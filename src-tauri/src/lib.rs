@@ -107,6 +107,12 @@ pub mod __test_api {
     // フィクスチャ生成専用のため struct そのものを再公開する。
     pub use crate::commands::import::CsvPreview;
 
+    // 接続間データ転送 (#986)。Tauri を介さずに統合テストから駆動するコア。
+    pub use crate::commands::transfer::{
+        transfer_data_inner, TransferColumnInfo, TransferOutcome, TransferRequest,
+    };
+    pub use crate::db::transfer::TransferMode;
+
     // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
     // 各 IPC ハンドラの `_inner` コア (State なし) を再公開する。
     pub use crate::commands::local::{
@@ -131,6 +137,48 @@ pub mod __test_api {
     pub use crate::commands::query::{
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
+    pub use crate::commands::script::{
+        ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
+        ScriptProgressEvent, ScriptRun,
+    };
+
+    /// `.sql` スクリプトのストリーミング文分割 (#973) を一括で行い、各文の本文だけを
+    /// 返す。フロント `splitSqlStatements` との共有ゴールデン
+    /// (`tests/script_split_golden.rs`) 用。
+    pub fn split_script(driver: DriverKind, sql: &str) -> Vec<String> {
+        crate::db::script::split_script(driver, sql)
+            .into_iter()
+            .map(|s| s.sql)
+            .collect()
+    }
+
+    /// `run_sql_script` の本体 (ファイル読み + 文分割 + 文ごとの read-only ガード +
+    /// 実行 + トランザクション制御) を Tauri ランタイム無しで駆動する (#973)。
+    /// `committed` はキャンセル時に `cancel_stream` が報告する確定済み文数。
+    pub async fn run_sql_script_via_core<F>(
+        session: std::sync::Arc<Session>,
+        path: &str,
+        database: Option<&str>,
+        options: ScriptOptions,
+        committed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        on_progress: F,
+    ) -> crate::error::Result<ScriptRun>
+    where
+        F: FnMut(ScriptProgress),
+    {
+        let total = crate::commands::script::script_file_size(path).await?;
+        let file = tokio::fs::File::open(path).await?;
+        crate::commands::script::run_script_core(
+            session,
+            file,
+            total,
+            database.map(str::to_string),
+            options,
+            committed,
+            on_progress,
+        )
+        .await
+    }
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
     /// `commands::export::write_export_to` — 実ファイル出力と**同じ**振り分け /
@@ -178,6 +226,21 @@ pub mod __test_api {
     pub use crate::commands::process::list_processes_inner;
     pub use crate::commands::profile::profile_column_inner;
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
+
+    /// 外部バイナリ非依存の論理ダンプ (#987) をメモリ上の文字列として得る。
+    /// `commands::dump::run_dump` が実ファイルへ書くのと同じ
+    /// `Connection::native_dump` を通すので、統合テストは「ダンプ → 再実行 →
+    /// 同一データ」の往復をそのまま検証できる。
+    pub async fn native_dump_sql(
+        conn: &Connection,
+        database: &str,
+        opts: &NativeDumpOptions,
+    ) -> crate::error::Result<String> {
+        let mut out = String::new();
+        conn.native_dump(database, opts, &mut out).await?;
+        Ok(out)
+    }
+    pub use crate::db::native_dump::NativeDumpOptions;
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
@@ -237,6 +300,27 @@ pub mod __test_api {
         database: Option<&str>,
     ) -> crate::error::Result<QueryResult> {
         crate::commands::query::run_query_inner(state, session_id, sql, database).await
+    }
+
+    /// Drives the `run_lookup_query` IPC command's core path (#1067): the
+    /// always-on read-only guard, the row cap and the timeout.
+    pub async fn run_lookup_query_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        database: Option<&str>,
+        query_timeout_secs: Option<u64>,
+        row_cap: Option<u32>,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::query::run_lookup_query_inner(
+            state,
+            session_id,
+            sql,
+            database,
+            query_timeout_secs,
+            row_cap,
+        )
+        .await
     }
 
     /// Drives the `run_query_transaction` IPC command's core path, exercising
@@ -728,6 +812,7 @@ pub fn run() {
             commands::ssh::resolve_ssh_config_host,
             commands::query::run_query,
             commands::query::run_query_transaction,
+            commands::query::run_lookup_query,
             commands::query::begin_transaction,
             commands::query::run_in_transaction,
             commands::query::finish_transaction,
@@ -799,6 +884,8 @@ pub fn run() {
             commands::dump::dump_database,
             commands::import::parse_csv_preview,
             commands::import::import_csv,
+            commands::script::run_sql_script,
+            commands::transfer::transfer_data,
             commands::file::read_text_file,
             commands::file::write_binary_file,
             commands::local::create_local_session,

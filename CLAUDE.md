@@ -115,7 +115,7 @@ noobDB は MySQL / PostgreSQL / SQLite / DuckDB / Microsoft SQL Server 対応の
   通信は `src/api/tauri.ts` の型付きラッパー (`invoke`) のみ。ストリーミング結果は
   戻り値ではなくイベント (`listen`) で受け取る。
 - **バックエンド** (`src-tauri/src/`): Tauri 2 + Tokio。`lib.rs::run()` が
-  **98 個の IPC コマンド**を登録し `AppState` を管理ステートとして持つ。
+  **103 個の IPC コマンド**を登録し `AppState` を管理ステートとして持つ。
 - **DB レイヤ**: トレイトオブジェクトではなく手書きの `enum db::Connection` で
   ドライバをディスパッチ (`db/mod.rs`)。
 - **秘密情報**: `profiles.json` (非秘密) と OS keyring (秘密) を厳密に分離。

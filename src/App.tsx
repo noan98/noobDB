@@ -60,6 +60,7 @@ import {
 } from "./components/tableMaintenance";
 import type { AlterStatement } from "./components/alterTable";
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
+import type { TransferSource } from "./components/dataTransfer";
 import {
   buildCreateViewSql,
   buildDropViewSql,
@@ -133,6 +134,9 @@ const SnippetForm = lazy(() =>
 const ImportModal = lazy(() =>
   import("./components/ImportModal").then((m) => ({ default: m.ImportModal })),
 );
+const DataTransferModal = lazy(() =>
+  import("./components/DataTransferModal").then((m) => ({ default: m.DataTransferModal })),
+);
 const TestDataModal = lazy(() =>
   import("./components/TestDataModal").then((m) => ({ default: m.TestDataModal })),
 );
@@ -141,6 +145,9 @@ const PlanWatchPanel = lazy(() =>
 );
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
+);
+const ScriptRunModal = lazy(() =>
+  import("./components/ScriptRunModal").then((m) => ({ default: m.ScriptRunModal })),
 );
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
@@ -286,6 +293,7 @@ import {
   type QueryNotificationKind,
 } from "./queryNotify";
 import { incomingForeignKeys } from "./fkNavigation";
+import type { ValueLookup } from "./components/useValuePicker";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
@@ -1184,6 +1192,23 @@ export default function App() {
   const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
+  // スマート値ピッカー (#1067) の候補取得。バックエンドの `run_lookup_query` が
+  // 読み取り専用ガード (セッションの read_only に関係なく常時)・行数上限・
+  // 設定の「クエリタイムアウト」を課すので、読み取り専用セッションでも動き、
+  // 大テーブルで無制限 fetch しない。SQL は対象テーブルを修飾済みなので database は渡さない。
+  const lookupTimeoutSecs = settings.queryTimeoutSecs;
+  const lookupForSession = useCallback(
+    (sid: string): ValueLookup =>
+      (sql, rowCap) =>
+        api.runLookupQuery({
+          sessionId: sid,
+          sql,
+          database: null,
+          queryTimeoutSecs: lookupTimeoutSecs > 0 ? lookupTimeoutSecs : null,
+          rowCap,
+        }),
+    [lookupTimeoutSecs],
+  );
   // 解決済みショートカットバインド (既定 + ユーザ上書き、#557)。グローバルキー
   // ハンドラは `bindingsRef` 経由で参照し、エディタには `editorBindings` で渡す。
   const shortcutBindings = useMemo(
@@ -1775,6 +1800,8 @@ export default function App() {
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
+  // `.sql` スクリプト実行モーダルの対象 DB (#973。null で閉じる)。
+  const [scriptTarget, setScriptTarget] = useState<string | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
@@ -1787,6 +1814,8 @@ export default function App() {
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
   const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
+  // 接続間データ転送 (#986): 転送元。null で閉じる。
+  const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
   // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
@@ -2714,6 +2743,7 @@ export default function App() {
     // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
     setImportTarget(null);
     setDumpTarget(null);
+    setScriptTarget(null);
     setSchemaExportTarget(null);
     setErrorProfileId(null);
     setAlterTableTarget(null);
@@ -2990,6 +3020,7 @@ export default function App() {
     setSelectedProfile(null);
     setImportTarget(null);
     setDumpTarget(null);
+    setScriptTarget(null);
     setSchemaExportTarget(null);
     // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
     // 残っていなければ未接続状態へ。
@@ -3105,6 +3136,7 @@ export default function App() {
       setSelectedProfile(null);
       setImportTarget(null);
       setDumpTarget(null);
+      setScriptTarget(null);
       setSchemaExportTarget(null);
       setConnectionStatus("connected");
       setErrorProfileId(lostProfileId);
@@ -5082,6 +5114,11 @@ export default function App() {
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
+  }, []);
+
+  // 接続間データ転送 (#986): テーブル全件を別接続へコピーする。
+  const handleTransferTable = useCallback((database: string, table: string) => {
+    setTransferSource({ kind: "table", database, table });
   }, []);
 
   // テストデータ生成ウィザード (#602) を開く。
@@ -7284,6 +7321,18 @@ export default function App() {
                               })
                           : undefined
                       }
+                      onTransferResult={
+                        sessionId &&
+                        tab.lastExecutedSql &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver)
+                          ? () =>
+                              setTransferSource({
+                                kind: "query",
+                                database: tab.database ?? selectedProfile?.database ?? null,
+                                sql: tab.lastExecutedSql,
+                              })
+                          : undefined
+                      }
                       onRegisterLocalTable={
                         sessionId && tab.result
                           ? () => handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql)
@@ -7330,6 +7379,7 @@ export default function App() {
                           ? (sql) => api.runQuery(sessionId, sql, tab.database ?? null)
                           : undefined
                       }
+                      onLookupQuery={sessionId ? lookupForSession(sessionId) : undefined}
                       onExploreColumn={
                         sessionId
                           ? (target) =>
@@ -7722,8 +7772,10 @@ export default function App() {
             onDelete={handleDeleteProfile}
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
+            onTransferTable={handleTransferTable}
             onGenerateTestData={handleGenerateTestData}
             onDumpDatabase={handleDumpDatabase}
+            onRunScript={setScriptTarget}
             onSchemaExport={handleSchemaExport}
             onRunTableSelect={handleRunTableSelect}
             onInsertTableSelect={handleInsertTableSelect}
@@ -8646,6 +8698,18 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {scriptTarget && sessionId && (
+          <ScriptRunModal
+            key={scriptTarget}
+            sessionId={sessionId}
+            database={scriptTarget}
+            isProduction={selectedProfile?.is_production ?? false}
+            onClose={() => setScriptTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {schemaExportTarget && sessionId && (
           <SchemaExportModal
             key={schemaExportTarget}
@@ -8780,6 +8844,20 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {transferSource && sessionId && (
+          <Suspense fallback={null}>
+            <DataTransferModal
+              sourceSessionId={sessionId}
+              sourceProfileId={selectedProfile?.id ?? null}
+              source={transferSource}
+              profiles={profiles}
+              onClose={() => setTransferSource(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {saveAsTableRequest && sessionId && (
           <Suspense fallback={null}>
             <SaveAsTableModal
@@ -8847,6 +8925,10 @@ export default function App() {
                 table={insTab.table}
                 columns={insTab.result.columns}
                 initialValues={rowInsertSeed ?? undefined}
+                driver={selectedProfile?.driver ?? "mysql"}
+                database={insTab.database ?? selectedProfile?.database ?? null}
+                tableColumns={insTab.tableColumns}
+                lookup={sessionId ? lookupForSession(sessionId) : undefined}
                 onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
                 onCancel={() => { setRowInsertTabId(null); setRowInsertSeed(null); }}
               />

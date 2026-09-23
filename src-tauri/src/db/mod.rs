@@ -5,6 +5,7 @@ pub mod duckdb;
 pub mod format;
 pub mod mssql;
 pub mod mysql;
+pub mod native_dump;
 pub mod postgres;
 /// ドライラン (プレビュー) のスナップショット取得を組み立てる共有ロジック。
 /// ドライバ非依存の純粋な文字列処理なので、各ドライバの
@@ -13,8 +14,11 @@ pub mod preview;
 pub mod privileges;
 pub mod profile;
 pub mod sandbox;
+/// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
+pub mod script;
 pub mod sqlite;
 pub mod sync;
+pub mod transfer;
 pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
 pub mod upsert;
@@ -846,6 +850,27 @@ impl Connection {
             Connection::Sqlite(c) => c.schema_objects(db).await,
             Connection::DuckDb(c) => c.schema_objects(db).await,
             Connection::Mssql(c) => c.schema_objects(db).await,
+        }
+    }
+
+    /// 外部バイナリに依存しない論理ダンプ (#987)。スキーマ DDL と行データの
+    /// INSERT を `sink` へストリーム出力する (`db::native_dump`)。MySQL /
+    /// PostgreSQL は `mysqldump` / `pg_dump`、SQLite は `sqlite_master` 経路
+    /// (`commands/dump.rs`) を使うため、ここでは DuckDB / MSSQL のみ対応。
+    pub async fn native_dump<S: native_dump::DumpSink + Send>(
+        &self,
+        database: &str,
+        opts: &native_dump::NativeDumpOptions,
+        sink: &mut S,
+    ) -> Result<()> {
+        match self {
+            Connection::DuckDb(_) => native_dump::dump_duckdb(self, database, opts, sink).await,
+            Connection::Mssql(_) => native_dump::dump_mssql(self, database, opts, sink).await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Sqlite(_) => {
+                Err(AppError::InvalidInput(
+                    "native dump is only implemented for DuckDB and MSSQL".into(),
+                ))
+            }
         }
     }
 

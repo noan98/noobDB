@@ -716,6 +716,43 @@ export const importErrorEvent = z.object({
   line: z.number().nullable().default(null),
 });
 
+// `.sql` スクリプト実行のイベント (#973)。`sql-script:*`。
+export const scriptProgressEvent = z.object({
+  streamId: z.string(),
+  executed: z.number(),
+  failed: z.number(),
+  bytesRead: z.number(),
+  totalBytes: z.number(),
+  elapsedMs: z.number(),
+});
+
+/** 失敗した 1 文 (continue-on-error の一覧 / 停止時の原因)。 */
+export const scriptFailure = z.object({
+  index: z.number(),
+  line: z.number(),
+  sql: z.string(),
+  error: z.string(),
+});
+
+export const scriptDoneEvent = z.object({
+  streamId: z.string(),
+  executed: z.number(),
+  succeeded: z.number(),
+  failedCount: z.number(),
+  failures: z.array(scriptFailure),
+  skippedControl: z.number(),
+  rowsAffected: z.number(),
+  elapsedMs: z.number(),
+});
+
+export const scriptErrorEvent = z.object({
+  streamId: z.string(),
+  error: z.string(),
+  failure: scriptFailure.nullable(),
+  executed: z.number(),
+  rolledBack: z.boolean(),
+});
+
 // ストリーミングダンプのイベント (#686)。
 export const dumpProgressEvent = z.object({
   streamId: z.string(),
@@ -849,6 +886,28 @@ export const exportStreamErrorEvent = z.object({
   /** Rows already written to the output file before the run failed (#685).
    *  Informational only — a failed/cancelled export always discards its
    *  partial output file. */
+  rows: z.number(),
+});
+
+// 接続間データ転送 (#986) のイベント。
+export const transferProgressEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+});
+
+export const transferDoneEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+  elapsedMs: z.number(),
+  /** 損失のある型マッピングなどの注意書き (空配列が普通)。 */
+  warnings: z.array(z.string()),
+});
+
+export const transferErrorEvent = z.object({
+  streamId: z.string(),
+  message: z.string(),
+  /** 失敗までに書き込んだ行数。新規作成/作り直しでは作りかけのテーブルを
+   *  DROP するため情報提供のみ。 */
   rows: z.number(),
 });
 

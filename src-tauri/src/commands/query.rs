@@ -207,6 +207,93 @@ pub(crate) async fn run_query_inner(
     result
 }
 
+/// 値ピッカー (#1067) の候補取得 1 回で返す行数の既定値と上限。フロントが
+/// `row_cap` を渡さない/大きすぎる値を渡しても、この上限を超えて fetch しない。
+const LOOKUP_DEFAULT_ROWS: usize = 200;
+const LOOKUP_MAX_ROWS: usize = 1000;
+
+/// セル編集・行追加のスマート値ピッカー (#1067) が、FK 参照先の候補値や
+/// ENUM / CHECK 制約の許可値を引くための**読み取り専用**クエリ実行。
+///
+/// `run_query` との違い:
+/// - セッションの `read_only` フラグに関係なく、常に読み取り専用の文だけを通す
+///   (候補取得は人の確認を挟まずに裏で走るため、書き込み文が紛れ込む余地を
+///   バックエンドで塞ぐ。自動更新 / ブロードキャストと同じ考え方)。緊急クエリ
+///   実行モードでも緩めない。
+/// - `row_cap` (既定 200・上限 1000) で自動 LIMIT/TOP を挿入し、さらに結果行も
+///   その件数で切り詰める — 大テーブルで無制限 fetch しない。
+/// - `query_timeout_secs` (設定の「クエリタイムアウト」) で全体を打ち切る。
+/// - クエリ履歴・結果キャッシュには載せない (入力補助の裏方クエリで、ユーザの
+///   実行履歴を汚さないため)。
+#[tauri::command]
+pub async fn run_lookup_query(
+    session_id: String,
+    sql: String,
+    database: Option<String>,
+    query_timeout_secs: Option<u64>,
+    row_cap: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<QueryResult> {
+    run_lookup_query_inner(
+        state.inner(),
+        &session_id,
+        &sql,
+        database.as_deref(),
+        query_timeout_secs,
+        row_cap,
+    )
+    .await
+}
+
+/// Core of [`run_lookup_query`] decoupled from Tauri's `State` wrapper (see
+/// [`run_query_inner`]).
+pub(crate) async fn run_lookup_query_inner(
+    state: &AppState,
+    session_id: &str,
+    sql: &str,
+    database: Option<&str>,
+    query_timeout_secs: Option<u64>,
+    row_cap: Option<u32>,
+) -> Result<QueryResult> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    let driver = session.conn.driver_kind();
+    if !is_read_only_sql_for(driver, sql) {
+        tracing::warn!(
+            session_id = %session.id,
+            sql = %sql_summary(sql),
+            "value lookup rejected a non-read-only statement"
+        );
+        return Err(AppError::ReadOnly(
+            "value lookup allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
+                .into(),
+        ));
+    }
+    let cap = row_cap
+        .map(|n| n as usize)
+        .unwrap_or(LOOKUP_DEFAULT_ROWS)
+        .clamp(1, LOOKUP_MAX_ROWS);
+    let limited = apply_auto_limit_for(driver, sql, cap);
+    let effective_sql = limited.as_deref().unwrap_or(sql);
+    let exec = session.conn.execute(effective_sql, database);
+    let mut result = match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                Ok(res) => res?,
+                Err(_) => return Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => exec.await?,
+    };
+    // 利用者が既に LIMIT を書いていて自動 LIMIT が挿入されなかった場合でも、
+    // 返す行数は必ず上限で切る (フロントの SQL 生成に不備があっても UI を
+    // 大量行で埋めない二重の安全網)。
+    result.rows.truncate(cap);
+    Ok(result)
+}
+
 /// Applies `statements` as a single all-or-nothing transaction. Every
 /// statement is checked against the read-only gate first, then the whole
 /// batch is committed together; if any statement fails the backend rolls the
@@ -537,6 +624,8 @@ pub struct StreamCancelledEvent {
 const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
 const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
+const EV_SCRIPT_CANCELLED: &str = "sql-script:cancelled";
+const EV_TRANSFER_CANCELLED: &str = "transfer-stream:cancelled";
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -1347,6 +1436,15 @@ pub async fn cancel_stream(
                     // for parity with the other terminal events (`abort` mode rolls
                     // back and reports 0). #687 review follow-up.
                     StreamKind::Import => Some(EV_IMPORT_CANCELLED),
+                    // A script run reports the number of statements already
+                    // committed (autocommit or a closed script-level
+                    // transaction); an open transaction is rolled back by the
+                    // runner's drop guard (#973).
+                    StreamKind::Script => Some(EV_SCRIPT_CANCELLED),
+                    // 接続間転送 (#986)。`create` / `replace` では作りかけのテーブルを
+                    // 後始末で DROP するため、`delivered_rows` (書き込み済み行数) が
+                    // 永続化されて残るのは `append` のときだけ。
+                    StreamKind::Transfer => Some(EV_TRANSFER_CANCELLED),
                     // Query/Preview always register an `on_cancel` callback (see
                     // `run_query_stream` / `preview_query_stream`), so this arm is
                     // unreachable in practice; keep it exhaustive rather than

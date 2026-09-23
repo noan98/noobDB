@@ -1242,6 +1242,27 @@ export const api = {
       sql,
       database: database ?? null,
     }).then((r) => parseResponse(schemas.queryResult, r, "run_query")),
+  /**
+   * スマート値ピッカー (#1067) の候補取得。FK 参照先の DISTINCT 値や ENUM /
+   * CHECK 許可値を引く裏方クエリで、バックエンドがセッションの read_only に
+   * 関係なく読み取り専用の文だけを通し、`rowCap` 件 (上限 1000) で打ち切り、
+   * `queryTimeoutSecs` (0 / null はタイムアウトなし) で全体を中断する。
+   * クエリ履歴・結果キャッシュには載らない。
+   */
+  runLookupQuery: (params: {
+    sessionId: string;
+    sql: string;
+    database?: string | null;
+    queryTimeoutSecs?: number | null;
+    rowCap?: number | null;
+  }) =>
+    invoke<QueryResult>("run_lookup_query", {
+      sessionId: params.sessionId,
+      sql: params.sql,
+      database: params.database ?? null,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
+      rowCap: params.rowCap ?? null,
+    }).then((r) => parseResponse(schemas.queryResult, r, "run_lookup_query")),
   runQueryTransaction: (
     sessionId: string,
     statements: string[],
@@ -1914,6 +1935,37 @@ export const api = {
     }),
 
   /**
+   * `.sql` スクリプトファイルを文単位でストリーミング実行する (#973)。ファイルは
+   * バックエンドが 64 KiB ずつ読むので全体をメモリに載せない。進捗・完了・エラーは
+   * `sql-script:*` イベント ({@link listenScriptStream}) で届き、`cancelStream` で
+   * 中断できる。読み取り専用ガードは文ごとにバックエンドで強制される。
+   */
+  runSqlScript: (params: {
+    sessionId: string;
+    streamId: string;
+    database?: string | null;
+    path: string;
+    options: ScriptOptions;
+  }) =>
+    invoke<void>("run_sql_script", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      database: params.database ?? null,
+      path: params.path,
+      options: params.options,
+    }),
+
+  /**
+   * 接続間データ転送 (#986)。ソース接続のテーブル全件 (`sourceTable`) か単一の
+   * 読み取り専用クエリ (`sourceSql`) を、ターゲット接続のテーブルへスキーマ +
+   * データごとコピーする。進捗は `transfer-stream:*` イベント
+   * ({@link listenTransferStream}) で届き、`cancelStream` で中断できる。
+   * ターゲットが読み取り専用プロファイルならバックエンドが拒否する。
+   */
+  transferData: (streamId: string, request: TransferRequest) =>
+    invoke<void>("transfer_data", { streamId, request }),
+
+  /**
    * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を
    * 直に叩かずバックエンド経由で読む (capabilities を最小に保つ)。サイズ上限を超える
    * ファイルは reject される。
@@ -2164,6 +2216,45 @@ export interface ExportStreamHandlers {
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
+/** 接続間データ転送 (#986) で既存テーブルと衝突したときの扱い。 */
+export type TransferMode = "create" | "replace" | "append";
+
+export interface TransferRequest {
+  sourceSessionId: string;
+  targetSessionId: string;
+  sourceDatabase?: string | null;
+  /** テーブル全件を転送するときのテーブル名 (`sourceSql` と排他)。 */
+  sourceTable?: string | null;
+  /** 単一の読み取り専用クエリの結果を転送するときの SQL (`sourceTable` と排他)。 */
+  sourceSql?: string | null;
+  targetDatabase?: string | null;
+  targetTable: string;
+  mode: TransferMode;
+  batchSize?: number | null;
+}
+export interface TransferProgressEvent {
+  streamId: string;
+  rows: number;
+}
+export interface TransferDoneEvent {
+  streamId: string;
+  rows: number;
+  elapsedMs: number;
+  warnings: string[];
+}
+export interface TransferErrorEvent {
+  streamId: string;
+  message: string;
+  rows: number;
+}
+export interface TransferStreamHandlers {
+  onProgress?: (event: TransferProgressEvent) => void;
+  onDone?: (event: TransferDoneEvent) => void;
+  onError?: (event: TransferErrorEvent) => void;
+  /** `cancelStream` が転送を中断したとき。`deliveredRows` は書き込み済み行数。 */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
 export interface DumpProgressEvent {
   streamId: string;
   bytes: number;
@@ -2188,6 +2279,60 @@ export interface DumpStreamHandlers {
   /** Fired when `cancelStream` claims this dump (#686). `deliveredRows` carries
    *  bytes written so far. The frontend's own cancel flow reads that off
    *  `cancelStream`'s return value instead. */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
+/** `.sql` スクリプト実行のオプション (#973)。2 つは排他 (両方 true はバックエンドが拒否)。 */
+export interface ScriptOptions {
+  /** 失敗した文をスキップして続行し、最後に失敗一覧を返す。 */
+  continueOnError: boolean;
+  /** 全体を 1 トランザクションで包む (失敗・キャンセルで ROLLBACK)。 */
+  wrapInTransaction: boolean;
+}
+
+/** 失敗した 1 文。`index` はスクリプト内の通し番号、`line` はファイル内の開始行 (1 始まり)。 */
+export interface ScriptFailure {
+  index: number;
+  line: number;
+  sql: string;
+  error: string;
+}
+
+export interface ScriptProgressEvent {
+  streamId: string;
+  executed: number;
+  failed: number;
+  bytesRead: number;
+  totalBytes: number;
+  elapsedMs: number;
+}
+
+export interface ScriptDoneEvent {
+  streamId: string;
+  executed: number;
+  succeeded: number;
+  failedCount: number;
+  failures: ScriptFailure[];
+  /** wrap-in-transaction で読み飛ばしたスクリプト内の BEGIN/COMMIT 等の数。 */
+  skippedControl: number;
+  rowsAffected: number;
+  elapsedMs: number;
+}
+
+export interface ScriptErrorEvent {
+  streamId: string;
+  error: string;
+  failure: ScriptFailure | null;
+  executed: number;
+  /** 開いていたトランザクションを ROLLBACK したか。 */
+  rolledBack: boolean;
+}
+
+export interface ScriptStreamHandlers {
+  onProgress?: (event: ScriptProgressEvent) => void;
+  onDone?: (event: ScriptDoneEvent) => void;
+  onError?: (event: ScriptErrorEvent) => void;
+  /** `deliveredRows` は確定済み (キャンセル後も残る) 文の数。 */
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
@@ -2481,6 +2626,45 @@ export async function listenImportStream(
   ]);
 }
 
+/**
+ * `.sql` スクリプト実行 (#973) の `sql-script:*` イベントを `streamId` で絞って
+ * 購読する。戻り値の関数ですべてのリスナーを外す。
+ */
+export async function listenScriptStream(
+  streamId: string,
+  handlers: ScriptStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  return registerListeners([
+    listen<ScriptProgressEvent>(
+      "sql-script:progress",
+      filter(schemas.scriptProgressEvent, "sql-script:progress", handlers.onProgress),
+    ),
+    listen<ScriptDoneEvent>(
+      "sql-script:done",
+      filter(schemas.scriptDoneEvent, "sql-script:done", handlers.onDone),
+    ),
+    listen<ScriptErrorEvent>(
+      "sql-script:error",
+      filter(schemas.scriptErrorEvent, "sql-script:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "sql-script:cancelled",
+      filter(schemas.streamCancelledEvent, "sql-script:cancelled", handlers.onCancelled),
+    ),
+  ]);
+}
+
 /** 全件ストリーミングエクスポートの進捗/完了/エラーイベントを購読する。 */
 export async function listenExportStream(
   streamId: string,
@@ -2513,6 +2697,42 @@ export async function listenExportStream(
     listen<StreamCancelledEvent>(
       "export-stream:cancelled",
       filter(schemas.streamCancelledEvent, "export-stream:cancelled", handlers.onCancelled),
+    ),
+  ]);
+}
+
+/** 接続間データ転送 (#986) の進捗/完了/エラー/キャンセルイベントを購読する。 */
+export async function listenTransferStream(
+  streamId: string,
+  handlers: TransferStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  return registerListeners([
+    listen<TransferProgressEvent>(
+      "transfer-stream:progress",
+      filter(schemas.transferProgressEvent, "transfer-stream:progress", handlers.onProgress),
+    ),
+    listen<TransferDoneEvent>(
+      "transfer-stream:done",
+      filter(schemas.transferDoneEvent, "transfer-stream:done", handlers.onDone),
+    ),
+    listen<TransferErrorEvent>(
+      "transfer-stream:error",
+      filter(schemas.transferErrorEvent, "transfer-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "transfer-stream:cancelled",
+      filter(schemas.streamCancelledEvent, "transfer-stream:cancelled", handlers.onCancelled),
     ),
   ]);
 }

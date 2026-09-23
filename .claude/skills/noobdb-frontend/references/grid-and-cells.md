@@ -160,3 +160,17 @@
   いる語での一致しか示さないため)。`columnMask.test.ts` が判定・永続化・設定の
   サニタイズを、`resultGridMask.test.tsx` が表示/コピー/reveal/ヘッダ切替/編集
   ブロックの結線を固定する。
+- FK / ENUM / SET / CHECK のスマート値ピッカー (#1067) — `valuePicker.ts` (純ロジック) +
+  `useValuePicker.tsx` (副作用・`<datalist>`)。インラインセル編集 (`ResultGrid` の
+  `DataGrid`) と行追加モーダル (`RowInsertModal`) の入力欄に候補を `<datalist>` で
+  紐づけるだけで、自由入力はそのまま可能。選んだ値は手入力と同じく既存の
+  `PendingEdits` / `PendingInsertRow` に載り、**DB への新しい書き込み経路は作らない**
+  (確定は従来どおり Apply)。候補取得 SQL (FK 参照先の `SELECT DISTINCT ... LIMIT`、
+  PG の `pg_enum`、各ドライバの CHECK 定義) は純関数で生成し、識別子は
+  `quoteIdentFor`、検索語は `quoteString` + `escapeLikeWildcards` を通す。実行は専用 IPC
+  `run_lookup_query` で、バックエンドがセッションの read_only に関係なく読み取り専用の
+  文だけを通し、行数上限 (既定 200・最大 1000) と設定の `queryTimeoutSecs` を課し、
+  履歴・結果キャッシュには載せない。MySQL ENUM/SET・DuckDB ENUM は型名から、PG の
+  ユーザ定義 ENUM は `pg_enum` から、CHECK は `col IN (...)` / `= ANY (ARRAY[...])` /
+  同一列の等値 OR だけを許可値として解析する。取れない・失敗した列は候補なし
+  (= 従来のテキスト入力) に静かに縮退する。ドライバ別の対応表は `valuePicker.ts` 冒頭。

@@ -38,3 +38,19 @@
 あると diff が「変更なし」に見える取りこぼしがありました。方言差 (ドル引用、
 `RETURNING` の切り落とし、`UPDATE ... FROM` / `DELETE ... USING` の失格判定) は
 `SqlFlavor` で分岐します。
+
+## `.sql` スクリプト実行 (`run_sql_script`, #973)
+
+`commands/script.rs` は同じ 3 点セット (`sql-script:progress` / `:done` / `:error` /
+`:cancelled`、`register_stream` の世代トークン、`listenScriptStream` の `stream_id`
+フィルタ) に乗る。ファイルは 64 KiB ずつ読み、`db/script.rs` の `ScriptSplitter`
+(フロント `splitSqlStatements` と共有ゴールデン `scriptSplitVectors.json` で一致を
+固定) が確定させた文から実行するので、メモリに載るのは最大 1 文ぶんだけ。
+
+- 読み取り専用ガードは**文ごと**に `ensure_allowed_for_session` で強制する。
+- スクリプト内の `BEGIN` / `COMMIT` / `ROLLBACK` は生 SQL としてプールへ流さず、
+  `begin_transaction` / `finish_transaction` へ読み替える (プールの別々の接続で
+  BEGIN と COMMIT を実行すると、開いたままのトランザクションがプールへ戻るため)。
+- キャンセルは子タスクの abort。abort は future を drop するだけでドライバが握る
+  専用接続のトランザクションは閉じないので、`TxGuard` の `Drop` が ROLLBACK を
+  spawn して後始末する。

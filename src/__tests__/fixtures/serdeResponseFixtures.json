@@ -446,6 +446,43 @@
     "kind": "view",
     "name": "active_users"
   },
+  "scriptDoneEvent": {
+    "elapsedMs": 900,
+    "executed": 20,
+    "failedCount": 1,
+    "failures": [
+      {
+        "error": "UNIQUE constraint failed",
+        "index": 4,
+        "line": 12,
+        "sql": "INSERT INTO t VALUES (1)"
+      }
+    ],
+    "rowsAffected": 57,
+    "skippedControl": 2,
+    "streamId": "strm0007",
+    "succeeded": 19
+  },
+  "scriptErrorEvent": {
+    "error": "line 12: UNIQUE constraint failed",
+    "executed": 4,
+    "failure": {
+      "error": "UNIQUE constraint failed",
+      "index": 4,
+      "line": 12,
+      "sql": "INSERT INTO t VALUES (1)"
+    },
+    "rolledBack": true,
+    "streamId": "strm0007"
+  },
+  "scriptProgressEvent": {
+    "bytesRead": 4096,
+    "elapsedMs": 150,
+    "executed": 10,
+    "failed": 1,
+    "streamId": "strm0007",
+    "totalBytes": 8192
+  },
   "serverInfo": {
     "variables": [
       {

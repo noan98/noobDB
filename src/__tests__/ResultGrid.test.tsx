@@ -1717,3 +1717,90 @@ describe("ResultGrid クイックフィルタ (#914)", () => {
     ).toBeNull();
   });
 });
+
+/**
+ * スマート値ピッカー (#1067) のインライン編集側。FK 列をダブルクリックで編集すると
+ * 参照先の候補が `onLookupQuery` 経由 (読み取り専用・行数上限付き) で取得され、
+ * 入力欄に `<datalist>` として紐づく。確定は従来どおり onSetCellEdit (編集バッファ)。
+ */
+describe("スマート値ピッカー (#1067)", () => {
+  const columns: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "user_id", type_name: "BIGINT" },
+  ];
+  const tableColumns: TableColumnInfo[] = [
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "user_id",
+      data_type: "bigint",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: "users",
+      referenced_column: "id",
+    },
+  ];
+  const result = makeResult(columns, [[1, "9007199254740993"]]);
+
+  it("FK 列の編集で候補を取得し、選んだ値は既存の編集バッファへ載る", async () => {
+    const user = userEvent.setup();
+    const onSetCellEdit = vi.fn();
+    const onLookupQuery = vi.fn(async (sql: string, rowCap: number) => {
+      void rowCap;
+      if (!sql.includes('"users"')) return makeResult([], []);
+      return makeResult([{ name: "id", type_name: "BIGINT" }], [["9007199254740993"], [12]]);
+    });
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        driver="postgres"
+        database="public"
+        table="orders"
+        tableColumns={tableColumns}
+        onSetCellEdit={onSetCellEdit}
+        onLookupQuery={onLookupQuery}
+      />,
+    );
+    const cell = container.querySelector("td.is-editable-cell") as HTMLElement;
+    await user.dblClick(cell);
+    await waitFor(() => {
+      const opts = [...cell.querySelectorAll("datalist option")].map(
+        (o) => (o as HTMLOptionElement).value,
+      );
+      expect(opts).toEqual(["9007199254740993", "12"]);
+    });
+    const fkCall = onLookupQuery.mock.calls.find(([sql]) => sql.includes('"users"'));
+    expect(fkCall?.[0]).toBe(
+      'SELECT DISTINCT "id" FROM "public"."users" WHERE "id" IS NOT NULL ORDER BY "id" LIMIT 50',
+    );
+    expect(fkCall?.[1]).toBe(50);
+    const input = cell.querySelector("input") as HTMLInputElement;
+    expect(input.getAttribute("list")).toBeTruthy();
+    await user.clear(input);
+    await user.type(input, "12");
+    await user.keyboard("{Enter}");
+    expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "9007199254740993"], [0], 0), 1, "12");
+  });
+
+  it("onLookupQuery が無ければ候補取得も datalist も出さない", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(
+      <ResultGrid result={result} editable tableColumns={tableColumns} onSetCellEdit={() => {}} />,
+    );
+    const cell = container.querySelector("td.is-editable-cell") as HTMLElement;
+    await user.dblClick(cell);
+    expect(cell.querySelector("datalist")).toBeNull();
+    expect(within(cell).getByRole("textbox")).toBeTruthy();
+  });
+});

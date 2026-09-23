@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **100 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **103 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -19,7 +19,7 @@
 ## クエリ実行・トランザクション (`commands/query.rs`)
 
 `run_query` / `run_query_transaction` / `run_query_stream` / `preview_query_stream` /
-`cancel_stream` / `set_emergency_mode` / `begin_transaction` / `run_in_transaction` /
+`cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` / `run_in_transaction` /
 `finish_transaction`
 
 ## スキーマ (`commands/schema.rs`)
@@ -83,6 +83,21 @@
 
 `export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
 `import_csv` / `read_text_file` / `write_binary_file`
+
+`run_sql_script` (`commands/script.rs`, #973) — `.sql` ファイルを 64 KiB ずつ読み、
+`db/script.rs` のストリーミング文分割 (フロント `splitSqlStatements` と共有ゴールデン
+`scriptSplitVectors.json` で一致を固定) で 1 文ずつ実行する。`sql-script:progress` /
+`:done` / `:error` / `:cancelled` イベント + `cancel_stream`。読み取り専用ガードは
+文ごと、`continueOnError` / `wrapInTransaction` は排他。スクリプト内の
+BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ読み替える。
+
+## 接続間データ転送 (`commands/transfer.rs`, #986)
+
+`transfer_data` — ソース接続のテーブル全件 / 単一の読み取り専用クエリ結果を、別接続の
+テーブルへスキーマ + データごと永続コピーするストリーミングコマンド。読み出しは
+`execute_stream`、書き込みは `import_rows` (新しい書き込み経路は増やさない)。進捗は
+`transfer-stream:*` イベント、`cancel_stream` で中断。ターゲットの `read_only` は
+バックエンドで拒否する。
 
 ## Schema Cache (`commands/schema.rs`, #1097)
 

@@ -259,9 +259,13 @@ interface Props {
   onDelete: (profile: ConnectionProfile) => void;
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
+  /** テーブルを別接続へスキーマ + データごとコピーする (#986)。読み取りなので read_only でも有効。 */
+  onTransferTable?: (database: string, table: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
   onGenerateTestData?: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
+  /** `.sql` ファイルをこの DB のコンテキストでストリーミング実行するモーダルを開く (#973)。 */
+  onRunScript?: (database: string) => void;
   /** DB スキーマを AI 向け Markdown としてエクスポートするモーダルを開く。 */
   onSchemaExport?: (database: string) => void;
   onRunTableSelect: (database: string, table: string) => void;
@@ -357,8 +361,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDelete,
   onPickTable,
   onImportTable,
+  onTransferTable,
   onGenerateTestData,
   onDumpDatabase,
+  onRunScript,
   onSchemaExport,
   onRunTableSelect,
   onInsertTableSelect,
@@ -938,6 +944,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       disabled: activeReadOnly,
       title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
     });
+    if (onTransferTable) {
+      items.push({
+        label: t("contextMenuTransferTable"),
+        onSelect: () => onTransferTable(db, tbl),
+      });
+    }
     // テストデータ生成 (#602) も書き込みなので read_only では無効化する
     // (バックエンドの run_query_transaction も read_only を拒否する)。
     if (onGenerateTestData) {
@@ -1113,6 +1125,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       });
     }
     items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
+    // ダンプの対になる「リストア」導線 (#973)。読み取り専用でも開ける — 書き込み文は
+    // バックエンドが文ごとに拒否し、SELECT だけのスクリプトは実行できる。
+    if (onRunScript) {
+      items.push({ label: t("contextMenuRunScript"), onSelect: () => onRunScript(db) });
+    }
     if (onSchemaExport) {
       items.push({ label: t("contextMenuSchemaExport"), onSelect: () => onSchemaExport(db) });
     }
