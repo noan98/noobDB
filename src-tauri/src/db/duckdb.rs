@@ -51,9 +51,9 @@ use super::advisor::UnusedIndexStats;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics, ServerVariable,
+    StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{init_sql_of, DbConnectOptions, DriverKind};
@@ -671,6 +671,20 @@ impl DuckDbConn {
     ) -> Result<UserPrivileges> {
         Err(AppError::InvalidInput(
             "users are not supported for DuckDB (file-backed, no server-side accounts)".into(),
+        ))
+    }
+
+    /// ルーチン (ストアドプロシージャ / 関数) を持たないため未対応 (#1003)。
+    /// 空のシグネチャではなくエラーを返し、直接 IPC を叩いた呼び出し側にも
+    /// 「非対応」を明示する (`list_processes` と同じ規約)。
+    pub async fn routine_signature(
+        &self,
+        _db: &str,
+        _kind: &str,
+        _name: &str,
+    ) -> Result<RoutineSignature> {
+        Err(AppError::InvalidInput(
+            "stored routines are not supported for DuckDB".into(),
         ))
     }
 

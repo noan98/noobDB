@@ -3004,3 +3004,21 @@ async fn sqlite_import_into_new_table_roundtrip() {
     let _ = std::fs::remove_file(&csv);
     let _ = std::fs::remove_file(&db);
 }
+
+/// SQLite はルーチンを持たないため、シグネチャ取得は空ではなくエラー (#1003)。
+#[tokio::test]
+async fn sqlite_routine_signature_is_unsupported() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_rt_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    let err = conn
+        .routine_signature("main", "procedure", "p", None)
+        .await
+        .expect_err("routines unsupported on SQLite");
+    assert!(err.to_string().contains("not supported"), "{err}");
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}

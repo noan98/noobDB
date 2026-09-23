@@ -46,7 +46,7 @@ use t::{
     HealthFinding, HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent,
     ImportResult, ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
     PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RowDiff, RowStatus,
+    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
     RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
     ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMetrics, ServerVariable, Severity,
     SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
@@ -119,6 +119,17 @@ fn build_fixtures() -> serde_json::Value {
         kind: "view".into(),
         name: "active_users".into(),
         id: Some("1234".into()),
+    };
+    let routine_signature = RoutineSignature {
+        kind: "function".into(),
+        name: "calc_total".into(),
+        parameters: vec![RoutineParameter {
+            name: "p_id".into(),
+            mode: "in".into(),
+            data_type: "integer".into(),
+        }],
+        returns_set: false,
+        return_type: Some("numeric".into()),
     };
     let table_row_estimate = TableRowEstimate {
         name: "users".into(),
@@ -585,6 +596,7 @@ fn build_fixtures() -> serde_json::Value {
         "foreignKey": foreign_key,
         "indexInfo": index_info,
         "schemaObject": schema_object,
+        "routineSignature": routine_signature,
         "tableRowEstimate": table_row_estimate,
         "tableRowIdentity": table_row_identity,
         "tableSizeInfo": table_size_info,

@@ -159,6 +159,34 @@ pub struct IndexInfo {
     pub method: Option<String>,
 }
 
+/// ストアドプロシージャ / 関数の 1 パラメータ (#1003)。`get_routine_signature`
+/// が返し、フロントの `routineCall.ts` が呼び出し SQL (CALL / SELECT / EXEC) を
+/// 組み立てる材料にする。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutineParameter {
+    /// パラメータ名。PostgreSQL の無名引数は空文字、MSSQL は先頭 `@` 付きのまま。
+    pub name: String,
+    /// 入出力モード: `in` / `out` / `inout` / `variadic` / `table`
+    /// (`table` は PostgreSQL の `RETURNS TABLE(...)` の出力列)。
+    pub mode: String,
+    /// 型名 (表示用かつ PostgreSQL ではキャスト先 — `format_type` の出力)。
+    pub data_type: String,
+}
+
+/// ルーチンのシグネチャ (#1003)。`kind` は `procedure` / `function`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutineSignature {
+    pub kind: String,
+    pub name: String,
+    /// 宣言順のパラメータ (戻り値そのものは含まない)。
+    pub parameters: Vec<RoutineParameter>,
+    /// 関数が集合 (行の集合 / テーブル値) を返すか。true なら
+    /// `SELECT * FROM fn(...)` の形で呼ぶ。プロシージャは常に false。
+    pub returns_set: bool,
+    /// 関数の戻り値型 (表示用)。プロシージャや取得できない場合は `None`。
+    pub return_type: Option<String>,
+}
+
 /// A non-table schema object: a view, materialized view, stored
 /// procedure, function, or trigger. `kind` is one of `view` /
 /// `materialized_view` / `procedure` / `function` / `trigger` so the UI can

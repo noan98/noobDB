@@ -259,6 +259,21 @@ export const schemaObject = z.object({
   id: z.string().nullish().transform((v) => v ?? null),
 });
 
+// #1003: ストアドプロシージャ / 関数のシグネチャ (`get_routine_signature`)。
+const routineParameter = z.object({
+  name: z.string(),
+  mode: z.string(),
+  data_type: z.string(),
+});
+
+export const routineSignature = z.object({
+  kind: z.string(),
+  name: z.string(),
+  parameters: z.array(routineParameter),
+  returns_set: z.boolean(),
+  return_type: z.string().nullish().transform((v) => v ?? null),
+});
+
 // #708: 踏み台/ジャンプホスト (2 段目まで)。SshProfile と同形だが自身の jump は
 // 持たない (チェーンは 1 段のジャンプホストまでに制限)。
 const sshJumpProfile = z.object({

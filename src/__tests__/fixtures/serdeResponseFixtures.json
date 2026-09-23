@@ -442,6 +442,19 @@
     ],
     "tables_analyzed": 3
   },
+  "routineSignature": {
+    "kind": "function",
+    "name": "calc_total",
+    "parameters": [
+      {
+        "data_type": "integer",
+        "mode": "in",
+        "name": "p_id"
+      }
+    ],
+    "return_type": "numeric",
+    "returns_set": false
+  },
   "schemaObject": {
     "id": "1234",
     "kind": "view",

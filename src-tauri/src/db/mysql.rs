@@ -9,9 +9,9 @@ use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo, UserPrivileges, Value,
+    QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
+    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{
@@ -1381,6 +1381,71 @@ impl MySqlConn {
         Ok(out)
     }
 
+    /// ルーチンのシグネチャ (#1003)。存在確認と関数の戻り値型は
+    /// `information_schema.ROUTINES`、パラメータは `information_schema.PARAMETERS`
+    /// (`ORDINAL_POSITION = 0` は関数の戻り値行なので除外) から読む。
+    pub async fn routine_signature(
+        &self,
+        db: &str,
+        kind: &str,
+        name: &str,
+    ) -> Result<RoutineSignature> {
+        let routine_type = if kind == "procedure" {
+            "PROCEDURE"
+        } else {
+            "FUNCTION"
+        };
+        let head: Option<MySqlRow> = sqlx::query(
+            "SELECT COALESCE(DTD_IDENTIFIER, '') FROM information_schema.ROUTINES \
+             WHERE ROUTINE_SCHEMA = ? AND ROUTINE_NAME = ? AND ROUTINE_TYPE = ?",
+        )
+        .bind(db)
+        .bind(name)
+        .bind(routine_type)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(head) = head else {
+            return Err(AppError::InvalidInput(format!(
+                "routine not found: {db}.{name}"
+            )));
+        };
+        let return_type = if kind == "function" {
+            Some(text_or_bytes(&head, 0)?).filter(|t| !t.is_empty())
+        } else {
+            None
+        };
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT COALESCE(PARAMETER_MODE, ''), COALESCE(PARAMETER_NAME, ''), \
+                    COALESCE(DTD_IDENTIFIER, '') \
+               FROM information_schema.PARAMETERS \
+              WHERE SPECIFIC_SCHEMA = ? AND SPECIFIC_NAME = ? AND ROUTINE_TYPE = ? \
+                AND ORDINAL_POSITION > 0 \
+              ORDER BY ORDINAL_POSITION",
+        )
+        .bind(db)
+        .bind(name)
+        .bind(routine_type)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut parameters = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let mode = text_or_bytes(r, 0)?.to_ascii_lowercase();
+            parameters.push(RoutineParameter {
+                name: text_or_bytes(r, 1)?,
+                // 関数の引数は PARAMETER_MODE が NULL (= IN 扱い)。
+                mode: if mode.is_empty() { "in".into() } else { mode },
+                data_type: text_or_bytes(r, 2)?,
+            });
+        }
+        Ok(RoutineSignature {
+            kind: kind.into(),
+            name: name.into(),
+            parameters,
+            returns_set: false,
+            return_type,
+        })
+    }
+
     pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
         if db.contains('`') || db.contains('\0') || name.contains('`') || name.contains('\0') {
             return Err(AppError::InvalidInput("invalid identifier".into()));
@@ -1733,6 +1798,15 @@ async fn apply_use_database(
 // from `SHOW TABLES`) with the BINARY flag, which makes sqlx's `String`
 // decoder refuse the column. Read raw bytes and convert manually so the same
 // code works across MySQL 8 and MariaDB.
+/// information_schema の文字列列を読む。サーバ/照合順序によって VARCHAR でも
+/// VARBINARY でも返りうるため、String で読めなければバイト列として UTF-8 解釈する。
+fn text_or_bytes(row: &MySqlRow, i: usize) -> Result<String> {
+    match row.try_get::<String, _>(i) {
+        Ok(s) => Ok(s),
+        Err(_) => decode_text_col(row, i),
+    }
+}
+
 fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
     let bytes: Vec<u8> = row.try_get(i)?;
     String::from_utf8(bytes).map_err(|e| AppError::Other(e.to_string()))

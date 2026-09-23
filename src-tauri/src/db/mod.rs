@@ -33,7 +33,7 @@ use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
+    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
     StatementStat, StreamBatch, TableColumnInfo, TableComment, TableRowEstimate, TableRowIdentity,
     TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
@@ -973,6 +973,34 @@ impl Connection {
             &indexes,
             &fks,
         ))
+    }
+
+    /// ストアドプロシージャ / 関数のシグネチャ (パラメータ一覧・戻り値) を返す
+    /// (#1003)。MySQL は `information_schema.PARAMETERS`、PostgreSQL は `pg_proc`
+    /// (`proargnames` / `proargmodes` / `proallargtypes`)、MSSQL は
+    /// `sys.parameters`。SQLite / DuckDB はルーチン概念を持たないため空ではなく
+    /// エラー (`list_processes` と同じ「未対応は明示」の規約)。カタログの読み取り
+    /// のみなので read_only セッションでも許可する。`id` は PostgreSQL の oid
+    /// (オーバーロード解決用、[`Connection::object_definition`] と同じ)。
+    pub async fn routine_signature(
+        &self,
+        db: &str,
+        kind: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<RoutineSignature> {
+        if kind != "procedure" && kind != "function" {
+            return Err(AppError::InvalidInput(format!(
+                "unsupported routine kind: {kind}"
+            )));
+        }
+        match self {
+            Connection::MySql(c) => c.routine_signature(db, kind, name).await,
+            Connection::Postgres(c) => c.routine_signature(db, kind, name, id).await,
+            Connection::Sqlite(c) => c.routine_signature(db, kind, name).await,
+            Connection::DuckDb(c) => c.routine_signature(db, kind, name).await,
+            Connection::Mssql(c) => c.routine_signature(db, kind, name).await,
+        }
     }
 
     /// Every index on `table` in `db`: name, constituent columns (in

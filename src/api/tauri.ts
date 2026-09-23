@@ -445,6 +445,30 @@ export interface SchemaObject {
   id: string | null;
 }
 
+/** ルーチン引数の入出力モード (#1003)。`table` は PostgreSQL の RETURNS TABLE 出力列。 */
+export type RoutineParamMode = "in" | "out" | "inout" | "variadic" | "table";
+
+/** ストアドプロシージャ / 関数の 1 パラメータ (`get_routine_signature`)。 */
+export interface RoutineParameter {
+  /** パラメータ名。PostgreSQL の無名引数は空文字、MSSQL は先頭 `@` 付き。 */
+  name: string;
+  /** 入出力モード。未知の値はバックエンドが `in` に倒して返す。 */
+  mode: RoutineParamMode | string;
+  /** 型名 (PostgreSQL は `format_type` の出力で、キャスト先にも使う)。 */
+  data_type: string;
+}
+
+/** ルーチンのシグネチャ (#1003)。 */
+export interface RoutineSignature {
+  kind: "procedure" | "function" | string;
+  name: string;
+  parameters: RoutineParameter[];
+  /** 関数が集合 / テーブル値を返すか (true なら `SELECT * FROM fn(...)`)。 */
+  returns_set: boolean;
+  /** 関数の戻り値型 (表示用)。 */
+  return_type: string | null;
+}
+
 /**
  * One foreign-key relationship in a database, used to draw ER-diagram edges.
  * One entry per referencing column; the columns of a composite key share a
@@ -1547,6 +1571,25 @@ export const api = {
       name,
       id: id ?? null,
     }),
+  /**
+   * ストアドプロシージャ / 関数のシグネチャ (パラメータ・戻り値) を取得する (#1003)。
+   * 読み取り専用の introspection。SQLite / DuckDB は未対応エラーを返す。
+   * `id` は PostgreSQL の oid (オーバーロード解決用)。
+   */
+  getRoutineSignature: (
+    sessionId: string,
+    database: string,
+    kind: string,
+    name: string,
+    id?: string | null,
+  ) =>
+    invoke<RoutineSignature>("get_routine_signature", {
+      sessionId,
+      database,
+      kind,
+      name,
+      id: id ?? null,
+    }).then((r) => parseResponse(schemas.routineSignature, r, "get_routine_signature")),
   compareSchema: (params: {
     sourceSessionId: string;
     sourceDatabase: string;

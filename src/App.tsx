@@ -264,6 +264,9 @@ const ShortcutCheatSheet = lazy(() =>
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
 );
+const RunRoutineModal = lazy(() =>
+  import("./components/RunRoutineModal").then((m) => ({ default: m.RunRoutineModal })),
+);
 import {
   analyzeDangerousSql,
   isReadOnlySql,
@@ -1837,6 +1840,13 @@ export default function App() {
   // 明示トランザクション: 現在のセッションでトランザクションが有効か。実行経路の
   // 振り分けにコールバックから参照するため ref も併せ持つ。
   const [txActive, setTxActive] = useState(false);
+  // ルーチン実行フォーム (#1003) の対象。null なら閉じている。
+  const [routineTarget, setRoutineTarget] = useState<{
+    database: string;
+    kind: "procedure" | "function";
+    name: string;
+    id: string | null;
+  } | null>(null);
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
@@ -4338,7 +4348,7 @@ export default function App() {
     }
   }, [sessionId, toast]);
 
-  const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean }) => {
+  const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
     // it never trips the destructive-query gate or auto LIMIT.
@@ -4350,7 +4360,9 @@ export default function App() {
     // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
     // ターゲットタブに対して行う。
     let target = tab;
-    let openedInNewTab = false;
+    // `fresh`: 呼び出し側が直前に addTab したばかりのタブ (tabsRef 未反映) を渡す
+    // とき。バッチ実行がメモリ上の target を直接使うようにする (#1003)。
+    let openedInNewTab = opts?.fresh ?? false;
     if (tab.kind === "query" && (opts?.newTab ?? settings.resultsInNewTab)) {
       const newTab: Tab = {
         ...makeQueryTab(),
@@ -5156,6 +5168,40 @@ export default function App() {
       toast.error(translate("objDefinitionError", { error: String(e) }));
     }
   }, [sessionId, openQueryInEditor, toast]);
+
+  // ストアドプロシージャ / 関数の実行 (#1003): 右クリック「実行...」でフォームを開き、
+  // 生成した呼び出し SQL を新しいクエリタブで **通常の実行ゲート** (`runInTabWithGate`
+  // = 危険クエリ確認・confirm_writes → run_query_stream / バッチ / 明示トランザクション)
+  // に渡す。独自の実行経路は持たない — read_only の拒否もバックエンドの
+  // `ensure_allowed_for_session` にそのまま任せる。
+  const handleRunRoutine = useCallback(
+    (database: string, kind: "procedure" | "function", name: string, id: string | null) => {
+      if (!sessionId) return;
+      setRoutineTarget({ database, kind, name, id });
+    },
+    [sessionId],
+  );
+
+  const handleRoutineRun = useCallback((sql: string) => {
+    const target = routineTarget;
+    setRoutineTarget(null);
+    if (!target || !sessionId) return;
+    const tab: Tab = {
+      ...makeQueryTab(),
+      sql,
+      lastExecutedSql: sql,
+      title: target.name,
+      database: target.database,
+    };
+    addTab(tab);
+    runInTabWithGate(tab, sql, { newTab: false, fresh: true });
+  }, [routineTarget, sessionId, addTab, runInTabWithGate]);
+
+  const handleRoutineToEditor = useCallback((sql: string) => {
+    const target = routineTarget;
+    setRoutineTarget(null);
+    openQueryInEditor(sql, target?.name);
+  }, [routineTarget, openQueryInEditor]);
 
   // ビュー定義の編集 (#851): 選択したビューの DDL を取得し、`CREATE VIEW` の
   // 外殻を剥がした本文だけを新しいクエリタブへ展開する。タブに `editingViewName`
@@ -7812,6 +7858,7 @@ export default function App() {
             onEditViewDefinition={handleEditViewDefinition}
             onFindUsages={handleFindUsages}
             onDropView={handleDropView}
+            onRunRoutine={handleRunRoutine}
             onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
             onOpenSandbox={handleOpenSandbox}
@@ -8963,6 +9010,20 @@ export default function App() {
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             onSubmit={handleParamsSubmit}
             onCancel={handleParamsCancel}
+          />
+        )}
+        {routineTarget && sessionId && (
+          <RunRoutineModal
+            sessionId={sessionId}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            database={routineTarget.database}
+            kind={routineTarget.kind}
+            name={routineTarget.name}
+            id={routineTarget.id}
+            txActive={txActive}
+            onRun={handleRoutineRun}
+            onSendToEditor={handleRoutineToEditor}
+            onCancel={() => setRoutineTarget(null)}
           />
         )}
         {pendingDangerous && (

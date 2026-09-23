@@ -453,3 +453,76 @@ async fn mssql_native_dump_roundtrip_when_env_set() {
     }
     conn.close().await;
 }
+
+/// ルーチンのシグネチャ取得 (#1003) と、`EXEC` がプロシージャの結果セットを
+/// ストリーミング経路で返すこと (`is_exec_shape`) を確認する。
+#[tokio::test]
+async fn mssql_routine_signature_and_exec_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MSSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MSSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mssql_url(&url).expect("valid url");
+    let db = opts.database.clone().unwrap_or_else(|| "master".into());
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP PROCEDURE IF EXISTS dbo.noobdb_rt_proc", Some(&db))
+        .await;
+    let _ = conn
+        .execute("DROP FUNCTION IF EXISTS dbo.noobdb_rt_fn", Some(&db))
+        .await;
+    conn.execute(
+        "CREATE PROCEDURE dbo.noobdb_rt_proc @a INT, @b NVARCHAR(10) OUTPUT \
+         AS BEGIN SELECT @a * 2 AS doubled END",
+        Some(&db),
+    )
+    .await
+    .expect("create procedure");
+    conn.execute(
+        "CREATE FUNCTION dbo.noobdb_rt_fn(@x INT) RETURNS INT AS BEGIN RETURN @x + 1 END",
+        Some(&db),
+    )
+    .await
+    .expect("create function");
+
+    let sig = conn
+        .routine_signature(&db, "procedure", "noobdb_rt_proc", None)
+        .await
+        .expect("procedure signature");
+    let modes: Vec<(&str, &str, &str)> = sig
+        .parameters
+        .iter()
+        .map(|p| (p.name.as_str(), p.mode.as_str(), p.data_type.as_str()))
+        .collect();
+    assert_eq!(
+        modes,
+        vec![("@a", "in", "int"), ("@b", "inout", "nvarchar(10)")]
+    );
+    let fsig = conn
+        .routine_signature(&db, "function", "noobdb_rt_fn", None)
+        .await
+        .expect("function signature");
+    assert!(!fsig.returns_set);
+    assert_eq!(fsig.return_type.as_deref(), Some("int"));
+    assert_eq!(fsig.parameters.len(), 1);
+
+    let mut rows: Vec<Vec<t::Value>> = Vec::new();
+    let exec = format!("EXEC [{db}].[dbo].[noobdb_rt_proc] 21, NULL");
+    conn.execute_stream(&exec, Some(&db), 100, 100, |b| {
+        if let t::StreamBatch::Rows(r) = b {
+            rows.extend(r);
+        }
+        Ok(())
+    })
+    .await
+    .expect("exec procedure");
+    assert_eq!(rows.len(), 1, "EXEC streams the procedure's result set");
+
+    let _ = conn
+        .execute("DROP PROCEDURE IF EXISTS dbo.noobdb_rt_proc", Some(&db))
+        .await;
+    let _ = conn
+        .execute("DROP FUNCTION IF EXISTS dbo.noobdb_rt_fn", Some(&db))
+        .await;
+    conn.close().await;
+}

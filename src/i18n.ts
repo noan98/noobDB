@@ -515,6 +515,31 @@ const en = {
   // ConfirmDialog (drop/truncate from the connection tree), and
   // SchemaCompareView's production apply confirmation.
   typeToConfirmLabel: "Type the following to continue: {target}",
+  // ストアドプロシージャ / 関数の実行フォーム (#1003)。
+  contextMenuRunRoutine: "Run...",
+  runRoutineUnsupportedDriver: "Stored routines are not supported for this driver",
+  runRoutineTitleProcedure: "Run procedure {name}",
+  runRoutineTitleFunction: "Run function {name}",
+  runRoutineLoading: "Loading parameters...",
+  runRoutineLoadError: "Could not load the routine's parameters: {error}",
+  runRoutineIntro:
+    "Enter a value for each parameter. Type NULL for SQL NULL; an empty box on a text parameter means an empty string.",
+  runRoutineIntroReturns:
+    "Returns {type}. Enter a value for each parameter. Type NULL for SQL NULL; an empty box on a text parameter means an empty string.",
+  runRoutineNoParams: "This routine takes no parameters.",
+  runRoutineUnnamedParam: "Parameter {n}",
+  runRoutineValuePlaceholder: "Value (NULL for null)",
+  runRoutineOutPlaceholder: "Output (shown in the result)",
+  runRoutinePreviewLabel: "Generated SQL",
+  runRoutineEscapeNote:
+    "Values are quoted and escaped for the active driver. The SQL runs through the normal query path, including the dangerous-query / write confirmation and read-only checks.",
+  runRoutineOutputsNotReturned:
+    "OUTPUT parameter values are passed in but not shown in the result (only the procedure's result set is displayed).",
+  runRoutineNeedsTransaction:
+    "Reading OUT/INOUT values needs the statements to share one connection. Begin an explicit transaction first, or send the SQL to the editor.",
+  runRoutineSendToEditor: "Send to editor",
+  runRoutineRun: "Run",
+  runRoutineCancel: "Cancel",
   parameterInputTitle: "Enter query parameters",
   parameterInputIntro:
     "This query contains {{name}} placeholders. Provide a value and type for each. Values are escaped for the active driver before the query runs.",
@@ -3610,6 +3635,31 @@ const ja: Dict = {
   // DangerousQueryDialog・ConfirmDialog (ツリーからの DROP/TRUNCATE)・
   // SchemaCompareView の本番適用確認で共有する「タイプして確認」ゲート (#675)。
   typeToConfirmLabel: "続行するには次のテキストを入力してください: {target}",
+  // ストアドプロシージャ / 関数の実行フォーム (#1003)。
+  contextMenuRunRoutine: "実行...",
+  runRoutineUnsupportedDriver: "このドライバはストアドルーチンに対応していません",
+  runRoutineTitleProcedure: "プロシージャ {name} を実行",
+  runRoutineTitleFunction: "関数 {name} を実行",
+  runRoutineLoading: "パラメータを読み込み中...",
+  runRoutineLoadError: "ルーチンのパラメータを取得できませんでした: {error}",
+  runRoutineIntro:
+    "各パラメータの値を入力してください。NULL と入力すると SQL の NULL、テキスト型で空欄のままにすると空文字になります。",
+  runRoutineIntroReturns:
+    "戻り値の型: {type}。各パラメータの値を入力してください。NULL と入力すると SQL の NULL、テキスト型で空欄のままにすると空文字になります。",
+  runRoutineNoParams: "このルーチンはパラメータを取りません。",
+  runRoutineUnnamedParam: "パラメータ {n}",
+  runRoutineValuePlaceholder: "値 (NULL で NULL)",
+  runRoutineOutPlaceholder: "出力 (結果に表示されます)",
+  runRoutinePreviewLabel: "生成される SQL",
+  runRoutineEscapeNote:
+    "値は接続中のドライバに合わせてクオート・エスケープされます。実行は通常のクエリ経路を通り、危険クエリ / 書き込みの確認と読み取り専用チェックが適用されます。",
+  runRoutineOutputsNotReturned:
+    "OUTPUT パラメータには値を渡しますが、返却値は結果に表示されません (プロシージャの結果セットのみ表示)。",
+  runRoutineNeedsTransaction:
+    "OUT / INOUT の値を読むには、各文が同じ接続で実行される必要があります。先に明示的トランザクションを開始するか、SQL をエディタへ送ってください。",
+  runRoutineSendToEditor: "エディタへ送る",
+  runRoutineRun: "実行",
+  runRoutineCancel: "キャンセル",
   parameterInputTitle: "クエリパラメータの入力",
   parameterInputIntro:
     "このクエリには {{name}} プレースホルダーが含まれています。各パラメータの値と型を指定してください。値は実行前に接続中のドライバに合わせてエスケープされます。",

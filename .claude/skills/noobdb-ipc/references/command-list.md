@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **103 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **106 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -26,7 +26,8 @@
 
 `list_databases` / `list_tables` / `describe_table` / `table_row_identity` /
 `schema_overview` / `foreign_keys` / `list_schema_objects` / `get_object_definition` /
-`list_indexes` / `table_row_estimates` / `list_table_comments` / `table_sizes`
+`list_indexes` / `table_row_estimates` / `list_table_comments` / `table_sizes` / `get_routine_signature`
+(ストアドプロシージャ / 関数のパラメータ取得、#1003 — SQLite/DuckDB は未対応エラー)
 
 `describe_table` の各列は `comment` (列コメント) を、`list_table_comments` は
 テーブル / ビューのコメントを返す (#1002)。SQLite はコメント非対応で常に空。

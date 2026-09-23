@@ -8,6 +8,7 @@ import { isSandboxShadowTableName } from "../sandbox";
 import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
+import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
@@ -325,6 +326,12 @@ interface Props {
    *  read_only では無効化される。 */
   onDropView?: (database: string, name: string) => void;
   /**
+   * ストアドプロシージャ / 関数の実行フォーム (#1003) を開く。右クリックメニューの
+   * 「実行...」から呼ぶ。SQLite / DuckDB (ルーチン非対応) では項目を無効化する。
+   * 未指定ならメニュー項目を出さない。
+   */
+  onRunRoutine?: (database: string, kind: "procedure" | "function", name: string, id: string | null) => void;
+  /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
    * introspection だけなので read_only でも有効。未指定ならメニュー項目を出さない。
@@ -398,6 +405,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onOpenObjectDefinition,
   onEditViewDefinition,
   onDropView,
+  onRunRoutine,
   onFindUsages,
   selectLimit,
   favorites,
@@ -1072,6 +1080,26 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // ビューの右クリックメニュー: 定義の編集 (#851)。ルーチン/トリガーは delimiter
   // 差が大きいため対象外 (Issue のスコープ外、クリックでの読み取り専用 DDL 表示は
   // 従来どおり `onOpenObjectDefinition` のまま)。
+  // ルーチン (プロシージャ / 関数) の右クリック: パラメータ入力付き実行 (#1003)。
+  // read_only でも無効化しない — 読み取りだけの関数もあり、書き込み系は実行時に
+  // バックエンドの `ensure_allowed_for_session` が拒否する (二重に判定しない)。
+  const handleRoutineContextMenu = (e: React.MouseEvent, db: string, o: SchemaObject) => {
+    if (!onRunRoutine || !isRoutineKind(o.kind)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const kind = o.kind;
+    const supported = supportsRoutineExecution(activeDriver);
+    const items: ContextMenuEntry[] = [
+      {
+        label: t("contextMenuRunRoutine"),
+        onSelect: () => onRunRoutine(db, kind, o.name, o.id),
+        disabled: !supported,
+        title: supported ? undefined : t("runRoutineUnsupportedDriver"),
+      },
+    ];
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
   const handleViewContextMenu = (e: React.MouseEvent, db: string, name: string) => {
     if (!onEditViewDefinition && !onDropView && !onFindUsages) return;
     e.preventDefault();
@@ -1535,7 +1563,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                   role="treeitem"
                   onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
                   onContextMenu={
-                    kind === "view" ? (ev) => handleViewContextMenu(ev, db, o.name) : undefined
+                    kind === "view"
+                      ? (ev) => handleViewContextMenu(ev, db, o.name)
+                      : isRoutineKind(kind)
+                        ? (ev) => handleRoutineContextMenu(ev, db, o)
+                        : undefined
                   }
                   {...treeTooltipProps(`${o.name} — ${labels[kind] ?? kind}`)}
                   _hover={{ bg: "app.rowHover" }}

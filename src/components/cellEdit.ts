@@ -385,7 +385,7 @@ function whereEqualsClause(driver: string, colName: string, v: CellValue): strin
  * Empty input is left as an empty string (use the explicit "NULL"
  * keyword to clear a column).
  */
-function literalFromInput(driver: string, raw: string, col: Column): string {
+export function literalFromInput(driver: string, raw: string, col: Column): string {
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return "NULL";
   const t = col.type_name.toUpperCase();

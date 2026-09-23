@@ -10,9 +10,9 @@ use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo, UserPrivileges, Value,
+    QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
+    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
@@ -151,7 +151,10 @@ impl PostgresConn {
         F: FnMut(StreamBatch) -> Result<()>,
     {
         let started = Instant::now();
-        let is_query = is_query_shape(sql);
+        // `CALL` は OUT / INOUT 引数の値を 1 行の結果セットとして返すため fetch
+        // 経路へ流す (#1003)。OUT を持たないプロシージャは 0 行で終わるだけで、
+        // CALL の rows_affected は元々常に 0 なので execute 経路との差は無い。
+        let is_query = is_query_shape(sql) || is_call_shape(sql);
 
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
@@ -1146,6 +1149,91 @@ impl PostgresConn {
             .collect())
     }
 
+    /// ルーチンのシグネチャ (#1003)。`id` (oid) があればそれで 1 件を特定し
+    /// (オーバーロード関数の取り違え防止)、無ければスキーマ + 名前の最初の 1 件。
+    /// パラメータは `proallargtypes` (OUT を含む全引数、無ければ入力のみの
+    /// `proargtypes`) を順序付きで展開し、`proargnames` / `proargmodes` を同じ
+    /// 添字で引く。型は `format_type` の出力で、フロントはこれをキャスト先にも使う。
+    pub async fn routine_signature(
+        &self,
+        schema: &str,
+        kind: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<RoutineSignature> {
+        let oid: Option<String> = match id {
+            Some(oid) => Some(oid.to_string()),
+            None => {
+                sqlx::query_scalar(
+                    "SELECT p.oid::text
+                       FROM pg_proc p
+                       JOIN pg_namespace n ON n.oid = p.pronamespace
+                      WHERE n.nspname = $1 AND p.proname = $2
+                      ORDER BY p.oid
+                      LIMIT 1",
+                )
+                .bind(schema)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+        };
+        let Some(oid) = oid else {
+            return Err(AppError::InvalidInput(format!(
+                "routine not found: {schema}.{name}"
+            )));
+        };
+        let head: Option<PgRow> = sqlx::query(
+            "SELECT p.proname::text, p.proretset, pg_get_function_result(p.oid)
+               FROM pg_proc p
+              WHERE p.oid = ($1)::oid",
+        )
+        .bind(&oid)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(head) = head else {
+            return Err(AppError::InvalidInput(format!(
+                "routine not found: {schema}.{name}"
+            )));
+        };
+        let actual_name: String = head.try_get(0)?;
+        let returns_set: bool = head.try_get(1)?;
+        let result_type: Option<String> = head.try_get(2)?;
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT COALESCE(p.proargnames[a.ord::int], '') AS name,
+                    COALESCE(p.proargmodes[a.ord::int]::text, 'i') AS mode,
+                    format_type(a.typ, NULL) AS data_type
+               FROM pg_proc p
+              CROSS JOIN LATERAL unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[]))
+                    WITH ORDINALITY AS a(typ, ord)
+              WHERE p.oid = ($1)::oid
+              ORDER BY a.ord",
+        )
+        .bind(&oid)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut parameters = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let mode: String = r.try_get(1)?;
+            parameters.push(RoutineParameter {
+                name: r.try_get(0)?,
+                mode: pg_arg_mode(&mode).into(),
+                data_type: r.try_get(2)?,
+            });
+        }
+        Ok(RoutineSignature {
+            kind: kind.into(),
+            name: actual_name,
+            parameters,
+            returns_set: kind == "function" && returns_set,
+            return_type: if kind == "function" {
+                result_type.filter(|t| !t.is_empty())
+            } else {
+                None
+            },
+        })
+    }
+
     pub async fn object_definition(
         &self,
         schema: &str,
@@ -1524,6 +1612,31 @@ fn full_pg_data_type(
     base.to_string()
 }
 
+/// 先頭キーワードが `CALL` (ストアドプロシージャ呼び出し) か (#1003)。先頭の
+/// 空白・コメントは無視する。[`is_query_shape`] とは別判定にしている理由は
+/// MySQL の `is_call_shape` と同じ — ゴールデン (`queryShapeVectors.json`) が
+/// 固定する「is_query_shape は CALL を含まない」契約を保ったまま、実行経路側で
+/// 結果セット (OUT 引数の行) を拾う。
+fn is_call_shape(sql: &str) -> bool {
+    let cleaned = strip_sql_comments(sql);
+    let trimmed = cleaned.trim_start().to_ascii_lowercase();
+    trimmed
+        .strip_prefix("call")
+        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+}
+
+/// `pg_proc.proargmodes` の 1 文字コードを [`RoutineParameter::mode`] の語彙へ
+/// 写す (#1003)。未知のコードは安全側 (値を渡す) の `in` に倒す。
+fn pg_arg_mode(code: &str) -> &'static str {
+    match code {
+        "o" => "out",
+        "b" => "inout",
+        "v" => "variadic",
+        "t" => "table",
+        _ => "in",
+    }
+}
+
 /// Decides whether `sql` should run through the result-set path
 /// (`fetch`/`fetch_all`) or the `execute` path that only reports
 /// `rows_affected`.
@@ -1617,7 +1730,7 @@ async fn apply_search_path(
 /// `execute` (pool connection) and `tx_execute` (held transaction connection).
 async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
-    if is_query_shape(sql) {
+    if is_query_shape(sql) || is_call_shape(sql) {
         let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut *conn)
             .await?;
@@ -2501,6 +2614,27 @@ async fn fetch_capped_pg(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_call_shape_detects_call_only() {
+        assert!(is_call_shape("CALL p(1)"));
+        assert!(is_call_shape("  /* c */ -- x\n call \"s\".\"p\"()"));
+        assert!(!is_call_shape("SELECT 1"));
+        assert!(!is_call_shape("callback()"));
+        assert!(!is_call_shape("INSERT INTO t VALUES (1)"));
+        // is_query_shape の契約 (CALL を含まない) は変えない。
+        assert!(!is_query_shape("CALL p(1)"));
+    }
+
+    #[test]
+    fn pg_arg_mode_maps_proargmodes() {
+        assert_eq!(pg_arg_mode("i"), "in");
+        assert_eq!(pg_arg_mode("o"), "out");
+        assert_eq!(pg_arg_mode("b"), "inout");
+        assert_eq!(pg_arg_mode("v"), "variadic");
+        assert_eq!(pg_arg_mode("t"), "table");
+        assert_eq!(pg_arg_mode("?"), "in");
+    }
 
     #[test]
     fn maps_ssl_mode_to_pg_equivalents() {

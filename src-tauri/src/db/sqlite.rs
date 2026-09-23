@@ -7,8 +7,8 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 use super::advisor::UnusedIndexStats;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
+    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
+    ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
     TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
@@ -608,6 +608,20 @@ impl SqliteConn {
     /// SQLite is file-backed — there is no server and no processes to list.
     /// The UI hides the process panel for SQLite; this error is the backstop
     /// for direct IPC calls.
+    /// ルーチン (ストアドプロシージャ / 関数) を持たないため未対応 (#1003)。
+    /// 空のシグネチャではなくエラーを返し、直接 IPC を叩いた呼び出し側にも
+    /// 「非対応」を明示する (`list_processes` と同じ規約)。
+    pub async fn routine_signature(
+        &self,
+        _db: &str,
+        _kind: &str,
+        _name: &str,
+    ) -> Result<RoutineSignature> {
+        Err(AppError::InvalidInput(
+            "stored routines are not supported for SQLite".into(),
+        ))
+    }
+
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         Err(AppError::InvalidInput(
             "process list is not supported for SQLite (file-backed, no server processes)".into(),
