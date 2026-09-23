@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { act, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { ActivityCenter } from "../components/ActivityCenter";
+import { ActivityCenter, toggleActivityCenter } from "../components/ActivityCenter";
 import { useToast } from "../components/Toast";
 import { __resetActivityLog, getActivityState, pushActivity } from "../activityLog";
 import { setLocale, t } from "../i18n";
@@ -154,5 +154,22 @@ describe("ActivityCenter (#912)", () => {
       severity: "warning",
       message: "plan changed",
     });
+  });
+
+  it("コマンドパレットからの開閉要求 (toggleActivityCenter) でも開閉し、既読になる (#1113)", async () => {
+    pushActivity("error", "import failed");
+    renderWithProviders(<ActivityCenter />);
+    expect(screen.queryByRole("dialog", { name: t("activityCenterTitle") })).toBeNull();
+
+    act(() => toggleActivityCenter());
+    const panel = await screen.findByRole("dialog", { name: t("activityCenterTitle") });
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(1);
+    const st = getActivityState();
+    expect(st.lastReadId).toBeGreaterThanOrEqual(st.entries[0].id);
+
+    act(() => toggleActivityCenter());
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: t("activityCenterTitle") })).toBeNull(),
+    );
   });
 });

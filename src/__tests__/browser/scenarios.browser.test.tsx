@@ -477,3 +477,58 @@ describe("シナリオ: 接続ツリーのカラム展開 (実ブラウザ)", ()
     await expect.element(screen.getByRole("treeitem", { name: "qty" })).not.toBeInTheDocument();
   });
 });
+
+describe("シナリオ: SQL Editor / Result Grid の操作体系 (#1113, 実ブラウザ)", () => {
+  it("エディタの右クリックで実行 → JSON ビュー切替 → パレットから EXPLAIN / アクティビティを開ける", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    // 1) SQL Editor の右クリックメニュー → 「クエリを実行」で再実行される。
+    const sqlCalls = () =>
+      invocationsOf("run_query_stream").map((a) => String((a as { sql?: unknown }).sql ?? ""));
+    const before = sqlCalls().length;
+    const content = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLElement>(".cm-content");
+      if (!el) throw new Error("editor not mounted");
+      return el;
+    }, { timeout: 5000 });
+    await page.elementLocator(content).click({ button: "right" });
+    await screen
+      .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+      .click();
+    await vi.waitFor(() => expect(sqlCalls().length).toBeGreaterThan(before), { timeout: 5000 });
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    // 2) 結果の表示切替 (Data / JSON)。JSON ビューはコピー導線と行数を持つ。
+    await screen.getByRole("radio", { name: t("resultViewJson") }).click();
+    await expect.element(screen.getByRole("button", { name: t("resultJsonCopy") })).toBeVisible();
+    await expect.element(screen.getByText(t("resultJsonRows", { rows: 2 }), { exact: true })).toBeVisible();
+    await screen.getByRole("radio", { name: t("gridViewLabel") }).click();
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    // 3) Command Palette → 「実行計画を表示」で EXPLAIN が走る (キーボードだけで完結)。
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await userEvent.keyboard(t("cmdkExplainQuery"));
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => {
+      expect(sqlCalls().some((sql) => sql.startsWith("EXPLAIN FORMAT=JSON "))).toBe(true);
+    }, { timeout: 5000 });
+    // 実行後にパレットは閉じる (退場アニメーションが終わるまで待ってから開き直す)。
+    await expect
+      .element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") }))
+      .not.toBeInTheDocument();
+
+    // 4) Command Palette → 「アクティビティを開閉」でベルのパネルが開く。
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await userEvent.keyboard(t("cmdkToggleActivity"));
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(screen.getByRole("dialog", { name: t("activityCenterTitle") }))
+      .toBeVisible();
+  });
+});

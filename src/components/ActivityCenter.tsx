@@ -399,6 +399,18 @@ function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
 }
 
 /**
+ * ベルボタン以外 (コマンドパレットの「アクティビティを開閉」、#1113) から
+ * アクティビティ一覧を開閉するための購読口。開閉状態はベル (`ActivityCenter`)
+ * 自身が持ち続け、ここは「トグルして」という要求を届けるだけ。
+ */
+const toggleRequestListeners = new Set<() => void>();
+
+/** アクティビティ一覧の開閉を要求する (マウント中のベルが処理する)。 */
+export function toggleActivityCenter(): void {
+  for (const listener of toggleRequestListeners) listener();
+}
+
+/**
  * タイトルバーに置くベルアイコン + 未読バッジ。押すとアクティビティ一覧を開き、
  * 開いた時点で既読にする (未読バッジが消える)。
  */
@@ -406,8 +418,31 @@ export function ActivityCenter() {
   const t = useT();
   const { entries, lastReadId } = useActivityLog();
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const anchorRef = useRef(anchor);
+  anchorRef.current = anchor;
   const unread = countUnread(entries, lastReadId);
   const label = unread > 0 ? t("activityOpenUnread", { count: unread }) : t("activityOpen");
+
+  const toggle = (button: HTMLElement | null) => {
+    if (anchorRef.current) {
+      setAnchor(null);
+      return;
+    }
+    if (!button) return;
+    setAnchor(button.getBoundingClientRect());
+    markActivityRead();
+  };
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+
+  useEffect(() => {
+    const listener = () => toggleRef.current(buttonRef.current);
+    toggleRequestListeners.add(listener);
+    return () => {
+      toggleRequestListeners.delete(listener);
+    };
+  }, []);
 
   return (
     <>
@@ -417,14 +452,8 @@ export function ActivityCenter() {
           aria-label={label}
           aria-haspopup="dialog"
           aria-expanded={anchor !== null}
-          onClick={(e) => {
-            if (anchor) {
-              setAnchor(null);
-              return;
-            }
-            setAnchor(e.currentTarget.getBoundingClientRect());
-            markActivityRead();
-          }}
+          ref={buttonRef}
+          onClick={(e) => toggle(e.currentTarget)}
           position="relative"
           width="38px"
           display="inline-flex"

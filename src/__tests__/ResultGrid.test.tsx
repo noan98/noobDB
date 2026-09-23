@@ -1036,6 +1036,58 @@ describe("キーボードセルナビゲーション (#406)", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("name\tqty\nbanana\t2"));
   });
 
+  it("右クリックの「コピー」から行を JSON / CSV としてコピーできる (#1113)", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+
+    fireEvent.contextMenu(cells[1][0]);
+    fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
+      key: "ArrowRight",
+    });
+    await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsJson") }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(JSON.parse(writeText.mock.calls[0][0] as string)).toEqual([{ name: "apple", qty: 5 }]);
+
+    fireEvent.contextMenu(cells[1][0]);
+    fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
+      key: "ArrowRight",
+    });
+    await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsCsv") }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("name,qty\r\napple,5\r\n"));
+  });
+
+  it("矩形選択の中で右クリックすると選択範囲の行数で CSV コピーする (#1113)", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowDown", shiftKey: true });
+
+    fireEvent.contextMenu(cells[1][0]);
+    fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
+      key: "ArrowRight",
+    });
+    await user.click(
+      await screen.findByRole("menuitem", { name: t("gridCopyAsCsvRows", { count: 2 }) }),
+    );
+    await waitFor(() =>
+      expect(writeText).toHaveBeenLastCalledWith("name\r\nbanana\r\napple\r\n"),
+    );
+  });
+
   it("Escape で選択範囲を解除する (#486)", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     const cells = dataCells(container);

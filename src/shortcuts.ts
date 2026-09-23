@@ -41,6 +41,7 @@ export type ShortcutId =
   | "runStatement"
   | "preview"
   | "format"
+  | "explain"
   | "openSettings"
   | "openHelp"
   | "toggleTheme"
@@ -106,6 +107,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutRunNewTabTitle", descKey: "shortcutRunNewTabDesc", category: "editor", id: "runNewTab", scope: "global", defaultCombo: "Mod+Shift+Enter" },
   { keysKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc", category: "editor", id: "preview", scope: "editor", defaultCombo: "Mod+Shift+Enter" },
   { keysKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc", category: "editor", id: "format", scope: "editor", defaultCombo: "Mod+Shift+F" },
+  { keysKey: "shortcutExplainTitle", descKey: "shortcutExplainDesc", category: "editor", id: "explain", scope: "editor", defaultCombo: "Mod+E" },
   { keysKey: "shortcutFocusEditorTitle", descKey: "shortcutFocusEditorDesc", category: "editor", id: "focusEditor", scope: "global", defaultCombo: "Mod+Shift+E" },
   { keysKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc", category: "editor" },
   { keysKey: "shortcutEditorFindTitle", descKey: "shortcutEditorFindDesc", category: "editor" },

@@ -17,6 +17,23 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
     `Splitter` と同じ操作体系 (矢印 / Home / End / Enter / ダブルクリック)。
   - Shell 操作のコマンドパレット候補 (サイドバー開閉・Explorer 絞り込み・ボトム
     パネル各タブ・テーブル構造) は `workspaceCommands.ts` が組み立てる。
+- SQL Editor / Result Grid の操作体系 (#1113) — 同じ操作をツールバー・右クリック・
+  コマンドパレット・ショートカット (`shortcuts.ts`) のどこからでも同じ経路で呼べる。
+  - エディタ本文の右クリック (`QueryEditor` + 純ロジック `sqlEditorMenu.ts`)。選択の
+    有無で「選択範囲を実行 / クエリを実行」を切り替え、カーソル位置の文・Dry Run・
+    EXPLAIN・整形・行コメント・切り取り/コピー/全選択・スニペット保存を並べる。
+    ContextMenu キー / Shift+F10 ではキャレット位置に開く。
+  - パレットの実行系候補 (実行・選択実行・整形・EXPLAIN・エディタへフォーカス・
+    アクティビティ開閉・背景接続への切替) は `editorCommands.ts`。実行は
+    `QueryEditorHandle` (`runAll` / `runStatement` / `formatSql` / `explain`) 経由で
+    ツールバーと同じ関数を呼ぶ。アクティビティの開閉要求は `ActivityCenter` の
+    `toggleActivityCenter()`。
+  - 結果の表示切替 `ResultViewSwitch` はグリッド / ピボット / チャート / JSON。
+    JSON ビューは `ResultJsonView` + `resultJson.ts` (`JsonTreeView` を再利用、機微
+    カラムは常に伏せ字)。隣の「EXPLAIN」ボタンは `ResultExplainContext` で配られ、
+    直前の SQL の実行計画を EXPLAIN タブで開く。
+  - グリッド右クリックの「コピー」に CSV / JSON (`gridCopyFormats.ts`、書式は
+    エクスポートの `buildCsv` / `buildJson` を再利用、マスク規則は TSV コピーと同じ)。
 - `api/tauri.ts` — 全 IPC の型付きラッパーとイベント購読ヘルパー (上述)。各 `invoke`
   ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。

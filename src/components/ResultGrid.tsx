@@ -82,6 +82,7 @@ import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
+import { buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -164,6 +165,7 @@ import {
 import {
   gridViewStateKeyFrom,
   readStoredGridView,
+  resultShapeSizingKey,
   toPersistedGridView,
   writeStoredGridView,
 } from "./gridViewState";
@@ -3924,6 +3926,37 @@ export const DataGrid = memo(function DataGrid({
     }
   };
 
+  // 「CSV / JSON としてコピー」(#1113) の対象。右クリックしたセルが矩形選択に
+  // 含まれていれば選択範囲 (表示順)、そうでなければその 1 行の表示中の全列。
+  const copyTargetFor = (rowIdx: number, colIdx: number) => {
+    if (
+      selectionRect &&
+      selectionRect.rowIndexSet.has(rowIdx) &&
+      selectionRect.colIdSet.has(colIdx)
+    ) {
+      return {
+        rowIndices: visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        colIndices: visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+      };
+    }
+    return { rowIndices: [rowIdx], colIndices: visibleColIds };
+  };
+  const copyAsFormat = (
+    format: GridCopyFormat,
+    target: { rowIndices: number[]; colIndices: number[] },
+  ) => {
+    const text = buildGridCopyText(format, {
+      columns,
+      rows,
+      rowIndices: target.rowIndices,
+      colIndices: target.colIndices,
+      isMasked: cellMaskedNow,
+      copyPlaceholder: columnMaskCopyPlaceholder,
+    });
+    if (text) void runCopy(text);
+    else setCopyMenu(null);
+  };
+
   // Clipboard paste → multi-cell bulk edit (#793). Symmetric to `copySelection`:
   // pastes a TSV/CSV block from the clipboard, expanding from the active
   // rectangular selection's top-left corner (or the active cell) into the grid's
@@ -5142,6 +5175,22 @@ export const DataGrid = memo(function DataGrid({
                     shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
                     onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
                   },
+                  // CSV / JSON (#1113)。書式はエクスポートと同じ (`gridCopyFormats.ts`)。
+                  ...(() => {
+                    const target = copyTargetFor(copyMenu.rowIdx, copyMenu.colIdx);
+                    const n = target.rowIndices.length;
+                    return [
+                      { separator: true as const },
+                      {
+                        label: n > 1 ? t("gridCopyAsCsvRows", { count: n }) : t("gridCopyAsCsv"),
+                        onSelect: () => copyAsFormat("csv", target),
+                      },
+                      {
+                        label: n > 1 ? t("gridCopyAsJsonRows", { count: n }) : t("gridCopyAsJson"),
+                        onSelect: () => copyAsFormat("json", target),
+                      },
+                    ];
+                  })(),
                   { separator: true as const },
                   multiRow
                     ? {
@@ -6484,11 +6533,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // Persist column widths per result shape: same database+table+column set
   // restores saved widths, a different shape falls back to defaults. The
   // column signature keeps free-form queries with distinct columns separate.
-  const columnSizingStorageKey = useMemo(() => {
-    if (!columns || columns.length === 0) return undefined;
-    const signature = JSON.stringify(columns.map((c) => c.name));
-    return `noobdb.colsizing.v1::${database ?? ""}::${table ?? ""}::${signature}`;
-  }, [columns, database, table]);
+  const columnSizingStorageKey = useMemo(
+    () => resultShapeSizingKey(columns, database, table),
+    [columns, database, table],
+  );
 
   // Client-side type/NOT NULL validation of a pending edit, by result-column
   // index. Mirrors the literal-building rules in cellEdit so invalid input is

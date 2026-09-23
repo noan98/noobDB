@@ -97,7 +97,7 @@ import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
-import type { ResultViewKind } from "./components/ResultViewSwitch";
+import { ResultExplainContext, type ResultViewKind } from "./components/ResultViewSwitch";
 import { TabBar } from "./components/TabBar";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
@@ -203,6 +203,9 @@ const ChartView = lazy(() =>
 );
 const PivotView = lazy(() =>
   import("./components/PivotView").then((m) => ({ default: m.PivotView })),
+);
+const ResultJsonView = lazy(() =>
+  import("./components/ResultJsonView").then((m) => ({ default: m.ResultJsonView })),
 );
 const BatchResultsView = lazy(() =>
   import("./components/BatchResultsView").then((m) => ({ default: m.BatchResultsView })),
@@ -320,6 +323,8 @@ import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
 import { workspaceCommandItems } from "./components/workspaceCommands";
+import { editorCommandItems } from "./components/editorCommands";
+import { toggleActivityCenter } from "./components/ActivityCenter";
 import {
   availableBottomPanelTabs,
   resolveBottomPanelTab,
@@ -753,6 +758,8 @@ interface Tab {
   showChart?: boolean;
   /** ピボットビューを表示中か。結果グリッドの代わりにクロス集計表を描く (#661)。 */
   showPivot?: boolean;
+  /** JSON ビューを表示中か (#1113)。結果グリッドの代わりに行オブジェクトの配列を描く。 */
+  showJson?: boolean;
   /** SQL スクリプトのバッチ実行の文ごとの結果。設定時は結果ビューに代えて表示。 */
   batchResults?: BatchStatementResult[];
   /** バッチ実行のスクリプト本文 (stop/continue 切替で再実行するため保持)。 */
@@ -1218,12 +1225,14 @@ export default function App() {
       runStatement: shortcutBindings.runStatement,
       preview: shortcutBindings.preview,
       format: shortcutBindings.format,
+      explain: shortcutBindings.explain,
     }),
     [
       shortcutBindings.run,
       shortcutBindings.runStatement,
       shortcutBindings.preview,
       shortcutBindings.format,
+      shortcutBindings.explain,
     ],
   );
   // グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/
@@ -2020,7 +2029,7 @@ export default function App() {
 
   /**
    * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。3 択は排他な
-   * ので `showPivot` / `showChart` の 2 フラグを常に同時に確定させ、どちらも false
+   * ので `showPivot` / `showChart` / `showJson` を常に同時に確定させ、すべて false
    * のときがグリッドという不変条件を 1 か所に閉じ込める。グリッド・ピボット・
    * チャートの各ツールバーに置いた `ResultViewSwitch` が共通でここを呼ぶ。
    */
@@ -2030,6 +2039,7 @@ export default function App() {
         ...tt,
         showPivot: view === "pivot",
         showChart: view === "chart",
+        showJson: view === "json",
       }));
     },
     [patchTab],
@@ -4214,6 +4224,7 @@ export default function App() {
       batchResults: [],
       showChart: false,
       showPivot: false,
+      showJson: false,
       preview: null,
       queryError: null,
     }));
@@ -4269,6 +4280,7 @@ export default function App() {
       queryError: null,
       showChart: false,
       showPivot: false,
+      showJson: false,
       batchResults: undefined,
       preview: null,
       // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
@@ -6719,6 +6731,44 @@ export default function App() {
         run: () => toggleTheme(),
       },
     );
+    // SQL Editor の実行・整形・EXPLAIN、アクティビティ、接続切替 (#1113)。
+    // 実行はアクティブなエディタのハンドル経由でツールバーと同じ経路を通る。
+    items.push(
+      ...editorCommandItems(
+        {
+          sessionId,
+          hasEditor: !!activeTab,
+          explainTab: activeTab?.kind === "explain",
+          openConnections: openConnections.map((c) => ({
+            profileId: c.profile.id,
+            name: c.profile.name,
+            driver: c.profile.driver,
+            active: c.sessionId === sessionId,
+          })),
+          shortcuts: {
+            run: formatCombo(shortcutBindings.run),
+            runStatement: formatCombo(shortcutBindings.runStatement),
+            format: formatCombo(shortcutBindings.format),
+            explain: formatCombo(shortcutBindings.explain),
+          },
+        },
+        {
+          runAll: () => activeEditor()?.runAll(),
+          runStatement: () => activeEditor()?.runStatement(),
+          formatSql: () => activeEditor()?.formatSql(),
+          explain: () => activeEditor()?.explain(),
+          // パレットが閉じてフォーカスを戻し終えてから移す (focusExplorer と同じ理由)。
+          focusEditor: () =>
+            requestAnimationFrame(() => requestAnimationFrame(() => activeEditor()?.focus())),
+          toggleActivity: () => requestAnimationFrame(() => toggleActivityCenter()),
+          switchConnection: (profileId) => {
+            const target = openConnectionsRef.current.find((c) => c.profile.id === profileId);
+            if (target) void switchToOpenConnection(target);
+          },
+        },
+        t,
+      ),
+    );
     // Sidebar / Bottom Panel / テーブル構造への導線 (#1112)。可用条件は純モジュール側。
     items.push(
       ...workspaceCommandItems(
@@ -6856,9 +6906,11 @@ export default function App() {
     openFullView,
     toggleTheme,
     pinnedResults.length,
-    openConnections.length,
+    openConnections,
     sidebarCollapsed,
     paletteTables,
+    activeEditor,
+    switchToOpenConnection,
     toggleBottomPanel,
     toggleSidebar,
     focusExplorer,
@@ -6938,7 +6990,7 @@ export default function App() {
     const maximized = layoutMode === "result" && isFocused && tab != null;
     const editorFocused = layoutMode === "editor" && isFocused && tab != null;
     // 結果領域が「どの軽量パネルを表示しているか」の判別子 (#788)。下の結果側
-    // 条件分岐 (explain → batch → chart → pivot → preview → grid) と同順で一致させ、
+    // 条件分岐 (explain → batch → chart → pivot → json → preview → grid) と同順で一致させ、
     // これを AnimatePresence の key にすることで、パネルの種類が変わるとき (例:
     // グリッド ⇔ EXPLAIN) だけ控えめなクロスフェードを添える。table ⇔ query の
     // ように両者とも "grid" のままなら key は不変なので、重い ResultGrid を
@@ -6955,9 +7007,11 @@ export default function App() {
             ? "chart"
             : tab.showPivot && tab.result && !tab.streaming
               ? "pivot"
-              : tab.preview
-                ? "preview"
-                : "grid";
+              : tab.showJson && tab.result && !tab.streaming
+                ? "json"
+                : tab.preview
+                  ? "preview"
+                  : "grid";
     return (
       <Flex
         key={pane.id}
@@ -7203,6 +7257,20 @@ export default function App() {
                       ResultGrid を余計に再マウントしない。reduced-motion は
                       ルートの MotionConfig で自動抑制。initial={false} で
                       ペイン初回描画時のフェードインは抑える。 */}
+                  {/* 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を
+                      専用の EXPLAIN タブで開く (エディタの EXPLAIN と同じ経路)。 */}
+                  <ResultExplainContext.Provider
+                    value={
+                      sessionId &&
+                      tab.kind !== "explain" &&
+                      !tab.batchResults &&
+                      !tab.streaming &&
+                      (tab.result?.columns.length ?? 0) > 0 &&
+                      tab.lastExecutedSql.trim().length > 0
+                        ? () => explainForTab(tab, tab.lastExecutedSql)
+                        : null
+                    }
+                  >
                   <AnimatePresence mode="wait" initial={false}>
                     <motion.div
                       key={contentMode}
@@ -7238,6 +7306,13 @@ export default function App() {
                     <ChartView
                       result={tab.result}
                       sourceSql={tab.lastExecutedSql}
+                      onChangeView={(v) => setResultView(tab.id, v)}
+                    />
+                  ) : tab.showJson && tab.result && !tab.streaming ? (
+                    <ResultJsonView
+                      result={tab.result}
+                      database={tab.database ?? selectedProfile?.database ?? null}
+                      table={tab.table ?? null}
                       onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (
@@ -7489,6 +7564,7 @@ export default function App() {
                   )}
                     </motion.div>
                   </AnimatePresence>
+                  </ResultExplainContext.Provider>
                 </Suspense>
                   </Box>
                 </Box>
