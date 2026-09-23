@@ -394,11 +394,8 @@ pub(crate) fn order_tables_by_dependencies(
     }
     let mut placed = vec![false; n];
     let mut out = Vec::with_capacity(n);
-    loop {
-        // 入力順で最初の「依存が解消済み」テーブルを取る (安定な順序)。
-        let Some(next) = (0..n).find(|&i| !placed[i] && indegree[i] == 0) else {
-            break;
-        };
+    // 入力順で最初の「依存が解消済み」テーブルを取る (安定な順序)。
+    while let Some(next) = (0..n).find(|&i| !placed[i] && indegree[i] == 0) {
         placed[next] = true;
         out.push(tables[next].clone());
         for &c in &children[next] {
