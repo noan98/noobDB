@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **100 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **101 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -19,7 +19,7 @@
 ## クエリ実行・トランザクション (`commands/query.rs`)
 
 `run_query` / `run_query_transaction` / `run_query_stream` / `preview_query_stream` /
-`cancel_stream` / `set_emergency_mode` / `begin_transaction` / `run_in_transaction` /
+`cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` / `run_in_transaction` /
 `finish_transaction`
 
 ## スキーマ (`commands/schema.rs`)

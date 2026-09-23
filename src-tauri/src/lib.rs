@@ -281,6 +281,27 @@ pub mod __test_api {
         crate::commands::query::run_query_inner(state, session_id, sql, database).await
     }
 
+    /// Drives the `run_lookup_query` IPC command's core path (#1067): the
+    /// always-on read-only guard, the row cap and the timeout.
+    pub async fn run_lookup_query_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        database: Option<&str>,
+        query_timeout_secs: Option<u64>,
+        row_cap: Option<u32>,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::query::run_lookup_query_inner(
+            state,
+            session_id,
+            sql,
+            database,
+            query_timeout_secs,
+            row_cap,
+        )
+        .await
+    }
+
     /// Drives the `run_query_transaction` IPC command's core path, exercising
     /// the per-statement read-only guard.
     pub async fn run_query_transaction_via_command(
@@ -770,6 +791,7 @@ pub fn run() {
             commands::ssh::resolve_ssh_config_host,
             commands::query::run_query,
             commands::query::run_query_transaction,
+            commands::query::run_lookup_query,
             commands::query::begin_transaction,
             commands::query::run_in_transaction,
             commands::query::finish_transaction,

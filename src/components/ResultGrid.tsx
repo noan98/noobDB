@@ -1,4 +1,4 @@
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
@@ -37,6 +37,10 @@ import {
   useSettings,
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
+import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } from "./useValuePicker";
+
+/** 候補なしを表す共有の空配列 (レンダーごとに新しい配列を作らない)。 */
+const EMPTY_PICKER_VALUES: string[] = [];
 import { RowInspector } from "./RowInspector";
 import { resolveRelatedEntries } from "../relatedRows";
 import { copyToClipboard } from "./clipboard";
@@ -1084,6 +1088,12 @@ interface Props {
    * only in-memory stats.
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * スマート値ピッカー (#1067) の候補取得。App が `api.runLookupQuery` を
+   * アクティブセッションへ束ねて渡す (バックエンドで読み取り専用・行数上限・
+   * タイムアウトが効く)。未指定ならセル編集は従来のテキスト入力のみ。
+   */
+  onLookupQuery?: ValueLookup;
   /**
    * 列データプロファイル (「列を探索」、#974) をボトムパネルで開く。対象テーブルが
    * 特定できる結果の列クイック統計にだけ導線を出す。
@@ -2614,6 +2624,7 @@ export const DataGrid = memo(function DataGrid({
   onSelectionSummary,
   onExportSelection,
   onRunStatsQuery,
+  valuePicker,
   onExploreColumn,
   findHits,
   findCurrentKey,
@@ -2767,6 +2778,11 @@ export const DataGrid = memo(function DataGrid({
    * hide the full-aggregate button (in-memory stats still show).
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * スマート値ピッカー (#1067)。インライン編集の入力欄に FK / ENUM / CHECK の
+   * 候補を `<datalist>` で紐づける。選んだ値は手入力と同じく編集バッファに載る。
+   */
+  valuePicker?: ValuePicker;
   /**
    * 列データプロファイル (「列を探索」、#974) をボトムパネルで開く。対象テーブルが
    * 特定できる結果の列クイック統計にだけ導線を出す。
@@ -3496,6 +3512,18 @@ export const DataGrid = memo(function DataGrid({
   const [editing, setEditing] = useState<
     { rowIdx: number; colIdx: number; value: string } | null
   >(null);
+  // スマート値ピッカー (#1067): 編集中セルの列について候補を (再) 取得する。
+  // FK は入力に応じて前方一致で絞り込み、ENUM / CHECK は初回に 1 度だけ引く。
+  const valuePickerListId = useId();
+  useEffect(() => {
+    if (!editing || !valuePicker) return;
+    const name = columns[editing.colIdx]?.name;
+    if (!name) return;
+    // 開いた直後 (元の値のまま) は絞り込まずに候補を出し、打ち替え始めたら前方一致で絞る。
+    const orig = rows[editing.rowIdx]?.[editing.colIdx];
+    const origDisplay = orig === null || orig === undefined ? "" : String(orig);
+    valuePicker.request(name, editing.value === origDisplay ? "" : editing.value);
+  }, [editing, valuePicker, columns, rows]);
 
   // Keyboard navigation: the currently selected cell (row = original row index).
   const [activeCell, setActiveCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
@@ -4389,6 +4417,10 @@ export const DataGrid = memo(function DataGrid({
         const cellMasked = maskedCols !== null && cellMaskedNow(row.index, colIdx);
         // Live validation of the value being typed, and of an
         // already-buffered value that's sitting invalid in the grid.
+        const editPickerValues =
+          isEditingHere && valuePicker
+            ? valuePicker.candidates(columns[colIdx]?.name ?? "")
+            : EMPTY_PICKER_VALUES;
         const editError =
           isEditingHere && validateEdit
             ? validateEdit(colIdx, editing!.value)
@@ -4500,6 +4532,7 @@ export const DataGrid = memo(function DataGrid({
                   autoFocus
                   className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
                   aria-invalid={editError ? true : undefined}
+                  list={editPickerValues.length > 0 ? valuePickerListId : undefined}
                   value={editing!.value}
                   onChange={(e) =>
                     setEditing({
@@ -4576,6 +4609,7 @@ export const DataGrid = memo(function DataGrid({
                     }
                   }}
                 />
+                <ValueDatalist id={valuePickerListId} values={editPickerValues} />
                 {editError && (
                   <div className="cell-edit-error" role="alert">
                     {t(editError)}
@@ -6077,6 +6111,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   lastEditAppliedAt,
   applyingEdits,
   onRunStatsQuery,
+  onLookupQuery,
   onExploreColumn,
   maximized,
   onToggleMaximize,
@@ -6538,6 +6573,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
   const hasPendingEdits = editsCount > 0;
   const editableActive = !!editable && pkIndices.length > 0;
+  // スマート値ピッカー (#1067): 編集可能なテーブルタブでだけ候補取得を有効にする。
+  const valuePicker = useValuePicker({
+    driver: driver ?? "mysql",
+    database,
+    table,
+    columns: tableColumns,
+    lookup: editableActive ? onLookupQuery : undefined,
+  });
   const autoRefreshOn = autoRefreshSecs != null && autoRefreshSecs > 0;
 
   // Preview wraps a single statement; multi-row edits would need a
@@ -7360,6 +7403,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           onSelectionSummary={setSelSummary}
           onExportSelection={handleExportSelection}
           onRunStatsQuery={onRunStatsQuery}
+          valuePicker={editableActive ? valuePicker : undefined}
           onExploreColumn={onExploreColumn}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}

@@ -309,7 +309,7 @@ export function hasAmbiguousIdentity(rows: CellValue[][], indices: number[]): bo
   return false;
 }
 
-function qualifiedTableRef(driver: string, database: string, table: string): string {
+export function qualifiedTableRef(driver: string, database: string, table: string): string {
   // SQLite has a single namespace per connection — the synthetic "main"
   // database label is for the UI tree, not the SQL itself.
   if (driver === "sqlite") return quoteIdentFor(driver, table);

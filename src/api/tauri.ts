@@ -1242,6 +1242,27 @@ export const api = {
       sql,
       database: database ?? null,
     }).then((r) => parseResponse(schemas.queryResult, r, "run_query")),
+  /**
+   * スマート値ピッカー (#1067) の候補取得。FK 参照先の DISTINCT 値や ENUM /
+   * CHECK 許可値を引く裏方クエリで、バックエンドがセッションの read_only に
+   * 関係なく読み取り専用の文だけを通し、`rowCap` 件 (上限 1000) で打ち切り、
+   * `queryTimeoutSecs` (0 / null はタイムアウトなし) で全体を中断する。
+   * クエリ履歴・結果キャッシュには載らない。
+   */
+  runLookupQuery: (params: {
+    sessionId: string;
+    sql: string;
+    database?: string | null;
+    queryTimeoutSecs?: number | null;
+    rowCap?: number | null;
+  }) =>
+    invoke<QueryResult>("run_lookup_query", {
+      sessionId: params.sessionId,
+      sql: params.sql,
+      database: params.database ?? null,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
+      rowCap: params.rowCap ?? null,
+    }).then((r) => parseResponse(schemas.queryResult, r, "run_lookup_query")),
   runQueryTransaction: (
     sessionId: string,
     statements: string[],

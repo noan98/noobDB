@@ -289,6 +289,7 @@ import {
   type QueryNotificationKind,
 } from "./queryNotify";
 import { incomingForeignKeys } from "./fkNavigation";
+import type { ValueLookup } from "./components/useValuePicker";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
@@ -1187,6 +1188,23 @@ export default function App() {
   const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
+  // スマート値ピッカー (#1067) の候補取得。バックエンドの `run_lookup_query` が
+  // 読み取り専用ガード (セッションの read_only に関係なく常時)・行数上限・
+  // 設定の「クエリタイムアウト」を課すので、読み取り専用セッションでも動き、
+  // 大テーブルで無制限 fetch しない。SQL は対象テーブルを修飾済みなので database は渡さない。
+  const lookupTimeoutSecs = settings.queryTimeoutSecs;
+  const lookupForSession = useCallback(
+    (sid: string): ValueLookup =>
+      (sql, rowCap) =>
+        api.runLookupQuery({
+          sessionId: sid,
+          sql,
+          database: null,
+          queryTimeoutSecs: lookupTimeoutSecs > 0 ? lookupTimeoutSecs : null,
+          rowCap,
+        }),
+    [lookupTimeoutSecs],
+  );
   // 解決済みショートカットバインド (既定 + ユーザ上書き、#557)。グローバルキー
   // ハンドラは `bindingsRef` 経由で参照し、エディタには `editorBindings` で渡す。
   const shortcutBindings = useMemo(
@@ -7338,6 +7356,7 @@ export default function App() {
                           ? (sql) => api.runQuery(sessionId, sql, tab.database ?? null)
                           : undefined
                       }
+                      onLookupQuery={sessionId ? lookupForSession(sessionId) : undefined}
                       onExploreColumn={
                         sessionId
                           ? (target) =>
@@ -8868,6 +8887,10 @@ export default function App() {
                 table={insTab.table}
                 columns={insTab.result.columns}
                 initialValues={rowInsertSeed ?? undefined}
+                driver={selectedProfile?.driver ?? "mysql"}
+                database={insTab.database ?? selectedProfile?.database ?? null}
+                tableColumns={insTab.tableColumns}
+                lookup={sessionId ? lookupForSession(sessionId) : undefined}
                 onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
                 onCancel={() => { setRowInsertTabId(null); setRowInsertSeed(null); }}
               />

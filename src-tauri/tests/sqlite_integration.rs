@@ -1169,6 +1169,67 @@ async fn read_only_session_allows_select_via_ipc() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 値ピッカーの候補取得 (#1067) は read-only セッションでも SELECT を通し、
+/// 書き込み文はセッションが書き込み可能でも常に拒否し、行数上限で切り詰める。
+#[tokio::test]
+async fn lookup_query_is_read_only_and_capped() {
+    let path = seed_ro_fixture("lookup").await;
+    {
+        let seed = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+            .await
+            .expect("connect (seed more)");
+        for id in 2..=30 {
+            seed.execute(
+                &format!("INSERT INTO ro_t (id, label) VALUES ({id}, 'v{id}')"),
+                None,
+            )
+            .await
+            .expect("seed");
+        }
+        seed.close().await;
+    }
+    let (state, sid) = ro_state(&path).await;
+    let res = t::run_lookup_query_via_command(
+        &state,
+        &sid,
+        "SELECT DISTINCT label FROM ro_t ORDER BY label",
+        None,
+        Some(5),
+        Some(10),
+    )
+    .await
+    .expect("read-only session must allow lookup SELECT");
+    assert_eq!(res.rows.len(), 10, "row cap must bound the fetch");
+
+    // 既定の上限 (200) 以内ならそのまま全件。
+    let all =
+        t::run_lookup_query_via_command(&state, &sid, "SELECT id FROM ro_t", None, None, None)
+            .await
+            .expect("lookup without explicit cap");
+    assert_eq!(all.rows.len(), 30);
+
+    // 書き込み可能なセッションでも lookup 経路は書き込みを通さない。
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let conn = t::connect(&opts).await.expect("connect (rw)");
+    let rw = t::make_session("lookup_rw", conn, opts, /* read_only */ false);
+    let rw_sid = state.insert(rw).await;
+    let err =
+        t::run_lookup_query_via_command(&state, &rw_sid, "DELETE FROM ro_t", None, None, None)
+            .await
+            .expect_err("lookup must reject writes even on a writable session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "got: {err:?}");
+
+    let err = t::run_lookup_query_via_command(&state, "nope", "SELECT 1", None, None, None)
+        .await
+        .expect_err("unknown session");
+    assert!(
+        matches!(err, t::AppError::SessionNotFound(_)),
+        "got: {err:?}"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
 #[tokio::test]
 async fn read_only_session_rejects_transaction_writes() {
     let path = seed_ro_fixture("tx").await;
