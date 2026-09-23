@@ -12,8 +12,10 @@ use super::types::{
     StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
     TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
+use super::upsert::{conflict_clause, ImportConflict};
 use super::{
-    build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode,
+    build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions,
+    DriverKind, SslMode,
 };
 use crate::error::{AppError, Result};
 
@@ -470,6 +472,7 @@ impl MySqlConn {
     /// wrapped in one transaction. Cells are bound as text (`NULL` for `None`)
     /// and MySQL coerces them to the destination column type, so a CSV column
     /// of `"42"` lands in an INT column without us having to know the schema.
+    #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,
         database: Option<&str>,
@@ -477,6 +480,7 @@ impl MySqlConn {
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
+        conflict: &ImportConflict,
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -495,6 +499,7 @@ impl MySqlConn {
             .collect::<Vec<_>>()
             .join(", ");
         let table_ident = quote_ident(table);
+        let on_conflict = conflict_clause(DriverKind::Mysql, columns, conflict);
         // MySQL caps a statement at 65,535 placeholders; stay well under.
         let max_rows = (65000 / ncols).max(1);
         let batch = batch_size.clamp(1, max_rows);
@@ -504,7 +509,8 @@ impl MySqlConn {
         let mut tx = conn.begin().await?;
         let mut inserted: u64 = 0;
         for chunk in rows.chunks(batch) {
-            let sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            sql.push_str(&on_conflict);
             let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
             for row in chunk {
                 for ci in 0..ncols {
@@ -531,6 +537,7 @@ impl MySqlConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
@@ -542,7 +549,8 @@ impl MySqlConn {
             .collect::<Vec<_>>()
             .join(", ");
         let table_ident = quote_ident(table);
-        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, rows.len());
+        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, rows.len());
+        sql.push_str(&conflict_clause(DriverKind::Mysql, columns, conflict));
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for row in rows {
             for ci in 0..ncols {
@@ -592,6 +600,7 @@ impl MySqlConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<Option<(usize, String)>> {
         // A non-transactional engine (MyISAM etc.) can't roll back the probe
         // inserts, so probing would leave rows behind. Skip it and let the caller
@@ -610,7 +619,8 @@ impl MySqlConn {
             .collect::<Vec<_>>()
             .join(", ");
         let table_ident = quote_ident(table);
-        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        sql.push_str(&conflict_clause(DriverKind::Mysql, columns, conflict));
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
         let mut tx = conn.begin().await?;

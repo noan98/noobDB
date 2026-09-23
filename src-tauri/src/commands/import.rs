@@ -2,6 +2,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
+
+use crate::db::upsert::{ConflictMode, ImportConflict};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::query::record_write_history;
@@ -110,6 +112,25 @@ pub struct ImportOptions {
     /// (all-or-nothing) for requests that omit it.
     #[serde(default)]
     pub error_mode: ImportErrorMode,
+    /// How to treat rows whose key already exists (#972). Defaults to plain
+    /// INSERT (a duplicate key is a row error, handled by `error_mode`).
+    #[serde(default)]
+    pub conflict_mode: ConflictMode,
+    /// Destination columns that identify a row for `conflict_mode` `skip` /
+    /// `update`. Must be a non-empty subset of the mapped columns in those
+    /// modes; ignored for `insert`.
+    #[serde(default)]
+    pub key_columns: Vec<String>,
+}
+
+impl ImportOptions {
+    /// The DB-layer conflict spec for this import (#972).
+    fn conflict(&self) -> ImportConflict {
+        ImportConflict {
+            mode: self.conflict_mode,
+            key_columns: self.key_columns.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -551,6 +572,10 @@ pub async fn import_csv(
             "no columns mapped for import".into(),
         ));
     }
+    // UPSERT のキー列はマッピング済み列の部分集合でなければならない (#972)。
+    // ストリーム開始前に同期的に弾き、入力ミスを即座にエラーとして返す。
+    let mapped: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
+    options.conflict().validate(&mapped)?;
 
     // Rows committed so far. In `skip` mode each chunk is auto-committed, so a
     // mid-import cancel leaves the committed rows persisted — this counter lets
@@ -783,6 +808,7 @@ async fn run_import(
     // row by both record number and file line (#687).
     let (rows, lines) = parse_rows_with_lines(text.as_bytes(), &options, &mapping)?;
     let total = rows.len() as u64;
+    let conflict = options.conflict();
 
     tracing::info!(
         session_id = %session.id,
@@ -790,6 +816,8 @@ async fn run_import(
         table = %table,
         total,
         error_mode = ?options.error_mode,
+        conflict_mode = ?options.conflict_mode,
+        key_columns = options.key_columns.len(),
         "csv import starting"
     );
 
@@ -841,6 +869,7 @@ async fn run_import(
                     &columns,
                     &rows,
                     batch_size,
+                    &conflict,
                     progress,
                 )
                 .await?;
@@ -870,6 +899,7 @@ async fn run_import(
                     &columns,
                     &rows,
                     batch_size,
+                    &conflict,
                     emit_progress,
                 )
                 .await
@@ -882,7 +912,7 @@ async fn run_import(
                 Err(e) => {
                     let located = session
                         .conn
-                        .probe_failing_row(database.as_deref(), &table, &columns, &rows)
+                        .probe_failing_row(database.as_deref(), &table, &columns, &rows, &conflict)
                         .await
                         .ok()
                         .flatten();
@@ -923,6 +953,8 @@ mod tests {
             null_token: null_token.map(|s| s.to_string()),
             encoding: "utf-8".into(),
             error_mode: ImportErrorMode::Abort,
+            conflict_mode: ConflictMode::Insert,
+            key_columns: Vec::new(),
         }
     }
 
@@ -937,6 +969,8 @@ mod tests {
             null_token: null_token.map(|s| s.to_string()),
             encoding: "utf-8".into(),
             error_mode: ImportErrorMode::Abort,
+            conflict_mode: ConflictMode::Insert,
+            key_columns: Vec::new(),
         }
     }
 

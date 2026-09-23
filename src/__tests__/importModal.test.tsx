@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { SAMPLE_COLUMNS } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -15,6 +15,12 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
+      parseCsvPreview: vi.fn().mockResolvedValue({
+        headers: ["id", "name"],
+        rows: [["1", "alice"]],
+        truncated: false,
+      }),
+      importCsv: vi.fn().mockResolvedValue(undefined),
       describeTable: vi.fn().mockResolvedValue(
         SAMPLE_COLUMNS.map((c) => ({
           name: c.name,
@@ -33,6 +39,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { ImportModal } from "../components/ImportModal";
+import { api } from "../api/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -67,5 +74,40 @@ describe("ImportModal render smoke (#604)", () => {
     // ヘッダとフッタの両方に「閉じる」ボタンがあるため、先頭 (ヘッダ) を叩く。
     fireEvent.click(screen.getAllByRole("button", { name: t("importClose") })[0]);
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ImportModal conflict mode / UPSERT (#972)", () => {
+  it("requires key columns for UPSERT and sends them with the import", async () => {
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    // プレビュー取得 + 自動マッピングの完了を待つ。
+    await screen.findByText(t("importMappingTitle"));
+
+    fireEvent.change(screen.getByLabelText(t("importConflictMode")), {
+      target: { value: "update" },
+    });
+    // モックの列に主キーが無いので既定キーは空 → エラーを出し、実行を無効にする。
+    expect(await screen.findByText(t("importConflictKeysRequired"))).toBeInTheDocument();
+    const execute = screen.getByRole("button", { name: t("importExecute") });
+    expect(execute).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "id" }));
+    expect(screen.queryByText(t("importConflictKeysRequired"))).not.toBeInTheDocument();
+    expect(execute).toBeEnabled();
+
+    fireEvent.click(execute);
+    await waitFor(() => expect(api.importCsv).toHaveBeenCalledOnce());
+    const params = vi.mocked(api.importCsv).mock.calls[0][0];
+    expect(params.options.conflictMode).toBe("update");
+    expect(params.options.keyColumns).toEqual(["id"]);
   });
 });

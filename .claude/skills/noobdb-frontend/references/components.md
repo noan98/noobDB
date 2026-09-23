@@ -47,7 +47,12 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   クエリ。`queryParams.ts` が型別に安全なリテラル/識別子へ展開)、`BatchResultsView`
   (複数文スクリプトのバッチ実行結果。文分割は `sqlScript.ts`)、`CreateTableModal`
   (CREATE TABLE ウィザード。`createTable.ts`)、`RowInsertModal` / `RowInspector` /
-  `RenameTableDialog` (行追加・行インスペクタ・テーブル名変更)、`SchemaCompareView`
+  `RenameTableDialog` (行追加・行インスペクタ・テーブル名変更。行インスペクタの
+  「関連」タブ #1028 は `RelatedRowsPanel` で被参照 FK ごとに子行をアコーディオン
+  展開する master-detail。SQL は `relatedRows.ts` が `fkNavigation.ts` の
+  `buildReverseRefSql` に方言別の `LIMIT` / `TOP` を足して生成し、App の
+  `onRunRelatedQuery` = `run_query` (履歴に残らない内部クエリ) で取得する。
+  子行の機微カラムは #1069 の設定パターンで伏せ字、キー列がマスク中なら辿らない)、`SchemaCompareView`
   (スキーマ/データ比較 → 同期 SQL 生成 UI。バックの Diff/Sync コマンドを駆動)、
   `SandboxCreateModal` / `SandboxSection` / `SandboxReviewModal` (壊せる砂場・ブランチ
   #747。作成・サイドバー専用セクション・変更確認 → 書き戻し。純ロジックは

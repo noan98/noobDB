@@ -98,5 +98,21 @@
   途中キャンセルで一部行が残りうる。コミット済み件数を `StreamHandle.delivered_rows` に反映し、
   `cancel_stream` は `csv-import:cancelled` を emit して `deliveredRows` (= コミット済み行数) を
   返します (`abort` はロールバックするので 0)。`ImportModal` はキャンセル時にこの件数を表示。
+  **競合モード / UPSERT (#972)**: `ImportOptions.conflict_mode` (`db::upsert::ConflictMode`:
+  `insert` 既定 / `skip` / `update`) と `key_columns` (マッピング済み列の部分集合) で、
+  既存キーの行を「読み飛ばす」「取り込み値で更新する」を選べます。方言別の構文は
+  `db/upsert.rs` の純関数に集約: MySQL は `ON DUPLICATE KEY UPDATE` (skip は `k = k` の
+  no-op 代入。`INSERT IGNORE` は重複以外のエラーまで握りつぶすので使わない。判定は
+  テーブルの全一意キー)、PostgreSQL / SQLite / DuckDB は `ON CONFLICT (keys) DO
+  NOTHING | DO UPDATE SET c = EXCLUDED.c`、SQL Server は `MERGE … WITH (HOLDLOCK)`
+  (NULL は `CAST(NULL AS NVARCHAR(MAX))` で型付け)。PG / DuckDB の DO UPDATE と MERGE は
+  1 文内のキー重複をエラーにするため、`ImportConflict::collapse_duplicate_keys` が
+  チャンク内で畳みます (update は最後の行、skip は最初の行が勝つ = 1 行ずつ適用したのと
+  同じ結果)。競合設定は `import_rows` / `try_insert_chunk` / `probe_failing_row` の
+  全経路に通るので、abort/skip (#687)・進捗イベント・読み取り専用拒否
+  (`ensure_import_writable`) はそのまま効きます。キー列の検証
+  (`ImportConflict::validate`) は `import_csv` がストリーム開始前に同期で行い、
+  `ImportModal` は同じ規則の `components/importConflict.ts` で実行ボタンを無効化します
+  (既定キーはマッピング済みの主キー列)。
   読み込みは `read_import_file` が空パス拒否 + `MAX_IMPORT_FILE_BYTES` (512 MiB) 上限を
   `commands::file` と同じく metadata + `take` の二段で強制します。

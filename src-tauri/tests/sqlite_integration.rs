@@ -1633,7 +1633,15 @@ async fn sqlite_resilient_import_skips_and_locates_bad_rows() {
 
     // Skip mode: good rows commit, bad rows are reported by index.
     let outcome = conn
-        .import_rows_skipping(None, "imp", &columns, &rows, 500, |_| Ok(()))
+        .import_rows_skipping(
+            None,
+            "imp",
+            &columns,
+            &rows,
+            500,
+            &t::ImportConflict::insert_only(),
+            |_| Ok(()),
+        )
         .await
         .expect("skip import");
     assert_eq!(outcome.inserted, 2, "records 0 and 3 should insert");
@@ -1655,7 +1663,13 @@ async fn sqlite_resilient_import_skips_and_locates_bad_rows() {
     // (index 1, the NOT NULL violation) and leaves nothing behind (rolled back).
     conn.execute("DELETE FROM imp", None).await.expect("clear");
     let located = conn
-        .probe_failing_row(None, "imp", &columns, &rows)
+        .probe_failing_row(
+            None,
+            "imp",
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+        )
         .await
         .expect("probe");
     assert_eq!(located.map(|(i, _)| i), Some(1));
@@ -2488,6 +2502,87 @@ async fn sqlite_list_processes_via_command_layer() {
     ));
 
     let _ = std::fs::remove_file(&path);
+}
+
+/// UPSERT import round-trip (#972): `update` mode inserts new keys and
+/// overwrites existing ones (a key repeated inside one file resolves to its
+/// last occurrence), and `skip` mode leaves existing rows untouched while
+/// still inserting new keys. Exercises both the all-or-nothing path
+/// (`import_rows`) and the resilient path (`import_rows_skipping`).
+async fn assert_upsert_roundtrip(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: &str| Some(s.to_string());
+    let select = format!("SELECT name FROM {table} ORDER BY id");
+    let names = || async {
+        let r = conn.execute(&select, None).await.expect("select names");
+        r.rows
+            .iter()
+            .map(|row| match &row[0] {
+                t::Value::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let update = t::ImportConflict {
+        mode: t::ConflictMode::Update,
+        key_columns: vec!["id".to_string()],
+    };
+    let rows = vec![
+        vec![cell("2"), cell("B")],
+        vec![cell("3"), cell("c")],
+        vec![cell("3"), cell("c2")],
+    ];
+    let n = conn
+        .import_rows(None, table, &columns, &rows, 500, &update, |_| Ok(()))
+        .await
+        .expect("upsert (update) import");
+    assert_eq!(n, 3);
+    assert_eq!(names().await, vec!["a", "B", "c2"]);
+
+    let skip = t::ImportConflict {
+        mode: t::ConflictMode::Skip,
+        key_columns: vec!["id".to_string()],
+    };
+    let rows = vec![vec![cell("1"), cell("zzz")], vec![cell("4"), cell("d")]];
+    let outcome = conn
+        .import_rows_skipping(None, table, &columns, &rows, 500, &skip, |_| Ok(()))
+        .await
+        .expect("upsert (skip) import");
+    assert!(outcome.skipped.is_empty(), "{:?}", outcome.skipped);
+    assert_eq!(names().await, vec!["a", "B", "c2", "d"]);
+
+    // UPSERT without key columns is rejected before touching the table.
+    let no_keys = t::ImportConflict {
+        mode: t::ConflictMode::Update,
+        key_columns: Vec::new(),
+    };
+    assert!(conn
+        .import_rows(None, table, &columns, &rows, 500, &no_keys, |_| Ok(()))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn sqlite_upsert_import_roundtrip() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_upsert_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let opts = t::sqlite_options(p.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE imp_up (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO imp_up VALUES (1, 'a'), (2, 'b')", None)
+        .await
+        .expect("seed");
+    assert_upsert_roundtrip(&conn, "imp_up").await;
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
 }
 
 /// 列データプロファイル (#974) のコマンド層。読み取りの集計だけなので read_only

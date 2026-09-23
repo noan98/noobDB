@@ -1026,6 +1026,14 @@ export type ImportFormat = "csv" | "json" | "ndjson";
 /** How the importer handles rows the database rejects (#687). */
 export type ImportErrorMode = "abort" | "skip";
 
+/**
+ * How the importer treats a row whose key already exists (#972).
+ * `"insert"` (default) issues a plain INSERT, so a duplicate key is a row
+ * error handled by `errorMode`; `"skip"` leaves the existing row untouched;
+ * `"update"` overwrites it with the imported values (UPSERT).
+ */
+export type ImportConflictMode = "insert" | "skip" | "update";
+
 export interface ImportOptions {
   /** Source format. Omit/`"csv"` for the classic CSV path. */
   format?: ImportFormat;
@@ -1048,6 +1056,14 @@ export interface ImportOptions {
    * Omitted → the backend default (`"abort"`).
    */
   errorMode?: ImportErrorMode;
+  /** Duplicate-key handling (#972). Omitted → `"insert"`. */
+  conflictMode?: ImportConflictMode;
+  /**
+   * Destination columns identifying a row for `conflictMode` `"skip"` /
+   * `"update"`. Must be a non-empty subset of the mapped columns in those
+   * modes (the backend rejects anything else); ignored for `"insert"`.
+   */
+  keyColumns?: string[];
 }
 
 export interface ColumnMapping {

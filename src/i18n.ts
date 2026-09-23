@@ -1701,6 +1701,22 @@ const en = {
   gridInspectorClose: "Close inspector",
   gridInspectorCopyField: "Copy field value",
   gridInspectorEmpty: "No columns to show",
+  inspectorTabsAria: "Inspector view",
+  inspectorTabFields: "Fields",
+  inspectorTabRelated: "Related ({count})",
+  relatedRowsHint: "Rows in other tables that reference this row (read-only preview).",
+  relatedRowsBlockedMasked: "The key column is masked, so this relation is not followed.",
+  relatedRowsBlockedMissing: "Key column {column} is not in this result.",
+  relatedRowsBlockedNull: "The key is NULL, so there are no referencing rows.",
+  relatedRowsLoading: "Loading…",
+  relatedRowsEmpty: "No referencing rows",
+  relatedRowsCount: "{count} rows",
+  relatedRowsCountMore: "First {count} rows",
+  relatedRowsLoadMore: "Load more",
+  relatedRowsCapReached: "Showing at most {count} rows. Open in the grid to see all of them.",
+  relatedRowsOpen: "Open in grid",
+  relatedRowsError: "Failed to load: {error}",
+  relatedRowsTableAria: "Rows of {table} referencing this row",
   // コンテキストメニューの Undo/Redo (#815). ツールバーボタンの
   // editUndoTitle/editRedoTitle と同じ操作だが、メニュー項目としては
   // ショートカット表記を別カラムで出すため文言だけの短いラベルにする。
@@ -1883,6 +1899,17 @@ const en = {
   importSkippedRowLine: "record {record} (line {line}): {reason}",
   importSkippedCopy: "Copy list",
   importSkippedCopied: "Copied skipped rows.",
+  // Duplicate-key handling / UPSERT (#972).
+  importConflictMode: "On existing key",
+  importConflictModeInsert: "Insert only (duplicate = error)",
+  importConflictModeSkip: "Skip existing rows",
+  importConflictModeUpdate: "Update existing rows (UPSERT)",
+  importConflictKeys: "Key columns",
+  importConflictKeysHint:
+    "Rows are matched by these columns. They need a primary key or UNIQUE constraint in the table (MySQL matches on every unique key of the table).",
+  importConflictKeysRequired: "Select at least one key column.",
+  importConflictKeyNotMapped: "Key columns must be mapped to a source field.",
+  importConflictNoMapped: "Map at least one column first.",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "Generate test data into {table}",
@@ -4636,6 +4663,22 @@ const ja: Dict = {
   gridInspectorClose: "インスペクタを閉じる",
   gridInspectorCopyField: "フィールド値をコピー",
   gridInspectorEmpty: "表示する列がありません",
+  inspectorTabsAria: "インスペクタの表示",
+  inspectorTabFields: "フィールド",
+  inspectorTabRelated: "関連 ({count})",
+  relatedRowsHint: "この行を参照している他テーブルの行です (読み取り専用のプレビュー)。",
+  relatedRowsBlockedMasked: "キー列が伏せ字で表示中のため、この関連は辿りません。",
+  relatedRowsBlockedMissing: "キー列 {column} がこの結果に含まれていません。",
+  relatedRowsBlockedNull: "キーが NULL のため、参照している行はありません。",
+  relatedRowsLoading: "読み込み中…",
+  relatedRowsEmpty: "参照している行はありません",
+  relatedRowsCount: "{count} 件",
+  relatedRowsCountMore: "先頭 {count} 件",
+  relatedRowsLoadMore: "さらに読み込む",
+  relatedRowsCapReached: "最大 {count} 件まで表示しています。すべて見るにはグリッドで開いてください。",
+  relatedRowsOpen: "グリッドで開く",
+  relatedRowsError: "読み込みに失敗しました: {error}",
+  relatedRowsTableAria: "この行を参照している {table} の行",
   // コンテキストメニューの Undo/Redo (#815)。
   gridUndoItem: "元に戻す",
   gridRedoItem: "やり直す",
@@ -4815,6 +4858,17 @@ const ja: Dict = {
   importSkippedRowLine: "レコード {record} (行 {line}): {reason}",
   importSkippedCopy: "一覧をコピー",
   importSkippedCopied: "スキップ行をコピーしました。",
+  // 既存キーの扱い / UPSERT (#972)。
+  importConflictMode: "既存キーの扱い",
+  importConflictModeInsert: "INSERT のみ (重複はエラー)",
+  importConflictModeSkip: "既存行はスキップ",
+  importConflictModeUpdate: "既存行を更新 (UPSERT)",
+  importConflictKeys: "キー列",
+  importConflictKeysHint:
+    "これらの列で既存行と照合します。テーブル側に主キーまたは UNIQUE 制約が必要です (MySQL はテーブルの全一意キーで照合します)。",
+  importConflictKeysRequired: "キー列を 1 つ以上選んでください。",
+  importConflictKeyNotMapped: "キー列はファイルの列にマッピングされている必要があります。",
+  importConflictNoMapped: "先に列を 1 つ以上マッピングしてください。",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "{table} にテストデータを生成",

@@ -13,7 +13,8 @@ use super::types::{
     StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
     TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
-use super::{columns_of, init_sql_of, DbConnectOptions, SslMode};
+use super::upsert::{conflict_clause, ImportConflict};
+use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 
 /// pg_stat_activity の `application_name` に載せる接続の表示名。
@@ -373,6 +374,7 @@ impl PostgresConn {
     /// type checking, whereas an untyped string literal (`'42'`) is coerced to
     /// the column type. `standard_conforming_strings` is forced on so doubling
     /// single quotes is the only escaping needed.
+    #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,
         database: Option<&str>,
@@ -380,6 +382,7 @@ impl PostgresConn {
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
+        conflict: &ImportConflict,
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -391,13 +394,6 @@ impl PostgresConn {
         if rows.is_empty() {
             return Ok(0);
         }
-        let ncols = columns.len();
-        let cols_sql = columns
-            .iter()
-            .map(|c| pg_quote_ident(c))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let table_ident = pg_quote_ident(table);
         let batch = batch_size.clamp(1, 1000);
 
         let mut conn = self.pool.acquire().await?;
@@ -410,21 +406,7 @@ impl PostgresConn {
         let mut tx = conn.begin().await?;
         let mut inserted: u64 = 0;
         for chunk in rows.chunks(batch) {
-            let mut sql = format!("INSERT INTO {} ({}) VALUES ", table_ident, cols_sql);
-            for (r, row) in chunk.iter().enumerate() {
-                if r > 0 {
-                    sql.push(',');
-                }
-                sql.push('(');
-                for ci in 0..ncols {
-                    if ci > 0 {
-                        sql.push(',');
-                    }
-                    let cell = row.get(ci).and_then(|c| c.as_deref());
-                    sql.push_str(&pg_literal(cell));
-                }
-                sql.push(')');
-            }
+            let sql = build_pg_upsert(table, columns, chunk, conflict);
             sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *tx)
                 .await?;
@@ -443,11 +425,12 @@ impl PostgresConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
-        let sql = build_pg_insert(table, columns, rows);
+        let sql = build_pg_upsert(table, columns, rows, conflict);
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
         sqlx::Executor::execute(
@@ -469,6 +452,7 @@ impl PostgresConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<Option<(usize, String)>> {
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
@@ -479,7 +463,7 @@ impl PostgresConn {
         .await?;
         let mut tx = conn.begin().await?;
         for (i, row) in rows.iter().enumerate() {
-            let sql = build_pg_insert(table, columns, std::slice::from_ref(row));
+            let sql = build_pg_upsert(table, columns, std::slice::from_ref(row), conflict);
             if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *tx)
                 .await
@@ -2406,6 +2390,21 @@ fn build_pg_insert(table: &str, columns: &[String], rows: &[Vec<Option<String>>]
         }
         sql.push(')');
     }
+    sql
+}
+
+/// [`build_pg_insert`] に競合句 (#972) を付けたもの。UPSERT モードでは
+/// `ON CONFLICT DO UPDATE` が同一文内のキー重複をエラーにするため、先に
+/// [`ImportConflict::collapse_duplicate_keys`] で 1 行に畳む。
+fn build_pg_upsert(
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<Option<String>>],
+    conflict: &ImportConflict,
+) -> String {
+    let rows = conflict.collapse_duplicate_keys(columns, rows);
+    let mut sql = build_pg_insert(table, columns, &rows);
+    sql.push_str(&conflict_clause(DriverKind::Postgres, columns, conflict));
     sql
 }
 

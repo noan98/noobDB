@@ -11,7 +11,8 @@ use super::types::{
     ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
     TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
-use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions};
+use super::upsert::{conflict_clause, ImportConflict};
+use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
@@ -284,6 +285,7 @@ impl SqliteConn {
     /// wrapped in one transaction. Cells bind as text (`NULL` for `None`) and
     /// SQLite applies column affinity, so numeric-looking text lands in
     /// INTEGER/REAL columns as numbers.
+    #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,
         _database: Option<&str>,
@@ -291,6 +293,7 @@ impl SqliteConn {
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
+        conflict: &ImportConflict,
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -313,12 +316,14 @@ impl SqliteConn {
         // 999); keep each statement under it regardless of the requested size.
         let max_rows = (900 / ncols).max(1);
         let batch = batch_size.clamp(1, max_rows);
+        let on_conflict = conflict_clause(DriverKind::Sqlite, columns, conflict);
 
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
         let mut inserted: u64 = 0;
         for chunk in rows.chunks(batch) {
-            let sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            sql.push_str(&on_conflict);
             let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
             for row in chunk {
                 for ci in 0..ncols {
@@ -346,6 +351,7 @@ impl SqliteConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
@@ -357,7 +363,8 @@ impl SqliteConn {
             .collect::<Vec<_>>()
             .join(", ");
         let table_ident = quote_ident(table);
-        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, rows.len());
+        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, rows.len());
+        sql.push_str(&conflict_clause(DriverKind::Sqlite, columns, conflict));
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for row in rows {
             for ci in 0..ncols {
@@ -377,6 +384,7 @@ impl SqliteConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<Option<(usize, String)>> {
         let ncols = columns.len();
         let cols_sql = columns
@@ -385,7 +393,8 @@ impl SqliteConn {
             .collect::<Vec<_>>()
             .join(", ");
         let table_ident = quote_ident(table);
-        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        sql.push_str(&conflict_clause(DriverKind::Sqlite, columns, conflict));
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
         for (i, row) in rows.iter().enumerate() {

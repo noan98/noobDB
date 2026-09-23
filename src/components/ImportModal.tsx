@@ -6,6 +6,7 @@ import {
   listenImportStream,
   type ColumnMapping,
   type CsvPreview,
+  type ImportConflictMode,
   type ImportErrorMode,
   type ImportFormat,
   type ImportOptions,
@@ -18,10 +19,16 @@ import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { transitions } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, PressableButton, Select, Switch } from "./ui";
+import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import {
+  defaultKeyColumns,
+  pruneKeyColumns,
+  toggleKeyColumn,
+  validateConflictKeys,
+} from "./importConflict";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -115,6 +122,10 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
   const [nullMode, setNullMode] = useState<NullMode>("empty");
   const [nullCustom, setNullCustom] = useState("NULL");
   const [errorMode, setErrorMode] = useState<ImportErrorMode>("abort");
+  // 既存キーの扱い (#972)。`keyColumns` が null の間は「未操作」とみなし、
+  // マッピング済みの主キー列を既定のキーとして使う。
+  const [conflictMode, setConflictMode] = useState<ImportConflictMode>("insert");
+  const [keyColumns, setKeyColumns] = useState<string[] | null>(null);
 
   const [tableColumns, setTableColumns] = useState<TableColumnInfo[] | null>(null);
   const [preview, setPreview] = useState<CsvPreview | null>(null);
@@ -237,8 +248,18 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       .map(([column, idx]) => ({ column, csvIndex: idx as number }));
   }, [mapping]);
 
+  const mappedColumns = useMemo(() => mappingEntries.map((m) => m.column), [mappingEntries]);
+  const effectiveKeyColumns = useMemo(
+    () =>
+      keyColumns === null
+        ? defaultKeyColumns(tableColumns ?? [], mappedColumns)
+        : pruneKeyColumns(keyColumns, mappedColumns),
+    [keyColumns, tableColumns, mappedColumns],
+  );
+  const conflictError = validateConflictKeys(conflictMode, effectiveKeyColumns, mappedColumns);
+
   const handleImport = async () => {
-    if (!path || mappingEntries.length === 0 || !quoteValid) return;
+    if (!path || mappingEntries.length === 0 || !quoteValid || conflictError) return;
     const streamId = newStreamId();
     streamIdRef.current = streamId;
     setStatus({ kind: "importing", inserted: 0, total: 0 });
@@ -294,7 +315,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         database,
         table,
         path,
-        options: buildOptions(),
+        options: { ...buildOptions(), conflictMode, keyColumns: effectiveKeyColumns },
         mapping: mappingEntries,
       });
     } catch (e) {
@@ -497,6 +518,21 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
               <option value="skip">{t("importErrorModeSkip")}</option>
             </Select>
           </chakra.div>
+
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <FieldLabel htmlFor="import-conflict-mode">{t("importConflictMode")}</FieldLabel>
+            <Select
+              id="import-conflict-mode"
+              minW="150px"
+              value={conflictMode}
+              onChange={(e) => setConflictMode(e.target.value as ImportConflictMode)}
+              disabled={importing}
+            >
+              <option value="insert">{t("importConflictModeInsert")}</option>
+              <option value="skip">{t("importConflictModeSkip")}</option>
+              <option value="update">{t("importConflictModeUpdate")}</option>
+            </Select>
+          </chakra.div>
         </FormSection>
 
         {errorMode === "skip" && (
@@ -584,6 +620,47 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
                 </chakra.div>
               ))}
             </chakra.div>
+          </FormSection>
+        )}
+
+        {conflictMode !== "insert" && preview && tableColumns && (
+          <FormSection>
+            <FieldLabel as="div">{t("importConflictKeys")}</FieldLabel>
+            <chakra.div display="flex" flexWrap="wrap" gap="3">
+              {mappedColumns.length === 0 && (
+                <chakra.span fontSize="xs" color="app.textMuted">
+                  {t("importConflictNoMapped")}
+                </chakra.span>
+              )}
+              {mappedColumns.map((col) => (
+                <chakra.label
+                  key={col}
+                  display="flex"
+                  alignItems="center"
+                  gap="1"
+                  fontSize="sm"
+                  fontFamily="mono"
+                >
+                  <Checkbox
+                    checked={effectiveKeyColumns.includes(col)}
+                    onChange={() =>
+                      setKeyColumns(toggleKeyColumn(effectiveKeyColumns, col, mappedColumns))
+                    }
+                    disabled={importing}
+                  />
+                  {col}
+                </chakra.label>
+              ))}
+            </chakra.div>
+            <chakra.div fontSize="xs" color="app.textMuted">
+              {t("importConflictKeysHint")}
+            </chakra.div>
+            {conflictError === "keysRequired" && (
+              <FieldError>{t("importConflictKeysRequired")}</FieldError>
+            )}
+            {conflictError === "keyNotMapped" && (
+              <FieldError>{t("importConflictKeyNotMapped")}</FieldError>
+            )}
           </FormSection>
         )}
 
@@ -725,7 +802,9 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
           variant="primary"
           loading={importing}
           onClick={handleImport}
-          disabled={importing || !path || mappingEntries.length === 0 || !quoteValid}
+          disabled={
+            importing || !path || mappingEntries.length === 0 || !quoteValid || conflictError !== null
+          }
         >
           {importing ? t("importImporting") : t("importExecute")}
         </LoadingButton>
