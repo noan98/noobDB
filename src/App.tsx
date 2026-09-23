@@ -282,6 +282,12 @@ import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
 import { workspaceViewKey } from "./components/workspaceView";
+import {
+  hasOpenNestedLayer,
+  isEditableElement,
+  resolveWorkspaceEscape,
+} from "./components/workspaceEscape";
+import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, WorkspaceSplit } from "./components/BottomPanel";
 import {
   availableBottomPanelTabs,
@@ -6326,20 +6332,31 @@ export default function App() {
         setLayoutMode((m) => toggleLayoutMode(m, "editor"));
         return;
       }
-      if (e.key === "Escape" && layoutMode !== "normal") {
-        const el = document.activeElement as HTMLElement | null;
-        if (el) {
-          const tag = el.tagName;
-          if (
-            tag === "INPUT" ||
-            tag === "TEXTAREA" ||
-            tag === "SELECT" ||
-            el.isContentEditable ||
-            el.closest(".cm-editor")
-          ) {
-            return;
-          }
-        }
+      // Esc の受け手は `resolveWorkspaceEscape` (#1070) で決める。全画面サーフェス
+      // (`WorkspaceSurface`) の Escape と同じ関数を引くので、1 回の Esc で
+      // 「サーフェスを閉じる」と「最大化を解除する」が同時に起きない。ネストした
+      // Modal / メニューや入力欄のローカル Esc もそちらが優先される。
+      const escape = resolveWorkspaceEscape({
+        key: e.key,
+        defaultPrevented: e.defaultPrevented,
+        isComposing: e.isComposing,
+        nestedLayerOpen: e.key === "Escape" && hasOpenNestedLayer(document),
+        editableFocused: isEditableElement(document.activeElement),
+        view: workspaceViewKey({
+          showCompare,
+          showErd,
+          showUsers,
+          showServerInfo,
+          showSizes,
+          showCompareResults,
+          showForm,
+          showSnippetForm,
+          sessionId: sessionIdRef.current,
+          sizesTarget,
+        }),
+        layoutMaximized: layoutMode !== "normal",
+      });
+      if (escape === "restoreLayout") {
         e.preventDefault();
         setLayoutMode("normal");
       }
@@ -6363,6 +6380,7 @@ export default function App() {
     showObjectSearch,
     showDataSearch,
     showCheatSheet,
+    sizesTarget,
   ]);
 
   // レイアウトモードは接続状態に依らず保持し、再起動・再接続でも復元する (#618)。
@@ -7890,45 +7908,61 @@ export default function App() {
           }}
         >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+        {/* Escape で閉じる全画面サーフェスは `WorkspaceSurface` で包む (#1070)。
+            開いたらコンテナへフォーカスを移し、閉じたら開く前の要素へ戻す。
+            `onClose` は戻るボタンと同じ関数を渡す (導線を 1 つに揃える)。
+            フォーム 2 種は未保存入力の破棄を避けるため Escape 対象外。 */}
         {showCompare ? (
-          <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
+          <WorkspaceSurface view="compare" onClose={() => setShowCompare(false)}>
+            <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
+          </WorkspaceSurface>
         ) : showErd && sessionId ? (
-          <ERDiagramView
-            sessionId={sessionId}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
-            onOpenTable={handleOpenTable}
-            onClose={() => setShowErd(false)}
-          />
+          <WorkspaceSurface view="erd" onClose={() => setShowErd(false)}>
+            <ERDiagramView
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+              onOpenTable={handleOpenTable}
+              onClose={() => setShowErd(false)}
+            />
+          </WorkspaceSurface>
         ) : showUsers && sessionId ? (
-          <UsersPanel
-            sessionId={sessionId}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            database={activeTab?.database ?? selectedProfile?.database ?? null}
-            readOnly={selectedProfile?.read_only ?? false}
-            onClose={() => setShowUsers(false)}
-          />
+          <WorkspaceSurface view="users" onClose={() => setShowUsers(false)}>
+            <UsersPanel
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={activeTab?.database ?? selectedProfile?.database ?? null}
+              readOnly={selectedProfile?.read_only ?? false}
+              onClose={() => setShowUsers(false)}
+            />
+          </WorkspaceSurface>
         ) : showServerInfo && sessionId ? (
-          <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+          <WorkspaceSurface view="serverInfo" onClose={() => setShowServerInfo(false)}>
+            <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+          </WorkspaceSurface>
         ) : showSizes && sizesTarget && sessionId ? (
-          <TableStatisticsPanel
-            sessionId={sessionId}
-            database={sizesTarget}
-            onOpenTable={(table) => {
-              const db = sizesTarget;
-              setSizesTarget(null);
-              handleOpenTable(db, table);
-            }}
-            onClose={() => setSizesTarget(null)}
-          />
+          <WorkspaceSurface view="sizes" onClose={() => setSizesTarget(null)}>
+            <TableStatisticsPanel
+              sessionId={sessionId}
+              database={sizesTarget}
+              onOpenTable={(table) => {
+                const db = sizesTarget;
+                setSizesTarget(null);
+                handleOpenTable(db, table);
+              }}
+              onClose={() => setSizesTarget(null)}
+            />
+          </WorkspaceSurface>
         ) : showCompareResults ? (
-          <PinnedComparisonView
-            pinned={pinnedResults}
-            driver={selectedProfile?.driver ?? "mysql"}
-            onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
-            onClear={() => setPinnedResults([])}
-            onClose={() => setShowCompareResults(false)}
-          />
+          <WorkspaceSurface view="compareResults" onClose={() => setShowCompareResults(false)}>
+            <PinnedComparisonView
+              pinned={pinnedResults}
+              driver={selectedProfile?.driver ?? "mysql"}
+              onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
+              onClear={() => setPinnedResults([])}
+              onClose={() => setShowCompareResults(false)}
+            />
+          </WorkspaceSurface>
         ) : showForm ? (
           <ConnectionForm
             key={formInstanceId}
