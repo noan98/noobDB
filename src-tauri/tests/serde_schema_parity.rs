@@ -46,13 +46,13 @@ use t::{
     HealthFinding, HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent,
     ImportResult, ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
     PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
-    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
-    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMetrics, ServerVariable, Severity,
-    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
-    SslMode, StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement,
-    TableColumnInfo, TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    Value,
+    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
+    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
+    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
+    ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope,
+    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementStat, StreamCancelledEvent,
+    SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment, TableDiff, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");

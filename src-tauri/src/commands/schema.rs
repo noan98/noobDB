@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::db::types::{
-    ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo, TableComment, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo,
+    ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo, TableComment,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
 };
 use crate::error::{AppError, Result};
 use crate::state::AppState;

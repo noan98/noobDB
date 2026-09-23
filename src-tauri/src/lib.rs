@@ -37,10 +37,10 @@ pub mod __test_api {
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-        ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
-        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableComment,
-        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-        UserPrivileges, Value,
+        ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature,
+        SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch,
+        TableColumnInfo, TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
+        TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
