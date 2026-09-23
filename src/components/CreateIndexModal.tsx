@@ -82,7 +82,7 @@ export function CreateIndexModal({
   );
 
   return (
-    <Modal width="520px" onClose={onClose}>
+    <Modal onSubmit={() => onRun(sql)} submitDisabled={!valid || readOnly} width="520px" onClose={onClose}>
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("createIndexTitle", { table })}
       </ModalHeader>
@@ -133,12 +133,12 @@ export function CreateIndexModal({
         )}
       </ModalBody>
       <ModalFooter>
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("createTableClose")}
-        </Button>
-        <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" disabled={!valid} onClick={() => onSendToEditor(sql)}>
           {t("createTableToEditor")}
+        </Button>
+        <div style={{ flex: 1 }} />
+        <Button type="button" variant="secondary" onClick={onClose}>
+          {t("createTableClose")}
         </Button>
         <PressableButton type="button" variant="primary" disabled={!valid || readOnly} onClick={() => onRun(sql)}>
           {t("createIndexRun")}

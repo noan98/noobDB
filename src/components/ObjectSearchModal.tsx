@@ -8,6 +8,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { NoResultsIllustration } from "./illustrations";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
+import { ErrorNote } from "./modalForm";
 
 /**
  * スキーマ横断のグローバルオブジェクト検索。`schema_overview` を源に、テーブル名・
@@ -124,7 +125,9 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
   };
 
   return (
-    <Modal open onClose={onClose} width="640px" initialFocusEl={() => inputRef.current}>
+    <Modal
+      // no-submit: 検索 UI。Enter が候補の決定を担う
+      open onClose={onClose} width="640px" initialFocusEl={() => inputRef.current}>
       <Flex
         align="center"
         gap="2"
@@ -173,9 +176,10 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
 
       <Box id="object-search-list" role="listbox" maxH="min(440px, 62vh)" overflowY="auto" py="1.5">
         {error ? (
-          <Box px="4" py="5" textAlign="center" color="app.textError" fontSize="sm" role="alert">
+          // 検索の失敗は操作をブロックする持続的エラーなので ErrorNote (#1114)。
+          <ErrorNote mx="4" my="3" role="alert">
             {error}
-          </Box>
+          </ErrorNote>
         ) : results.length === 0 ? (
           // 未入力 (ヒント) / 入力あり検索一致なしの 2 状態とも、この結果一覧
           // 領域全体が空になるため ResultGrid と同じリッチなイラストで表現する

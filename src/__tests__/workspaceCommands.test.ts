@@ -42,6 +42,9 @@ describe("workspaceCommandItems", () => {
     expect(ids(base)).toEqual([
       "nav:toggle-sidebar",
       "nav:focus-explorer",
+      "nav:output",
+      "nav:messages",
+      "nav:activityPanel",
       "nav:advisor",
       "nav:inspector",
       "nav:processes",
@@ -52,11 +55,27 @@ describe("workspaceCommandItems", () => {
     ]);
   });
 
-  it("未接続でもサイドバー操作は出す (接続先を探すため)。接続系は出さない", () => {
+  it("未接続でもサイドバー操作とログ系パネル (#1114) は出す。接続系は出さない", () => {
     expect(ids({ ...base, sessionId: null, driver: null, openConnectionCount: 0 })).toEqual([
       "nav:toggle-sidebar",
       "nav:focus-explorer",
+      "nav:output",
+      "nav:messages",
+      "nav:activityPanel",
     ]);
+  });
+
+  it("ログ系の候補はそれぞれのボトムパネルタブを開閉する (#1114)", () => {
+    const acts = actions();
+    const items = workspaceCommandItems(base, acts, t);
+    for (const [id, tab] of [
+      ["nav:output", "output"],
+      ["nav:messages", "messages"],
+      ["nav:activityPanel", "activity"],
+    ] as const) {
+      items.find((i) => i.id === id)?.run();
+      expect(acts.toggleBottomPanel).toHaveBeenLastCalledWith(tab);
+    }
   });
 
   it("背景接続だけなら接続ヘルスは出す", () => {

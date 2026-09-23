@@ -981,7 +981,9 @@ export function SettingsView({ theme, onClose }: Props) {
 
   return (
     <>
-    <Modal onClose={onClose} width="1120px">
+    <Modal
+      // no-submit: 設定は変更と同時に反映され、確定操作が無い
+      onClose={onClose} width="1120px">
       <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
         {t("settingsTitle")}
       </ModalHeader>

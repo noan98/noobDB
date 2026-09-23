@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "./testUtils";
-import { QueryEditor } from "../components/QueryEditor";
+import { createRef } from "react";
+import { fireEvent } from "@testing-library/react";
+import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 
 // QueryEditor の主要な実行フロー (Run ボタン / Ctrl+Enter ショートカット / 空状態
@@ -176,5 +178,67 @@ describe("QueryEditor ツールバーのオーバーフロー (#915)", () => {
       />,
     );
     expect(screen.getByLabelText(t("editorEmergencyMode"))).toBeTruthy();
+  });
+
+  // --- #1113: 右クリックメニュー / EXPLAIN ショートカット / パレット用ハンドル ---
+
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  it("エディタ本文の右クリックで文脈メニューが開き、「クエリを実行」で onRun が呼ばれる", async () => {
+    const user = userEvent.setup();
+    const onRun = vi.fn();
+    renderWithProviders(<QueryEditor onRun={onRun} onExplain={() => {}} initialSql="SELECT 9" />);
+
+    const host = document.querySelector(".cm-editor")?.parentElement as HTMLElement;
+    fireEvent.contextMenu(host, { clientX: 20, clientY: 20 });
+
+    const run = await screen.findByRole("menuitem", {
+      name: new RegExp(`^${escapeRe(t("editorMenuRunAll"))}`),
+    });
+    // 選択が無いのでコピー/切り取りは無効、カーソル位置の文の実行は出ている。
+    expect(screen.getByRole("menuitem", { name: new RegExp(escapeRe(t("editorMenuRunStatement"))) })).toBeTruthy();
+    const copy = document.querySelectorAll<HTMLButtonElement>("[role=menuitem][disabled]");
+    expect(Array.from(copy).some((el) => el.textContent?.includes(t("editorMenuCopy")))).toBe(true);
+
+    await user.click(run);
+    expect(onRun).toHaveBeenCalledWith("SELECT 9");
+  });
+
+  it("右クリックメニューの EXPLAIN は選択 / 全文で onExplain を呼ぶ", async () => {
+    const user = userEvent.setup();
+    const onExplain = vi.fn();
+    renderWithProviders(<QueryEditor onRun={() => {}} onExplain={onExplain} initialSql="SELECT 3" />);
+
+    const host = document.querySelector(".cm-editor")?.parentElement as HTMLElement;
+    fireEvent.contextMenu(host, { clientX: 10, clientY: 10 });
+    await user.click(
+      await screen.findByRole("menuitem", { name: new RegExp(`^${escapeRe(t("editorMenuExplain"))}`) }),
+    );
+    expect(onExplain).toHaveBeenCalledWith("SELECT 3");
+  });
+
+  it("Ctrl+E (Mod-E) で EXPLAIN が走る", async () => {
+    const onExplain = vi.fn();
+    renderWithProviders(<QueryEditor onRun={() => {}} onExplain={onExplain} initialSql="SELECT 5" />);
+    const editable = document.querySelector(".cm-content") as HTMLElement;
+    editable.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{Control>}e{/Control}");
+    await waitFor(() => expect(onExplain).toHaveBeenCalledWith("SELECT 5"));
+  });
+
+  it("パレット用ハンドル (runAll / runStatement / explain) がツールバーと同じ経路で実行する", () => {
+    const onRun = vi.fn();
+    const onExplain = vi.fn();
+    const ref = createRef<QueryEditorHandle>();
+    renderWithProviders(
+      <QueryEditor ref={ref} onRun={onRun} onExplain={onExplain} initialSql={"SELECT 1;\nSELECT 2"} />,
+    );
+    ref.current?.runAll();
+    expect(onRun).toHaveBeenLastCalledWith("SELECT 1;\nSELECT 2");
+    ref.current?.runStatement();
+    expect(onRun).toHaveBeenLastCalledWith("SELECT 1");
+    ref.current?.explain();
+    expect(onExplain).toHaveBeenCalledWith("SELECT 1;\nSELECT 2");
   });
 });

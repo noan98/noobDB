@@ -82,6 +82,7 @@ import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
+import { buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -164,6 +165,7 @@ import {
 import {
   gridViewStateKeyFrom,
   readStoredGridView,
+  resultShapeSizingKey,
   toPersistedGridView,
   writeStoredGridView,
 } from "./gridViewState";
@@ -179,6 +181,9 @@ import {
   rowHasMaskedCell,
   toggleMaskOverride,
 } from "./columnMask";
+
+/** 未保存編集の破棄確認で初期フォーカスを当てるキャンセルボタンの id (#1114)。 */
+const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
@@ -196,6 +201,7 @@ import {
  * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
  * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
+
 
 export const GRID_CSS: SystemStyleObject = {
   // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
@@ -3924,6 +3930,37 @@ export const DataGrid = memo(function DataGrid({
     }
   };
 
+  // 「CSV / JSON としてコピー」(#1113) の対象。右クリックしたセルが矩形選択に
+  // 含まれていれば選択範囲 (表示順)、そうでなければその 1 行の表示中の全列。
+  const copyTargetFor = (rowIdx: number, colIdx: number) => {
+    if (
+      selectionRect &&
+      selectionRect.rowIndexSet.has(rowIdx) &&
+      selectionRect.colIdSet.has(colIdx)
+    ) {
+      return {
+        rowIndices: visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        colIndices: visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+      };
+    }
+    return { rowIndices: [rowIdx], colIndices: visibleColIds };
+  };
+  const copyAsFormat = (
+    format: GridCopyFormat,
+    target: { rowIndices: number[]; colIndices: number[] },
+  ) => {
+    const text = buildGridCopyText(format, {
+      columns,
+      rows,
+      rowIndices: target.rowIndices,
+      colIndices: target.colIndices,
+      isMasked: cellMaskedNow,
+      copyPlaceholder: columnMaskCopyPlaceholder,
+    });
+    if (text) void runCopy(text);
+    else setCopyMenu(null);
+  };
+
   // Clipboard paste → multi-cell bulk edit (#793). Symmetric to `copySelection`:
   // pastes a TSV/CSV block from the clipboard, expanding from the active
   // rectangular selection's top-left corner (or the active cell) into the grid's
@@ -5142,6 +5179,22 @@ export const DataGrid = memo(function DataGrid({
                     shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
                     onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
                   },
+                  // CSV / JSON (#1113)。書式はエクスポートと同じ (`gridCopyFormats.ts`)。
+                  ...(() => {
+                    const target = copyTargetFor(copyMenu.rowIdx, copyMenu.colIdx);
+                    const n = target.rowIndices.length;
+                    return [
+                      { separator: true as const },
+                      {
+                        label: n > 1 ? t("gridCopyAsCsvRows", { count: n }) : t("gridCopyAsCsv"),
+                        onSelect: () => copyAsFormat("csv", target),
+                      },
+                      {
+                        label: n > 1 ? t("gridCopyAsJsonRows", { count: n }) : t("gridCopyAsJson"),
+                        onSelect: () => copyAsFormat("json", target),
+                      },
+                    ];
+                  })(),
                   { separator: true as const },
                   multiRow
                     ? {
@@ -5597,7 +5650,7 @@ export const DataGrid = memo(function DataGrid({
       )}
       <AnimatePresence>
         {bulkEdit && (
-          <Modal width="420px" onClose={() => setBulkEdit(null)}>
+          <Modal width="420px" onClose={() => setBulkEdit(null)} onSubmit={applyBulkEdit}>
             <ModalHeader onClose={() => setBulkEdit(null)} closeLabel={t("dangerousCancel")}>
               {t("gridBulkEditTitle")}
             </ModalHeader>
@@ -6484,11 +6537,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // Persist column widths per result shape: same database+table+column set
   // restores saved widths, a different shape falls back to defaults. The
   // column signature keeps free-form queries with distinct columns separate.
-  const columnSizingStorageKey = useMemo(() => {
-    if (!columns || columns.length === 0) return undefined;
-    const signature = JSON.stringify(columns.map((c) => c.name));
-    return `noobdb.colsizing.v1::${database ?? ""}::${table ?? ""}::${signature}`;
-  }, [columns, database, table]);
+  const columnSizingStorageKey = useMemo(
+    () => resultShapeSizingKey(columns, database, table),
+    [columns, database, table],
+  );
 
   // Client-side type/NOT NULL validation of a pending edit, by result-column
   // index. Mirrors the literal-building rules in cellEdit so invalid input is
@@ -7076,7 +7128,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         )}
         <AnimatePresence>
           {showDiscardConfirm && (
-            <Modal width="400px" onClose={() => setShowDiscardConfirm(false)}>
+            <Modal
+              // no-submit: 未保存編集の破棄確認 (破壊的)。キャンセルが既定
+              width="400px"
+              onClose={() => setShowDiscardConfirm(false)}
+              // 破壊的パターン (#1114): 右端のキャンセルに初期フォーカス。
+              initialFocusEl={() => document.getElementById(DISCARD_CANCEL_ID)}
+            >
               <ModalHeader onClose={() => setShowDiscardConfirm(false)} closeLabel={t("dangerousCancel")}>
                 {t("editDiscardConfirmTitle")}
               </ModalHeader>
@@ -7087,15 +7145,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 })}
               </ModalBody>
               <ModalFooter>
+                {/* 未保存の編集の破棄は取り消せないので「破壊的」パターン (#1114):
+                    実行は左に非強調、右端のキャンセルを primary + 初期フォーカス。 */}
                 <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setShowDiscardConfirm(false)}
-                >
-                  {t("dangerousCancel")}
-                </Button>
-                <Button
-                  variant="danger"
+                  variant="dangerOutline"
                   size="sm"
                   onClick={() => {
                     setShowDiscardConfirm(false);
@@ -7103,6 +7156,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                   }}
                 >
                   {t("editDiscardConfirmOk")}
+                </Button>
+                <div style={{ flex: 1 }} />
+                <Button
+                  id={DISCARD_CANCEL_ID}
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setShowDiscardConfirm(false)}
+                >
+                  {t("dangerousCancel")}
                 </Button>
               </ModalFooter>
             </Modal>

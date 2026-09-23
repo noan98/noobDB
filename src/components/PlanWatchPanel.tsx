@@ -106,7 +106,9 @@ export function PlanWatchPanel({
   };
 
   return (
-    <Modal onClose={onClose} width="1180px">
+    <Modal
+      // no-submit: 一覧の閲覧・管理画面で、確定する主アクションが無い
+      onClose={onClose} width="1180px">
       <ModalHeader onClose={onClose} closeLabel={t("planWatchClose")}>
         {t("planWatchTitle", { name: profile.name })}
       </ModalHeader>

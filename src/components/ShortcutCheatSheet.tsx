@@ -37,7 +37,9 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
 
   return (
-    <Modal onClose={onClose} width="560px">
+    <Modal
+      // no-submit: 参照画面 (閉じるのみ)
+      onClose={onClose} width="560px">
       <ModalHeader onClose={onClose} closeLabel={t("cheatSheetClose")}>
         {t("cheatSheetTitle")}
       </ModalHeader>

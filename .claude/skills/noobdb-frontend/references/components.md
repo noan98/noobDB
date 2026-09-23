@@ -17,6 +17,42 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
     `Splitter` と同じ操作体系 (矢印 / Home / End / Enter / ダブルクリック)。
   - Shell 操作のコマンドパレット候補 (サイドバー開閉・Explorer 絞り込み・ボトム
     パネル各タブ・テーブル構造) は `workspaceCommands.ts` が組み立てる。
+  - Bottom Panel のタブは用途グループ順 (#1114): **ログ** (出力 `OutputPanel` /
+    メッセージ `MessagesPanel` / アクティビティ `ActivityLogPanel`、いずれも接続不要)
+    → **診断** (アドバイザ・インスペクタ・プロセス・接続ヘルス) → **参照** (影響分析・
+    構造・列を探索)。グループの切れ目に区切り線 (`bottomPanelGroupStarts`)。
+    - 出力 = 実行した文ごとの結末。`outputLog.ts` のストアへ `App.tsx` の実行経路
+      (`runQueryInTab` の done / error・キャンセル・一括実行・トランザクション内実行)
+      が結果受信地点で `recordOutput` する。自動リフレッシュの tick は積まない。
+    - メッセージ = ステータスバーの履歴。`App.tsx` の `status` 監視 effect が
+      `statusMessage.ts` の `statusLogClass` (途中経過は落とす、成功はキー単位・
+      エラーは本文単位で直前と畳む) を通して `messageLog.ts` へ積む。フッターの
+      一覧アイコンからも開ける。
+    - アクティビティ = トーストの履歴 (`activityLog.ts`)。ベルのポップオーバーの
+      「パネルで開く」からも辿れ、パネル表示中は既読になる。
+    - 3 タブとも `SeverityLog.tsx` の `LogToolbar` (フィルタチップ + クリア) と行を共有。
+- モーダル / フォームの操作 (#1114) — `Modal` の `onSubmit` / `submitDisabled` で
+  Cmd/Ctrl+Enter が主アクションになる (判定は `modalKeys.ts` の `isModalSubmitKey`)。
+  `ConnectionForm` / `SnippetForm` / タスク編集フォームもルートで同じ判定を使う。
+  破壊的な確認・閲覧のみのモーダルは開始タグに `// no-submit: 理由`。フッターの並びと
+  エラー表示の規約は `.claude/rules/ui-design-system.md` §7.2 / §7.4 / §7.5。
+- SQL Editor / Result Grid の操作体系 (#1113) — 同じ操作をツールバー・右クリック・
+  コマンドパレット・ショートカット (`shortcuts.ts`) のどこからでも同じ経路で呼べる。
+  - エディタ本文の右クリック (`QueryEditor` + 純ロジック `sqlEditorMenu.ts`)。選択の
+    有無で「選択範囲を実行 / クエリを実行」を切り替え、カーソル位置の文・Dry Run・
+    EXPLAIN・整形・行コメント・切り取り/コピー/全選択・スニペット保存を並べる。
+    ContextMenu キー / Shift+F10 ではキャレット位置に開く。
+  - パレットの実行系候補 (実行・選択実行・整形・EXPLAIN・エディタへフォーカス・
+    アクティビティ開閉・背景接続への切替) は `editorCommands.ts`。実行は
+    `QueryEditorHandle` (`runAll` / `runStatement` / `formatSql` / `explain`) 経由で
+    ツールバーと同じ関数を呼ぶ。アクティビティの開閉要求は `ActivityCenter` の
+    `toggleActivityCenter()`。
+  - 結果の表示切替 `ResultViewSwitch` はグリッド / ピボット / チャート / JSON。
+    JSON ビューは `ResultJsonView` + `resultJson.ts` (`JsonTreeView` を再利用、機微
+    カラムは常に伏せ字)。隣の「EXPLAIN」ボタンは `ResultExplainContext` で配られ、
+    直前の SQL の実行計画を EXPLAIN タブで開く。
+  - グリッド右クリックの「コピー」に CSV / JSON (`gridCopyFormats.ts`、書式は
+    エクスポートの `buildCsv` / `buildJson` を再利用、マスク規則は TSV コピーと同じ)。
 - `api/tauri.ts` — 全 IPC の型付きラッパーとイベント購読ヘルパー (上述)。各 `invoke`
   ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。

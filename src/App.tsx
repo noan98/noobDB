@@ -97,7 +97,7 @@ import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
-import type { ResultViewKind } from "./components/ResultViewSwitch";
+import { ResultExplainContext, type ResultViewKind } from "./components/ResultViewSwitch";
 import { TabBar } from "./components/TabBar";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
@@ -203,6 +203,9 @@ const ChartView = lazy(() =>
 );
 const PivotView = lazy(() =>
   import("./components/PivotView").then((m) => ({ default: m.PivotView })),
+);
+const ResultJsonView = lazy(() =>
+  import("./components/ResultJsonView").then((m) => ({ default: m.ResultJsonView })),
 );
 const BatchResultsView = lazy(() =>
   import("./components/BatchResultsView").then((m) => ({ default: m.BatchResultsView })),
@@ -320,6 +323,13 @@ import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
 import { workspaceCommandItems } from "./components/workspaceCommands";
+import { editorCommandItems } from "./components/editorCommands";
+import { toggleActivityCenter } from "./components/ActivityCenter";
+import { ActivityLogPanel, MessagesPanel } from "./components/SeverityLog";
+import { OutputPanel } from "./components/OutputPanel";
+import { statusLogClass, statusTone, type Status } from "./statusMessage";
+import { pushMessage } from "./messageLog";
+import { pushOutput, type OutputInput } from "./outputLog";
 import {
   availableBottomPanelTabs,
   resolveBottomPanelTab,
@@ -453,56 +463,6 @@ function readInitialSidebarWidth(): number {
   } catch {
     return parseSidebarWidth(null);
   }
-}
-
-type Status =
-  // No status to surface (e.g. freshly connected, no query run yet). The
-  // footer bar is hidden entirely; one-shot confirmations like "connected"
-  // live in the toast notifications instead.
-  | { kind: "idle" }
-  | { kind: "literal"; text: string; error?: boolean; errorKind?: string | null }
-  // `errorKind` carries the structured `AppError.kind` (#683) so the hint/
-  // illustration resolver can classify reliably instead of pattern-matching the
-  // message text. Optional: paths that only have a plain string omit it and the
-  // resolver falls back to message matching.
-  | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean; errorKind?: string | null };
-
-// エラーは重大度別に区別する。`critical` は接続喪失など回復に再接続を要する
-// 致命的状態 (赤、目立つバッジ)、`warning` はタイムアウトなど接続は生きている軽度
-// 障害 (黄)、`error` は SQL 構文エラー・制約違反など個別クエリの失敗 (赤)。
-type StatusTone = "running" | "success" | "error" | "warning" | "critical" | "info";
-
-// Status keys that represent an in-progress operation (spinner + accent border).
-const RUNNING_STATUS_KEYS = new Set([
-  "statusConnecting",
-  "statusRunningQuery",
-  "statusRunningPreview",
-  "statusApplyingEdits",
-]);
-
-// 致命的 (critical): セッションが使えなくなり再接続が必要な状態。フッターに残し、
-// 「重大」バッジ + 再接続導線で対処を促す。
-const CRITICAL_STATUS_KEYS = new Set(["statusConnectionLost"]);
-
-// 警告 (warning): 接続は維持されており、設定変更や再試行で回復しうる軽度の障害。
-const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout", "statusQueryTimeoutPartial"]);
-
-// Maps a status to a tone for the footer's icon + colored left border.
-// Derived from the existing `error` flag and known keys, so call sites don't
-// each have to declare a severity.
-function statusTone(s: Status): StatusTone {
-  if (s.kind === "idle") return "info";
-  if (s.kind === "key") {
-    if (RUNNING_STATUS_KEYS.has(s.key)) return "running";
-    // critical / warning は error フラグの有無より優先して重大度を確定させる。
-    if (CRITICAL_STATUS_KEYS.has(s.key)) return "critical";
-    if (WARNING_STATUS_KEYS.has(s.key)) return "warning";
-    if (s.error) return "error";
-    if (s.key === "appDisconnected") return "info";
-    return "success";
-  }
-  if (s.error) return "error";
-  return "info";
 }
 
 /** 中央寄せの空状態プレースホルダ。ペインに何もない時 / 遅延読み込み中に使う。 */
@@ -753,6 +713,8 @@ interface Tab {
   showChart?: boolean;
   /** ピボットビューを表示中か。結果グリッドの代わりにクロス集計表を描く (#661)。 */
   showPivot?: boolean;
+  /** JSON ビューを表示中か (#1113)。結果グリッドの代わりに行オブジェクトの配列を描く。 */
+  showJson?: boolean;
   /** SQL スクリプトのバッチ実行の文ごとの結果。設定時は結果ビューに代えて表示。 */
   batchResults?: BatchStatementResult[];
   /** バッチ実行のスクリプト本文 (stop/continue 切替で再実行するため保持)。 */
@@ -1218,12 +1180,14 @@ export default function App() {
       runStatement: shortcutBindings.runStatement,
       preview: shortcutBindings.preview,
       format: shortcutBindings.format,
+      explain: shortcutBindings.explain,
     }),
     [
       shortcutBindings.run,
       shortcutBindings.runStatement,
       shortcutBindings.preview,
       shortcutBindings.format,
+      shortcutBindings.explain,
     ],
   );
   // グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/
@@ -2020,7 +1984,7 @@ export default function App() {
 
   /**
    * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。3 択は排他な
-   * ので `showPivot` / `showChart` の 2 フラグを常に同時に確定させ、どちらも false
+   * ので `showPivot` / `showChart` / `showJson` を常に同時に確定させ、すべて false
    * のときがグリッドという不変条件を 1 か所に閉じ込める。グリッド・ピボット・
    * チャートの各ツールバーに置いた `ResultViewSwitch` が共通でここを呼ぶ。
    */
@@ -2030,6 +1994,7 @@ export default function App() {
         ...tt,
         showPivot: view === "pivot",
         showChart: view === "chart",
+        showJson: view === "json",
       }));
     },
     [patchTab],
@@ -3389,6 +3354,29 @@ export default function App() {
     [settings.queryNotificationsEnabled, settings.queryNotificationThresholdSecs],
   );
 
+  // Bottom Panel「出力」タブ (#1114) への記録。実行経路が結果を受け取った地点で
+  // 呼ぶだけで、DB アクセスそのものには関与しない。接続名 / 既定 DB は ref 経由で
+  // 引き、実行系 useCallback の依存配列を増やさない (増やすと接続切替のたびに
+  // ハンドラが作り直され、エディタのキーマップへの再バインドが走る)。
+  const outputProfileRef = useRef<{ name: string | null; database: string | null }>({
+    name: null,
+    database: null,
+  });
+  outputProfileRef.current = {
+    name: selectedProfile?.name ?? null,
+    database: selectedProfile?.database ?? null,
+  };
+  const recordOutput = useCallback(
+    (input: Omit<OutputInput, "connection" | "database">, database: string | null | undefined) => {
+      pushOutput({
+        ...input,
+        connection: outputProfileRef.current.name,
+        database: database ?? outputProfileRef.current.database,
+      });
+    },
+    [],
+  );
+
   const runQueryInTab = useCallback(async (
     tabId: string,
     sql: string,
@@ -3527,6 +3515,19 @@ export default function App() {
         } else {
           setStatus({ kind: "key", key: "statusRowsAffected", vars: { rows: rowsAffected, ms: elapsedMs } });
         }
+        // 自動リフレッシュの tick はユーザが実行した文ではないので出力に積まない。
+        if (!autoRefresh) {
+          recordOutput(
+            {
+              sql,
+              outcome: hasColumns ? "rows" : "affected",
+              rows: hasColumns ? totalRows : rowsAffected,
+              elapsedMs,
+              error: null,
+            },
+            tab?.database,
+          );
+        }
         // A new entry was just written to history; refresh the panel. Auto-refresh
         // ticks never write history, so they skip the (otherwise per-tick) reload.
         if (!autoRefresh) setHistoryReloadKey((k) => k + 1);
@@ -3576,6 +3577,18 @@ export default function App() {
         }));
         setHistoryReloadKey((k) => k + 1);
         finalize();
+        if (!autoRefresh) {
+          recordOutput(
+            {
+              sql,
+              outcome: timedOut ? "timeout" : "error",
+              rows: timedOut ? deliveredRows : null,
+              elapsedMs: Date.now() - startedAt,
+              error: error ?? null,
+            },
+            tab?.database,
+          );
+        }
         if (!autoRefresh && !connectionLost) {
           void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error });
         }
@@ -3631,6 +3644,12 @@ export default function App() {
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      if (!autoRefresh) {
+        recordOutput(
+          { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
+          tab?.database,
+        );
+      }
       finalize();
     }
   }, [
@@ -3647,6 +3666,7 @@ export default function App() {
     selectedProfile?.database,
     // 読み取り専用判定の文字列エスケープ規則がドライバ依存になったため (#852)。
     selectedProfile?.driver,
+    recordOutput,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
@@ -4214,6 +4234,7 @@ export default function App() {
       batchResults: [],
       showChart: false,
       showPivot: false,
+      showJson: false,
       preview: null,
       queryError: null,
     }));
@@ -4222,6 +4243,7 @@ export default function App() {
     let stopped = false;
     for (const stmt of statements) {
       if (stopped) {
+        recordOutput({ sql: stmt, outcome: "skipped", rows: null, elapsedMs: null, error: null }, db);
         results.push({ sql: stmt, status: "skipped" });
         continue;
       }
@@ -4231,6 +4253,16 @@ export default function App() {
           ? await api.runInTransaction(sessionId, stmt)
           : await api.runQuery(sessionId, stmt, db);
         const isSelect = res.columns.length > 0;
+        recordOutput(
+          {
+            sql: stmt,
+            outcome: isSelect ? "rows" : "affected",
+            rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
+            elapsedMs: res.elapsed_ms,
+            error: null,
+          },
+          db,
+        );
         results.push({
           sql: stmt,
           status: "ok",
@@ -4240,6 +4272,7 @@ export default function App() {
           elapsedMs: res.elapsed_ms,
         });
       } catch (e) {
+        recordOutput({ sql: stmt, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, db);
         results.push({ sql: stmt, status: "error", error: String(e) });
         if (stopOnError) stopped = true;
       }
@@ -4255,7 +4288,7 @@ export default function App() {
       vars: { ok: okCount, errors: errCount, total: results.length },
       error: errCount > 0,
     });
-  }, [sessionId, selectedProfile?.database, selectedProfile?.driver, patchTab]);
+  }, [sessionId, selectedProfile?.database, selectedProfile?.driver, patchTab, recordOutput]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -4269,6 +4302,7 @@ export default function App() {
       queryError: null,
       showChart: false,
       showPivot: false,
+      showJson: false,
       batchResults: undefined,
       preview: null,
       // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
@@ -4289,11 +4323,23 @@ export default function App() {
         autoLimitSql: null,
       }));
       setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: res.rows.length, ms: res.elapsed_ms } });
+      const isSelect = res.columns.length > 0;
+      recordOutput(
+        {
+          sql,
+          outcome: isSelect ? "rows" : "affected",
+          rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
+          elapsedMs: res.elapsed_ms,
+          error: null,
+        },
+        null,
+      );
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      recordOutput({ sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, null);
     }
-  }, [sessionId, patchTab]);
+  }, [sessionId, patchTab, recordOutput]);
 
   // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
@@ -4561,8 +4607,14 @@ export default function App() {
       const elapsedMs =
         started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
       void notifyQueryOutcome("cancelled", elapsedMs);
+      if (tab.lastExecutedSql) {
+        recordOutput(
+          { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
+          tab.database,
+        );
+      }
     }
-  }, [cancelStreamForTab, patchTab, notifyQueryOutcome]);
+  }, [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput]);
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab
   // holding the snippet when there is no active tab yet.
@@ -6719,6 +6771,44 @@ export default function App() {
         run: () => toggleTheme(),
       },
     );
+    // SQL Editor の実行・整形・EXPLAIN、アクティビティ、接続切替 (#1113)。
+    // 実行はアクティブなエディタのハンドル経由でツールバーと同じ経路を通る。
+    items.push(
+      ...editorCommandItems(
+        {
+          sessionId,
+          hasEditor: !!activeTab,
+          explainTab: activeTab?.kind === "explain",
+          openConnections: openConnections.map((c) => ({
+            profileId: c.profile.id,
+            name: c.profile.name,
+            driver: c.profile.driver,
+            active: c.sessionId === sessionId,
+          })),
+          shortcuts: {
+            run: formatCombo(shortcutBindings.run),
+            runStatement: formatCombo(shortcutBindings.runStatement),
+            format: formatCombo(shortcutBindings.format),
+            explain: formatCombo(shortcutBindings.explain),
+          },
+        },
+        {
+          runAll: () => activeEditor()?.runAll(),
+          runStatement: () => activeEditor()?.runStatement(),
+          formatSql: () => activeEditor()?.formatSql(),
+          explain: () => activeEditor()?.explain(),
+          // パレットが閉じてフォーカスを戻し終えてから移す (focusExplorer と同じ理由)。
+          focusEditor: () =>
+            requestAnimationFrame(() => requestAnimationFrame(() => activeEditor()?.focus())),
+          toggleActivity: () => requestAnimationFrame(() => toggleActivityCenter()),
+          switchConnection: (profileId) => {
+            const target = openConnectionsRef.current.find((c) => c.profile.id === profileId);
+            if (target) void switchToOpenConnection(target);
+          },
+        },
+        t,
+      ),
+    );
     // Sidebar / Bottom Panel / テーブル構造への導線 (#1112)。可用条件は純モジュール側。
     items.push(
       ...workspaceCommandItems(
@@ -6856,9 +6946,11 @@ export default function App() {
     openFullView,
     toggleTheme,
     pinnedResults.length,
-    openConnections.length,
+    openConnections,
     sidebarCollapsed,
     paletteTables,
+    activeEditor,
+    switchToOpenConnection,
     toggleBottomPanel,
     toggleSidebar,
     focusExplorer,
@@ -6887,6 +6979,17 @@ export default function App() {
 
   const statusText =
     status.kind === "idle" ? "" : status.kind === "literal" ? status.text : t(status.key, status.vars);
+
+  // Bottom Panel「メッセージ」タブ (#1114) へステータスの履歴を積む。フッターは
+  // 最新 1 件しか見せないため、上書きされて消えたエラー文を後から読めるようにする。
+  // 途中経過 (取得中… など) と idle は `statusLogClass` が落とす。依存は `status`
+  // だけにして、言語切替で同じメッセージが再記録されないようにする。
+  useEffect(() => {
+    const text =
+      status.kind === "idle" ? "" : status.kind === "literal" ? status.text : t(status.key, status.vars);
+    const cls = statusLogClass(status, text);
+    if (cls) pushMessage(cls.severity, text, cls.dedupeKey);
+  }, [status]);
 
   const statusHintKey = useMemo(() => {
     if (status.kind === "idle" || !status.error) return null;
@@ -6938,7 +7041,7 @@ export default function App() {
     const maximized = layoutMode === "result" && isFocused && tab != null;
     const editorFocused = layoutMode === "editor" && isFocused && tab != null;
     // 結果領域が「どの軽量パネルを表示しているか」の判別子 (#788)。下の結果側
-    // 条件分岐 (explain → batch → chart → pivot → preview → grid) と同順で一致させ、
+    // 条件分岐 (explain → batch → chart → pivot → json → preview → grid) と同順で一致させ、
     // これを AnimatePresence の key にすることで、パネルの種類が変わるとき (例:
     // グリッド ⇔ EXPLAIN) だけ控えめなクロスフェードを添える。table ⇔ query の
     // ように両者とも "grid" のままなら key は不変なので、重い ResultGrid を
@@ -6955,9 +7058,11 @@ export default function App() {
             ? "chart"
             : tab.showPivot && tab.result && !tab.streaming
               ? "pivot"
-              : tab.preview
-                ? "preview"
-                : "grid";
+              : tab.showJson && tab.result && !tab.streaming
+                ? "json"
+                : tab.preview
+                  ? "preview"
+                  : "grid";
     return (
       <Flex
         key={pane.id}
@@ -7203,6 +7308,20 @@ export default function App() {
                       ResultGrid を余計に再マウントしない。reduced-motion は
                       ルートの MotionConfig で自動抑制。initial={false} で
                       ペイン初回描画時のフェードインは抑える。 */}
+                  {/* 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を
+                      専用の EXPLAIN タブで開く (エディタの EXPLAIN と同じ経路)。 */}
+                  <ResultExplainContext.Provider
+                    value={
+                      sessionId &&
+                      tab.kind !== "explain" &&
+                      !tab.batchResults &&
+                      !tab.streaming &&
+                      (tab.result?.columns.length ?? 0) > 0 &&
+                      tab.lastExecutedSql.trim().length > 0
+                        ? () => explainForTab(tab, tab.lastExecutedSql)
+                        : null
+                    }
+                  >
                   <AnimatePresence mode="wait" initial={false}>
                     <motion.div
                       key={contentMode}
@@ -7238,6 +7357,13 @@ export default function App() {
                     <ChartView
                       result={tab.result}
                       sourceSql={tab.lastExecutedSql}
+                      onChangeView={(v) => setResultView(tab.id, v)}
+                    />
+                  ) : tab.showJson && tab.result && !tab.streaming ? (
+                    <ResultJsonView
+                      result={tab.result}
+                      database={tab.database ?? selectedProfile?.database ?? null}
+                      table={tab.table ?? null}
                       onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (
@@ -7489,6 +7615,7 @@ export default function App() {
                   )}
                     </motion.div>
                   </AnimatePresence>
+                  </ResultExplainContext.Provider>
                 </Suspense>
                   </Box>
                 </Box>
@@ -7560,7 +7687,13 @@ export default function App() {
   // だけを見るので、「state は advisor のままだが対象 DB が無い」状態が表に出ない。
   const activeBottomPanelTab = resolveBottomPanelTab(bottomPanelTab, bottomPanelCtx);
   const bottomPanelLabel = (tab: BottomPanelTab) =>
-    tab === "advisor"
+    tab === "output"
+      ? t("outputTitle")
+      : tab === "messages"
+        ? t("messagesTitle")
+        : tab === "activity"
+          ? t("activityCenterTitle")
+          : tab === "advisor"
       ? t("advisorTitle")
       : tab === "inspector"
         ? t("inspectorTitle")
@@ -7592,7 +7725,10 @@ export default function App() {
       <AccentWash connectionKey={sessionId} connection={titleBarConnection} />
       {/* 起動スプラッシュ (#619)。ブート完了でアンマウントしフェードアウトする。 */}
       <AnimatePresence>{!booted && <SplashScreen />}</AnimatePresence>
-      <TitleBar connection={titleBarConnection} />
+      <TitleBar
+        connection={titleBarConnection}
+        onOpenActivityPanel={() => setBottomPanelTab("activity")}
+      />
       <Grid
         templateColumns={
           sidebarCollapsed || (narrow && narrowSidebarOpen)
@@ -8044,7 +8180,16 @@ export default function App() {
                 onClose={() => setBottomPanelTab(null)}
               >
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-                  {activeBottomPanelTab === "health" ? (
+                  {activeBottomPanelTab === "output" ? (
+                    // ログ系 3 タブ (#1114) は接続に依存しないので sessionId の
+                    // ガードより前で描く。出力の SQL は新しいタブで開き、今の
+                    // エディタを上書きしない (履歴の「新しいタブで開く」と同じ)。
+                    <OutputPanel onOpenSql={handleOpenHistoryInNewTab} />
+                  ) : activeBottomPanelTab === "messages" ? (
+                    <MessagesPanel />
+                  ) : activeBottomPanelTab === "activity" ? (
+                    <ActivityLogPanel />
+                  ) : activeBottomPanelTab === "health" ? (
                     // 接続横断のヘルスダッシュボード (#1068)。未接続プロファイルへは
                     // 自動で接続せず、行の「接続」は通常の handleConnect を通す。
                     <ConnectionHealthPanel
@@ -8625,6 +8770,20 @@ export default function App() {
                   </Tooltip>
                 </>
               )}
+              {/* フッターは最新 1 件だけ。過去のメッセージは Bottom Panel の
+                  「メッセージ」タブで読み返せる (#1114)。 */}
+              <IconButton
+                type="button"
+                variant="ghost"
+                size="sm"
+                flexShrink="0"
+                color="currentColor"
+                title={t("statusOpenMessages")}
+                aria-label={t("statusOpenMessages")}
+                onClick={() => setBottomPanelTab("messages")}
+              >
+                <Icon name="list" size={ICON_SIZES.sm} />
+              </IconButton>
               {isDismissible && (
                 <Tooltip label={t("statusDismiss")}>
                 <chakra.button
@@ -9066,6 +9225,10 @@ export default function App() {
               disabled: !sessionId,
               title: !sessionId ? t("appToolsNeedsSession") : undefined,
             },
+            // ログ系のボトムパネル (#1114)。接続に関係なく開ける。
+            { label: t("outputTitle"), onSelect: () => toggleBottomPanel("output") },
+            { label: t("messagesTitle"), onSelect: () => toggleBottomPanel("messages") },
+            { label: t("activityCenterTitle"), onSelect: () => toggleBottomPanel("activity") },
             {
               label: t("appProcesses"),
               onSelect: () => toggleBottomPanel("processes"),

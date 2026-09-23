@@ -289,6 +289,8 @@ export function DataSearchModal({
 
   return (
     <Modal
+      onSubmit={handleStart}
+      submitDisabled={scanning || finished || !canStart}
       width="680px"
       onClose={onClose}
       closeOnInteractOutside={!scanning}
@@ -571,22 +573,20 @@ export function DataSearchModal({
       </ModalBody>
 
       <ModalFooter>
+        {!scanning && finished && (
+          <Button type="button" variant="secondary" onClick={handleReset}>
+            {t("dataSearchNewSearch")}
+          </Button>
+        )}
         <div style={{ flex: 1 }} />
         {scanning ? (
           <Button type="button" variant="secondary" onClick={handleCancel}>
             {t("dataSearchCancel")}
           </Button>
         ) : (
-          <>
-            {finished && (
-              <Button type="button" variant="secondary" onClick={handleReset}>
-                {t("dataSearchNewSearch")}
-              </Button>
-            )}
-            <Button type="button" variant="secondary" onClick={onClose}>
-              {t("dataSearchClose")}
-            </Button>
-          </>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            {t("dataSearchClose")}
+          </Button>
         )}
         {!finished && (
           <LoadingButton

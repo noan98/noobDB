@@ -274,7 +274,9 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   }, [combined, targetSessionId, targetProfile, sandbox, tables, allowDelete, sandboxSessionId, confirm, confirmTyped, t, loadAll]);
 
   return (
-    <Modal width="720px" onClose={onClose} closeOnInteractOutside={!applying} closeOnEscape={!applying}>
+    <Modal
+      // no-submit: 本番への変更適用。差分の確認を飛ばしてキーで適用させない
+      width="720px" onClose={onClose} closeOnInteractOutside={!applying} closeOnEscape={!applying}>
       <ModalHeader onClose={onClose} closeLabel={t("sandboxReviewClose")} closeDisabled={applying}>
         {t("sandboxReviewTitle", { name: sandbox.name })}
       </ModalHeader>
@@ -502,10 +504,6 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         )}
       </ModalBody>
       <ModalFooter>
-        <div style={{ flex: 1 }} />
-        <Button type="button" variant="secondary" onClick={onClose} disabled={applying}>
-          {t("sandboxReviewClose")}
-        </Button>
         <Button type="button" onClick={loadAll} disabled={loading || applying}>
           {t("sandboxReviewRefresh")}
         </Button>
@@ -516,6 +514,10 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         >
           {t("sandboxReviewGenerate")}
         </LoadingButton>
+        <div style={{ flex: 1 }} />
+        <Button type="button" variant="secondary" onClick={onClose} disabled={applying}>
+          {t("sandboxReviewClose")}
+        </Button>
         <LoadingButton
           pressable
           variant="primary"

@@ -13,6 +13,7 @@ import {
   severityRole,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
+import { CodePreview } from "./modalForm";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -237,20 +238,7 @@ export function AdvisorPanel({
                     )}
                     {f.fix_ddl && (
                       <Box marginTop="2">
-                        <chakra.pre
-                          margin={0}
-                          padding="6px 8px"
-                          fontSize="var(--text-xs)"
-                          fontFamily="var(--font-mono)"
-                          background="var(--bg-muted)"
-                          border="1px solid var(--border-subtle, var(--border))"
-                          borderRadius="var(--radius-sm)"
-                          overflowX="auto"
-                          whiteSpace="pre-wrap"
-                          wordBreak="break-all"
-                        >
-                          {f.fix_ddl}
-                        </chakra.pre>
+                        <CodePreview wrap>{f.fix_ddl}</CodePreview>
                         <Flex gap="2" marginTop="1.5">
                           <Button
                             type="button"

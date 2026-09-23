@@ -17,6 +17,8 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip } from "./Tooltip";
+import { FieldError } from "./modalForm";
+import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { transitions, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import {
@@ -238,9 +240,9 @@ function PasswordInput({
       </Box>
       {revealError && (
         // クリック後に非同期で現れるため、支援技術へ通知する (role="alert")。
-        <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
+        <FieldError display="block" mt="1">
           {revealError}
-        </Text>
+        </FieldError>
       )}
       {revealed !== null && (
         <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
@@ -784,6 +786,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       gap="3"
       p="4"
       overflowY="auto"
+      // モーダルと同じく Cmd/Ctrl+Enter で主アクション (保存) を実行する (#1114)。
+      onKeyDown={(e) => {
+        if (saving || testing) return;
+        if (!isModalSubmitKey(pickModalKeys(e))) return;
+        e.preventDefault();
+        void handleSave();
+      }}
     >
       <Heading gridColumn="span 2">
         {initial?.id ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}
@@ -862,9 +871,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 }}
               />
               {portError && (
-                <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
+                <FieldError display="block" mt="1">
                   {portError}
-                </Text>
+                </FieldError>
               )}
             </Box>
           </Box>
@@ -1104,9 +1113,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     }}
                   />
                   {sshPortError && (
-                    <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
+                    <FieldError display="block" mt="1">
                       {sshPortError}
-                    </Text>
+                    </FieldError>
                   )}
                 </Box>
               </Box>
@@ -1199,9 +1208,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                           }}
                         />
                         {sshJumpPortError && (
-                          <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
+                          <FieldError display="block" mt="1">
                             {sshJumpPortError}
-                          </Text>
+                          </FieldError>
                         )}
                       </Box>
                     </Box>
@@ -1307,13 +1316,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         {error && <ResultBanner key="test-error" tone="danger">{error}</ResultBanner>}
       </AnimatePresence>
 
-      <Flex gridColumn="span 2" gap="2" justify="flex-end">
-        <Button type="button" variant="secondary" onClick={onCancel} disabled={saving || testing}>
-          {t("formCancel")}
-        </Button>
+      {/* フッター配置はモーダルの通常パターン (#1114) と同じ: 補助操作 (接続テスト)
+          を左、spacer を挟んで右端にキャンセル → 主アクション (保存)。 */}
+      <Flex gridColumn="span 2" gap="2" align="center">
         <LoadingButton type="button" loading={testing} onClick={handleTest} disabled={saving}>
           {testing ? t("formTesting") : t("formTest")}
         </LoadingButton>
+        <Box flex="1" />
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={saving || testing}>
+          {t("formCancel")}
+        </Button>
         <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave} disabled={testing}>
           {t("formSave")}
         </LoadingButton>

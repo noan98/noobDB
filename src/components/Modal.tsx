@@ -1,10 +1,11 @@
 import { chakra, Dialog, Portal } from "@chakra-ui/react";
 import { motion } from "motion/react";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
 import { transitions, variants } from "../motion";
 import { Button } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 
 /**
  * Chakra の `Dialog` (ポータル + バックドロップ +
@@ -49,6 +50,14 @@ interface ModalProps {
   closeOnEscape?: boolean;
   /** 開いたときにフォーカスする要素を返す (例: キャンセルボタン)。 */
   initialFocusEl?: () => HTMLElement | null;
+  /**
+   * 主アクション (フッター右端の primary ボタンと同じ処理)。渡すと
+   * **Cmd/Ctrl+Enter** でどのフィールドからでも実行できる (#1114、`modalKeys.ts`)。
+   * 破壊的な確認ダイアログには渡さない (`designTokens.test.ts` が免除リストで管理)。
+   */
+  onSubmit?: () => void;
+  /** 主アクションのボタンが無効なときは true (キーボードからも実行しない)。 */
+  submitDisabled?: boolean;
   children: ReactNode;
 }
 
@@ -59,8 +68,18 @@ export function Modal({
   closeOnInteractOutside = true,
   closeOnEscape = true,
   initialFocusEl,
+  onSubmit,
+  submitDisabled = false,
   children,
 }: ModalProps) {
+  const onContentKeyDown = onSubmit
+    ? (e: KeyboardEvent<HTMLDivElement>) => {
+        if (submitDisabled) return;
+        if (!isModalSubmitKey(pickModalKeys(e))) return;
+        e.preventDefault();
+        onSubmit();
+      }
+    : undefined;
   return (
     <Dialog.Root
       open={open}
@@ -104,6 +123,7 @@ export function Modal({
             <MotionContent
               {...variants.dialog}
               transition={transitions.enter}
+              onKeyDown={onContentKeyDown}
               css={{
                 display: "flex",
                 flexDirection: "column",
@@ -204,10 +224,19 @@ type ModalFooterProps = ComponentProps<typeof Dialog.Footer>;
  * 1. 通常の操作 — 右端に主アクション (primary)、その左にキャンセル (secondary)。
  *    左側の補助アクションとの間は spacer (`<div style={{ flex: 1 }} />`) で空ける。
  *    例: ExportModal / RowInsertModal / RenameTableDialog。
- * 2. 破壊的・不可逆な操作 (安全側優先) — 実行を**左**に非強調 (secondary)
- *    で置き、spacer を挟んで**右端にキャンセルを primary + 初期フォーカス**で置く。
- *    HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
- *    例: DangerousQueryDialog / ConfirmDialog (tone: danger・warning)。
+ * 2. 破壊的・不可逆な操作 (安全側優先) — 実行を**左**に非強調 (secondary /
+ *    dangerOutline) で置き、spacer を挟んで**右端にキャンセルを primary + 初期
+ *    フォーカス**で置く。HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に
+ *    優位にしない。例: DangerousQueryDialog / ConfirmDialog (tone: danger・warning) /
+ *    HostKeyMismatchDialog。
+ *
+ * どちらのパターンでも**閉じる / キャンセルは spacer より右**に来る (#1114 で、
+ * キャンセルが左端・主アクションが右端に離れていたモーダルを揃えた)。
+ * フッターに solid の `danger` ボタンは置かない (破壊的操作は左の dangerOutline)。
+ * いずれも `designTokens.test.ts` の「モーダルのフッター配置」が検査する。
+ *
+ * キーボード: 通常の操作では `Modal` に `onSubmit` を渡し、Cmd/Ctrl+Enter で主
+ * アクションを実行できるようにする。Esc は常に閉じる。
  */
 export function ModalFooter({ children, ...rest }: ModalFooterProps) {
   return (

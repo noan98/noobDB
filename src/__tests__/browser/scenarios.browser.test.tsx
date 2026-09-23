@@ -12,6 +12,8 @@ import {
   type ChannelLike,
 } from "./tauriMock";
 import type { CellValue, Column, ConnectionProfile, TableColumnInfo } from "../../api/tauri";
+import { __resetOutputLog } from "../../outputLog";
+import { __resetMessageLog } from "../../messageLog";
 
 // シナリオテスト (#564) — App 全体を実ブラウザにマウントし、ユーザ操作の主要
 // フローを再現する。Phase 1 (画面スモーク) / Phase 2 (ビジュアル回帰) が
@@ -475,5 +477,129 @@ describe("シナリオ: 接続ツリーのカラム展開 (実ブラウザ)", ()
     // もう一度 Enter で折り畳まれる。
     await userEvent.keyboard("{Enter}");
     await expect.element(screen.getByRole("treeitem", { name: "qty" })).not.toBeInTheDocument();
+  });
+});
+
+describe("シナリオ: SQL Editor / Result Grid の操作体系 (#1113, 実ブラウザ)", () => {
+  it("エディタの右クリックで実行 → JSON ビュー切替 → パレットから EXPLAIN / アクティビティを開ける", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    // 1) SQL Editor の右クリックメニュー → 「クエリを実行」で再実行される。
+    const sqlCalls = () =>
+      invocationsOf("run_query_stream").map((a) => String((a as { sql?: unknown }).sql ?? ""));
+    const before = sqlCalls().length;
+    const content = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLElement>(".cm-content");
+      if (!el) throw new Error("editor not mounted");
+      return el;
+    }, { timeout: 5000 });
+    await page.elementLocator(content).click({ button: "right" });
+    await screen
+      .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+      .click();
+    await vi.waitFor(() => expect(sqlCalls().length).toBeGreaterThan(before), { timeout: 5000 });
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    // 2) 結果の表示切替 (Data / JSON)。JSON ビューはコピー導線と行数を持つ。
+    await screen.getByRole("radio", { name: t("resultViewJson") }).click();
+    await expect.element(screen.getByRole("button", { name: t("resultJsonCopy") })).toBeVisible();
+    await expect.element(screen.getByText(t("resultJsonRows", { rows: 2 }), { exact: true })).toBeVisible();
+    await screen.getByRole("radio", { name: t("gridViewLabel") }).click();
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    // 3) Command Palette → 「実行計画を表示」で EXPLAIN が走る (キーボードだけで完結)。
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await userEvent.keyboard(t("cmdkExplainQuery"));
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => {
+      expect(sqlCalls().some((sql) => sql.startsWith("EXPLAIN FORMAT=JSON "))).toBe(true);
+    }, { timeout: 5000 });
+    // 実行後にパレットは閉じる (退場アニメーションが終わるまで待ってから開き直す)。
+    await expect
+      .element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") }))
+      .not.toBeInTheDocument();
+
+    // 4) Command Palette → 「アクティビティを開閉」でベルのパネルが開く。
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await userEvent.keyboard(t("cmdkToggleActivity"));
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(screen.getByRole("dialog", { name: t("activityCenterTitle") }))
+      .toBeVisible();
+  });
+});
+
+describe("シナリオ: Bottom Panel のログ系タブ (#1114, 実ブラウザ)", () => {
+  // 出力 / メッセージはモジュール単位の (セッション内) ストアなので、前のシナリオの
+  // 実行結果が残らないよう空から始める。
+  beforeEach(() => {
+    __resetOutputLog();
+    __resetMessageLog();
+  });
+
+  it("実行結果が出力タブに積まれ、メッセージ / アクティビティとタブで行き来できる", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    // 1) Command Palette → 「出力 (実行ログ)」でボトムパネルの出力タブが開く。
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await userEvent.keyboard(t("cmdkOutput"));
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(screen.getByRole("tab", { name: t("outputTitle") }))
+      .toHaveAttribute("aria-selected", "true");
+    // テーブルを開いたときの SELECT が結末 (2 行) 付きで記録されている。
+    const outputList = screen.getByRole("list", { name: t("outputListAria") });
+    await expect.element(outputList).toBeVisible();
+    await expect
+      .element(outputList.getByText(t("outputSummaryRows", { rows: 2, ms: 5 })).first())
+      .toBeVisible();
+
+    // 2) 行を展開すると「新しいタブで開く」が出る (キーボード操作できるボタン)。
+    await outputList.getByRole("button", { expanded: false }).first().click();
+    await expect.element(screen.getByRole("button", { name: t("outputOpenInEditor") })).toBeVisible();
+
+    // 3) 矢印キーでメッセージタブへ。ステータスバーに出た完了メッセージが残っている。
+    await screen.getByRole("tab", { name: t("outputTitle") }).click();
+    await userEvent.keyboard("{ArrowRight}");
+    await expect
+      .element(screen.getByRole("tab", { name: t("messagesTitle") }))
+      .toHaveAttribute("aria-selected", "true");
+    const messages = screen.getByRole("list", { name: t("messagesListAria") });
+    await expect
+      .element(messages.getByText(t("statusStreamingDone", { rows: 2, ms: 5 })))
+      .toBeVisible();
+
+    // 4) アクティビティタブも同じ骨格 (フィルタ + クリア) で開ける。
+    await screen.getByRole("tab", { name: t("activityCenterTitle") }).click();
+    await expect
+      .element(screen.getByRole("tab", { name: t("activityCenterTitle") }))
+      .toHaveAttribute("aria-selected", "true");
+    await expect
+      .element(screen.getByRole("group", { name: t("activityFilterAria") }))
+      .toBeVisible();
+
+    // 5) Esc (タブバー上) でパネルを閉じる。
+    await screen.getByRole("tab", { name: t("activityCenterTitle") }).click();
+    await userEvent.keyboard("{Escape}");
+    await expect
+      .element(screen.getByRole("tab", { name: t("activityCenterTitle") }))
+      .not.toBeInTheDocument();
+
+    // 6) ステータスバーの「メッセージ履歴を表示」からもメッセージタブへ辿れる。
+    await screen.getByRole("button", { name: t("statusOpenMessages") }).click();
+    await expect
+      .element(screen.getByRole("tab", { name: t("messagesTitle") }))
+      .toHaveAttribute("aria-selected", "true");
   });
 });

@@ -77,6 +77,7 @@ export function DangerousQueryDialog({
 
   return (
     <Modal
+      // no-submit: 危険クエリの確認。実行は明示的なクリック / フォーカス移動に限る
       width="520px"
       onClose={onCancel}
       initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}

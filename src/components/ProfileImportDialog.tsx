@@ -42,7 +42,9 @@ export function ProfileImportDialog({ onConfirm, onCancel }: Props) {
   ];
 
   return (
-    <Modal width="480px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
+    <Modal
+      // no-submit: 既存プロファイルを上書きしうる取り込みの確認。キャンセルが既定
+      width="480px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
       <ModalHeader onClose={onCancel} closeLabel={t("confirmDefaultCancel")}>
         {t("profileImportTitle")}
       </ModalHeader>

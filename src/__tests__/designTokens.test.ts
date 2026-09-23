@@ -352,6 +352,136 @@ describe("フォーム / モーダルの共通プリミティブ", () => {
   });
 });
 
+describe("フォーム / パネルの共通プリミティブ (#1114 でモーダル外へ拡大)", () => {
+  const isComponent = (path: string) => /^\.\.\/components\/\w+\.tsx$/.test(path) || path === "../App.tsx";
+  /** 行が (JSDoc / 行) コメントかどうか。ルールの説明文で名前を挙げるのは違反ではない。 */
+  const isCommentLine = (line: string) => /^\s*(?:\/\/|\*|\/\*|\{\/\*)/.test(line);
+
+  function scan(pattern: RegExp, fileFilter: (path: string) => boolean, allowLine: (line: string) => boolean) {
+    const out: string[] = [];
+    for (const [path, content] of sources) {
+      if (!fileFilter(path)) continue;
+      content.split("\n").forEach((line, i) => {
+        if (isCommentLine(line) || allowLine(line)) return;
+        if (pattern.test(line)) out.push(`${toDisplayPath(path)}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    return out;
+  }
+
+  it("SQL / 生成コードのプレビューはモーダル外 (パネル・確認文) でも CodePreview を使う", () => {
+    // #1114 時点で UsersPanel (4 箇所)・AdvisorPanel・FlightRecorderPanel が、地の色・
+    // 角丸・余白の違う手書き <pre> を持っていた (AdvisorPanel は padding を px 直値)。
+    // 例外は「生成した SQL ではなく値そのものを見せるビューア」だけ。
+    const VALUE_VIEWERS = new Set([
+      "../components/CellValueViewer.tsx", // セル値 (JSON / テキスト) の閲覧・編集
+      "../components/RowInspector.tsx", // 行のセル値
+      "../components/ExplainViewer.tsx", // 実行計画の生テキスト
+      "../components/updatePrompt.tsx", // リリースノート本文
+      "../components/LocalTablesPanel.tsx", // 一覧行の SQL 抜粋 (3 行で切る要約表示)
+      "../components/modalForm.tsx", // CodePreview 自身の定義元 (JSDoc での言及)
+    ]);
+    const offenders = findViolations(
+      /<chakra\.pre|\bas="pre"/,
+      () => true,
+      (path) => isComponent(path) && !VALUE_VIEWERS.has(path),
+    );
+    expect(
+      offenders,
+      "SQL / 生成コードの表示は modalForm.tsx の <CodePreview> を使う。値そのものを見せる " +
+        "ビューアを新設する場合だけ、このテストの VALUE_VIEWERS に理由付きで足す。",
+    ).toEqual([]);
+  });
+
+  it('エラー表示の role="alert" を手書きしない (FieldError / ErrorNote を使う)', () => {
+    // 同じ「入力が拒否された理由」が画面ごとに別の文字サイズ・色・余白で出ていた
+    // (ConnectionForm のポート / SSH ポート、WhereUsedPanel の入力エラー等)。
+    // 例外は結果グリッドのセル近傍エラー (modalForm.tsx の方針どおりセル内に出す)。
+    const offenders = scan(
+      /role="alert"/,
+      (path) => isComponent(path) && path !== "../components/ResultGrid.tsx" && path !== "../components/modalForm.tsx",
+      (line) => /<(?:ErrorNote|FieldError)\b/.test(line),
+    );
+    expect(
+      offenders,
+      'フィールドのエラーは <FieldError> (role="alert" 込み)、操作を止める持続的エラーは ' +
+        '<ErrorNote role="alert"> を使う (modalForm.tsx)。',
+    ).toEqual([]);
+  });
+});
+
+describe("モーダルのフッター配置とキーボード (#1114)", () => {
+  /** `<ModalFooter>` … `</ModalFooter>` の中身をすべて取り出す。 */
+  function footers(): { path: string; body: string }[] {
+    const out: { path: string; body: string }[] = [];
+    for (const [path, content] of sources) {
+      const re = /<ModalFooter[\s>][\s\S]*?<\/ModalFooter>/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content))) out.push({ path: toDisplayPath(path), body: m[0] });
+    }
+    return out;
+  }
+  const SPACER = /flex:\s*1\s*\}|flex="1"|flex=\{1\}/;
+
+  it("スキャン範囲の健全性: 主要なモーダルのフッターを実際に読めている", () => {
+    const paths = new Set(footers().map((f) => f.path));
+    expect(paths.size).toBeGreaterThan(25);
+    expect(paths).toContain("src/components/ConfirmDialog.tsx");
+    expect(paths).toContain("src/components/ExportModal.tsx");
+  });
+
+  it("フッターには spacer があり、閉じる / キャンセルは spacer より右に置く", () => {
+    // 通常パターン: 補助 → spacer → キャンセル → 主アクション。
+    // 破壊的パターン: 実行 (非強調) → spacer → キャンセル (primary)。
+    // どちらでもキャンセルは spacer の右。#1114 時点で 7 つのモーダルがキャンセルを
+    // 左端に置き、主アクションと画面の両端に離れていた。
+    const offenders: string[] = [];
+    for (const { path, body } of footers()) {
+      const spacer = body.search(SPACER);
+      if (spacer < 0) {
+        offenders.push(`${path}: spacer が無い`);
+        continue;
+      }
+      const cancel = body.search(/onClick=\{(?:onClose|onCancel|handleClose)\}/);
+      if (cancel >= 0 && cancel < spacer) offenders.push(`${path}: 閉じる / キャンセルが spacer より左`);
+    }
+    expect(offenders, "Modal.tsx の ModalFooter の JSDoc にある 2 パターンに従う。").toEqual([]);
+  });
+
+  it("フッターに solid の danger ボタンを置かない (破壊的操作は左の dangerOutline)", () => {
+    const offenders = footers()
+      .filter(({ body }) => /variant="danger"/.test(body))
+      .map(({ path }) => path);
+    expect(
+      offenders,
+      "破壊的な実行は dangerOutline で左に置き、右端のキャンセルを primary + 初期フォーカスにする。",
+    ).toEqual([]);
+  });
+
+  it("Modal は主アクションを onSubmit で渡す (Cmd/Ctrl+Enter)。渡さないなら理由を書く", () => {
+    // キーボードでの確定手段がモーダルごとにバラバラだった (単一入力欄だけ Enter)。
+    // 確定操作が無い閲覧画面・破壊的な確認は `// no-submit: 理由` を開始タグに書く。
+    const offenders: string[] = [];
+    for (const [path, content] of sources) {
+      const re = /<Modal[\s>]/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content))) {
+        const rest = content.slice(m.index);
+        const next = rest.search(/\n\s*</);
+        const tag = next >= 0 ? rest.slice(0, next) : rest;
+        if (/onSubmit=/.test(tag) || /\/\/ no-submit: \S/.test(tag)) continue;
+        const line = content.slice(0, m.index).split("\n").length;
+        offenders.push(`${toDisplayPath(path)}:${line}`);
+      }
+    }
+    expect(
+      offenders,
+      "<Modal onSubmit={主アクション} submitDisabled={無効条件}> を渡すか、開始タグに " +
+        "`// no-submit: 理由` を書く (破壊的な確認・閲覧のみの画面など)。",
+    ).toEqual([]);
+  });
+});
+
 describe("共通コンポーネントの迂回", () => {
   it("アイコンは Icon.tsx 以外から @tabler/icons-react を直接 import しない", () => {
     const offenders = findViolations(

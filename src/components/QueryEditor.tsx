@@ -19,7 +19,13 @@ import {
   highlightActiveLine,
   type DecorationSet,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  selectAll,
+  toggleComment,
+} from "@codemirror/commands";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { sql, type SQLNamespace } from "@codemirror/lang-sql";
 import { forceLinting, lintGutter, linter } from "@codemirror/lint";
@@ -52,6 +58,10 @@ import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { copyToClipboard } from "./clipboard";
+import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
+import { formatCombo as formatComboLabel } from "../shortcutKeys";
+import type { ShortcutId } from "../shortcuts";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
 import { Switch } from "./Switch";
@@ -144,6 +154,8 @@ export interface EditorKeyBindings {
   runStatement: string;
   preview: string;
   format: string;
+  /** EXPLAIN (#1113)。未指定なら既定へフォールバック。 */
+  explain: string;
 }
 
 export interface SchemaTable {
@@ -267,6 +279,16 @@ export interface QueryEditorHandle {
   setText: (text: string) => void;
   /** キーボードフォーカスをエディタへ移す (ペインフォーカス循環 #681)。 */
   focus: () => void;
+  /**
+   * コマンドパレット (#1113) からの実行系アクション。いずれもツールバー /
+   * ショートカットと同じ経路 (選択 → 無ければ全文、など) を通るだけで、新しい
+   * 実行経路は持たない。対象テキストが空なら何もしない。
+   */
+  runAll: () => void;
+  /** 選択があれば選択を、無ければカーソル位置の 1 文を実行する (Mod+Alt+Enter と同じ)。 */
+  runStatement: () => void;
+  formatSql: () => void;
+  explain: () => void;
 }
 
 function formatEditorContent(
@@ -455,17 +477,20 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const runStatementCombo = editorBindings?.runStatement ?? DEFAULT_SHORTCUT_COMBOS.runStatement;
   const previewCombo = editorBindings?.preview ?? DEFAULT_SHORTCUT_COMBOS.preview;
   const formatCombo = editorBindings?.format ?? DEFAULT_SHORTCUT_COMBOS.format;
+  const explainCombo = editorBindings?.explain ?? DEFAULT_SHORTCUT_COMBOS.explain;
   const bindingsRef = useRef<EditorKeyBindings>({
     run: runCombo,
     runStatement: runStatementCombo,
     preview: previewCombo,
     format: formatCombo,
+    explain: explainCombo,
   });
   bindingsRef.current = {
     run: runCombo,
     runStatement: runStatementCombo,
     preview: previewCombo,
     format: formatCombo,
+    explain: explainCombo,
   };
   const [hasContent, setHasContent] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
@@ -473,6 +498,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   // 間だけ非 null。位置決め・外側クリック/Escape での閉じ・キーボード操作は共有の
   // `ContextMenu` に任せる。
   const [overflowAnchor, setOverflowAnchor] = useState<{ x: number; y: number } | null>(null);
+  // エディタ本文の右クリックメニュー (#1113)。開いた瞬間の選択状態で項目を決める
+  // (メニュー表示中に選択は変わらない) ため、アンカーと一緒に文脈も保持する。
+  const [editorMenu, setEditorMenu] = useState<
+    { x: number; y: number; hasSelection: boolean; hasContent: boolean } | null
+  >(null);
   // 影響行数プリフライト (#737) の対象テキスト。updateListener が「選択 or 全文」を
   // 反映し、値が実際に変わったときだけ更新する (カーソル移動だけでは再計算しない)。
   const [preflightSql, setPreflightSql] = useState("");
@@ -487,6 +517,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onRunRef.current = onRun;
   const onPreviewRef = useRef(onPreview);
   onPreviewRef.current = onPreview;
+  const onExplainRef = useRef(onExplain);
+  onExplainRef.current = onExplain;
   const onPreflightImpactRef = useRef(onPreflightImpact);
   onPreflightImpactRef.current = onPreflightImpact;
   const driverRef = useRef(driver);
@@ -579,6 +611,18 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       key: comboToCodeMirror(bindings.format),
       preventDefault: true,
       run: (v: EditorView) => formatEditorContent(v, driverRef.current, onFormatErrorRef.current),
+    },
+    {
+      // EXPLAIN (#1113)。EXPLAIN タブ (onExplain 無し) では素通しする。
+      key: comboToCodeMirror(bindings.explain),
+      preventDefault: true,
+      run: (v: EditorView) => {
+        const explain = onExplainRef.current;
+        if (!explain) return false;
+        const text = selectionOrAllText(v);
+        if (text !== null) explain(text);
+        return true;
+      },
     },
   ];
 
@@ -763,7 +807,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       ),
     });
     // bindingsRef は毎レンダ更新されるため、コンボ文字列の変化を依存に使う。
-  }, [runCombo, runStatementCombo, previewCombo, formatCombo]);
+  }, [runCombo, runStatementCombo, previewCombo, formatCombo, explainCombo]);
 
   // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
   // WHERE から COUNT を組み立ててデバウンス付きで裏実行する。設定オフ・未接続では
@@ -810,6 +854,31 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     focus: () => {
       viewRef.current?.focus();
     },
+    // 以下はパレットから呼ばれる。ハンドラは ref 経由で最新の props を読む
+    // (useImperativeHandle は初回だけ構築するため)。
+    runAll: () => {
+      const view = viewRef.current;
+      if (!view) return;
+      const text = selectionOrAllText(view);
+      if (text === null) return;
+      resetHistoryNav();
+      onRunRef.current(text);
+    },
+    runStatement: () => {
+      const view = viewRef.current;
+      if (view) runStatementUnderCursor(view);
+    },
+    formatSql: () => {
+      const view = viewRef.current;
+      if (view) formatEditorContent(view, driverRef.current, onFormatErrorRef.current);
+    },
+    explain: () => {
+      const view = viewRef.current;
+      const explain = onExplainRef.current;
+      if (!view || !explain) return;
+      const text = selectionOrAllText(view);
+      if (text !== null) explain(text);
+    },
   }), []);
 
   const currentText = (): string | null => {
@@ -854,6 +923,116 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     if (!onBroadcast) return;
     const text = currentText();
     if (text !== null) onBroadcast(text);
+  };
+
+  // 右クリックメニュー (#1113) の各アクション。実行系はツールバー / ショートカットと
+  // 同じ関数を呼ぶだけで、新しい実行経路は作らない。
+  const runEditorMenuAction = (action: SqlEditorMenuAction) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const sel = view.state.selection.main;
+    const selected = sel.empty ? "" : view.state.sliceDoc(sel.from, sel.to);
+    switch (action) {
+      case "run":
+        runSelectionOrAll();
+        break;
+      case "runStatement":
+        runStatementUnderCursor(view);
+        break;
+      case "preview":
+        previewSelectionOrAll();
+        break;
+      case "explain":
+        explainSelectionOrAll();
+        break;
+      case "format":
+        formatSelectionOrAll();
+        break;
+      case "toggleComment":
+        toggleComment(view);
+        break;
+      case "copy":
+        if (selected) void copyToClipboard(selected);
+        break;
+      case "cut":
+        if (selected) {
+          void copyToClipboard(selected).then((ok) => {
+            // コピーに失敗したら本文を消さない (クリップボードにも残らず失われるため)。
+            const v = viewRef.current;
+            if (!ok || !v) return;
+            const cur = v.state.selection.main;
+            if (cur.from === sel.from && cur.to === sel.to) {
+              v.dispatch({ changes: { from: sel.from, to: sel.to, insert: "" } });
+            }
+          });
+        }
+        break;
+      case "selectAll":
+        selectAll(view);
+        break;
+      case "saveSnippet":
+        saveSelectionOrAll();
+        return; // スニペット保存フォームへフォーカスを渡すのでエディタへ戻さない。
+    }
+    view.focus();
+  };
+
+  const openEditorMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    const view = viewRef.current;
+    if (!view) return;
+    e.preventDefault();
+    const sel = view.state.selection.main;
+    let x = e.clientX;
+    let y = e.clientY;
+    // キーボード (ContextMenu キー / Shift+F10) 由来は座標が 0,0 で届くので、
+    // キャレット位置へ開く (#1113: キーボードだけでメニューへ到達できるように)。
+    if (x === 0 && y === 0) {
+      const caret = view.coordsAtPos(sel.head);
+      if (caret) {
+        x = caret.left;
+        y = caret.bottom;
+      }
+    }
+    setEditorMenu({
+      x,
+      y,
+      hasSelection: !sel.empty && view.state.sliceDoc(sel.from, sel.to).trim().length > 0,
+      hasContent: view.state.doc.toString().trim().length > 0,
+    });
+  };
+
+  const editorMenuItems = (): ContextMenuEntry[] => {
+    if (!editorMenu) return [];
+    const combos: Partial<Record<ShortcutId, string>> = {
+      run: runCombo,
+      runStatement: runStatementCombo,
+      preview: previewCombo,
+      format: formatCombo,
+      explain: explainCombo,
+    };
+    return sqlEditorMenuSpec({
+      hasSelection: editorMenu.hasSelection,
+      hasContent: editorMenu.hasContent,
+      disabled: !!disabled,
+      explainMode: !!explainMode,
+      canPreview: !!onPreview,
+      canExplain: !!onExplain,
+      canSaveSnippet: !!onSaveSnippet,
+    }).map((spec) => {
+      if ("separator" in spec) return spec;
+      const combo = spec.shortcutId ? combos[spec.shortcutId] : undefined;
+      return {
+        label: t(spec.labelKey),
+        icon: spec.icon,
+        shortcut: combo ? formatComboLabel(combo) : undefined,
+        disabled: spec.disabled,
+        title: spec.disabled && spec.disabledReasonKey ? t(spec.disabledReasonKey) : undefined,
+        onSelect: () => {
+          setEditorMenu(null);
+          runEditorMenuAction(spec.action);
+        },
+      };
+    });
   };
 
   const runLabel = explainMode
@@ -1141,7 +1320,21 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           onClose={() => setOverflowAnchor(null)}
         />
       )}
-      <Box ref={hostRef} flex="1" overflow="auto" bg="app.surface" />
+      <Box
+        ref={hostRef}
+        flex="1"
+        overflow="auto"
+        bg="app.surface"
+        onContextMenu={openEditorMenu}
+      />
+      {editorMenu && (
+        <ContextMenu
+          x={editorMenu.x}
+          y={editorMenu.y}
+          items={editorMenuItems()}
+          onClose={() => setEditorMenu(null)}
+        />
+      )}
       <AnimatePresence>
         {showBuilder && sessionId && !explainMode && (
           <QueryBuilder

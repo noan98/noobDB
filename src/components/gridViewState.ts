@@ -43,6 +43,21 @@ export interface PersistedGridView {
 }
 
 /**
+ * 結果シェイプ (database + table + 列名の並び) から列サイジングキーを作る。
+ * `ResultGrid` の列幅・ビュー状態の永続化キーの根で、JSON ビュー (#1113) が同じ
+ * 結果のマスク上書き (#1069) を引くのにも使う。列が無ければ undefined。
+ */
+export function resultShapeSizingKey(
+  columns: readonly { name: string }[] | null | undefined,
+  database: string | null | undefined,
+  table: string | null | undefined,
+): string | undefined {
+  if (!columns || columns.length === 0) return undefined;
+  const signature = JSON.stringify(columns.map((c) => c.name));
+  return `noobdb.colsizing.v1::${database ?? ""}::${table ?? ""}::${signature}`;
+}
+
+/**
  * 列サイジングキー (`noobdb.colsizing.v1::…`) からビュー状態キーを導出する。
  * `colStateKeyFrom` / `footerStateKeyFrom` と同じ発想で、同一のテーブル署名
  * (database+table+列構成) を引き継ぐ。プレビューペイン (キー無し) では undefined に

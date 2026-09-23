@@ -194,7 +194,8 @@ App Shell は `Sidebar / Main Workspace / Bottom Panel` の 3 領域 (#1112)。
 | 性質 | 置き場所 | 実体 |
 |---|---|---|
 | 一時的な操作 (作成・変更・確認・エクスポート設定) | **Modal** | `Modal.tsx` |
-| SQL を書きながら参照する情報 (アドバイザ・インスペクタ・プロセス監視・テーブル構造) | **Bottom Panel** | `BottomPanel.tsx` + `bottomPanelTabs.ts` |
+| SQL を書きながら参照する情報 (実行ログ・メッセージ・アドバイザ・インスペクタ・プロセス監視・テーブル構造) | **Bottom Panel** | `BottomPanel.tsx` + `bottomPanelTabs.ts` |
+| 選んだ 1 行 / 1 セルの詳細 (ワークスペースの右端) | **Right Inspector** | `RowInspector.tsx` (結果グリッドの Alt+Enter / 右クリック) |
 | それ自体が作業対象で広い面積が要るもの (ER 図・スキーマ比較・ユーザ管理・結果比較) | **全画面サーフェス** | `App.tsx` の三項チェーン + `workspaceView.ts` |
 
 Modal は「開いて、決めて、閉じる」ものに限る。**閉じるまで作業が進まない**性質が
@@ -204,6 +205,30 @@ Modal は「開いて、決めて、閉じる」ものに限る。**閉じるま
 消える**。これは「その画面自体が作業対象」のときだけ許される。参照しながら手を動かす
 情報は必ず Bottom Panel へ置く (#1112 でアドバイザ・インスペクタ・プロセス監視の
 3 つを全画面から移したのがこの線引きの由来)。
+
+#### Bottom Panel のタブは用途で 3 グループに分ける (#1114)
+
+タブバーはグループの切れ目に区切り線を引く (`BOTTOM_PANEL_TAB_GROUP` /
+`bottomPanelGroupStarts`)。新しいタブはまずどのグループかを決め、配列の該当位置に置く。
+
+| グループ | タブ | 中身 | 開ける条件 |
+|---|---|---|---|
+| **ログ** — このセッションで何が起きたか | 出力 (`output`) | 実行した文ごとの結末 (件数・所要時間・エラー本文)。`outputLog.ts` | 常に (未接続でも) |
+| | メッセージ (`messages`) | ステータスバーに出た文の履歴 (フッターは最新 1 件しか見せない)。`messageLog.ts` | 常に |
+| | アクティビティ (`activity`) | トーストの履歴 (ベルのポップオーバーと同じストア)。`activityLog.ts` | 常に |
+| **診断** — DB / サーバの状態と改善提案 | アドバイザ・インスペクタ・プロセス・接続ヘルス | | 接続中 (ヘルスは背景接続でも可) |
+| **参照** — 選んだオブジェクトの詳細 | 影響分析・構造・列を探索 | | 接続中 + 対象が決まっている |
+
+ログの 3 つは「何を記録しているか」で分ける。**同じ出来事を二重に積まない**:
+実行結果の詳細は出力、ステータスバーの文言はメッセージ、トーストはアクティビティ。
+ログ系のタブは `SeverityLog.tsx` の `LogToolbar` (左: フィルタチップ / 右: クリア) と
+一覧行を共有し、3 タブで操作位置を揃える。記録は実行経路が結果を受け取った地点で
+`pushOutput` / ステータス変化の effect で `pushMessage` を呼ぶだけで、**DB アクセスの
+経路には触れない**。
+
+ワークスペースの右端には **Right Inspector** (`RowInspector`) だけを置く。1 行 / 1 セル
+の詳細は選択に追従して変わるので、横に並べて見比べられる右端が向く。一覧や時系列の
+情報は Bottom Panel へ置き、右端に新しいパネルを増やさない。
 
 Bottom Panel に足すときは:
 
@@ -216,8 +241,9 @@ Bottom Panel に足すときは:
 上下の配分は `WorkspaceSplit` が既存の `Splitter direction="column"` へ委ねる。
 リサイズ・キーボード操作・永続化・クランプを個別に実装しない。
 
-> **ガード**: `bottomPanelTabs.test.ts` (解決規則 + `App.tsx` への結線) /
-> `bottomPanelShell.test.tsx` (タブの WAI-ARIA 構造・閉じる導線) /
+> **ガード**: `bottomPanelTabs.test.ts` (解決規則・用途グループ + `App.tsx` への結線) /
+> `bottomPanelShell.test.tsx` (タブの WAI-ARIA 構造・閉じる導線・区切り線) /
+> `bottomPanelLogs.test.ts` / `bottomPanelLogPanels.test.tsx` (ログ系の記録規則と描画) /
 > `workspaceView.test.ts` (全画面サーフェスの排他集合)
 
 ### 7.2 フォームの共通プリミティブ (`components/modalForm.tsx`)
@@ -238,9 +264,19 @@ Bottom Panel に足すときは:
 フィールドラベルではないので本文サイズのまま) と、設定画面の行
 (`SettingsView` の `SettingsNumberRow` 等が `& label` でまとめてスタイルを持つ)。
 
-> **ガード**: `designTokens.test.ts` の「フォーム / モーダルの共通プリミティブ」
+**モーダルの外 (接続フォーム・スニペットフォーム・Bottom Panel の各パネル) でも同じ
+プリミティブを使う** (#1114)。SQL / 生成コードの表示は `CodePreview`、入力エラーは
+`FieldError`、操作を止めるエラーは `ErrorNote role="alert"`。`role="alert"` を
+`<Text>` / `<chakra.div>` に手書きしない。例外は値そのものを見せるビューア
+(`CellValueViewer` / `RowInspector` / `ExplainViewer` など) の `<pre>` と、結果グリッド
+のセル近傍エラー (セル内に出して文脈を保つ)。
+
+> **ガード**: `designTokens.test.ts` の「フォーム / モーダルの共通プリミティブ」と
+> 「フォーム / パネルの共通プリミティブ」
 > — `*Modal.tsx` / `*Dialog.tsx` 内の手書き `<pre>` と、
-> `color="app.textSecondary"` を持つ手書き `<label>` を禁止する
+> `color="app.textSecondary"` を持つ手書き `<label>` を禁止する。加えて全コンポーネント
+> で SQL プレビューの手書き `<pre>` (値ビューアは許可リスト) と、`ErrorNote` /
+> `FieldError` 以外への `role="alert"` の手書きを禁止する
 
 ### 7.3 意味色は「面の上」と「ベタ塗りの上」を取り違えない
 
@@ -257,11 +293,43 @@ Bottom Panel に足すときは:
 > **ガード**: `designTokens.test.ts` の「ベタ塗り専用の前景色」
 > — `app.*Fg` の近傍に対応する `app.*Bg` が無ければ fail
 
-### 7.4 モーダルのフッター配置
+### 7.4 モーダル・フォームのボタン配置 (Primary / Secondary / Destructive)
 
 `Modal.tsx` の `ModalFooter` の JSDoc にある 2 パターン (通常 / 破壊的) のどちらかに
-必ず従う。破壊的操作では実行を左に非強調で置き、右端のキャンセルを primary +
-初期フォーカスにする。
+必ず従う。
+
+| パターン | 並び (左 → 右) |
+|---|---|
+| 通常 | 補助操作 (エディタへ送る・接続テスト・更新 …) → **spacer** → キャンセル / 閉じる (secondary) → 主アクション (primary) |
+| 破壊的 | 実行 (`dangerOutline`、非強調) → **spacer** → キャンセル (primary + 初期フォーカス) |
+
+- どちらでも**キャンセル / 閉じるは spacer の右**。主アクションと離して左端に置かない。
+- フッターに solid の `variant="danger"` を置かない (破壊的な実行を視覚的に優位にしない)。
+- モーダルでないフォーム (`ConnectionForm` / `SnippetForm` / タスクの編集フォーム) も
+  同じ並びにする。
+
+> **ガード**: `designTokens.test.ts` の「モーダルのフッター配置とキーボード」
+> — spacer の有無・キャンセルの位置・solid danger を全 `<ModalFooter>` で検査する
+
+### 7.5 キーボード操作 (#1114)
+
+| キー | 動作 | 実装 |
+|---|---|---|
+| **Cmd/Ctrl+Enter** | 主アクションを実行 (どのフィールドにフォーカスがあっても) | `<Modal onSubmit submitDisabled>` / フォームのルートで `isModalSubmitKey` (`components/modalKeys.ts`) |
+| **Esc** | 実行せずに閉じる | `Modal` (Chakra Dialog) / Bottom Panel のタブバー |
+| Enter | 単一入力欄のモーダルでは確定 (従来どおり) | 各モーダル |
+
+- SQL エディタの「実行」と同じキーなので、エディタ → モーダル → フォームで覚え直しが
+  要らない。IME 変換中・リピート・内側で処理済み (`defaultPrevented`) のキーでは実行しない。
+- 主アクションが無効 (`disabled`) なときは `submitDisabled` でキーボードからも実行しない。
+  **ボタンの `disabled` と同じ条件を渡す。**
+- **破壊的な確認・閲覧だけの画面には `onSubmit` を渡さない。** その場合は開始タグに
+  `// no-submit: 理由` を書く (誤爆で DROP / 上書きが走らないように)。
+- チートシート / ヘルプには `shortcuts.ts` の表示専用項目 (`shortcutModalSubmit*`) で出る。
+
+> **ガード**: `designTokens.test.ts` の「Modal は主アクションを onSubmit で渡す」
+> (全 `<Modal>` 開始タグに `onSubmit=` か `// no-submit:` を要求) /
+> `modalKeyboard.test.tsx` (判定と `Modal` の結線)
 
 ---
 

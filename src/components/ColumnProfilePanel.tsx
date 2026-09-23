@@ -23,6 +23,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Select } from "./ui";
+import { ErrorNote } from "./modalForm";
 
 /**
  * 列データプロファイル (「列を探索」、#974) のボトムパネル。
@@ -228,9 +229,7 @@ export function ColumnProfilePanel({
       </Flex>
 
       {columnsError && (
-        <chakra.div role="alert" fontSize="sm" color="app.textError">
-          {t("profileLoadColumnsError", { error: columnsError })}
-        </chakra.div>
+        <ErrorNote role="alert">{t("profileLoadColumnsError", { error: columnsError })}</ErrorNote>
       )}
 
       {error && (

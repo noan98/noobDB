@@ -194,7 +194,7 @@ export function MigrationExportModal({
   };
 
   return (
-    <Modal width="560px" onClose={onClose} closeOnInteractOutside={!isSaving} closeOnEscape={!isSaving}>
+    <Modal onSubmit={handleSave} submitDisabled={isSaving || !downReady} width="560px" onClose={onClose} closeOnInteractOutside={!isSaving} closeOnEscape={!isSaving}>
       <ModalHeader onClose={onClose} closeLabel={t("schemaCompareClose")} closeDisabled={isSaving}>
         {t("schemaCompareMigrationTitle")}
       </ModalHeader>

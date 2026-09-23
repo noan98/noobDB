@@ -1,9 +1,10 @@
+import { useRef } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { ConnectionProfile } from "../api/tauri";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview } from "./modalForm";
-import { Button, PressableButton } from "./ui";
+import { Button } from "./ui";
 import { parseHostKeyFingerprints } from "./hostKeyFingerprints";
 
 // Re-exported for existing importers (tests, App.tsx pins the approved key).
@@ -33,9 +34,12 @@ export function HostKeyMismatchDialog({ profile, message, busy, onReTrust, onCan
   const t = useT();
   const fps = parseHostKeyFingerprints(message);
   const sshEndpoint = profile.ssh ? `${profile.ssh.host}:${profile.ssh.port}` : "";
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   return (
-    <Modal width="520px" onClose={onCancel}>
+    <Modal
+      // no-submit: ホスト鍵の再信頼は破壊的操作。キャンセルが既定
+      width="520px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
       <ModalHeader onClose={onCancel} closeLabel={t("hostKeyMismatchCancel")}>
         {t("hostKeyMismatchTitle")}
       </ModalHeader>
@@ -62,18 +66,17 @@ export function HostKeyMismatchDialog({ profile, message, busy, onReTrust, onCan
         </Flex>
       </ModalBody>
       <ModalFooter>
+        {/* ホスト鍵の再信頼は中間者攻撃を受け入れうる破壊的・不可逆な操作なので、
+            ModalFooter の「破壊的」パターン (#1114) に従う: 実行は左に非強調、
+            右端のキャンセルを primary + 初期フォーカスにして stray Enter で
+            再信頼が走らないようにする。 */}
+        <Button type="button" variant="dangerOutline" disabled={busy} onClick={onReTrust}>
+          {busy ? t("hostKeyMismatchReTrusting") : t("hostKeyMismatchReTrust")}
+        </Button>
         <div style={{ flex: 1 }} />
-        <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
+        <Button ref={cancelRef} type="button" variant="primary" onClick={onCancel} disabled={busy}>
           {t("hostKeyMismatchCancel")}
         </Button>
-        <PressableButton
-          type="button"
-          variant="danger"
-          disabled={busy}
-          onClick={onReTrust}
-        >
-          {busy ? t("hostKeyMismatchReTrusting") : t("hostKeyMismatchReTrust")}
-        </PressableButton>
       </ModalFooter>
     </Modal>
   );

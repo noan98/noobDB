@@ -100,7 +100,7 @@ export function RowInsertModal({
   };
 
   return (
-    <Modal width="560px" onClose={onCancel} initialFocusEl={() => firstRef.current}>
+    <Modal onSubmit={submit} width="560px" onClose={onCancel} initialFocusEl={() => firstRef.current}>
       <ModalHeader onClose={onCancel} closeLabel={t("createTableClose")}>
         {t("rowOpsInsertTitle", { table })}
       </ModalHeader>

@@ -70,6 +70,31 @@ export function workspaceCommandItems(
   });
 
   // --- Bottom Panel ---
+  // ログ系 (#1114) は接続に依存しないので常に出す。
+  items.push({
+    id: "nav:output",
+    group: "navigation",
+    label: t("cmdkOutput"),
+    icon: "query",
+    keywords: "output log executed statements rows affected errors 出力 実行ログ 実行結果 影響行数 エラー",
+    run: () => actions.toggleBottomPanel("output"),
+  });
+  items.push({
+    id: "nav:messages",
+    group: "navigation",
+    label: t("cmdkMessages"),
+    icon: "list",
+    keywords: "messages status bar history errors メッセージ ステータス 履歴 エラー",
+    run: () => actions.toggleBottomPanel("messages"),
+  });
+  items.push({
+    id: "nav:activityPanel",
+    group: "navigation",
+    label: t("cmdkActivityPanel"),
+    icon: "bell",
+    keywords: "activity notifications toast panel アクティビティ 通知 トースト パネル",
+    run: () => actions.toggleBottomPanel("activity"),
+  });
   // アドバイザは DB コンテキストが要る (ツールメニューと同じガード)。DB が解決
   // できないと database="" で診断が失敗するため導線ごと出さない。
   if (ctx.sessionId && ctx.database) {

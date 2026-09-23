@@ -4,6 +4,7 @@ import { api, UndoConflict, WriteCaptureSummary } from "../api/tauri";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview } from "./modalForm";
 import { Button, PressableButton } from "./ui";
 import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
@@ -114,20 +115,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
       const message = (
         <Box>
           <chakra.p m={0}>{t("flightRecorderUndoConfirmBody", { table: entry.table })}</chakra.p>
-          <chakra.pre
-            m={0}
-            mt="2"
-            p="2"
-            fontSize="xs"
-            fontFamily="mono"
-            whiteSpace="pre-wrap"
-            maxHeight="160px"
-            overflowY="auto"
-            bg="app.surfaceMuted"
-            borderRadius="sm"
-          >
+          <CodePreview wrap mt="2" maxH="160px">
             {preview.statements.join(";\n") || t("flightRecorderNoStatements")}
-          </chakra.pre>
+          </CodePreview>
           {preview.conflicts.length > 0 && (
             <>
               <chakra.p m={0} mt="2" color="app.textError" fontWeight={600}>
@@ -182,7 +172,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
   };
 
   return (
-    <Modal onClose={onClose} width="820px">
+    <Modal
+      // no-submit: 閲覧画面 (閉じるのみ)。Undo は行ごとの確認ダイアログを通す
+      onClose={onClose} width="820px">
       <ModalHeader onClose={onClose} closeLabel={t("flightRecorderClose")}>
         {t("flightRecorderTitle")}
       </ModalHeader>

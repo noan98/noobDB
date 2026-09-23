@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import appSource from "../App.tsx?raw";
 import {
   BOTTOM_PANEL_TABS,
+  BOTTOM_PANEL_TAB_GROUP,
   availableBottomPanelTabs,
+  bottomPanelGroupStarts,
   nextBottomPanelTab,
   resolveBottomPanelTab,
   toggleBottomPanelTab,
@@ -30,17 +32,21 @@ const connected = {
   openConnectionCount: 1,
 };
 
+/** 接続に依存せず常に開けるログ系タブ (#1114)。 */
+const LOG_TABS = ["output", "messages", "activity"];
+
 describe("availableBottomPanelTabs", () => {
-  it("未接続ではどのタブも開けない", () => {
+  it("未接続ではログ系 (出力 / メッセージ / アクティビティ) だけ開ける (#1114)", () => {
+    // 接続失敗のメッセージこそ未接続のときに読みたいので、ログ系は接続を要求しない。
     expect(
       availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 0 }),
-    ).toEqual([]);
+    ).toEqual(LOG_TABS);
   });
 
-  it("アクティブ接続が無くても背景接続があれば接続ヘルスだけ開ける (#1068)", () => {
+  it("アクティブ接続が無くても背景接続があれば接続ヘルスも開ける (#1068)", () => {
     expect(
       availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 2 }),
-    ).toEqual(["health"]);
+    ).toEqual([...LOG_TABS, "health"]);
   });
 
   it("接続していて対象が揃えば全タブを開ける (定義順を保つ)", () => {
@@ -51,7 +57,7 @@ describe("availableBottomPanelTabs", () => {
     for (const db of [null, undefined, ""]) {
       expect(
         availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db, openConnectionCount: 1 }),
-      ).toEqual(["inspector", "processes", "whereUsed", "health"]);
+      ).toEqual([...LOG_TABS, "inspector", "processes", "health", "whereUsed"]);
     }
   });
 
@@ -123,6 +129,36 @@ describe("resolveBottomPanelTab", () => {
   });
 });
 
+describe("用途グループ (#1114)", () => {
+  it("Output / Messages / Activity / Advisor の用途で並ぶ (ログ → 診断 → 参照)", () => {
+    expect(BOTTOM_PANEL_TABS.slice(0, 4)).toEqual(["output", "messages", "activity", "advisor"]);
+    // 同じグループのタブは連続して並ぶ (グループが飛び飛びにならない)。
+    const order = BOTTOM_PANEL_TABS.map((tab) => BOTTOM_PANEL_TAB_GROUP[tab]);
+    const collapsed = order.filter((g, i) => i === 0 || g !== order[i - 1]);
+    expect(collapsed).toEqual(["log", "diagnostics", "reference"]);
+  });
+
+  it("区切り線はグループが変わるタブの手前にだけ引く", () => {
+    expect([...bottomPanelGroupStarts(BOTTOM_PANEL_TABS)]).toEqual(["advisor", "whereUsed"]);
+  });
+
+  it("開けないタブが抜けた並びでも、実際に隣り合うタブ同士で判定する", () => {
+    // 未接続: ログ系 + 接続ヘルス → 区切りは health の手前の 1 本。
+    expect([...bottomPanelGroupStarts([...LOG_TABS, "health"] as BottomPanelTab[])]).toEqual(["health"]);
+    // ログ系だけ → 区切りなし。
+    expect(bottomPanelGroupStarts(LOG_TABS as BottomPanelTab[]).size).toBe(0);
+    expect(bottomPanelGroupStarts([]).size).toBe(0);
+  });
+
+  it("ログ系は切断しても閉じない", () => {
+    for (const tab of LOG_TABS as BottomPanelTab[]) {
+      expect(
+        resolveBottomPanelTab(tab, { sessionId: null, advisorDatabase: null, openConnectionCount: 0 }),
+      ).toBe(tab);
+    }
+  });
+});
+
 describe("toggleBottomPanelTab", () => {
   it("閉じている状態から選ぶと開く", () => {
     expect(toggleBottomPanelTab(null, "advisor")).toBe("advisor");
@@ -146,8 +182,8 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "structure", 1)).toBe("advisor");
-    expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("structure");
+    expect(nextBottomPanelTab(tabs, "profile", 1)).toBe("output");
+    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("profile");
   });
 
   it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {
@@ -190,6 +226,19 @@ describe("App.tsx の結線 (#1112)", () => {
     expect(appSource).toContain('activeBottomPanelTab === "structure"');
     expect(appSource).toContain("onOpenStructure={handleOpenStructure}");
     expect(appSource).toContain("onOpenData={handleOpenTable}");
+  });
+
+  it("ログ系 3 タブ (#1114) を接続ガードより前で描き、記録元へ結線している", () => {
+    const outputIdx = appSource.indexOf('activeBottomPanelTab === "output"');
+    const guardIdx = appSource.indexOf("!sessionId ? null : activeBottomPanelTab");
+    expect(outputIdx).toBeGreaterThan(0);
+    expect(guardIdx).toBeGreaterThan(outputIdx);
+    expect(appSource).toContain("<OutputPanel onOpenSql={handleOpenHistoryInNewTab} />");
+    expect(appSource).toContain("<MessagesPanel />");
+    expect(appSource).toContain("<ActivityLogPanel />");
+    // 出力は実行経路の結果受信地点で、メッセージはステータスの変化で積む。
+    expect(appSource).toMatch(/recordOutput\(/);
+    expect(appSource).toMatch(/pushMessage\(cls\.severity, text, cls\.dedupeKey\)/);
   });
 
   it("ボトムパネルへ移した 3 つは全画面サーフェスとして残っていない", () => {

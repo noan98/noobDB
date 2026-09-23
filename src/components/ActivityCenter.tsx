@@ -1,9 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Box, chakra, VisuallyHidden } from "@chakra-ui/react";
+import { Box, chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { CountUp } from "./CountUp";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { springs, staggerContainer, transitions, variants } from "../motion";
@@ -12,18 +11,15 @@ import { useFocusTrap, useReturnFocus } from "../keyboardNav";
 import {
   ACTIVITY_LIMIT,
   ACTIVITY_SEVERITIES,
-  ACTIVITY_SEVERITY_ROLE,
   clearActivity,
   countBySeverity,
   countUnread,
   filterActivity,
   markActivityRead,
-  relativeActivityTime,
   useActivityLog,
-  type ActivityEntry,
   type ActivitySeverity,
 } from "../activityLog";
-import type { I18nKey } from "../i18n";
+import { FilterChip, SEVERITY_LABEL, SeverityLogRow } from "./SeverityLog";
 
 /**
  * アプリ内アクティビティ (通知センター、#912)。
@@ -66,137 +62,19 @@ const STAGGER_CAP = 20;
 // motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
 // 素通しする (`WelcomeView` / `ProfileCardGrid` と同じパターン)。
 const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
-const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
 const MotionBadge = chakra(motion.span, {}, {
   forwardProps: ["variants", "initial", "animate", "exit", "transition"],
 });
 
-/** 重大度ごとのアイコン (色は意味色トークン)。 */
-const SEVERITY_ICON: Record<ActivitySeverity, "check" | "warning" | "help"> = {
-  success: "check",
-  warning: "warning",
-  error: "warning",
-  info: "help",
-};
-
-/** 重大度ラベルの i18n キー (フィルタチップと読み上げに使う)。 */
-const SEVERITY_LABEL: Record<ActivitySeverity, I18nKey> = {
-  success: "activitySeveritySuccess",
-  warning: "activitySeverityWarning",
-  error: "activitySeverityError",
-  info: "activitySeverityInfo",
-};
-
-/** 相対時刻を i18n 文字列へ。1 分未満は「たった今」。 */
-function formatRelative(t: ReturnType<typeof useT>, at: number, now: number): string {
-  const rel = relativeActivityTime(at, now);
-  switch (rel.unit) {
-    case "minutes":
-      return t("activityTimeMinutes", { n: rel.value });
-    case "hours":
-      return t("activityTimeHours", { n: rel.value });
-    case "days":
-      return t("activityTimeDays", { n: rel.value });
-    case "now":
-    default:
-      return t("activityTimeNow");
-  }
-}
-
-function ActivityRow({
-  entry,
-  now,
-  animated,
+function ActivityPanel({
+  anchor,
+  onClose,
+  onOpenInPanel,
 }: {
-  entry: ActivityEntry;
-  now: number;
-  /** false のときは stagger に参加させず即時表示する (#984、`STAGGER_CAP` 超過分)。 */
-  animated: boolean;
+  anchor: DOMRect;
+  onClose: () => void;
+  onOpenInPanel?: () => void;
 }) {
-  const t = useT();
-  const role = ACTIVITY_SEVERITY_ROLE[entry.severity];
-  const absolute = new Date(entry.at).toLocaleString();
-  return (
-    <MotionLi
-      variants={animated ? variants.staggerItem : undefined}
-      display="flex"
-      alignItems="flex-start"
-      gap="2"
-      px="2.5"
-      py="2"
-      borderBottom="1px solid"
-      borderColor="app.borderSubtle"
-      _last={{ borderBottom: "none" }}
-    >
-      <chakra.span
-        display="inline-flex"
-        flexShrink={0}
-        mt="0.5"
-        color={semanticColorToken(role, "text")}
-        aria-hidden
-      >
-        <Icon name={SEVERITY_ICON[entry.severity]} size={ICON_SIZES.sm} />
-      </chakra.span>
-      <Box flex="1" minW={0} display="flex" flexDirection="column" gap="0.5">
-        <chakra.span fontSize="var(--text-sm)" color="app.text" lineHeight="1.4" wordBreak="break-word">
-          {entry.message}
-        </chakra.span>
-        <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
-          {/* 重大度は色だけに頼らずテキストでも示す (CB 配慮)。絶対時刻は
-              ツールチップではなく title 相当の情報として同じ行に持たせず、
-              相対時刻の隣に読み上げ用の文言としてだけ添える。 */}
-          <VisuallyHidden>{t(SEVERITY_LABEL[entry.severity])}: </VisuallyHidden>
-          {formatRelative(t, entry.at, now)}
-          <VisuallyHidden> ({absolute})</VisuallyHidden>
-        </chakra.span>
-      </Box>
-    </MotionLi>
-  );
-}
-
-/** フィルタチップ 1 個 (「すべて」+ 重大度ごと)。 */
-function FilterChip({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <chakra.button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      display="inline-flex"
-      alignItems="center"
-      gap="1"
-      px="2"
-      py="0.5"
-      fontSize="var(--text-xs)"
-      fontWeight={600}
-      borderRadius="pill"
-      border="1px solid"
-      borderColor={active ? "app.accent" : "app.border"}
-      bg={active ? "app.hover" : "transparent"}
-      color={active ? "app.text" : "app.textMuted"}
-      cursor="pointer"
-      whiteSpace="nowrap"
-      _hover={{ bg: "app.hover", color: "app.text" }}
-    >
-      {label}
-      <chakra.span color="app.textMuted" fontWeight={500} textStyle="numeric">
-        {/* 件数の変化はカウントアップで遷移させる (#1024)。 */}
-        <CountUp value={count} />
-      </chakra.span>
-    </chakra.button>
-  );
-}
-
-function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => void }) {
   const t = useT();
   const { entries } = useActivityLog();
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -292,6 +170,29 @@ function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
           <chakra.h2 flex="1" minW={0} fontSize="var(--text-sm)" fontWeight={600} color="app.text">
             {t("activityCenterTitle")}
           </chakra.h2>
+          {onOpenInPanel && (
+            // 開きっぱなしで読みたいときは Bottom Panel の「アクティビティ」タブへ
+            // (#1114)。ポップオーバーは一瞥用、パネルは作業しながら参照する用。
+            <chakra.button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenInPanel();
+              }}
+              fontSize="xs"
+              px="1.5"
+              py="0.5"
+              borderRadius="sm"
+              border="1px solid"
+              borderColor="app.border"
+              bg="transparent"
+              color="app.textMuted"
+              cursor="pointer"
+              _hover={{ bg: "app.hover", color: "app.text" }}
+            >
+              {t("activityOpenInPanel")}
+            </chakra.button>
+          )}
           <chakra.button
             type="button"
             onClick={clearActivity}
@@ -377,7 +278,13 @@ function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
             aria-label={t("activityListAria")}
           >
             {shown.map((e, i) => (
-              <ActivityRow key={e.id} entry={e} now={now} animated={i < STAGGER_CAP} />
+              <SeverityLogRow
+                key={e.id}
+                entry={e}
+                now={now}
+                animated={i < STAGGER_CAP}
+                time="relative"
+              />
             ))}
           </MotionUl>
         )}
@@ -399,15 +306,50 @@ function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
 }
 
 /**
+ * ベルボタン以外 (コマンドパレットの「アクティビティを開閉」、#1113) から
+ * アクティビティ一覧を開閉するための購読口。開閉状態はベル (`ActivityCenter`)
+ * 自身が持ち続け、ここは「トグルして」という要求を届けるだけ。
+ */
+const toggleRequestListeners = new Set<() => void>();
+
+/** アクティビティ一覧の開閉を要求する (マウント中のベルが処理する)。 */
+export function toggleActivityCenter(): void {
+  for (const listener of toggleRequestListeners) listener();
+}
+
+/**
  * タイトルバーに置くベルアイコン + 未読バッジ。押すとアクティビティ一覧を開き、
  * 開いた時点で既読にする (未読バッジが消える)。
  */
-export function ActivityCenter() {
+export function ActivityCenter({ onOpenInPanel }: { onOpenInPanel?: () => void } = {}) {
   const t = useT();
   const { entries, lastReadId } = useActivityLog();
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const anchorRef = useRef(anchor);
+  anchorRef.current = anchor;
   const unread = countUnread(entries, lastReadId);
   const label = unread > 0 ? t("activityOpenUnread", { count: unread }) : t("activityOpen");
+
+  const toggle = (button: HTMLElement | null) => {
+    if (anchorRef.current) {
+      setAnchor(null);
+      return;
+    }
+    if (!button) return;
+    setAnchor(button.getBoundingClientRect());
+    markActivityRead();
+  };
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+
+  useEffect(() => {
+    const listener = () => toggleRef.current(buttonRef.current);
+    toggleRequestListeners.add(listener);
+    return () => {
+      toggleRequestListeners.delete(listener);
+    };
+  }, []);
 
   return (
     <>
@@ -417,14 +359,8 @@ export function ActivityCenter() {
           aria-label={label}
           aria-haspopup="dialog"
           aria-expanded={anchor !== null}
-          onClick={(e) => {
-            if (anchor) {
-              setAnchor(null);
-              return;
-            }
-            setAnchor(e.currentTarget.getBoundingClientRect());
-            markActivityRead();
-          }}
+          ref={buttonRef}
+          onClick={(e) => toggle(e.currentTarget)}
           position="relative"
           width="38px"
           display="inline-flex"
@@ -480,7 +416,13 @@ export function ActivityCenter() {
         </chakra.button>
       </Tooltip>
       <AnimatePresence>
-        {anchor && <ActivityPanel anchor={anchor} onClose={() => setAnchor(null)} />}
+        {anchor && (
+          <ActivityPanel
+            anchor={anchor}
+            onClose={() => setAnchor(null)}
+            onOpenInPanel={onOpenInPanel}
+          />
+        )}
       </AnimatePresence>
     </>
   );

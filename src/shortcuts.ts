@@ -41,6 +41,7 @@ export type ShortcutId =
   | "runStatement"
   | "preview"
   | "format"
+  | "explain"
   | "openSettings"
   | "openHelp"
   | "toggleTheme"
@@ -94,6 +95,9 @@ export const SHORTCUT_CATEGORY_ORDER: ShortcutCategory[] = ["global", "editor", 
 export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutCommandPaletteTitle", descKey: "shortcutCommandPaletteDesc", category: "global", id: "commandPalette", scope: "global", defaultCombo: "Mod+K" },
   { keysKey: "shortcutCheatSheetTitle", descKey: "shortcutCheatSheetDesc", category: "global" },
+  // モーダル / フォーム共通の確定・中止 (#1114、判定は components/modalKeys.ts)。
+  // Modal 内でだけ効く表示専用の項目で、再割り当ては対象外。
+  { keysKey: "shortcutModalSubmitTitle", descKey: "shortcutModalSubmitDesc", category: "global" },
   { keysKey: "shortcutSidebarFilterTitle", descKey: "shortcutSidebarFilterDesc", category: "global", id: "sidebarFilter", scope: "global", defaultCombo: "Mod+P" },
   { keysKey: "shortcutObjectSearchTitle", descKey: "shortcutObjectSearchDesc", category: "global", id: "objectSearch", scope: "global", defaultCombo: "Mod+Shift+O" },
   { keysKey: "shortcutOpenSettingsTitle", descKey: "shortcutOpenSettingsDesc", category: "global", id: "openSettings", scope: "global", defaultCombo: "Mod+," },
@@ -106,6 +110,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutRunNewTabTitle", descKey: "shortcutRunNewTabDesc", category: "editor", id: "runNewTab", scope: "global", defaultCombo: "Mod+Shift+Enter" },
   { keysKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc", category: "editor", id: "preview", scope: "editor", defaultCombo: "Mod+Shift+Enter" },
   { keysKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc", category: "editor", id: "format", scope: "editor", defaultCombo: "Mod+Shift+F" },
+  { keysKey: "shortcutExplainTitle", descKey: "shortcutExplainDesc", category: "editor", id: "explain", scope: "editor", defaultCombo: "Mod+E" },
   { keysKey: "shortcutFocusEditorTitle", descKey: "shortcutFocusEditorDesc", category: "editor", id: "focusEditor", scope: "global", defaultCombo: "Mod+Shift+E" },
   { keysKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc", category: "editor" },
   { keysKey: "shortcutEditorFindTitle", descKey: "shortcutEditorFindDesc", category: "editor" },

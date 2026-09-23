@@ -96,7 +96,7 @@ export function RunRoutineModal({
   });
 
   return (
-    <Modal width="640px" onClose={onCancel} initialFocusEl={() => firstInputRef.current}>
+    <Modal onSubmit={run} submitDisabled={!canRun} width="640px" onClose={onCancel} initialFocusEl={() => firstInputRef.current}>
       <ModalHeader onClose={onCancel} closeLabel={t("runRoutineCancel")}>
         {title}
       </ModalHeader>

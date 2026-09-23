@@ -207,6 +207,8 @@ export function TestDataModal({
 
   return (
     <Modal
+      onSubmit={handleRun}
+      submitDisabled={running || !specs || !rowCountValid || insertColumns.length === 0}
       width="760px"
       onClose={onClose}
       closeOnInteractOutside={!running}

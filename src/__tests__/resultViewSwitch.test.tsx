@@ -11,7 +11,7 @@ import { t } from "../i18n";
  * `onChange` が呼ばれることを固定する。
  */
 describe("ResultViewSwitch", () => {
-  it("renders the three views as an exclusive radio group", () => {
+  it("renders the four views as an exclusive radio group", () => {
     renderWithProviders(<ResultViewSwitch value="grid" onChange={() => {}} />);
 
     expect(
@@ -22,6 +22,7 @@ describe("ResultViewSwitch", () => {
       t("gridViewLabel"),
       t("pivotShow"),
       t("chartShow"),
+      t("resultViewJson"),
     ]);
   });
 
@@ -54,14 +55,14 @@ describe("ResultViewSwitch", () => {
     const tabIndexes = screen
       .getAllByRole("radio")
       .map((r) => r.getAttribute("tabindex"));
-    expect(tabIndexes).toEqual(["-1", "0", "-1"]);
+    expect(tabIndexes).toEqual(["-1", "0", "-1", "-1"]);
   });
 
   // tabIndex の静的値だけでは `useRovingFocus` がコンテナに配線されているかまでは
   // 見えないため、実際のキー操作でフォーカスが動くことを固定する。
   it("moves focus with the arrow keys, Home and End", () => {
     renderWithProviders(<ResultViewSwitch value="grid" onChange={() => {}} />);
-    const [grid, pivot, chart] = screen.getAllByRole("radio");
+    const [grid, pivot, , json] = screen.getAllByRole("radio");
 
     grid.focus();
     fireEvent.keyDown(grid, { key: "ArrowRight" });
@@ -71,13 +72,13 @@ describe("ResultViewSwitch", () => {
     expect(document.activeElement).toBe(grid);
 
     fireEvent.keyDown(grid, { key: "End" });
-    expect(document.activeElement).toBe(chart);
+    expect(document.activeElement).toBe(json);
 
-    fireEvent.keyDown(chart, { key: "Home" });
+    fireEvent.keyDown(json, { key: "Home" });
     expect(document.activeElement).toBe(grid);
 
     // 端では巻き戻る (useRovingFocus の既定 wrap: true)。
     fireEvent.keyDown(grid, { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(chart);
+    expect(document.activeElement).toBe(json);
   });
 });
