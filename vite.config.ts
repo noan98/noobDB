@@ -31,6 +31,10 @@ export default defineConfig(async () => ({
       "**/dist/**",
       "**/src/__tests__/browser/**",
       "**/*.browser.test.tsx",
+      // scripts/ 配下のテスト (automerge の判定ロジック, #1108) は Node 標準の
+      // `node:test` で書いており、`pnpm run test:scripts` / ci.yml の
+      // `automerge gate (script tests)` ジョブが素の Node で実行する。
+      "scripts/**",
     ],
     // カバレッジ計測。
     //
