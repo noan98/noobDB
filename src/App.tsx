@@ -217,6 +217,9 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const ConnectionHealthPanel = lazy(() =>
+  import("./components/ConnectionHealthPanel").then((m) => ({ default: m.ConnectionHealthPanel })),
+);
 const UsersPanel = lazy(() =>
   import("./components/UsersPanel").then((m) => ({ default: m.UsersPanel })),
 );
@@ -6618,6 +6621,16 @@ export default function App() {
         run: () => toggleBottomPanel("advisor"),
       });
     }
+    if (openConnections.length > 0) {
+      items.push({
+        id: "nav:connectionHealth",
+        group: "navigation",
+        label: t("healthTitle"),
+        icon: "server",
+        keywords: "health ping latency version status ヘルス 稼働 レイテンシ バージョン 死活",
+        run: () => toggleBottomPanel("health"),
+      });
+    }
     if (sessionId) {
       items.push({
         id: "nav:disconnect",
@@ -6736,6 +6749,7 @@ export default function App() {
     openFullView,
     toggleTheme,
     pinnedResults.length,
+    openConnections.length,
   ]);
 
   // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
@@ -7393,6 +7407,8 @@ export default function App() {
     sessionId,
     advisorDatabase: activeTab?.database ?? selectedProfile?.database,
     profileTable: profileTarget?.table,
+    // 接続ヘルス (#1068) は接続横断なので、背景接続だけでも開ける。
+    openConnectionCount: openConnections.length,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
   // 切断やタブ切替で開けなくなったタブはここで閉じる。描画側はこの解決済みの値
@@ -7403,9 +7419,11 @@ export default function App() {
       ? t("advisorTitle")
       : tab === "inspector"
         ? t("inspectorTitle")
-        : tab === "profile"
-          ? t("profileTitle")
-          : t("processTitle");
+        : tab === "health"
+          ? t("healthTitle")
+          : tab === "profile"
+            ? t("profileTitle")
+            : t("processTitle");
 
   return (
     <Flex
@@ -7895,7 +7913,7 @@ export default function App() {
             `WorkspaceSplit` が分割そのものを作らず素通しする。 */}
         <WorkspaceSplit
           bottom={
-            activeBottomPanelTab && sessionId ? (
+            activeBottomPanelTab ? (
               <BottomPanel
                 tab={activeBottomPanelTab}
                 tabs={bottomPanelTabs}
@@ -7904,7 +7922,19 @@ export default function App() {
                 onClose={() => setBottomPanelTab(null)}
               >
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-                  {activeBottomPanelTab === "processes" ? (
+                  {activeBottomPanelTab === "health" ? (
+                    // 接続横断のヘルスダッシュボード (#1068)。未接続プロファイルへは
+                    // 自動で接続せず、行の「接続」は通常の handleConnect を通す。
+                    <ConnectionHealthPanel
+                      connections={openConnections}
+                      profiles={visibleProfiles}
+                      activeSessionId={sessionId}
+                      defaultIntervalSecs={settings.autoRefreshDefaultSecs}
+                      connectingProfileId={connectingId}
+                      onOpenProfile={(p) => void handleConnect(p)}
+                      onReconnected={clearEmergencyFor}
+                    />
+                  ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
                     <ProcessListPanel
                       sessionId={sessionId}
                       driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
@@ -8839,6 +8869,12 @@ export default function App() {
                 : selectedProfile?.driver === "sqlite"
                   ? t("appProcessesUnsupported")
                   : undefined,
+            },
+            {
+              label: t("healthTitle"),
+              onSelect: () => toggleBottomPanel("health"),
+              disabled: openConnections.length === 0,
+              title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
             },
             {
               label: t("appUsers"),

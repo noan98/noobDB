@@ -13,7 +13,13 @@ import { BOTTOM_PANEL_TABS, type BottomPanelTab } from "../components/bottomPane
  */
 
 const label = (tab: BottomPanelTab) =>
-  tab === "advisor" ? t("advisorTitle") : tab === "inspector" ? t("inspectorTitle") : t("processTitle");
+  tab === "advisor"
+    ? t("advisorTitle")
+    : tab === "inspector"
+      ? t("inspectorTitle")
+      : tab === "health"
+        ? t("healthTitle")
+        : t("processTitle");
 
 function renderShell(overrides: Partial<Parameters<typeof BottomPanel>[0]> = {}) {
   const props = {
@@ -38,6 +44,7 @@ describe("BottomPanel シェル (#1112)", () => {
       t("advisorTitle"),
       t("inspectorTitle"),
       t("processTitle"),
+      t("healthTitle"),
     ]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(tabs[1]).toHaveAttribute("aria-selected", "false");
@@ -46,7 +53,7 @@ describe("BottomPanel シェル (#1112)", () => {
   it("選択中のタブだけがタブ順に乗る (ローピング tabindex)", () => {
     renderShell({ tab: "inspector" });
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((el) => el.getAttribute("tabindex"))).toEqual(["-1", "0", "-1"]);
+    expect(tabs.map((el) => el.getAttribute("tabindex"))).toEqual(["-1", "0", "-1", "-1"]);
   });
 
   it("本体は選択中のタブに紐づく tabpanel として描かれる", () => {
@@ -78,7 +85,7 @@ describe("BottomPanel シェル (#1112)", () => {
     fireEvent.keyDown(active, { key: "Home" });
     expect(props.onSelect).toHaveBeenLastCalledWith("advisor");
     fireEvent.keyDown(active, { key: "End" });
-    expect(props.onSelect).toHaveBeenLastCalledWith("processes");
+    expect(props.onSelect).toHaveBeenLastCalledWith("health");
   });
 
   it("タブバー上の Escape でパネルを閉じる", () => {
