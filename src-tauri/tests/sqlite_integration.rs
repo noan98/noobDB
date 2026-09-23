@@ -2786,3 +2786,221 @@ async fn sqlite_profile_column_via_command_layer() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// セル値をテスト比較用の文字列へ (64bit 整数は安全整数を超えると lossless
+/// デコードで文字列になるため、Int / String の両方を同じ表記に揃える)。
+fn cell_text(v: &t::Value) -> String {
+    match v {
+        t::Value::Null => "NULL".to_string(),
+        t::Value::Int(i) => i.to_string(),
+        t::Value::UInt(u) => u.to_string(),
+        t::Value::Float(f) => f.to_string(),
+        t::Value::String(s) => s.clone(),
+        t::Value::Bool(b) => b.to_string(),
+        t::Value::Bytes(b) => b.clone(),
+    }
+}
+
+/// ファイルから新規テーブルを作成してインポート (#985)。「CSV → CREATE TABLE →
+/// 既存の import_rows 経路でロード → SELECT で検証」を常時実走の SQLite で往復
+/// させる。予約語の列名・空白入りのテーブル名・64bit 整数境界・NULL トークン・
+/// 日付 (SQLite では TEXT へ縮退) を含める。
+#[tokio::test]
+async fn sqlite_import_into_new_table_roundtrip() {
+    let db = temp_cmd_db("new_table");
+    let csv = std::env::temp_dir().join(format!("noobdb_new_table_{}.csv", std::process::id()));
+    std::fs::write(
+        &csv,
+        "id,order,price,joined,big,note\n\
+         1,a,9.99,2024-01-01,9223372036854775807,\n\
+         2,b,1.5,2024-02-29,-9223372036854775808,hello\n",
+    )
+    .expect("write csv");
+    let csv_path = csv.to_str().expect("utf8 path");
+    let db_path = db.to_str().expect("utf8 path");
+
+    let conn = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("s-new", conn, t::sqlite_options(db_path), false);
+
+    let options = serde_json::json!({
+        "format": "csv",
+        "delimiter": ",",
+        "quote": "\"",
+        "hasHeader": true,
+        "nullToken": "",
+        "encoding": "utf-8",
+    });
+    let names = ["id", "order", "price", "joined", "big", "note"];
+    let mapping = serde_json::Value::Array(
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| serde_json::json!({ "column": n, "csvIndex": i }))
+            .collect(),
+    );
+    let create = serde_json::json!([
+        { "name": "id", "type": "integer" },
+        { "name": "order", "type": "text" },
+        { "name": "price", "type": "decimal" },
+        { "name": "joined", "type": "date" },
+        { "name": "big", "type": "bigint" },
+        { "name": "note", "type": "text" },
+    ]);
+
+    // DDL プレビューは実行時と同じ生成関数 (予約語・空白もクォートされる)。
+    let ddl =
+        t::render_create_table(t::DriverKind::Sqlite, "new t", create.clone()).expect("render ddl");
+    assert!(ddl.starts_with("CREATE TABLE \"new t\" ("), "{ddl}");
+    assert!(ddl.contains("\"order\" TEXT"), "{ddl}");
+    assert!(ddl.contains("\"joined\" TEXT"), "{ddl}");
+    assert!(ddl.contains("\"big\" INTEGER"), "{ddl}");
+
+    let inserted = t::import_file_via_command(
+        &session,
+        None,
+        "new t",
+        csv_path,
+        options.clone(),
+        mapping.clone(),
+        Some(create.clone()),
+    )
+    .await
+    .expect("import setup")
+    .expect("import rows");
+    assert_eq!(inserted, 2);
+
+    let res = session
+        .conn
+        .execute(
+            "SELECT id, \"order\", price, joined, big, note, typeof(big), typeof(price) \
+             FROM \"new t\" ORDER BY id",
+            None,
+        )
+        .await
+        .expect("select");
+    let rows: Vec<Vec<String>> = res
+        .rows
+        .iter()
+        .map(|r| r.iter().map(cell_text).collect())
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                "1",
+                "a",
+                "9.99",
+                "2024-01-01",
+                "9223372036854775807",
+                "NULL",
+                "integer",
+                "real"
+            ],
+            vec![
+                "2",
+                "b",
+                "1.5",
+                "2024-02-29",
+                "-9223372036854775808",
+                "hello",
+                "integer",
+                "real"
+            ],
+        ]
+    );
+
+    // 同名で再実行すると CREATE TABLE が失敗し、既存の行には触れない。
+    let again = t::import_file_via_command(
+        &session,
+        None,
+        "new t",
+        csv_path,
+        options.clone(),
+        mapping.clone(),
+        Some(create.clone()),
+    )
+    .await;
+    assert!(again.is_err(), "creating an existing table must fail");
+    let count = session
+        .conn
+        .execute("SELECT COUNT(*) FROM \"new t\"", None)
+        .await
+        .expect("count");
+    assert!(matches!(&count.rows[0][0], t::Value::Int(2)));
+
+    // 重複列名 (大文字小文字を無視) は DDL を流す前に弾く。
+    let dup = serde_json::json!([
+        { "name": "id", "type": "integer" },
+        { "name": "ID", "type": "text" },
+    ]);
+    let dup_mapping = serde_json::json!([
+        { "column": "id", "csvIndex": 0 },
+        { "column": "ID", "csvIndex": 1 },
+    ]);
+    let err = t::import_file_via_command(
+        &session,
+        None,
+        "dup_t",
+        csv_path,
+        options.clone(),
+        dup_mapping,
+        Some(dup),
+    )
+    .await
+    .expect_err("duplicate columns must be rejected");
+    assert!(err.to_string().contains("duplicate column name"), "{err}");
+    // 作成列に無い列へのマッピングも弾く。
+    let err = t::import_file_via_command(
+        &session,
+        None,
+        "stray_t",
+        csv_path,
+        options.clone(),
+        serde_json::json!([{ "column": "nope", "csvIndex": 0 }]),
+        Some(serde_json::json!([{ "name": "id", "type": "integer" }])),
+    )
+    .await
+    .expect_err("mapping outside the new table must be rejected");
+    assert!(
+        err.to_string().contains("not part of the new table"),
+        "{err}"
+    );
+    let tables = session
+        .conn
+        .execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            None,
+        )
+        .await
+        .expect("tables");
+    let tables: Vec<String> = tables.rows.iter().map(|r| cell_text(&r[0])).collect();
+    assert_eq!(tables, vec!["new t".to_string()]);
+
+    session.conn.close().await;
+
+    // 読み取り専用セッションはバックエンドで拒否され、テーブルも作られない。
+    let conn = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("connect ro");
+    let ro = t::make_session("s-ro", conn, t::sqlite_options(db_path), true);
+    let err =
+        t::import_file_via_command(&ro, None, "ro_t", csv_path, options, mapping, Some(create))
+            .await
+            .expect_err("read-only session must reject");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let exists = ro
+        .conn
+        .execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'ro_t'",
+            None,
+        )
+        .await
+        .expect("probe");
+    assert!(matches!(&exists.rows[0][0], t::Value::Int(0)));
+    ro.conn.close().await;
+
+    let _ = std::fs::remove_file(&csv);
+    let _ = std::fs::remove_file(&db);
+}

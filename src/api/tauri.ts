@@ -1078,6 +1078,27 @@ export interface ImportOptions {
   keyColumns?: string[];
 }
 
+/**
+ * 新規テーブル作成付きインポート (#985) の列型。バックエンドの
+ * `db::create_table::NewColumnType` と 1:1 (方言ごとの型名への変換と縮退は
+ * バックエンドが行う)。
+ */
+export type NewColumnType =
+  | "integer"
+  | "bigint"
+  | "decimal"
+  | "double"
+  | "boolean"
+  | "date"
+  | "datetime"
+  | "text";
+
+/** 新規テーブルの 1 列 (#985)。 */
+export interface NewTableColumn {
+  name: string;
+  type: NewColumnType;
+}
+
 export interface ColumnMapping {
   /** Destination table column name. */
   column: string;
@@ -1939,6 +1960,11 @@ export const api = {
     options: ImportOptions;
     mapping: ColumnMapping[];
     batchSize?: number;
+    /**
+     * 指定すると、取り込み前にこの列定義で `table` を新規作成する (#985)。
+     * `mapping` の `column` はすべてここに含まれている必要がある。
+     */
+    createTable?: NewTableColumn[] | null;
   }) =>
     invoke<void>("import_csv", {
       sessionId: params.sessionId,
@@ -1949,6 +1975,7 @@ export const api = {
       options: params.options,
       mapping: params.mapping,
       batchSize: params.batchSize ?? null,
+      createTable: params.createTable ?? null,
     }),
 
   /**
@@ -1981,6 +2008,16 @@ export const api = {
    */
   transferData: (streamId: string, request: TransferRequest) =>
     invoke<void>("transfer_data", { streamId, request }),
+
+  /**
+   * 新規テーブル作成付きインポート (#985) で実行される `CREATE TABLE` を返す。
+   * 実行時と同じバックエンドの生成関数を通すので、プレビュー = 実際の DDL。
+   * 名前が空・重複列名・長さ超過などは reject される。
+   */
+  previewCreateTableDdl: (driver: DriverKind, table: string, columns: NewTableColumn[]) =>
+    invoke<string>("preview_create_table_ddl", { driver, table, columns }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "preview_create_table_ddl"),
+    ),
 
   /**
    * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を

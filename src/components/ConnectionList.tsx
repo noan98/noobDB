@@ -263,6 +263,8 @@ interface Props {
   onImportTable: (database: string, table: string) => void;
   /** テーブルを別接続へスキーマ + データごとコピーする (#986)。読み取りなので read_only でも有効。 */
   onTransferTable?: (database: string, table: string) => void;
+  /** ファイルから新規テーブルを作成してインポートする (#985)。read_only では無効化。 */
+  onImportNewTable?: (database: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
   onGenerateTestData?: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
@@ -367,6 +369,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onPickTable,
   onImportTable,
   onTransferTable,
+  onImportNewTable,
   onGenerateTestData,
   onDumpDatabase,
   onRunScript,
@@ -1147,6 +1150,16 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       items.push({
         label: t("contextMenuCreateTable"),
         onSelect: () => onCreateTable(db),
+        disabled: activeReadOnly,
+        title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+      });
+    }
+    if (onImportNewTable) {
+      // 取り込みは書き込み (CREATE TABLE + INSERT) なので read_only では無効化する
+      // (バックエンドの import_csv も read_only を拒否する)。
+      items.push({
+        label: t("contextMenuImportNewTable"),
+        onSelect: () => onImportNewTable(db),
         disabled: activeReadOnly,
         title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
       });

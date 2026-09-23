@@ -353,6 +353,50 @@ pub mod __test_api {
         crate::commands::query::run_in_transaction_inner(state, session_id, sql).await
     }
 
+    /// ファイル → 新規テーブル作成 → ロードの経路 (#985) を Tauri ランタイム無しで
+    /// 駆動する。`import_csv` と同じ検証 (read_only ガード・新規テーブル定義) を
+    /// 掛けてから同じコア (`run_import_core`) を走らせる。引数は IPC と同じ JSON
+    /// 形 (camelCase) で受け、ワイヤ形のデシリアライズも一緒に検証する。
+    /// 戻り値: `Ok(Ok(挿入行数))` / abort モードの行エラーは `Ok(Err(msg))`。
+    pub async fn import_file_via_command(
+        session: &Session,
+        database: Option<&str>,
+        table: &str,
+        path: &str,
+        options: serde_json::Value,
+        mapping: serde_json::Value,
+        create_table: Option<serde_json::Value>,
+    ) -> crate::error::Result<std::result::Result<u64, String>> {
+        let bad = |e: serde_json::Error| crate::error::AppError::InvalidInput(e.to_string());
+        let options = serde_json::from_value(options).map_err(bad)?;
+        let mapping = serde_json::from_value(mapping).map_err(bad)?;
+        let create_table = match create_table {
+            Some(v) => Some(serde_json::from_value(v).map_err(bad)?),
+            None => None,
+        };
+        crate::commands::import::import_file_for_test(
+            session,
+            database.map(str::to_string),
+            table.to_string(),
+            path.to_string(),
+            options,
+            mapping,
+            create_table,
+        )
+        .await
+    }
+
+    /// `preview_create_table_ddl` IPC と同じ DDL 生成 (#985)。
+    pub fn render_create_table(
+        driver: DriverKind,
+        table: &str,
+        columns: serde_json::Value,
+    ) -> crate::error::Result<String> {
+        let columns: Vec<crate::db::create_table::NewColumn> = serde_json::from_value(columns)
+            .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
+        crate::db::create_table::render_create_table(driver, table, &columns)
+    }
+
     /// The read-only guard the `import_csv` IPC command applies before any CSV
     /// rows reach the driver.
     pub fn ensure_import_writable(session: &Session) -> crate::error::Result<()> {
@@ -888,6 +932,7 @@ pub fn run() {
             commands::import::import_csv,
             commands::script::run_sql_script,
             commands::transfer::transfer_data,
+            commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::file::write_binary_file,
             commands::local::create_local_session,

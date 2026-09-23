@@ -1779,7 +1779,8 @@ export default function App() {
   // 同じくヘッダの「ツール」ボタン直下に出す補助ビュー (スキーマ比較 / ER 図 /
   // プロセス一覧) メニューのアンカー座標。3 ボタン → 1 ボタンへの集約。
   const [toolsMenu, setToolsMenu] = useState<{ x: number; y: number } | null>(null);
-  const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
+  // `table: null` はファイルから新規テーブルを作成するモード (#985)。
+  const [importTarget, setImportTarget] = useState<{ database: string; table: string | null } | null>(null);
   // テストデータ生成ウィザード (#602) の対象テーブル。
   const [testDataTarget, setTestDataTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
@@ -5109,6 +5110,12 @@ export default function App() {
     setTransferSource({ kind: "table", database, table });
   }, []);
 
+  // ファイルから新規テーブルを作成してインポート (#985)。DB のコンテキスト
+  // メニューから開く (対象テーブルが無いので ImportModal は作成モード固定)。
+  const handleImportNewTable = useCallback((database: string) => {
+    setImportTarget({ database, table: null });
+  }, []);
+
   // テストデータ生成ウィザード (#602) を開く。
   const handleGenerateTestData = useCallback((database: string, table: string) => {
     setTestDataTarget({ database, table });
@@ -7776,6 +7783,7 @@ export default function App() {
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
             onTransferTable={handleTransferTable}
+            onImportNewTable={handleImportNewTable}
             onGenerateTestData={handleGenerateTestData}
             onDumpDatabase={handleDumpDatabase}
             onRunScript={setScriptTarget}
@@ -8634,12 +8642,23 @@ export default function App() {
             sessionId={sessionId}
             database={importTarget.database}
             table={importTarget.table}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             initialPath={importInitialPath ?? undefined}
             onClose={() => {
               setImportTarget(null);
               setImportInitialPath(null);
             }}
-            onImported={() => handleImported(importTarget.database, importTarget.table)}
+            onImported={(table, created) => {
+              if (created) {
+                // 新しいテーブルが増えたのでツリーとスキーマキャッシュを更新し、
+                // 取り込んだテーブルを開く (#985)。
+                invalidateSchemaCache(importTarget.database);
+                connectionListRef.current?.refreshSchema();
+                handleOpenTable(importTarget.database, table);
+              } else {
+                handleImported(importTarget.database, table);
+              }
+            }}
           />
         )}
       </AnimatePresence>

@@ -1237,3 +1237,126 @@ async fn duckdb_table_definition_returns_native_ddl() {
     conn.close().await;
     remove_db_files(&path);
 }
+
+/// ファイルから新規テーブルを作成してインポート (#985) の DuckDB 版。DuckDB は
+/// 型に厳格なので、真偽 / 日付 / 日時 / 64bit 整数の実型へのロードと、abort
+/// モードで行が型変換に失敗したときに作成したテーブルが DROP されることを確かめる。
+#[tokio::test]
+async fn duckdb_import_into_new_table_roundtrip_and_cleanup() {
+    let path = temp_db_path("new_table");
+    create_empty_db(&path);
+    let db_path = path.to_str().expect("utf8 path");
+    let csv = std::env::temp_dir().join(format!("noobdb_duck_new_{}.csv", std::process::id()));
+    std::fs::write(
+        &csv,
+        "id,flag,day,at,big\n\
+         1,true,2024-02-29,2024-01-02 03:04:05.123456,9223372036854775807\n\
+         2,false,2024-03-01,2024-01-02T10:00:00,-1\n",
+    )
+    .expect("write csv");
+    let csv_path = csv.to_str().expect("utf8 path");
+
+    let conn = t::connect(&t::duckdb_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("d-new", conn, t::duckdb_options(db_path), false);
+    let options = serde_json::json!({
+        "delimiter": ",",
+        "quote": "\"",
+        "hasHeader": true,
+        "nullToken": "",
+        "encoding": "utf-8",
+    });
+    let mapping = serde_json::json!([
+        { "column": "id", "csvIndex": 0 },
+        { "column": "flag", "csvIndex": 1 },
+        { "column": "day", "csvIndex": 2 },
+        { "column": "at", "csvIndex": 3 },
+        { "column": "big", "csvIndex": 4 },
+    ]);
+    let create = serde_json::json!([
+        { "name": "id", "type": "integer" },
+        { "name": "flag", "type": "boolean" },
+        { "name": "day", "type": "date" },
+        { "name": "at", "type": "datetime" },
+        { "name": "big", "type": "bigint" },
+    ]);
+    let inserted = t::import_file_via_command(
+        &session,
+        None,
+        "select",
+        csv_path,
+        options.clone(),
+        mapping.clone(),
+        Some(create.clone()),
+    )
+    .await
+    .expect("import setup")
+    .expect("import rows");
+    assert_eq!(inserted, 2);
+    let res = session
+        .conn
+        .execute(
+            // `at` は DuckDB の予約語 (インポート側は quote_ident でクォート済み)。
+            "SELECT typeof(flag), typeof(day), typeof(\"at\"), typeof(big), \
+             CAST(big AS VARCHAR), CAST(flag AS VARCHAR) FROM \"select\" ORDER BY id",
+            None,
+        )
+        .await
+        .expect("select");
+    let text = |v: &t::Value| match v {
+        t::Value::String(s) => s.clone(),
+        other => format!("{other:?}"),
+    };
+    let rows: Vec<Vec<String>> = res
+        .rows
+        .iter()
+        .map(|r| r.iter().map(text).collect())
+        .collect();
+    assert_eq!(
+        rows[0],
+        vec![
+            "BOOLEAN",
+            "DATE",
+            "TIMESTAMP",
+            "BIGINT",
+            "9223372036854775807",
+            "true"
+        ]
+    );
+    assert_eq!(rows[1][5], "false");
+
+    // abort モードで型変換に失敗 → 作成したテーブルは DROP される。
+    std::fs::write(&csv, "id\n1\nnot-a-number\n").expect("write bad csv");
+    let failed = t::import_file_via_command(
+        &session,
+        None,
+        "bad_t",
+        csv_path,
+        options,
+        serde_json::json!([{ "column": "id", "csvIndex": 0 }]),
+        Some(serde_json::json!([{ "name": "id", "type": "integer" }])),
+    )
+    .await
+    .expect("setup succeeds; the row error is reported");
+    let message = failed.expect_err("the bad row must fail the abort-mode import");
+    assert!(message.contains("record 2"), "{message}");
+    assert!(message.contains("was dropped"), "{message}");
+    let exists = session
+        .conn
+        .execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'bad_t'",
+            None,
+        )
+        .await
+        .expect("probe");
+    assert!(
+        matches!(&exists.rows[0][0], t::Value::Int(0)),
+        "{:?}",
+        exists.rows
+    );
+
+    session.conn.close().await;
+    let _ = std::fs::remove_file(&csv);
+    remove_db_files(&path);
+}

@@ -1,4 +1,6 @@
 pub mod advisor;
+/// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
+pub mod create_table;
 pub mod data_diff;
 pub mod diff;
 pub mod duckdb;
@@ -373,6 +375,22 @@ impl Connection {
             Connection::DuckDb(c) => c.execute(sql, database).await,
             Connection::Mssql(c) => c.execute(sql, database).await,
         }
+    }
+
+    /// ファイル取り込み用の新規テーブルを作成する (#985)。DDL は
+    /// [`create_table::render_create_table`] がこの接続の方言で生成し (識別子は
+    /// `quote_ident` でクォート)、通常の [`Connection::execute`] で流す。続く
+    /// `import_rows` と同じ `database` 文脈 (MySQL/MSSQL の USE、PostgreSQL の
+    /// search_path) で実行されるため、作成先と取り込み先が一致する。
+    pub async fn create_table_from_columns(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[create_table::NewColumn],
+    ) -> Result<String> {
+        let ddl = create_table::render_create_table(self.driver_kind(), table, columns)?;
+        self.execute(&ddl, database).await?;
+        Ok(ddl)
     }
 
     /// Begin an explicit transaction on a dedicated held connection so

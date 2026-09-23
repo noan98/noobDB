@@ -89,7 +89,11 @@
 ## エクスポート / ダンプ / インポート / ファイル
 
 `export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
-`import_csv` / `read_text_file` / `write_binary_file`
+`import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_binary_file`
+
+`preview_create_table_ddl` は「ファイルから新規テーブルを作成」(#985) の DDL
+プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ
+`db::create_table::render_create_table` を返す (書き込みなし)。
 
 `run_sql_script` (`commands/script.rs`, #973) — `.sql` ファイルを 64 KiB ずつ読み、
 `db/script.rs` のストリーミング文分割 (フロント `splitSqlStatements` と共有ゴールデン

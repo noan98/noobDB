@@ -138,6 +138,27 @@
   (`ImportConflict::validate`) は `import_csv` がストリーム開始前に同期で行い、
   `ImportModal` は同じ規則の `components/importConflict.ts` で実行ボタンを無効化します
   (既定キーはマッピング済みの主キー列)。
+  **ファイルから新規テーブルを作成 (#985)**: `import_csv` の任意引数 `create_table`
+  (`Vec<db::create_table::NewColumn>` = 列名 + 抽象型 `integer` / `bigint` / `decimal` /
+  `double` / `boolean` / `date` / `datetime` / `text`) を渡すと、取り込み前に
+  `Connection::create_table_from_columns` がテーブルを作ります。DDL は
+  `db/create_table.rs::render_create_table` の純関数が方言別に生成し (識別子は
+  `db::sync::quote_ident`、型名は列挙からのみ = 文字列の型名を受け取らない)、DB が持たない
+  型は縮退します (SQLite の日付/日時は TEXT、MySQL の TEXT は LONGTEXT、日時は
+  `DATETIME(6)` / `DATETIME2` など)。検証 (空名・前後空白・大文字小文字を無視した列名重複・
+  PostgreSQL 63 バイト / MySQL 64 文字 / MSSQL 128 文字の識別子長) は `import_csv` が
+  ストリーム開始前に同期で行い、作成自体は**ファイルのパース成功後** (`run_import_core`) に
+  行います。取り込みは既存の `import_rows` / `import_rows_skipping` にそのまま合流する
+  (新しい書き込み経路は無い) ので read_only 拒否・abort/skip・進捗イベントは共通です。
+  `abort` で失敗した場合は作ったテーブルを `DROP TABLE` で片付けます (MySQL の DDL は
+  暗黙コミットで同一トランザクションに入れられないため)。途中キャンセルでは空テーブルが
+  残ります。UI の DDL プレビューは `preview_create_table_ddl` (同じ生成関数、書き込みなし)
+  から取り、型推論は `components/newTableInference.ts` の純関数 (64bit 境界は `BigInt`、
+  先頭ゼロは文字列、MySQL では真偽を推論しない) がプレビュー 50 行から行います。入口は
+  DB のコンテキストメニュー「ファイルから新規テーブル...」と、既存テーブル向け
+  `ImportModal` の「新規テーブルを作成」トグル。統合テスト
+  (`sqlite_integration.rs`、常時実走) が `__test_api::import_file_via_command` で
+  「ファイル → 作成 → ロード → SELECT」を往復させます。
   読み込みは `read_import_file` が空パス拒否 + `MAX_IMPORT_FILE_BYTES` (512 MiB) 上限を
   `commands::file` と同じく metadata + `take` の二段で強制します。
 
