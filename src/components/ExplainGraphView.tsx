@@ -85,7 +85,7 @@ const metaCss: SystemStyleObject = {
   alignItems: "center",
   gap: "var(--space-1-5)",
   fontSize: "var(--text-2xs)",
-  fontVariantNumeric: "tabular-nums",
+  textStyle: "numeric",
 };
 
 /** One plan-tree node. Background is the cost heat; text ink adapts to it. */

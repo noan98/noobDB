@@ -187,7 +187,7 @@ function FilterChip({
       _hover={{ bg: "app.hover", color: "app.text" }}
     >
       {label}
-      <chakra.span color="app.textMuted" fontWeight={500}>
+      <chakra.span color="app.textMuted" fontWeight={500} textStyle="numeric">
         {count}
       </chakra.span>
     </chakra.button>
@@ -464,6 +464,7 @@ export function ActivityCenter() {
                 justifyContent="center"
                 fontSize="3xs"
                 fontWeight={700}
+                textStyle="numeric"
                 lineHeight={1}
                 borderRadius="pill"
                 bg={semanticColorToken("danger", "solid")}

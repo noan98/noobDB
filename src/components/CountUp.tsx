@@ -12,6 +12,8 @@ import { useCountUp } from "../useCountUp";
  *   `aria-live="polite"` な祖先要素の中に置けば、値が変わった瞬間に 1 回だけ
  *   確定値が読み上げられる (aria-hidden な兄弟の連続変化は読み上げに影響しない)。
  *
+ * 見える桁は `textStyle="numeric"` (等幅数字 #1072) で描画し、補間中の横揺れを防ぐ。
+ *
  * 表示専用: `value` を書き換えたり副作用を起こしたりしない。
  */
 export function CountUp({
@@ -25,7 +27,10 @@ export function CountUp({
   const { display } = useCountUp(value);
   return (
     <>
-      <chakra.span aria-hidden="true">{formatter(display)}</chakra.span>
+      {/* 補間中に桁形が変わっても横幅が揺れないよう等幅数字にする (#1072)。 */}
+      <chakra.span aria-hidden="true" textStyle="numeric">
+        {formatter(display)}
+      </chakra.span>
       <VisuallyHidden>{formatter(value)}</VisuallyHidden>
     </>
   );

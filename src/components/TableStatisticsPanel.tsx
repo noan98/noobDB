@@ -59,6 +59,8 @@ const tdCss: SystemStyleObject = {
   padding: "var(--space-1-25) var(--space-2-5)",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
+  // 行数・サイズ列は再取得で値が変わるため等幅数字で桁を揃える (#1072)。
+  textStyle: "numeric",
   color: "var(--text)",
   whiteSpace: "nowrap",
 };

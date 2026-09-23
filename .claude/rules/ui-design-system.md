@@ -85,8 +85,12 @@ theme.ts (Chakra トークン)
 
 - `fontSize="11px"` のような px 直値は禁止 (`--text-*` も `--font-scale` を内包する)。
 - 上付きの小見出し (セクションラベル) は `textStyle="overline"` を使う。
+- 値が変わる数値 (カウントアップ・ページャ・メトリクス・統計・一覧の ID / 経過時間
+  など) は `textStyle="numeric"` (スタイルオブジェクト内は `textStyle: "numeric"`) で
+  等幅数字にする (#1072)。`fontVariantNumeric` / `font-variant-numeric` は直書き
+  しない (`theme.ts` の `textStyles.numeric` が単一ソース)。`CountUp` は既定で適用済み。
 
-> **ガード**: `designTokens.test.ts` の「タイポグラフィ」
+> **ガード**: `designTokens.test.ts` の「タイポグラフィ」/「等幅数字」
 
 ---
 

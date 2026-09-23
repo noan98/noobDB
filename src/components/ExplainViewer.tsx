@@ -105,7 +105,7 @@ function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
   };
 }
 const scoreValueCss: SystemStyleObject = {
-  fontVariantNumeric: "tabular-nums",
+  textStyle: "numeric",
 };
 const scoreBandCss: SystemStyleObject = {
   // タイポグラフィは `textStyles.overline` (#817) を共有しつつ、色だけは親の

@@ -168,7 +168,7 @@ function MetricChart({
                 style={{ background: categoricalColor(s.colorIndex) }}
               />
               {t(s.labelKey)}
-              <chakra.span fontFamily="var(--font-mono)" color="app.text">
+              <chakra.span fontFamily="var(--font-mono)" textStyle="numeric" color="app.text">
                 {latest == null ? (
                   isRate ? (
                     formatRate(latest)
@@ -384,7 +384,7 @@ export function ServerMetricsPanel({
         </Select>
         {loading && <Spinner size={14} />}
         {updatedAt && (
-          <chakra.span fontSize="xs" color="app.textMuted">
+          <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
             {t("processUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
           </chakra.span>
         )}

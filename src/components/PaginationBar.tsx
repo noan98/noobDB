@@ -88,6 +88,9 @@ export function PaginationBar({
       borderTopColor="app.border"
       bg="app.surface"
       fontSize="sm"
+      // ページ番号・行レンジはページ送りのたびに変わるため、バー全体を等幅数字にして
+      // 桁の横揺れを防ぐ (#1072)。文字列部分には影響しない。
+      textStyle="numeric"
       color="app.textSecondary"
       flex="none"
       flexWrap="wrap"

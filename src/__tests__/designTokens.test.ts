@@ -171,6 +171,26 @@ describe("design tokens: タイポグラフィ", () => {
   });
 });
 
+describe("design tokens: 等幅数字 (#1072)", () => {
+  it("font-variant-numeric は直書きせず textStyle=\"numeric\" を使う", () => {
+    const offenders = findViolations(
+      /fontVariantNumeric|font-variant-numeric/,
+      () => true,
+      (path) => path !== "../theme.ts",
+    );
+    expect(
+      offenders,
+      "等幅数字は theme.ts の textStyles.numeric が単一ソース。コンポーネントでは " +
+        "textStyle=\"numeric\" (スタイルオブジェクト内は textStyle: \"numeric\") を使う。",
+    ).toEqual([]);
+    expect(themeTs).toMatch(/numeric:\s*\{\s*value:\s*\{\s*fontVariantNumeric:\s*"tabular-nums"/);
+  });
+
+  it("App.css にも font-variant-numeric を置かない (トークンと二重定義しない)", () => {
+    expect(css).not.toMatch(/font-variant-numeric/);
+  });
+});
+
 describe("design tokens: 角丸 (radius)", () => {
   it("borderRadius は px 直値ではなく radii トークン (xs/sm/md/lg/pill) を使う", () => {
     const offenders = findViolations(

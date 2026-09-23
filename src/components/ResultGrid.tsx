@@ -371,7 +371,7 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& .cell-number, & .cell-decimal": {
     color: "var(--cell-number)",
-    fontVariantNumeric: "tabular-nums",
+    textStyle: "numeric",
   },
   // 条件付き書式: データバー / ヒートマップの背景レイヤ。値テキストは前面。
   "& .cell-cf-wrap": {
@@ -615,7 +615,7 @@ export const GRID_CSS: SystemStyleObject = {
     gap: "var(--space-2)",
   },
   "& tfoot .grid-footer-fn": { textStyle: "overline" },
-  "& tfoot .grid-footer-val": { fontVariantNumeric: "tabular-nums", fontWeight: 600 },
+  "& tfoot .grid-footer-val": { textStyle: "numeric", fontWeight: 600 },
   "& td.grid-empty-cell": {
     padding: "3.5",
     color: "var(--text-muted)",
@@ -2073,6 +2073,7 @@ function StatRow({ label, value, title }: { label: string; value: ReactNode; tit
     <chakra.span
       fontSize="var(--text-sm)"
       fontFamily="mono"
+      textStyle="numeric"
       color="app.text"
       fontWeight={600}
       textAlign="right"
@@ -6724,6 +6725,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             color="app.text"
             whiteSpace="nowrap"
             fontFamily="mono"
+            textStyle="numeric"
             aria-live="polite"
             aria-label={t("gridSelectionAria")}
             py="0.5"
@@ -6758,6 +6760,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             color="app.textMuted"
             whiteSpace="nowrap"
             fontFamily="mono"
+            textStyle="numeric"
             aria-live="polite"
           >
             {statusBarParts[0]}
@@ -6939,6 +6942,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               <chakra.span
                 fontSize="xs"
                 fontFamily="mono"
+                textStyle="numeric"
                 whiteSpace="nowrap"
                 aria-live="polite"
                 color={

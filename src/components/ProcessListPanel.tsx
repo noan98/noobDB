@@ -62,6 +62,8 @@ const tdCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border-subtle, var(--border))",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
+  // ID・経過秒は自動更新で頻繁に変わるため等幅数字で桁を揃える (#1072)。
+  textStyle: "numeric",
   color: "var(--text)",
   verticalAlign: "top",
 };
@@ -295,7 +297,7 @@ export function ProcessListPanel({
         </Select>
         {loading && <Spinner size={14} />}
         {updatedAt && (
-          <chakra.span fontSize="xs" color="app.textMuted">
+          <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
             {t("processUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
           </chakra.span>
         )}
