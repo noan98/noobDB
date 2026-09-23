@@ -49,6 +49,8 @@ import {
 } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
+import { reorderColumnIds } from "./columnReorderFlip";
+import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
@@ -2981,20 +2983,18 @@ export const DataGrid = memo(function DataGrid({
   // `handleColumnOrderChange` / `persistColumnState`, whose persist key
   // (`colStateKey`) tracks database/table — not just `columns`. It's only
   // invoked from the (already per-render) header onDrop, so it needn't be stable.
+  // 新しい順序の計算は純関数 `reorderColumnIds` (#1021)。確定直前に
+  // `columnFlip.capture()` でヘッダ位置を記録し、コミット後に列を元の位置から
+  // 定位置へ滑らせる (FLIP、`useColumnReorderFlip`)。
   const reorderColumn = (fromId: string, toId: string) => {
-    if (fromId === toId) return;
-    const base = (
-      columnOrderRef.current.length
-        ? columnOrderRef.current
-        : columns.map((_, i) => String(i))
-    ).slice();
-    const fromIdx = base.indexOf(fromId);
-    if (fromIdx < 0) return;
-    const [moved] = base.splice(fromIdx, 1);
-    const insertAt = base.indexOf(toId);
-    if (insertAt < 0) return;
-    base.splice(insertAt, 0, moved);
-    handleColumnOrderChange(base);
+    const next = reorderColumnIds(
+      columnOrderRef.current.length ? columnOrderRef.current : columns.map((_, i) => String(i)),
+      fromId,
+      toId,
+    );
+    if (!next) return;
+    columnFlip.capture();
+    handleColumnOrderChange(next);
   };
 
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
@@ -3317,6 +3317,10 @@ export const DataGrid = memo(function DataGrid({
   const pendingFocusRef = useRef<{ rowIdx: number; colIdx: number } | null>(null);
   // Refs to mounted data <td> elements keyed by "rowIdx:colIdx".
   const cellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+  // 列ドラッグ並べ替え確定時の FLIP (#1021)。ヘッダ/フッターは `data-col-id`、
+  // 本体セルは `cellRefs` から引く。
+  const gridTableRef = useRef<HTMLTableElement>(null);
+  const columnFlip = useColumnReorderFlip(gridTableRef, cellRefs);
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
@@ -4467,6 +4471,7 @@ export const DataGrid = memo(function DataGrid({
         </Box>
       )}
       <table
+        ref={gridTableRef}
         role="grid"
         style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}
         onKeyDown={handleGridKeyDown}
@@ -4525,6 +4530,7 @@ export const DataGrid = memo(function DataGrid({
                 return (
                   <th
                     key={h.id}
+                    data-col-id={h.column.id}
                     style={pinStyle}
                     className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${dragOverColId === h.column.id ? "is-drag-over" : ""} ${dragColId === h.column.id ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
                     aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
@@ -4759,6 +4765,7 @@ export const DataGrid = memo(function DataGrid({
                 const footerTd = (
                   <td
                     key={h.id}
+                    data-col-id={h.column.id}
                     style={pinStyle}
                     className={`grid-footer-cell col-${kind} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
                   >

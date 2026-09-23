@@ -62,6 +62,11 @@ import type { Transition, Variants } from "motion/react";
  * - 空/オンボーディング表示の fade-in (`EmptyState`)。
  * - `Switch` のつまみ (`springs.snappy`)、アイコン/バッジのクロスフェード
  *   (`MultiStateBadge` / `QueryEditor` / `ImportModal` / `App`)。
+ * - 結果グリッドの列ドラッグ並べ替えの確定 (`ResultGrid` — `useColumnReorderFlip`、
+ *   #1021)。`TabBar` と同じ「定位置へ滑る」動きだが、ヘッダは全列ぶん常に描画され
+ *   頻繁に再レンダーされるため `layout` は使わず、ドロップ確定の 1 回だけ計測する
+ *   手書き FLIP (Web Animations API) で `durations.base` / `easings.out` を再利用する。
+ *   Motion の外なので reduced-motion は `useReducedMotionConfig` で明示的に見る。
  * - 結果パネルの種類切替 (`App` — `AnimatePresence mode="wait"` + `variants.fade`)。
  *   グリッド ⇔ EXPLAIN / チャート / ピボット / プレビュー / バッチのように「軽量
  *   パネルの種類が変わる」ときだけ控えめにクロスフェードする。key を表示内容の
