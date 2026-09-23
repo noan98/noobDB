@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **103 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **106 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -26,7 +26,15 @@
 
 `list_databases` / `list_tables` / `describe_table` / `table_row_identity` /
 `schema_overview` / `foreign_keys` / `list_schema_objects` / `get_object_definition` /
-`list_indexes` / `table_row_estimates` / `table_sizes`
+`list_indexes` / `table_row_estimates` / `list_table_comments` / `table_sizes` / `get_routine_signature`
+(ストアドプロシージャ / 関数のパラメータ取得、#1003 — SQLite/DuckDB は未対応エラー)
+
+`describe_table` の各列は `comment` (列コメント) を、`list_table_comments` は
+テーブル / ビューのコメントを返す (#1002)。SQLite はコメント非対応で常に空。
+
+`get_object_definition` は `kind = "table"` でテーブルの `CREATE TABLE` DDL も返す
+(#1001)。MySQL/SQLite/DuckDB はネイティブ DDL、PostgreSQL/MSSQL は
+`db/table_ddl.rs` がカタログ情報から再構成したベストエフォート DDL。
 
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
@@ -82,7 +90,11 @@
 ## エクスポート / ダンプ / インポート / ファイル
 
 `export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
-`import_csv` / `read_text_file` / `write_binary_file`
+`import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_binary_file`
+
+`preview_create_table_ddl` は「ファイルから新規テーブルを作成」(#985) の DDL
+プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ
+`db::create_table::render_create_table` を返す (書き込みなし)。
 
 `run_sql_script` (`commands/script.rs`, #973) — `.sql` ファイルを 64 KiB ずつ読み、
 `db/script.rs` のストリーミング文分割 (フロント `splitSqlStatements` と共有ゴールデン

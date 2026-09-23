@@ -6,10 +6,12 @@ import {
   listenImportStream,
   type ColumnMapping,
   type CsvPreview,
+  type DriverKind,
   type ImportConflictMode,
   type ImportErrorMode,
   type ImportFormat,
   type ImportOptions,
+  type NewColumnType,
   type SkippedRowInfo,
   type TableColumnInfo,
 } from "../api/tauri";
@@ -22,13 +24,33 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import {
+  CodePreview,
+  ErrorNote,
+  FieldError,
+  FieldLabel,
+  FormSection,
+  PathRow,
+} from "./modalForm";
 import {
   defaultKeyColumns,
   pruneKeyColumns,
   toggleKeyColumn,
   validateConflictKeys,
 } from "./importConflict";
+import {
+  buildColumnDrafts,
+  mergeColumnDrafts,
+  newColumnTypeCellKind,
+  newColumnTypeOptions,
+  newTableRequest,
+  suggestTableName,
+  validateNewTable,
+  type NewColumnDraft,
+  type NewTableError,
+} from "./newTableInference";
+import { cellKindIcon } from "./cellTypeMeta";
+import type { I18nKey } from "../i18n";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -36,10 +58,20 @@ import { Tooltip } from "./Tooltip";
 interface Props {
   sessionId: string;
   database: string;
-  table: string;
+  /**
+   * Destination table. `null` opens the modal in "create a new table from the
+   * file" mode (#985) with no existing table to switch back to.
+   */
+  table: string | null;
+  /** Session driver — drives the new-table type options and DDL preview (#985). */
+  driver: DriverKind;
   onClose: () => void;
-  /** Called after a successful import so the caller can refresh the grid. */
-  onImported: () => void;
+  /**
+   * Called after a successful import so the caller can refresh the grid.
+   * `created` is true when the import created `table` (#985), so the caller
+   * can also refresh the schema tree.
+   */
+  onImported: (table: string, created: boolean) => void;
   /**
    * Pre-selected file path. When the modal is opened by dropping a
    * `.csv` onto the window, the path is filled in up front so the preview
@@ -59,6 +91,18 @@ type Status =
   | { kind: "error"; message: string };
 
 const ENCODINGS = ["utf-8", "shift_jis", "euc-jp", "utf-16le", "windows-1252"];
+
+/** 新規テーブルの列型 → 表示ラベルの i18n キー (#985)。 */
+const TYPE_LABEL_KEYS: Record<NewColumnType, I18nKey> = {
+  integer: "importTypeInteger",
+  bigint: "importTypeBigint",
+  decimal: "importTypeDecimal",
+  double: "importTypeDouble",
+  boolean: "importTypeBoolean",
+  date: "importTypeDate",
+  datetime: "importTypeDatetime",
+  text: "importTypeText",
+};
 
 /** Guesses the import format from a file path's extension. */
 function formatFromPath(path: string): ImportFormat {
@@ -108,10 +152,32 @@ function autoMap(
   return m;
 }
 
-export function ImportModal({ sessionId, database, table, onClose, onImported, initialPath }: Props) {
+export function ImportModal({
+  sessionId,
+  database,
+  table,
+  driver,
+  onClose,
+  onImported,
+  initialPath,
+}: Props) {
   const t = useT();
   const toast = useToast();
   const [path, setPath] = useState(initialPath ?? "");
+  // ファイルから新規テーブルを作成するモード (#985)。対象テーブルが無い
+  // (DB のコンテキストメニューから開いた) ときは常にこのモード。
+  const [createNew, setCreateNew] = useState(table === null);
+  const [newTableName, setNewTableName] = useState(() =>
+    initialPath ? suggestTableName(initialPath) : "",
+  );
+  // ユーザがテーブル名を編集したら、ファイルを選び直しても上書きしない。
+  const [tableNameEdited, setTableNameEdited] = useState(false);
+  const [drafts, setDrafts] = useState<NewColumnDraft[] | null>(null);
+  const [ddl, setDdl] = useState<string | null>(null);
+  const [ddlError, setDdlError] = useState<string | null>(null);
+  // 新規テーブル作成付きの取り込みが成功した後は、同じ名前で再実行しても
+  // 「既に存在する」エラーになるだけなので実行ボタンを止める。
+  const [created, setCreated] = useState(false);
   const [format, setFormat] = useState<ImportFormat>(
     initialPath ? formatFromPath(initialPath) : "csv",
   );
@@ -147,13 +213,14 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
   // let a stale invalid quote block the JSON preview/import.
   const quoteValid = !isCsv || isValidSingleByteChar(quote);
 
+  const nullToken = nullMode === "none" ? null : nullMode === "empty" ? "" : nullCustom;
   const buildOptions = useCallback((): ImportOptions => {
-    const nullToken = nullMode === "none" ? null : nullMode === "empty" ? "" : nullCustom;
     return { format, delimiter, quote, hasHeader, nullToken, encoding, errorMode };
-  }, [format, delimiter, quote, hasHeader, nullMode, nullCustom, encoding, errorMode]);
+  }, [format, delimiter, quote, hasHeader, nullToken, encoding, errorMode]);
 
-  // Fetch destination columns once for the mapping UI.
+  // Fetch destination columns once for the mapping UI (existing-table mode only).
   useEffect(() => {
+    if (table === null) return;
     let cancelled = false;
     api
       .describeTable(sessionId, database, table)
@@ -203,6 +270,81 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
     };
     // buildOptions captures every parsing option; tableColumns drives auto-map.
   }, [path, buildOptions, tableColumns, hasHeader, quoteValid]);
+
+  // 新規テーブルの列の下書き (名前の提案 + 型推論) をプレビューから作る (#985)。
+  // NULL トークンはバックエンドと同じ規則で推論前に適用する (空セルを NULL に
+  // しない設定なら、空セルを含む数値列は文字列になる)。
+  const namedFields = isCsv ? hasHeader : true;
+  useEffect(() => {
+    if (!preview) {
+      setDrafts(null);
+      return;
+    }
+    const next = buildColumnDrafts(preview, nullToken, driver, namedFields);
+    setDrafts((prev) => mergeColumnDrafts(prev, next));
+  }, [preview, nullToken, driver, namedFields]);
+
+  // ファイル名からテーブル名を提案する (ユーザが編集するまで)。
+  useEffect(() => {
+    if (!tableNameEdited && path) setNewTableName(suggestTableName(path));
+  }, [path, tableNameEdited]);
+
+  const newTableError: NewTableError =
+    createNew && drafts ? validateNewTable(driver, newTableName, drafts) : null;
+  const newTable = useMemo(
+    () => (createNew && drafts ? newTableRequest(drafts) : null),
+    [createNew, drafts],
+  );
+
+  // 実行される CREATE TABLE をバックエンドの生成関数から取ってきて見せる
+  // (プレビュー = 実際に流れる DDL)。検証エラーがある間は取りに行かない。
+  useEffect(() => {
+    if (!createNew || !newTable || newTableError) {
+      setDdl(null);
+      setDdlError(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .previewCreateTableDdl(driver, newTableName, newTable.columns)
+      .then((sql) => {
+        if (cancelled) return;
+        setDdl(sql);
+        setDdlError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setDdl(null);
+        setDdlError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [createNew, newTable, newTableError, driver, newTableName]);
+
+  const updateDraft = useCallback((index: number, patch: Partial<NewColumnDraft>) => {
+    setDrafts((prev) =>
+      prev ? prev.map((d, i) => (i === index ? { ...d, ...patch } : d)) : prev,
+    );
+  }, []);
+
+  const newTableErrorText = (err: NewTableError): string | null => {
+    if (!err) return null;
+    switch (err.kind) {
+      case "tableNameRequired":
+        return t("importNewTableNameRequired");
+      case "nameWhitespace":
+        return t("importNewTableNameWhitespace", { name: err.name });
+      case "nameTooLong":
+        return t("importNewTableNameTooLong", { name: err.name, limit: err.limit });
+      case "noColumns":
+        return t("importNewTableNoColumns");
+      case "columnNameRequired":
+        return t("importNewTableColumnNameRequired");
+      case "duplicateColumn":
+        return t("importNewTableDuplicateColumn", { name: err.name });
+    }
+  };
 
   // Detach the event listener on unmount.
   useEffect(() => {
@@ -256,10 +398,24 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         : pruneKeyColumns(keyColumns, mappedColumns),
     [keyColumns, tableColumns, mappedColumns],
   );
-  const conflictError = validateConflictKeys(conflictMode, effectiveKeyColumns, mappedColumns);
+  const conflictError = createNew
+    ? null
+    : validateConflictKeys(conflictMode, effectiveKeyColumns, mappedColumns);
+
+  // 取り込み先と列マッピング。新規テーブルモードでは下書きから作る (#985)。
+  const targetTable = createNew ? newTableName : (table ?? "");
+  const effectiveMapping = newTable ? newTable.mapping : mappingEntries;
+  const canImport =
+    !!path &&
+    effectiveMapping.length > 0 &&
+    quoteValid &&
+    conflictError === null &&
+    (!createNew || (newTable !== null && newTableError === null && !created));
 
   const handleImport = async () => {
-    if (!path || mappingEntries.length === 0 || !quoteValid || conflictError) return;
+    if (!canImport) return;
+    const importTable = targetTable;
+    const creating = createNew;
     const streamId = newStreamId();
     streamIdRef.current = streamId;
     setStatus({ kind: "importing", inserted: 0, total: 0 });
@@ -282,7 +438,14 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
           toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
           setStatus({ kind: "idle" });
         }
-        onImported();
+        if (creating) {
+          setCreated(true);
+          toast.success(t("importNewTableCreated", { table: importTable }));
+        }
+        onImported(importTable, creating);
+        // 新規テーブルを作った取り込みが完全に成功したら閉じる (同名での再実行は
+        // 「既に存在する」エラーになるだけ)。スキップ行があるときは一覧を見せる。
+        if (creating && e.skipped.length === 0) onClose();
       },
       onError: (e) => {
         // Enrich an abort-mode failure with the pinpointed record/line (#687).
@@ -313,10 +476,14 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         sessionId,
         streamId,
         database,
-        table,
+        table: importTable,
         path,
-        options: { ...buildOptions(), conflictMode, keyColumns: effectiveKeyColumns },
-        mapping: mappingEntries,
+        // 作ったばかりの空テーブルに UPSERT の意味は無いので INSERT 固定。
+        options: creating
+          ? { ...buildOptions(), conflictMode: "insert", keyColumns: [] }
+          : { ...buildOptions(), conflictMode, keyColumns: effectiveKeyColumns },
+        mapping: effectiveMapping,
+        createTable: newTable?.columns ?? null,
       });
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
@@ -380,7 +547,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       closeOnEscape={!importing}
     >
       <ModalHeader onClose={onClose} closeLabel={t("importClose")} closeDisabled={importing}>
-        {t("importTitle", { table })}
+        {createNew ? t("importNewTableTitle") : t("importTitle", { table: table ?? "" })}
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="4">
@@ -401,6 +568,39 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
               {t("importBrowse")}
             </Button>
           </PathRow>
+        </FormSection>
+
+        <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
+          <chakra.div display="flex" flexDirection="row" alignItems="center" gap="1.5">
+            <Switch
+              checked={createNew}
+              onChange={setCreateNew}
+              // 既存テーブルが無い (DB から開いた) ときは切り替え先が無い。
+              disabled={importing || table === null}
+              label={t("importCreateNewTable")}
+            />
+          </chakra.div>
+          {createNew && (
+            <chakra.div display="flex" flexDirection="column" gap="1.5" flex="1" minW="200px">
+              <FieldLabel htmlFor="import-new-table-name">{t("importNewTableName")}</FieldLabel>
+              <Input
+                id="import-new-table-name"
+                type="text"
+                value={newTableName}
+                onChange={(e) => {
+                  setTableNameEdited(true);
+                  setNewTableName(e.target.value);
+                  setCreated(false);
+                }}
+                disabled={importing}
+                aria-invalid={
+                  newTableError?.kind === "tableNameRequired" ||
+                  (newTableError?.kind === "nameWhitespace" && newTableError.name === newTableName) ||
+                  (newTableError?.kind === "nameTooLong" && newTableError.name === newTableName)
+                }
+              />
+            </chakra.div>
+          )}
         </FormSection>
 
         <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
@@ -519,6 +719,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             </Select>
           </chakra.div>
 
+          {!createNew && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-conflict-mode">{t("importConflictMode")}</FieldLabel>
             <Select
@@ -533,6 +734,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
               <option value="update">{t("importConflictModeUpdate")}</option>
             </Select>
           </chakra.div>
+          )}
         </FormSection>
 
         {errorMode === "skip" && (
@@ -560,7 +762,83 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
           </chakra.div>
         )}
 
-        {preview && tableColumns && (
+        {createNew && preview && drafts && (
+          <FormSection>
+            <FieldLabel as="div">{t("importNewTableColumns")}</FieldLabel>
+            <chakra.div
+              display="grid"
+              gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))"
+              gap="2"
+            >
+              {drafts.map((d, i) => (
+                <chakra.div key={d.csvIndex} display="flex" alignItems="center" gap="1.5">
+                  <Checkbox
+                    checked={d.include}
+                    onChange={() => updateDraft(i, { include: !d.include })}
+                    disabled={importing}
+                    aria-label={t("importNewTableInclude", { name: d.name })}
+                  />
+                  <Tooltip label={csvColumnLabel(d.csvIndex)}>
+                    <chakra.span color="app.textMuted" display="inline-flex">
+                      <Icon name={cellKindIcon(newColumnTypeCellKind(d.type))} />
+                    </chakra.span>
+                  </Tooltip>
+                  <Input
+                    flex="1"
+                    minW={0}
+                    type="text"
+                    fontFamily="mono"
+                    value={d.name}
+                    onChange={(e) => updateDraft(i, { name: e.target.value })}
+                    disabled={importing || !d.include}
+                    aria-label={t("importNewTableColumnName", { n: d.csvIndex + 1 })}
+                  />
+                  <Select
+                    flex="0 0 42%"
+                    minW={0}
+                    value={d.type}
+                    onChange={(e) => updateDraft(i, { type: e.target.value as NewColumnType })}
+                    disabled={importing || !d.include}
+                    aria-label={t("importNewTableColumnType", { name: d.name })}
+                  >
+                    {newColumnTypeOptions(driver).map((ty) => (
+                      <option key={ty} value={ty}>
+                        {ty === d.inferredType
+                          ? t(TYPE_LABEL_KEYS[ty])
+                          : `${t(TYPE_LABEL_KEYS[ty])} (${t("importNewTableInferred", {
+                              type: t(TYPE_LABEL_KEYS[d.inferredType]),
+                            })})`}
+                      </option>
+                    ))}
+                  </Select>
+                </chakra.div>
+              ))}
+            </chakra.div>
+            <chakra.div fontSize="xs" color="app.textMuted">
+              {t("importNewTableHint")}
+            </chakra.div>
+            {newTableError && <FieldError>{newTableErrorText(newTableError)}</FieldError>}
+          </FormSection>
+        )}
+
+        {createNew && (ddl || ddlError) && (
+          <FormSection>
+            <FieldLabel as="div">{t("importNewTableDdl")}</FieldLabel>
+            {ddl && (
+              <CodePreview maxH="160px" data-testid="import-new-table-ddl">
+                {ddl}
+              </CodePreview>
+            )}
+            {ddlError && <ErrorNote>{ddlError}</ErrorNote>}
+            {errorMode === "abort" && (
+              <chakra.div fontSize="xs" color="app.textMuted">
+                {t("importNewTableAbortHint")}
+              </chakra.div>
+            )}
+          </FormSection>
+        )}
+
+        {!createNew && preview && tableColumns && (
           <FormSection>
             <FieldLabel as="div">{t("importMappingTitle")}</FieldLabel>
             <chakra.div
@@ -623,7 +901,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
           </FormSection>
         )}
 
-        {conflictMode !== "insert" && preview && tableColumns && (
+        {!createNew && conflictMode !== "insert" && preview && tableColumns && (
           <FormSection>
             <FieldLabel as="div">{t("importConflictKeys")}</FieldLabel>
             <chakra.div display="flex" flexWrap="wrap" gap="3">
@@ -802,9 +1080,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
           variant="primary"
           loading={importing}
           onClick={handleImport}
-          disabled={
-            importing || !path || mappingEntries.length === 0 || !quoteValid || conflictError !== null
-          }
+          disabled={importing || !canImport}
         >
           {importing ? t("importImporting") : t("importExecute")}
         </LoadingButton>

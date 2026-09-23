@@ -1140,3 +1140,223 @@ async fn duckdb_native_dump_roundtrips_into_fresh_file() {
     remove_db_files(&src_path);
     remove_db_files(&dst_path);
 }
+
+#[tokio::test]
+async fn duckdb_table_and_column_comments_round_trip() {
+    // #1002: COMMENT ON で付けたコメントが describe (columns) と table_comments に
+    // 出る。コメントの無い列は None。
+    let path = temp_db_path("comments");
+    create_empty_db(&path);
+    let opts = t::duckdb_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, qty INTEGER)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("COMMENT ON TABLE items IS '商品'", None)
+        .await
+        .expect("comment table");
+    conn.execute("COMMENT ON COLUMN items.qty IS 'it''s qty'", None)
+        .await
+        .expect("comment column");
+
+    let cols = conn.columns("main", "items").await.expect("columns");
+    let qty = cols.iter().find(|c| c.name == "qty").expect("qty");
+    assert_eq!(qty.comment.as_deref(), Some("it's qty"));
+    let id = cols.iter().find(|c| c.name == "id").expect("id");
+    assert_eq!(id.comment, None);
+
+    let tables = conn.table_comments("main").await.expect("table comments");
+    assert!(
+        tables
+            .iter()
+            .any(|c| c.name == "items" && c.comment == "商品"),
+        "{tables:?}"
+    );
+
+    conn.close().await;
+    remove_db_files(&path);
+}
+
+#[tokio::test]
+async fn duckdb_table_definition_returns_native_ddl() {
+    // #1001: kind="table" は duckdb_tables().sql のネイティブ DDL に、ユーザ作成
+    // インデックス (duckdb_indexes().sql) をベストエフォートで後置して返す。
+    let path = temp_db_path("tblddl");
+    create_empty_db(&path);
+    let opts = t::duckdb_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL DEFAULT 'x')",
+        None,
+    )
+    .await
+    .expect("create parent");
+    conn.execute(
+        "CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id))",
+        None,
+    )
+    .await
+    .expect("create child");
+    conn.execute("CREATE INDEX idx_child_pid ON child (pid)", None)
+        .await
+        .expect("create index");
+    conn.execute("CREATE VIEW v_child AS SELECT id FROM child", None)
+        .await
+        .expect("create view");
+
+    let ddl = conn
+        .object_definition("main", "table", "parent", None)
+        .await
+        .expect("parent ddl");
+    assert!(ddl.contains("CREATE TABLE"), "{ddl}");
+    assert!(ddl.contains("PRIMARY KEY"), "{ddl}");
+    assert!(ddl.contains("NOT NULL"), "{ddl}");
+    assert!(ddl.trim_end().ends_with(';'), "{ddl}");
+
+    let child = conn
+        .object_definition("main", "table", "child", None)
+        .await
+        .expect("child ddl");
+    assert!(child.contains("REFERENCES"), "{child}");
+    assert!(child.contains("idx_child_pid"), "{child}");
+
+    let view = conn
+        .object_definition("main", "table", "v_child", None)
+        .await
+        .expect("view via table kind");
+    assert!(view.to_uppercase().contains("CREATE VIEW"), "{view}");
+
+    assert!(conn
+        .object_definition("main", "table", "missing", None)
+        .await
+        .is_err());
+
+    conn.close().await;
+    remove_db_files(&path);
+}
+
+/// ファイルから新規テーブルを作成してインポート (#985) の DuckDB 版。DuckDB は
+/// 型に厳格なので、真偽 / 日付 / 日時 / 64bit 整数の実型へのロードと、abort
+/// モードで行が型変換に失敗したときに作成したテーブルが DROP されることを確かめる。
+#[tokio::test]
+async fn duckdb_import_into_new_table_roundtrip_and_cleanup() {
+    let path = temp_db_path("new_table");
+    create_empty_db(&path);
+    let db_path = path.to_str().expect("utf8 path");
+    let csv = std::env::temp_dir().join(format!("noobdb_duck_new_{}.csv", std::process::id()));
+    std::fs::write(
+        &csv,
+        "id,flag,day,at,big\n\
+         1,true,2024-02-29,2024-01-02 03:04:05.123456,9223372036854775807\n\
+         2,false,2024-03-01,2024-01-02T10:00:00,-1\n",
+    )
+    .expect("write csv");
+    let csv_path = csv.to_str().expect("utf8 path");
+
+    let conn = t::connect(&t::duckdb_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("d-new", conn, t::duckdb_options(db_path), false);
+    let options = serde_json::json!({
+        "delimiter": ",",
+        "quote": "\"",
+        "hasHeader": true,
+        "nullToken": "",
+        "encoding": "utf-8",
+    });
+    let mapping = serde_json::json!([
+        { "column": "id", "csvIndex": 0 },
+        { "column": "flag", "csvIndex": 1 },
+        { "column": "day", "csvIndex": 2 },
+        { "column": "at", "csvIndex": 3 },
+        { "column": "big", "csvIndex": 4 },
+    ]);
+    let create = serde_json::json!([
+        { "name": "id", "type": "integer" },
+        { "name": "flag", "type": "boolean" },
+        { "name": "day", "type": "date" },
+        { "name": "at", "type": "datetime" },
+        { "name": "big", "type": "bigint" },
+    ]);
+    let inserted = t::import_file_via_command(
+        &session,
+        None,
+        "select",
+        csv_path,
+        options.clone(),
+        mapping.clone(),
+        Some(create.clone()),
+    )
+    .await
+    .expect("import setup")
+    .expect("import rows");
+    assert_eq!(inserted, 2);
+    let res = session
+        .conn
+        .execute(
+            // `at` は DuckDB の予約語 (インポート側は quote_ident でクォート済み)。
+            "SELECT typeof(flag), typeof(day), typeof(\"at\"), typeof(big), \
+             CAST(big AS VARCHAR), CAST(flag AS VARCHAR) FROM \"select\" ORDER BY id",
+            None,
+        )
+        .await
+        .expect("select");
+    let text = |v: &t::Value| match v {
+        t::Value::String(s) => s.clone(),
+        other => format!("{other:?}"),
+    };
+    let rows: Vec<Vec<String>> = res
+        .rows
+        .iter()
+        .map(|r| r.iter().map(text).collect())
+        .collect();
+    assert_eq!(
+        rows[0],
+        vec![
+            "BOOLEAN",
+            "DATE",
+            "TIMESTAMP",
+            "BIGINT",
+            "9223372036854775807",
+            "true"
+        ]
+    );
+    assert_eq!(rows[1][5], "false");
+
+    // abort モードで型変換に失敗 → 作成したテーブルは DROP される。
+    std::fs::write(&csv, "id\n1\nnot-a-number\n").expect("write bad csv");
+    let failed = t::import_file_via_command(
+        &session,
+        None,
+        "bad_t",
+        csv_path,
+        options,
+        serde_json::json!([{ "column": "id", "csvIndex": 0 }]),
+        Some(serde_json::json!([{ "name": "id", "type": "integer" }])),
+    )
+    .await
+    .expect("setup succeeds; the row error is reported");
+    let message = failed.expect_err("the bad row must fail the abort-mode import");
+    assert!(message.contains("record 2"), "{message}");
+    assert!(message.contains("was dropped"), "{message}");
+    let exists = session
+        .conn
+        .execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'bad_t'",
+            None,
+        )
+        .await
+        .expect("probe");
+    assert!(
+        matches!(&exists.rows[0][0], t::Value::Int(0)),
+        "{:?}",
+        exists.rows
+    );
+
+    session.conn.close().await;
+    let _ = std::fs::remove_file(&csv);
+    remove_db_files(&path);
+}

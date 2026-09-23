@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::db::types::{
-    ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo,
+    ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo, TableComment,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
 };
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -152,6 +152,31 @@ pub async fn get_object_definition(
         .await
 }
 
+/// ストアドプロシージャ / 関数のシグネチャ (パラメータ・戻り値) を返す (#1003)。
+/// 「実行…」フォームの入力欄を組み立てるための読み取り専用 introspection で、
+/// read_only セッションでも許可する (実際の実行は通常のクエリ経路
+/// `run_query_stream` に乗り、`ensure_allowed_for_session` の安全網を通る)。
+/// SQLite / DuckDB はエラー (未対応)。`get_object_definition` と同じく DDL 直後に
+/// 古い値を返さないようキャッシュしない。
+#[tauri::command]
+pub async fn get_routine_signature(
+    session_id: String,
+    database: String,
+    kind: String,
+    name: String,
+    id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<RoutineSignature> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session
+        .conn
+        .routine_signature(&database, &kind, &name, id.as_deref())
+        .await
+}
+
 /// テーブルのインデックス一覧を返す。名前・構成カラム・UNIQUE/PRIMARY/方式。
 #[tauri::command]
 pub async fn list_indexes(
@@ -182,6 +207,23 @@ pub async fn table_row_estimates(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.table_row_estimates(&database).await
+}
+
+/// DB 内のテーブル (とビュー) のコメント一覧を返す (#1002)。コメントを持つもの
+/// だけ。SQLite はコメント機能が無いので常に空。カタログを読むだけの読み取り
+/// 操作なので read_only でも許可する。コメント編集直後に古い値を見せないよう、
+/// `table_row_estimates` と同じくキャッシュを経由しない。
+#[tauri::command]
+pub async fn list_table_comments(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableComment>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.table_comments(&database).await
 }
 
 /// テーブルごとのサイズ・統計 (行数・データ/インデックス/合計サイズ) を返す。

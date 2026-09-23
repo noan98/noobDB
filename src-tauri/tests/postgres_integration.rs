@@ -1053,3 +1053,106 @@ async fn postgres_upsert_import_roundtrip() {
         .await
         .expect("cleanup");
 }
+
+/// ルーチンのシグネチャ取得 (#1003) と、生成される呼び出し SQL の形 (`CALL` で
+/// OUT/INOUT が 1 行返る / `SELECT * FROM fn(...)`) が既存のストリーミング実行経路で
+/// 結果を返すことを確認する。
+#[tokio::test]
+async fn postgres_routine_signature_and_call_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for stmt in [
+        "DROP FUNCTION IF EXISTS public.noobdb_rt_fn(integer, text)",
+        "DROP PROCEDURE IF EXISTS public.noobdb_rt_proc(integer, integer, integer)",
+    ] {
+        let _ = conn.execute(stmt, None).await;
+    }
+    conn.execute(
+        "CREATE FUNCTION public.noobdb_rt_fn(a integer, b text, OUT total integer, OUT label text) \
+         LANGUAGE sql AS $$ SELECT a * 2, b || '!' $$",
+        None,
+    )
+    .await
+    .expect("create function");
+    conn.execute(
+        "CREATE PROCEDURE public.noobdb_rt_proc(IN a integer, INOUT b integer, OUT c integer) \
+         LANGUAGE plpgsql AS $$ BEGIN b := b + a; c := a * 10; END $$",
+        None,
+    )
+    .await
+    .expect("create procedure (PG14+ OUT)");
+
+    let sig = conn
+        .routine_signature("public", "function", "noobdb_rt_fn", None)
+        .await
+        .expect("function signature");
+    let modes: Vec<(&str, &str, &str)> = sig
+        .parameters
+        .iter()
+        .map(|p| (p.name.as_str(), p.mode.as_str(), p.data_type.as_str()))
+        .collect();
+    assert_eq!(
+        modes,
+        vec![
+            ("a", "in", "integer"),
+            ("b", "in", "text"),
+            ("total", "out", "integer"),
+            ("label", "out", "text"),
+        ]
+    );
+
+    let psig = conn
+        .routine_signature("public", "procedure", "noobdb_rt_proc", None)
+        .await
+        .expect("procedure signature");
+    let pmodes: Vec<&str> = psig.parameters.iter().map(|p| p.mode.as_str()).collect();
+    assert_eq!(pmodes, vec!["in", "inout", "out"]);
+    assert_eq!(psig.return_type, None);
+
+    // CALL は fetch 経路に流れ、OUT / INOUT の値が 1 行で返る。
+    let mut rows: Vec<Vec<t::Value>> = Vec::new();
+    conn.execute_stream(
+        r#"CALL "public"."noobdb_rt_proc"(CAST(2 AS integer), CAST(5 AS integer), CAST(NULL AS integer))"#,
+        None,
+        100,
+        100,
+        |b| {
+            if let t::StreamBatch::Rows(r) = b {
+                rows.extend(r);
+            }
+            Ok(())
+        },
+    )
+    .await
+    .expect("call procedure");
+    assert_eq!(rows.len(), 1, "CALL returns the OUT/INOUT row: {rows:?}");
+
+    let mut frows: Vec<Vec<t::Value>> = Vec::new();
+    conn.execute_stream(
+        r#"SELECT * FROM "public"."noobdb_rt_fn"(CAST(3 AS integer), CAST('x' AS text))"#,
+        None,
+        100,
+        100,
+        |b| {
+            if let t::StreamBatch::Rows(r) = b {
+                frows.extend(r);
+            }
+            Ok(())
+        },
+    )
+    .await
+    .expect("select function");
+    assert_eq!(frows.len(), 1);
+
+    for stmt in [
+        "DROP FUNCTION IF EXISTS public.noobdb_rt_fn(integer, text)",
+        "DROP PROCEDURE IF EXISTS public.noobdb_rt_proc(integer, integer, integer)",
+    ] {
+        let _ = conn.execute(stmt, None).await;
+    }
+    conn.close().await;
+}

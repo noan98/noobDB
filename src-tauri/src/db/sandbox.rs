@@ -310,6 +310,7 @@ mod tests {
             extra: String::new(),
             referenced_table: None,
             referenced_column: None,
+            comment: None,
         }];
         let out = with_shadow_copies(&[("orders".to_string(), cols)]);
         assert_eq!(out.len(), 2);

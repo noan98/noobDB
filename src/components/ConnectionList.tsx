@@ -8,6 +8,7 @@ import { isSandboxShadowTableName } from "../sandbox";
 import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
+import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
@@ -17,6 +18,8 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
+import { isSynthesizedTableDdl } from "./tableDdl";
+import { tableCommentMap, withComment } from "./schemaComment";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
 import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
 import { DropInsertionMarker } from "./DropInsertionMarker";
@@ -29,6 +32,14 @@ import {
   type MaintenanceKind,
 } from "./maintenanceCommands";
 import { Input } from "./ui";
+import {
+  explorerContainerKind,
+  foreignKeyTargetLabel,
+  partitionDatabaseNodes,
+  showTablesHeader,
+  tableChildGroups,
+  type ExplorerViewNode,
+} from "./explorerTree";
 import type { I18nKey } from "../i18n";
 import {
   MotionTreeRow,
@@ -258,9 +269,17 @@ interface Props {
   /** Passes the full profile (not just id) so the caller can offer an Undo (#676). */
   onDelete: (profile: ConnectionProfile) => void;
   onPickTable: (database: string, table: string) => void;
+  /**
+   * テーブル / ビューの構造 (列・インデックス・外部キー) をボトムパネルで開く (#1112)。
+   * データ (`onPickTable`) と並ぶテーブル選択後のもう一方の行き先。未指定なら
+   * メニュー項目を出さない。
+   */
+  onOpenStructure?: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
   /** テーブルを別接続へスキーマ + データごとコピーする (#986)。読み取りなので read_only でも有効。 */
   onTransferTable?: (database: string, table: string) => void;
+  /** ファイルから新規テーブルを作成してインポートする (#985)。read_only では無効化。 */
+  onImportNewTable?: (database: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
   onGenerateTestData?: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
@@ -270,8 +289,11 @@ interface Props {
   onSchemaExport?: (database: string) => void;
   onRunTableSelect: (database: string, table: string) => void;
   onInsertTableSelect: (database: string, table: string) => void;
-  /** Provided only for drivers with a single-statement definition (MySQL/SQLite). */
+  /** テーブルの CREATE TABLE DDL を新しいクエリタブに表示する (#1001)。全ドライバ対応
+   *  (`get_object_definition` の kind = "table")。読み取りのみなので read_only でも有効。 */
   onShowCreateTable?: (database: string, table: string) => void;
+  /** テーブルの CREATE TABLE DDL をクリップボードへコピーする (#1001)。 */
+  onCopyTableDdl?: (database: string, table: string) => void;
   /** DB ノードから新規テーブル作成ウィザードを開く。 */
   onCreateTable?: (database: string) => void;
   /** テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。read_only では無効化される。 */
@@ -318,6 +340,12 @@ interface Props {
    *  read_only では無効化される。 */
   onDropView?: (database: string, name: string) => void;
   /**
+   * ストアドプロシージャ / 関数の実行フォーム (#1003) を開く。右クリックメニューの
+   * 「実行...」から呼ぶ。SQLite / DuckDB (ルーチン非対応) では項目を無効化する。
+   * 未指定ならメニュー項目を出さない。
+   */
+  onRunRoutine?: (database: string, kind: "procedure" | "function", name: string, id: string | null) => void;
+  /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
    * introspection だけなので read_only でも有効。未指定ならメニュー項目を出さない。
@@ -360,8 +388,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDuplicate,
   onDelete,
   onPickTable,
+  onOpenStructure,
   onImportTable,
   onTransferTable,
+  onImportNewTable,
   onGenerateTestData,
   onDumpDatabase,
   onRunScript,
@@ -369,6 +399,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableSelect,
   onInsertTableSelect,
   onShowCreateTable,
+  onCopyTableDdl,
   onCreateTable,
   onTruncateTable,
   onDropTable,
@@ -389,6 +420,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onOpenObjectDefinition,
   onEditViewDefinition,
   onDropView,
+  onRunRoutine,
   onFindUsages,
   selectLimit,
   favorites,
@@ -421,6 +453,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const [rowEstimates, setRowEstimates] = useState<
     Record<string, Record<string, number | null>>
   >({});
+  // DB ごとのテーブルコメント (#1002)、`db -> table -> comment`。コメントを持つ
+  // テーブルだけが入る。行ツールチップに添える装飾情報なので失敗は無視する。
+  const [tableComments, setTableComments] = useState<Record<string, Record<string, string>>>({});
   const [filter, setFilter] = useState("");
   const filterInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -580,6 +615,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
       setTables((prev) => ({ ...prev, ...nextTables }));
       setRowEstimates((prev) => ({ ...prev, ...nextEstimates }));
+      for (const db of existingOpenDbs) void loadTableComments(targetSessionId, db);
       setSchemaObjects((prev) => ({ ...prev, ...nextObjects }));
       setTableColumns((prev) => ({ ...prev, ...nextCols }));
       setTableIndexes((prev) => ({ ...prev, ...nextIndexes }));
@@ -691,6 +727,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setDatabases(dbs);
       setTables(nextTables);
       setRowEstimates(nextEstimates);
+      setTableComments({});
+      for (const db of openDbs) void loadTableComments(targetSessionId, db);
       setTableColumns(nextCols);
     } catch (e) {
       // Suppress a stale session's error so it can't surface on the new one.
@@ -707,6 +745,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   useEffect(() => {
     setTables({});
     setRowEstimates({});
+    setTableComments({});
     setTableColumns({});
     setTableIndexes({});
     setSchemaObjects({});
@@ -913,12 +952,35 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const handleTableContextMenu = (e: React.MouseEvent, db: string, tbl: string) => {
     e.preventDefault();
     e.stopPropagation();
+    // 先頭はテーブル選択後の 2 つの行き先 (#1112): データ (ダブルクリックと同じ) と
+    // 構造 (ボトムパネル)。
     const items: ContextMenuEntry[] = [
+      { label: t("contextMenuOpenData"), onSelect: () => onPickTable(db, tbl) },
+    ];
+    if (onOpenStructure) {
+      items.push({ label: t("contextMenuOpenStructure"), onSelect: () => onOpenStructure(db, tbl) });
+    }
+    items.push(
+      { separator: true },
       { label: t("contextMenuRunSelect", { limit: selectLimit }), onSelect: () => onRunTableSelect(db, tbl) },
       { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, tbl) },
-    ];
+    );
+    // DDL の表示 / コピー (#1001)。PostgreSQL / MSSQL はカタログからの再構成なので、
+    // ベストエフォートである旨をツールチップで明示する。
+    const ddlTitle = isSynthesizedTableDdl(activeDriver) ? t("tableDdlSynthesizedHint") : undefined;
     if (onShowCreateTable) {
-      items.push({ label: t("contextMenuShowCreate"), onSelect: () => onShowCreateTable(db, tbl) });
+      items.push({
+        label: t("contextMenuShowCreate"),
+        onSelect: () => onShowCreateTable(db, tbl),
+        title: ddlTitle,
+      });
+    }
+    if (onCopyTableDdl) {
+      items.push({
+        label: t("contextMenuCopyDdl"),
+        onSelect: () => onCopyTableDdl(db, tbl),
+        title: ddlTitle,
+      });
     }
     // 列データプロファイル (#974)。読み取りの集計だけなので read_only でも有効。
     if (onExploreColumns) {
@@ -1039,15 +1101,58 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  // ビューの右クリックメニュー: 定義の編集 (#851)。ルーチン/トリガーは delimiter
-  // 差が大きいため対象外 (Issue のスコープ外、クリックでの読み取り専用 DDL 表示は
-  // 従来どおり `onOpenObjectDefinition` のまま)。
-  const handleViewContextMenu = (e: React.MouseEvent, db: string, name: string) => {
-    if (!onEditViewDefinition && !onDropView && !onFindUsages) return;
+  // ルーチン (プロシージャ / 関数) の右クリック: パラメータ入力付き実行 (#1003)。
+  // read_only でも無効化しない — 読み取りだけの関数もあり、書き込み系は実行時に
+  // バックエンドの `ensure_allowed_for_session` が拒否する (二重に判定しない)。
+  const handleRoutineContextMenu = (e: React.MouseEvent, db: string, o: SchemaObject) => {
+    if (!onRunRoutine || !isRoutineKind(o.kind)) return;
     e.preventDefault();
     e.stopPropagation();
+    const kind = o.kind;
+    const supported = supportsRoutineExecution(activeDriver);
+    const items: ContextMenuEntry[] = [
+      {
+        label: t("contextMenuRunRoutine"),
+        onSelect: () => onRunRoutine(db, kind, o.name, o.id),
+        disabled: !supported,
+        title: supported ? undefined : t("runRoutineUnsupportedDriver"),
+      },
+    ];
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  // ビューの右クリックメニュー: データ / 構造 (#1112)・定義の表示 / 編集 (#851)・
+  // 影響分析 (#1027)・DROP VIEW。ルーチン/トリガーは delimiter 差が大きいため定義の
+  // 編集は対象外。`asNode` が false のときは定義だけを開く旧来のビュー行
+  // (`list_tables` と名前が突き合わなかったもの) で、データ系の項目を出さない。
+  // テーブル向けの書き込み系 (インポート / TRUNCATE / 列編集など) はビューには出さない。
+  const handleViewContextMenu = (
+    e: React.MouseEvent,
+    db: string,
+    view: ExplorerViewNode,
+    asNode = true,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const { name } = view;
     const items: ContextMenuEntry[] = [];
-    if (onEditViewDefinition) {
+    if (asNode) {
+      items.push({ label: t("contextMenuOpenData"), onSelect: () => onPickTable(db, name) });
+      if (onOpenStructure) {
+        items.push({ label: t("contextMenuOpenStructure"), onSelect: () => onOpenStructure(db, name) });
+      }
+      items.push(
+        { label: t("contextMenuRunSelect", { limit: selectLimit }), onSelect: () => onRunTableSelect(db, name) },
+        { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, name) },
+      );
+    }
+    if (onOpenObjectDefinition && asNode) {
+      items.push({
+        label: t("contextMenuShowDefinition"),
+        onSelect: () => onOpenObjectDefinition(db, view.kind, name, view.id),
+      });
+    }
+    if (onEditViewDefinition && view.kind === "view") {
       items.push({
         label: t("contextMenuEditViewDefinition"),
         onSelect: () => onEditViewDefinition(db, name),
@@ -1060,7 +1165,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         onSelect: () => onFindUsages(db, name, null),
       });
     }
-    if (onDropView) {
+    if (asNode && onToggleFavorite) {
+      const fav = (favorites ?? []).some((f) => tableRefEquals(f, { database: db, table: name }));
+      items.push({ separator: true });
+      items.push({
+        label: fav ? t("contextMenuRemoveFavorite") : t("contextMenuAddFavorite"),
+        onSelect: () => onToggleFavorite(db, name),
+      });
+    }
+    if (asNode && onCopyTableName) {
+      items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(name) });
+    }
+    if (onDropView && view.kind === "view") {
       if (items.length > 0) items.push({ separator: true });
       items.push({
         label: t("contextMenuDropView"),
@@ -1070,6 +1186,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         danger: true,
       });
     }
+    if (items.length === 0) return;
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
@@ -1120,6 +1237,16 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       items.push({
         label: t("contextMenuCreateTable"),
         onSelect: () => onCreateTable(db),
+        disabled: activeReadOnly,
+        title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+      });
+    }
+    if (onImportNewTable) {
+      // 取り込みは書き込み (CREATE TABLE + INSERT) なので read_only では無効化する
+      // (バックエンドの import_csv も read_only を拒否する)。
+      items.push({
+        label: t("contextMenuImportNewTable"),
+        onSelect: () => onImportNewTable(db),
         disabled: activeReadOnly,
         title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
       });
@@ -1183,6 +1310,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   };
 
+  // テーブルコメント (#1002) をベストエフォートで取得する。SQLite は常に空。
+  // `loadRowEstimates` と同じく接続切替後の古い結果は捨てる。
+  async function loadTableComments(sid: string, db: string) {
+    try {
+      const list = await api.listTableComments(sid, db);
+      if (sessionIdRef.current !== sid) return;
+      setTableComments((prev) => ({ ...prev, [db]: tableCommentMap(list) }));
+    } catch {
+      // 装飾情報なのでツリー表示は止めない。
+    }
+  }
+
   const toggleDb = async (db: string) => {
     if (!sessionId) return;
     const isOpen = expandedDbs[db];
@@ -1204,6 +1343,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       const list = await listVisibleTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
+      void loadTableComments(sessionId, db);
       // 非テーブルのスキーマオブジェクトもベストエフォートで取得する。
       // 接続切替中に旧セッションの結果を反映しないよう sid を確認する。
       const sid = sessionId;
@@ -1272,6 +1412,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // 保守コマンドの SQL 方言はアクティブ接続のドライバで決まる (ツリーは
   // アクティブ接続のみを表示する)。
   const activeDriver = profiles.find((p) => p.id === activeProfileId)?.driver ?? "mysql";
+  // ツリーの「データベース」階層が何を表すか (PostgreSQL / DuckDB ではスキーマ)。#1112
+  const containerLabel =
+    explorerContainerKind(activeDriver) === "schema"
+      ? t("explorerContainerSchema")
+      : t("explorerContainerDatabase");
 
   const profileMetaMatches = useCallback(
     (p: ConnectionProfile) =>
@@ -1441,11 +1586,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   };
 
   // 非テーブルのスキーマオブジェクトを種別ごとにグループ化して描画する。
-  // 選択すると onOpenObjectDefinition で定義 DDL を開く。
-  const renderSchemaObjects = (db: string) => {
+  // 選択すると onOpenObjectDefinition で定義 DDL を開く。`list_tables` と突き合った
+  // ビューは `partitionDatabaseNodes` がテーブル同等のノードへ移しているので、
+  // ここに来るのはルーチン / トリガーと、名前が突き合わなかったビューだけ (#1112)。
+  const renderSchemaObjects = (db: string, objs: readonly SchemaObject[]) => {
     if (!onOpenObjectDefinition) return null;
-    const objs = schemaObjects[db];
-    if (!objs || objs.length === 0) return null;
+    if (objs.length === 0) return null;
     const order: SchemaObject["kind"][] = [
       "view",
       "materialized_view",
@@ -1482,7 +1628,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                   role="treeitem"
                   onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
                   onContextMenu={
-                    kind === "view" ? (ev) => handleViewContextMenu(ev, db, o.name) : undefined
+                    kind === "view"
+                      ? (ev) => handleViewContextMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
+                      : isRoutineKind(kind)
+                        ? (ev) => handleRoutineContextMenu(ev, db, o)
+                        : undefined
                   }
                   {...treeTooltipProps(`${o.name} — ${labels[kind] ?? kind}`)}
                   _hover={{ bg: "app.rowHover" }}
@@ -1500,6 +1650,233 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           );
         })}
       </>
+    );
+  };
+
+  // テーブル / ビューのノード (#1112)。ビューもテーブルと同じく列・インデックス・
+  // 外部キーを展開でき、ダブルクリックでデータを開く (以前はビューが「テーブル一覧」
+  // と「ビュー」グループの 2 箇所に別物として出ていた)。
+  const renderTableNode = (
+    db: string,
+    tbl: string,
+    { schemaFiltered, dbNameHit, view }: { schemaFiltered: boolean; dbNameHit: boolean; view: ExplorerViewNode | null },
+  ) => {
+    const tKey = tableKey(db, tbl);
+    const tableNameHit = searching && tbl.toLowerCase().includes(q);
+    const showAllCols = !schemaFiltered || dbNameHit || tableNameHit;
+    const tOpen =
+      !!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl));
+    const cols = tableColumns[tKey];
+    const rowEst = rowEstimates[db]?.[tbl];
+    const rowEstLabel =
+      typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
+    // 現在結果パネルに開いているテーブルかどうか (#982)。
+    // ツリーはアクティブ接続のみを表示するので db/table の
+    // 一致だけで十分 (プロファイル跨ぎの衝突はない)。
+    const isActiveTable =
+      !!activeTable && activeTable.database === db && activeTable.table === tbl;
+    // 列・インデックス・外部キーの子グループ (#1112)。見出しは複数グループが
+    // 並ぶときだけ出す (`tableChildGroups`)。
+    const childGroups = cols ? tableChildGroups(cols, tableIndexes[tKey]) : null;
+    return (
+      <TreeNode key={tbl}>
+        <TreeRow
+          pl="1"
+          role="treeitem"
+          /* 行のアクセシブルネームをテーブル名に固定する。既定の
+             content 由来の名前だと、内側のチェブロンボタンの
+             aria-label や行数バッジまで連結され、SR の読み上げと
+             ロール検索 (テスト含む) が不安定になるため。 */
+          aria-label={tbl}
+          aria-expanded={tOpen}
+          // 「現在地」表示 (#982): SR には aria-current、視覚には
+          // 下の共有 layoutId インジケータ (アクセントスパイン) で
+          // 示す。position: relative はインジケータの絶対配置の
+          // 基準になるが、非アクティブ行では不要なので付けない。
+          aria-current={isActiveTable ? "true" : undefined}
+          position={isActiveTable ? "relative" : undefined}
+          bg={isActiveTable ? "var(--bg-active)" : undefined}
+          onDoubleClick={() => onPickTable(db, tbl)}
+          onContextMenu={(e) =>
+            view ? handleViewContextMenu(e, db, view) : handleTableContextMenu(e, db, tbl)
+          }
+          {...treeTooltipProps(withComment(t("treeTableTitle"), tableComments[db]?.[tbl]))}
+          _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
+        >
+          {isActiveTable && (
+            <MotionActiveIndicator
+              layoutId={activeTableIndicatorId}
+              transition={transitions.emphasized}
+              position="absolute"
+              left="0"
+              top="0"
+              bottom="0"
+              width="2px"
+              bg="var(--accent)"
+              aria-hidden
+            />
+          )}
+          {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
+              ダブルクリック (テーブルを開く) の前に click が 2 回発火して
+              カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
+              連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
+              唯一の展開手段になったためネイティブ button として描画し、
+              キーボード (Enter/Space) と支援技術からも操作できるようにする
+              (行本体は現状 tabIndex を持たない — 上記のキーボードナビ方針
+              コメント参照)。 */}
+          <TreeChevronButton
+            type="button"
+            transform={tOpen ? "rotate(90deg)" : undefined}
+            aria-label={t("treeToggleColumnsAria", { table: tbl })}
+            aria-expanded={tOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              void toggleTable(db, tbl);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >▸</TreeChevronButton>
+          <TreeIcon color="app.textSecondary" aria-hidden><Icon name={view ? "view" : "table"} /></TreeIcon>
+          <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
+          {rowEstLabel && (
+            <TreeBadge
+              fontFamily="mono"
+              fontSize="2xs"
+              textTransform="none"
+              letterSpacing="0"
+              {...treeTooltipProps(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
+            >
+              {rowEstLabel}
+            </TreeBadge>
+          )}
+        </TreeRow>
+        <TreeCollapse open={tOpen}>
+          <TreeChildren>
+            {cols === undefined ? (
+              renderLoadingRow()
+            ) : cols.length === 0 ? (
+              <TreeEmpty>{t("treeNoColumns")}</TreeEmpty>
+            ) : (
+              <>
+              {showAllCols && childGroups?.showColumnsHeader && (
+                <QuickAccessHeader>{t("treeColumnsLabel")}</QuickAccessHeader>
+              )}
+              {cols
+                .filter((col) => showAllCols || col.name.toLowerCase().includes(q))
+                .map((col) => {
+                const isPk = col.key === "PRI";
+                const isFk = col.referenced_table !== null;
+                return (
+                  <TreeRow
+                    key={col.name}
+                    pt="0.75"
+                    pb="0.75"
+                    cursor="default"
+                    fontSize="sm"
+                    role="treeitem"
+                    onContextMenu={(e) => handleColumnContextMenu(e, db, tbl, col.name)}
+                    {...columnTooltipProps(col)}
+                  >
+                    <TreeChevron visibility="hidden" aria-hidden />
+                    {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
+                        hover すると `ColumnTooltip` (下記 `hoveredColumn`) が
+                        鍵種別・型を含む詳細を表示するため、ここで別に native
+                        title を持つと同じ情報が二重に (かつ約 1 秒遅れで)
+                        出てしまう。 */}
+                    <TreeIcon
+                      fontSize="xs"
+                      color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
+                      aria-hidden
+                    >
+                      {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
+                    </TreeIcon>
+                    <TreeLabel fontFamily="mono" color="app.text"><HighlightText text={col.name} query={q} /></TreeLabel>
+                    <TreeBadge
+                      fontFamily="mono"
+                      textTransform="lowercase"
+                      fontSize="2xs"
+                    >
+                      {col.data_type}
+                    </TreeBadge>
+                  </TreeRow>
+                );
+              })}
+              </>
+            )}
+            {/* インデックス一覧。展開時に列と並行取得し、
+                列の下に小見出し付きで表示する。 */}
+            {showAllCols && (tableIndexes[tKey]?.length ?? 0) > 0 && (
+              <>
+                <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
+                {tableIndexes[tKey].map((idx) => (
+                  <TreeRow
+                    key={`idx:${idx.name}`}
+                    pt="0.75"
+                    pb="0.75"
+                    cursor="default"
+                    fontSize="sm"
+                    role="treeitem"
+                    onContextMenu={(e) => handleIndexContextMenu(e, db, tbl, idx)}
+                    {...treeTooltipProps(
+                      `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
+                    )}
+                  >
+                    <TreeChevron visibility="hidden" aria-hidden />
+                    <TreeIcon
+                      fontSize="xs"
+                      color={idx.primary ? "app.keyAccent" : idx.unique ? "app.status.success" : "app.textMuted"}
+                      aria-hidden
+                    >
+                      {idx.primary ? <Icon name="key" /> : <Icon name="list" />}
+                    </TreeIcon>
+                    <TreeLabel fontFamily="mono" color="app.text">
+                      {idx.columns.join(", ") || idx.name}
+                    </TreeLabel>
+                    {(idx.primary || idx.unique) && (
+                      <TreeBadge
+                        fontSize="2xs"
+                        textTransform="uppercase"
+                        {...treeTooltipProps(idx.name)}
+                      >
+                        {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
+                      </TreeBadge>
+                    )}
+                  </TreeRow>
+                ))}
+              </>
+            )}
+            {/* 外部キー (#1112)。列行の鎖アイコンだけでは「どこを参照しているか」が
+                ホバーしないと分からないため、参照先をグループで並べる。クリックで
+                参照先テーブルのデータを開く (ツリーのダブルクリックと同じ導線)。 */}
+            {showAllCols && childGroups && childGroups.foreignKeys.length > 0 && (
+              <>
+                <QuickAccessHeader>{t("treeForeignKeysLabel")}</QuickAccessHeader>
+                {childGroups.foreignKeys.map((fk) => (
+                  <TreeRow
+                    key={`fk:${fk.column}`}
+                    pt="0.75"
+                    pb="0.75"
+                    fontSize="sm"
+                    role="treeitem"
+                    aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}`}
+                    onClick={() => onPickTable(db, fk.referencedTable)}
+                    {...treeTooltipProps(t("treeFkOpenHint", { table: fk.referencedTable }))}
+                    _hover={{ bg: "app.rowHover" }}
+                  >
+                    <TreeChevron visibility="hidden" aria-hidden />
+                    <TreeIcon fontSize="xs" color="app.accent" aria-hidden>
+                      <Icon name="link" />
+                    </TreeIcon>
+                    <TreeLabel fontFamily="mono" color="app.text">
+                      {fk.column}
+                      <chakra.span color="app.textMuted"> → {foreignKeyTargetLabel(fk)}</chakra.span>
+                    </TreeLabel>
+                  </TreeRow>
+                ))}
+              </>
+            )}
+          </TreeChildren>
+        </TreeCollapse>
+      </TreeNode>
     );
   };
 
@@ -1742,8 +2119,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       onClick={() => toggleDb(db)}
                       onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
+                      aria-label={db}
                       aria-expanded={dbOpen}
-                      {...treeTooltipProps(db)}
+                      {...treeTooltipProps(`${db} — ${containerLabel}`)}
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                       <TreeIcon color="app.dbAccent" aria-hidden><Icon name="database" /></TreeIcon>
@@ -1754,191 +2132,44 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         {dbTables === undefined ? (
                           renderLoadingRow()
                         ) : dbTables.length === 0 ? (
-                          <TreeEmpty>{t("treeNoTables")}</TreeEmpty>
+                          <>
+                            <TreeEmpty>{t("treeNoTables")}</TreeEmpty>
+                            {!schemaFiltered && renderSchemaObjects(db, partitionDatabaseNodes([], schemaObjects[db]).objects)}
+                          </>
                         ) : (
-                          dbTables
-                            .filter((tbl) => !schemaFiltered || dbNameHit || tableNodeMatches(db, tbl))
-                            .map((tbl) => {
-                            const tKey = tableKey(db, tbl);
-                            const tableNameHit = searching && tbl.toLowerCase().includes(q);
-                            const showAllCols = !schemaFiltered || dbNameHit || tableNameHit;
-                            const tOpen =
-                              !!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl));
-                            const cols = tableColumns[tKey];
-                            const rowEst = rowEstimates[db]?.[tbl];
-                            const rowEstLabel =
-                              typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
-                            // 現在結果パネルに開いているテーブルかどうか (#982)。
-                            // ツリーはアクティブ接続のみを表示するので db/table の
-                            // 一致だけで十分 (プロファイル跨ぎの衝突はない)。
-                            const isActiveTable =
-                              !!activeTable && activeTable.database === db && activeTable.table === tbl;
-                            return (
-                              <TreeNode key={tbl}>
-                                <TreeRow
-                                  pl="1"
-                                  role="treeitem"
-                                  /* 行のアクセシブルネームをテーブル名に固定する。既定の
-                                     content 由来の名前だと、内側のチェブロンボタンの
-                                     aria-label や行数バッジまで連結され、SR の読み上げと
-                                     ロール検索 (テスト含む) が不安定になるため。 */
-                                  aria-label={tbl}
-                                  aria-expanded={tOpen}
-                                  // 「現在地」表示 (#982): SR には aria-current、視覚には
-                                  // 下の共有 layoutId インジケータ (アクセントスパイン) で
-                                  // 示す。position: relative はインジケータの絶対配置の
-                                  // 基準になるが、非アクティブ行では不要なので付けない。
-                                  aria-current={isActiveTable ? "true" : undefined}
-                                  position={isActiveTable ? "relative" : undefined}
-                                  bg={isActiveTable ? "var(--bg-active)" : undefined}
-                                  onDoubleClick={() => onPickTable(db, tbl)}
-                                  onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
-                                  {...treeTooltipProps(t("treeTableTitle"))}
-                                  _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
-                                >
-                                  {isActiveTable && (
-                                    <MotionActiveIndicator
-                                      layoutId={activeTableIndicatorId}
-                                      transition={transitions.emphasized}
-                                      position="absolute"
-                                      left="0"
-                                      top="0"
-                                      bottom="0"
-                                      width="2px"
-                                      bg="var(--accent)"
-                                      aria-hidden
-                                    />
-                                  )}
-                                  {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
-                                      ダブルクリック (テーブルを開く) の前に click が 2 回発火して
-                                      カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
-                                      連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
-                                      唯一の展開手段になったためネイティブ button として描画し、
-                                      キーボード (Enter/Space) と支援技術からも操作できるようにする
-                                      (行本体は現状 tabIndex を持たない — 上記のキーボードナビ方針
-                                      コメント参照)。 */}
-                                  <TreeChevronButton
-                                    type="button"
-                                    transform={tOpen ? "rotate(90deg)" : undefined}
-                                    aria-label={t("treeToggleColumnsAria", { table: tbl })}
-                                    aria-expanded={tOpen}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void toggleTable(db, tbl);
-                                    }}
-                                    onDoubleClick={(e) => e.stopPropagation()}
-                                  >▸</TreeChevronButton>
-                                  <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
-                                  <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
-                                  {rowEstLabel && (
-                                    <TreeBadge
-                                      fontFamily="mono"
-                                      fontSize="2xs"
-                                      textTransform="none"
-                                      letterSpacing="0"
-                                      {...treeTooltipProps(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
-                                    >
-                                      {rowEstLabel}
-                                    </TreeBadge>
-                                  )}
-                                </TreeRow>
-                                <TreeCollapse open={tOpen}>
-                                  <TreeChildren>
-                                    {cols === undefined ? (
-                                      renderLoadingRow()
-                                    ) : cols.length === 0 ? (
-                                      <TreeEmpty>{t("treeNoColumns")}</TreeEmpty>
-                                    ) : (
-                                      cols
-                                        .filter((col) => showAllCols || col.name.toLowerCase().includes(q))
-                                        .map((col) => {
-                                        const isPk = col.key === "PRI";
-                                        const isFk = col.referenced_table !== null;
-                                        return (
-                                          <TreeRow
-                                            key={col.name}
-                                            pt="0.75"
-                                            pb="0.75"
-                                            cursor="default"
-                                            fontSize="sm"
-                                            role="treeitem"
-                                            onContextMenu={(e) => handleColumnContextMenu(e, db, tbl, col.name)}
-                                            {...columnTooltipProps(col)}
-                                          >
-                                            <TreeChevron visibility="hidden" aria-hidden />
-                                            {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
-                                                hover すると `ColumnTooltip` (下記 `hoveredColumn`) が
-                                                鍵種別・型を含む詳細を表示するため、ここで別に native
-                                                title を持つと同じ情報が二重に (かつ約 1 秒遅れで)
-                                                出てしまう。 */}
-                                            <TreeIcon
-                                              fontSize="xs"
-                                              color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
-                                              aria-hidden
-                                            >
-                                              {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
-                                            </TreeIcon>
-                                            <TreeLabel fontFamily="mono" color="app.text"><HighlightText text={col.name} query={q} /></TreeLabel>
-                                            <TreeBadge
-                                              fontFamily="mono"
-                                              textTransform="lowercase"
-                                              fontSize="2xs"
-                                            >
-                                              {col.data_type}
-                                            </TreeBadge>
-                                          </TreeRow>
-                                        );
-                                      })
-                                    )}
-                                    {/* インデックス一覧。展開時に列と並行取得し、
-                                        列の下に小見出し付きで表示する。 */}
-                                    {showAllCols && (tableIndexes[tKey]?.length ?? 0) > 0 && (
-                                      <>
-                                        <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
-                                        {tableIndexes[tKey].map((idx) => (
-                                          <TreeRow
-                                            key={`idx:${idx.name}`}
-                                            pt="0.75"
-                                            pb="0.75"
-                                            cursor="default"
-                                            fontSize="sm"
-                                            role="treeitem"
-                                            onContextMenu={(e) => handleIndexContextMenu(e, db, tbl, idx)}
-                                            {...treeTooltipProps(
-                                              `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
-                                            )}
-                                          >
-                                            <TreeChevron visibility="hidden" aria-hidden />
-                                            <TreeIcon
-                                              fontSize="xs"
-                                              color={idx.primary ? "app.keyAccent" : idx.unique ? "app.status.success" : "app.textMuted"}
-                                              aria-hidden
-                                            >
-                                              {idx.primary ? <Icon name="key" /> : <Icon name="list" />}
-                                            </TreeIcon>
-                                            <TreeLabel fontFamily="mono" color="app.text">
-                                              {idx.columns.join(", ") || idx.name}
-                                            </TreeLabel>
-                                            {(idx.primary || idx.unique) && (
-                                              <TreeBadge
-                                                fontSize="2xs"
-                                                textTransform="uppercase"
-                                                {...treeTooltipProps(idx.name)}
-                                              >
-                                                {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
-                                              </TreeBadge>
-                                            )}
-                                          </TreeRow>
-                                        ))}
-                                      </>
-                                    )}
-                                  </TreeChildren>
-                                </TreeCollapse>
-                              </TreeNode>
+                          (() => {
+                            const groups = partitionDatabaseNodes(dbTables, schemaObjects[db]);
+                            const visibleTables = groups.tables.filter(
+                              (tbl) => !schemaFiltered || dbNameHit || tableNodeMatches(db, tbl),
                             );
-                          })
+                            const visibleViews = groups.views.filter(
+                              (v) => !schemaFiltered || dbNameHit || tableNodeMatches(db, v.name),
+                            );
+                            return (
+                              <>
+                                {showTablesHeader(groups) && visibleTables.length > 0 && (
+                                  <QuickAccessHeader>
+                                    {t("objGroupTables")}{" "}
+                                    <chakra.span textStyle="numeric">({visibleTables.length})</chakra.span>
+                                  </QuickAccessHeader>
+                                )}
+                                {visibleTables.map((tbl) =>
+                                  renderTableNode(db, tbl, { schemaFiltered, dbNameHit, view: null }),
+                                )}
+                                {visibleViews.length > 0 && (
+                                  <QuickAccessHeader>
+                                    {t("objGroupViews")}{" "}
+                                    <chakra.span textStyle="numeric">({visibleViews.length})</chakra.span>
+                                  </QuickAccessHeader>
+                                )}
+                                {visibleViews.map((v) =>
+                                  renderTableNode(db, v.name, { schemaFiltered, dbNameHit, view: v }),
+                                )}
+                                {!schemaFiltered && renderSchemaObjects(db, groups.objects)}
+                              </>
+                            );
+                          })()
                         )}
-                        {!schemaFiltered && renderSchemaObjects(db)}
                       </TreeChildren>
                     </TreeCollapse>
                   </TreeNode>
@@ -2297,6 +2528,12 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: TooltipR
           <>
             <TooltipDt>{t("colTipExtra")}</TooltipDt>
             <TooltipDd>{col.extra}</TooltipDd>
+          </>
+        )}
+        {col.comment && col.comment.trim() !== "" && (
+          <>
+            <TooltipDt>{t("colTipComment")}</TooltipDt>
+            <TooltipDd>{col.comment}</TooltipDd>
           </>
         )}
       </chakra.dl>

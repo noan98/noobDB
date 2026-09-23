@@ -37,11 +37,12 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::advisor::UnusedIndexStats;
+use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
+    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{mssql_merge_sql, ImportConflict};
 use super::{DbConnectOptions, SslMode};
@@ -328,7 +329,9 @@ impl MssqlConn {
         let client = conn.client_mut()?;
         apply_use_database(client, database).await?;
 
-        if !is_query_shape(sql) {
+        // `EXEC` はプロシージャの結果セットを表示するため query 経路へ流す
+        // (#1003、[`is_exec_shape`] 参照)。
+        if !is_query_shape(sql) && !is_exec_shape(sql) {
             let result = client.execute(sql, &[]).await?;
             conn.unmark_discard();
             return Ok(QueryResult::empty(
@@ -794,6 +797,28 @@ impl MssqlConn {
             })
             .collect();
 
+        // #1002: 列コメントは拡張プロパティ `MS_Description` (SSMS と同じ慣習)。
+        let comment_rows = rows(
+            &mut conn,
+            r#"SELECT c.name, CAST(ep.value AS nvarchar(max))
+               FROM sys.extended_properties ep
+               JOIN sys.tables t ON t.object_id = ep.major_id
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               JOIN sys.columns c ON c.object_id = ep.major_id AND c.column_id = ep.minor_id
+               WHERE ep.class = 1 AND ep.name = 'MS_Description' AND ep.minor_id > 0
+                 AND s.name = 'dbo' AND t.name = @P1"#,
+            &[&table],
+        )
+        .await?;
+        let comment_map: std::collections::HashMap<String, String> = comment_rows
+            .iter()
+            .filter_map(|r| {
+                let col = r.get::<&str, _>(0)?.to_string();
+                let comment = non_empty_comment(r.get::<&str, _>(1).map(str::to_string))?;
+                Some((col, comment))
+            })
+            .collect();
+
         Ok(base_rows
             .iter()
             .map(|r| {
@@ -824,8 +849,36 @@ impl MssqlConn {
                     },
                     referenced_table: referenced.map(|(t, _)| t.clone()),
                     referenced_column: referenced.map(|(_, c)| c.clone()),
+                    comment: comment_map.get(&name).cloned(),
                     name,
                 }
+            })
+            .collect())
+    }
+
+    /// テーブル / ビューのコメント (#1002)。オブジェクトレベル (`minor_id = 0`)
+    /// の拡張プロパティ `MS_Description`。
+    pub async fn table_comments(&self, db: &str) -> Result<Vec<TableComment>> {
+        let mut conn = self.pool.acquire().await?;
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT o.name, CAST(ep.value AS nvarchar(max))
+               FROM sys.extended_properties ep
+               JOIN sys.objects o ON o.object_id = ep.major_id
+               JOIN sys.schemas s ON s.schema_id = o.schema_id
+               WHERE ep.class = 1 AND ep.name = 'MS_Description' AND ep.minor_id = 0
+                 AND s.name = 'dbo' AND o.type IN ('U', 'V')
+               ORDER BY o.name"#,
+            &[],
+        )
+        .await?;
+        Ok(out
+            .iter()
+            .filter_map(|r| {
+                let name = r.get::<&str, _>(0)?.to_string();
+                let comment = non_empty_comment(r.get::<&str, _>(1).map(str::to_string))?;
+                Some(TableComment { name, comment })
             })
             .collect())
     }
@@ -970,6 +1023,89 @@ impl MssqlConn {
     /// `OBJECT_DEFINITION` works uniformly for views/procedures/functions/
     /// triggers, unlike MySQL's per-kind `SHOW CREATE ...`, so `kind` is only
     /// used to validate the request.
+    /// ルーチンのシグネチャ (#1003)。`sys.objects` + `sys.parameters` を読む
+    /// (他の introspection と同じく dbo スキーマ限定)。`parameter_id = 0` は
+    /// スカラー関数の戻り値行なので `return_type` に回す。T-SQL の OUTPUT
+    /// パラメータは呼び出し側が値も渡せる (入出力) ため mode は `inout`。
+    /// 型名は長さ/精度付きで組み立てる (表示用)。
+    pub async fn routine_signature(
+        &self,
+        db: &str,
+        kind: &str,
+        name: &str,
+    ) -> Result<RoutineSignature> {
+        let mut conn = self.pool.acquire().await?;
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT RTRIM(o.type) AS otype,
+                      p.parameter_id,
+                      p.name,
+                      CASE
+                        WHEN p.parameter_id IS NULL THEN NULL
+                        WHEN p.user_type_id <> p.system_type_id THEN TYPE_NAME(p.user_type_id)
+                        WHEN TYPE_NAME(p.system_type_id) IN ('varchar', 'char', 'varbinary', 'binary')
+                          THEN TYPE_NAME(p.system_type_id) + '(' +
+                               CASE WHEN p.max_length = -1 THEN 'max'
+                                    ELSE CAST(p.max_length AS varchar(10)) END + ')'
+                        WHEN TYPE_NAME(p.system_type_id) IN ('nvarchar', 'nchar')
+                          THEN TYPE_NAME(p.system_type_id) + '(' +
+                               CASE WHEN p.max_length = -1 THEN 'max'
+                                    ELSE CAST(p.max_length / 2 AS varchar(10)) END + ')'
+                        WHEN TYPE_NAME(p.system_type_id) IN ('decimal', 'numeric')
+                          THEN TYPE_NAME(p.system_type_id) + '(' +
+                               CAST(p.precision AS varchar(10)) + ',' +
+                               CAST(p.scale AS varchar(10)) + ')'
+                        ELSE TYPE_NAME(p.system_type_id)
+                      END AS data_type,
+                      CAST(ISNULL(p.is_output, 0) AS int) AS is_output
+                 FROM sys.objects o
+                 JOIN sys.schemas s ON s.schema_id = o.schema_id
+                 LEFT JOIN sys.parameters p ON p.object_id = o.object_id
+                WHERE s.name = 'dbo' AND o.name = @P1
+                  AND o.type IN ('P', 'PC', 'FN', 'FS', 'IF', 'TF', 'FT')
+                ORDER BY p.parameter_id"#,
+            &[&name],
+        )
+        .await?;
+        let Some(first) = out.first() else {
+            return Err(AppError::InvalidInput(format!(
+                "routine not found: {db}.dbo.{name}"
+            )));
+        };
+        let otype = first.get::<&str, _>(0).unwrap_or_default().to_string();
+        let returns_set = matches!(otype.as_str(), "IF" | "TF" | "FT");
+        let mut return_type: Option<String> = None;
+        let mut parameters = Vec::new();
+        for r in &out {
+            let Some(pid) = r.get::<i32, _>(1) else {
+                continue; // パラメータを持たないルーチン (LEFT JOIN の NULL 行)
+            };
+            let data_type = r.get::<&str, _>(3).unwrap_or_default().to_string();
+            if pid == 0 {
+                return_type = Some(data_type);
+                continue;
+            }
+            let is_output = r.get::<i32, _>(4).unwrap_or(0) != 0;
+            parameters.push(RoutineParameter {
+                name: r.get::<&str, _>(2).unwrap_or_default().to_string(),
+                mode: if is_output { "inout" } else { "in" }.into(),
+                data_type,
+            });
+        }
+        Ok(RoutineSignature {
+            kind: kind.into(),
+            name: name.into(),
+            parameters,
+            returns_set: kind == "function" && returns_set,
+            return_type: if kind == "function" && !returns_set {
+                return_type
+            } else {
+                None
+            },
+        })
+    }
+
     pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
         if !matches!(kind, "view" | "procedure" | "function" | "trigger") {
             return Err(AppError::InvalidInput(format!(
@@ -1413,7 +1549,7 @@ async fn exec(conn: &mut PooledConn, sql: &str) -> Result<u64> {
 /// indirectly whenever a subsequent ROLLBACK/COMMIT also happens to fail.
 async fn run_sql_on(conn: &mut PooledConn, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
-    if is_query_shape(sql) {
+    if is_query_shape(sql) || is_exec_shape(sql) {
         let out = rows(conn, sql, &[]).await?;
         let columns = columns_of_rows(&out);
         let rows_out = out.iter().map(row_to_values).collect();
@@ -1437,6 +1573,22 @@ async fn fetch_rows(conn: &mut PooledConn, sql: Option<&str>) -> Result<Vec<TdsR
         None => Ok(Vec::new()),
         Some(q) => query_rows(conn, q, &[]).await,
     }
+}
+
+/// 先頭キーワードが `EXEC` / `EXECUTE` (ストアドプロシージャ呼び出し) か
+/// (#1003)。先頭の空白・コメントは無視する。プロシージャは結果セットを返すか
+/// 実行時にしか分からないため [`is_query_shape`] には含めず (ゴールデン
+/// `queryShapeVectors.json` の契約を維持)、実行経路側でこの判定を足して
+/// query 経路 (最初の結果セットを表示) へ流す。トレードオフとして、結果セットを
+/// 返さない EXEC は tiberius の QueryStream が DONE トークンの行数を公開しない
+/// ため rows_affected が 0 と表示される (結果セットを失うより優先した)。
+fn is_exec_shape(sql: &str) -> bool {
+    let cleaned = super::strip_sql_comments(sql, super::SqlFlavor::Postgres);
+    let trimmed = cleaned.trim_start().to_ascii_lowercase();
+    let rest = trimmed
+        .strip_prefix("execute")
+        .or_else(|| trimmed.strip_prefix("exec"));
+    rest.is_some_and(|r| !r.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
 }
 
 /// Statement shapes SQL Server is expected to return a result set for. `EXEC`
@@ -1853,6 +2005,18 @@ async fn fetch_primary_key(client: &mut MssqlClient, target: &str) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_exec_shape_detects_exec_and_execute() {
+        assert!(is_exec_shape("EXEC [db].[dbo].[p] 1"));
+        assert!(is_exec_shape("  -- run\n execute dbo.p"));
+        assert!(is_exec_shape("exec\n  p"));
+        assert!(!is_exec_shape("SELECT 1"));
+        assert!(!is_exec_shape("executor_log"));
+        assert!(!is_exec_shape("exec_foo"));
+        // is_query_shape の契約 (EXEC を含まない) は変えない。
+        assert!(!is_query_shape("EXEC p"));
+    }
 
     #[test]
     fn is_query_shape_recognizes_select_and_with() {

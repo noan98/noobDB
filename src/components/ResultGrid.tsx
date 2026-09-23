@@ -92,6 +92,7 @@ import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
+import { columnCommentsFor, withComment } from "./schemaComment";
 import {
   buildInsertClipboard,
   buildRowSql,
@@ -3219,7 +3220,10 @@ export const DataGrid = memo(function DataGrid({
         // ヘッダー系コントロール (ソート/フィルタ/リサイズボタン等、後述) と
         // 同じく共有 `Tooltip` を直接使ってよい (#884)。
         header: () => (
-          <Tooltip label={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name} focusableWrapper>
+          <Tooltip
+            label={withComment(fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name, fkInfo?.comment)}
+            focusableWrapper
+          >
             <span className="th-content">
               <span className="th-label-row">
                 {fkTable && <span className="th-fk-badge">FK</span>}
@@ -5880,6 +5884,7 @@ export const DataGrid = memo(function DataGrid({
         return (
           <RowInspector
             columns={columns}
+            comments={columnCommentsFor(columns.map((c) => c.name), columnMeta)}
             values={rows[activeCell.rowIdx]}
             maskedColumns={
               maskedCols

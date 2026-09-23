@@ -7,8 +7,8 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 use super::advisor::UnusedIndexStats;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
+    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
+    ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
     TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
@@ -608,6 +608,20 @@ impl SqliteConn {
     /// SQLite is file-backed — there is no server and no processes to list.
     /// The UI hides the process panel for SQLite; this error is the backstop
     /// for direct IPC calls.
+    /// ルーチン (ストアドプロシージャ / 関数) を持たないため未対応 (#1003)。
+    /// 空のシグネチャではなくエラーを返し、直接 IPC を叩いた呼び出し側にも
+    /// 「非対応」を明示する (`list_processes` と同じ規約)。
+    pub async fn routine_signature(
+        &self,
+        _db: &str,
+        _kind: &str,
+        _name: &str,
+    ) -> Result<RoutineSignature> {
+        Err(AppError::InvalidInput(
+            "stored routines are not supported for SQLite".into(),
+        ))
+    }
+
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         Err(AppError::InvalidInput(
             "process list is not supported for SQLite (file-backed, no server processes)".into(),
@@ -800,6 +814,8 @@ impl SqliteConn {
                     extra: String::new(),
                     referenced_table,
                     referenced_column,
+                    // SQLite はコメント機能を持たない (#1002)。
+                    comment: None,
                 }
             })
             .collect())
@@ -952,6 +968,9 @@ impl SqliteConn {
     }
 
     pub async fn object_definition(&self, _db: &str, kind: &str, name: &str) -> Result<String> {
+        if kind == "table" {
+            return self.table_definition(name).await;
+        }
         // The DDL is stored verbatim in sqlite_master.sql.
         let row: Option<SqliteRow> =
             sqlx::query("SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2")
@@ -965,6 +984,40 @@ impl SqliteConn {
                 "no definition found for {kind} '{name}'"
             ))),
         }
+    }
+
+    /// テーブル (またはテーブル一覧に並ぶビュー) の DDL (#1001)。`sqlite_master.sql`
+    /// にはユーザが書いた CREATE 文がそのまま残るので、それに明示的に作られた
+    /// インデックス (`sql` が NULL の自動インデックスは除く) を続けて返す。
+    async fn table_definition(&self, name: &str) -> Result<String> {
+        let row: Option<SqliteRow> = sqlx::query(
+            "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(table_sql) =
+            row.and_then(|r| r.try_get::<Option<String>, _>("sql").ok().flatten())
+        else {
+            return Err(AppError::InvalidInput(format!(
+                "no definition found for table '{name}'"
+            )));
+        };
+        let index_rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT sql FROM sqlite_master \
+             WHERE type = 'index' AND tbl_name = ?1 AND sql IS NOT NULL \
+             ORDER BY name",
+        )
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut statements = vec![table_sql];
+        statements.extend(
+            index_rows
+                .iter()
+                .filter_map(|r| r.try_get::<Option<String>, _>("sql").ok().flatten()),
+        );
+        Ok(super::table_ddl::join_native_statements(statements))
     }
 
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {

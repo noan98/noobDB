@@ -392,6 +392,12 @@ export interface TableColumnInfo {
   referenced_table: string | null;
   /** Referenced column for the foreign key, when known. */
   referenced_column: string | null;
+  /**
+   * 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description` /
+   * MSSQL `MS_Description` / DuckDB `duckdb_columns().comment`。無い・SQLite は
+   * `null`。古いバックエンドは送らないので省略可能 (後方互換)。
+   */
+  comment?: string | null;
 }
 
 /** One table (or view) and its column names, for whole-schema autocomplete. */
@@ -439,6 +445,30 @@ export interface SchemaObject {
   id: string | null;
 }
 
+/** ルーチン引数の入出力モード (#1003)。`table` は PostgreSQL の RETURNS TABLE 出力列。 */
+export type RoutineParamMode = "in" | "out" | "inout" | "variadic" | "table";
+
+/** ストアドプロシージャ / 関数の 1 パラメータ (`get_routine_signature`)。 */
+export interface RoutineParameter {
+  /** パラメータ名。PostgreSQL の無名引数は空文字、MSSQL は先頭 `@` 付き。 */
+  name: string;
+  /** 入出力モード。未知の値はバックエンドが `in` に倒して返す。 */
+  mode: RoutineParamMode | string;
+  /** 型名 (PostgreSQL は `format_type` の出力で、キャスト先にも使う)。 */
+  data_type: string;
+}
+
+/** ルーチンのシグネチャ (#1003)。 */
+export interface RoutineSignature {
+  kind: "procedure" | "function" | string;
+  name: string;
+  parameters: RoutineParameter[];
+  /** 関数が集合 / テーブル値を返すか (true なら `SELECT * FROM fn(...)`)。 */
+  returns_set: boolean;
+  /** 関数の戻り値型 (表示用)。 */
+  return_type: string | null;
+}
+
 /**
  * One foreign-key relationship in a database, used to draw ER-diagram edges.
  * One entry per referencing column; the columns of a composite key share a
@@ -462,6 +492,12 @@ export interface ForeignKey {
 export interface TableRowEstimate {
   name: string;
   estimate: number | null;
+}
+
+/** テーブル (またはビュー) のコメント 1 件 (#1002)。コメントを持つものだけが返る。 */
+export interface TableComment {
+  name: string;
+  comment: string;
 }
 
 /**
@@ -1066,6 +1102,27 @@ export interface ImportOptions {
   keyColumns?: string[];
 }
 
+/**
+ * 新規テーブル作成付きインポート (#985) の列型。バックエンドの
+ * `db::create_table::NewColumnType` と 1:1 (方言ごとの型名への変換と縮退は
+ * バックエンドが行う)。
+ */
+export type NewColumnType =
+  | "integer"
+  | "bigint"
+  | "decimal"
+  | "double"
+  | "boolean"
+  | "date"
+  | "datetime"
+  | "text";
+
+/** 新規テーブルの 1 列 (#985)。 */
+export interface NewTableColumn {
+  name: string;
+  type: NewColumnType;
+}
+
 export interface ColumnMapping {
   /** Destination table column name. */
   column: string;
@@ -1414,6 +1471,11 @@ export const api = {
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
       (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
     ),
+  /** DB 内のテーブルコメント一覧 (#1002)。コメントを持つテーブルだけ。SQLite は常に空。 */
+  listTableComments: (sessionId: string, database: string) =>
+    invoke<TableComment[]>("list_table_comments", { sessionId, database }).then((r) =>
+      parseResponse(schemas.tableCommentArray, r, "list_table_comments"),
+    ),
   /** テーブルごとのサイズ・統計を取得する (サイズダッシュボード #562)。 */
   tableSizes: (sessionId: string, database: string) =>
     invoke<TableSizeInfo[]>("table_sizes", { sessionId, database }).then((r) =>
@@ -1509,6 +1571,25 @@ export const api = {
       name,
       id: id ?? null,
     }),
+  /**
+   * ストアドプロシージャ / 関数のシグネチャ (パラメータ・戻り値) を取得する (#1003)。
+   * 読み取り専用の introspection。SQLite / DuckDB は未対応エラーを返す。
+   * `id` は PostgreSQL の oid (オーバーロード解決用)。
+   */
+  getRoutineSignature: (
+    sessionId: string,
+    database: string,
+    kind: string,
+    name: string,
+    id?: string | null,
+  ) =>
+    invoke<RoutineSignature>("get_routine_signature", {
+      sessionId,
+      database,
+      kind,
+      name,
+      id: id ?? null,
+    }).then((r) => parseResponse(schemas.routineSignature, r, "get_routine_signature")),
   compareSchema: (params: {
     sourceSessionId: string;
     sourceDatabase: string;
@@ -1922,6 +2003,11 @@ export const api = {
     options: ImportOptions;
     mapping: ColumnMapping[];
     batchSize?: number;
+    /**
+     * 指定すると、取り込み前にこの列定義で `table` を新規作成する (#985)。
+     * `mapping` の `column` はすべてここに含まれている必要がある。
+     */
+    createTable?: NewTableColumn[] | null;
   }) =>
     invoke<void>("import_csv", {
       sessionId: params.sessionId,
@@ -1932,6 +2018,7 @@ export const api = {
       options: params.options,
       mapping: params.mapping,
       batchSize: params.batchSize ?? null,
+      createTable: params.createTable ?? null,
     }),
 
   /**
@@ -1964,6 +2051,16 @@ export const api = {
    */
   transferData: (streamId: string, request: TransferRequest) =>
     invoke<void>("transfer_data", { streamId, request }),
+
+  /**
+   * 新規テーブル作成付きインポート (#985) で実行される `CREATE TABLE` を返す。
+   * 実行時と同じバックエンドの生成関数を通すので、プレビュー = 実際の DDL。
+   * 名前が空・重複列名・長さ超過などは reject される。
+   */
+  previewCreateTableDdl: (driver: DriverKind, table: string, columns: NewTableColumn[]) =>
+    invoke<string>("preview_create_table_ddl", { driver, table, columns }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "preview_create_table_ddl"),
+    ),
 
   /**
    * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を

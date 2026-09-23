@@ -6,11 +6,12 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo, UserPrivileges, Value,
+    QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
+    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{
@@ -1225,7 +1226,8 @@ impl MySqlConn {
                      AND k.COLUMN_NAME = c.COLUMN_NAME
                      AND k.REFERENCED_TABLE_NAME IS NOT NULL
                    ORDER BY k.ORDINAL_POSITION
-                   LIMIT 1) AS REFERENCED_COLUMN_NAME
+                   LIMIT 1) AS REFERENCED_COLUMN_NAME,
+                 c.COLUMN_COMMENT
                FROM information_schema.COLUMNS c
                WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
                ORDER BY c.ORDINAL_POSITION"#,
@@ -1249,6 +1251,36 @@ impl MySqlConn {
                 extra: r.try_get::<String, _>(5).unwrap_or_default(),
                 referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
                 referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
+                // #1002: コメント無しは空文字で返るので None にそろえる。
+                comment: non_empty_comment(r.try_get::<Option<String>, _>(8).ok().flatten()),
+            })
+            .collect())
+    }
+
+    /// テーブル / ビューのコメント (#1002)。`TABLE_COMMENT` はビューに対して
+    /// 固定文字列 `VIEW` を返すため、基底テーブルだけを対象にする。
+    pub async fn table_comments(&self, db: &str) -> Result<Vec<TableComment>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' AND TABLE_COMMENT <> '' \
+             ORDER BY TABLE_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                // サーバ版によって information_schema の列が文字列 / バイナリの
+                // どちらで届くか揺れるため、両方を試す。
+                let text = |i: usize| {
+                    r.try_get::<String, _>(i)
+                        .ok()
+                        .or_else(|| decode_text_col(r, i).ok())
+                };
+                let name = text(0)?;
+                let comment = non_empty_comment(text(1))?;
+                Some(TableComment { name, comment })
             })
             .collect())
     }
@@ -1349,6 +1381,71 @@ impl MySqlConn {
         Ok(out)
     }
 
+    /// ルーチンのシグネチャ (#1003)。存在確認と関数の戻り値型は
+    /// `information_schema.ROUTINES`、パラメータは `information_schema.PARAMETERS`
+    /// (`ORDINAL_POSITION = 0` は関数の戻り値行なので除外) から読む。
+    pub async fn routine_signature(
+        &self,
+        db: &str,
+        kind: &str,
+        name: &str,
+    ) -> Result<RoutineSignature> {
+        let routine_type = if kind == "procedure" {
+            "PROCEDURE"
+        } else {
+            "FUNCTION"
+        };
+        let head: Option<MySqlRow> = sqlx::query(
+            "SELECT COALESCE(DTD_IDENTIFIER, '') FROM information_schema.ROUTINES \
+             WHERE ROUTINE_SCHEMA = ? AND ROUTINE_NAME = ? AND ROUTINE_TYPE = ?",
+        )
+        .bind(db)
+        .bind(name)
+        .bind(routine_type)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(head) = head else {
+            return Err(AppError::InvalidInput(format!(
+                "routine not found: {db}.{name}"
+            )));
+        };
+        let return_type = if kind == "function" {
+            Some(text_or_bytes(&head, 0)?).filter(|t| !t.is_empty())
+        } else {
+            None
+        };
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT COALESCE(PARAMETER_MODE, ''), COALESCE(PARAMETER_NAME, ''), \
+                    COALESCE(DTD_IDENTIFIER, '') \
+               FROM information_schema.PARAMETERS \
+              WHERE SPECIFIC_SCHEMA = ? AND SPECIFIC_NAME = ? AND ROUTINE_TYPE = ? \
+                AND ORDINAL_POSITION > 0 \
+              ORDER BY ORDINAL_POSITION",
+        )
+        .bind(db)
+        .bind(name)
+        .bind(routine_type)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut parameters = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let mode = text_or_bytes(r, 0)?.to_ascii_lowercase();
+            parameters.push(RoutineParameter {
+                name: text_or_bytes(r, 1)?,
+                // 関数の引数は PARAMETER_MODE が NULL (= IN 扱い)。
+                mode: if mode.is_empty() { "in".into() } else { mode },
+                data_type: text_or_bytes(r, 2)?,
+            });
+        }
+        Ok(RoutineSignature {
+            kind: kind.into(),
+            name: name.into(),
+            parameters,
+            returns_set: false,
+            return_type,
+        })
+    }
+
     pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
         if db.contains('`') || db.contains('\0') || name.contains('`') || name.contains('\0') {
             return Err(AppError::InvalidInput("invalid identifier".into()));
@@ -1356,6 +1453,22 @@ impl MySqlConn {
         // SHOW CREATE ... can't bind identifiers; quote them manually after the
         // guard above. The result column holding the DDL differs by object kind.
         let qualified = format!("`{db}`.`{name}`");
+        if kind == "table" {
+            // #1001: `SHOW CREATE TABLE` はネイティブの完全な DDL (列・キー・
+            // インデックス・外部キー・ENGINE/CHARSET/COMMENT) を返す。テーブル
+            // 一覧にはビューも含まれ、ビューに対しては同じ文が `Create View`
+            // 列で応答するため、両方の列名を試す。
+            let row: MySqlRow = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SHOW CREATE TABLE {qualified}"
+            )))
+            .fetch_one(&self.pool)
+            .await?;
+            let ddl = row
+                .try_get::<String, _>("Create Table")
+                .or_else(|_| row.try_get::<String, _>("Create View"))
+                .unwrap_or_default();
+            return Ok(super::table_ddl::join_native_statements([ddl]));
+        }
         let (stmt, col) = match kind {
             "view" => (format!("SHOW CREATE VIEW {qualified}"), "Create View"),
             "procedure" => (
@@ -1685,6 +1798,15 @@ async fn apply_use_database(
 // from `SHOW TABLES`) with the BINARY flag, which makes sqlx's `String`
 // decoder refuse the column. Read raw bytes and convert manually so the same
 // code works across MySQL 8 and MariaDB.
+/// information_schema の文字列列を読む。サーバ/照合順序によって VARCHAR でも
+/// VARBINARY でも返りうるため、String で読めなければバイト列として UTF-8 解釈する。
+fn text_or_bytes(row: &MySqlRow, i: usize) -> Result<String> {
+    match row.try_get::<String, _>(i) {
+        Ok(s) => Ok(s),
+        Err(_) => decode_text_col(row, i),
+    }
+}
+
 fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
     let bytes: Vec<u8> = row.try_get(i)?;
     String::from_utf8(bytes).map_err(|e| AppError::Other(e.to_string()))

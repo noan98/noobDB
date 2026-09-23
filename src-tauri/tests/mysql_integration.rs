@@ -1250,3 +1250,71 @@ async fn mysql_upsert_import_roundtrip() {
         .await
         .expect("cleanup");
 }
+
+/// ルーチンのシグネチャ取得 (#1003): information_schema.PARAMETERS から
+/// IN/OUT/INOUT とパラメータ順・型を読み、関数の戻り値型を返す。
+#[tokio::test]
+async fn mysql_routine_signature_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts.database.clone().expect("test db in url");
+    let conn = t::connect(&opts).await.expect("connect");
+    // CREATE/DROP PROCEDURE / FUNCTION は prepared statement プロトコルでは
+    // 拒否される (error 1295) ので、既存テストと同じくテキストプロトコルで用意する。
+    let _ = t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_rt_proc").await;
+    let _ = t::mysql_exec_text(&opts, "DROP FUNCTION IF EXISTS noobdb_rt_fn").await;
+    t::mysql_exec_text(
+        &opts,
+        "CREATE PROCEDURE noobdb_rt_proc(IN a INT, INOUT b VARCHAR(10), OUT c INT) \
+         BEGIN SET c = a * 2; SELECT a AS a_echo; END",
+    )
+    .await
+    .expect("create procedure");
+    let fn_created = t::mysql_exec_text(
+        &opts,
+        "CREATE FUNCTION noobdb_rt_fn(x INT) RETURNS INT DETERMINISTIC RETURN x + 1",
+    )
+    .await;
+
+    let sig = conn
+        .routine_signature(&db, "procedure", "noobdb_rt_proc", None)
+        .await
+        .expect("procedure signature");
+    let modes: Vec<(&str, &str)> = sig
+        .parameters
+        .iter()
+        .map(|p| (p.name.as_str(), p.mode.as_str()))
+        .collect();
+    assert_eq!(modes, vec![("a", "in"), ("b", "inout"), ("c", "out")]);
+    assert!(sig.parameters[1]
+        .data_type
+        .to_lowercase()
+        .starts_with("varchar"));
+
+    // バイナリログ有効時に DETERMINISTIC 関数の作成権限が無い環境もあるため、
+    // 作成できたときだけ検証する。
+    if fn_created.is_ok() {
+        let fsig = conn
+            .routine_signature(&db, "function", "noobdb_rt_fn", None)
+            .await
+            .expect("function signature");
+        assert_eq!(fsig.parameters.len(), 1);
+        assert_eq!(fsig.parameters[0].mode, "in");
+        assert_eq!(
+            fsig.return_type.as_deref().map(str::to_lowercase),
+            Some("int".into())
+        );
+    }
+
+    assert!(conn
+        .routine_signature(&db, "procedure", "noobdb_rt_missing", None)
+        .await
+        .is_err());
+
+    let _ = t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_rt_proc").await;
+    let _ = t::mysql_exec_text(&opts, "DROP FUNCTION IF EXISTS noobdb_rt_fn").await;
+    conn.close().await;
+}

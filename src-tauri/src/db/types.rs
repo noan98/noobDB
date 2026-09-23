@@ -107,6 +107,26 @@ pub struct TableColumnInfo {
     pub referenced_table: Option<String>,
     /// The referenced column for the foreign key, when the driver can resolve it.
     pub referenced_column: Option<String>,
+    /// 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description` /
+    /// MSSQL 拡張プロパティ `MS_Description` / DuckDB `duckdb_columns().comment`。
+    /// コメントが無い列と SQLite (コメント機能なし) は `None`。`#[serde(default)]`
+    /// なので、このフィールドを持たない JSON (スナップショット等) も読める。
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
+/// テーブル (またはビュー) のコメント 1 件 (#1002)。`list_table_comments` は
+/// コメントを持つものだけを返す (空コメントは含めない)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableComment {
+    pub name: String,
+    pub comment: String,
+}
+
+/// 空文字 / 空白だけのコメントを `None` に正規化する (#1002)。MySQL は
+/// コメント無しを空文字で返すため、ドライバ間で「無い」の表現をそろえる。
+pub fn non_empty_comment(s: Option<String>) -> Option<String> {
+    s.filter(|c| !c.trim().is_empty())
 }
 
 /// One foreign-key relationship within a database, used to draw the ER
@@ -137,6 +157,34 @@ pub struct IndexInfo {
     pub unique: bool,
     pub primary: bool,
     pub method: Option<String>,
+}
+
+/// ストアドプロシージャ / 関数の 1 パラメータ (#1003)。`get_routine_signature`
+/// が返し、フロントの `routineCall.ts` が呼び出し SQL (CALL / SELECT / EXEC) を
+/// 組み立てる材料にする。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutineParameter {
+    /// パラメータ名。PostgreSQL の無名引数は空文字、MSSQL は先頭 `@` 付きのまま。
+    pub name: String,
+    /// 入出力モード: `in` / `out` / `inout` / `variadic` / `table`
+    /// (`table` は PostgreSQL の `RETURNS TABLE(...)` の出力列)。
+    pub mode: String,
+    /// 型名 (表示用かつ PostgreSQL ではキャスト先 — `format_type` の出力)。
+    pub data_type: String,
+}
+
+/// ルーチンのシグネチャ (#1003)。`kind` は `procedure` / `function`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutineSignature {
+    pub kind: String,
+    pub name: String,
+    /// 宣言順のパラメータ (戻り値そのものは含まない)。
+    pub parameters: Vec<RoutineParameter>,
+    /// 関数が集合 (行の集合 / テーブル値) を返すか。true なら
+    /// `SELECT * FROM fn(...)` の形で呼ぶ。プロシージャは常に false。
+    pub returns_set: bool,
+    /// 関数の戻り値型 (表示用)。プロシージャや取得できない場合は `None`。
+    pub return_type: Option<String>,
 }
 
 /// A non-table schema object: a view, materialized view, stored

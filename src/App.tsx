@@ -52,6 +52,7 @@ import {
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
+import { TABLE_DDL_KIND } from "./components/tableDdl";
 import {
   buildDropIndexSql,
   buildDropTableSql,
@@ -248,6 +249,9 @@ const AdvisorPanel = lazy(() =>
 const ColumnProfilePanel = lazy(() =>
   import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
 );
+const TableStructurePanel = lazy(() =>
+  import("./components/TableStructurePanel").then((m) => ({ default: m.TableStructurePanel })),
+);
 const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
@@ -262,6 +266,9 @@ const ShortcutCheatSheet = lazy(() =>
 );
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
+);
+const RunRoutineModal = lazy(() =>
+  import("./components/RunRoutineModal").then((m) => ({ default: m.RunRoutineModal })),
 );
 import {
   analyzeDangerousSql,
@@ -309,6 +316,10 @@ import {
 } from "./components/workspaceEscape";
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, WorkspaceSplit } from "./components/BottomPanel";
+import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
+import { parseSidebarWidth } from "./components/sidebarLayout";
+import type { StructureTarget } from "./components/tableStructure";
+import { workspaceCommandItems } from "./components/workspaceCommands";
 import {
   availableBottomPanelTabs,
   resolveBottomPanelTab,
@@ -432,19 +443,16 @@ const SIDEBAR_EXPAND_BUTTON_SIZE = "28px";
  */
 const SIDEBAR_EXPAND_CLEARANCE =
   `calc(var(--space-2) + ${SIDEBAR_EXPAND_BUTTON_SIZE} + var(--space-2-5))`;
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_MAX_WIDTH = 560;
-const SIDEBAR_DEFAULT_WIDTH = 300;
 // Below this window width the sidebar auto-collapses to give the main area room;
 // the user can still open it on demand (it then overlays the editor, see CSS).
 const NARROW_BREAKPOINT = 760;
 
-const clampSidebarWidth = (w: number) =>
-  Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, w));
-
 function readInitialSidebarWidth(): number {
-  const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-  return Number.isFinite(saved) && saved > 0 ? clampSidebarWidth(saved) : SIDEBAR_DEFAULT_WIDTH;
+  try {
+    return parseSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  } catch {
+    return parseSidebarWidth(null);
+  }
 }
 
 type Status =
@@ -944,19 +952,6 @@ async function resolveTableOpen(
   };
 }
 
-// SQL that returns a table's definition, or null for drivers without a
-// single-statement form (Postgres). MySQL uses SHOW CREATE TABLE; SQLite reads
-// the original DDL out of sqlite_master.
-function tableDefinitionSql(driver: string, database: string, table: string): string | null {
-  if (driver === "mysql") {
-    return `SHOW CREATE TABLE ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-  }
-  if (driver === "sqlite") {
-    return `SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = '${table.replace(/'/g, "''")}'`;
-  }
-  return null;
-}
-
 // Cache key for a database's whole-schema autocomplete snapshot. The NUL
 // separator can't appear in a session id or database name, so it can't
 // collide across (session, database) pairs.
@@ -1287,6 +1282,9 @@ export default function App() {
   // 「列を探索」(#974) の対象。サイドバーのテーブル / 結果グリッドの列から開いたときに
   // 決まり、ボトムパネルの profile タブはこれがあるときだけ開ける。
   const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
+  // テーブル構造 (#1112) の対象。ツリー / コマンドパレット / 外部キーの参照先から
+  // 決まり、ボトムパネルの structure タブはこれがあるときだけ開ける。
+  const [structureTarget, setStructureTarget] = useState<StructureTarget | null>(null);
   // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
   const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
@@ -1425,7 +1423,6 @@ export default function App() {
   const [narrow, setNarrow] = useState<boolean>(() => window.innerWidth < NARROW_BREAKPOINT);
   const [narrowSidebarOpen, setNarrowSidebarOpen] = useState(false);
   const [sidebarResizing, setSidebarResizing] = useState(false);
-  const sidebarResizingRef = useRef(false);
 
   const sidebarCollapsed = narrow ? !narrowSidebarOpen : sidebarUserCollapsed;
 
@@ -1513,42 +1510,6 @@ export default function App() {
       cancelled = true;
     };
     // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
-  }, []);
-
-  // Lock the cursor while dragging so it doesn't flicker off the thin handle.
-  useEffect(() => {
-    if (!sidebarResizing) return;
-    const prev = document.body.style.cursor;
-    document.body.style.cursor = "ew-resize";
-    return () => {
-      document.body.style.cursor = prev;
-    };
-  }, [sidebarResizing]);
-
-  const onSidebarResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    sidebarResizingRef.current = true;
-    setSidebarResizing(true);
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const onSidebarResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!sidebarResizingRef.current) return;
-    setSidebarWidth(clampSidebarWidth(e.clientX));
-  }, []);
-
-  const onSidebarResizePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    sidebarResizingRef.current = false;
-    setSidebarResizing(false);
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -1791,7 +1752,8 @@ export default function App() {
   // 同じくヘッダの「ツール」ボタン直下に出す補助ビュー (スキーマ比較 / ER 図 /
   // プロセス一覧) メニューのアンカー座標。3 ボタン → 1 ボタンへの集約。
   const [toolsMenu, setToolsMenu] = useState<{ x: number; y: number } | null>(null);
-  const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
+  // `table: null` はファイルから新規テーブルを作成するモード (#985)。
+  const [importTarget, setImportTarget] = useState<{ database: string; table: string | null } | null>(null);
   // テストデータ生成ウィザード (#602) の対象テーブル。
   const [testDataTarget, setTestDataTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
@@ -1848,6 +1810,13 @@ export default function App() {
   // 明示トランザクション: 現在のセッションでトランザクションが有効か。実行経路の
   // 振り分けにコールバックから参照するため ref も併せ持つ。
   const [txActive, setTxActive] = useState(false);
+  // ルーチン実行フォーム (#1003) の対象。null なら閉じている。
+  const [routineTarget, setRoutineTarget] = useState<{
+    database: string;
+    kind: "procedure" | "function";
+    name: string;
+    id: string | null;
+  } | null>(null);
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
@@ -4349,7 +4318,7 @@ export default function App() {
     }
   }, [sessionId, toast]);
 
-  const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean }) => {
+  const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
     // it never trips the destructive-query gate or auto LIMIT.
@@ -4361,7 +4330,9 @@ export default function App() {
     // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
     // ターゲットタブに対して行う。
     let target = tab;
-    let openedInNewTab = false;
+    // `fresh`: 呼び出し側が直前に addTab したばかりのタブ (tabsRef 未反映) を渡す
+    // とき。バッチ実行がメモリ上の target を直接使うようにする (#1003)。
+    let openedInNewTab = opts?.fresh ?? false;
     if (tab.kind === "query" && (opts?.newTab ?? settings.resultsInNewTab)) {
       const newTab: Tab = {
         ...makeQueryTab(),
@@ -5121,6 +5092,12 @@ export default function App() {
     setTransferSource({ kind: "table", database, table });
   }, []);
 
+  // ファイルから新規テーブルを作成してインポート (#985)。DB のコンテキスト
+  // メニューから開く (対象テーブルが無いので ImportModal は作成モード固定)。
+  const handleImportNewTable = useCallback((database: string) => {
+    setImportTarget({ database, table: null });
+  }, []);
+
   // テストデータ生成ウィザード (#602) を開く。
   const handleGenerateTestData = useCallback((database: string, table: string) => {
     setTestDataTarget({ database, table });
@@ -5161,6 +5138,40 @@ export default function App() {
       toast.error(translate("objDefinitionError", { error: String(e) }));
     }
   }, [sessionId, openQueryInEditor, toast]);
+
+  // ストアドプロシージャ / 関数の実行 (#1003): 右クリック「実行...」でフォームを開き、
+  // 生成した呼び出し SQL を新しいクエリタブで **通常の実行ゲート** (`runInTabWithGate`
+  // = 危険クエリ確認・confirm_writes → run_query_stream / バッチ / 明示トランザクション)
+  // に渡す。独自の実行経路は持たない — read_only の拒否もバックエンドの
+  // `ensure_allowed_for_session` にそのまま任せる。
+  const handleRunRoutine = useCallback(
+    (database: string, kind: "procedure" | "function", name: string, id: string | null) => {
+      if (!sessionId) return;
+      setRoutineTarget({ database, kind, name, id });
+    },
+    [sessionId],
+  );
+
+  const handleRoutineRun = useCallback((sql: string) => {
+    const target = routineTarget;
+    setRoutineTarget(null);
+    if (!target || !sessionId) return;
+    const tab: Tab = {
+      ...makeQueryTab(),
+      sql,
+      lastExecutedSql: sql,
+      title: target.name,
+      database: target.database,
+    };
+    addTab(tab);
+    runInTabWithGate(tab, sql, { newTab: false, fresh: true });
+  }, [routineTarget, sessionId, addTab, runInTabWithGate]);
+
+  const handleRoutineToEditor = useCallback((sql: string) => {
+    const target = routineTarget;
+    setRoutineTarget(null);
+    openQueryInEditor(sql, target?.name);
+  }, [routineTarget, openQueryInEditor]);
 
   // ビュー定義の編集 (#851): 選択したビューの DDL を取得し、`CREATE VIEW` の
   // 外殻を剥がした本文だけを新しいクエリタブへ展開する。タブに `editingViewName`
@@ -5645,10 +5656,25 @@ export default function App() {
     }
   }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
 
+  // テーブルの CREATE TABLE DDL の表示 / コピー (#1001)。全ドライバで
+  // `get_object_definition` (kind = "table") を使う — MySQL/SQLite/DuckDB は
+  // ネイティブ DDL、PostgreSQL/MSSQL はカタログから再構成した DDL。純粋な読み取り
+  // なので read_only セッションでも動く (`is_read_only_sql` の経路を通らない)。
   const handleShowCreateTable = useCallback((database: string, table: string) => {
-    const sql = tableDefinitionSql(selectedProfile?.driver ?? "mysql", database, table);
-    if (sql) openAndRunQuery(sql, table);
-  }, [openAndRunQuery, selectedProfile?.driver]);
+    void handleOpenObjectDefinition(database, TABLE_DDL_KIND, table, null);
+  }, [handleOpenObjectDefinition]);
+
+  const handleCopyTableDdl = useCallback(async (database: string, table: string) => {
+    if (!sessionId) return;
+    try {
+      const ddl = await api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null);
+      if (await copyToClipboard(ddl)) {
+        toast.success(translate("tableDdlCopied", { table }));
+      }
+    } catch (e) {
+      toast.error(translate("objDefinitionError", { error: String(e) }));
+    }
+  }, [sessionId, toast]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
@@ -6491,9 +6517,16 @@ export default function App() {
     },
     [],
   );
+  // Database Explorer でテーブルを選んだあとの「構造 (Structure)」側の行き先 (#1112)。
+  // 「データ (Data)」側は従来どおり `handleOpenTable`。列を探索と同じく常に開く。
+  const handleOpenStructure = useCallback((database: string, table: string) => {
+    setStructureTarget({ database, table });
+    setBottomPanelTab("structure");
+  }, []);
   // 接続先が変わったら前のセッションのテーブルを指したままにしない。
   useEffect(() => {
     setProfileTarget(null);
+    setStructureTarget(null);
   }, [sessionId]);
   /**
    * スキーマツリーの右クリック (テーブル / 列 / ビュー) から影響分析 (#1027) を開き、
@@ -6542,6 +6575,31 @@ export default function App() {
 
   // パレットの「現在の DB」を要する項目 (スキーマエクスポート等) の対象 DB。
   const paletteDatabase = activeTab?.database ?? selectedProfile?.database ?? null;
+
+  // パレットの構造 (#1112) 候補に使う、アクティブ接続でキャッシュ済みのテーブル。
+  const paletteTables = useMemo(() => {
+    if (!sessionId) return [];
+    const prefix = `${sessionId}\0`;
+    const out: { database: string; table: string }[] = [];
+    for (const [key, schema] of Object.entries(schemaCache)) {
+      if (!key.startsWith(prefix)) continue;
+      const database = key.slice(prefix.length);
+      for (const table of schema) out.push({ database, table: table.name });
+    }
+    return out;
+  }, [sessionId, schemaCache]);
+
+  // パレットから Database Explorer の絞り込みへ移る (#1112)。折りたたみ中は
+  // サイドバーが inert でフォーカスできないので先に開く。パレットが閉じて
+  // フォーカスを戻し終えてから移すため 2 フレーム待つ。
+  const focusExplorer = useCallback(() => {
+    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+    else setSidebarUserCollapsed(false);
+    setSidebarTab("connections");
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => connectionListRef.current?.focusFilter()),
+    );
+  }, []);
 
   const commandItems = useMemo<CommandItem[]>(() => {
     const items: CommandItem[] = [];
@@ -6661,40 +6719,25 @@ export default function App() {
         run: () => toggleTheme(),
       },
     );
-    // アドバイザは DB コンテキストが要る (ツールメニューと同じガード)。DB が
-    // 解決できないとパレットから開いても database="" で診断が失敗するため、
-    // ここで導線ごと出さない。
-    if (sessionId && paletteDatabase) {
-      items.push({
-        id: "nav:advisor",
-        group: "navigation",
-        label: t("appAdvisor"),
-        icon: "warning",
-        keywords: "advisor schema health index lint 健全性 診断 インデックス",
-        run: () => toggleBottomPanel("advisor"),
-      });
-    }
-    if (openConnections.length > 0) {
-      items.push({
-        id: "nav:connectionHealth",
-        group: "navigation",
-        label: t("healthTitle"),
-        icon: "server",
-        keywords: "health ping latency version status ヘルス 稼働 レイテンシ バージョン 死活",
-        run: () => toggleBottomPanel("health"),
-      });
-    }
-    // 影響分析 (#1027)。対象はパネル内のフォームで決めるので接続だけを要求する。
-    if (sessionId) {
-      items.push({
-        id: "nav:whereUsed",
-        group: "navigation",
-        label: t("cmdkWhereUsed"),
-        icon: "search",
-        keywords: "where used usages impact dependency references drop rename 影響分析 参照元 依存 使用箇所",
-        run: () => toggleBottomPanel("whereUsed"),
-      });
-    }
+    // Sidebar / Bottom Panel / テーブル構造への導線 (#1112)。可用条件は純モジュール側。
+    items.push(
+      ...workspaceCommandItems(
+        {
+          sessionId,
+          driver: selectedProfile?.driver ?? null,
+          database: paletteDatabase,
+          openConnectionCount: openConnections.length,
+          sidebarCollapsed,
+          tables: paletteTables,
+          shortcuts: {
+            toggleSidebar: formatCombo(shortcutBindings.toggleSidebar),
+            sidebarFilter: formatCombo(shortcutBindings.sidebarFilter),
+          },
+        },
+        { toggleBottomPanel, toggleSidebar, focusExplorer, openStructure: handleOpenStructure },
+        t,
+      ),
+    );
     if (sessionId) {
       items.push({
         id: "nav:disconnect",
@@ -6814,6 +6857,12 @@ export default function App() {
     toggleTheme,
     pinnedResults.length,
     openConnections.length,
+    sidebarCollapsed,
+    paletteTables,
+    toggleBottomPanel,
+    toggleSidebar,
+    focusExplorer,
+    handleOpenStructure,
   ]);
 
   // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
@@ -7502,6 +7551,7 @@ export default function App() {
     sessionId,
     advisorDatabase: activeTab?.database ?? selectedProfile?.database,
     profileTable: profileTarget?.table,
+    structureTable: structureTarget?.table,
     // 接続ヘルス (#1068) は接続横断なので、背景接続だけでも開ける。
     openConnectionCount: openConnections.length,
   };
@@ -7520,7 +7570,9 @@ export default function App() {
             ? t("healthTitle")
             : tab === "profile"
               ? t("profileTitle")
-              : t("processTitle");
+              : tab === "structure"
+                ? t("structureTitle")
+                : t("processTitle");
 
   return (
     <Flex
@@ -7771,19 +7823,18 @@ export default function App() {
             onDuplicate={handleDuplicateProfile}
             onDelete={handleDeleteProfile}
             onPickTable={handleOpenTable}
+            onOpenStructure={handleOpenStructure}
             onImportTable={handleImportTable}
             onTransferTable={handleTransferTable}
+            onImportNewTable={handleImportNewTable}
             onGenerateTestData={handleGenerateTestData}
             onDumpDatabase={handleDumpDatabase}
             onRunScript={setScriptTarget}
             onSchemaExport={handleSchemaExport}
             onRunTableSelect={handleRunTableSelect}
             onInsertTableSelect={handleInsertTableSelect}
-            onShowCreateTable={
-              selectedProfile && (selectedProfile.driver === "mysql" || selectedProfile.driver === "sqlite")
-                ? handleShowCreateTable
-                : undefined
-            }
+            onShowCreateTable={handleShowCreateTable}
+            onCopyTableDdl={handleCopyTableDdl}
             selectLimit={Math.max(1, settings.defaultDisplayCount)}
             favorites={quickAccess.favorites}
             recent={quickAccess.recent}
@@ -7804,6 +7855,7 @@ export default function App() {
             onEditViewDefinition={handleEditViewDefinition}
             onFindUsages={handleFindUsages}
             onDropView={handleDropView}
+            onRunRoutine={handleRunRoutine}
             onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
             onOpenSandbox={handleOpenSandbox}
@@ -7890,42 +7942,12 @@ export default function App() {
       </Flex>
 
       {!sidebarCollapsed && (
-        <Box
-          position="absolute"
-          top={0}
-          bottom={0}
-          left="var(--sidebar-width, 300px)"
-          width="9px"
-          transform="translateX(-5px)"
-          cursor="ew-resize"
-          zIndex={45}
-          touchAction="none"
-          data-dragging={sidebarResizing ? "true" : undefined}
-          css={{
-            "&::after": {
-              content: '""',
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: "5px",
-              width: "1px",
-              background: "transparent",
-              transition:
-                "background var(--dur-fast, 0.12s) var(--ease, ease), width var(--dur-fast, 0.12s) var(--ease, ease)",
-            },
-            "&:hover::after, &[data-dragging='true']::after": {
-              background: "var(--accent)",
-              width: "2px",
-            },
-          }}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t("sidebarCollapse")}
-          onPointerDown={onSidebarResizePointerDown}
-          onPointerMove={onSidebarResizePointerMove}
-          onPointerUp={onSidebarResizePointerUp}
-          onPointerCancel={onSidebarResizePointerUp}
-          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+        <SidebarResizeHandle
+          width={sidebarWidth}
+          onWidthChange={setSidebarWidth}
+          resizing={sidebarResizing}
+          onResizingChange={setSidebarResizing}
+          ariaLabel={t("sidebarResizeAria")}
         />
       )}
 
@@ -8049,6 +8071,16 @@ export default function App() {
                         onSelectColumn={(column) =>
                           setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
                         }
+                      />
+                    ) : null
+                  ) : activeBottomPanelTab === "structure" ? (
+                    structureTarget ? (
+                      <TableStructurePanel
+                        sessionId={sessionId}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        target={structureTarget}
+                        onOpenData={handleOpenTable}
+                        onSelectTable={setStructureTarget}
                       />
                     ) : null
                   ) : activeBottomPanelTab === "inspector" ? (
@@ -8634,12 +8666,23 @@ export default function App() {
             sessionId={sessionId}
             database={importTarget.database}
             table={importTarget.table}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             initialPath={importInitialPath ?? undefined}
             onClose={() => {
               setImportTarget(null);
               setImportInitialPath(null);
             }}
-            onImported={() => handleImported(importTarget.database, importTarget.table)}
+            onImported={(table, created) => {
+              if (created) {
+                // 新しいテーブルが増えたのでツリーとスキーマキャッシュを更新し、
+                // 取り込んだテーブルを開く (#985)。
+                invalidateSchemaCache(importTarget.database);
+                connectionListRef.current?.refreshSchema();
+                handleOpenTable(importTarget.database, table);
+              } else {
+                handleImported(importTarget.database, table);
+              }
+            }}
           />
         )}
       </AnimatePresence>
@@ -8944,6 +8987,20 @@ export default function App() {
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             onSubmit={handleParamsSubmit}
             onCancel={handleParamsCancel}
+          />
+        )}
+        {routineTarget && sessionId && (
+          <RunRoutineModal
+            sessionId={sessionId}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            database={routineTarget.database}
+            kind={routineTarget.kind}
+            name={routineTarget.name}
+            id={routineTarget.id}
+            txActive={txActive}
+            onRun={handleRoutineRun}
+            onSendToEditor={handleRoutineToEditor}
+            onCancel={() => setRoutineTarget(null)}
           />
         )}
         {pendingDangerous && (

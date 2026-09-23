@@ -151,17 +151,21 @@ fn create_table_stmt(driver: DriverKind, table: &TableDiff) -> SyncStatement {
         lines.push(format!("PRIMARY KEY ({})", pk.join(", ")));
     }
 
-    let sql = format!(
-        "CREATE TABLE {} (\n  {}\n)",
-        quote_ident(driver, &table.name),
-        lines.join(",\n  ")
-    );
+    let sql = render_create_table(&quote_ident(driver, &table.name), &lines);
     SyncStatement {
         sql,
         table: table.name.clone(),
         kind: SyncKind::CreateTable,
         destructive: false,
     }
+}
+
+/// Renders `CREATE TABLE <qualified> (\n  <line>,\n  ...\n)` from already
+/// rendered body lines (column defs + table constraints). Shared by the sync
+/// CREATE branch and the table-DDL reconstruction (`db::table_ddl`, #1001) so
+/// both produce the same layout.
+pub(crate) fn render_create_table(qualified: &str, lines: &[String]) -> String {
+    format!("CREATE TABLE {} (\n  {}\n)", qualified, lines.join(",\n  "))
 }
 
 /// Emits add / modify / drop column statements for a table present on both
@@ -391,8 +395,10 @@ fn pg_alter(table: &str, sql: String) -> SyncStatement {
 /// [extra]`). `data_type` comes verbatim from introspection (including any
 /// length/precision, e.g. `varchar(50)` / `character varying(50)`); the
 /// `DEFAULT` clause is built by [`default_clause`]. `extra` (e.g.
-/// `auto_increment`) is MySQL-only.
-fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
+/// `auto_increment`) is MySQL-only. Shared with the table-DDL reconstruction
+/// (`db::table_ddl`, #1001) so "Copy DDL" renders columns exactly the way the
+/// sync / sandbox CREATE path does.
+pub(crate) fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
     let mut def = format!("{} {}", quote_ident(driver, &col.name), col.data_type);
     if !col.nullable {
         def.push_str(" NOT NULL");
@@ -530,6 +536,7 @@ mod tests {
             extra: String::new(),
             referenced_table: None,
             referenced_column: None,
+            comment: None,
         }
     }
 

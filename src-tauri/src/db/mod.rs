@@ -1,4 +1,6 @@
 pub mod advisor;
+/// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
+pub mod create_table;
 pub mod data_diff;
 pub mod diff;
 pub mod duckdb;
@@ -18,6 +20,8 @@ pub mod sandbox;
 pub mod script;
 pub mod sqlite;
 pub mod sync;
+/// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
+pub mod table_ddl;
 pub mod transfer;
 pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
@@ -29,9 +33,9 @@ use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-    StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema,
-    TableSizeInfo, UserPrivileges, Value,
+    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
+    ServerMetrics, StatementStat, StreamBatch, TableColumnInfo, TableComment, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use upsert::ImportConflict;
 
@@ -371,6 +375,22 @@ impl Connection {
             Connection::DuckDb(c) => c.execute(sql, database).await,
             Connection::Mssql(c) => c.execute(sql, database).await,
         }
+    }
+
+    /// ファイル取り込み用の新規テーブルを作成する (#985)。DDL は
+    /// [`create_table::render_create_table`] がこの接続の方言で生成し (識別子は
+    /// `quote_ident` でクォート)、通常の [`Connection::execute`] で流す。続く
+    /// `import_rows` と同じ `database` 文脈 (MySQL/MSSQL の USE、PostgreSQL の
+    /// search_path) で実行されるため、作成先と取り込み先が一致する。
+    pub async fn create_table_from_columns(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[create_table::NewColumn],
+    ) -> Result<String> {
+        let ddl = create_table::render_create_table(self.driver_kind(), table, columns)?;
+        self.execute(&ddl, database).await?;
+        Ok(ddl)
     }
 
     /// Begin an explicit transaction on a dedicated held connection so
@@ -874,9 +894,18 @@ impl Connection {
         }
     }
 
-    /// The DDL/definition of a non-table schema object. `kind`/`name` are
-    /// from [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
+    /// The DDL/definition of a schema object. `kind`/`name` are from
+    /// [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
     /// oid) used to disambiguate overloaded functions / same-name triggers.
+    ///
+    /// `kind == "table"` (#1001) returns the table's full `CREATE TABLE` DDL:
+    /// MySQL (`SHOW CREATE TABLE`), SQLite (`sqlite_master.sql`) and DuckDB
+    /// (`duckdb_tables().sql`) return the engine's own DDL; PostgreSQL / MSSQL
+    /// have no native equivalent, so the DDL is reconstructed from the column /
+    /// index / FK introspection via [`table_ddl::synthesize_create_table`].
+    /// The table list also carries views, so a view name falls back to its
+    /// view definition. Pure read introspection — never goes through the
+    /// read-only SQL guard and works on read-only sessions.
     pub async fn object_definition(
         &self,
         db: &str,
@@ -884,12 +913,93 @@ impl Connection {
         name: &str,
         id: Option<&str>,
     ) -> Result<String> {
+        if kind == "table" {
+            match self {
+                Connection::Postgres(c) => {
+                    if let Some(view_kind) = c.view_kind(db, name).await? {
+                        return c.create_view_ddl(db, view_kind, name).await;
+                    }
+                    return self.synthesized_table_ddl(db, name).await;
+                }
+                Connection::Mssql(c) => {
+                    // OBJECT_DEFINITION はテーブルに対して NULL を返し、ビューには
+                    // 完全な CREATE VIEW を返す。空ならテーブルとして再構成する。
+                    let view_def = c.object_definition(db, "view", name).await?;
+                    if !view_def.trim().is_empty() {
+                        return Ok(view_def);
+                    }
+                    return self.synthesized_table_ddl(db, name).await;
+                }
+                _ => {}
+            }
+        }
         match self {
             Connection::MySql(c) => c.object_definition(db, kind, name).await,
             Connection::Postgres(c) => c.object_definition(db, kind, name, id).await,
             Connection::Sqlite(c) => c.object_definition(db, kind, name).await,
             Connection::DuckDb(c) => c.object_definition(db, kind, name).await,
             Connection::Mssql(c) => c.object_definition(db, kind, name).await,
+        }
+    }
+
+    /// PostgreSQL / MSSQL 向けに、列・インデックス・外部キーの introspection を
+    /// 束ねて `CREATE TABLE` を再構成する (#1001)。方言は接続自身のドライバ。
+    async fn synthesized_table_ddl(&self, db: &str, table: &str) -> Result<String> {
+        let columns = self.columns(db, table).await?;
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "no definition found for table '{table}'"
+            )));
+        }
+        let indexes = self.list_indexes(db, table).await?;
+        let fks: Vec<ForeignKey> = self
+            .foreign_keys(db)
+            .await?
+            .into_iter()
+            .filter(|f| f.table == table)
+            .collect();
+        let driver = self.driver_kind();
+        // MSSQL ドライバは introspection を `dbo` スキーマに固定している
+        // (`db` はデータベース名) ので、修飾も `dbo` にそろえる。
+        let schema = match driver {
+            DriverKind::Mssql => "dbo",
+            _ => db,
+        };
+        Ok(table_ddl::synthesize_create_table(
+            driver,
+            Some(schema),
+            table,
+            &columns,
+            &indexes,
+            &fks,
+        ))
+    }
+
+    /// ストアドプロシージャ / 関数のシグネチャ (パラメータ一覧・戻り値) を返す
+    /// (#1003)。MySQL は `information_schema.PARAMETERS`、PostgreSQL は `pg_proc`
+    /// (`proargnames` / `proargmodes` / `proallargtypes`)、MSSQL は
+    /// `sys.parameters`。SQLite / DuckDB はルーチン概念を持たないため空ではなく
+    /// エラー (`list_processes` と同じ「未対応は明示」の規約)。カタログの読み取り
+    /// のみなので read_only セッションでも許可する。`id` は PostgreSQL の oid
+    /// (オーバーロード解決用、[`Connection::object_definition`] と同じ)。
+    pub async fn routine_signature(
+        &self,
+        db: &str,
+        kind: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<RoutineSignature> {
+        if kind != "procedure" && kind != "function" {
+            return Err(AppError::InvalidInput(format!(
+                "unsupported routine kind: {kind}"
+            )));
+        }
+        match self {
+            Connection::MySql(c) => c.routine_signature(db, kind, name).await,
+            Connection::Postgres(c) => c.routine_signature(db, kind, name, id).await,
+            Connection::Sqlite(c) => c.routine_signature(db, kind, name).await,
+            Connection::DuckDb(c) => c.routine_signature(db, kind, name).await,
+            Connection::Mssql(c) => c.routine_signature(db, kind, name).await,
         }
     }
 
@@ -920,6 +1030,18 @@ impl Connection {
             Connection::Sqlite(c) => c.table_row_estimates(db).await,
             Connection::DuckDb(c) => c.table_row_estimates(db).await,
             Connection::Mssql(c) => c.table_row_estimates(db).await,
+        }
+    }
+
+    /// テーブル / ビューのコメント (#1002)。コメントを持つものだけを返す。
+    /// SQLite はコメント機能を持たないので常に空。
+    pub async fn table_comments(&self, db: &str) -> Result<Vec<TableComment>> {
+        match self {
+            Connection::MySql(c) => c.table_comments(db).await,
+            Connection::Postgres(c) => c.table_comments(db).await,
+            Connection::Sqlite(_) => Ok(Vec::new()),
+            Connection::DuckDb(c) => c.table_comments(db).await,
+            Connection::Mssql(c) => c.table_comments(db).await,
         }
     }
 
@@ -1889,6 +2011,17 @@ pub fn sql_may_change_schema(driver: DriverKind, sql: &str) -> bool {
     let masked = mask_for_driver(driver, &orig);
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     ["create", "alter", "drop", "truncate", "rename"]
+        .iter()
+        .any(|kw| contains_word(&masked_lower, kw))
+        // コメント編集 (#1002): PostgreSQL / DuckDB の `COMMENT ON ...` と MSSQL の
+        // 拡張プロパティ手続きは上のキーワードを含まないが、`describe_table` が
+        // 返す列コメントを変えるのでスキーマキャッシュを無効化する必要がある。
+        || contains_word_phrase(&masked_lower, "comment on")
+        || [
+            "sp_addextendedproperty",
+            "sp_updateextendedproperty",
+            "sp_dropextendedproperty",
+        ]
         .iter()
         .any(|kw| contains_word(&masked_lower, kw))
 }
@@ -3433,6 +3566,28 @@ mod tests {
         assert!(sql_may_change_schema(
             DriverKind::Mysql,
             "SELECT 1; ALTER TABLE t ADD COLUMN c INT"
+        ));
+    }
+
+    /// コメント編集 (#1002) もスキーマキャッシュを無効化する。`comment` という
+    /// 列名を読むだけの SELECT は対象外。
+    #[test]
+    fn sql_may_change_schema_detects_comment_edits() {
+        assert!(sql_may_change_schema(
+            DriverKind::Postgres,
+            "COMMENT ON COLUMN \"public\".\"t\".\"c\" IS 'x'"
+        ));
+        assert!(sql_may_change_schema(
+            DriverKind::DuckDb,
+            "comment on table t is null"
+        ));
+        assert!(sql_may_change_schema(
+            DriverKind::Mssql,
+            "EXEC sp_addextendedproperty @name = N'MS_Description', @value = N'x'"
+        ));
+        assert!(!sql_may_change_schema(
+            DriverKind::Postgres,
+            "SELECT comment FROM notes WHERE comment <> ''"
         ));
     }
 

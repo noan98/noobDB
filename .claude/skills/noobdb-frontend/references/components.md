@@ -5,6 +5,18 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
 
 - `App.tsx` — 全体のシェル。タブ (table / query / explain)、接続状態、ストリーミング
   購読、インラインセル編集 (`components/cellEdit.ts`)、テーマを束ねるルート。
+- App Shell (#1112) — `Sidebar / Main Workspace / Bottom Panel` の 3 領域。
+  - Sidebar = Database Explorer (`ConnectionList`)。階層は Connection → Database
+    (PostgreSQL / DuckDB ではスキーマ) → テーブル / ビュー / ルーチン → 列 /
+    インデックス / 外部キー。`list_tables` はビューも返すため、振り分けは純ロジック
+    `explorerTree.ts` (`partitionDatabaseNodes` / `tableChildGroups`) が担い、ビューは
+    テーブルと同じノード (列展開・ダブルクリックでデータ) として 1 回だけ並ぶ。
+    テーブル選択後の行き先は「データ」(ダブルクリック / 右クリック先頭) と「構造」
+    (右クリック / コマンドパレット → ボトムパネル `TableStructurePanel`、整形は
+    `tableStructure.ts`)。幅変更は `SidebarResizeHandle` + `sidebarLayout.ts` で
+    `Splitter` と同じ操作体系 (矢印 / Home / End / Enter / ダブルクリック)。
+  - Shell 操作のコマンドパレット候補 (サイドバー開閉・Explorer 絞り込み・ボトム
+    パネル各タブ・テーブル構造) は `workspaceCommands.ts` が組み立てる。
 - `api/tauri.ts` — 全 IPC の型付きラッパーとイベント購読ヘルパー (上述)。各 `invoke`
   ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。

@@ -792,6 +792,7 @@ mod tests {
             extra: String::new(),
             referenced_table: None,
             referenced_column: None,
+            comment: None,
         };
 
         let t1 = cache
@@ -874,6 +875,7 @@ mod tests {
                     extra: String::new(),
                     referenced_table: None,
                     referenced_column: None,
+                    comment: None,
                 }])
             })
             .await;

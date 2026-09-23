@@ -397,6 +397,7 @@
             "changed_fields": [],
             "name": "email",
             "source": {
+              "comment": "primary key",
               "data_type": "int",
               "default": "0",
               "extra": "auto_increment",
@@ -440,6 +441,19 @@
       }
     ],
     "tables_analyzed": 3
+  },
+  "routineSignature": {
+    "kind": "function",
+    "name": "calc_total",
+    "parameters": [
+      {
+        "data_type": "integer",
+        "mode": "in",
+        "name": "p_id"
+      }
+    ],
+    "return_type": "numeric",
+    "returns_set": false
   },
   "schemaObject": {
     "id": "1234",
@@ -551,6 +565,7 @@
     ]
   },
   "tableColumnInfo": {
+    "comment": "primary key",
     "data_type": "int",
     "default": "0",
     "extra": "auto_increment",
@@ -559,6 +574,10 @@
     "nullable": false,
     "referenced_column": "id",
     "referenced_table": "parent"
+  },
+  "tableComment": {
+    "comment": "registered users",
+    "name": "users"
   },
   "tableRowEstimate": {
     "estimate": 1234,

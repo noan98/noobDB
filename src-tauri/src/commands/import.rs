@@ -3,7 +3,9 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use crate::db::create_table::{render_create_table, render_drop_table, NewColumn};
 use crate::db::upsert::{ConflictMode, ImportConflict};
+use crate::db::DriverKind;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::query::record_write_history;
@@ -554,6 +556,7 @@ pub async fn import_csv(
     options: ImportOptions,
     mapping: Vec<ColumnMapping>,
     batch_size: Option<usize>,
+    create_table: Option<Vec<NewColumn>>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -576,6 +579,13 @@ pub async fn import_csv(
     // ストリーム開始前に同期的に弾き、入力ミスを即座にエラーとして返す。
     let mapped: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
     options.conflict().validate(&mapped)?;
+    // 新規テーブル作成 (#985) の定義も同期的に検証する (空名・重複列名・長さ
+    // 上限・マッピング先が作成列に含まれるか)。DDL の実行自体はファイルの
+    // パースが成功した後 (`run_import_core`) で行い、壊れたファイルで空テーブル
+    // だけが残るのを避ける。
+    if let Some(cols) = &create_table {
+        validate_create_spec(session.conn.driver_kind(), &table, cols, &mapped)?;
+    }
 
     // Rows committed so far. In `skip` mode each chunk is auto-committed, so a
     // mid-import cancel leaves the committed rows persisted — this counter lets
@@ -610,6 +620,7 @@ pub async fn import_csv(
             options,
             mapping,
             batch_size.unwrap_or(DEFAULT_BATCH_SIZE),
+            create_table,
             committed_for_task,
         )
         .await;
@@ -647,6 +658,7 @@ async fn spawn_import(
     options: ImportOptions,
     mapping: Vec<ColumnMapping>,
     batch_size: usize,
+    create_table: Option<Vec<NewColumn>>,
     committed: Arc<std::sync::atomic::AtomicU64>,
 ) {
     // Kept for the history summary after `run_import` consumes the originals.
@@ -663,7 +675,17 @@ async fn spawn_import(
         mapping.len()
     );
     let result = run_import(
-        &app, &session, &stream_id, database, table, path, options, mapping, batch_size, committed,
+        &app,
+        &session,
+        &stream_id,
+        database,
+        table,
+        path,
+        options,
+        mapping,
+        batch_size,
+        create_table,
+        committed,
     )
     .await;
 
@@ -788,6 +810,9 @@ async fn spawn_import(
     }
 }
 
+/// Tauri 側のラッパー: `csv-import:*` イベントの emit を `run_import_core` へ
+/// 渡すだけ。取り込みの本体 (パース → 新規テーブル作成 → `import_rows`) は
+/// AppHandle 無しでも統合テストから駆動できるよう core に置く (#985)。
 #[allow(clippy::too_many_arguments)]
 async fn run_import(
     app: &AppHandle,
@@ -799,8 +824,103 @@ async fn run_import(
     options: ImportOptions,
     mapping: Vec<ColumnMapping>,
     batch_size: usize,
+    create_table: Option<Vec<NewColumn>>,
     committed: Arc<std::sync::atomic::AtomicU64>,
 ) -> Result<ImportRun> {
+    let started_app = app.clone();
+    let started_id = stream_id.to_string();
+    let on_started = move |total: u64| {
+        if let Err(e) = started_app.emit(
+            EV_IMPORT_STARTED,
+            ImportStartedEvent {
+                stream_id: started_id.clone(),
+                total,
+            },
+        ) {
+            tracing::warn!(stream_id = %started_id, error = %e, "failed to emit import started event");
+        }
+    };
+    let progress_app = app.clone();
+    let progress_id = stream_id.to_string();
+    let on_progress = move |inserted: u64, total: u64| -> Result<()> {
+        if let Err(e) = progress_app.emit(
+            EV_IMPORT_PROGRESS,
+            ImportProgressEvent {
+                stream_id: progress_id.clone(),
+                inserted,
+                total,
+            },
+        ) {
+            tracing::warn!(stream_id = %progress_id, error = %e, "failed to emit import progress event");
+        }
+        Ok(())
+    };
+    run_import_core(
+        session,
+        stream_id,
+        database,
+        table,
+        path,
+        options,
+        mapping,
+        batch_size,
+        create_table,
+        committed,
+        on_started,
+        on_progress,
+    )
+    .await
+}
+
+/// 新規テーブル作成 (#985) の定義を検証する。DDL を実際にレンダリングして
+/// (= 実行時と同じ関数で) 名前・重複・長さ上限を確かめ、さらにマッピング先の
+/// 列がすべて作成する列に含まれていることを確かめる。
+fn validate_create_spec(
+    driver: DriverKind,
+    table: &str,
+    columns: &[NewColumn],
+    mapped: &[String],
+) -> Result<()> {
+    render_create_table(driver, table, columns)?;
+    for m in mapped {
+        if !columns.iter().any(|c| &c.name == m) {
+            return Err(AppError::InvalidInput(format!(
+                "mapped column {m} is not part of the new table definition"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 取り込みの本体。ファイルを読んでパースし、`create_table` があれば新規
+/// テーブルを作成してから、既存の `import_rows` / `import_rows_skipping`
+/// 経路へ合流する (新しい書き込み経路は増やさない)。
+///
+/// 新規テーブルは**パース成功後**に作る (壊れたファイルで空テーブルだけが
+/// 残らないように)。`abort` モードで取り込みが失敗したときは、作ったばかりの
+/// テーブルをベストエフォートで DROP して「ファイル → テーブル」を
+/// all-or-nothing に近づける (MySQL の DDL は暗黙コミットで同一トランザクションに
+/// 入れられないため、DROP による後始末で揃える)。`skip` モードは良い行を
+/// コミットする設計なので DROP しない。
+#[allow(clippy::too_many_arguments)]
+async fn run_import_core<S, P>(
+    session: &Session,
+    stream_id: &str,
+    database: Option<String>,
+    table: String,
+    path: String,
+    options: ImportOptions,
+    mapping: Vec<ColumnMapping>,
+    batch_size: usize,
+    create_table: Option<Vec<NewColumn>>,
+    committed: Arc<std::sync::atomic::AtomicU64>,
+    on_started: S,
+    mut on_progress: P,
+) -> Result<ImportRun>
+where
+    S: FnOnce(u64),
+    P: FnMut(u64, u64) -> Result<()>,
+{
     let bytes = read_import_file(&path).await?;
     let text = decode_bytes(&bytes, &options.encoding);
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
@@ -810,6 +930,23 @@ async fn run_import(
     let total = rows.len() as u64;
     let conflict = options.conflict();
 
+    // 新規テーブル作成 (#985)。パース成功後に実行する。DDL は履歴にも残す
+    // (インポート自体の要約とは別エントリ)。
+    let created = match &create_table {
+        Some(cols) => {
+            create_table_for_import(session, database.as_deref(), &table, cols).await?;
+            tracing::info!(
+                session_id = %session.id,
+                stream_id = %stream_id,
+                table = %table,
+                columns = cols.len(),
+                "created table for import"
+            );
+            true
+        }
+        None => false,
+    };
+
     tracing::info!(
         session_id = %session.id,
         stream_id = %stream_id,
@@ -818,37 +955,11 @@ async fn run_import(
         error_mode = ?options.error_mode,
         conflict_mode = ?options.conflict_mode,
         key_columns = options.key_columns.len(),
+        created_table = created,
         "csv import starting"
     );
 
-    if let Err(e) = app.emit(
-        EV_IMPORT_STARTED,
-        ImportStartedEvent {
-            stream_id: stream_id.to_string(),
-            total,
-        },
-    ) {
-        tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import started event");
-    }
-
-    // Cumulative-progress emitter shared by both modes.
-    let emit_progress = {
-        let emit_app = app.clone();
-        let emit_id = stream_id.to_string();
-        move |n: u64| -> Result<()> {
-            if let Err(e) = emit_app.emit(
-                EV_IMPORT_PROGRESS,
-                ImportProgressEvent {
-                    stream_id: emit_id.clone(),
-                    inserted: n,
-                    total,
-                },
-            ) {
-                tracing::warn!(stream_id = %emit_id, error = %e, "failed to emit import progress event");
-            }
-            Ok(())
-        }
-    };
+    on_started(total);
 
     let started = Instant::now();
     match options.error_mode {
@@ -859,7 +970,7 @@ async fn run_import(
             // then report the rows that actually persisted.
             let progress = move |n: u64| -> Result<()> {
                 committed.store(n, std::sync::atomic::Ordering::SeqCst);
-                emit_progress(n)
+                on_progress(n, total)
             };
             let outcome = session
                 .conn
@@ -900,7 +1011,7 @@ async fn run_import(
                     &rows,
                     batch_size,
                     &conflict,
-                    emit_progress,
+                    |n| on_progress(n, total),
                 )
                 .await
             {
@@ -922,13 +1033,18 @@ async fn run_import(
                         }
                         None => (None, None),
                     };
-                    let message = match (record, line) {
+                    let mut message = match (record, line) {
                         (Some(r), Some(l)) => {
                             format!("{e} (failed at record {r}, line {l})")
                         }
                         (Some(r), None) => format!("{e} (failed at record {r})"),
                         _ => e.to_string(),
                     };
+                    if created {
+                        message.push_str(
+                            &drop_created_table(session, database.as_deref(), &table).await,
+                        );
+                    }
                     Ok(ImportRun::Failed {
                         message,
                         record,
@@ -938,6 +1054,118 @@ async fn run_import(
             }
         }
     }
+}
+
+/// 新規テーブルを作成し、DDL を履歴に残してキャッシュを捨てる (#985)。
+/// 失敗した場合もレンダリング済み DDL をエラー付きで履歴に残す。
+async fn create_table_for_import(
+    session: &Session,
+    database: Option<&str>,
+    table: &str,
+    columns: &[NewColumn],
+) -> Result<()> {
+    let started = Instant::now();
+    match session
+        .conn
+        .create_table_from_columns(database, table, columns)
+        .await
+    {
+        Ok(ddl) => {
+            record_write_history(
+                session,
+                ddl,
+                database,
+                None,
+                Some(started.elapsed().as_millis() as i64),
+                None,
+            )
+            .await;
+            // テーブルが増えたのでスキーマ / 結果キャッシュを捨てる。
+            session.schema_cache.invalidate_all().await;
+            session.query_cache.invalidate_all().await;
+            Ok(())
+        }
+        Err(e) => {
+            let ddl = render_create_table(session.conn.driver_kind(), table, columns)
+                .unwrap_or_else(|_| format!("-- CREATE TABLE {table}"));
+            record_write_history(session, ddl, database, None, None, Some(e.to_string())).await;
+            Err(e)
+        }
+    }
+}
+
+/// abort モードの取り込み失敗時に、直前に作成したテーブルを DROP する (#985)。
+/// 失敗してもインポートのエラー自体は返したいので、結果はメッセージの
+/// 接尾辞として返す。
+async fn drop_created_table(session: &Session, database: Option<&str>, table: &str) -> String {
+    let sql = render_drop_table(session.conn.driver_kind(), table);
+    match session.conn.execute(&sql, database).await {
+        Ok(_) => {
+            record_write_history(session, sql, database, None, None, None).await;
+            session.schema_cache.invalidate_all().await;
+            " (the newly created table was dropped)".to_string()
+        }
+        Err(drop_err) => {
+            tracing::warn!(
+                table = %table,
+                error = %drop_err,
+                "failed to drop the table created for a failed import"
+            );
+            format!(" (the newly created table could not be dropped: {drop_err})")
+        }
+    }
+}
+
+/// 統合テスト向けの入口 (#985): `import_csv` と同じ検証 (read_only ガード・
+/// 新規テーブル定義の検証) を掛けてから、AppHandle 無しで `run_import_core`
+/// を走らせる。成功なら `Ok(Ok(挿入行数))`、abort モードの行エラーは
+/// `Ok(Err(メッセージ))`、セットアップ失敗は `Err`。
+pub(crate) async fn import_file_for_test(
+    session: &Session,
+    database: Option<String>,
+    table: String,
+    path: String,
+    options: ImportOptions,
+    mapping: Vec<ColumnMapping>,
+    create_table: Option<Vec<NewColumn>>,
+) -> Result<std::result::Result<u64, String>> {
+    ensure_import_writable(session)?;
+    let mapped: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
+    options.conflict().validate(&mapped)?;
+    if let Some(cols) = &create_table {
+        validate_create_spec(session.conn.driver_kind(), &table, cols, &mapped)?;
+    }
+    let run = run_import_core(
+        session,
+        "test",
+        database,
+        table,
+        path,
+        options,
+        mapping,
+        DEFAULT_BATCH_SIZE,
+        create_table,
+        Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        |_| {},
+        |_, _| Ok(()),
+    )
+    .await?;
+    Ok(match run {
+        ImportRun::Ok { inserted, .. } => Ok(inserted),
+        ImportRun::Failed { message, .. } => Err(message),
+    })
+}
+
+/// `preview_create_table_ddl` IPC: インポートモーダルが「実際に流れる DDL」を
+/// 表示するため、実行時 (`create_table_from_columns`) と同じ
+/// [`render_create_table`] を通す (#985)。書き込みを伴わないので read_only でも可。
+#[tauri::command]
+pub async fn preview_create_table_ddl(
+    driver: DriverKind,
+    table: String,
+    columns: Vec<NewColumn>,
+) -> Result<String> {
+    render_create_table(driver, &table, &columns)
 }
 
 #[cfg(test)]
