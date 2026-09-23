@@ -333,6 +333,12 @@ impl MssqlConn {
 
         // `EXEC` はプロシージャの結果セットを表示するため query 経路へ流す
         // (#1003、[`is_exec_shape`] 参照)。
+        if requires_own_batch(sql) {
+            // バッチ先頭でしか受け付けない DDL は素のバッチで送る ([`requires_own_batch`])。
+            run_batch(client, sql).await?;
+            conn.unmark_discard();
+            return Ok(QueryResult::empty(0, started.elapsed().as_millis() as u64));
+        }
         if !is_query_shape(sql) && !is_exec_shape(sql) {
             let result = client.execute(sql, &[]).await?;
             conn.unmark_discard();
@@ -1588,6 +1594,16 @@ async fn run_sql_on(conn: &mut PooledConn, sql: &str) -> Result<QueryResult> {
             rows_affected: 0,
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
+    } else if requires_own_batch(sql) {
+        // `sp_executesql` 経由 (tiberius の `execute`) だと「バッチの先頭文」で
+        // なければならない DDL がエラー 156 になるため、素のバッチで送る。
+        // 行数は返らないが、これらの DDL はそもそも行を変更しない。
+        let result = {
+            let client = conn.client_mut()?;
+            run_batch(client, sql).await
+        };
+        unwrap_or_discard(conn, result)?;
+        Ok(QueryResult::empty(0, started.elapsed().as_millis() as u64))
     } else {
         let total = exec(conn, sql).await?;
         Ok(QueryResult::empty(
@@ -1595,6 +1611,39 @@ async fn run_sql_on(conn: &mut PooledConn, sql: &str) -> Result<QueryResult> {
             started.elapsed().as_millis() as u64,
         ))
     }
+}
+
+/// SQL Server が「バッチの最初の文」でしか受け付けない DDL か (#920)。
+/// `CREATE` / `ALTER` / `CREATE OR ALTER` に続く `VIEW` / `PROCEDURE` (`PROC`) /
+/// `FUNCTION` / `TRIGGER` / `SCHEMA` / `DEFAULT` / `RULE` が該当する。
+///
+/// tiberius の `execute` / `query` はパラメータが無くても `@params` 付きの
+/// `sp_executesql` で送る。パラメータ付きの `sp_executesql` の中ではこれらが
+/// バッチ先頭として扱われず、`Incorrect syntax near the keyword 'VIEW'`
+/// (エラー 156) になる。実サーバでの統合テストで判明した。
+fn requires_own_batch(sql: &str) -> bool {
+    let cleaned = super::strip_sql_comments(sql, super::SqlFlavor::Postgres);
+    let lower = cleaned.to_ascii_lowercase();
+    let mut words = lower.split_whitespace();
+    let Some(first) = words.next() else {
+        return false;
+    };
+    if first != "create" && first != "alter" {
+        return false;
+    }
+    let mut next = words.next();
+    if first == "create" && next == Some("or") {
+        if words.next() != Some("alter") {
+            return false;
+        }
+        next = words.next();
+    }
+    matches!(
+        next,
+        Some(
+            "view" | "procedure" | "proc" | "function" | "trigger" | "schema" | "default" | "rule"
+        )
+    )
 }
 
 async fn fetch_rows(conn: &mut PooledConn, sql: Option<&str>) -> Result<Vec<TdsRow>> {
@@ -2054,6 +2103,33 @@ async fn fetch_primary_key(client: &mut MssqlClient, target: &str) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requires_own_batch_detects_batch_first_ddl() {
+        for sql in [
+            "CREATE VIEW dbo.v AS SELECT 1 AS x",
+            "  create procedure dbo.p AS SELECT 1",
+            "CREATE PROC dbo.p AS SELECT 1",
+            "-- note\nCREATE FUNCTION dbo.f() RETURNS INT AS BEGIN RETURN 1 END",
+            "/* c */ CREATE TRIGGER dbo.t ON dbo.a AFTER INSERT AS SELECT 1",
+            "ALTER VIEW dbo.v AS SELECT 2 AS x",
+            "CREATE OR ALTER PROCEDURE dbo.p AS SELECT 1",
+            "CREATE SCHEMA s",
+        ] {
+            assert!(requires_own_batch(sql), "{sql}");
+        }
+        for sql in [
+            "CREATE TABLE dbo.t (id INT)",
+            "CREATE INDEX ix ON dbo.t (id)",
+            "ALTER TABLE dbo.t ADD c INT",
+            "INSERT INTO dbo.v VALUES (1)",
+            "SELECT 'CREATE VIEW' AS s",
+            "CREATE OR REPLACE VIEW v AS SELECT 1",
+            "",
+        ] {
+            assert!(!requires_own_batch(sql), "{sql}");
+        }
+    }
 
     #[test]
     fn is_exec_shape_detects_exec_and_execute() {
