@@ -43,6 +43,7 @@ use super::types::{
     StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
     UserPrivileges, Value,
 };
+use super::upsert::{mssql_merge_sql, ImportConflict};
 use super::{DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
@@ -533,6 +534,7 @@ impl MssqlConn {
     /// literals (like the PostgreSQL driver) rather than binding them so SQL
     /// Server's implicit conversion coerces text into the destination
     /// column's real type.
+    #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,
         database: Option<&str>,
@@ -540,6 +542,7 @@ impl MssqlConn {
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
+        conflict: &ImportConflict,
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -551,9 +554,7 @@ impl MssqlConn {
         if rows.is_empty() {
             return Ok(0);
         }
-        let ncols = columns.len();
-        let cols_sql = columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
-        let table_ident = qi(table);
+        // 1000 は INSERT の VALUES / MERGE の表構築子とも T-SQL の行数上限。
         let batch = batch_size.clamp(1, 1000);
 
         let mut conn = self.pool.acquire().await?;
@@ -571,7 +572,7 @@ impl MssqlConn {
         begin_tx(&mut conn).await?;
         let mut inserted: u64 = 0;
         for chunk in rows.chunks(batch) {
-            let sql = build_multi_row_insert(&table_ident, &cols_sql, ncols, chunk);
+            let sql = build_import_sql(table, columns, chunk, conflict);
             let step = {
                 let client = conn.client_mut()?;
                 client.execute(sql.as_str(), &[]).await
@@ -599,12 +600,12 @@ impl MssqlConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
-        let cols_sql = columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
-        let sql = build_multi_row_insert(&qi(table), &cols_sql, columns.len(), rows);
+        let sql = build_import_sql(table, columns, rows, conflict);
         let mut conn = self.pool.acquire().await?;
         use_database(&mut conn, database).await?;
         exec(&mut conn, &sql).await?;
@@ -619,20 +620,14 @@ impl MssqlConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<Option<(usize, String)>> {
         let mut conn = self.pool.acquire().await?;
         use_database(&mut conn, database).await?;
         begin_tx(&mut conn).await?;
-        let cols_sql = columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
-        let table_ident = qi(table);
         let mut failing: Option<(usize, String)> = None;
         for (i, row) in rows.iter().enumerate() {
-            let sql = build_multi_row_insert(
-                &table_ident,
-                &cols_sql,
-                columns.len(),
-                std::slice::from_ref(row),
-            );
+            let sql = build_import_sql(table, columns, std::slice::from_ref(row), conflict);
             let step = {
                 let client = conn.client_mut()?;
                 client.execute(sql.as_str(), &[]).await
@@ -1730,6 +1725,23 @@ fn build_multi_row_insert(
         sql.push(')');
     }
     sql
+}
+
+/// インポート 1 文を組み立てる: 通常は [`build_multi_row_insert`]、UPSERT
+/// モード (#972) では `MERGE`。MERGE はソース側のキー重複をエラーにするので
+/// 先に [`ImportConflict::collapse_duplicate_keys`] で畳む。
+fn build_import_sql(
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<Option<String>>],
+    conflict: &ImportConflict,
+) -> String {
+    if conflict.is_upsert() {
+        let rows = conflict.collapse_duplicate_keys(columns, rows);
+        return mssql_merge_sql(table, columns, conflict, &rows);
+    }
+    let cols_sql = columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
+    build_multi_row_insert(&qi(table), &cols_sql, columns.len(), rows)
 }
 
 /// Tokenizes `sql` for the dry-run preview's target-table extraction, the

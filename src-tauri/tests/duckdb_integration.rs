@@ -184,7 +184,15 @@ async fn duckdb_resilient_import_skips_and_locates_bad_rows() {
     ];
 
     let outcome = conn
-        .import_rows_skipping(None, "imp", &columns, &rows, 500, |_| Ok(()))
+        .import_rows_skipping(
+            None,
+            "imp",
+            &columns,
+            &rows,
+            500,
+            &t::ImportConflict::insert_only(),
+            |_| Ok(()),
+        )
         .await
         .expect("skip import");
     assert_eq!(outcome.inserted, 2, "records 0 and 3 should insert");
@@ -206,7 +214,13 @@ async fn duckdb_resilient_import_skips_and_locates_bad_rows() {
     // and leaves nothing behind (rolled back).
     conn.execute("DELETE FROM imp", None).await.expect("clear");
     let located = conn
-        .probe_failing_row(None, "imp", &columns, &rows)
+        .probe_failing_row(
+            None,
+            "imp",
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+        )
         .await
         .expect("probe");
     assert_eq!(located.map(|(i, _)| i), Some(1));
@@ -861,6 +875,85 @@ async fn duckdb_init_sql_search_path_resolves_on_each_cloned_connection() {
         assert_eq!(res.rows, vec![vec![t::Value::Int(7)]]);
     }
 
+    conn.close().await;
+    remove_db_files(&path);
+}
+
+/// UPSERT import round-trip (#972): `update` mode inserts new keys and
+/// overwrites existing ones (a key repeated inside one file resolves to its
+/// last occurrence), and `skip` mode leaves existing rows untouched while
+/// still inserting new keys. Exercises both the all-or-nothing path
+/// (`import_rows`) and the resilient path (`import_rows_skipping`).
+async fn assert_upsert_roundtrip(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: &str| Some(s.to_string());
+    let select = format!("SELECT name FROM {table} ORDER BY id");
+    let names = || async {
+        let r = conn.execute(&select, None).await.expect("select names");
+        r.rows
+            .iter()
+            .map(|row| match &row[0] {
+                t::Value::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let update = t::ImportConflict {
+        mode: t::ConflictMode::Update,
+        key_columns: vec!["id".to_string()],
+    };
+    let rows = vec![
+        vec![cell("2"), cell("B")],
+        vec![cell("3"), cell("c")],
+        vec![cell("3"), cell("c2")],
+    ];
+    let n = conn
+        .import_rows(None, table, &columns, &rows, 500, &update, |_| Ok(()))
+        .await
+        .expect("upsert (update) import");
+    assert_eq!(n, 3);
+    assert_eq!(names().await, vec!["a", "B", "c2"]);
+
+    let skip = t::ImportConflict {
+        mode: t::ConflictMode::Skip,
+        key_columns: vec!["id".to_string()],
+    };
+    let rows = vec![vec![cell("1"), cell("zzz")], vec![cell("4"), cell("d")]];
+    let outcome = conn
+        .import_rows_skipping(None, table, &columns, &rows, 500, &skip, |_| Ok(()))
+        .await
+        .expect("upsert (skip) import");
+    assert!(outcome.skipped.is_empty(), "{:?}", outcome.skipped);
+    assert_eq!(names().await, vec!["a", "B", "c2", "d"]);
+
+    // UPSERT without key columns is rejected before touching the table.
+    let no_keys = t::ImportConflict {
+        mode: t::ConflictMode::Update,
+        key_columns: Vec::new(),
+    };
+    assert!(conn
+        .import_rows(None, table, &columns, &rows, 500, &no_keys, |_| Ok(()))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn duckdb_upsert_import_roundtrip() {
+    let path = temp_db_path("upsert");
+    create_empty_db(&path);
+    let opts = t::duckdb_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE imp_up (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO imp_up VALUES (1, 'a'), (2, 'b')", None)
+        .await
+        .expect("seed");
+    assert_upsert_roundtrip(&conn, "imp_up").await;
     conn.close().await;
     remove_db_files(&path);
 }

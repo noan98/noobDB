@@ -16,6 +16,8 @@ pub mod sandbox;
 pub mod sqlite;
 pub mod sync;
 pub mod types;
+/// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
+pub mod upsert;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +29,7 @@ use types::{
     StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema,
     TableSizeInfo, UserPrivileges, Value,
 };
+use upsert::ImportConflict;
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
 /// `host`/`port` will already point to the local end of the tunnel.
@@ -481,6 +484,11 @@ impl Connection {
     /// the cumulative inserted-row count after each batch so callers can emit
     /// streaming progress; returning `Err` from it aborts the import and rolls
     /// back. Returns the total number of rows inserted.
+    ///
+    /// `conflict` selects plain INSERT (default) or an UPSERT mode that skips /
+    /// updates rows whose key already exists (#972). The per-dialect statement
+    /// shape lives in [`upsert`].
+    #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,
         database: Option<&str>,
@@ -488,31 +496,73 @@ impl Connection {
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
+        conflict: &ImportConflict,
         on_progress: F,
     ) -> Result<u64>
     where
         F: FnMut(u64) -> Result<()>,
     {
+        conflict.validate(columns)?;
         match self {
             Connection::MySql(c) => {
-                c.import_rows(database, table, columns, rows, batch_size, on_progress)
-                    .await
+                c.import_rows(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    on_progress,
+                )
+                .await
             }
             Connection::Postgres(c) => {
-                c.import_rows(database, table, columns, rows, batch_size, on_progress)
-                    .await
+                c.import_rows(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    on_progress,
+                )
+                .await
             }
             Connection::Sqlite(c) => {
-                c.import_rows(database, table, columns, rows, batch_size, on_progress)
-                    .await
+                c.import_rows(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    on_progress,
+                )
+                .await
             }
             Connection::DuckDb(c) => {
-                c.import_rows(database, table, columns, rows, batch_size, on_progress)
-                    .await
+                c.import_rows(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    on_progress,
+                )
+                .await
             }
             Connection::Mssql(c) => {
-                c.import_rows(database, table, columns, rows, batch_size, on_progress)
-                    .await
+                c.import_rows(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    on_progress,
+                )
+                .await
             }
         }
     }
@@ -527,13 +577,29 @@ impl Connection {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<()> {
         match self {
-            Connection::MySql(c) => c.try_insert_chunk(database, table, columns, rows).await,
-            Connection::Postgres(c) => c.try_insert_chunk(database, table, columns, rows).await,
-            Connection::Sqlite(c) => c.try_insert_chunk(database, table, columns, rows).await,
-            Connection::DuckDb(c) => c.try_insert_chunk(database, table, columns, rows).await,
-            Connection::Mssql(c) => c.try_insert_chunk(database, table, columns, rows).await,
+            Connection::MySql(c) => {
+                c.try_insert_chunk(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::Postgres(c) => {
+                c.try_insert_chunk(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::Sqlite(c) => {
+                c.try_insert_chunk(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::DuckDb(c) => {
+                c.try_insert_chunk(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::Mssql(c) => {
+                c.try_insert_chunk(database, table, columns, rows, conflict)
+                    .await
+            }
         }
     }
 
@@ -549,13 +615,29 @@ impl Connection {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<Option<(usize, String)>> {
         match self {
-            Connection::MySql(c) => c.probe_failing_row(database, table, columns, rows).await,
-            Connection::Postgres(c) => c.probe_failing_row(database, table, columns, rows).await,
-            Connection::Sqlite(c) => c.probe_failing_row(database, table, columns, rows).await,
-            Connection::DuckDb(c) => c.probe_failing_row(database, table, columns, rows).await,
-            Connection::Mssql(c) => c.probe_failing_row(database, table, columns, rows).await,
+            Connection::MySql(c) => {
+                c.probe_failing_row(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::Postgres(c) => {
+                c.probe_failing_row(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::Sqlite(c) => {
+                c.probe_failing_row(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::DuckDb(c) => {
+                c.probe_failing_row(database, table, columns, rows, conflict)
+                    .await
+            }
+            Connection::Mssql(c) => {
+                c.probe_failing_row(database, table, columns, rows, conflict)
+                    .await
+            }
         }
     }
 
@@ -584,6 +666,7 @@ impl Connection {
     /// rows are dropped. Returns the inserted count and the list of skipped rows
     /// (0-based index + reason). `on_progress` receives the cumulative inserted
     /// count after each chunk.
+    #[allow(clippy::too_many_arguments)]
     pub async fn import_rows_skipping<F>(
         &self,
         database: Option<&str>,
@@ -591,6 +674,7 @@ impl Connection {
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
+        conflict: &ImportConflict,
         mut on_progress: F,
     ) -> Result<ImportOutcome>
     where
@@ -599,6 +683,7 @@ impl Connection {
         if columns.is_empty() {
             return Err(AppError::InvalidInput("no columns to import".into()));
         }
+        conflict.validate(columns)?;
         // Non-transactional engines (MyISAM etc.) can't roll back a partially
         // applied multi-row INSERT, so a failed chunk may leave some rows
         // committed — and the per-row retry below would then re-insert (i.e.
@@ -620,7 +705,10 @@ impl Connection {
         let mut skipped: Vec<SkippedRow> = Vec::new();
         for (chunk_idx, chunk) in rows.chunks(batch).enumerate() {
             let start = chunk_idx * batch;
-            match self.try_insert_chunk(database, table, columns, chunk).await {
+            match self
+                .try_insert_chunk(database, table, columns, chunk, conflict)
+                .await
+            {
                 Ok(()) => inserted += chunk.len() as u64,
                 // A single-row chunk can't be narrowed further, so record it
                 // directly instead of re-issuing the same failing INSERT.
@@ -633,7 +721,13 @@ impl Connection {
                     // commit; failures are recorded and skipped.
                     for (i, row) in chunk.iter().enumerate() {
                         match self
-                            .try_insert_chunk(database, table, columns, std::slice::from_ref(row))
+                            .try_insert_chunk(
+                                database,
+                                table,
+                                columns,
+                                std::slice::from_ref(row),
+                                conflict,
+                            )
                             .await
                         {
                             Ok(()) => inserted += 1,

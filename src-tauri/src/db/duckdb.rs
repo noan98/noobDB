@@ -54,7 +54,8 @@ use super::types::{
     StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
     UserPrivileges, Value,
 };
-use super::{init_sql_of, DbConnectOptions};
+use super::upsert::{conflict_clause, ImportConflict};
+use super::{init_sql_of, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 
 // `databases()` / `tables()` / `columns()` treat the `db` parameter as a
@@ -436,6 +437,7 @@ impl DuckDbConn {
     /// Bulk INSERT via inline-literal, batched multi-row statements wrapped
     /// in one transaction (all-or-nothing). See the module docs for why
     /// literals are used instead of bound parameters.
+    #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,
         _database: Option<&str>,
@@ -443,6 +445,7 @@ impl DuckDbConn {
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
+        conflict: &ImportConflict,
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -458,6 +461,7 @@ impl DuckDbConn {
         let table = table.to_string();
         let columns = columns.to_vec();
         let rows = rows.to_vec();
+        let conflict = conflict.clone();
         let conn = self.clone_conn()?;
         // Grabbed before `conn` moves into the blocking closure so a caller
         // that aborts via `on_progress` (e.g. cancellation) can ask the
@@ -474,7 +478,7 @@ impl DuckDbConn {
             let result = (|| -> Result<u64> {
                 let mut inserted: u64 = 0;
                 for chunk in rows.chunks(batch) {
-                    let sql = build_duckdb_insert(&table, &columns, chunk);
+                    let sql = build_duckdb_upsert(&table, &columns, chunk, &conflict);
                     conn.execute_batch(&sql)?;
                     inserted += chunk.len() as u64;
                     let _ = tx.send(inserted);
@@ -529,6 +533,7 @@ impl DuckDbConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
@@ -536,9 +541,10 @@ impl DuckDbConn {
         let table = table.to_string();
         let columns = columns.to_vec();
         let rows = rows.to_vec();
+        let conflict = conflict.clone();
         let conn = self.clone_conn()?;
         run_blocking(move || {
-            let sql = build_duckdb_insert(&table, &columns, &rows);
+            let sql = build_duckdb_upsert(&table, &columns, &rows, &conflict);
             conn.execute_batch(&sql)?;
             Ok(())
         })
@@ -553,16 +559,19 @@ impl DuckDbConn {
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
     ) -> Result<Option<(usize, String)>> {
         let table = table.to_string();
         let columns = columns.to_vec();
         let rows = rows.to_vec();
+        let conflict = conflict.clone();
         let conn = self.clone_conn()?;
         run_blocking(move || -> Result<Option<(usize, String)>> {
             conn.execute_batch("BEGIN TRANSACTION")?;
             let mut failure = None;
             for (i, row) in rows.iter().enumerate() {
-                let sql = build_duckdb_insert(&table, &columns, std::slice::from_ref(row));
+                let sql =
+                    build_duckdb_upsert(&table, &columns, std::slice::from_ref(row), &conflict);
                 if let Err(e) = conn.execute_batch(&sql) {
                     failure = Some((i, e.to_string()));
                     break;
@@ -1638,6 +1647,20 @@ fn build_duckdb_insert(table: &str, columns: &[String], rows: &[Vec<Option<Strin
         }
         sql.push(')');
     }
+    sql
+}
+
+/// [`build_duckdb_insert`] に競合句 (#972) を付けたもの。DuckDB も
+/// `ON CONFLICT DO UPDATE` で同一文内のキー重複をエラーにするため、先に畳む。
+fn build_duckdb_upsert(
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<Option<String>>],
+    conflict: &ImportConflict,
+) -> String {
+    let rows = conflict.collapse_duplicate_keys(columns, rows);
+    let mut sql = build_duckdb_insert(table, columns, &rows);
+    sql.push_str(&conflict_clause(DriverKind::DuckDb, columns, conflict));
     sql
 }
 

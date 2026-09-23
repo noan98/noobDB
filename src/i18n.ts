@@ -1883,6 +1883,17 @@ const en = {
   importSkippedRowLine: "record {record} (line {line}): {reason}",
   importSkippedCopy: "Copy list",
   importSkippedCopied: "Copied skipped rows.",
+  // Duplicate-key handling / UPSERT (#972).
+  importConflictMode: "On existing key",
+  importConflictModeInsert: "Insert only (duplicate = error)",
+  importConflictModeSkip: "Skip existing rows",
+  importConflictModeUpdate: "Update existing rows (UPSERT)",
+  importConflictKeys: "Key columns",
+  importConflictKeysHint:
+    "Rows are matched by these columns. They need a primary key or UNIQUE constraint in the table (MySQL matches on every unique key of the table).",
+  importConflictKeysRequired: "Select at least one key column.",
+  importConflictKeyNotMapped: "Key columns must be mapped to a source field.",
+  importConflictNoMapped: "Map at least one column first.",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "Generate test data into {table}",
@@ -4815,6 +4826,17 @@ const ja: Dict = {
   importSkippedRowLine: "レコード {record} (行 {line}): {reason}",
   importSkippedCopy: "一覧をコピー",
   importSkippedCopied: "スキップ行をコピーしました。",
+  // 既存キーの扱い / UPSERT (#972)。
+  importConflictMode: "既存キーの扱い",
+  importConflictModeInsert: "INSERT のみ (重複はエラー)",
+  importConflictModeSkip: "既存行はスキップ",
+  importConflictModeUpdate: "既存行を更新 (UPSERT)",
+  importConflictKeys: "キー列",
+  importConflictKeysHint:
+    "これらの列で既存行と照合します。テーブル側に主キーまたは UNIQUE 制約が必要です (MySQL はテーブルの全一意キーで照合します)。",
+  importConflictKeysRequired: "キー列を 1 つ以上選んでください。",
+  importConflictKeyNotMapped: "キー列はファイルの列にマッピングされている必要があります。",
+  importConflictNoMapped: "先に列を 1 つ以上マッピングしてください。",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "{table} にテストデータを生成",

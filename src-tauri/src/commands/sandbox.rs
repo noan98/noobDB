@@ -43,6 +43,7 @@ use crate::db::sandbox::{
 };
 use crate::db::sync::{generate_sync_sql, quote_ident};
 use crate::db::types::{TableColumnInfo, Value};
+use crate::db::upsert::ImportConflict;
 use crate::db::{Connection, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 use crate::sandboxes::store as sandbox_store;
@@ -308,18 +309,30 @@ pub(crate) async fn create_sandbox_inner(
         }
         let cells: Vec<Vec<Option<String>>> = t.rows.iter().map(|r| row_to_cells(r)).collect();
         if let Err(e) = conn
-            .import_rows(None, &t.name, &t.columns, &cells, IMPORT_BATCH_SIZE, |_| {
-                Ok(())
-            })
+            .import_rows(
+                None,
+                &t.name,
+                &t.columns,
+                &cells,
+                IMPORT_BATCH_SIZE,
+                &ImportConflict::insert_only(),
+                |_| Ok(()),
+            )
             .await
         {
             return Err(fail(conn, &file_path, e).await);
         }
         let shadow = shadow_table_name(&t.name);
         if let Err(e) = conn
-            .import_rows(None, &shadow, &t.columns, &cells, IMPORT_BATCH_SIZE, |_| {
-                Ok(())
-            })
+            .import_rows(
+                None,
+                &shadow,
+                &t.columns,
+                &cells,
+                IMPORT_BATCH_SIZE,
+                &ImportConflict::insert_only(),
+                |_| Ok(()),
+            )
             .await
         {
             return Err(fail(conn, &file_path, e).await);
