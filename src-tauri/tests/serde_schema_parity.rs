@@ -284,6 +284,12 @@ fn build_fixtures() -> serde_json::Value {
         ssl_client_cert: Some("/etc/ssl/client.pem".into()),
         ssl_client_key: Some("/etc/ssl/client.key".into()),
         init_sql: Some("SET time_zone = '+00:00';".into()),
+        // #734: AWS IAM 認証の非秘密設定 (リージョン / AWS プロファイル名) も
+        // zod ⇔ serde ゴールデンの対象にする。
+        aws_iam: Some(t::AwsIamConfig {
+            region: "ap-northeast-1".into(),
+            profile: Some("work".into()),
+        }),
     };
     let connection_profile = ProfileWithSecretFlags {
         profile: connection_profile_inner,

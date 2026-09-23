@@ -55,3 +55,28 @@ mysql-server/postgresql (ubuntu-latest ランナーに既定でプリインス�
 ジョブ分割方針には一切手を入れていません (最小侵襲)。MySQL 側は Ubuntu の
 AppArmor プロファイルがカスタム datadir/証明書パスを塞ぐことがあるため
 `aa-complain` で complain モードに倒しています (プロファイルが存在しない環境では
+
+## AWS RDS / Aurora IAM 認証 (#734) と TLS 強制
+
+`DbConnectOptions.aws_iam` (`db/aws_iam.rs` の `AwsIamOptions`) が `Some` のとき、
+MySQL / PostgreSQL ドライバは保存パスワードの代わりに RDS 認証トークン
+(`rds-db:connect` の SigV4 presigned URL、有効期限 15 分) を接続ごとに生成して
+パスワードに使う。
+
+- **TLS 強制**: `aws_iam::enforce_tls` が未設定 / `disable` / `prefer` を `require`
+  へ引き上げる。`commands/connection.rs::build_options` と各ドライバの `apply_tls`
+  の両方で適用 (多層防御)。フロントの `awsIam.ts::effectiveSslModeForIam` と共有
+  ゴールデン `src/__tests__/fixtures/awsIamGolden.json` で規則を固定している。
+- **MySQL** は `enable_cleartext_plugin(true)` (RDS の `AWSAuthenticationPlugin` は
+  `mysql_clear_password` でトークンを受け取る)。TLS 強制とセットでのみ有効。
+- **署名ホスト**: トークンは SSH トンネルで 127.0.0.1 に差し替える**前**の本来の
+  エンドポイント名で署名する (`AwsIamOptions.endpoint_host/port`)。
+- **失効**: 確立済み接続は失効後も有効。プールの新規接続用に 10 分ごとに
+  `Pool::set_connect_options` でトークンを差し替える (`spawn_token_refresh`)。
+  再接続 (#712) は `Connection::connect` を通るので必ず新しいトークンになる。
+- **秘密**: AWS 資格情報は環境変数 / `~/.aws/credentials` / `~/.aws/config` の静的キー
+  から接続時に読むだけで、profiles.json にも keyring にも保存しない。トークンも
+  `connect_options.password` に残さない (ネイティブダンプだけは
+  `with_fresh_password` で一時オプションファイルへ渡す)。SSO / AssumeRole /
+  `credential_process` は範囲外 (エラーで `aws configure export-credentials` を案内)。
+- 依存は `sha2` のみ (HMAC-SHA256 は自前)。`aws-config` / `aws-sdk-rds` は入れていない。

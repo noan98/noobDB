@@ -1104,6 +1104,7 @@ async fn sqlite_missing_path_reports_invalid_input() {
         ssl_client_cert: None,
         ssl_client_key: None,
         init_sql: None,
+        aws_iam: None,
     };
     let err = noobdb_lib::__test_api::connect(&opts)
         .await

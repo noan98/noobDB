@@ -105,6 +105,27 @@ export interface SessionInitSettings {
 }
 
 /**
+ * AWS RDS / Aurora IAM database authentication settings (#734). Non-secret:
+ * only the region and the AWS profile *name* are stored — the AWS access keys
+ * are read by the backend from the environment / `~/.aws/credentials` at
+ * connect time and never saved by noobDB (neither in profiles.json nor in the
+ * keyring). The backend generates a fresh 15-minute RDS auth token per new
+ * physical connection and forces TLS (`require` or stricter).
+ */
+export interface AwsIamConfig {
+  /** AWS region (e.g. `ap-northeast-1`). Empty = infer from the RDS endpoint name / `AWS_REGION`. */
+  region: string;
+  /** Profile name in `~/.aws/credentials` / `~/.aws/config`. `null` = AWS default resolution. */
+  profile?: string | null;
+}
+
+/** Auth method selector shared by the connect request and the saved profile. */
+export interface AwsIamSettings {
+  /** `null`/omitted = classic password auth; set = AWS IAM auth (MySQL / PostgreSQL only). */
+  aws_iam?: AwsIamConfig | null;
+}
+
+/**
  * The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same
  * shape as {@link SshProfile} minus its own `jump` — chains are capped at one
  * bastion hop (2 SSH hops total) for now.
@@ -131,7 +152,7 @@ export interface SshProfile {
   jump?: SshJumpProfile | null;
 }
 
-export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
+export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings {
   id: string;
   name: string;
   driver: string;
@@ -217,7 +238,7 @@ export interface ResolvedSshAlias {
   jump_user: string | null;
 }
 
-export interface ConnectRequest extends TlsSettings, SessionInitSettings {
+export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
   profile_id?: string;
   driver: DriverKind;
   host: string;
@@ -237,7 +258,7 @@ export interface ConnectRequest extends TlsSettings, SessionInitSettings {
   skip_history?: boolean;
 }
 
-export interface SaveProfileRequest extends TlsSettings, SessionInitSettings {
+export interface SaveProfileRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
   id?: string;
   name: string;
   driver: string;

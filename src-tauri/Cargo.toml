@@ -116,6 +116,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utility
 data-encoding = "2"
+# AWS RDS IAM 認証トークン (#734) の SigV4 署名 (SHA-256 / HMAC-SHA256) も下の
+# `sha2` (エクスポートの仮名化 #733 と共用) を使う。トークン生成は AWS API を呼ばない
+# ローカルの署名計算だけなので、aws-config / aws-sdk-rds (推移依存が非常に大きい) は
+# 入れず自前実装にしている (HMAC は RFC 2104 の自前実装)。
 csv = "1"
 encoding_rs = "0.8"
 # SQL 整形 (#546)。ダンプ DDL / 出力 SQL の可読性向上に使う薄いラッパ。default 構成

@@ -25,6 +25,7 @@ pub mod __test_api {
         analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
         TableMeta, UnusedIndexEntry, UnusedIndexStats,
     };
+    pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
@@ -718,6 +719,7 @@ pub mod __test_api {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         }
     }
 
@@ -736,6 +738,7 @@ pub mod __test_api {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         }
     }
 
@@ -779,6 +782,7 @@ pub mod __test_api {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         })
     }
 

@@ -17,7 +17,15 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip } from "./Tooltip";
-import { FieldError } from "./modalForm";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import {
+  buildAwsIamConfig,
+  effectiveSslModeForIam,
+  inferRdsRegion,
+  isIamCapableDriver,
+  isSslModeAllowedForIam,
+  type DbAuthMethod,
+} from "./awsIam";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { transitions, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
@@ -423,6 +431,15 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   // Session-initialization SQL run on every new connection (#522).
   const [initSql, setInitSql] = useState(initial?.init_sql ?? "");
 
+  // DB auth method (#734): classic password, or AWS RDS IAM auth. IAM stores
+  // only the region and the AWS profile *name*; the backend reads the AWS keys
+  // from the environment / ~/.aws/credentials at connect time.
+  const [authMethod, setAuthMethod] = useState<DbAuthMethod>(
+    initial?.aws_iam ? "aws_iam" : "password",
+  );
+  const [awsRegion, setAwsRegion] = useState(initial?.aws_iam?.region ?? "");
+  const [awsProfile, setAwsProfile] = useState(initial?.aws_iam?.profile ?? "");
+
   const [useSsh, setUseSsh] = useState(!!initial?.ssh);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
   const [sshPort, setSshPort] = useState(String(initial?.ssh?.port ?? 22));
@@ -461,6 +478,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   // DuckDB (#709) is file-backed exactly like SQLite: same `file_path`
   // requirement, no host/port/user/password, no SSH tunnel, no TLS.
   const isFileBacked = driver === "sqlite" || driver === "duckdb";
+  // AWS IAM auth applies only to network MySQL / PostgreSQL (#734). It forces
+  // TLS, so the effective mode shown/sent is at least `require`.
+  const iamActive = !isFileBacked && isIamCapableDriver(driver) && authMethod === "aws_iam";
+  const effectiveSslMode: SslMode = iamActive ? effectiveSslModeForIam(sslMode) : sslMode;
+  const awsIamConfig = () =>
+    isFileBacked ? null : buildAwsIamConfig(authMethod, driver, awsRegion, awsProfile);
+  const inferredRegion = inferRdsRegion(host);
 
   const handleDriverChange = (next: DriverKind) => {
     if (next === driver) return;
@@ -574,7 +598,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   // Non-secret TLS fields included in both connect and save requests. Empty
   // paths are sent as null so the backend treats them as unset.
   const tlsSettings = () => ({
-    ssl_mode: sslMode,
+    ssl_mode: effectiveSslMode,
     ssl_root_cert: sslRootCert.trim() || null,
     ssl_client_cert: sslClientCert.trim() || null,
     ssl_client_key: sslClientKey.trim() || null,
@@ -622,7 +646,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       host,
       port: Number(port),
       user,
-      password,
+      // IAM auth never sends a password: the backend signs a token instead.
+      password: iamActive ? "" : password,
       database: database || null,
       ssh: useSsh
         ? {
@@ -651,6 +676,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       skip_history: skipHistory,
       ...tlsSettings(),
       init_sql: initSql.trim() || null,
+      aws_iam: awsIamConfig(),
     };
   };
 
@@ -738,7 +764,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 : null,
             }
           : null,
-        db_password: isFileBacked || password === "" ? undefined : password,
+        db_password: isFileBacked || iamActive || password === "" ? undefined : password,
         ssh_passphrase:
           !isFileBacked && useSsh && sshAuthMethod === "key" && sshPassphrase !== ""
             ? sshPassphrase
@@ -764,12 +790,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         file_path: isFileBacked ? (filePath || null) : null,
         // SQLite is file-backed and never negotiates TLS; persist null so a
         // driver switch can't leave stale TLS settings on the profile.
-        ssl_mode: isFileBacked ? null : sslMode,
+        ssl_mode: isFileBacked ? null : effectiveSslMode,
         ssl_root_cert: isFileBacked ? null : (sslRootCert.trim() || null),
         ssl_client_cert: isFileBacked ? null : (sslClientCert.trim() || null),
         ssl_client_key: isFileBacked ? null : (sslClientKey.trim() || null),
         // Init SQL applies to all drivers (SQLite via PRAGMA).
         init_sql: initSql.trim() || null,
+        // AWS IAM auth (#734): region + AWS profile name only (no AWS keys).
+        aws_iam: awsIamConfig(),
       });
       onSaved();
     } catch (e) {
@@ -887,17 +915,74 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <Input id={`${fid}-database`} value={database} onChange={(e) => setDatabase(e.target.value)} />
             </Box>
           </Box>
-          <Box mt="2">
-            <label htmlFor={`${fid}-db-password`}>{t("formDbPassword")}</label>
-            <PasswordInput
-              id={`${fid}-db-password`}
-              value={password}
-              onChange={setPassword}
-              hasStored={!!initial?.has_db_password}
-              profileId={initial?.id}
-              secretKind="db_password"
-            />
-          </Box>
+          {isIamCapableDriver(driver) && (
+            <FormSection mt="2">
+              <FieldLabel htmlFor={`${fid}-auth-method`}>{t("formAuthMethod")}</FieldLabel>
+              <Select
+                id={`${fid}-auth-method`}
+                value={authMethod}
+                onChange={(e) => setAuthMethod(e.target.value as DbAuthMethod)}
+              >
+                <option value="password">{t("formAuthMethodPassword")}</option>
+                <option value="aws_iam">{t("formAuthMethodAwsIam")}</option>
+              </Select>
+            </FormSection>
+          )}
+          {iamActive ? (
+            <FormSection mt="2" data-testid="aws-iam-settings">
+              <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3">
+                <FormSection>
+                  <FieldLabel htmlFor={`${fid}-aws-region`}>{t("formAwsRegion")}</FieldLabel>
+                  <Input
+                    id={`${fid}-aws-region`}
+                    value={awsRegion}
+                    onChange={(e) => setAwsRegion(e.target.value)}
+                    placeholder={inferredRegion ?? t("formAwsRegionPlaceholder")}
+                  />
+                </FormSection>
+                <FormSection>
+                  <FieldLabel htmlFor={`${fid}-aws-profile`}>{t("formAwsProfile")}</FieldLabel>
+                  <Input
+                    id={`${fid}-aws-profile`}
+                    value={awsProfile}
+                    onChange={(e) => setAwsProfile(e.target.value)}
+                    placeholder={t("formAwsProfilePlaceholder")}
+                  />
+                </FormSection>
+              </Box>
+              {awsRegion.trim() === "" &&
+                (inferredRegion ? (
+                  <Text color="app.textMuted" fontSize="xs" m="0">
+                    {t("formAwsRegionInferred", { region: inferredRegion })}
+                  </Text>
+                ) : (
+                  <FieldError tone="warning">{t("formAwsRegionMissing")}</FieldError>
+                ))}
+              <Text color="app.textMuted" fontSize="xs" m="0">
+                {t("formAwsIamHelp")}
+              </Text>
+              <Text color="app.textMuted" fontSize="xs" m="0">
+                {t("formAwsIamExpiryHelp")}
+              </Text>
+              {useSsh && (
+                <Text color="app.textMuted" fontSize="xs" m="0">
+                  {t("formAwsIamSshHint")}
+                </Text>
+              )}
+            </FormSection>
+          ) : (
+            <Box mt="2">
+              <label htmlFor={`${fid}-db-password`}>{t("formDbPassword")}</label>
+              <PasswordInput
+                id={`${fid}-db-password`}
+                value={password}
+                onChange={setPassword}
+                hasStored={!!initial?.has_db_password}
+                profileId={initial?.id}
+                secretKind="db_password"
+              />
+            </Box>
+          )}
         </Fieldset>
       )}
 
@@ -906,9 +991,18 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Legend>{t("formTlsLegend")}</Legend>
           <Box>
             <label htmlFor={`${fid}-tls-mode`}>{t("formTlsMode")}</label>
-            <Select id={`${fid}-tls-mode`} value={sslMode} onChange={(e) => setSslMode(e.target.value as SslMode)}>
-              <option value="disable">{t("formTlsModeDisable")}</option>
-              <option value="prefer">{t("formTlsModePrefer")}</option>
+            <Select
+              id={`${fid}-tls-mode`}
+              value={effectiveSslMode}
+              onChange={(e) => setSslMode(e.target.value as SslMode)}
+            >
+              {/* IAM auth (#734) is TLS-only: plaintext-capable modes are not selectable. */}
+              <option value="disable" disabled={iamActive && !isSslModeAllowedForIam("disable")}>
+                {t("formTlsModeDisable")}
+              </option>
+              <option value="prefer" disabled={iamActive && !isSslModeAllowedForIam("prefer")}>
+                {t("formTlsModePrefer")}
+              </option>
               <option value="require">{t("formTlsModeRequire")}</option>
               <option value="verify_ca">{t("formTlsModeVerifyCa")}</option>
               <option value="verify_full">{t("formTlsModeVerifyFull")}</option>
@@ -916,9 +1010,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {t("formTlsModeHelp")}
             </Text>
+            {iamActive && (
+              <Text color="app.textMuted" fontSize="xs" mt="1" mb="0" data-testid="aws-iam-tls-note">
+                {t("formAwsIamTlsNote")}
+              </Text>
+            )}
           </Box>
           {isProduction &&
-            (sslMode === "disable" || sslMode === "prefer" || sslMode === "require") && (
+            (effectiveSslMode === "disable" ||
+              effectiveSslMode === "prefer" ||
+              effectiveSslMode === "require") && (
               <Text color="app.textWarning" fontSize="xs" mt="2" mb="0">
                 {t("formTlsProductionHint")}
               </Text>

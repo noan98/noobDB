@@ -1,4 +1,5 @@
 pub mod advisor;
+pub mod aws_iam;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
 pub mod data_diff;
@@ -76,6 +77,15 @@ pub struct DbConnectOptions {
     /// [`is_session_init_sql`] (SET / PRAGMA / read-only only). Non-secret.
     #[serde(default)]
     pub init_sql: Option<String>,
+    /// AWS RDS / Aurora IAM database authentication (#734). `Some` means the
+    /// driver generates a fresh RDS auth token (SigV4 presigned `rds-db:connect`)
+    /// as the password for every new physical connection, and TLS is forced to
+    /// `require` or stricter. Carries only non-secret parameters (region, AWS
+    /// profile name, and the pre-tunnel endpoint the token is signed for) — the
+    /// AWS credentials are read from the environment / shared credentials file
+    /// at connect time and never stored. `password` stays empty in this mode.
+    #[serde(default)]
+    pub aws_iam: Option<aws_iam::AwsIamOptions>,
 }
 
 /// Driver-neutral TLS requirement level. Each driver's `connect` maps this to
@@ -3294,6 +3304,7 @@ mod tests {
                 ssl_client_cert: None,
                 ssl_client_key: None,
                 init_sql: init.map(str::to_string),
+                aws_iam: None,
             }
         }
         // No statement to run → None (so no after_connect hook runs an empty query).

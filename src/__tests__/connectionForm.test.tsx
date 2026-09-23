@@ -11,6 +11,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       revealProfileSecret: vi.fn(),
       testConnection: vi.fn(),
+      saveProfile: vi.fn(),
     },
   };
 });
@@ -270,5 +271,114 @@ describe("ConnectionForm connection test feedback (#1006)", () => {
     fireEvent.change(portField(), { target: { value: "5432" } });
     expect(portField()).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByText(t("formInvalidPort"))).toBeNull();
+  });
+});
+
+/**
+ * AWS RDS IAM 認証 (#734)。認証方式に AWS IAM を選ぶとパスワード欄が消え、
+ * 接続要求はパスワード無し + `aws_iam` + TLS 強制 (`require` 以上) になること、
+ * 保存時にも AWS のキーではなくリージョン / プロファイル名だけが送られることを固定する。
+ */
+describe("ConnectionForm AWS IAM authentication (#734)", () => {
+  const testConnection = vi.mocked(api.testConnection);
+  const saveProfile = vi.mocked(api.saveProfile);
+
+  beforeEach(() => {
+    testConnection.mockReset();
+    saveProfile.mockReset();
+  });
+
+  function authSelect(): HTMLSelectElement {
+    return screen.getByLabelText(t("formAuthMethod")) as HTMLSelectElement;
+  }
+
+  it("swaps the password field for region / profile and sends a TLS-forced IAM request", async () => {
+    testConnection.mockResolvedValue("ok");
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText(t("formHost")), {
+      target: { value: "mydb.abc123.ap-northeast-1.rds.amazonaws.com" },
+    });
+    expect(screen.getByLabelText(t("formDbPassword"))).toBeInTheDocument();
+
+    fireEvent.change(authSelect(), { target: { value: "aws_iam" } });
+    expect(screen.queryByLabelText(t("formDbPassword"))).toBeNull();
+    // リージョンはエンドポイント名から推定され、TLS の注記が出る。
+    expect(
+      screen.getByText(t("formAwsRegionInferred", { region: "ap-northeast-1" })),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("aws-iam-tls-note")).toBeInTheDocument();
+    // 平文を許すモードは選べず、既定の prefer は require に引き上げられる。
+    const tls = screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement;
+    expect(tls.value).toBe("require");
+    expect((tls.querySelector('option[value="disable"]') as HTMLOptionElement).disabled).toBe(true);
+    expect((tls.querySelector('option[value="prefer"]') as HTMLOptionElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(t("formAwsProfile")), { target: { value: " work " } });
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+    await screen.findByText(t("formConnectionOk"));
+
+    const req = testConnection.mock.calls[0][0];
+    expect(req.password).toBe("");
+    expect(req.ssl_mode).toBe("require");
+    expect(req.aws_iam).toEqual({ region: "", profile: "work" });
+    expect(req.host).toBe("mydb.abc123.ap-northeast-1.rds.amazonaws.com");
+  });
+
+  it("warns when the region cannot be inferred from the host", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.change(authSelect(), { target: { value: "aws_iam" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(t("formAwsRegionMissing"));
+    fireEvent.change(screen.getByLabelText(t("formAwsRegion")), { target: { value: "us-east-1" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("restores a saved IAM profile and saves only non-secret IAM settings", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    const onSaved = vi.fn();
+    const saved: ConnectionProfile = {
+      id: "iam00001",
+      name: "RDS",
+      driver: "postgres",
+      host: "db.abc.us-west-2.rds.amazonaws.com",
+      port: 5432,
+      user: "app_iam",
+      database: null,
+      ssh: null,
+      group: null,
+      color: null,
+      is_production: false,
+      confirm_writes: false,
+      read_only: false,
+      skip_history: false,
+      file_path: null,
+      ssl_mode: "verify_full",
+      aws_iam: { region: "us-west-2", profile: "prod" },
+    };
+    renderWithProviders(
+      <ConnectionForm initial={saved} profiles={[saved]} onSaved={onSaved} onCancel={() => {}} />,
+    );
+    expect(authSelect().value).toBe("aws_iam");
+    expect((screen.getByLabelText(t("formAwsRegion")) as HTMLInputElement).value).toBe("us-west-2");
+    expect((screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement).value).toBe("verify_full");
+
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const req = saveProfile.mock.calls[0][0];
+    expect(req.aws_iam).toEqual({ region: "us-west-2", profile: "prod" });
+    expect(req.ssl_mode).toBe("verify_full");
+    expect(req.db_password).toBeUndefined();
+  });
+
+  it("does not offer IAM auth for SQL Server", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText(t("formDriver")), { target: { value: "mssql" } });
+    expect(screen.queryByLabelText(t("formAuthMethod"))).toBeNull();
+    expect(screen.getByLabelText(t("formDbPassword"))).toBeInTheDocument();
   });
 });

@@ -68,6 +68,13 @@ pub struct ConnectionProfile {
     /// allowed. Non-secret; stored in `profiles.json`.
     #[serde(default)]
     pub init_sql: Option<String>,
+    /// AWS RDS / Aurora IAM database authentication (#734). `Some` selects the
+    /// `aws_iam` auth method (no stored DB password); `None` is the classic
+    /// password method, including every profile saved before this field existed.
+    /// Holds only the region and AWS profile *name* — AWS access keys are never
+    /// stored by noobDB (neither here nor in the keyring).
+    #[serde(default)]
+    pub aws_iam: Option<crate::db::aws_iam::AwsIamConfig>,
 }
 
 /// How an SSH tunnel authenticates with the jump host.

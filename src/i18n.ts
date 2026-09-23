@@ -790,6 +790,24 @@ const en = {
     "Optional client certificate and key for servers that require mutual TLS (mTLS). Leave blank otherwise. Only the file paths are stored — the file contents are read at connect time and never saved.",
   formTlsSshHint:
     "Over an SSH tunnel the driver connects to 127.0.0.1, so Verify full (hostname check) may fail against a certificate issued for the real host. Use Verify CA, or set the database host to match the certificate.",
+  formAuthMethod: "Authentication",
+  formAuthMethodPassword: "Password",
+  formAuthMethodAwsIam: "AWS IAM (RDS / Aurora)",
+  formAwsRegion: "AWS region",
+  formAwsRegionPlaceholder: "ap-northeast-1",
+  formAwsRegionInferred: "Region is inferred from the endpoint: {region}",
+  formAwsRegionMissing:
+    "The region cannot be inferred from this host. Enter it here, or set AWS_REGION before starting noobDB.",
+  formAwsProfile: "AWS profile (optional)",
+  formAwsProfilePlaceholder: "default",
+  formAwsIamHelp:
+    "noobDB signs a short-lived RDS auth token (rds-db:connect) for the DB user above and uses it instead of a password. AWS credentials are read at connect time from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN) or from the named profile in ~/.aws/credentials — noobDB never stores them. SSO / assume-role / credential_process profiles are not resolved directly: run `aws configure export-credentials --profile NAME --format env` and start noobDB with those variables.",
+  formAwsIamExpiryHelp:
+    "Tokens expire after 15 minutes. Connections already open keep working; noobDB regenerates the token every 10 minutes for new pooled connections, and on reconnect. If your AWS credentials themselves expire (temporary keys), reconnecting fails until you refresh them.",
+  formAwsIamSshHint:
+    "Over an SSH tunnel the token is still signed for the host entered above (the real RDS endpoint), not 127.0.0.1 — keep the endpoint name here, not the tunnel address.",
+  formAwsIamTlsNote:
+    "AWS IAM authentication requires TLS, so Disable / Prefer are not available. For Verify CA / Verify full, set the CA certificate to the Amazon RDS CA bundle (global-bundle.pem).",
   formInitSqlLegend: "Session init SQL",
   formInitSqlPlaceholder: "SET search_path TO app, public;\nSET time_zone = '+00:00';",
   formInitSqlPlaceholderSqlite: "PRAGMA foreign_keys = ON;\nPRAGMA busy_timeout = 5000;",
@@ -2290,6 +2308,19 @@ const en = {
   helpSectionGuards: "Modes & safety guards",
   helpSectionGuardsDesc: "Settings that help prevent accidental writes.",
 
+  helpSectionConnection: "Connections & authentication",
+  helpSectionConnectionDesc: "How noobDB authenticates to the database.",
+  helpAwsIamTitle: "AWS IAM authentication (RDS / Aurora)",
+  helpAwsIamDesc:
+    "Connect to Amazon RDS / Aurora MySQL or PostgreSQL with an IAM auth token instead of a stored password. Choose \"AWS IAM\" as the authentication method in the connection form. TLS is always required.",
+  helpAwsIamStep1:
+    "Enable IAM DB authentication on the instance and create the DB user for IAM (MySQL: IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS' / PostgreSQL: GRANT rds_iam).",
+  helpAwsIamStep2:
+    "Make AWS credentials with rds-db:connect permission available: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN) or a profile in ~/.aws/credentials.",
+  helpAwsIamStep3:
+    "Enter the RDS endpoint name as the host (even when using an SSH tunnel), then set the region (inferred from the endpoint when possible) and optionally the AWS profile.",
+  helpAwsIamNote:
+    "Auth tokens expire after 15 minutes. Connections already established keep working after expiry; new pooled connections use a token regenerated every 10 minutes, and Reconnect (including auto-reconnect) always signs a fresh one. If the AWS credentials themselves expire, reconnecting fails until you refresh them. AWS keys are never stored by noobDB.",
   helpDryRunTitle: "Dry Run",
   helpDryRunDesc:
     "Runs your query inside a transaction and rolls it back, then shows the before/after state of the affected rows. Nothing is committed.",
@@ -4122,6 +4153,24 @@ const ja: Dict = {
     "相互 TLS (mTLS) を要求するサーバ向けの任意のクライアント証明書と鍵です。不要なら空のままにします。保存されるのはファイルパスのみで、ファイルの中身は接続時に読み込むだけで保存しません。",
   formTlsSshHint:
     "SSH トンネル経由ではドライバは 127.0.0.1 に接続するため、「完全検証」(ホスト名検証) は実ホスト向けに発行された証明書に対して失敗することがあります。「CA 検証」を使うか、DB ホスト名を証明書に合わせてください。",
+  formAuthMethod: "認証方式",
+  formAuthMethodPassword: "パスワード",
+  formAuthMethodAwsIam: "AWS IAM (RDS / Aurora)",
+  formAwsRegion: "AWS リージョン",
+  formAwsRegionPlaceholder: "ap-northeast-1",
+  formAwsRegionInferred: "エンドポイント名からリージョンを推定します: {region}",
+  formAwsRegionMissing:
+    "このホスト名からはリージョンを推定できません。ここに入力するか、noobDB の起動前に AWS_REGION を設定してください。",
+  formAwsProfile: "AWS プロファイル (任意)",
+  formAwsProfilePlaceholder: "default",
+  formAwsIamHelp:
+    "上の DB ユーザ向けに有効期限の短い RDS 認証トークン (rds-db:connect) を署名し、パスワードの代わりに使います。AWS の資格情報は接続時に AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN)、または ~/.aws/credentials の指定プロファイルから読み込み、noobDB には一切保存しません。SSO / AssumeRole / credential_process のプロファイルは直接は解決しないため、`aws configure export-credentials --profile 名前 --format env` の結果を環境変数に設定してから noobDB を起動してください。",
+  formAwsIamExpiryHelp:
+    "トークンの有効期限は 15 分です。確立済みの接続は失効後もそのまま使えます。プールが新しく張る接続向けに 10 分ごとにトークンを作り直し、再接続時にも新しいトークンを生成します。一時的な AWS 資格情報そのものが失効した場合は、資格情報を更新するまで再接続に失敗します。",
+  formAwsIamSshHint:
+    "SSH トンネル経由でも、トークンは 127.0.0.1 ではなく上で入力したホスト名 (本来の RDS エンドポイント) で署名されます。ここにはトンネルのアドレスではなくエンドポイント名を入力してください。",
+  formAwsIamTlsNote:
+    "AWS IAM 認証は TLS 必須のため「無効」「優先」は選べません。「CA 検証」「完全検証」を使う場合は CA 証明書に Amazon RDS の CA バンドル (global-bundle.pem) を指定してください。",
   formInitSqlLegend: "セッション初期化 SQL",
   formInitSqlPlaceholder: "SET search_path TO app, public;\nSET time_zone = '+00:00';",
   formInitSqlPlaceholderSqlite: "PRAGMA foreign_keys = ON;\nPRAGMA busy_timeout = 5000;",
@@ -5615,6 +5664,19 @@ const ja: Dict = {
   helpSectionGuards: "モード / 安全装置",
   helpSectionGuardsDesc: "誤った書き込みを防ぐための設定です。",
 
+  helpSectionConnection: "接続と認証",
+  helpSectionConnectionDesc: "noobDB が DB へ認証する方法です。",
+  helpAwsIamTitle: "AWS IAM 認証 (RDS / Aurora)",
+  helpAwsIamDesc:
+    "保存したパスワードの代わりに IAM 認証トークンで Amazon RDS / Aurora の MySQL・PostgreSQL へ接続します。接続フォームの認証方式で「AWS IAM」を選びます。TLS は常に必須です。",
+  helpAwsIamStep1:
+    "インスタンスで IAM データベース認証を有効にし、IAM 用の DB ユーザを作成します (MySQL: IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS' / PostgreSQL: GRANT rds_iam)。",
+  helpAwsIamStep2:
+    "rds-db:connect 権限を持つ AWS 資格情報を用意します: 環境変数 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN)、または ~/.aws/credentials のプロファイル。",
+  helpAwsIamStep3:
+    "ホストには RDS のエンドポイント名を入力し (SSH トンネル利用時も同じ)、リージョン (エンドポイント名から推定可能なら省略可) と必要なら AWS プロファイル名を設定します。",
+  helpAwsIamNote:
+    "認証トークンの有効期限は 15 分です。確立済みの接続は失効後もそのまま使えます。プールが新しく張る接続には 10 分ごとに作り直したトークンを使い、再接続 (自動再接続を含む) では必ず新しいトークンを署名します。AWS 資格情報そのものが失効した場合は、更新するまで再接続に失敗します。AWS のキーは noobDB に保存されません。",
   helpDryRunTitle: "Dry Run",
   helpDryRunDesc:
     "クエリをトランザクション内で試し実行し、ロールバックします。影響を受ける行の実行前後 (Before/After) を表示します。DB には何もコミットされません。",

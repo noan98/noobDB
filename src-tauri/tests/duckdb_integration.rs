@@ -759,6 +759,7 @@ async fn duckdb_missing_or_nonexistent_path_reports_invalid_input() {
         ssl_client_cert: None,
         ssl_client_key: None,
         init_sql: None,
+        aws_iam: None,
     };
     let err = t::connect(&opts)
         .await
