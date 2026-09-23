@@ -7,6 +7,7 @@ import {
   canGoPrev,
   pageRange,
 } from "../pagination";
+import { CountUpText } from "./CountUp";
 import { ICON_SIZES, Icon } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -112,9 +113,13 @@ export function PaginationBar({
       </Tooltip>
 
       <chakra.span display="inline-flex" alignItems="center" gap="1.5" minW="0">
-        {t("pageLabel", { page })}
+        {/* ページ番号・総ページ数・行レンジは CountUp で遷移させる (#1024)。
+            reduced-motion / 小さな差分 (前後 1 ページ送り) は即時ジャンプ。 */}
+        <CountUpText values={[page]} render={([p]) => t("pageLabel", { page: p })} />
         {totalPages != null && (
-          <chakra.span color="app.textMuted">{t("pageOfTotal", { total: totalPages })}</chakra.span>
+          <chakra.span color="app.textMuted">
+            <CountUpText values={[totalPages]} render={([n]) => t("pageOfTotal", { total: n })} />
+          </chakra.span>
         )}
         {loading && <Spinner size={12} />}
       </chakra.span>
@@ -141,7 +146,12 @@ export function PaginationBar({
       </Tooltip>
 
       <chakra.span color="app.textMuted" fontSize="xs">
-        {range.to > 0 ? t("pageRowRange", { from: range.from, to: range.to }) : ""}
+        {range.to > 0 ? (
+          <CountUpText
+            values={[range.from, range.to]}
+            render={([from, to]) => t("pageRowRange", { from, to })}
+          />
+        ) : null}
       </chakra.span>
 
       <chakra.span flex="1" />

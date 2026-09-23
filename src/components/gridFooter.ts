@@ -1,5 +1,6 @@
 import type { CellValue } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
+import { integerCountUpTarget } from "../useCountUp";
 import { columnStats, isNumericStatsKind, nullRatePercentOf, type ColumnStats } from "./gridStats";
 
 /**
@@ -89,6 +90,21 @@ export function computeFooterCell(stats: ColumnStats, fn: FooterAggFn): FooterCe
     default:
       return { ...base, blank: true };
   }
+}
+
+/**
+ * フッターセルの値をカウントアップ (#1024) させてよいなら目標値を、そうでなければ
+ * null (従来どおりのクロスフェード付き静的表示) を返す。
+ *
+ * - ストリーミング中 (`streaming`) は null — 行が届くたびに集計が変わる未確定値を
+ *   追いかけてアニメーションさせない (`useCountUp` の「確定値だけ」方針)。
+ * - 空セル・NULL 率 (`percent`) は null。率は 1 桁小数を持つ別表記のため。
+ * - 数値は `integerCountUpTarget` と同じ基準 (安全整数のみ)。平均などの小数・
+ *   安全整数外の合計は静的表示のまま (丸めた途中値を出さない)。
+ */
+export function footerCountUpTarget(cell: FooterCell | null, streaming: boolean): number | null {
+  if (streaming || !cell || cell.blank || cell.percent !== null) return null;
+  return integerCountUpTarget(cell.numeric);
 }
 
 /** 列の生値から直接フッターセルを計算する便宜関数 (テスト・単発計算用)。 */

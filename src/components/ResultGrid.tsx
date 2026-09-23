@@ -75,7 +75,7 @@ import {
 } from "./cellConditionalFormat";
 import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
 import { CountUp } from "./CountUp";
-import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
+import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -148,6 +148,7 @@ import {
   availableFooterFns,
   computeFooterCell,
   defaultFooterFn,
+  footerCountUpTarget,
   footerStateKeyFrom,
   readStoredFooterState,
   resolveFooterFn,
@@ -1161,14 +1162,6 @@ function formatNumber(v: number): string {
 }
 
 /**
- * `resultStatusBar` の結果件数は元々 `.toLocaleString()` を通さず生の桁で表示
- * していた (#977 のカウントアップ導入前と同じ見た目を保つための整形関数)。
- */
-function formatCountUpPlainInt(n: number): string {
-  return String(Math.round(n));
-}
-
-/**
  * BLOB の概算サイズを人間可読な単位 (B / KB / MB) に整形する。`Value::Bytes` は
  * 16 進文字列としてワイヤに乗る (CLAUDE.md 参照) ため、バイト長は文字数の半分。
  */
@@ -2132,6 +2125,11 @@ const FOOTER_FN_LABEL: Record<FooterAggFn, I18nKey> = {
 };
 
 /** フッターセルの表示テキスト (空セルは空文字)。整形はここでロケール依存で行う。 */
+/** フッターのカウントアップ用整形。補間中の小数を丸め、確定値は `fmtStatNum` と同一表記。 */
+function fmtFooterInt(n: number): string {
+  return fmtStatNum(Math.round(n));
+}
+
 function footerCellText(cell: { blank: boolean; numeric: number | null; percent: number | null }): string {
   if (cell.blank) return "";
   if (cell.percent !== null) {
@@ -4780,6 +4778,7 @@ export const DataGrid = memo(function DataGrid({
                 const stats = footerStats?.[colIdx];
                 const cell = stats ? computeFooterCell(stats, fn) : null;
                 const text = cell ? footerCellText(cell) : "";
+                const countTarget = footerCountUpTarget(cell, skeleton);
                 const pinSide = h.column.getIsPinned();
                 const pinStyle: CSSProperties = pinSide
                   ? {
@@ -4800,6 +4799,15 @@ export const DataGrid = memo(function DataGrid({
                     {fn !== "none" && (
                       <span className="grid-footer-inner">
                         <span className="grid-footer-fn">{label}</span>
+                        {countTarget !== null ? (
+                          // 確定した整数集計はカウントアップで遷移させる (#1024)。
+                          // key を固定したまま CountUp に値だけ渡し続けることで
+                          // 前回値 → 新値を補間する (key={text} だと再マウントされ
+                          // 初回表示扱いになりアニメーションしない)。
+                          <span className="grid-footer-val">
+                            <CountUp value={countTarget} formatter={fmtFooterInt} />
+                          </span>
+                        ) : (
                         <motion.span
                           key={text}
                           className="grid-footer-val"
@@ -4809,6 +4817,7 @@ export const DataGrid = memo(function DataGrid({
                         >
                           {text}
                         </motion.span>
+                        )}
                       </span>
                     )}
                   </td>
