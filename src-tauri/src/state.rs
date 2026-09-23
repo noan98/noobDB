@@ -29,6 +29,9 @@ pub enum StreamKind {
     /// A `.sql` script run (#973). `delivered_rows` carries the number of
     /// statements already committed (they survive a cancel).
     Script,
+    /// A cross-connection data transfer (#986). `delivered_rows` carries rows
+    /// written to the target so far.
+    Transfer,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`

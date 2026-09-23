@@ -1072,6 +1072,12 @@ interface Props {
    */
   onRegisterLocalTable?: () => void;
   /**
+   * 結果セットを別接続のテーブルへスキーマ + データごとコピーする (#986)。
+   * App が転送元 (単一の SELECT/WITH とセッション) を確定できるときだけ渡し、
+   * 未指定ならボタン自体を出さない。表示条件は Export と揃える。
+   */
+  onTransferResult?: () => void;
+  /**
    * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
    */
@@ -6107,6 +6113,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onSaveAsTable,
   onSaveAsView,
   onRegisterLocalTable,
+  onTransferResult,
   fullExport,
   lastEditAppliedAt,
   applyingEdits,
@@ -6770,6 +6777,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <Icon name="database" size={ICON_SIZES.md} /> {t("registerLocalTableButton")}
           </Button>
         </Tooltip>
+        {onTransferResult && (
+          <Tooltip
+            focusableWrapper={!canExport}
+            label={
+              streaming
+                ? t("exportDisabledStreaming")
+                : !canExport
+                  ? t("exportDisabledNoRows")
+                  : t("transferResultButtonTitle")
+            }
+          >
+            <Button
+              size="sm"
+              px="2.5"
+              onClick={() => onTransferResult()}
+              disabled={!canExport}
+            >
+              <Icon name="transfer" size={ICON_SIZES.md} /> {t("transferResultButton")}
+            </Button>
+          </Tooltip>
+        )}
         {onSetAutoRefresh && (
           <Tooltip label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}>
           <Box

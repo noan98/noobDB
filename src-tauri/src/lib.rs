@@ -107,6 +107,12 @@ pub mod __test_api {
     // フィクスチャ生成専用のため struct そのものを再公開する。
     pub use crate::commands::import::CsvPreview;
 
+    // 接続間データ転送 (#986)。Tauri を介さずに統合テストから駆動するコア。
+    pub use crate::commands::transfer::{
+        transfer_data_inner, TransferColumnInfo, TransferOutcome, TransferRequest,
+    };
+    pub use crate::db::transfer::TransferMode;
+
     // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
     // 各 IPC ハンドラの `_inner` コア (State なし) を再公開する。
     pub use crate::commands::local::{
@@ -864,6 +870,7 @@ pub fn run() {
             commands::import::parse_csv_preview,
             commands::import::import_csv,
             commands::script::run_sql_script,
+            commands::transfer::transfer_data,
             commands::file::read_text_file,
             commands::file::write_binary_file,
             commands::local::create_local_session,

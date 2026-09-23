@@ -1954,6 +1954,14 @@ export const api = {
       path: params.path,
       options: params.options,
     }),
+   * 接続間データ転送 (#986)。ソース接続のテーブル全件 (`sourceTable`) か単一の
+   * 読み取り専用クエリ (`sourceSql`) を、ターゲット接続のテーブルへスキーマ +
+   * データごとコピーする。進捗は `transfer-stream:*` イベント
+   * ({@link listenTransferStream}) で届き、`cancelStream` で中断できる。
+   * ターゲットが読み取り専用プロファイルならバックエンドが拒否する。
+   */
+  transferData: (streamId: string, request: TransferRequest) =>
+    invoke<void>("transfer_data", { streamId, request }),
 
   /**
    * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を
@@ -2203,6 +2211,45 @@ export interface ExportStreamHandlers {
    *  `StreamCancelledEvent` — the frontend's own cancel flow reads
    *  `deliveredRows` off `cancelStream`'s return value instead, since it
    *  detaches its listeners before invoking it; this is for other consumers. */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
+/** 接続間データ転送 (#986) で既存テーブルと衝突したときの扱い。 */
+export type TransferMode = "create" | "replace" | "append";
+
+export interface TransferRequest {
+  sourceSessionId: string;
+  targetSessionId: string;
+  sourceDatabase?: string | null;
+  /** テーブル全件を転送するときのテーブル名 (`sourceSql` と排他)。 */
+  sourceTable?: string | null;
+  /** 単一の読み取り専用クエリの結果を転送するときの SQL (`sourceTable` と排他)。 */
+  sourceSql?: string | null;
+  targetDatabase?: string | null;
+  targetTable: string;
+  mode: TransferMode;
+  batchSize?: number | null;
+}
+export interface TransferProgressEvent {
+  streamId: string;
+  rows: number;
+}
+export interface TransferDoneEvent {
+  streamId: string;
+  rows: number;
+  elapsedMs: number;
+  warnings: string[];
+}
+export interface TransferErrorEvent {
+  streamId: string;
+  message: string;
+  rows: number;
+}
+export interface TransferStreamHandlers {
+  onProgress?: (event: TransferProgressEvent) => void;
+  onDone?: (event: TransferDoneEvent) => void;
+  onError?: (event: TransferErrorEvent) => void;
+  /** `cancelStream` が転送を中断したとき。`deliveredRows` は書き込み済み行数。 */
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
@@ -2648,6 +2695,42 @@ export async function listenExportStream(
     listen<StreamCancelledEvent>(
       "export-stream:cancelled",
       filter(schemas.streamCancelledEvent, "export-stream:cancelled", handlers.onCancelled),
+    ),
+  ]);
+}
+
+/** 接続間データ転送 (#986) の進捗/完了/エラー/キャンセルイベントを購読する。 */
+export async function listenTransferStream(
+  streamId: string,
+  handlers: TransferStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  return registerListeners([
+    listen<TransferProgressEvent>(
+      "transfer-stream:progress",
+      filter(schemas.transferProgressEvent, "transfer-stream:progress", handlers.onProgress),
+    ),
+    listen<TransferDoneEvent>(
+      "transfer-stream:done",
+      filter(schemas.transferDoneEvent, "transfer-stream:done", handlers.onDone),
+    ),
+    listen<TransferErrorEvent>(
+      "transfer-stream:error",
+      filter(schemas.transferErrorEvent, "transfer-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "transfer-stream:cancelled",
+      filter(schemas.streamCancelledEvent, "transfer-stream:cancelled", handlers.onCancelled),
     ),
   ]);
 }

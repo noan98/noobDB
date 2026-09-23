@@ -889,6 +889,28 @@ export const exportStreamErrorEvent = z.object({
   rows: z.number(),
 });
 
+// 接続間データ転送 (#986) のイベント。
+export const transferProgressEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+});
+
+export const transferDoneEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+  elapsedMs: z.number(),
+  /** 損失のある型マッピングなどの注意書き (空配列が普通)。 */
+  warnings: z.array(z.string()),
+});
+
+export const transferErrorEvent = z.object({
+  streamId: z.string(),
+  message: z.string(),
+  /** 失敗までに書き込んだ行数。新規作成/作り直しでは作りかけのテーブルを
+   *  DROP するため情報提供のみ。 */
+  rows: z.number(),
+});
+
 /** DEV ビルドでのみ詳細なバリデーションエラーをコンソールへ出す。 */
 const DEV = import.meta.env.DEV;
 

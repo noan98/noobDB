@@ -91,6 +91,14 @@
 文ごと、`continueOnError` / `wrapInTransaction` は排他。スクリプト内の
 BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ読み替える。
 
+## 接続間データ転送 (`commands/transfer.rs`, #986)
+
+`transfer_data` — ソース接続のテーブル全件 / 単一の読み取り専用クエリ結果を、別接続の
+テーブルへスキーマ + データごと永続コピーするストリーミングコマンド。読み出しは
+`execute_stream`、書き込みは `import_rows` (新しい書き込み経路は増やさない)。進捗は
+`transfer-stream:*` イベント、`cancel_stream` で中断。ターゲットの `read_only` は
+バックエンドで拒否する。
+
 ## Schema Cache (`commands/schema.rs`, #1097)
 
 `refresh_schema_cache` — セッション単位の Schema Cache (`cache::SchemaCache`) を

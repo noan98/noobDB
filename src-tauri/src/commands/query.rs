@@ -625,6 +625,7 @@ const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
 const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
 const EV_SCRIPT_CANCELLED: &str = "sql-script:cancelled";
+const EV_TRANSFER_CANCELLED: &str = "transfer-stream:cancelled";
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -1440,6 +1441,10 @@ pub async fn cancel_stream(
                     // transaction); an open transaction is rolled back by the
                     // runner's drop guard (#973).
                     StreamKind::Script => Some(EV_SCRIPT_CANCELLED),
+                    // 接続間転送 (#986)。`create` / `replace` では作りかけのテーブルを
+                    // 後始末で DROP するため、`delivered_rows` (書き込み済み行数) が
+                    // 永続化されて残るのは `append` のときだけ。
+                    StreamKind::Transfer => Some(EV_TRANSFER_CANCELLED),
                     // Query/Preview always register an `on_cancel` callback (see
                     // `run_query_stream` / `preview_query_stream`), so this arm is
                     // unreachable in practice; keep it exhaustive rather than

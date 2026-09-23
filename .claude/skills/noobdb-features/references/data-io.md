@@ -116,3 +116,34 @@
   (既定キーはマッピング済みの主キー列)。
   読み込みは `read_import_file` が空パス拒否 + `MAX_IMPORT_FILE_BYTES` (512 MiB) 上限を
   `commands::file` と同じく metadata + `take` の二段で強制します。
+
+## 接続間データ転送 (#986)
+
+- `commands/transfer.rs` (`transfer_data`) + 純粋層 `db/transfer.rs`。ソース接続の
+  テーブル全件 (`SELECT * FROM <table>`) または単一の読み取り専用クエリの結果を、別接続の
+  テーブルへスキーマ + データごとコピーする。UI は `DataTransferModal` (サイドバーの
+  テーブル右クリック「別の接続へコピー...」/ 結果グリッドの「別接続へ」)、判定の純ロジックは
+  `components/dataTransfer.ts`。
+- **新しい書き込み経路は増やさない**: 読み出しは `Connection::execute_stream`、書き込みは
+  `Connection::import_rows` をバッチ単位で呼ぶ。DDL (CREATE / DROP) は通常の `execute`。
+- **メモリに全件を載せない**: 読み出しタスクと書き込みループを容量 2 の有界チャネルで
+  繋ぎ、`execute_stream` の同期コールバックは `block_in_place` でチャネルの空きを待つ
+  (背圧)。`block_in_place` はマルチスレッドランタイム専用なので、current_thread 上では
+  エラーを返す (統合テストは `flavor = "multi_thread"`)。
+- **型 / DDL マッピング** (`db/transfer.rs`): ソースの型名を論理型 `TransferType` に
+  正規化 → ターゲット方言の DDL 型へ展開。型名で判定できない列 (SQLite の式列) は最初の
+  バッチの値から推定。列名は空なら `column_N`、重複は `_2` 連番で一意化。制約・インデックスは
+  コピーしない。バイナリは PostgreSQL `\x<hex>` / DuckDB `\xAB` エスケープで直接書き、
+  SQLite / MySQL は hex テキストで入れて全件投入後に `UPDATE ... SET c = unhex(c)` で戻す
+  (転送が作成したテーブルのみ。追記モードでは拒否)。SQL Server は `NVARCHAR(MAX)` に
+  `0x` 付き hex を格納する縮退 (警告を返す)。
+- **モード** (`TransferMode`): `create` (既にあれば CREATE が失敗) / `replace`
+  (DROP → CREATE) / `append` (DDL なし、列名で対応)。`create` / `replace` は失敗・キャンセル時に
+  作りかけのテーブルを DROP する (キャンセルは future の drop 経由なので Drop ガードが
+  バックグラウンドタスクで DROP を投げる)。`append` はバッチごとにコミットされるため、
+  キャンセル時は `deliveredRows` で書き込み済み行数を返す。
+- **安全網**: ターゲットの `read_only` はバックエンドで拒否 (緊急書き込みモードでも)。
+  ソースが SQL のときは `ensure_allowed_for_session` + `is_read_only_sql_for` で読み取り
+  専用文に限る。同一セッション・同一テーブルへの `create` / `replace` も拒否。
+  `is_production` の確認 (置き換えなら接続名タイプ入力の強確認) は UI レベル。
+- 統合テスト: `tests/transfer_integration.rs` (SQLite ↔ DuckDB、環境変数不要で常時実走)。

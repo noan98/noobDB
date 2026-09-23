@@ -17,6 +17,7 @@ pub mod sandbox;
 pub mod script;
 pub mod sqlite;
 pub mod sync;
+pub mod transfer;
 pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
 pub mod upsert;

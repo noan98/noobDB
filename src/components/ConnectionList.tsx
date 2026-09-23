@@ -259,6 +259,8 @@ interface Props {
   onDelete: (profile: ConnectionProfile) => void;
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
+  /** テーブルを別接続へスキーマ + データごとコピーする (#986)。読み取りなので read_only でも有効。 */
+  onTransferTable?: (database: string, table: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
   onGenerateTestData?: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
@@ -359,6 +361,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDelete,
   onPickTable,
   onImportTable,
+  onTransferTable,
   onGenerateTestData,
   onDumpDatabase,
   onRunScript,
@@ -941,6 +944,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       disabled: activeReadOnly,
       title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
     });
+    if (onTransferTable) {
+      items.push({
+        label: t("contextMenuTransferTable"),
+        onSelect: () => onTransferTable(db, tbl),
+      });
+    }
     // テストデータ生成 (#602) も書き込みなので read_only では無効化する
     // (バックエンドの run_query_transaction も read_only を拒否する)。
     if (onGenerateTestData) {

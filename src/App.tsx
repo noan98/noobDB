@@ -60,6 +60,7 @@ import {
 } from "./components/tableMaintenance";
 import type { AlterStatement } from "./components/alterTable";
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
+import type { TransferSource } from "./components/dataTransfer";
 import {
   buildCreateViewSql,
   buildDropViewSql,
@@ -132,6 +133,9 @@ const SnippetForm = lazy(() =>
 );
 const ImportModal = lazy(() =>
   import("./components/ImportModal").then((m) => ({ default: m.ImportModal })),
+);
+const DataTransferModal = lazy(() =>
+  import("./components/DataTransferModal").then((m) => ({ default: m.DataTransferModal })),
 );
 const TestDataModal = lazy(() =>
   import("./components/TestDataModal").then((m) => ({ default: m.TestDataModal })),
@@ -1810,6 +1814,8 @@ export default function App() {
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
   const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
+  // 接続間データ転送 (#986): 転送元。null で閉じる。
+  const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
   // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
@@ -5110,6 +5116,11 @@ export default function App() {
     setImportTarget({ database, table });
   }, []);
 
+  // 接続間データ転送 (#986): テーブル全件を別接続へコピーする。
+  const handleTransferTable = useCallback((database: string, table: string) => {
+    setTransferSource({ kind: "table", database, table });
+  }, []);
+
   // テストデータ生成ウィザード (#602) を開く。
   const handleGenerateTestData = useCallback((database: string, table: string) => {
     setTestDataTarget({ database, table });
@@ -7310,6 +7321,18 @@ export default function App() {
                               })
                           : undefined
                       }
+                      onTransferResult={
+                        sessionId &&
+                        tab.lastExecutedSql &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver)
+                          ? () =>
+                              setTransferSource({
+                                kind: "query",
+                                database: tab.database ?? selectedProfile?.database ?? null,
+                                sql: tab.lastExecutedSql,
+                              })
+                          : undefined
+                      }
                       onRegisterLocalTable={
                         sessionId && tab.result
                           ? () => handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql)
@@ -7749,6 +7772,7 @@ export default function App() {
             onDelete={handleDeleteProfile}
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
+            onTransferTable={handleTransferTable}
             onGenerateTestData={handleGenerateTestData}
             onDumpDatabase={handleDumpDatabase}
             onRunScript={setScriptTarget}
@@ -8814,6 +8838,20 @@ export default function App() {
               onRun={handleCreateIndexRun}
               onSendToEditor={handleCreateIndexToEditor}
               onClose={() => setCreateIndexTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {transferSource && sessionId && (
+          <Suspense fallback={null}>
+            <DataTransferModal
+              sourceSessionId={sessionId}
+              sourceProfileId={selectedProfile?.id ?? null}
+              source={transferSource}
+              profiles={profiles}
+              onClose={() => setTransferSource(null)}
             />
           </Suspense>
         )}
