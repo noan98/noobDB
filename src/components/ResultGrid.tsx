@@ -38,6 +38,7 @@ import {
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { RowInspector } from "./RowInspector";
+import { resolveRelatedEntries } from "../relatedRows";
 import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import {
@@ -1002,6 +1003,12 @@ interface Props {
    * to the grid so the right-click menu can offer "show referencing rows".
    */
   incomingFks?: IncomingFk[];
+  /**
+   * 行インスペクタの「関連」タブ (master-detail、#1028) で子行を取得する内部クエリ。
+   * App が `run_query` (クエリ履歴に残らない・読み取り専用ガードを通る) に結ぶ。
+   * `incomingFks` と揃うときだけタブを出す。
+   */
+  onRunRelatedQuery?: (sql: string) => Promise<QueryResult>;
   /** 削除予定の行: rowEditKey の集合。 */
   pendingDeleteKeys?: Set<string>;
   /** 行を削除予定にトグルする。 */
@@ -2596,6 +2603,7 @@ export const DataGrid = memo(function DataGrid({
   rowSqlTable,
   columnMeta,
   incomingFks,
+  onRunRelatedQuery,
   onFkJump,
   paginationState,
   onPaginationChange,
@@ -2718,6 +2726,12 @@ export const DataGrid = memo(function DataGrid({
    * open the child tables filtered to the clicked row's key value.
    */
   incomingFks?: IncomingFk[];
+  /**
+   * 行インスペクタの「関連」タブ (master-detail、#1028) で子行を取得する内部クエリ。
+   * App が `run_query` (クエリ履歴に残らない・読み取り専用ガードを通る) に結ぶ。
+   * `incomingFks` と揃うときだけタブを出す。
+   */
+  onRunRelatedQuery?: (sql: string) => Promise<QueryResult>;
   /** Called when the user triggers a FK jump with the generated SELECT SQL. */
   onFkJump?: (sql: string) => void;
   /** When set, TanStack pagination is activated and only this page of rows is rendered. */
@@ -5833,6 +5847,22 @@ export const DataGrid = memo(function DataGrid({
                 : undefined
             }
             columnKinds={columnKinds}
+            related={
+              onRunRelatedQuery && incomingFks && incomingFks.length > 0
+                ? {
+                    entries: resolveRelatedEntries(
+                      incomingFks,
+                      columns.map((c) => c.name),
+                      rows[activeCell.rowIdx],
+                      (ci) => cellMaskedNow(activeCell.rowIdx, ci),
+                    ),
+                    driver: rowSqlDriver ?? "mysql",
+                    database: rowSqlDatabase ?? null,
+                    runQuery: onRunRelatedQuery,
+                    onOpenInGrid: onFkJump,
+                  }
+                : undefined
+            }
             rowNumber={inspVis >= 0 ? inspVis + 1 : activeCell.rowIdx + 1}
             hasPrev={inspVis > 0}
             hasNext={inspVis >= 0 && inspVis < visibleRows.length - 1}
@@ -6029,6 +6059,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRetry,
   onFkJump,
   incomingFks,
+  onRunRelatedQuery,
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
@@ -7322,6 +7353,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           rowSqlTable={table}
           columnMeta={tableColumns ?? undefined}
           incomingFks={incomingFks}
+          onRunRelatedQuery={onRunRelatedQuery}
           onFkJump={onFkJump}
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}

@@ -7325,6 +7325,11 @@ export default function App() {
                       onRunStatsQuery={
                         sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
                       }
+                      onRunRelatedQuery={
+                        sessionId
+                          ? (sql) => api.runQuery(sessionId, sql, tab.database ?? null)
+                          : undefined
+                      }
                       onExploreColumn={
                         sessionId
                           ? (target) =>
