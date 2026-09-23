@@ -1914,6 +1914,27 @@ export const api = {
     }),
 
   /**
+   * `.sql` スクリプトファイルを文単位でストリーミング実行する (#973)。ファイルは
+   * バックエンドが 64 KiB ずつ読むので全体をメモリに載せない。進捗・完了・エラーは
+   * `sql-script:*` イベント ({@link listenScriptStream}) で届き、`cancelStream` で
+   * 中断できる。読み取り専用ガードは文ごとにバックエンドで強制される。
+   */
+  runSqlScript: (params: {
+    sessionId: string;
+    streamId: string;
+    database?: string | null;
+    path: string;
+    options: ScriptOptions;
+  }) =>
+    invoke<void>("run_sql_script", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      database: params.database ?? null,
+      path: params.path,
+      options: params.options,
+    }),
+
+  /**
    * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を
    * 直に叩かずバックエンド経由で読む (capabilities を最小に保つ)。サイズ上限を超える
    * ファイルは reject される。
@@ -2188,6 +2209,60 @@ export interface DumpStreamHandlers {
   /** Fired when `cancelStream` claims this dump (#686). `deliveredRows` carries
    *  bytes written so far. The frontend's own cancel flow reads that off
    *  `cancelStream`'s return value instead. */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
+/** `.sql` スクリプト実行のオプション (#973)。2 つは排他 (両方 true はバックエンドが拒否)。 */
+export interface ScriptOptions {
+  /** 失敗した文をスキップして続行し、最後に失敗一覧を返す。 */
+  continueOnError: boolean;
+  /** 全体を 1 トランザクションで包む (失敗・キャンセルで ROLLBACK)。 */
+  wrapInTransaction: boolean;
+}
+
+/** 失敗した 1 文。`index` はスクリプト内の通し番号、`line` はファイル内の開始行 (1 始まり)。 */
+export interface ScriptFailure {
+  index: number;
+  line: number;
+  sql: string;
+  error: string;
+}
+
+export interface ScriptProgressEvent {
+  streamId: string;
+  executed: number;
+  failed: number;
+  bytesRead: number;
+  totalBytes: number;
+  elapsedMs: number;
+}
+
+export interface ScriptDoneEvent {
+  streamId: string;
+  executed: number;
+  succeeded: number;
+  failedCount: number;
+  failures: ScriptFailure[];
+  /** wrap-in-transaction で読み飛ばしたスクリプト内の BEGIN/COMMIT 等の数。 */
+  skippedControl: number;
+  rowsAffected: number;
+  elapsedMs: number;
+}
+
+export interface ScriptErrorEvent {
+  streamId: string;
+  error: string;
+  failure: ScriptFailure | null;
+  executed: number;
+  /** 開いていたトランザクションを ROLLBACK したか。 */
+  rolledBack: boolean;
+}
+
+export interface ScriptStreamHandlers {
+  onProgress?: (event: ScriptProgressEvent) => void;
+  onDone?: (event: ScriptDoneEvent) => void;
+  onError?: (event: ScriptErrorEvent) => void;
+  /** `deliveredRows` は確定済み (キャンセル後も残る) 文の数。 */
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
@@ -2477,6 +2552,45 @@ export async function listenImportStream(
     listen<StreamCancelledEvent>(
       "csv-import:cancelled",
       filter(schemas.streamCancelledEvent, "csv-import:cancelled", handlers.onCancelled),
+    ),
+  ]);
+}
+
+/**
+ * `.sql` スクリプト実行 (#973) の `sql-script:*` イベントを `streamId` で絞って
+ * 購読する。戻り値の関数ですべてのリスナーを外す。
+ */
+export async function listenScriptStream(
+  streamId: string,
+  handlers: ScriptStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  return registerListeners([
+    listen<ScriptProgressEvent>(
+      "sql-script:progress",
+      filter(schemas.scriptProgressEvent, "sql-script:progress", handlers.onProgress),
+    ),
+    listen<ScriptDoneEvent>(
+      "sql-script:done",
+      filter(schemas.scriptDoneEvent, "sql-script:done", handlers.onDone),
+    ),
+    listen<ScriptErrorEvent>(
+      "sql-script:error",
+      filter(schemas.scriptErrorEvent, "sql-script:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "sql-script:cancelled",
+      filter(schemas.streamCancelledEvent, "sql-script:cancelled", handlers.onCancelled),
     ),
   ]);
 }

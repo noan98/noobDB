@@ -47,11 +47,12 @@ use t::{
     ImportResult, ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
     PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
     ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RowDiff, RowStatus,
-    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ServerInfo, ServerMetrics,
-    ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod,
-    SshJumpProfile, SshProfile, SslMode, StatementStat, StreamCancelledEvent, SyncKind, SyncPlan,
-    SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema,
-    TableSizeInfo, Value,
+    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
+    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMetrics, ServerVariable, Severity,
+    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
+    SslMode, StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement,
+    TableColumnInfo, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -500,6 +501,39 @@ fn build_fixtures() -> serde_json::Value {
         line: Some(4),
     };
 
+    // `.sql` スクリプト実行 (#973) の `sql-script:*` ペイロード。
+    let script_failure = ScriptFailure {
+        index: 4,
+        line: 12,
+        sql: "INSERT INTO t VALUES (1)".into(),
+        error: "UNIQUE constraint failed".into(),
+    };
+    let script_progress_event = ScriptProgressEvent {
+        stream_id: "strm0007".into(),
+        executed: 10,
+        failed: 1,
+        bytes_read: 4096,
+        total_bytes: 8192,
+        elapsed_ms: 150,
+    };
+    let script_done_event = ScriptDoneEvent {
+        stream_id: "strm0007".into(),
+        executed: 20,
+        succeeded: 19,
+        failed_count: 1,
+        failures: vec![script_failure.clone()],
+        skipped_control: 2,
+        rows_affected: 57,
+        elapsed_ms: 900,
+    };
+    let script_error_event = ScriptErrorEvent {
+        stream_id: "strm0007".into(),
+        error: "line 12: UNIQUE constraint failed".into(),
+        failure: Some(script_failure),
+        executed: 4,
+        rolled_back: true,
+    };
+
     let dump_progress_event = DumpProgressEvent {
         stream_id: "strm0004".into(),
         bytes: 65536,
@@ -600,6 +634,9 @@ fn build_fixtures() -> serde_json::Value {
         "exportDoneEvent": export_done_event,
         "exportStreamErrorEvent": export_error_event,
         "connectPhaseEvent": connect_phase_event,
+        "scriptProgressEvent": script_progress_event,
+        "scriptDoneEvent": script_done_event,
+        "scriptErrorEvent": script_error_event,
     })
 }
 

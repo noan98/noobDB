@@ -142,6 +142,9 @@ const PlanWatchPanel = lazy(() =>
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
 );
+const ScriptRunModal = lazy(() =>
+  import("./components/ScriptRunModal").then((m) => ({ default: m.ScriptRunModal })),
+);
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
 );
@@ -1775,6 +1778,8 @@ export default function App() {
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
+  // `.sql` スクリプト実行モーダルの対象 DB (#973。null で閉じる)。
+  const [scriptTarget, setScriptTarget] = useState<string | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
@@ -2714,6 +2719,7 @@ export default function App() {
     // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
     setImportTarget(null);
     setDumpTarget(null);
+    setScriptTarget(null);
     setSchemaExportTarget(null);
     setErrorProfileId(null);
     setAlterTableTarget(null);
@@ -2990,6 +2996,7 @@ export default function App() {
     setSelectedProfile(null);
     setImportTarget(null);
     setDumpTarget(null);
+    setScriptTarget(null);
     setSchemaExportTarget(null);
     // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
     // 残っていなければ未接続状態へ。
@@ -3105,6 +3112,7 @@ export default function App() {
       setSelectedProfile(null);
       setImportTarget(null);
       setDumpTarget(null);
+      setScriptTarget(null);
       setSchemaExportTarget(null);
       setConnectionStatus("connected");
       setErrorProfileId(lostProfileId);
@@ -7724,6 +7732,7 @@ export default function App() {
             onImportTable={handleImportTable}
             onGenerateTestData={handleGenerateTestData}
             onDumpDatabase={handleDumpDatabase}
+            onRunScript={setScriptTarget}
             onSchemaExport={handleSchemaExport}
             onRunTableSelect={handleRunTableSelect}
             onInsertTableSelect={handleInsertTableSelect}
@@ -8641,6 +8650,18 @@ export default function App() {
             database={dumpTarget}
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             onClose={() => setDumpTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {scriptTarget && sessionId && (
+          <ScriptRunModal
+            key={scriptTarget}
+            sessionId={sessionId}
+            database={scriptTarget}
+            isProduction={selectedProfile?.is_production ?? false}
+            onClose={() => setScriptTarget(null)}
           />
         )}
       </AnimatePresence>

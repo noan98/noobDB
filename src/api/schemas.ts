@@ -716,6 +716,43 @@ export const importErrorEvent = z.object({
   line: z.number().nullable().default(null),
 });
 
+// `.sql` スクリプト実行のイベント (#973)。`sql-script:*`。
+export const scriptProgressEvent = z.object({
+  streamId: z.string(),
+  executed: z.number(),
+  failed: z.number(),
+  bytesRead: z.number(),
+  totalBytes: z.number(),
+  elapsedMs: z.number(),
+});
+
+/** 失敗した 1 文 (continue-on-error の一覧 / 停止時の原因)。 */
+export const scriptFailure = z.object({
+  index: z.number(),
+  line: z.number(),
+  sql: z.string(),
+  error: z.string(),
+});
+
+export const scriptDoneEvent = z.object({
+  streamId: z.string(),
+  executed: z.number(),
+  succeeded: z.number(),
+  failedCount: z.number(),
+  failures: z.array(scriptFailure),
+  skippedControl: z.number(),
+  rowsAffected: z.number(),
+  elapsedMs: z.number(),
+});
+
+export const scriptErrorEvent = z.object({
+  streamId: z.string(),
+  error: z.string(),
+  failure: scriptFailure.nullable(),
+  executed: z.number(),
+  rolledBack: z.boolean(),
+});
+
 // ストリーミングダンプのイベント (#686)。
 export const dumpProgressEvent = z.object({
   streamId: z.string(),

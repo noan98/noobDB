@@ -84,6 +84,13 @@
 `export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
 `import_csv` / `read_text_file` / `write_binary_file`
 
+`run_sql_script` (`commands/script.rs`, #973) — `.sql` ファイルを 64 KiB ずつ読み、
+`db/script.rs` のストリーミング文分割 (フロント `splitSqlStatements` と共有ゴールデン
+`scriptSplitVectors.json` で一致を固定) で 1 文ずつ実行する。`sql-script:progress` /
+`:done` / `:error` / `:cancelled` イベント + `cancel_stream`。読み取り専用ガードは
+文ごと、`continueOnError` / `wrapInTransaction` は排他。スクリプト内の
+BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ読み替える。
+
 ## Schema Cache (`commands/schema.rs`, #1097)
 
 `refresh_schema_cache` — セッション単位の Schema Cache (`cache::SchemaCache`) を

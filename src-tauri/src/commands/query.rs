@@ -537,6 +537,7 @@ pub struct StreamCancelledEvent {
 const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
 const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
+const EV_SCRIPT_CANCELLED: &str = "sql-script:cancelled";
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -1347,6 +1348,11 @@ pub async fn cancel_stream(
                     // for parity with the other terminal events (`abort` mode rolls
                     // back and reports 0). #687 review follow-up.
                     StreamKind::Import => Some(EV_IMPORT_CANCELLED),
+                    // A script run reports the number of statements already
+                    // committed (autocommit or a closed script-level
+                    // transaction); an open transaction is rolled back by the
+                    // runner's drop guard (#973).
+                    StreamKind::Script => Some(EV_SCRIPT_CANCELLED),
                     // Query/Preview always register an `on_cancel` callback (see
                     // `run_query_stream` / `preview_query_stream`), so this arm is
                     // unreachable in practice; keep it exhaustive rather than

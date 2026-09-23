@@ -97,6 +97,10 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["importStartedEvent", schemas.importStartedEvent],
   ["importProgressEvent", schemas.importProgressEvent],
   ["importDoneEvent", schemas.importDoneEvent],
+  // #973: `.sql` スクリプト実行の `sql-script:*` (scriptFailure は done/error 内で間接カバー)。
+  ["scriptProgressEvent", schemas.scriptProgressEvent],
+  ["scriptDoneEvent", schemas.scriptDoneEvent],
+  ["scriptErrorEvent", schemas.scriptErrorEvent],
   ["importErrorEvent", schemas.importErrorEvent],
   ["dumpProgressEvent", schemas.dumpProgressEvent],
   ["dumpDoneEvent", schemas.dumpDoneEvent],

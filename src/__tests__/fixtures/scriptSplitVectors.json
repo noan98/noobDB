@@ -1,0 +1,188 @@
+{
+  "_comment": "スクリプト文分割の共有ゴールデン (#973)。フロント src/sqlScript.ts の splitSqlStatements とバック src-tauri/src/db/script.rs の ScriptSplitter が同じ分割結果になることを固定する。statements は MySQL 以外 (postgres/sqlite/duckdb/mssql) の期待値、statementsMysql は MySQL だけ結果が変わるケースの期待値。",
+  "drivers": [
+    "mysql",
+    "postgres",
+    "sqlite",
+    "duckdb",
+    "mssql"
+  ],
+  "cases": [
+    {
+      "sql": "SELECT 1; SELECT 2;",
+      "note": "単純な 2 文 (末尾の ; の後ろの空文は捨てる)",
+      "statements": [
+        "SELECT 1",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1;;; SELECT 2",
+      "note": "連続した ; の空文は数えない",
+      "statements": [
+        "SELECT 1",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "   \n\t ",
+      "note": "空白だけ",
+      "statements": []
+    },
+    {
+      "sql": "SELECT ';' AS s; SELECT 2",
+      "note": "文字列リテラル内の ; では区切らない",
+      "statements": [
+        "SELECT ';' AS s",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 'a;''b'; SELECT 2",
+      "note": "二重化クオートはエスケープ",
+      "statements": [
+        "SELECT 'a;''b'",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT \"a;b\"; SELECT `c;d`",
+      "note": "二重引用符識別子とバッククォート内の ;",
+      "statements": [
+        "SELECT \"a;b\"",
+        "SELECT `c;d`"
+      ]
+    },
+    {
+      "sql": "SELECT 1 -- a; b\n; SELECT 2",
+      "note": "-- 行コメント内の ;",
+      "statements": [
+        "SELECT 1 -- a; b",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1 -- x\r\n; SELECT 2",
+      "note": "CRLF: 行コメントは LF で終わり、CR は trim で落ちる",
+      "statements": [
+        "SELECT 1 -- x",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1 # a; b\n; SELECT 2",
+      "note": "# 行コメント (マスク規約 #J3 と同じ扱い)",
+      "statements": [
+        "SELECT 1 # a; b",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1 /* x; y */; SELECT 2",
+      "note": "ブロックコメント内の ;",
+      "statements": [
+        "SELECT 1 /* x; y */",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1 /* unterminated; SELECT 2",
+      "note": "閉じていないブロックコメントは末尾まで",
+      "statements": [
+        "SELECT 1 /* unterminated; SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 'unterminated; SELECT 2",
+      "note": "閉じていない文字列は末尾まで",
+      "statements": [
+        "SELECT 'unterminated; SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT $$a;b$$; SELECT $tag$ x; $$ y $tag$; SELECT 3",
+      "note": "ドル引用 (タグなし / タグ付き、中に $$ を含む)",
+      "statements": [
+        "SELECT $$a;b$$",
+        "SELECT $tag$ x; $$ y $tag$",
+        "SELECT 3"
+      ]
+    },
+    {
+      "sql": "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql; SELECT f()",
+      "note": "関数本体 (ドル引用) の中の ; では区切らない",
+      "statements": [
+        "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql",
+        "SELECT f()"
+      ]
+    },
+    {
+      "sql": "SELECT a$b; c$ FROM t; SELECT 2",
+      "note": "単語文字の直後の $ は識別子の一部 (開始タグにしない)",
+      "statements": [
+        "SELECT a$b",
+        "c$ FROM t",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT $1; SELECT 2",
+      "note": "数字始まりの $1 はプレースホルダ",
+      "statements": [
+        "SELECT $1",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT '\\'; DROP TABLE t; --'; SELECT 3",
+      "note": "バックスラッシュは MySQL だけ '...' 内のエスケープ (#852 / #1004)",
+      "statements": [
+        "SELECT '\\'",
+        "DROP TABLE t"
+      ],
+      "statementsMysql": [
+        "SELECT '\\'; DROP TABLE t; --'",
+        "SELECT 3"
+      ]
+    },
+    {
+      "sql": "/*!40014 SET FOREIGN_KEY_CHECKS=0 */;\n/* only comment */;\n-- lead\nSELECT 1",
+      "note": "条件付きコメント /*! */ は実行されるコードなので文として残す (安全網のマスク規約・#1074 の文分割と同じく全ドライバで同じ扱い)",
+      "statements": [
+        "/*!40014 SET FOREIGN_KEY_CHECKS=0 */",
+        "-- lead\nSELECT 1"
+      ]
+    },
+    {
+      "sql": "SELECT 1; -- trailing note",
+      "note": "コメントだけの断片は文として数えない",
+      "statements": [
+        "SELECT 1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO t VALUES ('日本語;テキスト');\r\nSELECT 2",
+      "note": "マルチバイト文字を含むリテラル",
+      "statements": [
+        "INSERT INTO t VALUES ('日本語;テキスト')",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "﻿SELECT 1",
+      "note": "先頭の BOM は空白として trim される",
+      "statements": [
+        "SELECT 1"
+      ]
+    },
+    {
+      "sql": "BEGIN TRANSACTION;\nCREATE TABLE t(x int);\nCOMMIT;",
+      "note": "トランザクション制御文も 1 文として切り出す (実行時の読み替えはランナー側)",
+      "statements": [
+        "BEGIN TRANSACTION",
+        "CREATE TABLE t(x int)",
+        "COMMIT"
+      ]
+    }
+  ]
+}

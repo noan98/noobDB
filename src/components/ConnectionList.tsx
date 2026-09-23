@@ -262,6 +262,8 @@ interface Props {
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
   onGenerateTestData?: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
+  /** `.sql` ファイルをこの DB のコンテキストでストリーミング実行するモーダルを開く (#973)。 */
+  onRunScript?: (database: string) => void;
   /** DB スキーマを AI 向け Markdown としてエクスポートするモーダルを開く。 */
   onSchemaExport?: (database: string) => void;
   onRunTableSelect: (database: string, table: string) => void;
@@ -359,6 +361,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onImportTable,
   onGenerateTestData,
   onDumpDatabase,
+  onRunScript,
   onSchemaExport,
   onRunTableSelect,
   onInsertTableSelect,
@@ -1113,6 +1116,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       });
     }
     items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
+    // ダンプの対になる「リストア」導線 (#973)。読み取り専用でも開ける — 書き込み文は
+    // バックエンドが文ごとに拒否し、SELECT だけのスクリプトは実行できる。
+    if (onRunScript) {
+      items.push({ label: t("contextMenuRunScript"), onSelect: () => onRunScript(db) });
+    }
     if (onSchemaExport) {
       items.push({ label: t("contextMenuSchemaExport"), onSelect: () => onSchemaExport(db) });
     }

@@ -17,6 +17,7 @@ pub mod profiles;
 pub mod query;
 pub mod sandbox;
 pub mod schema;
+pub mod script;
 pub mod server;
 pub mod snippets;
 pub mod ssh;

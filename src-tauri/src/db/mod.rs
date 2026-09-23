@@ -13,6 +13,8 @@ pub mod preview;
 pub mod privileges;
 pub mod profile;
 pub mod sandbox;
+/// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
+pub mod script;
 pub mod sqlite;
 pub mod sync;
 pub mod types;

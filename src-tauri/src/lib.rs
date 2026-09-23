@@ -131,6 +131,48 @@ pub mod __test_api {
     pub use crate::commands::query::{
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
+    pub use crate::commands::script::{
+        ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
+        ScriptProgressEvent, ScriptRun,
+    };
+
+    /// `.sql` スクリプトのストリーミング文分割 (#973) を一括で行い、各文の本文だけを
+    /// 返す。フロント `splitSqlStatements` との共有ゴールデン
+    /// (`tests/script_split_golden.rs`) 用。
+    pub fn split_script(driver: DriverKind, sql: &str) -> Vec<String> {
+        crate::db::script::split_script(driver, sql)
+            .into_iter()
+            .map(|s| s.sql)
+            .collect()
+    }
+
+    /// `run_sql_script` の本体 (ファイル読み + 文分割 + 文ごとの read-only ガード +
+    /// 実行 + トランザクション制御) を Tauri ランタイム無しで駆動する (#973)。
+    /// `committed` はキャンセル時に `cancel_stream` が報告する確定済み文数。
+    pub async fn run_sql_script_via_core<F>(
+        session: std::sync::Arc<Session>,
+        path: &str,
+        database: Option<&str>,
+        options: ScriptOptions,
+        committed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        on_progress: F,
+    ) -> crate::error::Result<ScriptRun>
+    where
+        F: FnMut(ScriptProgress),
+    {
+        let total = crate::commands::script::script_file_size(path).await?;
+        let file = tokio::fs::File::open(path).await?;
+        crate::commands::script::run_script_core(
+            session,
+            file,
+            total,
+            database.map(str::to_string),
+            options,
+            committed,
+            on_progress,
+        )
+        .await
+    }
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
     /// `commands::export::write_export_to` — 実ファイル出力と**同じ**振り分け /
@@ -799,6 +841,7 @@ pub fn run() {
             commands::dump::dump_database,
             commands::import::parse_csv_preview,
             commands::import::import_csv,
+            commands::script::run_sql_script,
             commands::file::read_text_file,
             commands::file::write_binary_file,
             commands::local::create_local_session,
