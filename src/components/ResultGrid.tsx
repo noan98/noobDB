@@ -5505,6 +5505,7 @@ export const DataGrid = memo(function DataGrid({
                   : undefined
               }
               onClose={() => setViewer(null)}
+              driver={rowSqlDriver}
             />
           );
         })()}

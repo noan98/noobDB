@@ -4,6 +4,15 @@
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
   `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用。色は下記
   `colorScale.ts` を参照)。
+- JSON / JSONB セルのツリービューア (#1026) — `jsonTree.ts` (純ロジック) +
+  `JsonTreeView.tsx`。`CellValueViewer` の閲覧モードでテキスト表示とトグルする。
+  **`JSON.parse` を使わない**ロスレスパーサで数値を元テキストのまま保持するため、
+  64bit 整数が丸まらない (整形表示・編集時の整形/最小化も同じパーサ経由)。子は展開
+  ノードだけ 200 件ずつ遅延描画し、検索は明示スタックで走査する。ノード単位でパス
+  (`$.a.b[0]`)・値・方言別の SQL 抽出式 / WHERE 条件 (PostgreSQL `->`/`->>`、MySQL
+  `JSON_EXTRACT`、SQLite `json_extract`、DuckDB `json_extract_string`、MSSQL
+  `JSON_VALUE`/`JSON_QUERY`) を**クリップボードへコピーするだけ**で、DB への書き込み
+  経路もフィルタモデルも増やさない。
 - セル値のクイックフィルタ (#914) — `quickFilter.ts`。結果グリッドのセル右クリックに
   出る「この値で絞り込む (= value)」「この値を除外する (≠ value)」の**純ロジック**。
   **新しいフィルタモデルは増やさず**、クリックしたセルの値を既存の 2 経路 — table
