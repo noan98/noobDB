@@ -272,6 +272,8 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
 
   return (
     <Modal
+      onSubmit={handleDump}
+      submitDisabled={isRunning || !path.trim()}
       width="620px"
       onClose={onClose}
       closeOnInteractOutside={!isRunning}

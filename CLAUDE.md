@@ -64,14 +64,21 @@
   白地に白文字になり消える。面の上の意味色テキストは `app.textError` /
   `app.textWarning` / `app.textSuccess`。`designTokens.test.ts` が CI で強制。
 - **新しい画面は「Modal / Bottom Panel / 全画面サーフェス」のどれかに正しく置く。**
-  SQL を書きながら参照する情報 (アドバイザ・インスペクタ・プロセス監視など) は
-  Bottom Panel (`BottomPanel.tsx` + `bottomPanelTabs.ts`)。`<main>` を丸ごと置き換える
+  SQL を書きながら参照する情報 (実行ログ・メッセージ・アドバイザ・インスペクタ・
+  プロセス監視など) は Bottom Panel (`BottomPanel.tsx` + `bottomPanelTabs.ts`)。
+  タブは「ログ / 診断 / 参照」の用途グループ順に並べる。`<main>` を丸ごと置き換える
   全画面サーフェスは「その画面自体が作業対象」のときだけ (ER 図・スキーマ比較など)。
   上下の配分は `WorkspaceSplit` が既存の `Splitter` へ委ねる (リサイズを再実装しない)。
 - **モーダル内のフィールドラベル・バリデーションエラー・コードプレビューを手書き
   しない。** `components/modalForm.tsx` の `FieldLabel` / `FieldError` /
   `CodePreview` / `FormSection` / `ErrorNote` を使う (`designTokens.test.ts` が
-  `*Modal.tsx` / `*Dialog.tsx` 内の手書き `<pre>` とラベルを検出する)。
+  `*Modal.tsx` / `*Dialog.tsx` 内の手書き `<pre>` とラベルを検出する)。モーダル外の
+  フォーム・パネルでも SQL プレビューは `CodePreview`、エラーは `FieldError` /
+  `ErrorNote` (`role="alert"` を手書きしない)。
+- **モーダルのボタンは「補助 → spacer → キャンセル → 主アクション」、破壊的なら
+  「実行 (dangerOutline) → spacer → キャンセル (primary + 初期フォーカス)」。**
+  `<Modal>` には主アクションを `onSubmit` (Cmd/Ctrl+Enter) で渡すか、開始タグに
+  `// no-submit: 理由` を書く。`designTokens.test.ts` が全モーダルで検査する。
 - **UI に px 直値・色リテラルを書かない。** 余白/文字サイズ/角丸/色は `App.css` の
   CSS 変数 → `theme.ts` の Chakra トークン経由でのみ参照する (px 直値はフォント拡大
   設定に追従せず、色リテラルはダーク系テーマプリセットで破綻する)。ベタ塗りの上の

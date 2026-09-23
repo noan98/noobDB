@@ -24,6 +24,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
 import { useToast } from "./Toast";
@@ -224,7 +225,9 @@ export function TaskManager({
 
   return (
     <>
-      <Modal onClose={onClose} width="880px">
+      <Modal
+        // no-submit: 一覧 + 行内フォーム。フォームは自身の Cmd/Ctrl+Enter で保存する
+        onClose={onClose} width="880px">
         <ModalHeader onClose={onClose} closeLabel={t("taskManagerClose")}>
           {t("taskManagerTitle")}
         </ModalHeader>
@@ -598,7 +601,18 @@ function TaskForm({
   };
 
   return (
-    <chakra.div display="flex" flexDirection="column" gap="3.5">
+    <chakra.div
+      display="flex"
+      flexDirection="column"
+      gap="3.5"
+      // モーダル / 接続フォームと同じく Cmd/Ctrl+Enter で保存する (#1114)。
+      onKeyDown={(e) => {
+        if (saving) return;
+        if (!isModalSubmitKey(pickModalKeys(e))) return;
+        e.preventDefault();
+        void handleSubmit();
+      }}
+    >
       <FormSection>
         <FieldLabel htmlFor="task-name">{t("taskFormName")}</FieldLabel>
         <Input id="task-name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
@@ -787,10 +801,10 @@ function TaskForm({
         </chakra.span>
       </chakra.label>
 
-      {formError && <ErrorNote>{formError}</ErrorNote>}
+      {formError && <ErrorNote role="alert">{formError}</ErrorNote>}
 
       <Flex gap="2" justify="flex-end">
-        <Button type="button" onClick={onCancel} disabled={saving}>
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>
           {t("taskFormCancel")}
         </Button>
         <LoadingButton type="button" variant="primary" loading={saving} onClick={() => void handleSubmit()}>

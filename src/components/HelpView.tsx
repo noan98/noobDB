@@ -224,7 +224,9 @@ export function HelpView({ onClose }: { onClose: () => void }) {
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
   return (
-    <Modal onClose={onClose} width="920px">
+    <Modal
+      // no-submit: 参照画面 (閉じるのみ)
+      onClose={onClose} width="920px">
       <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
         {t("helpTitle")}
       </ModalHeader>

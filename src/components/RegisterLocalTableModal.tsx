@@ -41,7 +41,7 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
   };
 
   return (
-    <Modal width="520px" onClose={onClose} initialFocusEl={() => inputRef.current}>
+    <Modal onSubmit={submit} submitDisabled={!valid} width="520px" onClose={onClose} initialFocusEl={() => inputRef.current}>
       <ModalHeader onClose={onClose} closeLabel={t("localRegisterClose")}>
         {t("localRegisterTitle")}
       </ModalHeader>
@@ -95,10 +95,10 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
         </Flex>
       </ModalBody>
       <ModalFooter>
+        <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onClose}>
           {t("localRegisterClose")}
         </Button>
-        <div style={{ flex: 1 }} />
         <PressableButton type="button" variant="primary" disabled={!valid} onClick={submit}>
           {t("localRegisterConfirm")}
         </PressableButton>

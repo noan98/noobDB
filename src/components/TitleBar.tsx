@@ -47,7 +47,14 @@ function TitleControl({ title, ...props }: HTMLChakraProps<"button">) {
  * on the right mirror the platform window buttons. Window actions require the
  * matching `core:window:*` permissions in `capabilities/default.json`.
  */
-export function TitleBar({ connection }: { connection?: TitleBarConnection | null }) {
+export function TitleBar({
+  connection,
+  onOpenActivityPanel,
+}: {
+  connection?: TitleBarConnection | null;
+  /** アクティビティを Bottom Panel で開く (#1114)。ベルのポップオーバーから辿る。 */
+  onOpenActivityPanel?: () => void;
+}) {
   const t = useT();
   const [maximized, setMaximized] = useState(false);
 
@@ -150,7 +157,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
       <Flex align="stretch">
         {/* アクティビティ (通知センター、#912)。自動で消えたトーストを後から
             見返す入口で、ウィンドウ操作より手前 (左) に置く。 */}
-        <ActivityCenter />
+        <ActivityCenter onOpenInPanel={onOpenActivityPanel} />
         <TitleControl
           onClick={() => appWindow.minimize()}
           title={t("titleBarMinimize")}

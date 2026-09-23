@@ -83,7 +83,7 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
   const dataListId = "create-table-types";
 
   return (
-    <Modal width="820px" onClose={onClose}>
+    <Modal onSubmit={() => onRun(sql)} submitDisabled={!valid || readOnly} width="820px" onClose={onClose}>
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("createTableTitle")}
       </ModalHeader>
@@ -156,12 +156,12 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
         {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
       </ModalBody>
       <ModalFooter>
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("createTableClose")}
-        </Button>
-        <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" disabled={!valid} onClick={() => onSendToEditor(sql)}>
           {t("createTableToEditor")}
+        </Button>
+        <div style={{ flex: 1 }} />
+        <Button type="button" variant="secondary" onClick={onClose}>
+          {t("createTableClose")}
         </Button>
         <PressableButton type="button" variant="primary" disabled={!valid || readOnly} onClick={() => onRun(sql)}>
           {t("createTableRun")}

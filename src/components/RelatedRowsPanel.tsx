@@ -20,6 +20,7 @@ import { classifyTypeName } from "./cellTypeMeta";
 import { MASK_PLACEHOLDER, resolveMaskedColumns } from "./columnMask";
 import { TreeChevron } from "./tree";
 import { Button } from "./ui";
+import { ErrorNote } from "./modalForm";
 
 /**
  * 行インスペクタの「関連」タブ (master-detail、#1028)。
@@ -278,9 +279,9 @@ function RelatedRowsBody({
         </chakra.div>
       )}
       {state.kind === "error" && (
-        <chakra.div fontSize="xs" color="app.textError" role="alert" wordBreak="break-word">
+        <ErrorNote role="alert" wordBreak="break-word">
           {t("relatedRowsError", { error: state.message })}
-        </chakra.div>
+        </ErrorNote>
       )}
       {split && split.rows.length === 0 && (
         <chakra.div fontSize="xs" color="app.textMuted">

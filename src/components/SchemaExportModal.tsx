@@ -213,6 +213,8 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
 
   return (
     <Modal
+      onSubmit={handleSave}
+      submitDisabled={isSaving || !path.trim() || !hasOutput}
       width="620px"
       onClose={onClose}
       closeOnInteractOutside={!isSaving}

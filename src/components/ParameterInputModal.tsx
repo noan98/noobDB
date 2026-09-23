@@ -128,7 +128,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
   };
 
   return (
-    <Modal width="600px" onClose={onCancel} initialFocusEl={() => firstInputRef.current}>
+    <Modal onSubmit={submit} submitDisabled={hasError} width="600px" onClose={onCancel} initialFocusEl={() => firstInputRef.current}>
       <ModalHeader onClose={onCancel} closeLabel={t("parameterInputCancel")}>
         {t("parameterInputTitle")}
       </ModalHeader>

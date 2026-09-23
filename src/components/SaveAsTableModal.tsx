@@ -71,7 +71,7 @@ export function SaveAsTableModal({ sessionId, driver, database, sourceSql, onCon
   };
 
   return (
-    <Modal width="560px" onClose={onClose} initialFocusEl={() => inputRef.current}>
+    <Modal onSubmit={submit} submitDisabled={!valid} width="560px" onClose={onClose} initialFocusEl={() => inputRef.current}>
       <ModalHeader onClose={onClose} closeLabel={t("saveAsTableClose")}>
         {t("saveAsTableTitle")}
       </ModalHeader>
@@ -108,10 +108,10 @@ export function SaveAsTableModal({ sessionId, driver, database, sourceSql, onCon
         </FormSection>
       </ModalBody>
       <ModalFooter>
+        <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onClose}>
           {t("saveAsTableClose")}
         </Button>
-        <div style={{ flex: 1 }} />
         <PressableButton type="button" variant="primary" disabled={!valid} onClick={submit}>
           {t("saveAsTableConfirm")}
         </PressableButton>

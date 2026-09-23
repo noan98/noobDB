@@ -295,7 +295,7 @@ export function BroadcastModal({
 
   if (step === "select") {
     return (
-      <Modal onClose={handleClose} width="560px">
+      <Modal onSubmit={handleRun} submitDisabled={selected.size === 0} onClose={handleClose} width="560px">
         <ModalHeader onClose={handleClose} closeLabel={t("broadcastClose")}>
           {t("broadcastPickerTitle")}
         </ModalHeader>
@@ -340,10 +340,10 @@ export function BroadcastModal({
           </Flex>
         </ModalBody>
         <ModalFooter>
+          <chakra.span flex="1" />
           <Button type="button" variant="secondary" onClick={handleClose}>
             {t("broadcastPickerCancel")}
           </Button>
-          <chakra.span flex="1" />
           <LoadingButton
             type="button"
             variant="primary"
@@ -358,7 +358,9 @@ export function BroadcastModal({
   }
 
   return (
-    <Modal onClose={handleClose} width="min(1120px, 95vw)">
+    <Modal
+      // no-submit: 結果の閲覧画面で、確定する主アクションが無い (閉じるのみ)
+      onClose={handleClose} width="min(1120px, 95vw)">
       <ModalHeader onClose={handleClose} closeLabel={t("broadcastClose")}>
         {t("broadcastResultsTitle")}
       </ModalHeader>

@@ -179,7 +179,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   const sqlPreview = statements.map((s: AlterStatement) => s.sql).join("\n");
 
   return (
-    <Modal width="880px" onClose={onClose}>
+    <Modal onSubmit={() => onRun(statements)} submitDisabled={!valid || readOnly} width="880px" onClose={onClose}>
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("alterTableTitle", { table })}
       </ModalHeader>
@@ -443,10 +443,6 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         </AnimatePresence>
       </ModalBody>
       <ModalFooter>
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("createTableClose")}
-        </Button>
-        <div style={{ flex: 1 }} />
         <Button
           type="button"
           variant="secondary"
@@ -454,6 +450,10 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
           onClick={() => onSendToEditor(sqlPreview)}
         >
           {t("createTableToEditor")}
+        </Button>
+        <div style={{ flex: 1 }} />
+        <Button type="button" variant="secondary" onClick={onClose}>
+          {t("createTableClose")}
         </Button>
         <PressableButton
           type="button"

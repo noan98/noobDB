@@ -15,7 +15,17 @@
  */
 
 /**
- * ボトムパネルに並ぶタブ。表示順もこの配列の順。
+ * ボトムパネルに並ぶタブ。表示順もこの配列の順で、**用途のグループごとに並べる**
+ * (#1114)。グループの切れ目はタブバーに区切り線として出る (`BOTTOM_PANEL_TAB_GROUP`)。
+ *
+ * 1. **ログ** (`output` / `messages` / `activity`) — このセッションで何が起きたか。
+ *    接続の有無に関係なく開ける (接続失敗のメッセージこそ未接続時に読みたい)。
+ *    - 出力: 実行した文ごとの結末 (件数・所要時間・エラー本文)。`outputLog.ts`
+ *    - メッセージ: ステータスバーに出た文の履歴 (最新 1 件しか出ないため)。`messageLog.ts`
+ *    - アクティビティ: トーストの履歴 (ベルのポップオーバーと同じストア)。`activityLog.ts`
+ * 2. **診断** (`advisor` / `inspector` / `processes` / `health`) — DB とサーバの
+ *    状態・改善提案。
+ * 3. **参照** (`whereUsed` / `structure` / `profile`) — 選んだオブジェクトの詳細。
  *
  * `whereUsed` (影響分析、#1027) は「DROP / RENAME の前に参照元を確かめながら
  * DDL を書く」ための参照情報なので、全画面ではなくここに置く。対象のデータベースは
@@ -27,20 +37,52 @@
  * 書くための参照情報なので、全画面ではなくここに置く。
  */
 export const BOTTOM_PANEL_TABS = [
+  "output",
+  "messages",
+  "activity",
   "advisor",
   "inspector",
   "processes",
-  "whereUsed",
   "health",
-  "profile",
+  "whereUsed",
   "structure",
+  "profile",
 ] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
 
+/** タブの用途グループ (表示順は `BOTTOM_PANEL_TABS` のまま)。 */
+export type BottomPanelTabGroup = "log" | "diagnostics" | "reference";
+
+export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup> = {
+  output: "log",
+  messages: "log",
+  activity: "log",
+  advisor: "diagnostics",
+  inspector: "diagnostics",
+  processes: "diagnostics",
+  health: "diagnostics",
+  whereUsed: "reference",
+  structure: "reference",
+  profile: "reference",
+};
+
+/**
+ * 与えられた並びで「直前のタブと別グループになる」タブ (= 手前に区切り線を
+ * 引くタブ) を返す。先頭のタブは含めない (区切る相手が無い)。開けないタブが
+ * 抜けた並びでも、実際に隣り合うタブ同士で判定する。
+ */
+export function bottomPanelGroupStarts(tabs: readonly BottomPanelTab[]): Set<BottomPanelTab> {
+  const out = new Set<BottomPanelTab>();
+  for (let i = 1; i < tabs.length; i++) {
+    if (BOTTOM_PANEL_TAB_GROUP[tabs[i]] !== BOTTOM_PANEL_TAB_GROUP[tabs[i - 1]]) out.add(tabs[i]);
+  }
+  return out;
+}
+
 /** タブを開けるかどうかの判定材料。`App.tsx` の該当 state を写したもの。 */
 export interface BottomPanelContext {
-  /** アクティブな接続セッション。`health` 以外のタブはこれを要求する。 */
+  /** アクティブな接続セッション。ログ系と `health` 以外のタブはこれを要求する。 */
   sessionId: string | null;
   /**
    * 開いている接続の本数 (アクティブ + 背景)。接続ヘルス (#1068) は接続横断の
@@ -68,6 +110,8 @@ export interface BottomPanelContext {
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
 export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTab[] {
   return BOTTOM_PANEL_TABS.filter((tab) => {
+    // ログ系は接続に依存しない (未接続時の接続失敗メッセージも読めるように)。
+    if (BOTTOM_PANEL_TAB_GROUP[tab] === "log") return true;
     if (tab === "health") return !!ctx.sessionId || ctx.openConnectionCount > 0;
     if (!ctx.sessionId) return false;
     if (tab === "advisor") return !!ctx.advisorDatabase;

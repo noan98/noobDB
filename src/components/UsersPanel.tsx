@@ -13,7 +13,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
-import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
@@ -106,20 +106,6 @@ const tdCss: SystemStyleObject = {
   color: "var(--text)",
   whiteSpace: "nowrap",
   verticalAlign: "top",
-};
-const preCss: SystemStyleObject = {
-  margin: 0,
-  marginTop: "2",
-  padding: "2.5",
-  maxHeight: "260px",
-  overflow: "auto",
-  fontSize: "var(--text-xs)",
-  fontFamily: "var(--font-mono)",
-  background: "var(--bg-muted)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-sm)",
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-all",
 };
 
 export function UsersPanel({
@@ -286,7 +272,7 @@ export function UsersPanel({
           <chakra.p margin={0}>
             {t("usersApplyConfirmMessage", { count: statements.length })}
           </chakra.p>
-          <chakra.pre css={preCss}>{statements.join(";\n")}</chakra.pre>
+          <CodePreview wrap mt="2" maxH="260px">{statements.join(";\n")}</CodePreview>
         </>
       ),
       confirmLabel: t("usersApplyConfirmOk"),
@@ -319,7 +305,7 @@ export function UsersPanel({
       message: (
         <>
           <chakra.p margin={0}>{t("usersCreateConfirmMessage")}</chakra.p>
-          <chakra.pre css={preCss}>{sql}</chakra.pre>
+          <CodePreview wrap mt="2" maxH="260px">{sql}</CodePreview>
         </>
       ),
       confirmLabel: t("usersCreateConfirmOk"),
@@ -352,7 +338,7 @@ export function UsersPanel({
           <chakra.p margin={0}>
             {t("usersDropConfirmMessage", { name: selected.name })}
           </chakra.p>
-          <chakra.pre css={preCss}>{sql}</chakra.pre>
+          <CodePreview wrap mt="2" maxH="260px">{sql}</CodePreview>
         </>
       ),
       confirmLabel: t("usersDropConfirmOk"),
@@ -391,7 +377,7 @@ export function UsersPanel({
           <chakra.p margin={0}>
             {t("usersPasswordConfirmMessage", { name: selected.name })}
           </chakra.p>
-          <chakra.pre css={preCss}>{sql}</chakra.pre>
+          <CodePreview wrap mt="2" maxH="260px">{sql}</CodePreview>
         </>
       ),
       confirmLabel: t("usersPasswordConfirmOk"),

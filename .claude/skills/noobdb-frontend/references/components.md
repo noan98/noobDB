@@ -17,6 +17,25 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
     `Splitter` と同じ操作体系 (矢印 / Home / End / Enter / ダブルクリック)。
   - Shell 操作のコマンドパレット候補 (サイドバー開閉・Explorer 絞り込み・ボトム
     パネル各タブ・テーブル構造) は `workspaceCommands.ts` が組み立てる。
+  - Bottom Panel のタブは用途グループ順 (#1114): **ログ** (出力 `OutputPanel` /
+    メッセージ `MessagesPanel` / アクティビティ `ActivityLogPanel`、いずれも接続不要)
+    → **診断** (アドバイザ・インスペクタ・プロセス・接続ヘルス) → **参照** (影響分析・
+    構造・列を探索)。グループの切れ目に区切り線 (`bottomPanelGroupStarts`)。
+    - 出力 = 実行した文ごとの結末。`outputLog.ts` のストアへ `App.tsx` の実行経路
+      (`runQueryInTab` の done / error・キャンセル・一括実行・トランザクション内実行)
+      が結果受信地点で `recordOutput` する。自動リフレッシュの tick は積まない。
+    - メッセージ = ステータスバーの履歴。`App.tsx` の `status` 監視 effect が
+      `statusMessage.ts` の `statusLogClass` (途中経過は落とす、成功はキー単位・
+      エラーは本文単位で直前と畳む) を通して `messageLog.ts` へ積む。フッターの
+      一覧アイコンからも開ける。
+    - アクティビティ = トーストの履歴 (`activityLog.ts`)。ベルのポップオーバーの
+      「パネルで開く」からも辿れ、パネル表示中は既読になる。
+    - 3 タブとも `SeverityLog.tsx` の `LogToolbar` (フィルタチップ + クリア) と行を共有。
+- モーダル / フォームの操作 (#1114) — `Modal` の `onSubmit` / `submitDisabled` で
+  Cmd/Ctrl+Enter が主アクションになる (判定は `modalKeys.ts` の `isModalSubmitKey`)。
+  `ConnectionForm` / `SnippetForm` / タスク編集フォームもルートで同じ判定を使う。
+  破壊的な確認・閲覧のみのモーダルは開始タグに `// no-submit: 理由`。フッターの並びと
+  エラー表示の規約は `.claude/rules/ui-design-system.md` §7.2 / §7.4 / §7.5。
 - SQL Editor / Result Grid の操作体系 (#1113) — 同じ操作をツールバー・右クリック・
   コマンドパレット・ショートカット (`shortcuts.ts`) のどこからでも同じ経路で呼べる。
   - エディタ本文の右クリック (`QueryEditor` + 純ロジック `sqlEditorMenu.ts`)。選択の

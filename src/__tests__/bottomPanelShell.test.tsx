@@ -13,7 +13,13 @@ import { BOTTOM_PANEL_TABS, type BottomPanelTab } from "../components/bottomPane
  */
 
 const label = (tab: BottomPanelTab) =>
-  tab === "advisor"
+  tab === "output"
+    ? t("outputTitle")
+    : tab === "messages"
+      ? t("messagesTitle")
+      : tab === "activity"
+        ? t("activityCenterTitle")
+        : tab === "advisor"
     ? t("advisorTitle")
     : tab === "inspector"
       ? t("inspectorTitle")
@@ -26,8 +32,9 @@ const label = (tab: BottomPanelTab) =>
 function renderShell(overrides: Partial<Parameters<typeof BottomPanel>[0]> = {}) {
   const props = {
     tab: "advisor" as BottomPanelTab,
-    // 「列を探索」(#974) と「構造」(#1112) は対象テーブルが決まったときだけ並ぶので、常設のタブで検証する。
-    tabs: BOTTOM_PANEL_TABS.filter((tab) => tab !== "profile" && tab !== "structure"),
+    // 「列を探索」(#974) と「構造」(#1112) は対象テーブルが決まったときだけ並ぶので、
+    // 接続中に常設の診断タブ + 影響分析で検証する (ログ系 3 タブは別の it で扱う)。
+    tabs: ["advisor", "inspector", "processes", "health", "whereUsed"] as BottomPanelTab[],
     label,
     onSelect: vi.fn(),
     onClose: vi.fn(),
@@ -46,8 +53,8 @@ describe("BottomPanel シェル (#1112)", () => {
       t("advisorTitle"),
       t("inspectorTitle"),
       t("processTitle"),
-      t("whereUsedTitle"),
       t("healthTitle"),
+      t("whereUsedTitle"),
     ]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(tabs[1]).toHaveAttribute("aria-selected", "false");
@@ -88,7 +95,31 @@ describe("BottomPanel シェル (#1112)", () => {
     fireEvent.keyDown(active, { key: "Home" });
     expect(props.onSelect).toHaveBeenLastCalledWith("advisor");
     fireEvent.keyDown(active, { key: "End" });
-    expect(props.onSelect).toHaveBeenLastCalledWith("health");
+    expect(props.onSelect).toHaveBeenLastCalledWith("whereUsed");
+  });
+
+  it("用途グループ (ログ / 診断 / 参照、#1114) の切れ目に区切り線を引く", () => {
+    renderShell({ tabs: BOTTOM_PANEL_TABS.filter((tab) => tab !== "profile" && tab !== "structure") });
+    // ログ系 3 タブは接続に関係なく常に並ぶ。
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.slice(0, 3).map((el) => el.textContent)).toEqual([
+      t("outputTitle"),
+      t("messagesTitle"),
+      t("activityCenterTitle"),
+    ]);
+    // ログ | 診断 | 参照 の 2 箇所。区切り線はタブではない (矢印キー巡回に乗らない)。
+    const dividers = screen.getAllByTestId("bottom-panel-group-divider");
+    expect(dividers).toHaveLength(2);
+    for (const d of dividers) {
+      expect(d).toHaveAttribute("aria-hidden");
+      expect(d.getAttribute("role")).toBeNull();
+    }
+    expect(tabs).toHaveLength(BOTTOM_PANEL_TABS.length - 2);
+  });
+
+  it("グループが 1 つだけなら区切り線を引かない", () => {
+    renderShell({ tab: "output", tabs: ["output", "messages", "activity"] });
+    expect(screen.queryAllByTestId("bottom-panel-group-divider")).toHaveLength(0);
   });
 
   it("タブバー上の Escape でパネルを閉じる", () => {

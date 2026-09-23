@@ -179,7 +179,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
   const percent = progress ? scriptProgressPercent(progress) : null;
 
   return (
-    <Modal width="640px" onClose={onClose} closeOnInteractOutside={!isRunning} closeOnEscape={!isRunning}>
+    <Modal onSubmit={handleRun} submitDisabled={isRunning || !path.trim()} width="640px" onClose={onClose} closeOnInteractOutside={!isRunning} closeOnEscape={!isRunning}>
       <ModalHeader onClose={onClose} closeLabel={t("scriptClose")} closeDisabled={isRunning}>
         {database ? t("scriptTitleDb", { database }) : t("scriptTitle")}
       </ModalHeader>

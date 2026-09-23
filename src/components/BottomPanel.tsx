@@ -1,7 +1,8 @@
-import { forwardRef, useCallback, useRef, type ReactNode } from "react";
+import { forwardRef, Fragment, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import {
+  bottomPanelGroupStarts,
   nextBottomPanelTab,
   type BottomPanelTab,
 } from "./bottomPanelTabs";
@@ -100,6 +101,8 @@ interface Props {
 export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: Props) {
   const t = useT();
   const tabRefs = useRef<Partial<Record<BottomPanelTab, HTMLButtonElement | null>>>({});
+  // 用途グループ (ログ / 診断 / 参照、#1114) の切れ目に区切り線を引く。
+  const groupStarts = useMemo(() => bottomPanelGroupStarts(tabs), [tabs]);
 
   const onTabKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -146,18 +149,32 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: P
       >
         <Flex role="tablist" aria-label={t("bottomPanelTablistAria")} align="stretch" overflowX="auto">
           {tabs.map((key) => (
-            <BottomPanelTabButton
-              key={key}
-              ref={(el) => {
-                tabRefs.current[key] = el;
-              }}
-              tabKey={key}
-              active={key === tab}
-              onActivate={() => onSelect(key)}
-              onKeyDown={onTabKeyDown}
-            >
-              {label(key)}
-            </BottomPanelTabButton>
+            <Fragment key={key}>
+              {groupStarts.has(key) && (
+                // 装飾の区切り線。タブ列のキーボード巡回 (矢印キー) には参加させない。
+                <Box
+                  aria-hidden
+                  data-testid="bottom-panel-group-divider"
+                  alignSelf="center"
+                  w="1px"
+                  h="16px"
+                  mx="1"
+                  bg="app.border"
+                  flexShrink={0}
+                />
+              )}
+              <BottomPanelTabButton
+                ref={(el) => {
+                  tabRefs.current[key] = el;
+                }}
+                tabKey={key}
+                active={key === tab}
+                onActivate={() => onSelect(key)}
+                onKeyDown={onTabKeyDown}
+              >
+                {label(key)}
+              </BottomPanelTabButton>
+            </Fragment>
           ))}
         </Flex>
         <Box flex="1" />

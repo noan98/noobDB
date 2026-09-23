@@ -182,6 +182,9 @@ import {
   toggleMaskOverride,
 } from "./columnMask";
 
+/** 未保存編集の破棄確認で初期フォーカスを当てるキャンセルボタンの id (#1114)。 */
+const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
+
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
  * `ResultGrid` のスクロール枠と `PreviewGrid` の各ペイン本体に `css` で適用する
@@ -198,6 +201,7 @@ import {
  * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
  * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
+
 
 export const GRID_CSS: SystemStyleObject = {
   // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
@@ -5646,7 +5650,7 @@ export const DataGrid = memo(function DataGrid({
       )}
       <AnimatePresence>
         {bulkEdit && (
-          <Modal width="420px" onClose={() => setBulkEdit(null)}>
+          <Modal width="420px" onClose={() => setBulkEdit(null)} onSubmit={applyBulkEdit}>
             <ModalHeader onClose={() => setBulkEdit(null)} closeLabel={t("dangerousCancel")}>
               {t("gridBulkEditTitle")}
             </ModalHeader>
@@ -7124,7 +7128,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         )}
         <AnimatePresence>
           {showDiscardConfirm && (
-            <Modal width="400px" onClose={() => setShowDiscardConfirm(false)}>
+            <Modal
+              // no-submit: 未保存編集の破棄確認 (破壊的)。キャンセルが既定
+              width="400px"
+              onClose={() => setShowDiscardConfirm(false)}
+              // 破壊的パターン (#1114): 右端のキャンセルに初期フォーカス。
+              initialFocusEl={() => document.getElementById(DISCARD_CANCEL_ID)}
+            >
               <ModalHeader onClose={() => setShowDiscardConfirm(false)} closeLabel={t("dangerousCancel")}>
                 {t("editDiscardConfirmTitle")}
               </ModalHeader>
@@ -7135,15 +7145,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 })}
               </ModalBody>
               <ModalFooter>
+                {/* 未保存の編集の破棄は取り消せないので「破壊的」パターン (#1114):
+                    実行は左に非強調、右端のキャンセルを primary + 初期フォーカス。 */}
                 <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setShowDiscardConfirm(false)}
-                >
-                  {t("dangerousCancel")}
-                </Button>
-                <Button
-                  variant="danger"
+                  variant="dangerOutline"
                   size="sm"
                   onClick={() => {
                     setShowDiscardConfirm(false);
@@ -7151,6 +7156,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                   }}
                 >
                   {t("editDiscardConfirmOk")}
+                </Button>
+                <div style={{ flex: 1 }} />
+                <Button
+                  id={DISCARD_CANCEL_ID}
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setShowDiscardConfirm(false)}
+                >
+                  {t("dangerousCancel")}
                 </Button>
               </ModalFooter>
             </Modal>

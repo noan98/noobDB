@@ -284,6 +284,8 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
 
   return (
     <Modal
+      onSubmit={() => void run()}
+      submitDisabled={isRunning || !canRun}
       width="600px"
       onClose={onClose}
       closeOnInteractOutside={!isRunning}

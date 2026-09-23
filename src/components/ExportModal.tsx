@@ -366,6 +366,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
 
   return (
     <Modal
+      onSubmit={handleExport}
+      submitDisabled={isSaving || !path.trim()}
       width="560px"
       onClose={onClose}
       closeOnInteractOutside={!isSaving}

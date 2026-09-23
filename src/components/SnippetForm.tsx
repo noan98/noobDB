@@ -4,6 +4,8 @@ import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
 import { Button, Heading, Input, Select, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
+import { ErrorNote } from "./modalForm";
+import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 
 interface Props {
   initial: Snippet | null;
@@ -122,10 +124,18 @@ export function SnippetForm({
       gridTemplateColumns="1fr 1fr"
       gap="3"
       overflowY="auto"
+      // 接続フォーム / モーダルと同じく Cmd/Ctrl+Enter で保存する (#1114)。
+      onKeyDown={(e) => {
+        if (saving) return;
+        if (!isModalSubmitKey(pickModalKeys(e))) return;
+        e.preventDefault();
+        void handleSave();
+      }}
     >
-      <chakra.h2 gridColumn="span 2" m={0}>
+      {/* 見出しは接続フォームと同じ共通 Heading (#1114)。 */}
+      <Heading gridColumn="span 2">
         {initial ? t("snippetEditTitle", { name: initial.name }) : t("snippetNewTitle")}
-      </chakra.h2>
+      </Heading>
 
       <Box gridColumn="span 2">
         <chakra.label htmlFor={`${fid}-name`}>{t("snippetName")}</chakra.label>
@@ -249,9 +259,15 @@ export function SnippetForm({
         />
       </Box>
 
-      {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
+      {/* 保存を止める持続的なエラーは ErrorNote (#1114)。 */}
+      {error && (
+        <ErrorNote gridColumn="span 2" role="alert">
+          {error}
+        </ErrorNote>
+      )}
 
-      <Box gridColumn="span 2" display="flex" gap="2" justifyContent="flex-end">
+      <Box gridColumn="span 2" display="flex" gap="2" alignItems="center">
+        <Box flex="1" />
         <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>{t("formCancel")}</Button>
         <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave}>{t("formSave")}</LoadingButton>
       </Box>

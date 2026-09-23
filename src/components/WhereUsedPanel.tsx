@@ -7,7 +7,7 @@ import { semanticColorToken } from "../semanticColors";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
-import { FieldLabel } from "./modalForm";
+import { FieldError, FieldLabel } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Button, Input } from "./ui";
@@ -229,9 +229,8 @@ export function WhereUsedPanel({
       </chakra.form>
 
       {formError && (
-        <chakra.div role="alert" fontSize="sm" color="app.textError">
-          {formError}
-        </chakra.div>
+        // 検索フォームの入力エラーはフィールド単位の FieldError (#1114)。
+        <FieldError display="block">{formError}</FieldError>
       )}
 
       <chakra.div fontSize="xs" color="app.textMuted" display="flex" flexDirection="column" gap="0.5">

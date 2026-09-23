@@ -541,6 +541,8 @@ export function ImportModal({
 
   return (
     <Modal
+      onSubmit={handleImport}
+      submitDisabled={importing || !canImport}
       width="680px"
       onClose={onClose}
       closeOnInteractOutside={!importing}

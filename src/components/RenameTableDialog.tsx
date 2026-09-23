@@ -26,7 +26,7 @@ export function RenameTableDialog({ table, onConfirm, onCancel }: Props) {
   };
 
   return (
-    <Modal width="440px" onClose={onCancel} initialFocusEl={() => inputRef.current}>
+    <Modal onSubmit={submit} submitDisabled={!valid} width="440px" onClose={onCancel} initialFocusEl={() => inputRef.current}>
       <ModalHeader onClose={onCancel} closeLabel={t("createTableClose")}>
         {t("renameTableTitle")}
       </ModalHeader>

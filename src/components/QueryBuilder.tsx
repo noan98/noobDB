@@ -893,7 +893,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   );
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} onSubmit={handleExecute} submitDisabled={runDisabled}>
       <ModalHeader onClose={onClose} closeLabel={t("qbClose")}>
         {t("qbTitle")}
       </ModalHeader>

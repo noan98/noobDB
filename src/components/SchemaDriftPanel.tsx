@@ -115,7 +115,9 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
   }, [genA?.id, genB?.id, compareAttempt]);
 
   return (
-    <Modal onClose={onClose} width="980px">
+    <Modal
+      // no-submit: 一覧の閲覧画面で、確定する主アクションが無い
+      onClose={onClose} width="980px">
       <ModalHeader onClose={onClose} closeLabel={t("schemaDriftClose")}>
         {t("schemaDriftTitle", { name: profile.name })}
       </ModalHeader>

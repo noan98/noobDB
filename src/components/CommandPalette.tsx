@@ -144,7 +144,9 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   };
 
   return (
-    <Modal open onClose={onClose} width="620px" initialFocusEl={() => inputRef.current}>
+    <Modal
+      // no-submit: 検索 UI。Enter が候補の決定を担う
+      open onClose={onClose} width="620px" initialFocusEl={() => inputRef.current}>
       <Flex
         align="center"
         gap="2"

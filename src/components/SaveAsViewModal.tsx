@@ -89,7 +89,7 @@ export function SaveAsViewModal({
   };
 
   return (
-    <Modal width="560px" onClose={onClose} initialFocusEl={() => inputRef.current}>
+    <Modal onSubmit={submit} submitDisabled={!valid} width="560px" onClose={onClose} initialFocusEl={() => inputRef.current}>
       <ModalHeader onClose={onClose} closeLabel={t("saveAsViewClose")}>
         {t("saveAsViewTitle")}
       </ModalHeader>
@@ -128,10 +128,10 @@ export function SaveAsViewModal({
         </FormSection>
       </ModalBody>
       <ModalFooter>
+        <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onClose}>
           {t("saveAsViewClose")}
         </Button>
-        <div style={{ flex: 1 }} />
         <PressableButton type="button" variant="primary" disabled={!valid} onClick={submit}>
           {replace ? t("saveAsViewReplaceConfirm") : t("saveAsViewConfirm")}
         </PressableButton>

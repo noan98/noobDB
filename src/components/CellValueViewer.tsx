@@ -12,6 +12,7 @@ import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
 import { Segmented } from "./Segmented";
 import { Tooltip } from "./Tooltip";
+import { FieldError } from "./modalForm";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -164,7 +165,13 @@ export function CellValueViewer({
   };
 
   return (
-    <Modal width="820px" onClose={onClose}>
+    <Modal
+      width="820px"
+      onClose={onClose}
+      // 編集中だけ Cmd/Ctrl+Enter で保存 (#1114)。閲覧中は確定操作が無い。
+      onSubmit={editing ? handleSave : undefined}
+      submitDisabled={!!validationError}
+    >
       <ModalHeader
         onClose={onClose}
         closeLabel={t("cellViewerClose")}
@@ -207,9 +214,7 @@ export function CellValueViewer({
               _disabled={{ opacity: 0.5, cursor: "not-allowed" }}
             />
             {validationError && (
-              <chakra.div role="alert" fontSize="sm" color={semanticColorToken("danger", "text")}>
-                {t(validationError)}
-              </chakra.div>
+              <FieldError display="block">{t(validationError)}</FieldError>
             )}
           </>
         ) : isNull ? (
