@@ -116,6 +116,17 @@ const SECTIONS: Section[] = [
       { titleKey: "helpQueryBuilderTitle", descKey: "helpQueryBuilderDesc", impact: "no" },
       { titleKey: "helpSnippetTitle", descKey: "helpSnippetDesc", impact: "no" },
       { titleKey: "helpExportTitle", descKey: "helpExportDesc", impact: "no" },
+      {
+        titleKey: "helpProfileBackupTitle",
+        descKey: "helpProfileBackupDesc",
+        impact: "no",
+        stepKeys: [
+          "helpProfileBackupStep1",
+          "helpProfileBackupStep2",
+          "helpProfileBackupStep3",
+        ],
+        noteKey: "helpProfileBackupNote",
+      },
       { titleKey: "helpCellEditTitle", descKey: "helpCellEditDesc", impact: "no" },
       { titleKey: "helpDiscardTitle", descKey: "helpDiscardDesc", impact: "no" },
       { titleKey: "helpHistoryTitle", descKey: "helpHistoryDesc", impact: "no" },

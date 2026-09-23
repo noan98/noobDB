@@ -593,6 +593,18 @@ export const profileImportResult = z.object({
   invalid: z.number(),
 });
 
+/** `import_profiles_encrypted` の結果 (#710)。`ImportResult` + keyring へ戻した秘密の件数。 */
+export const encryptedProfileImportResult = profileImportResult.extend({
+  secrets: z.number(),
+});
+
+/** `export_profiles_encrypted` の結果 (#710)。件数のみで、秘密の値は含まない。 */
+export const encryptedProfileExportResult = z.object({
+  profiles: z.number(),
+  secrets: z.number(),
+  bytes: z.number(),
+});
+
 /** 配列を返すコマンド用のラッパースキーマ。 */
 export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);

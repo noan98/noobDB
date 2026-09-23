@@ -47,3 +47,16 @@
   `PasswordInput` の state にのみ保持し、再マスク・アンマウント・30 秒
   (`REVEAL_TIMEOUT_MS`) の経過で破棄する。**新しい秘密の種類を追加するときは
   `SecretKind` と `ProfileSecretKind` (フロント) の両方に足してください。**
+- **暗号化フルバックアップ (`export_profiles_encrypted` / `import_profiles_encrypted`、
+  #710) はマシン移行のための明示的な持ち出し経路です。** 秘密は平文のままディスク・
+  ログ・IPC 応答に出さず、利用者のパスフレーズから Argon2id (m=64 MiB, t=3, p=1) で
+  導出した鍵の AES-256-GCM 暗号文としてだけ書き出します (`profiles/backup.rs`。
+  52 バイトのバージョン付きヘッダ全体を AAD に入れるので、パラメータ・ソルト・
+  ノンスの改ざんも復号失敗になる)。平文ペイロード / 導出鍵 / keyring から読んだ値は
+  `zeroize::Zeroizing` で破棄時にゼロ埋めし、一時ファイルは作りません。パスフレーズは
+  保存しません。取り込みは平文インポートと同じ `merge_imported` の衝突解決 (Rename /
+  Skip / Overwrite) に乗り、取り込み先 id の keyring を「バックアップの値で置換・
+  無い種類は削除」します。keyring 書き込みが途中で失敗したら変更前の値へ戻して
+  `profiles.json` を保存せず、`profiles.json` の保存が失敗した場合も keyring を戻します
+  (`commands/profile_backup.rs` の `apply_secrets` / `rollback`)。keyring の kind を
+  足すときは `secrets::ALL_KINDS` と `backup::BackupSecrets` にも追加してください。

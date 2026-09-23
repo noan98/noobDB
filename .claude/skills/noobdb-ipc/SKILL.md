@@ -5,7 +5,7 @@ description: noobDB に IPC コマンドを追加・変更・削除するとき�
 
 # noobDB の IPC 表面
 
-現在 **106 コマンド**が `lib.rs::run()` の `generate_handler!` に登録されています。
+現在 **108 コマンド**が `lib.rs::run()` の `generate_handler!` に登録されています。
 全件は `references/command-list.md`。
 
 ## コマンドを追加するときの手順 (3 点コントラクト)
@@ -49,6 +49,6 @@ description: noobDB に IPC コマンドを追加・変更・削除するとき�
 
 | ファイル | 内容 |
 |---|---|
-| `references/command-list.md` | 106 コマンドの全件一覧 (機能別) |
+| `references/command-list.md` | 108 コマンドの全件一覧 (機能別) |
 | `references/parity-and-errors.md` | パリティテストの詳細、`AppError` の kind と `BackendError` への正規化 |
 | `references/test-api.md` | `__test_api` の使い方、コマンド層の常時実行カバレッジ (#881)、capabilities |

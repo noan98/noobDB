@@ -93,6 +93,39 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
       .toBeVisible();
   });
 
+  it("エクスポートの調査バンドル (#745) が持ち出し件数を明示し、機微カラムを伏せ字でプレビューする", async () => {
+    const result = makeResult(
+      [
+        { name: "id", type_name: "INT" },
+        { name: "user_email", type_name: "VARCHAR" },
+      ],
+      [
+        [1, "alice@example.com"],
+        [2, "bob@example.com"],
+      ],
+    );
+    const screen = await renderInBrowser(
+      <ResultGrid
+        result={result}
+        onChangeView={() => {}}
+        bundleContext={{ sql: "SELECT * FROM users", profileName: "dev", host: null, executedAt: null }}
+      />,
+    );
+
+    await screen.getByRole("button", { name: t("exportButton") }).click();
+    await screen.getByRole("radio", { name: t("exportFormatBundle") }).click();
+    await expect
+      .element(screen.getByText(t("exportBundleDataWarning", { rows: 2, cols: 2 })))
+      .toBeVisible();
+    // 既定のマスクパターン (email) に一致する列を伏せ字で出すことを明示する。
+    await expect
+      .element(screen.getByText(t("exportBundleMasked", { count: 1, names: "user_email" })))
+      .toBeVisible();
+    const preview = screen.getByLabelText(t("exportPreview"));
+    await expect.element(preview).toHaveTextContent("<!DOCTYPE html>");
+    expect(preview.element().textContent).not.toContain("alice@example.com");
+  });
+
   it("危険クエリ確認ダイアログ (安全網 UI) が描画される", async () => {
     const findings: DangerFinding[] = [{ kind: "deleteNoWhere", target: "users" }];
     const screen = await renderInBrowser(

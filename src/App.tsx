@@ -28,6 +28,7 @@ import {
 } from "./api/tauri";
 import { SandboxCreateModal } from "./components/SandboxCreateModal";
 import { SandboxReviewModal } from "./components/SandboxReviewModal";
+import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profileBackup";
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { sqlSaveFileName } from "./sqlFileIO";
@@ -98,6 +99,7 @@ import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./components/ResultViewSwitch";
+import { bundleExplainPrefix, bundlePlanSupported } from "./components/investigationBundle";
 import { TabBar } from "./components/TabBar";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
@@ -161,6 +163,11 @@ const BroadcastModal = lazy(() =>
 );
 const ProfileImportDialog = lazy(() =>
   import("./components/ProfileImportDialog").then((m) => ({ default: m.ProfileImportDialog })),
+);
+const ProfileBackupExportDialog = lazy(() =>
+  import("./components/ProfileBackupExportDialog").then((m) => ({
+    default: m.ProfileBackupExportDialog,
+  })),
 );
 const PaginationBar = lazy(() =>
   import("./components/PaginationBar").then((m) => ({ default: m.PaginationBar })),
@@ -585,11 +592,8 @@ type TabKind = "table" | "query" | "explain";
 
 // EXPLAIN の方言別プレフィックス。MySQL/PostgreSQL は JSON プラン、SQLite は
 // `EXPLAIN QUERY PLAN` (行ベース)。ExplainViewer が driver でパーサを切り替える。
-function explainPrefixFor(driver: string | undefined): string {
-  if (driver === "postgres") return "EXPLAIN (FORMAT JSON) ";
-  if (driver === "sqlite") return "EXPLAIN QUERY PLAN ";
-  return "EXPLAIN FORMAT=JSON ";
-}
+// 調査バンドル (#745) の実行計画同梱と同じ単一ソース。
+const explainPrefixFor = bundleExplainPrefix;
 
 interface Tab {
   id: string;
@@ -604,6 +608,8 @@ interface Tab {
    * every run; in-memory only (not persisted).
    */
   lastExecutedSql: string;
+  /** 直近の実行が完了した時刻 (epoch ms)。調査バンドル (#745) の「実行日時」。 */
+  lastRunAt?: number;
   result: QueryResult | null;
   preview: PreviewResult | null;
   schemaTable: SchemaTable | null;
@@ -1732,6 +1738,12 @@ export default function App() {
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
+  // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む
+  // ファイルのパス + 直前の復号エラー (パスフレーズ誤りなら開いたまま再入力させる)。
+  const [backupExportOpen, setBackupExportOpen] = useState(false);
+  const [backupImport, setBackupImport] = useState<{ path: string; error: string | null } | null>(
+    null,
+  );
   // CREATE TABLE ウィザード: 対象データベース。null で閉じる。
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
@@ -2277,6 +2289,77 @@ export default function App() {
       }
     },
     [importProfilesPath, refreshProfiles, toast, translate],
+  );
+
+  // 暗号化バックアップの書き出し (#710): パスフレーズ確定 → 保存先選択 → 書き出し。
+  // 保存ダイアログをキャンセルしたらパスフレーズダイアログは開いたまま残す。
+  const handleBackupExportPick = useCallback(() => {
+    if (profiles.length === 0) {
+      toast.info(translate("profileExportEmpty"));
+      return;
+    }
+    setBackupExportOpen(true);
+  }, [profiles.length, toast, translate]);
+
+  const handleBackupExportConfirm = useCallback(
+    async (passphrase: string) => {
+      try {
+        const dest = await saveFileDialog({
+          defaultPath: defaultBackupFileName(),
+          title: translate("profileBackupSaveTitle"),
+          filters: [{ name: translate("profileBackupFileFilter"), extensions: [BACKUP_FILE_EXTENSION] }],
+        });
+        if (typeof dest !== "string" || !dest) return;
+        const res = await api.exportProfilesEncrypted(dest, passphrase);
+        setBackupExportOpen(false);
+        toast.success(
+          translate("profileBackupExportSuccess", {
+            path: dest,
+            profiles: res.profiles,
+            secrets: res.secrets,
+          }),
+        );
+      } catch (e) {
+        toast.error(translate("profileBackupExportError", { error: String(e) }));
+      }
+    },
+    [toast, translate],
+  );
+
+  const handleBackupImportPick = useCallback(async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: translate("profileBackupImportTitle"),
+        filters: [{ name: translate("profileBackupFileFilter"), extensions: [BACKUP_FILE_EXTENSION] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      setBackupImport({ path: picked, error: null });
+    } catch (e) {
+      toast.error(translate("profileBackupImportError", { error: String(e) }));
+    }
+  }, [toast, translate]);
+
+  const handleBackupImportConfirm = useCallback(
+    async (strategy: ProfileImportStrategy, passphrase: string) => {
+      const path = backupImport?.path;
+      if (!path) return;
+      try {
+        const res = await api.importProfilesEncrypted(path, passphrase, strategy);
+        setBackupImport(null);
+        await refreshProfiles();
+        toast.success(
+          translate("profileBackupImportSuccess", res as unknown as Record<string, string | number>),
+        );
+      } catch (e) {
+        // パスフレーズ誤り / 改ざんはダイアログ内に出して再入力させる。
+        setBackupImport({
+          path,
+          error: translate("profileBackupImportError", { error: String(e) }),
+        });
+      }
+    },
+    [backupImport, refreshProfiles, toast, translate],
   );
 
   const refreshSnippets = useCallback(async () => {
@@ -3490,6 +3573,7 @@ export default function App() {
             return {
               ...tt,
               result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs },
+              lastRunAt: Date.now(),
               streaming: false,
               canLoadMore: false,
               autoLimitApplied: null,
@@ -3504,6 +3588,7 @@ export default function App() {
             result: tt.result
               ? { ...tt.result, elapsed_ms: elapsedMs, rows_affected: totalRows }
               : tt.result,
+            lastRunAt: Date.now(),
             streaming: false,
             canLoadMore: tt.paginatable !== null,
             autoLimitApplied: appliedAutoLimit,
@@ -7594,6 +7679,35 @@ export default function App() {
                             }
                           : undefined
                       }
+                      bundleContext={
+                        // 調査バンドル (#745): 接続の非秘密メタ情報だけを渡す
+                        // (パスワード・接続文字列は型ごと持たない)。
+                        tab.result
+                          ? {
+                              sql: tab.lastExecutedSql || null,
+                              profileName: selectedProfile?.name ?? null,
+                              host: selectedProfile?.host || null,
+                              executedAt: tab.lastRunAt ?? null,
+                              describe: sessionId
+                                ? (db, table) => api.describeTable(sessionId, db, table)
+                                : undefined,
+                              // EXPLAIN は対応ドライバかつ読み取り SQL のときだけ (複文の書き込みを
+                              // EXPLAIN 付きで送って実行してしまう事故を避ける)。
+                              loadPlan:
+                                sessionId &&
+                                tab.lastExecutedSql &&
+                                bundlePlanSupported(selectedProfile?.driver) &&
+                                isReadOnlySql(tab.lastExecutedSql, selectedProfile?.driver)
+                                  ? () =>
+                                      api.runQuery(
+                                        sessionId,
+                                        `${explainPrefixFor(selectedProfile?.driver)}${tab.lastExecutedSql}`,
+                                        tab.database ?? null,
+                                      )
+                                  : undefined,
+                            }
+                          : undefined
+                      }
                       lastEditAppliedAt={tab.lastEditAppliedAt}
                       maximized={maximized}
                       onToggleMaximize={() => setLayoutMode((m) => toggleLayoutMode(m, "result"))}
@@ -8985,6 +9099,27 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {backupImport && (
+          <ProfileImportDialog
+            encrypted
+            error={backupImport.error}
+            onConfirm={handleBackupImportConfirm}
+            onCancel={() => setBackupImport(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {backupExportOpen && (
+          <ProfileBackupExportDialog
+            profileCount={profiles.length}
+            onConfirm={handleBackupExportConfirm}
+            onCancel={() => setBackupExportOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {createTableDb !== null && sessionId && (
           <Suspense fallback={null}>
             <CreateTableModal
@@ -9208,6 +9343,8 @@ export default function App() {
           items={[
             { label: t("profileImportAria"), onSelect: handleImportProfilesPick },
             { label: t("profileExportAria"), onSelect: handleExportProfiles },
+            { label: t("profileBackupImportAria"), onSelect: handleBackupImportPick },
+            { label: t("profileBackupExportAria"), onSelect: handleBackupExportPick },
           ]}
           onClose={() => setProfileTransferMenu(null)}
         />

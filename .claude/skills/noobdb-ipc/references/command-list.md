@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **106 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **108 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -81,6 +81,12 @@
 
 `list_profiles` / `reveal_profile_secret` / `save_profile` / `delete_profile` /
 `reorder_profiles` / `export_profiles` / `import_profiles`
+
+## プロファイルの暗号化バックアップ (`commands/profile_backup.rs`)
+
+`export_profiles_encrypted` / `import_profiles_encrypted` (#710。keyring の秘密込みで
+パスフレーズ暗号化 — Argon2id + AES-256-GCM、形式は `profiles/backup.rs` の
+モジュール doc。引数は `req` 構造体でパスフレーズを受け、応答は件数のみ)
 
 ## スニペット・履歴・ログ (`commands/snippets.rs`, `history.rs`, `logs.rs`)
 

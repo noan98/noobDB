@@ -172,6 +172,7 @@ import {
 import {
   MASK_PLACEHOLDER,
   REVEAL_TIMEOUT_MS,
+  type MaskConfig,
   type MaskOverrides,
   type RevealTarget,
   isCellMasked,
@@ -181,6 +182,7 @@ import {
   rowHasMaskedCell,
   toggleMaskOverride,
 } from "./columnMask";
+import type { BundleContext } from "./investigationBundle";
 
 /** 未保存編集の破棄確認で初期フォーカスを当てるキャンセルボタンの id (#1114)。 */
 const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
@@ -1089,6 +1091,11 @@ interface Props {
    * 「全件 (再実行)」モードが現れる。
    */
   fullExport?: FullExportContext;
+  /**
+   * 調査バンドル (#745) の文脈 (実行 SQL・非秘密の接続メタ・スキーマ/実行計画の
+   * 取得関数)。提供されるとエクスポートに「調査バンドル (HTML)」形式が現れる。
+   */
+  bundleContext?: BundleContext;
   /**
    * Wall-clock timestamp (ms) set by the parent each time an Apply edit
    * succeeds. `ResultGrid` uses changes to this value to play a brief
@@ -2647,10 +2654,16 @@ export const DataGrid = memo(function DataGrid({
   serverFilter,
   onSetServerSort,
   onSetServerFilter,
+  onMaskConfigChange,
 }: {
   columns: Column[];
   rows: CellValue[][];
   enableColumnControls?: boolean;
+  /**
+   * 機微カラムマスク (#1069) の実効設定 (機能 ON/OFF・パターン・列単位の上書き) が
+   * 変わるたびに呼ばれる。調査バンドル (#745) の書き出しで同じマスクを適用するため。
+   */
+  onMaskConfigChange?: (config: MaskConfig) => void;
   changedCells?: boolean[][];
   changedColumns?: boolean[];
   /**
@@ -2968,6 +2981,10 @@ export const DataGrid = memo(function DataGrid({
   }, [gridViewKey]);
 
   // --- 機微カラムの表示マスク (#1069) ---
+  // 実効設定を親 (ResultGrid) へ伝える (調査バンドルが同じマスクで書き出すため)。
+  useEffect(() => {
+    onMaskConfigChange?.({ enabled: columnMaskEnabled, patterns: columnMaskPatterns, overrides: maskOverrides });
+  }, [onMaskConfigChange, columnMaskEnabled, columnMaskPatterns, maskOverrides]);
   // 列ごとのマスクフラグ。1 列もマスクされなければ null (セル描画のホットパスは
   // null 判定 1 回で素通りする)。列/設定/上書きが変わったときだけ再計算する。
   const maskedCols = useMemo(
@@ -6173,6 +6190,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRegisterLocalTable,
   onTransferResult,
   fullExport,
+  bundleContext,
   lastEditAppliedAt,
   applyingEdits,
   onRunStatsQuery,
@@ -6231,6 +6249,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     if (!streaming) markGridCommit(rowCount);
   }, [streaming, rowCount]);
   const [showExport, setShowExport] = useState(false);
+  // DataGrid が持つ機微カラムマスクの実効設定 (調査バンドルの書き出しに使う)。
+  const [maskConfig, setMaskConfig] = useState<MaskConfig | null>(null);
   // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
   // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
   // ツールバーの通常 Export を開いたときに古い選択が「選択範囲」スコープとして
@@ -7469,6 +7489,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         <DataGrid
           columns={result.columns}
           rows={result.rows}
+          onMaskConfigChange={setMaskConfig}
           scrollContainerRef={containerRef}
           globalFilter={search}
           editable={editableActive}
@@ -7674,6 +7695,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
             stoppedPartial={!!partialResult}
             fullExport={fullExport}
+            bundle={bundleContext}
+            elapsedMs={result.elapsed_ms}
+            // DataGrid からまだ届いていないときも、設定のパターンだけでマスクする
+            // (漏らさない側に倒す)。
+            maskConfig={
+              maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns }
+            }
             selection={selectionExport}
             onClose={() => {
               setShowExport(false);

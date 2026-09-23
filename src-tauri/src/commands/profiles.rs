@@ -324,8 +324,12 @@ pub struct ImportResult {
     pub invalid: usize,
 }
 
+/// 取り込めるドライバか。`DriverKind::parse` に委ねるので、ドライバを足すと
+/// インポートも自動で追従する (以前は mysql/postgres/sqlite の手書きリストで、
+/// DuckDB / SQL Server のプロファイルが「不正な行」として捨てられていた。#710 の
+/// マシン移行で全ドライバを運べるよう修正)。
 fn is_known_driver(driver: &str) -> bool {
-    matches!(driver, "mysql" | "postgres" | "sqlite")
+    crate::db::DriverKind::parse(driver).is_some()
 }
 
 /// インポートされたプロファイル群を既存リストへ統合する純粋ロジック。ストレージに
@@ -337,11 +341,32 @@ fn is_known_driver(driver: &str) -> bool {
 /// keyring エントリを新プロファイル宛に誤って引き継がないようにするため。#H4)。
 /// Rename で新規採番される経路は別 id なので既存秘密に影響しない。
 fn merge_imported(
+    all: Vec<ConnectionProfile>,
+    imported: Vec<ConnectionProfile>,
+    strategy: ImportStrategy,
+    gen_id: impl FnMut() -> String,
+) -> (Vec<ConnectionProfile>, ImportResult, Vec<String>) {
+    let (merged, result, overwritten_ids, _) =
+        merge_imported_placed(all, imported, strategy, gen_id);
+    (merged, result, overwritten_ids)
+}
+
+/// [`merge_imported`] の本体。4 つ目の戻り値は入力と同じ順・同じ長さの「取り込み
+/// 先 id」で、スキップ / 不正行は `None`、Rename で採番し直した行は新 id になる。
+/// 暗号化バックアップの取り込み (#710) が、各プロファイルの秘密をどの id の
+/// keyring エントリへ書き戻すかを決めるのに使う。
+pub(crate) fn merge_imported_placed(
     mut all: Vec<ConnectionProfile>,
     imported: Vec<ConnectionProfile>,
     strategy: ImportStrategy,
     mut gen_id: impl FnMut() -> String,
-) -> (Vec<ConnectionProfile>, ImportResult, Vec<String>) {
+) -> (
+    Vec<ConnectionProfile>,
+    ImportResult,
+    Vec<String>,
+    Vec<Option<String>>,
+) {
+    let mut placed = Vec::with_capacity(imported.len());
     let mut result = ImportResult {
         imported: 0,
         skipped: 0,
@@ -352,6 +377,7 @@ fn merge_imported(
     for mut profile in imported {
         if profile.name.trim().is_empty() || !is_known_driver(&profile.driver) {
             result.invalid += 1;
+            placed.push(None);
             continue;
         }
         let collides = !profile.id.is_empty() && all.iter().any(|p| p.id == profile.id);
@@ -359,14 +385,17 @@ fn merge_imported(
             match strategy {
                 ImportStrategy::Skip => {
                     result.skipped += 1;
+                    placed.push(None);
                     continue;
                 }
                 ImportStrategy::Overwrite => {
+                    let id = profile.id.clone();
                     if let Some(existing) = all.iter_mut().find(|p| p.id == profile.id) {
-                        overwritten_ids.push(profile.id.clone());
+                        overwritten_ids.push(id.clone());
                         *existing = profile;
                     }
                     result.overwritten += 1;
+                    placed.push(Some(id));
                     continue;
                 }
                 ImportStrategy::Rename => {
@@ -377,10 +406,11 @@ fn merge_imported(
             // Defensive: a hand-edited file might omit ids.
             profile.id = gen_id();
         }
+        placed.push(Some(profile.id.clone()));
         all.push(profile);
         result.imported += 1;
     }
-    (all, result, overwritten_ids)
+    (all, result, overwritten_ids, placed)
 }
 
 /// 指定 (または全) プロファイルを秘密情報抜きで JSON 化する純粋ロジック。`ids` が
@@ -676,6 +706,45 @@ mod tests {
         assert!(overwritten_ids.is_empty());
         assert_eq!(merged[0].name, "Good");
         assert_eq!(merged[0].id, "new1");
+    }
+
+    #[test]
+    fn import_accepts_every_supported_driver() {
+        // #710: DuckDB / SQL Server も取り込めること (以前は 3 ドライバの手書きで弾かれた)。
+        let incoming = ["mysql", "postgres", "sqlite", "duckdb", "mssql"]
+            .iter()
+            .map(|d| profile("", d, d))
+            .collect();
+        let (_, res, _) = merge_imported(vec![], incoming, ImportStrategy::Rename, counter());
+        assert_eq!(res.imported, 5);
+        assert_eq!(res.invalid, 0);
+    }
+
+    #[test]
+    fn merge_placed_reports_destination_ids_in_input_order() {
+        let existing = vec![profile("a", "A", "mysql"), profile("b", "B", "mysql")];
+        let incoming = vec![
+            profile("a", "A2", "mysql"),   // collides
+            profile("c", "C", "postgres"), // new
+            profile("x", "Bad", "oracle"), // invalid
+        ];
+        let (_, _, _, placed) = merge_imported_placed(
+            existing.clone(),
+            incoming.clone(),
+            ImportStrategy::Rename,
+            counter(),
+        );
+        assert_eq!(placed, vec![Some("new1".into()), Some("c".into()), None]);
+        let (_, _, _, placed) = merge_imported_placed(
+            existing.clone(),
+            incoming.clone(),
+            ImportStrategy::Skip,
+            counter(),
+        );
+        assert_eq!(placed, vec![None, Some("c".into()), None]);
+        let (_, _, _, placed) =
+            merge_imported_placed(existing, incoming, ImportStrategy::Overwrite, counter());
+        assert_eq!(placed, vec![Some("a".into()), Some("c".into()), None]);
     }
 
     // #938: フロントは snake_case のリテラル ("db_password" 等) を送る。keyring の

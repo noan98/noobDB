@@ -915,6 +915,8 @@ pub fn run() {
             commands::profiles::reorder_profiles,
             commands::profiles::export_profiles,
             commands::profiles::import_profiles,
+            commands::profile_backup::export_profiles_encrypted,
+            commands::profile_backup::import_profiles_encrypted,
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,

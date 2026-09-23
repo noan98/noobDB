@@ -4,11 +4,11 @@ import { AnimatePresence, motion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
-import { useT } from "../i18n";
+import { useLocale, useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Radio } from "./ui";
+import { Button, Checkbox, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
@@ -16,6 +16,17 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
 import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
 import { Tooltip } from "./Tooltip";
+import { resolveMaskedColumns, type MaskConfig } from "./columnMask";
+import {
+  buildInvestigationBundleHtml,
+  bundleSchemaTargets,
+  formatBundleDate,
+  loadBundleSchema,
+  type BundleContext,
+  type BundleLabels,
+  type BundlePlan,
+  type BundleSchemaTable,
+} from "./investigationBundle";
 
 /** プレビュー欄に表示する最大行数 (コピーは全行が対象)。 */
 const PREVIEW_ROWS = 50;
@@ -61,7 +72,58 @@ interface Props {
    * current / full のみ。
    */
   selection?: { columns: Column[]; rows: CellValue[][] } | null;
+  /**
+   * 調査バンドル (#745) の文脈。提供されると形式に「調査バンドル (HTML)」が増える。
+   */
+  bundle?: BundleContext;
+  /** 結果の実行時間 (ms)。バンドルのメタ情報に出す。 */
+  elapsedMs?: number | null;
+  /**
+   * 機微カラムマスク (#1069) の設定。バンドルではマスク対象列を (グリッドでの一時
+   * reveal に関係なく) 常に伏せ字で出力する。
+   */
+  maskConfig?: MaskConfig;
   onClose: () => void;
+}
+
+/**
+ * モーダル上の出力形式。`bundle` はフロントで HTML を組み立てて `write_binary_file`
+ * で保存する (バックエンドのエクスポート形式ではない)。
+ */
+type ModalFormat = ExportFormat | "bundle";
+
+function bundleLabels(t: ReturnType<typeof useT>, generatedAt: Date): BundleLabels {
+  return {
+    title: t("bundleTitle"),
+    notice: t("bundleNotice", { at: formatBundleDate(generatedAt) }),
+    sectionMeta: t("bundleSectionMeta"),
+    sectionSql: t("bundleSectionSql"),
+    sectionResult: t("bundleSectionResult"),
+    sectionSchema: t("bundleSectionSchema"),
+    sectionPlan: t("bundleSectionPlan"),
+    generatedAt: t("bundleGeneratedAt"),
+    executedAt: t("bundleExecutedAt"),
+    profile: t("bundleProfile"),
+    driver: t("bundleDriver"),
+    database: t("bundleDatabase"),
+    host: t("bundleHost"),
+    rows: t("bundleRows"),
+    elapsed: t("bundleElapsed"),
+    partial: t("bundlePartial"),
+    masked: t("bundleMasked"),
+    sortHint: t("bundleSortHint"),
+    noSql: t("bundleNoSql"),
+    noRows: t("bundleNoRows"),
+    unavailable: t("bundleUnavailable"),
+    colName: t("bundleColName"),
+    colType: t("bundleColType"),
+    colNullable: t("bundleColNullable"),
+    colKey: t("bundleColKey"),
+    colDefault: t("bundleColDefault"),
+    colExtra: t("bundleColExtra"),
+    yes: t("bundleYes"),
+    no: t("bundleNo"),
+  };
 }
 
 function pad(n: number, width = 2): string {
@@ -99,8 +161,10 @@ function defaultBasename(database: string | null, table: string | null): string 
   return `query_${ts}`;
 }
 
-function extensionFor(format: ExportFormat): string {
+function extensionFor(format: ModalFormat): string {
   switch (format) {
+    case "bundle":
+      return ".html";
     case "csv":
       return ".csv";
     case "ndjson":
@@ -136,10 +200,17 @@ type Status =
  */
 type ExportScope = "current" | "selection" | "full";
 
-export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, selection, onClose }: Props) {
+export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, selection, bundle, elapsedMs, maskConfig, onClose }: Props) {
   const t = useT();
+  const locale = useLocale();
   const toast = useToast();
-  const [format, setFormat] = useState<ExportFormat>("csv");
+  const [format, setFormat] = useState<ModalFormat>("csv");
+  const isBundle = format === "bundle";
+  // 調査バンドルのオプション。ホスト名は既定で含めない (共有先に接続先を明かさない側)。
+  // 実行計画は DB へ EXPLAIN を投げるので明示的に選んだときだけ。
+  const [bundleHost, setBundleHost] = useState(false);
+  const [bundleSchema, setBundleSchema] = useState(true);
+  const [bundlePlan, setBundlePlan] = useState(false);
   // SQL INSERT 形式の対象テーブル名 (既定は結果元テーブル、JOIN 等で不明なら空入力可)
   // とバッチサイズ (1 文へまとめる行数の上限)。
   const [sqlTable, setSqlTable] = useState<string>(table ?? "");
@@ -172,6 +243,72 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // 従来どおりグリッド全体。`buildExportContent` は共通なので書式は二重定義しない。
   const effectiveColumns = scope === "selection" && selection ? selection.columns : columns;
   const effectiveRows = scope === "selection" && selection ? selection.rows : rows;
+  // バンドルでのマスク対象列 (列名で判定するので選択範囲の列部分集合にもそのまま効く)。
+  const bundleMasked = useMemo(
+    () => (maskConfig ? resolveMaskedColumns(effectiveColumns.map((c) => c.name), maskConfig) : null),
+    [effectiveColumns, maskConfig],
+  );
+  const bundleMaskedNames = useMemo(
+    () => effectiveColumns.filter((_, i) => bundleMasked?.[i]).map((c) => c.name),
+    [effectiveColumns, bundleMasked],
+  );
+  const canBundleSchema = !!bundle?.describe;
+  const canBundlePlan = !!bundle?.loadPlan;
+
+  /**
+   * バンドル HTML を組み立てる。`withExtras` のときだけスキーマ / 実行計画を非同期に
+   * 取得して同梱する (プレビューは同期で先頭行のみ)。
+   */
+  const buildBundle = async (bodyRows: CellValue[][], withExtras: boolean): Promise<string> => {
+    const generatedAt = new Date();
+    let schema: BundleSchemaTable[] | null = null;
+    let plan: BundlePlan | null = null;
+    if (withExtras && bundle) {
+      const describe = bundle.describe;
+      const loadPlan = bundle.loadPlan;
+      const [s, p] = await Promise.all([
+        bundleSchema && describe
+          ? loadBundleSchema(bundleSchemaTargets(bundle.sql, database, table), database, describe)
+          : Promise.resolve(null),
+        bundlePlan && loadPlan
+          ? loadPlan().then(
+              (result): BundlePlan => ({ result }),
+              (e): BundlePlan => ({ result: null, error: String(e) }),
+            )
+          : Promise.resolve(null),
+      ]);
+      schema = s;
+      plan = p;
+    }
+    return buildBundleHtmlSync(bodyRows, generatedAt, schema, plan);
+  };
+  const buildBundleHtmlSync = (
+    bodyRows: CellValue[][],
+    generatedAt: Date,
+    schema: BundleSchemaTable[] | null,
+    plan: BundlePlan | null,
+  ): string =>
+    buildInvestigationBundleHtml({
+      sql: bundle?.sql ?? null,
+      columns: effectiveColumns,
+      rows: bodyRows,
+      maskedColumns: bundleMasked,
+      meta: {
+        generatedAt,
+        executedAt: bundle?.executedAt ? new Date(bundle.executedAt) : null,
+        profileName: bundle?.profileName ?? null,
+        driver: driver ?? null,
+        database,
+        // 秘密情報ではないが、ユーザが選んだときだけ含める。
+        host: bundleHost ? bundle?.host || null : null,
+        elapsedMs: elapsedMs ?? null,
+        partial: !!partial && scope !== "selection",
+      },
+      schema,
+      plan,
+      labels: bundleLabels(t, generatedAt),
+      lang: locale,
+    });
 
   // プレビューは先頭 PREVIEW_ROWS 行のみ生成して表示負荷を抑える。実際の出力書式
   // (CSV のクオート・JSON の整形・実行クエリ同梱) はバックエンドと同じ。
@@ -180,8 +317,12 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     [sqlDriver, sqlTable, sqlBatch],
   );
   const previewContent = useMemo(
-    () => buildExportContent(format, effectiveColumns, effectiveRows.slice(0, PREVIEW_ROWS), queryForJson, exportCtx),
-    [format, effectiveColumns, effectiveRows, queryForJson, exportCtx],
+    () =>
+      format === "bundle"
+        ? buildBundleHtmlSync(effectiveRows.slice(0, PREVIEW_ROWS), new Date(), null, null)
+        : buildExportContent(format, effectiveColumns, effectiveRows.slice(0, PREVIEW_ROWS), queryForJson, exportCtx),
+    // buildBundleHtmlSync は下記の依存だけから決まる (毎レンダーで作り直される関数自体は除外)。
+    [format, effectiveColumns, effectiveRows, queryForJson, exportCtx, bundleMasked, bundleHost, bundle, elapsedMs, partial, scope, locale],
   );
   const previewTruncated = effectiveRows.length > PREVIEW_ROWS;
   // Set on unmount so an in-flight `listenExportStream` (awaited below) can
@@ -202,7 +343,10 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // 違い行数を絞らないため、選択範囲スコープなら選択範囲の全行、それ以外はグリッドに
   // 読み込まれている全行が対象。
   const handleCopy = async () => {
-    const content = buildExportContent(format, effectiveColumns, effectiveRows, queryForJson, exportCtx);
+    const content =
+      format === "bundle"
+        ? await buildBundle(effectiveRows, true)
+        : buildExportContent(format, effectiveColumns, effectiveRows, queryForJson, exportCtx);
     const ok = await copyToClipboard(content);
     if (!ok) {
       toast.error(t("clipboardCopyFailed"));
@@ -224,7 +368,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         const dir = await downloadDir();
         if (cancelled || userEditedPathRef.current) return;
         const full = await join(dir, `${initialBasename}${extensionFor(format)}`);
-        if (cancelled || userEditedPathRef.current) return;
+        // 文字列以外 (IPC スタブ等で null が返る環境) は採用しない — path は常に文字列。
+        if (cancelled || userEditedPathRef.current || typeof full !== "string") return;
         setPath(full);
       } catch {
         // ダウンロードフォルダが解決できない環境ではファイル名のままにする。
@@ -255,7 +400,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       defaultPath: path || `${initialBasename}${extensionFor(format)}`,
       title: t("exportPickFileTitle"),
       filters: [
-        format === "csv"
+        format === "bundle"
+          ? { name: "HTML", extensions: ["html", "htm"] }
+          : format === "csv"
           ? { name: "CSV", extensions: ["csv"] }
           : format === "ndjson"
             ? { name: "NDJSON", extensions: ["ndjson", "jsonl"] }
@@ -274,7 +421,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
 
   const handleExport = async () => {
     if (!path.trim()) return;
-    if (scope === "full" && fullExport) {
+    if (scope === "full" && fullExport && format !== "bundle") {
       await handleFullExport(fullExport);
       return;
     }
@@ -283,10 +430,24 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       return;
     }
     setStatus({ kind: "saving" });
+    if (format === "bundle") {
+      try {
+        const html = await buildBundle(effectiveRows, true);
+        // 既存の保存経路 (チャート/ER 図の画像保存と同じ write_binary_file)。
+        const bytes = await api.writeBinaryFile(path, new TextEncoder().encode(html));
+        toast.success(t("exportSuccess", { bytes, path }));
+        setStatus({ kind: "idle" });
+      } catch (e) {
+        setStatus({ kind: "error", message: String(e) });
+        toast.error(t("exportError", { error: String(e) }));
+      }
+      return;
+    }
+    const backendFormat: ExportFormat = format;
     try {
       const bytes = await api.exportQueryResult({
         path,
-        format,
+        format: backendFormat,
         columns: effectiveColumns,
         rows: effectiveRows,
         // JSON 形式のときだけ実行クエリを同梱する (バックエンドが判定)。
@@ -306,6 +467,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
 
   // 全件モード: クエリを再実行してバックエンドでストリーミング書き出し。
   const handleFullExport = async (ctx: FullExportContext) => {
+    // 調査バンドルは在グリッド行のスナップショットで、全件再実行の対象外。
+    if (format === "bundle") return;
     const streamId = `export_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     setStatus({ kind: "streaming", rows: 0, streamId });
     unlistenRef.current?.();
@@ -381,7 +544,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         <chakra.div fontSize="md" color="app.text">
           {t("exportRowCount", { rows: effectiveRows.length })}
         </chakra.div>
-        {(hasSelection || fullExport) && (
+        {(hasSelection || (fullExport && !isBundle)) && (
           <FormSection>
             <FieldLabel as="div">{t("exportScope")}</FieldLabel>
             <chakra.div role="radiogroup" aria-label={t("exportScope")} display="flex" flexDirection="column" gap="1.5">
@@ -389,7 +552,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 [
                   "current",
                   ...(hasSelection ? (["selection"] as const) : []),
-                  ...(fullExport ? (["full"] as const) : []),
+                  // 調査バンドルは在グリッドの取得済み行のスナップショットなので、
+                  // 全件 (再実行) スコープは出さない。
+                  ...(fullExport && !isBundle ? (["full"] as const) : []),
                 ] as const
               ).map((sc) => (
                 <chakra.label key={sc} display="inline-flex" alignItems="flex-start" gap="2" cursor="pointer" userSelect="none">
@@ -430,7 +595,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             {t("exportFullProgress", { rows: status.rows })}
           </chakra.div>
         )}
-        {partial && scope === "current" && (
+        {partial && (scope === "current" || (isBundle && scope === "full")) && (
           <chakra.div
             role="status"
             py="2" px="2.5"
@@ -451,9 +616,19 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             role="radiogroup"
             aria-label={t("exportFormat")}
             display="flex"
+            flexWrap="wrap"
             gap="2"
           >
-            {(["json", "csv", "ndjson", "markdown", "sql"] as const).map((fmt) => (
+            {(
+              [
+                "json",
+                "csv",
+                "ndjson",
+                "markdown",
+                "sql",
+                ...(bundle ? (["bundle"] as const) : []),
+              ] as const
+            ).map((fmt) => (
               <chakra.label
                 key={fmt}
                 display="inline-flex"
@@ -472,12 +647,18 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                   name="export-format"
                   value={fmt}
                   checked={format === fmt}
-                  onChange={() => setFormat(fmt)}
+                  onChange={() => {
+                    setFormat(fmt);
+                    // バンドルに全件スコープは無いので、グリッドのみへ寄せる。
+                    if (fmt === "bundle" && scope === "full") setScope("current");
+                  }}
                   disabled={isSaving}
                   m={0}
                 />
                 <span>
-                  {fmt === "csv"
+                  {fmt === "bundle"
+                    ? t("exportFormatBundle")
+                    : fmt === "csv"
                     ? t("exportFormatCsv")
                     : fmt === "ndjson"
                       ? t("exportFormatNdjson")
@@ -540,6 +721,68 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             </motion.div>
           )}
         </AnimatePresence>
+
+        {isBundle && (
+          <FormSection>
+            <FieldLabel as="div">{t("exportBundleOptions")}</FieldLabel>
+            {/* 保存前にデータの持ち出しを件数付きで明示する (#745)。 */}
+            <chakra.div
+              role="note"
+              data-testid="export-bundle-warning"
+              py="2" px="2.5"
+              border="1px solid"
+              borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
+              bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
+              color="app.text"
+              borderRadius="md"
+              fontSize="sm"
+              lineHeight={1.5}
+              display="flex"
+              flexDirection="column"
+              gap="1"
+            >
+              <chakra.span>
+                {t("exportBundleDataWarning", { rows: effectiveRows.length, cols: effectiveColumns.length })}
+              </chakra.span>
+              <chakra.span>
+                {bundleMaskedNames.length > 0
+                  ? t("exportBundleMasked", { count: bundleMaskedNames.length, names: bundleMaskedNames.join(", ") })
+                  : t("exportBundleNoMasked")}
+              </chakra.span>
+              <chakra.span color="app.textMuted">{t("exportBundleNoSecrets")}</chakra.span>
+            </chakra.div>
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
+                <Checkbox
+                  checked={bundleHost}
+                  onChange={(e) => setBundleHost(e.target.checked)}
+                  disabled={isSaving || !bundle?.host}
+                />
+                <span>{t("exportBundleIncludeHost")}</span>
+              </chakra.label>
+              {canBundleSchema && (
+                <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
+                  <Checkbox
+                    checked={bundleSchema}
+                    onChange={(e) => setBundleSchema(e.target.checked)}
+                    disabled={isSaving}
+                  />
+                  <span>{t("exportBundleIncludeSchema")}</span>
+                </chakra.label>
+              )}
+              {canBundlePlan && (
+                <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
+                  <Checkbox
+                    checked={bundlePlan}
+                    onChange={(e) => setBundlePlan(e.target.checked)}
+                    disabled={isSaving}
+                  />
+                  <span>{t("exportBundleIncludePlan")}</span>
+                </chakra.label>
+              )}
+            </chakra.div>
+          </FormSection>
+        )}
 
         <FormSection>
           <FieldLabel htmlFor="export-path">{t("exportSavePath")}</FieldLabel>

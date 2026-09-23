@@ -141,6 +141,33 @@ pub fn delete_ssh_jump_password(profile_id: &str) -> Result<()> {
     delete_secret(profile_id, "ssh_password_hop0")
 }
 
+/// keyring に置く秘密の kind 文字列の全件 (#710 の暗号化バックアップが
+/// プロファイルごとに列挙して読み書きする)。新しい秘密の種類を足すときはここと
+/// `commands::profiles::SecretKind` / フロントの `ProfileSecretKind` /
+/// `backup::BackupSecrets` を揃えること。
+pub const ALL_KINDS: [&str; 5] = [
+    "db_password",
+    "ssh_passphrase",
+    "ssh_password",
+    "ssh_passphrase_hop0",
+    "ssh_password_hop0",
+];
+
+/// kind 文字列で秘密を読む (#710)。値はログに出さない。
+pub fn get_kind(profile_id: &str, kind: &str) -> Result<Option<String>> {
+    get_secret(profile_id, kind)
+}
+
+/// kind 文字列で秘密を書く (#710)。
+pub fn set_kind(profile_id: &str, kind: &str, value: &str) -> Result<()> {
+    set_secret(profile_id, kind, value)
+}
+
+/// kind 文字列で秘密を消す (#710)。未登録は成功扱い。
+pub fn delete_kind(profile_id: &str, kind: &str) -> Result<()> {
+    delete_secret(profile_id, kind)
+}
+
 pub fn delete_all(profile_id: &str) -> Result<()> {
     delete_db_password(profile_id)?;
     delete_ssh_passphrase(profile_id)?;
