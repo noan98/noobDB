@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { api, type DriverKind, type TableColumnInfo } from "../api/tauri";
 import {
   buildAlterPlan,
+  supportsComments,
   type AlterStatement,
   type ExistingColumnBaseline,
   type ExistingColumnEdit,
@@ -68,6 +69,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   const [existing, setExisting] = useState<ExistingColumnEdit[]>([]);
   const [added, setAdded] = useState<AddedColumnRow[]>([]);
   const [indexes, setIndexes] = useState<IndexRow[]>([]);
+  // テーブルコメント (#1002)。`before` は DB の現状、`after` は入力値。
+  const [tableComment, setTableComment] = useState({ before: "", after: "" });
+  const commentsSupported = supportsComments(driver);
   // `added`/`indexes` 行の React key を配列インデックスに頼らないための採番。
   const rowIdCounter = useRef(0);
   const nextRowId = () => `row${++rowIdCounter.current}`;
@@ -76,16 +80,23 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    api
-      .describeTable(sessionId, database, table)
-      .then((cols: TableColumnInfo[]) => {
+    // テーブルコメントは装飾的な付随情報なので、取得に失敗しても列編集は続行する
+    // (コメント非対応の SQLite では問い合わせない)。
+    const commentsPromise = supportsComments(driver)
+      ? api.listTableComments(sessionId, database).catch(() => [])
+      : Promise.resolve([]);
+    Promise.all([api.describeTable(sessionId, database, table), commentsPromise])
+      .then(([cols, tableComments]: [TableColumnInfo[], { name: string; comment: string }[]]) => {
         if (cancelled) return;
+        const current = tableComments.find((c) => c.name === table)?.comment ?? "";
+        setTableComment({ before: current, after: current });
         const base: ExistingColumnBaseline[] = cols.map((c) => ({
           name: c.name,
           type: c.data_type,
           notNull: !c.nullable,
           defaultValue: c.default ?? "",
           extra: c.extra,
+          comment: c.comment ?? "",
         }));
         setBaseline(base);
         setExisting(
@@ -96,6 +107,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             type: b.type,
             notNull: b.notNull,
             defaultValue: b.defaultValue,
+            comment: b.comment ?? "",
           })),
         );
         setLoading(false);
@@ -108,7 +120,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, table]);
+  }, [sessionId, driver, database, table]);
 
   const setExistingAt = (i: number, patch: Partial<ExistingColumnEdit>) =>
     setExisting((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -156,8 +168,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         // id は React key 専用のローカル state なので、純ロジックへ渡す前に取り除く。
         added: added.map((r) => ({ name: r.name, type: r.type, notNull: r.notNull, defaultValue: r.defaultValue })),
         indexes: indexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
+        tableComment,
       }),
-    [driver, database, table, baseline, existing, added, indexes],
+    [driver, database, table, baseline, existing, added, indexes, tableComment],
   );
   const statements = plan.statements;
   const unsupported = plan.unsupported;
@@ -207,6 +220,22 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               transition={transitions.crossfade}
               style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
             >
+            <FormSection>
+              <FieldLabel htmlFor="alter-table-comment">{t("alterTableTableComment")}</FieldLabel>
+              <Input
+                id="alter-table-comment"
+                value={tableComment.after}
+                onChange={(e) => setTableComment((c) => ({ ...c, after: e.target.value }))}
+                placeholder={commentsSupported ? t("alterTableCommentPlaceholder") : undefined}
+                disabled={!commentsSupported}
+              />
+              {!commentsSupported && (
+                <chakra.span fontSize="xs" color="app.textMuted">
+                  {t("alterTableCommentUnsupported")}
+                </chakra.span>
+              )}
+            </FormSection>
+
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel as="div">{t("alterTableExistingSection")}</FieldLabel>
               {driver === "mysql" && (
@@ -216,7 +245,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               )}
               <chakra.div
                 display="grid"
-                gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr auto"
+                gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr 1.2fr auto"
                 gap="1.5"
                 textStyle="overline"
                 px="0.5"
@@ -227,13 +256,14 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                 <span>{t("createTableColNotNull")}</span>
                 <span />
                 <span>{t("createTableColDefault")}</span>
+                <span>{t("alterTableColComment")}</span>
                 <span />
               </chakra.div>
               {existing.map((row, i) => (
                 <chakra.div
                   key={row.original}
                   display="grid"
-                  gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr auto"
+                  gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr 1.2fr auto"
                   gap="1.5"
                   alignItems="center"
                   opacity={row.drop ? 0.5 : 1}
@@ -263,6 +293,13 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                     onChange={(e) => setExistingAt(i, { defaultValue: e.target.value })}
                     placeholder={t("createTableColDefault")}
                     disabled={row.drop}
+                  />
+                  <Input
+                    value={row.comment ?? ""}
+                    onChange={(e) => setExistingAt(i, { comment: e.target.value })}
+                    placeholder={commentsSupported ? t("alterTableColComment") : undefined}
+                    disabled={row.drop || !commentsSupported}
+                    aria-label={t("alterTableColCommentAria", { column: row.original })}
                   />
                   <Tooltip label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}>
                     <chakra.button

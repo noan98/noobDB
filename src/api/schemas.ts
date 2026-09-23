@@ -44,6 +44,14 @@ export const tableColumnInfo = z.object({
   extra: z.string(),
   referenced_table: z.string().nullable(),
   referenced_column: z.string().nullable(),
+  /** 列コメント (#1002)。古いバックエンドは送らないので省略可能 (後方互換)。 */
+  comment: z.string().nullable().optional(),
+});
+
+/** テーブルコメント 1 件 (#1002、`list_table_comments`)。 */
+export const tableComment = z.object({
+  name: z.string(),
+  comment: z.string(),
 });
 
 export const tableSchema = z.object({
@@ -575,6 +583,7 @@ export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const tableCommentArray = z.array(tableComment);
 export const tableSizeInfoArray = z.array(tableSizeInfo);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);

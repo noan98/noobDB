@@ -1142,6 +1142,45 @@ async fn duckdb_native_dump_roundtrips_into_fresh_file() {
 }
 
 #[tokio::test]
+async fn duckdb_table_and_column_comments_round_trip() {
+    // #1002: COMMENT ON で付けたコメントが describe (columns) と table_comments に
+    // 出る。コメントの無い列は None。
+    let path = temp_db_path("comments");
+    create_empty_db(&path);
+    let opts = t::duckdb_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, qty INTEGER)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("COMMENT ON TABLE items IS '商品'", None)
+        .await
+        .expect("comment table");
+    conn.execute("COMMENT ON COLUMN items.qty IS 'it''s qty'", None)
+        .await
+        .expect("comment column");
+
+    let cols = conn.columns("main", "items").await.expect("columns");
+    let qty = cols.iter().find(|c| c.name == "qty").expect("qty");
+    assert_eq!(qty.comment.as_deref(), Some("it's qty"));
+    let id = cols.iter().find(|c| c.name == "id").expect("id");
+    assert_eq!(id.comment, None);
+
+    let tables = conn.table_comments("main").await.expect("table comments");
+    assert!(
+        tables
+            .iter()
+            .any(|c| c.name == "items" && c.comment == "商品"),
+        "{tables:?}"
+    );
+
+    conn.close().await;
+    remove_db_files(&path);
+}
+
+#[tokio::test]
 async fn duckdb_table_definition_returns_native_ddl() {
     // #1001: kind="table" は duckdb_tables().sql のネイティブ DDL に、ユーザ作成
     // インデックス (duckdb_indexes().sql) をベストエフォートで後置して返す。

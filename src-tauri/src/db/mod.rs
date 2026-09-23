@@ -32,8 +32,8 @@ use advisor::UnusedIndexStats;
 use types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
     ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-    StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema,
-    TableSizeInfo, UserPrivileges, Value,
+    StatementStat, StreamBatch, TableColumnInfo, TableComment, TableRowEstimate, TableRowIdentity,
+    TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use upsert::ImportConflict;
 
@@ -984,6 +984,18 @@ impl Connection {
             Connection::Sqlite(c) => c.table_row_estimates(db).await,
             Connection::DuckDb(c) => c.table_row_estimates(db).await,
             Connection::Mssql(c) => c.table_row_estimates(db).await,
+        }
+    }
+
+    /// テーブル / ビューのコメント (#1002)。コメントを持つものだけを返す。
+    /// SQLite はコメント機能を持たないので常に空。
+    pub async fn table_comments(&self, db: &str) -> Result<Vec<TableComment>> {
+        match self {
+            Connection::MySql(c) => c.table_comments(db).await,
+            Connection::Postgres(c) => c.table_comments(db).await,
+            Connection::Sqlite(_) => Ok(Vec::new()),
+            Connection::DuckDb(c) => c.table_comments(db).await,
+            Connection::Mssql(c) => c.table_comments(db).await,
         }
     }
 
@@ -1953,6 +1965,17 @@ pub fn sql_may_change_schema(driver: DriverKind, sql: &str) -> bool {
     let masked = mask_for_driver(driver, &orig);
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     ["create", "alter", "drop", "truncate", "rename"]
+        .iter()
+        .any(|kw| contains_word(&masked_lower, kw))
+        // コメント編集 (#1002): PostgreSQL / DuckDB の `COMMENT ON ...` と MSSQL の
+        // 拡張プロパティ手続きは上のキーワードを含まないが、`describe_table` が
+        // 返す列コメントを変えるのでスキーマキャッシュを無効化する必要がある。
+        || contains_word_phrase(&masked_lower, "comment on")
+        || [
+            "sp_addextendedproperty",
+            "sp_updateextendedproperty",
+            "sp_dropextendedproperty",
+        ]
         .iter()
         .any(|kw| contains_word(&masked_lower, kw))
 }
@@ -3497,6 +3520,28 @@ mod tests {
         assert!(sql_may_change_schema(
             DriverKind::Mysql,
             "SELECT 1; ALTER TABLE t ADD COLUMN c INT"
+        ));
+    }
+
+    /// コメント編集 (#1002) もスキーマキャッシュを無効化する。`comment` という
+    /// 列名を読むだけの SELECT は対象外。
+    #[test]
+    fn sql_may_change_schema_detects_comment_edits() {
+        assert!(sql_may_change_schema(
+            DriverKind::Postgres,
+            "COMMENT ON COLUMN \"public\".\"t\".\"c\" IS 'x'"
+        ));
+        assert!(sql_may_change_schema(
+            DriverKind::DuckDb,
+            "comment on table t is null"
+        ));
+        assert!(sql_may_change_schema(
+            DriverKind::Mssql,
+            "EXEC sp_addextendedproperty @name = N'MS_Description', @value = N'x'"
+        ));
+        assert!(!sql_may_change_schema(
+            DriverKind::Postgres,
+            "SELECT comment FROM notes WHERE comment <> ''"
         ));
     }
 

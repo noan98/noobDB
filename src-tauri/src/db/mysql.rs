@@ -6,6 +6,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
@@ -1225,7 +1226,8 @@ impl MySqlConn {
                      AND k.COLUMN_NAME = c.COLUMN_NAME
                      AND k.REFERENCED_TABLE_NAME IS NOT NULL
                    ORDER BY k.ORDINAL_POSITION
-                   LIMIT 1) AS REFERENCED_COLUMN_NAME
+                   LIMIT 1) AS REFERENCED_COLUMN_NAME,
+                 c.COLUMN_COMMENT
                FROM information_schema.COLUMNS c
                WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
                ORDER BY c.ORDINAL_POSITION"#,
@@ -1249,6 +1251,36 @@ impl MySqlConn {
                 extra: r.try_get::<String, _>(5).unwrap_or_default(),
                 referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
                 referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
+                // #1002: コメント無しは空文字で返るので None にそろえる。
+                comment: non_empty_comment(r.try_get::<Option<String>, _>(8).ok().flatten()),
+            })
+            .collect())
+    }
+
+    /// テーブル / ビューのコメント (#1002)。`TABLE_COMMENT` はビューに対して
+    /// 固定文字列 `VIEW` を返すため、基底テーブルだけを対象にする。
+    pub async fn table_comments(&self, db: &str) -> Result<Vec<TableComment>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' AND TABLE_COMMENT <> '' \
+             ORDER BY TABLE_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                // サーバ版によって information_schema の列が文字列 / バイナリの
+                // どちらで届くか揺れるため、両方を試す。
+                let text = |i: usize| {
+                    r.try_get::<String, _>(i)
+                        .ok()
+                        .or_else(|| decode_text_col(r, i).ok())
+                };
+                let name = text(0)?;
+                let comment = non_empty_comment(text(1))?;
+                Some(TableComment { name, comment })
             })
             .collect())
     }

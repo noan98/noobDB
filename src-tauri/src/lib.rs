@@ -38,8 +38,9 @@ pub mod __test_api {
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
         ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
-        TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableComment,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -830,6 +831,7 @@ pub fn run() {
             commands::schema::list_schema_objects,
             commands::schema::get_object_definition,
             commands::schema::table_row_estimates,
+            commands::schema::list_table_comments,
             commands::schema::table_sizes,
             commands::server::server_info,
             commands::server::server_metrics,

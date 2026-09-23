@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::db::types::{
-    ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo,
+    ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableComment, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo,
 };
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -182,6 +182,23 @@ pub async fn table_row_estimates(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.table_row_estimates(&database).await
+}
+
+/// DB 内のテーブル (とビュー) のコメント一覧を返す (#1002)。コメントを持つもの
+/// だけ。SQLite はコメント機能が無いので常に空。カタログを読むだけの読み取り
+/// 操作なので read_only でも許可する。コメント編集直後に古い値を見せないよう、
+/// `table_row_estimates` と同じくキャッシュを経由しない。
+#[tauri::command]
+pub async fn list_table_comments(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableComment>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.table_comments(&database).await
 }
 
 /// テーブルごとのサイズ・統計 (行数・データ/インデックス/合計サイズ) を返す。

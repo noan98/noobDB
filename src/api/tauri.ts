@@ -392,6 +392,12 @@ export interface TableColumnInfo {
   referenced_table: string | null;
   /** Referenced column for the foreign key, when known. */
   referenced_column: string | null;
+  /**
+   * 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description` /
+   * MSSQL `MS_Description` / DuckDB `duckdb_columns().comment`。無い・SQLite は
+   * `null`。古いバックエンドは送らないので省略可能 (後方互換)。
+   */
+  comment?: string | null;
 }
 
 /** One table (or view) and its column names, for whole-schema autocomplete. */
@@ -462,6 +468,12 @@ export interface ForeignKey {
 export interface TableRowEstimate {
   name: string;
   estimate: number | null;
+}
+
+/** テーブル (またはビュー) のコメント 1 件 (#1002)。コメントを持つものだけが返る。 */
+export interface TableComment {
+  name: string;
+  comment: string;
 }
 
 /**
@@ -1413,6 +1425,11 @@ export const api = {
   tableRowEstimates: (sessionId: string, database: string) =>
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
       (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
+    ),
+  /** DB 内のテーブルコメント一覧 (#1002)。コメントを持つテーブルだけ。SQLite は常に空。 */
+  listTableComments: (sessionId: string, database: string) =>
+    invoke<TableComment[]>("list_table_comments", { sessionId, database }).then((r) =>
+      parseResponse(schemas.tableCommentArray, r, "list_table_comments"),
     ),
   /** テーブルごとのサイズ・統計を取得する (サイズダッシュボード #562)。 */
   tableSizes: (sessionId: string, database: string) =>

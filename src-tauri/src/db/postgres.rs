@@ -7,6 +7,7 @@ use sqlx::postgres::{
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
@@ -922,7 +923,14 @@ impl PostgresConn {
                 fk.ref_column,
                 c.character_maximum_length,
                 c.numeric_precision,
-                c.numeric_scale
+                c.numeric_scale,
+                (SELECT pg_catalog.col_description(a.attrelid, a.attnum)
+                   FROM pg_catalog.pg_attribute a
+                   JOIN pg_catalog.pg_class cl ON cl.oid = a.attrelid
+                   JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace
+                  WHERE ns.nspname = c.table_schema
+                    AND cl.relname = c.table_name
+                    AND a.attname = c.column_name) AS column_comment
               FROM information_schema.columns c
               LEFT JOIN (
                 SELECT kcu.column_name
@@ -985,7 +993,34 @@ impl PostgresConn {
                     extra: r.try_get::<String, _>(5).unwrap_or_default(),
                     referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
                     referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
+                    // #1002: `COMMENT ON COLUMN` の値 (`col_description`)。
+                    comment: non_empty_comment(r.try_get::<Option<String>, _>(11).ok().flatten()),
                 }
+            })
+            .collect())
+    }
+
+    /// テーブル / ビュー / マテビュー / 外部テーブルのコメント (#1002)。
+    /// `COMMENT ON TABLE|VIEW ...` の値 (`obj_description(oid, 'pg_class')`)。
+    pub async fn table_comments(&self, schema: &str) -> Result<Vec<TableComment>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT c.relname, pg_catalog.obj_description(c.oid, 'pg_class')
+               FROM pg_catalog.pg_class c
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = $1
+                 AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                 AND pg_catalog.obj_description(c.oid, 'pg_class') IS NOT NULL
+               ORDER BY c.relname"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let name = r.try_get::<String, _>(0).ok()?;
+                let comment = non_empty_comment(r.try_get::<Option<String>, _>(1).ok().flatten())?;
+                Some(TableComment { name, comment })
             })
             .collect())
     }

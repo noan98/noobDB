@@ -44,6 +44,7 @@ type AnyObjectSchema = z.ZodObject<z.ZodRawShape>;
 const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["queryResult", schemas.queryResult],
   ["tableColumnInfo", schemas.tableColumnInfo],
+  ["tableComment", schemas.tableComment],
   ["tableSchema", schemas.tableSchema],
   ["foreignKey", schemas.foreignKey],
   ["indexInfo", schemas.indexInfo],

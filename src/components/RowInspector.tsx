@@ -10,6 +10,7 @@ import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
 import type { CellKind } from "./cellTypeMeta";
 import { Tooltip } from "./Tooltip";
+import { withComment } from "./schemaComment";
 import { MASK_PLACEHOLDER } from "./columnMask";
 import { RelatedRowsPanel } from "./RelatedRowsPanel";
 import { Segmented } from "./Segmented";
@@ -30,6 +31,8 @@ export interface RowInspectorRelated {
 interface Props {
   /** Column metadata (names) for the inspected row. */
   columns: Column[];
+  /** 列コメント (#1002)。`columns` と同じ並び。無い列は `null`、未指定なら表示しない。 */
+  comments?: (string | null)[];
   /** The row's raw cell values (original column order). */
   values: CellValue[];
   /** Per-column classified kinds (for NULL/BLOB/JSON aware rendering). */
@@ -73,6 +76,7 @@ const MotionDrawer = chakra(motion.div, {}, { forwardProps: ["transition"] });
  */
 export function RowInspector({
   columns,
+  comments,
   values,
   columnKinds,
   maskedColumns,
@@ -248,6 +252,7 @@ export function RowInspector({
               const json = !isNull && !isBinary ? tryFormatJson(String(v)) : null;
               const display = json ?? raw;
               const masked = !!maskedColumns?.[i];
+              const comment = comments?.[i] ?? null;
               return (
                 <Box
                   key={`${col.name}-${i}`}
@@ -259,7 +264,7 @@ export function RowInspector({
                   borderColor="app.borderSubtle"
                 >
                   <Box display="flex" alignItems="center" gap="1.5">
-                    <Tooltip label={`${col.name} — ${col.type_name}`}>
+                    <Tooltip label={withComment(`${col.name} — ${col.type_name}`, comment)}>
                       <chakra.span
                         flex="1"
                         fontSize="xs"
@@ -299,6 +304,11 @@ export function RowInspector({
                       </chakra.button>
                     </Tooltip>
                   </Box>
+                  {comment && (
+                    <chakra.span fontSize="xs" color="app.textSecondary" wordBreak="break-word">
+                      {comment}
+                    </chakra.span>
+                  )}
                   {masked ? (
                     <chakra.span
                       fontSize="sm"

@@ -48,6 +48,7 @@ use std::sync::Mutex as StdMutex;
 use duckdb::types::{Type as DuckType, Value as DuckValue};
 
 use super::advisor::UnusedIndexStats;
+use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
@@ -749,6 +750,26 @@ impl DuckDbConn {
             for fk in fks {
                 fk_by_col.insert(fk.column, (fk.referenced_table, fk.referenced_column));
             }
+            // #1002: 列コメント (`COMMENT ON COLUMN`) は `duckdb_columns().comment`。
+            // コメント列は DuckDB 0.10.1 以降にしか無いため、失敗したら「コメント
+            // 無し」に縮退する (列一覧そのものは失敗させない)。
+            let mut comment_by_col: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT column_name, comment FROM duckdb_columns() \
+                 WHERE schema_name = ? AND table_name = ?",
+            ) {
+                if let Ok(mut rows) = stmt.query(duckdb::params![db, table]) {
+                    while let Ok(Some(row)) = rows.next() {
+                        let name: Option<String> = row.get(0).ok();
+                        let comment =
+                            non_empty_comment(row.get::<_, Option<String>>(1).ok().flatten());
+                        if let (Some(name), Some(comment)) = (name, comment) {
+                            comment_by_col.insert(name, comment);
+                        }
+                    }
+                }
+            }
 
             let mut stmt = conn.prepare(
                 "SELECT column_name, data_type, is_nullable, column_default \
@@ -768,6 +789,7 @@ impl DuckDbConn {
                     None => (None, None),
                 };
                 out.push(TableColumnInfo {
+                    comment: comment_by_col.get(&name).cloned(),
                     key: if pk_cols.contains(&name) {
                         "PRI".into()
                     } else {
@@ -917,6 +939,37 @@ impl DuckDbConn {
             sql.ok_or_else(|| {
                 AppError::InvalidInput(format!("no definition found for view '{name}'"))
             })
+        })
+        .await
+    }
+
+    /// テーブル / ビューのコメント (#1002)。`duckdb_tables().comment` /
+    /// `duckdb_views().comment` (0.10.1 以降)。古い版ではコメント列が無いので
+    /// 空一覧に縮退する。
+    pub async fn table_comments(&self, db: &str) -> Result<Vec<TableComment>> {
+        let conn = self.clone_conn()?;
+        let db = db.to_string();
+        run_blocking(move || -> Result<Vec<TableComment>> {
+            let mut out = Vec::new();
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT table_name, comment FROM duckdb_tables() WHERE schema_name = ? \
+                 UNION ALL \
+                 SELECT view_name, comment FROM duckdb_views() WHERE schema_name = ? \
+                 ORDER BY 1",
+            ) else {
+                return Ok(out);
+            };
+            let Ok(mut rows) = stmt.query(duckdb::params![db, db]) else {
+                return Ok(out);
+            };
+            while let Ok(Some(row)) = rows.next() {
+                let name: Option<String> = row.get(0).ok();
+                let comment = non_empty_comment(row.get::<_, Option<String>>(1).ok().flatten());
+                if let (Some(name), Some(comment)) = (name, comment) {
+                    out.push(TableComment { name, comment });
+                }
+            }
+            Ok(out)
         })
         .await
     }

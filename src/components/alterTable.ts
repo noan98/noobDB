@@ -15,15 +15,24 @@
 // 保持しているため、MySQL の `MODIFY`/`CHANGE COLUMN` が要求するそれらのフル指定を
 // 毎回自然に満たせる。ただし MySQL の `extra` (`auto_increment`・
 // `on update CURRENT_TIMESTAMP` 等、`information_schema.COLUMNS.EXTRA` 由来) は
-// `CHANGE COLUMN` 実行時に baseline の値を逐語で付け足して保持するが、それ以外の
-// 付随属性 (文字セット/照合順序・`COMMENT`・生成列式など。`describeTable` が
-// そもそも取得しない) は保持できない — フル対応ではなく最小対応であることに注意。
+// `CHANGE COLUMN` 実行時に baseline の値を逐語で付け足して保持する。列コメント
+// (`COMMENT`) も #1002 で `describeTable` が取得するようになったので、`CHANGE
+// COLUMN` で列を再定義するときは baseline (または編集後) のコメントを付け足して
+// 保持する。それ以外の付随属性 (文字セット/照合順序・生成列式など。`describeTable`
+// がそもそも取得しない) は保持できない — フル対応ではなく最小対応であることに注意。
+//
+// テーブル / 列コメントの編集 (#1002) もここで方言別に組み立てる:
+// MySQL は `ALTER TABLE ... COMMENT = '...'` と列の再定義 (`CHANGE COLUMN ...
+// COMMENT '...'`)、PostgreSQL / DuckDB は `COMMENT ON TABLE|COLUMN ... IS ...`、
+// MSSQL は拡張プロパティ `MS_Description` (`sp_add/update/dropextendedproperty`)。
+// SQLite はコメント機能を持たないので生成しない (UI 側で入力欄を無効化する)。
 //
 // 生成した文言 (未対応の変更の通知など) は理由コードのみを返し、実際の文字列化は
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import { quoteIdentFor } from "./sqlDialect";
 import { formatDefault } from "./createTable";
+import { quoteString } from "./cellEdit";
 
 /** DB から読み取った既存列の現状 (`describeTable` の結果をそのまま使う)。 */
 export interface ExistingColumnBaseline {
@@ -44,6 +53,8 @@ export interface ExistingColumnBaseline {
    * MySQL 以外では常に空文字で無視される。
    */
   extra: string;
+  /** 列コメント (#1002)。無ければ空文字 / 未指定。SQLite は常に空。 */
+  comment?: string;
 }
 
 /**
@@ -61,6 +72,8 @@ export interface ExistingColumnEdit {
   notNull: boolean;
   /** 生の DEFAULT 入力。空文字は「デフォルトなし」。 */
   defaultValue: string;
+  /** 編集後の列コメント (#1002)。未指定なら baseline のまま (変更なし)。 */
+  comment?: string;
 }
 
 /**
@@ -89,6 +102,8 @@ export interface AlterTableForm {
   existing: ExistingColumnEdit[];
   added: NewColumn[];
   indexes: IndexDef[];
+  /** テーブルコメントの編集 (#1002)。`before` は DB の現状、`after` は入力値。 */
+  tableComment?: { before: string; after: string };
 }
 
 export type AlterStatementKind =
@@ -96,7 +111,8 @@ export type AlterStatementKind =
   | "renameColumn"
   | "modifyColumn"
   | "dropColumn"
-  | "createIndex";
+  | "createIndex"
+  | "comment";
 
 export interface AlterStatement {
   sql: string;
@@ -117,6 +133,82 @@ export interface UnsupportedChange {
 export interface AlterPlan {
   statements: AlterStatement[];
   unsupported: UnsupportedChange[];
+}
+
+/**
+ * テーブル / 列コメントの編集に対応するドライバか (#1002)。SQLite はコメント機能を
+ * 持たない (DDL 中の `--` コメントは保持されるが、カタログとして読み書きできない)
+ * ため非対応で、UI はコメント欄を無効化して理由を表示する。
+ */
+export function supportsComments(driver: string): boolean {
+  return driver === "mysql" || driver === "postgres" || driver === "duckdb" || driver === "mssql";
+}
+
+/** MSSQL の拡張プロパティ `MS_Description` を付け替える `EXEC` 文 (#1002)。
+ *  既存値の有無で add / update / drop を選ぶ。スキーマは introspection と同じ `dbo`。 */
+function mssqlDescriptionSql(table: string, column: string | null, before: string, after: string): string | null {
+  const hadBefore = before.trim() !== "";
+  const hasAfter = after.trim() !== "";
+  if (!hadBefore && !hasAfter) return null;
+  const proc = !hasAfter
+    ? "sp_dropextendedproperty"
+    : hadBefore
+      ? "sp_updateextendedproperty"
+      : "sp_addextendedproperty";
+  const args = [`@name = N'MS_Description'`];
+  if (hasAfter) args.push(`@value = ${quoteString("mssql", after)}`);
+  args.push(
+    `@level0type = N'SCHEMA'`,
+    `@level0name = N'dbo'`,
+    `@level1type = N'TABLE'`,
+    `@level1name = ${quoteString("mssql", table)}`,
+  );
+  if (column !== null) {
+    args.push(`@level2type = N'COLUMN'`, `@level2name = ${quoteString("mssql", column)}`);
+  }
+  return `EXEC ${proc} ${args.join(", ")};`;
+}
+
+/** `COMMENT ON ... IS ...` の右辺 (空文字はコメント削除 = `NULL`)。 */
+function commentOnValue(driver: string, value: string): string {
+  return value.trim() === "" ? "NULL" : quoteString(driver, value);
+}
+
+/**
+ * テーブルコメントの変更文 (#1002)。変更が無い / 非対応ドライバなら null。
+ * `table` はクオート前のテーブル名 (MSSQL の拡張プロパティ用)。
+ */
+function tableCommentSql(
+  driver: string,
+  tIdent: string,
+  table: string,
+  before: string,
+  after: string,
+): string | null {
+  if (!supportsComments(driver) || before === after) return null;
+  if (driver === "mysql") return `ALTER TABLE ${tIdent} COMMENT = ${quoteString(driver, after)};`;
+  if (driver === "mssql") return mssqlDescriptionSql(table, null, before, after);
+  return `COMMENT ON TABLE ${tIdent} IS ${commentOnValue(driver, after)};`;
+}
+
+/**
+ * 列コメントの変更文 (PostgreSQL / DuckDB / MSSQL、#1002)。MySQL は列の再定義に
+ * 含めるのでここでは扱わない。`column` はリネーム後の列名。
+ */
+function columnCommentSql(
+  driver: string,
+  tIdent: string,
+  table: string,
+  column: string,
+  before: string,
+  after: string,
+): string | null {
+  if (before === after) return null;
+  if (driver === "mssql") return mssqlDescriptionSql(table, column, before, after);
+  if (driver === "postgres" || driver === "duckdb") {
+    return `COMMENT ON COLUMN ${tIdent}.${quoteIdentFor(driver, column)} IS ${commentOnValue(driver, after)};`;
+  }
+  return null;
 }
 
 /** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。`tableMaintenance.ts` /
@@ -152,6 +244,7 @@ function formatDefaultForEdit(driver: string, raw: string): string | null {
 function planExistingColumn(
   driver: string,
   tIdent: string,
+  table: string,
   baseline: ExistingColumnBaseline,
   edit: ExistingColumnEdit,
   statements: AlterStatement[],
@@ -176,14 +269,18 @@ function planExistingColumn(
   const nullChanged = edit.notNull !== baseline.notNull;
   const defaultChanged = edit.defaultValue.trim() !== baseline.defaultValue.trim();
   const facetsChanged = typeChanged || nullChanged || defaultChanged;
+  // コメント (#1002)。SQLite は非対応なので常に「変更なし」扱い。
+  const beforeComment = baseline.comment ?? "";
+  const afterComment = supportsComments(driver) ? (edit.comment ?? beforeComment) : beforeComment;
+  const commentChanged = afterComment !== beforeComment;
 
-  if (!renamed && !facetsChanged) return;
+  if (!renamed && !facetsChanged && !commentChanged) return;
 
   const oldIdent = quoteIdentFor(driver, baseline.name);
   const newIdent = quoteIdentFor(driver, newName);
 
   if (driver === "mysql") {
-    if (renamed && !facetsChanged) {
+    if (renamed && !facetsChanged && !commentChanged) {
       statements.push({
         sql: `ALTER TABLE ${tIdent} RENAME COLUMN ${oldIdent} TO ${newIdent};`,
         kind: "renameColumn",
@@ -203,13 +300,28 @@ function planExistingColumn(
     // CHANGE COLUMN で AUTO_INCREMENT 等が黙って消えてしまう
     // (`db/sync.rs::column_def` と同じ方針)。
     if (baseline.extra.trim()) parts.push(baseline.extra.trim());
+    // 列コメントも CHANGE COLUMN の再定義で消えるので、編集後 (未編集なら
+    // baseline) の値を付け足して保持する (#1002)。空へ変更したときだけ明示的に
+    // `COMMENT ''` を書いて削除する。
+    if (afterComment !== "" || commentChanged) {
+      parts.push(`COMMENT ${quoteString(driver, afterComment)}`);
+    }
     statements.push({
       sql: `ALTER TABLE ${tIdent} CHANGE COLUMN ${oldIdent} ${parts.join(" ")};`,
-      kind: renamed ? "renameColumn" : "modifyColumn",
+      kind: renamed ? "renameColumn" : facetsChanged ? "modifyColumn" : "comment",
       destructive: false,
     });
     return;
   }
+
+  // PostgreSQL / DuckDB / MSSQL の列コメントは独立した文なので、他の変更
+  // (リネーム含む) の後にリネーム後の列名で付け替える。
+  const pushColumnComment = () => {
+    const sql = commentChanged
+      ? columnCommentSql(driver, tIdent, table, newName, beforeComment, afterComment)
+      : null;
+    if (sql) statements.push({ sql, kind: "comment", destructive: false });
+  };
 
   if (driver === "postgres") {
     if (renamed) {
@@ -242,6 +354,7 @@ function planExistingColumn(
           : `ALTER TABLE ${tIdent} ALTER COLUMN ${newIdent} DROP DEFAULT;`;
       statements.push({ sql, kind: "modifyColumn", destructive: false });
     }
+    pushColumnComment();
     return;
   }
 
@@ -257,12 +370,15 @@ function planExistingColumn(
   if (typeChanged || nullChanged || defaultChanged) {
     unsupported.push({ column: baseline.name, reason: "sqliteInPlaceModify" });
   }
+  pushColumnComment();
 }
 
 const STATEMENT_ORDER: Record<AlterStatementKind, number> = {
   addColumn: 0,
   renameColumn: 1,
   modifyColumn: 1,
+  // コメントは列のリネーム/変更と同じ段 (安定ソートで生成順 = リネームの後を保つ)。
+  comment: 1,
   dropColumn: 2,
   createIndex: 3,
 };
@@ -291,7 +407,18 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   for (const edit of form.existing) {
     const baseline = baselineByName.get(edit.original);
     if (!baseline) continue;
-    planExistingColumn(driver, tIdent, baseline, edit, statements, unsupported);
+    planExistingColumn(driver, tIdent, form.table, baseline, edit, statements, unsupported);
+  }
+
+  if (form.tableComment) {
+    const sql = tableCommentSql(
+      driver,
+      tIdent,
+      form.table,
+      form.tableComment.before,
+      form.tableComment.after,
+    );
+    if (sql) statements.push({ sql, kind: "comment", destructive: false });
   }
 
   statements.sort((a, b) => STATEMENT_ORDER[a.kind] - STATEMENT_ORDER[b.kind]);

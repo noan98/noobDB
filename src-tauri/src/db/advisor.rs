@@ -562,6 +562,7 @@ mod tests {
             extra: String::new(),
             referenced_table: None,
             referenced_column: None,
+            comment: None,
         }
     }
 

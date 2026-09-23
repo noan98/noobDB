@@ -26,7 +26,10 @@
 
 `list_databases` / `list_tables` / `describe_table` / `table_row_identity` /
 `schema_overview` / `foreign_keys` / `list_schema_objects` / `get_object_definition` /
-`list_indexes` / `table_row_estimates` / `table_sizes`
+`list_indexes` / `table_row_estimates` / `list_table_comments` / `table_sizes`
+
+`describe_table` の各列は `comment` (列コメント) を、`list_table_comments` は
+テーブル / ビューのコメントを返す (#1002)。SQLite はコメント非対応で常に空。
 
 `get_object_definition` は `kind = "table"` でテーブルの `CREATE TABLE` DDL も返す
 (#1001)。MySQL/SQLite/DuckDB はネイティブ DDL、PostgreSQL/MSSQL は

@@ -800,6 +800,8 @@ impl SqliteConn {
                     extra: String::new(),
                     referenced_table,
                     referenced_column,
+                    // SQLite はコメント機能を持たない (#1002)。
+                    comment: None,
                 }
             })
             .collect())

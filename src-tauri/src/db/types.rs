@@ -107,6 +107,26 @@ pub struct TableColumnInfo {
     pub referenced_table: Option<String>,
     /// The referenced column for the foreign key, when the driver can resolve it.
     pub referenced_column: Option<String>,
+    /// 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description` /
+    /// MSSQL 拡張プロパティ `MS_Description` / DuckDB `duckdb_columns().comment`。
+    /// コメントが無い列と SQLite (コメント機能なし) は `None`。`#[serde(default)]`
+    /// なので、このフィールドを持たない JSON (スナップショット等) も読める。
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
+/// テーブル (またはビュー) のコメント 1 件 (#1002)。`list_table_comments` は
+/// コメントを持つものだけを返す (空コメントは含めない)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableComment {
+    pub name: String,
+    pub comment: String,
+}
+
+/// 空文字 / 空白だけのコメントを `None` に正規化する (#1002)。MySQL は
+/// コメント無しを空文字で返すため、ドライバ間で「無い」の表現をそろえる。
+pub fn non_empty_comment(s: Option<String>) -> Option<String> {
+    s.filter(|c| !c.trim().is_empty())
 }
 
 /// One foreign-key relationship within a database, used to draw the ER

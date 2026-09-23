@@ -51,7 +51,7 @@ use t::{
     ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMetrics, ServerVariable, Severity,
     SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
     SslMode, StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement,
-    TableColumnInfo, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    TableColumnInfo, TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
     Value,
 };
 
@@ -91,6 +91,11 @@ fn build_fixtures() -> serde_json::Value {
         extra: "auto_increment".into(),
         referenced_table: Some("parent".into()),
         referenced_column: Some("id".into()),
+        comment: Some("primary key".into()),
+    };
+    let table_comment = TableComment {
+        name: "users".into(),
+        comment: "registered users".into(),
     };
     let table_schema = TableSchema {
         name: "users".into(),
@@ -575,6 +580,7 @@ fn build_fixtures() -> serde_json::Value {
         "column": column,
         "queryResult": query_result,
         "tableColumnInfo": table_column_info,
+        "tableComment": table_comment,
         "tableSchema": table_schema,
         "foreignKey": foreign_key,
         "indexInfo": index_info,

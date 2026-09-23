@@ -18,6 +18,7 @@ import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
 import { isSynthesizedTableDdl } from "./tableDdl";
+import { tableCommentMap, withComment } from "./schemaComment";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
 import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
 import { DropInsertionMarker } from "./DropInsertionMarker";
@@ -426,6 +427,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const [rowEstimates, setRowEstimates] = useState<
     Record<string, Record<string, number | null>>
   >({});
+  // DB ごとのテーブルコメント (#1002)、`db -> table -> comment`。コメントを持つ
+  // テーブルだけが入る。行ツールチップに添える装飾情報なので失敗は無視する。
+  const [tableComments, setTableComments] = useState<Record<string, Record<string, string>>>({});
   const [filter, setFilter] = useState("");
   const filterInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -585,6 +589,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
       setTables((prev) => ({ ...prev, ...nextTables }));
       setRowEstimates((prev) => ({ ...prev, ...nextEstimates }));
+      for (const db of existingOpenDbs) void loadTableComments(targetSessionId, db);
       setSchemaObjects((prev) => ({ ...prev, ...nextObjects }));
       setTableColumns((prev) => ({ ...prev, ...nextCols }));
       setTableIndexes((prev) => ({ ...prev, ...nextIndexes }));
@@ -696,6 +701,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setDatabases(dbs);
       setTables(nextTables);
       setRowEstimates(nextEstimates);
+      setTableComments({});
+      for (const db of openDbs) void loadTableComments(targetSessionId, db);
       setTableColumns(nextCols);
     } catch (e) {
       // Suppress a stale session's error so it can't surface on the new one.
@@ -712,6 +719,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   useEffect(() => {
     setTables({});
     setRowEstimates({});
+    setTableComments({});
     setTableColumns({});
     setTableIndexes({});
     setSchemaObjects({});
@@ -1202,6 +1210,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   };
 
+  // テーブルコメント (#1002) をベストエフォートで取得する。SQLite は常に空。
+  // `loadRowEstimates` と同じく接続切替後の古い結果は捨てる。
+  async function loadTableComments(sid: string, db: string) {
+    try {
+      const list = await api.listTableComments(sid, db);
+      if (sessionIdRef.current !== sid) return;
+      setTableComments((prev) => ({ ...prev, [db]: tableCommentMap(list) }));
+    } catch {
+      // 装飾情報なのでツリー表示は止めない。
+    }
+  }
+
   const toggleDb = async (db: string) => {
     if (!sessionId) return;
     const isOpen = expandedDbs[db];
@@ -1223,6 +1243,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       const list = await listVisibleTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
+      void loadTableComments(sessionId, db);
       // 非テーブルのスキーマオブジェクトもベストエフォートで取得する。
       // 接続切替中に旧セッションの結果を反映しないよう sid を確認する。
       const sid = sessionId;
@@ -1812,7 +1833,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                   bg={isActiveTable ? "var(--bg-active)" : undefined}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
-                                  {...treeTooltipProps(t("treeTableTitle"))}
+                                  {...treeTooltipProps(withComment(t("treeTableTitle"), tableComments[db]?.[tbl]))}
                                   _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
                                 >
                                   {isActiveTable && (
@@ -2316,6 +2337,12 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: TooltipR
           <>
             <TooltipDt>{t("colTipExtra")}</TooltipDt>
             <TooltipDd>{col.extra}</TooltipDd>
+          </>
+        )}
+        {col.comment && col.comment.trim() !== "" && (
+          <>
+            <TooltipDt>{t("colTipComment")}</TooltipDt>
+            <TooltipDd>{col.comment}</TooltipDd>
           </>
         )}
       </chakra.dl>

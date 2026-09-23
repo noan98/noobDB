@@ -37,6 +37,7 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::advisor::UnusedIndexStats;
+use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
@@ -794,6 +795,28 @@ impl MssqlConn {
             })
             .collect();
 
+        // #1002: 列コメントは拡張プロパティ `MS_Description` (SSMS と同じ慣習)。
+        let comment_rows = rows(
+            &mut conn,
+            r#"SELECT c.name, CAST(ep.value AS nvarchar(max))
+               FROM sys.extended_properties ep
+               JOIN sys.tables t ON t.object_id = ep.major_id
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               JOIN sys.columns c ON c.object_id = ep.major_id AND c.column_id = ep.minor_id
+               WHERE ep.class = 1 AND ep.name = 'MS_Description' AND ep.minor_id > 0
+                 AND s.name = 'dbo' AND t.name = @P1"#,
+            &[&table],
+        )
+        .await?;
+        let comment_map: std::collections::HashMap<String, String> = comment_rows
+            .iter()
+            .filter_map(|r| {
+                let col = r.get::<&str, _>(0)?.to_string();
+                let comment = non_empty_comment(r.get::<&str, _>(1).map(str::to_string))?;
+                Some((col, comment))
+            })
+            .collect();
+
         Ok(base_rows
             .iter()
             .map(|r| {
@@ -824,8 +847,36 @@ impl MssqlConn {
                     },
                     referenced_table: referenced.map(|(t, _)| t.clone()),
                     referenced_column: referenced.map(|(_, c)| c.clone()),
+                    comment: comment_map.get(&name).cloned(),
                     name,
                 }
+            })
+            .collect())
+    }
+
+    /// テーブル / ビューのコメント (#1002)。オブジェクトレベル (`minor_id = 0`)
+    /// の拡張プロパティ `MS_Description`。
+    pub async fn table_comments(&self, db: &str) -> Result<Vec<TableComment>> {
+        let mut conn = self.pool.acquire().await?;
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT o.name, CAST(ep.value AS nvarchar(max))
+               FROM sys.extended_properties ep
+               JOIN sys.objects o ON o.object_id = ep.major_id
+               JOIN sys.schemas s ON s.schema_id = o.schema_id
+               WHERE ep.class = 1 AND ep.name = 'MS_Description' AND ep.minor_id = 0
+                 AND s.name = 'dbo' AND o.type IN ('U', 'V')
+               ORDER BY o.name"#,
+            &[],
+        )
+        .await?;
+        Ok(out
+            .iter()
+            .filter_map(|r| {
+                let name = r.get::<&str, _>(0)?.to_string();
+                let comment = non_empty_comment(r.get::<&str, _>(1).map(str::to_string))?;
+                Some(TableComment { name, comment })
             })
             .collect())
     }
