@@ -68,7 +68,13 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
   };
 
   return (
-    <Modal width="520px" onClose={onCancel} initialFocusEl={() => firstRef.current}>
+    <Modal
+      width="520px"
+      onClose={onCancel}
+      initialFocusEl={() => firstRef.current}
+      onSubmit={() => void submit()}
+      submitDisabled={busy || error !== null}
+    >
       <ModalHeader onClose={onCancel} closeLabel={t("confirmDefaultCancel")}>
         {t("profileBackupExportTitle")}
       </ModalHeader>
