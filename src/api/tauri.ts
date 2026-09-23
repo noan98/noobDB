@@ -956,7 +956,24 @@ export interface LogView {
   path: string | null;
 }
 
-export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql";
+export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql" | "xlsx";
+
+/** xlsx エクスポートで Excel の上限 (行数 / セル文字数) に当たり、出力が欠けた内訳 (#711)。 */
+export interface ExportTruncation {
+  /** 実際にシートへ書いたデータ行数 (ヘッダを除く)。 */
+  writtenRows: number;
+  /** 行数上限 (1,048,576 行 = ヘッダ + 1,048,575 データ行) を超えて書かなかった行数。 */
+  droppedRows: number;
+  /** セル文字数上限 (32,767 文字) で切り詰めたセル数。 */
+  truncatedCells: number;
+}
+
+/** 在グリッド経路 `export_query_result` の戻り値 (#711)。 */
+export interface ExportResult {
+  bytes: number;
+  /** 出力が欠けていなければ (xlsx 以外は常に) null。 */
+  truncation: ExportTruncation | null;
+}
 
 /** Checkbox-selected `mysqldump` flags for a database dump. */
 export interface DumpOptions {
@@ -1964,7 +1981,7 @@ export const api = {
     /** 列単位のマスキングルール (#733)。未指定 / 空ならマスクしない。 */
     masks?: ExportColumnMask[] | null;
   }) =>
-    invoke<number>("export_query_result", {
+    invoke<ExportResult>("export_query_result", {
       path: params.path,
       format: params.format,
       columns: params.columns,
@@ -1974,7 +1991,7 @@ export const api = {
       driver: params.driver ?? null,
       batchSize: params.batchSize ?? null,
       masks: params.masks && params.masks.length > 0 ? params.masks : null,
-    }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
+    }).then((r) => parseResponse(schemas.exportResult, r, "export_query_result")),
 
   /**
    * 行へエクスポート用マスキング (#733) を適用して返す (プレビュー / 全文コピー用)。
@@ -2345,8 +2362,11 @@ export interface ExportProgressEvent {
 }
 export interface ExportDoneEvent {
   streamId: string;
+  /** クエリから読んだ行数 (xlsx で上限を超えた行も含む)。 */
   rows: number;
   bytes: number;
+  /** xlsx で Excel の上限に当たったときだけ非 null (#711)。 */
+  truncation: ExportTruncation | null;
 }
 export interface ExportStreamErrorEvent {
   streamId: string;

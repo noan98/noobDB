@@ -15,6 +15,7 @@ import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
 import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
+import { exportFormatHasTextPreview, xlsxTruncationNotices, type ExportNotice } from "./exportXlsx";
 import { Tooltip } from "./Tooltip";
 import { resolveMaskedColumns, type MaskConfig } from "./columnMask";
 import {
@@ -191,6 +192,8 @@ function extensionFor(format: ModalFormat): string {
       return ".md";
     case "sql":
       return ".sql";
+    case "xlsx":
+      return ".xlsx";
     default:
       return ".json";
   }
@@ -245,6 +248,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   const initialBasename = useMemo(() => defaultBasename(database, table), [database, table]);
   const [path, setPath] = useState<string>(`${initialBasename}${extensionFor("csv")}`);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  // 直近の xlsx エクスポートで Excel の上限に当たったときの警告 (#711)。トーストは
+  // 消えるので、何行で切れたかをモーダル内にも残す。次のエクスポート開始で消す。
+  const [notices, setNotices] = useState<ExportNotice[]>([]);
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
   // ユーザがパスを手で編集 / ブラウズで選択したら true。既定の保存先 (ダウンロード
@@ -389,6 +395,17 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   );
   const previewMaskError = currentMasked && "error" in currentMasked ? currentMasked.error : null;
   const previewTruncated = effectiveRows.length > PREVIEW_ROWS;
+  // xlsx (バイナリ) はプレビュー/全文コピーの対象外 (#711)。
+  const hasTextPreview = exportFormatHasTextPreview(format);
+  const copyDisabled = effectiveRows.length === 0 || !hasTextPreview;
+
+  // 上限超過の警告を表示 (モーダル内に残す) し、トーストでも知らせる。
+  const reportNotices = (next: ExportNotice[]) => {
+    setNotices(next);
+    for (const n of next) {
+      toast.notify({ message: t(n.key, n.params), tone: "info", severity: "warning" });
+    }
+  };
   // Set on unmount so an in-flight `listenExportStream` (awaited below) can
   // tell its registration arrived too late and must self-unlisten — otherwise
   // the listener would be orphaned (the cleanup below has already run).
@@ -407,6 +424,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // 違い行数を絞らないため、選択範囲スコープなら選択範囲の全行、それ以外はグリッドに
   // 読み込まれている全行が対象。
   const handleCopy = async () => {
+    // xlsx (バイナリ) は全文コピーの対象外 (#711)。ボタンも無効化している。
+    if (!hasTextPreview) return;
     let sourceRows = effectiveRows;
     if (masks.length > 0) {
       // 全文コピーもファイル出力と同じくマスク後の値にする (バックエンドで変換)。
@@ -484,7 +503,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               ? { name: "Markdown", extensions: ["md", "markdown"] }
               : format === "sql"
                 ? { name: "SQL", extensions: ["sql"] }
-                : { name: "JSON", extensions: ["json"] },
+                : format === "xlsx"
+                  ? { name: "Excel", extensions: ["xlsx"] }
+                  : { name: "JSON", extensions: ["json"] },
       ],
     });
     if (typeof selected === "string" && selected) {
@@ -495,6 +516,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
 
   const handleExport = async () => {
     if (!path.trim()) return;
+    setNotices([]);
     if (scope === "full" && fullExport && format !== "bundle") {
       await handleFullExport(fullExport);
       return;
@@ -526,7 +548,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     }
     const backendFormat: ExportFormat = format;
     try {
-      const bytes = await api.exportQueryResult({
+      const result = await api.exportQueryResult({
         path,
         format: backendFormat,
         columns: effectiveColumns,
@@ -539,7 +561,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         batchSize: sqlBatch,
         masks,
       });
-      toast.success(t("exportSuccess", { bytes, path }) + maskedSuffix);
+      toast.success(t("exportSuccess", { bytes: result.bytes, path }) + maskedSuffix);
+      reportNotices(xlsxTruncationNotices(result.truncation));
       setStatus({ kind: "idle" });
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
@@ -552,6 +575,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     // 調査バンドルは在グリッド行のスナップショットで、全件再実行の対象外。
     if (format === "bundle") return;
     const streamId = `export_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    setNotices([]);
     setStatus({ kind: "streaming", rows: 0, streamId });
     unlistenRef.current?.();
     const unlisten = await listenExportStream(streamId, {
@@ -561,6 +585,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         unlistenRef.current?.();
         unlistenRef.current = null;
         toast.success(t("exportFullDone", { rows: e.rows, bytes: e.bytes, path }) + maskedSuffix);
+        reportNotices(xlsxTruncationNotices(e.truncation));
         setStatus({ kind: "idle" });
       },
       onError: (e) => {
@@ -709,6 +734,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 "ndjson",
                 "markdown",
                 "sql",
+                "xlsx",
                 ...(bundle ? (["bundle"] as const) : []),
               ] as const
             ).map((fmt) => (
@@ -749,11 +775,18 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                         ? t("exportFormatMarkdown")
                         : fmt === "sql"
                           ? t("exportFormatSql")
-                          : t("exportFormatJson")}
+                          : fmt === "xlsx"
+                            ? t("exportFormatXlsx")
+                            : t("exportFormatJson")}
                 </span>
               </chakra.label>
             ))}
           </chakra.div>
+          {format === "xlsx" && (
+            <chakra.div fontSize="xs" color="app.textMuted">
+              {t("exportXlsxHint")}
+            </chakra.div>
+          )}
         </FormSection>
 
         {/* 形式 (CSV/JSON/SQL 等) の切替でオプション群が瞬間的に差し替わらない
@@ -927,11 +960,11 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               </chakra.span>
             )}
             <chakra.div flex="1" />
-            <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={effectiveRows.length === 0}>
+            <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={copyDisabled}>
               <chakra.button
                 type="button"
                 onClick={handleCopy}
-                disabled={effectiveRows.length === 0}
+                disabled={copyDisabled}
                 aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
                 display="inline-flex"
                 alignItems="center"
@@ -954,20 +987,46 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               </chakra.button>
             </Tooltip>
           </chakra.div>
-          <CodePreview aria-label={t("exportPreview")} maxH="180px">
-            {previewMaskError
-              ? t("exportMaskingError", { error: previewMaskError })
-              : previewContent === null
-                ? t("exportMaskingPending")
-                : previewContent || t("exportNoData")}
-          </CodePreview>
-          {previewTruncated && (
+          {hasTextPreview ? (
+            <CodePreview aria-label={t("exportPreview")} maxH="180px">
+              {previewMaskError
+                ? t("exportMaskingError", { error: previewMaskError })
+                : previewContent === null
+                  ? t("exportMaskingPending")
+                  : previewContent || t("exportNoData")}
+            </CodePreview>
+          ) : (
+            <chakra.div role="note" fontSize="sm" color="app.textMuted">
+              {t("exportPreviewUnavailableXlsx")}
+            </chakra.div>
+          )}
+          {hasTextPreview && previewTruncated && (
             <chakra.div fontSize="xs" color="app.textMuted">
               {t("exportPreviewTruncated", { shown: PREVIEW_ROWS, total: effectiveRows.length })}
             </chakra.div>
           )}
         </FormSection>
 
+        {notices.length > 0 && (
+          <chakra.div
+            role="status"
+            py="2" px="2.5"
+            border="1px solid"
+            borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
+            bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
+            color="app.text"
+            borderRadius="md"
+            fontSize="sm"
+            lineHeight={1.5}
+            display="flex"
+            flexDirection="column"
+            gap="1"
+          >
+            {notices.map((n) => (
+              <span key={n.key}>{t(n.key, n.params)}</span>
+            ))}
+          </chakra.div>
+        )}
         {status.kind === "error" && (
           <ErrorNote>{t("exportError", { error: status.message })}</ErrorNote>
         )}

@@ -1137,6 +1137,14 @@ const en = {
   bundleColExtra: "Extra",
   bundleYes: "YES",
   bundleNo: "NO",
+  exportFormatXlsx: "Excel (xlsx)",
+  exportPreviewUnavailableXlsx: "Excel (xlsx) is a binary format and can't be previewed or copied.",
+  exportXlsxHint:
+    "Numbers, booleans and NULL keep their types. Integers/decimals over 15 digits (Excel's precision) are written as text; dates stay as text. At most 1,048,575 data rows.",
+  exportXlsxRowsDropped:
+    "Excel's row limit (1,048,576 rows including the header) was exceeded: wrote {written} of {total} rows, {dropped} rows were not exported.",
+  exportXlsxCellsTruncated:
+    "{cells} cells exceeded Excel's 32,767-character limit and were truncated.",
   exportSqlTable: "Target table",
   exportSqlTablePlaceholder: "Table name for INSERT",
   exportSqlBatch: "Rows per statement",
@@ -4460,6 +4468,14 @@ const ja: Dict = {
   bundleColExtra: "その他",
   bundleYes: "YES",
   bundleNo: "NO",
+  exportFormatXlsx: "Excel (xlsx)",
+  exportPreviewUnavailableXlsx: "Excel 形式はプレビューできません (バイナリ形式のためコピーもできません)。",
+  exportXlsxHint:
+    "数値・真偽・NULL は型を保って出力します。Excel の精度 (15 桁) を超える整数・小数は文字列セルで、日時は文字列のまま出力します。データ行は最大 1,048,575 行です。",
+  exportXlsxRowsDropped:
+    "Excel の行数上限 (ヘッダ込み 1,048,576 行) を超えたため、{total} 行中 {written} 行だけを書き出しました ({dropped} 行は出力されていません)。",
+  exportXlsxCellsTruncated:
+    "Excel のセル文字数上限 (32,767 文字) を超えた {cells} セルを切り詰めました。",
   exportSqlTable: "対象テーブル",
   exportSqlTablePlaceholder: "INSERT 先のテーブル名",
   exportSqlBatch: "1 文あたり行数",

@@ -913,10 +913,25 @@ export const exportProgressEvent = z.object({
   rows: z.number(),
 });
 
+/** xlsx エクスポートで Excel の上限 (行数 / セル文字数) に当たり、出力が欠けた内訳 (#711)。 */
+export const exportTruncation = z.object({
+  writtenRows: z.number(),
+  droppedRows: z.number(),
+  truncatedCells: z.number(),
+});
+
+/** 在グリッド経路 `export_query_result` の戻り値 (#711)。 */
+export const exportResult = z.object({
+  bytes: z.number(),
+  truncation: exportTruncation.nullable(),
+});
+
 export const exportDoneEvent = z.object({
   streamId: z.string(),
   rows: z.number(),
   bytes: z.number(),
+  /** xlsx で上限に当たったときだけ非 null。`rows` は読んだ全行数、書いた行数は `truncation.writtenRows`。 */
+  truncation: exportTruncation.nullable(),
 });
 
 export const exportStreamErrorEvent = z.object({

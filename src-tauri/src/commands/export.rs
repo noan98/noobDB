@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+pub use crate::commands::export_xlsx::ExportTruncation;
+use crate::commands::export_xlsx::{write_xlsx, XlsxSheetWriter};
 use crate::commands::query::ensure_allowed_for_session;
 use crate::db::data_diff::sql_literal;
 use crate::db::masking::{mask_rows, needs_salt, ColumnMask, MaskPlan, MaskSpec};
@@ -40,6 +42,19 @@ pub enum ExportFormat {
     /// `INSERT INTO ... VALUES (...), (...);` を生成する。複数行はバッチサイズ単位で
     /// 1 文へまとめる。
     Sql,
+    /// Excel ブック (xlsx、#711)。バイナリ形式なのでフロントのプレビュー/コピーの
+    /// 対象外。値の対応・Excel の上限の扱いは `commands/export_xlsx.rs` を参照。
+    Xlsx,
+}
+
+/// 在グリッド経路 (`export_query_result`) の戻り値。
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportResult {
+    /// 書き出したファイルのバイト数。
+    pub bytes: u64,
+    /// xlsx で Excel の上限 (行数 / セル文字数) に当たり、出力が元データから欠けた
+    /// ときの内訳。欠けていなければ (xlsx 以外は常に) `null`。
+    pub truncation: Option<ExportTruncation>,
 }
 
 /// SQL INSERT 形式の出力に必要なパラメータ (対象テーブル・ドライバ・バッチサイズ)。
@@ -89,7 +104,7 @@ pub async fn export_query_result(
     batch_size: Option<usize>,
     // 列単位のマスキングルール (#733)。None / 空ならマスクしない。
     masks: Option<Vec<ColumnMask>>,
-) -> Result<u64> {
+) -> Result<ExportResult> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("save path is empty".into()));
     }
@@ -101,13 +116,23 @@ pub async fn export_query_result(
         .map_or(0, |s| s.plan(&columns).masked_count());
     let result = write_export(path, format, columns, rows, query, sql_opts, mask_spec).await;
     match &result {
-        Ok(bytes) => tracing::info!(
-            format = ?format,
-            rows = row_count,
-            bytes = *bytes,
-            masked_columns,
-            "query result exported"
-        ),
+        Ok(res) => {
+            tracing::info!(
+                format = ?format,
+                rows = row_count,
+                bytes = res.bytes,
+                masked_columns,
+                "query result exported"
+            );
+            if let Some(t) = &res.truncation {
+                tracing::warn!(
+                    written_rows = t.written_rows,
+                    dropped_rows = t.dropped_rows,
+                    truncated_cells = t.truncated_cells,
+                    "xlsx export hit an Excel limit; output is incomplete"
+                );
+            }
+        }
         Err(e) => tracing::error!(format = ?format, error = %e, "failed to export query result"),
     }
     result
@@ -125,12 +150,12 @@ async fn write_export(
     query: Option<String>,
     sql_opts: SqlExportOpts,
     mask_spec: Option<MaskSpec>,
-) -> Result<u64> {
-    tokio::task::spawn_blocking(move || -> Result<u64> {
+) -> Result<ExportResult> {
+    tokio::task::spawn_blocking(move || -> Result<ExportResult> {
         let file = std::fs::File::create(&path)?;
         let mut writer = std::io::BufWriter::new(file);
         let plan = mask_spec.as_ref().map(|s| s.plan(&columns));
-        write_export_to(
+        let truncation = write_export_to(
             &mut writer,
             format,
             &columns,
@@ -144,7 +169,7 @@ async fn write_export(
             .into_inner()
             .map_err(|e| AppError::Io(e.into_error()))?;
         let bytes = file.metadata()?.len();
-        Ok(bytes)
+        Ok(ExportResult { bytes, truncation })
     })
     .await
     .map_err(|e| AppError::Other(format!("export task failed: {e}")))?
@@ -153,7 +178,10 @@ async fn write_export(
 /// 形式ごとのライタへの振り分け。ファイル出力 ([`write_export`]) と、フロントの
 /// プレビュー実装との共有ゴールデン (`tests/export_format_golden.rs`、#879) が
 /// **同じ経路**を通るように、`Write` 実装を取る形で切り出してある。
-pub(crate) fn write_export_to<W: Write>(
+///
+/// xlsx のときだけ、Excel の上限で出力が欠けた内訳 ([`ExportTruncation`]) を返す
+/// (テキスト形式は常に `None`)。
+pub(crate) fn write_export_to<W: Write + Send>(
     w: &mut W,
     format: ExportFormat,
     columns: &[Column],
@@ -161,9 +189,10 @@ pub(crate) fn write_export_to<W: Write>(
     query: Option<&str>,
     sql_opts: &SqlExportOpts,
     mask: Option<&MaskPlan>,
-) -> Result<()> {
-    // マスキング (#733) の単一フック: 値エンコード直前に行を変換する。ストリーミング
-    // 経路 (`StreamExportSink::on_rows`) も同じ `mask_rows` を通る。
+) -> Result<Option<ExportTruncation>> {
+    // マスキング (#733) の単一フック: 値エンコード直前に行を変換する。xlsx (#711) を
+    // 含む全形式がこの後の分岐を通る。ストリーミング経路 (`StreamExportSink::on_rows`)
+    // も同じ `mask_rows` を通る。
     let rows = mask_rows(mask, rows);
     let rows: &[Vec<Value>] = &rows;
     match format {
@@ -172,8 +201,9 @@ pub(crate) fn write_export_to<W: Write>(
         ExportFormat::Ndjson => write_ndjson(w, columns, rows)?,
         ExportFormat::Markdown => write_markdown(w, columns, rows)?,
         ExportFormat::Sql => write_sql_insert(w, columns, rows, sql_opts)?,
+        ExportFormat::Xlsx => return write_xlsx(w, columns, rows),
     }
-    Ok(())
+    Ok(None)
 }
 
 /// IPC で受け取ったマスキング指定 (#733) を検証し、`hash` ルールがあれば keyring から
@@ -526,6 +556,10 @@ pub struct ExportDoneEvent {
     pub stream_id: String,
     pub rows: u64,
     pub bytes: u64,
+    /// xlsx で Excel の上限に当たり出力が欠けたときの内訳 (#711)。`rows` は
+    /// クエリから読んだ全行数で、実際に書いた行数は `truncation.writtenRows`。
+    /// 欠けていなければ `null`。
+    pub truncation: Option<ExportTruncation>,
 }
 
 #[derive(Serialize, Clone)]
@@ -556,6 +590,9 @@ struct StreamExportSink {
     /// マスキング指定 (#733)。列が分かる `on_columns` で `mask_plan` に解決する。
     mask_spec: Option<MaskSpec>,
     mask_plan: Option<MaskPlan>,
+    /// xlsx 形式のときのシートライタ (定数メモリモード)。他形式では `None`。
+    /// セルは一時ファイルへ逐次書かれ、`finish` でブック全体を `writer` へ保存する。
+    xlsx: Option<XlsxSheetWriter>,
 }
 
 impl StreamExportSink {
@@ -572,6 +609,10 @@ impl StreamExportSink {
             ExportFormat::Json => query.filter(|q| !q.is_empty()),
             _ => None,
         };
+        let xlsx = match format {
+            ExportFormat::Xlsx => Some(XlsxSheetWriter::new()?),
+            _ => None,
+        };
         Ok(Self {
             writer: BufWriter::new(file),
             format,
@@ -581,6 +622,7 @@ impl StreamExportSink {
             sql_opts,
             mask_spec,
             mask_plan: None,
+            xlsx,
         })
     }
 
@@ -602,6 +644,7 @@ impl StreamExportSink {
             }
             // Markdown はヘッダ + 区切り行を columns イベントで書く。
             ExportFormat::Markdown => write_markdown_header(&mut self.writer, &self.columns)?,
+            ExportFormat::Xlsx => xlsx_sheet(&mut self.xlsx)?.write_header(&self.columns)?,
             // NDJSON / SQL にはヘッダも開き括弧も無いので columns イベントでは何も書かない
             // (SQL は各バッチで自己完結した INSERT 文を書く)。
             ExportFormat::Ndjson | ExportFormat::Sql => {}
@@ -638,11 +681,18 @@ impl StreamExportSink {
             }
             // 1 行 1 オブジェクト + `\n`。in-memory の write_ndjson と同じ書式。
             ExportFormat::Ndjson => write_ndjson(&mut self.writer, &self.columns, rows)?,
+            // 行数上限を超えた行は書かずに数えるだけ (返り値は読んだ行数のまま)。
+            ExportFormat::Xlsx => xlsx_sheet(&mut self.xlsx)?.write_rows(&self.columns, rows)?,
         }
         Ok(rows.len())
     }
 
-    fn finish(mut self) -> Result<u64> {
+    fn finish(mut self) -> Result<(u64, Option<ExportTruncation>)> {
+        let mut truncation = None;
+        if let Some(sheet) = self.xlsx.as_mut() {
+            // xlsx は ZIP なので、ここで初めてブック全体を出力ファイルへ書く。
+            truncation = sheet.save_to(&mut self.writer)?;
+        }
         if let ExportFormat::Json = self.format {
             if self.json_query.is_some() {
                 // rows 配列を閉じてラッパオブジェクトも閉じる。
@@ -663,8 +713,27 @@ impl StreamExportSink {
             .writer
             .into_inner()
             .map_err(|e| AppError::Io(e.into_error()))?;
-        Ok(file.metadata()?.len())
+        Ok((file.metadata()?.len(), truncation))
     }
+}
+
+/// xlsx 形式の sink からシートライタを取り出す。`with_query` が xlsx のときは必ず
+/// `Some` にするので `None` は内部不整合。
+fn xlsx_sheet(sheet: &mut Option<XlsxSheetWriter>) -> Result<&mut XlsxSheetWriter> {
+    sheet
+        .as_mut()
+        .ok_or_else(|| AppError::Other("xlsx sheet writer is missing".into()))
+}
+
+/// ストリーミングエクスポート ([`run_export_to_file`]) の完了結果。
+#[derive(Debug, Clone)]
+pub(crate) struct StreamExportOutcome {
+    /// クエリから読んだ行数 (xlsx で上限を超えた行も含む)。
+    pub rows: u64,
+    /// 書き出したファイルのバイト数。
+    pub bytes: u64,
+    /// xlsx で Excel の上限に当たり出力が欠けたときの内訳。
+    pub truncation: Option<ExportTruncation>,
 }
 
 /// キャンセル (abort) や失敗時に書きかけの出力ファイルを残さないための RAII ガード。
@@ -719,7 +788,7 @@ impl Drop for PartialFileCleanup {
 /// the cumulative row count after each batch (best-effort; the caller decides
 /// whether to emit an event, update a counter, or do nothing).
 ///
-/// Returns `(rows, bytes)` on success. Does **not** check read-only-ness or
+/// Returns the row / byte counts (plus the xlsx truncation report) on success. Does **not** check read-only-ness or
 /// session permissions — callers must do that (both current call sites do).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_export_to_file(
@@ -735,7 +804,7 @@ pub(crate) async fn run_export_to_file(
     query_timeout_secs: Option<u64>,
     mask_spec: Option<MaskSpec>,
     mut on_progress: impl FnMut(u64),
-) -> Result<(u64, u64)> {
+) -> Result<StreamExportOutcome> {
     // SQL 形式のドライバはセッション (実接続) の方言を使う。
     let sql_opts =
         SqlExportOpts::build(Some(session.conn.driver_kind()), sql_table, sql_batch_size);
@@ -788,10 +857,14 @@ pub(crate) async fn run_export_to_file(
         Ok(_) => {
             let sink = shared.lock().ok().and_then(|mut g| g.take());
             match sink.map(|s| s.finish()) {
-                Some(Ok(bytes)) => {
+                Some(Ok((bytes, truncation))) => {
                     // 出力が完全に書き終わったので、以降 Drop されてもファイルは消さない。
                     cleanup.commit();
-                    Ok((counter.load(Ordering::SeqCst), bytes))
+                    Ok(StreamExportOutcome {
+                        rows: counter.load(Ordering::SeqCst),
+                        bytes,
+                        truncation,
+                    })
                 }
                 // finish (JSON の閉じ括弧書き込み等) 失敗。cleanup は未 commit の
                 // ままなので、関数末尾での Drop が部分ファイルを削除する。
@@ -964,14 +1037,28 @@ async fn spawn_export_stream(
     .await;
 
     match result {
-        Ok((rows, bytes)) => {
+        Ok(StreamExportOutcome {
+            rows,
+            bytes,
+            truncation,
+        }) => {
             tracing::info!(stream_id = %stream_id, rows, bytes, "streaming export complete");
+            if let Some(t) = &truncation {
+                tracing::warn!(
+                    stream_id = %stream_id,
+                    written_rows = t.written_rows,
+                    dropped_rows = t.dropped_rows,
+                    truncated_cells = t.truncated_cells,
+                    "xlsx export hit an Excel limit; output is incomplete"
+                );
+            }
             let _ = app.emit(
                 EV_EXPORT_DONE,
                 ExportDoneEvent {
                     stream_id: stream_id.clone(),
                     rows,
                     bytes,
+                    truncation,
                 },
             );
         }
@@ -1272,7 +1359,8 @@ mod tests {
             .unwrap();
         sink.on_rows(&[vec![Value::Int(2), Value::String("b, c".into())]])
             .unwrap();
-        let bytes = sink.finish().unwrap();
+        let (bytes, truncation) = sink.finish().unwrap();
+        assert_eq!(truncation, None);
         let out = std::fs::read_to_string(&path).unwrap();
         assert_eq!(out, "id,name\r\n1,a\r\n2,\"b, c\"\r\n");
         assert_eq!(bytes as usize, out.len());
@@ -1918,5 +2006,123 @@ mod tests {
     async fn load_mask_spec_treats_empty_as_disabled() {
         assert!(load_mask_spec(None).await.unwrap().is_none());
         assert!(load_mask_spec(Some(Vec::new())).await.unwrap().is_none());
+    }
+
+    /// xlsx の `sheet1.xml` を取り出す (テスト用)。
+    fn xlsx_sheet_xml(bytes: &[u8]) -> String {
+        use std::io::Read;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        xml
+    }
+
+    /// ストリーミング経路の xlsx (#711): 複数バッチに分けて書いても、在グリッド経路
+    /// (`write_export_to`) と同じセルのブックになる。
+    #[test]
+    fn stream_sink_xlsx_matches_in_memory() {
+        let path = std::env::temp_dir().join(format!(
+            "noobdb_export_sink_xlsx_{}.xlsx",
+            std::process::id()
+        ));
+        let path_str = path.to_str().unwrap().to_string();
+        let cols = vec![
+            Column {
+                name: "id".into(),
+                type_name: "BIGINT".into(),
+            },
+            col("name"),
+        ];
+        let batch1 = vec![vec![Value::Int(1), Value::String("日本語".into())]];
+        let batch2 = vec![
+            vec![Value::Int(1_000_000_000_000_000), Value::Null],
+            vec![Value::Bool(true), Value::Bytes("ab".into())],
+        ];
+        let mut sink =
+            StreamExportSink::with_query(&path_str, ExportFormat::Xlsx, None, test_sql_opts(), None)
+                .unwrap();
+        sink.on_columns(cols.clone()).unwrap();
+        assert_eq!(sink.on_rows(&batch1).unwrap(), 1);
+        assert_eq!(sink.on_rows(&batch2).unwrap(), 2);
+        let (bytes, truncation) = sink.finish().unwrap();
+        assert_eq!(truncation, None);
+        let streamed = std::fs::read(&path).unwrap();
+        assert_eq!(bytes as usize, streamed.len());
+        let _ = std::fs::remove_file(&path);
+
+        let all: Vec<Vec<Value>> = batch1.into_iter().chain(batch2).collect();
+        let mut buf = Vec::new();
+        let report = write_export_to(
+            &mut buf,
+            ExportFormat::Xlsx,
+            &cols,
+            &all,
+            None,
+            &test_sql_opts(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report, None);
+        let sheet = xlsx_sheet_xml(&streamed);
+        assert_eq!(sheet, xlsx_sheet_xml(&buf));
+        // 16 桁の整数は文字列セル、BLOB は 0x 付き、マルチバイトはそのまま。
+        assert!(sheet.contains("<t>1000000000000000</t>"), "{sheet}");
+        assert!(sheet.contains("<t>0xab</t>"), "{sheet}");
+        assert!(sheet.contains("<t>日本語</t>"), "{sheet}");
+        assert!(sheet.contains(r#"t="b""#), "{sheet}");
+    }
+
+    /// マスキング (#733) × xlsx (#711): 在グリッド / ストリーミングの両経路で xlsx にも
+    /// マスクが掛かり、両経路のシートが一致する (生の値がブックに残らない)。
+    #[test]
+    fn masking_applies_to_xlsx_on_both_paths() {
+        let (columns, rows) = masking_fixture();
+        let plan = mask_spec().plan(&columns);
+        let in_memory = masked_bytes(ExportFormat::Xlsx, Some(&plan));
+        let in_memory_sheet = xlsx_sheet_xml(&in_memory);
+        for raw in [
+            "taro@example.com",
+            "山田太郎",
+            "090-1234-5678",
+            "secret note",
+        ] {
+            assert!(
+                !in_memory_sheet.contains(raw),
+                "xlsx leaked {raw}: {in_memory_sheet}"
+            );
+        }
+        assert!(in_memory_sheet.contains("ta**********.com"), "{in_memory_sheet}");
+        assert!(in_memory_sheet.contains("REDACTED"), "{in_memory_sheet}");
+        let pseudo = crate::db::masking::pseudonymize("山田太郎", b"unit-test-salt", 12);
+        assert_eq!(in_memory_sheet.matches(&pseudo).count(), 2, "{in_memory_sheet}");
+        // マスクなしでは生の値が出る (マスクが効いていることの対照)。
+        let raw_sheet = xlsx_sheet_xml(&masked_bytes(ExportFormat::Xlsx, None));
+        assert!(raw_sheet.contains("taro@example.com"), "{raw_sheet}");
+
+        let path = std::env::temp_dir().join(format!(
+            "noobdb_export_mask_xlsx_{}.xlsx",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Xlsx,
+            None,
+            test_sql_opts(),
+            Some(mask_spec()),
+        )
+        .unwrap();
+        sink.on_columns(columns.clone()).unwrap();
+        // 2 バッチに分けても同じ結果になる。
+        sink.on_rows(&rows[..1]).unwrap();
+        sink.on_rows(&rows[1..]).unwrap();
+        sink.finish().unwrap();
+        let streamed = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(xlsx_sheet_xml(&streamed), in_memory_sheet);
     }
 }

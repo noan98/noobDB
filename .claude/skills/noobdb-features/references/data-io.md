@@ -16,7 +16,28 @@
   ドライバを引数で受け取り、ストリーミング経路はセッションの方言を使う)。
   加えて `export_query_stream` は、グリッドに載っていない大きな結果セットを
   メモリに溜めず**ストリーミングで直接ファイルへ書き出す**経路です (`run_query_stream`
-  と同じバッチ列を消費)。5 形式とも通常 / ストリーミングの両経路に対応します。
+  と同じバッチ列を消費)。6 形式とも通常 / ストリーミングの両経路に対応します。
+  **Excel (xlsx)** (`ExportFormat::Xlsx`、#711) は `commands/export_xlsx.rs` の
+  `XlsxSheetWriter` (`rust_xlsxwriter` の定数メモリモード = セルを一時ファイルへ逐次
+  フラッシュ) を両経路で共有します。値の対応は `xlsx_cell` 純関数に集約: NULL → 空セル、
+  真偽 → 真偽セル、`Int`/`UInt` は**絶対値 15 桁以下のみ数値セル・16 桁以上は十進の
+  文字列セル** (Excel は有効数字 15 桁で表示・再入力し、それを超える桁が 0 に化けるため)、
+  有限の `Float` は数値セル (NaN/inf は文字列)、`String` は文字列セル (数値型の列 —
+  `is_numeric_type` — で素の十進リテラルかつ有効 15 桁以下のときだけ数値セル。先頭ゼロ・
+  日時・数式風の値は文字列のまま。`write_string` なので数式として評価されず CSV の
+  インジェクション緩和は不要)、BLOB は `0x...`、空文字列は空セル、ヘッダは太字のみ。
+  **上限**: データ行は 1,048,575 行 (ヘッダ込み 1,048,576) まで書き、超えた行は
+  エラーにせず数えて `ExportTruncation { writtenRows, droppedRows, truncatedCells }`
+  で返す (32,767 文字 (UTF-16 単位) 超のセルは切り詰めて数える。16,384 列超はエラー)。
+  在グリッド経路は戻り値 `ExportResult { bytes, truncation }`、ストリーミング経路は
+  `export-stream:done` の `truncation` で返し、`ExportModal` が警告として表示します
+  (純ロジック `components/exportXlsx.ts`)。スケジューラ (#730) は書いた行数を実行ログに
+  残します。定数メモリモードは一時ファイル作成失敗でライブラリ内部が panic するため、
+  先に `Workbook::set_tempdir` で書き込み可否を `Err` として検査しています。
+  xlsx はバイナリなのでプレビュー/全文コピーの対象外 (`exportPreview.ts` は空を返す)。
+  共有ゴールデンは各ケースの `xlsxCells` (セル種別 + 値) で固定し、
+  `tests/export_format_golden.rs` が判定関数と**実際に書いた xlsx を展開して読み戻した
+  シート XML** の両方を突き合わせます。
   **JSON 形式のときは実行クエリを出力に同梱**できます (`export_query_result` の
   `query` 引数 / `export_query_stream` は `sql` を流用)。同梱時は配列ではなく
   `{ "query": <sql>, "rows": [...] }` でラップします (キーは serde_json 既定の

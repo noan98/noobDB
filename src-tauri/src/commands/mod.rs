@@ -3,6 +3,7 @@ pub mod connection;
 pub mod diff;
 pub mod dump;
 pub mod export;
+pub mod export_xlsx;
 pub mod file;
 pub mod flight_recorder;
 pub mod history;

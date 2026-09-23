@@ -1,6 +1,6 @@
 {
-  "description": "エクスポート 5 書式 (CSV / JSON / NDJSON / Markdown / SQL INSERT) のフロント↔バック共有ゴールデンベクタ (#879)。フロントの src/components/exportPreview.ts::buildExportContent は、バックエンド src-tauri/src/commands/export.rs の書き出しと**バイト一致**するよう独立に再実装されている (エクスポートモーダルのプレビュー = 実ファイルの中身、という約束)。同じ入力を両実装へ通して出力を突き合わせることで、片方だけ直したときの静かなドリフトを検出する。",
-  "conventions": "cells の kind は Rust の db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected はバックエンド (= 実ファイル) の出力。frontendExpected はフロントの期待値で、省略された書式は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか受け取らず BLOB を文字列と区別できないため、bytes を含むケースだけ意図的に食い違う — その差分をここへ明記して固定する。",
+  "description": "エクスポート 5 書式 (CSV / JSON / NDJSON / Markdown / SQL INSERT) + Excel (xlsx、#711) のセルのフロント↔バック共有ゴールデンベクタ (#879)。フロントの src/components/exportPreview.ts::buildExportContent は、バックエンド src-tauri/src/commands/export.rs の書き出しと**バイト一致**するよう独立に再実装されている (エクスポートモーダルのプレビュー = 実ファイルの中身、という約束)。同じ入力を両実装へ通して出力を突き合わせることで、片方だけ直したときの静かなドリフトを検出する。",
+  "conventions": "cells の kind は Rust の db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected はバックエンド (= 実ファイル) の出力。frontendExpected はフロントの期待値で、省略された書式は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか受け取らず BLOB を文字列と区別できないため、bytes を含むケースだけ意図的に食い違う — その差分をここへ明記して固定する。 xlsxCells は Excel (xlsx、#711) のセル (1 行目はヘッダ) で、表記は空セル `-` / 真偽 `b:true` / 数値 `n:<Rust f64 の Display>` / 文字列 `s:<本文>`。xlsx はバイナリでフロントにプレビュー実装が無いためバックエンド (src-tauri/tests/export_format_golden.rs) だけが検証し、判定関数と実際に書いた xlsx の読み戻しの両方を突き合わせる。",
   "cases": [
     {
       "name": "basic",
@@ -84,7 +84,30 @@
         "markdown": "| id | name | score | active | note |\n| --- | --- | --- | --- | --- |\n| 1 | alice | 1.5 | true |  |\n| 2 | b,c\"d | -0.25 | false | line1<br>line2\\|piped\\\\slash |\n",
         "ndjson": "{\"active\":true,\"id\":1,\"name\":\"alice\",\"note\":null,\"score\":1.5}\n{\"active\":false,\"id\":2,\"name\":\"b,c\\\"d\",\"note\":\"line1\\nline2|piped\\\\slash\",\"score\":-0.25}\n",
         "sql": "INSERT INTO `users` (`id`, `name`, `score`, `active`, `note`) VALUES\n  (1, 'alice', 1.5, 1, NULL),\n  (2, 'b,c\"d', -0.25, 0, 'line1\nline2|piped\\\\slash');\n"
-      }
+      },
+      "xlsxCells": [
+        [
+          "s:id",
+          "s:name",
+          "s:score",
+          "s:active",
+          "s:note"
+        ],
+        [
+          "n:1",
+          "s:alice",
+          "n:1.5",
+          "b:true",
+          "-"
+        ],
+        [
+          "n:2",
+          "s:b,c\"d",
+          "n:-0.25",
+          "b:false",
+          "s:line1\nline2|piped\\slash"
+        ]
+      ]
     },
     {
       "name": "empty-rows",
@@ -112,7 +135,13 @@
         "markdown": "| id | name |\n| --- | --- |\n",
         "ndjson": "",
         "sql": ""
-      }
+      },
+      "xlsxCells": [
+        [
+          "s:id",
+          "s:name"
+        ]
+      ]
     },
     {
       "name": "json-with-query",
@@ -151,7 +180,17 @@
         "markdown": "| b | a |\n| --- | --- |\n| 7 | x |\n",
         "ndjson": "{\"a\":\"x\",\"b\":7}\n",
         "sql": "INSERT INTO \"t\" (\"b\", \"a\") VALUES\n  (7, 'x');\n"
-      }
+      },
+      "xlsxCells": [
+        [
+          "s:b",
+          "s:a"
+        ],
+        [
+          "n:7",
+          "s:x"
+        ]
+      ]
     },
     {
       "name": "csv-formula-injection",
@@ -240,7 +279,37 @@
         "markdown": "| v | n |\n| --- | --- |\n| =1+2 | -5 |\n| -5 | 0 |\n| +3.2 | 0 |\n| -1e5 | 0 |\n| @SUM(A1) | 0 |\n| -cmd\\|'/c calc | 0 |\n",
         "ndjson": "{\"n\":-5,\"v\":\"=1+2\"}\n{\"n\":0,\"v\":\"-5\"}\n{\"n\":0,\"v\":\"+3.2\"}\n{\"n\":0,\"v\":\"-1e5\"}\n{\"n\":0,\"v\":\"@SUM(A1)\"}\n{\"n\":0,\"v\":\"-cmd|'/c calc\"}\n",
         "sql": "INSERT INTO `t` (`v`, `n`) VALUES\n  ('=1+2', -5),\n  ('-5', 0),\n  ('+3.2', 0),\n  ('-1e5', 0),\n  ('@SUM(A1)', 0),\n  ('-cmd|''/c calc', 0);\n"
-      }
+      },
+      "xlsxCells": [
+        [
+          "s:v",
+          "s:n"
+        ],
+        [
+          "s:=1+2",
+          "n:-5"
+        ],
+        [
+          "s:-5",
+          "n:0"
+        ],
+        [
+          "s:+3.2",
+          "n:0"
+        ],
+        [
+          "s:-1e5",
+          "n:0"
+        ],
+        [
+          "s:@SUM(A1)",
+          "n:0"
+        ],
+        [
+          "s:-cmd|'/c calc",
+          "n:0"
+        ]
+      ]
     },
     {
       "name": "sorted-keys-and-unicode",
@@ -303,7 +372,23 @@
         "markdown": "| z | a | Ａ | 🙂 |  |\n| --- | --- | --- | --- | --- |\n| zv | av | full-width | emoji | private-use |\n",
         "ndjson": "{\"a\":\"av\",\"z\":\"zv\",\"\":\"private-use\",\"Ａ\":\"full-width\",\"🙂\":\"emoji\"}\n",
         "sql": "INSERT INTO \"t\" (\"z\", \"a\", \"Ａ\", \"🙂\", \"\") VALUES\n  ('zv', 'av', 'full-width', 'emoji', 'private-use');\n"
-      }
+      },
+      "xlsxCells": [
+        [
+          "s:z",
+          "s:a",
+          "s:Ａ",
+          "s:🙂",
+          "s:"
+        ],
+        [
+          "s:zv",
+          "s:av",
+          "s:full-width",
+          "s:emoji",
+          "s:private-use"
+        ]
+      ]
     },
     {
       "name": "sql-batching-and-quoting",
@@ -361,7 +446,25 @@
         "markdown": "| we\"ird | n |\n| --- | --- |\n| O'Brien | 1 |\n| a\\\\b | 2 |\n|  | 3 |\n",
         "ndjson": "{\"n\":1,\"we\\\"ird\":\"O'Brien\"}\n{\"n\":2,\"we\\\"ird\":\"a\\\\b\"}\n{\"n\":3,\"we\\\"ird\":null}\n",
         "sql": "INSERT INTO \"sch ema\" (\"we\"\"ird\", \"n\") VALUES\n  ('O''Brien', 1),\n  ('a\\b', 2);\nINSERT INTO \"sch ema\" (\"we\"\"ird\", \"n\") VALUES\n  (NULL, 3);\n"
-      }
+      },
+      "xlsxCells": [
+        [
+          "s:we\"ird",
+          "s:n"
+        ],
+        [
+          "s:O'Brien",
+          "n:1"
+        ],
+        [
+          "s:a\\b",
+          "n:2"
+        ],
+        [
+          "-",
+          "n:3"
+        ]
+      ]
     },
     {
       "name": "blob-known-divergence",
@@ -399,7 +502,179 @@
         "ndjson": "{\"b\":\"ab12\"}\n",
         "markdown": "| b |\n| --- |\n| ab12 |\n",
         "sql": "INSERT INTO `t` (`b`) VALUES\n  ('ab12');\n"
-      }
+      },
+      "xlsxCells": [
+        [
+          "s:b"
+        ],
+        [
+          "s:0xab12"
+        ]
+      ]
+    },
+    {
+      "name": "xlsx-precision-boundaries",
+      "note": "xlsx (#711) の 15 桁境界: 15 桁の整数は数値、16 桁以上 / 2^53-1 / lossless 文字列化した u64 は文字列。DECIMAL 列の十進文字列は有効 15 桁以下のみ数値。先頭ゼロ・数式風・日時は文字列のまま",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "BIGINT"
+        },
+        {
+          "name": "amount",
+          "typeName": "DECIMAL(20,4)"
+        },
+        {
+          "name": "code",
+          "typeName": "VARCHAR(20)"
+        },
+        {
+          "name": "ratio",
+          "typeName": "DOUBLE"
+        },
+        {
+          "name": "created_at",
+          "typeName": "DATETIME"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 999999999999999
+          },
+          {
+            "kind": "string",
+            "value": "123.4500"
+          },
+          {
+            "kind": "string",
+            "value": "00123"
+          },
+          {
+            "kind": "float",
+            "value": 0.30000000000000004
+          },
+          {
+            "kind": "string",
+            "value": "2024-01-02 03:04:05"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 1000000000000000
+          },
+          {
+            "kind": "string",
+            "value": "1234567890.123456"
+          },
+          {
+            "kind": "string",
+            "value": "=SUM(A1)"
+          },
+          {
+            "kind": "float",
+            "value": -123456.789
+          },
+          {
+            "kind": "null"
+          }
+        ],
+        [
+          {
+            "kind": "uint",
+            "value": 9007199254740991
+          },
+          {
+            "kind": "string",
+            "value": "-0.001"
+          },
+          {
+            "kind": "string",
+            "value": "日本語"
+          },
+          {
+            "kind": "float",
+            "value": 2.5
+          },
+          {
+            "kind": "string",
+            "value": ""
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "18446744073709551615"
+          },
+          {
+            "kind": "string",
+            "value": "1234567890.12345"
+          },
+          {
+            "kind": "bool",
+            "value": true
+          },
+          {
+            "kind": "null"
+          },
+          {
+            "kind": "string",
+            "value": "2024-01-02T03:04:05+09:00"
+          }
+        ]
+      ],
+      "query": null,
+      "sql": {
+        "driver": "postgres",
+        "table": "ledger",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "id,amount,code,ratio,created_at\r\n999999999999999,123.4500,00123,0.30000000000000004,2024-01-02 03:04:05\r\n1000000000000000,1234567890.123456,'=SUM(A1),-123456.789,\r\n9007199254740991,-0.001,日本語,2.5,\r\n18446744073709551615,1234567890.12345,true,,2024-01-02T03:04:05+09:00\r\n",
+        "json": "[\n  {\n    \"amount\": \"123.4500\",\n    \"code\": \"00123\",\n    \"created_at\": \"2024-01-02 03:04:05\",\n    \"id\": 999999999999999,\n    \"ratio\": 0.30000000000000004\n  },\n  {\n    \"amount\": \"1234567890.123456\",\n    \"code\": \"=SUM(A1)\",\n    \"created_at\": null,\n    \"id\": 1000000000000000,\n    \"ratio\": -123456.789\n  },\n  {\n    \"amount\": \"-0.001\",\n    \"code\": \"日本語\",\n    \"created_at\": \"\",\n    \"id\": 9007199254740991,\n    \"ratio\": 2.5\n  },\n  {\n    \"amount\": \"1234567890.12345\",\n    \"code\": true,\n    \"created_at\": \"2024-01-02T03:04:05+09:00\",\n    \"id\": \"18446744073709551615\",\n    \"ratio\": null\n  }\n]",
+        "markdown": "| id | amount | code | ratio | created_at |\n| --- | --- | --- | --- | --- |\n| 999999999999999 | 123.4500 | 00123 | 0.30000000000000004 | 2024-01-02 03:04:05 |\n| 1000000000000000 | 1234567890.123456 | =SUM(A1) | -123456.789 |  |\n| 9007199254740991 | -0.001 | 日本語 | 2.5 |  |\n| 18446744073709551615 | 1234567890.12345 | true |  | 2024-01-02T03:04:05+09:00 |\n",
+        "ndjson": "{\"amount\":\"123.4500\",\"code\":\"00123\",\"created_at\":\"2024-01-02 03:04:05\",\"id\":999999999999999,\"ratio\":0.30000000000000004}\n{\"amount\":\"1234567890.123456\",\"code\":\"=SUM(A1)\",\"created_at\":null,\"id\":1000000000000000,\"ratio\":-123456.789}\n{\"amount\":\"-0.001\",\"code\":\"日本語\",\"created_at\":\"\",\"id\":9007199254740991,\"ratio\":2.5}\n{\"amount\":\"1234567890.12345\",\"code\":true,\"created_at\":\"2024-01-02T03:04:05+09:00\",\"id\":\"18446744073709551615\",\"ratio\":null}\n",
+        "sql": "INSERT INTO \"ledger\" (\"id\", \"amount\", \"code\", \"ratio\", \"created_at\") VALUES\n  (999999999999999, '123.4500', '00123', 0.30000000000000004, '2024-01-02 03:04:05'),\n  (1000000000000000, '1234567890.123456', '=SUM(A1)', -123456.789, NULL),\n  (9007199254740991, '-0.001', '日本語', 2.5, ''),\n  ('18446744073709551615', '1234567890.12345', TRUE, NULL, '2024-01-02T03:04:05+09:00');\n"
+      },
+      "xlsxCells": [
+        [
+          "s:id",
+          "s:amount",
+          "s:code",
+          "s:ratio",
+          "s:created_at"
+        ],
+        [
+          "n:999999999999999",
+          "n:123.45",
+          "s:00123",
+          "n:0.30000000000000004",
+          "s:2024-01-02 03:04:05"
+        ],
+        [
+          "s:1000000000000000",
+          "s:1234567890.123456",
+          "s:=SUM(A1)",
+          "n:-123456.789",
+          "-"
+        ],
+        [
+          "s:9007199254740991",
+          "n:-0.001",
+          "s:日本語",
+          "n:2.5",
+          "-"
+        ],
+        [
+          "s:18446744073709551615",
+          "n:1234567890.12345",
+          "b:true",
+          "-",
+          "s:2024-01-02T03:04:05+09:00"
+        ]
+      ]
     }
   ]
 }

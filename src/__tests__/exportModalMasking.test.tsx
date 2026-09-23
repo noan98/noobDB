@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.mocked(api.maskExportRows).mockImplementation(async ({ rows }) =>
     rows.map((r) => [r[0], "MASKED", r[2]]),
   );
-  vi.mocked(api.exportQueryResult).mockResolvedValue(123);
+  vi.mocked(api.exportQueryResult).mockResolvedValue({ bytes: 123, truncation: null });
 });
 
 describe("ExportModal データマスキング (#733)", () => {

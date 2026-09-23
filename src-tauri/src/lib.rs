@@ -203,7 +203,22 @@ pub mod __test_api {
         Ok(buf)
     }
 
-    pub use crate::commands::export::ExportFormat;
+    pub use crate::commands::export::{ExportFormat, ExportResult, ExportTruncation};
+
+    /// xlsx エクスポートで 1 つの値がどのセルになるかを文字列で表す (#711)。
+    /// 書き出し ([`crate::commands::export_xlsx::XlsxSheetWriter`]) が従う判定
+    /// `xlsx_cell` をそのまま通すので、共有ゴールデン
+    /// (`tests/export_format_golden.rs`) が xlsx のセル型・値を固定できる。
+    /// 表記: 空セル `-` / 真偽 `b:true` / 数値 `n:<f64 の Display>` / 文字列 `s:<本文>`。
+    pub fn xlsx_cell_repr(value: &Value, column: Option<&Column>) -> String {
+        use crate::commands::export_xlsx::{xlsx_cell, XlsxCell};
+        match xlsx_cell(value, column) {
+            XlsxCell::Blank => "-".to_string(),
+            XlsxCell::Bool(b) => format!("b:{b}"),
+            XlsxCell::Number(n) => format!("n:{n}"),
+            XlsxCell::Text(s) => format!("s:{s}"),
+        }
+    }
 
     /// SQL 識別子引用の単一実装 (`db::sync::quote_ident`)。`pub(crate)` のため
     /// `pub use` で再公開できず、薄いラッパーで露出する。実装横断ゴールデン

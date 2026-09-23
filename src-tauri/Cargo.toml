@@ -122,6 +122,11 @@ encoding_rs = "0.8"
 # のみ (CLI 着色用の optional "debug" feature は使わない) で依存は unicode_categories /
 # winnow (いずれも MIT/Apache) に閉じ、cargo deny の許可リストを通る。
 sqlformat = "0.5"
+# Excel (xlsx) エクスポート (#711)。書き込み専用の純 Rust 実装 (MIT OR Apache-2.0)。
+# "constant_memory" は行を書くたびに一時ファイルへ逐次フラッシュする定数メモリ
+# モードで、ストリーミング経路 (`export_query_stream`) が 100 万行級の結果を
+# メモリに溜めずに書き出すために使う (推移依存は tempfile / zip のみ)。
+rust_xlsxwriter = { version = "0.99", default-features = false, features = ["constant_memory"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"
@@ -154,6 +159,10 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 # 手書きサンプルでは思いつきにくいエッジケース (コメント/文字列リテラルに隠した
 # キーワード等) を自動探索し、安全網のバイパスを継続的に検出する (#355)。
 proptest = "1"
+# xlsx エクスポート (#711) の共有ゴールデン (tests/export_format_golden.rs) が、書き出した
+# xlsx を展開してシート XML を読み戻すために使う。rust_xlsxwriter が既に引き込む zip と
+# 同じ版・同じ feature なので依存グラフは増えない。
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [features]
 default = ["custom-protocol"]
