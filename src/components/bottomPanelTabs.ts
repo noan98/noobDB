@@ -14,11 +14,19 @@
  * この線引きは `.claude/rules/ui-design-system.md` の §7.1 に記述している。
  */
 
-/** ボトムパネルに並ぶタブ。表示順もこの配列の順。 */
+/**
+ * ボトムパネルに並ぶタブ。表示順もこの配列の順。
+ *
+ * `whereUsed` (影響分析、#1027) は「DROP / RENAME の前に参照元を確かめながら
+ * DDL を書く」ための参照情報なので、全画面ではなくここに置く。対象のデータベースは
+ * パネル内のフォームで決める (スキーマツリーの右クリックから開くと埋まった状態で
+ * 始まる) ため、開ける条件は接続中であることだけ。
+ */
 export const BOTTOM_PANEL_TABS = [
   "advisor",
   "inspector",
   "processes",
+  "whereUsed",
   "health",
   "profile",
 ] as const;

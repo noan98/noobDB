@@ -2495,6 +2495,36 @@ const en = {
   inspectorCopied: "Copied to clipboard",
   inspectorCopyFailed: "Copy failed",
 
+  // オブジェクト依存検索 / 影響分析 (#1027)
+  whereUsedTitle: "Where used",
+  whereUsedDesc:
+    "Finds views, routines, triggers and saved snippets whose definitions reference a table or column — check what breaks before a DROP or RENAME. Read-only: definitions are only fetched, never executed.",
+  whereUsedDatabase: "Database / schema",
+  whereUsedTable: "Table or view",
+  whereUsedColumn: "Column (optional)",
+  whereUsedColumnPlaceholder: "Leave empty to search the table itself",
+  whereUsedRun: "Search",
+  whereUsedCancel: "Cancel",
+  whereUsedProgress: "Reading definitions… {done} / {total}",
+  whereUsedSummary: "{matches} result(s) reference {target} — scanned {objects} definition(s) and {snippets} snippet(s).",
+  whereUsedNone: "No references to {target} were found in {objects} definition(s) and {snippets} snippet(s).",
+  whereUsedCancelled: "Search cancelled — the results below are partial.",
+  whereUsedUnsupported: "Not scanned on this connection (the driver has none or cannot read them): {kinds}.",
+  whereUsedDynamicNote: "Names inside dynamic SQL strings (e.g. EXECUTE '…') are not detected.",
+  whereUsedFailed: "{count} definition(s) could not be read:",
+  whereUsedEmptyDefs: "{count} definition(s) returned no body (e.g. encrypted objects):",
+  whereUsedPossible: "Possible",
+  whereUsedPossibleHint:
+    "The column name appears, but this definition does not name the table, so it may belong to another table (e.g. a trigger's NEW.col or an unresolved alias).",
+  whereUsedKindSnippet: "Snippet",
+  whereUsedOpen: "Open {name}",
+  whereUsedHits: "{count} hit(s)",
+  whereUsedError: "Search failed: {error}",
+  whereUsedNeedTable: "Enter a table or view name.",
+  contextMenuFindUsages: "Find usages (impact analysis)",
+  contextMenuFindColumnUsages: "Find usages of this column",
+  cmdkWhereUsed: "Where used (impact analysis)",
+
   // スキーマ健全性アドバイザ (#741)
   appAdvisor: "Schema health advisor",
   appAdvisorUnsupported: "Connect to a database first",
@@ -5397,6 +5427,36 @@ const ja: Dict = {
   inspectorCopySql: "SQL をコピー",
   inspectorCopied: "クリップボードにコピーしました",
   inspectorCopyFailed: "コピーに失敗しました",
+
+  // オブジェクト依存検索 / 影響分析 (#1027)
+  whereUsedTitle: "影響分析 (参照元)",
+  whereUsedDesc:
+    "テーブル / 列を参照しているビュー・ルーチン・トリガー・保存済みスニペットを定義本文から探します。DROP や RENAME の前に何が壊れるかを確認できます。定義を取得するだけで実行はしません (読み取り専用)。",
+  whereUsedDatabase: "データベース / スキーマ",
+  whereUsedTable: "テーブル / ビュー",
+  whereUsedColumn: "列 (任意)",
+  whereUsedColumnPlaceholder: "空ならテーブル自体への参照を検索",
+  whereUsedRun: "検索",
+  whereUsedCancel: "キャンセル",
+  whereUsedProgress: "定義を取得中… {done} / {total}",
+  whereUsedSummary: "{target} を参照しているもの: {matches} 件 (定義 {objects} 件・スニペット {snippets} 件を走査)",
+  whereUsedNone: "{target} への参照は見つかりませんでした (定義 {objects} 件・スニペット {snippets} 件を走査)。",
+  whereUsedCancelled: "検索をキャンセルしました。以下は途中までの結果です。",
+  whereUsedUnsupported: "この接続では走査しない種別 (ドライバに存在しない / 取得できない): {kinds}",
+  whereUsedDynamicNote: "動的 SQL の文字列 (EXECUTE '…' など) の中の名前は検出できません。",
+  whereUsedFailed: "定義を取得できなかったもの {count} 件:",
+  whereUsedEmptyDefs: "定義本文が空で返ったもの {count} 件 (暗号化されたオブジェクトなど):",
+  whereUsedPossible: "候補",
+  whereUsedPossibleHint:
+    "列名は出現しますが、この定義はテーブル名を含まないため、別テーブルの同名列の可能性があります (トリガーの NEW.col や解決できない別名など)。",
+  whereUsedKindSnippet: "スニペット",
+  whereUsedOpen: "{name} を開く",
+  whereUsedHits: "{count} 箇所",
+  whereUsedError: "検索に失敗しました: {error}",
+  whereUsedNeedTable: "テーブル名またはビュー名を入力してください。",
+  contextMenuFindUsages: "参照元を検索 (影響分析)",
+  contextMenuFindColumnUsages: "この列の参照元を検索",
+  cmdkWhereUsed: "影響分析 (参照元の検索)",
 
   // スキーマ健全性アドバイザ (#741)
   appAdvisor: "スキーマ健全性アドバイザ",

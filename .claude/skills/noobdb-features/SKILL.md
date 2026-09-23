@@ -30,7 +30,7 @@ description: noobDB の機能レイヤを変更するとき — エクスポー�
 | `references/local-query.md` | ローカル横断クエリ (#740)。一時領域の権限検証が要点 |
 | `references/scheduler.md` | タスクスケジューラ (#730)。UTC 固定・読み取り専用限定 |
 | `references/flight-recorder.md` | DML フライトレコーダーと Undo (#735) |
-| `references/diagnostics.md` | スキーマ健全性アドバイザ (#741)、ライブクエリ・インスペクタ (#746)、サーバ情報 (#563)、スキーマドリフト (#736) |
+| `references/diagnostics.md` | スキーマ健全性アドバイザ (#741)、ライブクエリ・インスペクタ (#746)、サーバ情報 (#563)、スキーマドリフト (#736)、影響分析 (#1027) |
 | `references/updater.md` | アプリ内自動更新 (#705)。**公開鍵はプレースホルダのまま** |
 
 ## 書き込み経路のガードは自動では効きません

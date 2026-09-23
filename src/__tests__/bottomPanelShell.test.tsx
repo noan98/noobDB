@@ -17,6 +17,8 @@ const label = (tab: BottomPanelTab) =>
     ? t("advisorTitle")
     : tab === "inspector"
       ? t("inspectorTitle")
+      : tab === "whereUsed"
+        ? t("whereUsedTitle")
       : tab === "health"
         ? t("healthTitle")
         : t("processTitle");
@@ -24,7 +26,7 @@ const label = (tab: BottomPanelTab) =>
 function renderShell(overrides: Partial<Parameters<typeof BottomPanel>[0]> = {}) {
   const props = {
     tab: "advisor" as BottomPanelTab,
-    // 「列を探索」(#974) は対象テーブルが決まったときだけ並ぶので、常設の 3 タブで検証する。
+    // 「列を探索」(#974) は対象テーブルが決まったときだけ並ぶので、常設のタブで検証する。
     tabs: BOTTOM_PANEL_TABS.filter((tab) => tab !== "profile"),
     label,
     onSelect: vi.fn(),
@@ -44,6 +46,7 @@ describe("BottomPanel シェル (#1112)", () => {
       t("advisorTitle"),
       t("inspectorTitle"),
       t("processTitle"),
+      t("whereUsedTitle"),
       t("healthTitle"),
     ]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
@@ -53,7 +56,7 @@ describe("BottomPanel シェル (#1112)", () => {
   it("選択中のタブだけがタブ順に乗る (ローピング tabindex)", () => {
     renderShell({ tab: "inspector" });
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((el) => el.getAttribute("tabindex"))).toEqual(["-1", "0", "-1", "-1"]);
+    expect(tabs.map((el) => el.getAttribute("tabindex"))).toEqual(["-1", "0", "-1", "-1", "-1"]);
   });
 
   it("本体は選択中のタブに紐づく tabpanel として描かれる", () => {

@@ -86,7 +86,8 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
-import { SnippetList } from "./components/SnippetList";
+import { scopeMatches, SnippetList } from "./components/SnippetList";
+import type { WhereUsedRequest } from "./components/WhereUsedPanel";
 import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
@@ -239,6 +240,9 @@ const AdvisorPanel = lazy(() =>
 );
 const ColumnProfilePanel = lazy(() =>
   import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
+);
+const WhereUsedPanel = lazy(() =>
+  import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
@@ -1258,6 +1262,8 @@ export default function App() {
   // 「列を探索」(#974) の対象。サイドバーのテーブル / 結果グリッドの列から開いたときに
   // 決まり、ボトムパネルの profile タブはこれがあるときだけ開ける。
   const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
+  // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
+  const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
   // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
   const [showUsers, setShowUsers] = useState(false);
@@ -6452,6 +6458,14 @@ export default function App() {
   useEffect(() => {
     setProfileTarget(null);
   }, [sessionId]);
+  /**
+   * スキーマツリーの右クリック (テーブル / 列 / ビュー) から影響分析 (#1027) を開き、
+   * その対象で即座に検索する。トグルではなく常に開く (別の対象を続けて調べるため)。
+   */
+  const handleFindUsages = useCallback((database: string, table: string, column: string | null) => {
+    setWhereUsedRequest({ target: { database, table, column }, autoRun: true });
+    setBottomPanelTab("whereUsed");
+  }, []);
 
   // 設定/ヘルプを開く・テーマ切替・サイドバー開閉 (#681)。コマンドパレットと
   // 同様、接続前でも使えるよう常時有効にする (Cmd/Ctrl+K のハンドラの隣に置かず
@@ -6631,6 +6645,17 @@ export default function App() {
         icon: "server",
         keywords: "health ping latency version status ヘルス 稼働 レイテンシ バージョン 死活",
         run: () => toggleBottomPanel("health"),
+      });
+    }
+    // 影響分析 (#1027)。対象はパネル内のフォームで決めるので接続だけを要求する。
+    if (sessionId) {
+      items.push({
+        id: "nav:whereUsed",
+        group: "navigation",
+        label: t("cmdkWhereUsed"),
+        icon: "search",
+        keywords: "where used usages impact dependency references drop rename 影響分析 参照元 依存 使用箇所",
+        run: () => toggleBottomPanel("whereUsed"),
       });
     }
     if (sessionId) {
@@ -7434,11 +7459,13 @@ export default function App() {
       ? t("advisorTitle")
       : tab === "inspector"
         ? t("inspectorTitle")
-        : tab === "health"
-          ? t("healthTitle")
-          : tab === "profile"
-            ? t("profileTitle")
-            : t("processTitle");
+        : tab === "whereUsed"
+          ? t("whereUsedTitle")
+          : tab === "health"
+            ? t("healthTitle")
+            : tab === "profile"
+              ? t("profileTitle")
+              : t("processTitle");
 
   return (
     <Flex
@@ -7718,6 +7745,7 @@ export default function App() {
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
             onEditViewDefinition={handleEditViewDefinition}
+            onFindUsages={handleFindUsages}
             onDropView={handleDropView}
             onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
@@ -7970,6 +7998,25 @@ export default function App() {
                     <QueryInspectorPanel
                       sessionId={sessionId}
                       driver={selectedProfile?.driver ?? "mysql"}
+                    />
+                  ) : activeBottomPanelTab === "whereUsed" ? (
+                    <WhereUsedPanel
+                      key={sessionId}
+                      sessionId={sessionId}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      defaultDatabase={bottomPanelCtx.advisorDatabase ?? ""}
+                      request={whereUsedRequest}
+                      onRequestConsumed={() =>
+                        setWhereUsedRequest((r) => (r ? { ...r, autoRun: false } : r))
+                      }
+                      snippets={snippets.filter((s) => scopeMatches(s, selectedProfile ?? null))}
+                      onOpenObject={(database, kind, name, id) =>
+                        void handleOpenObjectDefinition(database, kind, name, id)
+                      }
+                      onOpenSnippet={(id) => {
+                        const snip = snippets.find((s) => s.id === id);
+                        if (snip) openQueryInEditor(snip.sql, snip.name);
+                      }}
                     />
                   ) : bottomPanelCtx.advisorDatabase ? (
                     <AdvisorPanel

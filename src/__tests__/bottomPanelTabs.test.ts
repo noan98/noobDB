@@ -50,7 +50,7 @@ describe("availableBottomPanelTabs", () => {
     for (const db of [null, undefined, ""]) {
       expect(
         availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db, openConnectionCount: 1 }),
-      ).toEqual(["inspector", "processes", "health"]);
+      ).toEqual(["inspector", "processes", "whereUsed", "health"]);
     }
   });
 
@@ -127,6 +127,12 @@ describe("nextBottomPanelTab", () => {
   it("端では折り返す", () => {
     expect(nextBottomPanelTab(tabs, "profile", 1)).toBe("advisor");
     expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("profile");
+  });
+
+  it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {
+    expect(
+      availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: null, openConnectionCount: 1 }),
+    ).toContain("whereUsed");
   });
 
   it("開けるタブだけの並びで折り返す (アドバイザが落ちている場合)", () => {
