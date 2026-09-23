@@ -3,27 +3,36 @@
 // トップレベルの `;` で文を分割する。文字列リテラル・識別子クオート・コメント
 // (`--` / `#` の行コメント、`/* */` のブロックコメント)・PostgreSQL のドル引用
 // ($tag$...$tag$) の内側にある `;` では分割しない (文字列内セミコロンの誤検出を
-// 防ぐ)。`#` を行コメント扱いするのは `src/dangerousSql.ts` の maskLiterals /
-// バックエンド `mask_for_analysis` (src-tauri/src/db/mod.rs) と揃えるためで、
-// これにより「文分割 (バッチ実行の単位)」と「危険 SQL 判定 (analyzeDangerousSql /
-// isReadOnlySql)」が同じ文字を同じ意味 (コメント) として扱い、`SELECT data #>>
-// '{a}' FROM t; DELETE FROM t` のような入力で両者の判定が食い違って危険な DELETE
-// を見逃す事故を防ぐ (#J3)。PostgreSQL では `#`/`#>>` は実際には演算子であり、
-// 実行結果とは乖離する既知の限界だが、安全側 (見逃さない) を優先する。
+// 防ぐ)。
 //
-// **文字列内のバックスラッシュも同じ理由でドライバ対応にする (#1004)。**
-// `'\'` を含む文字列がどこで閉じるかは MySQL/MariaDB だけ `\` をエスケープ文字
-// として読む解釈で変わる (`dangerousSql.ts` の `driverBackslashEscapes`、バックの
-// `driver_backslash_escapes`、#852)。ここが `analyzeDangerousSql` /
-// `isReadOnlySql` のマスクと食い違うと、`SELECT '\' AS x; DROP TABLE t` の
-// ような PostgreSQL/SQLite/DuckDB/MSSQL 向け入力で文分割だけが「まだ文字列の
-// 中」と誤読し、`statementAtOffset` (#555 のカーソル文実行) が DROP を含む
-// ブロック全体を返しうる。呼び出し口の `driver?` は省略可能で、省略時は
-// `driverBackslashEscapes(undefined)` と同じ保守的 (非 MySQL) 解釈になる。
+// **マスクは `src/dangerousSql.ts` の `maskLiterals` をそのまま使う (#1074)。**
+// 以前は文分割器がマスク処理を独自に再実装しており、`maskLiterals` / バックエンド
+// `mask_for_analysis_impl` (src-tauri/src/db/mod.rs、`maskVectors.json` で一致を
+// 固定済み、#988) と次の点で乖離していた:
+//
+// - MySQL バージョンコメント `/*! … */` を素のブロックコメントとして丸ごと
+//   スキップしていた (マスクは本体を実行対象として残す)。→
+//   `SELECT 1 /*!40000 ; DELETE FROM t */` を 1 文と誤読していた。
+// - 閉じタグの無いドル引用で EOF まで飲み込んでいた (マスクは `$` を露出させて
+//   走査を続ける)。→ `SELECT $$ oops ; DROP TABLE users` の `;` を隠していた。
+//
+// マスク後の文字列は長さが元と同じで、コメント/リテラルの中身は空白になる。
+// したがって「マスク後に残っている `;` = トップレベルの `;`」であり、その位置で
+// 元の SQL を切ればよい。これで「文分割 (バッチ実行・カーソル文実行・フライト
+// レコーダの単位)」と「危険 SQL 判定 (analyzeDangerousSql / isReadOnlySql)」が
+// 構造的に同じ文字を同じ意味で扱う。`#` を行コメント扱いするのも同じ理由 (#J3):
+// PostgreSQL では `#`/`#>>` は演算子であり実行結果とは乖離する既知の限界だが、
+// 安全側 (見逃さない) を優先する。文字列内バックスラッシュの解釈もマスクと同じく
+// ドライバ対応で、MySQL/MariaDB だけ `\` をエスケープと読む (#852、#1004)。
+// `driver?` は省略可能で、省略時は保守的 (非 MySQL) 解釈になる。
+//
+// 文境界は共有ゴールデン `src/__tests__/fixtures/statementSplitVectors.json` で
+// 固定し、バック側 (`src-tauri/tests/statement_split_golden.rs`) も同じ JSON を
+// バックエンドのマスクで分割して一致を検証する。
 //
 // 副作用が無いので Vitest でユニットテストする。
 
-import { driverBackslashEscapes } from "./dangerousSql";
+import { maskLiterals } from "./dangerousSql";
 
 /**
  * 1 文の範囲。`from` / `to` は元の `sql` 内における**トリム済み本文**の絶対
@@ -40,81 +49,35 @@ export interface StatementRange {
 /**
  * `sql` をトップレベルの `;` で分割し、空文・コメントのみの断片を除いた各文を
  * **範囲付き**で返す。文字列 (`'...'` / `"..."` / `` `...` ``)・行/ブロック
- * コメント・ドル引用の内側のセミコロンでは分割しない。
+ * コメント・ドル引用の内側のセミコロンでは分割しない (判定は `maskLiterals` と
+ * 完全に同一)。
  *
  * `driver` は `'...'` 内のバックスラッシュ解釈を選ぶ (#852、#1004)。省略時は
  * `driverBackslashEscapes(undefined)` と同じ保守的 (非 MySQL) 解釈になる。
  */
 export function splitSqlStatementRanges(sql: string, driver?: string): StatementRange[] {
+  const masked = maskLiterals(sql, driver);
   const ranges: StatementRange[] = [];
   let segStart = 0;
-  let i = 0;
-  const n = sql.length;
 
   const pushSegment = (end: number) => {
-    const raw = sql.slice(segStart, end);
-    const trimmed = raw.trim();
     // コメントだけの断片 (例: `SELECT 1; -- note` の `-- note`) は実行文ではないので
     // 数えない。複数文判定 (isMultiStatement) が誤って true にならないようにする。
-    if (trimmed.length > 0 && hasExecutableSql(trimmed)) {
-      const leading = raw.length - raw.trimStart().length;
-      const trailing = raw.length - raw.trimEnd().length;
-      ranges.push({ from: segStart + leading, to: end - trailing, text: trimmed });
-    }
+    if (!hasExecutableSql(masked.slice(segStart, end))) return;
+    const raw = sql.slice(segStart, end);
+    const leading = raw.length - raw.trimStart().length;
+    const trailing = raw.length - raw.trimEnd().length;
+    ranges.push({ from: segStart + leading, to: end - trailing, text: raw.trim() });
   };
 
-  while (i < n) {
-    const ch = sql[i];
-    const next = sql[i + 1];
-
-    // 行コメント -- ... 改行まで
-    if (ch === "-" && next === "-") {
-      const end = sql.indexOf("\n", i);
-      i = end === -1 ? n : end;
-      continue;
-    }
-    // 行コメント # ... 改行まで (MySQL の # コメント。バックエンド
-    // mask_for_analysis / フロント dangerousSql.ts の maskLiterals と # の扱いを
-    // 揃えることで、危険クエリ判定 (isReadOnlySql/analyzeDangerousSql は # 以降を
-    // コメントとしてマスクする) と文分割の結果が一致するようにする (#J3)。
-    // PostgreSQL では `#`/`#>>` は演算子として実行され得るため、実 PostgreSQL の
-    // 挙動とは乖離が残る既知の限界だが、危険 SQL の見逃しを防ぐことを優先する。
-    if (ch === "#") {
-      const end = sql.indexOf("\n", i);
-      i = end === -1 ? n : end;
-      continue;
-    }
-    // ブロックコメント /* ... */
-    if (ch === "/" && next === "*") {
-      const end = sql.indexOf("*/", i + 2);
-      i = end === -1 ? n : end + 2;
-      continue;
-    }
-    // 文字列 / 識別子クオート: ' " `
-    if (ch === "'" || ch === '"' || ch === "`") {
-      i = scanQuoted(sql, i, ch, driver);
-      continue;
-    }
-    // ドル引用 $tag$ ... $tag$ (PostgreSQL)。tag は省略可 ($$)。直前が単語文字の
-    // `$` は識別子の一部 (MySQL は名前に `$` を許す) なので開始タグとみなさない。
-    if (ch === "$" && (i === 0 || !/[A-Za-z0-9_]/.test(sql[i - 1]))) {
-      const open = matchDollarTag(sql, i);
-      if (open) {
-        const closeIdx = sql.indexOf(open, i + open.length);
-        i = closeIdx === -1 ? n : closeIdx + open.length;
-        continue;
-      }
-    }
-    // トップレベルのセミコロン → 文の区切り
-    if (ch === ";") {
+  for (let i = 0; i < masked.length; i++) {
+    // マスク後に残る `;` はすべてトップレベル (コメント/リテラル内は空白化済み)。
+    if (masked[i] === ";") {
       pushSegment(i);
       segStart = i + 1;
-      i++;
-      continue;
     }
-    i++;
   }
-  pushSegment(n);
+  pushSegment(masked.length);
   return ranges;
 }
 
@@ -145,14 +108,12 @@ export function statementAtOffset(sql: string, offset: number, driver?: string):
   return ranges[ranges.length - 1];
 }
 
-/** コメント (行 `--` / `#` / ブロック `/* *​/`) を除いて実行可能な SQL が残るか。 */
-function hasExecutableSql(fragment: string): boolean {
-  const stripped = fragment
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/--[^\n\r]*/g, "")
-    .replace(/#[^\n\r]*/g, "")
-    .trim();
-  return stripped.length > 0;
+// マスク済みの断片に実行可能な SQL が残るか。コメントはマスクで空白化済みなので
+// 空白を除けばよい。ただし MySQL バージョンコメントの閉じ `*/` はマスクが素通し
+// にする (本体を実行対象として残すため) ので、`/*!40000 SET x = 1; */` を分割した
+// 後ろ側の `*/` だけの断片は実行文として数えない。
+function hasExecutableSql(maskedFragment: string): boolean {
+  return maskedFragment.replace(/\*\//g, "").trim().length > 0;
 }
 
 /**
@@ -180,47 +141,4 @@ export interface BatchStatementResult {
   elapsedMs?: number;
   /** エラー時のメッセージ。 */
   error?: string;
-}
-
-/**
- * 開始クオート `start` (= sql[i]) の対応する閉じ位置の次のインデックスを返す。
- * `driver` が `driverBackslashEscapes` で MySQL/MariaDB と判定されたときだけ
- * `'...'` 内のバックスラッシュをエスケープとして尊重する (#852、#1004) —
- * `dangerousSql.ts` の `maskLiterals` と同じ規則を共有し、文分割と危険 SQL
- * 判定が同じ位置で文字列を閉じるようにする。
- */
-function scanQuoted(sql: string, i: number, quote: string, driver?: string): number {
-  const backslashEscapes = quote === "'" && driverBackslashEscapes(driver);
-  let j = i + 1;
-  const n = sql.length;
-  while (j < n) {
-    const c = sql[j];
-    if (c === quote) {
-      // 二重化 ('' / "" / ``) はエスケープとして 1 文字進めて継続。
-      if (sql[j + 1] === quote) {
-        j += 2;
-        continue;
-      }
-      return j + 1;
-    }
-    if (c === "\\" && backslashEscapes) {
-      j += 2;
-      continue;
-    }
-    j++;
-  }
-  return n;
-}
-
-/**
- * `sql[i]` が `$` のとき、ドル引用の開始タグ (`$$` / `$tag$`) を返す。無効なら null。
- * タグは識別子風で数字始まりは不可 (`$1` は PostgreSQL のパラメータプレースホルダ)。
- */
-function matchDollarTag(sql: string, i: number): string | null {
-  // $tag$ : $ の後に数字以外で始まる [A-Za-z0-9_]* が続き、再び $ で閉じる。
-  let j = i + 1;
-  if (/[0-9]/.test(sql[j] ?? "")) return null;
-  while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j])) j++;
-  if (sql[j] === "$") return sql.slice(i, j + 1);
-  return null;
 }

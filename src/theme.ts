@@ -393,6 +393,21 @@ const config = defineConfig({
           color: "app.textMuted",
         },
       },
+      // 数値表示の等幅数字 (#1072)。カウントアップ (`CountUp`) やページャ・
+      // メトリクス・統計・プロセス一覧のように値が頻繁に変わる数値は、比例数字だと
+      // 桁形 (1 と 8 など) が変わるたびに横幅が揺れてガタついて見える。
+      // `tabular-nums` は数字の字幅だけを揃える OpenType 機能で、文字サイズ・色・
+      // フォントファミリには触れないため、他の textStyle / style prop と
+      // 重ねても干渉しない。`uiFontFamily` / `monoFontFamily` に tnum 非対応の
+      // フォントが選ばれても、ブラウザが単に無視するだけで無害にフォールバックする。
+      // `font-variant-numeric` の直書きは designTokens.test.ts が禁止しており、
+      // 等幅数字はこのトークン (`textStyle="numeric"` / css 内 `textStyle: "numeric"`)
+      // だけが単一ソース。
+      numeric: {
+        value: {
+          fontVariantNumeric: "tabular-nums",
+        },
+      },
     }),
   },
 });

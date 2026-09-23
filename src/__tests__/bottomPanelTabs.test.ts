@@ -22,24 +22,47 @@ import {
  * 使い忘れていないこと) をソース走査で確認する (`workspaceView.test.ts` と同じ手法)。
  */
 
-const connected = { sessionId: "sess1", advisorDatabase: "app" };
+const connected = {
+  sessionId: "sess1",
+  advisorDatabase: "app",
+  profileTable: "users",
+  openConnectionCount: 1,
+};
 
 describe("availableBottomPanelTabs", () => {
   it("未接続ではどのタブも開けない", () => {
-    expect(availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app" })).toEqual([]);
+    expect(
+      availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 0 }),
+    ).toEqual([]);
   });
 
-  it("接続していれば 3 タブとも開ける (定義順を保つ)", () => {
+  it("アクティブ接続が無くても背景接続があれば接続ヘルスだけ開ける (#1068)", () => {
+    expect(
+      availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 2 }),
+    ).toEqual(["health"]);
+  });
+
+  it("接続していて対象が揃えば全タブを開ける (定義順を保つ)", () => {
     expect(availableBottomPanelTabs(connected)).toEqual([...BOTTOM_PANEL_TABS]);
   });
 
   it("対象データベースが決まらないとアドバイザだけ落ちる", () => {
     for (const db of [null, undefined, ""]) {
-      expect(availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db })).toEqual([
-        "inspector",
-        "processes",
-      ]);
+      expect(
+        availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db, openConnectionCount: 1 }),
+      ).toEqual(["inspector", "processes", "whereUsed", "health"]);
     }
+  });
+
+  it("「列を探索」(#974) は対象テーブルが決まったときだけ開ける", () => {
+    for (const table of [null, undefined, ""]) {
+      expect(
+        availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: "app", profileTable: table, openConnectionCount: 1 }),
+      ).not.toContain("profile");
+    }
+    expect(
+      availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: "app", profileTable: "users", openConnectionCount: 1 }),
+    ).toContain("profile");
   });
 });
 
@@ -56,12 +79,23 @@ describe("resolveBottomPanelTab", () => {
 
   it("切断したら開いていたタブを閉じる", () => {
     expect(
-      resolveBottomPanelTab("processes", { sessionId: null, advisorDatabase: "app" }),
+      resolveBottomPanelTab("processes", {
+        sessionId: null,
+        advisorDatabase: "app",
+        openConnectionCount: 0,
+      }),
+    ).toBeNull();
+    expect(
+      resolveBottomPanelTab("health", { sessionId: null, advisorDatabase: "app", openConnectionCount: 0 }),
     ).toBeNull();
   });
 
+  it("プロファイル対象が外れたら「列を探索」を閉じる", () => {
+    expect(resolveBottomPanelTab("profile", { ...connected, profileTable: null })).toBeNull();
+  });
+
   it("対象データベースが外れたらアドバイザだけ閉じる (他タブは残る)", () => {
-    const ctx = { sessionId: "sess1", advisorDatabase: null };
+    const ctx = { sessionId: "sess1", advisorDatabase: null, openConnectionCount: 1 };
     expect(resolveBottomPanelTab("advisor", ctx)).toBeNull();
     expect(resolveBottomPanelTab("inspector", ctx)).toBe("inspector");
     expect(resolveBottomPanelTab("processes", ctx)).toBe("processes");
@@ -91,8 +125,14 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "processes", 1)).toBe("advisor");
-    expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("processes");
+    expect(nextBottomPanelTab(tabs, "profile", 1)).toBe("advisor");
+    expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("profile");
+  });
+
+  it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {
+    expect(
+      availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: null, openConnectionCount: 1 }),
+    ).toContain("whereUsed");
   });
 
   it("開けるタブだけの並びで折り返す (アドバイザが落ちている場合)", () => {

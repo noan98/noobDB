@@ -204,6 +204,22 @@ read-only ベクタがたまたま踏む範囲でしか間接的にカバーさ�
 場合は `j` まで (実文字を含めて) マスクするようにしています (fail-closed 方向の
 修正で、閉じている場合の挙動は変えていません)。
 
+**文分割器はマスクの上に構築します (#1074)。** バッチ実行の振り分け
+(`isMultiStatement`)・カーソル位置の文実行 (`statementAtOffset`、#555)・フライト
+レコーダの文分割はフロント `src/sqlScript.ts` の `splitSqlStatementRanges` を
+通ります。以前はこれがマスク処理を独自に再実装しており、MySQL バージョンコメント
+`/*! … */` を素のブロックコメントとして丸ごと飛ばす (`SELECT 1 /*!40000 ;
+DELETE FROM t */` を 1 文と誤読)・閉じタグの無いドル引用で EOF まで飲み込む
+(`SELECT $$ oops ; DROP TABLE users` の `;` を隠す) という 2 点で `maskLiterals`
+と乖離していました。現在は `maskLiterals(sql, driver)` の結果に残った `;` の位置で
+元の SQL を切るだけの実装で、マスク後の断片が空白と (バージョンコメントの素通し
+された閉じ) `*/` だけなら文として数えません。文境界そのものは共有ベクタ
+`src/__tests__/fixtures/statementSplitVectors.json` で固定し、フロントは
+`statementSplitGolden.test.ts`、バックは `tests/statement_split_golden.rs` が
+**バックエンドのマスク (`mask_for_driver`) で同じ規則の分割**をして一致を検証します。
+バック側は加えて「フロントが 2 文以上と見る入力は `has_stacked_statements_for` も
+必ず true」を確認します。
+
 **安全網には「強制レベル」の違いがある点に注意してください。** 同じ「安全網」でも、
 バックエンドで強制されるものと、UI 上の確認に留まるものがあります。
 

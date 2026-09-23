@@ -27,6 +27,23 @@
   `compare_schema` と同じく許容しています。
 - UI: `components/AdvisorPanel.tsx`、純ロジックのミラーは `components/advisor.ts`。
 
+## オブジェクト依存検索 / 影響分析 (#1027)
+
+「このテーブル / 列を DROP・RENAME したら何が壊れるか」を、ビュー・ルーチン・
+トリガーの定義本文と保存済みスニペットから探すボトムパネル (`whereUsed` タブ)。
+
+- **新しい IPC は無い。** 既存の `list_schema_objects` → `get_object_definition`
+  (同時 4 本、進捗表示・キャンセル可) と App が保持するスニペット一覧を合成するだけ。
+- 判定は純モジュール `components/whereUsed.ts`。`dangerousSql.ts` の
+  `maskLiterals` をそのまま再利用し (挙動は変えない)、引用識別子の中身と
+  PostgreSQL のドル引用本体 (関数本文) だけを書き戻してから識別子トークンを照合する。
+  境界規則 (部分一致しない・大小無視・引用解釈・スキーマ修飾・列の別名解決) は
+  同ファイル冒頭の JSDoc。判定に迷う列参照は捨てずに `possible` (候補) で残す。
+- ドライバ別の取得可否は `WHERE_USED_KIND_SUPPORT` (SQLite はビュー/トリガー、
+  DuckDB はビューのみ)。取れない種別・取得失敗・空の本文 (MSSQL の暗号化) は UI で明示。
+- 入口: スキーマツリーの右クリック (テーブル / ビュー / 列)、コマンドパレット。
+  結果から既存の定義ビューア (`handleOpenObjectDefinition`) / スニペットへ遷移する。
+
 ## ライブクエリ・インスペクタ (#746)
 
 `commands/inspector.rs` の 3 コマンド。

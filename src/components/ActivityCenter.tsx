@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Box, chakra, VisuallyHidden } from "@chakra-ui/react";
 import { useT } from "../i18n";
+import { CountUp } from "./CountUp";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { springs, staggerContainer, transitions, variants } from "../motion";
@@ -187,8 +188,9 @@ function FilterChip({
       _hover={{ bg: "app.hover", color: "app.text" }}
     >
       {label}
-      <chakra.span color="app.textMuted" fontWeight={500}>
-        {count}
+      <chakra.span color="app.textMuted" fontWeight={500} textStyle="numeric">
+        {/* 件数の変化はカウントアップで遷移させる (#1024)。 */}
+        <CountUp value={count} />
       </chakra.span>
     </chakra.button>
   );
@@ -464,6 +466,7 @@ export function ActivityCenter() {
                 justifyContent="center"
                 fontSize="3xs"
                 fontWeight={700}
+                textStyle="numeric"
                 lineHeight={1}
                 borderRadius="pill"
                 bg={semanticColorToken("danger", "solid")}

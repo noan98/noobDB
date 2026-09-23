@@ -188,12 +188,13 @@ function matchDollarQuoteTag(sql: string, i: number): string | null {
  * MySQL would judge, never later, so keywords are revealed rather than hidden
  * and every check built on the mask errs toward "this is a write".
  *
- * Exported so `sqlScript.ts`'s statement splitter (`scanQuoted`) can share the
- * exact same rule — statement boundaries and the danger/read-only masks must
- * agree on where a `'...'` literal closes, or a hidden second statement can
- * slip past one check while the other still sees it (#1004).
+ * `sqlScript.ts`'s statement splitter shares this exact rule by splitting on
+ * top of `maskLiterals` itself (#1074) — statement boundaries and the
+ * danger/read-only masks must agree on where a `'...'` literal closes, or a
+ * hidden second statement can slip past one check while the other still sees
+ * it (#1004).
  */
-export function driverBackslashEscapes(driver?: string): boolean {
+function driverBackslashEscapes(driver?: string): boolean {
   return driver === "mysql";
 }
 

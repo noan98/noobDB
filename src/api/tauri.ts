@@ -664,6 +664,35 @@ export interface StatementStat {
 }
 
 /**
+ * 集計件数。2^53 を超えるとバックエンド (`Value::from_u64_lossless`) が十進文字列で
+ * 返すので `number | string` (#974)。
+ */
+export type ProfileCount = number | string;
+
+/**
+ * 列データプロファイル (「列を探索」、#974)。サーバ側で全件集計した NULL 率 /
+ * DISTINCT / MIN・MAX / 上位頻出値 / (数値列のみ) ヒストグラム。`notes` は縮退
+ * 理由コード (`stats_unavailable` / `top_values_unavailable` /
+ * `histogram_unavailable` / `approx_distinct_unsupported` /
+ * `approx_distinct_no_stats`)。
+ */
+export interface ColumnProfile {
+  column: string;
+  data_type: string;
+  numeric: boolean;
+  total_count: ProfileCount;
+  non_null_count: ProfileCount;
+  null_count: ProfileCount;
+  distinct_count: ProfileCount | null;
+  distinct_approximate: boolean;
+  min_value: CellValue;
+  max_value: CellValue;
+  top_values: { value: CellValue; count: ProfileCount }[];
+  histogram: { lower: number; upper: number; count: ProfileCount }[];
+  notes: string[];
+}
+
+/**
  * Where a table or column sits relative to the two schemas in a comparison.
  * `source_only` would be added to the target, `target_only` would be removed,
  * `different` exists on both sides with differing definitions, `same` is
@@ -1402,6 +1431,27 @@ export const api = {
     invoke<StatementStat[]>("sample_statement_stats", { sessionId }).then((r) =>
       parseResponse(schemas.statementStatArray, r, "sample_statement_stats"),
     ),
+  /**
+   * 列データプロファイル (#974)。単一 SELECT の集計だけなので read_only セッション
+   * でも動く。`approximate` は PostgreSQL (統計情報) / DuckDB (HyperLogLog) で
+   * DISTINCT を近似する (他ドライバは正確値に縮退し `notes` に理由が入る)。
+   */
+  profileColumn: (
+    sessionId: string,
+    database: string,
+    table: string,
+    column: string,
+    approximate: boolean,
+    topN?: number | null,
+  ) =>
+    invoke<ColumnProfile>("profile_column", {
+      sessionId,
+      database,
+      table,
+      column,
+      approximate,
+      topN: topN ?? null,
+    }).then((r) => parseResponse(schemas.columnProfile, r, "profile_column")),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>
     invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>

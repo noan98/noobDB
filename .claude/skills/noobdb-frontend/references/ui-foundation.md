@@ -91,3 +91,13 @@
   子項目へフォーカス、ArrowLeft / Escape で親へ戻る。挙動は
   `contextMenu.test.tsx`、算術は `menuPosition.test.ts`、実 CSS 上の配置は
   `browser/screens.browser.test.tsx` が固定する。
+- **スクロール端影 (#1073)**: 横 (必要なら縦) にスクロールする面の端に「まだ先が
+  続く」ことを示す影は `components/ScrollEdgeShadows.tsx` を使う (独自に
+  `mask-image` や疑似要素を書かない)。スクロールコンテナの**直下の先頭の子**に置く
+  高さ 0 の sticky 帯なので表の流れ・列整列を変えず、`aria-hidden` +
+  `pointer-events: none` で操作に関与しない。ピン留め列のようなスクロールしない帯は
+  `insetStart` / `insetEnd` で避ける (結果グリッドは行番号列 + 左ピン留め幅 /
+  右ピン留め幅を渡している)。どの端に出すかの判定は純関数
+  `components/scrollEdges.ts` (`computeScrollEdges`) で、`scrollEdges.test.tsx` と
+  `browser/scrollEdges.browser.test.tsx` が固定する。色は `var(--text)` 由来の
+  `color-mix` (ピン留め境界影と同じ) で新規色は定義しない。

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { pruneMruIds, recordMruUsage, sanitizeMruIds } from "./components/commandPaletteSearch";
+import { DEFAULT_MASK_PATTERNS, sanitizeMaskPatterns } from "./components/columnMask";
 
 export type Theme = "light" | "dark";
 
@@ -121,6 +122,16 @@ export interface Settings {
    * possible header row.
    */
   columnNullBars: boolean;
+  /**
+   * 結果グリッドの機微カラム表示マスキング (#1069) の ON/OFF。列名が
+   * `columnMaskPatterns` に一致する列 (と列ヘッダメニューで個別に指定した列) を
+   * 伏せ字で表示する。表示専用で、実値・編集バッファ・エクスポートは不変。
+   */
+  columnMaskEnabled: boolean;
+  /** 自動マスクする列名パターン (部分一致・大文字小文字無視。`*`/`?` でグロブ)。 */
+  columnMaskPatterns: string[];
+  /** マスク中のセルをコピーしたとき、実値ではなく伏せ字をコピーする (誤コピー防止)。 */
+  columnMaskCopyPlaceholder: boolean;
   /**
    * Preferred monospace font family for the editor, result grid and code views.
    * `null` keeps the App.css default mono stack. A non-null value is
@@ -314,6 +325,11 @@ export const DEFAULT_RICH_CELL_RENDERING = true;
 
 /** Column NULL-rate mini bars are on by default; display-only like rich cells (#911). */
 export const DEFAULT_COLUMN_NULL_BARS = true;
+
+/** 機微カラムの表示マスキング (#1069) は既定オン (受け入れ条件: 既定パターンで自動マスク)。 */
+export const DEFAULT_COLUMN_MASK_ENABLED = true;
+/** マスク中セルのコピーは既定で伏せ字 (漏らさない側)。 */
+export const DEFAULT_COLUMN_MASK_COPY_PLACEHOLDER = true;
 
 /** Font family defaults: `null` means "use the App.css default stack". */
 export const DEFAULT_MONO_FONT_FAMILY: string | null = null;
@@ -649,6 +665,9 @@ export const DEFAULT_SETTINGS: Settings = {
   cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
   richCellRendering: DEFAULT_RICH_CELL_RENDERING,
   columnNullBars: DEFAULT_COLUMN_NULL_BARS,
+  columnMaskEnabled: DEFAULT_COLUMN_MASK_ENABLED,
+  columnMaskPatterns: [...DEFAULT_MASK_PATTERNS],
+  columnMaskCopyPlaceholder: DEFAULT_COLUMN_MASK_COPY_PLACEHOLDER,
   monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
   uiFontFamily: DEFAULT_UI_FONT_FAMILY,
   themePreset: DEFAULT_THEME_PRESET,
@@ -869,6 +888,9 @@ export function normalizeSettings(input: unknown): Settings {
     cellEditOnBlur?: unknown;
     richCellRendering?: unknown;
     columnNullBars?: unknown;
+    columnMaskEnabled?: unknown;
+    columnMaskPatterns?: unknown;
+    columnMaskCopyPlaceholder?: unknown;
     monoFontFamily?: unknown;
     uiFontFamily?: unknown;
     themePreset?: unknown;
@@ -956,6 +978,15 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.columnNullBars === "boolean"
         ? parsed.columnNullBars
         : DEFAULT_COLUMN_NULL_BARS,
+    columnMaskEnabled:
+      typeof parsed.columnMaskEnabled === "boolean"
+        ? parsed.columnMaskEnabled
+        : DEFAULT_COLUMN_MASK_ENABLED,
+    columnMaskPatterns: sanitizeMaskPatterns(parsed.columnMaskPatterns, DEFAULT_MASK_PATTERNS),
+    columnMaskCopyPlaceholder:
+      typeof parsed.columnMaskCopyPlaceholder === "boolean"
+        ? parsed.columnMaskCopyPlaceholder
+        : DEFAULT_COLUMN_MASK_COPY_PLACEHOLDER,
     monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
     uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
     themePreset: sanitizeThemePreset(parsed.themePreset, DEFAULT_THEME_PRESET),
@@ -1340,6 +1371,34 @@ export function setRichCellRendering(value: boolean): void {
 export function setColumnNullBars(value: boolean): void {
   if (current.columnNullBars === value) return;
   current = { ...current, columnNullBars: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setColumnMaskEnabled(value: boolean): void {
+  if (current.columnMaskEnabled === value) return;
+  current = { ...current, columnMaskEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** マスク対象パターンを置き換える (#1069)。空配列は「パターンでは何もマスクしない」。 */
+export function setColumnMaskPatterns(value: readonly string[]): void {
+  const next = sanitizeMaskPatterns(value, current.columnMaskPatterns);
+  if (
+    next.length === current.columnMaskPatterns.length &&
+    next.every((p, i) => p === current.columnMaskPatterns[i])
+  ) {
+    return;
+  }
+  current = { ...current, columnMaskPatterns: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setColumnMaskCopyPlaceholder(value: boolean): void {
+  if (current.columnMaskCopyPlaceholder === value) return;
+  current = { ...current, columnMaskCopyPlaceholder: value };
   persist();
   listeners.forEach((cb) => cb());
 }

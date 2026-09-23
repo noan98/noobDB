@@ -67,6 +67,9 @@ jobs:
               - 'tsconfig.node.json'
               - 'vite.config.ts'
               - 'vitest.browser.config.ts'
+              # #1076: knip の設定だけを変えた PR (tags / ignore の追加など) でも
+              # `pnpm run knip` を再実行し、デッドコード検出の緩和を素通りさせない。
+              - 'knip.json'
             rust:
               - 'src-tauri/**'
             # #853: 言語横断のゴールデン/パリティテスト (Rust 側の
@@ -359,6 +362,7 @@ jobs:
           src/__tests__/streamEventParity.test.ts
           src/__tests__/readOnlyGolden.test.ts
           src/__tests__/maskGolden.test.ts
+          src/__tests__/statementSplitGolden.test.ts
           src/__tests__/errorKindGolden.test.ts
           src/__tests__/errorHintGolden.test.ts
           src/__tests__/schemaParity.test.ts

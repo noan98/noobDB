@@ -10,6 +10,7 @@ import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
 import type { CellKind } from "./cellTypeMeta";
 import { Tooltip } from "./Tooltip";
+import { MASK_PLACEHOLDER } from "./columnMask";
 
 interface Props {
   /** Column metadata (names) for the inspected row. */
@@ -18,6 +19,12 @@ interface Props {
   values: CellValue[];
   /** Per-column classified kinds (for NULL/BLOB/JSON aware rendering). */
   columnKinds: CellKind[];
+  /**
+   * 機微カラム表示マスク (#1069): 列ごとに「このセルはマスク中か」。true の列は
+   * 値を伏せ字で表示し、フィールドのコピーも無効にする (グリッドで reveal すると
+   * false になり実値が出る)。省略時はマスク無し。
+   */
+  maskedColumns?: boolean[];
   /** 1-based visible row number shown in the header. */
   rowNumber: number;
   onClose: () => void;
@@ -51,6 +58,7 @@ export function RowInspector({
   columns,
   values,
   columnKinds,
+  maskedColumns,
   rowNumber,
   onClose,
   onPrev,
@@ -191,6 +199,7 @@ export function RowInspector({
               const raw = isNull ? "" : isBinary ? `0x${String(v)}` : String(v);
               const json = !isNull && !isBinary ? tryFormatJson(String(v)) : null;
               const display = json ?? raw;
+              const masked = !!maskedColumns?.[i];
               return (
                 <Box
                   key={`${col.name}-${i}`}
@@ -215,7 +224,10 @@ export function RowInspector({
                         {col.name}
                       </chakra.span>
                     </Tooltip>
-                    <Tooltip label={t("gridInspectorCopyField")} focusableWrapper={isNull}>
+                    <Tooltip
+                      label={masked ? t("gridMaskedCellTitle") : t("gridInspectorCopyField")}
+                      focusableWrapper={isNull || masked}
+                    >
                       <chakra.button
                         type="button"
                         display="inline-flex"
@@ -231,7 +243,7 @@ export function RowInspector({
                         flexShrink={0}
                         _hover={{ bg: "app.hover", color: "app.text" }}
                         _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-                        disabled={isNull}
+                        disabled={isNull || masked}
                         onClick={() => void copyField(display)}
                         aria-label={t("gridInspectorCopyField")}
                       >
@@ -239,7 +251,16 @@ export function RowInspector({
                       </chakra.button>
                     </Tooltip>
                   </Box>
-                  {isNull ? (
+                  {masked ? (
+                    <chakra.span
+                      fontSize="sm"
+                      color="app.textMuted"
+                      letterSpacing="wider"
+                      aria-label={t("gridMaskedCellAria")}
+                    >
+                      {MASK_PLACEHOLDER}
+                    </chakra.span>
+                  ) : isNull ? (
                     <chakra.span fontSize="sm" fontStyle="italic" color="app.textMuted">
                       {t("resultNull")}
                     </chakra.span>

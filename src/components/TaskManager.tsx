@@ -361,7 +361,7 @@ function TaskRow({
             {profileName} · {summarizeAction(task.action)} · {summarizeSchedule(task.schedule)}
           </chakra.div>
         </chakra.div>
-        <chakra.div fontSize="xs" color="app.textMuted" minW="90px" textAlign="right">
+        <chakra.div fontSize="xs" color="app.textMuted" minW="90px" textAlign="right" textStyle="numeric">
           {task.enabled ? (
             <>
               {t("taskNextRun")}: {rel ? rel : "–"}
@@ -424,6 +424,7 @@ function TaskRow({
                   gap="2"
                   fontSize="xs"
                   fontFamily="var(--font-mono)"
+                  textStyle="numeric"
                   color={r.status === "ok" ? "app.textMuted" : semanticColorToken("danger", "text")}
                 >
                   <chakra.span minW="170px">{new Date(r.started_at).toLocaleString()}</chakra.span>

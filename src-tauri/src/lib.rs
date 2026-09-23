@@ -33,6 +33,7 @@ pub mod __test_api {
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
         generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
     };
+    pub use crate::db::profile::{ColumnProfile, ProfileHistogramBucket, ProfileValueCount};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
@@ -77,6 +78,13 @@ pub mod __test_api {
         crate::db::mask_for_driver(driver, &chars)
             .into_iter()
             .collect()
+    }
+
+    /// バックエンドの stacked 文検出 (#852)。文境界ゴールデン (#1074、
+    /// `tests/statement_split_golden.rs`) が「フロントの文分割器が 2 文以上と見る
+    /// 入力は、バックエンドも必ず stacked と判定する」ことを検証するために公開する。
+    pub fn has_stacked_statements_for(driver: DriverKind, sql: &str) -> bool {
+        crate::db::has_stacked_statements_for(driver, sql)
     }
 
     // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
@@ -167,6 +175,7 @@ pub mod __test_api {
         query_stats_support_inner, sample_live_queries_inner, sample_statement_stats_inner,
     };
     pub use crate::commands::process::list_processes_inner;
+    pub use crate::commands::profile::profile_column_inner;
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
@@ -751,6 +760,7 @@ pub fn run() {
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
             commands::inspector::sample_statement_stats,
+            commands::profile::profile_column,
             commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,

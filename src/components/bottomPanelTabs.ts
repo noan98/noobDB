@@ -14,26 +14,56 @@
  * この線引きは `.claude/rules/ui-design-system.md` の §7.1 に記述している。
  */
 
-/** ボトムパネルに並ぶタブ。表示順もこの配列の順。 */
-export const BOTTOM_PANEL_TABS = ["advisor", "inspector", "processes"] as const;
+/**
+ * ボトムパネルに並ぶタブ。表示順もこの配列の順。
+ *
+ * `whereUsed` (影響分析、#1027) は「DROP / RENAME の前に参照元を確かめながら
+ * DDL を書く」ための参照情報なので、全画面ではなくここに置く。対象のデータベースは
+ * パネル内のフォームで決める (スキーマツリーの右クリックから開くと埋まった状態で
+ * 始まる) ため、開ける条件は接続中であることだけ。
+ */
+export const BOTTOM_PANEL_TABS = [
+  "advisor",
+  "inspector",
+  "processes",
+  "whereUsed",
+  "health",
+  "profile",
+] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
 
 /** タブを開けるかどうかの判定材料。`App.tsx` の該当 state を写したもの。 */
 export interface BottomPanelContext {
-  /** 接続中セッション。すべてのタブが接続を要求する。 */
+  /** アクティブな接続セッション。`health` 以外のタブはこれを要求する。 */
   sessionId: string | null;
+  /**
+   * 開いている接続の本数 (アクティブ + 背景)。接続ヘルス (#1068) は接続横断の
+   * 俯瞰なので、アクティブ接続が無くても背景接続が 1 本でもあれば開ける。
+   */
+  openConnectionCount: number;
   /**
    * アドバイザの対象データベース (アクティブタブ → プロファイル既定の順で解決済み)。
    * 診断はデータベース単位なので、これが無いとアドバイザだけ開けない。
    */
   advisorDatabase: string | null | undefined;
+  /**
+   * 「列を探索」(#974) の対象テーブル。サイドバーのテーブル / 結果グリッドの列から
+   * 開いたときだけ決まり、決まっていなければプロファイルタブは開けない (対象の
+   * 無い空パネルを作らない)。
+   */
+  profileTable?: string | null;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
 export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTab[] {
-  if (!ctx.sessionId) return [];
-  return BOTTOM_PANEL_TABS.filter((tab) => tab !== "advisor" || !!ctx.advisorDatabase);
+  return BOTTOM_PANEL_TABS.filter((tab) => {
+    if (tab === "health") return !!ctx.sessionId || ctx.openConnectionCount > 0;
+    if (!ctx.sessionId) return false;
+    if (tab === "advisor") return !!ctx.advisorDatabase;
+    if (tab === "profile") return !!ctx.profileTable;
+    return true;
+  });
 }
 
 /**

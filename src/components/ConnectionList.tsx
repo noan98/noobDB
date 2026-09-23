@@ -290,6 +290,8 @@ interface Props {
   onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
   /** DB ノードからサイズ・統計ダッシュボードを開く。#562。 */
   onShowDatabaseSizes?: (database: string) => void;
+  /** テーブルノードから列データプロファイル (「列を探索」) を開く。#974。 */
+  onExploreColumns?: (database: string, table: string) => void;
   /** DB ノードからサンドボックス (壊せる砂場) 作成ダイアログを開く。#747。 */
   onCreateSandbox?: (database: string) => void;
   /** 作成済みサンドボックス一覧 (#747)。専用セクションとして通常のプロファイル
@@ -311,6 +313,12 @@ interface Props {
   /** ビューの DROP (#851)。テーブルの `onDropTable` と同じ確認導線を流用する。
    *  read_only では無効化される。 */
   onDropView?: (database: string, name: string) => void;
+  /**
+   * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
+   * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
+   * introspection だけなので read_only でも有効。未指定ならメニュー項目を出さない。
+   */
+  onFindUsages?: (database: string, table: string, column: string | null) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
   /** お気に入りテーブル (アクティブ接続) のクイックアクセス。 */
@@ -365,6 +373,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
+  onExploreColumns,
   onCreateSandbox,
   sandboxes,
   onOpenSandbox,
@@ -374,6 +383,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onOpenObjectDefinition,
   onEditViewDefinition,
   onDropView,
+  onFindUsages,
   selectLimit,
   favorites,
   recent,
@@ -904,6 +914,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onShowCreateTable) {
       items.push({ label: t("contextMenuShowCreate"), onSelect: () => onShowCreateTable(db, tbl) });
     }
+    // 列データプロファイル (#974)。読み取りの集計だけなので read_only でも有効。
+    if (onExploreColumns) {
+      items.push({ label: t("profileMenuLabel"), onSelect: () => onExploreColumns(db, tbl) });
+    }
+    if (onFindUsages) {
+      items.push({ label: t("contextMenuFindUsages"), onSelect: () => onFindUsages(db, tbl, null) });
+    }
     if (onToggleFavorite) {
       const fav = (favorites ?? []).some((f) => tableRefEquals(f, { database: db, table: tbl }));
       items.push({ separator: true });
@@ -1014,7 +1031,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // 差が大きいため対象外 (Issue のスコープ外、クリックでの読み取り専用 DDL 表示は
   // 従来どおり `onOpenObjectDefinition` のまま)。
   const handleViewContextMenu = (e: React.MouseEvent, db: string, name: string) => {
-    if (!onEditViewDefinition && !onDropView) return;
+    if (!onEditViewDefinition && !onDropView && !onFindUsages) return;
     e.preventDefault();
     e.stopPropagation();
     const items: ContextMenuEntry[] = [];
@@ -1022,6 +1039,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       items.push({
         label: t("contextMenuEditViewDefinition"),
         onSelect: () => onEditViewDefinition(db, name),
+      });
+    }
+    // ビューも他のビュー / ルーチンから参照されうるので影響分析の対象にする (#1027)。
+    if (onFindUsages) {
+      items.push({
+        label: t("contextMenuFindUsages"),
+        onSelect: () => onFindUsages(db, name, null),
       });
     }
     if (onDropView) {
@@ -1035,6 +1059,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       });
     }
     setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  // 列ノードの右クリック: 影響分析 (#1027)。列を RENAME / DROP する前に、その列を
+  // 参照しているビュー・ルーチン・トリガー・スニペットを探す。
+  const handleColumnContextMenu = (e: React.MouseEvent, db: string, tbl: string, column: string) => {
+    if (!onFindUsages) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [{ label: t("contextMenuFindColumnUsages"), onSelect: () => onFindUsages(db, tbl, column) }],
+    });
   };
 
   // インデックスノードの右クリック: DROP INDEX (#850)。PK インデックスは
@@ -1808,6 +1845,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
+                                            onContextMenu={(e) => handleColumnContextMenu(e, db, tbl, col.name)}
                                             {...columnTooltipProps(col)}
                                           >
                                             <TreeChevron visibility="hidden" aria-hidden />

@@ -316,7 +316,7 @@ const W = 900;
 const H = 440;
 const PAD = { left: 60, right: 20, top: 16, bottom: 66 };
 
-function CartesianChart({
+export function CartesianChart({
   model,
   type,
   xName,

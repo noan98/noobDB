@@ -10,6 +10,25 @@
 経路外、コマンド側で別途ガード)。SQLite はサーバプロセスを持たないため空を返します。
 なお #587 で `performance_schema` 無効時に MySQL のプロセス一覧が空になる問題を修正済み。
 
+## 接続横断のヘルスダッシュボード (#1068)
+
+ボトムパネルの「接続ヘルス」タブ (`ConnectionHealthPanel.tsx` + 純ロジック
+`connectionHealth.ts`)。**新しい IPC は持たず**、開いている各セッションへ既存の
+`ping_session` (up/down + フロント計測の往復レイテンシ) / `server_info` (バージョン。
+セッション単位でキャッシュ) / `server_metrics` (接続数。SQLite / DuckDB は呼ばず N/A)
+を並列度 4・個別タイムアウト付きで投げて集約します。いずれも読み取り専用なので
+read_only セッションでも動きます。
+
+- **未接続プロファイルへ自動接続しない**。「保存済みも表示」で並べても `notConnected`
+  行になるだけで、接続は行のボタン (= 通常の `handleConnect`) の明示操作のみ。
+- タイムアウトはフロントが待つのをやめるだけで Rust 側の問い合わせは走り続けるため、
+  `createHealthProber` が IPC × セッションごとに in-flight を追跡し、返っていないものへ
+  次の問い合わせを積みません。
+- エラー文面は表示もログもしない (状態ラベルだけ)。down / timeout 行は `api.reconnect`
+  (同じ session id で張り直し) への導線を出します。
+- 接続横断なので、アクティブ接続が無くても背景接続が 1 本あればタブを開けます
+  (`availableBottomPanelTabs` の `openConnectionCount`)。
+
 ## ユーザ / 権限管理 (#732)
 
 MySQL ユーザ (`mysql.user` + `mysql.tables_priv`) / PostgreSQL ロール (`pg_roles` +

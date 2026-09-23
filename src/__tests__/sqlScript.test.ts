@@ -225,3 +225,30 @@ describe("isMultiStatement", () => {
     expect(isMultiStatement("SELECT 1; -- note")).toBe(false);
   });
 });
+
+describe("文分割は maskLiterals と同じ文字を同じ意味で扱う (#1074 回帰)", () => {
+  it("MySQL バージョンコメント /*! … */ の本体は実行対象なので、中の ; で分割する", () => {
+    // 以前は素のブロックコメントとして丸ごとスキップし、DELETE を 1 文目に
+    // 畳み込んでいた (maskLiterals / バックエンドは本体を残す)。
+    const sql = "SELECT 1 /*!40000 ; DELETE FROM t */";
+    expect(splitSqlStatements(sql)).toEqual(["SELECT 1 /*!40000", "DELETE FROM t */"]);
+    expect(isMultiStatement(sql, "mysql")).toBe(true);
+    // カーソルを先頭に置いても DELETE を含む範囲を返さない。
+    expect(statementAtOffset(sql, 0, "mysql")?.text).toBe("SELECT 1 /*!40000");
+  });
+
+  it("未終端ドル引用は EOF まで飲み込まず、後続の ; と DROP を露出させる", () => {
+    // 以前は閉じタグが無いと EOF までドル引用扱いにし、DROP を隠していた。
+    const sql = "SELECT $$ oops ; DROP TABLE users";
+    expect(splitSqlStatements(sql, "postgres")).toEqual(["SELECT $$ oops", "DROP TABLE users"]);
+    expect(isMultiStatement(sql, "postgres")).toBe(true);
+    expect(statementAtOffset(sql, 0, "postgres")?.text).toBe("SELECT $$ oops");
+  });
+
+  it("バージョンコメントの閉じ */ だけ残った断片は文として数えない", () => {
+    expect(splitSqlStatements("SELECT 1; /*!40000 SET x = 1; */")).toEqual([
+      "SELECT 1",
+      "/*!40000 SET x = 1",
+    ]);
+  });
+});

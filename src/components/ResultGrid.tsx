@@ -35,7 +35,6 @@ import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   useSettings,
-  type Density,
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { RowInspector } from "./RowInspector";
@@ -48,6 +47,9 @@ import {
   type ContextMenuEntry,
 } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
+import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
+import { reorderColumnIds } from "./columnReorderFlip";
+import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
@@ -72,12 +74,14 @@ import {
 } from "./cellConditionalFormat";
 import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
 import { CountUp } from "./CountUp";
-import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
+import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
-import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
+import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
+import { ResultPaneSkeleton } from "./ResultPaneSkeleton";
+import { DENSITY_ROW_ESTIMATE } from "./resultSkeleton";
 import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
@@ -145,6 +149,7 @@ import {
   availableFooterFns,
   computeFooterCell,
   defaultFooterFn,
+  footerCountUpTarget,
   footerStateKeyFrom,
   readStoredFooterState,
   resolveFooterFn,
@@ -156,6 +161,18 @@ import {
   toPersistedGridView,
   writeStoredGridView,
 } from "./gridViewState";
+import {
+  MASK_PLACEHOLDER,
+  REVEAL_TIMEOUT_MS,
+  type MaskOverrides,
+  type RevealTarget,
+  isCellMasked,
+  isCellRevealed,
+  maskedCopyText,
+  resolveMaskedColumns,
+  rowHasMaskedCell,
+  toggleMaskOverride,
+} from "./columnMask";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
@@ -173,14 +190,6 @@ import {
  * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
  * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
-/** Per-density seed height (px) for the virtualizer's first paint. The
- *  real height is measured afterwards; these only need to be close. Values track
- *  the `--density-row-h` tokens in App.css. */
-const DENSITY_ROW_ESTIMATE: Record<Density, number> = {
-  compact: 24,
-  normal: 30,
-  spacious: 40,
-};
 
 export const GRID_CSS: SystemStyleObject = {
   // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
@@ -351,6 +360,19 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
   },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
+  // 機微カラムの表示マスク (#1069)。伏せ字は値の長さを漏らさない固定長で、
+  // 色は --text-muted (テーマ追従) なのでライト/ダーク両方で読める。
+  "& .cell-masked": {
+    color: "var(--text-muted)",
+    letterSpacing: "var(--tracking-wider)",
+    userSelect: "none",
+  },
+  // マスク対象列のヘッダに出す目印 (eye-off)。
+  "& th .th-mask-icon": {
+    display: "inline-flex",
+    alignItems: "center",
+    color: "var(--text-muted)",
+  },
   // 空文字 / 空配列 / 空オブジェクトの淡色バッジ。NULL とは別トーンにして、
   // 「NULL ではないが空」であることを区別できるようにする。
   "& .cell-empty": {
@@ -368,7 +390,7 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& .cell-number, & .cell-decimal": {
     color: "var(--cell-number)",
-    fontVariantNumeric: "tabular-nums",
+    textStyle: "numeric",
   },
   // 条件付き書式: データバー / ヒートマップの背景レイヤ。値テキストは前面。
   "& .cell-cf-wrap": {
@@ -612,7 +634,7 @@ export const GRID_CSS: SystemStyleObject = {
     gap: "var(--space-2)",
   },
   "& tfoot .grid-footer-fn": { textStyle: "overline" },
-  "& tfoot .grid-footer-val": { fontVariantNumeric: "tabular-nums", fontWeight: 600 },
+  "& tfoot .grid-footer-val": { textStyle: "numeric", fontWeight: 600 },
   "& td.grid-empty-cell": {
     padding: "3.5",
     color: "var(--text-muted)",
@@ -1056,6 +1078,11 @@ interface Props {
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
   /**
+   * 列データプロファイル (「列を探索」、#974) をボトムパネルで開く。対象テーブルが
+   * 特定できる結果の列クイック統計にだけ導線を出す。
+   */
+  onExploreColumn?: (target: { database: string | null; table: string; column: string }) => void;
+  /**
    * 結果パネルの全画面モーダル表示の現在状態。`onToggleMaximize` が渡されたときだけ
    * ツールバーに最大化/復元トグルを出し、`maximized` でアイコンとツールチップを切り替える。
    */
@@ -1150,14 +1177,6 @@ function formatNumber(v: number): string {
   if (!Number.isFinite(v)) return String(v);
   if (Number.isInteger(v)) return intFormatter.format(v);
   return v.toString();
-}
-
-/**
- * `resultStatusBar` の結果件数は元々 `.toLocaleString()` を通さず生の桁で表示
- * していた (#977 のカウントアップ導入前と同じ見た目を保つための整形関数)。
- */
-function formatCountUpPlainInt(n: number): string {
-  return String(Math.round(n));
 }
 
 /**
@@ -1633,6 +1652,9 @@ function ColumnFilterMenu({
   serverFilter,
   onApplyServerFilter,
   onClearServerFilter,
+  masked,
+  onToggleMask,
+  onRevealColumn,
 }: {
   columnName: string;
   kind: CellKind;
@@ -1669,6 +1691,14 @@ function ColumnFilterMenu({
   serverFilter?: { op: ServerFilterOp; value: string } | null;
   onApplyServerFilter?: (op: ServerFilterOp, value: string) => void;
   onClearServerFilter?: () => void;
+  /**
+   * 機微カラム表示マスク (#1069): この列が現在マスク対象か、その切替、列全体の
+   * 一時 reveal。`onToggleMask` 未指定 (機能オフ) ならセクションを出さない。
+   * `onRevealColumn` はマスク中のときだけ渡される。
+   */
+  masked?: boolean;
+  onToggleMask?: () => void;
+  onRevealColumn?: () => void;
 }) {
   const t = useT();
   const numeric = isNumericFilterKind(kind);
@@ -1971,6 +2001,41 @@ function ColumnFilterMenu({
         </chakra.label>
       )}
 
+      {onToggleMask && (
+        <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
+            {t("gridMaskSectionLabel")}
+          </chakra.span>
+          <Box display="flex" flexWrap="wrap" gap="1.5">
+            <Button
+              variant="secondary"
+              size="sm"
+              px="2"
+              onClick={() => {
+                onToggleMask();
+                onClose();
+              }}
+            >
+              <Icon name={masked ? "eye" : "eye-off"} size={ICON_SIZES.sm} />
+              {masked ? t("gridMaskColumnOff") : t("gridMaskColumnOn")}
+            </Button>
+            {onRevealColumn && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onRevealColumn();
+                  onClose();
+                }}
+              >
+                {t("gridMaskRevealColumn", { secs: Math.round(REVEAL_TIMEOUT_MS / 1000) })}
+              </Button>
+            )}
+          </Box>
+        </Box>
+      )}
+
       {(onHideColumn || onShowAllColumns || onResetLayout || onShowStats || onToggleFooter) && (
         <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
@@ -2065,6 +2130,7 @@ function StatRow({ label, value, title }: { label: string; value: ReactNode; tit
     <chakra.span
       fontSize="var(--text-sm)"
       fontFamily="mono"
+      textStyle="numeric"
       color="app.text"
       fontWeight={600}
       textAlign="right"
@@ -2123,6 +2189,11 @@ const FOOTER_FN_LABEL: Record<FooterAggFn, I18nKey> = {
 };
 
 /** フッターセルの表示テキスト (空セルは空文字)。整形はここでロケール依存で行う。 */
+/** フッターのカウントアップ用整形。補間中の小数を丸め、確定値は `fmtStatNum` と同一表記。 */
+function fmtFooterInt(n: number): string {
+  return fmtStatNum(Math.round(n));
+}
+
 function footerCellText(cell: { blank: boolean; numeric: number | null; percent: number | null }): string {
   if (cell.blank) return "";
   if (cell.percent !== null) {
@@ -2148,6 +2219,7 @@ function ColumnStatsMenu({
   onClose,
   statsRequest,
   onRunStatsQuery,
+  onExploreColumn,
   footerFn,
   onSetFooterFn,
 }: {
@@ -2161,6 +2233,8 @@ function ColumnStatsMenu({
   statsRequest?: FullStatsRequest;
   /** 集計 SQL を実行する (App から api.runQuery を束ねて渡す)。 */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /** 列データプロファイル (#974) をボトムパネルで開く。未指定なら導線を出さない。 */
+  onExploreColumn?: () => void;
   /** この列の集計フッター関数 (#645)。`onSetFooterFn` があるときだけ節を出す。 */
   footerFn?: FooterAggFn;
   onSetFooterFn?: (fn: FooterAggFn) => void;
@@ -2447,7 +2521,20 @@ function ColumnStatsMenu({
         </Box>
       )}
 
-      <Box display="flex" justifyContent="flex-end" paddingTop="0.5">
+      <Box display="flex" justifyContent="flex-end" gap="1.5" paddingTop="0.5">
+        {onExploreColumn && (
+          <Button
+            variant="secondary"
+            size="sm"
+            px="2.5"
+            onClick={() => {
+              onExploreColumn();
+              onClose();
+            }}
+          >
+            {t("profileExploreColumn")}
+          </Button>
+        )}
         <Button variant="secondary" size="sm" px="2.5" onClick={onClose}>
           {t("gridStatsClose")}
         </Button>
@@ -2519,6 +2606,7 @@ export const DataGrid = memo(function DataGrid({
   onSelectionSummary,
   onExportSelection,
   onRunStatsQuery,
+  onExploreColumn,
   findHits,
   findCurrentKey,
   findNav,
@@ -2666,6 +2754,11 @@ export const DataGrid = memo(function DataGrid({
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
   /**
+   * 列データプロファイル (「列を探索」、#974) をボトムパネルで開く。対象テーブルが
+   * 特定できる結果の列クイック統計にだけ導線を出す。
+   */
+  onExploreColumn?: (target: { database: string | null; table: string; column: string }) => void;
+  /**
    * 結果内検索 (#644) のヒットセル ("row:col" キー) の集合。該当セルに
    * ハイライトクラスを付ける。省略時 (検索バーが閉じている/プレビュー) は無印。
    */
@@ -2698,7 +2791,14 @@ export const DataGrid = memo(function DataGrid({
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
-  const { cellEditOnBlur, richCellRendering, columnNullBars } = useSettings();
+  const {
+    cellEditOnBlur,
+    richCellRendering,
+    columnNullBars,
+    columnMaskEnabled,
+    columnMaskPatterns,
+    columnMaskCopyPlaceholder,
+  } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
   // セル内容の全文ツールチップ (省略記号で切れた値・条件付き書式のホバー説明
   // など) は行×列に比例して大量に描画されうるため (仮想化されていても可視行 ×
@@ -2777,34 +2877,109 @@ export const DataGrid = memo(function DataGrid({
   sortingRef.current = sorting;
   const columnFiltersRef = useRef(columnFilters);
   columnFiltersRef.current = columnFilters;
+  // 機微カラム表示マスク (#1069) の列単位の上書き。ソート/フィルタと同じ
+  // ビュー状態 blob に相乗りして結果シェイプ単位で永続化する。
+  const [maskOverrides, setMaskOverrides] = useState<MaskOverrides>(
+    () => readStoredGridView(gridViewKey).masks ?? {},
+  );
+  const maskOverridesRef = useRef(maskOverrides);
+  maskOverridesRef.current = maskOverrides;
   // Reload sort/filters when the result shape (table) changes. Persisting only
   // happens on user interaction (below), so this load never races a stale write.
   useEffect(() => {
     const s = readStoredGridView(gridViewKey);
     setSorting(s.sorting ?? []);
     setColumnFilters(s.filters ?? []);
+    setMaskOverrides(s.masks ?? {});
   }, [gridViewKey]);
   const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
     const next = typeof updater === "function" ? updater(sortingRef.current) : updater;
     setSorting(next);
-    writeStoredGridView(gridViewKey, toPersistedGridView(next, columnFiltersRef.current));
+    writeStoredGridView(
+      gridViewKey,
+      toPersistedGridView(next, columnFiltersRef.current, maskOverridesRef.current),
+    );
   };
   const handleColumnFiltersChange: OnChangeFn<ColumnFiltersState> = (updater) => {
     const next = typeof updater === "function" ? updater(columnFiltersRef.current) : updater;
     setColumnFilters(next);
-    writeStoredGridView(gridViewKey, toPersistedGridView(sortingRef.current, next));
+    writeStoredGridView(
+      gridViewKey,
+      toPersistedGridView(sortingRef.current, next, maskOverridesRef.current),
+    );
   };
   // Clear both sort and filters, persisting the reset in one write (avoids the
-  // stale-ref hazard of calling the two handlers back to back).
+  // stale-ref hazard of calling the two handlers back to back). Column mask
+  // overrides (#1069) are not a filter, so they survive the reset.
   const clearSortAndFilters = useCallback(() => {
     setSorting([]);
     setColumnFilters([]);
-    writeStoredGridView(gridViewKey, {});
+    writeStoredGridView(gridViewKey, { masks: maskOverridesRef.current });
   }, [gridViewKey]);
   const clearSorting = useCallback(() => {
     setSorting([]);
-    writeStoredGridView(gridViewKey, toPersistedGridView([], columnFiltersRef.current));
+    writeStoredGridView(
+      gridViewKey,
+      toPersistedGridView([], columnFiltersRef.current, maskOverridesRef.current),
+    );
   }, [gridViewKey]);
+
+  // --- 機微カラムの表示マスク (#1069) ---
+  // 列ごとのマスクフラグ。1 列もマスクされなければ null (セル描画のホットパスは
+  // null 判定 1 回で素通りする)。列/設定/上書きが変わったときだけ再計算する。
+  const maskedCols = useMemo(
+    () =>
+      resolveMaskedColumns(
+        columns.map((c) => c.name),
+        { enabled: columnMaskEnabled, patterns: columnMaskPatterns, overrides: maskOverrides },
+      ),
+    [columns, columnMaskEnabled, columnMaskPatterns, maskOverrides],
+  );
+  // 一時 reveal (セル 1 つ or 列全体)。タイムアウトとウィンドウのフォーカス喪失で
+  // 再マスクする。reveal はセル描画 (`renderCell`) でだけ参照し、列定義
+  // (`tableColumns`) の依存には入れない — reveal の切替で react-table の列モデルを
+  // 作り直さないため (#1098 と同じ配慮)。
+  const [reveal, setReveal] = useState<RevealTarget | null>(null);
+  useEffect(() => {
+    if (!reveal) return;
+    const timer = window.setTimeout(() => setReveal(null), REVEAL_TIMEOUT_MS);
+    const remask = () => setReveal(null);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") setReveal(null);
+    };
+    window.addEventListener("blur", remask);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("blur", remask);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [reveal]);
+  // 結果 (列構成) が変わったら reveal は無効。セル単位の reveal は行インデックスで
+  // 持つため、行が差し替わったら別の行を見せてしまわないよう解除する。
+  useEffect(() => {
+    setReveal(null);
+  }, [columns]);
+  useEffect(() => {
+    setReveal((r) => (r && r.kind === "cell" ? null : r));
+  }, [rows]);
+  const toggleColumnMask = (colIdx: number, nextMasked: boolean) => {
+    const name = columns[colIdx]?.name;
+    if (name === undefined) return;
+    const next = toggleMaskOverride(maskOverridesRef.current, name, columnMaskPatterns, nextMasked);
+    setMaskOverrides(next);
+    writeStoredGridView(
+      gridViewKey,
+      toPersistedGridView(sortingRef.current, columnFiltersRef.current, next),
+    );
+    if (!nextMasked) setReveal((r) => (r && r.colIdx === colIdx ? null : r));
+  };
+  /** 列全体がマスク中 (= マスク対象で、列 reveal されていない) か。 */
+  const isColumnMaskedNow = (colIdx: number) =>
+    !!maskedCols?.[colIdx] && !(reveal?.kind === "column" && reveal.colIdx === colIdx);
+  /** セル 1 つがマスク中か。 */
+  const cellMaskedNow = (rowIdx: number, colIdx: number) =>
+    isCellMasked(maskedCols, reveal, rowIdx, colIdx);
 
   // Column widths persist per result shape. The ref mirrors the live state so
   // functional updates from TanStack resolve against the latest value without
@@ -2980,20 +3155,18 @@ export const DataGrid = memo(function DataGrid({
   // `handleColumnOrderChange` / `persistColumnState`, whose persist key
   // (`colStateKey`) tracks database/table — not just `columns`. It's only
   // invoked from the (already per-render) header onDrop, so it needn't be stable.
+  // 新しい順序の計算は純関数 `reorderColumnIds` (#1021)。確定直前に
+  // `columnFlip.capture()` でヘッダ位置を記録し、コミット後に列を元の位置から
+  // 定位置へ滑らせる (FLIP、`useColumnReorderFlip`)。
   const reorderColumn = (fromId: string, toId: string) => {
-    if (fromId === toId) return;
-    const base = (
-      columnOrderRef.current.length
-        ? columnOrderRef.current
-        : columns.map((_, i) => String(i))
-    ).slice();
-    const fromIdx = base.indexOf(fromId);
-    if (fromIdx < 0) return;
-    const [moved] = base.splice(fromIdx, 1);
-    const insertAt = base.indexOf(toId);
-    if (insertAt < 0) return;
-    base.splice(insertAt, 0, moved);
-    handleColumnOrderChange(base);
+    const next = reorderColumnIds(
+      columnOrderRef.current.length ? columnOrderRef.current : columns.map((_, i) => String(i)),
+      fromId,
+      toId,
+    );
+    if (!next) return;
+    columnFlip.capture();
+    handleColumnOrderChange(next);
   };
 
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
@@ -3015,6 +3188,13 @@ export const DataGrid = memo(function DataGrid({
               <span className="th-label-row">
                 {fkTable && <span className="th-fk-badge">FK</span>}
                 <span className="th-name">{c.name}</span>
+                {maskedCols?.[i] && (
+                  <Tooltip label={t("gridMaskColumnIndicator")} focusableWrapper>
+                    <span className="th-mask-icon" role="img" aria-label={t("gridMaskColumnIndicator")}>
+                      <Icon name="eye-off" size={ICON_SIZES.sm} />
+                    </span>
+                  </Tooltip>
+                )}
                 {/* カラム型アイコン。aria-label で SR にも型を伝える。
                     名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
                 <Tooltip label={t(CELL_KIND_META[kind].labelKey)} focusableWrapper>
@@ -3223,6 +3403,7 @@ export const DataGrid = memo(function DataGrid({
     locale,
     colFormats,
     heatPaletteKey,
+    maskedCols,
   ]);
 
   // ストリーミング中は 1 行バッチが届くたびに呼び出し元 (App.tsx) が
@@ -3316,6 +3497,10 @@ export const DataGrid = memo(function DataGrid({
   const pendingFocusRef = useRef<{ rowIdx: number; colIdx: number } | null>(null);
   // Refs to mounted data <td> elements keyed by "rowIdx:colIdx".
   const cellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+  // 列ドラッグ並べ替え確定時の FLIP (#1021)。ヘッダ/フッターは `data-col-id`、
+  // 本体セルは `cellRefs` から引く。
+  const gridTableRef = useRef<HTMLTableElement>(null);
+  const columnFlip = useColumnReorderFlip(gridTableRef, cellRefs);
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
@@ -3345,6 +3530,18 @@ export const DataGrid = memo(function DataGrid({
   // Column quick-stats popover (#524): which column + the anchor rect of the
   // header control that opened it (reuses the filter icon's rect).
   const [statsMenu, setStatsMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
+  // reveal の期限切れ/フォーカス喪失で再マスクされたら、実値を表示している
+  // 値ビューア・列の統計も閉じる (#1069)。開いたまま伏せ字化を待たない。
+  useEffect(() => {
+    if (viewer && isCellMasked(maskedCols, reveal, viewer.rowIdx, viewer.colIdx)) setViewer(null);
+    if (
+      statsMenu &&
+      maskedCols?.[statsMenu.colIdx] &&
+      !(reveal?.kind === "column" && reveal.colIdx === statsMenu.colIdx)
+    ) {
+      setStatsMenu(null);
+    }
+  }, [viewer, statsMenu, maskedCols, reveal]);
 
   useEffect(
     () => () => {
@@ -3364,16 +3561,25 @@ export const DataGrid = memo(function DataGrid({
     if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
     copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
-  const copyCell = (rowIdx: number, colIdx: number) =>
-    void runCopy(cellToText(rows[rowIdx]?.[colIdx] ?? null));
-  const copyRow = (rowIdx: number) =>
-    void runCopy((rows[rowIdx] ?? []).map(cellToText).join("\t"));
-  const copyRowWithHeaders = (rowIdx: number) =>
-    void runCopy(
-      `${columns.map((c) => c.name).join("\t")}\n${(rows[rowIdx] ?? [])
-        .map(cellToText)
-        .join("\t")}`,
+  // コピー用のセルテキスト。マスク中 (#1069) かつ設定でプレースホルダコピーが
+  // 有効なら伏せ字を、それ以外は実値 (表示整形前の元の値) を返す。
+  const copyTextAt = (rowIdx: number, colIdx: number) =>
+    maskedCopyText(
+      cellToText(rows[rowIdx]?.[colIdx] ?? null),
+      cellMaskedNow(rowIdx, colIdx),
+      columnMaskCopyPlaceholder,
     );
+  const rowCopyText = (rowIdx: number) =>
+    (rows[rowIdx] ?? []).map((_, ci) => copyTextAt(rowIdx, ci)).join("\t");
+  const copyCell = (rowIdx: number, colIdx: number) => void runCopy(copyTextAt(rowIdx, colIdx));
+  const copyRow = (rowIdx: number) => void runCopy(rowCopyText(rowIdx));
+  const copyRowWithHeaders = (rowIdx: number) =>
+    void runCopy(`${columns.map((c) => c.name).join("\t")}\n${rowCopyText(rowIdx)}`);
+  // 「SQL としてコピー」は伏せ字を埋めると壊れた SQL になるため、コピーを伏せ字に
+  // する設定の間は、マスク中のセルを含む行を対象にできない (#1069)。
+  const rowSqlBlockedByMask = (rowIndices: number[]) =>
+    columnMaskCopyPlaceholder &&
+    rowIndices.some((ri) => rowHasMaskedCell(maskedCols, reveal, ri, columns.length));
 
   // Whether the right-click menu can offer "copy as SQL": we need a concrete
   // target table (set only for table tabs, not free-form query results).
@@ -3571,11 +3777,14 @@ export const DataGrid = memo(function DataGrid({
     const cells: CellValue[] = [];
     for (const ri of selectionRect.rowIndexSet) {
       for (const ci of selectionRect.colIdSet) {
+        // マスク中のセル (#1069) は合計・最小/最大などから値が逆算できるので
+        // 集計対象から外す。
+        if (isCellMasked(maskedCols, reveal, ri, ci)) continue;
         cells.push(rows[ri]?.[ci] ?? null);
       }
     }
     return computeSelectionSummary(cells);
-  }, [selectionRect, rows]);
+  }, [selectionRect, rows, maskedCols, reveal]);
   // Push the summary up only when its *value* changes. The effect must key off a
   // primitive — `selectionStats` is a fresh object each render (its memo deps
   // churn under TanStack's row/column models), so depending on its identity would
@@ -3647,7 +3856,7 @@ export const DataGrid = memo(function DataGrid({
       const lines: string[] = [];
       if (withHeaders) lines.push(colIds.map((ci) => columns[ci]?.name ?? "").join("\t"));
       for (const ri of rowIdxs) {
-        lines.push(colIds.map((ci) => cellToText(rows[ri]?.[ci] ?? null)).join("\t"));
+        lines.push(colIds.map((ci) => copyTextAt(ri, ci)).join("\t"));
       }
       void runCopy(lines.join("\n"));
       return;
@@ -3655,7 +3864,7 @@ export const DataGrid = memo(function DataGrid({
     if (activeCell) {
       if (withHeaders) {
         void runCopy(
-          `${columns[activeCell.colIdx]?.name ?? ""}\n${cellToText(rows[activeCell.rowIdx]?.[activeCell.colIdx] ?? null)}`,
+          `${columns[activeCell.colIdx]?.name ?? ""}\n${copyTextAt(activeCell.rowIdx, activeCell.colIdx)}`,
         );
       } else {
         copyCell(activeCell.rowIdx, activeCell.colIdx);
@@ -4039,7 +4248,10 @@ export const DataGrid = memo(function DataGrid({
         e.preventDefault();
         // Alt/Option+Enter (行インスペクタトグル) は switch より前段で処理済み。
         const colEd = editable && (editableColumns?.[colIdx] ?? false);
-        if (colEd && onSetCellEdit) {
+        if (colEd && onSetCellEdit && cellMaskedNow(rowIdx, colIdx)) {
+          // マスク中は編集欄が実値を初期表示してしまうので開かない (#1069)。
+          toast.info(t("gridMaskedCellBlocked"));
+        } else if (colEd && onSetCellEdit) {
           const v = rows[rowIdx]?.[colIdx] ?? null;
           const rowKey = rowEditKey(rows[rowIdx] ?? [], pkIndices ?? [], rowIdx);
           const pending = pendingEdits?.[rowKey]?.[colIdx];
@@ -4070,6 +4282,13 @@ export const DataGrid = memo(function DataGrid({
           const colEd = editable && (editableColumns?.[colIdx] ?? false);
           if (colEd && onSetCellEdit) {
             e.preventDefault();
+            // 打鍵での置き換え編集自体は実値を表示しないが、「マスク中のセルは
+            // reveal するまで編集を始めない」をダブルクリック/Enter と揃え、
+            // 見えていない値を誤って上書きしないようにする (#1069)。
+            if (cellMaskedNow(rowIdx, colIdx)) {
+              toast.info(t("gridMaskedCellBlocked"));
+              return;
+            }
             setEditing({ rowIdx, colIdx, value: e.key });
           }
         }
@@ -4151,6 +4370,9 @@ export const DataGrid = memo(function DataGrid({
         const findKey = `${row.index}:${colIdx}`;
         const isFindHit = !!findHits?.has(findKey);
         const isFindCurrent = isFindHit && findCurrentKey === findKey;
+        // 機微カラムの表示マスク (#1069)。マスク無しの結果では `maskedCols` が
+        // null なので、ここは null 判定 1 回で終わる (列仮想化のホットパス)。
+        const cellMasked = maskedCols !== null && cellMaskedNow(row.index, colIdx);
         // Live validation of the value being typed, and of an
         // already-buffered value that's sitting invalid in the grid.
         const editError =
@@ -4176,6 +4398,12 @@ export const DataGrid = memo(function DataGrid({
             }
           : {};
         const handleDoubleClick = () => {
+          // マスク中のセルは編集欄も値ビューアも実値を表示してしまうので、
+          // reveal (右クリック) するまでどちらも開かない (#1069)。
+          if (cellMasked) {
+            toast.info(t("gridMaskedCellBlocked"));
+            return;
+          }
           // Editable cells edit on double-click; everything else
           // (read-only grids, PK/BLOB columns, preview panes) opens
           // the full-value viewer instead, so the two never collide.
@@ -4200,7 +4428,7 @@ export const DataGrid = memo(function DataGrid({
               if (el) cellRefs.current.set(key, el);
               else cellRefs.current.delete(key);
             }}
-            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
+            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}${cellMasked ? " is-masked-cell" : ""}`}
             // マウス hover 用は行×列に比例するため native title ではなく
             // `cellTooltipProps` (#884) に委譲する。キーボードでの同等手段は
             // 既存の `gridInspector` ショートカット (`CellValueViewer`) が
@@ -4208,7 +4436,9 @@ export const DataGrid = memo(function DataGrid({
             {...cellTooltipProps(
               isEditingHere
                 ? undefined
-                : hasPending
+                : cellMasked
+                  ? t("gridMaskedCellTitle")
+                  : hasPending
                   ? t("editPendingTitle", {
                       original: isNull ? t("resultNull") : String(v),
                       next: pendingValue,
@@ -4338,6 +4568,12 @@ export const DataGrid = memo(function DataGrid({
                   </div>
                 )}
               </div>
+            ) : cellMasked ? (
+              // マスク中は実値も保留中の編集値も出さない。固定長の伏せ字で、
+              // 値の長さ・型 (NULL かどうか) も漏らさない。
+              <span className="cell-masked" aria-label={t("gridMaskedCellAria")}>
+                {MASK_PLACEHOLDER}
+              </span>
             ) : hasPending ? (
               // 未適用編集の値は Motion で軽くハイライトする。`key` を
               // pendingValue にして値が変わるたび (= 編集/Undo/Redo のたび) 再マウント
@@ -4400,6 +4636,16 @@ export const DataGrid = memo(function DataGrid({
 
   return (
     <>
+      {/* スクロール端影 (#1073)。スクロールコンテナ直下の先頭に置く高さ 0 の
+          sticky 帯で、表の流れ・列整列には影響しない。左の影は行番号列 + 左ピン
+          留め列の右端、右の影は右ピン留め列の左端に出す (ピン境界を尊重)。 */}
+      {virtualize && scrollContainerRef && (
+        <ScrollEdgeShadows
+          scrollRef={scrollContainerRef}
+          insetStart={leftDeadZone}
+          insetEnd={rightDeadZone}
+        />
+      )}
       {(isFiltered || multiSortActive || serverSort || serverFilter) && (
         <Box className="grid-filter-summary">
           {isFiltered && t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
@@ -4456,6 +4702,7 @@ export const DataGrid = memo(function DataGrid({
         </Box>
       )}
       <table
+        ref={gridTableRef}
         role="grid"
         style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}
         onKeyDown={handleGridKeyDown}
@@ -4514,6 +4761,7 @@ export const DataGrid = memo(function DataGrid({
                 return (
                   <th
                     key={h.id}
+                    data-col-id={h.column.id}
                     style={pinStyle}
                     className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${dragOverColId === h.column.id ? "is-drag-over" : ""} ${dragColId === h.column.id ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
                     aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
@@ -4734,7 +4982,11 @@ export const DataGrid = memo(function DataGrid({
                 const fn = resolveFooterFn(footerAggs[h.column.id], kind);
                 const stats = footerStats?.[colIdx];
                 const cell = stats ? computeFooterCell(stats, fn) : null;
-                const text = cell ? footerCellText(cell) : "";
+                // マスク中の列 (#1069) は集計値 (合計・最小/最大など) も伏せ、
+                // CountUp (#1024) でも数値を出さない。
+                const footerMasked = isColumnMaskedNow(colIdx);
+                const text = cell ? (footerMasked ? MASK_PLACEHOLDER : footerCellText(cell)) : "";
+                const countTarget = footerMasked ? null : footerCountUpTarget(cell, skeleton);
                 const pinSide = h.column.getIsPinned();
                 const pinStyle: CSSProperties = pinSide
                   ? {
@@ -4748,12 +5000,22 @@ export const DataGrid = memo(function DataGrid({
                 const footerTd = (
                   <td
                     key={h.id}
+                    data-col-id={h.column.id}
                     style={pinStyle}
                     className={`grid-footer-cell col-${kind} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
                   >
                     {fn !== "none" && (
                       <span className="grid-footer-inner">
                         <span className="grid-footer-fn">{label}</span>
+                        {countTarget !== null ? (
+                          // 確定した整数集計はカウントアップで遷移させる (#1024)。
+                          // key を固定したまま CountUp に値だけ渡し続けることで
+                          // 前回値 → 新値を補間する (key={text} だと再マウントされ
+                          // 初回表示扱いになりアニメーションしない)。
+                          <span className="grid-footer-val">
+                            <CountUp value={countTarget} formatter={fmtFooterInt} />
+                          </span>
+                        ) : (
                         <motion.span
                           key={text}
                           className="grid-footer-val"
@@ -4763,6 +5025,7 @@ export const DataGrid = memo(function DataGrid({
                         >
                           {text}
                         </motion.span>
+                        )}
                       </span>
                     )}
                   </td>
@@ -4810,6 +5073,10 @@ export const DataGrid = memo(function DataGrid({
                     ? Array.from(selectionRect.rowIndexSet)
                     : [copyMenu.rowIdx];
                 const multiRow = insertRowIndices.length > 1;
+                // マスク中のセルを含む行は SQL としてコピーできない (#1069)。
+                const insertMasked = rowSqlBlockedByMask(insertRowIndices);
+                const rowMasked = rowSqlBlockedByMask([copyMenu.rowIdx]);
+                const maskTitle = t("gridMaskedSqlCopyBlocked");
                 return [
                   { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
                   {
@@ -4821,11 +5088,14 @@ export const DataGrid = memo(function DataGrid({
                   multiRow
                     ? {
                         label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
-                        title: t("gridCopyAsInsertRowsTitle"),
+                        title: insertMasked ? maskTitle : t("gridCopyAsInsertRowsTitle"),
+                        disabled: insertMasked,
                         onSelect: () => copyRowsAsInsert(insertRowIndices, false),
                       }
                     : {
                         label: t("gridCopyAsInsert"),
+                        title: insertMasked ? maskTitle : undefined,
+                        disabled: insertMasked,
                         onSelect: () => copyRowsAsInsert(insertRowIndices, false),
                       },
                   ...(multiRow
@@ -4834,7 +5104,10 @@ export const DataGrid = memo(function DataGrid({
                           label: t("gridCopyAsInsertRowsCombined", {
                             count: insertRowIndices.length,
                           }),
-                          title: t("gridCopyAsInsertRowsCombinedTitle"),
+                          title: insertMasked
+                            ? maskTitle
+                            : t("gridCopyAsInsertRowsCombinedTitle"),
+                          disabled: insertMasked,
                           onSelect: () => copyRowsAsInsert(insertRowIndices, true),
                         },
                       ]
@@ -4844,14 +5117,22 @@ export const DataGrid = memo(function DataGrid({
                         {
                           label: t("gridCopyAsUpdate"),
                           onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
-                          disabled: !rowSqlHasPk,
-                          title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                          disabled: !rowSqlHasPk || rowMasked,
+                          title: !rowSqlHasPk
+                            ? t("gridCopyAsSqlNoPk")
+                            : rowMasked
+                              ? maskTitle
+                              : undefined,
                         },
                         {
                           label: t("gridCopyAsDelete"),
                           onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
-                          disabled: !rowSqlHasPk,
-                          title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                          disabled: !rowSqlHasPk || rowMasked,
+                          title: !rowSqlHasPk
+                            ? t("gridCopyAsSqlNoPk")
+                            : rowMasked
+                              ? maskTitle
+                              : undefined,
                         },
                       ]
                     : []),
@@ -4899,6 +5180,9 @@ export const DataGrid = memo(function DataGrid({
               const kind = columnKinds[copyMenu.colIdx] ?? "string";
               // BLOB は手元に 16 進表現しか無く、それで一致比較しても意味を成さない。
               if (kind === "binary") return [];
+              // マスク中のセル (#1069) は出さない: ラベルに値が出るうえ、適用後の
+              // フィルタチップ/フィルタ欄にも値が表示されてしまうため。
+              if (cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)) return [];
               const value = rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null;
               const numeric = isNumericFilterKind(kind);
               const nullCell = isNullCell(value);
@@ -4943,7 +5227,11 @@ export const DataGrid = memo(function DataGrid({
                   { separator: true as const },
                   {
                     label: t("gridDuplicateRow"),
-                    title: t("gridDuplicateRowTitle"),
+                    // 行の複製は行追加モーダルに実値を表示するため、マスク中の
+                    // セルを含む行では使えない (#1069)。
+                    ...(rowHasMaskedCell(maskedCols, reveal, copyMenu.rowIdx, columns.length)
+                      ? { disabled: true, title: t("gridMaskedDuplicateBlocked") }
+                      : { title: t("gridDuplicateRowTitle") }),
                     onSelect: () => {
                       const row = rows[copyMenu.rowIdx];
                       setCopyMenu(null);
@@ -5065,7 +5353,13 @@ export const DataGrid = memo(function DataGrid({
               const fkMeta = columnMeta?.find(
                 (m) => m.name === columns[copyMenu.colIdx]?.name,
               );
-              if (fkMeta?.referenced_table && fkMeta.referenced_column) {
+              // FK ジャンプの SQL はエディタに値をそのまま書き出すため、マスク中の
+              // セル (#1069) からは辿らない (順方向・逆方向とも)。
+              if (
+                fkMeta?.referenced_table &&
+                fkMeta.referenced_column &&
+                !cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)
+              ) {
                 const refTable = fkMeta.referenced_table;
                 const sql = buildFkJumpSql({
                   driver,
@@ -5089,7 +5383,7 @@ export const DataGrid = memo(function DataGrid({
               // 短いラベルにする。
               const candidates = (incomingFks ?? []).flatMap((inc) => {
                 const refColIdx = columns.findIndex((c) => c.name === inc.referencedColumn);
-                if (refColIdx < 0) return [];
+                if (refColIdx < 0 || cellMaskedNow(copyMenu.rowIdx, refColIdx)) return [];
                 return [{ inc, refColIdx }];
               });
               const grouped = candidates.length >= SUBMENU_THRESHOLD;
@@ -5121,9 +5415,55 @@ export const DataGrid = memo(function DataGrid({
               if (items.length === 0) return [];
               return [{ separator: true as const }, ...items];
             })(),
+            // 機微カラムの一時 reveal / 再マスク (#1069)。マスク対象列のセルでだけ出す。
+            ...(() => {
+              const ci = copyMenu.colIdx;
+              const ri = copyMenu.rowIdx;
+              if (!maskedCols?.[ci]) return [];
+              const revealed = isCellRevealed(reveal, ri, ci);
+              const secs = Math.round(REVEAL_TIMEOUT_MS / 1000);
+              return [
+                { separator: true as const },
+                ...(revealed
+                  ? [
+                      {
+                        label: t("gridMaskRemask"),
+                        icon: "eye-off" as const,
+                        onSelect: () => {
+                          setCopyMenu(null);
+                          setReveal(null);
+                        },
+                      },
+                    ]
+                  : [
+                      {
+                        label: t("gridMaskRevealCell", { secs }),
+                        icon: "eye" as const,
+                        title: t("gridMaskRevealTitle"),
+                        onSelect: () => {
+                          setCopyMenu(null);
+                          setReveal({ kind: "cell", rowIdx: ri, colIdx: ci });
+                        },
+                      },
+                      {
+                        label: t("gridMaskRevealColumn", { secs }),
+                        title: t("gridMaskRevealTitle"),
+                        onSelect: () => {
+                          setCopyMenu(null);
+                          setReveal({ kind: "column", colIdx: ci });
+                        },
+                      },
+                    ]),
+              ];
+            })(),
             { separator: true as const },
             {
               label: t("gridViewFull"),
+              // 値ビューアは実値を全文表示するため、マスク中は開かない (#1069)。
+              disabled: cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx),
+              title: cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)
+                ? t("gridMaskedCellBlocked")
+                : undefined,
               onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
             },
             {
@@ -5307,7 +5647,8 @@ export const DataGrid = memo(function DataGrid({
               : undefined
           }
           onShowStats={
-            enableColumnControls
+            // マスク中の列 (#1069) は代表値・最小/最大が実値を表示するので出さない。
+            enableColumnControls && !isColumnMaskedNow(filterMenu.colIdx)
               ? () => {
                   const { colIdx, anchor } = filterMenu;
                   setFilterMenu(null);
@@ -5347,9 +5688,20 @@ export const DataGrid = memo(function DataGrid({
               ? () => onSetServerFilter(columns[filterMenu.colIdx]?.name ?? "", null)
               : undefined
           }
+          masked={!!maskedCols?.[filterMenu.colIdx]}
+          onToggleMask={
+            columnMaskEnabled
+              ? () => toggleColumnMask(filterMenu.colIdx, !maskedCols?.[filterMenu.colIdx])
+              : undefined
+          }
+          onRevealColumn={
+            isColumnMaskedNow(filterMenu.colIdx)
+              ? () => setReveal({ kind: "column", colIdx: filterMenu.colIdx })
+              : undefined
+          }
         />
       )}
-      {statsMenu && (() => {
+      {statsMenu && !isColumnMaskedNow(statsMenu.colIdx) && (() => {
         const colIdx = statsMenu.colIdx;
         const kind = columnKinds[colIdx] ?? "string";
         const colName = columns[colIdx]?.name ?? "";
@@ -5374,6 +5726,16 @@ export const DataGrid = memo(function DataGrid({
             values={colValues}
             statsRequest={statsRequest}
             onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
+            onExploreColumn={
+              rowSqlTable && onExploreColumn
+                ? () =>
+                    onExploreColumn({
+                      database: rowSqlDatabase ?? null,
+                      table: rowSqlTable,
+                      column: colName,
+                    })
+                : undefined
+            }
             onClose={() => setStatsMenu(null)}
             footerFn={resolveFooterFn(footerAggs[String(colIdx)], kind)}
             onSetFooterFn={
@@ -5422,7 +5784,7 @@ export const DataGrid = memo(function DataGrid({
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {viewer && (() => {
+        {viewer && !cellMaskedNow(viewer.rowIdx, viewer.colIdx) && (() => {
           // 大きな TEXT / JSON 値の直接編集 (#556)。インライン編集と同じ条件
           // (編集可・PK あり・列が編集対象) を満たすときだけ編集モードを許可し、
           // 保存は既存のセル編集経路 (commitEdit → onSetCellEdit) に合流させる。
@@ -5450,6 +5812,7 @@ export const DataGrid = memo(function DataGrid({
                   : undefined
               }
               onClose={() => setViewer(null)}
+              driver={rowSqlDriver}
             />
           );
         })()}
@@ -5464,6 +5827,11 @@ export const DataGrid = memo(function DataGrid({
           <RowInspector
             columns={columns}
             values={rows[activeCell.rowIdx]}
+            maskedColumns={
+              maskedCols
+                ? columns.map((_, ci) => cellMaskedNow(activeCell.rowIdx, ci))
+                : undefined
+            }
             columnKinds={columnKinds}
             rowNumber={inspVis >= 0 ? inspVis + 1 : activeCell.rowIdx + 1}
             hasPrev={inspVis > 0}
@@ -5678,6 +6046,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   lastEditAppliedAt,
   applyingEdits,
   onRunStatsQuery,
+  onExploreColumn,
   maximized,
   onToggleMaximize,
   onPinResult,
@@ -6088,12 +6457,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }
   if (result.columns.length === 0) {
     if (streaming) {
-      // カラム情報未着のストリーミング中: 密度設定に合わせた行数ぶんのスケルトン行を
-      // 表示してレイアウトシフトを抑える。データ到着後は DataGrid に差し替わる。
-      // 行数は「表示領域の高さ / 推定行高」から概算し、空白が目立たないよう 8 行を
-      // 最大として適度な数にする。
-      const skeletonRowCount = Math.min(8, Math.max(3, Math.round(320 / DENSITY_ROW_ESTIMATE[settings.density])));
-      const skeletonColWidths = [42, 68, 55, 80, 50, 72, 60, 45];
+      // カラム情報未着のストリーミング中: 共有の結果ペイン骨格 (#1071) を表示して
+      // レイアウトシフトを抑える。columns 受信後は DataGrid が実ヘッダの下に列数ぶんの
+      // 骨格行を出し (#657)、最初の行が届いた時点で実データへ差し替わる。
       return (
         <Box
           display="flex"
@@ -6116,33 +6482,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onStop={onStopStreaming}
             timeoutSecs={settings.queryTimeoutSecs}
           />
-          {/* スケルトン行: 密度ごとの行高に合わせた疑似列バーを並べる */}
-          <Box
-            px="3"
-            pt="2.5"
-            display="flex"
-            flexDirection="column"
-            gap={settings.density === "compact" ? "1" : settings.density === "spacious" ? "2" : "1.5"}
-            aria-hidden
-          >
-            {Array.from({ length: skeletonRowCount }, (_, i) => (
-              <Box key={i} display="flex" gap="2" opacity={1 - i * 0.1}>
-                {skeletonColWidths.slice(0, 5).map((w, ci) => (
-                  <Skeleton
-                    key={ci}
-                    height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
-                    style={{ width: `${w}px`, animationDelay: `${(i * 5 + ci) * 0.05}s` }}
-                    flexShrink={0}
-                  />
-                ))}
-                <Skeleton
-                  height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
-                  flex="1"
-                  style={{ animationDelay: `${(i * 5 + 5) * 0.05}s` }}
-                />
-              </Box>
-            ))}
-          </Box>
+          {/* 列数未知の骨格 (#1071)。副次パネルと同じ SkeletonTableRows +
+              ヘッダ骨格で、App.tsx の Suspense fallback と同一の見た目。 */}
+          <ResultPaneSkeleton columnCount={null} density={settings.density} />
         </Box>
       );
     }
@@ -6667,6 +7009,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             color="app.text"
             whiteSpace="nowrap"
             fontFamily="mono"
+            textStyle="numeric"
             aria-live="polite"
             aria-label={t("gridSelectionAria")}
             py="0.5"
@@ -6701,6 +7044,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             color="app.textMuted"
             whiteSpace="nowrap"
             fontFamily="mono"
+            textStyle="numeric"
             aria-live="polite"
           >
             {statusBarParts[0]}
@@ -6882,6 +7226,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               <chakra.span
                 fontSize="xs"
                 fontFamily="mono"
+                textStyle="numeric"
                 whiteSpace="nowrap"
                 aria-live="polite"
                 color={
@@ -6983,6 +7328,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           onSelectionSummary={setSelSummary}
           onExportSelection={handleExportSelection}
           onRunStatsQuery={onRunStatsQuery}
+          onExploreColumn={onExploreColumn}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}
           findHits={findHits}

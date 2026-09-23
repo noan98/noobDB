@@ -11,6 +11,7 @@ pub mod postgres;
 /// `preview_execute_with_limit` から共有する (#preview-parity)。
 pub mod preview;
 pub mod privileges;
+pub mod profile;
 pub mod sandbox;
 pub mod sqlite;
 pub mod sync;
@@ -963,6 +964,23 @@ impl Connection {
             Connection::DuckDb(c) => c.unused_indexes(db).await,
             Connection::Mssql(c) => c.unused_indexes(db).await,
         }
+    }
+
+    /// 列データプロファイル (「列を探索」、#974)。件数 / NULL 率 / DISTINCT /
+    /// MIN・MAX / 上位頻出値 / (数値列のみ) ヒストグラムをサーバ側で全件集計する。
+    /// 方言別の SQL は `profile::build_*_sql` (純関数) が `DriverKind` の全
+    /// バリアントについて生成し、ここは `execute` 経由で流すだけ。すべて単一の
+    /// SELECT なので read_only セッションでも実行できる。型の都合で通らない段は
+    /// 理由コード付きで縮退する ([`profile::ColumnProfile::notes`])。
+    pub async fn column_profile(
+        &self,
+        db: &str,
+        table: &str,
+        column: &str,
+        approximate: bool,
+        top_n: u32,
+    ) -> Result<profile::ColumnProfile> {
+        profile::run_column_profile(self, db, table, column, approximate, top_n).await
     }
 
     pub async fn close(&self) {

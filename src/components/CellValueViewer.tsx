@@ -5,9 +5,12 @@ import { useT, type I18nKey } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { copyToClipboard } from "./clipboard";
 import { Icon, ICON_SIZES } from "./Icon";
+import { JsonTreeView } from "./JsonTreeView";
+import { parseJsonLossless, serializeJson, formatJsonLossless } from "./jsonTree";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
+import { Segmented } from "./Segmented";
 import { Tooltip } from "./Tooltip";
 
 interface Props {
@@ -38,17 +41,25 @@ interface Props {
    */
   onSave?: (value: string) => void;
   onClose: () => void;
+  /**
+   * 接続ドライバ。JSON ツリービューで方言別の SQL 抽出式 / WHERE 条件を生成する
+   * のに使う (#1026)。未指定なら SQL のコピー導線を出さない。
+   */
+  driver?: string;
 }
 
-/** Pretty-print a string as JSON, or null when it isn't valid JSON. */
-function tryFormatJson(s: string): string | null {
+type JsonViewMode = "tree" | "text";
+
+/**
+ * Parse an object/array JSON document losslessly, or null when it isn't one.
+ * `JSON.parse` would round 64-bit integers beyond `Number.MAX_SAFE_INTEGER`,
+ * so the pretty view, the tree view and the edit-mode Format/Minify all go
+ * through `jsonTree.ts`, which keeps every number's original text (#1026).
+ */
+function tryParseJsonDocument(s: string) {
   const trimmed = s.trim();
   if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return null;
-  }
+  return parseJsonLossless(trimmed);
 }
 
 /** Whether a string parses as JSON (used to gate saving a JSON edit). */
@@ -71,6 +82,7 @@ export function CellValueViewer({
   pendingValue,
   onSave,
   onClose,
+  driver,
 }: Props) {
   const t = useT();
   const toast = useToast();
@@ -79,13 +91,17 @@ export function CellValueViewer({
 
   const canEdit = !!editable && !!onSave && !isBinary;
 
-  // JSON values are pretty-printed by default with a toggle back to raw text.
-  const formattedJson = useMemo(
-    () => (isNull || isBinary ? null : tryFormatJson(String(value))),
+  // JSON values are pretty-printed by default with a toggle back to raw text,
+  // and shown as a collapsible tree by default (#1026) with a toggle to text.
+  const jsonDoc = useMemo(
+    () => (isNull || isBinary ? null : tryParseJsonDocument(String(value))),
     [value, isNull, isBinary],
   );
+  const formattedJson = useMemo(() => (jsonDoc ? serializeJson(jsonDoc, 2) : null), [jsonDoc]);
   const canFormat = formattedJson !== null;
   const [pretty, setPretty] = useState(canFormat);
+  const [viewMode, setViewMode] = useState<JsonViewMode>("tree");
+  const showTree = canFormat && viewMode === "tree";
   const display = pretty && formattedJson !== null ? formattedJson : raw;
 
   // 編集状態。`onSave` が無いビューアでは常に閲覧専用。保留中編集があれば編集
@@ -132,12 +148,13 @@ export function CellValueViewer({
   })();
 
   const reformatJson = (minify: boolean) => {
-    try {
-      const parsed = JSON.parse(draft);
-      setDraft(JSON.stringify(parsed, null, minify ? undefined : 2));
-    } catch {
+    // ロスレス整形: 丸めた数値を編集バッファへ書き戻さない (#1026)。
+    const next = formatJsonLossless(draft, minify ? undefined : 2);
+    if (next === null) {
       toast.error(t("cellViewerInvalidJson"));
+      return;
     }
+    setDraft(next);
   };
 
   const handleSave = () => {
@@ -199,6 +216,8 @@ export function CellValueViewer({
           <chakra.div fontStyle="italic" color="app.textMuted">
             {t("resultNull")}
           </chakra.div>
+        ) : showTree && jsonDoc ? (
+          <JsonTreeView root={jsonDoc} columnName={columnName} driver={driver} />
         ) : display === "" ? (
           <chakra.div fontStyle="italic" color="app.textMuted">
             {t("cellViewerEmpty")}
@@ -264,6 +283,17 @@ export function CellValueViewer({
         ) : (
           <>
             {canFormat && (
+              <Segmented<JsonViewMode>
+                value={viewMode}
+                onChange={setViewMode}
+                ariaLabel={t("cellViewerViewMode")}
+                options={[
+                  { value: "tree", label: t("cellViewerViewTree"), icon: "list" },
+                  { value: "text", label: t("cellViewerViewText"), icon: "text" },
+                ]}
+              />
+            )}
+            {canFormat && !showTree && (
               <chakra.span fontSize="sm" color="app.text">
                 <Switch
                   checked={pretty}

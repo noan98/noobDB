@@ -15,6 +15,34 @@
     "name": "id",
     "type_name": "INTEGER"
   },
+  "columnProfile": {
+    "column": "age",
+    "data_type": "bigint",
+    "distinct_approximate": true,
+    "distinct_count": "9007199254740993",
+    "histogram": [
+      {
+        "count": 7,
+        "lower": 0.0,
+        "upper": 2.5
+      }
+    ],
+    "max_value": "9007199254740993",
+    "min_value": -3,
+    "non_null_count": 80,
+    "notes": [
+      "approx_distinct_no_stats"
+    ],
+    "null_count": 20,
+    "numeric": true,
+    "top_values": [
+      {
+        "count": 10,
+        "value": 42
+      }
+    ],
+    "total_count": 100
+  },
   "connectPhaseEvent": {
     "attemptId": "attempt0001",
     "phase": "tunnel_connecting"
@@ -240,31 +268,6 @@
   "logView": {
     "path": "/home/user/.local/share/noobDB/noobdb.log",
     "text": "2026-01-01T00:00:00Z INFO noobdb starting"
-  },
-  "previewResult": {
-    "after_rows": [
-      [
-        2
-      ]
-    ],
-    "before_rows": [
-      [
-        1
-      ]
-    ],
-    "columns": [
-      {
-        "name": "id",
-        "type_name": "INTEGER"
-      }
-    ],
-    "elapsed_ms": 5,
-    "primary_key": [
-      "id"
-    ],
-    "rows_affected": 1,
-    "target_table": "users",
-    "truncated": false
   },
   "previewStreamDoneMessage": {
     "kind": "done"

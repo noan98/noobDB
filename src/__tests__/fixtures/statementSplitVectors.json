@@ -1,0 +1,238 @@
+{
+  "drivers": [
+    "mysql",
+    "postgres",
+    "sqlite",
+    "duckdb",
+    "mssql"
+  ],
+  "cases": [
+    {
+      "sql": "SELECT 1",
+      "note": "単一文 (区切りなし)",
+      "statements": [
+        "SELECT 1"
+      ]
+    },
+    {
+      "sql": "SELECT 1; SELECT 2;",
+      "note": "単純な 2 文 + 末尾セミコロン",
+      "statements": [
+        "SELECT 1",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1;;; SELECT 2",
+      "note": "連続セミコロン (空文は数えない)",
+      "statements": [
+        "SELECT 1",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "   \n  ",
+      "note": "空白のみ (文なし)",
+      "statements": []
+    },
+    {
+      "sql": ";;",
+      "note": "セミコロンのみ (文なし)",
+      "statements": []
+    },
+    {
+      "sql": "SELECT ';' AS s; SELECT 2",
+      "note": "文字列リテラル内の ; では分割しない",
+      "statements": [
+        "SELECT ';' AS s",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 'a;''b'; SELECT 2",
+      "note": "二重化クオート ('') のエスケープ",
+      "statements": [
+        "SELECT 'a;''b'",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT \"a;b\"; SELECT `c;d`",
+      "note": "二重引用符識別子とバッククォート内の ;",
+      "statements": [
+        "SELECT \"a;b\"",
+        "SELECT `c;d`"
+      ]
+    },
+    {
+      "sql": "SELECT 1 -- a; b\n; SELECT 2",
+      "note": "-- 行コメント内の ;",
+      "statements": [
+        "SELECT 1 -- a; b",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1 # a; b\n; SELECT 2",
+      "note": "# 行コメント内の ; (#J3: maskLiterals と揃える)",
+      "statements": [
+        "SELECT 1 # a; b",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT data #>> '{a}' FROM t; DELETE FROM t",
+      "note": "#J3 回帰: # 以降はコメント扱いで 1 文 (安全判定と一致)",
+      "statements": [
+        "SELECT data #>> '{a}' FROM t; DELETE FROM t"
+      ]
+    },
+    {
+      "sql": "SELECT 1 /* x; y */; SELECT 2",
+      "note": "ブロックコメント内の ;",
+      "statements": [
+        "SELECT 1 /* x; y */",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1; -- note",
+      "note": "末尾のコメントだけの断片は文として数えない",
+      "statements": [
+        "SELECT 1"
+      ]
+    },
+    {
+      "sql": "SELECT 1; /* x */",
+      "note": "末尾のブロックコメントだけの断片は文として数えない",
+      "statements": [
+        "SELECT 1"
+      ]
+    },
+    {
+      "sql": "SELECT 1 /* never closed ; DROP TABLE t",
+      "note": "未終端ブロックコメントは EOF までコメント",
+      "statements": [
+        "SELECT 1 /* never closed ; DROP TABLE t"
+      ]
+    },
+    {
+      "sql": "SELECT 1 /*!40000 ; DELETE FROM t */",
+      "note": "#1074 回帰: MySQL バージョンコメント /*! */ の本体は実行対象 (中の ; で分割する)",
+      "statements": [
+        "SELECT 1 /*!40000",
+        "DELETE FROM t */"
+      ]
+    },
+    {
+      "sql": "/*!40000 SET x = 1; */ SELECT 2",
+      "note": "バージョンコメント閉じ */ は素通しされるが、*/ を含む後続文はそのまま文",
+      "statements": [
+        "/*!40000 SET x = 1",
+        "*/ SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT 1; /*!40000 SET x = 1; */",
+      "note": "バージョンコメント分割後の */ だけの断片は文として数えない",
+      "statements": [
+        "SELECT 1",
+        "/*!40000 SET x = 1"
+      ]
+    },
+    {
+      "sql": "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql; SELECT f()",
+      "note": "ドル引用 ($$) の関数本体は 1 文",
+      "statements": [
+        "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql",
+        "SELECT f()"
+      ]
+    },
+    {
+      "sql": "SELECT $tag$ a; b $tag$; SELECT 2",
+      "note": "タグ付きドル引用",
+      "statements": [
+        "SELECT $tag$ a; b $tag$",
+        "SELECT 2"
+      ]
+    },
+    {
+      "sql": "SELECT $$ oops ; DROP TABLE users",
+      "note": "#1074 回帰: 未終端ドル引用は $ を露出して走査を続ける (; で分割)",
+      "statements": [
+        "SELECT $$ oops",
+        "DROP TABLE users"
+      ]
+    },
+    {
+      "sql": "SELECT $tag$broken and; DROP TABLE t",
+      "note": "#1074 回帰: 未終端タグ付きドル引用",
+      "statements": [
+        "SELECT $tag$broken and",
+        "DROP TABLE t"
+      ]
+    },
+    {
+      "sql": "SELECT $1; SELECT $1",
+      "note": "$1 はパラメータでありドル引用タグではない",
+      "statements": [
+        "SELECT $1",
+        "SELECT $1"
+      ]
+    },
+    {
+      "sql": "SELECT a$tag$; SELECT b$tag$",
+      "note": "識別子内の $ はドル引用の開始ではない",
+      "statements": [
+        "SELECT a$tag$",
+        "SELECT b$tag$"
+      ]
+    },
+    {
+      "sql": "SELECT '\\' AS x; DROP TABLE t",
+      "note": "#1004: バックスラッシュは MySQL だけエスケープ (他ドライバは 2 文)",
+      "statements": [
+        "SELECT '\\' AS x",
+        "DROP TABLE t"
+      ],
+      "statementsMysql": [
+        "SELECT '\\' AS x; DROP TABLE t"
+      ]
+    },
+    {
+      "sql": "SELECT \"\\\" AS x; DROP TABLE t",
+      "note": "二重引用符内のバックスラッシュも MySQL だけエスケープ (maskLiterals / バックエンドと同じ)",
+      "statements": [
+        "SELECT \"\\\" AS x",
+        "DROP TABLE t"
+      ],
+      "statementsMysql": [
+        "SELECT \"\\\" AS x; DROP TABLE t"
+      ]
+    },
+    {
+      "sql": "SELECT `\\` AS x; DROP TABLE t",
+      "note": "バッククォート識別子内のバックスラッシュはどのドライバでもエスケープではない",
+      "statements": [
+        "SELECT `\\` AS x",
+        "DROP TABLE t"
+      ]
+    },
+    {
+      "sql": "SELECT 'never closed ; DROP TABLE t",
+      "note": "未終端の文字列リテラルは EOF まで文字列",
+      "statements": [
+        "SELECT 'never closed ; DROP TABLE t"
+      ]
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1);\nUPDATE t SET a = 2 WHERE id = 1;\nDELETE FROM t WHERE id = 3",
+      "note": "改行区切りの複数 DML (前後の空白はトリム)",
+      "statements": [
+        "INSERT INTO t VALUES (1)",
+        "UPDATE t SET a = 2 WHERE id = 1",
+        "DELETE FROM t WHERE id = 3"
+      ]
+    }
+  ]
+}

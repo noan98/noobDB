@@ -215,26 +215,40 @@ export const statementStat = z.object({
   rows: z.number().nullable(),
 });
 
+/** 上位頻出値 1 件 (#974)。件数は 2^53 超で十進文字列になりうる。 */
+const profileValueCount = z.object({
+  value: cellValue,
+  count: z.union([z.number(), z.string()]),
+});
+
+/** ヒストグラム 1 区間 (#974)。 */
+const profileHistogramBucket = z.object({
+  lower: z.number(),
+  upper: z.number(),
+  count: z.union([z.number(), z.string()]),
+});
+
+/** 列データプロファイル (#974)。 */
+export const columnProfile = z.object({
+  column: z.string(),
+  data_type: z.string(),
+  numeric: z.boolean(),
+  total_count: z.union([z.number(), z.string()]),
+  non_null_count: z.union([z.number(), z.string()]),
+  null_count: z.union([z.number(), z.string()]),
+  distinct_count: z.union([z.number(), z.string()]).nullable(),
+  distinct_approximate: z.boolean(),
+  min_value: cellValue,
+  max_value: cellValue,
+  top_values: z.array(profileValueCount),
+  histogram: z.array(profileHistogramBucket),
+  notes: z.array(z.string()),
+});
+
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),
   id: z.string().nullish().transform((v) => v ?? null),
-});
-
-/**
- * プレビュー結果の検証スキーマ。他の IPC スキーマと対をなす公開検証表面で、
- * 現状ランタイム検証には未配線だが API 完全性のため保持する。
- * @public
- */
-export const previewResult = z.object({
-  target_table: z.string().nullable(),
-  columns: z.array(column),
-  primary_key: z.array(z.string()),
-  before_rows: z.array(z.array(cellValue)),
-  after_rows: z.array(z.array(cellValue)),
-  rows_affected: z.number(),
-  elapsed_ms: z.number(),
-  truncated: z.boolean(),
 });
 
 // #708: 踏み台/ジャンプホスト (2 段目まで)。SshProfile と同形だが自身の jump は

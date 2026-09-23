@@ -40,17 +40,18 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    CancelStreamResult, Column, ColumnDiff, ConnectPhaseEvent, ConnectResponse, ConnectionProfile,
-    CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
-    ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
-    HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PreviewResult,
-    PreviewStreamMessage, ProcessInfo, ProfileWithSecretFlags, QueryResult, QueryStatsSupport,
-    QueryStreamMessage, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
-    ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet,
-    SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementStat,
-    StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableDiff,
-    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
+    CancelStreamResult, Column, ColumnDiff, ColumnProfile, ConnectPhaseEvent, ConnectResponse,
+    ConnectionProfile, CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent,
+    DumpProgressEvent, ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey,
+    HealthFinding, HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent,
+    ImportResult, ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
+    PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
+    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RowDiff, RowStatus,
+    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ServerInfo, ServerMetrics,
+    ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod,
+    SshJumpProfile, SshProfile, SslMode, StatementStat, StreamCancelledEvent, SyncKind, SyncPlan,
+    SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -174,6 +175,30 @@ fn build_fixtures() -> serde_json::Value {
         max_time_ms: 87.2,
         rows: Some(1200),
     };
+    // 列データプロファイル (#974)。件数は `from_u64_lossless` 済みの `Value`
+    // (安全整数内は数値、超えると十進文字列) なので両方の形を露出させる。
+    let column_profile = ColumnProfile {
+        column: "age".into(),
+        data_type: "bigint".into(),
+        numeric: true,
+        total_count: Value::UInt(100),
+        non_null_count: Value::UInt(80),
+        null_count: Value::UInt(20),
+        distinct_count: Some(Value::String("9007199254740993".into())),
+        distinct_approximate: true,
+        min_value: Value::Int(-3),
+        max_value: Value::String("9007199254740993".into()),
+        top_values: vec![ProfileValueCount {
+            value: Value::Int(42),
+            count: Value::UInt(10),
+        }],
+        histogram: vec![ProfileHistogramBucket {
+            lower: 0.0,
+            upper: 2.5,
+            count: Value::UInt(7),
+        }],
+        notes: vec!["approx_distinct_no_stats".into()],
+    };
     let server_metrics = ServerMetrics {
         connections: Some(42),
         active: Some(3),
@@ -182,16 +207,6 @@ fn build_fixtures() -> serde_json::Value {
         questions: Some(1_000_000),
         slow_queries: Some(12),
         lock_waits: Some(5),
-    };
-    let preview_result = PreviewResult {
-        target_table: Some("users".into()),
-        columns: vec![column.clone()],
-        primary_key: vec!["id".into()],
-        before_rows: vec![vec![Value::Int(1)]],
-        after_rows: vec![vec![Value::Int(2)]],
-        rows_affected: 1,
-        elapsed_ms: 5,
-        truncated: false,
     };
     let health_finding = HealthFinding {
         rule: RuleId::FkMissingIndex,
@@ -540,7 +555,7 @@ fn build_fixtures() -> serde_json::Value {
         "queryStatsSupport": query_stats_support,
         "liveQuery": live_query,
         "statementStat": statement_stat,
-        "previewResult": preview_result,
+        "columnProfile": column_profile,
         "healthFinding": health_finding,
         "skippedRule": skipped_rule,
         "schemaHealthReport": schema_health_report,

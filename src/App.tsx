@@ -79,12 +79,15 @@ import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
 import { StreamProgressBar } from "./components/StreamProgressBar";
+import { ResultPaneSkeleton } from "./components/ResultPaneSkeleton";
+import { showsResultSkeletonFallback } from "./components/resultSkeleton";
 import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
-import { SnippetList } from "./components/SnippetList";
+import { scopeMatches, SnippetList } from "./components/SnippetList";
+import type { WhereUsedRequest } from "./components/WhereUsedPanel";
 import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
@@ -217,6 +220,9 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const ConnectionHealthPanel = lazy(() =>
+  import("./components/ConnectionHealthPanel").then((m) => ({ default: m.ConnectionHealthPanel })),
+);
 const UsersPanel = lazy(() =>
   import("./components/UsersPanel").then((m) => ({ default: m.UsersPanel })),
 );
@@ -231,6 +237,12 @@ const QueryInspectorPanel = lazy(() =>
 );
 const AdvisorPanel = lazy(() =>
   import("./components/AdvisorPanel").then((m) => ({ default: m.AdvisorPanel })),
+);
+const ColumnProfilePanel = lazy(() =>
+  import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
+);
+const WhereUsedPanel = lazy(() =>
+  import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
@@ -282,6 +294,12 @@ import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
 import { workspaceViewKey } from "./components/workspaceView";
+import {
+  hasOpenNestedLayer,
+  isEditableElement,
+  resolveWorkspaceEscape,
+} from "./components/workspaceEscape";
+import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, WorkspaceSplit } from "./components/BottomPanel";
 import {
   availableBottomPanelTabs,
@@ -289,6 +307,7 @@ import {
   toggleBottomPanelTab,
   type BottomPanelTab,
 } from "./components/bottomPanelTabs";
+import type { ProfileTarget } from "./components/columnProfile";
 import {
   useSettings,
   getSettings,
@@ -1240,6 +1259,11 @@ export default function App() {
    * サーフェスを全部閉じる」定型のすべてに毎回追従させる必要があった)。
    */
   const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab | null>(null);
+  // 「列を探索」(#974) の対象。サイドバーのテーブル / 結果グリッドの列から開いたときに
+  // 決まり、ボトムパネルの profile タブはこれがあるときだけ開ける。
+  const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
+  // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
+  const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
   // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
   const [showUsers, setShowUsers] = useState(false);
@@ -6326,20 +6350,31 @@ export default function App() {
         setLayoutMode((m) => toggleLayoutMode(m, "editor"));
         return;
       }
-      if (e.key === "Escape" && layoutMode !== "normal") {
-        const el = document.activeElement as HTMLElement | null;
-        if (el) {
-          const tag = el.tagName;
-          if (
-            tag === "INPUT" ||
-            tag === "TEXTAREA" ||
-            tag === "SELECT" ||
-            el.isContentEditable ||
-            el.closest(".cm-editor")
-          ) {
-            return;
-          }
-        }
+      // Esc の受け手は `resolveWorkspaceEscape` (#1070) で決める。全画面サーフェス
+      // (`WorkspaceSurface`) の Escape と同じ関数を引くので、1 回の Esc で
+      // 「サーフェスを閉じる」と「最大化を解除する」が同時に起きない。ネストした
+      // Modal / メニューや入力欄のローカル Esc もそちらが優先される。
+      const escape = resolveWorkspaceEscape({
+        key: e.key,
+        defaultPrevented: e.defaultPrevented,
+        isComposing: e.isComposing,
+        nestedLayerOpen: e.key === "Escape" && hasOpenNestedLayer(document),
+        editableFocused: isEditableElement(document.activeElement),
+        view: workspaceViewKey({
+          showCompare,
+          showErd,
+          showUsers,
+          showServerInfo,
+          showSizes,
+          showCompareResults,
+          showForm,
+          showSnippetForm,
+          sessionId: sessionIdRef.current,
+          sizesTarget,
+        }),
+        layoutMaximized: layoutMode !== "normal",
+      });
+      if (escape === "restoreLayout") {
         e.preventDefault();
         setLayoutMode("normal");
       }
@@ -6363,6 +6398,7 @@ export default function App() {
     showObjectSearch,
     showDataSearch,
     showCheatSheet,
+    sizesTarget,
   ]);
 
   // レイアウトモードは接続状態に依らず保持し、再起動・再接続でも復元する (#618)。
@@ -6406,6 +6442,29 @@ export default function App() {
    */
   const toggleBottomPanel = useCallback((tab: BottomPanelTab) => {
     setBottomPanelTab((current) => toggleBottomPanelTab(current, tab));
+  }, []);
+
+  // 列データプロファイル (#974) をボトムパネルで開く。SQL を書きながら参照する
+  // 情報なのでワークスペースは置き換えない (ui-design-system.md §7.1)。
+  // トグルではなく常に開く — 別の列を選び直したときに閉じてしまわないように。
+  const handleExploreColumns = useCallback(
+    (database: string, table: string, column: string | null = null) => {
+      setProfileTarget({ database, table, column });
+      setBottomPanelTab("profile");
+    },
+    [],
+  );
+  // 接続先が変わったら前のセッションのテーブルを指したままにしない。
+  useEffect(() => {
+    setProfileTarget(null);
+  }, [sessionId]);
+  /**
+   * スキーマツリーの右クリック (テーブル / 列 / ビュー) から影響分析 (#1027) を開き、
+   * その対象で即座に検索する。トグルではなく常に開く (別の対象を続けて調べるため)。
+   */
+  const handleFindUsages = useCallback((database: string, table: string, column: string | null) => {
+    setWhereUsedRequest({ target: { database, table, column }, autoRun: true });
+    setBottomPanelTab("whereUsed");
   }, []);
 
   // 設定/ヘルプを開く・テーマ切替・サイドバー開閉 (#681)。コマンドパレットと
@@ -6578,6 +6637,27 @@ export default function App() {
         run: () => toggleBottomPanel("advisor"),
       });
     }
+    if (openConnections.length > 0) {
+      items.push({
+        id: "nav:connectionHealth",
+        group: "navigation",
+        label: t("healthTitle"),
+        icon: "server",
+        keywords: "health ping latency version status ヘルス 稼働 レイテンシ バージョン 死活",
+        run: () => toggleBottomPanel("health"),
+      });
+    }
+    // 影響分析 (#1027)。対象はパネル内のフォームで決めるので接続だけを要求する。
+    if (sessionId) {
+      items.push({
+        id: "nav:whereUsed",
+        group: "navigation",
+        label: t("cmdkWhereUsed"),
+        icon: "search",
+        keywords: "where used usages impact dependency references drop rename 影響分析 参照元 依存 使用箇所",
+        run: () => toggleBottomPanel("whereUsed"),
+      });
+    }
     if (sessionId) {
       items.push({
         id: "nav:disconnect",
@@ -6696,6 +6776,7 @@ export default function App() {
     openFullView,
     toggleTheme,
     pinnedResults.length,
+    openConnections.length,
   ]);
 
   // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
@@ -7015,7 +7096,20 @@ export default function App() {
                       既存の tab.streaming (フッター tone と同源) を共有する。 */}
                   <StreamProgressBar active={!!tab.streaming} />
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
-                <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+                {/* 初回実行でグリッドのチャンクを読み込む間は、副次パネルと揃えた
+                    骨格を出す (#1071)。表の結果を待っていない場合は従来の Spinner。 */}
+                <Suspense
+                  fallback={
+                    showsResultSkeletonFallback(tab) ? (
+                      <ResultPaneSkeleton
+                        columnCount={tab.result?.columns.length ?? null}
+                        density={settings.density}
+                      />
+                    ) : (
+                      <PaneEmpty><Spinner size={20} /></PaneEmpty>
+                    )
+                  }
+                >
                   {/* 結果パネルの種類が変わるとき (グリッド ⇔ EXPLAIN /
                       チャート / ピボット / プレビュー / バッチ) に控えめな
                       クロスフェードを添える (#788)。key は contentMode なので
@@ -7231,6 +7325,12 @@ export default function App() {
                       onRunStatsQuery={
                         sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
                       }
+                      onExploreColumn={
+                        sessionId
+                          ? (target) =>
+                              handleExploreColumns(target.database ?? "", target.table, target.column)
+                          : undefined
+                      }
                       serverSort={tab.kind === "table" ? tab.serverSort ?? null : undefined}
                       serverFilter={tab.kind === "table" ? tab.serverFilter ?? null : undefined}
                       onSetServerSort={
@@ -7346,13 +7446,26 @@ export default function App() {
   const bottomPanelCtx = {
     sessionId,
     advisorDatabase: activeTab?.database ?? selectedProfile?.database,
+    profileTable: profileTarget?.table,
+    // 接続ヘルス (#1068) は接続横断なので、背景接続だけでも開ける。
+    openConnectionCount: openConnections.length,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
   // 切断やタブ切替で開けなくなったタブはここで閉じる。描画側はこの解決済みの値
   // だけを見るので、「state は advisor のままだが対象 DB が無い」状態が表に出ない。
   const activeBottomPanelTab = resolveBottomPanelTab(bottomPanelTab, bottomPanelCtx);
   const bottomPanelLabel = (tab: BottomPanelTab) =>
-    tab === "advisor" ? t("advisorTitle") : tab === "inspector" ? t("inspectorTitle") : t("processTitle");
+    tab === "advisor"
+      ? t("advisorTitle")
+      : tab === "inspector"
+        ? t("inspectorTitle")
+        : tab === "whereUsed"
+          ? t("whereUsedTitle")
+          : tab === "health"
+            ? t("healthTitle")
+            : tab === "profile"
+              ? t("profileTitle")
+              : t("processTitle");
 
   return (
     <Flex
@@ -7628,9 +7741,11 @@ export default function App() {
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
+            onExploreColumns={(database, table) => handleExploreColumns(database, table)}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
             onEditViewDefinition={handleEditViewDefinition}
+            onFindUsages={handleFindUsages}
             onDropView={handleDropView}
             onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
@@ -7841,7 +7956,7 @@ export default function App() {
             `WorkspaceSplit` が分割そのものを作らず素通しする。 */}
         <WorkspaceSplit
           bottom={
-            activeBottomPanelTab && sessionId ? (
+            activeBottomPanelTab ? (
               <BottomPanel
                 tab={activeBottomPanelTab}
                 tabs={bottomPanelTabs}
@@ -7850,16 +7965,58 @@ export default function App() {
                 onClose={() => setBottomPanelTab(null)}
               >
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-                  {activeBottomPanelTab === "processes" ? (
+                  {activeBottomPanelTab === "health" ? (
+                    // 接続横断のヘルスダッシュボード (#1068)。未接続プロファイルへは
+                    // 自動で接続せず、行の「接続」は通常の handleConnect を通す。
+                    <ConnectionHealthPanel
+                      connections={openConnections}
+                      profiles={visibleProfiles}
+                      activeSessionId={sessionId}
+                      defaultIntervalSecs={settings.autoRefreshDefaultSecs}
+                      connectingProfileId={connectingId}
+                      onOpenProfile={(p) => void handleConnect(p)}
+                      onReconnected={clearEmergencyFor}
+                    />
+                  ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
                     <ProcessListPanel
                       sessionId={sessionId}
                       driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                       readOnly={selectedProfile?.read_only ?? false}
                     />
+                  ) : activeBottomPanelTab === "profile" ? (
+                    profileTarget ? (
+                      <ColumnProfilePanel
+                        sessionId={sessionId}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        target={profileTarget}
+                        onSelectColumn={(column) =>
+                          setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
+                        }
+                      />
+                    ) : null
                   ) : activeBottomPanelTab === "inspector" ? (
                     <QueryInspectorPanel
                       sessionId={sessionId}
                       driver={selectedProfile?.driver ?? "mysql"}
+                    />
+                  ) : activeBottomPanelTab === "whereUsed" ? (
+                    <WhereUsedPanel
+                      key={sessionId}
+                      sessionId={sessionId}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      defaultDatabase={bottomPanelCtx.advisorDatabase ?? ""}
+                      request={whereUsedRequest}
+                      onRequestConsumed={() =>
+                        setWhereUsedRequest((r) => (r ? { ...r, autoRun: false } : r))
+                      }
+                      snippets={snippets.filter((s) => scopeMatches(s, selectedProfile ?? null))}
+                      onOpenObject={(database, kind, name, id) =>
+                        void handleOpenObjectDefinition(database, kind, name, id)
+                      }
+                      onOpenSnippet={(id) => {
+                        const snip = snippets.find((s) => s.id === id);
+                        if (snip) openQueryInEditor(snip.sql, snip.name);
+                      }}
                     />
                   ) : bottomPanelCtx.advisorDatabase ? (
                     <AdvisorPanel
@@ -7890,45 +8047,61 @@ export default function App() {
           }}
         >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+        {/* Escape で閉じる全画面サーフェスは `WorkspaceSurface` で包む (#1070)。
+            開いたらコンテナへフォーカスを移し、閉じたら開く前の要素へ戻す。
+            `onClose` は戻るボタンと同じ関数を渡す (導線を 1 つに揃える)。
+            フォーム 2 種は未保存入力の破棄を避けるため Escape 対象外。 */}
         {showCompare ? (
-          <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
+          <WorkspaceSurface view="compare" onClose={() => setShowCompare(false)}>
+            <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
+          </WorkspaceSurface>
         ) : showErd && sessionId ? (
-          <ERDiagramView
-            sessionId={sessionId}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
-            onOpenTable={handleOpenTable}
-            onClose={() => setShowErd(false)}
-          />
+          <WorkspaceSurface view="erd" onClose={() => setShowErd(false)}>
+            <ERDiagramView
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+              onOpenTable={handleOpenTable}
+              onClose={() => setShowErd(false)}
+            />
+          </WorkspaceSurface>
         ) : showUsers && sessionId ? (
-          <UsersPanel
-            sessionId={sessionId}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            database={activeTab?.database ?? selectedProfile?.database ?? null}
-            readOnly={selectedProfile?.read_only ?? false}
-            onClose={() => setShowUsers(false)}
-          />
+          <WorkspaceSurface view="users" onClose={() => setShowUsers(false)}>
+            <UsersPanel
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={activeTab?.database ?? selectedProfile?.database ?? null}
+              readOnly={selectedProfile?.read_only ?? false}
+              onClose={() => setShowUsers(false)}
+            />
+          </WorkspaceSurface>
         ) : showServerInfo && sessionId ? (
-          <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+          <WorkspaceSurface view="serverInfo" onClose={() => setShowServerInfo(false)}>
+            <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+          </WorkspaceSurface>
         ) : showSizes && sizesTarget && sessionId ? (
-          <TableStatisticsPanel
-            sessionId={sessionId}
-            database={sizesTarget}
-            onOpenTable={(table) => {
-              const db = sizesTarget;
-              setSizesTarget(null);
-              handleOpenTable(db, table);
-            }}
-            onClose={() => setSizesTarget(null)}
-          />
+          <WorkspaceSurface view="sizes" onClose={() => setSizesTarget(null)}>
+            <TableStatisticsPanel
+              sessionId={sessionId}
+              database={sizesTarget}
+              onOpenTable={(table) => {
+                const db = sizesTarget;
+                setSizesTarget(null);
+                handleOpenTable(db, table);
+              }}
+              onClose={() => setSizesTarget(null)}
+            />
+          </WorkspaceSurface>
         ) : showCompareResults ? (
-          <PinnedComparisonView
-            pinned={pinnedResults}
-            driver={selectedProfile?.driver ?? "mysql"}
-            onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
-            onClear={() => setPinnedResults([])}
-            onClose={() => setShowCompareResults(false)}
-          />
+          <WorkspaceSurface view="compareResults" onClose={() => setShowCompareResults(false)}>
+            <PinnedComparisonView
+              pinned={pinnedResults}
+              driver={selectedProfile?.driver ?? "mysql"}
+              onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
+              onClear={() => setPinnedResults([])}
+              onClose={() => setShowCompareResults(false)}
+            />
+          </WorkspaceSurface>
         ) : showForm ? (
           <ConnectionForm
             key={formInstanceId}
@@ -8758,6 +8931,12 @@ export default function App() {
                 : selectedProfile?.driver === "sqlite"
                   ? t("appProcessesUnsupported")
                   : undefined,
+            },
+            {
+              label: t("healthTitle"),
+              onSelect: () => toggleBottomPanel("health"),
+              disabled: openConnections.length === 0,
+              title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
             },
             {
               label: t("appUsers"),
