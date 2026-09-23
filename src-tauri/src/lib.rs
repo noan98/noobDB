@@ -79,6 +79,13 @@ pub mod __test_api {
             .collect()
     }
 
+    /// バックエンドの stacked 文検出 (#852)。文境界ゴールデン (#1074、
+    /// `tests/statement_split_golden.rs`) が「フロントの文分割器が 2 文以上と見る
+    /// 入力は、バックエンドも必ず stacked と判定する」ことを検証するために公開する。
+    pub fn has_stacked_statements_for(driver: DriverKind, sql: &str) -> bool {
+        crate::db::has_stacked_statements_for(driver, sql)
+    }
+
     // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
     // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
