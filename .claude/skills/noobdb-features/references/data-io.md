@@ -36,7 +36,8 @@
   空結果・クエリ同梱・SQL のバッチ分割 — をケース名で固定しています。BLOB だけは
   フロントが `Value::Bytes` を区別できないため意図的に食い違い、`frontendExpected` に
   明記します。
-- `commands/dump.rs`: `mysqldump` を呼ぶ DB ダンプ (MySQL 専用)。資格情報は
+- `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
+  SQLite / DuckDB / MSSQL は接続から直接生成 (下記)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
   エラーを返します。`DumpOptions.format_sql` (既定オフ) を立てると、書き出した
@@ -63,6 +64,29 @@
   起動時に `cleanup_stale_dump_credential_files` が自分たちの命名規約に一致する
   ものだけを掃除します (`commands::local::cleanup_stale_local_files` と同じ位置・
   同じベストエフォート方針で `lib.rs` から呼びます)。
+  **DuckDB / MSSQL のネイティブダンプ (#987)**: 外部バイナリに依存せず、
+  `Connection::native_dump` (`db/native_dump.rs`) がライブ接続のカタログから DDL を
+  組み立て、行を `execute_stream` で読みながら INSERT としてストリーム出力します
+  (`commands/dump.rs::dump_native` が一時ファイル・進捗・キャンセルの共通枠に載せる。
+  テーブル完了ごとに `tables` / `tablesTotal` 付きの進捗)。INSERT の書式は
+  エクスポートと `native_dump::build_sql_insert_statement` を共有し、リテラルは
+  `sql_literal` を土台に列型別の補正 (`ColumnRender`) を掛けます — 2^53 超の整数・
+  DECIMAL (`from_*_lossless` で文字列化されたもの) は数値列なら引用符なしへ戻し、
+  DuckDB の日時/INTERVAL/UUID/入れ子型は `CAST(col AS VARCHAR)` → `CAST('...' AS 型)`、
+  MSSQL の日時は DATEFORMAT 非依存の ISO 文字列 (`datetime` は style 126)・`money` は
+  style 2・文字列は `N'...'`。計算列・rowversion・DuckDB の生成列は INSERT から外し、
+  IDENTITY 列は各バッチ内で `SET IDENTITY_INSERT ON/OFF` します。DuckDB は
+  `duckdb_tables()/views()/indexes()` の `sql` をそのまま使い、テーブルは FK 依存順
+  (`order_tables_by_dependencies`)、シーケンスは現在値の続きから再作成。MSSQL は
+  `dbo` 限定 (ドライバの introspection 方針と同じ) で、`CREATE TABLE` (PK/UNIQUE/CHECK/
+  DEFAULT/IDENTITY/計算列/照合順序) → データ → インデックス → FK (`ALTER TABLE`) →
+  ビュー/ルーチン/トリガー (`sys.sql_modules`、作成順) を **`GO` 区切り**で出します。
+  `routines` / `triggers` / `addDropTable` / `extendedInsert` / `noData` / `noCreateInfo`
+  を解釈し、`singleTransaction` は非対応 (テーブル間の一貫スナップショットは取らない)。
+  既知の限界: DuckDB のユーザ定義型 (`CREATE TYPE`)・マクロ、MSSQL の `dbo` 以外の
+  スキーマ・ユーザ定義型・`sql_variant` の元の型は出力しません。
+  往復は `tests/duckdb_integration.rs` (常時) / `tests/mssql_integration.rs`
+  (`NOOBDB_TEST_MSSQL_URL` ゲート、一時 DB を 2 つ作る) で検証します。
 - `commands/import.rs`: CSV / JSON / NDJSON を `import_rows` でテーブルへ一括投入
   します (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。
   読み取り専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。

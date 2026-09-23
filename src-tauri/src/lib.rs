@@ -227,6 +227,21 @@ pub mod __test_api {
     pub use crate::commands::profile::profile_column_inner;
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
 
+    /// 外部バイナリ非依存の論理ダンプ (#987) をメモリ上の文字列として得る。
+    /// `commands::dump::run_dump` が実ファイルへ書くのと同じ
+    /// `Connection::native_dump` を通すので、統合テストは「ダンプ → 再実行 →
+    /// 同一データ」の往復をそのまま検証できる。
+    pub async fn native_dump_sql(
+        conn: &Connection,
+        database: &str,
+        opts: &NativeDumpOptions,
+    ) -> crate::error::Result<String> {
+        let mut out = String::new();
+        conn.native_dump(database, opts, &mut out).await?;
+        Ok(out)
+    }
+    pub use crate::db::native_dump::NativeDumpOptions;
+
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
     }

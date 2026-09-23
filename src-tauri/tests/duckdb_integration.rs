@@ -957,3 +957,186 @@ async fn duckdb_upsert_import_roundtrip() {
     conn.close().await;
     remove_db_files(&path);
 }
+
+/// #987: 外部バイナリ非依存のネイティブダンプ → 別ファイルへ再実行 → 同一データ。
+/// 識別子クオート (`"` を含む名前)・NULL・BLOB・日付/時刻・TIMESTAMPTZ・
+/// 64bit 超の整数 (BIGINT 最大値 / HUGEINT)・DECIMAL・入れ子型・生成列・
+/// シーケンスの現在値・外部キー順・インデックス・ビューを 1 本で往復させる。
+#[tokio::test]
+async fn duckdb_native_dump_roundtrips_into_fresh_file() {
+    let src_path = temp_db_path("dump_src");
+    let dst_path = temp_db_path("dump_dst");
+    create_empty_db(&src_path);
+    create_empty_db(&dst_path);
+
+    {
+        let setup = duckdb::Connection::open(&src_path).expect("open src");
+        // 子テーブル名を親より辞書順で前 (`a_child` < `z_parent`) にして、
+        // 名前順ではなく FK 依存順で出力されることを確かめる。
+        setup
+            .execute_batch(
+                r#"
+                CREATE SEQUENCE child_seq START 100;
+                CREATE TABLE "z_parent" (
+                    id BIGINT PRIMARY KEY,
+                    "we""ird name" VARCHAR,
+                    big BIGINT,
+                    huge HUGEINT,
+                    dec DECIMAL(20,4),
+                    d DATE,
+                    ts TIMESTAMP,
+                    tstz TIMESTAMPTZ,
+                    tm TIME,
+                    iv INTERVAL,
+                    u UUID,
+                    b BLOB,
+                    f DOUBLE,
+                    flag BOOLEAN,
+                    l INTEGER[],
+                    st STRUCT(a INTEGER, "b c" VARCHAR),
+                    doubled BIGINT GENERATED ALWAYS AS (id * 2) VIRTUAL
+                );
+                CREATE TABLE "a_child" (
+                    id INTEGER PRIMARY KEY DEFAULT nextval('child_seq'),
+                    parent_id BIGINT REFERENCES "z_parent"(id),
+                    note VARCHAR
+                );
+                INSERT INTO "z_parent" (id, "we""ird name", big, huge, dec, d, ts, tstz, tm, iv, u, b, f, flag, l, st) VALUES
+                    (1, 'it''s; a "test"', 9223372036854775807, 170141183460469231731687303715884105727,
+                     1234567890123456.7891, DATE '2024-02-29', TIMESTAMP '2024-01-02 03:04:05.123456',
+                     TIMESTAMPTZ '2024-01-02 03:04:05+09', TIME '23:59:59.5', INTERVAL '1 year 2 days 3 seconds',
+                     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '\x00\xFF\x10'::BLOB, 0.1, TRUE,
+                     [1, NULL, 3], {'a': 1, 'b c': 'x''y'}),
+                    (2, NULL, -9223372036854775808, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                     ''::BLOB, 1e300, FALSE, [], NULL),
+                    (3, 'line1' || chr(10) || 'line2 \ back', 0, -1, -0.5, DATE '1970-01-01', NULL, NULL, NULL, NULL,
+                     NULL, NULL, NULL, NULL, NULL, NULL);
+                INSERT INTO "a_child" (parent_id, note) VALUES (1, 'x'), (1, NULL), (3, '日本語');
+                CREATE INDEX idx_child_parent ON "a_child"(parent_id);
+                CREATE VIEW v_parent AS SELECT id, big FROM "z_parent" WHERE id > 1;
+                "#,
+            )
+            .expect("seed source");
+    }
+
+    let src = t::connect(&t::duckdb_options(src_path.to_str().expect("utf8")))
+        .await
+        .expect("connect src");
+    let dump = t::native_dump_sql(&src, "main", &t::NativeDumpOptions::default())
+        .await
+        .expect("native dump");
+
+    // 親テーブルが子より先に作られる (FK 依存順)。DuckDB の DDL は識別子を
+    // 必要なときだけクオートするので、どちらの綴りでも探す。
+    let pos = |name: &str| {
+        dump.find(&format!("CREATE TABLE {name}"))
+            .or_else(|| dump.find(&format!("CREATE TABLE \"{name}\"")))
+    };
+    let (parent_at, child_at) = (pos("z_parent"), pos("a_child"));
+    assert!(
+        parent_at.is_some() && child_at.is_some() && parent_at < child_at,
+        "parent must be created before child:\n{dump}"
+    );
+    // 生成列は INSERT の列に含めない。64bit 境界は引用符なしの正確な値。
+    assert!(
+        !dump.contains("\"doubled\")"),
+        "generated column must not be inserted:\n{dump}"
+    );
+    assert!(dump.contains("9223372036854775807"), "{dump}");
+    assert!(
+        dump.contains("170141183460469231731687303715884105727"),
+        "{dump}"
+    );
+
+    // 別ファイルへ復元 (DuckDB CLI と同じく execute_batch でスクリプトごと実行)。
+    {
+        let dst = duckdb::Connection::open(&dst_path).expect("open dst");
+        if let Err(e) = dst.execute_batch(&dump) {
+            panic!("restore failed: {e}\n--- dump ---\n{dump}");
+        }
+    }
+    let dst = t::connect(&t::duckdb_options(dst_path.to_str().expect("utf8")))
+        .await
+        .expect("connect dst");
+
+    for sql in [
+        // INTERVAL 列は既存の DuckDB ドライバが列メタデータを組めない (duckdb crate の
+        // `Interval(MonthDayNano)` 未実装) ので、生の比較からは外し、下の CAST 版で見る。
+        "SELECT * EXCLUDE (iv) FROM \"z_parent\" ORDER BY id",
+        "SELECT CAST(COLUMNS(*) AS VARCHAR) FROM \"z_parent\" ORDER BY id",
+        "SELECT * FROM \"a_child\" ORDER BY id",
+        "SELECT * FROM v_parent ORDER BY id",
+    ] {
+        let a = src.execute(sql, None).await.expect("src select");
+        let b = dst.execute(sql, None).await.expect("dst select");
+        assert!(!a.rows.is_empty(), "{sql} returned no rows");
+        assert_eq!(a.rows, b.rows, "mismatch for {sql}\n--- dump ---\n{dump}");
+    }
+
+    // シーケンスは現在値の続きから (100, 101, 102 を使用済み → 次は 103)。
+    let next = dst
+        .execute("SELECT nextval('child_seq')", None)
+        .await
+        .expect("nextval");
+    assert_eq!(next.rows, vec![vec![t::Value::Int(103)]]);
+
+    // インデックスと外部キーも復元されている。
+    let idx = dst
+        .execute(
+            "SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'idx_child_parent'",
+            None,
+        )
+        .await
+        .expect("indexes");
+    assert_eq!(idx.rows, vec![vec![t::Value::Int(1)]]);
+    assert!(
+        dst.execute("INSERT INTO \"a_child\" (parent_id) VALUES (999)", None)
+            .await
+            .is_err(),
+        "foreign key must be restored"
+    );
+
+    // スキーマのみ / データのみのオプション。
+    let schema_only = t::native_dump_sql(
+        &src,
+        "main",
+        &t::NativeDumpOptions {
+            no_data: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("schema-only dump");
+    assert!(!schema_only.contains("INSERT INTO"), "{schema_only}");
+    assert!(schema_only.contains("CREATE TABLE"), "{schema_only}");
+    let data_only = t::native_dump_sql(
+        &src,
+        "main",
+        &t::NativeDumpOptions {
+            no_create_info: true,
+            extended_insert: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("data-only dump");
+    assert!(!data_only.contains("CREATE TABLE"), "{data_only}");
+    assert!(!data_only.contains("DROP TABLE"), "{data_only}");
+    // 1 行 1 文: 親 3 行 + 子 3 行。
+    assert_eq!(data_only.matches("INSERT INTO").count(), 6, "{data_only}");
+
+    // 読み取り専用セッションでもダンプできる (読み出しのみ)。
+    drop(src);
+    drop(dst);
+    let ro_opts = t::duckdb_options(src_path.to_str().expect("utf8"));
+    let ro = t::connect(&ro_opts).await.expect("reconnect");
+    let session = t::make_session("dump-ro", ro, ro_opts, true);
+    let again = t::native_dump_sql(&session.conn, "main", &t::NativeDumpOptions::default())
+        .await
+        .expect("dump on read-only session");
+    assert_eq!(again, dump, "dump must be deterministic");
+    drop(session);
+
+    remove_db_files(&src_path);
+    remove_db_files(&dst_path);
+}

@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::process::Command;
 
+use crate::db::native_dump::{DumpSink, NativeDumpOptions};
 use crate::db::types::Value;
 use crate::db::{DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
@@ -152,6 +153,8 @@ pub struct DumpOptions {
 /// - PostgreSQL: `pg_dump` (password via a temp `PGPASSFILE`), same piping.
 /// - SQLite: generated table-by-table from the live connection, written
 ///   incrementally (no whole-dump `String` in memory).
+/// - DuckDB / MSSQL (#987): 外部バイナリ非依存のネイティブ生成
+///   (`db::native_dump`)。カタログから DDL を組み立て、行をストリームで INSERT 化する。
 #[tauri::command]
 pub async fn dump_database(
     app: AppHandle,
@@ -288,34 +291,6 @@ pub(crate) async fn run_dump(
     counter: &Arc<AtomicU64>,
     started: Instant,
 ) -> Result<u64> {
-    // Fail fast for unsupported drivers *before* touching the filesystem —
-    // otherwise every dump attempt on these would create (and immediately
-    // discard) a temp file for nothing.
-    match session.connect_options.driver {
-        // #709: DuckDB has no `sqlite_master`-style catalog table carrying
-        // verbatim `CREATE TABLE` DDL the way SQLite does, so `dump_sqlite`'s
-        // approach doesn't translate directly. A dedicated DuckDB dump path
-        // (e.g. reconstructing DDL from `information_schema` /
-        // `duckdb_tables()`, or shelling out to DuckDB's own `EXPORT
-        // DATABASE`) is left for a follow-up — not part of #709's accepted
-        // scope (connect/stream/schema-tree/read-only/cell-edit/import/
-        // export). Every other capability works; only whole-database dump is
-        // unavailable for now.
-        DriverKind::DuckDb => {
-            return Err(AppError::InvalidInput(
-                "database dump is not yet supported for DuckDB".into(),
-            ))
-        }
-        // #729 のスコープ外 (mysqldump / pg_dump に相当する外部ダンプツールの
-        // MSSQL 対応は別 Issue)。
-        DriverKind::Mssql => {
-            return Err(AppError::InvalidInput(
-                "database dump is not yet supported for MSSQL".into(),
-            ))
-        }
-        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite => {}
-    }
-
     // Reserve the temp file up front with a symlink-safe `create_new` open
     // and thread the already-open handle down to whichever driver path
     // actually writes into it, rather than letting each path re-open the
@@ -375,16 +350,20 @@ pub(crate) async fn run_dump(
             )
             .await?
         }
+        // #987: DuckDB / MSSQL は外部ダンプツールに頼らず、ライブ接続のカタログと
+        // 行データから SQL を生成する (`db::native_dump`)。
         DriverKind::DuckDb | DriverKind::Mssql => {
-            // Unreachable in practice — the early return above already sends
-            // these two drivers home before `tmp`/`tmp_file` are created. Kept
-            // as an explicit (non-panicking) arm rather than `unreachable!()`
-            // so a future refactor that removes the early check fails safely
-            // (an `InvalidInput` error) instead of a runtime panic; `cleanup`
-            // (not yet committed) removes the reserved-but-unused temp file.
-            return Err(AppError::InvalidInput(
-                "database dump is not yet supported for this driver".into(),
-            ));
+            dump_native(
+                app,
+                stream_id,
+                &session.conn,
+                database,
+                tmp_file,
+                options,
+                counter,
+                started,
+            )
+            .await?
         }
     };
 
@@ -887,6 +866,103 @@ async fn dump_sqlite(
     writer.flush().await?;
     let bytes = counter.load(Ordering::SeqCst);
     Ok(bytes)
+}
+
+/// `DumpOptions` のうちネイティブダンプ (#987) が解釈する項目を写す。
+fn native_dump_options(options: &DumpOptions) -> NativeDumpOptions {
+    NativeDumpOptions {
+        no_data: options.no_data,
+        no_create_info: options.no_create_info,
+        add_drop_table: options.add_drop_table,
+        extended_insert: options.extended_insert,
+        routines: options.routines,
+        triggers: options.triggers,
+    }
+}
+
+/// ネイティブダンプの書き出し先。バイト数を共有カウンタへ積み、
+/// `dump-stream:progress` を (バイトは間引いて、テーブル完了ごとに) 発火する。
+/// 行データは `execute_stream` の同期コールバックから書かれるため、書き込みは
+/// ストリーミングエクスポートと同じく同期 I/O (`BufWriter<std::fs::File>`)。
+struct NativeFileSink<'a> {
+    writer: std::io::BufWriter<std::fs::File>,
+    app: &'a AppHandle,
+    stream_id: &'a str,
+    counter: &'a Arc<AtomicU64>,
+    started: Instant,
+    last_emit: u64,
+    tables: Option<(u64, u64)>,
+}
+
+impl NativeFileSink<'_> {
+    fn emit_progress(&self, bytes: u64) {
+        let (tables, tables_total) = match self.tables {
+            Some((d, t)) => (Some(d), Some(t)),
+            None => (None, None),
+        };
+        let _ = self.app.emit(
+            EV_DUMP_PROGRESS,
+            DumpProgressEvent {
+                stream_id: self.stream_id.to_string(),
+                bytes,
+                elapsed_ms: self.started.elapsed().as_millis() as u64,
+                tables,
+                tables_total,
+            },
+        );
+    }
+}
+
+impl DumpSink for NativeFileSink<'_> {
+    fn write(&mut self, s: &str) -> Result<()> {
+        use std::io::Write;
+        self.writer.write_all(s.as_bytes())?;
+        let len = s.len() as u64;
+        let total = self.counter.fetch_add(len, Ordering::SeqCst) + len;
+        if total - self.last_emit >= PROGRESS_BYTES {
+            self.last_emit = total;
+            self.emit_progress(total);
+        }
+        Ok(())
+    }
+
+    fn table_done(&mut self, done: u64, total: u64) {
+        self.tables = Some((done, total));
+        self.emit_progress(self.counter.load(Ordering::SeqCst));
+    }
+}
+
+/// DuckDB / MSSQL のネイティブダンプ (#987) を、予約済みの一時ファイル `file` へ
+/// 書き出す。後始末 (失敗・キャンセル時の削除) は `run_dump` の
+/// `PartialFileCleanup` が持つ。読み出しのみなので読み取り専用セッションでも動く。
+#[allow(clippy::too_many_arguments)]
+async fn dump_native(
+    app: &AppHandle,
+    stream_id: &str,
+    conn: &crate::db::Connection,
+    database: &str,
+    file: tokio::fs::File,
+    options: &DumpOptions,
+    counter: &Arc<AtomicU64>,
+    started: Instant,
+) -> Result<u64> {
+    let file = file.into_std().await;
+    let mut sink = NativeFileSink {
+        writer: std::io::BufWriter::new(file),
+        app,
+        stream_id,
+        counter,
+        started,
+        last_emit: 0,
+        tables: None,
+    };
+    conn.native_dump(database, &native_dump_options(options), &mut sink)
+        .await?;
+    {
+        use std::io::Write;
+        sink.writer.flush()?;
+    }
+    Ok(counter.load(Ordering::SeqCst))
 }
 
 /// Write `s` to the dump file and add its byte length to the shared counter.

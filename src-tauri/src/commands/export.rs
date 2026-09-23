@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::query::ensure_allowed_for_session;
 use crate::db::data_diff::sql_literal;
+use crate::db::native_dump::build_sql_insert_statement;
 use crate::db::sync::quote_ident;
 use crate::db::types::{Column, StreamBatch, Value};
 use crate::db::{is_read_only_sql_for, DriverKind};
@@ -434,15 +435,9 @@ fn write_sql_insert<W: Write>(
     let table = quote_ident(opts.driver, &opts.table);
     let cols = sql_columns_clause(opts.driver, columns);
     for chunk in rows.chunks(opts.batch_size.max(1)) {
-        let mut stmt = format!("INSERT INTO {} ({}) VALUES\n", table, cols);
-        for (i, row) in chunk.iter().enumerate() {
-            if i > 0 {
-                stmt.push_str(",\n");
-            }
-            stmt.push_str("  ");
-            stmt.push_str(&sql_values_tuple(opts.driver, columns, row));
-        }
-        stmt.push_str(";\n");
+        let stmt = build_sql_insert_statement(&table, &cols, chunk, |row| {
+            sql_values_tuple(opts.driver, columns, row)
+        });
         w.write_all(stmt.as_bytes())?;
     }
     Ok(())
