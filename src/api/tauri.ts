@@ -1954,6 +1954,8 @@ export const api = {
       path: params.path,
       options: params.options,
     }),
+
+  /**
    * 接続間データ転送 (#986)。ソース接続のテーブル全件 (`sourceTable`) か単一の
    * 読み取り専用クエリ (`sourceSql`) を、ターゲット接続のテーブルへスキーマ +
    * データごとコピーする。進捗は `transfer-stream:*` イベント
