@@ -1262,25 +1262,22 @@ async fn mysql_routine_signature_when_env_set() {
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let db = opts.database.clone().expect("test db in url");
     let conn = t::connect(&opts).await.expect("connect");
-    let _ = conn
-        .execute("DROP PROCEDURE IF EXISTS noobdb_rt_proc", None)
-        .await;
-    let _ = conn
-        .execute("DROP FUNCTION IF EXISTS noobdb_rt_fn", None)
-        .await;
-    conn.execute(
+    // CREATE/DROP PROCEDURE / FUNCTION は prepared statement プロトコルでは
+    // 拒否される (error 1295) ので、既存テストと同じくテキストプロトコルで用意する。
+    let _ = t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_rt_proc").await;
+    let _ = t::mysql_exec_text(&opts, "DROP FUNCTION IF EXISTS noobdb_rt_fn").await;
+    t::mysql_exec_text(
+        &opts,
         "CREATE PROCEDURE noobdb_rt_proc(IN a INT, INOUT b VARCHAR(10), OUT c INT) \
          BEGIN SET c = a * 2; SELECT a AS a_echo; END",
-        None,
     )
     .await
     .expect("create procedure");
-    let fn_created = conn
-        .execute(
-            "CREATE FUNCTION noobdb_rt_fn(x INT) RETURNS INT DETERMINISTIC RETURN x + 1",
-            None,
-        )
-        .await;
+    let fn_created = t::mysql_exec_text(
+        &opts,
+        "CREATE FUNCTION noobdb_rt_fn(x INT) RETURNS INT DETERMINISTIC RETURN x + 1",
+    )
+    .await;
 
     let sig = conn
         .routine_signature(&db, "procedure", "noobdb_rt_proc", None)
@@ -1317,11 +1314,7 @@ async fn mysql_routine_signature_when_env_set() {
         .await
         .is_err());
 
-    let _ = conn
-        .execute("DROP PROCEDURE IF EXISTS noobdb_rt_proc", None)
-        .await;
-    let _ = conn
-        .execute("DROP FUNCTION IF EXISTS noobdb_rt_fn", None)
-        .await;
+    let _ = t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_rt_proc").await;
+    let _ = t::mysql_exec_text(&opts, "DROP FUNCTION IF EXISTS noobdb_rt_fn").await;
     conn.close().await;
 }
