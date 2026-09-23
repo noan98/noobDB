@@ -42,6 +42,28 @@
 //!   プロセスのメモリ上にのみ存在し、ディスクへは一切書かない — プロセス終了・
 //!   切断・Refresh のいずれでも消える。
 //!
+//! ## single-flight (同時ミスの合流、#1107)
+//!
+//! 同一キーへの呼び出しが同時にミスしたとき、実際に `fetch` (DB introspection /
+//! クエリ実行) を走らせるのは最初の 1 呼び出し (リーダー) だけで、残りはその
+//! 結末を待つ (接続直後にスキーマ関連の UI が一斉に立ち上がる場面で、同じ
+//! introspection が重複して走らないようにする)。Schema Cache の全 kind と
+//! Query Result Cache が同じ実装 ([`KeyedCache::get_or_fetch`]) を共有する。
+//!
+//! - **fetch 中はロックを保持しない。** in-flight 表は `std::sync::Mutex` で、
+//!   表の参照・更新の瞬間だけ取り、`.await` を跨いで保持しない。結末の配布は
+//!   `tokio::sync::watch` で行う (#1101 レビュー方針: introspection 中に他の
+//!   操作をブロックしない)。
+//! - **generation (#1105) と整合させる。** 合流できるのは fetch 開始時点と
+//!   同じ世代の呼び出しだけ。待ち合わせ中に `invalidate_all()` が走ったら、
+//!   待機者は共有結果を受け取らずに新しい世代でやり直す (stale を掴まない)。
+//!   リーダー自身の返り値と「cache へは書かない」挙動は従来どおり。
+//! - **エラー**: キャッシュしない。待機者は自分の fetch を 1 回だけ直接実行する
+//!   (エラーの `kind` を保つため、リーダーのエラーは複製しない)。
+//! - **キャンセル (future の drop)・パニック**: リーダーのガードの `Drop` が
+//!   in-flight 表を片付け、結末を送らないまま送信側が閉じるので、待機者は
+//!   永久には待たずにやり直す (1 人が新しいリーダーになり、残りはそこへ合流)。
+//!
 //! ## Query Result Cache
 //!
 //! Schema Cache とは別の、実行結果 (行データそのもの) を対象にしたキャッシュ。
@@ -172,16 +194,17 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex as StdMutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 
 use crate::db::types::{
     ForeignKey, IndexInfo, QueryResult, SchemaObject, TableColumnInfo, TableRowIdentity,
     TableSchema, Value,
 };
 use crate::db::{is_read_only_sql_for, DriverKind};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 
 /// キャッシュエントリの既定 TTL (#1097)。DDL / 明示 Refresh による invalidate が
 /// 主たる鮮度保証だが、それらを経由しない外部要因 (別クライアントによる変更) に
@@ -213,119 +236,364 @@ impl<V> CacheEntry<V> {
     }
 }
 
-/// キーを持たないスロット (`databases()` のように接続全体で 1 件しかないもの)
-/// の get-or-fetch。ロックを保持したまま `fetch` を `.await` しない
-/// (読み取りロックは値の有無だけ見て即座に解放し、書き込みロックは fetch 完了後
-/// に短時間だけ取る) — 同時に複数の呼び出しがミスした場合、fetch が重複して
-/// 走ることがあるが (single-flight 化はしていない)、結果は最後の書き込みが残る
-/// だけで正しさには影響しない、既知の割り切り。
-///
-/// **`generation` による invalidate との競合防止 (PR #1101 レビュー指摘)。**
-/// ロックを解放して `fetch` を `.await` している間に、その接続の他の操作が
-/// `invalidate_all()` を呼んで `generation` をインクリメントすることがある
-/// (例: この fetch が DDL 実行前に始まった introspection で、DDL 完了後に
-/// 結果が返ってくる場合)。この場合 fetch 自体は成功しても、その結果はもはや
-/// 最新のスキーマ状態を反映していない可能性があるため、**呼び出し元へは返すが
-/// cache へは書き込まない**。fetch 開始前後で `generation` を比較するだけの
-/// 単純な仕組みで、fetch 中ずっと書き込みロックを握る (= introspection 中に
-/// 他の操作をブロックする) 方式は採らない。
-async fn get_or_fetch_single<V, F, Fut>(
-    slot: &RwLock<Option<CacheEntry<V>>>,
-    ttl: Duration,
-    generation: &AtomicU64,
-    fetch: F,
-) -> Result<V>
-where
-    V: Clone,
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<V>>,
-{
-    {
-        let guard = slot.read().await;
-        if let Some(entry) = guard.as_ref() {
-            if !entry.is_expired(ttl) {
-                return Ok(entry.value.clone());
-            }
-        }
-    }
-    let generation_before_fetch = generation.load(Ordering::SeqCst);
-    let value = fetch().await?;
-    {
-        // generation の再チェックは **write lock を取得した後**に行う。
-        // `invalidate_all()` は generation のインクリメントを各スロットの
-        // write lock 取得より必ず先に行うため (invalidate_all の実装参照)、
-        // ここで lock を取得できた時点で generation の最新値を確実に読める —
-        // チェックとロック取得の間に invalidate が割り込む隙間を作らない
-        // (チェックしてからロックを取る順序だと、その隙間で invalidate が
-        // 完了してしまい stale な結果を書き戻す余地が残る)。
-        let mut guard = slot.write().await;
-        if generation.load(Ordering::SeqCst) == generation_before_fetch {
-            *guard = Some(CacheEntry::fresh(value.clone()));
-        } else {
-            tracing::debug!(
-                "schema cache: dropping a fetch result that raced with invalidate_all (stale generation)"
-            );
-        }
-    }
-    Ok(value)
+/// single-flight で共有する fetch の結末 (#1107)。リーダー (実際に `fetch` を
+/// 実行した呼び出し) が `watch` チャネルで待機者へ配る。
+#[derive(Clone)]
+enum FlightOutcome<V> {
+    /// fetch が成功した。待機者は (generation が変わっていなければ) この値を返す。
+    Value(V),
+    /// fetch がエラーを返した。`AppError` は `Clone` できず、かつ `kind`
+    /// (`connectionLost` など UI の復帰導線を決める判別子) を保ったまま複製する
+    /// 手段がないため、エラー本体は配らない。待機者は各自の `fetch` を 1 回だけ
+    /// 直接実行し、自分自身のエラー (または回復した値) を受け取る
+    /// ([`KeyedCache::get_or_fetch`] 参照)。
+    Failed,
 }
 
-/// キー付きスロット (`tables(db)` / `columns(db, table)` など) の get-or-fetch。
-/// ロックの扱い・`generation` による invalidate との競合防止は
-/// [`get_or_fetch_single`] と同じ方針。
-async fn get_or_fetch<K, V, F, Fut>(
-    map: &RwLock<HashMap<K, CacheEntry<V>>>,
+type FlightTx<V> = watch::Sender<Option<FlightOutcome<V>>>;
+type FlightRx<V> = watch::Receiver<Option<FlightOutcome<V>>>;
+
+/// 1 キーぶんの進行中 fetch。`generation` は fetch 開始時点の invalidate 世代で、
+/// 合流できるのは**同じ世代の呼び出しだけ** — invalidate 後に来た呼び出しが
+/// invalidate 前に始まった fetch (= stale かもしれない結果) に相乗りしない。
+struct Flight<V> {
+    id: u64,
+    generation: u64,
+    /// 合流した待機者の数 (ログとテストの同期用。値の正しさには関与しない)。
+    waiters: usize,
+    rx: FlightRx<V>,
+}
+
+enum FlightRole<V> {
+    /// 同じ世代の fetch が進行中なので、その結末を待つ。
+    Wait(FlightRx<V>),
+    /// 自分がリーダーとして fetch を実行する。
+    Lead { id: u64, tx: FlightTx<V> },
+}
+
+/// リーダーが持つ後始末用ガード。正常終了・エラー・**キャンセル (future の
+/// drop)・パニック (巻き戻しによる drop)** のどの経路でも `Drop` が走り、
+/// in-flight 表から自分のエントリを取り除く。フィールドの `tx` は `drop` 本体の
+/// **後**に破棄されるため、「表からは消えたが送信側は生きている」順序になる —
+/// 逆順 (送信側だけ先に閉じて表に残る) だと、閉じたフライトへ新しい呼び出しが
+/// 合流して空振りを繰り返す窓ができてしまう。結末を送らずに `tx` が閉じると
+/// 待機者の `changed()` がエラーになり、待機者は永久に待たずに再試行する。
+struct FlightGuard<'a, K: Eq + Hash, V> {
+    flights: &'a StdMutex<HashMap<K, Flight<V>>>,
     key: K,
-    ttl: Duration,
-    max_entries: usize,
-    generation: &AtomicU64,
-    fetch: F,
-) -> Result<V>
+    id: u64,
+    tx: FlightTx<V>,
+}
+
+impl<K: Eq + Hash, V> Drop for FlightGuard<'_, K, V> {
+    fn drop(&mut self) {
+        let mut flights = lock_flights(self.flights);
+        // invalidate 後に同じキーで新しい世代のフライトが登録されている
+        // (= 表のエントリが既に差し替わっている) ことがあるので、自分の id の
+        // ときだけ取り除く。
+        if flights.get(&self.key).is_some_and(|f| f.id == self.id) {
+            flights.remove(&self.key);
+        }
+    }
+}
+
+/// in-flight 表のロックを取る。保持するのは表の参照・更新の間だけで、
+/// **`.await` を跨いで保持しない** (だから非同期ロックではなく `std` の
+/// `Mutex` で足り、`Drop` からも取れる)。ポイズン (保持中のパニック) は表を
+/// 壊す操作 (途中までの更新) を伴わないので、中身をそのまま使って続行する。
+fn lock_flights<K, V>(
+    flights: &StdMutex<HashMap<K, Flight<V>>>,
+) -> MutexGuard<'_, HashMap<K, Flight<V>>> {
+    flights.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// リーダーの結末を待つ。結末が届けば `Some`、結末を送らずにリーダーが消えた
+/// (キャンセル・パニック) なら `None`。
+async fn wait_for_flight<V: Clone>(mut rx: FlightRx<V>) -> Option<FlightOutcome<V>> {
+    loop {
+        let current = rx.borrow_and_update().clone();
+        if current.is_some() {
+            return current;
+        }
+        if rx.changed().await.is_err() {
+            // 送信側が閉じた。閉じる直前に結末が送られていればそれを返す。
+            return rx.borrow().clone();
+        }
+    }
+}
+
+/// キー付きのキャッシュスロット 1 kind 分 (`tables` / `columns` / クエリ結果など)。
+/// 値の本体 (`entries`) と、同一キーへの同時ミスを 1 回の fetch にまとめる
+/// single-flight の in-flight 表 (`flights`、#1107) を組にして持つ。
+struct KeyedCache<K, V> {
+    /// ログに載せる種別名 (`"schema cache"` など)。キーや値の中身は載せない。
+    label: &'static str,
+    entries: RwLock<HashMap<K, CacheEntry<V>>>,
+    flights: StdMutex<HashMap<K, Flight<V>>>,
+    next_flight_id: AtomicU64,
+}
+
+impl<K, V> KeyedCache<K, V>
 where
     K: Eq + Hash + Clone,
     V: Clone,
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<V>>,
 {
-    {
-        let guard = map.read().await;
-        if let Some(entry) = guard.get(&key) {
-            if !entry.is_expired(ttl) {
-                return Ok(entry.value.clone());
-            }
+    fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            entries: RwLock::new(HashMap::new()),
+            flights: StdMutex::new(HashMap::new()),
+            next_flight_id: AtomicU64::new(0),
         }
     }
-    let generation_before_fetch = generation.load(Ordering::SeqCst);
-    let value = fetch().await?;
-    {
-        // generation の再チェックは **write lock を取得した後**に行う。
-        // 理由は [`get_or_fetch_single`] のコメント参照。
-        let mut guard = map.write().await;
-        if generation.load(Ordering::SeqCst) == generation_before_fetch {
-            if guard.len() >= max_entries && !guard.contains_key(&key) {
+
+    /// 値だけを捨てる。進行中のフライトは触らない — `generation` の
+    /// インクリメント (呼び出し元の `invalidate_all` が先に行う) により、
+    /// 以後の呼び出しは旧世代のフライトに合流せず、旧世代の結果は cache へ
+    /// 書き戻らず、旧世代を待っていた待機者も結果を受け取らずに再試行する。
+    async fn clear(&self) {
+        self.entries.write().await.clear();
+    }
+
+    async fn lookup(&self, key: &K, ttl: Duration) -> Option<V> {
+        let guard = self.entries.read().await;
+        guard
+            .get(key)
+            .filter(|entry| !entry.is_expired(ttl))
+            .map(|entry| entry.value.clone())
+    }
+
+    fn join_or_lead(&self, key: &K, generation: u64) -> FlightRole<V> {
+        let mut flights = lock_flights(&self.flights);
+        if let Some(flight) = flights.get_mut(key) {
+            if flight.generation == generation {
+                flight.waiters += 1;
                 tracing::debug!(
-                    max_entries,
-                    "schema cache: kind exceeded its entry cap, clearing before insert"
+                    waiters = flight.waiters,
+                    "{}: joined an in-flight fetch (single-flight)",
+                    self.label
                 );
-                guard.clear();
+                return FlightRole::Wait(flight.rx.clone());
             }
-            guard.insert(key, CacheEntry::fresh(value.clone()));
-        } else {
-            tracing::debug!(
-                "schema cache: dropping a fetch result that raced with invalidate_all (stale generation)"
-            );
+        }
+        // 進行中のフライトが無い、または旧世代 (invalidate 前に始まった) の
+        // フライトしか無い — 自分がリーダーになる。旧世代のエントリは差し替える
+        // (旧リーダーのガードは id が違うので新しいエントリを消さない)。
+        let (tx, rx) = watch::channel(None);
+        let id = self.next_flight_id.fetch_add(1, Ordering::Relaxed);
+        flights.insert(
+            key.clone(),
+            Flight {
+                id,
+                generation,
+                waiters: 0,
+                rx,
+            },
+        );
+        FlightRole::Lead { id, tx }
+    }
+
+    /// `fetch` を実行し、成功かつ `cacheable` なら generation を再確認してから
+    /// cache へ書く。ロックは fetch 中には一切保持しない。
+    ///
+    /// **`generation` による invalidate との競合防止 (PR #1101 レビュー指摘)。**
+    /// fetch を `.await` している間に `invalidate_all()` が `generation` を
+    /// インクリメントすることがある (例: DDL 実行前に始まった introspection が
+    /// DDL 完了後に返ってくる)。この場合 fetch 結果は最新でない可能性があるため、
+    /// **呼び出し元へは返すが cache へは書き込まない**。再チェックは write lock を
+    /// 取得した**後**に行う — `invalidate_all()` は generation のインクリメントを
+    /// 各スロットの write lock 取得より必ず先に行うため、ロック取得後なら
+    /// generation の最新値を確実に読める (チェックしてからロックを取る順序だと、
+    /// その隙間で invalidate が完了して stale な結果を書き戻す余地が残る)。
+    async fn fetch_and_store<F, Fut, C>(
+        &self,
+        key: K,
+        generation_before_fetch: u64,
+        max_entries: usize,
+        generation: &AtomicU64,
+        cacheable: &C,
+        fetch: F,
+    ) -> Result<V>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<V>>,
+        C: Fn(&V) -> bool,
+    {
+        let value = fetch().await?;
+        if cacheable(&value) {
+            let mut guard = self.entries.write().await;
+            if generation.load(Ordering::SeqCst) == generation_before_fetch {
+                if guard.len() >= max_entries && !guard.contains_key(&key) {
+                    tracing::debug!(
+                        max_entries,
+                        "{}: kind exceeded its entry cap, clearing before insert",
+                        self.label
+                    );
+                    guard.clear();
+                }
+                guard.insert(key, CacheEntry::fresh(value.clone()));
+            } else {
+                tracing::debug!(
+                    "{}: dropping a fetch result that raced with invalidate_all (stale generation)",
+                    self.label
+                );
+            }
+        }
+        Ok(value)
+    }
+
+    /// get-or-fetch 本体 (single-flight 付き、#1107)。
+    ///
+    /// 1. cache を読み取りロックで引き、ヒットすれば即返す (ロックは即解放)。
+    /// 2. ミスしたら in-flight 表を見る。**同じキー・同じ generation** の fetch が
+    ///    進行中ならそれに合流して結末を待ち、無ければ自分がリーダーとして
+    ///    fetch を実行する。fetch 中はどのロックも保持しない (introspection 中に
+    ///    他の操作をブロックしない、#1101 レビュー方針)。
+    /// 3. リーダーは結果を (generation を再確認してから) cache に書き、結末を
+    ///    待機者へ配る。**リーダー自身は fetch 結果を必ず返す** — invalidate と
+    ///    競合した場合でも「呼び出し元へは返すが cache へは書かない」という
+    ///    #1105 以来の挙動を保つ。
+    ///
+    /// 待機者側の扱い:
+    ///
+    /// - **成功**: 待ち始めた時点の generation がまだ最新なら値を受け取る。
+    ///   待っている間に `invalidate_all()` が走っていたら、その値は invalidate 前
+    ///   の状態かもしれないので**受け取らずに 1. からやり直す** (新しい世代で
+    ///   改めて合流またはリーダーになる) — invalidate 後の呼び出しに stale な値を
+    ///   返さない。
+    /// - **エラー**: エラーはキャッシュしない (従来どおり)。待機者は自分の
+    ///   `fetch` を 1 回だけ直接実行して、その結果を返す ([`FlightOutcome::Failed`]
+    ///   参照)。もう一度合流させないのは、DB が落ちている間に待機者が 1 人ずつ
+    ///   順番にリーダーになってタイムアウトを直列に積み上げるのを避けるため。
+    /// - **リーダーのキャンセル・パニック**: 結末が届かないまま送信側が閉じるので
+    ///   待機者は永久には待たず、1. からやり直す (うち 1 人が新しいリーダーになる)。
+    async fn get_or_fetch<F, Fut, C>(
+        &self,
+        key: K,
+        ttl: Duration,
+        max_entries: usize,
+        generation: &AtomicU64,
+        cacheable: C,
+        fetch: F,
+    ) -> Result<V>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<V>>,
+        C: Fn(&V) -> bool,
+    {
+        // 待機者として再試行した末に自分がリーダーになることがあるので、
+        // `FnOnce` の fetch は使うときに取り出す。取り出した分岐は必ず return
+        // するため、2 回取り出されることはない。
+        let mut fetch = Some(fetch);
+        loop {
+            if let Some(value) = self.lookup(&key, ttl).await {
+                return Ok(value);
+            }
+            let generation_now = generation.load(Ordering::SeqCst);
+            match self.join_or_lead(&key, generation_now) {
+                FlightRole::Wait(rx) => match wait_for_flight(rx).await {
+                    Some(FlightOutcome::Value(value))
+                        if generation.load(Ordering::SeqCst) == generation_now =>
+                    {
+                        return Ok(value);
+                    }
+                    Some(FlightOutcome::Value(_)) => {
+                        tracing::debug!(
+                            "{}: discarding a shared fetch result that raced with invalidate_all; retrying",
+                            self.label
+                        );
+                    }
+                    Some(FlightOutcome::Failed) => {
+                        let fetch = take_fetch(&mut fetch)?;
+                        let generation_before_fetch = generation.load(Ordering::SeqCst);
+                        return self
+                            .fetch_and_store(
+                                key,
+                                generation_before_fetch,
+                                max_entries,
+                                generation,
+                                &cacheable,
+                                fetch,
+                            )
+                            .await;
+                    }
+                    None => {
+                        tracing::debug!(
+                            "{}: the in-flight fetch was cancelled or panicked; retrying",
+                            self.label
+                        );
+                    }
+                },
+                FlightRole::Lead { id, tx } => {
+                    let guard = FlightGuard {
+                        flights: &self.flights,
+                        key: key.clone(),
+                        id,
+                        tx,
+                    };
+                    // 1. の lookup とリーダー登録の間に、先行リーダーが cache へ
+                    // 書いてフライトを片付け終えていることがある (リーダーは
+                    // 「cache へ書く → フライトを消す」の順なので、フライトが
+                    // 無いのに cache にはある状態が起こりうる)。登録後にもう一度
+                    // 引いて、その隙間での重複 fetch を防ぐ。
+                    if let Some(value) = self.lookup(&key, ttl).await {
+                        guard
+                            .tx
+                            .send_replace(Some(FlightOutcome::Value(value.clone())));
+                        return Ok(value);
+                    }
+                    let fetch = take_fetch(&mut fetch)?;
+                    let result = self
+                        .fetch_and_store(
+                            key,
+                            generation_now,
+                            max_entries,
+                            generation,
+                            &cacheable,
+                            fetch,
+                        )
+                        .await;
+                    guard.tx.send_replace(Some(match &result {
+                        Ok(value) => FlightOutcome::Value(value.clone()),
+                        Err(_) => FlightOutcome::Failed,
+                    }));
+                    return result;
+                }
+            }
         }
     }
-    Ok(value)
+
+    /// テスト用: `key` の進行中フライトに合流している待機者の数。フライトが
+    /// 無ければ 0。
+    #[cfg(test)]
+    fn flight_waiters(&self, key: &K) -> usize {
+        lock_flights(&self.flights)
+            .get(key)
+            .map_or(0, |flight| flight.waiters)
+    }
 }
+
+/// `get_or_fetch` のループ内で `FnOnce` の fetch を取り出す。取り出した分岐は
+/// 必ず return するので `None` にはならないが、本体コードで `expect` を使わない
+/// 規約 (#527) に従いエラーとして扱う。
+fn take_fetch<F>(fetch: &mut Option<F>) -> Result<F> {
+    fetch.take().ok_or_else(|| {
+        AppError::Other("cache: fetch closure was already consumed (internal bug)".into())
+    })
+}
+
+/// Schema Cache の全 kind が使う「常にキャッシュ対象」述語 (Query Result Cache
+/// だけは行数・バイト数の上限で絞る)。
+fn always_cacheable<V>(_: &V) -> bool {
+    true
+}
+
+/// Schema Cache のログ上の種別名。
+const SCHEMA_CACHE_LABEL: &str = "schema cache";
 
 /// `(database, table)` の複合キー。`columns` / `row_identity` / `list_indexes`
 /// で共有する。
 type TableKey = (String, String);
-
-/// 1 kind 分のキー付きスロット。`clippy::type_complexity` 対策の型エイリアス —
-/// 実体は変えず名前を付けているだけ。
-type Slot<K, V> = RwLock<HashMap<K, CacheEntry<V>>>;
 
 /// セッション (接続) 単位のスキーマ introspection キャッシュ。フィールドは
 /// `commands::schema` の各 IPC ハンドラと 1 対 1 対応する。キャッシュしない
@@ -352,14 +620,16 @@ pub struct SchemaCache {
     /// 「次の 1 回だけ再取得が走る」だけで安全側 — invalidate_all 自体の
     /// 「丸ごと破棄」という既存方針と同じ割り切り)。
     generation: AtomicU64,
-    databases: RwLock<Option<CacheEntry<Vec<String>>>>,
-    tables: Slot<String, Vec<String>>,
-    columns: Slot<TableKey, Vec<TableColumnInfo>>,
-    row_identity: Slot<TableKey, TableRowIdentity>,
-    schema_overview: Slot<String, Vec<TableSchema>>,
-    foreign_keys: Slot<String, Vec<ForeignKey>>,
-    schema_objects: Slot<String, Vec<SchemaObject>>,
-    list_indexes: Slot<TableKey, Vec<IndexInfo>>,
+    /// 接続全体で 1 件しかない `databases()` は、キー `()` の [`KeyedCache`]
+    /// として持つ (single-flight・generation の扱いを他の kind と共通化する)。
+    databases: KeyedCache<(), Vec<String>>,
+    tables: KeyedCache<String, Vec<String>>,
+    columns: KeyedCache<TableKey, Vec<TableColumnInfo>>,
+    row_identity: KeyedCache<TableKey, TableRowIdentity>,
+    schema_overview: KeyedCache<String, Vec<TableSchema>>,
+    foreign_keys: KeyedCache<String, Vec<ForeignKey>>,
+    schema_objects: KeyedCache<String, Vec<SchemaObject>>,
+    list_indexes: KeyedCache<TableKey, Vec<IndexInfo>>,
 }
 
 impl Default for SchemaCache {
@@ -376,14 +646,14 @@ impl SchemaCache {
             ttl,
             max_entries_per_kind,
             generation: AtomicU64::new(0),
-            databases: RwLock::new(None),
-            tables: RwLock::new(HashMap::new()),
-            columns: RwLock::new(HashMap::new()),
-            row_identity: RwLock::new(HashMap::new()),
-            schema_overview: RwLock::new(HashMap::new()),
-            foreign_keys: RwLock::new(HashMap::new()),
-            schema_objects: RwLock::new(HashMap::new()),
-            list_indexes: RwLock::new(HashMap::new()),
+            databases: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            tables: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            columns: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            row_identity: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            schema_overview: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            foreign_keys: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            schema_objects: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            list_indexes: KeyedCache::new(SCHEMA_CACHE_LABEL),
         }
     }
 
@@ -392,7 +662,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<String>>>,
     {
-        get_or_fetch_single(&self.databases, self.ttl, &self.generation, fetch).await
+        self.databases
+            .get_or_fetch(
+                (),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     pub async fn tables<F, Fut>(&self, database: &str, fetch: F) -> Result<Vec<String>>
@@ -400,15 +679,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<String>>>,
     {
-        get_or_fetch(
-            &self.tables,
-            database.to_string(),
-            self.ttl,
-            self.max_entries_per_kind,
-            &self.generation,
-            fetch,
-        )
-        .await
+        self.tables
+            .get_or_fetch(
+                database.to_string(),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     pub async fn columns<F, Fut>(
@@ -421,15 +701,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<TableColumnInfo>>>,
     {
-        get_or_fetch(
-            &self.columns,
-            (database.to_string(), table.to_string()),
-            self.ttl,
-            self.max_entries_per_kind,
-            &self.generation,
-            fetch,
-        )
-        .await
+        self.columns
+            .get_or_fetch(
+                (database.to_string(), table.to_string()),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     pub async fn row_identity<F, Fut>(
@@ -442,15 +723,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<TableRowIdentity>>,
     {
-        get_or_fetch(
-            &self.row_identity,
-            (database.to_string(), table.to_string()),
-            self.ttl,
-            self.max_entries_per_kind,
-            &self.generation,
-            fetch,
-        )
-        .await
+        self.row_identity
+            .get_or_fetch(
+                (database.to_string(), table.to_string()),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     pub async fn schema_overview<F, Fut>(
@@ -462,15 +744,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<TableSchema>>>,
     {
-        get_or_fetch(
-            &self.schema_overview,
-            database.to_string(),
-            self.ttl,
-            self.max_entries_per_kind,
-            &self.generation,
-            fetch,
-        )
-        .await
+        self.schema_overview
+            .get_or_fetch(
+                database.to_string(),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     pub async fn foreign_keys<F, Fut>(&self, database: &str, fetch: F) -> Result<Vec<ForeignKey>>
@@ -478,15 +761,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<ForeignKey>>>,
     {
-        get_or_fetch(
-            &self.foreign_keys,
-            database.to_string(),
-            self.ttl,
-            self.max_entries_per_kind,
-            &self.generation,
-            fetch,
-        )
-        .await
+        self.foreign_keys
+            .get_or_fetch(
+                database.to_string(),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     pub async fn schema_objects<F, Fut>(
@@ -498,15 +782,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<SchemaObject>>>,
     {
-        get_or_fetch(
-            &self.schema_objects,
-            database.to_string(),
-            self.ttl,
-            self.max_entries_per_kind,
-            &self.generation,
-            fetch,
-        )
-        .await
+        self.schema_objects
+            .get_or_fetch(
+                database.to_string(),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     pub async fn list_indexes<F, Fut>(
@@ -519,15 +804,16 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<IndexInfo>>>,
     {
-        get_or_fetch(
-            &self.list_indexes,
-            (database.to_string(), table.to_string()),
-            self.ttl,
-            self.max_entries_per_kind,
-            &self.generation,
-            fetch,
-        )
-        .await
+        self.list_indexes
+            .get_or_fetch(
+                (database.to_string(), table.to_string()),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
     }
 
     /// このセッションのスキーマキャッシュを丸ごと無効化する。呼び出し元:
@@ -546,14 +832,14 @@ impl SchemaCache {
     /// generation を見た上で書き込むかどうかを判断できる。
     pub async fn invalidate_all(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
-        *self.databases.write().await = None;
-        self.tables.write().await.clear();
-        self.columns.write().await.clear();
-        self.row_identity.write().await.clear();
-        self.schema_overview.write().await.clear();
-        self.foreign_keys.write().await.clear();
-        self.schema_objects.write().await.clear();
-        self.list_indexes.write().await.clear();
+        self.databases.clear().await;
+        self.tables.clear().await;
+        self.columns.clear().await;
+        self.row_identity.clear().await;
+        self.schema_overview.clear().await;
+        self.foreign_keys.clear().await;
+        self.schema_objects.clear().await;
+        self.list_indexes.clear().await;
         tracing::debug!("schema cache invalidated");
     }
 }
@@ -615,9 +901,9 @@ pub struct QueryResultCache {
     max_bytes: usize,
     /// invalidate 世代カウンタ。`SchemaCache::generation` と同じ役割・同じ
     /// 仕組みで「invalidate と競合した in-flight fetch の結果が cache に
-    /// 書き戻る」ことを防ぐ (詳細は [`get_or_fetch`] のドキュメント参照)。
+    /// 書き戻る」ことを防ぐ (詳細は [`KeyedCache::get_or_fetch`] のドキュメント参照)。
     generation: AtomicU64,
-    entries: RwLock<HashMap<QueryCacheKey, CacheEntry<QueryResult>>>,
+    entries: KeyedCache<QueryCacheKey, QueryResult>,
 }
 
 impl Default for QueryResultCache {
@@ -641,7 +927,7 @@ impl QueryResultCache {
             max_rows,
             max_bytes,
             generation: AtomicU64::new(0),
-            entries: RwLock::new(HashMap::new()),
+            entries: KeyedCache::new("query result cache"),
         }
     }
 
@@ -655,9 +941,12 @@ impl QueryResultCache {
     /// 結果が行数・バイト数の上限内であれば cache へ insert してから返す
     /// (上限超過時は insert だけをスキップし、呼び出し元へは結果をそのまま返す)。
     ///
-    /// ロックの扱い・`generation` による invalidate との競合防止は
-    /// `SchemaCache` の `get_or_fetch` と同じ方針 (fetch 中はロックを解放し、
-    /// write lock 取得後に generation を再チェックしてから insert する)。
+    /// ロックの扱い・`generation` による invalidate との競合防止・同一キーへの
+    /// 同時ミスを 1 回の fetch にまとめる single-flight (#1107) は `SchemaCache`
+    /// と共通の [`KeyedCache::get_or_fetch`] に委ねる (fetch 中はロックを解放し、
+    /// write lock 取得後に generation を再チェックしてから insert する)。上限を
+    /// 超えてキャッシュ対象外になった結果も、同じ世代で合流した待機者へは
+    /// そのまま配る (同一キー・同一世代なので再実行しても同じ問い合わせになる)。
     pub async fn get_or_fetch<F, Fut>(
         &self,
         driver: DriverKind,
@@ -673,43 +962,26 @@ impl QueryResultCache {
             return fetch().await;
         }
         let key: QueryCacheKey = (database.map(str::to_string), sql.to_string());
-        {
-            let guard = self.entries.read().await;
-            if let Some(entry) = guard.get(&key) {
-                if !entry.is_expired(self.ttl) {
-                    return Ok(entry.value.clone());
-                }
-            }
-        }
-        let generation_before_fetch = self.generation.load(Ordering::SeqCst);
-        let value = fetch().await?;
-        let eligible = value.rows.len() <= self.max_rows
-            && estimate_query_result_bytes(&value) <= self.max_bytes;
-        if eligible {
-            let mut guard = self.entries.write().await;
-            if self.generation.load(Ordering::SeqCst) == generation_before_fetch {
-                if guard.len() >= self.max_entries && !guard.contains_key(&key) {
-                    tracing::debug!(
-                        max_entries = self.max_entries,
-                        "query result cache: kind exceeded its entry cap, clearing before insert"
-                    );
-                    guard.clear();
-                }
-                guard.insert(key, CacheEntry::fresh(value.clone()));
-            } else {
-                tracing::debug!(
-                    "query result cache: dropping a fetch result that raced with invalidate_all (stale generation)"
-                );
-            }
-        }
-        Ok(value)
+        let (max_rows, max_bytes) = (self.max_rows, self.max_bytes);
+        self.entries
+            .get_or_fetch(
+                key,
+                self.ttl,
+                self.max_entries,
+                &self.generation,
+                |value: &QueryResult| {
+                    value.rows.len() <= max_rows && estimate_query_result_bytes(value) <= max_bytes
+                },
+                fetch,
+            )
+            .await
     }
 
     /// このセッションのクエリ結果キャッシュを丸ごと無効化する。呼び出し元の
     /// 一覧はモジュールドキュメント「invalidate 条件」参照。
     pub async fn invalidate_all(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
-        self.entries.write().await.clear();
+        self.entries.clear().await;
         tracing::debug!("query result cache invalidated");
     }
 }
@@ -929,14 +1201,14 @@ mod tests {
 
         cache.invalidate_all().await;
 
-        assert!(cache.databases.read().await.is_none());
-        assert!(cache.tables.read().await.is_empty());
-        assert!(cache.columns.read().await.is_empty());
-        assert!(cache.row_identity.read().await.is_empty());
-        assert!(cache.schema_overview.read().await.is_empty());
-        assert!(cache.foreign_keys.read().await.is_empty());
-        assert!(cache.schema_objects.read().await.is_empty());
-        assert!(cache.list_indexes.read().await.is_empty());
+        assert!(cache.databases.entries.read().await.is_empty());
+        assert!(cache.tables.entries.read().await.is_empty());
+        assert!(cache.columns.entries.read().await.is_empty());
+        assert!(cache.row_identity.entries.read().await.is_empty());
+        assert!(cache.schema_overview.entries.read().await.is_empty());
+        assert!(cache.foreign_keys.entries.read().await.is_empty());
+        assert!(cache.schema_objects.entries.read().await.is_empty());
+        assert!(cache.list_indexes.entries.read().await.is_empty());
     }
 
     /// TTL が経過したエントリはヒットとみなさず再取得すること (最終防御線が
@@ -991,7 +1263,7 @@ mod tests {
             .tables("db2", || async { Ok(vec!["t2".to_string()]) })
             .await
             .unwrap();
-        assert_eq!(cache.tables.read().await.len(), 2);
+        assert_eq!(cache.tables.entries.read().await.len(), 2);
 
         // 3 件目の挿入で容量 (2) を超えるため、丸ごとクリアしてから db3 だけが
         // 残る。
@@ -999,7 +1271,7 @@ mod tests {
             .tables("db3", || async { Ok(vec!["t3".to_string()]) })
             .await
             .unwrap();
-        let map = cache.tables.read().await;
+        let map = cache.tables.entries.read().await;
         assert_eq!(map.len(), 1);
         assert!(map.contains_key("db3"));
     }
@@ -1094,7 +1366,7 @@ mod tests {
         assert_eq!(fresh, vec!["fresh".to_string()]);
     }
 
-    /// 上と同じ競合を `get_or_fetch_single` (`databases()`) 側でも固定する。
+    /// 上と同じ競合を キー無しスロット (`databases()`、キー `()`) 側でも固定する。
     #[tokio::test]
     async fn invalidate_during_fetch_does_not_resurrect_the_stale_databases_value() {
         let cache = test_cache();
@@ -1185,7 +1457,7 @@ mod tests {
 
         // --- 4. fetch 結果が cache に登録されていないことを確認 ---
         assert!(
-            cache.tables.read().await.is_empty(),
+            cache.tables.entries.read().await.is_empty(),
             "invalidate と競合した fetch の結果が cache に書き戻ってはいけない"
         );
 
@@ -1466,7 +1738,7 @@ mod query_result_cache_tests {
             })
             .await
             .unwrap();
-        assert_eq!(cache.entries.read().await.len(), 2);
+        assert_eq!(cache.entries.entries.read().await.len(), 2);
 
         cache
             .get_or_fetch(DriverKind::Sqlite, None, "SELECT 3", || async {
@@ -1474,7 +1746,7 @@ mod query_result_cache_tests {
             })
             .await
             .unwrap();
-        let map = cache.entries.read().await;
+        let map = cache.entries.entries.read().await;
         assert_eq!(map.len(), 1);
         assert!(map.contains_key(&(None, "SELECT 3".to_string())));
     }
@@ -1618,7 +1890,7 @@ mod query_result_cache_tests {
         assert_eq!(stale.rows.len(), 1);
 
         assert!(
-            cache.entries.read().await.is_empty(),
+            cache.entries.entries.read().await.is_empty(),
             "invalidate と競合した fetch の結果が cache に書き戻ってはいけない"
         );
 
@@ -1638,5 +1910,624 @@ mod query_result_cache_tests {
             1,
             "cache に stale な値が残っていなければ、次のアクセスで必ず再取得が走るはず"
         );
+    }
+}
+
+/// single-flight (#1107) の回帰テスト。すべて oneshot / 待機者数の観測による
+/// 決定的な同期で組み立て、sleep によるタイミング依存は使わない。
+/// `tokio::time::timeout` は「実装が壊れて待機者が永久に待つ」ときにテストを
+/// ハングさせずに失敗させるための安全網で、成功経路のタイミングには関与しない。
+#[cfg(test)]
+mod single_flight_tests {
+    use super::*;
+    use crate::db::types::Column;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    const HANG_GUARD: Duration = Duration::from_secs(10);
+
+    fn schema_cache() -> Arc<SchemaCache> {
+        Arc::new(SchemaCache::new(Duration::from_secs(300), 500))
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `slot` の `key` のフライトに `n` 人の待機者が合流するまで待つ。
+    async fn wait_for_waiters<K, V>(slot: &KeyedCache<K, V>, key: &K, n: usize)
+    where
+        K: Eq + Hash + Clone,
+        V: Clone,
+    {
+        tokio::time::timeout(HANG_GUARD, async {
+            while slot.flight_waiters(key) < n {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("待機者が合流しないままタイムアウトした");
+    }
+
+    /// `rx` の合図が来るまで結果を返さない fetch を持つ `tables("db")` 呼び出しを
+    /// 別タスクで開始し、fetch に入った (= リーダーとしてロック解放中の
+    /// introspection に入った) ことを確認してから JoinHandle を返す。
+    async fn spawn_blocked_leader(
+        cache: &Arc<SchemaCache>,
+        calls: &Arc<AtomicUsize>,
+        release: oneshot::Receiver<Result<Vec<String>>>,
+    ) -> tokio::task::JoinHandle<Result<Vec<String>>> {
+        let (started_tx, started_rx) = oneshot::channel::<()>();
+        let cache = cache.clone();
+        let calls = calls.clone();
+        let handle = tokio::spawn(async move {
+            cache
+                .tables("db", move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    started_tx.send(()).expect("test waits for start");
+                    release.await.expect("test must release the leader")
+                })
+                .await
+        });
+        tokio::time::timeout(HANG_GUARD, started_rx)
+            .await
+            .expect("leader never started")
+            .expect("leader dropped before start");
+        handle
+    }
+
+    /// `tables("db")` を呼ぶ待機者タスク。fetch が呼ばれたら `calls` を数え、
+    /// `value` を返す (待機者が合流に成功していれば呼ばれない)。
+    fn spawn_caller(
+        cache: &Arc<SchemaCache>,
+        calls: &Arc<AtomicUsize>,
+        value: Result<Vec<String>>,
+    ) -> tokio::task::JoinHandle<Result<Vec<String>>> {
+        let cache = cache.clone();
+        let calls = calls.clone();
+        tokio::spawn(async move {
+            cache
+                .tables("db", move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    value
+                })
+                .await
+        })
+    }
+
+    async fn join<T>(handle: tokio::task::JoinHandle<T>) -> T {
+        tokio::time::timeout(HANG_GUARD, handle)
+            .await
+            .expect("task hung (a waiter waited forever)")
+            .expect("task must not panic")
+    }
+
+    /// 受け入れ条件 1: 同一キーへ同時に複数の呼び出しがミスしても `fetch` は
+    /// 1 回しか実行されず、全員が同じ結果を受け取る。
+    #[tokio::test]
+    async fn concurrent_misses_run_fetch_only_once() {
+        let cache = schema_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+
+        let leader = spawn_blocked_leader(&cache, &calls, release_rx).await;
+        let waiters: Vec<_> = (0..4)
+            .map(|_| spawn_caller(&cache, &calls, Ok(strings(&["WRONG"]))))
+            .collect();
+        wait_for_waiters(&cache.tables, &"db".to_string(), 4).await;
+
+        release_tx.send(Ok(strings(&["t1", "t2"]))).unwrap();
+
+        assert_eq!(join(leader).await.unwrap(), strings(&["t1", "t2"]));
+        for waiter in waiters {
+            assert_eq!(join(waiter).await.unwrap(), strings(&["t1", "t2"]));
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "同時ミスでも fetch はリーダーの 1 回だけのはず"
+        );
+        // 完了後はフライトが片付き、値は cache に載っている。
+        assert_eq!(cache.tables.flight_waiters(&"db".to_string()), 0);
+        assert!(lock_flights(&cache.tables.flights).is_empty());
+        assert!(cache.tables.entries.read().await.contains_key("db"));
+    }
+
+    /// マルチスレッドランタイムでも同じく 1 回にまとまる (`std::sync::Mutex`
+    /// による in-flight 表の排他が実スレッド並行でも成り立つこと)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_misses_run_fetch_only_once_on_multi_thread_runtime() {
+        let cache = schema_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+
+        let leader = spawn_blocked_leader(&cache, &calls, release_rx).await;
+        let waiters: Vec<_> = (0..8)
+            .map(|_| spawn_caller(&cache, &calls, Ok(strings(&["WRONG"]))))
+            .collect();
+        wait_for_waiters(&cache.tables, &"db".to_string(), 8).await;
+        release_tx.send(Ok(strings(&["t"]))).unwrap();
+
+        assert_eq!(join(leader).await.unwrap(), strings(&["t"]));
+        for waiter in waiters {
+            assert_eq!(join(waiter).await.unwrap(), strings(&["t"]));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// 異なるキーは合流しない (single-flight はキー単位)。
+    #[tokio::test]
+    async fn different_keys_do_not_share_a_flight() {
+        let cache = schema_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+        let leader = spawn_blocked_leader(&cache, &calls, release_rx).await;
+
+        // 別キーの呼び出しは、"db" のリーダーが止まっていても即座に完了する。
+        let other = tokio::time::timeout(
+            HANG_GUARD,
+            cache.tables("other_db", || async { Ok(strings(&["o"])) }),
+        )
+        .await
+        .expect("別キーの呼び出しが無関係なフライトを待ってはいけない")
+        .unwrap();
+        assert_eq!(other, strings(&["o"]));
+
+        release_tx.send(Ok(strings(&["t"]))).unwrap();
+        join(leader).await.unwrap();
+    }
+
+    /// キー無しスロット (`databases()`、キー `()`) でも同時ミスが
+    /// 1 回の fetch にまとまる。
+    #[tokio::test]
+    async fn concurrent_database_misses_run_fetch_only_once() {
+        let cache = schema_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = oneshot::channel::<()>();
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+
+        let leader = {
+            let cache = cache.clone();
+            let calls = calls.clone();
+            tokio::spawn(async move {
+                cache
+                    .databases(move || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        started_tx.send(()).unwrap();
+                        release_rx.await.unwrap();
+                        Ok(strings(&["d1"]))
+                    })
+                    .await
+            })
+        };
+        started_rx.await.unwrap();
+        let waiters: Vec<_> = (0..3)
+            .map(|_| {
+                let cache = cache.clone();
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    cache
+                        .databases(move || async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            Ok(strings(&["WRONG"]))
+                        })
+                        .await
+                })
+            })
+            .collect();
+        wait_for_waiters(&cache.databases, &(), 3).await;
+        release_tx.send(()).unwrap();
+
+        assert_eq!(join(leader).await.unwrap(), strings(&["d1"]));
+        for waiter in waiters {
+            assert_eq!(join(waiter).await.unwrap(), strings(&["d1"]));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// 受け入れ条件 2 (#1105 の generation 対策との整合): single-flight の
+    /// 待ち合わせ中に `invalidate_all()` が走ったら、
+    ///
+    /// - リーダー自身は fetch 結果を返す (従来どおり) が cache へは書かない
+    /// - 待っていた呼び出しは stale な共有結果を受け取らず、新しい世代で
+    ///   自分の fetch をやり直して最新値を返す
+    /// - stale な値が cache に復活しない
+    #[tokio::test]
+    async fn invalidate_while_waiting_does_not_hand_out_or_cache_the_stale_value() {
+        let cache = schema_cache();
+        let leader_calls = Arc::new(AtomicUsize::new(0));
+        let waiter_calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+
+        let leader = spawn_blocked_leader(&cache, &leader_calls, release_rx).await;
+        let waiter = spawn_caller(&cache, &waiter_calls, Ok(strings(&["fresh"])));
+        wait_for_waiters(&cache.tables, &"db".to_string(), 1).await;
+
+        // 待機者が合流した状態で invalidate (DDL 実行後に相当)。
+        cache.invalidate_all().await;
+        // invalidate 前に読み始めた introspection が古い結果を返す。
+        release_tx.send(Ok(strings(&["stale"]))).unwrap();
+
+        assert_eq!(
+            join(leader).await.unwrap(),
+            strings(&["stale"]),
+            "リーダー自身への返り値は従来どおり fetch 結果そのもの"
+        );
+        assert_eq!(
+            join(waiter).await.unwrap(),
+            strings(&["fresh"]),
+            "invalidate を跨いで待っていた呼び出しが stale な共有結果を掴んではいけない"
+        );
+        assert_eq!(waiter_calls.load(Ordering::SeqCst), 1);
+
+        // cache には新しい世代で取り直した値だけが載っている。
+        let map = cache.tables.entries.read().await;
+        assert_eq!(
+            map.get("db").map(|e| e.value.clone()),
+            Some(strings(&["fresh"])),
+            "stale な値が cache に復活してはいけない"
+        );
+    }
+
+    /// invalidate **後**に来た呼び出しは、invalidate 前に始まった (まだ進行中の)
+    /// フライトに合流しない — 旧世代のリーダーを待たずに自分で fetch する。
+    /// 旧リーダーが後から完了しても、新しい世代の値を上書きしない。
+    #[tokio::test]
+    async fn caller_after_invalidate_does_not_join_the_old_generation_flight() {
+        let cache = schema_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+        let leader = spawn_blocked_leader(&cache, &calls, release_rx).await;
+
+        cache.invalidate_all().await;
+
+        // 旧世代のフライトに合流していればリーダーが止まっている限り返らない
+        // (= タイムアウトで失敗する)。
+        let late = tokio::time::timeout(
+            HANG_GUARD,
+            cache.tables("db", || async { Ok(strings(&["fresh"])) }),
+        )
+        .await
+        .expect("invalidate 後の呼び出しが旧世代のフライトを待ってはいけない")
+        .unwrap();
+        assert_eq!(late, strings(&["fresh"]));
+
+        release_tx.send(Ok(strings(&["stale"]))).unwrap();
+        assert_eq!(join(leader).await.unwrap(), strings(&["stale"]));
+
+        // 旧リーダーのガードが新しい世代のフライトやエントリを壊していないこと、
+        // および stale が fresh を上書きしていないこと。
+        let hit = cache
+            .tables("db", || async { Ok(strings(&["WRONG"])) })
+            .await
+            .unwrap();
+        assert_eq!(hit, strings(&["fresh"]));
+        assert!(lock_flights(&cache.tables.flights).is_empty());
+    }
+
+    /// 受け入れ条件 3: リーダーの fetch がエラーを返した場合の挙動。
+    ///
+    /// - エラーはキャッシュしない
+    /// - 待機者は永久に待たず、自分の fetch を 1 回だけ直接実行してその結果を
+    ///   返す (エラーの `kind` を保つため、リーダーのエラーは複製しない)
+    #[tokio::test]
+    async fn leader_error_releases_waiters_to_fetch_on_their_own() {
+        let cache = schema_cache();
+        let leader_calls = Arc::new(AtomicUsize::new(0));
+        let waiter_calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+
+        let leader = spawn_blocked_leader(&cache, &leader_calls, release_rx).await;
+        let recovering = spawn_caller(&cache, &waiter_calls, Ok(strings(&["recovered"])));
+        let failing = spawn_caller(&cache, &waiter_calls, Err(AppError::Timeout(30)));
+        wait_for_waiters(&cache.tables, &"db".to_string(), 2).await;
+
+        release_tx
+            .send(Err(AppError::InvalidInput("boom".into())))
+            .unwrap();
+
+        assert!(matches!(join(leader).await, Err(AppError::InvalidInput(_))));
+        assert_eq!(join(recovering).await.unwrap(), strings(&["recovered"]));
+        // 待機者自身の fetch のエラーが、その kind のまま返ること。
+        assert!(matches!(join(failing).await, Err(AppError::Timeout(30))));
+        assert_eq!(
+            waiter_calls.load(Ordering::SeqCst),
+            2,
+            "リーダーがエラーなら待機者はそれぞれ自分の fetch を 1 回ずつ実行する"
+        );
+        assert!(lock_flights(&cache.tables.flights).is_empty());
+    }
+
+    /// エラーのあと、次の呼び出しでは改めて fetch が走る (エラーが cache にも
+    /// in-flight 表にも残らない)。
+    #[tokio::test]
+    async fn after_a_failed_flight_the_next_call_fetches_again() {
+        let cache = schema_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+        let leader = spawn_blocked_leader(&cache, &calls, release_rx).await;
+        let waiter = spawn_caller(&cache, &calls, Err(AppError::InvalidInput("again".into())));
+        wait_for_waiters(&cache.tables, &"db".to_string(), 1).await;
+
+        release_tx
+            .send(Err(AppError::InvalidInput("boom".into())))
+            .unwrap();
+        assert!(join(leader).await.is_err());
+        assert!(join(waiter).await.is_err());
+        assert!(cache.tables.entries.read().await.is_empty());
+
+        let next = {
+            let calls = calls.clone();
+            cache
+                .tables("db", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(strings(&["ok"]))
+                })
+                .await
+                .unwrap()
+        };
+        assert_eq!(next, strings(&["ok"]));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    /// リーダーの future がキャンセル (drop) されても待機者は永久に待たず、
+    /// 待機者のうち 1 人が新しいリーダーとして fetch をやり直す。その結果は
+    /// cache に載り、次回はヒットする。
+    #[tokio::test]
+    async fn cancelled_leader_does_not_strand_waiters() {
+        let cache = schema_cache();
+        let leader_calls = Arc::new(AtomicUsize::new(0));
+        let waiter_calls = Arc::new(AtomicUsize::new(0));
+        // release_tx を保持し続ける = リーダーの fetch は自力では終わらない。
+        let (_release_tx, release_rx) = oneshot::channel();
+
+        let leader = spawn_blocked_leader(&cache, &leader_calls, release_rx).await;
+        let waiters: Vec<_> = (0..3)
+            .map(|_| spawn_caller(&cache, &waiter_calls, Ok(strings(&["retried"]))))
+            .collect();
+        wait_for_waiters(&cache.tables, &"db".to_string(), 3).await;
+
+        leader.abort();
+        let aborted = tokio::time::timeout(HANG_GUARD, leader)
+            .await
+            .expect("aborted leader must finish");
+        assert!(aborted.unwrap_err().is_cancelled());
+
+        for waiter in waiters {
+            assert_eq!(join(waiter).await.unwrap(), strings(&["retried"]));
+        }
+        assert_eq!(
+            waiter_calls.load(Ordering::SeqCst),
+            1,
+            "キャンセル後の再試行も 1 回の fetch にまとまる (待機者が新しいリーダーに合流する)"
+        );
+        assert!(lock_flights(&cache.tables.flights).is_empty());
+
+        let hit = cache
+            .tables("db", || async { Ok(strings(&["WRONG"])) })
+            .await
+            .unwrap();
+        assert_eq!(hit, strings(&["retried"]));
+    }
+
+    /// 呼び出し元の future を直接 drop する形のキャンセル (タスクの abort では
+    /// なく、`select!` の負け側などと同じ経路) でも in-flight 表が片付き、
+    /// 次の呼び出しが合流先を失って固まらない。
+    #[tokio::test]
+    async fn dropping_the_leader_future_cleans_up_the_flight() {
+        let cache = schema_cache();
+        {
+            let fut = cache.tables("db", std::future::pending::<Result<Vec<String>>>);
+            // 1 回だけ poll して fetch に入らせてから drop する。
+            // `biased` なので必ず `fut` を先に 1 回 poll し、pending なら
+            // 即座に完了する 2 本目の分岐へ抜ける。
+            let mut fut = Box::pin(fut);
+            tokio::select! {
+                biased;
+                _ = &mut fut => panic!("pending な fetch のリーダーが完了してはいけない"),
+                _ = std::future::ready(()) => {}
+            }
+            assert_eq!(lock_flights(&cache.tables.flights).len(), 1);
+        }
+        assert!(
+            lock_flights(&cache.tables.flights).is_empty(),
+            "drop されたリーダーのフライトが表に残ってはいけない"
+        );
+
+        let value = tokio::time::timeout(
+            HANG_GUARD,
+            cache.tables("db", || async { Ok(strings(&["after_drop"])) }),
+        )
+        .await
+        .expect("次の呼び出しが消えたフライトを待ってはいけない")
+        .unwrap();
+        assert_eq!(value, strings(&["after_drop"]));
+    }
+
+    /// リーダーの fetch がパニックしても待機者は永久に待たず、fetch をやり直す。
+    #[tokio::test]
+    async fn panicking_leader_does_not_strand_waiters() {
+        let cache = schema_cache();
+        let waiter_calls = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = oneshot::channel::<()>();
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+
+        let leader = {
+            let cache = cache.clone();
+            tokio::spawn(async move {
+                cache
+                    .tables("db", move || async move {
+                        started_tx.send(()).unwrap();
+                        release_rx.await.unwrap();
+                        panic!("introspection panicked (test)");
+                    })
+                    .await
+            })
+        };
+        started_rx.await.unwrap();
+        let waiter = spawn_caller(&cache, &waiter_calls, Ok(strings(&["after_panic"])));
+        wait_for_waiters(&cache.tables, &"db".to_string(), 1).await;
+
+        release_tx.send(()).unwrap();
+        let panicked = tokio::time::timeout(HANG_GUARD, leader)
+            .await
+            .expect("panicking leader must finish");
+        assert!(panicked.unwrap_err().is_panic());
+
+        assert_eq!(join(waiter).await.unwrap(), strings(&["after_panic"]));
+        assert_eq!(waiter_calls.load(Ordering::SeqCst), 1);
+        assert!(lock_flights(&cache.tables.flights).is_empty());
+    }
+
+    // ── Query Result Cache ──
+
+    fn one_row(v: i64) -> QueryResult {
+        QueryResult {
+            columns: vec![Column {
+                name: "c".to_string(),
+                type_name: "int".to_string(),
+            }],
+            rows: vec![vec![Value::Int(v)]],
+            rows_affected: 1,
+            elapsed_ms: 0,
+        }
+    }
+
+    fn first_cell(result: &QueryResult) -> i64 {
+        match result.rows[0][0] {
+            Value::Int(v) => v,
+            ref other => panic!("unexpected cell {other:?}"),
+        }
+    }
+
+    fn query_key() -> QueryCacheKey {
+        (Some("main".to_string()), "SELECT * FROM t".to_string())
+    }
+
+    fn spawn_query(
+        cache: &Arc<QueryResultCache>,
+        calls: &Arc<AtomicUsize>,
+        value: i64,
+    ) -> tokio::task::JoinHandle<Result<QueryResult>> {
+        let cache = cache.clone();
+        let calls = calls.clone();
+        tokio::spawn(async move {
+            cache
+                .get_or_fetch(
+                    DriverKind::Sqlite,
+                    Some("main"),
+                    "SELECT * FROM t",
+                    move || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(one_row(value))
+                    },
+                )
+                .await
+        })
+    }
+
+    async fn spawn_blocked_query_leader(
+        cache: &Arc<QueryResultCache>,
+        release: oneshot::Receiver<QueryResult>,
+    ) -> tokio::task::JoinHandle<Result<QueryResult>> {
+        let (started_tx, started_rx) = oneshot::channel::<()>();
+        let cache = cache.clone();
+        let handle = tokio::spawn(async move {
+            cache
+                .get_or_fetch(
+                    DriverKind::Sqlite,
+                    Some("main"),
+                    "SELECT * FROM t",
+                    move || async move {
+                        started_tx.send(()).unwrap();
+                        Ok(release.await.unwrap())
+                    },
+                )
+                .await
+        });
+        tokio::time::timeout(HANG_GUARD, started_rx)
+            .await
+            .expect("leader never started")
+            .unwrap();
+        handle
+    }
+
+    /// Query Result Cache も同一クエリの同時ミスを 1 回の実行にまとめる。
+    #[tokio::test]
+    async fn query_cache_concurrent_misses_run_fetch_only_once() {
+        let cache = Arc::new(QueryResultCache::new(
+            Duration::from_secs(300),
+            20,
+            1000,
+            1024 * 1024,
+        ));
+        let waiter_calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+        let leader = spawn_blocked_query_leader(&cache, release_rx).await;
+        let waiters: Vec<_> = (0..3)
+            .map(|_| spawn_query(&cache, &waiter_calls, -1))
+            .collect();
+        wait_for_waiters(&cache.entries, &query_key(), 3).await;
+
+        release_tx.send(one_row(7)).unwrap();
+        assert_eq!(first_cell(&join(leader).await.unwrap()), 7);
+        for waiter in waiters {
+            assert_eq!(first_cell(&join(waiter).await.unwrap()), 7);
+        }
+        assert_eq!(waiter_calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// 上限超過でキャッシュ対象外になる結果も、同じ世代で合流した待機者には
+    /// 配られる (cache には載らない)。
+    #[tokio::test]
+    async fn query_cache_shares_uncacheable_results_with_waiters_without_caching() {
+        let cache = Arc::new(QueryResultCache::new(
+            Duration::from_secs(300),
+            20,
+            /* max_rows */ 0,
+            1024 * 1024,
+        ));
+        let waiter_calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+        let leader = spawn_blocked_query_leader(&cache, release_rx).await;
+        let waiter = spawn_query(&cache, &waiter_calls, -1);
+        wait_for_waiters(&cache.entries, &query_key(), 1).await;
+
+        release_tx.send(one_row(3)).unwrap();
+        assert_eq!(first_cell(&join(leader).await.unwrap()), 3);
+        assert_eq!(first_cell(&join(waiter).await.unwrap()), 3);
+        assert_eq!(waiter_calls.load(Ordering::SeqCst), 0);
+        assert!(cache.entries.entries.read().await.is_empty());
+    }
+
+    /// Query Result Cache でも、待ち合わせ中の invalidate (= 書き込み後) を
+    /// 跨いだ待機者は stale な共有結果を受け取らず、取り直した値を返す。
+    #[tokio::test]
+    async fn query_cache_invalidate_while_waiting_does_not_hand_out_stale_rows() {
+        let cache = Arc::new(QueryResultCache::new(
+            Duration::from_secs(300),
+            20,
+            1000,
+            1024 * 1024,
+        ));
+        let waiter_calls = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = oneshot::channel();
+        let leader = spawn_blocked_query_leader(&cache, release_rx).await;
+        let waiter = spawn_query(&cache, &waiter_calls, 2);
+        wait_for_waiters(&cache.entries, &query_key(), 1).await;
+
+        cache.invalidate_all().await;
+        release_tx.send(one_row(1)).unwrap(); // stale
+
+        assert_eq!(first_cell(&join(leader).await.unwrap()), 1);
+        assert_eq!(
+            first_cell(&join(waiter).await.unwrap()),
+            2,
+            "書き込み後の待機者に stale な行を返してはいけない"
+        );
+        assert_eq!(waiter_calls.load(Ordering::SeqCst), 1);
+        let map = cache.entries.entries.read().await;
+        assert_eq!(map.get(&query_key()).map(|e| first_cell(&e.value)), Some(2));
     }
 }
