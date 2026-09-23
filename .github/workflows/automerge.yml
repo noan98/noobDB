@@ -1,7 +1,7 @@
 name: automerge
 
-# CI が成功し、Codex のレビューが完了して未解決のレビュースレッドが無い open PR を
-# 自動で main へマージする。
+# CI が成功し、明示的な変更依頼が残っておらず、Codex のレビューが完了して未解決の
+# レビュースレッドが無い open PR を自動で main へマージする。
 # noobGit リポジトリの automerge ワークフローを参考に、noobDB 向けに移植したもの。
 #
 # 設計方針:
@@ -9,12 +9,15 @@ name: automerge
 #     (フォークからの PR でも PR 由来のコードを実行しないため安全)。
 #   - ブランチ保護に依存しない。CI の成功 (ci.yml の最新 run が success) を
 #     自前で再確認し、mergeable / mergeStateStatus を見てからマージする。
-#   - 人間のレビュー承認は要求しない。レビュー層はレビュー bot が担い、次の 2 段で
+#   - 人間のレビュー承認は要求しない。レビュー層はレビュー bot が担い、次の 3 段で
 #     判定する:
+#       (0) 人間 (OWNER / MEMBER / COLLABORATOR) の明示的な変更依頼が残って
+#           いないこと (Step 4b, #1108)
 #       (1) Codex (`chatgpt-codex-connector[bot]`) が **現在の head SHA を**
 #           レビュー済みであること (Step 5)
 #       (2) 未解決のレビュースレッドが 0 件であること (Step 6)
 #     レビューが 1 件も付かない PR を素通しにはしない (Step 5 が止める)。
+#     人間の「承認」は要求しないが、人間の「待った」は必ず効かせる (Step 4b)。
 #
 # レビュー基盤の CodeRabbit → Codex 移行 (#1109):
 #   以前のレビュー層は CodeRabbit だったが、レートリミットが厳しく実用に耐えな
@@ -80,15 +83,57 @@ name: automerge
 #     どちらも **Step 6 の未解決スレッド判定は免除しない** (人間 / bot の明示的な
 #     指摘を尊重するため)。
 #
-# 既知の残課題:
-#   - 通常コメント (issue comment) での「修正してから merge」は Step 6 の
-#     未解決スレッド判定では拾えない (#1108)。本ファイルの同じゲート設計を触る
-#     ため、#1109 (本移行) とは分けて対応する。
+# Step 4b (変更依頼ゲート, #1108) の判定方式と、そう決めた理由:
+#   - **何が起きたか**: PR #1101 で、オーナーが競合バグの指摘と「この点を修正して
+#     から merge 推奨」を **通常コメント (issue comment)** で投稿した直後に、
+#     automerge がマージした。Step 6 は「未解決のレビュースレッド」しか見ず、
+#     通常コメントや行に紐付かないレビュー本文 (本文だけの Request changes を含む)
+#     はスレッドを作らないため、依頼を取りこぼした。どちらで書くかは投稿時の UI
+#     操作で決まり、「修正してから merge」という意図の強さとは無関係なので、
+#     運用ルール (「変更依頼は必ずスレッドで」) だけでは再発を防げない。
+#   - **採用した方式**: 次の 4 つの信号の OR で「マージ保留」とする (Issue の
+#     対応案 1 + 2 の組み合わせ。対応案 3 = 承認ベースへの転換は、レビューが
+#     付かない PR を通す automerge の利点を殺すので採らない):
+#       (h-1) 保留ラベル `do-not-merge` (HOLD_LABEL)。外すまで保留。
+#       (h-2) 信頼できる人間のコメント / レビュー本文の **`/hold` だけの行**。
+#             後から信頼できる人間が `/unhold` するまで保留し、push では解けない。
+#       (h-3) 信頼できる人間の `CHANGES_REQUESTED` レビュー (レビュアごとの最新の
+#             APPROVED / CHANGES_REQUESTED / DISMISSED)。承認し直すか dismiss で解除。
+#       (h-4) 信頼できる人間のコメント / レビュー本文の **変更依頼の定型句**
+#             (「修正してから merge」「マージしないで」「do not merge」
+#             「fix ... before merging」など)。**依頼より後に head が push されたら
+#             解除**する (依頼への対応 push で意図が満たされる前提)。新しい head は
+#             Step 5 で Codex の再レビューを改めて通るので、push だけで無審査には
+#             ならない。push で解きたくない強い保留は (h-2) を使う。
+#   - **マーカー (h-1/h-2) だけにしなかった理由**: 貼り忘れると #1101 と同じことが
+#     起きる。実際の依頼は自然文で来るので、定型句 (h-4) で自然文も拾う。
+#   - **定型句だけにしなかった理由**: キーワード検出は誤判定しうる。取りこぼさず
+#     確実に止める手段 (h-1/h-2/h-3) と、誤検出を解く手段 (push / `/unhold`) を
+#     両方用意した。誤検出は「マージしない」側に倒れるので、既知のバグを main に
+#     入れるより被害が小さい。
+#   - **automerge を殺さないための絞り込み** (レビューが付かない PR は従来どおり
+#     通す): 判定材料は OWNER / MEMBER / COLLABORATOR の人間の投稿だけ。bot
+#     (Codex / github-actions / その他 `[bot]`) と automerge 自身のマーカー付き
+#     コメントは無視する (Codex の指摘は Step 6 がスレッドで拾う)。一般ユーザの
+#     コメントで任意の PR を止められる DoS も防ぐ。コードブロック・インライン
+#     コード・引用行・HTML コメントの中は読まない (「`/hold` と書くと止まる」の
+#     ような説明や、依頼の引用で止めない)。定型句に一致しない普通のコメント
+#     (LGTM・進捗報告など) では止まらない。
+#   - **push 観測時刻は Step 5 と同じ check-suite の作成時刻を使う** (Step 4a)。
+#     取れなければ (h-4) は push では解除できない (安全側)。committer date を
+#     使わない理由は Step 5 と同じ。
+#   - **判定ロジックはシェルに埋めず `scripts/automerge-hold.mjs` に置く**。
+#     Actions の実環境では動作確認できないため、純関数にして
+#     `scripts/automerge-hold.test.mjs` (`pnpm run test:scripts`、ci.yml の
+#     `automerge gate (script tests)` ジョブ) で境界ケースを固定している。
+#     スクリプトは **既定ブランチ (main) から** sparse checkout して実行する
+#     (PR 側のコードは実行しない = 冒頭の方針を維持)。取得・実行に失敗したら
+#     ジョブが落ちる = マージしない側に倒れる。
 #
 # トリガ:
 #   - ci ワークフローが完了したとき (workflow_run) — CI 成功を起点に再評価する。
-#   - レビューが提出されたとき (pull_request_review) — Codex のレビュー提出 /
-#     スレッド解消を起点に再評価。
+#   - レビューが提出 / dismiss されたとき (pull_request_review) — Codex のレビュー
+#     提出・Request changes の dismiss (Step 4b の解除) を起点に再評価。
 #   - PR にコメントが付いたとき (issue_comment) — Codex の利用上限メッセージや
 #     `@codex review` への応答を起点に再評価する (Codex はレビューを出さずに
 #     コメントだけを返す経路があるため、これが無いと取りこぼす)。
@@ -97,11 +142,12 @@ name: automerge
 # 再評価する経路は無い。実運用では CI (数十分) の完了が Codex の応答 (数分) より
 # 遅いため workflow_run で拾えるが、取りこぼした場合は PR に何かコメントすれば
 # 再評価される (下の `if` が OWNER / MEMBER / COLLABORATOR のコメントを通すのは
-# この再評価の手段も兼ねている)。
+# この再評価の手段も兼ねている)。保留ラベル (`do-not-merge`) を外したときも
+# 同様にイベントが来ないので、`/unhold` 等のコメントで再評価させる。
 
 on:
   pull_request_review:
-    types: [submitted]
+    types: [submitted, dismissed]
   issue_comment:
     types: [created, edited]
   workflow_run:
@@ -140,6 +186,9 @@ env:
   # (Step 6 の未解決スレッド判定は免除しない)。Codex 側の障害・クォータ切れ・
   # 応答文言の変更で全 PR が永久停止しないための最終手段の保険。
   CODEX_BYPASS_LABEL: automerge-without-codex
+  # このラベルが付いた PR は自動マージしない (Step 4b, #1108)。外すまで保留。
+  # `automerge-without-codex` と違い、こちらは **止める側** のラベル。
+  HOLD_LABEL: do-not-merge
 
 jobs:
   automerge:
@@ -160,9 +209,12 @@ jobs:
     # (bot の `author_association` は NONE / CONTRIBUTOR になりうるので、
     # ログイン名の一致を別に見る必要がある)。
     #
-    # なお **このジョブはコメント本文やレビュー本文を判定に一切使わない**。
-    # 起動後は PR を API から取り直し、CI・Codex の完了信号・レビュースレッドを
-    # 一から評価する。したがってコメントでできるのは「判定をやり直させる」ことだけで、
+    # 起動後は PR を API から取り直し、CI・変更依頼・Codex の完了信号・レビュー
+    # スレッドを一から評価する。コメント / レビューの **本文を判定に使うのは
+    # Step 4b (変更依頼ゲート) だけ**で、そこでも OWNER / MEMBER / COLLABORATOR の
+    # 人間の投稿しか読まず、**マージを止める方向にしか働かない** (`/unhold` も
+    # 信頼できる人間の保留を解くだけで、他のゲートを飛ばすことはできない)。
+    # したがって一般ユーザのコメントでできるのは「判定をやり直させる」ことだけで、
     # 判定結果を変えることはできない。上の絞り込みは多層防御 + 空振り実行の削減。
     #
     # 自分が投稿した `@codex review` 依頼コメント (マーカー入り) では起動しない
@@ -180,6 +232,22 @@ jobs:
        (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) ||
         github.event.comment.user.login == 'chatgpt-codex-connector[bot]'))
     steps:
+      # Step 4b の判定スクリプト (scripts/automerge-hold.mjs) だけを **既定ブランチ
+      # から** 取得する。pull_request_review では既定の checkout 対象が PR の merge
+      # ref になるため、ref を明示して PR 由来のコードを実行しないようにする。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/automerge-hold.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
       - name: Check conditions and auto-merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -249,6 +317,89 @@ jobs:
             exit 0
           fi
 
+          # 4a. head SHA の push 観測時刻。GitHub がサーバ側で観測した時刻として
+          #     head SHA に対する check-suite の作成時刻の最小値を使う。
+          #     **git の committer date にフォールバックしてはいけない**
+          #     (冒頭の設計方針を参照)。Step 4b (定型句の保留を push で解くか) と
+          #     Step 5 (👍 / 利用上限の時刻判定) が共用する。取れなかったときの扱いは
+          #     それぞれの Step で決める (どちらも安全側)。
+          push_observed_at=""
+          if ! push_observed_at="$(gh api "repos/$GH_REPO/commits/$headSha/check-suites" \
+               --jq '[.check_suites[].created_at] | sort | .[0] // empty' 2>&1)"; then
+            echo "::warning::head commit ($headSha) の check-suites (push 観測時刻の代替) の取得に失敗しました: $push_observed_at"
+            push_observed_at=""
+          fi
+          echo "head ($headSha) の push 観測時刻: ${push_observed_at:-(不明)}"
+
+          # 4b. 変更依頼ゲート (#1108)。判定方式とその根拠はファイル冒頭の
+          #     「Step 4b の判定方式と、そう決めた理由」を参照。判定ロジックは
+          #     scripts/automerge-hold.mjs (ユニットテスト付き) にあり、ここでは
+          #     材料 (ラベル・issue comment・レビュー・push 観測時刻) を集めて渡すだけ。
+          #     Codex の免除ラベルが付いていても **免除しない** (人間の待ったを尊重)。
+          #     マージ直前 (Step 7) にも同じ判定をやり直すため関数にしてある。
+          #     副作用として pr_comments / pr_reviews を更新し、Step 5 が再利用する。
+          #     **注意**: `if check_hold` の条件部として呼ぶため、関数内では
+          #     `set -e` が効かない。取得・判定の失敗で「保留なし」に倒れないよう
+          #     (= fail-open でマージしないよう)、各コマンドの失敗を明示的に
+          #     hold_fail でジョブごと止める。
+          hold_fail() {
+            echo "::error title=変更依頼ゲートの判定に失敗しました::$1 安全側でマージしません。"
+            exit 1
+          }
+          check_hold() {
+            local labels hold_input verdict
+            labels="$(gh pr view "$PR" --json labels --jq '[.labels[].name]')" \
+              || hold_fail "PR のラベルを取得できませんでした。"
+            pr_comments="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq '.[]' | jq -s '.')" \
+              || hold_fail "PR のコメントを取得できませんでした。"
+            pr_reviews="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate --jq '.[]' | jq -s '.')" \
+              || hold_fail "PR のレビューを取得できませんでした。"
+            # コメント数が多いと引数長の上限に当たるので、配列はファイル経由で渡す。
+            hold_input="$(mktemp -d)" || hold_fail "一時ディレクトリを作れませんでした。"
+            printf '%s' "$pr_comments" > "$hold_input/comments.json" || hold_fail "一時ファイルに書けませんでした。"
+            printf '%s' "$pr_reviews" > "$hold_input/reviews.json" || hold_fail "一時ファイルに書けませんでした。"
+            jq -n \
+              --argjson labels "$labels" \
+              --slurpfile comments "$hold_input/comments.json" \
+              --slurpfile reviews "$hold_input/reviews.json" \
+              --arg pushObservedAt "$push_observed_at" \
+              --arg holdLabel "$HOLD_LABEL" \
+              '{labels: $labels, comments: $comments[0], reviews: $reviews[0],
+                pushObservedAt: $pushObservedAt, holdLabel: $holdLabel}' > "$hold_input/input.json" \
+              || hold_fail "判定スクリプトへの入力を組み立てられませんでした。"
+            hold_result="$(node scripts/automerge-hold.mjs < "$hold_input/input.json")" \
+              || hold_fail "scripts/automerge-hold.mjs が失敗しました。"
+            rm -rf "$hold_input"
+            verdict="$(echo "$hold_result" | jq -r '.hold')" \
+              || hold_fail "判定結果を解釈できませんでした: $hold_result"
+            case "$verdict" in
+              true) return 0 ;;
+              false) return 1 ;;
+              *) hold_fail "判定結果が true / false ではありません: $hold_result" ;;
+            esac
+          }
+
+          report_hold() {
+            echo "PR #$PR には明示的な変更依頼が残っているためマージしません:"
+            echo "$hold_result" | jq -r '.reasons[] | "  - " + .'
+            {
+              echo "### :no_entry: 変更依頼が残っているため自動マージを保留しました"
+              echo ""
+              echo "- 対象 PR: #$PR (head \`$headSha\`)"
+              echo "$hold_result" | jq -r '.reasons[] | "- " + .'
+              echo ""
+              echo "解除方法: 定型句による依頼は対応を push すると解除、\`/hold\` は信頼できるユーザの \`/unhold\` コメント、"
+              echo "Request changes は承認し直すか dismiss、\`$HOLD_LABEL\` ラベルは外したうえで PR にコメントして再評価させてください。"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          hold_result=""; pr_comments="[]"; pr_reviews="[]"
+          if check_hold; then
+            report_hold
+            exit 0
+          fi
+
           # 5. Codex のレビューゲート (#1109)。判定方式とその根拠はファイル冒頭の
           #    「Step 5 の判定方式と、そう決めた理由」を参照。要点だけ再掲すると、
           #    現在の head SHA に対する Codex の完了信号 (レビュー提出 or 👍) を
@@ -268,25 +419,16 @@ jobs:
               echo ""
             } >> "$GITHUB_STEP_SUMMARY"
           else
-            # 5-1. head SHA の push 観測時刻。GitHub がサーバ側で観測した時刻として
-            #      head SHA に対する check-suite の作成時刻の最小値を使う。
-            #      **git の committer date にフォールバックしてはいけない**
-            #      (冒頭の設計方針を参照)。取れなければ安全側でスキップする。
-            push_observed_at=""
-            if ! push_observed_at="$(gh api "repos/$GH_REPO/commits/$headSha/check-suites" \
-                 --jq '[.check_suites[].created_at] | sort | .[0] // empty' 2>&1)"; then
-              echo "::warning::head commit ($headSha) の check-suites (push 観測時刻の代替) の取得に失敗しました: $push_observed_at"
-              push_observed_at=""
-            fi
+            # 5-1. head SHA の push 観測時刻 (Step 4a で取得済み)。Codex の完了信号の
+            #      時刻判定に必須なので、取れなければ安全側でスキップする。
             if [ -z "$push_observed_at" ]; then
               echo "head ($headSha) の push 観測時刻を決定できませんでした。安全側でスキップ。"
               exit 0
             fi
-            echo "head ($headSha) の push 観測時刻: $push_observed_at"
 
-            # 5-2. Codex のレビュー提出 (シグナル a-1 / a-2)。
-            codex_reviews="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate --jq '.[]' \
-              | jq -s --arg login "$CODEX_LOGIN" '[.[] | select(.user.login == $login)]')"
+            # 5-2. Codex のレビュー提出 (シグナル a-1 / a-2)。一覧は Step 4b で取得済み。
+            codex_reviews="$(printf '%s' "$pr_reviews" \
+              | jq --arg login "$CODEX_LOGIN" '[.[] | select(.user.login == $login)]')"
 
             codex_reviewed_head="false"
             codex_signal=""
@@ -333,8 +475,8 @@ jobs:
 
             # 5-4. issue comment 側のシグナル: 利用上限メッセージと、自分が投稿した
             #      `@codex review` 依頼マーカー。
+            #      issue comment の一覧は Step 4b で取得済み。
             codex_request_marker="<!-- automerge:codex-review-request:$headSha -->"
-            pr_comments="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq '.[]' | jq -s '.')"
             codex_limit_for_head="$(printf '%s' "$pr_comments" \
               | jq -r --arg login "$CODEX_LOGIN" --arg since "$push_observed_at" \
                   '[.[] | select(.user.login == $login
@@ -452,7 +594,18 @@ jobs:
             echo "mergeStateStatus=$mss (試行 $i/5)"
             case "$mss" in
               CLEAN|UNSTABLE|HAS_HOOKS)
-                if gh pr merge "$PR" --merge; then
+                # マージ直前に変更依頼ゲート (Step 4b) をやり直す。Step 4b から
+                # ここまでに Codex 待ち・バックオフで数十秒〜数分空くことがあり、
+                # その間に投稿された「修正してから merge」を取りこぼさないため
+                # (#1101 は依頼の「直後」にマージされた)。
+                if check_hold; then
+                  report_hold
+                  exit 0
+                fi
+                # --match-head-commit: 評価した head から push で変わっていたら
+                # マージしない (新しい head は Codex の再レビューと Step 4b の
+                # 「push 後の依頼」判定をまだ通っていない)。次の CI 完了で再評価される。
+                if gh pr merge "$PR" --merge --match-head-commit "$headSha"; then
                   merged="true"
                   break
                 fi

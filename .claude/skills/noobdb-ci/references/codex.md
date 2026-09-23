@@ -2,7 +2,8 @@
 
 PR のレビュー層は **Codex (`chatgpt-codex-connector[bot]`)** が担い、
 `automerge.yml` の Step 5 / Step 6 が「レビューが済むまでマージしない」ゲートに
-なっています。関連ワークフローは `automerge.yml` の **1 本だけ**です。
+なっています。その手前の Step 4b が「人間の変更依頼が残っていたらマージしない」
+ゲート (#1108) です。関連ワークフローは `automerge.yml` の **1 本だけ**です。
 
 ## CodeRabbit からの移行 (#1109)
 
@@ -121,10 +122,48 @@ Codex account and connect to github.」と返すのみでレビューを実行�
 | `CODEX_LOGIN` | `chatgpt-codex-connector[bot]` | Codex のログイン名。**完全一致**で照合する (`chatgpt-codex-connector-review` のような別名が前方一致ですり抜けないように) |
 | `CODEX_REREVIEW_DELAY_MINUTES` | `5` | push 観測時刻からこの分数を過ぎても完了信号が無ければ `@codex review` を 1 回投稿する。短すぎると自動レビューと依頼が二重に走り、長すぎると修正 push 後の停止時間が伸びる |
 | `CODEX_BYPASS_LABEL` | `automerge-without-codex` | Codex のレビュー要件だけを免除するラベル |
+| `HOLD_LABEL` | `do-not-merge` | 付いている間は自動マージしない (Step 4b の変更依頼ゲート。**止める側**のラベル) |
 
-## 未対応の残課題
+## 変更依頼ゲート (Step 4b, #1108)
 
-- **通常コメントでの変更依頼を拾えない (#1108)**。「修正してから merge」が
-  issue comment として投稿された場合、Step 6 の未解決レビュースレッド判定では
-  カウントされずマージが止まりません (PR #1101 で実際に発生)。同じ Step 5 / 6 の
-  ゲート設計を触るため、#1109 (本移行) とは分けて対応します。
+PR #1101 で、オーナーが「この点を修正してから merge 推奨」を **通常コメント
+(issue comment)** で投稿した直後に automerge がマージしました。Step 6 は未解決の
+レビュースレッドしか見ず、通常コメントや本文だけのレビュー (Request changes を
+含む) はスレッドを作らないため取りこぼしていました。Step 4b はこれを塞ぎます。
+
+判定ロジックは **`scripts/automerge-hold.mjs`** (純関数) にあり、
+`scripts/automerge-hold.test.mjs` (`pnpm run test:scripts`、ci.yml の
+`automerge gate (script tests)` ジョブ) で境界ケースを固定しています。
+ワークフローは既定ブランチ (main) からこのスクリプトだけを sparse checkout して
+実行します (PR 側のコードは実行しない)。
+
+| 信号 | 解除方法 | push で解除 |
+|---|---|---|
+| `do-not-merge` ラベル (`HOLD_LABEL`) | ラベルを外して PR にコメント (再評価) | しない |
+| `/hold` だけの行 (コメント / レビュー本文) | 信頼できるユーザの `/unhold` (または `/hold cancel`) | しない |
+| Request changes (`CHANGES_REQUESTED` が各レビュアの最新状態) | 承認し直す / dismiss | しない |
+| 変更依頼の定型句 (「修正してから merge」「マージしないで」「do not merge」「fix ... before merging」等) | 依頼より後の push、または `/unhold` | **する** |
+
+- 読むのは **OWNER / MEMBER / COLLABORATOR の人間の投稿だけ**。bot (Codex /
+  `github-actions[bot]` / その他 `[bot]`) と `<!-- automerge:` マーカー付きの
+  投稿は無視します (Codex の指摘は Step 6 がスレッドで拾う)。
+- コードブロック・インラインコード・引用行 (`>`)・HTML コメントの中は読みません。
+  `/hold` は「その行が `/hold` だけ」のときだけコマンドとして扱います。
+- 定型句の保留は、**依頼より後に head が push されたら解除**します (対応 push で
+  意図が満たされる前提)。新しい head は Step 5 で Codex の再レビューが要るので
+  無審査にはなりません。push で解けない保留が欲しいときは `/hold` を使います。
+  push 観測時刻が取れないときは push では解除しません (安全側)。
+- **Codex 免除ラベル (`automerge-without-codex`) でも Step 4b は免除しません。**
+- 判定は Step 7 のマージ直前にもう一度やり直し、`gh pr merge
+  --match-head-commit` で評価した head 以外をマージしないようにしています。
+- 取得・判定に失敗したらジョブを `::error::` で落とします (fail-closed)。
+  `if check_hold` の条件部では `set -e` が効かないため、関数内の各コマンドに
+  明示的な失敗処理を付けています。**これを外すと失敗時に「保留なし」へ倒れます。**
+
+### 設計上の落とし穴 (Step 4b)
+
+- **定型句を増やすときは、止まるべき文と止まってはいけない文を両方テストに足す。**
+  誤検出が増えると automerge が実質無効化されます (レビューが付かない PR は
+  従来どおり通すのが受け入れ条件)。
+- **信頼できない投稿者の判定を緩めない。** public リポジトリなので、誰でも
+  コメントで任意の PR を止められる DoS になります。

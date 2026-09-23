@@ -14,6 +14,7 @@
     "test:e2e": "wdio run e2e/wdio.conf.ts",
     "knip": "knip",
     "bundle-size": "node scripts/bundle-size.mjs",
+    "test:scripts": "node --test scripts/automerge-hold.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
