@@ -129,3 +129,46 @@ describe("ProcessListPanel error state (#848)", () => {
     });
   });
 });
+
+/**
+ * ライブ監視のモーション (#1022)。ポーリングで値が変わったセルだけが
+ * フラッシュし (`data-live-flash`)、経過時間の単調増加は光らないこと、
+ * 消えたプロセスの行が (exit 後に) 取り除かれること、接続数が表示されることを
+ * 固定する。
+ */
+describe("ProcessListPanel live motion (#1022)", () => {
+  const base: ProcessInfo = {
+    id: 7,
+    user: "app",
+    host: "localhost",
+    database: "db",
+    command: "Query",
+    state: "executing",
+    time_secs: 10,
+    query: "SELECT 1",
+    is_self: false,
+  };
+
+  it("変化したセルだけをフラッシュし、消えた行は取り除く", async () => {
+    vi.mocked(api.listProcesses)
+      .mockResolvedValueOnce([base, { ...base, id: 8 }])
+      .mockResolvedValueOnce([{ ...base, state: "Sending data", time_secs: 15 }]);
+
+    const { container } = renderWithProviders(
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
+    );
+    await waitFor(() => expect(screen.getByText("8")).toBeInTheDocument());
+    // 初期表示では何も光らない。
+    expect(container.querySelectorAll("[data-live-flash]")).toHaveLength(0);
+    expect(screen.getByTestId("process-count").textContent).toContain("2");
+
+    fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
+
+    await waitFor(() => expect(screen.getByText("Sending data")).toBeInTheDocument());
+    const flashed = [...container.querySelectorAll("[data-live-flash]")];
+    expect(flashed.map((el) => el.textContent)).toEqual(["Sending data"]);
+
+    await waitFor(() => expect(screen.queryByText("8")).not.toBeInTheDocument());
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr")).toHaveLength(1));
+  });
+});

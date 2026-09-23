@@ -2,7 +2,10 @@ import { useMemo, useState } from "react";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import type { ConnectionProfile, Snippet } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
-import type { PlanWatchState } from "../planWatch";
+import { PLAN_WATCH_LIVE_FIELDS, watchedRowKey, type PlanWatchState } from "../planWatch";
+import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
+import { CountUp } from "./CountUp";
+import { LiveCollapse, LiveFlash, LiveRowsPresence, useLiveChanges } from "./LiveRows";
 import {
   type PlanChange,
   comparePlans,
@@ -70,6 +73,11 @@ export function PlanWatchPanel({
       })),
     [state, snippets],
   );
+  // 更新で新しい世代が記録されたスニペットの世代数を一瞬光らせる (#1022)。
+  const { flashToken } = useLiveChanges(watched, watchedRowKey, PLAN_WATCH_LIVE_FIELDS);
+  const genCountParts = splitAroundCountUpToken(
+    t("planWatchGenerationCount", { count: COUNT_UP_TOKEN }),
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const active =
     watched.find((w) => w.id === selectedId) ?? (watched.length > 0 ? watched[0] : null);
@@ -120,47 +128,57 @@ export function PlanWatchPanel({
               borderColor="app.border"
               borderRadius="md"
             >
-              {watched.map((w) => {
-                const isActive = active?.id === w.id;
-                return (
-                  <Flex
-                    key={w.id}
-                    role="button"
-                    tabIndex={0}
-                    px="2.5"
-                    py="2"
-                    gap="2"
-                    align="center"
-                    cursor="pointer"
-                    bg={isActive ? "app.active" : undefined}
-                    _hover={{ bg: isActive ? "app.active" : "app.hover" }}
-                    onClick={() => selectSnippet(w.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        selectSnippet(w.id);
-                      }
-                    }}
-                  >
-                    <Icon name="explain" size={ICON_SIZES.sm} />
-                    <Box flex="1" minWidth={0}>
-                      <Tooltip label={w.snippet?.sql} placement="bottom">
-                        <chakra.div
-                          textStyle="subheading"
-                          overflow="hidden"
-                          textOverflow="ellipsis"
-                          whiteSpace="nowrap"
-                        >
-                          {w.snippet?.name ?? t("planWatchSnippetMissing")}
-                        </chakra.div>
-                      </Tooltip>
-                      <chakra.div fontSize="xs" color="app.textMuted">
-                        {t("planWatchGenerationCount", { count: w.generations.length })}
-                      </chakra.div>
-                    </Box>
-                  </Flex>
-                );
-              })}
+              <LiveRowsPresence>
+                {watched.map((w) => {
+                  const isActive = active?.id === w.id;
+                  return (
+                    <LiveCollapse key={w.id} standalone>
+                      <Flex
+                        role="button"
+                        tabIndex={0}
+                        px="2.5"
+                        py="2"
+                        gap="2"
+                        align="center"
+                        cursor="pointer"
+                        bg={isActive ? "app.active" : undefined}
+                        _hover={{ bg: isActive ? "app.active" : "app.hover" }}
+                        onClick={() => selectSnippet(w.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            selectSnippet(w.id);
+                          }
+                        }}
+                      >
+                        <Icon name="explain" size={ICON_SIZES.sm} />
+                        <Box flex="1" minWidth={0}>
+                          <Tooltip label={w.snippet?.sql} placement="bottom">
+                            <chakra.div
+                              textStyle="subheading"
+                              overflow="hidden"
+                              textOverflow="ellipsis"
+                              whiteSpace="nowrap"
+                            >
+                              {w.snippet?.name ?? t("planWatchSnippetMissing")}
+                            </chakra.div>
+                          </Tooltip>
+                          <LiveFlash
+                            token={flashToken(w.id, "generations")}
+                            fontSize="xs"
+                            color="app.textMuted"
+                            borderRadius="xs"
+                          >
+                            {genCountParts[0]}
+                            <CountUp value={w.generations.length} />
+                            {genCountParts[1]}
+                          </LiveFlash>
+                        </Box>
+                      </Flex>
+                    </LiveCollapse>
+                  );
+                })}
+              </LiveRowsPresence>
             </Box>
 
             {/* 右: 世代選択 + 変化点 + 2 面比較 */}

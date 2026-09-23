@@ -6,6 +6,7 @@
 // (Vitest でユニットテスト)。EXPLAIN の実行・変化通知・比較 UI は App.tsx /
 // PlanWatchPanel.tsx が担当し、計画の正規化・比較は `components/planDiff.ts` に任せる。
 
+import type { LiveField } from "./components/liveDiff";
 import type { PlanPayloadKind } from "./components/planDiff";
 
 const STORAGE_PREFIX = "noobdb.planwatch.";
@@ -33,6 +34,32 @@ export interface PlanWatchState {
 }
 
 export const EMPTY_PLAN_WATCH: PlanWatchState = { watches: {} };
+
+/** 計画ウォッチパネルの 1 行 (ウォッチ中のスニペット)。 */
+export interface WatchedRowSnapshot {
+  id: string;
+  generations: PlanGeneration[];
+}
+
+/**
+ * 計画ウォッチパネルの値変化フラッシュ (#1022) の判定。最新世代が入れ替わった
+ * (= 更新で新しい計画が記録された) ときだけ世代数の表示を光らせる。世代数は
+ * 上限 (`MAX_GENERATIONS`) で頭打ちになるため、件数ではなく先頭世代の ID で見る。
+ * 件数の増減 (古い世代の刈り込みなど) も併せて変化とみなす。
+ */
+export const PLAN_WATCH_LIVE_FIELDS: readonly LiveField<WatchedRowSnapshot, "generations">[] = [
+  {
+    name: "generations",
+    changed: (a, b) =>
+      (a.generations[0]?.id ?? null) !== (b.generations[0]?.id ?? null) ||
+      a.generations.length !== b.generations.length,
+  },
+];
+
+/** 計画ウォッチ行の安定 key (#1022)。 */
+export function watchedRowKey(row: WatchedRowSnapshot): string {
+  return row.id;
+}
 
 function isValidGeneration(v: unknown): v is PlanGeneration {
   if (!v || typeof v !== "object") return false;

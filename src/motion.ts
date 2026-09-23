@@ -77,6 +77,11 @@ import type { Transition, Variants } from "motion/react";
  *   遅延ロード (`React.lazy`) されたビューがサスペンドしても退出中の旧ビューを
  *   巻き込まないよう、`Suspense` は `AnimatePresence` の外ではなく各
  *   `motion.div` の内側に置く。
+ * - ライブ監視パネルの行の出入りと値変化フラッシュ (`ProcessListPanel` /
+ *   `PlanWatchPanel` — `LiveRows.tsx` の `LiveRowsPresence` + `variants.collapse`、
+ *   フラッシュは既存の `@keyframes apply-flash`、数値は `CountUp`) (#1022)。
+ *   `height` / `opacity` の補間は `MotionConfig reducedMotion` では止まらないため、
+ *   `LiveRowsPresence` が `useReducedMotion()` を見て transition を即時化する。
  */
 
 /** cubic-bezier カーブ。CSS の `--ease` / `--ease-out` と同じ値。 */

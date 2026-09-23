@@ -1,4 +1,36 @@
 import type { ProcessInfo } from "../api/tauri";
+import type { LiveField } from "./liveDiff";
+
+/** 値変化フラッシュ (#1022) の対象列。 */
+export type ProcessLiveField = "command" | "state" | "time" | "query";
+
+/**
+ * プロセス一覧で「前回ポーリングから変化した」とみなす列の判定 (#1022)。
+ *
+ * 経過時間 (`time`) は実行中の文なら毎ティック単調に増えるのが正常で、それを
+ * 毎回光らせると列全体が点滅し続けて何も読み取れない。そこで**巻き戻った
+ * (= 同じ接続で新しい文が始まった)** ときと、報告の有無が切り替わったときだけ
+ * 変化とみなす。単調な増加は `CountUp` の数値補間で「進んでいる」ことを示す。
+ */
+export const PROCESS_LIVE_FIELDS: readonly LiveField<ProcessInfo, ProcessLiveField>[] = [
+  { name: "command", changed: (a, b) => (a.command ?? null) !== (b.command ?? null) },
+  { name: "state", changed: (a, b) => (a.state ?? null) !== (b.state ?? null) },
+  {
+    name: "time",
+    changed: (a, b) => {
+      const before = a.time_secs ?? null;
+      const after = b.time_secs ?? null;
+      if (before === null || after === null) return before !== after;
+      return after < before;
+    },
+  },
+  { name: "query", changed: (a, b) => (a.query ?? null) !== (b.query ?? null) },
+];
+
+/** プロセス行の安定 key (#1022)。ポーリング間で同じ接続は同じ key を保つ。 */
+export function processKey(p: ProcessInfo): number {
+  return p.id;
+}
 
 /**
  * プロセスモニタパネルの純ロジック。レンダリングから切り離してユニットテスト
