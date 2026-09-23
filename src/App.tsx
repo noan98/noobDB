@@ -79,6 +79,8 @@ import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
 import { StreamProgressBar } from "./components/StreamProgressBar";
+import { ResultPaneSkeleton } from "./components/ResultPaneSkeleton";
+import { showsResultSkeletonFallback } from "./components/resultSkeleton";
 import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
@@ -7069,7 +7071,20 @@ export default function App() {
                       既存の tab.streaming (フッター tone と同源) を共有する。 */}
                   <StreamProgressBar active={!!tab.streaming} />
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
-                <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+                {/* 初回実行でグリッドのチャンクを読み込む間は、副次パネルと揃えた
+                    骨格を出す (#1071)。表の結果を待っていない場合は従来の Spinner。 */}
+                <Suspense
+                  fallback={
+                    showsResultSkeletonFallback(tab) ? (
+                      <ResultPaneSkeleton
+                        columnCount={tab.result?.columns.length ?? null}
+                        density={settings.density}
+                      />
+                    ) : (
+                      <PaneEmpty><Spinner size={20} /></PaneEmpty>
+                    )
+                  }
+                >
                   {/* 結果パネルの種類が変わるとき (グリッド ⇔ EXPLAIN /
                       チャート / ピボット / プレビュー / バッチ) に控えめな
                       クロスフェードを添える (#788)。key は contentMode なので

@@ -35,7 +35,6 @@ import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   useSettings,
-  type Density,
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { RowInspector } from "./RowInspector";
@@ -80,7 +79,9 @@ import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
-import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
+import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
+import { ResultPaneSkeleton } from "./ResultPaneSkeleton";
+import { DENSITY_ROW_ESTIMATE } from "./resultSkeleton";
 import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
@@ -177,14 +178,6 @@ import {
  * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
  * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
-/** Per-density seed height (px) for the virtualizer's first paint. The
- *  real height is measured afterwards; these only need to be close. Values track
- *  the `--density-row-h` tokens in App.css. */
-const DENSITY_ROW_ESTIMATE: Record<Density, number> = {
-  compact: 24,
-  normal: 30,
-  spacious: 40,
-};
 
 export const GRID_CSS: SystemStyleObject = {
   // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
@@ -6155,12 +6148,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }
   if (result.columns.length === 0) {
     if (streaming) {
-      // カラム情報未着のストリーミング中: 密度設定に合わせた行数ぶんのスケルトン行を
-      // 表示してレイアウトシフトを抑える。データ到着後は DataGrid に差し替わる。
-      // 行数は「表示領域の高さ / 推定行高」から概算し、空白が目立たないよう 8 行を
-      // 最大として適度な数にする。
-      const skeletonRowCount = Math.min(8, Math.max(3, Math.round(320 / DENSITY_ROW_ESTIMATE[settings.density])));
-      const skeletonColWidths = [42, 68, 55, 80, 50, 72, 60, 45];
+      // カラム情報未着のストリーミング中: 共有の結果ペイン骨格 (#1071) を表示して
+      // レイアウトシフトを抑える。columns 受信後は DataGrid が実ヘッダの下に列数ぶんの
+      // 骨格行を出し (#657)、最初の行が届いた時点で実データへ差し替わる。
       return (
         <Box
           display="flex"
@@ -6183,33 +6173,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onStop={onStopStreaming}
             timeoutSecs={settings.queryTimeoutSecs}
           />
-          {/* スケルトン行: 密度ごとの行高に合わせた疑似列バーを並べる */}
-          <Box
-            px="3"
-            pt="2.5"
-            display="flex"
-            flexDirection="column"
-            gap={settings.density === "compact" ? "1" : settings.density === "spacious" ? "2" : "1.5"}
-            aria-hidden
-          >
-            {Array.from({ length: skeletonRowCount }, (_, i) => (
-              <Box key={i} display="flex" gap="2" opacity={1 - i * 0.1}>
-                {skeletonColWidths.slice(0, 5).map((w, ci) => (
-                  <Skeleton
-                    key={ci}
-                    height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
-                    style={{ width: `${w}px`, animationDelay: `${(i * 5 + ci) * 0.05}s` }}
-                    flexShrink={0}
-                  />
-                ))}
-                <Skeleton
-                  height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
-                  flex="1"
-                  style={{ animationDelay: `${(i * 5 + 5) * 0.05}s` }}
-                />
-              </Box>
-            ))}
-          </Box>
+          {/* 列数未知の骨格 (#1071)。副次パネルと同じ SkeletonTableRows +
+              ヘッダ骨格で、App.tsx の Suspense fallback と同一の見た目。 */}
+          <ResultPaneSkeleton columnCount={null} density={settings.density} />
         </Box>
       );
     }
