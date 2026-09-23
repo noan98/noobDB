@@ -1,11 +1,21 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type DriverKind, type ProcessInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
-import { formatProcessTime, pruneSelection, summarizeQuery } from "./processList";
+import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
+import {
+  formatProcessTime,
+  processKey,
+  PROCESS_LIVE_FIELDS,
+  pruneSelection,
+  summarizeQuery,
+} from "./processList";
+import { CountUp } from "./CountUp";
+import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
+import { uniqueByKey } from "./liveDiff";
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
@@ -45,22 +55,35 @@ const thCss: SystemStyleObject = {
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
+// セルは `LiveCell` (#1022) の 3 層構造: `<td>` (境界線・フォント) → 伸縮 div →
+// フラッシュ div (パディング・折り返し)。行の高さアニメを `<td>` の下限に
+// 邪魔されないよう、パディングは内側 (`*InnerCss`) に置く。
 const tdCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border-subtle, var(--border))",
-  padding: "var(--space-1-25) var(--space-2-5)",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
   color: "var(--text)",
-  whiteSpace: "nowrap",
   verticalAlign: "top",
+};
+const cellInnerCss: SystemStyleObject = {
+  padding: "var(--space-1-25) var(--space-2-5)",
+  whiteSpace: "nowrap",
 };
 const queryTdCss: SystemStyleObject = {
   ...tdCss,
-  whiteSpace: "normal",
-  wordBreak: "break-all",
   color: "var(--text-secondary)",
   maxWidth: "640px",
 };
+const queryInnerCss: SystemStyleObject = {
+  ...cellInnerCss,
+  whiteSpace: "normal",
+  wordBreak: "break-all",
+};
+
+/** CountUp の補間値 (小数) を経過時間表記へ整形する。 */
+function formatLiveProcessTime(n: number): string {
+  return formatProcessTime(Math.round(n));
+}
 
 export function ProcessListPanel({
   sessionId,
@@ -94,6 +117,11 @@ export function ProcessListPanel({
   // in-flight ガード: 前回の取得 (または kill) が終わるまでティックをスキップし、
   // 低速な接続 (SSH トンネル等) でもリクエストが積み重ならないようにする。
   const busyRef = useRef(false);
+
+  // ポーリング結果の id 重複を除き (React key の衝突防止)、前回スナップショット
+  // との差分から値変化フラッシュの再生キーを得る (#1022)。
+  const rows = useMemo(() => uniqueByKey(processes, processKey), [processes]);
+  const { flashToken } = useLiveChanges(rows, processKey, PROCESS_LIVE_FIELDS);
 
   const load = useCallback(async () => {
     if (busyRef.current) return;
@@ -131,14 +159,16 @@ export function ProcessListPanel({
     return () => clearInterval(handle);
   }, [autoRefresh, intervalSecs, load]);
 
-  const allSelected = processes.length > 0 && selected.size === processes.length;
+  const countParts = splitAroundCountUpToken(t("processCount", { count: COUNT_UP_TOKEN }));
+
+  const allSelected = rows.length > 0 && selected.size === rows.length;
   const toggleAll = useCallback(() => {
     setSelected((cur) =>
-      cur.size === processes.length
+      cur.size === rows.length
         ? new Set()
-        : new Set(processes.map((p) => p.id)),
+        : new Set(rows.map((p) => p.id)),
     );
-  }, [processes]);
+  }, [rows]);
   const toggleOne = useCallback((id: number) => {
     setSelected((cur) => {
       const next = new Set(cur);
@@ -269,6 +299,15 @@ export function ProcessListPanel({
             {t("processUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
           </chakra.span>
         )}
+        {updatedAt && !error && (
+          // 接続数の増減をカウントアップで示す (#1022)。数値以外の文言は i18n
+          // テンプレートのまま、数値部分だけを CountUp へ差し替える。
+          <chakra.span fontSize="xs" color="app.textMuted" data-testid="process-count">
+            {countParts[0]}
+            <CountUp value={rows.length} />
+            {countParts[1]}
+          </chakra.span>
+        )}
       </Flex>
 
       {readOnly && (
@@ -322,48 +361,66 @@ export function ProcessListPanel({
                 // 避け、9 列の構造をシマーで予兆表示する (#846)。
                 <SkeletonTableRows columns={9} />
               ) : (
-                processes.map((p) => (
-                  <tr key={p.id}>
-                    <chakra.td css={tdCss}>
-                      <Checkbox
-                        checked={selected.has(p.id)}
-                        aria-label={t("processSelectRow", { id: p.id })}
-                        onChange={() => toggleOne(p.id)}
-                      />
-                    </chakra.td>
-                    <chakra.td css={tdCss}>
-                      {p.id}
-                      {p.is_self && (
-                        <Tooltip label={t("processSelfBadgeTitle")} focusableWrapper>
-                          <chakra.span
-                            marginLeft="1.5"
-                            px="1.5"
-                            fontSize="var(--text-xs)"
-                            fontFamily="var(--font-sans)"
-                            color="var(--accent)"
-                            border="1px solid var(--accent)"
-                            borderRadius="var(--radius-sm)"
-                          >
-                            {t("processSelfBadge")}
-                          </chakra.span>
+                <LiveRowsPresence>
+                  {rows.map((p) => (
+                    <LiveTr key={p.id}>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss}>
+                        <Checkbox
+                          checked={selected.has(p.id)}
+                          aria-label={t("processSelectRow", { id: p.id })}
+                          onChange={() => toggleOne(p.id)}
+                        />
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss}>
+                        {p.id}
+                        {p.is_self && (
+                          <Tooltip label={t("processSelfBadgeTitle")} focusableWrapper>
+                            <chakra.span
+                              marginLeft="1.5"
+                              px="1.5"
+                              fontSize="var(--text-xs)"
+                              fontFamily="var(--font-sans)"
+                              color="var(--accent)"
+                              border="1px solid var(--accent)"
+                              borderRadius="var(--radius-sm)"
+                            >
+                              {t("processSelfBadge")}
+                            </chakra.span>
+                          </Tooltip>
+                        )}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss}>{p.user ?? "–"}</LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss}>{p.host ?? "–"}</LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss}>{p.database ?? "–"}</LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} flash={flashToken(p.id, "command")}>
+                        {p.command ?? "–"}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} flash={flashToken(p.id, "state")}>
+                        {p.state ?? "–"}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} flash={flashToken(p.id, "time")}>
+                        {/* 単調な増加は CountUp の補間で「進んでいる」ことを示し、
+                            巻き戻り (新しい文の開始) だけをフラッシュする。 */}
+                        {p.time_secs == null || p.time_secs < 0 ? (
+                          formatProcessTime(p.time_secs)
+                        ) : (
+                          <CountUp value={p.time_secs} formatter={formatLiveProcessTime} />
+                        )}
+                      </LiveCell>
+                      {p.query ? (
+                        <Tooltip label={p.query}>
+                          <LiveCell css={queryTdCss} innerCss={queryInnerCss} flash={flashToken(p.id, "query")}>
+                            {summarizeQuery(p.query)}
+                          </LiveCell>
                         </Tooltip>
+                      ) : (
+                        <LiveCell css={queryTdCss} innerCss={queryInnerCss} flash={flashToken(p.id, "query")}>
+                          {summarizeQuery(p.query)}
+                        </LiveCell>
                       )}
-                    </chakra.td>
-                    <chakra.td css={tdCss}>{p.user ?? "–"}</chakra.td>
-                    <chakra.td css={tdCss}>{p.host ?? "–"}</chakra.td>
-                    <chakra.td css={tdCss}>{p.database ?? "–"}</chakra.td>
-                    <chakra.td css={tdCss}>{p.command ?? "–"}</chakra.td>
-                    <chakra.td css={tdCss}>{p.state ?? "–"}</chakra.td>
-                    <chakra.td css={tdCss}>{formatProcessTime(p.time_secs)}</chakra.td>
-                    {p.query ? (
-                      <Tooltip label={p.query}>
-                        <chakra.td css={queryTdCss}>{summarizeQuery(p.query)}</chakra.td>
-                      </Tooltip>
-                    ) : (
-                      <chakra.td css={queryTdCss}>{summarizeQuery(p.query)}</chakra.td>
-                    )}
-                  </tr>
-                ))
+                    </LiveTr>
+                  ))}
+                </LiveRowsPresence>
               )}
             </tbody>
           </chakra.table>

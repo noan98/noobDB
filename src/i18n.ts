@@ -2247,6 +2247,7 @@ const en = {
   processRefresh: "Refresh",
   processRetry: "Retry",
   processUpdatedAt: "Updated {time}",
+  processCount: "{count} connections",
   processKillSelected: "Kill selected ({count})",
   processKillConfirmTitle: "Kill processes",
   processKillConfirmMessage:
@@ -5034,6 +5035,7 @@ const ja: Dict = {
   processRefresh: "更新",
   processRetry: "再試行",
   processUpdatedAt: "{time} 更新",
+  processCount: "接続 {count} 件",
   processKillSelected: "選択を kill ({count})",
   processKillConfirmTitle: "プロセスを強制終了",
   processKillConfirmMessage:
