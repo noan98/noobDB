@@ -27,9 +27,27 @@ import {
   type BundlePlan,
   type BundleSchemaTable,
 } from "./investigationBundle";
+import { setExportMaskPresets, useSettings } from "../settings";
+import { ExportMaskingSection } from "./ExportMaskingSection";
+import {
+  countMaskedColumns,
+  type ExportColumnMask,
+  type ExportMaskOverrides,
+  resolveExportMasks,
+  upsertMaskPreset,
+} from "./exportMasking";
 
 /** プレビュー欄に表示する最大行数 (コピーは全行が対象)。 */
 const PREVIEW_ROWS = 50;
+
+/**
+ * マスキング (#733) 有効時のプレビュー行。変換はバックエンド (`mask_export_rows`) で
+ * 行うため非同期で届く。`masks` / `source` は「どの入力に対する結果か」で、現在の
+ * 入力と一致しない結果 (古い応答) は使わない。
+ */
+type MaskedPreview =
+  | { masks: ExportColumnMask[]; source: CellValue[][]; rows: CellValue[][] }
+  | { masks: ExportColumnMask[]; source: CellValue[][]; error: string };
 
 /**
  * 全件ストリーミングエクスポートに必要な情報。提供されると「全件 (再実行)」
@@ -204,6 +222,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
+  const settings = useSettings();
   const [format, setFormat] = useState<ModalFormat>("csv");
   const isBundle = format === "bundle";
   // 調査バンドルのオプション。ホスト名は既定で含めない (共有先に接続先を明かさない側)。
@@ -310,20 +329,65 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       lang: locale,
     });
 
+  // ── データマスキング (#733) ──
+  // 既定は無効 (従来どおり生データ)。有効にすると列名プリセットに一致する列へ自動で
+  // ルールが掛かり、列ごとに上書きできる。列名パターンの判定は表示マスク (#1069) と
+  // 同じ `matchesMaskPattern` を共有する (`exportMasking.ts`)。
+  const [maskEnabled, setMaskEnabled] = useState(false);
+  const [maskOverrides, setMaskOverrides] = useState<ExportMaskOverrides>({});
+  const columnNames = useMemo(() => effectiveColumns.map((c) => c.name), [effectiveColumns]);
+  const masks = useMemo(
+    () => (maskEnabled ? resolveExportMasks(columnNames, settings.exportMaskPresets, maskOverrides) : []),
+    [maskEnabled, columnNames, settings.exportMaskPresets, maskOverrides],
+  );
+  const maskedCount = countMaskedColumns(columnNames, masks);
+  const maskedSuffix = maskedCount > 0 ? t("exportMaskedSuffix", { count: maskedCount }) : "";
+  const previewRows = useMemo(() => effectiveRows.slice(0, PREVIEW_ROWS), [effectiveRows]);
+  const [maskedPreview, setMaskedPreview] = useState<MaskedPreview | null>(null);
+  useEffect(() => {
+    if (masks.length === 0) return;
+    let cancelled = false;
+    api
+      .maskExportRows({ columns: effectiveColumns, rows: previewRows, masks })
+      .then(
+        (out) => {
+          if (!cancelled) setMaskedPreview({ masks, source: previewRows, rows: out });
+        },
+        (e) => {
+          if (!cancelled) setMaskedPreview({ masks, source: previewRows, error: String(e) });
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [masks, effectiveColumns, previewRows]);
+  // 現在の入力に対する結果だけを使う。マスキング有効中に結果が無い (未着・古い) 間は
+  // 生の値を見せない (プレビューに実値が一瞬でも出ると「マスクされていない」と誤認させる)。
+  const currentMasked =
+    masks.length > 0 && maskedPreview && maskedPreview.masks === masks && maskedPreview.source === previewRows
+      ? maskedPreview
+      : null;
+
   // プレビューは先頭 PREVIEW_ROWS 行のみ生成して表示負荷を抑える。実際の出力書式
   // (CSV のクオート・JSON の整形・実行クエリ同梱) はバックエンドと同じ。
   const exportCtx = useMemo(
     () => ({ driver: sqlDriver, table: sqlTable, sqlBatchSize: sqlBatch }),
     [sqlDriver, sqlTable, sqlBatch],
   );
+  const previewSourceRows =
+    masks.length === 0 ? previewRows : currentMasked && "rows" in currentMasked ? currentMasked.rows : null;
   const previewContent = useMemo(
     () =>
-      format === "bundle"
-        ? buildBundleHtmlSync(effectiveRows.slice(0, PREVIEW_ROWS), new Date(), null, null)
-        : buildExportContent(format, effectiveColumns, effectiveRows.slice(0, PREVIEW_ROWS), queryForJson, exportCtx),
+      previewSourceRows === null
+        ? null
+        : format === "bundle"
+          ? // バンドルもマスキング (#733) 後の行を使い、表示マスク (#1069) 対象列はさらに伏せ字にする。
+            buildBundleHtmlSync(previewSourceRows, new Date(), null, null)
+          : buildExportContent(format, effectiveColumns, previewSourceRows, queryForJson, exportCtx),
     // buildBundleHtmlSync は下記の依存だけから決まる (毎レンダーで作り直される関数自体は除外)。
-    [format, effectiveColumns, effectiveRows, queryForJson, exportCtx, bundleMasked, bundleHost, bundle, elapsedMs, partial, scope, locale],
+    [format, effectiveColumns, previewSourceRows, queryForJson, exportCtx, bundleMasked, bundleHost, bundle, elapsedMs, partial, scope, locale],
   );
+  const previewMaskError = currentMasked && "error" in currentMasked ? currentMasked.error : null;
   const previewTruncated = effectiveRows.length > PREVIEW_ROWS;
   // Set on unmount so an in-flight `listenExportStream` (awaited below) can
   // tell its registration arrived too late and must self-unlisten — otherwise
@@ -343,10 +407,20 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // 違い行数を絞らないため、選択範囲スコープなら選択範囲の全行、それ以外はグリッドに
   // 読み込まれている全行が対象。
   const handleCopy = async () => {
+    let sourceRows = effectiveRows;
+    if (masks.length > 0) {
+      // 全文コピーもファイル出力と同じくマスク後の値にする (バックエンドで変換)。
+      try {
+        sourceRows = await api.maskExportRows({ columns: effectiveColumns, rows: effectiveRows, masks });
+      } catch (e) {
+        toast.error(t("exportMaskingError", { error: String(e) }));
+        return;
+      }
+    }
     const content =
       format === "bundle"
-        ? await buildBundle(effectiveRows, true)
-        : buildExportContent(format, effectiveColumns, effectiveRows, queryForJson, exportCtx);
+        ? await buildBundle(sourceRows, true)
+        : buildExportContent(format, effectiveColumns, sourceRows, queryForJson, exportCtx);
     const ok = await copyToClipboard(content);
     if (!ok) {
       toast.error(t("clipboardCopyFailed"));
@@ -432,10 +506,17 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     setStatus({ kind: "saving" });
     if (format === "bundle") {
       try {
-        const html = await buildBundle(effectiveRows, true);
+        // データマスキング (#733) はバンドルにも適用する (変換はバックエンドの
+        // `mask_export_rows` で、他形式のファイル出力と同じ `db/masking.rs`)。表示マスク
+        // (#1069) 対象列はその上で `buildInvestigationBundleHtml` が伏せ字にする。
+        const bodyRows =
+          masks.length > 0
+            ? await api.maskExportRows({ columns: effectiveColumns, rows: effectiveRows, masks })
+            : effectiveRows;
+        const html = await buildBundle(bodyRows, true);
         // 既存の保存経路 (チャート/ER 図の画像保存と同じ write_binary_file)。
         const bytes = await api.writeBinaryFile(path, new TextEncoder().encode(html));
-        toast.success(t("exportSuccess", { bytes, path }));
+        toast.success(t("exportSuccess", { bytes, path }) + maskedSuffix);
         setStatus({ kind: "idle" });
       } catch (e) {
         setStatus({ kind: "error", message: String(e) });
@@ -456,8 +537,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         table: sqlTable,
         driver: sqlDriver,
         batchSize: sqlBatch,
+        masks,
       });
-      toast.success(t("exportSuccess", { bytes, path }));
+      toast.success(t("exportSuccess", { bytes, path }) + maskedSuffix);
       setStatus({ kind: "idle" });
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
@@ -478,7 +560,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       onDone: (e) => {
         unlistenRef.current?.();
         unlistenRef.current = null;
-        toast.success(t("exportFullDone", { rows: e.rows, bytes: e.bytes, path }));
+        toast.success(t("exportFullDone", { rows: e.rows, bytes: e.bytes, path }) + maskedSuffix);
         setStatus({ kind: "idle" });
       },
       onError: (e) => {
@@ -510,6 +592,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         // SQL 形式のときだけ使われる (ドライバはセッションから取得)。
         table: sqlTable,
         batchSize: sqlBatch,
+        masks,
       });
     } catch (e) {
       unlisten();
@@ -784,6 +867,26 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
           </FormSection>
         )}
 
+        <ExportMaskingSection
+          columnNames={columnNames}
+          enabled={maskEnabled}
+          onEnabledChange={setMaskEnabled}
+          presets={settings.exportMaskPresets}
+          overrides={maskOverrides}
+          onOverridesChange={setMaskOverrides}
+          onSavePreset={(column, rule) => {
+            setExportMaskPresets(upsertMaskPreset(settings.exportMaskPresets, column, rule));
+            // 保存したプリセットが効くので、この列の一時的な上書きは外す。
+            setMaskOverrides((cur) => {
+              const next = { ...cur };
+              delete next[column];
+              return next;
+            });
+            toast.success(t("exportMaskingPresetSaved", { column }));
+          }}
+          disabled={isSaving}
+        />
+
         <FormSection>
           <FieldLabel htmlFor="export-path">{t("exportSavePath")}</FieldLabel>
           <PathRow>
@@ -809,6 +912,20 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         <FormSection>
           <chakra.div display="flex" alignItems="center" gap="2">
             <FieldLabel as="div" mb={0}>{t("exportPreview")}</FieldLabel>
+            {maskEnabled && (
+              <chakra.span
+                data-testid="export-masked-count"
+                fontSize="xs"
+                py="0.5"
+                px="1.5"
+                borderRadius="pill"
+                border="1px solid"
+                borderColor="app.border"
+                color={maskedCount > 0 ? "app.text" : "app.textMuted"}
+              >
+                {maskedCount > 0 ? t("exportMaskedColumns", { count: maskedCount }) : t("exportMaskingNoColumns")}
+              </chakra.span>
+            )}
             <chakra.div flex="1" />
             <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={effectiveRows.length === 0}>
               <chakra.button
@@ -838,7 +955,11 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             </Tooltip>
           </chakra.div>
           <CodePreview aria-label={t("exportPreview")} maxH="180px">
-            {previewContent || t("exportNoData")}
+            {previewMaskError
+              ? t("exportMaskingError", { error: previewMaskError })
+              : previewContent === null
+                ? t("exportMaskingPending")
+                : previewContent || t("exportNoData")}
           </CodePreview>
           {previewTruncated && (
             <chakra.div fontSize="xs" color="app.textMuted">

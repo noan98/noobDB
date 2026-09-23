@@ -23,6 +23,9 @@ import { z } from "zod";
  *  BLOB は 16 進文字列 (`Value::Bytes`) として string に乗る (CLAUDE.md 参照)。 */
 export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
 
+/** 行の配列 (`Vec<Vec<Value>>`)。`mask_export_rows` (#733) の戻り値。 */
+export const cellRows = z.array(z.array(cellValue));
+
 export const column = z.object({
   name: z.string(),
   type_name: z.string(),

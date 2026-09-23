@@ -125,6 +125,9 @@ async fn run_action(app: &AppHandle, session_id: &str, task: &TaskDefinition) ->
                 EXPORT_INITIAL_BATCH,
                 EXPORT_CHUNK_SIZE,
                 None,
+                // スケジュール実行のエクスポートはマスキング (#733) 非対応 (タスク定義に
+                // ルールを持たない)。マスクが必要な出力は ExportModal から行う。
+                None,
                 |_rows| {},
             )
             .await;

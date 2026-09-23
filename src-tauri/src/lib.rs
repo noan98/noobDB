@@ -197,7 +197,9 @@ pub mod __test_api {
     ) -> crate::error::Result<Vec<u8>> {
         let opts = crate::commands::export::SqlExportOpts::build(driver, table, batch_size);
         let mut buf = Vec::new();
-        crate::commands::export::write_export_to(&mut buf, format, columns, rows, query, &opts)?;
+        crate::commands::export::write_export_to(
+            &mut buf, format, columns, rows, query, &opts, None,
+        )?;
         Ok(buf)
     }
 
@@ -930,6 +932,7 @@ pub fn run() {
             commands::logs::clear_logs,
             commands::export::export_query_result,
             commands::export::export_query_stream,
+            commands::export::mask_export_rows,
             commands::dump::dump_database,
             commands::import::parse_csv_preview,
             commands::import::import_csv,

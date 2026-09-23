@@ -5,6 +5,8 @@ pub mod data_diff;
 pub mod diff;
 pub mod duckdb;
 pub mod format;
+/// エクスポート時のデータマスキング (#733)。出力時だけの変換で DB には触れない。
+pub mod masking;
 pub mod mssql;
 pub mod mysql;
 pub mod native_dump;

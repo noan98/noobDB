@@ -125,6 +125,10 @@ sqlformat = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"
+# エクスポート時の仮名化 (#733)。HMAC-SHA256(アプリ単位の秘密ソルト, 値)。どちらも
+# 既に推移依存としてロックに載っている版 (digest 0.11 系) を明示依存にしただけ。
+sha2 = "0.11"
+hmac = "0.13"
 tiberius = { version = "0.12.3", default-features = false, features = ["rustls", "chrono", "rust_decimal", "tds73"] }
 # tiberius (SQL Server ドライバ、#729) は生の TCP ストリームを `AsyncRead + AsyncWrite`
 # (futures 版) として要求するため、tokio の `AsyncRead`/`AsyncWrite` (tokio 版) を

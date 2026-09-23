@@ -427,7 +427,7 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
     );
     // `export_query_result` は引数の間にコメント行を挟む。コメント除去が効いているか確認。
     expect(backendParams.get("export_query_result")?.slice().sort()).toEqual(
-      ["path", "format", "columns", "rows", "query", "table", "driver", "batchSize"].sort(),
+      ["path", "format", "columns", "rows", "query", "table", "driver", "batchSize", "masks"].sort(),
     );
     // 引数を一切取らないコマンドは空配列。
     expect(backendParams.get("read_logs")).toEqual([]);

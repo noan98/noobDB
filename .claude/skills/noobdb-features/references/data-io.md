@@ -45,6 +45,30 @@
   `escapeHtml` を通し、CSP `default-src 'none'` で外部リソースを禁止、機微カラムマスク
   (#1069) 対象列は reveal に関係なく伏せ字。文脈は `App.tsx` → `ResultGrid` の
   `bundleContext` で渡し、マスク設定は `DataGrid` の `onMaskConfigChange` で持ち上げる。
+- **データマスキング (#733)**: `export_query_result` / `export_query_stream` は
+  `masks: Option<Vec<ColumnMask>>` (列名 → `MaskRule`) を受け取り、純粋層
+  `db/masking.rs` の `mask_rows` を**値エンコード直前の単一フック**として在グリッド
+  (`write_export_to`) とストリーミング (`StreamExportSink::on_rows`) の両経路・5 形式
+  すべてに通す (経路ごとの実装差を作らない)。ルールは `fixed` (固定値) / `partial`
+  (先頭・末尾 N 文字を残して `*`、コードポイント単位) / `hash` (仮名化) / `null`。
+  **NULL はどのルールでも NULL のまま**、数値・真偽値は文字列表現を変換、BLOB は 16 進
+  文字列を変換 (在グリッド経路でも同じ文字列になるので `hash` は両経路で一致)。
+  列は**名前の完全一致**で対応付ける (ストリーミングは列が実行時まで不明なため)。
+  **仮名化は HMAC-SHA256(アプリ単位の秘密ソルト, 値)** の 16 進先頭 N 文字で、同一値 →
+  同一出力なので結合キーに使える。ソルトは初回利用時に生成して **OS keyring にのみ**
+  保存する (`profiles::secrets::get_or_create_export_mask_salt`、キーは
+  `export-masking/hash_salt`)。`profiles.json`・設定・ログ・フロントには出さない —
+  そのためプレビュー / 全文コピーもフロントで変換せず `mask_export_rows` IPC を通す
+  (変換の二重実装を持たない)。keyring が使えないときに `hash` を指定するとエラーで
+  止まる (素の SHA-256 へ縮退したり、マスクせず書き出したりしない)。フロント
+  (`components/exportMasking.ts`) は列名パターンのプリセット (設定 `exportMaskPresets`、
+  プロファイル非依存。同梱は email / phone / mobile / *_name 系) と列単位の上書きから
+  ルールを解決し、パターン判定は表示マスク (#1069) の `matchesMaskPattern` を共有する。
+  ルールの正規化 (上限・既定値) はフロント `sanitizeMaskRule` とバック
+  `MaskRule::normalized` の二重実装なので、共有ゴールデン
+  `src/__tests__/fixtures/exportMaskingVectors.json` で一致を固定 (バックは
+  `db/masking.rs` の単体テストが `cases` の変換結果も検証)。スケジュール実行
+  (`tasks/executor.rs`) のエクスポートはマスキング非対応。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
   SQLite / DuckDB / MSSQL は接続から直接生成 (下記)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)

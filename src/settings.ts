@@ -1,6 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { pruneMruIds, recordMruUsage, sanitizeMruIds } from "./components/commandPaletteSearch";
 import { DEFAULT_MASK_PATTERNS, sanitizeMaskPatterns } from "./components/columnMask";
+import {
+  BUILTIN_EXPORT_MASK_PRESETS,
+  type ExportMaskPreset,
+  sanitizeMaskPresets,
+} from "./components/exportMasking";
 
 export type Theme = "light" | "dark";
 
@@ -132,6 +137,13 @@ export interface Settings {
   columnMaskPatterns: string[];
   /** マスク中のセルをコピーしたとき、実値ではなく伏せ字をコピーする (誤コピー防止)。 */
   columnMaskCopyPlaceholder: boolean;
+  /**
+   * エクスポート時のデータマスキング (#733) の列名パターン → 既定ルールのプリセット。
+   * プロファイル非依存で、ExportModal でマスキングを有効にすると一致する列へ自動で
+   * 適用される。ルールの**定義だけ**を持ち、仮名化のソルト (秘密) は含まない
+   * (ソルトは OS keyring のみ)。
+   */
+  exportMaskPresets: ExportMaskPreset[];
   /**
    * Preferred monospace font family for the editor, result grid and code views.
    * `null` keeps the App.css default mono stack. A non-null value is
@@ -668,6 +680,7 @@ export const DEFAULT_SETTINGS: Settings = {
   columnMaskEnabled: DEFAULT_COLUMN_MASK_ENABLED,
   columnMaskPatterns: [...DEFAULT_MASK_PATTERNS],
   columnMaskCopyPlaceholder: DEFAULT_COLUMN_MASK_COPY_PLACEHOLDER,
+  exportMaskPresets: sanitizeMaskPresets(undefined, BUILTIN_EXPORT_MASK_PRESETS),
   monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
   uiFontFamily: DEFAULT_UI_FONT_FAMILY,
   themePreset: DEFAULT_THEME_PRESET,
@@ -891,6 +904,7 @@ export function normalizeSettings(input: unknown): Settings {
     columnMaskEnabled?: unknown;
     columnMaskPatterns?: unknown;
     columnMaskCopyPlaceholder?: unknown;
+    exportMaskPresets?: unknown;
     monoFontFamily?: unknown;
     uiFontFamily?: unknown;
     themePreset?: unknown;
@@ -987,6 +1001,7 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.columnMaskCopyPlaceholder === "boolean"
         ? parsed.columnMaskCopyPlaceholder
         : DEFAULT_COLUMN_MASK_COPY_PLACEHOLDER,
+    exportMaskPresets: sanitizeMaskPresets(parsed.exportMaskPresets, BUILTIN_EXPORT_MASK_PRESETS),
     monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
     uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
     themePreset: sanitizeThemePreset(parsed.themePreset, DEFAULT_THEME_PRESET),
@@ -1399,6 +1414,15 @@ export function setColumnMaskPatterns(value: readonly string[]): void {
 export function setColumnMaskCopyPlaceholder(value: boolean): void {
   if (current.columnMaskCopyPlaceholder === value) return;
   current = { ...current, columnMaskCopyPlaceholder: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** エクスポートのマスキングプリセットを置き換える (#733)。正規化してから保存する。 */
+export function setExportMaskPresets(value: readonly ExportMaskPreset[]): void {
+  const next = sanitizeMaskPresets(value, current.exportMaskPresets);
+  if (JSON.stringify(next) === JSON.stringify(current.exportMaskPresets)) return;
+  current = { ...current, exportMaskPresets: next };
   persist();
   listeners.forEach((cb) => cb());
 }

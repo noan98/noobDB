@@ -176,3 +176,43 @@ pub fn delete_all(profile_id: &str) -> Result<()> {
     delete_ssh_jump_password(profile_id)?;
     Ok(())
 }
+
+/// エクスポート時の仮名化 (#733) に使うアプリ単位のソルトの keyring 上の位置。
+/// プロファイル ID は `new_profile_id` の英数字 8 文字なので、`export-masking` という
+/// 名前空間とは衝突しない。
+const EXPORT_MASK_NAMESPACE: &str = "export-masking";
+const EXPORT_MASK_SALT_KIND: &str = "hash_salt";
+/// ソルトのバイト長 (HMAC-SHA256 のブロック長未満で十分なエントロピー)。
+const EXPORT_MASK_SALT_BYTES: usize = 32;
+
+/// 初回生成の競合 (2 本のエクスポートが同時に「未作成」を観測して別々のソルトを書く)
+/// を防ぐ直列化。敗者のエクスポートだけ別の仮名になるのを避ける。
+static EXPORT_MASK_SALT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// エクスポートの仮名化 (`hash` ルール) に使うソルトを keyring から取り出す。無ければ
+/// 乱数で生成して保存してから返す。
+///
+/// **ソルトは秘密情報として OS keyring にのみ置く** — `profiles.json`・設定
+/// (localStorage)・ログ・フロントエンドには出さない (値を返すのはバックエンド内部の
+/// マスキング処理だけで、IPC では返さない)。ソルトが漏れると、同じ仮名を持つ値を
+/// 辞書から総当たりで復元できるようになるため。keyring のエントリを削除すると次回の
+/// エクスポートで新しいソルトが作られ、以降の仮名は以前のファイルと結合できなくなる。
+pub fn get_or_create_export_mask_salt() -> Result<Vec<u8>> {
+    use rand::RngExt;
+    let _guard = EXPORT_MASK_SALT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(hex) = get_secret(EXPORT_MASK_NAMESPACE, EXPORT_MASK_SALT_KIND)? {
+        if !hex.is_empty() {
+            return Ok(hex.into_bytes());
+        }
+    }
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..EXPORT_MASK_SALT_BYTES)
+        .map(|_| rng.random::<u8>())
+        .collect();
+    let hex = data_encoding::HEXLOWER.encode(&bytes);
+    set_secret(EXPORT_MASK_NAMESPACE, EXPORT_MASK_SALT_KIND, &hex)?;
+    tracing::info!("keyring: generated a new export masking salt");
+    Ok(hex.into_bytes())
+}

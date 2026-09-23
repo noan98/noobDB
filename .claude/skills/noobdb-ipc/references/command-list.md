@@ -102,6 +102,11 @@
 プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ
 `db::create_table::render_create_table` を返す (書き込みなし)。
 
+`mask_export_rows` (`commands/export.rs`, #733) — エクスポートのデータマスキングを
+行へ適用して返す (ExportModal のプレビュー / 全文コピー用)。仮名化の秘密ソルトを
+フロントへ出さないため、変換は実出力と同じ `db/masking.rs` で行う。ファイル・DB には
+触れない。`export_query_result` / `export_query_stream` も同じ `masks` 引数を受け取る。
+
 `run_sql_script` (`commands/script.rs`, #973) — `.sql` ファイルを 64 KiB ずつ読み、
 `db/script.rs` のストリーミング文分割 (フロント `splitSqlStatements` と共有ゴールデン
 `scriptSplitVectors.json` で一致を固定) で 1 文ずつ実行する。`sql-script:progress` /
