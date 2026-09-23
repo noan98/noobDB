@@ -282,6 +282,12 @@ describe("定型句の検出", () => {
   it("閉じていないコードブロックは末尾までコード扱い", () => {
     assert.equal(stripNonDirectiveText("OK\n```\ndo not merge").includes("do not merge"), false);
   });
+  it("入れ子・閉じていない HTML コメントも除去しきる (CodeQL 指摘の回帰)", () => {
+    const nested = stripNonDirectiveText("<!<!-- x -->-- do not merge -->ok");
+    assert.equal(nested.includes("<!--"), false);
+    assert.equal(stripNonDirectiveText("LGTM <!-- do not merge"), "LGTM ");
+    assert.equal(detectChangeRequest("LGTM <!-- do not merge"), null);
+  });
   it("コードブロックの後の本文は検出対象", () => {
     assert.notEqual(detectChangeRequest("```\nx\n```\ndo not merge"), null);
   });

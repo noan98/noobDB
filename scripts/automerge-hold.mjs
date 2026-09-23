@@ -103,7 +103,13 @@ export function isTrustedHumanPost(item) {
 export function stripNonDirectiveText(body) {
   if (typeof body !== "string") return "";
   let text = body.replace(/\r\n?/g, "\n");
-  text = text.replace(/<!--[\s\S]*?-->/g, "");
+  // HTML コメントは置換で新たな `<!--` が生まれうるので、変化しなくなるまで繰り返す。
+  // 閉じていない `<!--` は (GitHub の描画と同じく) 末尾までをコメントとみなす。
+  for (let prev = ""; prev !== text; ) {
+    prev = text;
+    text = text.replace(/<!--[\s\S]*?-->/g, "");
+  }
+  text = text.replace(/<!--[\s\S]*$/, "");
   // フェンス付きコードブロック (``` / ~~~)。閉じていない場合は末尾までをコード扱い。
   text = text.replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[ \t]*$|(?![\s\S]))/gm, "");
   // インラインコード
