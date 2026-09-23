@@ -22,6 +22,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       maskExportRows: vi.fn(),
       exportQueryResult: vi.fn(),
+      writeBinaryFile: vi.fn(),
     },
   };
 });
@@ -53,6 +54,7 @@ beforeEach(() => {
     rows.map((r) => [r[0], "MASKED", r[2]]),
   );
   vi.mocked(api.exportQueryResult).mockResolvedValue({ bytes: 123, truncation: null });
+  vi.mocked(api.writeBinaryFile).mockResolvedValue(456);
 });
 
 describe("ExportModal データマスキング (#733)", () => {
@@ -150,5 +152,54 @@ describe("ExportModal データマスキング (#733)", () => {
     const calls = vi.mocked(api.maskExportRows).mock.calls;
     const last = calls[calls.length - 1][0];
     expect(last.masks.map((m) => m.column)).toEqual(["user_email", "note"]);
+  });
+});
+
+/**
+ * 他の形式との組み合わせ。xlsx (#711) はプレビューを出さないがマスク指定はそのまま
+ * バックエンドへ渡り、調査バンドル (#745) はフロントで組み立てるので
+ * `mask_export_rows` で変換した行をバンドルへ入れる (生の値が HTML に残らない)。
+ */
+describe("ExportModal データマスキング × 他形式 (#733 / #711 / #745)", () => {
+  it("xlsx でもマスク指定が書き出しに渡り、プレビュー用の値は表示しない", async () => {
+    renderModal();
+    enableMasking();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatXlsx") }));
+    expect(screen.getByText(t("exportPreviewUnavailableXlsx"))).toBeInTheDocument();
+    expect(screen.queryByText(/taro@example\.com/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    await waitFor(() => expect(api.exportQueryResult).toHaveBeenCalledOnce());
+    const params = vi.mocked(api.exportQueryResult).mock.calls[0][0];
+    expect(params.format).toBe("xlsx");
+    expect(params.masks?.map((m) => m.column)).toEqual(["user_email"]);
+  });
+
+  it("調査バンドルはマスク後の行で組み立て、プレビューにも保存にも生の値を出さない", async () => {
+    renderWithProviders(
+      <ExportModal
+        columns={COLUMNS}
+        rows={ROWS}
+        database={null}
+        table="users"
+        driver="mysql"
+        bundle={{ sql: "SELECT * FROM users", profileName: "dev", host: null, executedAt: null }}
+        onClose={() => {}}
+      />,
+    );
+    enableMasking();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
+    const preview = screen.getByLabelText(t("exportPreview"));
+    await waitFor(() => expect(preview.textContent).toContain("MASKED"));
+    expect(preview.textContent).not.toContain("taro@example.com");
+
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    await waitFor(() => expect(api.writeBinaryFile).toHaveBeenCalledOnce());
+    const [, bytes] = vi.mocked(api.writeBinaryFile).mock.calls[0];
+    const html = new TextDecoder().decode(bytes);
+    expect(html).toContain("MASKED");
+    expect(html).not.toContain("taro@example.com");
+    expect(html).not.toContain("hanako@example.com");
+    // 保存時は全行を変換する (プレビューの先頭行だけではない)。
+    expect(vi.mocked(api.maskExportRows).mock.calls.some(([p]) => p.rows.length === ROWS.length)).toBe(true);
   });
 });

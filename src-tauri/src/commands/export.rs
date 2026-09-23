@@ -11,7 +11,7 @@ pub use crate::commands::export_xlsx::ExportTruncation;
 use crate::commands::export_xlsx::{write_xlsx, XlsxSheetWriter};
 use crate::commands::query::ensure_allowed_for_session;
 use crate::db::data_diff::sql_literal;
-use crate::db::masking::{mask_rows, needs_salt, ColumnMask, MaskPlan, MaskSpec};
+use crate::db::masking::{mask_columns, mask_rows, needs_salt, ColumnMask, MaskPlan, MaskSpec};
 use crate::db::native_dump::build_sql_insert_statement;
 use crate::db::sync::quote_ident;
 use crate::db::types::{Column, StreamBatch, Value};
@@ -201,7 +201,8 @@ pub(crate) fn write_export_to<W: Write + Send>(
         ExportFormat::Ndjson => write_ndjson(w, columns, rows)?,
         ExportFormat::Markdown => write_markdown(w, columns, rows)?,
         ExportFormat::Sql => write_sql_insert(w, columns, rows, sql_opts)?,
-        ExportFormat::Xlsx => return write_xlsx(w, columns, rows),
+        // xlsx だけが列の型名を見る (数値セル判定)。マスク列は文字列として扱わせる。
+        ExportFormat::Xlsx => return write_xlsx(w, &mask_columns(mask, columns), rows),
     }
     Ok(None)
 }
@@ -682,7 +683,11 @@ impl StreamExportSink {
             // 1 行 1 オブジェクト + `\n`。in-memory の write_ndjson と同じ書式。
             ExportFormat::Ndjson => write_ndjson(&mut self.writer, &self.columns, rows)?,
             // 行数上限を超えた行は書かずに数えるだけ (返り値は読んだ行数のまま)。
-            ExportFormat::Xlsx => xlsx_sheet(&mut self.xlsx)?.write_rows(&self.columns, rows)?,
+            // マスク列は文字列として扱わせる (在グリッド経路の `write_export_to` と同じ)。
+            ExportFormat::Xlsx => {
+                let columns = mask_columns(self.mask_plan.as_ref(), &self.columns);
+                xlsx_sheet(&mut self.xlsx)?.write_rows(&columns, rows)?
+            }
         }
         Ok(rows.len())
     }
@@ -2042,9 +2047,14 @@ mod tests {
             vec![Value::Int(1_000_000_000_000_000), Value::Null],
             vec![Value::Bool(true), Value::Bytes("ab".into())],
         ];
-        let mut sink =
-            StreamExportSink::with_query(&path_str, ExportFormat::Xlsx, None, test_sql_opts(), None)
-                .unwrap();
+        let mut sink = StreamExportSink::with_query(
+            &path_str,
+            ExportFormat::Xlsx,
+            None,
+            test_sql_opts(),
+            None,
+        )
+        .unwrap();
         sink.on_columns(cols.clone()).unwrap();
         assert_eq!(sink.on_rows(&batch1).unwrap(), 1);
         assert_eq!(sink.on_rows(&batch2).unwrap(), 2);
@@ -2095,10 +2105,17 @@ mod tests {
                 "xlsx leaked {raw}: {in_memory_sheet}"
             );
         }
-        assert!(in_memory_sheet.contains("ta**********.com"), "{in_memory_sheet}");
+        assert!(
+            in_memory_sheet.contains("ta**********.com"),
+            "{in_memory_sheet}"
+        );
         assert!(in_memory_sheet.contains("REDACTED"), "{in_memory_sheet}");
         let pseudo = crate::db::masking::pseudonymize("山田太郎", b"unit-test-salt", 12);
-        assert_eq!(in_memory_sheet.matches(&pseudo).count(), 2, "{in_memory_sheet}");
+        assert_eq!(
+            in_memory_sheet.matches(&pseudo).count(),
+            2,
+            "{in_memory_sheet}"
+        );
         // マスクなしでは生の値が出る (マスクが効いていることの対照)。
         let raw_sheet = xlsx_sheet_xml(&masked_bytes(ExportFormat::Xlsx, None));
         assert!(raw_sheet.contains("taro@example.com"), "{raw_sheet}");
@@ -2124,5 +2141,68 @@ mod tests {
         let streamed = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(xlsx_sheet_xml(&streamed), in_memory_sheet);
+    }
+
+    /// マスク列は元が数値型でも xlsx で文字列セルになる (数字だけの仮名・固定値の
+    /// 先頭 0 を落とさない)。マスクしない数値列は従来どおり数値セル。
+    #[test]
+    fn masked_numeric_column_stays_text_in_xlsx() {
+        use crate::db::masking::MaskRule;
+        let columns = vec![
+            Column {
+                name: "id".into(),
+                type_name: "INT".into(),
+            },
+            Column {
+                name: "code".into(),
+                type_name: "DECIMAL(10,0)".into(),
+            },
+        ];
+        let rows = vec![vec![Value::Int(42), Value::String("12345".into())]];
+        let spec = MaskSpec::new(
+            vec![ColumnMask {
+                column: "code".into(),
+                rule: MaskRule::Fixed {
+                    value: "007".into(),
+                },
+            }],
+            None,
+        )
+        .unwrap();
+        let plan = spec.plan(&columns);
+        let mut buf = Vec::new();
+        write_export_to(
+            &mut buf,
+            ExportFormat::Xlsx,
+            &columns,
+            &rows,
+            None,
+            &test_sql_opts(),
+            Some(&plan),
+        )
+        .unwrap();
+        let sheet = xlsx_sheet_xml(&buf);
+        assert!(sheet.contains("<t>007</t>"), "{sheet}");
+        assert!(sheet.contains("<v>42</v>"), "{sheet}");
+
+        let path = std::env::temp_dir().join(format!(
+            "noobdb_export_mask_xlsx_numeric_{}.xlsx",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Xlsx,
+            None,
+            test_sql_opts(),
+            Some(spec),
+        )
+        .unwrap();
+        sink.on_columns(columns.clone()).unwrap();
+        sink.on_rows(&rows).unwrap();
+        sink.finish().unwrap();
+        let streamed = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(xlsx_sheet_xml(&streamed), sheet);
     }
 }

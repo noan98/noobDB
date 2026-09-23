@@ -4,7 +4,7 @@
 //! など) を**出力時にだけ**変換する。DB 内のデータには一切触れない (UPDATE は発行
 //! しない)。変換はここに集約した副作用なしの純関数で、`commands/export.rs` の
 //! 「値エンコード直前」の単一フック ([`MaskPlan::apply_rows`]) から、在グリッド /
-//! ストリーミングの両経路・5 形式すべてに同じ形で効く。
+//! ストリーミングの両経路・6 形式 (xlsx #711 を含む) すべてに同じ形で効く。
 //!
 //! ## ルール ([`MaskRule`])
 //!
@@ -232,6 +232,42 @@ impl MaskPlan {
             return Cow::Borrowed(rows);
         }
         Cow::Owned(rows.iter().map(|r| self.apply_row(r)).collect())
+    }
+
+    /// マスク後の値に合わせた列定義を返す。マスクした列は変換後が文字列 (または
+    /// NULL) なので、型名による推定 (xlsx の `is_numeric_type`、#711) を効かせない
+    /// よう型名を [`MASKED_COLUMN_TYPE`] に置き換える。これをしないと、数値列を
+    /// `hash` で仮名化した結果がたまたま数字だけのとき xlsx で数値セルになり、先頭の
+    /// `0` が落ちて他形式と別の仮名になる。マスク列が無ければ借用のまま返す。
+    pub fn output_columns<'a>(&self, columns: &'a [Column]) -> Cow<'a, [Column]> {
+        if self.masked_count() == 0 {
+            return Cow::Borrowed(columns);
+        }
+        Cow::Owned(
+            columns
+                .iter()
+                .enumerate()
+                .map(|(i, c)| match self.rules.get(i).and_then(|r| r.as_ref()) {
+                    Some(_) => Column {
+                        name: c.name.clone(),
+                        type_name: MASKED_COLUMN_TYPE.into(),
+                    },
+                    None => c.clone(),
+                })
+                .collect(),
+        )
+    }
+}
+
+/// マスク後の列に付ける型名 ([`MaskPlan::output_columns`])。数値型と誤認されない
+/// 文字列型の名前にする。
+pub const MASKED_COLUMN_TYPE: &str = "TEXT";
+
+/// 計画が無ければ借用のまま返す [`MaskPlan::output_columns`]。
+pub fn mask_columns<'a>(plan: Option<&MaskPlan>, columns: &'a [Column]) -> Cow<'a, [Column]> {
+    match plan {
+        Some(p) => p.output_columns(columns),
+        None => Cow::Borrowed(columns),
     }
 }
 
