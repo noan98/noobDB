@@ -63,8 +63,18 @@ NOOBDB_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \
   cargo test --test mysql_integration
 NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
   cargo test --test postgres_integration
-NOOBDB_TEST_MSSQL_URL=mssql://sa:YourStrong!Passw0rd@127.0.0.1:1433/testdb \
+NOOBDB_TEST_MSSQL_URL=mssql://sa:NoobDB_Test_Pw1@127.0.0.1:1433/testdb \
   cargo test --test mssql_integration
+```
+
+MSSQL はローカルでも CI と同じ手順で用意できます (#920。`testdb` は自動作成されない
+ので `scripts/ci-setup-mssql.sh` で作る):
+
+```sh
+docker run -d --name noobdb-mssql -e ACCEPT_EULA=Y \
+  -e MSSQL_SA_PASSWORD=NoobDB_Test_Pw1 -p 1433:1433 \
+  mcr.microsoft.com/mssql/server:2022-latest
+MSSQL_CONTAINER=noobdb-mssql bash scripts/ci-setup-mssql.sh   # export 文を出力
 ```
 
 SSH トンネル統合テスト (`tests/ssh_integration.rs`、#331) は `NOOBDB_TEST_SSH_URL`
