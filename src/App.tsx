@@ -28,6 +28,7 @@ import {
 } from "./api/tauri";
 import { SandboxCreateModal } from "./components/SandboxCreateModal";
 import { SandboxReviewModal } from "./components/SandboxReviewModal";
+import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profileBackup";
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { sqlSaveFileName } from "./sqlFileIO";
@@ -162,6 +163,11 @@ const BroadcastModal = lazy(() =>
 );
 const ProfileImportDialog = lazy(() =>
   import("./components/ProfileImportDialog").then((m) => ({ default: m.ProfileImportDialog })),
+);
+const ProfileBackupExportDialog = lazy(() =>
+  import("./components/ProfileBackupExportDialog").then((m) => ({
+    default: m.ProfileBackupExportDialog,
+  })),
 );
 const PaginationBar = lazy(() =>
   import("./components/PaginationBar").then((m) => ({ default: m.PaginationBar })),
@@ -1732,6 +1738,12 @@ export default function App() {
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
+  // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む
+  // ファイルのパス + 直前の復号エラー (パスフレーズ誤りなら開いたまま再入力させる)。
+  const [backupExportOpen, setBackupExportOpen] = useState(false);
+  const [backupImport, setBackupImport] = useState<{ path: string; error: string | null } | null>(
+    null,
+  );
   // CREATE TABLE ウィザード: 対象データベース。null で閉じる。
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
@@ -2277,6 +2289,77 @@ export default function App() {
       }
     },
     [importProfilesPath, refreshProfiles, toast, translate],
+  );
+
+  // 暗号化バックアップの書き出し (#710): パスフレーズ確定 → 保存先選択 → 書き出し。
+  // 保存ダイアログをキャンセルしたらパスフレーズダイアログは開いたまま残す。
+  const handleBackupExportPick = useCallback(() => {
+    if (profiles.length === 0) {
+      toast.info(translate("profileExportEmpty"));
+      return;
+    }
+    setBackupExportOpen(true);
+  }, [profiles.length, toast, translate]);
+
+  const handleBackupExportConfirm = useCallback(
+    async (passphrase: string) => {
+      try {
+        const dest = await saveFileDialog({
+          defaultPath: defaultBackupFileName(),
+          title: translate("profileBackupSaveTitle"),
+          filters: [{ name: translate("profileBackupFileFilter"), extensions: [BACKUP_FILE_EXTENSION] }],
+        });
+        if (typeof dest !== "string" || !dest) return;
+        const res = await api.exportProfilesEncrypted(dest, passphrase);
+        setBackupExportOpen(false);
+        toast.success(
+          translate("profileBackupExportSuccess", {
+            path: dest,
+            profiles: res.profiles,
+            secrets: res.secrets,
+          }),
+        );
+      } catch (e) {
+        toast.error(translate("profileBackupExportError", { error: String(e) }));
+      }
+    },
+    [toast, translate],
+  );
+
+  const handleBackupImportPick = useCallback(async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: translate("profileBackupImportTitle"),
+        filters: [{ name: translate("profileBackupFileFilter"), extensions: [BACKUP_FILE_EXTENSION] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      setBackupImport({ path: picked, error: null });
+    } catch (e) {
+      toast.error(translate("profileBackupImportError", { error: String(e) }));
+    }
+  }, [toast, translate]);
+
+  const handleBackupImportConfirm = useCallback(
+    async (strategy: ProfileImportStrategy, passphrase: string) => {
+      const path = backupImport?.path;
+      if (!path) return;
+      try {
+        const res = await api.importProfilesEncrypted(path, passphrase, strategy);
+        setBackupImport(null);
+        await refreshProfiles();
+        toast.success(
+          translate("profileBackupImportSuccess", res as unknown as Record<string, string | number>),
+        );
+      } catch (e) {
+        // パスフレーズ誤り / 改ざんはダイアログ内に出して再入力させる。
+        setBackupImport({
+          path,
+          error: translate("profileBackupImportError", { error: String(e) }),
+        });
+      }
+    },
+    [backupImport, refreshProfiles, toast, translate],
   );
 
   const refreshSnippets = useCallback(async () => {
@@ -9016,6 +9099,27 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {backupImport && (
+          <ProfileImportDialog
+            encrypted
+            error={backupImport.error}
+            onConfirm={handleBackupImportConfirm}
+            onCancel={() => setBackupImport(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {backupExportOpen && (
+          <ProfileBackupExportDialog
+            profileCount={profiles.length}
+            onConfirm={handleBackupExportConfirm}
+            onCancel={() => setBackupExportOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {createTableDb !== null && sessionId && (
           <Suspense fallback={null}>
             <CreateTableModal
@@ -9239,6 +9343,8 @@ export default function App() {
           items={[
             { label: t("profileImportAria"), onSelect: handleImportProfilesPick },
             { label: t("profileExportAria"), onSelect: handleExportProfiles },
+            { label: t("profileBackupImportAria"), onSelect: handleBackupImportPick },
+            { label: t("profileBackupExportAria"), onSelect: handleBackupExportPick },
           ]}
           onClose={() => setProfileTransferMenu(null)}
         />

@@ -3462,6 +3462,8 @@ dependencies = [
 name = "noobdb"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
+ "argon2",
  "chrono",
  "csv",
  "data-encoding",
@@ -3490,6 +3492,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

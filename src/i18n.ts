@@ -1181,6 +1181,35 @@ const en = {
   profileImportSuccess:
     "Imported {imported}, skipped {skipped}, overwritten {overwritten}, invalid {invalid}",
   profileImportError: "Profile import failed: {error}",
+  profileBackupExportAria: "Export encrypted backup (with secrets)",
+  profileBackupImportAria: "Import encrypted backup",
+  profileBackupExportTitle: "Export encrypted profile backup",
+  profileBackupExportNote:
+    "Writes all {count} connection profiles together with their saved passwords and passphrases into a single file encrypted with the passphrase below. Use it to move to another computer.",
+  profileBackupPassphrase: "Backup passphrase",
+  profileBackupPassphraseConfirm: "Confirm passphrase",
+  profileBackupStrength: "Strength: {level}",
+  profileBackupStrengthWeak: "weak",
+  profileBackupStrengthFair: "fair",
+  profileBackupStrengthStrong: "strong",
+  profileBackupPassphraseTooShort: "Use at least {min} characters.",
+  profileBackupPassphraseMismatch: "The passphrases do not match.",
+  profileBackupWarning:
+    "Anyone with this file and the passphrase can read every saved password. A weak passphrase can be brute-forced, so use a long one (16+ characters recommended). The passphrase is not stored anywhere and cannot be recovered.",
+  profileBackupExportConfirm: "Choose file and export",
+  profileBackupExporting: "Encrypting…",
+  profileBackupSaveTitle: "Save encrypted profile backup",
+  profileBackupFileFilter: "noobDB encrypted backup",
+  profileBackupExportSuccess:
+    "Exported {profiles} profiles and {secrets} secrets to {path} (encrypted)",
+  profileBackupExportError: "Encrypted backup export failed: {error}",
+  profileBackupImportTitle: "Import encrypted profile backup",
+  profileBackupImportNote:
+    "Enter the passphrase used when the backup was created. Saved passwords and passphrases are restored into this computer's keyring.",
+  profileBackupImporting: "Decrypting…",
+  profileBackupImportSuccess:
+    "Imported {imported}, skipped {skipped}, overwritten {overwritten}, invalid {invalid}; restored {secrets} secrets",
+  profileBackupImportError: "Encrypted backup import failed: {error}",
   exportRowCount: "{rows} rows will be exported.",
   exportPartialWarning: "Only the rows currently loaded are exported. To export the full result set, run \"Fetch all rows\" first.",
   exportPartialWarningStopped: "The query was cancelled or timed out before finishing — only the rows already loaded are exported. Re-run it to get the full result.",
@@ -2262,6 +2291,16 @@ const en = {
   helpExportTitle: "Export results (CSV/JSON)",
   helpExportDesc:
     "Writes the already-fetched result set to a file. A read-only export.",
+  helpProfileBackupTitle: "Encrypted profile backup (move to another PC)",
+  helpProfileBackupDesc:
+    "Export every connection profile together with its saved passwords / passphrases as one passphrase-encrypted file (Argon2id + AES-256-GCM), and import it on another computer to connect right away.",
+  helpProfileBackupStep1:
+    "Open the profile import/export menu in the connection list and choose \"Export encrypted backup\".",
+  helpProfileBackupStep2: "Enter a passphrase twice, then choose where to save the .noobdb-backup file.",
+  helpProfileBackupStep3:
+    "On the new computer choose \"Import encrypted backup\", enter the same passphrase and pick how to resolve id collisions.",
+  helpProfileBackupNote:
+    "Anyone holding the file and the passphrase can read every saved password. A short or guessable passphrase can be brute-forced offline, so use a long one (16+ characters) and store the file like a password. The passphrase is never saved; if you forget it the backup cannot be opened. A wrong passphrase or a modified file is rejected.",
 
   helpCellEditTitle: "Cell edit (double-click)",
   helpCellEditDesc:
@@ -4439,6 +4478,35 @@ const ja: Dict = {
   profileImportSuccess:
     "インポート {imported} 件 / スキップ {skipped} 件 / 上書き {overwritten} 件 / 無効 {invalid} 件",
   profileImportError: "プロファイルのインポートに失敗しました: {error}",
+  profileBackupExportAria: "暗号化バックアップを書き出す (秘密込み)",
+  profileBackupImportAria: "暗号化バックアップを読み込む",
+  profileBackupExportTitle: "プロファイルの暗号化バックアップを書き出す",
+  profileBackupExportNote:
+    "{count} 件すべての接続プロファイルを、保存済みのパスワード / パスフレーズごと、下のパスフレーズで暗号化した 1 つのファイルに書き出します。PC の買い替え・再セットアップ時の移行に使います。",
+  profileBackupPassphrase: "バックアップのパスフレーズ",
+  profileBackupPassphraseConfirm: "パスフレーズ (確認)",
+  profileBackupStrength: "強度: {level}",
+  profileBackupStrengthWeak: "弱い",
+  profileBackupStrengthFair: "普通",
+  profileBackupStrengthStrong: "強い",
+  profileBackupPassphraseTooShort: "{min} 文字以上にしてください。",
+  profileBackupPassphraseMismatch: "パスフレーズが一致しません。",
+  profileBackupWarning:
+    "このファイルとパスフレーズがあれば、保存済みのパスワードをすべて読めます。弱いパスフレーズは総当たりで破られるため、長いもの (16 文字以上を推奨) を使ってください。パスフレーズはどこにも保存されず、忘れると復元できません。",
+  profileBackupExportConfirm: "保存先を選んで書き出す",
+  profileBackupExporting: "暗号化しています…",
+  profileBackupSaveTitle: "プロファイルの暗号化バックアップを保存",
+  profileBackupFileFilter: "noobDB 暗号化バックアップ",
+  profileBackupExportSuccess:
+    "{path} にプロファイル {profiles} 件と秘密 {secrets} 件を暗号化して書き出しました",
+  profileBackupExportError: "暗号化バックアップの書き出しに失敗しました: {error}",
+  profileBackupImportTitle: "プロファイルの暗号化バックアップを読み込む",
+  profileBackupImportNote:
+    "バックアップ作成時のパスフレーズを入力してください。保存済みのパスワード / パスフレーズはこの PC の keyring に復元されます。",
+  profileBackupImporting: "復号しています…",
+  profileBackupImportSuccess:
+    "インポート {imported} 件 / スキップ {skipped} 件 / 上書き {overwritten} 件 / 無効 {invalid} 件、秘密 {secrets} 件を復元しました",
+  profileBackupImportError: "暗号化バックアップの読み込みに失敗しました: {error}",
   exportRowCount: "{rows} 行をエクスポートします。",
   exportPartialWarning: "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
   exportPartialWarningStopped: "クエリはキャンセルまたはタイムアウトにより途中で停止しました — 現在読み込み済みの行のみが対象です。全件を取得するにはクエリを再実行してください。",
@@ -5514,6 +5582,16 @@ const ja: Dict = {
   helpExportTitle: "結果のエクスポート (CSV/JSON)",
   helpExportDesc:
     "取得済みの結果セットをファイルに書き出します。読み取りのみのエクスポートです。",
+  helpProfileBackupTitle: "プロファイルの暗号化バックアップ (PC 移行)",
+  helpProfileBackupDesc:
+    "全接続プロファイルを保存済みのパスワード / パスフレーズごと、パスフレーズで暗号化した 1 ファイル (Argon2id + AES-256-GCM) に書き出し、別の PC で読み込めばそのまま接続できます。",
+  helpProfileBackupStep1:
+    "接続一覧のプロファイル入出力メニューから「暗号化バックアップを書き出す」を選びます。",
+  helpProfileBackupStep2: "パスフレーズを 2 回入力し、.noobdb-backup ファイルの保存先を選びます。",
+  helpProfileBackupStep3:
+    "移行先の PC で「暗号化バックアップを読み込む」を選び、同じパスフレーズと ID 衝突時の扱いを指定します。",
+  helpProfileBackupNote:
+    "ファイルとパスフレーズの両方を持つ人は保存済みのパスワードをすべて読めます。短い・推測しやすいパスフレーズはオフラインの総当たりで破られるため、長いもの (16 文字以上) を使い、ファイルはパスワードと同様に厳重に保管してください。パスフレーズはどこにも保存されず、忘れると開けません。誤ったパスフレーズや改ざんされたファイルは拒否されます。",
 
   helpCellEditTitle: "セルのダブルクリック編集",
   helpCellEditDesc:

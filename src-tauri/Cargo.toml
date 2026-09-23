@@ -94,6 +94,16 @@ russh = "0.62"
 # 不要なバックエンド (とその依存) を依存グラフから外す (#273)。モバイル対応や別 OS の
 # サポートを足す場合は対応する [target.*] ブロックを追加すること。
 directories = "6"
+# プロファイルの暗号化フルエクスポート (#710)。パスフレーズ → 鍵を Argon2id で導出し、
+# AES-256-GCM で封緘する。どちらも RustCrypto (MIT/Apache-2.0) で、russh が既に同じ
+# バージョンを依存グラフへ入れているため新規クレートは増えない (cargo deny の許可
+# リストもそのまま通る)。argon2 は PHC 文字列 (password-hash) を使わず生の
+# `hash_password_into` だけ呼ぶので default features を切り、alloc のみ有効にする。
+argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"] }
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+# 平文ペイロード / 導出鍵 / keyring から読んだ秘密のメモリ上バッファを破棄時に
+# ゼロ埋めする (#710)。
+zeroize = "1"
 
 # Serialization & errors
 serde = { version = "1", features = ["derive"] }

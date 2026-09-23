@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod secrets;
 pub mod store;
 
