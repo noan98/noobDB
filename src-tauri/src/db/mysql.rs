@@ -1356,6 +1356,22 @@ impl MySqlConn {
         // SHOW CREATE ... can't bind identifiers; quote them manually after the
         // guard above. The result column holding the DDL differs by object kind.
         let qualified = format!("`{db}`.`{name}`");
+        if kind == "table" {
+            // #1001: `SHOW CREATE TABLE` はネイティブの完全な DDL (列・キー・
+            // インデックス・外部キー・ENGINE/CHARSET/COMMENT) を返す。テーブル
+            // 一覧にはビューも含まれ、ビューに対しては同じ文が `Create View`
+            // 列で応答するため、両方の列名を試す。
+            let row: MySqlRow = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SHOW CREATE TABLE {qualified}"
+            )))
+            .fetch_one(&self.pool)
+            .await?;
+            let ddl = row
+                .try_get::<String, _>("Create Table")
+                .or_else(|_| row.try_get::<String, _>("Create View"))
+                .unwrap_or_default();
+            return Ok(super::table_ddl::join_native_statements([ddl]));
+        }
         let (stmt, col) = match kind {
             "view" => (format!("SHOW CREATE VIEW {qualified}"), "Create View"),
             "procedure" => (

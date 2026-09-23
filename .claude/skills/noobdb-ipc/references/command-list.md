@@ -28,6 +28,10 @@
 `schema_overview` / `foreign_keys` / `list_schema_objects` / `get_object_definition` /
 `list_indexes` / `table_row_estimates` / `table_sizes`
 
+`get_object_definition` は `kind = "table"` でテーブルの `CREATE TABLE` DDL も返す
+(#1001)。MySQL/SQLite/DuckDB はネイティブ DDL、PostgreSQL/MSSQL は
+`db/table_ddl.rs` がカタログ情報から再構成したベストエフォート DDL。
+
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
 `compare_schema` / `compare_table_data` / `diff_schema_snapshots` /

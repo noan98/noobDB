@@ -17,6 +17,7 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
+import { isSynthesizedTableDdl } from "./tableDdl";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
 import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
 import { DropInsertionMarker } from "./DropInsertionMarker";
@@ -270,8 +271,11 @@ interface Props {
   onSchemaExport?: (database: string) => void;
   onRunTableSelect: (database: string, table: string) => void;
   onInsertTableSelect: (database: string, table: string) => void;
-  /** Provided only for drivers with a single-statement definition (MySQL/SQLite). */
+  /** テーブルの CREATE TABLE DDL を新しいクエリタブに表示する (#1001)。全ドライバ対応
+   *  (`get_object_definition` の kind = "table")。読み取りのみなので read_only でも有効。 */
   onShowCreateTable?: (database: string, table: string) => void;
+  /** テーブルの CREATE TABLE DDL をクリップボードへコピーする (#1001)。 */
+  onCopyTableDdl?: (database: string, table: string) => void;
   /** DB ノードから新規テーブル作成ウィザードを開く。 */
   onCreateTable?: (database: string) => void;
   /** テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。read_only では無効化される。 */
@@ -369,6 +373,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableSelect,
   onInsertTableSelect,
   onShowCreateTable,
+  onCopyTableDdl,
   onCreateTable,
   onTruncateTable,
   onDropTable,
@@ -917,8 +922,22 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       { label: t("contextMenuRunSelect", { limit: selectLimit }), onSelect: () => onRunTableSelect(db, tbl) },
       { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, tbl) },
     ];
+    // DDL の表示 / コピー (#1001)。PostgreSQL / MSSQL はカタログからの再構成なので、
+    // ベストエフォートである旨をツールチップで明示する。
+    const ddlTitle = isSynthesizedTableDdl(activeDriver) ? t("tableDdlSynthesizedHint") : undefined;
     if (onShowCreateTable) {
-      items.push({ label: t("contextMenuShowCreate"), onSelect: () => onShowCreateTable(db, tbl) });
+      items.push({
+        label: t("contextMenuShowCreate"),
+        onSelect: () => onShowCreateTable(db, tbl),
+        title: ddlTitle,
+      });
+    }
+    if (onCopyTableDdl) {
+      items.push({
+        label: t("contextMenuCopyDdl"),
+        onSelect: () => onCopyTableDdl(db, tbl),
+        title: ddlTitle,
+      });
     }
     // 列データプロファイル (#974)。読み取りの集計だけなので read_only でも有効。
     if (onExploreColumns) {

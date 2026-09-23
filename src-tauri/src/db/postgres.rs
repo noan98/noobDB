@@ -1183,6 +1183,45 @@ impl PostgresConn {
         })
     }
 
+    /// `name` がビュー / マテビューなら `Some("view" | "materialized_view")`。
+    /// テーブル一覧 (`tables`) はビューも含むため、テーブル DDL 要求 (#1001) を
+    /// ビューへ振り分けるのに使う。`relkind` は `"char"` 型なので `::text` 必須。
+    pub async fn view_kind(&self, schema: &str, name: &str) -> Result<Option<&'static str>> {
+        let kind: Option<String> = sqlx::query_scalar(
+            r#"SELECT c.relkind::text
+               FROM pg_catalog.pg_class c
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = $1 AND c.relname = $2"#,
+        )
+        .bind(schema)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(match kind.as_deref() {
+            Some("v") => Some("view"),
+            Some("m") => Some("materialized_view"),
+            _ => None,
+        })
+    }
+
+    /// `pg_get_viewdef` は本文 (SELECT) しか返さないので、`CREATE [MATERIALIZED]
+    /// VIEW "schema"."name" AS` を前置して貼り付け可能な DDL にする (#1001)。
+    pub async fn create_view_ddl(&self, schema: &str, kind: &str, name: &str) -> Result<String> {
+        let body = self.object_definition(schema, kind, name, None).await?;
+        let keyword = if kind == "materialized_view" {
+            "MATERIALIZED VIEW"
+        } else {
+            "VIEW"
+        };
+        let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+        let body = body.trim().trim_end_matches(';').trim_end();
+        Ok(format!(
+            "CREATE {keyword} {}.{} AS\n{body};\n",
+            q(schema),
+            q(name)
+        ))
+    }
+
     pub async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>> {
         // Expand pg_index.indkey (the ordered column attnums) with ordinality so
         // composite indexes keep declaration order, then resolve each attnum to a

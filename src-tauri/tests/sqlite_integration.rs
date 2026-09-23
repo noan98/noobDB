@@ -601,6 +601,64 @@ async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
 }
 
 #[tokio::test]
+async fn sqlite_table_definition_returns_native_ddl_with_indexes() {
+    // #1001: kind="table" はネイティブ DDL (sqlite_master.sql) に明示インデックスを
+    // 続けて返す。テーブル一覧に並ぶビューもビューの DDL を返す。
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_tblddl_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT NOT NULL DEFAULT 'x')",
+        None,
+    )
+    .await
+    .expect("create parent");
+    conn.execute(
+        "CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id), u TEXT UNIQUE)",
+        None,
+    )
+    .await
+    .expect("create child");
+    conn.execute("CREATE INDEX idx_child_pid ON child (pid)", None)
+        .await
+        .expect("create index");
+    conn.execute("CREATE VIEW v_child AS SELECT id FROM child", None)
+        .await
+        .expect("create view");
+
+    let ddl = conn
+        .object_definition("main", "table", "child", None)
+        .await
+        .expect("table ddl");
+    assert!(ddl.starts_with("CREATE TABLE child"), "{ddl}");
+    assert!(ddl.contains("REFERENCES parent(id)"), "{ddl}");
+    assert!(
+        ddl.contains(";\n\nCREATE INDEX idx_child_pid ON child (pid);"),
+        "{ddl}"
+    );
+    // UNIQUE 制約の自動インデックス (sql が NULL) は出さない
+    assert!(!ddl.contains("sqlite_autoindex"), "{ddl}");
+
+    let view = conn
+        .object_definition("main", "table", "v_child", None)
+        .await
+        .expect("view via table kind");
+    assert!(view.starts_with("CREATE VIEW v_child"), "{view}");
+
+    assert!(conn
+        .object_definition("main", "table", "missing", None)
+        .await
+        .is_err());
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_explicit_transaction_commits_and_rolls_back() {
     // 明示トランザクション: BEGIN→INSERT→ROLLBACK は何も残さず、
     // BEGIN→INSERT→COMMIT は永続化される。文は同一の保持接続で実行される。

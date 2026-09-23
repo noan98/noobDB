@@ -1140,3 +1140,61 @@ async fn duckdb_native_dump_roundtrips_into_fresh_file() {
     remove_db_files(&src_path);
     remove_db_files(&dst_path);
 }
+
+#[tokio::test]
+async fn duckdb_table_definition_returns_native_ddl() {
+    // #1001: kind="table" は duckdb_tables().sql のネイティブ DDL に、ユーザ作成
+    // インデックス (duckdb_indexes().sql) をベストエフォートで後置して返す。
+    let path = temp_db_path("tblddl");
+    create_empty_db(&path);
+    let opts = t::duckdb_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL DEFAULT 'x')",
+        None,
+    )
+    .await
+    .expect("create parent");
+    conn.execute(
+        "CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id))",
+        None,
+    )
+    .await
+    .expect("create child");
+    conn.execute("CREATE INDEX idx_child_pid ON child (pid)", None)
+        .await
+        .expect("create index");
+    conn.execute("CREATE VIEW v_child AS SELECT id FROM child", None)
+        .await
+        .expect("create view");
+
+    let ddl = conn
+        .object_definition("main", "table", "parent", None)
+        .await
+        .expect("parent ddl");
+    assert!(ddl.contains("CREATE TABLE"), "{ddl}");
+    assert!(ddl.contains("PRIMARY KEY"), "{ddl}");
+    assert!(ddl.contains("NOT NULL"), "{ddl}");
+    assert!(ddl.trim_end().ends_with(';'), "{ddl}");
+
+    let child = conn
+        .object_definition("main", "table", "child", None)
+        .await
+        .expect("child ddl");
+    assert!(child.contains("REFERENCES"), "{child}");
+    assert!(child.contains("idx_child_pid"), "{child}");
+
+    let view = conn
+        .object_definition("main", "table", "v_child", None)
+        .await
+        .expect("view via table kind");
+    assert!(view.to_uppercase().contains("CREATE VIEW"), "{view}");
+
+    assert!(conn
+        .object_definition("main", "table", "missing", None)
+        .await
+        .is_err());
+
+    conn.close().await;
+    remove_db_files(&path);
+}

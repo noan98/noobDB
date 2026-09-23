@@ -19,6 +19,8 @@ pub mod script;
 pub mod sqlite;
 pub mod sync;
 pub mod transfer;
+/// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
+pub mod table_ddl;
 pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
 pub mod upsert;
@@ -874,9 +876,18 @@ impl Connection {
         }
     }
 
-    /// The DDL/definition of a non-table schema object. `kind`/`name` are
-    /// from [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
+    /// The DDL/definition of a schema object. `kind`/`name` are from
+    /// [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
     /// oid) used to disambiguate overloaded functions / same-name triggers.
+    ///
+    /// `kind == "table"` (#1001) returns the table's full `CREATE TABLE` DDL:
+    /// MySQL (`SHOW CREATE TABLE`), SQLite (`sqlite_master.sql`) and DuckDB
+    /// (`duckdb_tables().sql`) return the engine's own DDL; PostgreSQL / MSSQL
+    /// have no native equivalent, so the DDL is reconstructed from the column /
+    /// index / FK introspection via [`table_ddl::synthesize_create_table`].
+    /// The table list also carries views, so a view name falls back to its
+    /// view definition. Pure read introspection — never goes through the
+    /// read-only SQL guard and works on read-only sessions.
     pub async fn object_definition(
         &self,
         db: &str,
@@ -884,6 +895,26 @@ impl Connection {
         name: &str,
         id: Option<&str>,
     ) -> Result<String> {
+        if kind == "table" {
+            match self {
+                Connection::Postgres(c) => {
+                    if let Some(view_kind) = c.view_kind(db, name).await? {
+                        return c.create_view_ddl(db, view_kind, name).await;
+                    }
+                    return self.synthesized_table_ddl(db, name).await;
+                }
+                Connection::Mssql(c) => {
+                    // OBJECT_DEFINITION はテーブルに対して NULL を返し、ビューには
+                    // 完全な CREATE VIEW を返す。空ならテーブルとして再構成する。
+                    let view_def = c.object_definition(db, "view", name).await?;
+                    if !view_def.trim().is_empty() {
+                        return Ok(view_def);
+                    }
+                    return self.synthesized_table_ddl(db, name).await;
+                }
+                _ => {}
+            }
+        }
         match self {
             Connection::MySql(c) => c.object_definition(db, kind, name).await,
             Connection::Postgres(c) => c.object_definition(db, kind, name, id).await,
@@ -891,6 +922,39 @@ impl Connection {
             Connection::DuckDb(c) => c.object_definition(db, kind, name).await,
             Connection::Mssql(c) => c.object_definition(db, kind, name).await,
         }
+    }
+
+    /// PostgreSQL / MSSQL 向けに、列・インデックス・外部キーの introspection を
+    /// 束ねて `CREATE TABLE` を再構成する (#1001)。方言は接続自身のドライバ。
+    async fn synthesized_table_ddl(&self, db: &str, table: &str) -> Result<String> {
+        let columns = self.columns(db, table).await?;
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "no definition found for table '{table}'"
+            )));
+        }
+        let indexes = self.list_indexes(db, table).await?;
+        let fks: Vec<ForeignKey> = self
+            .foreign_keys(db)
+            .await?
+            .into_iter()
+            .filter(|f| f.table == table)
+            .collect();
+        let driver = self.driver_kind();
+        // MSSQL ドライバは introspection を `dbo` スキーマに固定している
+        // (`db` はデータベース名) ので、修飾も `dbo` にそろえる。
+        let schema = match driver {
+            DriverKind::Mssql => "dbo",
+            _ => db,
+        };
+        Ok(table_ddl::synthesize_create_table(
+            driver,
+            Some(schema),
+            table,
+            &columns,
+            &indexes,
+            &fks,
+        ))
     }
 
     /// Every index on `table` in `db`: name, constituent columns (in

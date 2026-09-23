@@ -893,6 +893,9 @@ impl DuckDbConn {
     }
 
     pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
+        if kind == "table" {
+            return self.table_definition(db, name).await;
+        }
         if kind != "view" {
             return Err(AppError::InvalidInput(format!(
                 "unsupported object kind: {kind}"
@@ -914,6 +917,58 @@ impl DuckDbConn {
             sql.ok_or_else(|| {
                 AppError::InvalidInput(format!("no definition found for view '{name}'"))
             })
+        })
+        .await
+    }
+
+    /// テーブルの DDL (#1001)。DuckDB はカタログ関数 `duckdb_tables()` に
+    /// 正規化済みの `CREATE TABLE` (列・NOT NULL・DEFAULT・PK/UNIQUE/FK/CHECK)
+    /// を持つので、再構成せずそれを返す。テーブル一覧に並ぶビューは
+    /// `duckdb_views()` へフォールバックする。ユーザ作成インデックスは
+    /// `duckdb_indexes().sql` からベストエフォートで後置する (メタデータ関数の
+    /// 列構成が版で揺れるため、失敗してもテーブル DDL 自体は返す)。
+    async fn table_definition(&self, db: &str, name: &str) -> Result<String> {
+        let conn = self.clone_conn()?;
+        let db = db.to_string();
+        let name = name.to_string();
+        run_blocking(move || -> Result<String> {
+            let table_sql: Option<String> = conn
+                .query_row(
+                    "SELECT sql FROM duckdb_tables() WHERE schema_name = ? AND table_name = ?",
+                    duckdb::params![db, name],
+                    |r| r.get(0),
+                )
+                .ok()
+                .flatten();
+            let main_sql = match table_sql {
+                Some(sql) => sql,
+                None => conn
+                    .query_row(
+                        "SELECT sql FROM duckdb_views() WHERE schema_name = ? AND view_name = ?",
+                        duckdb::params![db, name],
+                        |r| r.get::<_, Option<String>>(0),
+                    )
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| {
+                        AppError::InvalidInput(format!("no definition found for table '{name}'"))
+                    })?,
+            };
+            let mut statements = vec![main_sql];
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT sql FROM duckdb_indexes() \
+                 WHERE schema_name = ? AND table_name = ? AND sql IS NOT NULL \
+                 ORDER BY index_name",
+            ) {
+                if let Ok(mut rows) = stmt.query(duckdb::params![db, name]) {
+                    while let Ok(Some(row)) = rows.next() {
+                        if let Ok(Some(sql)) = row.get::<_, Option<String>>(0) {
+                            statements.push(sql);
+                        }
+                    }
+                }
+            }
+            Ok(super::table_ddl::join_native_statements(statements))
         })
         .await
     }

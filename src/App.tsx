@@ -52,6 +52,7 @@ import {
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
+import { TABLE_DDL_KIND } from "./components/tableDdl";
 import {
   buildDropIndexSql,
   buildDropTableSql,
@@ -942,19 +943,6 @@ async function resolveTableOpen(
     tableColumns: cols,
     rowIdentity,
   };
-}
-
-// SQL that returns a table's definition, or null for drivers without a
-// single-statement form (Postgres). MySQL uses SHOW CREATE TABLE; SQLite reads
-// the original DDL out of sqlite_master.
-function tableDefinitionSql(driver: string, database: string, table: string): string | null {
-  if (driver === "mysql") {
-    return `SHOW CREATE TABLE ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-  }
-  if (driver === "sqlite") {
-    return `SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = '${table.replace(/'/g, "''")}'`;
-  }
-  return null;
 }
 
 // Cache key for a database's whole-schema autocomplete snapshot. The NUL
@@ -5645,10 +5633,25 @@ export default function App() {
     }
   }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
 
+  // テーブルの CREATE TABLE DDL の表示 / コピー (#1001)。全ドライバで
+  // `get_object_definition` (kind = "table") を使う — MySQL/SQLite/DuckDB は
+  // ネイティブ DDL、PostgreSQL/MSSQL はカタログから再構成した DDL。純粋な読み取り
+  // なので read_only セッションでも動く (`is_read_only_sql` の経路を通らない)。
   const handleShowCreateTable = useCallback((database: string, table: string) => {
-    const sql = tableDefinitionSql(selectedProfile?.driver ?? "mysql", database, table);
-    if (sql) openAndRunQuery(sql, table);
-  }, [openAndRunQuery, selectedProfile?.driver]);
+    void handleOpenObjectDefinition(database, TABLE_DDL_KIND, table, null);
+  }, [handleOpenObjectDefinition]);
+
+  const handleCopyTableDdl = useCallback(async (database: string, table: string) => {
+    if (!sessionId) return;
+    try {
+      const ddl = await api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null);
+      if (await copyToClipboard(ddl)) {
+        toast.success(translate("tableDdlCopied", { table }));
+      }
+    } catch (e) {
+      toast.error(translate("objDefinitionError", { error: String(e) }));
+    }
+  }, [sessionId, toast]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
@@ -7779,11 +7782,8 @@ export default function App() {
             onSchemaExport={handleSchemaExport}
             onRunTableSelect={handleRunTableSelect}
             onInsertTableSelect={handleInsertTableSelect}
-            onShowCreateTable={
-              selectedProfile && (selectedProfile.driver === "mysql" || selectedProfile.driver === "sqlite")
-                ? handleShowCreateTable
-                : undefined
-            }
+            onShowCreateTable={handleShowCreateTable}
+            onCopyTableDdl={handleCopyTableDdl}
             selectLimit={Math.max(1, settings.defaultDisplayCount)}
             favorites={quickAccess.favorites}
             recent={quickAccess.recent}

@@ -1908,7 +1908,11 @@ const en = {
 
   contextMenuRunSelect: "Run SELECT * (LIMIT {limit})",
   contextMenuInsertSelect: "Insert SELECT * into editor",
-  contextMenuShowCreate: "Show table definition",
+  contextMenuShowCreate: "Show DDL",
+  contextMenuCopyDdl: "Copy DDL",
+  tableDdlSynthesizedHint:
+    "This database has no native CREATE TABLE output, so the DDL is reconstructed from catalog metadata (best-effort: generated columns, CHECK constraints, partitioning and expression indexes are not included).",
+  tableDdlCopied: "Copied the DDL of {table}",
   contextMenuAddFavorite: "Add to favorites",
   contextMenuRemoveFavorite: "Remove from favorites",
   contextMenuImportCsv: "Import CSV...",
@@ -4956,7 +4960,11 @@ const ja: Dict = {
 
   contextMenuRunSelect: "SELECT * を実行 (LIMIT {limit})",
   contextMenuInsertSelect: "SELECT * をエディタへ挿入",
-  contextMenuShowCreate: "テーブル定義を表示",
+  contextMenuShowCreate: "DDL を表示",
+  contextMenuCopyDdl: "DDL をコピー",
+  tableDdlSynthesizedHint:
+    "この DB は CREATE TABLE をネイティブに出力できないため、カタログ情報から DDL を再構成します (ベストエフォート: 生成列・CHECK 制約・パーティション・式インデックスは含まれません)。",
+  tableDdlCopied: "{table} の DDL をコピーしました",
   contextMenuAddFavorite: "お気に入りに追加",
   contextMenuRemoveFavorite: "お気に入りから削除",
   contextMenuImportCsv: "CSV をインポート...",

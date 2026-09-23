@@ -952,6 +952,9 @@ impl SqliteConn {
     }
 
     pub async fn object_definition(&self, _db: &str, kind: &str, name: &str) -> Result<String> {
+        if kind == "table" {
+            return self.table_definition(name).await;
+        }
         // The DDL is stored verbatim in sqlite_master.sql.
         let row: Option<SqliteRow> =
             sqlx::query("SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2")
@@ -965,6 +968,40 @@ impl SqliteConn {
                 "no definition found for {kind} '{name}'"
             ))),
         }
+    }
+
+    /// テーブル (またはテーブル一覧に並ぶビュー) の DDL (#1001)。`sqlite_master.sql`
+    /// にはユーザが書いた CREATE 文がそのまま残るので、それに明示的に作られた
+    /// インデックス (`sql` が NULL の自動インデックスは除く) を続けて返す。
+    async fn table_definition(&self, name: &str) -> Result<String> {
+        let row: Option<SqliteRow> = sqlx::query(
+            "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(table_sql) =
+            row.and_then(|r| r.try_get::<Option<String>, _>("sql").ok().flatten())
+        else {
+            return Err(AppError::InvalidInput(format!(
+                "no definition found for table '{name}'"
+            )));
+        };
+        let index_rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT sql FROM sqlite_master \
+             WHERE type = 'index' AND tbl_name = ?1 AND sql IS NOT NULL \
+             ORDER BY name",
+        )
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut statements = vec![table_sql];
+        statements.extend(
+            index_rows
+                .iter()
+                .filter_map(|r| r.try_get::<Option<String>, _>("sql").ok().flatten()),
+        );
+        Ok(super::table_ddl::join_native_statements(statements))
     }
 
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
