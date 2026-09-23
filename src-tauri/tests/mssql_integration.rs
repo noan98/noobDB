@@ -1,7 +1,7 @@
 //! Integration test against a live Microsoft SQL Server (#729).
 //!
 //! Skipped unless `NOOBDB_TEST_MSSQL_URL` is set, e.g.:
-//!     mssql://sa:YourStrong!Passw0rd@127.0.0.1:1433/testdb
+//!     mssql://sa:NoobDB_Test_Pw1@127.0.0.1:1433/testdb
 //!
 //! Exercises the `Connection::Mssql` path end-to-end: connect, run queries,
 //! list databases, introspect columns/indexes (`dbo` schema — see the
@@ -10,9 +10,10 @@
 //! the dry-run preview (which must leave the live table untouched). Mirrors
 //! `mysql_integration.rs` / `postgres_integration.rs`.
 //!
-//! Not run in CI (no MSSQL service container is configured yet, per the
-//! issue's initial scope) — run locally against a `mssql-server` Docker
-//! image with the env var set.
+//! Run in CI by the `rust (test)` job against a SQL Server 2022 service
+//! container (#920; `testdb` is created by `scripts/ci-setup-mssql.sh`).
+//! Locally, start a `mcr.microsoft.com/mssql/server` Docker image, create the
+//! database, and set the env var.
 
 use noobdb_lib::__test_api as t;
 
@@ -38,6 +39,59 @@ async fn mssql_roundtrip_when_env_set() {
     assert_eq!(res.rows.len(), 1);
     assert!(matches!(&res.rows[0][0], t::Value::Int(1)));
     assert!(matches!(&res.rows[0][1], t::Value::String(s) if s == "hello"));
+
+    // #920: nullable integer / float columns arrive as the variable-width
+    // INTN / FLTN wire types whatever their declared width. Decoding used to
+    // dispatch on the column type and panic (tiberius `Row::get` on a
+    // variant mismatch) on the first nullable `bigint`. `VALUES` with a NULL
+    // row forces the nullable wire types.
+    let res = conn
+        .execute(
+            "SELECT b, ti, r, d FROM (VALUES \
+               (CAST(9007199254740993 AS bigint), CAST(7 AS tinyint), CAST(0.5 AS real), \
+                CAST(-12345678901234567890123456789012.345678 AS decimal(38,6))), \
+               (NULL, NULL, NULL, NULL)) v(b, ti, r, d)",
+            None,
+        )
+        .await
+        .expect("nullable wire types");
+    assert_eq!(
+        res.rows,
+        vec![
+            vec![
+                // Beyond JS's safe integer range → lossless string.
+                t::Value::String("9007199254740993".into()),
+                t::Value::Int(7),
+                t::Value::Float(0.5),
+                // 38 digits: beyond rust_decimal's range, rendered exactly.
+                t::Value::String("-12345678901234567890123456789012.345678".into()),
+            ],
+            vec![
+                t::Value::Null,
+                t::Value::Null,
+                t::Value::Null,
+                t::Value::Null
+            ],
+        ]
+    );
+
+    // #920: `USE [db]` must persist on the pooled connection. tiberius sends
+    // `execute`/`query` through `sp_executesql`, inside which a `USE` reverts
+    // on return — so the switch used to be silently lost.
+    let cur = conn
+        .execute("SELECT DB_NAME()", Some("master"))
+        .await
+        .expect("db_name in master");
+    assert_eq!(cur.rows, vec![vec![t::Value::String("master".into())]]);
+    let cur = conn
+        .execute("SELECT DB_NAME()", Some(&db))
+        .await
+        .expect("db_name in test db");
+    assert!(
+        matches!(&cur.rows[0][0], t::Value::String(s) if s.eq_ignore_ascii_case(&db)),
+        "expected {db:?}, got {:?}",
+        cur.rows
+    );
 
     // The connect-time database must show up in the database list.
     let dbs = conn.databases().await.expect("list databases");
@@ -446,7 +500,13 @@ async fn mssql_native_dump_roundtrip_when_env_set() {
     for db in [&src_db, &dst_db] {
         let _ = conn
             .execute(
-                &format!("ALTER DATABASE [{db}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{db}]"),
+                // The pooled connection may still be switched into `db`
+                // (`USE` persists per session), and a session cannot drop the
+                // database it is using — step out to master first.
+                &format!(
+                    "USE master; ALTER DATABASE [{db}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; \
+                     DROP DATABASE [{db}]"
+                ),
                 None,
             )
             .await;

@@ -64,9 +64,20 @@ SSH やセッション層には触らないでください — それらはド�
   `probe_failing_row` の行単位 INSERT 失敗で、これは想定内のデータエラーであり接続
   破損の証拠ではないので discard しません。
 - **統合テストは `tests/mssql_integration.rs`**、`NOOBDB_TEST_MSSQL_URL`
-  (`mssql://user:pass@host:port/db`) 環境変数ゲート (未設定ならスキップ)。CI の
-  サービスコンテナは未追加 (ローカル/手動実行のみ、他ドライバと同じ導入パターンを
-  踏襲すれば追加可能)。
+  (`mssql://user:pass@host:port/db`) 環境変数ゲート (未設定ならスキップ)。CI では
+  `rust (test)` の SQL Server 2022 サービスコンテナに対して実走する (#920。テスト用
+  DB は `scripts/ci-setup-mssql.sh` が作成)。
+- **tiberius の `execute` / `query` は常に `sp_executesql` 経由** (#920)。その中で
+  実行した `USE` は呼び出しが返ると元に戻り、`BEGIN` / `COMMIT` / `ROLLBACK
+  TRANSACTION` は `@@TRANCOUNT` の不一致 (エラー 266) を起こすため、セッション単位の
+  文 (DB 切替・トランザクション制御) は `run_batch` (`simple_query` = 素の SQL
+  バッチ) で送る。
+- **`Row::get::<T>` は型不一致で panic する** (tiberius の `try_get(..).unwrap()`)。
+  NULL 許容の整数列は宣言幅に関係なく `INTN` (tinyint〜bigint のどれも来る)、
+  NULL 許容の浮動小数は `FLTN` で届くので、`decode_cell` は `ColumnType` ではなく
+  `ColumnData` のバリアントで分岐する。introspection で `get::<i32>` 等を使うときは
+  SQL 側で `CAST(... AS int)` して型を固定する (`INFORMATION_SCHEMA.COLUMNS.
+  NUMERIC_PRECISION` は `tinyint`)。
 
 `db::types::{Value, Column, QueryResult, TableColumnInfo, TableSchema,
 PreviewResult, StreamBatch}` がドライバ横断のワイヤフォーマットです。`Value` は

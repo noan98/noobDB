@@ -650,6 +650,30 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
+      # MSSQL 統合テスト (tests/mssql_integration.rs) 用 (#920)。MySQL/PostgreSQL と
+      # 並存させる。ACCEPT_EULA=Y が無いとコンテナは即終了する。SA パスワードは
+      # SQL Server の複雑性要件 (大小英字・数字・記号のうち 3 種以上、8 文字以上) を
+      # 満たし、かつ URL / シェルで特殊扱いされない文字だけにしている (下の
+      # scripts/ci-setup-mssql.sh の既定値と一致させること)。
+      # healthcheck の sqlcmd は 2022 CU14 以降 /opt/mssql-tools18 (要 -C = 自己署名
+      # 証明書を信頼) に移ったため、旧パスへもフォールバックする。初回起動は数十秒
+      # かかるので start-period と retries を MySQL/PostgreSQL より長めに取る。
+      # テスト用 DB (testdb) はイメージに自動作成の仕組みが無いため、後段の
+      # 「Setup MSSQL test database」ステップが作成する。
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: NoobDB_Test_Pw1
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd="/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P NoobDB_Test_Pw1 -Q 'SELECT 1' -b -o /dev/null || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P NoobDB_Test_Pw1 -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval=10s
+          --health-timeout=10s
+          --health-start-period=20s
+          --health-retries=20
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -775,6 +799,20 @@ jobs:
         background: true
         run: bash scripts/ci-setup-tls-db.sh
 
+      # MSSQL 統合テスト (#920) 用に、SQL Server サービスコンテナの起動完了を待って
+      # テスト用 DB (testdb) を作成し、NOOBDB_TEST_MSSQL_URL を $GITHUB_ENV へ書く。
+      # サービスの healthcheck が通っていてもシステム DB の復旧直後はログインが
+      # 弾かれることがあるため、スクリプト側でも SELECT 1 が通るまで待つ。コンテナ
+      # 内の sqlcmd を docker exec で使うので apt は不要だが、sshd / TLS DB と同じく
+      # background 起動して下のツール導入と重ね、nextest 直前の wait で合流する。
+      - name: "Setup MSSQL test database (MSSQL integration #920)"
+        id: mssql
+        background: true
+        env:
+          MSSQL_CONTAINER: ${{ job.services.mssql.id }}
+          MSSQL_SA_PASSWORD: NoobDB_Test_Pw1
+        run: bash scripts/ci-setup-mssql.sh
+
       # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
       - name: Install cargo-nextest
@@ -793,8 +831,9 @@ jobs:
       # テスト (#520/#795) が nextest で正しく実走する。dist/ は上のスタブステップで
       # 既に用意済み。sshd/tlsdb のいずれかが失敗した場合はこの wait でジョブが
       # fail する (公式仕様)。
-      - name: Wait for background setup (sshd, TLS test DBs)
-        wait: [sshd, tlsdb]
+      # mssql (#920) も同様に NOOBDB_TEST_MSSQL_URL を $GITHUB_ENV 経由で渡す。
+      - name: Wait for background setup (sshd, TLS test DBs, MSSQL)
+        wait: [sshd, tlsdb, mssql]
 
       # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
       # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
@@ -804,6 +843,8 @@ jobs:
       # は、それぞれ background の「Setup test sshd」/「Setup TLS test databases」が
       # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb] 以降で参照可能になるため、
       # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
+      # NOOBDB_TEST_MSSQL_URL も同様に「Setup MSSQL test database」が書き込み、
+      # MSSQL 統合テスト (#920) が SQL Server サービスコンテナに対して実走する。
       - name: cargo llvm-cov nextest
         working-directory: src-tauri
         env:

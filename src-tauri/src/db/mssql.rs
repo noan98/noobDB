@@ -194,7 +194,8 @@ impl Drop for PooledConn {
 /// (an unknown transactional state must never be handed back to the pool).
 async fn begin_tx(conn: &mut PooledConn) -> Result<()> {
     let client = conn.client_mut()?;
-    if let Err(e) = client.execute("BEGIN TRANSACTION", &[]).await {
+    // Plain batch, not `sp_executesql` — see [`run_batch`] (#920).
+    if let Err(e) = run_batch(client, "BEGIN TRANSACTION").await {
         conn.mark_discard();
         return Err(e.into());
     }
@@ -207,7 +208,8 @@ async fn begin_tx(conn: &mut PooledConn) -> Result<()> {
 /// open on it.
 async fn finish_tx(conn: &mut PooledConn, stmt: &str) -> Result<()> {
     let client = conn.client_mut()?;
-    match client.execute(stmt, &[]).await {
+    // Plain batch, not `sp_executesql` — see [`run_batch`] (#920).
+    match run_batch(client, stmt).await {
         Ok(_) => Ok(()),
         Err(e) => {
             conn.mark_discard();
@@ -731,8 +733,14 @@ impl MssqlConn {
 
         let base_rows = rows(
             &mut conn,
+            // NUMERIC_PRECISION is `tinyint`, not `int`: cast all three
+            // numeric columns to `int` so the `get::<i32>` below always matches
+            // the on-wire variant — tiberius's `Row::get` panics on a mismatch
+            // (#920).
             r#"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
-                      CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
+                      CAST(CHARACTER_MAXIMUM_LENGTH AS int),
+                      CAST(NUMERIC_PRECISION AS int),
+                      CAST(NUMERIC_SCALE AS int)
                FROM INFORMATION_SCHEMA.COLUMNS
                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @P1
                ORDER BY ORDINAL_POSITION"#,
@@ -1398,12 +1406,33 @@ fn qi(name: &str) -> String {
 /// every database it can see — unlike PostgreSQL, which is one schema per
 /// connection). A `None`/empty `database` leaves the connection on whatever
 /// database it is already on.
+///
+/// Sent as a plain SQL batch ([`run_batch`]), **not** via `client.execute`:
+/// tiberius's `execute`/`query` always wrap the text in `sp_executesql`, and
+/// SQL Server documents that a `USE` inside `sp_executesql` only lasts until
+/// that call returns — so the switch silently reverted and every
+/// `Some(db)` operation actually ran in the login's default database (#920).
 async fn apply_use_database(client: &mut MssqlClient, database: Option<&str>) -> Result<()> {
     if let Some(db) = database {
         if !db.is_empty() {
-            client.execute(format!("USE {}", qi(db)), &[]).await?;
+            run_batch(client, &format!("USE {}", qi(db))).await?;
         }
     }
+    Ok(())
+}
+
+/// Runs `sql` as a plain SQL batch (TDS `SQLBatch`, via `simple_query`) and
+/// drains every result so the connection is ready for the next request.
+///
+/// Session-scoped statements must go through here rather than
+/// `client.execute`/`client.query`, which wrap the text in `sp_executesql`:
+/// a `USE` inside `sp_executesql` reverts when the call returns, and a
+/// `BEGIN`/`COMMIT`/`ROLLBACK TRANSACTION` that changes `@@TRANCOUNT` across
+/// the call raises error 266 ("Transaction count after EXECUTE indicates a
+/// mismatching number of BEGIN and COMMIT statements") — tiberius's own tests
+/// drive transactions through `simple_query` for this reason (#920).
+async fn run_batch(client: &mut MssqlClient, sql: &str) -> tiberius::Result<()> {
+    client.simple_query(sql).await?.into_results().await?;
     Ok(())
 }
 
@@ -1681,72 +1710,92 @@ fn row_to_values(row: &TdsRow) -> Vec<Value> {
         .collect()
 }
 
-/// Decodes one cell. Scalar / text / binary / GUID / numeric types are read
-/// straight off the row's [`tiberius::ColumnData`] variant (no ambiguity —
-/// each Rust type in [`tiberius::FromSql`] maps to exactly one `ColumnData`
-/// variant, unlike sqlx's declared-type-name dispatch the other drivers use).
-/// Date/time types go through `chrono`'s `FromSql` impls (feature `chrono`)
-/// since converting SQL Server's on-wire day-count/tick representation by
-/// hand would duplicate non-trivial logic tiberius already has.
+/// Decodes one cell by its **on-wire value variant** ([`tiberius::ColumnData`])
+/// rather than the column's declared [`ColumnType`] (#920).
+///
+/// Dispatching on `ColumnType` is unsound against a real server: SQL Server
+/// sends every *nullable* integer column (`tinyint`/`smallint`/`int`/`bigint`)
+/// as the variable-width `INTN` type — so `ColumnType::Intn` may carry a
+/// `ColumnData::I64` — and nullable `real`/`float` both arrive as `FLTN`.
+/// tiberius's `Row::get` **panics** on a Rust-type/variant mismatch (it is
+/// `try_get(..).unwrap()`), so the old `Intn => get::<i32>` arm crashed on the
+/// first nullable `bigint` it read. Each `ColumnData` variant maps to exactly
+/// one decoding, and every arm below is panic-free. Date/time variants go
+/// through `chrono`'s `FromSql` impls (feature `chrono`) since converting SQL
+/// Server's on-wire day-count/tick representation by hand would duplicate
+/// non-trivial logic tiberius already has.
 fn decode_cell(row: &TdsRow, i: usize) -> Value {
-    let Some(col) = row.columns().get(i) else {
-        return Value::Null;
-    };
-    match col.column_type() {
-        ColumnType::Bit | ColumnType::Bitn => opt_val(row.get::<bool, _>(i), Value::Bool),
-        ColumnType::Int1 => opt_val(row.get::<u8, _>(i), |v| Value::Int(v as i64)),
-        ColumnType::Int2 => opt_val(row.get::<i16, _>(i), |v| Value::Int(v as i64)),
-        ColumnType::Int4 | ColumnType::Intn => {
-            opt_val(row.get::<i32, _>(i), |v| Value::Int(v as i64))
-        }
+    row.cells()
+        .nth(i)
+        .map(|(_, data)| decode_column_data(data))
+        .unwrap_or(Value::Null)
+}
+
+fn decode_column_data(data: &tiberius::ColumnData<'static>) -> Value {
+    use tiberius::ColumnData as D;
+    use tiberius::FromSql;
+    match data {
+        D::Bit(v) => opt_val(*v, Value::Bool),
+        D::U8(v) => opt_val(*v, |v| Value::Int(i64::from(v))),
+        D::I16(v) => opt_val(*v, |v| Value::Int(i64::from(v))),
+        D::I32(v) => opt_val(*v, |v| Value::Int(i64::from(v))),
         // `bigint` is the only integer width here that can exceed JS's safe
         // integer range (2^53-1) — `tinyint`/`smallint`/`int` above always
         // fit, so they stay `Value::Int` unconditionally. See
         // `Value::from_i64_lossless`'s doc comment (#precision).
-        ColumnType::Int8 => opt_val(row.get::<i64, _>(i), Value::from_i64_lossless),
-        ColumnType::Float4 => opt_val(row.get::<f32, _>(i), |v| Value::Float(v as f64)),
-        ColumnType::Float8 | ColumnType::Floatn | ColumnType::Money | ColumnType::Money4 => {
-            opt_val(row.get::<f64, _>(i), Value::Float)
-        }
-        ColumnType::Guid => opt_val(row.get::<tiberius::Uuid, _>(i), |v: tiberius::Uuid| {
+        D::I64(v) => opt_val(*v, Value::from_i64_lossless),
+        // `money` / `smallmoney` also arrive as `F64` (tiberius's decoding).
+        D::F32(v) => opt_val(*v, |v| Value::Float(f64::from(v))),
+        D::F64(v) => opt_val(*v, Value::Float),
+        D::String(v) => opt_val(v.as_deref(), |s| Value::String(s.to_string())),
+        D::Guid(v) => opt_val(*v, |g| Value::String(g.to_string())),
+        D::Binary(v) => opt_val(v.as_deref(), |b| {
+            Value::Bytes(data_encoding::HEXLOWER.encode(b))
+        }),
+        D::Numeric(v) => opt_val(*v, |n| {
+            Value::String(numeric_to_string(n.value(), n.scale()))
+        }),
+        D::Xml(v) => opt_val(v.as_deref(), |x| Value::String(x.to_string())),
+        D::Date(_) => opt_val(chrono::NaiveDate::from_sql(data).ok().flatten(), |v| {
             Value::String(v.to_string())
         }),
-        ColumnType::Decimaln | ColumnType::Numericn => {
-            opt_val(row.get::<rust_decimal::Decimal, _>(i), |v| {
+        D::Time(_) => opt_val(chrono::NaiveTime::from_sql(data).ok().flatten(), |v| {
+            Value::String(v.to_string())
+        }),
+        D::DateTime(_) | D::SmallDateTime(_) | D::DateTime2(_) => {
+            opt_val(chrono::NaiveDateTime::from_sql(data).ok().flatten(), |v| {
                 Value::String(v.to_string())
             })
         }
-        ColumnType::BigVarBin | ColumnType::BigBinary | ColumnType::Image => {
-            opt_val(row.get::<&[u8], _>(i), |v| {
-                Value::Bytes(data_encoding::HEXLOWER.encode(v))
-            })
-        }
-        ColumnType::Daten => opt_val(row.get::<chrono::NaiveDate, _>(i), |v| {
-            Value::String(v.to_string())
-        }),
-        ColumnType::Timen => opt_val(row.get::<chrono::NaiveTime, _>(i), |v| {
-            Value::String(v.to_string())
-        }),
-        ColumnType::Datetime
-        | ColumnType::Datetimen
-        | ColumnType::Datetime4
-        | ColumnType::Datetime2 => opt_val(row.get::<chrono::NaiveDateTime, _>(i), |v| {
-            Value::String(v.to_string())
-        }),
-        ColumnType::DatetimeOffsetn => {
-            opt_val(row.get::<chrono::DateTime<chrono::Utc>, _>(i), |v| {
-                Value::String(v.to_rfc3339())
-            })
-        }
-        // Everything else (var/fixed char, XML, sql_variant, ...) reads as
-        // text — the standard fallback tail the other drivers use too.
-        _ => opt_val(row.get::<&str, _>(i), |v| Value::String(v.to_string())),
+        D::DateTimeOffset(_) => opt_val(
+            chrono::DateTime::<chrono::Utc>::from_sql(data)
+                .ok()
+                .flatten(),
+            |v| Value::String(v.to_rfc3339()),
+        ),
     }
 }
 
-/// `Row::get` returns `Option<T>` directly (no `Result` to unwrap — a type
-/// mismatch here would be a bug in the match above, not user data), so this
-/// just maps `Some`/`None` into `Value`/`Value::Null`.
+/// Renders a `decimal` / `numeric` (`value` × 10^-`scale`) exactly, keeping
+/// the column's scale (trailing zeros included, like `rust_decimal`'s
+/// `Display`). Done by hand rather than through `rust_decimal::Decimal`
+/// because that type holds only ~28-29 significant digits and tiberius's
+/// conversion (`Decimal::from_i128_with_scale`) panics beyond it, while SQL
+/// Server allows 38. tiberius's own `Numeric` `Display` is not usable either:
+/// it renders `-0.5` as `0.-5`.
+fn numeric_to_string(value: i128, scale: u8) -> String {
+    let digits = value.unsigned_abs().to_string();
+    let sign = if value < 0 { "-" } else { "" };
+    let scale = usize::from(scale);
+    if scale == 0 {
+        return format!("{sign}{digits}");
+    }
+    let padded = format!("{digits:0>width$}", width = scale + 1);
+    let (int_part, frac_part) = padded.split_at(padded.len() - scale);
+    format!("{sign}{int_part}.{frac_part}")
+}
+
+/// Maps a decoded `Option` into `Value` / `Value::Null`.
 fn opt_val<T>(v: Option<T>, f: impl FnOnce(T) -> Value) -> Value {
     v.map(f).unwrap_or(Value::Null)
 }
@@ -2109,6 +2158,82 @@ mod tests {
         assert_eq!(
             build_multi_row_insert("[t]", "[a], [b]", 2, &rows),
             "INSERT INTO [t] ([a], [b]) VALUES (N'1',NULL),(N'2',N'x')"
+        );
+    }
+
+    /// #920: decoding dispatches on the on-wire `ColumnData` variant, so a
+    /// nullable integer column (`INTN`) of any width decodes without the
+    /// width-mismatch panic `Row::get` has, and `bigint` stays lossless.
+    #[test]
+    fn decode_column_data_handles_every_integer_width_and_nulls() {
+        use std::borrow::Cow;
+        use tiberius::ColumnData as D;
+        assert_eq!(decode_column_data(&D::U8(Some(7))), Value::Int(7));
+        assert_eq!(decode_column_data(&D::I16(Some(-3))), Value::Int(-3));
+        assert_eq!(decode_column_data(&D::I32(Some(42))), Value::Int(42));
+        assert_eq!(decode_column_data(&D::I64(Some(4))), Value::Int(4));
+        assert_eq!(
+            decode_column_data(&D::I64(Some(i64::MAX))),
+            Value::String(i64::MAX.to_string())
+        );
+        assert_eq!(decode_column_data(&D::F32(Some(0.5))), Value::Float(0.5));
+        assert_eq!(decode_column_data(&D::F64(Some(0.1))), Value::Float(0.1));
+        assert_eq!(decode_column_data(&D::Bit(Some(true))), Value::Bool(true));
+        assert_eq!(
+            decode_column_data(&D::String(Some(Cow::Borrowed("日本語")))),
+            Value::String("日本語".into())
+        );
+        assert_eq!(
+            decode_column_data(&D::Binary(Some(Cow::Borrowed(&[0x00, 0xff, 0x10][..])))),
+            Value::Bytes("00ff10".into())
+        );
+        assert_eq!(
+            decode_column_data(&D::Numeric(Some(
+                tiberius::numeric::Numeric::new_with_scale(-5, 1)
+            ))),
+            Value::String("-0.5".into())
+        );
+        for null in [
+            D::U8(None),
+            D::I16(None),
+            D::I32(None),
+            D::I64(None),
+            D::F32(None),
+            D::F64(None),
+            D::Bit(None),
+            D::String(None),
+            D::Guid(None),
+            D::Binary(None),
+            D::Numeric(None),
+            D::Xml(None),
+            D::Date(None),
+            D::Time(None),
+            D::DateTime(None),
+            D::SmallDateTime(None),
+            D::DateTime2(None),
+            D::DateTimeOffset(None),
+        ] {
+            assert_eq!(decode_column_data(&null), Value::Null, "{null:?}");
+        }
+    }
+
+    /// #920: `decimal(38, s)` exceeds `rust_decimal`'s ~28 digits (whose
+    /// tiberius conversion panics) — rendered exactly by hand instead.
+    #[test]
+    fn numeric_to_string_is_exact_for_full_precision_and_signs() {
+        assert_eq!(numeric_to_string(0, 0), "0");
+        assert_eq!(numeric_to_string(-42, 0), "-42");
+        assert_eq!(numeric_to_string(-5, 1), "-0.5");
+        assert_eq!(numeric_to_string(5, 3), "0.005");
+        assert_eq!(numeric_to_string(-500_000, 6), "-0.500000");
+        assert_eq!(numeric_to_string(1_250, 2), "12.50");
+        assert_eq!(
+            numeric_to_string(99_999_999_999_999_999_999_999_999_999_999_999_999, 6),
+            "99999999999999999999999999999999.999999"
+        );
+        assert_eq!(
+            numeric_to_string(-12_345_678_901_234_567_890_123_456, 6),
+            "-12345678901234567890.123456"
         );
     }
 

@@ -94,7 +94,8 @@
   Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
-  が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
+  が MySQL 8 / PostgreSQL 16 / SQL Server 2022 (#920) のサービスコンテナに対し
+  `cargo llvm-cov nextest`
   (カバレッジ計装下で nextest を実走) を実行します。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
@@ -112,7 +113,14 @@
   バイナリを導入)。`rust (test)` には MySQL 用の
   `NOOBDB_TEST_MYSQL_URL` と PostgreSQL 用の `NOOBDB_TEST_POSTGRES_URL` を両方
   渡しており、両ドライバの統合テストが CI で実走します (SQLite は環境変数不要で
-  常に走る)。カバレッジは `cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
+  常に走る)。MSSQL (#920) はサービスコンテナ (`mcr.microsoft.com/mssql/server:2022-latest`、
+  `ACCEPT_EULA=Y`、sqlcmd による healthcheck) を起動したうえで、background ステップ
+  `scripts/ci-setup-mssql.sh` がコンテナ内の sqlcmd を `docker exec` で叩いて起動完了を
+  待ち、テスト用 DB `testdb` を作成して `NOOBDB_TEST_MSSQL_URL` を `$GITHUB_ENV` に
+  書きます (SQL Server のイメージには `MYSQL_DATABASE` / `POSTGRES_DB` 相当の自動作成が
+  無く、接続 URL の DB はログイン既定 DB なので存在しないと接続自体が失敗するため)。
+  sqlcmd は 2022 CU14 以降 `/opt/mssql-tools18` (要 `-C`) にあり、healthcheck と
+  スクリプトの両方で旧パス `/opt/mssql-tools` へフォールバックします。カバレッジは `cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
   Job Summary に出力して PR ごとに可視化し、加えて `--fail-under-lines` で行
   カバレッジの**下限を強制**します。閾値は**ラチェット式 (下げない)** で運用し
   (#482)、テスト整備で実測が上がったら実測をわずかに下回る値へ段階的に引き上げます
