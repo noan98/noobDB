@@ -25,4 +25,5 @@ pub mod snippets;
 pub mod ssh;
 pub mod sync;
 pub mod tasks;
+pub mod timelapse;
 pub mod transfer;

@@ -17,6 +17,7 @@ mod snippets;
 mod ssh;
 mod state;
 mod tasks;
+mod timelapse;
 
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
@@ -947,6 +948,12 @@ pub fn run() {
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,
             commands::flight_recorder::undo_flight_record,
+            commands::timelapse::timelapse_watch_table,
+            commands::timelapse::timelapse_capture,
+            commands::timelapse::timelapse_list_watches,
+            commands::timelapse::timelapse_diff_generations,
+            commands::timelapse::timelapse_unwatch,
+            commands::timelapse::timelapse_clear_all,
             commands::logs::read_logs,
             commands::logs::clear_logs,
             commands::export::export_query_result,

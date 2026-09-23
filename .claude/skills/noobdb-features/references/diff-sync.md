@@ -33,3 +33,24 @@
   (`DROP`) / `allow_delete` (`DELETE`) フラグで破壊的操作をオプトインにし、読み取り専用
   セッションへの適用は拒否します。MySQL は DDL の暗黙コミットのため best-effort 逐次、
   他ドライバは all-or-nothing。
+
+## テーブル・タイムラプス (#739) — データ比較の時間方向版
+
+`timelapse/` (純関数 + `store.rs`) と `commands/timelapse.rs`。ウォッチ登録した
+テーブルを接続時 (`settings.timelapseOnConnect`) と手動更新で `select_rows_sql`
+(PK 順・`MAX_DATA_ROWS + 1` 行。MSSQL は `TOP (n)`) により取得し、
+`<data_dir>/table_timelapse.sqlite` (Unix は `0600`) に世代として保存する。
+
+- **PK 必須** (`compare_table_data` と同じ制約)。上限超過のテーブルは
+  `allow_partial` の同意が無ければ登録しない (UI が「先頭 N 行だけを記録」を確認)。
+- 列名 + 行 JSON の FNV-1a 64 フィンガープリントが直前世代と同じなら世代を増やさない。
+  ウォッチ単位の世代数ローテーション (`clamp_max_generations`、既定 20) と、全体の
+  保存量上限 `MAX_TOTAL_BYTES` (64 MiB。各ウォッチの最新世代は残す)。
+- 差分は `diff_snapshots` → `compute_data_diff` をそのまま流用し、**source = 新しい
+  世代 / target = 古い世代** (`source_only` = 追加)。世代間で列が増減しても名前で
+  揃えてから比較する (`align_rows`)。
+- `Connection::execute` を直接呼ぶのでクエリ履歴に残らず、read_only セッションでも
+  動く (`ensure_allowed_for_session` も通す)。
+- 保存するのは実データのローカルコピー (秘密情報は含めない)。機微カラムマスク
+  (#1069) は**表示専用**で、保存データはマスクしない。UI は Bottom Panel の
+  `timelapse` タブ (`TableTimelapsePanel.tsx` / `tableTimelapse.ts`)。

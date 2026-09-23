@@ -62,6 +62,14 @@
 `profile_column` (#974。NULL 率 / DISTINCT / MIN・MAX / 上位頻出値 / ヒストグラムを
 サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可)
 
+## テーブル・タイムラプス (`commands/timelapse.rs`)
+
+`timelapse_watch_table` / `timelapse_capture` / `timelapse_list_watches` /
+`timelapse_diff_generations` / `timelapse_unwatch` / `timelapse_clear_all`
+(#739。ウォッチ登録したテーブルの世代スナップショットを `<data_dir>/table_timelapse.sqlite`
+に保存し、任意の 2 世代を `compute_data_diff` で比較。取得は PK 順の単一 SELECT
+(最大 `MAX_DATA_ROWS`) で履歴に記録せず、read_only セッションでも可。PK 必須)
+
 ## タスクスケジューラ (`commands/tasks.rs`)
 
 `list_tasks` / `save_task` / `delete_task` / `set_task_enabled` / `run_task_now` /

@@ -229,6 +229,14 @@ export interface Settings {
    */
   schemaDriftOnConnect: boolean;
   /**
+   * テーブル・タイムラプス (#739): 接続確立直後に、このプロファイルでウォッチ
+   * 登録済みのテーブルのスナップショットを背景で取得する。読み取り専用の単一
+   * SELECT のみで履歴も汚さない。ウォッチが 1 件も無ければ何もしない。
+   */
+  timelapseOnConnect: boolean;
+  /** テーブル・タイムラプス (#739): ウォッチ 1 件あたりに保持する世代数 (古い世代から削除)。 */
+  timelapseMaxGenerations: number;
+  /**
    * アプリ内モーション量コントロール (#787)。既定は `system` で、これまでどおり
    * OS の `prefers-reduced-motion` に追従する (`main.tsx` の
    * `MotionConfig reducedMotion="user"` + `App.css` の
@@ -637,6 +645,13 @@ export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
 /** スキーマドリフト・タイムライン (#736) の接続時自動スナップショットは既定オン。 */
 export const DEFAULT_SCHEMA_DRIFT_ON_CONNECT = true;
 
+/** テーブル・タイムラプス (#739) の接続時自動スナップショットは既定オン。 */
+export const DEFAULT_TIMELAPSE_ON_CONNECT = true;
+/** 保持世代数。Rust の `timelapse::DEFAULT_MAX_GENERATIONS` / `clamp_max_generations` と揃える。 */
+export const DEFAULT_TIMELAPSE_MAX_GENERATIONS = 20;
+export const MIN_TIMELAPSE_MAX_GENERATIONS = 1;
+export const MAX_TIMELAPSE_MAX_GENERATIONS = 100;
+
 /** コマンドパレット MRU (#845) は既定で空 (未使用状態)。 */
 export const DEFAULT_COMMAND_PALETTE_MRU: string[] = [];
 
@@ -694,6 +709,8 @@ export const DEFAULT_SETTINGS: Settings = {
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
   schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
+  timelapseOnConnect: DEFAULT_TIMELAPSE_ON_CONNECT,
+  timelapseMaxGenerations: DEFAULT_TIMELAPSE_MAX_GENERATIONS,
   motionPreference: DEFAULT_MOTION_PREFERENCE,
   commandPaletteMru: DEFAULT_COMMAND_PALETTE_MRU,
   flightRecorderEnabled: DEFAULT_FLIGHT_RECORDER_ENABLED,
@@ -918,6 +935,8 @@ export function normalizeSettings(input: unknown): Settings {
     preflightImpactEnabled?: unknown;
     planWatchOnConnect?: unknown;
     schemaDriftOnConnect?: unknown;
+    timelapseOnConnect?: unknown;
+    timelapseMaxGenerations?: unknown;
     motionPreference?: unknown;
     commandPaletteMru?: unknown;
     flightRecorderEnabled?: unknown;
@@ -1042,6 +1061,16 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.schemaDriftOnConnect === "boolean"
         ? parsed.schemaDriftOnConnect
         : DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
+    timelapseOnConnect:
+      typeof parsed.timelapseOnConnect === "boolean"
+        ? parsed.timelapseOnConnect
+        : DEFAULT_TIMELAPSE_ON_CONNECT,
+    timelapseMaxGenerations: sanitizeIntInRange(
+      parsed.timelapseMaxGenerations,
+      DEFAULT_TIMELAPSE_MAX_GENERATIONS,
+      MIN_TIMELAPSE_MAX_GENERATIONS,
+      MAX_TIMELAPSE_MAX_GENERATIONS,
+    ),
     motionPreference: sanitizeMotionPreference(parsed.motionPreference, DEFAULT_MOTION_PREFERENCE),
     commandPaletteMru: sanitizeMruIds(parsed.commandPaletteMru),
     flightRecorderEnabled:
@@ -1520,6 +1549,26 @@ export function setPlanWatchOnConnect(value: boolean): void {
 export function setSchemaDriftOnConnect(value: boolean): void {
   if (current.schemaDriftOnConnect === value) return;
   current = { ...current, schemaDriftOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setTimelapseOnConnect(value: boolean): void {
+  if (current.timelapseOnConnect === value) return;
+  current = { ...current, timelapseOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setTimelapseMaxGenerations(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.timelapseMaxGenerations,
+    MIN_TIMELAPSE_MAX_GENERATIONS,
+    MAX_TIMELAPSE_MAX_GENERATIONS,
+  );
+  if (next === current.timelapseMaxGenerations) return;
+  current = { ...current, timelapseMaxGenerations: next };
   persist();
   listeners.forEach((cb) => cb());
 }

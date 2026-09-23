@@ -480,6 +480,54 @@ export const dataDiff = z.object({
   target_count: z.number(),
 });
 
+// テーブル・タイムラプス (#739)。
+const timelapseGenerationMeta = z.object({
+  id: z.number(),
+  captured_at: z.string(),
+  row_count: z.number(),
+  truncated: z.boolean(),
+  bytes: z.number(),
+});
+
+export const tableWatch = z.object({
+  id: z.number(),
+  profile_id: z.string(),
+  driver: z.string(),
+  database: z.string(),
+  table: z.string(),
+  active: z.boolean(),
+  partial: z.boolean(),
+  created_at: z.string(),
+  generations: z.array(timelapseGenerationMeta),
+});
+export const tableWatchArray = z.array(tableWatch);
+
+export const timelapseWatchOutcome = z.object({
+  watch_id: z.number().nullable(),
+  over_limit: z.boolean(),
+  row_limit: z.number(),
+  generation_added: z.boolean(),
+});
+
+const timelapseCaptureOutcome = z.object({
+  watch_id: z.number(),
+  database: z.string(),
+  table: z.string(),
+  added: z.boolean(),
+  truncated: z.boolean(),
+  error: z.string().nullable(),
+});
+export const timelapseCaptureOutcomeArray = z.array(timelapseCaptureOutcome);
+
+export const timelapseGenerationDiff = z.object({
+  diff: dataDiff,
+  columns_added: z.array(z.string()),
+  columns_removed: z.array(z.string()),
+  partial: z.boolean(),
+  from_captured_at: z.string(),
+  to_captured_at: z.string(),
+});
+
 /** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
 export const sandboxRecord = z.object({
   id: z.string(),

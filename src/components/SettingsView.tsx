@@ -36,6 +36,9 @@ import {
   MAX_FLIGHT_RECORDER_ROW_CAP,
   MIN_FLIGHT_RECORDER_RETENTION_DAYS,
   MAX_FLIGHT_RECORDER_RETENTION_DAYS,
+  DEFAULT_TIMELAPSE_MAX_GENERATIONS,
+  MIN_TIMELAPSE_MAX_GENERATIONS,
+  MAX_TIMELAPSE_MAX_GENERATIONS,
   DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DEFAULT_QUERY_TIMEOUT_SECS,
@@ -106,6 +109,8 @@ import {
   setColumnMaskCopyPlaceholder,
   setPlanWatchOnConnect,
   setSchemaDriftOnConnect,
+  setTimelapseOnConnect,
+  setTimelapseMaxGenerations,
   setSqlLintEnabled,
   setPreflightImpactEnabled,
   setFlightRecorderEnabled,
@@ -605,6 +610,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
   { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
   { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
+  { id: "settings-sec-timelapse", titleKey: "settingsTimelapse" },
   { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
   { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
   { id: "settings-sec-safety", titleKey: "settingsSafety" },
@@ -765,6 +771,13 @@ export function SettingsView({ theme, onClose }: Props) {
   const [flightRetentionInput, setFlightRetentionInput] = useState(
     String(settings.flightRecorderRetentionDays),
   );
+  const [timelapseGenInput, setTimelapseGenInput] = useState(
+    String(settings.timelapseMaxGenerations),
+  );
+  useEffect(
+    () => setTimelapseGenInput(String(settings.timelapseMaxGenerations)),
+    [settings.timelapseMaxGenerations],
+  );
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
@@ -848,6 +861,35 @@ export function SettingsView({ theme, onClose }: Props) {
       setFlightRecorderRetentionDays(n);
     } else {
       setFlightRetentionInput(String(settings.flightRecorderRetentionDays));
+    }
+  };
+  const commitTimelapseGenerations = () => {
+    const n = Number.parseInt(timelapseGenInput, 10);
+    if (
+      Number.isSafeInteger(n) &&
+      n >= MIN_TIMELAPSE_MAX_GENERATIONS &&
+      n <= MAX_TIMELAPSE_MAX_GENERATIONS
+    ) {
+      setTimelapseMaxGenerations(n);
+    } else {
+      setTimelapseGenInput(String(settings.timelapseMaxGenerations));
+    }
+  };
+  // テーブル・タイムラプス (#739) の全データ一括削除。ローカル専用ストアの
+  // ウォッチ登録と保存済み世代をすべて消す。
+  const clearTimelapse = async () => {
+    const ok = await confirm({
+      title: t("settingsTimelapseClearTitle"),
+      message: t("settingsTimelapseClearMessage"),
+      confirmLabel: t("settingsTimelapseClearAll"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      const count = await api.timelapseClearAll();
+      toast.success(t("settingsTimelapseCleared", { count }));
+    } catch (e) {
+      toast.error(String(e));
     }
   };
   const commitFontSize = () => {
@@ -1346,6 +1388,51 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsSchemaDriftOnConnectHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-timelapse" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsTimelapse")}</chakra.h3>
+          <SettingsReset onClick={() => void clearTimelapse()}>
+            {t("settingsTimelapseClearAll")}
+          </SettingsReset>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsTimelapseHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-timelapse-on-connect">
+            <Switch
+              id="settings-timelapse-on-connect"
+              checked={settings.timelapseOnConnect}
+              onChange={setTimelapseOnConnect}
+            />
+            {t("settingsTimelapseOnConnect")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsTimelapseOnConnectHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-timelapse-max-generations">
+            {t("settingsTimelapseMaxGenerations")}
+          </chakra.label>
+          <Input
+            id="settings-timelapse-max-generations"
+            type="number"
+            min={MIN_TIMELAPSE_MAX_GENERATIONS}
+            max={MAX_TIMELAPSE_MAX_GENERATIONS}
+            step={1}
+            value={timelapseGenInput}
+            placeholder={String(DEFAULT_TIMELAPSE_MAX_GENERATIONS)}
+            onChange={(e) => setTimelapseGenInput(e.target.value)}
+            onBlur={commitTimelapseGenerations}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsTimelapseMaxGenerationsHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-flight-recorder" scrollMarginTop="8px">

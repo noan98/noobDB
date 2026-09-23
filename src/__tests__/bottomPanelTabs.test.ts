@@ -29,6 +29,7 @@ const connected = {
   advisorDatabase: "app",
   profileTable: "users",
   structureTable: "users",
+  timelapseProfileId: "prof1",
   openConnectionCount: 1,
 };
 
@@ -90,6 +91,26 @@ describe("構造タブ (#1112)", () => {
   it("対象が外れたら構造タブを閉じる", () => {
     expect(resolveBottomPanelTab("structure", { ...connected, structureTable: null })).toBeNull();
     expect(resolveBottomPanelTab("structure", connected)).toBe("structure");
+  });
+});
+
+describe("タイムラプスタブ (#739)", () => {
+  it("保存済みプロファイルで接続しているときだけ開ける (参照グループ)", () => {
+    expect(availableBottomPanelTabs(connected)).toContain("timelapse");
+    for (const id of [null, undefined, ""]) {
+      expect(availableBottomPanelTabs({ ...connected, timelapseProfileId: id })).not.toContain("timelapse");
+    }
+    expect(
+      availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
+    ).not.toContain("timelapse");
+    expect(BOTTOM_PANEL_TAB_GROUP.timelapse).toBe("reference");
+  });
+
+  it("App.tsx にパネルとツリーからの登録導線が結線されている", () => {
+    expect(appSource).toContain("timelapseProfileId: selectedProfile?.id");
+    expect(appSource).toContain('activeBottomPanelTab === "timelapse"');
+    expect(appSource).toContain("<TableTimelapsePanel");
+    expect(appSource).toContain("onWatchTable={handleWatchTable}");
   });
 });
 
@@ -182,8 +203,8 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "profile", 1)).toBe("output");
-    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("profile");
+    expect(nextBottomPanelTab(tabs, "timelapse", 1)).toBe("output");
+    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("timelapse");
   });
 
   it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {

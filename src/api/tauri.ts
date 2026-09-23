@@ -913,6 +913,63 @@ export interface DataDiff {
   target_count: number;
 }
 
+/** テーブル・タイムラプス (#739) の保存済み世代 1 件のメタデータ (行データは含まない)。 */
+export interface TimelapseGenerationMeta {
+  id: number;
+  /** 取得時刻 (RFC 3339)。 */
+  captured_at: string;
+  row_count: number;
+  /** 行数上限で打ち切った部分取得の世代なら true。 */
+  truncated: boolean;
+  bytes: number;
+}
+
+/** ウォッチ登録されたテーブル 1 件と、その世代一覧 (新しい順)。 */
+export interface TableWatch {
+  id: number;
+  profile_id: string;
+  driver: string;
+  database: string;
+  table: string;
+  /** false = ウォッチ解除済み (世代データは残してある)。自動取得の対象外。 */
+  active: boolean;
+  /** 登録時に行数上限を超えており、先頭 N 行だけの記録に同意した。 */
+  partial: boolean;
+  created_at: string;
+  generations: TimelapseGenerationMeta[];
+}
+
+/** `timelapseWatchTable` の結果。`watch_id` が null なら行数上限超過で未登録。 */
+export interface TimelapseWatchOutcome {
+  watch_id: number | null;
+  over_limit: boolean;
+  row_limit: number;
+  generation_added: boolean;
+}
+
+/** `timelapseCapture` の 1 ウォッチ分の結果。 */
+export interface TimelapseCaptureOutcome {
+  watch_id: number;
+  database: string;
+  table: string;
+  added: boolean;
+  truncated: boolean;
+  error: string | null;
+}
+
+/**
+ * 2 世代間の差分。`diff` の **source = 新しい世代 / target = 古い世代** なので、
+ * `source_only` = 追加行、`target_only` = 削除行、`different` = 変更行。
+ */
+export interface TimelapseGenerationDiff {
+  diff: DataDiff;
+  columns_added: string[];
+  columns_removed: string[];
+  partial: boolean;
+  from_captured_at: string;
+  to_captured_at: string;
+}
+
 /**
  * サンドボックス (壊せる砂場、#747) の非秘密メタデータ。実データはローカル
  * SQLite ファイル (`file_path`) に持ち、`session_id` (作成/一覧取得後にセッション
@@ -2205,6 +2262,59 @@ export const api = {
   undoFlightRecord: (sessionId: string, id: number, force: boolean) =>
     invoke<UndoOutcome>("undo_flight_record", { sessionId, id, force }).then((r) =>
       parseResponse(schemas.undoOutcome, r, "undo_flight_record"),
+    ),
+
+  // --- テーブル・タイムラプス (#739) ---
+  // スナップショットはアプリデータディレクトリ配下のローカル専用ストア
+  // (`table_timelapse.sqlite`) にのみ保存される。取得は読み取り専用の単一 SELECT で、
+  // クエリ履歴には記録されない。
+
+  /**
+   * テーブルをウォッチ登録し初回スナップショットを取る。PK の無いテーブルは
+   * エラー。行数上限を超えるテーブルは `allowPartial` が false なら登録せず
+   * `over_limit: true` を返す (UI が同意を取ってから `true` で再呼び出しする)。
+   */
+  timelapseWatchTable: (params: {
+    sessionId: string;
+    database: string;
+    table: string;
+    allowPartial: boolean;
+    maxGenerations?: number | null;
+  }) =>
+    invoke<TimelapseWatchOutcome>("timelapse_watch_table", {
+      sessionId: params.sessionId,
+      database: params.database,
+      table: params.table,
+      allowPartial: params.allowPartial,
+      maxGenerations: params.maxGenerations ?? null,
+    }).then((r) => parseResponse(schemas.timelapseWatchOutcome, r, "timelapse_watch_table")),
+
+  /** セッションのプロファイルのアクティブなウォッチを全件取得する (接続時 / 手動更新)。 */
+  timelapseCapture: (sessionId: string, maxGenerations?: number | null) =>
+    invoke<TimelapseCaptureOutcome[]>("timelapse_capture", {
+      sessionId,
+      maxGenerations: maxGenerations ?? null,
+    }).then((r) => parseResponse(schemas.timelapseCaptureOutcomeArray, r, "timelapse_capture")),
+
+  timelapseListWatches: (profileId: string) =>
+    invoke<TableWatch[]>("timelapse_list_watches", { profileId }).then((r) =>
+      parseResponse(schemas.tableWatchArray, r, "timelapse_list_watches"),
+    ),
+
+  /** 同じウォッチの 2 世代の行差分 (古い方 → 新しい方)。セッション不要。 */
+  timelapseDiffGenerations: (fromId: number, toId: number) =>
+    invoke<TimelapseGenerationDiff>("timelapse_diff_generations", { fromId, toId }).then((r) =>
+      parseResponse(schemas.timelapseGenerationDiff, r, "timelapse_diff_generations"),
+    ),
+
+  /** ウォッチ解除。`deleteData` なら保存済み世代も削除する。 */
+  timelapseUnwatch: (watchId: number, deleteData: boolean) =>
+    invoke<void>("timelapse_unwatch", { watchId, deleteData }),
+
+  /** 全ウォッチ・全世代を削除する (設定画面の一括削除)。削除した世代数を返す。 */
+  timelapseClearAll: () =>
+    invoke<number>("timelapse_clear_all").then((r) =>
+      parseResponse(schemas.numberResponse, r, "timelapse_clear_all"),
     ),
 
   // --- タスクスケジューラ (#730) ---

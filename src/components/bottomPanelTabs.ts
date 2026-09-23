@@ -35,6 +35,11 @@
  * `structure` (テーブル構造、#1112) は Database Explorer でテーブルを選んだあと
  * 「データ」と並ぶもう一方の行き先。列・インデックス・外部キーを見ながら SQL を
  * 書くための参照情報なので、全画面ではなくここに置く。
+ *
+ * `timelapse` (テーブル・タイムラプス、#739) はウォッチ登録したテーブルの世代間の
+ * 行差分。「さっきの変更で何が変わったか」を見ながら SQL を書くための参照情報なので
+ * ここに置く。ウォッチはプロファイル単位で保存するため、保存済みプロファイルで
+ * 接続しているときだけ開ける。
  */
 export const BOTTOM_PANEL_TABS = [
   "output",
@@ -47,6 +52,7 @@ export const BOTTOM_PANEL_TABS = [
   "whereUsed",
   "structure",
   "profile",
+  "timelapse",
 ] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
@@ -65,6 +71,7 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   whereUsed: "reference",
   structure: "reference",
   profile: "reference",
+  timelapse: "reference",
 };
 
 /**
@@ -105,6 +112,11 @@ export interface BottomPanelContext {
    * から決まり、決まっていなければ構造タブは開けない (空パネルを作らない)。
    */
   structureTable?: string | null;
+  /**
+   * テーブル・タイムラプス (#739) のウォッチ保存先プロファイル。アドホック接続
+   * (プロファイル無し) ではウォッチを保存できないので開けない。
+   */
+  timelapseProfileId?: string | null;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
@@ -117,6 +129,7 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
     if (tab === "advisor") return !!ctx.advisorDatabase;
     if (tab === "profile") return !!ctx.profileTable;
     if (tab === "structure") return !!ctx.structureTable;
+    if (tab === "timelapse") return !!ctx.timelapseProfileId;
     return true;
   });
 }

@@ -262,6 +262,9 @@ const ColumnProfilePanel = lazy(() =>
 const TableStructurePanel = lazy(() =>
   import("./components/TableStructurePanel").then((m) => ({ default: m.TableStructurePanel })),
 );
+const TableTimelapsePanel = lazy(() =>
+  import("./components/TableTimelapsePanel").then((m) => ({ default: m.TableTimelapsePanel })),
+);
 const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
@@ -430,6 +433,8 @@ import {
   type SchemaDriftState,
   type SnapshotTable,
 } from "./schemaDrift";
+import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
+import { summarizeCapture } from "./tableTimelapse";
 import { Tooltip } from "./components/Tooltip";
 
 type Theme = "light" | "dark";
@@ -2634,6 +2639,48 @@ export default function App() {
   );
 
   const handleOpenSchemaDrift = useCallback(() => setSchemaDriftOpen(true), []);
+
+  // テーブル・タイムラプス (#739): スキーマツリーからのウォッチ登録要求と、接続時の
+  // 自動取得後にパネルへ一覧を読み直させるカウンタ。
+  const [timelapseRequest, setTimelapseRequest] = useState<TimelapseWatchRequest | null>(null);
+  const [timelapseRefreshKey, setTimelapseRefreshKey] = useState(0);
+  const timelapseSeqRef = useRef(0);
+
+  /**
+   * ウォッチ中のテーブルのスナップショットを背景で取得する (接続時)。読み取り専用の
+   * 単一 SELECT のみで履歴を汚さない。ウォッチが無ければバックエンドは空を返す。
+   * 内容が変わったテーブルがあれば控えめなトーストで知らせる。
+   */
+  const captureTimelapse = useCallback(
+    async (sid: string, maxGenerations: number) => {
+      try {
+        const summary = summarizeCapture(await api.timelapseCapture(sid, maxGenerations));
+        if (summary.changed.length > 0) {
+          toast.notify({
+            message: translate("timelapseCaptureChangedToast", { tables: summary.changed.join(", ") }),
+            tone: "info",
+          });
+          setTimelapseRefreshKey((n) => n + 1);
+        }
+        if (summary.failed.length > 0) {
+          toast.notify({
+            message: translate("timelapseCaptureFailedToast", {
+              tables: summary.failed.map((f) => `${f.table} (${f.error})`).join(", "),
+            }),
+            tone: "info",
+            severity: "warning",
+          });
+        }
+      } catch (e) {
+        toast.notify({
+          message: translate("timelapseCaptureFailedToast", { tables: String(e) }),
+          tone: "info",
+          severity: "warning",
+        });
+      }
+    },
+    [toast],
+  );
   const handleCaptureSchemaDrift = useCallback(() => {
     if (sessionId && selectedProfile) void captureSchemaSnapshot(sessionId, selectedProfile);
   }, [sessionId, selectedProfile, captureSchemaSnapshot]);
@@ -2929,6 +2976,11 @@ export default function App() {
       if (settings.schemaDriftOnConnect) {
         void captureSchemaSnapshot(res.session_id, profile);
       }
+      // テーブル・タイムラプス (#739): ウォッチ中のテーブルのスナップショットを
+      // 背景で取得する (接続をブロックしない)。
+      if (settings.timelapseOnConnect) {
+        void captureTimelapse(res.session_id, settings.timelapseMaxGenerations);
+      }
     } catch (e) {
       // 接続失敗時は表示状態を実態 (未接続) に合わせる。sessionId は既に null に
       // なっているが selectedProfile を旧プロファイルのままにすると、ヘッダが
@@ -2962,6 +3014,9 @@ export default function App() {
     refreshPlanWatches,
     settings.schemaDriftOnConnect,
     captureSchemaSnapshot,
+    settings.timelapseOnConnect,
+    settings.timelapseMaxGenerations,
+    captureTimelapse,
     toast,
     confirm,
   ]);
@@ -6656,6 +6711,13 @@ export default function App() {
   );
   // Database Explorer でテーブルを選んだあとの「構造 (Structure)」側の行き先 (#1112)。
   // 「データ (Data)」側は従来どおり `handleOpenTable`。列を探索と同じく常に開く。
+  // テーブル・タイムラプス (#739) のウォッチ登録。確認ダイアログ・行数上限の同意・
+  // 登録はパネル側が担うので、ここは要求を渡してタブを開くだけ (常に開く)。
+  const handleWatchTable = useCallback((database: string, table: string) => {
+    timelapseSeqRef.current += 1;
+    setTimelapseRequest({ database, table, seq: timelapseSeqRef.current });
+    setBottomPanelTab("timelapse");
+  }, []);
   const handleOpenStructure = useCallback((database: string, table: string) => {
     setStructureTarget({ database, table });
     setBottomPanelTab("structure");
@@ -7793,6 +7855,7 @@ export default function App() {
     advisorDatabase: activeTab?.database ?? selectedProfile?.database,
     profileTable: profileTarget?.table,
     structureTable: structureTarget?.table,
+    timelapseProfileId: selectedProfile?.id,
     // 接続ヘルス (#1068) は接続横断なので、背景接続だけでも開ける。
     openConnectionCount: openConnections.length,
   };
@@ -7819,7 +7882,9 @@ export default function App() {
               ? t("profileTitle")
               : tab === "structure"
                 ? t("structureTitle")
-                : t("processTitle");
+                : tab === "timelapse"
+                  ? t("timelapseTitle")
+                  : t("processTitle");
 
   return (
     <Flex
@@ -8100,6 +8165,7 @@ export default function App() {
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
             onExploreColumns={(database, table) => handleExploreColumns(database, table)}
+            onWatchTable={handleWatchTable}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
             onEditViewDefinition={handleEditViewDefinition}
@@ -8340,6 +8406,18 @@ export default function App() {
                         target={structureTarget}
                         onOpenData={handleOpenTable}
                         onSelectTable={setStructureTarget}
+                      />
+                    ) : null
+                  ) : activeBottomPanelTab === "timelapse" ? (
+                    selectedProfile ? (
+                      <TableTimelapsePanel
+                        key={selectedProfile.id}
+                        sessionId={sessionId}
+                        profileId={selectedProfile.id}
+                        maxGenerations={settings.timelapseMaxGenerations}
+                        watchRequest={timelapseRequest}
+                        onRequestConsumed={() => setTimelapseRequest(null)}
+                        refreshKey={timelapseRefreshKey}
                       />
                     ) : null
                   ) : activeBottomPanelTab === "inspector" ? (
@@ -9446,6 +9524,12 @@ export default function App() {
                 if (db) setSchemaExportTarget(db);
               },
               disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
+            },
+            {
+              label: t("settingsTimelapse"),
+              onSelect: () => toggleBottomPanel("timelapse"),
+              disabled: !sessionId || !selectedProfile,
               title: !sessionId ? t("appToolsNeedsSession") : undefined,
             },
             {
