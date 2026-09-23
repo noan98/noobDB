@@ -48,6 +48,7 @@ import {
   type ContextMenuEntry,
 } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
+import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
@@ -4400,6 +4401,16 @@ export const DataGrid = memo(function DataGrid({
 
   return (
     <>
+      {/* スクロール端影 (#1073)。スクロールコンテナ直下の先頭に置く高さ 0 の
+          sticky 帯で、表の流れ・列整列には影響しない。左の影は行番号列 + 左ピン
+          留め列の右端、右の影は右ピン留め列の左端に出す (ピン境界を尊重)。 */}
+      {virtualize && scrollContainerRef && (
+        <ScrollEdgeShadows
+          scrollRef={scrollContainerRef}
+          insetStart={leftDeadZone}
+          insetEnd={rightDeadZone}
+        />
+      )}
       {(isFiltered || multiSortActive || serverSort || serverFilter) && (
         <Box className="grid-filter-summary">
           {isFiltered && t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
