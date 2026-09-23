@@ -6521,6 +6521,16 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     return false;
   }, [pendingEdits, validateEdit]);
 
+  // スマート値ピッカー (#1067): 編集可能なテーブルタブでだけ候補取得を有効にする。
+  // フックなので下の早期 return より前で呼ぶ (結果の有無で呼び出し順が変わらないように)。
+  const valuePicker = useValuePicker({
+    driver: driver ?? "mysql",
+    database,
+    table,
+    columns: tableColumns,
+    lookup: !!editable && pkIndices.length > 0 ? onLookupQuery : undefined,
+  });
+
   if (!result) {
     return (
       <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
@@ -6580,14 +6590,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
   const hasPendingEdits = editsCount > 0;
   const editableActive = !!editable && pkIndices.length > 0;
-  // スマート値ピッカー (#1067): 編集可能なテーブルタブでだけ候補取得を有効にする。
-  const valuePicker = useValuePicker({
-    driver: driver ?? "mysql",
-    database,
-    table,
-    columns: tableColumns,
-    lookup: editableActive ? onLookupQuery : undefined,
-  });
   const autoRefreshOn = autoRefreshSecs != null && autoRefreshSecs > 0;
 
   // Preview wraps a single statement; multi-row edits would need a
