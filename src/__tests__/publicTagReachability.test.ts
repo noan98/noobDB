@@ -97,7 +97,10 @@ function references(
   declFile: string,
   includeTests: boolean,
 ): { own: number; others: string[] } {
-  const re = new RegExp(`(^|[^\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`, "g");
+  // 識別子には `$` しか正規表現のメタ文字が現れないが、将来の取り違えを防ぐため
+  // バックスラッシュを含むすべてのメタ文字をエスケープする。
+  const escaped = name.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
+  const re = new RegExp(`(^|[^\\w$])${escaped}(?![\\w$])`, "g");
   let own = 0;
   const others: string[] = [];
   for (const [file, src] of strippedSources) {
