@@ -194,7 +194,7 @@ App Shell は `Sidebar / Main Workspace / Bottom Panel` の 3 領域 (#1112)。
 | 性質 | 置き場所 | 実体 |
 |---|---|---|
 | 一時的な操作 (作成・変更・確認・エクスポート設定) | **Modal** | `Modal.tsx` |
-| SQL を書きながら参照する情報 (アドバイザ・インスペクタ・プロセス監視) | **Bottom Panel** | `BottomPanel.tsx` + `bottomPanelTabs.ts` |
+| SQL を書きながら参照する情報 (アドバイザ・インスペクタ・プロセス監視・テーブル構造) | **Bottom Panel** | `BottomPanel.tsx` + `bottomPanelTabs.ts` |
 | それ自体が作業対象で広い面積が要るもの (ER 図・スキーマ比較・ユーザ管理・結果比較) | **全画面サーフェス** | `App.tsx` の三項チェーン + `workspaceView.ts` |
 
 Modal は「開いて、決めて、閉じる」ものに限る。**閉じるまで作業が進まない**性質が

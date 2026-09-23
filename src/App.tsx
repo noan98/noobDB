@@ -249,6 +249,9 @@ const AdvisorPanel = lazy(() =>
 const ColumnProfilePanel = lazy(() =>
   import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
 );
+const TableStructurePanel = lazy(() =>
+  import("./components/TableStructurePanel").then((m) => ({ default: m.TableStructurePanel })),
+);
 const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
@@ -313,6 +316,10 @@ import {
 } from "./components/workspaceEscape";
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, WorkspaceSplit } from "./components/BottomPanel";
+import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
+import { parseSidebarWidth } from "./components/sidebarLayout";
+import type { StructureTarget } from "./components/tableStructure";
+import { workspaceCommandItems } from "./components/workspaceCommands";
 import {
   availableBottomPanelTabs,
   resolveBottomPanelTab,
@@ -436,19 +443,16 @@ const SIDEBAR_EXPAND_BUTTON_SIZE = "28px";
  */
 const SIDEBAR_EXPAND_CLEARANCE =
   `calc(var(--space-2) + ${SIDEBAR_EXPAND_BUTTON_SIZE} + var(--space-2-5))`;
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_MAX_WIDTH = 560;
-const SIDEBAR_DEFAULT_WIDTH = 300;
 // Below this window width the sidebar auto-collapses to give the main area room;
 // the user can still open it on demand (it then overlays the editor, see CSS).
 const NARROW_BREAKPOINT = 760;
 
-const clampSidebarWidth = (w: number) =>
-  Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, w));
-
 function readInitialSidebarWidth(): number {
-  const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-  return Number.isFinite(saved) && saved > 0 ? clampSidebarWidth(saved) : SIDEBAR_DEFAULT_WIDTH;
+  try {
+    return parseSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  } catch {
+    return parseSidebarWidth(null);
+  }
 }
 
 type Status =
@@ -1278,6 +1282,9 @@ export default function App() {
   // 「列を探索」(#974) の対象。サイドバーのテーブル / 結果グリッドの列から開いたときに
   // 決まり、ボトムパネルの profile タブはこれがあるときだけ開ける。
   const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
+  // テーブル構造 (#1112) の対象。ツリー / コマンドパレット / 外部キーの参照先から
+  // 決まり、ボトムパネルの structure タブはこれがあるときだけ開ける。
+  const [structureTarget, setStructureTarget] = useState<StructureTarget | null>(null);
   // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
   const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
@@ -1416,7 +1423,6 @@ export default function App() {
   const [narrow, setNarrow] = useState<boolean>(() => window.innerWidth < NARROW_BREAKPOINT);
   const [narrowSidebarOpen, setNarrowSidebarOpen] = useState(false);
   const [sidebarResizing, setSidebarResizing] = useState(false);
-  const sidebarResizingRef = useRef(false);
 
   const sidebarCollapsed = narrow ? !narrowSidebarOpen : sidebarUserCollapsed;
 
@@ -1504,42 +1510,6 @@ export default function App() {
       cancelled = true;
     };
     // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
-  }, []);
-
-  // Lock the cursor while dragging so it doesn't flicker off the thin handle.
-  useEffect(() => {
-    if (!sidebarResizing) return;
-    const prev = document.body.style.cursor;
-    document.body.style.cursor = "ew-resize";
-    return () => {
-      document.body.style.cursor = prev;
-    };
-  }, [sidebarResizing]);
-
-  const onSidebarResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    sidebarResizingRef.current = true;
-    setSidebarResizing(true);
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const onSidebarResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!sidebarResizingRef.current) return;
-    setSidebarWidth(clampSidebarWidth(e.clientX));
-  }, []);
-
-  const onSidebarResizePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    sidebarResizingRef.current = false;
-    setSidebarResizing(false);
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -6547,9 +6517,16 @@ export default function App() {
     },
     [],
   );
+  // Database Explorer でテーブルを選んだあとの「構造 (Structure)」側の行き先 (#1112)。
+  // 「データ (Data)」側は従来どおり `handleOpenTable`。列を探索と同じく常に開く。
+  const handleOpenStructure = useCallback((database: string, table: string) => {
+    setStructureTarget({ database, table });
+    setBottomPanelTab("structure");
+  }, []);
   // 接続先が変わったら前のセッションのテーブルを指したままにしない。
   useEffect(() => {
     setProfileTarget(null);
+    setStructureTarget(null);
   }, [sessionId]);
   /**
    * スキーマツリーの右クリック (テーブル / 列 / ビュー) から影響分析 (#1027) を開き、
@@ -6598,6 +6575,31 @@ export default function App() {
 
   // パレットの「現在の DB」を要する項目 (スキーマエクスポート等) の対象 DB。
   const paletteDatabase = activeTab?.database ?? selectedProfile?.database ?? null;
+
+  // パレットの構造 (#1112) 候補に使う、アクティブ接続でキャッシュ済みのテーブル。
+  const paletteTables = useMemo(() => {
+    if (!sessionId) return [];
+    const prefix = `${sessionId}\0`;
+    const out: { database: string; table: string }[] = [];
+    for (const [key, schema] of Object.entries(schemaCache)) {
+      if (!key.startsWith(prefix)) continue;
+      const database = key.slice(prefix.length);
+      for (const table of schema) out.push({ database, table: table.name });
+    }
+    return out;
+  }, [sessionId, schemaCache]);
+
+  // パレットから Database Explorer の絞り込みへ移る (#1112)。折りたたみ中は
+  // サイドバーが inert でフォーカスできないので先に開く。パレットが閉じて
+  // フォーカスを戻し終えてから移すため 2 フレーム待つ。
+  const focusExplorer = useCallback(() => {
+    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+    else setSidebarUserCollapsed(false);
+    setSidebarTab("connections");
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => connectionListRef.current?.focusFilter()),
+    );
+  }, []);
 
   const commandItems = useMemo<CommandItem[]>(() => {
     const items: CommandItem[] = [];
@@ -6717,40 +6719,25 @@ export default function App() {
         run: () => toggleTheme(),
       },
     );
-    // アドバイザは DB コンテキストが要る (ツールメニューと同じガード)。DB が
-    // 解決できないとパレットから開いても database="" で診断が失敗するため、
-    // ここで導線ごと出さない。
-    if (sessionId && paletteDatabase) {
-      items.push({
-        id: "nav:advisor",
-        group: "navigation",
-        label: t("appAdvisor"),
-        icon: "warning",
-        keywords: "advisor schema health index lint 健全性 診断 インデックス",
-        run: () => toggleBottomPanel("advisor"),
-      });
-    }
-    if (openConnections.length > 0) {
-      items.push({
-        id: "nav:connectionHealth",
-        group: "navigation",
-        label: t("healthTitle"),
-        icon: "server",
-        keywords: "health ping latency version status ヘルス 稼働 レイテンシ バージョン 死活",
-        run: () => toggleBottomPanel("health"),
-      });
-    }
-    // 影響分析 (#1027)。対象はパネル内のフォームで決めるので接続だけを要求する。
-    if (sessionId) {
-      items.push({
-        id: "nav:whereUsed",
-        group: "navigation",
-        label: t("cmdkWhereUsed"),
-        icon: "search",
-        keywords: "where used usages impact dependency references drop rename 影響分析 参照元 依存 使用箇所",
-        run: () => toggleBottomPanel("whereUsed"),
-      });
-    }
+    // Sidebar / Bottom Panel / テーブル構造への導線 (#1112)。可用条件は純モジュール側。
+    items.push(
+      ...workspaceCommandItems(
+        {
+          sessionId,
+          driver: selectedProfile?.driver ?? null,
+          database: paletteDatabase,
+          openConnectionCount: openConnections.length,
+          sidebarCollapsed,
+          tables: paletteTables,
+          shortcuts: {
+            toggleSidebar: formatCombo(shortcutBindings.toggleSidebar),
+            sidebarFilter: formatCombo(shortcutBindings.sidebarFilter),
+          },
+        },
+        { toggleBottomPanel, toggleSidebar, focusExplorer, openStructure: handleOpenStructure },
+        t,
+      ),
+    );
     if (sessionId) {
       items.push({
         id: "nav:disconnect",
@@ -6870,6 +6857,12 @@ export default function App() {
     toggleTheme,
     pinnedResults.length,
     openConnections.length,
+    sidebarCollapsed,
+    paletteTables,
+    toggleBottomPanel,
+    toggleSidebar,
+    focusExplorer,
+    handleOpenStructure,
   ]);
 
   // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
@@ -7558,6 +7551,7 @@ export default function App() {
     sessionId,
     advisorDatabase: activeTab?.database ?? selectedProfile?.database,
     profileTable: profileTarget?.table,
+    structureTable: structureTarget?.table,
     // 接続ヘルス (#1068) は接続横断なので、背景接続だけでも開ける。
     openConnectionCount: openConnections.length,
   };
@@ -7576,7 +7570,9 @@ export default function App() {
             ? t("healthTitle")
             : tab === "profile"
               ? t("profileTitle")
-              : t("processTitle");
+              : tab === "structure"
+                ? t("structureTitle")
+                : t("processTitle");
 
   return (
     <Flex
@@ -7827,6 +7823,7 @@ export default function App() {
             onDuplicate={handleDuplicateProfile}
             onDelete={handleDeleteProfile}
             onPickTable={handleOpenTable}
+            onOpenStructure={handleOpenStructure}
             onImportTable={handleImportTable}
             onTransferTable={handleTransferTable}
             onImportNewTable={handleImportNewTable}
@@ -7945,42 +7942,12 @@ export default function App() {
       </Flex>
 
       {!sidebarCollapsed && (
-        <Box
-          position="absolute"
-          top={0}
-          bottom={0}
-          left="var(--sidebar-width, 300px)"
-          width="9px"
-          transform="translateX(-5px)"
-          cursor="ew-resize"
-          zIndex={45}
-          touchAction="none"
-          data-dragging={sidebarResizing ? "true" : undefined}
-          css={{
-            "&::after": {
-              content: '""',
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: "5px",
-              width: "1px",
-              background: "transparent",
-              transition:
-                "background var(--dur-fast, 0.12s) var(--ease, ease), width var(--dur-fast, 0.12s) var(--ease, ease)",
-            },
-            "&:hover::after, &[data-dragging='true']::after": {
-              background: "var(--accent)",
-              width: "2px",
-            },
-          }}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t("sidebarCollapse")}
-          onPointerDown={onSidebarResizePointerDown}
-          onPointerMove={onSidebarResizePointerMove}
-          onPointerUp={onSidebarResizePointerUp}
-          onPointerCancel={onSidebarResizePointerUp}
-          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+        <SidebarResizeHandle
+          width={sidebarWidth}
+          onWidthChange={setSidebarWidth}
+          resizing={sidebarResizing}
+          onResizingChange={setSidebarResizing}
+          ariaLabel={t("sidebarResizeAria")}
         />
       )}
 
@@ -8104,6 +8071,16 @@ export default function App() {
                         onSelectColumn={(column) =>
                           setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
                         }
+                      />
+                    ) : null
+                  ) : activeBottomPanelTab === "structure" ? (
+                    structureTarget ? (
+                      <TableStructurePanel
+                        sessionId={sessionId}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        target={structureTarget}
+                        onOpenData={handleOpenTable}
+                        onSelectTable={setStructureTarget}
                       />
                     ) : null
                   ) : activeBottomPanelTab === "inspector" ? (

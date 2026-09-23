@@ -23,11 +23,14 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listTables: vi.fn().mockResolvedValue(["tbl1", "tbl2"]),
       tableRowEstimates: vi.fn().mockResolvedValue([]),
       listSchemaObjects: vi.fn().mockResolvedValue([]),
+      describeTable: vi.fn().mockResolvedValue([]),
+      listIndexes: vi.fn().mockResolvedValue([]),
     },
   };
 });
 
 import { ConnectionList } from "../components/ConnectionList";
+import { api } from "../api/tauri";
 
 const noop = () => {};
 const baseProps = {
@@ -146,5 +149,89 @@ describe("ConnectionList のアクティブテーブル行インジケータ (#9
     const row2 = await screen.findByRole("treeitem", { name: "tbl2" });
     expect(row1).not.toHaveAttribute("aria-current");
     expect(row2).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("Database Explorer の階層 (#1112)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const col = (name: string, over: Record<string, unknown> = {}) => ({
+    name,
+    data_type: "int",
+    nullable: false,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...over,
+  });
+
+  async function openDb(props: Partial<Parameters<typeof ConnectionList>[0]> = {}) {
+    const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={[profile]}
+        activeProfileId="p-a"
+        sessionId="s1"
+        onOpenObjectDefinition={noop}
+        {...props}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("treeitem", { name: "db1" }));
+  }
+
+  it("ビューはテーブル一覧から外れて「ビュー」グループに 1 回だけ並ぶ", async () => {
+    vi.mocked(api.listTables).mockResolvedValueOnce(["tbl1", "v1"]);
+    vi.mocked(api.listSchemaObjects).mockResolvedValueOnce([{ kind: "view", name: "v1", id: null }]);
+    await openDb();
+
+    await screen.findByText(t("objGroupViews"));
+    expect(screen.getByText(t("objGroupTables"))).toBeInTheDocument();
+    expect(screen.getAllByRole("treeitem", { name: "v1" })).toHaveLength(1);
+    expect(screen.getByRole("treeitem", { name: "tbl1" })).toBeInTheDocument();
+  });
+
+  it("テーブルの右クリックは先頭に「データを開く」「構造を表示」を出す", async () => {
+    const onPickTable = vi.fn();
+    const onOpenStructure = vi.fn();
+    await openDb({ onPickTable, onOpenStructure });
+
+    const row = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.contextMenu(row);
+    const items = await screen.findAllByRole("menuitem");
+    expect(items[0]).toHaveTextContent(t("contextMenuOpenData"));
+    expect(items[1]).toHaveTextContent(t("contextMenuOpenStructure"));
+    fireEvent.click(items[1]);
+    expect(onOpenStructure).toHaveBeenCalledWith("db1", "tbl1");
+
+    fireEvent.contextMenu(row);
+    fireEvent.click((await screen.findAllByRole("menuitem"))[0]);
+    expect(onPickTable).toHaveBeenCalledWith("db1", "tbl1");
+  });
+
+  it("テーブルを展開すると列・インデックス・外部キーのグループが並び、外部キーから参照先を開ける", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([
+      col("id", { key: "PRI" }),
+      col("user_id", { referenced_table: "users", referenced_column: "id" }),
+    ]);
+    vi.mocked(api.listIndexes).mockResolvedValueOnce([
+      { name: "PRIMARY", columns: ["id"], unique: true, primary: true, method: null },
+    ]);
+    const onPickTable = vi.fn();
+    await openDb({ onPickTable });
+
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+
+    const fkRow = await screen.findByRole("treeitem", { name: "user_id → users.id" });
+    expect(screen.getByText(t("treeColumnsLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("indexesLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("treeForeignKeysLabel"))).toBeInTheDocument();
+    fireEvent.click(fkRow);
+    expect(onPickTable).toHaveBeenCalledWith("db1", "users");
   });
 });

@@ -21,6 +21,10 @@
  * DDL を書く」ための参照情報なので、全画面ではなくここに置く。対象のデータベースは
  * パネル内のフォームで決める (スキーマツリーの右クリックから開くと埋まった状態で
  * 始まる) ため、開ける条件は接続中であることだけ。
+ *
+ * `structure` (テーブル構造、#1112) は Database Explorer でテーブルを選んだあと
+ * 「データ」と並ぶもう一方の行き先。列・インデックス・外部キーを見ながら SQL を
+ * 書くための参照情報なので、全画面ではなくここに置く。
  */
 export const BOTTOM_PANEL_TABS = [
   "advisor",
@@ -29,6 +33,7 @@ export const BOTTOM_PANEL_TABS = [
   "whereUsed",
   "health",
   "profile",
+  "structure",
 ] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
@@ -53,6 +58,11 @@ export interface BottomPanelContext {
    * 無い空パネルを作らない)。
    */
   profileTable?: string | null;
+  /**
+   * 構造タブ (#1112) の対象テーブル。ツリー / コマンドパレット / 外部キーの参照先
+   * から決まり、決まっていなければ構造タブは開けない (空パネルを作らない)。
+   */
+  structureTable?: string | null;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
@@ -62,6 +72,7 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
     if (!ctx.sessionId) return false;
     if (tab === "advisor") return !!ctx.advisorDatabase;
     if (tab === "profile") return !!ctx.profileTable;
+    if (tab === "structure") return !!ctx.structureTable;
     return true;
   });
 }

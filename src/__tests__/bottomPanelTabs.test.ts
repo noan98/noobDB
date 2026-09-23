@@ -26,6 +26,7 @@ const connected = {
   sessionId: "sess1",
   advisorDatabase: "app",
   profileTable: "users",
+  structureTable: "users",
   openConnectionCount: 1,
 };
 
@@ -63,6 +64,26 @@ describe("availableBottomPanelTabs", () => {
     expect(
       availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: "app", profileTable: "users", openConnectionCount: 1 }),
     ).toContain("profile");
+  });
+});
+
+describe("構造タブ (#1112)", () => {
+  it("対象テーブルが決まったときだけ開ける", () => {
+    for (const table of [null, undefined, ""]) {
+      expect(availableBottomPanelTabs({ ...connected, structureTable: table })).not.toContain("structure");
+    }
+    expect(availableBottomPanelTabs(connected)).toContain("structure");
+  });
+
+  it("未接続では対象テーブルが残っていても開けない", () => {
+    expect(
+      availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
+    ).not.toContain("structure");
+  });
+
+  it("対象が外れたら構造タブを閉じる", () => {
+    expect(resolveBottomPanelTab("structure", { ...connected, structureTable: null })).toBeNull();
+    expect(resolveBottomPanelTab("structure", connected)).toBe("structure");
   });
 });
 
@@ -125,8 +146,8 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "profile", 1)).toBe("advisor");
-    expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("profile");
+    expect(nextBottomPanelTab(tabs, "structure", 1)).toBe("advisor");
+    expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("structure");
   });
 
   it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {
@@ -162,6 +183,13 @@ describe("App.tsx の結線 (#1112)", () => {
   it("ワークスペースとボトムパネルの分割は共通の Splitter へ委ねる", () => {
     // 高さのリサイズ規則 (クランプ・永続化・キーボード操作) を二重実装しない。
     expect(appSource).toContain("<WorkspaceSplit");
+  });
+
+  it("構造タブ (#1112) はツリーから開け、パネルからデータタブへ戻れる", () => {
+    expect(appSource).toContain("structureTable: structureTarget?.table");
+    expect(appSource).toContain('activeBottomPanelTab === "structure"');
+    expect(appSource).toContain("onOpenStructure={handleOpenStructure}");
+    expect(appSource).toContain("onOpenData={handleOpenTable}");
   });
 
   it("ボトムパネルへ移した 3 つは全画面サーフェスとして残っていない", () => {
