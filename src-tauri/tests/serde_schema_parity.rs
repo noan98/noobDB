@@ -44,7 +44,7 @@ use t::{
     CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PreviewResult,
+    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
     PreviewStreamMessage, ProcessInfo, ProfileWithSecretFlags, QueryResult, QueryStatsSupport,
     QueryStreamMessage, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
     ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet,
@@ -182,16 +182,6 @@ fn build_fixtures() -> serde_json::Value {
         questions: Some(1_000_000),
         slow_queries: Some(12),
         lock_waits: Some(5),
-    };
-    let preview_result = PreviewResult {
-        target_table: Some("users".into()),
-        columns: vec![column.clone()],
-        primary_key: vec!["id".into()],
-        before_rows: vec![vec![Value::Int(1)]],
-        after_rows: vec![vec![Value::Int(2)]],
-        rows_affected: 1,
-        elapsed_ms: 5,
-        truncated: false,
     };
     let health_finding = HealthFinding {
         rule: RuleId::FkMissingIndex,
@@ -540,7 +530,6 @@ fn build_fixtures() -> serde_json::Value {
         "queryStatsSupport": query_stats_support,
         "liveQuery": live_query,
         "statementStat": statement_stat,
-        "previewResult": preview_result,
         "healthFinding": health_finding,
         "skippedRule": skipped_rule,
         "schemaHealthReport": schema_health_report,

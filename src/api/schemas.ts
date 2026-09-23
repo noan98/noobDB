@@ -221,22 +221,6 @@ export const schemaObject = z.object({
   id: z.string().nullish().transform((v) => v ?? null),
 });
 
-/**
- * プレビュー結果の検証スキーマ。他の IPC スキーマと対をなす公開検証表面で、
- * 現状ランタイム検証には未配線だが API 完全性のため保持する。
- * @public
- */
-export const previewResult = z.object({
-  target_table: z.string().nullable(),
-  columns: z.array(column),
-  primary_key: z.array(z.string()),
-  before_rows: z.array(z.array(cellValue)),
-  after_rows: z.array(z.array(cellValue)),
-  rows_affected: z.number(),
-  elapsed_ms: z.number(),
-  truncated: z.boolean(),
-});
-
 // #708: 踏み台/ジャンプホスト (2 段目まで)。SshProfile と同形だが自身の jump は
 // 持たない (チェーンは 1 段のジャンプホストまでに制限)。
 const sshJumpProfile = z.object({

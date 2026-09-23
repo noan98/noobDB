@@ -241,31 +241,6 @@
     "path": "/home/user/.local/share/noobDB/noobdb.log",
     "text": "2026-01-01T00:00:00Z INFO noobdb starting"
   },
-  "previewResult": {
-    "after_rows": [
-      [
-        2
-      ]
-    ],
-    "before_rows": [
-      [
-        1
-      ]
-    ],
-    "columns": [
-      {
-        "name": "id",
-        "type_name": "INTEGER"
-      }
-    ],
-    "elapsed_ms": 5,
-    "primary_key": [
-      "id"
-    ],
-    "rows_affected": 1,
-    "target_table": "users",
-    "truncated": false
-  },
   "previewStreamDoneMessage": {
     "kind": "done"
   },
