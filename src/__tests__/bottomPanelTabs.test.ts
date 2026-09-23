@@ -22,14 +22,14 @@ import {
  * 使い忘れていないこと) をソース走査で確認する (`workspaceView.test.ts` と同じ手法)。
  */
 
-const connected = { sessionId: "sess1", advisorDatabase: "app" };
+const connected = { sessionId: "sess1", advisorDatabase: "app", profileTable: "users" };
 
 describe("availableBottomPanelTabs", () => {
   it("未接続ではどのタブも開けない", () => {
     expect(availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app" })).toEqual([]);
   });
 
-  it("接続していれば 3 タブとも開ける (定義順を保つ)", () => {
+  it("接続していて対象が揃えば全タブを開ける (定義順を保つ)", () => {
     expect(availableBottomPanelTabs(connected)).toEqual([...BOTTOM_PANEL_TABS]);
   });
 
@@ -40,6 +40,17 @@ describe("availableBottomPanelTabs", () => {
         "processes",
       ]);
     }
+  });
+
+  it("「列を探索」(#974) は対象テーブルが決まったときだけ開ける", () => {
+    for (const table of [null, undefined, ""]) {
+      expect(
+        availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: "app", profileTable: table }),
+      ).not.toContain("profile");
+    }
+    expect(
+      availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: "app", profileTable: "users" }),
+    ).toContain("profile");
   });
 });
 
@@ -58,6 +69,10 @@ describe("resolveBottomPanelTab", () => {
     expect(
       resolveBottomPanelTab("processes", { sessionId: null, advisorDatabase: "app" }),
     ).toBeNull();
+  });
+
+  it("プロファイル対象が外れたら「列を探索」を閉じる", () => {
+    expect(resolveBottomPanelTab("profile", { ...connected, profileTable: null })).toBeNull();
   });
 
   it("対象データベースが外れたらアドバイザだけ閉じる (他タブは残る)", () => {
@@ -91,8 +106,8 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "processes", 1)).toBe("advisor");
-    expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("processes");
+    expect(nextBottomPanelTab(tabs, "profile", 1)).toBe("advisor");
+    expect(nextBottomPanelTab(tabs, "advisor", -1)).toBe("profile");
   });
 
   it("開けるタブだけの並びで折り返す (アドバイザが落ちている場合)", () => {

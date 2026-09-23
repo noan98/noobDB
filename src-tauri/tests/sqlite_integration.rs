@@ -2489,3 +2489,86 @@ async fn sqlite_list_processes_via_command_layer() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// 列データプロファイル (#974) のコマンド層。読み取りの集計だけなので read_only
+/// セッションでも動くこと、NULL 率 / DISTINCT / MIN・MAX / 上位頻出値 / ヒストグラムが
+/// SQLite の実 SQL で揃うこと、存在しない列・未知セッションを弾くことを固定する。
+#[tokio::test]
+async fn sqlite_profile_column_via_command_layer() {
+    let path = temp_cmd_db("profile");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE profile_t (id INTEGER PRIMARY KEY, score REAL, tag TEXT, big INTEGER)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO profile_t (score, tag, big) VALUES \
+         (1.0, 'a', 9007199254740993), (2.0, 'a', 1), (2.0, 'b', 1), \
+         (10.0, 'a', 1), (NULL, NULL, NULL)",
+        None,
+    )
+    .await
+    .expect("insert");
+    // read_only = true: プロファイルは読み取りだけなので読み取り専用セッションでも動く。
+    let session = t::make_session("prof", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let p = t::profile_column_inner(&state, &sid, "main", "profile_t", "score", false, None)
+        .await
+        .expect("profile numeric column");
+    assert!(p.numeric);
+    assert_eq!(p.total_count, t::Value::UInt(5));
+    assert_eq!(p.non_null_count, t::Value::UInt(4));
+    assert_eq!(p.null_count, t::Value::UInt(1));
+    assert_eq!(p.distinct_count, Some(t::Value::UInt(3)));
+    assert_eq!(p.min_value, t::Value::Float(1.0));
+    assert_eq!(p.max_value, t::Value::Float(10.0));
+    assert_eq!(p.top_values[0].count, t::Value::UInt(2));
+    let hist_total: u64 = p
+        .histogram
+        .iter()
+        .map(|b| match b.count {
+            t::Value::UInt(c) => c,
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(hist_total, 4, "every non-NULL value lands in one bucket");
+    assert_eq!(p.histogram.first().map(|b| b.lower), Some(1.0));
+    assert_eq!(p.histogram.last().map(|b| b.upper), Some(10.0));
+
+    // SQLite は近似 DISTINCT を持たないので正確値に縮退し、理由を残す。
+    let approx = t::profile_column_inner(&state, &sid, "main", "profile_t", "tag", true, Some(1))
+        .await
+        .expect("profile text column");
+    assert!(!approx.numeric);
+    assert!(approx.histogram.is_empty());
+    assert!(!approx.distinct_approximate);
+    assert_eq!(
+        approx.notes,
+        vec!["approx_distinct_unsupported".to_string()]
+    );
+    assert_eq!(approx.top_values.len(), 1);
+    assert_eq!(approx.top_values[0].value, t::Value::String("a".into()));
+    assert_eq!(approx.top_values[0].count, t::Value::UInt(3));
+
+    // 2^53 を超える値は丸めずに文字列で届く (from_*_lossless 経由)。
+    let big = t::profile_column_inner(&state, &sid, "main", "profile_t", "big", false, None)
+        .await
+        .expect("profile bigint column");
+    assert_eq!(big.max_value, t::Value::String("9007199254740993".into()));
+
+    assert!(matches!(
+        t::profile_column_inner(&state, &sid, "main", "profile_t", "nope", false, None).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        t::profile_column_inner(&state, "nope", "main", "profile_t", "score", false, None).await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}

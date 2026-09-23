@@ -18,7 +18,8 @@ const label = (tab: BottomPanelTab) =>
 function renderShell(overrides: Partial<Parameters<typeof BottomPanel>[0]> = {}) {
   const props = {
     tab: "advisor" as BottomPanelTab,
-    tabs: BOTTOM_PANEL_TABS,
+    // 「列を探索」(#974) は対象テーブルが決まったときだけ並ぶので、常設の 3 タブで検証する。
+    tabs: BOTTOM_PANEL_TABS.filter((tab) => tab !== "profile"),
     label,
     onSelect: vi.fn(),
     onClose: vi.fn(),

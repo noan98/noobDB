@@ -290,6 +290,8 @@ interface Props {
   onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
   /** DB ノードからサイズ・統計ダッシュボードを開く。#562。 */
   onShowDatabaseSizes?: (database: string) => void;
+  /** テーブルノードから列データプロファイル (「列を探索」) を開く。#974。 */
+  onExploreColumns?: (database: string, table: string) => void;
   /** DB ノードからサンドボックス (壊せる砂場) 作成ダイアログを開く。#747。 */
   onCreateSandbox?: (database: string) => void;
   /** 作成済みサンドボックス一覧 (#747)。専用セクションとして通常のプロファイル
@@ -365,6 +367,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
+  onExploreColumns,
   onCreateSandbox,
   sandboxes,
   onOpenSandbox,
@@ -903,6 +906,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     ];
     if (onShowCreateTable) {
       items.push({ label: t("contextMenuShowCreate"), onSelect: () => onShowCreateTable(db, tbl) });
+    }
+    // 列データプロファイル (#974)。読み取りの集計だけなので read_only でも有効。
+    if (onExploreColumns) {
+      items.push({ label: t("profileMenuLabel"), onSelect: () => onExploreColumns(db, tbl) });
     }
     if (onToggleFavorite) {
       const fav = (favorites ?? []).some((f) => tableRefEquals(f, { database: db, table: tbl }));

@@ -15,7 +15,7 @@
  */
 
 /** ボトムパネルに並ぶタブ。表示順もこの配列の順。 */
-export const BOTTOM_PANEL_TABS = ["advisor", "inspector", "processes"] as const;
+export const BOTTOM_PANEL_TABS = ["advisor", "inspector", "processes", "profile"] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
 
@@ -28,12 +28,22 @@ export interface BottomPanelContext {
    * 診断はデータベース単位なので、これが無いとアドバイザだけ開けない。
    */
   advisorDatabase: string | null | undefined;
+  /**
+   * 「列を探索」(#974) の対象テーブル。サイドバーのテーブル / 結果グリッドの列から
+   * 開いたときだけ決まり、決まっていなければプロファイルタブは開けない (対象の
+   * 無い空パネルを作らない)。
+   */
+  profileTable?: string | null;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
 export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTab[] {
   if (!ctx.sessionId) return [];
-  return BOTTOM_PANEL_TABS.filter((tab) => tab !== "advisor" || !!ctx.advisorDatabase);
+  return BOTTOM_PANEL_TABS.filter((tab) => {
+    if (tab === "advisor") return !!ctx.advisorDatabase;
+    if (tab === "profile") return !!ctx.profileTable;
+    return true;
+  });
 }
 
 /**

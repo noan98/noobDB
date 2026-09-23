@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **99 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **100 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -48,6 +48,11 @@
 
 `analyze_schema_health` / `query_stats_support` / `sample_live_queries` /
 `sample_statement_stats` / `server_info` / `server_metrics`
+
+## 列データプロファイル (`commands/profile.rs`)
+
+`profile_column` (#974。NULL 率 / DISTINCT / MIN・MAX / 上位頻出値 / ヒストグラムを
+サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可)
 
 ## タスクスケジューラ (`commands/tasks.rs`)
 

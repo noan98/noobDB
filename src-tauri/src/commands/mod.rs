@@ -12,6 +12,7 @@ pub mod local;
 pub mod logs;
 pub mod privileges;
 pub mod process;
+pub mod profile;
 pub mod profiles;
 pub mod query;
 pub mod sandbox;

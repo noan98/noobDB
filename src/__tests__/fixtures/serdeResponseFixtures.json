@@ -15,6 +15,34 @@
     "name": "id",
     "type_name": "INTEGER"
   },
+  "columnProfile": {
+    "column": "age",
+    "data_type": "bigint",
+    "distinct_approximate": true,
+    "distinct_count": "9007199254740993",
+    "histogram": [
+      {
+        "count": 7,
+        "lower": 0.0,
+        "upper": 2.5
+      }
+    ],
+    "max_value": "9007199254740993",
+    "min_value": -3,
+    "non_null_count": 80,
+    "notes": [
+      "approx_distinct_no_stats"
+    ],
+    "null_count": 20,
+    "numeric": true,
+    "top_values": [
+      {
+        "count": 10,
+        "value": 42
+      }
+    ],
+    "total_count": 100
+  },
   "connectPhaseEvent": {
     "attemptId": "attempt0001",
     "phase": "tunnel_connecting"

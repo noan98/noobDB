@@ -215,6 +215,36 @@ export const statementStat = z.object({
   rows: z.number().nullable(),
 });
 
+/** 上位頻出値 1 件 (#974)。件数は 2^53 超で十進文字列になりうる。 */
+const profileValueCount = z.object({
+  value: cellValue,
+  count: z.union([z.number(), z.string()]),
+});
+
+/** ヒストグラム 1 区間 (#974)。 */
+const profileHistogramBucket = z.object({
+  lower: z.number(),
+  upper: z.number(),
+  count: z.union([z.number(), z.string()]),
+});
+
+/** 列データプロファイル (#974)。 */
+export const columnProfile = z.object({
+  column: z.string(),
+  data_type: z.string(),
+  numeric: z.boolean(),
+  total_count: z.union([z.number(), z.string()]),
+  non_null_count: z.union([z.number(), z.string()]),
+  null_count: z.union([z.number(), z.string()]),
+  distinct_count: z.union([z.number(), z.string()]).nullable(),
+  distinct_approximate: z.boolean(),
+  min_value: cellValue,
+  max_value: cellValue,
+  top_values: z.array(profileValueCount),
+  histogram: z.array(profileHistogramBucket),
+  notes: z.array(z.string()),
+});
+
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),

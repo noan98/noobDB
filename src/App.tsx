@@ -232,6 +232,9 @@ const QueryInspectorPanel = lazy(() =>
 const AdvisorPanel = lazy(() =>
   import("./components/AdvisorPanel").then((m) => ({ default: m.AdvisorPanel })),
 );
+const ColumnProfilePanel = lazy(() =>
+  import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
+);
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -295,6 +298,7 @@ import {
   toggleBottomPanelTab,
   type BottomPanelTab,
 } from "./components/bottomPanelTabs";
+import type { ProfileTarget } from "./components/columnProfile";
 import {
   useSettings,
   getSettings,
@@ -1246,6 +1250,9 @@ export default function App() {
    * サーフェスを全部閉じる」定型のすべてに毎回追従させる必要があった)。
    */
   const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab | null>(null);
+  // 「列を探索」(#974) の対象。サイドバーのテーブル / 結果グリッドの列から開いたときに
+  // 決まり、ボトムパネルの profile タブはこれがあるときだけ開ける。
+  const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
   // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
   const [showUsers, setShowUsers] = useState(false);
@@ -6426,6 +6433,21 @@ export default function App() {
     setBottomPanelTab((current) => toggleBottomPanelTab(current, tab));
   }, []);
 
+  // 列データプロファイル (#974) をボトムパネルで開く。SQL を書きながら参照する
+  // 情報なのでワークスペースは置き換えない (ui-design-system.md §7.1)。
+  // トグルではなく常に開く — 別の列を選び直したときに閉じてしまわないように。
+  const handleExploreColumns = useCallback(
+    (database: string, table: string, column: string | null = null) => {
+      setProfileTarget({ database, table, column });
+      setBottomPanelTab("profile");
+    },
+    [],
+  );
+  // 接続先が変わったら前のセッションのテーブルを指したままにしない。
+  useEffect(() => {
+    setProfileTarget(null);
+  }, [sessionId]);
+
   // 設定/ヘルプを開く・テーマ切替・サイドバー開閉 (#681)。コマンドパレットと
   // 同様、接続前でも使えるよう常時有効にする (Cmd/Ctrl+K のハンドラの隣に置かず
   // `openFullView` 定義後に置くことで宣言順を素直にしている)。
@@ -7249,6 +7271,12 @@ export default function App() {
                       onRunStatsQuery={
                         sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
                       }
+                      onExploreColumn={
+                        sessionId
+                          ? (target) =>
+                              handleExploreColumns(target.database ?? "", target.table, target.column)
+                          : undefined
+                      }
                       serverSort={tab.kind === "table" ? tab.serverSort ?? null : undefined}
                       serverFilter={tab.kind === "table" ? tab.serverFilter ?? null : undefined}
                       onSetServerSort={
@@ -7364,13 +7392,20 @@ export default function App() {
   const bottomPanelCtx = {
     sessionId,
     advisorDatabase: activeTab?.database ?? selectedProfile?.database,
+    profileTable: profileTarget?.table,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
   // 切断やタブ切替で開けなくなったタブはここで閉じる。描画側はこの解決済みの値
   // だけを見るので、「state は advisor のままだが対象 DB が無い」状態が表に出ない。
   const activeBottomPanelTab = resolveBottomPanelTab(bottomPanelTab, bottomPanelCtx);
   const bottomPanelLabel = (tab: BottomPanelTab) =>
-    tab === "advisor" ? t("advisorTitle") : tab === "inspector" ? t("inspectorTitle") : t("processTitle");
+    tab === "advisor"
+      ? t("advisorTitle")
+      : tab === "inspector"
+        ? t("inspectorTitle")
+        : tab === "profile"
+          ? t("profileTitle")
+          : t("processTitle");
 
   return (
     <Flex
@@ -7646,6 +7681,7 @@ export default function App() {
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
+            onExploreColumns={(database, table) => handleExploreColumns(database, table)}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
             onEditViewDefinition={handleEditViewDefinition}
@@ -7874,6 +7910,17 @@ export default function App() {
                       driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                       readOnly={selectedProfile?.read_only ?? false}
                     />
+                  ) : activeBottomPanelTab === "profile" ? (
+                    profileTarget ? (
+                      <ColumnProfilePanel
+                        sessionId={sessionId}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        target={profileTarget}
+                        onSelectColumn={(column) =>
+                          setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
+                        }
+                      />
+                    ) : null
                   ) : activeBottomPanelTab === "inspector" ? (
                     <QueryInspectorPanel
                       sessionId={sessionId}

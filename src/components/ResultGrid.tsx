@@ -1059,6 +1059,11 @@ interface Props {
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
   /**
+   * 列データプロファイル (「列を探索」、#974) をボトムパネルで開く。対象テーブルが
+   * 特定できる結果の列クイック統計にだけ導線を出す。
+   */
+  onExploreColumn?: (target: { database: string | null; table: string; column: string }) => void;
+  /**
    * 結果パネルの全画面モーダル表示の現在状態。`onToggleMaximize` が渡されたときだけ
    * ツールバーに最大化/復元トグルを出し、`maximized` でアイコンとツールチップを切り替える。
    */
@@ -2151,6 +2156,7 @@ function ColumnStatsMenu({
   onClose,
   statsRequest,
   onRunStatsQuery,
+  onExploreColumn,
   footerFn,
   onSetFooterFn,
 }: {
@@ -2164,6 +2170,8 @@ function ColumnStatsMenu({
   statsRequest?: FullStatsRequest;
   /** 集計 SQL を実行する (App から api.runQuery を束ねて渡す)。 */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /** 列データプロファイル (#974) をボトムパネルで開く。未指定なら導線を出さない。 */
+  onExploreColumn?: () => void;
   /** この列の集計フッター関数 (#645)。`onSetFooterFn` があるときだけ節を出す。 */
   footerFn?: FooterAggFn;
   onSetFooterFn?: (fn: FooterAggFn) => void;
@@ -2450,7 +2458,20 @@ function ColumnStatsMenu({
         </Box>
       )}
 
-      <Box display="flex" justifyContent="flex-end" paddingTop="0.5">
+      <Box display="flex" justifyContent="flex-end" gap="1.5" paddingTop="0.5">
+        {onExploreColumn && (
+          <Button
+            variant="secondary"
+            size="sm"
+            px="2.5"
+            onClick={() => {
+              onExploreColumn();
+              onClose();
+            }}
+          >
+            {t("profileExploreColumn")}
+          </Button>
+        )}
         <Button variant="secondary" size="sm" px="2.5" onClick={onClose}>
           {t("gridStatsClose")}
         </Button>
@@ -2522,6 +2543,7 @@ export const DataGrid = memo(function DataGrid({
   onSelectionSummary,
   onExportSelection,
   onRunStatsQuery,
+  onExploreColumn,
   findHits,
   findCurrentKey,
   findNav,
@@ -2668,6 +2690,11 @@ export const DataGrid = memo(function DataGrid({
    * hide the full-aggregate button (in-memory stats still show).
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * 列データプロファイル (「列を探索」、#974) をボトムパネルで開く。対象テーブルが
+   * 特定できる結果の列クイック統計にだけ導線を出す。
+   */
+  onExploreColumn?: (target: { database: string | null; table: string; column: string }) => void;
   /**
    * 結果内検索 (#644) のヒットセル ("row:col" キー) の集合。該当セルに
    * ハイライトクラスを付ける。省略時 (検索バーが閉じている/プレビュー) は無印。
@@ -5392,6 +5419,16 @@ export const DataGrid = memo(function DataGrid({
             values={colValues}
             statsRequest={statsRequest}
             onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
+            onExploreColumn={
+              rowSqlTable && onExploreColumn
+                ? () =>
+                    onExploreColumn({
+                      database: rowSqlDatabase ?? null,
+                      table: rowSqlTable,
+                      column: colName,
+                    })
+                : undefined
+            }
             onClose={() => setStatsMenu(null)}
             footerFn={resolveFooterFn(footerAggs[String(colIdx)], kind)}
             onSetFooterFn={
@@ -5696,6 +5733,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   lastEditAppliedAt,
   applyingEdits,
   onRunStatsQuery,
+  onExploreColumn,
   maximized,
   onToggleMaximize,
   onPinResult,
@@ -7001,6 +7039,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           onSelectionSummary={setSelSummary}
           onExportSelection={handleExportSelection}
           onRunStatsQuery={onRunStatsQuery}
+          onExploreColumn={onExploreColumn}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}
           findHits={findHits}

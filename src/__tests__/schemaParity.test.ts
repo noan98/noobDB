@@ -57,6 +57,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["queryStatsSupport", schemas.queryStatsSupport],
   ["liveQuery", schemas.liveQuery],
   ["statementStat", schemas.statementStat],
+  ["columnProfile", schemas.columnProfile],
   ["healthFinding", schemas.healthFinding],
   ["skippedRule", schemas.skippedRule],
   ["schemaHealthReport", schemas.schemaHealthReport],
