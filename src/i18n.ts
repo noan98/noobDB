@@ -1650,6 +1650,21 @@ const en = {
   gridStopButtonTitle: "Stop the running query. Rows already received stay visible and the connection is kept.",
   // セル右クリックのクイックフィルタ (#914)。
   gridQuickFilterEq: "Filter by this value (= {value})",
+  gridMaskColumnIndicator: "Masked column (display only)",
+  gridMaskedCellTitle: "Masked value. Right-click to reveal it temporarily.",
+  gridMaskedCellAria: "Masked value",
+  gridMaskedCellBlocked: "This value is masked. Reveal it (right-click) before viewing or editing.",
+  gridMaskedSqlCopyBlocked:
+    "Unavailable while the row has masked cells (the SQL would contain placeholders). Reveal them first, or allow copying real values in Settings.",
+  gridMaskedDuplicateBlocked: "Unavailable while the row has masked cells. Reveal them first.",
+  gridMaskRemask: "Mask again",
+  gridMaskRevealCell: "Reveal this cell ({secs}s)",
+  gridMaskRevealColumn: "Reveal this column ({secs}s)",
+  gridMaskRevealTitle:
+    "Shows the real value temporarily. It is masked again after the timeout or when the window loses focus.",
+  gridMaskSectionLabel: "Sensitive data mask",
+  gridMaskColumnOn: "Mask this column",
+  gridMaskColumnOff: "Unmask this column",
   gridQuickFilterNe: "Exclude this value (≠ {value})",
   gridQuickFilterEqNull: "Filter by NULL (IS NULL)",
   gridQuickFilterNeNull: "Exclude NULL (IS NOT NULL)",
@@ -2668,6 +2683,16 @@ const en = {
   settingsColumnNullBars: "Column NULL rate mini bars",
   settingsColumnNullBarsHelp:
     "Show a thin always-on bar under each result grid column header indicating what share of the loaded rows is NULL. Display-only, computed from the rows already fetched (no extra query). Turn off for the most compact header row.",
+  settingsColumnMask: "Mask sensitive columns in the result grid",
+  settingsColumnMaskHelp:
+    "Show columns whose names match the patterns below (and columns you mask from the header menu) as •••• — handy for screen sharing and demos. Display-only: real values, pending edits and exports are unchanged. Reveal a cell or column temporarily from the right-click menu; it is masked again after 30 seconds or when the window loses focus.",
+  settingsColumnMaskPatterns: "Column name patterns to mask",
+  settingsColumnMaskPatternsHelp:
+    "Comma-separated, case-insensitive. A plain word matches anywhere in the name (email → user_email); use * and ? to match the whole name (e.g. *_pin).",
+  settingsColumnMaskPatternsReset: "Restore defaults",
+  settingsColumnMaskCopyPlaceholder: "Copy masked cells as ••••",
+  settingsColumnMaskCopyPlaceholderHelp:
+    "Prevents accidentally pasting a masked value elsewhere. Turn off to copy the real value even while it is masked.",
   settingsAutoRefreshDefault: "Default auto-refresh interval",
   settingsAutoRefreshDefaultHelp:
     "Default cadence pre-selected in the result grid's auto-refresh control.",
@@ -4530,6 +4555,21 @@ const ja: Dict = {
   gridStopButtonTitle: "実行中のクエリを停止します。取得済みの行は表示されたまま残り、接続は維持されます。",
   // セル右クリックのクイックフィルタ (#914)。
   gridQuickFilterEq: "この値で絞り込む (= {value})",
+  gridMaskColumnIndicator: "マスク中の列 (表示のみ伏せ字)",
+  gridMaskedCellTitle: "伏せ字で表示中です。右クリックから一時的に表示できます。",
+  gridMaskedCellAria: "伏せ字の値",
+  gridMaskedCellBlocked: "この値はマスク中です。表示・編集するには右クリックから一時表示してください。",
+  gridMaskedSqlCopyBlocked:
+    "マスク中のセルを含む行では使えません (SQL に伏せ字が入るため)。先に一時表示するか、設定で実値のコピーを許可してください。",
+  gridMaskedDuplicateBlocked: "マスク中のセルを含む行では使えません。先に一時表示してください。",
+  gridMaskRemask: "再びマスクする",
+  gridMaskRevealCell: "このセルを一時表示 ({secs} 秒)",
+  gridMaskRevealColumn: "この列を一時表示 ({secs} 秒)",
+  gridMaskRevealTitle:
+    "実際の値を一時的に表示します。時間切れ、またはウィンドウのフォーカスが外れると再びマスクされます。",
+  gridMaskSectionLabel: "機微データのマスク",
+  gridMaskColumnOn: "この列をマスク",
+  gridMaskColumnOff: "この列のマスクを解除",
   gridQuickFilterNe: "この値を除外する (≠ {value})",
   gridQuickFilterEqNull: "NULL で絞り込む (IS NULL)",
   gridQuickFilterNeNull: "NULL を除外する (IS NOT NULL)",
@@ -5546,6 +5586,16 @@ const ja: Dict = {
   settingsColumnNullBars: "列ヘッダの NULL 率ミニバー",
   settingsColumnNullBarsHelp:
     "結果グリッドの各列ヘッダ下端に、取得済み行のうち NULL が占める割合を示す細いバーを常時表示します。表示専用で、取得済みの行だけから計算します (追加のクエリは発行しません)。オフにするとヘッダ行を最もコンパクトにできます。",
+  settingsColumnMask: "結果グリッドで機微カラムをマスクする",
+  settingsColumnMaskHelp:
+    "列名が下のパターンに一致する列 (と列ヘッダメニューで個別にマスクした列) を •••• で表示します。画面共有やデモでの露出事故を防ぎます。表示専用で、実値・未適用の編集・エクスポート内容は変わりません。右クリックからセル/列を一時表示でき、30 秒後またはウィンドウのフォーカスが外れると再びマスクされます。",
+  settingsColumnMaskPatterns: "マスクする列名パターン",
+  settingsColumnMaskPatternsHelp:
+    "カンマ区切り・大文字小文字は区別しません。単語は列名のどこかに含まれれば一致します (email → user_email)。* と ? を使うと列名全体との一致になります (例: *_pin)。",
+  settingsColumnMaskPatternsReset: "既定に戻す",
+  settingsColumnMaskCopyPlaceholder: "マスク中のセルは •••• としてコピーする",
+  settingsColumnMaskCopyPlaceholderHelp:
+    "伏せ字の値を誤って別の場所へ貼り付けないようにします。オフにすると、マスク中でも実値をコピーします。",
   settingsAutoRefreshDefault: "自動更新の既定間隔",
   settingsAutoRefreshDefaultHelp:
     "結果グリッドの自動更新コントロールで既定選択される間隔。",

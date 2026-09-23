@@ -20,6 +20,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
+import { DEFAULT_MASK_PATTERNS, formatMaskPatterns, parseMaskPatterns } from "./columnMask";
 import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { KnownHostsPanel } from "./KnownHostsPanel";
@@ -100,6 +101,9 @@ import {
   setResultGridPageSize,
   setRichCellRendering,
   setColumnNullBars,
+  setColumnMaskEnabled,
+  setColumnMaskPatterns,
+  setColumnMaskCopyPlaceholder,
   setPlanWatchOnConnect,
   setSchemaDriftOnConnect,
   setSqlLintEnabled,
@@ -733,6 +737,18 @@ export function SettingsView({ theme, onClose }: Props) {
   const [prefetchInput, setPrefetchInput] = useState(String(settings.streamPrefetchSize));
   const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
   const [timeoutInput, setTimeoutInput] = useState(String(settings.queryTimeoutSecs));
+  // 機微カラムマスクのパターン (#1069)。入力中は素の文字列で持ち、blur/Enter で確定。
+  const [maskPatternsInput, setMaskPatternsInput] = useState(
+    formatMaskPatterns(settings.columnMaskPatterns),
+  );
+  useEffect(() => {
+    setMaskPatternsInput(formatMaskPatterns(settings.columnMaskPatterns));
+  }, [settings.columnMaskPatterns]);
+  const commitMaskPatterns = () => {
+    const next = parseMaskPatterns(maskPatternsInput);
+    setColumnMaskPatterns(next);
+    setMaskPatternsInput(formatMaskPatterns(next));
+  };
   const [connectTimeoutInput, setConnectTimeoutInput] = useState(
     String(settings.connectTimeoutSecs),
   );
@@ -1525,6 +1541,59 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsToggleLabel>
           <SettingsHelpInline>
             {t("settingsConfirmDangerousQueriesHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-column-mask">
+            <Switch
+              id="settings-column-mask"
+              checked={settings.columnMaskEnabled}
+              onChange={setColumnMaskEnabled}
+            />
+            {t("settingsColumnMask")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsColumnMaskHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-column-mask-patterns">
+            {t("settingsColumnMaskPatterns")}
+          </SettingsToggleLabel>
+          <Input
+            id="settings-column-mask-patterns"
+            flex="1"
+            minW="200px"
+            value={maskPatternsInput}
+            disabled={!settings.columnMaskEnabled}
+            onChange={(e) => setMaskPatternsInput(e.target.value)}
+            onBlur={commitMaskPatterns}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsReset
+            disabled={!settings.columnMaskEnabled}
+            onClick={() => setColumnMaskPatterns(DEFAULT_MASK_PATTERNS)}
+          >
+            {t("settingsColumnMaskPatternsReset")}
+          </SettingsReset>
+          <SettingsHelpInline>
+            {t("settingsColumnMaskPatternsHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-column-mask-copy">
+            <Switch
+              id="settings-column-mask-copy"
+              checked={settings.columnMaskCopyPlaceholder}
+              disabled={!settings.columnMaskEnabled}
+              onChange={setColumnMaskCopyPlaceholder}
+            />
+            {t("settingsColumnMaskCopyPlaceholder")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsColumnMaskCopyPlaceholderHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
         <SettingsToggleRow>

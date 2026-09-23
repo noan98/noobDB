@@ -33,6 +33,13 @@ export interface PersistedGridView {
   sorting?: PersistedSort[];
   /** 列フィルタ (列 ID → 構造化条件)。 */
   filters?: PersistedFilter[];
+  /**
+   * 機微カラム表示マスク (#1069) の列単位の上書き (列名 → マスクする/しない)。
+   * 列名パターンによる自動判定と異なる指定だけを持つ (`toggleMaskOverride`)。
+   * 列 ID (位置) ではなく列名で持つのは、キー自体が列構成の署名を含むうえ、
+   * マスクの意図は「その名前の列」に紐づくため。
+   */
+  masks?: Record<string, boolean>;
 }
 
 /**
@@ -91,6 +98,19 @@ function sanitizeSorting(raw: unknown): PersistedSort[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+function sanitizeMasks(raw: unknown): Record<string, boolean> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, boolean> = {};
+  let any = false;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "boolean") {
+      out[k] = v;
+      any = true;
+    }
+  }
+  return any ? out : undefined;
+}
+
 function sanitizeFilters(raw: unknown): PersistedFilter[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const out: PersistedFilter[] = [];
@@ -117,6 +137,8 @@ export function normalizeGridView(parsed: unknown): PersistedGridView {
   if (sorting) out.sorting = sorting;
   const filters = sanitizeFilters(o.filters);
   if (filters) out.filters = filters;
+  const masks = sanitizeMasks(o.masks);
+  if (masks) out.masks = masks;
   return out;
 }
 
@@ -137,20 +159,22 @@ export function readStoredGridView(key: string | undefined): PersistedGridView {
 }
 
 /**
- * ビュー状態を保存する。実質デフォルト (ソートも列フィルタも無し) のときはエントリを
- * 削除して、クリアが確実に既定へ戻るようにする (`writeStoredColumnState` と同じ発想)。
+ * ビュー状態を保存する。実質デフォルト (ソート・列フィルタ・列マスクの上書きがどれも無い) ときは
+ * エントリを削除して、クリアが確実に既定へ戻るようにする (`writeStoredColumnState` と同じ発想)。
  */
 export function writeStoredGridView(key: string | undefined, state: PersistedGridView): void {
   if (!key) return;
   try {
     const hasSorting = !!state.sorting && state.sorting.length > 0;
     const hasFilters = !!state.filters && state.filters.length > 0;
-    if (!hasSorting && !hasFilters) {
+    const hasMasks = !!state.masks && Object.keys(state.masks).length > 0;
+    if (!hasSorting && !hasFilters && !hasMasks) {
       localStorage.removeItem(key);
     } else {
       const out: PersistedGridView = {};
       if (hasSorting) out.sorting = state.sorting;
       if (hasFilters) out.filters = state.filters;
+      if (hasMasks) out.masks = state.masks;
       localStorage.setItem(key, JSON.stringify(out));
     }
   } catch {
@@ -165,6 +189,7 @@ export function writeStoredGridView(key: string | undefined, state: PersistedGri
 export function toPersistedGridView(
   sorting: SortingState,
   columnFilters: ColumnFiltersState,
+  masks?: Record<string, boolean>,
 ): PersistedGridView {
   const state: PersistedGridView = {};
   if (sorting.length > 0) {
@@ -175,5 +200,6 @@ export function toPersistedGridView(
     if (isColumnFilter(f.value)) filters.push({ id: f.id, value: f.value });
   }
   if (filters.length > 0) state.filters = filters;
+  if (masks && Object.keys(masks).length > 0) state.masks = masks;
   return state;
 }
