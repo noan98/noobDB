@@ -36,6 +36,15 @@
   空結果・クエリ同梱・SQL のバッチ分割 — をケース名で固定しています。BLOB だけは
   フロントが `Value::Bytes` を区別できないため意図的に食い違い、`frontendExpected` に
   明記します。
+  **調査バンドル (#745)** は `ExportModal` の 6 つ目の形式「調査バンドル (HTML)」で、
+  バックエンドのエクスポート形式ではありません。`components/investigationBundle.ts`
+  (純ロジック) が SQL (ハイライト付き)・在グリッド行 (ソート可能な表)・非秘密の接続
+  メタ (プロファイル名/ドライバ/DB、ホストはチェック時のみ)・任意でテーブル定義
+  (`describe_table`)・EXPLAIN (mysql/postgres/sqlite かつ読み取り SQL のみ) を自己完結
+  HTML に組み立て、`write_binary_file` で保存します (capabilities 追加なし)。値は全て
+  `escapeHtml` を通し、CSP `default-src 'none'` で外部リソースを禁止、機微カラムマスク
+  (#1069) 対象列は reveal に関係なく伏せ字。文脈は `App.tsx` → `ResultGrid` の
+  `bundleContext` で渡し、マスク設定は `DataGrid` の `onMaskConfigChange` で持ち上げる。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
   SQLite / DuckDB / MSSQL は接続から直接生成 (下記)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen, fireEvent } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { SAMPLE_COLUMNS, SAMPLE_ROWS, makeColumn } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -14,7 +14,20 @@ vi.mock("@tauri-apps/api/path", () => ({
   join: vi.fn().mockResolvedValue("/home/user/Downloads/export.csv"),
 }));
 
+vi.mock("../api/tauri", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/tauri")>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      writeBinaryFile: vi.fn().mockResolvedValue(123),
+    },
+  };
+});
+
 import { ExportModal } from "../components/ExportModal";
+import { api, type TableColumnInfo } from "../api/tauri";
+import { MASK_PLACEHOLDER } from "../components/columnMask";
 
 describe("ExportModal render smoke (#604)", () => {
   it("mounts as a dialog and shows the export title", () => {
@@ -125,5 +138,108 @@ describe("ExportModal 選択範囲スコープ (#917)", () => {
     fireEvent.click(screen.getByRole("radio", { name: new RegExp(t("exportScopeCurrent")) }));
     const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
     expect(preview).toContain("id,name");
+  });
+});
+
+/**
+ * 調査バンドル (#745)。`bundle` 文脈が渡されたときだけ形式に現れ、保存前に
+ * 持ち出す件数と伏せ字化される列を明示し、`write_binary_file` で自己完結 HTML を書く。
+ */
+describe("ExportModal 調査バンドル (#745)", () => {
+  const COLS = [makeColumn("id", "int"), makeColumn("user_email", "varchar")];
+  const ROWS = [
+    [1, "alice@example.com"],
+    [2, "bob@example.com"],
+  ];
+  const MASK = { enabled: true, patterns: ["email"], overrides: {} };
+
+  function renderBundle() {
+    const describeFn = vi.fn().mockResolvedValue([
+      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "" },
+    ] as unknown as TableColumnInfo[]);
+    const loadPlan = vi.fn().mockResolvedValue({
+      columns: [makeColumn("EXPLAIN", "json")],
+      rows: [['{"plan":1}']],
+      rows_affected: 0,
+      elapsed_ms: 1,
+    });
+    renderWithProviders(
+      <ExportModal
+        columns={COLS}
+        rows={ROWS}
+        database="appdb"
+        table="users"
+        driver="mysql"
+        bundle={{
+          sql: "SELECT * FROM users",
+          profileName: "prod",
+          host: "db.internal",
+          executedAt: Date.UTC(2026, 0, 1),
+          describe: describeFn,
+          loadPlan,
+        }}
+        elapsedMs={12}
+        maskConfig={MASK}
+        onClose={() => {}}
+      />,
+    );
+    return { describeFn, loadPlan };
+  }
+
+  function lastWrittenHtml(): { path: string; html: string } {
+    const calls = vi.mocked(api.writeBinaryFile).mock.calls;
+    const [path, bytes] = calls[calls.length - 1];
+    return { path, html: new TextDecoder().decode(bytes) };
+  }
+
+  it("bundle 文脈が無ければ形式に出さない", () => {
+    renderWithProviders(
+      <ExportModal columns={COLS} rows={ROWS} database={null} table={null} onClose={() => {}} />,
+    );
+    expect(screen.queryByRole("radio", { name: t("exportFormatBundle") })).not.toBeInTheDocument();
+  });
+
+  it("選ぶと持ち出し件数と伏せ字列を明示し、プレビューはマスク済み HTML", () => {
+    renderBundle();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
+    const warning = screen.getByTestId("export-bundle-warning");
+    expect(warning.textContent).toContain(t("exportBundleDataWarning", { rows: 2, cols: 2 }));
+    expect(warning.textContent).toContain(t("exportBundleMasked", { count: 1, names: "user_email" }));
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    expect(preview).toContain("<!DOCTYPE html>");
+    expect(preview).toContain(MASK_PLACEHOLDER);
+    expect(preview).not.toContain("alice@example.com");
+    // ホスト名は既定で含めない。
+    expect(preview).not.toContain("db.internal");
+    expect(screen.getByRole("checkbox", { name: t("exportBundleIncludeHost") })).not.toBeChecked();
+  });
+
+  it("保存すると write_binary_file に .html を書き、スキーマを同梱し EXPLAIN は既定で実行しない", async () => {
+    vi.mocked(api.writeBinaryFile).mockClear();
+    const { describeFn, loadPlan } = renderBundle();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("exportBundleIncludeHost") }));
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    await waitFor(() => expect(api.writeBinaryFile).toHaveBeenCalled());
+    const { path, html } = lastWrittenHtml();
+    expect(path.endsWith(".html")).toBe(true);
+    expect(describeFn).toHaveBeenCalledWith("appdb", "users");
+    expect(loadPlan).not.toHaveBeenCalled();
+    expect(html).toContain(t("bundleSectionSchema"));
+    expect(html).toContain("db.internal");
+    expect(html).not.toContain("alice@example.com");
+  });
+
+  it("実行計画を選ぶと EXPLAIN を取得して同梱する", async () => {
+    vi.mocked(api.writeBinaryFile).mockClear();
+    const { loadPlan } = renderBundle();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("exportBundleIncludePlan") }));
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    await waitFor(() => expect(api.writeBinaryFile).toHaveBeenCalled());
+    expect(loadPlan).toHaveBeenCalled();
+    const { html } = lastWrittenHtml();
+    expect(html).toContain(t("bundleSectionPlan"));
+    expect(html).toContain("&quot;plan&quot;: 1");
   });
 });

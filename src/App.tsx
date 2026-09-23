@@ -98,6 +98,7 @@ import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./components/ResultViewSwitch";
+import { bundleExplainPrefix, bundlePlanSupported } from "./components/investigationBundle";
 import { TabBar } from "./components/TabBar";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
@@ -585,11 +586,8 @@ type TabKind = "table" | "query" | "explain";
 
 // EXPLAIN の方言別プレフィックス。MySQL/PostgreSQL は JSON プラン、SQLite は
 // `EXPLAIN QUERY PLAN` (行ベース)。ExplainViewer が driver でパーサを切り替える。
-function explainPrefixFor(driver: string | undefined): string {
-  if (driver === "postgres") return "EXPLAIN (FORMAT JSON) ";
-  if (driver === "sqlite") return "EXPLAIN QUERY PLAN ";
-  return "EXPLAIN FORMAT=JSON ";
-}
+// 調査バンドル (#745) の実行計画同梱と同じ単一ソース。
+const explainPrefixFor = bundleExplainPrefix;
 
 interface Tab {
   id: string;
@@ -604,6 +602,8 @@ interface Tab {
    * every run; in-memory only (not persisted).
    */
   lastExecutedSql: string;
+  /** 直近の実行が完了した時刻 (epoch ms)。調査バンドル (#745) の「実行日時」。 */
+  lastRunAt?: number;
   result: QueryResult | null;
   preview: PreviewResult | null;
   schemaTable: SchemaTable | null;
@@ -3490,6 +3490,7 @@ export default function App() {
             return {
               ...tt,
               result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs },
+              lastRunAt: Date.now(),
               streaming: false,
               canLoadMore: false,
               autoLimitApplied: null,
@@ -3504,6 +3505,7 @@ export default function App() {
             result: tt.result
               ? { ...tt.result, elapsed_ms: elapsedMs, rows_affected: totalRows }
               : tt.result,
+            lastRunAt: Date.now(),
             streaming: false,
             canLoadMore: tt.paginatable !== null,
             autoLimitApplied: appliedAutoLimit,
@@ -7591,6 +7593,35 @@ export default function App() {
                                   : tab.lastExecutedSql,
                               initialBatch: Math.max(1, settings.defaultDisplayCount),
                               chunkSize: Math.max(1, settings.streamPrefetchSize),
+                            }
+                          : undefined
+                      }
+                      bundleContext={
+                        // 調査バンドル (#745): 接続の非秘密メタ情報だけを渡す
+                        // (パスワード・接続文字列は型ごと持たない)。
+                        tab.result
+                          ? {
+                              sql: tab.lastExecutedSql || null,
+                              profileName: selectedProfile?.name ?? null,
+                              host: selectedProfile?.host || null,
+                              executedAt: tab.lastRunAt ?? null,
+                              describe: sessionId
+                                ? (db, table) => api.describeTable(sessionId, db, table)
+                                : undefined,
+                              // EXPLAIN は対応ドライバかつ読み取り SQL のときだけ (複文の書き込みを
+                              // EXPLAIN 付きで送って実行してしまう事故を避ける)。
+                              loadPlan:
+                                sessionId &&
+                                tab.lastExecutedSql &&
+                                bundlePlanSupported(selectedProfile?.driver) &&
+                                isReadOnlySql(tab.lastExecutedSql, selectedProfile?.driver)
+                                  ? () =>
+                                      api.runQuery(
+                                        sessionId,
+                                        `${explainPrefixFor(selectedProfile?.driver)}${tab.lastExecutedSql}`,
+                                        tab.database ?? null,
+                                      )
+                                  : undefined,
                             }
                           : undefined
                       }
