@@ -3,6 +3,7 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod assertions;
 mod cache;
 mod commands;
 mod db;
@@ -22,6 +23,8 @@ mod timelapse;
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
+    pub use crate::commands::assertions::AssertionOutcome;
     pub use crate::db::advisor::{
         analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
         TableMeta, UnusedIndexEntry, UnusedIndexStats,
@@ -320,6 +323,26 @@ pub mod __test_api {
         database: Option<&str>,
     ) -> crate::error::Result<QueryResult> {
         crate::commands::query::run_query_inner(state, session_id, sql, database).await
+    }
+
+    /// Drives the `run_assertion` IPC command's core path (#742): rule → SQL
+    /// conversion for the session's driver, then the always-read-only lookup
+    /// path (timeout, no history, no result cache) and pass/fail evaluation.
+    pub async fn run_assertion_via_command(
+        state: &AppState,
+        session_id: &str,
+        assertion: &crate::assertions::Assertion,
+        database: Option<&str>,
+        query_timeout_secs: Option<u64>,
+    ) -> crate::error::Result<crate::commands::assertions::AssertionOutcome> {
+        crate::commands::assertions::run_assertion_with(
+            state,
+            session_id,
+            assertion,
+            database,
+            query_timeout_secs,
+        )
+        .await
     }
 
     /// Drives the `run_lookup_query` IPC command's core path (#1067): the
@@ -942,6 +965,11 @@ pub fn run() {
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,
+            commands::assertions::list_assertions,
+            commands::assertions::save_assertion,
+            commands::assertions::delete_assertion,
+            commands::assertions::preview_assertion_sql,
+            commands::assertions::run_assertion,
             commands::history::list_history,
             commands::history::clear_history,
             commands::flight_recorder::list_flight_records,

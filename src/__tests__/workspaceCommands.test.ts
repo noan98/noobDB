@@ -48,6 +48,7 @@ describe("workspaceCommandItems", () => {
       "nav:advisor",
       "nav:inspector",
       "nav:processes",
+      "nav:assertions",
       "nav:connectionHealth",
       "nav:whereUsed",
       "structure:app\0users",

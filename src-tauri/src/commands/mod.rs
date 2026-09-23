@@ -1,4 +1,5 @@
 pub mod advisor;
+pub mod assertions;
 pub mod connection;
 pub mod diff;
 pub mod dump;

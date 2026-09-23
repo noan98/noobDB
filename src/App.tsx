@@ -268,6 +268,10 @@ const TableTimelapsePanel = lazy(() =>
 const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
+// データ品質アサーション (#742)。ボトムパネルを開くまで読み込まない。
+const AssertionsPanel = lazy(() =>
+  import("./components/AssertionsPanel").then((m) => ({ default: m.AssertionsPanel })),
+);
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -5320,6 +5324,16 @@ export default function App() {
     addTab(tab);
   }, [addTab]);
 
+  // データ品質アサーション (#742) の fail から違反行クエリを開く。**実行はしない**
+  // (生成 SQL を見てから利用者が実行する)。検証と同じデータベースに向けるため、
+  // アクティブタブ → プロファイル既定の順で解決したものをタブに持たせる。
+  const assertionDatabase = activeTab?.database ?? selectedProfile?.database;
+  const handleOpenAssertionSql = useCallback((sql: string, title: string) => {
+    const tab: Tab = { ...makeQueryTab(), sql, title };
+    if (assertionDatabase) tab.database = assertionDatabase;
+    addTab(tab);
+  }, [addTab, assertionDatabase]);
+
   // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する。
   const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
     if (!sessionId) return;
@@ -7876,6 +7890,8 @@ export default function App() {
         ? t("inspectorTitle")
         : tab === "whereUsed"
           ? t("whereUsedTitle")
+          : tab === "assertions"
+            ? t("assertTitle")
           : tab === "health"
             ? t("healthTitle")
             : tab === "profile"
@@ -8443,6 +8459,16 @@ export default function App() {
                         const snip = snippets.find((s) => s.id === id);
                         if (snip) openQueryInEditor(snip.sql, snip.name);
                       }}
+                    />
+                  ) : activeBottomPanelTab === "assertions" ? (
+                    <AssertionsPanel
+                      key={sessionId}
+                      sessionId={sessionId}
+                      driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                      profile={selectedProfile ?? null}
+                      database={bottomPanelCtx.advisorDatabase}
+                      queryTimeoutSecs={settings.queryTimeoutSecs}
+                      onOpenSql={handleOpenAssertionSql}
                     />
                   ) : bottomPanelCtx.advisorDatabase ? (
                     <AdvisorPanel
@@ -9490,6 +9516,13 @@ export default function App() {
                 : selectedProfile?.driver === "sqlite"
                   ? t("appQueryInspectorUnsupported")
                   : undefined,
+            },
+            {
+              label: t("appAssertions"),
+              onSelect: () => toggleBottomPanel("assertions"),
+              // 全ドライバ対応。検証 DB は未決定ならセッション既定で動くので接続だけを要求する。
+              disabled: !sessionId,
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
             },
             {
               label: t("appAdvisor"),

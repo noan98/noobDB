@@ -58,7 +58,7 @@ describe("availableBottomPanelTabs", () => {
     for (const db of [null, undefined, ""]) {
       expect(
         availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db, openConnectionCount: 1 }),
-      ).toEqual([...LOG_TABS, "inspector", "processes", "health", "whereUsed"]);
+      ).toEqual([...LOG_TABS, "inspector", "processes", "assertions", "health", "whereUsed"]);
     }
   });
 
@@ -213,6 +213,15 @@ describe("nextBottomPanelTab", () => {
     ).toContain("whereUsed");
   });
 
+  it("データ品質アサーション (#742) は対象 DB が決まらなくても開ける (セッション既定で検証)", () => {
+    expect(
+      availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: null, openConnectionCount: 1 }),
+    ).toContain("assertions");
+    expect(
+      availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 1 }),
+    ).not.toContain("assertions");
+  });
+
   it("開けるタブだけの並びで折り返す (アドバイザが落ちている場合)", () => {
     const partial: readonly BottomPanelTab[] = ["inspector", "processes"];
     expect(nextBottomPanelTab(partial, "processes", 1)).toBe("inspector");
@@ -240,6 +249,12 @@ describe("App.tsx の結線 (#1112)", () => {
   it("ワークスペースとボトムパネルの分割は共通の Splitter へ委ねる", () => {
     // 高さのリサイズ規則 (クランプ・永続化・キーボード操作) を二重実装しない。
     expect(appSource).toContain("<WorkspaceSplit");
+  });
+
+  it("データ品質アサーション (#742) の結線: 違反行クエリは実行せずに新規タブで開く", () => {
+    expect(appSource).toContain('activeBottomPanelTab === "assertions"');
+    expect(appSource).toContain("onOpenSql={handleOpenAssertionSql}");
+    expect(appSource).toContain('toggleBottomPanel("assertions")');
   });
 
   it("構造タブ (#1112) はツリーから開け、パネルからデータタブへ戻れる", () => {

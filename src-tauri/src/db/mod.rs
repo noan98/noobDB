@@ -1,4 +1,5 @@
 pub mod advisor;
+pub mod assertions;
 pub mod aws_iam;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;

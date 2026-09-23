@@ -359,6 +359,61 @@ export const snippet = z.object({
   scope: snippetScope,
 });
 
+// データ品質アサーション (#742)。Rust の `AssertionRule` (`tag = "kind"`) のミラー。
+const assertionRule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("not_null"), column: z.string() }),
+  z.object({ kind: z.literal("unique"), columns: z.array(z.string()) }),
+  z.object({
+    kind: z.literal("accepted_values"),
+    column: z.string(),
+    values: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("range"),
+    column: z.string(),
+    min: z.string().nullable(),
+    max: z.string().nullable(),
+  }),
+  z.object({
+    kind: z.literal("referential"),
+    columns: z.array(z.string()),
+    ref_schema: z.string().nullable(),
+    ref_table: z.string(),
+    ref_columns: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("row_count"),
+    op: z.enum(["gt", "gte", "lt", "lte", "eq", "between"]),
+    value: z.number(),
+    max: z.number().nullable(),
+  }),
+]);
+
+export const assertion = z.object({
+  id: z.string(),
+  name: z.string(),
+  scope: snippetScope,
+  schema: z.string().nullable(),
+  table: z.string(),
+  rule: assertionRule,
+});
+
+export const assertionArray = z.array(assertion);
+
+export const assertionSql = z.object({
+  check_sql: z.string(),
+  violations_sql: z.string(),
+});
+
+export const assertionOutcome = z.object({
+  id: z.string(),
+  passed: z.boolean(),
+  observed: z.number(),
+  check_sql: z.string(),
+  violations_sql: z.string(),
+  elapsed_ms: z.number(),
+});
+
 export const historyEntry = z.object({
   id: z.number(),
   profile_id: z.string().nullable(),

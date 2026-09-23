@@ -331,6 +331,66 @@ export interface SaveSnippetRequest {
   scope: SnippetScope;
 }
 
+/** データ品質アサーション (#742) の `row_count` 比較演算子。 */
+export type RowCountOp = "gt" | "gte" | "lt" | "lte" | "eq" | "between";
+
+/**
+ * データ品質アサーションのルール本体 (#742)。Rust の `AssertionRule`
+ * (`#[serde(tag = "kind")]`) のミラーで、フィールド名は snake_case のまま。
+ * 値 (`values` / `min` / `max`) は入力された文字列のまま保持し、リテラル化は
+ * 実行時にバックエンドがドライバ別に行う。
+ */
+export type AssertionRule =
+  | { kind: "not_null"; column: string }
+  | { kind: "unique"; columns: string[] }
+  | { kind: "accepted_values"; column: string; values: string[] }
+  | { kind: "range"; column: string; min: string | null; max: string | null }
+  | {
+      kind: "referential";
+      columns: string[];
+      ref_schema: string | null;
+      ref_table: string;
+      ref_columns: string[];
+    }
+  | { kind: "row_count"; op: RowCountOp; value: number; max: number | null };
+
+/** 保存済みのデータ品質アサーション (#742)。 */
+export interface Assertion {
+  id: string;
+  name: string;
+  scope: SnippetScope;
+  schema: string | null;
+  table: string;
+  rule: AssertionRule;
+}
+
+export interface SaveAssertionRequest {
+  /** 未指定/空なら新規採番。 */
+  id?: string;
+  name: string;
+  scope: SnippetScope;
+  schema: string | null;
+  table: string;
+  rule: AssertionRule;
+}
+
+/** ルールから生成した読み取り専用 SQL (#742)。 */
+export interface AssertionSql {
+  /** 件数 (違反件数、row_count は総行数) を返す集計クエリ。 */
+  check_sql: string;
+  /** 違反行を表示するクエリ (fail から新規タブで開く)。 */
+  violations_sql: string;
+}
+
+/** 1 件の検証結果 (#742)。 */
+export interface AssertionOutcome extends AssertionSql {
+  id: string;
+  passed: boolean;
+  /** row_count は総行数、それ以外は違反件数。 */
+  observed: number;
+  elapsed_ms: number;
+}
+
 export interface HistoryEntry {
   id: number;
   profile_id: string | null;
@@ -2014,6 +2074,50 @@ export const api = {
       parseResponse(schemas.snippet, r, "save_snippet"),
     ),
   deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),
+
+  /** データ品質アサーション (#742) の一覧 (`assertions.json`)。 */
+  listAssertions: () =>
+    invoke<Assertion[]>("list_assertions").then((r) =>
+      parseResponse(schemas.assertionArray, r, "list_assertions"),
+    ),
+  saveAssertion: (req: SaveAssertionRequest) =>
+    invoke<Assertion>("save_assertion", { req }).then((r) =>
+      parseResponse(schemas.assertion, r, "save_assertion"),
+    ),
+  deleteAssertion: (id: string) => invoke<void>("delete_assertion", { id }),
+  /**
+   * 保存前のルールを `driver` 方言の読み取り専用 SQL に変換する (DB には触れない)。
+   * 編集モーダルのプレビュー用。入力が不完全なら InvalidInput で reject される。
+   */
+  previewAssertionSql: (params: {
+    driver: DriverKind;
+    schema: string | null;
+    table: string;
+    rule: AssertionRule;
+  }) =>
+    invoke<AssertionSql>("preview_assertion_sql", {
+      driver: params.driver,
+      schema: params.schema,
+      table: params.table,
+      rule: params.rule,
+    }).then((r) => parseResponse(schemas.assertionSql, r, "preview_assertion_sql")),
+  /**
+   * 保存済みアサーション 1 件を検証する。バックエンドは `run_lookup_query` と同じ
+   * 経路 (セッションの read_only に関係なく読み取り専用の文だけを通す・
+   * `queryTimeoutSecs` で打ち切る・クエリ履歴/結果キャッシュに載せない) で実行する。
+   */
+  runAssertion: (params: {
+    sessionId: string;
+    id: string;
+    database?: string | null;
+    queryTimeoutSecs?: number | null;
+  }) =>
+    invoke<AssertionOutcome>("run_assertion", {
+      sessionId: params.sessionId,
+      id: params.id,
+      database: params.database ?? null,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
+    }).then((r) => parseResponse(schemas.assertionOutcome, r, "run_assertion")),
 
   listHistory: (params: {
     profileId?: string | null;

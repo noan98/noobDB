@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **115 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **120 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -75,6 +75,13 @@
 `list_tasks` / `save_task` / `delete_task` / `set_task_enabled` / `run_task_now` /
 `list_task_runs` / `clear_task_runs` / `get_scheduler_settings` /
 `set_scheduler_settings`
+
+## データ品質アサーション (`commands/assertions.rs`)
+
+`list_assertions` / `save_assertion` / `delete_assertion` / `preview_assertion_sql` /
+`run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック
+`db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも
+可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 
