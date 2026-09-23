@@ -24,7 +24,9 @@
 - OS の keyring (`keyring` クレート) には**秘密情報のみ**を保存します:
   `<profile_id>/db_password`・`<profile_id>/ssh_passphrase`・`<profile_id>/ssh_password`
   の 3 種を、サービス名 `noobDB` のもとに格納します。詳細は `profiles/secrets.rs`
-  を参照してください。
+  を参照してください。プロファイルに属さない秘密として、エクスポートの仮名化 (#733)
+  に使うアプリ単位のソルト `export-masking/hash_salt` もここに置きます
+  (`get_or_create_export_mask_salt`。初回利用時に乱数生成、IPC では返さない)。
 - `save_profile` は秘密情報を `Option<String>` として受け取り、空文字列に意味を
   持たせます: `None` は変更なし、`Some("")` は keyring から削除、`Some(v)` は値を設定。
 - `delete_profile` は孤立した資格情報を残さないよう、最初に `secrets::delete_all`

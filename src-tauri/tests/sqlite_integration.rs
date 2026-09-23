@@ -1104,6 +1104,7 @@ async fn sqlite_missing_path_reports_invalid_input() {
         ssl_client_cert: None,
         ssl_client_key: None,
         init_sql: None,
+        aws_iam: None,
     };
     let err = noobdb_lib::__test_api::connect(&opts)
         .await
@@ -3020,5 +3021,177 @@ async fn sqlite_routine_signature_is_unsupported() {
         .expect_err("routines unsupported on SQLite");
     assert!(err.to_string().contains("not supported"), "{err}");
     conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// データ品質アサーション (#742)
+//
+// 6 種の初期ルールを **read-only セッション**で実行し、違反件数と pass/fail、
+// fail から辿る違反行クエリの中身を実データで確かめる。
+// ---------------------------------------------------------------------------
+
+fn assertion(id: &str, table: &str, rule: t::AssertionRule) -> t::Assertion {
+    t::Assertion {
+        id: id.into(),
+        name: id.into(),
+        scope: t::SnippetScope::Any,
+        schema: None,
+        table: table.into(),
+        rule,
+    }
+}
+
+#[tokio::test]
+async fn data_quality_assertions_run_on_read_only_session() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_assert_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    {
+        let seed = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+            .await
+            .expect("connect (seed)");
+        for sql in [
+            "CREATE TABLE aq_orders (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE aq_items (id INTEGER PRIMARY KEY, order_id INTEGER, email TEXT, status TEXT, qty INTEGER)",
+            "INSERT INTO aq_orders (id) VALUES (1), (2)",
+            "INSERT INTO aq_items VALUES (1, 1, 'a@x', 'active', 5), (2, 2, 'b@x', 'banned', 10), \
+             (3, 9, NULL, 'weird', 500), (4, NULL, 'a@x', 'active', 1)",
+        ] {
+            seed.execute(sql, None).await.expect(sql);
+        }
+        seed.close().await;
+    }
+    let (state, sid) = ro_state(&path).await;
+
+    use t::AssertionRule as R;
+    let cases: Vec<(t::Assertion, bool, u64)> = vec![
+        (
+            assertion(
+                "nn",
+                "aq_items",
+                R::NotNull {
+                    column: "email".into(),
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            assertion(
+                "nn_ok",
+                "aq_items",
+                R::NotNull {
+                    column: "status".into(),
+                },
+            ),
+            true,
+            0,
+        ),
+        (
+            assertion(
+                "uq",
+                "aq_items",
+                R::Unique {
+                    columns: vec!["email".into()],
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            assertion(
+                "av",
+                "aq_items",
+                R::AcceptedValues {
+                    column: "status".into(),
+                    values: vec!["active".into(), "banned".into()],
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            assertion(
+                "rg",
+                "aq_items",
+                R::Range {
+                    column: "qty".into(),
+                    min: Some("1".into()),
+                    max: Some("100".into()),
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            assertion(
+                "rf",
+                "aq_items",
+                R::Referential {
+                    columns: vec!["order_id".into()],
+                    ref_schema: None,
+                    ref_table: "aq_orders".into(),
+                    ref_columns: vec!["id".into()],
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            assertion(
+                "rc",
+                "aq_items",
+                R::RowCount {
+                    op: t::RowCountOp::Between,
+                    value: 1,
+                    max: Some(10),
+                },
+            ),
+            true,
+            4,
+        ),
+    ];
+    for (a, passed, observed) in &cases {
+        let out = t::run_assertion_via_command(&state, &sid, a, None, Some(10))
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", a.id));
+        assert_eq!(out.id, a.id);
+        assert_eq!(out.passed, *passed, "{}: {}", a.id, out.check_sql);
+        assert_eq!(out.observed, *observed, "{}: {}", a.id, out.check_sql);
+        // fail から辿る違反行クエリも read-only セッションでそのまま実行できる。
+        let rows = t::run_query_via_command(&state, &sid, &out.violations_sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("{} violations: {e}", a.id));
+        if a.id == "rf" {
+            assert_eq!(rows.rows.len(), 1);
+            assert!(
+                matches!(&rows.rows[0][0], t::Value::Int(3)),
+                "{:?}",
+                rows.rows
+            );
+        }
+    }
+
+    // 1 ルールの失敗 (存在しないテーブル) はそのルールのエラーに留まる。
+    // (SQLite は未知の "列" を文字列リテラルとして解釈するため、列ではなく表で試す)
+    let err = t::run_assertion_via_command(
+        &state,
+        &sid,
+        &assertion(
+            "bad",
+            "aq_missing_table",
+            R::NotNull {
+                column: "id".into(),
+            },
+        ),
+        None,
+        None,
+    )
+    .await
+    .expect_err("missing column must fail");
+    assert!(!matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
     let _ = std::fs::remove_file(&path);
 }

@@ -109,6 +109,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["dumpErrorEvent", schemas.dumpErrorEvent],
   ["exportProgressEvent", schemas.exportProgressEvent],
   ["exportDoneEvent", schemas.exportDoneEvent],
+  // #711: 在グリッド経路 `export_query_result` の戻り値。
+  ["exportResult", schemas.exportResult],
   ["exportStreamErrorEvent", schemas.exportStreamErrorEvent],
   ["connectPhaseEvent", schemas.connectPhaseEvent],
 ];

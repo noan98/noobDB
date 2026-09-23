@@ -188,6 +188,19 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    headerKey: "helpSectionConnection",
+    descKey: "helpSectionConnectionDesc",
+    features: [
+      {
+        // AWS IAM 認証 (#734)。トークン失効 (15 分) 後の再接続挙動をここに明記する。
+        titleKey: "helpAwsIamTitle",
+        descKey: "helpAwsIamDesc",
+        stepKeys: ["helpAwsIamStep1", "helpAwsIamStep2", "helpAwsIamStep3"],
+        noteKey: "helpAwsIamNote",
+      },
+    ],
+  },
+  {
     headerKey: "helpSectionShortcuts",
     descKey: "helpSectionShortcutsDesc",
     // ショートカット一覧は `shortcuts.ts` の単一ソースから生成し、`?` で開く

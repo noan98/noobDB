@@ -318,6 +318,9 @@ interface Props {
   onShowDatabaseSizes?: (database: string) => void;
   /** テーブルノードから列データプロファイル (「列を探索」) を開く。#974。 */
   onExploreColumns?: (database: string, table: string) => void;
+  /** テーブルノードからテーブル・タイムラプス (#739) のウォッチ登録を始める。
+   *  読み取りの SELECT だけなので read_only でも有効。 */
+  onWatchTable?: (database: string, table: string) => void;
   /** DB ノードからサンドボックス (壊せる砂場) 作成ダイアログを開く。#747。 */
   onCreateSandbox?: (database: string) => void;
   /** 作成済みサンドボックス一覧 (#747)。専用セクションとして通常のプロファイル
@@ -411,6 +414,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
   onExploreColumns,
+  onWatchTable,
   onCreateSandbox,
   sandboxes,
   onOpenSandbox,
@@ -985,6 +989,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     // 列データプロファイル (#974)。読み取りの集計だけなので read_only でも有効。
     if (onExploreColumns) {
       items.push({ label: t("profileMenuLabel"), onSelect: () => onExploreColumns(db, tbl) });
+    }
+    // テーブル・タイムラプス (#739)。登録時に制約とプライバシーを確認ダイアログで示す。
+    if (onWatchTable) {
+      items.push({ label: t("timelapseMenuLabel"), onSelect: () => onWatchTable(db, tbl) });
     }
     if (onFindUsages) {
       items.push({ label: t("contextMenuFindUsages"), onSelect: () => onFindUsages(db, tbl, null) });

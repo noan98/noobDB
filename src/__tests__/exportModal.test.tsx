@@ -243,3 +243,49 @@ describe("ExportModal 調査バンドル (#745)", () => {
     expect(html).toContain("&quot;plan&quot;: 1");
   });
 });
+
+/**
+ * Excel (xlsx) エクスポート (#711)。バイナリ形式なのでプレビュー/コピーの対象外に
+ * なり、バックエンドが上限超過の内訳を返したら何行で切れたかをモーダル内に残す。
+ */
+describe("ExportModal Excel (xlsx) (#711)", () => {
+  it("xlsx を選ぶとプレビュー不可の案内を出し、全文コピーを無効化する", () => {
+    renderWithProviders(
+      <ExportModal
+        columns={SAMPLE_COLUMNS}
+        rows={SAMPLE_ROWS}
+        database={null}
+        table={null}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatXlsx") }));
+    expect(screen.getByText(t("exportPreviewUnavailableXlsx"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("exportPreview"))).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("exportCopyAll") })).toBeDisabled();
+    expect((screen.getByLabelText(t("exportSavePath")) as HTMLInputElement).value).toMatch(/\.xlsx$/);
+  });
+
+  it("行数上限で打ち切られたら書いた行数と全行数を警告として表示する", async () => {
+    const { api } = await import("../api/tauri");
+    const spy = vi.spyOn(api, "exportQueryResult").mockResolvedValue({
+      bytes: 4096,
+      truncation: { writtenRows: 1_048_575, droppedRows: 25, truncatedCells: 0 },
+    });
+    renderWithProviders(
+      <ExportModal
+        columns={SAMPLE_COLUMNS}
+        rows={SAMPLE_ROWS}
+        database={null}
+        table={null}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatXlsx") }));
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    const expected = t("exportXlsxRowsDropped", { written: 1_048_575, dropped: 25, total: 1_048_600 });
+    expect((await screen.findAllByText(expected)).length).toBeGreaterThan(0);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ format: "xlsx" }));
+    spy.mockRestore();
+  });
+});

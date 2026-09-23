@@ -1,0 +1,28 @@
+{
+  "description": "AWS RDS IAM 認証 (#734) の Rust / フロント二重実装を固定する共有ゴールデンベクタ。regionFromHost は src-tauri/src/db/aws_iam.rs の infer_region_from_host と src/components/awsIam.ts の inferRdsRegion (エンドポイント名からのリージョン推定。該当しなければ null)。enforceTls は enforce_tls と effectiveSslModeForIam (IAM 認証時の TLS 強制: 未設定 / disable / prefer は require へ引き上げ、require 以上はそのまま)。判定を変えるときは必ずここへ境界ケースを追記すること。",
+  "regionFromHost": [
+    { "host": "mydb.abcdefghijkl.us-east-1.rds.amazonaws.com", "region": "us-east-1" },
+    { "host": "prod-instance.us-east-1.rds.amazonaws.com", "region": "us-east-1" },
+    { "host": "my-cluster.cluster-abc123.ap-northeast-1.rds.amazonaws.com", "region": "ap-northeast-1" },
+    { "host": "my-cluster.cluster-ro-abc123.eu-west-2.rds.amazonaws.com", "region": "eu-west-2" },
+    { "host": "my-proxy.proxy-abc123.us-west-2.rds.amazonaws.com", "region": "us-west-2" },
+    { "host": "db.abc.cn-north-1.rds.amazonaws.com.cn", "region": "cn-north-1" },
+    { "host": "db.abc.us-gov-west-1.rds.amazonaws.com", "region": "us-gov-west-1" },
+    { "host": "  MyDB.ABC.US-EAST-2.RDS.AMAZONAWS.COM.  ", "region": "us-east-2" },
+    { "host": "us-east-1.rds.amazonaws.com", "region": null },
+    { "host": "rds.amazonaws.com", "region": null },
+    { "host": "db.abc.us-east-1.rds.example.com", "region": null },
+    { "host": "db.abc.notaregion.rds.amazonaws.com", "region": null },
+    { "host": "db.internal", "region": null },
+    { "host": "127.0.0.1", "region": null },
+    { "host": "", "region": null }
+  ],
+  "enforceTls": [
+    { "mode": null, "effective": "require" },
+    { "mode": "disable", "effective": "require" },
+    { "mode": "prefer", "effective": "require" },
+    { "mode": "require", "effective": "require" },
+    { "mode": "verify_ca", "effective": "verify_ca" },
+    { "mode": "verify_full", "effective": "verify_full" }
+  ]
+}

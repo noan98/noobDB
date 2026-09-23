@@ -25,21 +25,38 @@ pub struct MySqlConn {
     /// 明示トランザクションで確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
     /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::MySql>>>,
+    /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
+    /// タスク。ドロップで停止する。パスワード認証では `None`。
+    _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
+}
+
+/// 接続オプション (プールが新しい物理接続を張るときに使う) を組み立てる。
+/// `password` は保存済みパスワード、または AWS IAM 認証トークン。
+fn connect_options(opts: &DbConnectOptions, password: &str) -> MySqlConnectOptions {
+    let mut connect = MySqlConnectOptions::new()
+        .host(&opts.host)
+        .port(opts.port)
+        .username(&opts.user)
+        .password(password);
+    if let Some(db) = &opts.database {
+        if !db.is_empty() {
+            connect = connect.database(db);
+        }
+    }
+    if opts.aws_iam.is_some() {
+        // RDS MySQL の IAM 認証ユーザ (AWSAuthenticationPlugin) はトークンを
+        // mysql_clear_password で受け取る。平文送信になるため、TLS 必須
+        // (`apply_tls` が require 以上へ強制) とセットでのみ有効化する。
+        connect = connect.enable_cleartext_plugin(true);
+    }
+    apply_tls(connect, opts)
 }
 
 impl MySqlConn {
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
-        let mut connect = MySqlConnectOptions::new()
-            .host(&opts.host)
-            .port(opts.port)
-            .username(&opts.user)
-            .password(&opts.password);
-        if let Some(db) = &opts.database {
-            if !db.is_empty() {
-                connect = connect.database(db);
-            }
-        }
-        connect = apply_tls(connect, opts);
+        let password = super::aws_iam::password_for(opts)?;
+        let connect = connect_options(opts, &password);
+        drop(password);
         let mut pool_opts = MySqlPoolOptions::new()
             .min_connections(0)
             .max_connections(5)
@@ -65,9 +82,24 @@ impl MySqlConn {
             );
             e
         })?;
+        // IAM トークンは 15 分で失効する。確立済みの接続はそのまま使えるが、
+        // プールが後から張る新規接続 (アイドル切断後・並列取得時) は新しい
+        // トークンが要るため、接続オプションを定期的に差し替える。
+        let iam_refresh = opts.aws_iam.clone().map(|iam| {
+            let refresh_pool = pool.clone();
+            let refresh_opts = opts.clone();
+            super::aws_iam::spawn_token_refresh(iam, opts.user.clone(), move |token| {
+                if refresh_pool.is_closed() {
+                    return false;
+                }
+                refresh_pool.set_connect_options(connect_options(&refresh_opts, &token));
+                true
+            })
+        });
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),
+            _iam_refresh: iam_refresh,
         })
     }
 
@@ -1751,7 +1783,13 @@ fn map_ssl_mode(mode: SslMode) -> MySqlSslMode {
 /// left untouched when `None` (sqlx defaults to `preferred`); empty certificate
 /// paths are ignored so a blank field behaves like "unset".
 fn apply_tls(mut connect: MySqlConnectOptions, opts: &DbConnectOptions) -> MySqlConnectOptions {
-    if let Some(mode) = opts.ssl_mode {
+    // AWS IAM 認証 (#734) は TLS 必須。`build_options` でも強制しているが、
+    // ドライバ層でも require 以上を保証する (多層防御)。
+    let mode = match opts.aws_iam {
+        Some(_) => Some(super::aws_iam::enforce_tls(opts.ssl_mode)),
+        None => opts.ssl_mode,
+    };
+    if let Some(mode) = mode {
         connect = connect.ssl_mode(map_ssl_mode(mode));
     }
     if let Some(ca) = non_empty(&opts.ssl_root_cert) {

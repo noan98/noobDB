@@ -16,7 +16,28 @@
   ドライバを引数で受け取り、ストリーミング経路はセッションの方言を使う)。
   加えて `export_query_stream` は、グリッドに載っていない大きな結果セットを
   メモリに溜めず**ストリーミングで直接ファイルへ書き出す**経路です (`run_query_stream`
-  と同じバッチ列を消費)。5 形式とも通常 / ストリーミングの両経路に対応します。
+  と同じバッチ列を消費)。6 形式とも通常 / ストリーミングの両経路に対応します。
+  **Excel (xlsx)** (`ExportFormat::Xlsx`、#711) は `commands/export_xlsx.rs` の
+  `XlsxSheetWriter` (`rust_xlsxwriter` の定数メモリモード = セルを一時ファイルへ逐次
+  フラッシュ) を両経路で共有します。値の対応は `xlsx_cell` 純関数に集約: NULL → 空セル、
+  真偽 → 真偽セル、`Int`/`UInt` は**絶対値 15 桁以下のみ数値セル・16 桁以上は十進の
+  文字列セル** (Excel は有効数字 15 桁で表示・再入力し、それを超える桁が 0 に化けるため)、
+  有限の `Float` は数値セル (NaN/inf は文字列)、`String` は文字列セル (数値型の列 —
+  `is_numeric_type` — で素の十進リテラルかつ有効 15 桁以下のときだけ数値セル。先頭ゼロ・
+  日時・数式風の値は文字列のまま。`write_string` なので数式として評価されず CSV の
+  インジェクション緩和は不要)、BLOB は `0x...`、空文字列は空セル、ヘッダは太字のみ。
+  **上限**: データ行は 1,048,575 行 (ヘッダ込み 1,048,576) まで書き、超えた行は
+  エラーにせず数えて `ExportTruncation { writtenRows, droppedRows, truncatedCells }`
+  で返す (32,767 文字 (UTF-16 単位) 超のセルは切り詰めて数える。16,384 列超はエラー)。
+  在グリッド経路は戻り値 `ExportResult { bytes, truncation }`、ストリーミング経路は
+  `export-stream:done` の `truncation` で返し、`ExportModal` が警告として表示します
+  (純ロジック `components/exportXlsx.ts`)。スケジューラ (#730) は書いた行数を実行ログに
+  残します。定数メモリモードは一時ファイル作成失敗でライブラリ内部が panic するため、
+  先に `Workbook::set_tempdir` で書き込み可否を `Err` として検査しています。
+  xlsx はバイナリなのでプレビュー/全文コピーの対象外 (`exportPreview.ts` は空を返す)。
+  共有ゴールデンは各ケースの `xlsxCells` (セル種別 + 値) で固定し、
+  `tests/export_format_golden.rs` が判定関数と**実際に書いた xlsx を展開して読み戻した
+  シート XML** の両方を突き合わせます。
   **JSON 形式のときは実行クエリを出力に同梱**できます (`export_query_result` の
   `query` 引数 / `export_query_stream` は `sql` を流用)。同梱時は配列ではなく
   `{ "query": <sql>, "rows": [...] }` でラップします (キーは serde_json 既定の
@@ -36,7 +57,7 @@
   空結果・クエリ同梱・SQL のバッチ分割 — をケース名で固定しています。BLOB だけは
   フロントが `Value::Bytes` を区別できないため意図的に食い違い、`frontendExpected` に
   明記します。
-  **調査バンドル (#745)** は `ExportModal` の 6 つ目の形式「調査バンドル (HTML)」で、
+  **調査バンドル (#745)** は `ExportModal` の 7 つ目の形式「調査バンドル (HTML)」で、
   バックエンドのエクスポート形式ではありません。`components/investigationBundle.ts`
   (純ロジック) が SQL (ハイライト付き)・在グリッド行 (ソート可能な表)・非秘密の接続
   メタ (プロファイル名/ドライバ/DB、ホストはチェック時のみ)・任意でテーブル定義
@@ -45,6 +66,34 @@
   `escapeHtml` を通し、CSP `default-src 'none'` で外部リソースを禁止、機微カラムマスク
   (#1069) 対象列は reveal に関係なく伏せ字。文脈は `App.tsx` → `ResultGrid` の
   `bundleContext` で渡し、マスク設定は `DataGrid` の `onMaskConfigChange` で持ち上げる。
+- **データマスキング (#733)**: `export_query_result` / `export_query_stream` は
+  `masks: Option<Vec<ColumnMask>>` (列名 → `MaskRule`) を受け取り、純粋層
+  `db/masking.rs` の `mask_rows` を**値エンコード直前の単一フック**として在グリッド
+  (`write_export_to`) とストリーミング (`StreamExportSink::on_rows`) の両経路・6 形式
+  (xlsx #711 を含む) すべてに通す (経路ごとの実装差を作らない)。xlsx もセル型の判定
+  (`xlsx_cell`) の手前でマスク済みの行を受け取るので、仮名化・固定値にした列は
+  文字列セルになる。調査バンドル (#745) はフロントで組み立てるため、保存 / 全文コピー /
+  プレビューとも先に `mask_export_rows` で同じ変換を掛けた行をバンドルへ渡し、その上で
+  表示マスク (#1069) 対象列を伏せ字にする (両方が効く)。ルールは `fixed` (固定値) / `partial`
+  (先頭・末尾 N 文字を残して `*`、コードポイント単位) / `hash` (仮名化) / `null`。
+  **NULL はどのルールでも NULL のまま**、数値・真偽値は文字列表現を変換、BLOB は 16 進
+  文字列を変換 (在グリッド経路でも同じ文字列になるので `hash` は両経路で一致)。
+  列は**名前の完全一致**で対応付ける (ストリーミングは列が実行時まで不明なため)。
+  **仮名化は HMAC-SHA256(アプリ単位の秘密ソルト, 値)** の 16 進先頭 N 文字で、同一値 →
+  同一出力なので結合キーに使える。ソルトは初回利用時に生成して **OS keyring にのみ**
+  保存する (`profiles::secrets::get_or_create_export_mask_salt`、キーは
+  `export-masking/hash_salt`)。`profiles.json`・設定・ログ・フロントには出さない —
+  そのためプレビュー / 全文コピーもフロントで変換せず `mask_export_rows` IPC を通す
+  (変換の二重実装を持たない)。keyring が使えないときに `hash` を指定するとエラーで
+  止まる (素の SHA-256 へ縮退したり、マスクせず書き出したりしない)。フロント
+  (`components/exportMasking.ts`) は列名パターンのプリセット (設定 `exportMaskPresets`、
+  プロファイル非依存。同梱は email / phone / mobile / *_name 系) と列単位の上書きから
+  ルールを解決し、パターン判定は表示マスク (#1069) の `matchesMaskPattern` を共有する。
+  ルールの正規化 (上限・既定値) はフロント `sanitizeMaskRule` とバック
+  `MaskRule::normalized` の二重実装なので、共有ゴールデン
+  `src/__tests__/fixtures/exportMaskingVectors.json` で一致を固定 (バックは
+  `db/masking.rs` の単体テストが `cases` の変換結果も検証)。スケジュール実行
+  (`tasks/executor.rs`) のエクスポートはマスキング非対応。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
   SQLite / DuckDB / MSSQL は接続から直接生成 (下記)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)

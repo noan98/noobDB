@@ -1,0 +1,556 @@
+{
+  "_comment": "エクスポート時のデータマスキング (#733) の共有ゴールデン。Rust (src-tauri/src/db/masking.rs の tests) は cases のルールを正規化してから入力値へ適用し expected と、normalize の rule を正規化して normalized と突き合わせる。フロント (src/__tests__/exportMaskingGolden.test.ts) は normalize を sanitizeMaskRule に通して同じ正規形になることと、cases のルールが既に正規形であることを確認する。hash の期待値は HMAC-SHA256(salt, 値の文字列表現) の小文字 16 進先頭 length 文字 (Python の hmac で独立に算出)。",
+  "salt": "noobdb-golden-salt",
+  "cases": [
+    {
+      "name": "fixed_string",
+      "rule": {
+        "kind": "fixed",
+        "value": "***"
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice"
+      },
+      "expected": "***"
+    },
+    {
+      "name": "fixed_custom_on_int_becomes_string",
+      "rule": {
+        "kind": "fixed",
+        "value": "REDACTED"
+      },
+      "input": {
+        "kind": "int",
+        "value": 42
+      },
+      "expected": "REDACTED"
+    },
+    {
+      "name": "fixed_empty_value",
+      "rule": {
+        "kind": "fixed",
+        "value": ""
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice"
+      },
+      "expected": ""
+    },
+    {
+      "name": "fixed_keeps_null",
+      "rule": {
+        "kind": "fixed",
+        "value": "***"
+      },
+      "input": {
+        "kind": "null"
+      },
+      "expected": null
+    },
+    {
+      "name": "fixed_on_bytes",
+      "rule": {
+        "kind": "fixed",
+        "value": "***"
+      },
+      "input": {
+        "kind": "bytes",
+        "value": "deadbeef"
+      },
+      "expected": "***"
+    },
+    {
+      "name": "partial_email",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 2,
+        "keepEnd": 4
+      },
+      "input": {
+        "kind": "string",
+        "value": "taro@example.com"
+      },
+      "expected": "ta**********.com"
+    },
+    {
+      "name": "partial_multibyte_cjk",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 1,
+        "keepEnd": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "山田太郎"
+      },
+      "expected": "山**郎"
+    },
+    {
+      "name": "partial_emoji_zwj_counts_code_points",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 1,
+        "keepEnd": 0
+      },
+      "input": {
+        "kind": "string",
+        "value": "👨‍👩‍👧"
+      },
+      "expected": "👨****"
+    },
+    {
+      "name": "partial_surrogate_pair_kept_whole",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 1,
+        "keepEnd": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "a😀b😀"
+      },
+      "expected": "a**😀"
+    },
+    {
+      "name": "partial_short_value_fully_masked",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 2,
+        "keepEnd": 2
+      },
+      "input": {
+        "kind": "string",
+        "value": "abc"
+      },
+      "expected": "***"
+    },
+    {
+      "name": "partial_exact_length_fully_masked",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 2,
+        "keepEnd": 2
+      },
+      "input": {
+        "kind": "string",
+        "value": "abcd"
+      },
+      "expected": "****"
+    },
+    {
+      "name": "partial_empty_string",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 1,
+        "keepEnd": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": ""
+      },
+      "expected": ""
+    },
+    {
+      "name": "partial_phone_keep_last_4",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 0,
+        "keepEnd": 4
+      },
+      "input": {
+        "kind": "string",
+        "value": "090-1234-5678"
+      },
+      "expected": "*********5678"
+    },
+    {
+      "name": "partial_on_int",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 0,
+        "keepEnd": 2
+      },
+      "input": {
+        "kind": "int",
+        "value": 1234567
+      },
+      "expected": "*****67"
+    },
+    {
+      "name": "partial_on_negative_int",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 1,
+        "keepEnd": 0
+      },
+      "input": {
+        "kind": "int",
+        "value": -42
+      },
+      "expected": "-**"
+    },
+    {
+      "name": "partial_on_bool",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 1,
+        "keepEnd": 0
+      },
+      "input": {
+        "kind": "bool",
+        "value": true
+      },
+      "expected": "t***"
+    },
+    {
+      "name": "partial_on_bytes_hex_text",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 2,
+        "keepEnd": 2
+      },
+      "input": {
+        "kind": "bytes",
+        "value": "deadbeef"
+      },
+      "expected": "de****ef"
+    },
+    {
+      "name": "partial_keeps_null",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 1,
+        "keepEnd": 1
+      },
+      "input": {
+        "kind": "null"
+      },
+      "expected": null
+    },
+    {
+      "name": "partial_keep_clamped_to_max",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 64,
+        "keepEnd": 0
+      },
+      "input": {
+        "kind": "string",
+        "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx******"
+    },
+    {
+      "name": "hash_email",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice@example.com"
+      },
+      "expected": "faaaa117c35b8801"
+    },
+    {
+      "name": "hash_int_same_as_numeric_string_int",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "int",
+        "value": 42
+      },
+      "expected": "7d9508bdad71577e"
+    },
+    {
+      "name": "hash_int_same_as_numeric_string_str",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "string",
+        "value": "42"
+      },
+      "expected": "7d9508bdad71577e"
+    },
+    {
+      "name": "hash_uint",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "uint",
+        "value": 18446744073709551615
+      },
+      "expected": "4fb339fc752347d2"
+    },
+    {
+      "name": "hash_float",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "float",
+        "value": 1.5
+      },
+      "expected": "cf790b1101013f5d"
+    },
+    {
+      "name": "hash_integral_float_formats_without_fraction",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "float",
+        "value": 3.0
+      },
+      "expected": "50f1f72295e62a48"
+    },
+    {
+      "name": "hash_bool",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "bool",
+        "value": false
+      },
+      "expected": "a52510b395131a7a"
+    },
+    {
+      "name": "hash_bytes_hex_text",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "bytes",
+        "value": "deadbeef"
+      },
+      "expected": "30caaa7f51475e3a"
+    },
+    {
+      "name": "hash_blob_string_same_as_bytes",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "string",
+        "value": "deadbeef"
+      },
+      "expected": "30caaa7f51475e3a"
+    },
+    {
+      "name": "hash_empty_string",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "string",
+        "value": ""
+      },
+      "expected": "38b31e320d15ef9b"
+    },
+    {
+      "name": "hash_multibyte",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "string",
+        "value": "山田太郎"
+      },
+      "expected": "9b43c2adc329374d"
+    },
+    {
+      "name": "hash_full_length",
+      "rule": {
+        "kind": "hash",
+        "length": 64
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice@example.com"
+      },
+      "expected": "faaaa117c35b88010988fbebd33929d3fdc183083e22c83e515f908e49934d79"
+    },
+    {
+      "name": "hash_length_clamped_min",
+      "rule": {
+        "kind": "hash",
+        "length": 4
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice@example.com"
+      },
+      "expected": "faaa"
+    },
+    {
+      "name": "hash_keeps_null",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "null"
+      },
+      "expected": null
+    },
+    {
+      "name": "null_rule_on_string",
+      "rule": {
+        "kind": "null"
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice"
+      },
+      "expected": null
+    },
+    {
+      "name": "null_rule_on_int",
+      "rule": {
+        "kind": "null"
+      },
+      "input": {
+        "kind": "int",
+        "value": 7
+      },
+      "expected": null
+    },
+    {
+      "name": "null_rule_on_bytes",
+      "rule": {
+        "kind": "null"
+      },
+      "input": {
+        "kind": "bytes",
+        "value": "00ff"
+      },
+      "expected": null
+    }
+  ],
+  "normalize": [
+    {
+      "name": "fixed_default_value",
+      "rule": {
+        "kind": "fixed"
+      },
+      "normalized": {
+        "kind": "fixed",
+        "value": "***"
+      }
+    },
+    {
+      "name": "fixed_keeps_surrounding_spaces",
+      "rule": {
+        "kind": "fixed",
+        "value": " x "
+      },
+      "normalized": {
+        "kind": "fixed",
+        "value": " x "
+      }
+    },
+    {
+      "name": "fixed_truncated_to_200_code_points",
+      "rule": {
+        "kind": "fixed",
+        "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      },
+      "normalized": {
+        "kind": "fixed",
+        "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      }
+    },
+    {
+      "name": "partial_defaults_to_zero",
+      "rule": {
+        "kind": "partial"
+      },
+      "normalized": {
+        "kind": "partial",
+        "keepStart": 0,
+        "keepEnd": 0
+      }
+    },
+    {
+      "name": "partial_clamped_to_64",
+      "rule": {
+        "kind": "partial",
+        "keepStart": 100,
+        "keepEnd": 3
+      },
+      "normalized": {
+        "kind": "partial",
+        "keepStart": 64,
+        "keepEnd": 3
+      }
+    },
+    {
+      "name": "hash_default_length",
+      "rule": {
+        "kind": "hash"
+      },
+      "normalized": {
+        "kind": "hash",
+        "length": 16
+      }
+    },
+    {
+      "name": "hash_clamped_min",
+      "rule": {
+        "kind": "hash",
+        "length": 0
+      },
+      "normalized": {
+        "kind": "hash",
+        "length": 4
+      }
+    },
+    {
+      "name": "hash_clamped_max",
+      "rule": {
+        "kind": "hash",
+        "length": 1000
+      },
+      "normalized": {
+        "kind": "hash",
+        "length": 64
+      }
+    },
+    {
+      "name": "hash_in_range_unchanged",
+      "rule": {
+        "kind": "hash",
+        "length": 12
+      },
+      "normalized": {
+        "kind": "hash",
+        "length": 12
+      }
+    },
+    {
+      "name": "null_rule",
+      "rule": {
+        "kind": "null"
+      },
+      "normalized": {
+        "kind": "null"
+      }
+    }
+  ]
+}

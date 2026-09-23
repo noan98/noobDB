@@ -125,6 +125,17 @@ export function workspaceCommandItems(
       run: () => actions.toggleBottomPanel("processes"),
     });
   }
+  // データ品質アサーション (#742)。接続だけを要求する (検証 DB はセッション既定で可)。
+  if (ctx.sessionId) {
+    items.push({
+      id: "nav:assertions",
+      group: "navigation",
+      label: t("cmdkAssertions"),
+      icon: "check",
+      keywords: "data quality assertion test not null unique accepted values range orphan row count データ品質 アサーション 検証 孤児 一意",
+      run: () => actions.toggleBottomPanel("assertions"),
+    });
+  }
   if (ctx.openConnectionCount > 0) {
     items.push({
       id: "nav:connectionHealth",

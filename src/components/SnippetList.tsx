@@ -58,7 +58,7 @@ interface MenuState {
 }
 
 /** True when `snippet` should be offered while connected to `profile`. */
-export function scopeMatches(snippet: Snippet, profile: ConnectionProfile | null): boolean {
+export function scopeMatches(snippet: Pick<Snippet, "scope">, profile: ConnectionProfile | null): boolean {
   const s = snippet.scope;
   if (s.kind === "any") return true;
   if (!profile) return false;

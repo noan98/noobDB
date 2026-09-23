@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Where a snippet is offered. `Any` shows everywhere; `Profile` only when
 /// connected to that exact profile; `Group` for any profile in that group.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SnippetScope {
     #[default]

@@ -23,6 +23,9 @@ import { z } from "zod";
  *  BLOB は 16 進文字列 (`Value::Bytes`) として string に乗る (CLAUDE.md 参照)。 */
 export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
 
+/** 行の配列 (`Vec<Vec<Value>>`)。`mask_export_rows` (#733) の戻り値。 */
+export const cellRows = z.array(z.array(cellValue));
+
 export const column = z.object({
   name: z.string(),
   type_name: z.string(),
@@ -321,6 +324,15 @@ export const connectionProfile = z.object({
   ssl_client_key: z.string().nullable().optional(),
   // セッション初期化 SQL (非秘密)。未設定の旧プロファイルでは欠落。
   init_sql: z.string().nullable().optional(),
+  // AWS IAM 認証 (#734)。リージョンと AWS プロファイル名のみ (アクセスキーは保存
+  // しない)。null / 欠落はパスワード認証 (本機能以前の旧プロファイルを含む)。
+  aws_iam: z
+    .object({
+      region: z.string(),
+      profile: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   // 以下は list_profiles の戻り値にのみ含まれる「秘密が設定済みか」の表示用フラグ。
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),
@@ -345,6 +357,61 @@ export const snippet = z.object({
   sql: z.string(),
   driver: z.string().nullable(),
   scope: snippetScope,
+});
+
+// データ品質アサーション (#742)。Rust の `AssertionRule` (`tag = "kind"`) のミラー。
+const assertionRule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("not_null"), column: z.string() }),
+  z.object({ kind: z.literal("unique"), columns: z.array(z.string()) }),
+  z.object({
+    kind: z.literal("accepted_values"),
+    column: z.string(),
+    values: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("range"),
+    column: z.string(),
+    min: z.string().nullable(),
+    max: z.string().nullable(),
+  }),
+  z.object({
+    kind: z.literal("referential"),
+    columns: z.array(z.string()),
+    ref_schema: z.string().nullable(),
+    ref_table: z.string(),
+    ref_columns: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("row_count"),
+    op: z.enum(["gt", "gte", "lt", "lte", "eq", "between"]),
+    value: z.number(),
+    max: z.number().nullable(),
+  }),
+]);
+
+export const assertion = z.object({
+  id: z.string(),
+  name: z.string(),
+  scope: snippetScope,
+  schema: z.string().nullable(),
+  table: z.string(),
+  rule: assertionRule,
+});
+
+export const assertionArray = z.array(assertion);
+
+export const assertionSql = z.object({
+  check_sql: z.string(),
+  violations_sql: z.string(),
+});
+
+export const assertionOutcome = z.object({
+  id: z.string(),
+  passed: z.boolean(),
+  observed: z.number(),
+  check_sql: z.string(),
+  violations_sql: z.string(),
+  elapsed_ms: z.number(),
 });
 
 export const historyEntry = z.object({
@@ -466,6 +533,54 @@ export const dataDiff = z.object({
   truncated: z.boolean(),
   source_count: z.number(),
   target_count: z.number(),
+});
+
+// テーブル・タイムラプス (#739)。
+const timelapseGenerationMeta = z.object({
+  id: z.number(),
+  captured_at: z.string(),
+  row_count: z.number(),
+  truncated: z.boolean(),
+  bytes: z.number(),
+});
+
+export const tableWatch = z.object({
+  id: z.number(),
+  profile_id: z.string(),
+  driver: z.string(),
+  database: z.string(),
+  table: z.string(),
+  active: z.boolean(),
+  partial: z.boolean(),
+  created_at: z.string(),
+  generations: z.array(timelapseGenerationMeta),
+});
+export const tableWatchArray = z.array(tableWatch);
+
+export const timelapseWatchOutcome = z.object({
+  watch_id: z.number().nullable(),
+  over_limit: z.boolean(),
+  row_limit: z.number(),
+  generation_added: z.boolean(),
+});
+
+const timelapseCaptureOutcome = z.object({
+  watch_id: z.number(),
+  database: z.string(),
+  table: z.string(),
+  added: z.boolean(),
+  truncated: z.boolean(),
+  error: z.string().nullable(),
+});
+export const timelapseCaptureOutcomeArray = z.array(timelapseCaptureOutcome);
+
+export const timelapseGenerationDiff = z.object({
+  diff: dataDiff,
+  columns_added: z.array(z.string()),
+  columns_removed: z.array(z.string()),
+  partial: z.boolean(),
+  from_captured_at: z.string(),
+  to_captured_at: z.string(),
 });
 
 /** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
@@ -910,10 +1025,25 @@ export const exportProgressEvent = z.object({
   rows: z.number(),
 });
 
+/** xlsx エクスポートで Excel の上限 (行数 / セル文字数) に当たり、出力が欠けた内訳 (#711)。 */
+export const exportTruncation = z.object({
+  writtenRows: z.number(),
+  droppedRows: z.number(),
+  truncatedCells: z.number(),
+});
+
+/** 在グリッド経路 `export_query_result` の戻り値 (#711)。 */
+export const exportResult = z.object({
+  bytes: z.number(),
+  truncation: exportTruncation.nullable(),
+});
+
 export const exportDoneEvent = z.object({
   streamId: z.string(),
   rows: z.number(),
   bytes: z.number(),
+  /** xlsx で上限に当たったときだけ非 null。`rows` は読んだ全行数、書いた行数は `truncation.writtenRows`。 */
+  truncation: exportTruncation.nullable(),
 });
 
 export const exportStreamErrorEvent = z.object({

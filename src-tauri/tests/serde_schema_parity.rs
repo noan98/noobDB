@@ -284,6 +284,12 @@ fn build_fixtures() -> serde_json::Value {
         ssl_client_cert: Some("/etc/ssl/client.pem".into()),
         ssl_client_key: Some("/etc/ssl/client.key".into()),
         init_sql: Some("SET time_zone = '+00:00';".into()),
+        // #734: AWS IAM 認証の非秘密設定 (リージョン / AWS プロファイル名) も
+        // zod ⇔ serde ゴールデンの対象にする。
+        aws_iam: Some(t::AwsIamConfig {
+            region: "ap-northeast-1".into(),
+            profile: Some("work".into()),
+        }),
     };
     let connection_profile = ProfileWithSecretFlags {
         profile: connection_profile_inner,
@@ -575,6 +581,17 @@ fn build_fixtures() -> serde_json::Value {
         stream_id: "strm0005".into(),
         rows: 1000,
         bytes: 40960,
+        // #711: xlsx で Excel の行数上限に当たったケース (非 null の形を固定する)。
+        truncation: Some(t::ExportTruncation {
+            written_rows: 1_048_575,
+            dropped_rows: 25,
+            truncated_cells: 2,
+        }),
+    };
+    // #711: 在グリッド経路 `export_query_result` の戻り値 (xlsx 以外は truncation が null)。
+    let export_result = t::ExportResult {
+        bytes: 2048,
+        truncation: None,
     };
     let export_error_event = ExportErrorEvent {
         stream_id: "strm0005".into(),
@@ -650,6 +667,7 @@ fn build_fixtures() -> serde_json::Value {
         "dumpErrorEvent": dump_error_event,
         "exportProgressEvent": export_progress_event,
         "exportDoneEvent": export_done_event,
+        "exportResult": export_result,
         "exportStreamErrorEvent": export_error_event,
         "connectPhaseEvent": connect_phase_event,
         "scriptProgressEvent": script_progress_event,

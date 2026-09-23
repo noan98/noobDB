@@ -68,6 +68,9 @@ pub struct SaveProfileRequest {
     /// Session-initialization SQL run right after each connection is established.
     #[serde(default)]
     pub init_sql: Option<String>,
+    /// AWS IAM database authentication settings (#734). Non-secret.
+    #[serde(default)]
+    pub aws_iam: Option<crate::db::aws_iam::AwsIamConfig>,
 }
 
 /// A stored profile plus flags telling the UI which secrets already exist in the
@@ -231,6 +234,13 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         init_sql: req.init_sql.filter(|s| !s.trim().is_empty()),
+        aws_iam: req.aws_iam.map(|c| crate::db::aws_iam::AwsIamConfig {
+            region: c.region.trim().to_string(),
+            profile: c
+                .profile
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty()),
+        }),
     };
     store::upsert(profile.clone())?;
 
@@ -612,6 +622,7 @@ mod tests {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         }
     }
 

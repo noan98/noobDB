@@ -3,6 +3,7 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod assertions;
 mod cache;
 mod commands;
 mod db;
@@ -17,14 +18,18 @@ mod snippets;
 mod ssh;
 mod state;
 mod tasks;
+mod timelapse;
 
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
+    pub use crate::commands::assertions::AssertionOutcome;
     pub use crate::db::advisor::{
         analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
         TableMeta, UnusedIndexEntry, UnusedIndexStats,
     };
+    pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
@@ -197,11 +202,28 @@ pub mod __test_api {
     ) -> crate::error::Result<Vec<u8>> {
         let opts = crate::commands::export::SqlExportOpts::build(driver, table, batch_size);
         let mut buf = Vec::new();
-        crate::commands::export::write_export_to(&mut buf, format, columns, rows, query, &opts)?;
+        crate::commands::export::write_export_to(
+            &mut buf, format, columns, rows, query, &opts, None,
+        )?;
         Ok(buf)
     }
 
-    pub use crate::commands::export::ExportFormat;
+    pub use crate::commands::export::{ExportFormat, ExportResult, ExportTruncation};
+
+    /// xlsx エクスポートで 1 つの値がどのセルになるかを文字列で表す (#711)。
+    /// 書き出し ([`crate::commands::export_xlsx::XlsxSheetWriter`]) が従う判定
+    /// `xlsx_cell` をそのまま通すので、共有ゴールデン
+    /// (`tests/export_format_golden.rs`) が xlsx のセル型・値を固定できる。
+    /// 表記: 空セル `-` / 真偽 `b:true` / 数値 `n:<f64 の Display>` / 文字列 `s:<本文>`。
+    pub fn xlsx_cell_repr(value: &Value, column: Option<&Column>) -> String {
+        use crate::commands::export_xlsx::{xlsx_cell, XlsxCell};
+        match xlsx_cell(value, column) {
+            XlsxCell::Blank => "-".to_string(),
+            XlsxCell::Bool(b) => format!("b:{b}"),
+            XlsxCell::Number(n) => format!("n:{n}"),
+            XlsxCell::Text(s) => format!("s:{s}"),
+        }
+    }
 
     /// SQL 識別子引用の単一実装 (`db::sync::quote_ident`)。`pub(crate)` のため
     /// `pub use` で再公開できず、薄いラッパーで露出する。実装横断ゴールデン
@@ -301,6 +323,26 @@ pub mod __test_api {
         database: Option<&str>,
     ) -> crate::error::Result<QueryResult> {
         crate::commands::query::run_query_inner(state, session_id, sql, database).await
+    }
+
+    /// Drives the `run_assertion` IPC command's core path (#742): rule → SQL
+    /// conversion for the session's driver, then the always-read-only lookup
+    /// path (timeout, no history, no result cache) and pass/fail evaluation.
+    pub async fn run_assertion_via_command(
+        state: &AppState,
+        session_id: &str,
+        assertion: &crate::assertions::Assertion,
+        database: Option<&str>,
+        query_timeout_secs: Option<u64>,
+    ) -> crate::error::Result<crate::commands::assertions::AssertionOutcome> {
+        crate::commands::assertions::run_assertion_with(
+            state,
+            session_id,
+            assertion,
+            database,
+            query_timeout_secs,
+        )
+        .await
     }
 
     /// Drives the `run_lookup_query` IPC command's core path (#1067): the
@@ -701,6 +743,7 @@ pub mod __test_api {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         }
     }
 
@@ -719,6 +762,7 @@ pub mod __test_api {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         }
     }
 
@@ -762,6 +806,7 @@ pub mod __test_api {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         })
     }
 
@@ -920,16 +965,28 @@ pub fn run() {
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,
+            commands::assertions::list_assertions,
+            commands::assertions::save_assertion,
+            commands::assertions::delete_assertion,
+            commands::assertions::preview_assertion_sql,
+            commands::assertions::run_assertion,
             commands::history::list_history,
             commands::history::clear_history,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,
             commands::flight_recorder::undo_flight_record,
+            commands::timelapse::timelapse_watch_table,
+            commands::timelapse::timelapse_capture,
+            commands::timelapse::timelapse_list_watches,
+            commands::timelapse::timelapse_diff_generations,
+            commands::timelapse::timelapse_unwatch,
+            commands::timelapse::timelapse_clear_all,
             commands::logs::read_logs,
             commands::logs::clear_logs,
             commands::export::export_query_result,
             commands::export::export_query_stream,
+            commands::export::mask_export_rows,
             commands::dump::dump_database,
             commands::import::parse_csv_preview,
             commands::import::import_csv,

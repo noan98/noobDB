@@ -79,6 +79,7 @@ mod tests {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         };
         Connection::connect(&opts)
             .await

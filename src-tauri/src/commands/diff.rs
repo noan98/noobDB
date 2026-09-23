@@ -156,10 +156,36 @@ pub(crate) fn select_rows_sql(
         .map(|c| quote_ident(driver, c))
         .collect::<Vec<_>>()
         .join(", ");
-    format!(
-        "SELECT {cols} FROM {} ORDER BY {order} LIMIT {limit}",
-        quote_ident(driver, table)
-    )
+    let table = quote_ident(driver, table);
+    match driver {
+        // T-SQL には `LIMIT` が無いので `TOP (n)` (#739 のタイムラプスが MSSQL でも
+        // 同じ関数を使うため)。
+        DriverKind::Mssql => format!("SELECT TOP ({limit}) {cols} FROM {table} ORDER BY {order}"),
+        _ => format!("SELECT {cols} FROM {table} ORDER BY {order} LIMIT {limit}"),
+    }
+}
+
+#[cfg(test)]
+mod select_rows_sql_tests {
+    use super::*;
+
+    #[test]
+    fn select_rows_sql_uses_limit_or_top_per_driver() {
+        let cols = vec!["id".to_string(), "v".to_string()];
+        let pk = vec!["id".to_string()];
+        assert_eq!(
+            select_rows_sql(DriverKind::Mysql, "t", &cols, &pk, 11),
+            "SELECT `id`, `v` FROM `t` ORDER BY `id` LIMIT 11"
+        );
+        assert_eq!(
+            select_rows_sql(DriverKind::Postgres, "t", &cols, &pk, 11),
+            "SELECT \"id\", \"v\" FROM \"t\" ORDER BY \"id\" LIMIT 11"
+        );
+        assert_eq!(
+            select_rows_sql(DriverKind::Mssql, "t", &cols, &pk, 11),
+            "SELECT TOP (11) [id], [v] FROM [t] ORDER BY [id]"
+        );
+    }
 }
 
 /// Compares the rows of one `table` between the source and target databases,

@@ -23,8 +23,8 @@
  *    - 出力: 実行した文ごとの結末 (件数・所要時間・エラー本文)。`outputLog.ts`
  *    - メッセージ: ステータスバーに出た文の履歴 (最新 1 件しか出ないため)。`messageLog.ts`
  *    - アクティビティ: トーストの履歴 (ベルのポップオーバーと同じストア)。`activityLog.ts`
- * 2. **診断** (`advisor` / `inspector` / `processes` / `health`) — DB とサーバの
- *    状態・改善提案。
+ * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `health`) —
+ *    DB とサーバの状態・改善提案・データ品質の検証。
  * 3. **参照** (`whereUsed` / `structure` / `profile`) — 選んだオブジェクトの詳細。
  *
  * `whereUsed` (影響分析、#1027) は「DROP / RENAME の前に参照元を確かめながら
@@ -35,6 +35,15 @@
  * `structure` (テーブル構造、#1112) は Database Explorer でテーブルを選んだあと
  * 「データ」と並ぶもう一方の行き先。列・インデックス・外部キーを見ながら SQL を
  * 書くための参照情報なので、全画面ではなくここに置く。
+ *
+ * `timelapse` (テーブル・タイムラプス、#739) はウォッチ登録したテーブルの世代間の
+ * 行差分。「さっきの変更で何が変わったか」を見ながら SQL を書くための参照情報なので
+ * ここに置く。ウォッチはプロファイル単位で保存するため、保存済みプロファイルで
+ * 接続しているときだけ開ける。
+ * `assertions` (データ品質アサーション、#742) は「検証結果を見ながら違反行を SQL で
+ * 追う」ための診断情報なので、ここ (診断グループ) に置く。検証するデータベースはアクティブタブ →
+ * プロファイル既定の順で決まり (未決定ならセッションの既定)、開ける条件は接続中で
+ * あることだけ。追加・編集は `AssertionEditorModal` (一時的な操作 = Modal)。
  */
 export const BOTTOM_PANEL_TABS = [
   "output",
@@ -43,10 +52,12 @@ export const BOTTOM_PANEL_TABS = [
   "advisor",
   "inspector",
   "processes",
+  "assertions",
   "health",
   "whereUsed",
   "structure",
   "profile",
+  "timelapse",
 ] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
@@ -61,10 +72,12 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   advisor: "diagnostics",
   inspector: "diagnostics",
   processes: "diagnostics",
+  assertions: "diagnostics",
   health: "diagnostics",
   whereUsed: "reference",
   structure: "reference",
   profile: "reference",
+  timelapse: "reference",
 };
 
 /**
@@ -105,6 +118,11 @@ export interface BottomPanelContext {
    * から決まり、決まっていなければ構造タブは開けない (空パネルを作らない)。
    */
   structureTable?: string | null;
+  /**
+   * テーブル・タイムラプス (#739) のウォッチ保存先プロファイル。アドホック接続
+   * (プロファイル無し) ではウォッチを保存できないので開けない。
+   */
+  timelapseProfileId?: string | null;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
@@ -117,6 +135,7 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
     if (tab === "advisor") return !!ctx.advisorDatabase;
     if (tab === "profile") return !!ctx.profileTable;
     if (tab === "structure") return !!ctx.structureTable;
+    if (tab === "timelapse") return !!ctx.timelapseProfileId;
     return true;
   });
 }

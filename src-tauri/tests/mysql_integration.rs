@@ -1318,3 +1318,129 @@ async fn mysql_routine_signature_when_env_set() {
     let _ = t::mysql_exec_text(&opts, "DROP FUNCTION IF EXISTS noobdb_rt_fn").await;
     conn.close().await;
 }
+
+/// データ品質アサーション (#742): 6 種の初期ルールを read-only セッションで実行し、
+/// 違反件数と pass/fail を実データで確かめる (SQLite 版と同じシナリオ)。
+#[tokio::test]
+async fn mysql_data_quality_assertions_on_read_only_session() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let seed = t::connect(&opts).await.expect("connect (seed)");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_aq_items",
+        "DROP TABLE IF EXISTS noobdb_aq_orders",
+        "CREATE TABLE noobdb_aq_orders (id INT PRIMARY KEY)",
+        "CREATE TABLE noobdb_aq_items (id INT PRIMARY KEY, order_id INT, email VARCHAR(64), status VARCHAR(16), qty INT)",
+        "INSERT INTO noobdb_aq_orders (id) VALUES (1), (2)",
+        "INSERT INTO noobdb_aq_items VALUES (1, 1, 'a@x', 'active', 5), (2, 2, 'b@x', 'banned', 10), \
+         (3, 9, NULL, 'weird', 500), (4, NULL, 'a@x', 'active', 1)",
+    ] {
+        seed.execute(sql, None).await.expect(sql);
+    }
+
+    let conn = t::connect(&opts).await.expect("connect (read-only)");
+    let state = t::AppState::default();
+    let sid = state
+        .insert(t::make_session("aq_ro", conn, opts.clone(), true))
+        .await;
+
+    use t::AssertionRule as R;
+    let mk = |id: &str, rule: R| t::Assertion {
+        id: id.into(),
+        name: id.into(),
+        scope: t::SnippetScope::Any,
+        schema: None,
+        table: "noobdb_aq_items".into(),
+        rule,
+    };
+    let cases = vec![
+        (
+            mk(
+                "nn",
+                R::NotNull {
+                    column: "email".into(),
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            mk(
+                "uq",
+                R::Unique {
+                    columns: vec!["email".into()],
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            mk(
+                "av",
+                R::AcceptedValues {
+                    column: "status".into(),
+                    values: vec!["active".into(), "banned".into()],
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            mk(
+                "rg",
+                R::Range {
+                    column: "qty".into(),
+                    min: Some("1".into()),
+                    max: Some("100".into()),
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            mk(
+                "rf",
+                R::Referential {
+                    columns: vec!["order_id".into()],
+                    ref_schema: None,
+                    ref_table: "noobdb_aq_orders".into(),
+                    ref_columns: vec!["id".into()],
+                },
+            ),
+            false,
+            1,
+        ),
+        (
+            mk(
+                "rc",
+                R::RowCount {
+                    op: t::RowCountOp::Gt,
+                    value: 0,
+                    max: None,
+                },
+            ),
+            true,
+            4,
+        ),
+    ];
+    for (a, passed, observed) in &cases {
+        let out = t::run_assertion_via_command(&state, &sid, a, None, Some(30))
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", a.id));
+        assert_eq!(out.passed, *passed, "{}: {}", a.id, out.check_sql);
+        assert_eq!(out.observed, *observed, "{}: {}", a.id, out.check_sql);
+        t::run_query_via_command(&state, &sid, &out.violations_sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("{} violations: {e}", a.id));
+    }
+
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_aq_items",
+        "DROP TABLE IF EXISTS noobdb_aq_orders",
+    ] {
+        seed.execute(sql, None).await.expect(sql);
+    }
+}

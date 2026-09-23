@@ -2,6 +2,7 @@ import { Channel, invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
+import type { ExportColumnMask } from "../components/exportMasking";
 
 /**
  * A backend error carrying the structured `AppError.kind` discriminant (#683).
@@ -104,6 +105,27 @@ export interface SessionInitSettings {
 }
 
 /**
+ * AWS RDS / Aurora IAM database authentication settings (#734). Non-secret:
+ * only the region and the AWS profile *name* are stored — the AWS access keys
+ * are read by the backend from the environment / `~/.aws/credentials` at
+ * connect time and never saved by noobDB (neither in profiles.json nor in the
+ * keyring). The backend generates a fresh 15-minute RDS auth token per new
+ * physical connection and forces TLS (`require` or stricter).
+ */
+export interface AwsIamConfig {
+  /** AWS region (e.g. `ap-northeast-1`). Empty = infer from the RDS endpoint name / `AWS_REGION`. */
+  region: string;
+  /** Profile name in `~/.aws/credentials` / `~/.aws/config`. `null` = AWS default resolution. */
+  profile?: string | null;
+}
+
+/** Auth method selector shared by the connect request and the saved profile. */
+export interface AwsIamSettings {
+  /** `null`/omitted = classic password auth; set = AWS IAM auth (MySQL / PostgreSQL only). */
+  aws_iam?: AwsIamConfig | null;
+}
+
+/**
  * The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same
  * shape as {@link SshProfile} minus its own `jump` — chains are capped at one
  * bastion hop (2 SSH hops total) for now.
@@ -130,7 +152,7 @@ export interface SshProfile {
   jump?: SshJumpProfile | null;
 }
 
-export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
+export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings {
   id: string;
   name: string;
   driver: string;
@@ -216,7 +238,7 @@ export interface ResolvedSshAlias {
   jump_user: string | null;
 }
 
-export interface ConnectRequest extends TlsSettings, SessionInitSettings {
+export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
   profile_id?: string;
   driver: DriverKind;
   host: string;
@@ -236,7 +258,7 @@ export interface ConnectRequest extends TlsSettings, SessionInitSettings {
   skip_history?: boolean;
 }
 
-export interface SaveProfileRequest extends TlsSettings, SessionInitSettings {
+export interface SaveProfileRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
   id?: string;
   name: string;
   driver: string;
@@ -307,6 +329,66 @@ export interface SaveSnippetRequest {
   sql: string;
   driver: string | null;
   scope: SnippetScope;
+}
+
+/** データ品質アサーション (#742) の `row_count` 比較演算子。 */
+export type RowCountOp = "gt" | "gte" | "lt" | "lte" | "eq" | "between";
+
+/**
+ * データ品質アサーションのルール本体 (#742)。Rust の `AssertionRule`
+ * (`#[serde(tag = "kind")]`) のミラーで、フィールド名は snake_case のまま。
+ * 値 (`values` / `min` / `max`) は入力された文字列のまま保持し、リテラル化は
+ * 実行時にバックエンドがドライバ別に行う。
+ */
+export type AssertionRule =
+  | { kind: "not_null"; column: string }
+  | { kind: "unique"; columns: string[] }
+  | { kind: "accepted_values"; column: string; values: string[] }
+  | { kind: "range"; column: string; min: string | null; max: string | null }
+  | {
+      kind: "referential";
+      columns: string[];
+      ref_schema: string | null;
+      ref_table: string;
+      ref_columns: string[];
+    }
+  | { kind: "row_count"; op: RowCountOp; value: number; max: number | null };
+
+/** 保存済みのデータ品質アサーション (#742)。 */
+export interface Assertion {
+  id: string;
+  name: string;
+  scope: SnippetScope;
+  schema: string | null;
+  table: string;
+  rule: AssertionRule;
+}
+
+export interface SaveAssertionRequest {
+  /** 未指定/空なら新規採番。 */
+  id?: string;
+  name: string;
+  scope: SnippetScope;
+  schema: string | null;
+  table: string;
+  rule: AssertionRule;
+}
+
+/** ルールから生成した読み取り専用 SQL (#742)。 */
+export interface AssertionSql {
+  /** 件数 (違反件数、row_count は総行数) を返す集計クエリ。 */
+  check_sql: string;
+  /** 違反行を表示するクエリ (fail から新規タブで開く)。 */
+  violations_sql: string;
+}
+
+/** 1 件の検証結果 (#742)。 */
+export interface AssertionOutcome extends AssertionSql {
+  id: string;
+  passed: boolean;
+  /** row_count は総行数、それ以外は違反件数。 */
+  observed: number;
+  elapsed_ms: number;
 }
 
 export interface HistoryEntry {
@@ -891,6 +973,63 @@ export interface DataDiff {
   target_count: number;
 }
 
+/** テーブル・タイムラプス (#739) の保存済み世代 1 件のメタデータ (行データは含まない)。 */
+export interface TimelapseGenerationMeta {
+  id: number;
+  /** 取得時刻 (RFC 3339)。 */
+  captured_at: string;
+  row_count: number;
+  /** 行数上限で打ち切った部分取得の世代なら true。 */
+  truncated: boolean;
+  bytes: number;
+}
+
+/** ウォッチ登録されたテーブル 1 件と、その世代一覧 (新しい順)。 */
+export interface TableWatch {
+  id: number;
+  profile_id: string;
+  driver: string;
+  database: string;
+  table: string;
+  /** false = ウォッチ解除済み (世代データは残してある)。自動取得の対象外。 */
+  active: boolean;
+  /** 登録時に行数上限を超えており、先頭 N 行だけの記録に同意した。 */
+  partial: boolean;
+  created_at: string;
+  generations: TimelapseGenerationMeta[];
+}
+
+/** `timelapseWatchTable` の結果。`watch_id` が null なら行数上限超過で未登録。 */
+export interface TimelapseWatchOutcome {
+  watch_id: number | null;
+  over_limit: boolean;
+  row_limit: number;
+  generation_added: boolean;
+}
+
+/** `timelapseCapture` の 1 ウォッチ分の結果。 */
+export interface TimelapseCaptureOutcome {
+  watch_id: number;
+  database: string;
+  table: string;
+  added: boolean;
+  truncated: boolean;
+  error: string | null;
+}
+
+/**
+ * 2 世代間の差分。`diff` の **source = 新しい世代 / target = 古い世代** なので、
+ * `source_only` = 追加行、`target_only` = 削除行、`different` = 変更行。
+ */
+export interface TimelapseGenerationDiff {
+  diff: DataDiff;
+  columns_added: string[];
+  columns_removed: string[];
+  partial: boolean;
+  from_captured_at: string;
+  to_captured_at: string;
+}
+
 /**
  * サンドボックス (壊せる砂場、#747) の非秘密メタデータ。実データはローカル
  * SQLite ファイル (`file_path`) に持ち、`session_id` (作成/一覧取得後にセッション
@@ -955,7 +1094,24 @@ export interface LogView {
   path: string | null;
 }
 
-export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql";
+export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql" | "xlsx";
+
+/** xlsx エクスポートで Excel の上限 (行数 / セル文字数) に当たり、出力が欠けた内訳 (#711)。 */
+export interface ExportTruncation {
+  /** 実際にシートへ書いたデータ行数 (ヘッダを除く)。 */
+  writtenRows: number;
+  /** 行数上限 (1,048,576 行 = ヘッダ + 1,048,575 データ行) を超えて書かなかった行数。 */
+  droppedRows: number;
+  /** セル文字数上限 (32,767 文字) で切り詰めたセル数。 */
+  truncatedCells: number;
+}
+
+/** 在グリッド経路 `export_query_result` の戻り値 (#711)。 */
+export interface ExportResult {
+  bytes: number;
+  /** 出力が欠けていなければ (xlsx 以外は常に) null。 */
+  truncation: ExportTruncation | null;
+}
 
 /** Checkbox-selected `mysqldump` flags for a database dump. */
 export interface DumpOptions {
@@ -1919,6 +2075,50 @@ export const api = {
     ),
   deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),
 
+  /** データ品質アサーション (#742) の一覧 (`assertions.json`)。 */
+  listAssertions: () =>
+    invoke<Assertion[]>("list_assertions").then((r) =>
+      parseResponse(schemas.assertionArray, r, "list_assertions"),
+    ),
+  saveAssertion: (req: SaveAssertionRequest) =>
+    invoke<Assertion>("save_assertion", { req }).then((r) =>
+      parseResponse(schemas.assertion, r, "save_assertion"),
+    ),
+  deleteAssertion: (id: string) => invoke<void>("delete_assertion", { id }),
+  /**
+   * 保存前のルールを `driver` 方言の読み取り専用 SQL に変換する (DB には触れない)。
+   * 編集モーダルのプレビュー用。入力が不完全なら InvalidInput で reject される。
+   */
+  previewAssertionSql: (params: {
+    driver: DriverKind;
+    schema: string | null;
+    table: string;
+    rule: AssertionRule;
+  }) =>
+    invoke<AssertionSql>("preview_assertion_sql", {
+      driver: params.driver,
+      schema: params.schema,
+      table: params.table,
+      rule: params.rule,
+    }).then((r) => parseResponse(schemas.assertionSql, r, "preview_assertion_sql")),
+  /**
+   * 保存済みアサーション 1 件を検証する。バックエンドは `run_lookup_query` と同じ
+   * 経路 (セッションの read_only に関係なく読み取り専用の文だけを通す・
+   * `queryTimeoutSecs` で打ち切る・クエリ履歴/結果キャッシュに載せない) で実行する。
+   */
+  runAssertion: (params: {
+    sessionId: string;
+    id: string;
+    database?: string | null;
+    queryTimeoutSecs?: number | null;
+  }) =>
+    invoke<AssertionOutcome>("run_assertion", {
+      sessionId: params.sessionId,
+      id: params.id,
+      database: params.database ?? null,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
+    }).then((r) => parseResponse(schemas.assertionOutcome, r, "run_assertion")),
+
   listHistory: (params: {
     profileId?: string | null;
     limit?: number | null;
@@ -1960,8 +2160,10 @@ export const api = {
     table?: string | null;
     driver?: string | null;
     batchSize?: number | null;
+    /** 列単位のマスキングルール (#733)。未指定 / 空ならマスクしない。 */
+    masks?: ExportColumnMask[] | null;
   }) =>
-    invoke<number>("export_query_result", {
+    invoke<ExportResult>("export_query_result", {
       path: params.path,
       format: params.format,
       columns: params.columns,
@@ -1970,7 +2172,20 @@ export const api = {
       table: params.table ?? null,
       driver: params.driver ?? null,
       batchSize: params.batchSize ?? null,
-    }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
+      masks: params.masks && params.masks.length > 0 ? params.masks : null,
+    }).then((r) => parseResponse(schemas.exportResult, r, "export_query_result")),
+
+  /**
+   * 行へエクスポート用マスキング (#733) を適用して返す (プレビュー / 全文コピー用)。
+   * 仮名化 (`hash`) の秘密ソルトは keyring にありフロントへ出さないため、変換は
+   * 実際の書き出しと同じバックエンドの純関数で行う。ファイル・DB には触れない。
+   */
+  maskExportRows: (params: { columns: Column[]; rows: CellValue[][]; masks: ExportColumnMask[] }) =>
+    invoke<CellValue[][]>("mask_export_rows", {
+      columns: params.columns,
+      rows: params.rows,
+      masks: params.masks,
+    }).then((r) => parseResponse(schemas.cellRows, r, "mask_export_rows")),
 
   /**
    * クエリを再実行し、全件をストリーミングで直接ファイルへ書き出す。結果は
@@ -1989,6 +2204,8 @@ export const api = {
     /** SQL 形式のときの対象テーブル名・バッチサイズ。ドライバはセッションから取る。 */
     table?: string | null;
     batchSize?: number | null;
+    /** 列単位のマスキングルール (#733)。未指定 / 空ならマスクしない。 */
+    masks?: ExportColumnMask[] | null;
   }) =>
     invoke<void>("export_query_stream", {
       sessionId: params.sessionId,
@@ -2002,6 +2219,7 @@ export const api = {
       queryTimeoutSecs: params.queryTimeoutSecs,
       table: params.table ?? null,
       batchSize: params.batchSize ?? null,
+      masks: params.masks && params.masks.length > 0 ? params.masks : null,
     }),
 
   /**
@@ -2148,6 +2366,59 @@ export const api = {
   undoFlightRecord: (sessionId: string, id: number, force: boolean) =>
     invoke<UndoOutcome>("undo_flight_record", { sessionId, id, force }).then((r) =>
       parseResponse(schemas.undoOutcome, r, "undo_flight_record"),
+    ),
+
+  // --- テーブル・タイムラプス (#739) ---
+  // スナップショットはアプリデータディレクトリ配下のローカル専用ストア
+  // (`table_timelapse.sqlite`) にのみ保存される。取得は読み取り専用の単一 SELECT で、
+  // クエリ履歴には記録されない。
+
+  /**
+   * テーブルをウォッチ登録し初回スナップショットを取る。PK の無いテーブルは
+   * エラー。行数上限を超えるテーブルは `allowPartial` が false なら登録せず
+   * `over_limit: true` を返す (UI が同意を取ってから `true` で再呼び出しする)。
+   */
+  timelapseWatchTable: (params: {
+    sessionId: string;
+    database: string;
+    table: string;
+    allowPartial: boolean;
+    maxGenerations?: number | null;
+  }) =>
+    invoke<TimelapseWatchOutcome>("timelapse_watch_table", {
+      sessionId: params.sessionId,
+      database: params.database,
+      table: params.table,
+      allowPartial: params.allowPartial,
+      maxGenerations: params.maxGenerations ?? null,
+    }).then((r) => parseResponse(schemas.timelapseWatchOutcome, r, "timelapse_watch_table")),
+
+  /** セッションのプロファイルのアクティブなウォッチを全件取得する (接続時 / 手動更新)。 */
+  timelapseCapture: (sessionId: string, maxGenerations?: number | null) =>
+    invoke<TimelapseCaptureOutcome[]>("timelapse_capture", {
+      sessionId,
+      maxGenerations: maxGenerations ?? null,
+    }).then((r) => parseResponse(schemas.timelapseCaptureOutcomeArray, r, "timelapse_capture")),
+
+  timelapseListWatches: (profileId: string) =>
+    invoke<TableWatch[]>("timelapse_list_watches", { profileId }).then((r) =>
+      parseResponse(schemas.tableWatchArray, r, "timelapse_list_watches"),
+    ),
+
+  /** 同じウォッチの 2 世代の行差分 (古い方 → 新しい方)。セッション不要。 */
+  timelapseDiffGenerations: (fromId: number, toId: number) =>
+    invoke<TimelapseGenerationDiff>("timelapse_diff_generations", { fromId, toId }).then((r) =>
+      parseResponse(schemas.timelapseGenerationDiff, r, "timelapse_diff_generations"),
+    ),
+
+  /** ウォッチ解除。`deleteData` なら保存済み世代も削除する。 */
+  timelapseUnwatch: (watchId: number, deleteData: boolean) =>
+    invoke<void>("timelapse_unwatch", { watchId, deleteData }),
+
+  /** 全ウォッチ・全世代を削除する (設定画面の一括削除)。削除した世代数を返す。 */
+  timelapseClearAll: () =>
+    invoke<number>("timelapse_clear_all").then((r) =>
+      parseResponse(schemas.numberResponse, r, "timelapse_clear_all"),
     ),
 
   // --- タスクスケジューラ (#730) ---
@@ -2326,8 +2597,11 @@ export interface ExportProgressEvent {
 }
 export interface ExportDoneEvent {
   streamId: string;
+  /** クエリから読んだ行数 (xlsx で上限を超えた行も含む)。 */
   rows: number;
   bytes: number;
+  /** xlsx で Excel の上限に当たったときだけ非 null (#711)。 */
+  truncation: ExportTruncation | null;
 }
 export interface ExportStreamErrorEvent {
   streamId: string;

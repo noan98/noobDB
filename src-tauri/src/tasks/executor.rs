@@ -125,17 +125,37 @@ async fn run_action(app: &AppHandle, session_id: &str, task: &TaskDefinition) ->
                 EXPORT_INITIAL_BATCH,
                 EXPORT_CHUNK_SIZE,
                 None,
+                // スケジュール実行のエクスポートはマスキング (#733) 非対応 (タスク定義に
+                // ルールを持たない)。マスクが必要な出力は ExportModal から行う。
+                None,
                 |_rows| {},
             )
             .await;
             match result {
-                Ok((rows, bytes)) => TaskOutcome {
-                    ok: true,
-                    error: None,
-                    output_path: Some(path),
-                    rows: Some(rows as i64),
-                    bytes: Some(bytes as i64),
-                },
+                Ok(outcome) => {
+                    // xlsx で Excel の上限に当たったときは、実際にファイルへ書いた行数を
+                    // 記録する (読んだ行数を載せると実行ログが出力内容と食い違う)。
+                    let written = match &outcome.truncation {
+                        Some(t) => {
+                            tracing::warn!(
+                                task_id = %task.id,
+                                written_rows = t.written_rows,
+                                dropped_rows = t.dropped_rows,
+                                truncated_cells = t.truncated_cells,
+                                "scheduled xlsx export hit an Excel limit; output is incomplete"
+                            );
+                            t.written_rows
+                        }
+                        None => outcome.rows,
+                    };
+                    TaskOutcome {
+                        ok: true,
+                        error: None,
+                        output_path: Some(path),
+                        rows: Some(written as i64),
+                        bytes: Some(outcome.bytes as i64),
+                    }
+                }
                 Err(e) => TaskOutcome::err(e.to_string()),
             }
         }
@@ -231,6 +251,7 @@ fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, 
         ssl_client_cert: profile.ssl_client_cert.clone(),
         ssl_client_key: profile.ssl_client_key.clone(),
         init_sql: profile.init_sql.clone(),
+        aws_iam: profile.aws_iam.clone(),
         read_only: true,
         skip_history: true,
     })

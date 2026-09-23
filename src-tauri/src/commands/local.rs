@@ -286,6 +286,7 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
         ssl_client_cert: None,
         ssl_client_key: None,
         init_sql: None,
+        aws_iam: None,
     };
     let conn = match Connection::connect(&opts).await {
         Ok(c) => c,

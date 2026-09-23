@@ -7,24 +7,39 @@ import { markGridCommit } from "../perf";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
+  columnFilteringFeature,
+  columnOrderingFeature,
+  columnPinningFeature,
+  columnResizingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  createFilteredRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
+  globalFilteringFeature,
+  rowPaginationFeature,
+  rowSortingFeature,
+  tableFeatures,
+  useTable,
   type ColumnDef,
   type ColumnFiltersState,
   type ColumnSizingState,
+  type ColumnVisibilityState,
   type FilterFn,
   type OnChangeFn,
   type PaginationState,
-  type SortingFn,
+  type SortFn,
   type SortingState,
   type Cell,
   type Row,
-  type VisibilityState,
 } from "@tanstack/react-table";
+import {
+  fromTablePinning,
+  pinSideFromTable,
+  tablePinPosition,
+  toTablePinning,
+} from "./gridColumnPinning";
 import { CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { semanticColorToken, semanticColorVar } from "../semanticColors";
@@ -1190,6 +1205,30 @@ interface RowShape {
   [key: string]: CellValue;
 }
 
+/**
+ * 結果グリッドが使う react-table v9 の機能セット (#1115)。v9 は機能を既定で
+ * バンドルしないため、実際に使うものだけをここで明示登録する。行モデルは
+ * 前提となる機能の後ろに置く (filtered → sorted → paginated の順に適用される)。
+ * ページングの行モデルは常に登録し、ページング表示でないときは
+ * `manualPagination: true` で素通しにする (機能セットはテーブル生成時に固定される
+ * ため、v8 のように `getPaginationRowModel` を条件付きで渡す形は取れない)。
+ */
+const gridFeatures = tableFeatures({
+  columnFilteringFeature,
+  globalFilteringFeature,
+  rowSortingFeature,
+  rowPaginationFeature,
+  columnVisibilityFeature,
+  columnOrderingFeature,
+  columnPinningFeature,
+  columnSizingFeature,
+  columnResizingFeature,
+  filteredRowModel: createFilteredRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+});
+type GridFeatures = typeof gridFeatures;
+
 // CellKind は表示メタ (型アイコン/空値分類) と共有するため cellTypeMeta.ts に集約し、
 // ここでは import して使う。
 
@@ -1236,7 +1275,7 @@ function cmpNullable<T>(a: T | null, b: T | null, cmp: (a: T, b: T) => number): 
   return cmp(a, b);
 }
 
-const sortNumeric: SortingFn<RowShape> = (rowA, rowB, columnId) => {
+const sortNumeric: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) => {
   const av = rowA.getValue(columnId) as CellValue;
   const bv = rowB.getValue(columnId) as CellValue;
   const an = av === null || av === undefined ? null : Number(av);
@@ -1249,7 +1288,7 @@ const sortNumeric: SortingFn<RowShape> = (rowA, rowB, columnId) => {
   });
 };
 
-const sortBool: SortingFn<RowShape> = (rowA, rowB, columnId) => {
+const sortBool: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) => {
   const av = rowA.getValue(columnId) as CellValue;
   const bv = rowB.getValue(columnId) as CellValue;
   const toBool = (v: CellValue): boolean | null => {
@@ -1269,7 +1308,7 @@ const sortBool: SortingFn<RowShape> = (rowA, rowB, columnId) => {
 // 10〜100 倍速い)。
 const stringCollator = new Intl.Collator(undefined, { numeric: true });
 
-const sortString: SortingFn<RowShape> = (rowA, rowB, columnId) => {
+const sortString: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) => {
   const av = rowA.getValue(columnId) as CellValue;
   const bv = rowB.getValue(columnId) as CellValue;
   const as = av === null || av === undefined ? null : String(av);
@@ -1277,7 +1316,7 @@ const sortString: SortingFn<RowShape> = (rowA, rowB, columnId) => {
   return cmpNullable(as, bs, (x, y) => stringCollator.compare(x, y));
 };
 
-function sortingFnForKind(kind: CellKind): SortingFn<RowShape> {
+function sortingFnForKind(kind: CellKind): SortFn<GridFeatures, RowShape> {
   switch (kind) {
     case "number":
     case "decimal":
@@ -1581,7 +1620,7 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
   }
 }
 
-const columnFilter: FilterFn<RowShape> = (row, columnId, filterValue) => {
+const columnFilter: FilterFn<GridFeatures, RowShape> = (row, columnId, filterValue) => {
   const f = filterValue as ColumnFilter | undefined;
   if (!isColumnFilterActive(f)) return true;
   const v = row.getValue(columnId) as CellValue;
@@ -1595,11 +1634,11 @@ const columnFilter: FilterFn<RowShape> = (row, columnId, filterValue) => {
   return matchesColumnValue(v, f);
 };
 
-const globalIncludesFilter: FilterFn<RowShape> = (row, _columnId, filterValue) => {
+const globalIncludesFilter: FilterFn<GridFeatures, RowShape> = (row, _columnId, filterValue) => {
   const fv = (filterValue ?? "") as string;
   if (fv === "") return true;
   const needle = fv.toLowerCase();
-  const r = row as Row<RowShape>;
+  const r = row as Row<GridFeatures, RowShape>;
   for (const cell of r.getAllCells()) {
     if (!cell.column.getCanGlobalFilter()) continue;
     const v = cell.getValue() as CellValue;
@@ -3072,7 +3111,7 @@ export const DataGrid = memo(function DataGrid({
   const [columnOrder, setColumnOrder] = useState<string[]>(
     () => readStoredColumnState(colStateKey).order ?? [],
   );
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+  const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>(
     () => readStoredColumnState(colStateKey).visibility ?? {},
   );
   const columnOrderRef = useRef(columnOrder);
@@ -3096,6 +3135,10 @@ export const DataGrid = memo(function DataGrid({
   );
   const columnPinningRef = useRef(columnPinning);
   columnPinningRef.current = columnPinning;
+  // react-table v9 は論理方向 (`start` / `end`) で受け取るので境界でだけ変換する
+  // (永続化は従来の `{ left, right }` のまま — gridColumnPinning.ts 参照)。
+  // 参照を安定させ、ピン留めが変わらない再描画で列モデルを作り直させない。
+  const tablePinning = useMemo(() => toTablePinning(columnPinning), [columnPinning]);
 
   // Persist the full layout blob (snapshotting from refs so each writer sees
   // the latest of the other two fields).
@@ -3115,7 +3158,7 @@ export const DataGrid = memo(function DataGrid({
     setColumnOrder(next);
     persistColumnState({ order: next });
   };
-  const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) => {
+  const handleColumnVisibilityChange: OnChangeFn<ColumnVisibilityState> = (updater) => {
     const next = typeof updater === "function" ? updater(columnVisibilityRef.current) : updater;
     setColumnVisibility(next);
     persistColumnState({ visibility: next });
@@ -3229,7 +3272,7 @@ export const DataGrid = memo(function DataGrid({
     handleColumnOrderChange(next);
   };
 
-  const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
+  const tableColumns = useMemo<ColumnDef<GridFeatures, RowShape>[]>(() => {
     // 列ごとの線形探索 (find) は横に広いテーブルで O(列数²) になるため、
     // 名前 → メタデータの Map を 1 度だけ作って引く。
     const metaByName = new Map(columnMeta?.map((m) => [m.name, m]) ?? []);
@@ -3271,7 +3314,7 @@ export const DataGrid = memo(function DataGrid({
           </Tooltip>
         ),
         accessorFn: (row) => row[String(i)],
-        sortingFn: sortingFnForKind(kind),
+        sortFn: sortingFnForKind(kind),
         filterFn: columnFilter,
         enableSorting: enableColumnControls,
         enableColumnFilter: enableColumnControls,
@@ -3501,7 +3544,8 @@ export const DataGrid = memo(function DataGrid({
     return next;
   }, [rows]);
 
-  const table = useReactTable({
+  const table = useTable({
+    features: gridFeatures,
     data,
     columns: tableColumns,
     state: {
@@ -3511,7 +3555,7 @@ export const DataGrid = memo(function DataGrid({
       columnSizing,
       columnOrder,
       columnVisibility,
-      columnPinning,
+      columnPinning: tablePinning,
       ...(paginationState ? { pagination: paginationState } : {}),
     },
     onSortingChange: handleSortingChange,
@@ -3520,18 +3564,19 @@ export const DataGrid = memo(function DataGrid({
     onColumnOrderChange: handleColumnOrderChange,
     onColumnVisibilityChange: handleColumnVisibilityChange,
     onColumnPinningChange: (updater) => {
-      const prev = columnPinningRef.current;
-      const nextRaw = typeof updater === "function" ? updater(prev) : updater;
-      const next = { left: nextRaw.left ?? [], right: nextRaw.right ?? [] };
+      const prev = toTablePinning(columnPinningRef.current);
+      const next = fromTablePinning(typeof updater === "function" ? updater(prev) : updater);
       setColumnPinning(next);
       persistColumnState({ pinning: next });
     },
     ...(onPaginationChange ? { onPaginationChange } : {}),
+    // v9 の既定 `getCanGlobalFilter` はアクセサを持つ全列を対象にする (v8 は先頭行の
+    // 値が string / number の列だけだったため、先頭行が NULL / 真偽値の列が検索から
+    // 漏れていた)。v9 の既定のほうが結果内検索として一貫しているのでそのまま使う (#1115)。
     globalFilterFn: globalIncludesFilter,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    ...(paginationState ? { getPaginationRowModel: getPaginationRowModel() } : {}),
+    // ページング表示でないときは登録済みのページング行モデルを素通しにする
+    // (`gridFeatures` のコメント参照)。
+    manualPagination: !paginationState,
     enableSortingRemoval: true,
     enableColumnResizing: true,
     columnResizeMode: "onChange",
@@ -4106,8 +4151,8 @@ export const DataGrid = memo(function DataGrid({
   // `<td>` simply occupies the combined width of the columns it skips (same
   // mechanism as the vertical spacer rows below).
   const leafColumnsForPin = table.getVisibleLeafColumns();
-  const leftPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "left");
-  const rightPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "right");
+  const leftPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "start");
+  const rightPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "end");
   const leftPinnedCount = leftPinnedColumns.length;
   const rightPinnedCount = rightPinnedColumns.length;
   const centerColumns = leafColumnsForPin.filter((c) => !c.getIsPinned());
@@ -4179,7 +4224,7 @@ export const DataGrid = memo(function DataGrid({
     if (paginationState && onPaginationChange) {
       // ページング時: ソート/フィルタ適用後・ページ分割前の行モデルからヒット行の
       // 表示位置を求め、そのページへジャンプする。
-      const pre = table.getPrePaginationRowModel().rows;
+      const pre = table.getPrePaginatedRowModel().rows;
       const pos = pre.findIndex((r) => r.index === findNav.rowIdx);
       if (pos >= 0) {
         const page = Math.floor(pos / paginationState.pageSize);
@@ -4199,7 +4244,7 @@ export const DataGrid = memo(function DataGrid({
       // ページ切替が反映される前なら次レンダーまで保留。列フィルタ等で行自体が
       // 表示されていないなら諦める (件数表示は取得済み行ベースのまま)。
       if (paginationState) {
-        const pre = table.getPrePaginationRowModel().rows;
+        const pre = table.getPrePaginatedRowModel().rows;
         if (pre.some((r) => r.index === nav.rowIdx)) return;
       }
       pendingFindNavRef.current = null;
@@ -4406,7 +4451,7 @@ export const DataGrid = memo(function DataGrid({
   // `row.index` is the absolute index into `rows` used for edit/changed lookups.
   // `measureIndex` (when virtualizing) wires the row to the virtualizer so its
   // real height is measured.
-  const renderRow = (row: Row<RowShape>, rowIdx: number, measureIndex?: number) => {
+  const renderRow = (row: Row<GridFeatures, RowShape>, rowIdx: number, measureIndex?: number) => {
     // Does this row hold any buffered edit? Drives the row-level pending marker.
     // Looked up by the row's PK-derived identity, like the per-cell
     // lookup below, so it tracks the row across pagination/sort.
@@ -4446,7 +4491,7 @@ export const DataGrid = memo(function DataGrid({
         const rightCells = rightPinnedCount > 0 ? cells.slice(cells.length - rightPinnedCount) : [];
         const centerCells = cells.slice(leftPinnedCount, cells.length - rightPinnedCount);
         const windowed = columnVirtualItems.length > 0;
-        const renderCell = (cell: Cell<RowShape, unknown>) => {
+        const renderCell = (cell: Cell<GridFeatures, RowShape>) => {
         // Resolve original column index from the column id so reorder/hide
         // and pinning don't misalign per-column lookups.
         const colIdx = Number(cell.column.id);
@@ -4497,14 +4542,14 @@ export const DataGrid = memo(function DataGrid({
         // default contents and to detect "user typed it back to
         // the original" (which clears the pending edit).
         const originalDisplay = isNull ? "" : String(v);
-        const pinSide = cell.column.getIsPinned();
+        const pinSide = pinSideFromTable(cell.column.getIsPinned());
         const pinStyle: CSSProperties = pinSide
           ? {
               position: "sticky",
               zIndex: 1,
               ...(pinSide === "left"
-                ? { left: ROW_INDEX_WIDTH + cell.column.getStart("left") }
-                : { right: cell.column.getAfter("right") }),
+                ? { left: ROW_INDEX_WIDTH + cell.column.getStart("start") }
+                : { right: cell.column.getAfter("end") }),
             }
           : {};
         const handleDoubleClick = () => {
@@ -4860,14 +4905,14 @@ export const DataGrid = memo(function DataGrid({
                   h.column.getFilterValue() as ColumnFilter | undefined,
                 );
                 const filterLabel = t("gridFilterAria", { column: columns[colIdx]?.name ?? "" });
-                const pinSide = h.column.getIsPinned();
+                const pinSide = pinSideFromTable(h.column.getIsPinned());
                 const pinStyle: CSSProperties = pinSide
                   ? {
                       position: "sticky",
                       zIndex: 3,
                       ...(pinSide === "left"
-                        ? { left: ROW_INDEX_WIDTH + h.column.getStart("left") }
-                        : { right: h.column.getAfter("right") }),
+                        ? { left: ROW_INDEX_WIDTH + h.column.getStart("start") }
+                        : { right: h.column.getAfter("end") }),
                     }
                   : {};
                 return (
@@ -5099,13 +5144,13 @@ export const DataGrid = memo(function DataGrid({
                 const footerMasked = isColumnMaskedNow(colIdx);
                 const text = cell ? (footerMasked ? MASK_PLACEHOLDER : footerCellText(cell)) : "";
                 const countTarget = footerMasked ? null : footerCountUpTarget(cell, skeleton);
-                const pinSide = h.column.getIsPinned();
+                const pinSide = pinSideFromTable(h.column.getIsPinned());
                 const pinStyle: CSSProperties = pinSide
                   ? {
                       zIndex: 4,
                       ...(pinSide === "left"
-                        ? { left: ROW_INDEX_WIDTH + h.column.getStart("left") }
-                        : { right: h.column.getAfter("right") }),
+                        ? { left: ROW_INDEX_WIDTH + h.column.getStart("start") }
+                        : { right: h.column.getAfter("end") }),
                     }
                   : {};
                 const label = t(FOOTER_FN_LABEL[fn]);
@@ -5766,12 +5811,12 @@ export const DataGrid = memo(function DataGrid({
           onResetLayout={enableColumnControls && hasCustomLayout ? resetColumnLayout : undefined}
           pinned={
             enableColumnControls
-              ? table.getColumn(String(filterMenu.colIdx))?.getIsPinned() ?? false
+              ? pinSideFromTable(table.getColumn(String(filterMenu.colIdx))?.getIsPinned() ?? false)
               : undefined
           }
           onPin={
             enableColumnControls
-              ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(side)
+              ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(tablePinPosition(side))
               : undefined
           }
           onShowStats={

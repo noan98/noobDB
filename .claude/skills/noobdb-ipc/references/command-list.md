@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **108 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **120 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -62,11 +62,26 @@
 `profile_column` (#974。NULL 率 / DISTINCT / MIN・MAX / 上位頻出値 / ヒストグラムを
 サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可)
 
+## テーブル・タイムラプス (`commands/timelapse.rs`)
+
+`timelapse_watch_table` / `timelapse_capture` / `timelapse_list_watches` /
+`timelapse_diff_generations` / `timelapse_unwatch` / `timelapse_clear_all`
+(#739。ウォッチ登録したテーブルの世代スナップショットを `<data_dir>/table_timelapse.sqlite`
+に保存し、任意の 2 世代を `compute_data_diff` で比較。取得は PK 順の単一 SELECT
+(最大 `MAX_DATA_ROWS`) で履歴に記録せず、read_only セッションでも可。PK 必須)
+
 ## タスクスケジューラ (`commands/tasks.rs`)
 
 `list_tasks` / `save_task` / `delete_task` / `set_task_enabled` / `run_task_now` /
 `list_task_runs` / `clear_task_runs` / `get_scheduler_settings` /
 `set_scheduler_settings`
+
+## データ品質アサーション (`commands/assertions.rs`)
+
+`list_assertions` / `save_assertion` / `delete_assertion` / `preview_assertion_sql` /
+`run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック
+`db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも
+可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 
@@ -101,6 +116,11 @@
 `preview_create_table_ddl` は「ファイルから新規テーブルを作成」(#985) の DDL
 プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ
 `db::create_table::render_create_table` を返す (書き込みなし)。
+
+`mask_export_rows` (`commands/export.rs`, #733) — エクスポートのデータマスキングを
+行へ適用して返す (ExportModal のプレビュー / 全文コピー用)。仮名化の秘密ソルトを
+フロントへ出さないため、変換は実出力と同じ `db/masking.rs` で行う。ファイル・DB には
+触れない。`export_query_result` / `export_query_stream` も同じ `masks` 引数を受け取る。
 
 `run_sql_script` (`commands/script.rs`, #973) — `.sql` ファイルを 64 KiB ずつ読み、
 `db/script.rs` のストリーミング文分割 (フロント `splitSqlStatements` と共有ゴールデン

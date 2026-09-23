@@ -42,7 +42,7 @@ const DEFAULT_DUMP_OPTIONS: DumpOptions = {
   noCreateInfo: false,
 };
 
-const EXPORT_FORMATS: ExportFormat[] = ["csv", "json", "ndjson", "markdown", "sql"];
+const EXPORT_FORMATS: ExportFormat[] = ["csv", "json", "ndjson", "markdown", "sql", "xlsx"];
 
 const EXPORT_FORMAT_LABEL_KEYS: Record<ExportFormat, I18nKey> = {
   csv: "exportFormatCsv",
@@ -50,6 +50,7 @@ const EXPORT_FORMAT_LABEL_KEYS: Record<ExportFormat, I18nKey> = {
   ndjson: "exportFormatNdjson",
   markdown: "exportFormatMarkdown",
   sql: "exportFormatSql",
+  xlsx: "exportFormatXlsx",
 };
 
 /**
@@ -507,7 +508,7 @@ function TaskForm({
   const preview = outputPath ? previewOutputPath(outputPath, new Date()) : "";
 
   const browseOutputPath = async () => {
-    const ext = actionKind === "dump" ? "sql" : format === "json" ? "json" : format === "ndjson" ? "ndjson" : format === "markdown" ? "md" : format === "sql" ? "sql" : "csv";
+    const ext = actionKind === "dump" ? "sql" : format === "json" ? "json" : format === "ndjson" ? "ndjson" : format === "markdown" ? "md" : format === "sql" ? "sql" : format === "xlsx" ? "xlsx" : "csv";
     const picked = await saveFileDialog({
       title: t("taskOutputPathBrowseTitle"),
       defaultPath: `${name || "task"}.${ext}`,

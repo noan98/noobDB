@@ -29,6 +29,7 @@ const connected = {
   advisorDatabase: "app",
   profileTable: "users",
   structureTable: "users",
+  timelapseProfileId: "prof1",
   openConnectionCount: 1,
 };
 
@@ -57,7 +58,7 @@ describe("availableBottomPanelTabs", () => {
     for (const db of [null, undefined, ""]) {
       expect(
         availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db, openConnectionCount: 1 }),
-      ).toEqual([...LOG_TABS, "inspector", "processes", "health", "whereUsed"]);
+      ).toEqual([...LOG_TABS, "inspector", "processes", "assertions", "health", "whereUsed"]);
     }
   });
 
@@ -90,6 +91,26 @@ describe("構造タブ (#1112)", () => {
   it("対象が外れたら構造タブを閉じる", () => {
     expect(resolveBottomPanelTab("structure", { ...connected, structureTable: null })).toBeNull();
     expect(resolveBottomPanelTab("structure", connected)).toBe("structure");
+  });
+});
+
+describe("タイムラプスタブ (#739)", () => {
+  it("保存済みプロファイルで接続しているときだけ開ける (参照グループ)", () => {
+    expect(availableBottomPanelTabs(connected)).toContain("timelapse");
+    for (const id of [null, undefined, ""]) {
+      expect(availableBottomPanelTabs({ ...connected, timelapseProfileId: id })).not.toContain("timelapse");
+    }
+    expect(
+      availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
+    ).not.toContain("timelapse");
+    expect(BOTTOM_PANEL_TAB_GROUP.timelapse).toBe("reference");
+  });
+
+  it("App.tsx にパネルとツリーからの登録導線が結線されている", () => {
+    expect(appSource).toContain("timelapseProfileId: selectedProfile?.id");
+    expect(appSource).toContain('activeBottomPanelTab === "timelapse"');
+    expect(appSource).toContain("<TableTimelapsePanel");
+    expect(appSource).toContain("onWatchTable={handleWatchTable}");
   });
 });
 
@@ -182,14 +203,23 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "profile", 1)).toBe("output");
-    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("profile");
+    expect(nextBottomPanelTab(tabs, "timelapse", 1)).toBe("output");
+    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("timelapse");
   });
 
   it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {
     expect(
       availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: null, openConnectionCount: 1 }),
     ).toContain("whereUsed");
+  });
+
+  it("データ品質アサーション (#742) は対象 DB が決まらなくても開ける (セッション既定で検証)", () => {
+    expect(
+      availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: null, openConnectionCount: 1 }),
+    ).toContain("assertions");
+    expect(
+      availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 1 }),
+    ).not.toContain("assertions");
   });
 
   it("開けるタブだけの並びで折り返す (アドバイザが落ちている場合)", () => {
@@ -219,6 +249,12 @@ describe("App.tsx の結線 (#1112)", () => {
   it("ワークスペースとボトムパネルの分割は共通の Splitter へ委ねる", () => {
     // 高さのリサイズ規則 (クランプ・永続化・キーボード操作) を二重実装しない。
     expect(appSource).toContain("<WorkspaceSplit");
+  });
+
+  it("データ品質アサーション (#742) の結線: 違反行クエリは実行せずに新規タブで開く", () => {
+    expect(appSource).toContain('activeBottomPanelTab === "assertions"');
+    expect(appSource).toContain("onOpenSql={handleOpenAssertionSql}");
+    expect(appSource).toContain('toggleBottomPanel("assertions")');
   });
 
   it("構造タブ (#1112) はツリーから開け、パネルからデータタブへ戻れる", () => {

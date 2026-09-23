@@ -311,30 +311,20 @@ pub(crate) async fn run_dump(
     let tmp_str = tmp.to_string_lossy().to_string();
     let mut cleanup = PartialFileCleanup::new(tmp.clone());
 
+    // AWS IAM 認証 (#734) のセッションは `connect_options.password` が空なので、
+    // 外部ダンプツールへ渡す直前に今有効なトークンを作って差し込む (トークンは
+    // 一時オプションファイル / PGPASSFILE にのみ書かれ、ダンプ後に消える)。
+    let dump_opts = crate::db::aws_iam::with_fresh_password(&session.connect_options)?;
     let bytes = match session.connect_options.driver {
         DriverKind::Mysql => {
             dump_mysql(
-                app,
-                stream_id,
-                &session.connect_options,
-                database,
-                tmp_file,
-                options,
-                counter,
-                started,
+                app, stream_id, &dump_opts, database, tmp_file, options, counter, started,
             )
             .await?
         }
         DriverKind::Postgres => {
             dump_postgres(
-                app,
-                stream_id,
-                &session.connect_options,
-                database,
-                tmp_file,
-                options,
-                counter,
-                started,
+                app, stream_id, &dump_opts, database, tmp_file, options, counter, started,
             )
             .await?
         }
@@ -734,6 +724,10 @@ async fn dump_postgres(
             cmd.arg("--schema").arg(schema);
         }
     }
+    // AWS IAM auth (#734) requires TLS; the token is only accepted over SSL.
+    if connect_options.aws_iam.is_some() {
+        cmd.env("PGSSLMODE", "require");
+    }
     // Keep the password out of the environment except for the pass-file pointer.
     cmd.env("PGPASSFILE", pgpass.path());
     cmd.env_remove("PGPASSWORD");
@@ -1117,6 +1111,13 @@ impl DefaultsFile {
         // sqlx connects over TCP; force the client to do the same so a
         // "localhost" host doesn't silently switch to a unix socket.
         content.push_str("protocol=TCP\n");
+        if opts.aws_iam.is_some() {
+            // AWS IAM auth (#734): the RDS auth token is sent with the
+            // mysql_clear_password plugin, which is only safe (and only
+            // accepted by RDS) over TLS.
+            content.push_str("enable-cleartext-plugin\n");
+            content.push_str("ssl-mode=REQUIRED\n");
+        }
 
         #[cfg(unix)]
         let mut file = {
@@ -1306,6 +1307,7 @@ mod tests {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         };
         let path = {
             let f = PgPassFile::create(&opts, "testdb").expect("create");
@@ -1382,6 +1384,7 @@ mod tests {
             ssl_client_cert: None,
             ssl_client_key: None,
             init_sql: None,
+            aws_iam: None,
         };
         let path = {
             let f = DefaultsFile::create(&opts).expect("create");

@@ -347,6 +347,10 @@ export function buildExportContent(
         rows,
         ctx?.sqlBatchSize ?? DEFAULT_SQL_BATCH,
       );
+    case "xlsx":
+      // バイナリ形式 (#711) はテキストとしてプレビュー/コピーできない。表示側は
+      // `exportFormatHasTextPreview` で分岐する。
+      return "";
     default:
       return buildJson(columns, rows, query);
   }

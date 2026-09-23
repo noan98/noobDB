@@ -1,8 +1,10 @@
 pub mod advisor;
+pub mod assertions;
 pub mod connection;
 pub mod diff;
 pub mod dump;
 pub mod export;
+pub mod export_xlsx;
 pub mod file;
 pub mod flight_recorder;
 pub mod history;
@@ -24,4 +26,5 @@ pub mod snippets;
 pub mod ssh;
 pub mod sync;
 pub mod tasks;
+pub mod timelapse;
 pub mod transfer;

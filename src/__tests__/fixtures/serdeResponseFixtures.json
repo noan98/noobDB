@@ -51,6 +51,10 @@
     "session_id": "abcd1234"
   },
   "connectionProfile": {
+    "aws_iam": {
+      "profile": "work",
+      "region": "ap-northeast-1"
+    },
     "color": "#dc2626",
     "confirm_writes": true,
     "database": "appdb",
@@ -160,11 +164,20 @@
   "exportDoneEvent": {
     "bytes": 40960,
     "rows": 1000,
-    "streamId": "strm0005"
+    "streamId": "strm0005",
+    "truncation": {
+      "droppedRows": 25,
+      "truncatedCells": 2,
+      "writtenRows": 1048575
+    }
   },
   "exportProgressEvent": {
     "rows": 500,
     "streamId": "strm0005"
+  },
+  "exportResult": {
+    "bytes": 2048,
+    "truncation": null
   },
   "exportStreamErrorEvent": {
     "message": "disk full",
