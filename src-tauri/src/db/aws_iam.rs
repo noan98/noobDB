@@ -883,10 +883,15 @@ sso_account_id = 123456789012
 ";
 
     fn read_files(p: &Path) -> Option<String> {
-        match p.to_str()? {
-            "/home/u/.aws/credentials" => Some(CREDENTIALS.to_string()),
-            "/home/u/.aws/config" => Some(CONFIG.to_string()),
-            _ => None,
+        // 本体と同じ `Path::join` で組み立てて比較する (Windows では区切りが `\` になり、
+        // 文字列の完全一致では `/home/u\.aws\credentials` と一致しないため)。
+        let aws = Path::new("/home/u").join(".aws");
+        if p == aws.join("credentials") {
+            Some(CREDENTIALS.to_string())
+        } else if p == aws.join("config") {
+            Some(CONFIG.to_string())
+        } else {
+            None
         }
     }
 
