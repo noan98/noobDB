@@ -87,7 +87,7 @@ sqlx = { version = "0.9", default-features = false, features = [
 duckdb = { version = "1", features = ["bundled"] }
 
 # SSH
-russh = "0.62"
+russh = "0.63"
 
 # Secrets / config
 # keyring のネイティブバックエンドはターゲット OS ごとに分け、ビルド中のターゲットに
