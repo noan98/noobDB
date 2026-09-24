@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use russh::client::{Handler, Session};
-use russh::keys::{HashAlg, PublicKey};
+use russh::keys::{HashAlg, PublicKeyOrCertificate};
 use russh::ChannelId;
 
 use crate::profiles::store::data_dir;
@@ -149,9 +149,14 @@ impl Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        let fingerprint = server_public_key.fingerprint(HashAlg::Sha256).to_string();
+        // russh 0.63 からホスト証明書も渡ってくる。CA 検証は行わず、証明書に
+        // 埋め込まれた公開鍵そのものの指紋で TOFU を行う (素の鍵と同じ固定方式)。
+        let fingerprint = server_public_key
+            .public_key()
+            .fingerprint(HashAlg::Sha256)
+            .to_string();
         match self.lookup() {
             Ok(Some(known)) => {
                 if known == fingerprint {
@@ -273,7 +278,7 @@ mod tests {
         std::fs::write(&path, format!("ssh.example.com:22 {legacy}\n")).unwrap();
 
         let mut handler = ClientHandler::with_known_hosts("ssh.example.com", 22, path.clone());
-        assert!(handler.check_server_key(&key).await.unwrap());
+        assert!(handler.check_server_key(&key.clone().into()).await.unwrap());
 
         let migrated = std::fs::read_to_string(&path).unwrap();
         assert_eq!(migrated.trim(), format!("ssh.example.com:22 {modern}"));
@@ -295,7 +300,7 @@ mod tests {
 
         let mut handler = ClientHandler::with_known_hosts("ssh.example.com", 22, path.clone());
         assert!(matches!(
-            handler.check_server_key(&presented).await,
+            handler.check_server_key(&presented.clone().into()).await,
             Err(russh::Error::UnknownKey)
         ));
 
@@ -310,7 +315,7 @@ mod tests {
 
         let path = temp_known_hosts();
         let mut handler = ClientHandler::with_known_hosts("ssh.example.com", 22, path.clone());
-        assert!(handler.check_server_key(&key).await.unwrap());
+        assert!(handler.check_server_key(&key.clone().into()).await.unwrap());
 
         let recorded = std::fs::read_to_string(&path).unwrap();
         assert_eq!(recorded.trim(), format!("ssh.example.com:22 {modern}"));
@@ -367,7 +372,7 @@ mod tests {
         let mut handler = ClientHandler::with_known_hosts("ssh.example.com", 22, path.clone());
         let slot = handler.mismatch_slot();
         assert!(matches!(
-            handler.check_server_key(&presented).await,
+            handler.check_server_key(&presented.clone().into()).await,
             Err(russh::Error::UnknownKey)
         ));
         let recorded = slot.lock().unwrap().clone().expect("mismatch recorded");
