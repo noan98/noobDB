@@ -22,8 +22,20 @@ vi.mock("../api/tauri", async (importOriginal) => {
   };
 });
 
+// `checkAllConnections` の完了タイミングだけを差し替えられるようにする (他の純関数は
+// 実装のまま使う)。#1160 のスケルトン検証は「接続 0 件でも、確認が終わるまでは
+// `loading` が true」という一瞬の窓を再現する必要があるため。
+vi.mock("../components/connectionHealth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/connectionHealth")>();
+  return {
+    ...actual,
+    checkAllConnections: vi.fn(actual.checkAllConnections),
+  };
+});
+
 import { ConnectionHealthPanel } from "../components/ConnectionHealthPanel";
 import { api, type ConnectionProfile } from "../api/tauri";
+import { checkAllConnections } from "../components/connectionHealth";
 
 const profile = (over: Partial<ConnectionProfile>): ConnectionProfile =>
   ({
@@ -108,6 +120,77 @@ describe("ConnectionHealthPanel (#1068)", () => {
     fireEvent.click(within(row).getByRole("button", { name: new RegExp(t("healthConnect")) }));
     expect(onOpen).toHaveBeenCalledWith(saved);
     expect(api.connect).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 初回ロード中の空状態誤表示 (#1160)。姉妹パネル (#846) と同じく、`rows` 未取得の
+   * 間は `EmptyState` ではなく `SkeletonTableRows` を出し、実データ到着後に差し替わる
+   * ことを固定する。
+   */
+  it("初回の確認中は EmptyState ではなくスケルトン行を表示し、完了後に実データ0件なら EmptyState に差し替わる (#1160)", async () => {
+    // 接続 0 件でも `runChecks` は必ず一度回る (targets=[] でも loading は true になる)。
+    // その「確認中」の一瞬を検証するため `checkAllConnections` の完了を手で止める。
+    let resolveChecks: (out: []) => void = () => {};
+    const pending = new Promise<[]>((resolve) => {
+      resolveChecks = resolve;
+    });
+    vi.mocked(checkAllConnections).mockReturnValueOnce(pending);
+
+    const { container } = renderWithProviders(
+      <ConnectionHealthPanel
+        connections={[]}
+        profiles={[]}
+        activeSessionId={null}
+        defaultIntervalSecs={30}
+        connectingProfileId={null}
+        onOpenProfile={() => {}}
+        onReconnected={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      const rows = container.querySelectorAll("tbody > tr");
+      expect(rows.length).toBeGreaterThan(0);
+      rows.forEach((row) => expect(row.getAttribute("aria-hidden")).toBe("true"));
+    });
+    // 確認中は「接続がありません」相当の空状態を誤って出さない。
+    expect(screen.queryByText(t("healthEmpty"))).not.toBeInTheDocument();
+
+    resolveChecks([]);
+
+    await waitFor(() => {
+      expect(screen.getByText(t("healthEmpty"))).toBeInTheDocument();
+    });
+    expect(container.querySelector("tbody > tr")).toBeNull();
+  });
+
+  it("開いている接続があれば、確認結果が届く前から実データ行 (状態: unknown) を表示する", async () => {
+    // `buildHealthRows` は開いている接続をそのまま行にするため、rows は接続数に
+    // 追従して即時に埋まる (0 件になるのは「接続が本当に無い」時だけ)。
+    let resolvePing: (up: boolean) => void = () => {};
+    const pending = new Promise<boolean>((resolve) => {
+      resolvePing = resolve;
+    });
+    vi.mocked(api.pingSession).mockReturnValueOnce(pending);
+
+    renderWithProviders(
+      <ConnectionHealthPanel
+        connections={[{ sessionId: "s-m", profile: mysql }]}
+        profiles={[mysql]}
+        activeSessionId="s-m"
+        defaultIntervalSecs={30}
+        connectingProfileId={null}
+        onOpenProfile={() => {}}
+        onReconnected={() => {}}
+      />,
+    );
+
+    const row = await screen.findByTestId("health-row-m");
+    expect(within(row).getByText(t("healthStatusUnknown"))).toBeInTheDocument();
+    expect(screen.queryByText(t("healthEmpty"))).not.toBeInTheDocument();
+
+    resolvePing(true);
+    await waitFor(() => expect(within(row).getByText(t("healthStatusUp"))).toBeInTheDocument());
   });
 
   it("落ちた接続には再接続導線を出し、同じ session id で張り直す", async () => {

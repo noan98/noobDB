@@ -20,6 +20,7 @@ import {
 } from "./connectionHealth";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Select } from "./ui";
@@ -313,7 +314,8 @@ export function ConnectionHealthPanel({
         </Flex>
       )}
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && !loading ? (
+        // 実データ 0 件が確定した後にのみ真の空状態を出す (loading 優先、#1160)。
         <EmptyState icon="server" title={t("healthEmpty")} />
       ) : (
         <Box overflowX="auto">
@@ -329,7 +331,12 @@ export function ConnectionHealthPanel({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {loading && rows.length === 0 ? (
+                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+                // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1160)。
+                <SkeletonTableRows columns={6} />
+              ) : (
+                rows.map((row) => {
                 const gen = row.sessionId ? (flash.get(row.sessionId) ?? 0) : 0;
                 const profile = profileById.get(row.profileId);
                 return (
@@ -405,7 +412,8 @@ export function ConnectionHealthPanel({
                     </chakra.td>
                   </chakra.tr>
                 );
-              })}
+              })
+              )}
             </tbody>
           </chakra.table>
         </Box>
