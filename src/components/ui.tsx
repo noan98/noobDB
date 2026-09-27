@@ -125,10 +125,16 @@ export const SectionLabel = chakra("span", sectionLabelRecipe);
  * 経由で使うこと (詳細・設計意図は recipe 側の JSDoc を参照)。
  *
  * `<button>` 要素として描画される (`type="button"` は呼び出し側で明示する)。
- * ホバー/押下に加えて要素の出入り (stagger) など Motion 化が要る場面では、
- * `chakra(motion.button, selectableCardRecipe, {...})` の形で同じ recipe を
- * 直接 `motion.button` に適用する (`ProfileCardGrid.tsx` 参照)。この
- * `SelectableCard` は Motion を伴わない静的な用途 (`WelcomeView` /
- * `SettingsView`) 向け。
+ *
+ * **`SelectableCard` 自体を `motion.button` 化しない。** かつて
+ * `chakra(motion.button, selectableCardRecipe, {...})` として stagger の入場
+ * (`variants.staggerItem`) を直接乗せていたが、入場アニメ完了後に Motion が
+ * `transform: none` をインライン style に残し、それが recipe の
+ * `_hover`/`&:active` の CSS `transform` (ホバーリフト/押下フィードバック) より
+ * 優先されてしまい、リフト/押下が一切効かなくなる不具合があった (実 Chromium で
+ * 確認)。要素の出入り (stagger 等) に Motion が要る場面では、`motion.div` の薄い
+ * ラッパー (`base: { display: "flex" }` + `variants`) で入場だけを担当させ、その
+ * 中に `<SelectableCard flex="1">` を通常の `<button>` として置く
+ * (`WelcomeView.tsx` / `ProfileCardGrid.tsx` の `MotionCardWrap` 参照)。
  */
 export const SelectableCard = chakra("button", selectableCardRecipe);

@@ -723,6 +723,15 @@ export const sectionLabelRecipe = defineRecipe({
  *   呼び出し側が通常の style prop として重ねる (`borderLeft`/`borderLeftColor` は
  *   この recipe が触らないプロパティなので、そのまま安全に上乗せできる)。
  *
+ * この recipe を `motion.button` へ直接適用しない (`chakra(motion.button, ...)`)。
+ * `variants`/stagger の入場アニメ完了後に Motion がインライン `transform: none`
+ * を残し、ここで定義する `_hover`/`&:active` の CSS `transform` (リフト/押下) を
+ * 上書きしてしまう。要素の出入りに Motion が要る場合は、入場だけを担当する
+ * `motion.div` の薄いラッパーを外側に置き、この recipe を適用した通常の
+ * `<button>` (`ui.tsx` の `SelectableCard`) を中に置くこと
+ * (`ui.tsx` の `SelectableCard` JSDoc / `WelcomeView.tsx` `ProfileCardGrid.tsx`
+ * の `MotionCardWrap` を参照)。
+ *
  * `size` variant:
  * - `default`: `WelcomeCard` / `ProfileCard` 相当 (padding 4 / gap 2)。
  * - `compact`: `ThemePresetCard` 相当の小さいタイル (padding 2 / gap 1.5)。

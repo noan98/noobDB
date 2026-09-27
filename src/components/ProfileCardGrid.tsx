@@ -4,13 +4,12 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ConnectionProfile } from "../api/tauri";
 import { useT } from "../i18n";
 import { staggerContainer, variants } from "../motion";
-import { selectableCardRecipe } from "../theme";
 import {
   driverColor,
   driverIconName,
   workspaceSpineColor,
 } from "../profileIdentity";
-import { Heading } from "./ui";
+import { Heading, SelectableCard } from "./ui";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { GroupAvatar, ProfileBadges, ProfileColorChip } from "./ProfileBadge";
 import { Spinner } from "./Spinner";
@@ -21,17 +20,22 @@ import { Spinner } from "./Spinner";
 const MotionFlex = chakra(motion.div, {}, {
   forwardProps: ["transition", "initial", "animate", "variants"],
 });
-// カードの見た目 (角丸・静止エレベーション・ホバーの 1 段上のリフト・押下・
-// フォーカスリング) は `ui.tsx` の `SelectableCard` と同じ `selectableCardRecipe`
-// (#1161) を共有する。以前 (#1144) はここに `whileHover`/`whileTap` の scale
-// spring を個別に持っていたが、影 (box-shadow) と transform を 1 つの CSS
-// transition で協調させる必要があり、Motion の spring と CSS transition の
-// 二重管理は手触りがずれやすい (影だけ CSS、scale だけ Motion、という分割は
-// #1144 の実装コメントにもある通り既に box-shadow との衝突を避けるための妥協
-// だった)。そのため hover/press の手触りは recipe 側の CSS transition
-// (translateY + shadow) へ一本化し、Motion は要素の出入り (stagger, #875) だけを
-// 担当する。stagger アイテムの入場 (`variants.staggerItem`) は変更しない。
-const MotionCard = chakra(motion.button, selectableCardRecipe, {
+// stagger 入場 (#875) だけを担当する薄いラッパー。カードの見た目・ホバー/押下は
+// `ui.tsx` の `SelectableCard` (`selectableCardRecipe`、#1161) にそのまま任せる。
+//
+// `SelectableCard` 自身を `motion.button` 化 (`chakra(motion.button, recipe)`) して
+// `variants={variants.staggerItem}` を渡すと、入場アニメ完了後に Motion が
+// `transform: none` をインライン style に残してしまい、それが recipe の
+// `_hover`/`&:active` の `transform: translateY(...)` (CSS) より詳細度で勝って
+// ホバーリフト/押下フィードバックが一切効かなくなる不具合があった (実 Chromium で
+// 確認、#1161 フォローアップ)。stagger の入場 (opacity/y) を担う要素と、ホバー/
+// 押下の transform を担う要素 (`SelectableCard` = 素の button、CSS transition の
+// み) を分離することで、Motion のインライン transform が CSS の transform と
+// 衝突しないようにする。レイアウト用の flex/minW/maxW/minH はこのラッパー側に
+// 置き、`base.display: "flex"` によりラッパー自身を flex コンテナ化することで、
+// 中の `SelectableCard` (`flex="1"`) がラッパーの幅いっぱい・高さいっぱい
+// (align-items の既定 stretch) に広がる。
+const MotionCardWrap = chakra(motion.div, { base: { display: "flex" } }, {
   forwardProps: ["variants"],
 });
 
@@ -96,27 +100,31 @@ export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }:
             />
           );
         })}
-        <MotionCard
-          type="button"
+        <MotionCardWrap
           variants={variants.staggerItem}
-          onClick={onCreate}
-          alignItems="center"
-          justifyContent="center"
           flex="0 1 240px"
           minW="220px"
           maxW="280px"
           minH="118px"
-          bg="transparent"
-          border="1px dashed"
-          borderColor="app.borderStrong"
-          color="app.textMuted"
-          _hover={{ bg: "app.hover", color: "app.text", borderColor: "app.accent" }}
         >
-          <Icon name="plus" size={ICON_SIZES.lg} />
-          <Text fontWeight={600} fontSize="sm">
-            {t("profileCardsNew")}
-          </Text>
-        </MotionCard>
+          <SelectableCard
+            type="button"
+            onClick={onCreate}
+            flex="1"
+            alignItems="center"
+            justifyContent="center"
+            bg="transparent"
+            border="1px dashed"
+            borderColor="app.borderStrong"
+            color="app.textMuted"
+            _hover={{ bg: "app.hover", color: "app.text", borderColor: "app.accent" }}
+          >
+            <Icon name="plus" size={ICON_SIZES.lg} />
+            <Text fontWeight={600} fontSize="sm">
+              {t("profileCardsNew")}
+            </Text>
+          </SelectableCard>
+        </MotionCardWrap>
       </MotionFlex>
     </Flex>
   );
@@ -139,70 +147,68 @@ function ProfileCard({
   const endpoint = endpointSummary(p);
   const inert = disabled || connecting;
   return (
-    <MotionCard
-      type="button"
-      variants={variants.staggerItem}
-      onClick={onConnect}
-      disabled={inert}
-      aria-label={p.name}
-      aria-describedby={descId}
-      aria-busy={connecting || undefined}
-      flex="0 1 240px"
-      minW="220px"
-      maxW="280px"
-      minH="118px"
-      // 本番は常に危険色のスパインで際立たせる (サイドバーのワークスペース・
-      // スパイン #791 と同じ色決定を共有)。非本番はプロファイル色/アクセント。
-      // ホバーで変わらない色なので、recipe の `_hover` (borderColor/shadow/
-      // transform を担当) と衝突しない単一の style prop で足りる。
-      borderLeft="3px solid"
-      borderLeftColor={workspaceSpineColor(p)}
-    >
-      <Flex align="center" gap="2" minW={0}>
-        <ProfileColorChip color={p.color} />
-        <Text
-          fontWeight={600}
-          fontSize="sm"
-          color="app.text"
-          flex="1"
-          minW={0}
-          overflow="hidden"
-          textOverflow="ellipsis"
-          whiteSpace="nowrap"
-        >
-          {p.name}
-        </Text>
-        <ProfileBadges isProduction={p.is_production} readOnly={p.read_only} compact />
-      </Flex>
-      <Flex align="center" gap="2" minW={0} color="app.textMuted">
-        <chakra.span
-          aria-hidden
-          display="inline-flex"
-          flexShrink={0}
-          style={{ color: driverColor(p.driver) }}
-        >
-          {connecting ? <Spinner size={14} /> : <Icon name={driverIcon} size={ICON_SIZES.md} />}
-        </chakra.span>
-        <Text
-          id={descId}
-          fontSize="xs"
-          fontFamily="var(--font-mono)"
-          minW={0}
-          overflow="hidden"
-          textOverflow="ellipsis"
-          whiteSpace="nowrap"
-        >
-          {connecting ? t("statusConnecting", { name: p.name }) : endpoint}
-        </Text>
-      </Flex>
-      {p.group && (
-        <Flex align="center" gap="1.5" minW={0} color="app.textMuted">
-          <GroupAvatar name={p.group} size={16} />
-          <Text fontSize="xs" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-            {p.group}
+    <MotionCardWrap variants={variants.staggerItem} flex="0 1 240px" minW="220px" maxW="280px" minH="118px">
+      <SelectableCard
+        type="button"
+        onClick={onConnect}
+        disabled={inert}
+        aria-label={p.name}
+        aria-describedby={descId}
+        aria-busy={connecting || undefined}
+        flex="1"
+        // 本番は常に危険色のスパインで際立たせる (サイドバーのワークスペース・
+        // スパイン #791 と同じ色決定を共有)。非本番はプロファイル色/アクセント。
+        // ホバーで変わらない色なので、recipe の `_hover` (borderColor/shadow/
+        // transform を担当) と衝突しない単一の style prop で足りる。
+        borderLeft="3px solid"
+        borderLeftColor={workspaceSpineColor(p)}
+      >
+        <Flex align="center" gap="2" minW={0}>
+          <ProfileColorChip color={p.color} />
+          <Text
+            fontWeight={600}
+            fontSize="sm"
+            color="app.text"
+            flex="1"
+            minW={0}
+            overflow="hidden"
+            textOverflow="ellipsis"
+            whiteSpace="nowrap"
+          >
+            {p.name}
+          </Text>
+          <ProfileBadges isProduction={p.is_production} readOnly={p.read_only} compact />
+        </Flex>
+        <Flex align="center" gap="2" minW={0} color="app.textMuted">
+          <chakra.span
+            aria-hidden
+            display="inline-flex"
+            flexShrink={0}
+            style={{ color: driverColor(p.driver) }}
+          >
+            {connecting ? <Spinner size={14} /> : <Icon name={driverIcon} size={ICON_SIZES.md} />}
+          </chakra.span>
+          <Text
+            id={descId}
+            fontSize="xs"
+            fontFamily="var(--font-mono)"
+            minW={0}
+            overflow="hidden"
+            textOverflow="ellipsis"
+            whiteSpace="nowrap"
+          >
+            {connecting ? t("statusConnecting", { name: p.name }) : endpoint}
           </Text>
         </Flex>
-      )}
-    </MotionCard>
+        {p.group && (
+          <Flex align="center" gap="1.5" minW={0} color="app.textMuted">
+            <GroupAvatar name={p.group} size={16} />
+            <Text fontSize="xs" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+              {p.group}
+            </Text>
+          </Flex>
+        )}
+      </SelectableCard>
+    </MotionCardWrap>
   );
 }
