@@ -9,6 +9,7 @@ import {
   DIVERGING_RAMPS,
   SEQUENTIAL_RAMPS,
   categoricalColor,
+  rampStops,
   sampleRamp,
   type ColorRamp,
 } from "../colorScale";
@@ -124,27 +125,36 @@ const RAMP_SOLO_T = 0.75;
 /**
  * 系列インデックス → 色。`categorical` は既存の離散パレットを循環参照し、
  * ランプでは系列数で `rampSpan` を等分してサンプリングする (隣接系列の明度差を
- * 確保するため端から端まで使い切る)。`count` が 0 なら空配列。
+ * 確保するため端から端まで使い切る)。`count` が 0 なら空配列。`isDark` (既定
+ * false、#1187) でダーク用パレット/ストップ (`CATEGORICAL_DARK` / `stopsDark`) を
+ * 選び、ダークテーマでも「明度＝値」の対応とカテゴリ色のコントラストを保つ。
  */
-export function chartSeriesColors(paletteKey: string | undefined, count: number): string[] {
+export function chartSeriesColors(paletteKey: string | undefined, count: number, isDark = false): string[] {
   const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
   const { ramp } = chartPalette(paletteKey);
-  if (!ramp) return Array.from({ length: n }, (_, i) => categoricalColor(i));
-  if (n === 1) return [sampleRamp(RAMP_SOLO_T, ramp.stops)];
+  if (!ramp) return Array.from({ length: n }, (_, i) => categoricalColor(i, isDark));
+  const stops = rampStops(ramp, isDark);
+  if (n === 1) return [sampleRamp(RAMP_SOLO_T, stops)];
   const [lo, hi] = rampSpan(ramp);
-  return Array.from({ length: n }, (_, i) => sampleRamp(lo + ((hi - lo) * i) / (n - 1), ramp.stops));
+  return Array.from({ length: n }, (_, i) => sampleRamp(lo + ((hi - lo) * i) / (n - 1), stops));
 }
 
 /**
  * 値の大小をランプ上の位置へ写した「1 点ごとの色」(#916)。単一数値系列の棒/円を
  * 値で着色するために使う。`categorical` では値による着色を行わないので `null` を
  * 返し、呼び出し側は系列色 1 色にフォールバックする。値域が退化 (空/全同値/
- * 非有限のみ) しているときは大小を色で表せないため単色を返す。
+ * 非有限のみ) しているときは大小を色で表せないため単色を返す。`isDark` は
+ * `chartSeriesColors` と同じ (#1187)。
  */
-export function chartValueColors(values: number[], paletteKey: string | undefined): string[] | null {
+export function chartValueColors(
+  values: number[],
+  paletteKey: string | undefined,
+  isDark = false,
+): string[] | null {
   const { ramp } = chartPalette(paletteKey);
   if (!ramp) return null;
-  const solo = sampleRamp(RAMP_SOLO_T, ramp.stops);
+  const stops = rampStops(ramp, isDark);
+  const solo = sampleRamp(RAMP_SOLO_T, stops);
   let min = Infinity;
   let max = -Infinity;
   for (const v of values) {
@@ -158,24 +168,26 @@ export function chartValueColors(values: number[], paletteKey: string | undefine
   const [lo, hi] = rampSpan(ramp);
   return values.map((v) => {
     if (!Number.isFinite(v)) return solo;
-    return sampleRamp(lo + ((hi - lo) * (v - min)) / (max - min), ramp.stops);
+    return sampleRamp(lo + ((hi - lo) * (v - min)) / (max - min), stops);
   });
 }
 
 /**
  * ランプを CSS の `linear-gradient` として表現する (値で着色しているときの凡例
- * 見本用)。離散パレットは勾配を持たないので `null`。
+ * 見本用)。離散パレットは勾配を持たないので `null`。`isDark` は `chartSeriesColors`
+ * と同じ (#1187)。
  */
-export function chartRampGradient(paletteKey: string | undefined): string | null {
+export function chartRampGradient(paletteKey: string | undefined, isDark = false): string | null {
   const { ramp } = chartPalette(paletteKey);
   if (!ramp) return null;
+  const stops = rampStops(ramp, isDark);
   const [lo, hi] = rampSpan(ramp);
   const steps = 4;
-  const stops = Array.from({ length: steps + 1 }, (_, i) => {
+  const gradientStops = Array.from({ length: steps + 1 }, (_, i) => {
     const t = lo + ((hi - lo) * i) / steps;
-    return `${sampleRamp(t, ramp.stops)} ${Math.round((i / steps) * 100)}%`;
+    return `${sampleRamp(t, stops)} ${Math.round((i / steps) * 100)}%`;
   });
-  return `linear-gradient(90deg, ${stops.join(", ")})`;
+  return `linear-gradient(90deg, ${gradientStops.join(", ")})`;
 }
 
 /** 描画点数の上限。これを超えたら等間隔でサンプリングする。 */

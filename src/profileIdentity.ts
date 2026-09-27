@@ -123,24 +123,27 @@ export function groupInitials(name: string): string {
  * グループ名から安定した色を割り当てる (同じ名前は常に同じ色になる)。ユーザが
  * 選ぶ `profile.color` とは独立した「グループ単位」の色で、`colorScale.ts` の
  * カラーブラインド配慮済みカテゴリパレットを名前の簡易ハッシュで循環参照する
- * (チャート系列と同じパレットを再利用し、色を二重定義しない)。
+ * (チャート系列と同じパレットを再利用し、色を二重定義しない)。`isDark` (既定
+ * false、#1187) でダーク用パレット (`CATEGORICAL_DARK`) を選び、サイドバーの
+ * 暗背景でもコントラストを確保する。
  */
-export function groupAvatarColor(name: string): string {
+export function groupAvatarColor(name: string, isDark = false): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     // 単純な多項式ハッシュ (Java の String.hashCode と同型)。暗号用途ではなく
     // 「同名なら常に同じ色」を安定して得られれば十分。
     hash = (hash * 31 + name.charCodeAt(i)) | 0;
   }
-  return categoricalColor(hash);
+  return categoricalColor(hash, isDark);
 }
 
 /**
  * グループアバターに乗せるイニシャル文字色。`groupAvatarColor` の塗りに対して
- * `accentForeground` でコントラストの高い側を選ぶ。
+ * `accentForeground` でコントラストの高い側を選ぶ。`isDark` は `groupAvatarColor`
+ * と同じ (#1187)。
  */
-export function groupAvatarForeground(name: string): string {
-  return accentForeground(groupAvatarColor(name));
+export function groupAvatarForeground(name: string, isDark = false): string {
+  return accentForeground(groupAvatarColor(name, isDark));
 }
 
 /**

@@ -1,6 +1,7 @@
 import { chakra, type HTMLChakraProps } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
+import { useIsDarkTheme } from "../colorScale";
 import { Icon, ICON_SIZES } from "./Icon";
 import { semanticColorToken } from "../semanticColors";
 import { transitions, variants } from "../motion";
@@ -236,10 +237,12 @@ export function ProfileColorChip({
  * イニシャルが取れない (空文字) グループ名では何も描画しない。
  */
 export function GroupAvatar({ name, size = 18 }: { name: string; size?: number }) {
+  // ダークテーマではコントラストを確保した並行パレットへ切り替える (#1187)。
+  const isDark = useIsDarkTheme();
   const initials = groupInitials(name);
   if (!initials) return null;
-  const bg = groupAvatarColor(name);
-  const fg = groupAvatarForeground(name);
+  const bg = groupAvatarColor(name, isDark);
+  const fg = groupAvatarForeground(name, isDark);
   return (
     <chakra.span
       aria-hidden

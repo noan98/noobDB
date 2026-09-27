@@ -2,9 +2,21 @@ import { describe, it, expect } from "vitest";
 // Vite の `?raw` インポートで App.css の中身を文字列として取り込む (node の fs に
 // 依存せず、vite build / vitest 双方で同じ経路で読める)。型は vite/client が提供。
 import css from "../App.css?raw";
+// theme.ts の dark 判定条件 (`conditions.dark`) の実ソースを比較するため。
+import themeTsSource from "../theme.ts?raw";
 // コントラスト比の計算はアクセント色ロジック (accent.ts) と共有する (#559)。
 // 二重実装を避け、accent.test.ts と同じ式で全テーマ/プリセットを検証する。
 import { contrastRatio } from "../accent";
+// データ可視化パレットのダークテーマ対応 (#1187) の回帰ガード。
+import {
+  CATEGORICAL,
+  CATEGORICAL_DARK,
+  DIVERGING_RAMPS,
+  SEQUENTIAL_RAMPS,
+  isDarkDataTheme,
+  rampStops,
+  sampleRamp,
+} from "../colorScale";
 
 /**
  * デザイントークンの WCAG AA コントラスト回帰テストと、フォントスケール
@@ -83,6 +95,15 @@ function luminance(hex: string): number {
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
   return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
+}
+
+/** `sampleRamp` の `rgb(r, g, b)` 出力を `contrastRatio`/`luminance` が受ける
+ *  `#rrggbb` へ変換する (#1187)。 */
+function rgbToHex(rgb: string): string {
+  const m = rgb.match(/rgb\((\d+), (\d+), (\d+)\)/);
+  if (!m) throw new Error(`unexpected color format: ${rgb}`);
+  const toHex = (n: string) => Number(n).toString(16).padStart(2, "0");
+  return `#${toHex(m[1])}${toHex(m[2])}${toHex(m[3])}`;
 }
 
 function check(
@@ -368,6 +389,120 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
     it("text stays legible on row selection / hover", () => {
       check(vars, "text", "bg-active", AA_TEXT);
       check(vars, "text", "bg-row-hover", AA_TEXT);
+    });
+  });
+});
+
+describe("data-viz palettes stay dark-theme aware (#1187)", () => {
+  // `isDarkDataTheme` は `theme.ts` の Chakra `conditions.dark`
+  // (`"[data-theme$=dark] &"`、CSS の属性値末尾一致セレクタ) と同じ「値が
+  // "dark" で終わるか」を再利用していることを、実際の theme.ts のソースから
+  // 直接検証する (新しい判定方法を発明していないことの回帰ガード)。
+  it("isDarkDataTheme matches theme.ts's [data-theme$=dark] suffix rule", () => {
+    expect(themeTsSource).toMatch(/dark:\s*"\[data-theme\$=dark\]\s*&"/);
+  });
+
+  it("agrees with the suffix rule for every known data-theme value", () => {
+    const darkValues = ["dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark"];
+    const lightValues = ["light", "hc-light", "cb-light", "solarized-light"];
+    for (const v of darkValues) expect(isDarkDataTheme(v)).toBe(true);
+    for (const v of lightValues) expect(isDarkDataTheme(v)).toBe(false);
+    expect(isDarkDataTheme(null)).toBe(false);
+    expect(isDarkDataTheme(undefined)).toBe(false);
+    expect(isDarkDataTheme("")).toBe(false);
+  });
+
+  // すべての「ダーク系」data-theme 値 (base dark + プリセット) の --bg を集める。
+  // discoverPresets はライト/ダークどちらのプリセットも含むので isDarkDataTheme で絞る。
+  const darkBackgrounds: Record<string, string> = { dark: dark.bg };
+  for (const preset of presets) {
+    if (isDarkDataTheme(preset.name) && preset.vars.bg) darkBackgrounds[preset.name] = preset.vars.bg;
+  }
+  const lightBackgrounds: Record<string, string> = { light: light.bg };
+  for (const preset of presets) {
+    if (!isDarkDataTheme(preset.name) && preset.vars.bg) lightBackgrounds[preset.name] = preset.vars.bg;
+  }
+
+  it("discovers at least the known dark-family backgrounds", () => {
+    // 退行検知: フィルタ条件の変更などで 0 件になっても素通りしないようにする。
+    expect(Object.keys(darkBackgrounds)).toEqual(
+      expect.arrayContaining(["dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark"]),
+    );
+  });
+
+  it("CATEGORICAL (light) meets the UI-component minimum (3:1) on every light-family background", () => {
+    for (const [name, bg] of Object.entries(lightBackgrounds)) {
+      for (const c of CATEGORICAL) {
+        expect(contrastRatio(c, bg), `${c} on ${name} (${bg})`).toBeGreaterThanOrEqual(AA_UI);
+      }
+    }
+  });
+
+  it("CATEGORICAL_DARK meets the UI-component minimum (3:1) on every dark-family background (#1187)", () => {
+    // 修正前の `CATEGORICAL` (ライト用) は nord-dark / one-dark / dracula-dark など
+    // 複数のダークプリセットで 3:1 を割り込んでいた (紫 #aa3377 は多くのダーク背景で
+    // 2 台前半)。ダーク用並行パレットで全ダーク系テーマの背景に対し確保することを固定する。
+    for (const [name, bg] of Object.entries(darkBackgrounds)) {
+      for (const c of CATEGORICAL_DARK) {
+        expect(contrastRatio(c, bg), `${c} on ${name} (${bg})`).toBeGreaterThanOrEqual(AA_UI);
+      }
+    }
+  });
+
+  it("CATEGORICAL_DARK stays CB-safe: same length/order as CATEGORICAL and all distinct", () => {
+    expect(CATEGORICAL_DARK.length).toBe(CATEGORICAL.length);
+    expect(new Set(CATEGORICAL_DARK).size).toBe(CATEGORICAL_DARK.length);
+    for (const hex of CATEGORICAL_DARK) expect(hex).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  describe.each([
+    ["blue", SEQUENTIAL_RAMPS.blue],
+    ["teal", SEQUENTIAL_RAMPS.teal],
+  ] as const)("sequential ramp %s (dark)", (_name, ramp) => {
+    it("low value (t=0) stays close in darkness to every dark-family background", () => {
+      // 「ヒートマップの低い値の色が背景に近い暗さであること」の回帰ガード。
+      // 完全一致は求めず、UI 部品の最低限未満 (< 3:1) に収まることで
+      // 「背景から浮き上がって見えない」ことを固定する。
+      const low = sampleRamp(0, rampStops(ramp, true));
+      for (const [name, bg] of Object.entries(darkBackgrounds)) {
+        const lowHex = rgbToHex(low);
+        expect(contrastRatio(lowHex, bg), `${ramp.key} low vs ${name} (${bg})`).toBeLessThan(AA_UI);
+      }
+    });
+
+    it("luminance increases monotonically from low value to high value (明度＝値を保つ)", () => {
+      const stops = rampStops(ramp, true);
+      const lums = [0, 0.5, 1].map((t) => luminance(rgbToHex(sampleRamp(t, stops))));
+      expect(lums[1]).toBeGreaterThan(lums[0]);
+      expect(lums[2]).toBeGreaterThan(lums[1]);
+    });
+
+    it("high value (t=1) is clearly brighter than the darkest dark-family background", () => {
+      const high = rgbToHex(sampleRamp(1, rampStops(ramp, true)));
+      for (const [name, bg] of Object.entries(darkBackgrounds)) {
+        expect(contrastRatio(high, bg), `${ramp.key} high vs ${name} (${bg})`).toBeGreaterThanOrEqual(AA_UI);
+      }
+    });
+  });
+
+  describe.each([
+    ["coolWarm", DIVERGING_RAMPS.coolWarm],
+    ["blueOrange", DIVERGING_RAMPS.blueOrange],
+  ] as const)("diverging ramp %s (dark)", (_name, ramp) => {
+    it("center (t=0.5, low salience) stays close in darkness to every dark-family background", () => {
+      const center = rgbToHex(sampleRamp(0.5, rampStops(ramp, true)));
+      for (const [name, bg] of Object.entries(darkBackgrounds)) {
+        expect(contrastRatio(center, bg), `${ramp.key} center vs ${name} (${bg})`).toBeLessThan(AA_UI);
+      }
+    });
+
+    it("both ends (t=0 / t=1, high salience) are clearly brighter than the center", () => {
+      const stops = rampStops(ramp, true);
+      const centerLum = luminance(rgbToHex(sampleRamp(0.5, stops)));
+      const loLum = luminance(rgbToHex(sampleRamp(0, stops)));
+      const hiLum = luminance(rgbToHex(sampleRamp(1, stops)));
+      expect(loLum).toBeGreaterThan(centerLum);
+      expect(hiLum).toBeGreaterThan(centerLum);
     });
   });
 });

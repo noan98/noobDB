@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CellValue, Column } from "../api/tauri";
-import { CATEGORICAL, DIVERGING_RAMPS, SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
+import { CATEGORICAL, CATEGORICAL_DARK, DIVERGING_RAMPS, SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
 import {
   buildChartModel,
   chartConfigKeyFrom,
@@ -458,6 +458,20 @@ describe("chartSeriesColors (#916)", () => {
     const [only] = chartSeriesColors("teal", 1);
     expect(only).toBe(sampleRamp(0.75, SEQUENTIAL_RAMPS.teal.stops));
   });
+
+  it("switches to the dark-aware categorical palette and dark ramp stops when isDark=true (#1187)", () => {
+    const catColors = chartSeriesColors("categorical", 3, true);
+    expect(catColors).toEqual([CATEGORICAL_DARK[0], CATEGORICAL_DARK[1], CATEGORICAL_DARK[2]]);
+    expect(catColors[0]).not.toBe(CATEGORICAL[0]);
+
+    const rampColors = chartSeriesColors("blue", 3, true);
+    expect(rampColors[2]).toBe(sampleRamp(1, SEQUENTIAL_RAMPS.blue.stopsDark));
+    expect(rampColors[2]).not.toBe(sampleRamp(1, SEQUENTIAL_RAMPS.blue.stops));
+  });
+
+  it("defaults isDark to false when omitted (back-compat)", () => {
+    expect(chartSeriesColors("categorical", 2)).toEqual(chartSeriesColors("categorical", 2, false));
+  });
 });
 
 describe("chartValueColors (#916)", () => {
@@ -497,6 +511,14 @@ describe("chartValueColors (#916)", () => {
     const colors = chartValueColors([0, Number.NaN, 10], "blue")!;
     expect(colors[1]).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
   });
+
+  it("samples the dark ramp stops when isDark=true, keeping low→high the same direction (#1187)", () => {
+    const colors = chartValueColors([10, 0, 5], "blue", true)!;
+    const [high, low] = colors;
+    expect(high).toBe(sampleRamp(1, SEQUENTIAL_RAMPS.blue.stopsDark));
+    expect(low).toBe(sampleRamp(0.2, SEQUENTIAL_RAMPS.blue.stopsDark));
+    expect(high).not.toBe(sampleRamp(1, SEQUENTIAL_RAMPS.blue.stops));
+  });
 });
 
 describe("chartRampGradient (#916)", () => {
@@ -509,5 +531,12 @@ describe("chartRampGradient (#916)", () => {
     expect(css).toMatch(/^linear-gradient\(90deg, rgb\(/);
     expect(css).toContain("0%");
     expect(css).toContain("100%");
+  });
+
+  it("uses the dark ramp stops when isDark=true (#1187)", () => {
+    const light = chartRampGradient("blue", false);
+    const dark = chartRampGradient("blue", true);
+    expect(dark).not.toBeNull();
+    expect(dark).not.toBe(light);
   });
 });

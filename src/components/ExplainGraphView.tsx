@@ -20,7 +20,7 @@ import "@xyflow/react/dist/style.css";
 
 import { useReducedMotion } from "motion/react";
 
-import { INK_DARK, INK_LIGHT, SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
+import { SEQUENTIAL_RAMPS, rampStops, readableInk, sampleRamp, useIsDarkTheme } from "../colorScale";
 import { semanticColorVar } from "../semanticColors";
 import {
   buildPlanGraph,
@@ -53,8 +53,6 @@ interface PlanNodeData {
   [key: string]: unknown;
 }
 type PlanFlowNode = Node<PlanNodeData, "planNode">;
-
-const SEQ_STOPS = SEQUENTIAL_RAMPS.blue.stops;
 
 const cardBaseCss: SystemStyleObject = {
   width: "100%",
@@ -90,13 +88,18 @@ const metaCss: SystemStyleObject = {
 
 /** One plan-tree node. Background is the cost heat; text ink adapts to it. */
 function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
+  // ダークテーマでは「暗→明」の向きへ切り替える (#1187)。
+  const isDark = useIsDarkTheme();
   // コスト → 背景色。ヒートが null (コスト無し) のときは中立の薄色を使う。
-  const fill = data.heat === null ? null : sampleRamp(data.heat, SEQ_STOPS);
-  const ink = data.heat !== null && data.heat >= 0.5 ? INK_LIGHT : INK_DARK;
+  const fill = data.heat === null ? null : sampleRamp(data.heat, rampStops(SEQUENTIAL_RAMPS.blue, isDark));
+  // 固定しきい値 (旧: heat >= 0.5) ではなく塗り色そのものとの実コントラストで
+  // 選ぶ (`readableInk`、#646/#1187)。ダークの暗→明ランプでは低ヒートが暗色に
+  // なるため、しきい値方式のままだと反転後にインクが誤った側になる。
+  const ink = fill ? readableInk(fill) : "var(--text)";
   const css: SystemStyleObject = {
     ...cardBaseCss,
     background: fill ?? "var(--bg-elevated)",
-    color: fill ? ink : "var(--text)",
+    color: ink,
     borderColor: data.selected ? "var(--accent)" : "var(--border)",
     outline: data.selected ? "2px solid var(--accent)" : "none",
   };

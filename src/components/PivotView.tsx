@@ -3,7 +3,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
-import { SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
+import { SEQUENTIAL_RAMPS, rampStops, sampleRamp, useIsDarkTheme } from "../colorScale";
 import { semanticColorToken } from "../semanticColors";
 import { Button, Checkbox } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -54,7 +54,6 @@ interface Props {
 const AGGS: PivotAgg[] = ["sum", "avg", "count", "min", "max"];
 // ヒートマップの塗り不透明度 (テーマの背景を透かし、既定文字色の可読性を保つ)。
 const HEAT_OPACITY = 45;
-const RAMP = SEQUENTIAL_RAMPS.teal.stops;
 
 const numFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 function formatValue(n: number | null): string {
@@ -95,6 +94,9 @@ const totalCss: SystemStyleObject = {
 
 export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeView }: Props) {
   const t = useT();
+  // ダークテーマでは「暗→明」の向きへ切り替える (#1187)。
+  const isDark = useIsDarkTheme();
+  const ramp = rampStops(SEQUENTIAL_RAMPS.teal, isDark);
   // 永続化キーは実行 SQL のフィンガープリント (#909)。クエリ再実行のたびに
   // PivotView はストリーミング状態を経由して remount されるため (App.tsx の
   // `!tab.streaming` 条件)、useState の初期化関数だけで再実行時の復元が完結する。
@@ -137,7 +139,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
     if (!heatmap || v == null || !Number.isFinite(v) || !heatRange) return undefined;
     const { min, max } = heatRange;
     const t01 = max > min ? (v - min) / (max - min) : 0.5;
-    return `color-mix(in srgb, ${sampleRamp(t01, RAMP)} ${HEAT_OPACITY}%, transparent)`;
+    return `color-mix(in srgb, ${sampleRamp(t01, ramp)} ${HEAT_OPACITY}%, transparent)`;
   };
 
   if (!config || !model) {
