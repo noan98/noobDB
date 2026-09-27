@@ -21,7 +21,7 @@ import {
   type JsonSearchResult,
 } from "./jsonTree";
 import { useToast } from "./Toast";
-import { TreeChevron, TreeRow } from "./tree";
+import { TreeChevron, TreeCollapse, TreeRow } from "./tree";
 import { Button, Input } from "./ui";
 
 /**
@@ -366,41 +366,46 @@ function JsonTreeRow({
           </chakra.span>
         )}
       </TreeRow>
-      {open && (
-        <chakra.div role="group">
-          {children.map((c, idx) => (
-            <JsonTreeRow
-              // 重複キーを持つオブジェクトもあり得るので位置を併用する。
-              key={`${idx}:${String(c.segment)}`}
-              ctx={ctx}
-              node={c.node}
-              path={[...path, c.segment]}
-              segment={c.segment}
-              level={level + 1}
-            />
-          ))}
-          {hidden > 0 && (
-            <TreeRow
-              role="treeitem"
-              aria-level={level + 2}
-              tabIndex={-1}
-              onClick={() => ctx.showMore(key)}
-              onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  ctx.showMore(key);
-                }
-              }}
-              style={{ paddingLeft: indentFor(level + 1) }}
-              color="app.accent"
-              fontWeight={500}
-            >
-              <TreeChevron aria-hidden />
-              {t("jsonTreeShowMore", { n: Math.min(hidden, CHILD_PAGE_SIZE) })}
-            </TreeRow>
-          )}
-        </chakra.div>
+      {container && (
+        // 接続ツリー (ConnectionList) と同じ TreeCollapse で開閉する (#1186)。
+        // opacity のみを補間するので height 補間のコストは掛からず、深いネスト
+        // でも重くならない。非コンテナ行では TreeCollapse 自体を作らない。
+        <TreeCollapse open={open}>
+          <chakra.div role="group">
+            {children.map((c, idx) => (
+              <JsonTreeRow
+                // 重複キーを持つオブジェクトもあり得るので位置を併用する。
+                key={`${idx}:${String(c.segment)}`}
+                ctx={ctx}
+                node={c.node}
+                path={[...path, c.segment]}
+                segment={c.segment}
+                level={level + 1}
+              />
+            ))}
+            {hidden > 0 && (
+              <TreeRow
+                role="treeitem"
+                aria-level={level + 2}
+                tabIndex={-1}
+                onClick={() => ctx.showMore(key)}
+                onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    ctx.showMore(key);
+                  }
+                }}
+                style={{ paddingLeft: indentFor(level + 1) }}
+                color="app.accent"
+                fontWeight={500}
+              >
+                <TreeChevron aria-hidden />
+                {t("jsonTreeShowMore", { n: Math.min(hidden, CHILD_PAGE_SIZE) })}
+              </TreeRow>
+            )}
+          </chakra.div>
+        </TreeCollapse>
       )}
     </>
   );
