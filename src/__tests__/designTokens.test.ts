@@ -169,6 +169,22 @@ describe("design tokens: タイポグラフィ", () => {
         "(tight/snug/normal/relaxed) を使う。",
     ).toEqual([]);
   });
+
+  it("SVG の fontSize 属性も単位無し px 直値 (fontSize=\"11\") を使わない (#1189)", () => {
+    // SVG の fontSize 属性は単位を省略すると px 相当として解釈される。Chakra の
+    // トークン名 (xs/sm/2xs/...) は常に英字を含み純粋な数値にはならないため、
+    // `fontSize="11"` のように数値のみの文字列はほぼ確実に SVG の px 直値。
+    // 上の「fontSize は px 直値ではなく...」テストの正規表現 (px|pt サフィックス必須)
+    // をすり抜けていた (ChartView.tsx / ServerMetricsPanel.tsx の <text> がこれで
+    // フォント拡大設定に追従していなかった)。style={{ fontSize: "var(--text-xs)" }}
+    // のようにトークン参照へ寄せる (ERDiagramView.tsx / ExplainGraphView.tsx と同方式)。
+    const offenders = findViolations(/\bfontSize=\{?"[0-9.]+"\}?/, () => true);
+    expect(
+      offenders,
+      "SVG の <text> も App.css の --text-* を style={{ fontSize: \"var(--text-xs)\" }} " +
+        "の形で参照する。",
+    ).toEqual([]);
+  });
 });
 
 describe("design tokens: 等幅数字 (#1072)", () => {
