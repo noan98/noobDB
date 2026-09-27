@@ -76,6 +76,9 @@ beforeEach(() => {
 // 各テスト後にマウント結果を破棄する。Portal (Modal) を含むコンポーネントが
 // document.body 直下に残ると、後続テストの `getByRole("dialog")` が複数一致して
 // 落ちるため、明示的にクリーンアップして DOM をまっさらに保つ。
-afterEach(() => {
-  cleanup();
+// `cleanup()` は Promise を返す (アンマウントは非同期)。await しないと前のテストの
+// App が外れ切る前に次のテストが描画を始め、同じ tab / treeitem が 2 つずつ見えて
+// strict mode 違反で落ちることがある (CI で断続的に発生)。
+afterEach(async () => {
+  await cleanup();
 });
