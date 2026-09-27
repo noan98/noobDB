@@ -119,3 +119,37 @@ describe("QueryInspectorPanel error state (#848)", () => {
     });
   });
 });
+
+/**
+ * 前提可否プローブの初回応答待ちを bare Spinner から共通スケルトンへ揃える (#1174)。
+ * `queryStatsSupport` が返るまでの間はツールバー/タブの骨格が出て、確定表示
+ * (記録開始ボタンや空状態) を誤って出さないことを固定する。
+ */
+describe("QueryInspectorPanel initial support probe skeleton (#1174)", () => {
+  it("shows a skeleton (role=status) while the support probe is pending, then the toolbar once resolved", async () => {
+    let resolveSupport: (s: QueryStatsSupport) => void = () => {};
+    const pending = new Promise<QueryStatsSupport>((resolve) => {
+      resolveSupport = resolve;
+    });
+    vi.mocked(api.queryStatsSupport).mockReturnValueOnce(pending);
+
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(t("inspectorSupportLoading"));
+    expect(screen.queryByText(t("inspectorStart"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("inspectorTailIdle"))).not.toBeInTheDocument();
+
+    resolveSupport({
+      live_tail: true,
+      statements: true,
+      live_tail_reason: null,
+      statements_reason: null,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument();
+    });
+    expect(screen.queryByText(t("inspectorSupportLoading"))).not.toBeInTheDocument();
+  });
+});

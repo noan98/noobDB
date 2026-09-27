@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type QueryStatsSupport, type StatementStat } from "../api/tauri";
 import { useT } from "../i18n";
@@ -27,6 +27,7 @@ import {
   type LiveTailEntry,
   type NPlusOneOptions,
 } from "./queryInspector";
+import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select } from "./ui";
 import { useToast } from "./Toast";
@@ -321,7 +322,23 @@ export function QueryInspectorPanel({
           action={{ label: t("inspectorRetry"), onClick: () => probeSupport() }}
         />
       )}
-      {support == null && supportError == null && <Spinner size={14} />}
+      {support == null && supportError == null && (
+        // 前提可否プローブの初回応答待ち (#848): 中央の bare Spinner ではなく、
+        // 後に来るツールバー / タブの構造をシマーで予兆表示する (#846 の横展開、
+        // #1174)。ロード中のスクリーンリーダー告知は VisuallyHidden で担い、
+        // シマー自体は視覚的なプレースホルダなので aria-hidden にする。
+        <Flex direction="column" gap="3.5" role="status" aria-live="polite">
+          <VisuallyHidden>{t("inspectorSupportLoading")}</VisuallyHidden>
+          <Flex align="center" gap="3" flexWrap="wrap" aria-hidden>
+            <Skeleton height="28px" style={{ width: "132px", borderRadius: "var(--radius-sm)" }} />
+            <Skeleton height="28px" style={{ width: "104px", borderRadius: "var(--radius-sm)" }} />
+          </Flex>
+          <Flex gap="2" borderBottom="1px solid" borderColor="app.border" pb="2" aria-hidden>
+            <Skeleton height="20px" style={{ width: "88px", animationDelay: "0.035s" }} />
+            <Skeleton height="20px" style={{ width: "88px", animationDelay: "0.07s" }} />
+          </Flex>
+        </Flex>
+      )}
 
       {support && (
         <>

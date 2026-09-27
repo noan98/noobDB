@@ -103,4 +103,44 @@ describe("TableStructurePanel (#1112)", () => {
     await waitFor(() => expect(api.describeTable).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("id")).toBeInTheDocument();
   });
+
+  /**
+   * 初回ロード中の bare Spinner を廃止し、共通スケルトンへ揃える (#1174)。
+   * `describeTable` が返るまでの間は列表の骨格 (6 列) が出て、インデックス/外部キー
+   * の「無し」表示 (実データ 0 件の確定表示) を誤って出さないことを固定する。
+   */
+  it("初回ロード中は列表のスケルトンを出し、インデックス/外部キーの空表示は出さない", async () => {
+    let resolveColumns: (cols: ReturnType<typeof col>[]) => void = () => {};
+    const pending = new Promise<ReturnType<typeof col>[]>((resolve) => {
+      resolveColumns = resolve;
+    });
+    vi.mocked(api.describeTable).mockReturnValueOnce(pending);
+    vi.mocked(api.listIndexes).mockResolvedValueOnce([]);
+
+    const { container } = renderWithProviders(
+      <TableStructurePanel
+        sessionId="s1"
+        driver="mysql"
+        target={{ database: "app", table: "orders" }}
+        onOpenData={vi.fn()}
+        onSelectTable={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const rows = container.querySelectorAll("tbody > tr");
+      expect(rows.length).toBeGreaterThan(0);
+      rows.forEach((row) => expect(row.getAttribute("aria-hidden")).toBe("true"));
+    });
+    expect(screen.queryByText(t("structureNoIndexes"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("structureNoForeignKeys"))).not.toBeInTheDocument();
+    // シマーは aria-hidden なので、読み込み中であることは status で告知する。
+    expect(screen.getByRole("status")).toHaveTextContent(t("structureLoading"));
+
+    resolveColumns([col("id", { key: "PRI" })]);
+    expect(await screen.findByText("id")).toBeInTheDocument();
+    expect(screen.queryByText(t("structureLoading"))).not.toBeInTheDocument();
+    expect(screen.getByText(t("structureNoIndexes"))).toBeInTheDocument();
+    expect(screen.getByText(t("structureNoForeignKeys"))).toBeInTheDocument();
+  });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
   api,
@@ -25,6 +25,7 @@ import { statusColors } from "./diffStatusColors";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ErrorNote } from "./modalForm";
+import { SkeletonRow, SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { formatBytes } from "./tableSize";
 import { Button, Select } from "./ui";
@@ -74,6 +75,15 @@ const tdCss: SystemStyleObject = {
   verticalAlign: "top",
   whiteSpace: "nowrap",
 };
+
+/** ウォッチ一覧の初回ロードスケルトン (#1174) のバー幅パターン。視覚的な単調さを
+ *  避けるため周期させる (`ConnectionList` の `SKELETON_ROW_WIDTHS` と同じ発想)。 */
+const TIMELAPSE_WATCH_SKELETON_WIDTHS = [72, 55, 68, 48];
+
+/** 差分計算中の骨格 (#1174) に敷く列数。世代ペアが変わるたびに実列数
+ *  (`diff.diff.columns.length + 1`) が変わり得るため、結果ペインの列数未知
+ *  スケルトン (`resultSkeleton.ts`) と同じ考え方で固定の既定列数にする。 */
+const TIMELAPSE_DIFF_SKELETON_COLUMNS = 4;
 
 /** 差分行の種別 → `DiffStatus` の色語彙 (スキーマ/データ比較と共通)。 */
 const KIND_STATUS: Record<TimelapseRowKind, DiffStatus> = {
@@ -390,8 +400,26 @@ export function TableTimelapsePanel({
           action={{ label: t("timelapseRetry"), onClick: () => void reload() }}
         />
       ) : watches === null ? (
-        <Flex align="center" gap="2" px="4" py="3">
-          <Spinner size={14} />
+        // 初回ロード中 (まだウォッチ一覧を取得していない): 中央の bare Spinner
+        // ではなく、後に来る左ペインのリスト構造をシマーで予兆表示する
+        // (#846 の横展開、#1174)。
+        <Flex flex="1" minH={0} role="status" aria-live="polite">
+          <VisuallyHidden>{t("timelapseLoading")}</VisuallyHidden>
+          <Box
+            w="240px"
+            flexShrink={0}
+            p="2"
+            borderRight="1px solid"
+            borderColor="app.border"
+            display="flex"
+            flexDirection="column"
+            gap="1"
+            aria-hidden
+          >
+            {TIMELAPSE_WATCH_SKELETON_WIDTHS.map((w, i) => (
+              <SkeletonRow key={i} style={{ width: `${w}%`, animationDelay: `${i * 0.08}s` }} />
+            ))}
+          </Box>
         </Flex>
       ) : watches.length === 0 ? (
         <EmptyState
@@ -505,7 +533,22 @@ export function TableTimelapsePanel({
               )}
 
               {diffError && <ErrorNote role="alert">{t("timelapseDiffError", { error: diffError })}</ErrorNote>}
-              {diffLoading && !diff && <Spinner size={14} />}
+              {diffLoading && !diff && (
+                // 差分計算中: 列数は世代ペアが変わるたびに変わり得るため、結果
+                // ペインの列数未知スケルトンと同じ既定列数で骨格を出す
+                // (#846 / #1071 の横展開、#1174)。
+                <chakra.table
+                  width="100%"
+                  style={{ borderCollapse: "collapse" }}
+                  role="status"
+                  aria-live="polite"
+                >
+                  <VisuallyHidden as="caption">{t("timelapseDiffLoading")}</VisuallyHidden>
+                  <chakra.tbody aria-hidden>
+                    <SkeletonTableRows columns={TIMELAPSE_DIFF_SKELETON_COLUMNS} rows={3} />
+                  </chakra.tbody>
+                </chakra.table>
+              )}
 
               {diff && counts && effectivePair && (
                 <>
