@@ -63,6 +63,7 @@ import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
 import { formatCombo as formatComboLabel } from "../shortcutKeys";
 import type { ShortcutId } from "../shortcuts";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
+import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Switch } from "./Switch";
 import { Button } from "./ui";
@@ -1061,11 +1062,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   // しないように — 連打しても次の `idle` へすぐ戻る)。
   const runState: "idle" | "running" | "disabled" =
     disabled || !hasContent ? "disabled" : running ? "running" : "idle";
-  const runIconPlay = (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-      <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
-    </svg>
-  );
+  const runIconPlay = <Icon name="play" size={ICON_SIZES.sm} />;
   const runIconSpinner = <Spinner size={12} />;
   const runStates: Record<"idle" | "running" | "disabled", BadgeState> = {
     // Run はエディタの主要アクションなので、アクセント色 (primary 相当) で
@@ -1084,12 +1081,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   // はトースト/ステータスバー側で表現し、Badge 自体は短時間で `idle` に戻る。
   const previewState: "idle" | "running" | "disabled" =
     disabled || !hasContent ? "disabled" : previewRunning ? "running" : "idle";
-  const previewIconEye = (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
-      <circle cx="8" cy="8" r="2" />
-    </svg>
-  );
+  const previewIconEye = <Icon name="eye" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.thin} />;
   const previewStates: Record<"idle" | "running" | "disabled", BadgeState> = {
     // Dry Run は安全なプレビュー実行 (常にロールバック) なので、Run のような
     // 主役色は使わず中立トーンに統一し、補助アクションとして落ち着かせる。
@@ -1226,12 +1218,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           title={disabledReason ?? t("editorFormatTitle")}
         >
           <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 3h12" />
-              <path d="M2 7h8" />
-              <path d="M2 11h10" />
-              <path d="M2 15h6" />
-            </svg>
+            <Icon name="format" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.thin} />
           </chakra.span>
           {t("editorFormat")}
         </ToolbarButton>
@@ -1251,11 +1238,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             aria-expanded={!!overflowAnchor}
           >
             <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-                <circle cx="3" cy="8" r="1.3" />
-                <circle cx="8" cy="8" r="1.3" />
-                <circle cx="13" cy="8" r="1.3" />
-              </svg>
+              <Icon name="more" size={ICON_SIZES.sm} />
             </chakra.span>
           </ToolbarButton>
         )}
@@ -1298,15 +1281,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               aria-pressed={!!focusMode}
             >
               <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-                {focusMode ? (
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M6 2v4H2M14 6h-4V2M6 14v-4H2M10 14v-4h4" />
-                  </svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" />
-                  </svg>
-                )}
+                <Icon
+                  name={focusMode ? "minimize" : "maximize"}
+                  size={ICON_SIZES.sm}
+                  strokeWidth={ICON_STROKE.thin}
+                />
               </chakra.span>
             </ToolbarButton>
           </>
