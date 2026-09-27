@@ -111,7 +111,7 @@ export function Segmented<T extends string>({ value, options, onChange, ariaLabe
             _hover={active ? undefined : { color: "app.text" }}
             _focusVisible={{
               outline: "none",
-              boxShadow: "inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent)",
+              boxShadow: "inset var(--focus-ring)",
             }}
           >
             {active && (

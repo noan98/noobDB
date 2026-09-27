@@ -157,6 +157,20 @@ theme.ts (Chakra トークン)
 その場合も UI に直書きせず、上記モジュールの名前付き定数
 (`COLOR_INPUT_FALLBACK` / `ACCENT_INPUT_FALLBACK`) を使う。
 
+### フォーカスリング (#1162)
+
+キーボードフォーカスの `:focus-visible` / `_focusVisible` は **`var(--focus-ring)`**
+(エラー系は `var(--focus-ring-danger)`) だけを使う。`inset` を付ける場合も
+`inset var(--focus-ring)` のように同じトークンをそのまま使い、`color-mix(in srgb,
+var(--accent) 35%, transparent)` のような手書き構成 (35%・55%・25% など) を
+`box-shadow` に直接書かない。要素ごとにリングの濃さ・構成がばらつくと、同じ
+キーボード操作なのに見た目の統一感が崩れる。`theme.ts` のレシピ内なら既存の
+`focusRing` / `focusRingDanger` 定数を使う。
+
+> **ガード**: `designTokens.test.ts` の「フォーカスリング」
+> — `:focus-visible` / `_focusVisible` 直下の `box-shadow` が `var(--focus-ring)` /
+> `var(--focus-ring-danger)` (先頭の `inset` は許可) 以外だと fail する
+
 ---
 
 ## 5. 共通コンポーネントを迂回しない

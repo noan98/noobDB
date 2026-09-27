@@ -8,8 +8,8 @@ import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 
-// キーボードフォーカスリング (App.css のフォーカス表現と一致、動的アクセントへ追従)。
-const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
+// キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
+const focusRing = "var(--focus-ring)";
 
 // motion 要素を Chakra style props で装飾できるようにラップする。motion の
 // `transition` プロップは Chakra のスタイルプロップ名と衝突するため明示的に転送する

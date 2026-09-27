@@ -17,9 +17,9 @@ const TREE_ROW_TRANSITION = {
   transitionTimingFunction: "var(--ease)",
 } as const;
 
-/** キーボードフォーカスリング。動的アクセントへ追従させるため CSS 変数を直接参照。
+/** キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
  *  行内の操作要素 (`TreeChevronButton`) も同じリングを共有する。 */
-const TREE_FOCUS_RING = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
+const TREE_FOCUS_RING = "var(--focus-ring)";
 
 export const TreePane = chakra("div", {
   base: { display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 },

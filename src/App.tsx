@@ -587,7 +587,7 @@ const SidebarTabButton = forwardRef<
       _hover={{ bg: "app.hover", color: "app.text" }}
       _focusVisible={{
         outline: "none",
-        boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)",
+        boxShadow: "var(--focus-ring)",
       }}
       onClick={onActivate}
       onKeyDown={onKeyDown}
