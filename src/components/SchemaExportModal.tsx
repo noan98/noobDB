@@ -9,8 +9,8 @@ import { Button, Checkbox, Input, Radio, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
-import { Icon, ICON_SIZES } from "./Icon";
-import { copyToClipboard } from "./clipboard";
+import { CopyButton } from "./CopyButton";
+import { useCopyFeedback } from "./useCopyFeedback";
 import { mapLimited } from "./mapLimited";
 import {
   buildSchemaMarkdown,
@@ -60,18 +60,10 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
 
   const [path, setPath] = useState<string>(() => defaultSchemaFilename(database));
   const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
-  const [copied, setCopied] = useState(false);
-  const copiedTimer = useRef<number | null>(null);
+  const { copied, copy } = useCopyFeedback();
   // ExportModal と同じガード: ユーザがパスを編集済みなら既定の保存先
   // (ダウンロードフォルダ) の後付けで上書きしない。
   const userEditedPathRef = useRef(false);
-
-  useEffect(
-    () => () => {
-      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    },
-    [],
-  );
 
   // スキーマ全体 (テーブル一覧 + FK) と全テーブルの列詳細を先読みする。
   // ERDiagramView と同じ取得パターン。テーブル単位の describeTable 失敗は
@@ -173,18 +165,6 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
   const isSaving = status.kind === "saving";
   const hasOutput = markdown.length > 0;
   const emptySelection = scope === "selected" && selected.size === 0;
-
-  const handleCopy = async () => {
-    if (!hasOutput) return;
-    const ok = await copyToClipboard(markdown);
-    if (!ok) {
-      toast.error(t("clipboardCopyFailed"));
-      return;
-    }
-    setCopied(true);
-    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
-  };
 
   const handleBrowse = async () => {
     const selectedPath = await save({
@@ -392,35 +372,32 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
                   {t("exportPreview")}
                 </FieldLabel>
                 <chakra.div flex="1" />
-                <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={!hasOutput}>
-                  <chakra.button
-                    type="button"
-                    onClick={handleCopy}
-                    disabled={!hasOutput}
-                    aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
-                    display="inline-flex"
-                    alignItems="center"
-                    justifyContent="center"
-                    gap="1.5"
-                    py="1"
-                    px="2"
-                    color="app.textMuted"
-                    bg="app.bgInput"
-                    border="1px solid"
-                    borderColor="app.border"
-                    borderRadius="md"
-                    fontSize="xs"
-                    cursor="pointer"
-                    transitionProperty="color, background, border-color"
-                    transitionDuration="var(--dur-fast)"
-                    transitionTimingFunction="var(--ease)"
-                    _hover={{ color: "app.text", bg: "app.hover" }}
-                    _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-                  >
-                    <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
-                    <span>{copied ? t("gridCopied") : t("exportCopyAll")}</span>
-                  </chakra.button>
-                </Tooltip>
+                <CopyButton
+                  copied={copied}
+                  onClick={() => void copy(markdown)}
+                  disabled={!hasOutput}
+                  focusableWrapper={!hasOutput}
+                  label={t("exportCopyAll")}
+                  copiedLabel={t("gridCopied")}
+                  showLabel
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  gap="1.5"
+                  py="1"
+                  px="2"
+                  bg="app.bgInput"
+                  border="1px solid"
+                  borderColor="app.border"
+                  borderRadius="md"
+                  fontSize="xs"
+                  cursor="pointer"
+                  transitionProperty="color, background, border-color"
+                  transitionDuration="var(--dur-fast)"
+                  transitionTimingFunction="var(--ease)"
+                  _hover={{ color: "app.text", bg: "app.hover" }}
+                  _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+                />
               </chakra.div>
               <CodePreview aria-label={t("exportPreview")} maxH="220px">
                 {previewContent ||

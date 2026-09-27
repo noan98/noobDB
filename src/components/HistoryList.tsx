@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { I18nKey, useT } from "../i18n";
@@ -20,9 +20,9 @@ import {
   TreeRow,
   TreeSearch,
 } from "./tree";
-import { copyToClipboard } from "./clipboard";
+import { CopyButton } from "./CopyButton";
+import { useKeyedCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
-import { useToast } from "./Toast";
 import {
   HISTORY_PERIOD_FILTERS,
   HISTORY_STATUS_FILTERS,
@@ -121,7 +121,6 @@ function formatTime(iso: string): string {
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
 export const HistoryList = memo(function HistoryList({ activeProfile, sessionId, reloadKey, onRestore, onOpenInNewTab, onSaveAsSnippet, onNewQuery }: Props) {
   const t = useT();
-  const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [flightRecorderOpen, setFlightRecorderOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -131,22 +130,10 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   const [periodFilter, setPeriodFilter] = useState<HistoryPeriodFilter>("all");
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<number | null>(null);
-  const copiedTimer = useRef<number | null>(null);
-
-  useEffect(() => () => {
-    if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
-  }, []);
+  const { copiedKey: copiedId, copy } = useKeyedCopyFeedback<number>();
 
   const handleCopy = async (id: number, sql: string) => {
-    const ok = await copyToClipboard(sql);
-    if (!ok) {
-      toast.error(t("clipboardCopyFailed"));
-      return;
-    }
-    setCopiedId(id);
-    if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
+    await copy(id, sql);
   };
 
   // Debounce the search box so each keystroke doesn't hit the backend.
@@ -364,27 +351,24 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                       transitionDuration="var(--dur-fast)"
                       transitionTimingFunction="var(--ease)"
                     >
-                      <Tooltip label={copiedId === h.id ? t("historyCopied") : t("historyCopySql")}>
-                        <chakra.button
-                          type="button"
-                          minW="0"
-                          w="24px"
-                          h="24px"
-                          p="0"
-                          display="inline-flex"
-                          alignItems="center"
-                          justifyContent="center"
-                          color="app.textSecondary"
-                          _hover={{ color: "app.text" }}
-                          aria-label={t("historyCopySql")}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleCopy(h.id, h.sql);
-                          }}
-                        >
-                          <Icon name={copiedId === h.id ? "check" : "copy"} size={ICON_SIZES.md} />
-                        </chakra.button>
-                      </Tooltip>
+                      <CopyButton
+                        copied={copiedId === h.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleCopy(h.id, h.sql);
+                        }}
+                        label={t("historyCopySql")}
+                        copiedLabel={t("historyCopied")}
+                        minW="0"
+                        w="24px"
+                        h="24px"
+                        p="0"
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        color="app.textSecondary"
+                        _hover={{ color: "app.text" }}
+                      />
                       <Tooltip label={t("historyOpenInNewTab")}>
                         <chakra.button
                           type="button"

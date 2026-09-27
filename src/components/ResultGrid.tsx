@@ -58,7 +58,7 @@ import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } fro
 const EMPTY_PICKER_VALUES: string[] = [];
 import { RowInspector } from "./RowInspector";
 import { resolveRelatedEntries } from "../relatedRows";
-import { copyToClipboard } from "./clipboard";
+import { useCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
 import {
   ContextMenu,
@@ -3628,8 +3628,7 @@ export const DataGrid = memo(function DataGrid({
   const [copyMenu, setCopyMenu] = useState<
     { x: number; y: number; rowIdx: number; colIdx: number } | null
   >(null);
-  const [copied, setCopied] = useState(false);
-  const copiedTimer = useRef<number | null>(null);
+  const { copied, copy: copyWithFeedback } = useCopyFeedback();
 
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
@@ -3663,23 +3662,9 @@ export const DataGrid = memo(function DataGrid({
     }
   }, [viewer, statsMenu, maskedCols, reveal]);
 
-  useEffect(
-    () => () => {
-      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    },
-    [],
-  );
-
   const runCopy = async (text: string) => {
     setCopyMenu(null);
-    const ok = await copyToClipboard(text);
-    if (!ok) {
-      toast.error(t("clipboardCopyFailed"));
-      return;
-    }
-    setCopied(true);
-    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    await copyWithFeedback(text);
   };
   // コピー用のセルテキスト。マスク中 (#1069) かつ設定でプレースホルダコピーが
   // 有効なら伏せ字を、それ以外は実値 (表示整形前の元の値) を返す。
