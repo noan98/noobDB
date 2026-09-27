@@ -233,6 +233,23 @@
   --brand-violet: #8b5cf6;
   --brand-gradient: linear-gradient(135deg, var(--brand-blue), var(--brand-violet));
 
+  /* ── Hero wash (#1163) ────────────────────────────────────────────────
+     起動直後の「第一印象」画面 (WelcomeView / ProfileCardGrid) のルートに敷く、
+     ごく控えめなブランド由来の背景。`--brand-gradient` と同じ 2 色 (brand-blue /
+     brand-violet、テーマを跨いで固定) を単一ソースとして `color-mix` で薄め、
+     素の `app.bg` に重ねても文字/カードのコントラストを損なわない不透明度
+     (12%/8% 以下) に留める。上部中央のみに淡く滲ませ、下端は完全な透明へ
+     フェードさせるので、スクロール量や画面幅が変わっても縁が見切れない。
+     静止背景のため reduced-motion の影響は無い。
+     高コントラストプリセット (hc-light/hc-dark) は AAA を最優先するため、下の
+     プリセットブロックで `none` に上書きする。 */
+  --hero-wash: radial-gradient(
+    ellipse 1200px 560px at 50% -12%,
+    color-mix(in srgb, var(--brand-blue) 12%, transparent) 0%,
+    color-mix(in srgb, var(--brand-violet) 8%, transparent) 45%,
+    transparent 75%
+  );
+
   --bg: #f5f7fa;
   --bg-elevated: #ffffff;
   --bg-muted: #eef1f5;
@@ -654,6 +671,10 @@
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.45);
 
+  /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
+     ブランドウォッシュは敷かない。 */
+  --hero-wash: none;
+
   --bg: #ffffff;
   --bg-elevated: #ffffff;
   --bg-muted: #f2f2f2;
@@ -749,6 +770,10 @@
   --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.7);
   --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.75);
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.85);
+
+  /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
+     ブランドウォッシュは敷かない。 */
+  --hero-wash: none;
 
   --bg: #000000;
   /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
