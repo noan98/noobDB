@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen, within } from "./testUtils";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { CellValueViewer } from "../components/CellValueViewer";
 import { t } from "../i18n";
 
@@ -55,6 +55,26 @@ describe("CellValueViewer JSON tree (#1026)", () => {
     renderWithProviders(<CellValueViewer columnName="c" value="hello" onClose={() => {}} />);
     expect(screen.queryByRole("tree")).toBeNull();
     expect(screen.getByText("hello")).toBeInTheDocument();
+  });
+
+  it("expands/collapses child nodes through the shared TreeCollapse motion (#1186)", async () => {
+    renderWithProviders(<CellValueViewer columnName="doc" value={DOC} isJson onClose={() => {}} />);
+    const tree = screen.getByRole("tree");
+    const userRow = within(tree).getByText('"user"').closest('[role="treeitem"]') as HTMLElement;
+    expect(userRow).toHaveAttribute("aria-expanded", "false");
+    expect(within(tree).queryByText('"Alice"')).toBeNull();
+
+    // 開くと (enter アニメーションはマウントと同時に行われるので) 同期的に子が見える。
+    fireEvent.click(userRow);
+    expect(userRow).toHaveAttribute("aria-expanded", "true");
+    expect(within(tree).getByText('"Alice"')).toBeInTheDocument();
+
+    // 閉じると exit アニメーション (AnimatePresence) の完了後に DOM から外れる。
+    fireEvent.click(userRow);
+    expect(userRow).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => {
+      expect(within(tree).queryByText('"Alice"')).toBeNull();
+    });
   });
 
   it("edit-mode Minify does not round big integers", () => {
