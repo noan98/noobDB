@@ -117,6 +117,10 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
 
   return (
     <MotionRoot
+      // 起動直後の第一印象面に敷く、ごく控えめなブランドウォッシュ (#1163)。値は App.css の
+      // `--hero-wash` が単一ソース。重ね用の要素を置くと本文やカードの上に色が被るため、
+      // ルート自身の背景画像として敷く (内容は常にその手前に描かれる)。
+      css={{ backgroundImage: "var(--hero-wash)", backgroundRepeat: "no-repeat" }}
       display="flex"
       flexDirection="column"
       alignItems="center"
