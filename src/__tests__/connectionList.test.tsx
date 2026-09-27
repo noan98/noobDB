@@ -376,3 +376,80 @@ describe("スキーマツリーのキーボード操作 (#1184)", () => {
     expect(onPickTable).not.toHaveBeenCalled();
   });
 });
+
+describe("スキーマツリーのコンテキストメニューをキーボードから開く (Shift+F10 / メニューキー、#1185)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  async function openDb(props: Partial<Parameters<typeof ConnectionList>[0]> = {}) {
+    const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={[profile]}
+        activeProfileId="p-a"
+        sessionId="s1"
+        onOpenObjectDefinition={noop}
+        {...props}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("treeitem", { name: "db1" }));
+  }
+
+  it("Shift+F10 でフォーカス中のテーブル行の右クリックメニューが開く", async () => {
+    const onPickTable = vi.fn();
+    const onOpenStructure = vi.fn();
+    await openDb({ onPickTable, onOpenStructure });
+    const row = await screen.findByRole("treeitem", { name: "tbl1" });
+
+    fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    const items = await screen.findAllByRole("menuitem");
+    expect(items[0]).toHaveTextContent(t("contextMenuOpenData"));
+    expect(items[1]).toHaveTextContent(t("contextMenuOpenStructure"));
+  });
+
+  it("ContextMenu キーでも DB 行の右クリックメニューが開く", async () => {
+    await openDb();
+    const row = await screen.findByRole("treeitem", { name: "db1" });
+
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    expect(await screen.findByRole("menuitem", { name: t("contextMenuDump") })).toBeInTheDocument();
+  });
+
+  it("Esc で閉じるとフォーカスが元の行へ戻る", async () => {
+    await openDb();
+    const row = await screen.findByRole("treeitem", { name: "tbl1" });
+    // `useReturnFocus` は実際の DOM フォーカスを記憶するため、実際に `.focus()` する。
+    row.focus();
+
+    fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    await screen.findAllByRole("menuitem");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(row);
+  });
+
+  it("IME 変換中の ContextMenu キーは無視する", async () => {
+    await openDb();
+    const row = await screen.findByRole("treeitem", { name: "tbl1" });
+
+    fireEvent.keyDown(row, { key: "ContextMenu", isComposing: true });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("メニューを持たない行 (外部キー) では何も開かない", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([
+      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
+      { name: "user_id", data_type: "int", nullable: false, key: "", default: null, extra: "", referenced_table: "users", referenced_column: "id" },
+    ]);
+    await openDb();
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+    const fkRow = await screen.findByRole("treeitem", { name: "user_id → users.id" });
+
+    fireEvent.keyDown(fkRow, { key: "F10", shiftKey: true });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});

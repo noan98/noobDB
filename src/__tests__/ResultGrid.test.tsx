@@ -1922,3 +1922,51 @@ describe("スマート値ピッカー (#1067)", () => {
     expect(within(cell).getByRole("textbox")).toBeTruthy();
   });
 });
+
+describe("コンテキストメニューをキーボードから開く (Shift+F10 / メニューキー、#1185)", () => {
+  beforeEach(() => setLocale("en"));
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("Shift+F10 でアクティブセルの右クリックメニューが開く", async () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[1][0]);
+    fireEvent.keyDown(cells[1][0], { key: "F10", shiftKey: true });
+    expect(await screen.findByRole("menuitem", { name: t("gridCopyGroup") })).toBeInTheDocument();
+  });
+
+  it("ContextMenu キーでもアクティブセルの右クリックメニューが開く", async () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][1]);
+    fireEvent.keyDown(cells[0][1], { key: "ContextMenu" });
+    expect(await screen.findByRole("menuitem", { name: t("gridCopyGroup") })).toBeInTheDocument();
+  });
+
+  it("Esc で閉じるとフォーカスが元のセルへ戻る", async () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    const cell = cells[1][0];
+    // `useReturnFocus` (ContextMenu) は実際の DOM フォーカス (`document.activeElement`)
+    // を記憶するため、`fireEvent.focus` ではなく実際に `.focus()` する。
+    act(() => cell.focus());
+    fireEvent.keyDown(cell, { key: "F10", shiftKey: true });
+    await screen.findByRole("menuitem", { name: t("gridCopyGroup") });
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(cell);
+  });
+
+  it("IME 変換中の ContextMenu キーは無視する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ContextMenu", isComposing: true });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});

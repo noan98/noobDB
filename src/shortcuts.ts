@@ -121,6 +121,10 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutGridCopyTitle", descKey: "shortcutGridCopyDesc", category: "grid", id: "gridCopy", scope: "grid", defaultCombo: "Mod+C" },
   { keysKey: "shortcutGridCopyHeadersTitle", descKey: "shortcutGridCopyHeadersDesc", category: "grid", id: "gridCopyHeaders", scope: "grid", defaultCombo: "Mod+Shift+C" },
   { keysKey: "shortcutGridInspectorTitle", descKey: "shortcutGridInspectorDesc", category: "grid", id: "gridInspector", scope: "grid", defaultCombo: "Alt+Enter" },
+  // 右クリックメニューをキーボードから開く (#1185)。結果グリッドのアクティブセルと
+  // サイドバーのスキーマツリー行の両方で効く固定キー (OS 標準のコンテキストメニュー
+  // 起動キーと同じ) なので再割り当て対象外。
+  { keysKey: "shortcutContextMenuTitle", descKey: "shortcutContextMenuDesc", category: "grid" },
   { keysKey: "shortcutEditUndoTitle", descKey: "shortcutEditUndoDesc", category: "grid", id: "gridUndo", scope: "grid", defaultCombo: "Mod+Z" },
   { keysKey: "shortcutGridRedoTitle", descKey: "shortcutGridRedoDesc", category: "grid", id: "gridRedo", scope: "grid", defaultCombo: "Mod+Shift+Z" },
   { keysKey: "shortcutGridPageNextTitle", descKey: "shortcutGridPageNextDesc", category: "grid", id: "gridPageNext", scope: "global", defaultCombo: "Alt+ArrowRight" },

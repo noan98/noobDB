@@ -16,6 +16,12 @@ import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { useRovingFocus } from "../keyboardNav";
 import { resolveTreeArrowLeft, resolveTreeArrowRight, type TreeNavRow } from "../treeKeyboardNav";
+import {
+  contextMenuTriggerFromRect,
+  isContextMenuOpenKey,
+  pickContextMenuOpenKeys,
+  type ContextMenuTriggerEvent,
+} from "./contextMenuKeyboard";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
@@ -854,12 +860,17 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
    * (Shift+F10 / ContextMenu キーでメニューを開く) は分岐を 1 つ足すだけで済む。
    *
    * - Enter/Space: `activate` (行の既定動作。無ければ何もしない)
+   * - Shift+F10 / `ContextMenu` キー: `openContextMenu` (行の右クリックメニューと
+   *   同じ関数。無ければ何もしない、#1185)。座標は行自身の矩形の左下から算出し、
+   *   右クリックの `onContextMenu` へそのまま渡せる `ContextMenuTriggerEvent` を
+   *   組み立てる — メニューの組み立てロジック自体は右クリックと共有する。
    * - ArrowLeft/ArrowRight: 展開可能ノードの開閉、または親/子行へのフォーカス移動
    *   (`treeKeyboardNav.ts` の判定を `aria-level`/`aria-expanded` から組み立てる)
    * - それ以外 (↑↓/Home/End/先頭文字): `useRovingFocus` にそのまま委譲
    */
   const makeTreeItemKeyDown = useCallback(
-    (activate?: () => void) => (e: React.KeyboardEvent<HTMLElement>) => {
+    (activate?: () => void, openContextMenu?: (e: ContextMenuTriggerEvent) => void) =>
+      (e: React.KeyboardEvent<HTMLElement>) => {
       // 行の中の操作要素 (テーブル行のチェブロン button など) から伝わってきたキーは
       // その要素自身に任せる。ここで Enter を横取りすると、チェブロンの Enter で
       // カラム一覧を開く代わりにテーブルが開いてしまう (`onTreeItemFocus` と同じ判定)。
@@ -867,6 +878,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       if (activate && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
         activate();
+        return;
+      }
+      if (openContextMenu && isContextMenuOpenKey(pickContextMenuOpenKeys(e))) {
+        e.preventDefault();
+        openContextMenu(contextMenuTriggerFromRect(e.currentTarget.getBoundingClientRect()));
         return;
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -991,9 +1007,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       requestAnimationFrame(() => profileRowRefs.current.get(p.id)?.focus());
       return;
     }
-    // 上記の並べ替えショートカット (修飾キー付き) 以外の矢印キー/Home/End/先頭文字は
-    // ツリー共通のナビゲーションへ委譲する (#1184)。
-    makeTreeItemKeyDown()(e);
+    // 上記の並べ替えショートカット (修飾キー付き) 以外の矢印キー/Home/End/先頭文字、
+    // および Shift+F10 / ContextMenu キー (#1185) はツリー共通のナビゲーションへ
+    // 委譲する (#1184)。
+    makeTreeItemKeyDown(undefined, (ev) => handleProfileContextMenu(ev, p))(e);
   };
 
   /** Drag reorder of the named-group headers themselves (relative to one
@@ -1045,7 +1062,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     onConnect(p);
   };
 
-  const handleProfileContextMenu = (e: React.MouseEvent, p: ConnectionProfile) => {
+  const handleProfileContextMenu = (e: ContextMenuTriggerEvent, p: ConnectionProfile) => {
     e.preventDefault();
     e.stopPropagation();
     setMenu({
@@ -1073,7 +1090,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     });
   };
 
-  const handleTableContextMenu = (e: React.MouseEvent, db: string, tbl: string) => {
+  const handleTableContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string) => {
     e.preventDefault();
     e.stopPropagation();
     // 先頭はテーブル選択後の 2 つの行き先 (#1112): データ (ダブルクリックと同じ) と
@@ -1232,7 +1249,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // ルーチン (プロシージャ / 関数) の右クリック: パラメータ入力付き実行 (#1003)。
   // read_only でも無効化しない — 読み取りだけの関数もあり、書き込み系は実行時に
   // バックエンドの `ensure_allowed_for_session` が拒否する (二重に判定しない)。
-  const handleRoutineContextMenu = (e: React.MouseEvent, db: string, o: SchemaObject) => {
+  const handleRoutineContextMenu = (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => {
     if (!onRunRoutine || !isRoutineKind(o.kind)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1255,7 +1272,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // (`list_tables` と名前が突き合わなかったもの) で、データ系の項目を出さない。
   // テーブル向けの書き込み系 (インポート / TRUNCATE / 列編集など) はビューには出さない。
   const handleViewContextMenu = (
-    e: React.MouseEvent,
+    e: ContextMenuTriggerEvent,
     db: string,
     view: ExplorerViewNode,
     asNode = true,
@@ -1320,7 +1337,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
   // 列ノードの右クリック: 影響分析 (#1027)。列を RENAME / DROP する前に、その列を
   // 参照しているビュー・ルーチン・トリガー・スニペットを探す。
-  const handleColumnContextMenu = (e: React.MouseEvent, db: string, tbl: string, column: string) => {
+  const handleColumnContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => {
     if (!onFindUsages) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1335,7 +1352,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // `DROP INDEX` 単体では方言によって落とせない (MySQL は `ALTER TABLE ... DROP
   // PRIMARY KEY`、PostgreSQL は制約の DROP が必要) ため、ここでは常に無効化して
   // 誤操作を防ぐ (項目自体は出し、理由をツールチップで明示する)。
-  const handleIndexContextMenu = (e: React.MouseEvent, db: string, tbl: string, idx: IndexInfo) => {
+  const handleIndexContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string, idx: IndexInfo) => {
     e.preventDefault();
     e.stopPropagation();
     if (!onDropIndex) return;
@@ -1357,7 +1374,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  const handleDbContextMenu = (e: React.MouseEvent, db: string) => {
+  const handleDbContextMenu = (e: ContextMenuTriggerEvent, db: string) => {
     e.preventDefault();
     e.stopPropagation();
     const items: ContextMenuEntry[] = [];
@@ -1687,7 +1704,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         aria-level={groupLevel + 2}
         tabIndex={treeItemTabIndex(key)}
         onFocus={onTreeItemFocus(key)}
-        onKeyDown={makeTreeItemKeyDown(activate)}
+        onKeyDown={makeTreeItemKeyDown(activate, (e) => handleTableContextMenu(e, refItem.database, refItem.table))}
         onClick={activate}
         onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
         {...treeTooltipProps(`${refItem.database}.${refItem.table}`)}
@@ -1763,6 +1780,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               {items.map((o) => {
                 const key = `so:${db}:${kind}:${o.name}:${o.id ?? ""}`;
                 const activate = () => onOpenObjectDefinition(db, o.kind, o.name, o.id);
+                const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
+                  kind === "view"
+                    ? (ev) => handleViewContextMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
+                    : isRoutineKind(kind)
+                      ? (ev) => handleRoutineContextMenu(ev, db, o)
+                      : undefined;
                 return (
                 <TreeRow
                   key={key}
@@ -1772,15 +1795,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                   aria-level={groupLevel + 3}
                   tabIndex={treeItemTabIndex(key)}
                   onFocus={onTreeItemFocus(key)}
-                  onKeyDown={makeTreeItemKeyDown(activate)}
+                  onKeyDown={makeTreeItemKeyDown(activate, openMenu)}
                   onClick={activate}
-                  onContextMenu={
-                    kind === "view"
-                      ? (ev) => handleViewContextMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
-                      : isRoutineKind(kind)
-                        ? (ev) => handleRoutineContextMenu(ev, db, o)
-                        : undefined
-                  }
+                  onContextMenu={openMenu}
                   {...treeTooltipProps(`${o.name} — ${labels[kind] ?? kind}`)}
                   _hover={{ bg: "app.rowHover" }}
                 >
@@ -1842,7 +1859,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           aria-expanded={tOpen}
           tabIndex={treeItemTabIndex(treeKey)}
           onFocus={onTreeItemFocus(treeKey)}
-          onKeyDown={makeTreeItemKeyDown(() => onPickTable(db, tbl))}
+          onKeyDown={makeTreeItemKeyDown(() => onPickTable(db, tbl), (e) =>
+            view ? handleViewContextMenu(e, db, view) : handleTableContextMenu(e, db, tbl),
+          )}
           // 「現在地」表示 (#982): SR には aria-current、視覚には
           // 下の共有 layoutId インジケータ (アクセントスパイン) で
           // 示す。position: relative はインジケータの絶対配置の
@@ -1933,7 +1952,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                     aria-level={groupLevel + 4}
                     tabIndex={treeItemTabIndex(colKey)}
                     onFocus={onTreeItemFocus(colKey)}
-                    onKeyDown={makeTreeItemKeyDown()}
+                    onKeyDown={makeTreeItemKeyDown(undefined, (e) => handleColumnContextMenu(e, db, tbl, col.name))}
                     onContextMenu={(e) => handleColumnContextMenu(e, db, tbl, col.name)}
                     {...columnTooltipProps(col)}
                   >
@@ -1982,7 +2001,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                     aria-level={groupLevel + 4}
                     tabIndex={treeItemTabIndex(idxKey)}
                     onFocus={onTreeItemFocus(idxKey)}
-                    onKeyDown={makeTreeItemKeyDown()}
+                    onKeyDown={makeTreeItemKeyDown(undefined, (e) => handleIndexContextMenu(e, db, tbl, idx))}
                     onContextMenu={(e) => handleIndexContextMenu(e, db, tbl, idx)}
                     {...treeTooltipProps(
                       `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
@@ -2308,7 +2327,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       aria-expanded={dbOpen}
                       tabIndex={treeItemTabIndex(dbTreeKey)}
                       onFocus={onTreeItemFocus(dbTreeKey)}
-                      onKeyDown={makeTreeItemKeyDown(() => void toggleDb(db))}
+                      onKeyDown={makeTreeItemKeyDown(() => void toggleDb(db), (e) => handleDbContextMenu(e, db))}
                       {...treeTooltipProps(`${db} — ${containerLabel}`)}
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
