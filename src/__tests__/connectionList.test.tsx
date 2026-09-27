@@ -235,3 +235,144 @@ describe("Database Explorer の階層 (#1112)", () => {
     expect(onPickTable).toHaveBeenCalledWith("db1", "users");
   });
 });
+
+describe("スキーマツリーのキーボード操作 (#1184)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 展開状態は `schemaTreeState.ts` 経由で localStorage に永続化される
+    // (プロファイル id 固定でテストしているため、前のテストの展開状態が
+    // 漏れないようにクリアする)。
+    localStorage.clear();
+  });
+
+  const col = (name: string, over: Record<string, unknown> = {}) => ({
+    name,
+    data_type: "int",
+    nullable: false,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...over,
+  });
+
+  async function openDb(props: Partial<Parameters<typeof ConnectionList>[0]> = {}) {
+    const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={[profile]}
+        activeProfileId="p-a"
+        sessionId="s1"
+        onOpenObjectDefinition={noop}
+        {...props}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("treeitem", { name: "db1" }));
+  }
+
+  it("行ごとの aria-level が階層の深さどおりに付く (プロファイル < db < テーブル < カラム)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+    await openDb();
+    const profileRow = screen.getByRole("treeitem", { name: /Alpha DB/ });
+    const dbRow = await screen.findByRole("treeitem", { name: "db1" });
+    const tblRow = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+    const colRow = await screen.findByRole("treeitem", { name: /id/ });
+
+    expect(profileRow).toHaveAttribute("aria-level", "1");
+    expect(dbRow).toHaveAttribute("aria-level", "2");
+    expect(tblRow).toHaveAttribute("aria-level", "3");
+    expect(colRow).toHaveAttribute("aria-level", "4");
+  });
+
+  it("roving tabindex: 常にちょうど 1 行だけが tabIndex=0 で、フォーカスした行に追従する", async () => {
+    await openDb();
+    const dbRow = await screen.findByRole("treeitem", { name: "db1" });
+    const tblRow = await screen.findByRole("treeitem", { name: "tbl1" });
+
+    const zeroTabIndexCount = () =>
+      screen.getAllByRole("treeitem").filter((el) => el.getAttribute("tabindex") === "0").length;
+
+    expect(zeroTabIndexCount()).toBe(1);
+    fireEvent.focus(tblRow);
+    expect(tblRow).toHaveAttribute("tabindex", "0");
+    expect(dbRow).toHaveAttribute("tabindex", "-1");
+    expect(zeroTabIndexCount()).toBe(1);
+  });
+
+  it("ArrowDown/ArrowUp で兄弟行へフォーカスが移動する", async () => {
+    await openDb();
+    const dbRow = await screen.findByRole("treeitem", { name: "db1" });
+    const tbl1 = await screen.findByRole("treeitem", { name: "tbl1" });
+    const tbl2 = await screen.findByRole("treeitem", { name: "tbl2" });
+
+    // `useRovingFocus` は `document.activeElement` を見て移動するため、
+    // `keyboardNav.test.tsx` と同じく先に対象行へ実フォーカスを当てる。
+    dbRow.focus();
+    fireEvent.keyDown(dbRow, { key: "ArrowDown" });
+    expect(tbl1).toHaveFocus();
+
+    fireEvent.keyDown(tbl1, { key: "ArrowDown" });
+    expect(tbl2).toHaveFocus();
+
+    fireEvent.keyDown(tbl2, { key: "ArrowUp" });
+    expect(tbl1).toHaveFocus();
+  });
+
+  it("ArrowRight は折りたたみ中のテーブルを展開し、展開済みなら最初のカラムへフォーカスを移す", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+    await openDb();
+    const tblRow = await screen.findByRole("treeitem", { name: "tbl1" });
+
+    fireEvent.keyDown(tblRow, { key: "ArrowRight" });
+    await waitFor(() => expect(tblRow).toHaveAttribute("aria-expanded", "true"));
+    // 展開直後はまだ行自体にフォーカスがある (トグルのみ、移動はしない)。
+    expect(tblRow).toHaveFocus();
+
+    const colRow = await screen.findByRole("treeitem", { name: /id/ });
+    fireEvent.keyDown(tblRow, { key: "ArrowRight" });
+    expect(colRow).toHaveFocus();
+  });
+
+  it("ArrowLeft は展開済みノードを折りたたみ、折りたたみ済み/葉では親へフォーカスを移す", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+    await openDb();
+    const tblRow = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+    const colRow = await screen.findByRole("treeitem", { name: /id/ });
+
+    fireEvent.keyDown(colRow, { key: "ArrowLeft" });
+    expect(tblRow).toHaveFocus();
+
+    fireEvent.keyDown(tblRow, { key: "ArrowLeft" });
+    expect(tblRow).toHaveAttribute("aria-expanded", "false");
+    expect(tblRow).toHaveFocus();
+
+    const dbRow = screen.getByRole("treeitem", { name: "db1" });
+    fireEvent.keyDown(tblRow, { key: "ArrowLeft" });
+    expect(dbRow).toHaveFocus();
+  });
+
+  it("Enter/Space でテーブル行を実行 (onPickTable) できる", async () => {
+    const onPickTable = vi.fn();
+    await openDb({ onPickTable });
+    const tblRow = await screen.findByRole("treeitem", { name: "tbl1" });
+
+    fireEvent.keyDown(tblRow, { key: "Enter" });
+    expect(onPickTable).toHaveBeenCalledWith("db1", "tbl1");
+  });
+
+  it("行の中のチェブロン button の Enter は行の実行に横取りされない (ネイティブのクリックで開閉させる)", async () => {
+    const onPickTable = vi.fn();
+    await openDb({ onPickTable });
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    const chevron = screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) });
+
+    // preventDefault されていなければ fireEvent は true を返す (= ブラウザの既定動作である
+    // button の click が起きる)。
+    expect(fireEvent.keyDown(chevron, { key: "Enter" })).toBe(true);
+    expect(onPickTable).not.toHaveBeenCalled();
+  });
+});

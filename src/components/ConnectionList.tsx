@@ -14,6 +14,8 @@ import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
+import { useRovingFocus } from "../keyboardNav";
+import { resolveTreeArrowLeft, resolveTreeArrowRight, type TreeNavRow } from "../treeKeyboardNav";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
@@ -808,10 +810,108 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   }, [groupOrder]);
 
-  // このツリーの行 (DB/テーブル/インデックス/オブジェクト) は現状 `tabIndex` を
-  // 持たず (別 Issue のキーボードナビゲーション改善のスコープ)、`treeTooltipProps`
-  // (= `useDelegatedTooltip().bind`) はマウス hover のみに対応する — native title
-  // からの後退はなく、表示速度とテーマ追従だけを底上げする。
+  // --- ツリー全体の roving tabindex (#1184) ---
+  //
+  // DB/テーブル/カラム/インデックス/外部キー/スキーマオブジェクトの各行を含む
+  // ツリー全体で「今 Tab で止まる 1 行」を `activeTreeKey` として管理する
+  // (JsonTreeView の `selectedKey` と同じ考え方だが、こちらは選択状態ではなく
+  // 純粋にフォーカスの置き場所だけを表す)。各行は `data-tree-key` に自分の一意な
+  // キーを持ち、そのキーが `activeTreeKey` と一致するときだけ `tabIndex=0` になる。
+  //
+  // 初期値・および対象行が消えた場合 (折りたたみ/削除/検索フィルタで非表示) の
+  // フォールバックは、ツリー内の最初の `[role=treeitem]` を採用する。DOM を都度
+  // 読むだけの副作用なので依存配列を持たず、値が変わらない限り re-render しない
+  // (`setActiveTreeKey` は同じ値なら React が自動で打ち切る)。
+  const treeRef = useRef<HTMLDivElement>(null);
+  const [activeTreeKey, setActiveTreeKey] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const container = treeRef.current;
+    if (!container) return;
+    // `querySelector` の属性セレクタに任意文字列 (テーブル名など) をそのまま
+    // 埋め込むと `"` を含む名前で壊れるため、`dataset` を JS 側で比較する。
+    const items = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-key]"));
+    if (activeTreeKey !== null && items.some((el) => el.dataset.treeKey === activeTreeKey)) {
+      return;
+    }
+    setActiveTreeKey(items[0]?.dataset.treeKey ?? null);
+  });
+  /** 行の `tabIndex` を `activeTreeKey` から算出する共通ヘルパ。 */
+  const treeItemTabIndex = (key: string) => (activeTreeKey === key ? 0 : -1);
+
+  // ↑↓ / Home / End / 先頭文字ジャンプは既存の `useRovingFocus` (#815 で実装済みの
+  // type-ahead 込み) にそのまま委譲する。ツリー内のすべての `[role=treeitem]` が
+  // 対象 — 折りたたみ中のノードの子は `TreeCollapse` がそもそもマウントしないため、
+  // 常に「今見えている行」だけを拾う。
+  const { onKeyDown: onTreeRovingKeyDown } = useRovingFocus(treeRef, "[role=treeitem]", {
+    orientation: "vertical",
+    wrap: false,
+  });
+
+  /**
+   * ツリー行 (プロファイル/グループ見出しを含む全階層) で共有する keydown ハンドラの
+   * ファクトリ。フォーカス管理の「1 か所」をここに集約しておくことで、#1185
+   * (Shift+F10 / ContextMenu キーでメニューを開く) は分岐を 1 つ足すだけで済む。
+   *
+   * - Enter/Space: `activate` (行の既定動作。無ければ何もしない)
+   * - ArrowLeft/ArrowRight: 展開可能ノードの開閉、または親/子行へのフォーカス移動
+   *   (`treeKeyboardNav.ts` の判定を `aria-level`/`aria-expanded` から組み立てる)
+   * - それ以外 (↑↓/Home/End/先頭文字): `useRovingFocus` にそのまま委譲
+   */
+  const makeTreeItemKeyDown = useCallback(
+    (activate?: () => void) => (e: React.KeyboardEvent<HTMLElement>) => {
+      // 行の中の操作要素 (テーブル行のチェブロン button など) から伝わってきたキーは
+      // その要素自身に任せる。ここで Enter を横取りすると、チェブロンの Enter で
+      // カラム一覧を開く代わりにテーブルが開いてしまう (`onTreeItemFocus` と同じ判定)。
+      if (e.target !== e.currentTarget) return;
+      if (activate && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        activate();
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const container = treeRef.current;
+        const row = e.currentTarget;
+        if (!container) return;
+        const items = Array.from(container.querySelectorAll<HTMLElement>("[role=treeitem]"));
+        const index = items.indexOf(row);
+        if (index === -1) return;
+        const rows: TreeNavRow[] = items.map((el) => ({
+          level: Number(el.getAttribute("aria-level") ?? "1"),
+          expandable: el.hasAttribute("aria-expanded"),
+          open: el.getAttribute("aria-expanded") === "true",
+        }));
+        const result =
+          e.key === "ArrowRight" ? resolveTreeArrowRight(rows, index) : resolveTreeArrowLeft(rows, index);
+        if (!result) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (result.type === "toggle") {
+          // チェブロンが別のネイティブ button に分かれている行 (テーブル) は
+          // それを、そうでない行 (DB/グループ/プロファイル) は行自身をクリックする
+          // — どちらも既存の onClick トグルロジックをそのまま再利用できる。
+          const toggleTarget =
+            row.querySelector<HTMLElement>("[aria-expanded]") ??
+            (row.hasAttribute("aria-expanded") ? row : null);
+          toggleTarget?.click();
+          // ネイティブ button (テーブル行のチェブロン) をクリックすると、ブラウザが
+          // そのボタン自身へフォーカスを移してしまう。矢印キーによる開閉ではフォーカスを
+          // 行から動かさない (APG Tree パターン) ため、行へ戻す。
+          if (toggleTarget !== row) row.focus();
+        } else {
+          items[result.index]?.focus();
+        }
+        return;
+      }
+      onTreeRovingKeyDown(e);
+    },
+    [onTreeRovingKeyDown],
+  );
+  /** フォーカスが行そのものに入ったとき (子要素からのバブリングは無視) に
+   *  `activeTreeKey` を更新する共通ハンドラ。マウスクリックでも `focus()` は
+   *  発火するので、クリック操作からも自然に roving tabindex が追従する。 */
+  const onTreeItemFocus = (key: string) => (e: React.FocusEvent<HTMLElement>) => {
+    if (e.target === e.currentTarget) setActiveTreeKey(key);
+  };
 
   // --- 接続 / グループの並べ替え (#786) ---
   //
@@ -871,19 +971,28 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
     // ドラッグと同じく検索フィルタ中は無効 (`reorderEnabled`) — 部分表示のまま
     // 裏の全体順序を動かさない。イベント発火時に評価されるので後方の宣言でよい。
-    if (!reorderEnabled || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
-    if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
-    const dir = e.key === "ArrowDown" ? 1 : -1;
-    const moved = moveItemBy(siblingIds, p.id, dir);
-    if (moved === siblingIds) return;
-    e.preventDefault();
-    const full = applySubsequenceOrder(
-      profiles.map((pp) => pp.id),
-      moved,
-    );
-    onReorderProfiles(full);
-    setDropIndicator(p.id);
-    requestAnimationFrame(() => profileRowRefs.current.get(p.id)?.focus());
+    if (
+      reorderEnabled &&
+      (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+      (e.metaKey || e.ctrlKey) &&
+      e.shiftKey
+    ) {
+      const dir = e.key === "ArrowDown" ? 1 : -1;
+      const moved = moveItemBy(siblingIds, p.id, dir);
+      if (moved === siblingIds) return;
+      e.preventDefault();
+      const full = applySubsequenceOrder(
+        profiles.map((pp) => pp.id),
+        moved,
+      );
+      onReorderProfiles(full);
+      setDropIndicator(p.id);
+      requestAnimationFrame(() => profileRowRefs.current.get(p.id)?.focus());
+      return;
+    }
+    // 上記の並べ替えショートカット (修飾キー付き) 以外の矢印キー/Home/End/先頭文字は
+    // ツリー共通のナビゲーションへ委譲する (#1184)。
+    makeTreeItemKeyDown()(e);
   };
 
   /** Drag reorder of the named-group headers themselves (relative to one
@@ -906,15 +1015,24 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     // 検索フィルタ中は `namedGroupKeys` がヒットしたグループだけの部分集合になる。
     // その部分集合で `setGroupOrder` すると永続化済みの全体順序を可視分だけで
     // 上書きしてしまうため、ドラッグと同じく `reorderEnabled` でガードする。
-    if (!reorderEnabled || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
-    if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
-    const dir = e.key === "ArrowDown" ? 1 : -1;
-    const moved = moveItemBy(namedGroupKeys, name, dir);
-    if (moved === namedGroupKeys) return;
-    e.preventDefault();
-    setGroupOrder(moved);
-    setDropIndicator(`group:${name}`);
-    requestAnimationFrame(() => groupRowRefs.current.get(name)?.focus());
+    if (
+      reorderEnabled &&
+      (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+      (e.metaKey || e.ctrlKey) &&
+      e.shiftKey
+    ) {
+      const dir = e.key === "ArrowDown" ? 1 : -1;
+      const moved = moveItemBy(namedGroupKeys, name, dir);
+      if (moved === namedGroupKeys) return;
+      e.preventDefault();
+      setGroupOrder(moved);
+      setDropIndicator(`group:${name}`);
+      requestAnimationFrame(() => groupRowRefs.current.get(name)?.focus());
+      return;
+    }
+    // 上記の並べ替えショートカット (修飾キー付き) 以外の矢印キー/Home/End/先頭文字は
+    // ツリー共通のナビゲーションへ委譲する (#1184)。
+    makeTreeItemKeyDown()(e);
   };
 
   const handleProfileClick = (p: ConnectionProfile) => {
@@ -1510,6 +1628,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     return groups;
   }, [profiles, visibleProfiles, groupOrder]);
 
+  // グループ見出しがある (`grouped !== null`) 場合、プロファイル行はグループ行の
+  // 1 段下になるため、その配下 (DB/テーブル/カラム…) も `aria-level` が 1 段深くなる。
+  const groupLevel = grouped !== null ? 1 : 0;
+
   const profileStatus = (p: ConnectionProfile): "connected" | "connecting" | "error" | "idle" => {
     if (connectingId === p.id) return "connecting";
     if (errorProfileId === p.id && activeProfileId !== p.id) return "error";
@@ -1553,12 +1675,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // 並べ、ワンクリックで開けるようにする。各行は db.table を表示し、`onPickTable` で開く。
   const renderQuickAccessRow = (refItem: TableRef, kind: "favorite" | "recent") => {
     const star = kind === "favorite";
+    const key = `qa:${kind}:${tableKey(refItem.database, refItem.table)}`;
+    const activate = () => onPickTable(refItem.database, refItem.table);
     return (
       <TreeRow
-        key={`${kind}:${tableKey(refItem.database, refItem.table)}`}
+        key={key}
+        data-tree-key={key}
         pl="1"
         role="treeitem"
-        onClick={() => onPickTable(refItem.database, refItem.table)}
+        aria-level={groupLevel + 2}
+        tabIndex={treeItemTabIndex(key)}
+        onFocus={onTreeItemFocus(key)}
+        onKeyDown={makeTreeItemKeyDown(activate)}
+        onClick={activate}
         onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
         {...treeTooltipProps(`${refItem.database}.${refItem.table}`)}
         _hover={{ bg: "app.rowHover" }}
@@ -1630,12 +1759,20 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           return (
             <div key={kind}>
               <QuickAccessHeader>{labels[kind] ?? kind}</QuickAccessHeader>
-              {items.map((o) => (
+              {items.map((o) => {
+                const key = `so:${db}:${kind}:${o.name}:${o.id ?? ""}`;
+                const activate = () => onOpenObjectDefinition(db, o.kind, o.name, o.id);
+                return (
                 <TreeRow
-                  key={`${kind}:${o.name}:${o.id ?? ""}`}
+                  key={key}
+                  data-tree-key={key}
                   pl="1"
                   role="treeitem"
-                  onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
+                  aria-level={groupLevel + 3}
+                  tabIndex={treeItemTabIndex(key)}
+                  onFocus={onTreeItemFocus(key)}
+                  onKeyDown={makeTreeItemKeyDown(activate)}
+                  onClick={activate}
                   onContextMenu={
                     kind === "view"
                       ? (ev) => handleViewContextMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
@@ -1654,7 +1791,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                     <HighlightText text={o.name} query={q} />
                   </TreeLabel>
                 </TreeRow>
-              ))}
+                );
+              })}
             </div>
           );
         })}
@@ -1687,9 +1825,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     // 列・インデックス・外部キーの子グループ (#1112)。見出しは複数グループが
     // 並ぶときだけ出す (`tableChildGroups`)。
     const childGroups = cols ? tableChildGroups(cols, tableIndexes[tKey]) : null;
+    const treeKey = `tbl:${tKey}`;
     return (
       <TreeNode key={tbl}>
         <TreeRow
+          data-tree-key={treeKey}
           pl="1"
           role="treeitem"
           /* 行のアクセシブルネームをテーブル名に固定する。既定の
@@ -1697,7 +1837,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
              aria-label や行数バッジまで連結され、SR の読み上げと
              ロール検索 (テスト含む) が不安定になるため。 */
           aria-label={tbl}
+          aria-level={groupLevel + 3}
           aria-expanded={tOpen}
+          tabIndex={treeItemTabIndex(treeKey)}
+          onFocus={onTreeItemFocus(treeKey)}
+          onKeyDown={makeTreeItemKeyDown(() => onPickTable(db, tbl))}
           // 「現在地」表示 (#982): SR には aria-current、視覚には
           // 下の共有 layoutId インジケータ (アクセントスパイン) で
           // 示す。position: relative はインジケータの絶対配置の
@@ -1729,10 +1873,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               ダブルクリック (テーブルを開く) の前に click が 2 回発火して
               カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
               連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
-              唯一の展開手段になったためネイティブ button として描画し、
-              キーボード (Enter/Space) と支援技術からも操作できるようにする
-              (行本体は現状 tabIndex を持たない — 上記のキーボードナビ方針
-              コメント参照)。 */}
+              マウスでは唯一の展開手段になったためネイティブ button として描画し、
+              キーボード (Enter/Space) と支援技術からも操作できるようにする。
+              行本体からの ArrowRight/ArrowLeft (#1184) も、この button の
+              aria-expanded を目印にここをクリックしてトグルする
+              (`makeTreeItemKeyDown` 参照)。 */}
           <TreeChevronButton
             type="button"
             transform={tOpen ? "rotate(90deg)" : undefined}
@@ -1774,14 +1919,20 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 .map((col) => {
                 const isPk = col.key === "PRI";
                 const isFk = col.referenced_table !== null;
+                const colKey = `col:${tKey}:${col.name}`;
                 return (
                   <TreeRow
                     key={col.name}
+                    data-tree-key={colKey}
                     pt="0.75"
                     pb="0.75"
                     cursor="default"
                     fontSize="sm"
                     role="treeitem"
+                    aria-level={groupLevel + 4}
+                    tabIndex={treeItemTabIndex(colKey)}
+                    onFocus={onTreeItemFocus(colKey)}
+                    onKeyDown={makeTreeItemKeyDown()}
                     onContextMenu={(e) => handleColumnContextMenu(e, db, tbl, col.name)}
                     {...columnTooltipProps(col)}
                   >
@@ -1816,14 +1967,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             {showAllCols && (tableIndexes[tKey]?.length ?? 0) > 0 && (
               <>
                 <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
-                {tableIndexes[tKey].map((idx) => (
+                {tableIndexes[tKey].map((idx) => {
+                  const idxKey = `idx:${tKey}:${idx.name}`;
+                  return (
                   <TreeRow
                     key={`idx:${idx.name}`}
+                    data-tree-key={idxKey}
                     pt="0.75"
                     pb="0.75"
                     cursor="default"
                     fontSize="sm"
                     role="treeitem"
+                    aria-level={groupLevel + 4}
+                    tabIndex={treeItemTabIndex(idxKey)}
+                    onFocus={onTreeItemFocus(idxKey)}
+                    onKeyDown={makeTreeItemKeyDown()}
                     onContextMenu={(e) => handleIndexContextMenu(e, db, tbl, idx)}
                     {...treeTooltipProps(
                       `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
@@ -1850,7 +2008,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       </TreeBadge>
                     )}
                   </TreeRow>
-                ))}
+                  );
+                })}
               </>
             )}
             {/* 外部キー (#1112)。列行の鎖アイコンだけでは「どこを参照しているか」が
@@ -1859,15 +2018,23 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             {showAllCols && childGroups && childGroups.foreignKeys.length > 0 && (
               <>
                 <QuickAccessHeader>{t("treeForeignKeysLabel")}</QuickAccessHeader>
-                {childGroups.foreignKeys.map((fk) => (
+                {childGroups.foreignKeys.map((fk) => {
+                  const fkKey = `fk:${tKey}:${fk.column}`;
+                  const activate = () => onPickTable(db, fk.referencedTable);
+                  return (
                   <TreeRow
                     key={`fk:${fk.column}`}
+                    data-tree-key={fkKey}
                     pt="0.75"
                     pb="0.75"
                     fontSize="sm"
                     role="treeitem"
+                    aria-level={groupLevel + 4}
                     aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}`}
-                    onClick={() => onPickTable(db, fk.referencedTable)}
+                    tabIndex={treeItemTabIndex(fkKey)}
+                    onFocus={onTreeItemFocus(fkKey)}
+                    onKeyDown={makeTreeItemKeyDown(activate)}
+                    onClick={activate}
                     {...treeTooltipProps(t("treeFkOpenHint", { table: fk.referencedTable }))}
                     _hover={{ bg: "app.rowHover" }}
                   >
@@ -1880,7 +2047,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       <chakra.span color="app.textMuted"> → {foreignKeyTargetLabel(fk)}</chakra.span>
                     </TreeLabel>
                   </TreeRow>
-                ))}
+                  );
+                })}
               </>
             )}
           </TreeChildren>
@@ -1912,6 +2080,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   };
 
   const renderProfile = (p: ConnectionProfile, siblingIds: string[]) => {
+    const profileTreeKey = `profile:${p.id}`;
     const isActive = p.id === activeProfileId;
     const isOpen = !!expandedProfiles[p.id];
     // When the query matches the connection's own metadata, show its full tree;
@@ -1990,11 +2159,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           whileHover={{ scale: 1.01, boxShadow: "var(--shadow-md)" }}
           transition={springs.gentle}
           style={{ transformOrigin: "center left" }}
+          data-tree-key={profileTreeKey}
           onClick={() => handleProfileClick(p)}
           onContextMenu={(e) => handleProfileContextMenu(e, p)}
           onKeyDown={handleProfileRowKeyDown(p, siblingIds)}
-          tabIndex={0}
+          onFocus={onTreeItemFocus(profileTreeKey)}
+          tabIndex={treeItemTabIndex(profileTreeKey)}
           role="treeitem"
+          aria-level={groupLevel + 1}
           aria-expanded={isOpen}
           // 共有 `Tooltip` (#814) で単純に包むと、この行自体が `AnimatePresence`
           // の直接の子として追跡される `Reorder.Item` (ドラッグ並べ替え #786) のため、
@@ -2121,15 +2293,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 const dbNameHit = searching && db.toLowerCase().includes(q);
                 const dbOpen = !!expandedDbs[db] || (schemaFiltered && dbNodeMatches(db));
                 const dbTables = tables[db];
+                const dbTreeKey = `db:${db}`;
                 return (
                   <TreeNode key={db}>
                     <TreeRow
+                      data-tree-key={dbTreeKey}
                       pl="1"
                       onClick={() => toggleDb(db)}
                       onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
                       aria-label={db}
+                      aria-level={groupLevel + 2}
                       aria-expanded={dbOpen}
+                      tabIndex={treeItemTabIndex(dbTreeKey)}
+                      onFocus={onTreeItemFocus(dbTreeKey)}
+                      onKeyDown={makeTreeItemKeyDown(() => void toggleDb(db))}
                       {...treeTooltipProps(`${db} — ${containerLabel}`)}
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
@@ -2231,7 +2409,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       ) : visibleProfiles.length === 0 ? (
         <Text color="app.textMuted" p="3">{t("listNoMatches")}</Text>
       ) : (
-        <Box flex="1" overflowY="auto" py="1" fontSize="md" color="app.text" role="tree">
+        <Box ref={treeRef} flex="1" overflowY="auto" py="1" fontSize="md" color="app.text" role="tree">
           {grouped === null ? (
             // ungrouped の 1 本のフラットな並び: そのままプロファイルの並び順
             // (ドラッグ/キーボードで動かせる)。
@@ -2304,12 +2482,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         transitionDuration="var(--dur-fast)"
                         transitionTimingFunction="var(--ease)"
                         _hover={{ bg: "app.hover", color: "app.text" }}
+                        data-tree-key={`group:${key}`}
                         onClick={() =>
                           setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
                         }
                         onKeyDown={handleGroupRowKeyDown(key, namedGroupKeys)}
-                        tabIndex={0}
+                        onFocus={onTreeItemFocus(`group:${key}`)}
+                        tabIndex={treeItemTabIndex(`group:${key}`)}
                         role="treeitem"
+                        aria-level={1}
                         aria-expanded={groupOpen}
                       >
                         <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
@@ -2381,6 +2562,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           transitionDuration="var(--dur-fast)"
                           transitionTimingFunction="var(--ease)"
                           _hover={{ bg: "app.hover", color: "app.text" }}
+                          data-tree-key={`group:${key}`}
                           onClick={() =>
                             setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
                           }
@@ -2388,8 +2570,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           // 開閉)。未分類は並べ替え不可のため矢印キーの移動は
                           // moveItemBy が no-op になり、開閉だけが効く。
                           onKeyDown={handleGroupRowKeyDown(key, namedGroupKeys)}
-                          tabIndex={0}
+                          onFocus={onTreeItemFocus(`group:${key}`)}
+                          tabIndex={treeItemTabIndex(`group:${key}`)}
                           role="treeitem"
+                          aria-level={1}
                           aria-expanded={groupOpen}
                         >
                           <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
