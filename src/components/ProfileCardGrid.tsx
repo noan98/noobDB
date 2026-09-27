@@ -3,7 +3,8 @@ import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { ConnectionProfile } from "../api/tauri";
 import { useT } from "../i18n";
-import { springs, staggerContainer, variants } from "../motion";
+import { staggerContainer, variants } from "../motion";
+import { selectableCardRecipe } from "../theme";
 import {
   driverColor,
   driverIconName,
@@ -20,17 +21,19 @@ import { Spinner } from "./Spinner";
 const MotionFlex = chakra(motion.div, {}, {
   forwardProps: ["transition", "initial", "animate", "variants"],
 });
-const MotionCard = chakra(motion.button, {}, {
-  forwardProps: ["transition", "variants", "whileHover", "whileTap"],
+// カードの見た目 (角丸・静止エレベーション・ホバーの 1 段上のリフト・押下・
+// フォーカスリング) は `ui.tsx` の `SelectableCard` と同じ `selectableCardRecipe`
+// (#1161) を共有する。以前 (#1144) はここに `whileHover`/`whileTap` の scale
+// spring を個別に持っていたが、影 (box-shadow) と transform を 1 つの CSS
+// transition で協調させる必要があり、Motion の spring と CSS transition の
+// 二重管理は手触りがずれやすい (影だけ CSS、scale だけ Motion、という分割は
+// #1144 の実装コメントにもある通り既に box-shadow との衝突を避けるための妥協
+// だった)。そのため hover/press の手触りは recipe 側の CSS transition
+// (translateY + shadow) へ一本化し、Motion は要素の出入り (stagger, #875) だけを
+// 担当する。stagger アイテムの入場 (`variants.staggerItem`) は変更しない。
+const MotionCard = chakra(motion.button, selectableCardRecipe, {
+  forwardProps: ["variants"],
 });
-
-// カードのホバー/押下の手触り (#1144)。サイドバーの接続行 (ConnectionList) や
-// PressableButton と同じ springs.gentle の scale に揃える。transform は Motion が
-// 持つので CSS 側の transition / _active からは外し、影は CSS の _hover で付ける
-// (Motion で box-shadow を補間すると _focusVisible のフォーカスリングを上書きするため)。
-// prefers-reduced-motion 時はルートの MotionConfig が transform を抑制する。
-const CARD_HOVER = { scale: 1.02 } as const;
-const CARD_TAP = { scale: 0.98 } as const;
 
 interface Props {
   /** 表示するプロファイル (App の並び順そのまま)。 */
@@ -97,30 +100,17 @@ export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }:
           type="button"
           variants={variants.staggerItem}
           onClick={onCreate}
-          display="flex"
-          flexDirection="column"
           alignItems="center"
           justifyContent="center"
-          gap="2"
           flex="0 1 240px"
           minW="220px"
           maxW="280px"
           minH="118px"
-          p="4"
           bg="transparent"
           border="1px dashed"
           borderColor="app.borderStrong"
-          borderRadius="lg"
           color="app.textMuted"
-          cursor="pointer"
-          whileHover={CARD_HOVER}
-          whileTap={CARD_TAP}
-          transition={springs.gentle}
-          transitionProperty="background, border-color, color, box-shadow"
-          transitionDuration="var(--dur-fast)"
-          transitionTimingFunction="var(--ease)"
-          _hover={{ bg: "app.hover", color: "app.text", borderColor: "app.accent", boxShadow: "var(--shadow-md)" }}
-          _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+          _hover={{ bg: "app.hover", color: "app.text", borderColor: "app.accent" }}
         >
           <Icon name="plus" size={ICON_SIZES.lg} />
           <Text fontWeight={600} fontSize="sm">
@@ -157,40 +147,16 @@ function ProfileCard({
       aria-label={p.name}
       aria-describedby={descId}
       aria-busy={connecting || undefined}
-      display="flex"
-      flexDirection="column"
-      alignItems="stretch"
-      textAlign="left"
-      gap="2"
       flex="0 1 240px"
       minW="220px"
       maxW="280px"
       minH="118px"
-      p="4"
-      bg="app.surface"
-      border="1px solid"
-      borderColor="app.border"
       // 本番は常に危険色のスパインで際立たせる (サイドバーのワークスペース・
       // スパイン #791 と同じ色決定を共有)。非本番はプロファイル色/アクセント。
+      // ホバーで変わらない色なので、recipe の `_hover` (borderColor/shadow/
+      // transform を担当) と衝突しない単一の style prop で足りる。
       borderLeft="3px solid"
       borderLeftColor={workspaceSpineColor(p)}
-      borderRadius="lg"
-      cursor="pointer"
-      // 押せない間 (他の接続を試行中 / このカードが接続中) は持ち上げない。
-      whileHover={inert ? undefined : CARD_HOVER}
-      whileTap={inert ? undefined : CARD_TAP}
-      transition={springs.gentle}
-      transitionProperty="background, border-color, box-shadow"
-      transitionDuration="var(--dur-fast)"
-      transitionTimingFunction="var(--ease)"
-      _hover={{
-        bg: "app.hover",
-        borderColor: "app.borderStrong",
-        borderLeftColor: workspaceSpineColor(p),
-        boxShadow: "var(--shadow-md)",
-      }}
-      _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
-      _disabled={{ opacity: 0.6, cursor: "default" }}
     >
       <Flex align="center" gap="2" minW={0}>
         <ProfileColorChip color={p.color} />

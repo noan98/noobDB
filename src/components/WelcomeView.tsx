@@ -5,6 +5,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../i18n";
 import { staggerContainer, transitions, variants } from "../motion";
+import { selectableCardRecipe } from "../theme";
 import { BrandMark } from "../brand";
 import { WelcomeIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
@@ -16,7 +17,10 @@ const MotionRoot = chakra(motion.div, {}, { forwardProps: ["transition"] });
 const MotionDiv = chakra(motion.div, {}, { forwardProps: ["transition"] });
 // 主要導線カードの stagger (順次出現、#875) 用。variants を motion へ素通しする。
 const MotionRow = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
-const MotionCardButton = chakra(motion.button, {}, { forwardProps: ["variants"] });
+// カードの見た目 (角丸・エレベーション・ホバーリフト・押下・フォーカスリング) は
+// `ui.tsx` の `SelectableCard` と同じ `selectableCardRecipe` (#1161) を共有し、
+// 出現の stagger だけ motion に任せる (`ui.tsx` の JSDoc / recipe の JSDoc 参照)。
+const MotionCardButton = chakra(motion.button, selectableCardRecipe, { forwardProps: ["variants"] });
 
 interface Props {
   /** 「接続を追加」— 空の接続フォームを開く (ConnectionList の onCreate と同じ)。 */
@@ -52,26 +56,10 @@ function WelcomeCard({ icon, title, description, onClick }: CardProps) {
       onClick={onClick}
       aria-label={title}
       aria-describedby={descId}
-      display="flex"
-      flexDirection="column"
       alignItems="flex-start"
-      gap="2"
-      textAlign="left"
       flex="1 1 220px"
       minW="200px"
       maxW="280px"
-      p="4"
-      bg="app.surface"
-      border="1px solid"
-      borderColor="app.border"
-      borderRadius="lg"
-      cursor="pointer"
-      transitionProperty="background, border-color, box-shadow, transform"
-      transitionDuration="var(--dur-fast)"
-      transitionTimingFunction="var(--ease)"
-      _hover={{ bg: "app.hover", borderColor: "app.borderStrong" }}
-      _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
-      _active={{ transform: "translateY(1px)" }}
     >
       <Flex
         align="center"

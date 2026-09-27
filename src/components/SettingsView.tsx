@@ -13,7 +13,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Segmented } from "./Segmented";
-import { Input, Select, Switch } from "./ui";
+import { Input, Select, SelectableCard, Switch } from "./ui";
 import {
   SettingsHelp,
   SettingsSection,
@@ -399,41 +399,13 @@ const ThemePresetRow = chakra("div", {
   base: { display: "flex", flexWrap: "wrap", gap: "2" },
 });
 
-// ホバー/押下の軽い press/scale フィードバック付きカード。動きの duration/easing は
-// motion.ts が CSS 側にも配っているトークン (`--dur-fast` / `--ease`) をそのまま使う。
-// 密な個数 (7 プリセット) を同時マウントするため、motion.ts の設計方針
-// (「単純な hover/focus/active の transition は motion 化しても利点が薄く
-// レンダリングコストが増えるだけ」— 共通ボタン/ツリー行/ツールバーボタンは
-// CSS のまま残す、と明記) に従い、他の設定行の各種ボタン群と同じく
-// framer-motion では包まずネイティブ CSS transition + transform で実装する。
-const ThemePresetCard = chakra("button", {
-  base: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: "1.5",
-    width: "92px",
-    p: "2",
-    border: "1px solid",
-    borderColor: "app.borderStrong",
-    borderRadius: "md",
-    background: "app.surface",
-    cursor: "pointer",
-    transitionProperty: "border-color, box-shadow, transform",
-    transitionDuration: "var(--dur-fast)",
-    transitionTimingFunction: "var(--ease)",
-    _hover: { borderColor: "app.textMuted", transform: "scale(1.03)" },
-    "&:active": { transform: "scale(0.97)" },
-    "&[aria-pressed=true]": {
-      borderColor: "app.accent",
-      boxShadow: "inset 0 0 0 1px var(--accent)",
-    },
-    _focusVisible: {
-      outline: "none",
-      boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)",
-    },
-  },
-});
+// カードの見た目 (角丸・静止エレベーション・ホバーの 1 段上のリフト・押下・
+// フォーカスリング・選択状態の `aria-pressed` リング) は `ui.tsx` の
+// `SelectableCard` (`selectableCardRecipe`、#1161) に一元化してある。以前は
+// ここだけ角丸が `md` (他は `lg`)・押下が `scale`(他は `translateY`)・
+// フォーカスリングが手書きの 35% (他は `--focus-ring` の 45%) と食い違って
+// いたため、専用の recipe を持たず `SelectableCard size="compact"` を直接使う。
+const ThemePresetCard = SelectableCard;
 
 // 5 色を 1 本の帯 (CSS グラデーション) で並べたミニパレット。チップ 1 個ずつを
 // 別 DOM 要素にすると 7 プリセット × 5 チップ = 35 要素が常時マウントされ、設定
@@ -1150,6 +1122,8 @@ export function SettingsView({ theme, onClose }: Props) {
                 <Tooltip key={p} label={chipTitle}>
                   <ThemePresetCard
                     type="button"
+                    size="compact"
+                    width="92px"
                     aria-pressed={selected}
                     onClick={() => setThemePreset(p as ThemePreset)}
                   >

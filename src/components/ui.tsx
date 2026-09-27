@@ -8,6 +8,7 @@ import {
   inputRecipe,
   radioRecipe,
   sectionLabelRecipe,
+  selectableCardRecipe,
   selectRecipe,
   textareaRecipe,
 } from "../theme";
@@ -113,3 +114,21 @@ export const Heading = chakra("h2", headingRecipe);
  *  単一ソース化する。ツリーのグループヘッダーやグリッドのカラムヘッダーなど、
  *  「本文より小さく、地味だが構造を示す」ラベルに使う。 */
 export const SectionLabel = chakra("span", sectionLabelRecipe);
+
+/**
+ * クリック可能なサーフェスカード (#1161)。「面全体がボタンになっている
+ * カード」— ウェルカム画面の主要導線カード・プロファイルカード・テーマ
+ * プリセットカードなどに使う。角丸・静止時のエレベーション
+ * (`shadow="elevationRaised"`)・ホバーの 1 段上のエレベーション + わずかな
+ * リフト・押下フィードバック・フォーカスリング・`aria-pressed` の選択状態を
+ * `theme.ts` の `selectableCardRecipe` に一元化してある。手書きせず必ずここ
+ * 経由で使うこと (詳細・設計意図は recipe 側の JSDoc を参照)。
+ *
+ * `<button>` 要素として描画される (`type="button"` は呼び出し側で明示する)。
+ * ホバー/押下に加えて要素の出入り (stagger) など Motion 化が要る場面では、
+ * `chakra(motion.button, selectableCardRecipe, {...})` の形で同じ recipe を
+ * 直接 `motion.button` に適用する (`ProfileCardGrid.tsx` 参照)。この
+ * `SelectableCard` は Motion を伴わない静的な用途 (`WelcomeView` /
+ * `SettingsView`) 向け。
+ */
+export const SelectableCard = chakra("button", selectableCardRecipe);
