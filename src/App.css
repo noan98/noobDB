@@ -97,7 +97,7 @@
   --space-10: calc(40px * var(--font-scale));
   --space-12: calc(48px * var(--font-scale));
 
-  /* Display density (#410, #620). An axis independent of the font scale: it
+  /* Display density (#410, #620, #1188). An axis independent of the font scale: it
      tunes the result grid's cell padding / row height so the same font can be
      packed tighter (4K screens) or loosened (small screens). The `normal`
      values below match the historical grid padding (5px/10px) exactly so the
@@ -108,15 +108,25 @@
      --density-control-scale extends the density axis beyond the grid: it is a
      *vertical padding multiplier* for interactive controls (buttons / inputs /
      select / textarea) so the same density preset that tightens the grid also
-     tightens forms, the sidebar and modal footers. `normal` = 1 keeps every
+     tightens forms and modal footers. `normal` = 1 keeps every
      control padding byte-identical to the historical value (a true no-op);
      compact / spacious override it below. The control padding tokens that
      follow consume it so the recipes in theme.ts reference one source of truth
-     instead of hard-coding calc(...). */
+     instead of hard-coding calc(...).
+
+     --density-tree-py (#1188) is the sidebar's own axis: the schema/connection
+     tree is the highest-row-count surface in the sidebar (tables, columns,
+     profiles), so it gets a dedicated vertical-padding token rather than
+     reusing --density-control-scale (tree rows are not form controls). `normal`
+     equals --space-1 exactly (byte-identical, a true no-op); compact/spacious
+     scale it by the same ratio as --density-cell-py (0.4x / 1.8x) so the tree
+     tightens/loosens in step with the result grid. `TreeRow` / `MotionTreeRow`
+     (components/tree.tsx) and the sidebar's group-heading rows consume it. */
   --density-cell-py: calc(5px * var(--font-scale));
   --density-cell-px: calc(10px * var(--font-scale));
   --density-row-h: 30px;
   --density-control-scale: 1;
+  --density-tree-py: calc(4px * var(--font-scale));
 
   /* Control padding tokens (#620). Vertical padding follows the density axis
      (--density-control-scale); horizontal padding tracks only --font-scale so
@@ -1474,12 +1484,16 @@
   --density-cell-px: calc(8px * var(--font-scale));
   --density-row-h: 24px;
   --density-control-scale: 0.6;
+  /* --density-cell-py の compact 比率 (2/5 = 0.4x) を --density-tree-py にも適用。 */
+  --density-tree-py: calc(1.6px * var(--font-scale));
 }
 :root[data-density="spacious"] {
   --density-cell-py: calc(9px * var(--font-scale));
   --density-cell-px: calc(12px * var(--font-scale));
   --density-row-h: 40px;
   --density-control-scale: 1.35;
+  /* --density-cell-py の spacious 比率 (9/5 = 1.8x) を --density-tree-py にも適用。 */
+  --density-tree-py: calc(7.2px * var(--font-scale));
 }
 
 /* 密度変更の遷移演出 (#1023)。上の --density-* トークンは瞬時に上書きされる

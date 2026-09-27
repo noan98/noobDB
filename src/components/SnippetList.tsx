@@ -20,6 +20,7 @@ import {
   TreePane,
   TreeRow,
   TreeSearch,
+  TREE_GROUP_HEADING_PY,
 } from "./tree";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { readCollapsedSnippetFolders, writeCollapsedSnippetFolders } from "./snippetFolders";
@@ -361,9 +362,9 @@ export const SnippetList = memo(function SnippetList({
                       overflow="hidden"
                       userSelect="none"
                       cursor="pointer"
-                      pt="1.5"
+                      pt={TREE_GROUP_HEADING_PY}
                       pr="2.5"
-                      pb="1.5"
+                      pb={TREE_GROUP_HEADING_PY}
                       pl="1.5"
                       textStyle="overline"
                       bg="app.surfaceMuted"

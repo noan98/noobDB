@@ -54,6 +54,7 @@ import {
   TreeLabel,
   TreeNode,
   TreeRow,
+  TREE_GROUP_HEADING_PY,
 } from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
@@ -2465,9 +2466,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         overflow="hidden"
                         userSelect="none"
                         cursor="pointer"
-                        pt="1.5"
+                        pt={TREE_GROUP_HEADING_PY}
                         pr="2.5"
-                        pb="1.5"
+                        pb={TREE_GROUP_HEADING_PY}
                         pl="1.5"
                         textStyle="overline"
                         bg="app.surfaceMuted"
@@ -2547,9 +2548,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           overflow="hidden"
                           userSelect="none"
                           cursor="pointer"
-                          pt="1.5"
+                          pt={TREE_GROUP_HEADING_PY}
                           pr="2.5"
-                          pb="1.5"
+                          pb={TREE_GROUP_HEADING_PY}
                           pl="1.5"
                           textStyle="overline"
                           bg="app.surfaceMuted"

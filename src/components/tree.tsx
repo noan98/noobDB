@@ -21,6 +21,15 @@ const TREE_ROW_TRANSITION = {
  *  行内の操作要素 (`TreeChevronButton`) も同じリングを共有する。 */
 const TREE_FOCUS_RING = "var(--focus-ring)";
 
+/**
+ * グループ / フォルダ見出し行 (接続グループ・スニペットフォルダ) の縦余白 (#1188)。
+ * 通常のツリー行より一段ゆったりさせるため `--density-tree-py` の 1.5 倍を使う
+ * (既定値は従来の `space-1-5` = 6px と等価な no-op)。見出し自体も密度設定に
+ * 追従させ、`TreeRow` と同じ比率で伸縮させる。`ConnectionList` / `SnippetList` の
+ * グループ見出し行で共有する。
+ */
+export const TREE_GROUP_HEADING_PY = "calc(var(--density-tree-py) * 1.5)";
+
 export const TreePane = chakra("div", {
   base: { display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 },
 });
@@ -44,13 +53,15 @@ export const TreeNode = chakra("div", {
   base: { display: "flex", flexDirection: "column" },
 });
 
+/** 縦余白 (`pt`/`pb`) は `--density-tree-py` (App.css) 経由で表示密度設定に追従する
+ *  (#1188)。既定 (comfortable) は `--space-1` と等価な no-op。 */
 export const TreeRow = chakra("div", {
   base: {
     display: "flex",
     alignItems: "center",
     gap: "1",
-    pt: "1",
-    pb: "1",
+    pt: "var(--density-tree-py)",
+    pb: "var(--density-tree-py)",
     pr: "2.5",
     pl: "1.5",
     cursor: "pointer",
@@ -80,8 +91,8 @@ export const MotionTreeRow = chakra(
       display: "flex",
       alignItems: "center",
       gap: "1",
-      pt: "1",
-      pb: "1",
+      pt: "var(--density-tree-py)",
+      pb: "var(--density-tree-py)",
       pr: "2.5",
       pl: "1.5",
       cursor: "pointer",

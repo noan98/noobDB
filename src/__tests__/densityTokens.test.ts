@@ -52,6 +52,26 @@ describe("density tokens", () => {
     expect(spacious).toMatch(/--density-control-scale:\s*1\.35;/);
   });
 
+  // #1188: サイドバーのスキーマツリー行にも密度を効かせる専用トークン。
+  it("defines --density-tree-py at normal as a no-op equal to --space-1", () => {
+    // --space-1 (App.css) と byte-identical (4px * font-scale) にすることで
+    // 既定 (comfortable) の見た目を変えない。
+    expect(root).toMatch(/--space-1:\s*calc\(4px \* var\(--font-scale\)\);/);
+    expect(root).toMatch(/--density-tree-py:\s*calc\(4px \* var\(--font-scale\)\);/);
+  });
+
+  it("scales --density-tree-py for compact/spacious by the same ratio as --density-cell-py", () => {
+    // compact: 2/5 = 0.4x, spacious: 9/5 = 1.8x (--density-cell-py と同じ比率)。
+    expect(compact).toMatch(/--density-tree-py:\s*calc\(1\.6px \* var\(--font-scale\)\);/);
+    expect(spacious).toMatch(/--density-tree-py:\s*calc\(7\.2px \* var\(--font-scale\)\);/);
+  });
+
+  it("keeps --density-tree-py tracking the font scale on every preset", () => {
+    for (const b of [root, compact, spacious]) {
+      expect(b).toMatch(/--density-tree-py:\s*calc\([^;]*var\(--font-scale\)[^;]*\);/);
+    }
+  });
+
   it("makes control vertical padding follow the density axis (not horizontal)", () => {
     // 縦余白は密度軸に追従し、横余白は font-scale のみ (密度で詰めない)。
     expect(root).toMatch(
