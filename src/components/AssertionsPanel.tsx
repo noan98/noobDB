@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
-import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
   api,
@@ -28,6 +28,7 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration } from "./illustrations";
 import { scopeMatches } from "./SnippetList";
+import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
@@ -297,9 +298,25 @@ export function AssertionsPanel({
           action={{ label: t("assertRetry"), onClick: () => void load() }}
         />
       ) : assertions === null ? (
-        <Flex justify="center" py="4">
-          <Spinner size={20} />
-        </Flex>
+        // 初回ロード中 (まだ 1 件も取得していない): 中央の bare Spinner ではなく、
+        // 5 列の表構造をシマーで予兆表示する (#846 の横展開、#1174)。ロード中の
+        // スクリーンリーダー告知は VisuallyHidden で担い、シマー自体は視覚的な
+        // プレースホルダなので aria-hidden にする。
+        <chakra.table width="100%" style={{ borderCollapse: "collapse" }} role="status" aria-live="polite">
+          <VisuallyHidden as="caption">{t("assertLoading")}</VisuallyHidden>
+          <chakra.thead aria-hidden>
+            <chakra.tr>
+              <chakra.th css={thCss}>{t("assertColStatus")}</chakra.th>
+              <chakra.th css={thCss}>{t("assertColName")}</chakra.th>
+              <chakra.th css={thCss}>{t("assertColRule")}</chakra.th>
+              <chakra.th css={thCss}>{t("assertColResult")}</chakra.th>
+              <chakra.th css={thCss} />
+            </chakra.tr>
+          </chakra.thead>
+          <chakra.tbody>
+            <SkeletonTableRows columns={5} />
+          </chakra.tbody>
+        </chakra.table>
       ) : visible.length === 0 ? (
         <EmptyState
           compact

@@ -141,4 +141,47 @@ describe("TableTimelapsePanel (#739)", () => {
     );
     expect(api.timelapseWatchTable).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * 初回ロード中の bare Spinner を廃止し、共通スケルトンへ揃える (#1174)。
+   * ウォッチ一覧の取得中は左ペインのリスト骨格が出て、「ウォッチ無し」の
+   * 空状態 (実データ 0 件の確定表示) を誤って出さないことを固定する。
+   */
+  it("ウォッチ一覧の取得中はリストのスケルトンを出し、空状態は出さない", async () => {
+    let resolveWatches: (list: TableWatch[]) => void = () => {};
+    const pending = new Promise<TableWatch[]>((resolve) => {
+      resolveWatches = resolve;
+    });
+    vi.mocked(api.timelapseListWatches).mockReturnValueOnce(pending);
+
+    renderPanel();
+
+    expect(await screen.findByText(t("timelapseLoading"))).toBeInTheDocument();
+    expect(screen.queryByText(t("timelapseEmptyTitle"))).not.toBeInTheDocument();
+
+    resolveWatches([]);
+    await waitFor(() => expect(screen.getByText(t("timelapseEmptyTitle"))).toBeInTheDocument());
+  });
+
+  /**
+   * 差分計算中も同様に bare Spinner を廃止し、列数未知の表スケルトンへ揃える (#1174)。
+   */
+  it("差分計算中は表のスケルトンを出し、差分結果は出さない", async () => {
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
+    let resolveDiff: (d: TimelapseGenerationDiff) => void = () => {};
+    const pending = new Promise<TimelapseGenerationDiff>((resolve) => {
+      resolveDiff = resolve;
+    });
+    vi.mocked(api.timelapseDiffGenerations).mockReturnValueOnce(pending);
+
+    renderPanel();
+
+    expect(await screen.findByText(t("timelapseDiffLoading"))).toBeInTheDocument();
+    expect(screen.queryByText(t("timelapseCountAdded", { count: 1 }))).not.toBeInTheDocument();
+
+    resolveDiff(genDiff());
+    await waitFor(() =>
+      expect(screen.getByText(t("timelapseCountAdded", { count: 1 }))).toBeInTheDocument(),
+    );
+  });
 });

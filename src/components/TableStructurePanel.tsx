@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type IndexInfo, type TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
@@ -7,7 +7,7 @@ import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from ".
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
-import { Spinner } from "./Spinner";
+import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 import {
@@ -223,17 +223,16 @@ export function TableStructurePanel({
           title={t("structureLoadError", { error })}
           action={{ label: t("structureReload"), onClick: reload }}
         />
-      ) : !rows ? (
-        <Flex align="center" gap="2">
-          <Spinner size={14} />
-          <chakra.span fontSize="sm" color="app.textMuted">
-            {t("structureLoading")}
-          </chakra.span>
-        </Flex>
       ) : (
         <>
+          {!rows && (
+            // シマーは aria-hidden なので、読み込み中であることは別途告知する (#1174)。
+            <VisuallyHidden role="status" aria-live="polite">
+              {t("structureLoading")}
+            </VisuallyHidden>
+          )}
           <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
-            <SectionCaption label={t("structureColumns")} count={rows.length} />
+            <SectionCaption label={t("structureColumns")} count={rows?.length ?? 0} />
             <chakra.thead>
               <chakra.tr>
                 <chakra.th css={thCss} textAlign="right">#</chakra.th>
@@ -245,7 +244,12 @@ export function TableStructurePanel({
               </chakra.tr>
             </chakra.thead>
             <chakra.tbody>
-              {rows.map((r) => (
+              {!rows ? (
+                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+                // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1174)。
+                <SkeletonTableRows columns={6} />
+              ) : (
+                rows.map((r) => (
                 <chakra.tr key={r.name}>
                   <chakra.td css={tdCss} textAlign="right" textStyle="numeric" color="app.textMuted">
                     {r.position}
@@ -291,10 +295,13 @@ export function TableStructurePanel({
                     </Flex>
                   </chakra.td>
                 </chakra.tr>
-              ))}
+                ))
+              )}
             </chakra.tbody>
           </chakra.table>
 
+          {rows && (
+          <>
           <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
             <SectionCaption label={t("indexesLabel")} count={sortedIndexes?.length ?? 0} />
             {sortedIndexes === null ? null : sortedIndexes.length === 0 ? (
@@ -380,6 +387,8 @@ export function TableStructurePanel({
               </>
             )}
           </chakra.table>
+          </>
+          )}
         </>
       )}
     </Box>
