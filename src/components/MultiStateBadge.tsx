@@ -99,7 +99,7 @@ const MotionInner = chakra(
   { forwardProps: ["transition", "layout", "initial", "animate", "exit"] },
 );
 
-const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
+const focusRing = "var(--focus-ring)";
 
 export function MultiStateBadge<S extends string>({
   state,

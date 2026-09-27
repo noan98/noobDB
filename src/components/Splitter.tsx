@@ -252,7 +252,7 @@ export function Splitter({
           },
           "&:focus-visible": {
             outline: "none",
-            boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)",
+            boxShadow: "var(--focus-ring)",
           },
         }}
         onPointerDown={onPointerDown}

@@ -125,7 +125,7 @@ function OutputRow({
         _hover={{ bg: "app.hover" }}
         _focusVisible={{
           outline: "none",
-          boxShadow: "inset 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)",
+          boxShadow: "inset var(--focus-ring)",
         }}
       >
         <chakra.span display="inline-flex" flexShrink={0} mt="0.5" color={semanticColorToken(role, "text")} aria-hidden>

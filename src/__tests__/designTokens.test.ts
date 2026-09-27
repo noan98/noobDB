@@ -335,6 +335,71 @@ describe("design tokens: ベタ塗り専用の前景色", () => {
   });
 });
 
+describe("design tokens: フォーカスリング (#1162)", () => {
+  /**
+   * `App.css` の `--focus-ring` (45%) / `--focus-ring-danger` を
+   * 「全フォーカス要素で統一する単一ソース」としているのに、`:focus-visible` /
+   * `_focusVisible` に別構成の手書き `box-shadow` (35%・55%・25% など) を書くと、
+   * 同じキーボードフォーカスでも要素ごとにリングの濃さ・構成がばらつく
+   * (#1162 時点で Splitter・SettingsSwatchInput・SidebarTabButton・OutputPanel・
+   * Segmented・BottomPanel・tree.tsx・TabBar・MultiStateBadge・Switch の
+   * 10 箇所がこれをしていた)。
+   *
+   * 許可するのは `var(--focus-ring)` / `var(--focus-ring-danger)`
+   * (先頭に `inset ` が付いてもよい) のみ。`theme.ts` の `focusRing` /
+   * `focusRingDanger` や、各コンポーネントの同名ローカル定数を経由してもよいが、
+   * その定数自体の定義がこの許可パターンでなければならない (定義側も検査する)。
+   *
+   * 判定は `_focusVisible` / `:focus-visible` の出現位置から後方 300 文字以内の
+   * 最初の `boxShadow:` を「対になる指定」とみなす近似 (このリポジトリの
+   * `_focusVisible={{ outline: "none", boxShadow: ... }}` という書き方は
+   * 常に数行以内に収まるため)。`outline` だけで `boxShadow` を持たない
+   * `focus-visible` セレクタ (下線や背景だけを変えるもの) は対象外。
+   *
+   * 注: `ResultGrid` の選択ハイライト (`is-selected-cell` など) は
+   * `:focus-visible` / `_focusVisible` のセレクタではないため、そもそもこの
+   * 走査に引っかからない (対象外)。
+   */
+  const ALLOWED_FOCUS_RING = /^(inset\s+)?var\(--focus-ring(-danger)?\)$/;
+  const FOCUS_SELECTOR = /_focusVisible\s*[:=]|:focus-visible/g;
+  const BOX_SHADOW_NEAR = /boxShadow\s*:\s*(?:"([^"]*)"|([A-Za-z_$][\w$]*))/;
+  const SEARCH_WINDOW = 300;
+
+  /** 同じファイル内で `const <name> = "...";` として定義された文字列値を解決する。 */
+  function resolveStringConst(content: string, name: string): string | null {
+    const re = new RegExp(`const\\s+${name}\\s*=\\s*"([^"]*)"`);
+    const m = re.exec(content);
+    return m ? m[1] : null;
+  }
+
+  it("_focusVisible / :focus-visible 直下の box-shadow は --focus-ring 系のみ", () => {
+    const offenders: string[] = [];
+    for (const [path, content] of sources) {
+      let fm: RegExpExecArray | null;
+      const focusRe = new RegExp(FOCUS_SELECTOR.source, "g");
+      while ((fm = focusRe.exec(content))) {
+        const windowText = content.slice(fm.index, fm.index + SEARCH_WINDOW);
+        const bsMatch = BOX_SHADOW_NEAR.exec(windowText);
+        if (!bsMatch) continue; // boxShadow を持たない focus-visible (下線/背景だけ) は対象外
+        const literal = bsMatch[1];
+        const identifier = bsMatch[2];
+        const raw = literal !== undefined ? literal : resolveStringConst(content, identifier!);
+        if (raw === null || raw === undefined) continue; // 解決できない識別子は誤検出回避のため対象外
+        if (!ALLOWED_FOCUS_RING.test(raw.trim())) {
+          const absoluteIndex = fm.index + (bsMatch.index ?? 0);
+          const line = content.slice(0, absoluteIndex).split("\n").length;
+          offenders.push(`${toDisplayPath(path)}:${line}: boxShadow: ${JSON.stringify(raw)}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "フォーカスリングは var(--focus-ring) (エラー系は var(--focus-ring-danger))、" +
+        "先頭に inset を付ける場合も同様に一本化する。手書きの color-mix(...) 構成は禁止。",
+    ).toEqual([]);
+  });
+});
+
 describe("フォーム / モーダルの共通プリミティブ", () => {
   /** モーダルとダイアログ (= `modalForm.tsx` のプリミティブを使う画面)。 */
   const isModalSource = (path: string) =>

@@ -388,7 +388,7 @@ const SettingsSwatch = chakra("button", {
     },
     _focusVisible: {
       outline: "none",
-      boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)",
+      boxShadow: "var(--focus-ring)",
     },
   },
 });
