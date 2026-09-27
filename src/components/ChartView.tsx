@@ -5,8 +5,9 @@ import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { readableInk } from "../colorScale";
 import { durations, easings } from "../motion";
-import { Checkbox, Select } from "./ui";
+import { Checkbox } from "./ui";
 import { ImageExportButton } from "./ImageExportButton";
+import { ListboxSelect } from "./ListboxSelect";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
@@ -193,44 +194,52 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
           }}
         />
         <Field label={t("chartType")}>
-          <Select value={config.type} onChange={(e) => setType(e.target.value as ChartType)} width="auto">
-            <option value="bar">{t("chartTypeBar")}</option>
-            <option value="line">{t("chartTypeLine")}</option>
-            <option value="area">{t("chartTypeArea")}</option>
-            <option value="pie">{t("chartTypePie")}</option>
-          </Select>
+          <ListboxSelect
+            value={config.type}
+            ariaLabel={t("chartType")}
+            onChange={(v) => setType(v as ChartType)}
+            options={[
+              { value: "bar", label: t("chartTypeBar") },
+              { value: "line", label: t("chartTypeLine") },
+              { value: "area", label: t("chartTypeArea") },
+              { value: "pie", label: t("chartTypePie") },
+            ]}
+          />
         </Field>
         <Field label={t("chartXAxis")}>
-          <Select value={config.xCol} onChange={(e) => setX(Number(e.target.value))} width="auto">
-            {result.columns.map((c, i) => (
-              <option key={i} value={i}>{c.name}</option>
-            ))}
-          </Select>
+          <ListboxSelect
+            value={String(config.xCol)}
+            ariaLabel={t("chartXAxis")}
+            onChange={(v) => setX(Number(v))}
+            options={result.columns.map((c, i) => ({ value: String(i), label: c.name }))}
+          />
         </Field>
         <Field label={t("chartAggregation")}>
-          <Select value={config.aggregation} onChange={(e) => setAgg(e.target.value as Aggregation)} width="auto">
-            <option value="none">{t("chartAggNone")}</option>
-            <option value="sum">SUM</option>
-            <option value="avg">AVG</option>
-            <option value="count">COUNT</option>
-          </Select>
+          <ListboxSelect
+            value={config.aggregation}
+            ariaLabel={t("chartAggregation")}
+            onChange={(v) => setAgg(v as Aggregation)}
+            options={[
+              { value: "none", label: t("chartAggNone") },
+              { value: "sum", label: "SUM" },
+              { value: "avg", label: "AVG" },
+              { value: "count", label: "COUNT" },
+            ]}
+          />
         </Field>
         {/* 配色 (#916): グリッドの条件付き書式と同型のセレクタで、共有カラー
             スケールの離散/連続/発散パレットを選ぶ。CB セーフかどうかも同じ
             注記 (`gridPaletteCbSafe`) で示し、体系を UI レベルでも揃える。 */}
         <Field label={t("chartPalette")}>
-          <Select
+          <ListboxSelect
             value={config.palette ?? DEFAULT_CHART_PALETTE}
-            onChange={(e) => setPalette(e.target.value as ChartPaletteKey)}
-            width="auto"
-          >
-            {Object.values(CHART_PALETTES).map((p) => (
-              <option key={p.key} value={p.key}>
-                {t(`chartPalette_${p.key}` as Parameters<typeof t>[0])}
-                {p.colorBlindSafe ? ` ${t("gridPaletteCbSafe")}` : ""}
-              </option>
-            ))}
-          </Select>
+            ariaLabel={t("chartPalette")}
+            onChange={(v) => setPalette(v as ChartPaletteKey)}
+            options={Object.values(CHART_PALETTES).map((p) => ({
+              value: p.key,
+              label: `${t(`chartPalette_${p.key}` as Parameters<typeof t>[0])}${p.colorBlindSafe ? ` ${t("gridPaletteCbSafe")}` : ""}`,
+            }))}
+          />
         </Field>
         <Field label={t("chartYAxis")}>
           <Flex gap="2" flexWrap="wrap">

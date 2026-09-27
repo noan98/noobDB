@@ -9,6 +9,7 @@ import {
 } from "../pagination";
 import { CountUpText } from "./CountUp";
 import { ICON_SIZES, Icon } from "./Icon";
+import { ListboxSelect } from "./ListboxSelect";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 
@@ -72,6 +73,10 @@ export function PaginationBar({
   const nextOk = canGoNext(page, totalPages, rowsOnPage, pageSize) && !loading;
   const lastOk = totalPages != null && page < totalPages && !loading;
   const range = pageRange(page, pageSize, rowsOnPage);
+  // 現在のページサイズが選択肢に無ければ先頭に足して必ず選べるようにする。
+  const pageSizeOptions = (PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSize)
+    ? PAGE_SIZE_OPTIONS
+    : [pageSize, ...PAGE_SIZE_OPTIONS];
 
   const submitJump = () => {
     const n = Number.parseInt(jump, 10);
@@ -179,35 +184,18 @@ export function PaginationBar({
         />
       </chakra.label>
 
-      <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="xs" whiteSpace="nowrap">
-        {t("pageSizeLabel")}
-        <chakra.select
-          value={pageSize}
-          onChange={(e) => onSetPageSize(Number.parseInt(e.target.value, 10))}
+      <chakra.span display="inline-flex" alignItems="center" gap="1.5" fontSize="xs" whiteSpace="nowrap">
+        <chakra.span color="app.textSecondary">{t("pageSizeLabel")}</chakra.span>
+        <ListboxSelect
+          // 現在のサイズが選択肢に無ければ先頭に足して必ず選べるようにする。
+          value={String(pageSize)}
+          options={pageSizeOptions.map((s) => ({ value: String(s), label: String(s) }))}
+          onChange={(v) => onSetPageSize(Number.parseInt(v, 10))}
           disabled={loading}
-          minH={CONTROL_H}
-          // ネイティブ select の右側に描かれるドロップダウン矢印と数値が重なって
-          // 見切れないよう、右パディングを広めに取り、最小幅も確保する。
-          minW={CONTROL_MIN_W}
-          pl="1.5"
-          pr="5"
-          borderWidth="1px"
-          borderColor="app.border"
-          borderRadius="md"
-          bg="app.surface"
-          color="app.text"
-        >
-          {/* 現在のサイズが選択肢に無ければ先頭に足して必ず選べるようにする。 */}
-          {(PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSize)
-            ? null
-            : <option value={pageSize}>{pageSize}</option>}
-          {PAGE_SIZE_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </chakra.select>
-      </chakra.label>
+          ariaLabel={t("pageSizeLabel")}
+          css={{ minHeight: CONTROL_H, minWidth: CONTROL_MIN_W }}
+        />
+      </chakra.span>
     </Flex>
   );
 }

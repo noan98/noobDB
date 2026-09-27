@@ -5,8 +5,9 @@ import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
 import { semanticColorToken } from "../semanticColors";
-import { Button, Checkbox, Select } from "./ui";
+import { Button, Checkbox } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
+import { ListboxSelect } from "./ListboxSelect";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import {
   buildPivotModel,
@@ -224,42 +225,45 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
       >
         <ResultViewSwitch value="pivot" onChange={onChangeView} />
         <Field label={t("pivotRowField")}>
-          <Select value={config.rowField} onChange={(e) => setRowField(Number(e.target.value))} width="auto">
-            {result.columns.map((c, i) => (
-              <option key={i} value={i}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+          <ListboxSelect
+            value={String(config.rowField)}
+            ariaLabel={t("pivotRowField")}
+            onChange={(v) => setRowField(Number(v))}
+            options={result.columns.map((c, i) => ({ value: String(i), label: c.name }))}
+          />
         </Field>
         <Field label={t("pivotColField")}>
-          <Select value={config.colField ?? ""} onChange={(e) => setColField(e.target.value)} width="auto">
-            <option value="">{t("pivotNone")}</option>
-            {result.columns.map((c, i) => (
-              <option key={i} value={i}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+          <ListboxSelect
+            value={config.colField != null ? String(config.colField) : ""}
+            ariaLabel={t("pivotColField")}
+            onChange={(v) => setColField(v)}
+            options={[
+              { value: "", label: t("pivotNone") },
+              ...result.columns.map((c, i) => ({ value: String(i), label: c.name })),
+            ]}
+          />
         </Field>
         <Field label={t("pivotAgg")}>
-          <Select value={config.agg} onChange={(e) => setAgg(e.target.value as PivotAgg)} width="auto">
-            {AGGS.map((a) => (
-              <option key={a} value={a}>
-                {t(`pivotAgg_${a}` as `pivotAgg_${PivotAgg}`)}
-              </option>
-            ))}
-          </Select>
+          <ListboxSelect
+            value={config.agg}
+            ariaLabel={t("pivotAgg")}
+            onChange={(v) => setAgg(v as PivotAgg)}
+            options={AGGS.map((a) => ({
+              value: a,
+              label: t(`pivotAgg_${a}` as `pivotAgg_${PivotAgg}`),
+            }))}
+          />
         </Field>
         <Field label={t("pivotValueField")}>
-          <Select value={config.valueField ?? ""} onChange={(e) => setValueField(e.target.value)} width="auto">
-            <option value="">{config.agg === "count" ? "*" : t("pivotNone")}</option>
-            {result.columns.map((c, i) => (
-              <option key={i} value={i}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+          <ListboxSelect
+            value={config.valueField != null ? String(config.valueField) : ""}
+            ariaLabel={t("pivotValueField")}
+            onChange={(v) => setValueField(v)}
+            options={[
+              { value: "", label: config.agg === "count" ? "*" : t("pivotNone") },
+              ...result.columns.map((c, i) => ({ value: String(i), label: c.name })),
+            ]}
+          />
         </Field>
         <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
           <Checkbox checked={heatmap} onChange={(e) => setHeatmap(e.target.checked)} />

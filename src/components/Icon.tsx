@@ -15,6 +15,7 @@ import {
   IconCalendar,
   IconChartBar,
   IconCheck,
+  IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
   IconClock,
@@ -165,6 +166,7 @@ export type IconName =
   | "warning"
   | "chevron-left"
   | "chevron-right"
+  | "chevron-down"
   | "clock"
   | "copy"
   | "eye"
@@ -292,6 +294,8 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   "alert-circle": IconAlertCircle,
   "chevron-left": IconChevronLeft,
   "chevron-right": IconChevronRight,
+  // ListboxSelect (#1143) のトリガー右側に出す開閉インジケータ。
+  "chevron-down": IconChevronDown,
   clock: IconClock,
   copy: IconCopy,
   eye: IconEye,
