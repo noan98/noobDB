@@ -98,6 +98,7 @@ import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
+import { buildCopyFlashRange, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -913,6 +914,16 @@ export const GRID_CSS: SystemStyleObject = {
       background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 38%, var(--bg))`,
       boxShadow: `inset 0 0 0 2px ${semanticColorVar("warning", "solid")}`,
       animation: "find-current-pulse 0.45s var(--ease-out)",
+    },
+  // コピー成功時の範囲フラッシュ (#1159)。演出は apply-flash (インライン編集の
+  // 適用成功) をそのまま再利用する — どちらも「一瞬 inset リングで確認を示す」
+  // 同じ意味の演出のため、専用キーフレームを増やさない。クラスは `runCopy` が
+  // コピー成功時に対象セルの DOM 要素へ直接付け外しする (`flashCopyRange`)。
+  // ストライプ/ホバーの行背景より優先する必要があるため、is-find-current と同じ
+  // 3 セレクタで上書きする。
+  "& tbody td.is-copy-flash, & tbody tr.grid-row-stripe td.is-copy-flash, & tbody tr:hover td.is-copy-flash":
+    {
+      animation: "apply-flash 0.7s ease-out",
     },
 };
 
@@ -3630,6 +3641,47 @@ export const DataGrid = memo(function DataGrid({
   >(null);
   const { copied, copy: copyWithFeedback } = useCopyFeedback();
 
+  // コピー成功時に対象範囲 (単一セル/行/矩形選択) を一瞬フラッシュさせる
+  // (#1159)。`apply-flash` (インライン編集の適用成功) と同方式で、可視セルの
+  // DOM 要素へ直接クラスを付け外しする — 選択範囲がどれだけ大きくても、React
+  // state を全セルへ撒かず「いま DOM にある (= 仮想スクロールで可視な) セル」
+  // だけを `cellRefs` から辿るので描画コストは可視セル数に比例する
+  // (`gridCopyFlash.ts` の `collectCopyFlashKeys` 参照)。
+  const copyFlashTimerRef = useRef<number | null>(null);
+  const copyFlashElsRef = useRef<HTMLTableCellElement[]>([]);
+  const clearCopyFlash = () => {
+    if (copyFlashTimerRef.current !== null) {
+      window.clearTimeout(copyFlashTimerRef.current);
+      copyFlashTimerRef.current = null;
+    }
+    for (const el of copyFlashElsRef.current) el.classList.remove("is-copy-flash");
+    copyFlashElsRef.current = [];
+  };
+  useEffect(() => clearCopyFlash, []);
+  const flashCopyRange = (rowIndices: readonly number[], colIndices: readonly number[]) => {
+    // 直前のフラッシュが再生中なら止め、同じセルへ再度当たっても最初から
+    // 再生し直す (連続コピーでも毎回光る)。
+    clearCopyFlash();
+    const range = buildCopyFlashRange(rowIndices, colIndices);
+    const keys = collectCopyFlashKeys(cellRefs.current.keys(), range);
+    const els = keys
+      .map((key) => cellRefs.current.get(key))
+      .filter((el): el is HTMLTableCellElement => !!el);
+    if (els.length === 0) return;
+    for (const el of els) {
+      // クラスを外した直後に付け直すだけでは CSS アニメーションが再始動しないので、
+      // レイアウトを読んでリフローを挟み、同じセルでも最初から再生させる。
+      void el.offsetWidth;
+      el.classList.add("is-copy-flash");
+    }
+    copyFlashElsRef.current = els;
+    copyFlashTimerRef.current = window.setTimeout(() => {
+      for (const el of els) el.classList.remove("is-copy-flash");
+      copyFlashElsRef.current = [];
+      copyFlashTimerRef.current = null;
+    }, 700);
+  };
+
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
 
@@ -3662,9 +3714,13 @@ export const DataGrid = memo(function DataGrid({
     }
   }, [viewer, statsMenu, maskedCols, reveal]);
 
-  const runCopy = async (text: string) => {
+  const runCopy = async (
+    text: string,
+    range?: { rowIndices: readonly number[]; colIndices: readonly number[] },
+  ) => {
     setCopyMenu(null);
-    await copyWithFeedback(text);
+    const ok = await copyWithFeedback(text);
+    if (ok && range) flashCopyRange(range.rowIndices, range.colIndices);
   };
   // コピー用のセルテキスト。マスク中 (#1069) かつ設定でプレースホルダコピーが
   // 有効なら伏せ字を、それ以外は実値 (表示整形前の元の値) を返す。
@@ -3676,10 +3732,15 @@ export const DataGrid = memo(function DataGrid({
     );
   const rowCopyText = (rowIdx: number) =>
     (rows[rowIdx] ?? []).map((_, ci) => copyTextAt(rowIdx, ci)).join("\t");
-  const copyCell = (rowIdx: number, colIdx: number) => void runCopy(copyTextAt(rowIdx, colIdx));
-  const copyRow = (rowIdx: number) => void runCopy(rowCopyText(rowIdx));
+  const copyCell = (rowIdx: number, colIdx: number) =>
+    void runCopy(copyTextAt(rowIdx, colIdx), { rowIndices: [rowIdx], colIndices: [colIdx] });
+  const copyRow = (rowIdx: number) =>
+    void runCopy(rowCopyText(rowIdx), { rowIndices: [rowIdx], colIndices: visibleColIds });
   const copyRowWithHeaders = (rowIdx: number) =>
-    void runCopy(`${columns.map((c) => c.name).join("\t")}\n${rowCopyText(rowIdx)}`);
+    void runCopy(`${columns.map((c) => c.name).join("\t")}\n${rowCopyText(rowIdx)}`, {
+      rowIndices: [rowIdx],
+      colIndices: visibleColIds,
+    });
   // 「SQL としてコピー」は伏せ字を埋めると壊れた SQL になるため、コピーを伏せ字に
   // する設定の間は、マスク中のセルを含む行を対象にできない (#1069)。
   const rowSqlBlockedByMask = (rowIndices: number[]) =>
@@ -3708,7 +3769,7 @@ export const DataGrid = memo(function DataGrid({
       kind,
     );
     if (stmts.length === 0) return;
-    void runCopy(stmts.join("\n"));
+    void runCopy(stmts.join("\n"), { rowIndices: [rowIdx], colIndices: visibleColIds });
   };
 
   // "Copy as INSERT" for one or more selected rows (#601). Unlike
@@ -3733,7 +3794,7 @@ export const DataGrid = memo(function DataGrid({
     if (!result.tableResolved) {
       toast.info(t("gridCopyAsInsertAmbiguousTable"));
     }
-    void runCopy(result.sql);
+    void runCopy(result.sql, { rowIndices, colIndices: visibleColIds });
   };
 
   const commitEdit = (
@@ -3963,13 +4024,14 @@ export const DataGrid = memo(function DataGrid({
       for (const ri of rowIdxs) {
         lines.push(colIds.map((ci) => copyTextAt(ri, ci)).join("\t"));
       }
-      void runCopy(lines.join("\n"));
+      void runCopy(lines.join("\n"), { rowIndices: rowIdxs, colIndices: colIds });
       return;
     }
     if (activeCell) {
       if (withHeaders) {
         void runCopy(
           `${columns[activeCell.colIdx]?.name ?? ""}\n${copyTextAt(activeCell.rowIdx, activeCell.colIdx)}`,
+          { rowIndices: [activeCell.rowIdx], colIndices: [activeCell.colIdx] },
         );
       } else {
         copyCell(activeCell.rowIdx, activeCell.colIdx);
@@ -4004,7 +4066,7 @@ export const DataGrid = memo(function DataGrid({
       isMasked: cellMaskedNow,
       copyPlaceholder: columnMaskCopyPlaceholder,
     });
-    if (text) void runCopy(text);
+    if (text) void runCopy(text, { rowIndices: target.rowIndices, colIndices: target.colIndices });
     else setCopyMenu(null);
   };
 
