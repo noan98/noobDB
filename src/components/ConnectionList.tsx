@@ -859,6 +859,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
    */
   const makeTreeItemKeyDown = useCallback(
     (activate?: () => void) => (e: React.KeyboardEvent<HTMLElement>) => {
+      // 行の中の操作要素 (テーブル行のチェブロン button など) から伝わってきたキーは
+      // その要素自身に任せる。ここで Enter を横取りすると、チェブロンの Enter で
+      // カラム一覧を開く代わりにテーブルが開いてしまう (`onTreeItemFocus` と同じ判定)。
+      if (e.target !== e.currentTarget) return;
       if (activate && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
         activate();

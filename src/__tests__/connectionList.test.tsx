@@ -363,4 +363,16 @@ describe("スキーマツリーのキーボード操作 (#1184)", () => {
     fireEvent.keyDown(tblRow, { key: "Enter" });
     expect(onPickTable).toHaveBeenCalledWith("db1", "tbl1");
   });
+
+  it("行の中のチェブロン button の Enter は行の実行に横取りされない (ネイティブのクリックで開閉させる)", async () => {
+    const onPickTable = vi.fn();
+    await openDb({ onPickTable });
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    const chevron = screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) });
+
+    // preventDefault されていなければ fireEvent は true を返す (= ブラウザの既定動作である
+    // button の click が起きる)。
+    expect(fireEvent.keyDown(chevron, { key: "Enter" })).toBe(true);
+    expect(onPickTable).not.toHaveBeenCalled();
+  });
 });
