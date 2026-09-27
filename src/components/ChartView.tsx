@@ -3,7 +3,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
-import { readableInk } from "../colorScale";
+import { readableInk, useIsDarkTheme } from "../colorScale";
 import { durations, easings } from "../motion";
 import { Checkbox } from "./ui";
 import { ImageExportButton } from "./ImageExportButton";
@@ -85,6 +85,9 @@ const ANIM_MAX_ELEMENTS = 200;
 
 export function ChartView({ result, sourceSql, onChangeView }: Props) {
   const t = useT();
+  // ダークテーマでは系列色 (`categorical`) をコントラスト確保版へ、連続/発散
+  // ランプは「暗→明」の向きへ切り替える (#1187)。
+  const isDark = useIsDarkTheme();
   const numericCols = useMemo(
     () => inferNumericColumns(result.columns, result.rows),
     [result.columns, result.rows],
@@ -165,17 +168,17 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
 
   // 系列色 (#916)。既定はこれまでどおりカテゴリスケールで、連続/発散ランプを
   // 選ぶとグリッドのヒートマップと同じ体系の色になる。
-  const seriesColors = chartSeriesColors(config.palette, model.series.length);
+  const seriesColors = chartSeriesColors(config.palette, model.series.length, isDark);
   // 単一数値系列を「値の大小」でランプ着色する。棒だけが対象で、折れ線/面は
   // 1 本の線・面が 1 色である方が形状を追いやすいので系列色のままにする
   // (円グラフはもともとスライス単位の着色なので `PieChart` 側で解決する)。
   // `categorical` では null が返り、従来どおり系列 1 色で描く。
   const valueColors =
     model.series.length === 1 && config.type === "bar"
-      ? chartValueColors(model.series[0].values, config.palette)
+      ? chartValueColors(model.series[0].values, config.palette, isDark)
       : null;
   // 値で着色しているときの凡例見本は、単色ではなくランプの勾配で示す。
-  const legendGradient = valueColors ? chartRampGradient(config.palette) : null;
+  const legendGradient = valueColors ? chartRampGradient(config.palette, isDark) : null;
 
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
@@ -297,7 +300,7 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
         ) : config.yCols.length === 0 ? (
           <EmptyState compact icon="filter" title={t("chartPickY")} />
         ) : config.type === "pie" ? (
-          <PieChart model={model} palette={config.palette ?? DEFAULT_CHART_PALETTE} />
+          <PieChart model={model} palette={config.palette ?? DEFAULT_CHART_PALETTE} isDark={isDark} />
         ) : (
           <CartesianChart
             model={model}
@@ -608,7 +611,7 @@ function HoverTooltip({
   );
 }
 
-function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
+function PieChart({ model, palette, isDark }: { model: ChartModel; palette: string; isDark: boolean }) {
   // 円グラフは先頭系列のみ。負値は 0 にクランプ。
   const [hover, setHover] = useState<number | null>(null);
   const series = model.series[0];
@@ -616,8 +619,8 @@ function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
   const total = values.reduce((a, b) => a + b, 0);
   // 円は元からスライス単位の着色なので、色はスライス数ぶん用意する (#916)。
   // ランプを選んだときは値の大小で、離散パレットでは従来どおりカテゴリ色の
-  // 循環でスライスを塗り分ける。
-  const colors = chartValueColors(values, palette) ?? chartSeriesColors(palette, values.length);
+  // 循環でスライスを塗り分ける。`isDark` (#1187) でダーク用の色を選ぶ。
+  const colors = chartValueColors(values, palette, isDark) ?? chartSeriesColors(palette, values.length, isDark);
   // スライスは数が限られるため常に出現アニメーション可。reduced-motion は
   // ルートの MotionConfig が自動抑制する。
   const animate = values.length <= ANIM_MAX_ELEMENTS;

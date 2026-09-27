@@ -92,7 +92,7 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
-import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
+import { accentFill, ACCENT_FILL_STOPS, readableInk, useIsDarkTheme } from "../colorScale";
 import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
@@ -2935,6 +2935,8 @@ export const DataGrid = memo(function DataGrid({
   // 数値セルの条件付き書式。列ごとの適用モードと、共有のヒートパレット。
   const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
   const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
+  // ダークテーマではヒートマップを「暗→明」の向きへ切り替える (#1187)。
+  const isDarkTheme = useIsDarkTheme();
   // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のみ算出。
   // `rows.map` で行数長の中間配列を列ごとに作らず、ジェネレータで 1 パス集計する。
   const columnStats = useMemo<(NumericStats | null)[]>(
@@ -3390,7 +3392,7 @@ export const DataGrid = memo(function DataGrid({
               );
             }
             const palette = HEAT_PALETTES[heatPaletteKey] ?? HEAT_PALETTES[DEFAULT_HEAT_PALETTE];
-            const color = heatmapColor(normalize(num, stats), palette);
+            const color = heatmapColor(normalize(num, stats), palette, isDarkTheme);
             // ヒートマップは半透明の塗り (行背景との合成) だと、合成後の色が
             // テーマ/行背景ごとに変わってしまい、固定の文字色ではコントラストを
             // 保証できない (#646: 一部の組み合わせで 1.3:1 まで低下していた)。
@@ -3521,6 +3523,7 @@ export const DataGrid = memo(function DataGrid({
     colFormats,
     heatPaletteKey,
     maskedCols,
+    isDarkTheme,
   ]);
 
   // ストリーミング中は 1 行バッチが届くたびに呼び出し元 (App.tsx) が

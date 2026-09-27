@@ -4,7 +4,7 @@ import { Box, chakra, Flex } from "@chakra-ui/react";
 import { api, type DriverKind } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { AUTO_REFRESH_INTERVAL_OPTIONS, useSettings } from "../settings";
-import { categoricalColor } from "../colorScale";
+import { categoricalColor, useIsDarkTheme } from "../colorScale";
 import { niceTicks } from "./chartData";
 import {
   DEFAULT_METRICS_WINDOW_SECS,
@@ -113,6 +113,8 @@ function MetricChart({
   unitLabel: string;
 }) {
   const t = useT();
+  // ダークテーマではコントラストを確保した並行パレットへ切り替える (#1187)。
+  const isDark = useIsDarkTheme();
   const keys = def.series.map((s) => s.key);
   const hasData = hasSeriesData(points, keys);
 
@@ -165,7 +167,7 @@ function MetricChart({
                 width="10px"
                 height="10px"
                 borderRadius="xs"
-                style={{ background: categoricalColor(s.colorIndex) }}
+                style={{ background: categoricalColor(s.colorIndex, isDark) }}
               />
               {t(s.labelKey)}
               <chakra.span fontFamily="var(--font-mono)" textStyle="numeric" color="app.text">
@@ -235,7 +237,7 @@ function MetricChart({
           {seriesData.map((s) => {
             if (s.pts.length === 0) return null;
             const d = s.pts.map((p) => `${xAt(p.atMs)},${yAt(p.value)}`).join(" ");
-            const color = categoricalColor(s.colorIndex);
+            const color = categoricalColor(s.colorIndex, isDark);
             return (
               <g key={s.key}>
                 {s.pts.length === 1 ? (

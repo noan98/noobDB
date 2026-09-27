@@ -12,7 +12,7 @@
  * 単体テストする。色/幅マッピングと正規化のリグレッションをここで固定する。
  */
 
-import { SEQUENTIAL_RAMPS, DIVERGING_RAMPS, sampleRamp } from "../colorScale";
+import { SEQUENTIAL_RAMPS, DIVERGING_RAMPS, sampleRamp, rampStops } from "../colorScale";
 import type { ColorRamp } from "../colorScale";
 
 /** 列ごとの適用モード。 */
@@ -91,7 +91,9 @@ export const DEFAULT_HEAT_PALETTE = "blue";
 /**
  * 正規化値 `t` (0–1) をパレット上の色へ写像し `rgb(...)` 文字列で返す。隣接ストップ
  * を線形補間する。`t` はクランプする。実体は共有スケールの `sampleRamp`。
+ * `isDark` (既定 false) で `colorScale.ts` のダーク用ストップ (`stopsDark`、#1187)
+ * を選び、ダークテーマでも「明度＝値」の対応を保つ。
  */
-export function heatmapColor(t: number, palette: HeatPalette): string {
-  return sampleRamp(t, palette.stops);
+export function heatmapColor(t: number, palette: HeatPalette, isDark = false): string {
+  return sampleRamp(t, rampStops(palette, isDark));
 }

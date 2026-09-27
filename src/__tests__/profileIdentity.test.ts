@@ -121,7 +121,7 @@ describe("groupAvatarColor / groupAvatarForeground (#663)", () => {
 
   it("differentiates at least some distinct names (not a constant function)", () => {
     const names = ["Production", "Staging", "QA", "Analytics", "Ops", "Dev"];
-    const colors = new Set(names.map(groupAvatarColor));
+    const colors = new Set(names.map((n) => groupAvatarColor(n)));
     expect(colors.size).toBeGreaterThan(1);
   });
 

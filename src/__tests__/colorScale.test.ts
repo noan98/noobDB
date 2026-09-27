@@ -3,6 +3,7 @@ import {
   SEQUENTIAL_RAMPS,
   DIVERGING_RAMPS,
   CATEGORICAL,
+  CATEGORICAL_DARK,
   sampleRamp,
   categoricalColor,
   readableInk,
@@ -10,6 +11,8 @@ import {
   INK_LIGHT,
   accentFill,
   ACCENT_FILL_STOPS,
+  isDarkDataTheme,
+  rampStops,
 } from "../colorScale";
 // コントラスト比の計算は accent.ts と共有する (themeContrast.test.ts と同じ方針)。
 import { contrastRatio } from "../accent";
@@ -89,7 +92,78 @@ describe("categoricalColor (#525)", () => {
       expect(hex).toMatch(/^#[0-9a-f]{6}$/);
     }
   });
+
+  it("defaults isDark to false (uses CATEGORICAL, back-compat)", () => {
+    CATEGORICAL.forEach((hex, i) => {
+      expect(categoricalColor(i, false)).toBe(hex);
+      expect(categoricalColor(i)).toBe(categoricalColor(i, false));
+    });
+  });
+
+  it("uses CATEGORICAL_DARK when isDark=true (#1187)", () => {
+    CATEGORICAL_DARK.forEach((hex, i) => {
+      expect(categoricalColor(i, true)).toBe(hex);
+    });
+    expect(categoricalColor(0, true)).not.toBe(categoricalColor(0, false));
+  });
+
+  it("cycles/clamps CATEGORICAL_DARK the same way as CATEGORICAL", () => {
+    expect(categoricalColor(CATEGORICAL_DARK.length, true)).toBe(CATEGORICAL_DARK[0]);
+    expect(categoricalColor(-1, true)).toBe(CATEGORICAL_DARK[CATEGORICAL_DARK.length - 1]);
+    expect(categoricalColor(NaN, true)).toBe(CATEGORICAL_DARK[0]);
+  });
 });
+
+describe("isDarkDataTheme (#1187)", () => {
+  it("matches theme.ts's [data-theme$=dark] suffix rule for known values", () => {
+    for (const v of ["dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark"]) {
+      expect(isDarkDataTheme(v)).toBe(true);
+    }
+    for (const v of ["light", "hc-light", "cb-light", "solarized-light"]) {
+      expect(isDarkDataTheme(v)).toBe(false);
+    }
+  });
+
+  it("treats missing/empty values as light (safe default)", () => {
+    expect(isDarkDataTheme(null)).toBe(false);
+    expect(isDarkDataTheme(undefined)).toBe(false);
+    expect(isDarkDataTheme("")).toBe(false);
+  });
+});
+
+describe("rampStops (#1187)", () => {
+  it("returns light stops by default and dark stops when isDark=true", () => {
+    expect(rampStops(SEQUENTIAL_RAMPS.blue, false)).toBe(SEQUENTIAL_RAMPS.blue.stops);
+    expect(rampStops(SEQUENTIAL_RAMPS.blue, true)).toBe(SEQUENTIAL_RAMPS.blue.stopsDark);
+  });
+
+  it("every ramp's stopsDark has the same point count as stops (same t placement)", () => {
+    for (const ramp of [...Object.values(SEQUENTIAL_RAMPS), ...Object.values(DIVERGING_RAMPS)]) {
+      expect(ramp.stopsDark.length).toBe(ramp.stops.length);
+    }
+  });
+
+  it("sequential dark stops increase in luminance (低値=暗い→高値=明るい, #1187)", () => {
+    for (const ramp of Object.values(SEQUENTIAL_RAMPS)) {
+      const lowLum = hexLuminance(ramp.stopsDark[0]);
+      const highLum = hexLuminance(ramp.stopsDark[ramp.stopsDark.length - 1]);
+      expect(lowLum).toBeLessThan(highLum);
+    }
+  });
+});
+
+/** hex → 相対輝度 (テスト内だけのミニヘルパー)。 */
+function hexLuminance(hex: string): number {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const lin = (c: number) => {
+    const cs = c / 255;
+    return cs <= 0.03928 ? cs / 12.92 : ((cs + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
 
 describe("readableInk (#525/#526)", () => {
   it("uses dark ink on light fills (yellow / grey) and white on dark fills", () => {
