@@ -87,6 +87,10 @@ theme.ts (Chakra トークン)
 | `letterSpacing` | `tight` / `normal` / `wide` / `wider` | -0.01 / 0 / 0.02 / 0.05em |
 
 - `fontSize="11px"` のような px 直値は禁止 (`--text-*` も `--font-scale` を内包する)。
+  SVG の `<text>` も同様で、`fontSize="11"` (単位を省略すると px 相当になる) を直書き
+  せず `style={{ fontSize: "var(--text-xs)" }}` の形でトークンを参照する
+  (`ERDiagramView.tsx` / `ExplainGraphView.tsx` / `ChartView.tsx` /
+  `ServerMetricsPanel.tsx` の書き方に揃える, #1189)。
 - 上付きの小見出し (セクションラベル) は `textStyle="overline"` を使う。
 - 値が変わる数値 (カウントアップ・ページャ・メトリクス・統計・一覧の ID / 経過時間
   など) は `textStyle="numeric"` (スタイルオブジェクト内は `textStyle: "numeric"`) で
@@ -94,6 +98,7 @@ theme.ts (Chakra トークン)
   しない (`theme.ts` の `textStyles.numeric` が単一ソース)。`CountUp` は既定で適用済み。
 
 > **ガード**: `designTokens.test.ts` の「タイポグラフィ」/「等幅数字」
+> (SVG の単位無し `fontSize="<数値>"` も検査対象)
 
 ---
 

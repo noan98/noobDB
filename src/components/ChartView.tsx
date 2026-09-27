@@ -406,7 +406,7 @@ export function CartesianChart({
               stroke={baseline ? "var(--border)" : "var(--border-subtle)"}
               strokeDasharray={baseline ? undefined : "3 4"}
             />
-            <text x={PAD.left - 8} y={y + 3} textAnchor="end" fontSize="11" fill="var(--text-muted)">
+            <text x={PAD.left - 8} y={y + 3} textAnchor="end" style={{ fontSize: "var(--text-xs)" }} fill="var(--text-muted)">
               {formatTick(v)}
             </text>
           </g>
@@ -441,7 +441,7 @@ export function CartesianChart({
       {/* X 軸ラベル */}
       {model.labels.map((lab, i) =>
         i % labelStep === 0 ? (
-          <text key={i} x={xAt(i)} y={H - PAD.bottom + 16} textAnchor="end" fontSize="10" fill="var(--text-muted)"
+          <text key={i} x={xAt(i)} y={H - PAD.bottom + 16} textAnchor="end" style={{ fontSize: "var(--text-2xs)" }} fill="var(--text-muted)"
             transform={`rotate(-30 ${xAt(i)} ${H - PAD.bottom + 16})`}>
             {truncate(lab)}
           </text>
@@ -449,7 +449,7 @@ export function CartesianChart({
       )}
       {/* X 軸タイトル (どの列が横軸かを明示) */}
       {xName && (
-        <text x={PAD.left + plotW / 2} y={H - 6} textAnchor="middle" fontSize="11" fontWeight={600} fill="var(--text-secondary)">
+        <text x={PAD.left + plotW / 2} y={H - 6} textAnchor="middle" style={{ fontSize: "var(--text-xs)" }} fontWeight={600} fill="var(--text-secondary)">
           {truncate(xName, 48)}
         </text>
       )}
@@ -587,7 +587,7 @@ function HoverTooltip({
         stroke="var(--border)"
         opacity={0.98}
       />
-      <text x={left + 10} y={top + 18} fontSize="11" fontWeight={700} fill="var(--text)">
+      <text x={left + 10} y={top + 18} style={{ fontSize: "var(--text-xs)" }} fontWeight={700} fill="var(--text)">
         {header}
       </text>
       {rows.map((r, i) => {
@@ -595,10 +595,10 @@ function HoverTooltip({
         return (
           <g key={i}>
             <rect x={left + 10} y={ry - 8} width="9" height="9" rx="2" fill={r.color} />
-            <text x={left + 24} y={ry} fontSize="11" fill="var(--text-secondary)">
+            <text x={left + 24} y={ry} style={{ fontSize: "var(--text-xs)" }} fill="var(--text-secondary)">
               {r.name}
             </text>
-            <text x={left + boxW - 10} y={ry} textAnchor="end" fontSize="11" fontWeight={600} fill="var(--text)">
+            <text x={left + boxW - 10} y={ry} textAnchor="end" style={{ fontSize: "var(--text-xs)" }} fontWeight={600} fill="var(--text)">
               {r.value}
             </text>
           </g>
@@ -628,7 +628,7 @@ function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
   return (
     <chakra.svg viewBox="0 0 720 440" width="100%" style={{ maxHeight: "100%" }} role="img">
       {total === 0 ? (
-        <text x={cx} y={cy} textAnchor="middle" fontSize="12" fill="var(--text-muted)">∅</text>
+        <text x={cx} y={cy} textAnchor="middle" style={{ fontSize: "var(--text-sm)" }} fill="var(--text-muted)">∅</text>
       ) : (
         values.map((v, i) => {
           const frac = v / total;
@@ -694,7 +694,7 @@ function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
                 </motion.path>
               )}
               {frac >= 0.05 && (
-                <text x={lx} y={ly} textAnchor="middle" fontSize="12" fontWeight={700} fill={readableInk(color)} pointerEvents="none">
+                <text x={lx} y={ly} textAnchor="middle" style={{ fontSize: "var(--text-sm)" }} fontWeight={700} fill={readableInk(color)} pointerEvents="none">
                   {pct.toFixed(0)}%
                 </text>
               )}
@@ -714,7 +714,7 @@ function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
             style={{ cursor: "default" }}
           >
             <rect width="12" height="12" rx="2" fill={colors[i % colors.length]} fillOpacity={hover == null || hover === i ? 1 : 0.5} />
-            <text x="18" y="11" fontSize="11" fontWeight={hover === i ? 700 : 400} fill="var(--text)">
+            <text x="18" y="11" style={{ fontSize: "var(--text-xs)" }} fontWeight={hover === i ? 700 : 400} fill="var(--text)">
               {truncate(lab)} — {formatValue(values[i])} ({pct.toFixed(1)}%)
             </text>
           </g>

@@ -210,7 +210,7 @@ function MetricChart({
                   x={PAD.left - 6}
                   y={y + 3}
                   textAnchor="end"
-                  fontSize="10"
+                  style={{ fontSize: "var(--text-2xs)" }}
                   fill="var(--text-muted)"
                 >
                   {tick}
@@ -219,14 +219,14 @@ function MetricChart({
             );
           })}
           {/* 時間軸ラベル (両端)。 */}
-          <text x={PAD.left} y={CHART_H - 8} textAnchor="start" fontSize="10" fill="var(--text-muted)">
+          <text x={PAD.left} y={CHART_H - 8} textAnchor="start" style={{ fontSize: "var(--text-2xs)" }} fill="var(--text-muted)">
             {timeLabel(t0)}
           </text>
           <text
             x={CHART_W - PAD.right}
             y={CHART_H - 8}
             textAnchor="end"
-            fontSize="10"
+            style={{ fontSize: "var(--text-2xs)" }}
             fill="var(--text-muted)"
           >
             {timeLabel(t1)}
