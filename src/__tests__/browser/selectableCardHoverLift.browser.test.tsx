@@ -24,8 +24,8 @@ import { ProfileCardGrid } from "../../components/ProfileCardGrid";
 import { makeProfile } from "../fixtures/componentFixtures";
 import { t } from "../../i18n";
 
-afterEach(() => {
-  cleanup();
+afterEach(async () => {
+  await cleanup();
 });
 
 // 入場 stagger (staggerTiming: delay 0.04s + each 0.035s) + enter transition
