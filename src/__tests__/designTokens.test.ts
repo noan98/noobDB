@@ -545,4 +545,46 @@ describe("共通コンポーネントの迂回", () => {
       "アイコンの線幅は strokeWidth={ICON_STROKE.thin | regular | bold} で指定する (数値直書き禁止)。",
     ).toEqual([]);
   });
+
+  // 手書き <svg> の許可リスト (#1175)。それぞれ「Icon.tsx を通せない/通すべきでない
+  // 正当な理由」を残す。新しい手書き <svg> を足したくなったら、まず
+  // components/Icon.tsx にグリフを足して <Icon name=... /> で描けないか検討する。
+  const HANDWRITTEN_SVG_ALLOWLIST = new Set([
+    // Icon.tsx 自身: セマンティック・レキシコンの実装そのもの (ブランドロゴの
+    // <svg fill="currentColor"> 描画) であり、迂回ではなく単一ソース側。
+    "../components/Icon.tsx",
+    // ウィンドウ操作 (最小化/最大化/閉じる) は OS のタイトルバー的なガラス面で、
+    // アプリの意味アイコンのセマンティック・レキシコンとは別物。10x10 の極小
+    // viewBox で線幅も 1px 固定という UI 全体と異なる規約を持つ (rule §5)。
+    "../components/TitleBar.tsx",
+    // 空状態のイラスト: アイコンではなく複数パスからなる挿絵で、`Svg` 経由でも
+    // 意味は 1 対 1 のグリフ選択ではない (`illustrations.tsx` は `chakra("svg")`
+    // 経由だがここでは JSX 内の素の <svg> は使っていない。将来素の <svg> を
+    // 足す場合に備えて許可しておく)。
+    "../components/illustrations.tsx",
+    // データを描くチャート/メトリクス面: 軸・バー・折れ線などを算出した座標で
+    // 描画する図であり、固定グリフの選択ではないため対象外。
+    "../components/ChartView.tsx",
+    "../components/ServerMetricsPanel.tsx",
+    // ブランドカラー定数と同様、noobDB ロゴそのもの (favicon / App.css と parity
+    // 固定) を描く単一ソース。
+    "../brand.tsx",
+  ]);
+
+  it("コンポーネントで手書きの <svg> を書かない (#1175)", () => {
+    // JSX の素の `<svg` タグと、Chakra の `chakra.svg` / `chakra("svg")` ファクトリ
+    // 経由の手書き svg の両方を検出する。どちらも Icon.tsx の GLYPHS を経由しない
+    // "素通り" のグリフ描画で、ICON_SIZES / ICON_STROKE のトークン規約からも外れる。
+    const offenders = findViolations(
+      /<svg\b|chakra\.svg\b|chakra\(\s*["']svg["']\s*\)/,
+      () => true,
+      (path) => !HANDWRITTEN_SVG_ALLOWLIST.has(path),
+    );
+    expect(
+      offenders,
+      "アイコンは手書き <svg> ではなく components/Icon.tsx へグリフを足して " +
+        "<Icon name=... size={ICON_SIZES.xx} /> で描く。データ/図を描く SVG や " +
+        "ブランドロゴなど正当な例外は本テストの HANDWRITTEN_SVG_ALLOWLIST に理由付きで追加する。",
+    ).toEqual([]);
+  });
 });

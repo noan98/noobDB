@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   IconAlertCircle,
   IconAlertTriangle,
+  IconAlignLeft,
   IconArrowBackUp,
   IconArrowForwardUp,
   IconArrowsExchange,
@@ -23,6 +24,7 @@ import {
   IconColumns,
   IconCopy,
   IconDatabase,
+  IconDots,
   IconDownload,
   IconEye,
   IconEyeOff,
@@ -44,6 +46,7 @@ import {
   IconMinimize,
   IconMoon,
   IconPin,
+  IconPlayerPlayFilled,
   IconPlugConnectedX,
   IconPlus,
   IconRefresh,
@@ -118,6 +121,9 @@ import {
  * | チャート (結果の可視化)    | `chart`         |
  * | ピボット (クロス集計)      | `pivot`         |
  * | 一括実行 (ブロードキャスト) | `broadcast`    |
+ * | 実行 (再生)                | `play`          |
+ * | 整形 (フォーマット)        | `format`        |
+ * | もっと見る (オーバーフローメニュー) | `more`  |
  *
  * ## サイズ / ストローク規約
  *
@@ -212,7 +218,10 @@ export type IconName =
   | "broadcast"
   | "flask"
   | "info"
-  | "alert-circle";
+  | "alert-circle"
+  | "play"
+  | "format"
+  | "more";
 
 /**
  * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
@@ -353,6 +362,13 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   bell: IconBell,
   broadcast: IconBroadcast,
   flask: IconFlask,
+  // 実行 (再生): Run ボタンの塗り三角。塗り glyph だが `star-filled` と同様、
+  // fill/stroke の切り替えはコンポーネント側が持つのでここでは通常通り登録する。
+  play: IconPlayerPlayFilled,
+  // 整形 (フォーマット): 長さの異なる行 = 整形されたコード行。
+  format: IconAlignLeft,
+  // もっと見る (オーバーフローメニュー): 横並びの三点リーダー。
+  more: IconDots,
 };
 
 interface IconProps {

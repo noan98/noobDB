@@ -163,7 +163,7 @@ theme.ts (Chakra トークン)
 
 | やること | 使うもの | 使ってはいけないもの |
 |---|---|---|
-| アイコン | `components/Icon.tsx` の `<Icon name=... size={ICON_SIZES.md} />` | `@tabler/icons-react` の直接 import |
+| アイコン | `components/Icon.tsx` の `<Icon name=... size={ICON_SIZES.md} />` | `@tabler/icons-react` の直接 import・手書きの `<svg>` (#1175) |
 | ツールチップ | `components/Tooltip.tsx` / `useDelegatedTooltip()` | native `title=` |
 | 右クリックメニュー | `components/ContextMenu.tsx` | 独自のメニュー実装 |
 | 確認ダイアログ | `ConfirmDialog.tsx` / `useConfirm()` | `window.confirm()` |
@@ -180,7 +180,8 @@ theme.ts (Chakra トークン)
 `variants.slideUp` を内包するので `AnimatePresence` の直下に置けば退場も揃う。
 小さなインラインのバッジ (重大度・状態のピル) は帯ではないので対象外。
 
-> **ガード**: `designTokens.test.ts` (tabler 直 import / `<Icon>` の数値 `strokeWidth` /
+> **ガード**: `designTokens.test.ts` (tabler 直 import / 手書き `<svg>` (#1175、許可リストは
+> `HANDWRITTEN_SVG_ALLOWLIST`) / `<Icon>` の数値 `strokeWidth` /
 > 旧 `app.bgError` の直書き) / `callout.test.tsx` /
 > `windowConfirmGuard.test.ts` (`window.confirm`) / `icon.test.tsx` / `tooltip.test.tsx`
 

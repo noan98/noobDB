@@ -3,6 +3,7 @@ import { useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { preflightTone, type PreflightTone } from "./preflight";
 import type { PreflightResult } from "./usePreflight";
+import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import { Tooltip } from "./Tooltip";
 
 /**
@@ -88,10 +89,7 @@ export function PreflightBadge({ result }: Props) {
       >
         <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
           {/* 影響 = 対象行を表す簡素な行アイコン。 */}
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="3" width="12" height="10" rx="1.5" />
-            <path d="M2 6.5h12M6 3v10" />
-          </svg>
+          <Icon name="table" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.thin} />
         </chakra.span>
         {label}
       </chakra.span>
