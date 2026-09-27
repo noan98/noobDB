@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
 import { typedConfirmMatches } from "../typeToConfirm";
 import { semanticColorToken } from "../semanticColors";
+import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input } from "./ui";
 
@@ -88,23 +89,12 @@ export function DangerousQueryDialog({
 
       <ModalBody display="flex" flexDirection="column" gap="3">
         {isProduction && (
-          // 意味色「danger」の淡色バナー (#664)。以前はボタン専用の
+          // 意味色「danger」の状態バナー (#664 / #1145)。以前はボタン専用の
           // `app.dangerBg`/`app.dangerFg` (ライト/ダーク 2 値のみでテーマ
-          // プリセットに追従しない) をベタ塗り背景に転用していた。バナー用途は
-          // 本来 subtle/border/text の組み合わせ (PreviewGrid のドライラン
-          // バナーと同じパターン) が用意されており、全テーマプリセットで AA を
-          // 満たすことを検証済みなのでこちらに揃える。
-          <chakra.div
-            py="2" px="2.5"
-            borderRadius="md"
-            borderLeft="3px solid"
-            borderLeftColor={semanticColorToken("danger", "border")}
-            fontWeight={600}
-            color={semanticColorToken("danger", "text")}
-            bg={semanticColorToken("danger", "subtle")}
-          >
+          // プリセットに追従しない) をベタ塗り背景に転用していた。
+          <Callout tone="danger" icon="production" fontWeight={600}>
             {t("dangerousProductionNote")}
-          </chakra.div>
+          </Callout>
         )}
         {findings.length > 0 ? (
           <>
@@ -153,30 +143,20 @@ export function DangerousQueryDialog({
         {impact && (impact.count !== null || impact.allRows) && (
           // プリフライトの影響行数を「約 N 行が削除/更新されます」と併記する (#737)。
           // 全行 (WHERE なし) は危険色バナーで一段強調する。
-          <chakra.div
-            py="2" px="2.5"
-            borderRadius="md"
-            borderLeft="3px solid"
-            borderLeftColor={semanticColorToken(impact.allRows ? "danger" : "warning", "border")}
-            bg={semanticColorToken(impact.allRows ? "danger" : "warning", "subtle")}
-            color={semanticColorToken(impact.allRows ? "danger" : "warning", "text")}
-            display="flex"
-            flexDirection="column"
-            gap="0.5"
-          >
+          <Callout tone={impact.allRows ? "danger" : "warning"}>
             {impact.count !== null && (
-              <chakra.span fontWeight={600}>
+              <chakra.span display="block" fontWeight={600}>
                 {t(
                   impact.verb === "delete" ? "dangerousImpactDelete" : "dangerousImpactUpdate",
                   { count: impact.count.toLocaleString() },
                 )}
               </chakra.span>
             )}
-            {impact.allRows && <chakra.span>{t("dangerousImpactAllRows")}</chakra.span>}
-            <chakra.span fontSize="sm" color="app.textMuted">
+            {impact.allRows && <chakra.span display="block">{t("dangerousImpactAllRows")}</chakra.span>}
+            <chakra.span display="block" color="app.textMuted">
               {t("dangerousImpactNote")}
             </chakra.span>
-          </chakra.div>
+          </Callout>
         )}
         {requiresTyped && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">

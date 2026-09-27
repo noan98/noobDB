@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen, fireEvent } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import { BottomPanel, WorkspaceSplit } from "../components/BottomPanel";
 import { BOTTOM_PANEL_TABS, type BottomPanelTab } from "../components/bottomPanelTabs";
@@ -152,5 +152,31 @@ describe("WorkspaceSplit (#1112)", () => {
     const separator = screen.getByRole("separator");
     expect(separator).toHaveAttribute("aria-orientation", "horizontal");
     expect(separator).toHaveAccessibleName(t("bottomPanelResizeAria"));
+  });
+
+  it("閉じると退場アニメーションの後に分割を外し、開くと分割を作り直す (#1142)", async () => {
+    const view = renderWithProviders(
+      <WorkspaceSplit bottom={<div data-testid="bottom">bottom</div>}>
+        <div data-testid="workspace">workspace</div>
+      </WorkspaceSplit>,
+    );
+    view.rerender(
+      <WorkspaceSplit bottom={null}>
+        <div data-testid="workspace">workspace</div>
+      </WorkspaceSplit>,
+    );
+    // 退場が終われば分割 (セパレータ) ごと消え、ワークスペースだけが残る。
+    await waitFor(() => expect(screen.queryByRole("separator")).toBeNull());
+    expect(screen.queryByTestId("bottom")).toBeNull();
+    expect(screen.getByTestId("workspace")).toBeInTheDocument();
+
+    view.rerender(
+      <WorkspaceSplit bottom={<div data-testid="bottom">again</div>}>
+        <div data-testid="workspace">workspace</div>
+      </WorkspaceSplit>,
+    );
+    // 開いた瞬間に同期で分割が作られる (1 フレーム遅れて出ない)。
+    expect(screen.getByRole("separator")).toBeInTheDocument();
+    expect(screen.getByTestId("bottom")).toHaveTextContent("again");
   });
 });

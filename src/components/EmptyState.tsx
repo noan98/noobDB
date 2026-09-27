@@ -3,7 +3,7 @@ import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { PressableButton } from "./ui";
-import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 
 /** ルートを motion 化するラッパー。`transition` を motion へ転送する
  *  (`TabBar` / `Modal` と同方式)。`Flex` のショートハンド (direction/align/justify)
@@ -109,7 +109,7 @@ export function EmptyState({
             <Icon
               name={icon}
               size={compact ? ICON_SIZES.lg : ICON_SIZES["2xl"]}
-              strokeWidth={1.5}
+              strokeWidth={ICON_STROKE.thin}
             />
           </Flex>
         )

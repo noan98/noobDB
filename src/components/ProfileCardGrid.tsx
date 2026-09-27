@@ -3,7 +3,7 @@ import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { ConnectionProfile } from "../api/tauri";
 import { useT } from "../i18n";
-import { staggerContainer, variants } from "../motion";
+import { springs, staggerContainer, variants } from "../motion";
 import {
   driverColor,
   driverIconName,
@@ -21,8 +21,16 @@ const MotionFlex = chakra(motion.div, {}, {
   forwardProps: ["transition", "initial", "animate", "variants"],
 });
 const MotionCard = chakra(motion.button, {}, {
-  forwardProps: ["transition", "variants"],
+  forwardProps: ["transition", "variants", "whileHover", "whileTap"],
 });
+
+// カードのホバー/押下の手触り (#1144)。サイドバーの接続行 (ConnectionList) や
+// PressableButton と同じ springs.gentle の scale に揃える。transform は Motion が
+// 持つので CSS 側の transition / _active からは外し、影は CSS の _hover で付ける
+// (Motion で box-shadow を補間すると _focusVisible のフォーカスリングを上書きするため)。
+// prefers-reduced-motion 時はルートの MotionConfig が transform を抑制する。
+const CARD_HOVER = { scale: 1.02 } as const;
+const CARD_TAP = { scale: 0.98 } as const;
 
 interface Props {
   /** 表示するプロファイル (App の並び順そのまま)。 */
@@ -105,10 +113,13 @@ export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }:
           borderRadius="lg"
           color="app.textMuted"
           cursor="pointer"
-          transitionProperty="background, border-color, color"
+          whileHover={CARD_HOVER}
+          whileTap={CARD_TAP}
+          transition={springs.gentle}
+          transitionProperty="background, border-color, color, box-shadow"
           transitionDuration="var(--dur-fast)"
           transitionTimingFunction="var(--ease)"
-          _hover={{ bg: "app.hover", color: "app.text", borderColor: "app.accent" }}
+          _hover={{ bg: "app.hover", color: "app.text", borderColor: "app.accent", boxShadow: "var(--shadow-md)" }}
           _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
         >
           <Icon name="plus" size={ICON_SIZES.lg} />
@@ -136,12 +147,13 @@ function ProfileCard({
   const descId = useId();
   const driverIcon: IconName = driverIconName(p.driver) ?? "server";
   const endpoint = endpointSummary(p);
+  const inert = disabled || connecting;
   return (
     <MotionCard
       type="button"
       variants={variants.staggerItem}
       onClick={onConnect}
-      disabled={disabled || connecting}
+      disabled={inert}
       aria-label={p.name}
       aria-describedby={descId}
       aria-busy={connecting || undefined}
@@ -164,12 +176,20 @@ function ProfileCard({
       borderLeftColor={workspaceSpineColor(p)}
       borderRadius="lg"
       cursor="pointer"
-      transitionProperty="background, border-color, box-shadow, transform"
+      // 押せない間 (他の接続を試行中 / このカードが接続中) は持ち上げない。
+      whileHover={inert ? undefined : CARD_HOVER}
+      whileTap={inert ? undefined : CARD_TAP}
+      transition={springs.gentle}
+      transitionProperty="background, border-color, box-shadow"
       transitionDuration="var(--dur-fast)"
       transitionTimingFunction="var(--ease)"
-      _hover={{ bg: "app.hover", borderColor: "app.borderStrong", borderLeftColor: workspaceSpineColor(p) }}
+      _hover={{
+        bg: "app.hover",
+        borderColor: "app.borderStrong",
+        borderLeftColor: workspaceSpineColor(p),
+        boxShadow: "var(--shadow-md)",
+      }}
       _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
-      _active={{ transform: "translateY(1px)" }}
       _disabled={{ opacity: 0.6, cursor: "default" }}
     >
       <Flex align="center" gap="2" minW={0}>

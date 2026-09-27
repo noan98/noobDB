@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  IconAlertCircle,
   IconAlertTriangle,
   IconArrowBackUp,
   IconArrowForwardUp,
@@ -30,6 +31,7 @@ import {
   IconGitCompare,
   IconHash,
   IconHelp,
+  IconInfoCircle,
   IconKey,
   IconLayoutBoardSplit,
   IconLetterCase,
@@ -206,7 +208,9 @@ export type IconName =
   | "search"
   | "bell"
   | "broadcast"
-  | "flask";
+  | "flask"
+  | "info"
+  | "alert-circle";
 
 /**
  * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
@@ -282,6 +286,10 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   // スニペット: 保存した SQL = しおり。
   snippet: IconBookmark,
   warning: IconAlertTriangle,
+  // 状態バナー (Callout #1145) の情報 / 危険。警告の三角と形で見分けられるよう、
+  // どちらも円形の枠に揃える。
+  info: IconInfoCircle,
+  "alert-circle": IconAlertCircle,
   "chevron-left": IconChevronLeft,
   "chevron-right": IconChevronRight,
   clock: IconClock,

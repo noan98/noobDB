@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
+import { Callout } from "./Callout";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -27,8 +28,6 @@ import {
   type DbAuthMethod,
 } from "./awsIam";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
-import { transitions, variants } from "../motion";
-import { semanticColorToken } from "../semanticColors";
 import {
   COLOR_INPUT_FALLBACK,
   DEFAULT_PRODUCTION_COLOR,
@@ -326,45 +325,24 @@ function Legend({ children }: { children: ReactNode }) {
   );
 }
 
-// motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
-// 素通しする (`ActivityCenter` / `MultiStateBadge` と同じパターン)。
-const MotionBanner = chakra(motion.div, {}, {
-  forwardProps: ["initial", "animate", "exit", "transition"],
-});
-
 /**
- * 接続テスト結果のバナー (#1006)。成功/失敗を `AnimatePresence` +
- * `variants.slideUp` (`motion.ts`) で出入りさせ、`prefers-reduced-motion` /
- * `settings.motionPreference="reduced"` はルートの `MotionConfig` が自動で
- * 即時化する (個別分岐は不要)。色は意味色トークン (`semanticColors.ts`) 経由で
- * 解決し、色値を直書きしない。成功は `role="status"`、失敗は `role="alert"` +
- * `aria-live` で支援技術へ通知される。
+ * 接続テスト結果のバナー (#1006)。共有の状態バナー `Callout` (#1145) に委ね、
+ * 出入りは `AnimatePresence` 配下で `Callout` 既定の `variants.slideUp` が担う
+ * (`prefers-reduced-motion` はルートの `MotionConfig` が即時化する)。成功は
+ * `role="status"`、失敗は `role="alert"` + `aria-live` で支援技術へ通知される。
  */
 function ResultBanner({ tone, children }: { tone: "success" | "danger"; children: ReactNode }) {
   return (
-    <MotionBanner
+    <Callout
+      tone={tone}
       role={tone === "success" ? "status" : "alert"}
       aria-live={tone === "success" ? "polite" : "assertive"}
-      initial={variants.slideUp.initial}
-      animate={variants.slideUp.animate}
-      exit={variants.slideUp.exit}
-      transition={transitions.enter}
       gridColumn="span 2"
-      display="flex"
-      alignItems="center"
-      gap="2"
       px="3"
-      py="2"
-      border="1px solid"
-      borderColor={semanticColorToken(tone, "border")}
-      bg={semanticColorToken(tone, "subtle")}
-      color={semanticColorToken(tone, "text")}
-      borderRadius="md"
       fontSize="md"
     >
-      <Icon name={tone === "success" ? "check" : "warning"} size={ICON_SIZES.md} />
-      <Box as="span">{children}</Box>
-    </MotionBanner>
+      {children}
+    </Callout>
   );
 }
 
