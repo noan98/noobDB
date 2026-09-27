@@ -319,7 +319,7 @@ import {
 import { incomingForeignKeys } from "./fkNavigation";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
-import { transitions, variants } from "./motion";
+import { springs, transitions, variants } from "./motion";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
 import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
@@ -542,6 +542,29 @@ const SIDEBAR_TAB_ORDER: readonly SidebarTab[] = ["connections", "snippets", "hi
 const sidebarTabId = (key: SidebarTab) => `sidebar-tab-${key}`;
 const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
 
+// サイドバータブのアクティブインジケータの layoutId。サイドバーのタブリストは
+// アプリ内に 1 つしか存在しない (`TabBar` の分割ペインのような複数インスタンス化が
+// 無い) ため、`useId` を使わず固定文字列で足りる。他の layoutId (`TabBar` の
+// `tab-active-indicator-*`、`Segmented` の `segmented-thumb-*`) と衝突しない名前にする。
+const SIDEBAR_TAB_INDICATOR_ID = "sidebar-tab-active-indicator";
+
+// motion 要素を Chakra style props で装飾できるようにラップする。`TabBar` /
+// `Segmented` と同じパターン (motion の `transition` プロップは Chakra のスタイル
+// プロップ名と衝突するため明示的に転送する)。
+const MotionSidebarTabIndicator = chakra(motion.span, {}, { forwardProps: ["transition"] });
+
+// サイドバータブパネルのクロスフェード本体。flex 子として高さいっぱいに広がる
+// (`BottomPanel.tsx` の `FILL_STYLE` と同じ意図: 中身のスクロール・高さが
+// motion.div の挟み込みで壊れないようにする)。
+const SIDEBAR_TABPANEL_FILL_STYLE: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
+
 /**
  * サイドバー上部の Connections / Snippets / History 切替タブ。
  *
@@ -552,6 +575,10 @@ const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
  *     Tab キーでタブ群に入ると 1 回でアクティブタブにフォーカスする
  *   - 矢印キー / Home / End でフォーカス移動 + 自動アクティベーション (サイドバー
  *     の表示切替は副作用が軽いため、フォーカスの移動と同時に選択も切り替える)
+ *
+ * アクティブ表示は `TabBar` / `Segmented` と同じ `layoutId` スプリング付き
+ * インジケータ (#1173)。下線を色補間するのではなく、アクティブなタブの下に
+ * 敷いた `motion.span` を `springs.snappy` でタブ間を滑らせる。
  */
 const SidebarTabButton = forwardRef<
   HTMLButtonElement,
@@ -571,11 +598,12 @@ const SidebarTabButton = forwardRef<
       aria-controls={sidebarPanelId(tabKey)}
       aria-selected={active}
       tabIndex={active ? 0 : -1}
+      position="relative"
       flex="1"
       bg="transparent"
       border="none"
-      borderBottom="2px solid"
-      borderBottomColor={active ? "app.accent" : "transparent"}
+      // 下線の分の高さは透明な枠で確保し続ける (インジケータ導入前とタブの高さを変えない)。
+      borderBottom="2px solid transparent"
       borderRadius="0"
       px="2"
       py="1.75"
@@ -583,7 +611,7 @@ const SidebarTabButton = forwardRef<
       fontWeight={600}
       color={active ? "app.text" : "app.textMuted"}
       cursor="pointer"
-      transition="background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)"
+      transition="background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)"
       _hover={{ bg: "app.hover", color: "app.text" }}
       _focusVisible={{
         outline: "none",
@@ -593,6 +621,20 @@ const SidebarTabButton = forwardRef<
       onKeyDown={onKeyDown}
     >
       {children}
+      {active && (
+        <MotionSidebarTabIndicator
+          layoutId={SIDEBAR_TAB_INDICATOR_ID}
+          transition={springs.snappy}
+          position="absolute"
+          left="0"
+          right="0"
+          // 以前の下線 (borderBottom 2px) と同じ位置に重ねる。
+          bottom="-2px"
+          h="2px"
+          bg="app.accent"
+          aria-hidden
+        />
+      )}
     </chakra.button>
   );
 });
@@ -8136,6 +8178,17 @@ export default function App() {
           flex="1"
           overflow="hidden"
         >
+          {/* サイドバー本体 (アプリ起動直後) の初期表示と二重にならないよう
+              initial={false}。BottomPanel (#1142) のタブ切替と同じ組み合わせ。 */}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={sidebarTab}
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+              style={SIDEBAR_TABPANEL_FILL_STYLE}
+            >
           {sidebarTab === "connections" ? (
           <ConnectionList
             ref={connectionListRef}
@@ -8230,6 +8283,8 @@ export default function App() {
             onSaveToFile={handleSaveLocalDatabase}
           />
         )}
+            </motion.div>
+          </AnimatePresence>
         </Box>
         {/* グローバル操作 (テーマ / ヘルプ / 設定) のフッタ。接続先一覧とは無関係な
             操作のため、過密になったヘッダから下部へ退避 (VSCode の下部ギアと同配置)。 */}

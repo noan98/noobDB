@@ -603,3 +603,81 @@ describe("シナリオ: Bottom Panel のログ系タブ (#1114, 実ブラウザ)
       .toHaveAttribute("aria-selected", "true");
   });
 });
+
+describe("シナリオ: サイドバータブの sliding indicator とクロスフェード (#1173, 実ブラウザ)", () => {
+  // アクティブインジケータ (`MotionSidebarTabIndicator`) は `aria-hidden` の
+  // motion.span としてアクティブなタブの内側にのみ描画される (`SidebarTabButton`)。
+  function hasIndicator(tabEl: Element) {
+    return tabEl.querySelector('[aria-hidden="true"]') !== null;
+  }
+
+  it("インジケータはアクティブなタブにだけ描かれ、切替に追従する", async () => {
+    const screen = await renderInBrowser(<App />);
+
+    const connections = screen.getByRole("tab", { name: t("sidebarTabConnections") });
+    const snippets = screen.getByRole("tab", { name: t("sidebarTabSnippets") });
+    const history = screen.getByRole("tab", { name: t("sidebarTabHistory") });
+    const local = screen.getByRole("tab", { name: t("sidebarTabLocal") });
+
+    // 初期状態: Connections がアクティブでインジケータもそこにだけある。
+    await expect.element(connections).toHaveAttribute("aria-selected", "true");
+    expect(hasIndicator(connections.element())).toBe(true);
+    expect(hasIndicator(snippets.element())).toBe(false);
+    expect(hasIndicator(history.element())).toBe(false);
+    expect(hasIndicator(local.element())).toBe(false);
+
+    // Snippets へ切替: インジケータも移動し、他のタブからは消える。
+    await snippets.click();
+    await expect.element(snippets).toHaveAttribute("aria-selected", "true");
+    expect(hasIndicator(snippets.element())).toBe(true);
+    expect(hasIndicator(connections.element())).toBe(false);
+    expect(hasIndicator(history.element())).toBe(false);
+    expect(hasIndicator(local.element())).toBe(false);
+  });
+
+  it("タブ切替でパネル本文がクロスフェードし、新しい内容に差し替わる", async () => {
+    const screen = await renderInBrowser(<App />);
+
+    // Connections パネルにはプロファイル一覧 (Alpha DB) が出ている。
+    await expect.element(screen.getByRole("treeitem", { name: /Alpha DB/ })).toBeVisible();
+
+    // History へ切替: mode="wait" のクロスフェードを挟んでも最終的に新しい
+    // パネル (履歴の空状態) が表示され、旧パネルの中身は消える。
+    await screen.getByRole("tab", { name: t("sidebarTabHistory") }).click();
+    await expect
+      .element(screen.getByRole("treeitem", { name: /Alpha DB/ }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("tabpanel", { name: t("sidebarTabHistory") }))
+      .toBeVisible();
+
+    // Local へ切替: さらに別内容へ差し替わる。
+    await screen.getByRole("tab", { name: t("sidebarTabLocal") }).click();
+    await expect
+      .element(screen.getByRole("tabpanel", { name: t("sidebarTabLocal") }))
+      .toBeVisible();
+  });
+
+  it("タブ切替後も WAI-ARIA 属性 (role/aria-selected/aria-controls) が維持される", async () => {
+    const screen = await renderInBrowser(<App />);
+
+    const tablist = screen.getByRole("tablist", { name: t("sidebarTablistAria") });
+    await expect.element(tablist).toBeVisible();
+
+    const snippetsTab = screen.getByRole("tab", { name: t("sidebarTabSnippets") });
+    await snippetsTab.click();
+
+    await expect.element(snippetsTab).toHaveAttribute("aria-selected", "true");
+    const controlsId = snippetsTab.element().getAttribute("aria-controls");
+    expect(controlsId).toBeTruthy();
+
+    const panel = screen.getByRole("tabpanel", { name: t("sidebarTabSnippets") });
+    await expect.element(panel).toBeVisible();
+    expect(panel.element().id).toBe(controlsId);
+
+    // 非アクティブなタブはローピング tabindex (-1) のまま。
+    const historyTab = screen.getByRole("tab", { name: t("sidebarTabHistory") });
+    expect(historyTab.element().getAttribute("tabindex")).toBe("-1");
+    expect(snippetsTab.element().getAttribute("tabindex")).toBe("0");
+  });
+});
