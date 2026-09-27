@@ -1829,7 +1829,9 @@ html, body, #root {
    - `spinner-rotate`: 共通 Spinner コンポーネントのリング回転
    - `query-progress-slide`: クエリ実行中バーのスライド
    - `skeleton-shimmer`: ResultGrid スケルトンローダーのシマー
-   - `apply-flash`: ResultGrid のインライン編集適用成功時のフラッシュ
+   - `apply-flash`: ResultGrid のインライン編集適用成功時のフラッシュ。
+     コピー操作 (#1159、`runCopy` → `is-copy-flash`) も同じキーフレームを
+     再利用し、コピー対象のセル/行/矩形選択を一瞬フラッシュさせる
    - `find-current-pulse`: ResultGrid の結果内検索 (#644) で現在ヒットへ
      ジャンプしたときの着地パルス
    - `pane-overlay-in`: 結果最大化 / エディタ集中の全画面オーバーレイの出現

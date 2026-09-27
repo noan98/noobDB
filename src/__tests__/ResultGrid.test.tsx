@@ -1098,6 +1098,72 @@ describe("キーボードセルナビゲーション (#406)", () => {
     expect(container.querySelectorAll("td.is-selected-cell").length).toBe(0);
   });
 
+  it("Ctrl+C で単一セルをコピーすると、そのセルだけが一瞬フラッシュする (#1159)", async () => {
+    vi.useFakeTimers();
+    try {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        writable: true,
+        configurable: true,
+      });
+      const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+      const cells = dataCells(container);
+      fireEvent.focus(cells[0][0]);
+      fireEvent.keyDown(cells[0][0], { key: "c", ctrlKey: true });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(writeText).toHaveBeenCalledWith("banana");
+      expect(cells[0][0].classList.contains("is-copy-flash")).toBe(true);
+      // 隣のセルには付かない。
+      expect(cells[0][1].classList.contains("is-copy-flash")).toBe(false);
+      // 一定時間後に自動で外れる (apply-flash と同じ 700ms)。
+      act(() => vi.advanceTimersByTime(700));
+      expect(cells[0][0].classList.contains("is-copy-flash")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Ctrl+C で範囲コピーすると、選択矩形の全セルがフラッシュする (#1159)", async () => {
+    // フェイクタイマーへ切り替えると (advance 漏れの有無に関わらず) 後続の
+    // 非同期テスト (`waitFor` に依存する「結果内検索」など) を巻き込んで壊す
+    // ことがあるため、除去タイミングの検証は単一セルのテストにだけ任せ、ここ
+    // では実時間のまま「即座に範囲全体が付く」ことだけを見る。
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cells[1][1], { key: "c", ctrlKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(container.querySelectorAll("td.is-copy-flash").length).toBe(4);
+    // フラッシュ範囲外のセル (2 行目=cherry) には付かない。
+    expect(cells[2][0].classList.contains("is-copy-flash")).toBe(false);
+  });
+
+  it("クリップボードへの書き込みが失敗したときはフラッシュしない", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "c", ctrlKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(container.querySelectorAll("td.is-copy-flash").length).toBe(0);
+  });
+
   it("テーブルに role=grid、行に role=row、データセルに role=gridcell が付く", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     expect(container.querySelector("table[role='grid']")).toBeTruthy();
