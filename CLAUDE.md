@@ -74,7 +74,8 @@
   `CodePreview` / `FormSection` / `ErrorNote` を使う (`designTokens.test.ts` が
   `*Modal.tsx` / `*Dialog.tsx` 内の手書き `<pre>` とラベルを検出する)。モーダル外の
   フォーム・パネルでも SQL プレビューは `CodePreview`、エラーは `FieldError` /
-  `ErrorNote` (`role="alert"` を手書きしない)。
+  `ErrorNote` (`role="alert"` を手書きしない)。成功 / 警告 / 情報の帯は
+  `components/Callout.tsx` の `Callout` (意味色 4 段 + アイコンを手組みしない)。
 - **モーダルのボタンは「補助 → spacer → キャンセル → 主アクション」、破壊的なら
   「実行 (dangerOutline) → spacer → キャンセル (primary + 初期フォーカス)」。**
   `<Modal>` には主アクションを `onSubmit` (Cmd/Ctrl+Enter) で渡すか、開始タグに

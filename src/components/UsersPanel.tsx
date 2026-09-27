@@ -9,11 +9,12 @@ import {
 } from "../api/tauri";
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
+import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
-import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { CodePreview, FieldLabel, FormSection } from "./modalForm";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
@@ -429,7 +430,10 @@ export function UsersPanel({
       </chakra.p>
 
       {readOnly && (
-        <ErrorNote role="status">{t("usersReadOnlyHint")}</ErrorNote>
+        // 読み取り専用はエラーではなく「この画面では変更できない」という案内 (#1145)。
+        <Callout tone="info" icon="lock" role="status">
+          {t("usersReadOnlyHint")}
+        </Callout>
       )}
 
       <Flex gap="4" flex="1" minHeight={0} alignItems="stretch">

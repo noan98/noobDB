@@ -265,6 +265,26 @@ describe("design tokens: theme.ts ⇔ App.css のパリティ", () => {
       .sort();
     expect(missing, "theme.ts が参照する CSS 変数が App.css に無い").toEqual([]);
   });
+
+  it("コンポーネントがフォールバック無しで参照する CSS 変数は App.css かそのファイル自身に定義されている (#1147)", () => {
+    // theme.ts を経由しない生の `var(--x)` も同じく静かに崩れる。#1147 では ChartView が
+    // 実在しない `--bg-surface` をマーカーの縁取りに使い、ハローが透明になっていた。
+    // `var(--x, 既定値)` のフォールバック付きと、同じファイルで `--x` を定義している
+    // もの (インライン style で渡す幅・色相など) は意図的な参照なので対象外。
+    const offenders: string[] = [];
+    for (const [path, content] of sources) {
+      const re = /var\(\s*(--[\w-]*\w)\s*([,)])/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content))) {
+        const [, name, next] = m;
+        if (next === ",") continue;
+        const defined = new RegExp(`\\${name}\\s*:`);
+        if (defined.test(css) || defined.test(content) || content.includes(`"${name}"`)) continue;
+        offenders.push(`${toDisplayPath(path)}: ${name}`);
+      }
+    }
+    expect(offenders, "App.css に無い CSS 変数を参照している (タイプミス・廃止済みトークン)").toEqual([]);
+  });
 });
 
 describe("design tokens: ベタ塗り専用の前景色", () => {
@@ -400,12 +420,23 @@ describe("フォーム / パネルの共通プリミティブ (#1114 でモー�
     const offenders = scan(
       /role="alert"/,
       (path) => isComponent(path) && path !== "../components/ResultGrid.tsx" && path !== "../components/modalForm.tsx",
-      (line) => /<(?:ErrorNote|FieldError)\b/.test(line),
+      (line) => /<(?:ErrorNote|FieldError|Callout)\b/.test(line),
     );
     expect(
       offenders,
       'フィールドのエラーは <FieldError> (role="alert" 込み)、操作を止める持続的エラーは ' +
         '<ErrorNote role="alert"> を使う (modalForm.tsx)。',
+    ).toEqual([]);
+  });
+
+  it("状態の帯は Callout / ErrorNote で出し、旧 2 段トークン app.bgError を直書きしない (#1145)", () => {
+    // #1145 時点で ErrorNote・HostKeyMismatchDialog・ConnectionList が旧トークンの
+    // 地 + 無彩色 (または枠なし) で危険帯を手組みしており、周囲の 4 段意味色
+    // (subtle 地 + border 枠) の帯と見た目が食い違っていた。
+    const offenders = scan(/app\.bgError\b/, isComponent, () => false);
+    expect(
+      offenders,
+      '危険の帯は <ErrorNote> / <Callout tone="danger">、面の上のエラー文は app.textError を使う。',
     ).toEqual([]);
   });
 });
@@ -493,6 +524,25 @@ describe("共通コンポーネントの迂回", () => {
       offenders,
       "アイコンは components/Icon.tsx の <Icon name=... /> 経由で使う。直接 import すると " +
         "同じ意味に別グリフが割り当たり、ICON_SIZES / ICON_STROKE のトークン規約も崩れる。",
+    ).toEqual([]);
+  });
+
+  it("<Icon> の strokeWidth は ICON_STROKE トークンで渡す (#1146)", () => {
+    // #1146 時点で 1.5 の直書き 3 箇所と、スケール外の 2.2 (結果グリッドのフィルタ
+    // アイコンだけ線が太い) が混在していた。開始タグは複数行にまたがるので
+    // ファイル全体に対して `<Icon ...>` の範囲をマッチさせる。
+    const offenders: string[] = [];
+    for (const [path, content] of sources) {
+      const re = /<Icon\b[^>]*?\bstrokeWidth=(?:\{\s*[\d.]+\s*\}|"[\d.]+")/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content))) {
+        const line = content.slice(0, m.index).split("\n").length;
+        offenders.push(`${toDisplayPath(path)}:${line}: ${m[0].replace(/\s+/g, " ")}`);
+      }
+    }
+    expect(
+      offenders,
+      "アイコンの線幅は strokeWidth={ICON_STROKE.thin | regular | bold} で指定する (数値直書き禁止)。",
     ).toEqual([]);
   });
 });

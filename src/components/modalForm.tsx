@@ -1,5 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import type { ComponentProps } from "react";
+import { Callout } from "./Callout";
 
 /**
  * モーダル / 設定画面 / 各種フォームで共有する Chakra レイアウトプリミティブ群。
@@ -41,28 +42,26 @@ export const PathRow = chakra("div", {
 /**
  * エラー文の枠付き表示。
  *
+ * 実体は共有の状態バナー `Callout` の `tone="danger"` (#1145)。以前は枠線が中立色
+ * (`app.border`) + 旧 2 段トークン (`app.bgError`) で、周囲の意味色バナーと食い違って
+ * いたため、危険色の協調枠線 (`app.error.border`) と先頭アイコンに揃えた。
+ * `role` / 余白 / `gridColumn` などは従来どおり呼び出し側から渡せる。
+ *
  * ## エラー/警告表示の使い分け
  * - **Toast** (`Toast.tsx`): コピー完了・接続失敗などの一時的な操作結果。自動で
  *   消えるため、モーダル内の持続的なエラーには使わない。
  * - **ErrorNote** (本コンポーネント): モーダル内のバリデーション/実行エラー。
  *   操作を完了させるまで残り続ける必要があるエラーに使う。
+ * - **Callout** (`Callout.tsx`): 危険以外 (成功 / 警告 / 情報) の状態を告げる帯。
  * - **FieldError**: フィールドに隣接して出す軽量なバリデーションエラー
  *   (例: `SaveAsTableModal` のテーブル名衝突)。`ErrorNote` より控えめに表示したい
  *   場面に使う。
  * - **セル近傍の inline 表示**: グリッドのセル編集エラー。`ErrorNote` ではなく
  *   セル内に直接表示して文脈を保つ。
  */
-export const ErrorNote = chakra("div", {
-  base: {
-    py: "2", px: "2.5",
-    border: "1px solid",
-    borderColor: "app.border",
-    bg: "app.bgError",
-    color: "app.textError",
-    borderRadius: "md",
-    fontSize: "sm",
-  },
-});
+export function ErrorNote(props: Omit<ComponentProps<typeof Callout>, "tone">) {
+  return <Callout tone="danger" {...props} />;
+}
 
 const FieldErrorText = chakra("span", {
   base: { fontSize: "xs" },

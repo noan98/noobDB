@@ -71,7 +71,7 @@ import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
 import { reorderColumnIds } from "./columnReorderFlip";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
-import { Icon, ICON_SIZES } from "./Icon";
+import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import {
   type CellKind,
   CELL_KIND_META,
@@ -5001,7 +5001,7 @@ export const DataGrid = memo(function DataGrid({
                             aria-haspopup="dialog"
                             aria-expanded={filterMenu?.colIdx === colIdx}
                           >
-                            <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={2.2} />
+                            <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.bold} />
                           </chakra.button>
                         </Tooltip>
                       </div>

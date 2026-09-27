@@ -3,7 +3,6 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type ColumnProfile, type TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
-import { semanticColorToken } from "../semanticColors";
 import { chartSeriesColors } from "./chartData";
 import { CartesianChart } from "./ChartView";
 import {
@@ -24,6 +23,7 @@ import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Select } from "./ui";
 import { ErrorNote } from "./modalForm";
+import { Callout } from "./Callout";
 
 /**
  * 列データプロファイル (「列を探索」、#974) のボトムパネル。
@@ -246,21 +246,11 @@ export function ColumnProfilePanel({
       {profile && (
         <>
           {profile.notes.length > 0 && (
-            <Box
-              borderRadius="sm"
-              border="1px solid"
-              borderColor={semanticColorToken("warning", "border")}
-              bg={semanticColorToken("warning", "subtle")}
-              color={semanticColorToken("warning", "text")}
-              px="3"
-              py="2"
-            >
+            <Callout tone="warning" px="3">
               {profile.notes.map((code) => (
-                <chakra.div key={code} fontSize="sm">
-                  {t(profileNoteKey(code))}
-                </chakra.div>
+                <chakra.div key={code}>{t(profileNoteKey(code))}</chakra.div>
               ))}
-            </Box>
+            </Callout>
           )}
 
           <Flex gap="2" flexWrap="wrap">

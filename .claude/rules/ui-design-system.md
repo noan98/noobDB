@@ -28,6 +28,9 @@ theme.ts (Chakra トークン)
 
 > **ガード**: `__tests__/designTokens.test.ts`
 > — `theme.ts` が参照する `var(--x)` が `App.css` に実在することも検証する。
+> コンポーネントがフォールバック無しで書く生の `var(--x)` も、`App.css` かそのファイル
+> 自身に定義が無ければ fail する (#1147: 実在しない `--bg-surface` でチャートの縁取りが
+> 透明になっていた)。
 
 ---
 
@@ -166,11 +169,19 @@ theme.ts (Chakra トークン)
 | 確認ダイアログ | `ConfirmDialog.tsx` / `useConfirm()` | `window.confirm()` |
 | ショートカット | `shortcuts.ts` (単一ソース) | 個別のキーハンドラ定義 |
 | 空状態 | `EmptyState.tsx` | 独自の「データがありません」表示 |
+| 状態の帯 (成功/警告/危険/情報) | `Callout.tsx` の `<Callout tone=...>` (危険のエラーは `ErrorNote`) | `semanticColorToken(role, "subtle")` + 枠 + アイコンの手組み・旧 `app.bgError` |
 
 アイコンのサイズ・ストロークは `ICON_SIZES` / `ICON_STROKE` のトークンのみ
-(ピクセル直値は使わない)。詳細は `.claude/skills/noobdb-frontend/references/ui-foundation.md`。
+(ピクセル直値は使わない。`<Icon strokeWidth={1.5}>` ではなく `strokeWidth={ICON_STROKE.thin}`)。詳細は `.claude/skills/noobdb-frontend/references/ui-foundation.md`。
 
-> **ガード**: `designTokens.test.ts` (tabler 直 import) /
+`Callout` は `semanticColors.ts` の subtle 地 + border 枠 + text 文字を 1 度だけ組み立て、
+役割 → 先頭アイコンの対応 (`CALLOUT_ICONS`) も持つ (#1145)。`title` / `action` /
+`icon={null}` を受け、`role` (`alert` / `status`) は呼び出し側が決める。出現は
+`variants.slideUp` を内包するので `AnimatePresence` の直下に置けば退場も揃う。
+小さなインラインのバッジ (重大度・状態のピル) は帯ではないので対象外。
+
+> **ガード**: `designTokens.test.ts` (tabler 直 import / `<Icon>` の数値 `strokeWidth` /
+> 旧 `app.bgError` の直書き) / `callout.test.tsx` /
 > `windowConfirmGuard.test.ts` (`window.confirm`) / `icon.test.tsx` / `tooltip.test.tsx`
 
 ---
@@ -257,7 +268,8 @@ Bottom Panel に足すときは:
 | 入力欄の見出しラベル | `FieldLabel` (入力に紐づくなら `htmlFor`、見出し用途は `as="div"`) |
 | 入力欄 + 参照ボタンの横並び | `PathRow` |
 | フィールド単位のバリデーションエラー | `FieldError` (`role="alert"` 込み) |
-| 操作をブロックする持続的エラー | `ErrorNote` |
+| 操作をブロックする持続的エラー | `ErrorNote` (= `Callout tone="danger"`) |
+| 危険以外の状態の帯 (成功 / 警告 / 情報) | `Callout` (`components/Callout.tsx`) |
 | SQL / エクスポート内容のプレビュー | `CodePreview` (`wrap` で折り返し、高さは `minH` / `maxH`) |
 
 例外はチェックボックス / ラジオを包む `<label>` (コントロールの一部であって
@@ -276,7 +288,7 @@ Bottom Panel に足すときは:
 > — `*Modal.tsx` / `*Dialog.tsx` 内の手書き `<pre>` と、
 > `color="app.textSecondary"` を持つ手書き `<label>` を禁止する。加えて全コンポーネント
 > で SQL プレビューの手書き `<pre>` (値ビューアは許可リスト) と、`ErrorNote` /
-> `FieldError` 以外への `role="alert"` の手書きを禁止する
+> `FieldError` / `Callout` 以外への `role="alert"` の手書きを禁止する
 
 ### 7.3 意味色は「面の上」と「ベタ塗りの上」を取り違えない
 

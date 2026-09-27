@@ -1,6 +1,18 @@
-import { forwardRef, Fragment, useCallback, useMemo, useRef, type ReactNode } from "react";
+import {
+  forwardRef,
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { Box, chakra, Flex } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
+import { transitions, variants } from "../motion";
 import {
   bottomPanelGroupStarts,
   nextBottomPanelTab,
@@ -30,7 +42,24 @@ import { Button } from "./ui";
  * どのパネルを見ているかはタブバーが示し、閉じる操作はここの × に集約する。
  * そのため中身のコンポーネント (`AdvisorPanel` など) 側の見出し + 閉じるボタンは
  * #1112 で削除した。中身はツールバー (再実行・フィルタなど) から始まる。
+ *
+ * ## モーション (#1142)
+ *
+ * 全画面サーフェス・結果ペイン種別の切替と同じ語彙で、タブ切替は本体を
+ * `variants.fade` でクロスフェードし、開閉は `WorkspaceSplit` がパネル全体を
+ * `variants.slideUp` で出し入れする。reduced-motion 時はルートの `MotionConfig`
+ * が y 移動を抑制する (フェードだけが残る)。
  */
+
+/** アニメーションする本体・パネルの枠。flex 子として高さいっぱいに広がる。 */
+const FILL_STYLE: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
 
 const tabId = (key: BottomPanelTab) => `bottom-panel-tab-${key}`;
 const panelId = (key: BottomPanelTab) => `bottom-panel-${key}`;
@@ -202,7 +231,20 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: P
         flexDirection="column"
         overflow="hidden"
       >
-        {children}
+        {/* 結果ペインの種別切替 (App.tsx) と同じ組み合わせ。初回表示はパネル
+            自体の出現 (WorkspaceSplit) と二重にならないよう initial={false}。 */}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tab}
+            initial={variants.fade.initial}
+            animate={variants.fade.animate}
+            exit={variants.fade.exit}
+            transition={transitions.crossfade}
+            style={FILL_STYLE}
+          >
+            {children}
+          </motion.div>
+        </AnimatePresence>
       </Box>
     </Flex>
   );
@@ -218,6 +260,12 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: P
  * End / Enter)・localStorage 永続化・最小サイズのクランプはすべてそちらと
  * `paneLayout.ts` に実装済みで、ここで持つと規則が二重になる。既定の配分 (0.62) は
  * 「エディタと結果が主役、パネルは従」という Epic #1110 の方針をそのまま比率にした。
+ *
+ * 開閉はパネル全体を `variants.slideUp` で出し入れする (#1142)。高さは補間しない —
+ * 分割比は `Splitter` が持っているので、高さを動かすとドラッグ中の比率計算と
+ * 競合する。閉じるときは退場アニメーションが終わるまで分割を残し、
+ * `onExitComplete` で初めて `children` の素通しへ戻す。起動時に前回開いていた
+ * パネルは演出なしで出す (アプリの初期表示を遅く見せないため)。
  */
 export function WorkspaceSplit({
   bottom,
@@ -227,12 +275,37 @@ export function WorkspaceSplit({
   children: ReactNode;
 }) {
   const t = useT();
-  if (!bottom) return <>{children}</>;
+  const open = Boolean(bottom);
+  // 閉じる操作の後も退場アニメーションが終わるまで分割を残すためのフラグ。
+  // 開いた瞬間は描画中に同期で立てる (effect で立てると 1 フレーム分割無しで描かれる)。
+  const [split, setSplit] = useState(open);
+  if (open && !split) setSplit(true);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+  }, []);
+
+  if (!open && !split) return <>{children}</>;
   return (
     <Splitter
       direction="column"
       first={children}
-      second={bottom}
+      second={
+        <AnimatePresence onExitComplete={() => setSplit(false)}>
+          {open && (
+            <motion.div
+              key="bottom-panel"
+              initial={mounted.current ? variants.slideUp.initial : false}
+              animate={variants.slideUp.animate}
+              exit={variants.slideUp.initial}
+              transition={transitions.enter}
+              style={FILL_STYLE}
+            >
+              {bottom}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      }
       defaultFraction={0.62}
       minSize={140}
       storageKey="noobdb.bottomPanelSplit"

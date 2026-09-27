@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { ConnectionProfile } from "../api/tauri";
+import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview } from "./modalForm";
 import { Button } from "./ui";
@@ -54,15 +55,9 @@ export function HostKeyMismatchDialog({ profile, message, busy, onReTrust, onCan
           ) : (
             <CodePreview wrap>{message}</CodePreview>
           )}
-          <chakra.p
-            p="2"
-            borderRadius="sm"
-            bg="app.bgError"
-            color="app.textError"
-            fontWeight={500}
-          >
+          <Callout tone="danger" fontWeight={500}>
             {t("hostKeyMismatchWarning")}
-          </chakra.p>
+          </Callout>
         </Flex>
       </ModalBody>
       <ModalFooter>

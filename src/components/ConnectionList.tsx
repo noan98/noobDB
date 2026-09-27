@@ -5,6 +5,7 @@ import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableCo
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
 import { isSandboxShadowTableName } from "../sandbox";
+import { Callout } from "./Callout";
 import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
@@ -2205,17 +2206,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       </Box>
 
       {error && (
-        <Box
+        // サイドバー上端に全幅で敷く帯なので、角丸と左右上の枠を外して下線だけ残す。
+        <Callout
+          tone="danger"
           px="3"
           py="1.5"
           fontSize="xs"
-          color="app.textError"
-          bg="app.bgError"
-          borderBottom="1px solid"
-          borderColor="app.borderSubtle"
+          borderRadius="0"
+          borderWidth="0"
+          borderBottomWidth="1px"
         >
           {error}
-        </Box>
+        </Callout>
       )}
 
       {profiles.length === 0 ? (

@@ -511,13 +511,13 @@ export function CartesianChart({
                   cy={yAt(v)}
                   r={hover === i ? 4.5 : 2.5}
                   fill={color}
-                  stroke="var(--bg-surface)"
+                  stroke="var(--bg-elevated)"
                   strokeWidth={1}
                 />
               ))}
             {/* マーカー非表示時もホバー点だけは強調する。 */}
             {!showMarkers && hover != null && (
-              <circle cx={xAt(hover)} cy={yAt(s.values[hover])} r={4} fill={color} stroke="var(--bg-surface)" strokeWidth={1} />
+              <circle cx={xAt(hover)} cy={yAt(s.values[hover])} r={4} fill={color} stroke="var(--bg-elevated)" strokeWidth={1} />
             )}
           </g>
         );
@@ -655,7 +655,7 @@ function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
                   cy={cy + oy}
                   r={r}
                   fill={color}
-                  stroke="var(--bg-surface)"
+                  stroke="var(--bg-elevated)"
                   strokeWidth={1}
                   initial={animate ? { opacity: 0 } : false}
                   animate={{ opacity: 1 }}
@@ -671,7 +671,7 @@ function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
                 <motion.path
                   d={`M ${cx + ox} ${cy + oy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`}
                   fill={color}
-                  stroke="var(--bg-surface)"
+                  stroke="var(--bg-elevated)"
                   strokeWidth={1}
                   initial={animate ? { opacity: 0 } : false}
                   animate={{ opacity: 1 }}
