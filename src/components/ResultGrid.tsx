@@ -47,6 +47,11 @@ import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { comboMatchesEvent, formatCombo } from "../shortcutKeys";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
 import {
+  contextMenuPointFromRect,
+  isContextMenuOpenKey,
+  pickContextMenuOpenKeys,
+} from "./contextMenuKeyboard";
+import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   useSettings,
@@ -4370,6 +4375,18 @@ export const DataGrid = memo(function DataGrid({
     if (comboMatchesEvent(effectiveGridBindings.gridCopy, ne)) {
       e.preventDefault();
       copySelection(false);
+      return;
+    }
+    // Shift+F10 / ContextMenu キー (#1185): アクティブセルの右クリックメニューを
+    // キーボードから開く。座標はセル自身の矩形から算出し、右クリックと同じ
+    // `setCopyMenu` を呼ぶだけ (メニューの組み立てロジックは二重に持たない)。
+    if (isContextMenuOpenKey(pickContextMenuOpenKeys(e))) {
+      const el = cellRefs.current.get(`${rowIdx}:${colIdx}`);
+      if (el) {
+        e.preventDefault();
+        const { x, y } = contextMenuPointFromRect(el.getBoundingClientRect());
+        setCopyMenu({ x, y, rowIdx, colIdx });
+      }
       return;
     }
 

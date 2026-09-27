@@ -26,6 +26,16 @@ import { useCallback, useEffect, useRef } from "react";
  * Modal (Chakra Dialog) は Ark/Chakra 本体がこれを内包しているため重複しないが、
  * ContextMenu のような独自ポータルでは明示的に使う必要がある。
  *
+ * 記憶するタイミングは **レンダー中** (mount 用の `useEffect` ではない)。子
+ * コンポーネントが mount 時の `useEffect`/`useLayoutEffect` で自動フォーカスを
+ * 行う場合 (`ContextMenu` の `MenuPanel` が先頭項目へ `autoFocus` するなど)、
+ * React の effect は子 → 親の順に発火するため、`useReturnFocus` 側を
+ * `useEffect` で記憶すると子の自動フォーカス**後**に記憶してしまい、
+ * 「開く前にフォーカスしていた要素」ではなく「メニューの先頭項目」を記憶して
+ * しまう (#1185: キーボードでセル/行にフォーカスしたまま `ContextMenu` を
+ * 開いたときに、Esc で元のセル/行へ戻らない不具合)。レンダー中に一度だけ読めば
+ * この競合が起きない。
+ *
  * @example
  * ```tsx
  * function ContextMenu({ onClose }: { onClose: () => void }) {
@@ -35,12 +45,16 @@ import { useCallback, useEffect, useRef } from "react";
  * ```
  */
 export function useReturnFocus(): void {
-  // ref なので再レンダリングをトリガーしない。
-  const returnTo = useRef<Element | null>(null);
+  // レンダー中に 1 度だけ記憶する遅延初期化 (ref の初期値は毎レンダー式評価
+  // されるが、代入は初回のみ)。`undefined` 番人で 2 回目以降のレンダーでの
+  // 上書きを防ぐ — `document.activeElement` は子のマウント処理でこの後に
+  // 変わりうるため、後続レンダーで読み直すと記憶が上書きされてしまう。
+  const returnTo = useRef<Element | null | undefined>(undefined);
+  if (returnTo.current === undefined) {
+    returnTo.current = document.activeElement;
+  }
 
   useEffect(() => {
-    returnTo.current = document.activeElement;
-
     return () => {
       const el = returnTo.current;
       if (el && el instanceof HTMLElement && document.contains(el)) {

@@ -38,8 +38,8 @@ export function WorkspaceSurface({
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
 
-  // 宣言順が重要: useReturnFocus の effect が先に走って「開く前のフォーカス」を
-  // 記憶し、その後で下の effect がフォーカスをコンテナへ移す。
+  // useReturnFocus はレンダー中に「開く前のフォーカス」を記憶する (#1185)。
+  // その後で下の effect がフォーカスをコンテナへ移す。
   useReturnFocus();
   useEffect(() => {
     const el = ref.current;
