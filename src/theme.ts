@@ -698,3 +698,85 @@ export const sectionLabelRecipe = defineRecipe({
   className: "app-section-label",
   base: { margin: 0, textStyle: "overline" },
 });
+
+/**
+ * クリック可能なサーフェスカード (`ui.tsx` の `SelectableCard`、#1161)。
+ *
+ * ウェルカム画面の主要導線カード (`WelcomeCard`)・プロファイルカード
+ * (`ProfileCard` + 新規接続カード)・テーマプリセットカード (`ThemePresetCard`)
+ * が個別に手書きされ、角丸 (`lg`/`md`)・押下フィードバック (`translateY`/`scale`)・
+ * フォーカスリング (`--focus-ring` 45%/手書き 35%) が画面ごとに食い違っていた
+ * ものを単一化する recipe。
+ *
+ * - 静止時は `shadow="elevationRaised"` (`--elevation-raised`)。それまで
+ *   `--elevation-raised` はどのコンポーネントからも参照されておらず、カードは
+ *   枠線だけのフラットな見た目だった。
+ * - ホバーで 1 段上の `elevationPopover` (`--elevation-popover`、モーダル等の
+ *   オーバーレイと同じ影の強さ) + わずかな `translateY(-1px)` のリフト。
+ * - 押下は `translateY(1px)` (WelcomeCard 由来) に統一。ProfileCard が使っていた
+ *   `motion` の `whileHover`/`whileTap` scale (#1144) は、影のアニメーションと
+ *   1 つの transition プロパティ (`transform`) で協調させるため、この CSS ベースの
+ *   リフト/押下へ統合する (`ProfileCardGrid.tsx` 側のコメント参照)。
+ * - `aria-pressed="true"` (選択状態、`ThemePresetCard` が使用) はアクセント色の
+ *   枠線 + inset リングで示す。
+ * - 本番スパイン (`borderLeft`) のような用途固有の装飾は recipe に持たず、
+ *   呼び出し側が通常の style prop として重ねる (`borderLeft`/`borderLeftColor` は
+ *   この recipe が触らないプロパティなので、そのまま安全に上乗せできる)。
+ *
+ * この recipe を `motion.button` へ直接適用しない (`chakra(motion.button, ...)`)。
+ * `variants`/stagger の入場アニメ完了後に Motion がインライン `transform: none`
+ * を残し、ここで定義する `_hover`/`&:active` の CSS `transform` (リフト/押下) を
+ * 上書きしてしまう。要素の出入りに Motion が要る場合は、入場だけを担当する
+ * `motion.div` の薄いラッパーを外側に置き、この recipe を適用した通常の
+ * `<button>` (`ui.tsx` の `SelectableCard`) を中に置くこと
+ * (`ui.tsx` の `SelectableCard` JSDoc / `WelcomeView.tsx` `ProfileCardGrid.tsx`
+ * の `MotionCardWrap` を参照)。
+ *
+ * `size` variant:
+ * - `default`: `WelcomeCard` / `ProfileCard` 相当 (padding 4 / gap 2)。
+ * - `compact`: `ThemePresetCard` 相当の小さいタイル (padding 2 / gap 1.5)。
+ *
+ * `prefers-reduced-motion` 時は `App.css` 末尾の全称 `transition-duration: 0.01ms`
+ * (#787) が transform/box-shadow の遷移をまとめて即時化するため、個別の分岐は
+ * 不要。
+ */
+export const selectableCardRecipe = defineRecipe({
+  className: "app-selectable-card",
+  base: {
+    display: "flex",
+    textAlign: "left",
+    border: "1px solid",
+    borderColor: "app.border",
+    borderRadius: "lg",
+    bg: "app.surface",
+    color: "app.text",
+    cursor: "pointer",
+    shadow: "elevationRaised",
+    transitionProperty: "background, border-color, box-shadow, transform",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: {
+      bg: "app.hover",
+      borderColor: "app.borderStrong",
+      shadow: "elevationPopover",
+      transform: "translateY(-1px)",
+    },
+    "&:active:not(:disabled)": { transform: "translateY(1px)" },
+    // 選択状態 (ThemePresetCard)。アクセント色の枠線 + inset リングで示す。
+    "&[aria-pressed=true]": {
+      borderColor: "app.accent",
+      boxShadow: "inset 0 0 0 1px var(--accent)",
+    },
+    _focusVisible: { outline: "none", boxShadow: focusRing },
+    _disabled: { opacity: 0.6, cursor: "default" },
+  },
+  variants: {
+    size: {
+      default: { flexDirection: "column", alignItems: "stretch", gap: "2", p: "4" },
+      compact: { flexDirection: "column", alignItems: "flex-start", gap: "1.5", p: "2" },
+    },
+  },
+  defaultVariants: {
+    size: "default",
+  },
+});

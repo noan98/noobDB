@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
-import { Heading } from "./ui";
+import { Heading, SelectableCard } from "./ui";
 import { motion, useReducedMotion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../i18n";
@@ -16,7 +16,18 @@ const MotionRoot = chakra(motion.div, {}, { forwardProps: ["transition"] });
 const MotionDiv = chakra(motion.div, {}, { forwardProps: ["transition"] });
 // 主要導線カードの stagger (順次出現、#875) 用。variants を motion へ素通しする。
 const MotionRow = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
-const MotionCardButton = chakra(motion.button, {}, { forwardProps: ["variants"] });
+// stagger 入場だけを担当する薄いラッパー。カードの見た目・ホバー/押下は
+// `ui.tsx` の `SelectableCard` (`selectableCardRecipe`、#1161) にそのまま任せる。
+// `SelectableCard` 自身を `motion.button` 化すると、入場アニメ完了後に Motion が
+// 残す `transform: none` のインライン style が recipe の CSS `transform`
+// (ホバーリフト/押下) より優先されてしまい効かなくなる不具合があったため
+// (`ProfileCardGrid.tsx` の `MotionCardWrap` コメント参照)、入場担当の要素と
+// ホバー/押下担当の要素 (`SelectableCard`) を分離している。`base.display: "flex"`
+// でラッパー自身を flex コンテナ化し、中の `SelectableCard` (`flex="1"`) が
+// ラッパーいっぱいに広がるようにする。
+const MotionCardWrap = chakra(motion.div, { base: { display: "flex" } }, {
+  forwardProps: ["variants"],
+});
 
 interface Props {
   /** 「接続を追加」— 空の接続フォームを開く (ConnectionList の onCreate と同じ)。 */
@@ -46,51 +57,34 @@ interface CardProps {
 function WelcomeCard({ icon, title, description, onClick }: CardProps) {
   const descId = useId();
   return (
-    <MotionCardButton
-      type="button"
-      variants={variants.staggerItem}
-      onClick={onClick}
-      aria-label={title}
-      aria-describedby={descId}
-      display="flex"
-      flexDirection="column"
-      alignItems="flex-start"
-      gap="2"
-      textAlign="left"
-      flex="1 1 220px"
-      minW="200px"
-      maxW="280px"
-      p="4"
-      bg="app.surface"
-      border="1px solid"
-      borderColor="app.border"
-      borderRadius="lg"
-      cursor="pointer"
-      transitionProperty="background, border-color, box-shadow, transform"
-      transitionDuration="var(--dur-fast)"
-      transitionTimingFunction="var(--ease)"
-      _hover={{ bg: "app.hover", borderColor: "app.borderStrong" }}
-      _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
-      _active={{ transform: "translateY(1px)" }}
-    >
-      <Flex
-        align="center"
-        justify="center"
-        boxSize="40px"
-        rounded="lg"
-        bg="app.surfaceMuted"
-        color="app.accent"
-        aria-hidden
+    <MotionCardWrap variants={variants.staggerItem} flex="1 1 220px" minW="200px" maxW="280px">
+      <SelectableCard
+        type="button"
+        onClick={onClick}
+        aria-label={title}
+        aria-describedby={descId}
+        flex="1"
+        alignItems="flex-start"
       >
-        <Icon name={icon} size={ICON_SIZES.lg} strokeWidth={ICON_STROKE.thin} />
-      </Flex>
-      <Text fontWeight="600" color="app.text" fontSize="sm">
-        {title}
-      </Text>
-      <Text id={descId} color="app.textMuted" fontSize="xs" lineHeight="1.5">
-        {description}
-      </Text>
-    </MotionCardButton>
+        <Flex
+          align="center"
+          justify="center"
+          boxSize="40px"
+          rounded="lg"
+          bg="app.surfaceMuted"
+          color="app.accent"
+          aria-hidden
+        >
+          <Icon name={icon} size={ICON_SIZES.lg} strokeWidth={ICON_STROKE.thin} />
+        </Flex>
+        <Text fontWeight="600" color="app.text" fontSize="sm">
+          {title}
+        </Text>
+        <Text id={descId} color="app.textMuted" fontSize="xs" lineHeight="1.5">
+          {description}
+        </Text>
+      </SelectableCard>
+    </MotionCardWrap>
   );
 }
 
