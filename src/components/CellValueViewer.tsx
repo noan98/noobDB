@@ -1,17 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { CellValue } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
-import { copyToClipboard } from "./clipboard";
-import { Icon, ICON_SIZES } from "./Icon";
+import { CopyButton } from "./CopyButton";
+import { useCopyFeedback } from "./useCopyFeedback";
 import { JsonTreeView } from "./JsonTreeView";
 import { parseJsonLossless, serializeJson, formatJsonLossless } from "./jsonTree";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
 import { Segmented } from "./Segmented";
-import { Tooltip } from "./Tooltip";
 import { FieldError } from "./modalForm";
 
 interface Props {
@@ -114,24 +113,10 @@ export function CellValueViewer({
   const [draft, setDraft] = useState(seedText);
   const [nullDraft, setNullDraft] = useState(pendingIsNull || (hasPending ? false : isNull));
 
-  const [copied, setCopied] = useState(false);
-  const copiedTimer = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    },
-    [],
-  );
+  const { copied, copy } = useCopyFeedback();
 
   const handleCopy = async () => {
-    const ok = await copyToClipboard(display);
-    if (!ok) {
-      toast.error(t("clipboardCopyFailed"));
-      return;
-    }
-    setCopied(true);
-    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    await copy(display);
   };
 
   const startEditing = () => {
@@ -309,33 +294,30 @@ export function CellValueViewer({
               </chakra.span>
             )}
             <chakra.div flex="1" />
-            <Tooltip label={copied ? t("gridCopied") : t("cellViewerCopy")} focusableWrapper={isNull}>
-              <chakra.button
-                type="button"
-                onClick={handleCopy}
-                disabled={isNull}
-                aria-label={copied ? t("gridCopied") : t("cellViewerCopy")}
-                display="inline-flex"
-                alignItems="center"
-                justifyContent="center"
-                w="34px"
-                h="34px"
-                p={0}
-                color="app.textMuted"
-                bg="app.bgInput"
-                border="1px solid"
-                borderColor="app.border"
-                borderRadius="md"
-                cursor="pointer"
-                transitionProperty="color, background, border-color"
-                transitionDuration="var(--dur-fast)"
-                transitionTimingFunction="var(--ease)"
-                _hover={{ color: "app.text", bg: "app.hover" }}
-                _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-              >
-                <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
-              </chakra.button>
-            </Tooltip>
+            <CopyButton
+              copied={copied}
+              onClick={() => void handleCopy()}
+              disabled={isNull}
+              focusableWrapper={isNull}
+              label={t("cellViewerCopy")}
+              copiedLabel={t("gridCopied")}
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="34px"
+              h="34px"
+              p={0}
+              bg="app.bgInput"
+              border="1px solid"
+              borderColor="app.border"
+              borderRadius="md"
+              cursor="pointer"
+              transitionProperty="color, background, border-color"
+              transitionDuration="var(--dur-fast)"
+              transitionTimingFunction="var(--ease)"
+              _hover={{ color: "app.text", bg: "app.hover" }}
+              _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+            />
             {canEdit ? (
               <Button type="button" variant="primary" onClick={startEditing}>
                 {t("cellViewerEdit")}

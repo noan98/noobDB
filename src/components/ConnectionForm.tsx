@@ -12,7 +12,8 @@ import {
   SslMode,
 } from "../api/tauri";
 import { useT } from "../i18n";
-import { copyToClipboard } from "./clipboard";
+import { CopyButton } from "./CopyButton";
+import { useCopyFeedback } from "./useCopyFeedback";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
@@ -91,9 +92,8 @@ function PasswordInput({
   const [revealed, setRevealed] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showingMask = hasStored && value === "" && !focused && revealed === null;
   const canReveal = hasStored && value === "" && !!profileId && !!secretKind;
@@ -107,19 +107,12 @@ function PasswordInput({
 
   // Drop the plaintext (and any pending timer) when the field unmounts — e.g.
   // switching the SSH auth method away from "password" while it is revealed.
-  useEffect(
-    () => () => {
-      clearHideTimer();
-      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
-    },
-    [],
-  );
+  useEffect(() => clearHideTimer, []);
 
   const hideRevealed = () => {
     clearHideTimer();
     setRevealed(null);
     setShow(false);
-    setCopied(false);
     setRevealError(null);
   };
 
@@ -160,11 +153,7 @@ function PasswordInput({
 
   const copyRevealed = async () => {
     if (revealed === null) return;
-    if (await copyToClipboard(revealed)) {
-      setCopied(true);
-      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopied(false), 1500);
-    }
+    await copy(revealed);
   };
 
   const showing = show || revealed !== null;
@@ -198,27 +187,23 @@ function PasswordInput({
           onBlur={() => setFocused(false)}
         />
         {revealed !== null && (
-          <Tooltip label={copied ? t("formPasswordCopied") : t("formPasswordCopy")}>
-            <chakra.button
-              type="button"
-              position="absolute"
-              right="32px"
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              p="1"
-              border="none"
-              bg="transparent"
-              color={copied ? "app.textSuccess" : "app.textMuted"}
-              borderRadius="sm"
-              _hover={{ bg: "app.hover", color: copied ? "app.textSuccess" : "app.text" }}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => void copyRevealed()}
-              aria-label={copied ? t("formPasswordCopied") : t("formPasswordCopy")}
-            >
-              <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
-            </chakra.button>
-          </Tooltip>
+          <CopyButton
+            copied={copied}
+            onClick={() => void copyRevealed()}
+            label={t("formPasswordCopy")}
+            copiedLabel={t("formPasswordCopied")}
+            position="absolute"
+            right="32px"
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            p="1"
+            border="none"
+            bg="transparent"
+            borderRadius="sm"
+            _hover={{ bg: "app.hover", color: "app.text" }}
+            onMouseDown={(e) => e.preventDefault()}
+          />
         )}
         <Tooltip label={toggleLabel}>
           <chakra.button

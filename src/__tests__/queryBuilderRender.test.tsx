@@ -289,3 +289,48 @@ describe("QueryBuilder type-aware value input (改善 1)", () => {
     expect(screen.getByText(t("qbNotNullWarning"))).toBeInTheDocument();
   });
 });
+
+// コピー確認 UI の共通化 (#1158)。以前は unmount 時のタイマー cleanup が
+// 無く、unmount 後に setState されるリスクがあった。共通フック
+// (`useCopyFeedback`) 経由になったことで、コピー直後にモーダルを閉じても
+// タイマーが安全に破棄されることを固定する。
+describe("QueryBuilder SQL プレビューのコピー確認 (#1158)", () => {
+  beforeEach(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it("コピー後にアイコンが check に切り替わり、共通 Icon コンポーネント経由で描画される", async () => {
+    renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(api.listTables).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: t("qbCopy") }));
+
+    const copiedButton = await screen.findByRole("button", { name: t("qbCopied") });
+    // 生の inline <svg> (旧実装は viewBox="0 0 16 16" を手書きしていた) ではなく
+    // `components/Icon.tsx` が描く tabler アイコン (viewBox="0 0 24 24") 経由で
+    // あること (UI 規約 §5)。
+    const svg = copiedButton.querySelector("svg");
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute("viewBox")).toBe("0 0 24 24");
+  });
+
+  it("コピー確認表示中にモーダルを閉じて (unmount) もタイマーが原因の例外は起きない", async () => {
+    const { unmount } = renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(api.listTables).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: t("qbCopy") }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: t("qbCopied") })).toBeInTheDocument(),
+    );
+
+    expect(() => unmount()).not.toThrow();
+  });
+});

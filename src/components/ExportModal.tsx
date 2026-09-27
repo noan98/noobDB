@@ -12,11 +12,10 @@ import { Button, Checkbox, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
-import { Icon, ICON_SIZES } from "./Icon";
-import { copyToClipboard } from "./clipboard";
+import { CopyButton } from "./CopyButton";
+import { useCopyFeedback } from "./useCopyFeedback";
 import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
 import { exportFormatHasTextPreview, xlsxTruncationNotices, type ExportNotice } from "./exportXlsx";
-import { Tooltip } from "./Tooltip";
 import { resolveMaskedColumns, type MaskConfig } from "./columnMask";
 import {
   buildInvestigationBundleHtml,
@@ -251,8 +250,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // 直近の xlsx エクスポートで Excel の上限に当たったときの警告 (#711)。トーストは
   // 消えるので、何行で切れたかをモーダル内にも残す。次のエクスポート開始で消す。
   const [notices, setNotices] = useState<ExportNotice[]>([]);
-  const [copied, setCopied] = useState(false);
-  const copiedTimer = useRef<number | null>(null);
+  const { copied, copy } = useCopyFeedback();
   // ユーザがパスを手で編集 / ブラウズで選択したら true。既定の保存先 (ダウンロード
   // フォルダ) の後付けでユーザの入力を上書きしないためのガード。
   const userEditedPathRef = useRef(false);
@@ -415,7 +413,6 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     () => () => {
       disposedRef.current = true;
       unlistenRef.current?.();
-      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
     },
     [],
   );
@@ -440,14 +437,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       format === "bundle"
         ? await buildBundle(sourceRows, true)
         : buildExportContent(format, effectiveColumns, sourceRows, queryForJson, exportCtx);
-    const ok = await copyToClipboard(content);
-    if (!ok) {
-      toast.error(t("clipboardCopyFailed"));
-      return;
-    }
-    setCopied(true);
-    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    await copy(content);
   };
 
   // 既定の保存先を OS のダウンロードフォルダにする。初期パスはファイル名のみ
@@ -960,32 +950,29 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               </chakra.span>
             )}
             <chakra.div flex="1" />
-            <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={copyDisabled}>
-              <chakra.button
-                type="button"
-                onClick={handleCopy}
-                disabled={copyDisabled}
-                aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
-                display="inline-flex"
-                alignItems="center"
-                justifyContent="center"
-                w="28px"
-                h="28px"
-                color={copied ? "app.status.success" : "app.textMuted"}
-                bg="app.bgInput"
-                border="1px solid"
-                borderColor="app.border"
-                borderRadius="md"
-                cursor="pointer"
-                transitionProperty="color, background, border-color"
-                transitionDuration="var(--dur-fast)"
-                transitionTimingFunction="var(--ease)"
-                _hover={{ color: copied ? "app.status.success" : "app.text", bg: "app.hover" }}
-                _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-              >
-                <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
-              </chakra.button>
-            </Tooltip>
+            <CopyButton
+              copied={copied}
+              onClick={() => void handleCopy()}
+              disabled={copyDisabled}
+              focusableWrapper={copyDisabled}
+              label={t("exportCopyAll")}
+              copiedLabel={t("gridCopied")}
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="28px"
+              h="28px"
+              bg="app.bgInput"
+              border="1px solid"
+              borderColor="app.border"
+              borderRadius="md"
+              cursor="pointer"
+              transitionProperty="color, background, border-color"
+              transitionDuration="var(--dur-fast)"
+              transitionTimingFunction="var(--ease)"
+              _hover={{ color: "app.text", bg: "app.hover" }}
+              _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+            />
           </chakra.div>
           {hasTextPreview ? (
             <CodePreview aria-label={t("exportPreview")} maxH="180px">
