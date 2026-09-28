@@ -91,8 +91,8 @@ pub struct Assertion {
     /// どの接続のときに一覧へ出すか (スニペットと共有の型)。
     #[serde(default)]
     pub scope: SnippetScope,
-    /// 対象テーブルのスキーマ (PostgreSQL / MSSQL / DuckDB のスキーマ、MySQL の
-    /// データベース)。`None` ならセッションの既定に任せる。
+    /// 対象テーブルのスキーマ (PostgreSQL のスキーマ、MySQL のデータベース)。
+    /// `None` ならセッションの既定に任せる。
     #[serde(default)]
     pub schema: Option<String>,
     /// 対象テーブル。

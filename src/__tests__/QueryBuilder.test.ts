@@ -114,12 +114,11 @@ describe("quoteValueForColumn", () => {
     expect(quoteValueForColumn("mysql", "abc", info)).toBe("'abc'");
   });
 
-  it("emits TRUE/FALSE for a boolean column, 1/0 on SQLite/MSSQL", () => {
+  it("emits TRUE/FALSE for a boolean column, 1/0 on SQLite", () => {
     const info = makeColumnInfo({ data_type: "boolean" });
     expect(quoteValueForColumn("mysql", "true", info)).toBe("TRUE");
     expect(quoteValueForColumn("postgres", "false", info)).toBe("FALSE");
     expect(quoteValueForColumn("sqlite", "true", info)).toBe("1");
-    expect(quoteValueForColumn("mssql", "false", info)).toBe("0");
     // 0/1 spellings are also accepted for a boolean column.
     expect(quoteValueForColumn("mysql", "1", info)).toBe("TRUE");
     expect(quoteValueForColumn("mysql", "0", info)).toBe("FALSE");
@@ -337,9 +336,8 @@ describe("isRequiredColumn", () => {
   });
 });
 
-// ORDER BY (SELECT のみ) の buildSql 回帰テスト。特に MSSQL は TOP (n) を
-// SELECT 直後、ORDER BY を文末に置く必要があり、他の 3 ドライバは LIMIT の
-// 前に ORDER BY が来る — この方言差を固定する。
+// ORDER BY (SELECT のみ) の buildSql 回帰テスト。3 ドライバとも ORDER BY は
+// LIMIT の前に来る — この並びを固定する。
 describe("buildSql — ORDER BY", () => {
   const oneAsc: OrderByItem[] = [{ column: "name", direction: "ASC" }];
   const twoTerms: OrderByItem[] = [
@@ -379,22 +377,4 @@ describe("buildSql — ORDER BY", () => {
     );
   });
 
-  it("MSSQL: TOP goes right after SELECT, ORDER BY still trails the statement", () => {
-    const out = buildSelectSql("mssql", {
-      orderBy: oneAsc,
-      limitEnabled: true,
-      limit: "5",
-    });
-    expect(out).toBe('SELECT TOP (5) * FROM [db].[dbo].[users] ORDER BY [name] ASC;');
-  });
-
-  it("MSSQL: ORDER BY without a LIMIT (no TOP) still renders at the end", () => {
-    const out = buildSelectSql("mssql", { orderBy: oneAsc });
-    expect(out).toBe('SELECT * FROM [db].[dbo].[users] ORDER BY [name] ASC;');
-  });
-
-  it("MSSQL: TOP alone (no ORDER BY) is unaffected by the ORDER BY change", () => {
-    const out = buildSelectSql("mssql", { limitEnabled: true, limit: "5" });
-    expect(out).toBe("SELECT TOP (5) * FROM [db].[dbo].[users];");
-  });
 });

@@ -10,9 +10,8 @@
   64bit 整数が丸まらない (整形表示・編集時の整形/最小化も同じパーサ経由)。子は展開
   ノードだけ 200 件ずつ遅延描画し、検索は明示スタックで走査する。ノード単位でパス
   (`$.a.b[0]`)・値・方言別の SQL 抽出式 / WHERE 条件 (PostgreSQL `->`/`->>`、MySQL
-  `JSON_EXTRACT`、SQLite `json_extract`、DuckDB `json_extract_string`、MSSQL
-  `JSON_VALUE`/`JSON_QUERY`) を**クリップボードへコピーするだけ**で、DB への書き込み
-  経路もフィルタモデルも増やさない。
+  `JSON_EXTRACT`、SQLite `json_extract`) を**クリップボードへコピーするだけ**で、
+  DB への書き込み経路もフィルタモデルも増やさない。
 - セル値のクイックフィルタ (#914) — `quickFilter.ts`。結果グリッドのセル右クリックに
   出る「この値で絞り込む (= value)」「この値を除外する (≠ value)」の**純ロジック**。
   **新しいフィルタモデルは増やさず**、クリックしたセルの値を既存の 2 経路 — table
@@ -39,7 +38,7 @@
   そのセル 1 つ。時刻系の候補は**クリック時点**の時計で組み直す (メニューを開いたまま
   時間が経っても古い値を書かない)。NOT NULL 列では NULL の項目を「消す」のではなく
   **理由付きで無効化**して制約を可視化する。`BIT` はドライバで意味が変わる唯一の型で、
-  MSSQL では真偽型そのもの (MySQL/SQLite も 1/0 が有効) だが PostgreSQL / DuckDB では
+  MySQL/SQLite では真偽型そのもの (1/0 が有効) だが PostgreSQL では
   ビット列 (`'10110000'`) なので `true`/`false` も空文字も不正なリテラルになる。
   `classifyEditType` は型名しか見られないためこの分岐は `quickSetOptions` 側に置き、
   ビット列ドライバでは NULL 以外を出さない (必ず Apply で失敗する候補を出すくらいなら
@@ -173,7 +172,7 @@
   `quoteIdentFor`、検索語は `quoteString` + `escapeLikeWildcards` を通す。実行は専用 IPC
   `run_lookup_query` で、バックエンドがセッションの read_only に関係なく読み取り専用の
   文だけを通し、行数上限 (既定 200・最大 1000) と設定の `queryTimeoutSecs` を課し、
-  履歴・結果キャッシュには載せない。MySQL ENUM/SET・DuckDB ENUM は型名から、PG の
+  履歴・結果キャッシュには載せない。MySQL ENUM/SET は型名から、PG の
   ユーザ定義 ENUM は `pg_enum` から、CHECK は `col IN (...)` / `= ANY (ARRAY[...])` /
   同一列の等値 OR だけを許可値として解析する。取れない・失敗した列は候補なし
   (= 従来のテキスト入力) に静かに縮退する。ドライバ別の対応表は `valuePicker.ts` 冒頭。

@@ -15,7 +15,7 @@ import vectors from "./fixtures/sqlQuotingVectors.json";
 // バック側は同じ JSON を `src-tauri/tests/sql_quoting_golden.rs` が `include_str!`
 // で読み込み、対になる検証を行う。
 
-type Driver = "mysql" | "postgres" | "sqlite" | "duckdb" | "mssql";
+type Driver = "mysql" | "postgres" | "sqlite";
 type ByDriver = Record<Driver, string>;
 
 interface IdentifierCase {
@@ -48,7 +48,7 @@ function toCellValue(c: LiteralCase): CellValue {
 
 describe("SQL 引用/エスケープ ゴールデン (フロント実装)", () => {
   it("ベクタが 5 ドライバすべてを覆う", () => {
-    expect(drivers).toEqual(["mysql", "postgres", "sqlite", "duckdb", "mssql"]);
+    expect(drivers).toEqual(["mysql", "postgres", "sqlite"]);
     expect(identifiers.length).toBeGreaterThanOrEqual(10);
     expect(literals.length).toBeGreaterThanOrEqual(12);
   });

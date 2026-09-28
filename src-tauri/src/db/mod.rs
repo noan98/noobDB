@@ -5,13 +5,10 @@ pub mod aws_iam;
 pub mod create_table;
 pub mod data_diff;
 pub mod diff;
-pub mod duckdb;
 pub mod format;
 /// エクスポート時のデータマスキング (#733)。出力時だけの変換で DB には触れない。
 pub mod masking;
-pub mod mssql;
 pub mod mysql;
-pub mod native_dump;
 pub mod postgres;
 /// ドライラン (プレビュー) のスナップショット取得を組み立てる共有ロジック。
 /// ドライバ非依存の純粋な文字列処理なので、各ドライバの
@@ -114,14 +111,6 @@ pub enum DriverKind {
     Mysql,
     Postgres,
     Sqlite,
-    /// DuckDB (#709): a file-backed analytical database, addressed the same
-    /// way as SQLite (`file_path`, no host/port/user/password, no SSH/TLS).
-    /// `rename_all = "lowercase"` above already serializes this as `"duckdb"`.
-    DuckDb,
-    /// Microsoft SQL Server (#729). Backed by `tiberius` rather than `sqlx` —
-    /// see `db/mssql.rs` for the driver module and `AppError::Mssql` for the
-    /// dedicated error variant.
-    Mssql,
 }
 
 impl DriverKind {
@@ -132,8 +121,6 @@ impl DriverKind {
             DriverKind::Mysql => "mysql",
             DriverKind::Postgres => "postgres",
             DriverKind::Sqlite => "sqlite",
-            DriverKind::DuckDb => "duckdb",
-            DriverKind::Mssql => "mssql",
         }
     }
 
@@ -146,8 +133,6 @@ impl DriverKind {
             "mysql" => Some(DriverKind::Mysql),
             "postgres" => Some(DriverKind::Postgres),
             "sqlite" => Some(DriverKind::Sqlite),
-            "duckdb" => Some(DriverKind::DuckDb),
-            "mssql" => Some(DriverKind::Mssql),
             _ => None,
         }
     }
@@ -319,19 +304,6 @@ pub enum Connection {
     MySql(mysql::MySqlConn),
     Postgres(postgres::PostgresConn),
     Sqlite(sqlite::SqliteConn),
-    // Boxed: `DuckDbConn` carries a `std::sync::Mutex<duckdb::Connection>` +
-    // a `tokio::sync::Mutex<Option<duckdb::Connection>>` inline, which makes
-    // it noticeably larger than the sqlx-backed variants —
-    // `clippy::large_enum_variant` flags the resulting padding on every
-    // `Connection` value (Windows clippy catches this; Linux's build didn't
-    // regress but the lint is architecture-independent).
-    DuckDb(Box<duckdb::DuckDbConn>),
-    // Boxed: `MssqlConn` embeds `tiberius::Client`'s TDS connection state
-    // directly (no internal `Arc`/pool indirection at the top level like the
-    // sqlx-backed drivers), making it far larger than the other three
-    // variants — `clippy::large_enum_variant` flags the resulting padding on
-    // every `Connection` value.
-    Mssql(Box<mssql::MssqlConn>),
 }
 
 /// A single row skipped by a resilient (skip-mode) import: its 0-based index
@@ -359,8 +331,6 @@ impl Connection {
             Connection::MySql(_) => DriverKind::Mysql,
             Connection::Postgres(_) => DriverKind::Postgres,
             Connection::Sqlite(_) => DriverKind::Sqlite,
-            Connection::DuckDb(_) => DriverKind::DuckDb,
-            Connection::Mssql(_) => DriverKind::Mssql,
         }
     }
 
@@ -371,12 +341,6 @@ impl Connection {
                 postgres::PostgresConn::connect(opts).await?,
             )),
             DriverKind::Sqlite => Ok(Connection::Sqlite(sqlite::SqliteConn::connect(opts).await?)),
-            DriverKind::DuckDb => Ok(Connection::DuckDb(Box::new(
-                duckdb::DuckDbConn::connect(opts).await?,
-            ))),
-            DriverKind::Mssql => Ok(Connection::Mssql(Box::new(
-                mssql::MssqlConn::connect(opts).await?,
-            ))),
         }
     }
 
@@ -385,15 +349,13 @@ impl Connection {
             Connection::MySql(c) => c.execute(sql, database).await,
             Connection::Postgres(c) => c.execute(sql, database).await,
             Connection::Sqlite(c) => c.execute(sql, database).await,
-            Connection::DuckDb(c) => c.execute(sql, database).await,
-            Connection::Mssql(c) => c.execute(sql, database).await,
         }
     }
 
     /// ファイル取り込み用の新規テーブルを作成する (#985)。DDL は
     /// [`create_table::render_create_table`] がこの接続の方言で生成し (識別子は
     /// `quote_ident` でクォート)、通常の [`Connection::execute`] で流す。続く
-    /// `import_rows` と同じ `database` 文脈 (MySQL/MSSQL の USE、PostgreSQL の
+    /// `import_rows` と同じ `database` 文脈 (MySQL の USE、PostgreSQL の
     /// search_path) で実行されるため、作成先と取り込み先が一致する。
     pub async fn create_table_from_columns(
         &self,
@@ -415,8 +377,6 @@ impl Connection {
             Connection::MySql(c) => c.tx_begin(database).await,
             Connection::Postgres(c) => c.tx_begin(database).await,
             Connection::Sqlite(c) => c.tx_begin(database).await,
-            Connection::DuckDb(c) => c.tx_begin(database).await,
-            Connection::Mssql(c) => c.tx_begin(database).await,
         }
     }
 
@@ -427,8 +387,6 @@ impl Connection {
             Connection::MySql(c) => c.tx_execute(sql).await,
             Connection::Postgres(c) => c.tx_execute(sql).await,
             Connection::Sqlite(c) => c.tx_execute(sql).await,
-            Connection::DuckDb(c) => c.tx_execute(sql).await,
-            Connection::Mssql(c) => c.tx_execute(sql).await,
         }
     }
 
@@ -439,8 +397,6 @@ impl Connection {
             Connection::MySql(c) => c.tx_finish(commit).await,
             Connection::Postgres(c) => c.tx_finish(commit).await,
             Connection::Sqlite(c) => c.tx_finish(commit).await,
-            Connection::DuckDb(c) => c.tx_finish(commit).await,
-            Connection::Mssql(c) => c.tx_finish(commit).await,
         }
     }
 
@@ -450,8 +406,6 @@ impl Connection {
             Connection::MySql(c) => c.tx_active().await,
             Connection::Postgres(c) => c.tx_active().await,
             Connection::Sqlite(c) => c.tx_active().await,
-            Connection::DuckDb(c) => c.tx_active().await,
-            Connection::Mssql(c) => c.tx_active().await,
         }
     }
 
@@ -474,8 +428,6 @@ impl Connection {
             Connection::MySql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Postgres(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Sqlite(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
-            Connection::DuckDb(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
-            Connection::Mssql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
         }
     }
 
@@ -500,14 +452,6 @@ impl Connection {
                     .await
             }
             Connection::Sqlite(c) => {
-                c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
-                    .await
-            }
-            Connection::DuckDb(c) => {
-                c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
-                    .await
-            }
-            Connection::Mssql(c) => {
                 c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
                     .await
             }
@@ -577,30 +521,6 @@ impl Connection {
                 )
                 .await
             }
-            Connection::DuckDb(c) => {
-                c.import_rows(
-                    database,
-                    table,
-                    columns,
-                    rows,
-                    batch_size,
-                    conflict,
-                    on_progress,
-                )
-                .await
-            }
-            Connection::Mssql(c) => {
-                c.import_rows(
-                    database,
-                    table,
-                    columns,
-                    rows,
-                    batch_size,
-                    conflict,
-                    on_progress,
-                )
-                .await
-            }
         }
     }
 
@@ -626,14 +546,6 @@ impl Connection {
                     .await
             }
             Connection::Sqlite(c) => {
-                c.try_insert_chunk(database, table, columns, rows, conflict)
-                    .await
-            }
-            Connection::DuckDb(c) => {
-                c.try_insert_chunk(database, table, columns, rows, conflict)
-                    .await
-            }
-            Connection::Mssql(c) => {
                 c.try_insert_chunk(database, table, columns, rows, conflict)
                     .await
             }
@@ -667,14 +579,6 @@ impl Connection {
                 c.probe_failing_row(database, table, columns, rows, conflict)
                     .await
             }
-            Connection::DuckDb(c) => {
-                c.probe_failing_row(database, table, columns, rows, conflict)
-                    .await
-            }
-            Connection::Mssql(c) => {
-                c.probe_failing_row(database, table, columns, rows, conflict)
-                    .await
-            }
         }
     }
 
@@ -690,10 +594,7 @@ impl Connection {
     ) -> Result<bool> {
         match self {
             Connection::MySql(c) => c.table_is_transactional(database, table).await,
-            Connection::Postgres(_)
-            | Connection::Sqlite(_)
-            | Connection::DuckDb(_)
-            | Connection::Mssql(_) => Ok(true),
+            Connection::Postgres(_) | Connection::Sqlite(_) => Ok(true),
         }
     }
 
@@ -795,8 +696,6 @@ impl Connection {
             Connection::MySql(c) => c.execute_transaction(statements, database).await,
             Connection::Postgres(c) => c.execute_transaction(statements, database).await,
             Connection::Sqlite(c) => c.execute_transaction(statements, database).await,
-            Connection::DuckDb(c) => c.execute_transaction(statements, database).await,
-            Connection::Mssql(c) => c.execute_transaction(statements, database).await,
         }
     }
 
@@ -805,8 +704,6 @@ impl Connection {
             Connection::MySql(c) => c.databases().await,
             Connection::Postgres(c) => c.databases().await,
             Connection::Sqlite(c) => c.databases().await,
-            Connection::DuckDb(c) => c.databases().await,
-            Connection::Mssql(c) => c.databases().await,
         }
     }
 
@@ -815,8 +712,6 @@ impl Connection {
             Connection::MySql(c) => c.tables(db).await,
             Connection::Postgres(c) => c.tables(db).await,
             Connection::Sqlite(c) => c.tables(db).await,
-            Connection::DuckDb(c) => c.tables(db).await,
-            Connection::Mssql(c) => c.tables(db).await,
         }
     }
 
@@ -825,8 +720,6 @@ impl Connection {
             Connection::MySql(c) => c.columns(db, table).await,
             Connection::Postgres(c) => c.columns(db, table).await,
             Connection::Sqlite(c) => c.columns(db, table).await,
-            Connection::DuckDb(c) => c.columns(db, table).await,
-            Connection::Mssql(c) => c.columns(db, table).await,
         }
     }
 
@@ -838,8 +731,6 @@ impl Connection {
             Connection::MySql(c) => c.row_identity(db, table).await,
             Connection::Postgres(c) => c.row_identity(db, table).await,
             Connection::Sqlite(c) => c.row_identity(db, table).await,
-            Connection::DuckDb(c) => c.row_identity(db, table).await,
-            Connection::Mssql(c) => c.row_identity(db, table).await,
         }
     }
 
@@ -852,8 +743,6 @@ impl Connection {
             Connection::MySql(c) => c.schema_overview(db).await,
             Connection::Postgres(c) => c.schema_overview(db).await,
             Connection::Sqlite(c) => c.schema_overview(db).await,
-            Connection::DuckDb(c) => c.schema_overview(db).await,
-            Connection::Mssql(c) => c.schema_overview(db).await,
         }
     }
 
@@ -867,8 +756,6 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
-            Connection::DuckDb(c) => c.foreign_keys(db).await,
-            Connection::Mssql(c) => c.foreign_keys(db).await,
         }
     }
 
@@ -881,29 +768,6 @@ impl Connection {
             Connection::MySql(c) => c.schema_objects(db).await,
             Connection::Postgres(c) => c.schema_objects(db).await,
             Connection::Sqlite(c) => c.schema_objects(db).await,
-            Connection::DuckDb(c) => c.schema_objects(db).await,
-            Connection::Mssql(c) => c.schema_objects(db).await,
-        }
-    }
-
-    /// 外部バイナリに依存しない論理ダンプ (#987)。スキーマ DDL と行データの
-    /// INSERT を `sink` へストリーム出力する (`db::native_dump`)。MySQL /
-    /// PostgreSQL は `mysqldump` / `pg_dump`、SQLite は `sqlite_master` 経路
-    /// (`commands/dump.rs`) を使うため、ここでは DuckDB / MSSQL のみ対応。
-    pub async fn native_dump<S: native_dump::DumpSink + Send>(
-        &self,
-        database: &str,
-        opts: &native_dump::NativeDumpOptions,
-        sink: &mut S,
-    ) -> Result<()> {
-        match self {
-            Connection::DuckDb(_) => native_dump::dump_duckdb(self, database, opts, sink).await,
-            Connection::Mssql(_) => native_dump::dump_mssql(self, database, opts, sink).await,
-            Connection::MySql(_) | Connection::Postgres(_) | Connection::Sqlite(_) => {
-                Err(AppError::InvalidInput(
-                    "native dump is only implemented for DuckDB and MSSQL".into(),
-                ))
-            }
         }
     }
 
@@ -912,10 +776,10 @@ impl Connection {
     /// oid) used to disambiguate overloaded functions / same-name triggers.
     ///
     /// `kind == "table"` (#1001) returns the table's full `CREATE TABLE` DDL:
-    /// MySQL (`SHOW CREATE TABLE`), SQLite (`sqlite_master.sql`) and DuckDB
-    /// (`duckdb_tables().sql`) return the engine's own DDL; PostgreSQL / MSSQL
-    /// have no native equivalent, so the DDL is reconstructed from the column /
-    /// index / FK introspection via [`table_ddl::synthesize_create_table`].
+    /// MySQL (`SHOW CREATE TABLE`) and SQLite (`sqlite_master.sql`) return the
+    /// engine's own DDL; PostgreSQL has no native equivalent, so the DDL is
+    /// reconstructed from the column / index / FK introspection via
+    /// [`table_ddl::synthesize_create_table`].
     /// The table list also carries views, so a view name falls back to its
     /// view definition. Pure read introspection — never goes through the
     /// read-only SQL guard and works on read-only sessions.
@@ -927,35 +791,21 @@ impl Connection {
         id: Option<&str>,
     ) -> Result<String> {
         if kind == "table" {
-            match self {
-                Connection::Postgres(c) => {
-                    if let Some(view_kind) = c.view_kind(db, name).await? {
-                        return c.create_view_ddl(db, view_kind, name).await;
-                    }
-                    return self.synthesized_table_ddl(db, name).await;
+            if let Connection::Postgres(c) = self {
+                if let Some(view_kind) = c.view_kind(db, name).await? {
+                    return c.create_view_ddl(db, view_kind, name).await;
                 }
-                Connection::Mssql(c) => {
-                    // OBJECT_DEFINITION はテーブルに対して NULL を返し、ビューには
-                    // 完全な CREATE VIEW を返す。空ならテーブルとして再構成する。
-                    let view_def = c.object_definition(db, "view", name).await?;
-                    if !view_def.trim().is_empty() {
-                        return Ok(view_def);
-                    }
-                    return self.synthesized_table_ddl(db, name).await;
-                }
-                _ => {}
+                return self.synthesized_table_ddl(db, name).await;
             }
         }
         match self {
             Connection::MySql(c) => c.object_definition(db, kind, name).await,
             Connection::Postgres(c) => c.object_definition(db, kind, name, id).await,
             Connection::Sqlite(c) => c.object_definition(db, kind, name).await,
-            Connection::DuckDb(c) => c.object_definition(db, kind, name).await,
-            Connection::Mssql(c) => c.object_definition(db, kind, name).await,
         }
     }
 
-    /// PostgreSQL / MSSQL 向けに、列・インデックス・外部キーの introspection を
+    /// PostgreSQL 向けに、列・インデックス・外部キーの introspection を
     /// 束ねて `CREATE TABLE` を再構成する (#1001)。方言は接続自身のドライバ。
     async fn synthesized_table_ddl(&self, db: &str, table: &str) -> Result<String> {
         let columns = self.columns(db, table).await?;
@@ -972,15 +822,9 @@ impl Connection {
             .filter(|f| f.table == table)
             .collect();
         let driver = self.driver_kind();
-        // MSSQL ドライバは introspection を `dbo` スキーマに固定している
-        // (`db` はデータベース名) ので、修飾も `dbo` にそろえる。
-        let schema = match driver {
-            DriverKind::Mssql => "dbo",
-            _ => db,
-        };
         Ok(table_ddl::synthesize_create_table(
             driver,
-            Some(schema),
+            Some(db),
             table,
             &columns,
             &indexes,
@@ -990,9 +834,9 @@ impl Connection {
 
     /// ストアドプロシージャ / 関数のシグネチャ (パラメータ一覧・戻り値) を返す
     /// (#1003)。MySQL は `information_schema.PARAMETERS`、PostgreSQL は `pg_proc`
-    /// (`proargnames` / `proargmodes` / `proallargtypes`)、MSSQL は
-    /// `sys.parameters`。SQLite / DuckDB はルーチン概念を持たないため空ではなく
-    /// エラー (`list_processes` と同じ「未対応は明示」の規約)。カタログの読み取り
+    /// (`proargnames` / `proargmodes` / `proallargtypes`)。SQLite はルーチン概念を
+    /// 持たないため空ではなくエラー (`list_processes` と同じ「未対応は明示」の規約)。
+    /// カタログの読み取り
     /// のみなので read_only セッションでも許可する。`id` は PostgreSQL の oid
     /// (オーバーロード解決用、[`Connection::object_definition`] と同じ)。
     pub async fn routine_signature(
@@ -1011,8 +855,6 @@ impl Connection {
             Connection::MySql(c) => c.routine_signature(db, kind, name).await,
             Connection::Postgres(c) => c.routine_signature(db, kind, name, id).await,
             Connection::Sqlite(c) => c.routine_signature(db, kind, name).await,
-            Connection::DuckDb(c) => c.routine_signature(db, kind, name).await,
-            Connection::Mssql(c) => c.routine_signature(db, kind, name).await,
         }
     }
 
@@ -1025,8 +867,6 @@ impl Connection {
             Connection::MySql(c) => c.list_indexes(db, table).await,
             Connection::Postgres(c) => c.list_indexes(db, table).await,
             Connection::Sqlite(c) => c.list_indexes(db, table).await,
-            Connection::DuckDb(c) => c.list_indexes(db, table).await,
-            Connection::Mssql(c) => c.list_indexes(db, table).await,
         }
     }
 
@@ -1041,8 +881,6 @@ impl Connection {
             Connection::MySql(c) => c.table_row_estimates(db).await,
             Connection::Postgres(c) => c.table_row_estimates(db).await,
             Connection::Sqlite(c) => c.table_row_estimates(db).await,
-            Connection::DuckDb(c) => c.table_row_estimates(db).await,
-            Connection::Mssql(c) => c.table_row_estimates(db).await,
         }
     }
 
@@ -1053,8 +891,6 @@ impl Connection {
             Connection::MySql(c) => c.table_comments(db).await,
             Connection::Postgres(c) => c.table_comments(db).await,
             Connection::Sqlite(_) => Ok(Vec::new()),
-            Connection::DuckDb(c) => c.table_comments(db).await,
-            Connection::Mssql(c) => c.table_comments(db).await,
         }
     }
 
@@ -1069,8 +905,6 @@ impl Connection {
             Connection::MySql(c) => c.table_sizes(db).await,
             Connection::Postgres(c) => c.table_sizes(db).await,
             Connection::Sqlite(c) => c.table_sizes(db).await,
-            Connection::DuckDb(c) => c.table_sizes(db).await,
-            Connection::Mssql(c) => c.table_sizes(db).await,
         }
     }
 
@@ -1084,8 +918,6 @@ impl Connection {
             Connection::MySql(c) => c.server_info().await,
             Connection::Postgres(c) => c.server_info().await,
             Connection::Sqlite(c) => c.server_info().await,
-            Connection::DuckDb(c) => c.server_info().await,
-            Connection::Mssql(c) => c.server_info().await,
         }
     }
 
@@ -1100,8 +932,6 @@ impl Connection {
             Connection::MySql(c) => c.server_metrics().await,
             Connection::Postgres(c) => c.server_metrics().await,
             Connection::Sqlite(c) => c.server_metrics().await,
-            Connection::DuckDb(c) => c.server_metrics().await,
-            Connection::Mssql(c) => c.server_metrics().await,
         }
     }
 
@@ -1114,8 +944,6 @@ impl Connection {
             Connection::MySql(c) => c.list_processes().await,
             Connection::Postgres(c) => c.list_processes().await,
             Connection::Sqlite(c) => c.list_processes().await,
-            Connection::DuckDb(c) => c.list_processes().await,
-            Connection::Mssql(c) => c.list_processes().await,
         }
     }
 
@@ -1127,16 +955,12 @@ impl Connection {
             Connection::MySql(c) => c.kill_process(id).await,
             Connection::Postgres(c) => c.kill_process(id).await,
             Connection::Sqlite(c) => c.kill_process(id).await,
-            Connection::DuckDb(c) => c.kill_process(id).await,
-            Connection::Mssql(c) => c.kill_process(id).await,
         }
     }
 
     /// Server accounts/roles for the users & permissions panel (#732): MySQL
-    /// `mysql.user`, PostgreSQL `pg_roles`. SQLite has no user model, and MSSQL
-    /// is not yet implemented (could read `sys.server_principals` /
-    /// `sys.database_permissions`, out of scope for this PR) — both return an
-    /// error instead of an empty list for direct IPC callers (matching
+    /// `mysql.user`, PostgreSQL `pg_roles`. SQLite has no user model and
+    /// returns an error instead of an empty list for direct IPC callers (matching
     /// [`Connection::list_processes`]'s "unsupported" convention), and the
     /// frontend hides the panel entirely for SQLite.
     pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
@@ -1144,8 +968,6 @@ impl Connection {
             Connection::MySql(c) => c.list_db_users().await,
             Connection::Postgres(c) => c.list_db_users().await,
             Connection::Sqlite(c) => c.list_db_users().await,
-            Connection::DuckDb(c) => c.list_db_users().await,
-            Connection::Mssql(c) => c.list_db_users().await,
         }
     }
 
@@ -1157,8 +979,6 @@ impl Connection {
             Connection::MySql(c) => c.user_privileges(user, host).await,
             Connection::Postgres(c) => c.user_privileges(user, host).await,
             Connection::Sqlite(c) => c.user_privileges(user, host).await,
-            Connection::DuckDb(c) => c.user_privileges(user, host).await,
-            Connection::Mssql(c) => c.user_privileges(user, host).await,
         }
     }
 
@@ -1171,8 +991,6 @@ impl Connection {
             Connection::MySql(c) => c.query_stats_support().await,
             Connection::Postgres(c) => c.query_stats_support().await,
             Connection::Sqlite(c) => c.query_stats_support().await,
-            Connection::DuckDb(c) => c.query_stats_support().await,
-            Connection::Mssql(c) => c.query_stats_support().await,
         }
     }
 
@@ -1186,8 +1004,6 @@ impl Connection {
             Connection::MySql(c) => c.live_queries().await,
             Connection::Postgres(c) => c.live_queries().await,
             Connection::Sqlite(c) => c.live_queries().await,
-            Connection::DuckDb(c) => c.live_queries().await,
-            Connection::Mssql(c) => c.live_queries().await,
         }
     }
 
@@ -1200,8 +1016,6 @@ impl Connection {
             Connection::MySql(c) => c.statement_stats().await,
             Connection::Postgres(c) => c.statement_stats().await,
             Connection::Sqlite(c) => c.statement_stats().await,
-            Connection::DuckDb(c) => c.statement_stats().await,
-            Connection::Mssql(c) => c.statement_stats().await,
         }
     }
 
@@ -1215,8 +1029,6 @@ impl Connection {
             Connection::MySql(c) => c.unused_indexes(db).await,
             Connection::Postgres(c) => c.unused_indexes(db).await,
             Connection::Sqlite(c) => c.unused_indexes(db).await,
-            Connection::DuckDb(c) => c.unused_indexes(db).await,
-            Connection::Mssql(c) => c.unused_indexes(db).await,
         }
     }
 
@@ -1242,8 +1054,6 @@ impl Connection {
             Connection::MySql(c) => c.close().await,
             Connection::Postgres(c) => c.close().await,
             Connection::Sqlite(c) => c.close().await,
-            Connection::DuckDb(c) => c.close().await,
-            Connection::Mssql(c) => c.close().await,
         }
     }
 
@@ -1591,8 +1401,8 @@ impl Connection {
     // dispatch is still total so a stray direct call fails clearly instead of
     // panicking. Keeping these on the `Connection` enum — rather than as
     // free functions reaching into `Connection::Sqlite` from the command
-    // layer — is what keeps a future local-engine swap (e.g. DuckDB, #709)
-    // to just a new match arm here.
+    // layer — is what keeps a future local-engine swap to just a new match arm
+    // here.
 
     /// Registers a result set as a local table (create + bulk insert +
     /// provenance metadata, atomically). See
@@ -1605,10 +1415,7 @@ impl Connection {
     ) -> Result<()> {
         match self {
             Connection::Sqlite(c) => c.register_local_table(meta, columns, rows).await,
-            Connection::MySql(_)
-            | Connection::Postgres(_)
-            | Connection::DuckDb(_)
-            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+            Connection::MySql(_) | Connection::Postgres(_) => Err(AppError::InvalidInput(
                 "local table registration is only supported on the local SQLite engine".into(),
             )),
         }
@@ -1618,10 +1425,7 @@ impl Connection {
     pub async fn list_local_tables(&self) -> Result<Vec<LocalTableMeta>> {
         match self {
             Connection::Sqlite(c) => c.list_local_tables().await,
-            Connection::MySql(_)
-            | Connection::Postgres(_)
-            | Connection::DuckDb(_)
-            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+            Connection::MySql(_) | Connection::Postgres(_) => Err(AppError::InvalidInput(
                 "local table listing is only supported on the local SQLite engine".into(),
             )),
         }
@@ -1631,10 +1435,7 @@ impl Connection {
     pub async fn drop_local_table(&self, name: &str) -> Result<()> {
         match self {
             Connection::Sqlite(c) => c.drop_local_table(name).await,
-            Connection::MySql(_)
-            | Connection::Postgres(_)
-            | Connection::DuckDb(_)
-            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+            Connection::MySql(_) | Connection::Postgres(_) => Err(AppError::InvalidInput(
                 "dropping a local table is only supported on the local SQLite engine".into(),
             )),
         }
@@ -1646,10 +1447,7 @@ impl Connection {
     pub async fn vacuum_into(&self, path: &str) -> Result<()> {
         match self {
             Connection::Sqlite(c) => c.vacuum_into(path).await,
-            Connection::MySql(_)
-            | Connection::Postgres(_)
-            | Connection::DuckDb(_)
-            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+            Connection::MySql(_) | Connection::Postgres(_) => Err(AppError::InvalidInput(
                 "saving to file is only supported on the local SQLite engine".into(),
             )),
         }
@@ -1838,30 +1636,15 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// read-only profile gate is willing to let through.
 ///
 /// Allow list: `SELECT` / `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`
-/// for every driver, plus two driver-conditioned extensions (#1005):
+/// for every driver, plus one driver-independent extension:
 ///
 /// * **`VALUES` / `TABLE`, all drivers.** `VALUES (1),(2)` (a bare row
-///   constructor) and `TABLE t` (PostgreSQL/DuckDB/MySQL 8.0.19+ shorthand for
+///   constructor) and `TABLE t` (PostgreSQL/MySQL 8.0.19+ shorthand for
 ///   `SELECT * FROM t`) can only ever produce a result set — neither syntax
 ///   has a form that mutates data — so allowing them is safe regardless of
 ///   whether the connected driver actually supports the statement (an
 ///   unsupported driver just fails at the database with a syntax error, which
 ///   is not a safety concern).
-/// * **DuckDB only: `FROM` / `SUMMARIZE` / query-shaped `PRAGMA`.** DuckDB's
-///   `FROM t` (FROM-first shorthand for `SELECT * FROM t`) and `SUMMARIZE t`
-///   (read-only column statistics) are always read-only. `PRAGMA`, however,
-///   has both a query form (`PRAGMA database_list`, `PRAGMA table_info('t')`)
-///   and a *setting* form that changes session/database configuration
-///   (`PRAGMA memory_limit='1GB'`, `PRAGMA threads=4`) — the latter is a
-///   write in spirit even though it isn't `INSERT`/`UPDATE`/`DELETE`/DDL, so
-///   `PRAGMA` is only allowed for DuckDB, and only when the masked body
-///   contains no `=` (the setting form's syntax always has one; the query
-///   form never does — see [`is_read_only_sql_masked`]). SQLite's own
-///   `PRAGMA foreign_keys=ON` is exactly this setting form, and SQLite has no
-///   query-only `PRAGMA` use case that would be lost by leaving it off the
-///   allow list entirely, so `PRAGMA` stays unlisted for every driver other
-///   than DuckDB (fail-closed, per the project's default policy — see
-///   `CLAUDE.md`'s "読み取り専用ガードと自動 LIMIT").
 ///
 /// Trailing semicolons and whitespace are tolerated. `SELECT ... FOR UPDATE`,
 /// `FOR SHARE`, `FOR NO KEY UPDATE`, `FOR KEY SHARE` and the MySQL
@@ -1896,17 +1679,14 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// MySQL keeps its own escaping rules. See [`mask_for_driver`] (#852).
 pub fn is_read_only_sql(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    // ドライバ不明のときは #1005 の DuckDB 限定拡張 (`FROM`/`SUMMARIZE`/`PRAGMA`)
-    // を許可しない — `VALUES`/`TABLE` は全ドライバ共通なので `None` でも通す。
     is_read_only_sql_masked(None, &mask_for_analysis_conservative(&orig))
 }
 
 /// Driver-aware entry point for [`is_read_only_sql`] (#852): masks string
 /// literals with `driver`'s own escaping rules (see [`mask_for_driver`]) so
-/// PostgreSQL / SQLite / DuckDB / MSSQL are not analysed with MySQL's
-/// backslash-escape reading, which fails open on payloads like
-/// `SELECT '\'; DELETE FROM t; --'`. Also unlocks the DuckDB-only allow-list
-/// extensions documented on [`is_read_only_sql`] (#1005).
+/// PostgreSQL / SQLite are not analysed with MySQL's backslash-escape
+/// reading, which fails open on payloads like
+/// `SELECT '\'; DELETE FROM t; --'`.
 pub fn is_read_only_sql_for(driver: DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
     is_read_only_sql_masked(Some(driver), &mask_for_driver(driver, &orig))
@@ -1915,9 +1695,9 @@ pub fn is_read_only_sql_for(driver: DriverKind, sql: &str) -> bool {
 /// Shared body of [`is_read_only_sql`] / [`is_read_only_sql_for`], operating on
 /// an already-masked statement so the two entry points differ only in which
 /// masking rules they applied. `driver` is `None` for the driver-less entry
-/// point, which keeps the DuckDB-only extensions (`FROM` / `SUMMARIZE` /
-/// `PRAGMA`) turned off since it cannot know whether they're safe.
+/// point.
 fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool {
+    let _ = driver;
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     let body = masked_lower
         .trim()
@@ -1926,7 +1706,7 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
     if body.is_empty() {
         return false;
     }
-    let mut allowed_prefix = starts_with_word(body, "select")
+    let allowed_prefix = starts_with_word(body, "select")
         || starts_with_word(body, "show")
         || starts_with_word(body, "describe")
         || starts_with_word(body, "desc")
@@ -1936,17 +1716,6 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
         // 構文が存在しない。#1005 のドキュメントコメント参照)。
         || starts_with_word(body, "values")
         || starts_with_word(body, "table");
-    if !allowed_prefix && driver == Some(DriverKind::DuckDb) {
-        // DuckDB 限定の読み取り構文 (#1005)。
-        allowed_prefix = starts_with_word(body, "from") || starts_with_word(body, "summarize");
-        if !allowed_prefix && starts_with_word(body, "pragma") {
-            // PRAGMA は照会形 (`PRAGMA database_list`) と設定形
-            // (`PRAGMA memory_limit='1GB'`) の両方を持つ。設定形は構文上必ず
-            // `=` を含む一方、照会形は含まないため、`=` の有無で近似する
-            // (issue #1005 の提案どおり)。
-            allowed_prefix = !body.contains('=');
-        }
-    }
     if !allowed_prefix {
         return false;
     }
@@ -2026,9 +1795,9 @@ pub fn sql_may_change_schema(driver: DriverKind, sql: &str) -> bool {
     ["create", "alter", "drop", "truncate", "rename"]
         .iter()
         .any(|kw| contains_word(&masked_lower, kw))
-        // コメント編集 (#1002): PostgreSQL / DuckDB の `COMMENT ON ...` と MSSQL の
-        // 拡張プロパティ手続きは上のキーワードを含まないが、`describe_table` が
-        // 返す列コメントを変えるのでスキーマキャッシュを無効化する必要がある。
+        // コメント編集 (#1002): PostgreSQL の `COMMENT ON ...` は上のキーワードを
+        // 含まないが、`describe_table` が返す列コメントを変えるのでスキーマ
+        // キャッシュを無効化する必要がある。
         || contains_word_phrase(&masked_lower, "comment on")
         || [
             "sp_addextendedproperty",
@@ -2142,9 +1911,9 @@ const LOCKING_TABLE_HINTS: &[&str] = &[
 /// and every `WITH (…)` group in the statement is inspected so a hint on the
 /// second table of a join is not missed.
 ///
-/// Applied on **every** driver rather than only [`DriverKind::Mssql`]: `WITH
-/// (…)` directly after a table reference is not valid read-only syntax on the
-/// other dialects (a CTE is `WITH <name> AS (…)`), so there is nothing to
+/// Applied on **every** driver: `WITH (…)` directly after a table reference
+/// is not valid read-only syntax on any of them (a CTE is `WITH <name> AS
+/// (…)`), so there is nothing to
 /// false-positive on, and keeping one rule for all drivers means the shared
 /// golden vectors need a single expected verdict per statement.
 ///
@@ -2225,10 +1994,8 @@ fn has_locking_table_hint(body: &str) -> bool {
 /// * Only statements beginning with `select` or `with` are eligible. Anything
 ///   that already carries a `limit` / `offset` / `fetch` keyword (the last
 ///   covers the SQL-standard `FETCH FIRST/NEXT … ROWS ONLY` pagination clause
-///   that PostgreSQL and DuckDB both accept — appending a trailing `LIMIT`
-///   after it is a syntax error, mirroring the guard [`apply_auto_limit_mssql`]
-///   already has for T-SQL's `OFFSET … FETCH NEXT … ROWS ONLY`), a write
-///   keyword (`insert` / `update` / `delete` / `into` — guarding
+///   that PostgreSQL accepts — appending a trailing `LIMIT` after it is a
+///   syntax error), a write keyword (`insert` / `update` / `delete` / `into` — guarding
 ///   data-modifying CTEs and `SELECT … INTO`), a locking clause, or that reads
 ///   as a single-row aggregate is left alone.
 /// * *Any* `limit` token anywhere — even one inside a sub-query — makes us bail.
@@ -2310,130 +2077,16 @@ fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Opti
 
 /// Driver-aware entry point for the automatic row cap: MySQL / PostgreSQL /
 /// SQLite all understand a trailing `LIMIT n` and go through
-/// [`apply_auto_limit`] unchanged, but Microsoft SQL Server (#729) has no
-/// `LIMIT` keyword — the equivalent is `TOP (n)` spliced right after the
-/// leading `SELECT` (and `DISTINCT`, if present). Callers that know the
-/// target driver (`commands::query`) should use this instead of calling
+/// [`apply_auto_limit`] unchanged. Callers that know the target driver
+/// (`commands::query`) should use this instead of calling
 /// [`apply_auto_limit`] directly.
 ///
 /// String literals are masked with `driver`'s own escaping rules
 /// ([`mask_for_driver`], #852) rather than always assuming MySQL's.
 pub fn apply_auto_limit_for(driver: DriverKind, sql: &str, limit: usize) -> Option<String> {
-    match driver {
-        // T-SQL has no backslash string escapes, so the MSSQL rewriter's own
-        // conservative mask already matches `mask_for_driver(Mssql, …)`.
-        DriverKind::Mssql => apply_auto_limit_mssql(sql, limit),
-        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
-            let orig: Vec<char> = sql.chars().collect();
-            let masked = mask_for_driver(driver, &orig);
-            apply_auto_limit_masked(&orig, &masked, limit)
-        }
-    }
-}
-
-/// `TOP (n)` variant of [`apply_auto_limit`] for Microsoft SQL Server (#729).
-/// Shares the same eligibility checks (masked/lowercased body, write-keyword
-/// scan, aggregate-only detection) but rewrites by inserting `TOP (n)` right
-/// after the leading `SELECT` [`DISTINCT`] keywords rather than appending a
-/// trailing clause, because that is where T-SQL's row-cap syntax lives
-/// (`SELECT [DISTINCT] TOP (n) ...`).
-///
-/// **Deliberately conservative beyond what [`apply_auto_limit`] checks**:
-/// only a bare `SELECT ...` is rewritten. `WITH ... SELECT` (CTEs) are left
-/// untouched (`None`) — unlike a trailing `LIMIT`, `TOP` must be spliced
-/// right after the *specific* `SELECT` keyword that starts the outermost
-/// query, and locating that (as opposed to the first `SELECT` textually,
-/// which is typically inside the CTE body) is not attempted here. This is
-/// the same "when in doubt, don't rewrite" philosophy as the rest of this
-/// module. A statement that already contains `TOP`, `OFFSET`, or `FETCH`
-/// (T-SQL's `OFFSET ... FETCH NEXT ... ROWS ONLY` pagination clause) is left
-/// alone, same as an existing `LIMIT`/`OFFSET` on the other drivers.
-///
-/// **Driver-less entry point**: masks conservatively, which happens to match
-/// MSSQL's own rules (`\` is not a string escape in T-SQL), so this and
-/// [`apply_auto_limit_for`]`(DriverKind::Mssql, …)` always agree.
-pub fn apply_auto_limit_mssql(sql: &str, limit: usize) -> Option<String> {
     let orig: Vec<char> = sql.chars().collect();
-    apply_auto_limit_mssql_masked(&orig, &mask_for_analysis_conservative(&orig), limit)
-}
-
-/// Shared body of [`apply_auto_limit_mssql`] and its driver-aware caller.
-fn apply_auto_limit_mssql_masked(orig: &[char], masked: &[char], limit: usize) -> Option<String> {
-    if limit == 0 {
-        return None;
-    }
-    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
-
-    let body = masked_lower
-        .trim()
-        .trim_end_matches(|c: char| c == ';' || c.is_whitespace())
-        .trim_start();
-    if body.is_empty() {
-        return None;
-    }
-    // `WITH ...` (CTEs) intentionally unsupported here — see doc comment.
-    if !starts_with_word(body, "select") {
-        return None;
-    }
-    if contains_word(body, "top") || contains_word(body, "offset") || contains_word(body, "fetch") {
-        return None;
-    }
-    for kw in ["insert", "update", "delete", "into"] {
-        if contains_word(body, kw) {
-            return None;
-        }
-    }
-    if has_locking_clause(body) {
-        return None;
-    }
-    if is_aggregate_only(body) {
-        return None;
-    }
-    // T-SQL's `TOP` only caps the `SELECT` it's spliced into, not the whole
-    // statement — unlike the trailing `LIMIT` the other drivers get, which
-    // caps the entire `UNION`/`INTERSECT`/`EXCEPT` result. Inserting `TOP (n)`
-    // right after the leading `SELECT` here would only bound the *first*
-    // branch, leaving `SELECT ... UNION ALL SELECT ...` unbounded on its
-    // later branches — a silently-broken cap is worse than no cap, since the
-    // caller believes the row count is under control. Same "when in doubt,
-    // don't rewrite" posture as the rest of this function: decline instead.
-    // Depth-tracked ([`has_top_level_set_operator`]) so a set operator
-    // entirely inside a subquery (`FROM (SELECT a UNION SELECT b) x`) does
-    // not trigger this — only one joining the statement's own top-level
-    // `SELECT` branches does.
-    if has_top_level_set_operator(body) {
-        return None;
-    }
-
-    // Locate the leading `SELECT` (and optional `DISTINCT`) in the
-    // *untrimmed* masked/lowercased text, so indices still line up with
-    // `orig`. `body` above was only used for the eligibility checks. Compares
-    // `Vec<char>` slices throughout (never byte-slices the `String`) so this
-    // stays correct even if a non-ASCII identifier appears later in the SQL.
-    let full: Vec<char> = masked_lower.chars().collect();
-    let mut start = 0usize;
-    while start < full.len() && full[start].is_whitespace() {
-        start += 1;
-    }
-    // `body` starting with "select" guarantees this prefix is present.
-    let mut end = start + "select".len();
-    let mut after_ws = end;
-    while after_ws < full.len() && full[after_ws].is_whitespace() {
-        after_ws += 1;
-    }
-    let distinct: Vec<char> = "distinct".chars().collect();
-    if full.len() >= after_ws + distinct.len()
-        && full[after_ws..after_ws + distinct.len()] == distinct[..]
-        && (after_ws + distinct.len() == full.len()
-            || !is_word_char(full[after_ws + distinct.len()]))
-    {
-        end = after_ws + distinct.len();
-    }
-
-    let mut out: String = orig[..end].iter().collect();
-    out.push_str(&format!(" TOP ({limit})"));
-    out.extend(orig[end..].iter());
-    Some(out)
+    let masked = mask_for_driver(driver, &orig);
+    apply_auto_limit_masked(&orig, &masked, limit)
 }
 
 /// True when `sql` packs more than one statement — i.e. a `;` separates
@@ -2459,7 +2112,7 @@ pub(crate) fn has_stacked_statements(sql: &str) -> bool {
 
 /// Driver-aware entry point for [`has_stacked_statements`] (#852). Each
 /// driver's `preview_execute_with_limit` passes its own [`DriverKind`] so a
-/// PostgreSQL / SQLite / DuckDB / MSSQL payload is not analysed with MySQL's
+/// PostgreSQL / SQLite payload is not analysed with MySQL's
 /// backslash-escape reading, which would hide the stacked `;` in
 /// `UPDATE t SET s = '\'; DROP TABLE t; --'`.
 pub(crate) fn has_stacked_statements_for(driver: DriverKind, sql: &str) -> bool {
@@ -2611,8 +2264,8 @@ fn sets_no_backslash_escapes_mode(orig_segment: &str) -> bool {
 /// line up with the source. Newlines inside comments are kept so line-comment
 /// boundaries survive. `\` is **not** treated as a string escape character.
 ///
-/// PostgreSQL (with the default `standard_conforming_strings = on`), SQLite,
-/// DuckDB and Microsoft SQL Server all treat `\` inside `'…'` as an ordinary
+/// PostgreSQL (with the default `standard_conforming_strings = on`) and
+/// SQLite treat `\` inside `'…'` as an ordinary
 /// character, so a literal there is closed by the first unescaped, non-doubled
 /// quote — not by skipping over a backslash-escaped one. Masking those
 /// dialects with MySQL's reading (`backslash_escapes = true`) lets a payload
@@ -2639,14 +2292,13 @@ pub(crate) fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
 
 /// True when `driver` treats `\` inside a `'…'` / `"…"` string literal as an
 /// escape character. Only MySQL/MariaDB does (with the default
-/// `NO_BACKSLASH_ESCAPES` off); PostgreSQL (`standard_conforming_strings = on`),
-/// SQLite, DuckDB and Microsoft SQL Server all read `\` as an ordinary
-/// character, so a literal there closes at the first unescaped, non-doubled
-/// quote.
+/// `NO_BACKSLASH_ESCAPES` off); PostgreSQL (`standard_conforming_strings = on`)
+/// and SQLite both read `\` as an ordinary character, so a literal there
+/// closes at the first unescaped, non-doubled quote.
 fn driver_backslash_escapes(driver: DriverKind) -> bool {
     match driver {
         DriverKind::Mysql => true,
-        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => false,
+        DriverKind::Postgres | DriverKind::Sqlite => false,
     }
 }
 
@@ -2659,7 +2311,7 @@ fn driver_backslash_escapes(driver: DriverKind) -> bool {
 /// dialects: given `SELECT '\'; DELETE FROM t; --'`, the MySQL reading treats
 /// `\'` as an escaped quote and swallows the `; DELETE …` as
 /// still-inside-the-literal, so neither the stacked `;` nor the `delete`
-/// keyword is visible. PostgreSQL / SQLite / DuckDB / MSSQL actually close the
+/// keyword is visible. PostgreSQL / SQLite actually close the
 /// literal at that quote and run a real stacked write.
 ///
 /// Callers that know their driver should always route through the `*_for`
@@ -3037,45 +2689,6 @@ fn top_level_select_list(s: &str) -> Option<&str> {
     None
 }
 
-/// True when masked/lowercased `body` contains a `UNION` / `INTERSECT` /
-/// `EXCEPT` set operator keyword at parenthesis depth 0 — i.e. one joining
-/// the statement's *own* top-level `SELECT` to another branch, not one
-/// buried inside a subquery. Depth-tracked the same way as
-/// [`top_level_select_list`], so `SELECT * FROM (SELECT a UNION SELECT b) x`
-/// (a `UNION` entirely inside a derived table) does not count, only
-/// `SELECT a UNION SELECT b` at the top does. Used by
-/// [`apply_auto_limit_mssql_masked`] (#mssql-top-set-ops) to decline rewriting
-/// a `SELECT` whose T-SQL `TOP` would only cap one branch of a multi-branch
-/// result.
-fn has_top_level_set_operator(body: &str) -> bool {
-    const KEYWORDS: [&str; 3] = ["union", "intersect", "except"];
-    let b = body.as_bytes();
-    let mut depth = 0i32;
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'(' => depth += 1,
-            b')' if depth > 0 => depth -= 1,
-            _ if depth == 0 => {
-                for kw in KEYWORDS {
-                    let kb = kw.as_bytes();
-                    if i + kb.len() <= b.len() && &b[i..i + kb.len()] == kb {
-                        let before_ok = i == 0 || !is_word_byte(b[i - 1]);
-                        let after = i + kb.len();
-                        let after_ok = after >= b.len() || !is_word_byte(b[after]);
-                        if before_ok && after_ok {
-                            return true;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    false
-}
-
 fn split_top_level_commas(s: &str) -> Vec<&str> {
     let b = s.as_bytes();
     let mut depth = 0i32;
@@ -3129,20 +2742,15 @@ fn is_aggregate_expr(item: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_auto_limit, apply_auto_limit_for, apply_auto_limit_mssql, classify_write_kind,
-        classify_write_kind_for, has_stacked_statements, has_stacked_statements_for,
-        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, mask_sensitive_var,
-        sql_may_change_schema, sum_size_parts, DriverKind, SslMode, WriteKind,
+        apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
+        has_stacked_statements, has_stacked_statements_for, is_read_only_sql, is_read_only_sql_for,
+        is_session_init_sql, mask_sensitive_var, sql_may_change_schema, sum_size_parts, DriverKind,
+        SslMode, WriteKind,
     };
 
     /// Drivers whose string literals follow the standard reading (`\` is an
     /// ordinary character), i.e. everything except MySQL (#852).
-    const STANDARD_DRIVERS: [DriverKind; 4] = [
-        DriverKind::Postgres,
-        DriverKind::Sqlite,
-        DriverKind::DuckDb,
-        DriverKind::Mssql,
-    ];
+    const STANDARD_DRIVERS: [DriverKind; 2] = [DriverKind::Postgres, DriverKind::Sqlite];
 
     #[test]
     fn sum_size_parts_treats_missing_part_as_zero() {
@@ -3343,7 +2951,7 @@ mod tests {
     /// #852: the read-only guard used to mask with MySQL's backslash-escape
     /// rules on **every** driver, so `'\'` was read as an escaped quote and
     /// the `; DELETE …` behind it stayed hidden inside an apparently-open
-    /// string literal. PostgreSQL / SQLite / DuckDB / MSSQL close the literal
+    /// string literal. PostgreSQL / SQLite close the literal
     /// at that quote and would really run the stacked write.
     #[test]
     fn read_only_rejects_backslash_masked_stacked_write_on_standard_dialects() {
@@ -3419,120 +3027,6 @@ mod tests {
         }
     }
 
-    /// #1005: DuckDB's FROM-first shorthand (`FROM t` for `SELECT * FROM t`)
-    /// and `SUMMARIZE t` (read-only column statistics) are always read-only,
-    /// but only DuckDB actually has this syntax — every other driver keeps
-    /// rejecting it (fail-closed; `FROM`/`SUMMARIZE` simply aren't in their
-    /// allow list, mirroring the fact that these dialects don't support the
-    /// statement at all).
-    #[test]
-    fn read_only_duckdb_allows_from_and_summarize_only_for_duckdb() {
-        for sql in ["FROM users", "FROM users LIMIT 10", "SUMMARIZE users"] {
-            assert!(
-                is_read_only_sql_for(DriverKind::DuckDb, sql),
-                "DuckDB must accept {sql:?}"
-            );
-            for driver in STANDARD_DRIVERS {
-                if driver == DriverKind::DuckDb {
-                    continue;
-                }
-                assert!(
-                    !is_read_only_sql_for(driver, sql),
-                    "{driver:?} must still reject {sql:?} (not its syntax)"
-                );
-            }
-            assert!(
-                !is_read_only_sql_for(DriverKind::Mysql, sql),
-                "Mysql must still reject {sql:?}"
-            );
-            assert!(!is_read_only_sql(sql), "driver-less must reject {sql:?}");
-        }
-        // Stacking behind the DuckDB-only prefixes is still caught.
-        for sql in [
-            "FROM users; DROP TABLE users",
-            "SUMMARIZE users; DROP TABLE users",
-        ] {
-            assert!(
-                !is_read_only_sql_for(DriverKind::DuckDb, sql),
-                "DuckDB must reject stacked {sql:?}"
-            );
-        }
-    }
-
-    /// #1005: DuckDB's `PRAGMA` has both a query form (`PRAGMA database_list`,
-    /// `PRAGMA table_info('t')` — read-only) and a setting form
-    /// (`PRAGMA memory_limit='1GB'`, `PRAGMA threads=4` — changes session
-    /// configuration, a write in spirit). The gate approximates the
-    /// distinction by rejecting any masked body containing `=`, since the
-    /// setting form's syntax always has one and the query form never does.
-    /// SQLite's own setting-form `PRAGMA foreign_keys=ON` is exactly this
-    /// shape, which is why `PRAGMA` stays unlisted for every driver other
-    /// than DuckDB rather than trying to replicate the query/setting split
-    /// per dialect (see the allow-list doc comment on `is_read_only_sql`).
-    #[test]
-    fn read_only_duckdb_pragma_query_form_allowed_setting_form_rejected() {
-        for sql in ["PRAGMA database_list", "PRAGMA table_info('users')"] {
-            assert!(
-                is_read_only_sql_for(DriverKind::DuckDb, sql),
-                "DuckDB must accept query-form {sql:?}"
-            );
-        }
-        for sql in ["PRAGMA memory_limit='1GB'", "PRAGMA threads=4"] {
-            assert!(
-                !is_read_only_sql_for(DriverKind::DuckDb, sql),
-                "DuckDB must reject setting-form {sql:?} (contains '=')"
-            );
-        }
-        // No driver (DuckDB included) treats SQLite's classic setting-form
-        // PRAGMA as read-only.
-        for driver in STANDARD_DRIVERS {
-            assert!(
-                !is_read_only_sql_for(driver, "PRAGMA foreign_keys=ON"),
-                "{driver:?} must reject PRAGMA foreign_keys=ON"
-            );
-        }
-    }
-
-    /// Core of #1005: every leading keyword that `db::duckdb::is_query_shape`
-    /// (`src-tauri/src/db/duckdb.rs`) treats as query-shaped — routing the
-    /// statement to the result-set-returning `query` path rather than
-    /// `execute` — must also be read-only-eligible for DuckDB here, or a
-    /// read-only session would reject a statement the driver itself is happy
-    /// to run as a query. `is_query_shape` is a private helper owned by a
-    /// concurrently in-flight branch (#971), so this pins the *keyword list*
-    /// (read directly from its source, `with` / `select` / `show` /
-    /// `describe` / `desc` / `explain` / `pragma` / `summarize` / `values`)
-    /// with one representative read-only statement per keyword, rather than
-    /// calling the private function directly.
-    ///
-    /// One deliberate, documented exception: `is_query_shape` treats *every*
-    /// `PRAGMA` statement — including the setting form — as query-shaped
-    /// (it only decides which `duckdb`-crate call to make, not whether the
-    /// statement is safe to run in a read-only session), whereas the
-    /// read-only gate must reject the setting form. That half of `PRAGMA` is
-    /// intentionally excluded from this alignment check and is covered
-    /// instead by `read_only_duckdb_pragma_query_form_allowed_setting_form_rejected`.
-    #[test]
-    fn read_only_duckdb_allows_every_is_query_shape_keyword() {
-        let representative_read_only_statements = [
-            ("with", "WITH t AS (SELECT 1) SELECT * FROM t"),
-            ("select", "SELECT * FROM t"),
-            ("show", "SHOW TABLES"),
-            ("describe", "DESCRIBE t"),
-            ("desc", "DESC t"),
-            ("explain", "EXPLAIN SELECT 1"),
-            ("pragma", "PRAGMA version"),
-            ("summarize", "SUMMARIZE t"),
-            ("values", "VALUES (1), (2)"),
-        ];
-        for (keyword, sql) in representative_read_only_statements {
-            assert!(
-                is_read_only_sql_for(DriverKind::DuckDb, sql),
-                "is_query_shape keyword {keyword:?} ({sql:?}) must be read-only-eligible for DuckDB"
-            );
-        }
-    }
-
     /// Schema Cache (#1097) の invalidate 判定: DDL キーワードを含む文は検出
     /// され、通常の DML / SELECT は検出されないこと。
     #[test]
@@ -3590,14 +3084,6 @@ mod tests {
         assert!(sql_may_change_schema(
             DriverKind::Postgres,
             "COMMENT ON COLUMN \"public\".\"t\".\"c\" IS 'x'"
-        ));
-        assert!(sql_may_change_schema(
-            DriverKind::DuckDb,
-            "comment on table t is null"
-        ));
-        assert!(sql_may_change_schema(
-            DriverKind::Mssql,
-            "EXEC sp_addextendedproperty @name = N'MS_Description', @value = N'x'"
         ));
         assert!(!sql_may_change_schema(
             DriverKind::Postgres,
@@ -3769,7 +3255,7 @@ mod tests {
     /// * データ変更 CTE を「主文の位置」ではなく **本文のどこかに書き込み
     ///   キーワードが露出しているか** で弾く
     ///
-    /// ため、`\` をただの文字として読む 4 方言では `delete` がそのまま見えて
+    /// ため、`\` をただの文字として読む 2 方言では `delete` がそのまま見えて
     /// 拒否される。MySQL だけはマスクが実サーバと同じく「閉じない文字列」と
     /// 読むので `delete` は現れず true を返すが、そのとき実サーバも同じ理由で
     /// この文を構文エラーにするため書き込みは起きない (安全網とサーバの解釈が
@@ -3780,12 +3266,7 @@ mod tests {
     #[test]
     fn read_only_guard_rejects_backslash_cte_on_standard_dialects() {
         let sql = r"WITH t AS (SELECT '\' AS x) DELETE FROM y";
-        for driver in [
-            DriverKind::Postgres,
-            DriverKind::Sqlite,
-            DriverKind::DuckDb,
-            DriverKind::Mssql,
-        ] {
+        for driver in [DriverKind::Postgres, DriverKind::Sqlite] {
             assert!(
                 !is_read_only_sql_for(driver, sql),
                 "{driver:?} must not accept a data-modifying CTE in a read-only session"
@@ -4237,9 +3718,9 @@ mod tests {
 
     #[test]
     fn auto_limit_skips_when_fetch_present() {
-        // PostgreSQL/DuckDB's SQL-standard `FETCH FIRST/NEXT … ROWS ONLY`
-        // pagination clause (#969). Appending a trailing `LIMIT` after it
-        // would be a syntax error, so this must bail just like an existing
+        // PostgreSQL's SQL-standard `FETCH FIRST/NEXT … ROWS ONLY` pagination
+        // clause (#969). Appending a trailing `LIMIT` after it would be a
+        // syntax error, so this must bail just like an existing
         // `LIMIT`/`OFFSET` does.
         assert!(
             apply_auto_limit("SELECT * FROM t ORDER BY id FETCH FIRST 10 ROWS ONLY", 1000)
@@ -4254,15 +3735,9 @@ mod tests {
             1000
         )
         .is_none());
-        // Driver-aware entry point for PostgreSQL/DuckDB must agree.
+        // Driver-aware entry point for PostgreSQL must agree.
         assert!(apply_auto_limit_for(
             DriverKind::Postgres,
-            "SELECT * FROM t ORDER BY id FETCH FIRST 10 ROWS ONLY",
-            1000
-        )
-        .is_none());
-        assert!(apply_auto_limit_for(
-            DriverKind::DuckDb,
             "SELECT * FROM t ORDER BY id FETCH FIRST 10 ROWS ONLY",
             1000
         )
@@ -4408,56 +3883,6 @@ mod tests {
         assert_eq!(out, "SELECT a FROM t WHERE b=1 LIMIT 77", "got: {out}");
     }
 
-    /// 素の MSSQL `SELECT` は他ドライバの `LIMIT` と同じく `TOP (n)` が付く。
-    #[test]
-    fn auto_limit_mssql_inserts_top_on_bare_select() {
-        let out = apply_auto_limit_mssql("SELECT a FROM t WHERE b = 1", 100).unwrap();
-        assert_eq!(out, "SELECT TOP (100) a FROM t WHERE b = 1");
-    }
-
-    /// #mssql-top-set-ops: `TOP` は自分が属する `SELECT` にしか効かないため、
-    /// トップレベルの `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` を持つ文には
-    /// 自動 LIMIT を付与しない (2 つ目以降の枝が無制限のままになるため)。
-    #[test]
-    fn auto_limit_mssql_declines_on_top_level_set_operators() {
-        assert!(apply_auto_limit_mssql("SELECT a FROM x UNION SELECT a FROM y", 100).is_none());
-        assert!(apply_auto_limit_mssql("SELECT a FROM x UNION ALL SELECT a FROM y", 100).is_none());
-        assert!(apply_auto_limit_mssql("SELECT a FROM x INTERSECT SELECT a FROM y", 100).is_none());
-        assert!(apply_auto_limit_mssql("SELECT a FROM x EXCEPT SELECT a FROM y", 100).is_none());
-    }
-
-    /// 括弧の中 (サブクエリ内) の集合演算では諦めない — 深さ 0 の判定であることの確認。
-    #[test]
-    fn auto_limit_mssql_top_level_set_operator_check_is_depth_aware() {
-        // UNION はサブクエリの中だけ: 外側の SELECT には TOP が付いてよい。
-        let out = apply_auto_limit_mssql(
-            "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s",
-            100,
-        )
-        .unwrap();
-        assert_eq!(
-            out,
-            "SELECT TOP (100) * FROM (SELECT a FROM x UNION SELECT a FROM y) s"
-        );
-        // 外側 (深さ 0) に UNION があれば、内側に括弧があっても declines する。
-        assert!(apply_auto_limit_mssql(
-            "SELECT a FROM (SELECT b FROM z) x UNION SELECT a FROM y",
-            100
-        )
-        .is_none());
-    }
-
-    /// `driver_kind` を知っている呼び出し口 (`apply_auto_limit_for`) でも同じ挙動。
-    #[test]
-    fn auto_limit_for_mssql_declines_on_top_level_union() {
-        assert!(apply_auto_limit_for(
-            DriverKind::Mssql,
-            "SELECT a FROM x UNION SELECT a FROM y",
-            100
-        )
-        .is_none());
-    }
-
     // #735 DML フライトレコーダの分類器。
     #[test]
     fn classify_write_kind_recognises_the_three_dml_kinds() {
@@ -4525,13 +3950,7 @@ mod tests {
 
     #[test]
     fn driver_kind_parse_round_trips_as_str() {
-        for d in [
-            DriverKind::Mysql,
-            DriverKind::Postgres,
-            DriverKind::Sqlite,
-            DriverKind::DuckDb,
-            DriverKind::Mssql,
-        ] {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             assert_eq!(DriverKind::parse(d.as_str()), Some(d));
         }
         assert_eq!(DriverKind::parse("oracle"), None);

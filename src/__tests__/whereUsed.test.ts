@@ -68,7 +68,7 @@ describe("findReferences (テーブル)", () => {
     expect(hitTexts("select * from ORDERS", table("orders"), "postgres")).toEqual(["ORDERS"]);
     expect(hitTexts('select * from "Orders"', table("orders"), "postgres")).toEqual(['"Orders"']);
     expect(hitTexts("select * from `orders`", table("orders"), "mysql")).toEqual(["`orders`"]);
-    expect(hitTexts("select * from [orders]", table("orders"), "mssql")).toEqual(["[orders]"]);
+    expect(hitTexts("select * from [orders]", table("orders"), "sqlite")).toEqual(["[orders]"]);
     expect(hitTexts('select * from "order ""x"""', table('order "x"'), "postgres")).toEqual([
       '"order ""x"""',
     ]);
@@ -85,11 +85,6 @@ describe("findReferences (テーブル)", () => {
     expect(hitTexts("SELECT * FROM other.orders", table("orders"), "mysql")).toEqual([]);
     expect(hitTexts('SELECT * FROM "app"."orders"', table("orders"), "postgres")).toEqual([
       '"orders"',
-    ]);
-    // MSSQL は dbo / db.dbo の両方を同じスキーマとみなす。
-    expect(hitTexts("SELECT * FROM dbo.orders", table("orders", "shop"), "mssql")).toEqual(["orders"]);
-    expect(hitTexts("SELECT * FROM shop.dbo.[orders]", table("orders", "shop"), "mssql")).toEqual([
-      "[orders]",
     ]);
     expect(hitTexts("SELECT * FROM main.orders", table("orders", "main"), "sqlite")).toEqual(["orders"]);
   });
@@ -203,13 +198,10 @@ describe("ドライバ別の縮退", () => {
   it("取れない種別を明示する", () => {
     expect(unsupportedWhereUsedKinds("mysql")).toEqual([]);
     expect(unsupportedWhereUsedKinds("postgres")).toEqual([]);
-    expect(unsupportedWhereUsedKinds("mssql")).toEqual([]);
     expect(unsupportedWhereUsedKinds("sqlite")).toEqual(["procedure", "function"]);
-    expect(unsupportedWhereUsedKinds("duckdb")).toEqual(["procedure", "function", "trigger"]);
   });
 
   it("修飾子の既定スキーマ", () => {
-    expect(tableQualifiers("mssql", "Shop")).toEqual(["shop", "dbo"]);
     expect(tableQualifiers("sqlite", "main")).toEqual(["main"]);
     expect(tableQualifiers("postgres", "public")).toEqual(["public"]);
   });
@@ -276,7 +268,7 @@ describe("runWhereUsedScan", () => {
   it("ドライバが扱わない種別は取りに行かない", async () => {
     const asked: string[] = [];
     await runWhereUsedScan({
-      driver: "duckdb",
+      driver: "sqlite",
       target: table("orders"),
       listObjects: async () => objects,
       getDefinition: async (o) => {
@@ -285,7 +277,7 @@ describe("runWhereUsedScan", () => {
       },
       snippets: [],
     });
-    expect(new Set(asked)).toEqual(new Set(["view"]));
+    expect(new Set(asked)).toEqual(new Set(["view", "trigger"]));
   });
 
   it("キャンセルされたら残りを取りに行かず途中結果を返す", async () => {

@@ -71,18 +71,16 @@ describe("quickSetOptions", () => {
     expect(ids(col("a", "TIMESTAMP(3)"))).toEqual(["null", "now"]);
   });
 
-  // BIT はドライバで意味が変わる唯一の型。MSSQL では真偽型そのもの
-  // (`literalFromInput` が 1/0 へ落とす) だが、PostgreSQL / DuckDB では
+  // BIT はドライバで意味が変わる唯一の型。MySQL/SQLite では真偽型そのもの
+  // (`literalFromInput` が 1/0 へ落とす) だが、PostgreSQL では
   // ビット列 ('10110000') なので true/false も空文字も不正なリテラルになる。
-  it("BIT 列は真偽型として扱う (MSSQL / MySQL / SQLite)", () => {
-    expect(ids(col("a", "BIT"), null, "mssql")).toEqual(["null", "true", "false"]);
+  it("BIT 列は真偽型として扱う (MySQL / SQLite)", () => {
     expect(ids(col("a", "bit"), null, "mysql")).toEqual(["null", "true", "false"]);
     expect(ids(col("a", "BIT(1)"), null, "sqlite")).toEqual(["null", "true", "false"]);
   });
 
   it("ビット列ドライバの BIT 列では NULL 以外を出さない", () => {
     expect(ids(col("a", "BIT"), null, "postgres")).toEqual(["null"]);
-    expect(ids(col("a", "BIT(8)"), null, "duckdb")).toEqual(["null"]);
     // 空文字を出してしまうと bit(n) では必ず Apply が失敗する。
     expect(ids(col("a", "BIT(8)"), null, "postgres")).not.toContain("empty");
   });

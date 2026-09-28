@@ -1,6 +1,6 @@
 {
   "description": "読み取り専用判定 (read-only ガード) のフロント/バック共有ゴールデンベクタ (#444)。各ケースの sql に対する期待値 readOnly を、フロント src/dangerousSql.ts の isReadOnlySql と、バック src-tauri/src/db/mod.rs の is_read_only_sql の双方が満たすことを検証する。片方だけロジックを変えると判定がズレてこのテストが落ちる。新しい境界ケースはこの 1 ファイルに追記すれば両言語に反映される。",
-  "driverDimension": "readOnly は「標準的な文字列リテラル解釈」(バックスラッシュをエスケープと見なさない = PostgreSQL / SQLite / MSSQL、およびドライバ非依存の呼び出し口) での期待値 (#852)。MySQL だけは \\' を引用符のエスケープとして扱うため判定が変わりうる。異なる場合のみ readOnlyMysql を書く (省略時は readOnly と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ隠すため、readOnlyMysql が readOnly より厳しくなる (true→false) ことはない。DuckDB は文字列リテラル解釈こそ標準組だが、#1005 で FROM 先頭構文・SUMMARIZE・照会形 PRAGMA という DuckDB 固有の読み取り専用許可を追加したため、これらを使うケースだけ readOnlyDuckdb を書く (省略時は readOnly と同じ)。DuckDB の許可は追加のみで既存判定を狭めないため、readOnlyDuckdb が readOnly より厳しくなる (true→false) ことはない。",
+  "driverDimension": "readOnly は「標準的な文字列リテラル解釈」(バックスラッシュをエスケープと見なさない = PostgreSQL / SQLite、およびドライバ非依存の呼び出し口) での期待値 (#852)。MySQL だけは \\' を引用符のエスケープとして扱うため判定が変わりうる。異なる場合のみ readOnlyMysql を書く (省略時は readOnly と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ隠すため、readOnlyMysql が readOnly より厳しくなる (true→false) ことはない。",
   "cases": [
     { "sql": "SELECT * FROM users", "readOnly": true, "note": "素の SELECT" },
     { "sql": "  select 1  ", "readOnly": true, "note": "前後空白・小文字" },
@@ -50,12 +50,12 @@
     { "sql": ";", "readOnly": false, "note": "セミコロンのみ" },
     { "sql": "REPLACE INTO users (id) VALUES (1)", "readOnly": false, "note": "REPLACE INTO は許可プレフィックスでなく弾かれる" },
 
-    { "sql": "SELECT TOP (10) * FROM [dbo].[users]", "readOnly": true, "note": "MSSQL: TOP + ブラケット識別子" },
-    { "sql": "SELECT * FROM [dbo].[users] WITH (NOLOCK)", "readOnly": true, "note": "MSSQL: NOLOCK テーブルヒントは読み取りロック回避であり書き込みではない" },
-    { "sql": "SELECT * FROM users WHERE [order] = 1", "readOnly": true, "note": "MSSQL: 予約語をブラケットで囲んだ識別子" },
-    { "sql": "EXEC sp_helpdb", "readOnly": false, "note": "MSSQL: EXEC は許可プレフィックスでなく弾かれる (CALL と同方針)" },
-    { "sql": "EXECUTE dbo.my_proc", "readOnly": false, "note": "MSSQL: EXECUTE も同様に弾かれる" },
-    { "sql": "SELECT * FROM users; EXEC sp_x", "readOnly": false, "note": "MSSQL: SELECT の後ろに隠れた EXEC (スタック)" },
+    { "sql": "SELECT TOP (10) * FROM [dbo].[users]", "readOnly": true, "note": "(旧 MSSQL 構文) TOP + ブラケット識別子。ブラケットはただの文字として扱われるため 3 ドライバでも読み取り専用と判定する" },
+    { "sql": "SELECT * FROM [dbo].[users] WITH (NOLOCK)", "readOnly": true, "note": "(旧 MSSQL 構文) NOLOCK テーブルヒントは読み取りロック回避であり書き込みではないため 3 ドライバでも許可する" },
+    { "sql": "SELECT * FROM users WHERE [order] = 1", "readOnly": true, "note": "(旧 MSSQL 構文) 予約語をブラケットで囲んだ識別子。3 ドライバでも読み取り専用と判定する" },
+    { "sql": "EXEC sp_helpdb", "readOnly": false, "note": "(旧 MSSQL 構文) EXEC は許可プレフィックスでなく 3 ドライバでも弾かれる (CALL と同方針)" },
+    { "sql": "EXECUTE dbo.my_proc", "readOnly": false, "note": "(旧 MSSQL 構文) EXECUTE も同様に 3 ドライバで弾かれる" },
+    { "sql": "SELECT * FROM users; EXEC sp_x", "readOnly": false, "note": "(旧 MSSQL 構文) SELECT の後ろに隠れた EXEC (スタック) は 3 ドライバでも拒否する" },
 
     { "sql": "SELECT $$delete from users$$ AS s", "readOnly": true, "note": "ドル引用 ($$...$$) 内の write キーワードはマスクされる" },
     { "sql": "SELECT $tag$drop table x; -- $tag$ AS s", "readOnly": true, "note": "タグ付きドル引用 ($tag$...$tag$) 内の DDL/セミコロンはマスクされる" },
@@ -82,12 +82,12 @@
     { "sql": "WITH x AS (WITH y AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM y) SELECT * FROM x", "readOnly": false, "note": "ネスト CTE 内の INSERT を弾く" },
     { "sql": "WITH x AS (WITH y AS (UPDATE t SET c = 1 RETURNING *) SELECT * FROM y) SELECT * FROM x", "readOnly": false, "note": "ネスト CTE 内の UPDATE を弾く" },
 
-    { "sql": "SELECT '\\'; DELETE FROM users; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: PG/SQLite/DuckDB/MSSQL では \\ はエスケープでないため文字列が閉じ、隠れた DELETE が露出する。MySQL では \\' が引用符のエスケープなので全体が 1 つの文字列リテラル" },
+    { "sql": "SELECT '\\'; DELETE FROM users; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: PostgreSQL/SQLite では \\ はエスケープでないため文字列が閉じ、隠れた DELETE が露出する。MySQL では \\' が引用符のエスケープなので全体が 1 つの文字列リテラル" },
     { "sql": "SELECT '\\'; DROP TABLE users; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: 同上の DDL 版" },
     { "sql": "SELECT '\\'; SELECT 2; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: 書き込みキーワードが無くても、露出した 2 文目 (スタック) として弾く" },
     { "sql": "SELECT 'ok\\' AS s", "readOnly": true, "note": "#852: リテラル内の \\ があってもキーワード/セミコロンが露出しなければ両マスクとも読み取り" },
     { "sql": "SELECT 'a\\\\b' AS s", "readOnly": true, "note": "#852: エスケープされたバックスラッシュのみを含むリテラル" },
-    { "sql": "SELECT * FROM [dbo].[users] WITH (UPDLOCK)", "readOnly": false, "note": "#906: MSSQL テーブルヒント UPDLOCK は更新ロックを取得する" },
+    { "sql": "SELECT * FROM [dbo].[users] WITH (UPDLOCK)", "readOnly": false, "note": "#906: (旧 MSSQL 構文) テーブルヒント UPDLOCK は更新ロックを取得するため、3 ドライバでもキーワード検出で拒否する" },
     { "sql": "SELECT * FROM users WITH (UPDLOCK, HOLDLOCK)", "readOnly": false, "note": "#906: 複数ヒント (UPDLOCK + HOLDLOCK)" },
     { "sql": "SELECT * FROM users WITH (HOLDLOCK)", "readOnly": false, "note": "#906: HOLDLOCK はトランザクション終了まで共有ロックを保持する" },
     { "sql": "SELECT * FROM users WITH (SERIALIZABLE)", "readOnly": false, "note": "#906: SERIALIZABLE は HOLDLOCK の同義語" },
@@ -102,9 +102,9 @@
     { "sql": "SELECT updlock, serializable FROM t", "readOnly": true, "note": "#906: WITH (...) の外にある同名の列は誤検出しない" },
     { "sql": "SELECT * FROM t WHERE holdlock = 1", "readOnly": true, "note": "#906: WHERE 句の列名も誤検出しない" },
 
-    { "sql": "SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE t SET a=1; SELECT 1') AS r", "readOnly": false, "note": "MSSQL: OPENROWSET のリンクサーバ経由パススルー書き込みは引数の文字列内に隠れる" },
-    { "sql": "SELECT * FROM OPENQUERY(linked_srv, 'DELETE FROM accounts')", "readOnly": false, "note": "MSSQL: OPENQUERY も同様のパススルー" },
-    { "sql": "SELECT * FROM OPENDATASOURCE('SQLNCLI','Server=x;').db.dbo.t", "readOnly": false, "note": "MSSQL: OPENDATASOURCE も同様のパススルー" },
+    { "sql": "SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE t SET a=1; SELECT 1') AS r", "readOnly": false, "note": "(旧 MSSQL 構文) OPENROWSET のリンクサーバ経由パススルー書き込みは引数の文字列内に隠れるため、3 ドライバでも関数名検出で拒否する" },
+    { "sql": "SELECT * FROM OPENQUERY(linked_srv, 'DELETE FROM accounts')", "readOnly": false, "note": "(旧 MSSQL 構文) OPENQUERY も同様のパススルー。3 ドライバでも拒否する" },
+    { "sql": "SELECT * FROM OPENDATASOURCE('SQLNCLI','Server=x;').db.dbo.t", "readOnly": false, "note": "(旧 MSSQL 構文) OPENDATASOURCE も同様のパススルー。3 ドライバでも拒否する" },
     { "sql": "SELECT dblink_exec('dbname=other','DELETE FROM accounts')", "readOnly": false, "note": "PostgreSQL: dblink_exec は他 DB への書き込みパススルー" },
     { "sql": "SELECT dblink('dbname=other','SELECT 1')", "readOnly": false, "note": "PostgreSQL: dblink 自体も拒否 (fail-closed)" },
     { "sql": "SELECT load_extension('/tmp/evil.so')", "readOnly": false, "note": "SQLite: load_extension はネイティブ拡張のロード (任意コード実行)" },
@@ -115,7 +115,7 @@
     { "sql": "SELECT 1 /*! UNION SELECT password FROM users */", "readOnly": true, "note": "#mysql-versioned-comment: 中身が読み取り専用なら通る (バージョン番号省略形 /*! も対象)" },
     { "sql": "SELECT 1 /* normal comment with DELETE inside */", "readOnly": true, "note": "#mysql-versioned-comment: 通常のブロックコメント (! 無し) は従来どおりマスクされる" },
 
-    { "sql": "TABLE users", "readOnly": true, "note": "#1005: TABLE t は SELECT * FROM t の短縮形 (PostgreSQL/DuckDB/MySQL 8.0.19+)。書き込みに転じる構文が無いため全ドライバで許可" },
+    { "sql": "TABLE users", "readOnly": true, "note": "#1005: TABLE t は SELECT * FROM t の短縮形 (PostgreSQL・MySQL 8.0.19+)。書き込みに転じる構文が無いため全ドライバで許可" },
     { "sql": "TABLE users;", "readOnly": true, "note": "#1005: TABLE + 末尾セミコロンは許容" },
     { "sql": "VALUES (1), (2)", "readOnly": true, "note": "#1005: 裸の VALUES 行コンストラクタは結果セットを返すのみで書き込みに転じない。全ドライバで許可" },
     { "sql": "VALUES (1)", "readOnly": true, "note": "#1005: 単一行の VALUES" },
@@ -123,16 +123,16 @@
     { "sql": "VALUES (1); DELETE FROM users", "readOnly": false, "note": "#1005: VALUES の後ろに隠れた DELETE (スタック) は従来どおり拒否" },
     { "sql": "TABLE users FOR UPDATE", "readOnly": false, "note": "#1005: TABLE でもロック句 (FOR UPDATE) は拒否 (has_locking_clause は先頭キーワードに依存しない)" },
 
-    { "sql": "FROM users", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の FROM 先頭省略構文 (SELECT * FROM users と同義)。他ドライバはこの構文自体をサポートせず許可プレフィックスにも無いため拒否のまま" },
-    { "sql": "FROM users LIMIT 10", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の FROM 先頭 + LIMIT" },
-    { "sql": "FROM users; DROP TABLE users", "readOnly": false, "note": "#1005: DuckDB でも FROM の後ろに隠れた DDL (スタック) は拒否" },
-    { "sql": "SUMMARIZE users", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の SUMMARIZE は列統計を返す読み取り専用の擬似文" },
-    { "sql": "SUMMARIZE users; DROP TABLE users", "readOnly": false, "note": "#1005: DuckDB でも SUMMARIZE の後ろに隠れた DDL (スタック) は拒否" },
+    { "sql": "FROM users", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) FROM 先頭省略構文 (SELECT * FROM users と同義)。現行の 3 ドライバはこの構文自体をサポートせず許可プレフィックスにも無いため拒否のまま" },
+    { "sql": "FROM users LIMIT 10", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) FROM 先頭 + LIMIT。3 ドライバとも拒否のまま" },
+    { "sql": "FROM users; DROP TABLE users", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) FROM の後ろに隠れた DDL (スタック) も同様に拒否" },
+    { "sql": "SUMMARIZE users", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) SUMMARIZE は列統計を返す読み取り専用の擬似文だったが、現行の 3 ドライバは許可プレフィックスに持たないため拒否" },
+    { "sql": "SUMMARIZE users; DROP TABLE users", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) SUMMARIZE の後ろに隠れた DDL (スタック) も同様に拒否" },
 
-    { "sql": "PRAGMA database_list", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の引数無し PRAGMA (照会形) — 設定を読むだけで変更しない" },
-    { "sql": "PRAGMA table_info('users')", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の関数呼び出し形 PRAGMA (照会形、'=' を含まない)" },
-    { "sql": "PRAGMA memory_limit='1GB'", "readOnly": false, "note": "#1005: PRAGMA の設定形 (代入 '=' を含む) は書き込みに準じるため DuckDB でも拒否" },
+    { "sql": "PRAGMA database_list", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) 引数無し PRAGMA (照会形)。現行の 3 ドライバでは PRAGMA は許可プレフィックスに無いため拒否" },
+    { "sql": "PRAGMA table_info('users')", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) 関数呼び出し形 PRAGMA (照会形、'=' を含まない)。3 ドライバとも拒否" },
+    { "sql": "PRAGMA memory_limit='1GB'", "readOnly": false, "note": "#1005: PRAGMA の設定形 (代入 '=' を含む) は書き込みに準じるため拒否" },
     { "sql": "PRAGMA threads=4", "readOnly": false, "note": "#1005: PRAGMA 設定形の別例。'=' の有無で照会形と区別する" },
-    { "sql": "PRAGMA foreign_keys=ON", "readOnly": false, "note": "#1005: SQLite の PRAGMA 設定形の代表例。PRAGMA は DuckDB 以外では許可プレフィックスに無いため常に拒否 (SQLite で '=' の無い PRAGMA も同様に拒否のまま — 照会/設定の区別を持ち込まない)" }
+    { "sql": "PRAGMA foreign_keys=ON", "readOnly": false, "note": "#1005: SQLite の PRAGMA 設定形の代表例。PRAGMA はどのドライバでも許可プレフィックスに無いため常に拒否 (SQLite で '=' の無い PRAGMA も同様に拒否のまま — 照会/設定の区別を持ち込まない)" }
   ]
 }

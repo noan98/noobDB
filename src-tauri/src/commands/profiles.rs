@@ -93,9 +93,31 @@ pub struct ProfileWithSecretFlags {
     pub has_ssh_jump_password: bool,
 }
 
+/// `profiles.json` から読めたプロファイルのうち、現在サポートしているドライバの
+/// ものだけを残す。対応ドライバを縮小した後 (例: MSSQL / DuckDB 廃止) に残っている
+/// 旧エントリが 1 件でもあると、フロントの `driverKind` zod スキーマ (3 種のみ許可)
+/// が配列全体の parse に失敗し、プロファイル一覧が丸ごと読めなくなる — それを
+/// 避けるため、未知のドライバのプロファイルだけをここで読み飛ばす (警告ログ付き)。
+fn filter_supported_driver_profiles(profiles: Vec<ConnectionProfile>) -> Vec<ConnectionProfile> {
+    profiles
+        .into_iter()
+        .filter(|profile| {
+            let known = crate::db::DriverKind::parse(&profile.driver).is_some();
+            if !known {
+                tracing::warn!(
+                    profile_id = %profile.id,
+                    driver = %profile.driver,
+                    "profiles: skipping profile with unsupported driver"
+                );
+            }
+            known
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
-    let profiles = store::load_all()?;
+    let profiles = filter_supported_driver_profiles(store::load_all()?);
     Ok(profiles
         .into_iter()
         .map(|profile| {
@@ -335,9 +357,7 @@ pub struct ImportResult {
 }
 
 /// 取り込めるドライバか。`DriverKind::parse` に委ねるので、ドライバを足すと
-/// インポートも自動で追従する (以前は mysql/postgres/sqlite の手書きリストで、
-/// DuckDB / SQL Server のプロファイルが「不正な行」として捨てられていた。#710 の
-/// マシン移行で全ドライバを運べるよう修正)。
+/// インポートも自動で追従する。
 fn is_known_driver(driver: &str) -> bool {
     crate::db::DriverKind::parse(driver).is_some()
 }
@@ -721,14 +741,29 @@ mod tests {
 
     #[test]
     fn import_accepts_every_supported_driver() {
-        // #710: DuckDB / SQL Server も取り込めること (以前は 3 ドライバの手書きで弾かれた)。
-        let incoming = ["mysql", "postgres", "sqlite", "duckdb", "mssql"]
+        let incoming = ["mysql", "postgres", "sqlite"]
             .iter()
             .map(|d| profile("", d, d))
             .collect();
         let (_, res, _) = merge_imported(vec![], incoming, ImportStrategy::Rename, counter());
-        assert_eq!(res.imported, 5);
+        assert_eq!(res.imported, 3);
         assert_eq!(res.invalid, 0);
+    }
+
+    /// 対応ドライバを縮小した後 (MSSQL / DuckDB 廃止) も、旧 profiles.json に
+    /// 未知ドライバのエントリが残っている場合、それだけを読み飛ばし、
+    /// 残りのプロファイルは影響を受けないこと。
+    #[test]
+    fn filter_supported_driver_profiles_skips_only_unknown_driver() {
+        let profiles = vec![
+            profile("a", "MySQL profile", "mysql"),
+            profile("b", "Old MSSQL profile", "mssql"),
+            profile("c", "Old DuckDB profile", "duckdb"),
+            profile("d", "SQLite profile", "sqlite"),
+        ];
+        let kept = filter_supported_driver_profiles(profiles);
+        let ids: Vec<&str> = kept.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "d"]);
     }
 
     #[test]

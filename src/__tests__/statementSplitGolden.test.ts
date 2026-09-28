@@ -16,9 +16,8 @@ import vectors from "./fixtures/statementSplitVectors.json";
 // `include_str!` で読み、バックエンドのマスクで同じ規則の分割をして一致を検証する。
 //
 // ベクタは**ドライバ次元**を持つ (#852 / #1004)。`statements` はバックスラッシュを
-// 文字列エスケープと見なさない標準解釈 (PostgreSQL / SQLite / DuckDB / MSSQL、
-// およびドライバ省略時) の期待値で、MySQL だけ結果が変わるケースのみ
-// `statementsMysql` を持つ。
+// 文字列エスケープと見なさない標準解釈 (PostgreSQL / SQLite、およびドライバ省略時)
+// の期待値で、MySQL だけ結果が変わるケースのみ `statementsMysql` を持つ。
 
 interface VectorCase {
   sql: string;
@@ -32,7 +31,7 @@ const drivers = vectors.drivers as string[];
 const cases = vectors.cases as VectorCase[];
 
 /** 標準的な文字列リテラル解釈を採るドライバ (= `statements` がそのまま期待値)。 */
-const STANDARD_DRIVERS = ["postgres", "sqlite", "duckdb", "mssql"] as const;
+const STANDARD_DRIVERS = ["postgres", "sqlite"] as const;
 
 function expectSplit(sql: string, driver: string | undefined, expected: string[]) {
   expect(splitSqlStatements(sql, driver)).toEqual(expected);
@@ -49,8 +48,8 @@ function expectSplit(sql: string, driver: string | undefined, expected: string[]
 }
 
 describe("文境界ゴールデン (フロント splitSqlStatements)", () => {
-  it("ベクタが 5 ドライバすべてを覆う", () => {
-    expect(drivers).toEqual(["mysql", "postgres", "sqlite", "duckdb", "mssql"]);
+  it("ベクタが 3 ドライバすべてを覆う", () => {
+    expect(drivers).toEqual(["mysql", "postgres", "sqlite"]);
   });
 
   it("ベクタが十分なケース数を持つ (取りこぼし防止)", () => {

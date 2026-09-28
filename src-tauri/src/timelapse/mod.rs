@@ -320,7 +320,7 @@ mod tests {
             &["id", "v"],
             vec![vec![Value::Int(1), Value::String(s("x"))]],
         );
-        let (diff, _, _) = diff_snapshots(DriverKind::Mssql, "t", &a, &a.clone());
+        let (diff, _, _) = diff_snapshots(DriverKind::Postgres, "t", &a, &a.clone());
         assert!(diff.rows.is_empty());
     }
 }

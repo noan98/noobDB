@@ -28,6 +28,9 @@
 - 関連 Issue がある PR は**本文の独立行に `Closes #123`** を必ず入れる
   (タイトルの `(#123)` や本文中の `#123` 単独では close されない)。Epic は最後の
   子を解消する PR でのみ閉じる。
+- **対応 DB は MySQL / PostgreSQL / SQLite の 3 つに固定。** それ以外のドライバ
+  (DuckDB・SQL Server・Oracle・ClickHouse など) の追加・再導入や、それらとの
+  パリティを前提にした Issue は**作らない** (提案もしない)。
 - 詳細: `.claude/rules/issues-and-prs.md`
 
 ### コードの不変条件
@@ -49,9 +52,10 @@
   やむを得ない場合は `#[allow(...)]` + 日本語の根拠コメントを必ず添える。
 - **64bit 整数のデコードは `Value::from_*_lossless` を必ず経由する** — JS の安全整数
   を超えると丸められ、インラインセル編集が誤った行を書き換えます。
-- **新しい DB ドライバを追加するときは** `DriverKind` にバリアントを追加し、
-  `db/<name>.rs` で同じメソッド表面を実装し、`db/mod.rs` の**全 `match` アーム**を
-  拡張する。SSH / セッション層には触らない (ドライバ非依存)。
+- **`DriverKind` は `Mysql` / `Postgres` / `Sqlite` の 3 バリアントで固定。**
+  新しいドライバを追加しない (上記「Issue と PR」参照)。ドライバ別の機能を足す
+  ときは `db/mod.rs` の**全 `match` アーム**で 3 ドライバを揃え、SSH / セッション層
+  には触らない (ドライバ非依存)。
 - **安全網の強制レベルを混同しない**: `read_only` は**バックエンド強制**、
   `confirm_writes` / `is_production` は**UI レベルの誤操作防止のみ** (IPC を直接
   叩けば素通り)。
@@ -116,8 +120,8 @@ cargo test
 
 ## アーキテクチャ (要約)
 
-noobDB は MySQL / PostgreSQL / SQLite / DuckDB / Microsoft SQL Server 対応の軽量
-デスクトップ DB クライアントで、SSH トンネルをファーストクラスでサポートします。
+noobDB は MySQL / PostgreSQL / SQLite 対応の軽量デスクトップ DB クライアントで、
+SSH トンネルをファーストクラスでサポートします。
 
 - **フロントエンド** (`src/`): React 19 + TypeScript + Vite + Chakra UI。Rust への
   通信は `src/api/tauri.ts` の型付きラッパー (`invoke`) のみ。ストリーミング結果は

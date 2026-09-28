@@ -130,13 +130,12 @@ describe("tableChildGroups", () => {
 });
 
 describe("explorerContainerKind", () => {
-  it("PostgreSQL / DuckDB のデータベース階層はスキーマ", () => {
+  it("PostgreSQL のデータベース階層はスキーマ", () => {
     expect(explorerContainerKind("postgres")).toBe("schema");
-    expect(explorerContainerKind("duckdb")).toBe("schema");
   });
 
   it("それ以外はデータベース", () => {
-    for (const d of ["mysql", "sqlite", "mssql", "unknown"]) {
+    for (const d of ["mysql", "sqlite", "unknown"]) {
       expect(explorerContainerKind(d)).toBe("database");
     }
   });

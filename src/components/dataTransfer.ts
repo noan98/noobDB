@@ -24,8 +24,6 @@ export function toDriverKind(driver: string): DriverKind | null {
     case "mysql":
     case "postgres":
     case "sqlite":
-    case "duckdb":
-    case "mssql":
       return driver;
     default:
       return null;

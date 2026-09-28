@@ -137,12 +137,8 @@ describe("jsonPathSqlExpression", () => {
       "JSON_EXTRACT(`doc`, '$.\"q\\\\\"k\"')",
     );
   });
-  it("SQLite / DuckDB / MSSQL", () => {
+  it("SQLite", () => {
     expect(jsonPathSqlExpression("sqlite", "doc", path, true)).toBe(`json_extract("doc", '$.a.b[0]')`);
-    expect(jsonPathSqlExpression("duckdb", "doc", path, true)).toBe(`json_extract_string("doc", '$.a.b[0]')`);
-    expect(jsonPathSqlExpression("duckdb", "doc", path, false)).toBe(`json_extract("doc", '$.a.b[0]')`);
-    expect(jsonPathSqlExpression("mssql", "doc", path, true)).toBe(`JSON_VALUE([doc], N'$.a.b[0]')`);
-    expect(jsonPathSqlExpression("mssql", "doc", path, false)).toBe(`JSON_QUERY([doc], N'$.a.b[0]')`);
   });
   it("root path is the column itself", () => {
     expect(jsonPathSqlExpression("postgres", "doc", [], true)).toBe(`"doc"`);
@@ -162,17 +158,12 @@ describe("jsonPathSqlPredicate", () => {
 
   it("strings", () => {
     expect(jsonPathSqlPredicate("postgres", "doc", ["a"], str)).toBe(`"doc" ->> 'a' = 'O''Neil'`);
-    expect(jsonPathSqlPredicate("mssql", "doc", ["a"], str)).toBe(`JSON_VALUE([doc], N'$.a') = N'O''Neil'`);
   });
 
   it("numbers keep their original text (no rounding)", () => {
     expect(jsonPathSqlPredicate("postgres", "doc", ["n"], big)).toBe(`("doc" ->> 'n')::numeric = 9007199254740993`);
     expect(jsonPathSqlPredicate("mysql", "doc", ["n"], big)).toBe("JSON_EXTRACT(`doc`, '$.n') = 9007199254740993");
     expect(jsonPathSqlPredicate("sqlite", "doc", ["n"], big)).toBe(`json_extract("doc", '$.n') = 9007199254740993`);
-    expect(jsonPathSqlPredicate("duckdb", "doc", ["n"], big)).toBe(
-      `TRY_CAST(json_extract_string("doc", '$.n') AS DOUBLE) = 9007199254740993`,
-    );
-    expect(jsonPathSqlPredicate("mssql", "doc", ["n"], big)).toBe(`JSON_VALUE([doc], N'$.n') = N'9007199254740993'`);
   });
 
   it("booleans (SQLite uses 1/0)", () => {

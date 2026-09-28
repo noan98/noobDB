@@ -13,9 +13,9 @@ import { quoteIdentFor } from "./sqlDialect";
  *   描くため、ここではパース結果をそのまま木として公開し、検索だけを明示的な
  *   スタックで走査する (巨大 JSON で再帰が溢れないように)。
  * - **パス生成**: ノード単位の `$.a.b[0]` 形式のパスと、方言別の SQL 抽出式・
- *   WHERE 述語 (PostgreSQL `->`/`->>`、MySQL `JSON_EXTRACT`、SQLite `json_extract`、
- *   DuckDB `json_extract_string`、MSSQL `JSON_VALUE`/`JSON_QUERY`) を生成する。
- *   生成した SQL はクリップボードへコピーするだけで、DB へは何も書き込まない。
+ *   WHERE 述語 (PostgreSQL `->`/`->>`、MySQL `JSON_EXTRACT`、SQLite `json_extract`)
+ *   を生成する。生成した SQL はクリップボードへコピーするだけで、DB へは何も
+ *   書き込まない。
  */
 
 export type JsonNode =
@@ -393,7 +393,7 @@ const PLAIN_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /**
  * SQL/JSON パス表記 (`$.a.b[0]`)。識別子として安全でないキー (空白・記号・数字
  * 始まり・空文字など) は `$."a b"` のように二重引用符で囲む。この表記は MySQL /
- * SQLite / DuckDB / SQL Server / PostgreSQL jsonpath が共通して受け付ける。
+ * SQLite / PostgreSQL jsonpath が共通して受け付ける。
  */
 export function formatJsonPath(path: readonly JsonPathSegment[]): string {
   let s = "$";
@@ -412,10 +412,10 @@ function sqlString(driver: string, s: string): string {
 
 /**
  * パスが指す値を取り出す方言別の SQL 式。`scalar` が真ならテキスト/スカラとして
- * (PostgreSQL `->>`、MySQL `JSON_UNQUOTE(JSON_EXTRACT(...))`、MSSQL `JSON_VALUE`)、
- * 偽なら JSON 断片として (PostgreSQL `->`、MySQL `JSON_EXTRACT`、MSSQL
- * `JSON_QUERY`) 取り出す。ルート (空パス) は列そのもの。未知のドライバは MySQL 扱い
- * (`quoteIdentFor` と同じ規約)。MariaDB が `->>` を持たないため MySQL は関数形で書く。
+ * (PostgreSQL `->>`、MySQL `JSON_UNQUOTE(JSON_EXTRACT(...))`)、偽なら JSON 断片
+ * として (PostgreSQL `->`、MySQL `JSON_EXTRACT`) 取り出す。ルート (空パス) は
+ * 列そのもの。未知のドライバは MySQL 扱い (`quoteIdentFor` と同じ規約)。
+ * MariaDB が `->>` を持たないため MySQL は関数形で書く。
  */
 export function jsonPathSqlExpression(
   driver: string,
@@ -437,10 +437,6 @@ export function jsonPathSqlExpression(
   switch (driver) {
     case "sqlite":
       return `json_extract(${col}, ${p})`;
-    case "duckdb":
-      return scalar ? `json_extract_string(${col}, ${p})` : `json_extract(${col}, ${p})`;
-    case "mssql":
-      return scalar ? `JSON_VALUE(${col}, ${p})` : `JSON_QUERY(${col}, ${p})`;
     default:
       return scalar ? `JSON_UNQUOTE(JSON_EXTRACT(${col}, ${p}))` : `JSON_EXTRACT(${col}, ${p})`;
   }
@@ -450,9 +446,8 @@ export function jsonPathSqlExpression(
  * パスの値が `node` (スカラ) と等しい行を選ぶ WHERE 述語。コンテナ・ルートは null。
  *
  * 数値は元テキストのまま埋め込み、比較は方言ごとに数値として行う (PostgreSQL は
- * `::numeric` で任意精度、SQL Server は `JSON_VALUE` が元テキストを返すので文字列
- * 比較)。JSON の null はパス欠如とも一致する `IS NULL` になる (MySQL のみ
- * `JSON_TYPE` で null 値を区別する)。
+ * `::numeric` で任意精度)。JSON の null はパス欠如とも一致する `IS NULL` になる
+ * (MySQL のみ `JSON_TYPE` で null 値を区別する)。
  */
 export function jsonPathSqlPredicate(
   driver: string,
@@ -462,7 +457,7 @@ export function jsonPathSqlPredicate(
 ): string | null {
   if (path.length === 0 || isContainer(node)) return null;
   const scalarExpr = jsonPathSqlExpression(driver, column, path, true);
-  const isMysql = !["postgres", "sqlite", "duckdb", "mssql"].includes(driver);
+  const isMysql = !["postgres", "sqlite"].includes(driver);
   switch (node.kind) {
     case "null":
       if (isMysql) {
@@ -481,10 +476,6 @@ export function jsonPathSqlPredicate(
           return `(${scalarExpr})::numeric = ${node.raw}`;
         case "sqlite":
           return `${scalarExpr} = ${node.raw}`;
-        case "duckdb":
-          return `TRY_CAST(${scalarExpr} AS DOUBLE) = ${node.raw}`;
-        case "mssql":
-          return `${scalarExpr} = ${sqlString(driver, node.raw)}`;
         default:
           return `${jsonPathSqlExpression(driver, column, path, false)} = ${node.raw}`;
       }

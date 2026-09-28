@@ -6,7 +6,7 @@
 // 1. 候補取得用の **読み取り専用 SQL** の生成 (識別子は `quoteIdentFor`、値・検索語は
 //    `quoteString` + `escapeLikeWildcards` の既存リテラル生成規約に従う。自前で
 //    クオートしない)。FK 候補は必ず行数上限 (LIMIT / TOP) を付ける。
-// 2. 型定義 (`enum('a','b')` / `set(...)` / DuckDB の `ENUM('a', 'b')`) と CHECK 制約式
+// 2. 型定義 (`enum('a','b')` / `set(...)`) と CHECK 制約式
 //    (`col IN (...)` / `col = ANY (ARRAY[...])` / `col = 'a' OR col = 'b'`) からの
 //    許可値の抽出。
 // 3. 取得結果の行 → 候補文字列への変換。
@@ -22,8 +22,6 @@
 // | MySQL / MariaDB | ○ | ○ (`COLUMN_TYPE` を解析、追加クエリ不要) | ○ (`information_schema.CHECK_CONSTRAINTS`。8.0.16 未満の MySQL は表が無くクエリが失敗 → CHECK のみ縮退) |
 // | PostgreSQL | ○ | ○ (ユーザ定義 ENUM を `pg_enum` から取得) | ○ (`pg_get_constraintdef`) |
 // | SQLite | ○ | — (ENUM 型が無い) | ○ (`sqlite_master.sql` の CHECK 句を解析) |
-// | DuckDB | ○ | ○ (`information_schema.columns.data_type` の `ENUM(...)`) | ○ (`duckdb_constraints()`) |
-// | SQL Server | ○ | — (ENUM 型が無い) | ○ (`sys.check_constraints.definition`) |
 //
 // CHECK は「列 = 定数の列挙」と読める形 (IN リスト / `= ANY (ARRAY[...])` / 同一列の
 // 等値比較だけを OR で繋いだもの) だけを候補化する。範囲 (`BETWEEN` / `>`)・関数・
@@ -58,10 +56,6 @@ function textCastExpr(driver: string, quotedCol: string): string {
     case "postgres":
     case "sqlite":
       return `CAST(${quotedCol} AS TEXT)`;
-    case "duckdb":
-      return `CAST(${quotedCol} AS VARCHAR)`;
-    case "mssql":
-      return `CAST(${quotedCol} AS NVARCHAR(4000))`;
     default:
       return `CAST(${quotedCol} AS CHAR)`;
   }
@@ -73,7 +67,7 @@ function tableRef(driver: string, database: string | null | undefined, table: st
 
 export interface FkCandidatesParams {
   driver: string;
-  /** 編集中テーブルのデータベース (PostgreSQL / DuckDB ではスキーマ)。参照先も同じ場所にある前提。 */
+  /** 編集中テーブルのデータベース (PostgreSQL ではスキーマ)。参照先も同じ場所にある前提。 */
   database?: string | null;
   refTable: string;
   refColumn: string;
@@ -97,9 +91,7 @@ export function buildFkCandidatesSql(p: FkCandidatesParams): string {
     where.push(`${textCastExpr(p.driver, col)} LIKE ${pattern} ESCAPE ${quoteString(p.driver, "\\")}`);
   }
   const from = tableRef(p.driver, p.database, p.refTable);
-  const top = p.driver === "mssql" ? `TOP (${limit}) ` : "";
-  const tail = p.driver === "mssql" ? "" : ` LIMIT ${limit}`;
-  return `SELECT DISTINCT ${top}${col} FROM ${from} WHERE ${where.join(" AND ")} ORDER BY ${col}${tail}`;
+  return `SELECT DISTINCT ${col} FROM ${from} WHERE ${where.join(" AND ")} ORDER BY ${col} LIMIT ${limit}`;
 }
 
 /** 許可値取得クエリの用途。 */
@@ -117,7 +109,7 @@ export interface AllowedValuesQuery {
  * - `check`: 行 = `[制約定義テキスト]`。SQLite は CREATE TABLE 文全体を返す
  *   (列制約・表制約の CHECK をまとめて解析する)。
  *
- * MySQL の ENUM / SET と DuckDB の ENUM は型名に値が入っているのでクエリ不要。
+ * MySQL の ENUM / SET は型名に値が入っているのでクエリ不要。
  */
 export function buildAllowedValuesQueries(
   driver: string,
@@ -170,31 +162,6 @@ export function buildAllowedValuesQueries(
           sql: `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ${lit(table)}`,
         },
       ];
-    case "duckdb": {
-      const schema = database ? lit(database) : "current_schema()";
-      return [
-        {
-          purpose: "check",
-          sql:
-            "SELECT constraint_text FROM duckdb_constraints()" +
-            ` WHERE constraint_type = 'CHECK' AND schema_name = ${schema} AND table_name = ${lit(table)}`,
-        },
-      ];
-    }
-    case "mssql": {
-      // バックエンドのスキーマ introspection は dbo スキーマ前提 (`qualifiedTableRef` と同じ)。
-      const prefix = database ? `${quoteIdentFor(driver, database)}.` : "";
-      return [
-        {
-          purpose: "check",
-          sql:
-            `SELECT cc.definition FROM ${prefix}sys.check_constraints cc` +
-            ` JOIN ${prefix}sys.tables t ON t.object_id = cc.parent_object_id` +
-            ` JOIN ${prefix}sys.schemas s ON s.schema_id = t.schema_id` +
-            ` WHERE s.name = N'dbo' AND t.name = ${lit(table)}`,
-        },
-      ];
-    }
     default:
       return [];
   }
@@ -214,7 +181,7 @@ type Token =
 function tokenize(driver: string, src: string): Token[] {
   const out: Token[] = [];
   const backslashEscapes = driver === "mysql";
-  const bracketIdents = driver === "mssql" || driver === "sqlite";
+  const bracketIdents = driver === "sqlite";
   let i = 0;
   const n = src.length;
   const readString = (quote: string): string => {
@@ -275,7 +242,7 @@ function tokenize(driver: string, src: string): Token[] {
       const m = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(src.slice(i));
       const word = m ? m[0] : ch;
       i += word.length;
-      // 文字列の接頭辞: N'..' (MSSQL の Unicode) / E'..' (PG) / _utf8mb4'..' (MySQL のイントロデューサ)。
+      // 文字列の接頭辞: E'..' (PG) / _utf8mb4'..' (MySQL のイントロデューサ)。
       if (src[i] === "'" && (/^[NnEe]$/.test(word) || word.startsWith("_"))) {
         out.push({ t: "str", v: readString("'") });
         continue;
@@ -476,14 +443,13 @@ export function allowedValuesFromCheck(
 
 /**
  * 型定義文字列から ENUM / SET の許可値を抽出する。MySQL の `COLUMN_TYPE`
- * (`enum('a','b')` / `set('x','y')`) と DuckDB の `ENUM('a', 'b')` に対応。
- * それ以外の型は null。
+ * (`enum('a','b')` / `set('x','y')`) に対応。それ以外の型は null。
  */
 export function allowedValuesFromType(driver: string, dataType: string): AllowedValues | null {
   const m = /^\s*(enum|set)\s*\(([\s\S]*)\)\s*$/i.exec(dataType);
   if (!m) return null;
   const kind = m[1].toLowerCase() === "set" ? "set" : "enum";
-  // DuckDB に SET 型は無い (`set(` で始まる型名は来ない想定だが念のため弾く)。
+  // MySQL 以外に SET 型は無い (`set(` で始まる型名は来ない想定だが念のため弾く)。
   if (kind === "set" && driver !== "mysql") return null;
   const values = readLiteralList(tokenize(driver, `${m[2]})`), 0, ")");
   return values ? { kind, values } : null;
@@ -496,7 +462,7 @@ function dedupe(values: string[]): string[] {
 /**
  * テーブル全列の許可値マップを組み立てる。
  *
- * - 型由来 (MySQL ENUM/SET・DuckDB ENUM) は `columns` だけで決まる。
+ * - 型由来 (MySQL ENUM/SET) は `columns` だけで決まる。
  * - `pgEnumRows` は `buildAllowedValuesQueries` の `pgEnum` 結果 (`[列名, ラベル]`)。
  * - `checkDefinitions` は `check` 結果の定義テキスト。
  *

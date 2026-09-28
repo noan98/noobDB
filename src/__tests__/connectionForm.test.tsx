@@ -373,12 +373,11 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     expect(req.db_password).toBeUndefined();
   });
 
-  it("does not offer IAM auth for SQL Server", () => {
+  it("does not offer IAM auth for SQLite (file-backed)", () => {
     renderWithProviders(
       <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
     );
-    fireEvent.change(screen.getByLabelText(t("formDriver")), { target: { value: "mssql" } });
+    fireEvent.change(screen.getByLabelText(t("formDriver")), { target: { value: "sqlite" } });
     expect(screen.queryByLabelText(t("formAuthMethod"))).toBeNull();
-    expect(screen.getByLabelText(t("formDbPassword"))).toBeInTheDocument();
   });
 });

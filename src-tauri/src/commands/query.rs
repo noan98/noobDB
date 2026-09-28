@@ -1482,13 +1482,8 @@ mod tests {
     /// Every supported driver, so the read-only guards are asserted under both
     /// masking flavours (MySQL's backslash escapes vs. the standard reading)
     /// rather than only the one that happens to be the default (#852).
-    const ALL_DRIVERS: [DriverKind; 5] = [
-        DriverKind::Mysql,
-        DriverKind::Postgres,
-        DriverKind::Sqlite,
-        DriverKind::DuckDb,
-        DriverKind::Mssql,
-    ];
+    const ALL_DRIVERS: [DriverKind; 3] =
+        [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
 
     #[test]
     fn auto_refresh_allows_read_only_statements() {

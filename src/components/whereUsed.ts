@@ -21,7 +21,7 @@
  *    `_`・`$` (MySQL は `$` を名前に許す)。
  * 2. 大小文字は**無視**する。引用識別子 (`"Orders"`) は本来大小を区別する方言も
  *    あるが、見落とし回避を優先して同一視する。
- * 3. 引用形式は `"x"` (MySQL 以外)・`` `x` ``・`[x]` (MSSQL / SQLite) を解釈し、
+ * 3. 引用形式は `"x"` (MySQL 以外)・`` `x` ``・`[x]` (SQLite) を解釈し、
  *    中身 (二重化エスケープ解除後) で照合する。MySQL の `"x"` は文字列リテラル。
  * 4. `@x` / `@@x` (変数)・`:x` (バインド。`::` キャストは除く)・`$1` (位置
  *    パラメータ)・数字始まりの語はそもそも識別子として扱わない。
@@ -55,7 +55,7 @@ import { mapLimited } from "./mapLimited";
 
 /** 検索対象。`column` が null ならテーブル (またはビュー) そのものへの参照を探す。 */
 export interface WhereUsedTarget {
-  /** ツリーの「データベース」ノード名 (PostgreSQL はスキーマ、MSSQL はデータベース)。 */
+  /** ツリーの「データベース」ノード名 (PostgreSQL はスキーマ)。 */
   database: string;
   table: string;
   column: string | null;
@@ -107,17 +107,11 @@ const ALL_KINDS: readonly SchemaObjectKind[] = [
  * - PostgreSQL: 上記 + マテリアライズドビュー (`pg_get_viewdef` / `pg_get_functiondef` /
  *   `pg_get_triggerdef`)。トリガー本文はトリガー関数側にあるので関数として走査される。
  * - SQLite: ビュー / トリガーのみ (ストアドルーチンが存在しない。`sqlite_master.sql`)
- * - DuckDB: ビューのみ (プロシージャ / トリガーが無い。マクロはルーチンとして
- *   一覧していない)
- * - MSSQL: ビュー / プロシージャ / 関数 / トリガー (`OBJECT_DEFINITION`、`dbo` のみ。
- *   `WITH ENCRYPTION` のオブジェクトは本文が取れず「定義を取得できない」に数える)
  */
 export const WHERE_USED_KIND_SUPPORT: Readonly<Record<string, readonly SchemaObjectKind[]>> = {
   mysql: ["view", "procedure", "function", "trigger"],
   postgres: ALL_KINDS,
   sqlite: ["view", "trigger"],
-  duckdb: ["view"],
-  mssql: ["view", "procedure", "function", "trigger"],
 };
 
 /**
@@ -132,13 +126,11 @@ export function unsupportedWhereUsedKinds(driver: string): SchemaObjectKind[] {
 
 /**
  * テーブル名の修飾子として「対象と同じスキーマ / DB」を意味する名前 (小文字)。
- * MSSQL はスキーマを `dbo` 固定で扱う (`db.dbo.t` / `dbo.t`)。SQLite の既定
- * スキーマは `main`、DuckDB の既定カタログ内スキーマは `main`。
+ * SQLite の既定スキーマは `main`。
  */
 export function tableQualifiers(driver: string, database: string): string[] {
   const out = new Set<string>();
   if (database) out.add(database.toLowerCase());
-  if (driver === "mssql") out.add("dbo");
   if (driver === "sqlite") out.add("main");
   return [...out];
 }
@@ -152,7 +144,7 @@ function doubleQuoteIsIdentifier(driver: string | undefined): boolean {
 }
 
 function bracketIsIdentifier(driver: string | undefined): boolean {
-  return driver === "mssql" || driver === "sqlite";
+  return driver === "sqlite";
 }
 
 const WORD = /[\p{L}\p{N}_$]/u;
@@ -516,7 +508,7 @@ export interface WhereUsedReport {
   scannedSnippets: number;
   /** 定義の取得に失敗したオブジェクト (権限不足など)。 */
   failed: WhereUsedFailure[];
-  /** 定義本文が空で返ったオブジェクト (MSSQL の暗号化オブジェクトなど)。 */
+  /** 定義本文が空で返ったオブジェクト (ドライバが本文を返さなかったオブジェクト)。 */
   emptyDefinitions: { kind: SchemaObjectKind; name: string }[];
   /** キャンセルされ、途中までの結果であること。 */
   cancelled: boolean;

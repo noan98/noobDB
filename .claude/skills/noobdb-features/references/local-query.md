@@ -3,11 +3,11 @@
 ## ローカル横断クエリ (#740)
 
 複数接続の結果セットをローカルエンジンへ取り込み、異種 DB 間 JOIN・再分析を 1 アプリ内で
-完結させる機能です。第 1 候補は DuckDB (#709) でしたが、本実装は #709 に先行しないため
-**既にフル依存済みの組み込み SQLite をインメモリ相当 (一時ファイル) で使う縮退構成**を
-採用しています。将来 DuckDB へ差し替える場合は `db::Connection` の `Sqlite` 版
-`register_local_table` / `list_local_tables` / `drop_local_table` / `vacuum_into` を
-新バリアントへ実装し直すだけで、`commands/local.rs` (IPC 層) は無改修で済む設計です。
+完結させる機能です。**既にフル依存済みの組み込み SQLite をインメモリ相当 (一時ファイル)
+で使う構成**を採用しています。将来別のローカルエンジンへ差し替える場合は
+`db::Connection` の `Sqlite` 版 `register_local_table` / `list_local_tables` /
+`drop_local_table` / `vacuum_into` を新バリアントへ実装し直すだけで、`commands/local.rs`
+(IPC 層) は無改修で済む設計です。
 
 - **「ローカル」接続 = 駆動元セッションを持たない特殊セッション**。`create_local_session`
   が OS 標準の一時領域 (`std::env::temp_dir()/noobdb-local/`) に空の SQLite ファイルを

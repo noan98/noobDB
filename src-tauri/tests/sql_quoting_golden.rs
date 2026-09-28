@@ -151,8 +151,6 @@ fn vectors_cover_every_driver() {
         t::DriverKind::Mysql,
         t::DriverKind::Postgres,
         t::DriverKind::Sqlite,
-        t::DriverKind::DuckDb,
-        t::DriverKind::Mssql,
     ] {
         assert!(
             vectors.drivers.iter().any(|d| d == driver.as_str()),

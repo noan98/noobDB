@@ -7,7 +7,7 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   購読、インラインセル編集 (`components/cellEdit.ts`)、テーマを束ねるルート。
 - App Shell (#1112) — `Sidebar / Main Workspace / Bottom Panel` の 3 領域。
   - Sidebar = Database Explorer (`ConnectionList`)。階層は Connection → Database
-    (PostgreSQL / DuckDB ではスキーマ) → テーブル / ビュー / ルーチン → 列 /
+    (PostgreSQL ではスキーマ) → テーブル / ビュー / ルーチン → 列 /
     インデックス / 外部キー。`list_tables` はビューも返すため、振り分けは純ロジック
     `explorerTree.ts` (`partitionDatabaseNodes` / `tableChildGroups`) が担い、ビューは
     テーブルと同じノード (列展開・ダブルクリックでデータ) として 1 回だけ並ぶ。

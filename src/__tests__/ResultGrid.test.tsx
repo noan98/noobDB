@@ -1618,13 +1618,13 @@ describe("セル値のクイックセット", () => {
         />,
       );
 
-    // MSSQL の BIT は真偽型そのもの。
-    const mssql = render("mssql");
-    fireEvent.contextMenu(dataCells(mssql.container)[0][1]);
+    // MySQL の BIT は真偽型そのもの。
+    const mysql = render("mysql");
+    fireEvent.contextMenu(dataCells(mysql.container)[0][1]);
     await openQuickSet(user);
     expect(await screen.findByRole("menuitem", { name: t("gridQuickSetTrue") })).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
-    mssql.unmount();
+    mysql.unmount();
 
     // PostgreSQL の BIT はビット列なので true/false も空文字も出さない
     // (候補が NULL の 1 件だけになるので、サブメニューへは畳まれない)。

@@ -84,12 +84,12 @@ export function resolveDynamicValue(dynamic: QuickSetDynamic, now: Date): string
 
 /** `BIT` on a driver where it is *not* a boolean but a bit string. */
 function isBitStringDriver(driver: string | undefined): boolean {
-  // PostgreSQL / DuckDB `BIT(n)` holds a string of bits ('10110000'), not a
-  // truth value: `TRUE`/`FALSE` are invalid literals for it and so is `''`
-  // (there is no zero-length `bit(n)`). Everywhere else — MSSQL, where BIT *is*
-  // the boolean type, plus MySQL/SQLite where 1/0 is a valid BIT value —
-  // true/false is both meaningful and safe (`literalFromInput` emits 1/0).
-  return driver === "postgres" || driver === "duckdb";
+  // PostgreSQL `BIT(n)` holds a string of bits ('10110000'), not a truth
+  // value: `TRUE`/`FALSE` are invalid literals for it and so is `''` (there
+  // is no zero-length `bit(n)`). Everywhere else — MySQL/SQLite where 1/0 is
+  // a valid BIT value — true/false is both meaningful and safe
+  // (`literalFromInput` emits 1/0).
+  return driver === "postgres";
 }
 
 const BOOLEAN_OPTIONS: QuickSetOption[] = [

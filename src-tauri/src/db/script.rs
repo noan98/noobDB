@@ -457,11 +457,11 @@ pub fn classify_tx_control(driver: DriverKind, sql: &str) -> Option<TxControl> {
     }
 }
 
-/// `USE <db>` 文なら切り替え先のデータベース名を返す (MySQL / MSSQL のみ)。
+/// `USE <db>` 文なら切り替え先のデータベース名を返す (MySQL のみ)。
 /// プール接続で逐次実行するとき、後続の文に同じ DB コンテキストを渡し続けるために
-/// 使う。引用符 (`` ` `` / `"` / `[ ]`) は外す。
+/// 使う。引用符 (`` ` `` / `"`) は外す。
 pub fn parse_use_database(driver: DriverKind, sql: &str) -> Option<String> {
-    if !matches!(driver, DriverKind::Mysql | DriverKind::Mssql) {
+    if driver != DriverKind::Mysql {
         return None;
     }
     let body = sql
@@ -616,7 +616,6 @@ mod tests {
         assert_eq!(classify_tx_control(d, "COMMIT -- done"), Some(Commit));
         assert_eq!(classify_tx_control(d, "ROLLBACK WORK"), Some(Rollback));
         assert_eq!(classify_tx_control(d, "ROLLBACK TO SAVEPOINT s1"), None);
-        assert_eq!(classify_tx_control(DriverKind::Mssql, "BEGIN TRY"), None);
         assert_eq!(classify_tx_control(d, "SELECT 1"), None);
         assert_eq!(classify_tx_control(d, "'BEGIN'"), None);
     }
@@ -630,10 +629,6 @@ mod tests {
         assert_eq!(
             parse_use_database(DriverKind::Mysql, "use shop"),
             Some("shop".into())
-        );
-        assert_eq!(
-            parse_use_database(DriverKind::Mssql, "USE [master]"),
-            Some("master".into())
         );
         assert_eq!(parse_use_database(DriverKind::Postgres, "USE shop"), None);
         assert_eq!(parse_use_database(DriverKind::Mysql, "USER x"), None);

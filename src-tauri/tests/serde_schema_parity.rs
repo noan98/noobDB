@@ -437,12 +437,9 @@ fn build_fixtures() -> serde_json::Value {
     // `query_stream_rows_message` (`rows: [[1, "a"]]`) がそのまま該当し、
     // 「チャンク境界」はチャンクサイズという実行時パラメータの話であって
     // メッセージの JSON shape には現れないため、このゴールデン (フィールド名/
-    // 型のパリティ) の対象外 — `execute_stream` のバッチ分割は
-    // `tests/duckdb_integration.rs`
-    // (`duckdb_execute_stream_delivers_batched_rows`) が、キャンセル直後に
-    // 後続メッセージが無視される UI 側の挙動は
-    // `src/__tests__/browser/scenarios.browser.test.tsx` の「停止ボタンで
-    // キャンセルすると…以降のイベントは無視される」がそれぞれ担保する。
+    // 型のパリティ) の対象外 — キャンセル直後に後続メッセージが無視される
+    // UI 側の挙動は `src/__tests__/browser/scenarios.browser.test.tsx` の
+    // 「停止ボタンでキャンセルすると…以降のイベントは無視される」が担保する。
 
     let query_stream_columns_message = QueryStreamMessage::Columns {
         columns: vec![column.clone()],

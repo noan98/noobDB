@@ -16,8 +16,8 @@
 //! 通る。したがって read_only セッションでも全ルールが動く。
 
 use crate::assertions::{AssertionRule, RowCountOp};
+use crate::db::data_diff::is_numeric_literal;
 use crate::db::data_diff::sql_literal;
-use crate::db::native_dump::is_numeric_literal;
 use crate::db::sync::quote_ident;
 use crate::db::types::Value;
 use crate::db::{is_read_only_sql_for, DriverKind};
@@ -33,15 +33,10 @@ pub struct AssertionSql {
     pub violations_sql: String,
 }
 
-/// 違反件数 / 総行数の集計式。SQL Server の `COUNT(*)` は `INT` で 2^31 を超えると
-/// 算術オーバーフローになるため `COUNT_BIG(*)` を使う。
+/// 違反件数 / 総行数の集計式。
 fn count_expr(driver: DriverKind) -> &'static str {
-    match driver {
-        DriverKind::Mssql => "COUNT_BIG(*)",
-        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
-            "COUNT(*)"
-        }
-    }
+    let _ = driver;
+    "COUNT(*)"
 }
 
 fn non_blank(s: &str) -> bool {
@@ -67,7 +62,7 @@ fn qualified(driver: DriverKind, schema: Option<&str>, table: &str) -> String {
 
 /// 範囲の境界値のリテラル化。十進数値ならそのまま (引用符なし)、それ以外 (日付・
 /// 日時など) は文字列リテラルにして比較をエンジンの暗黙変換に任せる。数値判定は
-/// `native_dump::is_numeric_literal` を共有する — 数値と判定されなかった入力は必ず
+/// `data_diff::is_numeric_literal` を共有する — 数値と判定されなかった入力は必ず
 /// 引用符で囲まれエスケープされるので、SQL インジェクションにならない。
 fn bound_literal(driver: DriverKind, raw: &str) -> String {
     let s = raw.trim();
@@ -283,8 +278,8 @@ pub fn evaluate(rule: &AssertionRule, observed: u64) -> bool {
 }
 
 /// `check_sql` の 1 セル目を件数として読む。ドライバによって `COUNT(*)` の型が
-/// 異なり (`BIGINT` → `Int`、JS 安全整数超過は `from_*_lossless` で `String`、
-/// DuckDB の `HUGEINT` は文字列化など)、どれも受ける。負数や数値でない値は `None`。
+/// 異なり (`BIGINT` → `Int`、JS 安全整数超過は `from_*_lossless` で `String`
+/// など)、どれも受ける。負数や数値でない値は `None`。
 pub fn count_from_value(value: &Value) -> Option<u64> {
     match value {
         Value::Int(i) => u64::try_from(*i).ok(),
@@ -303,13 +298,7 @@ pub fn count_from_value(value: &Value) -> Option<u64> {
 mod tests {
     use super::*;
 
-    const ALL: [DriverKind; 5] = [
-        DriverKind::Mysql,
-        DriverKind::Postgres,
-        DriverKind::Sqlite,
-        DriverKind::DuckDb,
-        DriverKind::Mssql,
-    ];
+    const ALL: [DriverKind; 3] = [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
 
     fn s(v: &str) -> String {
         v.to_string()
@@ -388,14 +377,6 @@ mod tests {
             sql(DriverKind::Sqlite, None, "users", &rule).violations_sql,
             "SELECT * FROM \"users\" WHERE \"email\" IS NULL"
         );
-        assert_eq!(
-            sql(DriverKind::Mssql, Some("dbo"), "users", &rule).check_sql,
-            "SELECT COUNT_BIG(*) AS observed FROM [dbo].[users] WHERE [email] IS NULL"
-        );
-        assert_eq!(
-            sql(DriverKind::DuckDb, None, "users", &rule).check_sql,
-            "SELECT COUNT(*) AS observed FROM \"users\" WHERE \"email\" IS NULL"
-        );
     }
 
     #[test]
@@ -444,10 +425,6 @@ mod tests {
             sql(DriverKind::Sqlite, None, "t", &rule).check_sql,
             "SELECT COUNT(*) AS observed FROM \"t\" WHERE \"status\" IS NOT NULL AND \"status\" NOT IN ('a''b', 'c\\d')"
         );
-        assert_eq!(
-            sql(DriverKind::Mssql, None, "t", &rule).violations_sql,
-            "SELECT * FROM [t] WHERE [status] IS NOT NULL AND [status] NOT IN ('a''b', 'c\\d')"
-        );
     }
 
     #[test]
@@ -469,10 +446,6 @@ mod tests {
         assert_eq!(
             sql(DriverKind::Mysql, None, "t", &dates).check_sql,
             "SELECT COUNT(*) AS observed FROM `t` WHERE `d` IS NOT NULL AND (`d` < '2024-01-01' OR `d` > '2024-12-31')"
-        );
-        assert_eq!(
-            sql(DriverKind::Mssql, None, "t", &dates).check_sql,
-            "SELECT COUNT_BIG(*) AS observed FROM [t] WHERE [d] IS NOT NULL AND ([d] < '2024-01-01' OR [d] > '2024-12-31')"
         );
     }
 
@@ -525,20 +498,11 @@ mod tests {
             out.violations_sql,
             "SELECT COUNT(*) AS row_count FROM \"t\""
         );
-        assert_eq!(
-            sql(DriverKind::Mssql, None, "t", &rule).check_sql,
-            "SELECT COUNT_BIG(*) AS observed FROM [t]"
-        );
     }
 
     // 識別子・値に引用符やセミコロン・コメントを混ぜても、**書き込み文や
     // スタック文を返すことは決してない**: 返すなら必ず読み取り専用の単一文で、
     // そうでなければ生成時の多層防御が `ReadOnly` で拒否する。
-    //
-    // SQL Server だけは拒否側に倒れうる — 安全網のマスク (`mask_for_driver`) が
-    // `[...]` 識別子を引用として扱わないため、`'` / `;` / `--` を含む識別子は
-    // 括弧の中身が「素の SQL」に見える (fail-closed。そうした識別子を持つ現実的な
-    // スキーマはまず無いので、誤検出の代償より安全網を緩めない方を選ぶ)。
     #[test]
     fn hostile_identifiers_and_values_never_yield_writable_sql() {
         let evil = "x\"`]'; DROP TABLE users; --";
@@ -583,25 +547,9 @@ mod tests {
                             out.violations_sql
                         );
                     }
-                    Err(AppError::ReadOnly(_)) if driver == DriverKind::Mssql => {}
                     Err(e) => panic!("{driver:?} {rule:?}: {e}"),
                 }
             }
-        }
-        // `]` を含む識別子 (現実的な範囲) は MSSQL でも `]]` に二重化して生成できる。
-        let bracket = "odd]name col";
-        for rule in [
-            AssertionRule::NotNull { column: s(bracket) },
-            AssertionRule::Unique {
-                columns: vec![s(bracket), s("b")],
-            },
-        ] {
-            let out = build_sql(DriverKind::Mssql, None, bracket, &rule).unwrap();
-            assert!(
-                out.check_sql.contains("[odd]]name col]"),
-                "{}",
-                out.check_sql
-            );
         }
     }
 

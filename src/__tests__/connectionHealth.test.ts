@@ -66,12 +66,11 @@ const up = (over: Partial<HealthProbeResult> = {}): HealthProbeResult => ({
 });
 
 describe("isServerlessDriver", () => {
-  it("SQLite / DuckDB はサーバを持たない", () => {
+  it("SQLite はサーバを持たない", () => {
     expect(isServerlessDriver("sqlite")).toBe(true);
-    expect(isServerlessDriver("duckdb")).toBe(true);
   });
   it("サーバ型ドライバは false", () => {
-    for (const d of ["mysql", "postgres", "mssql"]) expect(isServerlessDriver(d)).toBe(false);
+    for (const d of ["mysql", "postgres"]) expect(isServerlessDriver(d)).toBe(false);
   });
 });
 
@@ -143,9 +142,9 @@ describe("probeConnectionHealth", () => {
     }
   });
 
-  it("SQLite / DuckDB は server_metrics を呼ばず接続数を N/A にする", async () => {
+  it("SQLite は server_metrics を呼ばず接続数を N/A にする", async () => {
     const connections = vi.fn(async () => 1);
-    for (const driver of ["sqlite", "duckdb"]) {
+    for (const driver of ["sqlite"]) {
       const r = await probeConnectionHealth({ sessionId: "s1", driver }, deps({ connections }));
       expect(r.status).toBe("up");
       expect(r.connections).toBe("na");

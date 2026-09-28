@@ -177,9 +177,9 @@ function matchDollarQuoteTag(sql: string, i: number): string | null {
 /**
  * True when `driver` treats `\` inside a `'…'` / `"…"` string literal as an
  * escape character. Only MySQL/MariaDB does (with the default
- * `NO_BACKSLASH_ESCAPES` off); PostgreSQL (`standard_conforming_strings = on`),
- * SQLite, DuckDB and Microsoft SQL Server all read `\` as an ordinary
- * character. Mirrors the backend `driver_backslash_escapes`
+ * `NO_BACKSLASH_ESCAPES` off); PostgreSQL (`standard_conforming_strings = on`)
+ * and SQLite both read `\` as an ordinary character. Mirrors the backend
+ * `driver_backslash_escapes`
  * (`src-tauri/src/db/mod.rs`, #852).
  *
  * Unlike the dialect helpers in `components/sqlDialect.ts`, an unknown or
@@ -313,7 +313,7 @@ const READ_ONLY_PREFIXES = ["select", "show", "describe", "desc", "explain", "wi
 
 /**
  * `VALUES (1),(2)` (a bare row constructor) and `TABLE t`
- * (PostgreSQL/DuckDB/MySQL 8.0.19+ shorthand for `SELECT * FROM t`) can only
+ * (PostgreSQL/MySQL 8.0.19+ shorthand for `SELECT * FROM t`) can only
  * ever produce a result set — neither has a form that mutates data — so they
  * are allowed for every driver regardless of whether it actually supports the
  * statement (an unsupported driver just fails with a syntax error, not a
@@ -321,15 +321,6 @@ const READ_ONLY_PREFIXES = ["select", "show", "describe", "desc", "explain", "wi
  * (`src-tauri/src/db/mod.rs`, #1005).
  */
 const READ_ONLY_PREFIXES_ALL_DRIVERS = ["values", "table"];
-
-/**
- * DuckDB-only read-only prefixes (#1005): `FROM t` (FROM-first shorthand for
- * `SELECT * FROM t`) and `SUMMARIZE t` (read-only column statistics). Kept
- * separate from `READ_ONLY_PREFIXES_ALL_DRIVERS` because these two are only
- * meaningful DuckDB syntax — `PRAGMA` is handled separately below since it
- * additionally needs the setting-form exclusion (see `isReadOnlySql`).
- */
-const READ_ONLY_PREFIXES_DUCKDB = ["from", "summarize"];
 
 const WRITE_KEYWORDS = [
   "insert",
@@ -428,9 +419,9 @@ const LOCKING_TABLE_HINTS = new Set([
  * `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`) is never mistaken for a
  * hint. Parenthesis depth is tracked because hints may be parameterised
  * (`INDEX(0)`), and every group is inspected so a hint on the second table of
- * a join is not missed. Applied on every driver, not just MSSQL: `WITH (…)`
- * straight after a table reference is not valid read-only syntax elsewhere (a
- * CTE is `WITH <name> AS (…)`), so there is nothing to false-positive on.
+ * a join is not missed. Applied on every driver: `WITH (…)` straight after a
+ * table reference is not valid read-only syntax on any of them (a CTE is
+ * `WITH <name> AS (…)`), so there is nothing to false-positive on.
  * Mirrors the backend `has_locking_table_hint`.
  */
 function hasLockingTableHint(body: string): boolean {
@@ -472,17 +463,13 @@ function hasLockingTableHint(body: string): boolean {
  * the statements a read-only session would reject. When in doubt it returns
  * false (treats the statement as a write), erring toward asking.
  *
- * `driver` selects the string-escaping rules used while masking (#852), and
- * also gates the DuckDB-only allow-list extensions (#1005): `FROM` (FROM-first
- * shorthand) / `SUMMARIZE` / query-shaped `PRAGMA` are only recognized when
- * `driver === "duckdb"`, since they're only safe (or only meaningful) syntax
- * on that dialect. `VALUES` / `TABLE` are recognized for every driver
- * (including when `driver` is omitted) because neither has a form that
- * mutates data. Omit `driver` only where it is genuinely unknown: the
- * fallback is the stricter non-MySQL string-escaping reading, which can
- * classify a legitimate MySQL statement using `\'` inside a literal as a
- * write (an extra confirmation prompt, never a missed one). See
- * `driverBackslashEscapes`.
+ * `driver` selects the string-escaping rules used while masking (#852).
+ * `VALUES` / `TABLE` are recognized for every driver (including when
+ * `driver` is omitted) because neither has a form that mutates data. Omit
+ * `driver` only where it is genuinely unknown: the fallback is the stricter
+ * non-MySQL string-escaping reading, which can classify a legitimate MySQL
+ * statement using `\'` inside a literal as a write (an extra confirmation
+ * prompt, never a missed one). See `driverBackslashEscapes`.
  */
 export function isReadOnlySql(sql: string, driver?: string): boolean {
   const masked = maskLiterals(sql, driver);
@@ -491,18 +478,9 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
     .replace(/[;\s]+$/, "")
     .replace(/^\s+/, "");
   if (!body) return false;
-  let allowedPrefix =
+  const allowedPrefix =
     READ_ONLY_PREFIXES.some((kw) => startsWithKeyword(body, kw)) ||
     READ_ONLY_PREFIXES_ALL_DRIVERS.some((kw) => startsWithKeyword(body, kw));
-  if (!allowedPrefix && driver === "duckdb") {
-    allowedPrefix = READ_ONLY_PREFIXES_DUCKDB.some((kw) => startsWithKeyword(body, kw));
-    if (!allowedPrefix && startsWithKeyword(body, "pragma")) {
-      // PRAGMA には照会形 (`PRAGMA database_list`) と設定形
-      // (`PRAGMA memory_limit='1GB'`) があり、後者だけ構文上必ず `=` を含む。
-      // バックの is_read_only_sql_masked (#1005) と同じ近似を使う。
-      allowedPrefix = !body.includes("=");
-    }
-  }
   if (!allowedPrefix) return false;
   // Trailing separators were stripped, so a remaining `;` hides a 2nd statement.
   if (body.includes(";")) return false;

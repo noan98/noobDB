@@ -15,7 +15,7 @@ import vectors from "./fixtures/maskVectors.json";
 // なる検証を行う。片方の実装だけ変えてもう片方とズレると、どちらかのテストが落ちる。
 //
 // ベクタは**ドライバ次元**を持つ (#852)。`masked` はバックスラッシュを文字列
-// エスケープと見なさない標準解釈 (PostgreSQL / SQLite / DuckDB / MSSQL、および
+// エスケープと見なさない標準解釈 (PostgreSQL / SQLite、および
 // ドライバを渡さない呼び出し = `mask_for_analysis_conservative` 相当) での期待値で、
 // MySQL だけ判定が変わるケースのみ `maskedMysql` を持つ。
 
@@ -31,11 +31,11 @@ const drivers = vectors.drivers as string[];
 const cases = vectors.cases as VectorCase[];
 
 /** 標準的な文字列リテラル解釈を採るドライバ (= `masked` がそのまま期待値)。 */
-const STANDARD_DRIVERS = ["postgres", "sqlite", "duckdb", "mssql"] as const;
+const STANDARD_DRIVERS = ["postgres", "sqlite"] as const;
 
 describe("マスキング ゴールデン (フロント maskLiterals)", () => {
-  it("ベクタが 5 ドライバすべてを覆う", () => {
-    expect(drivers).toEqual(["mysql", "postgres", "sqlite", "duckdb", "mssql"]);
+  it("ベクタが 3 ドライバすべてを覆う", () => {
+    expect(drivers).toEqual(["mysql", "postgres", "sqlite"]);
   });
 
   it("ベクタが十分なケース数を持つ (取りこぼし防止)", () => {

@@ -79,12 +79,6 @@ sqlx = { version = "0.9", default-features = false, features = [
     "json",
     "rust_decimal",
 ] }
-# DuckDB (#709)。分析用途のファイルベース DB。公式 Rust バインディングは同期 API
-# (sqlx 非対応) のため、`db/duckdb.rs` が `spawn_blocking` 越しに橋渡しする。
-# "bundled" feature は libduckdb を C++ ソースからビルドして静的リンクするため
-# システムに DuckDB を別途インストールする必要が無い (ビルドは重いがランタイム
-# 依存はゼロになる。README のビルド前提に合わせた選択)。
-duckdb = { version = "1", features = ["bundled"] }
 
 # SSH
 russh = "0.63"
@@ -138,13 +132,6 @@ rand = "0.10"
 # 既に推移依存としてロックに載っている版 (digest 0.11 系) を明示依存にしただけ。
 sha2 = "0.11"
 hmac = "0.13"
-tiberius = { version = "0.12.3", default-features = false, features = ["rustls", "chrono", "rust_decimal", "tds73"] }
-# tiberius (SQL Server ドライバ、#729) は生の TCP ストリームを `AsyncRead + AsyncWrite`
-# (futures 版) として要求するため、tokio の `AsyncRead`/`AsyncWrite` (tokio 版) を
-# 変換する `compat()` / `compat_write()` に tokio-util の "compat" feature が要る。
-# 依存グラフ上は既に 0.7.18 が推移的に解決されているが、明示依存にして意図を残す
-# (default-features は不要な io/codec/net feature を削るため無効化)。
-tokio-util = { version = "0.7", default-features = false, features = ["compat"] }
 
 # keyring のネイティブバックエンドはターゲット OS ごとに有効化する。これにより
 # ビルド中のターゲットに不要なバックエンド (とその推移依存) が依存グラフから外れる。
@@ -185,7 +172,7 @@ debug = "line-tables-only"
 #
 # LTO は "thin" とし、codegen-units は既定 (16) のままにする。以前は
 # lto = "fat" + codegen-units = 1 で最適化を最大化していたが、fat LTO は依存ツリー
-# 全体 (DuckDB の bundled 静的ライブラリ #709 を含む) を単一単位で再最適化するため、
+# 全体 (当時同梱していた DuckDB #709 の bundled 静的ライブラリを含む) を単一単位で再最適化するため、
 # 最終コンパイル + リンクが rust-cache でキャッシュできない毎回の固定コストとして
 # リリースビルドを支配していた (タグビルド 30 分超の主因の 1 つ)。本アプリの処理は
 # 大半が DB I/O 待ちで fat LTO の実行時性能メリットは計測困難な一方、thin LTO でも

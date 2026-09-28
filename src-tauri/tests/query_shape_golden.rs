@@ -2,9 +2,9 @@
 //!
 //! ストリーミング実行器が結果セットを返す fetch 経路 (`fetch`/`query`) を通すか、
 //! `rows_affected` のみを返す execute 経路を通すかを決める `is_query_shape` は、
-//! `is_read_only_sql` (#444) と違って共有関数ではなく、sqlite/mysql/postgres/
-//! duckdb/mssql の各 `db/<driver>.rs` にそれぞれ private (現在は `pub(crate)`)
-//! 関数として個別実装されている。5 実装が一致すべき境界ケースを共有ベクタ
+//! `is_read_only_sql` (#444) と違って共有関数ではなく、sqlite/mysql/postgres
+//! の各 `db/<driver>.rs` にそれぞれ private (現在は `pub(crate)`)
+//! 関数として個別実装されている。3 実装が一致すべき境界ケースを共有ベクタ
 //! (`src/__tests__/fixtures/queryShapeVectors.json`) に集約し、ここから
 //! `include_str!` で読み込んで全ドライバへ通す。片方のドライバだけ実装を
 //! 変えて他とズレた場合、このテストが落ちる。
@@ -87,8 +87,6 @@ fn vectors_cover_every_driver() {
         t::DriverKind::Mysql,
         t::DriverKind::Postgres,
         t::DriverKind::Sqlite,
-        t::DriverKind::DuckDb,
-        t::DriverKind::Mssql,
     ] {
         assert!(
             vectors.drivers.iter().any(|d| d == driver.as_str()),
@@ -98,10 +96,10 @@ fn vectors_cover_every_driver() {
 }
 
 /// ドライバ次元が形骸化していないことの確認 (`read_only_golden.rs` の
-/// `..._exercises_the_driver_dimension` と同じ意図)。5 ドライバが常に同じ
+/// `..._exercises_the_driver_dimension` と同じ意図)。3 ドライバが常に同じ
 /// 答えを返すだけのベクタ集合になっていないか — 実際に判定が割れるケース
-/// (SHOW / DESCRIBE / EXPLAIN / PRAGMA / SUMMARIZE / VALUES / TABLE の
-/// ドライバ固有分岐) が最低 1 件は残っていることを要求する。
+/// (SHOW / DESCRIBE / EXPLAIN / VALUES / TABLE のドライバ固有分岐) が
+/// 最低 1 件は残っていることを要求する。
 #[test]
 fn query_shape_golden_exercises_the_driver_dimension() {
     let vectors = load();
@@ -111,7 +109,7 @@ fn query_shape_golden_exercises_the_driver_dimension() {
     });
     assert!(
         has_divergent_case,
-        "shared vectors must keep at least one case where the 5 drivers' is_query_shape \
+        "shared vectors must keep at least one case where the 3 drivers' is_query_shape \
          actually disagree (otherwise the driver dimension is pointless)"
     );
 }

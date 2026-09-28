@@ -2,9 +2,7 @@
   "drivers": [
     "mysql",
     "postgres",
-    "sqlite",
-    "duckdb",
-    "mssql"
+    "sqlite"
   ],
   "cases": [
     {
@@ -19,7 +17,7 @@
     },
     {
       "sql": "SELECT \"my col\" FROM \"my table\"",
-      "note": "二重引用符付き識別子 (postgres/mssql の identifier)",
+      "note": "二重引用符付き識別子 (postgres の identifier)",
       "masked": "SELECT \"      \" FROM \"        \""
     },
     {

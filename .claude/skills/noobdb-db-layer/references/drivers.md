@@ -3,12 +3,8 @@
 ## ドライバのディスパッチ: `enum Connection`
 
 DB レイヤは意図的に手書きの enum で実装されており、トレイトオブジェクトではありません。
-`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` /
-`DuckDb` / `Mssql` の 5 バリアントを持ち (`DuckDb` と `Mssql` だけ `Box<...>` —
-`duckdb::Connection` を抱える `DuckDbConn` と `tiberius::Client` を抱える
-`MssqlConn` が sqlx ベースの 3 ドライバよりずっと大きく
-`clippy::large_enum_variant` に当たるため)、
-各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
+`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` の
+3 バリアントを持ち、各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
 `finish_transaction` / `transaction_active`, `health_check`,
 `preview_execute_with_limit`, `execute_stream`, `import_rows`, `execute_transaction`,
 `databases`, `tables`, `columns`, `schema_overview`, `foreign_keys`, `schema_objects`,
@@ -19,65 +15,8 @@ DB レイヤは意図的に手書きの enum で実装されており、トレ�
 SSH やセッション層には触らないでください — それらはドライバに依存しません。`schema_objects` /
 `object_definition` (ビュー・ルーチン・トリガーの列挙と DDL 取得)、`list_indexes`、
 `table_row_estimates` (統計情報ベースの概算行数)、`list_processes` / `kill_process`
-(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity` / MSSQL `sys.dm_exec_sessions`
-+ `sys.dm_exec_requests` / `KILL <spid>`) もこの enum 表面の一部で、SQLite では多くが
-サーバ機能非対応のため空や no-op で短絡します。
-
-**MSSQL ドライバ (`db/mssql.rs`、#729) は他 3 ドライバと異なり sqlx を使いません**
-(sqlx に MSSQL バックエンドが無いため)。代わりに素の TDS クライアント `tiberius` を
-直接使い、コネクションプールも `sqlx::Pool` ではなく本モジュール内に手書きの極小プール
-(`MssqlPool` — `std::sync::Mutex<Vec<Client>>` の idle リスト + `tokio::sync::Semaphore`
-で同時接続数を制限。同期 Mutex を使うのは `PooledConn` の `Drop` から async を経由せずに
-接続をプールへ返せるようにするため) を実装しています。エラー型も `AppError::Sqlx` では
-なく専用の `AppError::Mssql(#[from] tiberius::error::Error)` です。他ドライバとの主な
-差分:
-
-- **スキーマ introspection は `dbo` スキーマに限定**しています。MSSQL は 1 データベース
-  内に複数スキーマを持てますが、既存の「1 データベース = 1 名前空間」という他ドライバの
-  抽象 (sync/export/import が生成する識別子はすべて単一パート想定) を崩さないための
-  意図的なスコープ縮小です (`db/mssql.rs` のモジュール doc に詳細)。フロント側の
-  `db.table` 参照もすべて `db.[dbo].table` の 3 パートで組み立てます
-  (`cellEdit.ts`/`QueryBuilder.tsx`/`tableMaintenance.ts`/`createTable.ts` の
-  `qualified`/`qualifiedTableRef`/`tableRef`/`qualifiedName` を参照)。
-- **識別子クオートは `[ident]`** (`db::sync::quote_ident` の `DriverKind::Mssql` 分岐、
-  フロントは `sqlDialect.ts::quoteIdentFor`)。**自動 LIMIT は `TOP (n)`** を
-  `SELECT [DISTINCT]` の直後に挿入する専用実装 `db::apply_auto_limit_mssql`
-  (`db::apply_auto_limit_for` がドライバで振り分け) — `WITH` (CTE) は対象外
-  (「型を惑わせるより何もしない」方針、doc 参照)。フロントの `QueryBuilder.tsx` も
-  同じ TOP 方式で生成する。
-- **`server_metrics` / `query_stats_support` (ライブクエリ・インスペクタ) /
-  `unused_indexes` は未実装**(SQLite と同じ `unsupported_driver` 縮退)。`dump_database`
-  も未対応 (`commands/dump.rs` が `InvalidInput` を返す)。いずれも本 Issue の受け入れ
-  条件の範囲外 — 将来 `sys.dm_exec_*` 系 DMV で実装可能。
-- **手書きプールは「疑わしい接続を絶対に返さない」方針**。`PooledConn` の `Drop` は
-  既定でアイドルリストへ接続を戻すため、失敗した操作の後にそのまま返すと壊れた TCP
-  ソケットが次の無関係なリクエストへ配られます。そこで fallible な操作は
-  `unwrap_or_discard` / `rows` / `exec` などのヘルパ経由に統一し、エラー時は必ず
-  `mark_discard()` します (I/O エラーと SQL エラーを tiberius のエラー型から確実に
-  見分けるのは難しいので、**迷ったら捨てる** — 接続 1 本のコストの方が小さい)。
-  `execute_stream` / `preview_execute_with_limit` / `import_rows` は逆に
-  **先に discard を立て、最後まで読み切って成功したときだけ `unmark_discard()`** し
-  ます。この形なら `cancel_stream` の abort やタイムアウトで future が drop された
-  場合も自動的に discard 扱いになり、**未消費の結果セットを抱えた接続**がプールへ
-  戻りません (tiberius は読み切っていない `QueryStream` があると次のクエリの前に
-  残りを flush するため、放置すると次の呼び出し元がそのツケを払います)。例外は
-  `probe_failing_row` の行単位 INSERT 失敗で、これは想定内のデータエラーであり接続
-  破損の証拠ではないので discard しません。
-- **統合テストは `tests/mssql_integration.rs`**、`NOOBDB_TEST_MSSQL_URL`
-  (`mssql://user:pass@host:port/db`) 環境変数ゲート (未設定ならスキップ)。CI では
-  `rust (test)` の SQL Server 2022 サービスコンテナに対して実走する (#920。テスト用
-  DB は `scripts/ci-setup-mssql.sh` が作成)。
-- **tiberius の `execute` / `query` は常に `sp_executesql` 経由** (#920)。その中で
-  実行した `USE` は呼び出しが返ると元に戻り、`BEGIN` / `COMMIT` / `ROLLBACK
-  TRANSACTION` は `@@TRANCOUNT` の不一致 (エラー 266) を起こすため、セッション単位の
-  文 (DB 切替・トランザクション制御) は `run_batch` (`simple_query` = 素の SQL
-  バッチ) で送る。
-- **`Row::get::<T>` は型不一致で panic する** (tiberius の `try_get(..).unwrap()`)。
-  NULL 許容の整数列は宣言幅に関係なく `INTN` (tinyint〜bigint のどれも来る)、
-  NULL 許容の浮動小数は `FLTN` で届くので、`decode_cell` は `ColumnType` ではなく
-  `ColumnData` のバリアントで分岐する。introspection で `get::<i32>` 等を使うときは
-  SQL 側で `CAST(... AS int)` して型を固定する (`INFORMATION_SCHEMA.COLUMNS.
-  NUMERIC_PRECISION` は `tinyint`)。
+(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity`) もこの enum 表面の一部で、
+SQLite では多くがサーバ機能非対応のため空や no-op で短絡します。
 
 `db::types::{Value, Column, QueryResult, TableColumnInfo, TableSchema,
 PreviewResult, StreamBatch}` がドライバ横断のワイヤフォーマットです。`Value` は

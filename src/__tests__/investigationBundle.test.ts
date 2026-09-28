@@ -200,8 +200,7 @@ describe("bundlePlanSupported", () => {
     expect(bundlePlanSupported("mysql")).toBe(true);
     expect(bundlePlanSupported("postgres")).toBe(true);
     expect(bundlePlanSupported("sqlite")).toBe(true);
-    expect(bundlePlanSupported("mssql")).toBe(false);
-    expect(bundlePlanSupported("duckdb")).toBe(false);
+    expect(bundlePlanSupported("oracle")).toBe(false);
     expect(bundlePlanSupported(undefined)).toBe(false);
   });
 });

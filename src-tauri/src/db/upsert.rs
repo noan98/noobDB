@@ -7,14 +7,13 @@
 //! - `update` … 既存キーの行を取り込み値で更新する (DO UPDATE 相当)
 //!
 //! を選べるようにする。方言ごとの構文差はすべてこのモジュールの**純関数**に
-//! 閉じ込め、各ドライバは「従来の INSERT 文 + ここで作った接尾辞」または
-//! 「MSSQL の MERGE 文」を実行するだけにする (ドライバ側は接続・バインドのみ)。
+//! 閉じ込め、各ドライバは「従来の INSERT 文 + ここで作った接尾辞」を実行する
+//! だけにする (ドライバ側は接続・バインドのみ)。
 //!
 //! | 方言 | skip | update |
 //! |---|---|---|
 //! | MySQL | `ON DUPLICATE KEY UPDATE k = k` (no-op) | `ON DUPLICATE KEY UPDATE c = VALUES(c)` |
-//! | PostgreSQL / SQLite / DuckDB | `ON CONFLICT (keys) DO NOTHING` | `ON CONFLICT (keys) DO UPDATE SET c = EXCLUDED.c` |
-//! | SQL Server | `MERGE … WHEN NOT MATCHED BY TARGET THEN INSERT` | 上に加えて `WHEN MATCHED THEN UPDATE SET` |
+//! | PostgreSQL / SQLite | `ON CONFLICT (keys) DO NOTHING` | `ON CONFLICT (keys) DO UPDATE SET c = EXCLUDED.c` |
 //!
 //! MySQL の skip に `INSERT IGNORE` を使わないのは、IGNORE が重複キー以外の
 //! エラー (型変換・NOT NULL 違反など) まで警告に格下げして黙って取り込んでしまい、
@@ -107,7 +106,7 @@ impl ImportConflict {
 
     /// 1 文の中で同じキーが複数回現れる行を 1 行に畳む。
     ///
-    /// PostgreSQL / DuckDB の `ON CONFLICT DO UPDATE` と SQL Server の `MERGE` は、
+    /// PostgreSQL の `ON CONFLICT DO UPDATE` は、
     /// 1 文の中で同じ行を二度更新しようとするとエラーにする ("cannot affect row a
     /// second time")。1 行ずつ順に適用したときと同じ結果になるよう、
     /// `update` は**最後の行が勝ち**、`skip` は**最初の行が勝つ** (後続は既存
@@ -175,8 +174,8 @@ impl ImportConflict {
     }
 }
 
-/// MySQL / PostgreSQL / SQLite / DuckDB の `INSERT … VALUES (…)` の**後ろに付ける**
-/// 競合句 (先頭に空白を含む)。`Insert` モードと SQL Server (MERGE を使う) は空文字。
+/// MySQL / PostgreSQL / SQLite の `INSERT … VALUES (…)` の**後ろに付ける**
+/// 競合句 (先頭に空白を含む)。`Insert` モードは空文字。
 pub fn conflict_clause(
     driver: DriverKind,
     columns: &[String],
@@ -212,7 +211,7 @@ pub fn conflict_clause(
             };
             format!(" ON DUPLICATE KEY UPDATE {set}")
         }
-        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
+        DriverKind::Postgres | DriverKind::Sqlite => {
             let keys = conflict
                 .key_columns
                 .iter()
@@ -230,85 +229,7 @@ pub fn conflict_clause(
                 format!(" ON CONFLICT ({keys}) DO NOTHING")
             }
         }
-        DriverKind::Mssql => String::new(),
     }
-}
-
-/// SQL Server のリテラル。`NULL` は型付きにする: `VALUES` 表構築子の列型は全行の
-/// 型から決まるため、列が全行 NULL だと `int` になり、`date` 列などへの暗黙変換で
-/// "Operand type clash" になる。`NVARCHAR(MAX)` はほぼ全型へ暗黙変換できる。
-fn mssql_merge_literal(cell: Option<&str>) -> String {
-    match cell {
-        None => "CAST(NULL AS NVARCHAR(MAX))".to_string(),
-        Some(s) => format!("N'{}'", s.replace('\'', "''")),
-    }
-}
-
-/// SQL Server 用の UPSERT (`MERGE`) 文を組み立てる。値はドライバの INSERT と
-/// 同じく N'…' リテラルで埋め込み、SQL Server の暗黙変換で列型へ寄せる。
-///
-/// ```sql
-/// MERGE INTO [t] WITH (HOLDLOCK) AS tgt
-/// USING (VALUES (N'1',N'a')) AS src ([id], [name])
-/// ON tgt.[id] = src.[id]
-/// WHEN MATCHED THEN UPDATE SET tgt.[name] = src.[name]
-/// WHEN NOT MATCHED BY TARGET THEN INSERT ([id], [name]) VALUES (src.[id], src.[name]);
-/// ```
-///
-/// `HOLDLOCK` は MERGE の既知の競合 (同時実行で一意制約違反) を避ける定石。
-/// `rows` は [`ImportConflict::collapse_duplicate_keys`] で畳んだ後のものを渡す
-/// (MERGE はソース側のキー重複をエラーにする)。
-pub fn mssql_merge_sql(
-    table: &str,
-    columns: &[String],
-    conflict: &ImportConflict,
-    rows: &[Vec<Option<String>>],
-) -> String {
-    let q = |c: &str| quote_ident(DriverKind::Mssql, c);
-    let cols = columns.iter().map(|c| q(c)).collect::<Vec<_>>().join(", ");
-    let mut values = String::new();
-    for (r, row) in rows.iter().enumerate() {
-        if r > 0 {
-            values.push(',');
-        }
-        values.push('(');
-        for ci in 0..columns.len() {
-            if ci > 0 {
-                values.push(',');
-            }
-            values.push_str(&mssql_merge_literal(row.get(ci).and_then(|c| c.as_deref())));
-        }
-        values.push(')');
-    }
-    let on = conflict
-        .key_columns
-        .iter()
-        .map(|k| format!("tgt.{0} = src.{0}", q(k)))
-        .collect::<Vec<_>>()
-        .join(" AND ");
-    let updates = conflict.non_key_columns(columns);
-    let matched = if conflict.mode == ConflictMode::Update && !updates.is_empty() {
-        format!(
-            " WHEN MATCHED THEN UPDATE SET {}",
-            updates
-                .iter()
-                .map(|c| format!("tgt.{0} = src.{0}", q(c)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    } else {
-        String::new()
-    };
-    let src_cols = columns
-        .iter()
-        .map(|c| format!("src.{}", q(c)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "MERGE INTO {table} WITH (HOLDLOCK) AS tgt USING (VALUES {values}) AS src ({cols}) \
-         ON {on}{matched} WHEN NOT MATCHED BY TARGET THEN INSERT ({cols}) VALUES ({src_cols});",
-        table = q(table),
-    )
 }
 
 #[cfg(test)]
@@ -333,13 +254,7 @@ mod tests {
     #[test]
     fn insert_mode_has_no_clause_for_any_driver() {
         let c = cols(&["id", "name"]);
-        for d in [
-            DriverKind::Mysql,
-            DriverKind::Postgres,
-            DriverKind::Sqlite,
-            DriverKind::DuckDb,
-            DriverKind::Mssql,
-        ] {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             assert_eq!(conflict_clause(d, &c, &ImportConflict::insert_only()), "");
         }
     }
@@ -384,9 +299,9 @@ mod tests {
     }
 
     #[test]
-    fn postgres_sqlite_duckdb_use_on_conflict() {
+    fn postgres_sqlite_use_on_conflict() {
         let c = cols(&["id", "name"]);
-        for d in [DriverKind::Postgres, DriverKind::Sqlite, DriverKind::DuckDb] {
+        for d in [DriverKind::Postgres, DriverKind::Sqlite] {
             assert_eq!(
                 conflict_clause(d, &c, &conflict(ConflictMode::Update, &["id"])),
                 " ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\""
@@ -422,30 +337,6 @@ mod tests {
             ),
             " ON CONFLICT (\"id\") DO NOTHING"
         );
-    }
-
-    #[test]
-    fn mssql_merge_update() {
-        let c = cols(&["id", "name"]);
-        let rows = vec![row(&[Some("1"), Some("a'b")]), row(&[Some("2"), None])];
-        assert_eq!(
-            mssql_merge_sql("t", &c, &conflict(ConflictMode::Update, &["id"]), &rows),
-            "MERGE INTO [t] WITH (HOLDLOCK) AS tgt USING (VALUES (N'1',N'a''b'),\
-             (N'2',CAST(NULL AS NVARCHAR(MAX)))) AS src ([id], [name]) \
-             ON tgt.[id] = src.[id] WHEN MATCHED THEN UPDATE SET tgt.[name] = src.[name] \
-             WHEN NOT MATCHED BY TARGET THEN INSERT ([id], [name]) VALUES (src.[id], src.[name]);"
-        );
-    }
-
-    #[test]
-    fn mssql_merge_skip_has_no_matched_branch_and_composite_on() {
-        let c = cols(&["a", "b", "v"]);
-        let rows = vec![row(&[Some("1"), Some("2"), Some("x")])];
-        let sql = mssql_merge_sql("s]t", &c, &conflict(ConflictMode::Skip, &["a", "b"]), &rows);
-        assert!(sql.starts_with("MERGE INTO [s]]t] WITH (HOLDLOCK)"));
-        assert!(sql.contains("ON tgt.[a] = src.[a] AND tgt.[b] = src.[b] WHEN NOT MATCHED"));
-        assert!(!sql.contains("WHEN MATCHED THEN"));
-        assert!(sql.ends_with(';'));
     }
 
     #[test]

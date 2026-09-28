@@ -2,9 +2,8 @@
 //
 // コメントはバックエンドの `describe_table` (`TableColumnInfo.comment`) と
 // `list_table_comments` が返す。MySQL `COLUMN_COMMENT` / `TABLE_COMMENT`、
-// PostgreSQL `col_description` / `obj_description`、MSSQL の拡張プロパティ
-// `MS_Description`、DuckDB `duckdb_columns().comment` / `duckdb_tables().comment`。
-// SQLite はコメント機能を持たないので常に空 (UI は非対応を明示する)。
+// PostgreSQL `col_description` / `obj_description`。SQLite はコメント機能を
+// 持たないので常に空 (UI は非対応を明示する)。
 // 編集 DDL の生成は `alterTable.ts` (`buildAlterPlan` の `comment` 系) が担う。
 
 import type { TableColumnInfo, TableComment } from "../api/tauri";

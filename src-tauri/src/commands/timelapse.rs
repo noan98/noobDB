@@ -230,13 +230,7 @@ mod tests {
 
     #[test]
     fn driver_from_wire_round_trips_as_str() {
-        for d in [
-            DriverKind::Mysql,
-            DriverKind::Postgres,
-            DriverKind::Sqlite,
-            DriverKind::DuckDb,
-            DriverKind::Mssql,
-        ] {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             assert_eq!(driver_from_wire(d.as_str()).unwrap(), d);
         }
         assert!(driver_from_wire("oracle").is_err());

@@ -38,7 +38,7 @@
 
 `timelapse/` (純関数 + `store.rs`) と `commands/timelapse.rs`。ウォッチ登録した
 テーブルを接続時 (`settings.timelapseOnConnect`) と手動更新で `select_rows_sql`
-(PK 順・`MAX_DATA_ROWS + 1` 行。MSSQL は `TOP (n)`) により取得し、
+(PK 順・`MAX_DATA_ROWS + 1` 行) により取得し、
 `<data_dir>/table_timelapse.sqlite` (Unix は `0600`) に世代として保存する。
 
 - **PK 必須** (`compare_table_data` と同じ制約)。上限超過のテーブルは

@@ -354,7 +354,7 @@ interface Props {
   onDropView?: (database: string, name: string) => void;
   /**
    * ストアドプロシージャ / 関数の実行フォーム (#1003) を開く。右クリックメニューの
-   * 「実行...」から呼ぶ。SQLite / DuckDB (ルーチン非対応) では項目を無効化する。
+   * 「実行...」から呼ぶ。SQLite (ルーチン非対応) では項目を無効化する。
    * 未指定ならメニュー項目を出さない。
    */
   onRunRoutine?: (database: string, kind: "procedure" | "function", name: string, id: string | null) => void;
@@ -1106,7 +1106,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       { label: t("contextMenuRunSelect", { limit: selectLimit }), onSelect: () => onRunTableSelect(db, tbl) },
       { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, tbl) },
     );
-    // DDL の表示 / コピー (#1001)。PostgreSQL / MSSQL はカタログからの再構成なので、
+    // DDL の表示 / コピー (#1001)。PostgreSQL はカタログからの再構成なので、
     // ベストエフォートである旨をツールチップで明示する。
     const ddlTitle = isSynthesizedTableDdl(activeDriver) ? t("tableDdlSynthesizedHint") : undefined;
     if (onShowCreateTable) {
@@ -1557,7 +1557,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // 保守コマンドの SQL 方言はアクティブ接続のドライバで決まる (ツリーは
   // アクティブ接続のみを表示する)。
   const activeDriver = profiles.find((p) => p.id === activeProfileId)?.driver ?? "mysql";
-  // ツリーの「データベース」階層が何を表すか (PostgreSQL / DuckDB ではスキーマ)。#1112
+  // ツリーの「データベース」階層が何を表すか (PostgreSQL ではスキーマ)。#1112
   const containerLabel =
     explorerContainerKind(activeDriver) === "schema"
       ? t("explorerContainerSchema")
@@ -2132,12 +2132,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       rowBg = undefined;
     }
     const subtitle =
-      p.driver === "sqlite" || p.driver === "duckdb"
+      p.driver === "sqlite"
         ? p.file_path
           ? p.file_path.split(/[/\\]/).pop() || p.file_path
-          : p.driver === "duckdb"
-            ? "DuckDB"
-            : "SQLite"
+          : "SQLite"
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     const driverIcon = driverIconName(p.driver);
@@ -2197,7 +2195,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           // 報告するイベント委譲」方式) を使う — ラッパ要素を増やさないので
           // アニメーションに影響しない。
           {...treeTooltipProps(
-            p.driver === "sqlite" || p.driver === "duckdb"
+            p.driver === "sqlite"
               ? p.file_path ?? p.name
               : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`,
           )}

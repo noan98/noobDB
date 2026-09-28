@@ -1,23 +1,19 @@
 {
-  "description": "自動行キャップ (apply_auto_limit_for。末尾 LIMIT ×4 ドライバ + MSSQL の TOP (n) 挿入) の実装横断ゴールデンベクタ (#990)。src-tauri/src/db/mod.rs の apply_auto_limit_masked (MySQL/PostgreSQL/SQLite/DuckDB共有) と apply_auto_limit_mssql_masked (MSSQL 専用) は 同じ「迷ったら変更しない」方針を共有しつつ、書き換え方式 (末尾 LIMIT vs SELECT 直後の TOP) と チェックするキーワード集合 (limit/offset/fetch vs top/offset/fetch) が異なる。 #969 (FETCH FIRST ... ROWS ONLY に LIMIT を継ぎ足す不正 SQL) はこの非対称が原因で発生し、 既に修正済み。本ベクタはその再発防止と、ドライバ間の書き換え差分を横断で固定する。 各ケースの expected は 5 ドライバすべての apply_auto_limit_for(driver, sql, limit) の 期待出力 (書き換え後の SQL) または変更しないことを表す null を持つ。",
+  "description": "自動行キャップ (apply_auto_limit_for。末尾 LIMIT 挿入) の実装横断ゴールデンベクタ (#990)。src-tauri/src/db/mod.rs の apply_auto_limit_masked は MySQL/PostgreSQL/SQLite の 3 ドライバで共有され、「迷ったら変更しない」方針のもと limit/offset/fetch キーワードを見て末尾に LIMIT を挿入するかどうかを判定する。 #969 (FETCH FIRST ... ROWS ONLY に LIMIT を継ぎ足す不正 SQL) はこの判定の抜けが原因で発生し、 既に修正済み。本ベクタはその再発防止と、各ケースでの書き換え結果を横断で固定する。 各ケースの expected は 3 ドライバすべての apply_auto_limit_for(driver, sql, limit) の 期待出力 (書き換え後の SQL) または変更しないことを表す null を持つ。",
   "drivers": [
     "mysql",
     "postgres",
-    "sqlite",
-    "duckdb",
-    "mssql"
+    "sqlite"
   ],
   "cases": [
     {
       "sql": "SELECT * FROM t",
       "limit": 100,
-      "note": "素の SELECT: 4 ドライバは末尾 LIMIT、MSSQL は SELECT 直後に TOP",
+      "note": "素の SELECT: 3 ドライバとも末尾に LIMIT を挿入する",
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 100",
         "postgres": "SELECT * FROM t LIMIT 100",
-        "sqlite": "SELECT * FROM t LIMIT 100",
-        "duckdb": "SELECT * FROM t LIMIT 100",
-        "mssql": "SELECT TOP (100) * FROM t"
+        "sqlite": "SELECT * FROM t LIMIT 100" 
       }
     },
     {
@@ -27,33 +23,27 @@
       "expected": {
         "mysql": "select id, name from users where age > 18 LIMIT 50",
         "postgres": "select id, name from users where age > 18 LIMIT 50",
-        "sqlite": "select id, name from users where age > 18 LIMIT 50",
-        "duckdb": "select id, name from users where age > 18 LIMIT 50",
-        "mssql": "select TOP (50) id, name from users where age > 18"
+        "sqlite": "select id, name from users where age > 18 LIMIT 50" 
       }
     },
     {
       "sql": "SELECT DISTINCT a FROM t",
       "limit": 50,
-      "note": "MSSQL の TOP は SELECT DISTINCT の直後 (DISTINCT の後ろ) に挿入される",
+      "note": "SELECT DISTINCT でも末尾に LIMIT を挿入するだけで DISTINCT の位置は変えない",
       "expected": {
         "mysql": "SELECT DISTINCT a FROM t LIMIT 50",
         "postgres": "SELECT DISTINCT a FROM t LIMIT 50",
-        "sqlite": "SELECT DISTINCT a FROM t LIMIT 50",
-        "duckdb": "SELECT DISTINCT a FROM t LIMIT 50",
-        "mssql": "SELECT DISTINCT TOP (50) a FROM t"
+        "sqlite": "SELECT DISTINCT a FROM t LIMIT 50" 
       }
     },
     {
       "sql": "WITH c AS (SELECT 1 AS n) SELECT * FROM c",
       "limit": 20,
-      "note": "WITH ... SELECT (CTE): 4 ドライバは末尾 LIMIT で対応できるが、MSSQL の TOP は 外側の SELECT 位置を安全に特定できないため意図的に書き換えない (None)",
+      "note": "WITH ... SELECT (CTE): 3 ドライバとも末尾 LIMIT で対応できる",
       "expected": {
         "mysql": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20",
         "postgres": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20",
-        "sqlite": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20",
-        "duckdb": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20",
-        "mssql": null
+        "sqlite": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20" 
       }
     },
     {
@@ -63,9 +53,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -75,9 +63,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -87,9 +73,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -99,57 +83,47 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
       "sql": "SELECT * FROM t LIMIT 10",
       "limit": 100,
-      "note": "既存の LIMIT: 4 ドライバは変更しないが、MSSQL の apply_auto_limit_mssql は top/offset/fetch のみをチェックし limit キーワードは見ないため (T-SQL に LIMIT 構文は無く実在しない入力想定なので設計上チェック対象外)、 TOP (n) がそのまま挿入される — ドライバ間の非対称を固定する",
+      "note": "既存の LIMIT: limit キーワードを検出できるため 3 ドライバとも変更しない",
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": "SELECT TOP (100) * FROM t LIMIT 10"
+        "sqlite": null 
       }
     },
     {
       "sql": "SELECT * FROM t limit 10 offset 5",
       "limit": 1000,
-      "note": "LIMIT + OFFSET の組み合わせ: MSSQL も offset キーワードは見ているため、この場合は両陣営とも変更しない",
+      "note": "LIMIT + OFFSET の組み合わせ: 3 ドライバとも変更しない",
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
       "sql": "SELECT * FROM (SELECT id FROM big LIMIT 10) x",
       "limit": 1000,
-      "note": "サブクエリ内であっても LIMIT があれば 4 ドライバは変更しない (二重 LIMIT を避ける安全側)。 MSSQL は limit キーワードを見ないため TOP を挿入する (前ケースと同じ非対称)",
+      "note": "サブクエリ内であっても LIMIT があれば 3 ドライバとも変更しない (二重 LIMIT を避ける安全側)",
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": "SELECT TOP (1000) * FROM (SELECT id FROM big LIMIT 10) x"
+        "sqlite": null 
       }
     },
     {
       "sql": "SELECT TOP (5) * FROM t",
       "limit": 100,
-      "note": "既存の TOP: MSSQL は変更しないが、4 ドライバの apply_auto_limit は limit/offset/fetch のみをチェックし top キーワードは見ないため (他ドライバに TOP 構文は無く実在しない入力想定)、末尾に LIMIT がそのまま付与される — 逆方向の非対称を固定する",
+      "note": "(旧 MSSQL 構文) TOP (n): apply_auto_limit は limit/offset/fetch のみをチェックし top キーワードは見ないため (3 ドライバのいずれにも TOP 構文は無く実在しない入力想定)、末尾に LIMIT がそのまま付与される",
       "expected": {
         "mysql": "SELECT TOP (5) * FROM t LIMIT 100",
         "postgres": "SELECT TOP (5) * FROM t LIMIT 100",
-        "sqlite": "SELECT TOP (5) * FROM t LIMIT 100",
-        "duckdb": "SELECT TOP (5) * FROM t LIMIT 100",
-        "mssql": null
+        "sqlite": "SELECT TOP (5) * FROM t LIMIT 100" 
       }
     },
     {
@@ -159,9 +133,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000;",
         "postgres": "SELECT * FROM t LIMIT 1000;",
-        "sqlite": "SELECT * FROM t LIMIT 1000;",
-        "duckdb": "SELECT * FROM t LIMIT 1000;",
-        "mssql": "SELECT TOP (1000) * FROM t;"
+        "sqlite": "SELECT * FROM t LIMIT 1000;" 
       }
     },
     {
@@ -171,9 +143,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000; -- bye",
         "postgres": "SELECT * FROM t LIMIT 1000; -- bye",
-        "sqlite": "SELECT * FROM t LIMIT 1000; -- bye",
-        "duckdb": "SELECT * FROM t LIMIT 1000; -- bye",
-        "mssql": "SELECT TOP (1000) * FROM t; -- bye"
+        "sqlite": "SELECT * FROM t LIMIT 1000; -- bye" 
       }
     },
     {
@@ -183,9 +153,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000 -- trailing\n",
         "postgres": "SELECT * FROM t LIMIT 1000 -- trailing\n",
-        "sqlite": "SELECT * FROM t LIMIT 1000 -- trailing\n",
-        "duckdb": "SELECT * FROM t LIMIT 1000 -- trailing\n",
-        "mssql": "SELECT TOP (1000) * FROM t -- trailing\n"
+        "sqlite": "SELECT * FROM t LIMIT 1000 -- trailing\n" 
       }
     },
     {
@@ -195,9 +163,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -207,9 +173,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -219,9 +183,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -231,9 +193,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -243,9 +203,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -255,9 +213,7 @@
       "expected": {
         "mysql": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100",
         "postgres": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100",
-        "sqlite": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100",
-        "duckdb": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100",
-        "mssql": "SELECT TOP (100) a, COUNT(*) FROM t GROUP BY a"
+        "sqlite": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100" 
       }
     },
     {
@@ -267,33 +223,27 @@
       "expected": {
         "mysql": "SELECT COUNT(*) OVER () FROM t LIMIT 1000",
         "postgres": "SELECT COUNT(*) OVER () FROM t LIMIT 1000",
-        "sqlite": "SELECT COUNT(*) OVER () FROM t LIMIT 1000",
-        "duckdb": "SELECT COUNT(*) OVER () FROM t LIMIT 1000",
-        "mssql": "SELECT TOP (1000) COUNT(*) OVER () FROM t"
+        "sqlite": "SELECT COUNT(*) OVER () FROM t LIMIT 1000" 
       }
     },
     {
       "sql": "SELECT * FROM t WHERE s = '\\'; DELETE FROM t; --'",
       "limit": 100,
-      "note": "#852: PostgreSQL/SQLite/DuckDB/MSSQL の標準解釈では \\' の直後で文字列が閉じ、 隠れた DELETE が露出するため変更しない。MySQL は \\' を引用符のエスケープと読むため 文字列全体が 1 つのリテラルになり、素の SELECT としてキャップされる",
+      "note": "#852: PostgreSQL/SQLite の標準解釈では \\' の直後で文字列が閉じ、 隠れた DELETE が露出するため変更しない。MySQL は \\' を引用符のエスケープと読むため 文字列全体が 1 つのリテラルになり、素の SELECT としてキャップされる",
       "expected": {
         "mysql": "SELECT * FROM t WHERE s = '\\'; DELETE FROM t; --' LIMIT 100",
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
       "sql": "SELECT a FROM x UNION SELECT a FROM y",
       "limit": 100,
-      "note": "トップレベル UNION: 4 ドライバは末尾 LIMIT が全体の結果に効くのでキャップする。 MSSQL の TOP は自分が属する SELECT にしか効かず 2 つ目以降の枝が無制限のままになるため変更しない",
+      "note": "トップレベル UNION: 3 ドライバとも末尾 LIMIT が全体の結果に効くのでキャップする",
       "expected": {
         "mysql": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100",
-        "duckdb": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100",
-        "mssql": null
+        "sqlite": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100" 
       }
     },
     {
@@ -303,9 +253,7 @@
       "expected": {
         "mysql": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100",
-        "duckdb": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100",
-        "mssql": null
+        "sqlite": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100" 
       }
     },
     {
@@ -315,9 +263,7 @@
       "expected": {
         "mysql": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100",
-        "duckdb": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100",
-        "mssql": null
+        "sqlite": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100" 
       }
     },
     {
@@ -327,9 +273,7 @@
       "expected": {
         "mysql": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100",
-        "duckdb": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100",
-        "mssql": null
+        "sqlite": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100" 
       }
     },
     {
@@ -339,9 +283,7 @@
       "expected": {
         "mysql": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100",
         "postgres": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100",
-        "sqlite": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100",
-        "duckdb": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100",
-        "mssql": "SELECT TOP (100) * FROM (SELECT a FROM x UNION SELECT a FROM y) s"
+        "sqlite": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100" 
       }
     },
     {
@@ -351,9 +293,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -363,9 +303,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -375,9 +313,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -387,9 +323,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -399,9 +333,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -411,9 +343,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -423,9 +353,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -435,9 +363,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -447,9 +373,7 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null,
-        "duckdb": null,
-        "mssql": null
+        "sqlite": null 
       }
     },
     {
@@ -459,9 +383,7 @@
       "expected": {
         "mysql": "SELECT deleted_at FROM t LIMIT 1000",
         "postgres": "SELECT deleted_at FROM t LIMIT 1000",
-        "sqlite": "SELECT deleted_at FROM t LIMIT 1000",
-        "duckdb": "SELECT deleted_at FROM t LIMIT 1000",
-        "mssql": "SELECT TOP (1000) deleted_at FROM t"
+        "sqlite": "SELECT deleted_at FROM t LIMIT 1000" 
       }
     },
     {
@@ -471,9 +393,7 @@
       "expected": {
         "mysql": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000",
         "postgres": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000",
-        "sqlite": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000",
-        "duckdb": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000",
-        "mssql": "SELECT TOP (1000) REPLACE(name, 'a', 'b') FROM t"
+        "sqlite": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000" 
       }
     },
     {
@@ -483,9 +403,7 @@
       "expected": {
         "mysql": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000",
         "postgres": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000",
-        "sqlite": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000",
-        "duckdb": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000",
-        "mssql": "SELECT TOP (1000) * FROM t WHERE note = 'limit 5'"
+        "sqlite": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000" 
       }
     },
     {
@@ -495,9 +413,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */",
         "postgres": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */",
-        "sqlite": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */",
-        "duckdb": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */",
-        "mssql": "SELECT TOP (1000) * FROM t /* LIMIT 5 */"
+        "sqlite": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */" 
       }
     },
     {
@@ -507,9 +423,7 @@
       "expected": {
         "mysql": "SELECT `limit` FROM t LIMIT 1000",
         "postgres": "SELECT `limit` FROM t LIMIT 1000",
-        "sqlite": "SELECT `limit` FROM t LIMIT 1000",
-        "duckdb": "SELECT `limit` FROM t LIMIT 1000",
-        "mssql": "SELECT TOP (1000) `limit` FROM t"
+        "sqlite": "SELECT `limit` FROM t LIMIT 1000" 
       }
     },
     {
@@ -519,9 +433,7 @@
       "expected": {
         "mysql": "SELECT $$limit 5$$ AS s LIMIT 1000",
         "postgres": "SELECT $$limit 5$$ AS s LIMIT 1000",
-        "sqlite": "SELECT $$limit 5$$ AS s LIMIT 1000",
-        "duckdb": "SELECT $$limit 5$$ AS s LIMIT 1000",
-        "mssql": "SELECT TOP (1000) $$limit 5$$ AS s"
+        "sqlite": "SELECT $$limit 5$$ AS s LIMIT 1000" 
       }
     }
   ]

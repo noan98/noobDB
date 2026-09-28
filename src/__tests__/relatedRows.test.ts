@@ -23,24 +23,15 @@ describe("buildRelatedRowsSql", () => {
     );
   });
 
-  it("PostgreSQL / DuckDB: ダブルクォート + LIMIT", () => {
+  it("PostgreSQL: ダブルクォート + LIMIT", () => {
     expect(buildRelatedRowsSql({ ...base, driver: "postgres", database: "public" })).toBe(
       'SELECT * FROM "public"."orders" WHERE "user_id" = 42 LIMIT 51',
-    );
-    expect(buildRelatedRowsSql({ ...base, driver: "duckdb", database: null })).toBe(
-      'SELECT * FROM "orders" WHERE "user_id" = 42 LIMIT 51',
     );
   });
 
   it("SQLite: DB 修飾子を付けない", () => {
     expect(buildRelatedRowsSql({ ...base, driver: "sqlite", database: "main" })).toBe(
       'SELECT * FROM "orders" WHERE "user_id" = 42 LIMIT 51',
-    );
-  });
-
-  it("MSSQL: LIMIT ではなく TOP (n) を使う", () => {
-    expect(buildRelatedRowsSql({ ...base, driver: "mssql", database: "shop" })).toBe(
-      "SELECT TOP (51) * FROM [shop].[orders] WHERE [user_id] = 42",
     );
   });
 
@@ -55,16 +46,6 @@ describe("buildRelatedRowsSql", () => {
         limit: 10,
       }),
     ).toBe("SELECT * FROM `we``ird` WHERE `c``ol` = 'a''b\\\\c' LIMIT 11");
-    expect(
-      buildRelatedRowsSql({
-        driver: "mssql",
-        database: null,
-        childTable: "od]d",
-        childColumn: "k",
-        value: "x'y",
-        limit: 5,
-      }),
-    ).toBe("SELECT TOP (6) * FROM [od]]d] WHERE [k] = N'x''y'");
   });
 
   it("キー値が NULL なら取得しない (IS NULL で無関係な行を拾わない)", () => {
@@ -82,7 +63,7 @@ describe("buildRelatedRowsSql", () => {
   });
 
   it("生成 SQL は全方言で読み取り専用と判定される (read_only セッションでも動く)", () => {
-    for (const driver of ["mysql", "postgres", "sqlite", "duckdb", "mssql"]) {
+    for (const driver of ["mysql", "postgres", "sqlite"]) {
       const sql = buildRelatedRowsSql({ ...base, driver, database: "db", value: "x; DROP TABLE t" });
       expect(sql).not.toBeNull();
       expect(isReadOnlySql(sql ?? "", driver)).toBe(true);
