@@ -3567,8 +3567,15 @@ export default function App() {
     paginatableBase: string | null = null,
     autoLimit: number | null = null,
     autoRefresh: boolean = false,
+    // 呼び出し側が「この描画のクロージャより新しい」接続とタブを確定済みのときに渡す。
+    // 接続の切替直後 (`restoreSavedTabs`) や `addTab` 直後の初回実行では、まだ再描画
+    // されていないためクロージャの `sessionId` / `tabs` が古い — 特に切替元の
+    // セッション (例: ローカル横断クエリの SQLite) へクエリが飛び、切替先のテーブルが
+    // "no such table" になる事故があった。渡されたものをクロージャより優先する。
+    override?: { sessionId?: string; tab?: Tab },
   ) => {
-    if (!sessionId) {
+    const sid = override?.sessionId ?? sessionId;
+    if (!sid) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
     }
@@ -3577,7 +3584,7 @@ export default function App() {
       setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
       return;
     }
-    const tab = tabs.find((tt) => tt.id === tabId);
+    const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
     await cancelStreamForTab(tabId);
 
     const timeoutSecs = settings.queryTimeoutSecs;
@@ -3809,7 +3816,7 @@ export default function App() {
 
     try {
       await api.runQueryStream({
-        sessionId,
+        sessionId: sid,
         streamId,
         sql,
         database: tab?.database ?? null,
@@ -4051,7 +4058,9 @@ export default function App() {
       // immediately sees data instead of an empty grid.
       for (const tab of allTabs) {
         if (tab.kind === "table" && tab.paginatable) {
-          runQueryInTab(tab.id, tab.sql, tab.paginatable);
+          // `sid` は切替/接続で確定したばかりの新セッション。まだ再描画前なので
+          // `runQueryInTab` のクロージャは切替元のセッションとタブ一覧を指している。
+          runQueryInTab(tab.id, tab.sql, tab.paginatable, null, false, { sessionId: sid, tab });
         }
       }
       // Surface any table tabs that downgraded to query tabs. `skip_history`
@@ -5309,7 +5318,9 @@ export default function App() {
         rowEstimateTotal: null,
       };
       addTab(tab);
-      runQueryInTab(tab.id, sql, base);
+      // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
+      // タブ自体と開いた時点のセッションを明示的に渡す。
+      runQueryInTab(tab.id, sql, base, null, false, { sessionId, tab });
       // ページネーションの総ページ数目安に使う行数推定を取得 (ベストエフォート)。
       void api
         .tableRowEstimates(sessionId, database)

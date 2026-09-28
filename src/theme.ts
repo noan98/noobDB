@@ -744,6 +744,12 @@ export const selectableCardRecipe = defineRecipe({
   className: "app-selectable-card",
   base: {
     display: "flex",
+    // カードは常に幅の決まったラッパーの中に `flex="1"` の flex アイテムとして置かれる
+    // (`MotionCardWrap` 参照)。flex アイテムの `min-width` 既定値 `auto` は中身の
+    // min-content 幅 (= `white-space: nowrap` の長いホスト名やエンドポイントの全長) に
+    // なるため、そのままだとカードがラッパーの `maxW` を突き抜けて隣のカードへ重なって
+    // 描画される。0 にして、はみ出す文字は内側の ellipsis に任せる。
+    minW: 0,
     textAlign: "left",
     border: "1px solid",
     borderColor: "app.border",
