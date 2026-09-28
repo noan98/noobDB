@@ -32,7 +32,7 @@ interface Props {
   onCancel: () => void;
   /** 値ピッカー用: ドライバ ("mysql" | "postgres" | ...)。 */
   driver?: string;
-  /** 値ピッカー用: テーブルのデータベース (PostgreSQL / DuckDB ではスキーマ)。 */
+  /** 値ピッカー用: テーブルのデータベース (PostgreSQL ではスキーマ)。 */
   database?: string | null;
   /** 値ピッカー用: `describe_table` の列メタ (FK 参照先・型定義)。 */
   tableColumns?: TableColumnInfo[] | null;

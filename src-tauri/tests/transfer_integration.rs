@@ -1,11 +1,11 @@
 //! 接続間データ転送 (#986) の統合テスト。
 //!
-//! 外部サーバは不要: 別々の temp SQLite / DuckDB ファイルを「異種の接続」に見立て、
+//! 外部サーバは不要: 別々の temp SQLite ファイルを「異種の接続」に見立て、
 //! `commands::transfer` の IPC コア (`transfer_data_inner`) を Tauri なしで駆動する。
 //! 常時実走 (環境変数ゲートなし)。
 //!
 //! 検証すること:
-//! - SQLite → DuckDB → SQLite のラウンドトリップで BLOB / NULL / 日時 / 真偽値 / 実数が
+//! - SQLite → SQLite → SQLite のラウンドトリップで BLOB / NULL / 日時 / 真偽値 / 実数が
 //!   往復する (複数バッチにまたがる件数で、進捗コールバックも複数回呼ばれる)
 //! - クエリ結果の転送 (重複列名・式列の型推定)
 //! - 読み取り専用ターゲットの拒否 (テーブルは作られない)
@@ -44,16 +44,6 @@ async fn sqlite_session(state: &t::AppState, id: &str, read_only: bool) -> PathB
     state
         .insert(t::make_session(id, conn, opts, read_only))
         .await;
-    path
-}
-
-async fn duckdb_session(state: &t::AppState, id: &str) -> PathBuf {
-    let path = temp_path(id, "duckdb");
-    remove_files(&path);
-    drop(duckdb::Connection::open(&path).expect("create duckdb file"));
-    let opts = t::duckdb_options(path.to_str().expect("utf8 path"));
-    let conn = t::connect(&opts).await.expect("connect duckdb");
-    state.insert(t::make_session(id, conn, opts, false)).await;
     path
 }
 
@@ -122,27 +112,27 @@ async fn seed_source(state: &t::AppState, id: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn sqlite_to_duckdb_and_back_roundtrips_values() {
+async fn sqlite_to_sqlite_and_back_roundtrips_values() {
     let state = t::AppState::default();
     let src = sqlite_session(&state, "rt_src", false).await;
-    let duck = duckdb_session(&state, "rt_duck").await;
+    let mid = sqlite_session(&state, "rt_mid", false).await;
     let back = sqlite_session(&state, "rt_back", false).await;
     seed_source(&state, "rt_src").await;
 
-    // SQLite → DuckDB (進捗が複数回届く)
+    // SQLite → SQLite (進捗が複数回届く)
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_cb = calls.clone();
     let counter = Arc::new(AtomicU64::new(0));
     let out = t::transfer_data_inner(
         &state,
-        table_request("rt_src", "rt_duck", "items", "items_copy"),
+        table_request("rt_src", "rt_mid", "items", "items_copy"),
         counter.clone(),
         move |_| {
             calls_cb.fetch_add(1, Ordering::SeqCst);
         },
     )
     .await
-    .expect("sqlite -> duckdb");
+    .expect("sqlite -> sqlite");
     assert_eq!(out.rows, 2500);
     assert_eq!(counter.load(Ordering::SeqCst), 2500);
     assert!(calls.load(Ordering::SeqCst) >= 3, "progress per batch");
@@ -154,11 +144,11 @@ async fn sqlite_to_duckdb_and_back_roundtrips_values() {
     assert_eq!(
         types,
         vec![
-            ("id".into(), "BIGINT".into()),
-            ("name".into(), "VARCHAR".into()),
-            ("price".into(), "DOUBLE".into()),
+            ("id".into(), "INTEGER".into()),
+            ("name".into(), "TEXT".into()),
+            ("price".into(), "REAL".into()),
             ("data".into(), "BLOB".into()),
-            ("created".into(), "TIMESTAMP".into()),
+            ("created".into(), "DATETIME".into()),
             ("day".into(), "DATE".into()),
             ("flag".into(), "BOOLEAN".into()),
         ]
@@ -166,7 +156,7 @@ async fn sqlite_to_duckdb_and_back_roundtrips_values() {
 
     let r = exec(
         &state,
-        "rt_duck",
+        "rt_mid",
         "SELECT count(*), count(name), count(price), count(data) FROM items_copy",
     )
     .await;
@@ -176,8 +166,8 @@ async fn sqlite_to_duckdb_and_back_roundtrips_values() {
     );
     let r = exec(
         &state,
-        "rt_duck",
-        "SELECT name, price, hex(data), CAST(created AS VARCHAR), CAST(day AS VARCHAR), flag \
+        "rt_mid",
+        "SELECT name, price, hex(data), created, day, flag \
          FROM items_copy WHERE id = 4",
     )
     .await;
@@ -187,24 +177,30 @@ async fn sqlite_to_duckdb_and_back_roundtrips_values() {
     assert_eq!(text(&row[2]), "00FF10");
     assert_eq!(text(&row[3]), "2024-01-02 03:04:05");
     assert_eq!(text(&row[4]), "2024-05-06");
-    assert!(matches!(row[5], t::Value::Bool(false)));
+    assert!(matches!(row[5], t::Value::Bool(false) | t::Value::Int(0)));
     // NULL が NULL のまま (空文字などに化けない)
     let r = exec(
         &state,
-        "rt_duck",
+        "rt_mid",
         "SELECT name IS NULL, data IS NULL FROM items_copy WHERE id = 5",
     )
     .await;
-    assert!(matches!(r.rows[0][0], t::Value::Bool(true)));
-    assert!(matches!(r.rows[0][1], t::Value::Bool(false)));
+    assert!(matches!(
+        r.rows[0][0],
+        t::Value::Bool(true) | t::Value::Int(1)
+    ));
+    assert!(matches!(
+        r.rows[0][1],
+        t::Value::Bool(false) | t::Value::Int(0)
+    ));
 
-    // DuckDB → SQLite (BLOB はバイト列として戻る)
+    // SQLite → SQLite (BLOB はバイト列として戻る)
     let out = run(
         &state,
-        table_request("rt_duck", "rt_back", "items_copy", "items_back"),
+        table_request("rt_mid", "rt_back", "items_copy", "items_back"),
     )
     .await
-    .expect("duckdb -> sqlite");
+    .expect("sqlite -> sqlite");
     assert_eq!(out.rows, 2500);
     let r = exec(
         &state,
@@ -229,7 +225,7 @@ async fn sqlite_to_duckdb_and_back_roundtrips_values() {
     .await;
     assert_eq!(int(&r.rows[0][0]), 227);
 
-    for p in [src, duck, back] {
+    for p in [src, mid, back] {
         remove_files(&p);
     }
 }
@@ -238,7 +234,7 @@ async fn sqlite_to_duckdb_and_back_roundtrips_values() {
 async fn transfers_query_results_with_duplicate_and_expression_columns() {
     let state = t::AppState::default();
     let src = sqlite_session(&state, "q_src", false).await;
-    let dst = duckdb_session(&state, "q_dst").await;
+    let dst = sqlite_session(&state, "q_dst", false).await;
     exec(&state, "q_src", "CREATE TABLE a (id INTEGER, v TEXT)").await;
     exec(&state, "q_src", "INSERT INTO a VALUES (1, 'x'), (2, 'y')").await;
 
@@ -250,7 +246,7 @@ async fn transfers_query_results_with_duplicate_and_expression_columns() {
     assert_eq!(out.rows, 2);
     let names: Vec<String> = out.columns.iter().map(|c| c.name.clone()).collect();
     assert_eq!(names, vec!["id", "id_2", "half"]);
-    assert_eq!(out.columns[2].target_type, "DOUBLE");
+    assert_eq!(out.columns[2].target_type, "REAL");
     let r = exec(&state, "q_dst", "SELECT sum(half) FROM result").await;
     assert!(matches!(r.rows[0][0], t::Value::Float(f) if (f - 1.5).abs() < 1e-9));
 
@@ -372,7 +368,7 @@ async fn conflict_modes_create_replace_append() {
 async fn cancelling_drops_the_partially_created_table() {
     let state = Arc::new(t::AppState::default());
     let src = sqlite_session(&state, "c_src", false).await;
-    let dst = duckdb_session(&state, "c_dst").await;
+    let dst = sqlite_session(&state, "c_dst", false).await;
     exec(&state, "c_src", "CREATE TABLE big (id INTEGER, v TEXT)").await;
     exec(
         &state,
@@ -404,7 +400,7 @@ async fn cancelling_drops_the_partially_created_table() {
         let r = exec(
             &state,
             "c_dst",
-            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'big_copy'",
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'big_copy'",
         )
         .await;
         if int(&r.rows[0][0]) == 0 {

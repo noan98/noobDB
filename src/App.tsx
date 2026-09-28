@@ -5693,8 +5693,8 @@ export default function App() {
   //
   // `replace` は `SaveAsViewModal` が既存ビュー名との衝突から判定済み: 新規なら
   // 単一の `CREATE VIEW` (`api.runQuery` の単文実行)、置換なら
-  // `buildReplaceViewSql` が返す複数文 (SQLite は DROP+CREATE、MSSQL は
-  // CREATE OR ALTER) を `run_query_transaction` で all-or-nothing 実行する
+  // `buildReplaceViewSql` が返す複数文 (SQLite は DROP+CREATE) を
+  // `run_query_transaction` で all-or-nothing 実行する
   // (`handleAlterTableRun` と同じ複数文パターン)。モーダルは確定と同時に閉じ
   // (`SaveAsTableModal` と同じ流儀)、実行・スキーマキャッシュ更新・成功トーストは
   // 非同期に行う。
@@ -5916,8 +5916,8 @@ export default function App() {
   }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
 
   // テーブルの CREATE TABLE DDL の表示 / コピー (#1001)。全ドライバで
-  // `get_object_definition` (kind = "table") を使う — MySQL/SQLite/DuckDB は
-  // ネイティブ DDL、PostgreSQL/MSSQL はカタログから再構成した DDL。純粋な読み取り
+  // `get_object_definition` (kind = "table") を使う — MySQL/SQLite は
+  // ネイティブ DDL、PostgreSQL はカタログから再構成した DDL。純粋な読み取り
   // なので read_only セッションでも動く (`is_read_only_sql` の経路を通らない)。
   const handleShowCreateTable = useCallback((database: string, table: string) => {
     void handleOpenObjectDefinition(database, TABLE_DDL_KIND, table, null);
@@ -9555,20 +9555,13 @@ export default function App() {
             {
               label: t("appUsers"),
               onSelect: () => openFullView("users"),
-              // ユーザ概念を持たない SQLite に加え、MSSQL も未実装 (#729) のため
-              // 導線を出さない (#732。list_db_users がハードエラーを返す駆動でエラー
-              // トーストになるのを避ける。processes/queryInspector と異なり MSSQL は
-              // まだ理由コード付きの緩やかな縮退を返さないため menu レベルで隠す)。
-              disabled:
-                !sessionId ||
-                selectedProfile?.driver === "sqlite" ||
-                selectedProfile?.driver === "duckdb" ||
-                selectedProfile?.driver === "mssql",
+              // ユーザ概念を持たない SQLite には導線を出さない (#732。
+              // list_db_users がハードエラーを返す駆動でエラートーストになるのを
+              // 避ける)。
+              disabled: !sessionId || selectedProfile?.driver === "sqlite",
               title: !sessionId
                 ? t("appToolsNeedsSession")
-                : selectedProfile?.driver === "sqlite" ||
-                    selectedProfile?.driver === "duckdb" ||
-                    selectedProfile?.driver === "mssql"
+                : selectedProfile?.driver === "sqlite"
                   ? t("appUsersUnsupported")
                   : undefined,
             },

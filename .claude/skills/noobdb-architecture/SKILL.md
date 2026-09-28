@@ -5,12 +5,11 @@ description: noobDB の全体像を把握するとき — 2 プロセス構成 (
 
 # noobDB のアーキテクチャ
 
-noobDB は MySQL / PostgreSQL / SQLite / DuckDB (#709) / Microsoft SQL Server (#729)
-に対応した軽量デスクトップ DB クライアントで、SSH トンネルをファーストクラスで
-サポートします。Rust バックエンド (`rust-version` 1.77、edition 2021) は `sqlx`
-(`tls-rustls`。MySQL/PostgreSQL/SQLite の 3 ドライバが使う)、DuckDB 専用の `duckdb`
-(bundled)、MSSQL 専用の `tiberius`、`russh`、`keyring` などに依存しています
-(バージョンの正は `src-tauri/Cargo.toml`)。
+noobDB は MySQL / PostgreSQL / SQLite に対応した軽量デスクトップ DB クライアント
+で、SSH トンネルをファーストクラスでサポートします。Rust バックエンド
+(`rust-version` 1.77、edition 2021) は `sqlx` (`tls-rustls`。3 ドライバすべてが
+使う)、`russh`、`keyring` などに依存しています (バージョンの正は
+`src-tauri/Cargo.toml`)。
 
 ## バックエンドのモジュール地図 (`src-tauri/src/`)
 

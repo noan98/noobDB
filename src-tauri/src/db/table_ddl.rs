@@ -1,11 +1,11 @@
 //! 既存テーブルの `CREATE TABLE` DDL をカタログの introspection 結果から
 //! 再構成する (#1001「DDL をコピー / 表示」)。
 //!
-//! MySQL (`SHOW CREATE TABLE`)・SQLite (`sqlite_master.sql`)・DuckDB
-//! (`duckdb_tables().sql`) はエンジン自身が保持する DDL をそのまま返すので
-//! ここを通らない。PostgreSQL / MSSQL にはネイティブな「テーブルの CREATE 文を
-//! 返す」機能が無いため、既存の `describe_table` (列) + `list_indexes` +
-//! `foreign_keys` の結果を束ね、Diff/Sync の CREATE 分岐 (`db::sync`) と
+//! MySQL (`SHOW CREATE TABLE`)・SQLite (`sqlite_master.sql`) はエンジン自身が
+//! 保持する DDL をそのまま返すのでここを通らない。PostgreSQL にはネイティブな
+//! 「テーブルの CREATE 文を返す」機能が無いため、既存の `describe_table` (列)
+//! + `list_indexes` + `foreign_keys` の結果を束ね、Diff/Sync の CREATE 分岐
+//! (`db::sync`) と
 //! **同じ列定義レンダラ** (`column_def` / `quote_ident` / `render_create_table`)
 //! で接続自身の方言の DDL にする。純関数なので DB 無しでテストできる。
 //!
@@ -26,7 +26,7 @@ pub const SYNTHESIZED_DDL_HEADER: &str = "\
 -- partial/expression indexes are not included. Review before running.
 ";
 
-/// `schema` (PostgreSQL のスキーマ / MSSQL の `dbo`) で修飾したテーブル名。
+/// `schema` (PostgreSQL のスキーマ) で修飾したテーブル名。
 fn qualified_name(driver: DriverKind, schema: Option<&str>, table: &str) -> String {
     match schema {
         Some(s) if !s.is_empty() => {
@@ -36,15 +36,9 @@ fn qualified_name(driver: DriverKind, schema: Option<&str>, table: &str) -> Stri
     }
 }
 
-/// 1 列ぶんの定義。基本は sync と共通の `column_def` で、MSSQL の IDENTITY 列
-/// だけ補う (sync 側は既存テーブルへのデータコピーで IDENTITY_INSERT が要らない
-/// ように IDENTITY を付けない方針なので、ここで局所的に足す)。
+/// 1 列ぶんの定義。sync と共通の `column_def` をそのまま使う。
 fn render_column(driver: DriverKind, col: &TableColumnInfo) -> String {
-    let mut def = column_def(driver, col);
-    if driver == DriverKind::Mssql && col.extra.eq_ignore_ascii_case("identity") {
-        def.push_str(" IDENTITY");
-    }
-    def
+    column_def(driver, col)
 }
 
 /// 主キー列を宣言順で返す。PK インデックスがあればその列順 (複合 PK の順序を
@@ -146,21 +140,6 @@ fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<
     let unique = if idx.unique { "UNIQUE " } else { "" };
     let method = idx.method.as_deref().unwrap_or("");
     let sql = match driver {
-        // MSSQL の `type_desc` は CLUSTERED / NONCLUSTERED をそのまま DDL に書ける。
-        // それ以外 (COLUMNSTORE / XML / SPATIAL 等) は列リスト形式にならないので
-        // 通常の (NONCLUSTERED) インデックスとして書く。
-        DriverKind::Mssql => {
-            let kind = match method.to_ascii_uppercase().as_str() {
-                "CLUSTERED" => "CLUSTERED ",
-                "NONCLUSTERED" => "NONCLUSTERED ",
-                _ => "",
-            };
-            format!(
-                "CREATE {unique}{kind}INDEX {} ON {qualified} ({})",
-                quote_ident(driver, &idx.name),
-                cols.join(", ")
-            )
-        }
         // PostgreSQL は btree 以外のアクセスメソッドを `USING` で残す。
         DriverKind::Postgres if !method.is_empty() && !method.eq_ignore_ascii_case("btree") => {
             format!(
@@ -352,67 +331,26 @@ mod tests {
             col("pa", "int", true, ""),
             col("pb", "int", true, ""),
         ];
-        let indexes = vec![idx("PK_t", &["a", "b"], true, true, Some("CLUSTERED"))];
+        let indexes = vec![idx("PK_t", &["a", "b"], true, true, None)];
         // information_schema の直積で同じ組が重複して届くケースも畳めること
         let fks = vec![
             fk("t", "pa", "parent", Some("x"), Some("fk_parent")),
             fk("t", "pb", "parent", Some("y"), Some("fk_parent")),
             fk("t", "pa", "parent", Some("y"), Some("fk_parent")),
         ];
-        let ddl =
-            synthesize_create_table(DriverKind::Mssql, Some("dbo"), "t", &cols, &indexes, &fks);
-        assert!(ddl.contains("CREATE TABLE [dbo].[t] ("));
-        assert!(ddl.contains("PRIMARY KEY ([a], [b])"));
+        let ddl = synthesize_create_table(DriverKind::Mysql, None, "t", &cols, &indexes, &fks);
+        assert!(ddl.contains("CREATE TABLE `t` ("));
+        assert!(ddl.contains("PRIMARY KEY (`a`, `b`)"));
         assert!(ddl.contains(
-            "CONSTRAINT [fk_parent] FOREIGN KEY ([pa], [pb]) REFERENCES [parent] ([x], [y])"
+            "CONSTRAINT `fk_parent` FOREIGN KEY (`pa`, `pb`) REFERENCES `parent` (`x`, `y`)"
         ));
-    }
-
-    #[test]
-    fn mssql_identity_and_index_kind() {
-        let mut id = col("id", "int", false, "PRI");
-        id.extra = "identity".into();
-        let mut qty = col("qty", "int", false, "");
-        qty.default = Some("((0))".into());
-        let cols = vec![id, qty, col("name", "nvarchar(50)", true, "")];
-        let indexes = vec![
-            idx("PK_items", &["id"], true, true, Some("CLUSTERED")),
-            idx(
-                "UX_items_name",
-                &["name"],
-                true,
-                false,
-                Some("NONCLUSTERED"),
-            ),
-            idx(
-                "IX_cs",
-                &["qty"],
-                false,
-                false,
-                Some("NONCLUSTERED COLUMNSTORE"),
-            ),
-        ];
-        let ddl = synthesize_create_table(
-            DriverKind::Mssql,
-            Some("dbo"),
-            "items",
-            &cols,
-            &indexes,
-            &[],
-        );
-        assert!(ddl.contains("[id] int NOT NULL IDENTITY"));
-        assert!(ddl.contains("[qty] int NOT NULL DEFAULT ((0))"));
-        assert!(ddl.contains(
-            "CREATE UNIQUE NONCLUSTERED INDEX [UX_items_name] ON [dbo].[items] ([name])"
-        ));
-        assert!(ddl.contains("CREATE INDEX [IX_cs] ON [dbo].[items] ([qty])"));
     }
 
     #[test]
     fn fk_without_resolved_referenced_column_omits_column_list() {
         let cols = vec![col("p", "INTEGER", true, "")];
         let fks = vec![fk("c", "p", "parent", None, None)];
-        let ddl = synthesize_create_table(DriverKind::DuckDb, None, "c", &cols, &[], &fks);
+        let ddl = synthesize_create_table(DriverKind::Postgres, None, "c", &cols, &[], &fks);
         assert!(ddl.contains("CREATE TABLE \"c\" ("));
         assert!(ddl.contains("FOREIGN KEY (\"p\") REFERENCES \"parent\"\n"));
         assert!(!ddl.contains("CONSTRAINT"));

@@ -1,11 +1,9 @@
 {
-  "_comment": "スクリプト文分割の共有ゴールデン (#973)。フロント src/sqlScript.ts の splitSqlStatements とバック src-tauri/src/db/script.rs の ScriptSplitter が同じ分割結果になることを固定する。statements は MySQL 以外 (postgres/sqlite/duckdb/mssql) の期待値、statementsMysql は MySQL だけ結果が変わるケースの期待値。",
+  "_comment": "スクリプト文分割の共有ゴールデン (#973)。フロント src/sqlScript.ts の splitSqlStatements とバック src-tauri/src/db/script.rs の ScriptSplitter が同じ分割結果になることを固定する。statements は MySQL 以外 (postgres/sqlite) の期待値、statementsMysql は MySQL だけ結果が変わるケースの期待値。",
   "drivers": [
     "mysql",
     "postgres",
-    "sqlite",
-    "duckdb",
-    "mssql"
+    "sqlite"
   ],
   "cases": [
     {

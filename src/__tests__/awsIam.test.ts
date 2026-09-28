@@ -25,9 +25,7 @@ describe("awsIam form helpers (#734)", () => {
   it("offers IAM only for MySQL / PostgreSQL", () => {
     expect(isIamCapableDriver("mysql")).toBe(true);
     expect(isIamCapableDriver("postgres")).toBe(true);
-    expect(isIamCapableDriver("mssql")).toBe(false);
     expect(isIamCapableDriver("sqlite")).toBe(false);
-    expect(isIamCapableDriver("duckdb")).toBe(false);
   });
 
   it("disallows the plaintext-capable TLS modes", () => {
@@ -40,7 +38,7 @@ describe("awsIam form helpers (#734)", () => {
 
   it("builds the request payload only when IAM is selected on a capable driver", () => {
     expect(buildAwsIamConfig("password", "mysql", "us-east-1", "work")).toBeNull();
-    expect(buildAwsIamConfig("aws_iam", "mssql", "us-east-1", "work")).toBeNull();
+    expect(buildAwsIamConfig("aws_iam", "sqlite", "us-east-1", "work")).toBeNull();
     expect(buildAwsIamConfig("aws_iam", "postgres", " us-east-1 ", "  ")).toEqual({
       region: "us-east-1",
       profile: null,

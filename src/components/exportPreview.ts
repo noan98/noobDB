@@ -233,17 +233,13 @@ export const DEFAULT_SQL_BATCH = 100;
  * 一致していることは共有ゴールデン (`fixtures/sqlQuotingVectors.json` /
  * `sqlQuotingGolden.test.ts` / `tests/sql_quoting_golden.rs`) が固定する (#880)。
  *
- * DuckDB は PostgreSQL/SQLite と同じ二重引用符、MSSQL は角括弧 (`]` を `]]` へ
- * 二重化)。未知のドライバは `quoteIdentFor` と同じく MySQL 扱い。
+ * 未知のドライバは MySQL 扱い。
  *
  * @public 共有ゴールデンテストが直接検証するためエクスポートしている。
  */
 export function quoteSqlIdent(driver: string, name: string): string {
-  if (driver === "postgres" || driver === "sqlite" || driver === "duckdb") {
+  if (driver === "postgres" || driver === "sqlite") {
     return '"' + name.replace(/"/g, '""') + '"';
-  }
-  if (driver === "mssql") {
-    return "[" + name.replace(/]/g, "]]") + "]";
   }
   return "`" + name.replace(/`/g, "``") + "`";
 }
@@ -256,11 +252,10 @@ export function quoteSqlIdent(driver: string, name: string): string {
  * (#880)。
  *
  * 方言差:
- * - 真偽値は PostgreSQL / DuckDB が `TRUE`/`FALSE`、MySQL / SQLite / MSSQL が
- *   `1`/`0` (T-SQL は `BIT` に真偽型が無い)。
+ * - 真偽値は PostgreSQL が `TRUE`/`FALSE`、MySQL / SQLite が `1`/`0`。
  * - 文字列は全方言で `'` を `''` に二重化し、**MySQL だけ**バックスラッシュも
  *   二重化する (既定モードで `\` がエスケープ文字のため)。PostgreSQL /
- *   SQLite / DuckDB / MSSQL で二重化すると `\` が 2 文字に化けてデータが壊れる。
+ *   SQLite で二重化すると `\` が 2 文字に化けてデータが壊れる。
  * - 未知のドライバは `quoteSqlIdent` と同じく MySQL 扱い (エスケープを増やす側 =
  *   引用符から抜け出せない側に倒す)。
  *
@@ -269,12 +264,11 @@ export function quoteSqlIdent(driver: string, name: string): string {
 export function sqlLiteral(driver: string, v: CellValue): string {
   if (v === null) return "NULL";
   if (typeof v === "boolean") {
-    if (driver === "postgres" || driver === "duckdb") return v ? "TRUE" : "FALSE";
+    if (driver === "postgres") return v ? "TRUE" : "FALSE";
     return v ? "1" : "0";
   }
   if (typeof v === "number") return Number.isFinite(v) ? formatFloat(v) : "NULL";
-  const standardStrings =
-    driver === "postgres" || driver === "sqlite" || driver === "duckdb" || driver === "mssql";
+  const standardStrings = driver === "postgres" || driver === "sqlite";
   const escaped = standardStrings
     ? v.replace(/'/g, "''")
     : v.replace(/\\/g, "\\\\").replace(/'/g, "''");

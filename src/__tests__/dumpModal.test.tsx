@@ -36,11 +36,11 @@ describe("DumpModal render smoke (#604)", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  // #987: DuckDB / MSSQL はネイティブ生成になったので、外部ツール前提の注記では
-  // なくネイティブ用の注記と、適用できるオプションを表示する。
-  it.each(["duckdb", "mssql"] as const)("shows native-dump note and options for %s", (driver) => {
+  // SQLite はライブ接続から直接生成する (外部ツール不要) ので、外部ツール前提の
+  // 注記ではなくネイティブ用の注記と、適用できるオプションを表示する。
+  it("shows native-dump note and options for sqlite", () => {
     renderWithProviders(
-      <DumpModal sessionId="s1" database="main" driver={driver} onClose={() => {}} />,
+      <DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />,
     );
     expect(screen.getByText(t("dumpNoteNative"))).toBeInTheDocument();
     expect(screen.queryByText(t("dumpNote"))).not.toBeInTheDocument();
@@ -49,13 +49,5 @@ describe("DumpModal render smoke (#604)", () => {
     // mysqldump 専用のオプションは出さない。
     expect(screen.queryByText(t("dumpOptSingleTransaction"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("dumpOptEvents"))).not.toBeInTheDocument();
-  });
-
-  it("shows routines/triggers toggles only for mssql among the native drivers", () => {
-    renderWithProviders(
-      <DumpModal sessionId="s1" database="appdb" driver="mssql" onClose={() => {}} />,
-    );
-    expect(screen.getByText(t("dumpOptRoutines"))).toBeInTheDocument();
-    expect(screen.getByText(t("dumpOptTriggers"))).toBeInTheDocument();
   });
 });

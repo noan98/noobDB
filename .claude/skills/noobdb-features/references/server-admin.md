@@ -15,7 +15,7 @@
 ボトムパネルの「接続ヘルス」タブ (`ConnectionHealthPanel.tsx` + 純ロジック
 `connectionHealth.ts`)。**新しい IPC は持たず**、開いている各セッションへ既存の
 `ping_session` (up/down + フロント計測の往復レイテンシ) / `server_info` (バージョン。
-セッション単位でキャッシュ) / `server_metrics` (接続数。SQLite / DuckDB は呼ばず N/A)
+セッション単位でキャッシュ) / `server_metrics` (接続数。SQLite は呼ばず N/A)
 を並列度 4・個別タイムアウト付きで投げて集約します。いずれも読み取り専用なので
 read_only セッションでも動きます。
 

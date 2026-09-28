@@ -16,9 +16,8 @@ PR のレビュー層は **Codex (`chatgpt-codex-connector[bot]`)** が担い、
 - Secrets `CODERABBIT_PAT` の想定 → `CODEX_PAT` へ置き換え
 
 **`src/` と `src-tauri/tests/` に残る CodeRabbit への言及は消していません。**
-`ResultGrid.tsx` / `App.tsx` / `alterTable.test.ts` / `duckdb_integration.rs` の
-コメントは「なぜこの修正・回帰テストが存在するか」を説明する履歴で、内容は今も
-正しいためです。
+`ResultGrid.tsx` / `App.tsx` / `alterTable.test.ts` 等のコメントは「なぜこの修正・
+回帰テストが存在するか」を説明する履歴で、内容は今も正しいためです。
 
 先行して同じ移行を済ませた **VeloX リポジトリ** (`auto-merge.yml` /
 `.github/scripts/check_review_gate.py`) を参照して判定方式を揃えています。判定方式を

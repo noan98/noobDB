@@ -14,13 +14,10 @@
 //! apply path keeps it out of query history and logs.
 //!
 //! Only MySQL and PostgreSQL are implemented. SQLite has no user/permission
-//! model at all, and MSSQL support is not yet implemented (could read/write
-//! `sys.server_principals` / `sys.database_permissions`, out of scope for
-//! this PR — see `db::mssql`'s `list_db_users`/`user_privileges`), so every
-//! generator returns an empty string for [`super::DriverKind::Sqlite`] /
-//! [`super::DriverKind::Mssql`]; the frontend hides the users panel entirely
-//! for both, so this is an unreachable-in-practice fallback rather than a
-//! real code path.
+//! model at all, so every generator returns an empty string for
+//! [`super::DriverKind::Sqlite`]; the frontend hides the users panel for it,
+//! so this is an unreachable-in-practice fallback rather than a real code
+//! path.
 
 use serde::{Deserialize, Serialize};
 
@@ -70,8 +67,8 @@ fn privilege_keywords(driver: DriverKind, flags: PrivilegeFlags) -> Vec<&'static
             DriverKind::Mysql => out.extend(MYSQL_DDL_KEYWORDS),
             DriverKind::Postgres => out.extend(POSTGRES_DDL_KEYWORDS),
             // See the module doc: users & permissions is not yet implemented
-            // for these drivers, so no generator is reachable from the UI.
-            DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => {}
+            // for SQLite, so no generator is reachable from the UI.
+            DriverKind::Sqlite => {}
         }
     }
     out
@@ -174,7 +171,7 @@ pub fn generate_create_user_sql(driver: DriverKind, spec: &UserSpec) -> String {
                 None => format!("CREATE ROLE {ident} LOGIN"),
             }
         }
-        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite => String::new(),
     }
 }
 
@@ -183,7 +180,7 @@ pub fn generate_drop_user_sql(driver: DriverKind, name: &str, host: Option<&str>
     match driver {
         DriverKind::Mysql => format!("DROP USER {}", mysql_account(name, host)),
         DriverKind::Postgres => format!("DROP ROLE {}", quote_ident(DriverKind::Postgres, name)),
-        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite => String::new(),
     }
 }
 
@@ -206,7 +203,7 @@ pub fn generate_alter_password_sql(
             quote_ident(DriverKind::Postgres, name),
             pg_literal(password)
         ),
-        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite => String::new(),
     }
 }
 
@@ -253,7 +250,7 @@ fn render_grant_or_revoke(
                 ),
             }
         }
-        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite => String::new(),
     })
 }
 
@@ -658,26 +655,24 @@ mod tests {
 
     #[test]
     fn unsupported_driver_generators_return_empty_string_not_used_by_ui() {
-        // SQLite has no user model and MSSQL isn't implemented yet; the UI
-        // never reaches these for either driver, but the generators must not
-        // panic — they degrade to an empty string.
-        for driver in [DriverKind::Sqlite, DriverKind::Mssql] {
-            let user = UserSpec {
-                name: "x".into(),
-                host: None,
-                password: None,
-            };
-            assert_eq!(generate_create_user_sql(driver, &user), "");
-            assert_eq!(generate_drop_user_sql(driver, "x", None), "");
-            assert_eq!(generate_alter_password_sql(driver, "x", None, "pw"), "");
-            let grant = GrantSpec {
-                user: "x".into(),
-                host: None,
-                database: "main".into(),
-                table: None,
-                flags: flags(true, false, false, false, false),
-            };
-            assert_eq!(generate_grant_sql(driver, &grant).as_deref(), Some(""));
-        }
+        // SQLite has no user model; the UI never reaches these, but the
+        // generators must not panic — they degrade to an empty string.
+        let driver = DriverKind::Sqlite;
+        let user = UserSpec {
+            name: "x".into(),
+            host: None,
+            password: None,
+        };
+        assert_eq!(generate_create_user_sql(driver, &user), "");
+        assert_eq!(generate_drop_user_sql(driver, "x", None), "");
+        assert_eq!(generate_alter_password_sql(driver, "x", None, "pw"), "");
+        let grant = GrantSpec {
+            user: "x".into(),
+            host: None,
+            database: "main".into(),
+            table: None,
+            flags: flags(true, false, false, false, false),
+        };
+        assert_eq!(generate_grant_sql(driver, &grant).as_deref(), Some(""));
     }
 }

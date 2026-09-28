@@ -19,12 +19,10 @@ function sig(partial: Partial<RoutineSignature> & Pick<RoutineSignature, "kind" 
 }
 
 describe("supportsRoutineExecution / isRoutineKind", () => {
-  it("MySQL / PostgreSQL / MSSQL のみ対応 (SQLite / DuckDB は非対応)", () => {
+  it("MySQL / PostgreSQL のみ対応 (SQLite は非対応)", () => {
     expect(supportsRoutineExecution("mysql")).toBe(true);
     expect(supportsRoutineExecution("postgres")).toBe(true);
-    expect(supportsRoutineExecution("mssql")).toBe(true);
     expect(supportsRoutineExecution("sqlite")).toBe(false);
-    expect(supportsRoutineExecution("duckdb")).toBe(false);
   });
   it("procedure / function だけがルーチン", () => {
     expect(isRoutineKind("procedure")).toBe(true);
@@ -74,10 +72,6 @@ describe("routineArgLiteral (cellEdit のリテラル規約を再利用)", () =>
   it("MySQL は ' を二重化しバックスラッシュもエスケープ", () => {
     expect(routineArgLiteral("mysql", p("a", "in", "varchar(10)"), "O'Re\\illy")).toBe("'O''Re\\\\illy'");
   });
-  it("MSSQL は N 接頭辞、BIT は 0/1", () => {
-    expect(routineArgLiteral("mssql", p("@a", "in", "nvarchar(10)"), "x'y")).toBe("N'x''y'");
-    expect(routineArgLiteral("mssql", p("@a", "in", "bit"), "true")).toBe("1");
-  });
   it("PostgreSQL は型キャストを付け、バックスラッシュはそのまま", () => {
     expect(routineArgLiteral("postgres", p("a", "in", "integer"), "5")).toBe("CAST(5 AS integer)");
     expect(routineArgLiteral("postgres", p("a", "in", "text"), "a\\b'c")).toBe("CAST('a\\b''c' AS text)");
@@ -97,7 +91,6 @@ describe("routineQualifiedName", () => {
   it("識別子は quoteIdentFor でエスケープする", () => {
     expect(routineQualifiedName("mysql", "db`x", "p")).toBe("`db``x`.`p`");
     expect(routineQualifiedName("postgres", "public", 'f"n')).toBe('"public"."f""n"');
-    expect(routineQualifiedName("mssql", "db", "p]x")).toBe("[db].[dbo].[p]]x]");
   });
 });
 
@@ -181,40 +174,3 @@ describe("buildRoutineCall — PostgreSQL", () => {
   });
 });
 
-describe("buildRoutineCall — MSSQL", () => {
-  it("プロシージャは EXEC (位置指定)、OUTPUT は値を渡すが返らない", () => {
-    const r = buildRoutineCall({
-      driver: "mssql",
-      database: "app",
-      signature: sig({ kind: "procedure", name: "p", parameters: [p("@a", "in", "int"), p("@b", "inout", "nvarchar(10)")] }),
-      values: ["1", "NULL"],
-    });
-    expect(r).toEqual({ sql: "EXEC [app].[dbo].[p] 1, NULL", needsSameConnection: false, outputsReturned: false });
-  });
-  it("引数なしプロシージャ", () => {
-    const r = buildRoutineCall({
-      driver: "mssql",
-      database: "app",
-      signature: sig({ kind: "procedure", name: "p", parameters: [] }),
-      values: [],
-    });
-    expect(r.sql).toBe("EXEC [app].[dbo].[p]");
-    expect(r.outputsReturned).toBe(true);
-  });
-  it("スカラー関数は SELECT fn(...) AS fn、テーブル値関数は SELECT * FROM", () => {
-    const scalar = buildRoutineCall({
-      driver: "mssql",
-      database: "app",
-      signature: sig({ kind: "function", name: "f", parameters: [p("@s", "in", "nvarchar(5)")] }),
-      values: ["a'b"],
-    });
-    expect(scalar.sql).toBe("SELECT [app].[dbo].[f](N'a''b') AS [f]");
-    const tvf = buildRoutineCall({
-      driver: "mssql",
-      database: "app",
-      signature: sig({ kind: "function", name: "tf", returns_set: true, parameters: [p("@n", "in", "int")] }),
-      values: ["2"],
-    });
-    expect(tvf.sql).toBe("SELECT * FROM [app].[dbo].[tf](2)");
-  });
-});

@@ -145,7 +145,7 @@ describe("analyzeDangerousSql", () => {
     const sql = "UPDATE t SET note = '\\' WHERE id = 1";
 
     it("finds no finding on non-MySQL drivers (WHERE is a real top-level guard)", () => {
-      for (const driver of ["postgres", "sqlite", "duckdb", "mssql"]) {
+      for (const driver of ["postgres", "sqlite"]) {
         expect(analyzeDangerousSql(sql, driver)).toEqual([]);
       }
     });

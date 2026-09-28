@@ -12,7 +12,7 @@ import {
   pickerKindFor,
 } from "../components/valuePicker";
 
-const DRIVERS = ["mysql", "postgres", "sqlite", "duckdb", "mssql"] as const;
+const DRIVERS = ["mysql", "postgres", "sqlite"] as const;
 
 function col(name: string, dataType: string, fk?: [string, string]): TableColumnInfo {
   return {
@@ -33,20 +33,6 @@ describe("buildFkCandidatesSql (#1067)", () => {
       buildFkCandidatesSql({ driver: "mysql", database: "shop", refTable: "users", refColumn: "id" }),
     ).toBe(
       "SELECT DISTINCT `id` FROM `shop`.`users` WHERE `id` IS NOT NULL ORDER BY `id` LIMIT 50",
-    );
-  });
-
-  it("MSSQL uses TOP instead of LIMIT and the dbo-qualified 3-part name", () => {
-    expect(
-      buildFkCandidatesSql({
-        driver: "mssql",
-        database: "app",
-        refTable: "users",
-        refColumn: "id",
-        limit: 10,
-      }),
-    ).toBe(
-      "SELECT DISTINCT TOP (10) [id] FROM [app].[dbo].[users] WHERE [id] IS NOT NULL ORDER BY [id]",
     );
   });
 
@@ -74,15 +60,6 @@ describe("buildFkCandidatesSql (#1067)", () => {
     });
     expect(my).toContain("CAST(`code` AS CHAR) LIKE 'a\\\\_b%' ESCAPE '\\\\'");
     expect(my).toContain("FROM `users`");
-    const ms = buildFkCandidatesSql({
-      driver: "mssql",
-      refTable: "users",
-      refColumn: "code",
-      search: "x",
-    });
-    expect(ms).toContain("CAST([code] AS NVARCHAR(4000)) LIKE N'x%' ESCAPE N'\\'");
-    const duck = buildFkCandidatesSql({ driver: "duckdb", refTable: "t", refColumn: "c", search: "1" });
-    expect(duck).toContain(`CAST("c" AS VARCHAR) LIKE '1%'`);
   });
 
   it("clamps the limit to at least 1 and quotes hostile identifiers", () => {
@@ -131,14 +108,11 @@ describe("buildAllowedValuesQueries (#1067)", () => {
   it("falls back to the session's current schema / database when none is given", () => {
     expect(buildAllowedValuesQueries("postgres", null, "t")[0].sql).toContain("current_schema()");
     expect(buildAllowedValuesQueries("mysql", null, "t")[0].sql).toContain("DATABASE()");
-    expect(buildAllowedValuesQueries("mssql", null, "t")[0].sql).toContain("FROM sys.check_constraints");
   });
 
   it("escapes names as string literals (no injection through table names)", () => {
     const sql = buildAllowedValuesQueries("sqlite", "main", "a'b")[0].sql;
     expect(sql).toBe("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'a''b'");
-    const ms = buildAllowedValuesQueries("mssql", "my]db", "t")[0].sql;
-    expect(ms).toContain("[my]]db].sys.check_constraints");
   });
 
   it("unknown drivers produce no queries", () => {
@@ -158,17 +132,10 @@ describe("allowedValuesFromType (#1067)", () => {
     });
   });
 
-  it("parses DuckDB ENUM types", () => {
-    expect(allowedValuesFromType("duckdb", "ENUM('sad', 'ok', 'happy')")).toEqual({
-      kind: "enum",
-      values: ["sad", "ok", "happy"],
-    });
-  });
-
   it("ignores ordinary types and SET outside MySQL", () => {
     expect(allowedValuesFromType("mysql", "varchar(20)")).toBeNull();
     expect(allowedValuesFromType("postgres", "USER-DEFINED")).toBeNull();
-    expect(allowedValuesFromType("duckdb", "set('a')")).toBeNull();
+    expect(allowedValuesFromType("postgres", "set('a')")).toBeNull();
     expect(allowedValuesFromType("mysql", "enum()")).toBeNull();
   });
 });
@@ -201,12 +168,6 @@ describe("allowedValuesFromCheck (#1067)", () => {
     ]);
   });
 
-  it("MSSQL: OR chain of equalities with N-prefixed literals", () => {
-    expect(
-      allowedValuesFromCheck("mssql", ["([status]=N'b' OR [status]=N'a' OR [status]='c')"], "status"),
-    ).toEqual(["b", "a", "c"]);
-  });
-
   it("MySQL: charset introducers, and the backslash-quoted variant some 8.0 builds return", () => {
     expect(
       allowedValuesFromCheck("mysql", ["(`size` in (_utf8mb4'S',_utf8mb4'M',_utf8mb4'L'))"], "size"),
@@ -226,13 +187,6 @@ describe("allowedValuesFromCheck (#1067)", () => {
     expect(allowedValuesFromCheck("sqlite", [ddl], "size")).toEqual(["S", "L"]);
     expect(allowedValuesFromCheck("sqlite", [ddl], "n")).toBeNull();
     expect(allowedValuesFromCheck("sqlite", [ddl], "id")).toBeNull();
-  });
-
-  it("DuckDB constraint_text form", () => {
-    expect(allowedValuesFromCheck("duckdb", ["CHECK((mood IN ('a', 'b')))"], "mood")).toEqual([
-      "a",
-      "b",
-    ]);
   });
 
   it("matches column names case-insensitively and de-duplicates", () => {

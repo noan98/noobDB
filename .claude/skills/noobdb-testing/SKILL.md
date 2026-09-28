@@ -1,6 +1,6 @@
 ---
 name: noobdb-testing
-description: noobDB のテストを実行・追加するとき、統合テストの環境変数 (MySQL/PostgreSQL/MSSQL/SSH/TLS) を調べるとき、ミューテーションテスト・実ブラウザでの画面テスト (Vitest ブラウザモード)・ビジュアル回帰ベースライン・tauri-driver による実 webview E2E を扱うときに読む。
+description: noobDB のテストを実行・追加するとき、統合テストの環境変数 (MySQL/PostgreSQL/SSH/TLS) を調べるとき、ミューテーションテスト・実ブラウザでの画面テスト (Vitest ブラウザモード)・ビジュアル回帰ベースライン・tauri-driver による実 webview E2E を扱うときに読む。
 ---
 
 # noobDB のテスト
@@ -41,5 +41,5 @@ description: noobDB のテストを実行・追加するとき、統合テスト
 
 - **ビジュアルベースラインは `main` で生成しない** — 直接 push が禁止されており
   必ず失敗します。作業ブランチで `visual-baseline.yml` を実行してください。
-- **統合テストは環境変数が無いと黙ってスキップされます。** SQLite / DuckDB /
-  ローカル横断クエリのテストだけが常時実走します。
+- **統合テストは環境変数が無いと黙ってスキップされます。** SQLite / ローカル横断
+  クエリのテストだけが常時実走します。

@@ -27,8 +27,6 @@ describe("supportsComments", () => {
   it("SQLite だけ非対応", () => {
     expect(supportsComments("mysql")).toBe(true);
     expect(supportsComments("postgres")).toBe(true);
-    expect(supportsComments("duckdb")).toBe(true);
-    expect(supportsComments("mssql")).toBe(true);
     expect(supportsComments("sqlite")).toBe(false);
   });
 });
@@ -40,24 +38,12 @@ describe("テーブルコメント", () => {
     ]);
   });
 
-  it("PostgreSQL / DuckDB は COMMENT ON TABLE、空は IS NULL", () => {
+  it("PostgreSQL は COMMENT ON TABLE、空は IS NULL", () => {
     expect(sqls("postgres", form({ database: "public", tableComment: { before: "", after: "会員" } }))).toEqual([
       `COMMENT ON TABLE "public"."users" IS '会員';`,
     ]);
-    expect(sqls("duckdb", form({ database: "main", tableComment: { before: "x", after: "" } }))).toEqual([
+    expect(sqls("postgres", form({ database: "main", tableComment: { before: "x", after: "" } }))).toEqual([
       `COMMENT ON TABLE "main"."users" IS NULL;`,
-    ]);
-  });
-
-  it("MSSQL は既存値の有無で add / update / drop を選ぶ", () => {
-    expect(sqls("mssql", form({ tableComment: { before: "", after: "顧客" } }))).toEqual([
-      "EXEC sp_addextendedproperty @name = N'MS_Description', @value = N'顧客', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'users';",
-    ]);
-    expect(sqls("mssql", form({ tableComment: { before: "a", after: "b'c" } }))[0]).toContain(
-      "EXEC sp_updateextendedproperty @name = N'MS_Description', @value = N'b''c'",
-    );
-    expect(sqls("mssql", form({ tableComment: { before: "a", after: "" } }))).toEqual([
-      "EXEC sp_dropextendedproperty @name = N'MS_Description', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'users';",
     ]);
   });
 
@@ -122,20 +108,6 @@ describe("列コメント", () => {
     ).toEqual([
       `ALTER TABLE "public"."users" RENAME COLUMN "v" TO "value";`,
       `COMMENT ON COLUMN "public"."users"."value" IS '値';`,
-    ]);
-  });
-
-  it("MSSQL は列レベルの拡張プロパティ", () => {
-    expect(
-      sqls(
-        "mssql",
-        form({
-          baseline: [baseline({ name: "qty", comment: "" })],
-          existing: [edit({ original: "qty", name: "qty", comment: "数量" })],
-        }),
-      ),
-    ).toEqual([
-      "EXEC sp_addextendedproperty @name = N'MS_Description', @value = N'数量', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'users', @level2type = N'COLUMN', @level2name = N'qty';",
     ]);
   });
 

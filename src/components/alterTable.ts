@@ -23,8 +23,7 @@
 //
 // テーブル / 列コメントの編集 (#1002) もここで方言別に組み立てる:
 // MySQL は `ALTER TABLE ... COMMENT = '...'` と列の再定義 (`CHANGE COLUMN ...
-// COMMENT '...'`)、PostgreSQL / DuckDB は `COMMENT ON TABLE|COLUMN ... IS ...`、
-// MSSQL は拡張プロパティ `MS_Description` (`sp_add/update/dropextendedproperty`)。
+// COMMENT '...'`)、PostgreSQL は `COMMENT ON TABLE|COLUMN ... IS ...`。
 // SQLite はコメント機能を持たないので生成しない (UI 側で入力欄を無効化する)。
 //
 // 生成した文言 (未対応の変更の通知など) は理由コードのみを返し、実際の文字列化は
@@ -141,32 +140,7 @@ export interface AlterPlan {
  * ため非対応で、UI はコメント欄を無効化して理由を表示する。
  */
 export function supportsComments(driver: string): boolean {
-  return driver === "mysql" || driver === "postgres" || driver === "duckdb" || driver === "mssql";
-}
-
-/** MSSQL の拡張プロパティ `MS_Description` を付け替える `EXEC` 文 (#1002)。
- *  既存値の有無で add / update / drop を選ぶ。スキーマは introspection と同じ `dbo`。 */
-function mssqlDescriptionSql(table: string, column: string | null, before: string, after: string): string | null {
-  const hadBefore = before.trim() !== "";
-  const hasAfter = after.trim() !== "";
-  if (!hadBefore && !hasAfter) return null;
-  const proc = !hasAfter
-    ? "sp_dropextendedproperty"
-    : hadBefore
-      ? "sp_updateextendedproperty"
-      : "sp_addextendedproperty";
-  const args = [`@name = N'MS_Description'`];
-  if (hasAfter) args.push(`@value = ${quoteString("mssql", after)}`);
-  args.push(
-    `@level0type = N'SCHEMA'`,
-    `@level0name = N'dbo'`,
-    `@level1type = N'TABLE'`,
-    `@level1name = ${quoteString("mssql", table)}`,
-  );
-  if (column !== null) {
-    args.push(`@level2type = N'COLUMN'`, `@level2name = ${quoteString("mssql", column)}`);
-  }
-  return `EXEC ${proc} ${args.join(", ")};`;
+  return driver === "mysql" || driver === "postgres";
 }
 
 /** `COMMENT ON ... IS ...` の右辺 (空文字はコメント削除 = `NULL`)。 */
@@ -176,36 +150,31 @@ function commentOnValue(driver: string, value: string): string {
 
 /**
  * テーブルコメントの変更文 (#1002)。変更が無い / 非対応ドライバなら null。
- * `table` はクオート前のテーブル名 (MSSQL の拡張プロパティ用)。
  */
 function tableCommentSql(
   driver: string,
   tIdent: string,
-  table: string,
   before: string,
   after: string,
 ): string | null {
   if (!supportsComments(driver) || before === after) return null;
   if (driver === "mysql") return `ALTER TABLE ${tIdent} COMMENT = ${quoteString(driver, after)};`;
-  if (driver === "mssql") return mssqlDescriptionSql(table, null, before, after);
   return `COMMENT ON TABLE ${tIdent} IS ${commentOnValue(driver, after)};`;
 }
 
 /**
- * 列コメントの変更文 (PostgreSQL / DuckDB / MSSQL、#1002)。MySQL は列の再定義に
- * 含めるのでここでは扱わない。`column` はリネーム後の列名。
+ * 列コメントの変更文 (PostgreSQL、#1002)。MySQL は列の再定義に含めるので
+ * ここでは扱わない。`column` はリネーム後の列名。
  */
 function columnCommentSql(
   driver: string,
   tIdent: string,
-  table: string,
   column: string,
   before: string,
   after: string,
 ): string | null {
   if (before === after) return null;
-  if (driver === "mssql") return mssqlDescriptionSql(table, column, before, after);
-  if (driver === "postgres" || driver === "duckdb") {
+  if (driver === "postgres") {
     return `COMMENT ON COLUMN ${tIdent}.${quoteIdentFor(driver, column)} IS ${commentOnValue(driver, after)};`;
   }
   return null;
@@ -244,7 +213,6 @@ function formatDefaultForEdit(driver: string, raw: string): string | null {
 function planExistingColumn(
   driver: string,
   tIdent: string,
-  table: string,
   baseline: ExistingColumnBaseline,
   edit: ExistingColumnEdit,
   statements: AlterStatement[],
@@ -314,11 +282,11 @@ function planExistingColumn(
     return;
   }
 
-  // PostgreSQL / DuckDB / MSSQL の列コメントは独立した文なので、他の変更
+  // PostgreSQL の列コメントは独立した文なので、他の変更
   // (リネーム含む) の後にリネーム後の列名で付け替える。
   const pushColumnComment = () => {
     const sql = commentChanged
-      ? columnCommentSql(driver, tIdent, table, newName, beforeComment, afterComment)
+      ? columnCommentSql(driver, tIdent, newName, beforeComment, afterComment)
       : null;
     if (sql) statements.push({ sql, kind: "comment", destructive: false });
   };
@@ -407,14 +375,13 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   for (const edit of form.existing) {
     const baseline = baselineByName.get(edit.original);
     if (!baseline) continue;
-    planExistingColumn(driver, tIdent, form.table, baseline, edit, statements, unsupported);
+    planExistingColumn(driver, tIdent, baseline, edit, statements, unsupported);
   }
 
   if (form.tableComment) {
     const sql = tableCommentSql(
       driver,
       tIdent,
-      form.table,
       form.tableComment.before,
       form.tableComment.after,
     );

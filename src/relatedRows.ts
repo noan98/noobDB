@@ -8,8 +8,7 @@
 //
 // - 子行取得 SQL は `SELECT *` の読み取り専用で、識別子クォート・値のリテラル化は
 //   `fkNavigation.ts` (→ `sqlDialect.ts` / `cellEdit.ts`) に委ねる。件数上限は
-//   方言ごとに `LIMIT n` / `TOP (n)` を付け、「さらに読み込む」は上限を増やして
-//   取り直す (MSSQL の OFFSET は ORDER BY 必須なので OFFSET ページングにしない)。
+//   `LIMIT n` を付け、「さらに読み込む」は上限を増やして取り直す。
 // - 上限 + 1 件を取得し、溢れたら「続きあり」とする (`splitRelatedRows`)。
 // - 参照されているキー値が NULL の行には子行が存在し得ない (FK の NULL は何も
 //   参照しない) ので、`IS NULL` で無関係な行を拾わないよう取得自体をしない。
@@ -41,12 +40,8 @@ export function nextRelatedLimit(limit: number): number | null {
   return Math.min(RELATED_ROWS_MAX, cur + RELATED_ROWS_PAGE);
 }
 
-/** `SELECT * …` に方言ごとの行数上限を付ける。 */
-function withRowLimit(driver: string, selectStar: string, n: number): string {
-  if (driver === "mssql") {
-    // `buildReverseRefSql` は常に `SELECT * FROM …` で始まる。
-    return selectStar.replace(/^SELECT \* /, `SELECT TOP (${n}) * `);
-  }
+/** `SELECT * …` に行数上限を付ける。 */
+function withRowLimit(selectStar: string, n: number): string {
   return `${selectStar} LIMIT ${n}`;
 }
 
@@ -74,7 +69,7 @@ export function buildRelatedRowsSql(p: RelatedRowsSqlParams): string | null {
     childColumn: p.childColumn,
     value: p.value,
   });
-  return withRowLimit(p.driver, base, clampRelatedLimit(p.limit) + 1);
+  return withRowLimit(base, clampRelatedLimit(p.limit) + 1);
 }
 
 /**

@@ -256,8 +256,8 @@ impl Drop for CreatedTableGuard {
         let database = self.database.clone();
         let sql = std::mem::take(&mut self.drop_sql);
         handle.spawn(async move {
-            // 中断された書き込み (DuckDB はブロッキングスレッド上で最後のバッチを
-            // 走らせ切る) と競合して DROP が一時的に失敗しうるので、少し待って再試行する。
+            // 中断された書き込みと競合して DROP が一時的に失敗しうるので、
+            // 少し待って再試行する。
             for attempt in 0..10 {
                 match target.conn.execute(&sql, database.as_deref()).await {
                     Ok(_) => return,

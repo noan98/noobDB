@@ -128,22 +128,10 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
   ],
   postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql"],
   sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql"],
-  // #987: DuckDB / MSSQL はバックエンドのネイティブ生成 (`db/native_dump.rs`)。
-  // 行データは常に列名付き INSERT なので completeInsert は出さない。
-  duckdb: ["addDropTable", "extendedInsert", "noData", "noCreateInfo", "formatSql"],
-  mssql: [
-    "routines",
-    "triggers",
-    "addDropTable",
-    "extendedInsert",
-    "noData",
-    "noCreateInfo",
-    "formatSql",
-  ],
 };
 
 /** 外部クライアントツールを使わずに接続から直接 SQL を生成するドライバ。 */
-const NATIVE_DUMP_DRIVERS: ReadonlySet<DriverKind> = new Set<DriverKind>(["sqlite", "duckdb", "mssql"]);
+const NATIVE_DUMP_DRIVERS: ReadonlySet<DriverKind> = new Set<DriverKind>(["sqlite"]);
 
 type Status =
   | { kind: "idle" }

@@ -2,8 +2,8 @@
 //
 // `get_routine_signature` が返したシグネチャとフォームの入力値から、方言別の
 // 呼び出し SQL (MySQL `CALL` / `SELECT fn(...)`、PostgreSQL `CALL` /
-// `SELECT * FROM fn(...)`、MSSQL `EXEC` / `SELECT`) を組み立てる副作用なしの
-// 純モジュール (`queryParams.ts` と同型)。
+// `SELECT * FROM fn(...)`) を組み立てる副作用なしの純モジュール
+// (`queryParams.ts` と同型)。
 //
 // エスケープは新規実装しない: 値のリテラル化は `cellEdit.ts` の
 // `literalFromInput` (= `quoteString` / 数値・真偽値の判定。共有ゴールデン
@@ -20,8 +20,8 @@ import type { I18nKey } from "../i18n";
 import { literalFromInput, validateCellInput } from "./cellEdit";
 import { quoteIdentFor } from "./sqlDialect";
 
-/** ルーチンの実行 UI に対応するドライバ。SQLite / DuckDB はルーチンを持たない。 */
-const ROUTINE_DRIVERS = new Set(["mysql", "postgres", "mssql"]);
+/** ルーチンの実行 UI に対応するドライバ。SQLite はルーチンを持たない。 */
+const ROUTINE_DRIVERS = new Set(["mysql", "postgres"]);
 
 /** このドライバでルーチンの「実行…」を提供するか。 */
 export function supportsRoutineExecution(driver: string): boolean {
@@ -103,17 +103,13 @@ export interface RoutineCall {
    * (固定接続) 中でなければ OUT 値を正しく読めない。
    */
   needsSameConnection: boolean;
-  /**
-   * OUT / INOUT の値が結果として返るか。MSSQL の OUTPUT 引数は第 1 段階では
-   * 値を渡すだけで返却値は表示しない (false)。OUT / INOUT が無ければ true。
-   */
+  /** OUT / INOUT の値が結果として返るか。OUT / INOUT が無ければ true。 */
   outputsReturned: boolean;
 }
 
-/** 修飾名: MySQL `db`.`name`、PostgreSQL "schema"."name"、MSSQL [db].[dbo].[name]。 */
+/** 修飾名: MySQL `db`.`name`、PostgreSQL "schema"."name"。 */
 export function routineQualifiedName(driver: string, database: string, name: string): string {
   const q = (s: string) => quoteIdentFor(driver, s);
-  if (driver === "mssql") return `${q(database)}.${q("dbo")}.${q(name)}`;
   return `${q(database)}.${q(name)}`;
 }
 
@@ -126,8 +122,6 @@ export function routineQualifiedName(driver: string, database: string, name: str
  * - PostgreSQL: プロシージャは `CALL` (OUT 引数には型付き NULL を渡すと、OUT /
  *   INOUT の値が 1 行の結果として返る)。関数は `SELECT * FROM fn(...)` (OUT
  *   引数・RETURNS TABLE・集合返却も列として展開される)。
- * - MSSQL: プロシージャは `EXEC` (位置指定)。関数はテーブル値なら
- *   `SELECT * FROM fn(...)`、スカラーなら `SELECT fn(...) AS fn`。
  */
 export function buildRoutineCall(input: RoutineCallInput): RoutineCall {
   const { driver, database, signature, values } = input;
@@ -160,20 +154,6 @@ export function buildRoutineCall(input: RoutineCallInput): RoutineCall {
       needsSameConnection: false,
       outputsReturned: true,
     };
-  }
-
-  if (driver === "mssql") {
-    const args = params
-      .map((p, i) => ({ p, i }))
-      .filter(({ p }) => routineParamTakesInput(p))
-      .map(({ p, i }) => routineArgLiteral(driver, p, valueAt(i)));
-    if (signature.kind === "procedure") {
-      const sql = args.length > 0 ? `EXEC ${name} ${args.join(", ")}` : `EXEC ${name}`;
-      return { sql, needsSameConnection: false, outputsReturned: !hasOutputs };
-    }
-    const call = `${name}(${args.join(", ")})`;
-    const sql = signature.returns_set ? `SELECT * FROM ${call}` : `SELECT ${call} AS ${alias}`;
-    return { sql, needsSameConnection: false, outputsReturned: true };
   }
 
   // MySQL (未知ドライバも quoteIdentFor の規約どおり MySQL 扱い)。

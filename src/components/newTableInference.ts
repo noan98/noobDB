@@ -74,7 +74,7 @@ const DECIMAL_RE = /^-?(0|[1-9]\d*)\.(\d+)$/;
 const EXPONENT_RE = /^-?(0|[1-9]\d*)(\.\d+)?[eE][+-]?\d+$/;
 const BOOLEAN_RE = /^(true|false)$/i;
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-// 秒は必須 (SQL Server の ISO 8601 形式は秒まで要る)。秒未満は 6 桁まで
+// 秒は必須 (時刻部分を曖昧にしないため)。秒未満は 6 桁まで
 // (MySQL DATETIME(6) / PostgreSQL TIMESTAMP の精度)。タイムゾーン付きは方言間で
 // 扱いが揺れる (PostgreSQL の TIMESTAMP は黙って捨てる) ので文字列のまま。
 const DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?$/;
@@ -175,7 +175,7 @@ export function applyNullToken(raw: string, nullToken: string | null): string | 
 /**
  * ヘッダから列名を提案する。前後空白を落とし、空なら `column_N` (N は 1 始まりの
  * 列位置)、大文字小文字を無視して重複したら `_2`, `_3`, ... を付ける
- * (MySQL / SQL Server / SQLite / DuckDB は列名の大文字小文字を区別しない)。
+ * (MySQL / SQLite は列名の大文字小文字を区別しない)。
  */
 export function proposeColumnNames(headers: readonly string[]): string[] {
   const seen = new Set<string>();
@@ -280,10 +280,7 @@ function identLimit(driver: DriverKind): { limit: number; bytes: boolean } | nul
       return { limit: 64, bytes: false };
     case "postgres":
       return { limit: 63, bytes: true };
-    case "mssql":
-      return { limit: 128, bytes: false };
     case "sqlite":
-    case "duckdb":
       return null;
   }
 }

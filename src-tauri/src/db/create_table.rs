@@ -94,24 +94,6 @@ pub fn column_type_sql(driver: DriverKind, ty: NewColumnType) -> &'static str {
         (D::Sqlite, T::Double) => "REAL",
         (D::Sqlite, T::Boolean) => "BOOLEAN",
         (D::Sqlite, T::Date | T::Datetime | T::Text) => "TEXT",
-
-        (D::DuckDb, T::Integer) => "INTEGER",
-        (D::DuckDb, T::Bigint) => "BIGINT",
-        (D::DuckDb, T::Decimal) => "DECIMAL(38, 10)",
-        (D::DuckDb, T::Double) => "DOUBLE",
-        (D::DuckDb, T::Boolean) => "BOOLEAN",
-        (D::DuckDb, T::Date) => "DATE",
-        (D::DuckDb, T::Datetime) => "TIMESTAMP",
-        (D::DuckDb, T::Text) => "VARCHAR",
-
-        (D::Mssql, T::Integer) => "INT",
-        (D::Mssql, T::Bigint) => "BIGINT",
-        (D::Mssql, T::Decimal) => "DECIMAL(38, 10)",
-        (D::Mssql, T::Double) => "FLOAT",
-        (D::Mssql, T::Boolean) => "BIT",
-        (D::Mssql, T::Date) => "DATE",
-        (D::Mssql, T::Datetime) => "DATETIME2",
-        (D::Mssql, T::Text) => "NVARCHAR(MAX)",
     }
 }
 
@@ -123,8 +105,7 @@ fn max_ident_len(driver: DriverKind) -> Option<(usize, bool)> {
     match driver {
         DriverKind::Mysql => Some((64, false)),
         DriverKind::Postgres => Some((63, true)),
-        DriverKind::Mssql => Some((128, false)),
-        DriverKind::Sqlite | DriverKind::DuckDb => None,
+        DriverKind::Sqlite => None,
     }
 }
 
@@ -160,8 +141,8 @@ fn validate_ident(driver: DriverKind, what: &str, name: &str) -> Result<()> {
 
 /// 新規テーブル定義を検証する。テーブル名・列名が空でない / 前後空白なし /
 /// 方言の長さ上限内であること、列が 1 つ以上あり、列名が**大文字小文字を
-/// 無視して**重複しないこと (MySQL / SQL Server / SQLite / DuckDB は列名の
-/// 大文字小文字を区別しないため、保守的に全方言で同じ規則にする)。
+/// 無視して**重複しないこと (MySQL / SQLite は列名の大文字小文字を区別しない
+/// ため、保守的に全方言で同じ規則にする)。
 pub fn validate_new_table(driver: DriverKind, table: &str, columns: &[NewColumn]) -> Result<()> {
     validate_ident(driver, "table", table)?;
     if columns.is_empty() {
@@ -218,13 +199,7 @@ pub fn render_drop_table(driver: DriverKind, table: &str) -> String {
 mod tests {
     use super::*;
 
-    const ALL: [DriverKind; 5] = [
-        DriverKind::Mysql,
-        DriverKind::Postgres,
-        DriverKind::Sqlite,
-        DriverKind::DuckDb,
-        DriverKind::Mssql,
-    ];
+    const ALL: [DriverKind; 3] = [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
 
     fn col(name: &str, ty: NewColumnType) -> NewColumn {
         NewColumn {
@@ -251,14 +226,6 @@ mod tests {
             render_create_table(DriverKind::Sqlite, "users", &cols).unwrap(),
             "CREATE TABLE \"users\" (\n  \"id\" INTEGER,\n  \"name\" TEXT\n)"
         );
-        assert_eq!(
-            render_create_table(DriverKind::DuckDb, "users", &cols).unwrap(),
-            "CREATE TABLE \"users\" (\n  \"id\" BIGINT,\n  \"name\" VARCHAR\n)"
-        );
-        assert_eq!(
-            render_create_table(DriverKind::Mssql, "users", &cols).unwrap(),
-            "CREATE TABLE [users] (\n  [id] BIGINT,\n  [name] NVARCHAR(MAX)\n)"
-        );
     }
 
     #[test]
@@ -277,9 +244,6 @@ mod tests {
         let pg = render_create_table(DriverKind::Postgres, "from", &cols).unwrap();
         assert!(pg.contains("\"select\" INTEGER"));
         assert!(pg.contains("\"a\"\"b`c]d\" TEXT"));
-
-        let ms = render_create_table(DriverKind::Mssql, "from", &cols).unwrap();
-        assert!(ms.contains("[a\"b`c]]d] NVARCHAR(MAX)"));
     }
 
     #[test]
@@ -345,10 +309,6 @@ mod tests {
             "BIGINT"
         );
         assert_eq!(
-            column_type_sql(DriverKind::Mssql, NewColumnType::Boolean),
-            "BIT"
-        );
-        assert_eq!(
             column_type_sql(DriverKind::Mysql, NewColumnType::Datetime),
             "DATETIME(6)"
         );
@@ -371,6 +331,5 @@ mod tests {
             render_drop_table(DriverKind::Mysql, "a`b"),
             "DROP TABLE `a``b`"
         );
-        assert_eq!(render_drop_table(DriverKind::Mssql, "t"), "DROP TABLE [t]");
     }
 }

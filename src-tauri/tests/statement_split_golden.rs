@@ -41,12 +41,10 @@ struct VectorCase {
     statements_mysql: Option<Vec<String>>,
 }
 
-const ALL_DRIVERS: [t::DriverKind; 5] = [
+const ALL_DRIVERS: [t::DriverKind; 3] = [
     t::DriverKind::Mysql,
     t::DriverKind::Postgres,
     t::DriverKind::Sqlite,
-    t::DriverKind::DuckDb,
-    t::DriverKind::Mssql,
 ];
 
 fn load() -> Vectors {

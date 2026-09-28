@@ -19,13 +19,10 @@
 //! ([`value_to_cell`])。バイナリだけは方言ごとに表現が違う:
 //!
 //! - PostgreSQL: `\x<hex>` (bytea の hex 入力形式)
-//! - DuckDB: `\xAB\xCD...` (VARCHAR → BLOB の暗黙キャストが解釈するエスケープ)
 //! - SQLite / MySQL: テキストのまま hex を入れ、全件投入後に
 //!   `UPDATE ... SET c = unhex(c)` で 1 回だけバイト列へ戻す
 //!   ([`binary_finalize_sql`])。テキストでしか書けないインポート経路で
 //!   バイト列を忠実に運ぶための後処理で、転送が作成したテーブルに対してのみ行う。
-//! - SQL Server: NVARCHAR 経由で VARBINARY へ暗黙変換できないため、hex 文字列を
-//!   `NVARCHAR(MAX)` 列へ格納する (損失ありの縮退。警告を返す)。
 
 use crate::db::sync::quote_ident;
 use crate::db::types::{Column, Value};
@@ -248,28 +245,22 @@ pub fn target_type_sql(driver: DriverKind, ty: &TransferType) -> String {
     use DriverKind as D;
     use TransferType as T;
     let s: &str = match (ty, driver) {
-        (T::Boolean, D::Mssql) => "BIT",
         (T::Boolean, _) => "BOOLEAN",
 
         (T::Integer, D::Sqlite) => "INTEGER",
         (T::Integer, _) => "BIGINT",
 
         (T::UnsignedBigInt, D::Mysql) => "BIGINT UNSIGNED",
-        (T::UnsignedBigInt, D::DuckDb) => "UBIGINT",
         (T::UnsignedBigInt, D::Sqlite) => "INTEGER",
         (T::UnsignedBigInt, D::Postgres) => "NUMERIC(20,0)",
-        (T::UnsignedBigInt, D::Mssql) => "DECIMAL(20,0)",
 
         (T::Float, D::Postgres) => "DOUBLE PRECISION",
-        (T::Float, D::Mssql) => "FLOAT",
         (T::Float, D::Sqlite) => "REAL",
         (T::Float, _) => "DOUBLE",
 
         (T::Decimal { precision, scale }, _) => return decimal_sql(driver, *precision, *scale),
 
         (T::Text, D::Mysql) => "LONGTEXT",
-        (T::Text, D::Mssql) => "NVARCHAR(MAX)",
-        (T::Text, D::DuckDb) => "VARCHAR",
         (T::Text, _) => "TEXT",
 
         (T::Date, _) => "DATE",
@@ -278,30 +269,24 @@ pub fn target_type_sql(driver: DriverKind, ty: &TransferType) -> String {
         (T::Time, _) => "TIME",
 
         (T::Timestamp, D::Mysql) => "DATETIME(6)",
-        (T::Timestamp, D::Mssql) => "DATETIME2",
         (T::Timestamp, D::Sqlite) => "DATETIME",
         (T::Timestamp, _) => "TIMESTAMP",
 
         // MySQL にはタイムゾーン付きの型が無い。オフセット付き文字列を DATETIME へ
         // 入れると失敗/丸めが起きるため、文字列のまま無損失で保持する。
         (T::TimestampTz, D::Mysql) => "VARCHAR(64)",
-        (T::TimestampTz, D::Mssql) => "DATETIMEOFFSET",
         (T::TimestampTz, D::Sqlite) => "DATETIME",
         (T::TimestampTz, _) => "TIMESTAMPTZ",
 
         (T::Binary, D::Postgres) => "BYTEA",
         (T::Binary, D::Mysql) => "LONGBLOB",
-        (T::Binary, D::Mssql) => "NVARCHAR(MAX)",
         (T::Binary, _) => "BLOB",
 
         (T::Json, D::Postgres) => "JSONB",
         (T::Json, D::Mysql) => "JSON",
-        (T::Json, D::Mssql) => "NVARCHAR(MAX)",
-        (T::Json, D::DuckDb) => "VARCHAR",
         (T::Json, D::Sqlite) => "TEXT",
 
-        (T::Uuid, D::Postgres) | (T::Uuid, D::DuckDb) => "UUID",
-        (T::Uuid, D::Mssql) => "UNIQUEIDENTIFIER",
+        (T::Uuid, D::Postgres) => "UUID",
         (T::Uuid, D::Mysql) => "CHAR(36)",
         (T::Uuid, D::Sqlite) => "TEXT",
     };
@@ -309,11 +294,10 @@ pub fn target_type_sql(driver: DriverKind, ty: &TransferType) -> String {
 }
 
 fn decimal_sql(driver: DriverKind, precision: Option<u32>, scale: Option<u32>) -> String {
-    // 各方言の上限へ丸める (MySQL 65 / MSSQL・DuckDB 38)。PostgreSQL・SQLite は
-    // 精度不明なら素の NUMERIC で無制限/動的に受ける。
+    // 各方言の上限へ丸める (MySQL 65)。PostgreSQL・SQLite は精度不明なら素の
+    // NUMERIC で無制限/動的に受ける。
     let max_p = match driver {
         DriverKind::Mysql => 65,
-        DriverKind::Mssql | DriverKind::DuckDb => 38,
         DriverKind::Postgres => 1000,
         DriverKind::Sqlite => 0,
     };
@@ -380,8 +364,7 @@ pub fn create_table_sql(driver: DriverKind, table: &str, columns: &[TransferColu
     format!("CREATE TABLE {} ({})", quote_ident(driver, table), cols)
 }
 
-/// `DROP TABLE IF EXISTS <table>` (5 方言すべてが IF EXISTS をサポート —
-/// SQL Server は 2016 以降)。
+/// `DROP TABLE IF EXISTS <table>` (3 方言すべてが IF EXISTS をサポート)。
 pub fn drop_table_sql(driver: DriverKind, table: &str) -> String {
     format!("DROP TABLE IF EXISTS {}", quote_ident(driver, table))
 }
@@ -399,7 +382,8 @@ pub fn needs_binary_finalize(driver: DriverKind) -> bool {
 
 /// バイト列を忠実に書けない (hex 文字列へ縮退する) ドライバか。
 pub fn binary_is_lossy(driver: DriverKind) -> bool {
-    matches!(driver, DriverKind::Mssql)
+    let _ = driver;
+    false
 }
 
 /// hex で投入したバイナリ列をバイト列へ戻す UPDATE 文 (SQLite / MySQL のみ。
@@ -432,7 +416,7 @@ pub fn binary_finalize_sql(
 pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Option<String> {
     let bool_text = |b: bool| -> String {
         match driver {
-            DriverKind::Postgres | DriverKind::DuckDb => {
+            DriverKind::Postgres => {
                 if b {
                     "true".into()
                 } else {
@@ -469,18 +453,6 @@ pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Op
             }
             Some(match driver {
                 DriverKind::Postgres => format!("\\x{hex}"),
-                DriverKind::DuckDb => {
-                    let mut out = String::with_capacity(hex.len() * 2);
-                    let bytes = hex.as_bytes();
-                    for pair in bytes.chunks(2) {
-                        out.push_str("\\x");
-                        for b in pair {
-                            out.push(*b as char);
-                        }
-                    }
-                    out
-                }
-                DriverKind::Mssql => format!("0x{hex}"),
                 DriverKind::Sqlite | DriverKind::Mysql => hex.clone(),
             })
         }
@@ -493,7 +465,7 @@ pub fn plan_warnings(driver: DriverKind, columns: &[TransferColumn]) -> Vec<Stri
     if binary_is_lossy(driver) {
         for c in columns.iter().filter(|c| c.ty == TransferType::Binary) {
             out.push(format!(
-                "column \"{}\" is binary; SQL Server target stores it as a 0x-prefixed hex string (NVARCHAR)",
+                "column \"{}\" is binary and may lose precision on this target",
                 c.name
             ));
         }
@@ -662,19 +634,12 @@ mod tests {
             TransferType::Json,
             TransferType::Uuid,
         ];
-        for driver in [
-            DriverKind::Mysql,
-            DriverKind::Postgres,
-            DriverKind::Sqlite,
-            DriverKind::DuckDb,
-            DriverKind::Mssql,
-        ] {
+        for driver in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             for ty in &all_types {
                 let sql = target_type_sql(driver, ty);
                 assert!(!sql.is_empty(), "{driver:?} {ty:?}");
                 // 再分類しても論理型の「系統」が崩れないこと (往復の安定性)。
-                // MySQL の TimestampTz (VARCHAR) と MSSQL のバイナリ/JSON (NVARCHAR)
-                // は意図的な縮退なので除外する。
+                // MySQL の TimestampTz (VARCHAR) は意図的な縮退なので除外する。
                 let reclassified = classify_source_type(&sql);
                 assert!(reclassified.is_some(), "{driver:?} {ty:?} -> {sql}");
             }
@@ -686,14 +651,6 @@ mod tests {
         assert_eq!(
             target_type_sql(DriverKind::Postgres, &TransferType::Binary),
             "BYTEA"
-        );
-        assert_eq!(
-            target_type_sql(DriverKind::Mssql, &TransferType::Boolean),
-            "BIT"
-        );
-        assert_eq!(
-            target_type_sql(DriverKind::DuckDb, &TransferType::Timestamp),
-            "TIMESTAMP"
         );
         assert_eq!(
             target_type_sql(
@@ -750,11 +707,7 @@ mod tests {
             "CREATE TABLE `t` (`id` BIGINT, `we\"ird` LONGTEXT)"
         );
         assert_eq!(
-            create_table_sql(DriverKind::Mssql, "t]x", &cols),
-            "CREATE TABLE [t]]x] ([id] BIGINT, [we\"ird] NVARCHAR(MAX))"
-        );
-        assert_eq!(
-            drop_table_sql(DriverKind::DuckDb, "t"),
+            drop_table_sql(DriverKind::Postgres, "t"),
             "DROP TABLE IF EXISTS \"t\""
         );
         assert_eq!(
@@ -771,16 +724,8 @@ mod tests {
             Some("true")
         );
         assert_eq!(
-            value_to_cell(DriverKind::DuckDb, &b, &Value::Int(0)).as_deref(),
-            Some("false")
-        );
-        assert_eq!(
             value_to_cell(DriverKind::Sqlite, &b, &Value::Bool(true)).as_deref(),
             Some("1")
-        );
-        assert_eq!(
-            value_to_cell(DriverKind::Mssql, &b, &Value::Bool(false)).as_deref(),
-            Some("0")
         );
         assert_eq!(
             value_to_cell(DriverKind::Sqlite, &TransferType::Text, &Value::Null),
@@ -806,10 +751,6 @@ mod tests {
             Some("\\x00ff")
         );
         assert_eq!(
-            value_to_cell(DriverKind::DuckDb, &bin, &v).as_deref(),
-            Some("\\x00\\xff")
-        );
-        assert_eq!(
             value_to_cell(DriverKind::Sqlite, &bin, &v).as_deref(),
             Some("00ff")
         );
@@ -817,13 +758,9 @@ mod tests {
             value_to_cell(DriverKind::Mysql, &bin, &v).as_deref(),
             Some("00ff")
         );
-        assert_eq!(
-            value_to_cell(DriverKind::Mssql, &bin, &v).as_deref(),
-            Some("0x00ff")
-        );
         // バイナリでない列に入るバイト列は hex テキストのまま
         assert_eq!(
-            value_to_cell(DriverKind::DuckDb, &TransferType::Text, &v).as_deref(),
+            value_to_cell(DriverKind::Sqlite, &TransferType::Text, &v).as_deref(),
             Some("00ff")
         );
     }
@@ -851,13 +788,10 @@ mod tests {
             vec!["UPDATE `x` SET `b` = UNHEX(`b`) WHERE `b` IS NOT NULL".to_string()]
         );
         assert!(binary_finalize_sql(DriverKind::Postgres, "x", &cols).is_empty());
-        assert!(binary_finalize_sql(DriverKind::DuckDb, "x", &cols).is_empty());
         assert!(ensure_append_supported(DriverKind::Sqlite, &cols).is_err());
-        assert!(ensure_append_supported(DriverKind::Mssql, &cols).is_err());
-        assert!(ensure_append_supported(DriverKind::DuckDb, &cols).is_ok());
+        assert!(ensure_append_supported(DriverKind::Postgres, &cols).is_ok());
         assert!(ensure_append_supported(DriverKind::Sqlite, &cols[1..]).is_ok());
-        assert_eq!(plan_warnings(DriverKind::Mssql, &cols).len(), 1);
-        assert!(plan_warnings(DriverKind::DuckDb, &cols).is_empty());
+        assert!(plan_warnings(DriverKind::Postgres, &cols).is_empty());
     }
 
     #[test]

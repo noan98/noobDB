@@ -7,7 +7,7 @@
  *
  * ```
  * Connection
- * └ Database (PostgreSQL / DuckDB ではスキーマ)
+ * └ Database (PostgreSQL ではスキーマ)
  *   ├ Tables
  *   │ └ table ─┬ Columns
  *   │          ├ Indexes
@@ -147,11 +147,11 @@ export function tableChildGroups(
 }
 
 /**
- * ツリーの「データベース」階層が実際に何を表すか。PostgreSQL / DuckDB は接続が
- * 1 つの実データベースに固定され、この階層にはスキーマ (名前空間) が並ぶ
+ * ツリーの「データベース」階層が実際に何を表すか。PostgreSQL は接続が 1 つの
+ * 実データベースに固定され、この階層にはスキーマ (名前空間) が並ぶ
  * (バックエンドの `databases()` の実装に対応)。ツールチップと読み上げで取り違え
  * ないよう、ドライバごとに呼び分ける。
  */
 export function explorerContainerKind(driver: string): "database" | "schema" {
-  return driver === "postgres" || driver === "duckdb" ? "schema" : "database";
+  return driver === "postgres" ? "schema" : "database";
 }

@@ -39,8 +39,8 @@
   PostgreSQL のドル引用本体 (関数本文) だけを書き戻してから識別子トークンを照合する。
   境界規則 (部分一致しない・大小無視・引用解釈・スキーマ修飾・列の別名解決) は
   同ファイル冒頭の JSDoc。判定に迷う列参照は捨てずに `possible` (候補) で残す。
-- ドライバ別の取得可否は `WHERE_USED_KIND_SUPPORT` (SQLite はビュー/トリガー、
-  DuckDB はビューのみ)。取れない種別・取得失敗・空の本文 (MSSQL の暗号化) は UI で明示。
+- ドライバ別の取得可否は `WHERE_USED_KIND_SUPPORT` (SQLite はビュー/トリガーのみ)。
+  取れない種別・取得失敗・空の本文は UI で明示。
 - 入口: スキーマツリーの右クリック (テーブル / ビュー / 列)、コマンドパレット。
   結果から既存の定義ビューア (`handleOpenObjectDefinition`) / スニペットへ遷移する。
 
@@ -63,7 +63,7 @@
   PostgreSQL は `pid:query_start エポック`)。自セッション由来は除外しますが、
   同一プールの別物理接続はエンジンから区別できないためベストエフォートです
   (`ProcessInfo::is_self` と同じ限界)。
-- MSSQL / SQLite は未対応 (`unsupported_driver` 縮退)。
+- SQLite は未対応 (`unsupported_driver` 縮退)。
 - UI: `components/QueryInspectorPanel.tsx`、純ロジックは `components/queryInspector.ts`。
 
 ## サーバ情報 / メトリクス (#563)
@@ -71,7 +71,7 @@
 `commands/server.rs` の `server_info` (バージョン + 主要設定変数) と `server_metrics`。
 `SHOW VARIABLES` / `pg_settings` / `PRAGMA` など**書き込みを伴わない経路のみ**を
 使います。アクティブ接続は既存のプロセスモニタ (`list_processes`) が担うため
-重複させません。MSSQL / SQLite では `server_metrics` は未実装 (`unsupported_driver`)。
+重複させません。SQLite では `server_metrics` は未実装 (`unsupported_driver`)。
 UI: `ServerInfoPanel.tsx` / `ServerMetricsPanel.tsx`、純ロジックは `serverMetrics.ts`。
 
 ## スキーマドリフトのタイムライン (#736)

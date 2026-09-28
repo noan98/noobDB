@@ -12,16 +12,16 @@
 //!   `is_read_only_sql_for` を通ることを単体テストで固定している。
 //! - [`run_column_profile`] が `Connection::execute` 経由でそれらを流し、結果を
 //!   [`ColumnProfile`] に整形する。**各段は独立に縮退する**: 型の都合で
-//!   `COUNT(DISTINCT)` / `MIN` / `GROUP BY` が通らない列 (MSSQL の `text` /
-//!   `image`、PostgreSQL の `json` など) でも、失敗した段だけを理由コード
-//!   (`notes`) 付きで欠落させ、件数と NULL 率は必ず返す。
+//!   `COUNT(DISTINCT)` / `MIN` / `GROUP BY` が通らない列 (PostgreSQL の `json`
+//!   など) でも、失敗した段だけを理由コード (`notes`) 付きで欠落させ、件数と
+//!   NULL 率は必ず返す。
 //!
 //! ## 近似 DISTINCT
 //!
 //! `approximate = true` のとき、使えるドライバでは全件の `COUNT(DISTINCT)` を
-//! 避ける。PostgreSQL は `pg_stats.n_distinct` (ANALYZE 済みの統計、走査なし)、
-//! DuckDB は `approx_count_distinct` (HyperLogLog)。統計が無い / 非対応ドライバは
-//! 正確値にフォールバックし、その旨を `notes` に残す (黙って別物を返さない)。
+//! 避ける。PostgreSQL は `pg_stats.n_distinct` (ANALYZE 済みの統計、走査なし)。
+//! 統計が無い / 非対応ドライバは正確値にフォールバックし、その旨を `notes` に
+//! 残す (黙って別物を返さない)。
 //!
 //! ## 64bit 値
 //!
@@ -49,8 +49,8 @@ pub const NOTE_HISTOGRAM_UNAVAILABLE: &str = "histogram_unavailable";
 pub const NOTE_APPROX_UNSUPPORTED: &str = "approx_distinct_unsupported";
 pub const NOTE_APPROX_NO_STATS: &str = "approx_distinct_no_stats";
 
-/// プロファイル対象の列。`database` は MySQL/MSSQL ではデータベース、
-/// PostgreSQL/DuckDB ではスキーマ、SQLite では無視される (UI ツリーの規約と同じ)。
+/// プロファイル対象の列。`database` は MySQL ではデータベース、PostgreSQL では
+/// スキーマ、SQLite では無視される (UI ツリーの規約と同じ)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileTarget<'a> {
     pub driver: DriverKind,
@@ -64,7 +64,7 @@ pub struct ProfileTarget<'a> {
 pub enum DistinctMode {
     /// `COUNT(DISTINCT col)` (正確値。全件走査)。
     Exact,
-    /// DuckDB の `approx_count_distinct(col)`。
+    /// `approx_count_distinct(col)` (近似 DISTINCT)。
     Approx,
     /// 集計 SQL では求めない (PostgreSQL の統計情報から別途推定する)。
     Skip,
@@ -163,26 +163,20 @@ pub fn is_numeric_type(driver: DriverKind, data_type: &str) -> bool {
 }
 
 /// テーブル参照をドライバ方言で修飾する (`cellEdit.ts::qualifiedTableRef` と同じ規約)。
-/// SQLite はファイル単位なので名前空間を付けず、MSSQL は `db.dbo.table` の 3 部構成。
+/// SQLite はファイル単位なので名前空間を付けない。
 pub fn table_ref(t: &ProfileTarget<'_>) -> String {
     let table = quote_ident(t.driver, t.table);
     if t.driver == DriverKind::Sqlite || t.database.is_empty() {
         return table;
     }
     let db = quote_ident(t.driver, t.database);
-    match t.driver {
-        DriverKind::Mssql => format!("{db}.[dbo].{table}"),
-        _ => format!("{db}.{table}"),
-    }
+    format!("{db}.{table}")
 }
 
-/// 行数を数える集計関数。MSSQL の `COUNT` は INT (2^31 で桁あふれ) なので
-/// `COUNT_BIG` を使う。
+/// 行数を数える集計関数。
 fn count_fn(driver: DriverKind) -> &'static str {
-    match driver {
-        DriverKind::Mssql => "COUNT_BIG",
-        _ => "COUNT",
-    }
+    let _ = driver;
+    "COUNT"
 }
 
 /// 件数・DISTINCT・MIN/MAX を 1 行で返す集計 SQL。列の並びは
@@ -227,22 +221,15 @@ pub fn build_distinct_sql(t: &ProfileTarget<'_>) -> String {
 }
 
 /// 非 NULL 値の出現頻度の上位 `top_n` 件 (`value, freq` の 2 列、多い順)。
-/// MSSQL は `LIMIT` が無いので `TOP (n)`。
 pub fn build_top_values_sql(t: &ProfileTarget<'_>, top_n: u32) -> String {
     let col = quote_ident(t.driver, t.column);
     let count = count_fn(t.driver);
     let n = top_n.clamp(1, MAX_TOP_N);
     let from = table_ref(t);
-    match t.driver {
-        DriverKind::Mssql => format!(
-            "SELECT TOP ({n}) {col} AS value, {count}(*) AS freq FROM {from} \
-             WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY {count}(*) DESC"
-        ),
-        _ => format!(
-            "SELECT {col} AS value, {count}(*) AS freq FROM {from} \
-             WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY {count}(*) DESC LIMIT {n}"
-        ),
-    }
+    format!(
+        "SELECT {col} AS value, {count}(*) AS freq FROM {from} \
+         WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY {count}(*) DESC LIMIT {n}"
+    )
 }
 
 /// 浮動小数を全方言で通る数値リテラルにする (`1.5e0` 形式。負数は括弧で包み、
@@ -258,8 +245,7 @@ fn float_literal(v: f64) -> String {
 
 /// 数値列のヒストグラム SQL (`bucket, freq` の 2 列、区間番号の昇順)。区間は
 /// `[min, max]` を `buckets` 等分し、`max` ちょうどの値は最後の区間に入れる。
-/// 区間番号は派生表で求めてから GROUP BY する (MSSQL は GROUP BY に別名を
-/// 書けないため、全方言で同じ形にそろえる)。`min < max` かつ有限であることは
+/// 区間番号は派生表で求めてから GROUP BY する。`min < max` かつ有限であることは
 /// 呼び出し側が保証する。
 pub fn build_histogram_sql(t: &ProfileTarget<'_>, min: f64, max: f64, buckets: u32) -> String {
     let col = quote_ident(t.driver, t.column);
@@ -329,8 +315,7 @@ pub fn distinct_mode(
     }
     match driver {
         DriverKind::Postgres => (DistinctMode::Skip, None),
-        DriverKind::DuckDb => (DistinctMode::Approx, None),
-        DriverKind::Mysql | DriverKind::Sqlite | DriverKind::Mssql => {
+        DriverKind::Mysql | DriverKind::Sqlite => {
             (DistinctMode::Exact, Some(NOTE_APPROX_UNSUPPORTED))
         }
     }
@@ -482,7 +467,7 @@ pub async fn run_column_profile(
             }
             Err(_) => {
                 // 型の都合で DISTINCT / MIN / MAX が通らない列 (PostgreSQL の
-                // boolean は MIN/MAX を持たない、MSSQL の text は比較不能など)。
+                // boolean は MIN/MAX を持たないなど)。
                 // 件数は必ず返し、DISTINCT だけでも通るなら拾う。
                 let res = conn.execute(&build_count_sql(&target), None).await?;
                 let row = res.rows.into_iter().next().unwrap_or_default();
@@ -600,13 +585,7 @@ mod tests {
     use super::*;
     use crate::db::is_read_only_sql_for;
 
-    const ALL: [DriverKind; 5] = [
-        DriverKind::Mysql,
-        DriverKind::Postgres,
-        DriverKind::Sqlite,
-        DriverKind::DuckDb,
-        DriverKind::Mssql,
-    ];
+    const ALL: [DriverKind; 3] = [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
 
     fn target(driver: DriverKind) -> ProfileTarget<'static> {
         ProfileTarget {
@@ -634,12 +613,8 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_ignores_database_and_mssql_uses_three_part_name() {
+    fn sqlite_ignores_database() {
         assert!(build_count_sql(&target(DriverKind::Sqlite)).ends_with("FROM \"users\""));
-        let mssql = build_count_sql(&target(DriverKind::Mssql));
-        assert!(mssql.ends_with("FROM [app].[dbo].[users]"), "{mssql}");
-        // MSSQL の COUNT は INT で桁あふれするので COUNT_BIG。
-        assert!(mssql.starts_with("SELECT COUNT_BIG(*)"), "{mssql}");
     }
 
     #[test]
@@ -652,13 +627,10 @@ mod tests {
         };
         assert!(build_count_sql(&evil(DriverKind::Mysql)).contains("`a``b\"c]d`"));
         assert!(build_count_sql(&evil(DriverKind::Postgres)).contains("\"a`b\"\"c]d\""));
-        assert!(build_count_sql(&evil(DriverKind::Mssql)).contains("[a`b\"c]]d]"));
     }
 
     #[test]
     fn approx_distinct_uses_engine_specific_function() {
-        let sql = build_summary_sql(&target(DriverKind::DuckDb), DistinctMode::Approx);
-        assert!(sql.contains("approx_count_distinct(\"age\")"), "{sql}");
         let skip = build_summary_sql(&target(DriverKind::Postgres), DistinctMode::Skip);
         assert!(!skip.contains("DISTINCT"), "{skip}");
     }
@@ -673,11 +645,7 @@ mod tests {
             distinct_mode(DriverKind::Postgres, true),
             (DistinctMode::Skip, None)
         );
-        assert_eq!(
-            distinct_mode(DriverKind::DuckDb, true),
-            (DistinctMode::Approx, None)
-        );
-        for d in [DriverKind::Mysql, DriverKind::Sqlite, DriverKind::Mssql] {
+        for d in [DriverKind::Mysql, DriverKind::Sqlite] {
             assert_eq!(
                 distinct_mode(d, true),
                 (DistinctMode::Exact, Some(NOTE_APPROX_UNSUPPORTED))
@@ -693,12 +661,6 @@ mod tests {
             my.contains("WHERE `age` IS NOT NULL GROUP BY `age`"),
             "{my}"
         );
-        let ms = build_top_values_sql(&target(DriverKind::Mssql), 5);
-        assert!(
-            ms.starts_with("SELECT TOP (5) [age] AS value, COUNT_BIG(*)"),
-            "{ms}"
-        );
-        assert!(!ms.contains("LIMIT"), "{ms}");
         // 上限・下限でクランプする。
         assert!(build_top_values_sql(&target(DriverKind::Mysql), 0).ends_with("LIMIT 1"));
         assert!(build_top_values_sql(&target(DriverKind::Mysql), 10_000).ends_with("LIMIT 100"));

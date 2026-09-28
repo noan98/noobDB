@@ -524,17 +524,16 @@ fn create_index_ddl(driver: DriverKind, table: &str, columns: &[String]) -> Stri
     )
 }
 
-/// 方言別の `DROP INDEX`。MySQL / MSSQL は `DROP INDEX <name> ON <table>`
-/// (MSSQL も同じくテーブル修飾が必須)、PostgreSQL / SQLite は
-/// `DROP INDEX <name>` (テーブル指定不可)。
+/// 方言別の `DROP INDEX`。MySQL は `DROP INDEX <name> ON <table>`、
+/// PostgreSQL / SQLite は `DROP INDEX <name>` (テーブル指定不可)。
 fn drop_index_ddl(driver: DriverKind, table: &str, index: &str) -> String {
     match driver {
-        DriverKind::Mysql | DriverKind::Mssql => format!(
+        DriverKind::Mysql => format!(
             "DROP INDEX {} ON {};",
             quote_ident(driver, index),
             quote_ident(driver, table)
         ),
-        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
+        DriverKind::Postgres | DriverKind::Sqlite => {
             format!("DROP INDEX {};", quote_ident(driver, index))
         }
     }

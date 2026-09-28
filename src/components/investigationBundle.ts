@@ -233,8 +233,7 @@ export function extractReferencedTables(sql: string, limit = 5): TableReference[
 
 /**
  * EXPLAIN の同梱に対応するドライバ。アプリの EXPLAIN タブと同じ JSON / 行ベースの
- * プランが取れるものに限る (MSSQL の SHOWPLAN はセッション設定が要り、DuckDB は
- * 別構文のため対象外)。
+ * プランが取れるものに限る。
  */
 export function bundlePlanSupported(driver: string | null | undefined): boolean {
   return driver === "mysql" || driver === "postgres" || driver === "sqlite";

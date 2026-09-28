@@ -85,7 +85,7 @@ export const LATENCY_CRITICAL_MS = 1_000;
  * 概念が無いので N/A に縮退する (`server_metrics` もハードエラーを返す)。
  */
 export function isServerlessDriver(driver: string): boolean {
-  return driver === "sqlite" || driver === "duckdb";
+  return driver === "sqlite";
 }
 
 /** `withTimeout` の結果。 */

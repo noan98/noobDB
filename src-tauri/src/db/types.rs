@@ -48,7 +48,7 @@ impl Value {
         }
     }
 
-    /// [`Value::from_i64_lossless`] の 128bit 版 (DuckDB の `HUGEINT` 等)。
+    /// [`Value::from_i64_lossless`] の 128bit 版 (64bit を超える整数値向け)。
     /// `i64` に収まらない値も含めて、安全整数の外は必ず文字列になる。
     pub fn from_i128_lossless(v: i128) -> Self {
         let max = JS_MAX_SAFE_INTEGER as i128;
@@ -59,7 +59,7 @@ impl Value {
         }
     }
 
-    /// [`Value::from_i128_lossless`] の符号なし版 (DuckDB の `UHUGEINT` 等)。
+    /// [`Value::from_i128_lossless`] の符号なし版。
     pub fn from_u128_lossless(v: u128) -> Self {
         if v <= JS_MAX_SAFE_INTEGER as u128 {
             Value::UInt(v as u64)
@@ -107,8 +107,7 @@ pub struct TableColumnInfo {
     pub referenced_table: Option<String>,
     /// The referenced column for the foreign key, when the driver can resolve it.
     pub referenced_column: Option<String>,
-    /// 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description` /
-    /// MSSQL 拡張プロパティ `MS_Description` / DuckDB `duckdb_columns().comment`。
+    /// 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description`。
     /// コメントが無い列と SQLite (コメント機能なし) は `None`。`#[serde(default)]`
     /// なので、このフィールドを持たない JSON (スナップショット等) も読める。
     #[serde(default)]
@@ -164,7 +163,7 @@ pub struct IndexInfo {
 /// 組み立てる材料にする。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutineParameter {
-    /// パラメータ名。PostgreSQL の無名引数は空文字、MSSQL は先頭 `@` 付きのまま。
+    /// パラメータ名。PostgreSQL の無名引数は空文字。
     pub name: String,
     /// 入出力モード: `in` / `out` / `inout` / `variadic` / `table`
     /// (`table` は PostgreSQL の `RETURNS TABLE(...)` の出力列)。

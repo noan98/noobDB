@@ -15,7 +15,7 @@
 //! 取り込む (リポジトリ内の単一ソースを両言語が参照する構成。#444 / #880 と同型)。
 //!
 //! ベクタは**ドライバ次元**を持つ (#852): `masked` はバックスラッシュを文字列
-//! エスケープと見なさない標準解釈 (PostgreSQL / SQLite / DuckDB / MSSQL、および
+//! エスケープと見なさない標準解釈 (PostgreSQL / SQLite、および
 //! ドライバを渡さない `mask_for_analysis_conservative`) での期待値で、MySQL だけ
 //! 判定が変わるケースのみ `masked_mysql` を持つ。
 
@@ -43,12 +43,7 @@ struct VectorCase {
 }
 
 /// 標準的な文字列リテラル解釈を採るドライバ (= `masked` がそのまま期待値)。
-const STANDARD_DRIVERS: [t::DriverKind; 4] = [
-    t::DriverKind::Postgres,
-    t::DriverKind::Sqlite,
-    t::DriverKind::DuckDb,
-    t::DriverKind::Mssql,
-];
+const STANDARD_DRIVERS: [t::DriverKind; 2] = [t::DriverKind::Postgres, t::DriverKind::Sqlite];
 
 fn load() -> Vectors {
     serde_json::from_str(VECTORS_JSON).expect("shared mask vectors must be valid JSON")
@@ -142,8 +137,6 @@ fn vectors_cover_every_driver() {
         t::DriverKind::Mysql,
         t::DriverKind::Postgres,
         t::DriverKind::Sqlite,
-        t::DriverKind::DuckDb,
-        t::DriverKind::Mssql,
     ] {
         assert!(
             vectors.drivers.iter().any(|d| d == driver.as_str()),

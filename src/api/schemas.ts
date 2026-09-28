@@ -485,7 +485,7 @@ const tableDiff = z.object({
   columns: z.array(columnDiff),
 });
 
-const driverKind = z.enum(["mysql", "postgres", "sqlite", "duckdb", "mssql"]);
+const driverKind = z.enum(["mysql", "postgres", "sqlite"]);
 
 export const schemaDiff = z.object({
   source_driver: driverKind,

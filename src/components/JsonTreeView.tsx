@@ -35,7 +35,7 @@ interface Props {
   root: JsonNode;
   /** SQL 抽出式 / WHERE 条件の生成に使う列名。無ければ SQL コピーを出さない。 */
   columnName?: string;
-  /** 接続ドライバ ("mysql" | "postgres" | "sqlite" | "duckdb" | "mssql")。 */
+  /** 接続ドライバ ("mysql" | "postgres" | "sqlite")。 */
   driver?: string;
 }
 

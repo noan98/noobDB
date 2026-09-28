@@ -18,9 +18,10 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
     expect(defaultTransferTableName(querySource)).toBe("query_result");
   });
 
-  it("ドライバ文字列を DriverKind に絞る (DuckDB / MSSQL も落とさない)", () => {
-    expect(toDriverKind("duckdb")).toBe("duckdb");
-    expect(toDriverKind("mssql")).toBe("mssql");
+  it("ドライバ文字列を DriverKind に絞る", () => {
+    expect(toDriverKind("mysql")).toBe("mysql");
+    expect(toDriverKind("postgres")).toBe("postgres");
+    expect(toDriverKind("sqlite")).toBe("sqlite");
     expect(toDriverKind("oracle")).toBeNull();
   });
 

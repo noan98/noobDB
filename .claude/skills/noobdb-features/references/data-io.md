@@ -95,7 +95,7 @@
   `db/masking.rs` の単体テストが `cases` の変換結果も検証)。スケジュール実行
   (`tasks/executor.rs`) のエクスポートはマスキング非対応。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
-  SQLite / DuckDB / MSSQL は接続から直接生成 (下記)。`mysqldump` の資格情報は
+  SQLite は接続から直接生成 (`dump_sqlite`)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
   エラーを返します。`DumpOptions.format_sql` (既定オフ) を立てると、書き出した
@@ -122,29 +122,6 @@
   起動時に `cleanup_stale_dump_credential_files` が自分たちの命名規約に一致する
   ものだけを掃除します (`commands::local::cleanup_stale_local_files` と同じ位置・
   同じベストエフォート方針で `lib.rs` から呼びます)。
-  **DuckDB / MSSQL のネイティブダンプ (#987)**: 外部バイナリに依存せず、
-  `Connection::native_dump` (`db/native_dump.rs`) がライブ接続のカタログから DDL を
-  組み立て、行を `execute_stream` で読みながら INSERT としてストリーム出力します
-  (`commands/dump.rs::dump_native` が一時ファイル・進捗・キャンセルの共通枠に載せる。
-  テーブル完了ごとに `tables` / `tablesTotal` 付きの進捗)。INSERT の書式は
-  エクスポートと `native_dump::build_sql_insert_statement` を共有し、リテラルは
-  `sql_literal` を土台に列型別の補正 (`ColumnRender`) を掛けます — 2^53 超の整数・
-  DECIMAL (`from_*_lossless` で文字列化されたもの) は数値列なら引用符なしへ戻し、
-  DuckDB の日時/INTERVAL/UUID/入れ子型は `CAST(col AS VARCHAR)` → `CAST('...' AS 型)`、
-  MSSQL の日時は DATEFORMAT 非依存の ISO 文字列 (`datetime` は style 126)・`money` は
-  style 2・文字列は `N'...'`。計算列・rowversion・DuckDB の生成列は INSERT から外し、
-  IDENTITY 列は各バッチ内で `SET IDENTITY_INSERT ON/OFF` します。DuckDB は
-  `duckdb_tables()/views()/indexes()` の `sql` をそのまま使い、テーブルは FK 依存順
-  (`order_tables_by_dependencies`)、シーケンスは現在値の続きから再作成。MSSQL は
-  `dbo` 限定 (ドライバの introspection 方針と同じ) で、`CREATE TABLE` (PK/UNIQUE/CHECK/
-  DEFAULT/IDENTITY/計算列/照合順序) → データ → インデックス → FK (`ALTER TABLE`) →
-  ビュー/ルーチン/トリガー (`sys.sql_modules`、作成順) を **`GO` 区切り**で出します。
-  `routines` / `triggers` / `addDropTable` / `extendedInsert` / `noData` / `noCreateInfo`
-  を解釈し、`singleTransaction` は非対応 (テーブル間の一貫スナップショットは取らない)。
-  既知の限界: DuckDB のユーザ定義型 (`CREATE TYPE`)・マクロ、MSSQL の `dbo` 以外の
-  スキーマ・ユーザ定義型・`sql_variant` の元の型は出力しません。
-  往復は `tests/duckdb_integration.rs` (常時) / `tests/mssql_integration.rs`
-  (`NOOBDB_TEST_MSSQL_URL` ゲート、一時 DB を 2 つ作る) で検証します。
 - `commands/import.rs`: CSV / JSON / NDJSON を `import_rows` でテーブルへ一括投入
   します (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。
   読み取り専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。
@@ -185,9 +162,8 @@
   既存キーの行を「読み飛ばす」「取り込み値で更新する」を選べます。方言別の構文は
   `db/upsert.rs` の純関数に集約: MySQL は `ON DUPLICATE KEY UPDATE` (skip は `k = k` の
   no-op 代入。`INSERT IGNORE` は重複以外のエラーまで握りつぶすので使わない。判定は
-  テーブルの全一意キー)、PostgreSQL / SQLite / DuckDB は `ON CONFLICT (keys) DO
-  NOTHING | DO UPDATE SET c = EXCLUDED.c`、SQL Server は `MERGE … WITH (HOLDLOCK)`
-  (NULL は `CAST(NULL AS NVARCHAR(MAX))` で型付け)。PG / DuckDB の DO UPDATE と MERGE は
+  テーブルの全一意キー)、PostgreSQL / SQLite は `ON CONFLICT (keys) DO
+  NOTHING | DO UPDATE SET c = EXCLUDED.c`。PostgreSQL の DO UPDATE は
   1 文内のキー重複をエラーにするため、`ImportConflict::collapse_duplicate_keys` が
   チャンク内で畳みます (update は最後の行、skip は最初の行が勝つ = 1 行ずつ適用したのと
   同じ結果)。競合設定は `import_rows` / `try_insert_chunk` / `probe_failing_row` の
@@ -202,9 +178,9 @@
   `Connection::create_table_from_columns` がテーブルを作ります。DDL は
   `db/create_table.rs::render_create_table` の純関数が方言別に生成し (識別子は
   `db::sync::quote_ident`、型名は列挙からのみ = 文字列の型名を受け取らない)、DB が持たない
-  型は縮退します (SQLite の日付/日時は TEXT、MySQL の TEXT は LONGTEXT、日時は
-  `DATETIME(6)` / `DATETIME2` など)。検証 (空名・前後空白・大文字小文字を無視した列名重複・
-  PostgreSQL 63 バイト / MySQL 64 文字 / MSSQL 128 文字の識別子長) は `import_csv` が
+  型は縮退します (SQLite の日付/日時は TEXT、MySQL の TEXT は LONGTEXT)。検証
+  (空名・前後空白・大文字小文字を無視した列名重複・PostgreSQL 63 バイト /
+  MySQL 64 文字の識別子長) は `import_csv` が
   ストリーム開始前に同期で行い、作成自体は**ファイルのパース成功後** (`run_import_core`) に
   行います。取り込みは既存の `import_rows` / `import_rows_skipping` にそのまま合流する
   (新しい書き込み経路は無い) ので read_only 拒否・abort/skip・進捗イベントは共通です。
@@ -236,10 +212,9 @@
 - **型 / DDL マッピング** (`db/transfer.rs`): ソースの型名を論理型 `TransferType` に
   正規化 → ターゲット方言の DDL 型へ展開。型名で判定できない列 (SQLite の式列) は最初の
   バッチの値から推定。列名は空なら `column_N`、重複は `_2` 連番で一意化。制約・インデックスは
-  コピーしない。バイナリは PostgreSQL `\x<hex>` / DuckDB `\xAB` エスケープで直接書き、
+  コピーしない。バイナリは PostgreSQL `\x<hex>` エスケープで直接書き、
   SQLite / MySQL は hex テキストで入れて全件投入後に `UPDATE ... SET c = unhex(c)` で戻す
-  (転送が作成したテーブルのみ。追記モードでは拒否)。SQL Server は `NVARCHAR(MAX)` に
-  `0x` 付き hex を格納する縮退 (警告を返す)。
+  (転送が作成したテーブルのみ。追記モードでは拒否)。
 - **モード** (`TransferMode`): `create` (既にあれば CREATE が失敗) / `replace`
   (DROP → CREATE) / `append` (DDL なし、列名で対応)。`create` / `replace` は失敗・キャンセル時に
   作りかけのテーブルを DROP する (キャンセルは future の drop 経由なので Drop ガードが
@@ -249,4 +224,4 @@
   ソースが SQL のときは `ensure_allowed_for_session` + `is_read_only_sql_for` で読み取り
   専用文に限る。同一セッション・同一テーブルへの `create` / `replace` も拒否。
   `is_production` の確認 (置き換えなら接続名タイプ入力の強確認) は UI レベル。
-- 統合テスト: `tests/transfer_integration.rs` (SQLite ↔ DuckDB、環境変数不要で常時実走)。
+- 統合テスト: `tests/transfer_integration.rs` (SQLite ↔ SQLite、環境変数不要で常時実走)。

@@ -588,9 +588,7 @@ async fn build_options(
 
     // File-backed drivers don't have a host/port/user/password and can't
     // be tunneled, so short-circuit before touching credentials or SSH.
-    // DuckDB (#709) is file-backed exactly like SQLite: same `file_path`
-    // requirement, no SSH tunnel, no TLS.
-    if matches!(req.driver, DriverKind::Sqlite | DriverKind::DuckDb) {
+    if req.driver == DriverKind::Sqlite {
         let file_path = req
             .file_path
             .as_deref()
@@ -857,9 +855,7 @@ mod tests {
         assert_eq!(o.endpoint_port, 5432);
         assert_eq!(o.profile.as_deref(), Some("work"));
         assert!(iam_options_for(DriverKind::Mysql, &cfg, "h", 3306).is_ok());
-        for d in [DriverKind::Mssql, DriverKind::Sqlite, DriverKind::DuckDb] {
-            assert!(iam_options_for(d, &cfg, "h", 1).is_err(), "{d:?}");
-        }
+        assert!(iam_options_for(DriverKind::Sqlite, &cfg, "h", 1).is_err());
     }
 
     #[test]

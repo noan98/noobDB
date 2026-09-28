@@ -16,19 +16,12 @@ describe("buildTruncateSql", () => {
   it("falls back to DELETE FROM on SQLite (no TRUNCATE, no schema)", () => {
     expect(buildTruncateSql("sqlite", "main", "users")).toBe('DELETE FROM "users";');
   });
-
-  it("uses TRUNCATE TABLE on MSSQL with a 3-part dbo-qualified name (#729)", () => {
-    expect(buildTruncateSql("mssql", "shop", "users")).toBe(
-      "TRUNCATE TABLE [shop].[dbo].[users];",
-    );
-  });
 });
 
 describe("buildDropTableSql", () => {
   it("drops with a qualified, quoted name", () => {
     expect(buildDropTableSql("mysql", "shop", "t")).toBe("DROP TABLE `shop`.`t`;");
     expect(buildDropTableSql("sqlite", "main", "t")).toBe('DROP TABLE "t";');
-    expect(buildDropTableSql("mssql", "shop", "t")).toBe("DROP TABLE [shop].[dbo].[t];");
   });
 });
 
@@ -50,18 +43,6 @@ describe("buildRenameTableSql", () => {
       'ALTER TABLE "we""ird" RENAME TO "ne""w";',
     );
   });
-
-  it("uses EXEC sp_rename on MSSQL (#729, no RENAME TO in T-SQL)", () => {
-    expect(buildRenameTableSql("mssql", "shop", "old", "new")).toBe(
-      "EXEC sp_rename 'dbo.old', 'new';",
-    );
-  });
-
-  it("escapes embedded quotes for sp_rename's string arguments", () => {
-    expect(buildRenameTableSql("mssql", "shop", "we'ird", "ne'w")).toBe(
-      "EXEC sp_rename 'dbo.we''ird', 'ne''w';",
-    );
-  });
 });
 
 describe("buildCreateIndexSql (#850)", () => {
@@ -74,12 +55,6 @@ describe("buildCreateIndexSql (#850)", () => {
     );
     expect(buildCreateIndexSql("sqlite", "main", "t", ["a"])).toBe(
       'CREATE INDEX "idx_t_a" ON "t" ("a");',
-    );
-  });
-
-  it("qualifies MSSQL tables with the dbo schema (#729)", () => {
-    expect(buildCreateIndexSql("mssql", "shop", "users", ["email"])).toBe(
-      "CREATE INDEX [idx_users_email] ON [shop].[dbo].[users] ([email]);",
     );
   });
 
@@ -109,17 +84,10 @@ describe("buildDropIndexSql (#850)", () => {
     );
   });
 
-  it("uses DROP INDEX ... ON ... with a 3-part dbo-qualified name for MSSQL (#729)", () => {
-    expect(buildDropIndexSql("mssql", "shop", "users", "idx_users_email")).toBe(
-      "DROP INDEX [idx_users_email] ON [shop].[dbo].[users];",
-    );
-  });
-
-  it("uses a bare DROP INDEX (no table clause) for PostgreSQL/SQLite/DuckDB", () => {
+  it("uses a bare DROP INDEX (no table clause) for PostgreSQL/SQLite", () => {
     expect(buildDropIndexSql("postgres", "public", "orders", "idx_orders_user_id")).toBe(
       'DROP INDEX "idx_orders_user_id";',
     );
     expect(buildDropIndexSql("sqlite", "main", "t", "idx_t_a")).toBe('DROP INDEX "idx_t_a";');
-    expect(buildDropIndexSql("duckdb", "main", "t", "idx_t_a")).toBe('DROP INDEX "idx_t_a";');
   });
 });

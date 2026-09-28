@@ -2295,9 +2295,9 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("explain")
         // MySQL 8.0.19+ supports a bare `VALUES ROW(...), ROW(...)` statement
         // that returns a result set (#1052). Other drivers already treat a
-        // leading VALUES as query-shaped (see postgres.rs/sqlite.rs/duckdb.rs/
-        // mssql.rs); MySQL lacked the branch, so the statement was routed to
-        // the execute path and its rows were silently dropped.
+        // leading VALUES as query-shaped (see postgres.rs/sqlite.rs); MySQL
+        // lacked the branch, so the statement was routed to the execute path
+        // and its rows were silently dropped.
         || trimmed.starts_with("values")
 }
 
@@ -2417,15 +2417,14 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// found (e.g. `WITH ... TABLE t`), the statement is treated as query-shaped.
 ///
 /// キーワード列挙そのものは方言非依存 (MySQL/PostgreSQL 双方の DML キーワードを
-/// 含む) なので、`db/postgres.rs` / `db/sqlite.rs` / `db/duckdb.rs` /
-/// `db/mssql.rs` の `is_query_shape` からも `super::mysql::with_cte_is_mutation`
-/// として共有する (`pub(crate)`)。
+/// 含む) なので、`db/postgres.rs` / `db/sqlite.rs` の `is_query_shape` からも
+/// `super::mysql::with_cte_is_mutation` として共有する (`pub(crate)`)。
 ///
 /// **`driver` を受け取る理由 (#1051)**: コメント/リテラルの読み飛ばしだけは
 /// 方言依存で、`\` を文字列リテラルのエスケープ文字と見なすのは MySQL/MariaDB
 /// だけである。以前はこの関数が自前の走査で `\` を無条件にエスケープ扱いして
 /// いたため、`WITH t AS (SELECT '\' AS x) DELETE FROM y` を PostgreSQL /
-/// SQLite / DuckDB / MSSQL でも「文字列が閉じない」と誤読し、CTE の閉じ括弧ごと
+/// SQLite でも「文字列が閉じない」と誤読し、CTE の閉じ括弧ごと
 /// リテラルへ飲み込んで主文の `DELETE` に到達できず「データ変更ではない」= fetch
 /// 経路と判定していた (実サーバは 2 個目の `'` で文字列を閉じ、`DELETE` を実行
 /// する)。#852 が `is_read_only_sql_for` /
@@ -2437,7 +2436,7 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// ドライバを知らない呼び出し口が将来増えた場合は、#852 と同じ fail-closed
 /// 方針で [`super::mask_for_analysis_conservative`] (= `\` を通常文字として
 /// 読む、リテラルが早く閉じる側) を使ってここへ渡すこと。現在の呼び出し口は
-/// 5 ドライバの `is_query_shape` だけで、いずれも自分の `DriverKind` を持つ。
+/// 3 ドライバの `is_query_shape` だけで、いずれも自分の `DriverKind` を持つ。
 ///
 /// 共有マスクへ委譲したことによる副次的な挙動差 (いずれも fail-closed 方向、
 /// または実サーバの解釈に近づく方向):
@@ -2445,7 +2444,7 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// * MySQL の `/*! … */` は**コメントではなく条件付き実行構文**なので、
 ///   [`super::mask_for_driver`] は中身を空白化せずキーワード走査へ残す。
 ///   実際に実行される `DELETE` などがここでも見えるようになる。
-/// * PostgreSQL / DuckDB のドル引用文字列 (`$$…$$` / `$tag$…$tag$`) の中身が
+/// * PostgreSQL のドル引用文字列 (`$$…$$` / `$tag$…$tag$`) の中身が
 ///   リテラルとして正しく伏せられる (以前は素通しだった)。
 pub(crate) fn with_cte_is_mutation(driver: super::DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
@@ -2588,7 +2587,7 @@ mod tests {
     fn query_shape_recognises_bare_values_statement() {
         // MySQL 8.0.19+ supports a bare `VALUES ROW(...), ROW(...)` statement
         // that returns a result set (#1052). It must be routed to the fetch
-        // path like the other drivers (postgres/sqlite/duckdb/mssql).
+        // path like the other drivers (postgres/sqlite).
         assert!(is_query_shape("VALUES ROW(1)"));
         assert!(is_query_shape("VALUES ROW(1, 'a'), ROW(2, 'b')"));
         assert!(is_query_shape("  values row(1)"));
@@ -2674,13 +2673,8 @@ mod tests {
         // MySQL: `\'` はエスケープされた引用符なので文字列が閉じず、主文の
         // DELETE へ到達しない (= 非データ変更)。実サーバの解釈と一致する。
         assert!(!with_cte_is_mutation(DriverKind::Mysql, sql));
-        // それ以外の 4 方言では `\` はただの文字。文字列は閉じ、DELETE が露出する。
-        for driver in [
-            DriverKind::Postgres,
-            DriverKind::Sqlite,
-            DriverKind::DuckDb,
-            DriverKind::Mssql,
-        ] {
+        // それ以外の 2 方言では `\` はただの文字。文字列は閉じ、DELETE が露出する。
+        for driver in [DriverKind::Postgres, DriverKind::Sqlite] {
             assert!(
                 with_cte_is_mutation(driver, sql),
                 "{driver:?} must see the DELETE that follows the closed literal"
@@ -2699,13 +2693,7 @@ mod tests {
         use crate::db::DriverKind;
 
         let sql = r"WITH t AS (SELECT 'a\\' AS x) DELETE FROM y";
-        for driver in [
-            DriverKind::Mysql,
-            DriverKind::Postgres,
-            DriverKind::Sqlite,
-            DriverKind::DuckDb,
-            DriverKind::Mssql,
-        ] {
+        for driver in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             assert!(
                 with_cte_is_mutation(driver, sql),
                 "{driver:?} must treat the escaped backslash as closing the literal"

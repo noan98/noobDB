@@ -70,7 +70,7 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   });
 }
 
-export type DriverKind = "mysql" | "postgres" | "sqlite" | "duckdb" | "mssql";
+export type DriverKind = "mysql" | "postgres" | "sqlite";
 
 export type SshAuthMethod = "key" | "agent" | "password";
 
@@ -487,9 +487,8 @@ export interface TableColumnInfo {
   /** Referenced column for the foreign key, when known. */
   referenced_column: string | null;
   /**
-   * 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description` /
-   * MSSQL `MS_Description` / DuckDB `duckdb_columns().comment`。無い・SQLite は
-   * `null`。古いバックエンドは送らないので省略可能 (後方互換)。
+   * 列コメント (#1002)。MySQL `COLUMN_COMMENT` / PostgreSQL `col_description`。
+   * 無い・SQLite は `null`。古いバックエンドは送らないので省略可能 (後方互換)。
    */
   comment?: string | null;
 }
@@ -544,7 +543,7 @@ export type RoutineParamMode = "in" | "out" | "inout" | "variadic" | "table";
 
 /** ストアドプロシージャ / 関数の 1 パラメータ (`get_routine_signature`)。 */
 export interface RoutineParameter {
-  /** パラメータ名。PostgreSQL の無名引数は空文字、MSSQL は先頭 `@` 付き。 */
+  /** パラメータ名。PostgreSQL の無名引数は空文字。 */
   name: string;
   /** 入出力モード。未知の値はバックエンドが `in` に倒して返す。 */
   mode: RoutineParamMode | string;
@@ -1700,8 +1699,8 @@ export const api = {
     ),
   /**
    * 列データプロファイル (#974)。単一 SELECT の集計だけなので read_only セッション
-   * でも動く。`approximate` は PostgreSQL (統計情報) / DuckDB (HyperLogLog) で
-   * DISTINCT を近似する (他ドライバは正確値に縮退し `notes` に理由が入る)。
+   * でも動く。`approximate` は PostgreSQL (統計情報) で DISTINCT を近似する
+   * (他ドライバは正確値に縮退し `notes` に理由が入る)。
    */
   profileColumn: (
     sessionId: string,
@@ -1741,7 +1740,7 @@ export const api = {
     }),
   /**
    * ストアドプロシージャ / 関数のシグネチャ (パラメータ・戻り値) を取得する (#1003)。
-   * 読み取り専用の introspection。SQLite / DuckDB は未対応エラーを返す。
+   * 読み取り専用の introspection。SQLite は未対応エラーを返す。
    * `id` は PostgreSQL の oid (オーバーロード解決用)。
    */
   getRoutineSignature: (

@@ -156,7 +156,7 @@ pub async fn get_object_definition(
 /// 「実行…」フォームの入力欄を組み立てるための読み取り専用 introspection で、
 /// read_only セッションでも許可する (実際の実行は通常のクエリ経路
 /// `run_query_stream` に乗り、`ensure_allowed_for_session` の安全網を通る)。
-/// SQLite / DuckDB はエラー (未対応)。`get_object_definition` と同じく DDL 直後に
+/// SQLite はエラー (未対応)。`get_object_definition` と同じく DDL 直後に
 /// 古い値を返さないようキャッシュしない。
 #[tauri::command]
 pub async fn get_routine_signature(

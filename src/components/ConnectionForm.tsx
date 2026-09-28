@@ -258,8 +258,6 @@ function defaultPortFor(driver: DriverKind): number {
     case "mysql": return 3306;
     case "postgres": return 5432;
     case "sqlite": return 0;
-    case "duckdb": return 0;
-    case "mssql": return 1433;
   }
 }
 
@@ -268,19 +266,11 @@ function defaultUserFor(driver: DriverKind): string {
     case "mysql": return "root";
     case "postgres": return "postgres";
     case "sqlite": return "";
-    case "duckdb": return "";
-    case "mssql": return "sa";
   }
 }
 
 function normalizeDriver(driver: string | undefined): DriverKind {
-  if (
-    driver === "postgres" ||
-    driver === "sqlite" ||
-    driver === "mysql" ||
-    driver === "duckdb" ||
-    driver === "mssql"
-  ) {
+  if (driver === "postgres" || driver === "sqlite" || driver === "mysql") {
     return driver;
   }
   return "mysql";
@@ -438,9 +428,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshPortError, setSshPortError] = useState<string | null>(null);
   const [sshJumpPortError, setSshJumpPortError] = useState<string | null>(null);
 
-  // DuckDB (#709) is file-backed exactly like SQLite: same `file_path`
-  // requirement, no host/port/user/password, no SSH tunnel, no TLS.
-  const isFileBacked = driver === "sqlite" || driver === "duckdb";
+  const isFileBacked = driver === "sqlite";
   // AWS IAM auth applies only to network MySQL / PostgreSQL (#734). It forces
   // TLS, so the effective mode shown/sent is at least `require`.
   const iamActive = !isFileBacked && isIamCapableDriver(driver) && authMethod === "aws_iam";
@@ -572,16 +560,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       multiple: false,
       directory: false,
       title: t("formPickDbFileTitle"),
-      filters:
-        driver === "duckdb"
-          ? [
-              { name: t("formDuckDbFileFilter"), extensions: ["duckdb", "db"] },
-              { name: t("formAnyFileFilter"), extensions: ["*"] },
-            ]
-          : [
-              { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
-              { name: t("formAnyFileFilter"), extensions: ["*"] },
-            ],
+      filters: [
+        { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
+        { name: t("formAnyFileFilter"), extensions: ["*"] },
+      ],
     });
     if (typeof selected === "string") setFilePath(selected);
   };
@@ -804,44 +786,32 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <option value="mysql">{t("formDriverMysql")}</option>
           <option value="postgres">{t("formDriverPostgres")}</option>
           <option value="sqlite">{t("formDriverSqlite")}</option>
-          <option value="duckdb">{t("formDriverDuckDb")}</option>
-          <option value="mssql">{t("formDriverMssql")}</option>
         </Select>
       </Box>
 
       {isFileBacked ? (
         <Fieldset>
-          <Legend>{driver === "duckdb" ? t("formDuckDbLegend") : t("formSqliteLegend")}</Legend>
+          <Legend>{t("formSqliteLegend")}</Legend>
           <Box>
-            <label htmlFor={`${fid}-sqlite-path`}>
-              {driver === "duckdb" ? t("formDuckDbFilePath") : t("formSqliteFilePath")}
-            </label>
+            <label htmlFor={`${fid}-sqlite-path`}>{t("formSqliteFilePath")}</label>
             <Flex gap="2" align="end">
               <Input
                 id={`${fid}-sqlite-path`}
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
-                placeholder={
-                  driver === "duckdb"
-                    ? t("formDuckDbFilePathPlaceholder")
-                    : t("formSqliteFilePathPlaceholder")
-                }
+                placeholder={t("formSqliteFilePathPlaceholder")}
               />
               <Button type="button" onClick={pickDbFile}>{t("formBrowse")}</Button>
             </Flex>
             <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
-              {driver === "duckdb" ? t("formDuckDbFilePathHelp") : t("formSqliteFilePathHelp")}
+              {t("formSqliteFilePathHelp")}
             </Text>
           </Box>
         </Fieldset>
       ) : (
         <Fieldset>
           <Legend>
-            {driver === "postgres"
-              ? t("formPostgresLegend")
-              : driver === "mssql"
-                ? t("formMssqlLegend")
-                : t("formMysqlLegend")}
+            {driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}
           </Legend>
           <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
             <Box>
@@ -1358,11 +1328,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             value={initSql}
             onChange={(e) => setInitSql(e.target.value)}
             placeholder={
-              driver === "sqlite"
-                ? t("formInitSqlPlaceholderSqlite")
-                : driver === "duckdb"
-                  ? t("formInitSqlPlaceholderDuckDb")
-                  : t("formInitSqlPlaceholder")
+              driver === "sqlite" ? t("formInitSqlPlaceholderSqlite") : t("formInitSqlPlaceholder")
             }
             rows={3}
             css={{ fontFamily: "var(--font-mono)", resize: "vertical", width: "100%" }}

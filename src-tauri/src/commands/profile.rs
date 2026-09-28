@@ -9,7 +9,7 @@ use crate::state::AppState;
 /// 生成する SQL はすべて単一の SELECT なので read_only セッションでも許可する。
 /// `conn` を直接呼ぶ経路のためクエリ履歴 (`history.sqlite`) は汚さない
 /// (`commands/inspector.rs` と同じ)。`approximate` は使えるドライバ
-/// (PostgreSQL の統計情報 / DuckDB の `approx_count_distinct`) で DISTINCT を
+/// (PostgreSQL の統計情報) で DISTINCT を
 /// 近似し、全件の `COUNT(DISTINCT)` を避ける。
 #[tauri::command]
 pub async fn profile_column(

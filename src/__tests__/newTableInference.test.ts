@@ -113,10 +113,9 @@ describe("inferColumnType", () => {
 
   it("MySQL では真偽を推論しない (文字列へ縮退)", () => {
     expect(inferColumnType(["true", "false"], "postgres")).toBe("boolean");
-    expect(inferColumnType(["true", "false"], "mssql")).toBe("boolean");
     expect(inferColumnType(["true", "false"], "mysql")).toBe("text");
     expect(newColumnTypeOptions("mysql")).not.toContain("boolean");
-    expect(newColumnTypeOptions("duckdb")).toContain("boolean");
+    expect(newColumnTypeOptions("postgres")).toContain("boolean");
   });
 
   it("空文字は NULL トークン次第: NULL 化しなければ数値列が文字列になる", () => {

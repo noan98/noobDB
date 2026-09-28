@@ -123,7 +123,7 @@ describe("splitSqlStatements — driver-aware backslash escaping (#852, #1004)",
   // cursor and run it too.
   const sql = "SELECT '\\' AS x; DROP TABLE t";
 
-  it.each(["postgres", "sqlite", "duckdb", "mssql"])(
+  it.each(["postgres", "sqlite"])(
     "splits into two statements on %s (backslash is not an escape)",
     (driver) => {
       expect(splitSqlStatements(sql, driver)).toEqual([
@@ -152,14 +152,14 @@ describe("splitSqlStatements — driver-aware backslash escaping (#852, #1004)",
   it("statementAtOffset does not fold a following DROP into the cursor statement on non-MySQL drivers", () => {
     // Cursor sits inside "SELECT '\' AS x" (offset 5). On a non-MySQL driver
     // the range returned must stop before `; DROP TABLE t`.
-    for (const driver of ["postgres", "sqlite", "duckdb", "mssql"] as const) {
+    for (const driver of ["postgres", "sqlite"] as const) {
       expect(statementAtOffset(sql, 5, driver)?.text).toBe("SELECT '\\' AS x");
     }
     expect(statementAtOffset(sql, 5)?.text).toBe("SELECT '\\' AS x");
   });
 
   it("isMultiStatement agrees with splitSqlStatements across drivers", () => {
-    for (const driver of ["postgres", "sqlite", "duckdb", "mssql"] as const) {
+    for (const driver of ["postgres", "sqlite"] as const) {
       expect(isMultiStatement(sql, driver)).toBe(true);
     }
     expect(isMultiStatement(sql)).toBe(true);

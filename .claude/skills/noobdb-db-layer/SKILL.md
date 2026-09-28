@@ -1,13 +1,12 @@
 ---
 name: noobdb-db-layer
-description: noobDB の DB ドライバ層 (src-tauri/src/db/) を変更するとき、新しいドライバや列型を追加するとき、enum Connection のディスパッチ・MSSQL (tiberius) の手書きプール・TLS/SSL 設定・セッション初期化 SQL・値のデコード規約を調べるときに読む。
+description: noobDB の DB ドライバ層 (src-tauri/src/db/) を変更するとき、新しいドライバや列型を追加するとき、enum Connection のディスパッチ・TLS/SSL 設定・セッション初期化 SQL・値のデコード規約を調べるときに読む。
 ---
 
 # noobDB の DB ドライバ層 (`src-tauri/src/db/`)
 
-対応ドライバは **MySQL / PostgreSQL / SQLite / DuckDB / Microsoft SQL Server** の
-5 つ。ディスパッチはトレイトオブジェクトではなく**手書きの `enum Connection`**
-(`db/mod.rs`) です。
+対応ドライバは **MySQL / PostgreSQL / SQLite** の 3 つ。ディスパッチはトレイト
+オブジェクトではなく**手書きの `enum Connection`** (`db/mod.rs`) です。
 
 ## ドライバを追加・変更するときの手順
 
@@ -34,7 +33,7 @@ description: noobDB の DB ドライバ層 (src-tauri/src/db/) を変更する�
 
 | ファイル | 内容 |
 |---|---|
-| `references/drivers.md` | `enum Connection` のメソッド表面、MSSQL (tiberius) の手書きプールと「疑わしい接続は捨てる」方針、整数/PostgreSQL のデコード規約、`is_query_shape` |
+| `references/drivers.md` | `enum Connection` のメソッド表面、整数/PostgreSQL のデコード規約、`is_query_shape` |
 | `references/tls.md` | `SslMode` とドライバ別マッピング、証明書はパスのみ保存、TLS 統合テストの CI 配備 |
 | `references/session-init-sql.md` | `after_connect` フックでの初期化 SQL と読み取り専用との整合 |
 

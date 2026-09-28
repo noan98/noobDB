@@ -157,12 +157,7 @@ pub(crate) fn select_rows_sql(
         .collect::<Vec<_>>()
         .join(", ");
     let table = quote_ident(driver, table);
-    match driver {
-        // T-SQL には `LIMIT` が無いので `TOP (n)` (#739 のタイムラプスが MSSQL でも
-        // 同じ関数を使うため)。
-        DriverKind::Mssql => format!("SELECT TOP ({limit}) {cols} FROM {table} ORDER BY {order}"),
-        _ => format!("SELECT {cols} FROM {table} ORDER BY {order} LIMIT {limit}"),
-    }
+    format!("SELECT {cols} FROM {table} ORDER BY {order} LIMIT {limit}")
 }
 
 #[cfg(test)]
@@ -180,10 +175,6 @@ mod select_rows_sql_tests {
         assert_eq!(
             select_rows_sql(DriverKind::Postgres, "t", &cols, &pk, 11),
             "SELECT \"id\", \"v\" FROM \"t\" ORDER BY \"id\" LIMIT 11"
-        );
-        assert_eq!(
-            select_rows_sql(DriverKind::Mssql, "t", &cols, &pk, 11),
-            "SELECT TOP (11) [id], [v] FROM [t] ORDER BY [id]"
         );
     }
 }
