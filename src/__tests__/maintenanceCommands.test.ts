@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   databaseMaintenanceCommands,
+  matviewRefreshCommands,
   tableMaintenanceCommands,
   type MaintenanceKind,
 } from "../components/maintenanceCommands";
@@ -67,5 +68,28 @@ describe("databaseMaintenanceCommands", () => {
 
   it("returns nothing for MySQL (no global maintenance statement)", () => {
     expect(databaseMaintenanceCommands("mysql")).toEqual([]);
+  });
+});
+
+describe("matviewRefreshCommands (#1241)", () => {
+  it("generates plain and CONCURRENTLY REFRESH for PostgreSQL", () => {
+    expect(matviewRefreshCommands("postgres", "public", "mv_sales")).toEqual([
+      { kind: "refreshMatview", sql: 'REFRESH MATERIALIZED VIEW "public"."mv_sales";' },
+      {
+        kind: "refreshMatviewConcurrently",
+        sql: 'REFRESH MATERIALIZED VIEW CONCURRENTLY "public"."mv_sales";',
+      },
+    ]);
+  });
+
+  it("escapes embedded double quotes in identifiers", () => {
+    expect(matviewRefreshCommands("postgres", 'sc"h', 'm"v')[0]?.sql).toBe(
+      'REFRESH MATERIALIZED VIEW "sc""h"."m""v";',
+    );
+  });
+
+  it("returns nothing for drivers without materialized views", () => {
+    expect(matviewRefreshCommands("mysql", "shop", "v")).toEqual([]);
+    expect(matviewRefreshCommands("sqlite", null, "v")).toEqual([]);
   });
 });
