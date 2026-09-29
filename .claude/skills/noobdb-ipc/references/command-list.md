@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **120 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **122 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -111,7 +111,13 @@
 ## エクスポート / ダンプ / インポート / ファイル
 
 `export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
-`import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_binary_file`
+`import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_binary_file` /
+`fetch_cell_bytes` / `read_binary_file`
+
+`fetch_cell_bytes` / `read_binary_file` (`commands/cell_blob.rs`, #1148) は BLOB セルの
+ファイル入出力用。前者は主キーで 1 セルの生バイト (16 進) を SELECT のみで引き直し
+(`read_only` でも通る)、後者はファイルを 16 進で読む (上限 16 MiB)。書き戻しは
+フロントが `UPDATE` を組み立てて通常の `run_query` (読み取り専用ガード付き) で流す。
 
 `preview_create_table_ddl` は「ファイルから新規テーブルを作成」(#985) の DDL
 プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ

@@ -1,5 +1,6 @@
 pub mod advisor;
 pub mod assertions;
+pub mod cell_blob;
 pub mod connection;
 pub mod diff;
 pub mod dump;

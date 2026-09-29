@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { CellValue } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
@@ -12,6 +12,13 @@ import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
 import { Segmented } from "./Segmented";
 import { FieldError } from "./modalForm";
+import type { CellBlobHandlers } from "./useCellBlobIo";
+import {
+  MAX_PREVIEW_BYTES,
+  detectBlobKindFromHex,
+  formatBlobSize,
+  hexToBytes,
+} from "./blobIo";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -46,7 +53,18 @@ interface Props {
    * のに使う (#1026)。未指定なら SQL のコピー導線を出さない。
    */
   driver?: string;
+  /**
+   * バイナリセルのファイル保存 / 読み込みと画像プレビュー (#1148)。行を主キーで
+   * 引けるときだけ渡される。`load` が無いときは書き戻し不可 (読み取り専用など)。
+   */
+  blob?: CellBlobHandlers;
 }
+
+/** 生バイト取得の状態。画像なら `url` にプレビュー用の Blob URL が入る。 */
+type BlobPreview =
+  | { state: "loading" }
+  | { state: "error"; error: string }
+  | { state: "ready"; size: number; mime: string | null; url: string | null };
 
 type JsonViewMode = "tree" | "text";
 
@@ -83,6 +101,7 @@ export function CellValueViewer({
   onSave,
   onClose,
   driver,
+  blob,
 }: Props) {
   const t = useT();
   const toast = useToast();
@@ -114,6 +133,47 @@ export function CellValueViewer({
   const [nullDraft, setNullDraft] = useState(pendingIsNull || (hasPending ? false : isNull));
 
   const { copied, copy } = useCopyFeedback();
+
+  // バイナリセルの生バイトをサーバから引き直し、マジックバイトで種別を判定する。
+  // 画像なら Blob URL を作ってインライン表示する。値 (`value`) が変わったら
+  // (ファイルからの書き戻し後など) 取り直す。ハンドラは毎レンダーで作り直される
+  // ので ref 経由で最新を参照し、取得のトリガは値の変化だけにする。
+  const blobRef = useRef(blob);
+  blobRef.current = blob;
+  const hasBlob = !!blob;
+  const [preview, setPreview] = useState<BlobPreview | null>(null);
+  useEffect(() => {
+    if (!isBinary || !hasBlob || isNull) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    let url: string | null = null;
+    setPreview({ state: "loading" });
+    void (async () => {
+      try {
+        const hex = await blobRef.current?.fetchHex();
+        if (cancelled) return;
+        if (hex === null || hex === undefined) {
+          setPreview(null);
+          return;
+        }
+        const kind = detectBlobKindFromHex(hex);
+        const size = hex.length / 2;
+        if (kind?.image && size <= MAX_PREVIEW_BYTES) {
+          const bytes = hexToBytes(hex);
+          if (bytes) url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: kind.mime }));
+        }
+        setPreview({ state: "ready", size, mime: kind?.mime ?? null, url });
+      } catch (e) {
+        if (!cancelled) setPreview({ state: "error", error: String(e) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [value, isBinary, hasBlob, isNull]);
 
   const handleCopy = async () => {
     await copy(display);
@@ -172,6 +232,44 @@ export function CellValueViewer({
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="2">
+        {!editing && preview && (
+          <chakra.div display="flex" flexDirection="column" gap="2">
+            {preview.state === "loading" && (
+              <chakra.div color="app.textMuted" fontSize="sm">
+                {t("blobLoading")}
+              </chakra.div>
+            )}
+            {preview.state === "error" && (
+              <FieldError display="block">{t("blobFetchFailed", { error: preview.error })}</FieldError>
+            )}
+            {preview.state === "ready" && (
+              <>
+                <chakra.div color="app.textMuted" fontSize="sm" textStyle="numeric">
+                  {preview.mime ?? t("blobKindUnknown")} · {formatBlobSize(preview.size)}
+                </chakra.div>
+                {preview.url && (
+                  <chakra.div
+                    display="flex"
+                    justifyContent="center"
+                    p="2"
+                    bg="app.bgInput"
+                    border="1px solid"
+                    borderColor="app.border"
+                    borderRadius="md"
+                  >
+                    <chakra.img
+                      src={preview.url}
+                      alt={t("blobPreviewAlt", { column: columnName })}
+                      maxW="100%"
+                      maxH="40vh"
+                      objectFit="contain"
+                    />
+                  </chakra.div>
+                )}
+              </>
+            )}
+          </chakra.div>
+        )}
         {editing ? (
           <>
             <chakra.textarea
@@ -292,6 +390,16 @@ export function CellValueViewer({
                   label={t("cellViewerFormatJson")}
                 />
               </chakra.span>
+            )}
+            {blob && !isNull && (
+              <Button type="button" onClick={() => void blob.save()}>
+                {t("blobSave")}
+              </Button>
+            )}
+            {blob?.load && (
+              <Button type="button" onClick={() => void blob.load?.()}>
+                {t("blobLoad")}
+              </Button>
             )}
             <chakra.div flex="1" />
             <CopyButton
