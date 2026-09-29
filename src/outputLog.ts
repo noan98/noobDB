@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
+import type { ServerMessage, ServerMessageSeverity } from "./api/tauri";
 import type { I18nKey } from "./i18n";
+import type { SemanticRole } from "./semanticColors";
 
 /**
  * Bottom Panel の「出力」タブ (#1114) が表示する実行ログの共有ストア。
@@ -49,9 +51,49 @@ export interface OutputEntry {
   connection: string | null;
   /** 実行した DB (タブの DB → プロファイル既定)。 */
   database: string | null;
+  /**
+   * サーバが実行中に返した通知・警告 (#1165)。PostgreSQL の `RAISE NOTICE` や
+   * MySQL の `SHOW WARNINGS`。noobDB 自身の結末とは別物で、行を展開すると読める。
+   */
+  serverMessages?: readonly ServerMessage[];
 }
 
 export type OutputInput = Omit<OutputEntry, "id" | "at">;
+
+/** 重大度の重い順 (小さいほど重い)。 */
+const SEVERITY_RANK: Record<ServerMessageSeverity, number> = {
+  error: 0,
+  warning: 1,
+  notice: 2,
+  info: 3,
+};
+
+/** サーバ側メッセージの重大度 → 意味色の役割 (面の上の文字なので `text` 階で使う)。 */
+export const SERVER_SEVERITY_ROLE: Record<ServerMessageSeverity, SemanticRole> = {
+  error: "danger",
+  warning: "warning",
+  notice: "info",
+  info: "info",
+};
+
+/** サーバ側メッセージの重大度ラベルの i18n キー。 */
+export const SERVER_SEVERITY_LABEL: Record<ServerMessageSeverity, I18nKey> = {
+  error: "activitySeverityError",
+  warning: "activitySeverityWarning",
+  notice: "outputServerSeverityNotice",
+  info: "activitySeverityInfo",
+};
+
+/** 一覧の見出しで色を決めるための最も重い重大度。メッセージが無ければ null。 */
+export function worstServerSeverity(
+  messages: readonly ServerMessage[] | undefined,
+): ServerMessageSeverity | null {
+  if (!messages || messages.length === 0) return null;
+  return messages.reduce<ServerMessageSeverity>(
+    (worst, m) => (SEVERITY_RANK[m.severity] < SEVERITY_RANK[worst] ? m.severity : worst),
+    messages[0].severity,
+  );
+}
 
 /** 保持する最大件数。 */
 export const OUTPUT_LIMIT = 500;

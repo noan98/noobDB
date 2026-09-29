@@ -191,6 +191,7 @@ impl SqliteConn {
             rows: Vec::new(),
             rows_affected: total as u64,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
         })
     }
 
@@ -1223,6 +1224,7 @@ async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Quer
             rows: rows_out,
             rows_affected: 0,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
         })
     } else {
         let result = sqlx::query(sqlx::AssertSqlSafe(sql))

@@ -6,7 +6,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::tx_options::{TxIsolation, TxOptions};
-use crate::db::types::{Column, QueryResult, StreamBatch, Value};
+use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
 use crate::db::{apply_auto_limit_for, is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
@@ -121,10 +121,15 @@ fn ensure_auto_refresh_read_only(driver: DriverKind, sql: &str) -> Result<()> {
 /// a broadcast, but this is the backend-enforced half of that guarantee.
 /// `driver` selects the string-escaping rules the read-only analysis assumes
 /// (#852), same as [`ensure_auto_refresh_read_only`].
+///
+/// EXPLAIN の実測モード (`EXPLAIN ANALYZE`, #1164) も同じ `force_read_only`
+/// 経路を使う。`ANALYZE` は SQL を**実際に実行する**ので、対象が書き込みだと
+/// 本当にデータが変わる。`EXPLAIN` は許可プレフィックスだが本文の書き込み
+/// キーワード走査が効くため、`EXPLAIN ANALYZE DELETE ...` は拒否される。
 fn ensure_broadcast_read_only(driver: DriverKind, sql: &str) -> Result<()> {
     if !is_read_only_sql_for(driver, sql) {
         return Err(AppError::ReadOnly(
-            "broadcast execution allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
+            "forced read-only execution (broadcast / EXPLAIN ANALYZE) allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
                 .into(),
         ));
     }
@@ -552,6 +557,9 @@ pub enum QueryStreamMessage {
         /// The row cap that was auto-injected for this run, or `null` when none
         /// was applied. Lets the UI show a "auto LIMIT N applied" badge.
         applied_auto_limit: Option<u64>,
+        /// サーバが実行中に返した通知・警告 (PostgreSQL NOTICE/WARNING、MySQL
+        /// SHOW WARNINGS)。SQLite と無い場合は空配列 (#1165)。
+        server_messages: Vec<ServerMessage>,
     },
     Error {
         error: String,
@@ -919,6 +927,7 @@ async fn spawn_query_stream(
                 } else {
                     applied_auto_limit
                 },
+                server_messages: res.server_messages.clone(),
             }) {
                 tracing::warn!(
                     session_id = %session.id,
@@ -1044,6 +1053,7 @@ async fn spawn_captured_write(
                 elapsed_ms,
                 has_columns: false,
                 applied_auto_limit: None,
+                server_messages: result.server_messages.clone(),
             }) {
                 tracing::warn!(
                     session_id = %session.id,
@@ -1548,6 +1558,8 @@ mod tests {
             "SHOW TABLES",
             "DESCRIBE users",
             "EXPLAIN SELECT 1",
+            "EXPLAIN ANALYZE SELECT * FROM users",
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users",
             "WITH t AS (SELECT 1) SELECT * FROM t",
         ] {
             for driver in ALL_DRIVERS {
@@ -1571,6 +1583,12 @@ mod tests {
             "SELECT 1; DELETE FROM users",
             // Data-modifying CTE.
             "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+            // #1164: 実測モード (EXPLAIN ANALYZE) は対象 SQL を実際に実行する。
+            "EXPLAIN ANALYZE DELETE FROM users",
+            "EXPLAIN ANALYZE UPDATE users SET name = 'x'",
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) INSERT INTO users VALUES (1)",
+            "EXPLAIN (ANALYZE) WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+            "EXPLAIN ANALYZE SELECT 1; DELETE FROM users",
         ] {
             for driver in ALL_DRIVERS {
                 assert!(

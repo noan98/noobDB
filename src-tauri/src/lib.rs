@@ -43,9 +43,10 @@ pub mod __test_api {
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
         ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature,
-        SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch,
-        TableColumnInfo, TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-        TableSchema, TableSizeInfo, UserPrivileges, Value,
+        SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics,
+        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableComment,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -796,17 +797,34 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn"));
+    // ログ出力用フィルタ。NOTICE 捕捉 Layer (#1165) と独立させるため、グローバルでは
+    // なく各出力 Layer に per-layer フィルタとして付ける (グローバルに掛けると
+    // `sqlx=warn` が sqlx の NOTICE イベントを捕捉側からも隠してしまう)。
+    let make_filter =
+        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn"));
 
     // Tee events to stdout (terminal during `tauri dev`) and to a size-capped
     // file under the data dir that the Settings log viewer reads. The file layer
     // is dropped when no data dir is available, leaving stdout-only logging.
-    let file_layer = logs::init().map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
+    let file_layer = logs::init().map(|writer| {
+        fmt::layer()
+            .with_ansi(false)
+            .with_writer(writer)
+            .with_filter(make_filter())
+    });
+    // sqlx (postgres) の NOTICE / WARNING を実行中の文へ紐づけて捕捉する (#1165)。
+    let notice_layer =
+        db::server_messages::NoticeCaptureLayer.with_filter(tracing_subscriber::filter::filter_fn(
+            |meta| meta.target() == db::server_messages::NOTICE_TARGET,
+        ));
     tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt::layer().with_writer(std::io::stdout))
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_filter(make_filter()),
+        )
         .with(file_layer)
+        .with(notice_layer)
         .init();
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
@@ -952,6 +970,8 @@ pub fn run() {
             commands::transfer::transfer_data,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
+            commands::cell_blob::fetch_cell_bytes,
+            commands::cell_blob::read_binary_file,
             commands::file::write_binary_file,
             commands::local::create_local_session,
             commands::local::register_local_table,

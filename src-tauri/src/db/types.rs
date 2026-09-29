@@ -82,6 +82,12 @@ pub struct QueryResult {
     pub rows_affected: u64,
     /// Wall-clock duration in milliseconds for client-side display.
     pub elapsed_ms: u64,
+    /// サーバが文の実行中に返した通知・警告 (#1165)。PostgreSQL の NOTICE /
+    /// WARNING、MySQL の `SHOW WARNINGS`。SQLite と、捕捉できなかった経路は空。
+    /// `#[serde(default)]` なので、このフィールドを持たない JSON (キャッシュ等)
+    /// も読める。
+    #[serde(default)]
+    pub server_messages: Vec<ServerMessage>,
 }
 
 impl QueryResult {
@@ -91,8 +97,35 @@ impl QueryResult {
             rows: Vec::new(),
             rows_affected,
             elapsed_ms,
+            server_messages: Vec::new(),
         }
     }
+
+    /// サーバ側メッセージ (#1165) を載せた結果を返す。
+    pub fn with_server_messages(mut self, server_messages: Vec<ServerMessage>) -> Self {
+        self.server_messages = server_messages;
+        self
+    }
+}
+
+/// サーバ側メッセージの重大度 (#1165)。ドライバ固有の語彙を UI が扱う 4 段に
+/// 正規化する: PostgreSQL の NOTICE → `Notice`、WARNING → `Warning`、
+/// INFO / LOG / DEBUG → `Info`。MySQL の Note → `Info`、Warning → `Warning`、
+/// Error → `Error`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerMessageSeverity {
+    Error,
+    Warning,
+    Notice,
+    Info,
+}
+
+/// サーバが文の実行中に返した通知・警告 1 件 (#1165)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerMessage {
+    pub severity: ServerMessageSeverity,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

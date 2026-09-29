@@ -42,6 +42,7 @@ import {
   applyEditsToRows,
   buildDeleteStatements,
   buildInsertStatements,
+  buildBlobUpdateStatement,
   buildUpdateStatements,
   countEditedCells,
   countEditedRows,
@@ -106,6 +107,7 @@ import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./components/ResultViewSwitch";
 import { bundleExplainPrefix, bundlePlanSupported } from "./components/investigationBundle";
+import { buildExplainAnalyzeSql, explainAnalyzeSupported } from "./components/explainAnalyze";
 import { TabBar } from "./components/TabBar";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
@@ -319,6 +321,7 @@ import { extractQueryParams, substituteQueryParams, type ParamType } from "./que
 import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
+import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
   shouldAutoReconnect,
@@ -689,6 +692,11 @@ interface Tab {
   lastExecutedSql: string;
   /** 直近の実行が完了した時刻 (epoch ms)。調査バンドル (#745) の「実行日時」。 */
   lastRunAt?: number;
+  /**
+   * EXPLAIN タブの「実測モード (EXPLAIN ANALYZE)」が ON か (#1164)。ON の間は
+   * 再実行も実測で走る。永続化しない (復元したタブは推定 EXPLAIN から始める)。
+   */
+  explainAnalyze?: boolean;
   result: QueryResult | null;
   preview: PreviewResult | null;
   schemaTable: SchemaTable | null;
@@ -3611,7 +3619,9 @@ export default function App() {
     // されていないためクロージャの `sessionId` / `tabs` が古い — 特に切替元の
     // セッション (例: ローカル横断クエリの SQLite) へクエリが飛び、切替先のテーブルが
     // "no such table" になる事故があった。渡されたものをクロージャより優先する。
-    override?: { sessionId?: string; tab?: Tab },
+    // `forceReadOnly` は EXPLAIN 実測モード (#1164) 用: バックエンドにも読み取り専用を
+    // 強制させる (プロファイルの read_only に関わらず、書き込み文は拒否される)。
+    override?: { sessionId?: string; tab?: Tab; forceReadOnly?: boolean },
   ) => {
     const sid = override?.sessionId ?? sessionId;
     if (!sid) {
@@ -3708,7 +3718,7 @@ export default function App() {
           };
         });
       },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit }) => {
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages }) => {
         // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
         markQueryDone(streamId, {
           rows: hasColumns ? totalRows : rowsAffected,
@@ -3719,7 +3729,7 @@ export default function App() {
           if (!hasColumns) {
             return {
               ...tt,
-              result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs },
+              result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs, server_messages: serverMessages },
               lastRunAt: Date.now(),
               streaming: false,
               canLoadMore: false,
@@ -3756,6 +3766,7 @@ export default function App() {
               rows: hasColumns ? totalRows : rowsAffected,
               elapsedMs,
               error: null,
+              serverMessages,
             },
             tab?.database,
           );
@@ -3864,6 +3875,7 @@ export default function App() {
         autoLimit,
         queryTimeoutSecs: timeoutSecs,
         autoRefresh,
+        forceReadOnly: override?.forceReadOnly ?? false,
         // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
         // 自動リフレッシュ (常に読み取り専用) は対象外。
         capture:
@@ -4527,6 +4539,7 @@ export default function App() {
             rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
             elapsedMs: res.elapsed_ms,
             error: null,
+            serverMessages: res.server_messages,
           },
           db,
         );
@@ -4598,6 +4611,7 @@ export default function App() {
           rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
           elapsedMs: res.elapsed_ms,
           error: null,
+          serverMessages: res.server_messages,
         },
         null,
       );
@@ -4635,12 +4649,46 @@ export default function App() {
     }
   }, [sessionId, toast]);
 
+  // EXPLAIN タブの実行を 1 か所に集約する (#1164)。推定モードは従来どおり
+  // `explainPrefixFor` のプレフィックスで走らせる。実測モード (analyze) は SQL を
+  // 実際に実行するので、(1) 読み取り専用と判定できない SQL は実行しない
+  // (`buildExplainAnalyzeSql`)、(2) 実行前に明示確認、(3) バックエンドにも
+  // `forceReadOnly` で読み取り専用を強制させる、の 3 段で守る。
+  const runExplainInTab = useCallback(async (
+    tabId: string,
+    sql: string,
+    analyze: boolean,
+    override?: { sessionId?: string; tab?: Tab },
+  ) => {
+    const driver = selectedProfile?.driver;
+    if (!analyze) {
+      updateTab(tabId, { explainAnalyze: false });
+      void runQueryInTab(tabId, `${explainPrefixFor(driver)}${sql}`, null, null, false, override);
+      return;
+    }
+    const built = buildExplainAnalyzeSql(driver, sql);
+    if (!built.ok) {
+      if (built.reason === "notReadOnly") toast.error(translate("explainAnalyzeBlockedToast"));
+      else if (built.reason === "unsupported") toast.error(translate("explainAnalyzeUnsupportedToast"));
+      return;
+    }
+    const ok = await confirm({
+      title: translate("explainAnalyzeConfirmTitle"),
+      message: translate("explainAnalyzeConfirmBody"),
+      confirmLabel: translate("explainAnalyzeConfirmRun"),
+      tone: "warning",
+    });
+    if (!ok) return;
+    updateTab(tabId, { explainAnalyze: true });
+    void runQueryInTab(tabId, built.sql, null, null, false, { ...override, forceReadOnly: true });
+  }, [selectedProfile?.driver, runQueryInTab, updateTab, toast, translate, confirm]);
+
   const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
     // it never trips the destructive-query gate or auto LIMIT.
     if (tab.kind === "explain") {
-      runQueryInTab(tab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
+      void runExplainInTab(tab.id, sql, !!tab.explainAnalyze);
       return;
     }
     // 複数結果タブ: 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
@@ -4774,14 +4822,15 @@ export default function App() {
     // Re-explain in place when already on an explain tab; otherwise open a
     // dedicated explain tab in the same pane so the source is left untouched.
     if (sourceTab.kind === "explain") {
-      runQueryInTab(sourceTab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
+      void runExplainInTab(sourceTab.id, sql, !!sourceTab.explainAnalyze);
       return;
     }
     const owner = panesRef.current.find((p) => p.tabIds.includes(sourceTab.id));
     const tab = makeExplainTab(sql);
     addTab(tab, owner?.id);
-    runQueryInTab(tab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
-  }, [runQueryInTab, addTab, selectedProfile?.driver]);
+    // 新規 EXPLAIN タブは常に推定モードから始める (実測は EXPLAIN タブのトグルで opt-in)。
+    void runExplainInTab(tab.id, sql, false);
+  }, [runExplainInTab, addTab]);
 
   // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
   // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
@@ -5310,6 +5359,64 @@ export default function App() {
     readOnly,
     confirm,
   ]);
+
+  // BLOB セルへファイルの内容を書き戻す (#1148)。UPDATE は 1 セル分だけ組み立て、
+  // 上書きは取り消せないため接続設定に関わらず必ず確認してから実行する。読み取り専用
+  // セッションは `run_query` のバックエンドガードが拒否する (UI でも導線を出さない)。
+  // 成功したら取得済みの行へその場で反映し、ビューアが値の変化で取り直す。
+  const writeBlobForTab = useCallback(
+    async (tab: Tab, rowIdx: number, colIdx: number, hex: string): Promise<boolean> => {
+      if (!sessionId) return false;
+      const { result, tableColumns, database, table, rowIdentity } = tab;
+      if (!result || !tableColumns || !database || !table) return false;
+      const row = result.rows[rowIdx];
+      if (!row) return false;
+      const { indices: pkIndices, strategy } = resolveRowIdentity(
+        result.columns,
+        tableColumns,
+        rowIdentity,
+      );
+      // 実の主キーで行を特定できるときだけ (rowid / ctid / 全列一致では誤った行を
+      // 書き換えうる)。
+      if (strategy !== "primary_key") return false;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const stmt = buildBlobUpdateStatement({
+        driver, database, table, columns: result.columns, row, pkIndices, colIdx, hex,
+      });
+      if (!stmt) return false;
+      const size = formatBlobSize(hex.length / 2);
+      const ok = await confirm({
+        title: translate("blobLoadConfirmTitle"),
+        message: translate("blobLoadConfirmBody", {
+          column: result.columns[colIdx]?.name ?? "",
+          size,
+        }),
+        confirmLabel: translate("blobLoadConfirmButton"),
+        tone: "warning",
+      });
+      if (!ok) return false;
+      try {
+        const res = await api.runQuery(sessionId, stmt, database);
+        if (Number(res.rows_affected ?? 0) < 1) {
+          toast.error(translate("blobLoadNotUpdated"));
+          return false;
+        }
+      } catch (e) {
+        toast.error(translate("blobLoadFailed", { error: String(e) }));
+        return false;
+      }
+      patchTab(tab.id, (tt) => {
+        if (!tt.result) return tt;
+        const rows = tt.result.rows.map((r, i) =>
+          i === rowIdx ? r.map((v, c) => (c === colIdx ? hex : v)) : r,
+        );
+        return { ...tt, result: { ...tt.result, rows } };
+      });
+      toast.success(translate("blobLoaded", { size }));
+      return true;
+    },
+    [sessionId, selectedProfile?.driver, patchTab, confirm, toast],
+  );
 
   // 行を削除予定にトグルする。
   const toggleRowDeleteForTab = useCallback((tabId: string, rowKey: string) => {
@@ -7713,6 +7820,14 @@ export default function App() {
                       result={tab.result}
                       driver={selectedProfile?.driver ?? "mysql"}
                       streaming={tab.streaming}
+                      analyze={{
+                        supported: explainAnalyzeSupported(selectedProfile?.driver),
+                        active: !!tab.explainAnalyze,
+                        onToggle: (next) => {
+                          if (tab.streaming) return;
+                          void runExplainInTab(tab.id, tab.sql, next);
+                        },
+                      }}
                     />
                   ) : tab.batchResults ? (
                     <BatchResultsView
@@ -7825,6 +7940,16 @@ export default function App() {
                       editable={tab.kind === "table" && !readOnly}
                       tableColumns={tab.tableColumns}
                       rowIdentity={tab.rowIdentity}
+                      blobIo={
+                        sessionId && tab.kind === "table"
+                          ? {
+                              sessionId,
+                              onWrite: readOnly
+                                ? undefined
+                                : (r, c, hex) => writeBlobForTab(tab, r, c, hex),
+                            }
+                          : undefined
+                      }
                       pendingEdits={tab.pendingEdits}
                       canUndo={(tab.editUndoStack?.length ?? 0) > 0}
                       canRedo={(tab.editRedoStack?.length ?? 0) > 0}

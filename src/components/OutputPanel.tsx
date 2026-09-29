@@ -7,8 +7,11 @@ import {
   filterOutput,
   isProblemOutcome,
   outputSummary,
+  SERVER_SEVERITY_LABEL,
+  SERVER_SEVERITY_ROLE,
   sqlHeadline,
   useOutputLog,
+  worstServerSeverity,
   type OutputEntry,
   type OutputFilter,
 } from "../outputLog";
@@ -103,6 +106,8 @@ function OutputRow({
   const summary = outputSummary(entry);
   const detailsId = `output-row-${entry.id}`;
   const where = [entry.connection, entry.database].filter(Boolean).join(" / ");
+  const serverMessages = entry.serverMessages ?? [];
+  const worstServer = worstServerSeverity(serverMessages);
 
   return (
     <chakra.li borderBottom="1px solid" borderColor="app.borderSubtle" _last={{ borderBottom: "none" }}>
@@ -151,6 +156,11 @@ function OutputRow({
           >
             <VisuallyHidden>{t(problem ? "activitySeverityError" : "activitySeveritySuccess")}: </VisuallyHidden>
             {t(summary.key, summary.vars)}
+            {worstServer && (
+              <chakra.span color={semanticColorToken(SERVER_SEVERITY_ROLE[worstServer], "text")} ml="2">
+                {t("outputServerMessages", { count: serverMessages.length })}
+              </chakra.span>
+            )}
             {where && (
               <chakra.span color="app.textMuted" ml="2">
                 {where}
@@ -162,6 +172,30 @@ function OutputRow({
       {expanded && (
         <Flex id={detailsId} direction="column" gap="2" px="2.5" pb="2.5" pl="8">
           <CodePreview wrap maxH="200px">{entry.sql}</CodePreview>
+          {serverMessages.length > 0 && (
+            <chakra.ul
+              listStyleType="none"
+              m={0}
+              p={0}
+              display="flex"
+              flexDirection="column"
+              gap="1"
+              aria-label={t("outputServerMessagesAria")}
+            >
+              {serverMessages.map((m, i) => (
+                <chakra.li key={i} fontFamily="mono" fontSize="sm" wordBreak="break-word" whiteSpace="pre-wrap">
+                  <chakra.span
+                    color={semanticColorToken(SERVER_SEVERITY_ROLE[m.severity], "text")}
+                    fontWeight="semibold"
+                    mr="2"
+                  >
+                    {t(SERVER_SEVERITY_LABEL[m.severity])}
+                  </chakra.span>
+                  {m.text}
+                </chakra.li>
+              ))}
+            </chakra.ul>
+          )}
           {entry.error && (
             <CodePreview wrap maxH="160px" color="app.textError">
               {entry.error}

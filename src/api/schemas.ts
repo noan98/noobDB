@@ -31,11 +31,19 @@ export const column = z.object({
   type_name: z.string(),
 });
 
+/** サーバが文の実行中に返した通知・警告 1 件 (#1165)。 */
+export const serverMessage = z.object({
+  severity: z.enum(["error", "warning", "notice", "info"]),
+  text: z.string(),
+});
+
 export const queryResult = z.object({
   columns: z.array(column),
   rows: z.array(z.array(cellValue)),
   rows_affected: z.number(),
   elapsed_ms: z.number(),
+  /** 古いバックエンド / キャッシュ由来では欠けるので省略可能 (#1165)。 */
+  server_messages: z.array(serverMessage).optional(),
 });
 
 export const tableColumnInfo = z.object({
@@ -774,6 +782,8 @@ export const queryStreamDoneMessage = z.object({
   elapsedMs: z.number(),
   hasColumns: z.boolean(),
   appliedAutoLimit: z.number().nullable(),
+  /** サーバの通知・警告 (#1165)。古いバックエンドは送らないので省略可能。 */
+  serverMessages: z.array(serverMessage).optional(),
 });
 
 export const queryStreamErrorMessage = z.object({

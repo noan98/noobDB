@@ -458,11 +458,25 @@ export type CellValue =
   | number
   | string;
 
+/** サーバの通知・警告の重大度 (#1165)。`db::types::ServerMessageSeverity` の wire 表現。 */
+export type ServerMessageSeverity = "error" | "warning" | "notice" | "info";
+
+/**
+ * サーバが文の実行中に返した通知・警告 1 件 (#1165)。PostgreSQL の NOTICE /
+ * WARNING、MySQL の `SHOW WARNINGS`。SQLite は常に無い。
+ */
+export interface ServerMessage {
+  severity: ServerMessageSeverity;
+  text: string;
+}
+
 export interface QueryResult {
   columns: Column[];
   rows: CellValue[][];
   rows_affected: number;
   elapsed_ms: number;
+  /** サーバの通知・警告 (#1165)。無い / 古いバックエンドでは省略。 */
+  server_messages?: ServerMessage[];
 }
 
 export interface PreviewResult {
@@ -1549,7 +1563,8 @@ export const api = {
      * When true, the backend enforces a read-only guard regardless of the
      * session's profile. Used by cross-environment broadcast execution
      * (#738), which fans one statement out to several sessions at once and
-     * must never let it write to any of them.
+     * must never let it write to any of them. EXPLAIN の実測モード
+     * (EXPLAIN ANALYZE, #1164) も、SQL を実際に実行するためこれを立てる。
      */
     forceReadOnly?: boolean;
     /**
@@ -2357,6 +2372,31 @@ export const api = {
     ),
 
   /**
+   * 主キーで 1 セルの生バイトを取得する (#1148)。グリッドの表示値ではなくサーバの値を
+   * 引き直すので、ファイル保存・画像プレビューは常に完全な内容になる。16 進文字列
+   * (小文字) を返し、NULL は null。該当行が 1 行に定まらない場合は reject される。
+   */
+  fetchCellBytes: (
+    sessionId: string,
+    database: string | null,
+    table: string,
+    column: string,
+    key: { column: string; value: CellValue }[],
+  ) =>
+    invoke<string | null>("fetch_cell_bytes", { sessionId, database, table, column, key }).then(
+      (r) => parseResponse(schemas.nullableStringResponse, r, "fetch_cell_bytes"),
+    ),
+
+  /**
+   * ファイルをバイナリで読み 16 進文字列 (小文字) を返す (#1148、BLOB への書き戻し用)。
+   * サイズ上限 (16 MiB) を超えるファイルは reject される。
+   */
+  readBinaryFile: (path: string) =>
+    invoke<string>("read_binary_file", { path }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "read_binary_file"),
+    ),
+
+  /**
    * フロントで生成したバイト列 (チャート/ER 図の PNG・SVG など) を、保存ダイアログで
    * 選んだパスへバックエンド経由で書き出す (capabilities を最小に保つため。#643)。
    * 書き込んだバイト数を返す。
@@ -2552,6 +2592,8 @@ export interface QueryStreamDoneMessage {
   hasColumns: boolean;
   /** Row cap auto-injected for this run, or null when none was applied. */
   appliedAutoLimit: number | null;
+  /** サーバの通知・警告 (PostgreSQL NOTICE/WARNING、MySQL SHOW WARNINGS) (#1165)。 */
+  serverMessages?: ServerMessage[];
 }
 
 export interface QueryStreamErrorMessage {

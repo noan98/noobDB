@@ -19,6 +19,7 @@ pub mod profile;
 pub mod sandbox;
 /// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
 pub mod script;
+pub mod server_messages;
 pub mod sqlite;
 pub mod sync;
 /// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。

@@ -59,6 +59,9 @@ const en = {
   outputSummaryTimeout: "Timed out after {ms} ms ({rows} rows received)",
   outputSummaryCancelled: "Cancelled after {ms} ms ({rows} rows received)",
   outputSummarySkipped: "Skipped (an earlier statement failed)",
+  outputServerMessages: "{count} server messages",
+  outputServerMessagesAria: "Server messages",
+  outputServerSeverityNotice: "Notice",
   outputSummaryError: "Error: {error}",
   outputOpenInEditor: "Open in new tab",
   outputCopySql: "Copy SQL",
@@ -977,6 +980,26 @@ const en = {
     "A temporary table is created (typically for GROUP BY / DISTINCT / UNION). On large inputs this can be slow; an index matching the grouping or ordering may remove it.",
   explainHintFilesort:
     "A filesort runs to satisfy ORDER BY / GROUP BY. An index already in the sort order lets the database skip this extra sorting step.",
+  explainHintMisestimate:
+    "The planner's estimated row count is off from the actual rows by an order of magnitude or more. Stale or missing statistics are the usual cause — refresh them (ANALYZE TABLE on MySQL, ANALYZE / VACUUM ANALYZE on PostgreSQL) or check for correlated conditions the planner cannot see.",
+
+  explainAnalyzeLabel: "Measured mode (EXPLAIN ANALYZE)",
+  explainAnalyzeTooltip:
+    "Actually runs the query and shows real row counts and times next to the estimates. Only read-only queries are allowed, and a confirmation is required.",
+  explainAnalyzeUnsupportedTooltip:
+    "Measured mode is available for PostgreSQL and MySQL 8.0.18+ only.",
+  explainAnalyzeBadge: "Measured",
+  explainActualRows: "est {est} → actual {actual} rows",
+  explainNeverExecuted: "never executed",
+  explainTotalTime: "Execution time: {time}",
+  explainAnalyzeConfirmTitle: "Run EXPLAIN ANALYZE?",
+  explainAnalyzeConfirmBody:
+    "Measured mode actually executes this query. It can take as long as the query itself and put load on the server.",
+  explainAnalyzeConfirmRun: "Run",
+  explainAnalyzeBlockedToast:
+    "Measured mode runs the query for real, so only read-only queries (SELECT, WITH ... SELECT) are allowed.",
+  explainAnalyzeUnsupportedToast:
+    "Measured mode is not available for this database (PostgreSQL / MySQL 8.0.18+ only).",
 
   qbTitle: "Query Builder",
   qbClose: "Close",
@@ -2251,6 +2274,23 @@ const en = {
   gridFkReverseTitle: "Open the child table filtered to rows referencing this row",
   gridFkColHeader: "FK → {table}",
   cellViewerCopy: "Copy",
+  blobSave: "Save BLOB to file…",
+  blobLoad: "Load BLOB from file…",
+  blobLoading: "Loading the binary value…",
+  blobKindUnknown: "Unknown type",
+  blobPreviewAlt: "Image preview of {column}",
+  blobIsNull: "The cell is NULL, so there is nothing to save.",
+  blobSaved: "Saved {size} to {path}",
+  blobSaveFailed: "Could not save the BLOB: {error}",
+  blobFetchFailed: "Could not read the binary value: {error}",
+  blobLoadPickTitle: "Choose a file to store in the cell",
+  blobLoadFailed: "Could not load the file into the cell: {error}",
+  blobLoadConfirmTitle: "Replace the BLOB?",
+  blobLoadConfirmBody:
+    "Overwrite column {column} with the contents of {size} from the chosen file? An UPDATE runs immediately and cannot be undone from here.",
+  blobLoadConfirmButton: "Overwrite",
+  blobLoaded: "Updated the BLOB ({size})",
+  blobLoadNotUpdated: "No row was updated. The row may have been changed or deleted.",
   cellViewerClose: "Close",
   cellViewerFormatJson: "Format as JSON",
   cellViewerEmpty: "(empty)",
@@ -3691,6 +3731,9 @@ const ja: Dict = {
   outputSummaryTimeout: "タイムアウト ({ms} ms、{rows} 行受信済み)",
   outputSummaryCancelled: "キャンセル ({ms} ms、{rows} 行受信済み)",
   outputSummarySkipped: "スキップ (手前の文が失敗したため未実行)",
+  outputServerMessages: "サーバメッセージ {count} 件",
+  outputServerMessagesAria: "サーバメッセージ",
+  outputServerSeverityNotice: "通知",
   outputSummaryError: "エラー: {error}",
   outputOpenInEditor: "新しいタブで開く",
   outputCopySql: "SQL をコピー",
@@ -4608,6 +4651,26 @@ const ja: Dict = {
     "一時テーブルが作成されています (GROUP BY / DISTINCT / UNION などで発生)。入力が大きいと遅くなることがあり、グループ化・並び替えに合うインデックスで解消できる場合があります。",
   explainHintFilesort:
     "ORDER BY / GROUP BY のためにファイルソートが行われています。並び順に合ったインデックスがあれば、この追加のソートを省ける場合があります。",
+  explainHintMisestimate:
+    "オプティマイザの推定行数が実測行数と桁違いにズレています。統計情報が古い / 無いことが主な原因です。統計を更新 (MySQL: ANALYZE TABLE、PostgreSQL: ANALYZE / VACUUM ANALYZE) するか、オプティマイザが見通せない相関のある条件がないか確認してください。",
+
+  explainAnalyzeLabel: "実測モード (EXPLAIN ANALYZE)",
+  explainAnalyzeTooltip:
+    "クエリを実際に実行し、推定と並べて実測の行数・時間を表示します。読み取り専用のクエリのみ実行でき、実行前に確認が入ります。",
+  explainAnalyzeUnsupportedTooltip:
+    "実測モードは PostgreSQL と MySQL 8.0.18 以降でのみ利用できます。",
+  explainAnalyzeBadge: "実測",
+  explainActualRows: "推定 {est} → 実測 {actual} 行",
+  explainNeverExecuted: "実行されず",
+  explainTotalTime: "実行時間: {time}",
+  explainAnalyzeConfirmTitle: "EXPLAIN ANALYZE を実行しますか?",
+  explainAnalyzeConfirmBody:
+    "実測モードはこのクエリを実際に実行します。クエリ本来の実行時間がかかり、サーバに負荷がかかることがあります。",
+  explainAnalyzeConfirmRun: "実行",
+  explainAnalyzeBlockedToast:
+    "実測モードはクエリを実際に実行するため、読み取り専用のクエリ (SELECT / WITH ... SELECT) のみ実行できます。",
+  explainAnalyzeUnsupportedToast:
+    "このデータベースでは実測モードを利用できません (PostgreSQL / MySQL 8.0.18 以降のみ)。",
 
   qbTitle: "Query Builder",
   qbClose: "閉じる",
@@ -5876,6 +5939,23 @@ const ja: Dict = {
   gridFkReverseTitle: "この行を参照している子テーブルの行を開く",
   gridFkColHeader: "FK → {table}",
   cellViewerCopy: "コピー",
+  blobSave: "BLOB をファイルに保存…",
+  blobLoad: "ファイルから BLOB を読み込み…",
+  blobLoading: "バイナリ値を読み込み中…",
+  blobKindUnknown: "種別不明",
+  blobPreviewAlt: "{column} の画像プレビュー",
+  blobIsNull: "セルが NULL のため保存する内容がありません。",
+  blobSaved: "{size} を {path} に保存しました",
+  blobSaveFailed: "BLOB を保存できませんでした: {error}",
+  blobFetchFailed: "バイナリ値を取得できませんでした: {error}",
+  blobLoadPickTitle: "セルに格納するファイルを選択",
+  blobLoadFailed: "ファイルをセルへ読み込めませんでした: {error}",
+  blobLoadConfirmTitle: "BLOB を置き換えますか?",
+  blobLoadConfirmBody:
+    "列 {column} を、選択したファイルの内容 ({size}) で上書きします。UPDATE を今すぐ実行し、ここから元には戻せません。",
+  blobLoadConfirmButton: "上書きする",
+  blobLoaded: "BLOB を更新しました ({size})",
+  blobLoadNotUpdated: "更新された行がありません。行が変更または削除された可能性があります。",
   cellViewerClose: "閉じる",
   cellViewerFormatJson: "JSON を整形",
   cellViewerEmpty: "(空)",

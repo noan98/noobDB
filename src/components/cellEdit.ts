@@ -536,6 +536,31 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   return stmts;
 }
 
+/**
+ * 1 セルの BLOB を丸ごと差し替える `UPDATE` を 1 文組み立てる (#1148、ファイルからの
+ * 読み込み)。`hex` は新しい内容の 16 進文字列。WHERE は行の**元の**主キー値で組む
+ * (`buildUpdateStatements` と同じ規約)。主キーが無い / 列が範囲外なら null。
+ */
+export function buildBlobUpdateStatement(input: {
+  driver: string;
+  database: string;
+  table: string;
+  columns: Column[];
+  row: CellValue[];
+  pkIndices: number[];
+  colIdx: number;
+  hex: string;
+}): string | null {
+  const { driver, columns, row, pkIndices, colIdx, hex } = input;
+  const col = columns[colIdx];
+  if (!col || pkIndices.length === 0 || !/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) {
+    return null;
+  }
+  const ref = qualifiedTableRef(driver, input.database, input.table);
+  const where = pkIndices.map((i) => whereEqualsClause(driver, columns[i].name, row[i]));
+  return `UPDATE ${ref} SET ${quoteIdentFor(driver, col.name)} = ${blobLiteral(driver, hex.toLowerCase())} WHERE ${where.join(" AND ")};`;
+}
+
 /** One pending new row: column index → typed value. Unset columns are
  *  omitted from the INSERT so the database applies defaults / auto-increment.
  *  A value of `"null"` (any case) becomes SQL `NULL`. */
