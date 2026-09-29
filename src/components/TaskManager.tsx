@@ -5,6 +5,7 @@ import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   api,
   listenTaskRunEvents,
+  type Assertion,
   type ConnectionProfile,
   type DumpOptions,
   type ExportFormat,
@@ -16,7 +17,15 @@ import {
 import { useT, type I18nKey } from "../i18n";
 import { isReadOnlySql } from "../dangerousSql";
 import { semanticColorToken } from "../semanticColors";
-import { previewOutputPath, relativeNextRun, sortTasksForDisplay, summarizeAction, summarizeSchedule } from "../taskFormat";
+import {
+  buildAssertionTrends,
+  previewOutputPath,
+  relativeNextRun,
+  sortTasksForDisplay,
+  summarizeAction,
+  summarizeSchedule,
+  type AssertionTrend,
+} from "../taskFormat";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
@@ -416,6 +425,9 @@ function TaskRow({
             </chakra.p>
           ) : (
             <chakra.div display="flex" flexDirection="column" gap="1.5">
+              {task.action.kind === "run_assertions" && (
+                <AssertionTrendList taskId={task.id} refreshKey={runs} />
+              )}
               <Flex justify="flex-end">
                 <Button type="button" variant="danger" size="sm" onClick={onClearHistory}>
                   {t("taskHistoryClear")}
@@ -448,6 +460,70 @@ function TaskRow({
   );
 }
 
+/** アサーション実行タスクの合否推移 (#1170)。`refreshKey` が変わる (= 実行履歴が
+ *  更新される) たびに取り直す。 */
+function AssertionTrendList({ taskId, refreshKey }: { taskId: string; refreshKey: unknown }) {
+  const t = useT();
+  const [trends, setTrends] = useState<AssertionTrend[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    void api
+      .listAssertionRuns({ taskId, limit: 500 })
+      .then((records) => {
+        if (active) setTrends(buildAssertionTrends(records));
+      })
+      .catch(() => {
+        if (active) setTrends([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [taskId, refreshKey]);
+
+  if (trends === null) return null;
+  return (
+    <chakra.div display="flex" flexDirection="column" gap="1" marginBottom="2">
+      <chakra.div textStyle="overline" color="app.textMuted">
+        {t("taskAssertionTrendTitle")}
+      </chakra.div>
+      {trends.length === 0 ? (
+        <chakra.p margin={0} fontSize="xs" color="app.textMuted">
+          {t("taskAssertionTrendEmpty")}
+        </chakra.p>
+      ) : (
+        trends.map((tr) => (
+          <Flex key={tr.assertionId} align="center" gap="2" fontSize="xs" flexWrap="wrap">
+            <chakra.span minW="160px" flex="1" color="app.text" wordBreak="break-all">
+              {tr.name}
+            </chakra.span>
+            <Flex gap="0.5" role="img" aria-label={tr.dots.map((d) => (d ? t("taskAssertionPass") : t("taskAssertionFail"))).join(", ")}>
+              {tr.dots.map((passed, i) => (
+                <chakra.span
+                  key={i}
+                  w="8px"
+                  h="14px"
+                  borderRadius="xs"
+                  bg={semanticColorToken(passed ? "success" : "danger", "solid")}
+                />
+              ))}
+            </Flex>
+            <chakra.span minW="90px" textAlign="right" color="app.textMuted" textStyle="numeric">
+              {tr.lastError
+                ? tr.lastError
+                : tr.lastObserved != null
+                  ? t("taskAssertionTrendObserved", { observed: tr.lastObserved })
+                  : "–"}
+            </chakra.span>
+            <chakra.span minW="70px" textAlign="right" color="app.textMuted" textStyle="numeric">
+              {t("taskAssertionTrendRate", { rate: Math.round(tr.passRate * 100) })}
+            </chakra.span>
+          </Flex>
+        ))
+      )}
+    </chakra.div>
+  );
+}
+
 type ActionKind = TaskAction["kind"];
 type ScheduleKind = TaskSchedule["kind"];
 
@@ -473,7 +549,11 @@ function TaskForm({
   const [actionKind, setActionKind] = useState<ActionKind>(task?.action.kind ?? "export_query");
   const [sql, setSql] = useState(task?.action.kind === "export_query" ? task.action.sql : "");
   const [database, setDatabase] = useState(
-    task?.action.kind === "export_query" ? task.action.database ?? "" : task?.action.kind === "dump" ? task.action.database : "",
+    task?.action.kind === "export_query" || task?.action.kind === "run_assertions"
+      ? task.action.database ?? ""
+      : task?.action.kind === "dump"
+        ? task.action.database
+        : "",
   );
   const [format, setFormat] = useState<ExportFormat>(
     task?.action.kind === "export_query" ? task.action.format : "csv",
@@ -484,7 +564,19 @@ function TaskForm({
   const [sqlBatchSize, setSqlBatchSize] = useState(
     task?.action.kind === "export_query" && task.action.sql_batch_size ? String(task.action.sql_batch_size) : "",
   );
-  const [outputPath, setOutputPath] = useState(task?.action.output_path ?? "");
+  const [outputPath, setOutputPath] = useState(
+    task && task.action.kind !== "run_assertions" ? task.action.output_path : "",
+  );
+  const [assertions, setAssertions] = useState<Assertion[]>([]);
+  const [pickAssertions, setPickAssertions] = useState(
+    task?.action.kind === "run_assertions" && task.action.assertion_ids.length > 0,
+  );
+  const [assertionIds, setAssertionIds] = useState<string[]>(
+    task?.action.kind === "run_assertions" ? task.action.assertion_ids : [],
+  );
+  useEffect(() => {
+    void api.listAssertions().then(setAssertions).catch(() => setAssertions([]));
+  }, []);
   const [dumpOptions, setDumpOptions] = useState<DumpOptions>(
     task?.action.kind === "dump" ? task.action.options : DEFAULT_DUMP_OPTIONS,
   );
@@ -526,7 +618,7 @@ function TaskForm({
       setFormError(t("taskFormProfileRequired"));
       return;
     }
-    if (outputPath.trim() === "") {
+    if (actionKind !== "run_assertions" && outputPath.trim() === "") {
       setFormError(t("taskFormOutputPathRequired"));
       return;
     }
@@ -549,6 +641,16 @@ function TaskForm({
         output_path: outputPath,
         sql_table: format === "sql" && sqlTable.trim() !== "" ? sqlTable.trim() : null,
         sql_batch_size: format === "sql" && sqlBatchSize.trim() !== "" ? Number(sqlBatchSize) : null,
+      };
+    } else if (actionKind === "run_assertions") {
+      if (pickAssertions && assertionIds.length === 0) {
+        setFormError(t("taskFormAssertionsRequired"));
+        return;
+      }
+      action = {
+        kind: "run_assertions",
+        database: database.trim() === "" ? null : database.trim(),
+        assertion_ids: pickAssertions ? assertionIds : [],
       };
     } else {
       if (database.trim() === "") {
@@ -636,6 +738,7 @@ function TaskForm({
         <Select value={actionKind} onChange={(e) => setActionKind(e.target.value as ActionKind)}>
           <option value="export_query">{t("taskFormActionExport")}</option>
           <option value="dump">{t("taskFormActionDump")}</option>
+          <option value="run_assertions">{t("taskFormActionAssertions")}</option>
         </Select>
       </FormSection>
 
@@ -690,6 +793,49 @@ function TaskForm({
             </Flex>
           )}
         </>
+      ) : actionKind === "run_assertions" ? (
+        <>
+          <chakra.p margin={0} fontSize="xs" color="app.textMuted">
+            {t("taskFormAssertionsHint")}
+          </chakra.p>
+          <FormSection>
+            <FieldLabel htmlFor="task-database-assert">{t("taskFormDatabaseOptional")}</FieldLabel>
+            <Input id="task-database-assert" value={database} onChange={(e) => setDatabase(e.target.value)} />
+          </FormSection>
+          <FormSection>
+            <FieldLabel as="div">{t("taskFormActionAssertions")}</FieldLabel>
+            <Select
+              aria-label={t("taskFormActionAssertions")}
+              value={pickAssertions ? "pick" : "all"}
+              onChange={(e) => setPickAssertions(e.target.value === "pick")}
+            >
+              <option value="all">{t("taskFormAssertionsAll")}</option>
+              <option value="pick">{t("taskFormAssertionsPick")}</option>
+            </Select>
+            {pickAssertions &&
+              (assertions.length === 0 ? (
+                <chakra.p margin={0} marginTop="1" fontSize="xs" color="app.textMuted">
+                  {t("taskFormAssertionsNone")}
+                </chakra.p>
+              ) : (
+                <chakra.div display="flex" flexDirection="column" gap="1" marginTop="1.5">
+                  {assertions.map((a) => (
+                    <chakra.label key={a.id} display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
+                      <Checkbox
+                        checked={assertionIds.includes(a.id)}
+                        onChange={(e) =>
+                          setAssertionIds((cur) =>
+                            e.target.checked ? [...cur, a.id] : cur.filter((id) => id !== a.id),
+                          )
+                        }
+                      />
+                      {a.name}
+                    </chakra.label>
+                  ))}
+                </chakra.div>
+              ))}
+          </FormSection>
+        </>
       ) : (
         <>
           <FormSection>
@@ -725,6 +871,7 @@ function TaskForm({
         </>
       )}
 
+      {actionKind !== "run_assertions" && (
       <FormSection>
         <FieldLabel htmlFor="task-output-path">{t("taskFormOutputPath")}</FieldLabel>
         <PathRow>
@@ -743,6 +890,7 @@ function TaskForm({
           {preview && preview !== outputPath && <> — {t("taskFormOutputPathPreview", { path: preview })}</>}
         </chakra.p>
       </FormSection>
+      )}
 
       <FormSection>
         <FieldLabel as="div">{t("taskFormSchedule")}</FieldLabel>

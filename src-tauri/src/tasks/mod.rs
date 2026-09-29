@@ -55,6 +55,18 @@ pub enum TaskAction {
         #[serde(default)]
         options: DumpOptions,
     },
+    /// 保存済みのデータ品質アサーション (#742) を実行し、合否と observed 値を
+    /// `assertion_runs` へ蓄積する (#1170)。実行は `run_assertion_with` (読み取り専用
+    /// の `run_lookup_query` 経路) をそのまま通るので新たな書き込み経路は増えない。
+    /// 1 件でも違反 / 実行エラーがあればタスク実行は `error` 扱いになり、失敗通知に乗る。
+    RunAssertions {
+        /// 対象データベース (MySQL のデータベース等)。未指定ならプロファイルの既定。
+        #[serde(default)]
+        database: Option<String>,
+        /// 実行するアサーションの ID。空ならプロファイルのスコープに合うものすべて。
+        #[serde(default)]
+        assertion_ids: Vec<String>,
+    },
 }
 
 /// タスクの発火スケジュール。時刻はすべて UTC で解釈する
@@ -125,6 +137,37 @@ pub struct TaskRun {
     /// 起動時の追い掛け実行だったか (#730 の「未起動中に過ぎたスケジュール」対応)。
     #[serde(default)]
     pub catch_up: bool,
+}
+
+/// アサーション実行タスク (#1170) の 1 アサーション分の結果。`task_runs` の 1 行に
+/// 対して複数ぶら下がる (`assertion_runs` テーブル)。トレンド表示に使う。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssertionRunRecord {
+    pub id: i64,
+    pub task_id: String,
+    /// 所属する実行の開始時刻 (`TaskRun.started_at` と同値)。
+    pub run_started_at: String,
+    pub assertion_id: String,
+    /// 実行時点の名前 (後でアサーションが削除・改名されても履歴が読める)。
+    pub assertion_name: String,
+    pub passed: bool,
+    /// `check_sql` の結果。実行エラーで取れなかったときは `None`。
+    pub observed: Option<i64>,
+    /// 実行エラー (接続断・タイムアウト・削除済みなど)。違反は `passed=false` のみで
+    /// ここには入らない。
+    pub error: Option<String>,
+    pub elapsed_ms: i64,
+}
+
+/// `assertion_runs` へ書く前の 1 件 (`task_id` / `run_started_at` は記録側が付ける)。
+#[derive(Debug, Clone)]
+pub struct NewAssertionResult {
+    pub assertion_id: String,
+    pub assertion_name: String,
+    pub passed: bool,
+    pub observed: Option<i64>,
+    pub error: Option<String>,
+    pub elapsed_ms: i64,
 }
 
 #[derive(Debug, Clone)]

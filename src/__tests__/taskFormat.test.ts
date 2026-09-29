@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildAssertionTrends,
   previewOutputPath,
   relativeNextRun,
   sortTasksForDisplay,
@@ -129,5 +130,68 @@ describe("sortTasksForDisplay (#730)", () => {
     ];
     const order = sortTasksForDisplay(tasks).map((t) => t.name);
     expect(order).toEqual(["scheduled", "no-schedule"]);
+  });
+});
+
+describe("summarizeAction for run_assertions (#1170)", () => {
+  it("shows all-in-scope when no ids are chosen", () => {
+    expect(summarizeAction({ kind: "run_assertions", assertion_ids: [] })).toBe(
+      "assertions (all in scope)",
+    );
+  });
+
+  it("shows the count of chosen assertions", () => {
+    expect(
+      summarizeAction({ kind: "run_assertions", database: null, assertion_ids: ["a", "b"] }),
+    ).toBe("assertions (2)");
+  });
+});
+
+describe("buildAssertionTrends (#1170)", () => {
+  const rec = (
+    id: string,
+    name: string,
+    passed: boolean,
+    observed: number | null,
+    error: string | null = null,
+  ) => ({
+    assertion_id: id,
+    assertion_name: name,
+    passed,
+    observed,
+    error,
+  });
+
+  it("returns nothing for no records", () => {
+    expect(buildAssertionTrends([])).toEqual([]);
+  });
+
+  it("groups newest-first records per assertion and orders dots oldest to newest", () => {
+    const trends = buildAssertionTrends([
+      rec("a1", "A1", false, 5),
+      rec("a1", "A1", true, 0),
+      rec("a1", "A1", true, 0),
+    ]);
+    expect(trends).toHaveLength(1);
+    expect(trends[0].dots).toEqual([true, true, false]);
+    expect(trends[0].lastObserved).toBe(5);
+    expect(trends[0].passRate).toBeCloseTo(2 / 3);
+  });
+
+  it("lists currently failing assertions first, then by name", () => {
+    const trends = buildAssertionTrends([
+      rec("b", "Beta", true, 0),
+      rec("a", "Alpha", true, 0),
+      rec("z", "Zed", false, null, "timeout"),
+    ]);
+    expect(trends.map((t) => t.name)).toEqual(["Zed", "Alpha", "Beta"]);
+    expect(trends[0].lastError).toBe("timeout");
+    expect(trends[0].lastObserved).toBeNull();
+  });
+
+  it("caps the number of dots per assertion to the most recent maxDots", () => {
+    const records = Array.from({ length: 5 }, (_, i) => rec("a", "A", i !== 0, 0));
+    const [t] = buildAssertionTrends(records, 3);
+    expect(t.dots).toEqual([true, true, false]);
   });
 });

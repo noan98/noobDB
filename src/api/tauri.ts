@@ -1168,6 +1168,14 @@ export type TaskAction =
       database: string;
       output_path: string;
       options: DumpOptions;
+    }
+  | {
+      /** 保存済みデータ品質アサーション (#742) の定期実行 (#1170)。 */
+      kind: "run_assertions";
+      /** 対象データベース。未指定 (null) ならプロファイルの既定。 */
+      database?: string | null;
+      /** 実行するアサーション ID。空ならプロファイルのスコープに合うものすべて。 */
+      assertion_ids: string[];
     };
 
 /** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
@@ -1211,6 +1219,20 @@ export interface TaskRun {
   bytes: number | null;
   elapsed_ms: number;
   catch_up: boolean;
+}
+
+/** アサーション実行タスクの 1 アサーション分の合否履歴 (#1170)。 */
+export interface AssertionRunRecord {
+  id: number;
+  task_id: string;
+  run_started_at: string;
+  assertion_id: string;
+  assertion_name: string;
+  passed: boolean;
+  /** 実行エラーで取れなかったときは null。 */
+  observed: number | null;
+  error: string | null;
+  elapsed_ms: number;
 }
 
 export interface SchedulerSettings {
@@ -2446,6 +2468,19 @@ export const api = {
       taskId: taskId ?? null,
       limit: limit ?? null,
     }).then((r) => parseResponse(schemas.taskRunArray, r, "list_task_runs")),
+  /** アサーション実行タスクの合否履歴 (新しい順、#1170)。 */
+  listAssertionRuns: (params: {
+    taskId?: string | null;
+    assertionId?: string | null;
+    limit?: number;
+  }) =>
+    invoke<AssertionRunRecord[]>("list_assertion_runs", {
+      taskId: params.taskId ?? null,
+      assertionId: params.assertionId ?? null,
+      limit: params.limit ?? null,
+    }).then((r) =>
+      parseResponse(schemas.assertionRunRecordArray, r, "list_assertion_runs"),
+    ),
   clearTaskRuns: (taskId?: string | null) =>
     invoke<number>("clear_task_runs", { taskId: taskId ?? null }).then((r) =>
       parseResponse(schemas.numberResponse, r, "clear_task_runs"),

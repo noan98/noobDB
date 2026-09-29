@@ -18,8 +18,23 @@
 
 - **`TaskAction`** (`#[serde(tag = "kind")]`) — `ExportQuery` (SQL → ファイル。
   `export_query_stream` と同じ実行基盤を共有) と `Dump` (`dump_database` と同じ基盤)
-  の 2 種。`output_path` は `{date}` (YYYY-MM-DD) / `{datetime}` (YYYYMMDD-HHMMSS, UTC)
+  に加え、`RunAssertions` (#1170) がある。`output_path` は `{date}` (YYYY-MM-DD) / `{datetime}` (YYYYMMDD-HHMMSS, UTC)
   のプレースホルダを実行時に展開します (`resolve_output_path`)。
+- **`RunAssertions { database, assertion_ids }`** (#1170) — 保存済みのデータ品質
+  アサーション (#742) を実行する。`assertion_ids` が空ならプロファイルのスコープに
+  合うもの全部 (`assertions::select_for_task`、判定はフロントの `scopeMatches` と同じ)、
+  指定があればその ID (スコープは見ない。存在しない ID は実行エラーとして記録)。
+  実行は `commands::assertions::run_assertion_with` (読み取り専用の
+  `run_lookup_query` 経路) をそのまま通り、新たな書き込み経路は増えない。1 件でも
+  違反 / 実行エラーがあればタスク実行は `error` (`executor::summarize_assertion_failures`
+  が要約を `TaskRun.error` に入れる)。つまり既存の `task-run:error` → トースト +
+  (アプリが背面なら) OS 通知 (`App.tsx`) の経路が export / dump の失敗と同じく効く。
+  1 アサーションごとの合否 / observed は `task_runs.sqlite` の `assertion_runs`
+  テーブル (`runs::record_assertion_results`、上限 20,000 行) に蓄積し、
+  `list_assertion_runs` で読む (`TaskManager` の履歴に合否ドットのトレンド表示、
+  整形は `taskFormat.buildAssertionTrends`)。`task_runs` のスキーマは不変で、
+  `assertion_runs` は `CREATE TABLE IF NOT EXISTS` で既存 DB に足すだけ。
+  `tasks.json` は `RunAssertions` の追加のみで既存タスクはそのまま読める。
 - **`TaskSchedule`** — `Interval { minutes }` (最小 1 分) と
   `Daily { hour, minute }` の 2 種。
 - **`SchedulerSettings.catch_up_missed`** — アプリが閉じている間に過ぎた
@@ -50,6 +65,6 @@
 ## IPC / フロント
 
 `list_tasks` / `save_task` / `delete_task` / `set_task_enabled` / `run_task_now` /
-`list_task_runs` / `clear_task_runs` / `get_scheduler_settings` /
+`list_task_runs` / `list_assertion_runs` / `clear_task_runs` / `get_scheduler_settings` /
 `set_scheduler_settings`。UI は `components/TaskManager.tsx`、表示整形の純ロジックは
 `components/taskFormat.ts`。
