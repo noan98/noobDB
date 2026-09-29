@@ -57,6 +57,7 @@ import {
   useSettings,
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
+import { useCellBlobIo, type BlobIoConfig } from "./useCellBlobIo";
 import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } from "./useValuePicker";
 
 /** 候補なしを表す共有の空配列 (レンダーごとに新しい配列を作らない)。 */
@@ -1005,6 +1006,11 @@ interface Props {
    * with `tableColumns` via `resolveRowIdentity` to gate/build edits.
    */
   rowIdentity?: TableRowIdentity | null;
+  /**
+   * BLOB セルのファイル入出力 (#1148)。実際に有効になるのは行の識別が実の主キーの
+   * ときだけ (rowid / ctid / 全列一致では誤った行へ書き戻しうるため無効)。
+   */
+  blobIo?: BlobIoConfig;
   /** Edits awaiting Preview/Apply. Keyed by [rowEditKey][colIdx]. */
   pendingEdits?: PendingEdits;
   /**
@@ -2726,6 +2732,7 @@ export const DataGrid = memo(function DataGrid({
   rowSqlDriver,
   rowSqlDatabase,
   rowSqlTable,
+  blobIo,
   columnMeta,
   incomingFks,
   onRunRelatedQuery,
@@ -2846,6 +2853,11 @@ export const DataGrid = memo(function DataGrid({
   rowSqlDriver?: string;
   rowSqlDatabase?: string | null;
   rowSqlTable?: string | null;
+  /**
+   * BLOB セルのファイル保存 / 読み込みとセルビューアの画像プレビュー (#1148)。
+   * 指定があり、かつ行が主キーで一意に引けるときだけ導線を出す。
+   */
+  blobIo?: BlobIoConfig;
   /**
    * Column metadata from `describe_table` (FK, key info). When provided and a
    * column carries `referenced_table`, a "Jump to …" item is added to the
@@ -2976,6 +2988,16 @@ export const DataGrid = memo(function DataGrid({
   );
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
+  // BLOB セルのファイル入出力 (#1148)。行を実の主キーで引けるセルにだけハンドラが返る。
+  const blobHandlersFor = useCellBlobIo({
+    config: blobIo,
+    database: rowSqlDatabase,
+    table: rowSqlTable,
+    columns,
+    rows,
+    pkIndices,
+    isBinaryColumn: useCallback((c: number) => columnKinds[c] === "binary", [columnKinds]),
+  });
 
   // 数値セルの条件付き書式。列ごとの適用モードと、共有のヒートパレット。
   const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
@@ -5520,6 +5542,35 @@ export const DataGrid = memo(function DataGrid({
                   },
                 ]
               : []),
+            // BLOB のファイル入出力 (#1148)。主キーで行を引けるバイナリセルだけ。
+            // 読み込み (書き戻し) は編集可能なセッションでのみ出す。
+            ...(() => {
+              // マスク中のセルは生バイトを持ち出させない。
+              if (cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)) return [];
+              const blob = blobHandlersFor(copyMenu.rowIdx, copyMenu.colIdx);
+              if (!blob) return [];
+              return [
+                { separator: true as const },
+                {
+                  label: t("blobSave"),
+                  onSelect: () => {
+                    setCopyMenu(null);
+                    void blob.save();
+                  },
+                },
+                ...(blob.load
+                  ? [
+                      {
+                        label: t("blobLoad"),
+                        onSelect: () => {
+                          setCopyMenu(null);
+                          void blob.load?.();
+                        },
+                      },
+                    ]
+                  : []),
+              ];
+            })(),
             // 値のワンクリック設定: NULL / 空文字 / 0 / true / false / 現在日時
             // といった「毎回手で打つのが煩わしい定番値」を列の型に応じて出す。
             // 表示条件はインライン編集そのもの (編集可能な列 + PK 解決済み) と
@@ -6083,6 +6134,7 @@ export const DataGrid = memo(function DataGrid({
               columnName={columns[viewer.colIdx]?.name ?? ""}
               value={vVal}
               isBinary={columnKinds[viewer.colIdx] === "binary"}
+              blob={blobHandlersFor(viewer.rowIdx, viewer.colIdx)}
               editable={cellEditable}
               isJson={columnKinds[viewer.colIdx] === "json"}
               validate={validateEdit ? (v) => validateEdit(viewer.colIdx, v) : undefined}
@@ -6310,6 +6362,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   editable,
   tableColumns,
   rowIdentity,
+  blobIo,
   pendingEdits,
   canUndo,
   canRedo,
@@ -7665,6 +7718,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           rowSqlDriver={driver}
           rowSqlDatabase={database}
           rowSqlTable={table}
+          blobIo={identityStrategy === "primary_key" ? blobIo : undefined}
           columnMeta={tableColumns ?? undefined}
           incomingFks={incomingFks}
           onRunRelatedQuery={onRunRelatedQuery}

@@ -2362,6 +2362,31 @@ export const api = {
     ),
 
   /**
+   * 主キーで 1 セルの生バイトを取得する (#1148)。グリッドの表示値ではなくサーバの値を
+   * 引き直すので、ファイル保存・画像プレビューは常に完全な内容になる。16 進文字列
+   * (小文字) を返し、NULL は null。該当行が 1 行に定まらない場合は reject される。
+   */
+  fetchCellBytes: (
+    sessionId: string,
+    database: string | null,
+    table: string,
+    column: string,
+    key: { column: string; value: CellValue }[],
+  ) =>
+    invoke<string | null>("fetch_cell_bytes", { sessionId, database, table, column, key }).then(
+      (r) => parseResponse(schemas.nullableStringResponse, r, "fetch_cell_bytes"),
+    ),
+
+  /**
+   * ファイルをバイナリで読み 16 進文字列 (小文字) を返す (#1148、BLOB への書き戻し用)。
+   * サイズ上限 (16 MiB) を超えるファイルは reject される。
+   */
+  readBinaryFile: (path: string) =>
+    invoke<string>("read_binary_file", { path }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "read_binary_file"),
+    ),
+
+  /**
    * フロントで生成したバイト列 (チャート/ER 図の PNG・SVG など) を、保存ダイアログで
    * 選んだパスへバックエンド経由で書き出す (capabilities を最小に保つため。#643)。
    * 書き込んだバイト数を返す。

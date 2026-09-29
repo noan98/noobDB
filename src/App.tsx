@@ -42,6 +42,7 @@ import {
   applyEditsToRows,
   buildDeleteStatements,
   buildInsertStatements,
+  buildBlobUpdateStatement,
   buildUpdateStatements,
   countEditedCells,
   countEditedRows,
@@ -311,6 +312,7 @@ import { extractQueryParams, substituteQueryParams, type ParamType } from "./que
 import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
+import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
   shouldAutoReconnect,
@@ -5342,6 +5344,64 @@ export default function App() {
     confirm,
   ]);
 
+  // BLOB セルへファイルの内容を書き戻す (#1148)。UPDATE は 1 セル分だけ組み立て、
+  // 上書きは取り消せないため接続設定に関わらず必ず確認してから実行する。読み取り専用
+  // セッションは `run_query` のバックエンドガードが拒否する (UI でも導線を出さない)。
+  // 成功したら取得済みの行へその場で反映し、ビューアが値の変化で取り直す。
+  const writeBlobForTab = useCallback(
+    async (tab: Tab, rowIdx: number, colIdx: number, hex: string): Promise<boolean> => {
+      if (!sessionId) return false;
+      const { result, tableColumns, database, table, rowIdentity } = tab;
+      if (!result || !tableColumns || !database || !table) return false;
+      const row = result.rows[rowIdx];
+      if (!row) return false;
+      const { indices: pkIndices, strategy } = resolveRowIdentity(
+        result.columns,
+        tableColumns,
+        rowIdentity,
+      );
+      // 実の主キーで行を特定できるときだけ (rowid / ctid / 全列一致では誤った行を
+      // 書き換えうる)。
+      if (strategy !== "primary_key") return false;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const stmt = buildBlobUpdateStatement({
+        driver, database, table, columns: result.columns, row, pkIndices, colIdx, hex,
+      });
+      if (!stmt) return false;
+      const size = formatBlobSize(hex.length / 2);
+      const ok = await confirm({
+        title: translate("blobLoadConfirmTitle"),
+        message: translate("blobLoadConfirmBody", {
+          column: result.columns[colIdx]?.name ?? "",
+          size,
+        }),
+        confirmLabel: translate("blobLoadConfirmButton"),
+        tone: "warning",
+      });
+      if (!ok) return false;
+      try {
+        const res = await api.runQuery(sessionId, stmt, database);
+        if (Number(res.rows_affected ?? 0) < 1) {
+          toast.error(translate("blobLoadNotUpdated"));
+          return false;
+        }
+      } catch (e) {
+        toast.error(translate("blobLoadFailed", { error: String(e) }));
+        return false;
+      }
+      patchTab(tab.id, (tt) => {
+        if (!tt.result) return tt;
+        const rows = tt.result.rows.map((r, i) =>
+          i === rowIdx ? r.map((v, c) => (c === colIdx ? hex : v)) : r,
+        );
+        return { ...tt, result: { ...tt.result, rows } };
+      });
+      toast.success(translate("blobLoaded", { size }));
+      return true;
+    },
+    [sessionId, selectedProfile?.driver, patchTab, confirm, toast],
+  );
+
   // 行を削除予定にトグルする。
   const toggleRowDeleteForTab = useCallback((tabId: string, rowKey: string) => {
     patchTab(tabId, (tt) => {
@@ -7864,6 +7924,16 @@ export default function App() {
                       editable={tab.kind === "table" && !readOnly}
                       tableColumns={tab.tableColumns}
                       rowIdentity={tab.rowIdentity}
+                      blobIo={
+                        sessionId && tab.kind === "table"
+                          ? {
+                              sessionId,
+                              onWrite: readOnly
+                                ? undefined
+                                : (r, c, hex) => writeBlobForTab(tab, r, c, hex),
+                            }
+                          : undefined
+                      }
                       pendingEdits={tab.pendingEdits}
                       canUndo={(tab.editUndoStack?.length ?? 0) > 0}
                       canRedo={(tab.editRedoStack?.length ?? 0) > 0}

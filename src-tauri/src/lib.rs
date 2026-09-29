@@ -970,6 +970,8 @@ pub fn run() {
             commands::transfer::transfer_data,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
+            commands::cell_blob::fetch_cell_bytes,
+            commands::cell_blob::read_binary_file,
             commands::file::write_binary_file,
             commands::local::create_local_session,
             commands::local::register_local_table,
