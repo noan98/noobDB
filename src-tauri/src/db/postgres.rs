@@ -8,6 +8,7 @@ use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::server_messages::capture;
+use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
@@ -119,7 +120,7 @@ impl PostgresConn {
 
     // ── 明示トランザクション ──
 
-    pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
+    pub async fn tx_begin(&self, database: Option<&str>, opts: TxOptions) -> Result<()> {
         let mut guard = self.tx.lock().await;
         if guard.is_some() {
             return Err(AppError::InvalidInput(
@@ -128,7 +129,11 @@ impl PostgresConn {
         }
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
-        sqlx::query("BEGIN").execute(&mut *conn).await?;
+        // SQL は TxOptions が enum から組み立てた固定語彙のみ (#1166)。
+        let begin = opts.postgres_begin_sql();
+        sqlx::query(sqlx::AssertSqlSafe(begin))
+            .execute(&mut *conn)
+            .await?;
         *guard = Some(conn);
         Ok(())
     }

@@ -5,6 +5,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::db::tx_options::{TxIsolation, TxOptions};
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
 use crate::db::{apply_auto_limit_for, is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
@@ -417,17 +418,27 @@ pub(crate) async fn run_query_transaction_inner(
 // 経由に切り替える (通常のストリーミング経路はプールの別接続を使うため tx に乗らない)。
 
 /// 明示トランザクションを開始する。`database` は接続のスキーマ/DB コンテキスト。
+/// `isolation` / `read_only` は任意 (省略時はサーバ既定)。SQLite は非対応でエラー (#1166)。
 #[tauri::command]
 pub async fn begin_transaction(
     session_id: String,
     database: Option<String>,
+    isolation: Option<TxIsolation>,
+    read_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    session.conn.begin_transaction(database.as_deref()).await?;
+    let opts = TxOptions {
+        isolation,
+        read_only: read_only.unwrap_or(false),
+    };
+    session
+        .conn
+        .begin_transaction_with(database.as_deref(), opts)
+        .await?;
     tracing::info!(session_id = %session_id, "explicit transaction begun");
     Ok(())
 }

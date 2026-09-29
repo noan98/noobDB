@@ -5,6 +5,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRo
 use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::advisor::UnusedIndexStats;
+use super::tx_options::TxOptions;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
     ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
@@ -78,7 +79,8 @@ impl SqliteConn {
 
     // ── 明示トランザクション ──
 
-    pub async fn tx_begin(&self, _database: Option<&str>) -> Result<()> {
+    pub async fn tx_begin(&self, _database: Option<&str>, opts: TxOptions) -> Result<()> {
+        opts.ensure_default_for_sqlite()?;
         let mut guard = self.tx.lock().await;
         if guard.is_some() {
             return Err(AppError::InvalidInput(

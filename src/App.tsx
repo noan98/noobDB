@@ -115,6 +115,15 @@ import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
 import { Icon, ICON_SIZES } from "./components/Icon";
 import { Button } from "./components/ui";
+import { ListboxSelect } from "./components/ListboxSelect";
+import { Switch } from "./components/Switch";
+import {
+  isolationIsAliasedOn,
+  resolveTxOptions,
+  supportsTxOptions,
+  TX_ISOLATION_DEFAULT,
+  type TxIsolation,
+} from "./txOptions";
 import { LoadingButton } from "./components/LoadingButton";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
@@ -1865,6 +1874,9 @@ export default function App() {
   // 明示トランザクション: 現在のセッションでトランザクションが有効か。実行経路の
   // 振り分けにコールバックから参照するため ref も併せ持つ。
   const [txActive, setTxActive] = useState(false);
+  // 明示トランザクション開始オプション (#1166)。開始ボタン横のドロップダウン/スイッチの選択値。
+  const [txIsolation, setTxIsolation] = useState<string>(TX_ISOLATION_DEFAULT);
+  const [txReadOnly, setTxReadOnly] = useState(false);
   // ルーチン実行フォーム (#1003) の対象。null なら閉じている。
   const [routineTarget, setRoutineTarget] = useState<{
     database: string;
@@ -4614,13 +4626,17 @@ export default function App() {
   const handleBeginTransaction = useCallback(async () => {
     if (!sessionId) return;
     try {
-      await api.beginTransaction(sessionId, selectedProfile?.database ?? null);
+      await api.beginTransaction(
+        sessionId,
+        selectedProfile?.database ?? null,
+        resolveTxOptions(selectedProfile?.driver, txIsolation, txReadOnly),
+      );
       setTxActive(true);
       toast.info(translate("txBegun"));
     } catch (e) {
       toast.error(String(e));
     }
-  }, [sessionId, selectedProfile?.database, toast]);
+  }, [sessionId, selectedProfile?.database, selectedProfile?.driver, txIsolation, txReadOnly, toast]);
 
   const handleFinishTransaction = useCallback(async (commit: boolean) => {
     if (!sessionId) return;
@@ -9041,11 +9057,52 @@ export default function App() {
                       </Button>
                     </>
                   ) : (
-                    <Tooltip label={t("txBeginHelp")}>
-                      <Button variant="secondary" size="sm" onClick={handleBeginTransaction}>
-                        {t("txBegin")}
-                      </Button>
-                    </Tooltip>
+                    <>
+                      <Tooltip
+                        label={
+                          supportsTxOptions(selectedProfile?.driver)
+                            ? isolationIsAliasedOn(selectedProfile?.driver, txIsolation as TxIsolation)
+                              ? t("txIsolationAliasedHelp")
+                              : t("txIsolationLabel")
+                            : t("txOptionsUnsupported")
+                        }
+                        focusableWrapper
+                      >
+                        <Box minW="36">
+                          <ListboxSelect
+                            value={txIsolation}
+                            ariaLabel={t("txIsolationLabel")}
+                            disabled={!supportsTxOptions(selectedProfile?.driver)}
+                            onChange={setTxIsolation}
+                            options={[
+                              { value: TX_ISOLATION_DEFAULT, label: t("txIsolationDefault") },
+                              { value: "read-committed", label: t("txIsolationReadCommitted") },
+                              { value: "repeatable-read", label: t("txIsolationRepeatableRead") },
+                              { value: "serializable", label: t("txIsolationSerializable") },
+                              { value: "read-uncommitted", label: t("txIsolationReadUncommitted") },
+                            ]}
+                          />
+                        </Box>
+                      </Tooltip>
+                      <Tooltip
+                        label={supportsTxOptions(selectedProfile?.driver) ? t("txReadOnlyHelp") : t("txOptionsUnsupported")}
+                        focusableWrapper
+                      >
+                        <Box>
+                          <Switch
+                            checked={supportsTxOptions(selectedProfile?.driver) && txReadOnly}
+                            onChange={setTxReadOnly}
+                            disabled={!supportsTxOptions(selectedProfile?.driver)}
+                            label={t("txReadOnly")}
+                          />
+                        </Box>
+                      </Tooltip>
+                      <Tooltip label={t("txBeginHelp")}>
+                        <Button variant="secondary" size="sm" onClick={handleBeginTransaction}>
+                          {t("txBegin")}
+                        </Button>
+                      </Tooltip>
+                    </>
                   )}
                 </Flex>
               )}

@@ -6,6 +6,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
@@ -116,7 +117,7 @@ impl MySqlConn {
 
     // ── 明示トランザクション ──
 
-    pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
+    pub async fn tx_begin(&self, database: Option<&str>, opts: TxOptions) -> Result<()> {
         let mut guard = self.tx.lock().await;
         if guard.is_some() {
             return Err(AppError::InvalidInput(
@@ -127,9 +128,14 @@ impl MySqlConn {
         apply_use_database(&mut conn, database).await?;
         // Transaction-control statements go through the text protocol (raw_sql),
         // like `USE`, so they can't trip MySQL's prepared-statement error 1295.
+        // 分離レベルは START TRANSACTION の前 (次の 1 トランザクションだけに効く, #1166)。
+        // SQL は TxOptions が enum から組み立てた固定語彙のみ。
+        if let Some(pre) = opts.mysql_pre_sql() {
+            sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(pre))).await?;
+        }
         sqlx::Executor::execute(
             &mut *conn,
-            sqlx::raw_sql(sqlx::AssertSqlSafe("START TRANSACTION")),
+            sqlx::raw_sql(sqlx::AssertSqlSafe(opts.mysql_begin_sql())),
         )
         .await?;
         *guard = Some(conn);

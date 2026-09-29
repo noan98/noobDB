@@ -19,7 +19,7 @@
 ## クエリ実行・トランザクション (`commands/query.rs`)
 
 `run_query` / `run_query_transaction` / `run_query_stream` / `preview_query_stream` /
-`cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` / `run_in_transaction` /
+`cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` (任意引数 `isolation` / `readOnly`, #1166) / `run_in_transaction` /
 `finish_transaction`
 
 ## スキーマ (`commands/schema.rs`)
