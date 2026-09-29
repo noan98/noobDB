@@ -1,4 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { isProtectedNamespace, treeNamespaceKind } from "./databaseMaintenance";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
 import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableColumnInfo } from "../api/tauri";
@@ -10,6 +11,7 @@ import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
+import { isEditableObjectKind, supportsRoutineEditing, type EditableObjectKind } from "./routineMaintenance";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
@@ -324,6 +326,12 @@ interface Props {
   onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
   /** DB 全体の保守コマンド (SQLite VACUUM / PostgreSQL VACUUM・ANALYZE 等)。#561。 */
   onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
+  /** データベース / スキーマの新規作成モーダルを開く (#1190)。プロファイルと DB ノードの
+   *  右クリックから呼ぶ。SQLite は非対応なので項目を出さない。read_only では無効化。 */
+  onCreateNamespace?: () => void;
+  /** DB ノード (MySQL = データベース / PostgreSQL = スキーマ) の DROP (#1190)。名前の
+   *  タイプ入力確認は呼び出し側 (App) が挟む。read_only では無効化。 */
+  onDropNamespace?: (name: string) => void;
   /** DB ノードからサイズ・統計ダッシュボードを開く。#562。 */
   onShowDatabaseSizes?: (database: string) => void;
   /** テーブルノードから列データプロファイル (「列を探索」) を開く。#974。 */
@@ -358,6 +366,14 @@ interface Props {
    * 未指定ならメニュー項目を出さない。
    */
   onRunRoutine?: (database: string, kind: "procedure" | "function", name: string, id: string | null) => void;
+  /**
+   * ルーチン / トリガーの定義編集 (#1192)。右クリックの「定義を編集...」から呼ぶ。
+   * ドライバが対応しない種別 (SQLite のルーチン) や read_only では項目を無効化する。
+   * 未指定ならメニュー項目を出さない。
+   */
+  onEditRoutine?: (database: string, kind: EditableObjectKind, name: string, id: string | null) => void;
+  /** ルーチン / トリガーの新規作成 (#1192)。DB の右クリックメニューから呼ぶ。 */
+  onCreateRoutine?: (database: string, kind: EditableObjectKind) => void;
   /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
@@ -423,6 +439,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
+  onCreateNamespace,
+  onDropNamespace,
   onExploreColumns,
   onWatchTable,
   onCreateSandbox,
@@ -435,6 +453,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onEditViewDefinition,
   onDropView,
   onRunRoutine,
+  onEditRoutine,
+  onCreateRoutine,
   onFindUsages,
   selectLimit,
   favorites,
@@ -1077,6 +1097,16 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               },
             ]
           : []),
+        ...(onCreateNamespace && p.id === activeProfileId && treeNamespaceKind(p.driver) !== null
+          ? [
+              {
+                label: t(p.driver === "postgres" ? "contextMenuCreateNamespace" : "contextMenuCreateDatabase"),
+                onSelect: () => onCreateNamespace(),
+                disabled: p.read_only,
+                title: p.read_only ? t("listReadOnlyTitle") : undefined,
+              },
+            ]
+          : []),
         { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
         { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
         {
@@ -1250,25 +1280,39 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // read_only でも無効化しない — 読み取りだけの関数もあり、書き込み系は実行時に
   // バックエンドの `ensure_allowed_for_session` が拒否する (二重に判定しない)。
   const handleRoutineContextMenu = (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => {
-    if (!onRunRoutine || !isRoutineKind(o.kind)) return;
+    if (!isEditableObjectKind(o.kind)) return;
+    const kind = o.kind;
+    const canRun = !!onRunRoutine && isRoutineKind(kind);
+    if (!canRun && !onEditRoutine) return;
     e.preventDefault();
     e.stopPropagation();
-    const kind = o.kind;
-    const supported = supportsRoutineExecution(activeDriver);
-    const items: ContextMenuEntry[] = [
-      {
+    const items: ContextMenuEntry[] = [];
+    if (canRun && isRoutineKind(kind)) {
+      const supported = supportsRoutineExecution(activeDriver);
+      items.push({
         label: t("contextMenuRunRoutine"),
-        onSelect: () => onRunRoutine(db, kind, o.name, o.id),
+        onSelect: () => onRunRoutine?.(db, kind, o.name, o.id),
         disabled: !supported,
         title: supported ? undefined : t("runRoutineUnsupportedDriver"),
-      },
-    ];
+      });
+    }
+    if (onEditRoutine) {
+      // 定義の編集 (#1192) はモーダルが開くだけなので閲覧はできる。適用の可否は
+      // モーダル側 (read_only はバックエンド強制) が決める。
+      const supported = supportsRoutineEditing(activeDriver, kind);
+      items.push({
+        label: t("contextMenuEditRoutine"),
+        onSelect: () => onEditRoutine(db, kind, o.name, o.id),
+        disabled: !supported,
+        title: supported ? undefined : t("runRoutineUnsupportedDriver"),
+      });
+    }
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   // ビューの右クリックメニュー: データ / 構造 (#1112)・定義の表示 / 編集 (#851)・
-  // 影響分析 (#1027)・DROP VIEW。ルーチン/トリガーは delimiter 差が大きいため定義の
-  // 編集は対象外。`asNode` が false のときは定義だけを開く旧来のビュー行
+  // 影響分析 (#1027)・DROP VIEW。ルーチン/トリガーの定義編集は
+  // `handleRoutineContextMenu` (#1192)。`asNode` が false のときは定義だけを開く旧来のビュー行
   // (`list_tables` と名前が突き合わなかったもの) で、データ系の項目を出さない。
   // テーブル向けの書き込み系 (インポート / TRUNCATE / 列編集など) はビューには出さない。
   const handleViewContextMenu = (
@@ -1386,6 +1430,22 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
       });
     }
+    if (onCreateRoutine) {
+      const kinds: { kind: EditableObjectKind; key: "contextMenuCreateProcedure" | "contextMenuCreateFunction" | "contextMenuCreateTrigger" }[] = [
+        { kind: "procedure", key: "contextMenuCreateProcedure" },
+        { kind: "function", key: "contextMenuCreateFunction" },
+        { kind: "trigger", key: "contextMenuCreateTrigger" },
+      ];
+      const entries = kinds
+        .filter((k) => supportsRoutineEditing(activeDriver, k.kind))
+        .map((k) => ({
+          label: t(k.key),
+          onSelect: () => onCreateRoutine(db, k.kind),
+          disabled: activeReadOnly,
+          title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+        }));
+      items.push(...submenuOrFlat(t("contextMenuCreateRoutineGroup"), entries, { icon: "routine" }));
+    }
     if (onImportNewTable) {
       // 取り込みは書き込み (CREATE TABLE + INSERT) なので read_only では無効化する
       // (バックエンドの import_csv も read_only を拒否する)。
@@ -1395,6 +1455,31 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         disabled: activeReadOnly,
         title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
       });
+    }
+    // データベース / スキーマの作成・削除 (#1190)。SQLite は DB がファイル単位なので
+    // 出さない。書き込みなので read_only では無効化 (バックエンドも拒否する)。
+    const nsKind = treeNamespaceKind(activeDriver);
+    if (nsKind !== null && (onCreateNamespace || onDropNamespace)) {
+      const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
+      if (onCreateNamespace) {
+        items.push({
+          label: t(activeDriver === "postgres" ? "contextMenuCreateNamespace" : "contextMenuCreateDatabase"),
+          onSelect: () => onCreateNamespace(),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onDropNamespace) {
+        const protectedNs = isProtectedNamespace(activeDriver, db);
+        items.push({
+          label: t(nsKind === "schema" ? "contextMenuDropSchema" : "contextMenuDropDatabase"),
+          onSelect: () => onDropNamespace(db),
+          disabled: activeReadOnly || protectedNs,
+          title: activeReadOnly ? roTitle : protectedNs ? t("contextMenuNamespaceProtectedTitle") : undefined,
+          danger: true,
+        });
+      }
+      items.push({ separator: true });
     }
     items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
     // ダンプの対になる「リストア」導線 (#973)。読み取り専用でも開ける — 書き込み文は
@@ -1783,7 +1868,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
                   kind === "view"
                     ? (ev) => handleViewContextMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
-                    : isRoutineKind(kind)
+                    : isEditableObjectKind(kind)
                       ? (ev) => handleRoutineContextMenu(ev, db, o)
                       : undefined;
                 return (
