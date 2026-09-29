@@ -3195,3 +3195,73 @@ async fn data_quality_assertions_run_on_read_only_session() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn sqlite_identity_sync_fixes_duplicate_key_after_explicit_ids() {
+    // #1240: 明示 PK での投入や sqlite_sequence の取り残しを、フロントが生成する同期 SQL
+    // (`identitySync.ts`) で最大 rowid に揃えられ、その後の自動採番 INSERT が成功することを
+    // 確認する。(SQLite は行が残っていれば max(seq, MAX(rowid)) + 1 を採番するため、
+    // 取り残しが実害になるのは主に行削除後の id 再利用や他ツールでの seq 巻き戻しのとき。)
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_identity_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE seq_t (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    // 自動採番で 1 行入れてカウンタ行 (sqlite_sequence) を作り、その後に大きな id を明示投入する。
+    conn.execute("INSERT INTO seq_t (label) VALUES ('auto')", None)
+        .await
+        .expect("seed auto");
+    conn.execute("DELETE FROM seq_t", None)
+        .await
+        .expect("clear");
+    conn.execute(
+        "INSERT INTO seq_t (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+        None,
+    )
+    .await
+    .expect("explicit ids");
+    // 取り残しを意図的に再現する。
+    conn.execute(
+        "UPDATE sqlite_sequence SET seq = 0 WHERE name = 'seq_t'",
+        None,
+    )
+    .await
+    .expect("desync");
+
+    conn.execute(
+        r#"UPDATE sqlite_sequence SET seq = (SELECT COALESCE(MAX(rowid), 0) FROM "seq_t") WHERE name = 'seq_t'"#,
+        None,
+    )
+    .await
+    .expect("sync");
+    conn.execute("INSERT INTO seq_t (label) VALUES ('after')", None)
+        .await
+        .expect("insert after sync must succeed");
+    let rows = conn
+        .execute("SELECT MAX(id) FROM seq_t", None)
+        .await
+        .expect("max");
+    let json = serde_json::to_string(&rows.rows).expect("json");
+    assert!(json.contains('4'), "next id must be 4, got {json}");
+    let seq = conn
+        .execute("SELECT seq FROM sqlite_sequence WHERE name = 'seq_t'", None)
+        .await
+        .expect("seq");
+    let json = serde_json::to_string(&seq.rows).expect("json");
+    assert!(
+        json.contains('4'),
+        "seq must follow the last id, got {json}"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}

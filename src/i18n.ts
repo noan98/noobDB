@@ -1740,6 +1740,13 @@ const en = {
   contextMenuDropIndex: "Drop index...",
   // 保守コマンドのサブメニュー (#1018)
   contextMenuMaintenanceGroup: "Maintenance...",
+  // 採番列の同期 (#1240)
+  contextMenuSyncIdentity: "Sync auto-increment to data...",
+  identitySyncConfirmTitle: "Sync auto-increment of {table}?",
+  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to the current maximum value. The following statement will run:",
+  identitySyncNoColumn: "{table} has no auto-increment column to sync",
+  identitySyncMaxFailed: "Could not read the maximum value of {column}: {error}",
+  identitySyncDone: "Synced auto-increment of {table}",
   renameTableTitle: "Rename table",
   renameTableLabel: "New name for {table}",
   renameTableConfirm: "Rename",
@@ -5413,6 +5420,13 @@ const ja: Dict = {
   contextMenuDropIndex: "インデックスを DROP...",
   // 保守コマンドのサブメニュー (#1018)
   contextMenuMaintenanceGroup: "保守コマンド...",
+  // 採番列の同期 (#1240)
+  contextMenuSyncIdentity: "採番を実データに同期...",
+  identitySyncConfirmTitle: "{table} の採番を同期しますか?",
+  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます。次の文を実行します:",
+  identitySyncNoColumn: "{table} には同期できる採番列がありません",
+  identitySyncMaxFailed: "{column} の最大値を取得できませんでした: {error}",
+  identitySyncDone: "{table} の採番を同期しました",
   renameTableTitle: "テーブル名を変更",
   renameTableLabel: "{table} の新しい名前",
   renameTableConfirm: "変更",
