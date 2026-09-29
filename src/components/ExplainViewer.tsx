@@ -3,7 +3,7 @@ import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
-import { Button } from "./ui";
+import { Button, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import {
@@ -12,13 +12,17 @@ import {
   type PlanNode,
   type ScoreBand,
   attrVal,
+  actualTotalMs,
   collectIds,
   computeHints,
   findNode,
+  formatDurationMs,
   formatNumber,
   formatValue,
+  hasActual,
   heatFor,
   maxCost,
+  nodeMisestimate,
   parseExplainForDriver,
   parseNum,
   scorePlan,
@@ -400,6 +404,15 @@ interface Props {
   driver: string;
   /** True while the EXPLAIN command is still streaming its (single) row. */
   streaming?: boolean;
+  /**
+   * 実測モード (EXPLAIN ANALYZE, #1164) のトグル。未指定ならトグルを出さない。
+   * `supported` が false (SQLite など) のときは無効化して理由を Tooltip に出す。
+   */
+  analyze?: {
+    supported: boolean;
+    active: boolean;
+    onToggle: (next: boolean) => void;
+  };
 }
 
 interface NodeRowProps {
@@ -413,6 +426,9 @@ interface NodeRowProps {
   expandLabel: string;
   collapseLabel: string;
   hintsLabel: string;
+  /** 実測バッジの文言 (`est {est} → actual {actual} rows`) を作る。 */
+  actualRowsLabel: (est: string, actual: string) => string;
+  neverExecutedLabel: string;
 }
 
 function NodeRow({
@@ -426,6 +442,8 @@ function NodeRow({
   expandLabel,
   collapseLabel,
   hintsLabel,
+  actualRowsLabel,
+  neverExecutedLabel,
 }: NodeRowProps) {
   const isCollapsed = collapsed.has(node.id);
   const hasChildren = node.children.length > 0;
@@ -438,6 +456,11 @@ function NodeRow({
   // positive "info" hints are still shown in the detail panel on selection.
   const worstHint = worstSeverity(computeHints(node));
   const showHintMarker = worstHint === "caution" || worstHint === "warning";
+  // 実測モード (#1164): 推定 / 実測の行数を並記し、乖離が大きいノードは既存の
+  // semantic 色 (warm=警告色 / hot=危険色) のバッジにする。
+  const actual = node.actual;
+  const misestimate = nodeMisestimate(node).level;
+  const totalMs = actualTotalMs(node);
   return (
     <>
       <Box
@@ -480,8 +503,35 @@ function NodeRow({
           {node.cost !== null && (
             <chakra.span css={costBadgeCss(heat)}>{formatNumber(node.cost)}</chakra.span>
           )}
-          {parseNum(rows) !== null && (
-            <chakra.span css={badgeBaseCss}>{formatNumber(parseNum(rows) as number)} rows</chakra.span>
+          {actual ? (
+            actual.loops === 0 ? (
+              <chakra.span css={badgeBaseCss}>{neverExecutedLabel}</chakra.span>
+            ) : (
+              <>
+                {actual.rows !== null && (
+                  <chakra.span css={costBadgeCss(misestimate)} textStyle="numeric">
+                    {actualRowsLabel(
+                      actual.estRows === null ? "—" : formatNumber(actual.estRows),
+                      formatNumber(actual.rows),
+                    )}
+                  </chakra.span>
+                )}
+                {totalMs !== null && (
+                  <chakra.span css={badgeBaseCss} textStyle="numeric">
+                    {formatDurationMs(totalMs)}
+                  </chakra.span>
+                )}
+                {actual.loops !== null && actual.loops > 1 && (
+                  <chakra.span css={badgeBaseCss} textStyle="numeric">
+                    ×{formatNumber(actual.loops)}
+                  </chakra.span>
+                )}
+              </>
+            )
+          ) : (
+            parseNum(rows) !== null && (
+              <chakra.span css={badgeBaseCss}>{formatNumber(parseNum(rows) as number)} rows</chakra.span>
+            )
           )}
         </chakra.span>
       </Box>
@@ -500,13 +550,48 @@ function NodeRow({
             expandLabel={expandLabel}
             collapseLabel={collapseLabel}
             hintsLabel={hintsLabel}
+            actualRowsLabel={actualRowsLabel}
+            neverExecutedLabel={neverExecutedLabel}
           />
         ))}
     </>
   );
 }
 
-export function ExplainViewer({ result, driver, streaming }: Props) {
+/** 実測モードのトグルバー。どの表示状態 (読込中/空/エラー) でも常に出す。 */
+function AnalyzeBar({ analyze }: { analyze: NonNullable<Props["analyze"]> }) {
+  const t = useT();
+  return (
+    <Box css={toolbarCss}>
+      <Tooltip
+        label={t(analyze.supported ? "explainAnalyzeTooltip" : "explainAnalyzeUnsupportedTooltip")}
+        focusableWrapper
+      >
+        <chakra.span fontSize="sm" color="app.textSecondary">
+          <Switch
+            size="sm"
+            checked={analyze.active && analyze.supported}
+            disabled={!analyze.supported}
+            onChange={analyze.onToggle}
+            label={t("explainAnalyzeLabel")}
+          />
+        </chakra.span>
+      </Tooltip>
+    </Box>
+  );
+}
+
+export function ExplainViewer({ result, driver, streaming, analyze }: Props) {
+  if (!analyze) return <ExplainViewerBody result={result} driver={driver} streaming={streaming} />;
+  return (
+    <Box flex="1 1 auto" minHeight={0} minWidth={0} display="flex" flexDirection="column" overflow="hidden">
+      <AnalyzeBar analyze={analyze} />
+      <ExplainViewerBody result={result} driver={driver} streaming={streaming} />
+    </Box>
+  );
+}
+
+function ExplainViewerBody({ result, driver, streaming }: Omit<Props, "analyze">) {
   const t = useT();
   const { raw, root, error } = useMemo(
     () => parseExplainForDriver(driver, result),
@@ -515,6 +600,9 @@ export function ExplainViewer({ result, driver, streaming }: Props) {
   const [view, setView] = useState<"tree" | "graph">("tree");
   const max = useMemo(() => (root ? maxCost(root) : 0), [root]);
   const score = useMemo(() => (root ? scorePlan(root) : null), [root]);
+  // 実測モードの結果か (ノードのどれかが実測値を持つ)。ルートの実時間は実行時間の目安。
+  const analyzed = useMemo(() => hasActual(root), [root]);
+  const rootTotalMs = root ? actualTotalMs(root) : null;
   const allIds = useMemo(() => {
     if (!root) return [];
     const ids: string[] = [];
@@ -631,9 +719,15 @@ export function ExplainViewer({ result, driver, streaming }: Props) {
               </chakra.span>
             </Tooltip>
           )}
+          {analyzed && <chakra.span css={indexBadgeCss}>{t("explainAnalyzeBadge")}</chakra.span>}
           {root.cost !== null && (
             <chakra.span css={totalCostCss}>
               {t("explainTotalCost", { cost: formatNumber(root.cost) })}
+            </chakra.span>
+          )}
+          {analyzed && rootTotalMs !== null && (
+            <chakra.span css={totalCostCss} textStyle="numeric">
+              {t("explainTotalTime", { time: formatDurationMs(rootTotalMs) })}
             </chakra.span>
           )}
           <chakra.span flex={1} />
@@ -702,6 +796,8 @@ export function ExplainViewer({ result, driver, streaming }: Props) {
               expandLabel={t("explainExpandNode")}
               collapseLabel={t("explainCollapseNode")}
               hintsLabel={t("explainHintsTitle")}
+              actualRowsLabel={(est, actual) => t("explainActualRows", { est, actual })}
+              neverExecutedLabel={t("explainNeverExecuted")}
             />
           </Box>
         )}

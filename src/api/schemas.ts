@@ -31,11 +31,19 @@ export const column = z.object({
   type_name: z.string(),
 });
 
+/** サーバが文の実行中に返した通知・警告 1 件 (#1165)。 */
+export const serverMessage = z.object({
+  severity: z.enum(["error", "warning", "notice", "info"]),
+  text: z.string(),
+});
+
 export const queryResult = z.object({
   columns: z.array(column),
   rows: z.array(z.array(cellValue)),
   rows_affected: z.number(),
   elapsed_ms: z.number(),
+  /** 古いバックエンド / キャッシュ由来では欠けるので省略可能 (#1165)。 */
+  server_messages: z.array(serverMessage).optional(),
 });
 
 export const tableColumnInfo = z.object({
@@ -775,6 +783,8 @@ export const queryStreamDoneMessage = z.object({
   elapsedMs: z.number(),
   hasColumns: z.boolean(),
   appliedAutoLimit: z.number().nullable(),
+  /** サーバの通知・警告 (#1165)。古いバックエンドは送らないので省略可能。 */
+  serverMessages: z.array(serverMessage).optional(),
 });
 
 export const queryStreamErrorMessage = z.object({
@@ -969,6 +979,11 @@ const taskAction = z.discriminatedUnion("kind", [
     output_path: z.string(),
     options: dumpOptions,
   }),
+  z.object({
+    kind: z.literal("run_assertions"),
+    database: z.string().nullable().optional(),
+    assertion_ids: z.array(z.string()),
+  }),
 ]);
 
 const taskSchedule = z.discriminatedUnion("kind", [
@@ -1003,6 +1018,20 @@ export const taskRun = z.object({
   elapsed_ms: z.number(),
   catch_up: z.boolean(),
 });
+
+export const assertionRunRecord = z.object({
+  id: z.number(),
+  task_id: z.string(),
+  run_started_at: z.string(),
+  assertion_id: z.string(),
+  assertion_name: z.string(),
+  passed: z.boolean(),
+  observed: z.number().nullable(),
+  error: z.string().nullable(),
+  elapsed_ms: z.number(),
+});
+
+export const assertionRunRecordArray = z.array(assertionRunRecord);
 
 export const schedulerSettings = z.object({
   catch_up_missed: z.boolean(),

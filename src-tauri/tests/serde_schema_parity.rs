@@ -49,10 +49,10 @@ use t::{
     ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
     RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
     ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
-    ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope,
-    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementStat, StreamCancelledEvent,
-    SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment, TableDiff, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, Value,
+    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
+    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
+    StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
+    TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -81,6 +81,10 @@ fn build_fixtures() -> serde_json::Value {
         ],
         rows_affected: 0,
         elapsed_ms: 12,
+        server_messages: vec![ServerMessage {
+            severity: ServerMessageSeverity::Notice,
+            text: "table \"t\" does not exist, skipping".into(),
+        }],
     };
     let table_column_info = TableColumnInfo {
         name: "id".into(),
@@ -457,6 +461,10 @@ fn build_fixtures() -> serde_json::Value {
         elapsed_ms: 12,
         has_columns: true,
         applied_auto_limit: Some(1000),
+        server_messages: vec![ServerMessage {
+            severity: ServerMessageSeverity::Warning,
+            text: "[1265] Data truncated for column 'a' at row 1".into(),
+        }],
     };
     let query_stream_error_message = QueryStreamMessage::Error {
         error: "connection reset by peer".into(),

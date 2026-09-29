@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { api } from "../api/tauri";
 import {
   queryResult,
+  queryStreamDoneMessage,
   connectionProfile,
   historyEntry,
   parseResponse,
@@ -69,6 +70,35 @@ describe("IPC ランタイム型検証 (#391)", () => {
 });
 
 describe("Zod スキーマ単体 (#391)", () => {
+  it("サーバ側メッセージ (#1165) は省略可能で、重大度は列挙値のみ", () => {
+    const withMsgs = {
+      ...VALID_QUERY_RESULT,
+      server_messages: [{ severity: "notice", text: "hello" }],
+    };
+    expect(queryResult.safeParse(withMsgs).success).toBe(true);
+    expect(
+      queryResult.safeParse({
+        ...VALID_QUERY_RESULT,
+        server_messages: [{ severity: "fatal", text: "x" }],
+      }).success,
+    ).toBe(false);
+    const done = {
+      kind: "done",
+      totalRows: 0,
+      rowsAffected: 1,
+      elapsedMs: 2,
+      hasColumns: false,
+      appliedAutoLimit: null,
+    };
+    expect(queryStreamDoneMessage.safeParse(done).success).toBe(true);
+    expect(
+      queryStreamDoneMessage.safeParse({
+        ...done,
+        serverMessages: [{ severity: "warning", text: "w" }],
+      }).success,
+    ).toBe(true);
+  });
+
   it("queryResult は正常/異常を正しく判定する", () => {
     expect(queryResult.safeParse(VALID_QUERY_RESULT).success).toBe(true);
     expect(queryResult.safeParse({ columns: [] }).success).toBe(false);

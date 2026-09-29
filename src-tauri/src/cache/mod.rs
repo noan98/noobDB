@@ -1509,6 +1509,7 @@ mod query_result_cache_tests {
                 .collect(),
             rows_affected: rows as u64,
             elapsed_ms: 0,
+            server_messages: Vec::new(),
         }
     }
 
@@ -1665,6 +1666,7 @@ mod query_result_cache_tests {
                             rows: vec![vec![Value::String("x".repeat(1000))]], // 100 バイト上限を大きく超過
                             rows_affected: 1,
                             elapsed_ms: 0,
+                            server_messages: Vec::new(),
                         })
                     },
                 )
@@ -2391,6 +2393,7 @@ mod single_flight_tests {
             rows: vec![vec![Value::Int(v)]],
             rows_affected: 1,
             elapsed_ms: 0,
+            server_messages: Vec::new(),
         }
     }
 

@@ -13,6 +13,7 @@ use super::types::{
     ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
     TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
+use super::types::{ServerMessage, ServerMessageSeverity};
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{
     build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions,
@@ -265,6 +266,7 @@ impl MySqlConn {
                     rows: Vec::new(),
                     rows_affected: total as u64,
                     elapsed_ms,
+                    server_messages: Vec::new(),
                 });
             }
             return Ok(QueryResult::empty(rows_affected, elapsed_ms));
@@ -275,10 +277,14 @@ impl MySqlConn {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *conn)
                 .await?;
+            // 書き込み文の直後に警告を取る (#1165)。同じ接続・直後でないと
+            // 診断領域が次の文で上書きされる。
+            let messages = fetch_warnings(&mut conn).await;
             return Ok(QueryResult::empty(
                 result.rows_affected(),
                 started.elapsed().as_millis() as u64,
-            ));
+            )
+            .with_server_messages(messages));
         }
 
         let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch(&mut *conn);
@@ -318,6 +324,7 @@ impl MySqlConn {
             rows: Vec::new(),
             rows_affected: total as u64,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
         })
     }
 
@@ -1869,16 +1876,72 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
             rows: rows_out,
             rows_affected: 0,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
         })
     } else {
         let result = sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(&mut *conn)
             .await?;
-        Ok(QueryResult::empty(
-            result.rows_affected(),
-            started.elapsed().as_millis() as u64,
-        ))
+        // 書き込み文の直後に警告を取る (#1165)。
+        let messages = fetch_warnings(conn).await;
+        Ok(
+            QueryResult::empty(result.rows_affected(), started.elapsed().as_millis() as u64)
+                .with_server_messages(messages),
+        )
     }
+}
+
+/// 直前の文が出した警告を取得する (#1165)。まず `SHOW COUNT(*) WARNINGS` (診断領域を
+/// 消さない軽量な問い合わせ) で件数を見て、0 のときは何もしない。1 件以上あるときだけ
+/// `SHOW WARNINGS` を発行する。sqlx の `MySqlQueryResult` は OK パケットの
+/// `warning_count` を公開しないため、この 2 段構えで「警告がある文だけ」全文を取る。
+///
+/// 補助的な情報なので、取得に失敗しても文自体の成否には影響させず空を返す。
+/// `SHOW` は読み取り専用文なので `read_only` ガードとも干渉しない (ユーザ文ではない)。
+async fn fetch_warnings(conn: &mut sqlx::MySqlConnection) -> Vec<ServerMessage> {
+    let count = match sqlx::raw_sql("SHOW COUNT(*) WARNINGS")
+        .fetch_all(&mut *conn)
+        .await
+    {
+        Ok(rows) => rows
+            .first()
+            .and_then(|r| r.try_get::<i64, _>(0).ok())
+            // 件数を読めなかったときは、取りこぼすより SHOW WARNINGS に進む。
+            .unwrap_or(1),
+        Err(_) => return Vec::new(),
+    };
+    if count <= 0 {
+        return Vec::new();
+    }
+    match sqlx::raw_sql("SHOW WARNINGS").fetch_all(&mut *conn).await {
+        Ok(rows) => rows
+            .iter()
+            .take(super::server_messages::MAX_SERVER_MESSAGES)
+            .filter_map(|r| {
+                let level: String = r.try_get(0).ok()?;
+                let message: String = r.try_get(2).ok()?;
+                let code: Option<u32> = r.try_get(1).ok();
+                Some(warning_to_message(&level, code, &message))
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// `SHOW WARNINGS` の 1 行 (Level / Code / Message) を [`ServerMessage`] へ変換する。
+/// Level は `Note` → info、`Warning` → warning、`Error` → error (未知の値は info)。
+/// Code があれば `[1265] ...` の形で本文の先頭に付ける。
+fn warning_to_message(level: &str, code: Option<u32>, message: &str) -> ServerMessage {
+    let severity = match level.to_ascii_lowercase().as_str() {
+        "error" => ServerMessageSeverity::Error,
+        "warning" => ServerMessageSeverity::Warning,
+        _ => ServerMessageSeverity::Info,
+    };
+    let text = match code {
+        Some(c) => format!("[{c}] {message}"),
+        None => message.to_string(),
+    };
+    ServerMessage { severity, text }
 }
 
 fn row_to_values(row: &MySqlRow) -> Vec<Value> {
@@ -2357,6 +2420,7 @@ async fn collect_call(
             rows: rows_out,
             rows_affected: 0,
             elapsed_ms,
+            server_messages: Vec::new(),
         })
     } else {
         Ok(QueryResult::empty(rows_affected, elapsed_ms))
@@ -2494,6 +2558,30 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn warning_rows_map_to_severity_and_prefix_code() {
+        let w = warning_to_message(
+            "Warning",
+            Some(1265),
+            "Data truncated for column 'a' at row 1",
+        );
+        assert_eq!(w.severity, ServerMessageSeverity::Warning);
+        assert_eq!(w.text, "[1265] Data truncated for column 'a' at row 1");
+        assert_eq!(
+            warning_to_message("Note", None, "n").severity,
+            ServerMessageSeverity::Info
+        );
+        assert_eq!(warning_to_message("Note", None, "n").text, "n");
+        assert_eq!(
+            warning_to_message("ERROR", Some(1), "e").severity,
+            ServerMessageSeverity::Error
+        );
+        assert_eq!(
+            warning_to_message("weird", None, "x").severity,
+            ServerMessageSeverity::Info
+        );
+    }
 
     #[test]
     fn maps_ssl_mode_to_mysql_equivalents() {
