@@ -22,7 +22,8 @@ export interface ServerSort {
 }
 
 /**
- * 最小セットの演算子: 等価 / 非等価 / 部分一致 (LIKE) / NULL 判定。
+ * 演算子: 等価 / 非等価 / 部分一致 (LIKE) / NULL 判定 / 比較 (`gt` `gte` `lt`
+ * `lte`) / 範囲 (`between`, 両端を含む) / 集合 (`in`, #1149)。
  *
  * `ne` はセル右クリックの「この値を除外する」(#914) と列ヘッダの条件指定で使う。
  * SQL の三値論理どおり `col <> 'x'` は NULL 行にマッチしない — つまり除外の
@@ -30,16 +31,65 @@ export interface ServerSort {
  * `columnFilter` は値条件がある行で NULL を弾く) と同じ挙動なので、テーブル
  * ブラウズとクエリ結果のどちらで絞り込んでも見え方が揃う。
  */
-export type ServerFilterOp = "eq" | "ne" | "contains" | "isNull" | "isNotNull";
+export type ServerFilterOp =
+  | "eq"
+  | "ne"
+  | "contains"
+  | "isNull"
+  | "isNotNull"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "between"
+  | "in";
+
+/** 比較演算子 → SQL 記号。 */
+const COMPARE_SQL: Partial<Record<ServerFilterOp, string>> = {
+  eq: "=",
+  ne: "<>",
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
+};
+
+/** 値入力を 1 つ必要とする演算子 (`between` は 2 つ、`in` は複数値)。 */
+export function serverFilterOpNeedsValue(op: ServerFilterOp): boolean {
+  return op !== "isNull" && op !== "isNotNull";
+}
+
+/**
+ * `in` の入力 (カンマまたは改行区切り) を値の配列へ分割する。各要素は前後の
+ * 空白を落とし、空要素は捨てる。値自体にカンマを含めることはできない。
+ */
+export function splitInValues(raw: string): string[] {
+  return raw
+    .split(/[,\n]/)
+    .map((v) => v.trim())
+    .filter((v) => v !== "");
+}
+
+/**
+ * 入力が演算子の要件を満たすか (UI の適用ボタン活性判定用)。`between` は両端、
+ * `in` は 1 件以上、`eq` 系・`contains` は空でない値を要求しない (従来どおり)。
+ */
+export function isServerFilterInputValid(op: ServerFilterOp, value: string, value2?: string): boolean {
+  if (op === "between") return value.trim() !== "" && (value2 ?? "").trim() !== "";
+  if (op === "in") return splitInValues(value).length > 0;
+  return true;
+}
 
 export interface ServerFilter {
   column: string;
   op: ServerFilterOp;
   /** ユーザ入力の生値。`isNull`/`isNotNull` では無視される。 */
   value: string;
+  /** `between` の上端 (`value` が下端)。他の演算子では無視される。 */
+  value2?: string;
   /**
    * 対象カラムが数値型かどうか。true かつ `value` が数値リテラルのときだけ
-   * `eq` を裸の数値で埋め込む (それ以外は常に安全な文字列リテラル)。
+   * 比較系 (`eq` など) を裸の数値で埋め込む (それ以外は常に安全な文字列リテラル)。
    */
   numeric: boolean;
 }
@@ -54,6 +104,13 @@ export function escapeLikeValue(raw: string): string {
   return raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
+/** 数値カラムかつ数値リテラルなら裸の数値、それ以外は方言別にクオートした文字列。 */
+function filterLiteral(driver: string, filter: ServerFilter, raw: string): string {
+  const trimmed = raw.trim();
+  if (filter.numeric && isNumericParam(trimmed)) return trimmed;
+  return quoteString(driver, raw);
+}
+
 /** 1 つの `ServerFilter` を WHERE 条件の断片 (`col = ...` 等) へ変換する。 */
 export function buildServerFilterClause(driver: string, filter: ServerFilter): string {
   const ident = quoteIdentFor(driver, filter.column);
@@ -66,13 +123,20 @@ export function buildServerFilterClause(driver: string, filter: ServerFilter): s
       const pattern = `%${escapeLikeValue(filter.value)}%`;
       return `${ident} LIKE ${quoteString(driver, pattern)} ESCAPE '\\'`;
     }
+    case "between":
+      return `${ident} BETWEEN ${filterLiteral(driver, filter, filter.value)} AND ${filterLiteral(driver, filter, filter.value2 ?? "")}`;
+    case "in": {
+      const items = splitInValues(filter.value);
+      // 空集合は何にもマッチしない (`IN ()` は方言によって構文エラーになる)。
+      if (items.length === 0) return "1 = 0";
+      return `${ident} IN (${items.map((v) => filterLiteral(driver, filter, v)).join(", ")})`;
+    }
     case "ne":
     case "eq":
     default: {
-      const cmp = filter.op === "ne" ? "<>" : "=";
-      const trimmed = filter.value.trim();
-      if (filter.numeric && isNumericParam(trimmed)) return `${ident} ${cmp} ${trimmed}`;
-      return `${ident} ${cmp} ${quoteString(driver, filter.value)}`;
+      const cmp = COMPARE_SQL[filter.op] ?? "=";
+      // eq / ne は従来どおり生値 (trim しない) をクオートする。
+      return `${ident} ${cmp} ${filterLiteral(driver, filter, filter.value)}`;
     }
   }
 }

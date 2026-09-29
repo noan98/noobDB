@@ -1,13 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import type { DriverKind } from "../api/tauri";
+import { api, type DriverKind } from "../api/tauri";
 import { buildCreateTableSql, type ColumnDef } from "./createTable";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
+import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
 
 /**
  * CREATE TABLE ウィザード。カラム定義をフォームで組み立て、方言に応じた
@@ -16,6 +18,8 @@ import { Tooltip } from "./Tooltip";
  * read_only セッションでは実行ボタンを無効化する (バックエンドも write を拒否する)。
  */
 interface Props {
+  /** 参照先テーブルのサジェスト取得用 (省略時はサジェストなし)。 */
+  sessionId?: string;
   driver: DriverKind;
   database: string | null;
   readOnly: boolean;
@@ -43,12 +47,32 @@ function emptyColumn(driver: DriverKind): ColumnDef {
   };
 }
 
-export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEditor, onClose }: Props) {
+export function CreateTableModal({ sessionId, driver, database, readOnly, onRun, onSendToEditor, onClose }: Props) {
   const t = useT();
   const [table, setTable] = useState("");
   const [columns, setColumns] = useState<ColumnDef[]>(() => [
     { name: "id", type: driver === "sqlite" ? "INTEGER" : "INT", notNull: true, primaryKey: true, unique: false, autoIncrement: true, defaultValue: "" },
   ]);
+
+  const [foreignKeys, setForeignKeys] = useState<FkRow[]>([]);
+  const [checks, setChecks] = useState<CheckRow[]>([]);
+  const [tableNames, setTableNames] = useState<string[]>([]);
+  const rowIdCounter = useRef(0);
+  const nextRowId = () => `row${++rowIdCounter.current}`;
+
+  useEffect(() => {
+    if (!sessionId || !database) return;
+    let cancelled = false;
+    api
+      .listTables(sessionId, database)
+      .then((names) => {
+        if (!cancelled) setTableNames(names);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, database]);
 
   const setCol = (i: number, patch: Partial<ColumnDef>) =>
     setColumns((cols) => cols.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
@@ -57,8 +81,24 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
 
   const valid = table.trim().length > 0 && columns.length > 0 && columns.every((c) => c.name.trim().length > 0);
   const sql = useMemo(
-    () => (valid ? buildCreateTableSql(driver, { database, table: table.trim(), columns }) : ""),
-    [valid, driver, database, table, columns],
+    () =>
+      valid
+        ? buildCreateTableSql(driver, {
+            database,
+            table: table.trim(),
+            columns,
+            // id は React key 専用のローカル state なので純ロジックへ渡す前に落とす。
+            foreignKeys: foreignKeys
+              .filter(isCompleteForeignKey)
+              .map(({ id: _id, ...fk }) => fk),
+            checks: checks.filter(isCompleteCheck).map(({ id: _id, ...ck }) => ck),
+          })
+        : "",
+    [valid, driver, database, table, columns, foreignKeys, checks],
+  );
+  const columnNames = useMemo(
+    () => [...new Set(columns.map((c) => c.name.trim()).filter((n) => n.length > 0))],
+    [columns],
   );
 
   const dataListId = "create-table-types";
@@ -129,6 +169,17 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
             </Button>
           </Flex>
         </chakra.div>
+
+        <TableConstraintEditor
+          idPrefix="create-table"
+          foreignKeys={foreignKeys}
+          checks={checks}
+          onForeignKeysChange={setForeignKeys}
+          onChecksChange={setChecks}
+          columnNames={columnNames}
+          tableNames={tableNames}
+          nextId={nextRowId}
+        />
 
         <FormSection>
           <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>

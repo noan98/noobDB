@@ -165,6 +165,16 @@ pub(crate) async fn execute_and_log(
     if let Err(e) = runs::record(new_run).await {
         tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to record run log");
     }
+    // アサーション実行 (#1170): 1 件ごとの合否をトレンド表示用に蓄積する。
+    if let Err(e) = runs::record_assertion_results(
+        &task.id,
+        &started.to_rfc3339(),
+        outcome.assertion_results.clone(),
+    )
+    .await
+    {
+        tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to record assertion results");
+    }
 
     let started_str = started.to_rfc3339();
     if let Err(e) = update_last_run_mirror(&task.id, &started_str, status) {

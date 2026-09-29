@@ -978,6 +978,11 @@ const taskAction = z.discriminatedUnion("kind", [
     output_path: z.string(),
     options: dumpOptions,
   }),
+  z.object({
+    kind: z.literal("run_assertions"),
+    database: z.string().nullable().optional(),
+    assertion_ids: z.array(z.string()),
+  }),
 ]);
 
 const taskSchedule = z.discriminatedUnion("kind", [
@@ -1012,6 +1017,20 @@ export const taskRun = z.object({
   elapsed_ms: z.number(),
   catch_up: z.boolean(),
 });
+
+export const assertionRunRecord = z.object({
+  id: z.number(),
+  task_id: z.string(),
+  run_started_at: z.string(),
+  assertion_id: z.string(),
+  assertion_name: z.string(),
+  passed: z.boolean(),
+  observed: z.number().nullable(),
+  error: z.string().nullable(),
+  elapsed_ms: z.number(),
+});
+
+export const assertionRunRecordArray = z.array(assertionRunRecord);
 
 export const schedulerSettings = z.object({
   catch_up_missed: z.boolean(),

@@ -32,6 +32,16 @@
 import { quoteIdentFor } from "./sqlDialect";
 import { formatDefault } from "./createTable";
 import { quoteString } from "./cellEdit";
+import {
+  checkClause,
+  dropCheckClause,
+  dropForeignKeyClause,
+  foreignKeyClause,
+  isCompleteCheck,
+  isCompleteForeignKey,
+  type CheckDef,
+  type ForeignKeyDef,
+} from "./tableConstraints";
 
 /** DB から読み取った既存列の現状 (`describeTable` の結果をそのまま使う)。 */
 export interface ExistingColumnBaseline {
@@ -103,6 +113,14 @@ export interface AlterTableForm {
   indexes: IndexDef[];
   /** テーブルコメントの編集 (#1002)。`before` は DB の現状、`after` は入力値。 */
   tableComment?: { before: string; after: string };
+  /** 追加する外部キー (#1191)。不完全な行は無視する。 */
+  addedForeignKeys?: ForeignKeyDef[];
+  /** 追加する CHECK 制約 (#1191)。式が空の行は無視する。 */
+  addedChecks?: CheckDef[];
+  /** 削除する外部キーの制約名 (#1191)。 */
+  droppedForeignKeys?: string[];
+  /** 削除する CHECK 制約の制約名 (#1191)。 */
+  droppedChecks?: string[];
 }
 
 export type AlterStatementKind =
@@ -111,7 +129,11 @@ export type AlterStatementKind =
   | "modifyColumn"
   | "dropColumn"
   | "createIndex"
-  | "comment";
+  | "comment"
+  | "addForeignKey"
+  | "addCheck"
+  | "dropForeignKey"
+  | "dropCheck";
 
 export interface AlterStatement {
   sql: string;
@@ -125,13 +147,24 @@ export interface AlterStatement {
  * 文言はプレゼンテーション層 (i18n) に任せるため理由コードのみを返す。
  */
 export interface UnsupportedChange {
+  /** 対象の列名 (制約の場合は制約名 / 式の要約)。 */
   column: string;
-  reason: "sqliteInPlaceModify";
+  reason: "sqliteInPlaceModify" | "sqliteConstraintAlter";
 }
 
 export interface AlterPlan {
   statements: AlterStatement[];
   unsupported: UnsupportedChange[];
+}
+
+/**
+ * 既存テーブルへの FK / CHECK の追加・削除を ALTER で行えるドライバか (#1191)。
+ * SQLite は `ALTER TABLE` で制約を足せず、テーブル再作成 (rename→create→copy→drop)
+ * が要る。データ喪失リスクが高いため本機能では対象外とし、UI は入力欄を無効化して
+ * 理由を表示する (新規作成時の指定は `createTable.ts` で SQLite も対応)。
+ */
+export function supportsConstraintAlter(driver: string): boolean {
+  return driver === "mysql" || driver === "postgres";
 }
 
 /**
@@ -341,14 +374,81 @@ function planExistingColumn(
   pushColumnComment();
 }
 
+/** FK / CHECK の追加・削除文を組み立てる (#1191)。SQLite は文を出さず unsupported へ。 */
+function planConstraints(
+  driver: string,
+  tIdent: string,
+  form: AlterTableForm,
+  statements: AlterStatement[],
+  unsupported: UnsupportedChange[],
+): void {
+  const dropFks = (form.droppedForeignKeys ?? []).map((n) => n.trim()).filter((n) => n);
+  const dropChecks = (form.droppedChecks ?? []).map((n) => n.trim()).filter((n) => n);
+  const addFks = (form.addedForeignKeys ?? []).filter(isCompleteForeignKey);
+  const addChecks = (form.addedChecks ?? []).filter(isCompleteCheck);
+
+  if (!supportsConstraintAlter(driver)) {
+    for (const n of dropFks) unsupported.push({ column: n, reason: "sqliteConstraintAlter" });
+    for (const n of dropChecks) unsupported.push({ column: n, reason: "sqliteConstraintAlter" });
+    for (const fk of addFks) {
+      unsupported.push({
+        column: fk.name.trim() || fk.columns.join(", "),
+        reason: "sqliteConstraintAlter",
+      });
+    }
+    for (const ck of addChecks) {
+      unsupported.push({
+        column: ck.name.trim() || ck.expression.trim(),
+        reason: "sqliteConstraintAlter",
+      });
+    }
+    return;
+  }
+
+  for (const n of dropFks) {
+    statements.push({
+      sql: `ALTER TABLE ${tIdent} ${dropForeignKeyClause(driver, n)};`,
+      kind: "dropForeignKey",
+      destructive: true,
+    });
+  }
+  for (const n of dropChecks) {
+    statements.push({
+      sql: `ALTER TABLE ${tIdent} ${dropCheckClause(driver, n)};`,
+      kind: "dropCheck",
+      destructive: true,
+    });
+  }
+  for (const fk of addFks) {
+    statements.push({
+      sql: `ALTER TABLE ${tIdent} ADD ${foreignKeyClause(driver, form.database, fk)};`,
+      kind: "addForeignKey",
+      destructive: false,
+    });
+  }
+  for (const ck of addChecks) {
+    statements.push({
+      sql: `ALTER TABLE ${tIdent} ADD ${checkClause(driver, ck)};`,
+      kind: "addCheck",
+      destructive: false,
+    });
+  }
+}
+
 const STATEMENT_ORDER: Record<AlterStatementKind, number> = {
   addColumn: 0,
   renameColumn: 1,
   modifyColumn: 1,
   // コメントは列のリネーム/変更と同じ段 (安定ソートで生成順 = リネームの後を保つ)。
   comment: 1,
-  dropColumn: 2,
-  createIndex: 3,
+  // 制約の削除は列の削除より前 (列に依存する制約が残ると DROP COLUMN が失敗する)。
+  dropForeignKey: 1,
+  dropCheck: 1,
+  // 制約の追加はリネーム/追加後の列名を参照できるよう列変更の後、列削除の前。
+  addForeignKey: 2,
+  addCheck: 2,
+  dropColumn: 3,
+  createIndex: 4,
 };
 
 /**
@@ -387,6 +487,8 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
     );
     if (sql) statements.push({ sql, kind: "comment", destructive: false });
   }
+
+  planConstraints(driver, tIdent, form, statements, unsupported);
 
   statements.sort((a, b) => STATEMENT_ORDER[a.kind] - STATEMENT_ORDER[b.kind]);
 

@@ -20,6 +20,11 @@ export function summarizeAction(action: TaskAction): string {
   if (action.kind === "export_query") {
     return `export (${action.format})`;
   }
+  if (action.kind === "run_assertions") {
+    return action.assertion_ids.length === 0
+      ? "assertions (all in scope)"
+      : `assertions (${action.assertion_ids.length})`;
+  }
   return `dump (${action.database || "?"})`;
 }
 
@@ -74,4 +79,60 @@ export function sortTasksForDisplay<
   });
   disabled.sort((a, b) => a.name.localeCompare(b.name));
   return [...enabled, ...disabled];
+}
+
+/** アサーション 1 件ぶんの推移 (トレンド表示用)。 */
+export interface AssertionTrend {
+  assertionId: string;
+  /** 直近の実行時点の名前。 */
+  name: string;
+  /** 古い → 新しい順の合否 (最大 `maxDots` 件)。 */
+  dots: boolean[];
+  /** 直近の observed (実行エラーなら null)。 */
+  lastObserved: number | null;
+  lastError: string | null;
+  /** `dots` の範囲での合格率 (0〜1)。 */
+  passRate: number;
+}
+
+/**
+ * `list_assertion_runs` の結果 (新しい順) をアサーションごとにまとめる。表示順は
+ * 直近で失敗しているものを先頭に、次に名前順。純関数。
+ */
+export function buildAssertionTrends(
+  records: ReadonlyArray<{
+    assertion_id: string;
+    assertion_name: string;
+    passed: boolean;
+    observed: number | null;
+    error: string | null;
+  }>,
+  maxDots = 20,
+): AssertionTrend[] {
+  const byId = new Map<string, typeof records[number][]>();
+  for (const r of records) {
+    const list = byId.get(r.assertion_id) ?? [];
+    if (list.length < maxDots) list.push(r);
+    byId.set(r.assertion_id, list);
+  }
+  const trends: AssertionTrend[] = [];
+  for (const [assertionId, list] of byId) {
+    const latest = list[0];
+    const passedCount = list.filter((r) => r.passed).length;
+    trends.push({
+      assertionId,
+      name: latest.assertion_name,
+      dots: list.map((r) => r.passed).reverse(),
+      lastObserved: latest.observed,
+      lastError: latest.error,
+      passRate: passedCount / list.length,
+    });
+  }
+  trends.sort((a, b) => {
+    const af = a.dots[a.dots.length - 1] ? 1 : 0;
+    const bf = b.dots[b.dots.length - 1] ? 1 : 0;
+    if (af !== bf) return af - bf;
+    return a.name.localeCompare(b.name);
+  });
+  return trends;
 }

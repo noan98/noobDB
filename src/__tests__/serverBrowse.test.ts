@@ -4,6 +4,9 @@ import {
   buildServerFilterClause,
   buildServerSortClause,
   escapeLikeValue,
+  isServerFilterInputValid,
+  serverFilterOpNeedsValue,
+  splitInValues,
   type ServerFilter,
   type ServerSort,
 } from "../components/serverBrowse";
@@ -91,6 +94,107 @@ describe("buildServerFilterClause", () => {
     expect(
       buildServerFilterClause("mysql", { column: "id", op: "ne", value: "1 OR 1=1", numeric: true }),
     ).toBe("`id` <> '1 OR 1=1'");
+  });
+});
+
+describe("比較・範囲・IN 演算子 (#1149)", () => {
+  const drivers = ["mysql", "postgres", "sqlite"] as const;
+  const mk = (
+    op: ServerFilter["op"],
+    value: string,
+    numeric: boolean,
+    value2?: string,
+  ): ServerFilter => ({ column: "price", op, value, value2, numeric });
+
+  it("gt / gte / lt / lte: 数値カラムは裸の数値、全方言で識別子だけ異なる", () => {
+    const cases = [
+      ["gt", ">"],
+      ["gte", ">="],
+      ["lt", "<"],
+      ["lte", "<="],
+    ] as const;
+    for (const driver of drivers) {
+      for (const [op, sym] of cases) {
+        expect(buildServerFilterClause(driver, mk(op, " 10.5 ", true))).toBe(
+          `${quoteFor(driver, "price")} ${sym} 10.5`,
+        );
+      }
+    }
+  });
+
+  it("比較: 文字列/日付カラムはクオート、数値カラムでも非数値はクオートにフォールバック", () => {
+    for (const driver of drivers) {
+      expect(buildServerFilterClause(driver, mk("gt", "2024-01-01", false))).toBe(
+        `${quoteFor(driver, "price")} > '2024-01-01'`,
+      );
+      expect(buildServerFilterClause(driver, mk("lte", "1; DROP TABLE t", true))).toBe(
+        `${quoteFor(driver, "price")} <= '1; DROP TABLE t'`,
+      );
+    }
+  });
+
+  it("比較: シングルクオートはエスケープされ、MySQL のみバックスラッシュも二重化する", () => {
+    expect(buildServerFilterClause("postgres", mk("gte", "o'x\\y", false))).toBe(`"price" >= 'o''x\\y'`);
+    expect(buildServerFilterClause("sqlite", mk("gte", "o'x\\y", false))).toBe(`"price" >= 'o''x\\y'`);
+    expect(buildServerFilterClause("mysql", mk("gte", "o'x\\y", false))).toBe("`price` >= 'o''x\\\\y'");
+  });
+
+  it("between: 数値は裸、文字列はクオート、両端を含む BETWEEN", () => {
+    for (const driver of drivers) {
+      expect(buildServerFilterClause(driver, mk("between", "1", true, "99"))).toBe(
+        `${quoteFor(driver, "price")} BETWEEN 1 AND 99`,
+      );
+      expect(buildServerFilterClause(driver, mk("between", "2024-01-01", false, "2024-12-31"))).toBe(
+        `${quoteFor(driver, "price")} BETWEEN '2024-01-01' AND '2024-12-31'`,
+      );
+    }
+  });
+
+  it("between: 端ごとに数値判定し、インジェクション文字列はクオートされる", () => {
+    expect(buildServerFilterClause("sqlite", mk("between", "1", true, "9' OR '1'='1"))).toBe(
+      `"price" BETWEEN 1 AND '9'' OR ''1''=''1'`,
+    );
+  });
+
+  it("in: カンマ/改行区切りを分割し、各要素を個別にリテラル化する", () => {
+    for (const driver of drivers) {
+      expect(buildServerFilterClause(driver, mk("in", "1, 2,\n3,, x", true))).toBe(
+        `${quoteFor(driver, "price")} IN (1, 2, 3, 'x')`,
+      );
+      expect(buildServerFilterClause(driver, mk("in", "a,b", false))).toBe(
+        `${quoteFor(driver, "price")} IN ('a', 'b')`,
+      );
+    }
+  });
+
+  it("in: 空リストは何にもマッチしない条件になる (IN () を出さない)", () => {
+    for (const driver of drivers) {
+      expect(buildServerFilterClause(driver, mk("in", " , ,\n", false))).toBe("1 = 0");
+    }
+  });
+
+  it("in: 値中のクオートはエスケープされる", () => {
+    expect(buildServerFilterClause("postgres", mk("in", "a'b,c", false))).toBe(`"price" IN ('a''b', 'c')`);
+  });
+
+  it("applyServerBrowse: between/in も WHERE に注入される", () => {
+    expect(applyServerBrowse("SELECT * FROM t", "mysql", mk("between", "1", true, "5"), null)).toBe(
+      "SELECT * FROM t WHERE `price` BETWEEN 1 AND 5",
+    );
+    expect(applyServerBrowse("SELECT * FROM t", "sqlite", mk("in", "1,2", true), { column: "id", direction: "asc" })).toBe(
+      'SELECT * FROM t WHERE "price" IN (1, 2) ORDER BY "id" ASC',
+    );
+  });
+
+  it("splitInValues / isServerFilterInputValid / serverFilterOpNeedsValue", () => {
+    expect(splitInValues("a, b\n c ,")).toEqual(["a", "b", "c"]);
+    expect(isServerFilterInputValid("between", "1", "")).toBe(false);
+    expect(isServerFilterInputValid("between", "1", "2")).toBe(true);
+    expect(isServerFilterInputValid("in", " , ")).toBe(false);
+    expect(isServerFilterInputValid("in", "1")).toBe(true);
+    expect(isServerFilterInputValid("gt", "")).toBe(true);
+    expect(serverFilterOpNeedsValue("between")).toBe(true);
+    expect(serverFilterOpNeedsValue("isNull")).toBe(false);
   });
 });
 

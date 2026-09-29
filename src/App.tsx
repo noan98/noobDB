@@ -60,6 +60,11 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import {
+  buildDropNamespaceSql,
+  treeNamespaceKind,
+  type NamespaceKind,
+} from "./components/databaseMaintenance";
 import type { AlterStatement } from "./components/alterTable";
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
 import type { TransferSource } from "./components/dataTransfer";
@@ -70,6 +75,7 @@ import {
   extractViewBody,
 } from "./components/viewMaintenance";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
+import type { EditableObjectKind } from "./components/routineMaintenance";
 import { quoteIdentFor } from "./components/sqlDialect";
 import {
   applyServerBrowse,
@@ -187,6 +193,9 @@ const RenameTableDialog = lazy(() =>
 const AlterTableModal = lazy(() =>
   import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
 );
+const CreateNamespaceModal = lazy(() =>
+  import("./components/CreateNamespaceModal").then((m) => ({ default: m.CreateNamespaceModal })),
+);
 const CreateIndexModal = lazy(() =>
   import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
 );
@@ -283,6 +292,9 @@ const ShortcutCheatSheet = lazy(() =>
 );
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
+);
+const RoutineEditorModal = lazy(() =>
+  import("./components/RoutineEditorModal").then((m) => ({ default: m.RoutineEditorModal })),
 );
 const RunRoutineModal = lazy(() =>
   import("./components/RunRoutineModal").then((m) => ({ default: m.RunRoutineModal })),
@@ -389,6 +401,13 @@ import {
   clampPage,
   estimatedTotalPages,
 } from "./pagination";
+import {
+  buildKeysetPageSql,
+  keysetMoveFor,
+  readKeysetAnchor,
+  resolveKeysetPlan,
+  reverseRowsForPrev,
+} from "./keysetPagination";
 import {
   isMultiStatement,
   splitSqlStatements,
@@ -1802,6 +1821,7 @@ export default function App() {
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
+  const [createNamespaceOpen, setCreateNamespaceOpen] = useState(false);
   const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
@@ -1842,6 +1862,13 @@ export default function App() {
     database: string;
     kind: "procedure" | "function";
     name: string;
+    id: string | null;
+  } | null>(null);
+  // ルーチン / トリガーの新規作成・定義編集モーダル (#1192) の対象。name が null なら新規作成。
+  const [routineEditor, setRoutineEditor] = useState<{
+    database: string;
+    kind: EditableObjectKind;
+    name: string | null;
     id: string | null;
   } | null>(null);
   const txActiveRef = useRef(false);
@@ -4339,9 +4366,42 @@ export default function App() {
     const driver = selectedProfile?.driver ?? "mysql";
     const effectiveBase = applyServerBrowse(tab.paginatable, driver, nextFilter, nextSort);
     const sql = buildPageSql(effectiveBase, pageSize, target);
+    // キーセット (#1150): 隣接ページへの送りは現在ページの先頭/末尾行のキーから取り直す。
+    // 使えない (主キー無し・NULL 可能キー・ジャンプ等) 場合は null で従来の OFFSET。
+    const keysetMove = keysetMoveFor(
+      tab.page ?? 1,
+      target,
+      !!browseOverride?.force,
+      pageSize !== (tab.pageSize ?? tab.previewRowLimit),
+    );
+    const keysetPlan =
+      keysetMove && tab.result ? resolveKeysetPlan(tab.tableColumns, nextSort, tab.result.columns) : null;
+    const keysetAnchor =
+      keysetMove && keysetPlan && tab.result
+        ? readKeysetAnchor(
+            keysetPlan,
+            tab.result.columns,
+            keysetMove === "next" ? tab.result.rows[tab.result.rows.length - 1] : tab.result.rows[0],
+          )
+        : null;
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     try {
-      const res = await api.runQuery(sessionId, sql, tab.database ?? null);
+      let keysetRes: QueryResult | null = null;
+      if (keysetMove && keysetPlan && keysetAnchor) {
+        const keysetSql = buildKeysetPageSql(
+          tab.paginatable,
+          driver,
+          nextFilter,
+          keysetPlan,
+          keysetAnchor,
+          keysetMove,
+          pageSize,
+        );
+        const kres = await api.runQuery(sessionId, keysetSql, tab.database ?? null);
+        // 空 (行が消えて末尾を越えた等) なら OFFSET に任せる。
+        if (kres.rows.length > 0) keysetRes = { ...kres, rows: reverseRowsForPrev(kres.rows, keysetMove) };
+      }
+      const res = keysetRes ?? (await api.runQuery(sessionId, sql, tab.database ?? null));
       patchTab(tabId, (tt) => ({
         ...tt,
         result: res,
@@ -4399,7 +4459,7 @@ export default function App() {
   const setServerFilterInTab = useCallback((
     tabId: string,
     column: string,
-    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+    filter: { op: ServerFilterOp; value: string; value2?: string; numeric: boolean } | null,
   ) => {
     const next: ServerFilter | null = filter ? { column, ...filter } : null;
     void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
@@ -5414,6 +5474,21 @@ export default function App() {
     [sessionId],
   );
 
+  const handleEditRoutine = useCallback(
+    (database: string, kind: EditableObjectKind, name: string, id: string | null) => {
+      if (!sessionId) return;
+      setRoutineEditor({ database, kind, name, id });
+    },
+    [sessionId],
+  );
+  const handleCreateRoutine = useCallback(
+    (database: string, kind: EditableObjectKind) => {
+      if (!sessionId) return;
+      setRoutineEditor({ database, kind, name: null, id: null });
+    },
+    [sessionId],
+  );
+
   const handleRoutineRun = useCallback((sql: string) => {
     const target = routineTarget;
     setRoutineTarget(null);
@@ -5641,6 +5716,71 @@ export default function App() {
       toast.error(translate("statusQueryError", { error: String(e) }));
     }
   }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
+
+  // データベース / スキーマの新規作成 (#1190)。PostgreSQL の CREATE DATABASE は
+  // トランザクション内で実行できないので、`run_query_transaction` ではなく単文の
+  // `api.runQuery` (トランザクション無し) で流す。read_only はバックエンドが拒否する。
+  // 対象 DB を持たない文なので `database` は null。成功したらツリーを再取得する。
+  const runNamespaceDdl = useCallback(async (sql: string): Promise<boolean> => {
+    if (!sessionId) return false;
+    try {
+      await api.runQuery(sessionId, sql, null);
+      invalidateSchemaCache();
+      connectionListRef.current?.refreshSchema();
+      return true;
+    } catch (e) {
+      toast.error(translate("statusQueryError", { error: String(e) }));
+      return false;
+    }
+  }, [sessionId, invalidateSchemaCache, toast]);
+
+  const namespaceKindLabel = (kind: NamespaceKind) =>
+    translate(kind === "database" ? "namespaceKindDatabase" : "namespaceKindSchema");
+
+  const handleCreateNamespaceRun = useCallback(async (sql: string, kind: NamespaceKind, name: string) => {
+    const success = await runNamespaceDdl(sql);
+    if (!success) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    // PostgreSQL の新しい DATABASE はこの接続のツリー (= スキーマ一覧) に現れない。
+    toast.success(
+      driver === "postgres" && kind === "database"
+        ? translate("createNamespaceSuccessPgDatabase", { name })
+        : translate("createNamespaceSuccess", { kind: namespaceKindLabel(kind), name }),
+    );
+    setCreateNamespaceOpen(false);
+  }, [runNamespaceDdl, selectedProfile?.driver, toast]);
+
+  const handleCreateNamespaceToEditor = useCallback((sql: string) => {
+    setCreateNamespaceOpen(false);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // ツリーのノード (MySQL = データベース / PostgreSQL = スキーマ) の DROP (#1190)。
+  // 不可逆なので本番かどうかに関わらず名前のタイプ入力確認 (typedConfirmation) を要求する。
+  const handleDropNamespace = useCallback(async (name: string) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    const kind = treeNamespaceKind(driver);
+    if (!kind) return;
+    const sql = buildDropNamespaceSql(driver, kind, name);
+    if (!sql) return;
+    const kindLabel = namespaceKindLabel(kind);
+    const ok = await confirm({
+      title: translate("dropNamespaceConfirmTitle", { kind: kindLabel, name }),
+      message: maintenanceMessage(translate("dropNamespaceConfirmBody", { kind: kindLabel, name })),
+      confirmLabel: translate("dropNamespaceConfirmOk", { kind: kindLabel }),
+      tone: "danger",
+      typedConfirmation: name,
+    });
+    if (!ok) return;
+    const success = await runNamespaceDdl(sql);
+    if (success) {
+      toast.success(translate("dropNamespaceSuccess", { kind: kindLabel, name }));
+      // 削除したノード配下のテーブルタブは整合性が取れなくなるので閉じる。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === name)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    }
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, runNamespaceDdl, toast]);
 
   // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
   // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
@@ -8238,6 +8378,8 @@ export default function App() {
             recent={quickAccess.recent}
             onToggleFavorite={handleToggleFavorite}
             onCreateTable={(db) => setCreateTableDb(db)}
+            onCreateNamespace={() => setCreateNamespaceOpen(true)}
+            onDropNamespace={handleDropNamespace}
             onTruncateTable={handleTruncateTable}
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
@@ -8255,6 +8397,8 @@ export default function App() {
             onFindUsages={handleFindUsages}
             onDropView={handleDropView}
             onRunRoutine={handleRunRoutine}
+            onEditRoutine={handleEditRoutine}
+            onCreateRoutine={handleCreateRoutine}
             onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
             onOpenSandbox={handleOpenSandbox}
@@ -9296,6 +9440,7 @@ export default function App() {
         {createTableDb !== null && sessionId && (
           <Suspense fallback={null}>
             <CreateTableModal
+              sessionId={sessionId ?? undefined}
               driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
               database={createTableDb || null}
               readOnly={readOnly}
@@ -9331,6 +9476,21 @@ export default function App() {
               onRun={handleAlterTableRun}
               onSendToEditor={handleAlterTableToEditor}
               onClose={() => setAlterTableTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {createNamespaceOpen && sessionId && (
+          <Suspense fallback={null}>
+            <CreateNamespaceModal
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              readOnly={readOnly}
+              initialKind={treeNamespaceKind(selectedProfile?.driver ?? "mysql")}
+              onRun={handleCreateNamespaceRun}
+              onSendToEditor={handleCreateNamespaceToEditor}
+              onClose={() => setCreateNamespaceOpen(false)}
             />
           </Suspense>
         )}
@@ -9393,6 +9553,36 @@ export default function App() {
               initialName={saveAsViewRequest.initialName}
               onConfirm={handleSaveAsViewConfirm}
               onClose={() => setSaveAsViewRequest(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {routineEditor && sessionId && (
+          <Suspense fallback={null}>
+            <RoutineEditorModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={routineEditor.database}
+              kind={routineEditor.kind}
+              name={routineEditor.name}
+              id={routineEditor.id}
+              readOnly={readOnly}
+              onApplied={(created) => {
+                const kindLabel = translate(
+                  routineEditor.kind === "procedure"
+                    ? "routineEditKindProcedure"
+                    : routineEditor.kind === "function"
+                      ? "routineEditKindFunction"
+                      : "routineEditKindTrigger",
+                );
+                invalidateSchemaCache(routineEditor.database);
+                connectionListRef.current?.refreshSchema();
+                toast.success(translate(created ? "routineEditCreated" : "routineEditApplied", { kind: kindLabel }));
+                setRoutineEditor(null);
+              }}
+              onClose={() => setRoutineEditor(null)}
             />
           </Suspense>
         )}
