@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **120 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **121 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -73,7 +73,7 @@
 ## タスクスケジューラ (`commands/tasks.rs`)
 
 `list_tasks` / `save_task` / `delete_task` / `set_task_enabled` / `run_task_now` /
-`list_task_runs` / `clear_task_runs` / `get_scheduler_settings` /
+`list_task_runs` / `list_assertion_runs` / `clear_task_runs` / `get_scheduler_settings` /
 `set_scheduler_settings`
 
 ## データ品質アサーション (`commands/assertions.rs`)

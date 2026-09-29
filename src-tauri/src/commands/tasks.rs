@@ -10,8 +10,8 @@ use crate::db::is_read_only_sql;
 use crate::error::{AppError, Result};
 use crate::profiles;
 use crate::tasks::{
-    runs, schedule, scheduler, store, SchedulerSettings, TaskAction, TaskDefinition, TaskRun,
-    TaskSchedule,
+    runs, schedule, scheduler, store, AssertionRunRecord, SchedulerSettings, TaskAction,
+    TaskDefinition, TaskRun, TaskSchedule,
 };
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +68,10 @@ fn validate_action(action: &TaskAction) -> Result<()> {
                 return Err(AppError::InvalidInput("output path is empty".into()));
             }
         }
+        // アサーションは保存済みの定義を ID で参照するだけで、SQL は実行時に
+        // `db::assertions::build_sql` が生成する (生成時に読み取り専用を検証済み)。
+        // ここで検証するものは無い。
+        TaskAction::RunAssertions { .. } => {}
     }
     Ok(())
 }
@@ -189,6 +193,21 @@ pub async fn run_task_now(app: AppHandle, id: String) -> Result<TaskRun> {
 #[tauri::command]
 pub async fn list_task_runs(task_id: Option<String>, limit: Option<i64>) -> Result<Vec<TaskRun>> {
     runs::list(task_id.as_deref(), limit.unwrap_or(200)).await
+}
+
+/// アサーション実行タスクの合否履歴 (#1170)。新しい順。トレンド表示用。
+#[tauri::command]
+pub async fn list_assertion_runs(
+    task_id: Option<String>,
+    assertion_id: Option<String>,
+    limit: Option<i64>,
+) -> Result<Vec<AssertionRunRecord>> {
+    runs::list_assertion_runs(
+        task_id.as_deref(),
+        assertion_id.as_deref(),
+        limit.unwrap_or(200),
+    )
+    .await
 }
 
 #[tauri::command]
