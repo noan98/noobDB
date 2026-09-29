@@ -1,4 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { findIdentityColumn } from "./identitySync";
 import { isProtectedNamespace, treeNamespaceKind } from "./databaseMaintenance";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
@@ -326,6 +327,8 @@ interface Props {
   onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
   /** DB 全体の保守コマンド (SQLite VACUUM / PostgreSQL VACUUM・ANALYZE 等)。#561。 */
   onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
+  /** 採番列の現在値を実データに同期する (#1240)。対象列は App が再判定する。 */
+  onSyncIdentity?: (database: string, table: string) => void;
   /** データベース / スキーマの新規作成モーダルを開く (#1190)。プロファイルと DB ノードの
    *  右クリックから呼ぶ。SQLite は非対応なので項目を出さない。read_only では無効化。 */
   onCreateNamespace?: () => void;
@@ -438,6 +441,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDropIndex,
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
+  onSyncIdentity,
   onShowDatabaseSizes,
   onCreateNamespace,
   onDropNamespace,
@@ -1271,6 +1275,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             { icon: "tools" },
           ),
         );
+      }
+    }
+    // 採番列の同期 (#1240)。列メタが読み込み済みで対象列が無いテーブルには出さない
+    // (未読み込みなら判定できないので出し、App 側が実行時に再判定する)。
+    if (onSyncIdentity) {
+      const cols = tableColumns[`${db}::${tbl}`];
+      if (!cols || findIdentityColumn(activeDriver, cols) !== null) {
+        items.push({
+          label: t("contextMenuSyncIdentity"),
+          onSelect: () => onSyncIdentity(db, tbl),
+          disabled: activeReadOnly,
+          title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+        });
       }
     }
     setMenu({ x: e.clientX, y: e.clientY, items });

@@ -76,6 +76,11 @@ import {
   extractViewBody,
 } from "./components/viewMaintenance";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
+import {
+  buildIdentitySyncSql,
+  findIdentityColumn,
+  mysqlMaxValueSql,
+} from "./components/identitySync";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { quoteIdentFor } from "./components/sqlDialect";
 import {
@@ -6117,6 +6122,70 @@ export default function App() {
     [confirm, maintenanceMessage, runMaintenanceDdl, toast],
   );
 
+  // 採番列の現在値を実データに同期 (#1240)。列メタから対象を判定し、生成 SQL を確認
+  // ダイアログで提示して既存の保守実行経路 (`runMaintenanceDdl`) に流す。MySQL は
+  // AUTO_INCREMENT にサブクエリを書けないので、MAX を読み取り専用の lookup で先に取る。
+  const handleSyncIdentity = useCallback(
+    async (database: string, table: string) => {
+      if (!sessionId || !selectedProfile) return;
+      const driver = selectedProfile.driver;
+      try {
+        const columns = await api.describeTable(sessionId, database, table);
+        const column = findIdentityColumn(driver, columns);
+        if (!column) {
+          toast.error(translate("identitySyncNoColumn", { table }));
+          return;
+        }
+        let maxValue: string | null = null;
+        if (driver === "mysql") {
+          try {
+            const res = await api.runLookupQuery({
+              sessionId,
+              sql: mysqlMaxValueSql(database, table, column),
+              database,
+            });
+            const cell = res.rows[0]?.[0] ?? null;
+            maxValue = typeof cell === "number" ? String(cell) : cell === null ? null : String(cell);
+          } catch (e) {
+            toast.error(translate("identitySyncMaxFailed", { column, error: String(e) }));
+            return;
+          }
+        }
+        const sql = buildIdentitySyncSql(driver, database, table, column, maxValue);
+        if (!sql) {
+          toast.error(translate("identitySyncMaxFailed", { column, error: String(maxValue) }));
+          return;
+        }
+        const ok = await confirm({
+          title: translate("identitySyncConfirmTitle", { table }),
+          message: maintenanceMessage(
+            <>
+              {translate("identitySyncConfirmBody", { table, column })}
+              <br />
+              <br />
+              <chakra.code
+                display="block"
+                fontFamily="var(--font-mono)"
+                fontSize="sm"
+                whiteSpace="pre-wrap"
+                wordBreak="break-all"
+              >
+                {sql}
+              </chakra.code>
+            </>,
+          ),
+          confirmLabel: translate("maintenanceConfirmOk"),
+        });
+        if (!ok) return;
+        const success = await runMaintenanceDdl(sql, database);
+        if (success) toast.success(translate("identitySyncDone", { table }));
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+      }
+    },
+    [sessionId, selectedProfile, confirm, maintenanceMessage, runMaintenanceDdl, toast],
+  );
+
   // DB 全体の保守コマンド (SQLite VACUUM / PostgreSQL VACUUM・ANALYZE 等)。#561。
   const handleRunDatabaseMaintenance = useCallback(
     async (database: string, command: MaintenanceCommand) => {
@@ -8526,6 +8595,7 @@ export default function App() {
             onDropIndex={handleDropIndex}
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
+            onSyncIdentity={handleSyncIdentity}
             onShowDatabaseSizes={handleShowDatabaseSizes}
             onExploreColumns={(database, table) => handleExploreColumns(database, table)}
             onWatchTable={handleWatchTable}
