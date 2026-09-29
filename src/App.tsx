@@ -390,6 +390,13 @@ import {
   estimatedTotalPages,
 } from "./pagination";
 import {
+  buildKeysetPageSql,
+  keysetMoveFor,
+  readKeysetAnchor,
+  resolveKeysetPlan,
+  reverseRowsForPrev,
+} from "./keysetPagination";
+import {
   isMultiStatement,
   splitSqlStatements,
   type BatchStatementResult,
@@ -4338,9 +4345,42 @@ export default function App() {
     const driver = selectedProfile?.driver ?? "mysql";
     const effectiveBase = applyServerBrowse(tab.paginatable, driver, nextFilter, nextSort);
     const sql = buildPageSql(effectiveBase, pageSize, target);
+    // キーセット (#1150): 隣接ページへの送りは現在ページの先頭/末尾行のキーから取り直す。
+    // 使えない (主キー無し・NULL 可能キー・ジャンプ等) 場合は null で従来の OFFSET。
+    const keysetMove = keysetMoveFor(
+      tab.page ?? 1,
+      target,
+      !!browseOverride?.force,
+      pageSize !== (tab.pageSize ?? tab.previewRowLimit),
+    );
+    const keysetPlan =
+      keysetMove && tab.result ? resolveKeysetPlan(tab.tableColumns, nextSort, tab.result.columns) : null;
+    const keysetAnchor =
+      keysetMove && keysetPlan && tab.result
+        ? readKeysetAnchor(
+            keysetPlan,
+            tab.result.columns,
+            keysetMove === "next" ? tab.result.rows[tab.result.rows.length - 1] : tab.result.rows[0],
+          )
+        : null;
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     try {
-      const res = await api.runQuery(sessionId, sql, tab.database ?? null);
+      let keysetRes: QueryResult | null = null;
+      if (keysetMove && keysetPlan && keysetAnchor) {
+        const keysetSql = buildKeysetPageSql(
+          tab.paginatable,
+          driver,
+          nextFilter,
+          keysetPlan,
+          keysetAnchor,
+          keysetMove,
+          pageSize,
+        );
+        const kres = await api.runQuery(sessionId, keysetSql, tab.database ?? null);
+        // 空 (行が消えて末尾を越えた等) なら OFFSET に任せる。
+        if (kres.rows.length > 0) keysetRes = { ...kres, rows: reverseRowsForPrev(kres.rows, keysetMove) };
+      }
+      const res = keysetRes ?? (await api.runQuery(sessionId, sql, tab.database ?? null));
       patchTab(tabId, (tt) => ({
         ...tt,
         result: res,
