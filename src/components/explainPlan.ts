@@ -25,6 +25,37 @@ export interface PlanNode {
   cost: number | null;
   attrs: [string, unknown][];
   children: PlanNode[];
+  /** 実測モード (EXPLAIN ANALYZE) の結果だけが持つ実測値。推定 EXPLAIN では常に undefined。 */
+  actual?: PlanActual;
+}
+
+/**
+ * 実測モード (#1164) でノードに付く実測値。PostgreSQL / MySQL とも `rows` と
+ * `time` は **1 ループあたりの平均**で、推定行数 (`estRows`) も 1 ループあたり
+ * なので、`estRows` と `rows` はそのまま比較できる。ノード全体の実時間は
+ * `totalMs * loops` (`actualTotalMs`)。
+ */
+export interface PlanActual {
+  /** オプティマイザの推定行数 (1 ループあたり)。 */
+  estRows: number | null;
+  /** 実測行数 (1 ループあたりの平均)。一度も実行されなかったノードは null。 */
+  rows: number | null;
+  /** ループ回数。0 は「実行されなかった」(MySQL の `never executed`)。 */
+  loops: number | null;
+  /** 最初の行を返すまでの時間 (ms、1 ループあたり)。 */
+  startupMs: number | null;
+  /** 全行を返し終えるまでの時間 (ms、1 ループあたり)。 */
+  totalMs: number | null;
+  /** バッファアクセス (PostgreSQL の BUFFERS のみ)。 */
+  buffers: PlanBuffers | null;
+}
+
+/** PostgreSQL `BUFFERS` の共有バッファ集計 (ブロック数)。 */
+export interface PlanBuffers {
+  sharedHit: number | null;
+  sharedRead: number | null;
+  sharedDirtied: number | null;
+  sharedWritten: number | null;
 }
 
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -192,13 +223,40 @@ function buildPgNode(obj: Record<string, unknown>, path: string): PlanNode {
     });
   }
   const nodeType = typeof obj["Node Type"] === "string" ? (obj["Node Type"] as string) : "plan";
-  return {
+  const node: PlanNode = {
     id: path,
     kind: nodeType,
     label: pgLabel(obj),
     cost: parseNum(obj["Total Cost"]),
     attrs,
     children,
+  };
+  const actual = pgActual(obj);
+  if (actual) node.actual = actual;
+  return node;
+}
+
+/**
+ * `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` のノードから実測値を取り出す (#1164)。
+ * `Actual Rows` が無ければ推定 EXPLAIN なので undefined (= 既存挙動のまま)。
+ */
+function pgActual(obj: Record<string, unknown>): PlanActual | undefined {
+  if (!("Actual Rows" in obj) && !("Actual Loops" in obj)) return undefined;
+  const hasBuffers = Object.keys(obj).some((k) => k.startsWith("Shared "));
+  return {
+    estRows: parseNum(obj["Plan Rows"]),
+    rows: parseNum(obj["Actual Rows"]),
+    loops: parseNum(obj["Actual Loops"]),
+    startupMs: parseNum(obj["Actual Startup Time"]),
+    totalMs: parseNum(obj["Actual Total Time"]),
+    buffers: hasBuffers
+      ? {
+          sharedHit: parseNum(obj["Shared Hit Blocks"]),
+          sharedRead: parseNum(obj["Shared Read Blocks"]),
+          sharedDirtied: parseNum(obj["Shared Dirtied Blocks"]),
+          sharedWritten: parseNum(obj["Shared Written Blocks"]),
+        }
+      : null,
   };
 }
 
@@ -269,6 +327,125 @@ export function parseSqlitePlan(
   };
 }
 
+// --- MySQL 8.0.18+ `EXPLAIN ANALYZE` (行フォーマットのツリー) ----------------
+//
+// MySQL の `EXPLAIN ANALYZE` は JSON ではなく、1 セルに入ったインデント付きの
+// テキストツリーを返す (`FORMAT=JSON` との併用は不可)。各ノードは
+//   -> Filter: (t.a > 1)  (cost=0.35 rows=1) (actual time=0.02..0.03 rows=1 loops=1)
+// の形で、子は 4 スペース深くインデントされる。実行されなかったノードは
+// `(never executed)`。ここでは `->` 行を木に組み、cost / rows / actual を取り出す。
+
+const MYSQL_COST_RE = /\(cost=([^\s)]+)\s+rows=([^\s)]+)\)/;
+const MYSQL_ACTUAL_RE =
+  /\(actual time=(\d+(?:\.\d+)?)\.\.([^\s)]+)\s+rows=([^\s)]+)\s+loops=([^\s)]+)\)/;
+
+/** MySQL の `EXPLAIN ANALYZE` 出力 (テキストツリー) らしいか。JSON との判別に使う。 */
+export function looksLikeMysqlAnalyzeText(raw: string): boolean {
+  return /^\s*->\s/.test(raw);
+}
+
+interface MysqlTextLine {
+  depth: number;
+  text: string;
+}
+
+export function parseMysqlAnalyzeText(
+  raw: string,
+): { root: PlanNode | null; error: string | null } {
+  const lines: MysqlTextLine[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const m = /^(\s*)->\s?(.*)$/.exec(line);
+    if (m) {
+      lines.push({ depth: Math.floor(m[1].length / 4), text: m[2] });
+    } else if (line.trim() !== "" && lines.length > 0) {
+      // `->` で始まらない行は直前ノードの折り返し (長い条件式など)。
+      lines[lines.length - 1].text += ` ${line.trim()}`;
+    }
+  }
+  if (lines.length === 0) return { root: null, error: "unexpected plan shape" };
+
+  const roots: PlanNode[] = [];
+  // 各深さの「直近のノード」。子は 1 つ浅い深さの直近ノードにぶら下がる。
+  const stack: PlanNode[] = [];
+  for (const { depth, text } of lines) {
+    const d = Math.min(depth, stack.length);
+    const parent = d > 0 ? stack[d - 1] : null;
+    const path = parent ? `${parent.id}/${parent.children.length}` : `plan/${roots.length}`;
+    const node = buildMysqlTextNode(text, path);
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+    stack.length = d;
+    stack[d] = node;
+  }
+  if (roots.length === 1) {
+    return { root: retagRoot(roots[0], "plan"), error: null };
+  }
+  return {
+    root: {
+      id: "plan",
+      kind: "queryPlan",
+      label: "QUERY PLAN",
+      cost: null,
+      attrs: [],
+      children: roots,
+    },
+    error: null,
+  };
+}
+
+/** 単一ルートのとき、ルート id を "plan" に揃える (子の id も付け替える)。 */
+function retagRoot(node: PlanNode, id: string): PlanNode {
+  const rewrite = (n: PlanNode, from: string, to: string): PlanNode => ({
+    ...n,
+    id: to + n.id.slice(from.length),
+    children: n.children.map((c) => rewrite(c, from, to)),
+  });
+  return rewrite(node, node.id, id);
+}
+
+function buildMysqlTextNode(text: string, path: string): PlanNode {
+  const costMatch = MYSQL_COST_RE.exec(text);
+  const actualMatch = MYSQL_ACTUAL_RE.exec(text);
+  const neverExecuted = /\(never executed\)/.test(text);
+  const cut = text.search(/\s+\((?:cost=|actual time=|never executed)/);
+  const label = (cut >= 0 ? text.slice(0, cut) : text).trim();
+  const cost = costMatch ? parseNum(costMatch[1]) : null;
+  const estRows = costMatch ? parseNum(costMatch[2]) : null;
+  const attrs: [string, unknown][] = [["detail", label]];
+  if (cost !== null) attrs.push(["cost", cost]);
+  if (estRows !== null) attrs.push(["rows (estimated)", estRows]);
+  let actual: PlanActual | undefined;
+  if (actualMatch) {
+    actual = {
+      estRows,
+      rows: parseNum(actualMatch[3]),
+      loops: parseNum(actualMatch[4]),
+      startupMs: parseNum(actualMatch[1]),
+      totalMs: parseNum(actualMatch[2]),
+      buffers: null,
+    };
+  } else if (neverExecuted) {
+    actual = { estRows, rows: null, loops: 0, startupMs: null, totalMs: null, buffers: null };
+  }
+  if (actual) {
+    if (actual.rows !== null) attrs.push(["rows (actual)", actual.rows]);
+    if (actual.loops !== null) attrs.push(["loops", actual.loops]);
+    if (actual.startupMs !== null) attrs.push(["actual startup time (ms)", actual.startupMs]);
+    if (actual.totalMs !== null) attrs.push(["actual total time (ms)", actual.totalMs]);
+    if (actual.loops === 0) attrs.push(["never executed", true]);
+  }
+  const node: PlanNode = {
+    id: path,
+    kind: "mysqlStep",
+    label,
+    cost,
+    attrs,
+    children: [],
+  };
+  if (actual) node.actual = actual;
+  return node;
+}
+
 /** `parseExplainForDriver` の戻り値。`raw` はパース失敗時/空時に生表示するテキスト。 */
 export interface ParsedExplain {
   raw: string | null;
@@ -299,6 +476,11 @@ export function parseExplainForDriver(
   const cell = result.rows[0] && result.rows[0].length > 0 ? result.rows[0][0] : null;
   const raw = cell === null || cell === undefined ? null : String(cell);
   if (!raw) return { raw: null, root: null, error: null };
+  // MySQL の `EXPLAIN ANALYZE` (実測モード, #1164) は JSON でなくテキストツリー。
+  if (driver !== "postgres" && looksLikeMysqlAnalyzeText(raw)) {
+    const { root, error } = parseMysqlAnalyzeText(raw);
+    return { raw, root, error };
+  }
   const { root, error } =
     driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw);
   return { raw, root, error };
@@ -344,12 +526,68 @@ export function formatNumber(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+/** ミリ秒を読みやすい単位で整形する (1 秒以上は秒、それ未満は ms)。 */
+export function formatDurationMs(ms: number): string {
+  if (ms >= 1000) return `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} s`;
+  return `${formatNumber(Math.round(ms * 100) / 100)} ms`;
+}
+
 export function formatValue(v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (Array.isArray(v)) return v.map((x) => formatValue(x)).join(", ");
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "number") return formatNumber(v);
   return String(v);
+}
+
+// --- 推定 vs 実測の乖離 (#1164) ---------------------------------------------
+
+/** 推定と実測の乖離の重さ。`""` は乖離なし / 実測なし。既存の `Heat` と同じ 2 段。 */
+export type Misestimate = "" | "warm" | "hot";
+
+/** 推定と実測の比がこれ以上で注意 (warm) / 警告 (hot)。桁違い = 10 倍・100 倍。 */
+export const MISESTIMATE_WARM_RATIO = 10;
+export const MISESTIMATE_HOT_RATIO = 100;
+
+/**
+ * 推定行数と実測行数の乖離倍率 (常に 1 以上)。0 行同士の割り算を避け、かつ
+ * 「推定 0.4 行 / 実測 0 行」のような端数由来の見かけの乖離を出さないよう、
+ * 両辺を 1 行未満は 1 に切り上げてから大きい方 / 小さい方を返す。どちらかが
+ * 不明 (null) なら null。
+ */
+export function misestimateRatio(estRows: number | null, actualRows: number | null): number | null {
+  if (estRows === null || actualRows === null) return null;
+  const e = Math.max(1, estRows);
+  const a = Math.max(1, actualRows);
+  return Math.max(e / a, a / e);
+}
+
+/** 乖離倍率を warm / hot に分類する。 */
+export function misestimateLevel(ratio: number | null): Misestimate {
+  if (ratio === null) return "";
+  if (ratio >= MISESTIMATE_HOT_RATIO) return "hot";
+  if (ratio >= MISESTIMATE_WARM_RATIO) return "warm";
+  return "";
+}
+
+/** ノードの実測モード情報から乖離を判定する (実測なしなら常に `""`)。 */
+export function nodeMisestimate(node: PlanNode): { ratio: number | null; level: Misestimate } {
+  const ratio = node.actual ? misestimateRatio(node.actual.estRows, node.actual.rows) : null;
+  return { ratio, level: misestimateLevel(ratio) };
+}
+
+/** ノード全体の実時間 (ms) = 1 ループあたりの時間 × ループ回数。実測が無ければ null。 */
+export function actualTotalMs(node: PlanNode): number | null {
+  const a = node.actual;
+  if (!a || a.totalMs === null) return null;
+  return a.totalMs * (a.loops ?? 1);
+}
+
+/** プランのいずれかのノードが実測値を持つか (= 実測モードの結果か)。 */
+export function hasActual(root: PlanNode | null): boolean {
+  if (!root) return false;
+  if (root.actual) return true;
+  return root.children.some(hasActual);
 }
 
 export type HintSeverity = "info" | "caution" | "warning";
@@ -419,6 +657,19 @@ export function computeHints(node: PlanNode): PlanHint[] {
     } else if (pgRows !== null && pgRows >= ROWS_CAUTION_THRESHOLD) {
       hints.push({ severity: "caution", key: "explainHintManyRows" });
     }
+  }
+
+  // MySQL `EXPLAIN ANALYZE` (テキストツリー, #1164): 表スキャンはラベルで判別する。
+  if (node.kind === "mysqlStep" && /^Table scan on\b/i.test(node.label)) {
+    hints.push({ severity: "warning", key: "explainHintFullScan" });
+  }
+
+  // 実測モード (#1164): 推定行数と実測行数が桁違いにズレているノード。
+  const { level: misLevel } = nodeMisestimate(node);
+  if (misLevel === "hot") {
+    hints.push({ severity: "warning", key: "explainHintMisestimate" });
+  } else if (misLevel === "warm") {
+    hints.push({ severity: "caution", key: "explainHintMisestimate" });
   }
 
   // SQLite: the step `detail` text encodes the access path. A bare table SCAN is

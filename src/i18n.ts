@@ -967,6 +967,26 @@ const en = {
     "A temporary table is created (typically for GROUP BY / DISTINCT / UNION). On large inputs this can be slow; an index matching the grouping or ordering may remove it.",
   explainHintFilesort:
     "A filesort runs to satisfy ORDER BY / GROUP BY. An index already in the sort order lets the database skip this extra sorting step.",
+  explainHintMisestimate:
+    "The planner's estimated row count is off from the actual rows by an order of magnitude or more. Stale or missing statistics are the usual cause — refresh them (ANALYZE TABLE on MySQL, ANALYZE / VACUUM ANALYZE on PostgreSQL) or check for correlated conditions the planner cannot see.",
+
+  explainAnalyzeLabel: "Measured mode (EXPLAIN ANALYZE)",
+  explainAnalyzeTooltip:
+    "Actually runs the query and shows real row counts and times next to the estimates. Only read-only queries are allowed, and a confirmation is required.",
+  explainAnalyzeUnsupportedTooltip:
+    "Measured mode is available for PostgreSQL and MySQL 8.0.18+ only.",
+  explainAnalyzeBadge: "Measured",
+  explainActualRows: "est {est} → actual {actual} rows",
+  explainNeverExecuted: "never executed",
+  explainTotalTime: "Execution time: {time}",
+  explainAnalyzeConfirmTitle: "Run EXPLAIN ANALYZE?",
+  explainAnalyzeConfirmBody:
+    "Measured mode actually executes this query. It can take as long as the query itself and put load on the server.",
+  explainAnalyzeConfirmRun: "Run",
+  explainAnalyzeBlockedToast:
+    "Measured mode runs the query for real, so only read-only queries (SELECT, WITH ... SELECT) are allowed.",
+  explainAnalyzeUnsupportedToast:
+    "Measured mode is not available for this database (PostgreSQL / MySQL 8.0.18+ only).",
 
   qbTitle: "Query Builder",
   qbClose: "Close",
@@ -4588,6 +4608,26 @@ const ja: Dict = {
     "一時テーブルが作成されています (GROUP BY / DISTINCT / UNION などで発生)。入力が大きいと遅くなることがあり、グループ化・並び替えに合うインデックスで解消できる場合があります。",
   explainHintFilesort:
     "ORDER BY / GROUP BY のためにファイルソートが行われています。並び順に合ったインデックスがあれば、この追加のソートを省ける場合があります。",
+  explainHintMisestimate:
+    "オプティマイザの推定行数が実測行数と桁違いにズレています。統計情報が古い / 無いことが主な原因です。統計を更新 (MySQL: ANALYZE TABLE、PostgreSQL: ANALYZE / VACUUM ANALYZE) するか、オプティマイザが見通せない相関のある条件がないか確認してください。",
+
+  explainAnalyzeLabel: "実測モード (EXPLAIN ANALYZE)",
+  explainAnalyzeTooltip:
+    "クエリを実際に実行し、推定と並べて実測の行数・時間を表示します。読み取り専用のクエリのみ実行でき、実行前に確認が入ります。",
+  explainAnalyzeUnsupportedTooltip:
+    "実測モードは PostgreSQL と MySQL 8.0.18 以降でのみ利用できます。",
+  explainAnalyzeBadge: "実測",
+  explainActualRows: "推定 {est} → 実測 {actual} 行",
+  explainNeverExecuted: "実行されず",
+  explainTotalTime: "実行時間: {time}",
+  explainAnalyzeConfirmTitle: "EXPLAIN ANALYZE を実行しますか?",
+  explainAnalyzeConfirmBody:
+    "実測モードはこのクエリを実際に実行します。クエリ本来の実行時間がかかり、サーバに負荷がかかることがあります。",
+  explainAnalyzeConfirmRun: "実行",
+  explainAnalyzeBlockedToast:
+    "実測モードはクエリを実際に実行するため、読み取り専用のクエリ (SELECT / WITH ... SELECT) のみ実行できます。",
+  explainAnalyzeUnsupportedToast:
+    "このデータベースでは実測モードを利用できません (PostgreSQL / MySQL 8.0.18 以降のみ)。",
 
   qbTitle: "Query Builder",
   qbClose: "閉じる",

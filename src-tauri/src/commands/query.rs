@@ -120,10 +120,15 @@ fn ensure_auto_refresh_read_only(driver: DriverKind, sql: &str) -> Result<()> {
 /// a broadcast, but this is the backend-enforced half of that guarantee.
 /// `driver` selects the string-escaping rules the read-only analysis assumes
 /// (#852), same as [`ensure_auto_refresh_read_only`].
+///
+/// EXPLAIN の実測モード (`EXPLAIN ANALYZE`, #1164) も同じ `force_read_only`
+/// 経路を使う。`ANALYZE` は SQL を**実際に実行する**ので、対象が書き込みだと
+/// 本当にデータが変わる。`EXPLAIN` は許可プレフィックスだが本文の書き込み
+/// キーワード走査が効くため、`EXPLAIN ANALYZE DELETE ...` は拒否される。
 fn ensure_broadcast_read_only(driver: DriverKind, sql: &str) -> Result<()> {
     if !is_read_only_sql_for(driver, sql) {
         return Err(AppError::ReadOnly(
-            "broadcast execution allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
+            "forced read-only execution (broadcast / EXPLAIN ANALYZE) allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
                 .into(),
         ));
     }
@@ -1537,6 +1542,8 @@ mod tests {
             "SHOW TABLES",
             "DESCRIBE users",
             "EXPLAIN SELECT 1",
+            "EXPLAIN ANALYZE SELECT * FROM users",
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users",
             "WITH t AS (SELECT 1) SELECT * FROM t",
         ] {
             for driver in ALL_DRIVERS {
@@ -1560,6 +1567,12 @@ mod tests {
             "SELECT 1; DELETE FROM users",
             // Data-modifying CTE.
             "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+            // #1164: 実測モード (EXPLAIN ANALYZE) は対象 SQL を実際に実行する。
+            "EXPLAIN ANALYZE DELETE FROM users",
+            "EXPLAIN ANALYZE UPDATE users SET name = 'x'",
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) INSERT INTO users VALUES (1)",
+            "EXPLAIN (ANALYZE) WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+            "EXPLAIN ANALYZE SELECT 1; DELETE FROM users",
         ] {
             for driver in ALL_DRIVERS {
                 assert!(
