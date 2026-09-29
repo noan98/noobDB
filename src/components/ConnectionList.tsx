@@ -1,4 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { isProtectedNamespace, treeNamespaceKind } from "./databaseMaintenance";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
 import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableColumnInfo } from "../api/tauri";
@@ -324,6 +325,12 @@ interface Props {
   onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
   /** DB 全体の保守コマンド (SQLite VACUUM / PostgreSQL VACUUM・ANALYZE 等)。#561。 */
   onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
+  /** データベース / スキーマの新規作成モーダルを開く (#1190)。プロファイルと DB ノードの
+   *  右クリックから呼ぶ。SQLite は非対応なので項目を出さない。read_only では無効化。 */
+  onCreateNamespace?: () => void;
+  /** DB ノード (MySQL = データベース / PostgreSQL = スキーマ) の DROP (#1190)。名前の
+   *  タイプ入力確認は呼び出し側 (App) が挟む。read_only では無効化。 */
+  onDropNamespace?: (name: string) => void;
   /** DB ノードからサイズ・統計ダッシュボードを開く。#562。 */
   onShowDatabaseSizes?: (database: string) => void;
   /** テーブルノードから列データプロファイル (「列を探索」) を開く。#974。 */
@@ -423,6 +430,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
+  onCreateNamespace,
+  onDropNamespace,
   onExploreColumns,
   onWatchTable,
   onCreateSandbox,
@@ -1077,6 +1086,16 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               },
             ]
           : []),
+        ...(onCreateNamespace && p.id === activeProfileId && treeNamespaceKind(p.driver) !== null
+          ? [
+              {
+                label: t(p.driver === "postgres" ? "contextMenuCreateNamespace" : "contextMenuCreateDatabase"),
+                onSelect: () => onCreateNamespace(),
+                disabled: p.read_only,
+                title: p.read_only ? t("listReadOnlyTitle") : undefined,
+              },
+            ]
+          : []),
         { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
         { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
         {
@@ -1395,6 +1414,31 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         disabled: activeReadOnly,
         title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
       });
+    }
+    // データベース / スキーマの作成・削除 (#1190)。SQLite は DB がファイル単位なので
+    // 出さない。書き込みなので read_only では無効化 (バックエンドも拒否する)。
+    const nsKind = treeNamespaceKind(activeDriver);
+    if (nsKind !== null && (onCreateNamespace || onDropNamespace)) {
+      const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
+      if (onCreateNamespace) {
+        items.push({
+          label: t(activeDriver === "postgres" ? "contextMenuCreateNamespace" : "contextMenuCreateDatabase"),
+          onSelect: () => onCreateNamespace(),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onDropNamespace) {
+        const protectedNs = isProtectedNamespace(activeDriver, db);
+        items.push({
+          label: t(nsKind === "schema" ? "contextMenuDropSchema" : "contextMenuDropDatabase"),
+          onSelect: () => onDropNamespace(db),
+          disabled: activeReadOnly || protectedNs,
+          title: activeReadOnly ? roTitle : protectedNs ? t("contextMenuNamespaceProtectedTitle") : undefined,
+          danger: true,
+        });
+      }
+      items.push({ separator: true });
     }
     items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
     // ダンプの対になる「リストア」導線 (#973)。読み取り専用でも開ける — 書き込み文は

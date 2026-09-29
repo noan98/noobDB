@@ -60,6 +60,11 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import {
+  buildDropNamespaceSql,
+  treeNamespaceKind,
+  type NamespaceKind,
+} from "./components/databaseMaintenance";
 import type { AlterStatement } from "./components/alterTable";
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
 import type { TransferSource } from "./components/dataTransfer";
@@ -186,6 +191,9 @@ const RenameTableDialog = lazy(() =>
 );
 const AlterTableModal = lazy(() =>
   import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
+);
+const CreateNamespaceModal = lazy(() =>
+  import("./components/CreateNamespaceModal").then((m) => ({ default: m.CreateNamespaceModal })),
 );
 const CreateIndexModal = lazy(() =>
   import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
@@ -1802,6 +1810,7 @@ export default function App() {
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
+  const [createNamespaceOpen, setCreateNamespaceOpen] = useState(false);
   const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
@@ -5639,6 +5648,71 @@ export default function App() {
     }
   }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
 
+  // データベース / スキーマの新規作成 (#1190)。PostgreSQL の CREATE DATABASE は
+  // トランザクション内で実行できないので、`run_query_transaction` ではなく単文の
+  // `api.runQuery` (トランザクション無し) で流す。read_only はバックエンドが拒否する。
+  // 対象 DB を持たない文なので `database` は null。成功したらツリーを再取得する。
+  const runNamespaceDdl = useCallback(async (sql: string): Promise<boolean> => {
+    if (!sessionId) return false;
+    try {
+      await api.runQuery(sessionId, sql, null);
+      invalidateSchemaCache();
+      connectionListRef.current?.refreshSchema();
+      return true;
+    } catch (e) {
+      toast.error(translate("statusQueryError", { error: String(e) }));
+      return false;
+    }
+  }, [sessionId, invalidateSchemaCache, toast]);
+
+  const namespaceKindLabel = (kind: NamespaceKind) =>
+    translate(kind === "database" ? "namespaceKindDatabase" : "namespaceKindSchema");
+
+  const handleCreateNamespaceRun = useCallback(async (sql: string, kind: NamespaceKind, name: string) => {
+    const success = await runNamespaceDdl(sql);
+    if (!success) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    // PostgreSQL の新しい DATABASE はこの接続のツリー (= スキーマ一覧) に現れない。
+    toast.success(
+      driver === "postgres" && kind === "database"
+        ? translate("createNamespaceSuccessPgDatabase", { name })
+        : translate("createNamespaceSuccess", { kind: namespaceKindLabel(kind), name }),
+    );
+    setCreateNamespaceOpen(false);
+  }, [runNamespaceDdl, selectedProfile?.driver, toast]);
+
+  const handleCreateNamespaceToEditor = useCallback((sql: string) => {
+    setCreateNamespaceOpen(false);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // ツリーのノード (MySQL = データベース / PostgreSQL = スキーマ) の DROP (#1190)。
+  // 不可逆なので本番かどうかに関わらず名前のタイプ入力確認 (typedConfirmation) を要求する。
+  const handleDropNamespace = useCallback(async (name: string) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    const kind = treeNamespaceKind(driver);
+    if (!kind) return;
+    const sql = buildDropNamespaceSql(driver, kind, name);
+    if (!sql) return;
+    const kindLabel = namespaceKindLabel(kind);
+    const ok = await confirm({
+      title: translate("dropNamespaceConfirmTitle", { kind: kindLabel, name }),
+      message: maintenanceMessage(translate("dropNamespaceConfirmBody", { kind: kindLabel, name })),
+      confirmLabel: translate("dropNamespaceConfirmOk", { kind: kindLabel }),
+      tone: "danger",
+      typedConfirmation: name,
+    });
+    if (!ok) return;
+    const success = await runNamespaceDdl(sql);
+    if (success) {
+      toast.success(translate("dropNamespaceSuccess", { kind: kindLabel, name }));
+      // 削除したノード配下のテーブルタブは整合性が取れなくなるので閉じる。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === name)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    }
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, runNamespaceDdl, toast]);
+
   // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
   // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
   const handleCreateIndexRun = useCallback(async (sql: string) => {
@@ -8235,6 +8309,8 @@ export default function App() {
             recent={quickAccess.recent}
             onToggleFavorite={handleToggleFavorite}
             onCreateTable={(db) => setCreateTableDb(db)}
+            onCreateNamespace={() => setCreateNamespaceOpen(true)}
+            onDropNamespace={handleDropNamespace}
             onTruncateTable={handleTruncateTable}
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
@@ -9328,6 +9404,21 @@ export default function App() {
               onRun={handleAlterTableRun}
               onSendToEditor={handleAlterTableToEditor}
               onClose={() => setAlterTableTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {createNamespaceOpen && sessionId && (
+          <Suspense fallback={null}>
+            <CreateNamespaceModal
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              readOnly={readOnly}
+              initialKind={treeNamespaceKind(selectedProfile?.driver ?? "mysql")}
+              onRun={handleCreateNamespaceRun}
+              onSendToEditor={handleCreateNamespaceToEditor}
+              onClose={() => setCreateNamespaceOpen(false)}
             />
           </Suspense>
         )}
