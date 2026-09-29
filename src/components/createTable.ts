@@ -6,6 +6,14 @@
 
 import { quoteIdentFor } from "./sqlDialect";
 import { quoteString } from "./cellEdit";
+import {
+  checkClause,
+  foreignKeyClause,
+  isCompleteCheck,
+  isCompleteForeignKey,
+  type CheckDef,
+  type ForeignKeyDef,
+} from "./tableConstraints";
 
 export interface ColumnDef {
   name: string;
@@ -24,6 +32,10 @@ export interface CreateTableForm {
   database?: string | null;
   table: string;
   columns: ColumnDef[];
+  /** 外部キー (#1191)。不完全な行 (列・参照先が未入力) は無視する。 */
+  foreignKeys?: ForeignKeyDef[];
+  /** CHECK 制約 (#1191)。式が空の行は無視する。 */
+  checks?: CheckDef[];
 }
 
 /** DEFAULT 句を組み立てる。空なら null。数値・既知キーワードは素通し、他は文字列化。 */
@@ -73,6 +85,14 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
   if (pkCols.length > 0 && !sqliteAutoPk) {
     const pkList = pkCols.map((c) => quoteIdentFor(driver, c.name)).join(", ");
     lines.push(`PRIMARY KEY (${pkList})`);
+  }
+
+  // FK / CHECK はテーブル制約として末尾に並べる (SQLite でも CREATE TABLE 内なら可)。
+  for (const fk of form.foreignKeys ?? []) {
+    if (isCompleteForeignKey(fk)) lines.push(foreignKeyClause(driver, form.database, fk));
+  }
+  for (const ck of form.checks ?? []) {
+    if (isCompleteCheck(ck)) lines.push(checkClause(driver, ck));
   }
 
   const name = qualifiedName(driver, form.database, form.table);

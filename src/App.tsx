@@ -9293,6 +9293,7 @@ export default function App() {
         {createTableDb !== null && sessionId && (
           <Suspense fallback={null}>
             <CreateTableModal
+              sessionId={sessionId ?? undefined}
               driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
               database={createTableDb || null}
               readOnly={readOnly}
