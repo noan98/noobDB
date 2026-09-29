@@ -4398,7 +4398,7 @@ export default function App() {
   const setServerFilterInTab = useCallback((
     tabId: string,
     column: string,
-    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+    filter: { op: ServerFilterOp; value: string; value2?: string; numeric: boolean } | null,
   ) => {
     const next: ServerFilter | null = filter ? { column, ...filter } : null;
     void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
