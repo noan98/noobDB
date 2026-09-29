@@ -3368,6 +3368,10 @@ const en = {
   maintenanceVacuum: "Vacuum (reclaim space)",
   maintenanceVacuumAnalyze: "Vacuum + Analyze",
   maintenanceReindex: "Reindex",
+  maintenanceRefreshMatview: "Refresh materialized view",
+  maintenanceRefreshMatviewConcurrently: "Refresh materialized view (CONCURRENTLY)",
+  maintenanceRefreshMatviewConcurrentlyHint:
+    "Requires a unique index on the materialized view; it stays readable during the refresh",
   maintenanceConfirmTitle: "Run maintenance on {table}?",
   maintenanceConfirmDbTitle: "Run maintenance on database {database}?",
   maintenanceConfirmBody: "The following statement will run on {target}:",
@@ -7085,6 +7089,10 @@ const ja: Dict = {
   maintenanceVacuum: "VACUUM (領域回収)",
   maintenanceVacuumAnalyze: "VACUUM + ANALYZE",
   maintenanceReindex: "REINDEX (インデックス再構築)",
+  maintenanceRefreshMatview: "マテビューを更新",
+  maintenanceRefreshMatviewConcurrently: "マテビューを更新 (CONCURRENTLY)",
+  maintenanceRefreshMatviewConcurrentlyHint:
+    "マテビューにユニークインデックスが必要です。更新中も読み取りできます",
   maintenanceConfirmTitle: "{table} に保守コマンドを実行しますか？",
   maintenanceConfirmDbTitle: "データベース {database} に保守コマンドを実行しますか？",
   maintenanceConfirmBody: "次の文を {target} に対して実行します:",

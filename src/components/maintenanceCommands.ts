@@ -16,7 +16,9 @@ export type MaintenanceKind =
   | "repair"
   | "vacuum"
   | "vacuumAnalyze"
-  | "reindex";
+  | "reindex"
+  | "refreshMatview"
+  | "refreshMatviewConcurrently";
 
 /** 1 つの保守コマンド: 種別と、そのまま実行できる生成済み SQL。 */
 export interface MaintenanceCommand {
@@ -91,4 +93,23 @@ export function databaseMaintenanceCommands(driver: string): MaintenanceCommand[
     ];
   }
   return [];
+}
+
+/**
+ * PostgreSQL マテリアライズドビューの REFRESH (#1241)。PostgreSQL 以外には
+ * マテビューが無いので空を返す。`CONCURRENTLY` はユニークインデックスが前提で、
+ * トランザクションブロック内では実行できない。実行経路 (`run_query`) は単文を
+ * トランザクションで包まないため、そのまま実行できる。
+ */
+export function matviewRefreshCommands(
+  driver: string,
+  database: string | null,
+  name: string,
+): MaintenanceCommand[] {
+  if (driver !== "postgres") return [];
+  const target = qualified(driver, database, name);
+  return [
+    { kind: "refreshMatview", sql: `REFRESH MATERIALIZED VIEW ${target};` },
+    { kind: "refreshMatviewConcurrently", sql: `REFRESH MATERIALIZED VIEW CONCURRENTLY ${target};` },
+  ];
 }

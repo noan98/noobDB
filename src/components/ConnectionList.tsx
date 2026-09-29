@@ -40,6 +40,7 @@ import { driverColor, driverIconName, normalizeChipColor } from "../profileIdent
 import {
   databaseMaintenanceCommands,
   tableMaintenanceCommands,
+  matviewRefreshCommands,
   type MaintenanceCommand,
   type MaintenanceKind,
 } from "./maintenanceCommands";
@@ -172,6 +173,8 @@ const MAINTENANCE_LABEL_KEYS: Record<MaintenanceKind, I18nKey> = {
   vacuum: "maintenanceVacuum",
   vacuumAnalyze: "maintenanceVacuumAnalyze",
   reindex: "maintenanceReindex",
+  refreshMatview: "maintenanceRefreshMatview",
+  refreshMatviewConcurrently: "maintenanceRefreshMatviewConcurrently",
 };
 
 /** 接続リストのグループ折りたたみ状態を永続化する localStorage キー。
@@ -1381,6 +1384,27 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
     if (asNode && onCopyTableName) {
       items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(name) });
+    }
+    // マテリアライズドビューの REFRESH (#1241)。PostgreSQL 専用。書き込みを伴うので
+    // read_only では無効化し、実行時は App が確認ダイアログを挟む。
+    if (asNode && onRunTableMaintenance && view.kind === "materialized_view") {
+      const refreshCommands = matviewRefreshCommands(activeDriver, db, name);
+      if (refreshCommands.length > 0) {
+        items.push({ separator: true });
+        for (const command of refreshCommands) {
+          const concurrently = command.kind === "refreshMatviewConcurrently";
+          items.push({
+            label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+            onSelect: () => onRunTableMaintenance(db, name, command),
+            disabled: activeReadOnly,
+            title: activeReadOnly
+              ? t("listReadOnlyTitle")
+              : concurrently
+                ? t("maintenanceRefreshMatviewConcurrentlyHint")
+                : undefined,
+          });
+        }
+      }
     }
     if (onDropView && view.kind === "view") {
       if (items.length > 0) items.push({ separator: true });
