@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import type { ExportColumnMask } from "../components/exportMasking";
+import type { TxIsolation } from "../txOptions";
 
 /**
  * A backend error carrying the structured `AppError.kind` discriminant (#683).
@@ -1438,9 +1439,18 @@ export const api = {
     invoke<ResolvedSshAlias | null>("resolve_ssh_config_host", { alias }).then((r) =>
       r === null ? null : parseResponse(schemas.resolvedSshAlias, r, "resolve_ssh_config_host"),
     ),
-  /** 明示トランザクションを開始する。 */
-  beginTransaction: (sessionId: string, database?: string | null) =>
-    invoke<void>("begin_transaction", { sessionId, database: database ?? null }),
+  /** 明示トランザクションを開始する。`options` は分離レベル / READ ONLY (MySQL / PostgreSQL のみ、省略でサーバ既定, #1166)。 */
+  beginTransaction: (
+    sessionId: string,
+    database?: string | null,
+    options?: { isolation?: TxIsolation | null; readOnly?: boolean },
+  ) =>
+    invoke<void>("begin_transaction", {
+      sessionId,
+      database: database ?? null,
+      isolation: options?.isolation ?? null,
+      readOnly: options?.readOnly ?? null,
+    }),
   /** 明示トランザクション内で 1 文を実行する。 */
   runInTransaction: (sessionId: string, sql: string) =>
     invoke<QueryResult>("run_in_transaction", { sessionId, sql }).then((r) =>

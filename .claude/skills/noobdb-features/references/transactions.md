@@ -26,3 +26,17 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
 ありません。ドライバ差は `mysql_integration::mysql_ddl_dml_mixed_batch_is_not_atomic` /
 `postgres_integration::postgres_ddl_dml_mixed_batch_rolls_back` の対比テストで固定して
 います (環境変数ゲート、未設定ならスキップ)。
+
+## 開始オプション: 分離レベルと READ ONLY (#1166)
+
+`begin_transaction` は任意引数 `isolation` (`read-uncommitted` / `read-committed` /
+`repeatable-read` / `serializable`) と `readOnly` を受ける (省略でサーバ既定、後方互換)。
+SQL 片は `db/tx_options.rs` の enum (`TxIsolation`) からのみ組み立て、文字列連結しない。
+
+| ドライバ | 発行 |
+|---|---|
+| MySQL | `SET TRANSACTION ISOLATION LEVEL ...` を `START TRANSACTION` の**前**に (次の 1 TX だけに効く)。READ ONLY は `START TRANSACTION READ ONLY` |
+| PostgreSQL | `BEGIN ISOLATION LEVEL ... READ ONLY` の 1 文。READ UNCOMMITTED は READ COMMITTED 扱い |
+| SQLite | 非対応。指定されると `InvalidInput` で拒否 (黙って無視しない)。UI もトグルを無効化 |
+
+フロントの判定は `src/txOptions.ts` (`supportsTxOptions` / `resolveTxOptions`)。

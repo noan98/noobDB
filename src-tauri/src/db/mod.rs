@@ -24,6 +24,8 @@ pub mod sync;
 /// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
 pub mod table_ddl;
 pub mod transfer;
+/// 明示トランザクション開始オプション (分離レベル / READ ONLY, #1166)。
+pub mod tx_options;
 pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
 pub mod upsert;
@@ -373,10 +375,21 @@ impl Connection {
     /// (and thus the same transaction). `database` sets the connection's
     /// default schema/db context. Errs if a transaction is already active.
     pub async fn begin_transaction(&self, database: Option<&str>) -> Result<()> {
+        self.begin_transaction_with(database, tx_options::TxOptions::default())
+            .await
+    }
+
+    /// [`Self::begin_transaction`] に分離レベル / READ ONLY を指定する版 (#1166)。
+    /// SQLite は非対応で、オプション指定があれば `InvalidInput`。
+    pub async fn begin_transaction_with(
+        &self,
+        database: Option<&str>,
+        opts: tx_options::TxOptions,
+    ) -> Result<()> {
         match self {
-            Connection::MySql(c) => c.tx_begin(database).await,
-            Connection::Postgres(c) => c.tx_begin(database).await,
-            Connection::Sqlite(c) => c.tx_begin(database).await,
+            Connection::MySql(c) => c.tx_begin(database, opts).await,
+            Connection::Postgres(c) => c.tx_begin(database, opts).await,
+            Connection::Sqlite(c) => c.tx_begin(database, opts).await,
         }
     }
 
