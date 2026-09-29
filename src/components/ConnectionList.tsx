@@ -10,6 +10,7 @@ import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
+import { isEditableObjectKind, supportsRoutineEditing, type EditableObjectKind } from "./routineMaintenance";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
@@ -359,6 +360,14 @@ interface Props {
    */
   onRunRoutine?: (database: string, kind: "procedure" | "function", name: string, id: string | null) => void;
   /**
+   * ルーチン / トリガーの定義編集 (#1192)。右クリックの「定義を編集...」から呼ぶ。
+   * ドライバが対応しない種別 (SQLite のルーチン) や read_only では項目を無効化する。
+   * 未指定ならメニュー項目を出さない。
+   */
+  onEditRoutine?: (database: string, kind: EditableObjectKind, name: string, id: string | null) => void;
+  /** ルーチン / トリガーの新規作成 (#1192)。DB の右クリックメニューから呼ぶ。 */
+  onCreateRoutine?: (database: string, kind: EditableObjectKind) => void;
+  /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
    * introspection だけなので read_only でも有効。未指定ならメニュー項目を出さない。
@@ -435,6 +444,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onEditViewDefinition,
   onDropView,
   onRunRoutine,
+  onEditRoutine,
+  onCreateRoutine,
   onFindUsages,
   selectLimit,
   favorites,
@@ -1250,25 +1261,39 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // read_only でも無効化しない — 読み取りだけの関数もあり、書き込み系は実行時に
   // バックエンドの `ensure_allowed_for_session` が拒否する (二重に判定しない)。
   const handleRoutineContextMenu = (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => {
-    if (!onRunRoutine || !isRoutineKind(o.kind)) return;
+    if (!isEditableObjectKind(o.kind)) return;
+    const kind = o.kind;
+    const canRun = !!onRunRoutine && isRoutineKind(kind);
+    if (!canRun && !onEditRoutine) return;
     e.preventDefault();
     e.stopPropagation();
-    const kind = o.kind;
-    const supported = supportsRoutineExecution(activeDriver);
-    const items: ContextMenuEntry[] = [
-      {
+    const items: ContextMenuEntry[] = [];
+    if (canRun && isRoutineKind(kind)) {
+      const supported = supportsRoutineExecution(activeDriver);
+      items.push({
         label: t("contextMenuRunRoutine"),
-        onSelect: () => onRunRoutine(db, kind, o.name, o.id),
+        onSelect: () => onRunRoutine?.(db, kind, o.name, o.id),
         disabled: !supported,
         title: supported ? undefined : t("runRoutineUnsupportedDriver"),
-      },
-    ];
+      });
+    }
+    if (onEditRoutine) {
+      // 定義の編集 (#1192) はモーダルが開くだけなので閲覧はできる。適用の可否は
+      // モーダル側 (read_only はバックエンド強制) が決める。
+      const supported = supportsRoutineEditing(activeDriver, kind);
+      items.push({
+        label: t("contextMenuEditRoutine"),
+        onSelect: () => onEditRoutine(db, kind, o.name, o.id),
+        disabled: !supported,
+        title: supported ? undefined : t("runRoutineUnsupportedDriver"),
+      });
+    }
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   // ビューの右クリックメニュー: データ / 構造 (#1112)・定義の表示 / 編集 (#851)・
-  // 影響分析 (#1027)・DROP VIEW。ルーチン/トリガーは delimiter 差が大きいため定義の
-  // 編集は対象外。`asNode` が false のときは定義だけを開く旧来のビュー行
+  // 影響分析 (#1027)・DROP VIEW。ルーチン/トリガーの定義編集は
+  // `handleRoutineContextMenu` (#1192)。`asNode` が false のときは定義だけを開く旧来のビュー行
   // (`list_tables` と名前が突き合わなかったもの) で、データ系の項目を出さない。
   // テーブル向けの書き込み系 (インポート / TRUNCATE / 列編集など) はビューには出さない。
   const handleViewContextMenu = (
@@ -1385,6 +1410,22 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         disabled: activeReadOnly,
         title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
       });
+    }
+    if (onCreateRoutine) {
+      const kinds: { kind: EditableObjectKind; key: "contextMenuCreateProcedure" | "contextMenuCreateFunction" | "contextMenuCreateTrigger" }[] = [
+        { kind: "procedure", key: "contextMenuCreateProcedure" },
+        { kind: "function", key: "contextMenuCreateFunction" },
+        { kind: "trigger", key: "contextMenuCreateTrigger" },
+      ];
+      const entries = kinds
+        .filter((k) => supportsRoutineEditing(activeDriver, k.kind))
+        .map((k) => ({
+          label: t(k.key),
+          onSelect: () => onCreateRoutine(db, k.kind),
+          disabled: activeReadOnly,
+          title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+        }));
+      items.push(...submenuOrFlat(t("contextMenuCreateRoutineGroup"), entries, { icon: "routine" }));
     }
     if (onImportNewTable) {
       // 取り込みは書き込み (CREATE TABLE + INSERT) なので read_only では無効化する
@@ -1783,7 +1824,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
                   kind === "view"
                     ? (ev) => handleViewContextMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
-                    : isRoutineKind(kind)
+                    : isEditableObjectKind(kind)
                       ? (ev) => handleRoutineContextMenu(ev, db, o)
                       : undefined;
                 return (
