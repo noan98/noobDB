@@ -7,6 +7,7 @@ use sqlx::postgres::{
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::server_messages::capture;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
@@ -14,7 +15,6 @@ use super::types::{
     ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
     TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
-use super::server_messages::capture;
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
@@ -181,14 +181,9 @@ impl PostgresConn {
         F: FnMut(StreamBatch) -> Result<()>,
     {
         // NOTICE / WARNING を捕捉して結果へ載せる (#1165)。
-        let (result, messages) = capture(self.execute_stream_inner(
-            sql,
-            database,
-            initial_batch,
-            chunk_size,
-            on_batch,
-        ))
-        .await;
+        let (result, messages) =
+            capture(self.execute_stream_inner(sql, database, initial_batch, chunk_size, on_batch))
+                .await;
         Ok(result?.with_server_messages(messages))
     }
 

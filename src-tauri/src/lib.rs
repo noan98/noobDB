@@ -43,9 +43,10 @@ pub mod __test_api {
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
         ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature,
-        SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch,
-        TableColumnInfo, TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-        TableSchema, TableSizeInfo, UserPrivileges, Value,
+        SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics,
+        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableComment,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -812,13 +813,16 @@ pub fn run() {
             .with_filter(make_filter())
     });
     // sqlx (postgres) の NOTICE / WARNING を実行中の文へ紐づけて捕捉する (#1165)。
-    let notice_layer = db::server_messages::NoticeCaptureLayer.with_filter(
-        tracing_subscriber::filter::filter_fn(|meta| {
-            meta.target() == db::server_messages::NOTICE_TARGET
-        }),
-    );
+    let notice_layer =
+        db::server_messages::NoticeCaptureLayer.with_filter(tracing_subscriber::filter::filter_fn(
+            |meta| meta.target() == db::server_messages::NOTICE_TARGET,
+        ));
     tracing_subscriber::registry()
-        .with(fmt::layer().with_writer(std::io::stdout).with_filter(make_filter()))
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_filter(make_filter()),
+        )
         .with(file_layer)
         .with(notice_layer)
         .init();

@@ -1884,11 +1884,10 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
             .await?;
         // 書き込み文の直後に警告を取る (#1165)。
         let messages = fetch_warnings(conn).await;
-        Ok(QueryResult::empty(
-            result.rows_affected(),
-            started.elapsed().as_millis() as u64,
+        Ok(
+            QueryResult::empty(result.rows_affected(), started.elapsed().as_millis() as u64)
+                .with_server_messages(messages),
         )
-        .with_server_messages(messages))
     }
 }
 
@@ -2562,7 +2561,11 @@ mod tests {
 
     #[test]
     fn warning_rows_map_to_severity_and_prefix_code() {
-        let w = warning_to_message("Warning", Some(1265), "Data truncated for column 'a' at row 1");
+        let w = warning_to_message(
+            "Warning",
+            Some(1265),
+            "Data truncated for column 'a' at row 1",
+        );
         assert_eq!(w.severity, ServerMessageSeverity::Warning);
         assert_eq!(w.text, "[1265] Data truncated for column 'a' at row 1");
         assert_eq!(
