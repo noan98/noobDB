@@ -142,7 +142,14 @@ import {
   serverQuickFilter,
   type QuickFilterMode,
 } from "./quickFilter";
-import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
+import {
+  isServerFilterInputValid,
+  serverFilterOpNeedsValue,
+  type ServerFilter,
+  type ServerFilterOp,
+  type ServerSort,
+  type ServerSortDirection,
+} from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
 import {
   buildFkJumpSql,
@@ -1194,7 +1201,7 @@ interface Props {
   onSetServerSort?: (column: string, direction: ServerSortDirection | null) => void;
   onSetServerFilter?: (
     column: string,
-    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+    filter: { op: ServerFilterOp; value: string; value2?: string; numeric: boolean } | null,
   ) => void;
 }
 
@@ -1786,8 +1793,8 @@ function ColumnFilterMenu({
   serverSortDir?: ServerSortDirection | null;
   onSetServerSort?: (direction: ServerSortDirection | null) => void;
   /** サーバ側フィルタ (#792): この列が現在の全件 WHERE 対象ならその条件。 */
-  serverFilter?: { op: ServerFilterOp; value: string } | null;
-  onApplyServerFilter?: (op: ServerFilterOp, value: string) => void;
+  serverFilter?: { op: ServerFilterOp; value: string; value2?: string } | null;
+  onApplyServerFilter?: (op: ServerFilterOp, value: string, value2?: string) => void;
   onClearServerFilter?: () => void;
   /**
    * 機微カラム表示マスク (#1069): この列が現在マスク対象か、その切替、列全体の
@@ -1808,8 +1815,9 @@ function ColumnFilterMenu({
     () => serverFilter?.op ?? (numeric ? "eq" : "contains"),
   );
   const [serverFilterValue, setServerFilterValue] = useState<string>(() => serverFilter?.value ?? "");
-  const serverFilterNeedsValue =
-    serverFilterOp === "eq" || serverFilterOp === "ne" || serverFilterOp === "contains";
+  const [serverFilterValue2, setServerFilterValue2] = useState<string>(() => serverFilter?.value2 ?? "");
+  const serverFilterNeedsValue = serverFilterOpNeedsValue(serverFilterOp);
+  const serverFilterValid = isServerFilterInputValid(serverFilterOp, serverFilterValue, serverFilterValue2);
 
   // Commit the draft up to the table, clearing it when it no longer narrows.
   const apply = (next: ColumnFilter) => {
@@ -2001,6 +2009,12 @@ function ColumnFilterMenu({
               >
                 <option value="eq">{t("gridServerFilterOpEq")}</option>
                 <option value="ne">{t("gridServerFilterOpNe")}</option>
+                <option value="gt">{t("gridServerFilterOpGt")}</option>
+                <option value="gte">{t("gridServerFilterOpGte")}</option>
+                <option value="lt">{t("gridServerFilterOpLt")}</option>
+                <option value="lte">{t("gridServerFilterOpLte")}</option>
+                <option value="between">{t("gridServerFilterOpBetween")}</option>
+                <option value="in">{t("gridServerFilterOpIn")}</option>
                 <option value="contains">{t("gridServerFilterOpContains")}</option>
                 <option value="isNull">{t("gridServerFilterOpIsNull")}</option>
                 <option value="isNotNull">{t("gridServerFilterOpIsNotNull")}</option>
@@ -2011,9 +2025,30 @@ function ColumnFilterMenu({
                   type="text"
                   inputMode={numeric ? "decimal" : undefined}
                   value={serverFilterValue}
-                  placeholder={t("gridFilterValuePlaceholder")}
-                  aria-label={t("gridServerFilterValueAria")}
+                  placeholder={
+                    serverFilterOp === "in"
+                      ? t("gridServerFilterInPlaceholder")
+                      : serverFilterOp === "between"
+                        ? t("gridServerFilterBetweenFromPlaceholder")
+                        : t("gridFilterValuePlaceholder")
+                  }
+                  aria-label={
+                    serverFilterOp === "between"
+                      ? t("gridServerFilterBetweenFromAria")
+                      : t("gridServerFilterValueAria")
+                  }
                   onChange={(e) => setServerFilterValue(e.target.value)}
+                />
+              )}
+              {serverFilterOp === "between" && (
+                <chakra.input
+                  css={FILTER_FIELD_CSS}
+                  type="text"
+                  inputMode={numeric ? "decimal" : undefined}
+                  value={serverFilterValue2}
+                  placeholder={t("gridServerFilterBetweenToPlaceholder")}
+                  aria-label={t("gridServerFilterBetweenToAria")}
+                  onChange={(e) => setServerFilterValue2(e.target.value)}
                 />
               )}
               <Box display="flex" gap="1.5">
@@ -2021,8 +2056,13 @@ function ColumnFilterMenu({
                   variant="secondary"
                   size="sm"
                   px="2"
+                  disabled={!serverFilterValid}
                   onClick={() => {
-                    onApplyServerFilter(serverFilterOp, serverFilterValue);
+                    onApplyServerFilter(
+                      serverFilterOp,
+                      serverFilterValue,
+                      serverFilterOp === "between" ? serverFilterValue2 : undefined,
+                    );
                     onClose();
                   }}
                 >
@@ -2908,7 +2948,7 @@ export const DataGrid = memo(function DataGrid({
   onSetServerSort?: (column: string, direction: ServerSortDirection | null) => void;
   onSetServerFilter?: (
     column: string,
-    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+    filter: { op: ServerFilterOp; value: string; value2?: string; numeric: boolean } | null,
   ) => void;
 }) {
   const t = useT();
@@ -5961,15 +6001,16 @@ export const DataGrid = memo(function DataGrid({
           }
           serverFilter={
             serverFilter && serverFilter.column === (columns[filterMenu.colIdx]?.name ?? "")
-              ? { op: serverFilter.op, value: serverFilter.value }
+              ? { op: serverFilter.op, value: serverFilter.value, value2: serverFilter.value2 }
               : null
           }
           onApplyServerFilter={
             onSetServerFilter
-              ? (op, value) =>
+              ? (op, value, value2) =>
                   onSetServerFilter(columns[filterMenu.colIdx]?.name ?? "", {
                     op,
                     value,
+                    value2,
                     numeric: isNumericFilterKind(columnKinds[filterMenu.colIdx] ?? "string"),
                   })
               : undefined

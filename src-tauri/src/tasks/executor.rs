@@ -12,7 +12,9 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Manager};
 
-use super::{TaskAction, TaskDefinition};
+use super::{NewAssertionResult, TaskAction, TaskDefinition};
+use crate::assertions;
+use crate::commands::assertions::run_assertion_with;
 use crate::commands::connection::{
     connect, disconnect, ConnectRequest, SshJumpRequest, SshRequest,
 };
@@ -31,6 +33,8 @@ pub struct TaskOutcome {
     pub output_path: Option<String>,
     pub rows: Option<i64>,
     pub bytes: Option<i64>,
+    /// `RunAssertions` (#1170) の 1 アサーションごとの結果。他のアクションでは空。
+    pub assertion_results: Vec<NewAssertionResult>,
 }
 
 impl TaskOutcome {
@@ -41,8 +45,36 @@ impl TaskOutcome {
             output_path: None,
             rows: None,
             bytes: None,
+            assertion_results: Vec::new(),
         }
     }
+}
+
+/// アサーション 1 件あたりのクエリタイムアウト。ユーザ操作と違い中止できない
+/// 無人実行なので、固定の上限で必ず打ち切る。
+const ASSERTION_QUERY_TIMEOUT_SECS: u64 = 120;
+
+/// アサーション実行の結果から、タスクの成否とエラー要約を決める (純関数)。
+/// 全件 pass なら `None`。違反 (`passed=false`) と実行エラーを 1 行にまとめる。
+pub fn summarize_assertion_failures(results: &[NewAssertionResult]) -> Option<String> {
+    let failed: Vec<String> = results
+        .iter()
+        .filter(|r| !r.passed)
+        .map(|r| match (&r.error, r.observed) {
+            (Some(e), _) => format!("{} (error: {e})", r.assertion_name),
+            (None, Some(n)) => format!("{} (observed {n})", r.assertion_name),
+            (None, None) => r.assertion_name.clone(),
+        })
+        .collect();
+    if failed.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} of {} assertions failed: {}",
+        failed.len(),
+        results.len(),
+        failed.join(", ")
+    ))
 }
 
 /// エクスポートのストリーミング読み出しバッチサイズ。ユーザ操作の
@@ -84,7 +116,7 @@ pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
         Err(e) => return TaskOutcome::err(format!("connect failed: {e}")),
     };
 
-    let outcome = run_action(app, &session_id, task).await;
+    let outcome = run_action(app, &session_id, task, &profile).await;
 
     // 成功/失敗を問わず必ず切断する (常駐接続を増やさない)。切断自体の失敗は
     // ログに残すのみで、タスクの成否には影響させない (アクションはもう完了/
@@ -97,7 +129,12 @@ pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
     outcome
 }
 
-async fn run_action(app: &AppHandle, session_id: &str, task: &TaskDefinition) -> TaskOutcome {
+async fn run_action(
+    app: &AppHandle,
+    session_id: &str,
+    task: &TaskDefinition,
+    profile: &ConnectionProfile,
+) -> TaskOutcome {
     let state = app.state::<AppState>();
     let Some(session) = state.get(session_id).await else {
         return TaskOutcome::err("session unexpectedly missing right after connect");
@@ -154,6 +191,7 @@ async fn run_action(app: &AppHandle, session_id: &str, task: &TaskDefinition) ->
                         output_path: Some(path),
                         rows: Some(written as i64),
                         bytes: Some(outcome.bytes as i64),
+                        assertion_results: Vec::new(),
                     }
                 }
                 Err(e) => TaskOutcome::err(e.to_string()),
@@ -186,8 +224,80 @@ async fn run_action(app: &AppHandle, session_id: &str, task: &TaskDefinition) ->
                     output_path: Some(path),
                     rows: None,
                     bytes: Some(bytes as i64),
+                    assertion_results: Vec::new(),
                 },
                 Err(e) => TaskOutcome::err(e.to_string()),
+            }
+        }
+        TaskAction::RunAssertions {
+            database,
+            assertion_ids,
+        } => {
+            let all = match assertions::store::load_all() {
+                Ok(v) => v,
+                Err(e) => return TaskOutcome::err(e.to_string()),
+            };
+            let selected = assertions::select_for_task(
+                &all,
+                assertion_ids,
+                &profile.id,
+                profile.group.as_deref(),
+            );
+            if selected.is_empty() {
+                return TaskOutcome::err("no assertions matched this task's profile scope");
+            }
+            let mut results = Vec::with_capacity(selected.len());
+            for item in selected {
+                match item {
+                    Err(missing_id) => results.push(NewAssertionResult {
+                        assertion_id: missing_id.clone(),
+                        assertion_name: missing_id,
+                        passed: false,
+                        observed: None,
+                        error: Some("assertion not found (deleted?)".into()),
+                        elapsed_ms: 0,
+                    }),
+                    Ok(assertion) => {
+                        let started = Instant::now();
+                        // 1 件の失敗 (接続断・タイムアウト) で残りを止めない。
+                        let r = run_assertion_with(
+                            state.inner(),
+                            session_id,
+                            &assertion,
+                            database.as_deref(),
+                            Some(ASSERTION_QUERY_TIMEOUT_SECS),
+                        )
+                        .await;
+                        results.push(match r {
+                            Ok(o) => NewAssertionResult {
+                                assertion_id: assertion.id.clone(),
+                                assertion_name: assertion.name.clone(),
+                                passed: o.passed,
+                                observed: i64::try_from(o.observed).ok(),
+                                error: None,
+                                elapsed_ms: i64::try_from(o.elapsed_ms).unwrap_or(i64::MAX),
+                            },
+                            Err(e) => NewAssertionResult {
+                                assertion_id: assertion.id.clone(),
+                                assertion_name: assertion.name.clone(),
+                                passed: false,
+                                observed: None,
+                                error: Some(e.to_string()),
+                                elapsed_ms: i64::try_from(started.elapsed().as_millis())
+                                    .unwrap_or(i64::MAX),
+                            },
+                        });
+                    }
+                }
+            }
+            let error = summarize_assertion_failures(&results);
+            TaskOutcome {
+                ok: error.is_none(),
+                error,
+                output_path: None,
+                rows: Some(results.len() as i64),
+                bytes: None,
+                assertion_results: results,
             }
         }
     }
@@ -304,6 +414,42 @@ mod tests {
     #[test]
     fn leaves_path_without_placeholders_untouched() {
         assert_eq!(resolve_output_path("plain.csv", dt()), "plain.csv");
+    }
+
+    fn res(
+        name: &str,
+        passed: bool,
+        observed: Option<i64>,
+        error: Option<&str>,
+    ) -> NewAssertionResult {
+        NewAssertionResult {
+            assertion_id: name.into(),
+            assertion_name: name.into(),
+            passed,
+            observed,
+            error: error.map(str::to_string),
+            elapsed_ms: 1,
+        }
+    }
+
+    #[test]
+    fn summarize_returns_none_when_all_pass() {
+        let r = vec![res("a", true, Some(0), None), res("b", true, Some(0), None)];
+        assert_eq!(summarize_assertion_failures(&r), None);
+        assert_eq!(summarize_assertion_failures(&[]), None);
+    }
+
+    #[test]
+    fn summarize_lists_violations_and_errors() {
+        let r = vec![
+            res("a", true, Some(0), None),
+            res("b", false, Some(4), None),
+            res("c", false, None, Some("timeout")),
+        ];
+        assert_eq!(
+            summarize_assertion_failures(&r).as_deref(),
+            Some("2 of 3 assertions failed: b (observed 4), c (error: timeout)")
+        );
     }
 
     #[test]

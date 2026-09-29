@@ -24,7 +24,9 @@ import { SEQUENTIAL_RAMPS, rampStops, readableInk, sampleRamp, useIsDarkTheme } 
 import { semanticColorVar } from "../semanticColors";
 import {
   buildPlanGraph,
+  actualTotalMs,
   computeHints,
+  formatDurationMs,
   formatNumber,
   heatT,
   layoutPlanGraph,
@@ -47,6 +49,9 @@ interface PlanNodeData {
   /** 0–1 のヒート値。null なら中立色 (コスト無し)。 */
   heat: number | null;
   rows: number | null;
+  /** 実測モード (#1164): 実測行数 / 実時間 (ms)。推定 EXPLAIN では null。 */
+  actualRows: number | null;
+  actualMs: number | null;
   worstHint: "info" | "caution" | "warning" | null;
   selected: boolean;
   onSelect: () => void;
@@ -111,7 +116,15 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
         <chakra.span css={labelCss}>{data.label}</chakra.span>
         <chakra.span css={metaCss} opacity={0.92}>
           {data.cost !== null && <span>cost {formatNumber(data.cost)}</span>}
-          {data.rows !== null && <span>{formatNumber(data.rows)} rows</span>}
+          {data.actualRows !== null ? (
+            <span>
+              {data.rows !== null ? `${formatNumber(data.rows)} → ` : ""}
+              {formatNumber(data.actualRows)} rows
+            </span>
+          ) : (
+            data.rows !== null && <span>{formatNumber(data.rows)} rows</span>
+          )}
+          {data.actualMs !== null && <span>{formatDurationMs(data.actualMs)}</span>}
           {data.worstHint && data.worstHint !== "info" && (
             <chakra.span
               fontWeight={700}
@@ -174,7 +187,9 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
           label: n.node.label,
           cost: n.node.cost,
           heat: heatT(n.node.cost, maxCost),
-          rows: rowsOf(n.node),
+          rows: n.node.actual ? n.node.actual.estRows : rowsOf(n.node),
+          actualRows: n.node.actual ? n.node.actual.rows : null,
+          actualMs: actualTotalMs(n.node),
           worstHint: worstSeverity(computeHints(n.node)),
           selected: selectedId === n.id,
           onSelect: () => onSelect(n.id),

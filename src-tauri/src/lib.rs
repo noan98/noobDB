@@ -967,6 +967,7 @@ pub fn run() {
             commands::tasks::run_task_now,
             commands::tasks::list_task_runs,
             commands::tasks::clear_task_runs,
+            commands::tasks::list_assertion_runs,
             commands::tasks::get_scheduler_settings,
             commands::tasks::set_scheduler_settings,
             commands::schema::refresh_schema_cache,
