@@ -1222,9 +1222,11 @@ export interface SchedulerSettings {
 /**
  * Source data format for an import. CSV uses the delimiter/quote/header options;
  * JSON (array of objects) and NDJSON (one object per line) key rows by field
- * name and ignore those options. Defaults to "csv" on the backend if omitted.
+ * name and ignore those options. "xlsx" (#1171) reads one sheet of an Excel
+ * workbook (`sheet`, default: the first) and uses only `hasHeader`. Defaults to
+ * "csv" on the backend if omitted.
  */
-export type ImportFormat = "csv" | "json" | "ndjson";
+export type ImportFormat = "csv" | "json" | "ndjson" | "xlsx";
 
 /** How the importer handles rows the database rejects (#687). */
 export type ImportErrorMode = "abort" | "skip";
@@ -1267,6 +1269,8 @@ export interface ImportOptions {
    * modes (the backend rejects anything else); ignored for `"insert"`.
    */
   keyColumns?: string[];
+  /** xlsx のシート名 (#1171)。省略 / 空 → 先頭シート。他の形式では無視される。 */
+  sheet?: string | null;
 }
 
 /**
@@ -1301,6 +1305,8 @@ export interface CsvPreview {
   headers: string[];
   rows: string[][];
   truncated: boolean;
+  /** xlsx ブックの全シート名 (ブック順、#1171)。他の形式では空配列。 */
+  sheets: string[];
 }
 
 /**

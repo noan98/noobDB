@@ -105,6 +105,9 @@
         "Alice"
       ]
     ],
+    "sheets": [
+      "Sheet1"
+    ],
     "truncated": false
   },
   "dataDiff": {

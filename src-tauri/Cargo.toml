@@ -125,6 +125,9 @@ sqlformat = "0.5"
 # モードで、ストリーミング経路 (`export_query_stream`) が 100 万行級の結果を
 # メモリに溜めずに書き出すために使う (推移依存は tempfile / zip のみ)。
 rust_xlsxwriter = { version = "0.99", default-features = false, features = ["constant_memory"] }
+# Excel (xlsx) インポート (#1171)。読み取り専用の純 Rust 実装 (MIT)。default features
+# (chrono) は使わず、日時セルは自前で ISO 文字列へ変換する。
+calamine = { version = "0.30", default-features = false, features = ["dates"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"

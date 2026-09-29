@@ -19,6 +19,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
         headers: ["id", "name"],
         rows: [["1", "alice"]],
         truncated: false,
+        sheets: [],
       }),
       importCsv: vi.fn().mockResolvedValue(undefined),
       previewCreateTableDdl: vi
@@ -115,6 +116,48 @@ describe("ImportModal conflict mode / UPSERT (#972)", () => {
     const params = vi.mocked(api.importCsv).mock.calls[0][0];
     expect(params.options.conflictMode).toBe("update");
     expect(params.options.keyColumns).toEqual(["id"]);
+  });
+});
+
+describe("ImportModal xlsx source (#1171)", () => {
+  it("shows a sheet picker, re-reads the preview for the chosen sheet and sends it", async () => {
+    vi.mocked(api.parseCsvPreview).mockResolvedValue({
+      headers: ["id", "name"],
+      rows: [["1", "alice"]],
+      truncated: false,
+      sheets: ["First", "Second"],
+    });
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.xlsx"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importMappingTitle"));
+    // 拡張子から形式を推定し、文字コードや区切り文字は出さない。
+    expect(screen.getByLabelText(t("importFormat"))).toHaveValue("xlsx");
+    expect(screen.queryByLabelText(t("importEncoding"))).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(t("importDelimiter"))).not.toBeInTheDocument();
+    // 既定は先頭シート (options.sheet は送らない)。
+    expect(vi.mocked(api.parseCsvPreview).mock.calls[0][1].sheet).toBeNull();
+
+    const picker = await screen.findByLabelText(t("importSheet"));
+    expect(picker).toHaveValue("First");
+    fireEvent.change(picker, { target: { value: "Second" } });
+    await waitFor(() =>
+      expect(vi.mocked(api.parseCsvPreview).mock.lastCall?.[1].sheet).toBe("Second"),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: t("importExecute") }));
+    await waitFor(() => expect(api.importCsv).toHaveBeenCalledOnce());
+    const params = vi.mocked(api.importCsv).mock.calls[0][0];
+    expect(params.options.format).toBe("xlsx");
+    expect(params.options.sheet).toBe("Second");
   });
 });
 
