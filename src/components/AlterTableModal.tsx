@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
-import { api, type DriverKind, type TableColumnInfo } from "../api/tauri";
+import { api, type DriverKind, type ForeignKey, type TableColumnInfo } from "../api/tauri";
 import {
   buildAlterPlan,
   supportsComments,
+  supportsConstraintAlter,
   type AlterStatement,
   type ExistingColumnBaseline,
   type ExistingColumnEdit,
@@ -19,6 +20,8 @@ import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./m
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
+import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
 
 /**
  * 既存テーブルの列編集ダイアログ (#794)。`describeTable` で現状の列を取得し、
@@ -53,6 +56,39 @@ interface IndexRow extends IndexDef {
   id: string;
 }
 
+/** 既存 FK 1 本 (制約名単位に畳んだもの)。`name` が無い制約は DROP できない。 */
+interface ExistingFk {
+  name: string | null;
+  columns: string[];
+  refTable: string;
+  refColumns: string[];
+}
+
+/** `foreign_keys` の 1 列 1 行を、対象テーブルの制約単位へ畳む。 */
+function groupExistingFks(all: ForeignKey[], table: string): ExistingFk[] {
+  const out: ExistingFk[] = [];
+  const byName = new Map<string, ExistingFk>();
+  for (const r of all) {
+    if (r.table !== table) continue;
+    const refCol = r.referenced_column ? [r.referenced_column] : [];
+    const found = r.constraint_name ? byName.get(r.constraint_name) : undefined;
+    if (found) {
+      found.columns.push(r.column);
+      found.refColumns.push(...refCol);
+      continue;
+    }
+    const fk: ExistingFk = {
+      name: r.constraint_name,
+      columns: [r.column],
+      refTable: r.referenced_table,
+      refColumns: refCol,
+    };
+    if (r.constraint_name) byName.set(r.constraint_name, fk);
+    out.push(fk);
+  }
+  return out;
+}
+
 function emptyNewColumn(driver: DriverKind): NewColumn {
   return { name: "", type: driver === "sqlite" ? "TEXT" : "VARCHAR(255)", notNull: false, defaultValue: "" };
 }
@@ -72,6 +108,16 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   // テーブルコメント (#1002)。`before` は DB の現状、`after` は入力値。
   const [tableComment, setTableComment] = useState({ before: "", after: "" });
   const commentsSupported = supportsComments(driver);
+  // 外部キー / CHECK 制約 (#1191)。既存 FK は `foreign_keys` から読み、DROP 対象の
+  // 制約名を `droppedFks` に持つ。CHECK は既存一覧を取得する経路が無いため、
+  // 削除は制約名の入力で指定する。
+  const constraintsSupported = supportsConstraintAlter(driver);
+  const [existingFks, setExistingFks] = useState<ExistingFk[]>([]);
+  const [droppedFks, setDroppedFks] = useState<string[]>([]);
+  const [addedFks, setAddedFks] = useState<FkRow[]>([]);
+  const [addedChecks, setAddedChecks] = useState<CheckRow[]>([]);
+  const [droppedChecks, setDroppedChecks] = useState<{ id: string; name: string }[]>([]);
+  const [tableNames, setTableNames] = useState<string[]>([]);
   // `added`/`indexes` 行の React key を配列インデックスに頼らないための採番。
   const rowIdCounter = useRef(0);
   const nextRowId = () => `row${++rowIdCounter.current}`;
@@ -85,9 +131,27 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     const commentsPromise = supportsComments(driver)
       ? api.listTableComments(sessionId, database).catch(() => [])
       : Promise.resolve([]);
-    Promise.all([api.describeTable(sessionId, database, table), commentsPromise])
-      .then(([cols, tableComments]: [TableColumnInfo[], { name: string; comment: string }[]]) => {
+    // 外部キー / テーブル名も付随情報なので、取得に失敗しても列編集は続行する。
+    const fksPromise: Promise<ForeignKey[]> = supportsConstraintAlter(driver)
+      ? api.foreignKeys(sessionId, database).catch(() => [])
+      : Promise.resolve([]);
+    const tablesPromise: Promise<string[]> = api.listTables(sessionId, database).catch(() => []);
+    Promise.all([
+      api.describeTable(sessionId, database, table),
+      commentsPromise,
+      fksPromise,
+      tablesPromise,
+    ])
+      .then(([cols, tableComments, fks, tables]: [
+        TableColumnInfo[],
+        { name: string; comment: string }[],
+        ForeignKey[],
+        string[],
+      ]) => {
         if (cancelled) return;
+        setExistingFks(groupExistingFks(fks, table));
+        setDroppedFks([]);
+        setTableNames(tables);
         const current = tableComments.find((c) => c.name === table)?.comment ?? "";
         setTableComment({ before: current, after: current });
         const base: ExistingColumnBaseline[] = cols.map((c) => ({
@@ -169,8 +233,13 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         added: added.map((r) => ({ name: r.name, type: r.type, notNull: r.notNull, defaultValue: r.defaultValue })),
         indexes: indexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
         tableComment,
+        // id は React key 専用のローカル state なので純ロジックへ渡す前に落とす。
+        addedForeignKeys: addedFks.filter(isCompleteForeignKey).map(({ id: _id, ...fk }) => fk),
+        addedChecks: addedChecks.filter(isCompleteCheck).map(({ id: _id, ...ck }) => ck),
+        droppedForeignKeys: droppedFks,
+        droppedChecks: droppedChecks.map((c) => c.name),
       }),
-    [driver, database, table, baseline, existing, added, indexes, tableComment],
+    [driver, database, table, baseline, existing, added, indexes, tableComment, addedFks, addedChecks, droppedFks, droppedChecks],
   );
   const statements = plan.statements;
   const unsupported = plan.unsupported;
@@ -419,15 +488,114 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               </Flex>
             </chakra.div>
 
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <FieldLabel as="div">{t("alterTableConstraintsSection")}</FieldLabel>
+              {existingFks.length > 0 && (
+                <chakra.div display="flex" flexDirection="column" gap="1">
+                  <chakra.span fontSize="xs" color="app.textMuted">
+                    {t("alterTableExistingFks")}
+                  </chakra.span>
+                  {existingFks.map((fk, i) => {
+                    const dropped = fk.name !== null && droppedFks.includes(fk.name);
+                    return (
+                      <Flex key={fk.name ?? `unnamed-${i}`} gap="1.5" align="center" opacity={dropped ? 0.5 : 1}>
+                        <chakra.span fontSize="sm" fontFamily="mono" color="app.text" flex="1">
+                          {fk.name ? `${fk.name}: ` : ""}
+                          {t("alterTableFkTarget", {
+                            columns: fk.columns.join(", "),
+                            table: fk.refTable,
+                            refColumns: fk.refColumns.join(", "),
+                          })}
+                        </chakra.span>
+                        {fk.name === null ? (
+                          <chakra.span fontSize="xs" color="app.textMuted">
+                            {t("alterTableFkUnnamed")}
+                          </chakra.span>
+                        ) : (
+                          <Switch
+                            checked={dropped}
+                            disabled={!constraintsSupported}
+                            onChange={() => {
+                              const name = fk.name;
+                              if (name === null) return;
+                              setDroppedFks((cur) =>
+                                cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
+                              );
+                            }}
+                            aria-label={t("alterTableDropFk", { name: fk.name })}
+                          />
+                        )}
+                      </Flex>
+                    );
+                  })}
+                </chakra.div>
+              )}
+              <TableConstraintEditor
+                idPrefix="alter-table"
+                foreignKeys={addedFks}
+                checks={addedChecks}
+                onForeignKeysChange={setAddedFks}
+                onChecksChange={setAddedChecks}
+                columnNames={availableColumns}
+                tableNames={tableNames}
+                nextId={nextRowId}
+                disabled={!constraintsSupported}
+                disabledNote={t("alterTableConstraintSqliteNote")}
+              />
+              <chakra.div display="flex" flexDirection="column" gap="1.5">
+                <chakra.span fontSize="xs" color="app.textMuted">
+                  {t("alterTableDropCheckSection")}
+                </chakra.span>
+                {droppedChecks.map((c, i) => (
+                  <Flex key={c.id} gap="1.5" align="center">
+                    <Input
+                      value={c.name}
+                      onChange={(e) =>
+                        setDroppedChecks((rows) =>
+                          rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)),
+                        )
+                      }
+                      placeholder={t("alterTableDropCheckPlaceholder")}
+                      aria-label={t("alterTableDropCheckPlaceholder")}
+                      flex="1"
+                    />
+                    <chakra.button
+                      type="button"
+                      onClick={() => setDroppedChecks((rows) => rows.filter((_, idx) => idx !== i))}
+                      aria-label={t("alterTableDropCheckRemove")}
+                      color="app.textMuted"
+                      _hover={{ color: "app.textError" }}
+                      px="1"
+                    >
+                      <Icon name="close" />
+                    </chakra.button>
+                  </Flex>
+                ))}
+                <Flex>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={!constraintsSupported}
+                    onClick={() => setDroppedChecks((rows) => [...rows, { id: nextRowId(), name: "" }])}
+                  >
+                    <Icon name="plus" /> {t("alterTableDropCheckAdd")}
+                  </Button>
+                </Flex>
+              </chakra.div>
+            </chakra.div>
+
             {unsupported.length > 0 && (
               <chakra.div display="flex" flexDirection="column" gap="1" p="2" borderWidth="1px" borderColor="app.border" borderRadius="lg">
                 <Flex align="center" gap="1.5" color="app.textSecondary" fontSize="sm" fontWeight="600">
                   <Icon name="warning" />
                   {t("alterTableUnsupportedTitle")}
                 </Flex>
-                {unsupported.map((u: UnsupportedChange) => (
-                  <chakra.span key={u.column} fontSize="xs" color="app.textMuted">
-                    {t("alterTableUnsupportedSqlite", { column: u.column })}
+                {unsupported.map((u: UnsupportedChange, i) => (
+                  <chakra.span key={`${u.reason}-${u.column}-${i}`} fontSize="xs" color="app.textMuted">
+                    {u.reason === "sqliteConstraintAlter"
+                      ? t("alterTableUnsupportedConstraintSqlite", { column: u.column })
+                      : t("alterTableUnsupportedSqlite", { column: u.column })}
                   </chakra.span>
                 ))}
               </chakra.div>
