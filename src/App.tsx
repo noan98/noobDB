@@ -70,6 +70,7 @@ import {
   extractViewBody,
 } from "./components/viewMaintenance";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
+import type { EditableObjectKind } from "./components/routineMaintenance";
 import { quoteIdentFor } from "./components/sqlDialect";
 import {
   applyServerBrowse,
@@ -283,6 +284,9 @@ const ShortcutCheatSheet = lazy(() =>
 );
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
+);
+const RoutineEditorModal = lazy(() =>
+  import("./components/RoutineEditorModal").then((m) => ({ default: m.RoutineEditorModal })),
 );
 const RunRoutineModal = lazy(() =>
   import("./components/RunRoutineModal").then((m) => ({ default: m.RunRoutineModal })),
@@ -1842,6 +1846,13 @@ export default function App() {
     database: string;
     kind: "procedure" | "function";
     name: string;
+    id: string | null;
+  } | null>(null);
+  // ルーチン / トリガーの新規作成・定義編集モーダル (#1192) の対象。name が null なら新規作成。
+  const [routineEditor, setRoutineEditor] = useState<{
+    database: string;
+    kind: EditableObjectKind;
+    name: string | null;
     id: string | null;
   } | null>(null);
   const txActiveRef = useRef(false);
@@ -4398,7 +4409,7 @@ export default function App() {
   const setServerFilterInTab = useCallback((
     tabId: string,
     column: string,
-    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+    filter: { op: ServerFilterOp; value: string; value2?: string; numeric: boolean } | null,
   ) => {
     const next: ServerFilter | null = filter ? { column, ...filter } : null;
     void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
@@ -5407,6 +5418,21 @@ export default function App() {
     (database: string, kind: "procedure" | "function", name: string, id: string | null) => {
       if (!sessionId) return;
       setRoutineTarget({ database, kind, name, id });
+    },
+    [sessionId],
+  );
+
+  const handleEditRoutine = useCallback(
+    (database: string, kind: EditableObjectKind, name: string, id: string | null) => {
+      if (!sessionId) return;
+      setRoutineEditor({ database, kind, name, id });
+    },
+    [sessionId],
+  );
+  const handleCreateRoutine = useCallback(
+    (database: string, kind: EditableObjectKind) => {
+      if (!sessionId) return;
+      setRoutineEditor({ database, kind, name: null, id: null });
     },
     [sessionId],
   );
@@ -8252,6 +8278,8 @@ export default function App() {
             onFindUsages={handleFindUsages}
             onDropView={handleDropView}
             onRunRoutine={handleRunRoutine}
+            onEditRoutine={handleEditRoutine}
+            onCreateRoutine={handleCreateRoutine}
             onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
             onOpenSandbox={handleOpenSandbox}
@@ -9391,6 +9419,36 @@ export default function App() {
               initialName={saveAsViewRequest.initialName}
               onConfirm={handleSaveAsViewConfirm}
               onClose={() => setSaveAsViewRequest(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {routineEditor && sessionId && (
+          <Suspense fallback={null}>
+            <RoutineEditorModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={routineEditor.database}
+              kind={routineEditor.kind}
+              name={routineEditor.name}
+              id={routineEditor.id}
+              readOnly={readOnly}
+              onApplied={(created) => {
+                const kindLabel = translate(
+                  routineEditor.kind === "procedure"
+                    ? "routineEditKindProcedure"
+                    : routineEditor.kind === "function"
+                      ? "routineEditKindFunction"
+                      : "routineEditKindTrigger",
+                );
+                invalidateSchemaCache(routineEditor.database);
+                connectionListRef.current?.refreshSchema();
+                toast.success(translate(created ? "routineEditCreated" : "routineEditApplied", { kind: kindLabel }));
+                setRoutineEditor(null);
+              }}
+              onClose={() => setRoutineEditor(null)}
             />
           </Suspense>
         )}
