@@ -356,7 +356,13 @@
         "deadbeef"
       ]
     ],
-    "rows_affected": 0
+    "rows_affected": 0,
+    "server_messages": [
+      {
+        "severity": "notice",
+        "text": "table \"t\" does not exist, skipping"
+      }
+    ]
   },
   "queryStatsSupport": {
     "live_tail": true,
@@ -379,6 +385,12 @@
     "hasColumns": true,
     "kind": "done",
     "rowsAffected": 0,
+    "serverMessages": [
+      {
+        "severity": "warning",
+        "text": "[1265] Data truncated for column 'a' at row 1"
+      }
+    ],
     "totalRows": 2
   },
   "queryStreamErrorMessage": {
@@ -400,6 +412,19 @@
   "queryStreamRowsMessageLiteEmpty": {
     "kind": "rows",
     "rows": []
+  },
+  "routineSignature": {
+    "kind": "function",
+    "name": "calc_total",
+    "parameters": [
+      {
+        "data_type": "integer",
+        "mode": "in",
+        "name": "p_id"
+      }
+    ],
+    "return_type": "numeric",
+    "returns_set": false
   },
   "schemaDiff": {
     "source_driver": "mysql",
@@ -454,19 +479,6 @@
       }
     ],
     "tables_analyzed": 3
-  },
-  "routineSignature": {
-    "kind": "function",
-    "name": "calc_total",
-    "parameters": [
-      {
-        "data_type": "integer",
-        "mode": "in",
-        "name": "p_id"
-      }
-    ],
-    "return_type": "numeric",
-    "returns_set": false
   },
   "schemaObject": {
     "id": "1234",

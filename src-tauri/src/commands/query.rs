@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::db::types::{Column, QueryResult, StreamBatch, Value};
+use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
 use crate::db::{apply_auto_limit_for, is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
@@ -546,6 +546,9 @@ pub enum QueryStreamMessage {
         /// The row cap that was auto-injected for this run, or `null` when none
         /// was applied. Lets the UI show a "auto LIMIT N applied" badge.
         applied_auto_limit: Option<u64>,
+        /// サーバが実行中に返した通知・警告 (PostgreSQL NOTICE/WARNING、MySQL
+        /// SHOW WARNINGS)。SQLite と無い場合は空配列 (#1165)。
+        server_messages: Vec<ServerMessage>,
     },
     Error {
         error: String,
@@ -913,6 +916,7 @@ async fn spawn_query_stream(
                 } else {
                     applied_auto_limit
                 },
+                server_messages: res.server_messages.clone(),
             }) {
                 tracing::warn!(
                     session_id = %session.id,
@@ -1038,6 +1042,7 @@ async fn spawn_captured_write(
                 elapsed_ms,
                 has_columns: false,
                 applied_auto_limit: None,
+                server_messages: result.server_messages.clone(),
             }) {
                 tracing::warn!(
                     session_id = %session.id,

@@ -3704,7 +3704,7 @@ export default function App() {
           };
         });
       },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit }) => {
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages }) => {
         // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
         markQueryDone(streamId, {
           rows: hasColumns ? totalRows : rowsAffected,
@@ -3715,7 +3715,7 @@ export default function App() {
           if (!hasColumns) {
             return {
               ...tt,
-              result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs },
+              result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs, server_messages: serverMessages },
               lastRunAt: Date.now(),
               streaming: false,
               canLoadMore: false,
@@ -3752,6 +3752,7 @@ export default function App() {
               rows: hasColumns ? totalRows : rowsAffected,
               elapsedMs,
               error: null,
+              serverMessages,
             },
             tab?.database,
           );
@@ -4524,6 +4525,7 @@ export default function App() {
             rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
             elapsedMs: res.elapsed_ms,
             error: null,
+            serverMessages: res.server_messages,
           },
           db,
         );
@@ -4595,6 +4597,7 @@ export default function App() {
           rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
           elapsedMs: res.elapsed_ms,
           error: null,
+          serverMessages: res.server_messages,
         },
         null,
       );

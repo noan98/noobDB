@@ -457,11 +457,25 @@ export type CellValue =
   | number
   | string;
 
+/** サーバの通知・警告の重大度 (#1165)。`db::types::ServerMessageSeverity` の wire 表現。 */
+export type ServerMessageSeverity = "error" | "warning" | "notice" | "info";
+
+/**
+ * サーバが文の実行中に返した通知・警告 1 件 (#1165)。PostgreSQL の NOTICE /
+ * WARNING、MySQL の `SHOW WARNINGS`。SQLite は常に無い。
+ */
+export interface ServerMessage {
+  severity: ServerMessageSeverity;
+  text: string;
+}
+
 export interface QueryResult {
   columns: Column[];
   rows: CellValue[][];
   rows_affected: number;
   elapsed_ms: number;
+  /** サーバの通知・警告 (#1165)。無い / 古いバックエンドでは省略。 */
+  server_messages?: ServerMessage[];
 }
 
 export interface PreviewResult {
@@ -2543,6 +2557,8 @@ export interface QueryStreamDoneMessage {
   hasColumns: boolean;
   /** Row cap auto-injected for this run, or null when none was applied. */
   appliedAutoLimit: number | null;
+  /** サーバの通知・警告 (PostgreSQL NOTICE/WARNING、MySQL SHOW WARNINGS) (#1165)。 */
+  serverMessages?: ServerMessage[];
 }
 
 export interface QueryStreamErrorMessage {
