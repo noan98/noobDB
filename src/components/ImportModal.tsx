@@ -109,6 +109,7 @@ function formatFromPath(path: string): ImportFormat {
   const lower = path.toLowerCase();
   if (lower.endsWith(".ndjson") || lower.endsWith(".jsonl")) return "ndjson";
   if (lower.endsWith(".json")) return "json";
+  if (lower.endsWith(".xlsx")) return "xlsx";
   return "csv";
 }
 
@@ -185,6 +186,8 @@ export function ImportModal({
   const [delimiter, setDelimiter] = useState<DelimiterChoice>(",");
   const [quote, setQuote] = useState('"');
   const [hasHeader, setHasHeader] = useState(true);
+  // xlsx のシート名 (#1171)。空 = 先頭シート。ファイル・形式を変えたら選び直す。
+  const [sheet, setSheet] = useState("");
   const [nullMode, setNullMode] = useState<NullMode>("empty");
   const [nullCustom, setNullCustom] = useState("NULL");
   const [errorMode, setErrorMode] = useState<ImportErrorMode>("abort");
@@ -209,14 +212,26 @@ export function ImportModal({
 
   const importing = status.kind === "importing";
   const isCsv = format === "csv";
+  const isXlsx = format === "xlsx";
+  // 先頭行を列名として使うかを選べる形式 (JSON/NDJSON は常にフィールド名を持つ)。
+  const headerApplies = isCsv || isXlsx;
   // The quote character only matters for CSV; JSON/NDJSON ignore it, so don't
   // let a stale invalid quote block the JSON preview/import.
   const quoteValid = !isCsv || isValidSingleByteChar(quote);
 
   const nullToken = nullMode === "none" ? null : nullMode === "empty" ? "" : nullCustom;
   const buildOptions = useCallback((): ImportOptions => {
-    return { format, delimiter, quote, hasHeader, nullToken, encoding, errorMode };
-  }, [format, delimiter, quote, hasHeader, nullToken, encoding, errorMode]);
+    return {
+      format,
+      delimiter,
+      quote,
+      hasHeader,
+      nullToken,
+      encoding,
+      errorMode,
+      sheet: isXlsx && sheet ? sheet : null,
+    };
+  }, [format, delimiter, quote, hasHeader, nullToken, encoding, errorMode, isXlsx, sheet]);
 
   // Fetch destination columns once for the mapping UI (existing-table mode only).
   useEffect(() => {
@@ -234,6 +249,11 @@ export function ImportModal({
       cancelled = true;
     };
   }, [sessionId, database, table]);
+
+  // 別のファイルを選んだら前のブックのシート指定を捨てる (先頭シートに戻す)。
+  useEffect(() => {
+    setSheet("");
+  }, [path]);
 
   // Reload the preview whenever the file or parsing options change.
   useEffect(() => {
@@ -254,7 +274,7 @@ export function ImportModal({
         setPreview(p);
         // JSON/NDJSON always expose named fields, so map by name regardless of
         // the (CSV-only) header toggle.
-        if (tableColumns) setMapping(autoMap(tableColumns, p.headers, isCsv ? hasHeader : true));
+        if (tableColumns) setMapping(autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true));
       })
       .catch((e) => {
         if (!cancelled) {
@@ -269,12 +289,12 @@ export function ImportModal({
       cancelled = true;
     };
     // buildOptions captures every parsing option; tableColumns drives auto-map.
-  }, [path, buildOptions, tableColumns, hasHeader, quoteValid]);
+  }, [path, buildOptions, tableColumns, hasHeader, headerApplies, quoteValid]);
 
   // 新規テーブルの列の下書き (名前の提案 + 型推論) をプレビューから作る (#985)。
   // NULL トークンはバックエンドと同じ規則で推論前に適用する (空セルを NULL に
   // しない設定なら、空セルを含む数値列は文字列になる)。
-  const namedFields = isCsv ? hasHeader : true;
+  const namedFields = headerApplies ? hasHeader : true;
   useEffect(() => {
     if (!preview) {
       setDrafts(null);
@@ -359,15 +379,17 @@ export function ImportModal({
       multiple: false,
       title: t("importPickFileTitle"),
       filters: [
-        { name: t("importFileFilterData"), extensions: ["csv", "tsv", "txt", "json", "ndjson", "jsonl"] },
+        { name: t("importFileFilterData"), extensions: ["csv", "tsv", "txt", "json", "ndjson", "jsonl", "xlsx"] },
         { name: "CSV", extensions: ["csv", "tsv", "txt"] },
         { name: "JSON / NDJSON", extensions: ["json", "ndjson", "jsonl"] },
+        { name: "Excel", extensions: ["xlsx"] },
       ],
     });
     if (typeof selected === "string" && selected) {
       setPath(selected);
       // Auto-select the format from the extension; the user can still override.
       setFormat(formatFromPath(selected));
+      setSheet("");
       setStatus({ kind: "idle" });
     }
   };
@@ -375,13 +397,13 @@ export function ImportModal({
   const csvColumnLabel = useCallback(
     (index: number): string => {
       // JSON/NDJSON always have named fields; CSV only when the header toggle is on.
-      const named = isCsv ? hasHeader : true;
+      const named = headerApplies ? hasHeader : true;
       if (named && preview?.headers[index]) {
         return `${index + 1}. ${preview.headers[index]}`;
       }
       return t("importColumnNumbered", { n: index + 1 });
     },
-    [isCsv, hasHeader, preview, t],
+    [headerApplies, hasHeader, preview, t],
   );
 
   const mappingEntries = useMemo<ColumnMapping[]>(() => {
@@ -612,15 +634,39 @@ export function ImportModal({
               id="import-format"
               minW="140px"
               value={format}
-              onChange={(e) => setFormat(e.target.value as ImportFormat)}
+              onChange={(e) => {
+                setFormat(e.target.value as ImportFormat);
+                setSheet("");
+              }}
               disabled={importing}
             >
               <option value="csv">{t("importFormatCsv")}</option>
               <option value="json">{t("importFormatJson")}</option>
               <option value="ndjson">{t("importFormatNdjson")}</option>
+              <option value="xlsx">{t("importFormatXlsx")}</option>
             </Select>
           </chakra.div>
 
+          {isXlsx && preview && preview.sheets.length > 0 && (
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <FieldLabel htmlFor="import-sheet">{t("importSheet")}</FieldLabel>
+              <Select
+                id="import-sheet"
+                minW="140px"
+                value={sheet || preview.sheets[0]}
+                onChange={(e) => setSheet(e.target.value)}
+                disabled={importing}
+              >
+                {preview.sheets.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </chakra.div>
+          )}
+
+          {!isXlsx && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-encoding">{t("importEncoding")}</FieldLabel>
             <Select
@@ -637,6 +683,7 @@ export function ImportModal({
               ))}
             </Select>
           </chakra.div>
+          )}
 
           {isCsv && (
             <chakra.div display="flex" flexDirection="column" gap="1.5">
@@ -696,7 +743,7 @@ export function ImportModal({
             )}
           </chakra.div>
 
-          {isCsv && (
+          {headerApplies && (
             <chakra.div display="flex" flexDirection="row" alignItems="center" gap="1.5">
               <Switch
                 checked={hasHeader}
@@ -745,9 +792,14 @@ export function ImportModal({
           </chakra.div>
         )}
 
-        {!isCsv && (
+        {!isCsv && !isXlsx && (
           <chakra.div fontSize="xs" color="app.textMuted">
             {t("importJsonHelp")}
+          </chakra.div>
+        )}
+        {isXlsx && (
+          <chakra.div fontSize="xs" color="app.textMuted">
+            {t("importXlsxHelp")}
           </chakra.div>
         )}
 
@@ -980,7 +1032,7 @@ export function ImportModal({
                 <thead>
                   <tr>
                     {preview.headers.map((h, idx) => (
-                      <th key={idx}>{(isCsv ? hasHeader : true) ? h : csvColumnLabel(idx)}</th>
+                      <th key={idx}>{(headerApplies ? hasHeader : true) ? h : csvColumnLabel(idx)}</th>
                     ))}
                   </tr>
                 </thead>

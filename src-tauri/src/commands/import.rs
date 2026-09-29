@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::import_xlsx;
 use crate::db::create_table::{render_create_table, render_drop_table, NewColumn};
 use crate::db::upsert::{ConflictMode, ImportConflict};
 use crate::db::DriverKind;
@@ -72,6 +73,9 @@ pub enum ImportFormat {
     Json,
     /// Newline-delimited JSON — one object per line.
     Ndjson,
+    /// An Excel workbook (`.xlsx`, #1171). One sheet is imported (`ImportOptions.sheet`,
+    /// default: the first); `has_header` says whether its first row holds column names.
+    Xlsx,
 }
 
 /// How to handle a row the database rejects (#687). Defaults to `Abort` so the
@@ -123,6 +127,10 @@ pub struct ImportOptions {
     /// modes; ignored for `insert`.
     #[serde(default)]
     pub key_columns: Vec<String>,
+    /// Sheet name to import from an xlsx workbook (#1171). `None` / empty → the
+    /// first sheet. Ignored for the other formats.
+    #[serde(default)]
+    pub sheet: Option<String>,
 }
 
 impl ImportOptions {
@@ -154,6 +162,9 @@ pub struct CsvPreview {
     pub rows: Vec<Vec<String>>,
     /// True when the file has more data rows than were returned.
     pub truncated: bool,
+    /// All sheet names of an xlsx workbook, in workbook order (#1171). Empty for
+    /// the other formats. Lets the UI offer a sheet picker from the same call.
+    pub sheets: Vec<String>,
 }
 
 fn validate_chars(opts: &ImportOptions) -> Result<()> {
@@ -193,6 +204,9 @@ fn csv_err(e: csv::Error) -> AppError {
 }
 
 fn parse_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
+    if opts.format == ImportFormat::Xlsx {
+        return parse_xlsx_preview(data, opts);
+    }
     if opts.format != ImportFormat::Csv {
         return parse_json_preview(data, opts.format);
     }
@@ -226,6 +240,7 @@ fn parse_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
         headers,
         rows,
         truncated,
+        sheets: Vec::new(),
     })
 }
 
@@ -238,6 +253,10 @@ pub async fn parse_csv_preview(path: String, options: ImportOptions) -> Result<C
         validate_chars(&options)?;
     }
     let bytes = read_import_file(&path).await?;
+    if options.format == ImportFormat::Xlsx {
+        // xlsx はバイナリ (ZIP) なので文字コード変換を通さない。
+        return parse_preview(&bytes, &options);
+    }
     let text = decode_bytes(&bytes, &options.encoding);
     parse_preview(text.as_bytes(), &options)
 }
@@ -280,7 +299,7 @@ fn parse_json_records(
             Ok(out)
         }
         // The dispatcher only calls this for JSON/NDJSON.
-        ImportFormat::Csv => Ok(Vec::new()),
+        ImportFormat::Csv | ImportFormat::Xlsx => Ok(Vec::new()),
     }
 }
 
@@ -356,7 +375,78 @@ fn parse_json_preview(data: &[u8], format: ImportFormat) -> Result<CsvPreview> {
         headers,
         rows,
         truncated,
+        sheets: Vec::new(),
     })
+}
+
+/// Header + first rows of an xlsx sheet for the mapping UI (#1171). Reading stops
+/// as soon as enough rows for the preview are seen. Cells are addressed by the
+/// absolute sheet column so the preview and the import agree on `csv_index`.
+fn parse_xlsx_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
+    let want = PREVIEW_ROW_LIMIT + usize::from(opts.has_header);
+    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), Some(want))?;
+    let mut iter = sheet.rows.iter();
+    let header_row = if opts.has_header { iter.next() } else { None };
+    let data_rows: Vec<&import_xlsx::XlsxRow> = iter.collect();
+
+    let width = data_rows
+        .iter()
+        .map(|r| r.cells.len())
+        .chain(header_row.map(|r| r.cells.len()))
+        .max()
+        .unwrap_or(0);
+    let headers: Vec<String> = (0..width)
+        .map(|i| {
+            header_row
+                .and_then(|r| r.cells.get(i).cloned().flatten())
+                .filter(|h| !h.trim().is_empty())
+                .unwrap_or_else(|| format!("column_{}", i + 1))
+        })
+        .collect();
+    let rows = data_rows
+        .iter()
+        .map(|r| {
+            (0..width)
+                .map(|i| r.cells.get(i).cloned().flatten().unwrap_or_default())
+                .collect()
+        })
+        .collect();
+
+    Ok(CsvPreview {
+        headers,
+        rows,
+        truncated: sheet.truncated,
+        sheets: sheet.sheets,
+    })
+}
+
+/// Parses an xlsx sheet into target-column order via `mapping` (#1171). Returns the
+/// Excel row number of each record as its "line" for error reporting.
+fn parse_xlsx_rows(
+    data: &[u8],
+    opts: &ImportOptions,
+    mapping: &[ColumnMapping],
+) -> Result<ParsedRowsWithLines> {
+    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), None)?;
+    let skip = usize::from(opts.has_header);
+    let mut out: Vec<Vec<Option<String>>> = Vec::new();
+    let mut lines: Vec<Option<u64>> = Vec::new();
+    for row in sheet.rows.iter().skip(skip) {
+        lines.push(Some(row.line));
+        out.push(
+            mapping
+                .iter()
+                .map(|m| {
+                    row.cells
+                        .get(m.csv_index)
+                        .cloned()
+                        .flatten()
+                        .and_then(|s| apply_null(&s, opts))
+                })
+                .collect(),
+        );
+    }
+    Ok((out, lines))
 }
 
 /// Parses JSON/NDJSON records into target-column order via `mapping`. Each
@@ -420,6 +510,9 @@ fn parse_rows_with_lines(
     opts: &ImportOptions,
     mapping: &[ColumnMapping],
 ) -> Result<ParsedRowsWithLines> {
+    if opts.format == ImportFormat::Xlsx {
+        return parse_xlsx_rows(data, opts, mapping);
+    }
     if opts.format != ImportFormat::Csv {
         let rows = parse_json_rows(data, opts, mapping)?;
         // JSON/NDJSON identify a row by its record index, not a file line.
@@ -667,6 +760,7 @@ async fn spawn_import(
         ImportFormat::Csv => "CSV",
         ImportFormat::Json => "JSON",
         ImportFormat::Ndjson => "NDJSON",
+        ImportFormat::Xlsx => "XLSX",
     };
     let summary = format!(
         "-- {} import into {} ({} columns)",
@@ -922,11 +1016,18 @@ where
     P: FnMut(u64, u64) -> Result<()>,
 {
     let bytes = read_import_file(&path).await?;
-    let text = decode_bytes(&bytes, &options.encoding);
+    // xlsx はバイナリ (ZIP) なので文字コード変換を通さず生のバイト列を渡す。
+    let decoded;
+    let source: &[u8] = if options.format == ImportFormat::Xlsx {
+        &bytes
+    } else {
+        decoded = decode_bytes(&bytes, &options.encoding);
+        decoded.as_bytes()
+    };
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
     // `lines[i]` is record i's source file line (CSV only), used to report a bad
     // row by both record number and file line (#687).
-    let (rows, lines) = parse_rows_with_lines(text.as_bytes(), &options, &mapping)?;
+    let (rows, lines) = parse_rows_with_lines(source, &options, &mapping)?;
     let total = rows.len() as u64;
     let conflict = options.conflict();
 
@@ -1183,6 +1284,7 @@ mod tests {
             error_mode: ImportErrorMode::Abort,
             conflict_mode: ConflictMode::Insert,
             key_columns: Vec::new(),
+            sheet: None,
         }
     }
 
@@ -1199,6 +1301,7 @@ mod tests {
             error_mode: ImportErrorMode::Abort,
             conflict_mode: ConflictMode::Insert,
             key_columns: Vec::new(),
+            sheet: None,
         }
     }
 
@@ -1474,5 +1577,123 @@ mod tests {
         let p = parse_preview(text.as_bytes(), &opts(true, None)).unwrap();
         assert_eq!(p.headers, vec!["名前", "年齢"]);
         assert_eq!(p.rows, vec![vec!["山田", "30"]]);
+    }
+
+    // ---- xlsx (#1171) ----
+
+    fn xlsx_opts(has_header: bool, sheet: Option<&str>, null_token: Option<&str>) -> ImportOptions {
+        ImportOptions {
+            format: ImportFormat::Xlsx,
+            has_header,
+            sheet: sheet.map(str::to_string),
+            ..json_opts(ImportFormat::Xlsx, null_token)
+        }
+    }
+
+    /// エクスポート (`write_xlsx`) が書いたブックを、プレビューと取り込みの両方が
+    /// そのまま読める (往復)。
+    fn exported_book() -> Vec<u8> {
+        use crate::commands::export_xlsx::write_xlsx;
+        use crate::db::types::{Column, Value};
+        let col = |n: &str| Column {
+            name: n.into(),
+            type_name: "TEXT".into(),
+        };
+        let cols = vec![col("id"), col("name"), col("note")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("Alice".into()), Value::Null],
+            vec![
+                Value::Int(2),
+                Value::String("Bob".into()),
+                Value::String("x".into()),
+            ],
+        ];
+        let mut buf = Vec::new();
+        write_xlsx(&mut buf, &cols, &rows).unwrap();
+        buf
+    }
+
+    #[test]
+    fn xlsx_roundtrip_preview_and_rows() {
+        let data = exported_book();
+        let p = parse_preview(&data, &xlsx_opts(true, None, None)).unwrap();
+        assert_eq!(p.headers, vec!["id", "name", "note"]);
+        assert_eq!(p.rows, vec![vec!["1", "Alice", ""], vec!["2", "Bob", "x"]]);
+        assert!(!p.truncated);
+        assert_eq!(p.sheets.len(), 1);
+
+        let mapping = [map("name", 1), map("id", 0), map("note", 2)];
+        let (rows, lines) =
+            parse_rows_with_lines(&data, &xlsx_opts(true, None, None), &mapping).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                vec![Some("Alice".into()), Some("1".into()), None],
+                vec![Some("Bob".into()), Some("2".into()), Some("x".into())],
+            ]
+        );
+        // Excel の行番号 (ヘッダが 1 行目なのでデータは 2 行目から)。
+        assert_eq!(lines, vec![Some(2), Some(3)]);
+    }
+
+    #[test]
+    fn xlsx_without_header_synthesises_names_and_keeps_first_row() {
+        let data = exported_book();
+        let p = parse_preview(&data, &xlsx_opts(false, None, None)).unwrap();
+        assert_eq!(p.headers, vec!["column_1", "column_2", "column_3"]);
+        assert_eq!(p.rows.len(), 3);
+        let rows = parse_rows(&data, &xlsx_opts(false, None, None), &[map("a", 0)]).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], vec![Some("id".to_string())]);
+    }
+
+    #[test]
+    fn xlsx_null_token_applies_to_text_cells() {
+        let mut wb = rust_xlsxwriter::Workbook::new();
+        let ws = wb.add_worksheet();
+        ws.write_string(0, 0, "h").unwrap();
+        ws.write_string(1, 0, "NULL").unwrap();
+        ws.write_string(2, 0, "v").unwrap();
+        let data = wb.save_to_buffer().unwrap();
+        let rows = parse_rows(&data, &xlsx_opts(true, None, Some("NULL")), &[map("h", 0)]).unwrap();
+        assert_eq!(rows, vec![vec![None], vec![Some("v".to_string())]]);
+    }
+
+    #[test]
+    fn xlsx_sheet_selection_and_preview_truncation() {
+        let mut wb = rust_xlsxwriter::Workbook::new();
+        wb.add_worksheet()
+            .set_name("a")
+            .unwrap()
+            .write_string(0, 0, "ha")
+            .unwrap();
+        let ws = wb.add_worksheet().set_name("big").unwrap();
+        ws.write_string(0, 0, "n").unwrap();
+        for i in 1..=(PREVIEW_ROW_LIMIT as u32 + 5) {
+            ws.write_number(i, 0, f64::from(i)).unwrap();
+        }
+        let data = wb.save_to_buffer().unwrap();
+
+        let first = parse_preview(&data, &xlsx_opts(true, None, None)).unwrap();
+        assert_eq!(first.headers, vec!["ha"]);
+        assert_eq!(first.sheets, vec!["a", "big"]);
+
+        let big = parse_preview(&data, &xlsx_opts(true, Some("big"), None)).unwrap();
+        assert_eq!(big.rows.len(), PREVIEW_ROW_LIMIT);
+        assert!(big.truncated);
+        let all = parse_rows(&data, &xlsx_opts(true, Some("big"), None), &[map("n", 0)]).unwrap();
+        assert_eq!(all.len(), PREVIEW_ROW_LIMIT + 5);
+
+        assert!(parse_preview(&data, &xlsx_opts(true, Some("missing"), None)).is_err());
+    }
+
+    #[test]
+    fn xlsx_invalid_file_is_error_and_other_formats_unaffected() {
+        assert!(parse_preview(b"PK-not-really", &xlsx_opts(true, None, None)).is_err());
+        // CSV / JSON 経路は sheets を返さない。
+        let p = parse_preview(b"a,b\n1,2\n", &opts(true, None)).unwrap();
+        assert!(p.sheets.is_empty());
+        let p = parse_preview(br#"[{"a":1}]"#, &json_opts(ImportFormat::Json, None)).unwrap();
+        assert!(p.sheets.is_empty());
     }
 }

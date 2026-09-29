@@ -2341,7 +2341,7 @@ const en = {
   importTitle: "Import into {table}",
   importClose: "Close",
   importFile: "File",
-  importFilePlaceholder: "Path to the CSV / JSON / NDJSON file",
+  importFilePlaceholder: "Path to the CSV / JSON / NDJSON / xlsx file",
   importBrowse: "Browse...",
   importPickFileTitle: "Choose a file to import",
   // ファイルのドラッグ&ドロップ
@@ -2366,6 +2366,10 @@ const en = {
   importFormatCsv: "CSV",
   importFormatJson: "JSON (array)",
   importFormatNdjson: "NDJSON (one object per line)",
+  importFormatXlsx: "Excel (.xlsx)",
+  importSheet: "Sheet",
+  importXlsxHelp:
+    "Imports one sheet of the workbook. Empty cells become NULL, dates become YYYY-MM-DD [HH:MM:SS], and formula cells use their saved value.",
   importFileFilterData: "Data files",
   importJsonHelp:
     "Rows are keyed by object field name; columns are the union of all keys. Nested objects/arrays are imported as compact JSON text, and null or missing fields become SQL NULL.",
@@ -6006,7 +6010,7 @@ const ja: Dict = {
   importTitle: "{table} にインポート",
   importClose: "閉じる",
   importFile: "ファイル",
-  importFilePlaceholder: "CSV / JSON / NDJSON ファイルのパス",
+  importFilePlaceholder: "CSV / JSON / NDJSON / xlsx ファイルのパス",
   importBrowse: "参照...",
   importPickFileTitle: "取り込むファイルを選択",
   // ファイルのドラッグ&ドロップ
@@ -6031,6 +6035,10 @@ const ja: Dict = {
   importFormatCsv: "CSV",
   importFormatJson: "JSON (配列)",
   importFormatNdjson: "NDJSON (1 行 1 オブジェクト)",
+  importFormatXlsx: "Excel (.xlsx)",
+  importSheet: "シート",
+  importXlsxHelp:
+    "ブックのうち 1 シートを取り込みます。空セルは NULL、日付は YYYY-MM-DD [HH:MM:SS]、数式セルは保存済みの計算結果を使います。",
   importFileFilterData: "データファイル",
   importJsonHelp:
     "各行はオブジェクトのフィールド名で対応付けられ、列は全キーの和集合になります。ネストしたオブジェクト/配列はコンパクトな JSON テキストとして取り込まれ、null や欠損フィールドは SQL NULL になります。",

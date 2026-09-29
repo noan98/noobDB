@@ -670,6 +670,7 @@ export const csvPreview = z.object({
   headers: z.array(z.string()),
   rows: z.array(z.array(z.string())),
   truncated: z.boolean(),
+  sheets: z.array(z.string()),
 });
 
 export const connectResult = z.object({ session_id: z.string() });

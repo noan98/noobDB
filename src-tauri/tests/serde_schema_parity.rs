@@ -339,6 +339,7 @@ fn build_fixtures() -> serde_json::Value {
         headers: vec!["id".into(), "name".into()],
         rows: vec![vec!["1".into(), "Alice".into()]],
         truncated: false,
+        sheets: vec!["Sheet1".into()],
     };
 
     let connect_result = ConnectResponse {

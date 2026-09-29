@@ -136,6 +136,16 @@
   `CsvPreview` 型名は IPC 安定のため CSV 時代のまま据え置き、全フォーマットを扱います。
   `ImportModal` はフォーマット選択 (拡張子から既定推定) を持ち、JSON/NDJSON では
   CSV 専用フィールド (区切り/クオート/ヘッダ行) を隠します。
+  **xlsx インポート (#1171)**: `ImportFormat::Xlsx` は `commands/import_xlsx.rs`
+  (`calamine`、日時は `dates` feature) がシートを読み、既存の `parse_preview` /
+  `parse_rows_with_lines` に合流します。シートは `ImportOptions.sheet` (省略 = 先頭) で
+  選び、`CsvPreview.sheets` (ブック内の全シート名) が UI のシート選択を出します。
+  `csv_index` はシート上の絶対列 (A = 0)、先頭行をヘッダにするかは `has_header`、
+  エラー行の `line` は Excel の行番号。空セル・エラー値 (`#DIV/0!`) は NULL、日時は
+  `YYYY-MM-DD[ HH:MM:SS]`、数式は保存済みの計算値。xlsx はバイナリなので文字コード変換を
+  通さない。プレビューは必要な行数で読み取りを打ち切る (取り込み本体は他形式と同じく
+  行を保持する)。エクスポート (`export_xlsx.rs`) の出力をそのまま読めることを
+  `import_xlsx.rs` / `import.rs` のテストで固定 (往復)。
   **エラー行の扱い (#687)**: `ImportOptions.error_mode` (`ImportErrorMode`: `abort`
   既定 / `skip`) を持ちます。`abort` は従来どおり単一トランザクションの all-or-nothing で、
   失敗時は `Connection::probe_failing_row` (ロールバックする tx で 1 行ずつ再試行) が

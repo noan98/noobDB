@@ -10,6 +10,7 @@ pub mod file;
 pub mod flight_recorder;
 pub mod history;
 pub mod import;
+pub mod import_xlsx;
 pub mod inspector;
 pub mod local;
 pub mod logs;
