@@ -106,6 +106,7 @@ import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { buildCopyFlashRange, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { GridReplaceModal } from "./GridReplaceModal";
 import { Spinner } from "./Spinner";
 import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
 import { ResultPaneSkeleton } from "./ResultPaneSkeleton";
@@ -1083,6 +1084,11 @@ interface Props {
    * selection in one batch (#596). Set by App for editable table tabs.
    */
   onBulkEdit?: (edits: BulkEditTarget[]) => void;
+  /**
+   * 列全体の「検索して置換」(#1242) で組み立てた `UPDATE ... REPLACE(...)` を実行する。
+   * 確認ダイアログと実行・再取得は App 側が担う。未指定なら列全体モードを出さない。
+   */
+  onReplaceColumn?: (sql: string) => void;
   /**
    * 結果差分ハイライト (#597) のための前回結果の行スナップショット。同一クエリの
    * 再実行のときだけ App が前回結果を渡す。null なら差分なし。
@@ -2720,6 +2726,7 @@ export const DataGrid = memo(function DataGrid({
   pendingEdits,
   onSetCellEdit,
   onBulkEdit,
+  onReplaceColumn,
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
@@ -2801,6 +2808,8 @@ export const DataGrid = memo(function DataGrid({
    * `planBulkCellEdit`. Omit to hide the "set selected cells" menu item.
    */
   onBulkEdit?: (edits: BulkEditTarget[]) => void;
+  /** 列全体の検索して置換 (#1242) の実行ハンドラ。未指定なら列全体モードを出さない。 */
+  onReplaceColumn?: (sql: string) => void;
   /** 削除予定の行: rowEditKey の集合。該当行は取り消し線で示す。 */
   pendingDeleteKeys?: Set<string>;
   /** 行を削除予定にトグルする。未指定ならメニュー項目を出さない。 */
@@ -3760,6 +3769,9 @@ export const DataGrid = memo(function DataGrid({
   const [bulkEdit, setBulkEdit] = useState<
     { rowIndices: number[]; colIndices: number[]; value: string } | null
   >(null);
+
+  // 列の「検索して置換」ダイアログ (#1242): 対象列の添字。
+  const [replaceColIdx, setReplaceColIdx] = useState<number | null>(null);
 
   // Row inspector: when open, shows the active cell's row vertically.
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -5674,6 +5686,20 @@ export const DataGrid = memo(function DataGrid({
                   },
                 ]
               : []),
+            // 列の検索して置換 (#1242): 編集可能なテーブルタブのみ。マスク中のセルからは出さない。
+            ...(editable && onBulkEdit && !cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)
+              ? [
+                  {
+                    label: t("gridReplaceMenu", { column: columns[copyMenu.colIdx]?.name ?? "" }),
+                    title: t("gridReplaceMenuTitle"),
+                    onSelect: () => {
+                      const ci = copyMenu.colIdx;
+                      setCopyMenu(null);
+                      setReplaceColIdx(ci);
+                    },
+                  },
+                ]
+              : []),
             ...(() => {
               if (!onFkJump) return [];
               const driver = rowSqlDriver ?? "mysql";
@@ -5929,6 +5955,28 @@ export const DataGrid = memo(function DataGrid({
               </Button>
             </ModalFooter>
           </Modal>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {replaceColIdx !== null && onBulkEdit && (
+          <GridReplaceModal
+            columns={columns}
+            rows={rows}
+            pkIndices={pkIndices ?? []}
+            colIdx={replaceColIdx}
+            driver={rowSqlDriver ?? "mysql"}
+            database={rowSqlDatabase ?? null}
+            table={rowSqlTable ?? null}
+            editableColumns={editableColumns}
+            validateEdit={validateEdit}
+            serverFilter={serverFilter}
+            onApplyColumn={onReplaceColumn}
+            onApplyInGrid={(targets) => {
+              onBulkEdit(targets);
+              toast.success(t("gridReplaceApplied", { cells: targets.length }));
+            }}
+            onClose={() => setReplaceColIdx(null)}
+          />
         )}
       </AnimatePresence>
       {filterMenu && (
@@ -6386,6 +6434,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRequestInsertRow,
   onDuplicateRow,
   onBulkEdit,
+  onReplaceColumn,
   diffPrevRows,
   diffComparable,
   diffHighlightEnabled,
@@ -7704,6 +7753,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
           onBulkEdit={editableActive ? onBulkEdit : undefined}
+          onReplaceColumn={editableActive ? onReplaceColumn : undefined}
           changedCells={diff?.changedCells}
           addedRowIndices={diff?.addedRows}
           pendingDeleteKeys={pendingDeleteKeys}

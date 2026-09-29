@@ -5360,6 +5360,57 @@ export default function App() {
     confirm,
   ]);
 
+  // 列全体の「検索して置換」(#1242)。`GridReplaceModal` が組み立てた
+  // `UPDATE ... SET c = REPLACE(c, ...) WHERE ...` を、実行前に必ず確認して 1 トランザクション
+  // (`run_query_transaction`、all-or-nothing) で実行し、現在ページを取り直す。
+  // 大量行を一度に書き換えうるため、接続の本番/confirm_writes 設定に関わらず常に確認し、
+  // 本番接続ではテーブル名の入力確認 (#675) を要求する。read-only はバックエンドが拒否する。
+  // 保留編集がある間は取り直しで食い違うので実行しない (先に Apply / 破棄してもらう)。
+  const replaceColumnForTab = useCallback(
+    async (tab: Tab, sql: string) => {
+      if (!sessionId || !tab.database || !tab.table) return;
+      const driver = selectedProfile?.driver;
+      if (
+        Object.keys(tab.pendingEdits).length > 0 ||
+        (tab.pendingDeletes ?? []).length > 0 ||
+        (tab.pendingInserts ?? []).length > 0
+      ) {
+        setStatus({ kind: "key", key: "statusColumnReplaceBlockedByEdits", error: true });
+        return;
+      }
+      const findings = analyzeDangerousSql(sql, driver);
+      const isProduction = selectedProfile?.is_production ?? false;
+      const ok = await confirm({
+        title: translate("gridReplaceConfirmTitle"),
+        message:
+          translate("gridReplaceConfirmBody", { table: tab.table }) +
+          (findings.length > 0 ? `\n${translate("gridReplaceConfirmDanger")}` : "") +
+          `\n\n${sql}`,
+        confirmLabel: translate("gridReplaceConfirmButton"),
+        tone: "danger",
+        typedConfirmation: isProduction ? resolveTypedConfirmTarget([tab.table]) : undefined,
+      });
+      if (!ok) return;
+      setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: 1 } });
+      let affected = 0;
+      try {
+        const res = await api.runQueryTransaction(sessionId, [sql], tab.database);
+        affected = Number(res.rows_affected ?? 0);
+      } catch (e) {
+        setStatus({
+          kind: "key",
+          key: "statusColumnReplaceFailed",
+          vars: { error: String(e) },
+          error: true,
+        });
+        return;
+      }
+      setStatus({ kind: "key", key: "statusColumnReplaceApplied", vars: { rows: affected } });
+      void goToPageInTab(tab.id, tab.page ?? 1, undefined, { force: true });
+    },
+    [sessionId, selectedProfile?.driver, selectedProfile?.is_production, confirm, goToPageInTab],
+  );
+
   // BLOB セルへファイルの内容を書き戻す (#1148)。UPDATE は 1 セル分だけ組み立て、
   // 上書きは取り消せないため接続設定に関わらず必ず確認してから実行する。読み取り専用
   // セッションは `run_query` のバックエンドガードが拒否する (UI でも導線を出さない)。
@@ -7955,6 +8006,11 @@ export default function App() {
                       canRedo={(tab.editRedoStack?.length ?? 0) > 0}
                       onSetCellEdit={(r, c, v) => setCellEditForTab(tab.id, r, c, v)}
                       onBulkEdit={(edits) => setBulkCellEditsForTab(tab.id, edits)}
+                      onReplaceColumn={
+                        tab.kind === "table" && !readOnly && tab.paginatable
+                          ? (sql) => void replaceColumnForTab(tab, sql)
+                          : undefined
+                      }
                       diffPrevRows={tab.prevResultRows ?? null}
                       diffComparable={
                         !!tab.prevResultSql && tab.prevResultSql === tab.lastExecutedSql
