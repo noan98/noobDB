@@ -1517,7 +1517,8 @@ export const api = {
      * When true, the backend enforces a read-only guard regardless of the
      * session's profile. Used by cross-environment broadcast execution
      * (#738), which fans one statement out to several sessions at once and
-     * must never let it write to any of them.
+     * must never let it write to any of them. EXPLAIN の実測モード
+     * (EXPLAIN ANALYZE, #1164) も、SQL を実際に実行するためこれを立てる。
      */
     forceReadOnly?: boolean;
     /**
