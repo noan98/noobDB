@@ -8,6 +8,7 @@ import {
   isProblemOutcome,
   outputSummary,
   sqlHeadline,
+  worstServerSeverity,
   type OutputEntry,
 } from "../outputLog";
 
@@ -178,4 +179,28 @@ describe("outputLog", () => {
     });
   });
 
+});
+
+describe("worstServerSeverity (サーバ側メッセージ, #1165)", () => {
+  it("メッセージが無ければ null", () => {
+    expect(worstServerSeverity(undefined)).toBeNull();
+    expect(worstServerSeverity([])).toBeNull();
+  });
+
+  it("最も重い重大度を返す (error > warning > notice > info)", () => {
+    expect(worstServerSeverity([{ severity: "info", text: "a" }])).toBe("info");
+    expect(
+      worstServerSeverity([
+        { severity: "notice", text: "a" },
+        { severity: "warning", text: "b" },
+        { severity: "info", text: "c" },
+      ]),
+    ).toBe("warning");
+    expect(
+      worstServerSeverity([
+        { severity: "warning", text: "a" },
+        { severity: "error", text: "b" },
+      ]),
+    ).toBe("error");
+  });
 });

@@ -14,6 +14,7 @@ use super::types::{
     ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
     TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
+use super::server_messages::capture;
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
@@ -111,7 +112,9 @@ impl PostgresConn {
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
-        run_sql_on(&mut conn, sql).await
+        // NOTICE / WARNING を捕捉して結果へ載せる (#1165)。
+        let (result, messages) = capture(run_sql_on(&mut conn, sql)).await;
+        Ok(result?.with_server_messages(messages))
     }
 
     // ── 明示トランザクション ──
@@ -135,7 +138,8 @@ impl PostgresConn {
         let conn = guard
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
-        run_sql_on(conn, sql).await
+        let (result, messages) = capture(run_sql_on(conn, sql)).await;
+        Ok(result?.with_server_messages(messages))
     }
 
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
@@ -166,6 +170,29 @@ impl PostgresConn {
     }
 
     pub async fn execute_stream<F>(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        initial_batch: usize,
+        chunk_size: usize,
+        on_batch: F,
+    ) -> Result<QueryResult>
+    where
+        F: FnMut(StreamBatch) -> Result<()>,
+    {
+        // NOTICE / WARNING を捕捉して結果へ載せる (#1165)。
+        let (result, messages) = capture(self.execute_stream_inner(
+            sql,
+            database,
+            initial_batch,
+            chunk_size,
+            on_batch,
+        ))
+        .await;
+        Ok(result?.with_server_messages(messages))
+    }
+
+    async fn execute_stream_inner<F>(
         &self,
         sql: &str,
         database: Option<&str>,
@@ -232,6 +259,7 @@ impl PostgresConn {
             rows: Vec::new(),
             rows_affected: total as u64,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
         })
     }
 
@@ -1773,6 +1801,7 @@ async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryRes
             rows: rows_out,
             rows_affected: 0,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
         })
     } else {
         let result = sqlx::query(sqlx::AssertSqlSafe(sql))
