@@ -9,6 +9,8 @@ import type { HistoryEntry } from "../api/tauri";
  * 履歴 0 件で空状態が例外なくマウントされること、検索欄が可視であることを固定する。
  */
 const listHistory = vi.fn().mockResolvedValue([]);
+// 一覧は要約 (sql_preview) しか持たず、全文は getHistorySql で必要時に取る (#1256)。
+const getHistorySql = vi.fn();
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   return {
@@ -16,6 +18,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       listHistory: (...args: unknown[]) => listHistory(...args),
+      getHistorySql: (...args: unknown[]) => getHistorySql(...args),
     },
   };
 });
@@ -28,7 +31,8 @@ function makeHistoryEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
     profile_id: "p-test",
     driver: "mysql",
     database: "appdb",
-    sql: "SELECT * FROM users",
+    sql_preview: "SELECT * FROM users",
+    sql_len: 19,
     rows: 3,
     rows_affected: null,
     elapsed_ms: 12,
@@ -42,6 +46,7 @@ function makeHistoryEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
 beforeEach(() => {
   vi.clearAllMocks();
   listHistory.mockResolvedValue([]);
+  getHistorySql.mockReset();
 });
 
 describe("HistoryList render smoke (#604)", () => {
@@ -81,8 +86,14 @@ describe("HistoryList render smoke (#604)", () => {
 
 describe("HistoryList の「スニペットとして保存」行アクション (#878)", () => {
   it("onSaveAsSnippet が渡されているとき、行アクションが対象エントリの SQL で呼ばれる", async () => {
-    const entry = makeHistoryEntry({ sql: "SELECT id FROM orders WHERE status = 'open'" });
+    const fullSql = "SELECT id\n  FROM orders\n WHERE status = 'open'";
+    const entry = makeHistoryEntry({
+      id: 7,
+      sql_preview: "SELECT id FROM orders WHERE status = 'open'",
+      sql_len: fullSql.length,
+    });
     listHistory.mockResolvedValue([entry]);
+    getHistorySql.mockResolvedValue(fullSql);
     const onSaveAsSnippet = vi.fn();
 
     renderWithProviders(
@@ -99,13 +110,53 @@ describe("HistoryList の「スニペットとして保存」行アクション 
     const button = await screen.findByLabelText(t("historySaveAsSnippet"));
     fireEvent.click(button);
 
-    expect(onSaveAsSnippet).toHaveBeenCalledTimes(1);
-    expect(onSaveAsSnippet).toHaveBeenCalledWith(entry.sql);
+    // 全文は行アクションの時点で getHistorySql から取り、要約ではなく全文を渡す。
+    await waitFor(() => expect(onSaveAsSnippet).toHaveBeenCalledTimes(1));
+    expect(getHistorySql).toHaveBeenCalledWith(7);
+    expect(onSaveAsSnippet).toHaveBeenCalledWith(fullSql);
+  });
+
+  it("行のクリック (復元) は全文を getHistorySql で取って onRestore に渡す", async () => {
+    const fullSql = "SELECT *\n  FROM users";
+    const entry = makeHistoryEntry({ id: 3 });
+    listHistory.mockResolvedValue([entry]);
+    getHistorySql.mockResolvedValue(fullSql);
+    const onRestore = vi.fn();
+
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={onRestore}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText(entry.sql_preview));
+    await waitFor(() => expect(onRestore).toHaveBeenCalledWith(fullSql));
+    expect(getHistorySql).toHaveBeenCalledWith(3);
+  });
+
+  it("一覧の表示は取得済みの sql_preview をそのまま使い、全文を取りに行かない", async () => {
+    listHistory.mockResolvedValue([makeHistoryEntry()]);
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={() => {}}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+    await screen.findByText("SELECT * FROM users");
+    expect(getHistorySql).not.toHaveBeenCalled();
   });
 
   it("行のクリック (復元) をトリガーせず、onRestore を呼ばない", async () => {
     const entry = makeHistoryEntry();
     listHistory.mockResolvedValue([entry]);
+    getHistorySql.mockResolvedValue("SELECT * FROM users");
     const onRestore = vi.fn();
     const onSaveAsSnippet = vi.fn();
 
@@ -123,7 +174,7 @@ describe("HistoryList の「スニペットとして保存」行アクション 
     const button = await screen.findByLabelText(t("historySaveAsSnippet"));
     fireEvent.click(button);
 
-    expect(onSaveAsSnippet).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onSaveAsSnippet).toHaveBeenCalledTimes(1));
     expect(onRestore).not.toHaveBeenCalled();
   });
 
@@ -141,7 +192,7 @@ describe("HistoryList の「スニペットとして保存」行アクション 
       />,
     );
 
-    await screen.findByText(entry.sql);
+    await screen.findByText(entry.sql_preview);
     expect(screen.queryByLabelText(t("historySaveAsSnippet"))).not.toBeInTheDocument();
   });
 });

@@ -65,3 +65,9 @@ pnpm-debug.log*
 
 # Claude Code の個人用設定上書き (.claude/settings.json はコミットする)
 .claude/settings.local.json
+
+# UI 確認用の一時スクリーンショット (CLAUDE.md「UI の確認方法」)。撮影用テストと
+# 設定ファイルも一時ファイルなので誤コミットを防ぐ。
+src/__tests__/browser/__screenshots__/ui-audit/
+src/__tests__/browser/ui-audit.browser.test.tsx
+vitest.ui-audit.config.ts

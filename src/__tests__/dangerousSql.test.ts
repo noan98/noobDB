@@ -373,3 +373,50 @@ describe("isSchemaMutatingSql (#351)", () => {
     });
   }
 });
+
+// --- #1256: マスクの使い回しと、バックエンド判定値のヒント ---------------------
+
+import { maskLiterals, readOnlyWithHint } from "../dangerousSql";
+
+describe("maskLiterals のキャッシュ (#1256)", () => {
+  it("同じ (driver, sql) は同じ結果を返し、driver が違えば別々に計算する", () => {
+    // MySQL は `'...'` 内のバックスラッシュをエスケープとして読む。`\'` の扱いが違うので
+    // driver ごとにマスク結果が変わるケースで、キャッシュが driver を区別することを確かめる。
+    const sql = "SELECT 'a\\' ; DROP TABLE t -- '";
+    const mysql1 = maskLiterals(sql, "mysql");
+    const pg1 = maskLiterals(sql, "postgres");
+    expect(mysql1).not.toBe(pg1);
+    // 2 回目以降 (キャッシュヒット) も同じ値。
+    expect(maskLiterals(sql, "mysql")).toBe(mysql1);
+    expect(maskLiterals(sql, "postgres")).toBe(pg1);
+    expect(maskLiterals(sql, "mysql")).toHaveLength(sql.length);
+  });
+
+  it("多数の異なる SQL を通したあとでも結果は変わらない (古いエントリの追い出し)", () => {
+    const first = "DELETE FROM t WHERE note = 'x;y'";
+    const before = maskLiterals(first, "sqlite");
+    for (let i = 0; i < 50; i++) maskLiterals(`SELECT ${i} /* c${i} */`, "sqlite");
+    expect(maskLiterals(first, "sqlite")).toBe(before);
+  });
+
+  it("キャッシュ上限を超える巨大な SQL でも正しくマスクする", () => {
+    const big = `SELECT '${"a;".repeat(200 * 1024)}'`;
+    const masked = maskLiterals(big, "sqlite");
+    expect(masked).toHaveLength(big.length);
+    expect(masked.includes(";")).toBe(false);
+  });
+});
+
+describe("readOnlyWithHint (#1256)", () => {
+  it("同じ SQL のヒントがあれば再計算せずその値を使う", () => {
+    // ヒントの値をわざと実際の判定と逆にして、ヒントが使われていることを確かめる。
+    expect(readOnlyWithHint({ sql: "SELECT 1", readOnly: false }, "SELECT 1", "mysql")).toBe(false);
+    expect(readOnlyWithHint({ sql: "DELETE FROM t", readOnly: true }, "DELETE FROM t", "mysql")).toBe(true);
+  });
+
+  it("ヒントが無い / 別の SQL のものなら isReadOnlySql で求める", () => {
+    expect(readOnlyWithHint(undefined, "SELECT 1", "mysql")).toBe(true);
+    expect(readOnlyWithHint(null, "DELETE FROM t", "mysql")).toBe(false);
+    expect(readOnlyWithHint({ sql: "SELECT 1", readOnly: true }, "DELETE FROM t", "mysql")).toBe(false);
+  });
+});
