@@ -60,3 +60,50 @@ describe("AdvisorPanel error state (#848)", () => {
     });
   });
 });
+
+describe("AdvisorPanel running skeleton (#1211)", () => {
+  it("実行中は findings 表のスケルトンを出し、完了で実データに差し替える", async () => {
+    let resolve: (r: Awaited<ReturnType<typeof api.analyzeSchemaHealth>>) => void = () => {};
+    vi.mocked(api.analyzeSchemaHealth).mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+
+    const { container } = renderWithProviders(
+      <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />,
+    );
+    fireEvent.click(screen.getByText(t("advisorRun")));
+
+    await waitFor(() => {
+      const rows = container.querySelectorAll("tbody > tr");
+      expect(rows.length).toBeGreaterThan(0);
+      rows.forEach((row) => expect(row.getAttribute("aria-hidden")).toBe("true"));
+    });
+    // シマーは aria-hidden なので、実行中であることは文言 + Spinner (status) で告知する。
+    expect(screen.getByText(t("advisorRunning"))).toBeInTheDocument();
+
+    resolve({
+      driver: "mysql",
+      tables_analyzed: 1,
+      findings: [
+        {
+          rule: "missing_primary_key",
+          severity: "medium",
+          table: "orders",
+          columns: [],
+          context: [],
+          statistical: false,
+          fix_ddl: null,
+        },
+      ],
+      skipped: [],
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(t("advisorRunning"))).not.toBeInTheDocument();
+    });
+    const rows = container.querySelectorAll("tbody > tr");
+    expect(rows.length).toBe(1);
+    expect(rows[0].getAttribute("aria-hidden")).toBeNull();
+  });
+});
