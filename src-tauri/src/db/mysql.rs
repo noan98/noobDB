@@ -1312,24 +1312,82 @@ impl MySqlConn {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| TableColumnInfo {
-                name: r.try_get::<String, _>(0).unwrap_or_default(),
-                data_type: r.try_get::<String, _>(1).unwrap_or_default(),
-                nullable: r
-                    .try_get::<String, _>(2)
-                    .map(|s| s.eq_ignore_ascii_case("YES"))
-                    .unwrap_or(false),
-                key: r.try_get::<String, _>(3).unwrap_or_default(),
-                default: r.try_get::<Option<String>, _>(4).ok().flatten(),
-                extra: r.try_get::<String, _>(5).unwrap_or_default(),
-                referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
-                referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
-                // #1002: コメント無しは空文字で返るので None にそろえる。
-                comment: non_empty_comment(r.try_get::<Option<String>, _>(8).ok().flatten()),
+        Ok(rows.iter().map(|r| column_info_from_row(r, 0)).collect())
+    }
+
+    /// `db` の全テーブルの列を 1 回の問い合わせで取得する (#1255)。SQL は
+    /// [`MySqlConn::columns`] の `TABLE_NAME = ?` 条件を外し、先頭にテーブル名を
+    /// 足しただけなので、列ごとの値・並び (`ORDINAL_POSITION`) は同じになる。
+    pub async fn columns_for_database(&self, db: &str) -> Result<Vec<super::diff::TableColumns>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT
+                 c.TABLE_NAME,
+                 c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE, c.COLUMN_KEY,
+                 c.COLUMN_DEFAULT, c.EXTRA,
+                 (SELECT k.REFERENCED_TABLE_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE k
+                   WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA
+                     AND k.TABLE_NAME = c.TABLE_NAME
+                     AND k.COLUMN_NAME = c.COLUMN_NAME
+                     AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                   ORDER BY k.ORDINAL_POSITION
+                   LIMIT 1) AS REFERENCED_TABLE_NAME,
+                 (SELECT k.REFERENCED_COLUMN_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE k
+                   WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA
+                     AND k.TABLE_NAME = c.TABLE_NAME
+                     AND k.COLUMN_NAME = c.COLUMN_NAME
+                     AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                   ORDER BY k.ORDINAL_POSITION
+                   LIMIT 1) AS REFERENCED_COLUMN_NAME,
+                 c.COLUMN_COMMENT
+               FROM information_schema.COLUMNS c
+               WHERE c.TABLE_SCHEMA = ?
+               ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        let pairs = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    column_info_from_row(r, 1),
+                )
             })
-            .collect())
+            .collect();
+        Ok(super::group_columns_full(pairs))
+    }
+
+    /// `db` の全テーブルのインデックスを 1 回の問い合わせで取得する (#1255)。
+    /// [`MySqlConn::list_indexes`] と同じ `STATISTICS` を `TABLE_SCHEMA = ?` だけで
+    /// 引き、テーブル → インデックス名 → `SEQ_IN_INDEX` の順に並べる。
+    pub async fn indexes_for_database(&self, db: &str) -> Result<Vec<super::types::TableIndexes>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, NON_UNIQUE, INDEX_TYPE, SEQ_IN_INDEX
+               FROM information_schema.STATISTICS
+               WHERE TABLE_SCHEMA = ?
+               ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        let index_rows = rows
+            .iter()
+            .map(|r| {
+                let name = r.try_get::<String, _>(1).unwrap_or_default();
+                super::IndexRow {
+                    table: r.try_get::<String, _>(0).unwrap_or_default(),
+                    column: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                    unique: r.try_get::<i64, _>(3).unwrap_or(1) == 0,
+                    primary: name == "PRIMARY",
+                    method: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                    name,
+                }
+            })
+            .collect();
+        Ok(super::group_index_rows(index_rows))
     }
 
     /// テーブル / ビューのコメント (#1002)。`TABLE_COMMENT` はビューに対して
@@ -1904,6 +1962,26 @@ fn text_or_bytes(row: &MySqlRow, i: usize) -> Result<String> {
     match row.try_get::<String, _>(i) {
         Ok(s) => Ok(s),
         Err(_) => decode_text_col(row, i),
+    }
+}
+
+/// `columns` / `columns_for_database` 共通の列メタデータ行の読み取り。`off` は
+/// 先頭の `COLUMN_NAME` の列位置 (全テーブル版は先頭にテーブル名が付くので 1)。
+fn column_info_from_row(r: &MySqlRow, off: usize) -> TableColumnInfo {
+    TableColumnInfo {
+        name: r.try_get::<String, _>(off).unwrap_or_default(),
+        data_type: r.try_get::<String, _>(off + 1).unwrap_or_default(),
+        nullable: r
+            .try_get::<String, _>(off + 2)
+            .map(|s| s.eq_ignore_ascii_case("YES"))
+            .unwrap_or(false),
+        key: r.try_get::<String, _>(off + 3).unwrap_or_default(),
+        default: r.try_get::<Option<String>, _>(off + 4).ok().flatten(),
+        extra: r.try_get::<String, _>(off + 5).unwrap_or_default(),
+        referenced_table: r.try_get::<Option<String>, _>(off + 6).ok().flatten(),
+        referenced_column: r.try_get::<Option<String>, _>(off + 7).ok().flatten(),
+        // #1002: コメント無しは空文字で返るので None にそろえる。
+        comment: non_empty_comment(r.try_get::<Option<String>, _>(off + 8).ok().flatten()),
     }
 }
 

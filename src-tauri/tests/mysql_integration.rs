@@ -1816,6 +1816,85 @@ async fn mysql_inspector_delta_and_tail_fingerprint_commands() {
     observed.close().await;
 }
 
+/// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ結果でなければならない。
+async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
+    let bulk_columns = conn.columns_for_database(db).await.expect("columns bulk");
+    let bulk_indexes = conn.indexes_for_database(db).await.expect("indexes bulk");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!tables.is_empty());
+    for table in &tables {
+        let single = conn.columns(db, table).await.expect("columns");
+        let bulk = bulk_columns
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.columns.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "columns of {table} must match the per-table query"
+        );
+        let single = conn.list_indexes(db, table).await.expect("indexes");
+        let bulk = bulk_indexes
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.indexes.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "indexes of {table} must match the per-table query"
+        );
+    }
+    // 一括取得にだけ現れるテーブルは無い。
+    for t in &bulk_columns {
+        assert!(tables.contains(&t.name), "unexpected table {}", t.name);
+    }
+    for t in &bulk_indexes {
+        assert!(!t.indexes.is_empty(), "{} has no indexes", t.name);
+    }
+}
+
+#[tokio::test]
+async fn mysql_bulk_columns_and_indexes_match_per_table_queries() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // 同じサーバを他のテストが並列に操作するため、比較対象は専用データベースに閉じる。
+    let db = format!("noobdb_bulk_{}", std::process::id());
+    conn.execute(&format!("DROP DATABASE IF EXISTS `{db}`"), None)
+        .await
+        .expect("drop db");
+    conn.execute(&format!("CREATE DATABASE `{db}`"), None)
+        .await
+        .expect("create db");
+    for ddl in [
+        "CREATE TABLE bulk_parent (id INT PRIMARY KEY, name VARCHAR(40) COMMENT 'nm') COMMENT='parent table'",
+        "CREATE TABLE bulk_child (
+            id INT PRIMARY KEY,
+            pid INT NOT NULL DEFAULT 1,
+            extra VARCHAR(20),
+            UNIQUE KEY bulk_child_extra (extra),
+            KEY bulk_child_multi (pid, extra),
+            CONSTRAINT bulk_child_fk FOREIGN KEY (pid) REFERENCES bulk_parent (id)
+        )",
+    ] {
+        conn.execute(ddl, Some(&db)).await.expect(ddl);
+    }
+
+    assert_bulk_matches_per_table(&conn, &db).await;
+
+    conn.execute(&format!("DROP DATABASE `{db}`"), None)
+        .await
+        .expect("cleanup db");
+    conn.close().await;
+}
+
 /// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 MySQL の
 /// `execute_stream` に通す。DECIMAL は文字列で届くので数値判定 (`toNumber` 互換) の
 /// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。

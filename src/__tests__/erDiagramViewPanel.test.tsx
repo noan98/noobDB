@@ -13,7 +13,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      schemaOverview: vi.fn(),
+      describeDatabase: vi.fn(),
       foreignKeys: vi.fn().mockResolvedValue([]),
     },
   };
@@ -28,7 +28,7 @@ beforeEach(() => {
 
 describe("ERDiagramView error state (#848)", () => {
   it("shows the shared EmptyState title on load failure, and retries on click", async () => {
-    vi.mocked(api.schemaOverview).mockRejectedValueOnce(new Error("no such table"));
+    vi.mocked(api.describeDatabase).mockRejectedValueOnce(new Error("no such table"));
 
     renderWithProviders(
       <ERDiagramView
@@ -45,13 +45,13 @@ describe("ERDiagramView error state (#848)", () => {
         screen.getByText(t("erDiagramError", { error: "Error: no such table" })),
       ).toBeInTheDocument();
     });
-    expect(api.schemaOverview).toHaveBeenCalledTimes(1);
+    expect(api.describeDatabase).toHaveBeenCalledTimes(1);
 
-    vi.mocked(api.schemaOverview).mockResolvedValueOnce([]);
+    vi.mocked(api.describeDatabase).mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: t("erDiagramRetry") }));
 
     await waitFor(() => {
-      expect(api.schemaOverview).toHaveBeenCalledTimes(2);
+      expect(api.describeDatabase).toHaveBeenCalledTimes(2);
     });
     await waitFor(() => {
       expect(screen.getByText(t("erDiagramEmpty"))).toBeInTheDocument();

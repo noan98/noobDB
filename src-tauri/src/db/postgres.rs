@@ -1058,35 +1058,126 @@ impl PostgresConn {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .into_iter()
+        Ok(rows.iter().map(|r| column_info_from_row(r, 0)).collect())
+    }
+
+    /// `schema` の全テーブルの列を 1 回の問い合わせで取得する (#1255)。
+    /// [`PgConn::columns`] の `table_name = $2` 条件を外し、PK / FK の副問い合わせを
+    /// (テーブル名, 列名) で結合し直しただけなので、列ごとの値・並び
+    /// (`ordinal_position`) は単一テーブル版と同じになる。
+    pub async fn columns_for_database(
+        &self,
+        schema: &str,
+    ) -> Result<Vec<super::diff::TableColumns>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT
+                c.table_name,
+                c.column_name,
+                c.data_type,
+                c.is_nullable,
+                CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
+                c.column_default,
+                ''::text AS extra,
+                fk.ref_table,
+                fk.ref_column,
+                c.character_maximum_length,
+                c.numeric_precision,
+                c.numeric_scale,
+                (SELECT pg_catalog.col_description(a.attrelid, a.attnum)
+                   FROM pg_catalog.pg_attribute a
+                   JOIN pg_catalog.pg_class cl ON cl.oid = a.attrelid
+                   JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace
+                  WHERE ns.nspname = c.table_schema
+                    AND cl.relname = c.table_name
+                    AND a.attname = c.column_name) AS column_comment
+              FROM information_schema.columns c
+              LEFT JOIN (
+                SELECT DISTINCT kcu.table_name, kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                 AND tc.table_schema    = kcu.table_schema
+                 AND tc.table_name      = kcu.table_name
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+                  AND tc.table_schema = $1
+              ) pk ON pk.table_name = c.table_name AND pk.column_name = c.column_name
+              LEFT JOIN (
+                SELECT DISTINCT ON (kcu.table_name, kcu.column_name)
+                  kcu.table_name,
+                  kcu.column_name,
+                  ccu.table_name  AS ref_table,
+                  ccu.column_name AS ref_column
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                 AND tc.table_schema    = kcu.table_schema
+                 AND tc.table_name      = kcu.table_name
+                JOIN information_schema.constraint_column_usage ccu
+                  ON ccu.constraint_name = tc.constraint_name
+                 AND ccu.table_schema    = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.table_schema = $1
+                ORDER BY kcu.table_name, kcu.column_name
+              ) fk ON fk.table_name = c.table_name AND fk.column_name = c.column_name
+              WHERE c.table_schema = $1
+              ORDER BY c.table_name, c.ordinal_position"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let pairs = rows
+            .iter()
             .map(|r| {
-                let base_type = r.try_get::<String, _>(1).unwrap_or_default();
-                let char_len = r.try_get::<Option<i32>, _>(8).ok().flatten();
-                let numeric_precision = r.try_get::<Option<i32>, _>(9).ok().flatten();
-                let numeric_scale = r.try_get::<Option<i32>, _>(10).ok().flatten();
-                TableColumnInfo {
-                    name: r.try_get::<String, _>(0).unwrap_or_default(),
-                    data_type: full_pg_data_type(
-                        &base_type,
-                        char_len,
-                        numeric_precision,
-                        numeric_scale,
-                    ),
-                    nullable: r
-                        .try_get::<String, _>(2)
-                        .map(|s| s.eq_ignore_ascii_case("YES"))
-                        .unwrap_or(false),
-                    key: r.try_get::<String, _>(3).unwrap_or_default(),
-                    default: r.try_get::<Option<String>, _>(4).ok().flatten(),
-                    extra: r.try_get::<String, _>(5).unwrap_or_default(),
-                    referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
-                    referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
-                    // #1002: `COMMENT ON COLUMN` の値 (`col_description`)。
-                    comment: non_empty_comment(r.try_get::<Option<String>, _>(11).ok().flatten()),
-                }
+                (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    column_info_from_row(r, 1),
+                )
             })
-            .collect())
+            .collect();
+        Ok(super::group_columns_full(pairs))
+    }
+
+    /// `schema` の全テーブルのインデックスを 1 回の問い合わせで取得する (#1255)。
+    /// [`PgConn::list_indexes`] と同じカタログ結合から `relname = $1` 条件を外し、
+    /// テーブル名を返す列を足したもの。
+    pub async fn indexes_for_database(
+        &self,
+        schema: &str,
+    ) -> Result<Vec<super::types::TableIndexes>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT
+                 t.relname           AS table_name,
+                 i.relname           AS index_name,
+                 a.attname           AS column_name,
+                 ix.indisunique      AS is_unique,
+                 ix.indisprimary     AS is_primary,
+                 am.amname           AS method,
+                 k.ord               AS ord
+               FROM pg_class t
+               JOIN pg_namespace n ON n.oid = t.relnamespace
+               JOIN pg_index ix    ON ix.indrelid = t.oid
+               JOIN pg_class i     ON i.oid = ix.indexrelid
+               JOIN pg_am am       ON am.oid = i.relam
+               JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+               LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+               WHERE n.nspname = $1
+               ORDER BY t.relname, i.relname, k.ord"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let index_rows = rows
+            .iter()
+            .map(|r| super::IndexRow {
+                table: r.try_get::<String, _>("table_name").unwrap_or_default(),
+                name: r.try_get::<String, _>("index_name").unwrap_or_default(),
+                column: r.try_get::<Option<String>, _>("column_name").ok().flatten(),
+                unique: r.try_get::<bool, _>("is_unique").unwrap_or(false),
+                primary: r.try_get::<bool, _>("is_primary").unwrap_or(false),
+                method: r.try_get::<Option<String>, _>("method").ok().flatten(),
+            })
+            .collect();
+        Ok(super::group_index_rows(index_rows))
     }
 
     /// テーブル / ビュー / マテビュー / 外部テーブルのコメント (#1002)。
@@ -1680,6 +1771,30 @@ impl PostgresConn {
             slow_queries: None,
             lock_waits: None,
         })
+    }
+}
+
+/// `columns` / `columns_for_database` 共通の列メタデータ行の読み取り。`off` は
+/// 先頭の `column_name` の列位置 (全テーブル版は先頭にテーブル名が付くので 1)。
+fn column_info_from_row(r: &PgRow, off: usize) -> TableColumnInfo {
+    let base_type = r.try_get::<String, _>(off + 1).unwrap_or_default();
+    let char_len = r.try_get::<Option<i32>, _>(off + 8).ok().flatten();
+    let numeric_precision = r.try_get::<Option<i32>, _>(off + 9).ok().flatten();
+    let numeric_scale = r.try_get::<Option<i32>, _>(off + 10).ok().flatten();
+    TableColumnInfo {
+        name: r.try_get::<String, _>(off).unwrap_or_default(),
+        data_type: full_pg_data_type(&base_type, char_len, numeric_precision, numeric_scale),
+        nullable: r
+            .try_get::<String, _>(off + 2)
+            .map(|s| s.eq_ignore_ascii_case("YES"))
+            .unwrap_or(false),
+        key: r.try_get::<String, _>(off + 3).unwrap_or_default(),
+        default: r.try_get::<Option<String>, _>(off + 4).ok().flatten(),
+        extra: r.try_get::<String, _>(off + 5).unwrap_or_default(),
+        referenced_table: r.try_get::<Option<String>, _>(off + 6).ok().flatten(),
+        referenced_column: r.try_get::<Option<String>, _>(off + 7).ok().flatten(),
+        // #1002: `COMMENT ON COLUMN` の値 (`col_description`)。
+        comment: non_empty_comment(r.try_get::<Option<String>, _>(off + 11).ok().flatten()),
     }
 }
 

@@ -1538,6 +1538,94 @@ async fn postgres_bulk_write_and_health_probe_commands() {
     }
 }
 
+/// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ結果でなければならない。
+async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
+    let bulk_columns = conn.columns_for_database(db).await.expect("columns bulk");
+    let bulk_indexes = conn.indexes_for_database(db).await.expect("indexes bulk");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!tables.is_empty());
+    for table in &tables {
+        let single = conn.columns(db, table).await.expect("columns");
+        let bulk = bulk_columns
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.columns.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "columns of {table} must match the per-table query"
+        );
+        let single = conn.list_indexes(db, table).await.expect("indexes");
+        let bulk = bulk_indexes
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.indexes.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "indexes of {table} must match the per-table query"
+        );
+    }
+    // 一括取得にだけ現れるテーブルは無い。
+    for t in &bulk_columns {
+        assert!(tables.contains(&t.name), "unexpected table {}", t.name);
+    }
+    for t in &bulk_indexes {
+        assert!(!t.indexes.is_empty(), "{} has no indexes", t.name);
+    }
+}
+
+#[tokio::test]
+async fn postgres_bulk_columns_and_indexes_match_per_table_queries() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // 同じ DB を他のテストが並列に DROP / CREATE するため、比較対象は専用スキーマに
+    // 閉じる (public を丸ごと比べると、取得の合間にテーブルが消えて競合する)。
+    let schema = format!("noobdb_bulk_{}", std::process::id());
+    conn.execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"), None)
+        .await
+        .expect("drop schema");
+    for ddl in [
+        format!("CREATE SCHEMA {schema}"),
+        format!("CREATE TABLE {schema}.bulk_parent (id integer PRIMARY KEY, name varchar(40))"),
+        format!("COMMENT ON COLUMN {schema}.bulk_parent.name IS 'nm'"),
+        format!(
+            "CREATE TABLE {schema}.bulk_child (
+                id integer PRIMARY KEY,
+                pid integer NOT NULL DEFAULT 1 REFERENCES {schema}.bulk_parent (id),
+                extra numeric(10,2),
+                UNIQUE (extra)
+            )"
+        ),
+        format!("CREATE INDEX bulk_child_multi ON {schema}.bulk_child (pid, extra)"),
+        // 配列・enum・uuid・inet・money・interval・jsonb など多様な型も単一版と一致すること。
+        format!("CREATE TYPE {schema}.bulk_mood AS ENUM ('sad', 'ok')"),
+        format!(
+            "CREATE TABLE {schema}.bulk_types (
+                id integer PRIMARY KEY, u uuid, tags text[], nums integer[], addr inet,
+                price money, span interval, mood {schema}.bulk_mood, payload jsonb, big bigint
+            )"
+        ),
+    ] {
+        conn.execute(&ddl, None).await.expect(&ddl);
+    }
+
+    assert_bulk_matches_per_table(&conn, &schema).await;
+
+    conn.execute(&format!("DROP SCHEMA {schema} CASCADE"), None)
+        .await
+        .expect("cleanup schema");
+    conn.close().await;
+}
+
 /// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 PostgreSQL の
 /// `execute_stream` に通す。NUMERIC は文字列で届くので数値判定 (`toNumber` 互換) の
 /// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。

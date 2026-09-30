@@ -3653,6 +3653,113 @@ async fn sqlite_insert_generated_rows_is_atomic_and_guarded() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ結果でなければならない。
+async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
+    let bulk_columns = conn.columns_for_database(db).await.expect("columns bulk");
+    let bulk_indexes = conn.indexes_for_database(db).await.expect("indexes bulk");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!tables.is_empty());
+    for table in &tables {
+        let single = conn.columns(db, table).await.expect("columns");
+        let bulk = bulk_columns
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.columns.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "columns of {table} must match the per-table query"
+        );
+        let single = conn.list_indexes(db, table).await.expect("indexes");
+        let bulk = bulk_indexes
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.indexes.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "indexes of {table} must match the per-table query"
+        );
+    }
+    // 一括取得にだけ現れるテーブルは無い。
+    for t in &bulk_columns {
+        assert!(tables.contains(&t.name), "unexpected table {}", t.name);
+    }
+    for t in &bulk_indexes {
+        assert!(!t.indexes.is_empty(), "{} has no indexes", t.name);
+    }
+}
+
+#[tokio::test]
+async fn sqlite_bulk_columns_and_indexes_match_per_table_queries() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_bulk_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for ddl in [
+        "CREATE TABLE bulk_parent (id INTEGER PRIMARY KEY, name TEXT)",
+        "CREATE TABLE bulk_comp (a INTEGER, b INTEGER, PRIMARY KEY (a, b))",
+        "CREATE TABLE bulk_child (
+            id INTEGER PRIMARY KEY,
+            pid INTEGER REFERENCES bulk_parent,
+            other INTEGER REFERENCES bulk_parent(id),
+            ca INTEGER, cb INTEGER,
+            extra TEXT NOT NULL DEFAULT 'x',
+            FOREIGN KEY (ca, cb) REFERENCES bulk_comp
+        )",
+        "CREATE UNIQUE INDEX bulk_child_extra ON bulk_child(extra)",
+        "CREATE INDEX bulk_child_expr ON bulk_child(lower(extra))",
+        "CREATE INDEX bulk_child_multi ON bulk_child(pid, other)",
+        "CREATE TABLE bulk_lonely (v TEXT)",
+        "CREATE VIEW bulk_view AS SELECT id, name FROM bulk_parent",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+
+    assert_bulk_matches_per_table(&conn, "main").await;
+
+    // 暗黙の PK 参照は単一列 PK の親なら列名が解決され、複合 PK では None のまま。
+    let bulk = conn.columns_for_database("main").await.expect("bulk");
+    let child = bulk
+        .iter()
+        .find(|t| t.name == "bulk_child")
+        .expect("child table");
+    let pid = child.columns.iter().find(|c| c.name == "pid").expect("pid");
+    assert_eq!(pid.referenced_table.as_deref(), Some("bulk_parent"));
+    assert_eq!(pid.referenced_column.as_deref(), Some("id"));
+    let ca = child.columns.iter().find(|c| c.name == "ca").expect("ca");
+    assert_eq!(ca.referenced_table.as_deref(), Some("bulk_comp"));
+    assert_eq!(ca.referenced_column, None);
+
+    // ビューも列は返り、インデックスは持たない。
+    assert!(bulk.iter().any(|t| t.name == "bulk_view"));
+    let indexes = conn.indexes_for_database("main").await.expect("indexes");
+    assert!(!indexes.iter().any(|t| t.name == "bulk_view"));
+    assert!(!indexes.iter().any(|t| t.name == "bulk_lonely"));
+    let child_idx = indexes
+        .iter()
+        .find(|t| t.name == "bulk_child")
+        .expect("child indexes");
+    assert!(child_idx
+        .indexes
+        .iter()
+        .any(|i| i.name == "bulk_child_multi" && i.columns == ["pid", "other"]));
+    // 式インデックスは列名を持たないので列は空のまま現れる。
+    assert!(child_idx
+        .indexes
+        .iter()
+        .any(|i| i.name == "bulk_child_expr" && i.columns.is_empty()));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
 /// BLOB セルの probe / 生バイト取得 (#1258)。サイズと先頭 16 バイトの判定 (PNG)・
 /// 空 BLOB・NULL・TEXT 格納値・巨大 BLOB を SQLite の実 DB で往復させる。
 #[tokio::test]

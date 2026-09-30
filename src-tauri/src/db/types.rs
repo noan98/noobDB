@@ -155,6 +155,14 @@ pub struct TableComment {
     pub comment: String,
 }
 
+/// 1 テーブル分のインデックス一覧。`indexes_for_database` の戻り値の要素
+/// (#1255)。インデックスを 1 つも持たないテーブルは結果に現れない。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableIndexes {
+    pub name: String,
+    pub indexes: Vec<IndexInfo>,
+}
+
 /// 空文字 / 空白だけのコメントを `None` に正規化する (#1002)。MySQL は
 /// コメント無しを空文字で返すため、ドライバ間で「無い」の表現をそろえる。
 pub fn non_empty_comment(s: Option<String>) -> Option<String> {
