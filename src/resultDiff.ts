@@ -42,7 +42,7 @@ export interface ResultRowDiff {
  * BIGINT/DECIMAL の精度保持で数値が文字列で来るケースや Int(1) vs Bool(true) の
  * 往復を偽の差分にしない (`PreviewGrid` の `valuesEqual` と同方針)。
  */
-function valuesEqual(a: CellValue, b: CellValue): boolean {
+export function valuesEqual(a: CellValue, b: CellValue): boolean {
   if (a === b) return true;
   if (a === null || a === undefined) return b === null || b === undefined;
   if (b === null || b === undefined) return false;
@@ -109,4 +109,21 @@ export function diffResultRows(
     removedCount,
     hasChanges: anyCellChanged || addedRows.size > 0 || removedCount > 0,
   };
+}
+
+/**
+ * 事前計算済みの差分 (#1257)。自動リフレッシュのパッチ適用 (`refreshPatch.ts`) や
+ * ブロードキャスト比較 (バックエンド計算) は、差分を行配列と一緒に作るので、
+ * `ResultGrid` が `diffResultRows` で全行を突き合わせ直す必要がない。行配列の
+ * 同一性をキーにするため、行が別配列に置き換わる (セル編集の適用など) と自動的に
+ * 外れて従来の計算へ戻る。
+ */
+const precomputedDiffs = new WeakMap<object, ResultRowDiff>();
+
+export function attachRowDiff(rows: CellValue[][], diff: ResultRowDiff): void {
+  precomputedDiffs.set(rows, diff);
+}
+
+export function rowDiffFor(rows: CellValue[][] | null | undefined): ResultRowDiff | null {
+  return rows ? (precomputedDiffs.get(rows) ?? null) : null;
 }

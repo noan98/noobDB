@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
@@ -15,7 +15,10 @@ import {
   CHART_PALETTES,
   DEFAULT_CHART_PALETTE,
   buildChartModel,
+  buildChartSql,
+  canAggregateInDb,
   chartConfigKeyFrom,
+  chartModelFromAggregatedRows,
   chartNotices,
   chartRampGradient,
   chartSeriesColors,
@@ -77,13 +80,20 @@ interface Props {
    * `ResultViewSwitch` と、数値列が無いときの空状態アクションから呼ばれる。
    */
   onChangeView: (view: ResultViewKind) => void;
+  /** SQL ドライバ (識別子のクオート方言)。DB 側集計 (#1257) に使う。 */
+  driver?: string;
+  /**
+   * 集計 SQL を実行する (#1257)。渡されたときだけ、集計ありの設定で「DB で集計」を
+   * 選べる。取得済みの行ではなく元クエリ全件に対する GROUP BY になる。
+   */
+  onRunQuery?: (sql: string) => Promise<QueryResult>;
 }
 
 // 系列の出現アニメーションを行う要素数の上限。これを超えると数百〜数千の要素を
 // 同時にアニメートすることになり描画コストが嵩むため、静的描画に切り替える。
 const ANIM_MAX_ELEMENTS = 200;
 
-export function ChartView({ result, sourceSql, onChangeView }: Props) {
+export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery }: Props) {
   const t = useT();
   // ダークテーマでは系列色 (`categorical`) をコントラスト確保版へ、連続/発散
   // ランプは「暗→明」の向きへ切り替える (#1187)。
@@ -104,10 +114,62 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
     writeStoredChartConfig(persistKey, next);
   };
 
-  const model = useMemo<ChartModel | null>(
+  const clientModel = useMemo<ChartModel | null>(
     () => (config ? buildChartModel(result.columns, result.rows, config) : null),
     [config, result.columns, result.rows],
   );
+
+  // DB 側集計 (#1257): 有効かつ依頼できる設定のときだけ、元クエリ全件の GROUP BY を
+  // DB に任せる。結果が届くまで・失敗したときは取得済み行の JS 集計を表示する。
+  const [dbAgg, setDbAgg] = useState(false);
+  const dbAggSql = useMemo(() => {
+    if (!dbAgg || !onRunQuery || !config || !sourceSql) return null;
+    if (config.aggregation === "none" || !canAggregateInDb(result.columns, config, sourceSql)) {
+      return null;
+    }
+    return buildChartSql({
+      driver: driver ?? "mysql",
+      sourceSql,
+      xColumn: result.columns[config.xCol].name,
+      yColumns: config.yCols.map((c) => result.columns[c].name),
+      agg: config.aggregation,
+    });
+  }, [dbAgg, onRunQuery, config, sourceSql, driver, result.columns]);
+  const [remote, setRemote] = useState<
+    { sql: string; model: ChartModel | null; error: string | null } | null
+  >(null);
+  useEffect(() => {
+    if (!dbAggSql || !onRunQuery || !config || config.aggregation === "none") return;
+    let cancelled = false;
+    const agg = config.aggregation;
+    const yNames = config.yCols.map((c) => result.columns[c]?.name ?? `col${c}`);
+    onRunQuery(dbAggSql)
+      .then((res) => {
+        if (cancelled) return;
+        setRemote({
+          sql: dbAggSql,
+          model: chartModelFromAggregatedRows(res.rows, yNames, agg),
+          error: null,
+        });
+      })
+      .catch((e) => {
+        if (!cancelled) setRemote({ sql: dbAggSql, model: null, error: String(e) });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 結果列の参照は config と一緒に変わるので dbAggSql だけで十分。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbAggSql]);
+  const remoteForSql = remote && remote.sql === dbAggSql ? remote : null;
+  const model = remoteForSql?.model ?? clientModel;
+  const dbAggStatus: "off" | "pending" | "ok" | "failed" = !dbAggSql
+    ? "off"
+    : !remoteForSql
+      ? "pending"
+      : remoteForSql.model
+        ? "ok"
+        : "failed";
   // 退化データの注記は「実際にチャートを描く」ときだけ意味を持つ (Y 未選択/
   // データ 0 件のときは注記より前段の空状態メッセージが優先される)。
   const notices = useMemo<ChartNotice[]>(
@@ -230,6 +292,12 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
             ]}
           />
         </Field>
+        {onRunQuery && canAggregateInDb(result.columns, config, sourceSql) && (
+          <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
+            <Checkbox checked={dbAgg} onChange={(e) => setDbAgg(e.target.checked)} />
+            {t("chartAggInDb")}
+          </chakra.label>
+        )}
         {/* 配色 (#916): グリッドの条件付き書式と同型のセレクタで、共有カラー
             スケールの離散/連続/発散パレットを選ぶ。CB セーフかどうかも同じ
             注記 (`gridPaletteCbSafe`) で示し、体系を UI レベルでも揃える。 */}
@@ -257,6 +325,16 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
           </Flex>
         </Field>
       </Flex>
+
+      {dbAggStatus !== "off" && (
+        <chakra.div px="3" py="1" fontSize="xs" color="app.textMuted" flex="none">
+          {dbAggStatus === "pending"
+            ? t("chartAggInDbPending")
+            : dbAggStatus === "ok"
+              ? t("chartAggInDbNote")
+              : t("chartAggInDbFailed", { error: remoteForSql?.error ?? "" })}
+        </chakra.div>
+      )}
 
       {model.sampledFrom != null && (
         <chakra.div px="3" py="1" fontSize="xs" color="app.textMuted" flex="none">

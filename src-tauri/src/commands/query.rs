@@ -1,10 +1,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::db::refresh_diff::{PatchRun, RefreshBuilder};
+use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
 use crate::db::tx_options::{TxIsolation, TxOptions};
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
 use crate::db::{apply_auto_limit_for, is_read_only_sql_for, DriverKind};
@@ -126,7 +129,7 @@ fn ensure_auto_refresh_read_only(driver: DriverKind, sql: &str) -> Result<()> {
 /// 経路を使う。`ANALYZE` は SQL を**実際に実行する**ので、対象が書き込みだと
 /// 本当にデータが変わる。`EXPLAIN` は許可プレフィックスだが本文の書き込み
 /// キーワード走査が効くため、`EXPLAIN ANALYZE DELETE ...` は拒否される。
-fn ensure_broadcast_read_only(driver: DriverKind, sql: &str) -> Result<()> {
+pub(crate) fn ensure_broadcast_read_only(driver: DriverKind, sql: &str) -> Result<()> {
     if !is_read_only_sql_for(driver, sql) {
         return Err(AppError::ReadOnly(
             "forced read-only execution (broadcast / EXPLAIN ANALYZE) allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
@@ -546,6 +549,19 @@ pub enum QueryStreamMessage {
     },
     Rows {
         rows: Vec<Vec<Value>>,
+        /// この送信分までの**累積**逐次統計 (#1257)。フロントは `rowCount` が
+        /// 手元の行数と一致するときだけ採用し、NULL 数・数値 min/max・重複行
+        /// フラグの全行走査を省く。統計を持たない経路は `null`。
+        stats: Option<StreamStatsSnapshot>,
+    },
+    /// 自動リフレッシュの差分パッチ (#1257)。`refresh_diff` 付きの再実行で、前回結果との
+    /// 差分だけを返す。この場合 `Columns` / `Rows` は送られない。フロントは手元の前回
+    /// 行配列に `runs` を適用して今回の結果を再構成する (`unchanged` なら何もしない)。
+    Patch {
+        total_rows: u64,
+        unchanged: bool,
+        removed_count: u64,
+        runs: Vec<PatchRun>,
     },
     Done {
         total_rows: u64,
@@ -560,6 +576,13 @@ pub enum QueryStreamMessage {
         /// サーバが実行中に返した通知・警告 (PostgreSQL NOTICE/WARNING、MySQL
         /// SHOW WARNINGS)。SQLite と無い場合は空配列 (#1165)。
         server_messages: Vec<ServerMessage>,
+        /// 全行を観測し終えた時点の逐次統計 (#1257)。`Rows` の累積統計と同じ形。
+        /// 結果セットの無い文・統計を持たない経路は `null`。
+        stats: Option<StreamStatsSnapshot>,
+        /// 自動リフレッシュ差分 (#1257) の比較元として保持したスナップショットの ID。
+        /// フロントは次回の再実行でこれを `prevSnapshotId` として返す。保持しなかった
+        /// (要求なし・行数超過) ときは `null`。
+        snapshot_id: Option<u64>,
         /// 実行した SQL が読み取り専用と判定できるか (`is_read_only_sql_for`)。フロントが
         /// 実行後に `isReadOnlySql` をマスク込みで再計算しなくて済むよう、バックエンドの
         /// 判定値をそのまま載せる (#1256)。
@@ -653,6 +676,19 @@ const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
 const EV_SCRIPT_CANCELLED: &str = "sql-script:cancelled";
 const EV_TRANSFER_CANCELLED: &str = "transfer-stream:cancelled";
 
+/// 自動リフレッシュの差分パッチ (#1257) を要求するパラメータ。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshDiffRequest {
+    /// タブを識別するキー (セッション ID と合わせてスナップショットを引く)。
+    pub key: String,
+    /// 結果列に対する主キー列の添字 (グリッドの `pkIndices` と同じ)。
+    pub pk_indices: Vec<usize>,
+    /// フロントが手元の行配列に紐づけて持っているスナップショット ID。無い/古いと
+    /// パッチにならず全行ストリームになる。
+    pub prev_snapshot_id: Option<u64>,
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn run_query_stream(
@@ -675,6 +711,8 @@ pub async fn run_query_stream(
     capture: Option<bool>,
     capture_row_cap: Option<u32>,
     capture_retention_days: Option<u32>,
+    // 自動リフレッシュの差分パッチ (#1257)。`auto_refresh` のときだけ有効。
+    refresh_diff: Option<RefreshDiffRequest>,
     // #1096: フロントが `invoke` 前に生成し引数として渡す Tauri Channel。1
     // ストリームにつき 1 チャンネルなので、以後の columns/rows/done/error/
     // cancelled はすべてこのチャンネル経由で送る (旧 `query-stream:*` イベント群を
@@ -769,6 +807,7 @@ pub async fn run_query_stream(
             auto_limit,
             query_timeout_secs,
             auto_refresh,
+            refresh_diff.filter(|_| auto_refresh),
             delivered_rows_for_task,
             on_event,
         )
@@ -805,6 +844,7 @@ async fn spawn_query_stream(
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
     auto_refresh: bool,
+    refresh_diff: Option<RefreshDiffRequest>,
     delivered_rows: Arc<AtomicU64>,
     on_event: Channel<QueryStreamMessage>,
 ) {
@@ -830,6 +870,55 @@ async fn spawn_query_stream(
     // 計測 (#1094): シリアライズ + IPC emit の所要時間と概算ペイロードサイズを
     // 積算する。計測 OFF なら record_emit はクロージャをそのまま実行するだけ。
     let stream_perf = perf::StreamAccumulator::new();
+    // バッチ合流 (#1257): ドライバが 200 行ずつ渡してくるバッチを、初回だけ即送信し、
+    // 以降は時間 / サイズ倍々で合流してから Channel へ送る。`execute_stream` の
+    // future は `Send` でなければならないので `RefCell` ではなく `Mutex` (競合は無い)。
+    let batcher = Mutex::new(StreamBatcher::new(chunk_size));
+    // 自動リフレッシュ差分 (#1257)。前回スナップショットは ID が一致するものだけ使う。
+    let refresh_key = refresh_diff
+        .as_ref()
+        .map(|r| format!("{}\u{1}{}", session.id, r.key));
+    let refresh_prev = match (&refresh_diff, &refresh_key, app.try_state::<AppState>()) {
+        (Some(req), Some(key), Some(state)) => state
+            .refresh_snapshots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_matching(key, req.prev_snapshot_id),
+        _ => None,
+    };
+    let refresh: Mutex<Option<RefreshBuilder>> = Mutex::new(None);
+    let stats = Mutex::new(StreamStats::new());
+    let send_rows = |rows: Vec<Vec<Value>>| -> Result<()> {
+        // Count rows before sending so a cancel racing this exact
+        // point never under-reports what actually reached the UI.
+        let emitted_len = rows.len() as u64;
+        delivered_rows_cb.fetch_add(emitted_len, Ordering::SeqCst);
+        // 送信する合流バッチ単位で統計を更新する (累積が送信済み行数と常に一致する)。
+        let snapshot = {
+            let mut st = stats.lock().unwrap_or_else(|e| e.into_inner());
+            st.observe(&rows);
+            st.snapshot()
+        };
+        // 計測 (#1094): Channel 送信の所要時間と概算ペイロードサイズを積算。
+        let approx_bytes = perf::approx_rows_bytes(&rows);
+        stream_perf.record_emit(approx_bytes, || {
+            on_event
+                .send(QueryStreamMessage::Rows {
+                    rows,
+                    stats: Some(snapshot),
+                })
+                .map_err(|e| {
+                    // The UI never received these rows; roll back the count.
+                    delivered_rows_cb.fetch_sub(emitted_len, Ordering::SeqCst);
+                    tracing::warn!(
+                        stream_id = %send_id,
+                        error = %e,
+                        "failed to send rows message; aborting stream"
+                    );
+                    AppError::Other(format!("ipc channel send failed: {e}"))
+                })
+        })
+    };
     let exec = session.conn.execute_stream(
         &effective_sql,
         database.as_deref(),
@@ -837,6 +926,17 @@ async fn spawn_query_stream(
         chunk_size,
         |batch| match batch {
             StreamBatch::Columns(columns) => {
+                // 自動リフレッシュ差分 (#1257): 前回スナップショットと列構成が一致すれば
+                // パッチモードになり、列も行も送らない (フロントは前回の列をそのまま使う)。
+                if let Some(req) = &refresh_diff {
+                    let prev = refresh_prev.clone();
+                    let builder = RefreshBuilder::new(prev, &req.pk_indices, &columns);
+                    let is_patch = builder.as_ref().is_some_and(|b| b.is_patch());
+                    *refresh.lock().unwrap_or_else(|e| e.into_inner()) = builder;
+                    if is_patch {
+                        return Ok(());
+                    }
+                }
                 // 計測 (#1094): Channel 送信の所要時間と概算ペイロードサイズを積算。
                 let approx_bytes = perf::approx_columns_bytes(&columns);
                 stream_perf.record_emit(approx_bytes, || {
@@ -853,26 +953,31 @@ async fn spawn_query_stream(
                 })
             }
             StreamBatch::Rows(rows) => {
-                // Count rows before sending so a cancel racing this exact
-                // point never under-reports what actually reached the UI.
-                let emitted_len = rows.len() as u64;
-                delivered_rows_cb.fetch_add(emitted_len, Ordering::SeqCst);
-                // 計測 (#1094): Channel 送信の所要時間と概算ペイロードサイズを積算。
-                let approx_bytes = perf::approx_rows_bytes(&rows);
-                stream_perf.record_emit(approx_bytes, || {
-                    on_event
-                        .send(QueryStreamMessage::Rows { rows })
-                        .map_err(|e| {
-                            // The UI never received these rows; roll back the count.
-                            delivered_rows_cb.fetch_sub(emitted_len, Ordering::SeqCst);
-                            tracing::warn!(
-                                stream_id = %send_id,
-                                error = %e,
-                                "failed to send rows message; aborting stream"
-                            );
-                            AppError::Other(format!("ipc channel send failed: {e}"))
-                        })
-                })
+                {
+                    let mut guard = refresh.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(b) = guard.as_mut() {
+                        for row in &rows {
+                            b.observe(row);
+                        }
+                        if b.is_patch() {
+                            // パッチモード: 行は送らず、統計だけ更新する (最終統計を Done で送る)。
+                            drop(guard);
+                            stats
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .observe(&rows);
+                            return Ok(());
+                        }
+                    }
+                }
+                let ready = batcher
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(rows, Instant::now());
+                match ready {
+                    Some(rows) => send_rows(rows),
+                    None => Ok(()),
+                }
             }
         },
     );
@@ -888,6 +993,47 @@ async fn spawn_query_stream(
         }
         _ => exec.await,
     };
+
+    // 合流待ちで残った行を吐き出す (正常終了・DB エラー・タイムアウトのどれでも。
+    // これで `delivered_rows` と UI が受け取った行数が一致する)。送信に失敗した
+    // ときは結果がエラーに置き換わる。
+    let flush_rest = batcher.lock().unwrap_or_else(|e| e.into_inner()).finish();
+    let result = match (flush_rest, result) {
+        (Some(rows), Ok(res)) => send_rows(rows).map(|()| res),
+        (Some(rows), Err(e)) => {
+            // 元のエラーを優先する。残り行の送信失敗は警告ログだけ (send_rows 内)。
+            let _ = send_rows(rows);
+            Err(e)
+        }
+        (None, r) => r,
+    };
+    let final_stats = stats.lock().unwrap_or_else(|e| e.into_inner()).snapshot();
+    // 自動リフレッシュ差分 (#1257): 成功したときだけ新しいスナップショットを保管し、
+    // パッチモードだったならパッチを作る。失敗・タイムアウト時は前回のまま残す。
+    let mut snapshot_id: Option<u64> = None;
+    let mut refresh_patch = None;
+    if result.is_ok() {
+        let builder = refresh.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let (Some(builder), Some(key)) = (builder, refresh_key.as_deref()) {
+            let outcome = builder.finish();
+            let unchanged = outcome.patch.as_ref().is_some_and(|p| p.unchanged);
+            if let Some(state) = app.try_state::<AppState>() {
+                let mut store = state
+                    .refresh_snapshots
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if unchanged {
+                    // 内容が同一なら前回のスナップショットをそのまま使い続ける。
+                    snapshot_id = refresh_prev.as_ref().map(|p| p.id);
+                } else if let Some(snap) = outcome.snapshot {
+                    snapshot_id = Some(store.put(key, snap).id);
+                } else {
+                    store.remove(key);
+                }
+            }
+            refresh_patch = outcome.patch;
+        }
+    }
 
     // Query Result Cache (#1097): このストリーミング経路自体はキャッシュを
     // 読み書きしない (Epic #1093 の「大量データを無制限に保持しない」方針との
@@ -923,6 +1069,21 @@ async fn spawn_query_stream(
                 delivered_rows.load(Ordering::SeqCst),
                 res.columns.len(),
             );
+            if let Some(p) = refresh_patch {
+                if let Err(e) = on_event.send(QueryStreamMessage::Patch {
+                    total_rows: p.total_rows,
+                    unchanged: p.unchanged,
+                    removed_count: p.removed_count,
+                    runs: p.runs,
+                }) {
+                    tracing::warn!(
+                        session_id = %session.id,
+                        stream_id = %stream_id,
+                        error = %e,
+                        "failed to send patch message"
+                    );
+                }
+            }
             if let Err(e) = on_event.send(QueryStreamMessage::Done {
                 total_rows: if res.columns.is_empty() {
                     0
@@ -938,6 +1099,12 @@ async fn spawn_query_stream(
                     applied_auto_limit
                 },
                 server_messages: res.server_messages.clone(),
+                stats: if res.columns.is_empty() {
+                    None
+                } else {
+                    Some(final_stats)
+                },
+                snapshot_id,
                 read_only,
                 schema_may_change,
             }) {
@@ -1066,6 +1233,8 @@ async fn spawn_captured_write(
                 has_columns: false,
                 applied_auto_limit: None,
                 server_messages: result.server_messages.clone(),
+                stats: None,
+                snapshot_id: None,
                 read_only: crate::db::is_read_only_sql_for(session.conn.driver_kind(), &sql),
                 schema_may_change: crate::db::sql_may_change_schema(
                     session.conn.driver_kind(),
@@ -1126,7 +1295,7 @@ async fn spawn_captured_write(
 /// are logged but never surfaced to the caller, and sessions flagged
 /// `skip_history` are skipped entirely. Only the streaming run path records
 /// history, so internal pagination/edit queries don't pollute it.
-async fn record_history(
+pub(crate) async fn record_history(
     session: &Session,
     sql: &str,
     database: Option<&str>,

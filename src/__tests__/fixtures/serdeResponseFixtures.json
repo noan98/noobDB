@@ -45,6 +45,52 @@
     "kind": "started",
     "total": 3
   },
+  "broadcastCancelledMessage": {
+    "kind": "cancelled",
+    "sessionId": "sess0002"
+  },
+  "broadcastDoneMessage": {
+    "kind": "done"
+  },
+  "broadcastEnvMessage": {
+    "columns": [
+      {
+        "name": "id",
+        "type_name": "INTEGER"
+      }
+    ],
+    "diff": {
+      "addedRowIndices": [],
+      "changedCellCount": 1,
+      "changedCells": [
+        {
+          "cols": [
+            0
+          ],
+          "row": 1
+        }
+      ],
+      "comparable": true,
+      "hasDiff": true,
+      "mode": "pk",
+      "removedCount": 0,
+      "truncated": false
+    },
+    "elapsedMs": 7,
+    "error": null,
+    "kind": "env",
+    "rows": [
+      [
+        1
+      ],
+      [
+        2
+      ]
+    ],
+    "sessionId": "sess0001",
+    "status": "done",
+    "totalRows": 2
+  },
   "cancelStreamResponse": {
     "cancelled": true,
     "deliveredRows": 42
@@ -443,6 +489,23 @@
         "text": "[1265] Data truncated for column 'a' at row 1"
       }
     ],
+    "snapshotId": 3,
+    "stats": {
+      "duplicateRows": null,
+      "nullCounts": [
+        0,
+        1
+      ],
+      "numMax": [
+        2.0,
+        null
+      ],
+      "numMin": [
+        1.0,
+        null
+      ],
+      "rowCount": 2
+    },
     "totalRows": 2
   },
   "queryStreamErrorMessage": {
@@ -452,6 +515,36 @@
     "kind": "error",
     "timedOut": false
   },
+  "queryStreamPatchMessage": {
+    "kind": "patch",
+    "removedCount": 1,
+    "runs": [
+      {
+        "count": 1,
+        "from": 0,
+        "type": "keep"
+      },
+      {
+        "prev": [
+          1,
+          null
+        ],
+        "rows": [
+          [
+            2,
+            "b2"
+          ],
+          [
+            9,
+            null
+          ]
+        ],
+        "type": "rows"
+      }
+    ],
+    "totalRows": 3,
+    "unchanged": false
+  },
   "queryStreamRowsMessageLite": {
     "kind": "rows",
     "rows": [
@@ -459,11 +552,28 @@
         1,
         "a"
       ]
-    ]
+    ],
+    "stats": {
+      "duplicateRows": false,
+      "nullCounts": [
+        0,
+        0
+      ],
+      "numMax": [
+        1.0,
+        null
+      ],
+      "numMin": [
+        1.0,
+        null
+      ],
+      "rowCount": 1
+    }
   },
   "queryStreamRowsMessageLiteEmpty": {
     "kind": "rows",
-    "rows": []
+    "rows": [],
+    "stats": null
   },
   "routineSignature": {
     "kind": "function",
