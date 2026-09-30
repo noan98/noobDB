@@ -1,11 +1,15 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import { Button, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
+import { Skeleton } from "./Skeleton";
+import { staggerContainer, variants } from "../motion";
+import { EXPLAIN_SKELETON_ROWS, staggerPlanIds } from "./explainSkeleton";
 import {
   type Heat,
   type HintSeverity,
@@ -29,6 +33,13 @@ import {
   severityLabelKey,
   worstSeverity,
 } from "./explainPlan";
+
+// motion 用 props は Chakra のスタイルプロップと衝突するため明示的に転送する
+// (`CommandPalette` の `MotionListBox` / `MotionRow` と同じパターン)。
+const MotionTree = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionNode = chakra(motion.div, {}, { forwardProps: ["variants"] });
+
+const EMPTY_IDS: ReadonlySet<string> = new Set();
 
 const ExplainGraphView = lazy(() =>
   import("./ExplainGraphView").then((m) => ({ default: m.ExplainGraphView })),
@@ -429,6 +440,8 @@ interface NodeRowProps {
   /** 実測バッジの文言 (`est {est} → actual {actual} rows`) を作る。 */
   actualRowsLabel: (est: string, actual: string) => string;
   neverExecutedLabel: string;
+  /** 初回描画で stagger 出現させるノード ID。展開/折りたたみ後は空にして再生しない。 */
+  staggerIds: ReadonlySet<string>;
 }
 
 function NodeRow({
@@ -444,6 +457,7 @@ function NodeRow({
   hintsLabel,
   actualRowsLabel,
   neverExecutedLabel,
+  staggerIds,
 }: NodeRowProps) {
   const isCollapsed = collapsed.has(node.id);
   const hasChildren = node.children.length > 0;
@@ -463,8 +477,9 @@ function NodeRow({
   const totalMs = actualTotalMs(node);
   return (
     <>
-      <Box
+      <MotionNode
         css={nodeCss(heat, selected)}
+        variants={staggerIds.has(node.id) ? variants.staggerItem : undefined}
         pl={`${6 + depth * 16}px`}
         role="treeitem"
         aria-selected={selected}
@@ -534,7 +549,7 @@ function NodeRow({
             )
           )}
         </chakra.span>
-      </Box>
+      </MotionNode>
       {hasChildren &&
         !isCollapsed &&
         node.children.map((c) => (
@@ -552,6 +567,7 @@ function NodeRow({
             hintsLabel={hintsLabel}
             actualRowsLabel={actualRowsLabel}
             neverExecutedLabel={neverExecutedLabel}
+            staggerIds={staggerIds}
           />
         ))}
     </>
@@ -626,21 +642,44 @@ function ExplainViewerBody({ result, driver, streaming }: Omit<Props, "analyze">
   );
   const selectedHints = useMemo(() => (selected ? computeHints(selected) : []), [selected]);
 
-  const toggle = (id: string) =>
+  // 初回描画のみ stagger する (#1236)。展開/折りたたみが行われたらその plan では
+  // 再生しない。大量ノードは先頭 N 件に限る (`staggerPlanIds`)。
+  const reduced = useReducedMotion() ?? false;
+  const [entered, setEntered] = useState<PlanNode | null>(null);
+  const entranceIds = useMemo(() => staggerPlanIds(allIds), [allIds]);
+  const staggerIds = entered === root ? EMPTY_IDS : entranceIds;
+  const markEntered = () => setEntered(root);
+
+  const toggle = (id: string) => {
+    markEntered();
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  };
 
   if (streaming && !root) {
     return (
-      /* EXPLAIN_EMPTY_PROPS は column/center 配置なので Spinner をテキストの
-         上に重ねて縦積みローディング表示にする。 */
-      <Box {...EXPLAIN_EMPTY_PROPS}>
-        <Spinner size={13} />
-        {t("explainLoading")}
+      /* プランツリーの階層を模した Skeleton (#1236)。文言は支援技術向けに残す。 */
+      <Box {...EXPLAIN_EMPTY_PROPS} alignItems="stretch" justifyContent="flex-start" textAlign="left">
+        <chakra.span role="status" fontSize="sm">
+          {t("explainLoading")}
+        </chakra.span>
+        <Box aria-hidden display="flex" flexDirection="column" gap="2">
+          {EXPLAIN_SKELETON_ROWS.map((row, i) => (
+            <Skeleton
+              key={i}
+              height="14px"
+              style={{
+                width: `${row.width}%`,
+                marginLeft: `calc(${row.depth} * var(--space-4))`,
+                animationDelay: `${i * 0.035}s`,
+              }}
+            />
+          ))}
+        </Box>
       </Box>
     );
   }
@@ -754,12 +793,12 @@ function ExplainViewerBody({ result, driver, streaming }: Omit<Props, "analyze">
           {view === "tree" && (
             <>
               <Tooltip label={t("explainExpandAll")}>
-                <Button size="sm" px="2.5" onClick={() => setCollapsed(new Set())}>
+                <Button size="sm" px="2.5" onClick={() => { markEntered(); setCollapsed(new Set()); }}>
                   {t("explainExpandAll")}
                 </Button>
               </Tooltip>
               <Tooltip label={t("explainCollapseAll")}>
-                <Button size="sm" px="2.5" onClick={() => setCollapsed(new Set(allIds))}>
+                <Button size="sm" px="2.5" onClick={() => { markEntered(); setCollapsed(new Set(allIds)); }}>
                   {t("explainCollapseAll")}
                 </Button>
               </Tooltip>
@@ -784,7 +823,13 @@ function ExplainViewerBody({ result, driver, streaming }: Omit<Props, "analyze">
             </Suspense>
           </Box>
         ) : (
-          <Box css={treeCss} role="tree">
+          <MotionTree
+            css={treeCss}
+            role="tree"
+            variants={staggerContainer(reduced)}
+            initial="initial"
+            animate="animate"
+          >
             <NodeRow
               node={root}
               depth={0}
@@ -798,8 +843,9 @@ function ExplainViewerBody({ result, driver, streaming }: Omit<Props, "analyze">
               hintsLabel={t("explainHintsTitle")}
               actualRowsLabel={(est, actual) => t("explainActualRows", { est, actual })}
               neverExecutedLabel={t("explainNeverExecuted")}
+              staggerIds={staggerIds}
             />
-          </Box>
+          </MotionTree>
         )}
       </Box>
       <Box css={detailCss}>
