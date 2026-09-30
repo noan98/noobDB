@@ -1,8 +1,11 @@
 // DB 全体からの値検索 (#748) の純ロジック。
 //
-// 「この値はどのテーブル・どの列にあるか」を、テーブルを順に走査して調べるための
-// SQL 生成と、走査対象の絞り込みを担う。副作用なし・ドライバ非依存 (方言差は
-// `driver` 引数で吸収) なので Vitest で単体テストする。
+// 走査 SQL の生成 (`SUM(CASE WHEN …)` のテーブル単位クエリ) と行数しきい値の判定、走査結果の
+// 集計は **Rust (`src-tauri/src/db/data_search.rs`、#1261) へ移した**。ここに残るのは、
+// ヒット行クリックで「その列 / そのテーブルのヒット行」を開くジャンプ SQL の生成
+// (`buildColumnJumpSql` / `buildTableJumpSql`) と、それが使う列ごとの検索述語
+// (`buildColumnPredicate`) だけ。述語は Rust の走査 SQL と同じ規則でなければならず、
+// 共有ゴールデン `fixtures/dataSearchVectors.json` が両側で固定する。
 //
 // 列型による走査対象の絞り込みは `cellTypeMeta.ts` の `classifyTypeName`
 // (CellKind 分類。ResultGrid のセル描画と同じ基準) を再利用し、二重定義しない。
@@ -14,16 +17,10 @@ import { classifyTypeName, type CellKind } from "./cellTypeMeta";
 import { quoteString } from "./cellEdit";
 import { quoteIdentFor } from "./sqlDialect";
 import { qualifiedTable } from "../fkNavigation";
+import type { ScanColumn } from "../api/tauri";
 
 /** 一致モード: 完全一致 / 部分一致 (contains) / 前方一致。 */
 export type MatchMode = "exact" | "contains" | "prefix";
-
-/** 走査対象として describeTable の結果から最低限必要な情報。 */
-export interface ScanColumn {
-  name: string;
-  /** `TableColumnInfo.data_type` / `Column.type_name` と同じ語彙の生の型名。 */
-  dataType: string;
-}
 
 /**
  * 走査における列の扱い。`classifyTypeName` の `CellKind` をさらに粗く分類する:
@@ -108,44 +105,6 @@ export function buildColumnPredicate(
   }
 }
 
-/** {@link buildTableScanSql} の戻り値。 */
-export interface TableScanSql {
-  /** テーブル 1 つを 1 回のクエリで走査する SQL。 */
-  sql: string;
-  /** SELECT リストと同じ順序の列名 (結果行を位置で対応付けるため名前解決に頼らない)。 */
-  columns: string[];
-}
-
-/**
- * テーブル 1 つぶんの走査 SQL を生成する。列ごとに `SUM(CASE WHEN <述語> THEN 1
- * ELSE 0 END)` を並べた単一クエリで、1 回のフルスキャンで列ごとのヒット件数を
- * まとめて取得する (列ごとに別クエリを発行しない)。走査対象の列が 1 つもなければ
- * `null` を返す (呼び出し側はテーブルをスキップ扱いにする)。
- */
-export function buildTableScanSql(
-  driver: string,
-  database: string | null | undefined,
-  table: string,
-  columns: ScanColumn[],
-  term: string,
-  mode: MatchMode,
-): TableScanSql | null {
-  const parts: { name: string; predicate: string }[] = [];
-  for (const c of columns) {
-    const predicate = buildColumnPredicate(driver, c.name, classifyTypeName(c.dataType), term, mode);
-    if (predicate) parts.push({ name: c.name, predicate });
-  }
-  if (parts.length === 0) return null;
-  const selectList = parts
-    .map(
-      ({ name, predicate }) =>
-        `SUM(CASE WHEN ${predicate} THEN 1 ELSE 0 END) AS ${quoteIdentFor(driver, name)}`,
-    )
-    .join(", ");
-  const sql = `SELECT ${selectList} FROM ${qualifiedTable(driver, database, table)}`;
-  return { sql, columns: parts.map((p) => p.name) };
-}
-
 /**
  * 特定 1 列に絞った `SELECT * ... WHERE <col> <op> <term>` を生成する。ヒット
  * 一覧の行クリックから、その列だけに絞った結果を新規タブで開くために使う
@@ -193,40 +152,3 @@ export function buildTableJumpSql(
 
 /** スキャン対象を絞り込む既定の概算行数しきい値。これを超えるテーブルは既定でスキップする。 */
 export const DEFAULT_SCAN_ROW_THRESHOLD = 500_000;
-
-/**
- * 概算行数がしきい値を超えるテーブルをスキャン対象から除外すべきかどうか。
- * 推定値が取れない (`null`。SQLite や統計未収集など) 場合は保守的に「除外しない」
- * — 巨大テーブルを誤って弾かないよう、判断材料が無ければ通す。
- */
-export function shouldSkipTableForScan(
-  estimate: number | null,
-  thresholdRows: number,
-): boolean {
-  if (estimate === null) return false;
-  return estimate > thresholdRows;
-}
-
-/** 走査 1 テーブルぶんの結果。UI (`DataSearchModal`) の状態遷移に使う。 */
-export type TableScanOutcome =
-  | { status: "hit"; hits: { column: string; count: number }[] }
-  | { status: "no-hit" }
-  | { status: "skipped"; reason: "row-threshold" | "no-searchable-columns" | "error"; detail?: string };
-
-/**
- * `buildTableScanSql` が返した列順の 1 行 (`SUM(CASE...)` の結果) を、列ごとの
- * ヒット件数配列へ変換する。`SUM` は対象行が 0 件だと `NULL` を返すドライバがある
- * ため、`null`/`undefined` は 0 件として扱う。件数 0 の列は除外する。
- */
-export function parseScanRow(
-  columns: string[],
-  row: (number | string | boolean | null)[],
-): { column: string; count: number }[] {
-  const hits: { column: string; count: number }[] = [];
-  for (let i = 0; i < columns.length; i++) {
-    const raw = row[i];
-    const count = raw === null || raw === undefined ? 0 : Number(raw);
-    if (Number.isFinite(count) && count > 0) hits.push({ column: columns[i], count });
-  }
-  return hits;
-}

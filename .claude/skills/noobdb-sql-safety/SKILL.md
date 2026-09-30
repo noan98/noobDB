@@ -22,6 +22,13 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
    | `autoLimitVectors.json` | `apply_auto_limit_for` (5 ドライバ) |
    | `queryShapeVectors.json` | fetch/execute 経路の振り分け |
    | `sqlQuotingVectors.json` | 識別子引用・リテラルエスケープ |
+   | `objectSearchVectors.json` | グローバルオブジェクト検索の順位付け (Rust `db::object_search`、#1261) |
+   | `whereUsedVectors.json` | Where-used の参照検出・マスク・行単位のまとめ (Rust `db::where_used`、#1261) |
+   | `dataSearchVectors.json` | 値検索の述語・走査 SQL (Rust `db::data_search` と TS `buildColumnPredicate`、#1261) |
+
+   後ろ 3 つは**移植前の TS 実装を `src/__tests__/oracles/` にオラクルとして残し**、その出力を
+   期待値に固定している (製品コードの TS には実装が無い)。境界ケースを足すときは
+   オラクルの出力を `expected` に貼り、Rust 側の `tests/*_golden.rs` も通す。
 
 2. **マスクはドライバ別**である点を忘れない。バックスラッシュをエスケープ文字と
    見なすのは **MySQL/MariaDB だけ**です。ドライバを知っている呼び出し口は

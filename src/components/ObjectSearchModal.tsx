@@ -1,9 +1,8 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type TableSchema } from "../api/tauri";
+import { api, type ObjectSearchHit, type ObjectSearchScope } from "../api/tauri";
 import { useT } from "../i18n";
-import { buildObjectIndex, searchObjects, type ObjectEntry } from "../objectSearch";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { NoResultsIllustration } from "./illustrations";
@@ -14,12 +13,14 @@ import { staggerContainer, variants } from "../motion";
 import { ErrorNote } from "./modalForm";
 
 /**
- * スキーマ横断のグローバルオブジェクト検索。`schema_overview` を源に、テーブル名・
- * カラム名を全 DB (またはカレント DB) 串刺しで部分一致検索し、選択で該当テーブルを開く。
- * 既存コマンドパレット (Cmd/Ctrl+K) とは別キー (Cmd/Ctrl+Shift+O) で起動する。
+ * スキーマ横断のグローバルオブジェクト検索。テーブル名・カラム名を全 DB (またはカレント DB)
+ * 串刺しで部分一致検索し、選択で該当テーブルを開く。既存コマンドパレット (Cmd/Ctrl+K) とは
+ * 別キー (Cmd/Ctrl+Shift+O) で起動する。
  *
- * 絞り込み/スコアリングの純ロジックは `objectSearch.ts` に分離。ここは取得・入力状態・
- * キーボードナビ・描画のみを担う。
+ * 索引の構築・スコアリング・上位 N 件の抽出は Rust (`search_schema_objects`、#1261) が行い、
+ * 全 DB 分の索引はバックエンドの Schema Cache に保持される。ここは入力状態 (デバウンス付きの
+ * 検索要求)・キーボードナビ・描画のみを担う。開いた直後 (とスコープ切替時) は空クエリで
+ * 要求して索引を先に作らせ (ウォームアップ)、その間は skeleton を出す。
  */
 interface Props {
   sessionId: string;
@@ -37,53 +38,69 @@ const MotionRow = chakra(motion.button, {}, { forwardProps: ["variants"] });
 
 const RESULT_LIMIT = 300;
 
+/** キー入力から検索要求を出すまでの待ち時間 (連打中は最後の入力だけを問い合わせる)。 */
+const SEARCH_DEBOUNCE_MS = 120;
+
 export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onClose }: Props) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<Scope>(currentDatabase ? "current" : "all");
-  const [schemasByDb, setSchemasByDb] = useState<Record<string, TableSchema[]>>({});
-  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<ObjectSearchHit[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-
-  // スコープに応じてスキーマを取得する。current はカレント DB のみ、all は全 DB。
+  // 最後に発行した要求の番号。古い応答 (追い越された要求) は捨てる。
+  const requestSeq = useRef(0);
+  const mounted = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const acc: Record<string, TableSchema[]> = {};
-        if (scope === "current" && currentDatabase) {
-          acc[currentDatabase] = await api.schemaOverview(sessionId, currentDatabase);
-        } else {
-          const dbs = await api.listDatabases(sessionId);
-          for (const db of dbs) {
-            if (cancelled) return;
-            try {
-              acc[db] = await api.schemaOverview(sessionId, db);
-            } catch {
-              // 1 つの DB の取得失敗で全体を止めない (権限不足など)。
-            }
-          }
-        }
-        if (!cancelled) setSchemasByDb(acc);
-      } catch (e) {
-        if (!cancelled) setError(String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    mounted.current = true;
     return () => {
-      cancelled = true;
+      mounted.current = false;
     };
-  }, [sessionId, scope, currentDatabase]);
+  }, []);
 
-  const index = useMemo(() => buildObjectIndex(schemasByDb), [schemasByDb]);
-  const results = useMemo(() => searchObjects(index, query, RESULT_LIMIT), [index, query]);
+  // current はカレント DB のみ、all は全 DB。
+  const searchScope = useMemo<ObjectSearchScope>(
+    () =>
+      scope === "current" && currentDatabase
+        ? { kind: "current", database: currentDatabase }
+        : { kind: "all" },
+    [scope, currentDatabase],
+  );
+
+  // 検索要求。空クエリは結果が空のまま索引だけを作らせる (ウォームアップ) ので即時に、
+  // 入力があるときはデバウンスして問い合わせる。
+  useEffect(() => {
+    const run = () => {
+      const seq = ++requestSeq.current;
+      setLoading(true);
+      api
+        .searchSchemaObjects({ sessionId, scope: searchScope, query, limit: RESULT_LIMIT })
+        .then((hits) => {
+          if (!mounted.current || requestSeq.current !== seq) return;
+          setResults(hits);
+          setError(null);
+        })
+        .catch((e) => {
+          if (!mounted.current || requestSeq.current !== seq) return;
+          setError(String(e));
+        })
+        .finally(() => {
+          if (mounted.current && requestSeq.current === seq) setLoading(false);
+        });
+    };
+    if (!query.trim()) {
+      run();
+      return;
+    }
+    // デバウンス待ちの間に「該当なし」が一瞬出ないよう、要求を出す前から読み込み中にする。
+    setLoading(true);
+    const timer = setTimeout(run, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [sessionId, searchScope, query]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -232,7 +249,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
   );
 }
 
-function entryKey(e: ObjectEntry): string {
+function entryKey(e: ObjectSearchHit): string {
   return `${e.kind}:${e.database}.${e.table}.${e.column ?? ""}`;
 }
 
@@ -263,7 +280,7 @@ function ScopeButton({
 }
 
 interface RowProps {
-  entry: ObjectEntry;
+  entry: ObjectSearchHit;
   active: boolean;
   /** 先頭 `MAX_STAGGER_ITEMS` 件だけ stagger 出現させる (CommandPalette と同じ上限ガード)。 */
   animateEntrance: boolean;

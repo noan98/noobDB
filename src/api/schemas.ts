@@ -932,6 +932,107 @@ export const channelCancelledMessage = z.object({
   deliveredRows: z.number(),
 });
 
+// --- 検索系 (#1261) ----------------------------------------------------------
+//
+// `search_schema_objects` の戻り値と、`find_where_used` / `data_search_stream` が Tauri
+// Channel へ送るメッセージ (`src-tauri/src/commands/search.rs`)。
+
+/** グローバルオブジェクト検索のヒット 1 件。`column` はカラムエントリのときだけ。 */
+export const objectSearchHit = z.object({
+  kind: z.enum(["table", "column"]),
+  database: z.string(),
+  table: z.string(),
+  column: z.string().optional(),
+});
+
+export const objectSearchHitArray = z.array(objectSearchHit);
+
+const referenceLine = z.object({
+  line: z.number(),
+  text: z.string(),
+  ranges: z.array(z.tuple([z.number(), z.number()])),
+  clippedStart: z.boolean(),
+  clippedEnd: z.boolean(),
+});
+
+const whereUsedMatch = z.object({
+  confidence: z.enum(["direct", "possible"]),
+  hitCount: z.number(),
+  lines: z.array(referenceLine),
+  source: z.enum(["object", "snippet"]),
+  kind: z.string(),
+  name: z.string(),
+  id: z.string().nullable(),
+  snippetId: z.string().nullable(),
+});
+
+const whereUsedReport = z.object({
+  matches: z.array(whereUsedMatch),
+  scannedObjects: z.number(),
+  scannedSnippets: z.number(),
+  failed: z.array(z.object({ kind: z.string(), name: z.string(), error: z.string() })),
+  emptyDefinitions: z.array(z.object({ kind: z.string(), name: z.string() })),
+  cancelled: z.boolean(),
+});
+
+export const whereUsedProgressMessage = z.object({
+  kind: z.literal("progress"),
+  done: z.number(),
+  total: z.number(),
+});
+
+export const whereUsedDoneMessage = z.object({
+  kind: z.literal("done"),
+  report: whereUsedReport,
+});
+
+export const whereUsedErrorMessage = z.object({
+  kind: z.literal("error"),
+  error: z.string(),
+  connectionLost: z.boolean(),
+});
+
+export const whereUsedCancelledMessage = z.object({
+  kind: z.literal("cancelled"),
+  report: whereUsedReport,
+});
+
+export const dataSearchProgressMessage = z.object({
+  kind: z.literal("progress"),
+  index: z.number(),
+  total: z.number(),
+  table: z.string(),
+});
+
+const dataSearchEntry = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("hit"),
+    table: z.string(),
+    columns: z.array(z.object({ name: z.string(), dataType: z.string() })),
+    hits: z.array(z.object({ column: z.string(), count: z.number() })),
+  }),
+  z.object({ status: z.literal("no-hit"), table: z.string() }),
+  z.object({
+    status: z.literal("skipped"),
+    table: z.string(),
+    reason: z.enum(["row-threshold", "no-searchable-columns", "error"]),
+    detail: z.string().optional(),
+  }),
+]);
+
+export const dataSearchTableMessage = z.object({
+  kind: z.literal("table"),
+  entry: dataSearchEntry,
+});
+
+export const dataSearchDoneMessage = z.object({ kind: z.literal("done") });
+
+export const dataSearchErrorMessage = z.object({
+  kind: z.literal("error"),
+  error: z.string(),
+  connectionLost: z.boolean(),
+});
+
 // --- エディタのバッチ実行 (Tauri Channel, #1256) ---------------------------
 //
 // `run_sql_batch` (`src-tauri/src/commands/script.rs` の `BatchStreamMessage`) が

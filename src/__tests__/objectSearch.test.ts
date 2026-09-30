@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildObjectIndex, searchObjects } from "../objectSearch";
+// スコアリングは Rust へ移植済み (#1261)。ここでは移植前の TS 実装 (オラクル) の
+// 振る舞いを固定し、共有ゴールデン (objectSearchGolden.test.ts) の期待値の出所を守る。
+import { buildObjectIndex, searchObjects } from "./oracles/objectSearchOracle";
 
 const schemas = {
   shop: [

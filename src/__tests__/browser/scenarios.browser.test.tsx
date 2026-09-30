@@ -717,3 +717,35 @@ describe("シナリオ: サイドバータブの sliding indicator とクロス�
     expect(snippetsTab.element().getAttribute("tabindex")).toBe("0");
   });
 });
+
+describe("シナリオ: グローバルオブジェクト検索 (#1261, 実ブラウザ)", () => {
+  it("Ctrl+Shift+O で開き、入力がバックエンド検索になり、Enter で該当テーブルが開く", async () => {
+    registerAutoStream();
+    // 検索はバックエンド (Rust) が行う: 空クエリは索引のウォームアップ、"fruit" にだけ一致する。
+    onCommand("search_schema_objects", (args) =>
+      (args.query as string).trim().toLowerCase() === "fruit"
+        ? [{ kind: "table", database: "appdb", table: "fruits" }]
+        : [],
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+
+    await userEvent.keyboard("{Control>}{Shift>}o{/Shift}{/Control}");
+    const input = screen.getByRole("combobox", { name: t("objSearchPlaceholder") });
+    await expect.element(input).toBeVisible();
+    // 開いた直後に空クエリで索引を先に作らせている (ウォームアップ)。
+    await expect
+      .poll(() => invocationsOf("search_schema_objects").some((a) => a.query === ""))
+      .toBe(true);
+
+    await userEvent.keyboard("fruit");
+    const option = screen.getByRole("option").first();
+    await expect.element(option).toBeVisible();
+    // 最後の要求は入力全体 (デバウンス後)。
+    const queries = invocationsOf("search_schema_objects").map((a) => a.query);
+    expect(queries[queries.length - 1]).toBe("fruit");
+
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+  });
+});

@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type { SchemaObject, Snippet } from "../api/tauri";
+import type { WhereUsedMatch, WhereUsedTarget } from "../api/tauri";
+import {
+  sortWhereUsedMatches,
+  splitHighlightSegments,
+  unsupportedWhereUsedKinds,
+} from "../components/whereUsed";
+// 参照検出は Rust へ移植済み (#1261)。ここでは移植前の TS 実装 (オラクル) の振る舞いを
+// 固定し、共有ゴールデン (whereUsedGolden.test.ts) の期待値の出所を守る。
 import {
   analyzeDefinition,
   findReferences,
   prepareForReferenceScan,
-  runWhereUsedScan,
-  snippetAppliesToDriver,
-  splitHighlightSegments,
   tableQualifiers,
   toReferenceLines,
-  unsupportedWhereUsedKinds,
-  type WhereUsedTarget,
-} from "../components/whereUsed";
+} from "./oracles/whereUsedOracle";
 
 /**
  * オブジェクト依存検索 (#1027) の純ロジック。識別子境界 (部分一致しない)・引用・
@@ -201,110 +203,44 @@ describe("ドライバ別の縮退", () => {
     expect(unsupportedWhereUsedKinds("sqlite")).toEqual(["procedure", "function"]);
   });
 
-  it("修飾子の既定スキーマ", () => {
+  it("修飾子の既定スキーマ (オラクル)", () => {
     expect(tableQualifiers("sqlite", "main")).toEqual(["main"]);
     expect(tableQualifiers("postgres", "public")).toEqual(["public"]);
   });
 });
 
-describe("runWhereUsedScan", () => {
-  const objects: SchemaObject[] = [
-    { kind: "view", name: "v_orders", id: null },
-    { kind: "view", name: "orders", id: null },
-    { kind: "function", name: "f_total", id: "11" },
-    { kind: "procedure", name: "p_secret", id: null },
-    { kind: "trigger", name: "t_audit", id: "12" },
-    { kind: "function", name: "f_empty", id: null },
-  ];
-  const defs: Record<string, string> = {
-    v_orders: "CREATE VIEW v_orders AS SELECT * FROM orders",
-    orders: "CREATE VIEW orders AS SELECT * FROM orders",
-    f_total: "CREATE FUNCTION f_total() AS $$ SELECT sum(x) FROM customers $$",
-    t_audit: "CREATE TRIGGER t_audit AFTER INSERT ON app.orders FOR EACH ROW EXECUTE FUNCTION f()",
-    f_empty: "   ",
-  };
-  const snippet = (id: string, sql: string, driver: string | null): Snippet => ({
-    id,
-    name: id,
-    folder: null,
-    tags: [],
-    sql,
-    driver,
-    scope: { kind: "any" },
+describe("sortWhereUsedMatches", () => {
+  const m = (
+    kind: WhereUsedMatch["kind"],
+    name: string,
+    confidence: WhereUsedMatch["confidence"],
+  ): WhereUsedMatch => ({
+    confidence,
+    hitCount: 1,
+    lines: [],
+    source: kind === "snippet" ? "snippet" : "object",
+    kind,
+    name,
+    id: null,
+    snippetId: null,
   });
 
-  it("定義とスニペットを走査し、失敗・空定義を分けて報告する", async () => {
-    const progress: number[] = [];
-    const report = await runWhereUsedScan({
-      driver: "postgres",
-      target: table("orders"),
-      listObjects: async () => objects,
-      getDefinition: async (o) => {
-        if (o.name === "p_secret") throw new Error("permission denied");
-        return defs[o.name];
-      },
-      snippets: [
-        snippet("s1", "select * from orders", null),
-        snippet("s2", "select * from orders", "mysql"),
-        snippet("s3", "select 1", "postgres"),
-      ],
-      onProgress: (p) => progress.push(p.done),
-    });
-    expect(report.matches.map((m) => `${m.kind}:${m.name}`)).toEqual([
-      "view:v_orders",
-      "trigger:t_audit",
-      "snippet:s1",
+  it("直接参照 → 候補、その中で種別順 → 名前順に並べる", () => {
+    const sorted = sortWhereUsedMatches([
+      m("snippet", "s1", "direct"),
+      m("trigger", "t_audit", "possible"),
+      m("view", "v_b", "direct"),
+      m("function", "f_total", "direct"),
+      m("view", "v_a", "direct"),
+      m("view", "v_c", "possible"),
     ]);
-    // ビュー自身 (orders) は対象から外す。
-    expect(report.scannedObjects).toBe(4);
-    expect(report.scannedSnippets).toBe(2);
-    expect(report.failed).toEqual([{ kind: "procedure", name: "p_secret", error: "Error: permission denied" }]);
-    expect(report.emptyDefinitions).toEqual([{ kind: "function", name: "f_empty" }]);
-    expect(report.cancelled).toBe(false);
-    expect(progress[progress.length - 1]).toBe(5);
-    expect(report.matches[0].lines[0].line).toBe(1);
-  });
-
-  it("ドライバが扱わない種別は取りに行かない", async () => {
-    const asked: string[] = [];
-    await runWhereUsedScan({
-      driver: "sqlite",
-      target: table("orders"),
-      listObjects: async () => objects,
-      getDefinition: async (o) => {
-        asked.push(o.kind);
-        return defs[o.name] ?? "";
-      },
-      snippets: [],
-    });
-    expect(new Set(asked)).toEqual(new Set(["view", "trigger"]));
-  });
-
-  it("キャンセルされたら残りを取りに行かず途中結果を返す", async () => {
-    const ctrl = new AbortController();
-    let calls = 0;
-    const report = await runWhereUsedScan({
-      driver: "postgres",
-      target: table("orders"),
-      listObjects: async () => objects,
-      getDefinition: async (o) => {
-        calls++;
-        ctrl.abort();
-        return defs[o.name] ?? "";
-      },
-      snippets: [snippet("s1", "select * from orders", null)],
-      signal: ctrl.signal,
-      concurrency: 1,
-    });
-    expect(calls).toBe(1);
-    expect(report.cancelled).toBe(true);
-    expect(report.scannedSnippets).toBe(0);
-    expect(report.matches).toEqual([]);
-  });
-
-  it("スニペットのドライバ判定", () => {
-    expect(snippetAppliesToDriver(snippet("a", "", null), "mysql")).toBe(true);
-    expect(snippetAppliesToDriver(snippet("a", "", "mysql"), "mysql")).toBe(true);
-    expect(snippetAppliesToDriver(snippet("a", "", "postgres"), "mysql")).toBe(false);
+    expect(sorted.map((x) => `${x.confidence}:${x.kind}:${x.name}`)).toEqual([
+      "direct:view:v_a",
+      "direct:view:v_b",
+      "direct:function:f_total",
+      "direct:snippet:s1",
+      "possible:view:v_c",
+      "possible:trigger:t_audit",
+    ]);
   });
 });

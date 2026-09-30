@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **135 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **138 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -53,6 +53,33 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 `foreign_keys` のキャッシュから対象テーブルを参照する FK だけを返す(逆方向 FK ジャンプ)。
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
+
+## 検索 (`commands/search.rs`, #1261)
+
+`search_schema_objects` / `find_where_used` / `data_search_stream`
+
+検索系 3 機能を Rust 側で実行する。いずれもカタログまたは SELECT だけの読み取り操作で
+`read_only` でも動く。
+
+- `search_schema_objects(session_id, scope, query, limit)` — グローバルオブジェクト検索
+  (Cmd/Ctrl+Shift+O)。`scope` は `{kind:"current", database}` / `{kind:"all"}`。全 DB 分の
+  `information_schema` を 1 問い合わせで引いて索引化し (`SchemaCache` の `object_index_all` /
+  `object_index_db`。DDL・Refresh・TTL で失効)、スコアリングと上位 N 件の抽出
+  (`db/object_search.rs`) もバックエンドで行う。`query` が空なら結果は空で索引の構築のみ
+  (ウォームアップ)。順位規則は共有ゴールデン `objectSearchVectors.json`。
+- `find_where_used(session_id, stream_id, database, target, on_event)` — Where-used。
+  Channel に `progress` / `done{report}` / `error` / `cancelled{report}` を送る。定義本文は
+  PostgreSQL / SQLite では 1 問い合わせで一括取得 (`Connection::object_definitions_bulk`)、
+  MySQL は `SHOW CREATE` を並列 3 で個別取得 (`information_schema` の定義は `CREATE …` の
+  見出し・パラメータ・トリガーの対象テーブルを含まず検出結果が変わるため)。参照検出
+  (`db/where_used.rs`) と保存済みスニペット (接続プロファイルのスコープで絞り込み) の
+  走査もバックエンド。`cancel_stream(stream_id)` は途中結果つき (`cancelled: true`)。
+  共有ゴールデン `whereUsedVectors.json`。
+- `data_search_stream(session_id, stream_id, request, on_event)` — DB 全体からの値検索。
+  走査 SQL の生成 (`db/data_search.rs`) と列メタデータの一括取得 (5 テーブル以上) を
+  バックエンドで行い、同時実行 3 で発行する。Channel に `progress` / `table{entry}`
+  (指定順) / `done` / `error` / `cancelled` を送る。走査 SQL は `ensure_allowed_for_session`
+  (読み取り専用ガード) を通す。共有ゴールデン `dataSearchVectors.json`。
 
 `describe_table` の各列は `comment` (列コメント) を、`list_table_comments` は
 テーブル / ビューのコメントを返す (#1002)。SQLite はコメント非対応で常に空。
