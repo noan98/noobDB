@@ -1282,3 +1282,79 @@ async fn postgres_data_quality_assertions_on_read_only_session() {
         seed.execute(sql, None).await.expect(sql);
     }
 }
+
+/// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ結果でなければならない。
+async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
+    let bulk_columns = conn.columns_for_database(db).await.expect("columns bulk");
+    let bulk_indexes = conn.indexes_for_database(db).await.expect("indexes bulk");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!tables.is_empty());
+    for table in &tables {
+        let single = conn.columns(db, table).await.expect("columns");
+        let bulk = bulk_columns
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.columns.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "columns of {table} must match the per-table query"
+        );
+        let single = conn.list_indexes(db, table).await.expect("indexes");
+        let bulk = bulk_indexes
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.indexes.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "indexes of {table} must match the per-table query"
+        );
+    }
+    // 一括取得にだけ現れるテーブルは無い。
+    for t in &bulk_columns {
+        assert!(tables.contains(&t.name), "unexpected table {}", t.name);
+    }
+    for t in &bulk_indexes {
+        assert!(!t.indexes.is_empty(), "{} has no indexes", t.name);
+    }
+}
+
+#[tokio::test]
+async fn postgres_bulk_columns_and_indexes_match_per_table_queries() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for ddl in [
+        "DROP TABLE IF EXISTS bulk_child",
+        "DROP TABLE IF EXISTS bulk_parent",
+        "CREATE TABLE bulk_parent (id integer PRIMARY KEY, name varchar(40))",
+        "COMMENT ON COLUMN bulk_parent.name IS 'nm'",
+        "CREATE TABLE bulk_child (
+            id integer PRIMARY KEY,
+            pid integer NOT NULL DEFAULT 1 REFERENCES bulk_parent (id),
+            extra numeric(10,2),
+            UNIQUE (extra)
+        )",
+        "CREATE INDEX bulk_child_multi ON bulk_child (pid, extra)",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+
+    assert_bulk_matches_per_table(&conn, "public").await;
+
+    conn.execute("DROP TABLE IF EXISTS bulk_child", None)
+        .await
+        .expect("cleanup child");
+    conn.execute("DROP TABLE IF EXISTS bulk_parent", None)
+        .await
+        .expect("cleanup parent");
+    conn.close().await;
+}

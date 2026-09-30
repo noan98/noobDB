@@ -36,7 +36,6 @@ import {
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration } from "./illustrations";
-import { mapLimited } from "./mapLimited";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
 import { Spinner } from "./Spinner";
@@ -305,35 +304,26 @@ function ERDiagramInner({
     setError(null);
     didLayoutOnce.current = false;
     (async () => {
-      const [tables, foreignKeys] = await Promise.all([
-        api.schemaOverview(sessionId, database),
+      // 列名と PK 列は DB 全体を 1 回で取得する (#1255)。以前は列名を
+      // schemaOverview、PK を表示テーブルごとの describeTable (最大 80 回) で
+      // 取っていた。
+      const [described, foreignKeys] = await Promise.all([
+        api.describeDatabase(sessionId, database),
         api.foreignKeys(sessionId, database),
       ]);
       if (cancelled) return;
+      const tables = described.map((tb) => ({
+        name: tb.name,
+        columns: tb.columns.map((c) => c.name),
+      }));
+      const pkByTable = Object.fromEntries(
+        described.map((tb) => [
+          tb.name,
+          tb.columns.filter((c) => c.key === "PRI").map((c) => c.name),
+        ]),
+      );
 
-      // Build once (no PK) just to learn which tables survive the cap, then
-      // fetch PK metadata only for those — bounded work on large schemas.
-      const capped = buildErGraph({
-        tables: tables.map((tb) => ({ name: tb.name, columns: tb.columns })),
-        foreignKeys,
-      });
-      const shownTables = capped.nodes.map((n) => n.data.table);
-      const pkPairs = await mapLimited(shownTables, 8, async (name) => {
-        try {
-          const cols = await api.describeTable(sessionId, database, name);
-          return [name, cols.filter((c) => c.key === "PRI").map((c) => c.name)] as const;
-        } catch {
-          return [name, [] as string[]] as const;
-        }
-      });
-      if (cancelled) return;
-      const pkByTable = Object.fromEntries(pkPairs);
-
-      const built = buildErGraph({
-        tables: tables.map((tb) => ({ name: tb.name, columns: tb.columns })),
-        foreignKeys,
-        pkByTable,
-      });
+      const built = buildErGraph({ tables, foreignKeys, pkByTable });
       setGraph(built);
       setSummary({
         shown: built.nodes.length,

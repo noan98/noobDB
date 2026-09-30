@@ -729,13 +729,47 @@ export const encryptedProfileExportResult = z.object({
   bytes: z.number(),
 });
 
+/** テーブル統計ダッシュボードの 1 行 (`table_statistics`、#1255)。サイズ情報に
+ *  列数・インデックス数・PK 有無・FK 数を合成したもの。 */
+export const tableStatistic = tableSizeInfo.extend({
+  column_count: z.number().nullable(),
+  index_count: z.number(),
+  has_primary_key: z.boolean(),
+  foreign_key_count: z.number(),
+});
+
+/** 1 テーブル分の全列メタデータ (`describe_database`、#1255)。Rust の
+ *  `db::diff::TableColumns`。 */
+export const schemaSnapshotTable = z.object({
+  name: z.string(),
+  columns: z.array(tableColumnInfo),
+});
+
+/** 列編集ダイアログの初期ロード一式 (`alter_table_context`、#1255)。 */
+export const alterTableContext = z.object({
+  columns: z.array(tableColumnInfo),
+  table_comment: z.string(),
+  foreign_keys: z.array(foreignKey),
+  table_names: z.array(z.string()),
+});
+
+/** 逆方向 FK 1 件 (`incoming_foreign_keys`、#1255)。このレスポンスだけ camelCase
+ *  (Rust 側が `serde(rename_all = "camelCase")`、フロントの `IncomingFk` と同形)。 */
+export const incomingForeignKey = z.object({
+  table: z.string(),
+  column: z.string(),
+  referencedColumn: z.string(),
+});
+
 /** 配列を返すコマンド用のラッパースキーマ。 */
+export const tableStatisticArray = z.array(tableStatistic);
+export const schemaSnapshotTableArray = z.array(schemaSnapshotTable);
+export const incomingForeignKeyArray = z.array(incomingForeignKey);
 export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
 export const tableCommentArray = z.array(tableComment);
-export const tableSizeInfoArray = z.array(tableSizeInfo);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
 export const dbUserInfoArray = z.array(dbUserInfo);

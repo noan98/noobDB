@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
-import { api, type DriverKind, type ForeignKey, type TableColumnInfo } from "../api/tauri";
+import { api, type DriverKind, type ForeignKey } from "../api/tauri";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Radio, Switch } from "./ui";
@@ -11,7 +11,6 @@ import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./moda
 import { useToast } from "./Toast";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
-import { mapLimited } from "./mapLimited";
 import {
   buildSchemaMarkdown,
   defaultSchemaFilename,
@@ -31,7 +30,7 @@ interface Props {
 }
 
 type LoadState =
-  | { kind: "loading"; done: number; total: number }
+  | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "ready" };
 
@@ -42,14 +41,15 @@ type SaveStatus = { kind: "idle" } | { kind: "saving" } | { kind: "error"; messa
 
 /**
  * DB スキーマを AI 向けの Markdown としてコピー/保存するモーダル。
- * 開いた時点で全テーブルの列詳細を先読みする (`describeTable` を並列 8 で全走査)
- * ため、対象テーブルの選択変更は再取得なしで即プレビューへ反映される。
+ * 開いた時点で全テーブルの列詳細を `describeDatabase` の 1 回で先読みする (#1255、
+ * 以前はテーブル数ぶんの `describeTable` を並列 8 で走査していた)ため、対象テーブルの
+ * 選択変更は再取得なしで即プレビューへ反映される。
  */
 export function SchemaExportModal({ sessionId, database, driver, onClose }: Props) {
   const t = useT();
   const toast = useToast();
 
-  const [load, setLoad] = useState<LoadState>({ kind: "loading", done: 0, total: 0 });
+  const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [tables, setTables] = useState<SchemaExportTable[]>([]);
   const [fks, setFks] = useState<ForeignKey[]>([]);
 
@@ -65,31 +65,16 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
   // (ダウンロードフォルダ) の後付けで上書きしない。
   const userEditedPathRef = useRef(false);
 
-  // スキーマ全体 (テーブル一覧 + FK) と全テーブルの列詳細を先読みする。
-  // ERDiagramView と同じ取得パターン。テーブル単位の describeTable 失敗は
-  // columns: null (出力にプレースホルダ) へ落として続行する。
+  // スキーマ全体 (全テーブルの列詳細 + FK) を先読みする。列詳細は DB 全体を
+  // バックエンドの 1 回の問い合わせで取得する。
   useEffect(() => {
     let cancelled = false;
-    setLoad({ kind: "loading", done: 0, total: 0 });
+    setLoad({ kind: "loading" });
     (async () => {
-      const [overview, foreignKeys] = await Promise.all([
-        api.schemaOverview(sessionId, database),
+      const [detailed, foreignKeys] = await Promise.all([
+        api.describeDatabase(sessionId, database),
         api.foreignKeys(sessionId, database),
       ]);
-      if (cancelled) return;
-      setLoad({ kind: "loading", done: 0, total: overview.length });
-      const detailed = await mapLimited(overview, 8, async (tb) => {
-        let columns: TableColumnInfo[] | null;
-        try {
-          columns = await api.describeTable(sessionId, database, tb.name);
-        } catch {
-          columns = null;
-        }
-        if (!cancelled) {
-          setLoad((cur) => (cur.kind === "loading" ? { ...cur, done: cur.done + 1 } : cur));
-        }
-        return { name: tb.name, columns };
-      });
       if (cancelled) return;
       setTables(detailed);
       setFks(foreignKeys);
@@ -211,7 +196,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
 
         {load.kind === "loading" && (
           <chakra.div fontSize="sm" color="app.textSecondary">
-            {t("schemaExportLoading", { done: load.done, total: load.total })}
+            {t("schemaExportLoading")}
           </chakra.div>
         )}
         {load.kind === "error" && <ErrorNote>{load.message}</ErrorNote>}

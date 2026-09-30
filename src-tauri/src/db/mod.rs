@@ -17,6 +17,8 @@ pub mod preview;
 pub mod privileges;
 pub mod profile;
 pub mod sandbox;
+/// 一括取得したスキーマ情報の画面向け結合 (テーブル統計・逆方向 FK、#1255)。
+pub mod schema_insight;
 /// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
 pub mod script;
 pub mod server_messages;
@@ -38,8 +40,8 @@ use advisor::UnusedIndexStats;
 use types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
     ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
-    ServerMetrics, StatementStat, StreamBatch, TableColumnInfo, TableComment, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    ServerMetrics, StatementStat, StreamBatch, TableColumnInfo, TableComment, TableIndexes,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use upsert::ImportConflict;
 
@@ -734,6 +736,29 @@ impl Connection {
             Connection::MySql(c) => c.columns(db, table).await,
             Connection::Postgres(c) => c.columns(db, table).await,
             Connection::Sqlite(c) => c.columns(db, table).await,
+        }
+    }
+
+    /// `db` の全テーブル (とビュー) の列メタデータを 1 回の問い合わせで取得する
+    /// (#1255)。単一テーブル版 [`Connection::columns`] と同じ型・値・列順で、
+    /// テーブルごとの N+1 往復を避けたい経路 (スキーマ比較・アドバイザ・
+    /// スキーマエクスポート・ER 図・統計) が使う。テーブルは名前順、列は定義順。
+    pub async fn columns_for_database(&self, db: &str) -> Result<Vec<diff::TableColumns>> {
+        match self {
+            Connection::MySql(c) => c.columns_for_database(db).await,
+            Connection::Postgres(c) => c.columns_for_database(db).await,
+            Connection::Sqlite(c) => c.columns_for_database(db).await,
+        }
+    }
+
+    /// `db` の全テーブルのインデックスを 1 回の問い合わせで取得する (#1255)。
+    /// 単一テーブル版 [`Connection::list_indexes`] と同じ結果形式。インデックスを
+    /// 持たないテーブルは戻り値に現れない。
+    pub async fn indexes_for_database(&self, db: &str) -> Result<Vec<TableIndexes>> {
+        match self {
+            Connection::MySql(c) => c.indexes_for_database(db).await,
+            Connection::Postgres(c) => c.indexes_for_database(db).await,
+            Connection::Sqlite(c) => c.indexes_for_database(db).await,
         }
     }
 
@@ -1584,6 +1609,92 @@ pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableS
                 name: table,
                 columns: vec![column],
             }),
+        }
+    }
+    out
+}
+
+/// `columns_for_database` の行 (テーブル名, 列) をテーブルごとにまとめる (#1255)。
+/// テーブルの並びは初出順、列の並びは入力順を保つ。照合順序によってテーブル名の
+/// 異なるエントリが隣接しない場合でも取り違えないよう、隣接ではなく名前で束ねる。
+pub(crate) fn group_columns_full(rows: Vec<(String, TableColumnInfo)>) -> Vec<diff::TableColumns> {
+    let mut out: Vec<diff::TableColumns> = Vec::new();
+    let mut pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (table, column) in rows {
+        match pos.get(&table) {
+            Some(&i) => {
+                if let Some(entry) = out.get_mut(i) {
+                    entry.columns.push(column);
+                }
+            }
+            None => {
+                pos.insert(table.clone(), out.len());
+                out.push(diff::TableColumns {
+                    name: table,
+                    columns: vec![column],
+                });
+            }
+        }
+    }
+    out
+}
+
+/// `indexes_for_database` の (インデックス, 列) 1 行分の生データ (#1255)。
+pub(crate) struct IndexRow {
+    pub table: String,
+    pub name: String,
+    /// 構成列。式インデックスの列など名前を持たないものは `None` (列には積まない)。
+    pub column: Option<String>,
+    pub unique: bool,
+    pub primary: bool,
+    pub method: Option<String>,
+}
+
+/// `IndexRow` をテーブル → インデックスの順にまとめる。単一テーブル版
+/// `list_indexes` と同じく、初出順を保ち、同名インデックスの行は列を連結し、
+/// 空名のインデックスは捨てる。
+pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
+    let mut out: Vec<TableIndexes> = Vec::new();
+    let mut table_pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut index_pos: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+    for r in rows {
+        if r.name.is_empty() {
+            continue;
+        }
+        let ti = match table_pos.get(&r.table) {
+            Some(&i) => i,
+            None => {
+                let i = out.len();
+                table_pos.insert(r.table.clone(), i);
+                out.push(TableIndexes {
+                    name: r.table.clone(),
+                    indexes: Vec::new(),
+                });
+                i
+            }
+        };
+        let Some(entry) = out.get_mut(ti) else {
+            continue;
+        };
+        let key = (r.table, r.name.clone());
+        let ii = match index_pos.get(&key) {
+            Some(&i) => i,
+            None => {
+                let i = entry.indexes.len();
+                index_pos.insert(key, i);
+                entry.indexes.push(IndexInfo {
+                    name: r.name,
+                    columns: Vec::new(),
+                    unique: r.unique,
+                    primary: r.primary,
+                    method: r.method,
+                });
+                i
+            }
+        };
+        if let (Some(col), Some(index)) = (r.column, entry.indexes.get_mut(ii)) {
+            index.columns.push(col);
         }
     }
     out
@@ -2761,6 +2872,67 @@ mod tests {
         is_session_init_sql, mask_sensitive_var, sql_may_change_schema, sum_size_parts, DriverKind,
         SslMode, WriteKind,
     };
+
+    fn test_col(name: &str) -> super::types::TableColumnInfo {
+        super::types::TableColumnInfo {
+            name: name.to_string(),
+            data_type: "int".into(),
+            nullable: true,
+            key: String::new(),
+            default: None,
+            extra: String::new(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn group_columns_full_groups_by_table_in_first_seen_order() {
+        let grouped = super::group_columns_full(vec![
+            ("b".into(), test_col("x")),
+            ("a".into(), test_col("p")),
+            // 照合順序で隣接しなかった同名テーブルの行も取り違えない。
+            ("b".into(), test_col("y")),
+        ]);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].name, "b");
+        let names: Vec<&str> = grouped[0].columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["x", "y"]);
+        assert_eq!(grouped[1].name, "a");
+    }
+
+    fn index_row(table: &str, name: &str, column: Option<&str>) -> super::IndexRow {
+        super::IndexRow {
+            table: table.into(),
+            name: name.into(),
+            column: column.map(str::to_string),
+            unique: name == "uq",
+            primary: name == "PRIMARY",
+            method: None,
+        }
+    }
+
+    #[test]
+    fn group_index_rows_joins_columns_and_skips_unnamed_indexes() {
+        let grouped = super::group_index_rows(vec![
+            index_row("t", "PRIMARY", Some("id")),
+            index_row("t", "uq", Some("a")),
+            index_row("t", "uq", Some("b")),
+            // 式インデックス: 列名が無くてもインデックス自体は残る。
+            index_row("t", "expr", None),
+            index_row("t", "", Some("ignored")),
+            index_row("u", "PRIMARY", Some("id")),
+        ]);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].name, "t");
+        assert_eq!(grouped[0].indexes.len(), 3);
+        assert!(grouped[0].indexes[0].primary);
+        assert_eq!(grouped[0].indexes[1].columns, ["a", "b"]);
+        assert!(grouped[0].indexes[1].unique);
+        assert!(grouped[0].indexes[2].columns.is_empty());
+        assert_eq!(grouped[1].name, "u");
+    }
 
     /// Drivers whose string literals follow the standard reading (`\` is an
     /// ordinary character), i.e. everything except MySQL (#852).

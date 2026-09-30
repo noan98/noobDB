@@ -125,11 +125,11 @@ function separation(density: ErLayoutDensity): { nodesep: number; ranksep: numbe
 }
 
 export interface BuildErGraphInput {
-  /** Tables and their column names, in declaration order (schema_overview). */
+  /** Tables and their column names, in declaration order (describe_database). */
   tables: { name: string; columns: string[] }[];
   /** All foreign keys in the database (foreign_keys). */
   foreignKeys: ForeignKey[];
-  /** Primary-key column names per table, when known (describe_table). */
+  /** Primary-key column names per table, when known (describe_database). */
   pkByTable?: Record<string, string[]>;
 }
 

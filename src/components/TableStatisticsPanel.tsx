@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
-import { api, type IndexInfo } from "../api/tauri";
+import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import {
-  buildTableStatRows,
   computeTableSizeTotals,
   filterTableStats,
   formatBytes,
@@ -12,11 +11,11 @@ import {
   formatRowCount,
   sizeBarPercent,
   sortTableStats,
+  toTableStatRows,
   type SortDirection,
   type TableStatRow,
   type TableStatSortKey,
 } from "./tableSize";
-import { mapLimited } from "./mapLimited";
 import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -32,14 +31,12 @@ import { Tooltip } from "./Tooltip";
  * インデックス数・PK 有無・FK 数 (#660) を一覧し、ソート/クイックフィルタで俯瞰する。
  * サイズはデータバーで可視化する (表示専用)。テーブル名クリックでそのテーブルを開く。
  *
- * 取得はエンジンのカタログを読むだけ (テーブルスキャンなし) — サイズ/行数は
- * table_sizes、列数は schema_overview、FK は foreign_keys、インデックス/PK は各
- * テーブルの list_indexes を並列数制限つきで引く。読み取り操作のため read_only でも
- * 利用可。SQLite ではサーバ統計が限られる項目は「—」に縮退する。
+ * 取得はエンジンのカタログを読むだけ (テーブルスキャンなし) — サイズ/行数・列数・
+ * インデックス/PK・FK 数の結合までバックエンドの table_statistics が 1 コマンドで
+ * 行う (#1255。以前はテーブル数ぶんの list_indexes をフロントから引いていた)。
+ * 読み取り操作のため read_only でも利用可。SQLite ではサーバ統計が限られる項目は
+ * 「—」に縮退する。
  */
-
-// list_indexes を同時に開きすぎないための並列上限 (ER 図/スキーマエクスポートと同方針)。
-const INDEX_FETCH_CONCURRENCY = 8;
 
 const thBase: SystemStyleObject = {
   position: "sticky",
@@ -103,29 +100,9 @@ export function TableStatisticsPanel({
     const seq = ++requestSeqRef.current;
     setLoading(true);
     try {
-      // サイズ/行数・列数・FK は DB 単位の 1 コマンドずつ。インデックス/PK だけは
-      // テーブル単位なので、サイズ一覧のテーブル名に対して並列数制限つきで引く。
-      const [sizes, overview, foreignKeys] = await Promise.all([
-        api.tableSizes(sessionId, database),
-        api.schemaOverview(sessionId, database),
-        api.foreignKeys(sessionId, database),
-      ]);
+      const stats = await api.tableStatistics(sessionId, database);
       if (seq !== requestSeqRef.current) return;
-      const indexResults = await mapLimited(
-        sizes.map((s) => s.name),
-        INDEX_FETCH_CONCURRENCY,
-        async (name): Promise<[string, IndexInfo[] | null]> => {
-          try {
-            return [name, await api.listIndexes(sessionId, database, name)];
-          } catch {
-            // 1 テーブルの取得失敗は全体を落とさず「不明」(null) に縮退する。
-            return [name, null];
-          }
-        },
-      );
-      if (seq !== requestSeqRef.current) return;
-      const indexesByTable = new Map<string, IndexInfo[] | null>(indexResults);
-      setRows(buildTableStatRows(sizes, overview, foreignKeys, indexesByTable));
+      setRows(toTableStatRows(stats));
       setError(null);
     } catch (e) {
       if (seq !== requestSeqRef.current) return;
