@@ -89,8 +89,14 @@ describe("Zod スキーマ単体 (#391)", () => {
       elapsedMs: 2,
       hasColumns: false,
       appliedAutoLimit: null,
+      readOnly: false,
+      schemaMayChange: false,
     };
     expect(queryStreamDoneMessage.safeParse(done).success).toBe(true);
+    // バックエンドの判定値 (#1256) が欠けたメッセージは受け付けない。
+    expect(
+      queryStreamDoneMessage.safeParse({ ...done, readOnly: undefined }).success,
+    ).toBe(false);
     expect(
       queryStreamDoneMessage.safeParse({
         ...done,
@@ -141,7 +147,8 @@ describe("Zod スキーマ単体 (#391)", () => {
       profile_id: null,
       driver: "sqlite",
       database: null,
-      sql: "select 1",
+      sql_preview: "select 1",
+      sql_len: 8,
       rows: null,
       rows_affected: null,
       elapsed_ms: null,

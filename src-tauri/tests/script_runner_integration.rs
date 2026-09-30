@@ -409,3 +409,231 @@ async fn cancel_rolls_back_the_wrapping_transaction() {
     assert!(!session.conn.transaction_active().await);
     assert_eq!(count(&session, "t").await, 0);
 }
+
+// ---------------------------------------------------------------------------
+// エディタのバッチ実行 (`run_sql_batch`, #1256)。`.sql` ランナーと同じコアを
+// 文字列の Cursor で再利用し、文ごとの結果を返す。
+// ---------------------------------------------------------------------------
+
+async fn batch(
+    session: &Arc<t::Session>,
+    sql: &str,
+    stop_on_error: bool,
+    preview_rows: usize,
+) -> (t::ScriptRun, Vec<t::BatchStatementResult>) {
+    t::run_sql_batch_via_core(
+        session.clone(),
+        sql,
+        None,
+        stop_on_error,
+        preview_rows,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch setup")
+}
+
+#[tokio::test]
+async fn batch_returns_one_result_per_statement() {
+    let (_fx, session) = setup("batch_basic", false).await;
+    let (run, results) = batch(
+        &session,
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);\n\
+         INSERT INTO t VALUES (1, 'a;b'), (2, 'c');\n\
+         SELECT id, v FROM t ORDER BY id;\n\
+         SELECT id FROM t WHERE id > 100",
+        true,
+        200,
+    )
+    .await;
+    assert!(matches!(run, t::ScriptRun::Done { .. }));
+    assert_eq!(results.len(), 4);
+    assert!(results.iter().all(|r| r.status == t::BatchStatus::Ok));
+    // DDL / DML は columns なしで影響行数を返す。
+    assert!(results[0].columns.is_none());
+    assert_eq!(results[1].rows_affected, Some(2));
+    // SELECT は列と行を返す (文字列内の `;` で分割されない)。
+    assert_eq!(results[2].columns.as_ref().map(Vec::len), Some(2));
+    let rows = results[2].rows.as_ref().expect("rows");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][1], t::Value::String("a;b".into()));
+    // 0 行の SELECT は従来どおり columns が空 = 影響行数 0 の扱い (run_query と同じ判定)。
+    assert!(results[3].columns.is_none());
+    assert_eq!(results[3].rows_affected, Some(0));
+    assert_eq!(count(&session, "t").await, 2);
+}
+
+#[tokio::test]
+async fn batch_caps_select_rows_at_the_preview_limit() {
+    let (_fx, session) = setup("batch_cap", false).await;
+    let big =
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 100000) SELECT x FROM c";
+    let (_run, results) = batch(&session, big, true, 7).await;
+    assert_eq!(results.len(), 1);
+    let rows = results[0].rows.as_ref().expect("rows");
+    assert_eq!(rows.len(), 7, "取得は preview_rows 件で打ち切られる");
+    assert_eq!(rows[0][0], t::Value::Int(1));
+    assert_eq!(rows[6][0], t::Value::Int(7));
+    // 打ち切り後も同じ接続 (プール) が使える。
+    assert_eq!(
+        session
+            .conn
+            .execute("SELECT 1", None)
+            .await
+            .expect("pool still usable")
+            .rows
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn batch_stops_on_error_and_skips_the_rest() {
+    let (_fx, session) = setup("batch_stop", false).await;
+    let (run, results) = batch(
+        &session,
+        "CREATE TABLE t (id INTEGER PRIMARY KEY);\n\
+         INSERT INTO t VALUES (1);\n\
+         INSERT INTO missing_table VALUES (1);\n\
+         INSERT INTO t VALUES (2);\n\
+         INSERT INTO t VALUES (3)",
+        true,
+        200,
+    )
+    .await;
+    assert!(matches!(run, t::ScriptRun::Done { .. }));
+    let statuses: Vec<_> = results.iter().map(|r| r.status).collect();
+    assert_eq!(
+        statuses,
+        vec![
+            t::BatchStatus::Ok,
+            t::BatchStatus::Ok,
+            t::BatchStatus::Error,
+            t::BatchStatus::Skipped,
+            t::BatchStatus::Skipped,
+        ]
+    );
+    assert!(results[2]
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("missing_table")));
+    // スキップされた文の SQL 本文も返す (結果カードに表示する)。
+    assert_eq!(results[4].sql, "INSERT INTO t VALUES (3)");
+    assert_eq!(count(&session, "t").await, 1);
+}
+
+#[tokio::test]
+async fn batch_continues_past_errors_when_not_stopping() {
+    let (_fx, session) = setup("batch_continue", false).await;
+    let (_run, results) = batch(
+        &session,
+        "CREATE TABLE t (id INTEGER PRIMARY KEY);\n\
+         INSERT INTO missing_table VALUES (1);\n\
+         INSERT INTO t VALUES (2)",
+        false,
+        200,
+    )
+    .await;
+    let statuses: Vec<_> = results.iter().map(|r| r.status).collect();
+    assert_eq!(
+        statuses,
+        vec![
+            t::BatchStatus::Ok,
+            t::BatchStatus::Error,
+            t::BatchStatus::Ok
+        ]
+    );
+    assert_eq!(count(&session, "t").await, 1);
+}
+
+#[tokio::test]
+async fn batch_enforces_read_only_per_statement() {
+    let (_fx, session) = setup("batch_ro", true).await;
+    let (_run, results) = batch(
+        &session,
+        "SELECT 1;\nCREATE TABLE t (id INTEGER);\nSELECT 2",
+        false,
+        200,
+    )
+    .await;
+    assert_eq!(results[0].status, t::BatchStatus::Ok);
+    assert_eq!(results[1].status, t::BatchStatus::Error);
+    assert!(results[1]
+        .error
+        .as_deref()
+        .is_some_and(|e| e.to_lowercase().contains("read-only")));
+    assert_eq!(results[2].status, t::BatchStatus::Ok);
+    // テーブルは作られていない。
+    assert!(session.conn.execute("SELECT * FROM t", None).await.is_err());
+}
+
+#[tokio::test]
+async fn batch_runs_inside_an_active_explicit_transaction() {
+    let (_fx, session) = setup("batch_tx", false).await;
+    session
+        .conn
+        .execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+    session
+        .conn
+        .begin_transaction(None)
+        .await
+        .expect("begin explicit tx");
+    let (run, results) = batch(
+        &session,
+        "INSERT INTO t VALUES (1);\nINSERT INTO t VALUES (2);\nSELECT id FROM t ORDER BY id",
+        true,
+        200,
+    )
+    .await;
+    assert!(matches!(run, t::ScriptRun::Done { .. }));
+    assert!(results.iter().all(|r| r.status == t::BatchStatus::Ok));
+    assert_eq!(results[2].rows.as_ref().map(Vec::len), Some(2));
+    // 呼び出し側のトランザクションは開いたまま (ランナーは閉じない)。
+    assert!(session.conn.transaction_active().await);
+    session
+        .conn
+        .finish_transaction(false)
+        .await
+        .expect("rollback");
+    assert_eq!(
+        count(&session, "t").await,
+        0,
+        "同じ接続に乗っていたので ROLLBACK で消える"
+    );
+}
+
+#[tokio::test]
+async fn batch_script_transaction_control_is_translated_and_rolled_back_on_error() {
+    let (_fx, session) = setup("batch_ctl", false).await;
+    session
+        .conn
+        .execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+    // BEGIN ... COMMIT はランナーの明示トランザクションに読み替えられて確定する。
+    let (_run, ok) = batch(
+        &session,
+        "BEGIN;\nINSERT INTO t VALUES (1);\nCOMMIT;\nSELECT COUNT(*) FROM t",
+        true,
+        200,
+    )
+    .await;
+    assert!(ok.iter().all(|r| r.status == t::BatchStatus::Ok));
+    assert_eq!(count(&session, "t").await, 1);
+    assert!(!session.conn.transaction_active().await);
+
+    // BEGIN の後でエラーになったら、ランナーが開いたトランザクションは ROLLBACK される。
+    let (_run, failed) = batch(
+        &session,
+        "BEGIN;\nINSERT INTO t VALUES (2);\nINSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (3)",
+        true,
+        200,
+    )
+    .await;
+    assert_eq!(failed[2].status, t::BatchStatus::Error);
+    assert_eq!(failed[3].status, t::BatchStatus::Skipped);
+    assert_eq!(count(&session, "t").await, 1);
+    assert!(!session.conn.transaction_active().await);
+}

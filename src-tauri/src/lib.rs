@@ -152,8 +152,8 @@ pub mod __test_api {
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
     pub use crate::commands::script::{
-        ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
-        ScriptProgressEvent, ScriptRun,
+        BatchStatementResult, BatchStatus, BatchStreamMessage, ScriptDoneEvent, ScriptErrorEvent,
+        ScriptFailure, ScriptOptions, ScriptProgress, ScriptProgressEvent, ScriptRun,
     };
 
     /// `.sql` スクリプトのストリーミング文分割 (#973) を一括で行い、各文の本文だけを
@@ -192,6 +192,36 @@ pub mod __test_api {
             on_progress,
         )
         .await
+    }
+
+    /// `run_sql_batch` (エディタのバッチ実行, #1256) の本体を Tauri ランタイム無しで
+    /// 駆動する。各文の結果を順に集めて、ランナーの終了状態と一緒に返す。
+    pub async fn run_sql_batch_via_core(
+        session: std::sync::Arc<Session>,
+        sql: &str,
+        database: Option<&str>,
+        stop_on_error: bool,
+        preview_rows: usize,
+        committed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> crate::error::Result<(ScriptRun, Vec<BatchStatementResult>)> {
+        let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = results.clone();
+        let run = crate::commands::script::run_batch_core(
+            session,
+            sql.to_string(),
+            database.map(str::to_string),
+            stop_on_error,
+            preview_rows,
+            committed,
+            move |r| {
+                if let Ok(mut g) = sink.lock() {
+                    g.push(r);
+                }
+            },
+        )
+        .await?;
+        let collected = results.lock().map(|g| g.clone()).unwrap_or_default();
+        Ok((run, collected))
     }
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
@@ -955,6 +985,8 @@ pub fn run() {
             commands::assertions::preview_assertion_sql,
             commands::assertions::run_assertion,
             commands::history::list_history,
+            commands::history::get_history_sql,
+            commands::history::list_history_sql,
             commands::history::clear_history,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
@@ -975,6 +1007,7 @@ pub fn run() {
             commands::import::parse_csv_preview,
             commands::import::import_csv,
             commands::script::run_sql_script,
+            commands::script::run_sql_batch,
             commands::transfer::transfer_data,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,

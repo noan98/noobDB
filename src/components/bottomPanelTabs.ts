@@ -123,6 +123,14 @@ export interface BottomPanelContext {
    * (プロファイル無し) ではウォッチを保存できないので開けない。
    */
   timelapseProfileId?: string | null;
+  /**
+   * アクティブ接続のドライバ。プロセスモニタとクエリインスペクタはサーバ統計を
+   * 持たない SQLite では動かない (#732 / #746) ので、折りたたみ時のパネルバー
+   * (`bottomPanelStripTabs`) はこれを見て「無効 + 理由」で並べる。
+   * `availableBottomPanelTabs` の判定には使わない (開いたパネル側が非対応の説明を
+   * 出すため、開けること自体は変えない)。`ConnectionProfile.driver` と同じ生の文字列。
+   */
+  driver?: string | null;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
@@ -178,4 +186,57 @@ export function nextBottomPanelTab(
   const i = tabs.indexOf(current);
   if (i < 0 || tabs.length === 0) return null;
   return tabs[(i + delta + tabs.length) % tabs.length];
+}
+
+/**
+ * 折りたたみ時のパネルバーに並ぶ 1 項目。`reason` は無効なときだけ入る
+ * (ツールチップで「なぜ今は開けないか」を説明するため)。
+ */
+export interface BottomPanelStripEntry {
+  tab: BottomPanelTab;
+  enabled: boolean;
+  reason: BottomPanelUnavailableReason | null;
+}
+
+/** パネルバーの項目が今は開けない理由。表示文言は呼び出し側 (i18n) が解決する。 */
+export type BottomPanelUnavailableReason = "needsSession" | "needsDatabase" | "sqliteUnsupported";
+
+/**
+ * ボトムパネルを閉じているときに `<main>` の下端へ出すパネルバーの項目 (#1112 の
+ * 導線改善)。
+ *
+ * ## なぜ「開けないタブ」も並べるのか
+ *
+ * パネルを閉じるとタブ列ごと消える設計だったため、プロセスモニタ・クエリインスペクタ・
+ * アドバイザ・接続ヘルスといった本製品の中核機能の入口が、サイドバー右上のレンチ
+ * アイコン (17 項目のフラットなメニュー) とコマンドパレットしか無かった。バーを常設
+ * して **存在そのものを見せる** のが目的なので、ログ / 診断グループは接続の有無に
+ * 関係なく並べ、今は開けない項目は無効化して理由をツールチップで示す
+ * (「接続すればプロセスモニタが使える」と、接続前に分かる)。
+ *
+ * 参照グループ (影響分析・構造・列を探索・タイムラプス) は並べない。対象オブジェクトを
+ * 決めて開くもの (ツリーの右クリック・コマンドパレット・外部キーの参照先) で、バーに
+ * 出しても「何の構造か」が伝わらないうえ、1280px 幅で右端がはみ出す。
+ */
+export function bottomPanelStripTabs(ctx: BottomPanelContext): BottomPanelStripEntry[] {
+  const available = new Set(availableBottomPanelTabs(ctx));
+  const out: BottomPanelStripEntry[] = [];
+  for (const tab of BOTTOM_PANEL_TABS) {
+    if (BOTTOM_PANEL_TAB_GROUP[tab] === "reference") continue;
+    // SQLite はサーバ統計を持たず、プロセス一覧 / クエリ統計を取れない (#732 / #746)。
+    // 開けはするが中身が非対応表示になるだけなので、バーでは無効にして理由を示す。
+    const sqliteUnsupported =
+      ctx.driver === "sqlite" && (tab === "processes" || tab === "inspector");
+    if (available.has(tab) && !sqliteUnsupported) {
+      out.push({ tab, enabled: true, reason: null });
+      continue;
+    }
+    const reason: BottomPanelUnavailableReason = sqliteUnsupported
+      ? "sqliteUnsupported"
+      : tab === "advisor" && ctx.sessionId
+        ? "needsDatabase"
+        : "needsSession";
+    out.push({ tab, enabled: false, reason });
+  }
+  return out;
 }

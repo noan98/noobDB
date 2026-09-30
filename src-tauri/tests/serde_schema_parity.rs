@@ -40,21 +40,21 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    BroadcastDiff, BroadcastEnvReport, BroadcastMessage, CancelStreamResult, ChangedRow, Column,
-    ColumnDiff, ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview,
-    DataDiff, DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
-    ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
-    HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
-    PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
-    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
-    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
-    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
-    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
-    StatementStat, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement,
-    TableColumnInfo, TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema,
-    TableSizeInfo, Value,
+    BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport,
+    BroadcastMessage, CancelStreamResult, ChangedRow, Column, ColumnDiff, ColumnProfile,
+    ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff, DiffMode,
+    DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent, ExportDoneEvent,
+    ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding, HistoryEntry,
+    ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult, ImportStartedEvent,
+    IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun, PreviewStreamMessage,
+    ProcessInfo, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags, QueryResult,
+    QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
+    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
+    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage, ServerMessageSeverity,
+    ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope,
+    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementStat, StreamCancelledEvent,
+    StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment,
+    TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -323,7 +323,8 @@ fn build_fixtures() -> serde_json::Value {
         profile_id: Some("abc12345".into()),
         driver: "mysql".into(),
         database: Some("appdb".into()),
-        sql: "SELECT 1".into(),
+        sql_preview: "SELECT 1".into(),
+        sql_len: 8,
         rows: Some(1),
         rows_affected: None,
         elapsed_ms: Some(12),
@@ -485,6 +486,8 @@ fn build_fixtures() -> serde_json::Value {
             duplicate_rows: None,
         }),
         snapshot_id: Some(3),
+        read_only: false,
+        schema_may_change: true,
     };
     let broadcast_env_message = BroadcastMessage::Env(BroadcastEnvReport {
         session_id: "sess0001".into(),
@@ -666,6 +669,48 @@ fn build_fixtures() -> serde_json::Value {
         rows: 200,
     };
 
+    // #1256: エディタのバッチ実行 (`run_sql_batch`) の Channel メッセージ。
+    // 結果 1 文ぶんは SELECT (列 + 行) とエラーの 2 形を載せ、省略フィールド
+    // (`skip_serializing_if`) のキーも固定する。
+    let batch_stream_started_message = BatchStreamMessage::Started { total: 3 };
+    let batch_stream_results_message = BatchStreamMessage::Results {
+        results: vec![
+            BatchStatementResult {
+                sql: "SELECT 1".into(),
+                status: BatchStatus::Ok,
+                columns: Some(vec![column.clone()]),
+                rows: Some(vec![vec![Value::Int(1)]]),
+                rows_affected: None,
+                elapsed_ms: Some(2),
+                error: None,
+                server_messages: vec![],
+            },
+            BatchStatementResult {
+                sql: "DELETE FROM t".into(),
+                status: BatchStatus::Error,
+                columns: None,
+                rows: None,
+                rows_affected: None,
+                elapsed_ms: None,
+                error: Some("boom".into()),
+                server_messages: vec![],
+            },
+        ],
+    };
+    let batch_stream_done_message = BatchStreamMessage::Done {
+        ok: 1,
+        errors: 1,
+        skipped: 1,
+        elapsed_ms: 9,
+    };
+    let batch_stream_error_message = BatchStreamMessage::Error {
+        error: "connection reset by peer".into(),
+        connection_lost: true,
+    };
+    let batch_stream_cancelled_message = BatchStreamMessage::Cancelled {
+        delivered_statements: 2,
+    };
+
     let connect_phase_event = ConnectPhaseEvent {
         attempt_id: "attempt0001".into(),
         phase: "tunnel_connecting",
@@ -722,6 +767,12 @@ fn build_fixtures() -> serde_json::Value {
         "queryStreamErrorMessage": query_stream_error_message,
         "channelCancelledMessage": channel_cancelled_message,
         "channelCancelledMessageZero": channel_cancelled_message_zero,
+        // --- #1256: エディタのバッチ実行 (Channel) ---
+        "batchStreamStartedMessage": batch_stream_started_message,
+        "batchStreamResultsMessage": batch_stream_results_message,
+        "batchStreamDoneMessage": batch_stream_done_message,
+        "batchStreamErrorMessage": batch_stream_error_message,
+        "batchStreamCancelledMessage": batch_stream_cancelled_message,
         "previewStreamMetaMessage": preview_meta_message,
         "previewStreamRowsMessageLite": preview_rows_message,
         "previewStreamDoneMessage": preview_done_message,

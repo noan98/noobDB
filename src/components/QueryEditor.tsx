@@ -45,13 +45,13 @@ import {
   syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { format as formatSql } from "sql-formatter";
 import type { TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
+import { PREFLIGHT_MAX_CHARS } from "./preflight";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
 import { PreflightBadge } from "./PreflightBadge";
 import { comboToCodeMirror } from "../shortcutKeys";
@@ -62,7 +62,8 @@ import { copyToClipboard } from "./clipboard";
 import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
 import { formatCombo as formatComboLabel } from "../shortcutKeys";
 import type { ShortcutId } from "../shortcuts";
-import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
+import { codeMirrorSqlDialectFor } from "./sqlDialect";
+import { formatSqlAsync } from "./sqlFormat";
 import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Switch } from "./Switch";
@@ -292,36 +293,49 @@ export interface QueryEditorHandle {
   explain: () => void;
 }
 
+/**
+ * 選択範囲 (無ければ全文) を整形して置き換える。整形 (sql-formatter) は巨大な SQL で
+ * メインスレッドを塞ぐため Web Worker で実行する (#1256、`sqlFormat.ts`)。戻り値は
+ * 「キー入力を消費したか」で、対象テキストが空のときだけ false。置き換えは非同期に
+ * なるので、整形中にユーザが編集して対象テキストが変わっていたら結果は捨てる
+ * (古い整形結果で新しい入力を上書きしない)。
+ */
 function formatEditorContent(
   view: EditorView,
   driver: string,
   onError?: (message: string) => void,
 ): boolean {
-  const sel = view.state.selection.main;
+  const startState = view.state;
+  const sel = startState.selection.main;
   const isSelection = !sel.empty;
   const text = isSelection
-    ? view.state.sliceDoc(sel.from, sel.to)
-    : view.state.doc.toString();
+    ? startState.sliceDoc(sel.from, sel.to)
+    : startState.doc.toString();
   if (text.trim().length === 0) return false;
-  let formatted: string;
-  try {
-    formatted = formatSql(text, { language: sqlFormatterLanguageFor(driver) });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    onError?.(message);
-    return true;
-  }
-  if (formatted === text) return true;
-  if (isSelection) {
-    view.dispatch({
-      changes: { from: sel.from, to: sel.to, insert: formatted },
-      selection: { anchor: sel.from, head: sel.from + formatted.length },
-    });
-  } else {
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: formatted },
-    });
-  }
+  void formatSqlAsync(text, driver).then(
+    (formatted) => {
+      if (formatted === text) return;
+      const current = view.state;
+      // 整形中に文書が変わった場合は適用しない。同じ範囲の中身が変わっていなければ
+      // (別の場所だけが編集された場合も含め) 位置がずれていないかを文字列で確認する。
+      if (isSelection) {
+        if (current.sliceDoc(sel.from, sel.to) !== text) return;
+        view.dispatch({
+          changes: { from: sel.from, to: sel.to, insert: formatted },
+          selection: { anchor: sel.from, head: sel.from + formatted.length },
+        });
+      } else {
+        if (current.doc.length !== text.length || current.doc.toString() !== text) return;
+        view.dispatch({
+          changes: { from: 0, to: current.doc.length, insert: formatted },
+        });
+      }
+    },
+    (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      onError?.(message);
+    },
+  );
   return true;
 }
 
@@ -341,9 +355,21 @@ function selectionOrAllText(view: EditorView): string | null {
  */
 function preflightTextFromState(state: EditorState): string {
   const sel = state.selection.main;
+  // 上限を超える巨大なテキストは、文字列化する前に(doc.toString() の O(n) を避けて)
+  // 対象外にする (#1256)。
+  const length = sel.empty ? state.doc.length : sel.to - sel.from;
+  if (length > PREFLIGHT_MAX_CHARS) return "";
   const text = sel.empty ? state.doc.toString() : state.sliceDoc(sel.from, sel.to);
   return text.trim().length > 0 ? text : "";
 }
+
+/**
+ * プリフライト対象テキストの更新をまとめる待ち時間 (ms)。打鍵ごとに全文を文字列化して
+ * state を更新し計画を組み直すのをやめ、入力が止まってから 1 回だけ行う (#1256)。
+ * 編集が止まってから COUNT までの合計が従来の約 500ms になるよう、`usePreflight.ts` の
+ * COUNT 側デバウンスと合わせて決めている。
+ */
+const PREFLIGHT_TEXT_DEBOUNCE_MS = 150;
 
 function buildSqlExtension(
   driver: string,
@@ -508,6 +534,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   // 反映し、値が実際に変わったときだけ更新する (カーソル移動だけでは再計算しない)。
   const [preflightSql, setPreflightSql] = useState("");
   const preflightSqlRef = useRef("");
+  // プリフライト対象テキスト更新のデバウンスタイマー (#1256)。
+  const preflightTimerRef = useRef<number | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -738,13 +766,19 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             if (u.selectionSet || u.docChanged) {
               const sel = u.state.selection.main;
               onSelectionChangeRef.current?.({ anchor: sel.anchor, head: sel.head });
-              // プリフライト対象テキスト (選択 or 全文) を更新。実値が変わったときだけ
-              // setState し、カーソル移動 (選択なし = 常に全文) では再計算しない。
-              const pfText = preflightTextFromState(u.state);
-              if (pfText !== preflightSqlRef.current) {
-                preflightSqlRef.current = pfText;
-                setPreflightSql(pfText);
-              }
+              // プリフライト対象テキスト (選択 or 全文) の更新は、打鍵ごとではなく入力が
+              // 止まってから 1 回だけ行う (全文の文字列化・state 更新・計画組み立てを
+              // 打鍵ごとに走らせない、#1256)。タイマー発火時に最新の state を読む。
+              if (preflightTimerRef.current !== null) window.clearTimeout(preflightTimerRef.current);
+              preflightTimerRef.current = window.setTimeout(() => {
+                preflightTimerRef.current = null;
+                const pfText = preflightTextFromState(view.state);
+                // 実値が変わったときだけ setState する。
+                if (pfText !== preflightSqlRef.current) {
+                  preflightSqlRef.current = pfText;
+                  setPreflightSql(pfText);
+                }
+              }, PREFLIGHT_TEXT_DEBOUNCE_MS);
             }
           }),
         ],
@@ -756,7 +790,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     const initPreflightText = preflightTextFromState(view.state);
     preflightSqlRef.current = initPreflightText;
     setPreflightSql(initPreflightText);
-    return () => view.destroy();
+    return () => {
+      if (preflightTimerRef.current !== null) {
+        window.clearTimeout(preflightTimerRef.current);
+        preflightTimerRef.current = null;
+      }
+      view.destroy();
+    };
   }, []);
 
   const schemaKey = schemaTable

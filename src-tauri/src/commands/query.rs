@@ -583,6 +583,13 @@ pub enum QueryStreamMessage {
         /// フロントは次回の再実行でこれを `prevSnapshotId` として返す。保持しなかった
         /// (要求なし・行数超過) ときは `null`。
         snapshot_id: Option<u64>,
+        /// 実行した SQL が読み取り専用と判定できるか (`is_read_only_sql_for`)。フロントが
+        /// 実行後に `isReadOnlySql` をマスク込みで再計算しなくて済むよう、バックエンドの
+        /// 判定値をそのまま載せる (#1256)。
+        read_only: bool,
+        /// 実行した SQL がスキーマを変えうるか (`sql_may_change_schema`)。フロントの
+        /// 補完用スキーマキャッシュを無効化する判定に使う (#1256)。
+        schema_may_change: bool,
     },
     Error {
         error: String,
@@ -1034,7 +1041,10 @@ async fn spawn_query_stream(
     // 実行できる以上、`run_query` 側がキャッシュした結果を stale にしうるため
     // invalidate だけは行う。判定は元の `sql` (auto-limit 適用前) で行う —
     // LIMIT の注入は read-only 判定を変えないため `effective_sql` と等価。
-    if result.is_ok() && !crate::db::is_read_only_sql_for(session.conn.driver_kind(), &sql) {
+    // 判定値は Done メッセージにも載せるので 1 度だけ計算する (#1256)。
+    let read_only = crate::db::is_read_only_sql_for(session.conn.driver_kind(), &sql);
+    let schema_may_change = crate::db::sql_may_change_schema(session.conn.driver_kind(), &sql);
+    if result.is_ok() && !read_only {
         session.query_cache.invalidate_all().await;
     }
 
@@ -1095,6 +1105,8 @@ async fn spawn_query_stream(
                     Some(final_stats)
                 },
                 snapshot_id,
+                read_only,
+                schema_may_change,
             }) {
                 tracing::warn!(
                     session_id = %session.id,
@@ -1223,6 +1235,11 @@ async fn spawn_captured_write(
                 server_messages: result.server_messages.clone(),
                 stats: None,
                 snapshot_id: None,
+                read_only: crate::db::is_read_only_sql_for(session.conn.driver_kind(), &sql),
+                schema_may_change: crate::db::sql_may_change_schema(
+                    session.conn.driver_kind(),
+                    &sql,
+                ),
             }) {
                 tracing::warn!(
                     session_id = %session.id,

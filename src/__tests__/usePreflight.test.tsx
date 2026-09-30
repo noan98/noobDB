@@ -82,4 +82,18 @@ describe("usePreflightImpact", () => {
       "app",
     );
   });
+
+  it("長さ上限 (64KB) を超えるテキストは計画を組み立てず、COUNT も流さない (#1256)", () => {
+    const huge = `DELETE FROM users WHERE note = '${"x".repeat(64 * 1024)}'`;
+    const { result } = renderHook(() =>
+      usePreflightImpact({
+        sql: huge,
+        sessionId: "s1",
+        database: null,
+        enabled: true,
+      }),
+    );
+    expect(result.current).toBeNull();
+    expect(runQuery).not.toHaveBeenCalled();
+  });
 });

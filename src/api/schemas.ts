@@ -437,7 +437,10 @@ export const historyEntry = z.object({
   profile_id: z.string().nullable(),
   driver: z.string(),
   database: z.string().nullable(),
-  sql: z.string(),
+  /** 一覧用の要約 (空白を畳んだ先頭 N 文字)。全文は `get_history_sql` で取る (#1256)。 */
+  sql_preview: z.string(),
+  /** SQL 全文の文字数。 */
+  sql_len: z.number(),
   rows: z.number().nullable(),
   rows_affected: z.number().nullable(),
   elapsed_ms: z.number().nullable(),
@@ -835,6 +838,10 @@ export const queryStreamDoneMessage = z.object({
   stats: streamStatsSnapshot.nullable().optional(),
   /** 自動リフレッシュ差分 (#1257) の比較元スナップショット ID。保持しなければ null/省略。 */
   snapshotId: z.number().nullable().optional(),
+  /** 実行した SQL が読み取り専用か (バックエンドの `is_read_only_sql_for`、#1256)。 */
+  readOnly: z.boolean(),
+  /** 実行した SQL がスキーマを変えうるか (`sql_may_change_schema`、#1256)。 */
+  schemaMayChange: z.boolean(),
 });
 
 export const queryStreamErrorMessage = z.object({
@@ -889,6 +896,52 @@ export const broadcastDoneMessage = z.object({ kind: z.literal("done") });
 export const channelCancelledMessage = z.object({
   kind: z.literal("cancelled"),
   deliveredRows: z.number(),
+});
+
+// --- エディタのバッチ実行 (Tauri Channel, #1256) ---------------------------
+//
+// `run_sql_batch` (`src-tauri/src/commands/script.rs` の `BatchStreamMessage`) が
+// 1 本の Channel へ送る。結果は 150ms 間引きで `results` にまとめて届く。結果 1 文
+// ぶんのセル値は高頻度・大量になりうるため、rows 系と同じく構造だけを軽く検証する。
+
+export const batchStatementResult = z.object({
+  sql: z.string(),
+  status: z.enum(["ok", "error", "skipped"]),
+  columns: z.array(column).optional(),
+  rows: z.array(z.unknown()).optional(),
+  rowsAffected: z.number().optional(),
+  elapsedMs: z.number().optional(),
+  error: z.string().optional(),
+  serverMessages: z.array(serverMessage).optional(),
+});
+
+export const batchStreamStartedMessage = z.object({
+  kind: z.literal("started"),
+  total: z.number(),
+});
+
+export const batchStreamResultsMessage = z.object({
+  kind: z.literal("results"),
+  results: z.array(batchStatementResult),
+});
+
+export const batchStreamDoneMessage = z.object({
+  kind: z.literal("done"),
+  ok: z.number(),
+  errors: z.number(),
+  skipped: z.number(),
+  elapsedMs: z.number(),
+});
+
+export const batchStreamErrorMessage = z.object({
+  kind: z.literal("error"),
+  error: z.string(),
+  connectionLost: z.boolean(),
+});
+
+export const batchStreamCancelledMessage = z.object({
+  kind: z.literal("cancelled"),
+  deliveredStatements: z.number(),
 });
 
 export const previewStreamMetaMessage = z.object({

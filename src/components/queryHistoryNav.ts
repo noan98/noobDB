@@ -92,3 +92,33 @@ export function navigateNewer(
     cursor: "end",
   };
 }
+
+/** ↑/↓ ナビ・コマンドパレット用に保持する直近の実行クエリ数。 */
+export const QUERY_HISTORY_LIMIT = 100;
+
+/**
+ * 最新が先頭の履歴列から、隣り合う重複を畳む。連続して同じ SQL が並ぶと ↑/↓ で
+ * 1 件しか進まないため。
+ */
+export function dedupeAdjacentHistory(sqls: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const sql of sqls) {
+    if (out.length === 0 || out[out.length - 1] !== sql) out.push(sql);
+  }
+  return out;
+}
+
+/**
+ * 実行直後の SQL を履歴列の先頭へ積む (#1256)。実行のたびに履歴を再取得せず、
+ * 取得済みの列へ JS 側で足すために使う。直前と同じ SQL なら畳み (再取得後の
+ * `dedupeAdjacentHistory` と同じ結果)、`limit` を超えた古い分は捨てる。空文字は積まない。
+ */
+export function pushHistoryEntry(
+  history: readonly string[],
+  sql: string,
+  limit: number = QUERY_HISTORY_LIMIT,
+): string[] {
+  if (sql.trim().length === 0) return history.slice(0, limit);
+  if (history[0] === sql) return history.slice(0, limit);
+  return [sql, ...history].slice(0, limit);
+}

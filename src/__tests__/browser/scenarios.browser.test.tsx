@@ -83,6 +83,7 @@ function registerBaseHandlers() {
   onCommand("list_profiles", () => [ALPHA, BETA]);
   onCommand("list_snippets", () => []);
   onCommand("list_history", () => []);
+  onCommand("list_history_sql", () => []);
   onCommand("connect", (args) => {
     const req = args.req as { profile_id?: string };
     connectSeq += 1;
@@ -127,6 +128,8 @@ function emitQueryStreamResult(channel: ChannelLike, rows: CellValue[][]) {
     elapsedMs: 5,
     hasColumns: true,
     appliedAutoLimit: null,
+    readOnly: true,
+    schemaMayChange: false,
   });
 }
 
@@ -207,6 +210,8 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
       elapsedMs: 5,
       hasColumns: true,
       appliedAutoLimit: null,
+      readOnly: true,
+      schemaMayChange: false,
     });
     await expect
       .element(screen.getByText(t("statusStreamingDone", { rows: 2, ms: 5 })))
@@ -601,6 +606,37 @@ describe("シナリオ: Bottom Panel のログ系タブ (#1114, 実ブラウザ)
     await expect
       .element(screen.getByRole("tab", { name: t("messagesTitle") }))
       .toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("シナリオ: 折りたたみ時のパネルバーから中核機能へ辿れる (実ブラウザ)", () => {
+  it("接続前は診断が無効で理由が読め、接続後はパネルバーからプロセスモニタが開く", async () => {
+    onCommand("list_processes", () => []);
+    const screen = await renderInBrowser(<App />);
+
+    // 1) 未接続でもバーは常設され、プロセスモニタは「存在は見えるが開けない」。
+    const strip = screen.getByRole("navigation", { name: t("bottomPanelStripAria") });
+    await expect.element(strip).toBeVisible();
+    const processes = strip.getByRole("button", { name: t("processTitle") });
+    await expect.element(processes).toHaveAttribute("aria-disabled", "true");
+    await processes.hover();
+    await expect.element(screen.getByRole("tooltip")).toHaveTextContent(t("appToolsNeedsSession"));
+
+    // 2) 接続すると有効になり、1 クリックでボトムパネルが開く。
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(processes).not.toHaveAttribute("aria-disabled");
+    await processes.click();
+    await expect
+      .element(screen.getByRole("tab", { name: t("processTitle") }))
+      .toHaveAttribute("aria-selected", "true");
+    // 開いている間はタブバーが同じ役目を持つので、バーは二重に出さない。
+    await expect.element(strip).not.toBeInTheDocument();
+
+    // 3) 閉じるとバーへ戻る。
+    await screen.getByRole("button", { name: t("bottomPanelClose") }).click();
+    await expect
+      .element(screen.getByRole("navigation", { name: t("bottomPanelStripAria") }))
+      .toBeVisible();
   });
 });
 
