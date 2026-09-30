@@ -3,6 +3,7 @@ import {
   buildPreflightPlan,
   preflightTone,
   PREFLIGHT_LARGE_THRESHOLD,
+  PREFLIGHT_MAX_CHARS,
 } from "../components/preflight";
 
 describe("buildPreflightPlan — 対象外は null (バッジを出さない)", () => {
@@ -310,5 +311,17 @@ describe("preflightTone", () => {
     expect(preflightTone(false, 0)).toBe("neutral");
     expect(preflightTone(false, PREFLIGHT_LARGE_THRESHOLD - 1)).toBe("neutral");
     expect(preflightTone(false, null)).toBe("neutral");
+  });
+});
+
+describe("buildPreflightPlan — 長さ上限 (#1256)", () => {
+  it("上限ちょうどまでは解析し、超えるとプリフライトしない (null)", () => {
+    const head = "DELETE FROM users WHERE note = '";
+    const tail = "'";
+    const fill = (n: number) => "x".repeat(Math.max(0, n - head.length - tail.length));
+    const atLimit = head + fill(PREFLIGHT_MAX_CHARS) + tail;
+    expect(atLimit.length).toBe(PREFLIGHT_MAX_CHARS);
+    expect(buildPreflightPlan(atLimit)?.verb).toBe("delete");
+    expect(buildPreflightPlan(atLimit + " ")).toBeNull();
   });
 });
