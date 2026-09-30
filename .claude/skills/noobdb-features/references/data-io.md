@@ -62,7 +62,7 @@
   (純ロジック) が SQL (ハイライト付き)・在グリッド行 (ソート可能な表)・非秘密の接続
   メタ (プロファイル名/ドライバ/DB、ホストはチェック時のみ)・任意でテーブル定義
   (`describe_table`)・EXPLAIN (mysql/postgres/sqlite かつ読み取り SQL のみ) を自己完結
-  HTML に組み立て、`write_binary_file` で保存します (capabilities 追加なし)。値は全て
+  HTML に組み立て、`write_text_file` で保存します (capabilities 追加なし)。値は全て
   `escapeHtml` を通し、CSP `default-src 'none'` で外部リソースを禁止、機微カラムマスク
   (#1069) 対象列は reveal に関係なく伏せ字。文脈は `App.tsx` → `ResultGrid` の
   `bundleContext` で渡し、マスク設定は `DataGrid` の `onMaskConfigChange` で持ち上げる。
@@ -205,6 +205,23 @@
   「ファイル → 作成 → ロード → SELECT」を往復させます。
   読み込みは `read_import_file` が空パス拒否 + `MAX_IMPORT_FILE_BYTES` (512 MiB) 上限を
   `commands::file` と同じく metadata + `take` の二段で強制します。
+  **プレビューは先頭だけを読む (#1258)**: `parse_csv_preview` は CSV / NDJSON / JSON を
+  `commands/import_decode.rs` の `DecodingReader` (チャンク単位の `encoding_rs::Decoder`。
+  マルチバイト文字がチャンク境界をまたいでも化けない) 越しに読み、CSV / NDJSON は先頭
+  51 レコード、JSON 配列は `serde_json` のストリーム (Visitor で 51 要素読んだら番兵エラーで
+  停止) で止めます (1 行が長ければ必要なぶんだけ読み進める)。xlsx は全体。ヘッダ列は
+  「プレビューで読んだレコードのキー和集合」で、取り込み側の和集合 (first-seen 順) の
+  先頭部分なので、プレビューで選んだ `csv_index` は取り込みでもそのまま有効です。51 件目より
+  後ろの壊れた JSON / NDJSON はプレビューでは検出されず、取り込み時にエラーになります。
+  フロントはプレビューのキーから NULL トークン / エラーモードを外し、同じファイルで
+  オプションが変わったときは 200ms デバウンスします。
+  **進捗イベントの間引き (#1258)**: export / transfer / import の進捗 emit は
+  `commands/progress.rs` の `ProgressThrottle` (150ms、`script.rs` の `PROGRESS_INTERVAL` と同じ)
+  で間引き、最後の値は完了前 (import は `inserted >= total`) に必ず送ります。
+  **スキップ行 (#1258)**: `csv-import:done` の `skipped` は先頭 200 件 (`MAX_REPORTED_SKIPPED`)
+  と総数 `skippedTotal` のみ。全件は `AppState::last_import_skipped` が直近の取り込み結果として
+  保持し、`get_import_skipped_text` (コピー用) / `save_import_skipped_rows` (ファイル保存) が
+  Rust 側で組み立てます。
 
 ## 接続間データ転送 (#986)
 

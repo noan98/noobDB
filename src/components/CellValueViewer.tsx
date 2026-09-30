@@ -13,12 +13,7 @@ import { Button, Switch } from "./ui";
 import { Segmented } from "./Segmented";
 import { FieldError } from "./modalForm";
 import type { CellBlobHandlers } from "./useCellBlobIo";
-import {
-  MAX_PREVIEW_BYTES,
-  detectBlobKindFromHex,
-  formatBlobSize,
-  hexToBytes,
-} from "./blobIo";
+import { MAX_PREVIEW_BYTES, formatBlobSize } from "./blobIo";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -152,19 +147,21 @@ export function CellValueViewer({
     setPreview({ state: "loading" });
     void (async () => {
       try {
-        const hex = await blobRef.current?.fetchHex();
+        // まず probe でサイズと種別だけを取る (本体は転送しない)。画像のときだけ
+        // 本体をバイナリで取得して Blob URL を作る (#1258)。
+        const info = await blobRef.current?.probe();
         if (cancelled) return;
-        if (hex === null || hex === undefined) {
+        if (info === null || info === undefined) {
           setPreview(null);
           return;
         }
-        const kind = detectBlobKindFromHex(hex);
-        const size = hex.length / 2;
-        if (kind?.image && size <= MAX_PREVIEW_BYTES) {
-          const bytes = hexToBytes(hex);
-          if (bytes) url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: kind.mime }));
+        const size = info.size;
+        if (info.image && info.mime && size <= MAX_PREVIEW_BYTES) {
+          const bytes = await blobRef.current?.fetchBytes();
+          if (cancelled) return;
+          if (bytes) url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: info.mime }));
         }
-        setPreview({ state: "ready", size, mime: kind?.mime ?? null, url });
+        setPreview({ state: "ready", size, mime: info.mime, url });
       } catch (e) {
         if (!cancelled) setPreview({ state: "error", error: String(e) });
       }

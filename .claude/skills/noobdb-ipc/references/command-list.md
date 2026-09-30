@@ -132,13 +132,29 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 ## エクスポート / ダンプ / インポート / ファイル
 
 `export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
-`import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_binary_file` /
-`fetch_cell_bytes` / `read_binary_file`
+`import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_text_file` /
+`write_binary_file` / `fetch_cell_bytes` / `probe_cell_blob` / `save_cell_to_file` /
+`read_binary_file` / `get_import_skipped_text` / `save_import_skipped_rows`
 
-`fetch_cell_bytes` / `read_binary_file` (`commands/cell_blob.rs`, #1148) は BLOB セルの
-ファイル入出力用。前者は主キーで 1 セルの生バイト (16 進) を SELECT のみで引き直し
-(`read_only` でも通る)、後者はファイルを 16 進で読む (上限 16 MiB)。書き戻しは
-フロントが `UPDATE` を組み立てて通常の `run_query` (読み取り専用ガード付き) で流す。
+`fetch_cell_bytes` / `probe_cell_blob` / `save_cell_to_file` / `read_binary_file`
+(`commands/cell_blob.rs`, #1148 / #1258) は BLOB セルのファイル入出力とプレビュー用。
+`probe_cell_blob` はサイズ (`OCTET_LENGTH` / `LENGTH`) と先頭 16 バイトだけを SELECT して
+MIME・拡張子・画像か (`detect_blob_kind` がマジックバイト判定を担う) を返す (3 ドライバで
+SQL を揃えている)。`fetch_cell_bytes` は主キーで 1 セルの生バイトを SELECT のみで引き直し
+(`read_only` でも通る)、`read_binary_file` はファイルを読む (上限 16 MiB)。この 2 つは
+`tauri::ipc::Response` で**生バイト**を返し、JS は `ArrayBuffer` で受ける (16 進や JSON 配列を
+経由しない)。`save_cell_to_file` は DB → ファイルを Rust 内で完結させる (BLOB が IPC を通らない)。
+書き戻しはフロントが `UPDATE` を組み立てて通常の `run_query` (読み取り専用ガード付き) で流す。
+
+`write_text_file` (`commands/file.rs`, #1258) は SQL・Markdown・JSON などのテキストを文字列の
+まま UTF-8 で書く (上限 32 MiB)。`write_binary_file` は `tauri::ipc::Request` の raw ボディ
+(`InvokeBody::Raw`) を受け、保存先パスはヘッダ `x-noobdb-path` に URL エンコードして載せる
+(`api.writeBinaryFile` が `encodeURIComponent`、Rust 側 `decode_path_header` が復元)。
+
+`get_import_skipped_text` / `save_import_skipped_rows` (`commands/import.rs`, #1258) は
+skip モードの取り込みでスキップされた行の「全件」を扱う。`csv-import:done` には先頭
+200 件 (`MAX_REPORTED_SKIPPED`) と総数 `skippedTotal` だけを載せ、全件は `AppState` が直近の
+取り込み結果として保持する。表示文言はフロントの i18n テンプレートを引数で受ける。
 
 `preview_create_table_ddl` は「ファイルから新規テーブルを作成」(#985) の DDL
 プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ

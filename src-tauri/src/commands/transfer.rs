@@ -32,6 +32,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::progress::{needs_final_emit, ProgressThrottle};
 use crate::commands::query::{ensure_allowed_for_session, record_write_history};
 use crate::db::transfer::{
     binary_finalize_sql, create_table_sql, drop_table_sql, ensure_append_supported, plan_columns,
@@ -572,7 +573,15 @@ pub async fn transfer_data(
         let emit_app = app.clone();
         let emit_id = stream_id_for_task.clone();
         let started = Instant::now();
+        // 進捗イベントは 150ms ごとに間引く (#1258)。最終値は完了前に追い送りする。
+        let emitted = Arc::new(AtomicU64::new(0));
+        let emitted_cb = emitted.clone();
+        let mut throttle = ProgressThrottle::standard();
         let result = run_transfer(&prepared, counter_for_task.clone(), move |rows| {
+            if !throttle.ready() {
+                return;
+            }
+            emitted_cb.store(rows, Ordering::SeqCst);
             let _ = emit_app.emit(
                 EV_TRANSFER_PROGRESS,
                 TransferProgressEvent {
@@ -582,6 +591,17 @@ pub async fn transfer_data(
             );
         })
         .await;
+        if let Ok(outcome) = &result {
+            if needs_final_emit(emitted.load(Ordering::SeqCst), outcome.rows) {
+                let _ = app.emit(
+                    EV_TRANSFER_PROGRESS,
+                    TransferProgressEvent {
+                        stream_id: stream_id_for_task.clone(),
+                        rows: outcome.rows,
+                    },
+                );
+            }
+        }
         let elapsed_ms = started.elapsed().as_millis() as u64;
         after_transfer(&prepared, &result, elapsed_ms).await;
         match result {

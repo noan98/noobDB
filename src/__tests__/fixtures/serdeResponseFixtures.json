@@ -95,6 +95,12 @@
     "cancelled": true,
     "deliveredRows": 42
   },
+  "cellBlobProbe": {
+    "ext": "png",
+    "image": true,
+    "mime": "image/png",
+    "size": 4096
+  },
   "channelCancelledMessage": {
     "deliveredRows": 5,
     "kind": "cancelled"
@@ -323,6 +329,7 @@
         "record": 7
       }
     ],
+    "skippedTotal": 1234,
     "streamId": "strm0003"
   },
   "importErrorEvent": {
