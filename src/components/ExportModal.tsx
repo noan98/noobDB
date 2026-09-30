@@ -15,6 +15,7 @@ import { useToast } from "./Toast";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
+import { isResultGoneError } from "./resultHandle";
 import { exportFormatHasTextPreview, xlsxTruncationNotices, type ExportNotice } from "./exportXlsx";
 import { resolveMaskedColumns, type MaskConfig } from "./columnMask";
 import {
@@ -96,6 +97,12 @@ interface Props {
   bundle?: BundleContext;
   /** 結果の実行時間 (ms)。バンドルのメタ情報に出す。 */
   elapsedMs?: number | null;
+  /**
+   * 結果ハンドル (#1264)。`rows` をバックエンドが保持しているときの ID。「現在のグリッド」
+   * スコープのファイル出力・全文コピー・マスキングは、行を送らずこの ID を渡す
+   * (破棄済みなら行を送る従来の経路へ自動で戻る)。
+   */
+  resultId?: string | null;
   /**
    * 機微カラムマスク (#1069) の設定。バンドルではマスク対象列を (グリッドでの一時
    * reveal に関係なく) 常に伏せ字で出力する。
@@ -220,7 +227,7 @@ type Status =
  */
 type ExportScope = "current" | "selection" | "full";
 
-export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, selection, bundle, elapsedMs, maskConfig, onClose }: Props) {
+export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, selection, bundle, elapsedMs, resultId, maskConfig, onClose }: Props) {
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
@@ -266,6 +273,21 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // 従来どおりグリッド全体。`buildExportContent` は共通なので書式は二重定義しない。
   const effectiveColumns = scope === "selection" && selection ? selection.columns : columns;
   const effectiveRows = scope === "selection" && selection ? selection.rows : rows;
+  // 選択範囲は行の部分集合なのでハンドルを使えない。それ以外は `rows` = ハンドルの行。
+  const rowsHandle = scope === "selection" && selection ? null : (resultId ?? null);
+  /**
+   * 結果ハンドルがあれば行を送らずに `run(true)` を試し、破棄済み (`result handle gone`) なら
+   * 行を送る `run(false)` で再試行する。ハンドルが無ければ最初から `run(false)`。
+   */
+  const withHandle = async <T,>(run: (useHandle: boolean) => Promise<T>): Promise<T> => {
+    if (!rowsHandle) return run(false);
+    try {
+      return await run(true);
+    } catch (e) {
+      if (isResultGoneError(e)) return run(false);
+      throw e;
+    }
+  };
   // バンドルでのマスク対象列 (列名で判定するので選択範囲の列部分集合にもそのまま効く)。
   const bundleMasked = useMemo(
     () => (maskConfig ? resolveMaskedColumns(effectiveColumns.map((c) => c.name), maskConfig) : null),
@@ -423,20 +445,52 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   const handleCopy = async () => {
     // xlsx (バイナリ) は全文コピーの対象外 (#711)。ボタンも無効化している。
     if (!hasTextPreview) return;
-    let sourceRows = effectiveRows;
-    if (masks.length > 0) {
-      // 全文コピーもファイル出力と同じくマスク後の値にする (バックエンドで変換)。
+    let content: string;
+    if (format === "bundle") {
+      let sourceRows = effectiveRows;
+      if (masks.length > 0) {
+        // 全文コピーもファイル出力と同じくマスク後の値にする (バックエンドで変換)。
+        try {
+          sourceRows = await withHandle((useHandle) =>
+            api.maskExportRows({
+              columns: effectiveColumns,
+              rows: useHandle ? [] : effectiveRows,
+              masks,
+              resultId: useHandle ? rowsHandle : null,
+            }),
+          );
+        } catch (e) {
+          toast.error(t("exportMaskingError", { error: String(e) }));
+          return;
+        }
+      }
+      content = await buildBundle(sourceRows, true);
+    } else if (masks.length === 0 && !rowsHandle) {
+      // 従来どおり: マスクも結果ハンドルも無ければフロントで即時に組み立てる。
+      content = buildExportContent(format, effectiveColumns, effectiveRows, queryForJson, exportCtx);
+    } else {
+      // マスキング (#733) と書式化をバックエンドの `render_export_text` にまとめる (#1264)。
+      // ファイル出力と同じライタを通るので内容はファイルとバイト一致し、ハンドルがあれば
+      // 行を JS ⇄ Rust で往復させない。
       try {
-        sourceRows = await api.maskExportRows({ columns: effectiveColumns, rows: effectiveRows, masks });
+        content = await withHandle((useHandle) =>
+          api.renderExportText({
+            format,
+            columns: effectiveColumns,
+            rows: useHandle ? [] : effectiveRows,
+            resultId: useHandle ? rowsHandle : null,
+            query: queryForJson,
+            table: sqlTable,
+            driver: sqlDriver,
+            batchSize: sqlBatch,
+            masks,
+          }),
+        );
       } catch (e) {
-        toast.error(t("exportMaskingError", { error: String(e) }));
+        toast.error(masks.length > 0 ? t("exportMaskingError", { error: String(e) }) : String(e));
         return;
       }
     }
-    const content =
-      format === "bundle"
-        ? await buildBundle(sourceRows, true)
-        : buildExportContent(format, effectiveColumns, sourceRows, queryForJson, exportCtx);
     await copy(content);
   };
 
@@ -523,7 +577,14 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         // (#1069) 対象列はその上で `buildInvestigationBundleHtml` が伏せ字にする。
         const bodyRows =
           masks.length > 0
-            ? await api.maskExportRows({ columns: effectiveColumns, rows: effectiveRows, masks })
+            ? await withHandle((useHandle) =>
+                api.maskExportRows({
+                  columns: effectiveColumns,
+                  rows: useHandle ? [] : effectiveRows,
+                  masks,
+                  resultId: useHandle ? rowsHandle : null,
+                }),
+              )
             : effectiveRows;
         const html = await buildBundle(bodyRows, true);
         // 既存の保存経路 (チャート/ER 図の画像保存と同じ write_binary_file)。
@@ -538,19 +599,23 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     }
     const backendFormat: ExportFormat = format;
     try {
-      const result = await api.exportQueryResult({
-        path,
-        format: backendFormat,
-        columns: effectiveColumns,
-        rows: effectiveRows,
-        // JSON 形式のときだけ実行クエリを同梱する (バックエンドが判定)。
-        query: queryForJson,
-        // SQL 形式のときだけ使われる (バックエンドが形式で判定)。
-        table: sqlTable,
-        driver: sqlDriver,
-        batchSize: sqlBatch,
-        masks,
-      });
+      const result = await withHandle((useHandle) =>
+        api.exportQueryResult({
+          path,
+          format: backendFormat,
+          columns: effectiveColumns,
+          // 結果ハンドルがあれば行は送らずバックエンド保持の行を書き出す (#1264)。
+          rows: useHandle ? [] : effectiveRows,
+          resultId: useHandle ? rowsHandle : null,
+          // JSON 形式のときだけ実行クエリを同梱する (バックエンドが判定)。
+          query: queryForJson,
+          // SQL 形式のときだけ使われる (バックエンドが形式で判定)。
+          table: sqlTable,
+          driver: sqlDriver,
+          batchSize: sqlBatch,
+          masks,
+        }),
+      );
       toast.success(t("exportSuccess", { bytes: result.bytes, path }) + maskedSuffix);
       reportNotices(xlsxTruncationNotices(result.truncation));
       setStatus({ kind: "idle" });

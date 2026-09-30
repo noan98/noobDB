@@ -54,6 +54,7 @@ import {
   type PendingInsertRow,
 } from "./components/cellEdit";
 import { attachStreamStats } from "./components/streamStats";
+import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
 import { attachRowDiff } from "./resultDiff";
 import { type BulkEditTarget } from "./components/bulkEdit";
@@ -2137,6 +2138,30 @@ export default function App() {
     [patchTab],
   );
 
+  // 結果ハンドル (#1264): タブごとの「バックエンドが保持している結果」の ID。行配列への紐づけ
+  // (`attachResultHandle`) は WeakMap なので、JS 側の行が入れ替わればフロントは自動的に
+  // ハンドルを使わなくなる。ここではバックエンド側のメモリを確実に解放するため、タブが
+  // 閉じた / 行配列が入れ替わった / 再実行で置き換わったハンドルを `release_result` する。
+  const resultHandleByTabRef = useRef<Map<string, string>>(new Map());
+  const releaseResultHandle = useCallback((id: string) => {
+    void api.releaseResult(id).catch(() => {
+      // 解放に失敗してもバックエンドの LRU 上限・セッション切断で回収される。
+    });
+  }, []);
+  useEffect(() => {
+    const held = resultHandleByTabRef.current;
+    if (held.size === 0) return;
+    for (const [tabId, id] of held) {
+      const tab = tabs.find((tt) => tt.id === tabId);
+      // ストリーミング中は結果の入れ替え途中なので判定しない (完了時に確定する)。
+      if (tab?.streaming) continue;
+      if (!tab || resultHandleFor(tab.result?.rows) !== id) {
+        held.delete(tabId);
+        releaseResultHandle(id);
+      }
+    }
+  }, [tabs, releaseResultHandle]);
+
   const detachStreamListener = useCallback((tabId: string) => {
     const un = streamUnlistenRef.current.get(tabId);
     if (un) {
@@ -3799,7 +3824,7 @@ export default function App() {
           };
         });
       },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages, readOnly, schemaMayChange, stats, snapshotId }) => {
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages, readOnly, schemaMayChange, stats, snapshotId, resultId }) => {
         // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
         markQueryDone(streamId, {
           rows: hasColumns ? totalRows : rowsAffected,
@@ -3827,6 +3852,10 @@ export default function App() {
             attachStreamStats(tt.result.rows, stats);
             // 次回の再実行で差分パッチを使うための比較元 ID (#1257)。
             attachSnapshotId(tt.result.rows, snapshotId);
+            // バックエンドが保持した結果のハンドル (#1264)。行数が一致するときだけ紐づける。
+            if (resultId && tt.result.rows.length === totalRows) {
+              attachResultHandle(tt.result.rows, resultId);
+            }
           }
           return {
             ...tt,
@@ -3841,6 +3870,15 @@ export default function App() {
             ...(autoRefresh ? { autoRefreshLastRunAt: Date.now() } : {}),
           };
         });
+        // 結果ハンドル (#1264): 置き換わった前回のハンドルを解放し、新しい ID を記録する。
+        // 保持されなかった (null) なら前回のものも捨てる (行配列はもう別物)。
+        {
+          const held = resultHandleByTabRef.current;
+          const prevId = held.get(tabId);
+          if (resultId && hasColumns) held.set(tabId, resultId);
+          else held.delete(tabId);
+          if (prevId && prevId !== resultId) releaseResultHandle(prevId);
+        }
         if (hasColumns) {
           setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: totalRows, ms: elapsedMs } });
         } else {
@@ -3980,6 +4018,9 @@ export default function App() {
         captureRowCap: settings.flightRecorderRowCap,
         captureRetentionDays: settings.flightRecorderRetentionDays,
         refreshDiff,
+        // 大きな結果はバックエンドにも上限付きで保持し、ソート・フィルタ・検索・
+        // エクスポートを行の往復なしで行う (#1264)。
+        retainResult: true,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
@@ -3998,6 +4039,7 @@ export default function App() {
     updateTab,
     patchTab,
     cancelStreamForTab,
+    releaseResultHandle,
     invalidateSchemaCache,
     notifyQueryOutcome,
     pushQueryHistory,
@@ -6182,15 +6224,30 @@ export default function App() {
     void (async () => {
       try {
         const sid = await ensureLocalSession();
-        await api.registerLocalTable({
-          sessionId: sid,
-          tableName,
-          columns: req.columns,
-          rows: req.rows,
-          sourceProfile: selectedProfile?.name ?? null,
-          sourceSql: req.sourceSql,
-          sourceDriver: selectedProfile?.driver ?? null,
-        });
+        // 結果ハンドル (#1264) があれば行を送らずバックエンド保持の行を取り込む。破棄済み
+        // (`result handle gone`) なら行を送る従来の経路で再試行する。
+        const handleId = resultHandleFor(req.rows);
+        const register = (useHandle: boolean) =>
+          api.registerLocalTable({
+            sessionId: sid,
+            tableName,
+            columns: req.columns,
+            rows: useHandle ? [] : req.rows,
+            resultId: useHandle ? handleId : null,
+            sourceProfile: selectedProfile?.name ?? null,
+            sourceSql: req.sourceSql,
+            sourceDriver: selectedProfile?.driver ?? null,
+          });
+        if (handleId) {
+          try {
+            await register(true);
+          } catch (e) {
+            if (!isResultGoneError(e)) throw e;
+            await register(false);
+          }
+        } else {
+          await register(false);
+        }
         await refreshLocalTables(sid);
         toast.success(translate("localRegisterSuccess", { rows: req.rows.length, table: tableName }));
       } catch (e) {

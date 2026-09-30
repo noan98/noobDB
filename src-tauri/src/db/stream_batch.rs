@@ -187,7 +187,7 @@ impl StreamStats {
 /// `cellConditionalFormat.toNumber` と同じ基準でセル値を数値へ寄せる。
 /// 数値型はそのまま (非有限は対象外)、文字列は JS の `Number(trimmed)`、
 /// 真偽値・NULL は対象外。
-fn value_to_number(v: &Value) -> Option<f64> {
+pub(crate) fn value_to_number(v: &Value) -> Option<f64> {
     match v {
         Value::Int(i) => Some(*i as f64),
         Value::UInt(u) => Some(*u as f64),
@@ -197,7 +197,7 @@ fn value_to_number(v: &Value) -> Option<f64> {
     }
 }
 
-fn is_js_whitespace(c: char) -> bool {
+pub(crate) fn is_js_whitespace(c: char) -> bool {
     // ECMAScript の WhiteSpace + LineTerminator。Rust の `char::is_whitespace` とは
     // BOM (U+FEFF) の扱いが異なるので自前で定義する。
     matches!(

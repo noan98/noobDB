@@ -27,6 +27,18 @@
   クライアント側 `columnFilter` が値条件のある行で NULL を弾くのが一致するため、
   テーブルブラウズとクエリ結果で見え方が変わらない (意図的に揃えてある)。BLOB 列は
   手元に 16 進表現しか無く一致比較が意味を成さないので項目自体を出さない。
+- 結果ハンドル経由のソート・フィルタ・検索・統計 (#1264) — `gridSortFilter.ts` (ソート比較・
+  列フィルタ・全体フィルタの**値レベルの純ロジック**。`ResultGrid` の TanStack コールバックと
+  バックエンド `db/result_ops.rs` の両方の基準) と `resultHandle.ts` (ストリーム完了時に届く
+  `resultId` を**行配列の同一性**に紐づける WeakMap。`streamStats.ts` と同方式で、編集適用などで
+  行配列が入れ替われば自動的に外れ JS 経路へ戻る)。5 万行以上 (`HANDLE_SORT_MIN_ROWS`) で
+  ハンドルがある結果だけ、`DataGrid` が `result_sort_filter` の表示順 (元の行位置の配列) を
+  受け取って `manualSorting` / `manualFiltering` で TanStack を素通しにし、`visibleRows` を
+  その順に並べる。結果内検索 (正規表現なし) は `result_find`、列統計は `result_column_stats`、
+  エクスポート / 全文コピー / ローカル登録は `resultId` 渡し。破棄済み (`null` /
+  `result handle gone`) になったら JS 経路へ戻る。**既知の差**: 文字列ソートの照合順序だけ
+  `Intl.Collator` の近似 (`db/js_compat.rs::collation_key`)。Rust との一致は
+  `fixtures/resultOpsVectors.json` (`resultOpsGolden.test.ts` / `tests/result_ops_golden.rs`) が固定する。
 - セル値のクイックセット — `quickSetValues.ts`。結果グリッドのセル右クリックに出る
   「NULL をセット」「空文字をセット」「0 をセット」「true/false をセット」「現在日時を
   セット」の**純ロジック** (どの列にどの候補を出すか + 生成する生文字列)。生成値は

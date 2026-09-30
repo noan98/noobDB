@@ -488,7 +488,27 @@ fn build_fixtures() -> serde_json::Value {
         snapshot_id: Some(3),
         read_only: false,
         schema_may_change: true,
+        result_id: Some("qs_abc".into()),
     };
+    // 結果ハンドル (#1264): `result_find` / `result_column_stats` の戻り値。
+    let result_find_output = t::find(
+        &[vec![Value::String("abc".into()), Value::Null]],
+        2,
+        "b",
+        t::FindOptions {
+            case_sensitive: false,
+            whole_cell: false,
+        },
+        10,
+    );
+    let result_column_stats = t::column_stats(
+        &[
+            vec![Value::Int(1)],
+            vec![Value::String("ab".into())],
+            vec![Value::Null],
+        ],
+        0,
+    );
     let broadcast_env_message = BroadcastMessage::Env(BroadcastEnvReport {
         session_id: "sess0001".into(),
         status: "done",
@@ -760,6 +780,8 @@ fn build_fixtures() -> serde_json::Value {
         // 境界ケース (空結果・キャンセル直後) — 上のコメント参照。
         "queryStreamRowsMessageLiteEmpty": query_stream_rows_message_empty,
         "queryStreamDoneMessage": query_stream_done_message,
+        "resultFindOutput": result_find_output,
+        "resultColumnStats": result_column_stats,
         "queryStreamPatchMessage": query_stream_patch_message,
         "broadcastEnvMessage": broadcast_env_message,
         "broadcastCancelledMessage": broadcast_cancelled_message,

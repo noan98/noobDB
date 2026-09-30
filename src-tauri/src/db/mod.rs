@@ -9,6 +9,7 @@ pub mod data_diff;
 pub mod diff;
 pub mod format;
 /// エクスポート時のデータマスキング (#733)。出力時だけの変換で DB には触れない。
+pub mod js_compat;
 pub mod masking;
 pub mod mysql;
 pub mod postgres;
@@ -20,6 +21,8 @@ pub mod privileges;
 pub mod profile;
 /// 自動リフレッシュの差分パッチ (#1257)。
 pub mod refresh_diff;
+pub mod result_ops;
+pub mod result_store;
 pub mod sandbox;
 /// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
 pub mod script;

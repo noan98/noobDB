@@ -481,6 +481,7 @@
     "hasColumns": true,
     "kind": "done",
     "readOnly": false,
+    "resultId": "qs_abc",
     "rowsAffected": 0,
     "schemaMayChange": true,
     "serverMessages": [
@@ -574,6 +575,33 @@
     "kind": "rows",
     "rows": [],
     "stats": null
+  },
+  "resultColumnStats": {
+    "avg": 1.0,
+    "count": 3,
+    "distinctCount": 2,
+    "max": 1.0,
+    "maxLen": 2,
+    "min": 1.0,
+    "minLen": 1,
+    "mode": {
+      "count": 1,
+      "value": "1"
+    },
+    "nonNullCount": 2,
+    "nullCount": 1,
+    "numericCount": 1,
+    "sum": 1.0
+  },
+  "resultFindOutput": {
+    "hits": [
+      {
+        "colIdx": 0,
+        "rowIdx": 0
+      }
+    ],
+    "total": 1,
+    "truncated": false
   },
   "routineSignature": {
     "kind": "function",

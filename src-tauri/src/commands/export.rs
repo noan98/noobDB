@@ -104,10 +104,15 @@ pub async fn export_query_result(
     batch_size: Option<usize>,
     // 列単位のマスキングルール (#733)。None / 空ならマスクしない。
     masks: Option<Vec<ColumnMask>>,
+    // 結果ハンドル (#1264)。指定時は `rows` を使わず、バックエンドが保持する行を書き出す
+    // (ハンドルが破棄済みなら `result handle gone` のエラー。フロントは rows 付きで再試行する)。
+    result_id: Option<String>,
+    state: State<'_, AppState>,
 ) -> Result<ExportResult> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("save path is empty".into()));
     }
+    let rows = crate::commands::result::resolve_rows(&state, result_id.as_deref(), rows)?;
     let row_count = rows.len();
     let sql_opts = SqlExportOpts::build(driver, table, batch_size);
     let mask_spec = load_mask_spec(masks).await?;
@@ -146,7 +151,7 @@ async fn write_export(
     path: String,
     format: ExportFormat,
     columns: Vec<Column>,
-    rows: Vec<Vec<Value>>,
+    rows: Arc<Vec<Vec<Value>>>,
     query: Option<String>,
     sql_opts: SqlExportOpts,
     mask_spec: Option<MaskSpec>,
@@ -234,16 +239,30 @@ pub(crate) async fn load_mask_spec(masks: Option<Vec<ColumnMask>>) -> Result<Opt
 /// 仮名化 (`hash`) の秘密ソルトをフロントへ渡さずにプレビューを「実出力と同じ値」に
 /// するため、変換はバックエンドの同じ純関数 (`db::masking`) で行う。ファイルには何も
 /// 書かず、DB にも触れない。
+///
+/// `result_id` (#1264) を渡すとバックエンドが保持する行にマスキングを掛けて返す
+/// (`rows` は使わない)。フロントから行を送り上げる往復を省ける。
 #[tauri::command]
 pub async fn mask_export_rows(
     columns: Vec<Column>,
     rows: Vec<Vec<Value>>,
     masks: Vec<ColumnMask>,
+    result_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Vec<Value>>> {
+    let rows = crate::commands::result::resolve_rows(&state, result_id.as_deref(), rows)?;
+    mask_export_rows_inner(&columns, &rows, masks).await
+}
+
+pub(crate) async fn mask_export_rows_inner(
+    columns: &[Column],
+    rows: &[Vec<Value>],
+    masks: Vec<ColumnMask>,
 ) -> Result<Vec<Vec<Value>>> {
     let Some(spec) = load_mask_spec(Some(masks)).await? else {
-        return Ok(rows);
+        return Ok(rows.to_vec());
     };
-    let plan = spec.plan(&columns);
+    let plan = spec.plan(columns);
     Ok(rows.iter().map(|r| plan.apply_row(r)).collect())
 }
 
@@ -1993,9 +2012,9 @@ mod tests {
     async fn mask_export_rows_without_hash_needs_no_keyring() {
         use crate::db::masking::MaskRule;
         let (columns, rows) = masking_fixture();
-        let out = mask_export_rows(
-            columns,
-            rows,
+        let out = mask_export_rows_inner(
+            &columns,
+            &rows,
             vec![ColumnMask {
                 column: "email".into(),
                 rule: MaskRule::Null,

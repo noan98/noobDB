@@ -87,6 +87,9 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   // shape (キー集合) は代表値と同一なので同じスキーマで検証する。
   ["queryStreamRowsMessageLiteEmpty", schemas.queryStreamRowsMessageLite],
   ["queryStreamDoneMessage", schemas.queryStreamDoneMessage],
+  // 結果ハンドル (#1264)。
+  ["resultFindOutput", schemas.resultFindOutput],
+  ["resultColumnStats", schemas.resultColumnStats],
   ["queryStreamPatchMessage", schemas.queryStreamPatchMessage],
   // #1257: ブロードキャスト比較の Channel メッセージ。
   ["broadcastEnvMessage", schemas.broadcastEnvMessage],
