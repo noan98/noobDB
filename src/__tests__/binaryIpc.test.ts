@@ -38,7 +38,6 @@ describe("writeTextFile", () => {
     expect(mockInvoke).toHaveBeenCalledWith(
       "write_text_file",
       { path: "/tmp/a.sql", content: "SELECT 'あ';" },
-      undefined,
     );
   });
 });

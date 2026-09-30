@@ -70,7 +70,9 @@ function invoke<T>(
   args?: Record<string, unknown> | Uint8Array,
   options?: { headers: Record<string, string> },
 ): Promise<T> {
-  return rawInvoke<T>(cmd, args, options).catch((raw: unknown) => {
+  // options (raw ボディのヘッダ) を使わない呼び出しは従来どおり 2 引数で渡す。
+  const call = options ? rawInvoke<T>(cmd, args, options) : rawInvoke<T>(cmd, args);
+  return call.catch((raw: unknown) => {
     throw normalizeBackendError(raw);
   });
 }
