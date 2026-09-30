@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
@@ -86,8 +86,12 @@ type Status =
   | { kind: "idle" }
   | { kind: "importing"; inserted: number; total: number }
   // Skip-mode completion carrying the rows that were dropped (#687).
-  | { kind: "done"; inserted: number; skipped: SkippedRowInfo[] }
+  // `skipped` は先頭の一部だけ。総数は `skippedTotal`、全件は Rust 側が保持する (#1258)。
+  | { kind: "done"; inserted: number; skipped: SkippedRowInfo[]; skippedTotal: number }
   | { kind: "error"; message: string };
+
+/** 同じファイルでプレビューのオプションが変わったときの待ち時間 (入力欄の連続編集向け)。 */
+const PREVIEW_DEBOUNCE_MS = 200;
 
 const ENCODINGS = ["utf-8", "shift_jis", "euc-jp", "utf-16le", "windows-1252"];
 
@@ -254,9 +258,31 @@ export function ImportModal({
     setSheet("");
   }, [path]);
 
+  // プレビューの取得に影響するオプションだけ (#1258)。NULL トークンとエラーモードは
+  // プレビューの内容 (ファイルそのままの生テキスト) を変えないので含めない — 含めると
+  // NULL トークン欄に 1 文字打つたびにファイルを読み直してしまう。バックエンドの
+  // `parse_csv_preview` もこの 2 つは見ない。
+  const previewOptions = useMemo<ImportOptions>(
+    () => ({
+      format,
+      delimiter,
+      quote,
+      hasHeader,
+      nullToken: null,
+      encoding,
+      errorMode: "abort",
+      sheet: isXlsx && sheet ? sheet : null,
+    }),
+    [format, delimiter, quote, hasHeader, encoding, isXlsx, sheet],
+  );
+  // 直前にプレビューしたファイル。同じファイルでオプションだけ変わったときは、
+  // 入力欄の連続編集で何度も読まないよう少し待つ (デバウンス)。
+  const previewedPathRef = useRef<string | null>(null);
+
   // Reload the preview whenever the file or parsing options change.
   useEffect(() => {
     if (!path) {
+      previewedPathRef.current = null;
       setPreview(null);
       return;
     }
@@ -264,31 +290,37 @@ export function ImportModal({
     // preview fetch until it is corrected (the field shows its own error).
     if (!quoteValid) return;
     let cancelled = false;
-    setLoadingPreview(true);
-    setPreviewError(null);
-    api
-      .parseCsvPreview(path, buildOptions())
-      .then((p) => {
-        if (cancelled) return;
-        setPreview(p);
-        // JSON/NDJSON always expose named fields, so map by name regardless of
-        // the (CSV-only) header toggle.
-        if (tableColumns) setMapping(autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true));
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setPreview(null);
-          setPreviewError(String(e));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingPreview(false);
-      });
+    const delay = previewedPathRef.current === path ? PREVIEW_DEBOUNCE_MS : 0;
+    previewedPathRef.current = path;
+    const timer = setTimeout(() => {
+      setLoadingPreview(true);
+      setPreviewError(null);
+      api
+        .parseCsvPreview(path, previewOptions)
+        .then((p) => {
+          if (cancelled) return;
+          setPreview(p);
+          // JSON/NDJSON always expose named fields, so map by name regardless of
+          // the (CSV-only) header toggle.
+          if (tableColumns)
+            setMapping(autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true));
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setPreview(null);
+            setPreviewError(String(e));
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingPreview(false);
+        });
+    }, delay);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-    // buildOptions captures every parsing option; tableColumns drives auto-map.
-  }, [path, buildOptions, tableColumns, hasHeader, headerApplies, quoteValid]);
+    // previewOptions captures every option the preview depends on; tableColumns drives auto-map.
+  }, [path, previewOptions, tableColumns, hasHeader, headerApplies, quoteValid]);
 
   // 新規テーブルの列の下書き (名前の提案 + 型推論) をプレビューから作る (#985)。
   // NULL トークンはバックエンドと同じ規則で推論前に適用する (空セルを NULL に
@@ -451,10 +483,11 @@ export function ImportModal({
           unlistenRef.current();
           unlistenRef.current = null;
         }
-        if (e.skipped.length > 0) {
+        const skippedTotal = Math.max(e.skippedTotal, e.skipped.length);
+        if (skippedTotal > 0) {
           // Skip mode dropped some rows — keep the modal open to show them.
-          toast.info(t("importSkippedSummary", { inserted: e.inserted, skipped: e.skipped.length }));
-          setStatus({ kind: "done", inserted: e.inserted, skipped: e.skipped });
+          toast.info(t("importSkippedSummary", { inserted: e.inserted, skipped: skippedTotal }));
+          setStatus({ kind: "done", inserted: e.inserted, skipped: e.skipped, skippedTotal });
         } else {
           toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
           setStatus({ kind: "idle" });
@@ -466,7 +499,7 @@ export function ImportModal({
         onImported(importTable, creating);
         // 新規テーブルを作った取り込みが完全に成功したら閉じる (同名での再実行は
         // 「既に存在する」エラーになるだけ)。スキップ行があるときは一覧を見せる。
-        if (creating && e.skipped.length === 0) onClose();
+        if (creating && skippedTotal === 0) onClose();
       },
       onError: (e) => {
         // Enrich an abort-mode failure with the pinpointed record/line (#687).
@@ -515,19 +548,39 @@ export function ImportModal({
     }
   };
 
-  const copySkipped = useCallback(
-    async (skipped: SkippedRowInfo[]) => {
-      const text = skipped
-        .map((s) =>
-          s.line != null
-            ? t("importSkippedRowLine", { record: s.record, line: s.line, reason: s.reason })
-            : t("importSkippedRow", { record: s.record, reason: s.reason }),
-        )
-        .join("\n");
+  // スキップ行の全件は Rust 側が「直近の取り込み結果」として保持している (#1258)。
+  // コピー用テキストの組み立てもファイルへの書き出しもバックエンドで行い、フロントは
+  // 先頭の一部しか持たない。行の書式は表示と同じ i18n 文言をテンプレートとして渡す。
+  const copySkipped = useCallback(async () => {
+    try {
+      const text = await api.getImportSkippedText(
+        t("importSkippedRow"),
+        t("importSkippedRowLine"),
+      );
       if (await copyToClipboard(text)) toast.success(t("importSkippedCopied"));
-    },
-    [toast, t],
-  );
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [toast, t]);
+
+  const saveSkipped = useCallback(async () => {
+    try {
+      const dest = await save({
+        defaultPath: "skipped-rows.txt",
+        title: t("importSkippedSaveTitle"),
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      const count = await api.saveImportSkippedRows(
+        dest,
+        t("importSkippedRow"),
+        t("importSkippedRowLine"),
+      );
+      toast.success(t("importSkippedSaved", { count, path: dest }));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [toast, t]);
 
   const handleCancelImport = async () => {
     const sid = streamIdRef.current;
@@ -1074,18 +1127,36 @@ export function ImportModal({
               <chakra.span fontSize="sm" fontWeight={500}>
                 {t("importSkippedSummary", {
                   inserted: status.inserted,
-                  skipped: status.skipped.length,
+                  skipped: status.skippedTotal,
                 })}
               </chakra.span>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => void copySkipped(status.skipped)}
-              >
-                {t("importSkippedCopy")}
-              </Button>
+              <chakra.div display="flex" gap="2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void saveSkipped()}
+                >
+                  {t("importSkippedSave")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void copySkipped()}
+                >
+                  {t("importSkippedCopy")}
+                </Button>
+              </chakra.div>
             </chakra.div>
+            {status.skippedTotal > status.skipped.length && (
+              <chakra.div fontSize="sm" color="app.textMuted" textStyle="numeric">
+                {t("importSkippedShowing", {
+                  shown: status.skipped.length,
+                  total: status.skippedTotal,
+                })}
+              </chakra.div>
+            )}
             <chakra.div
               maxH="180px"
               overflowY="auto"

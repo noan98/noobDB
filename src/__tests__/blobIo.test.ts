@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  blobFileName,
-  blobKeyParts,
-  detectBlobKind,
-  detectBlobKindFromHex,
-  formatBlobSize,
-  hexToBytes,
-} from "../components/blobIo";
+import { blobFileName, blobKeyParts, bytesToHex, formatBlobSize } from "../components/blobIo";
 import { buildBlobUpdateStatement } from "../components/cellEdit";
 import type { Column } from "../api/tauri";
 
@@ -15,37 +8,16 @@ const cols: Column[] = [
   { name: "data", type_name: "BLOB" },
 ];
 
-describe("hexToBytes", () => {
-  it("decodes and rejects malformed input", () => {
-    expect(Array.from(hexToBytes("00ff10")!)).toEqual([0, 255, 16]);
-    expect(hexToBytes("abc")).toBeNull();
-    expect(hexToBytes("zz")).toBeNull();
-    expect(hexToBytes("")!.length).toBe(0);
-  });
-});
-
-describe("detectBlobKind (マジックバイト)", () => {
-  it("画像・PDF・アーカイブを判定する", () => {
-    expect(detectBlobKindFromHex("89504e470d0a1a0a0000")?.mime).toBe("image/png");
-    expect(detectBlobKindFromHex("ffd8ffe000104a46")?.mime).toBe("image/jpeg");
-    expect(detectBlobKindFromHex("474946383961")?.mime).toBe("image/gif");
-    expect(detectBlobKindFromHex("52494646000000005745425056503820")?.mime).toBe("image/webp");
-    expect(detectBlobKindFromHex("255044462d312e34")).toMatchObject({ mime: "application/pdf", image: false });
-    expect(detectBlobKindFromHex("504b0304")?.ext).toBe("zip");
-    expect(detectBlobKindFromHex("1f8b0800")?.ext).toBe("gz");
-  });
-  it("判別できないものは null、RIFF だけでは WebP にしない", () => {
-    expect(detectBlobKindFromHex("deadbeef")).toBeNull();
-    expect(detectBlobKindFromHex("52494646000000004156492000")).toBeNull();
-    expect(detectBlobKind(new Uint8Array([]))).toBeNull();
-    // "BM" だけ (14 バイト未満) は BMP と見なさない
-    expect(detectBlobKind(new Uint8Array([0x42, 0x4d, 0]))).toBeNull();
+describe("bytesToHex", () => {
+  it("小文字 2 桁ずつの 16 進にする", () => {
+    expect(bytesToHex(new Uint8Array([0, 255, 16]))).toBe("00ff10");
+    expect(bytesToHex(new Uint8Array([]))).toBe("");
   });
 });
 
 describe("blobFileName / formatBlobSize", () => {
   it("列名を安全なファイル名にし拡張子を付ける", () => {
-    expect(blobFileName("avatar", { mime: "image/png", ext: "png", image: true })).toBe("avatar.png");
+    expect(blobFileName("avatar", "png")).toBe("avatar.png");
     expect(blobFileName("a/b c", null)).toBe("a_b_c.bin");
     expect(blobFileName("///", null)).toBe("blob.bin");
   });

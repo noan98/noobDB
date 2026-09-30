@@ -3,12 +3,14 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::import_decode::DecodingReader;
 use crate::commands::import_xlsx;
 use crate::db::create_table::{render_create_table, render_drop_table, NewColumn};
 use crate::db::upsert::{ConflictMode, ImportConflict};
 use crate::db::DriverKind;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::progress::ProgressThrottle;
 use crate::commands::query::record_write_history;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
@@ -29,13 +31,9 @@ const DEFAULT_BATCH_SIZE: usize = 500;
 /// `commands::file` (#687 review follow-up).
 const MAX_IMPORT_FILE_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Read a file for import after rejecting an empty path and enforcing
-/// `MAX_IMPORT_FILE_BYTES`. Like `commands::file::read_text_file`, `metadata`
-/// alone is insufficient — it misses TOCTOU growth and special files whose
-/// length is 0/undefined (e.g. FIFOs, `/proc`) — so the actual read is also
-/// capped with `take` and the read length re-checked.
-async fn read_import_file(path: &str) -> Result<Vec<u8>> {
-    use tokio::io::AsyncReadExt;
+/// Rejects an empty path and a file larger than `MAX_IMPORT_FILE_BYTES` (by
+/// `metadata`; callers that read the content still cap the actual read).
+async fn check_import_file(path: &str) -> Result<()> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("import file path is empty".into()));
     }
@@ -48,6 +46,17 @@ async fn read_import_file(path: &str) -> Result<Vec<u8>> {
             )));
         }
     }
+    Ok(())
+}
+
+/// Read a file for import after rejecting an empty path and enforcing
+/// `MAX_IMPORT_FILE_BYTES`. Like `commands::file::read_text_file`, `metadata`
+/// alone is insufficient — it misses TOCTOU growth and special files whose
+/// length is 0/undefined (e.g. FIFOs, `/proc`) — so the actual read is also
+/// capped with `take` and the read length re-checked.
+async fn read_import_file(path: &str) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    check_import_file(path).await?;
     let file = tokio::fs::File::open(path).await?;
     // Read at most limit + 1 bytes so an exactly-limit file is still accepted
     // while anything larger is detected by the actual read length.
@@ -187,7 +196,7 @@ fn decode_bytes(bytes: &[u8], encoding: &str) -> String {
     cow.into_owned()
 }
 
-fn build_reader<'a>(data: &'a [u8], opts: &ImportOptions) -> csv::Reader<&'a [u8]> {
+fn build_reader<R: std::io::Read>(data: R, opts: &ImportOptions) -> csv::Reader<R> {
     csv::ReaderBuilder::new()
         .delimiter(opts.delimiter as u8)
         .quote(opts.quote as u8)
@@ -203,14 +212,33 @@ fn csv_err(e: csv::Error) -> AppError {
     AppError::Other(format!("CSV parse error: {e}"))
 }
 
+/// Header + first rows from already-decoded (UTF-8) bytes. xlsx is parsed from the
+/// whole workbook; CSV / JSON / NDJSON go through the streaming reader path.
 fn parse_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
     if opts.format == ImportFormat::Xlsx {
         return parse_xlsx_preview(data, opts);
     }
-    if opts.format != ImportFormat::Csv {
-        return parse_json_preview(data, opts.format);
+    parse_preview_reader(data, opts)
+}
+
+/// CSV / JSON / NDJSON のプレビュー。`reader` から**必要なぶんだけ**読む (#1258):
+/// CSV / NDJSON は先頭 `PREVIEW_ROW_LIMIT + 1` レコード、JSON 配列は同数の要素で
+/// 読み取りを止める。`reader` は UTF-8 へ変換済みであること。
+fn parse_preview_reader<R: std::io::Read>(reader: R, opts: &ImportOptions) -> Result<CsvPreview> {
+    match opts.format {
+        ImportFormat::Xlsx => Err(AppError::InvalidInput(
+            "xlsx preview needs the whole workbook".into(),
+        )),
+        ImportFormat::Json | ImportFormat::Ndjson => parse_json_preview_reader(reader, opts.format),
+        ImportFormat::Csv => parse_csv_preview_reader(reader, opts),
     }
-    let mut rdr = build_reader(data, opts);
+}
+
+fn parse_csv_preview_reader<R: std::io::Read>(
+    reader: R,
+    opts: &ImportOptions,
+) -> Result<CsvPreview> {
+    let mut rdr = build_reader(reader, opts);
     let mut records = rdr.records();
 
     let mut headers: Vec<String> = Vec::new();
@@ -246,19 +274,36 @@ fn parse_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
 
 /// Reads the file and returns the header + first rows for the mapping UI.
 /// Despite the `csv` name (kept for IPC stability) this handles CSV, JSON, and
-/// NDJSON; the format is selected by `options.format`.
+/// NDJSON; the format is selected by `options.format`. CSV / NDJSON / JSON read
+/// only the head of the file (decoded on the fly), so a huge file previews
+/// instantly (#1258); xlsx needs the whole workbook.
 #[tauri::command]
 pub async fn parse_csv_preview(path: String, options: ImportOptions) -> Result<CsvPreview> {
     if options.format == ImportFormat::Csv {
         validate_chars(&options)?;
     }
-    let bytes = read_import_file(&path).await?;
     if options.format == ImportFormat::Xlsx {
+        let bytes = read_import_file(&path).await?;
         // xlsx はバイナリ (ZIP) なので文字コード変換を通さない。
         return parse_preview(&bytes, &options);
     }
-    let text = decode_bytes(&bytes, &options.encoding);
-    parse_preview(text.as_bytes(), &options)
+    preview_text_file(path, options).await
+}
+
+/// CSV / JSON / NDJSON ファイルの先頭からプレビューを作る。ファイルは
+/// `DecodingReader` で UTF-8 へ変換しながら読み、必要な行数が揃った時点で止める。
+async fn preview_text_file(path: String, options: ImportOptions) -> Result<CsvPreview> {
+    use std::io::Read;
+    check_import_file(&path).await?;
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&path)?;
+        // 特殊ファイル (無限に読める /dev/zero 等) でも上限で打ち切る。
+        let limited = file.take(MAX_IMPORT_FILE_BYTES + 1);
+        let reader = DecodingReader::new(limited, &options.encoding);
+        parse_preview_reader(reader, &options)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("preview task failed: {e}")))?
 }
 
 fn json_err(e: serde_json::Error) -> AppError {
@@ -346,30 +391,162 @@ fn json_value_to_cell(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Header + first rows for the JSON/NDJSON mapping UI. Mirrors `parse_preview`'s
-/// CSV branch: NULL/missing cells show as empty text in the verbatim preview.
-fn parse_json_preview(data: &[u8], format: ImportFormat) -> Result<CsvPreview> {
-    let text = std::str::from_utf8(data)
-        .map_err(|e| AppError::Other(format!("invalid UTF-8 in import file: {e}")))?;
-    let records = parse_json_records(text, format)?;
-    let headers = collect_json_headers(&records);
+/// `BufRead` 由来の I/O エラーを `AppError` へ。UTF-8 として不正な入力
+/// (`InvalidData`) は従来と同じ文言にする。
+fn preview_read_err(e: std::io::Error) -> AppError {
+    if e.kind() == std::io::ErrorKind::InvalidData {
+        AppError::Other(format!("invalid UTF-8 in import file: {e}"))
+    } else {
+        AppError::Io(e)
+    }
+}
 
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut truncated = false;
-    for record in &records {
-        if rows.len() >= PREVIEW_ROW_LIMIT {
-            truncated = true;
+/// JSON 配列を要素単位で読む Visitor。`PREVIEW_ROW_LIMIT + 1` 個の要素を読んだ
+/// 時点で止める (+1 は「続きがある」ことの判定用)。serde_json は Visitor が途中で
+/// 戻ると `end_seq` でエラーにするため、停止は専用の番兵エラーで表し、呼び出し側が
+/// `stopped` を見て無視する。
+struct PreviewSeq<'a> {
+    records: &'a mut Vec<serde_json::Map<String, serde_json::Value>>,
+    failure: &'a mut Option<AppError>,
+    stopped: &'a mut bool,
+}
+
+impl<'de> serde::de::Visitor<'de> for PreviewSeq<'_> {
+    type Value = ();
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("an array of objects")
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> std::result::Result<(), A::Error> {
+        while let Some(value) = seq.next_element::<serde_json::Value>()? {
+            match json_object(value) {
+                Ok(map) => self.records.push(map),
+                Err(e) => {
+                    *self.failure = Some(e);
+                    *self.stopped = true;
+                    return Err(serde::de::Error::custom("preview stopped"));
+                }
+            }
+            if self.records.len() > PREVIEW_ROW_LIMIT {
+                *self.stopped = true;
+                return Err(serde::de::Error::custom("preview stopped"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// JSON ドキュメントの先頭 `PREVIEW_ROW_LIMIT + 1` レコードを読む。トップレベルが
+/// 配列なら要素単位のストリームで読み (先頭だけで止まる)、単一オブジェクトなら
+/// 全体を 1 行として読む。
+fn read_json_preview_records<R: std::io::BufRead>(
+    reader: &mut R,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+    use serde::Deserializer as _;
+    // 先頭の空白を読み飛ばして最初の有効バイトを覗く。
+    let first = loop {
+        let buf = reader.fill_buf().map_err(preview_read_err)?;
+        if buf.is_empty() {
+            break None;
+        }
+        match buf
+            .iter()
+            .position(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+        {
+            Some(i) => {
+                let b = buf[i];
+                reader.consume(i);
+                break Some(b);
+            }
+            None => {
+                let n = buf.len();
+                reader.consume(n);
+            }
+        }
+    };
+    if first != Some(b'[') {
+        let value: serde_json::Value = serde_json::from_reader(reader).map_err(json_err)?;
+        return match value {
+            serde_json::Value::Object(_) => Ok(vec![json_object(value)?]),
+            _ => Err(AppError::InvalidInput(
+                "JSON import expects an array of objects (or a single object)".into(),
+            )),
+        };
+    }
+    let mut records = Vec::new();
+    let mut failure: Option<AppError> = None;
+    let mut stopped = false;
+    let mut de = serde_json::Deserializer::from_reader(&mut *reader);
+    let result = (&mut de).deserialize_seq(PreviewSeq {
+        records: &mut records,
+        failure: &mut failure,
+        stopped: &mut stopped,
+    });
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    match result {
+        Ok(()) => de.end().map_err(json_err)?,
+        Err(e) if !stopped => return Err(json_err(e)),
+        Err(_) => {}
+    }
+    Ok(records)
+}
+
+/// NDJSON の先頭 `PREVIEW_ROW_LIMIT + 1` レコードを行単位で読む (空行は飛ばす)。
+fn read_ndjson_preview_records<R: std::io::BufRead>(
+    reader: R,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+    let mut out = Vec::new();
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.map_err(preview_read_err)?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(trimmed)
+            .map_err(|e| AppError::Other(format!("NDJSON parse error on line {}: {e}", i + 1)))?;
+        out.push(json_object(value)?);
+        if out.len() > PREVIEW_ROW_LIMIT {
             break;
         }
-        let row = headers
-            .iter()
-            .map(|h| match record.get(h) {
-                Some(v) => json_value_to_cell(v).unwrap_or_default(),
-                None => String::new(),
-            })
-            .collect();
-        rows.push(row);
     }
+    Ok(out)
+}
+
+/// Header + first rows for the JSON/NDJSON mapping UI. Mirrors the CSV branch:
+/// NULL/missing cells show as empty text in the verbatim preview. The header list
+/// is the union of keys of the records read for the preview; since the import's
+/// union (over all records) is built in first-seen order, this is always a prefix
+/// of it, so the mapping indexes the user picks stay valid for the import.
+fn parse_json_preview_reader<R: std::io::Read>(
+    reader: R,
+    format: ImportFormat,
+) -> Result<CsvPreview> {
+    let mut reader = std::io::BufReader::new(reader);
+    let records = match format {
+        ImportFormat::Ndjson => read_ndjson_preview_records(reader)?,
+        _ => read_json_preview_records(&mut reader)?,
+    };
+    let headers = collect_json_headers(&records);
+    let truncated = records.len() > PREVIEW_ROW_LIMIT;
+    let rows = records
+        .iter()
+        .take(PREVIEW_ROW_LIMIT)
+        .map(|record| {
+            headers
+                .iter()
+                .map(|h| match record.get(h) {
+                    Some(v) => json_value_to_cell(v).unwrap_or_default(),
+                    None => String::new(),
+                })
+                .collect()
+        })
+        .collect();
 
     Ok(CsvPreview {
         headers,
@@ -574,6 +751,94 @@ pub struct SkippedRowInfo {
     pub reason: String,
 }
 
+/// 完了イベントへ載せるスキップ行の上限 (#1258)。全件を IPC に載せると、巨大な
+/// ファイルで大半がスキップされたとき JSON と描画が重くなる。
+pub const MAX_REPORTED_SKIPPED: usize = 200;
+
+/// 1 行ぶんのテキスト。`{record}` / `{line}` / `{reason}` を 1 回の走査で置換する
+/// (置換結果の中に `{record}` のような文字列があっても再置換しない)。
+fn render_skipped_template(template: &str, row: &SkippedRowInfo) -> String {
+    let mut out = String::with_capacity(template.len() + row.reason.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let replaced = [
+            ("{record}", Some(row.record.to_string())),
+            ("{line}", row.line.map(|l| l.to_string())),
+            ("{reason}", Some(row.reason.clone())),
+        ]
+        .into_iter()
+        .find(|(name, _)| after.starts_with(name));
+        match replaced {
+            Some((name, value)) => {
+                out.push_str(&value.unwrap_or_default());
+                rest = &after[name.len()..];
+            }
+            None => {
+                out.push('{');
+                rest = &after[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// スキップ行の一覧テキスト (1 行 1 レコード、`\n` 区切り、末尾改行なし)。
+/// `line` が分かる行 (CSV) は `line_template`、そうでなければ `record_template`。
+/// テンプレートはフロントの i18n 文言をそのまま受け取る (表示言語を保つため)。
+fn format_skipped_rows(
+    rows: &[SkippedRowInfo],
+    record_template: &str,
+    line_template: &str,
+) -> String {
+    rows.iter()
+        .map(|r| {
+            let tpl = if r.line.is_some() {
+                line_template
+            } else {
+                record_template
+            };
+            render_skipped_template(tpl, r)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 直近の取り込みで保持しているスキップ行を一覧テキストにして返す (コピー用)。
+#[tauri::command]
+pub async fn get_import_skipped_text(
+    record_template: String,
+    line_template: String,
+    state: State<'_, AppState>,
+) -> Result<String> {
+    let rows = state.last_import_skipped_snapshot();
+    Ok(format_skipped_rows(&rows, &record_template, &line_template))
+}
+
+/// 直近の取り込みで保持しているスキップ行の全件を、ユーザが選んだ `path` へ
+/// テキストで書き出す。書き出した行数を返す。保持している行が無ければエラー。
+#[tauri::command]
+pub async fn save_import_skipped_rows(
+    path: String,
+    record_template: String,
+    line_template: String,
+    state: State<'_, AppState>,
+) -> Result<u64> {
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("save path is empty".into()));
+    }
+    let rows = state.last_import_skipped_snapshot();
+    if rows.is_empty() {
+        return Err(AppError::InvalidInput("no skipped rows to save".into()));
+    }
+    let mut text = format_skipped_rows(&rows, &record_template, &line_template);
+    text.push('\n');
+    tokio::fs::write(&path, text).await?;
+    Ok(rows.len() as u64)
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct ImportDoneEvent {
     #[serde(rename = "streamId")]
@@ -581,8 +846,14 @@ pub struct ImportDoneEvent {
     pub inserted: u64,
     #[serde(rename = "elapsedMs")]
     pub elapsed_ms: u64,
-    /// Rows skipped in `skip` mode (empty in `abort` mode). #687.
+    /// Rows skipped in `skip` mode (empty in `abort` mode). #687. 件数が多いときは
+    /// 先頭 [`MAX_REPORTED_SKIPPED`] 件だけ (#1258)。全件は `skipped_total` と
+    /// Rust 側に保持した直近の取り込み結果 (`save_import_skipped_rows` /
+    /// `get_import_skipped_text`) から取れる。
     pub skipped: Vec<SkippedRowInfo>,
+    /// Total number of skipped rows, including those not listed in `skipped`.
+    #[serde(rename = "skippedTotal")]
+    pub skipped_total: u64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -836,26 +1107,42 @@ async fn spawn_import(
         }
     }
 
+    // 失敗した取り込みの後に、古い取り込みのスキップ行が残らないようにする。
+    if !matches!(&result, Ok(ImportRun::Ok { .. })) {
+        if let Some(state) = app.try_state::<AppState>() {
+            state.set_last_import_skipped(Vec::new());
+        }
+    }
+
     match result {
         Ok(ImportRun::Ok {
             inserted,
             elapsed_ms,
             skipped,
         }) => {
+            let skipped_total = skipped.len() as u64;
             tracing::info!(
                 stream_id = %stream_id,
                 inserted,
-                skipped = skipped.len(),
+                skipped = skipped_total,
                 elapsed_ms,
                 "csv import completed"
             );
+            // 完了イベントには先頭だけを載せ、全件は「直近の取り込み結果」として
+            // Rust 側に保持する (#1258)。
+            let head: Vec<SkippedRowInfo> =
+                skipped.iter().take(MAX_REPORTED_SKIPPED).cloned().collect();
+            if let Some(state) = app.try_state::<AppState>() {
+                state.set_last_import_skipped(skipped);
+            }
             if let Err(e) = app.emit(
                 EV_IMPORT_DONE,
                 ImportDoneEvent {
                     stream_id: stream_id.clone(),
                     inserted,
                     elapsed_ms,
-                    skipped,
+                    skipped: head,
+                    skipped_total,
                 },
             ) {
                 tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import done event");
@@ -936,7 +1223,12 @@ async fn run_import(
     };
     let progress_app = app.clone();
     let progress_id = stream_id.to_string();
+    // 進捗イベントは 150ms ごとに間引く (#1258)。最後の進捗 (全行挿入済み) は必ず送る。
+    let mut throttle = ProgressThrottle::standard();
     let on_progress = move |inserted: u64, total: u64| -> Result<()> {
+        if !(throttle.ready() || inserted >= total) {
+            return Ok(());
+        }
         if let Err(e) = progress_app.emit(
             EV_IMPORT_PROGRESS,
             ImportProgressEvent {
@@ -1695,5 +1987,301 @@ mod tests {
         assert!(p.sheets.is_empty());
         let p = parse_preview(br#"[{"a":1}]"#, &json_opts(ImportFormat::Json, None)).unwrap();
         assert!(p.sheets.is_empty());
+    }
+
+    // ---- #1258: ストリーミングプレビュー -------------------------------------
+
+    fn preview_json(p: &CsvPreview) -> serde_json::Value {
+        serde_json::to_value(p).unwrap()
+    }
+
+    /// 従来実装 (全体をデコード → 全レコードをパース → 先頭 50 行) の参照実装。
+    /// ストリーミング版が 50 レコード以内のファイルで同じ結果を返すことの基準。
+    fn legacy_json_preview(text: &str, format: ImportFormat) -> CsvPreview {
+        let records = parse_json_records(text, format).unwrap();
+        let headers = collect_json_headers(&records);
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        let mut truncated = false;
+        for record in &records {
+            if rows.len() >= PREVIEW_ROW_LIMIT {
+                truncated = true;
+                break;
+            }
+            rows.push(
+                headers
+                    .iter()
+                    .map(|h| match record.get(h) {
+                        Some(v) => json_value_to_cell(v).unwrap_or_default(),
+                        None => String::new(),
+                    })
+                    .collect(),
+            );
+        }
+        CsvPreview {
+            headers,
+            rows,
+            truncated,
+            sheets: Vec::new(),
+        }
+    }
+
+    fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "noobdb_preview_{}_{}_{}",
+            std::process::id(),
+            name,
+            bytes.len()
+        ));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn streaming_csv_preview_matches_full_decode_for_shift_jis() {
+        // 64KB のチャンクを何度もまたぐ大きさの Shift_JIS CSV (2 バイト文字が境界に来る)。
+        let mut text = String::from("名前,備考\n");
+        for i in 0..6000 {
+            text.push_str(&format!("山田太郎{i},あいうえお漢字テキスト\n"));
+        }
+        let bytes = encoding_rs::SHIFT_JIS.encode(&text).0.into_owned();
+        assert!(bytes.len() > 3 * 64 * 1024);
+        let path = temp_file("sjis.csv", &bytes);
+        let mut o = opts(true, None);
+        o.encoding = "shift_jis".into();
+        let got = preview_text_file(path.to_string_lossy().into_owned(), o.clone())
+            .await
+            .unwrap();
+        let want = parse_preview(decode_bytes(&bytes, "shift_jis").as_bytes(), &o).unwrap();
+        assert_eq!(preview_json(&got), preview_json(&want));
+        assert_eq!(got.rows.len(), PREVIEW_ROW_LIMIT);
+        assert!(got.truncated);
+        assert_eq!(got.headers, vec!["名前", "備考"]);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn streaming_csv_preview_handles_a_single_huge_row_and_multiline_quotes() {
+        // 1 行がチャンクより長い + クォート内の改行。
+        let long = "x".repeat(200 * 1024);
+        let text = format!("a,b\n\"{long}\",1\n\"line1\nline2\",2\n3,4\n");
+        let path = temp_file("long.csv", text.as_bytes());
+        let got = preview_text_file(path.to_string_lossy().into_owned(), opts(true, None))
+            .await
+            .unwrap();
+        let want = parse_preview(text.as_bytes(), &opts(true, None)).unwrap();
+        assert_eq!(preview_json(&got), preview_json(&want));
+        assert_eq!(got.rows.len(), 3);
+        assert_eq!(got.rows[1][0], "line1\nline2");
+        assert!(!got.truncated);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn streaming_preview_rejects_empty_path_and_missing_file() {
+        assert!(matches!(
+            preview_text_file("  ".into(), opts(true, None))
+                .await
+                .unwrap_err(),
+            AppError::InvalidInput(_)
+        ));
+        assert!(matches!(
+            preview_text_file("/nonexistent/noobdb/x.csv".into(), opts(true, None))
+                .await
+                .unwrap_err(),
+            AppError::Io(_)
+        ));
+    }
+
+    /// 読み取ったバイト数を数える Reader (先頭だけ読んで止まることの検証用)。
+    struct CountingReader<'a> {
+        inner: &'a [u8],
+        read: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+    impl std::io::Read for CountingReader<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read.set(self.read.get() + n);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn preview_reads_only_the_head_of_csv_ndjson_and_json_arrays() {
+        let csv: String = (0..100_000).map(|i| format!("{i},row{i}\n")).collect();
+        let ndjson: String = (0..100_000).map(|i| format!("{{\"a\":{i}}}\n")).collect();
+        let json = format!(
+            "[{}]",
+            (0..100_000)
+                .map(|i| format!("{{\"a\":{i}}}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let cases: Vec<(&str, ImportOptions)> = vec![
+            (csv.as_str(), opts(false, None)),
+            (ndjson.as_str(), json_opts(ImportFormat::Ndjson, None)),
+            (json.as_str(), json_opts(ImportFormat::Json, None)),
+        ];
+        for (text, o) in cases {
+            let read = std::rc::Rc::new(std::cell::Cell::new(0));
+            let reader = CountingReader {
+                inner: text.as_bytes(),
+                read: read.clone(),
+            };
+            let p = parse_preview_reader(reader, &o).unwrap();
+            assert_eq!(p.rows.len(), PREVIEW_ROW_LIMIT);
+            assert!(p.truncated);
+            assert!(
+                read.get() < text.len() / 10,
+                "{:?}: read {} of {} bytes",
+                o.format,
+                read.get(),
+                text.len()
+            );
+        }
+    }
+
+    #[test]
+    fn json_array_preview_matches_legacy_within_the_row_limit() {
+        // 異種キー・null・入れ子・日本語を含む 50 件以内の配列。
+        let docs = [
+            r#"[{"id":1,"name":"山田","tags":["a","b"]},{"id":2,"extra":null},{"z":true,"id":3.5}]"#,
+            r#"  [ ]"#,
+            r#"{"only":"one"}"#,
+        ];
+        for doc in docs {
+            let got = parse_preview(doc.as_bytes(), &json_opts(ImportFormat::Json, None)).unwrap();
+            let want = legacy_json_preview(doc, ImportFormat::Json);
+            assert_eq!(preview_json(&got), preview_json(&want), "{doc}");
+        }
+        let nd = "{\"a\":1}\n\n{\"b\":\"x\"}\r\n  \n{\"a\":null,\"c\":[1]}\n";
+        let got = parse_preview(nd.as_bytes(), &json_opts(ImportFormat::Ndjson, None)).unwrap();
+        let want = legacy_json_preview(nd, ImportFormat::Ndjson);
+        assert_eq!(preview_json(&got), preview_json(&want));
+    }
+
+    #[test]
+    fn json_array_preview_stops_at_the_limit_and_ignores_the_tail() {
+        // 51 件目以降に壊れた内容があっても、先頭 50 件のプレビューは成功する。
+        let mut items: Vec<String> = (0..60).map(|i| format!("{{\"n\":{i}}}")).collect();
+        items.push("{oops".into());
+        let doc = format!("[{}]", items.join(","));
+        let p = parse_preview(doc.as_bytes(), &json_opts(ImportFormat::Json, None)).unwrap();
+        assert_eq!(p.rows.len(), PREVIEW_ROW_LIMIT);
+        assert!(p.truncated);
+        assert_eq!(p.rows[0], vec!["0"]);
+        assert_eq!(p.rows[49], vec!["49"]);
+        // ちょうど 50 件なら truncated ではない。
+        let exact = format!(
+            "[{}]",
+            (0..50)
+                .map(|i| format!("{{\"n\":{i}}}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let p = parse_preview(exact.as_bytes(), &json_opts(ImportFormat::Json, None)).unwrap();
+        assert_eq!(p.rows.len(), 50);
+        assert!(!p.truncated);
+        // 51 件なら truncated。
+        let over = format!(
+            "[{}]",
+            (0..51)
+                .map(|i| format!("{{\"n\":{i}}}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let p = parse_preview(over.as_bytes(), &json_opts(ImportFormat::Json, None)).unwrap();
+        assert_eq!(p.rows.len(), 50);
+        assert!(p.truncated);
+    }
+
+    #[test]
+    fn json_preview_errors_are_preserved() {
+        let j = json_opts(ImportFormat::Json, None);
+        // 配列内の非オブジェクト要素。
+        assert!(matches!(
+            parse_preview(b"[1,2]", &j).unwrap_err(),
+            AppError::InvalidInput(_)
+        ));
+        // トップレベルがスカラ。
+        assert!(matches!(
+            parse_preview(b"42", &j).unwrap_err(),
+            AppError::InvalidInput(_)
+        ));
+        // 空・構文エラー・先頭 50 件内の壊れた要素。
+        assert!(parse_preview(b"", &j).is_err());
+        assert!(parse_preview(b"[{\"a\":1},", &j).is_err());
+        assert!(parse_preview(b"[{\"a\":1} x]", &j).is_err());
+        // 配列が最後まで読めて末尾にゴミがある場合も従来どおりエラー。
+        assert!(parse_preview(b"[{\"a\":1}] trailing", &j).is_err());
+        // NDJSON は壊れた行番号を報告する。
+        let nd = json_opts(ImportFormat::Ndjson, None);
+        let err = parse_preview(b"{\"a\":1}\nnope\n", &nd).unwrap_err();
+        assert!(err.to_string().contains("line 2"), "{err}");
+        // NDJSON は 51 件目より後の壊れた行では失敗しない。
+        let mut text: String = (0..60).map(|i| format!("{{\"a\":{i}}}\n")).collect();
+        text.push_str("nope\n");
+        let p = parse_preview(text.as_bytes(), &nd).unwrap();
+        assert!(p.truncated);
+        // UTF-8 として不正な入力は従来と同じ系統のエラー。
+        assert!(parse_preview(&[b'[', 0xff, b']'], &j).is_err());
+        assert!(parse_preview(&[b'{', 0xff, b'\n'], &nd).is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_json_preview_decodes_non_utf8_files() {
+        let text = r#"[{"名前":"山田","v":1},{"名前":"佐藤","v":2}]"#;
+        let bytes = encoding_rs::SHIFT_JIS.encode(text).0.into_owned();
+        let path = temp_file("sjis.json", &bytes);
+        let mut o = json_opts(ImportFormat::Json, None);
+        o.encoding = "shift_jis".into();
+        let got = preview_text_file(path.to_string_lossy().into_owned(), o)
+            .await
+            .unwrap();
+        assert_eq!(got.headers, vec!["v", "名前"]);
+        assert_eq!(got.rows[1], vec!["2", "佐藤"]);
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ---- #1258: スキップ行の保持とテキスト化 ---------------------------------
+
+    fn skipped(record: u64, line: Option<u64>, reason: &str) -> SkippedRowInfo {
+        SkippedRowInfo {
+            record,
+            line,
+            reason: reason.into(),
+        }
+    }
+
+    #[test]
+    fn formats_skipped_rows_with_the_ui_templates() {
+        let rows = vec![
+            skipped(3, Some(4), "duplicate {record} key"),
+            skipped(9, None, "NOT NULL"),
+        ];
+        let text = format_skipped_rows(
+            &rows,
+            "record {record}: {reason}",
+            "record {record} (line {line}): {reason}",
+        );
+        assert_eq!(
+            text,
+            "record 3 (line 4): duplicate {record} key\nrecord 9: NOT NULL"
+        );
+        // 日本語テンプレートと未知のプレースホルダ・単独の波括弧はそのまま残る。
+        let ja = format_skipped_rows(&rows[1..], "レコード {record}: {reason} {unknown} {", "");
+        assert_eq!(ja, "レコード 9: NOT NULL {unknown} {");
+        assert_eq!(format_skipped_rows(&[], "a", "b"), "");
+    }
+
+    #[test]
+    fn last_import_skipped_is_replaced_per_import() {
+        let state = AppState::default();
+        assert!(state.last_import_skipped_snapshot().is_empty());
+        state.set_last_import_skipped((1..=500).map(|i| skipped(i, None, "x")).collect());
+        assert_eq!(state.last_import_skipped_snapshot().len(), 500);
+        state.set_last_import_skipped(vec![skipped(1, Some(2), "y")]);
+        assert_eq!(state.last_import_skipped_snapshot().len(), 1);
+        state.set_last_import_skipped(Vec::new());
+        assert!(state.last_import_skipped_snapshot().is_empty());
     }
 }

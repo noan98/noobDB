@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
 import { SAMPLE_COLUMNS } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -22,6 +22,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
         sheets: [],
       }),
       importCsv: vi.fn().mockResolvedValue(undefined),
+      getImportSkippedText: vi.fn().mockResolvedValue("ALL SKIPPED ROWS"),
+      saveImportSkippedRows: vi.fn().mockResolvedValue(1000),
       previewCreateTableDdl: vi
         .fn()
         .mockImplementation(async (_driver: string, table: string) => `CREATE TABLE "${table}" (...)`),
@@ -42,8 +44,15 @@ vi.mock("../api/tauri", async (importOriginal) => {
   };
 });
 
+const { saveMock, copyMock } = vi.hoisted(() => ({
+  saveMock: vi.fn(),
+  copyMock: vi.fn(),
+}));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: saveMock }));
+vi.mock("../components/clipboard", () => ({ copyToClipboard: copyMock }));
+
 import { ImportModal } from "../components/ImportModal";
-import { api } from "../api/tauri";
+import { api, listenImportStream, type ImportDoneEvent } from "../api/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -252,5 +261,146 @@ describe("ImportModal create a new table (#985)", () => {
     expect(await screen.findByText(t("importNewTableColumns"))).toBeInTheDocument();
     expect(screen.queryByText(t("importMappingTitle"))).not.toBeInTheDocument();
     expect(screen.queryByLabelText(t("importConflictMode"))).not.toBeInTheDocument();
+  });
+});
+
+describe("ImportModal preview requests (#1258)", () => {
+  function renderCsv() {
+    return renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 450));
+
+  it("does not re-read the file when only the NULL token or the error mode changes", async () => {
+    renderCsv();
+    await screen.findByText(t("importMappingTitle"));
+    await settle();
+    const before = vi.mocked(api.parseCsvPreview).mock.calls.length;
+    expect(before).toBeGreaterThan(0);
+    // プレビューに送るオプションは NULL トークン / エラーモードに依存しない。
+    const sent = vi.mocked(api.parseCsvPreview).mock.calls[0][1];
+    expect(sent.nullToken).toBeNull();
+    expect(sent.errorMode).toBe("abort");
+
+    fireEvent.change(screen.getByLabelText(t("importNull")), { target: { value: "none" } });
+    fireEvent.change(screen.getByLabelText(t("importErrorMode")), { target: { value: "skip" } });
+    await settle();
+    expect(vi.mocked(api.parseCsvPreview).mock.calls.length).toBe(before);
+
+    // 取り込み本体には実際の NULL トークン / エラーモードが渡る。
+    fireEvent.click(await screen.findByRole("button", { name: t("importExecute") }));
+    await waitFor(() => expect(api.importCsv).toHaveBeenCalledOnce());
+    const params = vi.mocked(api.importCsv).mock.calls[0][0];
+    expect(params.options.errorMode).toBe("skip");
+    expect(params.options.nullToken).toBeNull();
+  });
+
+  it("debounces rapid option edits into a single preview request", async () => {
+    renderCsv();
+    await screen.findByText(t("importMappingTitle"));
+    await settle();
+    const before = vi.mocked(api.parseCsvPreview).mock.calls.length;
+
+    const delimiter = screen.getByLabelText(t("importDelimiter"));
+    fireEvent.change(delimiter, { target: { value: ";" } });
+    fireEvent.change(delimiter, { target: { value: "\t" } });
+    fireEvent.change(delimiter, { target: { value: "," } });
+    fireEvent.change(delimiter, { target: { value: ";" } });
+    await settle();
+    const calls = vi.mocked(api.parseCsvPreview).mock.calls;
+    expect(calls.length).toBe(before + 1);
+    expect(calls[calls.length - 1][1].delimiter).toBe(";");
+  });
+});
+
+describe("ImportModal skipped rows (#1258)", () => {
+  async function finishWithSkips(skippedTotal: number, shown: number) {
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importMappingTitle"));
+    const execute = await screen.findByRole("button", { name: t("importExecute") });
+    await waitFor(() => expect(execute).toBeEnabled());
+    fireEvent.click(execute);
+    await waitFor(() => expect(listenImportStream).toHaveBeenCalled());
+    const handlers = vi.mocked(listenImportStream).mock.calls[0][1];
+    const event: ImportDoneEvent = {
+      streamId: "x",
+      inserted: 10,
+      elapsedMs: 5,
+      skipped: Array.from({ length: shown }, (_, i) => ({
+        record: i + 1,
+        line: i % 2 === 0 ? i + 2 : null,
+        reason: `bad ${i}`,
+      })),
+      skippedTotal,
+    };
+    await act(async () => {
+      handlers.onDone?.(event);
+    });
+  }
+
+  it("shows the total with only the head listed, and copies / saves the full list via the backend", async () => {
+    saveMock.mockResolvedValue("/tmp/out.txt");
+    copyMock.mockResolvedValue(true);
+    await finishWithSkips(1000, 200);
+
+    // 同じ文言がトースト (情報通知) にも出るので複数ヒットしうる。
+    expect(
+      (await screen.findAllByText(t("importSkippedSummary", { inserted: 10, skipped: 1000 }))).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(t("importSkippedShowing", { shown: 200, total: 1000 }))).toBeInTheDocument();
+    expect(screen.getByText(/bad 199/)).toBeInTheDocument();
+    expect(screen.queryByText(/bad 200/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: t("importSkippedCopy") }));
+    await waitFor(() => expect(copyMock).toHaveBeenCalledWith("ALL SKIPPED ROWS"));
+    expect(api.getImportSkippedText).toHaveBeenCalledWith(
+      t("importSkippedRow"),
+      t("importSkippedRowLine"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("importSkippedSave") }));
+    await waitFor(() =>
+      expect(api.saveImportSkippedRows).toHaveBeenCalledWith(
+        "/tmp/out.txt",
+        t("importSkippedRow"),
+        t("importSkippedRowLine"),
+      ),
+    );
+  });
+
+  it("omits the truncation note when every skipped row is listed", async () => {
+    await finishWithSkips(3, 3);
+    await screen.findAllByText(t("importSkippedSummary", { inserted: 10, skipped: 3 }));
+    expect(screen.queryByText(/importSkippedShowing/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(t("importSkippedShowing", { shown: 3, total: 3 })),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not call save when the file dialog is cancelled", async () => {
+    saveMock.mockResolvedValue(null);
+    await finishWithSkips(1000, 200);
+    fireEvent.click(await screen.findByRole("button", { name: t("importSkippedSave") }));
+    await waitFor(() => expect(saveMock).toHaveBeenCalled());
+    expect(api.saveImportSkippedRows).not.toHaveBeenCalled();
   });
 });

@@ -167,7 +167,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
     if (!path.trim() || !hasOutput) return;
     setStatus({ kind: "saving" });
     try {
-      const bytes = await api.writeBinaryFile(path, new TextEncoder().encode(markdown));
+      const bytes = await api.writeTextFile(path, markdown);
       toast.success(t("exportSuccess", { bytes, path }));
       setStatus({ kind: "idle" });
     } catch (e) {
