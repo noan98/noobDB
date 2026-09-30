@@ -86,6 +86,7 @@ const en = {
   bottomPanelTablistAria: "Bottom panel sections",
   bottomPanelClose: "Close panel",
   bottomPanelResizeAria: "Resize the bottom panel",
+  bottomPanelStripAria: "Bottom panel shortcuts",
   healthTitle: "Connection health",
   healthDesc:
     "Checks every open connection in parallel (SELECT 1 + read-only introspection). Saved profiles are never connected automatically.",
@@ -3817,6 +3818,7 @@ const ja: Dict = {
   bottomPanelTablistAria: "下部パネルのセクション",
   bottomPanelClose: "パネルを閉じる",
   bottomPanelResizeAria: "下部パネルの高さを変更",
+  bottomPanelStripAria: "下部パネルのショートカット",
   healthTitle: "接続ヘルス",
   healthDesc:
     "開いている全接続を並列に確認します (SELECT 1 + 読み取り専用の introspection)。保存済みプロファイルへ自動で接続することはありません。",

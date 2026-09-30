@@ -88,6 +88,12 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["queryStreamErrorMessage", schemas.queryStreamErrorMessage],
   ["channelCancelledMessage", schemas.channelCancelledMessage],
   ["channelCancelledMessageZero", schemas.channelCancelledMessage],
+  // #1256: エディタのバッチ実行 (`run_sql_batch`) の Channel メッセージ。
+  ["batchStreamStartedMessage", schemas.batchStreamStartedMessage],
+  ["batchStreamResultsMessage", schemas.batchStreamResultsMessage],
+  ["batchStreamDoneMessage", schemas.batchStreamDoneMessage],
+  ["batchStreamErrorMessage", schemas.batchStreamErrorMessage],
+  ["batchStreamCancelledMessage", schemas.batchStreamCancelledMessage],
   ["previewStreamMetaMessage", schemas.previewStreamMetaMessage],
   ["previewStreamRowsMessageLite", schemas.previewStreamRowsMessageLite],
   ["previewStreamDoneMessage", schemas.previewStreamDoneMessage],

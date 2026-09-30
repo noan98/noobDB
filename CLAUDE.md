@@ -118,6 +118,23 @@ cargo test
 統合テストは環境変数ゲート方式で、未設定ならスキップされます。全コマンドは
 `noobdb-testing` スキルを参照。
 
+## UI の確認方法
+
+UI を変更したとき・改善点を洗い出すときは、**実ブラウザ (Chromium) で App 全体を
+モック接続で描画し、スクリーンショットを撮って目視する** (Tauri 実機はクラウド実行
+環境では起動できない)。手順とテンプレートは
+`.claude/skills/noobdb-testing/references/ui-screenshots.md`。
+
+- **キャプチャは必ず日本語画面で撮る。** ブラウザテストの共通セットアップは英語固定
+  なので、撮影用テストの `beforeEach` で `setLocale("ja")` を呼び直す。英語のまま
+  撮ったキャプチャを PR / Issue に貼らない。
+- 撮影用のテスト (`ui-audit.browser.test.tsx`)・設定 (`vitest.ui-audit.config.ts`)・
+  PNG は一時ファイル。確認後に削除し、コミットに含めない。
+- 撮りたい画面が呼ぶ IPC コマンドは `onCommand` で固定応答を登録する。未登録の
+  コマンドはエラートーストになるだけで、UI の不具合ではない。
+- ビューポートは 1280×800 固定。はみ出し・二重表示・空状態の CTA・ツールチップの
+  重なり・ダークテーマの文字消えを見る。
+
 ## アーキテクチャ (要約)
 
 noobDB は MySQL / PostgreSQL / SQLite 対応の軽量デスクトップ DB クライアントで、
@@ -127,7 +144,7 @@ SSH トンネルをファーストクラスでサポートします。
   通信は `src/api/tauri.ts` の型付きラッパー (`invoke`) のみ。ストリーミング結果は
   戻り値ではなくイベント (`listen`) で受け取る。
 - **バックエンド** (`src-tauri/src/`): Tauri 2 + Tokio。`lib.rs::run()` が
-  **128 個の IPC コマンド**を登録し `AppState` を管理ステートとして持つ。
+  **131 個の IPC コマンド**を登録し `AppState` を管理ステートとして持つ。
 - **DB レイヤ**: トレイトオブジェクトではなく手書きの `enum db::Connection` で
   ドライバをディスパッチ (`db/mod.rs`)。
 - **秘密情報**: `profiles.json` (非秘密) と OS keyring (秘密) を厳密に分離。
