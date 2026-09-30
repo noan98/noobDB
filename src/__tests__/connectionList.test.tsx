@@ -15,16 +15,58 @@ import { t } from "../i18n";
  */
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
+  const listDatabases = vi.fn().mockResolvedValue(["db1"]);
+  const listTables = vi.fn().mockResolvedValue(["tbl1", "tbl2"]);
+  const tableRowEstimates = vi.fn().mockResolvedValue([]);
+  const listSchemaObjects = vi.fn().mockResolvedValue([]);
+  const describeTable = vi.fn().mockResolvedValue([]);
+  const listIndexes = vi.fn().mockResolvedValue([]);
   return {
     ...actual,
     api: {
       ...actual.api,
-      listDatabases: vi.fn().mockResolvedValue(["db1"]),
-      listTables: vi.fn().mockResolvedValue(["tbl1", "tbl2"]),
-      tableRowEstimates: vi.fn().mockResolvedValue([]),
-      listSchemaObjects: vi.fn().mockResolvedValue([]),
-      describeTable: vi.fn().mockResolvedValue([]),
-      listIndexes: vi.fn().mockResolvedValue([]),
+      listDatabases,
+      listTables,
+      tableRowEstimates,
+      listSchemaObjects,
+      describeTable,
+      listIndexes,
+      // 集約 IPC (#1263) は、個別 IPC のモックから同じ内容を組み立てて返す。
+      // テストが個別モックへ仕込む値 (`mockResolvedValueOnce`) がそのまま効く。
+      loadSchemaTree: vi.fn(async (sid: string, openDbs: string[], openKeys: string[]) => {
+        const databases: string[] = await listDatabases(sid);
+        const open = await Promise.all(
+          openDbs
+            .filter((db) => databases.includes(db))
+            .map(async (db) => ({
+              database: db,
+              tables: (await listTables(sid, db)) as string[],
+              row_estimates: await tableRowEstimates(sid, db),
+              objects: await listSchemaObjects(sid, db),
+              comments: [],
+            })),
+        );
+        const tables = await Promise.all(
+          openKeys.map(async (key) => {
+            const sep = key.indexOf("::");
+            return {
+              key,
+              columns: await describeTable(sid, key.slice(0, sep), key.slice(sep + 2)),
+              indexes: await listIndexes(sid, key.slice(0, sep), key.slice(sep + 2)),
+            };
+          }),
+        );
+        return { databases, open, tables };
+      }),
+      listTablesAll: vi.fn(async (sid: string) => {
+        const databases: string[] = await listDatabases(sid);
+        return Promise.all(
+          databases.map(async (database) => ({
+            database,
+            tables: (await listTables(sid, database)) as string[],
+          })),
+        );
+      }),
     },
   };
 });
@@ -451,5 +493,33 @@ describe("スキーマツリーのコンテキストメニューをキーボー�
 
     fireEvent.keyDown(fkRow, { key: "F10", shiftKey: true });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});
+
+describe("スキーマツリーの IPC 集約 (#1263)", () => {
+  it("接続時のツリー復元は load_schema_tree を 1 回だけ呼び、個別 IPC を直接叩かない", async () => {
+    vi.mocked(api.loadSchemaTree).mockClear();
+    vi.mocked(api.listTablesAll).mockClear();
+    const profile = makeProfile({ id: "p-1263", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={[profile]} activeProfileId="p-1263" sessionId="s-tree" />,
+    );
+    await screen.findByRole("treeitem", { name: "db1" });
+    expect(api.loadSchemaTree).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.loadSchemaTree).mock.calls[0][0]).toBe("s-tree");
+  });
+
+  it("スキーマ検索は全 DB のテーブル一覧を list_tables_all 1 回で取得して一致を表示する", async () => {
+    vi.mocked(api.listTablesAll).mockClear();
+    const profile = makeProfile({ id: "p-1263", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={[profile]} activeProfileId="p-1263" sessionId="s-search" />,
+    );
+    await screen.findByRole("treeitem", { name: "db1" });
+    fireEvent.change(screen.getByPlaceholderText(t("listSearchPlaceholder")), {
+      target: { value: "tbl2" },
+    });
+    await screen.findByRole("treeitem", { name: "tbl2" });
+    expect(api.listTablesAll).toHaveBeenCalledTimes(1);
   });
 });

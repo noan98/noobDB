@@ -1693,6 +1693,49 @@ impl MySqlConn {
             .collect())
     }
 
+    /// 1 テーブル分の行数推定 (#1263)。`table_row_estimates` と同じ値・同じ
+    /// 判定 (BASE TABLE のみ) を `TABLE_NAME = ?` で 1 件に絞って取得する。
+    /// テーブルが無い / ビュー / 統計なしは `None`。
+    pub async fn table_row_estimate(&self, db: &str, table: &str) -> Result<Option<i64>> {
+        let row: Option<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_ROWS
+               FROM information_schema.TABLES
+               WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'"#,
+        )
+        .bind(db)
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|r| {
+            r.try_get::<Option<u64>, _>(0)
+                .ok()
+                .flatten()
+                .map(|v| v as i64)
+        }))
+    }
+
+    /// 全データベースのテーブル (とビュー) を SQL 1 本で取得する (#1263)。
+    /// `(データベース名, テーブル名)` の組を DB 名 → テーブル名順で返す。
+    /// `tables` (`SHOW TABLES IN`) と同じく、ビューも含む。
+    pub async fn tables_all(&self) -> Result<Vec<(String, String)>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_SCHEMA, TABLE_NAME
+               FROM information_schema.TABLES
+               ORDER BY TABLE_SCHEMA, TABLE_NAME"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                )
+            })
+            .collect())
+    }
+
     pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
         // information_schema.TABLES carries the engine's own size accounting:
         // DATA_LENGTH / INDEX_LENGTH are BIGINT UNSIGNED byte counts maintained

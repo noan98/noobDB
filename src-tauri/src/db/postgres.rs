@@ -1603,6 +1603,57 @@ impl PostgresConn {
             .collect())
     }
 
+    /// 1 テーブル分の行数推定 (#1263)。`table_row_estimates` と同じ値・同じ判定
+    /// (`reltuples` が負なら `None`) を `relname = $2` で 1 件に絞って取得する。
+    pub async fn table_row_estimate(&self, schema: &str, table: &str) -> Result<Option<i64>> {
+        let row: Option<PgRow> = sqlx::query(
+            r#"SELECT c.reltuples::bigint AS est
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|r| {
+            let raw = r.try_get::<i64, _>(0).unwrap_or(-1);
+            (raw >= 0).then_some(raw)
+        }))
+    }
+
+    /// 全スキーマのテーブル・ビュー・マテビューを SQL 1 本で取得する (#1263)。
+    /// `databases` と同じ除外 (システムスキーマ / 一時スキーマ) を適用し、
+    /// `tables` と同じ対象 (`pg_tables` + `pg_views` + `pg_matviews`) を
+    /// `(スキーマ名, 名前)` の組で返す。
+    pub async fn tables_all(&self) -> Result<Vec<(String, String)>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT schemaname AS sch, tablename AS name FROM pg_tables
+             WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+               AND schemaname NOT LIKE 'pg_temp_%' AND schemaname NOT LIKE 'pg_toast_temp_%'
+             UNION ALL
+             SELECT schemaname, viewname FROM pg_views
+             WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+               AND schemaname NOT LIKE 'pg_temp_%' AND schemaname NOT LIKE 'pg_toast_temp_%'
+             UNION ALL
+             SELECT schemaname, matviewname FROM pg_matviews
+             WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+               AND schemaname NOT LIKE 'pg_temp_%' AND schemaname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY sch, name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                )
+            })
+            .collect())
+    }
+
     pub async fn table_sizes(&self, schema: &str) -> Result<Vec<TableSizeInfo>> {
         // pg_total_relation_size = table + all indexes + TOAST; pg_indexes_size
         // = just the indexes; pg_table_size = total minus indexes (heap + TOAST

@@ -3,7 +3,7 @@ import { findIdentityColumn } from "./identitySync";
 import { isProtectedNamespace, treeNamespaceKind } from "./databaseMaintenance";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
-import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableColumnInfo } from "../api/tauri";
+import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, SchemaTree, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
 import { isSandboxShadowTableName } from "../sandbox";
@@ -587,76 +587,54 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setExpandedDbs(openDbNames.length > 0 ? { ...stored.dbs } : {});
       setExpandedTables(openTableKeys.length > 0 ? { ...stored.tables } : {});
 
-      let dbs: string[];
+      // DB 一覧 + 開いている DB のテーブル/行数推定/非テーブルオブジェクト/コメント +
+      // 開いているテーブルの列/インデックスを `load_schema_tree` 1 回で取得する
+      // (#1263)。以前は DB ごと・テーブルごとに直列に IPC を呼んでいた。
+      let tree: SchemaTree;
       try {
-        dbs = await api.listDatabases(targetSessionId);
+        tree = await api.loadSchemaTree(targetSessionId, openDbNames, openTableKeys);
       } catch (e) {
         if (sessionIdRef.current === targetSessionId) setError(String(e));
         return;
       }
       if (sessionIdRef.current !== targetSessionId) return;
+      const dbs = tree.databases;
       setDatabases(dbs);
 
       const existingOpenDbs = openDbNames.filter((db) => dbs.includes(db));
 
-      // Fetch tables (+ estimates + non-table objects) for the open DBs.
       const nextTables: Record<string, string[]> = {};
       const nextEstimates: Record<string, Record<string, number | null>> = {};
       const nextObjects: Record<string, SchemaObject[]> = {};
-      const failedTableDbs = new Set<string>();
-      await Promise.all(
-        existingOpenDbs.map(async (db) => {
-          try {
-            nextTables[db] = await listVisibleTables(targetSessionId, db);
-          } catch {
-            // Skip a database that failed to list; re-expanding retries it.
-            failedTableDbs.add(db);
-          }
-          try {
-            const est = await api.tableRowEstimates(targetSessionId, db);
-            const map: Record<string, number | null> = {};
-            for (const e of est) map[e.name] = e.estimate;
-            nextEstimates[db] = map;
-          } catch {
-            // Estimates are decorative; a failure just drops the badges.
-          }
-          try {
-            nextObjects[db] = await api.listSchemaObjects(targetSessionId, db);
-          } catch {
-            nextObjects[db] = [];
-          }
-        }),
-      );
-      if (sessionIdRef.current !== targetSessionId) return;
+      const nextComments: Record<string, Record<string, string>> = {};
+      for (const d of tree.open) {
+        // A database whose table list failed is skipped; re-expanding retries it.
+        if (d.tables) nextTables[d.database] = d.tables.filter((tbl) => !isSandboxShadowTableName(tbl));
+        // Estimates / comments are decorative; a failure just drops the badges.
+        if (d.row_estimates) {
+          const map: Record<string, number | null> = {};
+          for (const e of d.row_estimates) map[e.name] = e.estimate;
+          nextEstimates[d.database] = map;
+        }
+        nextObjects[d.database] = d.objects;
+        if (d.comments) nextComments[d.database] = tableCommentMap(d.comments);
+      }
 
-      // Fetch columns (+ indexes) only for open tables under an open DB that we
-      // listed and confirmed still exist.
+      // Columns (+ indexes) only for open tables under an open DB that we listed
+      // and confirmed still exist.
       const nextCols: Record<string, TableColumnInfo[]> = {};
       const nextIndexes: Record<string, IndexInfo[]> = {};
-      await Promise.all(
-        openTableKeys.map(async (key) => {
-          const sep = key.indexOf("::");
-          if (sep < 0) return;
-          const db = key.slice(0, sep);
-          const tbl = key.slice(sep + 2);
-          if (!nextTables[db]?.includes(tbl)) return;
-          try {
-            nextCols[key] = await api.describeTable(targetSessionId, db, tbl);
-          } catch {
-            return;
-          }
-          try {
-            nextIndexes[key] = await api.listIndexes(targetSessionId, db, tbl);
-          } catch {
-            nextIndexes[key] = [];
-          }
-        }),
-      );
-      if (sessionIdRef.current !== targetSessionId) return;
+      for (const tt of tree.tables) {
+        const sep = tt.key.indexOf("::");
+        if (sep < 0) continue;
+        if (!nextTables[tt.key.slice(0, sep)]?.includes(tt.key.slice(sep + 2))) continue;
+        nextCols[tt.key] = tt.columns;
+        nextIndexes[tt.key] = tt.indexes;
+      }
 
       setTables((prev) => ({ ...prev, ...nextTables }));
       setRowEstimates((prev) => ({ ...prev, ...nextEstimates }));
-      for (const db of existingOpenDbs) void loadTableComments(targetSessionId, db);
+      setTableComments((prev) => ({ ...prev, ...nextComments }));
       setSchemaObjects((prev) => ({ ...prev, ...nextObjects }));
       setTableColumns((prev) => ({ ...prev, ...nextCols }));
       setTableIndexes((prev) => ({ ...prev, ...nextIndexes }));
@@ -722,45 +700,38 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       } catch {
         // ignore — 下の listDatabases がセッション消失を検知してエラー表示する。
       }
-      const dbs = await api.listDatabases(targetSessionId);
-      const openDbs = Object.keys(expandedDbs).filter(
-        (db) => expandedDbs[db] && dbs.includes(db),
+      // 一覧・開いている DB/テーブルの内容を `load_schema_tree` 1 回で再取得する (#1263)。
+      const tree = await api.loadSchemaTree(
+        targetSessionId,
+        Object.keys(expandedDbs).filter((db) => expandedDbs[db]),
+        Object.keys(expandedTables).filter((key) => expandedTables[key]),
       );
+      const dbs = tree.databases;
       const nextTables: Record<string, string[]> = {};
       const nextEstimates: Record<string, Record<string, number | null>> = {};
-      await Promise.all(
-        openDbs.map(async (db) => {
-          try {
-            nextTables[db] = await listVisibleTables(targetSessionId, db);
-          } catch {
-            // Skip a database that failed to list; re-expanding retries it.
-          }
-          try {
-            const est = await api.tableRowEstimates(targetSessionId, db);
-            const map: Record<string, number | null> = {};
-            for (const e of est) map[e.name] = e.estimate;
-            nextEstimates[db] = map;
-          } catch {
-            // Estimates are decorative; a failure just drops the badges.
-          }
-        }),
-      );
+      const nextObjects: Record<string, SchemaObject[]> = {};
+      const nextComments: Record<string, Record<string, string>> = {};
+      for (const d of tree.open) {
+        // Skip a database that failed to list; re-expanding retries it.
+        if (d.tables) nextTables[d.database] = d.tables.filter((tbl) => !isSandboxShadowTableName(tbl));
+        // Estimates / comments are decorative; a failure just drops the badges.
+        if (d.row_estimates) {
+          const map: Record<string, number | null> = {};
+          for (const e of d.row_estimates) map[e.name] = e.estimate;
+          nextEstimates[d.database] = map;
+        }
+        nextObjects[d.database] = d.objects;
+        if (d.comments) nextComments[d.database] = tableCommentMap(d.comments);
+      }
       const nextCols: Record<string, TableColumnInfo[]> = {};
-      await Promise.all(
-        Object.keys(expandedTables)
-          .filter((key) => expandedTables[key])
-          .map(async (key) => {
-            const sep = key.indexOf("::");
-            const db = key.slice(0, sep);
-            const tbl = key.slice(sep + 2);
-            if (!nextTables[db]?.includes(tbl)) return;
-            try {
-              nextCols[key] = await api.describeTable(targetSessionId, db, tbl);
-            } catch {
-              // Skip a table that failed; re-expanding retries it.
-            }
-          }),
-      );
+      const nextIndexes: Record<string, IndexInfo[]> = {};
+      for (const tt of tree.tables) {
+        const sep = tt.key.indexOf("::");
+        if (sep < 0) continue;
+        if (!nextTables[tt.key.slice(0, sep)]?.includes(tt.key.slice(sep + 2))) continue;
+        nextCols[tt.key] = tt.columns;
+        nextIndexes[tt.key] = tt.indexes;
+      }
       // The session may have changed while we awaited — don't clobber the new
       // connection's tree with results fetched for the old one.
       if (sessionIdRef.current !== targetSessionId) return;
@@ -768,9 +739,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setDatabases(dbs);
       setTables(nextTables);
       setRowEstimates(nextEstimates);
-      setTableComments({});
-      for (const db of openDbs) void loadTableComments(targetSessionId, db);
+      setTableComments(nextComments);
+      setSchemaObjects(nextObjects);
       setTableColumns(nextCols);
+      setTableIndexes(nextIndexes);
     } catch (e) {
       // Suppress a stale session's error so it can't surface on the new one.
       if (sessionIdRef.current === targetSessionId) setError(String(e));
@@ -1654,15 +1626,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (columnsInFlightRef.current.has(key)) return;
     columnsInFlightRef.current.add(key);
     try {
+      // 列とインデックスは独立なので並行に取得する (#1263)。インデックス一覧は
+      // ベストエフォート: 取得失敗 (権限など) でも列表示は維持する。
+      const idxPromise = api.listIndexes(sessionId, db, tbl).catch(() => [] as IndexInfo[]);
       const cols = await api.describeTable(sessionId, db, tbl);
       setTableColumns((prev) => ({ ...prev, [key]: cols }));
-      // インデックス一覧はベストエフォート: 取得失敗 (権限など) でも列表示は維持する。
-      try {
-        const idx = await api.listIndexes(sessionId, db, tbl);
-        setTableIndexes((prev) => ({ ...prev, [key]: idx }));
-      } catch {
-        setTableIndexes((prev) => ({ ...prev, [key]: [] }));
-      }
+      const idx = await idxPromise;
+      setTableIndexes((prev) => ({ ...prev, [key]: idx }));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1732,14 +1702,36 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // profile-name filter. Columns stay lazy (loaded on table expand).
   useEffect(() => {
     if (!searching || !sessionId || databases === null || !activeExpanded) return;
-    for (const db of databases) {
-      if (tables[db] !== undefined || tablesInFlightRef.current.has(db)) continue;
-      tablesInFlightRef.current.add(db);
-      listVisibleTables(sessionId, db)
-        .then((list) => setTables((prev) => ({ ...prev, [db]: list })))
-        .catch(() => {})
-        .finally(() => tablesInFlightRef.current.delete(db));
-    }
+    const missing = databases.filter(
+      (db) => tables[db] === undefined && !tablesInFlightRef.current.has(db),
+    );
+    if (missing.length === 0) return;
+    // 全 DB のテーブル一覧を SQL 1 本 (`list_tables_all`) で取得し、state へは 1 回の
+    // 更新でまとめて反映する (#1263)。以前は DB 数ぶんの `list_tables` を無制限に
+    // 並列で呼び、1 件ごとに再レンダーしていた。
+    const sid = sessionId;
+    for (const db of missing) tablesInFlightRef.current.add(db);
+    api
+      .listTablesAll(sid)
+      .then((all) => {
+        if (sessionIdRef.current !== sid) return;
+        const byDb = new Map(all.map((d) => [d.database, d.tables]));
+        setTables((prev) => {
+          const next = { ...prev };
+          for (const db of missing) {
+            // 手動展開などで先に埋まった DB は上書きしない。結果に無い DB は空として
+            // 確定させ、再取得のループを防ぐ。
+            if (next[db] === undefined) {
+              next[db] = (byDb.get(db) ?? []).filter((tbl) => !isSandboxShadowTableName(tbl));
+            }
+          }
+          return next;
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        for (const db of missing) tablesInFlightRef.current.delete(db);
+      });
   }, [searching, sessionId, databases, activeExpanded, tables]);
 
   const visibleProfiles = profiles.filter((p) => {

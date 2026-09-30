@@ -44,10 +44,11 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
-    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
-    ServerMetrics, StatementStat, StreamBatch, TableColumnInfo, TableComment, TableIndexes,
-    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    group_tables_by_database, Column, DatabaseTables, DbUserInfo, ForeignKey, IndexInfo, LiveQuery,
+    LocalTableMeta, PreviewResult, ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature,
+    SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch, TableColumnInfo,
+    TableComment, TableIndexes, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use upsert::ImportConflict;
 
@@ -926,6 +927,42 @@ impl Connection {
             Connection::MySql(c) => c.table_row_estimates(db).await,
             Connection::Postgres(c) => c.table_row_estimates(db).await,
             Connection::Sqlite(c) => c.table_row_estimates(db).await,
+        }
+    }
+
+    /// 1 テーブル分の行数推定 (#1263)。[`Connection::table_row_estimates`] の
+    /// 1 件版で、同じ値・同じ判定。SQLite は安価な統計が無いので常に `None`。
+    pub async fn table_row_estimate(&self, db: &str, table: &str) -> Result<Option<i64>> {
+        match self {
+            Connection::MySql(c) => c.table_row_estimate(db, table).await,
+            Connection::Postgres(c) => c.table_row_estimate(db, table).await,
+            Connection::Sqlite(_) => Ok(None),
+        }
+    }
+
+    /// 全データベース (PostgreSQL ではスキーマ) のテーブル一覧を SQL 1 本で取得し、
+    /// `databases` の順に並べて返す (#1263)。各 DB のテーブルは [`Connection::tables`]
+    /// と同じ内容・順序。テーブルを持たない DB も空配列で含める。スキーマツリーの
+    /// 検索が DB ごとの `tables` を N 並列で呼んでいたのを置き換える。
+    pub async fn tables_all(&self) -> Result<Vec<DatabaseTables>> {
+        match self {
+            Connection::MySql(c) => {
+                let (dbs, rows) = tokio::join!(c.databases(), c.tables_all());
+                Ok(group_tables_by_database(dbs?, rows?))
+            }
+            Connection::Postgres(c) => {
+                let (dbs, rows) = tokio::join!(c.databases(), c.tables_all());
+                Ok(group_tables_by_database(dbs?, rows?))
+            }
+            Connection::Sqlite(c) => {
+                let dbs = c.databases().await?;
+                let mut out = Vec::with_capacity(dbs.len());
+                for database in dbs {
+                    let tables = c.tables(&database).await?;
+                    out.push(DatabaseTables { database, tables });
+                }
+                Ok(out)
+            }
         }
     }
 

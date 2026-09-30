@@ -620,3 +620,81 @@ pub struct PreviewResult {
     /// True if either snapshot was truncated by the LIMIT.
     pub truncated: bool,
 }
+
+/// 1 データベース (PostgreSQL ではスキーマ) とそのテーブル名一覧。
+/// `Connection::tables_all` の戻り値の要素 (#1263)。`tables` は
+/// `Connection::tables` と同じ内容・順序 (ビューを含む)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatabaseTables {
+    pub database: String,
+    pub tables: Vec<String>,
+}
+
+/// `(DB 名, テーブル名)` の平らな行を、`databases` の順に並べた
+/// [`DatabaseTables`] へ振り分ける (#1263)。`databases` に無い DB の行は捨て
+/// (アクセスできない/システムスキーマ)、行が 1 件も無い DB は空配列で残す。
+/// 各 DB 内のテーブルは入力行の順序を保つ。
+pub fn group_tables_by_database(
+    databases: Vec<String>,
+    rows: Vec<(String, String)>,
+) -> Vec<DatabaseTables> {
+    let mut out: Vec<DatabaseTables> = databases
+        .into_iter()
+        .map(|database| DatabaseTables {
+            database,
+            tables: Vec::new(),
+        })
+        .collect();
+    let index: std::collections::HashMap<String, usize> = out
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.database.clone(), i))
+        .collect();
+    for (db, table) in rows {
+        if let Some(&i) = index.get(&db) {
+            out[i].tables.push(table);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod group_tables_tests {
+    use super::*;
+
+    fn s(v: &str) -> String {
+        v.to_string()
+    }
+
+    #[test]
+    fn groups_rows_in_database_order_and_keeps_empty_databases() {
+        let got = group_tables_by_database(
+            vec![s("b"), s("a"), s("empty")],
+            vec![(s("a"), s("t1")), (s("b"), s("x")), (s("a"), s("t2"))],
+        );
+        assert_eq!(
+            got,
+            vec![
+                DatabaseTables {
+                    database: s("b"),
+                    tables: vec![s("x")]
+                },
+                DatabaseTables {
+                    database: s("a"),
+                    tables: vec![s("t1"), s("t2")]
+                },
+                DatabaseTables {
+                    database: s("empty"),
+                    tables: vec![]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn drops_rows_of_unknown_databases() {
+        let got = group_tables_by_database(vec![s("a")], vec![(s("hidden"), s("t"))]);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].tables.is_empty());
+    }
+}
