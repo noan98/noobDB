@@ -924,6 +924,17 @@ impl Connection {
         }
     }
 
+    /// サーバのバージョン文字列だけを返す (#1259)。接続ヘルスの定期プローブ用で、
+    /// `server_info` の変数一覧 (MySQL の `SHOW VARIABLES` / PostgreSQL の
+    /// `pg_settings` / SQLite の PRAGMA 群) は取らない。取得できなければ空文字。
+    pub async fn server_version(&self) -> Result<String> {
+        match self {
+            Connection::MySql(c) => c.server_version().await,
+            Connection::Postgres(c) => c.server_version().await,
+            Connection::Sqlite(c) => c.server_version().await,
+        }
+    }
+
     /// Read-only server information (version + configuration variables) for the
     /// server-info panel. MySQL uses `SELECT VERSION()` + `SHOW VARIABLES`,
     /// PostgreSQL `version()` + `pg_settings`, SQLite `sqlite_version()` + a

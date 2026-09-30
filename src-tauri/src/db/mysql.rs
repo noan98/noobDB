@@ -1708,6 +1708,13 @@ impl MySqlConn {
             .collect())
     }
 
+    /// バージョン文字列だけを返す (`server_info` の先頭と同じクエリ)。
+    pub async fn server_version(&self) -> Result<String> {
+        Ok(sqlx::query_scalar::<_, String>("SELECT VERSION()")
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
     pub async fn server_info(&self) -> Result<ServerInfo> {
         let version: String = sqlx::query_scalar("SELECT VERSION()")
             .fetch_one(&self.pool)

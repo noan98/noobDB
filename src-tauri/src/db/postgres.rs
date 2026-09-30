@@ -1580,6 +1580,15 @@ impl PostgresConn {
             .collect())
     }
 
+    /// バージョン文字列だけを返す (`server_info` の先頭と同じクエリ)。
+    pub async fn server_version(&self) -> Result<String> {
+        Ok(
+            sqlx::query_scalar::<_, String>("SELECT current_setting('server_version')")
+                .fetch_one(&self.pool)
+                .await?,
+        )
+    }
+
     pub async fn server_info(&self) -> Result<ServerInfo> {
         // current_setting('server_version') is the bare "16.2"; version() adds
         // the build banner. The short form reads better as the headline; the

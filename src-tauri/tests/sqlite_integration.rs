@@ -1574,7 +1574,7 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
 #[tokio::test]
 async fn sqlite_health_probe_all_reports_up_down_and_caches_version() {
     let mut path = std::env::temp_dir();
-    path.push(format!("noobdb_sqlite_health_{}.db", std::process::id()));
+    path.push(format!("noobdb_sqlite_healthprobe_{}.db", std::process::id()));
     let _ = std::fs::remove_file(&path);
     std::fs::File::create(&path).expect("create temp sqlite file");
 

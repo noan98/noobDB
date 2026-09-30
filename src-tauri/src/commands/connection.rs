@@ -447,11 +447,11 @@ async fn probe_session_health(
         if cached.is_some() {
             return cached.clone();
         }
-        let fetched = tokio::time::timeout(timeout, session.conn.server_info())
+        let fetched = tokio::time::timeout(timeout, session.conn.server_version())
             .await
             .ok()
             .and_then(|r| r.ok())
-            .map(|info| info.version.trim().to_string())
+            .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
         if fetched.is_some() {
             session.set_cached_health_version(fetched.clone());
