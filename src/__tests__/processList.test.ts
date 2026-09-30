@@ -4,7 +4,6 @@ import type { ProcessInfo } from "../api/tauri";
 import {
   formatProcessTime,
   pruneSelection,
-  summarizeQuery,
 } from "../components/processList";
 
 function proc(id: number, overrides: Partial<ProcessInfo> = {}): ProcessInfo {
@@ -16,7 +15,8 @@ function proc(id: number, overrides: Partial<ProcessInfo> = {}): ProcessInfo {
     command: "Query",
     state: null,
     time_secs: 0,
-    query: null,
+    query_summary: null,
+    query_truncated: false,
     is_self: false,
     ...overrides,
   };
@@ -61,26 +61,5 @@ describe("pruneSelection", () => {
     const selected = new Set([1]);
     pruneSelection(selected, []);
     expect(selected.has(1)).toBe(true);
-  });
-});
-
-describe("summarizeQuery", () => {
-  it("shows a dash for empty or null queries", () => {
-    expect(summarizeQuery(null)).toBe("–");
-    expect(summarizeQuery("")).toBe("–");
-    expect(summarizeQuery("   \n  ")).toBe("–");
-  });
-
-  it("collapses whitespace and newlines into one line", () => {
-    expect(summarizeQuery("SELECT *\n  FROM   users\nWHERE id = 1")).toBe(
-      "SELECT * FROM users WHERE id = 1",
-    );
-  });
-
-  it("truncates long queries with an ellipsis", () => {
-    const long = `SELECT ${"x".repeat(300)}`;
-    const out = summarizeQuery(long, 50);
-    expect(out.length).toBe(51); // 50 chars + ellipsis
-    expect(out.endsWith("…")).toBe(true);
   });
 });

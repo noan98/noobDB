@@ -2,6 +2,7 @@ import { Channel, invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
+import type { UpdateGroup } from "../components/cellEdit";
 import type { ExportColumnMask } from "../components/exportMasking";
 import type { TxIsolation } from "../txOptions";
 import type { IncomingFk } from "../fkNavigation";
@@ -793,8 +794,22 @@ export interface ServerInfo {
 
 /**
  * サーバ側プロセス/接続 1 件 (プロセス監視パネル)。MySQL は processlist、
- * PostgreSQL は pg_stat_activity に対応する。`id` をそのまま `killProcess` に渡す。
+ * PostgreSQL は pg_stat_activity に対応する。`id` をそのまま `killProcesses` に渡す。
+ * クエリ本文は Rust 側で 1 行要約 (`query_summary`) にして返し、全文は
+ * `getProcessQuery` で id 指定で取得する (#1259)。
  */
+/** `insert_generated_rows` の結果 (#1259)。 */
+export interface InsertRowsResult {
+  inserted: number;
+  elapsed_ms: number;
+}
+
+export interface KillProcessesResult {
+  killed: number;
+  failed: number;
+  first_error: string | null;
+}
+
 export interface ProcessInfo {
   id: number;
   user: string | null;
@@ -805,7 +820,10 @@ export interface ProcessInfo {
   /** 詳細状態: MySQL STATE / PostgreSQL wait_event。 */
   state: string | null;
   time_secs: number | null;
-  query: string | null;
+  /** 改行・連続空白を畳み 200 文字で切り詰めた 1 行要約。クエリが無ければ null。 */
+  query_summary: string | null;
+  /** 要約が全文より短い (切り詰めた) とき true。 */
+  query_truncated: boolean;
   /**
    * この行が一覧クエリを実行した接続自身 (= 本アプリのプール接続) のとき true。
    * kill するとアプリのセッションが切断されるため、UI は警告を出す。ベスト
@@ -856,21 +874,24 @@ export interface UserPrivileges {
   tables: TablePrivilegeRow[];
 }
 
-/** GRANT/REVOKE の対象と権限フラグ (`generateGrantSql`/`generateRevokeSql` の入力)。
+/** 権限フラグ (CRUD + DDL)。 */
+export interface PrivilegeFlags {
+  select: boolean;
+  insert: boolean;
+  update: boolean;
+  delete: boolean;
+  ddl: boolean;
+}
+
+/** 1 テーブル (または DB/スキーマ全体) 分の権限差分 (`generatePrivilegeDiffSql` の入力)。
  *  `table` を省略すると DB/スキーマ全体が対象になる (MySQL `db.*` / PostgreSQL
  *  `ALL TABLES IN SCHEMA`)。 */
-export interface GrantSpec {
-  user: string;
-  host?: string | null;
-  database: string;
+export interface PrivilegeChange {
   table?: string | null;
-  flags: {
-    select: boolean;
-    insert: boolean;
-    update: boolean;
-    delete: boolean;
-    ddl: boolean;
-  };
+  /** 付与するフラグ。 */
+  added: PrivilegeFlags;
+  /** 剥奪するフラグ。 */
+  removed: PrivilegeFlags;
 }
 
 /**
@@ -882,6 +903,17 @@ export interface GrantSpec {
  * ドライバで異なる (MySQL=ステートメント数 / PostgreSQL=トランザクション数)。
  * SQLite はサーバを持たずコマンドがエラーを返す (UI は導線ごと非表示にする)。
  */
+/** `health_probe_all` の 1 セッション分の観測値 (#1259)。 */
+export interface HealthProbeItem {
+  session_id: string;
+  status: "up" | "down" | "timeout";
+  /** `SELECT 1` の往復時間 (ms)。up のときだけ値がある。 */
+  latency_ms: number | null;
+  version: string | null;
+  /** 現在の接続数。SQLite / 取得不可は null。 */
+  connections: number | null;
+}
+
 export interface ServerMetrics {
   /** クライアント接続数 (ゲージ)。MySQL Threads_connected / PG client backend 数。 */
   connections: number | null;
@@ -940,23 +972,28 @@ export interface LiveQuery {
   running: boolean;
   /** クエリ開始時刻 (エポック ms)。PostgreSQL のみ。 */
   started_at_ms: number | null;
+  /** Rust の `normalize_sql_fingerprint` による同型クエリキー (N+1 グルーピング用, #1259)。 */
+  fingerprint: string;
 }
 
 /**
- * digest (フィンガープリント) 単位の**累積**統計 1 行 (#746)。カウンタは
- * サーバの統計リセット以降の累積値で、「記録開始からの差分」は
- * `components/queryInspector.ts` の純ロジックが 2 スナップショットの引き算で
- * 求める。`max_time_ms` は高水位マークで差分計算できない点に注意。
+ * digest (フィンガープリント) 単位の**差分**統計 1 行 (#746 / #1259)。記録開始時点
+ * (baseline) との引き算と N+1 目安の判定は Rust 側 (`db/inspector.rs`) が行う。
+ * `max_time_ms` は高水位マークで差分計算できない累積値。`fingerprint` (SQL 本文) は
+ * digest の初出時のみ載り、以降は null (呼び出し側がキャッシュする)。
  */
-export interface StatementStat {
+export interface StatementDeltaRow {
   digest: string;
-  fingerprint: string;
+  fingerprint: string | null;
   database: string | null;
   calls: number;
   total_time_ms: number;
+  mean_time_ms: number;
   max_time_ms: number;
   /** MySQL は走査行数 (SUM_ROWS_EXAMINED)、PostgreSQL は返却/影響行数。 */
   rows: number | null;
+  /** 直近のポーリング間隔の実行レートが N+1 目安の閾値を超えた。 */
+  n_plus_one: boolean;
 }
 
 /**
@@ -1236,10 +1273,20 @@ export interface SandboxConflict {
   external_row: CellValue[] | null;
 }
 
+/** `compareTableData` の戻り値。`diff` は表示用、`diff_id` はバックエンド保持の同じ差分の ID (#1259)。 */
+export interface DataDiffHandle {
+  diff_id: string;
+  diff: DataDiff;
+}
+
 /** `sandboxTableDiff` の戻り値。 */
 export interface SandboxTableDiffResult {
-  /** サンドボックスでの変更 (base 比較)。`generateDataSyncSql` にそのまま渡せる。 */
+  /** サンドボックスでの変更 (base 比較)。表示用。SQL 生成には `desired_diff_id` を使う。 */
   desired: DataDiff;
+  /** `desired` をバックエンドが保持した ID (#1259)。`generateDataSyncSql` /
+   *  `sandboxAdvanceBase` にはこの ID (+ 除外キー) だけを送る。不要になったら
+   *  `releaseDataDiffs` で破棄する。 */
+  desired_diff_id: string;
   /** `source_checked` が false のときは常に空 (競合未検査、「競合なし」の意味ではない)。 */
   conflicts: SandboxConflict[];
   source_checked: boolean;
@@ -1559,6 +1606,16 @@ export const api = {
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
   /**
+   * 接続ヘルスダッシュボード (#1068 / #1259) 用に、全セッションの生死・往復レイテンシ・
+   * バージョン・接続数を 1 回の IPC でまとめて取得する。Rust 側が並列に問い合わせ、
+   * 各セッションを `timeoutMs` で打ち切る (問い合わせ自体も止まる)。バージョンは
+   * セッション単位でキャッシュされ、`refreshVersion` で取り直す。読み取り専用。
+   */
+  healthProbeAll: (sessionIds: string[], timeoutMs: number, refreshVersion = false) =>
+    invoke<HealthProbeItem[]>("health_probe_all", { sessionIds, timeoutMs, refreshVersion }).then(
+      (r) => parseResponse(schemas.healthProbeItemArray, r, "health_probe_all"),
+    ),
+  /**
    * ローカル横断クエリ (#740): 駆動元セッションを持たない「ローカル」接続を新規に
    * 開く。実体は一時ファイルバックドの SQLite セッションで、以降は他の接続と同じ
    * `runQuery` / `runQueryStream` 等で扱える。既定で揮発 — `disconnect` すると
@@ -1701,6 +1758,47 @@ export const api = {
       statements,
       database: database ?? null,
     }).then((r) => parseResponse(schemas.queryResultLite, r, "run_query_transaction")),
+  /**
+   * 結果グリッドのセル編集 Apply (#1259)。同じ (列, 値) ごとにまとめた `groups` から
+   * Rust が `UPDATE t SET c = v WHERE pk IN (…)` をチャンク化して組み立て、
+   * `extraStatements` (削除予定行 / 新規行の DELETE / INSERT) と合わせて 1 トランザクション
+   * (all-or-nothing) で実行する。read_only ガード・履歴・キャッシュは `runQueryTransaction`
+   * と同じ経路。
+   */
+  bulkUpdateCells: (params: {
+    sessionId: string;
+    database?: string | null;
+    table: string;
+    pkColumns: string[];
+    groups: UpdateGroup[];
+    extraStatements?: string[];
+  }) =>
+    invoke<QueryResult>("bulk_update_cells", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      table: params.table,
+      pkColumns: params.pkColumns,
+      groups: params.groups,
+      extraStatements: params.extraStatements ?? [],
+    }).then((r) => parseResponse(schemas.queryResultLite, r, "bulk_update_cells")),
+  /**
+   * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは
+   * null / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。
+   */
+  insertGeneratedRows: (params: {
+    sessionId: string;
+    database?: string | null;
+    table: string;
+    columns: string[];
+    rows: CellValue[][];
+  }) =>
+    invoke<InsertRowsResult>("insert_generated_rows", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      table: params.table,
+      columns: params.columns,
+      rows: params.rows,
+    }).then((r) => parseResponse(schemas.insertRowsResult, r, "insert_generated_rows")),
   runQueryStream: (params: {
     sessionId: string;
     streamId: string;
@@ -1947,9 +2045,19 @@ export const api = {
     invoke<ProcessInfo[]>("list_processes", { sessionId }).then((r) =>
       parseResponse(schemas.processInfoArray, r, "list_processes"),
     ),
-  /** プロセス/接続を強制終了する。read_only セッションはバックエンドで拒否される。 */
-  killProcess: (sessionId: string, processId: number) =>
-    invoke<void>("kill_process", { sessionId, processId }),
+  /** プロセス/接続をまとめて強制終了する (#1259)。PostgreSQL は `unnest` で 1 文、MySQL は
+   *  1 接続上で順に `KILL`。失敗があっても残りは続行し、件数と最初のエラーを返す。
+   *  read_only セッションはバックエンドで拒否される。 */
+  killProcesses: (sessionId: string, processIds: number[]) =>
+    invoke<KillProcessesResult>("kill_processes", { sessionId, processIds }).then((r) =>
+      parseResponse(schemas.killProcessesResult, r, "kill_processes"),
+    ),
+  /** 1 プロセスの実行中 (または直近) の SQL 全文を取得する (#1259)。一覧は要約しか
+   *  返さないため、ツールチップ表示などで全文が要るときだけ呼ぶ。消えていれば null。 */
+  getProcessQuery: (sessionId: string, processId: number) =>
+    invoke<string | null>("get_process_query", { sessionId, processId }).then((r) =>
+      parseResponse(schemas.nullableStringResponse, r, "get_process_query"),
+    ),
   /**
    * サーバランタイムのメトリクスを 1 サンプル取得する (監視ダッシュボード #731)。
    * `SHOW GLOBAL STATUS` / `pg_stat_activity` などメモリ上のカウンタを読むだけの
@@ -1970,11 +2078,35 @@ export const api = {
     invoke<LiveQuery[]>("sample_live_queries", { sessionId }).then((r) =>
       parseResponse(schemas.liveQueryArray, r, "sample_live_queries"),
     ),
-  /** digest 単位の累積統計スナップショットを取得する。差分計算はフロント純ロジックが担う。 */
-  sampleStatementStats: (sessionId: string) =>
-    invoke<StatementStat[]>("sample_statement_stats", { sessionId }).then((r) =>
-      parseResponse(schemas.statementStatArray, r, "sample_statement_stats"),
-    ),
+  /** ステートメント統計の記録を開始する (#1259)。現在の digest 累積スナップショットを
+   *  Rust 側のセッション状態に baseline として保持し、本文の送信済み集合も空にする。
+   *  サーバ側カウンタはリセットしない (権限不要)。読み取り SELECT のみ。 */
+  startStatementRecording: (sessionId: string) =>
+    invoke<void>("start_statement_recording", { sessionId }),
+  /**
+   * 記録開始 (baseline) からの digest 差分 (calls > 0 の行、総時間降順) を取得する (#1259)。
+   * 差分の引き算と N+1 目安 (直近ポーリング間隔の実行レート) は Rust 側で行う。
+   * `refresh: true` はサーバの統計を取り直し、`false` は前回取得分を `cumulative`
+   * (baseline 無視 = サーバの累積値そのまま) の切替で再計算するだけ。SQL 本文
+   * (`fingerprint`) は digest の初出時のみ載るので、呼び出し側は digest キー
+   * (`digest` + `database`) でキャッシュする。
+   */
+  sampleStatementDelta: (
+    sessionId: string,
+    opts: {
+      cumulative: boolean;
+      refresh: boolean;
+      nPlusOneMinCount: number;
+      nPlusOneWindowMs: number;
+    },
+  ) =>
+    invoke<StatementDeltaRow[]>("sample_statement_delta", {
+      sessionId,
+      cumulative: opts.cumulative,
+      refresh: opts.refresh,
+      nPlusOneMinCount: opts.nPlusOneMinCount,
+      nPlusOneWindowMs: opts.nPlusOneWindowMs,
+    }).then((r) => parseResponse(schemas.statementDeltaRowArray, r, "sample_statement_delta")),
   /**
    * 列データプロファイル (#974)。単一 SELECT の集計だけなので read_only セッション
    * でも動く。`approximate` は PostgreSQL (統計情報) で DISTINCT を近似する
@@ -2145,18 +2277,28 @@ export const api = {
     table: string;
     limit?: number | null;
   }) =>
-    invoke<DataDiff>("compare_table_data", {
+    invoke<DataDiffHandle>("compare_table_data", {
       sourceSessionId: params.sourceSessionId,
       sourceDatabase: params.sourceDatabase,
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
       table: params.table,
       limit: params.limit ?? null,
-    }).then((r) => parseResponse(schemas.dataDiffLite, r, "compare_table_data")),
-  generateDataSyncSql: (diff: DataDiff, allowDelete: boolean) =>
-    invoke<SyncPlan>("generate_data_sync_sql", { diff, allowDelete }).then((r) =>
-      parseResponse(schemas.syncPlan, r, "generate_data_sync_sql"),
-    ),
+    }).then((r) => parseResponse(schemas.dataDiffHandle, r, "compare_table_data")),
+  /**
+   * データ差分から INSERT / UPDATE / DELETE を描画する。差分そのものは送らず、
+   * `compareTableData` / `sandboxTableDiff` が返した `diffId` (バックエンド保持, #1259) を
+   * 渡す。`skipKeys` は描画前に除く行の主キー (サンドボックスの競合「スキップ」解決)。
+   * 保持期限切れ・破棄済みの ID はエラー (比較のやり直しを促す)。
+   */
+  generateDataSyncSql: (diffId: string, allowDelete: boolean, skipKeys?: CellValue[][] | null) =>
+    invoke<SyncPlan>("generate_data_sync_sql", {
+      diffId,
+      allowDelete,
+      skipKeys: skipKeys && skipKeys.length > 0 ? skipKeys : null,
+    }).then((r) => parseResponse(schemas.syncPlan, r, "generate_data_sync_sql")),
+  /** バックエンドが保持している `DataDiff` を破棄する (比較のやり直し・画面を閉じたとき)。 */
+  releaseDataDiffs: (diffIds: string[]) => invoke<void>("release_data_diffs", { diffIds }),
   applySyncSql: (params: {
     sessionId: string;
     database?: string | null;
@@ -2182,12 +2324,20 @@ export const api = {
     invoke<DbUserInfo[]>("list_db_users", { sessionId }).then((r) =>
       parseResponse(schemas.dbUserInfoArray, r, "list_db_users"),
     ),
-  /** 指定ユーザ/ロールの CRUD+DDL 権限マトリクスを取得する。読み取りのみ。 */
-  listUserPrivileges: (sessionId: string, user: string, host?: string | null) =>
+  /** 指定ユーザ/ロールの CRUD+DDL 権限マトリクスを取得する。読み取りのみ。`database`
+   *  (MySQL: DB 名 / PostgreSQL: スキーマ名) を渡すと、テーブル別の行をサーバ側で絞る
+   *  (global 行は常に返る, #1259)。 */
+  listUserPrivileges: (
+    sessionId: string,
+    user: string,
+    host?: string | null,
+    database?: string | null,
+  ) =>
     invoke<UserPrivileges>("list_user_privileges", {
       sessionId,
       user,
       host: host ?? null,
+      database: database ?? null,
     }).then((r) => parseResponse(schemas.userPrivileges, r, "list_user_privileges")),
   /** `CREATE USER` / `CREATE ROLE` の SQL を生成する (純粋、副作用なし)。 */
   generateCreateUserSql: (
@@ -2215,20 +2365,23 @@ export const api = {
     invoke<string>("generate_alter_password_sql", { driver, name, host, password }).then((r) =>
       parseResponse(schemas.stringResponse, r, "generate_alter_password_sql"),
     ),
-  /** `GRANT <privs> ON ... TO ...` の SQL を生成する (純粋)。選択された権限が無い
-   *  ときは `null` (生成する文が無い)。 */
-  generateGrantSql: (driver: DriverKind, spec: GrantSpec) =>
-    invoke<string | null>("generate_grant_sql", {
+  /** 権限差分 (テーブルごとの付与/剥奪フラグ) から `GRANT` / `REVOKE` 文をまとめて
+   *  生成する (純粋, #1259)。テーブル順に GRANT → REVOKE を並べ、フラグが無い側は出力
+   *  しない。 */
+  generatePrivilegeDiffSql: (
+    driver: DriverKind,
+    user: string,
+    host: string | null,
+    database: string,
+    changes: PrivilegeChange[],
+  ) =>
+    invoke<string[]>("generate_privilege_diff_sql", {
       driver,
-      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
-    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_grant_sql")),
-  /** `REVOKE <privs> ON ... FROM ...` の SQL を生成する (純粋)。`null` は
-   *  `generateGrantSql` と同じ意味。 */
-  generateRevokeSql: (driver: DriverKind, spec: GrantSpec) =>
-    invoke<string | null>("generate_revoke_sql", {
-      driver,
-      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
-    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_revoke_sql")),
+      user,
+      host,
+      database,
+      changes: changes.map((c) => ({ ...c, table: c.table ?? null })),
+    }).then((r) => parseResponse(schemas.stringArrayResponse, r, "generate_privilege_diff_sql")),
   /**
    * 確認済みの SQL 文 (CREATE USER / DROP USER / ALTER ... PASSWORD / GRANT /
    * REVOKE) を 1 トランザクションで適用する。`applySyncSql` と同じガード
@@ -2300,30 +2453,27 @@ export const api = {
       sandboxSessionId: params.sandboxSessionId,
       sourceSessionId: params.sourceSessionId ?? null,
     }).then((r) => parseResponse(schemas.sandboxSchemaDiffResult, r, "sandbox_schema_diff")),
-  /** 競合を「スキップ」解決した行を `diff` から取り除く。純粋な変換で副作用なし。 */
-  filterSandboxDataDiff: (diff: DataDiff, skipKeys: CellValue[][]) =>
-    invoke<DataDiff>("filter_sandbox_data_diff", { diff, skipKeys }).then((r) =>
-      parseResponse(schemas.dataDiffLite, r, "filter_sandbox_data_diff"),
-    ),
   /**
    * 書き戻しに成功した直後に呼び、サンドボックスの base スナップショットを
    * 適用済みの行へ進める。呼ばないと、次回の差分計算で「サンドボックス側も
    * 元 DB 側も変化した」という偽の競合が (実際にはもう一致している行に対して)
-   * 出続けてしまう。`applied` には実際に適用した SQL の生成元 (`generateDataSyncSql`
-   * に渡した後の) `DataDiff` を渡す。
+   * 出続けてしまう。`diffId` / `skipKeys` には実際に適用した SQL の生成元
+   * (`generateDataSyncSql` に渡したのと同じもの) を渡す。
    */
   sandboxAdvanceBase: (params: {
     sandboxId: string;
     sandboxSessionId: string;
     table: string;
-    applied: DataDiff;
+    diffId: string;
+    skipKeys?: CellValue[][] | null;
     allowDelete: boolean;
   }) =>
     invoke<void>("sandbox_advance_base", {
       sandboxId: params.sandboxId,
       sandboxSessionId: params.sandboxSessionId,
       table: params.table,
-      applied: params.applied,
+      diffId: params.diffId,
+      skipKeys: params.skipKeys && params.skipKeys.length > 0 ? params.skipKeys : null,
       allowDelete: params.allowDelete,
     }),
 

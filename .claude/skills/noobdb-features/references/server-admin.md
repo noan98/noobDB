@@ -2,10 +2,10 @@
 
 ## プロセス管理
 
-`commands/process.rs` の `list_processes` / `kill_process` が、サーバのアクティブな
+`commands/process.rs` の `list_processes` / `kill_processes` が、サーバのアクティブな
 接続/クエリ (MySQL `PROCESSLIST`、PostgreSQL `pg_stat_activity`) を `ProcessInfo` として
 列挙し、選択したプロセス/接続を強制終了します。`list_processes` は読み取り操作なので
-読み取り専用セッションでも許可しますが、`kill_process` はサーバ状態を変えるため
+読み取り専用セッションでも許可しますが、`kill_processes` はサーバ状態を変えるため
 読み取り専用セッションを明示的に拒否します (SQL 文ではないので `is_read_only_sql` の
 経路外、コマンド側で別途ガード)。SQLite はサーバプロセスを持たないため空を返します。
 なお #587 で `performance_schema` 無効時に MySQL のプロセス一覧が空になる問題を修正済み。
@@ -13,17 +13,18 @@
 ## 接続横断のヘルスダッシュボード (#1068)
 
 ボトムパネルの「接続ヘルス」タブ (`ConnectionHealthPanel.tsx` + 純ロジック
-`connectionHealth.ts`)。**新しい IPC は持たず**、開いている各セッションへ既存の
-`ping_session` (up/down + フロント計測の往復レイテンシ) / `server_info` (バージョン。
-セッション単位でキャッシュ) / `server_metrics` (接続数。SQLite は呼ばず N/A)
-を並列度 4・個別タイムアウト付きで投げて集約します。いずれも読み取り専用なので
-read_only セッションでも動きます。
+`connectionHealth.ts`)。全セッションぶんの観測は **`health_probe_all` 1 IPC** (#1259、
+`commands/connection.rs`) でまとめて取ります。Rust が `AppState` からセッションを引いて
+`join_all` で並列に問い合わせ、各問い合わせを `tokio::time::timeout` で包みます
+(タイムアウトで future を drop するので問い合わせ自体が止まる)。up/down は `SELECT 1`
+(往復レイテンシは Rust が計測)、接続数は専用の軽量クエリ (MySQL
+`SHOW GLOBAL STATUS LIKE 'Threads_connected'` / PostgreSQL `count(*)` 1 本 / SQLite は
+なし = N/A)、バージョンは `Session::health_version` にセッション単位でキャッシュ
+(「今すぐ確認」で `refreshVersion`)。いずれも読み取り専用なので read_only セッション
+でも動きます。状態判定 (`toHealthProbeResult`) と表示はフロントの純ロジックのままです。
 
 - **未接続プロファイルへ自動接続しない**。「保存済みも表示」で並べても `notConnected`
   行になるだけで、接続は行のボタン (= 通常の `handleConnect`) の明示操作のみ。
-- タイムアウトはフロントが待つのをやめるだけで Rust 側の問い合わせは走り続けるため、
-  `createHealthProber` が IPC × セッションごとに in-flight を追跡し、返っていないものへ
-  次の問い合わせを積みません。
 - エラー文面は表示もログもしない (状態ラベルだけ)。down / timeout 行は `api.reconnect`
   (同じ session id で張り直し) への導線を出します。
 - 接続横断なので、アクティブ接続が無くても背景接続が 1 本あればタブを開けます
@@ -57,7 +58,7 @@ CRUD+DDL 権限マトリクスを閲覧・編集する機能です。Diff/Sync (
   `execute_transaction` を直接呼び、`run_query_transaction` の履歴記録経路を経由しません
   — `CREATE USER`/`ALTER USER ... PASSWORD` はパスワードを SQL リテラルとして含みうる
   ため、クエリ履歴にもログにも一切残しません。読み取り専用セッションは
-  `kill_process` と同じくコマンド側で明示的に拒否します (`is_read_only_sql` を通らない
+  `kill_processes` と同じくコマンド側で明示的に拒否します (`is_read_only_sql` を通らない
   経路のため)。
 - フロント (`UsersPanel.tsx`) は MySQL の `mysql.user` グローバル (`*.*`) 権限行を
   意図的に**表示専用**にしています — このパネルが編集するのは選択中データベースの

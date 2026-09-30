@@ -107,7 +107,8 @@ function proc(id: number, overrides: Partial<ProcessInfo> = {}): ProcessInfo {
     command: "Query",
     state: "executing",
     time_secs: 10,
-    query: "SELECT 1",
+    query_summary: "SELECT 1",
+    query_truncated: false,
     is_self: false,
     ...overrides,
   };
@@ -122,7 +123,7 @@ describe("PROCESS_LIVE_FIELDS (#1022)", () => {
   it("state / command / query の変化をフラッシュ対象にする", () => {
     expect(processDiff(proc(1), proc(1, { state: "Sending data" }))).toEqual(["state"]);
     expect(processDiff(proc(1), proc(1, { command: "Sleep" }))).toEqual(["command"]);
-    expect(processDiff(proc(1), proc(1, { query: "SELECT 2" }))).toEqual(["query"]);
+    expect(processDiff(proc(1), proc(1, { query_summary: "SELECT 2" }))).toEqual(["query"]);
   });
 
   it("null ⇔ undefined の揺れは変化とみなさない", () => {

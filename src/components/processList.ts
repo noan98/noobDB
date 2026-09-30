@@ -24,7 +24,12 @@ export const PROCESS_LIVE_FIELDS: readonly LiveField<ProcessInfo, ProcessLiveFie
       return after < before;
     },
   },
-  { name: "query", changed: (a, b) => (a.query ?? null) !== (b.query ?? null) },
+  // 要約 (200 文字まで) の変化で判定する。要約より後ろだけが変わる更新は光らないが、
+  // 一覧は全文を運ばない設計 (#1259) の許容範囲。
+  {
+    name: "query",
+    changed: (a, b) => (a.query_summary ?? null) !== (b.query_summary ?? null),
+  },
 ];
 
 /** プロセス行の安定 key (#1022)。ポーリング間で同じ接続は同じ key を保つ。 */
@@ -66,15 +71,4 @@ export function pruneSelection(
     if (alive.has(id)) next.add(id);
   }
   return next;
-}
-
-/**
- * グリッドのクエリ列に出す 1 行要約。改行・連続空白を畳み、`max` 文字で
- * 切り詰めて "…" を付ける。空/NULL は "–"。
- */
-export function summarizeQuery(query: string | null, max = 200): string {
-  const oneLine = (query ?? "").split(/\s+/).filter(Boolean).join(" ");
-  if (oneLine === "") return "–";
-  if (oneLine.length <= max) return oneLine;
-  return `${oneLine.slice(0, max)}…`;
 }

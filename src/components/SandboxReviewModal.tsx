@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 
 import {
@@ -134,13 +134,25 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
     [sandbox.id, sandboxSessionId, targetSessionId],
   );
 
+  // バックエンドに保持されている差分 ID (#1259)。再読み込みと画面を閉じたときに解放する。
+  const tablesRef = useRef(tables);
+  tablesRef.current = tables;
+  const releaseHeldDiffs = useCallback(() => {
+    const ids = Object.values(tablesRef.current)
+      .map((st) => st.diff?.desired_diff_id)
+      .filter((id): id is string => !!id);
+    if (ids.length > 0) void api.releaseDataDiffs(ids).catch(() => {});
+  }, []);
+  useEffect(() => releaseHeldDiffs, [releaseHeldDiffs]);
+
   const loadAll = useCallback(() => {
+    releaseHeldDiffs();
     setCombined(null);
     setApplyResult(null);
     setOpError(null);
     void loadSchema();
     for (const table of sandbox.tables) void loadTable(table);
-  }, [loadSchema, loadTable, sandbox.tables]);
+  }, [loadSchema, loadTable, sandbox.tables, releaseHeldDiffs]);
 
   // `loadAll`'s identity already changes whenever `targetSessionId` does
   // (transitively, via `loadSchema`/`loadTable`), so depending on just
@@ -182,12 +194,10 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
       for (const table of sandbox.tables) {
         const st = tables[table];
         if (!st?.diff || st.diff.desired.rows.length === 0) continue;
+        // 差分はバックエンドが保持している (`desired_diff_id`)。競合「スキップ」の除外キー
+        // だけを送り、絞り込みと SQL 描画は Rust 側で行う (#1259)。
         const skipKeys = sandboxSkipKeys(st.diff.conflicts, st.resolutions);
-        const filtered =
-          skipKeys.length > 0
-            ? await api.filterSandboxDataDiff(st.diff.desired, skipKeys)
-            : st.diff.desired;
-        const plan = await api.generateDataSyncSql(filtered, allowDelete);
+        const plan = await api.generateDataSyncSql(st.diff.desired_diff_id, allowDelete, skipKeys);
         statements.push(...plan.statements);
         warnings.push(...plan.warnings);
       }
@@ -251,15 +261,12 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         const st = tables[table];
         if (!st?.diff || st.diff.desired.rows.length === 0) continue;
         const skipKeys = sandboxSkipKeys(st.diff.conflicts, st.resolutions);
-        const filtered =
-          skipKeys.length > 0
-            ? await api.filterSandboxDataDiff(st.diff.desired, skipKeys)
-            : st.diff.desired;
         await api.sandboxAdvanceBase({
           sandboxId: sandbox.id,
           sandboxSessionId,
           table,
-          applied: filtered,
+          diffId: st.diff.desired_diff_id,
+          skipKeys,
           allowDelete,
         });
       }
