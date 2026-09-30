@@ -3,6 +3,7 @@ import type { CellValue, Column } from "../api/tauri";
 import {
   buildColumnReplaceSql,
   columnReplaceUnsupported,
+  buildReplacer,
   escapeRegexLiteral,
   isTextColumnType,
   planGridReplace,
@@ -219,5 +220,34 @@ describe("planGridReplace", () => {
   });
   it("空の検索文字列は何もしない", () => {
     expect(run({ find: "" }).hitCount).toBe(0);
+  });
+});
+
+describe("buildReplacer (#1257)", () => {
+  const cs = { caseSensitive: true, regex: false };
+
+  it("replaceInText と同じ結果を、RegExp を 1 回だけコンパイルして返す", () => {
+    const cases: Array<[string, string, string, { caseSensitive: boolean; regex: boolean }]> = [
+      ["a.b a.b", ".", "-", cs],
+      ["Foo foo FOO", "foo", "x", { caseSensitive: false, regex: false }],
+      ["a1 b22", "(\\d+)", "<$1>", { caseSensitive: true, regex: true }],
+      ["cost $5", "$5", "$&", cs],
+    ];
+    for (const [text, find, rep, opts] of cases) {
+      const replacer = buildReplacer(find, rep, opts);
+      expect(replacer, find).not.toBeNull();
+      expect(replacer?.(text), find).toBe(replaceInText(text, find, rep, opts));
+    }
+  });
+
+  it("同じ replacer を繰り返し使っても結果が変わらない (g フラグの lastIndex 持ち越しなし)", () => {
+    const replacer = buildReplacer("a", "b", cs);
+    expect(replacer?.("aaa")).toBe("bbb");
+    expect(replacer?.("aaa")).toBe("bbb");
+    expect(replacer?.("xax")).toBe("xbx");
+  });
+
+  it("不正な正規表現は null", () => {
+    expect(buildReplacer("(", "x", { caseSensitive: true, regex: true })).toBeNull();
   });
 });

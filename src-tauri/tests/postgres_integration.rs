@@ -1369,3 +1369,79 @@ async fn postgres_cell_blob_probe_and_fetch() {
         .await
         .expect("cleanup");
 }
+
+/// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 PostgreSQL の
+/// `execute_stream` に通す。NUMERIC は文字列で届くので数値判定 (`toNumber` 互換) の
+/// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
+#[tokio::test]
+async fn postgres_stream_coalescing_and_stats() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS public.stream_batch_1257", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.stream_batch_1257 (id INT PRIMARY KEY, name TEXT, amount NUMERIC(10,1))",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO public.stream_batch_1257 \
+         SELECT g, 'n' || g, CASE WHEN g % 10 = 0 THEN NULL ELSE (g % 97) + 0.5 END \
+         FROM generate_series(1, 900) g",
+        None,
+    )
+    .await
+    .expect("seed");
+
+    let mut batcher = t::StreamBatcher::new(100);
+    let mut stats = t::StreamStats::new();
+    let mut sent: Vec<usize> = Vec::new();
+    let res = conn
+        .execute_stream(
+            "SELECT * FROM public.stream_batch_1257 ORDER BY id",
+            None,
+            100,
+            100,
+            |batch| {
+                if let t::StreamBatch::Rows(rows) = batch {
+                    if let Some(out) = batcher.push(rows, std::time::Instant::now()) {
+                        stats.observe(&out);
+                        sent.push(out.len());
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await
+        .expect("stream");
+    if let Some(rest) = batcher.finish() {
+        stats.observe(&rest);
+        sent.push(rest.len());
+    }
+
+    assert_eq!(res.rows_affected, 900);
+    assert_eq!(sent.iter().sum::<usize>(), 900);
+    assert_eq!(sent[0], 100, "初回バッチは即送信");
+    assert!(sent.len() < 9, "9 回のドライババッチが合流される: {sent:?}");
+    let snap = stats.snapshot();
+    assert_eq!(snap.row_count, 900);
+    assert_eq!(snap.null_counts[2], 90);
+    assert_eq!(snap.num_min[0], Some(1.0));
+    assert_eq!(snap.num_max[0], Some(900.0));
+    assert_eq!(snap.num_min[2], Some(0.5));
+    assert_eq!(snap.num_max[2], Some(96.5));
+    assert_eq!(snap.num_min[1], None);
+    assert_eq!(snap.duplicate_rows, Some(false));
+
+    conn.execute("DROP TABLE public.stream_batch_1257", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

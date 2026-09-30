@@ -40,20 +40,22 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    BatchStatementResult, BatchStatus, BatchStreamMessage, CancelStreamResult, CellBlobProbe,
-    Column, ColumnDiff, ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile,
-    CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
+    BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport,
+    BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff,
+    ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff,
+    DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
+    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
     PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
     ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
     RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
     ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
     ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
     SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
-    StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
-    TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
+    StatementStat, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement,
+    TableColumnInfo, TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -453,10 +455,20 @@ fn build_fixtures() -> serde_json::Value {
     };
     let query_stream_rows_message = QueryStreamMessage::Rows {
         rows: vec![vec![Value::Int(1), Value::String("a".into())]],
+        stats: Some(StreamStatsSnapshot {
+            row_count: 1,
+            null_counts: vec![0, 0],
+            num_min: vec![Some(1.0), None],
+            num_max: vec![Some(1.0), None],
+            duplicate_rows: Some(false),
+        }),
     };
     // 境界ケース: 空の結果セット (0 行の SELECT)。`Vec::new()` は serde で必ず
     // `[]` になり `null` にはならないが、それを固定して回帰を防ぐ。
-    let query_stream_rows_message_empty = QueryStreamMessage::Rows { rows: vec![] };
+    let query_stream_rows_message_empty = QueryStreamMessage::Rows {
+        rows: vec![],
+        stats: None,
+    };
     let query_stream_done_message = QueryStreamMessage::Done {
         total_rows: 2,
         rows_affected: 0,
@@ -467,8 +479,57 @@ fn build_fixtures() -> serde_json::Value {
             severity: ServerMessageSeverity::Warning,
             text: "[1265] Data truncated for column 'a' at row 1".into(),
         }],
+        stats: Some(StreamStatsSnapshot {
+            row_count: 2,
+            null_counts: vec![0, 1],
+            num_min: vec![Some(1.0), None],
+            num_max: vec![Some(2.0), None],
+            duplicate_rows: None,
+        }),
+        snapshot_id: Some(3),
         read_only: false,
         schema_may_change: true,
+    };
+    let broadcast_env_message = BroadcastMessage::Env(BroadcastEnvReport {
+        session_id: "sess0001".into(),
+        status: "done",
+        columns: vec![column.clone()],
+        rows: vec![vec![Value::Int(1)], vec![Value::Int(2)]],
+        total_rows: 2,
+        elapsed_ms: 7,
+        error: None,
+        diff: Some(BroadcastDiff {
+            comparable: true,
+            mode: DiffMode::Pk,
+            changed_cells: vec![ChangedRow {
+                row: 1,
+                cols: vec![0],
+            }],
+            changed_cell_count: 1,
+            added_row_indices: vec![],
+            removed_count: 0,
+            truncated: false,
+            has_diff: true,
+        }),
+    });
+    let broadcast_cancelled_message = BroadcastMessage::Cancelled {
+        session_id: "sess0002".into(),
+    };
+    let broadcast_done_message = BroadcastMessage::Done {};
+    let query_stream_patch_message = QueryStreamMessage::Patch {
+        total_rows: 3,
+        unchanged: false,
+        removed_count: 1,
+        runs: vec![
+            PatchRun::Keep { from: 0, count: 1 },
+            PatchRun::Rows {
+                prev: vec![Some(1), None],
+                rows: vec![
+                    vec![Value::Int(2), Value::String("b2".into())],
+                    vec![Value::Int(9), Value::Null],
+                ],
+            },
+        ],
     };
     let query_stream_error_message = QueryStreamMessage::Error {
         error: "connection reset by peer".into(),
@@ -708,6 +769,10 @@ fn build_fixtures() -> serde_json::Value {
         // 境界ケース (空結果・キャンセル直後) — 上のコメント参照。
         "queryStreamRowsMessageLiteEmpty": query_stream_rows_message_empty,
         "queryStreamDoneMessage": query_stream_done_message,
+        "queryStreamPatchMessage": query_stream_patch_message,
+        "broadcastEnvMessage": broadcast_env_message,
+        "broadcastCancelledMessage": broadcast_cancelled_message,
+        "broadcastDoneMessage": broadcast_done_message,
         "queryStreamErrorMessage": query_stream_error_message,
         "channelCancelledMessage": channel_cancelled_message,
         "channelCancelledMessageZero": channel_cancelled_message_zero,

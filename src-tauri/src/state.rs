@@ -159,6 +159,9 @@ pub struct AppState {
     /// 先頭の一部しか載せないため、「スキップ行を保存 / コピー」用に全件を Rust 側で
     /// 保持する。取り込みが終わるたびに置き換わる。
     last_import_skipped: std::sync::Mutex<Vec<crate::commands::import::SkippedRowInfo>>,
+    /// 自動リフレッシュの差分パッチ (#1257) が使う、タブ単位の前回結果スナップ
+    /// ショット (PK ハッシュ → 行ハッシュ)。行データは持たない。
+    pub refresh_snapshots: std::sync::Mutex<crate::db::refresh_diff::RefreshSnapshotStore>,
 }
 
 impl AppState {

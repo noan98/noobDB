@@ -1531,3 +1531,84 @@ async fn mysql_cell_blob_probe_and_fetch() {
         .await
         .expect("cleanup");
 }
+
+/// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 MySQL の
+/// `execute_stream` に通す。DECIMAL は文字列で届くので数値判定 (`toNumber` 互換) の
+/// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
+#[tokio::test]
+async fn mysql_stream_coalescing_and_stats() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS stream_batch_1257", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE stream_batch_1257 (id INT PRIMARY KEY, name VARCHAR(16), amount DECIMAL(10,1))",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    // MySQL の再帰 CTE 深さ既定 (1000) に収まる 900 行。amount は id % 10 = 0 で NULL。
+    conn.execute(
+        "INSERT INTO stream_batch_1257 (id, name, amount) \
+         WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 900) \
+         SELECT x, CONCAT('n', x), CASE WHEN x % 10 = 0 THEN NULL ELSE (x % 97) + 0.5 END FROM c",
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+
+    let mut batcher = t::StreamBatcher::new(100);
+    let mut stats = t::StreamStats::new();
+    let mut sent: Vec<usize> = Vec::new();
+    let res = conn
+        .execute_stream(
+            "SELECT * FROM stream_batch_1257 ORDER BY id",
+            Some(&db),
+            100,
+            100,
+            |batch| {
+                if let t::StreamBatch::Rows(rows) = batch {
+                    if let Some(out) = batcher.push(rows, std::time::Instant::now()) {
+                        stats.observe(&out);
+                        sent.push(out.len());
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await
+        .expect("stream");
+    if let Some(rest) = batcher.finish() {
+        stats.observe(&rest);
+        sent.push(rest.len());
+    }
+
+    assert_eq!(res.rows_affected, 900);
+    assert_eq!(sent.iter().sum::<usize>(), 900);
+    assert_eq!(sent[0], 100, "初回バッチは即送信");
+    assert!(sent.len() < 9, "9 回のドライババッチが合流される: {sent:?}");
+    let snap = stats.snapshot();
+    assert_eq!(snap.row_count, 900);
+    assert_eq!(snap.null_counts[2], 90);
+    assert_eq!(snap.num_min[0], Some(1.0));
+    assert_eq!(snap.num_max[0], Some(900.0));
+    assert_eq!(snap.num_min[2], Some(0.5));
+    assert_eq!(snap.num_max[2], Some(96.5));
+    assert_eq!(snap.num_min[1], None);
+    assert_eq!(snap.duplicate_rows, Some(false));
+
+    conn.execute("DROP TABLE stream_batch_1257", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

@@ -43,6 +43,8 @@ type AnyObjectSchema = z.ZodObject<z.ZodRawShape>;
 // shape) — フィクスチャは `beforeRows` の 1 サンプルのみ持つ。
 const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["queryResult", schemas.queryResult],
+  // #1257: 行配列を外側だけ検証する軽量版も、フルスキーマと同じキー集合を持つこと。
+  ["queryResult", schemas.queryResultLite],
   ["tableColumnInfo", schemas.tableColumnInfo],
   ["tableComment", schemas.tableComment],
   ["tableSchema", schemas.tableSchema],
@@ -77,6 +79,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["schemaDiff", schemas.schemaDiff],
   ["syncPlan", schemas.syncPlan],
   ["dataDiff", schemas.dataDiff],
+  ["dataDiff", schemas.dataDiffLite],
 
   // #1096: Query/Preview ストリーミングメッセージ (Tauri Channel)。
   ["queryStreamColumnsMessage", schemas.queryStreamColumnsMessage],
@@ -85,6 +88,11 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   // shape (キー集合) は代表値と同一なので同じスキーマで検証する。
   ["queryStreamRowsMessageLiteEmpty", schemas.queryStreamRowsMessageLite],
   ["queryStreamDoneMessage", schemas.queryStreamDoneMessage],
+  ["queryStreamPatchMessage", schemas.queryStreamPatchMessage],
+  // #1257: ブロードキャスト比較の Channel メッセージ。
+  ["broadcastEnvMessage", schemas.broadcastEnvMessage],
+  ["broadcastCancelledMessage", schemas.broadcastCancelledMessage],
+  ["broadcastDoneMessage", schemas.broadcastDoneMessage],
   ["queryStreamErrorMessage", schemas.queryStreamErrorMessage],
   ["channelCancelledMessage", schemas.channelCancelledMessage],
   ["channelCancelledMessageZero", schemas.channelCancelledMessage],

@@ -26,6 +26,9 @@ export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]
 /** 行の配列 (`Vec<Vec<Value>>`)。`mask_export_rows` (#733) の戻り値。 */
 export const cellRows = z.array(z.array(cellValue));
 
+/** `cellRows` の軽量版 (#1257): 外側の配列だけ検証する。 */
+export const cellRowsLite = z.array(z.unknown());
+
 export const column = z.object({
   name: z.string(),
   type_name: z.string(),
@@ -44,6 +47,13 @@ export const queryResult = z.object({
   elapsed_ms: z.number(),
   /** 古いバックエンド / キャッシュ由来では欠けるので省略可能 (#1165)。 */
   server_messages: z.array(serverMessage).optional(),
+});
+
+/** `queryResult` の軽量版 (#1257): 行は外側の配列であることだけ確認し、各行・各セルは
+ *  検証しない (ストリーム用 `queryStreamRowsMessageLite` と同じ方式)。数十万セルを
+ *  zod が再帰的に走査・複製するコストを避ける。列・件数・メッセージは従来どおり検証する。 */
+export const queryResultLite = queryResult.extend({
+  rows: z.array(z.unknown()),
 });
 
 export const tableColumnInfo = z.object({
@@ -546,6 +556,11 @@ export const dataDiff = z.object({
   target_count: z.number(),
 });
 
+/** `dataDiff` の軽量版 (#1257): `rows` (RowDiff の配列) は外側の構造だけ検証する。 */
+export const dataDiffLite = dataDiff.extend({
+  rows: z.array(z.unknown()),
+});
+
 // テーブル・タイムラプス (#739)。
 const timelapseGenerationMeta = z.object({
   id: z.number(),
@@ -766,6 +781,15 @@ export const historyEntryArray = z.array(historyEntry);
 // 届くため、**セル単位の検証は行わず構造のみ**を軽量に検証する (大きな結果セットでの
 // 検証コスト増を避けるトレードオフ)。
 
+/** Rust `StreamStatsSnapshot` (#1257): ストリーム中に逐次更新した列統計。 */
+export const streamStatsSnapshot = z.object({
+  rowCount: z.number(),
+  nullCounts: z.array(z.number()),
+  numMin: z.array(z.number().nullable()),
+  numMax: z.array(z.number().nullable()),
+  duplicateRows: z.boolean().nullable(),
+});
+
 export const queryStreamColumnsMessage = z.object({
   kind: z.literal("columns"),
   columns: z.array(column),
@@ -777,6 +801,28 @@ export const queryStreamColumnsMessage = z.object({
 export const queryStreamRowsMessageLite = z.object({
   kind: z.literal("rows"),
   rows: z.array(z.unknown()),
+  /** その送信分までの累積逐次統計 (#1257)。古いバックエンドは送らない。 */
+  stats: streamStatsSnapshot.nullable().optional(),
+});
+
+/** 自動リフレッシュ差分パッチの 1 区間 (#1257)。`rows` 区間の行本体は軽量に (外側の
+ *  配列だけ) 検証する。 */
+const queryStreamPatchRun = z.object({
+  type: z.enum(["keep", "rows"]),
+  from: z.number().optional(),
+  count: z.number().optional(),
+  prev: z.array(z.number().nullable()).optional(),
+  rows: z.array(z.unknown()).optional(),
+});
+
+/** 前回結果との差分だけを運ぶパッチ (#1257)。`refreshDiff` 付きの自動リフレッシュで、
+ *  `columns` / `rows` の代わりに届く。 */
+export const queryStreamPatchMessage = z.object({
+  kind: z.literal("patch"),
+  totalRows: z.number(),
+  unchanged: z.boolean(),
+  removedCount: z.number(),
+  runs: z.array(queryStreamPatchRun),
 });
 
 export const queryStreamDoneMessage = z.object({
@@ -788,6 +834,10 @@ export const queryStreamDoneMessage = z.object({
   appliedAutoLimit: z.number().nullable(),
   /** サーバの通知・警告 (#1165)。古いバックエンドは送らないので省略可能。 */
   serverMessages: z.array(serverMessage).optional(),
+  /** 全行を観測し終えた逐次統計 (#1257)。結果セットの無い文・古いバックエンドは省略/null。 */
+  stats: streamStatsSnapshot.nullable().optional(),
+  /** 自動リフレッシュ差分 (#1257) の比較元スナップショット ID。保持しなければ null/省略。 */
+  snapshotId: z.number().nullable().optional(),
   /** 実行した SQL が読み取り専用か (バックエンドの `is_read_only_sql_for`、#1256)。 */
   readOnly: z.boolean(),
   /** 実行した SQL がスキーマを変えうるか (`sql_may_change_schema`、#1256)。 */
@@ -802,6 +852,42 @@ export const queryStreamErrorMessage = z.object({
   /** Rows already delivered to the frontend before the run failed (#685). */
   deliveredRows: z.number(),
 });
+
+// --- ブロードキャスト比較 (Tauri Channel, #1257) ---------------------------
+//
+// `broadcast_compare` (`src-tauri/src/commands/broadcast.rs`) は環境ごとの結果を
+// `kind` タグ付きメッセージで返す。行は上限 5,000 行までだが、ストリーム用と同じく
+// 外側の配列だけ検証する。
+
+export const broadcastDiff = z.object({
+  comparable: z.boolean(),
+  mode: z.enum(["pk", "hash", "none"]),
+  changedCells: z.array(z.object({ row: z.number(), cols: z.array(z.number()) })),
+  changedCellCount: z.number(),
+  addedRowIndices: z.array(z.number()),
+  removedCount: z.number(),
+  truncated: z.boolean(),
+  hasDiff: z.boolean(),
+});
+
+export const broadcastEnvMessage = z.object({
+  kind: z.literal("env"),
+  sessionId: z.string(),
+  status: z.enum(["done", "error"]),
+  columns: z.array(column),
+  rows: z.array(z.unknown()),
+  totalRows: z.number(),
+  elapsedMs: z.number(),
+  error: z.string().nullable(),
+  diff: broadcastDiff.nullable(),
+});
+
+export const broadcastCancelledMessage = z.object({
+  kind: z.literal("cancelled"),
+  sessionId: z.string(),
+});
+
+export const broadcastDoneMessage = z.object({ kind: z.literal("done") });
 
 /** Query チャンネル・Preview チャンネルのどちらでも同じ shape で届く cancelled
  *  メッセージ (#685)。名前付きイベントのまま残る CSV インポート/エクスポート/

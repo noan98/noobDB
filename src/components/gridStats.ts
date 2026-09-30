@@ -195,6 +195,23 @@ export function columnNullRates(rows: CellValue[][], columnCount: number): numbe
   return nulls.map((nullCount) => nullRatePercentOf({ count: rows.length, nullCount }));
 }
 
+/**
+ * 列ごとの NULL 数 (ストリーム中にバックエンドが逐次集計したもの, #1257) から
+ * `columnNullRates` と同じ結果を作る。行を走査しない。
+ */
+export function nullRatesFromCounts(
+  nullCounts: readonly number[],
+  rowCount: number,
+  columnCount: number,
+): number[] {
+  const cols = Math.max(0, Math.floor(columnCount));
+  const out = new Array<number>(cols);
+  for (let i = 0; i < cols; i++) {
+    out[i] = nullRatePercentOf({ count: rowCount, nullCount: nullCounts[i] ?? 0 });
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // #524 全件集計 SQL
 // ─────────────────────────────────────────────────────────────────────────────

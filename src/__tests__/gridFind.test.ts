@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_FIND_RESULT,
   buildFindKeySet,
+  computeColumnMatchRows,
   computeFindMatches,
   findMatchKey,
   nextMatchIndex,
@@ -177,5 +178,43 @@ describe("findMatchKey / buildFindKeySet", () => {
     expect(set.has("2:0")).toBe(true);
     expect(set.has("1:1")).toBe(false);
     expect(set.size).toBe(2);
+  });
+});
+
+describe("computeColumnMatchRows (#1257)", () => {
+  const rows = [
+    ["apple", "Red", null],
+    ["banana", "yellow", "red"],
+    ["cherry", "RED", 7],
+    ["short"],
+  ];
+  const opts = { caseSensitive: false, wholeCell: false, regex: false };
+
+  it("computeFindMatches の該当列だけの結果と一致する", () => {
+    for (const col of [0, 1, 2]) {
+      for (const q of ["red", "a", "7", "zzz"]) {
+        const full = computeFindMatches(rows, 3, q, opts)
+          .matches.filter((m) => m.colIdx === col)
+          .map((m) => m.rowIdx);
+        expect(computeColumnMatchRows(rows, col, q, opts).rowIdxs, `${col}:${q}`).toEqual(full);
+      }
+    }
+  });
+
+  it("大小区別・完全一致・正規表現・不正な正規表現", () => {
+    expect(computeColumnMatchRows(rows, 1, "RED", { ...opts, caseSensitive: true }).rowIdxs).toEqual([2]);
+    expect(computeColumnMatchRows(rows, 1, "red", { ...opts, wholeCell: true }).rowIdxs).toEqual([0, 2]);
+    expect(computeColumnMatchRows(rows, 0, "^(a|b)", { ...opts, regex: true }).rowIdxs).toEqual([0, 1]);
+    expect(computeColumnMatchRows(rows, 0, "(", { ...opts, regex: true })).toEqual({
+      rowIdxs: [],
+      invalidRegex: true,
+    });
+  });
+
+  it("空クエリ・空行・範囲外の列は空", () => {
+    expect(computeColumnMatchRows(rows, 0, "", opts).rowIdxs).toEqual([]);
+    expect(computeColumnMatchRows([], 0, "a", opts).rowIdxs).toEqual([]);
+    expect(computeColumnMatchRows(rows, 9, "a", opts).rowIdxs).toEqual([]);
+    expect(computeColumnMatchRows(rows, -1, "a", opts).rowIdxs).toEqual([]);
   });
 });
