@@ -422,6 +422,7 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
         "capture",
         "captureRowCap",
         "captureRetentionDays",
+        "refreshDiff",
         "onEvent",
       ].sort(),
     );

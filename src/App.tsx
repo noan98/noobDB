@@ -51,6 +51,9 @@ import {
   type PendingEdits,
   type PendingInsertRow,
 } from "./components/cellEdit";
+import { attachStreamStats } from "./components/streamStats";
+import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
+import { attachRowDiff } from "./resultDiff";
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
@@ -1154,6 +1157,9 @@ async function shouldRestoreSavedTabs(
   if (mode === "never") return false;
   return askUser();
 }
+/** パレットが閉じている間の `commandItems` (毎回新しい配列を作らない, #1257)。 */
+const EMPTY_COMMAND_ITEMS: CommandItem[] = [];
+
 
 function emptyResult(columns: Column[]): QueryResult {
   return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
@@ -3654,9 +3660,30 @@ export default function App() {
     // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
     const prevRowsSnapshot = tab?.result?.rows ?? null;
     const prevSqlSnapshot = tab?.lastExecutedSql ?? null;
+    // 自動リフレッシュの差分パッチ (#1257): 前回結果が手元にあり、同じ SQL で、行識別
+    // (主キー等) が解決できるなら、バックエンドに前回結果との差分だけを返してもらう。
+    // 比較元のスナップショット ID は前回の行配列に紐づいているので、編集適用などで
+    // 行配列が入れ替わっていれば null (= 全行ストリームで取り直す)。
+    let refreshDiff: { key: string; pkIndices: number[]; prevSnapshotId: number | null } | null = null;
+    if (autoRefresh && tab?.result && !tab.streaming && prevSqlSnapshot === sql) {
+      const { indices } = resolveRowIdentity(
+        tab.result.columns,
+        tab.tableColumns ?? null,
+        tab.rowIdentity ?? null,
+      );
+      if (indices.length > 0) {
+        refreshDiff = {
+          key: tabId,
+          pkIndices: indices,
+          prevSnapshotId: snapshotIdFor(tab.result.rows),
+        };
+      }
+    }
+    // パッチで更新できる見込みのときは、前回の結果を消さずに残す (パッチの適用元になる)。
+    const keepPrevResult = refreshDiff?.prevSnapshotId != null;
     updateTab(tabId, {
       lastExecutedSql: sql,
-      result: emptyResult([]),
+      ...(keepPrevResult ? {} : { result: emptyResult([]) }),
       preview: null,
       prevResultRows: prevRowsSnapshot,
       prevResultSql: prevSqlSnapshot,
@@ -3698,16 +3725,21 @@ export default function App() {
           result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
         }));
       },
-      onRows: ({ rows }) => {
+      onRows: ({ rows, stats }) => {
         markFirstRow(streamId); // 計測 (#1094): Time to First Row (2 回目以降は no-op)
         patchTab(tabId, (tt) => {
           if (!tt.result) return tt;
+          // `concat` はスプレッド (`[...a, ...b]`) と違い引数展開のスタックを使わず、
+          // バックエンドが合流した数千行のバッチでも 1 回のコピーで済む (#1257)。
+          const nextRows = tt.result.rows.concat(rows as CellValue[][]);
+          // バックエンドが逐次更新した列統計を新しい行配列に紐づける。
+          attachStreamStats(nextRows, stats);
           return {
             ...tt,
             result: {
               ...tt.result,
-              rows: [...tt.result.rows, ...rows as CellValue[][]],
-              rows_affected: tt.result.rows.length + rows.length,
+              rows: nextRows,
+              rows_affected: nextRows.length,
               elapsed_ms: Date.now() - startedAt,
             },
           };
@@ -3724,7 +3756,31 @@ export default function App() {
           };
         });
       },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages }) => {
+      onPatch: (patch) => {
+        markFirstRow(streamId);
+        patchTab(tabId, (tt) => {
+          if (!tt.result) return tt;
+          const applied = applyRefreshPatch(
+            tt.result.rows,
+            patch,
+            tt.result.columns.length,
+            tt.diffHighlight ?? false,
+          );
+          // 差分は行配列と一緒に作ってあるので、グリッドは全行を突き合わせ直さない。
+          if (applied.diff) attachRowDiff(applied.rows, applied.diff);
+          if (applied.rows === tt.result.rows) return tt;
+          return {
+            ...tt,
+            result: {
+              ...tt.result,
+              rows: applied.rows,
+              rows_affected: applied.rows.length,
+              elapsed_ms: Date.now() - startedAt,
+            },
+          };
+        });
+      },
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages, stats, snapshotId }) => {
         // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
         markQueryDone(streamId, {
           rows: hasColumns ? totalRows : rowsAffected,
@@ -3746,6 +3802,12 @@ export default function App() {
           // tabs. The first `loadMore` request will turn this off when it sees
           // a short page, so we don't need to compare totalRows against the
           // exact LIMIT here.
+          // 最終統計 (全行観測済み) を行配列に紐づけ直す (#1257)。
+          if (tt.result) {
+            attachStreamStats(tt.result.rows, stats);
+            // 次回の再実行で差分パッチを使うための比較元 ID (#1257)。
+            attachSnapshotId(tt.result.rows, snapshotId);
+          }
           return {
             ...tt,
             result: tt.result
@@ -3890,6 +3952,7 @@ export default function App() {
           isSingleCapturableStatement(sql, selectedProfile?.driver),
         captureRowCap: settings.flightRecorderRowCap,
         captureRetentionDays: settings.flightRecorderRetentionDays,
+        refreshDiff,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
@@ -4207,7 +4270,7 @@ export default function App() {
           if (!tt.preview) return tt;
           return {
             ...tt,
-            preview: { ...tt.preview, before_rows: [...tt.preview.before_rows, ...rows as CellValue[][]] },
+            preview: { ...tt.preview, before_rows: tt.preview.before_rows.concat(rows as CellValue[][]) },
           };
         });
         setStatus((prev) => {
@@ -4220,7 +4283,7 @@ export default function App() {
           if (!tt.preview) return tt;
           return {
             ...tt,
-            preview: { ...tt.preview, after_rows: [...tt.preview.after_rows, ...rows as CellValue[][]] },
+            preview: { ...tt.preview, after_rows: tt.preview.after_rows.concat(rows as CellValue[][]) },
           };
         });
       },
@@ -4330,7 +4393,7 @@ export default function App() {
       const more = await api.runQuery(sessionId, sql, tab.database ?? null);
       patchTab(tabId, (tt) => {
         if (!tt.result) return { ...tt, loadingMore: false };
-        const nextRows = [...tt.result.rows, ...more.rows];
+        const nextRows = tt.result.rows.concat(more.rows);
         return {
           ...tt,
           result: {
@@ -7251,7 +7314,11 @@ export default function App() {
     );
   }, []);
 
+  // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
+  // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
+  // 組み立てると全テーブル分の項目生成が行バッチのたびに走っていた。
   const commandItems = useMemo<CommandItem[]>(() => {
+    if (!showCommandPalette) return EMPTY_COMMAND_ITEMS;
     const items: CommandItem[] = [];
 
     // 画面遷移・グローバル操作。
@@ -7520,6 +7587,7 @@ export default function App() {
 
     return items;
   }, [
+    showCommandPalette,
     sessionId,
     selectedProfile?.id,
     paletteDatabase,
@@ -7967,6 +8035,10 @@ export default function App() {
                     <ChartView
                       result={tab.result}
                       sourceSql={tab.lastExecutedSql}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      onRunQuery={
+                        sessionId ? (sql) => api.runQuery(sessionId, sql, tab.database ?? null) : undefined
+                      }
                       onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showJson && tab.result && !tab.streaming ? (
@@ -9699,8 +9771,6 @@ export default function App() {
                 !isSandboxProfileId(c.profile.id),
             )}
             tableColumns={broadcastRequest.tableColumns}
-            initialBatch={settings.defaultDisplayCount}
-            chunkSize={settings.streamPrefetchSize}
             autoLimit={settings.autoLimitEnabled ? settings.autoLimitCount : null}
             queryTimeoutSecs={settings.queryTimeoutSecs}
             confirm={confirm}

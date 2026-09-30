@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **123 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **124 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -21,6 +21,21 @@
 `run_query` / `run_query_transaction` / `run_query_stream` / `preview_query_stream` /
 `cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` (任意引数 `isolation` / `readOnly`, #1166) / `run_in_transaction` /
 `finish_transaction`
+
+`run_query_stream` は結果を Channel の `columns` / `rows` / `done` のほかに、バッチ合流
+(`db::stream_batch::StreamBatcher`: 初回は即送信、以降は時間 / サイズ倍々) と逐次統計
+(`rows.stats` / `done.stats`: 列ごとの NULL 数・数値 min/max・重複行フラグ) を付けて送る
+(#1257)。自動リフレッシュでは任意引数 `refreshDiff` (`{ key, pkIndices, prevSnapshotId }`)
+を渡すと、`db::refresh_diff` が前回結果の PK ハッシュ → 行ハッシュを保持して `patch`
+メッセージ (変化行・追加行の実データ + 変化なし区間の参照 + 削除数。全一致なら
+`unchanged`) だけを返す。
+
+## ブロードキャスト (`commands/broadcast.rs`)
+
+`broadcast_compare` — 同じ読み取りクエリを基準 + 対象セッションへ並行実行し、環境ごとの
+`env` メッセージ (列 + 上限 5,000 行の表示行 + 基準との差分サマリ、`db::broadcast_diff`) を
+Channel で返す (#738, #1257)。読み取り専用はバックエンド強制。各環境は
+`{runId}:{sessionId}` の stream id で `cancel_stream` できる。
 
 ## スキーマ (`commands/schema.rs`)
 

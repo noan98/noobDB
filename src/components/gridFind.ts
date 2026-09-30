@@ -97,6 +97,31 @@ export function computeFindMatches(
   return { matches, invalidRegex: false };
 }
 
+/**
+ * 1 列だけを対象にヒット行の添字を列挙する (#1257)。`computeFindMatches` の結果から
+ * その列を絞り込むのと同じ結果を、他の列のセルを `String()` / 判定せずに返す
+ * (列置換は対象列しか使わないため、全列走査は無駄になる)。
+ */
+export function computeColumnMatchRows(
+  rows: CellValue[][],
+  colIdx: number,
+  query: string,
+  options: GridFindOptions,
+): { rowIdxs: number[]; invalidRegex: boolean } {
+  if (query === "" || rows.length === 0 || colIdx < 0) return { rowIdxs: [], invalidRegex: false };
+  const matcher = buildMatcher(query, options);
+  if (!matcher) return { rowIdxs: [], invalidRegex: true };
+  const rowIdxs: number[] = [];
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    if (colIdx >= row.length) continue;
+    const v = row[colIdx];
+    if (v === null || v === undefined) continue;
+    if (matcher(String(v))) rowIdxs.push(r);
+  }
+  return { rowIdxs, invalidRegex: false };
+}
+
 /** ヒットの一意キー ("row:col")。ハイライト用 Set / 現在ヒット比較に使う。 */
 export function findMatchKey(m: GridFindMatch): string {
   return `${m.rowIdx}:${m.colIdx}`;
@@ -144,3 +169,8 @@ export function stableMatchIndex(
   if (prevIndex == null) return 0;
   return Math.min(Math.max(prevIndex, 0), matches.length - 1);
 }
+
+/** これより多い行数の結果では、結果内検索の入力を debounce して全行走査の回数を減らす (#1257)。 */
+export const FIND_DEBOUNCE_MIN_ROWS = 5000;
+/** 結果内検索の debounce 待ち時間 (ms)。 */
+export const FIND_DEBOUNCE_MS = 150;

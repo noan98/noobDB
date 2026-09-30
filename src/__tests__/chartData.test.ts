@@ -3,6 +3,9 @@ import type { CellValue, Column } from "../api/tauri";
 import { CATEGORICAL, CATEGORICAL_DARK, DIVERGING_RAMPS, SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
 import {
   buildChartModel,
+  buildChartSql,
+  canAggregateInDb,
+  chartModelFromAggregatedRows,
   chartConfigKeyFrom,
   chartNotices,
   chartPalette,
@@ -538,5 +541,88 @@ describe("chartRampGradient (#916)", () => {
     const dark = chartRampGradient("blue", true);
     expect(dark).not.toBeNull();
     expect(dark).not.toBe(light);
+  });
+});
+
+describe("DB 側集計モード (#1257)", () => {
+  const cols: Column[] = [
+    { name: "region", type_name: "text" },
+    { name: "amount", type_name: "int" },
+    { name: "", type_name: "int" },
+  ];
+
+  it("buildChartSql: 元 SQL をサブクエリに包んで GROUP BY する (末尾セミコロンは落とす)", () => {
+    const sql = buildChartSql({
+      driver: "mysql",
+      sourceSql: "SELECT region, amount FROM sales;  ",
+      xColumn: "region",
+      yColumns: ["amount", "qty"],
+      agg: "sum",
+    });
+    expect(sql).toBe(
+      "SELECT `region` AS `chart_x`, SUM(`amount`) AS `chart_y0`, SUM(`qty`) AS `chart_y1`\n" +
+        "FROM (SELECT region, amount FROM sales) AS `chart_src`\n" +
+        "GROUP BY `region`\n" +
+        "ORDER BY `region`",
+    );
+  });
+
+  it("buildChartSql: 方言ごとに識別子をクオートする", () => {
+    const base = { sourceSql: "SELECT 1", xColumn: 'we"ird', yColumns: ["v"], agg: "avg" as const };
+    expect(buildChartSql({ ...base, driver: "postgres" })).toContain('"we""ird"');
+    expect(buildChartSql({ ...base, driver: "sqlite" })).toContain("AVG(\"v\")");
+    expect(buildChartSql({ ...base, driver: "mysql", agg: "count" })).toContain("COUNT(`v`)");
+  });
+
+  it("canAggregateInDb: 集計あり・名前付きの列・元 SQL があるときだけ真", () => {
+    const cfg: ChartConfig = { type: "bar", xCol: 0, yCols: [1], aggregation: "sum" };
+    expect(canAggregateInDb(cols, cfg, "SELECT 1")).toBe(true);
+    expect(canAggregateInDb(cols, cfg, undefined)).toBe(false);
+    expect(canAggregateInDb(cols, cfg, "   ")).toBe(false);
+    expect(canAggregateInDb(cols, { ...cfg, aggregation: "none" }, "SELECT 1")).toBe(false);
+    expect(canAggregateInDb(cols, { ...cfg, yCols: [] }, "SELECT 1")).toBe(false);
+    // 別名の無い計算列 (空名) は参照できない。
+    expect(canAggregateInDb(cols, { ...cfg, yCols: [2] }, "SELECT 1")).toBe(false);
+    expect(canAggregateInDb(cols, { ...cfg, xCol: 2 }, "SELECT 1")).toBe(false);
+  });
+
+  it("chartModelFromAggregatedRows: JS 側の集計と同じ系列名・ラベルのモデルを作る", () => {
+    const rows: CellValue[][] = [
+      ["east", "10.5", 3],
+      [null, null, 0],
+      ["west", 7, null],
+    ];
+    const m = chartModelFromAggregatedRows(rows, ["amount", "qty"], "sum");
+    expect(m.labels).toEqual(["east", "(null)", "west"]);
+    expect(m.series.map((s) => s.name)).toEqual(["SUM(amount)", "SUM(qty)"]);
+    // 数値文字列は数値化、NULL は 0。
+    expect(m.series[0].values).toEqual([10.5, 0, 7]);
+    expect(m.series[1].values).toEqual([3, 0, 0]);
+    expect(m.sampledFrom).toBeNull();
+    expect(m.excludedNonNumeric).toBe(0);
+    expect(chartModelFromAggregatedRows([], ["a"], "count").series[0].name).toBe("COUNT(a)");
+  });
+
+  it("DB 集計の結果は、同じ入力に対する JS 集計と値が一致する (並びを除く)", () => {
+    const rows: CellValue[][] = [
+      ["a", 1],
+      ["b", 2],
+      ["a", 3],
+    ];
+    const js = buildChartModel(
+      [
+        { name: "k", type_name: "text" },
+        { name: "v", type_name: "int" },
+      ],
+      rows,
+      { type: "bar", xCol: 0, yCols: [1], aggregation: "sum" },
+    );
+    // DB が返すはずの結果 (X 昇順)。
+    const db = chartModelFromAggregatedRows([["a", 4], ["b", 2]], ["v"], "sum");
+    expect(db.labels).toEqual(js.labels.slice().sort());
+    expect(db.series[0].name).toBe(js.series[0].name);
+    expect(Object.fromEntries(db.labels.map((l, i) => [l, db.series[0].values[i]]))).toEqual(
+      Object.fromEntries(js.labels.map((l, i) => [l, js.series[0].values[i]])),
+    );
   });
 });

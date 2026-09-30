@@ -151,7 +151,7 @@ import {
   type ServerSort,
   type ServerSortDirection,
 } from "./serverBrowse";
-import { diffResultRows } from "../resultDiff";
+import { diffResultRows, rowDiffFor } from "../resultDiff";
 import {
   buildFkJumpSql,
   buildReverseRefSql,
@@ -168,12 +168,16 @@ import {
   parseFullColumnStats,
   isNumericStatsKind,
   columnNullRates,
+  nullRatesFromCounts,
   nullRatePercentOf,
 } from "./gridStats";
+import { numericStatsFromStream, streamStatsFor } from "./streamStats";
 import {
   type GridFindMatch,
   type GridFindResult,
   EMPTY_FIND_RESULT,
+  FIND_DEBOUNCE_MIN_ROWS,
+  FIND_DEBOUNCE_MS,
   buildFindKeySet,
   computeFindMatches,
   findMatchKey,
@@ -3013,21 +3017,25 @@ export const DataGrid = memo(function DataGrid({
   const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
   // ダークテーマではヒートマップを「暗→明」の向きへ切り替える (#1187)。
   const isDarkTheme = useIsDarkTheme();
-  // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のみ算出。
-  // `rows.map` で行数長の中間配列を列ごとに作らず、ジェネレータで 1 パス集計する。
-  const columnStats = useMemo<(NumericStats | null)[]>(
-    () =>
-      columnKinds.map((k, i) =>
-        k === "number" || k === "decimal"
-          ? computeNumericStats(
-              (function* () {
-                for (const r of rows) yield r[i];
-              })(),
-            )
-          : null,
-      ),
-    [columnKinds, rows],
-  );
+  // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のうち条件付き書式
+  // (バー/ヒート) が有効な列だけを算出する (#1257 — 書式を使わない列の全行走査は
+  // ストリーミングのバッチごとに走っていた)。ストリーム中にバックエンドが逐次更新した
+  // 統計が行配列に紐づいていれば (`streamStatsFor`)、それを使って走査自体を省く。
+  // セル編集の適用などで行配列が別物になると統計は自動的に外れ、JS で再計算する。
+  const columnStats = useMemo<(NumericStats | null)[]>(() => {
+    const stream = streamStatsFor(rows);
+    return columnKinds.map((k, i) => {
+      if (k !== "number" && k !== "decimal") return null;
+      const mode = colFormats[i] ?? "off";
+      if (mode === "off") return null;
+      if (stream) return numericStatsFromStream(stream, i);
+      return computeNumericStats(
+        (function* () {
+          for (const r of rows) yield r[i];
+        })(),
+      );
+    });
+  }, [columnKinds, rows, colFormats]);
   // `columnStats` は行が届くたびに (ストリーミング中は 1 バッチごとに) 作り直る。
   // これを下の `tableColumns` の依存配列に直接含めると、実際にはセルの描画関数
   // (`cell`) 自身は変わらないのに ColumnDef 配列全体が新しい参照になり、
@@ -3036,11 +3044,10 @@ export const DataGrid = memo(function DataGrid({
   // `colFormats` で明示的に有効化された列でしか参照しない (renderNumeric 内)
   // ので、ref 経由の最新値参照に切り替えて `tableColumns` の再構築対象から外す。
   // `cell` 関数は行データ (`data`) の変化のたびにどのみち呼び直されるため、
-  // 表示値が古くなることはない。
+  // 表示値が古くなることはない。ref は描画中に同期更新する (#1257: 書式を有効化した
+  // 直後の同じ描画で、新しく算出した列の統計を `cell` が読めるようにするため)。
   const columnStatsRef = useRef(columnStats);
-  useEffect(() => {
-    columnStatsRef.current = columnStats;
-  }, [columnStats]);
+  columnStatsRef.current = columnStats;
 
   // --- Sort & column filters, persisted per result shape (#677) ---
   // Column widths/order/visibility were already persisted (#616); sort and
@@ -3336,6 +3343,9 @@ export const DataGrid = memo(function DataGrid({
   // オフのとき、および行が 1 件も無いときは計算も描画もしない。
   const nullRates = useMemo<number[] | null>(() => {
     if (!columnNullBars || rows.length === 0 || columns.length === 0) return null;
+    // ストリーム逐次統計 (#1257) があれば NULL 数の全行走査を省く。
+    const stream = streamStatsFor(rows);
+    if (stream) return nullRatesFromCounts(stream.nullCounts, rows.length, columns.length);
     return columnNullRates(rows, columns.length);
   }, [columnNullBars, rows, columns.length]);
 
@@ -3783,6 +3793,15 @@ export const DataGrid = memo(function DataGrid({
   // Column quick-stats popover (#524): which column + the anchor rect of the
   // header control that opened it (reuses the filter icon's rect).
   const [statsMenu, setStatsMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
+  // 統計ポップオーバーに渡す列の全値 (#1257)。描画のたびに `rows.map` で配列を作り直すと
+  // 子の `computeColumnStats` の memo が毎回無効になり、ポップオーバーを開いている間
+  // ストリーミング/再描画のたびに全行の頻度集計をやり直していた。開いている列と行配列に
+  // だけ依存させる。
+  const statsColIdx = statsMenu?.colIdx ?? null;
+  const statsColValues = useMemo<CellValue[] | null>(
+    () => (statsColIdx === null ? null : rows.map((r) => r[statsColIdx] ?? null)),
+    [statsColIdx, rows],
+  );
   // reveal の期限切れ/フォーカス喪失で再マスクされたら、実値を表示している
   // 値ビューア・列の統計も閉じる (#1069)。開いたまま伏せ字化を待たない。
   useEffect(() => {
@@ -6085,7 +6104,7 @@ export const DataGrid = memo(function DataGrid({
         const colIdx = statsMenu.colIdx;
         const kind = columnKinds[colIdx] ?? "string";
         const colName = columns[colIdx]?.name ?? "";
-        const colValues = rows.map((r) => r[colIdx] ?? null);
+        const colValues = statsColValues ?? [];
         // 全件集計は具体的なターゲットテーブルと実行系が揃うときだけ提供する。
         const statsRequest: FullStatsRequest | undefined =
           rowSqlTable && onRunStatsQuery
@@ -6584,14 +6603,41 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const prevFindMatchRef = useRef<GridFindMatch | null>(null);
   const lastFindAutoNavKeyRef = useRef<string | null>(null);
 
+  // 大きな結果 (FIND_DEBOUNCE_MIN_ROWS 超) ではタイピングごとの全行走査を避けるため、
+  // 入力が止まってから検索する (#1257)。小さな結果は従来どおり即時。
+  const heavyFind = (result?.rows.length ?? 0) > FIND_DEBOUNCE_MIN_ROWS;
+  const [findQueryDebounced, setFindQueryDebounced] = useState(findQuery);
+  useEffect(() => {
+    if (!heavyFind || findQuery === "") {
+      setFindQueryDebounced(findQuery);
+      return;
+    }
+    const id = window.setTimeout(() => setFindQueryDebounced(findQuery), FIND_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [findQuery, heavyFind]);
+  const effectiveFindQuery = heavyFind ? findQueryDebounced : findQuery;
+  // ストリーミング中は行が届くたびにヒット一覧を全件再計算しない (#1257)。クエリ・
+  // オプションが変わらない限り直前の結果を保持し、完了 (streaming=false) で再計算する。
+  const lastFindRef = useRef<{ key: string; value: GridFindResult } | null>(null);
   const findResult = useMemo<GridFindResult>(() => {
     if (!findOpen || !result) return EMPTY_FIND_RESULT;
-    return computeFindMatches(result.rows, result.columns.length, findQuery, {
+    const key = JSON.stringify([
+      effectiveFindQuery,
+      findCaseSensitive,
+      findWholeCell,
+      findRegex,
+      result.columns.length,
+    ]);
+    const prev = lastFindRef.current;
+    if (streaming && prev && prev.key === key) return prev.value;
+    const value = computeFindMatches(result.rows, result.columns.length, effectiveFindQuery, {
       caseSensitive: findCaseSensitive,
       wholeCell: findWholeCell,
       regex: findRegex,
     });
-  }, [findOpen, result, findQuery, findCaseSensitive, findWholeCell, findRegex]);
+    lastFindRef.current = { key, value };
+    return value;
+  }, [findOpen, result, effectiveFindQuery, findCaseSensitive, findWholeCell, findRegex, streaming]);
   const findHits = useMemo(
     () => (findResult.matches.length > 0 ? buildFindKeySet(findResult.matches) : undefined),
     [findResult],
@@ -6777,8 +6823,22 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // but strengthens the toolbar hint and Apply's confirmation wording from a
   // generic caution to "this data actually has duplicates".
   const ambiguousIdentity = useMemo(
-    () => identityStrategy === "all_columns" && !!resultRows && hasAmbiguousIdentity(resultRows, pkIndices),
-    [identityStrategy, resultRows, pkIndices],
+    () => {
+      if (identityStrategy !== "all_columns" || !resultRows) return false;
+      // all_columns の識別は全列なので、ストリームの行ハッシュ重複フラグ (#1257) が
+      // そのまま答えになる (追跡上限超えで null のときは JS で走査する)。
+      const stream = streamStatsFor(resultRows);
+      if (
+        stream &&
+        stream.duplicateRows !== null &&
+        pkIndices.length === (columns?.length ?? -1) &&
+        pkIndices.every((p, i) => p === i)
+      ) {
+        return stream.duplicateRows;
+      }
+      return hasAmbiguousIdentity(resultRows, pkIndices);
+    },
+    [identityStrategy, resultRows, pkIndices, columns?.length],
   );
 
   // Re-run diff (#597): compare the previous snapshot against the current
@@ -6798,7 +6858,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     ) {
       return null;
     }
-    return diffResultRows(diffPrevRows, resultRows, pkIndices, columns.length);
+    // 自動リフレッシュのパッチ適用などで差分が行配列と一緒に作られていればそれを使う
+    // (全行の突き合わせをやり直さない, #1257)。
+    return rowDiffFor(resultRows) ?? diffResultRows(diffPrevRows, resultRows, pkIndices, columns.length);
   }, [
     diffHighlightEnabled,
     diffComparable,
@@ -7676,14 +7738,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 whiteSpace="nowrap"
                 aria-live="polite"
                 color={
-                  findResult.invalidRegex || (findQuery !== "" && findResult.matches.length === 0)
+                  findResult.invalidRegex || (effectiveFindQuery !== "" && findResult.matches.length === 0)
                     ? "var(--text-warning)"
                     : "app.textMuted"
                 }
               >
                 {findResult.invalidRegex
                   ? t("gridFindInvalidRegex")
-                  : findQuery === ""
+                  : effectiveFindQuery === ""
                     ? ""
                     : findResult.matches.length === 0
                       ? t("gridFindNoHits")
