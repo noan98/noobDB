@@ -20,7 +20,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      writeBinaryFile: vi.fn().mockResolvedValue(123),
+      writeTextFile: vi.fn().mockResolvedValue(123),
     },
   };
 });
@@ -143,7 +143,7 @@ describe("ExportModal 選択範囲スコープ (#917)", () => {
 
 /**
  * 調査バンドル (#745)。`bundle` 文脈が渡されたときだけ形式に現れ、保存前に
- * 持ち出す件数と伏せ字化される列を明示し、`write_binary_file` で自己完結 HTML を書く。
+ * 持ち出す件数と伏せ字化される列を明示し、`write_text_file` で自己完結 HTML を書く。
  */
 describe("ExportModal 調査バンドル (#745)", () => {
   const COLS = [makeColumn("id", "int"), makeColumn("user_email", "varchar")];
@@ -187,9 +187,9 @@ describe("ExportModal 調査バンドル (#745)", () => {
   }
 
   function lastWrittenHtml(): { path: string; html: string } {
-    const calls = vi.mocked(api.writeBinaryFile).mock.calls;
-    const [path, bytes] = calls[calls.length - 1];
-    return { path, html: new TextDecoder().decode(bytes) };
+    const calls = vi.mocked(api.writeTextFile).mock.calls;
+    const [path, html] = calls[calls.length - 1];
+    return { path, html };
   }
 
   it("bundle 文脈が無ければ形式に出さない", () => {
@@ -214,13 +214,13 @@ describe("ExportModal 調査バンドル (#745)", () => {
     expect(screen.getByRole("checkbox", { name: t("exportBundleIncludeHost") })).not.toBeChecked();
   });
 
-  it("保存すると write_binary_file に .html を書き、スキーマを同梱し EXPLAIN は既定で実行しない", async () => {
-    vi.mocked(api.writeBinaryFile).mockClear();
+  it("保存すると write_text_file に .html を書き、スキーマを同梱し EXPLAIN は既定で実行しない", async () => {
+    vi.mocked(api.writeTextFile).mockClear();
     const { describeFn, loadPlan } = renderBundle();
     fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
     fireEvent.click(screen.getByRole("checkbox", { name: t("exportBundleIncludeHost") }));
     fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
-    await waitFor(() => expect(api.writeBinaryFile).toHaveBeenCalled());
+    await waitFor(() => expect(api.writeTextFile).toHaveBeenCalled());
     const { path, html } = lastWrittenHtml();
     expect(path.endsWith(".html")).toBe(true);
     expect(describeFn).toHaveBeenCalledWith("appdb", "users");
@@ -231,12 +231,12 @@ describe("ExportModal 調査バンドル (#745)", () => {
   });
 
   it("実行計画を選ぶと EXPLAIN を取得して同梱する", async () => {
-    vi.mocked(api.writeBinaryFile).mockClear();
+    vi.mocked(api.writeTextFile).mockClear();
     const { loadPlan } = renderBundle();
     fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
     fireEvent.click(screen.getByRole("checkbox", { name: t("exportBundleIncludePlan") }));
     fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
-    await waitFor(() => expect(api.writeBinaryFile).toHaveBeenCalled());
+    await waitFor(() => expect(api.writeTextFile).toHaveBeenCalled());
     expect(loadPlan).toHaveBeenCalled();
     const { html } = lastWrittenHtml();
     expect(html).toContain(t("bundleSectionPlan"));

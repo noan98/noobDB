@@ -1008,6 +1008,17 @@ export const importDoneEvent = z.object({
   elapsedMs: z.number(),
   // 旧バックエンド (skipped フィールド無し) との後方互換で既定 []。
   skipped: z.array(skippedRowInfo).default([]),
+  // 先頭一部しか `skipped` に載らないため、総件数を別に持つ (#1258)。旧バックエンドでは
+  // 省略されるので既定 0 (フロントは `max(skippedTotal, skipped.length)` で使う)。
+  skippedTotal: z.number().default(0),
+});
+
+/** BLOB セルの probe 結果 (#1258)。 */
+export const cellBlobProbe = z.object({
+  size: z.number(),
+  mime: z.string().nullable(),
+  ext: z.string().nullable(),
+  image: z.boolean(),
 });
 
 export const importErrorEvent = z.object({

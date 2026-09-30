@@ -105,7 +105,7 @@ interface Props {
 }
 
 /**
- * モーダル上の出力形式。`bundle` はフロントで HTML を組み立てて `write_binary_file`
+ * モーダル上の出力形式。`bundle` はフロントで HTML を組み立てて `write_text_file`
  * で保存する (バックエンドのエクスポート形式ではない)。
  */
 type ModalFormat = ExportFormat | "bundle";
@@ -526,8 +526,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             ? await api.maskExportRows({ columns: effectiveColumns, rows: effectiveRows, masks })
             : effectiveRows;
         const html = await buildBundle(bodyRows, true);
-        // 既存の保存経路 (チャート/ER 図の画像保存と同じ write_binary_file)。
-        const bytes = await api.writeBinaryFile(path, new TextEncoder().encode(html));
+        // テキストのまま渡す保存経路 (write_text_file、#1258)。
+        const bytes = await api.writeTextFile(path, html);
         toast.success(t("exportSuccess", { bytes, path }) + maskedSuffix);
         setStatus({ kind: "idle" });
       } catch (e) {

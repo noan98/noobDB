@@ -3265,3 +3265,88 @@ async fn sqlite_identity_sync_fixes_duplicate_key_after_explicit_ids() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// BLOB セルの probe / 生バイト取得 (#1258)。サイズと先頭 16 バイトの判定 (PNG)・
+/// 空 BLOB・NULL・TEXT 格納値・巨大 BLOB を SQLite の実 DB で往復させる。
+#[tokio::test]
+async fn sqlite_cell_blob_probe_and_fetch() {
+    let db = temp_cmd_db("cell_blob");
+    let db_path = db.to_str().expect("utf8 path");
+    let conn = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("s-blob", conn, t::sqlite_options(db_path), false);
+    session
+        .conn
+        .execute(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB)",
+            None,
+        )
+        .await
+        .expect("create");
+    let png: Vec<u8> = [
+        &[0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a][..],
+        &[0u8; 100][..],
+    ]
+    .concat();
+    let hex: String = png.iter().map(|b| format!("{b:02X}")).collect();
+    let big = "00".repeat(40_000);
+    for sql in [
+        format!("INSERT INTO files VALUES (1, X'{hex}')"),
+        "INSERT INTO files VALUES (2, X'')".to_string(),
+        "INSERT INTO files VALUES (3, NULL)".to_string(),
+        "INSERT INTO files VALUES (4, 'plain text')".to_string(),
+        format!("INSERT INTO files VALUES (5, X'{big}')"),
+    ] {
+        session.conn.execute(&sql, None).await.expect("insert");
+    }
+    let key = |id: i64| serde_json::json!([{ "column": "id", "value": id }]);
+    let probe = |id: i64| {
+        let session = &session;
+        async move { t::probe_cell_blob_via_session(session, None, "files", "data", key(id)).await }
+    };
+    let fetch = |id: i64| {
+        let session = &session;
+        async move { t::fetch_cell_blob_via_session(session, None, "files", "data", key(id)).await }
+    };
+
+    // PNG: サイズ・MIME・拡張子・画像フラグ、取得バイトは元と一致。
+    let p = probe(1).await.expect("png").expect("not null");
+    assert_eq!(p.size, png.len() as u64);
+    assert_eq!(p.mime.as_deref(), Some("image/png"));
+    assert_eq!(p.ext.as_deref(), Some("png"));
+    assert!(p.image);
+    assert_eq!(fetch(1).await.expect("bytes").expect("not null"), png);
+
+    // 空 BLOB: サイズ 0・種別不明。
+    let p = probe(2)
+        .await
+        .expect("empty")
+        .expect("empty blob is not null");
+    assert_eq!((p.size, p.mime, p.image), (0, None, false));
+    assert_eq!(
+        fetch(2).await.expect("bytes").expect("not null"),
+        Vec::<u8>::new()
+    );
+
+    // NULL セルは両方 None。
+    assert!(probe(3).await.expect("null").is_none());
+    assert!(fetch(3).await.expect("null").is_none());
+
+    // TEXT で入った値も probe はバイト数で測る (取得は非バイナリ列として拒否)。
+    let p = probe(4).await.expect("text").expect("not null");
+    assert_eq!(p.size, "plain text".len() as u64);
+    assert!(fetch(4).await.is_err());
+
+    // 大きな BLOB でもサイズが正しい (先頭 16 バイトしか読まない経路)。
+    let p = probe(5).await.expect("big").expect("not null");
+    assert_eq!(p.size, 40_000);
+
+    // 存在しない行・キー無しはエラー。
+    assert!(probe(99).await.is_err());
+    assert!(
+        t::probe_cell_blob_via_session(&session, None, "files", "data", serde_json::json!([]))
+            .await
+            .is_err()
+    );
+}

@@ -6734,9 +6734,9 @@ export default function App() {
 
   /**
    * コマンドパレット / エディタツールバーからの「名前を付けて保存」(#918)。現在の
-   * タブの SQL を、既存の `write_binary_file` (フロントが fs API を直に叩かず
-   * capabilities を増やさない経路。チャート/ER 図の画像保存 #643 と同じパターン) で
-   * ディスクへ書き出す。新しい IPC は追加しない。
+   * タブの SQL を、`write_text_file` (フロントが fs API を直に叩かず
+   * capabilities を増やさない経路。#1258 で文字列のまま渡す専用 IPC にした) で
+   * ディスクへ書き出す。
    */
   const handleSaveSqlFile = useCallback(async () => {
     const tab = activeTabRef.current;
@@ -6748,7 +6748,7 @@ export default function App() {
         filters: [{ name: "SQL", extensions: ["sql"] }],
       });
       if (typeof dest !== "string" || !dest) return;
-      await api.writeBinaryFile(dest, new TextEncoder().encode(tab.sql));
+      await api.writeTextFile(dest, tab.sql);
       toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
     } catch (e) {
       toast.error(translate("saveSqlFileError", { error: String(e) }));

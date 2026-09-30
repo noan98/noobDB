@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub use crate::commands::export_xlsx::ExportTruncation;
 use crate::commands::export_xlsx::{write_xlsx, XlsxSheetWriter};
+use crate::commands::progress::{needs_final_emit, ProgressThrottle};
 use crate::commands::query::ensure_allowed_for_session;
 use crate::db::data_diff::build_sql_insert_statement;
 use crate::db::data_diff::sql_literal;
@@ -1012,6 +1013,11 @@ async fn spawn_export_stream(
     let emit_app = app.clone();
     let emit_id = stream_id.clone();
     let counter_cb = counter.clone();
+    // 進捗イベントは 150ms ごとに間引く (#1258)。最後に送った累積行数を覚えておき、
+    // 完了時に未送信の最終値だけ追い送りする。
+    let emitted = Arc::new(AtomicU64::new(0));
+    let emitted_cb = emitted.clone();
+    let mut throttle = ProgressThrottle::standard();
 
     let result = run_export_to_file(
         &session,
@@ -1029,6 +1035,10 @@ async fn spawn_export_stream(
             // AppState の StreamHandle.delivered_rows と同期させ、cancel_stream が
             // 現在までの行数を報告できるようにする。
             counter_cb.store(total, Ordering::SeqCst);
+            if !throttle.ready() {
+                return;
+            }
+            emitted_cb.store(total, Ordering::SeqCst);
             // Progress is best-effort; a failed emit shouldn't abort the export.
             let _ = emit_app.emit(
                 EV_EXPORT_PROGRESS,
@@ -1040,6 +1050,19 @@ async fn spawn_export_stream(
         },
     )
     .await;
+
+    // 間引きで送れなかった最後の進捗を、完了イベントの前に必ず送る。
+    if let Ok(outcome) = &result {
+        if needs_final_emit(emitted.load(Ordering::SeqCst), outcome.rows) {
+            let _ = app.emit(
+                EV_EXPORT_PROGRESS,
+                ExportProgressEvent {
+                    stream_id: stream_id.clone(),
+                    rows: outcome.rows,
+                },
+            );
+        }
+    }
 
     match result {
         Ok(StreamExportOutcome {

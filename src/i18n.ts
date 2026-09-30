@@ -2464,6 +2464,10 @@ const en = {
   importSkippedRowLine: "record {record} (line {line}): {reason}",
   importSkippedCopy: "Copy list",
   importSkippedCopied: "Copied skipped rows.",
+  importSkippedSave: "Save skipped rows",
+  importSkippedSaveTitle: "Save skipped rows",
+  importSkippedSaved: "Saved {count} skipped rows to {path}.",
+  importSkippedShowing: "Showing the first {shown} of {total} skipped rows. Use Copy or Save for the full list.",
   // Duplicate-key handling / UPSERT (#972).
   importConflictMode: "On existing key",
   importConflictModeInsert: "Insert only (duplicate = error)",
@@ -6190,6 +6194,10 @@ const ja: Dict = {
   importSkippedRowLine: "レコード {record} (行 {line}): {reason}",
   importSkippedCopy: "一覧をコピー",
   importSkippedCopied: "スキップ行をコピーしました。",
+  importSkippedSave: "スキップ行を保存",
+  importSkippedSaveTitle: "スキップ行を保存",
+  importSkippedSaved: "スキップ行 {count} 件を {path} に保存しました。",
+  importSkippedShowing: "スキップ行 {total} 件のうち先頭 {shown} 件を表示しています。全件はコピーまたは保存で取得できます。",
   // 既存キーの扱い / UPSERT (#972)。
   importConflictMode: "既存キーの扱い",
   importConflictModeInsert: "INSERT のみ (重複はエラー)",
