@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { CellValue, Column, QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
-import { transitions } from "../motion";
+import { directionalSlide, transitions } from "../motion";
+import {
+  inspectorWidth,
+  rowSlideDirection,
+  type NavDirection,
+} from "./rowInspectorNav";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -94,6 +99,16 @@ export function RowInspector({
   const [view, setView] = useState<"fields" | "related">("fields");
   const hasRelated = !!related && related.entries.length > 0;
   const activeView = hasRelated ? view : "fields";
+  // 行送りの方向 (#1234)。行番号が変わったレンダー中に確定させ、退出側にも同じ向きを渡す。
+  const [nav, setNav] = useState<{ row: number; dir: NavDirection }>({
+    row: rowNumber,
+    dir: 0,
+  });
+  if (nav.row !== rowNumber) {
+    setNav({ row: rowNumber, dir: rowSlideDirection(nav.row, rowNumber) });
+  }
+  // 幅は MotionConfig の自動抑制対象外 (transform ではない) なので明示的に即時化する。
+  const reduced = useReducedMotion();
 
   // Esc closes the inspector when focus is inside it (the grid handler covers
   // the case where focus is still on a cell).
@@ -107,7 +122,9 @@ export function RowInspector({
 
   const copyField = async (raw: string) => {
     const ok = await copyToClipboard(raw);
-    toast[ok ? "success" : "error"](ok ? t("gridCopied") : t("clipboardCopyFailed"));
+    toast[ok ? "success" : "error"](
+      ok ? t("gridCopied") : t("clipboardCopyFailed"),
+    );
   };
 
   return createPortal(
@@ -116,16 +133,15 @@ export function RowInspector({
         key="row-inspector"
         role="dialog"
         aria-label={t("gridRowInspectorTitle", { row: rowNumber })}
-        initial={{ opacity: 0, x: 28 }}
-        animate={{ opacity: 1, x: 0 }}
+        initial={{ opacity: 0, x: 28, width: inspectorWidth(activeView) }}
+        animate={{ opacity: 1, x: 0, width: inspectorWidth(activeView) }}
         exit={{ opacity: 0, x: 28 }}
-        transition={transitions.enter}
+        transition={reduced ? { duration: 0 } : transitions.enter}
         position="fixed"
         top={0}
         right={0}
         bottom={0}
         zIndex="modal"
-        width={activeView === "related" ? "min(560px, 92vw)" : "min(380px, 92vw)"}
         display="flex"
         flexDirection="column"
         bg="app.surface"
@@ -222,7 +238,9 @@ export function RowInspector({
                 { value: "fields", label: t("inspectorTabFields") },
                 {
                   value: "related",
-                  label: t("inspectorTabRelated", { count: related?.entries.length ?? 0 }),
+                  label: t("inspectorTabRelated", {
+                    count: related?.entries.length ?? 0,
+                  }),
                   icon: "link",
                 },
               ]}
@@ -230,7 +248,13 @@ export function RowInspector({
           </Box>
         )}
 
-        <Box flex="1" overflowY="auto" css={{ scrollbarWidth: "thin" }} px="3" py="2">
+        <Box
+          flex="1"
+          overflowY="auto"
+          css={{ scrollbarWidth: "thin" }}
+          px="3"
+          py="2"
+        >
           {activeView === "related" && related ? (
             <RelatedRowsPanel
               entries={related.entries}
@@ -239,107 +263,150 @@ export function RowInspector({
               runQuery={related.runQuery}
               onOpenInGrid={related.onOpenInGrid}
             />
-          ) : columns.length === 0 ? (
-            <chakra.div fontStyle="italic" color="app.textMuted" fontSize="sm">
-              {t("gridInspectorEmpty")}
-            </chakra.div>
           ) : (
-            columns.map((col, i) => {
-              const v = values[i] ?? null;
-              const isNull = v === null || v === undefined;
-              const isBinary = columnKinds[i] === "binary";
-              const raw = isNull ? "" : isBinary ? `0x${String(v)}` : String(v);
-              const json = !isNull && !isBinary ? tryFormatJson(String(v)) : null;
-              const display = json ?? raw;
-              const masked = !!maskedColumns?.[i];
-              const comment = comments?.[i] ?? null;
-              return (
-                <Box
-                  key={`${col.name}-${i}`}
-                  display="flex"
-                  flexDirection="column"
-                  gap="0.5"
-                  py="1.5"
-                  borderBottom="1px solid"
-                  borderColor="app.borderSubtle"
-                >
-                  <Box display="flex" alignItems="center" gap="1.5">
-                    <Tooltip label={withComment(`${col.name} — ${col.type_name}`, comment)}>
-                      <chakra.span
-                        flex="1"
-                        fontSize="xs"
-                        fontFamily="mono"
-                        color="app.textMuted"
-                        overflow="hidden"
-                        textOverflow="ellipsis"
-                        whiteSpace="nowrap"
+            <AnimatePresence mode="wait" initial={false} custom={nav.dir}>
+              <motion.div
+                key={rowNumber}
+                custom={nav.dir}
+                variants={directionalSlide}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={transitions.enter}
+              >
+                {columns.length === 0 ? (
+                  <chakra.div
+                    fontStyle="italic"
+                    color="app.textMuted"
+                    fontSize="sm"
+                  >
+                    {t("gridInspectorEmpty")}
+                  </chakra.div>
+                ) : (
+                  columns.map((col, i) => {
+                    const v = values[i] ?? null;
+                    const isNull = v === null || v === undefined;
+                    const isBinary = columnKinds[i] === "binary";
+                    const raw = isNull
+                      ? ""
+                      : isBinary
+                        ? `0x${String(v)}`
+                        : String(v);
+                    const json =
+                      !isNull && !isBinary ? tryFormatJson(String(v)) : null;
+                    const display = json ?? raw;
+                    const masked = !!maskedColumns?.[i];
+                    const comment = comments?.[i] ?? null;
+                    return (
+                      <Box
+                        key={`${col.name}-${i}`}
+                        display="flex"
+                        flexDirection="column"
+                        gap="0.5"
+                        py="1.5"
+                        borderBottom="1px solid"
+                        borderColor="app.borderSubtle"
                       >
-                        {col.name}
-                      </chakra.span>
-                    </Tooltip>
-                    <Tooltip
-                      label={masked ? t("gridMaskedCellTitle") : t("gridInspectorCopyField")}
-                      focusableWrapper={isNull || masked}
-                    >
-                      <chakra.button
-                        type="button"
-                        display="inline-flex"
-                        alignItems="center"
-                        justifyContent="center"
-                        w="20px"
-                        h="20px"
-                        border="none"
-                        bg="transparent"
-                        color="app.textMuted"
-                        borderRadius="sm"
-                        cursor="pointer"
-                        flexShrink={0}
-                        _hover={{ bg: "app.hover", color: "app.text" }}
-                        _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-                        disabled={isNull || masked}
-                        onClick={() => void copyField(display)}
-                        aria-label={t("gridInspectorCopyField")}
-                      >
-                        <Icon name="copy" size={ICON_SIZES.sm} />
-                      </chakra.button>
-                    </Tooltip>
-                  </Box>
-                  {comment && (
-                    <chakra.span fontSize="xs" color="app.textSecondary" wordBreak="break-word">
-                      {comment}
-                    </chakra.span>
-                  )}
-                  {masked ? (
-                    <chakra.span
-                      fontSize="sm"
-                      color="app.textMuted"
-                      letterSpacing="wider"
-                      aria-label={t("gridMaskedCellAria")}
-                    >
-                      {MASK_PLACEHOLDER}
-                    </chakra.span>
-                  ) : isNull ? (
-                    <chakra.span fontSize="sm" fontStyle="italic" color="app.textMuted">
-                      {t("resultNull")}
-                    </chakra.span>
-                  ) : (
-                    <chakra.pre
-                      m={0}
-                      maxH="180px"
-                      overflow="auto"
-                      fontFamily="mono"
-                      fontSize="sm"
-                      lineHeight={1.45}
-                      whiteSpace="pre-wrap"
-                      wordBreak="break-word"
-                      color="app.text"
-                    >
-                      {display}
-                    </chakra.pre>
-                  )}
-                </Box>
-              );
-            })
+                        <Box display="flex" alignItems="center" gap="1.5">
+                          <Tooltip
+                            label={withComment(
+                              `${col.name} — ${col.type_name}`,
+                              comment,
+                            )}
+                          >
+                            <chakra.span
+                              flex="1"
+                              fontSize="xs"
+                              fontFamily="mono"
+                              color="app.textMuted"
+                              overflow="hidden"
+                              textOverflow="ellipsis"
+                              whiteSpace="nowrap"
+                            >
+                              {col.name}
+                            </chakra.span>
+                          </Tooltip>
+                          <Tooltip
+                            label={
+                              masked
+                                ? t("gridMaskedCellTitle")
+                                : t("gridInspectorCopyField")
+                            }
+                            focusableWrapper={isNull || masked}
+                          >
+                            <chakra.button
+                              type="button"
+                              display="inline-flex"
+                              alignItems="center"
+                              justifyContent="center"
+                              w="20px"
+                              h="20px"
+                              border="none"
+                              bg="transparent"
+                              color="app.textMuted"
+                              borderRadius="sm"
+                              cursor="pointer"
+                              flexShrink={0}
+                              _hover={{ bg: "app.hover", color: "app.text" }}
+                              _disabled={{
+                                opacity: 0.35,
+                                cursor: "not-allowed",
+                              }}
+                              disabled={isNull || masked}
+                              onClick={() => void copyField(display)}
+                              aria-label={t("gridInspectorCopyField")}
+                            >
+                              <Icon name="copy" size={ICON_SIZES.sm} />
+                            </chakra.button>
+                          </Tooltip>
+                        </Box>
+                        {comment && (
+                          <chakra.span
+                            fontSize="xs"
+                            color="app.textSecondary"
+                            wordBreak="break-word"
+                          >
+                            {comment}
+                          </chakra.span>
+                        )}
+                        {masked ? (
+                          <chakra.span
+                            fontSize="sm"
+                            color="app.textMuted"
+                            letterSpacing="wider"
+                            aria-label={t("gridMaskedCellAria")}
+                          >
+                            {MASK_PLACEHOLDER}
+                          </chakra.span>
+                        ) : isNull ? (
+                          <chakra.span
+                            fontSize="sm"
+                            fontStyle="italic"
+                            color="app.textMuted"
+                          >
+                            {t("resultNull")}
+                          </chakra.span>
+                        ) : (
+                          <chakra.pre
+                            m={0}
+                            maxH="180px"
+                            overflow="auto"
+                            fontFamily="mono"
+                            fontSize="sm"
+                            lineHeight={1.45}
+                            whiteSpace="pre-wrap"
+                            wordBreak="break-word"
+                            color="app.text"
+                          >
+                            {display}
+                          </chakra.pre>
+                        )}
+                      </Box>
+                    );
+                  })
+                )}
+              </motion.div>
+            </AnimatePresence>
           )}
         </Box>
       </MotionDrawer>

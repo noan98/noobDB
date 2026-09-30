@@ -227,3 +227,24 @@ export const variants = {
     animate: { opacity: 1, y: 0, transition: transitions.enter },
   },
 } satisfies Record<string, Variants>;
+
+/**
+ * 方向付きスライドの移動量 (px)。行送りのように「隣へ移った」空間的手がかりを
+ * 出す控えめなスライドで使う (#1234)。コンポーネントに数値を直書きしない。
+ */
+export const slideOffsets = {
+  /** Row Inspector の行送り。ドロワー開閉 (28) より小さく、本体だけ動かす。 */
+  row: 16,
+} as const;
+
+/**
+ * 方向付きスライド + フェードの variants (#1234)。`AnimatePresence custom={dir}` と
+ * 子の `custom={dir}` に同じ向き (`-1` | `0` | `1`) を渡して使う。`dir` が正のとき
+ * 右から入って左へ抜け、負のとき左から入って右へ抜ける。0 は x 移動なしのフェード。
+ * reduced-motion 時の x 抑制は `MotionConfig` が担う。
+ */
+export const directionalSlide = {
+  initial: (dir: number) => ({ opacity: 0, x: dir * slideOffsets.row }),
+  animate: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir * -slideOffsets.row }),
+} satisfies Variants;
