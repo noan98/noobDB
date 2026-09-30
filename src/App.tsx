@@ -362,7 +362,7 @@ import {
   resolveWorkspaceEscape,
 } from "./components/workspaceEscape";
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
-import { BottomPanel, WorkspaceSplit } from "./components/BottomPanel";
+import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
@@ -376,9 +376,11 @@ import { pushMessage } from "./messageLog";
 import { pushOutput, type OutputInput } from "./outputLog";
 import {
   availableBottomPanelTabs,
+  bottomPanelStripTabs,
   resolveBottomPanelTab,
   toggleBottomPanelTab,
   type BottomPanelTab,
+  type BottomPanelUnavailableReason,
 } from "./components/bottomPanelTabs";
 import type { ProfileTarget } from "./components/columnProfile";
 import {
@@ -8336,8 +8338,20 @@ export default function App() {
     timelapseProfileId: selectedProfile?.id,
     // 接続ヘルス (#1068) は接続横断なので、背景接続だけでも開ける。
     openConnectionCount: openConnections.length,
+    // 折りたたみ時のパネルバーが SQLite 非対応 (プロセス / インスペクタ) を
+    // 「無効 + 理由」で見せるために使う。開ける判定には影響しない。
+    driver: sessionId ? (selectedProfile?.driver ?? null) : null,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
+  // 閉じているときに `<main>` の下端へ常設するパネルバー。中核機能 (プロセスモニタ・
+  // インスペクタ・アドバイザ・接続ヘルス) の入口をレンチメニューの外にも置く。
+  const bottomPanelStripEntries = bottomPanelStripTabs(bottomPanelCtx);
+  const bottomPanelReasonLabel = (reason: BottomPanelUnavailableReason) =>
+    reason === "sqliteUnsupported"
+      ? t("appProcessesUnsupported")
+      : reason === "needsDatabase"
+        ? t("appAdvisorUnsupported")
+        : t("appToolsNeedsSession");
   // 切断やタブ切替で開けなくなったタブはここで閉じる。描画側はこの解決済みの値
   // だけを見るので、「state は advisor のままだが対象 DB が無い」状態が表に出ない。
   const activeBottomPanelTab = resolveBottomPanelTab(bottomPanelTab, bottomPanelCtx);
@@ -8848,6 +8862,14 @@ export default function App() {
             ワークスペースと同時に見られるようにした。閉じているときは
             `WorkspaceSplit` が分割そのものを作らず素通しする。 */}
         <WorkspaceSplit
+          collapsed={
+            <BottomPanelStrip
+              entries={bottomPanelStripEntries}
+              label={bottomPanelLabel}
+              reasonLabel={bottomPanelReasonLabel}
+              onOpen={setBottomPanelTab}
+            />
+          }
           bottom={
             activeBottomPanelTab ? (
               <BottomPanel
@@ -10020,20 +10042,13 @@ export default function App() {
         <ContextMenu
           x={toolsMenu.x}
           y={toolsMenu.y}
+          // 用途グループごとに区切る (ボトムパネルのタブ順と同じ語彙):
+          // 診断 (中核機能を先頭に) → ログ → スキーマ / 運用の全画面ツール。
+          // 以前は 17 項目がフラットに並び、プロセスモニタなどの入口が埋もれていた。
           items={[
-            { label: t("appSchemaCompare"), onSelect: () => openFullView("compare") },
-            {
-              label: t("appErDiagram"),
-              onSelect: () => openFullView("erDiagram"),
-              disabled: !sessionId,
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            // ログ系のボトムパネル (#1114)。接続に関係なく開ける。
-            { label: t("outputTitle"), onSelect: () => toggleBottomPanel("output") },
-            { label: t("messagesTitle"), onSelect: () => toggleBottomPanel("messages") },
-            { label: t("activityCenterTitle"), onSelect: () => toggleBottomPanel("activity") },
             {
               label: t("appProcesses"),
+              icon: "server",
               onSelect: () => toggleBottomPanel("processes"),
               disabled: !sessionId || selectedProfile?.driver === "sqlite",
               title: !sessionId
@@ -10043,10 +10058,56 @@ export default function App() {
                   : undefined,
             },
             {
+              label: t("appQueryInspector"),
+              icon: "explain",
+              onSelect: () => toggleBottomPanel("inspector"),
+              // SQLite はサーバ統計を持たず非対応のため導線を出さない (#746)。
+              disabled: !sessionId || selectedProfile?.driver === "sqlite",
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : selectedProfile?.driver === "sqlite"
+                  ? t("appQueryInspectorUnsupported")
+                  : undefined,
+            },
+            {
+              label: t("appAdvisor"),
+              icon: "warning",
+              onSelect: () => toggleBottomPanel("advisor"),
+              // 全ドライバ対応 (SQLite も方言ルールあり)。DB コンテキストが必要。
+              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : !(activeTab?.database ?? selectedProfile?.database)
+                  ? t("appAdvisorUnsupported")
+                  : undefined,
+            },
+            {
               label: t("healthTitle"),
+              icon: "server",
               onSelect: () => toggleBottomPanel("health"),
               disabled: openConnections.length === 0,
               title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
+            },
+            {
+              label: t("appAssertions"),
+              icon: "check",
+              onSelect: () => toggleBottomPanel("assertions"),
+              // 全ドライバ対応。検証 DB は未決定ならセッション既定で動くので接続だけを要求する。
+              disabled: !sessionId,
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
+            },
+            { separator: true },
+            // ログ系のボトムパネル (#1114)。接続に関係なく開ける。
+            { label: t("outputTitle"), onSelect: () => toggleBottomPanel("output") },
+            { label: t("messagesTitle"), onSelect: () => toggleBottomPanel("messages") },
+            { label: t("activityCenterTitle"), onSelect: () => toggleBottomPanel("activity") },
+            { separator: true },
+            { label: t("appSchemaCompare"), onSelect: () => openFullView("compare") },
+            {
+              label: t("appErDiagram"),
+              onSelect: () => openFullView("erDiagram"),
+              disabled: !sessionId,
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
             },
             {
               label: t("appUsers"),
@@ -10059,35 +10120,6 @@ export default function App() {
                 ? t("appToolsNeedsSession")
                 : selectedProfile?.driver === "sqlite"
                   ? t("appUsersUnsupported")
-                  : undefined,
-            },
-            {
-              label: t("appQueryInspector"),
-              onSelect: () => toggleBottomPanel("inspector"),
-              // SQLite はサーバ統計を持たず非対応のため導線を出さない (#746)。
-              disabled: !sessionId || selectedProfile?.driver === "sqlite",
-              title: !sessionId
-                ? t("appToolsNeedsSession")
-                : selectedProfile?.driver === "sqlite"
-                  ? t("appQueryInspectorUnsupported")
-                  : undefined,
-            },
-            {
-              label: t("appAssertions"),
-              onSelect: () => toggleBottomPanel("assertions"),
-              // 全ドライバ対応。検証 DB は未決定ならセッション既定で動くので接続だけを要求する。
-              disabled: !sessionId,
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            {
-              label: t("appAdvisor"),
-              onSelect: () => toggleBottomPanel("advisor"),
-              // 全ドライバ対応 (SQLite も方言ルールあり)。DB コンテキストが必要。
-              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
-              title: !sessionId
-                ? t("appToolsNeedsSession")
-                : !(activeTab?.database ?? selectedProfile?.database)
-                  ? t("appAdvisorUnsupported")
                   : undefined,
             },
             {
