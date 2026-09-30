@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
-import type { QueryStatsSupport } from "../api/tauri";
+import type { QueryStatsSupport, StatementDeltaRow } from "../api/tauri";
 
 /**
  * ライブクエリ・インスペクタ (#746) の空状態統一 (#847)。記録開始前 (idle) は
@@ -21,7 +21,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
         statements_reason: null,
       } satisfies QueryStatsSupport),
       sampleLiveQueries: vi.fn().mockResolvedValue([]),
-      sampleStatementStats: vi.fn().mockResolvedValue([]),
+      startStatementRecording: vi.fn().mockResolvedValue(undefined),
+      sampleStatementDelta: vi.fn().mockResolvedValue([]),
     },
   };
 });
@@ -151,5 +152,59 @@ describe("QueryInspectorPanel initial support probe skeleton (#1174)", () => {
       expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument();
     });
     expect(screen.queryByText(t("inspectorSupportLoading"))).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 差分集計のバックエンド移管 (#1259)。記録開始で `startStatementRecording` を呼び、
+ * ティックごとに `sampleStatementDelta` の差分行を表示する。SQL 本文は digest の初出時
+ * だけ届くので、2 回目以降 (fingerprint: null) も初回の本文を保って表示する。累積表示の
+ * 切替はサーバへ取り直さず (`refresh: false`) 再計算だけを依頼する。
+ */
+describe("QueryInspectorPanel backend delta (#1259)", () => {
+  const row = (over: Partial<StatementDeltaRow> = {}): StatementDeltaRow => ({
+    digest: "d1",
+    fingerprint: "select * from orders where id = ?",
+    database: "shop",
+    calls: 4,
+    total_time_ms: 40,
+    mean_time_ms: 10,
+    max_time_ms: 15,
+    rows: 8,
+    n_plus_one: false,
+    ...over,
+  });
+
+  it("本文は初出時だけ受け取り、以降の差分行にも表示し続ける", async () => {
+    vi.mocked(api.sampleLiveQueries).mockResolvedValue([]);
+    vi.mocked(api.sampleStatementDelta)
+      .mockResolvedValueOnce([row()])
+      .mockResolvedValue([row({ fingerprint: null, calls: 9, n_plus_one: true })]);
+
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
+    await waitFor(() => expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument());
+    fireEvent.click(screen.getByText(t("inspectorTabStats")));
+    fireEvent.click(screen.getByText(t("inspectorStart")));
+
+    await waitFor(() => expect(api.startStatementRecording).toHaveBeenCalledWith("s1"));
+    await waitFor(() =>
+      expect(screen.getByText("select * from orders where id = ?")).toBeInTheDocument(),
+    );
+    expect(api.sampleStatementDelta).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ cumulative: false, refresh: true }),
+    );
+
+    // 累積表示の切替: refresh なしで再計算を依頼し、本文 (null で届く) はキャッシュから出る。
+    fireEvent.click(screen.getByLabelText(t("inspectorCumulativeLabel")));
+    await waitFor(() =>
+      expect(api.sampleStatementDelta).toHaveBeenCalledWith(
+        "s1",
+        expect.objectContaining({ cumulative: true, refresh: false }),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText("9")).toBeInTheDocument());
+    expect(screen.getByText("select * from orders where id = ?")).toBeInTheDocument();
+    expect(screen.getByText("N+1")).toBeInTheDocument();
   });
 });

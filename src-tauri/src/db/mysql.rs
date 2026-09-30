@@ -9,10 +9,11 @@ use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
-    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
-    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
-    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, PreviewResult,
+    ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject,
+    ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo,
+    TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use super::types::{ServerMessage, ServerMessageSeverity};
 use super::upsert::{conflict_clause, ImportConflict};
@@ -987,6 +988,7 @@ impl MySqlConn {
                     .ok(),
                 running,
                 started_at_ms: None,
+                fingerprint: String::new(),
             });
         }
         // 追加ソース: サーバサイド prepared statement (バイナリプロトコル)。
@@ -1031,6 +1033,7 @@ impl MySqlConn {
                     .ok(),
                 running: false,
                 started_at_ms: None,
+                fingerprint: String::new(),
             });
         }
         Ok(out)
@@ -1121,14 +1124,30 @@ impl MySqlConn {
         Ok(out)
     }
 
-    /// `KILL <id>` — terminates the whole connection (not just its current
-    /// statement). KILL takes no placeholders, but `id` is a number so the
-    /// interpolation cannot inject SQL.
-    pub async fn kill_process(&self, id: i64) -> Result<()> {
-        sqlx::query(sqlx::AssertSqlSafe(format!("KILL {id}")))
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+    /// `KILL <id>` を 1 本のプール接続上で順に実行する (#1259)。KILL はプレースホルダを
+    /// 取れないが `id` は数値なので SQL インジェクションにならない。失敗しても残りは続行し、
+    /// 件数と最初のエラーを返す。アプリ自身の接続 (`CONNECTION_ID()`) を巻き込むと
+    /// 以降の KILL が打てなくなるため、自分自身の id は最後に回す。
+    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
+        let mut conn = self.pool.acquire().await?;
+        let own = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+            .fetch_one(&mut *conn)
+            .await
+            .ok()
+            .and_then(|v| i64::try_from(v).ok());
+        let mut ordered: Vec<i64> = ids.iter().copied().filter(|id| Some(*id) != own).collect();
+        ordered.extend(ids.iter().copied().filter(|id| Some(*id) == own));
+        let mut out = KillProcessesResult::default();
+        for id in ordered {
+            match sqlx::query(sqlx::AssertSqlSafe(format!("KILL {id}")))
+                .execute(&mut *conn)
+                .await
+            {
+                Ok(_) => out.killed += 1,
+                Err(e) => out.record_failure(1, AppError::from(e).to_string()),
+            }
+        }
+        Ok(out)
     }
 
     /// Server accounts for the users & permissions panel (#732), read from
@@ -1173,7 +1192,16 @@ impl MySqlConn {
     /// grants from `mysql.tables_priv` (`Table_priv` is a comma-separated
     /// `SET` column). `host` defaults to `%` (MySQL's "any host" wildcard)
     /// when not given.
-    pub async fn user_privileges(&self, user: &str, host: Option<&str>) -> Result<UserPrivileges> {
+    ///
+    /// `database` を渡すと、テーブル別の行を `Db = ?` の WHERE で絞る (#1259)。
+    /// 全 DB 分を受けて JS の `startsWith` で落としていた無駄な転送をなくす。
+    /// global 行は `database` に関係なく常に返す。
+    pub async fn user_privileges(
+        &self,
+        user: &str,
+        host: Option<&str>,
+        database: Option<&str>,
+    ) -> Result<UserPrivileges> {
         let host = host.unwrap_or("%");
         let global_row: Option<MySqlRow> = sqlx::query(
             "SELECT Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv, \
@@ -1202,10 +1230,12 @@ impl MySqlConn {
 
         let table_rows: Vec<MySqlRow> = sqlx::query(
             "SELECT Db, Table_name, Table_priv FROM mysql.tables_priv \
-             WHERE User = ? AND Host = ? ORDER BY Db, Table_name",
+             WHERE User = ? AND Host = ? AND (? IS NULL OR Db = ?) ORDER BY Db, Table_name",
         )
         .bind(user)
         .bind(host)
+        .bind(database)
+        .bind(database)
         .fetch_all(&self.pool)
         .await?;
         let tables = table_rows
@@ -1736,6 +1766,13 @@ impl MySqlConn {
             .collect())
     }
 
+    /// バージョン文字列だけを返す (`server_info` の先頭と同じクエリ)。
+    pub async fn server_version(&self) -> Result<String> {
+        Ok(sqlx::query_scalar::<_, String>("SELECT VERSION()")
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
     pub async fn server_info(&self) -> Result<ServerInfo> {
         let version: String = sqlx::query_scalar("SELECT VERSION()")
             .fetch_one(&self.pool)
@@ -1760,6 +1797,18 @@ impl MySqlConn {
             })
             .collect();
         Ok(ServerInfo { version, variables })
+    }
+
+    /// 接続ヘルス (`health_probe_all`, #1259) 専用の軽量な接続数取得。
+    /// `server_metrics` は `SHOW GLOBAL STATUS` の全行を返すが、ヘルス表示に要るのは
+    /// `Threads_connected` だけなので `LIKE` で 1 行に絞る。
+    pub async fn connection_count(&self) -> Result<Option<i64>> {
+        let row: Option<MySqlRow> = sqlx::query("SHOW GLOBAL STATUS LIKE 'Threads_connected'")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row
+            .and_then(|r| r.try_get::<Option<String>, _>(1).ok().flatten())
+            .and_then(|v| v.trim().parse::<i64>().ok()))
     }
 
     /// 監視ダッシュボード (#731) 用の 1 サンプル。`SHOW GLOBAL STATUS` の

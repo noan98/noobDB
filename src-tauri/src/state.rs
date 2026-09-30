@@ -5,6 +5,7 @@ use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 
 use crate::cache::{QueryResultCache, SchemaCache};
+use crate::db::data_diff::DataDiff;
 use crate::db::{Connection, DbConnectOptions};
 use crate::ssh::{SshConfig, SshTunnel};
 
@@ -60,6 +61,78 @@ pub struct StreamHandle {
     pub on_cancel: Option<Box<dyn Fn(u64) + Send + Sync>>,
 }
 
+/// 保持する `DataDiff` の最大件数 (超えたら最古から破棄)。サンドボックスのレビューは
+/// 1 度に全テーブルの差分を読み込むため、ある程度の余裕を持たせる。
+pub const MAX_STORED_DIFFS: usize = 64;
+/// 保持する差分行の合計上限 (超えたら最古から破棄)。1 差分は最大 `MAX_DATA_ROWS` 行。
+pub const MAX_STORED_DIFF_ROWS: usize = 200_000;
+
+struct StoredDiff {
+    id: String,
+    /// この差分の取得元セッション。いずれかが切断されたら差分も破棄する。
+    owners: Vec<SessionId>,
+    diff: Arc<DataDiff>,
+}
+
+/// フロントへ丸ごと往復させていたデータ比較の `DataDiff` (最大 5,000 行) を ID で
+/// 保持する (#1259)。JS は表示用の diff を受け取ったうえで、SQL 生成 / 書き戻し後の
+/// base 前進には `diff_id` (+ 除外キー) だけを送る。上限 (件数・行数) を超えたら古い
+/// ものから破棄し、`release_data_diffs` (比較のやり直し・画面を閉じたとき) と
+/// セッション切断 (`drop_for_session`) でも破棄する。プロセス内メモリのみで永続化しない。
+#[derive(Default)]
+pub struct DiffStore {
+    entries: Vec<StoredDiff>,
+}
+
+impl DiffStore {
+    /// 差分を保存して ID を返す。`owners` は取得元のセッション ID。
+    pub fn insert(&mut self, diff: DataDiff, owners: Vec<SessionId>) -> String {
+        let id = random_slug(16);
+        self.entries.push(StoredDiff {
+            id: id.clone(),
+            owners,
+            diff: Arc::new(diff),
+        });
+        // 直近に入れた 1 件は必ず残す (単体で行数上限を超えてもその 1 件は使える)。
+        while self.entries.len() > 1
+            && (self.entries.len() > MAX_STORED_DIFFS
+                || self
+                    .entries
+                    .iter()
+                    .map(|e| e.diff.rows.len())
+                    .sum::<usize>()
+                    > MAX_STORED_DIFF_ROWS)
+        {
+            self.entries.remove(0);
+        }
+        id
+    }
+
+    pub fn get(&self, id: &str) -> Option<Arc<DataDiff>> {
+        self.entries
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.diff.clone())
+    }
+
+    pub fn release(&mut self, ids: &[String]) {
+        self.entries.retain(|e| !ids.contains(&e.id));
+    }
+
+    pub fn drop_for_session(&mut self, session_id: &str) {
+        self.entries
+            .retain(|e| !e.owners.iter().any(|o| o == session_id));
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 pub struct Session {
     pub id: SessionId,
     pub profile_id: Option<String>,
@@ -81,7 +154,7 @@ pub struct Session {
     /// type-the-connection-name confirmation) and intentionally *not*
     /// persisted: a fresh `Session` — including the in-place swap done by
     /// `reconnect` — always starts with the override off. Only the SQL query
-    /// paths honor it; CSV import, sync apply and `kill_process` keep
+    /// paths honor it; CSV import, sync apply and `kill_processes` keep
     /// rejecting read-only sessions regardless.
     pub emergency_write: AtomicBool,
     /// When true, statements run on this session are NOT written to the
@@ -120,6 +193,15 @@ pub struct Session {
     /// (対象・invalidate 条件・機微データの保存方針) は `cache` モジュールの
     /// ドキュメントコメント参照。
     pub query_cache: QueryResultCache,
+    /// 接続ヘルス (`health_probe_all`, #1259) がキャッシュするサーババージョン。
+    /// バージョンは接続中に変わらないので、初回 (または手動の再取得) だけ
+    /// `server_info` (設定変数も読む重い経路) を叩き、以降のティックでは使い回す。
+    /// `Session` のフィールドなので再接続 (新しい `Session` への差し替え) で自動的に空へ戻る。
+    pub health_version: std::sync::Mutex<Option<String>>,
+    /// ライブクエリ・インスペクタ (#746) のセッション単位の状態 (baseline と直前スナップ
+    /// ショット)。digest 差分の引き算と N+1 目安をバックエンドで行うために持つ (#1259)。
+    /// `Session` のフィールドなので切断・再接続で自動的に破棄される。
+    pub inspector: tokio::sync::Mutex<crate::db::inspector::InspectorState>,
 }
 
 impl Session {
@@ -128,6 +210,17 @@ impl Session {
     /// memory it must synchronize with — but SeqCst keeps it trivially correct.
     pub fn emergency_write_active(&self) -> bool {
         self.emergency_write.load(Ordering::SeqCst)
+    }
+
+    /// キャッシュ済みのサーババージョン (ロック汚染時は未取得扱い)。
+    pub fn cached_health_version(&self) -> Option<String> {
+        self.health_version.lock().ok().and_then(|g| g.clone())
+    }
+
+    pub fn set_cached_health_version(&self, version: Option<String>) {
+        if let Ok(mut g) = self.health_version.lock() {
+            *g = version;
+        }
     }
 
     pub fn set_emergency_write(&self, enabled: bool) {
@@ -155,6 +248,8 @@ pub struct AppState {
     pub connects: RwLock<HashMap<String, (u64, AbortHandle)>>,
     /// Monotonic source of the per-registration tokens above.
     connect_seq: AtomicU64,
+    /// データ比較 / サンドボックスの `DataDiff` を ID で保持するストア (#1259)。
+    pub data_diffs: std::sync::Mutex<DiffStore>,
     /// 直近の取り込み (skip モード) でスキップされた全行 (#1258)。完了イベントには
     /// 先頭の一部しか載せないため、「スキップ行を保存 / コピー」用に全件を Rust 側で
     /// 保持する。取り込みが終わるたびに置き換わる。
@@ -218,7 +313,29 @@ impl AppState {
         session
     }
 
+    /// `DataDiff` を保存して ID を返す (#1259)。ロック汚染時は保存せず空 ID を返す
+    /// (後続の `get_data_diff` が「期限切れ」として扱う)。
+    pub fn store_data_diff(&self, diff: DataDiff, owners: Vec<SessionId>) -> String {
+        match self.data_diffs.lock() {
+            Ok(mut store) => store.insert(diff, owners),
+            Err(_) => String::new(),
+        }
+    }
+
+    pub fn get_data_diff(&self, id: &str) -> Option<Arc<DataDiff>> {
+        self.data_diffs.lock().ok().and_then(|s| s.get(id))
+    }
+
+    pub fn release_data_diffs(&self, ids: &[String]) {
+        if let Ok(mut s) = self.data_diffs.lock() {
+            s.release(ids);
+        }
+    }
+
     pub async fn remove(&self, id: &str) -> Option<Arc<Session>> {
+        if let Ok(mut s) = self.data_diffs.lock() {
+            s.drop_for_session(id);
+        }
         let removed = self.sessions.write().await.remove(id);
         if removed.is_some() {
             tracing::debug!(session_id = %id, "session destroyed");
@@ -410,5 +527,67 @@ mod tests {
             !state.streams.read().await.contains_key(&stream_id),
             "the current registration's own token must still remove its entry"
         );
+    }
+
+    fn diff_with_rows(n: usize) -> DataDiff {
+        use crate::db::data_diff::{RowDiff, RowStatus};
+        use crate::db::types::Value;
+        DataDiff {
+            target_driver: crate::db::DriverKind::Sqlite,
+            table: "t".into(),
+            columns: vec!["id".into()],
+            primary_key: vec!["id".into()],
+            column_types: vec!["INTEGER".into()],
+            rows: (0..n)
+                .map(|i| RowDiff {
+                    status: RowStatus::SourceOnly,
+                    key: vec![Value::Int(i as i64)],
+                    source: Some(vec![Value::Int(i as i64)]),
+                    target: None,
+                    changed_columns: Vec::new(),
+                    key_unreliable: false,
+                })
+                .collect(),
+            truncated: false,
+            source_count: n,
+            target_count: 0,
+        }
+    }
+
+    /// #1259: 保持した差分は ID で引け、release / 切断 / 件数・行数の上限で破棄される。
+    #[test]
+    fn diff_store_get_release_session_drop_and_caps() {
+        let state = AppState::default();
+        let a = state.store_data_diff(diff_with_rows(3), vec!["s1".into(), "s2".into()]);
+        let b = state.store_data_diff(diff_with_rows(2), vec!["s3".into()]);
+        assert_ne!(a, b);
+        assert_eq!(state.get_data_diff(&a).map(|d| d.rows.len()), Some(3));
+        assert!(state.get_data_diff("unknown").is_none());
+
+        // 片方の取得元セッションを落とすと差分も消える。無関係な差分は残る。
+        if let Ok(mut store) = state.data_diffs.lock() {
+            store.drop_for_session("s2");
+        }
+        assert!(state.get_data_diff(&a).is_none());
+        assert!(state.get_data_diff(&b).is_some());
+
+        state.release_data_diffs(&[b.clone(), "unknown".into()]);
+        assert!(state.get_data_diff(&b).is_none());
+
+        // 件数上限: 最古から破棄され、直近の分は残る。
+        let ids: Vec<String> = (0..MAX_STORED_DIFFS + 5)
+            .map(|_| state.store_data_diff(diff_with_rows(1), vec![]))
+            .collect();
+        assert!(state.get_data_diff(&ids[0]).is_none());
+        assert!(state.get_data_diff(&ids[ids.len() - 1]).is_some());
+        assert_eq!(
+            state.data_diffs.lock().map(|s| s.len()).unwrap_or(0),
+            MAX_STORED_DIFFS
+        );
+
+        // 行数上限: 単体で上限を超える 1 件でも直近のものは使える。
+        let big = state.store_data_diff(diff_with_rows(MAX_STORED_DIFF_ROWS + 1), vec![]);
+        assert!(state.get_data_diff(&big).is_some());
+        assert_eq!(state.data_diffs.lock().map(|s| s.len()).unwrap_or(0), 1);
     }
 }

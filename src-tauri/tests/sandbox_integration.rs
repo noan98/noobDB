@@ -168,7 +168,13 @@ async fn sandbox_create_diff_writeback_and_discard_round_trip() {
     // Render + apply the writeback SQL to the *source* session, reusing the
     // existing (already-tested) generate_data_sync_sql / apply_sync_sql path
     // unchanged — this is the crux of the reuse design (see module doc).
-    let plan = t::generate_data_sync_sql(&diff.desired, /* allow_delete */ true);
+    let plan = t::generate_data_sync_sql_via_command(
+        &state,
+        &diff.desired_diff_id,
+        /* allow_delete */ true,
+        None,
+    )
+    .expect("generate from the stored diff");
     assert!(!plan.statements.is_empty());
     let statements: Vec<String> = plan.statements.into_iter().map(|s| s.sql).collect();
     t::apply_sync_sql_via_command(&state, &source_session_id, None, statements)
@@ -205,7 +211,8 @@ async fn sandbox_create_diff_writeback_and_discard_round_trip() {
         &create.sandbox.id,
         &create.session_id,
         "items",
-        diff.desired,
+        &diff.desired_diff_id,
+        vec![],
         true,
     )
     .await
@@ -264,11 +271,10 @@ async fn sandbox_create_diff_writeback_and_discard_round_trip() {
     );
     assert_eq!(conflict_diff.conflicts[0].key, vec![t::Value::Int(2)],);
 
-    // Resolving the conflict as "skip" must drop it from the writeback diff.
-    let filtered = t::filter_sandbox_data_diff(
-        conflict_diff.desired.clone(),
-        vec![conflict_diff.conflicts[0].key.clone()],
-    );
+    // Resolving the conflict as "skip" must drop it from the writeback diff — both
+    // in the pure filter and in the SQL rendered from the stored diff by id.
+    let skip = vec![conflict_diff.conflicts[0].key.clone()];
+    let filtered = t::filter_out_keys(&conflict_diff.desired, &skip);
     assert!(
         filtered
             .rows
@@ -276,6 +282,28 @@ async fn sandbox_create_diff_writeback_and_discard_round_trip() {
             .all(|r| r.key != vec![t::Value::Int(2)]),
         "the skipped key must not appear in the filtered diff"
     );
+    let unfiltered_plan =
+        t::generate_data_sync_sql_via_command(&state, &conflict_diff.desired_diff_id, true, None)
+            .expect("render without skipping");
+    let skipped_plan = t::generate_data_sync_sql_via_command(
+        &state,
+        &conflict_diff.desired_diff_id,
+        true,
+        Some(&skip),
+    )
+    .expect("render with the conflict skipped");
+    assert!(!unfiltered_plan.statements.is_empty());
+    assert!(
+        skipped_plan.statements.len() < unfiltered_plan.statements.len(),
+        "skipping the conflicting key must drop its statement"
+    );
+
+    // A released diff id is gone: rendering / advancing fail with a clear error
+    // instead of silently using stale data.
+    t::release_data_diffs_via_command(&state, std::slice::from_ref(&conflict_diff.desired_diff_id));
+    let gone =
+        t::generate_data_sync_sql_via_command(&state, &conflict_diff.desired_diff_id, true, None);
+    assert!(matches!(gone, Err(t::AppError::InvalidInput(_))));
 
     // --- Schema diff: sandbox-only structural change is surfaced too. ---
     sandbox_session
@@ -382,14 +410,15 @@ async fn sandbox_advance_base_rejects_unrelated_session() {
     )
     .await
     .expect("sandbox_table_diff")
-    .desired;
+    .desired_diff_id;
 
     let err = t::sandbox_advance_base_via_command(
         &state,
         &create.sandbox.id,
         &other_session_id,
         "items",
-        empty_diff,
+        &empty_diff,
+        vec![],
         true,
     )
     .await
@@ -471,14 +500,15 @@ async fn sandbox_advance_base_rejects_read_only_session() {
     )
     .await
     .expect("sandbox_table_diff")
-    .desired;
+    .desired_diff_id;
 
     let err = t::sandbox_advance_base_via_command(
         &state,
         &create.sandbox.id,
         &ro_session_id,
         "items",
-        empty_diff,
+        &empty_diff,
+        vec![],
         true,
     )
     .await

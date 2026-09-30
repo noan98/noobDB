@@ -7,10 +7,10 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 use super::advisor::UnusedIndexStats;
 use super::tx_options::TxOptions;
 use super::types::{
-    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
-    ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
+    PreviewResult, ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject,
+    ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
@@ -631,6 +631,11 @@ impl SqliteConn {
         ))
     }
 
+    /// SQLite はサーバを持たないので接続数の概念が無い (ヘルス表示は N/A)。
+    pub async fn connection_count(&self) -> Result<Option<i64>> {
+        Ok(None)
+    }
+
     /// See [`SqliteConn::list_processes`] — a file-backed database has no server
     /// runtime to sample, so the monitoring dashboard (#731) is unsupported. The
     /// frontend catches this error to hide the dashboard entry point.
@@ -642,7 +647,7 @@ impl SqliteConn {
 
     /// See [`SqliteConn::list_processes`] — nothing to kill on a file-backed
     /// database.
-    pub async fn kill_process(&self, _id: i64) -> Result<()> {
+    pub async fn kill_processes(&self, _ids: &[i64]) -> Result<KillProcessesResult> {
         Err(AppError::InvalidInput(
             "killing processes is not supported for SQLite (file-backed, no server processes)"
                 .into(),
@@ -663,6 +668,7 @@ impl SqliteConn {
         &self,
         _user: &str,
         _host: Option<&str>,
+        _database: Option<&str>,
     ) -> Result<UserPrivileges> {
         Err(AppError::InvalidInput(
             "users are not supported for SQLite (file-backed, no server-side accounts)".into(),
@@ -1252,6 +1258,13 @@ impl SqliteConn {
                 total_bytes: None,
             })
             .collect())
+    }
+
+    /// バージョン文字列だけを返す (`server_info` の先頭と同じクエリ)。
+    pub async fn server_version(&self) -> Result<String> {
+        Ok(sqlx::query_scalar::<_, String>("SELECT sqlite_version()")
+            .fetch_one(&self.pool)
+            .await?)
     }
 
     pub async fn server_info(&self) -> Result<ServerInfo> {

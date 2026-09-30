@@ -2,20 +2,19 @@
  * スキーマに基づくテストデータ生成 (#602) の純ロジック。
  *
  * `TestDataModal` が使う「カラム型 → 既定の生成方針の推定」「決定論的シード
- * (mulberry32 PRNG) による値生成」「INSERT 文の組み立て」を、副作用なしの
+ * (mulberry32 PRNG) による値生成」を、副作用なしの
  * 純関数として切り出す (CLAUDE.md の「安全性に直結する純ロジックをテストする」
  * 方針)。乱数は自前の軽量 PRNG (mulberry32) を使い、同じシード + 同じ設定なら
  * 常に同じ行列を返す — プレビューと実投入が必ず一致し、テストも安定する。
  *
- * 投入 SQL の識別子クオート・文字列エスケープは既存の方言ユーティリティ
- * (`sqlDialect.quoteIdentFor` / `cellEdit.quoteString`) を再利用し、リテラル
- * 規則を二重定義しない。
+ * 投入は生成行をそのまま Rust の `insert_generated_rows` へ渡す (#1259) ので、INSERT
+ * 文の組み立てとリテラル化はバックエンド側。ここに残る SQL は FK 候補取得の SELECT だけで、
+ * 識別子クオートは既存の方言ユーティリティ (`sqlDialect.quoteIdentFor`) を再利用する。
  */
 
 import type { CellValue, TableColumnInfo } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
 import { quoteIdentFor } from "./sqlDialect";
-import { literalFromCellValue } from "./cellEdit";
 
 /** 1 カラムの値の生成方針。 */
 export type GenStrategy =
@@ -340,34 +339,6 @@ export function generateRows(specs: ColumnGenSpec[], count: number, seed: number
 function qualifiedTableRef(driver: string, database: string, table: string): string {
   if (driver === "sqlite") return quoteIdentFor(driver, table);
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
-/**
- * 生成済みの行列から、バッチサイズごとにまとめた複数行 INSERT 文を組み立てる。
- * リテラル化は `cellEdit.literalFromCellValue` (方言別エスケープ) を共有する。
- * 返り値の文配列を `run_query_transaction` に渡せば all-or-nothing で投入される。
- */
-export function buildTestDataInsertStatements(
-  driver: string,
-  database: string,
-  table: string,
-  columns: string[],
-  rows: CellValue[][],
-  batchSize = 100,
-): string[] {
-  if (columns.length === 0 || rows.length === 0) return [];
-  const size = Math.max(1, Math.floor(batchSize));
-  const tableRef = qualifiedTableRef(driver, database, table);
-  const colList = columns.map((c) => quoteIdentFor(driver, c)).join(", ");
-  const statements: string[] = [];
-  for (let i = 0; i < rows.length; i += size) {
-    const chunk = rows.slice(i, i + size);
-    const values = chunk
-      .map((row) => `(${row.map((v) => literalFromCellValue(driver, v)).join(", ")})`)
-      .join(", ");
-    statements.push(`INSERT INTO ${tableRef} (${colList}) VALUES ${values}`);
-  }
-  return statements;
 }
 
 /**

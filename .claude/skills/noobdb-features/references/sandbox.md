@@ -34,11 +34,13 @@
     削除)。
   - `sandbox_table_diff` / `sandbox_schema_diff`: サンドボックスの live テーブルと
     shadow (base) テーブルを比較した「書き戻し案」(`desired`。`target_driver` は元 DB の
-    ドライバなので、そのまま `generate_data_sync_sql` / `generate_sync_sql` に渡せる) と、
+    ドライバ。データ差分は `desired_diff_id` で Rust が保持し (#1259)、`generate_data_sync_sql` には
+    この ID を渡す。スキーマ差分はそのまま `generate_sync_sql` に渡せる) と、
     任意で渡された元 DB セッションの現在値を同じ base と比較した「外部変更」を
     `detect_conflicts` / `schema_conflict_tables` で突き合わせた競合情報を返します。
-  - `filter_sandbox_data_diff`: 競合を「スキップ」解決した行を desired diff から除く
-    純粋コマンド (`generate_data_sync_sql` へ渡す前にフロントが呼ぶ)。
+  - 競合を「スキップ」解決した行の除外は、`generate_data_sync_sql` / `sandbox_advance_base` の
+    `skip_keys` 引数で行う (旧 `filter_sandbox_data_diff` コマンドは #1259 で廃止。
+    `db::sandbox::filter_out_keys` を保持差分に適用する)。
   - `sandbox_advance_base`: 書き戻し成功後に呼び、適用済みの行だけ shadow (base) を
     現在値へ進めます。呼ばないと、同じ行が次回の差分計算で「サンドボックス側も元 DB
     側も変化した」という偽の競合として出続けます (`allow_delete` を

@@ -372,7 +372,7 @@ pub struct ServerMetrics {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
     /// MySQL connection id / PostgreSQL backend pid. The value passed back to
-    /// `kill_process`.
+    /// `kill_processes`.
     pub id: i64,
     pub user: Option<String>,
     /// Client endpoint: MySQL `HOST` (`addr:port`), PostgreSQL
@@ -395,6 +395,86 @@ pub struct ProcessInfo {
     /// app's *other* pooled connections (same pool, different id) are not
     /// flagged because the engine cannot tell them apart from other clients.
     pub is_self: bool,
+}
+
+/// プロセス一覧の 1 行に載せるクエリ要約の最大文字数 (#1259)。
+pub const PROCESS_QUERY_SUMMARY_MAX: usize = 200;
+
+/// `list_processes` IPC が返す 1 行。[`ProcessInfo`] との違いはクエリ本文で、全文
+/// (巨大な INSERT など) を毎ポーリング・全接続ぶん JS へ送ってから JS で 200 文字に
+/// 切り詰めていた (#1259) のを、Rust 側で要約して `query_summary` / `query_truncated`
+/// だけ送る。全文はツールチップ表示時などに `get_process_query` で id 指定で取得する。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessListItem {
+    pub id: i64,
+    pub user: Option<String>,
+    pub host: Option<String>,
+    pub database: Option<String>,
+    pub command: Option<String>,
+    pub state: Option<String>,
+    pub time_secs: Option<i64>,
+    /// 改行・連続空白を 1 スペースに畳み、[`PROCESS_QUERY_SUMMARY_MAX`] 文字で切り詰めて
+    /// `…` を付けた 1 行要約。クエリが無い / 空白だけなら `None`。
+    pub query_summary: Option<String>,
+    /// 要約が全文より短い (切り詰めた) とき true。
+    pub query_truncated: bool,
+    pub is_self: bool,
+}
+
+/// クエリ本文を 1 行要約にする。空白の畳み込みは `split_whitespace` (Unicode 空白)、
+/// 長さは文字数で数える。空 / 空白だけなら `(None, false)`。
+pub fn summarize_process_query(query: Option<&str>, max: usize) -> (Option<String>, bool) {
+    let one_line = query
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if one_line.is_empty() {
+        return (None, false);
+    }
+    if one_line.chars().count() <= max {
+        return (Some(one_line), false);
+    }
+    let mut cut: String = one_line.chars().take(max).collect();
+    cut.push('…');
+    (Some(cut), true)
+}
+
+impl From<ProcessInfo> for ProcessListItem {
+    fn from(p: ProcessInfo) -> Self {
+        let (query_summary, query_truncated) =
+            summarize_process_query(p.query.as_deref(), PROCESS_QUERY_SUMMARY_MAX);
+        ProcessListItem {
+            id: p.id,
+            user: p.user,
+            host: p.host,
+            database: p.database,
+            command: p.command,
+            state: p.state,
+            time_secs: p.time_secs,
+            query_summary,
+            query_truncated,
+            is_self: p.is_self,
+        }
+    }
+}
+
+/// `kill_processes` の結果 (#1259)。失敗があっても残りは実行を続け、件数と最初の
+/// エラー文だけを返す (フロントの toast 文言は従来どおり件数 + 最初のエラー)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KillProcessesResult {
+    pub killed: u64,
+    pub failed: u64,
+    pub first_error: Option<String>,
+}
+
+impl KillProcessesResult {
+    pub fn record_failure(&mut self, count: u64, error: String) {
+        self.failed += count;
+        if self.first_error.is_none() {
+            self.first_error = Some(error);
+        }
+    }
 }
 
 /// Row identity strategy for inline editing when a table has no usable
@@ -533,6 +613,10 @@ pub struct LiveQuery {
     /// クエリ開始時刻 (エポック ms)。PostgreSQL の `query_start`。MySQL の
     /// TIMER_START はサーバ起動基準の相対値のため `None` (フロントは観測時刻で代替)。
     pub started_at_ms: Option<f64>,
+    /// `normalize_sql_fingerprint` による同型クエリキー (N+1 判定と行グルーピング用)。
+    /// ドライバは空で返し、`sample_live_queries` のコマンド層が埋める (#1259)。
+    #[serde(default)]
+    pub fingerprint: String,
 }
 
 /// digest (フィンガープリント) 単位の**累積**統計スナップショット 1 行。
