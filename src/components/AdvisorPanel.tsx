@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { motion } from "motion/react";
 
 import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
@@ -18,9 +19,11 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
+import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 import { useToast } from "./Toast";
+import { transitions, variants } from "../motion";
 
 /**
  * スキーマ健全性アドバイザ (#741): 決定的なルールベースで接続先スキーマを
@@ -83,6 +86,11 @@ function SeverityBadge({ severity }: { severity: HealthFinding["severity"] }) {
     </chakra.span>
   );
 }
+
+// 結果の差し替えはフェードで出す (reduced-motion は MotionConfig が即時化する)。
+const MotionReveal = chakra(motion.div, {}, {
+  forwardProps: ["initial", "animate", "transition"],
+});
 
 export function AdvisorPanel({
   sessionId,
@@ -175,7 +183,7 @@ export function AdvisorPanel({
         />
       )}
 
-      {report && report.skipped.length > 0 && (
+      {report && !running && report.skipped.length > 0 && (
         <Box
           borderRadius="var(--radius-sm)"
           border="1px solid"
@@ -199,7 +207,30 @@ export function AdvisorPanel({
         </Box>
       )}
 
-      {report && report.findings.length > 0 && (
+      {running && (
+        // 実行中は結果 (findings 表) の形を模したシマーを出し、完了時の
+        // レイアウトジャンプを抑える (#1211)。待機の告知は上の status が担う。
+        <chakra.table width="100%" style={{ borderCollapse: "collapse" }} aria-hidden>
+          <chakra.thead>
+            <chakra.tr>
+              <chakra.th css={thCss}>{t("advisorColSeverity")}</chakra.th>
+              <chakra.th css={thCss}>{t("advisorColRule")}</chakra.th>
+              <chakra.th css={thCss}>{t("advisorColTarget")}</chakra.th>
+              <chakra.th css={thCss}>{t("advisorColDetail")}</chakra.th>
+            </chakra.tr>
+          </chakra.thead>
+          <chakra.tbody>
+            <SkeletonTableRows columns={4} rows={5} />
+          </chakra.tbody>
+        </chakra.table>
+      )}
+
+      {report && !running && report.findings.length > 0 && (
+        <MotionReveal
+          initial={variants.fade.initial}
+          animate={variants.fade.animate}
+          transition={transitions.enter}
+        >
         <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
           <chakra.thead>
             <chakra.tr>
@@ -268,6 +299,7 @@ export function AdvisorPanel({
             })}
           </chakra.tbody>
         </chakra.table>
+        </MotionReveal>
       )}
     </Box>
   );

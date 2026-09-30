@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { motion } from "motion/react";
 
 import { api, type ColumnProfile, type TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
@@ -20,10 +21,12 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
+import { Skeleton, SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Select } from "./ui";
 import { ErrorNote } from "./modalForm";
 import { Callout } from "./Callout";
+import { transitions, variants } from "../motion";
 
 /**
  * 列データプロファイル (「列を探索」、#974) のボトムパネル。
@@ -60,6 +63,11 @@ const tdCss: SystemStyleObject = {
   fontSize: "var(--text-sm)",
   color: "var(--text)",
 };
+
+// 結果の差し替えはフェードで出す (reduced-motion は MotionConfig が即時化する)。
+const MotionReveal = chakra(motion.div, {}, {
+  forwardProps: ["initial", "animate", "transition"],
+});
 
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -243,8 +251,45 @@ export function ColumnProfilePanel({
 
       {!column && !error && <EmptyState compact icon="columns" title={t("profileEmpty")} />}
 
-      {profile && (
-        <>
+      {running && (
+        // 実行中は結果 (統計タイル + ヒストグラム + 上位値表) の形を模したシマーを
+        // 出し、完了時のレイアウトジャンプを抑える (#1211)。待機の告知は上の
+        // status が担う。
+        <Flex direction="column" gap="3" aria-hidden data-testid="profile-skeleton">
+          <Flex gap="2" flexWrap="wrap">
+            {Array.from({ length: 6 }, (_, i) => (
+              <Skeleton
+                key={i}
+                flex="1"
+                minW="120px"
+                height="52px"
+                borderRadius="md"
+                style={{ animationDelay: `${i * 0.035}s` }}
+              />
+            ))}
+          </Flex>
+          <Flex gap="4" flexWrap="wrap" align="flex-start">
+            <Skeleton flex="2" minW="320px" height="220px" borderRadius="md" />
+            <Box flex="1" minW="240px">
+              <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                <chakra.tbody>
+                  <SkeletonTableRows columns={3} rows={5} />
+                </chakra.tbody>
+              </chakra.table>
+            </Box>
+          </Flex>
+        </Flex>
+      )}
+
+      {profile && !running && (
+        <MotionReveal
+          initial={variants.fade.initial}
+          animate={variants.fade.animate}
+          transition={transitions.enter}
+          display="flex"
+          flexDirection="column"
+          gap="3"
+        >
           {profile.notes.length > 0 && (
             <Callout tone="warning" px="3">
               {profile.notes.map((code) => (
@@ -327,7 +372,7 @@ export function ColumnProfilePanel({
           ) : (
             <EmptyState compact icon="chart" title={t("profileNoValues")} />
           )}
-        </>
+        </MotionReveal>
       )}
     </Box>
   );
