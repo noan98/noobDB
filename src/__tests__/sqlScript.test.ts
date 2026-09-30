@@ -252,3 +252,63 @@ describe("文分割は maskLiterals と同じ文字を同じ意味で扱う (#10
     ]);
   });
 });
+
+// --- #1256: バックエンドのバッチ結果 → 結果ビュー / 出力ログへの変換 ---------------
+
+import { toBatchOutputInput, toBatchResult } from "../sqlScript";
+
+describe("toBatchResult / toBatchOutputInput (run_sql_batch の結果変換)", () => {
+  const cols = [{ name: "id", type_name: "INTEGER" }];
+
+  it("結果セットを返した文は columns / rows をそのまま結果ビューへ渡す", () => {
+    const wire = { sql: "SELECT id FROM t", status: "ok" as const, columns: cols, rows: [[1], [2]], elapsedMs: 3 };
+    expect(toBatchResult(wire)).toEqual({
+      sql: "SELECT id FROM t",
+      status: "ok",
+      columns: cols,
+      rows: [[1], [2]],
+      rowsAffected: undefined,
+      elapsedMs: 3,
+    });
+    expect(toBatchOutputInput(wire)).toEqual({
+      sql: "SELECT id FROM t",
+      outcome: "rows",
+      rows: 2,
+      elapsedMs: 3,
+      error: null,
+      serverMessages: undefined,
+    });
+  });
+
+  it("columns の無い成功は影響行数の結果 (0 行の SELECT も従来どおりこちら)", () => {
+    const wire = { sql: "DELETE FROM t", status: "ok" as const, rowsAffected: 4, elapsedMs: 1 };
+    expect(toBatchResult(wire)).toMatchObject({ status: "ok", rowsAffected: 4, columns: undefined, rows: undefined });
+    expect(toBatchOutputInput(wire)).toMatchObject({ outcome: "affected", rows: 4 });
+    // rowsAffected が無くても 0 件として扱う。
+    expect(toBatchResult({ sql: "SELECT 1 WHERE 0", status: "ok" })).toMatchObject({ rowsAffected: 0 });
+  });
+
+  it("サーバメッセージは出力ログにだけ載せる", () => {
+    const serverMessages = [{ severity: "warning" as const, text: "w" }];
+    const wire = { sql: "INSERT", status: "ok" as const, rowsAffected: 1, serverMessages };
+    expect(toBatchOutputInput(wire).serverMessages).toEqual(serverMessages);
+    expect(toBatchResult(wire)).not.toHaveProperty("serverMessages");
+  });
+
+  it("エラーとスキップ", () => {
+    expect(toBatchResult({ sql: "X", status: "error", error: "boom" })).toEqual({
+      sql: "X",
+      status: "error",
+      error: "boom",
+    });
+    expect(toBatchOutputInput({ sql: "X", status: "error", error: "boom" })).toEqual({
+      sql: "X",
+      outcome: "error",
+      rows: null,
+      elapsedMs: null,
+      error: "boom",
+    });
+    expect(toBatchResult({ sql: "Y", status: "skipped" })).toEqual({ sql: "Y", status: "skipped" });
+    expect(toBatchOutputInput({ sql: "Y", status: "skipped" })).toMatchObject({ outcome: "skipped", rows: null });
+  });
+});

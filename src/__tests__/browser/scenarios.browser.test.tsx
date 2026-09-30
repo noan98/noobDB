@@ -83,6 +83,7 @@ function registerBaseHandlers() {
   onCommand("list_profiles", () => [ALPHA, BETA]);
   onCommand("list_snippets", () => []);
   onCommand("list_history", () => []);
+  onCommand("list_history_sql", () => []);
   onCommand("connect", (args) => {
     const req = args.req as { profile_id?: string };
     connectSeq += 1;
@@ -127,6 +128,8 @@ function emitQueryStreamResult(channel: ChannelLike, rows: CellValue[][]) {
     elapsedMs: 5,
     hasColumns: true,
     appliedAutoLimit: null,
+    readOnly: true,
+    schemaMayChange: false,
   });
 }
 
@@ -207,6 +210,8 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
       elapsedMs: 5,
       hasColumns: true,
       appliedAutoLimit: null,
+      readOnly: true,
+      schemaMayChange: false,
     });
     await expect
       .element(screen.getByText(t("statusStreamingDone", { rows: 2, ms: 5 })))

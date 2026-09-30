@@ -2,6 +2,7 @@ import { forwardRef, lazy, Suspense, useCallback, useEffect, useMemo, useRef, us
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { QUERY_HISTORY_LIMIT, dedupeAdjacentHistory, pushHistoryEntry } from "./components/queryHistoryNav";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -23,6 +24,7 @@ import {
   TableSchema,
   listenConnectProgress,
   listenPreviewStream,
+  listenBatchStream,
   listenQueryStream,
   listenTaskRunEvents,
 } from "./api/tauri";
@@ -319,7 +321,8 @@ const RunRoutineModal = lazy(() =>
 import {
   analyzeDangerousSql,
   isReadOnlySql,
-  isSchemaMutatingSql,
+  readOnlyWithHint,
+  type ReadOnlyHint,
   type DangerFinding,
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
@@ -430,8 +433,9 @@ import {
 } from "./keysetPagination";
 import {
   isMultiStatement,
-  splitSqlStatements,
   type BatchStatementResult,
+  toBatchOutputInput,
+  toBatchResult,
 } from "./sqlScript";
 import {
   EMPTY_QUICK_ACCESS,
@@ -698,6 +702,12 @@ interface Tab {
    * every run; in-memory only (not persisted).
    */
   lastExecutedSql: string;
+  /**
+   * バックエンドが直近の実行完了 (`Done`) で返した読み取り専用判定 (#1256)。描画のたびに
+   * `isReadOnlySql(lastExecutedSql)` (全文マスク) を回さずに済むよう、その SQL に紐づけて
+   * 持つ。`sql` が `lastExecutedSql` と一致するときだけ有効で、食い違えば再計算に倒れる。
+   */
+  lastRunReadOnly?: ReadOnlyHint;
   /** 直近の実行が完了した時刻 (epoch ms)。調査バンドル (#745) の「実行日時」。 */
   lastRunAt?: number;
   /**
@@ -888,6 +898,9 @@ interface PaneState {
 
 /** Maximum number of undo/redo snapshots kept per tab. */
 const EDIT_UNDO_LIMIT = 50;
+/** バッチ実行 (`run_sql_batch`, #1256) で SELECT 1 文ごとに結果へ残す最大行数。
+ *  バックエンドはこの件数に達した時点で取得を打ち切る。 */
+const BATCH_PREVIEW_ROWS = 200;
 /** Grace window for undoing a connection-profile delete (#676). Matches the
  *  Undo toast's on-screen duration so the deferred delete finalizes as it fades. */
 const PROFILE_DELETE_UNDO_MS = 8000;
@@ -1642,8 +1655,8 @@ export default function App() {
   );
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
-  // ナビゲーション用。接続プロファイル単位で読み込み、実行のたびに
-  // `historyReloadKey` が増えるのを契機に再取得する。
+  // ナビゲーション用。接続プロファイル単位で 1 回読み込み、実行のたびに
+  // 先頭へ足す (再取得はしない、#1256)。
   const [queryHistory, setQueryHistory] = useState<string[]>([]);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
   const [snippetFormSql, setSnippetFormSql] = useState<string>("");
@@ -2494,9 +2507,10 @@ export default function App() {
     [],
   );
 
-  // 履歴ナビゲーション用に直近の実行クエリを読み込む。接続中のみ取得し、
-  // プロファイル切替・実行 (`historyReloadKey`) を契機に最新化する。連続して同じ
-  // SQL が並ぶと ↑/↓ で 1 件しか進まないように、隣り合う重複は畳む。
+  // 履歴ナビゲーション用に直近の実行クエリ (SQL 全文のみ) を読み込む。接続中のみ取得し、
+  // プロファイル切替・接続切替を契機に 1 回だけ最新化する。連続して同じ SQL が並ぶと
+  // ↑/↓ で 1 件しか進まないように、隣り合う重複は畳む。実行のたびの再取得はせず、
+  // 実行直後の SQL を `pushQueryHistory` で先頭に積む (#1256)。
   useEffect(() => {
     const profileId = selectedProfile?.id ?? null;
     if (!sessionId || !profileId) {
@@ -2506,13 +2520,9 @@ export default function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const entries = await api.listHistory({ profileId, limit: 100 });
+        const sqls = await api.listHistorySql({ profileId, limit: QUERY_HISTORY_LIMIT });
         if (cancelled) return;
-        const sqls: string[] = [];
-        for (const e of entries) {
-          if (sqls.length === 0 || sqls[sqls.length - 1] !== e.sql) sqls.push(e.sql);
-        }
-        setQueryHistory(sqls);
+        setQueryHistory(dedupeAdjacentHistory(sqls));
       } catch {
         // 履歴の取得失敗はナビゲーションを無効化するだけで、致命的ではない。
         if (!cancelled) setQueryHistory([]);
@@ -2521,7 +2531,14 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, selectedProfile?.id, historyReloadKey]);
+  }, [sessionId, selectedProfile?.id]);
+
+  // 実行した SQL を履歴ナビ用の列の先頭へ積む。バックエンドは実行のたびに履歴へ記録する
+  // (履歴を記録しない接続 `skip_history` を除く) ので、それと同じ内容を JS 側で足す。
+  const pushQueryHistory = useCallback((sql: string) => {
+    if (selectedProfileRef.current?.skip_history) return;
+    setQueryHistory((prev) => pushHistoryEntry(prev, sql));
+  }, []);
 
   // クイックアクセス: アクティブ接続が変わったら、そのプロファイルの
   // お気に入り/最近をストレージから読み込む。未接続時は空にする。
@@ -3726,7 +3743,7 @@ export default function App() {
           };
         });
       },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages }) => {
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages, readOnly, schemaMayChange }) => {
         // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
         markQueryDone(streamId, {
           rows: hasColumns ? totalRows : rowsAffected,
@@ -3738,6 +3755,7 @@ export default function App() {
             return {
               ...tt,
               result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs, server_messages: serverMessages },
+              lastRunReadOnly: { sql, readOnly },
               lastRunAt: Date.now(),
               streaming: false,
               canLoadMore: false,
@@ -3753,6 +3771,7 @@ export default function App() {
             result: tt.result
               ? { ...tt.result, elapsed_ms: elapsedMs, rows_affected: totalRows }
               : tt.result,
+            lastRunReadOnly: { sql, readOnly },
             lastRunAt: Date.now(),
             streaming: false,
             canLoadMore: tt.paginatable !== null,
@@ -3781,12 +3800,16 @@ export default function App() {
         }
         // A new entry was just written to history; refresh the panel. Auto-refresh
         // ticks never write history, so they skip the (otherwise per-tick) reload.
-        if (!autoRefresh) setHistoryReloadKey((k) => k + 1);
+        if (!autoRefresh) {
+          setHistoryReloadKey((k) => k + 1);
+          pushQueryHistory(sql);
+        }
         // DDL may have added/renamed tables or columns — refresh autocomplete
         // for the database this statement ran against (the executing tab's, or
         // the profile default when the tab pins no database), leaving other
         // panes' cached schemas untouched.
-        if (isSchemaMutatingSql(sql, selectedProfile?.driver)) {
+        // バックエンドが実行後に返した判定値を使う (JS でマスクし直さない、#1256)。
+        if (schemaMayChange) {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
         }
         finalize();
@@ -3827,6 +3850,8 @@ export default function App() {
           ...(timedOut ? { partialResult: timeoutPartialResult(deliveredRows) } : {}),
         }));
         setHistoryReloadKey((k) => k + 1);
+        // バックエンドは失敗した実行も履歴に記録するので、ナビ用の列にも足す。
+        if (!autoRefresh) pushQueryHistory(sql);
         finalize();
         if (!autoRefresh) {
           recordOutput(
@@ -3912,6 +3937,7 @@ export default function App() {
     cancelStreamForTab,
     invalidateSchemaCache,
     notifyQueryOutcome,
+    pushQueryHistory,
     settings.flightRecorderEnabled,
     settings.flightRecorderRowCap,
     settings.flightRecorderRetentionDays,
@@ -4496,10 +4522,13 @@ export default function App() {
     void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
   }, [goToPageInTab]);
 
-  // SQL スクリプト (複数文) のバッチ実行。文ごとに順次実行し、各文の結果
-  // (結果セット / 影響行数 / エラー) を集めて batchResults に積む。stopOnError なら
-  // 最初のエラーで残りをスキップ、false なら続行する。読み取り専用ガードは文ごとに
-  // バックエンドが強制する (api.runQuery 経由なので履歴は汚さない)。
+  // SQL スクリプト (複数文) のバッチ実行 (#1256)。文の分割・実行・SELECT のプレビュー
+  // 行 (200 件) での取得打ち切りはバックエンドの `run_sql_batch` が行い、各文の結果
+  // (結果セット / 影響行数 / エラー) は 150ms 間引きでまとめて届く。ここでは届いた
+  // 結果を batchResults に積むだけ (1 文ごとの IPC 往復・patchTab をしない)。
+  // stopOnError なら最初のエラーで残りをスキップ、false なら続行する。読み取り専用
+  // ガードは文ごとにバックエンドが強制し、明示トランザクション中は各文を同じ接続で
+  // 実行する (履歴は従来どおり汚さない)。
   // `tabOverride` は、新規結果タブを addTab した直後に呼ぶケース用。tabsRef は
   // effect 経由で更新されるため直後は新タブを見つけられない。その場合はメモリ上の Tab を
   // 直接渡してレース (無実行化) を避ける。同一タブの再実行では渡さず、tabsRef の最新
@@ -4510,10 +4539,7 @@ export default function App() {
     if (!tab) return;
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
-    const statements = splitSqlStatements(sql, selectedProfile?.driver);
-    if (statements.length === 0) return;
     const db = tab.database ?? selectedProfile?.database ?? null;
-    const MAX_PREVIEW_ROWS = 200;
     patchTab(tabId, (tt) => ({
       ...tt,
       batchRunning: true,
@@ -4525,58 +4551,68 @@ export default function App() {
       preview: null,
       queryError: null,
     }));
-    setStatus({ kind: "key", key: "statusBatchRunning", vars: { total: statements.length } });
     const results: BatchStatementResult[] = [];
-    let stopped = false;
-    for (const stmt of statements) {
-      if (stopped) {
-        recordOutput({ sql: stmt, outcome: "skipped", rows: null, elapsedMs: null, error: null }, db);
-        results.push({ sql: stmt, status: "skipped" });
-        continue;
-      }
-      try {
-        // 明示トランザクションが有効なら同一接続で実行して tx に乗せる。
-        const res = txActiveRef.current
-          ? await api.runInTransaction(sessionId, stmt)
-          : await api.runQuery(sessionId, stmt, db);
-        const isSelect = res.columns.length > 0;
-        recordOutput(
-          {
-            sql: stmt,
-            outcome: isSelect ? "rows" : "affected",
-            rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
-            elapsedMs: res.elapsed_ms,
-            error: null,
-            serverMessages: res.server_messages,
-          },
-          db,
-        );
-        results.push({
-          sql: stmt,
-          status: "ok",
-          columns: isSelect ? res.columns : undefined,
-          rows: isSelect ? res.rows.slice(0, MAX_PREVIEW_ROWS) : undefined,
-          rowsAffected: isSelect ? undefined : Number(res.rows_affected ?? 0),
-          elapsedMs: res.elapsed_ms,
+    const streamId = newStreamId(tabId);
+    let unlisten: UnlistenFn | null = null;
+    const finish = () => {
+      unlisten?.();
+      unlisten = null;
+    };
+    const finishRun = (extra: { error?: string } = {}) => {
+      patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
+      const okCount = results.filter((r) => r.status === "ok").length;
+      const errCount = results.filter((r) => r.status === "error").length;
+      if (extra.error !== undefined) {
+        setStatus({ kind: "key", key: "statusQueryError", vars: { error: extra.error }, error: true });
+      } else {
+        setStatus({
+          kind: "key",
+          key: "statusBatchDone",
+          vars: { ok: okCount, errors: errCount, total: results.length },
+          error: errCount > 0,
         });
-      } catch (e) {
-        recordOutput({ sql: stmt, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, db);
-        results.push({ sql: stmt, status: "error", error: String(e) });
-        if (stopOnError) stopped = true;
       }
-      // 進捗を反映 (途中経過を見せる)。コピーして積む。
-      patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
+    };
+    try {
+      unlisten = await listenBatchStream(streamId, {
+        onStarted: ({ total }) => {
+          setStatus({ kind: "key", key: "statusBatchRunning", vars: { total } });
+        },
+        onResults: ({ results: incoming }) => {
+          for (const r of incoming) {
+            recordOutput(toBatchOutputInput(r), db);
+            results.push(toBatchResult(r));
+          }
+          // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
+          patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
+        },
+        onDone: () => {
+          finish();
+          finishRun();
+        },
+        onError: ({ error, connectionLost }) => {
+          finish();
+          finishRun({ error });
+          if (connectionLost) void handleConnectionLostRef.current();
+        },
+        onCancelled: () => {
+          finish();
+          finishRun();
+        },
+      });
+      await api.runSqlBatch({
+        sessionId,
+        streamId,
+        database: db,
+        sql,
+        stopOnError,
+        previewRows: BATCH_PREVIEW_ROWS,
+      });
+    } catch (e) {
+      finish();
+      finishRun({ error: String(e) });
     }
-    patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
-    const okCount = results.filter((r) => r.status === "ok").length;
-    const errCount = results.filter((r) => r.status === "error").length;
-    setStatus({
-      kind: "key",
-      key: "statusBatchDone",
-      vars: { ok: okCount, errors: errCount, total: results.length },
-      error: errCount > 0,
-    });
-  }, [sessionId, selectedProfile?.database, selectedProfile?.driver, patchTab, recordOutput]);
+  }, [sessionId, selectedProfile?.database, patchTab, recordOutput]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -8148,7 +8184,8 @@ export default function App() {
                       applyingEdits={tab.applyingEdits}
                       autoRefreshSecs={tab.autoRefreshSecs ?? null}
                       autoRefreshAllowed={
-                        !!tab.result && isReadOnlySql(tab.lastExecutedSql, selectedProfile?.driver)
+                        !!tab.result &&
+                        readOnlyWithHint(tab.lastRunReadOnly, tab.lastExecutedSql, selectedProfile?.driver)
                       }
                       autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
                       onSetAutoRefresh={(secs) => setAutoRefreshForTab(tab.id, secs)}
@@ -8239,7 +8276,7 @@ export default function App() {
                                 sessionId &&
                                 tab.lastExecutedSql &&
                                 bundlePlanSupported(selectedProfile?.driver) &&
-                                isReadOnlySql(tab.lastExecutedSql, selectedProfile?.driver)
+                                readOnlyWithHint(tab.lastRunReadOnly, tab.lastExecutedSql, selectedProfile?.driver)
                                   ? () =>
                                       api.runQuery(
                                         sessionId,

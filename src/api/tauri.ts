@@ -397,7 +397,10 @@ export interface HistoryEntry {
   profile_id: string | null;
   driver: string;
   database: string | null;
-  sql: string;
+  /** 一覧用の SQL 要約 (空白を畳んだ先頭 N 文字、超過は `…`)。全文は `getHistorySql` (#1256)。 */
+  sql_preview: string;
+  /** SQL 全文の文字数。 */
+  sql_len: number;
   /** Rows returned by a SELECT-shaped statement. `null` for writes. */
   rows: number | null;
   /** Rows affected by a write statement. `null` for SELECTs. */
@@ -2190,6 +2193,17 @@ export const api = {
       from: params.from ?? null,
       to: params.to ?? null,
     }).then((r) => parseResponse(schemas.historyEntryArray, r, "list_history")),
+  /** 履歴 1 件の SQL 全文 (#1256)。一覧 (`listHistory`) は要約しか運ばない。 */
+  getHistorySql: (id: number) =>
+    invoke<string>("get_history_sql", { id }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "get_history_sql"),
+    ),
+  /** 直近の実行 SQL 全文だけを新しい順に返す (↑/↓ 履歴ナビ・コマンドパレット用、#1256)。 */
+  listHistorySql: (params: { profileId?: string | null; limit?: number | null } = {}) =>
+    invoke<string[]>("list_history_sql", {
+      profileId: params.profileId ?? null,
+      limit: params.limit ?? null,
+    }).then((r) => parseResponse(schemas.stringArray, r, "list_history_sql")),
   clearHistory: (profileId?: string | null) =>
     invoke<number>("clear_history", { profileId: profileId ?? null }).then((r) =>
       parseResponse(schemas.numberResponse, r, "clear_history"),
@@ -2346,6 +2360,37 @@ export const api = {
       path: params.path,
       options: params.options,
     }),
+
+  /**
+   * エディタの複数文 SQL をまとめて実行する (#1256)。文の分割・読み取り専用ガード・
+   * 実行・SELECT のプレビュー行 (`previewRows` 件で取得を打ち切り) までバックエンドが
+   * 行い、結果は {@link listenBatchStream} の Channel へ 150ms 間引きでまとめて届く。
+   * 明示トランザクション中は各文を同じ接続で実行する。`cancelStream` で中断できる。
+   */
+  runSqlBatch: (params: {
+    sessionId: string;
+    streamId: string;
+    database?: string | null;
+    sql: string;
+    stopOnError: boolean;
+    previewRows: number;
+  }) => {
+    const channel = batchStreamChannels.get(params.streamId);
+    if (!channel) {
+      throw new Error(
+        `runSqlBatch: listenBatchStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+      );
+    }
+    return invoke<void>("run_sql_batch", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      database: params.database ?? null,
+      sql: params.sql,
+      stopOnError: params.stopOnError,
+      previewRows: params.previewRows,
+      onEvent: channel,
+    });
+  },
 
   /**
    * 接続間データ転送 (#986)。ソース接続のテーブル全件 (`sourceTable`) か単一の
@@ -2600,6 +2645,10 @@ export interface QueryStreamDoneMessage {
   appliedAutoLimit: number | null;
   /** サーバの通知・警告 (PostgreSQL NOTICE/WARNING、MySQL SHOW WARNINGS) (#1165)。 */
   serverMessages?: ServerMessage[];
+  /** 実行した SQL が読み取り専用か (バックエンドの判定値。再計算しなくてよい、#1256)。 */
+  readOnly: boolean;
+  /** 実行した SQL がスキーマを変えうるか (バックエンドの判定値、#1256)。 */
+  schemaMayChange: boolean;
 }
 
 export interface QueryStreamErrorMessage {
@@ -2618,6 +2667,55 @@ export interface QueryStreamErrorMessage {
 /** Query チャンネル・Preview チャンネルどちらでも同じ shape (#685)。 */
 export interface ChannelCancelledMessage {
   deliveredRows: number;
+}
+
+// --- エディタのバッチ実行 (Tauri Channel, #1256) ---------------------------
+
+/** バッチ実行で 1 文ぶんの結果。`sqlScript.ts` の `BatchStatementResult` に
+ *  サーバメッセージ (出力ログ用) を足した wire 形。 */
+export interface BatchStreamStatementResult {
+  sql: string;
+  status: "ok" | "error" | "skipped";
+  columns?: Column[];
+  rows?: CellValue[][];
+  rowsAffected?: number;
+  elapsedMs?: number;
+  error?: string;
+  serverMessages?: ServerMessage[];
+}
+
+export interface BatchStreamStartedMessage {
+  /** 分割後の文の数。 */
+  total: number;
+}
+
+export interface BatchStreamResultsMessage {
+  /** 前回の通知以降に終わった文の結果 (実行順)。 */
+  results: BatchStreamStatementResult[];
+}
+
+export interface BatchStreamDoneMessage {
+  ok: number;
+  errors: number;
+  skipped: number;
+  elapsedMs: number;
+}
+
+export interface BatchStreamErrorMessage {
+  error: string;
+  connectionLost: boolean;
+}
+
+export interface BatchStreamCancelledMessage {
+  deliveredStatements: number;
+}
+
+export interface BatchStreamHandlers {
+  onStarted?: (event: BatchStreamStartedMessage) => void;
+  onResults?: (event: BatchStreamResultsMessage) => void;
+  onDone?: (event: BatchStreamDoneMessage) => void;
+  onError?: (event: BatchStreamErrorMessage) => void;
+  onCancelled?: (event: BatchStreamCancelledMessage) => void;
 }
 
 export interface PreviewStreamMetaMessage {
@@ -2911,6 +3009,7 @@ async function registerListeners(
  *  `api.runQueryStream` が読み出す。`unlisten` (detach) 時にエントリを消す。 */
 const queryStreamChannels = new Map<string, Channel<unknown>>();
 const previewStreamChannels = new Map<string, Channel<unknown>>();
+const batchStreamChannels = new Map<string, Channel<unknown>>();
 
 /** Channel から届く生メッセージの最小形。`kind` で分岐する。 */
 type RawStreamMessage = { kind: string } & Record<string, unknown>;
@@ -3004,6 +3103,77 @@ export async function listenQueryStream(
     // 消さない (`register_stream`/`forget_stream` のトークン方式と同じ発想)。
     if (queryStreamChannels.get(streamId) === channel) {
       queryStreamChannels.delete(streamId);
+    }
+  };
+}
+
+/**
+ * エディタのバッチ実行 (`runSqlBatch`, #1256) の Channel を `streamId` 向けに作って
+ * 購読する。戻り値は `listenQueryStream` と同じく、ハンドラを外す関数。
+ */
+export async function listenBatchStream(
+  streamId: string,
+  handlers: BatchStreamHandlers,
+): Promise<UnlistenFn> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "started":
+        handlers.onStarted?.(
+          parseChannelMessage<BatchStreamStartedMessage>(
+            schemas.batchStreamStartedMessage,
+            msg,
+            "batchStreamStartedMessage",
+          ),
+        );
+        break;
+      case "results":
+        handlers.onResults?.(
+          parseChannelMessage<BatchStreamResultsMessage>(
+            schemas.batchStreamResultsMessage,
+            msg,
+            "batchStreamResultsMessage",
+          ),
+        );
+        break;
+      case "done":
+        handlers.onDone?.(
+          parseChannelMessage<BatchStreamDoneMessage>(
+            schemas.batchStreamDoneMessage,
+            msg,
+            "batchStreamDoneMessage",
+          ),
+        );
+        break;
+      case "error":
+        handlers.onError?.(
+          parseChannelMessage<BatchStreamErrorMessage>(
+            schemas.batchStreamErrorMessage,
+            msg,
+            "batchStreamErrorMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<BatchStreamCancelledMessage>(
+            schemas.batchStreamCancelledMessage,
+            msg,
+            "batchStreamCancelledMessage",
+          ),
+        );
+        break;
+      default:
+        // 未知の kind は無視する (`listenQueryStream` と同じ保険)。
+        break;
+    }
+  };
+  batchStreamChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (batchStreamChannels.get(streamId) === channel) {
+      batchStreamChannels.delete(streamId);
     }
   };
 }

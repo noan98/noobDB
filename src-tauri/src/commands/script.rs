@@ -28,13 +28,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::commands::query::{ensure_allowed_for_session, record_write_history};
 use crate::db::script::{
-    classify_tx_control, parse_use_database, ScriptSplitter, ScriptStatement, TxControl,
+    classify_tx_control, parse_use_database, split_script, ScriptSplitter, ScriptStatement,
+    TxControl,
 };
+use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
+use crate::db::Connection;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
@@ -196,12 +200,44 @@ fn preview_sql(sql: &str) -> String {
 /// `cancel_stream` がそれを `deliveredRows` として報告する。
 pub(crate) async fn run_script_core<R, F>(
     session: Arc<Session>,
+    reader: R,
+    total_bytes: u64,
+    database: Option<String>,
+    options: ScriptOptions,
+    committed: Arc<AtomicU64>,
+    on_progress: F,
+) -> Result<ScriptRun>
+where
+    R: AsyncRead + Unpin,
+    F: FnMut(ScriptProgress),
+{
+    run_script_core_with(
+        session,
+        reader,
+        total_bytes,
+        database,
+        options,
+        committed,
+        on_progress,
+        None,
+    )
+    .await
+}
+
+/// [`run_script_core`] の本体。`batch` が `Some` のときは**エディタのバッチ実行**
+/// (#1256) として動き、各文の結果 (結果セットのプレビュー / 影響行数 / エラー /
+/// スキップ) を `on_result` へ 1 文ずつ渡す。分割・read-only ガード・トランザクション
+/// 制御文の読み替え・キャッシュ無効化は `.sql` スクリプト実行と同じ経路を共有する。
+#[allow(clippy::too_many_arguments)]
+async fn run_script_core_with<R, F>(
+    session: Arc<Session>,
     mut reader: R,
     total_bytes: u64,
     database: Option<String>,
     options: ScriptOptions,
     committed: Arc<AtomicU64>,
     mut on_progress: F,
+    batch: Option<BatchConfig>,
 ) -> Result<ScriptRun>
 where
     R: AsyncRead + Unpin,
@@ -209,7 +245,11 @@ where
 {
     validate_options(options)?;
     let driver = session.conn.driver_kind();
-    if session.conn.transaction_active().await {
+    let tx_active = session.conn.transaction_active().await;
+    // スクリプトファイル実行は、ユーザの明示トランザクションと干渉しないよう拒否する。
+    // エディタのバッチ実行は従来どおり明示トランザクションの上で動かす (各文を
+    // `execute_in_transaction` へ流し、BEGIN/COMMIT の読み替えはしない)。
+    if tx_active && batch.is_none() {
         return Err(AppError::InvalidInput(
             "an explicit transaction is already active on this session; commit or roll it back before running a script".into(),
         ));
@@ -236,6 +276,12 @@ where
         pending_in_tx: 0,
         wrote: false,
         schema_changed: false,
+        batch: batch.map(|cfg| BatchState {
+            preview_rows: cfg.preview_rows.max(1),
+            external_tx: tx_active,
+            skipping: false,
+            on_result: cfg.on_result,
+        }),
     };
 
     if options.wrap_in_transaction {
@@ -342,6 +388,204 @@ pub(crate) fn validate_options(options: ScriptOptions) -> Result<()> {
     Ok(())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// エディタのバッチ実行 (`run_sql_batch`, #1256)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 複数文スクリプトをエディタから実行する経路。以前はフロントが文分割 → 1 文ごとに
+// `run_query` / `run_in_transaction` を直列 await → 全行受け取ってから 200 行に
+// 切り詰める、という構成で、IPC 往復が文の数だけ・転送量が結果の全行ぶん発生して
+// いた。ここでは `.sql` スクリプトランナー (`run_script_core_with`) を文字列の
+// `Cursor` で再利用し、Rust 側で分割・実行・プレビュー行の切り詰め (SELECT は
+// `preview_rows` 件に達した時点で取得を打ち切る) まで行って、結果を Channel で
+// まとめて (150ms 間引きで) 返す。
+
+/// バッチ結果 1 文ぶんの状態。
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BatchStatus {
+    Ok,
+    Error,
+    Skipped,
+}
+
+/// バッチ実行の 1 文ぶんの結果。フロントの `BatchStatementResult` (`sqlScript.ts`)
+/// と同じ形 (camelCase)。`rows` は `preview_rows` 件までに切り詰め済み。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchStatementResult {
+    pub sql: String,
+    pub status: BatchStatus,
+    /// 結果セットを返した SELECT 系のときだけ。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<Column>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<Vec<Vec<Value>>>,
+    /// 書き込み系の影響行数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows_affected: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// サーバの通知・警告 (#1165)。出力ログ用で、空なら省略する。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub server_messages: Vec<ServerMessage>,
+}
+
+impl BatchStatementResult {
+    /// 成功した 1 文。`columns` が空でなければ結果セット、空なら影響行数の結果とみなす
+    /// (フロントの従来判定 `res.columns.length > 0` と同じ)。
+    fn ok(sql: String, r: &QueryResult) -> Self {
+        let is_select = !r.columns.is_empty();
+        Self {
+            sql,
+            status: BatchStatus::Ok,
+            columns: is_select.then(|| r.columns.clone()),
+            rows: is_select.then(|| r.rows.clone()),
+            rows_affected: (!is_select).then_some(r.rows_affected),
+            elapsed_ms: Some(r.elapsed_ms),
+            error: None,
+            server_messages: r.server_messages.clone(),
+        }
+    }
+
+    fn error(sql: String, error: String) -> Self {
+        Self {
+            sql,
+            status: BatchStatus::Error,
+            columns: None,
+            rows: None,
+            rows_affected: None,
+            elapsed_ms: None,
+            error: Some(error),
+            server_messages: Vec::new(),
+        }
+    }
+
+    fn skipped(sql: String) -> Self {
+        Self {
+            sql,
+            status: BatchStatus::Skipped,
+            columns: None,
+            rows: None,
+            rows_affected: None,
+            elapsed_ms: None,
+            error: None,
+            server_messages: Vec::new(),
+        }
+    }
+}
+
+/// バッチ実行の設定 (コア → ランナー)。
+struct BatchConfig {
+    /// SELECT の結果として保持する最大行数。これに達したら取得を打ち切る。
+    preview_rows: usize,
+    on_result: Box<dyn FnMut(BatchStatementResult) + Send + Sync>,
+}
+
+struct BatchState {
+    preview_rows: usize,
+    /// 開始時点で呼び出し側の明示トランザクションが有効だった。全文をその接続で
+    /// 実行し、BEGIN/COMMIT の読み替えもしない。
+    external_tx: bool,
+    /// エラー停止後の残りの文をスキップとして返している最中。
+    skipping: bool,
+    on_result: Box<dyn FnMut(BatchStatementResult) + Send + Sync>,
+}
+
+/// プレビュー上限で取得を打ち切るための目印エラー (呼び出し元で成功に読み替える)。
+const PREVIEW_CAP_MARKER: &str = "batch preview row cap reached";
+
+/// `sql` を実行し、結果行を `limit` 件までで打ち切る。SELECT 系は `execute_stream` の
+/// `on_batch` で `limit` 件に達した時点で取得を止める (残りの行は読まない)。書き込み系は
+/// 通常どおり影響行数を返す。
+async fn execute_preview(
+    conn: &Connection,
+    sql: &str,
+    database: Option<&str>,
+    limit: usize,
+) -> Result<QueryResult> {
+    let limit = limit.max(1);
+    let started = Instant::now();
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut columns: Vec<Column> = Vec::new();
+    let mut capped = false;
+    let res = conn
+        .execute_stream(sql, database, limit, limit, |batch| match batch {
+            StreamBatch::Columns(c) => {
+                columns = c;
+                Ok(())
+            }
+            StreamBatch::Rows(mut r) => {
+                let room = limit.saturating_sub(rows.len());
+                let reached = r.len() >= room;
+                r.truncate(room);
+                rows.append(&mut r);
+                if reached {
+                    capped = true;
+                    Err(AppError::Other(PREVIEW_CAP_MARKER.into()))
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await;
+    match res {
+        Ok(mut r) => {
+            r.rows = rows;
+            Ok(r)
+        }
+        Err(AppError::Other(m)) if capped && m == PREVIEW_CAP_MARKER => {
+            let n = rows.len() as u64;
+            Ok(QueryResult {
+                columns,
+                rows,
+                rows_affected: n,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                server_messages: Vec::new(),
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// バッチ実行の本体 (Tauri ランタイム非依存。統合テストからも駆動する)。`sql` を
+/// 文字列の `Cursor` として [`run_script_core_with`] へ流す。`stop_on_error` が
+/// true なら最初のエラーで残りをスキップ、false なら続行する。
+pub(crate) async fn run_batch_core<G>(
+    session: Arc<Session>,
+    sql: String,
+    database: Option<String>,
+    stop_on_error: bool,
+    preview_rows: usize,
+    committed: Arc<AtomicU64>,
+    on_result: G,
+) -> Result<ScriptRun>
+where
+    G: FnMut(BatchStatementResult) + Send + Sync + 'static,
+{
+    let bytes = sql.into_bytes();
+    let total = bytes.len() as u64;
+    run_script_core_with(
+        session,
+        std::io::Cursor::new(bytes),
+        total,
+        database,
+        ScriptOptions {
+            continue_on_error: !stop_on_error,
+            wrap_in_transaction: false,
+        },
+        committed,
+        |_| {},
+        Some(BatchConfig {
+            preview_rows,
+            on_result: Box::new(on_result),
+        }),
+    )
+    .await
+}
+
 struct Runner {
     guard: TxGuard,
     session: Arc<Session>,
@@ -361,6 +605,8 @@ struct Runner {
     pending_in_tx: u64,
     wrote: bool,
     schema_changed: bool,
+    /// エディタのバッチ実行モード (#1256)。`None` なら `.sql` スクリプト実行。
+    batch: Option<BatchState>,
 }
 
 impl Runner {
@@ -368,7 +614,22 @@ impl Runner {
     /// 最終結果を `Some` で返す。
     async fn run_statement(&mut self, stmt: ScriptStatement) -> Option<ScriptRun> {
         self.seen += 1;
-        if let Some(ctl) = classify_tx_control(self.driver, &stmt.sql) {
+        // バッチ実行で前の文がエラー停止したあとの残りは、実行せずスキップとして返す。
+        if self.batch.as_ref().is_some_and(|b| b.skipping) {
+            self.emit_batch(BatchStatementResult::skipped(stmt.sql));
+            return None;
+        }
+        // バッチ実行が呼び出し側の明示トランザクションの上で動くときは、制御文も
+        // 従来どおり生の SQL として同じ接続へ流す (読み替えると UI 側のトランザクション
+        // 状態 (`txActive`) と食い違う)。
+        let external_tx = self.batch.as_ref().is_some_and(|b| b.external_tx);
+        let ctl = if external_tx {
+            None
+        } else {
+            classify_tx_control(self.driver, &stmt.sql)
+        };
+        if let Some(ctl) = ctl {
+            let ctl_started = Instant::now();
             if self.options.wrap_in_transaction {
                 self.skipped_control += 1;
                 return None;
@@ -409,7 +670,16 @@ impl Runner {
                 }
             };
             return match result {
-                Ok(()) => None,
+                Ok(()) => {
+                    if self.batch.is_some() {
+                        let elapsed = ctl_started.elapsed().as_millis() as u64;
+                        self.emit_batch(BatchStatementResult::ok(
+                            stmt.sql.clone(),
+                            &QueryResult::empty(0, elapsed),
+                        ));
+                    }
+                    None
+                }
                 Err(e) => self.on_failure(&stmt, e).await,
             };
         }
@@ -418,7 +688,27 @@ impl Runner {
         if let Err(e) = ensure_allowed_for_session(&self.session, &stmt.sql) {
             return self.on_failure(&stmt, e).await;
         }
-        let result = if self.guard.active {
+        let result = if let Some(preview_rows) = self.batch.as_ref().map(|b| b.preview_rows) {
+            if self.guard.active || external_tx {
+                // トランザクション経路は結果を全件受け取ってから切り詰める。
+                self.session
+                    .conn
+                    .execute_in_transaction(&stmt.sql)
+                    .await
+                    .map(|mut r| {
+                        r.rows.truncate(preview_rows);
+                        r
+                    })
+            } else {
+                execute_preview(
+                    &self.session.conn,
+                    &stmt.sql,
+                    self.database.as_deref(),
+                    preview_rows,
+                )
+                .await
+            }
+        } else if self.guard.active {
             self.session.conn.execute_in_transaction(&stmt.sql).await
         } else {
             self.session
@@ -439,14 +729,24 @@ impl Runner {
                 if let Some(db) = parse_use_database(self.driver, &stmt.sql) {
                     self.database = Some(db);
                 }
+                if self.batch.is_some() {
+                    self.emit_batch(BatchStatementResult::ok(stmt.sql.clone(), &r));
+                }
                 if self.guard.active {
                     self.pending_in_tx += 1;
-                } else {
+                } else if !external_tx {
                     self.committed.fetch_add(1, Ordering::SeqCst);
                 }
                 None
             }
             Err(e) => self.on_failure(&stmt, e).await,
+        }
+    }
+
+    /// バッチ実行の 1 文ぶんの結果を通知する (バッチモード以外では何もしない)。
+    fn emit_batch(&mut self, result: BatchStatementResult) {
+        if let Some(b) = self.batch.as_mut() {
+            (b.on_result)(result);
         }
     }
 
@@ -461,6 +761,9 @@ impl Runner {
 
     async fn on_failure(&mut self, stmt: &ScriptStatement, e: AppError) -> Option<ScriptRun> {
         self.failed_count += 1;
+        if self.batch.is_some() {
+            return self.on_batch_failure(stmt, e).await;
+        }
         let failure = ScriptFailure {
             index: self.seen,
             line: stmt.line,
@@ -481,6 +784,33 @@ impl Runner {
         }
         let message = format!("line {}: {}", stmt.line, e);
         Some(self.abort_with(message, Some(failure)).await)
+    }
+
+    /// バッチ実行の失敗。エラーを 1 文の結果として通知し、停止モードなら残りを
+    /// スキップ扱いにする。ランナー自身が開いたトランザクションは、中途半端な状態を
+    /// 残さないようここで ROLLBACK する (`.sql` スクリプト実行の `abort_with` と同じ)。
+    /// 常に `None` を返す — 打ち切りは `skipping` で表し、コアは最後まで文を読み進める。
+    async fn on_batch_failure(&mut self, stmt: &ScriptStatement, e: AppError) -> Option<ScriptRun> {
+        tracing::warn!(
+            session_id = %self.session.id,
+            line = stmt.line,
+            error = %e,
+            "batch statement failed"
+        );
+        self.emit_batch(BatchStatementResult::error(stmt.sql.clone(), e.to_string()));
+        if !self.options.continue_on_error {
+            if let Some(b) = self.batch.as_mut() {
+                b.skipping = true;
+            }
+            if self.guard.active {
+                self.guard.active = false;
+                self.pending_in_tx = 0;
+                if let Err(err) = self.session.conn.finish_transaction(false).await {
+                    tracing::warn!(session_id = %self.session.id, error = %err, "batch: rollback failed");
+                }
+            }
+        }
+        None
     }
 
     /// 実行を止める。開いているトランザクションがあれば ROLLBACK する。
@@ -754,6 +1084,179 @@ async fn spawn_script(
     if let Some(state) = app.try_state::<AppState>() {
         state.forget_stream(&stream_id, stream_token).await;
     }
+}
+
+/// `run_sql_batch` が Channel で送るメッセージ (#1256)。`kind` タグ付きで、フロントの
+/// `listenBatchStream` (`src/api/tauri.ts`) と `schemas.ts` の `batch*Message` が対応する。
+#[derive(Debug, Serialize, Clone)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum BatchStreamMessage {
+    /// 実行を始める直前に 1 度だけ。`total` は分割後の文の数。
+    Started { total: u64 },
+    /// 終わった文の結果を 150ms ごとにまとめて届ける (1 文ごとに送らない)。
+    Results { results: Vec<BatchStatementResult> },
+    Done {
+        ok: u64,
+        errors: u64,
+        skipped: u64,
+        elapsed_ms: u64,
+    },
+    Error {
+        error: String,
+        connection_lost: bool,
+    },
+    /// `cancel_stream` がこのストリームを止めたとき。`delivered_statements` は
+    /// 確定済み (キャンセルしても残る) 文の数。
+    Cancelled { delivered_statements: u64 },
+}
+
+/// 結果の間引き送信 + 件数集計。`run_script_core_with` の `on_result` と、終了時の
+/// 最終フラッシュ (コマンド側) の両方から触るので `Arc<Mutex<_>>` で共有する。
+struct BatchEmitter {
+    channel: Channel<BatchStreamMessage>,
+    pending: Vec<BatchStatementResult>,
+    last_flush: Instant,
+    ok: u64,
+    errors: u64,
+    skipped: u64,
+}
+
+impl BatchEmitter {
+    fn push(&mut self, r: BatchStatementResult) {
+        match r.status {
+            BatchStatus::Ok => self.ok += 1,
+            BatchStatus::Error => self.errors += 1,
+            BatchStatus::Skipped => self.skipped += 1,
+        }
+        self.pending.push(r);
+        if self.last_flush.elapsed() >= PROGRESS_INTERVAL {
+            self.flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        self.last_flush = Instant::now();
+        if self.pending.is_empty() {
+            return;
+        }
+        let results = std::mem::take(&mut self.pending);
+        if let Err(e) = self.channel.send(BatchStreamMessage::Results { results }) {
+            tracing::warn!(error = %e, "failed to send batch results message");
+        }
+    }
+}
+
+/// `Mutex` の毒化は無視してロックを取る (中身は単純な集計値で、毒化しても整合する)。
+fn lock_emitter(m: &std::sync::Mutex<BatchEmitter>) -> std::sync::MutexGuard<'_, BatchEmitter> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// エディタの複数文 SQL をまとめて実行する (#1256)。分割・読み取り専用ガード・実行・
+/// SELECT のプレビュー行の切り詰めまでバックエンドで行い、結果は Channel へ 150ms
+/// 間引きでまとめて送る。キャンセルは `cancel_stream`。
+///
+/// 明示トランザクション中は各文を同じ接続 (`execute_in_transaction`) で実行する。
+/// 履歴には記録しない (従来の `run_query` 直列実行と同じ)。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_sql_batch(
+    app: AppHandle,
+    session_id: String,
+    stream_id: String,
+    database: Option<String>,
+    sql: String,
+    stop_on_error: bool,
+    preview_rows: usize,
+    on_event: Channel<BatchStreamMessage>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let total = split_script(session.conn.driver_kind(), &sql).len() as u64;
+    if let Err(e) = on_event.send(BatchStreamMessage::Started { total }) {
+        tracing::warn!(stream_id = %stream_id, error = %e, "failed to send batch started message");
+    }
+
+    let committed = Arc::new(AtomicU64::new(0));
+    let cancel_channel = on_event.clone();
+    // register_stream をタスク本体より前に完了させるゲート (`run_query_stream` と同じ理由)。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
+    let stream_id_for_task = stream_id.clone();
+    let committed_for_task = committed.clone();
+    let handle = tokio::spawn(async move {
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
+        let emitter = Arc::new(std::sync::Mutex::new(BatchEmitter {
+            channel: on_event.clone(),
+            pending: Vec::new(),
+            last_flush: Instant::now(),
+            ok: 0,
+            errors: 0,
+            skipped: 0,
+        }));
+        let sink = emitter.clone();
+        let outcome = run_batch_core(
+            session,
+            sql,
+            database,
+            stop_on_error,
+            preview_rows,
+            committed_for_task,
+            move |r| lock_emitter(&sink).push(r),
+        )
+        .await;
+        let (ok, errors, skipped) = {
+            let mut g = lock_emitter(&emitter);
+            g.flush();
+            (g.ok, g.errors, g.skipped)
+        };
+        let msg = match outcome {
+            Ok(ScriptRun::Done { elapsed_ms, .. }) => BatchStreamMessage::Done {
+                ok,
+                errors,
+                skipped,
+                elapsed_ms,
+            },
+            Ok(ScriptRun::Failed { message, .. }) => BatchStreamMessage::Error {
+                error: message,
+                connection_lost: false,
+            },
+            Err(e) => BatchStreamMessage::Error {
+                connection_lost: e.is_connection_lost(),
+                error: e.to_string(),
+            },
+        };
+        if let Err(e) = on_event.send(msg) {
+            tracing::warn!(stream_id = %stream_id_for_task, error = %e, "failed to send batch terminal message");
+        }
+        if let Some(state) = app.try_state::<AppState>() {
+            state.forget_stream(&stream_id_for_task, token).await;
+        }
+    });
+    let token = state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: committed,
+                kind: StreamKind::Script,
+                on_cancel: Some(Box::new(move |delivered| {
+                    let _ = cancel_channel.send(BatchStreamMessage::Cancelled {
+                        delivered_statements: delivered,
+                    });
+                })),
+            },
+        )
+        .await;
+    let _ = ready_tx.send(token);
+    Ok(())
 }
 
 #[cfg(test)]

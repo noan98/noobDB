@@ -1,4 +1,50 @@
 {
+  "batchStreamCancelledMessage": {
+    "deliveredStatements": 2,
+    "kind": "cancelled"
+  },
+  "batchStreamDoneMessage": {
+    "elapsedMs": 9,
+    "errors": 1,
+    "kind": "done",
+    "ok": 1,
+    "skipped": 1
+  },
+  "batchStreamErrorMessage": {
+    "connectionLost": true,
+    "error": "connection reset by peer",
+    "kind": "error"
+  },
+  "batchStreamResultsMessage": {
+    "kind": "results",
+    "results": [
+      {
+        "columns": [
+          {
+            "name": "id",
+            "type_name": "INTEGER"
+          }
+        ],
+        "elapsedMs": 2,
+        "rows": [
+          [
+            1
+          ]
+        ],
+        "sql": "SELECT 1",
+        "status": "ok"
+      },
+      {
+        "error": "boom",
+        "sql": "DELETE FROM t",
+        "status": "error"
+      }
+    ]
+  },
+  "batchStreamStartedMessage": {
+    "kind": "started",
+    "total": 3
+  },
   "cancelStreamResponse": {
     "cancelled": true,
     "deliveredRows": 42
@@ -217,7 +263,8 @@
     "profile_id": "abc12345",
     "rows": 1,
     "rows_affected": null,
-    "sql": "SELECT 1",
+    "sql_len": 8,
+    "sql_preview": "SELECT 1",
     "status": "ok"
   },
   "importDoneEvent": {
@@ -387,7 +434,9 @@
     "elapsedMs": 12,
     "hasColumns": true,
     "kind": "done",
+    "readOnly": false,
     "rowsAffected": 0,
+    "schemaMayChange": true,
     "serverMessages": [
       {
         "severity": "warning",

@@ -165,10 +165,14 @@ async fn list_in(
     from: Option<&str>,
     to: Option<&str>,
 ) -> Result<Vec<HistoryEntry>> {
-    let mut sql = String::from(
-        "SELECT id, profile_id, driver, \"database\", \"sql\", \"rows\",
+    // 一覧には SQL 全文を載せない (#1256)。要約に必要な先頭だけを substr で取り、
+    // 全文の長さは length() で得る。
+    let mut sql = format!(
+        "SELECT id, profile_id, driver, \"database\",
+                substr(\"sql\", 1, {PREVIEW_FETCH_CHARS}) AS sql_head,
+                length(\"sql\") AS sql_len, \"rows\",
                 rows_affected, elapsed_ms, status, error, executed_at
-         FROM query_history",
+         FROM query_history"
     );
     let mut conds: Vec<&str> = Vec::new();
     if profile_id.is_some() {
@@ -214,7 +218,71 @@ async fn list_in(
     q = q.bind(limit.max(1));
 
     let rows: Vec<SqliteRow> = q.fetch_all(pool).await?;
-    Ok(rows.iter().map(row_to_entry).collect())
+    let mut entries = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let mut entry = row_to_entry(r);
+        // 取得した先頭が途中で切れていて、畳んだ結果が上限に満たない (= 空白だらけの
+        // SQL) ときだけ、正確な要約のために全文を取り直す。通常は発生しない。
+        let head_chars = r
+            .try_get::<String, _>("sql_head")
+            .map(|h| h.chars().count() as i64)
+            .unwrap_or(0);
+        if entry.sql_len > head_chars
+            && entry.sql_preview.chars().count() <= super::SQL_PREVIEW_CHARS
+        {
+            if let Some(full) = get_sql_in(pool, entry.id).await? {
+                entry.sql_preview = super::sql_preview(&full);
+            }
+        }
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
+/// 要約のために SQL の先頭から読む最大文字数。要約は空白を畳んだ先頭
+/// [`super::SQL_PREVIEW_CHARS`] 文字なので、畳みで縮んでも足りる余裕を見て 4 倍読む。
+const PREVIEW_FETCH_CHARS: usize = super::SQL_PREVIEW_CHARS * 4;
+
+/// 履歴 1 件の SQL 全文を返す (`get_history_sql`)。無ければ `None`。
+pub async fn get_sql(id: i64) -> Result<Option<String>> {
+    get_sql_in(pool().await?, id).await
+}
+
+async fn get_sql_in(pool: &SqlitePool, id: i64) -> Result<Option<String>> {
+    let row: Option<SqliteRow> = sqlx::query("SELECT \"sql\" FROM query_history WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|r| r.try_get::<String, _>("sql").ok()))
+}
+
+/// `profile_id` の直近の実行 SQL 全文を新しい順に返す (↑/↓ 履歴ナビ・コマンド
+/// パレット用、#1256)。一覧 (`list`) と違い要約ではなく全文だが、メタデータを
+/// 運ばないぶん軽い。`profile_id` が `None` なら全プロファイル。
+pub async fn list_sqls(profile_id: Option<&str>, limit: i64) -> Result<Vec<String>> {
+    list_sqls_in(pool().await?, profile_id, limit).await
+}
+
+async fn list_sqls_in(
+    pool: &SqlitePool,
+    profile_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<String>> {
+    let sql = if profile_id.is_some() {
+        "SELECT \"sql\" FROM query_history WHERE profile_id = ?
+         ORDER BY executed_at DESC, id DESC LIMIT ?"
+    } else {
+        "SELECT \"sql\" FROM query_history ORDER BY executed_at DESC, id DESC LIMIT ?"
+    };
+    let mut q = sqlx::query(sql);
+    if let Some(pid) = profile_id {
+        q = q.bind(pid.to_string());
+    }
+    let rows: Vec<SqliteRow> = q.bind(limit.max(1)).fetch_all(pool).await?;
+    Ok(rows
+        .iter()
+        .map(|r| r.try_get::<String, _>("sql").unwrap_or_default())
+        .collect())
 }
 
 /// Deletes history rows. `Some(profile_id)` clears just that profile; `None`
@@ -244,7 +312,8 @@ fn row_to_entry(r: &SqliteRow) -> HistoryEntry {
         profile_id: r.try_get("profile_id").unwrap_or(None),
         driver: r.try_get("driver").unwrap_or_default(),
         database: r.try_get("database").unwrap_or(None),
-        sql: r.try_get("sql").unwrap_or_default(),
+        sql_preview: super::sql_preview(&r.try_get::<String, _>("sql_head").unwrap_or_default()),
+        sql_len: r.try_get("sql_len").unwrap_or_default(),
         rows: r.try_get("rows").unwrap_or(None),
         rows_affected: r.try_get("rows_affected").unwrap_or(None),
         elapsed_ms: r.try_get("elapsed_ms").unwrap_or(None),
@@ -324,7 +393,7 @@ mod tests {
             .unwrap();
         assert_eq!(all.len(), 3);
         // Newest executed_at first.
-        assert_eq!(all[0].sql, "SELECT 3");
+        assert_eq!(all[0].sql_preview, "SELECT 3");
 
         let p1 = list_in(&pool, Some("p1"), 100, None, None, None, None)
             .await
@@ -359,14 +428,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].sql, "SELECT * FROM users");
+        assert_eq!(hits[0].sql_preview, "SELECT * FROM users");
 
         // `_` must be matched literally, not as a wildcard.
         let underscore = list_in(&pool, None, 100, Some("a_b"), None, None, None)
             .await
             .unwrap();
         assert_eq!(underscore.len(), 1);
-        assert_eq!(underscore[0].sql, "SELECT a_b FROM t");
+        assert_eq!(underscore[0].sql_preview, "SELECT a_b FROM t");
     }
 
     #[tokio::test]
@@ -435,7 +504,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(err_only.len(), 1);
-        assert_eq!(err_only[0].sql, "SELECT 2");
+        assert_eq!(err_only[0].sql_preview, "SELECT 2");
     }
 
     #[tokio::test]
@@ -464,7 +533,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(from_only.len(), 2);
-        assert!(from_only.iter().all(|e| e.sql != "SELECT 1"));
+        assert!(from_only.iter().all(|e| e.sql_preview != "SELECT 1"));
 
         // Inclusive upper bound only.
         let to_only = list_in(
@@ -479,7 +548,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(to_only.len(), 2);
-        assert!(to_only.iter().all(|e| e.sql != "SELECT 3"));
+        assert!(to_only.iter().all(|e| e.sql_preview != "SELECT 3"));
 
         // Both bounds narrow to the single row in between (inclusive on the
         // exact boundary value too).
@@ -495,7 +564,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(both.len(), 1);
-        assert_eq!(both[0].sql, "SELECT 2");
+        assert_eq!(both[0].sql_preview, "SELECT 2");
     }
 
     #[tokio::test]
@@ -521,7 +590,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(remaining.len(), 3);
-        let sqls: Vec<&str> = remaining.iter().map(|e| e.sql.as_str()).collect();
+        let sqls: Vec<&str> = remaining.iter().map(|e| e.sql_preview.as_str()).collect();
         // The two oldest (by insertion order / id) were evicted; the three
         // most recently inserted survive.
         assert!(!sqls.contains(&"SELECT 0"));
@@ -551,5 +620,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(remaining.len(), 3);
+    }
+    #[tokio::test]
+    async fn list_returns_a_collapsed_preview_and_the_full_length_not_the_body() {
+        let pool = temp_pool().await;
+        let body = format!("SELECT\n  {}\nFROM t", "col, ".repeat(2000));
+        record_in(&pool, entry("p1", &body, "2026-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        let got = list_in(&pool, None, 10, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 1);
+        // 先頭 400 文字に畳まれ、末尾は省略記号。
+        assert_eq!(
+            got[0].sql_preview.chars().count(),
+            super::super::SQL_PREVIEW_CHARS + 1
+        );
+        assert!(got[0].sql_preview.starts_with("SELECT col, col,"));
+        assert!(got[0].sql_preview.ends_with('…'));
+        assert_eq!(got[0].sql_len, body.chars().count() as i64);
+    }
+
+    #[tokio::test]
+    async fn preview_of_a_whitespace_heavy_sql_is_still_exact() {
+        let pool = temp_pool().await;
+        // 先頭 4 倍ぶんの読み出しがほぼ空白で埋まっても、要約は正確 (全文を取り直す)。
+        let body = format!("SELECT{}1", " ".repeat(PREVIEW_FETCH_CHARS + 50));
+        record_in(&pool, entry("p1", &body, "2026-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        let got = list_in(&pool, None, 10, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(got[0].sql_preview, "SELECT 1");
+    }
+
+    #[tokio::test]
+    async fn get_sql_and_list_sqls_return_full_text() {
+        let pool = temp_pool().await;
+        let long = format!("SELECT {}", "x".repeat(5000));
+        record_in(&pool, entry("p1", &long, "2026-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        record_in(&pool, entry("p1", "SELECT 2", "2026-01-02T00:00:00Z"))
+            .await
+            .unwrap();
+        record_in(&pool, entry("p2", "SELECT 3", "2026-01-03T00:00:00Z"))
+            .await
+            .unwrap();
+        let listed = list_in(&pool, Some("p1"), 10, None, None, None, None)
+            .await
+            .unwrap();
+        let old = listed.iter().find(|e| e.sql_len > 5000).unwrap();
+        assert_eq!(
+            get_sql_in(&pool, old.id).await.unwrap().as_deref(),
+            Some(long.as_str())
+        );
+        assert_eq!(get_sql_in(&pool, 9999).await.unwrap(), None);
+
+        let sqls = list_sqls_in(&pool, Some("p1"), 10).await.unwrap();
+        assert_eq!(sqls, vec!["SELECT 2".to_string(), long]);
+        assert_eq!(
+            list_sqls_in(&pool, None, 1).await.unwrap(),
+            vec!["SELECT 3"]
+        );
     }
 }
