@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 import { api, type TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import {
@@ -19,7 +20,9 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Radio, Select } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Icon, ICON_SIZES } from "./Icon";
-import { Spinner } from "./Spinner";
+import { SkeletonSearchRows } from "./Skeleton";
+import { shouldStaggerEntrance } from "./commandPaletteSearch";
+import { staggerContainer, variants } from "../motion";
 
 /**
  * DB 全体からの値検索 (#748)。「この値はどのテーブル・どの列にあるか」を、対象
@@ -78,6 +81,10 @@ interface Progress {
   currentTable: string | null;
 }
 
+// CommandPalette と同じ stagger 語彙 (#1212)。
+const MotionHitList = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionHitCard = chakra(motion.div, {}, { forwardProps: ["variants"] });
+
 const MATCH_MODES: MatchMode[] = ["contains", "prefix", "exact"];
 
 export function DataSearchModal({
@@ -90,6 +97,7 @@ export function DataSearchModal({
   onClose,
 }: Props) {
   const t = useT();
+  const reduced = useReducedMotion() ?? false;
   const { confirm, dialog: confirmDialog } = useConfirm();
 
   const [term, setTerm] = useState("");
@@ -306,9 +314,11 @@ export function DataSearchModal({
         </chakra.div>
 
         {meta.kind === "loading" && (
-          <chakra.div display="flex" alignItems="center" gap="2" fontSize="sm" color="app.textSecondary">
-            <Spinner size={14} />
-            {t("dataSearchLoadingMeta")}
+          <chakra.div display="flex" flexDirection="column" gap="2" aria-busy>
+            <chakra.div fontSize="sm" color="app.textSecondary">
+              {t("dataSearchLoadingMeta")}
+            </chakra.div>
+            <SkeletonSearchRows rows={3} />
           </chakra.div>
         )}
         {meta.kind === "error" && <ErrorNote>{meta.message}</ErrorNote>}
@@ -456,7 +466,6 @@ export function DataSearchModal({
 
             {(scanning || finished) && progress && (
               <chakra.div display="flex" alignItems="center" gap="2" fontSize="sm">
-                {scanning && <Spinner size={14} />}
                 <chakra.span fontWeight={500} color="app.text">
                   {scanning
                     ? t("dataSearchProgress", {
@@ -479,13 +488,22 @@ export function DataSearchModal({
               <EmptyState compact icon="search" title={t("dataSearchNoHits")} />
             )}
 
-            {hitEntries.length > 0 && (
+            {(hitEntries.length > 0 || scanning) && (
               <FormSection>
                 <FieldLabel as="div">{t("dataSearchHitsHeading")}</FieldLabel>
-                <chakra.div display="flex" flexDirection="column" gap="2">
-                  {hitEntries.map((entry) => (
-                    <chakra.div
+                <MotionHitList
+                  display="flex"
+                  flexDirection="column"
+                  gap="2"
+                  aria-busy={scanning}
+                  variants={staggerContainer(reduced)}
+                  initial="initial"
+                  animate="animate"
+                >
+                  {hitEntries.map((entry, entryIndex) => (
+                    <MotionHitCard
                       key={entry.table}
+                      variants={shouldStaggerEntrance(entryIndex) ? variants.staggerItem : undefined}
                       border="1px solid"
                       borderColor="app.border"
                       borderRadius="md"
@@ -533,9 +551,11 @@ export function DataSearchModal({
                           </chakra.button>
                         );
                       })}
-                    </chakra.div>
+                    </MotionHitCard>
                   ))}
-                </chakra.div>
+                  {/* スキャン中は結果行の形を模した skeleton を末尾に出す (#1212)。 */}
+                  {scanning && <SkeletonSearchRows rows={hitEntries.length === 0 ? 3 : 1} />}
+                </MotionHitList>
               </FormSection>
             )}
 

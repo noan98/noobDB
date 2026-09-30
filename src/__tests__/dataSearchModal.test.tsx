@@ -33,6 +33,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
   };
 });
 
+import { api } from "../api/tauri";
 import { DataSearchModal } from "../components/DataSearchModal";
 
 beforeEach(() => {
@@ -67,5 +68,58 @@ describe("DataSearchModal empty state (#847)", () => {
     await waitFor(() => {
       expect(screen.getByText(t("dataSearchNoHits"))).toBeInTheDocument();
     });
+  });
+});
+
+describe("DataSearchModal skeleton (#1212)", () => {
+  const renderModal = () =>
+    renderWithProviders(
+      <DataSearchModal
+        sessionId="s1"
+        database="testdb"
+        driver="mysql"
+        isProduction={false}
+        profileName="local"
+        onOpenHit={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+  it("shows skeleton rows while the table metadata is loading", async () => {
+    vi.mocked(api.listTables).mockReturnValueOnce(new Promise<string[]>(() => {}));
+    renderModal();
+    expect(await screen.findByText(t("dataSearchLoadingMeta"))).toBeInTheDocument();
+    expect(screen.getAllByTestId("search-skeleton-row").length).toBeGreaterThan(0);
+  });
+
+  it("shows skeleton rows in the hits area while scanning, and removes them when done", async () => {
+    const user = userEvent.setup();
+    let resolve: (v: QueryResult) => void = () => {};
+    vi.mocked(api.runQuery).mockReturnValueOnce(
+      new Promise<QueryResult>((r) => {
+        resolve = r;
+      }),
+    );
+    renderModal();
+
+    await user.type(await screen.findByLabelText(t("dataSearchTermLabel")), "needle");
+    await user.click(screen.getByRole("button", { name: t("dataSearchStart") }));
+    const startButtons = await screen.findAllByRole("button", { name: t("dataSearchStart") });
+    await user.click(startButtons[startButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("search-skeleton-row").length).toBeGreaterThan(0);
+    });
+
+    resolve({
+      columns: [{ name: "note", type_name: "int" }],
+      rows: [[0]],
+      rows_affected: 0,
+      elapsed_ms: 1,
+    } as unknown as QueryResult);
+    await waitFor(() => {
+      expect(screen.getByText(t("dataSearchNoHits"))).toBeInTheDocument();
+    });
+    expect(screen.queryAllByTestId("search-skeleton-row")).toHaveLength(0);
   });
 });
