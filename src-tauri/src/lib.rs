@@ -121,6 +121,24 @@ pub mod __test_api {
     // フィクスチャ生成専用のため struct そのものを再公開する。
     pub use crate::commands::import::CsvPreview;
 
+    // 検索系 (#1261): グローバルオブジェクト検索 / Where-used / 値検索。純ロジックは共有
+    // ゴールデン (`tests/{object_search,where_used,data_search}_golden.rs`) が、コマンド層の
+    // コアは SQLite 統合テスト (`tests/search_integration.rs`) が Tauri 無しで駆動する。
+    pub use crate::commands::search::{
+        data_search_core, find_where_used_report, search_schema_objects_core, DataSearchEntry,
+        DataSearchMessage, DataSearchRequest, ObjectSearchScope, WhereUsedReport,
+    };
+    pub use crate::db::data_search::{
+        build_column_predicate, build_table_scan_sql, classify_type_name, is_numeric_term,
+        parse_scan_row, search_target_for_kind, should_skip_table_for_scan, CellKind, ColumnHit,
+        MatchMode, ScanColumn, SearchTarget, TableScanSql,
+    };
+    pub use crate::db::object_search::{ObjectHit, ObjectIndex};
+    pub use crate::db::where_used::{
+        analyze_definition, find_references, prepare_for_reference_scan, DefinitionAnalysis,
+        ReferenceConfidence, WhereUsedTarget,
+    };
+
     // 接続間データ転送 (#986)。Tauri を介さずに統合テストから駆動するコア。
     pub use crate::commands::transfer::{
         transfer_data_inner, TransferColumnInfo, TransferOutcome, TransferRequest,
@@ -969,6 +987,9 @@ pub fn run() {
             commands::schema::list_table_comments,
             commands::schema::table_statistics,
             commands::schema::describe_database,
+            commands::search::search_schema_objects,
+            commands::search::find_where_used,
+            commands::search::data_search_stream,
             commands::schema::alter_table_context,
             commands::schema::incoming_foreign_keys,
             commands::server::server_info,

@@ -1666,6 +1666,28 @@ impl MySqlConn {
         Ok(super::group_columns_by_table(pairs))
     }
 
+    /// 全スキーマの (スキーマ, テーブル, 列) を 1 回の問い合わせで返す (#1261)。
+    /// [`MySqlConn::schema_overview`] の `TABLE_SCHEMA = ?` を外しただけの SQL で、
+    /// グローバルオブジェクト検索の索引構築が DB 数ぶんの往復をしないために使う。
+    pub async fn schema_columns_all(&self) -> Result<Vec<(String, String, String)>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+               FROM information_schema.COLUMNS
+               ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| {
+                Ok((
+                    decode_text_col(r, 0)?,
+                    decode_text_col(r, 1)?,
+                    decode_text_col(r, 2)?,
+                ))
+            })
+            .collect()
+    }
+
     pub async fn table_row_estimates(&self, db: &str) -> Result<Vec<TableRowEstimate>> {
         // information_schema.TABLES.TABLE_ROWS is the engine's own row estimate
         // (exact for MyISAM, approximate for InnoDB) and needs no table scan.

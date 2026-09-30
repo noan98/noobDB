@@ -1,10 +1,12 @@
-// スキーマ横断のグローバルオブジェクト検索の純ロジック。
+// グローバルオブジェクト検索 (#1261) の **TS オラクル**。
 //
-// `schema_overview` (DB ごとの TableSchema[]) を検索インデックス化し、テーブル名・
-// カラム名を大小無視の部分一致でスコアリングして返す。UI (ObjectSearchModal) と
-// データ取得 (App.tsx) はここを使うだけ。副作用が無いので Vitest でテストする。
+// 検索のスコアリングは Rust (`src-tauri/src/db/object_search.rs`) へ移植済みで、製品コードに
+// この実装は無い。移植前の実装 (旧 `src/objectSearch.ts`) をそのままテスト資産として残し、
+// 共有ゴールデン `fixtures/objectSearchVectors.json` の期待値がこの実装の出力と一致する
+// ことを `objectSearchGolden.test.ts` で固定する (Rust 側は同じベクタを
+// `tests/object_search_golden.rs` が検証する)。これで「移植前後で順位が同一」を保証する。
 
-import type { TableSchema } from "./api/tauri";
+import type { TableSchema } from "../../api/tauri";
 
 /** 検索ヒット 1 件。テーブルそのものか、テーブル内のカラムか。 */
 export interface ObjectEntry {
