@@ -13,7 +13,6 @@ import { Tooltip } from "./Tooltip";
 import {
   activeSpecs,
   buildFkSelectSql,
-  buildTestDataInsertStatements,
   generateRows,
   inferColumnSpec,
   type ColumnGenSpec,
@@ -28,8 +27,8 @@ import {
  * 先頭数行のプレビューを確認してから投入する。FK カラムは参照先の既存値を
  * `run_query` (SELECT DISTINCT ... LIMIT) で取得してランダム選択し整合性を保つ。
  *
- * 投入は既存 IPC の `run_query_transaction` (all-or-nothing) のみで行い、
- * バックエンドの変更はない。読み取り専用セッションはバックエンドが拒否する
+ * 投入は `insert_generated_rows` (#1259、生成行を Rust の `import_rows` へ直接渡す
+ * 1 トランザクション = all-or-nothing) で行う。読み取り専用セッションはバックエンドが拒否する
  * (導線もメニュー側で無効化済み)。本番接続 (`is_production`) ではテーブル名の
  * タイプ入力を要求する強確認を挟む (DangerousQueryDialog 系と同じ UX ガード)。
  */
@@ -48,7 +47,6 @@ interface Props {
 const MAX_ROWS = 10000;
 const PREVIEW_ROWS = 5;
 const FK_CANDIDATE_LIMIT = 1000;
-const INSERT_BATCH_SIZE = 100;
 
 const STRATEGY_LABEL_KEYS: Record<GenStrategy, I18nKey> = {
   serial: "testDataStrategySerial",
@@ -186,15 +184,15 @@ export function TestDataModal({
     setRunning(true);
     try {
       const rows = generateRows(specs, rowCount, seed);
-      const statements = buildTestDataInsertStatements(
-        driver,
+      // 生成行を Rust の `insert_generated_rows` (`Connection::import_rows`、1 トランザクション)
+      // へそのまま渡す。100 行ずつのリテラル INSERT 文を JS で組み立てて送る経路は廃止 (#1259)。
+      const result = await api.insertGeneratedRows({
+        sessionId,
         database,
         table,
-        insertColumns.map((s) => s.column),
+        columns: insertColumns.map((s) => s.column),
         rows,
-        INSERT_BATCH_SIZE,
-      );
-      const result = await api.runQueryTransaction(sessionId, statements, database);
+      });
       toast.success(t("testDataSuccess", { count: rowCount, table, ms: result.elapsed_ms }));
       onInserted();
       onClose();

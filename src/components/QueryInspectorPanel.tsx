@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
-import { api, type QueryStatsSupport, type StatementStat } from "../api/tauri";
+import { api, type QueryStatsSupport, type StatementDeltaRow } from "../api/tauri";
 import { useT } from "../i18n";
 import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import {
@@ -16,13 +16,11 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
-  computeStatDelta,
   detectNPlusOne,
   filterLiveTail,
   formatMs,
   isPrivilegeMasked,
   mergeLiveTail,
-  nPlusOneFromRate,
   supportReasonI18nKey,
   type LiveTailEntry,
   type NPlusOneOptions,
@@ -42,7 +40,10 @@ import { Tooltip } from "./Tooltip";
  *   流す。自セッション・noobDB 内部クエリはバックエンドで除外済み。
  * - **フィンガープリント集計**: 同型クエリ (digest) 単位の実行回数/平均・最悪
  *   レイテンシ/総時間/行数を「記録開始時点からの差分」でランキング表示する。
- *   差分計算は `queryInspector.ts` の純ロジック。
+ *   差分の引き算・N+1 目安・ライブテールの指紋化はバックエンド (Rust の
+ *   `db/inspector.rs`) がセッション単位の baseline を持って行い、ここへは差分行
+ *   (calls > 0) だけが届く。SQL 本文は digest の初出時のみ届くので digest キーで
+ *   キャッシュする (#1259)。
  * - **N+1 検出**: 短時間に大量発行される同型クエリを決定的ルールでフラグする。
  *   閾値 (回数/時間窓) は設定として永続化。
  *
@@ -124,17 +125,19 @@ export function QueryInspectorPanel({
   const [recording, setRecording] = useState(false);
   const [tab, setTab] = useState<"tail" | "stats">("tail");
   const [tail, setTail] = useState<LiveTailEntry[]>([]);
-  const [baseline, setBaseline] = useState<StatementStat[]>([]);
   const [baselineAt, setBaselineAt] = useState<number | null>(null);
-  const [stats, setStats] = useState<StatementStat[]>([]);
+  // バックエンドが返した差分行 (calls > 0、総時間降順)。SQL 本文は初出の digest にだけ載るため
+  // `fingerprintCache` に溜めて行へ結び付ける。
+  const [deltaRows, setDeltaRows] = useState<StatementDeltaRow[]>([]);
+  const fingerprintCache = useRef(new Map<string, string>());
   const [error, setError] = useState<string | null>(null);
   const [sampledAt, setSampledAt] = useState<Date | null>(null);
   const [filterText, setFilterText] = useState("");
   const [minDurationInput, setMinDurationInput] = useState("");
   const [showCumulative, setShowCumulative] = useState(false);
-  // 直前スナップショット (digest レートで N+1 目安を出すために保持)。
-  const prevStatsRef = useRef<{ stats: StatementStat[]; at: number } | null>(null);
-  const [rateFlagged, setRateFlagged] = useState<Set<string>>(new Set());
+  // ポーリング応答と「累積表示」切替の再計算が競合しても、古い方の設定で組んだ行で
+  // 上書きしないよう、最新の切替状態を ref でも持つ。
+  const cumulativeRef = useRef(false);
   const busyRef = useRef(false);
   // 前提可否プローブのリクエスト世代カウンタ (再取得ボタンでの再実行時、旧要求の
   // 応答が後から返ってきても上書きしないようにする。#848)。
@@ -157,11 +160,9 @@ export function QueryInspectorPanel({
     setSupportError(null);
     setRecording(false);
     setTail([]);
-    setBaseline([]);
     setBaselineAt(null);
-    setStats([]);
-    prevStatsRef.current = null;
-    setRateFlagged(new Set());
+    setDeltaRows([]);
+    fingerprintCache.current.clear();
     api
       .queryStatsSupport(sessionId)
       .then((s) => {
@@ -185,6 +186,17 @@ export function QueryInspectorPanel({
     else if (tab === "stats" && !support.statements && support.live_tail) setTab("tail");
   }, [support, tab]);
 
+  // 差分行を取り込む。SQL 本文は「送信済み」としてバックエンドが二度と送らないので、
+  // 破棄する応答 (切替と競合した古い設定のもの) でも本文のキャッシュだけは必ず更新する。
+  const applyDeltaRows = useCallback((rows: StatementDeltaRow[], requestedCumulative: boolean) => {
+    for (const r of rows) {
+      if (r.fingerprint != null) {
+        fingerprintCache.current.set(`${r.digest} ${r.database ?? ""}`, r.fingerprint);
+      }
+    }
+    if (requestedCumulative === cumulativeRef.current) setDeltaRows(rows);
+  }, []);
+
   // ポーリング 1 ティック: ライブテール → digest スナップショットの順に取得する。
   // busyRef で前回のティックが終わるまでスキップ (SSH トンネル等の低速経路対策)。
   const tick = useCallback(async () => {
@@ -197,21 +209,14 @@ export function QueryInspectorPanel({
         setTail((cur) => mergeLiveTail(cur, sample, now));
       }
       if (support.statements) {
-        const snapshot = await api.sampleStatementStats(sessionId);
-        const now = Date.now();
-        const prev = prevStatsRef.current;
-        if (prev && now > prev.at) {
-          // 直近ポーリング間隔の差分レートで N+1 目安をフラグする。
-          const recent = computeStatDelta(prev.stats, snapshot);
-          const flagged = new Set(
-            recent
-              .filter((r) => nPlusOneFromRate(r.calls, now - prev.at, nPlusOneOpts))
-              .map((r) => `${r.digest} ${r.database ?? ""}`),
-          );
-          setRateFlagged(flagged);
-        }
-        prevStatsRef.current = { stats: snapshot, at: now };
-        setStats(snapshot);
+        const requested = cumulativeRef.current;
+        const rows = await api.sampleStatementDelta(sessionId, {
+          cumulative: requested,
+          refresh: true,
+          nPlusOneMinCount: nPlusOneOpts.minCount,
+          nPlusOneWindowMs: nPlusOneOpts.windowMs,
+        });
+        applyDeltaRows(rows, requested);
       }
       setError(null);
       setSampledAt(new Date());
@@ -220,27 +225,22 @@ export function QueryInspectorPanel({
     } finally {
       busyRef.current = false;
     }
-  }, [sessionId, support, nPlusOneOpts]);
+  }, [sessionId, support, nPlusOneOpts, applyDeltaRows]);
 
   const startRecording = useCallback(async () => {
     if (!support || recording) return;
     setTail([]);
-    setStats([]);
+    setDeltaRows([]);
+    fingerprintCache.current.clear();
     setError(null);
-    prevStatsRef.current = null;
-    setRateFlagged(new Set());
-    // 差分表示の基準となる記録開始時点のスナップショットを先に取る。
+    // 差分表示の基準となる記録開始時点のスナップショットは、バックエンドがセッション状態に
+    // 保持する (サーバ側のカウンタはリセットしない)。
     if (support.statements) {
       try {
-        const snapshot = await api.sampleStatementStats(sessionId);
-        setBaseline(snapshot);
-        prevStatsRef.current = { stats: snapshot, at: Date.now() };
+        await api.startStatementRecording(sessionId);
       } catch (e) {
-        setBaseline([]);
         setError(String(e));
       }
-    } else {
-      setBaseline([]);
     }
     setBaselineAt(Date.now());
     setRecording(true);
@@ -286,9 +286,24 @@ export function QueryInspectorPanel({
     [tail],
   );
 
-  const deltaRows = useMemo(
-    () => computeStatDelta(showCumulative ? [] : baseline, stats),
-    [showCumulative, baseline, stats],
+  // 「累積値を表示」の切替: サーバへは問い合わせず、バックエンドが前回取得分を
+  // baseline 無視/有りで再計算して返す。
+  const toggleCumulative = useCallback(
+    (next: boolean) => {
+      setShowCumulative(next);
+      cumulativeRef.current = next;
+      if (!recording || !support?.statements) return;
+      void api
+        .sampleStatementDelta(sessionId, {
+          cumulative: next,
+          refresh: false,
+          nPlusOneMinCount: nPlusOneOpts.minCount,
+          nPlusOneWindowMs: nPlusOneOpts.windowMs,
+        })
+        .then((rows) => applyDeltaRows(rows, next))
+        .catch((e) => setError(String(e)));
+    },
+    [recording, support, sessionId, nPlusOneOpts, applyDeltaRows],
   );
 
   const copySql = useCallback(
@@ -302,6 +317,9 @@ export function QueryInspectorPanel({
 
   const reasonText = (code: string | null) =>
     code == null ? null : t(supportReasonI18nKey(code));
+
+  const fingerprintOf = (r: StatementDeltaRow) =>
+    fingerprintCache.current.get(`${r.digest} ${r.database ?? ""}`) ?? "";
 
   const liveTailFinding = (fingerprint: string) => tailFindings.get(fingerprint);
 
@@ -598,7 +616,7 @@ export function QueryInspectorPanel({
                   <Checkbox
                     checked={showCumulative}
                     aria-label={t("inspectorCumulativeLabel")}
-                    onChange={(e) => setShowCumulative(e.target.checked)}
+                    onChange={(e) => toggleCumulative(e.target.checked)}
                   />
                   {t("inspectorCumulativeLabel")}
                 </chakra.label>
@@ -642,15 +660,15 @@ export function QueryInspectorPanel({
                       {deltaRows.map((r) => (
                         <tr key={`${r.digest} ${r.database ?? ""}`}>
                           <chakra.td css={numTdCss}>{r.calls}</chakra.td>
-                          <chakra.td css={numTdCss}>{formatMs(r.totalTimeMs)}</chakra.td>
-                          <chakra.td css={numTdCss}>{formatMs(r.meanTimeMs)}</chakra.td>
-                          <chakra.td css={numTdCss}>{formatMs(r.maxTimeMs)}</chakra.td>
+                          <chakra.td css={numTdCss}>{formatMs(r.total_time_ms)}</chakra.td>
+                          <chakra.td css={numTdCss}>{formatMs(r.mean_time_ms)}</chakra.td>
+                          <chakra.td css={numTdCss}>{formatMs(r.max_time_ms)}</chakra.td>
                           <chakra.td css={numTdCss}>{r.rows ?? "–"}</chakra.td>
                           <chakra.td css={tdCss}>{r.database ?? "–"}</chakra.td>
-                          <Tooltip label={r.fingerprint}>
+                          <Tooltip label={fingerprintOf(r)}>
                             <chakra.td css={queryTdCss}>
-                              {oneLine(r.fingerprint)}
-                              {rateFlagged.has(`${r.digest} ${r.database ?? ""}`) && (
+                              {oneLine(fingerprintOf(r))}
+                              {r.n_plus_one && (
                                 <NPlusOneBadge
                                   title={t("inspectorNPlusOneRateExplain", {
                                     windowMs: settings.inspectorNPlusOneWindowMs,
@@ -665,7 +683,7 @@ export function QueryInspectorPanel({
                                 minWidth="24px"
                                 px="1.5"
                                 py="0.5"
-                                onClick={() => void copySql(r.fingerprint)}
+                                onClick={() => void copySql(fingerprintOf(r))}
                                 aria-label={t("inspectorCopySql")}
                               >
                                 <Icon name="copy" size={ICON_SIZES.sm} />

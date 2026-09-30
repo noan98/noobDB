@@ -318,9 +318,11 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
 describe("シナリオ: インラインセル編集 → pending → Apply (実ブラウザ)", () => {
   it("セルをダブルクリックで編集し、Apply で UPDATE が 1 トランザクションに乗る", async () => {
     registerAutoStream();
-    const applied: string[][] = [];
-    onCommand("run_query_transaction", (args) => {
-      applied.push(args.statements as string[]);
+    // 一括 UPDATE は構造化入力で `bulk_update_cells` に渡り、SQL の組み立てと 1 トランザ
+    // クションでの実行は Rust 側が行う (#1259)。ここではその要求の中身を検証する。
+    const applied: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      applied.push(args);
       // サーバ側データを更新し、Apply 後の自動リフレッシュで新値が返るようにする。
       fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
       return { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 };
@@ -356,10 +358,17 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
 
     await screen.getByRole("button", { name: t("editApplyButton") }).click();
 
-    // PK (id=2) を WHERE に使った UPDATE が 1 文だけトランザクションに乗る。
+    // PK (id=2) を条件にした qty = 42 の更新が、1 回の要求 (= 1 トランザクション) で送られる。
     await vi.waitFor(() => {
       expect(applied).toEqual([
-        ["UPDATE `appdb`.`fruits` SET `qty` = 42 WHERE `id` = 2;"],
+        {
+          sessionId: expect.any(String),
+          database: "appdb",
+          table: "fruits",
+          pkColumns: ["id"],
+          groups: [{ set: [{ column: "qty", value: { kind: "number", text: "42" } }], keys: [[2]] }],
+          extraStatements: [],
+        },
       ]);
     }, { timeout: 5000 });
 

@@ -16,7 +16,7 @@
 設定しないローカルの `cargo test` (= SQLite のみ) では**コマンド境界が 1 度も
 走りません**でした。各コマンドの State なしコア
 (`query_stats_support_inner` / `sample_live_queries_inner` /
-`sample_statement_stats_inner` / `server_info_inner` / `server_metrics_inner` /
+`start_statement_recording_inner` / `sample_statement_delta_inner` / `server_info_inner` / `server_metrics_inner` /
 `list_processes_inner`) を `__test_api` から公開し、常時実走の
 `tests/sqlite_integration.rs` が「SQLite 短絡パスの戻り値 (縮退レスポンス /
 非対応エラー)」「未知セッション ID での `SessionNotFound`」「読み取り操作は

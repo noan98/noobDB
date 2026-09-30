@@ -8,8 +8,8 @@ import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import {
   buildHealthRows,
   changedHealthSessions,
-  checkAllConnections,
-  createHealthProber,
+  HEALTH_PROBE_TIMEOUT_MS,
+  toHealthProbeResult,
   healthStatusRole,
   latencyLevel,
   pruneHealthResults,
@@ -29,10 +29,9 @@ import { useToast } from "./Toast";
 /**
  * 接続横断のヘルスダッシュボード (#1068)。ボトムパネルの「接続ヘルス」タブの中身。
  *
- * 開いている全接続へ `ping_session` + `server_info` (バージョン、キャッシュ) +
- * `server_metrics` (接続数) を並列度を制限して投げ、状態・往復レイテンシ・バージョン・
- * 接続数を一覧する。判定・集計はすべて `connectionHealth.ts` の純関数で、ここは
- * ポーリングと描画だけを持つ。
+ * 開いている全接続を `health_probe_all` (1 IPC・Rust 側で並列 + 個別タイムアウト、
+ * #1259) で確認し、状態・往復レイテンシ・バージョン・接続数を一覧する。判定・集計は
+ * すべて `connectionHealth.ts` の純関数で、ここはポーリングと描画だけを持つ。
  *
  * - **未接続プロファイルへは勝手に接続しない**。「保存済みも表示」で並べても行は
  *   「未接続」のままで、接続は行の「接続」ボタン (= 通常の接続フローそのもの) だけ。
@@ -121,18 +120,6 @@ export function ConnectionHealthPanel({
   );
   const [reconnecting, setReconnecting] = useState<ReadonlySet<string>>(() => new Set());
 
-  // バージョンは接続中に変わらないのでセッション単位でキャッシュし、`server_info`
-  // (設定変数も読む) を毎ティック叩かない。手動確認と再接続でだけ捨てる。
-  const versionCache = useRef(new Map<string, string>());
-  const prober = useMemo(
-    () =>
-      createHealthProber({
-        ping: (sid) => api.pingSession(sid),
-        version: (sid) => api.serverInfo(sid).then((info) => info.version),
-        connections: (sid) => api.serverMetrics(sid).then((m) => m.connections),
-      }),
-    [],
-  );
   const busyRef = useRef(false);
   // 確認中に接続の集合が変わったら、終わった直後にもう一度回す (新しい接続を
   // 次のティックまで「確認中…」のまま放置しない)。
@@ -148,23 +135,27 @@ export function ConnectionHealthPanel({
       }
       busyRef.current = true;
       setLoading(true);
-      if (opts.refetchVersion) versionCache.current.clear();
       try {
         const targets = connectionsRef.current.map((c) => ({
           sessionId: c.sessionId,
           driver: c.profile.driver,
         }));
-        const out = await checkAllConnections(targets, (target) =>
-          prober.probe(target, { cachedVersion: versionCache.current.get(target.sessionId) }),
-        );
+        // IPC 自体の失敗 (エラー文面は接続先情報を含みうるので捨てる) は、項目なし =
+        // 全件 down として扱う (従来の ping 失敗と同じ見え方)。
+        const items = await api
+          .healthProbeAll(
+            targets.map((target) => target.sessionId),
+            HEALTH_PROBE_TIMEOUT_MS,
+            opts.refetchVersion === true,
+          )
+          .catch(() => []);
+        const bySession = new Map(items.map((item) => [item.session_id, item]));
         const next = pruneHealthResults(
           resultsRef.current,
           connectionsRef.current.map((c) => c.sessionId),
         );
-        targets.forEach((target, i) => {
-          const r = out[i];
-          next.set(target.sessionId, r);
-          if (r.version) versionCache.current.set(target.sessionId, r.version);
+        targets.forEach((target) => {
+          next.set(target.sessionId, toHealthProbeResult(target, bySession.get(target.sessionId)));
         });
         const changed = changedHealthSessions(resultsRef.current, next);
         resultsRef.current = next;
@@ -186,7 +177,7 @@ export function ConnectionHealthPanel({
         void runChecksRef.current();
       }
     },
-    [prober],
+    [],
   );
 
   const runChecksRef = useRef(runChecks);
@@ -215,7 +206,6 @@ export function ConnectionHealthPanel({
       setReconnecting((cur) => new Set(cur).add(sid));
       try {
         await api.reconnect(sid);
-        versionCache.current.delete(sid);
         onReconnected(sid);
         toast.success(t("healthReconnected", { name: row.name }));
       } catch {

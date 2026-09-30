@@ -3,7 +3,6 @@ import type { TableColumnInfo } from "../api/tauri";
 import {
   activeSpecs,
   buildFkSelectSql,
-  buildTestDataInsertStatements,
   classifyDataType,
   coerceFixedValue,
   generateRows,
@@ -293,48 +292,6 @@ describe("coerceFixedValue", () => {
     expect(coerceFixedValue("1", "bool")).toBe(true);
     expect(coerceFixedValue("plain", "string")).toBe("plain");
     expect(coerceFixedValue("", "number")).toBe("");
-  });
-});
-
-describe("buildTestDataInsertStatements", () => {
-  it("MySQL はバッククオート + DB 修飾", () => {
-    const sql = buildTestDataInsertStatements("mysql", "shop", "users", ["id", "name"], [[1, "a"]]);
-    expect(sql).toEqual(["INSERT INTO `shop`.`users` (`id`, `name`) VALUES (1, 'a')"]);
-  });
-  it("PostgreSQL はダブルクオート + DB 修飾", () => {
-    const sql = buildTestDataInsertStatements("postgres", "public", "users", ["id"], [[1]]);
-    expect(sql).toEqual(['INSERT INTO "public"."users" ("id") VALUES (1)']);
-  });
-  it("SQLite は単一名前空間なので DB 修飾しない", () => {
-    const sql = buildTestDataInsertStatements("sqlite", "main", "users", ["id"], [[1]]);
-    expect(sql).toEqual(['INSERT INTO "users" ("id") VALUES (1)']);
-  });
-  it("バッチサイズごとに複数行 INSERT へまとめる", () => {
-    const rows = Array.from({ length: 250 }, (_, i) => [i]);
-    const sql = buildTestDataInsertStatements("mysql", "db", "t", ["n"], rows, 100);
-    expect(sql).toHaveLength(3);
-    expect(sql[0].match(/\(/g)?.length).toBe(101); // カラムリスト 1 + 値 100
-    expect(sql[2]).toContain("(249)");
-  });
-  it("NULL / 真偽 / 文字列エスケープをリテラル化する", () => {
-    const [sql] = buildTestDataInsertStatements(
-      "mysql",
-      "db",
-      "t",
-      ["a", "b", "c"],
-      [[null, true, "it's \\ here"]],
-    );
-    expect(sql).toBe(
-      "INSERT INTO `db`.`t` (`a`, `b`, `c`) VALUES (NULL, TRUE, 'it''s \\\\ here')",
-    );
-  });
-  it("PostgreSQL はバックスラッシュを二重化しない", () => {
-    const [sql] = buildTestDataInsertStatements("postgres", "db", "t", ["a"], [["x\\y"]]);
-    expect(sql).toContain("'x\\y'");
-  });
-  it("空入力は空配列", () => {
-    expect(buildTestDataInsertStatements("mysql", "db", "t", [], [[1]])).toEqual([]);
-    expect(buildTestDataInsertStatements("mysql", "db", "t", ["a"], [])).toEqual([]);
   });
 });
 

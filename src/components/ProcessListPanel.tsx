@@ -11,7 +11,6 @@ import {
   processKey,
   PROCESS_LIVE_FIELDS,
   pruneSelection,
-  summarizeQuery,
 } from "./processList";
 import { CountUp } from "./CountUp";
 import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
@@ -209,28 +208,30 @@ export function ProcessListPanel({
     if (!ok) return;
     setKilling(true);
     busyRef.current = true;
+    // バックエンドの 1 コマンドで一括 kill (#1259)。PostgreSQL は 1 文、MySQL は 1 接続上で
+    // 順に実行し、失敗があっても残りは続行して件数と最初のエラーを返す。
     let killed = 0;
+    let failed = ids.length;
     let firstError: string | null = null;
-    // 逐次 kill: プール (最大 5 本) を一斉に占有せず、失敗時にどこまで進んだか
-    // 分かるようにする。件数は人間が選ぶ規模なので逐次でも十分速い。
-    for (const id of ids) {
-      try {
-        await api.killProcess(sessionId, id);
-        killed += 1;
-      } catch (e) {
-        if (firstError === null) firstError = String(e);
-      }
+    try {
+      const res = await api.killProcesses(sessionId, ids);
+      killed = res.killed;
+      failed = res.failed;
+      firstError = res.first_error;
+    } catch (e) {
+      // read_only 拒否など、コマンド自体が失敗した場合は全件失敗として扱う。
+      firstError = String(e);
     }
     busyRef.current = false;
     setKilling(false);
-    if (firstError === null) {
+    if (firstError === null && failed === 0) {
       toast.success(t("processKillDone", { count: killed }));
     } else {
       toast.error(
         t("processKillFailed", {
-          failed: ids.length - killed,
+          failed,
           count: ids.length,
-          error: firstError,
+          error: firstError ?? "",
         }),
       );
     }
@@ -409,17 +410,11 @@ export function ProcessListPanel({
                           <CountUp value={p.time_secs} formatter={formatLiveProcessTime} />
                         )}
                       </LiveCell>
-                      {p.query ? (
-                        <Tooltip label={p.query}>
-                          <LiveCell css={queryTdCss} innerCss={queryInnerCss} flash={flashToken(p.id, "query")}>
-                            {summarizeQuery(p.query)}
-                          </LiveCell>
-                        </Tooltip>
-                      ) : (
-                        <LiveCell css={queryTdCss} innerCss={queryInnerCss} flash={flashToken(p.id, "query")}>
-                          {summarizeQuery(p.query)}
-                        </LiveCell>
-                      )}
+                      <ProcessQueryCell
+                        sessionId={sessionId}
+                        process={p}
+                        flash={flashToken(p.id, "query")}
+                      />
                     </LiveTr>
                   ))}
                 </LiveRowsPresence>
@@ -434,6 +429,55 @@ export function ProcessListPanel({
       {dialog}
     </Box>
   );
+}
+
+/**
+ * クエリ列のセル。一覧が運ぶのは Rust 側で作った 1 行要約だけなので、ツールチップ用の
+ * 全文は初めてポインタ / フォーカスが乗ったときに `get_process_query` で id 指定取得し、
+ * 要約が変わる (= 別の文に変わった) まで使い回す (#1259)。全文を取れなかった間は要約を
+ * そのまま出す。
+ */
+function ProcessQueryCell({
+  sessionId,
+  process: p,
+  flash,
+}: {
+  sessionId: string;
+  process: ProcessInfo;
+  flash: number | null;
+}) {
+  const summary = p.query_summary ?? "–";
+  const [full, setFull] = useState<{ summary: string | null; text: string } | null>(null);
+  const inFlight = useRef(false);
+  const fetchFull = useCallback(() => {
+    if (!p.query_summary || inFlight.current) return;
+    if (full && full.summary === p.query_summary) return;
+    inFlight.current = true;
+    api
+      .getProcessQuery(sessionId, p.id)
+      .then((text) => {
+        if (text) setFull({ summary: p.query_summary, text });
+      })
+      .catch(() => {})
+      .finally(() => {
+        inFlight.current = false;
+      });
+  }, [full, p.id, p.query_summary, sessionId]);
+  const cell = (
+    <LiveCell
+      css={queryTdCss}
+      innerCss={queryInnerCss}
+      flash={flash}
+      onMouseEnter={fetchFull}
+      onFocus={fetchFull}
+    >
+      {summary}
+    </LiveCell>
+  );
+  if (!p.query_summary) return cell;
+  // 切り詰めていなければ要約 = 全文の 1 行化なので取得せずそのまま出してよい。
+  const label = full && full.summary === p.query_summary ? full.text : p.query_summary;
+  return <Tooltip label={label}>{cell}</Tooltip>;
 }
 
 /** プロセス一覧 / メトリクスの簡易タブボタン。 */

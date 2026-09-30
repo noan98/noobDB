@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **140 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **144 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -9,8 +9,11 @@
 
 ## 接続 (`commands/connection.rs`)
 
-`test_connection` / `connect` / `cancel_connect` / `ping_session` / `disconnect` /
-`reconnect`
+`test_connection` / `connect` / `cancel_connect` / `ping_session` / `health_probe_all` /
+`disconnect` / `reconnect`
+
+`health_probe_all(sessionIds, timeoutMs, refreshVersion)` (#1259) は接続ヘルスの一括プローブ。
+Rust が全セッションを並列に問い合わせ、各セッションを `tokio::time::timeout` で打ち切る。
 
 ## SSH (`commands/ssh.rs`)
 
@@ -21,6 +24,22 @@
 `run_query` / `run_query_transaction` / `run_query_stream` / `preview_query_stream` /
 `cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` (任意引数 `isolation` / `readOnly`, #1166) / `run_in_transaction` /
 `finish_transaction`
+
+## 一括書き込み (`commands/bulk_write.rs`, #1259)
+
+`bulk_update_cells` / `insert_generated_rows`
+
+- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements)` は結果グリッドの
+  セル編集 Apply。フロント (`cellEdit.buildUpdateGroups`) が同じ (列, 値) ごとにまとめた
+  構造化入力を送り、Rust が `UPDATE t SET c = v WHERE pk IN (…)` (単一 PK・500 件ずつ) /
+  行条件の `OR` 連結 (複合 PK・NULL を含む PK・100 行ずつ) を組み立てる。`extraStatements` は
+  同じトランザクションに載せる DELETE / INSERT。実行は `run_query_transaction_inner` へ
+  委譲するため read_only ガード (緊急モード含む)・履歴・キャッシュ invalidate は従来と同一
+  (フライトレコーダーに記録しない点も従来どおり。記録対象は `run_query_stream({ capture: true })`
+  の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
+  text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。
+- `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
+  (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 
 `run_query_stream` は結果を Channel の `columns` / `rows` / `done` のほかに、バッチ合流
 (`db::stream_batch::StreamBatcher`: 初回は即送信、以降は時間 / サイズ倍々) と逐次統計
@@ -64,23 +83,30 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
 `compare_schema` / `compare_table_data` / `diff_schema_snapshots` /
-`generate_sync_sql` / `generate_data_sync_sql` / `apply_sync_sql`
+`generate_sync_sql` / `generate_data_sync_sql` / `release_data_diffs` / `apply_sync_sql`
+
+`compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys)` は
+ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。
 
 ## サンドボックス (`commands/sandbox.rs`)
 
 `create_sandbox` / `list_sandboxes` / `discard_sandbox` / `sandbox_table_diff` /
-`sandbox_schema_diff` / `filter_sandbox_data_diff` / `sandbox_advance_base`
+`sandbox_schema_diff` / `sandbox_advance_base` (`diffId` + `skipKeys`, #1259)
 
 ## プロセス管理・ユーザ / 権限 (`commands/process.rs`, `commands/privileges.rs`)
 
-`list_processes` / `kill_process` / `list_db_users` / `list_user_privileges` /
+`list_processes` / `get_process_query` / `kill_processes` / `list_db_users` / `list_user_privileges` /
 `generate_create_user_sql` / `generate_drop_user_sql` / `generate_alter_password_sql` /
-`generate_grant_sql` / `generate_revoke_sql` / `apply_privilege_sql`
+`generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成) / `apply_privilege_sql`
+(`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、
+全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 /
+MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。
+`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る)
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
 `analyze_schema_health` / `query_stats_support` / `sample_live_queries` /
-`sample_statement_stats` / `server_info` / `server_metrics`
+`start_statement_recording` / `sample_statement_delta` (#1259。baseline 差分と N+1 目安を Rust 側で集計) / `server_info` / `server_metrics`
 
 ## 列データプロファイル (`commands/profile.rs`)
 

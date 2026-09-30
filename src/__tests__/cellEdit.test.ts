@@ -6,6 +6,7 @@ import {
   buildInsertClipboard,
   buildInsertStatements,
   buildRowSql,
+  buildUpdateGroups,
   buildUpdateStatements,
   cellValueFromInput,
   countEditedCells,
@@ -14,6 +15,7 @@ import {
   hasAmbiguousIdentity,
   isEditableColumnType,
   resolvePkIndices,
+  setValueFromInput,
   resolveRowIdentity,
   rowEditKey,
   validateCellInput,
@@ -854,6 +856,121 @@ describe("applyEditsToRows", () => {
     expect(out).toEqual([
       [2, "banana", 3],
       [3, "CHERRY", 7],
+    ]);
+  });
+});
+
+/**
+ * 構造化された Apply 入力 (#1259)。`literalFromInput` と同じ分類規則で値を分類し、同じ
+ * (列, 値) の行を 1 グループにまとめる。リテラル化と SQL 組み立ては Rust 側。
+ */
+describe("setValueFromInput (#1259)", () => {
+  it("literalFromInput と同じ規則で値を分類する", () => {
+    expect(setValueFromInput(" null ", col("a", "TEXT"))).toEqual({ kind: "null" });
+    expect(setValueFromInput(" 12.5 ", col("a", "INT"))).toEqual({ kind: "number", text: "12.5" });
+    // 数値列でも数値らしくない入力は文字列のまま (サーバ側の型強制に任せる)。
+    expect(setValueFromInput("abc", col("a", "INT"))).toEqual({ kind: "text", text: "abc" });
+    expect(setValueFromInput("TRUE", col("a", "BOOLEAN"))).toEqual({ kind: "bool", value: true });
+    expect(setValueFromInput("0", col("a", "BOOL"))).toEqual({ kind: "bool", value: false });
+    expect(setValueFromInput("true", col("a", "BIT"))).toEqual({ kind: "number", text: "1" });
+    // 文字列は trim しない (引用リテラルと同じ)。
+    expect(setValueFromInput(" x ", col("a", "TEXT"))).toEqual({ kind: "text", text: " x " });
+  });
+});
+
+describe("buildUpdateGroups (#1259)", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR"), col("n", "INT")];
+  const rows: CellValue[][] = [
+    [1, "a", 10],
+    [2, "b", 20],
+    [3, "c", 30],
+    ["9007199254740993", "d", 40],
+  ];
+  const input = (edits: PendingEdits, over: Partial<BuildUpdateInput> = {}): BuildUpdateInput => ({
+    driver: "mysql",
+    database: "db",
+    table: "tbl",
+    columns,
+    rows,
+    pkIndices: [0],
+    edits,
+    ...over,
+  });
+  const key = (id: CellValue) => rowEditKey([id, "", 0], [0], 0);
+
+  it("PK が無ければ空", () => {
+    expect(buildUpdateGroups(input({ [key(1)]: { 1: "x" } }, { pkIndices: [] }))).toEqual({
+      groups: [],
+      rowCount: 0,
+    });
+  });
+
+  it("同じ (列, 値) の行を 1 グループにまとめ、最初に現れた順に並べる", () => {
+    const { groups, rowCount } = buildUpdateGroups(
+      input({
+        [key(1)]: { 1: "same" },
+        [key(2)]: { 1: "other" },
+        [key(3)]: { 1: "same" },
+      }),
+    );
+    expect(rowCount).toBe(3);
+    expect(groups).toEqual([
+      { set: [{ column: "name", value: { kind: "text", text: "same" } }], keys: [[1], [3]] },
+      { set: [{ column: "name", value: { kind: "text", text: "other" } }], keys: [[2]] },
+    ]);
+  });
+
+  it("複数列の編集は列の組が同じ行だけまとまる。WHERE には元の PK 値を使う", () => {
+    const { groups } = buildUpdateGroups(
+      input({
+        [key(1)]: { 0: "99", 2: "5" },
+        [key(2)]: { 0: "98", 2: "5" },
+        [key(3)]: { 2: "5" },
+      }),
+    );
+    expect(groups).toHaveLength(3);
+    // 主キー自体を編集しても、キーは元の値 (1)。
+    expect(groups[0].keys).toEqual([[1]]);
+    expect(groups[2]).toEqual({
+      set: [{ column: "n", value: { kind: "number", text: "5" } }],
+      keys: [[3]],
+    });
+  });
+
+  it("64bit の主キーは文字列のまま (丸めない) 渡す", () => {
+    const big = "9007199254740993";
+    const { groups } = buildUpdateGroups(input({ [key(big)]: { 1: "x" } }));
+    expect(groups[0].keys).toEqual([[big]]);
+  });
+
+  it("再登場した行は 1 回だけ出す", () => {
+    const { groups, rowCount } = buildUpdateGroups(
+      input({ [key(1)]: { 1: "x" } }, { rows: [...rows, [1, "a", 10]] }),
+    );
+    expect(rowCount).toBe(1);
+    expect(groups[0].keys).toEqual([[1]]);
+  });
+
+  it("複合 PK は全 PK 列の元の値を順に渡す", () => {
+    const composite = [
+      [1, "a", 10],
+      [1, "b", 20],
+    ];
+    const k = (r: CellValue[]) => rowEditKey(r, [0, 1], 0);
+    const { groups } = buildUpdateGroups(
+      input(
+        { [k(composite[0])]: { 2: "7" }, [k(composite[1])]: { 2: "7" } },
+        { rows: composite, pkIndices: [0, 1] },
+      ),
+    );
+    expect(groups).toEqual([
+      {
+        set: [{ column: "n", value: { kind: "number", text: "7" } }],
+        keys: [
+          [1, "a"],
+          [1, "b"],
+        ],
+      },
     ]);
   });
 });
