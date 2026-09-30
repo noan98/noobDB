@@ -5599,16 +5599,12 @@ export default function App() {
       let sql: string;
       let tableColumns: TableColumnInfo[] = [];
       let rowIdentity: TableRowIdentity | null = null;
-      let rowEstimate: number | null = null;
-      let opened = false;
       try {
-        const r = await api.openTable(sessionId, database, table, limit, true);
+        const r = await api.openTable(sessionId, database, table, limit, false);
         base = r.base;
         sql = r.sql;
         tableColumns = r.columns;
         rowIdentity = r.row_identity;
-        rowEstimate = r.row_estimate;
-        opened = true;
       } catch {
         base = qualifiedTableSql(driver, database, table);
         sql = `${base} LIMIT ${limit}`;
@@ -5624,22 +5620,21 @@ export default function App() {
         paginatable: base,
         page: 1,
         pageSize: limit,
-        rowEstimateTotal: rowEstimate,
+        rowEstimateTotal: null,
       };
       addTab(tab);
       // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
       // タブ自体と開いた時点のセッションを明示的に渡す。
       runQueryInTab(tab.id, sql, base, null, false, { sessionId, tab });
-      // `open_table` が失敗したときだけ、ページネーションの総ページ数目安に使う
-      // 行数推定を 1 テーブル分で取得する (ベストエフォート)。
-      if (!opened) {
-        void api
-          .tableRowEstimate(sessionId, database, table)
-          .then((est) => {
-            if (est != null) patchTab(tab.id, (tt) => ({ ...tt, rowEstimateTotal: est }));
-          })
-          .catch(() => {});
-      }
+      // ストリーム開始を待たせないよう、ページネーションの総ページ数目安に使う
+      // 行数推定は 1 テーブル分を並行・非同期で取得して後から反映する
+      // (ベストエフォート。到着順に関わらず該当タブの値を更新するだけ)。
+      void api
+        .tableRowEstimate(sessionId, database, table)
+        .then((est) => {
+          if (est != null) patchTab(tab.id, (tt) => ({ ...tt, rowEstimateTotal: est }));
+        })
+        .catch(() => {});
     })();
   }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, selectedProfile?.driver, recordRecentTableOpen, sessionId, patchTab]);
 
