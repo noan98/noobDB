@@ -44,6 +44,30 @@ export interface DangerFinding {
  * pins both implementations to the same output for the same input.
  */
 export function maskLiterals(sql: string, driver?: string): string {
+  // 1 回の実行ゲート〜実行後処理の間に、同じ SQL が文分割・危険判定・読み取り専用判定・
+  // スキーマ変更判定などから 3〜5 回マスクされる (どれも全文走査)。直近の結果を小さな
+  // キャッシュに持ち、同じ (driver, sql) は 1 回しか走査しない (#1256)。
+  if (sql.length > MASK_CACHE_MAX_SQL_CHARS) return maskLiteralsUncached(sql, driver);
+  const key = `${driver ?? ""}\u0000${sql}`;
+  const hit = maskCache.get(key);
+  if (hit !== undefined) return hit;
+  const masked = maskLiteralsUncached(sql, driver);
+  if (maskCache.size >= MASK_CACHE_ENTRIES) {
+    // Map は挿入順なので、先頭 = 最も古いエントリを捨てる (FIFO)。
+    const oldest = maskCache.keys().next();
+    if (!oldest.done) maskCache.delete(oldest.value);
+  }
+  maskCache.set(key, masked);
+  return masked;
+}
+
+/** マスク結果キャッシュの上限エントリ数。直近数回の実行ぶんで足りる。 */
+const MASK_CACHE_ENTRIES = 8;
+/** これを超える巨大な SQL はキャッシュしない (キー + 値でメモリを抱え込まないため)。 */
+const MASK_CACHE_MAX_SQL_CHARS = 256 * 1024;
+const maskCache = new Map<string, string>();
+
+function maskLiteralsUncached(sql: string, driver?: string): string {
   const backslashEscapes = driverBackslashEscapes(driver);
   const out = sql.split("");
   const n = sql.length;
@@ -473,10 +497,7 @@ function hasLockingTableHint(body: string): boolean {
  */
 export function isReadOnlySql(sql: string, driver?: string): boolean {
   const masked = maskLiterals(sql, driver);
-  const body = masked
-    .toLowerCase()
-    .replace(/[;\s]+$/, "")
-    .replace(/^\s+/, "");
+  const body = trimTrailingSeparators(masked.toLowerCase()).replace(/^\s+/, "");
   if (!body) return false;
   const allowedPrefix =
     READ_ONLY_PREFIXES.some((kw) => startsWithKeyword(body, kw)) ||
@@ -531,4 +552,41 @@ export function isSchemaMutatingSql(sql: string, driver?: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * 末尾の空白と `;` を取り除く (`s.replace(/[;\s]+$/, "")` と同じ結果)。
+ *
+ * 正規表現の `[;\s]+$` は、文字列の途中にある長い空白の連なり (マスクでリテラルや
+ * コメントを空白化した跡) ごとに末尾まで走査してやり直すため、64KB 級のリテラルで
+ * 秒単位かかる二次時間になる (#1256)。末尾から 1 度だけ走査する。
+ */
+export function trimTrailingSeparators(s: string): string {
+  let end = s.length;
+  while (end > 0 && /[;\s]/.test(s[end - 1])) end--;
+  return s.slice(0, end);
+}
+
+/**
+ * バックエンドが実行後に返した読み取り専用判定 (`Done.readOnly`、#1256) を、その SQL
+ * に紐づけて持つヒント。
+ */
+export interface ReadOnlyHint {
+  /** 判定値を得たときに実行した SQL。 */
+  sql: string;
+  readOnly: boolean;
+}
+
+/**
+ * `sql` が読み取り専用か。`hint` が同じ SQL についての判定なら (バックエンドの
+ * `is_read_only_sql_for` と同じ値なので) それをそのまま使い、無い/別の SQL なら
+ * `isReadOnlySql` で求める。描画のたびに全文マスクを回さないためのもの (#1256)。
+ */
+export function readOnlyWithHint(
+  hint: ReadOnlyHint | null | undefined,
+  sql: string,
+  driver?: string,
+): boolean {
+  if (hint && hint.sql === sql) return hint.readOnly;
+  return isReadOnlySql(sql, driver);
 }

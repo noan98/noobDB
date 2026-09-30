@@ -38,6 +38,15 @@
   保守的な解釈を採る (`components/sqlDialect.ts` のヘルパが未知ドライバを MySQL 扱い
   するのとは**逆**なので注意)。
 
+**フロントの `maskLiterals` は直近 8 件をキャッシュする (#1256)。** 1 回の実行ゲート〜
+実行後処理で同じ SQL が文分割・危険判定・読み取り専用判定などから何度もマスクされる
+ため、`(driver, sql)` をキーに結果の文字列を使い回す (256K 文字超の SQL はキャッシュ
+しない)。マスクの**規則そのもの**は変えていない。マスク済み文字列の末尾トリムに
+`/[;\s]+$/` を使うと、リテラルを空白化した長い連なりで二次時間になるので、
+`trimTrailingSeparators` を使う。実行後の判定は `run_query_stream` の `Done` に載る
+`readOnly` / `schemaMayChange` (Rust の `is_read_only_sql_for` /
+`sql_may_change_schema`) を使い、JS でマスクし直さない。
+
 **テーブルロックヒントの拒否 (#906)。** 他ドライバの `FOR UPDATE` /
 `LOCK IN SHARE MODE` を拒否している設計意図 (読み取り専用セッションはロックを取らない)
 に合わせ、T-SQL 由来の `WITH (...)` ヒント構文のうち**共有読み取りより強いロックモード**

@@ -54,3 +54,25 @@
 - キャンセルは子タスクの abort。abort は future を drop するだけでドライバが握る
   専用接続のトランザクションは閉じないので、`TxGuard` の `Drop` が ROLLBACK を
   spawn して後始末する。
+
+## エディタのバッチ実行 (`run_sql_batch`, #1256)
+
+複数文 SQL をエディタから実行する経路。以前はフロントが分割 → 1 文ごとに
+`run_query` を直列 await → 全行を受けてから 200 行に切り詰めていたが、
+`commands/script.rs` の `run_script_core_with` を文字列の `Cursor` で再利用する形に
+した。`run_query_stream` と同じ **Channel** (`BatchStreamMessage`: `started` /
+`results` / `done` / `error` / `cancelled`) で結果を返し、`results` は
+`PROGRESS_INTERVAL` (150ms) 間引きで文の結果をまとめて届ける。`cancel_stream`
+(`StreamKind::Script`) で中断できる。
+
+- 分割・文ごとの read-only ガード・`BEGIN`/`COMMIT` の読み替え・キャッシュ無効化は
+  `.sql` スクリプト実行と共有する。履歴には**記録しない** (従来の `run_query` 直列実行と同じ)。
+- SELECT は `execute_stream` の `on_batch` で `previewRows` (200) 件に達した時点で取得を
+  打ち切る (`execute_preview`)。そのため出力ログの SELECT 件数は「全行数」ではなく
+  「保持した行数 (最大 200)」になる。
+- **明示トランザクション中**は各文を `execute_in_transaction` で同じ接続へ流す
+  (制御文の読み替えなし。結果は全件受けてから切り詰める)。スクリプトファイル実行は
+  従来どおり明示トランザクションが有効だと拒否する。
+- エラー停止 (`stop_on_error`) 後の残りの文は実行せず `skipped` として返す。ランナーが
+  自分で開いたトランザクションはエラー時に ROLLBACK する。
+

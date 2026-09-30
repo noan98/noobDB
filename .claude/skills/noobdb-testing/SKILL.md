@@ -36,6 +36,7 @@ description: noobDB のテストを実行・追加するとき、統合テスト
 | `references/commands.md` | 全コマンド、ミューテーションテスト、統合テストの環境変数一覧 |
 | `references/browser-tests.md` | Vitest ブラウザモード、フェイク Tauri ランタイム、ビジュアル回帰ベースラインの更新手順 |
 | `references/e2e.md` | tauri-driver + WebDriverIO の構成と、CI へ昇格させる基準 |
+| `references/ui-screenshots.md` | UI の確認方法: 実ブラウザで App 全体をモック接続で描画し、**日本語画面で**スクリーンショットを撮って目視する手順とテンプレート |
 
 ## 落とし穴
 

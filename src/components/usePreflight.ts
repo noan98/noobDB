@@ -14,10 +14,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/tauri";
-import { buildPreflightPlan, type PreflightPlan } from "./preflight";
+import { buildPreflightPlan, PREFLIGHT_MAX_CHARS, type PreflightPlan } from "./preflight";
 
-/** デバウンス遅延 (ms)。SQL lint (#704) と同じ 500ms 目安。 */
-const PREFLIGHT_DEBOUNCE_MS = 500;
+/**
+ * COUNT を裏実行するまでのデバウンス遅延 (ms)。SQL lint (#704) と同じ 500ms 目安。
+ * エディタ側が入力を `PREFLIGHT_TEXT_DEBOUNCE_MS` (QueryEditor) だけ待ってから
+ * `sql` を渡すので、その分を差し引いて、編集が止まってから COUNT までの合計を
+ * 従来どおり約 500ms に保つ。
+ */
+const PREFLIGHT_DEBOUNCE_MS = 350;
 
 export interface PreflightResult {
   /**
@@ -66,11 +71,12 @@ export function usePreflightImpact(params: {
     runIdRef.current += 1;
     const myId = runIdRef.current;
 
-    if (!enabled || !sessionId || !sql || sql.trim().length === 0) {
+    if (!enabled || !sessionId || !sql || sql.trim().length === 0 || sql.length > PREFLIGHT_MAX_CHARS) {
       setResult(null);
       return;
     }
-    // 計画は同期に組み立て、verb / 全行 / 推定不可を即座にバッジへ反映する。
+    // 計画の組み立て (全文マスク) は、エディタ側で入力をデバウンスしたあとに 1 回だけ
+    // 走る。verb / 全行 / 推定不可を即座にバッジへ反映する。
     const plan = buildPreflightPlan(sql, driver);
     if (!plan) {
       setResult(null);

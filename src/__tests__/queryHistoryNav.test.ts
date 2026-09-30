@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  dedupeAdjacentHistory,
   initialHistoryNav,
+  pushHistoryEntry,
+  QUERY_HISTORY_LIMIT,
   navigateNewer,
   navigateOlder,
 } from "../components/queryHistoryNav";
@@ -99,5 +102,37 @@ describe("往復", () => {
     const down2 = navigateNewer(HISTORY, state)!;
     expect(down2.text).toBe("draft");
     expect(down2.state).toEqual(initialHistoryNav);
+  });
+});
+
+describe("dedupeAdjacentHistory / pushHistoryEntry (#1256)", () => {
+  it("隣り合う重複だけを畳む (離れた重複は残す)", () => {
+    expect(dedupeAdjacentHistory(["a", "a", "b", "a", "a"])).toEqual(["a", "b", "a"]);
+    expect(dedupeAdjacentHistory([])).toEqual([]);
+  });
+
+  it("実行直後の SQL を先頭へ積む", () => {
+    expect(pushHistoryEntry(["SELECT 2", "SELECT 1"], "SELECT 3")).toEqual([
+      "SELECT 3",
+      "SELECT 2",
+      "SELECT 1",
+    ]);
+  });
+
+  it("直前と同じ SQL は積まない (再取得後の畳み込みと同じ結果)", () => {
+    const h = ["SELECT 2", "SELECT 1"];
+    expect(pushHistoryEntry(h, "SELECT 2")).toEqual(h);
+  });
+
+  it("空白だけの SQL は積まない", () => {
+    expect(pushHistoryEntry(["SELECT 1"], "  \n ")).toEqual(["SELECT 1"]);
+  });
+
+  it("上限を超えた古い分は捨てる", () => {
+    const full = Array.from({ length: QUERY_HISTORY_LIMIT }, (_, i) => `q${i}`);
+    const next = pushHistoryEntry(full, "new");
+    expect(next).toHaveLength(QUERY_HISTORY_LIMIT);
+    expect(next[0]).toBe("new");
+    expect(next[next.length - 1]).toBe(`q${QUERY_HISTORY_LIMIT - 2}`);
   });
 });

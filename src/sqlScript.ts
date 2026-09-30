@@ -124,7 +124,8 @@ export function isMultiStatement(sql: string, driver?: string): boolean {
   return splitSqlStatements(sql, driver).length > 1;
 }
 
-import type { CellValue, Column } from "./api/tauri";
+import type { BatchStreamStatementResult, CellValue, Column } from "./api/tauri";
+import type { OutputInput } from "./outputLog";
 
 /** バッチ実行における 1 文の実行結果。 */
 export interface BatchStatementResult {
@@ -141,4 +142,45 @@ export interface BatchStatementResult {
   elapsedMs?: number;
   /** エラー時のメッセージ。 */
   error?: string;
+}
+
+/**
+ * バックエンド (`run_sql_batch`, #1256) が返した 1 文ぶんの結果を、結果ビュー
+ * (`BatchResultsView`) が使う `BatchStatementResult` へ変換する。サーバメッセージは
+ * 出力ログ用なのでここでは持たない。
+ */
+export function toBatchResult(r: BatchStreamStatementResult): BatchStatementResult {
+  if (r.status === "error") return { sql: r.sql, status: "error", error: r.error };
+  if (r.status === "skipped") return { sql: r.sql, status: "skipped" };
+  // 結果セットを返した文は columns が付く (0 行の SELECT は従来どおり影響行数 0 の扱い)。
+  const isSelect = !!r.columns;
+  return {
+    sql: r.sql,
+    status: "ok",
+    columns: isSelect ? r.columns : undefined,
+    rows: isSelect ? r.rows : undefined,
+    rowsAffected: isSelect ? undefined : Number(r.rowsAffected ?? 0),
+    elapsedMs: r.elapsedMs,
+  };
+}
+
+/** 1 文ぶんの結果を出力ログ (`pushOutput`) のエントリに変換する (接続・DB 名は呼び出し側)。 */
+export function toBatchOutputInput(
+  r: BatchStreamStatementResult,
+): Omit<OutputInput, "connection" | "database"> {
+  if (r.status === "error") {
+    return { sql: r.sql, outcome: "error", rows: null, elapsedMs: null, error: r.error ?? "" };
+  }
+  if (r.status === "skipped") {
+    return { sql: r.sql, outcome: "skipped", rows: null, elapsedMs: null, error: null };
+  }
+  const isSelect = !!r.columns;
+  return {
+    sql: r.sql,
+    outcome: isSelect ? "rows" : "affected",
+    rows: isSelect ? (r.rows?.length ?? 0) : Number(r.rowsAffected ?? 0),
+    elapsedMs: r.elapsedMs ?? null,
+    error: null,
+    serverMessages: r.serverMessages,
+  };
 }

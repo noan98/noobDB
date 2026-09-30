@@ -107,10 +107,6 @@ interface Props {
   onNewQuery?: () => void;
 }
 
-function oneLine(sql: string): string {
-  return sql.replace(/\s+/g, " ").trim();
-}
-
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -132,9 +128,19 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   const [error, setError] = useState<string | null>(null);
   const { copiedKey: copiedId, copy } = useKeyedCopyFeedback<number>();
 
-  const handleCopy = async (id: number, sql: string) => {
-    await copy(id, sql);
+  // 一覧は SQL の要約 (`sql_preview`) しか持たない (#1256)。復元・コピー・新規タブ・
+  // スニペット保存のように全文が要る操作だけ、その時点で `get_history_sql` から取る。
+  // 履歴の上限超過や「履歴をクリア」で行が消えていた場合はエラーを表示に反映する。
+  const withFullSql = async (id: number, action: (sql: string) => unknown) => {
+    try {
+      const sql = await api.getHistorySql(id);
+      await action(sql);
+    } catch (e) {
+      setError(String(e));
+    }
   };
+
+  const handleCopy = (id: number) => withFullSql(id, (sql) => copy(id, sql));
 
   // Debounce the search box so each keystroke doesn't hit the backend.
   useEffect(() => {
@@ -297,16 +303,16 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                 animate={variants.fade.animate}
                 transition={transitions.crossfade}
               >
-                <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql}`}>
+                <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql_preview}`}>
                   <TreeRow
                     position="relative"
                     role="treeitem"
                     tabIndex={0}
-                    onClick={() => onRestore(h.sql)}
+                    onClick={() => void withFullSql(h.id, onRestore)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        onRestore(h.sql);
+                        void withFullSql(h.id, onRestore);
                       }
                     }}
                     css={{
@@ -320,7 +326,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                     <TreeIcon color="app.accent" aria-hidden>
                       <Icon name={failed ? "close" : "refresh"} />
                     </TreeIcon>
-                    <TreeLabel fontFamily="mono">{oneLine(h.sql)}</TreeLabel>
+                    <TreeLabel fontFamily="mono">{h.sql_preview}</TreeLabel>
                     {failed && (
                       <TreeBadge
                         bg={semanticColorToken("info", "subtle")}
@@ -355,7 +361,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                         copied={copiedId === h.id}
                         onClick={(e) => {
                           e.stopPropagation();
-                          void handleCopy(h.id, h.sql);
+                          void handleCopy(h.id);
                         }}
                         label={t("historyCopySql")}
                         copiedLabel={t("historyCopied")}
@@ -384,7 +390,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                           aria-label={t("historyOpenInNewTab")}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onOpenInNewTab(h.sql);
+                            void withFullSql(h.id, onOpenInNewTab);
                           }}
                         >
                           <Icon name="query" size={ICON_SIZES.md} />
@@ -406,7 +412,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                             aria-label={t("historySaveAsSnippet")}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onSaveAsSnippet(h.sql);
+                              void withFullSql(h.id, onSaveAsSnippet);
                             }}
                           >
                             <Icon name="snippet" size={ICON_SIZES.md} />

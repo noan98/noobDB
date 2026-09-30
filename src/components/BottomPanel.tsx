@@ -16,7 +16,9 @@ import { transitions, variants } from "../motion";
 import {
   bottomPanelGroupStarts,
   nextBottomPanelTab,
+  type BottomPanelStripEntry,
   type BottomPanelTab,
+  type BottomPanelUnavailableReason,
 } from "./bottomPanelTabs";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Splitter } from "./Splitter";
@@ -251,10 +253,110 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: P
 }
 
 /**
+ * ボトムパネルを閉じているときに `<main>` の下端へ常設するパネルバー。
+ *
+ * ## なぜ置くのか
+ *
+ * #1112 の設計では閉じるとタブ列ごと消え、プロセスモニタ・クエリインスペクタ・
+ * アドバイザ・接続ヘルスといった中核機能の入口がサイドバー右上のレンチアイコン
+ * (フラットな 17 項目メニュー) とコマンドパレットしか無かった。VS Code の折りたたみ
+ * パネルと同じく、閉じていても「何が下にあるか」を 1 行で見せ、1 クリックで開ける
+ * ようにする。項目の並び・有効 / 無効・理由は `bottomPanelStripTabs` (純ロジック) が
+ * 決め、ここは描画だけを担う。開いているときは `BottomPanel` のタブバーが同じ役目を
+ * 持つので、このバーは出さない (二重のタブ列を作らない)。
+ *
+ * 無効な項目は `disabled` にせず `aria-disabled` で止める — `disabled` だとホバーも
+ * フォーカスも効かず、「なぜ今は開けないか」のツールチップが読めないため。
+ */
+export function BottomPanelStrip({
+  entries,
+  label,
+  reasonLabel,
+  onOpen,
+}: {
+  /** `bottomPanelStripTabs` の戻り値。 */
+  entries: readonly BottomPanelStripEntry[];
+  /** タブラベル。`BottomPanel` と同じ関数を渡す。 */
+  label: (tab: BottomPanelTab) => string;
+  /** 無効な項目の理由 (ツールチップ)。i18n 済みの文字列を返す。 */
+  reasonLabel: (reason: BottomPanelUnavailableReason) => string;
+  onOpen: (tab: BottomPanelTab) => void;
+}) {
+  const t = useT();
+  const groupStarts = useMemo(
+    () => bottomPanelGroupStarts(entries.map((e) => e.tab)),
+    [entries],
+  );
+  if (entries.length === 0) return null;
+  return (
+    <Flex
+      as="nav"
+      aria-label={t("bottomPanelStripAria")}
+      data-testid="bottom-panel-strip"
+      align="stretch"
+      gap="0.5"
+      flexShrink={0}
+      bg="app.toolbar"
+      borderTopWidth="1px"
+      borderTopColor="app.border"
+      overflowX="auto"
+      // 「下から生えるパネル」の折りたたみ状態なので、`BottomPanel` のヘッダと
+      // 同じ面色 + 上辺の線で連続性を持たせる。
+    >
+      {entries.map(({ tab, enabled, reason }) => (
+        <Fragment key={tab}>
+          {groupStarts.has(tab) && (
+            <Box
+              aria-hidden
+              data-testid="bottom-panel-group-divider"
+              alignSelf="center"
+              w="1px"
+              h="16px"
+              mx="1"
+              bg="app.border"
+              flexShrink={0}
+            />
+          )}
+          {/* 有効な項目は `label` が undefined になり、Tooltip は子をそのまま返す。 */}
+          <Tooltip label={enabled || !reason ? undefined : reasonLabel(reason)}>
+            <chakra.button
+              type="button"
+              aria-disabled={enabled ? undefined : true}
+              data-testid={`bottom-panel-strip-${tab}`}
+              bg="transparent"
+              border="none"
+              borderTop="2px solid transparent"
+              borderRadius="0"
+              px="2.5"
+              py="1"
+              fontSize="sm"
+              fontWeight={600}
+              whiteSpace="nowrap"
+              color="app.textMuted"
+              opacity={enabled ? 1 : 0.5}
+              cursor={enabled ? "pointer" : "not-allowed"}
+              transition="background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)"
+              _hover={enabled ? { bg: "app.hover", color: "app.text" } : undefined}
+              _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+              onClick={() => {
+                if (enabled) onOpen(tab);
+              }}
+            >
+              {label(tab)}
+            </chakra.button>
+          </Tooltip>
+        </Fragment>
+      ))}
+    </Flex>
+  );
+}
+
+/**
  * ワークスペース (全画面サーフェス) とボトムパネルの縦分割 (#1112)。
  *
  * `bottom` が null のときは分割そのものを作らず `children` を素通しする — 閉じている
  * ときに 0 高のペインとセパレータを残すと、`<main>` の下端に押せない線が居座るため。
+ * 代わりに `collapsed` (折りたたみ時のパネルバー) を `children` の下へ置く。
  *
  * 分割の実装は既存の `Splitter` に委ねる。ドラッグ・キーボード操作 (矢印 / Home /
  * End / Enter)・localStorage 永続化・最小サイズのクランプはすべてそちらと
@@ -269,9 +371,15 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: P
  */
 export function WorkspaceSplit({
   bottom,
+  collapsed,
   children,
 }: {
   bottom: ReactNode | null;
+  /**
+   * 閉じているときだけ `children` の下に置くもの (`BottomPanelStrip`)。開いている
+   * 間と退場アニメーション中は出さない (タブ列が二重に見えないように)。
+   */
+  collapsed?: ReactNode;
   children: ReactNode;
 }) {
   const t = useT();
@@ -285,7 +393,13 @@ export function WorkspaceSplit({
     mounted.current = true;
   }, []);
 
-  if (!open && !split) return <>{children}</>;
+  if (!open && !split)
+    return (
+      <>
+        {children}
+        {collapsed}
+      </>
+    );
   return (
     <Splitter
       direction="column"

@@ -22,7 +22,7 @@
 //
 // 副作用が無いので Vitest (`src/__tests__/preflight.test.ts`) でユニットテストする。
 
-import { maskLiterals } from "../dangerousSql";
+import { maskLiterals, trimTrailingSeparators } from "../dangerousSql";
 
 /** プリフライト対象の書き込み DML 種別。 */
 export type PreflightVerb = "update" | "delete";
@@ -188,6 +188,14 @@ function readTableRef(masked: string, sql: string, p: number): { raw: string; en
 }
 
 /**
+ * プリフライトの対象にする SQL の最大文字数 (64 KiB 相当)。これを超えるテキストは
+ * 打鍵ごとの全文マスク / 計画組み立てを避けるためプリフライトしない (#1256)。
+ * エディタ側は文字列化する前に `doc.length` で同じ上限を見て、そもそも全文を
+ * 取り出さない。
+ */
+export const PREFLIGHT_MAX_CHARS = 64 * 1024;
+
+/**
  * 単一文の UPDATE / DELETE を影響行数プリフライト用の `PreflightPlan` へ変換する。
  *
  * - 対象外 (SELECT/INSERT/DDL、空、または複数文) のときは **null** を返す
@@ -200,10 +208,13 @@ function readTableRef(masked: string, sql: string, p: number): { raw: string; en
  * 保守的な非 MySQL 解釈になる。
  */
 export function buildPreflightPlan(sql: string, driver?: string): PreflightPlan | null {
+  // 巨大な SQL は全文マスクが重く、影響行数バッジの対象になる単発 UPDATE / DELETE
+  // としても現実的でない (#1256)。上限を超えたらプリフライトしない。
+  if (sql.length > PREFLIGHT_MAX_CHARS) return null;
   const masked = maskLiterals(sql, driver);
   // 末尾の空白と `;` を除いた実体。ここに `;` が残っていれば複数文なので対象外。
   // (文字列内の `;` はマスクで空白化済みなので誤検出しない。)
-  const trimmed = masked.replace(/[\s;]+$/, "");
+  const trimmed = trimTrailingSeparators(masked);
   if (trimmed.length === 0) return null;
   if (trimmed.includes(";")) return null;
   const stmtEnd = trimmed.length;

@@ -115,8 +115,14 @@
 
 ## スニペット・履歴・ログ (`commands/snippets.rs`, `history.rs`, `logs.rs`)
 
-`list_snippets` / `save_snippet` / `delete_snippet` / `list_history` / `clear_history` /
-`read_logs` / `clear_logs`
+`list_snippets` / `save_snippet` / `delete_snippet` / `list_history` / `get_history_sql` /
+`list_history_sql` / `clear_history` / `read_logs` / `clear_logs`
+
+履歴 (#1256): `list_history` は SQL 全文ではなく `sql_preview` (空白を畳んだ先頭 400
+文字、超過は `…`) と `sql_len` を返す。全文は `get_history_sql(id)` を復元・コピー・
+新規タブで開く・スニペット保存の時点で呼んで取る。`list_history_sql(profile_id, limit)` は
+エディタの ↑/↓ 履歴ナビとコマンドパレット用に SQL 全文だけを新しい順に返す (実行の
+たびに再取得せず、実行直後の SQL はフロントが先頭へ積む)。
 
 ## エクスポート / ダンプ / インポート / ファイル
 
@@ -144,6 +150,15 @@
 `:done` / `:error` / `:cancelled` イベント + `cancel_stream`。読み取り専用ガードは
 文ごと、`continueOnError` / `wrapInTransaction` は排他。スクリプト内の
 BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ読み替える。
+
+`run_sql_batch` (`commands/script.rs`, #1256) — エディタの複数文 SQL のバッチ実行。
+`run_sql_script` と同じ `run_script_core_with` を文字列の `Cursor` で再利用し、分割
+(`split_script`)・文ごとの read-only ガード・トランザクション制御文の読み替えを共有する。
+差分は (1) 結果を文ごとに返す (SELECT は `previewRows` 件に達した時点で
+`execute_stream` の `on_batch` で取得を打ち切る)、(2) 明示トランザクション中は各文を
+`execute_in_transaction` で同じ接続に流す (制御文の読み替えなし)、(3) 履歴には記録
+しない。結果は Channel (`started` / `results` / `done` / `error` / `cancelled`) で、
+`results` は 150ms 間引きでまとめて届く。`cancel_stream` で中断できる。
 
 ## 接続間データ転送 (`commands/transfer.rs`, #986)
 
