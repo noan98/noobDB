@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **130 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **131 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -40,6 +40,21 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
+
+`run_query_stream` は結果を Channel の `columns` / `rows` / `done` のほかに、バッチ合流
+(`db::stream_batch::StreamBatcher`: 初回は即送信、以降は時間 / サイズ倍々) と逐次統計
+(`rows.stats` / `done.stats`: 列ごとの NULL 数・数値 min/max・重複行フラグ) を付けて送る
+(#1257)。自動リフレッシュでは任意引数 `refreshDiff` (`{ key, pkIndices, prevSnapshotId }`)
+を渡すと、`db::refresh_diff` が前回結果の PK ハッシュ → 行ハッシュを保持して `patch`
+メッセージ (変化行・追加行の実データ + 変化なし区間の参照 + 削除数。全一致なら
+`unchanged`) だけを返す。
+
+## ブロードキャスト (`commands/broadcast.rs`)
+
+`broadcast_compare` — 同じ読み取りクエリを基準 + 対象セッションへ並行実行し、環境ごとの
+`env` メッセージ (列 + 上限 5,000 行の表示行 + 基準との差分サマリ、`db::broadcast_diff`) を
+Channel で返す (#738, #1257)。読み取り専用はバックエンド強制。各環境は
+`{runId}:{sessionId}` の stream id で `cancel_stream` できる。
 
 ## スキーマ (`commands/schema.rs`)
 

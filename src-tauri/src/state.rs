@@ -250,6 +250,9 @@ pub struct AppState {
     connect_seq: AtomicU64,
     /// データ比較 / サンドボックスの `DataDiff` を ID で保持するストア (#1259)。
     pub data_diffs: std::sync::Mutex<DiffStore>,
+    /// 自動リフレッシュの差分パッチ (#1257) が使う、タブ単位の前回結果スナップ
+    /// ショット (PK ハッシュ → 行ハッシュ)。行データは持たない。
+    pub refresh_snapshots: std::sync::Mutex<crate::db::refresh_diff::RefreshSnapshotStore>,
 }
 
 impl AppState {

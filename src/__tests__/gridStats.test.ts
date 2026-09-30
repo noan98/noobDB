@@ -7,6 +7,7 @@ import {
   isNumericStatsKind,
   nullRatePercentOf,
   columnNullRates,
+  nullRatesFromCounts,
 } from "../components/gridStats";
 import type { CellValue } from "../api/tauri";
 
@@ -264,5 +265,24 @@ describe("isNumericStatsKind", () => {
     expect(isNumericStatsKind("decimal")).toBe(true);
     expect(isNumericStatsKind("string")).toBe(false);
     expect(isNumericStatsKind("date")).toBe(false);
+  });
+});
+
+describe("nullRatesFromCounts (#1257)", () => {
+  it("columnNullRates と同じ結果を、行を走査せずに作る", () => {
+    const rows = [
+      [1, null, "a"],
+      [2, null, null],
+      [null, "x", undefined as unknown as null],
+      [4, "y", "b"],
+    ];
+    const counts = [1, 2, 2];
+    expect(nullRatesFromCounts(counts, rows.length, 3)).toEqual(columnNullRates(rows, 3));
+  });
+
+  it("範囲外の列は 0 件扱い、0 行は 0%", () => {
+    expect(nullRatesFromCounts([], 4, 2)).toEqual([0, 0]);
+    expect(nullRatesFromCounts([0], 0, 1)).toEqual(columnNullRates([], 1));
+    expect(nullRatesFromCounts([1], 1, -3)).toEqual([]);
   });
 });

@@ -25,11 +25,13 @@ mod timelapse;
 pub mod __test_api {
     pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
     pub use crate::commands::assertions::AssertionOutcome;
+    pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
         analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
         TableMeta, UnusedIndexEntry, UnusedIndexStats,
     };
     pub use crate::db::aws_iam::AwsIamConfig;
+    pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
@@ -40,7 +42,12 @@ pub mod __test_api {
         generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
     };
     pub use crate::db::profile::{ColumnProfile, ProfileHistogramBucket, ProfileValueCount};
+    pub use crate::db::refresh_diff::{
+        PatchPayload, PatchRun, RefreshBuilder, RefreshOutcome, RefreshSnapshot,
+        RefreshSnapshotStore,
+    };
     pub use crate::db::sandbox::filter_out_keys;
+    pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
@@ -988,6 +995,7 @@ pub fn run() {
             commands::query::run_in_transaction,
             commands::query::finish_transaction,
             commands::query::run_query_stream,
+            commands::broadcast::broadcast_compare,
             commands::query::set_emergency_mode,
             commands::query::preview_query_stream,
             commands::query::cancel_stream,

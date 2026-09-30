@@ -1,5 +1,6 @@
 pub mod advisor;
 pub mod assertions;
+pub mod broadcast;
 pub mod bulk_write;
 pub mod cell_blob;
 pub mod connection;

@@ -1556,7 +1556,7 @@ export const api = {
   /** 明示トランザクション内で 1 文を実行する。 */
   runInTransaction: (sessionId: string, sql: string) =>
     invoke<QueryResult>("run_in_transaction", { sessionId, sql }).then((r) =>
-      parseResponse(schemas.queryResult, r, "run_in_transaction"),
+      parseResponse(schemas.queryResultLite, r, "run_in_transaction"),
     ),
   /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する。 */
   finishTransaction: (sessionId: string, commit: boolean) =>
@@ -1577,7 +1577,7 @@ export const api = {
       sessionId,
       sql,
       database: database ?? null,
-    }).then((r) => parseResponse(schemas.queryResult, r, "run_query")),
+    }).then((r) => parseResponse(schemas.queryResultLite, r, "run_query")),
   /**
    * スマート値ピッカー (#1067) の候補取得。FK 参照先の DISTINCT 値や ENUM /
    * CHECK 許可値を引く裏方クエリで、バックエンドがセッションの read_only に
@@ -1598,7 +1598,7 @@ export const api = {
       database: params.database ?? null,
       queryTimeoutSecs: params.queryTimeoutSecs ?? null,
       rowCap: params.rowCap ?? null,
-    }).then((r) => parseResponse(schemas.queryResult, r, "run_lookup_query")),
+    }).then((r) => parseResponse(schemas.queryResultLite, r, "run_lookup_query")),
   runQueryTransaction: (
     sessionId: string,
     statements: string[],
@@ -1608,7 +1608,7 @@ export const api = {
       sessionId,
       statements,
       database: database ?? null,
-    }).then((r) => parseResponse(schemas.queryResult, r, "run_query_transaction")),
+    }).then((r) => parseResponse(schemas.queryResultLite, r, "run_query_transaction")),
   /**
    * 結果グリッドのセル編集 Apply (#1259)。同じ (列, 値) ごとにまとめた `groups` から
    * Rust が `UPDATE t SET c = v WHERE pk IN (…)` をチャンク化して組み立て、
@@ -1631,7 +1631,7 @@ export const api = {
       pkColumns: params.pkColumns,
       groups: params.groups,
       extraStatements: params.extraStatements ?? [],
-    }).then((r) => parseResponse(schemas.queryResult, r, "bulk_update_cells")),
+    }).then((r) => parseResponse(schemas.queryResultLite, r, "bulk_update_cells")),
   /**
    * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは
    * null / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。
@@ -1686,6 +1686,13 @@ export const api = {
     captureRowCap?: number | null;
     /** 退避した before/after イメージの保持期間 (日数)。 */
     captureRetentionDays?: number | null;
+    /**
+     * 自動リフレッシュの差分パッチ (#1257)。`autoRefresh` のときだけ有効。バックエンドが
+     * `key` のタブの前回結果 (PK ハッシュ → 行ハッシュ) を保持し、`prevSnapshotId` が
+     * 手元の行配列に紐づく ID と一致すれば、行の代わりに `patch` メッセージ (変化行・
+     * 追加行・削除数) だけを返す。`pkIndices` はグリッドの行識別列の添字。
+     */
+    refreshDiff?: { key: string; pkIndices: number[]; prevSnapshotId: number | null } | null;
   }) => {
     // #1096: `run_query_stream` は結果を Tauri Channel (`onEvent`) で送る。
     // チャンネルは呼び出し側が先に `listenQueryStream(streamId, handlers)` を
@@ -1711,6 +1718,7 @@ export const api = {
       capture: params.capture ?? false,
       captureRowCap: params.captureRowCap ?? null,
       captureRetentionDays: params.captureRetentionDays ?? null,
+      refreshDiff: params.refreshDiff ?? null,
       onEvent: channel,
     });
   },
@@ -1759,6 +1767,43 @@ export const api = {
     invoke<CancelStreamResult>("cancel_stream", { streamId }).then((r) =>
       parseResponse(schemas.cancelStreamResponse, r, "cancel_stream"),
     ),
+
+  /**
+   * 環境横断ブロードキャスト (#738, #1257): 同じ読み取りクエリを基準 + 対象セッションへ
+   * 並行実行し、環境ごとの結果 (上限 5,000 行) と基準との差分サマリを `listenBroadcast`
+   * の Channel で返す。読み取り専用はバックエンドが強制する。各環境は
+   * `broadcastEnvStreamId(runId, sessionId)` で `cancelStream` できる。
+   */
+  broadcastCompare: (params: {
+    runId: string;
+    sql: string;
+    baselineSessionId: string;
+    targetSessionIds: string[];
+    autoLimit?: number | null;
+    queryTimeoutSecs?: number | null;
+    /** 表の主キー列名 (テーブル閲覧タブ由来のとき)。 */
+    tablePkColumns: string[];
+    /** 結果列からユーザが選んだキー列名 (表の主キーが解決できないとき)。 */
+    userKeyColumn?: string | null;
+  }) => {
+    const channel = broadcastChannels.get(params.runId);
+    if (!channel) {
+      throw new Error(
+        `broadcastCompare: listenBroadcast(runId) must be awaited before invoking (runId="${params.runId}")`,
+      );
+    }
+    return invoke<void>("broadcast_compare", {
+      runId: params.runId,
+      sql: params.sql,
+      baselineSessionId: params.baselineSessionId,
+      targetSessionIds: params.targetSessionIds,
+      autoLimit: params.autoLimit ?? null,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
+      tablePkColumns: params.tablePkColumns,
+      userKeyColumn: params.userKeyColumn ?? null,
+      onEvent: channel,
+    });
+  },
 
   listDatabases: (sessionId: string) =>
     invoke<string[]>("list_databases", { sessionId }).then((r) =>
@@ -2401,7 +2446,7 @@ export const api = {
       columns: params.columns,
       rows: params.rows,
       masks: params.masks,
-    }).then((r) => parseResponse(schemas.cellRows, r, "mask_export_rows")),
+    }).then((r) => parseResponse(schemas.cellRowsLite, r, "mask_export_rows")),
 
   /**
    * クエリを再実行し、全件をストリーミングで直接ファイルへ書き出す。結果は
@@ -2782,8 +2827,36 @@ export interface QueryStreamColumnsMessage {
   columns: Column[];
 }
 
+/** ストリーム中に Rust が逐次更新した列統計 (#1257, `StreamStatsSnapshot`)。 */
+export interface StreamStatsSnapshot {
+  /** 観測した総行数。手元の `rows.length` と一致するときだけ採用する。 */
+  rowCount: number;
+  nullCounts: number[];
+  numMin: (number | null)[];
+  numMax: (number | null)[];
+  /** 全列が同一の行が 2 行以上あるか (`null` = 追跡上限超えで不明)。 */
+  duplicateRows: boolean | null;
+}
+
 export interface QueryStreamRowsMessage {
   rows: CellValue[][];
+  /** この送信分までの累積統計 (#1257)。無ければ JS 側で再計算する。 */
+  stats?: StreamStatsSnapshot | null;
+}
+
+/** パッチの 1 区間 (#1257)。`keep` は前回行の `from` から `count` 行のコピー、
+ *  `rows` は実データの行 (`prev[i]` は対応する前回行の位置、追加行は null)。 */
+export type QueryStreamPatchRun =
+  | { type: "keep"; from: number; count: number }
+  | { type: "rows"; prev: (number | null)[]; rows: CellValue[][] };
+
+export interface QueryStreamPatchMessage {
+  totalRows: number;
+  /** 全行が前回と同一 (`runs` は空)。 */
+  unchanged: boolean;
+  /** 前回にあって今回に対応が無い行数。 */
+  removedCount: number;
+  runs: QueryStreamPatchRun[];
 }
 
 export interface QueryStreamDoneMessage {
@@ -2795,6 +2868,10 @@ export interface QueryStreamDoneMessage {
   appliedAutoLimit: number | null;
   /** サーバの通知・警告 (PostgreSQL NOTICE/WARNING、MySQL SHOW WARNINGS) (#1165)。 */
   serverMessages?: ServerMessage[];
+  /** 全行を観測し終えた統計 (#1257)。 */
+  stats?: StreamStatsSnapshot | null;
+  /** 自動リフレッシュ差分 (#1257) の比較元スナップショット ID (保持しなければ null)。 */
+  snapshotId?: number | null;
   /** 実行した SQL が読み取り専用か (バックエンドの判定値。再計算しなくてよい、#1256)。 */
   readOnly: boolean;
   /** 実行した SQL がスキーマを変えうるか (バックエンドの判定値、#1256)。 */
@@ -3096,6 +3173,8 @@ export interface ImportStreamHandlers {
 export interface QueryStreamHandlers {
   onColumns?: (event: QueryStreamColumnsMessage) => void;
   onRows?: (event: QueryStreamRowsMessage) => void;
+  /** 自動リフレッシュの差分パッチ (#1257)。`refreshDiff` 付きの実行でだけ届く。 */
+  onPatch?: (event: QueryStreamPatchMessage) => void;
   onDone?: (event: QueryStreamDoneMessage) => void;
   onError?: (event: QueryStreamErrorMessage) => void;
   /** See `ExportStreamHandlers.onCancelled` (#685). Fired through the same
@@ -3212,6 +3291,15 @@ export async function listenQueryStream(
           ),
         );
         break;
+      case "patch":
+        handlers.onPatch?.(
+          parseChannelMessage<QueryStreamPatchMessage>(
+            schemas.queryStreamPatchMessage,
+            msg,
+            "queryStreamPatchMessage",
+          ),
+        );
+        break;
       case "done":
         handlers.onDone?.(
           parseChannelMessage<QueryStreamDoneMessage>(
@@ -3254,6 +3342,95 @@ export async function listenQueryStream(
     if (queryStreamChannels.get(streamId) === channel) {
       queryStreamChannels.delete(streamId);
     }
+  };
+}
+
+// --- ブロードキャスト比較 (#1257) -------------------------------------------
+
+/** 基準環境との差分サマリ (`db/broadcast_diff.rs` の `BroadcastDiff`)。変化セルは疎表現。 */
+export interface BroadcastDiff {
+  comparable: boolean;
+  /** "pk": PK ペアリング / "hash": 行ハッシュの多重集合比較 / "none": 比較不能。 */
+  mode: "pk" | "hash" | "none";
+  changedCells: { row: number; cols: number[] }[];
+  changedCellCount: number;
+  /** 対象にだけ存在する行の位置 (表示行上の添字)。 */
+  addedRowIndices: number[];
+  /** 基準にだけ存在した行の件数。 */
+  removedCount: number;
+  /** 比較上限に達して先頭行のみで比較した。 */
+  truncated: boolean;
+  hasDiff: boolean;
+}
+
+export interface BroadcastEnvMessage {
+  sessionId: string;
+  status: "done" | "error";
+  columns: Column[];
+  /** 先頭 5,000 行までの表示行。 */
+  rows: CellValue[][];
+  /** 打ち切り前の総行数。 */
+  totalRows: number;
+  elapsedMs: number;
+  error: string | null;
+  /** 基準環境との差分。基準自身・比較できないときは null。 */
+  diff: BroadcastDiff | null;
+}
+
+export interface BroadcastHandlers {
+  onEnv?: (event: BroadcastEnvMessage) => void;
+  onCancelled?: (event: { sessionId: string }) => void;
+  onDone?: () => void;
+}
+
+const broadcastChannels = new Map<string, Channel<unknown>>();
+
+/** 環境ごとの stream id (`cancel_stream` で個別にキャンセルできる)。バックエンドと同じ規則。 */
+export function broadcastEnvStreamId(runId: string, sessionId: string): string {
+  return `${runId}:${sessionId}`;
+}
+
+/**
+ * `api.broadcastCompare({ runId })` の結果を受ける Channel を用意する。先に await してから
+ * `broadcastCompare` を呼ぶこと。戻り値でハンドラを外す (以後のメッセージは無視される)。
+ */
+export async function listenBroadcast(
+  runId: string,
+  handlers: BroadcastHandlers,
+): Promise<UnlistenFn> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "env":
+        handlers.onEnv?.(
+          parseChannelMessage<BroadcastEnvMessage>(
+            schemas.broadcastEnvMessage,
+            msg,
+            "broadcastEnvMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<{ sessionId: string }>(
+            schemas.broadcastCancelledMessage,
+            msg,
+            "broadcastCancelledMessage",
+          ),
+        );
+        break;
+      case "done":
+        handlers.onDone?.();
+        break;
+      default:
+        break;
+    }
+  };
+  broadcastChannels.set(runId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (broadcastChannels.get(runId) === channel) broadcastChannels.delete(runId);
   };
 }
 

@@ -13,6 +13,7 @@ import {
   sampleRamp,
   type ColorRamp,
 } from "../colorScale";
+import { quoteIdentFor } from "./sqlDialect";
 import { resultViewKey } from "./resultViewKey";
 
 export type ChartType = "bar" | "line" | "area" | "pie";
@@ -323,6 +324,77 @@ export function buildChartModel(
   }));
   // 集計あり (sum/avg/count) は非数値・NULL を最初から除外して計算しており
   // 0 への読み替えは発生しない。
+  return { labels, series, sampledFrom: null, excludedNonNumeric: 0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DB 側集計モード (#1257)。ピボット (`pivotData.ts` の `buildPivotSql`) と同じ作りで、
+// 集計 (sum / avg / count) を取得済みの行ではなく**元クエリ全件に対して DB に任せる**。
+// 元 SQL をサブクエリに包んで GROUP BY するので、JOIN を含む任意の結果にも効き、
+// 取得行が上限で切れていても全件の集計になる。JS 側の畳み込みとの違いは次のとおり:
+//
+// - グループの並びは X 値の昇順 (DB の ORDER BY)。JS 側は最初の出現順。
+// - SUM/AVG は数値型の列を前提にする (文字列列への SUM は DB によってはエラー。
+//   その場合 ChartView は JS 側の集計へ縮退する)。COUNT は非 NULL の件数 (どちらも同じ)。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ChartSqlRequest {
+  driver: string;
+  /** チャート元になった実行 SQL (サブクエリに包んで GROUP BY する)。 */
+  sourceSql: string;
+  xColumn: string;
+  yColumns: string[];
+  agg: Exclude<Aggregation, "none">;
+}
+
+/** DB 側集計の SQL を生成する。結果の列は X、続いて Y 系列の集計値 (`yColumns` と同順)。 */
+export function buildChartSql(req: ChartSqlRequest): string {
+  const q = (name: string) => quoteIdentFor(req.driver, name);
+  // 末尾のセミコロンはサブクエリに包むと構文エラーになるため落とす。
+  const sub = req.sourceSql.trim().replace(/;+\s*$/, "");
+  const fn = req.agg.toUpperCase();
+  const selectCols = [
+    `${q(req.xColumn)} AS ${q("chart_x")}`,
+    ...req.yColumns.map((y, i) => `${fn}(${q(y)}) AS ${q(`chart_y${i}`)}`),
+  ];
+  return (
+    `SELECT ${selectCols.join(", ")}\n` +
+    `FROM (${sub}) AS ${q("chart_src")}\n` +
+    `GROUP BY ${q(req.xColumn)}\n` +
+    `ORDER BY ${q(req.xColumn)}`
+  );
+}
+
+/**
+ * DB 側集計を依頼できる設定か。集計ありで Y が 1 つ以上あり、必要な列が名前付き
+ * (別名の無い計算列は参照できない) で、元 SQL があるときだけ。
+ */
+export function canAggregateInDb(
+  columns: Column[],
+  config: ChartConfig,
+  sourceSql: string | undefined,
+): boolean {
+  if (!sourceSql || sourceSql.trim() === "") return false;
+  if (config.aggregation === "none" || config.yCols.length === 0) return false;
+  const named = (i: number) => (columns[i]?.name ?? "") !== "";
+  return named(config.xCol) && config.yCols.every(named);
+}
+
+/**
+ * `buildChartSql` の実行結果 (X + 集計値の列) からチャートモデルを作る。系列名は
+ * JS 側の集計と同じ (`SUM(amount)` 等) にして、凡例・エクスポートの見た目を揃える。
+ */
+export function chartModelFromAggregatedRows(
+  rows: CellValue[][],
+  yNames: string[],
+  aggregation: Exclude<Aggregation, "none">,
+): ChartModel {
+  const labels = rows.map((r) => cellLabel(r[0]));
+  const series: ChartSeries[] = yNames.map((name, i) => ({
+    name: aggregation === "count" ? `COUNT(${name})` : `${aggregation.toUpperCase()}(${name})`,
+    // SUM/AVG が NULL (数値が 1 件も無いグループ) は JS 側と同じく 0。
+    values: rows.map((r) => toNumber(r[i + 1]) ?? 0),
+  }));
   return { labels, series, sampledFrom: null, excludedNonNumeric: 0 };
 }
 
