@@ -65,10 +65,26 @@ export function errorKindOf(e: unknown): string | null {
  * {@link BackendError} (#683). All IPC calls in this module go through here, so
  * the whole frontend receives errors in one consistent shape.
  */
-function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return rawInvoke<T>(cmd, args).catch((raw: unknown) => {
+function invoke<T>(
+  cmd: string,
+  args?: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
+): Promise<T> {
+  return rawInvoke<T>(cmd, args, options).catch((raw: unknown) => {
     throw normalizeBackendError(raw);
   });
+}
+
+/**
+ * `tauri::ipc::Response` (生バイト) で返るコマンドの結果を `Uint8Array` へ揃える
+ * (#1258)。Tauri は生バイトを `ArrayBuffer` として渡すので、それ以外は契約違反。
+ */
+function parseBinaryResponse(value: unknown, command: string): Uint8Array {
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  throw new Error(`IPC レスポンス "${command}" がバイナリではありません`);
 }
 
 export type DriverKind = "mysql" | "postgres" | "sqlite";
@@ -2368,6 +2384,26 @@ export const api = {
     ),
 
   /**
+   * 直近の取り込み (skip モード) でスキップされた全行を、一覧テキストにして返す
+   * (#1258、コピー用)。全件は Rust 側が保持しているので、完了イベントに載る先頭
+   * 一部より多く取れる。`recordTemplate` / `lineTemplate` は `{record}` `{line}`
+   * `{reason}` を含む表示用テンプレート (i18n 文言をそのまま渡す)。
+   */
+  getImportSkippedText: (recordTemplate: string, lineTemplate: string) =>
+    invoke<string>("get_import_skipped_text", { recordTemplate, lineTemplate }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "get_import_skipped_text"),
+    ),
+
+  /**
+   * 直近の取り込みでスキップされた全行を `path` へテキストで書き出す (#1258)。
+   * 書き出した行数を返す。保持している行が無ければ reject される。
+   */
+  saveImportSkippedRows: (path: string, recordTemplate: string, lineTemplate: string) =>
+    invoke<number>("save_import_skipped_rows", { path, recordTemplate, lineTemplate }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "save_import_skipped_rows"),
+    ),
+
+  /**
    * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を
    * 直に叩かずバックエンド経由で読む (capabilities を最小に保つ)。サイズ上限を超える
    * ファイルは reject される。
@@ -2379,8 +2415,10 @@ export const api = {
 
   /**
    * 主キーで 1 セルの生バイトを取得する (#1148)。グリッドの表示値ではなくサーバの値を
-   * 引き直すので、ファイル保存・画像プレビューは常に完全な内容になる。16 進文字列
-   * (小文字) を返し、NULL は null。該当行が 1 行に定まらない場合は reject される。
+   * 引き直すので、画像プレビューは常に完全な内容になる。生バイト列をそのまま
+   * 受け取る (16 進文字列や JSON 配列を経由しない、#1258)。NULL セルは reject
+   * されるので、先に {@link api.probeCellBlob} で NULL / サイズ / 種別を確認すること。
+   * 該当行が 1 行に定まらない場合も reject される。
    */
   fetchCellBytes: (
     sessionId: string,
@@ -2389,27 +2427,79 @@ export const api = {
     column: string,
     key: { column: string; value: CellValue }[],
   ) =>
-    invoke<string | null>("fetch_cell_bytes", { sessionId, database, table, column, key }).then(
-      (r) => parseResponse(schemas.nullableStringResponse, r, "fetch_cell_bytes"),
+    invoke<unknown>("fetch_cell_bytes", { sessionId, database, table, column, key }).then(
+      (r) => parseBinaryResponse(r, "fetch_cell_bytes"),
     ),
 
   /**
-   * ファイルをバイナリで読み 16 進文字列 (小文字) を返す (#1148、BLOB への書き戻し用)。
-   * サイズ上限 (16 MiB) を超えるファイルは reject される。
+   * BLOB セルの probe (#1258): 本体を転送せず、サーバ側の長さ関数と先頭 16 バイトから
+   * サイズと種別 (MIME / 拡張子 / 画像か) だけを返す。NULL は null。
+   */
+  probeCellBlob: (
+    sessionId: string,
+    database: string | null,
+    table: string,
+    column: string,
+    key: { column: string; value: CellValue }[],
+  ) =>
+    invoke<CellBlobProbe | null>("probe_cell_blob", {
+      sessionId,
+      database,
+      table,
+      column,
+      key,
+    }).then((r) => parseResponse(schemas.cellBlobProbe.nullable(), r, "probe_cell_blob")),
+
+  /**
+   * 主キーで 1 セルの生バイトを取得し、そのまま `path` のファイルへ書き出す (#1258)。
+   * DB → ファイルが Rust 内で完結し、BLOB は IPC を通らない。書き込んだバイト数を返す。
+   */
+  saveCellToFile: (
+    sessionId: string,
+    database: string | null,
+    table: string,
+    column: string,
+    key: { column: string; value: CellValue }[],
+    path: string,
+  ) =>
+    invoke<number>("save_cell_to_file", {
+      sessionId,
+      database,
+      table,
+      column,
+      key,
+      path,
+    }).then((r) => parseResponse(schemas.numberResponse, r, "save_cell_to_file")),
+
+  /**
+   * ファイルをバイナリで読み、生バイト列を返す (#1148、BLOB への
+   * 書き戻し用。#1258 で 16 進文字列から生バイトへ)。サイズ上限 (16 MiB) を超える
+   * ファイルは reject される。
    */
   readBinaryFile: (path: string) =>
-    invoke<string>("read_binary_file", { path }).then((r) =>
-      parseResponse(schemas.stringResponse, r, "read_binary_file"),
+    invoke<unknown>("read_binary_file", { path }).then((r) =>
+      parseBinaryResponse(r, "read_binary_file"),
     ),
 
   /**
    * フロントで生成したバイト列 (チャート/ER 図の PNG・SVG など) を、保存ダイアログで
    * 選んだパスへバックエンド経由で書き出す (capabilities を最小に保つため。#643)。
-   * 書き込んだバイト数を返す。
+   * 書き込んだバイト数を返す。バイト列は Tauri の raw ボディでそのまま送る (JSON の
+   * 数値配列は約 4 倍に膨らむため。#1258)。パスはヘッダで運ぶので、ヘッダに載せられる
+   * よう URL エンコードする (日本語や Windows パスを Rust 側で復元する)。
    */
   writeBinaryFile: (path: string, data: Uint8Array) =>
-    invoke<number>("write_binary_file", { path, data: Array.from(data) }).then((r) =>
-      parseResponse(schemas.numberResponse, r, "write_binary_file"),
+    invoke<number>("write_binary_file", data, {
+      headers: { "x-noobdb-path": encodeURIComponent(path) },
+    }).then((r) => parseResponse(schemas.numberResponse, r, "write_binary_file")),
+
+  /**
+   * テキスト (SQL・Markdown・JSON など) を UTF-8 で `path` へ書き出す (#1258)。
+   * `writeBinaryFile` と同じ上限 (32 MiB)。書き込んだバイト数を返す。
+   */
+  writeTextFile: (path: string, content: string) =>
+    invoke<number>("write_text_file", { path, content }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "write_text_file"),
     ),
 
   // DML フライトレコーダ (#735)。書き込みの記録は `runQueryStream({ capture: true })`
@@ -2670,8 +2760,25 @@ export interface ImportDoneEvent {
   streamId: string;
   inserted: number;
   elapsedMs: number;
-  /** Rows skipped in skip mode (empty in abort mode). #687. */
+  /**
+   * Rows skipped in skip mode (empty in abort mode). #687. 多いときは先頭の一部
+   * だけ (#1258)。全件は `skippedTotal` と {@link api.saveImportSkippedRows} 側。
+   */
   skipped: SkippedRowInfo[];
+  /** スキップされた総件数 (`skipped` に載っていない行を含む)。 */
+  skippedTotal: number;
+}
+
+/** BLOB セルの probe 結果 (#1258)。本体を運ばずサイズと種別だけ。 */
+export interface CellBlobProbe {
+  /** 生バイト数。 */
+  size: number;
+  /** 推定 MIME (判別不能なら null)。 */
+  mime: string | null;
+  /** 保存ダイアログの既定拡張子 (ドット無し。判別不能なら null)。 */
+  ext: string | null;
+  /** `<img>` でそのまま描画できる画像か。 */
+  image: boolean;
 }
 
 export interface ImportErrorEvent {

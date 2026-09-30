@@ -18,7 +18,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       compareSchema: vi.fn(),
       generateSyncSql: vi.fn(),
-      writeBinaryFile: vi.fn(),
+      writeTextFile: vi.fn(),
     },
   };
 });
@@ -38,7 +38,7 @@ import { MigrationExportModal } from "../components/MigrationExportModal";
 
 const compareSchema = api.compareSchema as ReturnType<typeof vi.fn>;
 const generateSyncSql = api.generateSyncSql as ReturnType<typeof vi.fn>;
-const writeBinaryFile = api.writeBinaryFile as ReturnType<typeof vi.fn>;
+const writeTextFile = api.writeTextFile as ReturnType<typeof vi.fn>;
 
 const UP_PLAN: SyncPlan = {
   statements: [
@@ -74,7 +74,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   compareSchema.mockResolvedValue({ source_driver: "mysql", target_driver: "mysql", tables: [] });
   generateSyncSql.mockResolvedValue(DOWN_PLAN);
-  writeBinaryFile.mockResolvedValue(42);
+  writeTextFile.mockResolvedValue(42);
 });
 
 describe("MigrationExportModal render smoke (#744)", () => {
@@ -127,13 +127,13 @@ describe("MigrationExportModal render smoke (#744)", () => {
       return btn;
     });
     fireEvent.click(saveButton);
-    await waitFor(() => expect(writeBinaryFile).toHaveBeenCalledTimes(2));
-    const [upPath, upBytes] = writeBinaryFile.mock.calls[0];
-    const [downPath, downBytes] = writeBinaryFile.mock.calls[1];
+    await waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(2));
+    const [upPath, upText] = writeTextFile.mock.calls[0];
+    const [downPath, downText] = writeTextFile.mock.calls[1];
     expect(upPath).toContain("shop_staging_to_shop_prod");
     expect(downPath).toContain("shop_staging_to_shop_prod");
-    expect(new TextDecoder().decode(upBytes)).toContain("CREATE TABLE t (id INT);");
-    expect(new TextDecoder().decode(downBytes)).toContain("DROP TABLE t;");
-    expect(new TextDecoder().decode(downBytes)).toContain("sqlite cannot alter columns in place");
+    expect(upText).toContain("CREATE TABLE t (id INT);");
+    expect(downText).toContain("DROP TABLE t;");
+    expect(downText).toContain("sqlite cannot alter columns in place");
   });
 });

@@ -155,9 +155,31 @@ pub struct AppState {
     pub connects: RwLock<HashMap<String, (u64, AbortHandle)>>,
     /// Monotonic source of the per-registration tokens above.
     connect_seq: AtomicU64,
+    /// 直近の取り込み (skip モード) でスキップされた全行 (#1258)。完了イベントには
+    /// 先頭の一部しか載せないため、「スキップ行を保存 / コピー」用に全件を Rust 側で
+    /// 保持する。取り込みが終わるたびに置き換わる。
+    last_import_skipped: std::sync::Mutex<Vec<crate::commands::import::SkippedRowInfo>>,
 }
 
 impl AppState {
+    /// 直近の取り込みのスキップ行を置き換える。
+    pub fn set_last_import_skipped(&self, rows: Vec<crate::commands::import::SkippedRowInfo>) {
+        // ロックが poison されていても (別スレッドの panic) 単なる Vec なので中身を使う。
+        let mut guard = self
+            .last_import_skipped
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = rows;
+    }
+
+    /// 直近の取り込みのスキップ行の複製。
+    pub fn last_import_skipped_snapshot(&self) -> Vec<crate::commands::import::SkippedRowInfo> {
+        self.last_import_skipped
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     pub async fn insert(&self, session: Session) -> SessionId {
         let id = session.id.clone();
         self.sessions

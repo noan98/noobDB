@@ -40,19 +40,20 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    CancelStreamResult, Column, ColumnDiff, ColumnProfile, ConnectPhaseEvent, ConnectResponse,
-    ConnectionProfile, CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent,
-    DumpProgressEvent, ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey,
-    HealthFinding, HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent,
-    ImportResult, ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
-    PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
-    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
-    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
-    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
-    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
-    StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
-    TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
+    CancelStreamResult, CellBlobProbe, Column, ColumnDiff, ColumnProfile, ConnectPhaseEvent,
+    ConnectResponse, ConnectionProfile, CsvPreview, DataDiff, DiffStatus, DriverKind,
+    DumpDoneEvent, DumpErrorEvent, DumpProgressEvent, ExportDoneEvent, ExportErrorEvent,
+    ExportProgressEvent, ForeignKey, HealthFinding, HistoryEntry, ImportDoneEvent,
+    ImportErrorEvent, ImportProgressEvent, ImportResult, ImportStartedEvent, IndexInfo, KnownHost,
+    LiveQuery, LocalTableMeta, LogView, PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket,
+    ProfileValueCount, ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage,
+    RoutineParameter, RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport,
+    SchemaObject, ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent,
+    ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity,
+    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
+    SslMode, StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement,
+    TableColumnInfo, TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -521,6 +522,7 @@ fn build_fixtures() -> serde_json::Value {
             line: Some(8),
             reason: "duplicate key".into(),
         }],
+        skipped_total: 1234,
     };
     let import_error_event = ImportErrorEvent {
         stream_id: "strm0003".into(),
@@ -605,6 +607,13 @@ fn build_fixtures() -> serde_json::Value {
         rows: 200,
     };
 
+    let cell_blob_probe = CellBlobProbe {
+        size: 4096,
+        mime: Some("image/png".into()),
+        ext: Some("png".into()),
+        image: true,
+    };
+
     let connect_phase_event = ConnectPhaseEvent {
         attempt_id: "attempt0001".into(),
         phase: "tunnel_connecting",
@@ -667,6 +676,7 @@ fn build_fixtures() -> serde_json::Value {
         "importStartedEvent": import_started_event,
         "importProgressEvent": import_progress_event,
         "importDoneEvent": import_done_event,
+        "cellBlobProbe": cell_blob_probe,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,
         "dumpDoneEvent": dump_done_event,

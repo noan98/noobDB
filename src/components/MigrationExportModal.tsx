@@ -182,8 +182,8 @@ export function MigrationExportModal({
       const upPath = await join(dir, fileNames.up);
       const downPath = await join(dir, fileNames.down);
 
-      await api.writeBinaryFile(upPath, new TextEncoder().encode(contentUp));
-      await api.writeBinaryFile(downPath, new TextEncoder().encode(contentDown));
+      await api.writeTextFile(upPath, contentUp);
+      await api.writeTextFile(downPath, contentDown);
 
       setStatus({ kind: "done", upPath, downPath });
       toast.success(t("schemaCompareMigrationSaved", { up: upPath, down: downPath }));

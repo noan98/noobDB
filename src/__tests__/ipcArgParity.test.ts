@@ -217,7 +217,16 @@ function extractRegisteredCommands(source: string): Set<string> {
  */
 function isInjectedArgType(rustType: string): boolean {
   const head = rustType.trim().split(/[<\s]/)[0];
-  return head === "State" || head === "AppHandle" || head === "Window" || head === "WebviewWindow";
+  // `tauri::ipc::Request` は raw ボディ (+ ヘッダ) を直接受ける引数で、`write_binary_file`
+  // のように invoke の引数オブジェクトのキーとしては現れない (#1258)。
+  return (
+    head === "State" ||
+    head === "AppHandle" ||
+    head === "Window" ||
+    head === "WebviewWindow" ||
+    head === "tauri::ipc::Request" ||
+    head === "Request"
+  );
 }
 
 /**
@@ -331,6 +340,12 @@ function extractInvokedArgs(tauriTs: string): Map<string, Set<string>> {
     const keys = new Set<string>();
     if (rawArgs.length >= 2) {
       const objText = rawArgs[1];
+      if (rawArgs.length >= 3 && !(objText.startsWith("{") && objText.endsWith("}"))) {
+        // 第 2 引数が変数 (Uint8Array) で第 3 引数が `{ headers }` の raw ボディ呼び出し
+        // (`write_binary_file`、#1258)。引数オブジェクトのキーは無い。
+        result.set(cmdName, keys);
+        continue;
+      }
       if (!(objText.startsWith("{") && objText.endsWith("}"))) {
         throw new Error(
           `invoke("${cmdName}", …) の第 2 引数がオブジェクトリテラルでない (静的解析非対応): ${objText}`,
