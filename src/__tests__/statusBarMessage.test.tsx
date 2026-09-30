@@ -13,6 +13,17 @@ describe("StatusBarText (#1213)", () => {
     rerender(<StatusBarText text="3 行を取得しました" />);
     expect(await screen.findByText("3 行を取得しました")).toBeInTheDocument();
   });
+
+  it("同じ messageKey のまま文言だけ変わる更新は、退場を待たずその場で書き換える", () => {
+    const { rerender, container } = renderWithProviders(
+      <StatusBarText text="10 行取得中…" messageKey="statusStreaming" />,
+    );
+    const before = screen.getByText("10 行取得中…");
+    rerender(<StatusBarText text="20 行取得中…" messageKey="statusStreaming" />);
+    // 同期的に新しい文言へ置き換わり、同じ要素が使い回される (exit アニメが走らない)
+    expect(screen.getByText("20 行取得中…")).toBe(before);
+    expect(container.textContent).not.toContain("10 行取得中…");
+  });
 });
 
 describe("StatusBarIcon (#1213)", () => {

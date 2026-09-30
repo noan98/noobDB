@@ -53,12 +53,18 @@ export function StatusBarIcon({ kind }: { kind: StatusBarIconKind }) {
   );
 }
 
-/** 単一行のステータス文言。内容が変わるたびに下から差し替える。 */
-export function StatusBarText({ text }: { text: string }) {
+/**
+ * 単一行のステータス文言。メッセージの種類 (`messageKey`) が変わったときだけ
+ * 下から差し替える。ストリーミング中の「N 行取得中…」のように同じメッセージの
+ * 数値だけが高頻度で変わる更新ではアニメーションを再生せず、その場で書き換える
+ * (バッチごとに exit を待つとちらつき、表示が遅れて見えるため)。
+ * `messageKey` を省略した場合は文言そのものを key にする。
+ */
+export function StatusBarText({ text, messageKey }: { text: string; messageKey?: string }) {
   return (
     <AnimatePresence mode="wait" initial={false}>
       <MotionSpan
-        key={text}
+        key={messageKey ?? text}
         initial={variants.slideUp.initial}
         animate={variants.slideUp.animate}
         exit={variants.slideUp.exit}

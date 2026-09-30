@@ -7577,6 +7577,10 @@ export default function App() {
 
   const statusText =
     status.kind === "idle" ? "" : status.kind === "literal" ? status.text : t(status.key, status.vars);
+  // フッター文言の差し替えアニメーション (#1213) の単位。i18n キーで識別し、
+  // 同じメッセージの数値 (取得行数・経過時間) の更新では再生しない。
+  const statusMessageKey =
+    status.kind === "idle" ? "" : status.kind === "literal" ? status.text : status.key;
 
   // Bottom Panel「メッセージ」タブ (#1114) へステータスの履歴を積む。フッターは
   // 最新 1 件しか見せないため、上書きされて消えたエラー文を後から読めるようにする。
@@ -9436,7 +9440,7 @@ export default function App() {
                   // 伸びてレイアウトが崩れるのを防ぐ。
                   <Tooltip label={statusText} focusableWrapper>
                     <chakra.span display="block" overflow="hidden">
-                      <StatusBarText text={statusText} />
+                      <StatusBarText text={statusText} messageKey={statusMessageKey} />
                     </chakra.span>
                   </Tooltip>
                 )}
