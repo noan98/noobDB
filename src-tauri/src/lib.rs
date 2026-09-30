@@ -40,6 +40,7 @@ pub mod __test_api {
         generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
     };
     pub use crate::db::profile::{ColumnProfile, ProfileHistogramBucket, ProfileValueCount};
+    pub use crate::db::sandbox::filter_out_keys;
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
@@ -104,8 +105,7 @@ pub mod __test_api {
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags};
     pub use crate::commands::query::CancelStreamResult;
     pub use crate::commands::sandbox::{
-        filter_sandbox_data_diff, SandboxCreateResponse, SandboxSchemaDiffResult,
-        SandboxTableDiffResult,
+        SandboxCreateResponse, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
     pub use crate::history::HistoryEntry;
     pub use crate::sandboxes::SandboxRecord;
@@ -712,7 +712,8 @@ pub mod __test_api {
         sandbox_id: &str,
         sandbox_session_id: &str,
         table: &str,
-        applied: DataDiff,
+        diff_id: &str,
+        skip_keys: Vec<Vec<Value>>,
         allow_delete: bool,
     ) -> crate::error::Result<()> {
         crate::commands::sandbox::sandbox_advance_base_inner(
@@ -720,10 +721,28 @@ pub mod __test_api {
             sandbox_id.to_string(),
             sandbox_session_id.to_string(),
             table.to_string(),
-            applied,
+            diff_id.to_string(),
+            skip_keys,
             allow_delete,
         )
         .await
+    }
+
+    /// Drives the `generate_data_sync_sql` IPC command's core path (stored-diff
+    /// lookup + optional skip-key filtering + rendering) without a Tauri
+    /// runtime (#1259).
+    pub fn generate_data_sync_sql_via_command(
+        state: &AppState,
+        diff_id: &str,
+        allow_delete: bool,
+        skip_keys: Option<&[Vec<Value>]>,
+    ) -> crate::error::Result<SyncPlan> {
+        crate::commands::sync::generate_data_sync_sql_inner(state, diff_id, allow_delete, skip_keys)
+    }
+
+    /// Releases stored diffs like the `release_data_diffs` command does (#1259).
+    pub fn release_data_diffs_via_command(state: &AppState, ids: &[String]) {
+        state.release_data_diffs(ids);
     }
 
     /// Lists every sandbox's non-secret metadata (`list_sandboxes` IPC's core;
@@ -978,13 +997,13 @@ pub fn run() {
             commands::diff::diff_schema_snapshots,
             commands::sync::generate_sync_sql,
             commands::sync::generate_data_sync_sql,
+            commands::sync::release_data_diffs,
             commands::sync::apply_sync_sql,
             commands::sandbox::create_sandbox,
             commands::sandbox::list_sandboxes,
             commands::sandbox::discard_sandbox,
             commands::sandbox::sandbox_table_diff,
             commands::sandbox::sandbox_schema_diff,
-            commands::sandbox::filter_sandbox_data_diff,
             commands::sandbox::sandbox_advance_base,
             commands::profiles::list_profiles,
             commands::profiles::reveal_profile_secret,

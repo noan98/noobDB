@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { renderWithProviders, screen, waitFor, fireEvent } from "./testUtils";
 import { t } from "../i18n";
 import type { SandboxRecord, SandboxSchemaDiffResult, SandboxTableDiffResult } from "../api/tauri";
 
@@ -39,6 +39,7 @@ const { SCHEMA_DIFF, TABLE_DIFF } = vi.hoisted(() => ({
       source_count: 0,
       target_count: 0,
     },
+    desired_diff_id: "diff-users",
     conflicts: [],
     source_checked: true,
   } satisfies SandboxTableDiffResult,
@@ -52,11 +53,15 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       sandboxSchemaDiff: vi.fn().mockResolvedValue(SCHEMA_DIFF),
       sandboxTableDiff: vi.fn().mockResolvedValue(TABLE_DIFF),
+      generateSyncSql: vi.fn().mockResolvedValue({ statements: [], warnings: [] }),
+      generateDataSyncSql: vi.fn().mockResolvedValue({ statements: [], warnings: [] }),
+      releaseDataDiffs: vi.fn().mockResolvedValue(undefined),
     },
   };
 });
 
 import { SandboxReviewModal } from "../components/SandboxReviewModal";
+import { api, type ConnectionProfile } from "../api/tauri";
 
 const SANDBOX: SandboxRecord = {
   id: "sb1",
@@ -86,5 +91,42 @@ describe("SandboxReviewModal のスキーマ変更表示 (#1008)", () => {
     await waitFor(() => expect(screen.getByText("users")).toBeInTheDocument());
     expect(screen.getByText(t("schemaCompareStatusDifferent"))).toBeInTheDocument();
     expect(screen.queryByText("orders")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 差分のバックエンド保持 (#1259)。SQL 生成には差分そのものではなく `desired_diff_id` と
+ * 競合「スキップ」の除外キーだけを送り、画面を閉じたら保持を解放する。
+ */
+describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
+  const profile = { id: "p1", name: "src", driver: "sqlite" } as unknown as ConnectionProfile;
+
+  it("生成時は差分 ID だけを送り、閉じると保持を解放する", async () => {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue({
+      ...TABLE_DIFF,
+      desired: {
+        ...TABLE_DIFF.desired,
+        rows: [
+          { status: "source_only", key: [1], source: [1], target: null, changed_columns: [] },
+        ],
+      },
+    });
+    const { unmount } = renderWithProviders(
+      <SandboxReviewModal
+        sandbox={SANDBOX}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+    const generate = await screen.findByText(t("sandboxReviewGenerate"));
+    await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
+    fireEvent.click(generate);
+    await waitFor(() =>
+      expect(api.generateDataSyncSql).toHaveBeenCalledWith("diff-users", false, []),
+    );
+
+    unmount();
+    expect(api.releaseDataDiffs).toHaveBeenCalledWith(["diff-users"]);
   });
 });

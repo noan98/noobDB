@@ -460,6 +460,11 @@ pub struct SandboxTableDiffResult {
     /// *source* database's dialect (`target_driver`) — pass straight to the
     /// existing `generate_data_sync_sql` command to render writeback SQL.
     pub desired: DataDiff,
+    /// `desired` をバックエンド側 (`AppState::data_diffs`) に保持した ID (#1259)。
+    /// 書き戻し SQL の生成 (`generate_data_sync_sql`) と書き戻し後の base 前進
+    /// (`sandbox_advance_base`) にはこの ID + 除外キーだけを送る。不要になったら
+    /// `release_data_diffs` で破棄する。
+    pub desired_diff_id: String,
     /// Rows changed both in the sandbox and on the real database since the
     /// snapshot. Empty (and meaningless to read as "no conflicts") when
     /// `source_checked` is false.
@@ -566,8 +571,10 @@ pub(crate) async fn sandbox_table_diff_inner(
 
     let mut conflicts = Vec::new();
     let mut source_checked = false;
+    let mut source_owner: Option<String> = None;
     if let Some(source_session_id) = source_session_id {
         if let Some(source) = state.get(&source_session_id).await {
+            source_owner = Some(source_session_id.clone());
             let source_db = record.source_database.clone().unwrap_or_default();
             let sql = select_rows_sql(
                 record.source_driver,
@@ -595,22 +602,17 @@ pub(crate) async fn sandbox_table_diff_inner(
         }
     }
 
+    let mut owners = vec![sandbox_session_id.clone()];
+    if source_checked {
+        owners.extend(source_owner);
+    }
+    let desired_diff_id = state.store_data_diff(desired.clone(), owners);
     Ok(SandboxTableDiffResult {
         desired,
+        desired_diff_id,
         conflicts,
         source_checked,
     })
-}
-
-/// Drops the rows a conflict was resolved as "skip (keep the real database's
-/// value, don't overwrite)" for from `diff`. Pure passthrough to
-/// `db::sandbox::filter_out_keys`, in the same style as `generate_sync_sql` /
-/// `generate_data_sync_sql` (`commands::sync`) — no session involved, so the
-/// frontend can apply conflict resolution before handing the trimmed diff to
-/// the existing `generate_data_sync_sql` command to render writeback SQL.
-#[tauri::command]
-pub fn filter_sandbox_data_diff(diff: DataDiff, skip_keys: Vec<Vec<Value>>) -> DataDiff {
-    filter_out_keys(&diff, &skip_keys)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -741,7 +743,8 @@ pub async fn sandbox_advance_base(
     sandbox_id: String,
     sandbox_session_id: String,
     table: String,
-    applied: DataDiff,
+    diff_id: String,
+    skip_keys: Option<Vec<Vec<Value>>>,
     allow_delete: bool,
     state: State<'_, AppState>,
 ) -> Result<()> {
@@ -750,19 +753,22 @@ pub async fn sandbox_advance_base(
         sandbox_id,
         sandbox_session_id,
         table,
-        applied,
+        diff_id,
+        skip_keys.unwrap_or_default(),
         allow_delete,
     )
     .await
 }
 
 /// Core of [`sandbox_advance_base`] (see [`create_sandbox_inner`] doc).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn sandbox_advance_base_inner(
     state: &AppState,
     sandbox_id: String,
     sandbox_session_id: String,
     table: String,
-    applied: DataDiff,
+    diff_id: String,
+    skip_keys: Vec<Vec<Value>>,
     allow_delete: bool,
 ) -> Result<()> {
     let record = find_record(&sandbox_id)?;
@@ -782,6 +788,20 @@ pub(crate) async fn sandbox_advance_base_inner(
             "read-only session: sandbox base snapshot cannot be advanced".into(),
         ));
     }
+    // 書き戻した差分は `sandbox_table_diff` が保持した `desired` を ID で引き、競合解決で
+    // 「スキップ」した行を除く (`generate_data_sync_sql` に渡した diff と同じ絞り込み)。
+    let stored = crate::commands::sync::stored_diff(state, &diff_id)?;
+    if stored.table != table {
+        return Err(AppError::InvalidInput(format!(
+            "diff '{diff_id}' belongs to table '{}', not '{table}'",
+            stored.table
+        )));
+    }
+    let applied = if skip_keys.is_empty() {
+        (*stored).clone()
+    } else {
+        filter_out_keys(&stored, &skip_keys)
+    };
     let shadow = shadow_table_name(&table);
     let can_delete = allow_delete && !applied.truncated;
 

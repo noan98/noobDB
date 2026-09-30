@@ -407,7 +407,7 @@ impl NPlusOneOptions {
 /// digest 差分ベースの N+1 目安: 直近ポーリング間隔での実行回数を時間窓あたりの
 /// レートに換算して閾値と比べる。
 pub fn n_plus_one_from_rate(calls_delta: i64, elapsed_ms: f64, opts: NPlusOneOptions) -> bool {
-    if !(elapsed_ms > 0.0) || calls_delta <= 0 {
+    if elapsed_ms.is_nan() || elapsed_ms <= 0.0 || calls_delta <= 0 {
         return false;
     }
     (calls_delta as f64 / elapsed_ms) * f64::from(opts.window_ms) >= f64::from(opts.min_count)

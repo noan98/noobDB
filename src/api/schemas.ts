@@ -571,6 +571,12 @@ export const dataDiff = z.object({
   target_count: z.number(),
 });
 
+/** `compare_table_data` の戻り値: 表示用の差分 + バックエンド保持の差分 ID (#1259)。 */
+export const dataDiffHandle = z.object({
+  diff_id: z.string(),
+  diff: dataDiff,
+});
+
 // テーブル・タイムラプス (#739)。
 const timelapseGenerationMeta = z.object({
   id: z.number(),
@@ -649,6 +655,7 @@ const sandboxConflict = z.object({
 
 export const sandboxTableDiffResult = z.object({
   desired: dataDiff,
+  desired_diff_id: z.string(),
   conflicts: z.array(sandboxConflict),
   source_checked: z.boolean(),
 });

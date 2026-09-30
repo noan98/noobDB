@@ -6,7 +6,7 @@
 // ツリーから隠す)・行数上限の既定値クランプ・競合行の解決状態の集計 — に限る。
 // 主キーの型付き同一性判定 (整数 `1` と文字列 `"1"` を区別する等) はバックエンドの
 // `db::sandbox::key_signature` が正であり、フロントはそれをそのまま呼ぶ
-// (`filterSandboxDataDiff` IPC) ので、ここでは再実装しない。
+// (`generateDataSyncSql` の skipKeys、Rust 側 `filter_out_keys`) ので、ここでは再実装しない。
 
 import type {
   CellValue,
@@ -101,7 +101,7 @@ export function clampSandboxRowLimit(limit: number | null | undefined): number {
  * 署名 (整数 `1` と文字列 `"1"` を区別する) と完全に一致する必要はない —
  * ここでは「同じ画面内で表示された競合行を一意に指せればよい」用途に限るため、
  * 値と JS の型タグを連結するだけの簡易版で足りる。実際にどの行を書き戻し対象
- * から外すかの最終判定 (型付きの主キー一致) は `filterSandboxDataDiff` IPC
+ * から外すかの最終判定 (型付きの主キー一致) は `generateDataSyncSql` の skipKeys (Rust 側 `filter_out_keys`)
  * (`db::sandbox::key_signature` そのもの) が行う。
  */
 export function sandboxKeySignature(key: CellValue[]): string {
@@ -146,7 +146,7 @@ export function unresolvedSandboxConflicts(
 }
 
 /** 「スキップ (元 DB 側の値を維持し、書き戻さない)」と解決された行の主キー一覧。
- *  `api.filterSandboxDataDiff(diff, skipKeys)` にそのまま渡せる。 */
+ *  `api.generateDataSyncSql(diffId, allowDelete, skipKeys)` / `api.sandboxAdvanceBase` にそのまま渡せる。 */
 export function sandboxSkipKeys(
   conflicts: SandboxConflict[],
   resolutions: Record<string, SandboxConflictResolution>,

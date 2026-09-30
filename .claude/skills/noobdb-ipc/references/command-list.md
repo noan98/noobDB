@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **123 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **127 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -58,12 +58,15 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
 `compare_schema` / `compare_table_data` / `diff_schema_snapshots` /
-`generate_sync_sql` / `generate_data_sync_sql` / `apply_sync_sql`
+`generate_sync_sql` / `generate_data_sync_sql` / `release_data_diffs` / `apply_sync_sql`
+
+`compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys)` は
+ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。
 
 ## サンドボックス (`commands/sandbox.rs`)
 
 `create_sandbox` / `list_sandboxes` / `discard_sandbox` / `sandbox_table_diff` /
-`sandbox_schema_diff` / `filter_sandbox_data_diff` / `sandbox_advance_base`
+`sandbox_schema_diff` / `sandbox_advance_base` (`diffId` + `skipKeys`, #1259)
 
 ## プロセス管理・ユーザ / 権限 (`commands/process.rs`, `commands/privileges.rs`)
 

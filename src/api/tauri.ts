@@ -1121,10 +1121,20 @@ export interface SandboxConflict {
   external_row: CellValue[] | null;
 }
 
+/** `compareTableData` の戻り値。`diff` は表示用、`diff_id` はバックエンド保持の同じ差分の ID (#1259)。 */
+export interface DataDiffHandle {
+  diff_id: string;
+  diff: DataDiff;
+}
+
 /** `sandboxTableDiff` の戻り値。 */
 export interface SandboxTableDiffResult {
-  /** サンドボックスでの変更 (base 比較)。`generateDataSyncSql` にそのまま渡せる。 */
+  /** サンドボックスでの変更 (base 比較)。表示用。SQL 生成には `desired_diff_id` を使う。 */
   desired: DataDiff;
+  /** `desired` をバックエンドが保持した ID (#1259)。`generateDataSyncSql` /
+   *  `sandboxAdvanceBase` にはこの ID (+ 除外キー) だけを送る。不要になったら
+   *  `releaseDataDiffs` で破棄する。 */
+  desired_diff_id: string;
   /** `source_checked` が false のときは常に空 (競合未検査、「競合なし」の意味ではない)。 */
   conflicts: SandboxConflict[];
   source_checked: boolean;
@@ -1977,18 +1987,28 @@ export const api = {
     table: string;
     limit?: number | null;
   }) =>
-    invoke<DataDiff>("compare_table_data", {
+    invoke<DataDiffHandle>("compare_table_data", {
       sourceSessionId: params.sourceSessionId,
       sourceDatabase: params.sourceDatabase,
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
       table: params.table,
       limit: params.limit ?? null,
-    }).then((r) => parseResponse(schemas.dataDiff, r, "compare_table_data")),
-  generateDataSyncSql: (diff: DataDiff, allowDelete: boolean) =>
-    invoke<SyncPlan>("generate_data_sync_sql", { diff, allowDelete }).then((r) =>
-      parseResponse(schemas.syncPlan, r, "generate_data_sync_sql"),
-    ),
+    }).then((r) => parseResponse(schemas.dataDiffHandle, r, "compare_table_data")),
+  /**
+   * データ差分から INSERT / UPDATE / DELETE を描画する。差分そのものは送らず、
+   * `compareTableData` / `sandboxTableDiff` が返した `diffId` (バックエンド保持, #1259) を
+   * 渡す。`skipKeys` は描画前に除く行の主キー (サンドボックスの競合「スキップ」解決)。
+   * 保持期限切れ・破棄済みの ID はエラー (比較のやり直しを促す)。
+   */
+  generateDataSyncSql: (diffId: string, allowDelete: boolean, skipKeys?: CellValue[][] | null) =>
+    invoke<SyncPlan>("generate_data_sync_sql", {
+      diffId,
+      allowDelete,
+      skipKeys: skipKeys && skipKeys.length > 0 ? skipKeys : null,
+    }).then((r) => parseResponse(schemas.syncPlan, r, "generate_data_sync_sql")),
+  /** バックエンドが保持している `DataDiff` を破棄する (比較のやり直し・画面を閉じたとき)。 */
+  releaseDataDiffs: (diffIds: string[]) => invoke<void>("release_data_diffs", { diffIds }),
   applySyncSql: (params: {
     sessionId: string;
     database?: string | null;
@@ -2143,30 +2163,27 @@ export const api = {
       sandboxSessionId: params.sandboxSessionId,
       sourceSessionId: params.sourceSessionId ?? null,
     }).then((r) => parseResponse(schemas.sandboxSchemaDiffResult, r, "sandbox_schema_diff")),
-  /** 競合を「スキップ」解決した行を `diff` から取り除く。純粋な変換で副作用なし。 */
-  filterSandboxDataDiff: (diff: DataDiff, skipKeys: CellValue[][]) =>
-    invoke<DataDiff>("filter_sandbox_data_diff", { diff, skipKeys }).then((r) =>
-      parseResponse(schemas.dataDiff, r, "filter_sandbox_data_diff"),
-    ),
   /**
    * 書き戻しに成功した直後に呼び、サンドボックスの base スナップショットを
    * 適用済みの行へ進める。呼ばないと、次回の差分計算で「サンドボックス側も
    * 元 DB 側も変化した」という偽の競合が (実際にはもう一致している行に対して)
-   * 出続けてしまう。`applied` には実際に適用した SQL の生成元 (`generateDataSyncSql`
-   * に渡した後の) `DataDiff` を渡す。
+   * 出続けてしまう。`diffId` / `skipKeys` には実際に適用した SQL の生成元
+   * (`generateDataSyncSql` に渡したのと同じもの) を渡す。
    */
   sandboxAdvanceBase: (params: {
     sandboxId: string;
     sandboxSessionId: string;
     table: string;
-    applied: DataDiff;
+    diffId: string;
+    skipKeys?: CellValue[][] | null;
     allowDelete: boolean;
   }) =>
     invoke<void>("sandbox_advance_base", {
       sandboxId: params.sandboxId,
       sandboxSessionId: params.sandboxSessionId,
       table: params.table,
-      applied: params.applied,
+      diffId: params.diffId,
+      skipKeys: params.skipKeys && params.skipKeys.length > 0 ? params.skipKeys : null,
       allowDelete: params.allowDelete,
     }),
 
