@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ForeignKey } from "../api/tauri";
 import {
   buildFkJumpSql,
   buildReverseRefSql,
-  incomingForeignKeys,
 } from "../fkNavigation";
 
 describe("buildFkJumpSql", () => {
@@ -101,56 +99,6 @@ describe("buildFkJumpSql", () => {
         value: 1,
       }),
     ).toBe("SELECT * FROM `we``ird` WHERE `id` = 1");
-  });
-});
-
-describe("incomingForeignKeys", () => {
-  const fks: ForeignKey[] = [
-    {
-      table: "orders",
-      column: "user_id",
-      referenced_table: "users",
-      referenced_column: "id",
-      constraint_name: "fk_orders_user",
-    },
-    {
-      table: "comments",
-      column: "author_id",
-      referenced_table: "users",
-      referenced_column: "id",
-      constraint_name: null,
-    },
-    {
-      table: "orders",
-      column: "product_id",
-      referenced_table: "products",
-      referenced_column: "id",
-      constraint_name: null,
-    },
-    {
-      table: "broken",
-      column: "x",
-      referenced_table: "users",
-      referenced_column: null,
-      constraint_name: null,
-    },
-  ];
-
-  it("returns only FKs pointing at the given table", () => {
-    expect(incomingForeignKeys(fks, "users")).toEqual([
-      { table: "orders", column: "user_id", referencedColumn: "id" },
-      { table: "comments", column: "author_id", referencedColumn: "id" },
-    ]);
-  });
-
-  it("drops entries with an unknown referenced column", () => {
-    // `broken` references users but with a null referenced_column → excluded.
-    const result = incomingForeignKeys(fks, "users");
-    expect(result.some((r) => r.table === "broken")).toBe(false);
-  });
-
-  it("returns an empty list when nothing references the table", () => {
-    expect(incomingForeignKeys(fks, "nowhere")).toEqual([]);
   });
 });
 

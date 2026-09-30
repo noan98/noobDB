@@ -1,12 +1,12 @@
 // テーブル/DB サイズ・構造統計の整形・集計・フィルタ (純ロジック)。#562 / #660。
 //
-// #562 でバックエンドの table_sizes が返すバイト数・概算行数をダッシュボード表示向けに
-// 整形する層として生まれ、#660 でスキーマ把握のための構造メタ (列数・インデックス数・
-// PK 有無・FK 数) を既存コマンド (schema_overview / foreign_keys / list_indexes) の
-// 再利用で合成する層を足した。集計・ソート・フィルタはすべて副作用なしで、Vitest で
+// #562 でバックエンドが返すバイト数・概算行数をダッシュボード表示向けに整形する層として
+// 生まれ、#660 でスキーマ把握のための構造メタ (列数・インデックス数・PK 有無・FK 数) を
+// 足した。構造メタとサイズの結合は #1255 でバックエンド (`table_statistics`) に移り、
+// ここには表示用の整形・集計・ソート・フィルタだけが残る。すべて副作用なしで、Vitest で
 // ユニットテストする。表示専用でありデータは一切変更しない。
 
-import type { ForeignKey, IndexInfo, TableSchema, TableSizeInfo } from "../api/tauri";
+import type { TableSizeInfo, TableStatistic } from "../api/tauri";
 
 const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
@@ -59,72 +59,34 @@ export function sizeBarPercent(value: number | null | undefined, max: number): n
 }
 
 /**
- * 1 テーブルのサイズ + 構造統計。サイズ/行数は table_sizes (#562)、構造メタは
- * schema_overview (列数)・list_indexes (インデックス数・PK 有無)・foreign_keys
- * (FK 数) を合成した値 (#660)。取得できない項目は `null` にして「不明」と「0」を
- * 区別する (SQLite の縮退や、あるテーブルだけインデックス取得に失敗した場合など)。
+ * 1 テーブルのサイズ + 構造統計。バックエンドの `table_statistics` (#1255) が返す
+ * `TableStatistic` をダッシュボードの camelCase フィールドに写したもの。取得できない
+ * 項目は `null` にして「不明」と「0」を区別する (列メタデータが無いテーブルなど)。
  */
 export interface TableStatRow extends TableSizeInfo {
-  /** 列数。schema_overview が返すカラム名配列の長さ。取得不能時は `null`。 */
+  /** 列数。列メタデータが無いテーブルは `null`。 */
   columnCount: number | null;
-  /** インデックス数 (PRIMARY 含む)。list_indexes の件数。取得失敗時は `null`。 */
+  /** インデックス数 (PRIMARY 含む)。`null` は「不明」(現状バックエンドは常に数値を返す)。 */
   indexCount: number | null;
-  /** PRIMARY KEY を持つか。list_indexes に primary=true が 1 件でもあれば true。取得失敗時は `null`。 */
+  /** PRIMARY KEY を持つか。`null` は「不明」。 */
   hasPrimaryKey: boolean | null;
-  /** 外部キー (制約単位) の数。foreign_keys を制約名でまとめた件数。 */
+  /** 外部キー (制約単位) の数。 */
   foreignKeyCount: number | null;
 }
 
-/**
- * foreign_keys の行 (参照カラム 1 件につき 1 行、複合キーは constraint_name を共有)
- * を、テーブルごとの**制約単位**の件数に畳み込む。constraint_name が無いドライバ
- * (一部の SQLite など) では参照カラム→参照先の組を一意キーにして数える。
- */
-export function foreignKeyCounts(fks: readonly ForeignKey[]): Map<string, number> {
-  const perTable = new Map<string, Set<string>>();
-  for (const fk of fks) {
-    let set = perTable.get(fk.table);
-    if (!set) {
-      set = new Set();
-      perTable.set(fk.table, set);
-    }
-    const key = fk.constraint_name ?? `${fk.column}->${fk.referenced_table}.${fk.referenced_column ?? ""}`;
-    set.add(key);
-  }
-  const out = new Map<string, number>();
-  for (const [table, set] of perTable) out.set(table, set.size);
-  return out;
-}
-
-/**
- * サイズ一覧を基準に、列数・インデックス・FK の構造メタを名前で突き合わせて
- * `TableStatRow[]` を合成する。テーブル集合は `sizes` (サイズダッシュボードの対象)
- * を基準にし、他ソースは名前で引く (見つからなければ `null` = 不明)。
- *
- * `indexesByTable` はテーブル名 → そのインデックス一覧 (取得失敗時は `null`) の
- * マップ。未登録キー (未取得) も `null` 扱いにして「不明」を表す。foreignKeyCount は
- * FK が 1 件も無いテーブルでは 0 になる (foreign_keys は全テーブルを走査するため
- * 「不明」ではなく「0」)。
- */
-export function buildTableStatRows(
-  sizes: readonly TableSizeInfo[],
-  overview: readonly TableSchema[],
-  foreignKeys: readonly ForeignKey[],
-  indexesByTable: ReadonlyMap<string, IndexInfo[] | null>,
-): TableStatRow[] {
-  const colByName = new Map<string, number>();
-  for (const t of overview) colByName.set(t.name, t.columns.length);
-  const fkByName = foreignKeyCounts(foreignKeys);
-  return sizes.map((s) => {
-    const idx = indexesByTable.has(s.name) ? indexesByTable.get(s.name) : null;
-    return {
-      ...s,
-      columnCount: colByName.has(s.name) ? (colByName.get(s.name) as number) : null,
-      indexCount: idx == null ? null : idx.length,
-      hasPrimaryKey: idx == null ? null : idx.some((i) => i.primary),
-      foreignKeyCount: fkByName.get(s.name) ?? 0,
-    };
-  });
+/** `table_statistics` の戻り値をダッシュボードの行に写す。 */
+export function toTableStatRows(stats: readonly TableStatistic[]): TableStatRow[] {
+  return stats.map((s) => ({
+    name: s.name,
+    row_estimate: s.row_estimate,
+    data_bytes: s.data_bytes,
+    index_bytes: s.index_bytes,
+    total_bytes: s.total_bytes,
+    columnCount: s.column_count,
+    indexCount: s.index_count,
+    hasPrimaryKey: s.has_primary_key,
+    foreignKeyCount: s.foreign_key_count,
+  }));
 }
 
 /** ソート可能な列キー (サイズ + 構造)。 */

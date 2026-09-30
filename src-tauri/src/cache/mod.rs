@@ -210,9 +210,10 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::{watch, RwLock};
 
+use crate::db::diff::TableColumns;
 use crate::db::types::{
-    ForeignKey, IndexInfo, QueryResult, SchemaObject, TableColumnInfo, TableRowIdentity,
-    TableSchema, Value,
+    ForeignKey, IndexInfo, QueryResult, SchemaObject, TableColumnInfo, TableIndexes,
+    TableRowIdentity, TableSchema, Value,
 };
 use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
@@ -574,6 +575,44 @@ where
         }
     }
 
+    /// 複数キーをまとめて書き込む (#1255、DB 全体を 1 回で取得した結果の配布用)。
+    /// `fetch_and_store` と同じく write lock 取得**後**に generation を再確認し、
+    /// 取得中に `invalidate_all()` が走っていたら何も書かない。エントリ数が
+    /// `max_entries` を超える場合も書かない (1 件ずつ clear しながら挿入すると
+    /// 直前に書いた分を自分で消してしまうため)。書いた件数を返す。
+    async fn store_many(
+        &self,
+        items: Vec<(K, V)>,
+        generation_before_fetch: u64,
+        max_entries: usize,
+        generation: &AtomicU64,
+    ) -> usize {
+        if items.len() > max_entries {
+            tracing::debug!(
+                max_entries,
+                "{}: bulk result exceeds the entry cap, skipping the bulk store",
+                self.label
+            );
+            return 0;
+        }
+        let mut guard = self.entries.write().await;
+        if generation.load(Ordering::SeqCst) != generation_before_fetch {
+            tracing::debug!(
+                "{}: dropping a bulk result that raced with invalidate_all (stale generation)",
+                self.label
+            );
+            return 0;
+        }
+        if guard.len() + items.len() > max_entries {
+            guard.clear();
+        }
+        let n = items.len();
+        for (k, v) in items {
+            guard.insert(k, CacheEntry::fresh(v));
+        }
+        n
+    }
+
     /// テスト用: `key` の進行中フライトに合流している待機者の数。フライトが
     /// 無ければ 0。
     #[cfg(test)]
@@ -825,6 +864,70 @@ impl SchemaCache {
                 fetch,
             )
             .await
+    }
+
+    /// 現在の invalidate 世代。DB 全体の一括取得 (`columns_for_database` 等) の
+    /// **開始前**に読み、結果を [`store_columns_bulk`](Self::store_columns_bulk) /
+    /// [`store_indexes_bulk`](Self::store_indexes_bulk) に渡す。取得中に
+    /// `invalidate_all()` が走っていたら、その一括結果はキャッシュに書かれない。
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    /// 一括取得した列メタデータで、テーブル単位の `columns` エントリを埋める
+    /// (#1255)。以後の `describe_table` はキャッシュヒットになる。
+    pub async fn store_columns_bulk(
+        &self,
+        database: &str,
+        generation_before_fetch: u64,
+        tables: &[TableColumns],
+    ) {
+        let items = tables
+            .iter()
+            .map(|t| ((database.to_string(), t.name.clone()), t.columns.clone()))
+            .collect();
+        self.columns
+            .store_many(
+                items,
+                generation_before_fetch,
+                self.max_entries_per_kind,
+                &self.generation,
+            )
+            .await;
+    }
+
+    /// 一括取得したインデックスで、テーブル単位の `list_indexes` エントリを埋める
+    /// (#1255)。`tables` は対象テーブルの全名で、インデックスを持たないテーブルは
+    /// 空配列として登録する (単一テーブル版が空配列を返すのと同じ)。
+    pub async fn store_indexes_bulk(
+        &self,
+        database: &str,
+        generation_before_fetch: u64,
+        tables: &[String],
+        indexes: &[TableIndexes],
+    ) {
+        let by_table: HashMap<&str, &Vec<IndexInfo>> = indexes
+            .iter()
+            .map(|t| (t.name.as_str(), &t.indexes))
+            .collect();
+        let items = tables
+            .iter()
+            .map(|t| {
+                let value = by_table
+                    .get(t.as_str())
+                    .map(|v| (*v).clone())
+                    .unwrap_or_default();
+                ((database.to_string(), t.clone()), value)
+            })
+            .collect();
+        self.list_indexes
+            .store_many(
+                items,
+                generation_before_fetch,
+                self.max_entries_per_kind,
+                &self.generation,
+            )
+            .await;
     }
 
     /// このセッションのスキーマキャッシュを丸ごと無効化する。呼び出し元:
@@ -1093,6 +1196,90 @@ mod tests {
 
     /// 受け入れ条件 2: Refresh (= `invalidate_all`) を挟むと、その後の呼び出し
     /// は必ず `fetch` を再実行する (stale なキャッシュ値を返さない)。
+    fn bulk_table(name: &str) -> TableColumns {
+        TableColumns {
+            name: name.to_string(),
+            columns: Vec::new(),
+        }
+    }
+
+    /// 一括取得の結果でテーブル単位の `columns` / `list_indexes` エントリが埋まり、
+    /// 以後の単一テーブル版の呼び出しは fetch を走らせない (#1255)。
+    #[tokio::test]
+    async fn bulk_store_fills_per_table_entries() {
+        let cache = test_cache();
+        let generation = cache.generation();
+        cache
+            .store_columns_bulk("db", generation, &[bulk_table("a"), bulk_table("b")])
+            .await;
+        cache
+            .store_indexes_bulk(
+                "db",
+                generation,
+                &["a".to_string(), "b".to_string()],
+                &[TableIndexes {
+                    name: "a".into(),
+                    indexes: vec![IndexInfo {
+                        name: "PRIMARY".into(),
+                        columns: vec!["id".into()],
+                        unique: true,
+                        primary: true,
+                        method: None,
+                    }],
+                }],
+            )
+            .await;
+        let fetches = AtomicUsize::new(0);
+        for table in ["a", "b"] {
+            let cols = cache
+                .columns("db", table, || async {
+                    fetches.fetch_add(1, Ordering::SeqCst);
+                    Ok(Vec::new())
+                })
+                .await
+                .unwrap();
+            assert!(cols.is_empty());
+        }
+        let a = cache
+            .list_indexes("db", "a", || async {
+                fetches.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            })
+            .await
+            .unwrap();
+        assert_eq!(a.len(), 1);
+        // インデックスを持たないテーブルは空配列として登録される。
+        let b = cache
+            .list_indexes("db", "b", || async {
+                fetches.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![])
+            })
+            .await
+            .unwrap();
+        assert!(b.is_empty());
+        assert_eq!(fetches.load(Ordering::SeqCst), 0);
+    }
+
+    /// 取得開始後に `invalidate_all()` が走ったら、一括結果は書き戻さない (#1255)。
+    #[tokio::test]
+    async fn bulk_store_is_dropped_when_invalidated_during_fetch() {
+        let cache = test_cache();
+        let generation = cache.generation();
+        cache.invalidate_all().await;
+        cache
+            .store_columns_bulk("db", generation, &[bulk_table("a")])
+            .await;
+        let fetches = AtomicUsize::new(0);
+        cache
+            .columns("db", "a", || async {
+                fetches.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            })
+            .await
+            .unwrap();
+        assert_eq!(fetches.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn invalidate_all_forces_refetch() {
         let cache = test_cache();

@@ -5,7 +5,7 @@
 // 安全にクオート・エスケープして生成する。識別子のクオートは `sqlDialect.ts`、
 // 値のリテラル化は `cellEdit.ts` の既存方針を踏襲し、二重定義しない。副作用なし。
 
-import type { CellValue, ForeignKey } from "./api/tauri";
+import type { CellValue } from "./api/tauri";
 import { literalFromCellValue } from "./components/cellEdit";
 import { quoteIdentFor } from "./components/sqlDialect";
 
@@ -54,7 +54,7 @@ export function buildFkJumpSql(p: FkJumpParams): string {
   )}`;
 }
 
-/** 現在のテーブルを参照している子テーブル側の FK 1 件 (逆参照)。 */
+/** 現在のテーブルを参照している子テーブル側の FK 1 件 (逆参照)。抽出はバックエンドの `incoming_foreign_keys` (#1255)。 */
 export interface IncomingFk {
   /** FK を持つ子テーブル。 */
   table: string;
@@ -62,23 +62,6 @@ export interface IncomingFk {
   column: string;
   /** 子テーブルが指す、現在 (参照先) テーブル側のカラム。 */
   referencedColumn: string;
-}
-
-/**
- * `table` を参照している外部キー (逆参照) を抽出する。参照先カラムが不明な
- * エントリは結合キーを解決できないため除外する。
- */
-export function incomingForeignKeys(all: ForeignKey[], table: string): IncomingFk[] {
-  const out: IncomingFk[] = [];
-  for (const fk of all) {
-    if (fk.referenced_table !== table || !fk.referenced_column) continue;
-    out.push({
-      table: fk.table,
-      column: fk.column,
-      referencedColumn: fk.referenced_column,
-    });
-  }
-  return out;
 }
 
 export interface ReverseRefParams {

@@ -1,17 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTableStatRows,
   computeTableSizeTotals,
   filterTableStats,
-  foreignKeyCounts,
   formatBytes,
   formatCount,
   formatRowCount,
   sizeBarPercent,
   sortTableStats,
+  toTableStatRows,
   type TableStatRow,
 } from "../components/tableSize";
-import type { ForeignKey, IndexInfo, TableSchema, TableSizeInfo } from "../api/tauri";
+import type { TableSizeInfo, TableStatistic } from "../api/tauri";
 
 function row(name: string, partial: Partial<TableSizeInfo> = {}): TableSizeInfo {
   return {
@@ -31,28 +30,6 @@ function statRow(name: string, partial: Partial<TableStatRow> = {}): TableStatRo
     indexCount: null,
     hasPrimaryKey: null,
     foreignKeyCount: null,
-    ...partial,
-  };
-}
-
-function fk(table: string, partial: Partial<ForeignKey> = {}): ForeignKey {
-  return {
-    table,
-    column: "x",
-    referenced_table: "other",
-    referenced_column: "id",
-    constraint_name: null,
-    ...partial,
-  };
-}
-
-function idx(name: string, partial: Partial<IndexInfo> = {}): IndexInfo {
-  return {
-    name,
-    columns: ["a"],
-    unique: false,
-    primary: false,
-    method: null,
     ...partial,
   };
 }
@@ -183,79 +160,42 @@ describe("sortTableStats", () => {
   });
 });
 
-describe("foreignKeyCounts", () => {
-  it("counts distinct constraints per table, grouping composite columns", () => {
-    const fks: ForeignKey[] = [
-      // composite fk (2 columns share one constraint) → 1
-      fk("orders", { column: "a", constraint_name: "fk_ab" }),
-      fk("orders", { column: "b", constraint_name: "fk_ab" }),
-      // a second, distinct constraint → 2
-      fk("orders", { column: "c", constraint_name: "fk_c" }),
-      // different table
-      fk("items", { column: "x", constraint_name: "fk_x" }),
+describe("toTableStatRows", () => {
+  // 結合 (列数・インデックス・PK・FK 数) はバックエンドの `table_statistics` が行う
+  // (#1255、Rust 側 `db::schema_insight` のテストが検証)。ここでは戻り値の
+  // snake_case をダッシュボードの行へ写す層だけを固定する。
+  it("maps the backend statistics onto dashboard rows, keeping order", () => {
+    const stats: TableStatistic[] = [
+      {
+        ...row("users", { row_estimate: 10, total_bytes: 120 }),
+        column_count: 3,
+        index_count: 2,
+        has_primary_key: true,
+        foreign_key_count: 0,
+      },
+      {
+        ...row("ghost"),
+        column_count: null,
+        index_count: 0,
+        has_primary_key: false,
+        foreign_key_count: 1,
+      },
     ];
-    const counts = foreignKeyCounts(fks);
-    expect(counts.get("orders")).toBe(2);
-    expect(counts.get("items")).toBe(1);
-  });
-
-  it("falls back to column/target key when constraint_name is null", () => {
-    const fks: ForeignKey[] = [
-      fk("t", { column: "a", referenced_table: "u", referenced_column: "id" }),
-      fk("t", { column: "b", referenced_table: "u", referenced_column: "id" }),
-    ];
-    expect(foreignKeyCounts(fks).get("t")).toBe(2);
-  });
-});
-
-describe("buildTableStatRows", () => {
-  const sizes: TableSizeInfo[] = [row("users", { row_estimate: 10 }), row("orders")];
-  const overview: TableSchema[] = [
-    { name: "users", columns: ["id", "name", "email"] },
-    { name: "orders", columns: ["id", "user_id"] },
-    // extra table only in overview is ignored (list is anchored on sizes)
-    { name: "audit", columns: ["id"] },
-  ];
-  const fks: ForeignKey[] = [fk("orders", { column: "user_id", constraint_name: "fk_u" })];
-
-  it("merges columns, indexes, pk and fk counts keyed by table name", () => {
-    const indexes = new Map<string, IndexInfo[] | null>([
-      ["users", [idx("PRIMARY", { primary: true }), idx("idx_email", { unique: true })]],
-      ["orders", [idx("idx_user", {})]],
-    ]);
-    const rows = buildTableStatRows(sizes, overview, fks, indexes);
-    expect(rows.map((r) => r.name)).toEqual(["users", "orders"]);
-    const users = rows[0];
-    expect(users.columnCount).toBe(3);
-    expect(users.indexCount).toBe(2);
-    expect(users.hasPrimaryKey).toBe(true);
-    expect(users.foreignKeyCount).toBe(0);
-    const orders = rows[1];
-    expect(orders.columnCount).toBe(2);
-    expect(orders.indexCount).toBe(1);
-    expect(orders.hasPrimaryKey).toBe(false);
-    expect(orders.foreignKeyCount).toBe(1);
-  });
-
-  it("marks index/pk as unknown (null) when indexes were not fetched or failed", () => {
-    const indexes = new Map<string, IndexInfo[] | null>([
-      ["users", null], // fetch failed
-      // "orders" absent → not fetched
-    ]);
-    const rows = buildTableStatRows(sizes, overview, fks, indexes);
-    expect(rows[0].indexCount).toBeNull();
-    expect(rows[0].hasPrimaryKey).toBeNull();
-    expect(rows[1].indexCount).toBeNull();
-    expect(rows[1].hasPrimaryKey).toBeNull();
-    // column and fk counts still resolve from whole-db calls
-    expect(rows[0].columnCount).toBe(3);
+    const rows = toTableStatRows(stats);
+    expect(rows.map((r) => r.name)).toEqual(["users", "ghost"]);
+    expect(rows[0]).toMatchObject({
+      row_estimate: 10,
+      total_bytes: 120,
+      columnCount: 3,
+      indexCount: 2,
+      hasPrimaryKey: true,
+      foreignKeyCount: 0,
+    });
+    // 列メタデータが無いテーブルの列数は「不明」のまま (0 にしない)。
+    expect(rows[1].columnCount).toBeNull();
+    expect(rows[1].indexCount).toBe(0);
+    expect(rows[1].hasPrimaryKey).toBe(false);
     expect(rows[1].foreignKeyCount).toBe(1);
-  });
-
-  it("leaves columnCount null for a table missing from schema_overview", () => {
-    const rows = buildTableStatRows([row("ghost")], overview, [], new Map());
-    expect(rows[0].columnCount).toBeNull();
-    expect(rows[0].foreignKeyCount).toBe(0);
   });
 });
 
