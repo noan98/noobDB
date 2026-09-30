@@ -51,7 +51,7 @@ use t::{
     ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
     ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
     SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
-    StatementStat, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
+    StatementDeltaRow, StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
     TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
 };
 
@@ -187,15 +187,18 @@ fn build_fixtures() -> serde_json::Value {
         rows_examined: Some(100),
         running: true,
         started_at_ms: Some(1700000000000.0),
+        fingerprint: "select * from users where id = ?".into(),
     };
-    let statement_stat = StatementStat {
+    let statement_delta_row = StatementDeltaRow {
         digest: "abc123".into(),
-        fingerprint: "SELECT * FROM `users` WHERE `id` = ?".into(),
+        fingerprint: Some("SELECT * FROM `users` WHERE `id` = ?".into()),
         database: Some("appdb".into()),
         calls: 1200,
         total_time_ms: 4321.5,
+        mean_time_ms: 3.6,
         max_time_ms: 87.2,
         rows: Some(1200),
+        n_plus_one: true,
     };
     // 列データプロファイル (#974)。件数は `from_u64_lossless` 済みの `Value`
     // (安全整数内は数値、超えると十進文字列) なので両方の形を露出させる。
@@ -630,7 +633,7 @@ fn build_fixtures() -> serde_json::Value {
         "serverMetrics": server_metrics,
         "queryStatsSupport": query_stats_support,
         "liveQuery": live_query,
-        "statementStat": statement_stat,
+        "statementDeltaRow": statement_delta_row,
         "columnProfile": column_profile,
         "healthFinding": health_finding,
         "skippedRule": skipped_rule,

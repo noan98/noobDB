@@ -605,6 +605,10 @@ pub struct LiveQuery {
     /// クエリ開始時刻 (エポック ms)。PostgreSQL の `query_start`。MySQL の
     /// TIMER_START はサーバ起動基準の相対値のため `None` (フロントは観測時刻で代替)。
     pub started_at_ms: Option<f64>,
+    /// `normalize_sql_fingerprint` による同型クエリキー (N+1 判定と行グルーピング用)。
+    /// ドライバは空で返し、`sample_live_queries` のコマンド層が埋める (#1259)。
+    #[serde(default)]
+    pub fingerprint: String,
 }
 
 /// digest (フィンガープリント) 単位の**累積**統計スナップショット 1 行。

@@ -2593,16 +2593,33 @@ async fn sqlite_inspector_commands_degrade_via_command_layer() {
         t::sample_live_queries_inner(&state, &sid).await,
         Err(t::AppError::InvalidInput(_))
     ));
+    let opts = t::NPlusOneOptions::sanitized(10, 2000);
     assert!(matches!(
-        t::sample_statement_stats_inner(&state, &sid).await,
+        t::start_statement_recording_inner(&state, &sid).await,
         Err(t::AppError::InvalidInput(_))
     ));
+    assert!(matches!(
+        t::sample_statement_delta_inner(&state, &sid, false, true, opts).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    // refresh なし (前回取得分の再計算) はサーバへ問い合わせず、記録前は空を返す。
+    assert!(
+        t::sample_statement_delta_inner(&state, &sid, false, false, opts)
+            .await
+            .expect("no-refresh delta")
+            .is_empty()
+    );
 
     // 未知のセッション ID はドライバへ到達する前に弾かれる。
     for result in [
         t::query_stats_support_inner(&state, "nope").await.err(),
         t::sample_live_queries_inner(&state, "nope").await.err(),
-        t::sample_statement_stats_inner(&state, "nope").await.err(),
+        t::start_statement_recording_inner(&state, "nope")
+            .await
+            .err(),
+        t::sample_statement_delta_inner(&state, "nope", false, true, opts)
+            .await
+            .err(),
     ] {
         assert!(matches!(result, Some(t::AppError::SessionNotFound(_))));
     }

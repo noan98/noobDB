@@ -34,6 +34,7 @@ pub mod __test_api {
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
     pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
+    pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
         generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
@@ -44,9 +45,9 @@ pub mod __test_api {
         Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
         PreviewResult, ProcessInfo, ProcessListItem, QueryResult, QueryStatsSupport,
         RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
-        ServerMessageSeverity, ServerMetrics, ServerVariable, StatementStat, StreamBatch,
-        TableColumnInfo, TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-        TableSchema, TableSizeInfo, UserPrivileges, Value,
+        ServerMessageSeverity, ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo,
+        TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema,
+        TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -246,7 +247,8 @@ pub mod __test_api {
     // 経路を駆動できるよう、ここでピンポイントに公開する。
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{
-        query_stats_support_inner, sample_live_queries_inner, sample_statement_stats_inner,
+        query_stats_support_inner, sample_live_queries_inner, sample_statement_delta_inner,
+        start_statement_recording_inner,
     };
     pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
     pub use crate::commands::profile::profile_column_inner;
@@ -280,6 +282,7 @@ pub mod __test_api {
             schema_cache: crate::cache::SchemaCache::default(),
             query_cache: crate::cache::QueryResultCache::default(),
             health_version: Default::default(),
+            inspector: Default::default(),
         }
     }
 
@@ -916,7 +919,8 @@ pub fn run() {
             commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
-            commands::inspector::sample_statement_stats,
+            commands::inspector::start_statement_recording,
+            commands::inspector::sample_statement_delta,
             commands::profile::profile_column,
             commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,

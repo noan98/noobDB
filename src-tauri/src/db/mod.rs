@@ -6,6 +6,8 @@ pub mod create_table;
 pub mod data_diff;
 pub mod diff;
 pub mod format;
+/// ライブクエリ・インスペクタ (#746) のフィンガープリント正規化と digest 差分集計 (#1259)。
+pub mod inspector;
 /// エクスポート時のデータマスキング (#733)。出力時だけの変換で DB には触れない。
 pub mod masking;
 pub mod mysql;

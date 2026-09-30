@@ -315,6 +315,7 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
         health_version: Default::default(),
+        inspector: Default::default(),
     };
     let id = state.insert(session).await;
     tracing::info!(session_id = %id, "local session created");

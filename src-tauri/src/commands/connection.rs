@@ -280,6 +280,7 @@ pub async fn connect(
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
         health_version: Default::default(),
+        inspector: Default::default(),
     };
     let id = state.insert(session).await;
     tracing::info!(
@@ -553,6 +554,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
         health_version: Default::default(),
+        inspector: Default::default(),
     };
 
     // Swap the live session for the new one, then close the old connection. The

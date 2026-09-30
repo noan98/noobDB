@@ -813,23 +813,28 @@ export interface LiveQuery {
   running: boolean;
   /** クエリ開始時刻 (エポック ms)。PostgreSQL のみ。 */
   started_at_ms: number | null;
+  /** Rust の `normalize_sql_fingerprint` による同型クエリキー (N+1 グルーピング用, #1259)。 */
+  fingerprint: string;
 }
 
 /**
- * digest (フィンガープリント) 単位の**累積**統計 1 行 (#746)。カウンタは
- * サーバの統計リセット以降の累積値で、「記録開始からの差分」は
- * `components/queryInspector.ts` の純ロジックが 2 スナップショットの引き算で
- * 求める。`max_time_ms` は高水位マークで差分計算できない点に注意。
+ * digest (フィンガープリント) 単位の**差分**統計 1 行 (#746 / #1259)。記録開始時点
+ * (baseline) との引き算と N+1 目安の判定は Rust 側 (`db/inspector.rs`) が行う。
+ * `max_time_ms` は高水位マークで差分計算できない累積値。`fingerprint` (SQL 本文) は
+ * digest の初出時のみ載り、以降は null (呼び出し側がキャッシュする)。
  */
-export interface StatementStat {
+export interface StatementDeltaRow {
   digest: string;
-  fingerprint: string;
+  fingerprint: string | null;
   database: string | null;
   calls: number;
   total_time_ms: number;
+  mean_time_ms: number;
   max_time_ms: number;
   /** MySQL は走査行数 (SUM_ROWS_EXAMINED)、PostgreSQL は返却/影響行数。 */
   rows: number | null;
+  /** 直近のポーリング間隔の実行レートが N+1 目安の閾値を超えた。 */
+  n_plus_one: boolean;
 }
 
 /**
@@ -1790,11 +1795,35 @@ export const api = {
     invoke<LiveQuery[]>("sample_live_queries", { sessionId }).then((r) =>
       parseResponse(schemas.liveQueryArray, r, "sample_live_queries"),
     ),
-  /** digest 単位の累積統計スナップショットを取得する。差分計算はフロント純ロジックが担う。 */
-  sampleStatementStats: (sessionId: string) =>
-    invoke<StatementStat[]>("sample_statement_stats", { sessionId }).then((r) =>
-      parseResponse(schemas.statementStatArray, r, "sample_statement_stats"),
-    ),
+  /** ステートメント統計の記録を開始する (#1259)。現在の digest 累積スナップショットを
+   *  Rust 側のセッション状態に baseline として保持し、本文の送信済み集合も空にする。
+   *  サーバ側カウンタはリセットしない (権限不要)。読み取り SELECT のみ。 */
+  startStatementRecording: (sessionId: string) =>
+    invoke<void>("start_statement_recording", { sessionId }),
+  /**
+   * 記録開始 (baseline) からの digest 差分 (calls > 0 の行、総時間降順) を取得する (#1259)。
+   * 差分の引き算と N+1 目安 (直近ポーリング間隔の実行レート) は Rust 側で行う。
+   * `refresh: true` はサーバの統計を取り直し、`false` は前回取得分を `cumulative`
+   * (baseline 無視 = サーバの累積値そのまま) の切替で再計算するだけ。SQL 本文
+   * (`fingerprint`) は digest の初出時のみ載るので、呼び出し側は digest キー
+   * (`digest` + `database`) でキャッシュする。
+   */
+  sampleStatementDelta: (
+    sessionId: string,
+    opts: {
+      cumulative: boolean;
+      refresh: boolean;
+      nPlusOneMinCount: number;
+      nPlusOneWindowMs: number;
+    },
+  ) =>
+    invoke<StatementDeltaRow[]>("sample_statement_delta", {
+      sessionId,
+      cumulative: opts.cumulative,
+      refresh: opts.refresh,
+      nPlusOneMinCount: opts.nPlusOneMinCount,
+      nPlusOneWindowMs: opts.nPlusOneWindowMs,
+    }).then((r) => parseResponse(schemas.statementDeltaRowArray, r, "sample_statement_delta")),
   /**
    * 列データプロファイル (#974)。単一 SELECT の集計だけなので read_only セッション
    * でも動く。`approximate` は PostgreSQL (統計情報) で DISTINCT を近似する

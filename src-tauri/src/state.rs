@@ -125,6 +125,10 @@ pub struct Session {
     /// `server_info` (設定変数も読む重い経路) を叩き、以降のティックでは使い回す。
     /// `Session` のフィールドなので再接続 (新しい `Session` への差し替え) で自動的に空へ戻る。
     pub health_version: std::sync::Mutex<Option<String>>,
+    /// ライブクエリ・インスペクタ (#746) のセッション単位の状態 (baseline と直前スナップ
+    /// ショット)。digest 差分の引き算と N+1 目安をバックエンドで行うために持つ (#1259)。
+    /// `Session` のフィールドなので切断・再接続で自動的に破棄される。
+    pub inspector: tokio::sync::Mutex<crate::db::inspector::InspectorState>,
 }
 
 impl Session {

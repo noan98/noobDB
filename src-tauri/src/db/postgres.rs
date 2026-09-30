@@ -923,6 +923,7 @@ impl PostgresConn {
                 running: r.try_get::<bool, _>(7).unwrap_or(false),
                 rows_examined: None,
                 started_at_ms: r.try_get::<Option<f64>, _>(8).ok().flatten(),
+                fingerprint: String::new(),
             })
             .collect())
     }

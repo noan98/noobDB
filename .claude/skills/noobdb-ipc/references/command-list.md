@@ -62,7 +62,7 @@ MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
 `analyze_schema_health` / `query_stats_support` / `sample_live_queries` /
-`sample_statement_stats` / `server_info` / `server_metrics`
+`start_statement_recording` / `sample_statement_delta` (#1259。baseline 差分と N+1 目安を Rust 側で集計) / `server_info` / `server_metrics`
 
 ## 列データプロファイル (`commands/profile.rs`)
 

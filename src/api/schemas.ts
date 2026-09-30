@@ -239,17 +239,21 @@ export const liveQuery = z.object({
   rows_examined: z.number().nullable(),
   running: z.boolean(),
   started_at_ms: z.number().nullable(),
+  /** Rust の `normalize_sql_fingerprint` による同型クエリキー (#1259)。 */
+  fingerprint: z.string(),
 });
 
-/** digest 単位の累積統計 1 行 (#746)。 */
-export const statementStat = z.object({
+/** digest 単位の差分統計 1 行 (#746 / #1259)。`fingerprint` (SQL 本文) は digest の初出時のみ。 */
+export const statementDeltaRow = z.object({
   digest: z.string(),
-  fingerprint: z.string(),
+  fingerprint: z.string().nullable(),
   database: z.string().nullable(),
   calls: z.number(),
   total_time_ms: z.number(),
+  mean_time_ms: z.number(),
   max_time_ms: z.number(),
   rows: z.number().nullable(),
+  n_plus_one: z.boolean(),
 });
 
 /** 上位頻出値 1 件 (#974)。件数は 2^53 超で十進文字列になりうる。 */
@@ -759,7 +763,7 @@ export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
 export const dbUserInfoArray = z.array(dbUserInfo);
 export const liveQueryArray = z.array(liveQuery);
-export const statementStatArray = z.array(statementStat);
+export const statementDeltaRowArray = z.array(statementDeltaRow);
 export const schemaObjectArray = z.array(schemaObject);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);

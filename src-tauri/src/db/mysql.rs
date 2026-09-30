@@ -988,6 +988,7 @@ impl MySqlConn {
                     .ok(),
                 running,
                 started_at_ms: None,
+                fingerprint: String::new(),
             });
         }
         // 追加ソース: サーバサイド prepared statement (バイナリプロトコル)。
@@ -1032,6 +1033,7 @@ impl MySqlConn {
                     .ok(),
                 running: false,
                 started_at_ms: None,
+                fingerprint: String::new(),
             });
         }
         Ok(out)
