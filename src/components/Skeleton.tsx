@@ -136,3 +136,57 @@ export function SkeletonTableRows({
     </>
   );
 }
+
+/** 横断検索モーダル (オブジェクト検索 / データ検索) の結果行を模した行スケルトン
+ *  (#1212)。先頭のアイコン枠 + 2 段の文字バーという結果行の形を保ち、スキャン中
+ *  に「ここに結果が並ぶ」予兆を示す。`SkeletonTableRows` と同様に行ごとに
+ *  `opacity`/`animationDelay` を段階的にずらし、`aria-hidden` の純粋な視覚
+ *  プレースホルダとする (待機は呼び出し側の `aria-busy` が伝える)。
+ *
+ * @public
+ */
+export function SkeletonSearchRows({ rows = 5 }: { rows?: number }) {
+  return (
+    <>
+      {Array.from({ length: rows }, (_, ri) => (
+        <div
+          key={ri}
+          aria-hidden
+          data-testid="search-skeleton-row"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-2)",
+            padding: "var(--space-1-75) var(--space-4)",
+            opacity: 1 - ri * 0.12,
+          }}
+        >
+          <Skeleton
+            style={{
+              width: "var(--space-4)",
+              height: "var(--space-4)",
+              flexShrink: 0,
+              animationDelay: `${ri * 0.035}s`,
+            }}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", flex: 1, minWidth: 0 }}>
+            <Skeleton
+              style={{
+                height: "var(--space-3)",
+                width: `${TABLE_ROW_SKELETON_WIDTHS[ri % TABLE_ROW_SKELETON_WIDTHS.length]}%`,
+                animationDelay: `${ri * 0.035}s`,
+              }}
+            />
+            <Skeleton
+              style={{
+                height: "var(--space-2-5)",
+                width: `${TABLE_ROW_SKELETON_WIDTHS[(ri + 3) % TABLE_ROW_SKELETON_WIDTHS.length] / 2}%`,
+                animationDelay: `${ri * 0.035}s`,
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}

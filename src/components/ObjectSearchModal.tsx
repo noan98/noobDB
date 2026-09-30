@@ -1,4 +1,5 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
@@ -7,7 +8,9 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { NoResultsIllustration } from "./illustrations";
 import { Modal } from "./Modal";
-import { Spinner } from "./Spinner";
+import { SkeletonSearchRows } from "./Skeleton";
+import { shouldStaggerEntrance } from "./commandPaletteSearch";
+import { staggerContainer, variants } from "../motion";
 import { ErrorNote } from "./modalForm";
 
 /**
@@ -28,10 +31,15 @@ interface Props {
 
 type Scope = "current" | "all";
 
+// CommandPalette と同じ stagger 語彙 (#1212)。`variants` を子へ伝播させるため forwardProps で通す。
+const MotionListBox = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionRow = chakra(motion.button, {}, { forwardProps: ["variants"] });
+
 const RESULT_LIMIT = 300;
 
 export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onClose }: Props) {
   const t = useT();
+  const reduced = useReducedMotion() ?? false;
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<Scope>(currentDatabase ? "current" : "all");
   const [schemasByDb, setSchemasByDb] = useState<Record<string, TableSchema[]>>({});
@@ -161,7 +169,6 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
           fontSize="md"
           css={{ "&::placeholder": { color: "var(--text-muted)" } }}
         />
-        {loading && <Spinner size={14} />}
         {currentDatabase && (
           <chakra.div display="inline-flex" borderRadius="md" overflow="hidden" borderWidth="1px" borderColor="app.border" flexShrink={0}>
             <ScopeButton active={scope === "current"} onClick={() => setScope("current")}>
@@ -174,12 +181,25 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         )}
       </Flex>
 
-      <Box id="object-search-list" role="listbox" maxH="min(440px, 62vh)" overflowY="auto" py="1.5">
+      <MotionListBox
+        id="object-search-list"
+        role="listbox"
+        aria-busy={loading}
+        maxH="min(440px, 62vh)"
+        overflowY="auto"
+        py="1.5"
+        variants={staggerContainer(reduced)}
+        initial="initial"
+        animate="animate"
+      >
         {error ? (
           // 検索の失敗は操作をブロックする持続的エラーなので ErrorNote (#1114)。
           <ErrorNote mx="4" my="3" role="alert">
             {error}
           </ErrorNote>
+        ) : loading && results.length === 0 ? (
+          // スキャン中は結果行の形を模した skeleton を出す (#1212)。
+          <SkeletonSearchRows />
         ) : results.length === 0 ? (
           // 未入力 (ヒント) / 入力あり検索一致なしの 2 状態とも、この結果一覧
           // 領域全体が空になるため ResultGrid と同じリッチなイラストで表現する
@@ -198,6 +218,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
                 else itemRefs.current.delete(entryKey(entry));
               }}
               entry={entry}
+              animateEntrance={shouldStaggerEntrance(i)}
               active={i === activeIndex}
               onMouseMove={() => {
                 if (i !== activeIndex) setActiveIndex(i);
@@ -206,7 +227,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
             />
           ))
         )}
-      </Box>
+      </MotionListBox>
     </Modal>
   );
 }
@@ -244,17 +265,20 @@ function ScopeButton({
 interface RowProps {
   entry: ObjectEntry;
   active: boolean;
+  /** 先頭 `MAX_STAGGER_ITEMS` 件だけ stagger 出現させる (CommandPalette と同じ上限ガード)。 */
+  animateEntrance: boolean;
   onMouseMove: () => void;
   onClick: () => void;
   ref?: (el: HTMLButtonElement | null) => void;
 }
 
-function ResultRow({ entry, active, onMouseMove, onClick, ref }: RowProps) {
+function ResultRow({ entry, active, animateEntrance, onMouseMove, onClick, ref }: RowProps) {
   return (
-    <chakra.button
+    <MotionRow
       ref={ref}
       type="button"
       role="option"
+      variants={animateEntrance ? variants.staggerItem : undefined}
       aria-selected={active}
       tabIndex={-1}
       onMouseMove={onMouseMove}
@@ -285,6 +309,6 @@ function ResultRow({ entry, active, onMouseMove, onClick, ref }: RowProps) {
             : entry.database}
         </chakra.span>
       </Flex>
-    </chakra.button>
+    </MotionRow>
   );
 }
