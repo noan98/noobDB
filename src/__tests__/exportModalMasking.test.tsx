@@ -22,7 +22,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       maskExportRows: vi.fn(),
       exportQueryResult: vi.fn(),
-      writeBinaryFile: vi.fn(),
+      writeTextFile: vi.fn(),
     },
   };
 });
@@ -54,7 +54,7 @@ beforeEach(() => {
     rows.map((r) => [r[0], "MASKED", r[2]]),
   );
   vi.mocked(api.exportQueryResult).mockResolvedValue({ bytes: 123, truncation: null });
-  vi.mocked(api.writeBinaryFile).mockResolvedValue(456);
+  vi.mocked(api.writeTextFile).mockResolvedValue(456);
 });
 
 describe("ExportModal データマスキング (#733)", () => {
@@ -193,9 +193,8 @@ describe("ExportModal データマスキング × 他形式 (#733 / #711 / #745)
     expect(preview.textContent).not.toContain("taro@example.com");
 
     fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
-    await waitFor(() => expect(api.writeBinaryFile).toHaveBeenCalledOnce());
-    const [, bytes] = vi.mocked(api.writeBinaryFile).mock.calls[0];
-    const html = new TextDecoder().decode(bytes);
+    await waitFor(() => expect(api.writeTextFile).toHaveBeenCalledOnce());
+    const [, html] = vi.mocked(api.writeTextFile).mock.calls[0];
     expect(html).toContain("MASKED");
     expect(html).not.toContain("taro@example.com");
     expect(html).not.toContain("hanako@example.com");

@@ -952,7 +952,7 @@ export function SettingsView({ theme, onClose }: Props) {
       });
       if (typeof dest !== "string" || !dest) return;
       const json = serializeSettingsExport(settings);
-      await api.writeBinaryFile(dest, new TextEncoder().encode(json));
+      await api.writeTextFile(dest, json);
       toast.success(t("settingsBackupExportSuccess", { path: dest }));
     } catch (e) {
       toast.error(t("settingsBackupExportError", { error: String(e) }));

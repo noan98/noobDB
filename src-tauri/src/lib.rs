@@ -143,6 +143,7 @@ pub mod __test_api {
     // 個別イベント構造体ではなく、Tauri Channel で送る 1 本のタグ付き enum
     // (`QueryStreamMessage` / `PreviewStreamMessage`) に統合済み。Export/Dump/
     // Import は引き続き個別の emit ペイロード構造体のまま。
+    pub use crate::commands::cell_blob::CellBlobProbe;
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
@@ -431,6 +432,36 @@ pub mod __test_api {
     /// 掛けてから同じコア (`run_import_core`) を走らせる。引数は IPC と同じ JSON
     /// 形 (camelCase) で受け、ワイヤ形のデシリアライズも一緒に検証する。
     /// 戻り値: `Ok(Ok(挿入行数))` / abort モードの行エラーは `Ok(Err(msg))`。
+    /// `probe_cell_blob` の本体を、IPC と同じ JSON 形のキーで統合テストから駆動する (#1258)。
+    pub async fn probe_cell_blob_via_session(
+        session: &Session,
+        database: Option<&str>,
+        table: &str,
+        column: &str,
+        key: serde_json::Value,
+    ) -> crate::error::Result<Option<crate::commands::cell_blob::CellBlobProbe>> {
+        let key = parse_cell_key(key)?;
+        crate::commands::cell_blob::probe_blob(session, database, table, column, &key).await
+    }
+
+    /// `fetch_cell_bytes` / `save_cell_to_file` が共有する生バイト取得 (NULL は `None`)。
+    pub async fn fetch_cell_blob_via_session(
+        session: &Session,
+        database: Option<&str>,
+        table: &str,
+        column: &str,
+        key: serde_json::Value,
+    ) -> crate::error::Result<Option<Vec<u8>>> {
+        let key = parse_cell_key(key)?;
+        crate::commands::cell_blob::fetch_cell_blob(session, database, table, column, &key).await
+    }
+
+    fn parse_cell_key(
+        key: serde_json::Value,
+    ) -> crate::error::Result<Vec<crate::commands::cell_blob::CellKeyPart>> {
+        serde_json::from_value(key).map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))
+    }
+
     pub async fn import_file_via_command(
         session: &Session,
         database: Option<&str>,
@@ -1088,8 +1119,13 @@ pub fn run() {
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::cell_blob::fetch_cell_bytes,
+            commands::cell_blob::probe_cell_blob,
+            commands::cell_blob::save_cell_to_file,
             commands::cell_blob::read_binary_file,
             commands::file::write_binary_file,
+            commands::file::write_text_file,
+            commands::import::get_import_skipped_text,
+            commands::import::save_import_skipped_rows,
             commands::local::create_local_session,
             commands::local::register_local_table,
             commands::local::list_local_tables,

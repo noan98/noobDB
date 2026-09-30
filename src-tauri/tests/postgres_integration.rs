@@ -1613,3 +1613,90 @@ async fn postgres_stream_coalescing_and_stats() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// BLOB セルの probe / 生バイト取得 (#1258)。実 DB で長さ関数と先頭 16 バイトの
+/// 部分取得 SQL が動き、種別判定とサイズが正しいことを確認する。
+#[tokio::test]
+async fn postgres_cell_blob_probe_and_fetch() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("s-blob", conn, opts.clone(), false);
+    let db: Option<&str> = Some("public");
+    session
+        .conn
+        .execute("DROP TABLE IF EXISTS cell_blob_probe_t", db)
+        .await
+        .expect("drop");
+    session
+        .conn
+        .execute(
+            "CREATE TABLE cell_blob_probe_t (id INT PRIMARY KEY, data BYTEA)",
+            db,
+        )
+        .await
+        .expect("create");
+    let png: Vec<u8> = [
+        &[0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a][..],
+        &[0u8; 100][..],
+    ]
+    .concat();
+    let hex: String = png.iter().map(|b| format!("{b:02x}")).collect();
+    let big = "00".repeat(40_000);
+    for sql in [
+        format!("INSERT INTO cell_blob_probe_t VALUES (1, '\\x{hex}')"),
+        "INSERT INTO cell_blob_probe_t VALUES (2, '\\x')".to_string(),
+        "INSERT INTO cell_blob_probe_t VALUES (3, NULL)".to_string(),
+        format!("INSERT INTO cell_blob_probe_t VALUES (5, '\\x{big}')"),
+    ] {
+        session.conn.execute(&sql, db).await.expect("insert");
+    }
+    let key = |id: i64| serde_json::json!([{ "column": "id", "value": id }]);
+
+    let p = t::probe_cell_blob_via_session(&session, db, "cell_blob_probe_t", "data", key(1))
+        .await
+        .expect("png")
+        .expect("not null");
+    assert_eq!(p.size, png.len() as u64);
+    assert_eq!(p.mime.as_deref(), Some("image/png"));
+    assert!(p.image);
+    let bytes = t::fetch_cell_blob_via_session(&session, db, "cell_blob_probe_t", "data", key(1))
+        .await
+        .expect("fetch")
+        .expect("not null");
+    assert_eq!(bytes, png);
+
+    let p = t::probe_cell_blob_via_session(&session, db, "cell_blob_probe_t", "data", key(2))
+        .await
+        .expect("empty")
+        .expect("empty is not null");
+    assert_eq!((p.size, p.mime, p.image), (0, None, false));
+
+    assert!(
+        t::probe_cell_blob_via_session(&session, db, "cell_blob_probe_t", "data", key(3))
+            .await
+            .expect("null")
+            .is_none()
+    );
+    assert!(
+        t::fetch_cell_blob_via_session(&session, db, "cell_blob_probe_t", "data", key(3))
+            .await
+            .expect("null")
+            .is_none()
+    );
+
+    let p = t::probe_cell_blob_via_session(&session, db, "cell_blob_probe_t", "data", key(5))
+        .await
+        .expect("big")
+        .expect("not null");
+    assert_eq!(p.size, 40_000);
+
+    session
+        .conn
+        .execute("DROP TABLE cell_blob_probe_t", db)
+        .await
+        .expect("cleanup");
+}

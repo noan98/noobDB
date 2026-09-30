@@ -1,16 +1,9 @@
 import { useCallback } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { api, type CellValue, type Column } from "../api/tauri";
+import { api, type CellBlobProbe, type CellValue, type Column } from "../api/tauri";
 import { useT } from "../i18n";
 import { useToast } from "./Toast";
-import {
-  MAX_BLOB_BYTES,
-  blobFileName,
-  blobKeyParts,
-  detectBlobKindFromHex,
-  formatBlobSize,
-  hexToBytes,
-} from "./blobIo";
+import { MAX_BLOB_BYTES, blobFileName, blobKeyParts, bytesToHex, formatBlobSize } from "./blobIo";
 
 /**
  * BLOB セルのファイル入出力を有効にするための、結果グリッドへの入力 (#1148)。
@@ -26,9 +19,11 @@ export interface BlobIoConfig {
 }
 
 export interface CellBlobHandlers {
-  /** 生バイトを 16 進文字列で取得 (NULL は null)。 */
-  fetchHex: () => Promise<string | null>;
-  /** ファイルへ保存する。 */
+  /** サイズと種別だけを取得する (本体は転送しない。NULL は null)。 */
+  probe: () => Promise<CellBlobProbe | null>;
+  /** 生バイトを取得する (NULL セルは reject。先に `probe` で確認する)。 */
+  fetchBytes: () => Promise<Uint8Array>;
+  /** ファイルへ保存する (DB → ファイルはバックエンド内で完結し、BLOB は IPC を通らない)。 */
   save: () => Promise<void>;
   /** ファイルから読み込んで書き戻す。書き戻せない状況では undefined。 */
   load?: () => Promise<void>;
@@ -69,24 +64,29 @@ export function useCellBlobIo({
       const key = blobKeyParts(columns, row, pkIndices ?? [], isBinaryColumn);
       if (!key) return undefined;
 
-      const fetchHex = () =>
+      const probe = () =>
+        api.probeCellBlob(config.sessionId, database ?? null, table, col.name, key);
+      const fetchBytes = () =>
         api.fetchCellBytes(config.sessionId, database ?? null, table, col.name, key);
 
       const saveToFile = async () => {
         try {
-          const hex = await fetchHex();
-          if (hex === null) {
+          const info = await probe();
+          if (info === null) {
             toast.error(t("blobIsNull"));
             return;
           }
-          const bytes = hexToBytes(hex);
-          if (!bytes) throw new Error("invalid hex");
-          const path = await save({
-            defaultPath: blobFileName(col.name, detectBlobKindFromHex(hex)),
-          });
+          const path = await save({ defaultPath: blobFileName(col.name, info.ext) });
           if (typeof path !== "string" || !path) return;
-          await api.writeBinaryFile(path, bytes);
-          toast.success(t("blobSaved", { size: formatBlobSize(bytes.length), path }));
+          const size = await api.saveCellToFile(
+            config.sessionId,
+            database ?? null,
+            table,
+            col.name,
+            key,
+            path,
+          );
+          toast.success(t("blobSaved", { size: formatBlobSize(size), path }));
         } catch (e) {
           toast.error(t("blobSaveFailed", { error: String(e) }));
         }
@@ -98,16 +98,16 @@ export function useCellBlobIo({
             try {
               const path = await open({ multiple: false, title: t("blobLoadPickTitle") });
               if (typeof path !== "string" || !path) return;
-              const hex = await api.readBinaryFile(path);
-              if (hex.length / 2 > MAX_BLOB_BYTES) throw new Error("too large");
-              await onWrite(rowIdx, colIdx, hex);
+              const bytes = await api.readBinaryFile(path);
+              if (bytes.length > MAX_BLOB_BYTES) throw new Error("too large");
+              await onWrite(rowIdx, colIdx, bytesToHex(bytes));
             } catch (e) {
               toast.error(t("blobLoadFailed", { error: String(e) }));
             }
           }
         : undefined;
 
-      return { fetchHex, save: saveToFile, load: loadFromFile };
+      return { probe, fetchBytes, save: saveToFile, load: loadFromFile };
     },
     [config, database, table, columns, rows, pkIndices, isBinaryColumn, t, toast],
   );
