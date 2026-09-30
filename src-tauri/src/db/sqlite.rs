@@ -77,6 +77,19 @@ impl SqliteConn {
         run_sql_on(&mut conn, sql).await
     }
 
+    /// EXPLAIN 用の実行。SQLite は EXPLAIN / EXPLAIN QUERY PLAN の準備時には読み取り
+    /// トランザクションを開かないため、プールの接続が持つスキーマキャッシュが他の接続での
+    /// `CREATE INDEX` / `ALTER` に追従せず、古いスキーマで計画を返すことがある。計画の変化を
+    /// 見る用途 (実行計画ウォッチ #1260) では致命的なので、同じ接続で先に
+    /// `sqlite_master` を 1 回読んでスキーマを再検証してから実行する。
+    pub async fn execute_explain(&self, sql: &str) -> Result<QueryResult> {
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
+            .fetch_optional(&mut *conn)
+            .await?;
+        run_sql_on(&mut conn, sql).await
+    }
+
     // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, _database: Option<&str>, opts: TxOptions) -> Result<()> {

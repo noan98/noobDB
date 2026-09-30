@@ -1,0 +1,1473 @@
+{
+  "_note": "実行計画ウォッチ (#743 / #1260) の共有ゴールデンベクタ。planDiff.ts (フロント) と plan_watch (Rust) が同じ正規化・フィンガープリント・比較を返すことを固定する。期待値は planDiff.ts の実出力から生成した。",
+  "ops": [
+    {
+      "name": "mysql single table full scan",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"select_id\":1,\"cost_info\":{\"query_cost\":\"1.10\"},\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":10,\"cost_info\":{\"read_cost\":\"1.0\"}}}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/table",
+          "kind": "table",
+          "object": "t",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 10
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/table\",\"table\",\"t\",\"ALL\",null,null,1]]"
+    },
+    {
+      "name": "mysql nested loop with ref + hash join buffer",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"select_id\":1,\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":1000}},{\"table\":{\"table_name\":\"b\",\"access_type\":\"ref\",\"key\":\"ix_b\",\"rows_examined_per_scan\":3,\"using_join_buffer\":\"hash join\"}}]}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/nested_loop",
+          "kind": "nested_loop",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": "nested loop",
+          "estRows": null
+        },
+        {
+          "path": "query_block/nested_loop/0/table",
+          "kind": "table",
+          "object": "a",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 1000
+        },
+        {
+          "path": "query_block/nested_loop/1/table",
+          "kind": "table",
+          "object": "b",
+          "access": "ref",
+          "index": "ix_b",
+          "join": "hash join",
+          "estRows": 3
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/nested_loop\",\"nested_loop\",null,null,null,\"nested loop\",null],[\"query_block/nested_loop/0/table\",\"table\",\"a\",\"ALL\",null,null,3],[\"query_block/nested_loop/1/table\",\"table\",\"b\",\"ref\",\"ix_b\",\"hash join\",0]]"
+    },
+    {
+      "name": "mysql rows as strings and exact powers of ten",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":\"1000\"}},{\"table\":{\"table_name\":\"b\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":100000}},{\"table\":{\"table_name\":\"c\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":99999}},{\"table\":{\"table_name\":\"d\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":0}},{\"table\":{\"table_name\":\"e\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":\"\"}},{\"table\":{\"table_name\":\"f\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":\"abc\"}},{\"table\":{\"table_name\":\"g\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":0.5}}]}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/nested_loop",
+          "kind": "nested_loop",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": "nested loop",
+          "estRows": null
+        },
+        {
+          "path": "query_block/nested_loop/0/table",
+          "kind": "table",
+          "object": "a",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 1000
+        },
+        {
+          "path": "query_block/nested_loop/1/table",
+          "kind": "table",
+          "object": "b",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 100000
+        },
+        {
+          "path": "query_block/nested_loop/2/table",
+          "kind": "table",
+          "object": "c",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 99999
+        },
+        {
+          "path": "query_block/nested_loop/3/table",
+          "kind": "table",
+          "object": "d",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 0
+        },
+        {
+          "path": "query_block/nested_loop/4/table",
+          "kind": "table",
+          "object": "e",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 0
+        },
+        {
+          "path": "query_block/nested_loop/5/table",
+          "kind": "table",
+          "object": "f",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/nested_loop/6/table",
+          "kind": "table",
+          "object": "g",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": 0.5
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/nested_loop\",\"nested_loop\",null,null,null,\"nested loop\",null],[\"query_block/nested_loop/0/table\",\"table\",\"a\",\"ALL\",null,null,3],[\"query_block/nested_loop/1/table\",\"table\",\"b\",\"ALL\",null,null,5],[\"query_block/nested_loop/2/table\",\"table\",\"c\",\"ALL\",null,null,4],[\"query_block/nested_loop/3/table\",\"table\",\"d\",\"ALL\",null,null,0],[\"query_block/nested_loop/4/table\",\"table\",\"e\",\"ALL\",null,null,0],[\"query_block/nested_loop/5/table\",\"table\",\"f\",\"ALL\",null,null,null],[\"query_block/nested_loop/6/table\",\"table\",\"g\",\"ALL\",null,null,-1]]"
+    },
+    {
+      "name": "mysql ordering/grouping wrappers keep key order",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"select_id\":1,\"ordering_operation\":{\"using_filesort\":true,\"grouping_operation\":{\"using_temporary_table\":false,\"nested_loop\":[{\"table\":{\"table_name\":\"x\",\"access_type\":\"range\",\"key\":\"ix_x\"}}]}}}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/ordering_operation",
+          "kind": "ordering_operation",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/ordering_operation/grouping_operation",
+          "kind": "grouping_operation",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/ordering_operation/grouping_operation/nested_loop",
+          "kind": "nested_loop",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": "nested loop",
+          "estRows": null
+        },
+        {
+          "path": "query_block/ordering_operation/grouping_operation/nested_loop/0/table",
+          "kind": "table",
+          "object": "x",
+          "access": "range",
+          "index": "ix_x",
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/ordering_operation\",\"ordering_operation\",null,null,null,null,null],[\"query_block/ordering_operation/grouping_operation\",\"grouping_operation\",null,null,null,null,null],[\"query_block/ordering_operation/grouping_operation/nested_loop\",\"nested_loop\",null,null,null,\"nested loop\",null],[\"query_block/ordering_operation/grouping_operation/nested_loop/0/table\",\"table\",\"x\",\"range\",\"ix_x\",null,null]]"
+    },
+    {
+      "name": "mysql non-alphabetical key order",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"z_op\":{\"table\":{\"table_name\":\"z\",\"access_type\":\"ALL\"}},\"a_op\":{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}}}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/z_op",
+          "kind": "z_op",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/z_op/table",
+          "kind": "table",
+          "object": "z",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/a_op",
+          "kind": "a_op",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/a_op/table",
+          "kind": "table",
+          "object": "a",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/z_op\",\"z_op\",null,null,null,null,null],[\"query_block/z_op/table\",\"table\",\"z\",\"ALL\",null,null,null],[\"query_block/a_op\",\"a_op\",null,null,null,null,null],[\"query_block/a_op/table\",\"table\",\"a\",\"ALL\",null,null,null]]"
+    },
+    {
+      "name": "mysql attached subqueries array",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"select_id\":1,\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\"},\"attached_subqueries\":[{\"dependent\":true,\"query_block\":{\"select_id\":2,\"table\":{\"table_name\":\"u\",\"access_type\":\"eq_ref\",\"key\":\"PRIMARY\"}}}]}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/table",
+          "kind": "table",
+          "object": "t",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/attached_subqueries",
+          "kind": "attached_subqueries",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/attached_subqueries/0/query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/attached_subqueries/0/query_block/table",
+          "kind": "table",
+          "object": "u",
+          "access": "eq_ref",
+          "index": "PRIMARY",
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/table\",\"table\",\"t\",\"ALL\",null,null,null],[\"query_block/attached_subqueries\",\"attached_subqueries\",null,null,null,null,null],[\"query_block/attached_subqueries/0/query_block\",\"query_block\",null,null,null,null,null],[\"query_block/attached_subqueries/0/query_block/table\",\"table\",\"u\",\"eq_ref\",\"PRIMARY\",null,null]]"
+    },
+    {
+      "name": "mysql without query_block root",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"select_id\":1,\"table\":{\"table_name\":\"t\",\"access_type\":\"const\",\"key\":\"PRIMARY\"}}",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "plan",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/table",
+          "kind": "table",
+          "object": "t",
+          "access": "const",
+          "index": "PRIMARY",
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"plan\",null,null,null,null,null],[\"plan/table\",\"table\",\"t\",\"const\",\"PRIMARY\",null,null]]"
+    },
+    {
+      "name": "mysql scalar cost_info and scalar arrays",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"cost_info\":\"x\",\"used_columns\":[\"a\",\"b\"],\"table\":{\"table_name\":\"t\",\"access_type\":\"ref\",\"key\":\"k\",\"used_key_parts\":[\"a\"],\"using_join_buffer\":\"Block Nested Loop\"}}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/table",
+          "kind": "table",
+          "object": "t",
+          "access": "ref",
+          "index": "k",
+          "join": "block nested loop",
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/table\",\"table\",\"t\",\"ref\",\"k\",\"block nested loop\",null]]"
+    },
+    {
+      "name": "mysql duplicate keys last value wins in first position",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"a\":{\"table\":{\"table_name\":\"one\"}},\"b\":{\"table\":{\"table_name\":\"b\"}},\"a\":{\"table\":{\"table_name\":\"two\"}}}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/a",
+          "kind": "a",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/a/table",
+          "kind": "table",
+          "object": "two",
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/b",
+          "kind": "b",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/b/table",
+          "kind": "table",
+          "object": "b",
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/a\",\"a\",null,null,null,null,null],[\"query_block/a/table\",\"table\",\"two\",null,null,null,null],[\"query_block/b\",\"b\",null,null,null,null,null],[\"query_block/b/table\",\"table\",\"b\",null,null,null,null]]"
+    },
+    {
+      "name": "mysql array root is not a plan",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "[1,2,3]",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "mysql invalid json",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "not json",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "mysql empty payload",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "mysql unicode table name",
+      "driver": "mysql",
+      "payloadKind": "json",
+      "payload": "{\"query_block\":{\"table\":{\"table_name\":\"注文\\\"表\\\\\",\"access_type\":\"ALL\"}}}",
+      "ops": [
+        {
+          "path": "query_block",
+          "kind": "query_block",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "query_block/table",
+          "kind": "table",
+          "object": "注文\"表\\",
+          "access": "ALL",
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"query_block\",\"query_block\",null,null,null,null,null],[\"query_block/table\",\"table\",\"注文\\\"表\\\\\",\"ALL\",null,null,null]]"
+    },
+    {
+      "name": "postgres hash join over seq and index scan",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "[{\"Plan\":{\"Node Type\":\"Hash Join\",\"Plan Rows\":50,\"Plans\":[{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"a\",\"Plan Rows\":1000},{\"Node Type\":\"Hash\",\"Plan Rows\":1,\"Plans\":[{\"Node Type\":\"Index Scan\",\"Relation Name\":\"b\",\"Index Name\":\"b_pkey\",\"Plan Rows\":1}]}]}}]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "Hash Join",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": "hash join",
+          "estRows": 50
+        },
+        {
+          "path": "plan/0",
+          "kind": "Seq Scan",
+          "object": "a",
+          "access": "Seq Scan",
+          "index": null,
+          "join": null,
+          "estRows": 1000
+        },
+        {
+          "path": "plan/1",
+          "kind": "Hash",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": 1
+        },
+        {
+          "path": "plan/1/0",
+          "kind": "Index Scan",
+          "object": "b",
+          "access": "Index Scan",
+          "index": "b_pkey",
+          "join": null,
+          "estRows": 1
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"Hash Join\",null,null,null,\"hash join\",1],[\"plan/0\",\"Seq Scan\",\"a\",\"Seq Scan\",null,null,3],[\"plan/1\",\"Hash\",null,null,null,null,0],[\"plan/1/0\",\"Index Scan\",\"b\",\"Index Scan\",\"b_pkey\",null,0]]"
+    },
+    {
+      "name": "postgres nested loop and merge join and bitmap scan",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "[{\"Plan\":{\"Node Type\":\"Nested Loop\",\"Plan Rows\":7,\"Plans\":[{\"Node Type\":\"Merge Join\",\"Plan Rows\":2},{\"Node Type\":\"Bitmap Heap Scan\",\"Relation Name\":\"t\",\"Plan Rows\":12345}]}}]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "Nested Loop",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": "nested loop",
+          "estRows": 7
+        },
+        {
+          "path": "plan/0",
+          "kind": "Merge Join",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": "merge join",
+          "estRows": 2
+        },
+        {
+          "path": "plan/1",
+          "kind": "Bitmap Heap Scan",
+          "object": "t",
+          "access": "Bitmap Heap Scan",
+          "index": null,
+          "join": null,
+          "estRows": 12345
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"Nested Loop\",null,null,null,\"nested loop\",0],[\"plan/0\",\"Merge Join\",null,null,null,\"merge join\",0],[\"plan/1\",\"Bitmap Heap Scan\",\"t\",\"Bitmap Heap Scan\",null,null,4]]"
+    },
+    {
+      "name": "postgres plan without wrapper array",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "{\"Plan\":{\"Node Type\":\"Result\",\"Plan Rows\":1}}",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "Result",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": 1
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"Result\",null,null,null,null,0]]"
+    },
+    {
+      "name": "postgres bare plan object",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"t\",\"Plan Rows\":9}",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "Seq Scan",
+          "object": "t",
+          "access": "Seq Scan",
+          "index": null,
+          "join": null,
+          "estRows": 9
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"Seq Scan\",\"t\",\"Seq Scan\",null,null,0]]"
+    },
+    {
+      "name": "postgres missing node type",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "[{\"Plan\":{\"Relation Name\":\"t\",\"Plans\":[{\"Plan Rows\":3}]}}]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "plan",
+          "object": "t",
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/0",
+          "kind": "plan",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": 3
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"plan\",\"t\",null,null,null,null],[\"plan/0\",\"plan\",null,null,null,null,0]]"
+    },
+    {
+      "name": "postgres empty array",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "[]",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "postgres non-object element",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "[42]",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "postgres plan rows zero and negative",
+      "driver": "postgres",
+      "payloadKind": "json",
+      "payload": "[{\"Plan\":{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"t\",\"Plan Rows\":0,\"Plans\":[{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"u\",\"Plan Rows\":-5}]}}]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "Seq Scan",
+          "object": "t",
+          "access": "Seq Scan",
+          "index": null,
+          "join": null,
+          "estRows": 0
+        },
+        {
+          "path": "plan/0",
+          "kind": "Seq Scan",
+          "object": "u",
+          "access": "Seq Scan",
+          "index": null,
+          "join": null,
+          "estRows": -5
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"Seq Scan\",\"t\",\"Seq Scan\",null,null,0],[\"plan/0\",\"Seq Scan\",\"u\",\"Seq Scan\",null,null,0]]"
+    },
+    {
+      "name": "sqlite single scan",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"SCAN t\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "sqliteStep",
+          "object": "t",
+          "access": "SCAN",
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"sqliteStep\",\"t\",\"SCAN\",null,null,null]]"
+    },
+    {
+      "name": "sqlite search using index",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"SEARCH t USING INDEX ix_a (a=?)\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "sqliteStep",
+          "object": "t",
+          "access": "SEARCH USING INDEX",
+          "index": "ix_a",
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"sqliteStep\",\"t\",\"SEARCH USING INDEX\",\"ix_a\",null,null]]"
+    },
+    {
+      "name": "sqlite covering index and integer primary key",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"SEARCH t USING COVERING INDEX ix_a (a=?)\"],[3,0,\"SEARCH u USING INTEGER PRIMARY KEY (rowid=?)\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "queryPlan",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/0",
+          "kind": "sqliteStep",
+          "object": "t",
+          "access": "SEARCH USING COVERING INDEX",
+          "index": "ix_a",
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/1",
+          "kind": "sqliteStep",
+          "object": "u",
+          "access": "SEARCH USING INTEGER PRIMARY KEY",
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"queryPlan\",null,null,null,null,null],[\"plan/0\",\"sqliteStep\",\"t\",\"SEARCH USING COVERING INDEX\",\"ix_a\",null,null],[\"plan/1\",\"sqliteStep\",\"u\",\"SEARCH USING INTEGER PRIMARY KEY\",null,null,null]]"
+    },
+    {
+      "name": "sqlite nested children",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"SCAN t\"],[5,2,\"SEARCH u USING INDEX ix_u (x=?)\"],[9,5,\"USE TEMP B-TREE FOR ORDER BY\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "sqliteStep",
+          "object": "t",
+          "access": "SCAN",
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/0",
+          "kind": "sqliteStep",
+          "object": "u",
+          "access": "SEARCH USING INDEX",
+          "index": "ix_u",
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/0/0",
+          "kind": "sqliteStep",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"sqliteStep\",\"t\",\"SCAN\",null,null,null],[\"plan/0\",\"sqliteStep\",\"u\",\"SEARCH USING INDEX\",\"ix_u\",null,null],[\"plan/0/0\",\"sqliteStep\",null,null,null,null,null]]"
+    },
+    {
+      "name": "sqlite table keyword alias and lowercase",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"scan table t as x using index ix (a=?)\"],[3,0,\"SEARCH TABLE u AS y USING INTEGER PRIMARY KEY (rowid=?)\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "queryPlan",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/0",
+          "kind": "sqliteStep",
+          "object": "t",
+          "access": "SCAN USING INDEX",
+          "index": "ix",
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/1",
+          "kind": "sqliteStep",
+          "object": "u",
+          "access": "SEARCH USING INTEGER PRIMARY KEY",
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"queryPlan\",null,null,null,null,null],[\"plan/0\",\"sqliteStep\",\"t\",\"SCAN USING INDEX\",\"ix\",null,null],[\"plan/1\",\"sqliteStep\",\"u\",\"SEARCH USING INTEGER PRIMARY KEY\",null,null,null]]"
+    },
+    {
+      "name": "sqlite TABLE as the table name",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"SCAN TABLE\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "sqliteStep",
+          "object": "TABLE",
+          "access": "SCAN",
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"sqliteStep\",\"TABLE\",\"SCAN\",null,null,null]]"
+    },
+    {
+      "name": "sqlite detail without a scan verb",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"USE TEMP B-TREE FOR GROUP BY\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "sqliteStep",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"sqliteStep\",null,null,null,null,null]]"
+    },
+    {
+      "name": "sqlite empty detail",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,0,\"\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "sqliteStep",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"sqliteStep\",null,null,null,null,null]]"
+    },
+    {
+      "name": "sqlite no top-level rows",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[2,7,\"SCAN t\"]]",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "sqlite empty rows",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[]",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "sqlite single top-level row only",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[4,0,\"SEARCH t USING INDEX ix (a=?)\"],[6,4,\"SCAN v\"]]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "sqliteStep",
+          "object": "t",
+          "access": "SEARCH USING INDEX",
+          "index": "ix",
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/0",
+          "kind": "sqliteStep",
+          "object": "v",
+          "access": "SCAN",
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"sqliteStep\",\"t\",\"SEARCH USING INDEX\",\"ix\",null,null],[\"plan/0\",\"sqliteStep\",\"v\",\"SCAN\",null,null,null]]"
+    },
+    {
+      "name": "sqlite payload not an array",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "{}",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "sqlite payload invalid json",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "oops",
+      "ops": [],
+      "fingerprint": "[]"
+    },
+    {
+      "name": "sqlite string ids and null detail",
+      "driver": "sqlite",
+      "payloadKind": "sqliteRows",
+      "payload": "[[\"2\",\"0\",\"SCAN t\"],[3,\"x\",null],\"junk\"]",
+      "ops": [
+        {
+          "path": "plan",
+          "kind": "queryPlan",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/0",
+          "kind": "sqliteStep",
+          "object": "t",
+          "access": "SCAN",
+          "index": null,
+          "join": null,
+          "estRows": null
+        },
+        {
+          "path": "plan/1",
+          "kind": "sqliteStep",
+          "object": null,
+          "access": null,
+          "index": null,
+          "join": null,
+          "estRows": null
+        }
+      ],
+      "fingerprint": "[[\"plan\",\"queryPlan\",null,null,null,null,null],[\"plan/0\",\"sqliteStep\",\"t\",\"SCAN\",null,null,null],[\"plan/1\",\"sqliteStep\",null,null,null,null,null]]"
+    }
+  ],
+  "compare": [
+    {
+      "name": "mysql index lost to full scan",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ref\",\"key\":\"ix\",\"rows_examined_per_scan\":10}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":10}}}"
+      },
+      "changes": [
+        {
+          "kind": "access",
+          "severity": "warning",
+          "path": "query_block/table",
+          "object": "t",
+          "before": "ref",
+          "after": "ALL"
+        }
+      ]
+    },
+    {
+      "name": "mysql same plan",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ref\",\"key\":\"ix\"}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ref\",\"key\":\"ix\"}}}"
+      },
+      "changes": []
+    },
+    {
+      "name": "mysql other index same access",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ref\",\"key\":\"a\"}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ref\",\"key\":\"b\"}}}"
+      },
+      "changes": [
+        {
+          "kind": "index",
+          "severity": "info",
+          "path": "query_block/table",
+          "object": "t",
+          "before": "a",
+          "after": "b"
+        }
+      ]
+    },
+    {
+      "name": "mysql index dropped same access",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"index\",\"key\":\"a\"}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"index\"}}}"
+      },
+      "changes": [
+        {
+          "kind": "index",
+          "severity": "warning",
+          "path": "query_block/table",
+          "object": "t",
+          "before": "a",
+          "after": null
+        }
+      ]
+    },
+    {
+      "name": "mysql rows grow by 100x",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":10}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":1000}}}"
+      },
+      "changes": [
+        {
+          "kind": "estRows",
+          "severity": "warning",
+          "path": "query_block/table",
+          "object": "t",
+          "before": "10",
+          "after": "1000"
+        }
+      ]
+    },
+    {
+      "name": "mysql rows shrink by 100x",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":1000}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":10}}}"
+      },
+      "changes": [
+        {
+          "kind": "estRows",
+          "severity": "info",
+          "path": "query_block/table",
+          "object": "t",
+          "before": "1000",
+          "after": "10"
+        }
+      ]
+    },
+    {
+      "name": "mysql rows within factor",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":100}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":999}}}"
+      },
+      "changes": []
+    },
+    {
+      "name": "mysql rows exactly at factor",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":100}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":1000}}}"
+      },
+      "changes": [
+        {
+          "kind": "estRows",
+          "severity": "warning",
+          "path": "query_block/table",
+          "object": "t",
+          "before": "100",
+          "after": "1000"
+        }
+      ]
+    },
+    {
+      "name": "mysql rows from zero",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":0}}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\",\"rows_examined_per_scan\":50}}}"
+      },
+      "changes": [
+        {
+          "kind": "estRows",
+          "severity": "warning",
+          "path": "query_block/table",
+          "object": "t",
+          "before": "0",
+          "after": "50"
+        }
+      ]
+    },
+    {
+      "name": "mysql join buffer changes",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"b\",\"access_type\":\"ALL\",\"using_join_buffer\":\"hash join\"}}]}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"b\",\"access_type\":\"ALL\"}}]}}"
+      },
+      "changes": [
+        {
+          "kind": "join",
+          "severity": "info",
+          "path": "query_block/nested_loop/1/table",
+          "object": "b",
+          "before": "hash join",
+          "after": null
+        }
+      ]
+    },
+    {
+      "name": "mysql table removed from join",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"b\",\"access_type\":\"ref\",\"key\":\"k\"}}]}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}}]}}"
+      },
+      "changes": [
+        {
+          "kind": "opRemoved",
+          "severity": "info",
+          "path": "query_block/nested_loop/1/table",
+          "object": "b",
+          "before": "ref",
+          "after": null
+        }
+      ]
+    },
+    {
+      "name": "mysql full scan table added to join",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}}]}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"c\",\"access_type\":\"ALL\"}}]}}"
+      },
+      "changes": [
+        {
+          "kind": "opAdded",
+          "severity": "warning",
+          "path": "query_block/nested_loop/1/table",
+          "object": "c",
+          "before": null,
+          "after": "ALL"
+        }
+      ]
+    },
+    {
+      "name": "mysql index table added to join",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}}]}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"c\",\"access_type\":\"ref\",\"key\":\"k\"}}]}}"
+      },
+      "changes": [
+        {
+          "kind": "opAdded",
+          "severity": "info",
+          "path": "query_block/nested_loop/1/table",
+          "object": "c",
+          "before": null,
+          "after": "ref"
+        }
+      ]
+    },
+    {
+      "name": "mysql node inserted shifts array indexes",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"b\",\"access_type\":\"ref\",\"key\":\"k\"}}]}}"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"nested_loop\":[{\"table\":{\"table_name\":\"z\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"a\",\"access_type\":\"ALL\"}},{\"table\":{\"table_name\":\"b\",\"access_type\":\"ref\",\"key\":\"k\"}}]}}"
+      },
+      "changes": [
+        {
+          "kind": "opAdded",
+          "severity": "warning",
+          "path": "query_block/nested_loop/0/table",
+          "object": "z",
+          "before": null,
+          "after": "ALL"
+        }
+      ]
+    },
+    {
+      "name": "postgres seq scan to index scan",
+      "prev": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"t\",\"Plan Rows\":100}}]"
+      },
+      "next": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Index Scan\",\"Relation Name\":\"t\",\"Index Name\":\"t_idx\",\"Plan Rows\":100}}]"
+      },
+      "changes": [
+        {
+          "kind": "access",
+          "severity": "info",
+          "path": "plan",
+          "object": "t",
+          "before": "Seq Scan",
+          "after": "Index Scan"
+        }
+      ]
+    },
+    {
+      "name": "postgres index scan to seq scan with growth",
+      "prev": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Index Scan\",\"Relation Name\":\"t\",\"Index Name\":\"t_idx\",\"Plan Rows\":10}}]"
+      },
+      "next": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"t\",\"Plan Rows\":5000}}]"
+      },
+      "changes": [
+        {
+          "kind": "access",
+          "severity": "warning",
+          "path": "plan",
+          "object": "t",
+          "before": "Index Scan",
+          "after": "Seq Scan"
+        },
+        {
+          "kind": "estRows",
+          "severity": "warning",
+          "path": "plan",
+          "object": "t",
+          "before": "10",
+          "after": "5000"
+        }
+      ]
+    },
+    {
+      "name": "postgres join method change",
+      "prev": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Nested Loop\",\"Plans\":[{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"a\"},{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"b\"}]}}]"
+      },
+      "next": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Hash Join\",\"Plans\":[{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"a\"},{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"b\"}]}}]"
+      },
+      "changes": [
+        {
+          "kind": "join",
+          "severity": "info",
+          "path": "plan",
+          "object": "Hash Join",
+          "before": "nested loop",
+          "after": "hash join"
+        }
+      ]
+    },
+    {
+      "name": "sqlite search to scan",
+      "prev": {
+        "driver": "sqlite",
+        "payloadKind": "sqliteRows",
+        "payload": "[[2,0,\"SEARCH t USING INDEX ix (a=?)\"]]"
+      },
+      "next": {
+        "driver": "sqlite",
+        "payloadKind": "sqliteRows",
+        "payload": "[[2,0,\"SCAN t\"]]"
+      },
+      "changes": [
+        {
+          "kind": "access",
+          "severity": "warning",
+          "path": "plan",
+          "object": "t",
+          "before": "SEARCH USING INDEX",
+          "after": "SCAN"
+        }
+      ]
+    },
+    {
+      "name": "sqlite index swap",
+      "prev": {
+        "driver": "sqlite",
+        "payloadKind": "sqliteRows",
+        "payload": "[[2,0,\"SEARCH t USING INDEX ix (a=?)\"]]"
+      },
+      "next": {
+        "driver": "sqlite",
+        "payloadKind": "sqliteRows",
+        "payload": "[[2,0,\"SEARCH t USING INDEX iy (a=?)\"]]"
+      },
+      "changes": [
+        {
+          "kind": "index",
+          "severity": "info",
+          "path": "plan",
+          "object": "t",
+          "before": "ix",
+          "after": "iy"
+        }
+      ]
+    },
+    {
+      "name": "sqlite step added and removed",
+      "prev": {
+        "driver": "sqlite",
+        "payloadKind": "sqliteRows",
+        "payload": "[[2,0,\"SCAN t\"],[3,0,\"SCAN u\"]]"
+      },
+      "next": {
+        "driver": "sqlite",
+        "payloadKind": "sqliteRows",
+        "payload": "[[2,0,\"SCAN t\"],[3,0,\"SEARCH v USING INDEX iv (x=?)\"]]"
+      },
+      "changes": [
+        {
+          "kind": "opRemoved",
+          "severity": "info",
+          "path": "plan/1",
+          "object": "u",
+          "before": "SCAN",
+          "after": null
+        },
+        {
+          "kind": "opAdded",
+          "severity": "info",
+          "path": "plan/1",
+          "object": "v",
+          "before": null,
+          "after": "SEARCH USING INDEX"
+        }
+      ]
+    },
+    {
+      "name": "unparseable to parseable",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "oops"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "{\"query_block\":{\"table\":{\"table_name\":\"t\",\"access_type\":\"ALL\"}}}"
+      },
+      "changes": [
+        {
+          "kind": "opAdded",
+          "severity": "info",
+          "path": "query_block",
+          "object": "query_block",
+          "before": null,
+          "after": "query_block"
+        },
+        {
+          "kind": "opAdded",
+          "severity": "warning",
+          "path": "query_block/table",
+          "object": "t",
+          "before": null,
+          "after": "ALL"
+        }
+      ]
+    },
+    {
+      "name": "both unparseable",
+      "prev": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": "oops"
+      },
+      "next": {
+        "driver": "mysql",
+        "payloadKind": "json",
+        "payload": ""
+      },
+      "changes": []
+    }
+  ]
+}

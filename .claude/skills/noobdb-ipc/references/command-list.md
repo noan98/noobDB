@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **135 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **142 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -63,7 +63,7 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
-`compare_schema` / `compare_table_data` / `diff_schema_snapshots` /
+`compare_schema` / `compare_table_data` /
 `generate_sync_sql` / `generate_data_sync_sql` / `apply_sync_sql`
 
 ## サンドボックス (`commands/sandbox.rs`)
@@ -94,6 +94,24 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 (#739。ウォッチ登録したテーブルの世代スナップショットを `<data_dir>/table_timelapse.sqlite`
 に保存し、任意の 2 世代を `compute_data_diff` で比較。取得は PK 順の単一 SELECT
 (最大 `MAX_DATA_ROWS`) で履歴に記録せず、read_only セッションでも可。PK 必須)
+
+## スキーマドリフト (`commands/schema_drift.rs`)
+
+`schema_drift_capture` / `schema_drift_list` / `schema_drift_compare` /
+`schema_drift_import_legacy`
+(#736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで
+DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存
+(最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。
+`import_legacy` は旧 localStorage 世代を初回だけ取り込む)
+
+## 実行計画ウォッチ (`commands/plan_watch.rs`)
+
+`plan_watch_list` / `plan_watch_set` / `plan_watch_refresh` /
+`plan_watch_import_legacy`
+(#743 / #1260。世代は `<data_dir>/plan_watch.sqlite`。`refresh` はウォッチ中スニペットの
+EXPLAIN をまとめて実行し、正規化・フィンガープリント・世代記録・前世代との比較を Rust 内で
+完結して件数だけを返す。履歴に記録せず、read_only セッションでも可。スニペット削除
+(`delete_snippet`) は全プロファイルのウォッチを連鎖削除する)
 
 ## タスクスケジューラ (`commands/tasks.rs`)
 

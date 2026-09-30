@@ -1,17 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Flex, VisuallyHidden, chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
-import type { ConnectionProfile } from "../api/tauri";
+import type { ConnectionProfile, SchemaDriftGeneration, SchemaDriftSummary } from "../api/tauri";
 import { useT } from "../i18n";
-import {
-  canDiff,
-  diffIndexes,
-  summarizeDrift,
-  toDiffInput,
-  type DriftSummary,
-  type SchemaDriftState,
-  type SchemaGeneration,
-} from "../schemaDrift";
+import { canDiff } from "../schemaDrift";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
 import { Button, Select } from "./ui";
@@ -21,22 +13,22 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 
 /**
- * スキーマドリフト・タイムライン (#736) の閲覧パネル。プロファイルごとに
- * localStorage へ自動記録されたスキーマスナップショットの世代一覧を表示し、
+ * スキーマドリフト・タイムライン (#736) の閲覧パネル。プロファイルごとに Rust の
+ * SQLite ストア (#1260) へ自動記録されたスキーマスナップショットの世代一覧を表示し、
  * 任意の 2 世代間の差分 (テーブル/列/インデックスの追加・削除・変更) を一覧
  * 表示する。スナップショットの取得 (接続時の自動検知) は親 (`App.tsx`) が担い、
  * ここは保存済み世代の閲覧と差分表示に徹する — 閲覧・検知専用で書き込みは
  * 一切行わないため、読み取り専用セッションでも全機能が動作する。
  *
- * 差分計算は `db::diff::compute_schema_diff` を流用する `diffSchemaSnapshots`
- * IPC (セッション不要) を都度呼ぶ — `PlanWatchPanel` の実行計画比較 (フロント
- * 純ロジックのみで同期計算) とは異なり、選択世代が変わるたびの非同期呼び出しに
- * なる点に注意。
+ * 差分計算は Rust 側 (`schema_drift_compare`、セッション不要) が保存済みの 2 世代から
+ * 行い、サマリだけを返す — `PlanWatchPanel` の実行計画比較 (フロント純ロジックのみで
+ * 同期計算) とは異なり、選択世代が変わるたびの非同期呼び出しになる点に注意。
  */
 
 interface Props {
   profile: ConnectionProfile;
-  state: SchemaDriftState;
+  /** 保存済み世代のメタデータ (新しい順)。 */
+  generations: SchemaDriftGeneration[];
   /** この接続で今すぐスナップショットを取得できるか (アクティブ接続がこの
    *  プロファイルであること)。 */
   canCapture: boolean;
@@ -50,16 +42,22 @@ function formatCaptured(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapture, onClose }: Props) {
+export function SchemaDriftPanel({
+  profile,
+  generations: gens,
+  canCapture,
+  capturing,
+  onCapture,
+  onClose,
+}: Props) {
   const t = useT();
-  const gens = state.generations;
 
   const [pickA, setPickA] = useState<string | null>(null);
   const [pickB, setPickB] = useState<string | null>(null);
   const genB = gens.find((g) => g.id === pickB) ?? (gens.length > 0 ? gens[0] : null);
   const genA = gens.find((g) => g.id === pickA) ?? (gens.length > 1 ? gens[1] : genB);
 
-  const [summary, setSummary] = useState<DriftSummary | null>(null);
+  const [summary, setSummary] = useState<SchemaDriftSummary | null>(null);
   const [comparing, setComparing] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
   // 再取得ボタン用のカウンタ。genA/genB は変えずに同じ比較をやり直したいだけなので、
@@ -81,23 +79,11 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
     let cancelled = false;
     setComparing(true);
     setCompareError(null);
-    const source = toDiffInput(genA as SchemaGeneration);
-    const target = toDiffInput(genB as SchemaGeneration);
-    if (!source || !target) {
-      setComparing(false);
-      return;
-    }
     api
-      .diffSchemaSnapshots({
-        sourceDriver: genA.driver,
-        targetDriver: genB.driver,
-        source,
-        target,
-      })
-      .then((diff) => {
+      .schemaDriftCompare(profile.id, genA.id, genB.id)
+      .then((result) => {
         if (cancelled) return;
-        const indexDrift = diffIndexes(genA, genB);
-        setSummary(summarizeDrift(diff, indexDrift));
+        setSummary(result);
       })
       .catch((e) => {
         if (!cancelled) setCompareError(String(e));
@@ -112,7 +98,7 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
     // は state から毎回新しい参照で渡ってくるため、オブジェクト全体を依存にすると
     // 同じ世代を選び続けていても再計算してしまう。compareAttempt は再取得ボタン
     // 専用の依存で、同じ id のまま比較をやり直すために使う (#848)。
-  }, [genA?.id, genB?.id, compareAttempt]);
+  }, [genA?.id, genB?.id, compareAttempt, profile.id]);
 
   return (
     <Modal

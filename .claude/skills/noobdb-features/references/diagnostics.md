@@ -76,15 +76,23 @@ UI: `ServerInfoPanel.tsx` / `ServerMetricsPanel.tsx`、純ロジックは `serve
 
 ## スキーマドリフトのタイムライン (#736)
 
-`commands/diff.rs::diff_schema_snapshots` は、**ライブセッションを介さずに** 2 つの
-スキーマスナップショットを比較する `compute_schema_diff` への薄いパススルーです。
+取得・保存・差分計算はすべて Rust の `schema_drift` モジュール (#1260) で完結します
+(構成は `timelapse/` と同じ `mod.rs` + `store.rs`、保存先は
+`<data_dir>/schema_drift.sqlite`)。`schema_drift_capture` が
+`Connection::columns_for_database` / `indexes_for_database` (DB 全体を各 1 クエリ) で
+スナップショットを取り、テーブル名順に正規化 → FNV-1a フィンガープリント → 直前世代と
+同一なら何もせず、異なれば追加して 20 世代でローテーション → `compute_schema_diff` +
+`diff_indexes` で前世代との変化サマリを作って返します (フロントへはサマリだけが渡る)。
+1 世代が 8 MiB を超えるときは中身の保存を省略し `omitted` を立てます (フィンガープリントは
+全内容から計算)。`schema_drift_list` / `schema_drift_compare` はセッション不要で、
+パネルの世代一覧と 2 世代比較を担います。キャッシュは経由せず常にドライバへ直接
+問い合わせます (変化の検知が目的のため)。
 
-フロントが接続のたびに `list_tables` + `describe_table` で `TableColumns` の
-スナップショット (`compare_schema` がライブに集めるのと同じもの) を `localStorage` へ
-取り、任意の 2 世代を比較します — 接続直後に現在のスナップショットを直前の世代と
-比べればドリフトを検出できます。`sync::generate_sync_sql` と同じく純粋・同期で、
-両側を呼び出し側が渡すため `AppState` は不要です。
-UI: `components/SchemaDriftPanel.tsx`、純ロジックは `schemaDrift.ts`。
+旧実装の localStorage 世代は、プロファイルを選んだ時 (または取得時) に
+`migrateLegacySchemaDrift` が `schema_drift_import_legacy` へ一度だけ渡して取り込み、
+成功したらキーを削除します (Rust 側でフィンガープリントを計算し直すので、移行直後の
+取得が余計な世代を積まない)。
+UI: `components/SchemaDriftPanel.tsx`、フロントに残る整形・移行ロジックは `schemaDrift.ts`。
 
 実行計画のウォッチ (#743) は別機能で、`components/PlanWatchPanel.tsx` /
 `planDiff.ts` / `planWatch.ts` が担います (`noobdb-frontend` スキル参照)。

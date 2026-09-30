@@ -925,14 +925,83 @@ export interface SchemaDiff {
 }
 
 /**
- * One table's full column metadata — the wire shape `diffSchemaSnapshots`
- * expects on each side (mirrors the Rust `TableColumns` struct in
- * `db::diff`). Used both by the live `compare_schema` collection shape and by
- * `schemaDrift.ts`'s stored snapshots (schema drift timeline, #736).
+ * One table's full column metadata (mirrors the Rust `TableColumns` struct in
+ * `db::diff`). The wire shape of `describe_database`; the schema drift timeline
+ * (#736) stores the same columns, plus indexes, on the Rust side (#1260).
  */
 export interface SchemaSnapshotTable {
   name: string;
   columns: TableColumnInfo[];
+}
+
+/** 保存済みスキーマ世代のメタデータ (スキーマドリフト・タイムライン #736 / #1260)。 */
+export interface SchemaDriftGeneration {
+  id: string;
+  /** 取得時刻 (RFC 3339)。 */
+  capturedAt: string;
+  driver: DriverKind;
+  database: string;
+  /** 内容フィンガープリント (dedupe 用)。 */
+  fingerprint: string;
+  /** キャプチャ時点のテーブル数。 */
+  tableCount: number;
+  /** true のとき、サイズ暴走ガードで中身を保存していない (差分表示不可)。 */
+  omitted: boolean;
+}
+
+/** 1 テーブルの変化サマリ。`tableStatus` はテーブル自体の増減、それ以外は
+ *  「両側に存在するテーブル」内の列/インデックス単位の変化件数。 */
+export interface SchemaDriftTableChange {
+  table: string;
+  tableStatus: "added" | "removed" | "changed";
+  columnsAdded: number;
+  columnsRemoved: number;
+  columnsChanged: number;
+  indexesAdded: number;
+  indexesRemoved: number;
+  indexesChanged: number;
+}
+
+/** 2 世代間の変化サマリ全体。変化のあったテーブルのみ、名前順。 */
+export interface SchemaDriftSummary {
+  tables: SchemaDriftTableChange[];
+}
+
+/** `schema_drift_capture` の結果。 */
+export interface SchemaDriftCapture {
+  /** 新しい世代が追加されたか (直前世代と同一内容なら false)。 */
+  added: boolean;
+  /** 追加後の世代一覧 (新しい順)。`added` が false のときは空。 */
+  generations: SchemaDriftGeneration[];
+  /** 直前世代からの変化サマリ。初回取得・比較不能のときは null。 */
+  summary: SchemaDriftSummary | null;
+}
+
+/** 実行計画ウォッチ (#743 / #1260) の保存済み計画 1 世代。 */
+export interface PlanWatchGeneration {
+  id: string;
+  capturedAt: string;
+  driver: string;
+  /** MySQL/PG: 生 JSON 文字列。SQLite: [id, parent, detail] 行の JSON。 */
+  payloadKind: "json" | "sqliteRows";
+  payload: string;
+  /** Rust 側の `plan_fingerprint`。 */
+  fingerprint: string;
+}
+
+/** ウォッチ登録 1 件と世代 (新しい順)。エントリの存在 = ウォッチ登録済み。 */
+export interface PlanWatchEntry {
+  snippetId: string;
+  generations: PlanWatchGeneration[];
+}
+
+/** `plan_watch_refresh` の結果。 */
+export interface PlanWatchRefreshResult {
+  /** 新しい世代が記録された件数。 */
+  recorded: number;
+  /** 記録された世代のうち、前世代から重要な変化があった件数。 */
+  changed: number;
+  errors: { snippetId: string; name: string; error: string }[];
 }
 
 /** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde
@@ -1940,27 +2009,6 @@ export const api = {
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
     }).then((r) => parseResponse(schemas.schemaDiff, r, "compare_schema")),
-  /**
-   * セッションを介さず、2 つの独立に取得したスキーマスナップショットを
-   * `compute_schema_diff` で突き合わせる (スキーマドリフト・タイムライン #736)。
-   * `source` / `target` は `listTables` + `describeTable` で集めた
-   * `{ name, columns }` の配列 — `compareSchema` がライブ接続から集める形と同じ
-   * shape で、`schemaDrift.ts` の localStorage 世代ストアに保存された過去の
-   * スナップショットを渡せる。読み取り専用でも常時利用可能 (セッション自体を
-   * 使わない純粋な計算コマンド)。
-   */
-  diffSchemaSnapshots: (params: {
-    sourceDriver: DriverKind;
-    targetDriver: DriverKind;
-    source: SchemaSnapshotTable[];
-    target: SchemaSnapshotTable[];
-  }) =>
-    invoke<SchemaDiff>("diff_schema_snapshots", {
-      sourceDriver: params.sourceDriver,
-      targetDriver: params.targetDriver,
-      source: params.source,
-      target: params.target,
-    }).then((r) => parseResponse(schemas.schemaDiff, r, "diff_schema_snapshots")),
   generateSyncSql: (diff: SchemaDiff, allowDestructive: boolean) =>
     invoke<SyncPlan>("generate_sync_sql", { diff, allowDestructive }).then((r) =>
       parseResponse(schemas.syncPlan, r, "generate_sync_sql"),
@@ -2730,6 +2778,64 @@ export const api = {
   timelapseClearAll: () =>
     invoke<number>("timelapse_clear_all").then((r) =>
       parseResponse(schemas.numberResponse, r, "timelapse_clear_all"),
+    ),
+
+  // --- スキーマドリフト (#736 / #1260) ---
+
+  /**
+   * `database` のスキーマ (テーブル・列・インデックス) を Rust 内で一括取得して世代として
+   * 記録し、前世代からの変化サマリだけを返す。メタデータの読み取りのみ。
+   */
+  schemaDriftCapture: (sessionId: string, profileId: string, database: string) =>
+    invoke<SchemaDriftCapture>("schema_drift_capture", { sessionId, profileId, database }).then(
+      (r) => parseResponse(schemas.schemaDriftCapture, r, "schema_drift_capture"),
+    ),
+
+  /** プロファイルの保存済み世代 (新しい順)。セッション不要。 */
+  schemaDriftList: (profileId: string) =>
+    invoke<SchemaDriftGeneration[]>("schema_drift_list", { profileId }).then((r) =>
+      parseResponse(schemas.schemaDriftGenerationArray, r, "schema_drift_list"),
+    ),
+
+  /** 2 世代間の変化サマリ。どちらかが省略済み / 存在しないときは null。セッション不要。 */
+  schemaDriftCompare: (profileId: string, fromId: string, toId: string) =>
+    invoke<SchemaDriftSummary | null>("schema_drift_compare", { profileId, fromId, toId }).then(
+      (r) => parseResponse(schemas.schemaDriftSummaryOrNull, r, "schema_drift_compare"),
+    ),
+
+  /** 旧 localStorage の世代 (新しい順) をストアへ一度だけ取り込む。取り込んだ件数を返す。 */
+  schemaDriftImportLegacy: (profileId: string, generations: unknown[]) =>
+    invoke<number>("schema_drift_import_legacy", { profileId, generations }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "schema_drift_import_legacy"),
+    ),
+
+  // --- 実行計画ウォッチ (#743 / #1260) ---
+
+  /** プロファイルのウォッチ一覧 (世代つき)。セッション不要。 */
+  planWatchList: (profileId: string) =>
+    invoke<PlanWatchEntry[]>("plan_watch_list", { profileId }).then((r) =>
+      parseResponse(schemas.planWatchEntryArray, r, "plan_watch_list"),
+    ),
+
+  /** ウォッチの登録 / 解除。解除時は蓄積した世代ごと削除する。 */
+  planWatchSet: (profileId: string, snippetId: string, watched: boolean) =>
+    invoke<void>("plan_watch_set", { profileId, snippetId, watched }),
+
+  /**
+   * ウォッチ中スニペット (`snippetIds` 指定時はその部分集合) の EXPLAIN を Rust 内でまとめて
+   * 実行し、世代を記録する。クエリ履歴には記録されない。
+   */
+  planWatchRefresh: (sessionId: string, profileId: string, snippetIds?: string[]) =>
+    invoke<PlanWatchRefreshResult>("plan_watch_refresh", {
+      sessionId,
+      profileId,
+      snippetIds: snippetIds ?? null,
+    }).then((r) => parseResponse(schemas.planWatchRefreshResult, r, "plan_watch_refresh")),
+
+  /** 旧 localStorage のウォッチを一度だけ取り込む。取り込んだウォッチ数を返す。 */
+  planWatchImportLegacy: (profileId: string, watches: PlanWatchEntry[]) =>
+    invoke<number>("plan_watch_import_legacy", { profileId, watches }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "plan_watch_import_legacy"),
     ),
 
   // --- タスクスケジューラ (#730) ---

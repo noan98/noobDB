@@ -12,8 +12,10 @@ mod flight_recorder;
 mod history;
 mod logs;
 mod perf;
+mod plan_watch;
 mod profiles;
 mod sandboxes;
+mod schema_drift;
 mod snippets;
 mod ssh;
 mod state;
@@ -64,7 +66,17 @@ pub mod __test_api {
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
     pub use crate::flight_recorder::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
+    pub use crate::plan_watch::{
+        compare_plans, explain_prefix, explain_snapshot, ops_from_payload, plan_fingerprint,
+        snapshot_from_result, PayloadKind as PlanPayloadKind, PlanChange, PlanOp,
+        DEFAULT_ROW_FACTOR,
+    };
     pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshJumpProfile, SshProfile};
+    pub use crate::schema_drift::{
+        build_payload as build_drift_payload, capture_payload as capture_drift_payload,
+        fingerprint_payload as fingerprint_drift_payload, summarize_payloads as summarize_drift,
+        DriftSummary, SnapshotPayload as DriftSnapshotPayload,
+    };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
@@ -990,7 +1002,6 @@ pub fn run() {
             commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
-            commands::diff::diff_schema_snapshots,
             commands::sync::generate_sync_sql,
             commands::sync::generate_data_sync_sql,
             commands::sync::apply_sync_sql,
@@ -1032,6 +1043,14 @@ pub fn run() {
             commands::timelapse::timelapse_diff_generations,
             commands::timelapse::timelapse_unwatch,
             commands::timelapse::timelapse_clear_all,
+            commands::schema_drift::schema_drift_capture,
+            commands::schema_drift::schema_drift_list,
+            commands::schema_drift::schema_drift_compare,
+            commands::schema_drift::schema_drift_import_legacy,
+            commands::plan_watch::plan_watch_list,
+            commands::plan_watch::plan_watch_set,
+            commands::plan_watch::plan_watch_refresh,
+            commands::plan_watch::plan_watch_import_legacy,
             commands::logs::read_logs,
             commands::logs::clear_logs,
             commands::export::export_query_result,

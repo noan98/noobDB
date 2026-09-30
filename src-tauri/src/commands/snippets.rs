@@ -54,5 +54,11 @@ pub async fn save_snippet(req: SaveSnippetRequest) -> Result<Snippet> {
 #[tauri::command]
 pub async fn delete_snippet(id: String) -> Result<()> {
     store::delete(&id)?;
+    // 実行計画ウォッチ (#743 / #1260): 削除したスニペットのウォッチと世代を全
+    // プロファイルのストアから取り除く (孤立データを残さない)。スニペット自体は
+    // 既に削除済みなので、ウォッチ側の掃除に失敗しても削除は成功として扱う。
+    if let Err(e) = crate::plan_watch::store::delete_snippet(&id).await {
+        tracing::warn!(snippet_id = %id, error = %e, "failed to drop plan watch data of a deleted snippet");
+    }
     Ok(())
 }

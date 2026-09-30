@@ -363,6 +363,17 @@ impl Connection {
         }
     }
 
+    /// EXPLAIN 系の文を実行する (実行計画ウォッチ #1260)。MySQL / PostgreSQL は
+    /// [`Connection::execute`] と同じ。SQLite だけは他の接続での DDL に計画が追従する
+    /// よう、スキーマを再検証してから実行する (`SqliteConn::execute_explain`)。
+    pub async fn execute_explain(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.execute(sql, database).await,
+            Connection::Postgres(c) => c.execute(sql, database).await,
+            Connection::Sqlite(c) => c.execute_explain(sql).await,
+        }
+    }
+
     /// ファイル取り込み用の新規テーブルを作成する (#985)。DDL は
     /// [`create_table::render_create_table`] がこの接続の方言で生成し (識別子は
     /// `quote_ident` でクォート)、通常の [`Connection::execute`] で流す。続く

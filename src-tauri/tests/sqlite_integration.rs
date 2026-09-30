@@ -3457,3 +3457,161 @@ async fn sqlite_cell_blob_probe_and_fetch() {
             .is_err()
     );
 }
+
+// ── スキーマドリフト / 実行計画ウォッチ (#1260) ──
+
+/// #1260: スキーマドリフトのキャプチャ (`capture_payload`) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ内容でなければならない。
+async fn assert_drift_capture_matches_per_table(
+    conn: &t::Connection,
+    db: &str,
+) -> t::DriftSnapshotPayload {
+    let payload = t::capture_drift_payload(conn, db).await.expect("capture");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!payload.tables.is_empty());
+    for table in &payload.tables {
+        assert!(
+            tables.contains(&table.name),
+            "unexpected table {}",
+            table.name
+        );
+        let cols = conn.columns(db, &table.name).await.expect("columns");
+        assert_eq!(
+            format!("{:?}", table.columns),
+            format!("{cols:?}"),
+            "columns of {} must match the per-table query",
+            table.name
+        );
+        let idx = conn.list_indexes(db, &table.name).await.expect("indexes");
+        assert_eq!(
+            format!("{:?}", table.indexes),
+            format!("{idx:?}"),
+            "indexes of {} must match the per-table query",
+            table.name
+        );
+    }
+    let names: Vec<&str> = payload.tables.iter().map(|x| x.name.as_str()).collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted, "tables are normalized to name order");
+    payload
+}
+
+/// #1260: 列とインデックスの追加がフィンガープリントとサマリに現れ、何も変えなければ
+/// フィンガープリントが安定する。
+fn assert_drift_summary_after_alter(
+    before: &t::DriftSnapshotPayload,
+    after: &t::DriftSnapshotPayload,
+    table: &str,
+) {
+    assert_ne!(
+        t::fingerprint_drift_payload(before).expect("fp"),
+        t::fingerprint_drift_payload(after).expect("fp"),
+        "an ALTER must change the fingerprint"
+    );
+    let summary = t::summarize_drift(before, after);
+    let changed = summary
+        .tables
+        .iter()
+        .find(|c| c.table == table)
+        .expect("altered table is reported");
+    assert_eq!(changed.columns_added, 1);
+    assert_eq!(changed.indexes_added, 1);
+    assert_eq!(
+        summary.tables.len(),
+        1,
+        "only the altered table is reported"
+    );
+}
+
+/// #1260: 実 DB の EXPLAIN がウォッチ用のペイロードに変換でき、フィンガープリントが
+/// 安定し、インデックス追加による計画の変化が比較で検出される。
+async fn plan_ops(conn: &t::Connection, driver: &str, sql: &str) -> Vec<t::PlanOp> {
+    let snap = t::explain_snapshot(conn, sql)
+        .await
+        .expect("explain")
+        .expect("plan rows");
+    t::ops_from_payload(driver, snap.payload_kind, &snap.payload)
+}
+
+async fn assert_plan_watch_detects_index(
+    conn: &t::Connection,
+    driver: &str,
+    sql: &str,
+    create_index: &str,
+    index_db: Option<&str>,
+) {
+    let before = plan_ops(conn, driver, sql).await;
+    assert!(
+        !before.is_empty(),
+        "EXPLAIN must normalize to at least one op"
+    );
+    assert_eq!(
+        t::plan_fingerprint(&before),
+        t::plan_fingerprint(&plan_ops(conn, driver, sql).await),
+        "the same plan must have a stable fingerprint"
+    );
+    conn.execute(create_index, index_db)
+        .await
+        .expect(create_index);
+    let after = plan_ops(conn, driver, sql).await;
+    let changes = t::compare_plans(&before, &after, t::DEFAULT_ROW_FACTOR);
+    assert!(
+        !changes.is_empty(),
+        "adding an index must change the plan: {before:?} -> {after:?}"
+    );
+    assert_ne!(t::plan_fingerprint(&before), t::plan_fingerprint(&after));
+}
+
+#[tokio::test]
+async fn sqlite_schema_drift_capture_and_plan_watch() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_drift1260_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for ddl in [
+        "CREATE TABLE drift_parent (id INTEGER PRIMARY KEY, name TEXT)",
+        "CREATE TABLE drift_child (
+            id INTEGER PRIMARY KEY, pid INTEGER REFERENCES drift_parent, k INTEGER NOT NULL
+        )",
+        "CREATE INDEX drift_child_pid ON drift_child(pid)",
+        "CREATE TABLE drift_lonely (v TEXT)",
+        "CREATE VIEW drift_view AS SELECT id, name FROM drift_parent",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+
+    let before = assert_drift_capture_matches_per_table(&conn, "main").await;
+    let again = t::capture_drift_payload(&conn, "main")
+        .await
+        .expect("capture");
+    assert_eq!(
+        t::fingerprint_drift_payload(&before).expect("fp"),
+        t::fingerprint_drift_payload(&again).expect("fp"),
+        "an unchanged schema must have a stable fingerprint"
+    );
+    for ddl in [
+        "ALTER TABLE drift_child ADD COLUMN extra TEXT",
+        "CREATE INDEX drift_child_extra ON drift_child(extra)",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    let after = assert_drift_capture_matches_per_table(&conn, "main").await;
+    assert_drift_summary_after_alter(&before, &after, "drift_child");
+
+    // 実行計画ウォッチ: SCAN がインデックス探索 (SEARCH ... USING INDEX) に変わる。
+    assert_plan_watch_detects_index(
+        &conn,
+        "sqlite",
+        "SELECT * FROM drift_child WHERE k = 5",
+        "CREATE INDEX drift_child_k ON drift_child(k)",
+        None,
+    )
+    .await;
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
