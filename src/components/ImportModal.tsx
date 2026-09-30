@@ -16,10 +16,8 @@ import {
   type TableColumnInfo,
 } from "../api/tauri";
 import { chakra } from "@chakra-ui/react";
-import { motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
-import { transitions } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
@@ -53,6 +51,7 @@ import { cellKindIcon } from "./cellTypeMeta";
 import type { I18nKey } from "../i18n";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
+import { DeterminateProgressBar } from "./StreamProgressBar";
 import { Tooltip } from "./Tooltip";
 
 interface Props {
@@ -1058,13 +1057,7 @@ export function ImportModal({
             flexDirection="column"
             gap="1.5"
           >
-            <chakra.div h="8px" borderRadius="sm" bg="app.surfaceMuted" overflow="hidden">
-              <motion.div
-                style={{ height: "100%", background: "var(--accent)" }}
-                animate={{ width: `${percent}%` }}
-                transition={transitions.progress}
-              />
-            </chakra.div>
+            <DeterminateProgressBar value={percent / 100} />
             <chakra.div fontSize="sm" color="app.textMuted">
               {t("importProgress", { inserted: status.inserted, total: status.total })}
             </chakra.div>

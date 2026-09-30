@@ -100,6 +100,7 @@ import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
+import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { scopeMatches, SnippetList } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
@@ -7576,6 +7577,10 @@ export default function App() {
 
   const statusText =
     status.kind === "idle" ? "" : status.kind === "literal" ? status.text : t(status.key, status.vars);
+  // フッター文言の差し替えアニメーション (#1213) の単位。i18n キーで識別し、
+  // 同じメッセージの数値 (取得行数・経過時間) の更新では再生しない。
+  const statusMessageKey =
+    status.kind === "idle" ? "" : status.kind === "literal" ? status.text : status.key;
 
   // Bottom Panel「メッセージ」タブ (#1114) へステータスの履歴を積む。フッターは
   // 最新 1 件しか見せないため、上書きされて消えたエラー文を後から読めるようにする。
@@ -9367,13 +9372,11 @@ export default function App() {
                 color={toneColor}
                 css={{ "&:empty": { display: "none" }, "& .icon-svg": { width: "14px", height: "14px" } }}
               >
-                {tone === "running" ? (
-                  <Spinner size={13} />
-                ) : tone === "success" ? (
-                  <Icon name="check" />
-                ) : isError || isWarning ? (
-                  <Icon name="warning" />
-                ) : null}
+                <StatusBarIcon
+                  kind={
+                    tone === "running" ? "running" : tone === "success" ? "success" : isError || isWarning ? "warning" : null
+                  }
+                />
               </chakra.span>
               {isCritical && (
                 // 「重大」バッジは ProfileBadge の本番バッジと同じ danger ベタ塗り
@@ -9436,13 +9439,8 @@ export default function App() {
                   // Tooltip (#884) で確認できるようにする。フッターが複数行に
                   // 伸びてレイアウトが崩れるのを防ぐ。
                   <Tooltip label={statusText} focusableWrapper>
-                    <chakra.span
-                      display="block"
-                      whiteSpace="nowrap"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                    >
-                      {statusText}
+                    <chakra.span display="block" overflow="hidden">
+                      <StatusBarText text={statusText} messageKey={statusMessageKey} />
                     </chakra.span>
                   </Tooltip>
                 )}

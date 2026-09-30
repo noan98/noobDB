@@ -1182,7 +1182,7 @@ describe("行インスペクタ (#462)", () => {
     );
   }
 
-  it("Alt+Enter で選択行の全カラムを縦表示し、行移動に追従する", () => {
+  it("Alt+Enter で選択行の全カラムを縦表示し、行移動に追従する", async () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     const cells = dataCells(container);
     fireEvent.focus(cells[0][0]);
@@ -1198,7 +1198,8 @@ describe("行インスペクタ (#462)", () => {
     // 次の行へ追従。
     fireEvent.click(within(dialog).getByRole("button", { name: t("gridInspectorNext") }));
     const dialog2 = screen.getByRole("dialog", { name: t("gridRowInspectorTitle", { row: 2 }) });
-    expect(within(dialog2).getByText("apple")).toBeInTheDocument();
+    // 本体は方向付きスライドで入れ替わる (mode="wait" のため退出完了後に新しい行が出る、#1234)。
+    expect(await within(dialog2).findByText("apple")).toBeInTheDocument();
   });
 
   it("NULL は専用表記で示し、Esc で閉じる", () => {
