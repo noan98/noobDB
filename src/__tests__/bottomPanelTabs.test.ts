@@ -5,6 +5,7 @@ import {
   BOTTOM_PANEL_TAB_GROUP,
   availableBottomPanelTabs,
   bottomPanelGroupStarts,
+  bottomPanelStripTabs,
   nextBottomPanelTab,
   resolveBottomPanelTab,
   toggleBottomPanelTab,
@@ -282,5 +283,65 @@ describe("App.tsx の結線 (#1112)", () => {
     for (const gone of ["showAdvisor", "showQueryInspector", "showProcesses"]) {
       expect(appSource).not.toContain(gone);
     }
+  });
+});
+
+describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
+  const disabledTabs = (ctx: Parameters<typeof bottomPanelStripTabs>[0]) =>
+    bottomPanelStripTabs(ctx).filter((e) => !e.enabled);
+
+  it("未接続でもログ / 診断グループは並べ、診断は「接続が必要」で無効にする", () => {
+    // 存在を見せるのが目的: 接続前に「プロセスモニタがある」と分かる。
+    const entries = bottomPanelStripTabs({ sessionId: null, advisorDatabase: null, openConnectionCount: 0 });
+    expect(entries.map((e) => e.tab)).toEqual([
+      ...LOG_TABS,
+      "advisor",
+      "inspector",
+      "processes",
+      "assertions",
+      "health",
+    ]);
+    expect(entries.slice(0, 3).every((e) => e.enabled && e.reason === null)).toBe(true);
+    for (const e of entries.slice(3)) {
+      expect(e).toMatchObject({ enabled: false, reason: "needsSession" });
+    }
+  });
+
+  it("参照グループは対象が揃っていても並べない (対象を決めて開くもの)", () => {
+    const entries = bottomPanelStripTabs(connected);
+    expect(entries.map((e) => e.tab)).toEqual(
+      BOTTOM_PANEL_TABS.filter((tab) => BOTTOM_PANEL_TAB_GROUP[tab] !== "reference"),
+    );
+    expect(entries.every((e) => e.enabled && e.reason === null)).toBe(true);
+  });
+
+  it("接続中でも対象 DB が無ければアドバイザだけ「DB が必要」で無効", () => {
+    expect(disabledTabs({ ...connected, advisorDatabase: null })).toEqual([
+      { tab: "advisor", enabled: false, reason: "needsDatabase" },
+    ]);
+  });
+
+  it("SQLite ではプロセスモニタとクエリインスペクタを非対応として無効にする (#732 / #746)", () => {
+    // `availableBottomPanelTabs` は変えない (開けば中身が非対応の説明を出す)。
+    expect(availableBottomPanelTabs({ ...connected, driver: "sqlite" })).toContain("processes");
+    expect(disabledTabs({ ...connected, driver: "sqlite" })).toEqual([
+      { tab: "inspector", enabled: false, reason: "sqliteUnsupported" },
+      { tab: "processes", enabled: false, reason: "sqliteUnsupported" },
+    ]);
+    expect(disabledTabs({ ...connected, driver: "mysql" })).toEqual([]);
+  });
+
+  it("背景接続だけのときは接続ヘルスだけ開ける", () => {
+    const entries = bottomPanelStripTabs({ sessionId: null, advisorDatabase: null, openConnectionCount: 1 });
+    expect(entries.find((e) => e.tab === "health")).toMatchObject({ enabled: true });
+    expect(entries.find((e) => e.tab === "processes")).toMatchObject({ enabled: false, reason: "needsSession" });
+  });
+
+  it("App.tsx でパネルバーが WorkspaceSplit の collapsed に結線されている", () => {
+    expect(appSource).toContain("bottomPanelStripTabs(bottomPanelCtx)");
+    expect(appSource).toContain("<BottomPanelStrip");
+    expect(appSource).toMatch(/collapsed=\{\s*<BottomPanelStrip/);
+    // SQLite 非対応の理由を出すためにドライバを渡す。
+    expect(appSource).toContain("driver: sessionId ? (selectedProfile?.driver ?? null) : null");
   });
 });

@@ -1,8 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
-import { BottomPanel, WorkspaceSplit } from "../components/BottomPanel";
-import { BOTTOM_PANEL_TABS, type BottomPanelTab } from "../components/bottomPanelTabs";
+import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "../components/BottomPanel";
+import {
+  BOTTOM_PANEL_TABS,
+  type BottomPanelStripEntry,
+  type BottomPanelTab,
+  type BottomPanelUnavailableReason,
+} from "../components/bottomPanelTabs";
 
 /**
  * ボトムパネルのシェル (#1112 / Epic #1110 Phase 2)。
@@ -178,5 +183,81 @@ describe("WorkspaceSplit (#1112)", () => {
     // 開いた瞬間に同期で分割が作られる (1 フレーム遅れて出ない)。
     expect(screen.getByRole("separator")).toBeInTheDocument();
     expect(screen.getByTestId("bottom")).toHaveTextContent("again");
+  });
+});
+
+describe("BottomPanelStrip (折りたたみ時のパネルバー)", () => {
+  const reasonLabel = (reason: BottomPanelUnavailableReason) =>
+    reason === "sqliteUnsupported"
+      ? t("appProcessesUnsupported")
+      : reason === "needsDatabase"
+        ? t("appAdvisorUnsupported")
+        : t("appToolsNeedsSession");
+  const entries: BottomPanelStripEntry[] = [
+    { tab: "output", enabled: true, reason: null },
+    { tab: "messages", enabled: true, reason: null },
+    { tab: "advisor", enabled: true, reason: null },
+    { tab: "processes", enabled: false, reason: "needsSession" },
+  ];
+
+  function renderStrip(overrides: Partial<Parameters<typeof BottomPanelStrip>[0]> = {}) {
+    const props = { entries, label, reasonLabel, onOpen: vi.fn(), ...overrides };
+    renderWithProviders(<BottomPanelStrip {...props} />);
+    return props;
+  }
+
+  it("閉じていても開けるタブを 1 行で見せ、クリックで開く", () => {
+    const props = renderStrip();
+    const nav = screen.getByRole("navigation", { name: t("bottomPanelStripAria") });
+    expect(nav).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("advisorTitle") }));
+    expect(props.onOpen).toHaveBeenCalledWith("advisor");
+    // 用途グループ (ログ | 診断) の切れ目に区切り線。
+    expect(screen.getAllByTestId("bottom-panel-group-divider")).toHaveLength(1);
+  });
+
+  it("今は開けない項目は aria-disabled で残し、クリックしても開かない", () => {
+    const props = renderStrip();
+    const btn = screen.getByRole("button", { name: t("processTitle") });
+    expect(btn).toHaveAttribute("aria-disabled", "true");
+    // `disabled` にするとホバー / フォーカスが効かず理由のツールチップが読めない。
+    expect(btn).not.toBeDisabled();
+    fireEvent.click(btn);
+    expect(props.onOpen).not.toHaveBeenCalled();
+  });
+
+  it("無効な項目にフォーカスすると理由をツールチップで示す", async () => {
+    renderStrip();
+    fireEvent.focus(screen.getByRole("button", { name: t("processTitle") }));
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(t("appToolsNeedsSession")),
+    );
+  });
+
+  it("項目が無ければ何も描かない", () => {
+    renderStrip({ entries: [] });
+    expect(screen.queryByTestId("bottom-panel-strip")).toBeNull();
+  });
+
+  it("WorkspaceSplit は閉じているときだけ collapsed を出す", async () => {
+    const view = renderWithProviders(
+      <WorkspaceSplit bottom={null} collapsed={<div data-testid="strip">strip</div>}>
+        <div data-testid="workspace">workspace</div>
+      </WorkspaceSplit>,
+    );
+    expect(screen.getByTestId("strip")).toBeInTheDocument();
+    view.rerender(
+      <WorkspaceSplit bottom={<div data-testid="bottom">bottom</div>} collapsed={<div data-testid="strip">strip</div>}>
+        <div data-testid="workspace">workspace</div>
+      </WorkspaceSplit>,
+    );
+    // 開いている間はタブバーが同じ役目を持つので、バーは二重に出さない。
+    expect(screen.queryByTestId("strip")).toBeNull();
+    view.rerender(
+      <WorkspaceSplit bottom={null} collapsed={<div data-testid="strip">strip</div>}>
+        <div data-testid="workspace">workspace</div>
+      </WorkspaceSplit>,
+    );
+    await waitFor(() => expect(screen.getByTestId("strip")).toBeInTheDocument());
   });
 });

@@ -272,8 +272,19 @@ Bottom Panel に足すときは:
 上下の配分は `WorkspaceSplit` が既存の `Splitter direction="column"` へ委ねる。
 リサイズ・キーボード操作・永続化・クランプを個別に実装しない。
 
-> **ガード**: `bottomPanelTabs.test.ts` (解決規則・用途グループ + `App.tsx` への結線) /
-> `bottomPanelShell.test.tsx` (タブの WAI-ARIA 構造・閉じる導線・区切り線) /
+**閉じているときは `BottomPanelStrip` (折りたたみ時のパネルバー) を `<main>` の下端に
+常設する。** 閉じるとタブ列ごと消える設計だと、プロセスモニタ・クエリインスペクタ・
+アドバイザ・接続ヘルスといった中核機能の入口がレンチメニューとコマンドパレットだけに
+なり埋もれる。バーの項目・有効 / 無効・理由は `bottomPanelStripTabs` (純ロジック) が
+決める: ログ / 診断グループは接続前でも並べて「存在を見せる」(開けない項目は
+`aria-disabled` + 理由のツールチップ)、参照グループは対象を決めて開くものなので並べない。
+開いている間はタブバーが同じ役目を持つので、バーは出さない (`WorkspaceSplit` の
+`collapsed`)。サイドバーのレンチメニューも同じ語彙で「診断 → ログ → 全画面ツール」
+の順に区切り線で分ける。
+
+> **ガード**: `bottomPanelTabs.test.ts` (解決規則・用途グループ・折りたたみバーの項目 +
+> `App.tsx` への結線) /
+> `bottomPanelShell.test.tsx` (タブの WAI-ARIA 構造・閉じる導線・区切り線・折りたたみバー) /
 > `bottomPanelLogs.test.ts` / `bottomPanelLogPanels.test.tsx` (ログ系の記録規則と描画) /
 > `workspaceView.test.ts` (全画面サーフェスの排他集合)
 

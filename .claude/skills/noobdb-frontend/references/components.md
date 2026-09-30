@@ -21,6 +21,9 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
     メッセージ `MessagesPanel` / アクティビティ `ActivityLogPanel`、いずれも接続不要)
     → **診断** (アドバイザ・インスペクタ・プロセス・接続ヘルス) → **参照** (影響分析・
     構造・列を探索)。グループの切れ目に区切り線 (`bottomPanelGroupStarts`)。
+    閉じているときは `BottomPanelStrip` (`bottomPanelStripTabs` が項目を決める) を
+    `WorkspaceSplit` の `collapsed` として `<main>` の下端に常設し、中核機能の入口を
+    レンチメニュー以外にも置く。
     - 出力 = 実行した文ごとの結末。`outputLog.ts` のストアへ `App.tsx` の実行経路
       (`runQueryInTab` の done / error・キャンセル・一括実行・トランザクション内実行)
       が結果受信地点で `recordOutput` する。自動リフレッシュの tick は積まない。
