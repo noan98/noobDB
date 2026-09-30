@@ -372,6 +372,7 @@ pub(crate) async fn create_sandbox_inner(
         _tunnel: None,
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
+        health_version: Default::default(),
     };
     let session_id = state.insert(session).await;
     tracing::info!(

@@ -949,6 +949,17 @@ impl Connection {
         }
     }
 
+    /// 接続ヘルス (`health_probe_all`, #1259) 用の現在の接続数。`server_metrics`
+    /// より軽い専用クエリ (MySQL は `SHOW GLOBAL STATUS LIKE 'Threads_connected'`、
+    /// PostgreSQL は `count(*)` 1 本)。SQLite は概念が無く `None`。
+    pub async fn connection_count(&self) -> Result<Option<i64>> {
+        match self {
+            Connection::MySql(c) => c.connection_count().await,
+            Connection::Postgres(c) => c.connection_count().await,
+            Connection::Sqlite(c) => c.connection_count().await,
+        }
+    }
+
     /// Server-side processes/connections for the process monitor panel.
     /// Reads the engine's in-memory state (`processlist` / `pg_stat_activity`)
     /// — no table I/O — so it is cheap enough to poll. SQLite has no server

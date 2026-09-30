@@ -1577,6 +1577,18 @@ impl PostgresConn {
         Ok(ServerInfo { version, variables })
     }
 
+    /// 接続ヘルス (`health_probe_all`, #1259) 専用の軽量な接続数取得。
+    /// `server_metrics` の `pg_stat_database` 集計などは走らせず、client backend の
+    /// 件数を 1 本の `count(*)` で読む。権限やバージョン差で読めなければ `None`。
+    pub async fn connection_count(&self) -> Result<Option<i64>> {
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM pg_stat_activity WHERE backend_type = 'client backend'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .ok())
+    }
+
     /// 監視ダッシュボード (#731) 用の 1 サンプル。`pg_stat_activity` の状態別集計
     /// (接続数 / active / idle in transaction / ロック待ち) と `pg_stat_database` の
     /// トランザクション累計を読む。いずれもメモリ上のビューで安価。非スーパーユーザ

@@ -178,6 +178,16 @@ export const serverMetrics = z.object({
   lock_waits: z.number().nullable(),
 });
 
+/** 接続ヘルスの一括プローブ (`health_probe_all`, #1259) の 1 セッション分。 */
+export const healthProbeItem = z.object({
+  session_id: z.string(),
+  status: z.enum(["up", "down", "timeout"]),
+  latency_ms: z.number().nullable(),
+  version: z.string().nullable(),
+  connections: z.number().nullable(),
+});
+export const healthProbeItemArray = z.array(healthProbeItem);
+
 /** SSH known_hosts の 1 エントリ (host:port + fingerprint)。#682。 */
 export const knownHost = z.object({
   host: z.string(),

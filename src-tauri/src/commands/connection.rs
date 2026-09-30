@@ -279,6 +279,7 @@ pub async fn connect(
         local_temp_file: None,
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
+        health_version: Default::default(),
     };
     let id = state.insert(session).await;
     tracing::info!(
@@ -342,6 +343,129 @@ pub async fn ping_session(session_id: String, state: State<'_, AppState>) -> Res
         tracing::info!(session_id = %session_id, "health check failed; connection appears dead");
     }
     Ok(alive)
+}
+
+/// `health_probe_all` の 1 セッション分の結果 (#1259)。状態判定
+/// (`connectionHealth.ts`) はフロントの純ロジックが担い、ここは生の観測値だけを返す。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HealthProbeStatus {
+    /// `SELECT 1` が返った。
+    Up,
+    /// `SELECT 1` が失敗した、またはセッションが存在しない。
+    Down,
+    /// 個別タイムアウト内に返らなかった (問い合わせの future は drop 済み)。
+    Timeout,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct HealthProbeItem {
+    pub session_id: String,
+    pub status: HealthProbeStatus,
+    /// `SELECT 1` の往復時間 (ms)。`Up` のときだけ値を持つ。
+    pub latency_ms: Option<u64>,
+    /// サーババージョン (セッション単位でキャッシュ済みのものを含む)。取得不可は `None`。
+    pub version: Option<String>,
+    /// 現在の接続数。サーバを持たないドライバ / 取得不可は `None`。
+    pub connections: Option<i64>,
+}
+
+/// 1 ティックぶんの接続ヘルスを全セッション分まとめて取得する (#1259)。
+///
+/// 従来は JS が 1 セッションにつき `ping_session` → `server_info` → `server_metrics`
+/// を IPC で直列に投げ、JS の `withTimeout` はバックエンドの問い合わせを止められなかった。
+/// ここでは AppState からセッションを引いて `join_all` で並列に問い合わせ、各問い合わせを
+/// `tokio::time::timeout` で包む (タイムアウトで future を drop し、問い合わせを止める)。
+/// 接続数は MySQL `SHOW GLOBAL STATUS LIKE 'Threads_connected'` / PostgreSQL `count(*)`
+/// の軽量クエリ、バージョンはセッションにキャッシュする (`refresh_version` で再取得)。
+/// すべて読み取りのみなので read_only セッションでも許可する。エラー本文は返さない
+/// (接続先情報を含みうるため)。
+#[tauri::command]
+pub async fn health_probe_all(
+    session_ids: Vec<String>,
+    timeout_ms: u64,
+    refresh_version: bool,
+    state: State<'_, AppState>,
+) -> Result<Vec<HealthProbeItem>> {
+    Ok(health_probe_all_inner(state.inner(), &session_ids, timeout_ms, refresh_version).await)
+}
+
+/// Core of [`health_probe_all`] without Tauri's `State` wrapper (#881 と同じ流儀)。
+pub async fn health_probe_all_inner(
+    state: &AppState,
+    session_ids: &[String],
+    timeout_ms: u64,
+    refresh_version: bool,
+) -> Vec<HealthProbeItem> {
+    let timeout = Duration::from_millis(timeout_ms.clamp(100, 60_000));
+    futures_util::future::join_all(
+        session_ids
+            .iter()
+            .map(|id| probe_session_health(state, id, timeout, refresh_version)),
+    )
+    .await
+}
+
+async fn probe_session_health(
+    state: &AppState,
+    session_id: &str,
+    timeout: Duration,
+    refresh_version: bool,
+) -> HealthProbeItem {
+    let item = |status, latency_ms, version, connections| HealthProbeItem {
+        session_id: session_id.to_string(),
+        status,
+        latency_ms,
+        version,
+        connections,
+    };
+    let Some(session) = state.get(session_id).await else {
+        return item(HealthProbeStatus::Down, None, None, None);
+    };
+    let cached = if refresh_version {
+        None
+    } else {
+        session.cached_health_version()
+    };
+    let started = std::time::Instant::now();
+    match tokio::time::timeout(timeout, session.conn.health_check()).await {
+        Err(_) => {
+            tracing::info!(session_id = %session_id, "health probe timed out");
+            return item(HealthProbeStatus::Timeout, None, cached, None);
+        }
+        Ok(Err(_)) => {
+            tracing::info!(session_id = %session_id, "health check failed; connection appears dead");
+            return item(HealthProbeStatus::Down, None, cached, None);
+        }
+        Ok(Ok(())) => {}
+    }
+    let latency = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    // バージョンと接続数は互いに独立に並列で取る。片方の失敗・タイムアウトは
+    // もう片方と up 判定に影響させない。
+    let version_fut = async {
+        if cached.is_some() {
+            return cached.clone();
+        }
+        let fetched = tokio::time::timeout(timeout, session.conn.server_info())
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .map(|info| info.version.trim().to_string())
+            .filter(|v| !v.is_empty());
+        if fetched.is_some() {
+            session.set_cached_health_version(fetched.clone());
+        }
+        fetched
+    };
+    let connections_fut = async {
+        tokio::time::timeout(timeout, session.conn.connection_count())
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten()
+    };
+    let (version, connections) = tokio::join!(version_fut, connections_fut);
+    item(HealthProbeStatus::Up, Some(latency), version, connections)
 }
 
 #[tauri::command]
@@ -428,6 +552,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
         // 再確立時のキャッシュ有効性」。Query Result Cache も同じ理由)。
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
+        health_version: Default::default(),
     };
 
     // Swap the live session for the new one, then close the old connection. The

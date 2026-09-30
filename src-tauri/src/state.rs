@@ -120,6 +120,11 @@ pub struct Session {
     /// (対象・invalidate 条件・機微データの保存方針) は `cache` モジュールの
     /// ドキュメントコメント参照。
     pub query_cache: QueryResultCache,
+    /// 接続ヘルス (`health_probe_all`, #1259) がキャッシュするサーババージョン。
+    /// バージョンは接続中に変わらないので、初回 (または手動の再取得) だけ
+    /// `server_info` (設定変数も読む重い経路) を叩き、以降のティックでは使い回す。
+    /// `Session` のフィールドなので再接続 (新しい `Session` への差し替え) で自動的に空へ戻る。
+    pub health_version: std::sync::Mutex<Option<String>>,
 }
 
 impl Session {
@@ -128,6 +133,17 @@ impl Session {
     /// memory it must synchronize with — but SeqCst keeps it trivially correct.
     pub fn emergency_write_active(&self) -> bool {
         self.emergency_write.load(Ordering::SeqCst)
+    }
+
+    /// キャッシュ済みのサーババージョン (ロック汚染時は未取得扱い)。
+    pub fn cached_health_version(&self) -> Option<String> {
+        self.health_version.lock().ok().and_then(|g| g.clone())
+    }
+
+    pub fn set_cached_health_version(&self, version: Option<String>) {
+        if let Ok(mut g) = self.health_version.lock() {
+            *g = version;
+        }
     }
 
     pub fn set_emergency_write(&self, enabled: bool) {

@@ -1562,6 +1562,48 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 接続ヘルス (#1259) の一括プローブ。SQLite は up + 接続数なし、存在しない
+/// セッション id は down。バージョンはセッションにキャッシュされ、`refresh_version`
+/// で取り直せる。read_only セッションでも動く (読み取りのみ)。
+#[tokio::test]
+async fn sqlite_health_probe_all_reports_up_down_and_caches_version() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_health_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("health_ro", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let ids = vec![sid.clone(), "no-such-session".to_string()];
+    let out = t::health_probe_all_inner(&state, &ids, 5_000, false).await;
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].session_id, sid);
+    assert_eq!(out[0].status, t::HealthProbeStatus::Up);
+    assert!(out[0].latency_ms.is_some());
+    assert!(out[0].version.as_deref().is_some_and(|v| !v.is_empty()));
+    assert_eq!(out[0].connections, None);
+    assert_eq!(out[1].status, t::HealthProbeStatus::Down);
+    assert_eq!(out[1].latency_ms, None);
+
+    // 2 回目はキャッシュ済みのバージョンを使い回す。
+    let session = state.get(&sid).await.expect("session");
+    assert_eq!(
+        session.cached_health_version().as_deref(),
+        out[0].version.as_deref()
+    );
+    session.set_cached_health_version(Some("cached".into()));
+    let again = t::health_probe_all_inner(&state, &[sid.clone()], 5_000, false).await;
+    assert_eq!(again[0].version.as_deref(), Some("cached"));
+    let refreshed = t::health_probe_all_inner(&state, &[sid.clone()], 5_000, true).await;
+    assert_eq!(refreshed[0].version, out[0].version);
+
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Session-init SQL (#522) runs on every physical pool connection via the
 /// driver's `after_connect` hook. We connect with an init `PRAGMA` that sets a
 /// distinctive, connection-scoped value, then read it back through the normal

@@ -730,6 +730,17 @@ export interface GrantSpec {
  * ドライバで異なる (MySQL=ステートメント数 / PostgreSQL=トランザクション数)。
  * SQLite はサーバを持たずコマンドがエラーを返す (UI は導線ごと非表示にする)。
  */
+/** `health_probe_all` の 1 セッション分の観測値 (#1259)。 */
+export interface HealthProbeItem {
+  session_id: string;
+  status: "up" | "down" | "timeout";
+  /** `SELECT 1` の往復時間 (ms)。up のときだけ値がある。 */
+  latency_ms: number | null;
+  version: string | null;
+  /** 現在の接続数。SQLite / 取得不可は null。 */
+  connections: number | null;
+}
+
 export interface ServerMetrics {
   /** クライアント接続数 (ゲージ)。MySQL Threads_connected / PG client backend 数。 */
   connections: number | null;
@@ -1406,6 +1417,16 @@ export const api = {
    * トンネル断) false。セッションが見つからない場合のみ reject する。
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
+  /**
+   * 接続ヘルスダッシュボード (#1068 / #1259) 用に、全セッションの生死・往復レイテンシ・
+   * バージョン・接続数を 1 回の IPC でまとめて取得する。Rust 側が並列に問い合わせ、
+   * 各セッションを `timeoutMs` で打ち切る (問い合わせ自体も止まる)。バージョンは
+   * セッション単位でキャッシュされ、`refreshVersion` で取り直す。読み取り専用。
+   */
+  healthProbeAll: (sessionIds: string[], timeoutMs: number, refreshVersion = false) =>
+    invoke<HealthProbeItem[]>("health_probe_all", { sessionIds, timeoutMs, refreshVersion }).then(
+      (r) => parseResponse(schemas.healthProbeItemArray, r, "health_probe_all"),
+    ),
   /**
    * ローカル横断クエリ (#740): 駆動元セッションを持たない「ローカル」接続を新規に
    * 開く。実体は一時ファイルバックドの SQLite セッションで、以降は他の接続と同じ

@@ -4,7 +4,7 @@ import { t } from "../i18n";
 
 /**
  * 接続ヘルス (#1068) のパネル結線。純ロジックは `connectionHealth.test.ts` が固定し、
- * ここでは「既存 IPC だけを使う」「未接続プロファイルへ勝手に接続しない」
+ * ここでは「`health_probe_all` 1 回で全セッションを確認する (#1259)」「未接続プロファイルへ勝手に接続しない」
  * 「サーバを持たない接続は N/A」「落ちた接続に再接続導線が出る」を確認する。
  */
 vi.mock("../api/tauri", async (importOriginal) => {
@@ -13,29 +13,15 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      pingSession: vi.fn(),
-      serverInfo: vi.fn(),
-      serverMetrics: vi.fn(),
+      healthProbeAll: vi.fn(),
       reconnect: vi.fn(),
       connect: vi.fn(),
     },
   };
 });
 
-// `checkAllConnections` の完了タイミングだけを差し替えられるようにする (他の純関数は
-// 実装のまま使う)。#1160 のスケルトン検証は「接続 0 件でも、確認が終わるまでは
-// `loading` が true」という一瞬の窓を再現する必要があるため。
-vi.mock("../components/connectionHealth", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../components/connectionHealth")>();
-  return {
-    ...actual,
-    checkAllConnections: vi.fn(actual.checkAllConnections),
-  };
-});
-
 import { ConnectionHealthPanel } from "../components/ConnectionHealthPanel";
-import { api, type ConnectionProfile } from "../api/tauri";
-import { checkAllConnections } from "../components/connectionHealth";
+import { api, type ConnectionProfile, type HealthProbeItem } from "../api/tauri";
 
 const profile = (over: Partial<ConnectionProfile>): ConnectionProfile =>
   ({
@@ -63,17 +49,20 @@ const saved = profile({ id: "s", name: "saved-only", ssh: null });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(api.pingSession).mockImplementation(async (sid) => sid !== "dead");
-  vi.mocked(api.serverInfo).mockResolvedValue({ version: "8.0.36", variables: [] });
-  vi.mocked(api.serverMetrics).mockResolvedValue({
-    connections: 7,
-    active: null,
-    idle_in_transaction: null,
-    lock_waiting: null,
-    questions: null,
-    slow_queries: null,
-    lock_waits: null,
-  });
+  vi.mocked(api.healthProbeAll).mockImplementation(async (ids) =>
+    ids.map((sid) =>
+      sid === "dead"
+        ? { session_id: sid, status: "down" as const, latency_ms: null, version: null, connections: null }
+        : {
+            session_id: sid,
+            status: "up" as const,
+            latency_ms: 5,
+            version: "8.0.36",
+            // SQLite はバックエンドが接続数を返さない。
+            connections: sid === "s-l" ? null : 7,
+          },
+    ),
+  );
 });
 
 function renderPanel(onOpenProfile = vi.fn()) {
@@ -102,15 +91,14 @@ describe("ConnectionHealthPanel (#1068)", () => {
     expect(within(mysqlRow).getByText("8.0.36")).toBeInTheDocument();
     expect(within(mysqlRow).getByText("7")).toBeInTheDocument();
     expect(within(screen.getByTestId("health-row-l")).getByText(t("healthNa"))).toBeInTheDocument();
-    // SQLite には server_metrics を投げない。
-    expect(api.serverMetrics).toHaveBeenCalledTimes(1);
-    expect(api.serverMetrics).toHaveBeenCalledWith("s-m");
-    expect(api.pingSession).toHaveBeenCalledTimes(2);
+    // 全セッションを 1 回の IPC でまとめて確認する (2N 回ではない)。
+    expect(api.healthProbeAll).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.healthProbeAll).mock.calls[0][0]).toEqual(["s-m", "s-l"]);
   });
 
   it("保存済みプロファイルは表示しても自動で接続しない (明示操作のみ)", async () => {
     const onOpen = renderPanel();
-    await waitFor(() => expect(api.pingSession).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.healthProbeAll).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByLabelText(t("healthIncludeSaved")));
     const row = await screen.findByTestId("health-row-s");
     expect(within(row).getByText(t("healthStatusNotConnected"))).toBeInTheDocument();
@@ -129,12 +117,12 @@ describe("ConnectionHealthPanel (#1068)", () => {
    */
   it("初回の確認中は EmptyState ではなくスケルトン行を表示し、完了後に実データ0件なら EmptyState に差し替わる (#1160)", async () => {
     // 接続 0 件でも `runChecks` は必ず一度回る (targets=[] でも loading は true になる)。
-    // その「確認中」の一瞬を検証するため `checkAllConnections` の完了を手で止める。
+    // その「確認中」の一瞬を検証するため `healthProbeAll` の完了を手で止める。
     let resolveChecks: (out: []) => void = () => {};
     const pending = new Promise<[]>((resolve) => {
       resolveChecks = resolve;
     });
-    vi.mocked(checkAllConnections).mockReturnValueOnce(pending);
+    vi.mocked(api.healthProbeAll).mockReturnValueOnce(pending);
 
     const { container } = renderWithProviders(
       <ConnectionHealthPanel
@@ -167,11 +155,11 @@ describe("ConnectionHealthPanel (#1068)", () => {
   it("開いている接続があれば、確認結果が届く前から実データ行 (状態: unknown) を表示する", async () => {
     // `buildHealthRows` は開いている接続をそのまま行にするため、rows は接続数に
     // 追従して即時に埋まる (0 件になるのは「接続が本当に無い」時だけ)。
-    let resolvePing: (up: boolean) => void = () => {};
-    const pending = new Promise<boolean>((resolve) => {
-      resolvePing = resolve;
+    let resolveProbe: (items: HealthProbeItem[]) => void = () => {};
+    const pending = new Promise<HealthProbeItem[]>((resolve) => {
+      resolveProbe = resolve;
     });
-    vi.mocked(api.pingSession).mockReturnValueOnce(pending);
+    vi.mocked(api.healthProbeAll).mockReturnValueOnce(pending);
 
     renderWithProviders(
       <ConnectionHealthPanel
@@ -189,7 +177,7 @@ describe("ConnectionHealthPanel (#1068)", () => {
     expect(within(row).getByText(t("healthStatusUnknown"))).toBeInTheDocument();
     expect(screen.queryByText(t("healthEmpty"))).not.toBeInTheDocument();
 
-    resolvePing(true);
+    resolveProbe([{ session_id: "s-m", status: "up", latency_ms: 5, version: "8.0.36", connections: 7 }]);
     await waitFor(() => expect(within(row).getByText(t("healthStatusUp"))).toBeInTheDocument());
   });
 

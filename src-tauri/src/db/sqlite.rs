@@ -631,6 +631,11 @@ impl SqliteConn {
         ))
     }
 
+    /// SQLite はサーバを持たないので接続数の概念が無い (ヘルス表示は N/A)。
+    pub async fn connection_count(&self) -> Result<Option<i64>> {
+        Ok(None)
+    }
+
     /// See [`SqliteConn::list_processes`] — a file-backed database has no server
     /// runtime to sample, so the monitoring dashboard (#731) is unsupported. The
     /// frontend catches this error to hide the dashboard entry point.

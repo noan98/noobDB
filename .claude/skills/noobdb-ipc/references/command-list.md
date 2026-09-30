@@ -9,8 +9,11 @@
 
 ## 接続 (`commands/connection.rs`)
 
-`test_connection` / `connect` / `cancel_connect` / `ping_session` / `disconnect` /
-`reconnect`
+`test_connection` / `connect` / `cancel_connect` / `ping_session` / `health_probe_all` /
+`disconnect` / `reconnect`
+
+`health_probe_all(sessionIds, timeoutMs, refreshVersion)` (#1259) は接続ヘルスの一括プローブ。
+Rust が全セッションを並列に問い合わせ、各セッションを `tokio::time::timeout` で打ち切る。
 
 ## SSH (`commands/ssh.rs`)
 

@@ -247,6 +247,7 @@ pub mod __test_api {
     pub use crate::commands::inspector::{
         query_stats_support_inner, sample_live_queries_inner, sample_statement_stats_inner,
     };
+    pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::process::list_processes_inner;
     pub use crate::commands::profile::profile_column_inner;
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
@@ -278,6 +279,7 @@ pub mod __test_api {
             local_temp_file: None,
             schema_cache: crate::cache::SchemaCache::default(),
             query_cache: crate::cache::QueryResultCache::default(),
+            health_version: Default::default(),
         }
     }
 
@@ -872,6 +874,7 @@ pub fn run() {
             commands::connection::disconnect,
             commands::connection::reconnect,
             commands::connection::ping_session,
+            commands::connection::health_probe_all,
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,

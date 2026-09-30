@@ -1704,6 +1704,18 @@ impl MySqlConn {
         Ok(ServerInfo { version, variables })
     }
 
+    /// 接続ヘルス (`health_probe_all`, #1259) 専用の軽量な接続数取得。
+    /// `server_metrics` は `SHOW GLOBAL STATUS` の全行を返すが、ヘルス表示に要るのは
+    /// `Threads_connected` だけなので `LIKE` で 1 行に絞る。
+    pub async fn connection_count(&self) -> Result<Option<i64>> {
+        let row: Option<MySqlRow> = sqlx::query("SHOW GLOBAL STATUS LIKE 'Threads_connected'")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row
+            .and_then(|r| r.try_get::<Option<String>, _>(1).ok().flatten())
+            .and_then(|v| v.trim().parse::<i64>().ok()))
+    }
+
     /// 監視ダッシュボード (#731) 用の 1 サンプル。`SHOW GLOBAL STATUS` の
     /// メモリ上カウンタを 1 回で読み、必要な変数だけ拾う (テーブル I/O なし)。
     /// スループット (`Questions`) やロック待ち (`Innodb_row_lock_waits`) は累積

@@ -2,34 +2,24 @@
  * 接続横断のヘルスダッシュボード (#1068) の純ロジック。副作用なし (DOM / タイマーは
  * 呼び出し側から注入する) なので Vitest で単体テストできる。
  *
- * ## 新しい IPC を増やさない
+ * ## 取得はバックエンド 1 コマンド (#1259)
  *
- * 1 接続あたりのヘルスチェックは **既存の 3 コマンドの合成** で作る:
+ * 全セッションぶんの観測 (up / down・往復レイテンシ・バージョン・接続数) は
+ * `health_probe_all` 1 回で Rust 側がまとめて取る。Rust は AppState からセッションを
+ * 引いて並列に問い合わせ、各問い合わせを `tokio::time::timeout` で包む (タイムアウトで
+ * future を drop して問い合わせ自体を止める)。接続数は専用の軽量クエリ、バージョンは
+ * セッション単位でキャッシュ。ここは **返ってきた生の観測値を表示用の状態に畳む**
+ * 判定 (`toHealthProbeResult`) と、行の組み立て・集計だけを持つ。
  *
- * | 項目 | 使う IPC | 備考 |
- * |---|---|---|
- * | up / down・往復レイテンシ | `ping_session` (`SELECT 1`) | 往復時間はフロントで計測 |
- * | サーババージョン | `server_info` | 読み取り専用 introspection。セッション単位でキャッシュ |
- * | 現在の接続数 | `server_metrics` | サーバを持たないドライバでは呼ばない (N/A) |
- *
- * いずれも読み取り専用のため read_only セッションでも動く。バックエンドに新しい
- * 重い経路を足さず、既存コマンドの並列・個別タイムアウト付き呼び出しだけで賄う。
+ * いずれも読み取り専用のため read_only セッションでも動く。
  *
  * ## 勝手に接続しない
  *
  * 対象は **いま開いているセッションだけ**。保存済みで未接続のプロファイルは
  * 「未接続」行として並べるだけで、ここから接続を張ることはない (接続はユーザの
  * 明示操作 = 行の「接続」ボタンのみ)。SSH トンネルを大量に同時に張る事故を防ぐ。
- *
- * ## 1 接続の遅延が他をブロックしない
- *
- * 各呼び出しは `withTimeout` で個別に打ち切り、`checkAllConnections` は並列度を
- * 制限した `mapLimited` で回す。タイムアウトした問い合わせはバックエンド側では走り
- * 続けうるため、`createHealthProber` が **前回の問い合わせが返っていないセッション
- * には新しい問い合わせを積まない** (ポーリングでリクエストが積み重ならない)。
  */
 
-import { mapLimited } from "./mapLimited";
 
 /** 1 接続のヘルス状態。 */
 export type HealthStatus =
@@ -63,17 +53,15 @@ export interface HealthTarget {
   driver: string;
 }
 
-/** 注入する IPC。`api.pingSession` / `api.serverInfo` / `api.serverMetrics` を渡す。 */
-export interface HealthDeps {
-  ping: (sessionId: string) => Promise<boolean>;
-  version: (sessionId: string) => Promise<string>;
-  connections: (sessionId: string) => Promise<number | null>;
-  /** 単調増加の時計 (ms)。既定は `performance.now`。 */
-  now?: () => number;
+/** `health_probe_all` が返す 1 セッション分の生の観測値 (`api.healthProbeAll`)。 */
+export interface HealthProbeItemLike {
+  session_id: string;
+  status: "up" | "down" | "timeout";
+  latency_ms: number | null;
+  version: string | null;
+  connections: number | null;
 }
 
-/** 同時に問い合わせる接続数の上限。SSH トンネル越しの接続を一斉に叩かない。 */
-export const HEALTH_CHECK_CONCURRENCY = 4;
 /** 1 回の問い合わせの個別タイムアウト (ms)。 */
 export const HEALTH_PROBE_TIMEOUT_MS = 5_000;
 /** レイテンシの段階判定のしきい値 (ms)。この値「以上」で次の段階。 */
@@ -88,150 +76,25 @@ export function isServerlessDriver(driver: string): boolean {
   return driver === "sqlite";
 }
 
-/** `withTimeout` の結果。 */
-export type TimedResult<T> =
-  | { kind: "ok"; value: T }
-  | { kind: "error" }
-  | { kind: "timeout" };
-
 /**
- * promise を `ms` で打ち切る。失敗は例外にせず `{kind:"error"}` に畳む — エラー文面
- * (接続先情報を含みうる) を画面・ログに流さないため、ここで捨てる。
+ * `health_probe_all` の 1 項目 → 表示用の結果。サーバを持たないドライバの接続数は
+ * 概念が無いので常に `"na"`、取得に失敗した (null) サーバ型は null のまま。
+ * 空白だけのバージョンは null に正規化する。
  */
-export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<TimedResult<T>> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      resolve({ kind: "timeout" });
-    }, ms);
-    promise.then(
-      (value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ kind: "ok", value });
-      },
-      () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ kind: "error" });
-      },
-    );
-  });
-}
-
-/** ヘルスチェック 1 回ぶんの設定。 */
-export interface ProbeOptions {
-  timeoutMs?: number;
-  /** キャッシュ済みのバージョン。あれば `server_info` を呼ばない。 */
-  cachedVersion?: string | null;
-}
-
-/**
- * 1 接続のヘルスチェック。ping が通ったときだけバージョン / 接続数を取りにいく
- * (死んだ接続へ追い打ちしない)。バージョンと接続数は互いに独立に並列で取り、
- * 片方の失敗・タイムアウトはもう片方と up 判定に影響させない。
- */
-export async function probeConnectionHealth(
+export function toHealthProbeResult(
   target: HealthTarget,
-  deps: HealthDeps,
-  opts: ProbeOptions = {},
-): Promise<HealthProbeResult> {
-  const timeoutMs = opts.timeoutMs ?? HEALTH_PROBE_TIMEOUT_MS;
-  const now = deps.now ?? (() => performance.now());
+  item: HealthProbeItemLike | undefined,
+): HealthProbeResult {
   const serverless = isServerlessDriver(target.driver);
-
-  const started = now();
-  const ping = await withTimeout(deps.ping(target.sessionId), timeoutMs);
-  const elapsed = Math.max(0, Math.round(now() - started));
-  const cachedVersion = opts.cachedVersion ?? null;
-
-  if (ping.kind === "timeout") return timedOutResult(target, cachedVersion);
-  if (ping.kind === "error" || !ping.value) {
-    return {
-      status: "down",
-      latencyMs: null,
-      version: cachedVersion,
-      connections: serverless ? "na" : null,
-    };
-  }
-
-  const [version, connections] = await Promise.all([
-    cachedVersion !== null
-      ? Promise.resolve<TimedResult<string>>({ kind: "ok", value: cachedVersion })
-      : withTimeout(deps.version(target.sessionId), timeoutMs),
-    serverless
-      ? Promise.resolve<TimedResult<number | null>>({ kind: "ok", value: null })
-      : withTimeout(deps.connections(target.sessionId), timeoutMs),
-  ]);
-
+  // バックエンドが項目を返さなかった (想定外) ときは down 扱い。
+  const status = item?.status ?? "down";
+  const version = item?.version?.trim() ? item.version.trim() : null;
   return {
-    status: "up",
-    latencyMs: elapsed,
-    version: version.kind === "ok" && version.value.trim() !== "" ? version.value.trim() : null,
-    connections: serverless ? "na" : connections.kind === "ok" ? connections.value : null,
+    status,
+    latencyMs: status === "up" ? (item?.latency_ms ?? null) : null,
+    version,
+    connections: serverless ? "na" : status === "up" ? (item?.connections ?? null) : null,
   };
-}
-
-/** 問い合わせを打てなかった / 打ち切ったときの結果 (キャッシュ済みの値は保つ)。 */
-function timedOutResult(target: HealthTarget, cachedVersion: string | null | undefined): HealthProbeResult {
-  return {
-    status: "timeout",
-    latencyMs: null,
-    version: cachedVersion ?? null,
-    connections: isServerlessDriver(target.driver) ? "na" : null,
-  };
-}
-
-/**
- * 前回の問い合わせが返っていないセッションへ次の問い合わせを積まないプローバ。
- * `withTimeout` はフロント側で待つのをやめるだけで、Rust 側の `SELECT 1` は応答の
- * 無い接続で走り続ける。そのままポーリングすると未完了のリクエストが溜まり続ける
- * ため、IPC ごと (ping / version / connections × セッション) に in-flight を追跡し、
- * 返っていないものは呼ばずにタイムアウト扱い (ping) / 取得不可扱い (その他) にする。
- */
-export function createHealthProber(deps: HealthDeps) {
-  const pending = new Set<string>();
-  function guard<T>(kind: string, fn: (sessionId: string) => Promise<T>) {
-    return (sessionId: string): Promise<T> => {
-      const key = `${kind}:${sessionId}`;
-      if (pending.has(key)) return Promise.reject(new Error("in flight"));
-      pending.add(key);
-      return fn(sessionId).finally(() => pending.delete(key));
-    };
-  }
-  const guarded: HealthDeps = {
-    ping: guard("ping", deps.ping),
-    version: guard("version", deps.version),
-    connections: guard("connections", deps.connections),
-    now: deps.now,
-  };
-  return {
-    /** 前回の ping がまだ返っていないセッションか。 */
-    isInFlight: (sessionId: string) => pending.has(`ping:${sessionId}`),
-    probe(target: HealthTarget, opts: ProbeOptions = {}): Promise<HealthProbeResult> {
-      if (pending.has(`ping:${target.sessionId}`)) {
-        return Promise.resolve(timedOutResult(target, opts.cachedVersion));
-      }
-      return probeConnectionHealth(target, guarded, opts);
-    },
-  };
-}
-
-/**
- * 開いている全接続を並列度を制限してチェックする。結果は `targets` と同じ順。
- * 1 接続の遅延は `probe` 側の個別タイムアウトで打ち切られるため、他の接続の
- * 結果を待たせない (ワーカーは空いた順に次の対象へ進む)。
- */
-export function checkAllConnections(
-  targets: readonly HealthTarget[],
-  probe: (target: HealthTarget) => Promise<HealthProbeResult>,
-  concurrency: number = HEALTH_CHECK_CONCURRENCY,
-): Promise<HealthProbeResult[]> {
-  return mapLimited([...targets], concurrency, probe);
 }
 
 /** ダッシュボードの 1 行 (ソース: 開いている接続 + 任意で保存済みプロファイル)。 */
