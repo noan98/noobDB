@@ -1492,15 +1492,17 @@ async fn mysql_bulk_columns_and_indexes_match_per_table_queries() {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
-    let db = opts
-        .database
-        .clone()
-        .expect("test url must include a database");
     let conn = t::connect(&opts).await.expect("connect");
 
+    // 同じサーバを他のテストが並列に操作するため、比較対象は専用データベースに閉じる。
+    let db = format!("noobdb_bulk_{}", std::process::id());
+    conn.execute(&format!("DROP DATABASE IF EXISTS `{db}`"), None)
+        .await
+        .expect("drop db");
+    conn.execute(&format!("CREATE DATABASE `{db}`"), None)
+        .await
+        .expect("create db");
     for ddl in [
-        "DROP TABLE IF EXISTS bulk_child",
-        "DROP TABLE IF EXISTS bulk_parent",
         "CREATE TABLE bulk_parent (id INT PRIMARY KEY, name VARCHAR(40) COMMENT 'nm') COMMENT='parent table'",
         "CREATE TABLE bulk_child (
             id INT PRIMARY KEY,
@@ -1516,11 +1518,8 @@ async fn mysql_bulk_columns_and_indexes_match_per_table_queries() {
 
     assert_bulk_matches_per_table(&conn, &db).await;
 
-    conn.execute("DROP TABLE IF EXISTS bulk_child", Some(&db))
+    conn.execute(&format!("DROP DATABASE `{db}`"), None)
         .await
-        .expect("cleanup child");
-    conn.execute("DROP TABLE IF EXISTS bulk_parent", Some(&db))
-        .await
-        .expect("cleanup parent");
+        .expect("cleanup db");
     conn.close().await;
 }

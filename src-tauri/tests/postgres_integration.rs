@@ -1332,29 +1332,41 @@ async fn postgres_bulk_columns_and_indexes_match_per_table_queries() {
     let opts = t::parse_postgres_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
 
+    // 同じ DB を他のテストが並列に DROP / CREATE するため、比較対象は専用スキーマに
+    // 閉じる (public を丸ごと比べると、取得の合間にテーブルが消えて競合する)。
+    let schema = format!("noobdb_bulk_{}", std::process::id());
+    conn.execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"), None)
+        .await
+        .expect("drop schema");
     for ddl in [
-        "DROP TABLE IF EXISTS bulk_child",
-        "DROP TABLE IF EXISTS bulk_parent",
-        "CREATE TABLE bulk_parent (id integer PRIMARY KEY, name varchar(40))",
-        "COMMENT ON COLUMN bulk_parent.name IS 'nm'",
-        "CREATE TABLE bulk_child (
-            id integer PRIMARY KEY,
-            pid integer NOT NULL DEFAULT 1 REFERENCES bulk_parent (id),
-            extra numeric(10,2),
-            UNIQUE (extra)
-        )",
-        "CREATE INDEX bulk_child_multi ON bulk_child (pid, extra)",
+        format!("CREATE SCHEMA {schema}"),
+        format!("CREATE TABLE {schema}.bulk_parent (id integer PRIMARY KEY, name varchar(40))"),
+        format!("COMMENT ON COLUMN {schema}.bulk_parent.name IS 'nm'"),
+        format!(
+            "CREATE TABLE {schema}.bulk_child (
+                id integer PRIMARY KEY,
+                pid integer NOT NULL DEFAULT 1 REFERENCES {schema}.bulk_parent (id),
+                extra numeric(10,2),
+                UNIQUE (extra)
+            )"
+        ),
+        format!("CREATE INDEX bulk_child_multi ON {schema}.bulk_child (pid, extra)"),
+        // 配列・enum・uuid・inet・money・interval・jsonb など多様な型も単一版と一致すること。
+        format!("CREATE TYPE {schema}.bulk_mood AS ENUM ('sad', 'ok')"),
+        format!(
+            "CREATE TABLE {schema}.bulk_types (
+                id integer PRIMARY KEY, u uuid, tags text[], nums integer[], addr inet,
+                price money, span interval, mood {schema}.bulk_mood, payload jsonb, big bigint
+            )"
+        ),
     ] {
-        conn.execute(ddl, None).await.expect(ddl);
+        conn.execute(&ddl, None).await.expect(&ddl);
     }
 
-    assert_bulk_matches_per_table(&conn, "public").await;
+    assert_bulk_matches_per_table(&conn, &schema).await;
 
-    conn.execute("DROP TABLE IF EXISTS bulk_child", None)
+    conn.execute(&format!("DROP SCHEMA {schema} CASCADE"), None)
         .await
-        .expect("cleanup child");
-    conn.execute("DROP TABLE IF EXISTS bulk_parent", None)
-        .await
-        .expect("cleanup parent");
+        .expect("cleanup schema");
     conn.close().await;
 }
