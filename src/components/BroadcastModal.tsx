@@ -4,7 +4,9 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import {
   api,
-  listenQueryStream,
+  broadcastEnvStreamId,
+  listenBroadcast,
+  type BroadcastDiff,
   type CellValue,
   type Column,
   type ConnectionProfile,
@@ -12,12 +14,12 @@ import {
 } from "../api/tauri";
 import { useT } from "../i18n";
 import {
-  compareBroadcastEnvironment,
-  countChangedCells,
+  diffToRowDiff,
   MAX_BROADCAST_COMPARE_ROWS,
   resolveKeyIndicesByName,
   type BroadcastRunStatus,
 } from "../broadcastCompare";
+import { attachRowDiff } from "../resultDiff";
 import { semanticColorToken } from "../semanticColors";
 import { resolvePkIndices } from "./cellEdit";
 import type { ConfirmOptions } from "./ConfirmDialog";
@@ -37,17 +39,17 @@ import { ResultGrid } from "./ResultGrid";
  *    App 側が既に driver でフィルタ済みの `candidates` を渡す) をチェックボックスで
  *    選び、実行する。本番接続が含まれる場合は `confirm` (親から受け取った
  *    `useConfirm()`) で確認を挟む (#675 と同じ tone: "warning" パターン)。
- * 2. **結果画面** (`step === "running"`): 各接続を独立した `streamId` で
- *    `run_query_stream` (`forceReadOnly: true`) に投げ、`listenQueryStream` で
- *    購読する。1 接続のエラー/キャンセルは他に一切影響しない — ストリーム登録・
- *    イベント購読ともに接続ごとに完全に分離しているため。
+ * 2. **結果画面** (`step === "running"`): `broadcast_compare` (#1257) に全接続を渡す。
+ *    バックエンドが N セッションへ並行実行し、環境ごとに「列 + 上限 5,000 行の表示行 +
+ *    基準との差分サマリ」だけを Channel で返す (全行を受け取ってフロントで二重に
+ *    差分計算していた旧実装の置き換え)。1 接続のエラー/キャンセルは他に影響しない —
+ *    環境ごとに独立したタスクで、`broadcastEnvStreamId` で個別にキャンセルできる。
  *
- * PK 特定は `components/cellEdit.ts::resolvePkIndices` (実テーブルの
- * `TableColumnInfo` があるとき、つまりこの SQL がテーブル閲覧タブ由来のとき) を
- * そのまま再利用する。無い場合は `PinnedComparisonView.tsx` (#622) と同じ発想で、
- * ユーザが基準環境の結果列からキー列を 1 つ選べる。どちらも解決できなければ
- * `pkIndices` は空のままとなり、`compareBroadcastEnvironment` が行ハッシュ比較へ
- * 自動的に降格する。
+ * PK 特定は実テーブルの `TableColumnInfo` があるとき (この SQL がテーブル閲覧タブ
+ * 由来のとき) その主キー列名をバックエンドへ渡す。無い場合は
+ * `PinnedComparisonView.tsx` (#622) と同じ発想で、ユーザが基準環境の結果列から
+ * キー列を 1 つ選べる (変更するとバックエンドで再比較する)。どちらも解決できなければ
+ * バックエンドが行ハッシュ比較へ自動的に降格する。
  *
  * 差分のセル/行ハイライトは `ResultGrid` 既存の diff 描画 (#597) をそのまま使う
  * (`PinnedComparisonView` と同じ「合成 PK 列メタで tableColumns を渡す」手口)。
@@ -64,14 +66,16 @@ interface Candidate {
 interface Entry {
   sessionId: string;
   profile: ConnectionProfile;
-  streamId: string;
   status: BroadcastRunStatus;
   columns: Column[];
+  /** 先頭 MAX_BROADCAST_COMPARE_ROWS 行までの表示行。 */
   rows: CellValue[][];
-  rowsAffected: number;
+  /** 打ち切り前の総行数。 */
+  totalRows: number;
   elapsedMs: number;
   error: string | null;
-  deliveredRows: number;
+  /** バックエンドが計算した基準環境との差分 (基準自身・未到着・比較不能のときは null)。 */
+  diff: BroadcastDiff | null;
 }
 
 export interface BroadcastModalProps {
@@ -83,8 +87,6 @@ export interface BroadcastModalProps {
   candidates: Candidate[];
   /** 発火元タブが "table" タブのときの実テーブル列メタ。PK 自動解決に使う。 */
   tableColumns?: TableColumnInfo[] | null;
-  initialBatch: number;
-  chunkSize: number;
   autoLimit: number | null;
   queryTimeoutSecs: number;
   confirm: (opts: ConfirmOptions) => Promise<boolean>;
@@ -92,9 +94,9 @@ export interface BroadcastModalProps {
 }
 
 let broadcastSeq = 0;
-function newBroadcastStreamId(sessionId: string): string {
+function newBroadcastRunId(): string {
   broadcastSeq += 1;
-  return `bcast_${sessionId}_${Date.now().toString(36)}_${broadcastSeq.toString(36)}`;
+  return `bcast_${Date.now().toString(36)}_${broadcastSeq.toString(36)}`;
 }
 
 function syntheticPkColumns(columns: Column[], pkNames: Set<string>): TableColumnInfo[] {
@@ -114,7 +116,7 @@ function entryResult(e: Entry) {
   return {
     columns: e.columns,
     rows: e.rows,
-    rows_affected: e.rowsAffected || e.rows.length,
+    rows_affected: e.totalRows || e.rows.length,
     elapsed_ms: e.elapsedMs,
   };
 }
@@ -126,8 +128,6 @@ export function BroadcastModal({
   baselineProfile,
   candidates,
   tableColumns,
-  initialBatch,
-  chunkSize,
   autoLimit,
   queryTimeoutSecs,
   confirm,
@@ -142,19 +142,30 @@ export function BroadcastModal({
   const [keyColumn, setKeyColumn] = useState<string>("");
   const entriesRef = useRef<Entry[]>([]);
   entriesRef.current = entries;
-  const unlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+  // 現在の実行 (run) の識別子と、その対象。キー列の変更で同じ対象を再比較するために持つ。
+  const runIdRef = useRef<string | null>(null);
+  const targetsRef = useRef<Candidate[]>([]);
 
-  // アンマウント時 (モーダルを閉じたとき) は、まだ実行中のストリームを個別に
+  // 実行中の環境を個別にキャンセルする (stream id は `{runId}:{sessionId}`)。
+  const cancelRunning = () => {
+    const runId = runIdRef.current;
+    if (!runId) return;
+    for (const e of entriesRef.current) {
+      if (e.status === "running") void api.cancelStream(broadcastEnvStreamId(runId, e.sessionId));
+    }
+  };
+
+  // アンマウント時 (モーダルを閉じたとき) は、まだ実行中の環境を個別に
   // キャンセルしてからリスナーを外す。閉じた後もバックエンドのタスク/接続を
   // 握ったままにしないため (他のストリーミングコマンドの後始末と同じ方針)。
   useEffect(() => {
     return () => {
-      for (const e of entriesRef.current) {
-        if (e.status === "running") void api.cancelStream(e.streamId);
-      }
-      for (const un of unlistenRef.current.values()) un();
-      unlistenRef.current.clear();
+      cancelRunning();
+      unlistenRef.current?.();
+      unlistenRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleSelected = (sessionId: string) => {
@@ -178,45 +189,71 @@ export function BroadcastModal({
     );
   };
 
-  const runOneEntry = async (entry: Entry) => {
-    const unlisten = await listenQueryStream(entry.streamId, {
-      onColumns: ({ columns }) => patchEntry(entry.sessionId, { columns }),
-      onRows: ({ rows }) =>
-        patchEntry(entry.sessionId, (e) => ({ ...e, rows: [...e.rows, ...rows] })),
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns }) => {
-        patchEntry(entry.sessionId, {
-          status: "done",
-          rowsAffected: hasColumns ? totalRows : rowsAffected,
-          elapsedMs,
-        });
-      },
-      // 接続断もこのモーダルには再接続導線が無いため、素のエラーとしてそのまま表示する
-      // (App 本体の実行経路と違い connectionLost を特別扱いしない)。
-      onError: ({ error }) => {
-        patchEntry(entry.sessionId, {
-          status: "error",
-          error: error ?? "unknown error",
-        });
-      },
-      onCancelled: ({ deliveredRows }) => {
-        patchEntry(entry.sessionId, { status: "cancelled", deliveredRows });
-      },
+  // `broadcast_compare` を 1 回実行する。`baseline` を先頭に、全環境を並行実行し、
+  // 環境ごとの結果 (表示行 + 差分サマリ) が届くたびに対応するカードを更新する。
+  const startRun = async (targets: Candidate[], userKeyColumn: string) => {
+    unlistenRef.current?.();
+    const runId = newBroadcastRunId();
+    runIdRef.current = runId;
+    targetsRef.current = targets;
+    // 古い run のメッセージは無視する (キー列の変更で再実行したときの取りこぼし防止)。
+    const live = (fn: () => void) => () => {
+      if (runIdRef.current === runId) fn();
+    };
+    setEntries(
+      targets.map((c) => ({
+        sessionId: c.sessionId,
+        profile: c.profile,
+        status: "running" as const,
+        columns: [],
+        rows: [],
+        totalRows: 0,
+        elapsedMs: 0,
+        error: null,
+        diff: null,
+      })),
+    );
+    setStep("running");
+    const unlisten = await listenBroadcast(runId, {
+      onEnv: (rep) =>
+        live(() =>
+          patchEntry(rep.sessionId, {
+            status: rep.status === "error" ? "error" : "done",
+            columns: rep.columns,
+            rows: rep.rows,
+            totalRows: rep.totalRows,
+            elapsedMs: rep.elapsedMs,
+            error: rep.error,
+            diff: rep.diff,
+          }),
+        )(),
+      onCancelled: ({ sessionId }) =>
+        live(() => patchEntry(sessionId, { status: "cancelled" }))(),
     });
-    unlistenRef.current.set(entry.sessionId, unlisten);
+    unlistenRef.current = unlisten;
 
+    const [baselineTarget, ...rest] = targets;
     try {
-      await api.runQueryStream({
-        sessionId: entry.sessionId,
-        streamId: entry.streamId,
+      await api.broadcastCompare({
+        runId,
         sql,
-        initialBatch,
-        chunkSize,
+        baselineSessionId: baselineTarget.sessionId,
+        targetSessionIds: rest.map((c) => c.sessionId),
         autoLimit,
         queryTimeoutSecs,
-        forceReadOnly: true,
+        tablePkColumns: (tableColumns ?? [])
+          .filter((c) => c.key.toUpperCase() === "PRI")
+          .map((c) => c.name),
+        userKeyColumn: userKeyColumn || null,
       });
     } catch (e) {
-      patchEntry(entry.sessionId, { status: "error", error: String(e) });
+      live(() =>
+        setEntries((prev) =>
+          prev.map((en) =>
+            en.status === "running" ? { ...en, status: "error", error: String(e) } : en,
+          ),
+        ),
+      )();
     }
   };
 
@@ -238,34 +275,26 @@ export function BroadcastModal({
       { sessionId: baselineSessionId, profile: baselineProfile },
       ...chosen,
     ];
-    const initialEntries: Entry[] = targets.map((c) => ({
-      sessionId: c.sessionId,
-      profile: c.profile,
-      streamId: newBroadcastStreamId(c.sessionId),
-      status: "running",
-      columns: [],
-      rows: [],
-      rowsAffected: 0,
-      elapsedMs: 0,
-      error: null,
-      deliveredRows: 0,
-    }));
-    setEntries(initialEntries);
-    setStep("running");
-    for (const entry of initialEntries) {
-      void runOneEntry(entry);
-    }
+    await startRun(targets, keyColumn);
   };
 
   const cancelEntry = (sessionId: string) => {
+    const runId = runIdRef.current;
     const entry = entriesRef.current.find((e) => e.sessionId === sessionId);
-    if (entry && entry.status === "running") void api.cancelStream(entry.streamId);
+    if (runId && entry && entry.status === "running") {
+      void api.cancelStream(broadcastEnvStreamId(runId, sessionId));
+    }
   };
 
-  const cancelAll = () => {
-    for (const e of entriesRef.current) {
-      if (e.status === "running") void api.cancelStream(e.streamId);
-    }
+  const cancelAll = () => cancelRunning();
+
+  // 結果画面でキー列を選び直したら、同じ対象で再比較する (差分の計算はバックエンドが
+  // 行うため)。実行中の環境は先にキャンセルする。
+  const handleKeyColumnChange = (value: string) => {
+    setKeyColumn(value);
+    if (step !== "running" || targetsRef.current.length === 0) return;
+    cancelRunning();
+    void startRun(targetsRef.current, value);
   };
 
   const anyRunning = entries.some((e) => e.status === "running");
@@ -374,7 +403,7 @@ export function BroadcastModal({
               {t("broadcastKeyColumnLabel")}
               <Select
                 value={keyColumn}
-                onChange={(e) => setKeyColumn(e.target.value)}
+                onChange={(e) => handleKeyColumnChange(e.target.value)}
                 minWidth="180px"
                 disabled={
                   !!tableColumns && resolvePkIndices(baseline.columns, tableColumns).length > 0
@@ -397,7 +426,6 @@ export function BroadcastModal({
               entry={e}
               isBaseline={e.sessionId === baselineSessionId}
               baseline={baseline}
-              pkIndices={e.sessionId === baselineSessionId ? [] : pkIndices}
               pkNames={pkNames}
               driver={driver}
               onCancel={() => cancelEntry(e.sessionId)}
@@ -448,7 +476,6 @@ function EntryCard({
   entry,
   isBaseline,
   baseline,
-  pkIndices,
   pkNames,
   driver,
   onCancel,
@@ -456,7 +483,6 @@ function EntryCard({
   entry: Entry;
   isBaseline: boolean;
   baseline: Entry | null;
-  pkIndices: number[];
   pkNames: Set<string>;
   driver: string;
   onCancel: () => void;
@@ -465,15 +491,8 @@ function EntryCard({
   const settled = entry.status !== "running";
   const baselineSettled = !baseline || baseline.status !== "running";
 
-  const diff = useMemo(() => {
-    if (isBaseline || !baseline || !settled || !baselineSettled) return null;
-    if (baseline.columns.length === 0 || entry.columns.length === 0) return null;
-    return compareBroadcastEnvironment(
-      { columns: baseline.columns, rows: baseline.rows },
-      { columns: entry.columns, rows: entry.rows },
-      pkIndices,
-    );
-  }, [isBaseline, baseline, entry, pkIndices, settled, baselineSettled]);
+  // 差分はバックエンドが計算済み (#1257)。ここでは表示用に整形するだけ。
+  const diff: BroadcastDiff | null = isBaseline || !settled || !baselineSettled ? null : entry.diff;
 
   const diffLine = (() => {
     if (isBaseline) return null;
@@ -483,16 +502,30 @@ function EntryCard({
     if (!diff.hasDiff) return t("broadcastDiffNone");
     if (diff.mode === "pk") {
       return t("broadcastDiffPk", {
-        changed: countChangedCells(diff.changedCells),
-        added: diff.addedRowIndices.size,
+        changed: diff.changedCellCount,
+        added: diff.addedRowIndices.length,
         removed: diff.removedCount,
       });
     }
     return t("broadcastDiffHash", {
-      added: diff.addedRowIndices.size,
+      added: diff.addedRowIndices.length,
       removed: diff.removedCount,
     });
   })();
+
+  // グリッドのセル/行ハイライト用に、バックエンドの差分を `ResultRowDiff` へ変換して
+  // 行配列に紐づける。`ResultGrid` は紐づいた差分があれば全行の突き合わせ
+  // (`diffResultRows`) をやり直さない。
+  const rowDiff = useMemo(
+    () =>
+      diff && diff.mode === "pk"
+        ? diffToRowDiff(diff, entry.rows.length, entry.columns.length)
+        : null,
+    [diff, entry.rows.length, entry.columns.length],
+  );
+  // 行配列への紐づけは WeakMap への冪等な登録なので、描画中に行っても安全
+  // (グリッドの初回描画より前に揃っている必要がある)。
+  if (rowDiff) attachRowDiff(entry.rows, rowDiff);
 
   const tableColumnsForGrid =
     diff && diff.mode === "pk" ? syntheticPkColumns(entry.columns, pkNames) : undefined;
@@ -524,7 +557,9 @@ function EntryCard({
           {statusLabel(t, entry.status)}
         </Flex>
         <chakra.span fontSize="xs" color="app.textMuted">
-          {t("broadcastRowCount", { rows: entry.rows.length })}
+          {entry.totalRows > entry.rows.length
+            ? t("broadcastRowsShown", { rows: entry.totalRows, shown: entry.rows.length })
+            : t("broadcastRowCount", { rows: entry.totalRows || entry.rows.length })}
         </chakra.span>
         <chakra.span flex="1" />
         {entry.status === "running" && (

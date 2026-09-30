@@ -1,7 +1,7 @@
 import type { CellValue, Column } from "../api/tauri";
 import type { BulkEditTarget } from "./bulkEdit";
 import { editIsNoop, qualifiedTableRef, quoteString, rowEditKey } from "./cellEdit";
-import { computeFindMatches } from "./gridFind";
+import { computeColumnMatchRows } from "./gridFind";
 import { quoteIdentFor } from "./sqlDialect";
 
 /**
@@ -151,15 +151,30 @@ export function replaceInText(
   replace: string,
   options: ReplaceOptions,
 ): string | null {
+  const replacer = buildReplacer(find, replace, options);
+  return replacer ? replacer(text) : null;
+}
+
+/**
+ * `replaceInText` の RegExp を 1 回だけコンパイルして使い回す版 (#1257)。
+ * 多数のセルへ同じ置換を適用する呼び出し側 (`planGridReplace`) 用。正規表現が
+ * 不正なら null。`g` フラグ付きだが `String.prototype.replace` は毎回 lastIndex を
+ * 0 から始めるので、使い回しても結果は変わらない。
+ */
+export function buildReplacer(
+  find: string,
+  replace: string,
+  options: ReplaceOptions,
+): ((text: string) => string) | null {
   const flags = options.caseSensitive ? "g" : "gi";
-  if (options.regex) {
-    try {
-      return text.replace(new RegExp(find, flags), replace);
-    } catch {
-      return null;
-    }
+  let re: RegExp;
+  try {
+    re = new RegExp(options.regex ? find : escapeRegexLiteral(find), flags);
+  } catch {
+    return null;
   }
-  return text.replace(new RegExp(escapeRegexLiteral(find), flags), () => replace);
+  if (options.regex) return (text) => text.replace(re, replace);
+  return (text) => text.replace(re, () => replace);
 }
 
 export interface GridReplaceInput {
@@ -221,13 +236,14 @@ const EMPTY_PLAN: GridReplacePlan = {
 export function planGridReplace(input: GridReplaceInput): GridReplacePlan {
   const { rows, columns, colIdx, find, options } = input;
   if (find === "" || !columns[colIdx]) return EMPTY_PLAN;
-  const found = computeFindMatches(rows, columns.length, find, {
+  // 対象列だけを走査する (他列の全セルを String() しない, #1257)。
+  const found = computeColumnMatchRows(rows, colIdx, find, {
     caseSensitive: options.caseSensitive,
     wholeCell: false,
     regex: options.regex,
   });
   if (found.invalidRegex) return { ...EMPTY_PLAN, invalidRegex: true };
-  const hits = found.matches.filter((m) => m.colIdx === colIdx);
+  const hits = found.rowIdxs;
   if (hits.length === 0) return EMPTY_PLAN;
   if (input.pkIndices.length === 0) {
     return { ...EMPTY_PLAN, hitCount: hits.length, skippedNoPk: hits.length };
@@ -239,12 +255,14 @@ export function planGridReplace(input: GridReplaceInput): GridReplacePlan {
   const touched = new Set<string>();
   let skippedInvalid = 0;
   let unchanged = 0;
-  for (const { rowIdx } of hits) {
+  // RegExp は 1 回だけコンパイルして全セルで使い回す。
+  const replacer = buildReplacer(find, input.replace, options);
+  if (!replacer) return { ...EMPTY_PLAN, invalidRegex: true };
+  for (const rowIdx of hits) {
     const row = rows[rowIdx];
     const cur = row?.[colIdx];
     if (!row || cur === null || cur === undefined) continue;
-    const next = replaceInText(String(cur), find, input.replace, options);
-    if (next === null) return { ...EMPTY_PLAN, invalidRegex: true };
+    const next = replacer(String(cur));
     if (next === String(cur)) {
       unchanged++;
       continue;

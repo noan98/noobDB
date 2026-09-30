@@ -1,6 +1,8 @@
 pub mod advisor;
 pub mod assertions;
 pub mod aws_iam;
+/// 環境横断ブロードキャストの結果比較 (#1257)。
+pub mod broadcast_diff;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
 pub mod data_diff;
@@ -16,6 +18,8 @@ pub mod postgres;
 pub mod preview;
 pub mod privileges;
 pub mod profile;
+/// 自動リフレッシュの差分パッチ (#1257)。
+pub mod refresh_diff;
 pub mod sandbox;
 /// 一括取得したスキーマ情報の画面向け結合 (テーブル統計・逆方向 FK、#1255)。
 pub mod schema_insight;
@@ -23,6 +27,8 @@ pub mod schema_insight;
 pub mod script;
 pub mod server_messages;
 pub mod sqlite;
+/// ストリーミング結果のバッチ合流と逐次統計 (#1257)。
+pub mod stream_batch;
 pub mod sync;
 /// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
 pub mod table_ddl;

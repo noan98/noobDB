@@ -10,6 +10,26 @@
 プールへ接続が返ります。`query_timeout_secs` が正のときは `tokio::time::timeout` で
 実行全体をレースし、超過時は `AppError::Timeout` を返します。
 
+## バッチ合流・逐次統計・差分パッチ (#1257)
+
+`spawn_query_stream` はドライバの 200 行バッチをそのまま Channel へ流さず、ドライバ非依存の
+`db/stream_batch.rs` を通す。
+
+- **`StreamBatcher`**: 初回バッチは即送信 (最初の行が出るまでの時間を悪化させない)。以降は
+  「前回送信から 75ms 経過」か「溜まった行数がサイズ上限 (送信のたびに倍々、最大 10,000 行)
+  に到達」のどちらかで合流して `Rows` を送る。正常終了・DB エラー・タイムアウトのどれでも、
+  結果確定前に残りを吐き出すので `delivered_rows` は UI が受け取った行数と一致する。
+- **`StreamStats`**: 送信する合流バッチ単位で列ごとの NULL 数・数値 min/max (判定は
+  `cellConditionalFormat.toNumber` と同じ。`streamStatsVectors.json` で固定)・全列一致の
+  重複行フラグを更新し、累積値を `Rows.stats` / `Done.stats` に載せる。フロントは
+  `components/streamStats.ts` で**行配列の同一性**に紐づけて持ち、セル編集の適用などで行配列が
+  入れ替わると自動的に JS の全行再計算へ戻る。
+- **自動リフレッシュ差分パッチ** (`db/refresh_diff.rs`): `refreshDiff` 付きの再実行では、
+  タブ単位で前回結果の「PK ハッシュ → 行ハッシュ」(`AppState.refresh_snapshots`、最大 16 タブ /
+  50 万行) を使い、行の代わりに `patch` メッセージ (変化なし区間の参照 + 変化行・追加行の実データ
+  + 削除数) を返す。比較元は `Done.snapshotId` で払い出され、フロント (`refreshPatch.ts`) が
+  その ID を手元の行配列に紐づけて持つ。ID 不一致・列構成の変化・PK 無しは従来の全行ストリーム。
+
 「ドライラン」プレビュー (`preview_query_stream`) はトランザクション内で SQL を実行
 してロールバックし、対象テーブルの before/after スナップショット (PK でペアリング) を
 `preview-stream:*` イベントで返します。CSV インポート (`import_csv`) とインラインセル

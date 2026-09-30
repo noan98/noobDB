@@ -155,6 +155,9 @@ pub struct AppState {
     pub connects: RwLock<HashMap<String, (u64, AbortHandle)>>,
     /// Monotonic source of the per-registration tokens above.
     connect_seq: AtomicU64,
+    /// 自動リフレッシュの差分パッチ (#1257) が使う、タブ単位の前回結果スナップ
+    /// ショット (PK ハッシュ → 行ハッシュ)。行データは持たない。
+    pub refresh_snapshots: std::sync::Mutex<crate::db::refresh_diff::RefreshSnapshotStore>,
 }
 
 impl AppState {
