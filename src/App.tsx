@@ -11,7 +11,6 @@ import {
   Column,
   ConnectionProfile,
   DriverKind,
-  ForeignKey,
   type LocalTableMeta,
   type ProfileImportStrategy,
   PreviewResult,
@@ -352,7 +351,7 @@ import {
   shouldNotifyQueryCompletion,
   type QueryNotificationKind,
 } from "./queryNotify";
-import { incomingForeignKeys } from "./fkNavigation";
+import type { IncomingFk } from "./fkNavigation";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
@@ -1030,6 +1029,14 @@ async function resolveTableOpen(
     rowIdentity,
   };
 }
+
+/** 逆方向 FK のキャッシュキー (セッション + DB + テーブル)。 */
+function incomingFkCacheKey(sessionId: string, database: string, table: string): string {
+  return `${sessionId}\0${database}\0${table}`;
+}
+
+/** まだ取得できていないテーブルに渡す安定した空配列 (毎回新しい配列を作らない)。 */
+const NO_INCOMING_FKS: IncomingFk[] = [];
 
 // Cache key for a database's whole-schema autocomplete snapshot. The NUL
 // separator can't appear in a session id or database name, so it can't
@@ -1942,9 +1949,11 @@ export default function App() {
   // Keys with a schemaOverview request in flight, so the fetch effect doesn't
   // fire a duplicate while one is pending.
   const schemaInFlightRef = useRef<Set<string>>(new Set());
-  // Foreign keys per database (keyed by schemaCacheKey), used to offer reverse
-  // FK navigation ("show rows referencing this row"). #621
-  const [fkCache, setFkCache] = useState<Record<string, ForeignKey[]>>({});
+  // Reverse foreign keys per table (keyed by incomingFkCacheKey), used to offer
+  // reverse FK navigation ("show rows referencing this row"). The backend
+  // extracts them from its cached FK list, so the UI never re-filters a
+  // database-wide FK list while rendering. #621 / #1255
+  const [incomingFkCache, setIncomingFkCache] = useState<Record<string, IncomingFk[]>>({});
   const fkInFlightRef = useRef<Set<string>>(new Set());
   // Set while a destructive query awaits confirmation; holds everything needed
   // to run it once the user accepts the warning dialog.
@@ -3481,34 +3490,35 @@ export default function App() {
     return () => { cancelled = true; };
   }, [sessionId, paneActiveTabs, updateTab]);
 
-  // Fetch the database's foreign keys for each active table tab so the result
-  // grid can offer reverse FK navigation (rows referencing the current row).
-  // Cached per database and reused across tabs. #621
+  // Fetch the reverse foreign keys (FKs pointing at the table) for each active
+  // table tab so the result grid can offer reverse FK navigation (rows
+  // referencing the current row). Cached per table and reused across tabs. The
+  // backend keeps one database-wide FK list, so this costs no extra DB queries
+  // per table. #621 / #1255
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
     for (const tt of paneActiveTabs) {
-      if (!tt || tt.kind !== "table" || !tt.database) continue;
-      const key = schemaCacheKey(sessionId, tt.database);
-      if (key in fkCache || fkInFlightRef.current.has(key)) continue;
+      if (!tt || tt.kind !== "table" || !tt.database || !tt.table) continue;
+      const key = incomingFkCacheKey(sessionId, tt.database, tt.table);
+      if (key in incomingFkCache || fkInFlightRef.current.has(key)) continue;
       fkInFlightRef.current.add(key);
-      const database = tt.database;
-      api.foreignKeys(sessionId, database)
+      api.incomingForeignKeys(sessionId, tt.database, tt.table)
         .then((fks) => {
-          if (!cancelled) setFkCache((prev) => ({ ...prev, [key]: fks }));
+          if (!cancelled) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
         })
         .catch(() => { /* ignore: reverse FK nav is best-effort */ })
         .finally(() => { fkInFlightRef.current.delete(key); });
     }
     return () => { cancelled = true; };
-  }, [sessionId, paneActiveTabs, fkCache]);
+  }, [sessionId, paneActiveTabs, incomingFkCache]);
 
   // Drop every cached schema when the session changes so a new connection
   // never autocompletes against the previous database's tables.
   useEffect(() => {
     setSchemaCache({});
     schemaInFlightRef.current.clear();
-    setFkCache({});
+    setIncomingFkCache({});
     fkInFlightRef.current.clear();
   }, [sessionId]);
 
@@ -8276,10 +8286,8 @@ export default function App() {
                       onFkJump={(sql) => openAndRunQuery(sql)}
                       incomingFks={
                         tab.kind === "table" && tab.table && tab.database && sessionId
-                          ? incomingForeignKeys(
-                              fkCache[schemaCacheKey(sessionId, tab.database)] ?? [],
-                              tab.table,
-                            )
+                          ? incomingFkCache[incomingFkCacheKey(sessionId, tab.database, tab.table)] ??
+                            NO_INCOMING_FKS
                           : undefined
                       }
                       onRunStatsQuery={

@@ -1283,6 +1283,170 @@ async fn postgres_data_quality_assertions_on_read_only_session() {
     }
 }
 
+/// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ結果でなければならない。
+async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
+    let bulk_columns = conn.columns_for_database(db).await.expect("columns bulk");
+    let bulk_indexes = conn.indexes_for_database(db).await.expect("indexes bulk");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!tables.is_empty());
+    for table in &tables {
+        let single = conn.columns(db, table).await.expect("columns");
+        let bulk = bulk_columns
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.columns.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "columns of {table} must match the per-table query"
+        );
+        let single = conn.list_indexes(db, table).await.expect("indexes");
+        let bulk = bulk_indexes
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.indexes.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "indexes of {table} must match the per-table query"
+        );
+    }
+    // 一括取得にだけ現れるテーブルは無い。
+    for t in &bulk_columns {
+        assert!(tables.contains(&t.name), "unexpected table {}", t.name);
+    }
+    for t in &bulk_indexes {
+        assert!(!t.indexes.is_empty(), "{} has no indexes", t.name);
+    }
+}
+
+#[tokio::test]
+async fn postgres_bulk_columns_and_indexes_match_per_table_queries() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // 同じ DB を他のテストが並列に DROP / CREATE するため、比較対象は専用スキーマに
+    // 閉じる (public を丸ごと比べると、取得の合間にテーブルが消えて競合する)。
+    let schema = format!("noobdb_bulk_{}", std::process::id());
+    conn.execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"), None)
+        .await
+        .expect("drop schema");
+    for ddl in [
+        format!("CREATE SCHEMA {schema}"),
+        format!("CREATE TABLE {schema}.bulk_parent (id integer PRIMARY KEY, name varchar(40))"),
+        format!("COMMENT ON COLUMN {schema}.bulk_parent.name IS 'nm'"),
+        format!(
+            "CREATE TABLE {schema}.bulk_child (
+                id integer PRIMARY KEY,
+                pid integer NOT NULL DEFAULT 1 REFERENCES {schema}.bulk_parent (id),
+                extra numeric(10,2),
+                UNIQUE (extra)
+            )"
+        ),
+        format!("CREATE INDEX bulk_child_multi ON {schema}.bulk_child (pid, extra)"),
+        // 配列・enum・uuid・inet・money・interval・jsonb など多様な型も単一版と一致すること。
+        format!("CREATE TYPE {schema}.bulk_mood AS ENUM ('sad', 'ok')"),
+        format!(
+            "CREATE TABLE {schema}.bulk_types (
+                id integer PRIMARY KEY, u uuid, tags text[], nums integer[], addr inet,
+                price money, span interval, mood {schema}.bulk_mood, payload jsonb, big bigint
+            )"
+        ),
+    ] {
+        conn.execute(&ddl, None).await.expect(&ddl);
+    }
+
+    assert_bulk_matches_per_table(&conn, &schema).await;
+
+    conn.execute(&format!("DROP SCHEMA {schema} CASCADE"), None)
+        .await
+        .expect("cleanup schema");
+    conn.close().await;
+}
+
+/// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 PostgreSQL の
+/// `execute_stream` に通す。NUMERIC は文字列で届くので数値判定 (`toNumber` 互換) の
+/// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
+#[tokio::test]
+async fn postgres_stream_coalescing_and_stats() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS public.stream_batch_1257", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.stream_batch_1257 (id INT PRIMARY KEY, name TEXT, amount NUMERIC(10,1))",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO public.stream_batch_1257 \
+         SELECT g, 'n' || g, CASE WHEN g % 10 = 0 THEN NULL ELSE (g % 97) + 0.5 END \
+         FROM generate_series(1, 900) g",
+        None,
+    )
+    .await
+    .expect("seed");
+
+    let mut batcher = t::StreamBatcher::new(100);
+    let mut stats = t::StreamStats::new();
+    let mut sent: Vec<usize> = Vec::new();
+    let res = conn
+        .execute_stream(
+            "SELECT * FROM public.stream_batch_1257 ORDER BY id",
+            None,
+            100,
+            100,
+            |batch| {
+                if let t::StreamBatch::Rows(rows) = batch {
+                    if let Some(out) = batcher.push(rows, std::time::Instant::now()) {
+                        stats.observe(&out);
+                        sent.push(out.len());
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await
+        .expect("stream");
+    if let Some(rest) = batcher.finish() {
+        stats.observe(&rest);
+        sent.push(rest.len());
+    }
+
+    assert_eq!(res.rows_affected, 900);
+    assert_eq!(sent.iter().sum::<usize>(), 900);
+    assert_eq!(sent[0], 100, "初回バッチは即送信");
+    assert!(sent.len() < 9, "9 回のドライババッチが合流される: {sent:?}");
+    let snap = stats.snapshot();
+    assert_eq!(snap.row_count, 900);
+    assert_eq!(snap.null_counts[2], 90);
+    assert_eq!(snap.num_min[0], Some(1.0));
+    assert_eq!(snap.num_max[0], Some(900.0));
+    assert_eq!(snap.num_min[2], Some(0.5));
+    assert_eq!(snap.num_max[2], Some(96.5));
+    assert_eq!(snap.num_min[1], None);
+    assert_eq!(snap.duplicate_rows, Some(false));
+
+    conn.execute("DROP TABLE public.stream_batch_1257", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
 /// BLOB セルの probe / 生バイト取得 (#1258)。実 DB で長さ関数と先頭 16 バイトの
 /// 部分取得 SQL が動き、種別判定とサイズが正しいことを確認する。
 #[tokio::test]
@@ -1368,80 +1532,4 @@ async fn postgres_cell_blob_probe_and_fetch() {
         .execute("DROP TABLE cell_blob_probe_t", db)
         .await
         .expect("cleanup");
-}
-
-/// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 PostgreSQL の
-/// `execute_stream` に通す。NUMERIC は文字列で届くので数値判定 (`toNumber` 互換) の
-/// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
-#[tokio::test]
-async fn postgres_stream_coalescing_and_stats() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
-        return;
-    };
-    let opts = t::parse_postgres_url(&url).expect("valid url");
-    let conn = t::connect(&opts).await.expect("connect");
-
-    conn.execute("DROP TABLE IF EXISTS public.stream_batch_1257", None)
-        .await
-        .expect("drop");
-    conn.execute(
-        "CREATE TABLE public.stream_batch_1257 (id INT PRIMARY KEY, name TEXT, amount NUMERIC(10,1))",
-        None,
-    )
-    .await
-    .expect("create");
-    conn.execute(
-        "INSERT INTO public.stream_batch_1257 \
-         SELECT g, 'n' || g, CASE WHEN g % 10 = 0 THEN NULL ELSE (g % 97) + 0.5 END \
-         FROM generate_series(1, 900) g",
-        None,
-    )
-    .await
-    .expect("seed");
-
-    let mut batcher = t::StreamBatcher::new(100);
-    let mut stats = t::StreamStats::new();
-    let mut sent: Vec<usize> = Vec::new();
-    let res = conn
-        .execute_stream(
-            "SELECT * FROM public.stream_batch_1257 ORDER BY id",
-            None,
-            100,
-            100,
-            |batch| {
-                if let t::StreamBatch::Rows(rows) = batch {
-                    if let Some(out) = batcher.push(rows, std::time::Instant::now()) {
-                        stats.observe(&out);
-                        sent.push(out.len());
-                    }
-                }
-                Ok(())
-            },
-        )
-        .await
-        .expect("stream");
-    if let Some(rest) = batcher.finish() {
-        stats.observe(&rest);
-        sent.push(rest.len());
-    }
-
-    assert_eq!(res.rows_affected, 900);
-    assert_eq!(sent.iter().sum::<usize>(), 900);
-    assert_eq!(sent[0], 100, "初回バッチは即送信");
-    assert!(sent.len() < 9, "9 回のドライババッチが合流される: {sent:?}");
-    let snap = stats.snapshot();
-    assert_eq!(snap.row_count, 900);
-    assert_eq!(snap.null_counts[2], 90);
-    assert_eq!(snap.num_min[0], Some(1.0));
-    assert_eq!(snap.num_max[0], Some(900.0));
-    assert_eq!(snap.num_min[2], Some(0.5));
-    assert_eq!(snap.num_max[2], Some(96.5));
-    assert_eq!(snap.num_min[1], None);
-    assert_eq!(snap.duplicate_rows, Some(false));
-
-    conn.execute("DROP TABLE public.stream_batch_1257", None)
-        .await
-        .expect("cleanup");
-    conn.close().await;
 }

@@ -5,20 +5,20 @@
 //! に渡してレポートを返す。すべて読み取りの introspection なので `read_only`
 //! セッションでも許可する (適用は生成 DDL のエディタ挿入 → 既存安全網経由)。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tauri::State;
 
 use crate::db::advisor::{analyze, AdvisorInput, SchemaHealthReport, TableMeta};
+use crate::db::types::{IndexInfo, TableColumnInfo};
 use crate::db::Connection;
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
 /// `db` のスキーマを診断し、健全性の指摘リストを返す。ビューは
 /// `schema_objects` の一覧で除外し、ベーステーブルのみを対象にする (PK 欠落
-/// ルールがビューで誤検出しないように)。メタデータ収集は N+1 (テーブルごとに
-/// `columns` / `list_indexes` を 1 往復) だが、明示実行のユーザ操作なので
-/// `compare_schema` と同じく許容する。
+/// ルールがビューで誤検出しないように)。メタデータ収集は列・インデックスとも
+/// DB 全体を 1 問い合わせで取得する (#1255)。
 #[tauri::command]
 pub async fn analyze_schema_health(
     session_id: String,
@@ -50,17 +50,30 @@ pub(crate) async fn collect_and_analyze(
         .map(|o| o.name.clone())
         .collect();
 
+    // 列とインデックスは DB 全体を 1 問い合わせずつで取得する (#1255)。以前は
+    // テーブルごとに `columns` / `list_indexes` を 1 往復ずつ呼んでいた。
+    let mut columns_by_table: HashMap<String, Vec<TableColumnInfo>> = conn
+        .columns_for_database(database)
+        .await?
+        .into_iter()
+        .map(|t| (t.name, t.columns))
+        .collect();
+    let mut indexes_by_table: HashMap<String, Vec<IndexInfo>> = conn
+        .indexes_for_database(database)
+        .await?
+        .into_iter()
+        .map(|t| (t.name, t.indexes))
+        .collect();
+
     let mut tables = Vec::new();
     for name in all_tables {
         if view_names.contains(&name) {
             continue;
         }
-        let columns = conn.columns(database, &name).await?;
-        let indexes = conn.list_indexes(database, &name).await?;
         tables.push(TableMeta {
+            columns: columns_by_table.remove(&name).unwrap_or_default(),
+            indexes: indexes_by_table.remove(&name).unwrap_or_default(),
             name,
-            columns,
-            indexes,
         });
     }
 

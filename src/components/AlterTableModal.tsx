@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
-import { api, type DriverKind, type ForeignKey, type TableColumnInfo } from "../api/tauri";
+import { api, type DriverKind, type ForeignKey } from "../api/tauri";
 import {
   buildAlterPlan,
   supportsComments,
@@ -126,34 +126,18 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    // テーブルコメントは装飾的な付随情報なので、取得に失敗しても列編集は続行する
-    // (コメント非対応の SQLite では問い合わせない)。
-    const commentsPromise = supportsComments(driver)
-      ? api.listTableComments(sessionId, database).catch(() => [])
-      : Promise.resolve([]);
-    // 外部キー / テーブル名も付随情報なので、取得に失敗しても列編集は続行する。
-    const fksPromise: Promise<ForeignKey[]> = supportsConstraintAlter(driver)
-      ? api.foreignKeys(sessionId, database).catch(() => [])
-      : Promise.resolve([]);
-    const tablesPromise: Promise<string[]> = api.listTables(sessionId, database).catch(() => []);
-    Promise.all([
-      api.describeTable(sessionId, database, table),
-      commentsPromise,
-      fksPromise,
-      tablesPromise,
-    ])
-      .then(([cols, tableComments, fks, tables]: [
-        TableColumnInfo[],
-        { name: string; comment: string }[],
-        ForeignKey[],
-        string[],
-      ]) => {
+    // 現在の列・テーブルコメント・このテーブルの FK・テーブル名一覧を 1 回で取得する
+    // (#1255)。コメント / FK / テーブル名は装飾的な付随情報なので、バックエンドは
+    // その取得に失敗しても空で続行する (列の取得失敗だけがエラー)。
+    api
+      .alterTableContext(sessionId, database, table)
+      .then((ctx) => {
         if (cancelled) return;
-        setExistingFks(groupExistingFks(fks, table));
+        const cols = ctx.columns;
+        setExistingFks(groupExistingFks(ctx.foreign_keys, table));
         setDroppedFks([]);
-        setTableNames(tables);
-        const current = tableComments.find((c) => c.name === table)?.comment ?? "";
-        setTableComment({ before: current, after: current });
+        setTableNames(ctx.table_names);
+        setTableComment({ before: ctx.table_comment, after: ctx.table_comment });
         const base: ExistingColumnBaseline[] = cols.map((c) => ({
           name: c.name,
           type: c.data_type,

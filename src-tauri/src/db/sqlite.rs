@@ -824,6 +824,134 @@ impl SqliteConn {
             .collect())
     }
 
+    /// 全テーブル (とビュー) の列を取得する (#1255)。`sqlite_master` と
+    /// テーブル値 PRAGMA 関数 (`pragma_table_info` / `pragma_foreign_key_list`) を
+    /// 結合して 2 本の問い合わせで済ませる。列ごとの値は [`SqliteConn::columns`] と
+    /// 同じ (FK の参照先列が暗黙の主キー指定のときは、親テーブルが単一列 PK の場合に
+    /// だけその列名を補う)。`_db` は SQLite では使わない (常に main)。
+    pub async fn columns_for_database(&self, _db: &str) -> Result<Vec<super::diff::TableColumns>> {
+        // PRAGMA table_info: cid, name, type, notnull, dflt_value, pk
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT m.name, ti.name, ti.type, ti.\"notnull\", ti.dflt_value, ti.pk
+             FROM sqlite_master m
+             JOIN pragma_table_info(m.name) ti
+             WHERE m.type IN ('table', 'view')
+               AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+             ORDER BY m.name, ti.cid",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        // PRAGMA foreign_key_list: id, seq, table, from, to, on_update, on_delete, match.
+        // 列ごとに最初に現れた 1 件を採用する (単一テーブル版と同じ)。
+        let fk_rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT m.name, f.\"from\", f.\"table\", f.\"to\"
+             FROM sqlite_master m
+             JOIN pragma_foreign_key_list(m.name) f
+             WHERE m.type IN ('table', 'view')
+               AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut columns: Vec<(String, TableColumnInfo)> = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let pk = r.try_get::<i64, _>(5).unwrap_or(0);
+            columns.push((
+                r.try_get::<String, _>(0).unwrap_or_default(),
+                TableColumnInfo {
+                    name: r.try_get::<String, _>(1).unwrap_or_default(),
+                    data_type: r.try_get::<String, _>(2).unwrap_or_default(),
+                    nullable: r.try_get::<i64, _>(3).unwrap_or(0) == 0,
+                    key: if pk > 0 { "PRI".into() } else { String::new() },
+                    default: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                    extra: String::new(),
+                    referenced_table: None,
+                    referenced_column: None,
+                    // SQLite はコメント機能を持たない (#1002)。
+                    comment: None,
+                },
+            ));
+        }
+
+        // 暗黙の主キー参照を解決するための「テーブル名 (小文字) → 単一列 PK 名」。
+        // SQLite のテーブル名は大文字小文字を区別しないので小文字で引く。
+        let mut pk_cols: std::collections::HashMap<String, Vec<&str>> =
+            std::collections::HashMap::new();
+        for (table, col) in &columns {
+            if col.key == "PRI" {
+                pk_cols
+                    .entry(table.to_lowercase())
+                    .or_default()
+                    .push(col.name.as_str());
+            }
+        }
+        let single_pk: std::collections::HashMap<String, String> = pk_cols
+            .into_iter()
+            .filter_map(|(t, cols)| match cols.as_slice() {
+                [only] => Some((t, (*only).to_string())),
+                _ => None,
+            })
+            .collect();
+
+        let mut fks: std::collections::HashMap<(String, String), (String, Option<String>)> =
+            std::collections::HashMap::new();
+        for r in &fk_rows {
+            let from = r.try_get::<String, _>(1).unwrap_or_default();
+            if from.is_empty() {
+                continue;
+            }
+            let table = r.try_get::<String, _>(0).unwrap_or_default();
+            let ref_table = r.try_get::<String, _>(2).unwrap_or_default();
+            let ref_column = r
+                .try_get::<Option<String>, _>(3)
+                .ok()
+                .flatten()
+                .or_else(|| single_pk.get(&ref_table.to_lowercase()).cloned());
+            fks.entry((table, from)).or_insert((ref_table, ref_column));
+        }
+        for (table, col) in &mut columns {
+            if let Some((ref_table, ref_column)) = fks.get(&(table.clone(), col.name.clone())) {
+                col.referenced_table = Some(ref_table.clone());
+                col.referenced_column = ref_column.clone();
+            }
+        }
+        Ok(super::group_columns_full(columns))
+    }
+
+    /// 全テーブルのインデックスを取得する (#1255)。`sqlite_master` と
+    /// `pragma_index_list` / `pragma_index_info` を結合して 1 本で済ませる。
+    /// 並び・PK 判定 (`origin = 'pk'`)・式インデックス列の扱いは
+    /// [`SqliteConn::list_indexes`] と同じ。
+    pub async fn indexes_for_database(&self, _db: &str) -> Result<Vec<super::types::TableIndexes>> {
+        // index_list: seq, name, unique, origin, partial / index_info: seqno, cid, name。
+        // 式インデックスの列は name が NULL なので列としては積まない。
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT m.name, il.name, il.\"unique\", il.origin, ii.name
+             FROM sqlite_master m
+             JOIN pragma_index_list(m.name) il
+             LEFT JOIN pragma_index_info(il.name) ii
+             WHERE m.type = 'table'
+               AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let index_rows = rows
+            .iter()
+            .map(|r| super::IndexRow {
+                table: r.try_get::<String, _>(0).unwrap_or_default(),
+                name: r.try_get::<String, _>(1).unwrap_or_default(),
+                unique: r.try_get::<i64, _>(2).unwrap_or(0) != 0,
+                primary: r
+                    .try_get::<String, _>(3)
+                    .map(|o| o == "pk")
+                    .unwrap_or(false),
+                column: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                method: None,
+            })
+            .collect();
+        Ok(super::group_index_rows(index_rows))
+    }
+
     /// Row identity strategy for inline editing (#849). Once a table has no
     /// resolvable primary key, SQLite tables still carry an implicit `rowid`
     /// **unless** the table was declared `WITHOUT ROWID` or is a view/virtual

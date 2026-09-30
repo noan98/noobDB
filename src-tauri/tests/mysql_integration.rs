@@ -1445,6 +1445,166 @@ async fn mysql_data_quality_assertions_on_read_only_session() {
     }
 }
 
+/// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ結果でなければならない。
+async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
+    let bulk_columns = conn.columns_for_database(db).await.expect("columns bulk");
+    let bulk_indexes = conn.indexes_for_database(db).await.expect("indexes bulk");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!tables.is_empty());
+    for table in &tables {
+        let single = conn.columns(db, table).await.expect("columns");
+        let bulk = bulk_columns
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.columns.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "columns of {table} must match the per-table query"
+        );
+        let single = conn.list_indexes(db, table).await.expect("indexes");
+        let bulk = bulk_indexes
+            .iter()
+            .find(|t| &t.name == table)
+            .map(|t| t.indexes.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{single:?}"),
+            format!("{bulk:?}"),
+            "indexes of {table} must match the per-table query"
+        );
+    }
+    // 一括取得にだけ現れるテーブルは無い。
+    for t in &bulk_columns {
+        assert!(tables.contains(&t.name), "unexpected table {}", t.name);
+    }
+    for t in &bulk_indexes {
+        assert!(!t.indexes.is_empty(), "{} has no indexes", t.name);
+    }
+}
+
+#[tokio::test]
+async fn mysql_bulk_columns_and_indexes_match_per_table_queries() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // 同じサーバを他のテストが並列に操作するため、比較対象は専用データベースに閉じる。
+    let db = format!("noobdb_bulk_{}", std::process::id());
+    conn.execute(&format!("DROP DATABASE IF EXISTS `{db}`"), None)
+        .await
+        .expect("drop db");
+    conn.execute(&format!("CREATE DATABASE `{db}`"), None)
+        .await
+        .expect("create db");
+    for ddl in [
+        "CREATE TABLE bulk_parent (id INT PRIMARY KEY, name VARCHAR(40) COMMENT 'nm') COMMENT='parent table'",
+        "CREATE TABLE bulk_child (
+            id INT PRIMARY KEY,
+            pid INT NOT NULL DEFAULT 1,
+            extra VARCHAR(20),
+            UNIQUE KEY bulk_child_extra (extra),
+            KEY bulk_child_multi (pid, extra),
+            CONSTRAINT bulk_child_fk FOREIGN KEY (pid) REFERENCES bulk_parent (id)
+        )",
+    ] {
+        conn.execute(ddl, Some(&db)).await.expect(ddl);
+    }
+
+    assert_bulk_matches_per_table(&conn, &db).await;
+
+    conn.execute(&format!("DROP DATABASE `{db}`"), None)
+        .await
+        .expect("cleanup db");
+    conn.close().await;
+}
+
+/// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 MySQL の
+/// `execute_stream` に通す。DECIMAL は文字列で届くので数値判定 (`toNumber` 互換) の
+/// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
+#[tokio::test]
+async fn mysql_stream_coalescing_and_stats() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS stream_batch_1257", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE stream_batch_1257 (id INT PRIMARY KEY, name VARCHAR(16), amount DECIMAL(10,1))",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    // MySQL の再帰 CTE 深さ既定 (1000) に収まる 900 行。amount は id % 10 = 0 で NULL。
+    conn.execute(
+        "INSERT INTO stream_batch_1257 (id, name, amount) \
+         WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 900) \
+         SELECT x, CONCAT('n', x), CASE WHEN x % 10 = 0 THEN NULL ELSE (x % 97) + 0.5 END FROM c",
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+
+    let mut batcher = t::StreamBatcher::new(100);
+    let mut stats = t::StreamStats::new();
+    let mut sent: Vec<usize> = Vec::new();
+    let res = conn
+        .execute_stream(
+            "SELECT * FROM stream_batch_1257 ORDER BY id",
+            Some(&db),
+            100,
+            100,
+            |batch| {
+                if let t::StreamBatch::Rows(rows) = batch {
+                    if let Some(out) = batcher.push(rows, std::time::Instant::now()) {
+                        stats.observe(&out);
+                        sent.push(out.len());
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await
+        .expect("stream");
+    if let Some(rest) = batcher.finish() {
+        stats.observe(&rest);
+        sent.push(rest.len());
+    }
+
+    assert_eq!(res.rows_affected, 900);
+    assert_eq!(sent.iter().sum::<usize>(), 900);
+    assert_eq!(sent[0], 100, "初回バッチは即送信");
+    assert!(sent.len() < 9, "9 回のドライババッチが合流される: {sent:?}");
+    let snap = stats.snapshot();
+    assert_eq!(snap.row_count, 900);
+    assert_eq!(snap.null_counts[2], 90);
+    assert_eq!(snap.num_min[0], Some(1.0));
+    assert_eq!(snap.num_max[0], Some(900.0));
+    assert_eq!(snap.num_min[2], Some(0.5));
+    assert_eq!(snap.num_max[2], Some(96.5));
+    assert_eq!(snap.num_min[1], None);
+    assert_eq!(snap.duplicate_rows, Some(false));
+
+    conn.execute("DROP TABLE stream_batch_1257", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
 /// BLOB セルの probe / 生バイト取得 (#1258)。実 DB で長さ関数と先頭 16 バイトの
 /// 部分取得 SQL が動き、種別判定とサイズが正しいことを確認する。
 #[tokio::test]
@@ -1530,85 +1690,4 @@ async fn mysql_cell_blob_probe_and_fetch() {
         .execute("DROP TABLE cell_blob_probe_t", db)
         .await
         .expect("cleanup");
-}
-
-/// #1257: バッチ合流 (`StreamBatcher`) と逐次統計 (`StreamStats`) を実 MySQL の
-/// `execute_stream` に通す。DECIMAL は文字列で届くので数値判定 (`toNumber` 互換) の
-/// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
-#[tokio::test]
-async fn mysql_stream_coalescing_and_stats() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
-        return;
-    };
-    let opts = t::parse_mysql_url(&url).expect("valid url");
-    let db = opts
-        .database
-        .clone()
-        .expect("test url must include a database");
-    let conn = t::connect(&opts).await.expect("connect");
-
-    conn.execute("DROP TABLE IF EXISTS stream_batch_1257", Some(&db))
-        .await
-        .expect("drop");
-    conn.execute(
-        "CREATE TABLE stream_batch_1257 (id INT PRIMARY KEY, name VARCHAR(16), amount DECIMAL(10,1))",
-        Some(&db),
-    )
-    .await
-    .expect("create");
-    // MySQL の再帰 CTE 深さ既定 (1000) に収まる 900 行。amount は id % 10 = 0 で NULL。
-    conn.execute(
-        "INSERT INTO stream_batch_1257 (id, name, amount) \
-         WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 900) \
-         SELECT x, CONCAT('n', x), CASE WHEN x % 10 = 0 THEN NULL ELSE (x % 97) + 0.5 END FROM c",
-        Some(&db),
-    )
-    .await
-    .expect("seed");
-
-    let mut batcher = t::StreamBatcher::new(100);
-    let mut stats = t::StreamStats::new();
-    let mut sent: Vec<usize> = Vec::new();
-    let res = conn
-        .execute_stream(
-            "SELECT * FROM stream_batch_1257 ORDER BY id",
-            Some(&db),
-            100,
-            100,
-            |batch| {
-                if let t::StreamBatch::Rows(rows) = batch {
-                    if let Some(out) = batcher.push(rows, std::time::Instant::now()) {
-                        stats.observe(&out);
-                        sent.push(out.len());
-                    }
-                }
-                Ok(())
-            },
-        )
-        .await
-        .expect("stream");
-    if let Some(rest) = batcher.finish() {
-        stats.observe(&rest);
-        sent.push(rest.len());
-    }
-
-    assert_eq!(res.rows_affected, 900);
-    assert_eq!(sent.iter().sum::<usize>(), 900);
-    assert_eq!(sent[0], 100, "初回バッチは即送信");
-    assert!(sent.len() < 9, "9 回のドライババッチが合流される: {sent:?}");
-    let snap = stats.snapshot();
-    assert_eq!(snap.row_count, 900);
-    assert_eq!(snap.null_counts[2], 90);
-    assert_eq!(snap.num_min[0], Some(1.0));
-    assert_eq!(snap.num_max[0], Some(900.0));
-    assert_eq!(snap.num_min[2], Some(0.5));
-    assert_eq!(snap.num_max[2], Some(96.5));
-    assert_eq!(snap.num_min[1], None);
-    assert_eq!(snap.duplicate_rows, Some(false));
-
-    conn.execute("DROP TABLE stream_batch_1257", Some(&db))
-        .await
-        .expect("cleanup");
-    conn.close().await;
 }

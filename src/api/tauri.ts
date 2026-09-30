@@ -4,6 +4,7 @@ import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import type { ExportColumnMask } from "../components/exportMasking";
 import type { TxIsolation } from "../txOptions";
+import type { IncomingFk } from "../fkNavigation";
 
 /**
  * A backend error carrying the structured `AppError.kind` discriminant (#683).
@@ -642,6 +643,29 @@ export interface TableSizeInfo {
   data_bytes: number | null;
   index_bytes: number | null;
   total_bytes: number | null;
+}
+
+/**
+ * テーブル統計ダッシュボードの 1 行 (`table_statistics`、#1255)。サイズ情報に、列数・
+ * インデックス数・PK 有無・FK 数 (制約単位) を合成したもの。`column_count` は列メタ
+ * データが無いテーブル (PostgreSQL のマテビューなど) で `null` (= 不明)。
+ */
+export interface TableStatistic extends TableSizeInfo {
+  column_count: number | null;
+  index_count: number;
+  has_primary_key: boolean;
+  foreign_key_count: number;
+}
+
+/** 列編集ダイアログの初期ロード一式 (`alter_table_context`、#1255)。 */
+export interface AlterTableContext {
+  columns: TableColumnInfo[];
+  /** テーブルコメント。無い・未対応 (SQLite) は空文字。 */
+  table_comment: string;
+  /** このテーブル自身が持つ外部キー。FK 編集に対応しないドライバでは空。 */
+  foreign_keys: ForeignKey[];
+  /** DB 内のテーブル名一覧 (FK の参照先候補)。 */
+  table_names: string[];
 }
 
 /** サーバ設定/状態の 1 変数 (サーバ情報パネル #563)。値は常に文字列で表示。 */
@@ -1762,10 +1786,38 @@ export const api = {
     invoke<TableComment[]>("list_table_comments", { sessionId, database }).then((r) =>
       parseResponse(schemas.tableCommentArray, r, "list_table_comments"),
     ),
-  /** テーブルごとのサイズ・統計を取得する (サイズダッシュボード #562)。 */
-  tableSizes: (sessionId: string, database: string) =>
-    invoke<TableSizeInfo[]>("table_sizes", { sessionId, database }).then((r) =>
-      parseResponse(schemas.tableSizeInfoArray, r, "table_sizes"),
+  /**
+   * テーブルごとのサイズ・統計に、列数・インデックス数・PK 有無・FK 数を合成して
+   * 取得する (テーブル統計ダッシュボード #562 / #660 / #1255)。結合はバックエンドが
+   * 行い、テーブル数ぶんの `listIndexes` は不要。
+   */
+  tableStatistics: (sessionId: string, database: string) =>
+    invoke<TableStatistic[]>("table_statistics", { sessionId, database }).then((r) =>
+      parseResponse(schemas.tableStatisticArray, r, "table_statistics"),
+    ),
+  /**
+   * DB 内の全テーブル (とビュー) の列メタデータを 1 回で取得する (#1255)。各テーブルの
+   * 内容は `describeTable` と同一。スキーマエクスポートと ER 図が使う。
+   */
+  describeDatabase: (sessionId: string, database: string) =>
+    invoke<SchemaSnapshotTable[]>("describe_database", { sessionId, database }).then((r) =>
+      parseResponse(schemas.schemaSnapshotTableArray, r, "describe_database"),
+    ),
+  /**
+   * 列編集ダイアログの初期ロード一式 (現在の列・テーブルコメント・このテーブルの FK・
+   * テーブル名一覧) を 1 回で取得する (#1255)。
+   */
+  alterTableContext: (sessionId: string, database: string, table: string) =>
+    invoke<AlterTableContext>("alter_table_context", { sessionId, database, table }).then(
+      (r) => parseResponse(schemas.alterTableContext, r, "alter_table_context"),
+    ),
+  /**
+   * `table` を参照している外部キー (逆参照) を取得する (#621 / #1255)。結果グリッドの
+   * 「参照している行へジャンプ」用。
+   */
+  incomingForeignKeys: (sessionId: string, database: string, table: string) =>
+    invoke<IncomingFk[]>("incoming_foreign_keys", { sessionId, database, table }).then(
+      (r) => parseResponse(schemas.incomingForeignKeyArray, r, "incoming_foreign_keys"),
     ),
   /** 接続中サーバの情報 (バージョン + 設定変数) を取得する (サーバ情報パネル #563)。 */
   serverInfo: (sessionId: string) =>

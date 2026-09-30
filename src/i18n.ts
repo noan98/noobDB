@@ -1681,7 +1681,7 @@ const en = {
   schemaExportTitle: "Export schema \"{database}\" for AI",
   schemaExportNote:
     "Generates a Markdown summary of tables, columns and foreign keys. Paste it into an AI chat (Claude, etc.) so it can write SQL against your schema. The output itself is always in English.",
-  schemaExportLoading: "Loading column details... ({done}/{total})",
+  schemaExportLoading: "Loading column details...",
   schemaExportNoTables: "This database has no tables.",
   schemaExportScope: "Tables to include",
   schemaExportScopeAll: "Whole database",
@@ -5415,7 +5415,7 @@ const ja: Dict = {
   schemaExportTitle: "スキーマ「{database}」を AI 向けにエクスポート",
   schemaExportNote:
     "テーブル・カラム・外部キーを Markdown にまとめます。Claude などの AI チャットに貼り付けると、スキーマを踏まえた SQL を書かせられます。出力自体は常に英語です。",
-  schemaExportLoading: "列情報を取得中... ({done}/{total})",
+  schemaExportLoading: "列情報を取得中...",
   schemaExportNoTables: "このデータベースにテーブルがありません。",
   schemaExportScope: "対象テーブル",
   schemaExportScopeAll: "DB 全体",

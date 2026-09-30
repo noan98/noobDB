@@ -1,10 +1,13 @@
 //! Schema & data comparison commands.
 
+use std::collections::HashMap;
+
 use tauri::State;
 
 use crate::db::data_diff::{compute_data_diff, DataDiff};
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sync::quote_ident;
+use crate::db::types::TableColumnInfo;
 use crate::db::{Connection, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -16,23 +19,30 @@ use crate::state::AppState;
 pub(crate) const MAX_DATA_ROWS: usize = 5000;
 pub(crate) const DEFAULT_DATA_ROWS: usize = 1000;
 
-/// Fetches every table in `db` paired with its full column metadata. This is
-/// N+1 by design (one `columns` round trip per table); acceptable for an
-/// explicit, user-triggered comparison rather than a hot path.
+/// Fetches every table in `db` paired with its full column metadata. The
+/// columns of the whole database come from one `columns_for_database` round trip
+/// (#1255) instead of one `columns` call per table. The table set and order
+/// still follow `tables`, so tables the column catalog does not list (e.g.
+/// PostgreSQL materialized views) keep appearing with an empty column list, as
+/// the per-table loop used to produce.
 pub(crate) async fn collect_table_columns(
     conn: &Connection,
     db: &str,
 ) -> Result<Vec<TableColumns>> {
     let tables = conn.tables(db).await?;
-    let mut out = Vec::with_capacity(tables.len());
-    for table in tables {
-        let columns = conn.columns(db, &table).await?;
-        out.push(TableColumns {
-            name: table,
-            columns,
-        });
-    }
-    Ok(out)
+    let mut by_table: HashMap<String, Vec<TableColumnInfo>> = conn
+        .columns_for_database(db)
+        .await?
+        .into_iter()
+        .map(|t| (t.name, t.columns))
+        .collect();
+    Ok(tables
+        .into_iter()
+        .map(|name| TableColumns {
+            columns: by_table.remove(&name).unwrap_or_default(),
+            name,
+        })
+        .collect())
 }
 
 /// Compares the schema of `source_database` (on the source session) against
