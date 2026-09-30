@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Box, chakra, Flex } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { api, type SchemaObjectKind, type Snippet } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { staggerContainer, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { FieldError, FieldLabel } from "./modalForm";
-import { Spinner } from "./Spinner";
+import { progressRatio } from "./progressRatio";
+import { DeterminateProgressBar } from "./StreamProgressBar";
 import { Tooltip } from "./Tooltip";
 import { Button, Input } from "./ui";
 import {
@@ -35,6 +38,13 @@ import {
  * 定義の取得はオブジェクト数ぶんの往復になるので、進捗 (n / 総数) とキャンセルを
  * 出す。キャンセルすると未取得の定義は取りに行かず、途中までの結果を表示する。
  */
+
+/** stagger 出現させる先頭行数の上限 (大量ヒット時に出現が間延びしないよう)。 */
+const STAGGER_CAP = 20;
+
+// motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で素通しする。
+const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
 
 /** スキーマツリー / コマンドパレットからの検索要求。`autoRun` なら開いた直後に走らせる。 */
 export interface WhereUsedRequest {
@@ -219,9 +229,9 @@ export function WhereUsedPanel({
           </Button>
         )}
         {progress && (
-          <Flex align="center" gap="2" alignSelf="center">
-            <Spinner size={14} />
-            <chakra.span fontSize="sm" color="app.textMuted" aria-live="polite">
+          <Flex direction="column" gap="1" alignSelf="center" minW="200px">
+            <DeterminateProgressBar value={progressRatio(progress.done, progress.total)} />
+            <chakra.span fontSize="sm" color="app.textMuted" textStyle="numeric" aria-live="polite">
               {t("whereUsedProgress", { done: progress.done, total: progress.total })}
             </chakra.span>
           </Flex>
@@ -279,6 +289,7 @@ function WhereUsedResults({
   onOpenSnippet: (snippetId: string) => void;
 }) {
   const t = useT();
+  const reduced = useReducedMotion() ?? false;
   const counts = {
     target: targetLabel(target),
     matches: report.matches.length,
@@ -301,9 +312,20 @@ function WhereUsedResults({
       )}
 
       {report.matches.length > 0 && (
-        <chakra.ul listStyleType="none" margin={0} padding={0} display="flex" flexDirection="column" gap="2">
-          {report.matches.map((m) => (
+        <MotionUl
+          variants={staggerContainer(reduced)}
+          initial="initial"
+          animate="animate"
+          listStyleType="none"
+          margin={0}
+          padding={0}
+          display="flex"
+          flexDirection="column"
+          gap="2"
+        >
+          {report.matches.map((m, i) => (
             <WhereUsedMatchRow
+              animated={i < STAGGER_CAP}
               key={`${m.kind}:${m.name}:${m.id ?? m.snippetId ?? ""}`}
               match={m}
               onOpen={() =>
@@ -313,7 +335,7 @@ function WhereUsedResults({
               }
             />
           ))}
-        </chakra.ul>
+        </MotionUl>
       )}
 
       {report.failed.length > 0 && (
@@ -332,10 +354,19 @@ function WhereUsedResults({
   );
 }
 
-function WhereUsedMatchRow({ match, onOpen }: { match: WhereUsedMatch; onOpen: () => void }) {
+function WhereUsedMatchRow({
+  match,
+  onOpen,
+  animated,
+}: {
+  match: WhereUsedMatch;
+  onOpen: () => void;
+  animated: boolean;
+}) {
   const t = useT();
   return (
-    <chakra.li
+    <MotionLi
+      variants={animated ? variants.staggerItem : undefined}
       border="1px solid"
       borderColor="app.border"
       borderRadius="md"
@@ -413,7 +444,7 @@ function WhereUsedMatchRow({ match, onOpen }: { match: WhereUsedMatch; onOpen: (
           </chakra.li>
         ))}
       </chakra.ol>
-    </chakra.li>
+    </MotionLi>
   );
 }
 
