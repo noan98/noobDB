@@ -245,6 +245,9 @@ pub mod __test_api {
     // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::bulk_write::{
+        BulkSetColumn, BulkSetValue, BulkUpdateGroup, InsertRowsResult,
+    };
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{
         query_stats_support_inner, sample_live_queries_inner, sample_statement_delta_inner,
@@ -498,6 +501,51 @@ pub mod __test_api {
         profile_id: Option<&str>,
     ) -> crate::error::Result<Vec<crate::flight_recorder::WriteCaptureSummary>> {
         crate::flight_recorder::store::list(profile_id, 100).await
+    }
+
+    /// Drives the `bulk_update_cells` IPC command's core path (session lookup +
+    /// statement generation + the `run_query_transaction` read-only guard /
+    /// history / cache handling) without a Tauri runtime (#1259).
+    pub async fn bulk_update_cells_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        table: &str,
+        pk_columns: Vec<String>,
+        groups: Vec<BulkUpdateGroup>,
+        extra_statements: Vec<String>,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::bulk_write::bulk_update_cells_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            table.to_string(),
+            pk_columns,
+            groups,
+            extra_statements,
+        )
+        .await
+    }
+
+    /// Drives the `insert_generated_rows` IPC command's core path without a
+    /// Tauri runtime (#1259).
+    pub async fn insert_generated_rows_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<serde_json::Value>],
+    ) -> crate::error::Result<InsertRowsResult> {
+        crate::commands::bulk_write::insert_generated_rows_inner(
+            state,
+            session_id,
+            database.map(str::to_string),
+            table,
+            columns,
+            rows,
+        )
+        .await
     }
 
     /// Drives the `kill_processes` IPC command's core path (session lookup +
@@ -884,6 +932,8 @@ pub fn run() {
             commands::ssh::resolve_ssh_config_host,
             commands::query::run_query,
             commands::query::run_query_transaction,
+            commands::bulk_write::bulk_update_cells,
+            commands::bulk_write::insert_generated_rows,
             commands::query::run_lookup_query,
             commands::query::begin_transaction,
             commands::query::run_in_transaction,

@@ -3339,3 +3339,313 @@ async fn sqlite_identity_sync_fixes_duplicate_key_after_explicit_ids() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// セル編集 Apply の構造化コマンド (#1259) を実 SQLite で通す。同じ (列, 値) の行は
+/// 1 文にまとまり、複合 PK / NULL を含む PK / 64bit 相当の文字列 PK も正しい行だけを
+/// 書き換える。extra_statements (DELETE / INSERT) は同じトランザクションで all-or-nothing、
+/// read_only セッションはガードで拒否される。
+#[tokio::test]
+async fn sqlite_bulk_update_cells_groups_chunks_and_rolls_back() {
+    let path = temp_cmd_db("bulkupd");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    for stmt in [
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, n INTEGER)",
+        "CREATE TABLE pairs (a INTEGER, b TEXT, n INTEGER)",
+        "CREATE TABLE bigpk (id TEXT PRIMARY KEY, name TEXT)",
+    ] {
+        conn.execute(stmt, None).await.expect("ddl");
+    }
+    let values = (1..=1200)
+        .map(|i| format!("({i}, 'old{i}', {i})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute(&format!("INSERT INTO items VALUES {values}"), None)
+        .await
+        .expect("seed items");
+    conn.execute(
+        "INSERT INTO pairs VALUES (1, 'x', 0), (1, 'y', 0), (2, NULL, 0), (2, 'z', 0)",
+        None,
+    )
+    .await
+    .expect("seed pairs");
+    conn.execute(
+        "INSERT INTO bigpk VALUES ('9007199254740993', 'a'), ('9007199254740992', 'b')",
+        None,
+    )
+    .await
+    .expect("seed bigpk");
+    let session = t::make_session("bulk_rw", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let text = |c: &str, v: &str| t::BulkSetColumn {
+        column: c.into(),
+        value: t::BulkSetValue::Text { text: v.into() },
+    };
+    let num = |c: &str, v: &str| t::BulkSetColumn {
+        column: c.into(),
+        value: t::BulkSetValue::Number { text: v.into() },
+    };
+
+    // 単一 PK: 1200 行を 500 件ずつの IN に分けて同じ値へ、別グループは個別の値へ。
+    let keys: Vec<Vec<t::Value>> = (1..=1200).map(|i| vec![t::Value::Int(i)]).collect();
+    let res = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        None,
+        "items",
+        vec!["id".into()],
+        vec![
+            t::BulkUpdateGroup {
+                set: vec![text("name", "it's"), num("n", "-7")],
+                keys: keys[..1199].to_vec(),
+            },
+            t::BulkUpdateGroup {
+                set: vec![text("name", "last")],
+                keys: keys[1199..].to_vec(),
+            },
+        ],
+        vec![],
+    )
+    .await
+    .expect("bulk update");
+    assert_eq!(res.rows_affected, 1200);
+    let check = state.get(&sid).await.expect("session");
+    let r = check
+        .conn
+        .execute(
+            "SELECT count(*) FROM items WHERE name = 'it''s' AND n = -7",
+            None,
+        )
+        .await
+        .expect("count");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(1199)));
+    let r = check
+        .conn
+        .execute("SELECT name, n FROM items WHERE id = 1200", None)
+        .await
+        .expect("last");
+    assert!(matches!(&r.rows[0][0], t::Value::String(s) if s == "last"));
+    assert!(matches!(&r.rows[0][1], t::Value::Int(1200)));
+
+    // 複合 PK + NULL を含む PK (全列一致の行識別)。NULL は IS NULL で特定される。
+    let res = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        None,
+        "pairs",
+        vec!["a".into(), "b".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![num("n", "5")],
+            keys: vec![
+                vec![t::Value::Int(1), t::Value::String("y".into())],
+                vec![t::Value::Int(2), t::Value::Null],
+            ],
+        }],
+        vec![],
+    )
+    .await
+    .expect("composite");
+    assert_eq!(res.rows_affected, 2);
+    let r = check
+        .conn
+        .execute("SELECT count(*) FROM pairs WHERE n = 5", None)
+        .await
+        .expect("pairs");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(2)));
+
+    // 64bit 相当の文字列 PK は引用リテラルで等値比較され、隣の値を巻き込まない。
+    let res = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        None,
+        "bigpk",
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![text("name", "changed")],
+            keys: vec![vec![t::Value::String("9007199254740993".into())]],
+        }],
+        vec![],
+    )
+    .await
+    .expect("bigpk");
+    assert_eq!(res.rows_affected, 1);
+    let r = check
+        .conn
+        .execute("SELECT name FROM bigpk WHERE id = '9007199254740992'", None)
+        .await
+        .expect("neighbour");
+    assert!(matches!(&r.rows[0][0], t::Value::String(s) if s == "b"));
+
+    // extra_statements が失敗すれば、同じトランザクションの UPDATE もロールバックされる。
+    let failed = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        None,
+        "bigpk",
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![text("name", "should-roll-back")],
+            keys: vec![vec![t::Value::String("9007199254740992".into())]],
+        }],
+        vec!["INSERT INTO no_such_table VALUES (1);".into()],
+    )
+    .await;
+    assert!(failed.is_err());
+    let r = check
+        .conn
+        .execute("SELECT name FROM bigpk WHERE id = '9007199254740992'", None)
+        .await
+        .expect("after rollback");
+    assert!(matches!(&r.rows[0][0], t::Value::String(s) if s == "b"));
+
+    // 不正な数値リテラルは SQL に入る前に拒否される。
+    let bad = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        None,
+        "items",
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![num("n", "1; DROP TABLE items")],
+            keys: vec![vec![t::Value::Int(1)]],
+        }],
+        vec![],
+    )
+    .await;
+    assert!(matches!(bad, Err(t::AppError::InvalidInput(_))));
+
+    // read_only セッションはバックエンドで拒否される (従来の run_query_transaction と同じ)。
+    let ro_conn = t::connect(&opts).await.expect("connect ro");
+    let ro = t::make_session("bulk_ro", ro_conn, opts, /* read_only */ true);
+    let ro_id = state.insert(ro).await;
+    let denied = t::bulk_update_cells_via_command(
+        &state,
+        &ro_id,
+        None,
+        "items",
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![text("name", "x")],
+            keys: vec![vec![t::Value::Int(1)]],
+        }],
+        vec![],
+    )
+    .await;
+    assert!(matches!(denied, Err(t::AppError::ReadOnly(_))));
+    assert!(matches!(
+        t::bulk_update_cells_via_command(&state, "nope", None, "items", vec![], vec![], vec![])
+            .await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+/// テストデータ投入 (#1259): 生成行が `import_rows` 経由で 1 トランザクションに入る。
+/// null / 真偽 / 数値 / 文字列を型強制付きで受け、途中で失敗すれば 1 行も残らず、
+/// read_only セッションは拒否される。
+#[tokio::test]
+async fn sqlite_insert_generated_rows_is_atomic_and_guarded() {
+    let path = temp_cmd_db("gendata");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER, score REAL, note TEXT)",
+        None,
+    )
+    .await
+    .expect("ddl");
+    let session = t::make_session("gen_rw", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let cols: Vec<String> = ["id", "name", "active", "score", "note"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let rows: Vec<Vec<serde_json::Value>> = (1..=250)
+        .map(|i| {
+            vec![
+                serde_json::json!(i),
+                serde_json::json!(format!("o'brien {i}")),
+                serde_json::json!(i % 2 == 0),
+                serde_json::json!(i as f64 + 0.5),
+                serde_json::Value::Null,
+            ]
+        })
+        .collect();
+    let res = t::insert_generated_rows_via_command(&state, &sid, None, "people", &cols, &rows)
+        .await
+        .expect("insert");
+    assert_eq!(res.inserted, 250);
+    let s = state.get(&sid).await.expect("session");
+    let r = s
+        .conn
+        .execute(
+            "SELECT count(*), sum(active), count(note), min(name) FROM people",
+            None,
+        )
+        .await
+        .expect("verify");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(250)));
+    assert!(matches!(&r.rows[0][1], t::Value::Int(125)));
+    assert!(matches!(&r.rows[0][2], t::Value::Int(0)));
+
+    // 途中の制約違反 (NOT NULL) で全体がロールバックされる。
+    let mut bad = rows.clone();
+    bad.push(vec![
+        serde_json::json!(9001),
+        serde_json::Value::Null,
+        serde_json::json!(true),
+        serde_json::json!(1.0),
+        serde_json::Value::Null,
+    ]);
+    let bad: Vec<Vec<serde_json::Value>> = bad
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut r)| {
+            r[0] = serde_json::json!(10_000 + i as i64);
+            r
+        })
+        .collect();
+    assert!(
+        t::insert_generated_rows_via_command(&state, &sid, None, "people", &cols, &bad)
+            .await
+            .is_err()
+    );
+    let r = s
+        .conn
+        .execute("SELECT count(*) FROM people", None)
+        .await
+        .expect("count after failure");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(250)));
+
+    // 列数の食い違いは拒否。
+    assert!(matches!(
+        t::insert_generated_rows_via_command(
+            &state,
+            &sid,
+            None,
+            "people",
+            &cols,
+            &[vec![serde_json::json!(1)]]
+        )
+        .await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
+    let ro_conn = t::connect(&opts).await.expect("connect ro");
+    let ro = t::make_session("gen_ro", ro_conn, opts, /* read_only */ true);
+    let ro_id = state.insert(ro).await;
+    assert!(matches!(
+        t::insert_generated_rows_via_command(&state, &ro_id, None, "people", &cols, &rows).await,
+        Err(t::AppError::ReadOnly(_))
+    ));
+    assert!(matches!(
+        t::insert_generated_rows_via_command(&state, "nope", None, "people", &cols, &rows).await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}

@@ -43,6 +43,7 @@ import {
   buildDeleteStatements,
   buildInsertStatements,
   buildBlobUpdateStatement,
+  buildUpdateGroups,
   buildUpdateStatements,
   countEditedCells,
   countEditedRows,
@@ -5224,8 +5225,10 @@ export default function App() {
     );
     const driver = selectedProfile?.driver ?? "mysql";
     // 1 トランザクションに UPDATE (セル編集) + DELETE (削除予定行) + INSERT (新規行) を
-    // まとめる。all-or-nothing なので一部失敗で全体がロールバックする。
-    const updates = buildUpdateStatements({
+    // まとめる。all-or-nothing なので一部失敗で全体がロールバックする。セル編集は同じ
+    // (列, 値) ごとにまとめた構造化入力で Rust (`bulk_update_cells`) へ渡し、`UPDATE … WHERE
+    // pk IN (…)` のチャンク化とリテラル化はバックエンドが担う (#1259)。
+    const { groups: updateGroups, rowCount: updateRowCount } = buildUpdateGroups({
       driver, database, table, columns: result.columns, rows: result.rows, pkIndices, edits: pendingEdits,
     });
     const deletes = buildDeleteStatements({
@@ -5235,19 +5238,21 @@ export default function App() {
     const inserts = buildInsertStatements({
       driver, database, table, columns: result.columns, inserts: tab.pendingInserts ?? [],
     });
-    const stmts = [...updates, ...deletes, ...inserts];
-    if (stmts.length === 0) return;
+    const extraStatements = [...deletes, ...inserts];
+    // 行ごとの操作数 (編集行 + 削除 + 新規)。確認文とステータスの件数表示に使う。
+    const opCount = updateRowCount + extraStatements.length;
+    if (opCount === 0) return;
     // 主キーが無く全列一致で行を識別しているとき (#849) は一意性を保証できない
     // ため、Apply 前に必ず警告する — 本番/confirm_writes の設定に関わらず、常に
     // このテーブル特有の安全網として機能する。表示中の行に実際に重複がある
     // ことを検出できればより強い文言、そうでなければ一般的な注意文言を出す。
-    if ((updates.length > 0 || deletes.length > 0) && identityStrategy === "all_columns") {
+    if ((updateRowCount > 0 || deletes.length > 0) && identityStrategy === "all_columns") {
       const ambiguous = hasAmbiguousIdentity(result.rows, pkIndices);
       const ok = await confirm({
         title: translate("editAllColumnsConfirmTitle"),
         message: translate(
           ambiguous ? "editAllColumnsConfirmBodyAmbiguous" : "editAllColumnsConfirmBody",
-          { count: updates.length + deletes.length },
+          { count: updateRowCount + deletes.length },
         ),
         confirmLabel: translate("editApplyButton"),
         tone: "warning",
@@ -5264,7 +5269,7 @@ export default function App() {
     if (needsWriteApproval) {
       const ok = await confirm({
         title: translate("editApplyConfirmTitle"),
-        message: translate("editApplyConfirmBody", { count: stmts.length }),
+        message: translate("editApplyConfirmBody", { count: opCount }),
         confirmLabel: translate("editApplyButton"),
         tone: "warning",
       });
@@ -5272,14 +5277,21 @@ export default function App() {
     }
     const tabId = tab.id;
     patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
-    setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: stmts.length } });
+    setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
     // All statements run in a single backend transaction: either every
     // UPDATE commits or, on any failure, the whole batch rolls back so the
     // table is never left in a half-applied state.
     let totalAffected = 0;
     let failure: string | null = null;
     try {
-      const res = await api.runQueryTransaction(sessionId, stmts, database);
+      const res = await api.bulkUpdateCells({
+        sessionId,
+        database,
+        table,
+        pkColumns: pkIndices.map((i) => result.columns[i].name),
+        groups: updateGroups,
+        extraStatements,
+      });
       totalAffected = Number(res.rows_affected ?? 0);
     } catch (e) {
       failure = String(e);
@@ -5292,7 +5304,7 @@ export default function App() {
       setStatus({
         kind: "key",
         key: "statusApplyEditsPartial",
-        vars: { total: stmts.length, error: failure },
+        vars: { total: opCount, error: failure },
         error: true,
       });
       return;
@@ -5352,7 +5364,7 @@ export default function App() {
     setStatus({
       kind: "key",
       key: "statusAppliedEdits",
-      vars: { rows: totalAffected, count: stmts.length },
+      vars: { rows: totalAffected, count: opCount },
     });
   }, [
     sessionId,

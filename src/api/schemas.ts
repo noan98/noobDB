@@ -142,6 +142,12 @@ export const processInfo = z.object({
   is_self: z.boolean(),
 });
 
+/** `insert_generated_rows` の結果 (#1259)。 */
+export const insertRowsResult = z.object({
+  inserted: z.number(),
+  elapsed_ms: z.number(),
+});
+
 /** `kill_processes` の結果 (#1259)。 */
 export const killProcessesResult = z.object({
   killed: z.number(),

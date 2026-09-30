@@ -25,6 +25,22 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 `cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` (任意引数 `isolation` / `readOnly`, #1166) / `run_in_transaction` /
 `finish_transaction`
 
+## 一括書き込み (`commands/bulk_write.rs`, #1259)
+
+`bulk_update_cells` / `insert_generated_rows`
+
+- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements)` は結果グリッドの
+  セル編集 Apply。フロント (`cellEdit.buildUpdateGroups`) が同じ (列, 値) ごとにまとめた
+  構造化入力を送り、Rust が `UPDATE t SET c = v WHERE pk IN (…)` (単一 PK・500 件ずつ) /
+  行条件の `OR` 連結 (複合 PK・NULL を含む PK・100 行ずつ) を組み立てる。`extraStatements` は
+  同じトランザクションに載せる DELETE / INSERT。実行は `run_query_transaction_inner` へ
+  委譲するため read_only ガード (緊急モード含む)・履歴・キャッシュ invalidate は従来と同一
+  (フライトレコーダーに記録しない点も従来どおり。記録対象は `run_query_stream({ capture: true })`
+  の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
+  text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。
+- `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
+  (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
+
 ## スキーマ (`commands/schema.rs`)
 
 `list_databases` / `list_tables` / `describe_table` / `table_row_identity` /
