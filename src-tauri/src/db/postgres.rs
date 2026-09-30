@@ -11,10 +11,11 @@ use super::server_messages::capture;
 use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
-    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
-    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
-    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, PreviewResult,
+    ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject,
+    ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo,
+    TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
@@ -626,18 +627,38 @@ impl PostgresConn {
             .collect())
     }
 
-    /// `pg_terminate_backend(pid)` — terminates the whole backend (the
-    /// connection), matching MySQL `KILL`. Returns Ok even when the pid is
-    /// already gone (the function just returns false), which is the right
-    /// behaviour for a monitor that may race the process's natural exit.
-    pub async fn kill_process(&self, id: i64) -> Result<()> {
-        let pid = i32::try_from(id)
-            .map_err(|_| AppError::InvalidInput(format!("invalid backend pid: {id}")))?;
-        sqlx::query("SELECT pg_terminate_backend($1)")
-            .bind(pid)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+    /// `pg_terminate_backend(pid)` を `unnest` で 1 文にまとめて実行する (#1259)。
+    /// MySQL `KILL` と同じく接続全体を終了する。pid が既に消えていても関数は false を
+    /// 返すだけなので成功扱い (プロセス自然終了との競合は正常)。アプリ自身の接続
+    /// (`pg_backend_pid()`) は最後に回す。int4 に収まらない pid は実行前に失敗として数える。
+    /// 文が失敗した場合 (権限不足など) は対象全件を失敗として数え、最初のエラーを返す。
+    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
+        let mut out = KillProcessesResult::default();
+        let mut pids: Vec<i32> = Vec::with_capacity(ids.len());
+        for id in ids {
+            match i32::try_from(*id) {
+                Ok(pid) => pids.push(pid),
+                Err(_) => out.record_failure(1, format!("invalid backend pid: {id}")),
+            }
+        }
+        if pids.is_empty() {
+            return Ok(out);
+        }
+        let count = pids.len() as u64;
+        match sqlx::query(
+            "SELECT pg_terminate_backend(s.p) FROM ( \
+               SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
+               ORDER BY (p = pg_backend_pid()), ord \
+             ) s",
+        )
+        .bind(&pids)
+        .execute(&self.pool)
+        .await
+        {
+            Ok(_) => out.killed += count,
+            Err(e) => out.record_failure(count, AppError::from(e).to_string()),
+        }
+        Ok(out)
     }
 
     /// Roles for the users & permissions panel (#732), read from `pg_roles`
@@ -711,13 +732,23 @@ impl PostgresConn {
     /// grant equivalent to MySQL's `mysql.user` columns — `CREATE`/`ALTER`/
     /// `DROP TABLE` are governed by schema ownership/`CREATE` privilege, not
     /// per-table `GRANT` — so `global` is always `None` here.
-    pub async fn user_privileges(&self, user: &str, _host: Option<&str>) -> Result<UserPrivileges> {
+    ///
+    /// `database` (= PostgreSQL ではスキーマ名) を渡すと `table_schema = $2` で絞る
+    /// (#1259)。
+    pub async fn user_privileges(
+        &self,
+        user: &str,
+        _host: Option<&str>,
+        database: Option<&str>,
+    ) -> Result<UserPrivileges> {
         let rows: Vec<PgRow> = sqlx::query(
             "SELECT table_schema, table_name, privilege_type \
              FROM information_schema.role_table_grants \
-             WHERE grantee = $1 ORDER BY table_schema, table_name",
+             WHERE grantee = $1 AND ($2::text IS NULL OR table_schema::text = $2::text) \
+             ORDER BY table_schema, table_name",
         )
         .bind(user)
+        .bind(database)
         .fetch_all(&self.pool)
         .await?;
         let mut map: std::collections::BTreeMap<String, TablePrivilegeRow> =

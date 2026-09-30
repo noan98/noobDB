@@ -45,7 +45,7 @@ use t::{
     DumpProgressEvent, ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey,
     HealthFinding, HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent,
     ImportResult, ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView,
-    PreviewStreamMessage, ProcessInfo, ProfileHistogramBucket, ProfileValueCount,
+    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
     ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
     RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
     ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
@@ -158,7 +158,7 @@ fn build_fixtures() -> serde_json::Value {
         version: "8.0.36".into(),
         variables: vec![server_variable.clone()],
     };
-    let process_info = ProcessInfo {
+    let process_info = ProcessListItem {
         id: 42,
         user: Some("root".into()),
         host: Some("127.0.0.1:53344".into()),
@@ -166,7 +166,8 @@ fn build_fixtures() -> serde_json::Value {
         command: Some("Query".into()),
         state: Some("executing".into()),
         time_secs: Some(3),
-        query: Some("SELECT 1".into()),
+        query_summary: Some("SELECT 1".into()),
+        query_truncated: false,
         is_self: true,
     };
     let query_stats_support = QueryStatsSupport {

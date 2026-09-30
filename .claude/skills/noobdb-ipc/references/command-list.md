@@ -51,9 +51,13 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 
 ## プロセス管理・ユーザ / 権限 (`commands/process.rs`, `commands/privileges.rs`)
 
-`list_processes` / `kill_process` / `list_db_users` / `list_user_privileges` /
+`list_processes` / `get_process_query` / `kill_processes` / `list_db_users` / `list_user_privileges` /
 `generate_create_user_sql` / `generate_drop_user_sql` / `generate_alter_password_sql` /
-`generate_grant_sql` / `generate_revoke_sql` / `apply_privilege_sql`
+`generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成) / `apply_privilege_sql`
+(`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、
+全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 /
+MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。
+`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る)
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 

@@ -137,8 +137,16 @@ export const processInfo = z.object({
   command: z.string().nullable(),
   state: z.string().nullable(),
   time_secs: z.number().nullable(),
-  query: z.string().nullable(),
+  query_summary: z.string().nullable(),
+  query_truncated: z.boolean(),
   is_self: z.boolean(),
+});
+
+/** `kill_processes` の結果 (#1259)。 */
+export const killProcessesResult = z.object({
+  killed: z.number(),
+  failed: z.number(),
+  first_error: z.string().nullable(),
 });
 
 /** データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。 */
@@ -709,6 +717,7 @@ export const connectPhaseEvent = z.object({
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
 export const stringResponse = z.string();
+export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
 export const nullableStringResponse = z.string().nullable();
 

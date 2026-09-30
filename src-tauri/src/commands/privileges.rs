@@ -13,13 +13,14 @@
 //! statement is never written to the query-history database or the log file
 //! (see CLAUDE.md's secret-separation policy).
 
+use serde::Deserialize;
 use tauri::State;
 
 use crate::db::privileges::{
     generate_alter_password_sql as generate_alter_password,
     generate_create_user_sql as generate_create_user, generate_drop_user_sql as generate_drop_user,
     generate_grant_sql as generate_grant, generate_revoke_sql as generate_revoke, GrantSpec,
-    UserSpec,
+    PrivilegeFlags, UserSpec,
 };
 use crate::db::types::{DbUserInfo, UserPrivileges};
 use crate::db::DriverKind;
@@ -41,19 +42,25 @@ pub async fn list_db_users(
     session.conn.list_db_users().await
 }
 
-/// The CRUD + DDL privilege matrix for one user/role. Read-only.
+/// The CRUD + DDL privilege matrix for one user/role. Read-only. `database`
+/// (MySQL: DB 名 / PostgreSQL: スキーマ名) を渡すと、テーブル別の行をサーバ側の
+/// WHERE で絞る (#1259)。global 行は常に返す。
 #[tauri::command]
 pub async fn list_user_privileges(
     session_id: String,
     user: String,
     host: Option<String>,
+    database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<UserPrivileges> {
     let session = state
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    session.conn.user_privileges(&user, host.as_deref()).await
+    session
+        .conn
+        .user_privileges(&user, host.as_deref(), database.as_deref())
+        .await
 }
 
 /// Renders `CREATE USER`/`CREATE ROLE`. Pure — no round trip, no logging (the
@@ -81,17 +88,55 @@ pub fn generate_alter_password_sql(
     generate_alter_password(driver, &name, host.as_deref(), &password)
 }
 
-/// Renders `GRANT <privs> ON ... TO ...`. `null` to the frontend when no
-/// privilege flags are set (nothing to grant). Pure.
-#[tauri::command]
-pub fn generate_grant_sql(driver: DriverKind, spec: GrantSpec) -> Option<String> {
-    generate_grant(driver, &spec)
+/// 1 テーブル (または DB 全体) 分の権限差分: 付与するフラグと剥奪するフラグ。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrivilegeChange {
+    /// `None` は DB 全体 (MySQL `db.*` / PostgreSQL `ALL TABLES IN SCHEMA`)。
+    pub table: Option<String>,
+    pub added: PrivilegeFlags,
+    pub removed: PrivilegeFlags,
 }
 
-/// Renders `REVOKE <privs> ON ... FROM ...`. Pure.
+/// 権限差分の一覧から `GRANT` / `REVOKE` 文をまとめて生成する (#1259)。テーブル順に
+/// 「GRANT → REVOKE」を並べ、付与/剥奪するフラグが無い側は出力しない。1 テーブルごとに
+/// `generate_grant_sql` / `generate_revoke_sql` を IPC で直列に呼んでいたのを 1 回に
+/// まとめる。個々の文は `db::privileges::generate_grant_sql` / `generate_revoke_sql`
+/// の再利用なので出力は従来と同一。Pure — 通信もログもしない。
 #[tauri::command]
-pub fn generate_revoke_sql(driver: DriverKind, spec: GrantSpec) -> Option<String> {
-    generate_revoke(driver, &spec)
+pub fn generate_privilege_diff_sql(
+    driver: DriverKind,
+    user: String,
+    host: Option<String>,
+    database: String,
+    changes: Vec<PrivilegeChange>,
+) -> Vec<String> {
+    privilege_diff_statements(driver, &user, host.as_deref(), &database, &changes)
+}
+
+pub(crate) fn privilege_diff_statements(
+    driver: DriverKind,
+    user: &str,
+    host: Option<&str>,
+    database: &str,
+    changes: &[PrivilegeChange],
+) -> Vec<String> {
+    let spec = |table: &Option<String>, flags: PrivilegeFlags| GrantSpec {
+        user: user.to_string(),
+        host: host.map(str::to_string),
+        database: database.to_string(),
+        table: table.clone(),
+        flags,
+    };
+    let mut out = Vec::new();
+    for c in changes {
+        if let Some(sql) = generate_grant(driver, &spec(&c.table, c.added)) {
+            out.push(sql);
+        }
+        if let Some(sql) = generate_revoke(driver, &spec(&c.table, c.removed)) {
+            out.push(sql);
+        }
+    }
+    out
 }
 
 /// Applies previously generated/confirmed statements (`CREATE USER` /
@@ -145,4 +190,83 @@ pub(crate) async fn apply_privilege_sql_inner(
         .conn
         .execute_transaction(&statements, database.as_deref())
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flags(select: bool, insert: bool, ddl: bool) -> PrivilegeFlags {
+        PrivilegeFlags {
+            select,
+            insert,
+            update: false,
+            delete: false,
+            ddl,
+        }
+    }
+
+    fn change(
+        table: Option<&str>,
+        added: PrivilegeFlags,
+        removed: PrivilegeFlags,
+    ) -> PrivilegeChange {
+        PrivilegeChange {
+            table: table.map(str::to_string),
+            added,
+            removed,
+        }
+    }
+
+    #[test]
+    fn diff_statements_emit_grant_then_revoke_per_table_in_order() {
+        let changes = vec![
+            change(
+                Some("a"),
+                flags(true, false, false),
+                flags(false, true, false),
+            ),
+            change(
+                Some("b"),
+                flags(false, false, false),
+                flags(false, false, true),
+            ),
+        ];
+        let out = privilege_diff_statements(DriverKind::Mysql, "u", Some("h"), "db", &changes);
+        assert_eq!(
+            out,
+            vec![
+                "GRANT SELECT ON `db`.`a` TO 'u'@'h'".to_string(),
+                "REVOKE INSERT ON `db`.`a` FROM 'u'@'h'".to_string(),
+                "REVOKE CREATE, ALTER, DROP, INDEX, REFERENCES ON `db`.`b` FROM 'u'@'h'"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_statements_match_single_generators_and_skip_empty_sides() {
+        let changes = vec![
+            change(None, flags(true, true, false), flags(false, false, false)),
+            change(
+                Some("t"),
+                flags(false, false, false),
+                flags(false, false, false),
+            ),
+        ];
+        let out = privilege_diff_statements(DriverKind::Postgres, "bob", None, "public", &changes);
+        let expected = generate_grant(
+            DriverKind::Postgres,
+            &GrantSpec {
+                user: "bob".into(),
+                host: None,
+                database: "public".into(),
+                table: None,
+                flags: flags(true, true, false),
+            },
+        )
+        .expect("grant");
+        assert_eq!(out, vec![expected]);
+        assert!(privilege_diff_statements(DriverKind::Mysql, "u", None, "d", &[]).is_empty());
+    }
 }

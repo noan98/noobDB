@@ -1491,7 +1491,7 @@ async fn sqlite_users_commands_unsupported_and_read_only_guarded() {
         Err(t::AppError::InvalidInput(_))
     ));
     assert!(matches!(
-        conn.user_privileges("alice", None).await,
+        conn.user_privileges("alice", None, None).await,
         Err(t::AppError::InvalidInput(_))
     ));
 
@@ -1536,7 +1536,7 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
         Err(t::AppError::InvalidInput(_))
     ));
     assert!(matches!(
-        conn.kill_process(1).await,
+        conn.kill_processes(&[1]).await,
         Err(t::AppError::InvalidInput(_))
     ));
 
@@ -1546,7 +1546,13 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
     let state = t::AppState::default();
     let sid = state.insert(session).await;
     assert!(matches!(
-        t::kill_process_via_command(&state, &sid, 1).await,
+        t::kill_processes_via_command(&state, &sid, &[1]).await,
+        Err(t::AppError::ReadOnly(_))
+    ));
+
+    // 空の id 一覧は read_only セッションでもガードが先に拒否する (ガードは 1 回)。
+    assert!(matches!(
+        t::kill_processes_via_command(&state, &sid, &[]).await,
         Err(t::AppError::ReadOnly(_))
     ));
 
@@ -1555,7 +1561,7 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
     let session2 = t::make_session("proc_rw", conn2, opts, /* read_only */ false);
     let sid2 = state.insert(session2).await;
     assert!(matches!(
-        t::kill_process_via_command(&state, &sid2, 1).await,
+        t::kill_processes_via_command(&state, &sid2, &[1]).await,
         Err(t::AppError::InvalidInput(_))
     ));
 
@@ -1596,9 +1602,10 @@ async fn sqlite_health_probe_all_reports_up_down_and_caches_version() {
         out[0].version.as_deref()
     );
     session.set_cached_health_version(Some("cached".into()));
-    let again = t::health_probe_all_inner(&state, &[sid.clone()], 5_000, false).await;
+    let again = t::health_probe_all_inner(&state, std::slice::from_ref(&sid), 5_000, false).await;
     assert_eq!(again[0].version.as_deref(), Some("cached"));
-    let refreshed = t::health_probe_all_inner(&state, &[sid.clone()], 5_000, true).await;
+    let refreshed =
+        t::health_probe_all_inner(&state, std::slice::from_ref(&sid), 5_000, true).await;
     assert_eq!(refreshed[0].version, out[0].version);
 
     let _ = std::fs::remove_file(&path);
@@ -2640,7 +2647,7 @@ async fn sqlite_server_commands_via_command_layer() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// プロセス一覧のコマンド層。`kill_process` 側 (read_only ガード込み) は
+/// プロセス一覧のコマンド層。`kill_processes` 側 (read_only ガード込み) は
 /// `sqlite_process_commands_unsupported_and_read_only_guarded` が押さえているので、
 /// ここは読み取り側のコマンド境界を補完する。
 #[tokio::test]
@@ -2660,6 +2667,14 @@ async fn sqlite_list_processes_via_command_layer() {
     ));
     assert!(matches!(
         t::list_processes_inner(&state, "nope").await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+    assert!(matches!(
+        t::get_process_query_inner(&state, &sid, 1).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        t::get_process_query_inner(&state, "nope", 1).await,
         Err(t::AppError::SessionNotFound(_))
     ));
 

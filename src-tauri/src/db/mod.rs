@@ -36,10 +36,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
-    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
-    ServerMetrics, StatementStat, StreamBatch, TableColumnInfo, TableComment, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
+    PreviewResult, ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject,
+    ServerInfo, ServerMetrics, StatementStat, StreamBatch, TableColumnInfo, TableComment,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use upsert::ImportConflict;
 
@@ -972,14 +972,16 @@ impl Connection {
         }
     }
 
-    /// Terminates the server-side process/connection `id` (from
-    /// [`Connection::list_processes`]): MySQL `KILL <id>`, PostgreSQL
-    /// `pg_terminate_backend(pid)`. SQLite returns an error.
-    pub async fn kill_process(&self, id: i64) -> Result<()> {
+    /// Terminates the server-side processes/connections `ids` (from
+    /// [`Connection::list_processes`]): MySQL `KILL <id>` on one pooled
+    /// connection, PostgreSQL `pg_terminate_backend` over `unnest` in one
+    /// statement (#1259). Failures don't stop the rest; the result carries the
+    /// counts and the first error. SQLite returns an error.
+    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
         match self {
-            Connection::MySql(c) => c.kill_process(id).await,
-            Connection::Postgres(c) => c.kill_process(id).await,
-            Connection::Sqlite(c) => c.kill_process(id).await,
+            Connection::MySql(c) => c.kill_processes(ids).await,
+            Connection::Postgres(c) => c.kill_processes(ids).await,
+            Connection::Sqlite(c) => c.kill_processes(ids).await,
         }
     }
 
@@ -998,12 +1000,18 @@ impl Connection {
 
     /// The CRUD + DDL privilege matrix for one user/role (see
     /// [`UserPrivileges`]). `host` narrows a MySQL account (`user@host`);
-    /// ignored by other drivers.
-    pub async fn user_privileges(&self, user: &str, host: Option<&str>) -> Result<UserPrivileges> {
+    /// ignored by other drivers. `database` narrows the per-table rows in SQL
+    /// (MySQL `Db`, PostgreSQL schema) instead of returning every database (#1259).
+    pub async fn user_privileges(
+        &self,
+        user: &str,
+        host: Option<&str>,
+        database: Option<&str>,
+    ) -> Result<UserPrivileges> {
         match self {
-            Connection::MySql(c) => c.user_privileges(user, host).await,
-            Connection::Postgres(c) => c.user_privileges(user, host).await,
-            Connection::Sqlite(c) => c.user_privileges(user, host).await,
+            Connection::MySql(c) => c.user_privileges(user, host, database).await,
+            Connection::Postgres(c) => c.user_privileges(user, host, database).await,
+            Connection::Sqlite(c) => c.user_privileges(user, host, database).await,
         }
     }
 

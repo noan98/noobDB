@@ -47,7 +47,7 @@ pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result
 /// 有効な間は `ensure_allowed_for_session` が書き込み文を通すため、緊急対応の
 /// UPDATE などを別プロファイルで繋ぎ直さずに実行できる。適用範囲は SQL 実行経路
 /// (`run_query` / `run_query_transaction` / `run_query_stream` / 明示トランザク
-/// ション) のみで、CSV インポート・同期適用・`kill_process` の read-only 拒否は
+/// ション) のみで、CSV インポート・同期適用・`kill_processes` の read-only 拒否は
 /// 変わらない。フラグはセッション在命中のみ有効で、切断・再接続 (`reconnect` の
 /// セッション差し替え) で必ずオフに戻る。
 ///

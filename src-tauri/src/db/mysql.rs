@@ -9,10 +9,11 @@ use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
-    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
-    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
-    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, PreviewResult,
+    ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject,
+    ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo,
+    TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use super::types::{ServerMessage, ServerMessageSeverity};
 use super::upsert::{conflict_clause, ImportConflict};
@@ -1121,14 +1122,30 @@ impl MySqlConn {
         Ok(out)
     }
 
-    /// `KILL <id>` — terminates the whole connection (not just its current
-    /// statement). KILL takes no placeholders, but `id` is a number so the
-    /// interpolation cannot inject SQL.
-    pub async fn kill_process(&self, id: i64) -> Result<()> {
-        sqlx::query(sqlx::AssertSqlSafe(format!("KILL {id}")))
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+    /// `KILL <id>` を 1 本のプール接続上で順に実行する (#1259)。KILL はプレースホルダを
+    /// 取れないが `id` は数値なので SQL インジェクションにならない。失敗しても残りは続行し、
+    /// 件数と最初のエラーを返す。アプリ自身の接続 (`CONNECTION_ID()`) を巻き込むと
+    /// 以降の KILL が打てなくなるため、自分自身の id は最後に回す。
+    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
+        let mut conn = self.pool.acquire().await?;
+        let own = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+            .fetch_one(&mut *conn)
+            .await
+            .ok()
+            .and_then(|v| i64::try_from(v).ok());
+        let mut ordered: Vec<i64> = ids.iter().copied().filter(|id| Some(*id) != own).collect();
+        ordered.extend(ids.iter().copied().filter(|id| Some(*id) == own));
+        let mut out = KillProcessesResult::default();
+        for id in ordered {
+            match sqlx::query(sqlx::AssertSqlSafe(format!("KILL {id}")))
+                .execute(&mut *conn)
+                .await
+            {
+                Ok(_) => out.killed += 1,
+                Err(e) => out.record_failure(1, AppError::from(e).to_string()),
+            }
+        }
+        Ok(out)
     }
 
     /// Server accounts for the users & permissions panel (#732), read from
@@ -1173,7 +1190,16 @@ impl MySqlConn {
     /// grants from `mysql.tables_priv` (`Table_priv` is a comma-separated
     /// `SET` column). `host` defaults to `%` (MySQL's "any host" wildcard)
     /// when not given.
-    pub async fn user_privileges(&self, user: &str, host: Option<&str>) -> Result<UserPrivileges> {
+    ///
+    /// `database` を渡すと、テーブル別の行を `Db = ?` の WHERE で絞る (#1259)。
+    /// 全 DB 分を受けて JS の `startsWith` で落としていた無駄な転送をなくす。
+    /// global 行は `database` に関係なく常に返す。
+    pub async fn user_privileges(
+        &self,
+        user: &str,
+        host: Option<&str>,
+        database: Option<&str>,
+    ) -> Result<UserPrivileges> {
         let host = host.unwrap_or("%");
         let global_row: Option<MySqlRow> = sqlx::query(
             "SELECT Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv, \
@@ -1202,10 +1228,12 @@ impl MySqlConn {
 
         let table_rows: Vec<MySqlRow> = sqlx::query(
             "SELECT Db, Table_name, Table_priv FROM mysql.tables_priv \
-             WHERE User = ? AND Host = ? ORDER BY Db, Table_name",
+             WHERE User = ? AND Host = ? AND (? IS NULL OR Db = ?) ORDER BY Db, Table_name",
         )
         .bind(user)
         .bind(host)
+        .bind(database)
+        .bind(database)
         .fetch_all(&self.pool)
         .await?;
         let tables = table_rows

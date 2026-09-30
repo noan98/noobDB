@@ -450,7 +450,7 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
     conn.close().await;
 }
 
-/// プロセス監視パネル (list_processes / kill_process) の PostgreSQL 経路。
+/// プロセス監視パネル (list_processes / kill_processes) の PostgreSQL 経路。
 /// pg_stat_activity のクライアントバックエンドが一覧に現れること、別接続を
 /// pg_terminate_backend で終了させると一覧から消えることを確認する。
 #[tokio::test]
@@ -497,7 +497,17 @@ async fn postgres_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
-    conn.kill_process(victim_pid).await.expect("kill");
+    let killed = conn.kill_processes(&[victim_pid]).await.expect("kill");
+    assert_eq!(killed.killed, 1, "{killed:?}");
+    assert_eq!(killed.failed, 0, "{killed:?}");
+    // int4 に収まらない pid は実行前に失敗として数える (有効な pid はそのまま処理される)。
+    let mixed = conn
+        .kill_processes(&[i64::MAX, victim_pid])
+        .await
+        .expect("kill mixed");
+    assert_eq!(mixed.killed, 1, "{mixed:?}");
+    assert_eq!(mixed.failed, 1, "{mixed:?}");
+    assert!(mixed.first_error.is_some());
 
     // Backend teardown is asynchronous; poll briefly.
     let mut gone = false;
@@ -671,6 +681,44 @@ async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
     assert!(m.slow_queries.is_none(), "slow_queries has no PG analog");
     assert!(m.lock_waits.is_none(), "lock_waits has no cheap PG analog");
 
+    conn.close().await;
+}
+
+/// 接続ヘルス (#1259) 用の軽量な接続数取得 (client backend の `count(*)`) が自分自身を
+/// 含めて 1 以上を返すこと。
+#[tokio::test]
+async fn postgres_connection_count_is_reported() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let n = conn.connection_count().await.expect("connection_count");
+    assert!(n.is_some_and(|c| c >= 1), "client backends >= 1, got {n:?}");
+    conn.close().await;
+}
+
+/// `user_privileges` の `database` (= スキーマ) 絞り込み (#1259): 存在しないスキーマ
+/// を指定するとテーブル別の行は空になり、指定した場合は全行がそのスキーマのものだけになる。
+#[tokio::test]
+async fn postgres_user_privileges_schema_filter_narrows_rows() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let none = conn
+        .user_privileges(&opts.user, None, Some("noobdb_no_such_schema"))
+        .await
+        .expect("filtered");
+    assert!(none.tables.is_empty());
+    let public = conn
+        .user_privileges(&opts.user, None, Some("public"))
+        .await
+        .expect("public");
+    assert!(public.tables.iter().all(|r| r.table.starts_with("public.")));
     conn.close().await;
 }
 

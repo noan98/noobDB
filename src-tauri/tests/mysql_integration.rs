@@ -266,6 +266,59 @@ async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
     conn.close().await;
 }
 
+/// 接続ヘルス (#1259) 用の軽量な接続数取得が `server_metrics` の `Threads_connected` と
+/// 同じ意味 (自分自身を含むので 1 以上) を返すこと。
+#[tokio::test]
+async fn mysql_connection_count_is_reported() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let n = conn.connection_count().await.expect("connection_count");
+    assert!(
+        n.is_some_and(|c| c >= 1),
+        "Threads_connected >= 1, got {n:?}"
+    );
+    conn.close().await;
+}
+
+/// `user_privileges` の `database` 絞り込み (#1259): 存在しない DB を指定すると
+/// テーブル別の行は空になり、global 行 (mysql.user) は絞り込みに関係なく返る。
+#[tokio::test]
+async fn mysql_user_privileges_database_filter_narrows_table_rows() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let all = conn
+        .user_privileges(&opts.user, Some("%"), None)
+        .await
+        .expect("all");
+    let none = conn
+        .user_privileges(&opts.user, Some("%"), Some("noobdb_no_such_database"))
+        .await
+        .expect("filtered");
+    assert!(none.tables.is_empty());
+    assert_eq!(none.global.is_some(), all.global.is_some());
+    for row in &all.tables {
+        let scoped_db = row.table.split('.').next().unwrap_or_default().to_string();
+        let scoped = conn
+            .user_privileges(&opts.user, Some("%"), Some(&scoped_db))
+            .await
+            .expect("scoped");
+        assert!(scoped
+            .tables
+            .iter()
+            .all(|r| r.table.starts_with(&format!("{scoped_db}."))));
+        assert!(scoped.tables.iter().any(|r| r.table == row.table));
+    }
+    conn.close().await;
+}
+
 /// The preview lifts the user's WHERE clause out of the statement and uses it
 /// to filter the BEFORE snapshot, so an UPDATE or DELETE that touches a row
 /// past the first `row_limit` rows still shows the affected rows in the
@@ -832,7 +885,7 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
     conn.close().await;
 }
 
-/// プロセス監視パネル (list_processes / kill_process) の MySQL 経路。一覧には
+/// プロセス監視パネル (list_processes / kill_processes) の MySQL 経路。一覧には
 /// 少なくとも自分自身のプール接続が現れること、別接続を KILL するとその接続が
 /// 一覧から消えることを確認する。
 #[tokio::test]
@@ -880,7 +933,19 @@ async fn mysql_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
-    conn.kill_process(victim_id).await.expect("kill");
+    let killed = conn.kill_processes(&[victim_id]).await.expect("kill");
+    assert_eq!(killed.killed, 1, "{killed:?}");
+    assert_eq!(killed.failed, 0, "{killed:?}");
+    // 存在しない id は失敗として数え、最初のエラーを返すが、残りの kill は続行する。
+    let mixed = conn
+        .kill_processes(&[i64::MAX, victim_id])
+        .await
+        .expect("kill mixed");
+    assert_eq!(mixed.killed + mixed.failed, 2, "{mixed:?}");
+    assert!(
+        mixed.failed >= 1 && mixed.first_error.is_some(),
+        "{mixed:?}"
+    );
 
     // The server tears the thread down asynchronously; poll briefly.
     let mut gone = false;

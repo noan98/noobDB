@@ -36,7 +36,7 @@ description: noobDB の機能レイヤを変更するとき — エクスポー�
 ## 書き込み経路のガードは自動では効きません
 
 `is_read_only_sql` は SQL 文を通る経路にしか効きません。**SQL 文ではない書き込み**
-(`kill_process` / `apply_sync_sql` / `apply_privilege_sql` / `import_csv` /
+(`kill_processes` / `apply_sync_sql` / `apply_privilege_sql` / `import_csv` /
 `sandbox_advance_base`) は**コマンド側で明示的に `read_only` を拒否**しています。
 同種のコマンドを追加するときは同じガードを入れてください。
 

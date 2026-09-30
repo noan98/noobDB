@@ -7,10 +7,10 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 use super::advisor::UnusedIndexStats;
 use super::tx_options::TxOptions;
 use super::types::{
-    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo,
-    ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+    Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
+    PreviewResult, ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature, SchemaObject,
+    ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
@@ -647,7 +647,7 @@ impl SqliteConn {
 
     /// See [`SqliteConn::list_processes`] — nothing to kill on a file-backed
     /// database.
-    pub async fn kill_process(&self, _id: i64) -> Result<()> {
+    pub async fn kill_processes(&self, _ids: &[i64]) -> Result<KillProcessesResult> {
         Err(AppError::InvalidInput(
             "killing processes is not supported for SQLite (file-backed, no server processes)"
                 .into(),
@@ -668,6 +668,7 @@ impl SqliteConn {
         &self,
         _user: &str,
         _host: Option<&str>,
+        _database: Option<&str>,
     ) -> Result<UserPrivileges> {
         Err(AppError::InvalidInput(
             "users are not supported for SQLite (file-backed, no server-side accounts)".into(),

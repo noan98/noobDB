@@ -81,7 +81,7 @@ pub struct Session {
     /// type-the-connection-name confirmation) and intentionally *not*
     /// persisted: a fresh `Session` — including the in-place swap done by
     /// `reconnect` — always starts with the override off. Only the SQL query
-    /// paths honor it; CSV import, sync apply and `kill_process` keep
+    /// paths honor it; CSV import, sync apply and `kill_processes` keep
     /// rejecting read-only sessions regardless.
     pub emergency_write: AtomicBool,
     /// When true, statements run on this session are NOT written to the

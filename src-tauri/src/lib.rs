@@ -41,12 +41,12 @@ pub mod __test_api {
     pub use crate::db::profile::{ColumnProfile, ProfileHistogramBucket, ProfileValueCount};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
-        ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature,
-        SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics,
-        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableComment,
-        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-        UserPrivileges, Value,
+        Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
+        PreviewResult, ProcessInfo, ProcessListItem, QueryResult, QueryStatsSupport,
+        RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
+        ServerMessageSeverity, ServerMetrics, ServerVariable, StatementStat, StreamBatch,
+        TableColumnInfo, TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
+        TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -244,11 +244,11 @@ pub mod __test_api {
     // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{
         query_stats_support_inner, sample_live_queries_inner, sample_statement_stats_inner,
     };
-    pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
-    pub use crate::commands::process::list_processes_inner;
+    pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
     pub use crate::commands::profile::profile_column_inner;
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
 
@@ -497,14 +497,14 @@ pub mod __test_api {
         crate::flight_recorder::store::list(profile_id, 100).await
     }
 
-    /// Drives the `kill_process` IPC command's core path (session lookup +
+    /// Drives the `kill_processes` IPC command's core path (session lookup +
     /// read-only guard + driver kill) without a Tauri runtime.
-    pub async fn kill_process_via_command(
+    pub async fn kill_processes_via_command(
         state: &AppState,
         session_id: &str,
-        process_id: i64,
-    ) -> crate::error::Result<()> {
-        crate::commands::process::kill_process_inner(state, session_id, process_id).await
+        process_ids: &[i64],
+    ) -> crate::error::Result<KillProcessesResult> {
+        crate::commands::process::kill_processes_inner(state, session_id, process_ids).await
     }
 
     /// Drives the full schema-comparison path (`commands::diff`) without Tauri:
@@ -905,14 +905,14 @@ pub fn run() {
             commands::server::server_info,
             commands::server::server_metrics,
             commands::process::list_processes,
-            commands::process::kill_process,
+            commands::process::get_process_query,
+            commands::process::kill_processes,
             commands::privileges::list_db_users,
             commands::privileges::list_user_privileges,
             commands::privileges::generate_create_user_sql,
             commands::privileges::generate_drop_user_sql,
             commands::privileges::generate_alter_password_sql,
-            commands::privileges::generate_grant_sql,
-            commands::privileges::generate_revoke_sql,
+            commands::privileges::generate_privilege_diff_sql,
             commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,

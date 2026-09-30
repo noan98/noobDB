@@ -200,7 +200,7 @@ DELETE FROM t */` を 1 文と誤読)・閉じタグの無いドル引用で EOF
   `typedConfirmation`、#675 と同じパターン) を経て IPC `set_emergency_mode` で
   有効化すると、`ensure_allowed_for_session` が書き込み文を通します (通過は
   `tracing::warn!` でログに残る)。適用範囲は SQL 実行経路のみで、`import_csv` /
-  `apply_sync_sql` / `kill_process` の read-only 拒否は変わりません。フラグは
+  `apply_sync_sql` / `kill_processes` の read-only 拒否は変わりません。フラグは
   `AtomicBool` としてセッション在命中のみ有効で、切断・`reconnect` のセッション
   差し替えで必ずオフに戻ります (フロントの UI ミラー `emergencySessions` も同じ
   タイミングでリセット)。緊急モード中の書き込みは、フロントの実行ゲートが

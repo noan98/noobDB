@@ -641,8 +641,16 @@ export interface ServerInfo {
 
 /**
  * サーバ側プロセス/接続 1 件 (プロセス監視パネル)。MySQL は processlist、
- * PostgreSQL は pg_stat_activity に対応する。`id` をそのまま `killProcess` に渡す。
+ * PostgreSQL は pg_stat_activity に対応する。`id` をそのまま `killProcesses` に渡す。
+ * クエリ本文は Rust 側で 1 行要約 (`query_summary`) にして返し、全文は
+ * `getProcessQuery` で id 指定で取得する (#1259)。
  */
+export interface KillProcessesResult {
+  killed: number;
+  failed: number;
+  first_error: string | null;
+}
+
 export interface ProcessInfo {
   id: number;
   user: string | null;
@@ -653,7 +661,10 @@ export interface ProcessInfo {
   /** 詳細状態: MySQL STATE / PostgreSQL wait_event。 */
   state: string | null;
   time_secs: number | null;
-  query: string | null;
+  /** 改行・連続空白を畳み 200 文字で切り詰めた 1 行要約。クエリが無ければ null。 */
+  query_summary: string | null;
+  /** 要約が全文より短い (切り詰めた) とき true。 */
+  query_truncated: boolean;
   /**
    * この行が一覧クエリを実行した接続自身 (= 本アプリのプール接続) のとき true。
    * kill するとアプリのセッションが切断されるため、UI は警告を出す。ベスト
@@ -704,21 +715,24 @@ export interface UserPrivileges {
   tables: TablePrivilegeRow[];
 }
 
-/** GRANT/REVOKE の対象と権限フラグ (`generateGrantSql`/`generateRevokeSql` の入力)。
+/** 権限フラグ (CRUD + DDL)。 */
+export interface PrivilegeFlags {
+  select: boolean;
+  insert: boolean;
+  update: boolean;
+  delete: boolean;
+  ddl: boolean;
+}
+
+/** 1 テーブル (または DB/スキーマ全体) 分の権限差分 (`generatePrivilegeDiffSql` の入力)。
  *  `table` を省略すると DB/スキーマ全体が対象になる (MySQL `db.*` / PostgreSQL
  *  `ALL TABLES IN SCHEMA`)。 */
-export interface GrantSpec {
-  user: string;
-  host?: string | null;
-  database: string;
+export interface PrivilegeChange {
   table?: string | null;
-  flags: {
-    select: boolean;
-    insert: boolean;
-    update: boolean;
-    delete: boolean;
-    ddl: boolean;
-  };
+  /** 付与するフラグ。 */
+  added: PrivilegeFlags;
+  /** 剥奪するフラグ。 */
+  removed: PrivilegeFlags;
 }
 
 /**
@@ -1743,9 +1757,19 @@ export const api = {
     invoke<ProcessInfo[]>("list_processes", { sessionId }).then((r) =>
       parseResponse(schemas.processInfoArray, r, "list_processes"),
     ),
-  /** プロセス/接続を強制終了する。read_only セッションはバックエンドで拒否される。 */
-  killProcess: (sessionId: string, processId: number) =>
-    invoke<void>("kill_process", { sessionId, processId }),
+  /** プロセス/接続をまとめて強制終了する (#1259)。PostgreSQL は `unnest` で 1 文、MySQL は
+   *  1 接続上で順に `KILL`。失敗があっても残りは続行し、件数と最初のエラーを返す。
+   *  read_only セッションはバックエンドで拒否される。 */
+  killProcesses: (sessionId: string, processIds: number[]) =>
+    invoke<KillProcessesResult>("kill_processes", { sessionId, processIds }).then((r) =>
+      parseResponse(schemas.killProcessesResult, r, "kill_processes"),
+    ),
+  /** 1 プロセスの実行中 (または直近) の SQL 全文を取得する (#1259)。一覧は要約しか
+   *  返さないため、ツールチップ表示などで全文が要るときだけ呼ぶ。消えていれば null。 */
+  getProcessQuery: (sessionId: string, processId: number) =>
+    invoke<string | null>("get_process_query", { sessionId, processId }).then((r) =>
+      parseResponse(schemas.nullableStringResponse, r, "get_process_query"),
+    ),
   /**
    * サーバランタイムのメトリクスを 1 サンプル取得する (監視ダッシュボード #731)。
    * `SHOW GLOBAL STATUS` / `pg_stat_activity` などメモリ上のカウンタを読むだけの
@@ -1913,12 +1937,20 @@ export const api = {
     invoke<DbUserInfo[]>("list_db_users", { sessionId }).then((r) =>
       parseResponse(schemas.dbUserInfoArray, r, "list_db_users"),
     ),
-  /** 指定ユーザ/ロールの CRUD+DDL 権限マトリクスを取得する。読み取りのみ。 */
-  listUserPrivileges: (sessionId: string, user: string, host?: string | null) =>
+  /** 指定ユーザ/ロールの CRUD+DDL 権限マトリクスを取得する。読み取りのみ。`database`
+   *  (MySQL: DB 名 / PostgreSQL: スキーマ名) を渡すと、テーブル別の行をサーバ側で絞る
+   *  (global 行は常に返る, #1259)。 */
+  listUserPrivileges: (
+    sessionId: string,
+    user: string,
+    host?: string | null,
+    database?: string | null,
+  ) =>
     invoke<UserPrivileges>("list_user_privileges", {
       sessionId,
       user,
       host: host ?? null,
+      database: database ?? null,
     }).then((r) => parseResponse(schemas.userPrivileges, r, "list_user_privileges")),
   /** `CREATE USER` / `CREATE ROLE` の SQL を生成する (純粋、副作用なし)。 */
   generateCreateUserSql: (
@@ -1946,20 +1978,23 @@ export const api = {
     invoke<string>("generate_alter_password_sql", { driver, name, host, password }).then((r) =>
       parseResponse(schemas.stringResponse, r, "generate_alter_password_sql"),
     ),
-  /** `GRANT <privs> ON ... TO ...` の SQL を生成する (純粋)。選択された権限が無い
-   *  ときは `null` (生成する文が無い)。 */
-  generateGrantSql: (driver: DriverKind, spec: GrantSpec) =>
-    invoke<string | null>("generate_grant_sql", {
+  /** 権限差分 (テーブルごとの付与/剥奪フラグ) から `GRANT` / `REVOKE` 文をまとめて
+   *  生成する (純粋, #1259)。テーブル順に GRANT → REVOKE を並べ、フラグが無い側は出力
+   *  しない。 */
+  generatePrivilegeDiffSql: (
+    driver: DriverKind,
+    user: string,
+    host: string | null,
+    database: string,
+    changes: PrivilegeChange[],
+  ) =>
+    invoke<string[]>("generate_privilege_diff_sql", {
       driver,
-      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
-    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_grant_sql")),
-  /** `REVOKE <privs> ON ... FROM ...` の SQL を生成する (純粋)。`null` は
-   *  `generateGrantSql` と同じ意味。 */
-  generateRevokeSql: (driver: DriverKind, spec: GrantSpec) =>
-    invoke<string | null>("generate_revoke_sql", {
-      driver,
-      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
-    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_revoke_sql")),
+      user,
+      host,
+      database,
+      changes: changes.map((c) => ({ ...c, table: c.table ?? null })),
+    }).then((r) => parseResponse(schemas.stringArrayResponse, r, "generate_privilege_diff_sql")),
   /**
    * 確認済みの SQL 文 (CREATE USER / DROP USER / ALTER ... PASSWORD / GRANT /
    * REVOKE) を 1 トランザクションで適用する。`applySyncSql` と同じガード
