@@ -28,7 +28,14 @@
   メタデータ・行を取得して上記純粋関数に渡す IPC ラッパー。両セッションが同一ドライバで
   あること、データ比較対象テーブルにプライマリキーがあることを要求し、データ比較は
   `MAX_DATA_ROWS=5000` / `DEFAULT_DATA_ROWS=1000` で上限を設けます (マスターデータ向け)。
-- `commands/sync.rs`: `generate_sync_sql` / `generate_data_sync_sql` (純粋生成) と
+- **データ差分は Rust が ID で保持する (#1259)**: `compare_table_data` は表示用の `diff` と
+  `diff_id` を返し、差分本体 (最大 5,000 行) は `AppState::data_diffs` (`state.rs` の
+  `DiffStore`) に残す。フロントはこれまで差分全体を `generate_data_sync_sql` /
+  `sandbox_advance_base` へ丸ごと送り返していたが、今は `diff_id` (+ 除外キー `skipKeys`) だけ
+  を送る。上限は 64 件 / 合計 20 万行 (超過分は最古から破棄)、`release_data_diffs` (比較の
+  やり直し・画面を閉じたとき) とセッション切断 (`AppState::remove`) でも破棄する。破棄済みの
+  ID は `InvalidInput` (「比較をやり直してください」)。永続化はしない。
+- `commands/sync.rs`: `generate_sync_sql` / `generate_data_sync_sql(diff_id, allow_delete, skip_keys)` (純粋生成) と
   `apply_sync_sql` (ターゲットセッションでトランザクション実行) を公開。`allow_destructive`
   (`DROP`) / `allow_delete` (`DELETE`) フラグで破壊的操作をオプトインにし、読み取り専用
   セッションへの適用は拒否します。MySQL は DDL の暗黙コミットのため best-effort 逐次、

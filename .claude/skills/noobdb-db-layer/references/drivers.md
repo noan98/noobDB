@@ -9,12 +9,12 @@ DB レイヤは意図的に手書きの enum で実装されており、トレ�
 `preview_execute_with_limit`, `execute_stream`, `import_rows`, `execute_transaction`,
 `databases`, `tables`, `columns`, `schema_overview`, `foreign_keys`, `schema_objects`,
 `object_definition`, `list_indexes`, `table_row_estimates`, `list_processes`,
-`kill_process`, `close`, `driver_kind`) でバリアントに対してマッチします。**新しい
+`kill_processes`, `close`, `driver_kind`) でバリアントに対してマッチします。**新しい
 データベースを追加する場合は、`DriverKind` にバリアントを追加し、同じメソッド表面を
 公開する `db/<name>.rs` モジュールを追加し、`db/mod.rs` の各 `match` アームを拡張します。**
 SSH やセッション層には触らないでください — それらはドライバに依存しません。`schema_objects` /
 `object_definition` (ビュー・ルーチン・トリガーの列挙と DDL 取得)、`list_indexes`、
-`table_row_estimates` (統計情報ベースの概算行数)、`list_processes` / `kill_process`
+`table_row_estimates` (統計情報ベースの概算行数)、`list_processes` / `kill_processes`
 (MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity`) もこの enum 表面の一部で、
 SQLite では多くがサーバ機能非対応のため空や no-op で短絡します。
 

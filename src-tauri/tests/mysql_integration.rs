@@ -266,6 +266,59 @@ async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
     conn.close().await;
 }
 
+/// 接続ヘルス (#1259) 用の軽量な接続数取得が `server_metrics` の `Threads_connected` と
+/// 同じ意味 (自分自身を含むので 1 以上) を返すこと。
+#[tokio::test]
+async fn mysql_connection_count_is_reported() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let n = conn.connection_count().await.expect("connection_count");
+    assert!(
+        n.is_some_and(|c| c >= 1),
+        "Threads_connected >= 1, got {n:?}"
+    );
+    conn.close().await;
+}
+
+/// `user_privileges` の `database` 絞り込み (#1259): 存在しない DB を指定すると
+/// テーブル別の行は空になり、global 行 (mysql.user) は絞り込みに関係なく返る。
+#[tokio::test]
+async fn mysql_user_privileges_database_filter_narrows_table_rows() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let all = conn
+        .user_privileges(&opts.user, Some("%"), None)
+        .await
+        .expect("all");
+    let none = conn
+        .user_privileges(&opts.user, Some("%"), Some("noobdb_no_such_database"))
+        .await
+        .expect("filtered");
+    assert!(none.tables.is_empty());
+    assert_eq!(none.global.is_some(), all.global.is_some());
+    for row in &all.tables {
+        let scoped_db = row.table.split('.').next().unwrap_or_default().to_string();
+        let scoped = conn
+            .user_privileges(&opts.user, Some("%"), Some(&scoped_db))
+            .await
+            .expect("scoped");
+        assert!(scoped
+            .tables
+            .iter()
+            .all(|r| r.table.starts_with(&format!("{scoped_db}."))));
+        assert!(scoped.tables.iter().any(|r| r.table == row.table));
+    }
+    conn.close().await;
+}
+
 /// The preview lifts the user's WHERE clause out of the statement and uses it
 /// to filter the BEFORE snapshot, so an UPDATE or DELETE that touches a row
 /// past the first `row_limit` rows still shows the affected rows in the
@@ -832,7 +885,7 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
     conn.close().await;
 }
 
-/// プロセス監視パネル (list_processes / kill_process) の MySQL 経路。一覧には
+/// プロセス監視パネル (list_processes / kill_processes) の MySQL 経路。一覧には
 /// 少なくとも自分自身のプール接続が現れること、別接続を KILL するとその接続が
 /// 一覧から消えることを確認する。
 #[tokio::test]
@@ -880,7 +933,19 @@ async fn mysql_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
-    conn.kill_process(victim_id).await.expect("kill");
+    let killed = conn.kill_processes(&[victim_id]).await.expect("kill");
+    assert_eq!(killed.killed, 1, "{killed:?}");
+    assert_eq!(killed.failed, 0, "{killed:?}");
+    // 存在しない id は失敗として数え、最初のエラーを返すが、残りの kill は続行する。
+    let mixed = conn
+        .kill_processes(&[i64::MAX, victim_id])
+        .await
+        .expect("kill mixed");
+    assert_eq!(mixed.killed + mixed.failed, 2, "{mixed:?}");
+    assert!(
+        mixed.failed >= 1 && mixed.first_error.is_some(),
+        "{mixed:?}"
+    );
 
     // The server tears the thread down asynchronously; poll briefly.
     let mut gone = false;
@@ -1443,6 +1508,312 @@ async fn mysql_data_quality_assertions_on_read_only_session() {
     ] {
         seed.execute(sql, None).await.expect(sql);
     }
+}
+
+/// #1259: 構造化セル編集 (`bulk_update_cells`)・テストデータ投入 (`insert_generated_rows`)・
+/// 接続ヘルス (`health_probe_all`) を実 MySQL で通す。IN チャンク / 複合 PK / NULL を含む PK の
+/// UPDATE が方言どおりに解釈され、生成行の真偽・NULL・数値が列型へ強制変換されることを確認する。
+#[tokio::test]
+async fn mysql_bulk_write_and_health_probe_commands() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = opts.database.clone().expect("database in url");
+    let items = format!("noobdb_bulk1259_items_{}", std::process::id());
+    let pairs = format!("noobdb_bulk1259_pairs_{}", std::process::id());
+    let gen = format!("noobdb_bulk1259_gen_{}", std::process::id());
+    for tbl in [&items, &pairs, &gen] {
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+            .await;
+    }
+    conn.execute(
+        &format!("CREATE TABLE {items} (id BIGINT PRIMARY KEY, name VARCHAR(50), n INT)"),
+        Some(&db),
+    )
+    .await
+    .expect("create items");
+    conn.execute(
+        &format!("CREATE TABLE {pairs} (a INT NOT NULL, b VARCHAR(10) NOT NULL, n INT)"),
+        Some(&db),
+    )
+    .await
+    .expect("create pairs");
+    conn.execute(
+        &format!("CREATE TABLE {gen} (id INT PRIMARY KEY, label VARCHAR(40) NOT NULL, flag TINYINT(1), score DOUBLE PRECISION, note VARCHAR(20))"),
+        Some(&db),
+    )
+    .await
+    .expect("create gen");
+    let values = (1..=1100)
+        .map(|i| format!("({i}, 'old', {i})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute(&format!("INSERT INTO {items} VALUES {values}"), Some(&db))
+        .await
+        .expect("seed items");
+    conn.execute(
+        &format!("INSERT INTO {pairs} VALUES (1, 'x', 0), (1, 'y', 0), (2, 'z', 0)"),
+        Some(&db),
+    )
+    .await
+    .expect("seed pairs");
+
+    let session = t::make_session("bulk_real", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let text = |c: &str, v: &str| t::BulkSetColumn {
+        column: c.into(),
+        value: t::BulkSetValue::Text { text: v.into() },
+    };
+    let num = |c: &str, v: &str| t::BulkSetColumn {
+        column: c.into(),
+        value: t::BulkSetValue::Number { text: v.into() },
+    };
+
+    // 単一 PK の IN チャンク (1100 件 = 500 + 500 + 100) + 別グループ。文字列は引用リテラル。
+    let keys: Vec<Vec<t::Value>> = (1..=1100).map(|i| vec![t::Value::Int(i)]).collect();
+    let res = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &items,
+        vec!["id".into()],
+        vec![
+            t::BulkUpdateGroup {
+                set: vec![text("name", "it's a \\ test"), num("n", "-7")],
+                keys: keys[..1099].to_vec(),
+            },
+            t::BulkUpdateGroup {
+                set: vec![text("name", "last")],
+                keys: keys[1099..].to_vec(),
+            },
+        ],
+        vec![],
+    )
+    .await
+    .expect("bulk update items");
+    assert_eq!(res.rows_affected, 1100);
+    let s = state.get(&sid).await.expect("session");
+    let r = s
+        .conn
+        .execute(
+            &format!(
+                "SELECT count(*) FROM {items} WHERE name = 'last' OR (n = -7 AND name IS NOT NULL)"
+            ),
+            Some(&db),
+        )
+        .await
+        .expect("verify");
+    assert!(
+        matches!(&r.rows[0][0], t::Value::Int(1100)),
+        "{:?}",
+        r.rows[0]
+    );
+    let r = s
+        .conn
+        .execute(&format!("SELECT name FROM {items} WHERE id = 1"), Some(&db))
+        .await
+        .expect("verify escaped text");
+    assert!(
+        matches!(&r.rows[0][0], t::Value::String(v) if v == "it's a \\ test"),
+        "{:?}",
+        r.rows[0]
+    );
+
+    // 複合 PK。
+    let res = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &pairs,
+        vec!["a".into(), "b".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![num("n", "9")],
+            keys: vec![
+                vec![t::Value::Int(1), t::Value::String("y".into())],
+                vec![t::Value::Int(2), t::Value::String("z".into())],
+            ],
+        }],
+        vec![],
+    )
+    .await
+    .expect("bulk update pairs");
+    assert_eq!(res.rows_affected, 2);
+
+    // 生成行の投入: 真偽 / NULL / 数値 / 文字列が列型へ強制変換され、途中失敗で全件ロールバック。
+    let cols: Vec<String> = ["id", "label", "flag", "score", "note"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let rows: Vec<Vec<serde_json::Value>> = (1..=250)
+        .map(|i| {
+            vec![
+                serde_json::json!(i),
+                serde_json::json!(format!("o'brien \\ {i}")),
+                serde_json::json!(i % 2 == 0),
+                serde_json::json!(i as f64 + 0.25),
+                serde_json::Value::Null,
+            ]
+        })
+        .collect();
+    let ins = t::insert_generated_rows_via_command(&state, &sid, Some(&db), &gen, &cols, &rows)
+        .await
+        .expect("insert generated");
+    assert_eq!(ins.inserted, 250);
+    let r = s
+        .conn
+        .execute(
+            &format!("SELECT count(*), count(note), min(label) FROM {gen}"),
+            Some(&db),
+        )
+        .await
+        .expect("verify generated");
+    assert!(
+        matches!(&r.rows[0][0], t::Value::Int(250)),
+        "{:?}",
+        r.rows[0]
+    );
+    assert!(matches!(&r.rows[0][1], t::Value::Int(0)), "{:?}", r.rows[0]);
+    let mut dup = rows.clone();
+    dup.push(rows[0].clone()); // 主キー重複で失敗する。
+    assert!(
+        t::insert_generated_rows_via_command(&state, &sid, Some(&db), &gen, &cols, &dup)
+            .await
+            .is_err()
+    );
+    let r = s
+        .conn
+        .execute(&format!("SELECT count(*) FROM {gen}"), Some(&db))
+        .await
+        .expect("count after failed insert");
+    assert!(
+        matches!(&r.rows[0][0], t::Value::Int(250)),
+        "{:?}",
+        r.rows[0]
+    );
+
+    // 接続ヘルス: 生きている接続は up + バージョン + 接続数、未知のセッションは down。
+    let probe =
+        t::health_probe_all_inner(&state, &[sid.clone(), "nope".to_string()], 5_000, false).await;
+    assert_eq!(probe[0].status, t::HealthProbeStatus::Up);
+    assert!(probe[0].latency_ms.is_some());
+    assert!(probe[0].version.as_deref().is_some_and(|v| !v.is_empty()));
+    assert!(
+        probe[0].connections.is_some_and(|c| c >= 1),
+        "{:?}",
+        probe[0]
+    );
+    assert_eq!(probe[1].status, t::HealthProbeStatus::Down);
+
+    for tbl in [&items, &pairs, &gen] {
+        let _ = s
+            .conn
+            .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+            .await;
+    }
+}
+
+/// #1259: インスペクタの差分集計 (`start_statement_recording` / `sample_statement_delta`) と
+/// ライブテールの指紋化 (`sample_live_queries`) を実 MySQL のコマンド層で通す。記録開始後に
+/// 別接続が発行した目印クエリだけが差分行に現れ (回数は開始時点からの差)、SQL 本文は初出の
+/// 1 回だけ載り、累積表示でも同じ digest は本文なしで返る。
+#[tokio::test]
+async fn mysql_inspector_delta_and_tail_fingerprint_commands() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let support = conn.query_stats_support().await.expect("support probe");
+    if !support.statements || !support.live_tail {
+        eprintln!("skip: performance_schema digest / history consumers unavailable");
+        conn.close().await;
+        return;
+    }
+    let session = t::make_session("insp_real", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let o = t::NPlusOneOptions::sanitized(10, 2000);
+
+    let observed = t::connect(&opts).await.expect("second connect");
+    // 記録開始前に 1 回: baseline に含まれるので差分には出ない。
+    observed
+        .execute("SELECT 1259 AS noobdb_inspector_delta_marker", None)
+        .await
+        .expect("pre-marker");
+    t::start_statement_recording_inner(&state, &sid)
+        .await
+        .expect("start recording");
+    for i in 0..3 {
+        observed
+            .execute(
+                &format!("SELECT {} AS noobdb_inspector_delta_marker", 1260 + i),
+                None,
+            )
+            .await
+            .expect("marker");
+    }
+
+    let rows = t::sample_statement_delta_inner(&state, &sid, false, true, o)
+        .await
+        .expect("delta");
+    // サーバ側 prepared statement (バイナリプロトコル) はリテラル違いが別 digest になるため、
+    // 目印の行は複数に分かれうる。合計で「記録開始後の 3 回」になること、開始前の 1 回
+    // (baseline に含まれる) は現れないこと、本文が初出で載ることを確認する。
+    let markers: Vec<_> = rows
+        .iter()
+        .filter(|r| {
+            r.fingerprint
+                .as_deref()
+                .is_some_and(|f| f.contains("noobdb_inspector_delta_marker"))
+        })
+        .collect();
+    assert!(
+        !markers.is_empty(),
+        "marker digests appear with their body on first sight"
+    );
+    assert_eq!(
+        markers.iter().map(|r| r.calls).sum::<i64>(),
+        3,
+        "{markers:?}"
+    );
+    assert!(
+        markers.iter().all(|r| !r
+            .fingerprint
+            .as_deref()
+            .unwrap_or_default()
+            .contains("1259 AS")),
+        "the call made before the baseline must not appear: {markers:?}"
+    );
+
+    // 2 回目以降 (累積表示を含む) は同じ digest の本文を返さない。
+    let again = t::sample_statement_delta_inner(&state, &sid, true, false, o)
+        .await
+        .expect("cumulative recompute");
+    let first = markers[0];
+    let same = again
+        .iter()
+        .find(|r| r.digest == first.digest && r.database == first.database)
+        .expect("same digest in the cumulative view");
+    assert!(same.fingerprint.is_none());
+    assert!(same.calls >= first.calls);
+
+    // ライブテールには Rust で付けた同型クエリキーが載る (数値リテラルは ? に畳まれる)。
+    let tail = t::sample_live_queries_inner(&state, &sid)
+        .await
+        .expect("tail");
+    let q = tail
+        .iter()
+        .find(|q| q.query.contains("noobdb_inspector_delta_marker"))
+        .expect("marker in the live tail");
+    assert_eq!(q.fingerprint, "select ? as noobdb_inspector_delta_marker");
+
+    observed.close().await;
 }
 
 /// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの

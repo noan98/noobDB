@@ -46,13 +46,14 @@
 
 ## ライブクエリ・インスペクタ (#746)
 
-`commands/inspector.rs` の 3 コマンド。
+`commands/inspector.rs` の 4 コマンド。
 
 | コマンド | 内容 |
 |---|---|
 | `query_stats_support` | 前提可否プローブ。MySQL は `performance_schema` / consumer の状態、PostgreSQL は `pg_stat_statements` の有無・可読性を調べる |
 | `sample_live_queries` | 実行中/直近のステートメントをポーリングで取得 |
-| `sample_statement_stats` | 集約済みのステートメント統計 |
+| `start_statement_recording` | 記録開始。digest 累積スナップショットをセッション状態に baseline として保持 (#1259) |
+| `sample_statement_delta` | baseline からの digest 差分 (calls > 0 の行) と N+1 目安。`refresh: false` は前回取得分を `cumulative` 切替で再計算するだけ (#1259) |
 
 - **使えない機能には理由コードを付けて返します** (`QueryStatsSupport` の
   `live_tail_reason` / `statements_reason`)。フロントがコードを有効化手順つきの
@@ -64,7 +65,19 @@
   同一プールの別物理接続はエンジンから区別できないためベストエフォートです
   (`ProcessInfo::is_self` と同じ限界)。
 - SQLite は未対応 (`unsupported_driver` 縮退)。
-- UI: `components/QueryInspectorPanel.tsx`、純ロジックは `components/queryInspector.ts`。
+- **差分集計・指紋化はバックエンド (#1259)**: `db/inspector.rs` の `InspectorState` が
+  `Session::inspector` にセッション単位で baseline / 直前 / 最新スナップショットと
+  送信済み digest を保持し、引き算・N+1 レート目安・総時間降順の整列を行う。
+  **サーバ側カウンタはリセットしない** (権限不要) 設計は従来どおりで、引き算を
+  クライアントから Rust へ移しただけ。SQL 本文 (`fingerprint`) は digest の初出時だけ
+  返し、フロントは `digest + database` キーでキャッシュする (`start_statement_recording`
+  で送信済み集合がリセットされる)。状態は `Session` のフィールドなので切断・再接続で
+  破棄される。ライブテールの同型クエリキーも `sample_live_queries` が
+  `LiveQuery.fingerprint` として返す (`normalize_sql_fingerprint`)。旧 JS 実装を oracle に
+  生成したゴールデンベクタ `src/__tests__/fixtures/sqlFingerprintVectors.json` で出力の
+  一致を Rust のテストが固定する。正規化規則を変えるときはこの JSON に境界ケースを追記する。
+- UI: `components/QueryInspectorPanel.tsx`、純ロジック (N+1 窓判定・テールのマージ/
+  フィルタ) は `components/queryInspector.ts`。
 
 ## サーバ情報 / メトリクス (#563)
 

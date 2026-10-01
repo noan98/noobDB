@@ -130,6 +130,15 @@ mod select_rows_sql_tests {
     }
 }
 
+/// `compare_table_data` の結果。`diff` は表示用、`diff_id` は Rust 側のストア
+/// (`AppState::data_diffs`) に保持した同じ差分の ID で、SQL 生成 (`generate_data_sync_sql`)
+/// にはこの ID だけを送り返す (#1259)。不要になったら `release_data_diffs` で破棄する。
+#[derive(Debug, serde::Serialize)]
+pub struct DataDiffHandle {
+    pub diff_id: String,
+    pub diff: DataDiff,
+}
+
 /// Compares the rows of one `table` between the source and target databases,
 /// pairing by primary key. Reads at most `limit` rows per side (clamped to a
 /// master-data-sized cap); a table without a primary key is rejected since
@@ -143,7 +152,7 @@ pub async fn compare_table_data(
     table: String,
     limit: Option<usize>,
     state: State<'_, AppState>,
-) -> Result<DataDiff> {
+) -> Result<DataDiffHandle> {
     let source = state
         .get(&source_session_id)
         .await
@@ -201,7 +210,7 @@ pub async fn compare_table_data(
 
     let rows = compute_data_diff(&columns, &pk_idx, &source_rows, &target_rows);
 
-    Ok(DataDiff {
+    let diff = DataDiff {
         target_driver: driver,
         table,
         columns,
@@ -211,5 +220,10 @@ pub async fn compare_table_data(
         truncated,
         source_count,
         target_count,
-    })
+    };
+    let diff_id = state.store_data_diff(
+        diff.clone(),
+        vec![source_session_id.clone(), target_session_id.clone()],
+    );
+    Ok(DataDiffHandle { diff_id, diff })
 }

@@ -1,0 +1,245 @@
+{
+  "description": "normalizeSqlFingerprint (旧 queryInspector.ts の実装) を oracle にして生成したゴールデンベクタ (#1259)。Rust の db::inspector::normalize_sql_fingerprint が一致することを固定する。",
+  "vectors": [
+    {
+      "input": "SELECT * FROM users\n WHERE id = 42",
+      "expected": "select * from users where id = ?"
+    },
+    {
+      "input": "select * from users where id = 7",
+      "expected": "select * from users where id = ?"
+    },
+    {
+      "input": "SELECT *  FROM users WHERE id = 42",
+      "expected": "select * from users where id = ?"
+    },
+    {
+      "input": "select * from t where name = 'alice'",
+      "expected": "select * from t where name = ?"
+    },
+    {
+      "input": "select 'a''b;c'",
+      "expected": "select ?"
+    },
+    {
+      "input": "select 'a\\'b', 2",
+      "expected": "select ?, ?"
+    },
+    {
+      "input": "select 1.5, 2e10, 0xFF from t",
+      "expected": "select ?, ?, ? from t"
+    },
+    {
+      "input": "select * from t -- trailing\nwhere a = 1 /* block */",
+      "expected": "select * from t where a = ?"
+    },
+    {
+      "input": "select * from t # mysql comment\nwhere a = 1",
+      "expected": "select * from t where a = ?"
+    },
+    {
+      "input": "SELECT * FROM t WHERE id IN (1, 2, 3)",
+      "expected": "select * from t where id in (?)"
+    },
+    {
+      "input": "SELECT * FROM t WHERE id IN (4)",
+      "expected": "select * from t where id in (?)"
+    },
+    {
+      "input": "INSERT INTO t VALUES (1, 'a'), (2, 'b')",
+      "expected": "insert into t values (?, ?)"
+    },
+    {
+      "input": "INSERT INTO t VALUES (3, 'c')",
+      "expected": "insert into t values (?, ?)"
+    },
+    {
+      "input": "select col1 from table2",
+      "expected": "select col1 from table2"
+    },
+    {
+      "input": "select a--b from t",
+      "expected": "select a--b from t"
+    },
+    {
+      "input": "select a -- \nfrom t",
+      "expected": "select a from t"
+    },
+    {
+      "input": "select a --\nfrom t",
+      "expected": "select a from t"
+    },
+    {
+      "input": "select a --",
+      "expected": "select a"
+    },
+    {
+      "input": "select a --x\nfrom t",
+      "expected": "select a --x from t"
+    },
+    {
+      "input": "select 1 from t where x = \"abc\" and y = \"a\"\"b\"",
+      "expected": "select ? from t where x = ? and y = ?"
+    },
+    {
+      "input": "select 'unterminated",
+      "expected": "select 'unterminated"
+    },
+    {
+      "input": "select 'a'' from t",
+      "expected": "select ?' from t"
+    },
+    {
+      "input": "select 'a\\",
+      "expected": "select 'a\\"
+    },
+    {
+      "input": "select 'x' 'y' from t",
+      "expected": "select ? ? from t"
+    },
+    {
+      "input": "select 123abc, abc123, 1e5x, 1.5.3, 1e, 1e+5, 1.e5, .5, -3 from t",
+      "expected": "select 123abc, abc123, 1e5x, ?.?, 1e, ?, ?.e5, .?, -? from t"
+    },
+    {
+      "input": "select 0x, 0xZZ, 0x1g, x0xff, 0XAB from t",
+      "expected": "select 0x, 0xzz, 0x1g, x0xff, 0xab from t"
+    },
+    {
+      "input": "select 1e5, 1E+5, 1.5e-3, 12.34.56 from t",
+      "expected": "select ?, ?, ?, ?.? from t"
+    },
+    {
+      "input": "select /* c1 */ 1 /* c2 */ + 2",
+      "expected": "select ? + ?"
+    },
+    {
+      "input": "select /* unterminated 1",
+      "expected": "select /* unterminated ?"
+    },
+    {
+      "input": "select '/* not a comment */' , 5 from t",
+      "expected": "select ? , ? from t"
+    },
+    {
+      "input": "select * from t where id in(1,2,3) and x in ( 1 , 2 )",
+      "expected": "select * from t where id in (?) and x in (?)"
+    },
+    {
+      "input": "select * from t where id in (1, 'a', 2)",
+      "expected": "select * from t where id in (?)"
+    },
+    {
+      "input": "select min(1), in (1), main(1) from t",
+      "expected": "select min(?), in (?), main(?) from t"
+    },
+    {
+      "input": "select * from t where id in ()",
+      "expected": "select * from t where id in ()"
+    },
+    {
+      "input": "select * from t where id in (1,",
+      "expected": "select * from t where id in (?,"
+    },
+    {
+      "input": "INSERT INTO t (a,b) VALUES (1,2),(3,4),(5,6)",
+      "expected": "insert into t (a,b) values (?,?)"
+    },
+    {
+      "input": "INSERT INTO t VALUES (1), (2)",
+      "expected": "insert into t values (?)"
+    },
+    {
+      "input": "INSERT INTO t VALUES ( 1 , 2 ) , ( 3 , 4 )",
+      "expected": "insert into t values ( ? , ? )"
+    },
+    {
+      "input": "INSERT INTO t VALUES (1, 2), (3)",
+      "expected": "insert into t values (?, ?)"
+    },
+    {
+      "input": "INSERT INTO t VALUES (1, 2)",
+      "expected": "insert into t values (?, ?)"
+    },
+    {
+      "input": "SELECT\tA B　C D",
+      "expected": "select a b c d"
+    },
+    {
+      "input": "SELECT Ünï, 日本語 FROM テーブル WHERE 名前 = '太郎'",
+      "expected": "select ünï, 日本語 from テーブル where 名前 = ?"
+    },
+    {
+      "input": "",
+      "expected": ""
+    },
+    {
+      "input": "   ",
+      "expected": ""
+    },
+    {
+      "input": "-- only comment",
+      "expected": ""
+    },
+    {
+      "input": "# only comment",
+      "expected": ""
+    },
+    {
+      "input": "/* only */",
+      "expected": ""
+    },
+    {
+      "input": "select `col` from `tab` where `x` = 10",
+      "expected": "select `col` from `tab` where `x` = ?"
+    },
+    {
+      "input": "select * from t where a = $1 and b = $2",
+      "expected": "select * from t where a = $? and b = $?"
+    },
+    {
+      "input": "select * from t where a = :a1 and b = ?",
+      "expected": "select * from t where a = :a1 and b = ?"
+    },
+    {
+      "input": "UPDATE t SET a = a + 1 WHERE id = 99",
+      "expected": "update t set a = a + ? where id = ?"
+    },
+    {
+      "input": "select 'it''s', 'a\\\\' , 3",
+      "expected": "select ?, ? , ?"
+    },
+    {
+      "input": "select \"a\\\"b\", 4",
+      "expected": "select ?, ?"
+    },
+    {
+      "input": "select 1\r\n-- c\r\n, 2",
+      "expected": "select ? , ?"
+    },
+    {
+      "input": "select 9007199254740993",
+      "expected": "select ?"
+    },
+    {
+      "input": "select 3.",
+      "expected": "select ?."
+    },
+    {
+      "input": "select 3.x",
+      "expected": "select ?.x"
+    },
+    {
+      "input": "select 1_000, a1b2 from t",
+      "expected": "select 1_000, a1b2 from t"
+    },
+    {
+      "input": "select * from t where x in (1) or y in (2, 3)",
+      "expected": "select * from t where x in (?) or y in (?)"
+    },
+    {
+      "input": "select * from t where x IN (1,2)",
+      "expected": "select * from t where x in (?)"
+    }
+  ]
+}

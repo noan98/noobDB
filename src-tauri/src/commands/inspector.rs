@@ -1,6 +1,9 @@
+use std::time::Instant;
+
 use tauri::State;
 
-use crate::db::types::{LiveQuery, QueryStatsSupport, StatementStat};
+use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
+use crate::db::types::{LiveQuery, QueryStatsSupport};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -58,30 +61,92 @@ pub async fn sample_live_queries_inner(
         .get(session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
-    session.conn.live_queries().await
+    let mut queries = session.conn.live_queries().await?;
+    // 同型クエリキー (N+1 グルーピング用) はここで付ける (#1259)。
+    for q in &mut queries {
+        q.fingerprint = normalize_sql_fingerprint(&q.query);
+    }
+    Ok(queries)
 }
 
-/// digest (フィンガープリント) 単位の累積統計スナップショットを返す。
-/// 「記録開始からの差分」はフロントの純ロジック (`queryInspector.ts`) が
-/// 2 スナップショットの引き算で求める — サーバ側カウンタのリセット権限が
-/// 無くても使えるようにするため。read_only セッションでも許可し、履歴は
-/// 汚さない (`sample_live_queries` と同じ)。
+/// ステートメント統計の記録を開始する (#1259)。現在の digest 累積スナップショットを
+/// セッション状態に baseline として保持する (記録開始からの差分の基準)。サーバ側の
+/// カウンタはリセットしない — 権限が無くても使えるよう、引き算は Rust 側で行う設計は
+/// 従来のフロント実装と同じ。読み取り SELECT のみで、read_only セッションでも許可し、
+/// 履歴は汚さない (`sample_live_queries` と同じ)。
 #[tauri::command]
-pub async fn sample_statement_stats(
+pub async fn start_statement_recording(
     session_id: String,
     state: State<'_, AppState>,
-) -> Result<Vec<StatementStat>> {
-    sample_statement_stats_inner(state.inner(), &session_id).await
+) -> Result<()> {
+    start_statement_recording_inner(state.inner(), &session_id).await
 }
 
-/// Core of [`sample_statement_stats`]. See [`query_stats_support_inner`] (#881).
-pub async fn sample_statement_stats_inner(
-    state: &AppState,
-    session_id: &str,
-) -> Result<Vec<StatementStat>> {
+/// Core of [`start_statement_recording`]. See [`query_stats_support_inner`] (#881).
+pub async fn start_statement_recording_inner(state: &AppState, session_id: &str) -> Result<()> {
     let session = state
         .get(session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
-    session.conn.statement_stats().await
+    let snapshot = session.conn.statement_stats().await?;
+    session
+        .inspector
+        .lock()
+        .await
+        .start(snapshot, Instant::now());
+    Ok(())
+}
+
+/// baseline (記録開始) からの digest 差分を返す (#1259)。`refresh` ならサーバの統計を
+/// 取り直して直前との差分レートから N+1 目安も更新し、そうでなければ前回取得分を
+/// `cumulative` (baseline 無視) の切替で再計算するだけ (サーバへは問い合わせない)。
+/// 返すのは calls > 0 の行のみで、SQL 本文 (`fingerprint`) は digest の初出時だけ載せる。
+/// 状態はセッション単位で、切断・再接続で破棄される。`start_statement_recording` 前に
+/// `refresh` で呼ばれた場合はその時点を baseline として開始する。読み取りのみ。
+#[tauri::command]
+pub async fn sample_statement_delta(
+    session_id: String,
+    cumulative: bool,
+    refresh: bool,
+    n_plus_one_min_count: u32,
+    n_plus_one_window_ms: u32,
+    state: State<'_, AppState>,
+) -> Result<Vec<StatementDeltaRow>> {
+    sample_statement_delta_inner(
+        state.inner(),
+        &session_id,
+        cumulative,
+        refresh,
+        NPlusOneOptions::sanitized(n_plus_one_min_count, n_plus_one_window_ms),
+    )
+    .await
+}
+
+/// Core of [`sample_statement_delta`]. See [`query_stats_support_inner`] (#881).
+pub async fn sample_statement_delta_inner(
+    state: &AppState,
+    session_id: &str,
+    cumulative: bool,
+    refresh: bool,
+    opts: NPlusOneOptions,
+) -> Result<Vec<StatementDeltaRow>> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    // サーバへの問い合わせはロックの外で行う (refresh=false の再計算を待たせない)。
+    let snapshot = if refresh {
+        Some(session.conn.statement_stats().await?)
+    } else {
+        None
+    };
+    let mut inspector = session.inspector.lock().await;
+    if let Some(snapshot) = snapshot {
+        if inspector.has_baseline() {
+            inspector.ingest(snapshot, Instant::now(), opts);
+        } else {
+            inspector.start(snapshot, Instant::now());
+        }
+    }
+    Ok(inspector.rows(cumulative))
 }

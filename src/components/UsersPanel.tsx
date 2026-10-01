@@ -4,6 +4,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import {
   api,
   type DbUserInfo,
+  type PrivilegeChange,
   type DriverKind,
   type TablePrivilegeRow,
 } from "../api/tauri";
@@ -170,11 +171,12 @@ export function UsersPanel({
       setLoadingPrivs(true);
       setPrivsError(null);
       try {
-        const p = await api.listUserPrivileges(sessionId, u.name, u.host);
+        const p = await api.listUserPrivileges(sessionId, u.name, u.host, database);
         setGlobalRow(p.global);
         const prefix = database ? `${database}.` : null;
         const rows: Record<string, Flags> = {};
         for (const row of p.tables) {
+          // DB での絞り込みはサーバ側 (WHERE) で済んでいる。プレフィックスは表示名用。
           if (!prefix || !row.table.startsWith(prefix)) continue;
           rows[row.table.slice(prefix.length)] = flagsFromRow(row);
         }
@@ -235,33 +237,19 @@ export function UsersPanel({
 
   const applyPrivilegeChanges = useCallback(async () => {
     if (!selected || !database) return;
-    const statements: string[] = [];
+    // 差分があるテーブルだけを 1 回の IPC でまとめて SQL 化する (#1259)。
+    const changes: PrivilegeChange[] = [];
     for (const table of rowKeys) {
       const o = original[table] ?? EMPTY_FLAGS;
       const e = edited[table] ?? EMPTY_FLAGS;
       const added = diffFlags(o, e, true);
       const removed = diffFlags(o, e, false);
-      if (flagsAny(added)) {
-        const sql = await api.generateGrantSql(driver, {
-          user: selected.name,
-          host: selected.host,
-          database,
-          table,
-          flags: added,
-        });
-        if (sql) statements.push(sql);
-      }
-      if (flagsAny(removed)) {
-        const sql = await api.generateRevokeSql(driver, {
-          user: selected.name,
-          host: selected.host,
-          database,
-          table,
-          flags: removed,
-        });
-        if (sql) statements.push(sql);
-      }
+      if (flagsAny(added) || flagsAny(removed)) changes.push({ table, added, removed });
     }
+    const statements =
+      changes.length === 0
+        ? []
+        : await api.generatePrivilegeDiffSql(driver, selected.name, selected.host, database, changes);
     if (statements.length === 0) {
       toast.info(t("usersNoChanges"));
       return;

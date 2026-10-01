@@ -410,8 +410,20 @@ export function SchemaCompareView({
   const [dataTable, setDataTable] = useState<string>("");
   const [dataLimit, setDataLimit] = useState(1000);
   const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
+  // `dataDiff` をバックエンドが保持している ID (#1259)。SQL 生成にはこの ID だけを送る。
+  const [dataDiffId, setDataDiffId] = useState<string | null>(null);
+  const heldDiffIdRef = useRef<string | null>(null);
   const [dataComparing, setDataComparing] = useState(false);
   const [allowDelete, setAllowDelete] = useState(false);
+
+  // バックエンドが保持している差分を解放する。比較のやり直し・失敗・画面を閉じたときに呼ぶ。
+  const releaseHeldDiff = useCallback(() => {
+    const id = heldDiffIdRef.current;
+    if (!id) return;
+    heldDiffIdRef.current = null;
+    void api.releaseDataDiffs([id]).catch(() => {});
+  }, []);
+  useEffect(() => releaseHeldDiff, [releaseHeldDiff]);
 
   // Any change to the schema diff invalidates a previously generated plan and
   // any in-flight data comparison (the connections / databases changed).
@@ -422,8 +434,10 @@ export function SchemaCompareView({
     setSyncError(null);
     setApplyResult(null);
     setDataDiff(null);
+    setDataDiffId(null);
+    releaseHeldDiff();
     setDataTable("");
-  }, [diff]);
+  }, [diff, releaseHeldDiff]);
 
   // Sessions this view opened, keyed by profile id so the same profile chosen
   // on both sides reuses one connection. Disconnected on unmount.
@@ -629,22 +643,28 @@ export function SchemaCompareView({
         table: dataTable,
         limit: dataLimit,
       });
-      setDataDiff(result);
+      // 直前の比較結果はバックエンドの保持を解放してから差し替える。
+      releaseHeldDiff();
+      heldDiffIdRef.current = result.diff_id;
+      setDataDiff(result.diff);
+      setDataDiffId(result.diff_id);
     } catch (e) {
       setSyncError(String(e));
+      releaseHeldDiff();
       setDataDiff(null);
+      setDataDiffId(null);
     } finally {
       setDataComparing(false);
     }
-  }, [source, target, dataTable, dataLimit]);
+  }, [source, target, dataTable, dataLimit, releaseHeldDiff]);
 
   const generateDataPlan = useCallback(async () => {
-    if (!dataDiff) return;
+    if (!dataDiffId) return;
     setGenerating(true);
     setSyncError(null);
     setApplyResult(null);
     try {
-      const result = await api.generateDataSyncSql(dataDiff, allowDelete);
+      const result = await api.generateDataSyncSql(dataDiffId, allowDelete);
       setPlan(result);
       setPlanKind("data");
       setSelected(defaultSelection(result));
@@ -653,7 +673,7 @@ export function SchemaCompareView({
     } finally {
       setGenerating(false);
     }
-  }, [dataDiff, allowDelete]);
+  }, [dataDiffId, allowDelete]);
 
   const dataCounts = useMemo(() => {
     const c = { source_only: 0, target_only: 0, different: 0 };

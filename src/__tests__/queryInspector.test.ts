@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { LiveQuery, StatementStat } from "../api/tauri";
+import type { LiveQuery } from "../api/tauri";
 import {
-  computeStatDelta,
   DEFAULT_N_PLUS_ONE_MIN_COUNT,
   DEFAULT_N_PLUS_ONE_WINDOW_MS,
   detectNPlusOne,
@@ -10,25 +9,10 @@ import {
   formatMs,
   isPrivilegeMasked,
   mergeLiveTail,
-  normalizeSqlFingerprint,
-  nPlusOneFromRate,
   sanitizeNPlusOneOptions,
   supportReasonI18nKey,
   type LiveTailEntry,
 } from "../components/queryInspector";
-
-function stat(over: Partial<StatementStat>): StatementStat {
-  return {
-    digest: "d1",
-    fingerprint: "select * from t where id = ?",
-    database: "app",
-    calls: 0,
-    total_time_ms: 0,
-    max_time_ms: 0,
-    rows: null,
-    ...over,
-  };
-}
 
 function live(over: Partial<LiveQuery>): LiveQuery {
   return {
@@ -42,125 +26,16 @@ function live(over: Partial<LiveQuery>): LiveQuery {
     rows_examined: null,
     running: false,
     started_at_ms: null,
+    fingerprint: "select * from users where id = ?",
     ...over,
   };
 }
-
-describe("normalizeSqlFingerprint", () => {
-  it("数値・文字列リテラルを ? へ置換し、空白と大文字小文字を正規化する", () => {
-    expect(normalizeSqlFingerprint("SELECT * FROM users\n WHERE id = 42")).toBe(
-      "select * from users where id = ?",
-    );
-    expect(normalizeSqlFingerprint("select * from users where id = 7")).toBe(
-      normalizeSqlFingerprint("SELECT *  FROM users WHERE id=42".replace("=", " = ")),
-    );
-    expect(normalizeSqlFingerprint("select * from t where name = 'alice'")).toBe(
-      "select * from t where name = ?",
-    );
-  });
-
-  it("エスケープを含む文字列リテラルを 1 リテラルとして畳む", () => {
-    expect(normalizeSqlFingerprint("select 'a''b;c'")).toBe("select ?");
-    expect(normalizeSqlFingerprint("select 'a\\'b', 2")).toBe("select ?, ?");
-  });
-
-  it("小数・指数・16 進リテラルも置換する", () => {
-    expect(normalizeSqlFingerprint("select 1.5, 2e10, 0xFF from t")).toBe(
-      "select ?, ?, ? from t",
-    );
-  });
-
-  it("コメントを除去する", () => {
-    expect(
-      normalizeSqlFingerprint("select * from t -- trailing\nwhere a = 1 /* block */"),
-    ).toBe("select * from t where a = ?");
-    expect(normalizeSqlFingerprint("select * from t # mysql comment\nwhere a = 1")).toBe(
-      "select * from t where a = ?",
-    );
-  });
-
-  it("IN リストの要素数の違いを同型に畳む", () => {
-    const a = normalizeSqlFingerprint("SELECT * FROM t WHERE id IN (1, 2, 3)");
-    const b = normalizeSqlFingerprint("SELECT * FROM t WHERE id IN (4)");
-    expect(a).toBe(b);
-    expect(a).toBe("select * from t where id in (?)");
-  });
-
-  it("VALUES の複数行を 1 行に畳む (列数は保持する)", () => {
-    const a = normalizeSqlFingerprint("INSERT INTO t VALUES (1, 'a'), (2, 'b')");
-    const b = normalizeSqlFingerprint("INSERT INTO t VALUES (3, 'c')");
-    expect(a).toBe(b);
-    expect(a).toBe("insert into t values (?, ?)");
-  });
-
-  it("識別子中の数字は置換しない", () => {
-    expect(normalizeSqlFingerprint("select col1 from table2")).toBe(
-      "select col1 from table2",
-    );
-  });
-});
 
 describe("isPrivilegeMasked", () => {
   it("PostgreSQL の権限マスク行を検出する", () => {
     expect(isPrivilegeMasked("<insufficient privilege>")).toBe(true);
     expect(isPrivilegeMasked("  <insufficient privilege> ")).toBe(true);
     expect(isPrivilegeMasked("select 1")).toBe(false);
-  });
-});
-
-describe("computeStatDelta", () => {
-  it("記録開始時点からの差分を計算し総時間降順で返す", () => {
-    const baseline = [
-      stat({ digest: "a", calls: 10, total_time_ms: 100, rows: 50 }),
-      stat({ digest: "b", calls: 5, total_time_ms: 500 }),
-    ];
-    const current = [
-      stat({ digest: "a", calls: 14, total_time_ms: 140, max_time_ms: 30, rows: 70 }),
-      stat({ digest: "b", calls: 6, total_time_ms: 900, max_time_ms: 400 }),
-    ];
-    const rows = computeStatDelta(baseline, current);
-    expect(rows.map((r) => r.digest)).toEqual(["b", "a"]);
-    const a = rows.find((r) => r.digest === "a");
-    expect(a).toMatchObject({ calls: 4, totalTimeMs: 40, meanTimeMs: 10, rows: 20 });
-    // max は高水位マークなので累積値のまま。
-    expect(a?.maxTimeMs).toBe(30);
-  });
-
-  it("差分ゼロの digest は出さない", () => {
-    const s = stat({ digest: "a", calls: 10, total_time_ms: 100 });
-    expect(computeStatDelta([s], [s])).toEqual([]);
-  });
-
-  it("baseline に無い digest は初出として全量を差分にする", () => {
-    const rows = computeStatDelta([], [stat({ digest: "new", calls: 3, total_time_ms: 30 })]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ calls: 3, totalTimeMs: 30, meanTimeMs: 10 });
-  });
-
-  it("カウンタ逆行 (サーバ側リセット) は baseline を 0 とみなす", () => {
-    const rows = computeStatDelta(
-      [stat({ digest: "a", calls: 100, total_time_ms: 1000, rows: 10 })],
-      [stat({ digest: "a", calls: 4, total_time_ms: 40, rows: 2 })],
-    );
-    expect(rows[0]).toMatchObject({ calls: 4, totalTimeMs: 40, rows: 2 });
-  });
-
-  it("同じ digest でも database が違えば別行として扱う", () => {
-    const rows = computeStatDelta(
-      [stat({ digest: "a", database: "db1", calls: 5, total_time_ms: 10 })],
-      [
-        stat({ digest: "a", database: "db1", calls: 6, total_time_ms: 20 }),
-        stat({ digest: "a", database: "db2", calls: 3, total_time_ms: 30 }),
-      ],
-    );
-    expect(rows).toHaveLength(2);
-    expect(rows.find((r) => r.database === "db1")?.calls).toBe(1);
-    expect(rows.find((r) => r.database === "db2")?.calls).toBe(3);
-  });
-
-  it("rows が null のエンジン (PG activity 相当) では null を維持する", () => {
-    const rows = computeStatDelta([], [stat({ digest: "a", calls: 1, rows: null })]);
-    expect(rows[0].rows).toBeNull();
   });
 });
 
@@ -201,7 +76,7 @@ describe("detectNPlusOne", () => {
   });
 });
 
-describe("sanitizeNPlusOneOptions / nPlusOneFromRate", () => {
+describe("sanitizeNPlusOneOptions", () => {
   it("不正な閾値は既定値へフォールバックし、下限を強制する", () => {
     expect(sanitizeNPlusOneOptions({})).toEqual({
       minCount: DEFAULT_N_PLUS_ONE_MIN_COUNT,
@@ -216,19 +91,10 @@ describe("sanitizeNPlusOneOptions / nPlusOneFromRate", () => {
       windowMs: DEFAULT_N_PLUS_ONE_WINDOW_MS,
     });
   });
-
-  it("レート換算で時間窓あたりの回数が閾値以上なら true", () => {
-    // 5 秒で 50 回 → 2 秒窓あたり 20 回 ≥ 10。
-    expect(nPlusOneFromRate(50, 5000, { minCount: 10, windowMs: 2000 })).toBe(true);
-    // 5 秒で 10 回 → 2 秒窓あたり 4 回 < 10。
-    expect(nPlusOneFromRate(10, 5000, { minCount: 10, windowMs: 2000 })).toBe(false);
-    expect(nPlusOneFromRate(0, 5000)).toBe(false);
-    expect(nPlusOneFromRate(50, 0)).toBe(false);
-  });
 });
 
 describe("mergeLiveTail", () => {
-  it("新規イベントに観測時刻とフィンガープリントを刻んで先頭へ積む", () => {
+  it("新規イベントに観測時刻を刻み、Rust が付けたフィンガープリントを保って先頭へ積む", () => {
     const merged = mergeLiveTail([], [live({ key: "a" }), live({ key: "b" })], 5000);
     expect(merged.map((e) => e.key)).toEqual(["a", "b"]);
     expect(merged[0].observedAtMs).toBe(5000);

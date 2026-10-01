@@ -7,9 +7,11 @@
 
 use tauri::State;
 
-use crate::db::data_diff::{generate_data_sync_sql as generate_data, DataDiff};
+use crate::db::data_diff::generate_data_sync_sql as generate_data;
 use crate::db::diff::SchemaDiff;
+use crate::db::sandbox::filter_out_keys;
 use crate::db::sync::{generate_sync_sql as generate, SyncPlan};
+use crate::db::types::Value;
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -23,10 +25,56 @@ pub fn generate_sync_sql(diff: SchemaDiff, allow_destructive: bool) -> SyncPlan 
 }
 
 /// Renders the INSERT / UPDATE / DELETE that make the target table's rows match
-/// the source's. Pure; `DELETE`s appear only when `allow_delete` is set.
+/// the source's; `DELETE`s appear only when `allow_delete` is set. The diff
+/// itself stays in Rust (`AppState::data_diffs`, handed out as `diff_id` by
+/// `compare_table_data` / `sandbox_table_diff`) — the frontend used to round-trip
+/// up to 5,000 rows back through IPC just to get them rendered (#1259). `skip_keys`
+/// drops rows (by typed primary key) before rendering — the sandbox conflict
+/// resolution "skip (keep the real database's value)" (formerly
+/// `filter_sandbox_data_diff`). An unknown / released / evicted `diff_id` is an
+/// `InvalidInput` error ("compare again").
 #[tauri::command]
-pub fn generate_data_sync_sql(diff: DataDiff, allow_delete: bool) -> SyncPlan {
-    generate_data(&diff, allow_delete)
+pub fn generate_data_sync_sql(
+    diff_id: String,
+    allow_delete: bool,
+    skip_keys: Option<Vec<Vec<Value>>>,
+    state: State<'_, AppState>,
+) -> Result<SyncPlan> {
+    generate_data_sync_sql_inner(state.inner(), &diff_id, allow_delete, skip_keys.as_deref())
+}
+
+/// Core of [`generate_data_sync_sql`] without Tauri's `State` wrapper (#881).
+pub(crate) fn generate_data_sync_sql_inner(
+    state: &AppState,
+    diff_id: &str,
+    allow_delete: bool,
+    skip_keys: Option<&[Vec<Value>]>,
+) -> Result<SyncPlan> {
+    let diff = stored_diff(state, diff_id)?;
+    Ok(match skip_keys {
+        Some(keys) if !keys.is_empty() => {
+            generate_data(&filter_out_keys(&diff, keys), allow_delete)
+        }
+        _ => generate_data(&diff, allow_delete),
+    })
+}
+
+/// 保持中の差分を取り出す。無ければ (解放済み / 上限で破棄 / 切断で破棄) 比較のやり直しを促す。
+pub(crate) fn stored_diff(
+    state: &AppState,
+    diff_id: &str,
+) -> Result<std::sync::Arc<crate::db::data_diff::DataDiff>> {
+    state.get_data_diff(diff_id).ok_or_else(|| {
+        AppError::InvalidInput(
+            "the compared data is no longer available (expired or released); compare again".into(),
+        )
+    })
+}
+
+/// 不要になった保持差分を破棄する (比較のやり直し・画面を閉じたとき, #1259)。未知の ID は無視する。
+#[tauri::command]
+pub fn release_data_diffs(diff_ids: Vec<String>, state: State<'_, AppState>) {
+    state.release_data_diffs(&diff_ids);
 }
 
 /// Applies `statements` to `database` on the target session in one transaction
