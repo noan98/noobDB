@@ -707,6 +707,20 @@ describe("シナリオ: 折りたたみ時のパネルバーから中核機能�
   });
 });
 
+describe("シナリオ: 未接続表示の一本化 (#1276, 実ブラウザ)", () => {
+  it("未接続の「未接続」はステータスバーの 1 か所だけで、接続するとヘッダに接続名が出る", async () => {
+    const screen = await renderInBrowser(<App />);
+    await expect.element(screen.getByText(t("appDisconnected"), { exact: true }).first()).toBeVisible();
+    // ワークスペースヘッダとステータスバーの二重表示にならない。
+    expect(screen.getByText(t("appDisconnected"), { exact: true }).elements()).toHaveLength(1);
+
+    // 接続中にヘッダが担っていた接続名は失われない。
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    expect(screen.getByText(t("appDisconnected"), { exact: true }).elements()).toHaveLength(0);
+    await expect.element(screen.getByText("Alpha DB", { exact: true }).last()).toBeVisible();
+  });
+});
+
 describe("シナリオ: サイドバータブの sliding indicator とクロスフェード (#1173, 実ブラウザ)", () => {
   // アクティブインジケータ (`MotionSidebarTabIndicator`) は `aria-hidden` の
   // motion.span としてアクティブなタブの内側にのみ描画される (`SidebarTabButton`)。
