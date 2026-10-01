@@ -40,7 +40,7 @@ import {
   tablePinPosition,
   toTablePinning,
 } from "./gridColumnPinning";
-import { CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
+import { api, CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
@@ -172,6 +172,23 @@ import {
   nullRatePercentOf,
 } from "./gridStats";
 import { numericStatsFromStream, streamStatsFor } from "./streamStats";
+import { shouldUseHandleForGrid, resultHandleFor, HANDLE_FIND_LIMIT } from "./resultHandle";
+import {
+  buildHandleRequest,
+  handleRequestKey,
+  isIdentityRequest,
+  columnFilterPasses,
+  compareBoolCells,
+  compareNumericCells,
+  compareStringCells,
+  globalCellIncludes,
+  isColumnFilterActive,
+  type ColumnFilter,
+  type FilterNullMode,
+  type FilterOp,
+  type NumberFilterOp,
+  type TextFilterOp,
+} from "./gridSortFilter";
 import {
   type GridFindMatch,
   type GridFindResult,
@@ -1306,54 +1323,15 @@ function formatBytes(n: number): string {
   return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
 }
 
-// Sort: nulls are pushed after non-null values for asc; flipped to top by desc inversion.
-function cmpNullable<T>(a: T | null, b: T | null, cmp: (a: T, b: T) => number): number {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  return cmp(a, b);
-}
+const sortNumeric: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) =>
+  compareNumericCells(rowA.getValue(columnId) as CellValue, rowB.getValue(columnId) as CellValue);
 
-const sortNumeric: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) => {
-  const av = rowA.getValue(columnId) as CellValue;
-  const bv = rowB.getValue(columnId) as CellValue;
-  const an = av === null || av === undefined ? null : Number(av);
-  const bn = bv === null || bv === undefined ? null : Number(bv);
-  return cmpNullable(an, bn, (x, y) => {
-    if (Number.isNaN(x) && Number.isNaN(y)) return 0;
-    if (Number.isNaN(x)) return 1;
-    if (Number.isNaN(y)) return -1;
-    return x === y ? 0 : x < y ? -1 : 1;
-  });
-};
+const sortBool: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) =>
+  compareBoolCells(rowA.getValue(columnId) as CellValue, rowB.getValue(columnId) as CellValue);
 
-const sortBool: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) => {
-  const av = rowA.getValue(columnId) as CellValue;
-  const bv = rowB.getValue(columnId) as CellValue;
-  const toBool = (v: CellValue): boolean | null => {
-    if (v === null || v === undefined) return null;
-    if (typeof v === "boolean") return v;
-    if (typeof v === "number") return v !== 0;
-    const s = String(v).toLowerCase();
-    if (s === "true" || s === "1") return true;
-    if (s === "false" || s === "0") return false;
-    return null;
-  };
-  return cmpNullable(toBool(av), toBool(bv), (x, y) => (x === y ? 0 : x ? 1 : -1));
-};
+const sortString: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) =>
+  compareStringCells(rowA.getValue(columnId) as CellValue, rowB.getValue(columnId) as CellValue);
 
-// localeCompare はオプション付き呼び出しのたびに照合設定を再構築するため、
-// O(n log n) のソート比較では事前構築した Intl.Collator を使う (順序は同一で
-// 10〜100 倍速い)。
-const stringCollator = new Intl.Collator(undefined, { numeric: true });
-
-const sortString: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) => {
-  const av = rowA.getValue(columnId) as CellValue;
-  const bv = rowB.getValue(columnId) as CellValue;
-  const as = av === null || av === undefined ? null : String(av);
-  const bs = bv === null || bv === undefined ? null : String(bv);
-  return cmpNullable(as, bs, (x, y) => stringCollator.compare(x, y));
-};
 
 function sortingFnForKind(kind: CellKind): SortFn<GridFeatures, RowShape> {
   switch (kind) {
@@ -1539,20 +1517,8 @@ export function writeStoredColumnState(
  * structured value is stored as the TanStack column filter value and read back
  * by `columnFilter` (the `filterFn`) and the header popup.
  */
-export type FilterNullMode = "any" | "only" | "exclude";
-export type TextFilterOp = "contains" | "equals" | "notEquals" | "startsWith" | "endsWith";
-export type NumberFilterOp = "eq" | "ne" | "gt" | "lt" | "between";
-export type FilterOp = TextFilterOp | NumberFilterOp;
-
-export interface ColumnFilter {
-  op: FilterOp;
-  /** Primary operand (or lower bound for `between`). */
-  value: string;
-  /** Upper bound for `between`; ignored by every other operator. */
-  value2: string;
-  nullMode: FilterNullMode;
-}
-
+export type { ColumnFilter, FilterNullMode, FilterOp, NumberFilterOp, TextFilterOp };
+export { isColumnFilterActive };
 const TEXT_FILTER_OPS: { op: TextFilterOp; key: I18nKey }[] = [
   { op: "contains", key: "gridFilterOpContains" },
   { op: "equals", key: "gridFilterOpEquals" },
@@ -1582,96 +1548,8 @@ function makeDefaultFilter(kind: CellKind): ColumnFilter {
   };
 }
 
-/** A plain (optionally signed) base-10 integer string, safe for BigInt(). */
-function isIntegerLiteral(s: string): boolean {
-  return /^[+-]?\d+$/.test(s.trim());
-}
-
-/** Does the filter carry a value operand (vs. being a NULL-only condition)? */
-function filterHasValue(f: ColumnFilter): boolean {
-  if (f.op === "between") return f.value.trim() !== "" || f.value2.trim() !== "";
-  return f.value.trim() !== "";
-}
-
-/**
- * A filter only counts as "active" when it actually narrows the result: it has
- * a value operand or a non-default NULL gate. Inactive filters are stored as
- * `undefined` so the header icon highlight and the filtered-row summary track
- * real conditions only.
- */
-export function isColumnFilterActive(f: ColumnFilter | undefined): f is ColumnFilter {
-  return !!f && (f.nullMode !== "any" || filterHasValue(f));
-}
-
-function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFilter): boolean {
-  switch (f.op) {
-    case "contains":
-    case "equals":
-    case "notEquals":
-    case "startsWith":
-    case "endsWith": {
-      const s = String(v).toLowerCase();
-      const q = f.value.toLowerCase();
-      if (f.op === "contains") return s.includes(q);
-      if (f.op === "equals") return s === q;
-      if (f.op === "notEquals") return s !== q;
-      if (f.op === "startsWith") return s.startsWith(q);
-      return s.endsWith(q);
-    }
-    case "eq":
-    case "ne":
-    case "gt":
-    case "lt":
-    case "between": {
-      const raw = String(v).trim();
-      const a = f.value.trim();
-      const b = f.value2.trim();
-      // Big integers (e.g. BIGINT ids beyond 2^53) lose precision through
-      // Number(), which would break `eq`/range on real-world key columns. When
-      // the cell value and every supplied operand are plain integers, compare
-      // exactly via BigInt. Fractional decimals (and anything non-integer) fall
-      // back to Number — the same precision ceiling the numeric sort comparator
-      // already accepts.
-      const operands = f.op === "between" ? [a, b] : [a];
-      const present = operands.filter((x) => x !== "");
-      if (isIntegerLiteral(raw) && present.length > 0 && present.every(isIntegerLiteral)) {
-        const n = BigInt(raw);
-        if (f.op === "eq") return n === BigInt(a);
-        if (f.op === "ne") return n !== BigInt(a);
-        if (f.op === "gt") return n > BigInt(a);
-        if (f.op === "lt") return n < BigInt(a);
-        // between: an empty bound is treated as open.
-        return (a === "" || n >= BigInt(a)) && (b === "" || n <= BigInt(b));
-      }
-      const n = Number(v);
-      if (Number.isNaN(n)) return false;
-      const an = a === "" ? NaN : Number(a);
-      if (f.op === "eq") return !Number.isNaN(an) && n === an;
-      if (f.op === "ne") return !Number.isNaN(an) && n !== an;
-      if (f.op === "gt") return !Number.isNaN(an) && n > an;
-      if (f.op === "lt") return !Number.isNaN(an) && n < an;
-      // between: an empty bound is treated as open (-∞ / +∞).
-      const bn = b === "" ? NaN : Number(b);
-      const lo = Number.isNaN(an) ? -Infinity : an;
-      const hi = Number.isNaN(bn) ? Infinity : bn;
-      return n >= lo && n <= hi;
-    }
-  }
-}
-
-const columnFilter: FilterFn<GridFeatures, RowShape> = (row, columnId, filterValue) => {
-  const f = filterValue as ColumnFilter | undefined;
-  if (!isColumnFilterActive(f)) return true;
-  const v = row.getValue(columnId) as CellValue;
-  const isNull = v === null || v === undefined;
-  if (f.nullMode === "only") return isNull;
-  if (f.nullMode === "exclude" && isNull) return false;
-  // The NULL gate is satisfied; a bare NULL gate (no value operand) passes here.
-  if (!filterHasValue(f)) return true;
-  // A value condition can't be met by NULL (the "only" case already returned).
-  if (isNull) return false;
-  return matchesColumnValue(v, f);
-};
+const columnFilter: FilterFn<GridFeatures, RowShape> = (row, columnId, filterValue) =>
+  columnFilterPasses(row.getValue(columnId) as CellValue, filterValue as ColumnFilter | undefined);
 
 const globalIncludesFilter: FilterFn<GridFeatures, RowShape> = (row, _columnId, filterValue) => {
   const fv = (filterValue ?? "") as string;
@@ -1680,12 +1558,11 @@ const globalIncludesFilter: FilterFn<GridFeatures, RowShape> = (row, _columnId, 
   const r = row as Row<GridFeatures, RowShape>;
   for (const cell of r.getAllCells()) {
     if (!cell.column.getCanGlobalFilter()) continue;
-    const v = cell.getValue() as CellValue;
-    const s = v === null || v === undefined ? "null" : String(v);
-    if (s.toLowerCase().includes(needle)) return true;
+    if (globalCellIncludes(cell.getValue() as CellValue, needle)) return true;
   }
   return false;
 };
+
 
 /** Field styling shared by the filter popup's selects/inputs. */
 const FILTER_FIELD_CSS: SystemStyleObject = {
@@ -2370,12 +2247,21 @@ function ColumnStatsMenu({
   onExploreColumn,
   footerFn,
   onSetFooterFn,
+  resultId,
+  colIdx,
 }: {
   columnName: string;
   kind: CellKind;
   anchor: DOMRect;
   /** 取得済み (在メモリ) のこの列の全値。 */
   values: CellValue[];
+  /**
+   * 結果ハンドル (#1264)。あれば統計をバックエンド (`result_column_stats`) で集計し、
+   * 全行の頻度集計を JS で回さない。取得できなければ `values` から JS で計算する。
+   */
+  resultId?: string | null;
+  /** `resultId` 使用時に集計する列の添字。 */
+  colIdx?: number;
   onClose: () => void;
   /** 全件集計に必要な情報。未指定なら「全件集計」を出さない。 */
   statsRequest?: FullStatsRequest;
@@ -2395,7 +2281,47 @@ function ColumnStatsMenu({
   const [loadingFull, setLoadingFull] = useState(false);
   const [fullError, setFullError] = useState<string | null>(null);
 
-  const stats: ColumnStats = useMemo(() => computeColumnStats(values, kind), [values, kind]);
+  const [remoteStats, setRemoteStats] = useState<ColumnStats | null>(null);
+  const [remoteFailed, setRemoteFailed] = useState(false);
+  const useRemote = !!resultId && colIdx !== undefined && !remoteFailed;
+  useEffect(() => {
+    if (!useRemote || !resultId || colIdx === undefined) return;
+    let cancelled = false;
+    api
+      .resultColumnStats(resultId, colIdx)
+      .then((out) => {
+        if (cancelled) return;
+        if (out === null) setRemoteFailed(true);
+        else setRemoteStats(out);
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [useRemote, resultId, colIdx]);
+  const stats: ColumnStats = useMemo(
+    () =>
+      useRemote
+        ? (remoteStats ?? {
+            // 集計結果が届くまでの仮の表示 (件数だけ分かっている)。
+            count: values.length,
+            nullCount: 0,
+            nonNullCount: 0,
+            distinctCount: 0,
+            numericCount: 0,
+            sum: null,
+            avg: null,
+            min: null,
+            max: null,
+            minLen: null,
+            maxLen: null,
+            mode: null,
+          })
+        : computeColumnStats(values, kind),
+    [useRemote, remoteStats, values, kind],
+  );
   // 率の式は列ヘッダのミニバー (#911) / 集計フッターと `nullRatePercentOf` で共有する。
   const nullPct = nullRatePercentOf(stats);
 
@@ -3644,6 +3570,57 @@ export const DataGrid = memo(function DataGrid({
     return next;
   }, [rows]);
 
+  // ── 結果ハンドル経由のソート・フィルタ (#1264) ──
+  // 行数しきい値以上で、バックエンドが行を保持している (ハンドルがある) 結果だけ、ソート・
+  // 列フィルタ・全体フィルタを `result_sort_filter` に任せ、返ってきた表示順の行インデックスで
+  // 行を並べる。ハンドルが無い / 破棄済み / ページング表示のときは従来どおり TanStack が JS で処理する。
+  // 行配列が編集などで入れ替わればハンドルは自動的に外れる (`resultHandle.ts`)。
+  const rawHandleId = enableColumnControls && !paginationState ? shouldUseHandleForGrid(rows) : null;
+  const [goneHandleId, setGoneHandleId] = useState<string | null>(null);
+  const activeHandleId = rawHandleId && rawHandleId !== goneHandleId ? rawHandleId : null;
+  const handleRequest = useMemo(
+    () =>
+      activeHandleId
+        ? buildHandleRequest(sorting, columnFilters, globalFilter, columnKinds)
+        : null,
+    [activeHandleId, sorting, columnFilters, globalFilter, columnKinds],
+  );
+  const handleRequestKeyStr = handleRequest ? handleRequestKey(handleRequest) : "";
+  // `order` が null のときは「並びも絞り込みも無い」(元の行順そのまま)。
+  const [handleOrder, setHandleOrder] = useState<{ id: string; order: number[] | null } | null>(null);
+  useEffect(() => {
+    if (!activeHandleId || !handleRequest) {
+      setHandleOrder(null);
+      return;
+    }
+    if (isIdentityRequest(handleRequest)) {
+      setHandleOrder({ id: activeHandleId, order: null });
+      return;
+    }
+    let cancelled = false;
+    api
+      .resultSortFilter({ resultId: activeHandleId, ...handleRequest })
+      .then((order) => {
+        if (cancelled) return;
+        if (order === null) {
+          // 破棄済み: JS 経路へ戻る。
+          setGoneHandleId(activeHandleId);
+          return;
+        }
+        setHandleOrder({ id: activeHandleId, order });
+      })
+      .catch(() => {
+        if (!cancelled) setGoneHandleId(activeHandleId);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 条件は JSON キーで比較する (handleRequest の参照は描画ごとに変わりうる)。
+  }, [activeHandleId, handleRequestKeyStr]);
+  // 最初の順序が届くまでは TanStack の JS 結果を表示し続ける (ちらつき防止)。届いた後は
+  // 条件が変わっても新しい順序が来るまで前の順序を保つ。
+  const handleManual = !!activeHandleId && handleOrder?.id === activeHandleId;
+
   const table = useTable({
     features: gridFeatures,
     data,
@@ -3677,6 +3654,9 @@ export const DataGrid = memo(function DataGrid({
     // ページング表示でないときは登録済みのページング行モデルを素通しにする
     // (`gridFeatures` のコメント参照)。
     manualPagination: !paginationState,
+    // ハンドル経由の順序が使えるときは TanStack のソート・フィルタを素通しにする (#1264)。
+    manualSorting: handleManual,
+    manualFiltering: handleManual,
     enableSortingRemoval: true,
     enableColumnResizing: true,
     columnResizeMode: "onChange",
@@ -3968,7 +3948,17 @@ export const DataGrid = memo(function DataGrid({
     applyValueToCells(pending.rowIndices, pending.colIndices, pending.value);
   };
 
-  const visibleRows = table.getRowModel().rows;
+  const tableRows = table.getRowModel().rows;
+  const visibleRows = useMemo(() => {
+    if (!handleManual || !handleOrder?.order) return tableRows;
+    // ハンドルの順序は元の行位置 (= core row model の添字) の並び。
+    const out: typeof tableRows = [];
+    for (const i of handleOrder.order) {
+      const r = tableRows[i];
+      if (r) out.push(r);
+    }
+    return out;
+  }, [handleManual, handleOrder, tableRows]);
   // Original column indices in their current *display* order (reorder/hide
   // aware). Keyboard navigation steps through this; data lookups use the
   // original index it yields.
@@ -6123,6 +6113,8 @@ export const DataGrid = memo(function DataGrid({
             kind={kind}
             anchor={statsMenu.anchor}
             values={colValues}
+            resultId={enableColumnControls ? shouldUseHandleForGrid(rows) : null}
+            colIdx={colIdx}
             statsRequest={statsRequest}
             onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
             onExploreColumn={
@@ -6619,7 +6611,68 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // ストリーミング中は行が届くたびにヒット一覧を全件再計算しない (#1257)。クエリ・
   // オプションが変わらない限り直前の結果を保持し、完了 (streaming=false) で再計算する。
   const lastFindRef = useRef<{ key: string; value: GridFindResult } | null>(null);
-  const findResult = useMemo<GridFindResult>(() => {
+  // 結果ハンドル経由の検索 (#1264)。行数しきい値以上でバックエンドが行を保持している結果は、
+  // 正規表現を使わない検索を `result_find` に任せる (ヒットは上限付き)。正規表現は JS と Rust で
+  // 文法・意味が違うため常に JS。ストリーミング中・ハンドル破棄済みも JS。
+  const findHandleId = !streaming && !findRegex ? shouldUseHandleForGrid(result?.rows) : null;
+  const [goneFindHandleId, setGoneFindHandleId] = useState<string | null>(null);
+  const activeFindHandleId =
+    findOpen && findHandleId && findHandleId !== goneFindHandleId ? findHandleId : null;
+  const [remoteFind, setRemoteFind] = useState<{
+    key: string;
+    result: GridFindResult;
+    total: number;
+    truncated: boolean;
+  } | null>(null);
+  const remoteFindKey = JSON.stringify([
+    activeFindHandleId,
+    effectiveFindQuery,
+    findCaseSensitive,
+    findWholeCell,
+  ]);
+  useEffect(() => {
+    if (!activeFindHandleId) {
+      setRemoteFind(null);
+      return;
+    }
+    if (effectiveFindQuery === "") {
+      setRemoteFind({ key: remoteFindKey, result: EMPTY_FIND_RESULT, total: 0, truncated: false });
+      return;
+    }
+    let cancelled = false;
+    api
+      .resultFind({
+        resultId: activeFindHandleId,
+        query: effectiveFindQuery,
+        options: { caseSensitive: findCaseSensitive, wholeCell: findWholeCell },
+        limit: HANDLE_FIND_LIMIT,
+      })
+      .then((out) => {
+        if (cancelled) return;
+        if (out === null) {
+          setGoneFindHandleId(activeFindHandleId);
+          return;
+        }
+        setRemoteFind({
+          key: remoteFindKey,
+          result: {
+            matches: out.hits.map((h) => ({ rowIdx: h.rowIdx, colIdx: h.colIdx })),
+            invalidRegex: false,
+          },
+          total: out.total,
+          truncated: out.truncated,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setGoneFindHandleId(activeFindHandleId);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // remoteFindKey が条件 (ハンドル・クエリ・オプション) をすべて含む。
+  }, [remoteFindKey]);
+  const localFindResult = useMemo<GridFindResult>(() => {
+    if (activeFindHandleId) return EMPTY_FIND_RESULT;
     if (!findOpen || !result) return EMPTY_FIND_RESULT;
     const key = JSON.stringify([
       effectiveFindQuery,
@@ -6637,7 +6690,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     });
     lastFindRef.current = { key, value };
     return value;
-  }, [findOpen, result, effectiveFindQuery, findCaseSensitive, findWholeCell, findRegex, streaming]);
+  }, [activeFindHandleId, findOpen, result, effectiveFindQuery, findCaseSensitive, findWholeCell, findRegex, streaming]);
+  // 新しい応答が届くまでは直前のヒットを保つ (入力のたびにハイライトが消えない)。
+  const findResult = activeFindHandleId ? (remoteFind?.result ?? EMPTY_FIND_RESULT) : localFindResult;
+  // 打ち切られたときの総ヒット数 (ナビゲーションは先頭 HANDLE_FIND_LIMIT 件まで)。
+  const findTotal =
+    activeFindHandleId && remoteFind?.truncated ? remoteFind.total : findResult.matches.length;
   const findHits = useMemo(
     () => (findResult.matches.length > 0 ? buildFindKeySet(findResult.matches) : undefined),
     [findResult],
@@ -7749,10 +7807,16 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                     ? ""
                     : findResult.matches.length === 0
                       ? t("gridFindNoHits")
-                      : t("gridFindCount", {
-                          current: (findIdx ?? 0) + 1,
-                          total: findResult.matches.length,
-                        })}
+                      : findTotal > findResult.matches.length
+                        ? t("gridFindCountTruncated", {
+                            current: (findIdx ?? 0) + 1,
+                            total: findTotal,
+                            limit: findResult.matches.length,
+                          })
+                        : t("gridFindCount", {
+                            current: (findIdx ?? 0) + 1,
+                            total: findResult.matches.length,
+                          })}
               </chakra.span>
               <Tooltip label={t("gridFindPrevTitle")} focusableWrapper={findResult.matches.length === 0}>
                 <Button
@@ -8016,6 +8080,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             fullExport={fullExport}
             bundle={bundleContext}
             elapsedMs={result.elapsed_ms}
+            resultId={resultHandleFor(result.rows)}
             // DataGrid からまだ届いていないときも、設定のパターンだけでマスクする
             // (漏らさない側に倒す)。
             maskConfig={

@@ -260,6 +260,9 @@ pub struct AppState {
     /// 自動リフレッシュの差分パッチ (#1257) が使う、タブ単位の前回結果スナップ
     /// ショット (PK ハッシュ → 行ハッシュ)。行データは持たない。
     pub refresh_snapshots: std::sync::Mutex<crate::db::refresh_diff::RefreshSnapshotStore>,
+    /// 結果ハンドル (#1264): ストリーミングで流した大きな結果を、合計メモリ上限付きで
+    /// 保持するストア。ソート・フィルタ・検索・エクスポートをバックエンドで行うために使う。
+    pub results: std::sync::Mutex<crate::db::result_store::ResultStore>,
 }
 
 impl AppState {
@@ -342,6 +345,15 @@ impl AppState {
         let removed = self.sessions.write().await.remove(id);
         if removed.is_some() {
             tracing::debug!(session_id = %id, "session destroyed");
+            // 結果ハンドル (#1264): 切断したセッションの結果は保持し続けない。
+            let released = self
+                .results
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .release_session(id);
+            if released > 0 {
+                tracing::debug!(session_id = %id, released, "released result handles");
+            }
         }
         removed
     }

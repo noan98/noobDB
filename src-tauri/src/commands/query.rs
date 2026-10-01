@@ -7,6 +7,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::refresh_diff::{PatchRun, RefreshBuilder};
+use crate::db::result_store::ResultBuilder;
 use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
 use crate::db::tx_options::{TxIsolation, TxOptions};
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
@@ -590,6 +591,10 @@ pub enum QueryStreamMessage {
         /// 実行した SQL がスキーマを変えうるか (`sql_may_change_schema`)。フロントの
         /// 補完用スキーマキャッシュを無効化する判定に使う (#1256)。
         schema_may_change: bool,
+        /// 結果ハンドル (#1264)。全行をバックエンドに保持できたときのハンドル ID。保持しな
+        /// かった (要求なし・小さい結果・上限超過・エラー) ときは `null` で、フロントは
+        /// 行を JS から送る従来の経路を使う。
+        result_id: Option<String>,
     },
     Error {
         error: String,
@@ -713,6 +718,10 @@ pub async fn run_query_stream(
     capture_retention_days: Option<u32>,
     // 自動リフレッシュの差分パッチ (#1257)。`auto_refresh` のときだけ有効。
     refresh_diff: Option<RefreshDiffRequest>,
+    // 結果ハンドル (#1264)。true のとき、全行を合計メモリ上限の範囲でバックエンドにも保持し、
+    // `Done` の `result_id` で返す (ソート・フィルタ・検索・エクスポートをバックエンドで行うため)。
+    // 保持できなければ `result_id` は `null` で、従来どおり JS から行を送る経路になる。
+    retain_result: Option<bool>,
     // #1096: フロントが `invoke` 前に生成し引数として渡す Tauri Channel。1
     // ストリームにつき 1 チャンネルなので、以後の columns/rows/done/error/
     // cancelled はすべてこのチャンネル経由で送る (旧 `query-stream:*` イベント群を
@@ -808,6 +817,7 @@ pub async fn run_query_stream(
             query_timeout_secs,
             auto_refresh,
             refresh_diff.filter(|_| auto_refresh),
+            retain_result.unwrap_or(false),
             delivered_rows_for_task,
             on_event,
         )
@@ -845,6 +855,7 @@ async fn spawn_query_stream(
     query_timeout_secs: Option<u64>,
     auto_refresh: bool,
     refresh_diff: Option<RefreshDiffRequest>,
+    retain_result: bool,
     delivered_rows: Arc<AtomicU64>,
     on_event: Channel<QueryStreamMessage>,
 ) {
@@ -888,6 +899,21 @@ async fn spawn_query_stream(
     };
     let refresh: Mutex<Option<RefreshBuilder>> = Mutex::new(None);
     let stats = Mutex::new(StreamStats::new());
+    // 結果ハンドル (#1264): 行を複製して溜める。合計上限を超えたら builder 自身が行を
+    // 捨てるので、巨大な結果でもここのメモリは上限で頭打ちになる。
+    let result_builder: Mutex<Option<ResultBuilder>> = Mutex::new(if retain_result {
+        app.try_state::<AppState>().map(|state| {
+            ResultBuilder::new(
+                state
+                    .results
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .limit(),
+            )
+        })
+    } else {
+        None
+    });
     let send_rows = |rows: Vec<Vec<Value>>| -> Result<()> {
         // Count rows before sending so a cancel racing this exact
         // point never under-reports what actually reached the UI.
@@ -953,6 +979,14 @@ async fn spawn_query_stream(
                 })
             }
             StreamBatch::Rows(rows) => {
+                // パッチモードでも全行を観測するので、ハンドルには常に今回の結果全体が入る。
+                if let Some(b) = result_builder
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_mut()
+                {
+                    b.push_batch(&rows);
+                }
                 {
                     let mut guard = refresh.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(b) = guard.as_mut() {
@@ -1008,6 +1042,36 @@ async fn spawn_query_stream(
         (None, r) => r,
     };
     let final_stats = stats.lock().unwrap_or_else(|e| e.into_inner()).snapshot();
+    // 結果ハンドル (#1264): 成功した結果セットだけをストアへ確定する。`Done` より前に入れるので、
+    // フロントは `result_id` を受け取った時点ですぐ使える。保持できなければ `None`。
+    let result_id = match (
+        &result,
+        result_builder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take(),
+    ) {
+        (Ok(res), Some(builder)) if !res.columns.is_empty() => {
+            match (builder.finish(), app.try_state::<AppState>()) {
+                (Some((rows, bytes)), Some(state)) => {
+                    let inserted = state
+                        .results
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(
+                            stream_id.clone(),
+                            session.id.clone(),
+                            res.columns.len(),
+                            rows,
+                            bytes,
+                        );
+                    inserted.then(|| stream_id.clone())
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
     // 自動リフレッシュ差分 (#1257): 成功したときだけ新しいスナップショットを保管し、
     // パッチモードだったならパッチを作る。失敗・タイムアウト時は前回のまま残す。
     let mut snapshot_id: Option<u64> = None;
@@ -1107,6 +1171,7 @@ async fn spawn_query_stream(
                 snapshot_id,
                 read_only,
                 schema_may_change,
+                result_id: result_id.clone(),
             }) {
                 tracing::warn!(
                     session_id = %session.id,
@@ -1114,6 +1179,14 @@ async fn spawn_query_stream(
                     error = %e,
                     "failed to send done message"
                 );
+                // フロントに届かなかったハンドルは誰も解放できないので、ここで捨てる。
+                if let (Some(id), Some(state)) = (&result_id, app.try_state::<AppState>()) {
+                    state
+                        .results
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .release(id);
+                }
             }
         }
         Err(e) => {
@@ -1240,6 +1313,7 @@ async fn spawn_captured_write(
                     session.conn.driver_kind(),
                     &sql,
                 ),
+                result_id: None,
             }) {
                 tracing::warn!(
                     session_id = %session.id,

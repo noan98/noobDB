@@ -756,6 +756,40 @@ export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
 export const nullableStringResponse = z.string().nullable();
 
+/** `result_sort_filter` の戻り値。表示順の行インデックス。`null` はハンドルが無い (#1264)。 */
+export const resultSortFilterResponse = z.array(z.number()).nullable();
+
+/** `result_find` の 1 ヒット (#1264)。 */
+const resultFindHit = z.object({
+  rowIdx: z.number(),
+  colIdx: z.number(),
+});
+
+/** `result_find` の戻り値。`null` はハンドルが無い (#1264)。 */
+export const resultFindOutput = z.object({
+  hits: z.array(resultFindHit),
+  total: z.number(),
+  truncated: z.boolean(),
+});
+export const resultFindResponse = resultFindOutput.nullable();
+
+/** `result_column_stats` の戻り値 (`gridStats.ts::ColumnStats` と同形、#1264)。 */
+export const resultColumnStats = z.object({
+  count: z.number(),
+  nullCount: z.number(),
+  nonNullCount: z.number(),
+  distinctCount: z.number(),
+  numericCount: z.number(),
+  sum: z.number().nullable(),
+  avg: z.number().nullable(),
+  min: z.number().nullable(),
+  max: z.number().nullable(),
+  minLen: z.number().nullable(),
+  maxLen: z.number().nullable(),
+  mode: z.object({ value: z.string(), count: z.number() }).nullable(),
+});
+export const resultColumnStatsResponse = resultColumnStats.nullable();
+
 /** `cancel_stream` の戻り値。中断できた行数 (#685) を運ぶため単純な bool から
  *  拡張されている。 */
 export const cancelStreamResponse = z.object({
@@ -912,6 +946,8 @@ export const queryStreamDoneMessage = z.object({
   readOnly: z.boolean(),
   /** 実行した SQL がスキーマを変えうるか (`sql_may_change_schema`、#1256)。 */
   schemaMayChange: z.boolean(),
+  /** 結果ハンドル (#1264)。全行をバックエンドに保持できたときの ID、保持しなければ null/省略。 */
+  resultId: z.string().nullable().optional(),
 });
 
 export const queryStreamErrorMessage = z.object({

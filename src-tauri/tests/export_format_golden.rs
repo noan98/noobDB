@@ -275,6 +275,69 @@ fn export_formats_match_shared_vectors() {
     );
 }
 
+/// `render_export_text` (#1264: 全文コピー・マスク付きプレビュー・結果ハンドル経由) が、
+/// ファイル出力と同じ共有ベクタの期待値に一致する。行を直接渡す経路と、結果ハンドル経由で
+/// バックエンドが保持する行を使う経路の両方を通す。フロントの `buildExportContent`
+/// (プレビュー) も同じ期待値に固定されているので、プレビュー = 全文コピー = 実ファイルの
+/// 3 者が同じ書式であることがこのテストで保証される。
+#[tokio::test]
+async fn render_export_text_matches_shared_vectors() {
+    let vectors = load();
+    let state = t::AppState::default();
+    let mut failures = Vec::new();
+    for case in &vectors.cases {
+        let driver = t::DriverKind::parse(&case.sql.driver)
+            .unwrap_or_else(|| panic!("unknown driver in vectors: {}", case.sql.driver));
+        for (name, format) in FORMATS {
+            let expected = case.expected.get(name).expect("expectation");
+            for via_handle in [false, true] {
+                let rows = rows_of(case);
+                let (rows_param, result_id) = if via_handle {
+                    let id = format!("golden-{}-{name}", case.name);
+                    let bytes = rows.iter().map(|r| t::approx_row_bytes(r)).sum();
+                    state.results.lock().expect("results lock").insert(
+                        id.clone(),
+                        "s".into(),
+                        case.columns.len(),
+                        rows,
+                        bytes,
+                    );
+                    (Vec::new(), Some(id))
+                } else {
+                    (rows, None)
+                };
+                let actual = t::render_export_text_inner(
+                    &state,
+                    t::RenderExportRequest {
+                        format,
+                        columns: columns_of(case),
+                        rows: rows_param,
+                        result_id,
+                        query: case.query.clone(),
+                        table: Some(case.sql.table.clone()),
+                        driver: Some(driver),
+                        batch_size: Some(case.sql.batch_size),
+                        masks: None,
+                    },
+                )
+                .await
+                .expect("render_export_text must succeed");
+                if &actual != expected {
+                    failures.push(format!(
+                        "  - {} / {name} / handle={via_handle}\n      expected: {expected:?}\n      actual:   {actual:?}",
+                        case.name
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "render_export_text diverged from the shared golden vectors:\n{}",
+        failures.join("\n")
+    );
+}
+
 /// `ExportFormat` にバリアントを足したら、ここ (網羅 match) がコンパイルエラーになり、
 /// テキスト書式なら `FORMATS`、バイナリ書式なら専用のゴールデンへの追加を促す。
 #[test]
