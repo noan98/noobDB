@@ -1,4 +1,4 @@
-import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, forwardRef, memo, useCallback, useContext, useDeferredValue, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { findIdentityColumn } from "./identitySync";
 import { isProtectedNamespace, treeNamespaceKind } from "./databaseMaintenance";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
@@ -51,6 +51,7 @@ import {
   partitionDatabaseNodes,
   showTablesHeader,
   tableChildGroups,
+  type ExplorerForeignKey,
   type ExplorerViewNode,
 } from "./explorerTree";
 import type { I18nKey } from "../i18n";
@@ -405,11 +406,707 @@ interface MenuState {
   items: ContextMenuEntry[];
 }
 
+// --- スキーマツリーの行 (#1314) ---
+//
+// ツリーは数百〜数千行になりうるので、行ごとに `memo` コンポーネントへ切り出し、
+// 「その行の props が変わったときだけ」描き直す。行が共有するハンドラ・ツールチップ・
+// roving tabindex の状態は `TreeActionsContext` の安定した 1 オブジェクトで受け取る
+// (中身の関数は `ConnectionList` が ref 経由で最新に保つので、行の props には載せない)。
+
+/** ツリー全体で「今 Tab で止まる 1 行」(roving tabindex, #1184) の外部ストア。
+ *  フォーカス移動のたびに `ConnectionList` 本体や全行を描き直さないよう、state ではなく
+ *  ストアに置き、各行が自分のキーと一致するかだけを購読する (値が変わる 2 行だけが
+ *  再レンダーされる)。 */
+interface TabStopStore {
+  get: () => string | null;
+  set: (key: string | null) => void;
+  subscribe: (listener: () => void) => () => void;
+  has: (key: string) => boolean;
+  /** マウント中の行を登録する。戻り値はアンマウント時の解除関数で、止まり先の行が
+   *  消えたときはストアを空 (null) に戻して `ConnectionList` に再選出を促す。 */
+  register: (key: string) => () => void;
+}
+
+function createTabStopStore(): TabStopStore {
+  let current: string | null = null;
+  const listeners = new Set<() => void>();
+  const keys = new Map<string, number>();
+  const notify = () => {
+    for (const l of Array.from(listeners)) l();
+  };
+  return {
+    get: () => current,
+    set: (key) => {
+      if (key === current) return;
+      current = key;
+      notify();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    has: (key) => keys.has(key),
+    register: (key) => {
+      keys.set(key, (keys.get(key) ?? 0) + 1);
+      if (current === null) notify();
+      return () => {
+        const n = (keys.get(key) ?? 1) - 1;
+        if (n <= 0) keys.delete(key);
+        else keys.set(key, n);
+        if (n <= 0 && current === key) {
+          current = null;
+          notify();
+        }
+      };
+    },
+  };
+}
+
+type HoverHandlers = {
+  onMouseEnter: (e: React.MouseEvent<HTMLElement>) => void;
+  onMouseLeave: (e: React.MouseEvent<HTMLElement>) => void;
+};
+
+/** 共有ツールチップ (`useDelegatedTooltip` / `useDelegatedHover`) の `bind`。 */
+type HoverBind<V> = (value: V | undefined | null) => HoverHandlers | undefined;
+
+/** ツリー全体の行が共有するハンドラ群。`ConnectionList` が 1 度だけ作り、以後は同一参照。 */
+interface TreeActions {
+  store: TabStopStore;
+  treeTooltip: HoverBind<string>;
+  columnTooltip: HoverBind<TableColumnInfo>;
+  makeKeyDown: (
+    activate?: () => void,
+    openContextMenu?: (e: ContextMenuTriggerEvent) => void,
+  ) => (e: React.KeyboardEvent<HTMLElement>) => void;
+  pickTable: (db: string, tbl: string) => void;
+  toggleTable: (db: string, tbl: string) => void;
+  toggleFavorite: (db: string, tbl: string) => void;
+  openObjectDefinition: (db: string, kind: string, name: string, id: string | null) => void;
+  tableMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string) => void;
+  viewMenu: (e: ContextMenuTriggerEvent, db: string, view: ExplorerViewNode, asNode?: boolean) => void;
+  routineMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
+  columnMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => void;
+  indexMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, idx: IndexInfo) => void;
+  activeTableIndicatorId: string;
+}
+
+const TreeActionsContext = createContext<TreeActions | null>(null);
+
+function useTreeActions(): TreeActions {
+  const actions = useContext(TreeActionsContext);
+  if (!actions) throw new Error("TreeActionsContext の外でスキーマツリーの行を描画した");
+  return actions;
+}
+
+/** 呼び出し側が毎回新しい関数を作っても、返す関数の参照は変わらない (最新の関数へ委譲)。 */
+function useEvent<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
+
+/** 1 行ぶんの roving tabindex: `tabIndex` と、フォーカスが行そのものに入ったとき
+ *  (子要素からのバブリングは無視) にストアを更新する `onFocus`。マウスクリックでも
+ *  `focus()` は発火するので、クリック操作からも自然に追従する。 */
+function useTabStop(store: TabStopStore, key: string) {
+  const tabIndex = useSyncExternalStore(
+    store.subscribe,
+    () => (store.get() === key ? 0 : -1),
+  );
+  useLayoutEffect(() => store.register(key), [store, key]);
+  const onFocus = useCallback(
+    (e: React.FocusEvent<HTMLElement>) => {
+      if (e.target === e.currentTarget) store.set(key);
+    },
+    [store, key],
+  );
+  return { tabIndex, onFocus };
+}
+
+/** `memo` 化していない行 (プロファイル / グループ見出し / DB) に roving tabindex を
+ *  与える render-prop。フォーカス移動で再レンダーされるのはこの小さな枠だけ。 */
+function TabStop({
+  treeKey,
+  children,
+}: {
+  treeKey: string;
+  children: (stop: { tabIndex: number; onFocus: (e: React.FocusEvent<HTMLElement>) => void }) => React.ReactElement;
+}) {
+  const actions = useTreeActions();
+  return children(useTabStop(actions.store, treeKey));
+}
+
+type TooltipBindRef<V> = { current: HoverBind<V> | null };
+
+/** 行へ渡す `bind` を、ツールチップの状態を持つ `*Layer` から切り離すための安定ラッパー。
+ *  ホバー状態が変わっても行 (と `ConnectionList`) は描き直されず、層だけが再レンダーされる。
+ *  実際のハンドラはイベント時点の最新の `bind` へ委譲する。 */
+function useLazyBind<V>(ref: TooltipBindRef<V>): HoverBind<V> {
+  return useCallback(
+    (value) => {
+      if (value === undefined || value === null || (value as unknown) === "") return undefined;
+      return {
+        onMouseEnter: (e) => ref.current?.(value)?.onMouseEnter(e),
+        onMouseLeave: (e) => ref.current?.(value)?.onMouseLeave(e),
+      };
+    },
+    [ref],
+  );
+}
+
+/** ツリー行の単純テキストツールチップ (1 つの共有バブル + イベント委譲、#884)。 */
+function TreeTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<string> }) {
+  const { hovered, bind } = useDelegatedTooltip();
+  bindRef.current = bind;
+  return hovered ? <TooltipBubble label={hovered.label} anchor={hovered.rect} maxWidth="320px" /> : null;
+}
+
+/** カラム行の詳細ホバーカード (`ColumnTooltip`)。 */
+function ColumnTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<TableColumnInfo> }) {
+  const { hovered, bind } = useDelegatedHover<TableColumnInfo>();
+  bindRef.current = bind;
+  return hovered ? <ColumnTooltip col={hovered.value} anchor={hovered.rect} /> : null;
+}
+
+/** ローディングのスケルトン行。 */
+// スケルトン幅: 視覚的なランダム感を演出するために固定幅サイクルを使う。
+const SKELETON_ROW_WIDTHS = [72, 58, 85, 65, 78];
+
+function LoadingRow() {
+  const t = useT();
+  return (
+    // スケルトンノード: Spinner + テキストの代わりに、ツリー行の構造をシマーで
+    // 予兆表示する。シマー自体は内容のないプレースホルダなので `aria-hidden` で
+    // 支援技術から隠しつつ、`role="status"` + 視覚的に隠したテキストで
+    // 「ロード中」であることはスクリーンリーダーへ通知する。
+    <div role="status" aria-live="polite">
+      <VisuallyHidden>{t("treeLoading")}</VisuallyHidden>
+      <div aria-hidden>
+        {SKELETON_ROW_WIDTHS.map((w, i) => (
+          <SkeletonRow
+            key={i}
+            style={{ width: `${w}%`, animationDelay: `${i * 0.1}s`, opacity: 1 - i * 0.15 }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 行末の「…」ボタン (#1269)。右クリックと同じメニュー組み立て関数 `onOpen` を、
+ *  ボタンの左下を起点にして開く (キーボードの Shift+F10 と同じアンカー規則)。 */
+function TreeMoreActions({ onOpen }: { onOpen: (e: ContextMenuTriggerEvent) => void }) {
+  const t = useT();
+  const actions = useTreeActions();
+  return (
+    <TreeMoreButton
+      type="button"
+      data-tree-more=""
+      tabIndex={-1}
+      aria-label={t("treeMoreActionsAria")}
+      aria-haspopup="menu"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(contextMenuTriggerFromRect(e.currentTarget.getBoundingClientRect()));
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
+      {...actions.treeTooltip(t("treeMoreActionsAria"))}
+    >
+      <Icon name="more" size={ICON_SIZES.sm} />
+    </TreeMoreButton>
+  );
+}
+
+// クイックアクセス: アクティブ接続の databases の上に「お気に入り」「最近」を
+// 並べ、ワンクリックで開けるようにする。各行は db.table を表示し、`pickTable` で開く。
+const QuickAccessRow = memo(function QuickAccessRow({
+  refItem,
+  kind,
+  level,
+  removable,
+}: {
+  refItem: TableRef;
+  kind: "favorite" | "recent";
+  /** `groupLevel` (グループ見出しがあるとき 1)。 */
+  level: number;
+  /** お気に入り行に「解除」ボタンを出すか (トグル用ハンドラがあるとき)。 */
+  removable: boolean;
+}) {
+  const t = useT();
+  const actions = useTreeActions();
+  const star = kind === "favorite";
+  const key = `qa:${kind}:${tableKey(refItem.database, refItem.table)}`;
+  const { tabIndex, onFocus } = useTabStop(actions.store, key);
+  const activate = () => actions.pickTable(refItem.database, refItem.table);
+  const openMenu = (e: ContextMenuTriggerEvent) => actions.tableMenu(e, refItem.database, refItem.table);
+  return (
+    <TreeRow
+      data-tree-key={key}
+      pl="1"
+      role="treeitem"
+      aria-level={level + 2}
+      tabIndex={tabIndex}
+      onFocus={onFocus}
+      onKeyDown={actions.makeKeyDown(activate, openMenu)}
+      onClick={activate}
+      onContextMenu={openMenu}
+      {...actions.treeTooltip(`${refItem.database}.${refItem.table}`)}
+      _hover={{ bg: "app.rowHover" }}
+    >
+      <TreeChevron aria-hidden style={{ visibility: "hidden" }}>▸</TreeChevron>
+      <TreeIcon color={star ? "app.favorite" : "app.textSecondary"} aria-hidden>
+        <Icon name={star ? "star-filled" : "clock"} />
+      </TreeIcon>
+      <TreeLabel fontWeight={400}>
+        {refItem.table}
+        <chakra.span color="app.textMuted" fontSize="2xs" ml="1.5">
+          {refItem.database}
+        </chakra.span>
+      </TreeLabel>
+      {star && removable && (
+        <Tooltip label={t("quickAccessRemoveTitle")}>
+          <chakra.button
+            type="button"
+            aria-label={t("quickAccessRemoveTitle")}
+            onClick={(e) => {
+              e.stopPropagation();
+              actions.toggleFavorite(refItem.database, refItem.table);
+            }}
+            color="app.textMuted"
+            px="1"
+            _hover={{ color: "app.text" }}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </chakra.button>
+        </Tooltip>
+      )}
+    </TreeRow>
+  );
+});
+
+const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
+  view: "view",
+  materialized_view: "view",
+  procedure: "routine",
+  function: "routine",
+  trigger: "trigger",
+};
+
+/** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
+ *  選択すると `openObjectDefinition` で定義 DDL を開く。 */
+const SchemaObjectRow = memo(function SchemaObjectRow({
+  db,
+  o,
+  kindLabel,
+  level,
+  q,
+}: {
+  db: string;
+  o: SchemaObject;
+  kindLabel: string;
+  level: number;
+  q: string;
+}) {
+  const actions = useTreeActions();
+  const kind = o.kind;
+  const key = `so:${db}:${kind}:${o.name}:${o.id ?? ""}`;
+  const { tabIndex, onFocus } = useTabStop(actions.store, key);
+  const activate = () => actions.openObjectDefinition(db, o.kind, o.name, o.id);
+  const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
+    kind === "view"
+      ? (ev) => actions.viewMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
+      : isEditableObjectKind(kind)
+        ? (ev) => actions.routineMenu(ev, db, o)
+        : undefined;
+  return (
+    <TreeRow
+      data-tree-key={key}
+      pl="1"
+      role="treeitem"
+      aria-level={level + 3}
+      tabIndex={tabIndex}
+      onFocus={onFocus}
+      onKeyDown={actions.makeKeyDown(activate, openMenu)}
+      onClick={activate}
+      onContextMenu={openMenu}
+      {...actions.treeTooltip(`${o.name} — ${kindLabel}`)}
+      _hover={{ bg: "app.rowHover" }}
+    >
+      <TreeChevron visibility="hidden" aria-hidden />
+      <TreeIcon color="app.textSecondary" aria-hidden>
+        <Icon name={SCHEMA_OBJECT_ICONS[kind] ?? "query"} />
+      </TreeIcon>
+      <TreeLabel fontWeight={400}>
+        <HighlightText text={o.name} query={q} />
+      </TreeLabel>
+    </TreeRow>
+  );
+});
+
+const ColumnRow = memo(function ColumnRow({
+  db,
+  tbl,
+  col,
+  level,
+  q,
+}: {
+  db: string;
+  tbl: string;
+  col: TableColumnInfo;
+  level: number;
+  q: string;
+}) {
+  const actions = useTreeActions();
+  const isPk = col.key === "PRI";
+  const isFk = col.referenced_table !== null;
+  const colKey = `col:${tableKey(db, tbl)}:${col.name}`;
+  const { tabIndex, onFocus } = useTabStop(actions.store, colKey);
+  const openMenu = (e: ContextMenuTriggerEvent) => actions.columnMenu(e, db, tbl, col.name);
+  return (
+    <TreeRow
+      data-tree-key={colKey}
+      pt="0.75"
+      pb="0.75"
+      cursor="default"
+      fontSize="sm"
+      role="treeitem"
+      aria-level={level + 4}
+      tabIndex={tabIndex}
+      onFocus={onFocus}
+      onKeyDown={actions.makeKeyDown(undefined, openMenu)}
+      onContextMenu={openMenu}
+      {...actions.columnTooltip(col)}
+    >
+      <TreeChevron visibility="hidden" aria-hidden />
+      {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
+          hover すると `ColumnTooltip` (`ColumnTooltipLayer`) が
+          鍵種別・型を含む詳細を表示するため、ここで別に native
+          title を持つと同じ情報が二重に (かつ約 1 秒遅れで)
+          出てしまう。 */}
+      <TreeIcon
+        fontSize="xs"
+        color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
+        aria-hidden
+      >
+        {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
+      </TreeIcon>
+      <TreeLabel fontFamily="mono" color="app.text"><HighlightText text={col.name} query={q} /></TreeLabel>
+      <TreeBadge
+        fontFamily="mono"
+        textTransform="lowercase"
+        fontSize="2xs"
+      >
+        {col.data_type}
+      </TreeBadge>
+    </TreeRow>
+  );
+});
+
+const IndexRow = memo(function IndexRow({
+  db,
+  tbl,
+  idx,
+  level,
+}: {
+  db: string;
+  tbl: string;
+  idx: IndexInfo;
+  level: number;
+}) {
+  const t = useT();
+  const actions = useTreeActions();
+  const idxKey = `idx:${tableKey(db, tbl)}:${idx.name}`;
+  const { tabIndex, onFocus } = useTabStop(actions.store, idxKey);
+  const openMenu = (e: ContextMenuTriggerEvent) => actions.indexMenu(e, db, tbl, idx);
+  return (
+    <TreeRow
+      data-tree-key={idxKey}
+      pt="0.75"
+      pb="0.75"
+      cursor="default"
+      fontSize="sm"
+      role="treeitem"
+      aria-level={level + 4}
+      tabIndex={tabIndex}
+      onFocus={onFocus}
+      onKeyDown={actions.makeKeyDown(undefined, openMenu)}
+      onContextMenu={openMenu}
+      {...actions.treeTooltip(
+        `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
+      )}
+    >
+      <TreeChevron visibility="hidden" aria-hidden />
+      <TreeIcon
+        fontSize="xs"
+        color={idx.primary ? "app.keyAccent" : idx.unique ? "app.status.success" : "app.textMuted"}
+        aria-hidden
+      >
+        {idx.primary ? <Icon name="key" /> : <Icon name="list" />}
+      </TreeIcon>
+      <TreeLabel fontFamily="mono" color="app.text">
+        {idx.columns.join(", ") || idx.name}
+      </TreeLabel>
+      {(idx.primary || idx.unique) && (
+        <TreeBadge
+          fontSize="2xs"
+          textTransform="uppercase"
+          {...actions.treeTooltip(idx.name)}
+        >
+          {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
+        </TreeBadge>
+      )}
+    </TreeRow>
+  );
+});
+
+const ForeignKeyRow = memo(function ForeignKeyRow({
+  db,
+  tbl,
+  fk,
+  level,
+}: {
+  db: string;
+  tbl: string;
+  fk: ExplorerForeignKey;
+  level: number;
+}) {
+  const t = useT();
+  const actions = useTreeActions();
+  const fkKey = `fk:${tableKey(db, tbl)}:${fk.column}`;
+  const { tabIndex, onFocus } = useTabStop(actions.store, fkKey);
+  const activate = () => actions.pickTable(db, fk.referencedTable);
+  return (
+    <TreeRow
+      data-tree-key={fkKey}
+      pt="0.75"
+      pb="0.75"
+      fontSize="sm"
+      role="treeitem"
+      aria-level={level + 4}
+      aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}`}
+      tabIndex={tabIndex}
+      onFocus={onFocus}
+      onKeyDown={actions.makeKeyDown(activate)}
+      onClick={activate}
+      {...actions.treeTooltip(t("treeFkOpenHint", { table: fk.referencedTable }))}
+      _hover={{ bg: "app.rowHover" }}
+    >
+      <TreeChevron visibility="hidden" aria-hidden />
+      <TreeIcon fontSize="xs" color="app.accent" aria-hidden>
+        <Icon name="link" />
+      </TreeIcon>
+      <TreeLabel fontFamily="mono" color="app.text">
+        {fk.column}
+        <chakra.span color="app.textMuted"> → {foreignKeyTargetLabel(fk)}</chakra.span>
+      </TreeLabel>
+    </TreeRow>
+  );
+});
+
+interface TableNodeProps {
+  db: string;
+  tbl: string;
+  /** ビューなら振り分け結果のノード、テーブルなら null。 */
+  view: ExplorerViewNode | null;
+  /** 検索クエリ (小文字化済み)。 */
+  q: string;
+  /** `groupLevel` (グループ見出しがあるとき 1)。 */
+  level: number;
+  /** 子 (列・インデックス・外部キー) を展開しているか。 */
+  open: boolean;
+  /** 検索で絞り込み中でも列を全部出すか。false なら列名がマッチする列だけ。 */
+  showAllCols: boolean;
+  cols: TableColumnInfo[] | undefined;
+  indexes: IndexInfo[] | undefined;
+  rowEst: number | null | undefined;
+  comment: string | undefined;
+  /** 現在結果パネルに開いているテーブルか (#982)。 */
+  isActive: boolean;
+}
+
+/**
+ * テーブル / ビューのノード (#1112)。ビューもテーブルと同じく列・インデックス・
+ * 外部キーを展開でき、ダブルクリックでデータを開く。
+ *
+ * `memo` 化しているので、props (自分のテーブルの状態) が変わらない限り、ほかの行の
+ * フォーカス・ホバー・検索入力・ストリーミングでは描き直されない (#1314)。
+ */
+const TableNode = memo(function TableNode({
+  db,
+  tbl,
+  view,
+  q,
+  level,
+  open: tOpen,
+  showAllCols,
+  cols,
+  indexes,
+  rowEst,
+  comment,
+  isActive: isActiveTable,
+}: TableNodeProps) {
+  const t = useT();
+  const actions = useTreeActions();
+  const tKey = tableKey(db, tbl);
+  const treeKey = `tbl:${tKey}`;
+  const { tabIndex, onFocus } = useTabStop(actions.store, treeKey);
+  const rowEstLabel = typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
+  // 列・インデックス・外部キーの子グループ (#1112)。見出しは複数グループが
+  // 並ぶときだけ出す (`tableChildGroups`)。
+  const childGroups = useMemo(() => (cols ? tableChildGroups(cols, indexes) : null), [cols, indexes]);
+  const openMenu = (e: ContextMenuTriggerEvent) =>
+    view ? actions.viewMenu(e, db, view) : actions.tableMenu(e, db, tbl);
+
+  // 閉じているテーブルには `TreeCollapse` (= `AnimatePresence`) をマウントしない (#1314)。
+  // テーブルが数千件あっても、展開した行の分しかマウントされない。閉じるときは退場
+  // アニメを見せてからアンマウントする (`onExitComplete`)。
+  const [mounted, setMounted] = useState(tOpen);
+  if (tOpen && !mounted) setMounted(true);
+  const openRef = useRef(tOpen);
+  openRef.current = tOpen;
+  // 初期表示で既に開いている行は enter アニメしない (従来どおり)。開く操作で
+  // マウントされたとき (および一度閉じて再び開いたとき) だけフェードインする。
+  const animateIn = useRef(!tOpen);
+  const handleExitComplete = useCallback(() => {
+    if (openRef.current) return;
+    animateIn.current = true;
+    setMounted(false);
+  }, []);
+
+  return (
+    <TreeNode>
+      <TreeRow
+        data-tree-key={treeKey}
+        pl="1"
+        role="treeitem"
+        /* 行のアクセシブルネームをテーブル名に固定する。既定の
+           content 由来の名前だと、内側のチェブロンボタンの
+           aria-label や行数バッジまで連結され、SR の読み上げと
+           ロール検索 (テスト含む) が不安定になるため。 */
+        aria-label={tbl}
+        aria-level={level + 3}
+        aria-expanded={tOpen}
+        tabIndex={tabIndex}
+        onFocus={onFocus}
+        onKeyDown={actions.makeKeyDown(() => actions.pickTable(db, tbl), openMenu)}
+        // 「現在地」表示 (#982): SR には aria-current、視覚には
+        // 下の共有 layoutId インジケータ (アクセントスパイン) で
+        // 示す。position: relative はインジケータの絶対配置の
+        // 基準になるが、非アクティブ行では不要なので付けない。
+        aria-current={isActiveTable ? "true" : undefined}
+        position={isActiveTable ? "relative" : undefined}
+        bg={isActiveTable ? "var(--bg-active)" : undefined}
+        onDoubleClick={() => actions.pickTable(db, tbl)}
+        onContextMenu={openMenu}
+        {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
+        _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
+      >
+        {isActiveTable && (
+          <MotionActiveIndicator
+            layoutId={actions.activeTableIndicatorId}
+            transition={transitions.emphasized}
+            position="absolute"
+            left="0"
+            top="0"
+            bottom="0"
+            width="2px"
+            bg="var(--accent)"
+            aria-hidden
+          />
+        )}
+        {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
+            ダブルクリック (テーブルを開く) の前に click が 2 回発火して
+            カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
+            連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
+            マウスでは唯一の展開手段になったためネイティブ button として描画し、
+            キーボード (Enter/Space) と支援技術からも操作できるようにする。
+            行本体からの ArrowRight/ArrowLeft (#1184) も、この button の
+            aria-expanded を目印にここをクリックしてトグルする
+            (`makeTreeItemKeyDown` 参照)。 */}
+        <TreeChevronButton
+          type="button"
+          transform={tOpen ? "rotate(90deg)" : undefined}
+          aria-label={t("treeToggleColumnsAria", { table: tbl })}
+          aria-expanded={tOpen}
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.toggleTable(db, tbl);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >▸</TreeChevronButton>
+        <TreeIcon color="app.textSecondary" aria-hidden><Icon name={view ? "view" : "table"} /></TreeIcon>
+        <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
+        {rowEstLabel && (
+          <TreeBadge
+            fontFamily="mono"
+            fontSize="2xs"
+            textTransform="none"
+            letterSpacing="0"
+            {...actions.treeTooltip(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
+          >
+            {rowEstLabel}
+          </TreeBadge>
+        )}
+        <TreeMoreActions onOpen={openMenu} />
+      </TreeRow>
+      {mounted && (
+        <TreeCollapse open={tOpen} initial={animateIn.current} onExitComplete={handleExitComplete}>
+          <TreeChildren>
+            {cols === undefined ? (
+              <LoadingRow />
+            ) : cols.length === 0 ? (
+              <TreeEmpty>{t("treeNoColumns")}</TreeEmpty>
+            ) : (
+              <>
+                {showAllCols && childGroups?.showColumnsHeader && (
+                  <QuickAccessHeader>{t("treeColumnsLabel")}</QuickAccessHeader>
+                )}
+                {cols
+                  .filter((col) => showAllCols || col.name.toLowerCase().includes(q))
+                  .map((col) => (
+                    <ColumnRow key={col.name} db={db} tbl={tbl} col={col} level={level} q={q} />
+                  ))}
+              </>
+            )}
+            {/* インデックス一覧。展開時に列と並行取得し、
+                列の下に小見出し付きで表示する。 */}
+            {showAllCols && (indexes?.length ?? 0) > 0 && (
+              <>
+                <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
+                {indexes!.map((idx) => (
+                  <IndexRow key={`idx:${idx.name}`} db={db} tbl={tbl} idx={idx} level={level} />
+                ))}
+              </>
+            )}
+            {/* 外部キー (#1112)。列行の鎖アイコンだけでは「どこを参照しているか」が
+                ホバーしないと分からないため、参照先をグループで並べる。クリックで
+                参照先テーブルのデータを開く (ツリーのダブルクリックと同じ導線)。 */}
+            {showAllCols && childGroups && childGroups.foreignKeys.length > 0 && (
+              <>
+                <QuickAccessHeader>{t("treeForeignKeysLabel")}</QuickAccessHeader>
+                {childGroups.foreignKeys.map((fk) => (
+                  <ForeignKeyRow key={`fk:${fk.column}`} db={db} tbl={tbl} fk={fk} level={level} />
+                ))}
+              </>
+            )}
+          </TreeChildren>
+        </TreeCollapse>
+      )}
+    </TreeNode>
+  );
+});
+
 // React.memo + forwardRef でラップし、App.tsx の再レンダリング (クエリ入力や
 // ストリーミングのたびに発生する) でツリー全体が無駄に再描画されるのを防ぐ。
 // forwardRef は App.tsx から focusFilter() を呼ぶための ConnectionListHandle を
-// 公開するために必要。親から渡るコールバックは App 側で useCallback 安定化済みの
-// ため、接続状態が変わらない限り memo がスキップする。
+// 公開するために必要。親から渡るコールバックは、`tabs` / `activeTab` に依存するものを
+// App 側で `useStableCallbacks` (ref 経由の安定ラッパー) に包んでいるため参照が変わらず、
+// 接続状態・スキーマなどツリーの表示に関わる props が変わらない限り memo がスキップする
+// (#1314)。
 export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(function ConnectionList({
   profiles,
   activeProfileId,
@@ -509,15 +1206,17 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // `useDelegatedTooltip` ではなくその一般形 `useDelegatedHover` に載せ、hover
   // 遅延・「同時に見えるのは 1 つ」の登録簿・スクロール連動非表示を他の
   // ツールチップと共有する。
-  const { hovered: hoveredColumn, bind: columnTooltipProps } =
-    useDelegatedHover<TableColumnInfo>();
   // スキーマツリー行 (DB/テーブル/インデックス/オブジェクト) の単純テキスト
-  // ツールチップは、`hoveredColumn`/`ColumnTooltip` と同じ「1 つの共有ツールチップ +
-  // イベント委譲」方式を汎用化した `useDelegatedTooltip` (`Tooltip.tsx`、#884) に
-  // 委譲する。行数に比例して Tooltip インスタンスを増やさない — ツリーは数百行
-  // 規模になりうるため、行ごとに hover リスナー付きコンポーネントを乗せる素朴な
-  // 全置換は性能リスクがある (#884 Issue が示す設計案の 1 つ)。
-  const { hovered: hoveredLabel, bind: treeTooltipProps } = useDelegatedTooltip();
+  // ツールチップは、`ColumnTooltip` と同じ「1 つの共有ツールチップ + イベント委譲」
+  // 方式を汎用化した `useDelegatedTooltip` (`Tooltip.tsx`、#884) に委譲する。行数に
+  // 比例して Tooltip インスタンスを増やさない — ツリーは数百行規模になりうる。
+  // ホバーの state は `ConnectionList` 本体ではなく `*TooltipLayer` が持つ (#1314)。
+  // ツールチップの出入りでツリー全体を描き直さないため、行へ渡す `bind` は
+  // 安定ラッパー (`useLazyBind`) 越しにする。
+  const columnTooltipBindRef = useRef<HoverBind<TableColumnInfo> | null>(null);
+  const columnTooltipProps = useLazyBind(columnTooltipBindRef);
+  const treeTooltipBindRef = useRef<HoverBind<string> | null>(null);
+  const treeTooltipProps = useLazyBind(treeTooltipBindRef);
   // Databases whose table list is currently being fetched, either by manual
   // expand (toggleDb) or by eager schema-search loading. Shared so that rapid
   // collapse / re-expand during an in-flight fetch can't re-issue the same
@@ -823,30 +1522,41 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // --- ツリー全体の roving tabindex (#1184) ---
   //
   // DB/テーブル/カラム/インデックス/外部キー/スキーマオブジェクトの各行を含む
-  // ツリー全体で「今 Tab で止まる 1 行」を `activeTreeKey` として管理する
+  // ツリー全体で「今 Tab で止まる 1 行」を `tabStopStore` として管理する
   // (JsonTreeView の `selectedKey` と同じ考え方だが、こちらは選択状態ではなく
   // 純粋にフォーカスの置き場所だけを表す)。各行は `data-tree-key` に自分の一意な
-  // キーを持ち、そのキーが `activeTreeKey` と一致するときだけ `tabIndex=0` になる。
+  // キーを持ち、そのキーが ストアの値と一致するときだけ `tabIndex=0` になる。
   //
   // 初期値・および対象行が消えた場合 (折りたたみ/削除/検索フィルタで非表示) の
-  // フォールバックは、ツリー内の最初の `[role=treeitem]` を採用する。DOM を都度
-  // 読むだけの副作用なので依存配列を持たず、値が変わらない限り re-render しない
-  // (`setActiveTreeKey` は同じ値なら React が自動で打ち切る)。
+  // フォールバックは、ツリー内の最初の `[role=treeitem]` を採用する。
+  //
+  // 止まり先のキーは React state ではなく外部ストア (`TabStopStore`) に置き、各行が
+  // 自分のキーと一致するかだけを購読する (#1314)。フォーカスが動くたびに
+  // `ConnectionList` 本体と全行を描き直さず、値が変わる 2 行だけが再レンダーされる。
+  // 以前は依存配列の無い `useLayoutEffect` が毎レンダーで全 `[data-tree-key]` を
+  // 走査していたが、いまはマウント中のキーをストアが覚えているので O(1) で判定でき、
+  // 止まり先が消えたとき (ストアが空になったとき) だけ DOM を読む。
   const treeRef = useRef<HTMLDivElement>(null);
-  const [activeTreeKey, setActiveTreeKey] = useState<string | null>(null);
-  useLayoutEffect(() => {
+  const [tabStopStore] = useState(createTabStopStore);
+  const ensureTabStop = useCallback(() => {
     const container = treeRef.current;
     if (!container) return;
+    const current = tabStopStore.get();
+    if (current !== null && tabStopStore.has(current)) return;
     // `querySelector` の属性セレクタに任意文字列 (テーブル名など) をそのまま
-    // 埋め込むと `"` を含む名前で壊れるため、`dataset` を JS 側で比較する。
-    const items = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-key]"));
-    if (activeTreeKey !== null && items.some((el) => el.dataset.treeKey === activeTreeKey)) {
-      return;
-    }
-    setActiveTreeKey(items[0]?.dataset.treeKey ?? null);
-  });
-  /** 行の `tabIndex` を `activeTreeKey` から算出する共通ヘルパ。 */
-  const treeItemTabIndex = (key: string) => (activeTreeKey === key ? 0 : -1);
+    // 埋め込むと `"` を含む名前で壊れるため、`dataset` を JS 側で読む。
+    const first = container.querySelector<HTMLElement>("[data-tree-key]");
+    tabStopStore.set(first?.dataset.treeKey ?? null);
+  }, [tabStopStore]);
+  // 行が消えて止まり先が空になった / 空のストアへ最初の行が登録されたときに再選出する。
+  // 行のアンマウントは DOM 更新の途中で通知されるので、コミット後 (マイクロタスク) に読む。
+  useEffect(
+    () =>
+      tabStopStore.subscribe(() => {
+        if (tabStopStore.get() === null) queueMicrotask(ensureTabStop);
+      }),
+    [tabStopStore, ensureTabStop],
+  );
 
   // ↑↓ / Home / End / 先頭文字ジャンプは既存の `useRovingFocus` (#815 で実装済みの
   // type-ahead 込み) にそのまま委譲する。ツリー内のすべての `[role=treeitem]` が
@@ -876,7 +1586,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       (e: React.KeyboardEvent<HTMLElement>) => {
       // 行の中の操作要素 (テーブル行のチェブロン button など) から伝わってきたキーは
       // その要素自身に任せる。ここで Enter を横取りすると、チェブロンの Enter で
-      // カラム一覧を開く代わりにテーブルが開いてしまう (`onTreeItemFocus` と同じ判定)。
+      // カラム一覧を開く代わりにテーブルが開いてしまう (`useTabStop` の `onFocus` と同じ判定)。
       if (e.target !== e.currentTarget) return;
       if (activate && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
@@ -926,34 +1636,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     },
     [onTreeRovingKeyDown],
   );
-  /** フォーカスが行そのものに入ったとき (子要素からのバブリングは無視) に
-   *  `activeTreeKey` を更新する共通ハンドラ。マウスクリックでも `focus()` は
-   *  発火するので、クリック操作からも自然に roving tabindex が追従する。 */
-  const onTreeItemFocus = (key: string) => (e: React.FocusEvent<HTMLElement>) => {
-    if (e.target === e.currentTarget) setActiveTreeKey(key);
-  };
-
-  /** 行末の「…」ボタン (#1269)。右クリックと同じメニュー組み立て関数 `openMenu` を、
-   *  ボタンの左下を起点にして開く (キーボードの Shift+F10 と同じアンカー規則)。 */
-  const renderMoreButton = (openMenu: (e: ContextMenuTriggerEvent) => void) => (
-    <TreeMoreButton
-      type="button"
-      data-tree-more=""
-      tabIndex={-1}
-      aria-label={t("treeMoreActionsAria")}
-      aria-haspopup="menu"
-      onClick={(e) => {
-        e.stopPropagation();
-        openMenu(contextMenuTriggerFromRect(e.currentTarget.getBoundingClientRect()));
-      }}
-      onDoubleClick={(e) => e.stopPropagation()}
-      onContextMenu={(e) => e.stopPropagation()}
-      {...treeTooltipProps(t("treeMoreActionsAria"))}
-    >
-      <Icon name="more" size={ICON_SIZES.sm} />
-    </TreeMoreButton>
-  );
-
   // --- 接続 / グループの並べ替え (#786) ---
   //
   // Drop-position indicator: the key of the row currently shown as the drag/
@@ -1672,7 +2354,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   };
 
-  const q = filter.trim().toLowerCase();
+  // 検索は `useDeferredValue` で遅延させる (#1314)。入力欄 (`filter`) は即座に反映し、
+  // ツリーの絞り込みとハイライト (重い) は入力を妨げない優先度で追従する。
+  const deferredFilter = useDeferredValue(filter);
+  const q = deferredFilter.trim().toLowerCase();
   const searching = q.length > 0;
   // Drag/keyboard reorder is disabled while a search filter is active — the
   // tree shows a filtered subset then, and reordering a partial view would
@@ -1703,30 +2388,84 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // Schema-match helpers operate purely on the already-cached tree data
   // (`tables` / `tableColumns`); column matching only sees columns whose table
   // has been expanded at least once.
-  const columnNameMatches = useCallback(
-    (db: string, tbl: string) => {
-      const cols = tableColumns[tableKey(db, tbl)];
-      return !!cols && cols.some((c) => c.name.toLowerCase().includes(q));
-    },
-    [tableColumns, q],
-  );
-  const tableNodeMatches = useCallback(
-    (db: string, tbl: string) => tbl.toLowerCase().includes(q) || columnNameMatches(db, tbl),
-    [q, columnNameMatches],
-  );
-  const dbNodeMatches = useCallback(
-    (db: string) => {
-      if (db.toLowerCase().includes(q)) return true;
-      const tbls = tables[db];
-      return !!tbls && tbls.some((tbl) => tableNodeMatches(db, tbl));
-    },
-    [q, tables, tableNodeMatches],
-  );
+  //
+  // 小文字化したテーブル名・列名のインデックスは、データが変わったときだけ作る
+  // (#1314)。検索クエリが変わるたびに全テーブル・全列を `toLowerCase` し直さない。
+  const lowerIndex = useMemo(() => {
+    if (!searching) return null;
+    const tableNames: Record<string, string[]> = {};
+    for (const [db, list] of Object.entries(tables)) tableNames[db] = list.map((n) => n.toLowerCase());
+    const columnNames: Record<string, string[]> = {};
+    for (const [key, cols] of Object.entries(tableColumns)) {
+      columnNames[key] = cols.map((c) => c.name.toLowerCase());
+    }
+    return { tableNames, columnNames };
+    // `searching` は「インデックスが要るか」だけを表す (クエリ文字列の変化では作り直さない)。
+  }, [searching, tables, tableColumns]);
+
+  // クエリごとのマッチ結果 (DB / テーブル / 列) を 1 度だけ計算して集合で持つ。以前は
+  // 描画の各所 (絞り込み・展開判定・ハイライト) が DB × テーブル × 列の判定を
+  // 1 文字ごとに 2〜3 回繰り返していた。
+  const schemaMatch = useMemo(() => {
+    if (!lowerIndex) return null;
+    const colMatch = new Set<string>();
+    for (const [key, names] of Object.entries(lowerIndex.columnNames)) {
+      if (names.some((n) => n.includes(q))) colMatch.add(key);
+    }
+    const tableMatch = new Set<string>();
+    const dbMatch = new Set<string>();
+    for (const db of databases ?? []) {
+      let hit = db.toLowerCase().includes(q);
+      const names = lowerIndex.tableNames[db];
+      const list = tables[db];
+      if (names && list) {
+        for (let i = 0; i < list.length; i++) {
+          const key = tableKey(db, list[i]);
+          if (names[i].includes(q) || colMatch.has(key)) {
+            tableMatch.add(key);
+            hit = true;
+          }
+        }
+      }
+      if (hit) dbMatch.add(db);
+    }
+    return { colMatch, tableMatch, dbMatch };
+  }, [lowerIndex, q, databases, tables]);
+  const columnNameMatches = (db: string, tbl: string) =>
+    schemaMatch?.colMatch.has(tableKey(db, tbl)) ?? false;
+  const tableNodeMatches = (db: string, tbl: string) =>
+    schemaMatch?.tableMatch.has(tableKey(db, tbl)) ?? false;
+  const dbNodeMatches = (db: string) => schemaMatch?.dbMatch.has(db) ?? false;
 
   // The active connection's schema has a hit, so keep its profile visible even
   // when the query doesn't match the profile's own metadata.
   const activeSchemaMatches =
     searching && !!sessionId && databases !== null && databases.some(dbNodeMatches);
+
+  // ツリーの構造が変わったコミットの直後に、止まり先の行が残っているか確認する (#1184)。
+  // 判定はストアが覚えているマウント中のキーとの照合なので O(1) で、止まり先が消えて
+  // いるときだけ DOM を読む。依存を明示しているので、打鍵・ホバー・フォーカス移動の
+  // レンダーでは走らない。
+  useLayoutEffect(() => {
+    ensureTabStop();
+  }, [
+    ensureTabStop,
+    profiles,
+    q,
+    sessionId,
+    activeProfileId,
+    databases,
+    tables,
+    tableColumns,
+    tableIndexes,
+    schemaObjects,
+    expandedProfiles,
+    expandedDbs,
+    expandedTables,
+    expandedGroups,
+    favorites,
+    recent,
+  ]);
 
   // Eagerly load every database's table list while a schema search is active so
   // table-name matches surface without the user expanding each database first.
@@ -1818,78 +2557,54 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   };
 
-  // スケルトン幅: 視覚的なランダム感を演出するために固定幅サイクルを使う。
-  const SKELETON_ROW_WIDTHS = [72, 58, 85, 65, 78];
-
-  const renderLoadingRow = () => (
-    // スケルトンノード: Spinner + テキストの代わりに、ツリー行の構造をシマーで
-    // 予兆表示する。シマー自体は内容のないプレースホルダなので `aria-hidden` で
-    // 支援技術から隠しつつ、`role="status"` + 視覚的に隠したテキストで
-    // 「ロード中」であることはスクリーンリーダーへ通知する。
-    <div role="status" aria-live="polite">
-      <VisuallyHidden>{t("treeLoading")}</VisuallyHidden>
-      <div aria-hidden>
-        {SKELETON_ROW_WIDTHS.map((w, i) => (
-          <SkeletonRow
-            key={i}
-            style={{ width: `${w}%`, animationDelay: `${i * 0.1}s`, opacity: 1 - i * 0.15 }}
-          />
-        ))}
-      </div>
-    </div>
+  // 行 (`memo` 化した `TableNode` など) が共有するハンドラ群。各関数は `useEvent` で
+  // 「常に最新の自分」へ委譲するので、このオブジェクトは 1 度作ったら同一参照のまま
+  // (行の props / context が変わらず、描き直されない)。
+  const pickTable = useEvent((db: string, tbl: string) => onPickTable(db, tbl));
+  const toggleTableEvent = useEvent((db: string, tbl: string) => void toggleTable(db, tbl));
+  const toggleFavoriteEvent = useEvent((db: string, tbl: string) => onToggleFavorite?.(db, tbl));
+  const openObjectDefinitionEvent = useEvent((db: string, kind: string, name: string, id: string | null) =>
+    onOpenObjectDefinition?.(db, kind, name, id),
   );
-
-  // クイックアクセス: アクティブ接続の databases の上に「お気に入り」「最近」を
-  // 並べ、ワンクリックで開けるようにする。各行は db.table を表示し、`onPickTable` で開く。
-  const renderQuickAccessRow = (refItem: TableRef, kind: "favorite" | "recent") => {
-    const star = kind === "favorite";
-    const key = `qa:${kind}:${tableKey(refItem.database, refItem.table)}`;
-    const activate = () => onPickTable(refItem.database, refItem.table);
-    return (
-      <TreeRow
-        key={key}
-        data-tree-key={key}
-        pl="1"
-        role="treeitem"
-        aria-level={groupLevel + 2}
-        tabIndex={treeItemTabIndex(key)}
-        onFocus={onTreeItemFocus(key)}
-        onKeyDown={makeTreeItemKeyDown(activate, (e) => handleTableContextMenu(e, refItem.database, refItem.table))}
-        onClick={activate}
-        onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
-        {...treeTooltipProps(`${refItem.database}.${refItem.table}`)}
-        _hover={{ bg: "app.rowHover" }}
-      >
-        <TreeChevron aria-hidden style={{ visibility: "hidden" }}>▸</TreeChevron>
-        <TreeIcon color={star ? "app.favorite" : "app.textSecondary"} aria-hidden>
-          <Icon name={star ? "star-filled" : "clock"} />
-        </TreeIcon>
-        <TreeLabel fontWeight={400}>
-          {refItem.table}
-          <chakra.span color="app.textMuted" fontSize="2xs" ml="1.5">
-            {refItem.database}
-          </chakra.span>
-        </TreeLabel>
-        {star && onToggleFavorite && (
-          <Tooltip label={t("quickAccessRemoveTitle")}>
-            <chakra.button
-              type="button"
-              aria-label={t("quickAccessRemoveTitle")}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleFavorite(refItem.database, refItem.table);
-              }}
-              color="app.textMuted"
-              px="1"
-              _hover={{ color: "app.text" }}
-            >
-              <Icon name="close" size={ICON_SIZES.sm} />
-            </chakra.button>
-          </Tooltip>
-        )}
-      </TreeRow>
-    );
-  };
+  const tableMenuEvent = useEvent(handleTableContextMenu);
+  const viewMenuEvent = useEvent(handleViewContextMenu);
+  const routineMenuEvent = useEvent(handleRoutineContextMenu);
+  const columnMenuEvent = useEvent(handleColumnContextMenu);
+  const indexMenuEvent = useEvent(handleIndexContextMenu);
+  const treeActions = useMemo<TreeActions>(
+    () => ({
+      store: tabStopStore,
+      treeTooltip: treeTooltipProps,
+      columnTooltip: columnTooltipProps,
+      makeKeyDown: makeTreeItemKeyDown,
+      pickTable,
+      toggleTable: toggleTableEvent,
+      toggleFavorite: toggleFavoriteEvent,
+      openObjectDefinition: openObjectDefinitionEvent,
+      tableMenu: tableMenuEvent,
+      viewMenu: viewMenuEvent,
+      routineMenu: routineMenuEvent,
+      columnMenu: columnMenuEvent,
+      indexMenu: indexMenuEvent,
+      activeTableIndicatorId,
+    }),
+    [
+      tabStopStore,
+      treeTooltipProps,
+      columnTooltipProps,
+      makeTreeItemKeyDown,
+      pickTable,
+      toggleTableEvent,
+      toggleFavoriteEvent,
+      openObjectDefinitionEvent,
+      tableMenuEvent,
+      viewMenuEvent,
+      routineMenuEvent,
+      columnMenuEvent,
+      indexMenuEvent,
+      activeTableIndicatorId,
+    ],
+  );
 
   // 非テーブルのスキーマオブジェクトを種別ごとにグループ化して描画する。
   // 選択すると onOpenObjectDefinition で定義 DDL を開く。`list_tables` と突き合った
@@ -1912,13 +2627,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       function: t("objGroupFunctions"),
       trigger: t("objGroupTriggers"),
     };
-    const icons: Record<string, IconName> = {
-      view: "view",
-      materialized_view: "view",
-      procedure: "routine",
-      function: "routine",
-      trigger: "trigger",
-    };
     return (
       <>
         {order.map((kind) => {
@@ -1927,40 +2635,16 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           return (
             <div key={kind}>
               <QuickAccessHeader>{labels[kind] ?? kind}</QuickAccessHeader>
-              {items.map((o) => {
-                const key = `so:${db}:${kind}:${o.name}:${o.id ?? ""}`;
-                const activate = () => onOpenObjectDefinition(db, o.kind, o.name, o.id);
-                const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
-                  kind === "view"
-                    ? (ev) => handleViewContextMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
-                    : isEditableObjectKind(kind)
-                      ? (ev) => handleRoutineContextMenu(ev, db, o)
-                      : undefined;
-                return (
-                <TreeRow
-                  key={key}
-                  data-tree-key={key}
-                  pl="1"
-                  role="treeitem"
-                  aria-level={groupLevel + 3}
-                  tabIndex={treeItemTabIndex(key)}
-                  onFocus={onTreeItemFocus(key)}
-                  onKeyDown={makeTreeItemKeyDown(activate, openMenu)}
-                  onClick={activate}
-                  onContextMenu={openMenu}
-                  {...treeTooltipProps(`${o.name} — ${labels[kind] ?? kind}`)}
-                  _hover={{ bg: "app.rowHover" }}
-                >
-                  <TreeChevron visibility="hidden" aria-hidden />
-                  <TreeIcon color="app.textSecondary" aria-hidden>
-                    <Icon name={icons[kind] ?? "query"} />
-                  </TreeIcon>
-                  <TreeLabel fontWeight={400}>
-                    <HighlightText text={o.name} query={q} />
-                  </TreeLabel>
-                </TreeRow>
-                );
-              })}
+              {items.map((o) => (
+                <SchemaObjectRow
+                  key={`so:${db}:${kind}:${o.name}:${o.id ?? ""}`}
+                  db={db}
+                  o={o}
+                  kindLabel={labels[kind] ?? kind}
+                  level={groupLevel}
+                  q={q}
+                />
+              ))}
             </div>
           );
         })}
@@ -1968,9 +2652,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     );
   };
 
-  // テーブル / ビューのノード (#1112)。ビューもテーブルと同じく列・インデックス・
-  // 外部キーを展開でき、ダブルクリックでデータを開く (以前はビューが「テーブル一覧」
-  // と「ビュー」グループの 2 箇所に別物として出ていた)。
+  // `partitionDatabaseNodes` の結果を DB ごとに覚えておく (#1314)。毎レンダー作り直すと
+  // ビューのノードが新しいオブジェクトになり、行の `memo` が効かなくなる。
+  const partitionCacheRef = useRef(
+    new Map<string, { tables: string[]; objects: SchemaObject[] | undefined; groups: ReturnType<typeof partitionDatabaseNodes> }>(),
+  );
+  const partitionFor = (db: string, dbTables: string[], objects: SchemaObject[] | undefined) => {
+    const cached = partitionCacheRef.current.get(db);
+    if (cached && cached.tables === dbTables && cached.objects === objects) return cached.groups;
+    const groups = partitionDatabaseNodes(dbTables, objects);
+    partitionCacheRef.current.set(db, { tables: dbTables, objects, groups });
+    return groups;
+  };
+
+  // テーブル / ビューのノード (#1112)。行の描画は `memo` 化した `TableNode` に任せ、
+  // ここでは「その行の表示に効く値」だけを props として取り出す (#1314)。
   const renderTableNode = (
     db: string,
     tbl: string,
@@ -1978,255 +2674,25 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   ) => {
     const tKey = tableKey(db, tbl);
     const tableNameHit = searching && tbl.toLowerCase().includes(q);
-    const showAllCols = !schemaFiltered || dbNameHit || tableNameHit;
-    const tOpen =
-      !!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl));
-    const cols = tableColumns[tKey];
-    const rowEst = rowEstimates[db]?.[tbl];
-    const rowEstLabel =
-      typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
-    // 現在結果パネルに開いているテーブルかどうか (#982)。
-    // ツリーはアクティブ接続のみを表示するので db/table の
-    // 一致だけで十分 (プロファイル跨ぎの衝突はない)。
-    const isActiveTable =
-      !!activeTable && activeTable.database === db && activeTable.table === tbl;
-    // 列・インデックス・外部キーの子グループ (#1112)。見出しは複数グループが
-    // 並ぶときだけ出す (`tableChildGroups`)。
-    const childGroups = cols ? tableChildGroups(cols, tableIndexes[tKey]) : null;
-    const treeKey = `tbl:${tKey}`;
     return (
-      <TreeNode key={tbl}>
-        <TreeRow
-          data-tree-key={treeKey}
-          pl="1"
-          role="treeitem"
-          /* 行のアクセシブルネームをテーブル名に固定する。既定の
-             content 由来の名前だと、内側のチェブロンボタンの
-             aria-label や行数バッジまで連結され、SR の読み上げと
-             ロール検索 (テスト含む) が不安定になるため。 */
-          aria-label={tbl}
-          aria-level={groupLevel + 3}
-          aria-expanded={tOpen}
-          tabIndex={treeItemTabIndex(treeKey)}
-          onFocus={onTreeItemFocus(treeKey)}
-          onKeyDown={makeTreeItemKeyDown(() => onPickTable(db, tbl), (e) =>
-            view ? handleViewContextMenu(e, db, view) : handleTableContextMenu(e, db, tbl),
-          )}
-          // 「現在地」表示 (#982): SR には aria-current、視覚には
-          // 下の共有 layoutId インジケータ (アクセントスパイン) で
-          // 示す。position: relative はインジケータの絶対配置の
-          // 基準になるが、非アクティブ行では不要なので付けない。
-          aria-current={isActiveTable ? "true" : undefined}
-          position={isActiveTable ? "relative" : undefined}
-          bg={isActiveTable ? "var(--bg-active)" : undefined}
-          onDoubleClick={() => onPickTable(db, tbl)}
-          onContextMenu={(e) =>
-            view ? handleViewContextMenu(e, db, view) : handleTableContextMenu(e, db, tbl)
-          }
-          {...treeTooltipProps(withComment(t("treeTableTitle"), tableComments[db]?.[tbl]))}
-          _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
-        >
-          {isActiveTable && (
-            <MotionActiveIndicator
-              layoutId={activeTableIndicatorId}
-              transition={transitions.emphasized}
-              position="absolute"
-              left="0"
-              top="0"
-              bottom="0"
-              width="2px"
-              bg="var(--accent)"
-              aria-hidden
-            />
-          )}
-          {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
-              ダブルクリック (テーブルを開く) の前に click が 2 回発火して
-              カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
-              連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
-              マウスでは唯一の展開手段になったためネイティブ button として描画し、
-              キーボード (Enter/Space) と支援技術からも操作できるようにする。
-              行本体からの ArrowRight/ArrowLeft (#1184) も、この button の
-              aria-expanded を目印にここをクリックしてトグルする
-              (`makeTreeItemKeyDown` 参照)。 */}
-          <TreeChevronButton
-            type="button"
-            transform={tOpen ? "rotate(90deg)" : undefined}
-            aria-label={t("treeToggleColumnsAria", { table: tbl })}
-            aria-expanded={tOpen}
-            onClick={(e) => {
-              e.stopPropagation();
-              void toggleTable(db, tbl);
-            }}
-            onDoubleClick={(e) => e.stopPropagation()}
-          >▸</TreeChevronButton>
-          <TreeIcon color="app.textSecondary" aria-hidden><Icon name={view ? "view" : "table"} /></TreeIcon>
-          <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
-          {rowEstLabel && (
-            <TreeBadge
-              fontFamily="mono"
-              fontSize="2xs"
-              textTransform="none"
-              letterSpacing="0"
-              {...treeTooltipProps(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
-            >
-              {rowEstLabel}
-            </TreeBadge>
-          )}
-          {renderMoreButton((ev) =>
-            view ? handleViewContextMenu(ev, db, view) : handleTableContextMenu(ev, db, tbl),
-          )}
-        </TreeRow>
-        <TreeCollapse open={tOpen}>
-          <TreeChildren>
-            {cols === undefined ? (
-              renderLoadingRow()
-            ) : cols.length === 0 ? (
-              <TreeEmpty>{t("treeNoColumns")}</TreeEmpty>
-            ) : (
-              <>
-              {showAllCols && childGroups?.showColumnsHeader && (
-                <QuickAccessHeader>{t("treeColumnsLabel")}</QuickAccessHeader>
-              )}
-              {cols
-                .filter((col) => showAllCols || col.name.toLowerCase().includes(q))
-                .map((col) => {
-                const isPk = col.key === "PRI";
-                const isFk = col.referenced_table !== null;
-                const colKey = `col:${tKey}:${col.name}`;
-                return (
-                  <TreeRow
-                    key={col.name}
-                    data-tree-key={colKey}
-                    pt="0.75"
-                    pb="0.75"
-                    cursor="default"
-                    fontSize="sm"
-                    role="treeitem"
-                    aria-level={groupLevel + 4}
-                    tabIndex={treeItemTabIndex(colKey)}
-                    onFocus={onTreeItemFocus(colKey)}
-                    onKeyDown={makeTreeItemKeyDown(undefined, (e) => handleColumnContextMenu(e, db, tbl, col.name))}
-                    onContextMenu={(e) => handleColumnContextMenu(e, db, tbl, col.name)}
-                    {...columnTooltipProps(col)}
-                  >
-                    <TreeChevron visibility="hidden" aria-hidden />
-                    {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
-                        hover すると `ColumnTooltip` (下記 `hoveredColumn`) が
-                        鍵種別・型を含む詳細を表示するため、ここで別に native
-                        title を持つと同じ情報が二重に (かつ約 1 秒遅れで)
-                        出てしまう。 */}
-                    <TreeIcon
-                      fontSize="xs"
-                      color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
-                      aria-hidden
-                    >
-                      {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
-                    </TreeIcon>
-                    <TreeLabel fontFamily="mono" color="app.text"><HighlightText text={col.name} query={q} /></TreeLabel>
-                    <TreeBadge
-                      fontFamily="mono"
-                      textTransform="lowercase"
-                      fontSize="2xs"
-                    >
-                      {col.data_type}
-                    </TreeBadge>
-                  </TreeRow>
-                );
-              })}
-              </>
-            )}
-            {/* インデックス一覧。展開時に列と並行取得し、
-                列の下に小見出し付きで表示する。 */}
-            {showAllCols && (tableIndexes[tKey]?.length ?? 0) > 0 && (
-              <>
-                <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
-                {tableIndexes[tKey].map((idx) => {
-                  const idxKey = `idx:${tKey}:${idx.name}`;
-                  return (
-                  <TreeRow
-                    key={`idx:${idx.name}`}
-                    data-tree-key={idxKey}
-                    pt="0.75"
-                    pb="0.75"
-                    cursor="default"
-                    fontSize="sm"
-                    role="treeitem"
-                    aria-level={groupLevel + 4}
-                    tabIndex={treeItemTabIndex(idxKey)}
-                    onFocus={onTreeItemFocus(idxKey)}
-                    onKeyDown={makeTreeItemKeyDown(undefined, (e) => handleIndexContextMenu(e, db, tbl, idx))}
-                    onContextMenu={(e) => handleIndexContextMenu(e, db, tbl, idx)}
-                    {...treeTooltipProps(
-                      `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
-                    )}
-                  >
-                    <TreeChevron visibility="hidden" aria-hidden />
-                    <TreeIcon
-                      fontSize="xs"
-                      color={idx.primary ? "app.keyAccent" : idx.unique ? "app.status.success" : "app.textMuted"}
-                      aria-hidden
-                    >
-                      {idx.primary ? <Icon name="key" /> : <Icon name="list" />}
-                    </TreeIcon>
-                    <TreeLabel fontFamily="mono" color="app.text">
-                      {idx.columns.join(", ") || idx.name}
-                    </TreeLabel>
-                    {(idx.primary || idx.unique) && (
-                      <TreeBadge
-                        fontSize="2xs"
-                        textTransform="uppercase"
-                        {...treeTooltipProps(idx.name)}
-                      >
-                        {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
-                      </TreeBadge>
-                    )}
-                  </TreeRow>
-                  );
-                })}
-              </>
-            )}
-            {/* 外部キー (#1112)。列行の鎖アイコンだけでは「どこを参照しているか」が
-                ホバーしないと分からないため、参照先をグループで並べる。クリックで
-                参照先テーブルのデータを開く (ツリーのダブルクリックと同じ導線)。 */}
-            {showAllCols && childGroups && childGroups.foreignKeys.length > 0 && (
-              <>
-                <QuickAccessHeader>{t("treeForeignKeysLabel")}</QuickAccessHeader>
-                {childGroups.foreignKeys.map((fk) => {
-                  const fkKey = `fk:${tKey}:${fk.column}`;
-                  const activate = () => onPickTable(db, fk.referencedTable);
-                  return (
-                  <TreeRow
-                    key={`fk:${fk.column}`}
-                    data-tree-key={fkKey}
-                    pt="0.75"
-                    pb="0.75"
-                    fontSize="sm"
-                    role="treeitem"
-                    aria-level={groupLevel + 4}
-                    aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}`}
-                    tabIndex={treeItemTabIndex(fkKey)}
-                    onFocus={onTreeItemFocus(fkKey)}
-                    onKeyDown={makeTreeItemKeyDown(activate)}
-                    onClick={activate}
-                    {...treeTooltipProps(t("treeFkOpenHint", { table: fk.referencedTable }))}
-                    _hover={{ bg: "app.rowHover" }}
-                  >
-                    <TreeChevron visibility="hidden" aria-hidden />
-                    <TreeIcon fontSize="xs" color="app.accent" aria-hidden>
-                      <Icon name="link" />
-                    </TreeIcon>
-                    <TreeLabel fontFamily="mono" color="app.text">
-                      {fk.column}
-                      <chakra.span color="app.textMuted"> → {foreignKeyTargetLabel(fk)}</chakra.span>
-                    </TreeLabel>
-                  </TreeRow>
-                  );
-                })}
-              </>
-            )}
-          </TreeChildren>
-        </TreeCollapse>
-      </TreeNode>
+      <TableNode
+        key={tbl}
+        db={db}
+        tbl={tbl}
+        view={view}
+        q={q}
+        level={groupLevel}
+        open={!!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl))}
+        showAllCols={!schemaFiltered || dbNameHit || tableNameHit}
+        cols={tableColumns[tKey]}
+        indexes={tableIndexes[tKey]}
+        rowEst={rowEstimates[db]?.[tbl]}
+        comment={tableComments[db]?.[tbl]}
+        // 現在結果パネルに開いているテーブルかどうか (#982)。
+        // ツリーはアクティブ接続のみを表示するので db/table の
+        // 一致だけで十分 (プロファイル跨ぎの衝突はない)。
+        isActive={!!activeTable && activeTable.database === db && activeTable.table === tbl}
+      />
     );
   };
 
@@ -2234,18 +2700,27 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     const favs = favorites ?? [];
     const recents = recent ?? [];
     if (favs.length === 0 && recents.length === 0) return null;
+    const row = (r: TableRef, kind: "favorite" | "recent") => (
+      <QuickAccessRow
+        key={`qa:${kind}:${tableKey(r.database, r.table)}`}
+        refItem={r}
+        kind={kind}
+        level={groupLevel}
+        removable={!!onToggleFavorite}
+      />
+    );
     return (
       <>
         {favs.length > 0 && (
           <>
             <QuickAccessHeader>{t("quickAccessFavorites")}</QuickAccessHeader>
-            {favs.map((r) => renderQuickAccessRow(r, "favorite"))}
+            {favs.map((r) => row(r, "favorite"))}
           </>
         )}
         {recents.length > 0 && (
           <>
             <QuickAccessHeader>{t("quickAccessRecent")}</QuickAccessHeader>
-            {recents.map((r) => renderQuickAccessRow(r, "recent"))}
+            {recents.map((r) => row(r, "recent"))}
           </>
         )}
       </>
@@ -2307,6 +2782,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         {...variants.fade}
         transition={transitions.crossfade}
       >
+        <TabStop treeKey={profileTreeKey}>
+        {({ tabIndex, onFocus }) => (
         <MotionTreeRow
           ref={(el: HTMLElement | null) => {
             if (el) profileRowRefs.current.set(p.id, el);
@@ -2334,8 +2811,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           onClick={() => handleProfileClick(p)}
           onContextMenu={(e) => handleProfileContextMenu(e, p)}
           onKeyDown={handleProfileRowKeyDown(p, siblingIds)}
-          onFocus={onTreeItemFocus(profileTreeKey)}
-          tabIndex={treeItemTabIndex(profileTreeKey)}
+          onFocus={onFocus}
+          tabIndex={tabIndex}
           role="treeitem"
           aria-level={groupLevel + 1}
           aria-expanded={isOpen}
@@ -2449,12 +2926,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               同じ共有実装 (#1007)。 */}
           <DropInsertionMarker orientation="horizontal" visible={dropIndicator === p.id} />
         </MotionTreeRow>
+        )}
+        </TabStop>
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
           <TreeChildren>
             {isActive && sessionId && renderQuickAccess()}
             {databases === null ? (
-              renderLoadingRow()
+              <LoadingRow />
             ) : databases.length === 0 ? (
               <TreeEmpty>{t("treeNoDatabases")}</TreeEmpty>
             ) : (
@@ -2467,6 +2946,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 const dbTreeKey = `db:${db}`;
                 return (
                   <TreeNode key={db}>
+                    <TabStop treeKey={dbTreeKey}>
+                    {({ tabIndex, onFocus }) => (
                     <TreeRow
                       data-tree-key={dbTreeKey}
                       pl="1"
@@ -2476,28 +2957,30 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       aria-label={db}
                       aria-level={groupLevel + 2}
                       aria-expanded={dbOpen}
-                      tabIndex={treeItemTabIndex(dbTreeKey)}
-                      onFocus={onTreeItemFocus(dbTreeKey)}
+                      tabIndex={tabIndex}
+                      onFocus={onFocus}
                       onKeyDown={makeTreeItemKeyDown(() => void toggleDb(db), (e) => handleDbContextMenu(e, db))}
                       {...treeTooltipProps(`${db} — ${containerLabel}`)}
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                       <TreeIcon color="app.dbAccent" aria-hidden><Icon name="database" /></TreeIcon>
                       <TreeLabel fontWeight={400}><HighlightText text={db} query={q} /></TreeLabel>
-                      {renderMoreButton((ev) => handleDbContextMenu(ev, db))}
+                      <TreeMoreActions onOpen={(ev) => handleDbContextMenu(ev, db)} />
                     </TreeRow>
+                    )}
+                    </TabStop>
                     <TreeCollapse open={dbOpen}>
                       <TreeChildren>
                         {dbTables === undefined ? (
-                          renderLoadingRow()
+                          <LoadingRow />
                         ) : dbTables.length === 0 ? (
                           <>
                             <TreeEmpty>{t("treeNoTables")}</TreeEmpty>
-                            {!schemaFiltered && renderSchemaObjects(db, partitionDatabaseNodes([], schemaObjects[db]).objects)}
+                            {!schemaFiltered && renderSchemaObjects(db, partitionFor(db, dbTables, schemaObjects[db]).objects)}
                           </>
                         ) : (
                           (() => {
-                            const groups = partitionDatabaseNodes(dbTables, schemaObjects[db]);
+                            const groups = partitionFor(db, dbTables, schemaObjects[db]);
                             const visibleTables = groups.tables.filter(
                               (tbl) => !schemaFiltered || dbNameHit || tableNodeMatches(db, tbl),
                             );
@@ -2542,7 +3025,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   };
 
   return (
+    <TreeActionsContext.Provider value={treeActions}>
     <Flex direction="column" overflow="hidden" flex="1">
+      {/* ツールチップの state はここ (ツリー本体の外) に閉じ込める。ホバーの出入りで
+          描き直されるのはこの 2 つだけ (#1314)。 */}
+      <TreeTooltipLayer bindRef={treeTooltipBindRef} />
+      <ColumnTooltipLayer bindRef={columnTooltipBindRef} />
       <Box px="2.5" py="2" borderBottom="1px solid" borderColor="app.borderSubtle">
         <Input
           ref={filterInputRef}
@@ -2625,6 +3113,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                     onDragEnd={reorderEnabled ? () => setDropIndicator(null) : undefined}
                   >
                     <TreeNode>
+                      <TabStop treeKey={`group:${key}`}>
+                      {({ tabIndex, onFocus }) => (
                       <Box
                         ref={(el: HTMLElement | null) => {
                           if (el) groupRowRefs.current.set(key, el);
@@ -2659,8 +3149,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
                         }
                         onKeyDown={handleGroupRowKeyDown(key, namedGroupKeys)}
-                        onFocus={onTreeItemFocus(`group:${key}`)}
-                        tabIndex={treeItemTabIndex(`group:${key}`)}
+                        onFocus={onFocus}
+                        tabIndex={tabIndex}
                         role="treeitem"
                         aria-level={1}
                         aria-expanded={groupOpen}
@@ -2676,6 +3166,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                             TabBar と同じ共有実装 (#1007)。 */}
                         <DropInsertionMarker orientation="horizontal" visible={dropIndicator === `group:${key}`} />
                       </Box>
+                      )}
+                      </TabStop>
                       <TreeCollapse open={groupOpen}>
                         <Reorder.Group
                           as="div"
@@ -2711,6 +3203,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                     const memberIds = ungroupedGroup.profiles.map((p) => p.id);
                     return (
                       <TreeNode key={key}>
+                        <TabStop treeKey={`group:${key}`}>
+                        {({ tabIndex, onFocus }) => (
                         <Box
                           display="flex"
                           alignItems="center"
@@ -2742,8 +3236,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           // 開閉)。未分類は並べ替え不可のため矢印キーの移動は
                           // moveItemBy が no-op になり、開閉だけが効く。
                           onKeyDown={handleGroupRowKeyDown(key, namedGroupKeys)}
-                          onFocus={onTreeItemFocus(`group:${key}`)}
-                          tabIndex={treeItemTabIndex(`group:${key}`)}
+                          onFocus={onFocus}
+                          tabIndex={tabIndex}
                           role="treeitem"
                           aria-level={1}
                           aria-expanded={groupOpen}
@@ -2754,6 +3248,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           </chakra.span>
                           <TreeBadge textTransform="none" letterSpacing="0">{ungroupedGroup.profiles.length}</TreeBadge>
                         </Box>
+                        )}
+                        </TabStop>
                         <TreeCollapse open={groupOpen}>
                           <Reorder.Group
                             as="div"
@@ -2792,10 +3288,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
-
-      {hoveredColumn && <ColumnTooltip col={hoveredColumn.value} anchor={hoveredColumn.rect} />}
-      {hoveredLabel && <TooltipBubble label={hoveredLabel.label} anchor={hoveredLabel.rect} maxWidth="320px" />}
     </Flex>
+    </TreeActionsContext.Provider>
   );
 }));
 

@@ -61,6 +61,7 @@ import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPat
 import { attachRowDiff } from "./resultDiff";
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
+import { useStableCallbacks } from "./useStableCallbacks";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
 import {
@@ -1959,12 +1960,18 @@ export default function App() {
   // スキーマツリーの「現在地」表示 (#982) 用に、アクティブタブが開いている
   // (db, table) だけを取り出す。table タブでも database/table が未確定な
   // 過渡状態 (作成直後など) は null にして、ツリー側で誤って光らせない。
+  // 依存は `activeTab` ではなく (database, table) の文字列値にする (#1314)。
+  // `activeTab` は打鍵やストリーミングのバッチのたびに新しいオブジェクトになるが、
+  // 開いているテーブルは変わらないので、ここで参照を固定して ConnectionList の
+  // `memo` が破られないようにする。
+  const activeTreeDb = activeTab && activeTab.kind === "table" ? activeTab.database : null;
+  const activeTreeTableName = activeTab && activeTab.kind === "table" ? activeTab.table : null;
   const activeTreeTable = useMemo(
     () =>
-      activeTab && activeTab.kind === "table" && activeTab.database && activeTab.table
-        ? { database: activeTab.database, table: activeTab.table }
+      activeTreeDb && activeTreeTableName
+        ? { database: activeTreeDb, table: activeTreeTableName }
         : null,
-    [activeTab],
+    [activeTreeDb, activeTreeTableName],
   );
 
   // 読み取り専用判定 (`isReadOnlySql`) はドライバごとの文字列エスケープ規則に
@@ -8697,6 +8704,61 @@ export default function App() {
                   ? t("timelapseTitle")
                   : t("processTitle");
 
+  // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
+  // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
+  // ツリー全体が描き直される (#1314)。ref 経由の安定ラッパーに包んで渡す。
+  const connectionListHandlers = useStableCallbacks({
+    onConnect: handleConnect,
+    onDisconnectProfile: handleDisconnectProfile,
+    onReorderProfiles: handleReorderProfiles,
+    onCreate: handleOpenCreateForm,
+    onEdit: handleOpenEditForm,
+    onDuplicate: handleDuplicateProfile,
+    onDelete: handleDeleteProfile,
+    onPickTable: handleOpenTable,
+    onOpenStructure: handleOpenStructure,
+    onImportTable: handleImportTable,
+    onTransferTable: handleTransferTable,
+    onImportNewTable: handleImportNewTable,
+    onGenerateTestData: handleGenerateTestData,
+    onConfigureOpenQuery: sessionId && selectedProfile ? handleConfigureOpenQuery : undefined,
+    onDumpDatabase: handleDumpDatabase,
+    onRunScript: setScriptTarget,
+    onSchemaExport: handleSchemaExport,
+    onRunTableSelect: handleRunTableSelect,
+    onInsertTableSelect: handleInsertTableSelect,
+    onShowCreateTable: handleShowCreateTable,
+    onCopyTableDdl: handleCopyTableDdl,
+    onToggleFavorite: handleToggleFavorite,
+    onCreateTable: (db: string) => setCreateTableDb(db),
+    onCreateNamespace: () => setCreateNamespaceOpen(true),
+    onDropNamespace: handleDropNamespace,
+    onTruncateTable: handleTruncateTable,
+    onDropTable: handleDropTable,
+    onRenameTable: (database: string, table: string) => setRenameTarget({ database, table }),
+    onAlterTable: (database: string, table: string) => setAlterTableTarget({ database, table }),
+    onCreateIndex: (database: string, table: string) => setCreateIndexTarget({ database, table }),
+    onDropIndex: handleDropIndex,
+    onRunTableMaintenance: handleRunTableMaintenance,
+    onRunDatabaseMaintenance: handleRunDatabaseMaintenance,
+    onSyncIdentity: handleSyncIdentity,
+    onShowDatabaseSizes: handleShowDatabaseSizes,
+    onExploreColumns: (database: string, table: string) => handleExploreColumns(database, table),
+    onWatchTable: handleWatchTable,
+    onCopyTableName: handleCopyTableName,
+    onOpenObjectDefinition: handleOpenObjectDefinition,
+    onEditViewDefinition: handleEditViewDefinition,
+    onFindUsages: handleFindUsages,
+    onDropView: handleDropView,
+    onRunRoutine: handleRunRoutine,
+    onEditRoutine: handleEditRoutine,
+    onCreateRoutine: handleCreateRoutine,
+    onCreateSandbox: sessionId ? (db: string) => setSandboxCreateTarget({ database: db }) : undefined,
+    onOpenSandbox: handleOpenSandbox,
+    onReviewSandbox: handleReviewSandbox,
+    onDiscardSandbox: handleDiscardSandbox,
+  });
+
   return (
     <Flex
       direction="column"
@@ -8963,59 +9025,11 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             openProfileIds={openProfileIds}
-            onConnect={handleConnect}
-            onDisconnectProfile={handleDisconnectProfile}
-            onReorderProfiles={handleReorderProfiles}
-            onCreate={handleOpenCreateForm}
-            onEdit={handleOpenEditForm}
-            onDuplicate={handleDuplicateProfile}
-            onDelete={handleDeleteProfile}
-            onPickTable={handleOpenTable}
-            onOpenStructure={handleOpenStructure}
-            onImportTable={handleImportTable}
-            onTransferTable={handleTransferTable}
-            onImportNewTable={handleImportNewTable}
-            onGenerateTestData={handleGenerateTestData}
-            onConfigureOpenQuery={sessionId && selectedProfile ? handleConfigureOpenQuery : undefined}
-            onDumpDatabase={handleDumpDatabase}
-            onRunScript={setScriptTarget}
-            onSchemaExport={handleSchemaExport}
-            onRunTableSelect={handleRunTableSelect}
-            onInsertTableSelect={handleInsertTableSelect}
-            onShowCreateTable={handleShowCreateTable}
-            onCopyTableDdl={handleCopyTableDdl}
+            {...connectionListHandlers}
             selectLimit={Math.max(1, settings.defaultDisplayCount)}
             favorites={quickAccess.favorites}
             recent={quickAccess.recent}
-            onToggleFavorite={handleToggleFavorite}
-            onCreateTable={(db) => setCreateTableDb(db)}
-            onCreateNamespace={() => setCreateNamespaceOpen(true)}
-            onDropNamespace={handleDropNamespace}
-            onTruncateTable={handleTruncateTable}
-            onDropTable={handleDropTable}
-            onRenameTable={(database, table) => setRenameTarget({ database, table })}
-            onAlterTable={(database, table) => setAlterTableTarget({ database, table })}
-            onCreateIndex={(database, table) => setCreateIndexTarget({ database, table })}
-            onDropIndex={handleDropIndex}
-            onRunTableMaintenance={handleRunTableMaintenance}
-            onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
-            onSyncIdentity={handleSyncIdentity}
-            onShowDatabaseSizes={handleShowDatabaseSizes}
-            onExploreColumns={(database, table) => handleExploreColumns(database, table)}
-            onWatchTable={handleWatchTable}
-            onCopyTableName={handleCopyTableName}
-            onOpenObjectDefinition={handleOpenObjectDefinition}
-            onEditViewDefinition={handleEditViewDefinition}
-            onFindUsages={handleFindUsages}
-            onDropView={handleDropView}
-            onRunRoutine={handleRunRoutine}
-            onEditRoutine={handleEditRoutine}
-            onCreateRoutine={handleCreateRoutine}
-            onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
-            onOpenSandbox={handleOpenSandbox}
-            onReviewSandbox={handleReviewSandbox}
-            onDiscardSandbox={handleDiscardSandbox}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList
