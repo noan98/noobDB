@@ -30,6 +30,7 @@ export type ShortcutCategory = "global" | "editor" | "grid" | "tabs";
 export type ShortcutId =
   | "commandPalette"
   | "objectSearch"
+  | "quickLauncher"
   | "sidebarFilter"
   | "resultSearch"
   | "maximizeResult"
@@ -99,6 +100,8 @@ export const SHORTCUTS: ShortcutDef[] = [
   // Modal 内でだけ効く表示専用の項目で、再割り当ては対象外。
   { keysKey: "shortcutModalSubmitTitle", descKey: "shortcutModalSubmitDesc", category: "global" },
   { keysKey: "shortcutSidebarFilterTitle", descKey: "shortcutSidebarFilterDesc", category: "global", id: "sidebarFilter", scope: "global", defaultCombo: "Mod+P" },
+  // フローティング・ランチャー (#1254) の開閉。SQL エディタのある画面でだけ効く。
+  { keysKey: "shortcutQuickLauncherTitle", descKey: "shortcutQuickLauncherDesc", category: "global", id: "quickLauncher", scope: "global", defaultCombo: "Mod+Shift+J" },
   { keysKey: "shortcutObjectSearchTitle", descKey: "shortcutObjectSearchDesc", category: "global", id: "objectSearch", scope: "global", defaultCombo: "Mod+Shift+O" },
   { keysKey: "shortcutOpenSettingsTitle", descKey: "shortcutOpenSettingsDesc", category: "global", id: "openSettings", scope: "global", defaultCombo: "Mod+," },
   { keysKey: "shortcutOpenHelpTitle", descKey: "shortcutOpenHelpDesc", category: "global", id: "openHelp", scope: "global", defaultCombo: "F1" },

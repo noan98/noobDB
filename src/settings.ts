@@ -6,6 +6,17 @@ import {
   type ExportMaskPreset,
   sanitizeMaskPresets,
 } from "./components/exportMasking";
+import {
+  sanitizeTableOpenQueryOverrides,
+  upsertTableOpenQueryOverride,
+  validateTableQueryTemplate,
+  type TableOpenQueryOverride,
+} from "./tableQueryTemplate";
+import {
+  DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS,
+  sanitizeQuickLauncherSectionLimits,
+  type QuickLauncherSectionLimits,
+} from "./quickLauncher";
 
 export type Theme = "light" | "dark";
 
@@ -268,6 +279,18 @@ export interface Settings {
   flightRecorderRowCap: number;
   /** 退避した before/after イメージの保持期間 (日数)。0 は無期限。 */
   flightRecorderRetentionDays: number;
+  /**
+   * テーブルを開いたときのデフォルトクエリ (#1253)。`{table}` / `{pk}` / `{limit}`
+   * などのプレースホルダ付きテンプレート。空なら従来の `SELECT * ... LIMIT n`。
+   * 検証・展開は `tableQueryTemplate.ts`。
+   */
+  tableOpenQueryTemplate: string;
+  /** テーブル別の上書き (接続プロファイル + DB + テーブル)。全体設定より優先する。 */
+  tableOpenQueryOverrides: TableOpenQueryOverride[];
+  /** フローティング・ランチャー (#1254) を表示するか。 */
+  quickLauncherEnabled: boolean;
+  /** ランチャーの各セクションの表示件数。 */
+  quickLauncherSectionLimits: QuickLauncherSectionLimits;
 }
 
 /**
@@ -716,6 +739,10 @@ export const DEFAULT_SETTINGS: Settings = {
   flightRecorderEnabled: DEFAULT_FLIGHT_RECORDER_ENABLED,
   flightRecorderRowCap: DEFAULT_FLIGHT_RECORDER_ROW_CAP,
   flightRecorderRetentionDays: DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
+  tableOpenQueryTemplate: "",
+  tableOpenQueryOverrides: [],
+  quickLauncherEnabled: true,
+  quickLauncherSectionLimits: { ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS },
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -942,6 +969,10 @@ export function normalizeSettings(input: unknown): Settings {
     flightRecorderEnabled?: unknown;
     flightRecorderRowCap?: unknown;
     flightRecorderRetentionDays?: unknown;
+    tableOpenQueryTemplate?: unknown;
+    tableOpenQueryOverrides?: unknown;
+    quickLauncherEnabled?: unknown;
+    quickLauncherSectionLimits?: unknown;
   };
   return {
     syntaxColors: {
@@ -1089,6 +1120,16 @@ export function normalizeSettings(input: unknown): Settings {
       MIN_FLIGHT_RECORDER_RETENTION_DAYS,
       MAX_FLIGHT_RECORDER_RETENTION_DAYS,
     ),
+    // 壊れた (検証に通らない) テンプレートは捨てる。実行時にも再検証する (#1253)。
+    tableOpenQueryTemplate:
+      typeof parsed.tableOpenQueryTemplate === "string" &&
+      validateTableQueryTemplate(parsed.tableOpenQueryTemplate) === null
+        ? parsed.tableOpenQueryTemplate
+        : "",
+    tableOpenQueryOverrides: sanitizeTableOpenQueryOverrides(parsed.tableOpenQueryOverrides),
+    quickLauncherEnabled:
+      typeof parsed.quickLauncherEnabled === "boolean" ? parsed.quickLauncherEnabled : true,
+    quickLauncherSectionLimits: sanitizeQuickLauncherSectionLimits(parsed.quickLauncherSectionLimits),
   };
 }
 
@@ -1602,6 +1643,61 @@ export function setFlightRecorderRetentionDays(value: number): void {
   );
   if (next === current.flightRecorderRetentionDays) return;
   current = { ...current, flightRecorderRetentionDays: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * テーブルを開いたときのデフォルトクエリ (全体) を保存する (#1253)。検証に通らない
+ * テンプレートは保存せず false を返す (呼び出し側が `FieldError` で理由を出す)。
+ */
+export function setTableOpenQueryTemplate(value: string): boolean {
+  if (validateTableQueryTemplate(value) !== null) return false;
+  const next = value.trim();
+  if (next === current.tableOpenQueryTemplate) return true;
+  current = { ...current, tableOpenQueryTemplate: next };
+  persist();
+  listeners.forEach((cb) => cb());
+  return true;
+}
+
+/**
+ * テーブル別の上書きを保存する (同じキーは置き換え、空テンプレートは削除)。
+ * 検証に通らなければ保存せず false を返す。
+ */
+export function setTableOpenQueryOverride(entry: TableOpenQueryOverride): boolean {
+  if (validateTableQueryTemplate(entry.template) !== null) return false;
+  current = {
+    ...current,
+    tableOpenQueryOverrides: upsertTableOpenQueryOverride(current.tableOpenQueryOverrides, entry),
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+  return true;
+}
+
+/** テーブル別の上書きを削除する。 */
+export function removeTableOpenQueryOverride(profileId: string, database: string, table: string): void {
+  setTableOpenQueryOverride({ profileId, profileName: "", database, table, template: "" });
+}
+
+export function setQuickLauncherEnabled(value: boolean): void {
+  if (current.quickLauncherEnabled === value) return;
+  current = { ...current, quickLauncherEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setQuickLauncherSectionLimit(
+  section: keyof QuickLauncherSectionLimits,
+  value: number,
+): void {
+  const next = sanitizeQuickLauncherSectionLimits({
+    ...current.quickLauncherSectionLimits,
+    [section]: value,
+  });
+  if (next[section] === current.quickLauncherSectionLimits[section]) return;
+  current = { ...current, quickLauncherSectionLimits: next };
   persist();
   listeners.forEach((cb) => cb());
 }

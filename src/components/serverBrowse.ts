@@ -146,19 +146,27 @@ export function buildServerSortClause(driver: string, sort: ServerSort): string 
   return `${quoteIdentFor(driver, sort.column)} ${sort.direction === "desc" ? "DESC" : "ASC"}`;
 }
 
+/** `wrapBrowse` で base を包むときの派生テーブル名。 */
+export const SERVER_BROWSE_WRAP_ALIAS = "noobdb_src";
+
 /**
  * paginatable な base SQL (`SELECT * FROM ...`、WHERE/ORDER BY/LIMIT を持たない
  * 前提) に、サーバ側フィルタ/ソートを注入する。`filter`/`sort` がどちらも
  * null/undefined なら base をそのまま返す (迷ったら手を加えない、他の安全網と
  * 同じ保守的な方針)。
+ *
+ * `wrap` が真のときは、base が既に WHERE / ORDER BY 等を持つ (テーブルを開く
+ * テンプレート #1253) ので、末尾に句を足さず派生テーブルで包んでから注入する。
  */
 export function applyServerBrowse(
   base: string,
   driver: string,
   filter: ServerFilter | null | undefined,
   sort: ServerSort | null | undefined,
+  wrap = false,
 ): string {
   let sql = base;
+  if (wrap && (filter || sort)) sql = `SELECT * FROM (${base}) AS ${SERVER_BROWSE_WRAP_ALIAS}`;
   if (filter) sql += ` WHERE ${buildServerFilterClause(driver, filter)}`;
   if (sort) sql += ` ORDER BY ${buildServerSortClause(driver, sort)}`;
   return sql;

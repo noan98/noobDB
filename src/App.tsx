@@ -404,6 +404,7 @@ import {
   themePresetDataTheme,
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
+  setTableOpenQueryOverride,
   type TabRestoreMode,
   type Density,
 } from "./settings";
@@ -461,6 +462,15 @@ import {
   toggleSnippetFavorite,
   type SnippetQuickAccessState,
 } from "./snippetQuickAccess";
+import { TableOpenQueryModal } from "./components/TableOpenQueryModal";
+import { QuickLauncher } from "./components/QuickLauncher";
+import type { QuickLauncherSectionId } from "./quickLauncher";
+import {
+  applyTableOpenTemplate,
+  findTableOpenQueryOverride,
+  resolveTableOpenTemplate,
+  type TableOpenTemplateState,
+} from "./tableQueryTemplate";
 import {
   EMPTY_PLAN_WATCH,
   isWatched,
@@ -728,6 +738,13 @@ interface Tab {
    * user SQL is not paginatable because we don't know its row identity.
    */
   paginatable: string | null;
+  /**
+   * テーブルを開いたときのデフォルトクエリ (#1253) で開いたタブの状態。従来の
+   * `SELECT * ... LIMIT n` で開いたタブは null / undefined。`editable` が偽なら
+   * 編集系の操作を出さず読み取り専用バッジを出す。`keyset` / `wrapBrowse` は
+   * ページ送りとサーバ側ソート/フィルタの組み立て方を決める。
+   */
+  openTemplate?: TableOpenTemplateState | null;
   /**
    * プレビュー開始前の `paginatable` の退避値 (#F3)。プレビュー中は `paginatable`
    * を一時的に null にするため、完了/キャンセル/破棄のいずれの終了パスでもここから
@@ -1773,6 +1790,12 @@ export default function App() {
   const [importTarget, setImportTarget] = useState<{ database: string; table: string | null } | null>(null);
   // テストデータ生成ウィザード (#602) の対象テーブル。
   const [testDataTarget, setTestDataTarget] = useState<{ database: string; table: string } | null>(null);
+  // フローティング・ランチャー (#1254) のポップオーバーの開閉。
+  const [quickLauncherOpen, setQuickLauncherOpen] = useState(false);
+  // グローバルなキーハンドラ (依存配列なしの effect) から表示可否を読むための ref。
+  const quickLauncherVisibleRef = useRef(false);
+  // テーブル別のデフォルトクエリ設定 (#1253) の対象。
+  const [openQueryTarget, setOpenQueryTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
   // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
@@ -1971,6 +1994,11 @@ export default function App() {
   // The active session rejects writes when read-only: drives both the Query
   // Builder's disabled Run button and whether inline cell editing is offered.
   const readOnly = selectedProfile?.read_only ?? false;
+  // テーブルタブで編集系の操作 (セル編集・行の追加/削除・BLOB 書き戻し・列置換) を
+  // 出してよいか。read_only 接続に加え、行を特定できないデフォルトクエリ (#1253) で
+  // 開いたタブも読み取り専用にする (誤った行を書き換えないよう再判定はしない)。
+  const tableTabEditable = (tab: Pick<Tab, "kind" | "openTemplate">): boolean =>
+    tab.kind === "table" && !readOnly && tab.openTemplate?.editable !== false;
   // アクティブセッションで緊急クエリ実行モードが有効か。read-only 接続のクエリ
   // パネルからの書き込み実行を一時的に許可する (バックエンドの
   // `Session.emergency_write` が真のガードで、これはその UI ミラー)。
@@ -4120,14 +4148,30 @@ export default function App() {
             const k = openKey(s.database, s.table);
             const resolved = opened.get(k);
             if (!resolved) throw new Error(openErrors.get(k) ?? "table not resolved");
-            const base = resolved.base;
             const tableColumns = resolved.columns;
             const rowIdentity = resolved.row_identity;
             // Re-fetch page 1 at the restored page size (#678) so users who work
             // at 500/1000 rows don't have to re-select it; falls back to the
             // default display count when no page size was persisted.
             const pageLimit = s.pageSize && s.pageSize > 0 ? s.pageSize : limit;
-            const sql = `${base} LIMIT ${pageLimit}`;
+            // 復元時もテーブルを開くときと同じデフォルトクエリ (#1253) を適用する。
+            const { base, sql, openTemplate } = applyTableOpenTemplate({
+              resolved: resolveTableOpenTemplate(
+                settings.tableOpenQueryTemplate,
+                settings.tableOpenQueryOverrides,
+                profile.id,
+                s.database,
+                s.table,
+              ),
+              driver: profile.driver,
+              database: s.database,
+              table: s.table,
+              limit: pageLimit,
+              columns: tableColumns,
+              rowIdentity,
+              legacyBase: resolved.base,
+              legacySql: `${resolved.base} LIMIT ${pageLimit}`,
+            });
             return {
               ...makeTab("table", s.title || s.table, sql),
               database: s.database,
@@ -4135,6 +4179,7 @@ export default function App() {
               schemaTable: { database: s.database, name: s.table, columns: tableColumns.map((c) => c.name) },
               tableColumns,
               rowIdentity,
+              openTemplate,
               previewRowLimit: limit,
               paginatable: base,
               builderSnapshot: restoredSnapshot,
@@ -4234,7 +4279,7 @@ export default function App() {
         );
       }
     },
-    [runQueryInTab, settings.defaultDisplayCount, toast, focusEditorIfQueryTab],
+    [runQueryInTab, settings.defaultDisplayCount, settings.tableOpenQueryTemplate, settings.tableOpenQueryOverrides, toast, focusEditorIfQueryTab],
   );
 
   useEffect(() => {
@@ -4491,7 +4536,13 @@ export default function App() {
     const target = clampPage(page, total);
     if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
     const driver = selectedProfile?.driver ?? "mysql";
-    const effectiveBase = applyServerBrowse(tab.paginatable, driver, nextFilter, nextSort);
+    const effectiveBase = applyServerBrowse(
+      tab.paginatable,
+      driver,
+      nextFilter,
+      nextSort,
+      tab.openTemplate?.wrapBrowse ?? false,
+    );
     const sql = buildPageSql(effectiveBase, pageSize, target);
     // キーセット (#1150): 隣接ページへの送りは現在ページの先頭/末尾行のキーから取り直す。
     // 使えない (主キー無し・NULL 可能キー・ジャンプ等) 場合は null で従来の OFFSET。
@@ -4501,8 +4552,13 @@ export default function App() {
       !!browseOverride?.force,
       pageSize !== (tab.pageSize ?? tab.previewRowLimit),
     );
+    // デフォルトクエリ (#1253) がキーセットの条件 (主キー昇順のみ等) を満たさない
+    // タブは、常に LIMIT/OFFSET で送る。
+    const keysetAllowed = !tab.openTemplate || tab.openTemplate.keyset;
     const keysetPlan =
-      keysetMove && tab.result ? resolveKeysetPlan(tab.tableColumns, nextSort, tab.result.columns) : null;
+      keysetMove && keysetAllowed && tab.result
+        ? resolveKeysetPlan(tab.tableColumns, nextSort, tab.result.columns)
+        : null;
     const keysetAnchor =
       keysetMove && keysetPlan && tab.result
         ? readKeysetAnchor(
@@ -5123,6 +5179,46 @@ export default function App() {
     addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
   }, [addTab]);
 
+  // フローティング・ランチャー (#1254) から最近のクエリをエディタへ挿入する。
+  // フォーカス中のクエリ/EXPLAIN エディタのカーソル位置へ、無ければ新しいクエリタブへ。
+  const handleLauncherInsertSql = useCallback((sql: string) => {
+    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+      activeEditor()?.insertText(sql);
+    } else if (sessionId) {
+      addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
+    }
+  }, [activeTab, sessionId, activeEditor, addTab]);
+
+  // ランチャーから最近のクエリを実行する。スニペットのワンクリック実行 (#877) と同じく
+  // 新しいクエリタブを作り、通常のエディタ実行と同じ `runInTabWithGate` に委ねる
+  // (危険クエリ確認・読み取り専用ガード・本番書き込み承認・自動 LIMIT をそのまま通す)。
+  const handleLauncherRunSql = useCallback((sql: string) => {
+    if (!sessionId) return;
+    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
+    addTab(tab);
+    runInTabWithGate(tab, sql, { newTab: false });
+  }, [sessionId, addTab, runInTabWithGate]);
+
+  // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)
+  // をサイドバーに出す。
+  const handleLauncherShowMore = useCallback((section: QuickLauncherSectionId) => {
+    setSidebarTab(
+      section === "favoriteSnippets" ? "snippets" : section === "recentQueries" ? "history" : "connections",
+    );
+    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+    else setSidebarUserCollapsed(false);
+  }, []);
+
+  const quickLauncherSources = useMemo(
+    () => ({
+      snippets,
+      snippetQuickAccess,
+      queryHistory,
+      tableQuickAccess: quickAccess,
+    }),
+    [snippets, snippetQuickAccess, queryHistory, quickAccess],
+  );
+
   const handleSaveSnippetFromEditor = useCallback((sql: string) => {
     setEditingSnippet(null);
     setSnippetFormSql(sql);
@@ -5657,12 +5753,30 @@ export default function App() {
       let sql: string;
       let tableColumns: TableColumnInfo[] = [];
       let rowIdentity: TableRowIdentity | null = null;
+      let openTemplate: TableOpenTemplateState | null = null;
       try {
         const r = await api.openTable(sessionId, database, table, limit, false);
-        base = r.base;
-        sql = r.sql;
         tableColumns = r.columns;
         rowIdentity = r.row_identity;
+        // デフォルトクエリのテンプレート (#1253): テーブル別の上書き > 全体 > 従来。
+        // 展開・検証に失敗したら従来の base / sql のまま開く。
+        ({ base, sql, openTemplate } = applyTableOpenTemplate({
+          resolved: resolveTableOpenTemplate(
+            settings.tableOpenQueryTemplate,
+            settings.tableOpenQueryOverrides,
+            selectedProfile?.id,
+            database,
+            table,
+          ),
+          driver,
+          database,
+          table,
+          limit,
+          columns: r.columns,
+          rowIdentity: r.row_identity,
+          legacyBase: r.base,
+          legacySql: r.sql,
+        }));
       } catch {
         base = qualifiedTableSql(driver, database, table);
         sql = `${base} LIMIT ${limit}`;
@@ -5674,6 +5788,7 @@ export default function App() {
         schemaTable: { database, name: table, columns: tableColumns.map((c) => c.name) },
         tableColumns,
         rowIdentity,
+        openTemplate,
         previewRowLimit: limit,
         paginatable: base,
         page: 1,
@@ -5694,7 +5809,7 @@ export default function App() {
         })
         .catch(() => {});
     })();
-  }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, selectedProfile?.driver, recordRecentTableOpen, sessionId, patchTab]);
+  }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, settings.tableOpenQueryTemplate, settings.tableOpenQueryOverrides, selectedProfile?.driver, selectedProfile?.id, recordRecentTableOpen, sessionId, patchTab]);
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
@@ -5709,6 +5824,11 @@ export default function App() {
   // メニューから開く (対象テーブルが無いので ImportModal は作成モード固定)。
   const handleImportNewTable = useCallback((database: string) => {
     setImportTarget({ database, table: null });
+  }, []);
+
+  // テーブル別のデフォルトクエリ (#1253) の設定モーダルを開く。
+  const handleConfigureOpenQuery = useCallback((database: string, table: string) => {
+    setOpenQueryTarget({ database, table });
   }, []);
 
   // テストデータ生成ウィザード (#602) を開く。
@@ -7018,6 +7138,12 @@ export default function App() {
         e.preventDefault();
         if (sessionIdRef.current) setShowObjectSearch((v) => !v);
       }
+      // フローティング・ランチャー (#1254) の開閉。ボタンが出ている間だけ。
+      if (comboMatchesEvent(bindingsRef.current.quickLauncher, e)) {
+        if (!quickLauncherVisibleRef.current) return;
+        e.preventDefault();
+        setQuickLauncherOpen((v) => !v);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -8228,23 +8354,32 @@ export default function App() {
                       canLoadMore={tab.kind === "table" && tab.paginatable ? false : tab.canLoadMore}
                       onLoadMore={() => loadMoreInTab(tab.id)}
                       pendingDeleteKeys={tab.pendingDeletes ? new Set(tab.pendingDeletes) : undefined}
-                      onToggleRowDelete={tab.kind === "table" && !readOnly ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
-                      onRequestInsertRow={tab.kind === "table" && !readOnly ? () => requestInsertRowForTab(tab.id) : undefined}
-                      onDuplicateRow={tab.kind === "table" && !readOnly ? (row) => requestDuplicateRowForTab(tab.id, row) : undefined}
+                      onToggleRowDelete={tableTabEditable(tab) ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
+                      onRequestInsertRow={tableTabEditable(tab) ? () => requestInsertRowForTab(tab.id) : undefined}
+                      onDuplicateRow={tableTabEditable(tab) ? (row) => requestDuplicateRowForTab(tab.id, row) : undefined}
                       autoLimitApplied={tab.autoLimitApplied}
                       partialResult={tab.partialResult ?? null}
                       onFetchAllRows={() => fetchAllForTab(tab)}
                       driver={selectedProfile?.driver ?? "mysql"}
                       database={tab.database ?? selectedProfile?.database ?? null}
                       table={tab.table ?? null}
-                      editable={tab.kind === "table" && !readOnly}
+                      editable={tableTabEditable(tab)}
+                      readOnlyNotice={
+                        tab.kind === "table" && tab.openTemplate && !tab.openTemplate.editable
+                          ? t(
+                              tab.openTemplate.source === "override"
+                                ? "tableOpenQueryReadOnlyHintOverride"
+                                : "tableOpenQueryReadOnlyHintGlobal",
+                            )
+                          : null
+                      }
                       tableColumns={tab.tableColumns}
                       rowIdentity={tab.rowIdentity}
                       blobIo={
                         sessionId && tab.kind === "table"
                           ? {
                               sessionId,
-                              onWrite: readOnly
+                              onWrite: !tableTabEditable(tab)
                                 ? undefined
                                 : (r, c, hex) => writeBlobForTab(tab, r, c, hex),
                             }
@@ -8256,7 +8391,7 @@ export default function App() {
                       onSetCellEdit={(r, c, v) => setCellEditForTab(tab.id, r, c, v)}
                       onBulkEdit={(edits) => setBulkCellEditsForTab(tab.id, edits)}
                       onReplaceColumn={
-                        tab.kind === "table" && !readOnly && tab.paginatable
+                        tableTabEditable(tab) && tab.paginatable
                           ? (sql) => void replaceColumnForTab(tab, sql)
                           : undefined
                       }
@@ -8386,6 +8521,7 @@ export default function App() {
                                       selectedProfile?.driver ?? "mysql",
                                       tab.serverFilter ?? null,
                                       tab.serverSort ?? null,
+                                      tab.openTemplate?.wrapBrowse ?? false,
                                     )
                                   : tab.lastExecutedSql,
                               initialBatch: Math.max(1, settings.defaultDisplayCount),
@@ -8500,6 +8636,14 @@ export default function App() {
     sessionId,
     sizesTarget,
   });
+  // フローティング・ランチャー (#1254) は SQL エディタのある画面 (接続中の通常
+  // ワークスペース) にだけ出す。ER 図などの全画面サーフェスや未接続時は隠す。
+  const quickLauncherVisible =
+    settings.quickLauncherEnabled && !!sessionId && workspaceView === "workspace";
+  useEffect(() => {
+    quickLauncherVisibleRef.current = quickLauncherVisible;
+    if (!quickLauncherVisible) setQuickLauncherOpen(false);
+  }, [quickLauncherVisible]);
 
   // ボトムパネル (#1112) の文脈。アドバイザだけは診断対象のデータベースを要求する
   // ため、`workspaceViewKey` と同じ解決順 (アクティブタブ → プロファイル既定) を使う。
@@ -8832,6 +8976,7 @@ export default function App() {
             onTransferTable={handleTransferTable}
             onImportNewTable={handleImportNewTable}
             onGenerateTestData={handleGenerateTestData}
+            onConfigureOpenQuery={sessionId && selectedProfile ? handleConfigureOpenQuery : undefined}
             onDumpDatabase={handleDumpDatabase}
             onRunScript={setScriptTarget}
             onSchemaExport={handleSchemaExport}
@@ -9782,6 +9927,48 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {openQueryTarget && sessionId && selectedProfile && (
+          <TableOpenQueryModal
+            driver={selectedProfile.driver}
+            database={openQueryTarget.database}
+            table={openQueryTarget.table}
+            limit={Math.max(1, settings.defaultDisplayCount)}
+            initialTemplate={
+              findTableOpenQueryOverride(
+                settings.tableOpenQueryOverrides,
+                selectedProfile.id,
+                openQueryTarget.database,
+                openQueryTarget.table,
+              )?.template ?? ""
+            }
+            globalTemplate={settings.tableOpenQueryTemplate}
+            loadSchema={() =>
+              api
+                .openTable(sessionId, openQueryTarget.database, openQueryTarget.table, 1, false)
+                .then((r) => ({ columns: r.columns, rowIdentity: r.row_identity }))
+            }
+            onSave={(template) => {
+              const ok = setTableOpenQueryOverride({
+                profileId: selectedProfile.id,
+                profileName: selectedProfile.name,
+                database: openQueryTarget.database,
+                table: openQueryTarget.table,
+                template,
+              });
+              if (!ok) return;
+              setOpenQueryTarget(null);
+              toast.success(
+                t(template.trim() ? "tableOpenQuerySaved" : "tableOpenQueryRemoved", {
+                  table: openQueryTarget.table,
+                }),
+              );
+            }}
+            onClose={() => setOpenQueryTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {testDataTarget && sessionId && (
           <TestDataModal
             sessionId={sessionId}
@@ -10367,6 +10554,22 @@ export default function App() {
         />
       )}
       </Grid>
+      {quickLauncherVisible && (
+        <QuickLauncher
+          open={quickLauncherOpen}
+          onOpenChange={setQuickLauncherOpen}
+          sources={quickLauncherSources}
+          limits={settings.quickLauncherSectionLimits}
+          onInsertSnippet={handleInsertSnippet}
+          onRunSnippet={handleRunSnippet}
+          onInsertQuery={handleLauncherInsertSql}
+          onRunQuery={handleLauncherRunSql}
+          onInsertTable={(ref) => handleInsertTableSelect(ref.database, ref.table)}
+          onOpenTable={(ref) => handleOpenTable(ref.database, ref.table)}
+          onShowMore={handleLauncherShowMore}
+          onOpenSettings={() => openFullView("settings")}
+        />
+      )}
       <Suspense fallback={null}>
         <AnimatePresence>
           {showCommandPalette && (

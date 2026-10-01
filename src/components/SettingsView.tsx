@@ -29,6 +29,8 @@ import { DEFAULT_MASK_PATTERNS, formatMaskPatterns, parseMaskPatterns } from "./
 import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { KnownHostsPanel } from "./KnownHostsPanel";
+import { QuickLauncherSettings } from "./QuickLauncherSettings";
+import { TableOpenQuerySettings } from "./TableOpenQuerySettings";
 import { useToast } from "./Toast";
 import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
@@ -583,6 +585,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-language", titleKey: "settingsLanguage" },
   { id: "settings-sec-appearance", titleKey: "settingsAppearance" },
   { id: "settings-sec-streaming", titleKey: "settingsStreaming" },
+  { id: "settings-sec-table-open-query", titleKey: "tableOpenQuerySettingsTitle" },
   { id: "settings-sec-auto-limit", titleKey: "settingsAutoLimit" },
   { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
   { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
@@ -590,6 +593,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-timelapse", titleKey: "settingsTimelapse" },
   { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
   { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
+  { id: "settings-sec-quick-launcher", titleKey: "quickLauncherSettingsTitle" },
   { id: "settings-sec-safety", titleKey: "settingsSafety" },
   { id: "settings-sec-notifications", titleKey: "settingsNotifications" },
   { id: "settings-sec-tab-persistence", titleKey: "settingsTabPersistence" },
@@ -1185,6 +1189,14 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsNumberRow>
       </SettingsSection>
 
+      <SettingsSection id="settings-sec-table-open-query" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("tableOpenQuerySettingsTitle")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("tableOpenQuerySettingsHelp")}</SettingsHelp>
+        <TableOpenQuerySettings />
+      </SettingsSection>
+
       <SettingsSection id="settings-sec-auto-limit" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsAutoLimit")}</chakra.h3>
@@ -1517,6 +1529,14 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsColumnNullBarsHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-quick-launcher" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("quickLauncherSettingsTitle")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("quickLauncherSettingsHelp")}</SettingsHelp>
+        <QuickLauncherSettings />
       </SettingsSection>
 
       <SettingsSection id="settings-sec-safety" scrollMarginTop="8px">

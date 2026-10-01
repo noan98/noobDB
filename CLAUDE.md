@@ -73,6 +73,8 @@
   タブは「ログ / 診断 / 参照」の用途グループ順に並べる。`<main>` を丸ごと置き換える
   全画面サーフェスは「その画面自体が作業対象」のときだけ (ER 図・スキーマ比較など)。
   上下の配分は `WorkspaceSplit` が既存の `Splitter` へ委ねる (リサイズを再実装しない)。
+  第 5 の置き場 **Floating Launcher** (`QuickLauncher.tsx`) は参照/呼び出しの
+  ショートカット専用で、作業内容そのものは置かない (#1254)。
 - **モーダル内のフィールドラベル・バリデーションエラー・コードプレビューを手書き
   しない。** `components/modalForm.tsx` の `FieldLabel` / `FieldError` /
   `CodePreview` / `FormSection` / `ErrorNote` を使う (`designTokens.test.ts` が

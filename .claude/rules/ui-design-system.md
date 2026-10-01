@@ -219,7 +219,8 @@ var(--accent) 35%, transparent)` のような手書き構成 (35%・55%・25% �
 
 ### 7.1 Modal / Panel / 全画面サーフェスの責務
 
-App Shell は `Sidebar / Main Workspace / Bottom Panel` の 3 領域 (#1112)。
+App Shell は `Sidebar / Main Workspace / Bottom Panel` の 3 領域 (#1112) に、
+ワークスペース上に浮かぶ Floating Launcher (#1254) を加えた構成。
 新しい画面を足すときは、まずこの表でどこに置くかを決める。
 
 | 性質 | 置き場所 | 実体 |
@@ -228,6 +229,17 @@ App Shell は `Sidebar / Main Workspace / Bottom Panel` の 3 領域 (#1112)。
 | SQL を書きながら参照する情報 (実行ログ・メッセージ・アドバイザ・インスペクタ・プロセス監視・テーブル構造) | **Bottom Panel** | `BottomPanel.tsx` + `bottomPanelTabs.ts` |
 | 選んだ 1 行 / 1 セルの詳細 (ワークスペースの右端) | **Right Inspector** | `RowInspector.tsx` (結果グリッドの Alt+Enter / 右クリック) |
 | それ自体が作業対象で広い面積が要るもの (ER 図・スキーマ比較・ユーザ管理・結果比較) | **全画面サーフェス** | `App.tsx` の三項チェーン + `workspaceView.ts` |
+| 参照/呼び出しのショートカット (お気に入りスニペット・最近のクエリ・お気に入り/最近のテーブル) | **Floating Launcher** | `QuickLauncher.tsx` + `quickLauncher.ts` (#1254) |
+
+**Floating Launcher は第 5 の置き場で、参照/呼び出しのショートカット専用** (#1254)。
+作業内容そのもの (結果・ログ・フォーム・詳細) は置かず、既存の一覧 (スニペット /
+履歴 / スキーマツリー) への近道と「エディタへ挿入 / 実行」の起点だけを持つ。表示するのは
+SQL エディタのある画面 (接続中の `workspace`) だけで、全画面サーフェスや未接続時は隠す。
+ボタンはドラッグで動かせ、位置は「最寄りの隅 + 端からの割合」で保存する。Bottom Panel /
+Right Inspector と重なっても**自動では動かさない** (ユーザー位置を優先し、右クリックか
+設定画面の「位置をリセット」で右下へ戻す)。行のクリックは「エディタへ挿入」で、実行は
+Cmd/Ctrl+クリックか行内の実行ボタンから既存の実行経路 (`runInTabWithGate`) を通す。
+新しい呼び出し先を足すときも、ここに独自の画面を作らず既存の一覧・実行経路へ渡す。
 
 Modal は「開いて、決めて、閉じる」ものに限る。**閉じるまで作業が進まない**性質が
 あるため、見ながら SQL を書くような情報を Modal に置かない。
