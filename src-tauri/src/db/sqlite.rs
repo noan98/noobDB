@@ -81,9 +81,14 @@ impl SqliteConn {
     /// トランザクションを開かないため、プールの接続が持つスキーマキャッシュが他の接続での
     /// `CREATE INDEX` / `ALTER` に追従せず、古いスキーマで計画を返すことがある。計画の変化を
     /// 見る用途 (実行計画ウォッチ #1260) では致命的なので、同じ接続で先に
-    /// `sqlite_master` を 1 回読んでスキーマを再検証してから実行する。
+    /// `sqlite_master` を 1 回読んでスキーマを再検証してから実行する。加えて、sqlx は接続
+    /// ごとに準備済みステートメントをキャッシュするため、同じ EXPLAIN 文を前に流した接続では
+    /// 古いスキーマで準備された文が再利用されうる (Windows の CI で再現)。その接続の
+    /// キャッシュを捨ててから実行し、必ず現在のスキーマで準備し直させる。
     pub async fn execute_explain(&self, sql: &str) -> Result<QueryResult> {
+        use sqlx::Connection;
         let mut conn = self.pool.acquire().await?;
+        conn.clear_cached_statements().await?;
         sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
             .fetch_optional(&mut *conn)
             .await?;
