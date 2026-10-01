@@ -18,11 +18,12 @@ const base: WorkspaceCommandContext = {
   database: "app",
   openConnectionCount: 1,
   sidebarCollapsed: false,
+  profileDatabase: "app",
   tables: [
     { database: "app", table: "users" },
     { database: "app", table: "orders" },
   ],
-  shortcuts: { toggleSidebar: "Ctrl+B", sidebarFilter: "Ctrl+P" },
+  shortcuts: { toggleSidebar: "Ctrl+B", sidebarFilter: "Ctrl+P", objectSearch: "Ctrl+Shift+O" },
 };
 
 function actions() {
@@ -31,6 +32,12 @@ function actions() {
     toggleSidebar: vi.fn(),
     focusExplorer: vi.fn(),
     openStructure: vi.fn(),
+    openObjectSearch: vi.fn(),
+    openDataSearch: vi.fn(),
+    openSchemaDrift: vi.fn(),
+    openUsers: vi.fn(),
+    openServerInfo: vi.fn(),
+    openTasks: vi.fn(),
   };
 }
 
@@ -53,6 +60,12 @@ describe("workspaceCommandItems", () => {
       "nav:whereUsed",
       "structure:app\0users",
       "structure:app\0orders",
+      "nav:object-search",
+      "nav:data-search",
+      "nav:schema-drift",
+      "nav:users",
+      "nav:server-info",
+      "nav:tasks",
     ]);
   });
 
@@ -63,7 +76,35 @@ describe("workspaceCommandItems", () => {
       "nav:output",
       "nav:messages",
       "nav:activityPanel",
+      "nav:tasks",
     ]);
+  });
+
+  it("検索・管理系 (#1267 / #1268) の可用条件はレンチメニューと揃う", () => {
+    const sqlite = ids({ ...base, driver: "sqlite" });
+    expect(sqlite).not.toContain("nav:users");
+    expect(sqlite).toContain("nav:server-info");
+    const noDb = ids({ ...base, database: null, profileDatabase: null });
+    expect(noDb).not.toContain("nav:data-search");
+    expect(noDb).not.toContain("nav:schema-drift");
+    expect(noDb).toContain("nav:object-search");
+  });
+
+  it("検索・管理系の候補は対応するアクションを呼び、検索はショートカットを添える", () => {
+    const a = actions();
+    const items = workspaceCommandItems(base, a, t);
+    for (const [id, fn] of [
+      ["nav:object-search", a.openObjectSearch],
+      ["nav:data-search", a.openDataSearch],
+      ["nav:schema-drift", a.openSchemaDrift],
+      ["nav:users", a.openUsers],
+      ["nav:server-info", a.openServerInfo],
+      ["nav:tasks", a.openTasks],
+    ] as const) {
+      items.find((i) => i.id === id)?.run();
+      expect(fn).toHaveBeenCalledOnce();
+    }
+    expect(items.find((i) => i.id === "nav:object-search")?.shortcut).toBe("Ctrl+Shift+O");
   });
 
   it("ログ系の候補はそれぞれのボトムパネルタブを開閉する (#1114)", () => {
