@@ -344,4 +344,15 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
     // SQLite 非対応の理由を出すためにドライバを渡す。
     expect(appSource).toContain("driver: sessionId ? (selectedProfile?.driver ?? null) : null");
   });
+
+  it("パネルバーは全画面サーフェス中も隠さない (#1280): workspaceView で出し分けない", () => {
+    // 開いたパネルは全画面サーフェスの下にも残り (WorkspaceSplit が <main> 全体を包む)、
+    // 全画面中でもレンチメニュー / パレット / サイドバー右クリックから開ける。
+    // 開閉状態と無関係にバーだけ隠すと入口の有無が不整合になるため、バーの表示条件に
+    // workspaceView を持ち込まない。
+    const start = appSource.indexOf("<WorkspaceSplit");
+    const stripBlock = appSource.slice(start, appSource.indexOf("<BottomPanelStrip", start));
+    expect(stripBlock).not.toContain("workspaceView");
+    expect(stripBlock).not.toMatch(/workspaceView\w*\s*[!=]==/);
+  });
 });
