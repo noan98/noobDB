@@ -5,6 +5,7 @@ import { parseResponse } from "./schemas";
 import type { UpdateGroup } from "../components/cellEdit";
 import type { ExportColumnMask } from "../components/exportMasking";
 import type { TxIsolation } from "../txOptions";
+import type { HandleSortFilterRequest } from "../components/gridSortFilter";
 import type { IncomingFk } from "../fkNavigation";
 
 /**
@@ -1500,7 +1501,10 @@ export interface RegisterLocalTableRequest {
   sessionId: string;
   tableName: string;
   columns: Column[];
+  /** 取り込む行。`resultId` 指定時は使われない (空配列でよい)。 */
   rows: CellValue[][];
+  /** 結果ハンドル (#1264)。指定時はバックエンド保持の行を取り込む。 */
+  resultId?: string | null;
   sourceProfile?: string | null;
   sourceSql: string;
   sourceDriver?: string | null;
@@ -1573,6 +1577,7 @@ export const api = {
         table_name: req.tableName,
         columns: req.columns,
         rows: req.rows,
+        result_id: req.resultId ?? null,
         source_profile: req.sourceProfile ?? null,
         source_sql: req.sourceSql,
         source_driver: req.sourceDriver ?? null,
@@ -1778,6 +1783,12 @@ export const api = {
      * 追加行・削除数) だけを返す。`pkIndices` はグリッドの行識別列の添字。
      */
     refreshDiff?: { key: string; pkIndices: number[]; prevSnapshotId: number | null } | null;
+    /**
+     * 結果ハンドル (#1264)。true のとき、バックエンドが全行を合計メモリ上限の範囲で保持し、
+     * `done` メッセージの `resultId` で返す (保持できなければ null)。ソート・フィルタ・
+     * 検索・エクスポートを行を往復させずに行える。
+     */
+    retainResult?: boolean;
   }) => {
     // #1096: `run_query_stream` は結果を Tauri Channel (`onEvent`) で送る。
     // チャンネルは呼び出し側が先に `listenQueryStream(streamId, handlers)` を
@@ -1804,6 +1815,7 @@ export const api = {
       captureRowCap: params.captureRowCap ?? null,
       captureRetentionDays: params.captureRetentionDays ?? null,
       refreshDiff: params.refreshDiff ?? null,
+      retainResult: params.retainResult ?? false,
       onEvent: channel,
     });
   },
@@ -2580,6 +2592,11 @@ export const api = {
     batchSize?: number | null;
     /** 列単位のマスキングルール (#733)。未指定 / 空ならマスクしない。 */
     masks?: ExportColumnMask[] | null;
+    /**
+     * 結果ハンドル (#1264)。指定時は `rows` を使わず (空配列でよい)、バックエンドが保持する
+     * 行を書き出す。破棄済みなら `isResultGoneError` のエラーになるので rows 付きで再試行する。
+     */
+    resultId?: string | null;
   }) =>
     invoke<ExportResult>("export_query_result", {
       path: params.path,
@@ -2591,6 +2608,7 @@ export const api = {
       driver: params.driver ?? null,
       batchSize: params.batchSize ?? null,
       masks: params.masks && params.masks.length > 0 ? params.masks : null,
+      resultId: params.resultId ?? null,
     }).then((r) => parseResponse(schemas.exportResult, r, "export_query_result")),
 
   /**
@@ -2598,12 +2616,88 @@ export const api = {
    * 仮名化 (`hash`) の秘密ソルトは keyring にありフロントへ出さないため、変換は
    * 実際の書き出しと同じバックエンドの純関数で行う。ファイル・DB には触れない。
    */
-  maskExportRows: (params: { columns: Column[]; rows: CellValue[][]; masks: ExportColumnMask[] }) =>
+  maskExportRows: (params: {
+    columns: Column[];
+    rows: CellValue[][];
+    masks: ExportColumnMask[];
+    /** 結果ハンドル (#1264)。指定時は `rows` を使わず、バックエンド保持の行へ適用する。 */
+    resultId?: string | null;
+  }) =>
     invoke<CellValue[][]>("mask_export_rows", {
       columns: params.columns,
       rows: params.rows,
       masks: params.masks,
+      resultId: params.resultId ?? null,
     }).then((r) => parseResponse(schemas.cellRowsLite, r, "mask_export_rows")),
+
+  /**
+   * 結果ハンドル (#1264): ソート・列フィルタ・全体フィルタを適用した**表示順の行インデックス**
+   * (元の行位置) を返す。意味論は `ResultGrid` の JS 実装と同じ (ただし文字列の照合順序は
+   * `Intl.Collator` の近似)。`null` はハンドルが無い (破棄済み) — JS 経路へ戻る。
+   */
+  resultSortFilter: (params: { resultId: string } & HandleSortFilterRequest) =>
+    invoke<number[] | null>("result_sort_filter", {
+      resultId: params.resultId,
+      sort: params.sort,
+      filters: params.filters,
+      global: params.global,
+    }).then((r) => parseResponse(schemas.resultSortFilterResponse, r, "result_sort_filter")),
+
+  /**
+   * 結果ハンドル (#1264): 結果内検索 (正規表現なし)。ヒットは行優先で最大 `limit` 件 +
+   * 総数・打ち切りの有無。`null` はハンドルが無い。
+   */
+  resultFind: (params: {
+    resultId: string;
+    query: string;
+    options: { caseSensitive: boolean; wholeCell: boolean };
+    limit: number;
+  }) =>
+    invoke<ResultFindOutput | null>("result_find", {
+      resultId: params.resultId,
+      query: params.query,
+      options: params.options,
+      limit: params.limit,
+    }).then((r) => parseResponse(schemas.resultFindResponse, r, "result_find")),
+
+  /** 結果ハンドル (#1264): 列クイック統計。`null` はハンドルが無い。 */
+  resultColumnStats: (resultId: string, col: number) =>
+    invoke<ResultColumnStats | null>("result_column_stats", { resultId, col }).then((r) =>
+      parseResponse(schemas.resultColumnStatsResponse, r, "result_column_stats"),
+    ),
+
+  /** 結果ハンドル (#1264) を破棄する。存在しない ID でも成功 (冪等)。 */
+  releaseResult: (resultId: string) => invoke<void>("release_result", { resultId }),
+
+  /**
+   * エクスポート内容をテキストで生成する (全文コピー・マスク付きプレビュー用, #1264)。
+   * ファイル出力と同じバックエンドの書式ライタを通るため、書式・マスキングはファイルと
+   * バイト一致する。`resultId` 指定時は `rows` を使わない。xlsx は不可。
+   */
+  renderExportText: (params: {
+    format: ExportFormat;
+    columns: Column[];
+    rows?: CellValue[][];
+    resultId?: string | null;
+    query?: string | null;
+    table?: string | null;
+    driver?: string | null;
+    batchSize?: number | null;
+    masks?: ExportColumnMask[] | null;
+  }) =>
+    invoke<string>("render_export_text", {
+      req: {
+        format: params.format,
+        columns: params.columns,
+        rows: params.rows ?? [],
+        resultId: params.resultId ?? null,
+        query: params.query ?? null,
+        table: params.table ?? null,
+        driver: params.driver ?? null,
+        batchSize: params.batchSize ?? null,
+        masks: params.masks && params.masks.length > 0 ? params.masks : null,
+      },
+    }).then((r) => parseResponse(schemas.stringResponse, r, "render_export_text")),
 
   /**
    * クエリを再実行し、全件をストリーミングで直接ファイルへ書き出す。結果は
@@ -3058,6 +3152,31 @@ export interface QueryStreamColumnsMessage {
   columns: Column[];
 }
 
+/** `result_find` の戻り値 (#1264)。 */
+export interface ResultFindOutput {
+  hits: { rowIdx: number; colIdx: number }[];
+  /** 打ち切りを含む総ヒット数。 */
+  total: number;
+  /** `hits` が `limit` で打ち切られたか。 */
+  truncated: boolean;
+}
+
+/** `result_column_stats` の戻り値 (#1264)。`gridStats.ts::ColumnStats` と同形。 */
+export interface ResultColumnStats {
+  count: number;
+  nullCount: number;
+  nonNullCount: number;
+  distinctCount: number;
+  numericCount: number;
+  sum: number | null;
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+  minLen: number | null;
+  maxLen: number | null;
+  mode: { value: string; count: number } | null;
+}
+
 /** ストリーム中に Rust が逐次更新した列統計 (#1257, `StreamStatsSnapshot`)。 */
 export interface StreamStatsSnapshot {
   /** 観測した総行数。手元の `rows.length` と一致するときだけ採用する。 */
@@ -3107,6 +3226,8 @@ export interface QueryStreamDoneMessage {
   readOnly: boolean;
   /** 実行した SQL がスキーマを変えうるか (バックエンドの判定値、#1256)。 */
   schemaMayChange: boolean;
+  /** 結果ハンドル (#1264)。全行をバックエンドに保持できたときの ID (保持しなければ null)。 */
+  resultId?: string | null;
 }
 
 export interface QueryStreamErrorMessage {

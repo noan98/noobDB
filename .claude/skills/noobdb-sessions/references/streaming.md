@@ -29,6 +29,12 @@
   50 万行) を使い、行の代わりに `patch` メッセージ (変化なし区間の参照 + 変化行・追加行の実データ
   + 削除数) を返す。比較元は `Done.snapshotId` で払い出され、フロント (`refreshPatch.ts`) が
   その ID を手元の行配列に紐づけて持つ。ID 不一致・列構成の変化・PK 無しは従来の全行ストリーム。
+- **結果ハンドル** (`retainResult`, `db/result_store.rs`, #1264): `Rows` を送るのと同じ地点で行を
+  `ResultBuilder` に複製し、成功したら `AppState.results` (合計上限 256 MiB・LRU) へ確定して
+  `Done.resultId` で返す。5,000 行未満・上限超過・エラー/キャンセルは `null` (ハンドルなし)。
+  フロントは `components/resultHandle.ts` で**行配列の同一性**に紐づけて持ち、編集適用などで
+  入れ替われば自動的に JS 経路へ戻る。ソート・フィルタ・検索・列統計・エクスポート・ローカル登録は
+  `commands/result.rs` がハンドルの行で処理する (詳細は `noobdb-ipc/references/command-list.md`)。
 
 「ドライラン」プレビュー (`preview_query_stream`) はトランザクション内で SQL を実行
 してロールバックし、対象テーブルの before/after スナップショット (PK でペアリング) を

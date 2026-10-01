@@ -11,6 +11,7 @@ pub mod format;
 /// ライブクエリ・インスペクタ (#746) のフィンガープリント正規化と digest 差分集計 (#1259)。
 pub mod inspector;
 /// エクスポート時のデータマスキング (#733)。出力時だけの変換で DB には触れない。
+pub mod js_compat;
 pub mod masking;
 pub mod mysql;
 pub mod postgres;
@@ -22,6 +23,8 @@ pub mod privileges;
 pub mod profile;
 /// 自動リフレッシュの差分パッチ (#1257)。
 pub mod refresh_diff;
+pub mod result_ops;
+pub mod result_store;
 pub mod sandbox;
 /// 一括取得したスキーマ情報の画面向け結合 (テーブル統計・逆方向 FK、#1255)。
 pub mod schema_insight;
