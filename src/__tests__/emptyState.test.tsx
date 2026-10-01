@@ -37,3 +37,38 @@ describe("EmptyState onboarding (#450)", () => {
     expect(container.querySelectorAll("svg").length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("EmptyState secondaryActions (#1271)", () => {
+  it("renders secondary buttons with shortcut hints and fires handlers", async () => {
+    const { buildTabsEmptyActions, TABS_EMPTY_ACTIONS } = await import(
+      "../components/tabsEmptyActions"
+    );
+    const { fireEvent } = await import("@testing-library/react");
+    const calls: string[] = [];
+    const items = buildTabsEmptyActions(
+      (k) => `L:${k}`,
+      {
+        openSqlFile: () => calls.push("file"),
+        snippets: () => calls.push("snip"),
+        erDiagram: () => calls.push("er"),
+        commandPalette: () => calls.push("pal"),
+      },
+      "Ctrl+K",
+    );
+    expect(items.map((i) => i.id)).toEqual(TABS_EMPTY_ACTIONS.map((a) => a.id));
+    expect(items).toHaveLength(4);
+    expect(items.filter((i) => i.shortcut).map((i) => i.id)).toEqual(["commandPalette"]);
+
+    const { getByRole } = renderWithProviders(
+      <EmptyState
+        title="t"
+        action={{ label: "New", onClick: () => calls.push("new") }}
+        secondaryActions={items}
+      />,
+    );
+    for (const i of items) fireEvent.click(getByRole("button", { name: new RegExp(i.label) }));
+    fireEvent.click(getByRole("button", { name: "New" }));
+    expect(calls).toEqual(["file", "snip", "er", "pal", "new"]);
+    expect(getByRole("button", { name: /CommandPalette.*Ctrl\+K/ })).toBeTruthy();
+  });
+});

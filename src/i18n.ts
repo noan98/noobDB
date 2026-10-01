@@ -749,6 +749,10 @@ const en = {
   // Empty / onboarding states (shared EmptyState component).
   tabsEmptyTitle: "No tabs open",
   tabsNewQuery: "New query",
+  tabsEmptyOpenSqlFile: "Open SQL file",
+  tabsEmptySnippets: "Snippets",
+  tabsEmptyErDiagram: "ER diagram",
+  tabsEmptyCommandPalette: "Command palette",
   notConnectedTitle: "Not connected",
   snippetEmptyTitle: "No snippets yet",
   historyEmptyTitle: "No history yet",
@@ -4492,6 +4496,10 @@ const ja: Dict = {
   // 空状態 / オンボーディング (共通 EmptyState コンポーネント)。
   tabsEmptyTitle: "開いているタブがありません",
   tabsNewQuery: "新しいクエリ",
+  tabsEmptyOpenSqlFile: "SQL ファイルを開く",
+  tabsEmptySnippets: "スニペット",
+  tabsEmptyErDiagram: "ER 図",
+  tabsEmptyCommandPalette: "コマンドパレット",
   notConnectedTitle: "未接続です",
   snippetEmptyTitle: "スニペットがありません",
   historyEmptyTitle: "履歴がありません",

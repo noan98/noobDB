@@ -129,6 +129,7 @@ import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
 import { Icon, ICON_SIZES } from "./components/Icon";
 import { Button } from "./components/ui";
+import { buildTabsEmptyActions } from "./components/tabsEmptyActions";
 import { ListboxSelect } from "./components/ListboxSelect";
 import { Switch } from "./components/Switch";
 import {
@@ -7754,6 +7755,24 @@ export default function App() {
   // twice (side-by-side split). Each pane streams independently because every
   // per-tab handler is keyed by tab id, and stream bookkeeping lives in refs
   // keyed by tab id (not pane).
+  // タブが無い空状態の補助導線 (#1271)。パレット / SQL ファイル / ER 図 / スニペットは
+  // コマンドパレットと同じ既存ハンドラを呼ぶ。スニペットは折りたたみ中のサイドバーを
+  // 先に開いてからスニペットタブへ切り替える (`focusExplorer` と同じ作法)。
+  const tabsEmptySecondaryActions = buildTabsEmptyActions(
+    t,
+    {
+      openSqlFile: () => void handleOpenSqlFile(),
+      snippets: () => {
+        if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+        else setSidebarUserCollapsed(false);
+        setSidebarTab("snippets");
+      },
+      erDiagram: () => openFullView("erDiagram"),
+      commandPalette: () => setShowCommandPalette(true),
+    },
+    formatCombo(shortcutBindings.commandPalette),
+  );
+
   const renderPane = (pane: PaneState) => {
     const paneTabs = pane.tabIds
       .map((id) => tabs.find((tt) => tt.id === id))
@@ -8414,6 +8433,7 @@ export default function App() {
                 title={t("tabsEmptyTitle")}
                 description={t("tabsEmpty")}
                 action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab(pane.id) }}
+                secondaryActions={tabsEmptySecondaryActions}
               />
             </PaneEmpty>
           )}
@@ -9405,6 +9425,7 @@ export default function App() {
                       title={t("tabsEmptyTitle")}
                       description={t("tabsEmpty")}
                       action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab() }}
+                      secondaryActions={tabsEmptySecondaryActions}
                     />
                   </PaneEmpty>
                 </Flex>

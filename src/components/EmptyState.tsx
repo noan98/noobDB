@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
-import { PressableButton } from "./ui";
+import { Button, PressableButton } from "./ui";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 
 /** ルートを motion 化するラッパー。`transition` を motion へ転送する
@@ -24,6 +24,12 @@ interface Props {
   description?: string;
   /** Optional primary call-to-action button. */
   action?: { label: string; onClick: () => void };
+  /**
+   * Optional secondary actions rendered as quieter buttons under the primary
+   * action (#1271). `shortcut` is a display-only hint (resolve it via
+   * `shortcutKeys.formatCombo`; never hand-write it).
+   */
+  secondaryActions?: { label: string; onClick: () => void; icon?: IconName; shortcut?: string }[];
   /** Tighter layout for inline use (e.g. inside the result grid body). */
   compact?: boolean;
 }
@@ -63,6 +69,7 @@ export function EmptyState({
   title,
   description,
   action,
+  secondaryActions,
   compact = false,
 }: Props) {
   return (
@@ -135,6 +142,21 @@ export function EmptyState({
         <PressableButton type="button" variant="primary" onClick={action.onClick} mt="1">
           {action.label}
         </PressableButton>
+      )}
+      {secondaryActions && secondaryActions.length > 0 && (
+        <Flex wrap="wrap" justify="center" gap="2" mt="1" maxW="60ch">
+          {secondaryActions.map((a) => (
+            <Button key={a.label} type="button" variant="secondary" size="sm" onClick={a.onClick}>
+              {a.icon && <Icon name={a.icon} size={ICON_SIZES.md} />}
+              {a.label}
+              {a.shortcut && (
+                <Text as="span" color="app.textMuted" fontSize="xs">
+                  {a.shortcut}
+                </Text>
+              )}
+            </Button>
+          ))}
+        </Flex>
       )}
     </MotionRoot>
   );
