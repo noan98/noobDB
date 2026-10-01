@@ -299,6 +299,8 @@ interface Props {
   onImportNewTable?: (database: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
   onGenerateTestData?: (database: string, table: string) => void;
+  /** テーブルを開いたときのデフォルトクエリ (テーブル別、#1253) を設定する。 */
+  onConfigureOpenQuery?: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
   /** `.sql` ファイルをこの DB のコンテキストでストリーミング実行するモーダルを開く (#973)。 */
   onRunScript?: (database: string) => void;
@@ -429,6 +431,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onTransferTable,
   onImportNewTable,
   onGenerateTestData,
+  onConfigureOpenQuery,
   onDumpDatabase,
   onRunScript,
   onSchemaExport,
@@ -1137,6 +1140,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       { label: t("contextMenuRunSelect", { limit: selectLimit }), onSelect: () => onRunTableSelect(db, tbl) },
       { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, tbl) },
     );
+    // デフォルトクエリ (#1253) は設定の保存だけなので read_only でも有効。
+    if (onConfigureOpenQuery) {
+      items.push({
+        label: t("contextMenuConfigureOpenQuery"),
+        onSelect: () => onConfigureOpenQuery(db, tbl),
+      });
+    }
     // DDL の表示 / コピー (#1001)。PostgreSQL はカタログからの再構成なので、
     // ベストエフォートである旨をツールチップで明示する。
     const ddlTitle = isSynthesizedTableDdl(activeDriver) ? t("tableDdlSynthesizedHint") : undefined;

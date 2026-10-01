@@ -1025,6 +1025,12 @@ interface Props {
    * `kind === "table"`.
    */
   editable?: boolean;
+  /**
+   * 読み取り専用で開いた理由 (#1253: 行を特定できないデフォルトクエリで開いた
+   * テーブルタブ)。非 null のときツールバーに「読み取り専用」バッジを出し、
+   * ツールチップで理由を示す。
+   */
+  readOnlyNotice?: string | null;
   /** Column metadata from `describeTable` — used to detect PK + types. */
   tableColumns?: TableColumnInfo[] | null;
   /**
@@ -6425,6 +6431,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   database,
   table,
   editable,
+  readOnlyNotice,
   tableColumns,
   rowIdentity,
   blobIo,
@@ -7467,6 +7474,28 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
           </Box>
+          </Tooltip>
+        )}
+        {readOnlyNotice && (
+          <Tooltip label={readOnlyNotice}>
+            <chakra.span
+              tabIndex={0}
+              display="inline-flex"
+              alignItems="center"
+              gap="1"
+              px="1.5"
+              py="0.25"
+              borderRadius="sm"
+              fontSize="2xs"
+              whiteSpace="nowrap"
+              color="app.textMuted"
+              border="1px solid var(--border-subtle)"
+              aria-label={`${t("tableOpenQueryReadOnlyBadge")}: ${readOnlyNotice}`}
+              data-testid="template-readonly-badge"
+            >
+              <Icon name="lock" size={ICON_SIZES.sm} />
+              {t("tableOpenQueryReadOnlyBadge")}
+            </chakra.span>
           </Tooltip>
         )}
         {editable && tableColumns && identityStrategy !== "primary_key" && (
