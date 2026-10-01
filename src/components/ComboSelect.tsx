@@ -69,6 +69,9 @@ const MotionListbox = chakra(motion.div, {}, { forwardProps: ["transition"] });
 /** ポップオーバーと入力欄の間の隙間 (px)。 */
 const POPOVER_GAP = 4;
 
+/** これを超える候補数では、マウスのハイライトを state ではなく CSS の `:hover` で表す (#1321)。 */
+export const COMBO_CSS_HOVER_THRESHOLD = 50;
+
 function optionElementId(listboxId: string, index: number): string {
   return `${listboxId}-opt-${index}`;
 }
@@ -292,6 +295,7 @@ export function ComboSelect({
               </Box>
             ) : (
               filtered.map((opt, i) => {
+                const cssHover = filtered.length > COMBO_CSS_HOVER_THRESHOLD;
                 const isHighlighted = highlighted === i;
                 const isSelected = opt.value === value;
                 return (
@@ -321,7 +325,10 @@ export function ComboSelect({
                     transitionProperty="background"
                     transitionDuration="var(--dur-fast)"
                     transitionTimingFunction="var(--ease)"
-                    onMouseEnter={() => setHighlighted(i)}
+                    // 候補が多いときは hover を CSS に任せ、行を通過するたびの state 更新
+                    // (= 全候補の再レンダー) を避ける (#1321)。
+                    _hover={cssHover ? { bg: "var(--bg-hover)" } : undefined}
+                    onMouseEnter={cssHover ? undefined : () => setHighlighted(i)}
                     onClick={() => selectOption(opt)}
                   >
                     <Box flexShrink={0} w="14px" opacity={isSelected ? 1 : 0} aria-hidden>

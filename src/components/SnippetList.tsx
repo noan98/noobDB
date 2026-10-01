@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
@@ -67,6 +67,159 @@ export function scopeMatches(snippet: Pick<Snippet, "scope">, profile: Connectio
   if (s.kind === "group") return (profile.group ?? "") === s.group;
   return false;
 }
+
+/**
+ * スニペット 1 行 (#1321)。お気に入りの切替や他の行の更新で全行が再レンダーされないよう
+ * memo 化し、操作は安定したコールバックで受ける。表示に必要な状態は boolean で渡す。
+ */
+const SnippetRow = memo(function SnippetRow({
+  s,
+  isFavorite,
+  isWatched,
+  canRun,
+  canFavorite,
+  onInsert,
+  onRun,
+  onToggleFavorite,
+  onContextMenu,
+}: {
+  s: Snippet;
+  isFavorite: boolean;
+  isWatched: boolean;
+  canRun: boolean;
+  canFavorite: boolean;
+  onInsert: (snippet: Snippet) => void;
+  onRun: (snippet: Snippet) => void;
+  onToggleFavorite: (snippet: Snippet) => void;
+  onContextMenu: (e: React.MouseEvent, snippet: Snippet) => void;
+}) {
+  const t = useT();
+  const hasRowActions = canRun || canFavorite;
+  return (
+    <MotionTreeNode {...variants.fade} transition={transitions.crossfade}>
+      <Tooltip label={`${t("snippetInsertHint")}\n\n${s.sql}`}>
+        <TreeRow
+          position="relative"
+          role="treeitem"
+          tabIndex={0}
+          onDoubleClick={() => onInsert(s)}
+          onKeyDown={(e) => {
+            // Enter/Space は double-click と同じ「挿入」を実行。ダブルクリック
+            // 必須にすると誤発火を避けたい意図だが、キーボードでは明示的な押下
+            // なので 1 アクションで挿入する方が ARIA tree の慣習にも合う。
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onInsert(s);
+            }
+          }}
+          onContextMenu={(e) => onContextMenu(e, s)}
+          css={
+            hasRowActions
+              ? {
+                  "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
+                    opacity: 1,
+                    pointerEvents: "auto",
+                  },
+                }
+              : undefined
+          }
+        >
+          <TreeChevron visibility="hidden" aria-hidden />
+          <TreeIcon color="app.accent" aria-hidden><Icon name="snippet" /></TreeIcon>
+          <TreeLabel>{s.name}</TreeLabel>
+          {isFavorite && (
+            <Tooltip label={t("snippetFavoriteBadge")}>
+              <TreeIcon color="app.favorite" aria-label={t("snippetFavoriteBadge")}>
+                <Icon name="star-filled" />
+              </TreeIcon>
+            </Tooltip>
+          )}
+          {isWatched && (
+            <Tooltip label={t("snippetWatchBadge")}>
+              <TreeIcon
+                color="app.accent"
+                aria-label={t("snippetWatchBadge")}
+              >
+                <Icon name="explain" />
+              </TreeIcon>
+            </Tooltip>
+          )}
+          {s.tags.map((tag) => (
+            <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">{tag}</TreeBadge>
+          ))}
+          {s.driver && <TreeBadge>{s.driver}</TreeBadge>}
+          {hasRowActions && (
+            <chakra.span
+              data-row-actions=""
+              position="absolute"
+              top="0"
+              right="0"
+              bottom="0"
+              display="flex"
+              alignItems="center"
+              gap="0.5"
+              pl="4"
+              pr="1.5"
+              background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
+              opacity={0}
+              pointerEvents="none"
+              transitionProperty="opacity"
+              transitionDuration="var(--dur-fast)"
+              transitionTimingFunction="var(--ease)"
+            >
+              {canFavorite && (
+                <Tooltip label={isFavorite ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite")}>
+                  <chakra.button
+                    type="button"
+                    minW="0"
+                    w="24px"
+                    h="24px"
+                    p="0"
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    color={isFavorite ? "app.favorite" : "app.textSecondary"}
+                    _hover={{ color: "app.favorite" }}
+                    aria-label={isFavorite ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFavorite(s);
+                    }}
+                  >
+                    <Icon name={isFavorite ? "star-filled" : "star"} size={ICON_SIZES.md} />
+                  </chakra.button>
+                </Tooltip>
+              )}
+              {canRun && (
+                <Tooltip label={t("snippetMenuRun")}>
+                  <chakra.button
+                    type="button"
+                    minW="0"
+                    w="24px"
+                    h="24px"
+                    p="0"
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    color="app.textSecondary"
+                    _hover={{ color: "app.text" }}
+                    aria-label={t("snippetMenuRun")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRun(s);
+                    }}
+                  >
+                    <Icon name="query" size={ICON_SIZES.md} />
+                  </chakra.button>
+                </Tooltip>
+              )}
+            </chakra.span>
+          )}
+        </TreeRow>
+      </Tooltip>
+    </MotionTreeNode>
+  );
+});
 
 // memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
@@ -170,134 +323,34 @@ export const SnippetList = memo(function SnippetList({
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  const renderSnippet = (s: Snippet) => {
-    const isFavorite = favoriteIds?.includes(s.id) ?? false;
-    const hasRowActions = Boolean(onRun) || Boolean(onToggleFavorite);
-    return (
-      <MotionTreeNode key={s.id} {...variants.fade} transition={transitions.crossfade}>
-        <Tooltip label={`${t("snippetInsertHint")}\n\n${s.sql}`}>
-          <TreeRow
-            position="relative"
-            role="treeitem"
-            tabIndex={0}
-            onDoubleClick={() => onInsert(s)}
-            onKeyDown={(e) => {
-              // Enter/Space は double-click と同じ「挿入」を実行。ダブルクリック
-              // 必須にすると誤発火を避けたい意図だが、キーボードでは明示的な押下
-              // なので 1 アクションで挿入する方が ARIA tree の慣習にも合う。
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onInsert(s);
-              }
-            }}
-            onContextMenu={(e) => handleContextMenu(e, s)}
-            css={
-              hasRowActions
-                ? {
-                    "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
-                      opacity: 1,
-                      pointerEvents: "auto",
-                    },
-                  }
-                : undefined
-            }
-          >
-            <TreeChevron visibility="hidden" aria-hidden />
-            <TreeIcon color="app.accent" aria-hidden><Icon name="snippet" /></TreeIcon>
-            <TreeLabel>{s.name}</TreeLabel>
-            {isFavorite && (
-              <Tooltip label={t("snippetFavoriteBadge")}>
-                <TreeIcon color="app.favorite" aria-label={t("snippetFavoriteBadge")}>
-                  <Icon name="star-filled" />
-                </TreeIcon>
-              </Tooltip>
-            )}
-            {watchedPlanIds?.includes(s.id) && (
-              <Tooltip label={t("snippetWatchBadge")}>
-                <TreeIcon
-                  color="app.accent"
-                  aria-label={t("snippetWatchBadge")}
-                >
-                  <Icon name="explain" />
-                </TreeIcon>
-              </Tooltip>
-            )}
-            {s.tags.map((tag) => (
-              <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">{tag}</TreeBadge>
-            ))}
-            {s.driver && <TreeBadge>{s.driver}</TreeBadge>}
-            {hasRowActions && (
-              <chakra.span
-                data-row-actions=""
-                position="absolute"
-                top="0"
-                right="0"
-                bottom="0"
-                display="flex"
-                alignItems="center"
-                gap="0.5"
-                pl="4"
-                pr="1.5"
-                background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
-                opacity={0}
-                pointerEvents="none"
-                transitionProperty="opacity"
-                transitionDuration="var(--dur-fast)"
-                transitionTimingFunction="var(--ease)"
-              >
-                {onToggleFavorite && (
-                  <Tooltip label={isFavorite ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite")}>
-                    <chakra.button
-                      type="button"
-                      minW="0"
-                      w="24px"
-                      h="24px"
-                      p="0"
-                      display="inline-flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      color={isFavorite ? "app.favorite" : "app.textSecondary"}
-                      _hover={{ color: "app.favorite" }}
-                      aria-label={isFavorite ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleFavorite(s);
-                      }}
-                    >
-                      <Icon name={isFavorite ? "star-filled" : "star"} size={ICON_SIZES.md} />
-                    </chakra.button>
-                  </Tooltip>
-                )}
-                {onRun && (
-                  <Tooltip label={t("snippetMenuRun")}>
-                    <chakra.button
-                      type="button"
-                      minW="0"
-                      w="24px"
-                      h="24px"
-                      p="0"
-                      display="inline-flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      color="app.textSecondary"
-                      _hover={{ color: "app.text" }}
-                      aria-label={t("snippetMenuRun")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRun(s);
-                      }}
-                    >
-                      <Icon name="query" size={ICON_SIZES.md} />
-                    </chakra.button>
-                  </Tooltip>
-                )}
-              </chakra.span>
-            )}
-          </TreeRow>
-        </Tooltip>
-      </MotionTreeNode>
-    );
-  };
+  // 行 (memo) へ渡す操作は、最新のハンドラを ref 越しに呼ぶ安定関数にする (#1321)。
+  const handlersRef = useRef({ onInsert, onRun, onToggleFavorite, handleContextMenu });
+  handlersRef.current = { onInsert, onRun, onToggleFavorite, handleContextMenu };
+  const stableInsert = useCallback((sn: Snippet) => handlersRef.current.onInsert(sn), []);
+  const stableRun = useCallback((sn: Snippet) => handlersRef.current.onRun?.(sn), []);
+  const stableToggleFavorite = useCallback(
+    (sn: Snippet) => handlersRef.current.onToggleFavorite?.(sn),
+    [],
+  );
+  const stableContextMenu = useCallback(
+    (e: React.MouseEvent, sn: Snippet) => handlersRef.current.handleContextMenu(e, sn),
+    [],
+  );
+
+  const renderSnippet = (s: Snippet) => (
+    <SnippetRow
+      key={s.id}
+      s={s}
+      isFavorite={favoriteIds?.includes(s.id) ?? false}
+      isWatched={watchedPlanIds?.includes(s.id) ?? false}
+      canRun={Boolean(onRun)}
+      canFavorite={Boolean(onToggleFavorite)}
+      onInsert={stableInsert}
+      onRun={stableRun}
+      onToggleFavorite={stableToggleFavorite}
+      onContextMenu={stableContextMenu}
+    />
+  );
 
   return (
     <TreePane>

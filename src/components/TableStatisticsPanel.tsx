@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api } from "../api/tauri";
@@ -70,6 +70,72 @@ const tfootTdCss: SystemStyleObject = {
   color: "var(--text-secondary)",
 };
 
+const openButtonCss: SystemStyleObject = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  font: "inherit",
+  color: "var(--accent)",
+  cursor: "pointer",
+  textAlign: "left",
+  _hover: { textDecoration: "underline" },
+};
+
+/**
+ * テーブル統計の 1 行 (#1321)。ソート・フィルタの切替では行の中身は変わらないので、
+ * `memo` により並べ替えは DOM の移動だけで済み、全行の再描画にならない。
+ */
+const TableStatRowView = memo(function TableStatRowView({
+  row: r,
+  maxTotal,
+  onOpenTable,
+}: {
+  row: TableStatRow;
+  maxTotal: number;
+  onOpenTable?: (table: string) => void;
+}) {
+  const t = useT();
+  return (
+    <tr>
+      <chakra.td css={tdCss}>
+        {onOpenTable ? (
+          <Tooltip label={t("sizeOpenTable", { table: r.name })}>
+            <chakra.button type="button" onClick={() => onOpenTable(r.name)} css={openButtonCss}>
+              {r.name}
+            </chakra.button>
+          </Tooltip>
+        ) : (
+          r.name
+        )}
+      </chakra.td>
+      <chakra.td css={numTdCss}>{formatRowCount(r.row_estimate)}</chakra.td>
+      <chakra.td css={numTdCss}>{formatCount(r.columnCount)}</chakra.td>
+      <chakra.td css={numTdCss}>{formatCount(r.indexCount)}</chakra.td>
+      <chakra.td css={centerTdCss}>{r.hasPrimaryKey == null ? "—" : r.hasPrimaryKey ? t("sizePkYes") : t("sizePkNo")}</chakra.td>
+      <chakra.td css={numTdCss}>{formatCount(r.foreignKeyCount)}</chakra.td>
+      <chakra.td css={numTdCss}>{formatBytes(r.data_bytes)}</chakra.td>
+      <chakra.td css={numTdCss}>{formatBytes(r.index_bytes)}</chakra.td>
+      <chakra.td css={numTdCss}>
+        <Box position="relative">
+          {/* データバー (表示専用): 一覧中の最大合計を 100% とする。 */}
+          <Box
+            position="absolute"
+            top={0}
+            right={0}
+            bottom={0}
+            width={`${sizeBarPercent(r.total_bytes, maxTotal)}%`}
+            background="var(--accent)"
+            opacity={0.18}
+            borderRadius="var(--radius-sm)"
+            aria-hidden
+          />
+          <chakra.span position="relative">{formatBytes(r.total_bytes)}</chakra.span>
+        </Box>
+      </chakra.td>
+    </tr>
+  );
+});
+
 export function TableStatisticsPanel({
   sessionId,
   database,
@@ -134,6 +200,11 @@ export function TableStatisticsPanel({
     [],
   );
 
+  // 親が毎回新しい onOpenTable を渡しても行 (memo) が再レンダーされないよう、ref 経由の安定関数にする (#1321)。
+  const onOpenTableRef = useRef(onOpenTable);
+  onOpenTableRef.current = onOpenTable;
+  const openTable = useCallback((name: string) => onOpenTableRef.current?.(name), []);
+
   const filtered = filterTableStats(rows, { nameQuery, onlyNoIndex, onlyNoPrimaryKey });
   const sorted = sortTableStats(filtered, sortKey, sortDir);
   const totals = computeTableSizeTotals(sorted);
@@ -161,9 +232,6 @@ export function TableStatisticsPanel({
     onClick: () => onSort(key),
     onKeyDown: (e: ReactKeyboardEvent) => onHeaderKey(e, key),
   });
-
-  const pkLabel = (has: boolean | null) =>
-    has == null ? "—" : has ? t("sizePkYes") : t("sizePkNo");
 
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
@@ -303,56 +371,12 @@ export function TableStatisticsPanel({
                 <SkeletonTableRows columns={9} />
               ) : (
                 sorted.map((r) => (
-                <tr key={r.name}>
-                  <chakra.td css={tdCss}>
-                    {onOpenTable ? (
-                      <Tooltip label={t("sizeOpenTable", { table: r.name })}>
-                        <chakra.button
-                          type="button"
-                          onClick={() => onOpenTable(r.name)}
-                          css={{
-                            background: "none",
-                            border: "none",
-                            padding: 0,
-                            font: "inherit",
-                            color: "var(--accent)",
-                            cursor: "pointer",
-                            textAlign: "left",
-                            _hover: { textDecoration: "underline" },
-                          }}
-                        >
-                          {r.name}
-                        </chakra.button>
-                      </Tooltip>
-                    ) : (
-                      r.name
-                    )}
-                  </chakra.td>
-                  <chakra.td css={numTdCss}>{formatRowCount(r.row_estimate)}</chakra.td>
-                  <chakra.td css={numTdCss}>{formatCount(r.columnCount)}</chakra.td>
-                  <chakra.td css={numTdCss}>{formatCount(r.indexCount)}</chakra.td>
-                  <chakra.td css={centerTdCss}>{pkLabel(r.hasPrimaryKey)}</chakra.td>
-                  <chakra.td css={numTdCss}>{formatCount(r.foreignKeyCount)}</chakra.td>
-                  <chakra.td css={numTdCss}>{formatBytes(r.data_bytes)}</chakra.td>
-                  <chakra.td css={numTdCss}>{formatBytes(r.index_bytes)}</chakra.td>
-                  <chakra.td css={numTdCss}>
-                    <Box position="relative">
-                      {/* データバー (表示専用): 一覧中の最大合計を 100% とする。 */}
-                      <Box
-                        position="absolute"
-                        top={0}
-                        right={0}
-                        bottom={0}
-                        width={`${sizeBarPercent(r.total_bytes, maxTotal)}%`}
-                        background="var(--accent)"
-                        opacity={0.18}
-                        borderRadius="var(--radius-sm)"
-                        aria-hidden
-                      />
-                      <chakra.span position="relative">{formatBytes(r.total_bytes)}</chakra.span>
-                    </Box>
-                  </chakra.td>
-                </tr>
+                  <TableStatRowView
+                    key={r.name}
+                    row={r}
+                    maxTotal={maxTotal}
+                    onOpenTable={onOpenTable ? openTable : undefined}
+                  />
                 ))
               )}
             </tbody>

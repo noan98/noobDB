@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { I18nKey, useT } from "../i18n";
@@ -113,6 +113,174 @@ function formatTime(iso: string): string {
   return d.toLocaleString();
 }
 
+/**
+ * 履歴 1 行 (#1321)。`copied` の変化 (コピー完了の表示) や他の行の更新で全行が
+ * 再レンダーされないよう memo 化し、操作は id を取る安定したコールバックで受ける。
+ */
+const HistoryRow = memo(function HistoryRow({
+  h,
+  copied,
+  canSaveAsSnippet,
+  fadeIn,
+  onRestore,
+  onCopy,
+  onOpenInNewTab,
+  onSaveAsSnippet,
+}: {
+  h: HistoryEntry;
+  copied: boolean;
+  canSaveAsSnippet: boolean;
+  /** マウント時にフェードインするか (先頭の数行だけ。検索のたびに 200 行が一斉に動くのを避ける)。 */
+  fadeIn: boolean;
+  onRestore: (id: number) => void;
+  onCopy: (id: number) => void;
+  onOpenInNewTab: (id: number) => void;
+  onSaveAsSnippet: (id: number) => void;
+}) {
+  const t = useT();
+  const failed = h.status === "error";
+  const meta =
+    h.rows != null
+      ? t("historyRowsMeta", { rows: h.rows })
+      : h.rows_affected != null
+        ? t("historyAffectedMeta", { rows: h.rows_affected })
+        : "";
+  return (
+      <MotionTreeNode
+        key={h.id}
+        initial={fadeIn ? variants.fade.initial : false}
+        animate={variants.fade.animate}
+        transition={transitions.crossfade}
+      >
+        <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql_preview}`}>
+          <TreeRow
+            position="relative"
+            role="treeitem"
+            tabIndex={0}
+            onClick={() => onRestore(h.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onRestore(h.id);
+              }
+            }}
+            css={{
+              "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
+                opacity: 1,
+                pointerEvents: "auto",
+              },
+            }}
+          >
+            <TreeChevron visibility="hidden" aria-hidden />
+            <TreeIcon color="app.accent" aria-hidden>
+              <Icon name={failed ? "close" : "refresh"} />
+            </TreeIcon>
+            <TreeLabel fontFamily="mono">{h.sql_preview}</TreeLabel>
+            {failed && (
+              <TreeBadge
+                bg={semanticColorToken("info", "subtle")}
+                color="app.text"
+                borderColor="app.borderStrong"
+                fontWeight={700}
+              >
+                {t("historyStatusError")}
+              </TreeBadge>
+            )}
+            {!failed && meta && <TreeBadge>{meta}</TreeBadge>}
+            {h.elapsed_ms != null && <TreeBadge>{h.elapsed_ms} ms</TreeBadge>}
+            <chakra.span
+              data-row-actions=""
+              position="absolute"
+              top="0"
+              right="0"
+              bottom="0"
+              display="flex"
+              alignItems="center"
+              gap="0.5"
+              pl="4"
+              pr="1.5"
+              background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
+              opacity={0}
+              pointerEvents="none"
+              transitionProperty="opacity"
+              transitionDuration="var(--dur-fast)"
+              transitionTimingFunction="var(--ease)"
+            >
+              <CopyButton
+                copied={copied}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopy(h.id);
+                }}
+                label={t("historyCopySql")}
+                copiedLabel={t("historyCopied")}
+                minW="0"
+                w="24px"
+                h="24px"
+                p="0"
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                color="app.textSecondary"
+                _hover={{ color: "app.text" }}
+              />
+              <Tooltip label={t("historyOpenInNewTab")}>
+                <chakra.button
+                  type="button"
+                  minW="0"
+                  w="24px"
+                  h="24px"
+                  p="0"
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  color="app.textSecondary"
+                  _hover={{ color: "app.text" }}
+                  aria-label={t("historyOpenInNewTab")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenInNewTab(h.id);
+                  }}
+                >
+                  <Icon name="query" size={ICON_SIZES.md} />
+                </chakra.button>
+              </Tooltip>
+              {canSaveAsSnippet && (
+                <Tooltip label={t("historySaveAsSnippet")}>
+                  <chakra.button
+                    type="button"
+                    minW="0"
+                    w="24px"
+                    h="24px"
+                    p="0"
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    color="app.textSecondary"
+                    _hover={{ color: "app.text" }}
+                    aria-label={t("historySaveAsSnippet")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSaveAsSnippet(h.id);
+                    }}
+                  >
+                    <Icon name="snippet" size={ICON_SIZES.md} />
+                  </chakra.button>
+                </Tooltip>
+              )}
+            </chakra.span>
+          </TreeRow>
+        </Tooltip>
+        <Box pt="0" pr="1.5" pb="1" pl="7" fontSize="2xs" color="app.textMuted">
+          {formatTime(h.executed_at)}
+        </Box>
+      </MotionTreeNode>
+  );
+});
+
+/** 履歴行のフェードインを付ける先頭からの行数 (#1321)。 */
+const HISTORY_FADE_IN_ROWS = 20;
+
 // memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
 export const HistoryList = memo(function HistoryList({ activeProfile, sessionId, reloadKey, onRestore, onOpenInNewTab, onSaveAsSnippet, onNewQuery }: Props) {
@@ -141,6 +309,23 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   };
 
   const handleCopy = (id: number) => withFullSql(id, (sql) => copy(id, sql));
+
+  // 行 (memo) へ渡すコールバックは、最新のハンドラを ref 越しに呼ぶ安定関数にする (#1321)。
+  const handlersRef = useRef({ withFullSql, handleCopy, onRestore, onOpenInNewTab, onSaveAsSnippet });
+  handlersRef.current = { withFullSql, handleCopy, onRestore, onOpenInNewTab, onSaveAsSnippet };
+  const restoreById = useCallback((id: number) => {
+    void handlersRef.current.withFullSql(id, handlersRef.current.onRestore);
+  }, []);
+  const copyById = useCallback((id: number) => {
+    void handlersRef.current.handleCopy(id);
+  }, []);
+  const openInNewTabById = useCallback((id: number) => {
+    void handlersRef.current.withFullSql(id, handlersRef.current.onOpenInNewTab);
+  }, []);
+  const saveAsSnippetById = useCallback((id: number) => {
+    const fn = handlersRef.current.onSaveAsSnippet;
+    if (fn) void handlersRef.current.withFullSql(id, fn);
+  }, []);
 
   // Debounce the search box so each keystroke doesn't hit the backend.
   useEffect(() => {
@@ -288,146 +473,19 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
               なるため、ここは「控えめ」方針に従い、マウント時の
               opacity フェードイン (enter のみ・height 補間なし) に留める。新しい
               クエリ実行で先頭に積まれた項目が軽く出現し、削除は即時。 */}
-          {entries.map((h) => {
-            const failed = h.status === "error";
-            const meta =
-              h.rows != null
-                ? t("historyRowsMeta", { rows: h.rows })
-                : h.rows_affected != null
-                  ? t("historyAffectedMeta", { rows: h.rows_affected })
-                  : "";
-            return (
-              <MotionTreeNode
-                key={h.id}
-                initial={variants.fade.initial}
-                animate={variants.fade.animate}
-                transition={transitions.crossfade}
-              >
-                <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql_preview}`}>
-                  <TreeRow
-                    position="relative"
-                    role="treeitem"
-                    tabIndex={0}
-                    onClick={() => void withFullSql(h.id, onRestore)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        void withFullSql(h.id, onRestore);
-                      }
-                    }}
-                    css={{
-                      "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
-                        opacity: 1,
-                        pointerEvents: "auto",
-                      },
-                    }}
-                  >
-                    <TreeChevron visibility="hidden" aria-hidden />
-                    <TreeIcon color="app.accent" aria-hidden>
-                      <Icon name={failed ? "close" : "refresh"} />
-                    </TreeIcon>
-                    <TreeLabel fontFamily="mono">{h.sql_preview}</TreeLabel>
-                    {failed && (
-                      <TreeBadge
-                        bg={semanticColorToken("info", "subtle")}
-                        color="app.text"
-                        borderColor="app.borderStrong"
-                        fontWeight={700}
-                      >
-                        {t("historyStatusError")}
-                      </TreeBadge>
-                    )}
-                    {!failed && meta && <TreeBadge>{meta}</TreeBadge>}
-                    {h.elapsed_ms != null && <TreeBadge>{h.elapsed_ms} ms</TreeBadge>}
-                    <chakra.span
-                      data-row-actions=""
-                      position="absolute"
-                      top="0"
-                      right="0"
-                      bottom="0"
-                      display="flex"
-                      alignItems="center"
-                      gap="0.5"
-                      pl="4"
-                      pr="1.5"
-                      background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
-                      opacity={0}
-                      pointerEvents="none"
-                      transitionProperty="opacity"
-                      transitionDuration="var(--dur-fast)"
-                      transitionTimingFunction="var(--ease)"
-                    >
-                      <CopyButton
-                        copied={copiedId === h.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleCopy(h.id);
-                        }}
-                        label={t("historyCopySql")}
-                        copiedLabel={t("historyCopied")}
-                        minW="0"
-                        w="24px"
-                        h="24px"
-                        p="0"
-                        display="inline-flex"
-                        alignItems="center"
-                        justifyContent="center"
-                        color="app.textSecondary"
-                        _hover={{ color: "app.text" }}
-                      />
-                      <Tooltip label={t("historyOpenInNewTab")}>
-                        <chakra.button
-                          type="button"
-                          minW="0"
-                          w="24px"
-                          h="24px"
-                          p="0"
-                          display="inline-flex"
-                          alignItems="center"
-                          justifyContent="center"
-                          color="app.textSecondary"
-                          _hover={{ color: "app.text" }}
-                          aria-label={t("historyOpenInNewTab")}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void withFullSql(h.id, onOpenInNewTab);
-                          }}
-                        >
-                          <Icon name="query" size={ICON_SIZES.md} />
-                        </chakra.button>
-                      </Tooltip>
-                      {onSaveAsSnippet && (
-                        <Tooltip label={t("historySaveAsSnippet")}>
-                          <chakra.button
-                            type="button"
-                            minW="0"
-                            w="24px"
-                            h="24px"
-                            p="0"
-                            display="inline-flex"
-                            alignItems="center"
-                            justifyContent="center"
-                            color="app.textSecondary"
-                            _hover={{ color: "app.text" }}
-                            aria-label={t("historySaveAsSnippet")}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void withFullSql(h.id, onSaveAsSnippet);
-                            }}
-                          >
-                            <Icon name="snippet" size={ICON_SIZES.md} />
-                          </chakra.button>
-                        </Tooltip>
-                      )}
-                    </chakra.span>
-                  </TreeRow>
-                </Tooltip>
-                <Box pt="0" pr="1.5" pb="1" pl="7" fontSize="2xs" color="app.textMuted">
-                  {formatTime(h.executed_at)}
-                </Box>
-              </MotionTreeNode>
-            );
-          })}
+          {entries.map((h, i) => (
+            <HistoryRow
+              key={h.id}
+              h={h}
+              copied={copiedId === h.id}
+              canSaveAsSnippet={onSaveAsSnippet !== undefined}
+              fadeIn={i < HISTORY_FADE_IN_ROWS}
+              onRestore={restoreById}
+              onCopy={copyById}
+              onOpenInNewTab={openInNewTabById}
+              onSaveAsSnippet={saveAsSnippetById}
+            />
+          ))}
         </Tree>
       )}
       {confirmDialog}

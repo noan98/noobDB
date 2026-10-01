@@ -2905,6 +2905,8 @@ const en = {
   schemaCompareAllowDestructive: "Allow destructive changes (DROP TABLE / DROP COLUMN)",
   schemaCompareGenerate: "Generate sync SQL",
   schemaCompareGenerating: "Generating...",
+  schemaCompareStatementsShown: "Showing {shown} of {total} statements",
+  schemaCompareStatementsMore: "Show {count} more",
   schemaCompareNoStatements:
     "No statements to apply. Enable destructive changes to generate DROP statements.",
   schemaCompareBackupNote:
@@ -3016,6 +3018,7 @@ const en = {
   processKillFailed: "{failed} of {count} kill(s) failed: {error}",
   processLoadError: "Failed to load processes: {error}",
   processEmpty: "No processes to show.",
+  processTruncated: "Showing the first {shown} of {total} processes.",
   processReadOnlyHint:
     "This is a read-only session: killing processes is disabled (enforced by the backend).",
   processSelectAll: "Select all processes",
@@ -6730,6 +6733,8 @@ const ja: Dict = {
   schemaCompareAllowDestructive: "破壊的変更を許可する (DROP TABLE / DROP COLUMN)",
   schemaCompareGenerate: "反映 SQL を生成",
   schemaCompareGenerating: "生成中...",
+  schemaCompareStatementsShown: "{total} 件中 {shown} 件を表示中",
+  schemaCompareStatementsMore: "さらに {count} 件表示",
   schemaCompareNoStatements:
     "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
   schemaCompareBackupNote:
@@ -6841,6 +6846,7 @@ const ja: Dict = {
   processKillFailed: "{count} 件中 {failed} 件の kill に失敗しました: {error}",
   processLoadError: "プロセス一覧の取得に失敗しました: {error}",
   processEmpty: "表示するプロセスがありません。",
+  processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processReadOnlyHint:
     "読み取り専用セッションのため、プロセスの kill は無効です (バックエンドで強制されます)。",
   processSelectAll: "すべてのプロセスを選択",

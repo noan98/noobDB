@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type QueryStatsSupport, type StatementDeltaRow } from "../api/tauri";
@@ -108,6 +108,121 @@ function NPlusOneBadge({ title }: { title: string }) {
     </Tooltip>
   );
 }
+
+/**
+ * ライブテールの 1 行 (#1321)。`mergeLiveTail` は変化の無いエントリの参照を保つので、
+ * memo により「新しく積まれた行・実行状態が変わった行」だけが再レンダーされる。
+ * N+1 の判定結果はプリミティブで受け取り、親の Map 参照が変わっても波及させない。
+ */
+export const TailRow = memo(function TailRow({
+  entry: e,
+  showRowsExamined,
+  nPlusOneCount,
+  nPlusOneWindowMs,
+  onCopy,
+}: {
+  entry: LiveTailEntry;
+  showRowsExamined: boolean;
+  nPlusOneCount: number | null;
+  nPlusOneWindowMs: number;
+  onCopy: (sql: string) => void | Promise<void>;
+}) {
+  const t = useT();
+  return (
+    <tr>
+      <chakra.td css={tdCss}>
+        {new Date(e.observedAtMs).toLocaleTimeString()}
+        {e.running && (
+          <Tooltip label={t("inspectorRunningTitle")} focusableWrapper>
+            <chakra.span marginLeft="1.5" color="var(--accent)">
+              ▶
+            </chakra.span>
+          </Tooltip>
+        )}
+      </chakra.td>
+      <chakra.td css={tdCss}>
+        {[e.user, e.application || e.host].filter(Boolean).join("@") || "–"}
+      </chakra.td>
+      <chakra.td css={tdCss}>{e.database ?? "–"}</chakra.td>
+      <chakra.td css={numTdCss}>{formatMs(e.duration_ms)}</chakra.td>
+      {showRowsExamined && <chakra.td css={numTdCss}>{e.rows_examined ?? "–"}</chakra.td>}
+      <Tooltip label={e.query}>
+        <chakra.td css={queryTdCss}>
+          {oneLine(e.query)}
+          {nPlusOneCount != null && (
+            <NPlusOneBadge
+              title={t("inspectorNPlusOneExplain", {
+                count: nPlusOneCount,
+                windowMs: nPlusOneWindowMs,
+              })}
+            />
+          )}
+        </chakra.td>
+      </Tooltip>
+      <chakra.td css={tdCss}>
+        <Tooltip label={t("inspectorCopySql")}>
+          <Button
+            minWidth="24px"
+            px="1.5"
+            py="0.5"
+            onClick={() => void onCopy(e.query)}
+            aria-label={t("inspectorCopySql")}
+          >
+            <Icon name="copy" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
+      </chakra.td>
+    </tr>
+  );
+});
+
+/** フィンガープリント集計の 1 行 (#1321)。差分行の参照が変わった行だけ再レンダーする。 */
+export const StatRow = memo(function StatRow({
+  row: r,
+  fingerprint,
+  nPlusOneWindowMs,
+  onCopy,
+}: {
+  row: StatementDeltaRow;
+  fingerprint: string;
+  nPlusOneWindowMs: number;
+  onCopy: (sql: string) => void | Promise<void>;
+}) {
+  const t = useT();
+  return (
+    <tr>
+      <chakra.td css={numTdCss}>{r.calls}</chakra.td>
+      <chakra.td css={numTdCss}>{formatMs(r.total_time_ms)}</chakra.td>
+      <chakra.td css={numTdCss}>{formatMs(r.mean_time_ms)}</chakra.td>
+      <chakra.td css={numTdCss}>{formatMs(r.max_time_ms)}</chakra.td>
+      <chakra.td css={numTdCss}>{r.rows ?? "–"}</chakra.td>
+      <chakra.td css={tdCss}>{r.database ?? "–"}</chakra.td>
+      <Tooltip label={fingerprint}>
+        <chakra.td css={queryTdCss}>
+          {oneLine(fingerprint)}
+          {r.n_plus_one && (
+            <NPlusOneBadge
+              title={t("inspectorNPlusOneRateExplain", { windowMs: nPlusOneWindowMs })}
+            />
+          )}
+        </chakra.td>
+      </Tooltip>
+      <chakra.td css={tdCss}>
+        <Tooltip label={t("inspectorCopySql")}>
+          <Button
+            minWidth="24px"
+            px="1.5"
+            py="0.5"
+            onClick={() => void onCopy(fingerprint)}
+            aria-label={t("inspectorCopySql")}
+          >
+            <Icon name="copy" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
+      </chakra.td>
+    </tr>
+  );
+});
 
 export function QueryInspectorPanel({
   sessionId,
@@ -320,8 +435,6 @@ export function QueryInspectorPanel({
 
   const fingerprintOf = (r: StatementDeltaRow) =>
     fingerprintCache.current.get(`${r.digest} ${r.database ?? ""}`) ?? "";
-
-  const liveTailFinding = (fingerprint: string) => tailFindings.get(fingerprint);
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
@@ -550,56 +663,16 @@ export function QueryInspectorPanel({
                     </thead>
                     <tbody>
                       {visibleTail.map((e) => {
-                        const finding = liveTailFinding(e.fingerprint);
+                        const finding = tailFindings.get(e.fingerprint);
                         return (
-                          <tr key={e.key}>
-                            <chakra.td css={tdCss}>
-                              {new Date(e.observedAtMs).toLocaleTimeString()}
-                              {e.running && (
-                                <Tooltip label={t("inspectorRunningTitle")} focusableWrapper>
-                                  <chakra.span marginLeft="1.5" color="var(--accent)">
-                                    ▶
-                                  </chakra.span>
-                                </Tooltip>
-                              )}
-                            </chakra.td>
-                            <chakra.td css={tdCss}>
-                              {[e.user, e.application || e.host]
-                                .filter(Boolean)
-                                .join("@") || "–"}
-                            </chakra.td>
-                            <chakra.td css={tdCss}>{e.database ?? "–"}</chakra.td>
-                            <chakra.td css={numTdCss}>{formatMs(e.duration_ms)}</chakra.td>
-                            {driver === "mysql" && (
-                              <chakra.td css={numTdCss}>{e.rows_examined ?? "–"}</chakra.td>
-                            )}
-                            <Tooltip label={e.query}>
-                              <chakra.td css={queryTdCss}>
-                                {oneLine(e.query)}
-                                {finding && (
-                                  <NPlusOneBadge
-                                    title={t("inspectorNPlusOneExplain", {
-                                      count: finding.count,
-                                      windowMs: finding.windowMs,
-                                    })}
-                                  />
-                                )}
-                              </chakra.td>
-                            </Tooltip>
-                            <chakra.td css={tdCss}>
-                              <Tooltip label={t("inspectorCopySql")}>
-                                <Button
-                                  minWidth="24px"
-                                  px="1.5"
-                                  py="0.5"
-                                  onClick={() => void copySql(e.query)}
-                                  aria-label={t("inspectorCopySql")}
-                                >
-                                  <Icon name="copy" size={ICON_SIZES.sm} />
-                                </Button>
-                              </Tooltip>
-                            </chakra.td>
-                          </tr>
+                          <TailRow
+                            key={e.key}
+                            entry={e}
+                            showRowsExamined={driver === "mysql"}
+                            nPlusOneCount={finding?.count ?? null}
+                            nPlusOneWindowMs={finding?.windowMs ?? 0}
+                            onCopy={copySql}
+                          />
                         );
                       })}
                     </tbody>
@@ -657,41 +730,18 @@ export function QueryInspectorPanel({
                       </tr>
                     </thead>
                     <tbody>
-                      {deltaRows.map((r) => (
-                        <tr key={`${r.digest} ${r.database ?? ""}`}>
-                          <chakra.td css={numTdCss}>{r.calls}</chakra.td>
-                          <chakra.td css={numTdCss}>{formatMs(r.total_time_ms)}</chakra.td>
-                          <chakra.td css={numTdCss}>{formatMs(r.mean_time_ms)}</chakra.td>
-                          <chakra.td css={numTdCss}>{formatMs(r.max_time_ms)}</chakra.td>
-                          <chakra.td css={numTdCss}>{r.rows ?? "–"}</chakra.td>
-                          <chakra.td css={tdCss}>{r.database ?? "–"}</chakra.td>
-                          <Tooltip label={fingerprintOf(r)}>
-                            <chakra.td css={queryTdCss}>
-                              {oneLine(fingerprintOf(r))}
-                              {r.n_plus_one && (
-                                <NPlusOneBadge
-                                  title={t("inspectorNPlusOneRateExplain", {
-                                    windowMs: settings.inspectorNPlusOneWindowMs,
-                                  })}
-                                />
-                              )}
-                            </chakra.td>
-                          </Tooltip>
-                          <chakra.td css={tdCss}>
-                            <Tooltip label={t("inspectorCopySql")}>
-                              <Button
-                                minWidth="24px"
-                                px="1.5"
-                                py="0.5"
-                                onClick={() => void copySql(fingerprintOf(r))}
-                                aria-label={t("inspectorCopySql")}
-                              >
-                                <Icon name="copy" size={ICON_SIZES.sm} />
-                              </Button>
-                            </Tooltip>
-                          </chakra.td>
-                        </tr>
-                      ))}
+                      {deltaRows.map((r) => {
+                        const fp = fingerprintOf(r);
+                        return (
+                          <StatRow
+                            key={`${r.digest} ${r.database ?? ""}`}
+                            row={r}
+                            fingerprint={fp}
+                            nPlusOneWindowMs={settings.inspectorNPlusOneWindowMs}
+                            onCopy={copySql}
+                          />
+                        );
+                      })}
                     </tbody>
                   </chakra.table>
                 </Box>
