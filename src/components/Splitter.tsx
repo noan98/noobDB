@@ -54,15 +54,62 @@ export function Splitter({
   );
   const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+  const firstRef = useRef<HTMLDivElement | null>(null);
+  const secondRef = useRef<HTMLDivElement | null>(null);
+  const separatorRef = useRef<HTMLDivElement | null>(null);
+  // ドラッグ / アニメーション中の「いま見えている」比率 (#1312)。ドラッグ中は React の
+  // state を更新せず、この ref と DOM (flex-grow / aria-valuenow) へ直接反映する。
+  // state と localStorage は確定時 (pointerup・キー操作・アニメ完了) に 1 回だけ更新する。
+  const liveFractionRef = useRef(fraction);
+  const pendingRef = useRef<{ x: number; y: number } | null>(null);
+  const rafRef = useRef(0);
+  const animationRef = useRef<{ stop: () => void } | null>(null);
+  const secondCollapsedRef = useRef(secondCollapsed);
+  secondCollapsedRef.current = secondCollapsed;
 
-  useEffect(() => {
-    if (!storageKey) return;
-    try {
-      localStorage.setItem(storageKey, fraction.toFixed(4));
-    } catch {
-      // ignore
+  // state が確定した (キー操作・復元・確定) ときは live 値も追従させる。
+  liveFractionRef.current = dragging || animationRef.current ? liveFractionRef.current : fraction;
+
+  const persist = useCallback(
+    (f: number) => {
+      if (!storageKey) return;
+      try {
+        localStorage.setItem(storageKey, f.toFixed(4));
+      } catch {
+        // ignore
+      }
+    },
+    [storageKey],
+  );
+
+  // DOM へ直接比率を反映する (React の再レンダーを伴わない)。
+  const applyLive = useCallback((f: number) => {
+    liveFractionRef.current = f;
+    if (!secondCollapsedRef.current) {
+      if (firstRef.current) firstRef.current.style.flexGrow = String(f);
+      if (secondRef.current) secondRef.current.style.flexGrow = String(1 - f);
     }
-  }, [fraction, storageKey]);
+    separatorRef.current?.setAttribute("aria-valuenow", String(Math.round(f * 100)));
+  }, []);
+
+  // 確定: state を更新して 1 回だけ保存する。
+  const commit = useCallback(
+    (f: number) => {
+      liveFractionRef.current = f;
+      setFraction(f);
+      persist(f);
+    },
+    [persist],
+  );
+
+  useEffect(
+    () => () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      animationRef.current?.stop();
+    },
+    [],
+  );
 
   // Lock the global cursor while dragging so it doesn't flicker when the
   // pointer wanders outside the (thin) handle.
@@ -83,22 +130,39 @@ export function Splitter({
     [minSize],
   );
 
+  // ポインタ位置から比率を求める。ドラッグ中は DOM へ直接反映するだけで state は触らない。
   const updateFromPointer = useCallback(
-    (clientX: number, clientY: number) => {
+    (clientX: number, clientY: number): number | null => {
       const el = containerRef.current;
-      if (!el) return;
+      if (!el) return null;
       const rect = el.getBoundingClientRect();
       const total = direction === "row" ? rect.width : rect.height;
-      if (total <= 0) return;
+      if (total <= 0) return null;
       const offset = direction === "row" ? clientX - rect.left : clientY - rect.top;
       const { minF, maxF } = fractionBounds(total);
-      setFraction(clamp(offset / total, minF, maxF));
+      const f = clamp(offset / total, minF, maxF);
+      applyLive(f);
+      return f;
     },
-    [direction, fractionBounds],
+    [direction, fractionBounds, applyLive],
   );
+
+  const flushPending = useCallback(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    if (p) updateFromPointer(p.x, p.y);
+  }, [updateFromPointer]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
+    // ダブルクリックのアニメーション中につかんだら、その地点で止めて引き継ぐ。
+    animationRef.current?.stop();
+    animationRef.current = null;
+    draggingRef.current = true;
     setDragging(true);
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -109,34 +173,59 @@ export function Splitter({
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!dragging) return;
-      updateFromPointer(e.clientX, e.clientY);
+      if (!draggingRef.current) return;
+      // 高リフレッシュレートでもフレームごとに 1 回だけ反映する。
+      pendingRef.current = { x: e.clientX, y: e.clientY };
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = 0;
+          const p = pendingRef.current;
+          pendingRef.current = null;
+          if (p) updateFromPointer(p.x, p.y);
+        });
+      }
     },
-    [dragging, updateFromPointer],
+    [updateFromPointer],
   );
 
-  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    setDragging(false);
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
-  }, []);
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (draggingRef.current) {
+        draggingRef.current = false;
+        flushPending();
+        commit(liveFractionRef.current);
+      }
+      setDragging(false);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    },
+    [flushPending, commit],
+  );
 
   const prefersReducedMotion = useReducedMotion();
 
   const onDoubleClick = useCallback(() => {
+    animationRef.current?.stop();
+    animationRef.current = null;
     if (prefersReducedMotion) {
-      setFraction(defaultFraction);
+      commit(defaultFraction);
       return;
     }
-    animate(fraction, defaultFraction, {
+    // アニメーション中は DOM へ直接書き、完了時に 1 回だけ state / 保存を確定する (#1312)。
+    const controls = animate(liveFractionRef.current, defaultFraction, {
       duration: durations.slow,
       ease: easings.out,
-      onUpdate: (v) => setFraction(v),
+      onUpdate: (v) => applyLive(v),
+      onComplete: () => {
+        animationRef.current = null;
+        commit(defaultFraction);
+      },
     });
-  }, [defaultFraction, fraction, prefersReducedMotion]);
+    animationRef.current = controls;
+  }, [defaultFraction, prefersReducedMotion, applyLive, commit]);
 
   // Keyboard resize (a11y): arrow keys nudge the divider, Home/End jump to the
   // min/max, Enter resets to the default split. Step respects the same min-size
@@ -146,9 +235,9 @@ export function Splitter({
       const el = containerRef.current;
       const total = el ? (direction === "row" ? el.getBoundingClientRect().width : el.getBoundingClientRect().height) : 0;
       const { minF, maxF } = fractionBounds(total);
-      setFraction((f) => clamp(f + delta, minF, maxF));
+      commit(clamp(liveFractionRef.current + delta, minF, maxF));
     },
-    [direction, fractionBounds],
+    [direction, fractionBounds, commit],
   );
 
   const isRow = direction === "row";
@@ -173,10 +262,10 @@ export function Splitter({
         // Reset to the default split. (Backspace is intentionally not used — it
         // can trigger browser "back" navigation on a focused non-input element.)
         e.preventDefault();
-        setFraction(defaultFraction);
+        commit(defaultFraction);
       }
     },
-    [isRow, nudge, defaultFraction],
+    [isRow, nudge, defaultFraction, commit],
   );
 
   return (
@@ -190,6 +279,7 @@ export function Splitter({
       overflow="hidden"
     >
       <Box
+        ref={firstRef}
         display="flex"
         flexDirection="column"
         overflow="hidden"
@@ -201,6 +291,7 @@ export function Splitter({
       </Box>
       {!secondCollapsed && (
       <Box
+        ref={separatorRef}
         flex="0 0 auto"
         position="relative"
         zIndex={4}
@@ -279,6 +370,7 @@ export function Splitter({
       </Box>
       )}
       <Box
+        ref={secondRef}
         display="flex"
         flexDirection="column"
         overflow="hidden"

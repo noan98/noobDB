@@ -41,6 +41,9 @@ function TitleControl({ title, ...props }: HTMLChakraProps<"button">) {
   return title ? <Tooltip label={title}>{button}</Tooltip> : button;
 }
 
+/** onResized の間引き間隔 (ms)。 */
+const RESIZE_DEBOUNCE_MS = 100;
+
 /**
  * Custom window chrome shown in place of the native title bar
  * (`decorations: false`). The bar itself is a Tauri drag region; the controls
@@ -61,15 +64,24 @@ export function TitleBar({
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     appWindow.isMaximized().then(setMaximized).catch(() => {});
+    // ウィンドウ端のドラッグ中は onResized が毎フレーム届くので、IPC (isMaximized) の
+    // 往復は止まってから 1 回だけにする (#1312)。
+    let timer: ReturnType<typeof setTimeout> | undefined;
     appWindow
       .onResized(() => {
-        appWindow.isMaximized().then(setMaximized).catch(() => {});
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          appWindow.isMaximized().then(setMaximized).catch(() => {});
+        }, RESIZE_DEBOUNCE_MS);
       })
       .then((fn) => {
         unlisten = fn;
       })
       .catch(() => {});
-    return () => unlisten?.();
+    return () => {
+      clearTimeout(timer);
+      unlisten?.();
+    };
   }, []);
 
   // 接続中はタイトルバー下端にアクセントの帯を常時表示する。本番接続は
