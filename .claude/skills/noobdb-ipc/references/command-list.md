@@ -73,7 +73,23 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
 
-## 検索 (`commands/search.rs`, #1511)
+## スキーマ・テーブルオープンの集約 (`commands/schema.rs` / `schema_tree.rs` / `table_open.rs`、#1263)
+
+`table_row_estimate` / `load_schema_tree` / `list_tables_all` / `open_table` / `open_tables`
+
+- `table_row_estimate` — `table_row_estimates` の 1 テーブル版 (MySQL `TABLE_NAME = ?` /
+  PG `relname = $2` / SQLite は `None`)。`open_table` が失敗したときのフォールバックで使う。
+- `open_table(session, db, table, limit, with_estimate)` — 列 + (PK 無しなら)行識別 + 初回
+  SELECT の SQL (`table_select_sql`、フロント `qualifiedTableSql` と共有ゴールデン
+  `tableSelectSql.json`) + 行数推定 (タイムアウト付き) を `tokio::join!` で並行取得して
+  1 IPC で返す。`open_tables` はセッション復元用の一括版 (テーブルごとの成功/失敗、行数推定なし)。
+- `load_schema_tree(session, open_dbs, open_table_keys)` — スキーマツリーの復元 / 更新用。
+  DB 一覧 + 開いている DB のテーブル・行数推定・非テーブルオブジェクト・コメント + 開いている
+  テーブルの列・インデックス (多いときは #1255 の一括取得) を 1 回で返す。
+- `list_tables_all` — 全 DB のテーブル一覧を SQL 1 本で返す (スキーマ検索用、MySQL
+  `information_schema.TABLES` / PG 全スキーマ / SQLite は単一 DB)。
+
+## 検索 (`commands/search.rs`, #1261)
 
 `search_schema_objects` / `find_where_used` / `data_search_stream`
 
