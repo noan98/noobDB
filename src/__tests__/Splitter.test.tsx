@@ -65,6 +65,52 @@ describe("Splitter (#478)", () => {
     fireEvent.keyDown(sep, { key: "ArrowRight" });
     expect(Number(localStorage.getItem("test.split"))).toBeCloseTo(0.52, 2);
   });
+
+  it("ポインタのドラッグ中は localStorage に書かず、離したときに 1 回だけ保存する (#1312)", () => {
+    const rafs: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => rafs.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    try {
+      renderWithProviders(
+        <Splitter
+          direction="row"
+          defaultFraction={0.5}
+          storageKey="test.drag"
+          ariaLabel="panes"
+          first={<div>A</div>}
+          second={<div>B</div>}
+        />,
+      );
+      const sep = screen.getByRole("separator", { name: "panes" });
+      const container = sep.parentElement as HTMLElement;
+      container.getBoundingClientRect = () =>
+        ({ left: 0, top: 0, width: 1000, height: 600, right: 1000, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      fireEvent.pointerDown(sep, { pointerId: 1, clientX: 500, clientY: 10 });
+      fireEvent.pointerMove(sep, { pointerId: 1, clientX: 600, clientY: 10 });
+      fireEvent.pointerMove(sep, { pointerId: 1, clientX: 700, clientY: 10 });
+      expect(rafs).toHaveLength(1);
+      rafs.shift()?.(0);
+      expect(sep.getAttribute("aria-valuenow")).toBe("70");
+      expect(setItem.mock.calls.filter(([k]) => k === "test.drag")).toHaveLength(0);
+      fireEvent.pointerUp(sep, { pointerId: 1 });
+      const writes = setItem.mock.calls.filter(([k]) => k === "test.drag");
+      expect(writes).toHaveLength(1);
+      expect(Number(writes[0][1])).toBeCloseTo(0.7, 2);
+      expect(sep.getAttribute("aria-valuenow")).toBe("70");
+    } finally {
+      setItem.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("保存済みの配分を復元する", () => {
+    localStorage.setItem("test.restore", "0.3000");
+    renderWithProviders(
+      <Splitter direction="row" storageKey="test.restore" ariaLabel="panes" first={<div>A</div>} second={<div>B</div>} />,
+    );
+    expect(screen.getByRole("separator", { name: "panes" }).getAttribute("aria-valuenow")).toBe("30");
+  });
 });
 
 // ペインの分割 / 解除で残る方のペインを再マウントしない (#1310)。App.tsx は
