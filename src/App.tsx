@@ -8061,7 +8061,7 @@ export default function App() {
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   <QueryEditor
-                    key={tab.id}
+                    tabId={tab.id}
                     ref={getEditorRefSetter(pane.id)}
                     initialSql={tab.sql}
                     initialSelection={editorSelectionRef.current.get(tab.id) ?? tab.selection}

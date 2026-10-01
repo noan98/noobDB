@@ -54,6 +54,11 @@ import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { PREFLIGHT_MAX_CHARS } from "./preflight";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
 import { PreflightBadge } from "./PreflightBadge";
+import {
+  EditorStateCache,
+  sqlConfigChanged,
+  type AppliedEditorConfig,
+} from "./editorStateCache";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
@@ -222,11 +227,19 @@ interface Props {
    */
   databaseSchema?: TableSchema[] | null;
   activeTable?: ActiveTable | null;
+  /**
+   * 表示するタブの識別子 (#1308)。変わると `EditorView` は作り直さず、タブごとに保存した
+   * `EditorState` を `setState` で差し替える (undo 履歴・選択・スクロールが保たれる)。
+   * 初回に見るタブは `initialSql` から作り、保存済みのタブへ戻るときはその state を
+   * 復元する (保存した本文が `initialSql` と食い違えば捨てて作り直す)。未指定なら
+   * 差し替えは行わない (単一ドキュメントとしての利用)。
+   */
+  tabId?: string;
   initialSql?: string;
   /**
-   * 復元するカーソル/選択 (ドキュメントオフセット、#678)。マウント時に doc 長へ
-   * クランプして適用する。undefined なら先頭 (既定)。エディタは一度だけ生成されるため
-   * マウント時の値のみが使われる。
+   * 復元するカーソル/選択 (ドキュメントオフセット、#678)。state を新規に作るとき
+   * (初回マウントと、保存済み state の無いタブへの切替) に doc 長へクランプして適用する。
+   * undefined なら先頭 (既定)。
    */
   initialSelection?: { anchor: number; head: number };
   /** カーソル/選択が変わるたびに現在のオフセットを通知する (#678。タブ永続化用)。 */
@@ -380,6 +393,21 @@ function preflightTextFromState(state: EditorState): string {
  */
 const PREFLIGHT_TEXT_DEBOUNCE_MS = 150;
 
+/**
+ * 復元するカーソル/選択を doc 長へクランプする (#678)。SQL 本文と保存オフセットが
+ * 不整合でも範囲外にならない。undefined なら CodeMirror 既定 (先頭) に任せるため null。
+ */
+function clampSelection(
+  selection: { anchor: number; head: number } | undefined,
+  docLength: number,
+): { anchor: number; head: number } | null {
+  if (!selection) return null;
+  return {
+    anchor: Math.max(0, Math.min(selection.anchor, docLength)),
+    head: Math.max(0, Math.min(selection.head, docLength)),
+  };
+}
+
 function buildSqlExtension(
   driver: string,
   schemaTable: SchemaTable | null | undefined,
@@ -449,6 +477,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   schemaTable,
   databaseSchema,
   activeTable,
+  tabId,
   initialSql,
   initialSelection,
   onSelectionChange,
@@ -530,6 +559,42 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     format: formatCombo,
     explain: explainCombo,
   };
+  // いま props が求めている compartment 設定 (補完・構文チェック・アクションキーマップ)。
+  // view / state 側に入っている設定 (`appliedConfigRef`) と食い違ったときだけ
+  // reconfigure する (#1308: 初回マウントやタブ切替で無駄に作り直さない)。
+  const schemaKey = schemaTable
+    ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}`
+    : "";
+  const desiredConfig: AppliedEditorConfig = {
+    driver,
+    schemaKey,
+    databaseSchema: databaseSchema ?? null,
+    defaultDatabase: defaultDatabase ?? null,
+    lint: [
+      sqlLintEnabled ? "1" : "0",
+      lintMessages.syntaxError,
+      lintMessages.unterminated,
+      lintMessages.unknownStatementStart,
+      lintMessages.unterminatedComment,
+      lintMessages.clauseOrder,
+    ].join("\u0000"),
+    keymap: [runCombo, runStatementCombo, previewCombo, formatCombo, explainCombo].join("\u0000"),
+  };
+  const desiredConfigRef = useRef(desiredConfig);
+  desiredConfigRef.current = desiredConfig;
+  // 補完拡張の組み立てに使う最新の入力。タブ切替で新規 state を作るときに、マウント時点の
+  // 古い値ではなく現在の値を使うため ref 越しに読む。
+  const sqlArgsRef = useRef({ driver, schemaTable, databaseSchema, defaultDatabase });
+  sqlArgsRef.current = { driver, schemaTable, databaseSchema, defaultDatabase };
+  // 現在アクティブな state の compartment に入っている設定。
+  const appliedConfigRef = useRef<AppliedEditorConfig>(desiredConfig);
+  // タブ別 state の保存先と、新規 state の作成関数 (マウント時に一度だけ組み立てる)。
+  const stateCacheRef = useRef<EditorStateCache | null>(null);
+  if (stateCacheRef.current === null) stateCacheRef.current = new EditorStateCache();
+  const createStateRef = useRef<
+    ((doc: string, selection: { anchor: number; head: number } | null) => EditorState) | null
+  >(null);
+  const activeTabIdRef = useRef(tabId);
   const [hasContent, setHasContent] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
   // 「…」オーバーフローメニュー (#915) のアンカー (ビューポート座標)。開いている
@@ -669,14 +734,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   useEffect(() => {
     if (!hostRef.current) return;
     const startDoc = initialSql ?? "";
-    // 復元するカーソル/選択を doc 長へクランプ (#678)。SQL 本文と保存オフセットが
-    // 不整合でも範囲外にならない。undefined なら CodeMirror 既定 (先頭) に任せる。
-    const startSelection = initialSelection
-      ? {
-          anchor: Math.max(0, Math.min(initialSelection.anchor, startDoc.length)),
-          head: Math.max(0, Math.min(initialSelection.head, startDoc.length)),
-        }
-      : null;
 
     // 履歴ナビゲーションの結果をエディタへ反映する。`navigatingRef` を立てて dispatch
     // することで、この doc 変更を updateListener がユーザのタイプと誤認してナビ位置を
@@ -700,11 +757,16 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       return true;
     };
 
-    const view = new EditorView({
-      parent: hostRef.current,
-      state: EditorState.create({
-        doc: startDoc,
-        ...(startSelection ? { selection: startSelection } : {}),
+    // タブごとの state を作る (#1308)。初回マウントと、保存済み state の無いタブへの
+    // 切替の両方で使う。拡張はすべて ref / compartment 越しに props を読むので、
+    // どのタブの state にも同じものを載せてよい。
+    const makeState = (
+      doc: string,
+      selection: { anchor: number; head: number } | null,
+    ): EditorState =>
+      EditorState.create({
+        doc,
+        ...(selection ? { selection } : {}),
         extensions: [
           lineNumbers(),
           highlightActiveLine(),
@@ -724,7 +786,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
           // 再構成できるようにする。作成時点の設定値で初期化する。
           lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),
-          sqlCompartment.of(buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase)),
+          sqlCompartment.of(
+            buildSqlExtension(
+              sqlArgsRef.current.driver,
+              sqlArgsRef.current.schemaTable,
+              sqlArgsRef.current.databaseSchema,
+              sqlArgsRef.current.defaultDatabase,
+            ),
+          ),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
           // Compartment 越しのキーマップにして、設定変更時に再構成できるようにする。
           // 静的キーマップより前に置き優先させる。
@@ -783,7 +852,9 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               if (preflightTimerRef.current !== null) window.clearTimeout(preflightTimerRef.current);
               preflightTimerRef.current = window.setTimeout(() => {
                 preflightTimerRef.current = null;
-                const pfText = preflightTextFromState(view.state);
+                const current = viewRef.current;
+                if (!current) return;
+                const pfText = preflightTextFromState(current.state);
                 // 実値が変わったときだけ setState する。
                 if (pfText !== preflightSqlRef.current) {
                   preflightSqlRef.current = pfText;
@@ -793,9 +864,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             }
           }),
         ],
-      }),
+      });
+    createStateRef.current = makeState;
+    const view = new EditorView({
+      parent: hostRef.current,
+      state: makeState(startDoc, clampSelection(initialSelection, startDoc.length)),
     });
     viewRef.current = view;
+    appliedConfigRef.current = desiredConfigRef.current;
     setHasContent(startDoc.length > 0);
     // 復元されたタブが書き込み DML なら、マウント直後からプリフライトを効かせる。
     const initPreflightText = preflightTextFromState(view.state);
@@ -810,56 +886,109 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     };
   }, []);
 
-  const schemaKey = schemaTable
-    ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}`
-    : "";
+  // タブ切替 (#1308)。`EditorView` は作り直さず、離れるタブの state を保存して、戻る
+  // タブの保存済み state (無ければ `initialSql` から新規) を `setState` で差し替える。
+  // `setState` は update listener を呼ばないので、onChange / onSelectionChange の
+  // 誤発火 (別タブの内容を現在のタブへ書き戻す) は起きない。
+  useEffect(() => {
+    const view = viewRef.current;
+    const prevTabId = activeTabIdRef.current;
+    if (!view || tabId === undefined || prevTabId === tabId) {
+      activeTabIdRef.current = tabId;
+      return;
+    }
+    activeTabIdRef.current = tabId;
+    const cache = stateCacheRef.current;
+    const makeState = createStateRef.current;
+    if (!cache || !makeState) return;
 
+    if (prevTabId !== undefined) {
+      cache.set(prevTabId, {
+        state: view.state,
+        applied: appliedConfigRef.current,
+        scrollTop: view.scrollDOM.scrollTop,
+        hostScrollTop: hostRef.current?.scrollTop ?? 0,
+      });
+    }
+    if (preflightTimerRef.current !== null) {
+      window.clearTimeout(preflightTimerRef.current);
+      preflightTimerRef.current = null;
+    }
+    resetHistoryNav();
+
+    const doc = initialSql ?? "";
+    const hit = cache.take(tabId);
+    // 保存した本文が App 側のタブ本文と食い違うときは (外部から書き換えられた等) 保存分を
+    // 捨てて作り直す。長さを先に比べて、通常は全文の文字列化を避ける。
+    const reusable =
+      hit && hit.state.doc.length === doc.length && hit.state.doc.toString() === doc ? hit : null;
+    if (reusable) {
+      view.setState(reusable.state);
+      appliedConfigRef.current = reusable.applied;
+      view.scrollDOM.scrollTop = reusable.scrollTop;
+      if (hostRef.current) hostRef.current.scrollTop = reusable.hostScrollTop;
+    } else {
+      view.setState(makeState(doc, clampSelection(initialSelection, doc.length)));
+      appliedConfigRef.current = desiredConfigRef.current;
+      view.scrollDOM.scrollTop = 0;
+      if (hostRef.current) hostRef.current.scrollTop = 0;
+    }
+    setHasContent(view.state.doc.length > 0);
+    // Query Builder は切替で閉じる (従来の挙動を維持。入力は builderSnapshot で復元される)。
+    setShowBuilder(false);
+    const pfText = preflightTextFromState(view.state);
+    preflightSqlRef.current = pfText;
+    setPreflightSql(pfText);
+  }, [tabId]);
+
+  // compartment の設定が実際に変わったときだけ reconfigure する (#1308)。初回マウントや、
+  // 設定が同じタブ同士の切替では何もしない。以前は補完・構文チェック・キーマップの
+  // 3 つをマウントのたびに作り直していた。
+  //   - 補完: 接続のスキーマ / 方言 / 既定 DB が変わったとき。保存済み state が古い
+  //     スキーマで作られていた場合もここで追従する。
+  //   - 構文チェック: オン/オフ、または診断メッセージ (言語切替) が変わったとき。
+  //   - キーマップ: ショートカットの上書きが変わったとき (#557)。
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({
-      effects: sqlCompartment.reconfigure(
-        buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase),
-      ),
-    });
+    const applied = appliedConfigRef.current;
+    const want = desiredConfigRef.current;
+    const sqlChanged = sqlConfigChanged(applied, want);
+    const lintChanged = applied.lint !== want.lint;
+    const keymapChanged = applied.keymap !== want.keymap;
+    if (!sqlChanged && !lintChanged && !keymapChanged) return;
+    const effects: StateEffect<unknown>[] = [];
+    if (sqlChanged) {
+      effects.push(
+        sqlCompartment.reconfigure(
+          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase),
+        ),
+      );
+    }
+    if (lintChanged) effects.push(lintCompartment.reconfigure(buildLintExtension(sqlLintEnabled)));
+    if (keymapChanged) {
+      effects.push(
+        actionKeymapCompartment.reconfigure(keymap.of(buildActionKeymap(bindingsRef.current))),
+      );
+    }
+    appliedConfigRef.current = want;
+    view.dispatch({ effects });
     // 方言 (driver) が変わっても `@codemirror/lint` は doc 変更が無い限り再実行
     // されず、旧方言の診断が残ってしまう (#704 のレビュー指摘)。lint 有効時は
     // 明示的に再 lint を促し、新方言のパースツリーで診断を更新する。
-    if (sqlLintEnabledRef.current) forceLinting(view);
+    if (sqlChanged && sqlLintEnabledRef.current) forceLinting(view);
     // `databaseSchema` is a stable reference from the parent's cache: it only
     // changes identity on (re)fetch or when the editor's database changes, so
     // depending on it directly is both correct and cheap.
-  }, [schemaKey, driver, databaseSchema, defaultDatabase]);
-
-  // 構文チェックのオン/オフ、または診断メッセージ (言語切替) が変わったら lint
-  // 拡張を再構成する (#704)。オフ→空で診断が消え、言語切替では新メッセージで
-  // 作り直した linter が再 lint する。
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: lintCompartment.reconfigure(buildLintExtension(sqlLintEnabled)),
-    });
   }, [
-    sqlLintEnabled,
-    lintMessages.syntaxError,
-    lintMessages.unterminated,
-    lintMessages.unknownStatementStart,
-    lintMessages.unterminatedComment,
-    lintMessages.clauseOrder,
+    tabId,
+    desiredConfig.schemaKey,
+    desiredConfig.driver,
+    desiredConfig.databaseSchema,
+    desiredConfig.defaultDatabase,
+    desiredConfig.lint,
+    desiredConfig.keymap,
   ]);
-
-  // ショートカットの上書きが変わったら、アクションキーマップを再構成する (#557)。
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: actionKeymapCompartment.reconfigure(
-        keymap.of(buildActionKeymap(bindingsRef.current)),
-      ),
-    });
-    // bindingsRef は毎レンダ更新されるため、コンボ文字列の変化を依存に使う。
-  }, [runCombo, runStatementCombo, previewCombo, formatCombo, explainCombo]);
 
   // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
   // WHERE から COUNT を組み立ててデバウンス付きで裏実行する。設定オフ・未接続では
@@ -873,9 +1002,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     driver,
   });
   // 結果が変わるたび親へ通知 (危険クエリ確認ダイアログへの件数引き継ぎ用)。
+  // タブ切替直後に結果が変わらない (同じ SQL) 場合も、新しいタブのコールバックへ
+  // 通知し直す (#1308)。
   useEffect(() => {
     onPreflightImpactRef.current?.(preflight);
-  }, [preflight]);
+  }, [preflight, tabId]);
 
   // カーソル位置 (選択があれば選択を置換) へテキストを挿入する共通処理。
   // `QueryEditorHandle.insertText` (親からの外部呼び出し) と、Query Builder の
