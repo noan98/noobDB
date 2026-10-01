@@ -2,7 +2,15 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 
-import { api, type SchemaObjectKind, type Snippet } from "../api/tauri";
+import {
+  api,
+  listenWhereUsedStream,
+  type SchemaObjectKind,
+  type WhereUsedMatch,
+  type WhereUsedProgress,
+  type WhereUsedReport,
+  type WhereUsedTarget,
+} from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { staggerContainer, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
@@ -15,13 +23,9 @@ import { DeterminateProgressBar } from "./StreamProgressBar";
 import { Tooltip } from "./Tooltip";
 import { Button, Input } from "./ui";
 import {
-  runWhereUsedScan,
+  sortWhereUsedMatches,
   splitHighlightSegments,
   unsupportedWhereUsedKinds,
-  type WhereUsedMatch,
-  type WhereUsedProgress,
-  type WhereUsedReport,
-  type WhereUsedTarget,
 } from "./whereUsed";
 
 /**
@@ -31,12 +35,14 @@ import {
  * `.claude/rules/ui-design-system.md` §7.1 に従い全画面ではなくボトムパネルに置く
  * (開いてもエディタと結果が消えない)。見出しと閉じるボタンはシェル側が持つ。
  *
- * 走査は既存の `list_schema_objects` → `get_object_definition` と、App が保持する
- * スニペット一覧だけを使う (新しい IPC / 実行経路は無い)。いずれも読み取りなので
- * read_only セッションでも動く。判定は純モジュール `whereUsed.ts`。
+ * 走査は Rust の `find_where_used` (#1261) が行う — ビュー・ルーチン・トリガーの定義本文を
+ * バックエンドでまとめて取得して識別子を照合し、保存済みスニペットも走査して、ヒット位置
+ * だけを Tauri Channel で返す。いずれも読み取りなので read_only セッションでも動く。
+ * ここは入力フォームと結果の描画だけを担い、並べ替え・強調区間の分割は純モジュール
+ * `whereUsed.ts`。
  *
- * 定義の取得はオブジェクト数ぶんの往復になるので、進捗 (n / 総数) とキャンセルを
- * 出す。キャンセルすると未取得の定義は取りに行かず、途中までの結果を表示する。
+ * 進捗 (n / 総数) とキャンセルを出す。キャンセルすると未走査の分は取りに行かず、途中
+ * までの結果を表示する。
  */
 
 /** stagger 出現させる先頭行数の上限 (大量ヒット時に出現が間延びしないよう)。 */
@@ -50,6 +56,13 @@ const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
 export interface WhereUsedRequest {
   target: WhereUsedTarget;
   autoRun: boolean;
+}
+
+let whereUsedStreamSeq = 0;
+/** 走査 1 回ごとの一意な stream id (進捗・結果の宛先とキャンセルの宛先)。 */
+function makeWhereUsedStreamId(): string {
+  whereUsedStreamSeq += 1;
+  return `whereused_${Date.now().toString(36)}_${whereUsedStreamSeq.toString(36)}`;
 }
 
 const KIND_LABEL: Record<SchemaObjectKind | "snippet", I18nKey> = {
@@ -80,7 +93,6 @@ export function WhereUsedPanel({
   defaultDatabase,
   request,
   onRequestConsumed,
-  snippets,
   onOpenObject,
   onOpenSnippet,
 }: {
@@ -91,8 +103,6 @@ export function WhereUsedPanel({
   request: WhereUsedRequest | null;
   /** `autoRun` の要求を処理したことを App に伝える (再マウントで再実行しないため)。 */
   onRequestConsumed: () => void;
-  /** 接続中プロファイルのスコープで絞り込み済みのスニペット。 */
-  snippets: readonly Snippet[];
   onOpenObject: (database: string, kind: string, name: string, id: string | null) => void;
   onOpenSnippet: (snippetId: string) => void;
 }) {
@@ -107,9 +117,19 @@ export function WhereUsedPanel({
   const [progress, setProgress] = useState<WhereUsedProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  /** 走査中のストリーム。別の走査を始める・アンマウントするときに止める。 */
+  const activeRef = useRef<{ streamId: string; unlisten: () => void } | null>(null);
 
   const running = progress !== null;
+
+  /** 走査中のストリームを止めて Channel の購読を外す (届いていない結果は捨てる)。 */
+  const stopActive = useCallback(() => {
+    const active = activeRef.current;
+    if (!active) return;
+    activeRef.current = null;
+    active.unlisten();
+    void api.cancelStream(active.streamId).catch(() => {});
+  }, []);
 
   const run = useCallback(
     async (target: WhereUsedTarget) => {
@@ -117,38 +137,54 @@ export function WhereUsedPanel({
         setFormError(t("whereUsedNeedTable"));
         return;
       }
-      abortRef.current?.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
+      stopActive();
+      const streamId = makeWhereUsedStreamId();
+      const slot = { streamId, unlisten: () => {} };
+      activeRef.current = slot;
+      const isActive = () => activeRef.current === slot;
+      /** この走査を終える (最新の走査のときだけ状態を戻す)。 */
+      const settle = () => {
+        if (!isActive()) return;
+        activeRef.current = null;
+        setProgress(null);
+        slot.unlisten();
+      };
+      const show = (r: WhereUsedReport) => {
+        if (!isActive()) return;
+        setReport({ ...r, matches: sortWhereUsedMatches(r.matches) });
+        settle();
+      };
       setFormError(null);
       setError(null);
       setReport(null);
       setScannedTarget(target);
       setProgress({ done: 0, total: 0 });
       try {
-        const r = await runWhereUsedScan({
-          driver,
-          target,
-          listObjects: () => api.listSchemaObjects(sessionId, target.database),
-          getDefinition: (o) =>
-            api.getObjectDefinition(sessionId, target.database, o.kind, o.name, o.id),
-          snippets,
-          signal: ctrl.signal,
+        slot.unlisten = await listenWhereUsedStream(streamId, {
           onProgress: (p) => {
-            if (abortRef.current === ctrl) setProgress(p);
+            if (isActive()) setProgress(p);
+          },
+          onDone: ({ report: r }) => show(r),
+          onCancelled: ({ report: r }) => show(r),
+          onError: ({ error: message }) => {
+            if (!isActive()) return;
+            setError(message);
+            settle();
           },
         });
-        if (abortRef.current === ctrl) setReport(r);
-      } catch (e) {
-        if (abortRef.current === ctrl) setError(String(e));
-      } finally {
-        if (abortRef.current === ctrl) {
-          abortRef.current = null;
-          setProgress(null);
+        if (!isActive()) {
+          // listen の完了を待つ間に別の走査が始まった / アンマウントされた。
+          slot.unlisten();
+          return;
         }
+        await api.findWhereUsed({ sessionId, streamId, database: target.database, target });
+      } catch (e) {
+        if (!isActive()) return;
+        setError(String(e));
+        settle();
       }
     },
-    [driver, sessionId, snippets, t],
+    [sessionId, stopActive, t],
   );
 
   // ツリーの右クリック / コマンドパレットからの要求: フォームを埋め、必要なら走らせる。
@@ -164,11 +200,13 @@ export function WhereUsedPanel({
     // run / onRequestConsumed の再生成では再実行しない (要求オブジェクトの変化だけを見る)。
   }, [request]);
 
-  // アンマウント (タブ切替・切断) で走査中の定義取得を止める。
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // アンマウント (タブ切替・切断) で走査を止める。
+  useEffect(() => stopActive, [stopActive]);
 
+  // キャンセル: バックエンドが走査を止め、そこまでの結果を `cancelled` つきで返す。
   const cancel = useCallback(() => {
-    abortRef.current?.abort();
+    const active = activeRef.current;
+    if (active) void api.cancelStream(active.streamId).catch(() => {});
   }, []);
 
   const submit = (e: React.FormEvent) => {

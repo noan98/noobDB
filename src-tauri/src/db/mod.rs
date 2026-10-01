@@ -6,6 +6,8 @@ pub mod broadcast_diff;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
 pub mod data_diff;
+/// DB 全体からの値検索の走査 SQL 生成 (#748 / #1261)。
+pub mod data_search;
 pub mod diff;
 pub mod format;
 /// ライブクエリ・インスペクタ (#746) のフィンガープリント正規化と digest 差分集計 (#1259)。
@@ -14,6 +16,8 @@ pub mod inspector;
 pub mod js_compat;
 pub mod masking;
 pub mod mysql;
+/// グローバルオブジェクト検索の索引とスコアリング (#1261)。
+pub mod object_search;
 pub mod postgres;
 /// ドライラン (プレビュー) のスナップショット取得を組み立てる共有ロジック。
 /// ドライバ非依存の純粋な文字列処理なので、各ドライバの
@@ -43,6 +47,8 @@ pub mod tx_options;
 pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
 pub mod upsert;
+/// オブジェクト依存検索 (Where-used) の参照検出 (#1027 / #1261)。
+pub mod where_used;
 
 use serde::{Deserialize, Serialize};
 
@@ -795,6 +801,58 @@ impl Connection {
             Connection::Postgres(c) => c.schema_overview(db).await,
             Connection::Sqlite(c) => c.schema_overview(db).await,
         }
+    }
+
+    /// `databases` の全テーブルと列名を、DB ごとに返す (グローバルオブジェクト検索の
+    /// 索引用、#1261)。MySQL / PostgreSQL は `information_schema` を 1 問い合わせで
+    /// 引き (以前は DB ごとに `schema_overview`)、SQLite は単一 DB なので
+    /// `schema_overview` をそのまま使う。戻り値は `databases` の順で、テーブルを
+    /// 持たない DB も空配列で含む。
+    pub async fn schema_overview_all(
+        &self,
+        databases: &[String],
+    ) -> Result<Vec<(String, Vec<TableSchema>)>> {
+        let triples = match self {
+            Connection::MySql(c) => c.schema_columns_all().await?,
+            Connection::Postgres(c) => c.schema_columns_all().await?,
+            Connection::Sqlite(_) => {
+                let mut out = Vec::with_capacity(databases.len());
+                for db in databases {
+                    out.push((db.clone(), self.schema_overview(db).await?));
+                }
+                return Ok(out);
+            }
+        };
+        let mut by_db: std::collections::HashMap<String, Vec<(String, String)>> =
+            std::collections::HashMap::new();
+        for (schema, table, column) in triples {
+            by_db.entry(schema).or_default().push((table, column));
+        }
+        Ok(databases
+            .iter()
+            .map(|db| {
+                let pairs = by_db.remove(db).unwrap_or_default();
+                (db.clone(), group_columns_by_table(pairs))
+            })
+            .collect())
+    }
+
+    /// `db` のビュー / ルーチン / トリガーの定義本文を、ドライバが 1 問い合わせで返せる
+    /// 場合にまとめて取得する (Where-used、#1261)。キーは [`BulkDefinitions::key_for`]
+    /// で引く。MySQL は定義が `SHOW CREATE` でしか得られず (`information_schema` の
+    /// `VIEW_DEFINITION` / `ROUTINE_DEFINITION` / `ACTION_STATEMENT` は `CREATE …` の
+    /// 見出しやパラメータ、トリガーの対象テーブルを含まないので照合結果が変わる)
+    /// 一括取得できないため `None`。
+    pub async fn object_definitions_bulk(&self, db: &str) -> Result<Option<BulkDefinitions>> {
+        let map = match self {
+            Connection::MySql(_) => return Ok(None),
+            Connection::Postgres(c) => c.definitions_bulk(db).await?,
+            Connection::Sqlite(c) => c.definitions_bulk().await?,
+        };
+        Ok(Some(BulkDefinitions {
+            map,
+            by_oid: matches!(self, Connection::Postgres(_)),
+        }))
     }
 
     /// Every foreign-key relationship in `db`, used to draw ER-diagram edges.
@@ -1676,6 +1734,25 @@ pub(crate) fn mask_sensitive_var(name: &str, value: String) -> String {
         return "********".to_string();
     }
     value
+}
+
+/// [`Connection::object_definitions_bulk`] の結果。
+#[derive(Debug)]
+pub struct BulkDefinitions {
+    map: std::collections::HashMap<String, String>,
+    /// ルーチン・トリガーを oid (`SchemaObject::id`) で引くドライバか (PostgreSQL)。
+    by_oid: bool,
+}
+
+impl BulkDefinitions {
+    /// `obj` の定義本文。一括取得に含まれない (NULL だった・取得後に消えた) ときは `None`。
+    pub fn get(&self, obj: &types::SchemaObject) -> Option<&str> {
+        let key = match (self.by_oid, obj.kind.as_str(), obj.id.as_deref()) {
+            (true, "function" | "procedure" | "trigger", Some(id)) => format!("id:{id}"),
+            _ => format!("{}:{}", obj.kind, obj.name),
+        };
+        self.map.get(&key).map(String::as_str)
+    }
 }
 
 pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {

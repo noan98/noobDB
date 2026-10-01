@@ -1,18 +1,23 @@
 import { describe, expect, it } from "vitest";
+import type { ScanColumn } from "../api/tauri";
 import {
   buildColumnJumpSql,
   buildColumnPredicate,
   buildTableJumpSql,
-  buildTableScanSql,
   DEFAULT_SCAN_ROW_THRESHOLD,
   escapeLikeWildcards,
   isNumericTerm,
-  parseScanRow,
   searchTargetForDataType,
   searchTargetForKind,
-  shouldSkipTableForScan,
-  type ScanColumn,
 } from "../components/dataSearch";
+// 走査 SQL の生成・しきい値判定・結果行のパースは Rust へ移植済み (#1261)。ここでは移植前の
+// TS 実装 (オラクル) の振る舞いを固定し、共有ゴールデン (dataSearchGolden.test.ts) の
+// 期待値の出所を守る。
+import {
+  buildTableScanSql,
+  parseScanRow,
+  shouldSkipTableForScan,
+} from "./oracles/dataSearchOracle";
 
 describe("searchTargetForKind / searchTargetForDataType (#748)", () => {
   it("classifies text-like kinds as text", () => {

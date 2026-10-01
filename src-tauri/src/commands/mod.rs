@@ -29,6 +29,7 @@ pub mod sandbox;
 pub mod schema;
 pub mod schema_tree;
 pub mod script;
+pub mod search;
 pub mod server;
 pub mod snippets;
 pub mod ssh;

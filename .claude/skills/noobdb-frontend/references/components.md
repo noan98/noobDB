@@ -94,7 +94,7 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   チャート設定と同じ localStorage 永続化に相乗りし、このフィールドを持たない
   保存済み設定は縮退させず既定へ埋める)、`CommandPalette` (Cmd/Ctrl+K の横断検索。
   `commandPaletteSearch.ts`)、`ObjectSearchModal` (スキーマ全体のオブジェクト検索。
-  `objectSearch.ts`)、`ParameterInputModal` (`{{name}}` プレースホルダのパラメータ化
+  索引とスコアリングは Rust の `search_schema_objects`、#1261)、`ParameterInputModal` (`{{name}}` プレースホルダのパラメータ化
   クエリ。`queryParams.ts` が型別に安全なリテラル/識別子へ展開)、`BatchResultsView`
   (複数文スクリプトのバッチ実行結果。文分割は `sqlScript.ts`)、`CreateTableModal`
   (CREATE TABLE ウィザード。`createTable.ts`)、`RowInsertModal` / `RowInspector` /

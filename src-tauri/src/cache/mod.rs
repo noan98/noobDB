@@ -205,12 +205,13 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex as StdMutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{watch, RwLock};
 
 use crate::db::diff::TableColumns;
+use crate::db::object_search::ObjectIndex;
 use crate::db::types::{
     ForeignKey, IndexInfo, QueryResult, SchemaObject, TableColumnInfo, TableIndexes,
     TableRowIdentity, TableSchema, Value,
@@ -680,6 +681,11 @@ pub struct SchemaCache {
     foreign_keys: KeyedCache<String, Vec<ForeignKey>>,
     schema_objects: KeyedCache<String, Vec<SchemaObject>>,
     list_indexes: KeyedCache<TableKey, Vec<IndexInfo>>,
+    /// グローバルオブジェクト検索 (#1261) の索引。`object_index_all` は全 DB 分を
+    /// 1 つにまとめたもの (キー `()`)、`object_index_db` は DB 単位。いずれも検索の
+    /// たびに作り直さないよう、小文字化済みの名前を持つ索引を共有する。
+    object_index_all: KeyedCache<(), Arc<ObjectIndex>>,
+    object_index_db: KeyedCache<String, Arc<ObjectIndex>>,
 }
 
 impl Default for SchemaCache {
@@ -704,6 +710,8 @@ impl SchemaCache {
             foreign_keys: KeyedCache::new(SCHEMA_CACHE_LABEL),
             schema_objects: KeyedCache::new(SCHEMA_CACHE_LABEL),
             list_indexes: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            object_index_all: KeyedCache::new(SCHEMA_CACHE_LABEL),
+            object_index_db: KeyedCache::new(SCHEMA_CACHE_LABEL),
         }
     }
 
@@ -866,6 +874,46 @@ impl SchemaCache {
             .await
     }
 
+    /// 全 DB 分のオブジェクト検索索引 (#1261)。
+    pub async fn object_index_all<F, Fut>(&self, fetch: F) -> Result<Arc<ObjectIndex>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Arc<ObjectIndex>>>,
+    {
+        self.object_index_all
+            .get_or_fetch(
+                (),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
+    }
+
+    /// 1 つの DB 分のオブジェクト検索索引 (#1261)。
+    pub async fn object_index_db<F, Fut>(
+        &self,
+        database: &str,
+        fetch: F,
+    ) -> Result<Arc<ObjectIndex>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Arc<ObjectIndex>>>,
+    {
+        self.object_index_db
+            .get_or_fetch(
+                database.to_string(),
+                self.ttl,
+                self.max_entries_per_kind,
+                &self.generation,
+                always_cacheable,
+                fetch,
+            )
+            .await
+    }
+
     /// 現在の invalidate 世代。DB 全体の一括取得 (`columns_for_database` 等) の
     /// **開始前**に読み、結果を [`store_columns_bulk`](Self::store_columns_bulk) /
     /// [`store_indexes_bulk`](Self::store_indexes_bulk) に渡す。取得中に
@@ -954,6 +1002,8 @@ impl SchemaCache {
         self.foreign_keys.clear().await;
         self.schema_objects.clear().await;
         self.list_indexes.clear().await;
+        self.object_index_all.clear().await;
+        self.object_index_db.clear().await;
         tracing::debug!("schema cache invalidated");
     }
 }
@@ -1396,6 +1446,12 @@ mod tests {
                 }])
             })
             .await;
+        let _ = cache
+            .object_index_all(|| async { Ok(Arc::new(ObjectIndex::default())) })
+            .await;
+        let _ = cache
+            .object_index_db("d", || async { Ok(Arc::new(ObjectIndex::default())) })
+            .await;
 
         cache.invalidate_all().await;
 
@@ -1407,6 +1463,8 @@ mod tests {
         assert!(cache.foreign_keys.entries.read().await.is_empty());
         assert!(cache.schema_objects.entries.read().await.is_empty());
         assert!(cache.list_indexes.entries.read().await.is_empty());
+        assert!(cache.object_index_all.entries.read().await.is_empty());
+        assert!(cache.object_index_db.entries.read().await.is_empty());
     }
 
     /// TTL が経過したエントリはヒットとみなさず再取得すること (最終防御線が

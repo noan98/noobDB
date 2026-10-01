@@ -109,7 +109,7 @@ import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
-import { scopeMatches, SnippetList } from "./components/SnippetList";
+import { SnippetList } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
 import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
@@ -9096,7 +9096,6 @@ export default function App() {
                       onRequestConsumed={() =>
                         setWhereUsedRequest((r) => (r ? { ...r, autoRun: false } : r))
                       }
-                      snippets={snippets.filter((s) => scopeMatches(s, selectedProfile ?? null))}
                       onOpenObject={(database, kind, name, id) =>
                         void handleOpenObjectDefinition(database, kind, name, id)
                       }
