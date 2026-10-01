@@ -418,12 +418,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.command, "brew install mysql-client");
-        assert_eq!(plan.location, "/usr/local/opt/mysql-client/bin");
+        // Path::join は実行 OS の区切り文字を使うので、期待値も同じ組み立て方で作る
+        // (Windows の CI では `\` になる)。
+        let keg = |prefix: &str| {
+            Path::new(prefix)
+                .join("opt")
+                .join("mysql-client")
+                .join("bin")
+                .display()
+                .to_string()
+        };
+        assert_eq!(plan.location, keg("/usr/local"));
         assert!(plan.one_click);
         let no_brew =
             install_plan(DumpTool::Mysqldump, "macos", None, false, Path::new("/")).unwrap();
         assert!(!no_brew.one_click);
-        assert_eq!(no_brew.location, "/opt/homebrew/opt/mysql-client/bin");
+        assert_eq!(no_brew.location, keg("/opt/homebrew"));
     }
 
     #[test]
