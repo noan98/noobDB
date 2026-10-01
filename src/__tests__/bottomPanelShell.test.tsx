@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
@@ -256,5 +257,33 @@ describe("BottomPanelStrip (折りたたみ時のパネルバー)", () => {
       </WorkspaceSplit>,
     );
     await waitFor(() => expect(screen.getByTestId("strip")).toBeInTheDocument());
+  });
+
+  it("開閉でワークスペース (children) を再マウントしない (#1310)", async () => {
+    const mounts = vi.fn();
+    const unmounts = vi.fn();
+    function Workspace() {
+      useEffect(() => {
+        mounts();
+        return () => unmounts();
+      }, []);
+      return <div data-testid="workspace">workspace</div>;
+    }
+    const render = (bottom: React.ReactNode | null) => (
+      <WorkspaceSplit bottom={bottom}>
+        <Workspace />
+      </WorkspaceSplit>
+    );
+    const view = renderWithProviders(render(null));
+    const el = screen.getByTestId("workspace");
+    view.rerender(render(<div data-testid="bottom">bottom</div>));
+    expect(screen.getByTestId("bottom")).toBeInTheDocument();
+    view.rerender(render(null));
+    // 退場アニメーション完了 (onExitComplete で分割を畳む) の後も維持される。
+    await waitFor(() => expect(screen.queryByTestId("bottom")).toBeNull());
+    view.rerender(render(<div data-testid="bottom">again</div>));
+    expect(screen.getByTestId("workspace")).toBe(el);
+    expect(mounts).toHaveBeenCalledTimes(1);
+    expect(unmounts).not.toHaveBeenCalled();
   });
 });

@@ -9601,9 +9601,10 @@ export default function App() {
                     />
                   </PaneEmpty>
                 </Flex>
-              ) : panes.length === 1 ? (
-                renderPane(panes[0])
               ) : (
+                // ペイン数が 1 / 2 で木構造を変えない (#1310): 分割 / 解除のたびに
+                // Splitter ごと出し入れすると、残る方のペイン (エディタと結果グリッド)
+                // も再マウントされる。1 枚のときは 2 枚目を畳んだ Splitter にする。
                 <Splitter
                   direction="row"
                   storageKey="noobdb.split.panes"
@@ -9611,7 +9612,8 @@ export default function App() {
                   minSize={220}
                   ariaLabel={t("splitterPanesAria")}
                   first={renderPane(panes[0])}
-                  second={renderPane(panes[1])}
+                  second={panes.length > 1 ? renderPane(panes[1]) : null}
+                  secondCollapsed={panes.length < 2}
                 />
               )
             ) : profiles.length === 0 ? (

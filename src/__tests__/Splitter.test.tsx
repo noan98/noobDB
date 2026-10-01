@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { useEffect } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import { Splitter } from "../components/Splitter";
@@ -63,5 +64,41 @@ describe("Splitter (#478)", () => {
     const sep = screen.getByRole("separator", { name: "panes" });
     fireEvent.keyDown(sep, { key: "ArrowRight" });
     expect(Number(localStorage.getItem("test.split"))).toBeCloseTo(0.52, 2);
+  });
+});
+
+// ペインの分割 / 解除で残る方のペインを再マウントしない (#1310)。App.tsx は
+// ペイン数が 1 でも Splitter を使い、2 枚目を畳むだけにしている。
+describe("Splitter の 2 枚目の出し入れ (#1310)", () => {
+  it("2 枚目を畳んで出し入れしても 1 枚目を再マウントしない", () => {
+    const mounts = vi.fn();
+    const unmounts = vi.fn();
+    function Pane() {
+      useEffect(() => {
+        mounts();
+        return () => unmounts();
+      }, []);
+      return <div data-testid="pane-a">A</div>;
+    }
+    const render = (split: boolean) => (
+      <Splitter
+        direction="row"
+        ariaLabel="panes"
+        first={<Pane />}
+        second={split ? <div data-testid="pane-b">B</div> : null}
+        secondCollapsed={!split}
+      />
+    );
+    const view = renderWithProviders(render(false));
+    const el = screen.getByTestId("pane-a");
+    expect(screen.queryByRole("separator", { name: "panes" })).toBeNull();
+    view.rerender(render(true));
+    expect(screen.getByRole("separator", { name: "panes" })).toBeInTheDocument();
+    expect(screen.getByTestId("pane-b")).toBeInTheDocument();
+    view.rerender(render(false));
+    expect(screen.queryByTestId("pane-b")).toBeNull();
+    expect(screen.getByTestId("pane-a")).toBe(el);
+    expect(mounts).toHaveBeenCalledTimes(1);
+    expect(unmounts).not.toHaveBeenCalled();
   });
 });
