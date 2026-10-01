@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **139 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **144 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -200,6 +200,34 @@ skip モードの取り込みでスキップされた行の「全件」を扱う
 行へ適用して返す (ExportModal のプレビュー / 全文コピー用)。仮名化の秘密ソルトを
 フロントへ出さないため、変換は実出力と同じ `db/masking.rs` で行う。ファイル・DB には
 触れない。`export_query_result` / `export_query_stream` も同じ `masks` 引数を受け取る。
+`mask_export_rows` / `export_query_result` / `register_local_table` は `result_id`
+(#1264, 下記「結果ハンドル」) を渡すと行を送らずバックエンド保持の行を使う。
+
+### 結果ハンドル (`commands/result.rs`, #1264)
+
+`run_query_stream` の `retainResult: true` で、ストリームした結果をバックエンドが
+**合計メモリ上限付き** (既定 256 MiB、LRU) で保持し、`done` の `resultId` で返す
+(`db/result_store.rs`)。保持できなかった結果は `resultId: null` で、フロントは従来どおり
+JS から行を送る。ハンドルは「行配列」に紐づけて持ち (`components/resultHandle.ts`)、
+編集適用などで行配列が入れ替われば自動的に使われなくなる。
+
+`result_sort_filter` — ソート・列フィルタ・全体フィルタを適用した表示順の行インデックスを
+返す。意味論は `ResultGrid.tsx` と同じ (`db/result_ops.rs`)。文字列の照合順序だけ
+`Intl.Collator` の近似なので、5 万行以上 (`HANDLE_SORT_MIN_ROWS`) の結果に限って使う。
+`null` はハンドルが無い。
+
+`result_find` — 結果内検索 (正規表現なし。正規表現は JS の文法と違うためフロントが JS で
+処理する)。ヒットは行優先で `limit` 件 + 総数。`null` はハンドルが無い。
+
+`result_column_stats` — 列クイック統計 (`gridStats.ts::columnStats` と同じ値)。
+
+`release_result` — ハンドルを破棄する (タブを閉じる・再実行・編集適用)。冪等。セッション
+切断でもバックエンドが破棄する。
+
+`render_export_text` — エクスポート内容をテキストで返す (全文コピー・マスク付き
+プレビュー用)。ファイル出力と同じ `write_export_to` を `Vec<u8>` に向けるので、書式・
+マスキングはファイルとバイト一致する (`tests/export_format_golden.rs` が固定)。
+
 
 `run_sql_script` (`commands/script.rs`, #973) — `.sql` ファイルを 64 KiB ずつ読み、
 `db/script.rs` のストリーミング文分割 (フロント `splitSqlStatements` と共有ゴールデン

@@ -327,7 +327,13 @@ pub struct RegisterLocalTableRequest {
     pub session_id: SessionId,
     pub table_name: String,
     pub columns: Vec<Column>,
+    /// 取り込む行。`result_id` を指定したときは使わない (空でよい)。
+    #[serde(default)]
     pub rows: Vec<Vec<Value>>,
+    /// 結果ハンドル (#1264)。指定時はバックエンドが保持する行を取り込み、フロントから
+    /// 行を送らない。破棄済みなら `result handle gone` のエラー (フロントは rows 付きで再試行)。
+    #[serde(default)]
+    pub result_id: Option<String>,
     /// 表示用の由来情報。すべて非秘密 — 接続情報そのもの (ホスト/資格情報) は
     /// 含まない。
     pub source_profile: Option<String>,
@@ -357,32 +363,43 @@ pub async fn register_local_table_inner(
             "cannot register a table with no columns".into(),
         ));
     }
-    if req.rows.len() > MAX_LOCAL_TABLE_ROWS {
+    let RegisterLocalTableRequest {
+        session_id,
+        table_name,
+        columns,
+        rows,
+        result_id,
+        source_profile,
+        source_sql,
+        source_driver,
+    } = req;
+    let rows = crate::commands::result::resolve_rows(state, result_id.as_deref(), rows)?;
+    if rows.len() > MAX_LOCAL_TABLE_ROWS {
         return Err(AppError::InvalidInput(format!(
             "too many rows to register locally ({} rows; limit is {MAX_LOCAL_TABLE_ROWS})",
-            req.rows.len()
+            rows.len()
         )));
     }
-    let session = get_local_session(state, &req.session_id).await?;
+    let session = get_local_session(state, &session_id).await?;
 
     let meta = LocalTableMeta {
-        name: req.table_name.trim().to_string(),
-        source_profile: req.source_profile,
-        source_sql: req.source_sql,
-        source_driver: req.source_driver,
+        name: table_name.trim().to_string(),
+        source_profile,
+        source_sql,
+        source_driver,
         fetched_at_ms: now_ms(),
-        row_count: req.rows.len() as i64,
+        row_count: rows.len() as i64,
     };
     session
         .conn
-        .register_local_table(&meta, &req.columns, &req.rows)
+        .register_local_table(&meta, &columns, &rows)
         .await?;
     // Query Result Cache (#1097): テーブルの登録 (新規作成/上書き) はこの
     // ローカルセッション自身のデータを変えるので、そのセッションのクエリ結果
     // キャッシュを丸ごと invalidate する。
     session.query_cache.invalidate_all().await;
     tracing::info!(
-        session_id = %req.session_id,
+        session_id = %session_id,
         table = %meta.name,
         rows = meta.row_count,
         "registered local table"

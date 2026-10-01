@@ -1,0 +1,416 @@
+{
+  "sortFilter": [
+    {
+      "name": "numeric_asc_mixed_values",
+      "note": "数値列: 文字列は Number() 化 (空文字は 0、16 進・指数・前後空白を受理)。変換できない値 (NaN) は数値の後ろ、NULL は最後。",
+      "kinds": ["number"],
+      "rows": [[10], [null], ["abc"], [2], [""], ["0x1f"], [" 12 "], ["1e3"], [true], ["Infinity"], [-5], ["-0x10"], [1.5]],
+      "sort": [{"col": 0, "desc": false}],
+      "expected": [10, 4, 8, 12, 3, 0, 6, 5, 7, 9, 2, 11, 1]
+    },
+    {
+      "name": "numeric_desc_inverts_nulls_and_nan_to_top",
+      "note": "降順は比較結果の符号反転なので NULL / NaN が先頭に来る。",
+      "kinds": ["number"],
+      "rows": [[10], [null], ["abc"], [2], [""], ["0x1f"], [null], ["zzz"]],
+      "sort": [{"col": 0, "desc": true}],
+      "expected": [1, 6, 2, 7, 5, 0, 3, 4]
+    },
+    {
+      "name": "ties_keep_original_order_when_desc",
+      "note": "同値は昇順・降順どちらでも元の行順。",
+      "kinds": ["number"],
+      "rows": [[1], [2], [1], [2], [1]],
+      "sort": [{"col": 0, "desc": true}],
+      "expected": [1, 3, 0, 2, 4]
+    },
+    {
+      "name": "bool_sort",
+      "note": "真偽値列: true/1/0 以外の解釈できない値は NULL 扱いで最後。数値は 0 以外が true。",
+      "kinds": ["bool"],
+      "rows": [[true], [false], ["TRUE"], ["0"], ["abc"], [2], [0], [null], ["1"], ["False"]],
+      "sort": [{"col": 0, "desc": false}],
+      "expected": [1, 3, 6, 9, 0, 2, 5, 8, 4, 7]
+    },
+    {
+      "name": "string_sort_ascii",
+      "note": "文字列列 (Intl.Collator numeric): 記号 < 数字 < 英字、大小は同順位で小文字が先、数字列は数値順、先頭ゼロ違いは同値。",
+      "kinds": ["string"],
+      "rows": [["b"], ["A"], ["a"], ["B"], ["a1"], ["a10"], ["a2"], ["_x"], ["10"], ["9"], [""], [null], ["ab"], ["a b"], ["01"], ["1"], ["a-b"], ["a_b"], ["Z"], ["$"], ["x1y"], ["x1"]],
+      "sort": [{"col": 0, "desc": false}],
+      "expected": [10, 7, 19, 14, 15, 9, 8, 2, 1, 13, 17, 16, 4, 6, 5, 12, 0, 3, 21, 20, 18, 11]
+    },
+    {
+      "name": "string_sort_desc",
+      "note": "文字列の降順。",
+      "kinds": ["string"],
+      "rows": [["b"], ["A"], ["a"], [null], ["a10"], ["a2"], ["B"]],
+      "sort": [{"col": 0, "desc": true}],
+      "expected": [3, 6, 0, 4, 5, 1, 2]
+    },
+    {
+      "name": "string_sort_accents_and_kana",
+      "note": "Latin-1 / Latin Extended-A のアクセントとひらがな・カタカナ。ICU root 照合と一致する範囲だけ固定する。",
+      "kinds": ["string"],
+      "rows": [["f"], ["é"], ["e"], ["ez"], ["ß"], ["ss"], ["あ"], ["ア"], ["い"], ["a"], ["日"], ["É"], ["z"]],
+      "sort": [{"col": 0, "desc": false}],
+      "expected": [9, 2, 1, 11, 3, 0, 5, 4, 12, 6, 7, 8, 10]
+    },
+    {
+      "name": "string_sort_numbers_as_text",
+      "note": "数値・真偽値セルも String() してから照合する。",
+      "kinds": ["string"],
+      "rows": [[100], [20], [true], ["b"], [3.5], [false], [null]],
+      "sort": [{"col": 0, "desc": false}],
+      "expected": [4, 1, 0, 3, 5, 2, 6]
+    },
+    {
+      "name": "multi_key_sort",
+      "note": "第 1 キーが同値なら第 2 キー。キーごとに昇降順が独立。",
+      "kinds": ["number", "string"],
+      "rows": [[1, "b"], [1, "a"], [0, "z"], [1, "c"], [0, null], [null, "a"]],
+      "sort": [{"col": 0, "desc": false}, {"col": 1, "desc": true}],
+      "expected": [4, 2, 3, 0, 1, 5]
+    },
+    {
+      "name": "filter_text_ops",
+      "note": "テキスト演算子は大文字小文字を区別しない (toLowerCase)。NULL は値条件にマッチしない。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple pie"], ["PINEAPPLE"], [null], ["banana"], ["APPLE"], [""]],
+      "filters": [{"col": 0, "op": "contains", "value": "APPLE", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [0, 1, 2, 5]
+    },
+    {
+      "name": "filter_equals_and_not_equals",
+      "note": "notEquals も NULL には適用されない。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple"], ["x"], [null]],
+      "filters": [{"col": 0, "op": "notEquals", "value": "APPLE", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [2]
+    },
+    {
+      "name": "filter_starts_ends_with",
+      "note": "前方一致・後方一致。",
+      "kinds": ["string", "string"],
+      "rows": [["abcdef", "x"], ["ABxyz", "x"], ["zzabc", "x"]],
+      "filters": [{"col": 0, "op": "startsWith", "value": "ab", "value2": "", "nullMode": "any"}, {"col": 1, "op": "endsWith", "value": "X", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [0, 1]
+    },
+    {
+      "name": "filter_unicode_lowercase",
+      "note": "toLowerCase は Unicode の大小変換 (İ → i̇、Σ → σ) で比較する。",
+      "kinds": ["string"],
+      "rows": [["İstanbul"], ["istanbul"], ["ΣΑΣ"], ["σας"], ["ÄÖÜ"], ["äöü"]],
+      "filters": [{"col": 0, "op": "contains", "value": "ÄÖ", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [4, 5]
+    },
+    {
+      "name": "filter_blank_value_is_inactive",
+      "note": "空白だけの値は非アクティブ (絞り込まない)。",
+      "kinds": ["string"],
+      "rows": [["a"], [null], [""]],
+      "filters": [{"col": 0, "op": "contains", "value": "   ", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [0, 1, 2]
+    },
+    {
+      "name": "filter_null_only",
+      "note": "NULL ゲート only。",
+      "kinds": ["string"],
+      "rows": [["a"], [null], [""], [null]],
+      "filters": [{"col": 0, "op": "contains", "value": "", "value2": "", "nullMode": "only"}],
+      "sort": [],
+      "expected": [1, 3]
+    },
+    {
+      "name": "filter_null_exclude_with_value",
+      "note": "NULL ゲート exclude + 値条件。",
+      "kinds": ["string"],
+      "rows": [["a"], [null], ["ab"], ["b"]],
+      "filters": [{"col": 0, "op": "contains", "value": "a", "value2": "", "nullMode": "exclude"}],
+      "sort": [],
+      "expected": [0, 2]
+    },
+    {
+      "name": "filter_numeric_compare",
+      "note": "数値演算子: 文字列は Number() 化、変換できない値・NULL はマッチしない。空文字は 0。",
+      "kinds": ["number"],
+      "rows": [[5], ["5"], [" 5 "], [4], [6], ["abc"], [null], [""], ["5.0"], [true]],
+      "filters": [{"col": 0, "op": "eq", "value": "5", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [0, 1, 2, 8]
+    },
+    {
+      "name": "filter_numeric_ne_gt_lt",
+      "note": "ne は NaN オペランドで常に false。gt/lt の境界。",
+      "kinds": ["number", "number", "number"],
+      "rows": [[1, 1, 1], [5, 5, 5], [9, 9, 9], [null, null, null], ["x", "x", "x"]],
+      "filters": [{"col": 0, "op": "ne", "value": "5", "value2": "", "nullMode": "any"}, {"col": 1, "op": "gt", "value": "1", "value2": "", "nullMode": "any"}, {"col": 2, "op": "lt", "value": "9", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": []
+    },
+    {
+      "name": "filter_numeric_non_numeric_operand",
+      "note": "オペランドが数値でなければ eq/ne/gt/lt は何にもマッチしない。",
+      "kinds": ["number"],
+      "rows": [[1], [2], ["abc"]],
+      "filters": [{"col": 0, "op": "ne", "value": "abc", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": []
+    },
+    {
+      "name": "filter_bigint_exact_equality",
+      "note": "2^53 を超える整数は BigInt で厳密比較 (Number では衝突する)。",
+      "kinds": ["number"],
+      "rows": [["9007199254740993"], ["9007199254740992"], ["9007199254740994"], ["-9007199254740993"], ["9007199254740993.0"]],
+      "filters": [{"col": 0, "op": "eq", "value": "9007199254740993", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [0, 4]
+    },
+    {
+      "name": "filter_bigint_range_and_sign",
+      "note": "符号付き・先頭ゼロ・巨大整数の範囲比較。",
+      "kinds": ["number"],
+      "rows": [["123456789012345678901234567890"], ["-5"], ["+7"], ["007"], ["0"], ["-0"], ["99999999999999999999999999999"]],
+      "filters": [{"col": 0, "op": "between", "value": "-5", "value2": "123456789012345678901234567890", "nullMode": "any"}],
+      "sort": [],
+      "expected": [0, 1, 2, 3, 4, 5, 6]
+    },
+    {
+      "name": "filter_between_open_bounds",
+      "note": "between の片側が空なら開区間 (±∞)。",
+      "kinds": ["number", "number"],
+      "rows": [[1, 1], [5, 5], [9, 9], [null, null], [1.5, 1.5]],
+      "filters": [{"col": 0, "op": "between", "value": "", "value2": "5", "nullMode": "any"}, {"col": 1, "op": "between", "value": "1.2", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [1, 4]
+    },
+    {
+      "name": "filter_decimal_operand",
+      "note": "小数のオペランドは Number で比較 (BigInt 経路に入らない)。",
+      "kinds": ["number"],
+      "rows": [["1.5"], [1.5], ["1.50"], ["1.6"], [2]],
+      "filters": [{"col": 0, "op": "eq", "value": "1.5", "value2": "", "nullMode": "any"}],
+      "sort": [],
+      "expected": [0, 1, 2]
+    },
+    {
+      "name": "global_filter_null_as_text",
+      "note": "全体フィルタ: NULL は文字列 \"null\" として大小無視の部分一致。",
+      "kinds": ["string", "number"],
+      "rows": [["a", 1], [null, 2], ["NULLABLE", 3], ["b", null]],
+      "global": "NUL",
+      "sort": [],
+      "expected": [1, 2, 3]
+    },
+    {
+      "name": "global_filter_across_columns",
+      "note": "全列のどれかに含まれれば通す。数値・真偽値も String() で判定。",
+      "kinds": ["string", "number", "bool"],
+      "rows": [["x", 12345, false], ["y", 7, true], ["z", 9, false], ["Tr", 1, false]],
+      "global": "tru",
+      "sort": [],
+      "expected": [1]
+    },
+    {
+      "name": "global_filter_unicode",
+      "note": "全体フィルタも toLowerCase で比較する。",
+      "kinds": ["string"],
+      "rows": [["İ"], ["i̇"], ["I"], ["ß"]],
+      "global": "İ",
+      "sort": [],
+      "expected": [0, 1]
+    },
+    {
+      "name": "float_values_use_js_number_to_string",
+      "note": "浮動小数の文字列化は JS の Number#toString (1e21 以上 / 1e-7 以下は指数表記、-0 は 0)。",
+      "kinds": ["string"],
+      "rows": [[0.30000000000000004], [1e+21], [1.5e-07], [123456789012345680000], [0], [100], [1e-06]],
+      "global": "e",
+      "sort": [],
+      "expected": [1, 2]
+    },
+    {
+      "name": "filter_then_sort",
+      "note": "フィルタ → ソートの順に適用する。",
+      "kinds": ["number", "string"],
+      "rows": [[3, "keep c"], [1, "drop"], [2, "keep b"], [5, "keep e"], [4, "drop"]],
+      "filters": [{"col": 1, "op": "startsWith", "value": "keep", "value2": "", "nullMode": "any"}],
+      "sort": [{"col": 0, "desc": true}],
+      "expected": [3, 0, 2]
+    },
+    {
+      "name": "short_rows_treated_as_null",
+      "note": "列数より短い行の欠けたセルは NULL。",
+      "kinds": ["string", "string"],
+      "rows": [["a", "x"], ["b"], ["c", "y"]],
+      "filters": [{"col": 1, "op": "contains", "value": "", "value2": "", "nullMode": "only"}],
+      "sort": [],
+      "expected": [1]
+    }
+  ],
+  "find": [
+    {
+      "name": "find_case_insensitive_contains",
+      "note": "既定: 大小無視の部分一致、NULL セルは対象外、行優先。",
+      "rows": [["Abc", null], ["abc", "xABCx"], ["zzz", "AbC"]],
+      "columnCount": 2,
+      "query": "abc",
+      "options": {"caseSensitive": false, "wholeCell": false},
+      "limit": 100,
+      "expected": {"hits": [{"rowIdx": 0, "colIdx": 0}, {"rowIdx": 1, "colIdx": 0}, {"rowIdx": 1, "colIdx": 1}, {"rowIdx": 2, "colIdx": 1}], "total": 4, "truncated": false}
+    },
+    {
+      "name": "find_case_sensitive",
+      "note": "大文字小文字を区別。",
+      "rows": [["Abc", null], ["abc", "xABCx"], ["zzz", "AbC"]],
+      "columnCount": 2,
+      "query": "abc",
+      "options": {"caseSensitive": true, "wholeCell": false},
+      "limit": 100,
+      "expected": {"hits": [{"rowIdx": 1, "colIdx": 0}], "total": 1, "truncated": false}
+    },
+    {
+      "name": "find_whole_cell",
+      "note": "セル全体との完全一致 (大小無視)。",
+      "rows": [["abc", "ABC"], ["abcd", "Abc"]],
+      "columnCount": 2,
+      "query": "abc",
+      "options": {"caseSensitive": false, "wholeCell": true},
+      "limit": 100,
+      "expected": {"hits": [{"rowIdx": 0, "colIdx": 0}, {"rowIdx": 0, "colIdx": 1}, {"rowIdx": 1, "colIdx": 1}], "total": 3, "truncated": false}
+    },
+    {
+      "name": "find_whole_cell_case_sensitive",
+      "note": "完全一致 + 大小区別。",
+      "rows": [["abc", "ABC"], ["abcd", "Abc"]],
+      "columnCount": 2,
+      "query": "ABC",
+      "options": {"caseSensitive": true, "wholeCell": true},
+      "limit": 100,
+      "expected": {"hits": [{"rowIdx": 0, "colIdx": 1}], "total": 1, "truncated": false}
+    },
+    {
+      "name": "find_limit_truncates",
+      "note": "上限で打ち切り、総数は数え続ける。",
+      "rows": [["a", "a"], ["a", "a"], ["a", "a"]],
+      "columnCount": 2,
+      "query": "a",
+      "options": {"caseSensitive": false, "wholeCell": false},
+      "limit": 4,
+      "expected": {"hits": [{"rowIdx": 0, "colIdx": 0}, {"rowIdx": 0, "colIdx": 1}, {"rowIdx": 1, "colIdx": 0}, {"rowIdx": 1, "colIdx": 1}], "total": 6, "truncated": true}
+    },
+    {
+      "name": "find_empty_query",
+      "note": "空クエリはヒット 0 件 (空白だけのクエリは有効)。",
+      "rows": [["a b", " "]],
+      "columnCount": 2,
+      "query": "",
+      "options": {"caseSensitive": false, "wholeCell": false},
+      "limit": 10,
+      "expected": {"hits": [], "total": 0, "truncated": false}
+    },
+    {
+      "name": "find_whitespace_query",
+      "note": "空白だけのクエリはデータ中の空白を探せる。",
+      "rows": [["a b", " "], ["ab", null]],
+      "columnCount": 2,
+      "query": " ",
+      "options": {"caseSensitive": false, "wholeCell": false},
+      "limit": 10,
+      "expected": {"hits": [{"rowIdx": 0, "colIdx": 0}, {"rowIdx": 0, "colIdx": 1}], "total": 2, "truncated": false}
+    },
+    {
+      "name": "find_numbers_and_bools_as_text",
+      "note": "数値・真偽値は String() で判定。浮動小数は JS の表記。",
+      "rows": [[12345, true], [1e+21, false], [0.5, null]],
+      "columnCount": 2,
+      "query": "e+21",
+      "options": {"caseSensitive": false, "wholeCell": false},
+      "limit": 10,
+      "expected": {"hits": [{"rowIdx": 1, "colIdx": 0}], "total": 1, "truncated": false}
+    },
+    {
+      "name": "find_unicode_lowercase",
+      "note": "大小無視は Unicode の toLowerCase。",
+      "rows": [["İstanbul", "ÄÖÜ"], ["x", "äöü"]],
+      "columnCount": 2,
+      "query": "äö",
+      "options": {"caseSensitive": false, "wholeCell": false},
+      "limit": 10,
+      "expected": {"hits": [{"rowIdx": 0, "colIdx": 1}, {"rowIdx": 1, "colIdx": 1}], "total": 2, "truncated": false}
+    },
+    {
+      "name": "find_ignores_cells_beyond_column_count",
+      "note": "columnCount を超えるセルは対象外、短い行は有るセルだけ。",
+      "rows": [["a", "a", "a"], ["a"]],
+      "columnCount": 2,
+      "query": "a",
+      "options": {"caseSensitive": false, "wholeCell": false},
+      "limit": 10,
+      "expected": {"hits": [{"rowIdx": 0, "colIdx": 0}, {"rowIdx": 0, "colIdx": 1}, {"rowIdx": 1, "colIdx": 0}], "total": 3, "truncated": false}
+    }
+  ],
+  "columnStats": [
+    {
+      "name": "stats_mixed_values",
+      "note": "件数・NULL・DISTINCT・数値化 (Number() 相当、空文字・真偽値は対象外)・文字列長・最頻値。",
+      "rows": [["a"], ["a"], ["b"], [null], [" 12 "], ["0x10"], [""], [true], [3.5], ["abc"]],
+      "col": 0,
+      "expected": {"count": 10, "nullCount": 1, "nonNullCount": 9, "distinctCount": 8, "numericCount": 3, "sum": 31.5, "avg": 10.5, "min": 3.5, "max": 16, "minLen": 0, "maxLen": 4, "mode": {"value": "a", "count": 2}}
+    },
+    {
+      "name": "stats_mode_tie_picks_first_seen",
+      "note": "最頻値が同数なら先に現れた値。",
+      "rows": [["b"], ["a"], ["a"], ["b"], ["c"]],
+      "col": 0,
+      "expected": {"count": 5, "nullCount": 0, "nonNullCount": 5, "distinctCount": 3, "numericCount": 0, "sum": null, "avg": null, "min": null, "max": null, "minLen": 1, "maxLen": 1, "mode": {"value": "b", "count": 2}}
+    },
+    {
+      "name": "stats_length_is_utf16",
+      "note": "文字数は UTF-16 コード単位 (絵文字は 2)。",
+      "rows": [["😀"], ["a"], ["日本語"]],
+      "col": 0,
+      "expected": {"count": 3, "nullCount": 0, "nonNullCount": 3, "distinctCount": 3, "numericCount": 0, "sum": null, "avg": null, "min": null, "max": null, "minLen": 1, "maxLen": 3, "mode": {"value": "😀", "count": 1}}
+    },
+    {
+      "name": "stats_numeric_only",
+      "note": "数値列: 合計・平均・最小・最大。",
+      "rows": [[1], [2], [3.5], [null], [-4]],
+      "col": 0,
+      "expected": {"count": 5, "nullCount": 1, "nonNullCount": 4, "distinctCount": 4, "numericCount": 4, "sum": 2.5, "avg": 0.625, "min": -4, "max": 3.5, "minLen": 1, "maxLen": 3, "mode": {"value": "1", "count": 1}}
+    },
+    {
+      "name": "stats_all_null",
+      "note": "全て NULL のとき長さ・数値・最頻値は null。",
+      "rows": [[null], [null]],
+      "col": 0,
+      "expected": {"count": 2, "nullCount": 2, "nonNullCount": 0, "distinctCount": 0, "numericCount": 0, "sum": null, "avg": null, "min": null, "max": null, "minLen": null, "maxLen": null, "mode": null}
+    },
+    {
+      "name": "stats_empty",
+      "note": "0 行。",
+      "rows": [],
+      "col": 0,
+      "expected": {"count": 0, "nullCount": 0, "nonNullCount": 0, "distinctCount": 0, "numericCount": 0, "sum": null, "avg": null, "min": null, "max": null, "minLen": null, "maxLen": null, "mode": null}
+    },
+    {
+      "name": "stats_second_column_with_short_rows",
+      "note": "短い行の欠けたセルは NULL。",
+      "rows": [["a", 1], ["b"], ["c", 3]],
+      "col": 1,
+      "expected": {"count": 3, "nullCount": 1, "nonNullCount": 2, "distinctCount": 2, "numericCount": 2, "sum": 4, "avg": 2, "min": 1, "max": 3, "minLen": 1, "maxLen": 1, "mode": {"value": "1", "count": 1}}
+    },
+    {
+      "name": "stats_floats_stringified_like_js",
+      "note": "DISTINCT / 最頻値 / 長さは JS の文字列表記で数える。",
+      "rows": [[1], [1], [0.1], [1e+21], [1e+21]],
+      "col": 0,
+      "expected": {"count": 5, "nullCount": 0, "nonNullCount": 5, "distinctCount": 3, "numericCount": 5, "sum": 2e+21, "avg": 400000000000000000000, "min": 0.1, "max": 1e+21, "minLen": 1, "maxLen": 5, "mode": {"value": "1", "count": 2}}
+    }
+  ]
+}

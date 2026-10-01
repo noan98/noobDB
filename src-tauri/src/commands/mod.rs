@@ -24,6 +24,7 @@ pub mod profile_backup;
 pub mod profiles;
 pub mod progress;
 pub mod query;
+pub mod result;
 pub mod sandbox;
 pub mod schema;
 pub mod script;
