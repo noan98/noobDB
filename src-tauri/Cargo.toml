@@ -110,6 +110,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utility
 data-encoding = "2"
+# Where-used (#1261) の識別子走査が、旧 TS 実装の `/[\p{L}\p{N}_$]/u` と同じ Unicode
+# 一般カテゴリ判定を使うために `\p{L}` / `\p{N}` だけを有効にする。regex は tracing-
+# subscriber (env-filter) 経由で既に依存グラフに入っており、新規クレートは増えない。
+regex = { version = "1", default-features = false, features = ["std", "unicode-gencat"] }
 # AWS RDS IAM 認証トークン (#734) の SigV4 署名 (SHA-256 / HMAC-SHA256) も下の
 # `sha2` (エクスポートの仮名化 #733 と共用) を使う。トークン生成は AWS API を呼ばない
 # ローカルの署名計算だけなので、aws-config / aws-sdk-rds (推移依存が非常に大きい) は

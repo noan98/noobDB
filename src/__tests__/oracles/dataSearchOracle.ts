@@ -1,26 +1,27 @@
-// DB 全体からの値検索 (#748) の純ロジック。
+// DB 全体からの値検索の **TS オラクル** (#1261)。
 //
-// 走査 SQL の生成 (`SUM(CASE WHEN …)` のテーブル単位クエリ) と行数しきい値の判定、走査結果の
-// 集計は **Rust (`src-tauri/src/db/data_search.rs`、#1261) へ移した**。ここに残るのは、
-// ヒット行クリックで「その列 / そのテーブルのヒット行」を開くジャンプ SQL の生成
-// (`buildColumnJumpSql` / `buildTableJumpSql`) と、それが使う列ごとの検索述語
-// (`buildColumnPredicate`) だけ。述語は Rust の走査 SQL と同じ規則でなければならず、
-// 共有ゴールデン `fixtures/dataSearchVectors.json` が両側で固定する。
+// 走査 SQL の生成 (`buildTableScanSql`) などは Rust (`src-tauri/src/db/data_search.rs`) へ
+// 移植済みで、製品コードにこの実装は無い。移植前の実装 (旧 `components/dataSearch.ts`) を
+// そのままテスト資産として残し、共有ゴールデン `fixtures/dataSearchVectors.json` の期待値が
+// この実装の出力と一致することを `dataSearchGolden.test.ts` で固定する (Rust 側は同じ
+// ベクタを `tests/data_search_golden.rs` が検証する)。
 //
-// 列型による走査対象の絞り込みは `cellTypeMeta.ts` の `classifyTypeName`
-// (CellKind 分類。ResultGrid のセル描画と同じ基準) を再利用し、二重定義しない。
-// 識別子のクオートは `sqlDialect.ts`、文字列リテラルのエスケープは `cellEdit.ts`
-// の `quoteString` (FK ジャンプ #621 と同じ関数) を、テーブル参照の DB 修飾は
-// `fkNavigation.ts` の `qualifiedTable` をそれぞれ再利用する。
-
-import { classifyTypeName, type CellKind } from "./cellTypeMeta";
-import { quoteString } from "./cellEdit";
-import { quoteIdentFor } from "./sqlDialect";
-import { qualifiedTable } from "../fkNavigation";
-import type { ScanColumn } from "../api/tauri";
+// 以下は移植前のコメント。
+//
+import { classifyTypeName, type CellKind } from "../../components/cellTypeMeta";
+import { quoteString } from "../../components/cellEdit";
+import { quoteIdentFor } from "../../components/sqlDialect";
+import { qualifiedTable } from "../../fkNavigation";
 
 /** 一致モード: 完全一致 / 部分一致 (contains) / 前方一致。 */
 export type MatchMode = "exact" | "contains" | "prefix";
+
+/** 走査対象として describeTable の結果から最低限必要な情報。 */
+export interface ScanColumn {
+  name: string;
+  /** `TableColumnInfo.data_type` / `Column.type_name` と同じ語彙の生の型名。 */
+  dataType: string;
+}
 
 /**
  * 走査における列の扱い。`classifyTypeName` の `CellKind` をさらに粗く分類する:
@@ -43,11 +44,6 @@ export function searchTargetForKind(kind: CellKind): SearchTarget {
       // bool / date / time / binary — 既定除外。
       return "excluded";
   }
-}
-
-/** 列の生の型名から直接 {@link SearchTarget} を引く便宜関数。 */
-export function searchTargetForDataType(dataType: string): SearchTarget {
-  return searchTargetForKind(classifyTypeName(dataType));
 }
 
 /** 検索語が数値リテラルとして解釈できるか (`cellEdit.ts` の数値判定と同じ緩さ)。 */
@@ -105,50 +101,71 @@ export function buildColumnPredicate(
   }
 }
 
-/**
- * 特定 1 列に絞った `SELECT * ... WHERE <col> <op> <term>` を生成する。ヒット
- * 一覧の行クリックから、その列だけに絞った結果を新規タブで開くために使う
- * (FK ジャンプ #621 と同じ「安全なリテラル生成 → 新規タブ」の作法)。走査対象外の
- * 型、または数値列に非数値検索語の組み合わせでは `null`。
- */
-export function buildColumnJumpSql(
-  driver: string,
-  database: string | null | undefined,
-  table: string,
-  columnName: string,
-  dataType: string,
-  term: string,
-  mode: MatchMode,
-): string | null {
-  const predicate = buildColumnPredicate(driver, columnName, classifyTypeName(dataType), term, mode);
-  if (!predicate) return null;
-  return `SELECT * FROM ${qualifiedTable(driver, database, table)} WHERE ${predicate}`;
+/** {@link buildTableScanSql} の戻り値。 */
+export interface TableScanSql {
+  /** テーブル 1 つを 1 回のクエリで走査する SQL。 */
+  sql: string;
+  /** SELECT リストと同じ順序の列名 (結果行を位置で対応付けるため名前解決に頼らない)。 */
+  columns: string[];
 }
 
 /**
- * テーブル内でヒットした複数列をまとめて `OR` で束ねた `SELECT * ...` を生成する
- * (「このテーブルの全ヒットを一度に見る」用途)。`hitColumns` は `columns` の
- * 部分集合 (ヒットした列名) を渡す。該当する述語が 1 つもなければ `null`。
+ * テーブル 1 つぶんの走査 SQL を生成する。列ごとに `SUM(CASE WHEN <述語> THEN 1
+ * ELSE 0 END)` を並べた単一クエリで、1 回のフルスキャンで列ごとのヒット件数を
+ * まとめて取得する (列ごとに別クエリを発行しない)。走査対象の列が 1 つもなければ
+ * `null` を返す (呼び出し側はテーブルをスキップ扱いにする)。
  */
-export function buildTableJumpSql(
+export function buildTableScanSql(
   driver: string,
   database: string | null | undefined,
   table: string,
   columns: ScanColumn[],
-  hitColumns: string[],
   term: string,
   mode: MatchMode,
-): string | null {
-  const hitSet = new Set(hitColumns);
-  const predicates: string[] = [];
+): TableScanSql | null {
+  const parts: { name: string; predicate: string }[] = [];
   for (const c of columns) {
-    if (!hitSet.has(c.name)) continue;
     const predicate = buildColumnPredicate(driver, c.name, classifyTypeName(c.dataType), term, mode);
-    if (predicate) predicates.push(predicate);
+    if (predicate) parts.push({ name: c.name, predicate });
   }
-  if (predicates.length === 0) return null;
-  return `SELECT * FROM ${qualifiedTable(driver, database, table)} WHERE (${predicates.join(" OR ")})`;
+  if (parts.length === 0) return null;
+  const selectList = parts
+    .map(
+      ({ name, predicate }) =>
+        `SUM(CASE WHEN ${predicate} THEN 1 ELSE 0 END) AS ${quoteIdentFor(driver, name)}`,
+    )
+    .join(", ");
+  const sql = `SELECT ${selectList} FROM ${qualifiedTable(driver, database, table)}`;
+  return { sql, columns: parts.map((p) => p.name) };
 }
 
-/** スキャン対象を絞り込む既定の概算行数しきい値。これを超えるテーブルは既定でスキップする。 */
-export const DEFAULT_SCAN_ROW_THRESHOLD = 500_000;
+/**
+ * 概算行数がしきい値を超えるテーブルをスキャン対象から除外すべきかどうか。
+ * 推定値が取れない (`null`。SQLite や統計未収集など) 場合は保守的に「除外しない」
+ * — 巨大テーブルを誤って弾かないよう、判断材料が無ければ通す。
+ */
+export function shouldSkipTableForScan(
+  estimate: number | null,
+  thresholdRows: number,
+): boolean {
+  if (estimate === null) return false;
+  return estimate > thresholdRows;
+}
+
+/**
+ * `buildTableScanSql` が返した列順の 1 行 (`SUM(CASE...)` の結果) を、列ごとの
+ * ヒット件数配列へ変換する。`SUM` は対象行が 0 件だと `NULL` を返すドライバがある
+ * ため、`null`/`undefined` は 0 件として扱う。件数 0 の列は除外する。
+ */
+export function parseScanRow(
+  columns: string[],
+  row: (number | string | boolean | null)[],
+): { column: string; count: number }[] {
+  const hits: { column: string; count: number }[] = [];
+  for (let i = 0; i < columns.length; i++) {
+    const raw = row[i];
+    const count = raw === null || raw === undefined ? 0 : Number(raw);
+    if (Number.isFinite(count) && count > 0) hits.push({ column: columns[i], count });
+  }
+  return hits;
+}

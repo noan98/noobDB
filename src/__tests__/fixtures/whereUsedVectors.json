@@ -1,0 +1,1589 @@
+{
+  "description": "Where-used (#1027 / #1261) の参照検出の実装横断ゴールデンベクタ。移植前の TS 実装 (src/__tests__/oracles/whereUsedOracle.ts) の出力を期待値として固定し、Rust の db::where_used (tests/where_used_golden.rs) と TS オラクル (whereUsedGolden.test.ts) の両方を同じベクタに通す。`cases` は analyzeDefinition の結果 (参照が無ければ null。lines の ranges / 切り詰めは UTF-16 コードユニット基準)、`prepare` はコメント・リテラルのマスク結果。新しい境界ケースはここへ追記する。",
+  "cases": [
+    {
+      "name": "単語境界: 部分文字列にはマッチしない",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM orders_archive JOIN old_orders ON 1=1 JOIN orders2 ON 1=1",
+      "expected": null
+    },
+    {
+      "name": "大文字",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "select * from ORDERS",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "select * from ORDERS",
+            "ranges": [
+              [
+                14,
+                20
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "PG 二重引用",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "select * from \"Orders\"",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "select * from \"Orders\"",
+            "ranges": [
+              [
+                14,
+                22
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "MySQL バッククォート",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "select * from `orders`",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "select * from `orders`",
+            "ranges": [
+              [
+                14,
+                22
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "SQLite 角括弧",
+      "driver": "sqlite",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "select * from [orders]",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "select * from [orders]",
+            "ranges": [
+              [
+                14,
+                22
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "二重化された引用符",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "order \"x\"",
+        "column": null
+      },
+      "sql": "select * from \"order \"\"x\"\"\"",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "select * from \"order \"\"x\"\"\"",
+            "ranges": [
+              [
+                14,
+                27
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "空白を含む引用識別子",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "Order Items",
+        "column": null
+      },
+      "sql": "SELECT * FROM \"Order Items\"",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM \"Order Items\"",
+            "ranges": [
+              [
+                14,
+                27
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "MySQL の二重引用は文字列",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT \"orders\" FROM t",
+      "expected": null
+    },
+    {
+      "name": "コメント・文字列内",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT 'from orders' AS s -- orders\n/* orders */ FROM t",
+      "expected": null
+    },
+    {
+      "name": "MySQL のバックスラッシュエスケープ",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT 'it\\'s orders' FROM t",
+      "expected": null
+    },
+    {
+      "name": "PG ではバックスラッシュは通常文字",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT 'a\\' FROM orders -- '",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT 'a\\' FROM orders -- '",
+            "ranges": [
+              [
+                17,
+                23
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "MySQL バージョンコメント",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT /*!50000 * FROM orders */ 1",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT /*!50000 * FROM orders */ 1",
+            "ranges": [
+              [
+                23,
+                29
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "修飾: app.orders",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM app.orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM app.orders",
+            "ranges": [
+              [
+                18,
+                24
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "修飾: other.orders は除外",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM other.orders",
+      "expected": null
+    },
+    {
+      "name": "修飾: 引用付き",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM \"app\".\"orders\"",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM \"app\".\"orders\"",
+            "ranges": [
+              [
+                20,
+                28
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "SQLite main 修飾",
+      "driver": "sqlite",
+      "target": {
+        "database": "main",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM main.orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM main.orders",
+            "ranges": [
+              [
+                19,
+                25
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "SQLite は database が main 以外でも main を許す",
+      "driver": "sqlite",
+      "target": {
+        "database": "other",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM main.orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM main.orders",
+            "ranges": [
+              [
+                19,
+                25
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "orders.id の列修飾",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT orders.id FROM x",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT orders.id FROM x",
+            "ranges": [
+              [
+                7,
+                13
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "app.orders.id",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT app.orders.id FROM x",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT app.orders.id FROM x",
+            "ranges": [
+              [
+                11,
+                17
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "別名修飾のテーブル名同名は除外",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT o.orders FROM t o",
+      "expected": null
+    },
+    {
+      "name": "変数・バインド・位置パラメータ",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SET @orders = 1; SELECT :orders, @@orders, $1",
+      "expected": null
+    },
+    {
+      "name": "PG キャスト",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT x::orders FROM t",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT x::orders FROM t",
+            "ranges": [
+              [
+                10,
+                16
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "数字始まり",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT 1orders FROM t",
+      "expected": null
+    },
+    {
+      "name": "Unicode 識別子",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "注文",
+        "column": null
+      },
+      "sql": "SELECT * FROM 注文 JOIN 注文明細 ON 1=1",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM 注文 JOIN 注文明細 ON 1=1",
+            "ranges": [
+              [
+                14,
+                16
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "補助平面の文字は識別子を割る",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM 𠮷orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM 𠮷orders",
+            "ranges": [
+              [
+                16,
+                22
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "補助平面の文字の引用識別子",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "𠮷",
+        "column": null
+      },
+      "sql": "SELECT * FROM \"𠮷\"",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM \"𠮷\"",
+            "ranges": [
+              [
+                14,
+                18
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "補助平面の文字を前置した行",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "-- 😀\nSELECT '😀' FROM orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 2,
+            "text": "SELECT '😀' FROM orders",
+            "ranges": [
+              [
+                17,
+                23
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "PG ドル引用の関数本体",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "CREATE FUNCTION f() RETURNS int AS $function$\nBEGIN\n  -- orders\n  RETURN (SELECT count(*) FROM orders WHERE s = 'orders');\nEND\n$function$ LANGUAGE plpgsql",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 4,
+            "text": "RETURN (SELECT count(*) FROM orders WHERE s = 'orders');",
+            "ranges": [
+              [
+                29,
+                35
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "PG 空タグのドル引用",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "CREATE FUNCTION f() RETURNS void AS $$ DELETE FROM orders $$ LANGUAGE sql",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "CREATE FUNCTION f() RETURNS void AS $$ DELETE FROM orders $$ LANGUAGE sql",
+            "ranges": [
+              [
+                51,
+                57
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "PG 閉じていないドル引用",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT $tag$ FROM orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT $tag$ FROM orders",
+            "ranges": [
+              [
+                18,
+                24
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "MySQL の識別子内 $",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT a$orders, orders$x FROM orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT a$orders, orders$x FROM orders",
+            "ranges": [
+              [
+                31,
+                37
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "別の引用タグ",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "AS $a$ SELECT $b$ FROM orders $b$ FROM orders $a$",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 2,
+        "lines": [
+          {
+            "line": 1,
+            "text": "AS $a$ SELECT $b$ FROM orders $b$ FROM orders $a$",
+            "ranges": [
+              [
+                23,
+                29
+              ],
+              [
+                39,
+                45
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "ドット周りの空白",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM app . orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM app . orders",
+            "ranges": [
+              [
+                20,
+                26
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "末尾ドット",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT orders.",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT orders.",
+            "ranges": [
+              [
+                7,
+                13
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "空文字列",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "",
+      "expected": null
+    },
+    {
+      "name": "参照なし",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT 1",
+      "expected": null
+    },
+    {
+      "name": "SQLite 閉じていない角括弧",
+      "driver": "sqlite",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM [orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM [orders",
+            "ranges": [
+              [
+                15,
+                21
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "SQLite 空白を含む角括弧",
+      "driver": "sqlite",
+      "target": {
+        "database": "app",
+        "table": "order items",
+        "column": null
+      },
+      "sql": "SELECT * FROM [order items] WHERE 1",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM [order items] WHERE 1",
+            "ranges": [
+              [
+                14,
+                27
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "複数行・複数ヒット",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT *\n    FROM orders o JOIN orders p ON 1=1\nWHERE 1\nUNION SELECT * FROM orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 3,
+        "lines": [
+          {
+            "line": 2,
+            "text": "FROM orders o JOIN orders p ON 1=1",
+            "ranges": [
+              [
+                5,
+                11
+              ],
+              [
+                19,
+                25
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          },
+          {
+            "line": 4,
+            "text": "UNION SELECT * FROM orders",
+            "ranges": [
+              [
+                20,
+                26
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "CRLF 改行",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT *\r\n  FROM orders\r\n  WHERE 1",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 2,
+            "text": "FROM orders",
+            "ranges": [
+              [
+                5,
+                11
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "タブ・全角空白の字下げ",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT *\n\t　FROM orders　\n",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 2,
+            "text": "FROM orders",
+            "ranges": [
+              [
+                5,
+                11
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "長い行: 両側省略",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, b FROM orders WHERE c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND 1",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "a, a, a, a, a, a, a, a, a, a, a, b FROM orders WHERE c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 A",
+            "ranges": [
+              [
+                40,
+                46
+              ]
+            ],
+            "clippedStart": true,
+            "clippedEnd": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "長い行: 先頭側のみ省略",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, b FROM orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, b FROM orders",
+            "ranges": [
+              [
+                154,
+                160
+              ]
+            ],
+            "clippedStart": true,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "長い行: 末尾側のみ省略",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT * FROM orders WHERE c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND 1",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT * FROM orders WHERE c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c = 1 AND c =",
+            "ranges": [
+              [
+                14,
+                20
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "長い行: 補助平面の文字で UTF-16 幅が増える",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT '😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀' FROM  orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀' FROM  orders",
+            "ranges": [
+              [
+                154,
+                160
+              ]
+            ],
+            "clippedStart": true,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "長い行: 複数ヒットが切り出し範囲の外に出る",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": null
+      },
+      "sql": "SELECT orders, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, orders FROM x",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 2,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT orders, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a",
+            "ranges": [
+              [
+                7,
+                13
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: テーブル修飾と別名は直接参照",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT o.status, orders.status FROM orders o",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 2,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT o.status, orders.status FROM orders o",
+            "ranges": [
+              [
+                9,
+                15
+              ],
+              [
+                24,
+                30
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: AS 付き別名",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT x.status FROM app.orders AS x",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT x.status FROM app.orders AS x",
+            "ranges": [
+              [
+                9,
+                15
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: 引用付き別名",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT \"x\".status FROM app.orders AS \"x\"",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT \"x\".status FROM app.orders AS \"x\"",
+            "ranges": [
+              [
+                11,
+                17
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: 別テーブル修飾は除外",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT app.customers.status FROM app.customers",
+      "expected": null
+    },
+    {
+      "name": "列: 別スキーマの同名テーブルは除外",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT other.orders.status FROM t",
+      "expected": null
+    },
+    {
+      "name": "列: 無修飾で本文が別テーブル → 候補",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT status FROM customers",
+      "expected": {
+        "confidence": "possible",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT status FROM customers",
+            "ranges": [
+              [
+                7,
+                13
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: トリガーの NEW は候補",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "BEGIN NEW.status := 'x'; END",
+      "expected": {
+        "confidence": "possible",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "BEGIN NEW.status := 'x'; END",
+            "ranges": [
+              [
+                10,
+                16
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: 本文が対象テーブルを参照すれば無修飾も直接",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT status FROM orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT status FROM orders",
+            "ranges": [
+              [
+                7,
+                13
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: 解決できない別名は本文のテーブル参照で判定",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT z.status FROM orders, (SELECT 1) z",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT z.status FROM orders, (SELECT 1) z",
+            "ranges": [
+              [
+                9,
+                15
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: 部分一致しない",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT status_code, order_status FROM orders",
+      "expected": null
+    },
+    {
+      "name": "列: 別名の直後の予約語は別名にしない",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT where.status FROM orders WHERE 1",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT where.status FROM orders WHERE 1",
+            "ranges": [
+              [
+                13,
+                19
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: キャスト",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "status"
+      },
+      "sql": "SELECT status::text FROM orders",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT status::text FROM orders",
+            "ranges": [
+              [
+                7,
+                13
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: MySQL トリガー",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "qty"
+      },
+      "sql": "CREATE TRIGGER t AFTER INSERT ON orders FOR EACH ROW BEGIN UPDATE stock SET q = q - NEW.qty; END",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "CREATE TRIGGER t AFTER INSERT ON orders FOR EACH ROW BEGIN UPDATE stock SET q = q - NEW.qty; END",
+            "ranges": [
+              [
+                88,
+                91
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: SQLite ビュー",
+      "driver": "sqlite",
+      "target": {
+        "database": "main",
+        "table": "orders",
+        "column": "id"
+      },
+      "sql": "CREATE VIEW v AS SELECT o.id FROM main.orders AS o",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "CREATE VIEW v AS SELECT o.id FROM main.orders AS o",
+            "ranges": [
+              [
+                26,
+                28
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: 大文字の列名",
+      "driver": "mysql",
+      "target": {
+        "database": "app",
+        "table": "Orders",
+        "column": "STATUS"
+      },
+      "sql": "select o.Status from orders o",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 1,
+        "lines": [
+          {
+            "line": 1,
+            "text": "select o.Status from orders o",
+            "ranges": [
+              [
+                9,
+                15
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "列: 同じ行に複数",
+      "driver": "postgres",
+      "target": {
+        "database": "app",
+        "table": "orders",
+        "column": "a"
+      },
+      "sql": "SELECT o.a, o.a, a FROM orders o",
+      "expected": {
+        "confidence": "direct",
+        "hitCount": 3,
+        "lines": [
+          {
+            "line": 1,
+            "text": "SELECT o.a, o.a, a FROM orders o",
+            "ranges": [
+              [
+                9,
+                10
+              ],
+              [
+                14,
+                15
+              ],
+              [
+                17,
+                18
+              ]
+            ],
+            "clippedStart": false,
+            "clippedEnd": false
+          }
+        ]
+      }
+    }
+  ],
+  "prepare": [
+    {
+      "driver": "postgres",
+      "sql": "SELECT 'orders' -- orders\nFROM orders /* orders */",
+      "expected": "SELECT '      '          \nFROM orders             "
+    },
+    {
+      "driver": "postgres",
+      "sql": "SELECT * FROM \"Order Items\"",
+      "expected": "SELECT * FROM \"Order Items\""
+    },
+    {
+      "driver": "mysql",
+      "sql": "SELECT * FROM `order items`",
+      "expected": "SELECT * FROM `order items`"
+    },
+    {
+      "driver": "mysql",
+      "sql": "SELECT \"orders\"",
+      "expected": "SELECT \"      \""
+    },
+    {
+      "driver": "postgres",
+      "sql": "CREATE FUNCTION f() RETURNS int AS $function$\nBEGIN\n  -- orders\n  RETURN (SELECT count(*) FROM orders WHERE s = 'orders');\nEND\n$function$",
+      "expected": "CREATE FUNCTION f() RETURNS int AS $function$\nBEGIN\n           \n  RETURN (SELECT count(*) FROM orders WHERE s = '      ');\nEND\n$function$"
+    },
+    {
+      "driver": "sqlite",
+      "sql": "SELECT [a b], 'x' FROM t",
+      "expected": "SELECT [a b], ' ' FROM t"
+    },
+    {
+      "driver": "mysql",
+      "sql": "SELECT '😀' -- 😀\nFROM t",
+      "expected": "SELECT '  '      \nFROM t"
+    }
+  ]
+}

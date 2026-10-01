@@ -1,0 +1,756 @@
+{
+  "description": "グローバルオブジェクト検索 (#1261) の実装横断ゴールデンベクタ。移植前の TS 実装 (src/__tests__/oracles/objectSearchOracle.ts) の出力を期待値として固定し、Rust の db::object_search::ObjectIndex::search (tests/object_search_golden.rs) と TS オラクル (objectSearchGolden.test.ts) の両方を同じベクタに通す。順位 (完全一致 > 前方一致 > 単語境界 > 部分一致、同点はテーブル優先、二次キーは DB → テーブル → カラムの UTF-16 順) と打ち切りを固定する。新しい境界ケースは cases に query / limit を足し、オラクルの出力を expected に貼る。",
+  "schemas": {
+    "shop": [
+      {
+        "name": "users",
+        "columns": [
+          "id",
+          "user_name",
+          "email",
+          "first name",
+          "User.Id"
+        ]
+      },
+      {
+        "name": "orders",
+        "columns": [
+          "id",
+          "user_id",
+          "total"
+        ]
+      },
+      {
+        "name": "User Logs",
+        "columns": [
+          "id",
+          "message"
+        ]
+      },
+      {
+        "name": "order-items",
+        "columns": [
+          "item_id",
+          "order_id"
+        ]
+      },
+      {
+        "name": "a.b",
+        "columns": [
+          "x",
+          "b"
+        ]
+      },
+      {
+        "name": "İstanbul",
+        "columns": [
+          "İd",
+          "ÍD"
+        ]
+      },
+      {
+        "name": "ΟΔΥΣΣΕΥΣ",
+        "columns": [
+          "Σ"
+        ]
+      }
+    ],
+    "analytics": [
+      {
+        "name": "events",
+        "columns": [
+          "id",
+          "user_id",
+          "ts"
+        ]
+      },
+      {
+        "name": "users",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "～db": [
+      {
+        "name": "t_x",
+        "columns": [
+          "zzmatch"
+        ]
+      }
+    ],
+    "😀db": [
+      {
+        "name": "t_x",
+        "columns": [
+          "zzmatch"
+        ]
+      }
+    ],
+    "名前": [
+      {
+        "name": "😀users",
+        "columns": [
+          "名前",
+          "user_id"
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "query": "users",
+      "limit": 200,
+      "note": "完全一致のテーブルが先頭",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "analytics",
+          "table": "users"
+        },
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "users"
+        },
+        {
+          "kind": "table",
+          "database": "名前",
+          "table": "😀users"
+        }
+      ]
+    },
+    {
+      "query": "user_id",
+      "limit": 200,
+      "note": "DB 横断のカラム一致",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "名前",
+          "table": "😀users",
+          "column": "user_id"
+        }
+      ]
+    },
+    {
+      "query": "USER",
+      "limit": 200,
+      "note": "大小無視 + 前方一致のテーブル優先",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "analytics",
+          "table": "users"
+        },
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "User Logs"
+        },
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "users"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "User.Id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "user_name"
+        },
+        {
+          "kind": "column",
+          "database": "名前",
+          "table": "😀users",
+          "column": "user_id"
+        },
+        {
+          "kind": "table",
+          "database": "名前",
+          "table": "😀users"
+        }
+      ]
+    },
+    {
+      "query": "id",
+      "limit": 200,
+      "note": "多数ヒット",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "users",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "User Logs",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "order-items",
+          "column": "item_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "order-items",
+          "column": "order_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "User.Id"
+        },
+        {
+          "kind": "column",
+          "database": "名前",
+          "table": "😀users",
+          "column": "user_id"
+        }
+      ]
+    },
+    {
+      "query": "id",
+      "limit": 2,
+      "note": "上位 N 件で打ち切り",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "users",
+          "column": "id"
+        }
+      ]
+    },
+    {
+      "query": "id",
+      "limit": 1,
+      "note": "limit 1",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "id"
+        }
+      ]
+    },
+    {
+      "query": "id",
+      "limit": 0,
+      "note": "limit 0",
+      "expected": []
+    },
+    {
+      "query": "id",
+      "limit": 1000,
+      "note": "limit が件数より大きい",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "users",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "User Logs",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "order-items",
+          "column": "item_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "order-items",
+          "column": "order_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "User.Id"
+        },
+        {
+          "kind": "column",
+          "database": "名前",
+          "table": "😀users",
+          "column": "user_id"
+        }
+      ]
+    },
+    {
+      "query": "",
+      "limit": 200,
+      "note": "空クエリ",
+      "expected": []
+    },
+    {
+      "query": "   ",
+      "limit": 200,
+      "note": "空白だけ",
+      "expected": []
+    },
+    {
+      "query": "  users  ",
+      "limit": 200,
+      "note": "前後の空白は無視",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "analytics",
+          "table": "users"
+        },
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "users"
+        },
+        {
+          "kind": "table",
+          "database": "名前",
+          "table": "😀users"
+        }
+      ]
+    },
+    {
+      "query": " users ",
+      "limit": 200,
+      "note": "NBSP も JS の trim で落ちる",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "analytics",
+          "table": "users"
+        },
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "users"
+        },
+        {
+          "kind": "table",
+          "database": "名前",
+          "table": "😀users"
+        }
+      ]
+    },
+    {
+      "query": "a.b",
+      "limit": 200,
+      "note": "正規表現メタ文字 (.) はリテラル",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "a.b"
+        }
+      ]
+    },
+    {
+      "query": "b",
+      "limit": 200,
+      "note": "ドットの直後は単語境界",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "a.b",
+          "column": "b"
+        },
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "a.b"
+        },
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "İstanbul"
+        }
+      ]
+    },
+    {
+      "query": "user(",
+      "limit": 200,
+      "note": "括弧はリテラル (一致なし)",
+      "expected": []
+    },
+    {
+      "query": "[x",
+      "limit": 200,
+      "note": "ブラケットはリテラル (一致なし)",
+      "expected": []
+    },
+    {
+      "query": "\\",
+      "limit": 200,
+      "note": "バックスラッシュ (一致なし)",
+      "expected": []
+    },
+    {
+      "query": "name",
+      "limit": 200,
+      "note": "空白・アンダースコア直後の単語境界",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "first name"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "user_name"
+        }
+      ]
+    },
+    {
+      "query": "items",
+      "limit": 200,
+      "note": "ハイフン直後の単語境界",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "order-items"
+        }
+      ]
+    },
+    {
+      "query": "logs",
+      "limit": 200,
+      "note": "空白直後の単語境界 (テーブル)",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "User Logs"
+        }
+      ]
+    },
+    {
+      "query": "ÍD",
+      "limit": 200,
+      "note": "非 ASCII の大小無視",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "İstanbul",
+          "column": "ÍD"
+        }
+      ]
+    },
+    {
+      "query": "id",
+      "limit": 200,
+      "note": "id (İd の小文字化は 2 文字)",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "users",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "User Logs",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "id"
+        },
+        {
+          "kind": "column",
+          "database": "analytics",
+          "table": "events",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "order-items",
+          "column": "item_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "order-items",
+          "column": "order_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "orders",
+          "column": "user_id"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "users",
+          "column": "User.Id"
+        },
+        {
+          "kind": "column",
+          "database": "名前",
+          "table": "😀users",
+          "column": "user_id"
+        }
+      ]
+    },
+    {
+      "query": "i̇d",
+      "limit": 200,
+      "note": "İ の小文字化 (i + 結合ドット)",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "İstanbul",
+          "column": "İd"
+        }
+      ]
+    },
+    {
+      "query": "İ",
+      "limit": 200,
+      "note": "İ 自体のクエリ",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "İstanbul"
+        },
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "İstanbul",
+          "column": "İd"
+        }
+      ]
+    },
+    {
+      "query": "οδυσσευς",
+      "limit": 200,
+      "note": "語末シグマ",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "ΟΔΥΣΣΕΥΣ"
+        }
+      ]
+    },
+    {
+      "query": "ΟΔΥΣΣΕΥΣ",
+      "limit": 200,
+      "note": "語末シグマ (大文字クエリ)",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "shop",
+          "table": "ΟΔΥΣΣΕΥΣ"
+        }
+      ]
+    },
+    {
+      "query": "zzmatch",
+      "limit": 200,
+      "note": "同点の二次キー: DB 名は UTF-16 順 (補助平面 < U+FF5E)",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "😀db",
+          "table": "t_x",
+          "column": "zzmatch"
+        },
+        {
+          "kind": "column",
+          "database": "～db",
+          "table": "t_x",
+          "column": "zzmatch"
+        }
+      ]
+    },
+    {
+      "query": "😀",
+      "limit": 200,
+      "note": "補助平面の文字",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "名前",
+          "table": "😀users"
+        }
+      ]
+    },
+    {
+      "query": "名前",
+      "limit": 200,
+      "note": "日本語",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "名前",
+          "table": "😀users",
+          "column": "名前"
+        }
+      ]
+    },
+    {
+      "query": "x",
+      "limit": 200,
+      "note": "1 文字",
+      "expected": [
+        {
+          "kind": "column",
+          "database": "shop",
+          "table": "a.b",
+          "column": "x"
+        },
+        {
+          "kind": "table",
+          "database": "😀db",
+          "table": "t_x"
+        },
+        {
+          "kind": "table",
+          "database": "～db",
+          "table": "t_x"
+        }
+      ]
+    },
+    {
+      "query": "zzz-no-such",
+      "limit": 200,
+      "note": "一致なし",
+      "expected": []
+    }
+  ]
+}

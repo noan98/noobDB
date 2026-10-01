@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
-import { api, type TableColumnInfo } from "../api/tauri";
+import {
+  api,
+  listenDataSearchStream,
+  type DataSearchEntry,
+  type ScanColumn,
+} from "../api/tauri";
 import { useT } from "../i18n";
 import {
   buildColumnJumpSql,
   buildTableJumpSql,
-  buildTableScanSql,
   DEFAULT_SCAN_ROW_THRESHOLD,
-  parseScanRow,
-  shouldSkipTableForScan,
   type MatchMode,
-  type ScanColumn,
 } from "./dataSearch";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
@@ -28,12 +29,13 @@ import { staggerContainer, variants } from "../motion";
  * DB 全体からの値検索 (#748)。「この値はどのテーブル・どの列にあるか」を、対象
  * データベースのテーブルを順に走査して調べる横断検索モーダル。
  *
- * `api.runQuery` (非ストリーミング) をテーブルごとに順次呼ぶオーケストレーション。
- * `planWatch` と同じ理由 (履歴を汚さない) で `run_query_stream` ではなくこちらを
- * 使う。生成する SQL はすべて `SELECT` (集計 `SUM(CASE...)` によるヒット件数取得と
- * ヒット一覧クリック時の `SELECT * ... WHERE` のみ) なので、読み取り専用セッションでも
- * 完全に動作する。純ロジック (列型による絞り込み・SQL 生成・スキップ判定) は
- * `dataSearch.ts` に分離してテストする。
+ * 走査は Rust の `data_search_stream` (#1261) が行う。列メタデータの一括取得・テーブルごとの
+ * 走査 SQL (`SUM(CASE...)`) の生成・行数しきい値によるスキップ判定・同時実行数を絞った並列発行
+ * をバックエンドが担い、進捗とテーブルごとの結果 (指定順) を Tauri Channel で逐次返す。
+ * `planWatch` と同じ理由 (履歴を汚さない) で `run_query_stream` は使わない。生成される SQL は
+ * すべて `SELECT` で読み取り専用ガードを通るので、読み取り専用セッションでも完全に動作する。
+ * キャンセルは `cancel_stream` で、走査中のテーブルごと中断できる。ここは入力・確認ダイアログ・
+ * 結果の描画と、ヒット行クリック時のジャンプ SQL (`dataSearch.ts`) だけを担う。
  */
 
 interface Props {
@@ -87,6 +89,25 @@ const MotionHitCard = chakra(motion.div, {}, { forwardProps: ["variants"] });
 
 const MATCH_MODES: MatchMode[] = ["contains", "prefix", "exact"];
 
+let dataSearchStreamSeq = 0;
+/** 走査 1 回ごとの一意な stream id (進捗・結果の宛先とキャンセルの宛先)。 */
+function makeDataSearchStreamId(): string {
+  dataSearchStreamSeq += 1;
+  return `datasearch_${Date.now().toString(36)}_${dataSearchStreamSeq.toString(36)}`;
+}
+
+/** バックエンドの結果 1 件を画面の状態へ写す。 */
+function toResultEntry(entry: DataSearchEntry): ResultEntry {
+  switch (entry.status) {
+    case "hit":
+      return { table: entry.table, status: "hit", columns: entry.columns, hits: entry.hits };
+    case "no-hit":
+      return { table: entry.table, status: "no-hit" };
+    case "skipped":
+      return { table: entry.table, status: "skipped", reason: entry.reason, detail: entry.detail };
+  }
+}
+
 export function DataSearchModal({
   sessionId,
   database,
@@ -111,12 +132,12 @@ export function DataSearchModal({
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [results, setResults] = useState<ResultEntry[]>([]);
-  const cancelledRef = useRef(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  /** 走査中のストリーム。キャンセル・アンマウントで止める。 */
+  const activeRef = useRef<{ streamId: string; unlisten: () => void } | null>(null);
 
   // 対象データベースのテーブル一覧 + 概算行数を先読みする (SchemaExportModal と
-  // 同じ取得パターン)。列詳細 (describeTable) はスキャン実行時にテーブルごとに
-  // 取得する — 全テーブル先読みだと describeTable の並列発行が重く、スキャン開始前の
-  // 待ち時間が長くなるため。
+  // 同じ取得パターン)。列メタデータはスキャン実行時にバックエンドが取得する。
   useEffect(() => {
     let cancelled = false;
     setMeta({ kind: "loading" });
@@ -137,8 +158,17 @@ export function DataSearchModal({
     };
   }, [sessionId, database]);
 
-  // モーダルのアンマウント (切断・クローズ) 時にスキャンループを止める。
-  useEffect(() => () => { cancelledRef.current = true; }, []);
+  // モーダルのアンマウント (切断・クローズ) 時に走査を止める。
+  useEffect(
+    () => () => {
+      const active = activeRef.current;
+      if (!active) return;
+      activeRef.current = null;
+      active.unlisten();
+      void api.cancelStream(active.streamId).catch(() => {});
+    },
+    [],
+  );
 
   const allTables = meta.kind === "ready" ? meta.tables : [];
   const estimates = meta.kind === "ready" ? meta.estimates : {};
@@ -181,9 +211,20 @@ export function DataSearchModal({
     setResults((prev) => [...prev, entry]);
   };
 
-  const handleCancel = () => {
-    cancelledRef.current = true;
+  /** 走査を終えた状態にする (進捗を完了表示にして購読を外す)。 */
+  const finishScan = (slot: { streamId: string; unlisten: () => void }) => {
+    if (activeRef.current !== slot) return;
+    activeRef.current = null;
+    slot.unlisten();
+    setProgress((p) => (p ? { ...p, index: p.total, currentTable: null } : p));
     setScanning(false);
+  };
+
+  const handleCancel = () => {
+    const active = activeRef.current;
+    if (!active) return;
+    void api.cancelStream(active.streamId).catch(() => {});
+    finishScan(active);
   };
 
   const handleStart = async () => {
@@ -213,59 +254,56 @@ export function DataSearchModal({
     });
     if (!ok) return;
 
-    cancelledRef.current = false;
+    const streamId = makeDataSearchStreamId();
+    const slot = { streamId, unlisten: () => {} };
+    activeRef.current = slot;
+    const isActive = () => activeRef.current === slot;
     setResults([]);
+    setScanError(null);
     setProgress({ index: 0, total: targetTables.length, currentTable: null });
     setScanning(true);
 
-    const searchTerm = term.trim();
-    for (let i = 0; i < targetTables.length; i++) {
-      if (cancelledRef.current) break;
-      const table = targetTables[i];
-      setProgress({ index: i, total: targetTables.length, currentTable: table });
-
-      const estimate = estimates[table] ?? null;
-      if (shouldSkipTableForScan(estimate, threshold)) {
-        appendResult({ table, status: "skipped", reason: "row-threshold" });
-        continue;
+    try {
+      slot.unlisten = await listenDataSearchStream(streamId, {
+        onProgress: ({ index, total, table }) => {
+          if (isActive()) setProgress({ index, total, currentTable: table });
+        },
+        onTable: ({ entry }) => {
+          if (isActive()) appendResult(toResultEntry(entry));
+        },
+        onDone: () => finishScan(slot),
+        onCancelled: () => finishScan(slot),
+        onError: ({ error }) => {
+          if (!isActive()) return;
+          setScanError(error);
+          finishScan(slot);
+        },
+      });
+      if (!isActive()) {
+        // listen の完了を待つ間にキャンセル / アンマウントされた。
+        slot.unlisten();
+        return;
       }
-
-      let columns: TableColumnInfo[];
-      try {
-        columns = await api.describeTable(sessionId, database, table);
-      } catch (e) {
-        if (cancelledRef.current) break;
-        appendResult({ table, status: "skipped", reason: "error", detail: String(e) });
-        continue;
-      }
-      if (cancelledRef.current) break;
-
-      const scanColumns: ScanColumn[] = columns.map((c) => ({ name: c.name, dataType: c.data_type }));
-      const scan = buildTableScanSql(driver, database, table, scanColumns, searchTerm, matchMode);
-      if (!scan) {
-        appendResult({ table, status: "skipped", reason: "no-searchable-columns" });
-        continue;
-      }
-
-      try {
-        const result = await api.runQuery(sessionId, scan.sql, database);
-        if (cancelledRef.current) break;
-        const hits = parseScanRow(scan.columns, result.rows[0] ?? []);
-        if (hits.length > 0) {
-          appendResult({ table, status: "hit", columns: scanColumns, hits });
-        } else {
-          appendResult({ table, status: "no-hit" });
-        }
-      } catch (e) {
-        if (cancelledRef.current) break;
-        appendResult({ table, status: "skipped", reason: "error", detail: String(e) });
-      }
+      await api.dataSearchStream({
+        sessionId,
+        streamId,
+        request: {
+          database,
+          term: term.trim(),
+          mode: matchMode,
+          tables: targetTables,
+          rowThreshold: threshold,
+        },
+      });
+    } catch (e) {
+      if (!isActive()) return;
+      setScanError(String(e));
+      finishScan(slot);
     }
-    setProgress((p) => (p ? { ...p, index: targetTables.length, currentTable: null } : p));
-    setScanning(false);
   };
 
   const handleReset = () => {
+    setScanError(null);
     setResults([]);
     setProgress(null);
   };
@@ -322,6 +360,7 @@ export function DataSearchModal({
           </chakra.div>
         )}
         {meta.kind === "error" && <ErrorNote>{meta.message}</ErrorNote>}
+        {scanError && <ErrorNote>{scanError}</ErrorNote>}
 
         {meta.kind === "ready" && (
           <>

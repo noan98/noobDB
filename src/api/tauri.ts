@@ -7,6 +7,7 @@ import type { ExportColumnMask } from "../components/exportMasking";
 import type { TxIsolation } from "../txOptions";
 import type { HandleSortFilterRequest } from "../components/gridSortFilter";
 import type { IncomingFk } from "../fkNavigation";
+import type { MatchMode } from "../components/dataSearch";
 
 /**
  * A backend error carrying the structured `AppError.kind` discriminant (#683).
@@ -575,6 +576,112 @@ export interface SchemaObject {
   name: string;
   /** 同名衝突を避ける一意識別子 (PostgreSQL の oid 等)。無いドライバ/種別では null。 */
   id: string | null;
+}
+
+/** グローバルオブジェクト検索 (#1261) の検索範囲。 */
+export type ObjectSearchScope = { kind: "current"; database: string } | { kind: "all" };
+
+/** グローバルオブジェクト検索のヒット 1 件。テーブルそのものか、テーブル内のカラムか。 */
+export interface ObjectSearchHit {
+  kind: "table" | "column";
+  database: string;
+  table: string;
+  /** `kind === "column"` のときだけ設定。 */
+  column?: string;
+}
+
+/** Where-used (#1027 / #1261) の検索対象。`column` が null ならテーブル (ビュー) そのもの。 */
+export interface WhereUsedTarget {
+  /** ツリーの「データベース」ノード名 (PostgreSQL はスキーマ)。 */
+  database: string;
+  table: string;
+  column: string | null;
+}
+
+/** 参照の確からしさ。`possible` は「対象テーブルとの結び付きを確認できなかった」候補。 */
+export type ReferenceConfidence = "direct" | "possible";
+
+/** 表示用に 1 行へまとめた該当箇所。`ranges` は `text` 内のオフセット (UTF-16)。 */
+export interface ReferenceLine {
+  /** 1 始まりの行番号。 */
+  line: number;
+  text: string;
+  ranges: [number, number][];
+  /** 長い行の先頭 / 末尾を省略したか (表示側で「…」を付ける)。 */
+  clippedStart: boolean;
+  clippedEnd: boolean;
+}
+
+export interface WhereUsedMatch {
+  confidence: ReferenceConfidence;
+  hitCount: number;
+  lines: ReferenceLine[];
+  source: "object" | "snippet";
+  /** オブジェクト種別。スニペットは "snippet"。 */
+  kind: SchemaObjectKind | "snippet";
+  name: string;
+  /** スキーマオブジェクトの一意識別子 (`get_object_definition` へそのまま渡す)。 */
+  id: string | null;
+  /** スニペットの ID (スニペットのときだけ)。 */
+  snippetId: string | null;
+}
+
+export interface WhereUsedFailure {
+  kind: SchemaObjectKind;
+  name: string;
+  error: string;
+}
+
+export interface WhereUsedReport {
+  matches: WhereUsedMatch[];
+  /** 定義を走査できたオブジェクト数 (スニペットを除く)。 */
+  scannedObjects: number;
+  scannedSnippets: number;
+  /** 定義の取得に失敗したオブジェクト (権限不足など)。 */
+  failed: WhereUsedFailure[];
+  /** 定義本文が空で返ったオブジェクト。 */
+  emptyDefinitions: { kind: SchemaObjectKind; name: string }[];
+  /** キャンセルされ、途中までの結果であること。 */
+  cancelled: boolean;
+}
+
+export interface WhereUsedProgress {
+  done: number;
+  total: number;
+}
+
+/** DB 全体からの値検索 (#748 / #1261) の列 1 つ (名前と生の型名)。 */
+export interface ScanColumn {
+  name: string;
+  /** `TableColumnInfo.data_type` / `Column.type_name` と同じ語彙の生の型名。 */
+  dataType: string;
+}
+
+/** 値検索の走査 1 テーブルぶんの結果。テーブルの指定順に届く。 */
+export type DataSearchEntry =
+  | {
+      status: "hit";
+      table: string;
+      columns: ScanColumn[];
+      hits: { column: string; count: number }[];
+    }
+  | { status: "no-hit"; table: string }
+  | {
+      status: "skipped";
+      table: string;
+      reason: "row-threshold" | "no-searchable-columns" | "error";
+      detail?: string;
+    };
+
+/** `dataSearchStream` の要求。 */
+export interface DataSearchRequest {
+  database: string;
+  term: string;
+  mode: MatchMode;
+  /** 走査するテーブル (この順に結果が届く)。 */
+  tables: string[];
+  /** 概算行数がこれを超えるテーブルは走査しない。 */
+  rowThreshold: number;
 }
 
 /** ルーチン引数の入出力モード (#1003)。`table` は PostgreSQL の RETURNS TABLE 出力列。 */
@@ -2194,6 +2301,71 @@ export const api = {
     invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>
       parseResponse(schemas.schemaObjectArray, r, "list_schema_objects"),
     ),
+  /**
+   * スキーマ横断のオブジェクト検索 (#1261)。テーブル名・カラム名を大小無視の部分一致で
+   * スコアリングし、上位 `limit` 件だけを返す。全 DB 分の索引は Rust 側の Schema Cache に
+   * 保持され、`query` が空なら結果は空で索引の事前構築 (ウォームアップ) だけを行う。
+   */
+  searchSchemaObjects: (params: {
+    sessionId: string;
+    scope: ObjectSearchScope;
+    query: string;
+    limit: number;
+  }) =>
+    invoke<ObjectSearchHit[]>("search_schema_objects", {
+      sessionId: params.sessionId,
+      scope: params.scope,
+      query: params.query,
+      limit: params.limit,
+    }).then((r) => parseResponse(schemas.objectSearchHitArray, r, "search_schema_objects")),
+  /**
+   * Where-used (#1027 / #1261): ビュー・ルーチン・トリガーの定義本文とスニペットを Rust 側で
+   * 走査し、`target` への参照位置だけを {@link listenWhereUsedStream} の Channel で返す。
+   * 進捗とキャンセル (`cancelStream(streamId)`、途中結果つき) に対応する。
+   */
+  findWhereUsed: (params: {
+    sessionId: string;
+    streamId: string;
+    database: string;
+    target: WhereUsedTarget;
+  }) => {
+    const channel = whereUsedChannels.get(params.streamId);
+    if (!channel) {
+      throw new Error(
+        `findWhereUsed: listenWhereUsedStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+      );
+    }
+    return invoke<void>("find_where_used", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      database: params.database,
+      target: params.target,
+      onEvent: channel,
+    });
+  },
+  /**
+   * DB 全体からの値検索 (#748 / #1261)。走査 SQL の生成と並列実行は Rust 側で行い、進捗と
+   * テーブルごとの結果を {@link listenDataSearchStream} の Channel へ逐次送る。読み取り専用
+   * ガードを通る SELECT だけを発行し、`cancelStream(streamId)` で中断できる。
+   */
+  dataSearchStream: (params: {
+    sessionId: string;
+    streamId: string;
+    request: DataSearchRequest;
+  }) => {
+    const channel = dataSearchChannels.get(params.streamId);
+    if (!channel) {
+      throw new Error(
+        `dataSearchStream: listenDataSearchStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+      );
+    }
+    return invoke<void>("data_search_stream", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      request: params.request,
+      onEvent: channel,
+    });
+  },
   /** スキーマオブジェクトの定義 (DDL) を取得する。`id` は同名衝突を避ける一意識別子。 */
   getObjectDefinition: (
     sessionId: string,
@@ -3714,6 +3886,8 @@ async function registerListeners(
 const queryStreamChannels = new Map<string, Channel<unknown>>();
 const previewStreamChannels = new Map<string, Channel<unknown>>();
 const batchStreamChannels = new Map<string, Channel<unknown>>();
+const whereUsedChannels = new Map<string, Channel<unknown>>();
+const dataSearchChannels = new Map<string, Channel<unknown>>();
 
 /** Channel から届く生メッセージの最小形。`kind` で分岐する。 */
 type RawStreamMessage = { kind: string } & Record<string, unknown>;
@@ -3976,6 +4150,147 @@ export async function listenBatchStream(
     channel.onmessage = () => {};
     if (batchStreamChannels.get(streamId) === channel) {
       batchStreamChannels.delete(streamId);
+    }
+  };
+}
+
+export interface WhereUsedStreamHandlers {
+  onProgress?: (event: WhereUsedProgress) => void;
+  onDone?: (event: { report: WhereUsedReport }) => void;
+  onError?: (event: { error: string; connectionLost: boolean }) => void;
+  onCancelled?: (event: { report: WhereUsedReport }) => void;
+}
+
+/**
+ * Where-used (`findWhereUsed`, #1261) の Channel を `streamId` 向けに作って購読する。
+ * 戻り値は `listenQueryStream` と同じく、ハンドラを外す関数。
+ */
+export async function listenWhereUsedStream(
+  streamId: string,
+  handlers: WhereUsedStreamHandlers,
+): Promise<UnlistenFn> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "progress": {
+        const m = parseChannelMessage<WhereUsedProgress>(
+          schemas.whereUsedProgressMessage,
+          msg,
+          "whereUsedProgressMessage",
+        );
+        handlers.onProgress?.({ done: m.done, total: m.total });
+        break;
+      }
+      case "done":
+        handlers.onDone?.(
+          parseChannelMessage<{ report: WhereUsedReport }>(
+            schemas.whereUsedDoneMessage,
+            msg,
+            "whereUsedDoneMessage",
+          ),
+        );
+        break;
+      case "error":
+        handlers.onError?.(
+          parseChannelMessage<{ error: string; connectionLost: boolean }>(
+            schemas.whereUsedErrorMessage,
+            msg,
+            "whereUsedErrorMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<{ report: WhereUsedReport }>(
+            schemas.whereUsedCancelledMessage,
+            msg,
+            "whereUsedCancelledMessage",
+          ),
+        );
+        break;
+      default:
+        break;
+    }
+  };
+  whereUsedChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (whereUsedChannels.get(streamId) === channel) {
+      whereUsedChannels.delete(streamId);
+    }
+  };
+}
+
+export interface DataSearchStreamHandlers {
+  /** テーブルの走査を開始した (`index` は 0 始まりの通し番号)。 */
+  onProgress?: (event: { index: number; total: number; table: string }) => void;
+  onTable?: (event: { entry: DataSearchEntry }) => void;
+  onDone?: () => void;
+  onError?: (event: { error: string; connectionLost: boolean }) => void;
+  onCancelled?: (event: ChannelCancelledMessage) => void;
+}
+
+/**
+ * 値検索 (`dataSearchStream`, #1261) の Channel を `streamId` 向けに作って購読する。
+ * 戻り値は `listenQueryStream` と同じく、ハンドラを外す関数。
+ */
+export async function listenDataSearchStream(
+  streamId: string,
+  handlers: DataSearchStreamHandlers,
+): Promise<UnlistenFn> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "progress":
+        handlers.onProgress?.(
+          parseChannelMessage<{ index: number; total: number; table: string }>(
+            schemas.dataSearchProgressMessage,
+            msg,
+            "dataSearchProgressMessage",
+          ),
+        );
+        break;
+      case "table":
+        handlers.onTable?.(
+          parseChannelMessage<{ entry: DataSearchEntry }>(
+            schemas.dataSearchTableMessage,
+            msg,
+            "dataSearchTableMessage",
+          ),
+        );
+        break;
+      case "done":
+        handlers.onDone?.();
+        break;
+      case "error":
+        handlers.onError?.(
+          parseChannelMessage<{ error: string; connectionLost: boolean }>(
+            schemas.dataSearchErrorMessage,
+            msg,
+            "dataSearchErrorMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<ChannelCancelledMessage>(
+            schemas.channelCancelledMessage,
+            msg,
+            "channelCancelledMessage",
+          ),
+        );
+        break;
+      default:
+        break;
+    }
+  };
+  dataSearchChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (dataSearchChannels.get(streamId) === channel) {
+      dataSearchChannels.delete(streamId);
     }
   };
 }

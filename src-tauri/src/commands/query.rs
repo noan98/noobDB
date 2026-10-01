@@ -1730,7 +1730,7 @@ pub async fn cancel_stream(
                     // `run_query_stream` / `preview_query_stream`), so this arm is
                     // unreachable in practice; keep it exhaustive rather than
                     // panicking on a future refactor that drops the callback.
-                    StreamKind::Query | StreamKind::Preview => None,
+                    StreamKind::Query | StreamKind::Preview | StreamKind::Search => None,
                 };
                 if let Some(event) = event {
                     if let Err(e) = app.emit(

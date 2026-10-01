@@ -3102,6 +3102,7 @@ dependencies = [
  "keyring",
  "proptest",
  "rand 0.10.3",
+ "regex",
  "russh",
  "rust_decimal",
  "rust_xlsxwriter",

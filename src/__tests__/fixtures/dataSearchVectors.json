@@ -1,0 +1,5249 @@
+{
+  "description": "DB 全体からの値検索 (#748 / #1261) の走査 SQL 生成の実装横断ゴールデンベクタ。移植前の TS 実装 (src/__tests__/oracles/dataSearchOracle.ts) の出力を期待値として固定し、Rust の db::data_search (tests/data_search_golden.rs) と、フロントに残る buildColumnPredicate (dataSearchGolden.test.ts) の両方を同じベクタに通す。`classify` は型名 → CellKind / 走査対象、`predicates` は列ごとの述語、`numericTerms` は数値語判定、`scanSql` はテーブル単位の SUM(CASE) クエリ、`skip` は概算行数のしきい値判定、`parseRow` は結果 1 行 → ヒット件数。新しい境界ケースはここへ追記する。",
+  "classify": [
+    {
+      "dataType": "VARCHAR",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "varchar(255)",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "TEXT",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "int",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "INT UNSIGNED",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "bigint unsigned",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "int(11)",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "BIGINT",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "tinyint(1)",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "decimal",
+      "kind": "decimal",
+      "target": "numeric"
+    },
+    {
+      "dataType": "DECIMAL",
+      "kind": "decimal",
+      "target": "numeric"
+    },
+    {
+      "dataType": "numeric(10,2)",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "NUMERIC",
+      "kind": "decimal",
+      "target": "numeric"
+    },
+    {
+      "dataType": "bool",
+      "kind": "bool",
+      "target": "excluded"
+    },
+    {
+      "dataType": "BOOLEAN",
+      "kind": "bool",
+      "target": "excluded"
+    },
+    {
+      "dataType": "json",
+      "kind": "json",
+      "target": "text"
+    },
+    {
+      "dataType": "JSONB",
+      "kind": "json",
+      "target": "text"
+    },
+    {
+      "dataType": "enum",
+      "kind": "enum",
+      "target": "text"
+    },
+    {
+      "dataType": "SET",
+      "kind": "enum",
+      "target": "text"
+    },
+    {
+      "dataType": "blob",
+      "kind": "binary",
+      "target": "excluded"
+    },
+    {
+      "dataType": "LONGBLOB",
+      "kind": "binary",
+      "target": "excluded"
+    },
+    {
+      "dataType": "varbinary",
+      "kind": "binary",
+      "target": "excluded"
+    },
+    {
+      "dataType": "timestamp",
+      "kind": "date",
+      "target": "excluded"
+    },
+    {
+      "dataType": "timestamptz",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "datetime",
+      "kind": "date",
+      "target": "excluded"
+    },
+    {
+      "dataType": "DATE",
+      "kind": "date",
+      "target": "excluded"
+    },
+    {
+      "dataType": "time",
+      "kind": "time",
+      "target": "excluded"
+    },
+    {
+      "dataType": "uuid",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "year",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "",
+      "kind": "string",
+      "target": "text"
+    },
+    {
+      "dataType": "Double",
+      "kind": "number",
+      "target": "numeric"
+    }
+  ],
+  "predicates": [
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "`name` = 'Alice'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "`name` LIKE '%Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "`name` LIKE 'Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "`name` = ''"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "`name` LIKE '%%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "`name` LIKE '%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "`name` = '50%_off'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "`name` LIKE '%50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "`name` LIKE '50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "`name` = 'a\\\\b'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "`name` LIKE '%a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "`name` LIKE 'a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "`name` = 'it''s'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "`name` LIKE '%it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "`name` LIKE 'it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "`name` = '42'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "`name` LIKE '%42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "`name` LIKE '42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "ali",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "42",
+      "mode": "contains",
+      "expected": "`age` = 42"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "-3.14",
+      "mode": "contains",
+      "expected": "`age` = -3.14"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e10",
+      "mode": "contains",
+      "expected": "`age` = 10000000000"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "007",
+      "mode": "contains",
+      "expected": "`age` = 7"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e21",
+      "mode": "contains",
+      "expected": "`age` = 1e+21"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "0.0000001",
+      "mode": "contains",
+      "expected": "`age` = 1e-7"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1.5e-7",
+      "mode": "contains",
+      "expected": "`age` = 1.5e-7"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "123456789012345678901",
+      "mode": "contains",
+      "expected": "`age` = 123456789012345680000"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": " 7 ",
+      "mode": "contains",
+      "expected": "`age` = 7"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "abc",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1.",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e+5",
+      "mode": "contains",
+      "expected": "`age` = 100000"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "-0",
+      "mode": "contains",
+      "expected": "`age` = 0"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "0.1e1",
+      "mode": "contains",
+      "expected": "`age` = 1"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1E5",
+      "mode": "contains",
+      "expected": "`age` = 100000"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "99999999999999999999999",
+      "mode": "contains",
+      "expected": "`age` = 1e+23"
+    },
+    {
+      "driver": "mysql",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e400",
+      "mode": "contains",
+      "expected": "`age` = Infinity"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "ali",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "42",
+      "mode": "contains",
+      "expected": "`price` = 42"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "-3.14",
+      "mode": "contains",
+      "expected": "`price` = -3.14"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e10",
+      "mode": "contains",
+      "expected": "`price` = 10000000000"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "007",
+      "mode": "contains",
+      "expected": "`price` = 7"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e21",
+      "mode": "contains",
+      "expected": "`price` = 1e+21"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "0.0000001",
+      "mode": "contains",
+      "expected": "`price` = 1e-7"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1.5e-7",
+      "mode": "contains",
+      "expected": "`price` = 1.5e-7"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "123456789012345678901",
+      "mode": "contains",
+      "expected": "`price` = 123456789012345680000"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": " 7 ",
+      "mode": "contains",
+      "expected": "`price` = 7"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "abc",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1.",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e+5",
+      "mode": "contains",
+      "expected": "`price` = 100000"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "-0",
+      "mode": "contains",
+      "expected": "`price` = 0"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "0.1e1",
+      "mode": "contains",
+      "expected": "`price` = 1"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1E5",
+      "mode": "contains",
+      "expected": "`price` = 100000"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "99999999999999999999999",
+      "mode": "contains",
+      "expected": "`price` = 1e+23"
+    },
+    {
+      "driver": "mysql",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e400",
+      "mode": "contains",
+      "expected": "`price` = Infinity"
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "`data` = 'Alice'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "`data` LIKE '%Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "`data` LIKE 'Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "exact",
+      "expected": "`data` = ''"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "contains",
+      "expected": "`data` LIKE '%%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "prefix",
+      "expected": "`data` LIKE '%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "`data` = '50%_off'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "`data` LIKE '%50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "`data` LIKE '50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "`data` = 'a\\\\b'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "`data` LIKE '%a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "`data` LIKE 'a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "`data` = 'it''s'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "`data` LIKE '%it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "`data` LIKE 'it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "exact",
+      "expected": "`data` = '42'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "contains",
+      "expected": "`data` LIKE '%42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "`data` LIKE '42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "`we``ird` = 'Alice'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "`we``ird` LIKE '%Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "`we``ird` LIKE 'Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "`we``ird` = ''"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "`we``ird` LIKE '%%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "`we``ird` LIKE '%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "`we``ird` = '50%_off'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "`we``ird` LIKE '%50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "`we``ird` LIKE '50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "`we``ird` = 'a\\\\b'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "`we``ird` LIKE '%a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "`we``ird` LIKE 'a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "`we``ird` = 'it''s'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "`we``ird` LIKE '%it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "`we``ird` LIKE 'it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "`we``ird` = '42'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "`we``ird` LIKE '%42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "`we``ird` LIKE '42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "`we\"ird` = 'Alice'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "`we\"ird` LIKE '%Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "`we\"ird` LIKE 'Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "`we\"ird` = ''"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "`we\"ird` LIKE '%%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "`we\"ird` LIKE '%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "`we\"ird` = '50%_off'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "`we\"ird` LIKE '%50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "`we\"ird` LIKE '50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "`we\"ird` = 'a\\\\b'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "`we\"ird` LIKE '%a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "`we\"ird` LIKE 'a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "`we\"ird` = 'it''s'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "`we\"ird` LIKE '%it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "`we\"ird` LIKE 'it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "`we\"ird` = '42'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "`we\"ird` LIKE '%42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "`we\"ird` LIKE '42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "`back\\slash` = 'Alice'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "`back\\slash` LIKE '%Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "`back\\slash` LIKE 'Alice%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "exact",
+      "expected": "`back\\slash` = ''"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "contains",
+      "expected": "`back\\slash` LIKE '%%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "prefix",
+      "expected": "`back\\slash` LIKE '%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "`back\\slash` = '50%_off'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "`back\\slash` LIKE '%50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "`back\\slash` LIKE '50\\\\%\\\\_off%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "`back\\slash` = 'a\\\\b'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "`back\\slash` LIKE '%a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "`back\\slash` LIKE 'a\\\\\\\\b%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "`back\\slash` = 'it''s'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "`back\\slash` LIKE '%it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "`back\\slash` LIKE 'it''s%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "exact",
+      "expected": "`back\\slash` = '42'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "contains",
+      "expected": "`back\\slash` LIKE '%42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "`back\\slash` LIKE '42%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"name\" = 'Alice'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"name\" = ''"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"name\" = '50%_off'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"name\" = 'a\\b'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"name\" = 'it''s'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"name\" = '42'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "ali",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"age\" = 42"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "-3.14",
+      "mode": "contains",
+      "expected": "\"age\" = -3.14"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e10",
+      "mode": "contains",
+      "expected": "\"age\" = 10000000000"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "007",
+      "mode": "contains",
+      "expected": "\"age\" = 7"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e21",
+      "mode": "contains",
+      "expected": "\"age\" = 1e+21"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "0.0000001",
+      "mode": "contains",
+      "expected": "\"age\" = 1e-7"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1.5e-7",
+      "mode": "contains",
+      "expected": "\"age\" = 1.5e-7"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "123456789012345678901",
+      "mode": "contains",
+      "expected": "\"age\" = 123456789012345680000"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": " 7 ",
+      "mode": "contains",
+      "expected": "\"age\" = 7"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "abc",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1.",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e+5",
+      "mode": "contains",
+      "expected": "\"age\" = 100000"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "-0",
+      "mode": "contains",
+      "expected": "\"age\" = 0"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "0.1e1",
+      "mode": "contains",
+      "expected": "\"age\" = 1"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1E5",
+      "mode": "contains",
+      "expected": "\"age\" = 100000"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "99999999999999999999999",
+      "mode": "contains",
+      "expected": "\"age\" = 1e+23"
+    },
+    {
+      "driver": "postgres",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e400",
+      "mode": "contains",
+      "expected": "\"age\" = Infinity"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "ali",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"price\" = 42"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "-3.14",
+      "mode": "contains",
+      "expected": "\"price\" = -3.14"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e10",
+      "mode": "contains",
+      "expected": "\"price\" = 10000000000"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "007",
+      "mode": "contains",
+      "expected": "\"price\" = 7"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e21",
+      "mode": "contains",
+      "expected": "\"price\" = 1e+21"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "0.0000001",
+      "mode": "contains",
+      "expected": "\"price\" = 1e-7"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1.5e-7",
+      "mode": "contains",
+      "expected": "\"price\" = 1.5e-7"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "123456789012345678901",
+      "mode": "contains",
+      "expected": "\"price\" = 123456789012345680000"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": " 7 ",
+      "mode": "contains",
+      "expected": "\"price\" = 7"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "abc",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1.",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e+5",
+      "mode": "contains",
+      "expected": "\"price\" = 100000"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "-0",
+      "mode": "contains",
+      "expected": "\"price\" = 0"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "0.1e1",
+      "mode": "contains",
+      "expected": "\"price\" = 1"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1E5",
+      "mode": "contains",
+      "expected": "\"price\" = 100000"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "99999999999999999999999",
+      "mode": "contains",
+      "expected": "\"price\" = 1e+23"
+    },
+    {
+      "driver": "postgres",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e400",
+      "mode": "contains",
+      "expected": "\"price\" = Infinity"
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"data\" = 'Alice'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"data\" = ''"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"data\" = '50%_off'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"data\" = 'a\\b'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"data\" = 'it''s'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"data\" = '42'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"we`ird\" = 'Alice'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"we`ird\" = ''"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"we`ird\" = '50%_off'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"we`ird\" = 'a\\b'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"we`ird\" = 'it''s'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"we`ird\" = '42'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = 'Alice'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = ''"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = '50%_off'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = 'a\\b'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = 'it''s'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = '42'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = 'Alice'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = ''"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = '50%_off'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = 'a\\b'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = 'it''s'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = '42'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"name\" = 'Alice'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"name\" = ''"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"name\" = '50%_off'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"name\" = 'a\\b'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"name\" = 'it''s'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"name\" = '42'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"name\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "name",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"name\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "ali",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"age\" = 42"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "-3.14",
+      "mode": "contains",
+      "expected": "\"age\" = -3.14"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e10",
+      "mode": "contains",
+      "expected": "\"age\" = 10000000000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "007",
+      "mode": "contains",
+      "expected": "\"age\" = 7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e21",
+      "mode": "contains",
+      "expected": "\"age\" = 1e+21"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "0.0000001",
+      "mode": "contains",
+      "expected": "\"age\" = 1e-7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1.5e-7",
+      "mode": "contains",
+      "expected": "\"age\" = 1.5e-7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "123456789012345678901",
+      "mode": "contains",
+      "expected": "\"age\" = 123456789012345680000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": " 7 ",
+      "mode": "contains",
+      "expected": "\"age\" = 7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "abc",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1.",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e+5",
+      "mode": "contains",
+      "expected": "\"age\" = 100000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "-0",
+      "mode": "contains",
+      "expected": "\"age\" = 0"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "0.1e1",
+      "mode": "contains",
+      "expected": "\"age\" = 1"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1E5",
+      "mode": "contains",
+      "expected": "\"age\" = 100000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "99999999999999999999999",
+      "mode": "contains",
+      "expected": "\"age\" = 1e+23"
+    },
+    {
+      "driver": "sqlite",
+      "column": "age",
+      "dataType": "INT",
+      "term": "1e400",
+      "mode": "contains",
+      "expected": "\"age\" = Infinity"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "ali",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"price\" = 42"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "-3.14",
+      "mode": "contains",
+      "expected": "\"price\" = -3.14"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e10",
+      "mode": "contains",
+      "expected": "\"price\" = 10000000000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "007",
+      "mode": "contains",
+      "expected": "\"price\" = 7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e21",
+      "mode": "contains",
+      "expected": "\"price\" = 1e+21"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "0.0000001",
+      "mode": "contains",
+      "expected": "\"price\" = 1e-7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1.5e-7",
+      "mode": "contains",
+      "expected": "\"price\" = 1.5e-7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "123456789012345678901",
+      "mode": "contains",
+      "expected": "\"price\" = 123456789012345680000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": " 7 ",
+      "mode": "contains",
+      "expected": "\"price\" = 7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "abc",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1.",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e+5",
+      "mode": "contains",
+      "expected": "\"price\" = 100000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "-0",
+      "mode": "contains",
+      "expected": "\"price\" = 0"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "0.1e1",
+      "mode": "contains",
+      "expected": "\"price\" = 1"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1E5",
+      "mode": "contains",
+      "expected": "\"price\" = 100000"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "99999999999999999999999",
+      "mode": "contains",
+      "expected": "\"price\" = 1e+23"
+    },
+    {
+      "driver": "sqlite",
+      "column": "price",
+      "dataType": "DECIMAL",
+      "term": "1e400",
+      "mode": "contains",
+      "expected": "\"price\" = Infinity"
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "photo",
+      "dataType": "BLOB",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "active",
+      "dataType": "BOOL",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "TIMESTAMP",
+      "term": "42",
+      "mode": "prefix",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"data\" = 'Alice'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"data\" = ''"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"data\" = '50%_off'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"data\" = 'a\\b'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"data\" = 'it''s'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"data\" = '42'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"data\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "data",
+      "dataType": "JSON",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"data\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"we`ird\" = 'Alice'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"we`ird\" = ''"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"we`ird\" = '50%_off'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"we`ird\" = 'a\\b'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"we`ird\" = 'it''s'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"we`ird\" = '42'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"we`ird\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we`ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"we`ird\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = 'Alice'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = ''"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = '50%_off'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = 'a\\b'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = 'it''s'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"we\"\"ird\" = '42'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"we\"\"ird\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "we\"ird",
+      "dataType": "VARCHAR",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"we\"\"ird\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = 'Alice'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "Alice",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE 'Alice%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = ''"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE '%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = '50%_off'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "50%_off",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = 'a\\b'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "a\\b",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE 'a\\\\b%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = 'it''s'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "it's",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE 'it''s%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "exact",
+      "expected": "\"back\\slash\" = '42'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "contains",
+      "expected": "\"back\\slash\" LIKE '%42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "back\\slash",
+      "dataType": "TEXT",
+      "term": "42",
+      "mode": "prefix",
+      "expected": "\"back\\slash\" LIKE '42%' ESCAPE '\\'"
+    }
+  ],
+  "numericTerms": [
+    {
+      "term": "Alice",
+      "expected": false
+    },
+    {
+      "term": "ali",
+      "expected": false
+    },
+    {
+      "term": "",
+      "expected": false
+    },
+    {
+      "term": "50%_off",
+      "expected": false
+    },
+    {
+      "term": "a\\b",
+      "expected": false
+    },
+    {
+      "term": "it's",
+      "expected": false
+    },
+    {
+      "term": "42",
+      "expected": true
+    },
+    {
+      "term": "-3.14",
+      "expected": true
+    },
+    {
+      "term": "1e10",
+      "expected": true
+    },
+    {
+      "term": "007",
+      "expected": true
+    },
+    {
+      "term": "1e21",
+      "expected": true
+    },
+    {
+      "term": "0.0000001",
+      "expected": true
+    },
+    {
+      "term": "1.5e-7",
+      "expected": true
+    },
+    {
+      "term": "123456789012345678901",
+      "expected": true
+    },
+    {
+      "term": " 7 ",
+      "expected": true
+    },
+    {
+      "term": "abc",
+      "expected": false
+    },
+    {
+      "term": "1.",
+      "expected": false
+    },
+    {
+      "term": "1e+5",
+      "expected": true
+    },
+    {
+      "term": "-0",
+      "expected": true
+    },
+    {
+      "term": "0.1e1",
+      "expected": true
+    },
+    {
+      "term": "1E5",
+      "expected": true
+    },
+    {
+      "term": "99999999999999999999999",
+      "expected": true
+    },
+    {
+      "term": "1e400",
+      "expected": true
+    }
+  ],
+  "scanSql": [
+    {
+      "driver": "mysql",
+      "database": "shop",
+      "table": "users",
+      "columns": [
+        {
+          "name": "name",
+          "dataType": "VARCHAR"
+        },
+        {
+          "name": "age",
+          "dataType": "INT"
+        },
+        {
+          "name": "photo",
+          "dataType": "BLOB"
+        }
+      ],
+      "term": "ali",
+      "mode": "contains",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN `name` LIKE '%ali%' ESCAPE '\\\\' THEN 1 ELSE 0 END) AS `name` FROM `shop`.`users`",
+        "columns": [
+          "name"
+        ]
+      }
+    },
+    {
+      "driver": "mysql",
+      "database": "shop",
+      "table": "users",
+      "columns": [
+        {
+          "name": "name",
+          "dataType": "VARCHAR"
+        },
+        {
+          "name": "age",
+          "dataType": "INT"
+        },
+        {
+          "name": "photo",
+          "dataType": "BLOB"
+        }
+      ],
+      "term": "42",
+      "mode": "contains",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN `name` LIKE '%42%' ESCAPE '\\\\' THEN 1 ELSE 0 END) AS `name`, SUM(CASE WHEN `age` = 42 THEN 1 ELSE 0 END) AS `age` FROM `shop`.`users`",
+        "columns": [
+          "name",
+          "age"
+        ]
+      }
+    },
+    {
+      "driver": "mysql",
+      "database": "shop",
+      "table": "assets",
+      "columns": [
+        {
+          "name": "photo",
+          "dataType": "BLOB"
+        }
+      ],
+      "term": "abc",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "database": "main",
+      "table": "users",
+      "columns": [
+        {
+          "name": "name",
+          "dataType": "VARCHAR"
+        },
+        {
+          "name": "age",
+          "dataType": "INT"
+        },
+        {
+          "name": "photo",
+          "dataType": "BLOB"
+        }
+      ],
+      "term": "ali",
+      "mode": "contains",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN \"name\" LIKE '%ali%' ESCAPE '\\' THEN 1 ELSE 0 END) AS \"name\" FROM \"users\"",
+        "columns": [
+          "name"
+        ]
+      }
+    },
+    {
+      "driver": "postgres",
+      "database": "public",
+      "table": "users",
+      "columns": [
+        {
+          "name": "name",
+          "dataType": "VARCHAR"
+        },
+        {
+          "name": "age",
+          "dataType": "INT"
+        },
+        {
+          "name": "photo",
+          "dataType": "BLOB"
+        }
+      ],
+      "term": "ali",
+      "mode": "prefix",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN \"name\" LIKE 'ali%' ESCAPE '\\' THEN 1 ELSE 0 END) AS \"name\" FROM \"public\".\"users\"",
+        "columns": [
+          "name"
+        ]
+      }
+    },
+    {
+      "driver": "postgres",
+      "database": "public",
+      "table": "we\"ird table",
+      "columns": [
+        {
+          "name": "a\"b",
+          "dataType": "TEXT"
+        },
+        {
+          "name": "c",
+          "dataType": "int"
+        }
+      ],
+      "term": "42",
+      "mode": "exact",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN \"a\"\"b\" = '42' THEN 1 ELSE 0 END) AS \"a\"\"b\", SUM(CASE WHEN \"c\" = 42 THEN 1 ELSE 0 END) AS \"c\" FROM \"public\".\"we\"\"ird table\"",
+        "columns": [
+          "a\"b",
+          "c"
+        ]
+      }
+    },
+    {
+      "driver": "mysql",
+      "database": "we`ird db",
+      "table": "we`ird",
+      "columns": [
+        {
+          "name": "a`b",
+          "dataType": "TEXT"
+        }
+      ],
+      "term": "it's 50%",
+      "mode": "exact",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN `a``b` = 'it''s 50%' THEN 1 ELSE 0 END) AS `a``b` FROM `we``ird db`.`we``ird`",
+        "columns": [
+          "a`b"
+        ]
+      }
+    },
+    {
+      "driver": "mysql",
+      "database": null,
+      "table": "users",
+      "columns": [
+        {
+          "name": "name",
+          "dataType": "VARCHAR"
+        },
+        {
+          "name": "age",
+          "dataType": "INT"
+        },
+        {
+          "name": "photo",
+          "dataType": "BLOB"
+        }
+      ],
+      "term": "ali",
+      "mode": "contains",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN `name` LIKE '%ali%' ESCAPE '\\\\' THEN 1 ELSE 0 END) AS `name` FROM `users`",
+        "columns": [
+          "name"
+        ]
+      }
+    },
+    {
+      "driver": "mysql",
+      "database": "",
+      "table": "users",
+      "columns": [
+        {
+          "name": "name",
+          "dataType": "VARCHAR"
+        },
+        {
+          "name": "age",
+          "dataType": "INT"
+        },
+        {
+          "name": "photo",
+          "dataType": "BLOB"
+        }
+      ],
+      "term": "ali",
+      "mode": "contains",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN `name` LIKE '%ali%' ESCAPE '\\\\' THEN 1 ELSE 0 END) AS `name` FROM `users`",
+        "columns": [
+          "name"
+        ]
+      }
+    },
+    {
+      "driver": "postgres",
+      "database": "public",
+      "table": "empty",
+      "columns": [],
+      "term": "ali",
+      "mode": "contains",
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "database": "shop",
+      "table": "t",
+      "columns": [
+        {
+          "name": "price",
+          "dataType": "decimal"
+        },
+        {
+          "name": "d",
+          "dataType": "json"
+        },
+        {
+          "name": "e",
+          "dataType": "enum"
+        }
+      ],
+      "term": "1e21",
+      "mode": "contains",
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN `price` = 1e+21 THEN 1 ELSE 0 END) AS `price`, SUM(CASE WHEN `d` LIKE '%1e21%' ESCAPE '\\\\' THEN 1 ELSE 0 END) AS `d`, SUM(CASE WHEN `e` LIKE '%1e21%' ESCAPE '\\\\' THEN 1 ELSE 0 END) AS `e` FROM `shop`.`t`",
+        "columns": [
+          "price",
+          "d",
+          "e"
+        ]
+      }
+    }
+  ],
+  "skip": [
+    {
+      "estimate": null,
+      "threshold": 500000,
+      "expected": false
+    },
+    {
+      "estimate": 1000000,
+      "threshold": 500000,
+      "expected": true
+    },
+    {
+      "estimate": 500000,
+      "threshold": 500000,
+      "expected": false
+    },
+    {
+      "estimate": 10,
+      "threshold": 500000,
+      "expected": false
+    },
+    {
+      "estimate": 0,
+      "threshold": 0,
+      "expected": false
+    },
+    {
+      "estimate": 1,
+      "threshold": 0,
+      "expected": true
+    },
+    {
+      "estimate": null,
+      "threshold": 1,
+      "expected": false
+    }
+  ],
+  "parseRow": [
+    {
+      "columns": [
+        "name",
+        "age"
+      ],
+      "row": [
+        3,
+        0
+      ],
+      "expected": [
+        {
+          "column": "name",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "columns": [
+        "name"
+      ],
+      "row": [
+        null
+      ],
+      "expected": []
+    },
+    {
+      "columns": [
+        "name"
+      ],
+      "row": [
+        "5"
+      ],
+      "expected": [
+        {
+          "column": "name",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "columns": [
+        "a",
+        "b",
+        "c"
+      ],
+      "row": [
+        1
+      ],
+      "expected": [
+        {
+          "column": "a",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "columns": [
+        "a",
+        "b"
+      ],
+      "row": [
+        true,
+        false
+      ],
+      "expected": [
+        {
+          "column": "a",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "columns": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "row": [
+        "abc",
+        "",
+        "  5 ",
+        "1e3"
+      ],
+      "expected": [
+        {
+          "column": "c",
+          "count": 5
+        },
+        {
+          "column": "d",
+          "count": 1000
+        }
+      ]
+    },
+    {
+      "columns": [
+        "a",
+        "b"
+      ],
+      "row": [
+        -2,
+        0.5
+      ],
+      "expected": [
+        {
+          "column": "b",
+          "count": 0.5
+        }
+      ]
+    },
+    {
+      "columns": [
+        "a"
+      ],
+      "row": [
+        "2.5"
+      ],
+      "expected": [
+        {
+          "column": "a",
+          "count": 2.5
+        }
+      ]
+    },
+    {
+      "columns": [
+        "a"
+      ],
+      "row": [
+        "Infinity"
+      ],
+      "expected": []
+    }
+  ]
+}

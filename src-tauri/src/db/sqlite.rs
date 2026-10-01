@@ -1117,6 +1117,26 @@ impl SqliteConn {
             .collect())
     }
 
+    /// 全ビュー / トリガーの定義本文 (`sqlite_master.sql`) を 1 回の問い合わせで返す
+    /// (#1261 Where-used)。キーは `"<kind>:<name>"`。`object_definition` が引く
+    /// 列と同じなので本文は一致する。
+    pub async fn definitions_bulk(&self) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT type, name, sql FROM sqlite_master WHERE type IN ('view','trigger')",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = std::collections::HashMap::with_capacity(rows.len());
+        for r in &rows {
+            let kind: String = r.try_get("type")?;
+            let name: String = r.try_get("name")?;
+            if let Some(sql) = r.try_get::<Option<String>, _>("sql")? {
+                out.insert(format!("{kind}:{name}"), sql);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn object_definition(&self, _db: &str, kind: &str, name: &str) -> Result<String> {
         if kind == "table" {
             return self.table_definition(name).await;

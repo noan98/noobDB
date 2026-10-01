@@ -235,7 +235,7 @@ pub async fn list_table_comments(
 /// `database` の全テーブルの列メタデータを 1 回の問い合わせで取得し、テーブル
 /// 単位の `columns` キャッシュも同時に埋める (#1255)。取得は常にドライバへ
 /// 直接行う (ユーザ操作で開く画面が最新を見るため)。
-pub(super) async fn fetch_columns_bulk(
+pub(crate) async fn fetch_columns_bulk(
     session: &Session,
     database: &str,
 ) -> Result<Vec<TableColumns>> {

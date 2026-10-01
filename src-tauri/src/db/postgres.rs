@@ -1483,6 +1483,52 @@ impl PostgresConn {
         })
     }
 
+    /// `schema` の全ビュー / マテビュー / ルーチン / トリガーの定義本文を 1 回の問い合わせで
+    /// 返す (#1261 Where-used)。キーは [`object_definition`](Self::object_definition) と同じ
+    /// 関数で得た本文で、ビュー系は `"<kind>:<name>"`、ルーチン・トリガーは oid の
+    /// `"id:<oid>"`。集約関数は `pg_get_functiondef` が例外を投げて問い合わせ全体を
+    /// 壊すので NULL にして除く (呼び出し側が個別取得にフォールバックし、従来どおりの
+    /// エラーを `failed` に残す)。
+    pub async fn definitions_bulk(
+        &self,
+        schema: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"
+            SELECT 'view:' || v.viewname AS k,
+                   pg_get_viewdef(format('%I.%I', v.schemaname, v.viewname)::regclass, true) AS def
+              FROM pg_views v WHERE v.schemaname = $1
+            UNION ALL
+            SELECT 'materialized_view:' || m.matviewname,
+                   pg_get_viewdef(format('%I.%I', m.schemaname, m.matviewname)::regclass, true)
+              FROM pg_matviews m WHERE m.schemaname = $1
+            UNION ALL
+            SELECT 'id:' || p.oid::text,
+                   CASE WHEN p.prokind = 'a' THEN NULL ELSE pg_get_functiondef(p.oid) END
+              FROM pg_proc p
+              JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = $1
+            UNION ALL
+            SELECT 'id:' || t.oid::text, pg_get_triggerdef(t.oid)
+              FROM pg_trigger t
+              JOIN pg_class c ON c.oid = t.tgrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND NOT t.tgisinternal
+            "#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = std::collections::HashMap::with_capacity(rows.len());
+        for r in &rows {
+            let key: String = r.try_get(0)?;
+            if let Some(def) = r.try_get::<Option<String>, _>(1)? {
+                out.insert(key, def);
+            }
+        }
+        Ok(out)
+    }
+
     /// `name` がビュー / マテビューなら `Some("view" | "materialized_view")`。
     /// テーブル一覧 (`tables`) はビューも含むため、テーブル DDL 要求 (#1001) を
     /// ビューへ振り分けるのに使う。`relkind` は `"char"` 型なので `::text` 必須。
@@ -1605,6 +1651,27 @@ impl PostgresConn {
             })
             .collect();
         Ok(super::group_columns_by_table(pairs))
+    }
+
+    /// 全スキーマの (スキーマ, テーブル, 列) を 1 回の問い合わせで返す (#1261)。
+    /// [`PostgresConn::schema_overview`] の `table_schema = $1` を外しただけの SQL。
+    pub async fn schema_columns_all(&self) -> Result<Vec<(String, String, String)>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT table_schema, table_name, column_name
+               FROM information_schema.columns
+               ORDER BY table_schema, table_name, ordinal_position"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| {
+                Ok((
+                    r.try_get::<String, _>(0)?,
+                    r.try_get::<String, _>(1)?,
+                    r.try_get::<String, _>(2)?,
+                ))
+            })
+            .collect()
     }
 
     pub async fn table_row_estimates(&self, schema: &str) -> Result<Vec<TableRowEstimate>> {
