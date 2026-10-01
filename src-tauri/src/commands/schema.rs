@@ -9,7 +9,7 @@ use crate::db::schema_insight::{
 };
 use crate::db::types::{
     ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo, TableComment,
-    TableIndexes, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableIndexes, TableRowEstimate, TableSchema,
 };
 use crate::db::DriverKind;
 use crate::error::{AppError, Result};
@@ -64,27 +64,6 @@ pub async fn describe_table(
     session
         .schema_cache
         .columns(&database, &table, || conn.columns(&database, &table))
-        .await
-}
-
-/// テーブルの編集用の行識別戦略を返す (主キー不在時の rowid/ctid/全列一致
-/// フォールバック、#849)。呼び出し側 (フロント) は主キーが解決できたときは
-/// これを呼ぶ必要がない — `describe_table` の `key` だけで足りる。
-#[tauri::command]
-pub async fn table_row_identity(
-    session_id: String,
-    database: String,
-    table: String,
-    state: State<'_, AppState>,
-) -> Result<TableRowIdentity> {
-    let session = state
-        .get(&session_id)
-        .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    let conn = &session.conn;
-    session
-        .schema_cache
-        .row_identity(&database, &table, || conn.row_identity(&database, &table))
         .await
 }
 
@@ -217,6 +196,25 @@ pub async fn table_row_estimates(
     session.conn.table_row_estimates(&database).await
 }
 
+/// 1 テーブル分の行数推定を返す (#1263)。`table_row_estimates` の 1 件版で、
+/// DB 全体のカタログを読んで JS で 1 件に絞っていたテーブルオープン時の取得を
+/// `TABLE_NAME = ?` / `relname = $2` の 1 行に置き換える。テーブルが無い・
+/// ビュー・統計なし・SQLite は `None`。`table_row_estimates` と同じくキャッシュ
+/// しない。
+#[tauri::command]
+pub async fn table_row_estimate(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<Option<i64>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.table_row_estimate(&database, &table).await
+}
+
 /// DB 内のテーブル (とビュー) のコメント一覧を返す (#1002)。コメントを持つもの
 /// だけ。SQLite はコメント機能が無いので常に空。カタログを読むだけの読み取り
 /// 操作なので read_only でも許可する。コメント編集直後に古い値を見せないよう、
@@ -237,7 +235,10 @@ pub async fn list_table_comments(
 /// `database` の全テーブルの列メタデータを 1 回の問い合わせで取得し、テーブル
 /// 単位の `columns` キャッシュも同時に埋める (#1255)。取得は常にドライバへ
 /// 直接行う (ユーザ操作で開く画面が最新を見るため)。
-async fn fetch_columns_bulk(session: &Session, database: &str) -> Result<Vec<TableColumns>> {
+pub(super) async fn fetch_columns_bulk(
+    session: &Session,
+    database: &str,
+) -> Result<Vec<TableColumns>> {
     let generation = session.schema_cache.generation();
     let tables = session.conn.columns_for_database(database).await?;
     session
@@ -250,7 +251,10 @@ async fn fetch_columns_bulk(session: &Session, database: &str) -> Result<Vec<Tab
 /// `database` の全テーブルのインデックスを 1 回の問い合わせで取得し、テーブル
 /// 単位の `list_indexes` キャッシュも同時に埋める (#1255)。インデックスを持たない
 /// テーブルは空配列としてキャッシュする。
-async fn fetch_indexes_bulk(session: &Session, database: &str) -> Result<Vec<TableIndexes>> {
+pub(super) async fn fetch_indexes_bulk(
+    session: &Session,
+    database: &str,
+) -> Result<Vec<TableIndexes>> {
     let conn = &session.conn;
     let generation = session.schema_cache.generation();
     let (indexes, table_names) = tokio::join!(
@@ -426,7 +430,7 @@ pub async fn incoming_foreign_keys(
 ///
 /// Schema Browser の「更新」ボタンなど、ユーザが明示的にスキーマの最新状態を
 /// 見たいときに呼ぶ。無効化後の次の `list_databases` / `list_tables` /
-/// `describe_table` / `table_row_identity` / `schema_overview` /
+/// `describe_table` / `schema_overview` /
 /// `foreign_keys` / `list_schema_objects` / `list_indexes` はキャッシュを
 /// 経由せず必ずドライバへ再取得しに行く (DDL 実行時の自動 invalidate と同じ
 /// `SchemaCache::invalidate_all` を呼ぶだけなので、無効化の網羅性はそちらと

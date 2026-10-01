@@ -670,6 +670,49 @@ export interface AlterTableContext {
   table_names: string[];
 }
 
+/** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。 */
+export interface OpenTableResult {
+  /** ページネーションの土台 (`SELECT *[, rowid|ctid] FROM ...`、LIMIT なし)。 */
+  base: string;
+  /** 初回実行する SQL (`base` + ` LIMIT <limit>`)。 */
+  sql: string;
+  columns: TableColumnInfo[];
+  /** PK が無いときだけ取得する行識別フォールバック。 */
+  row_identity: TableRowIdentity | null;
+  /** 行数推定。`withEstimate` が偽・未対応・統計なしは null。 */
+  row_estimate: number | null;
+}
+
+/** `open_tables` の 1 件分。`result` と `error` はどちらか一方だけ入る。 */
+export interface OpenTableEntry {
+  database: string;
+  table: string;
+  result: OpenTableResult | null;
+  error: string | null;
+}
+
+/** 1 DB (PostgreSQL ではスキーマ) とそのテーブル名一覧 (`list_tables_all`、#1263)。 */
+export interface DatabaseTables {
+  database: string;
+  tables: string[];
+}
+
+/** スキーマツリー復元 / 更新の一括結果 (`load_schema_tree`、#1263)。 */
+export interface SchemaTree {
+  /** 接続が持つ全データベース名。 */
+  databases: string[];
+  /** 要求した開いている DB のうち実在するもの。取得失敗の項目は null (反映しない) か空。 */
+  open: {
+    database: string;
+    tables: string[] | null;
+    row_estimates: TableRowEstimate[] | null;
+    objects: SchemaObject[];
+    comments: TableComment[] | null;
+  }[];
+  /** 開いているテーブルのうち、実在し列を取得できたもの。`key` は `db::table`。 */
+  tables: { key: string; columns: TableColumnInfo[]; indexes: IndexInfo[] }[];
+}
+
 /** サーバ設定/状態の 1 変数 (サーバ情報パネル #563)。値は常に文字列で表示。 */
 export interface ServerVariable {
   name: string;
@@ -1940,14 +1983,6 @@ export const api = {
     invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }).then(
       (r) => parseResponse(schemas.tableColumnInfoArray, r, "describe_table"),
     ),
-  /**
-   * PK 不在時の編集用行識別戦略 (rowid/ctid/全列一致、#849) を取得する。PK が
-   * 解決できているときは呼ぶ必要がない — `describeTable` の `key` だけで足りる。
-   */
-  tableRowIdentity: (sessionId: string, database: string, table: string) =>
-    invoke<TableRowIdentity>("table_row_identity", { sessionId, database, table }).then(
-      (r) => parseResponse(schemas.tableRowIdentity, r, "table_row_identity"),
-    ),
   schemaOverview: (sessionId: string, database: string) =>
     invoke<TableSchema[]>("schema_overview", { sessionId, database }).then((r) =>
       parseResponse(schemas.tableSchemaArray, r, "schema_overview"),
@@ -1959,6 +1994,58 @@ export const api = {
   tableRowEstimates: (sessionId: string, database: string) =>
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
       (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
+    ),
+  /**
+   * 1 テーブル分の行数推定 (#1263)。`tableRowEstimates` の 1 件版で、テーブルが無い・
+   * ビュー・統計なし・SQLite は null。
+   */
+  tableRowEstimate: (sessionId: string, database: string, table: string) =>
+    invoke<number | null>("table_row_estimate", { sessionId, database, table }).then(
+      (r) => parseResponse(schemas.nullableNumber, r, "table_row_estimate"),
+    ),
+  /**
+   * テーブルタブを開くのに必要な情報 (列・行識別・初回 SELECT・行数推定) を 1 回で
+   * 取得する (#1263)。列の取得失敗は reject、行識別・行数推定の失敗は null。
+   * `withEstimate` が偽のときは行数推定を取りに行かない。
+   */
+  openTable: (
+    sessionId: string,
+    database: string,
+    table: string,
+    limit: number,
+    withEstimate: boolean,
+  ) =>
+    invoke<OpenTableResult>("open_table", {
+      sessionId,
+      database,
+      table,
+      limit,
+      withEstimate,
+    }).then((r) => parseResponse(schemas.openTableResult, r, "open_table")),
+  /**
+   * セッション復元用の一括版 (#1263)。要求順に、テーブルごとの成功 / 失敗を返す
+   * (行数推定は取得しない)。
+   */
+  openTables: (sessionId: string, tables: [string, string][], limit: number) =>
+    invoke<OpenTableEntry[]>("open_tables", { sessionId, tables, limit }).then((r) =>
+      parseResponse(schemas.openTableEntryArray, r, "open_tables"),
+    ),
+  /**
+   * スキーマツリーの復元 / 更新に必要な情報を 1 回で取得する (#1263)。開いている
+   * DB のテーブル一覧・行数推定・非テーブルオブジェクト・コメントと、開いている
+   * テーブル (`db::table`) の列・インデックス。
+   */
+  loadSchemaTree: (sessionId: string, openDbs: string[], openTableKeys: string[]) =>
+    invoke<SchemaTree>("load_schema_tree", { sessionId, openDbs, openTableKeys }).then(
+      (r) => parseResponse(schemas.schemaTree, r, "load_schema_tree"),
+    ),
+  /**
+   * 全 DB のテーブル一覧を 1 回で取得する (#1263)。各 DB の内容は `listTables` と
+   * 同一で、`listDatabases` の順。スキーマ検索が使う。
+   */
+  listTablesAll: (sessionId: string) =>
+    invoke<DatabaseTables[]>("list_tables_all", { sessionId }).then((r) =>
+      parseResponse(schemas.databaseTablesArray, r, "list_tables_all"),
     ),
   /** DB 内のテーブルコメント一覧 (#1002)。コメントを持つテーブルだけ。SQLite は常に空。 */
   listTableComments: (sessionId: string, database: string) =>

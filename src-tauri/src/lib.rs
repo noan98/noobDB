@@ -683,6 +683,60 @@ pub mod __test_api {
         crate::commands::schema::refresh_schema_cache_inner(state, session_id).await
     }
 
+    /// `load_schema_tree` / `open_table` / `open_tables` の本体 (#1263)。Tauri の
+    /// `State` なしでコマンド層 (セッション解決 + 並行取得 + キャッシュ経由) を駆動する。
+    pub use crate::commands::schema_tree::{SchemaTree, SchemaTreeDatabase, SchemaTreeTable};
+    pub use crate::commands::table_open::{table_select_sql, OpenTableEntry, OpenTableResult};
+
+    pub async fn load_schema_tree_via_command(
+        state: &AppState,
+        session_id: &str,
+        open_dbs: Vec<String>,
+        open_table_keys: Vec<String>,
+    ) -> crate::error::Result<SchemaTree> {
+        let session = state
+            .get(session_id)
+            .await
+            .ok_or_else(|| crate::error::AppError::SessionNotFound(session_id.to_string()))?;
+        crate::commands::schema_tree::load_schema_tree_inner(&session, open_dbs, open_table_keys)
+            .await
+    }
+
+    pub async fn open_table_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: &str,
+        table: &str,
+        limit: u64,
+        with_estimate: bool,
+    ) -> crate::error::Result<OpenTableResult> {
+        let session = state
+            .get(session_id)
+            .await
+            .ok_or_else(|| crate::error::AppError::SessionNotFound(session_id.to_string()))?;
+        crate::commands::table_open::open_table_inner(
+            &session,
+            database,
+            table,
+            limit,
+            with_estimate,
+        )
+        .await
+    }
+
+    pub async fn open_tables_via_command(
+        state: &AppState,
+        session_id: &str,
+        tables: Vec<(String, String)>,
+        limit: u64,
+    ) -> crate::error::Result<Vec<OpenTableEntry>> {
+        let session = state
+            .get(session_id)
+            .await
+            .ok_or_else(|| crate::error::AppError::SessionNotFound(session_id.to_string()))?;
+        Ok(crate::commands::table_open::open_tables_inner(&session, tables, limit).await)
+    }
+
     /// Drives the `apply_sync_sql` IPC command's core path (session lookup +
     /// read-only guard + empty-statement guard + transactional apply) without a
     /// Tauri runtime, so integration tests can verify the destructive-write
@@ -1059,7 +1113,6 @@ pub fn run() {
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
-            commands::schema::table_row_identity,
             commands::schema::schema_overview,
             commands::schema::foreign_keys,
             commands::schema::list_indexes,
@@ -1067,6 +1120,11 @@ pub fn run() {
             commands::schema::get_object_definition,
             commands::schema::get_routine_signature,
             commands::schema::table_row_estimates,
+            commands::schema::table_row_estimate,
+            commands::schema_tree::load_schema_tree,
+            commands::schema_tree::list_tables_all,
+            commands::table_open::open_table,
+            commands::table_open::open_tables,
             commands::schema::list_table_comments,
             commands::schema::table_statistics,
             commands::schema::describe_database,

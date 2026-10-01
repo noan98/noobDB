@@ -1,0 +1,11 @@
+[
+  { "driver": "mysql", "database": "shop", "table": "orders", "hidden": null, "expected": "SELECT * FROM `shop`.`orders`" },
+  { "driver": "mysql", "database": "we`ird", "table": "t`1", "hidden": null, "expected": "SELECT * FROM `we``ird`.`t``1`" },
+  { "driver": "mysql", "database": "shop", "table": "order items", "hidden": null, "expected": "SELECT * FROM `shop`.`order items`" },
+  { "driver": "postgres", "database": "public", "table": "users", "hidden": null, "expected": "SELECT * FROM \"public\".\"users\"" },
+  { "driver": "postgres", "database": "public", "table": "no_pk", "hidden": "ctid", "expected": "SELECT *, ctid FROM \"public\".\"no_pk\"" },
+  { "driver": "postgres", "database": "s\"x", "table": "t\"y", "hidden": null, "expected": "SELECT * FROM \"s\"\"x\".\"t\"\"y\"" },
+  { "driver": "sqlite", "database": "main", "table": "items", "hidden": null, "expected": "SELECT * FROM \"items\"" },
+  { "driver": "sqlite", "database": "main", "table": "no_pk", "hidden": "rowid", "expected": "SELECT *, rowid FROM \"no_pk\"" },
+  { "driver": "sqlite", "database": "main", "table": "we\"ird", "hidden": null, "expected": "SELECT * FROM \"we\"\"ird\"" }
+]

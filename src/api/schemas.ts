@@ -841,6 +841,51 @@ export const alterTableContext = z.object({
   table_names: z.array(z.string()),
 });
 
+/** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。Rust の
+ *  `commands::table_open::OpenTableResult`。 */
+export const openTableResult = z.object({
+  base: z.string(),
+  sql: z.string(),
+  columns: z.array(tableColumnInfo),
+  row_identity: tableRowIdentity.nullable(),
+  row_estimate: z.number().nullable(),
+});
+
+/** `open_tables` の 1 件分。`result` と `error` はどちらか一方。 */
+export const openTableEntry = z.object({
+  database: z.string(),
+  table: z.string(),
+  result: openTableResult.nullable(),
+  error: z.string().nullable(),
+});
+
+/** 1 DB とそのテーブル名一覧 (`list_tables_all`、#1263)。 */
+export const databaseTables = z.object({
+  database: z.string(),
+  tables: z.array(z.string()),
+});
+
+/** スキーマツリー復元 / 更新の一括結果 (`load_schema_tree`、#1263)。 */
+export const schemaTree = z.object({
+  databases: z.array(z.string()),
+  open: z.array(
+    z.object({
+      database: z.string(),
+      tables: z.array(z.string()).nullable(),
+      row_estimates: z.array(tableRowEstimate).nullable(),
+      objects: z.array(schemaObject),
+      comments: z.array(tableComment).nullable(),
+    }),
+  ),
+  tables: z.array(
+    z.object({
+      key: z.string(),
+      columns: z.array(tableColumnInfo),
+      indexes: z.array(indexInfo),
+    }),
+  ),
+});
+
 /** 逆方向 FK 1 件 (`incoming_foreign_keys`、#1255)。このレスポンスだけ camelCase
  *  (Rust 側が `serde(rename_all = "camelCase")`、フロントの `IncomingFk` と同形)。 */
 export const incomingForeignKey = z.object({
@@ -852,6 +897,10 @@ export const incomingForeignKey = z.object({
 /** 配列を返すコマンド用のラッパースキーマ。 */
 export const tableStatisticArray = z.array(tableStatistic);
 export const schemaSnapshotTableArray = z.array(schemaSnapshotTable);
+/** `number | null` を返すコマンド用 (`table_row_estimate`、#1263)。 */
+export const nullableNumber = z.number().nullable();
+export const openTableEntryArray = z.array(openTableEntry);
+export const databaseTablesArray = z.array(databaseTables);
 export const incomingForeignKeyArray = z.array(incomingForeignKey);
 export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);

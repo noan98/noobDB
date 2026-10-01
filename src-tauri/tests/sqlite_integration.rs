@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
+mod common;
+
 use noobdb_lib::__test_api as t;
 
 fn temp_db_path() -> PathBuf {
@@ -3998,6 +4000,59 @@ async fn sqlite_schema_drift_capture_and_plan_watch() {
         None,
     )
     .await;
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// `load_schema_tree` / `open_table(s)` / `list_tables_all` / `table_row_estimate`
+/// (#1263) が、個別 IPC の結果と一致する (SQLite、環境変数不要)。
+#[tokio::test]
+async fn sqlite_tree_and_open_table_match_individual_ipcs() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_tree_1263_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "CREATE TABLE tr_a (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        "CREATE TABLE tr_b (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES tr_a(id), v TEXT)",
+        "CREATE INDEX tr_b_v ON tr_b (v)",
+        "CREATE TABLE tr_c (x INTEGER, y TEXT)",
+        "CREATE UNIQUE INDEX tr_c_x ON tr_c (x)",
+        "CREATE TABLE tr_d (k TEXT PRIMARY KEY, n INTEGER)",
+        "CREATE VIEW tr_v AS SELECT id, name FROM tr_a",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let session_conn = t::connect(&opts).await.expect("connect (session)");
+    let session = t::make_session("tree_1263", session_conn, opts.clone(), false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let tables: Vec<String> = ["tr_a", "tr_b", "tr_c", "tr_d"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    common::assert_tree_and_open_match_individual_ipcs(&state, &sid, &conn, "main", &tables).await;
+
+    // PK の無いテーブルは rowid を隠し列として SELECT に含める (#849)。
+    let no_pk = t::open_table_via_command(&state, &sid, "main", "tr_c", 5, false)
+        .await
+        .expect("open_table");
+    assert_eq!(no_pk.base, "SELECT *, rowid FROM \"tr_c\"");
+    assert_eq!(no_pk.sql, "SELECT *, rowid FROM \"tr_c\" LIMIT 5");
+    let with_pk = t::open_table_via_command(&state, &sid, "main", "tr_a", 5, false)
+        .await
+        .expect("open_table");
+    assert_eq!(with_pk.base, "SELECT * FROM \"tr_a\"");
+    assert!(
+        with_pk.row_identity.is_none(),
+        "identity is skipped with a PK"
+    );
+    // SQLite は行数推定を持たない。
+    assert_eq!(conn.table_row_estimate("main", "tr_a").await.unwrap(), None);
 
     conn.close().await;
     let _ = std::fs::remove_file(&path);
