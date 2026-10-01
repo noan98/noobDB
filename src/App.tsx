@@ -7429,14 +7429,6 @@ export default function App() {
           keywords: "schema export ai markdown claude llm スキーマ 出力 エクスポート",
           run: () => setSchemaExportTarget(paletteDatabase),
         });
-        items.push({
-          id: "nav:data-search",
-          group: "navigation",
-          label: t("cmdkActionDataSearch"),
-          icon: "search",
-          keywords: "data search value grep find 値 検索 データ 横断",
-          run: () => setShowDataSearch(true),
-        });
       }
     }
     items.push(
@@ -7537,15 +7529,28 @@ export default function App() {
           sessionId,
           driver: selectedProfile?.driver ?? null,
           database: paletteDatabase,
+          profileDatabase: selectedProfile?.database ?? null,
           openConnectionCount: openConnections.length,
           sidebarCollapsed,
           tables: paletteTables,
           shortcuts: {
             toggleSidebar: formatCombo(shortcutBindings.toggleSidebar),
             sidebarFilter: formatCombo(shortcutBindings.sidebarFilter),
+            objectSearch: formatCombo(shortcutBindings.objectSearch),
           },
         },
-        { toggleBottomPanel, toggleSidebar, focusExplorer, openStructure: handleOpenStructure },
+        {
+          toggleBottomPanel,
+          toggleSidebar,
+          focusExplorer,
+          openStructure: handleOpenStructure,
+          openObjectSearch: () => setShowObjectSearch(true),
+          openDataSearch: () => setShowDataSearch(true),
+          openSchemaDrift: handleOpenSchemaDrift,
+          openUsers: () => openFullView("users"),
+          openServerInfo: () => openFullView("serverInfo"),
+          openTasks: () => openFullView("tasks"),
+        },
         t,
       ),
     );
@@ -10223,6 +10228,23 @@ export default function App() {
             { label: t("outputTitle"), onSelect: () => toggleBottomPanel("output") },
             { label: t("messagesTitle"), onSelect: () => toggleBottomPanel("messages") },
             { label: t("activityCenterTitle"), onSelect: () => toggleBottomPanel("activity") },
+            { separator: true },
+            // 検索系 (#1266 / #1267)。パレット (workspaceCommands) と同じ開ける条件。
+            {
+              label: t("appObjectSearch"),
+              icon: "search",
+              onSelect: () => setShowObjectSearch(true),
+              disabled: !sessionId,
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
+              shortcut: formatCombo(shortcutBindings.objectSearch),
+            },
+            {
+              label: t("cmdkActionDataSearch"),
+              icon: "search",
+              onSelect: () => setShowDataSearch(true),
+              disabled: !sessionId || !paletteDatabase,
+              title: !sessionId ? t("appToolsNeedsSession") : !paletteDatabase ? t("appDataSearchNeedsDatabase") : undefined,
+            },
             { separator: true },
             { label: t("appSchemaCompare"), onSelect: () => openFullView("compare") },
             {

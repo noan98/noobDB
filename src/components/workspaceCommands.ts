@@ -24,10 +24,12 @@ export interface WorkspaceCommandContext {
   openConnectionCount: number;
   /** サイドバーが今折りたたまれているか (ラベルの出し分け用)。 */
   sidebarCollapsed: boolean;
+  /** 接続プロファイルの既定 DB (スキーマドリフトの対象)。無ければ null。 */
+  profileDatabase: string | null;
   /** スキーマキャッシュ済みのテーブル (アクティブ接続のもの)。 */
   tables: readonly { database: string; table: string }[];
   /** 表示用に解決済みのショートカット (`formatCombo` の戻り値)。 */
-  shortcuts: { toggleSidebar?: string; sidebarFilter?: string };
+  shortcuts: { toggleSidebar?: string; sidebarFilter?: string; objectSearch?: string };
 }
 
 export interface WorkspaceCommandActions {
@@ -35,6 +37,12 @@ export interface WorkspaceCommandActions {
   toggleSidebar: () => void;
   focusExplorer: () => void;
   openStructure: (database: string, table: string) => void;
+  openObjectSearch: () => void;
+  openDataSearch: () => void;
+  openSchemaDrift: () => void;
+  openUsers: () => void;
+  openServerInfo: () => void;
+  openTasks: () => void;
 }
 
 type Translate = (key: I18nKey, vars?: Record<string, string | number>) => string;
@@ -172,6 +180,70 @@ export function workspaceCommandItems(
       });
     }
   }
+
+  // --- 検索・管理系 (#1267 / #1268)。可用条件はレンチメニューと同じ ---
+  if (ctx.sessionId) {
+    items.push({
+      id: "nav:object-search",
+      group: "navigation",
+      label: t("appObjectSearch"),
+      icon: "search",
+      keywords: "object search table column find global テーブル カラム 列 オブジェクト 検索 横断",
+      shortcut: ctx.shortcuts.objectSearch,
+      run: () => actions.openObjectSearch(),
+    });
+  }
+  // データ値の検索は対象 DB が決まらないと開けない (モーダルが database を要求する)。
+  if (ctx.sessionId && ctx.database) {
+    items.push({
+      id: "nav:data-search",
+      group: "navigation",
+      label: t("cmdkActionDataSearch"),
+      icon: "search",
+      keywords: "data search value grep find 値 検索 データ 横断",
+      run: () => actions.openDataSearch(),
+    });
+  }
+  if (ctx.sessionId && ctx.profileDatabase) {
+    items.push({
+      id: "nav:schema-drift",
+      group: "navigation",
+      label: t("appSchemaDrift"),
+      icon: "diff",
+      keywords: "schema drift timeline snapshot change history スキーマ ドリフト タイムライン スナップショット 変更 履歴",
+      run: () => actions.openSchemaDrift(),
+    });
+  }
+  // ユーザ概念を持たない SQLite は対象外 (レンチメニューと同じ)。
+  if (ctx.sessionId && ctx.driver !== "sqlite") {
+    items.push({
+      id: "nav:users",
+      group: "navigation",
+      label: t("appUsers"),
+      icon: "key",
+      keywords: "users permissions grants privileges roles account ユーザ 権限 管理 ロール アカウント",
+      run: () => actions.openUsers(),
+    });
+  }
+  if (ctx.sessionId) {
+    items.push({
+      id: "nav:server-info",
+      group: "navigation",
+      label: t("serverInfoMenuLabel"),
+      icon: "server",
+      keywords: "server info version variables status config サーバ 情報 バージョン 変数 設定",
+      run: () => actions.openServerInfo(),
+    });
+  }
+  // タスクスケジューラは接続不要 (フッタのアイコンと同じ)。
+  items.push({
+    id: "nav:tasks",
+    group: "navigation",
+    label: t("cmdkActionTasks"),
+    icon: "clock",
+    keywords: "task scheduler cron schedule job タスク スケジューラ 定期 実行 ジョブ",
+    run: () => actions.openTasks(),
+  });
 
   return items;
 }
