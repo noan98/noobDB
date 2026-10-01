@@ -114,6 +114,58 @@ function registerBaseHandlers() {
     { name: (args.database as string) === "betadb" ? "gadgets" : "fruits", estimate: null },
   ]);
   onCommand("list_schema_objects", () => []);
+  onCommand("list_table_comments", () => []);
+  // 集約 IPC (#1263): テーブルを開く処理とスキーマツリーの復元 / 検索は、
+  // 個別コマンドの代わりにこれらを呼ぶ。内容は上の個別ハンドラと同じ。
+  const tableOf = (db: string) => (db === "betadb" ? "gadgets" : "fruits");
+  const openResult = (db: string, table: string, limit: number) => {
+    const base = `SELECT * FROM \`${db}\`.\`${table}\``;
+    return {
+      base,
+      sql: `${base} LIMIT ${limit}`,
+      columns: FRUIT_TABLE_COLUMNS,
+      row_identity: null,
+      row_estimate: null,
+    };
+  };
+  onCommand("open_table", (args) =>
+    openResult(args.database as string, args.table as string, args.limit as number),
+  );
+  onCommand("open_tables", (args) =>
+    (args.tables as [string, string][]).map(([database, table]) => ({
+      database,
+      table,
+      result: openResult(database, table, args.limit as number),
+      error: null,
+    })),
+  );
+  onCommand("table_row_estimate", () => null);
+  onCommand("load_schema_tree", (args) => {
+    const databases =
+      sessionProfiles.get(args.sessionId as string) === BETA.id ? ["betadb"] : ["appdb"];
+    return {
+      databases,
+      open: (args.openDbs as string[])
+        .filter((db) => databases.includes(db))
+        .map((db) => ({
+          database: db,
+          tables: [tableOf(db)],
+          row_estimates: [{ name: tableOf(db), estimate: null }],
+          objects: [],
+          comments: [],
+        })),
+      tables: (args.openTableKeys as string[]).map((key) => ({
+        key,
+        columns: FRUIT_TABLE_COLUMNS,
+        indexes: [],
+      })),
+    };
+  });
+  onCommand("list_tables_all", (args) =>
+    (sessionProfiles.get(args.sessionId as string) === BETA.id ? ["betadb"] : ["appdb"]).map(
+      (database) => ({ database, tables: [tableOf(database)] }),
+    ),
+  );
   onCommand("cancel_stream", () => ({ cancelled: true, deliveredRows: 1 }));
 }
 

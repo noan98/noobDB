@@ -8,6 +8,8 @@
 //! and round-trip CRUD against an isolated temporary table. Preview must
 //! leave the live table untouched.
 
+mod common;
+
 use noobdb_lib::__test_api as t;
 
 #[tokio::test]
@@ -1787,4 +1789,71 @@ async fn postgres_cell_blob_probe_and_fetch() {
         .execute("DROP TABLE cell_blob_probe_t", db)
         .await
         .expect("cleanup");
+}
+
+/// `load_schema_tree` / `open_table(s)` / `list_tables_all` / `table_row_estimate`
+/// (#1263) が、個別 IPC の結果と一致する。他のテストと干渉しないよう専用の
+/// スキーマ `noobdb_t1263` に閉じる。
+#[tokio::test]
+async fn postgres_tree_and_open_table_match_individual_ipcs() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP SCHEMA IF EXISTS noobdb_t1263 CASCADE", None)
+        .await
+        .expect("drop");
+    conn.execute("CREATE SCHEMA noobdb_t1263", None)
+        .await
+        .expect("create");
+    for sql in [
+        "CREATE TABLE noobdb_t1263.tr_a (id INT PRIMARY KEY, name VARCHAR(40) NOT NULL)",
+        "COMMENT ON TABLE noobdb_t1263.tr_a IS 'first'",
+        "CREATE TABLE noobdb_t1263.tr_b (id INT PRIMARY KEY, a_id INT REFERENCES noobdb_t1263.tr_a(id), v VARCHAR(20))",
+        "CREATE INDEX tr_b_v ON noobdb_t1263.tr_b (v)",
+        "CREATE TABLE noobdb_t1263.tr_c (x INT UNIQUE, y TEXT)",
+        "CREATE TABLE noobdb_t1263.tr_d (k VARCHAR(10) PRIMARY KEY, n INT)",
+        "CREATE VIEW noobdb_t1263.tr_v AS SELECT id, name FROM noobdb_t1263.tr_a",
+        "INSERT INTO noobdb_t1263.tr_a VALUES (1, 'x'), (2, 'y')",
+        "ANALYZE noobdb_t1263.tr_a",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let session_conn = t::connect(&opts).await.expect("connect (session)");
+    let session = t::make_session("tree_1263", session_conn, opts.clone(), false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let tables: Vec<String> = ["tr_a", "tr_b", "tr_c", "tr_d"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    common::assert_tree_and_open_match_individual_ipcs(
+        &state,
+        &sid,
+        &conn,
+        "noobdb_t1263",
+        &tables,
+    )
+    .await;
+    // PK 無しテーブルの SELECT は ctid を隠し列に含める (#849)。
+    let no_pk = t::open_table_via_command(&state, &sid, "noobdb_t1263", "tr_c", 5, false)
+        .await
+        .expect("open_table");
+    assert_eq!(no_pk.base, "SELECT *, ctid FROM \"noobdb_t1263\".\"tr_c\"");
+
+    // ビューにも行数推定は無い (BASE TABLE のみ)。
+    assert_eq!(
+        conn.table_row_estimate("noobdb_t1263", "tr_v")
+            .await
+            .expect("estimate"),
+        None
+    );
+
+    conn.execute("DROP SCHEMA IF EXISTS noobdb_t1263 CASCADE", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
 }

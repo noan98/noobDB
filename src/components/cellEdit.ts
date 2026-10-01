@@ -202,7 +202,7 @@ export interface RowIdentityResolution {
  *
  * 1. A real primary key (`resolvePkIndices`) — always preferred when it
  *    resolves.
- * 2. The backend's `rowIdentity` fallback (`table_row_identity`, #849) when
+ * 2. The backend's `rowIdentity` fallback (`open_table` の `row_identity`, #849) when
  *    the table has none:
  *    - `"rowid"` / `"ctid"` — a single pseudo-column the caller must have
  *      appended to the browse `SELECT` (see `qualifiedTableSql`) and that

@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **147 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **151 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -58,13 +58,13 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 ## スキーマ (`commands/schema.rs`)
 
-`list_databases` / `list_tables` / `describe_table` / `table_row_identity` /
+`list_databases` / `list_tables` / `describe_table` /
 `schema_overview` / `foreign_keys` / `list_schema_objects` / `get_object_definition` /
 `list_indexes` / `table_row_estimates` / `list_table_comments` / `get_routine_signature`
 (ストアドプロシージャ / 関数のパラメータ取得、#1003 — SQLite は未対応エラー) /
 `table_statistics` / `describe_database` / `alter_table_context` / `incoming_foreign_keys` (#1255)
 
-#1255 の 4 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
+#1255 の 148 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
 `table_statistics` はサイズ・行数に列数・インデックス数・PK 有無・FK 数を合成して返す
 (旧 `table_sizes` の置き換え)。`describe_database` は全テーブルの `describe_table` 相当
 (スキーマエクスポート / ER 図)。`alter_table_context` は列編集ダイアログの初期ロード一式
@@ -73,7 +73,7 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
 
-## 検索 (`commands/search.rs`, #1261)
+## 検索 (`commands/search.rs`, #1511)
 
 `search_schema_objects` / `find_where_used` / `data_search_stream`
 

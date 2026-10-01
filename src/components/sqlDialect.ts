@@ -17,6 +17,35 @@ export function quoteIdentFor(driver: string, name: string): string {
   return "`" + name.replace(/`/g, "``") + "`";
 }
 
+/**
+ * テーブルを開く初回 SELECT (LIMIT なし)。`open_table` (Rust の
+ * `commands::table_open::table_select_sql`) と同一の SQL を返す — 共有ゴールデン
+ * `fixtures/tableSelectSql.json` で固定 (#1263)。
+ *
+ * `hiddenColumn`, when given, appends a driver pseudo-column (SQLite
+ * `rowid` / PostgreSQL `ctid`) to the SELECT list so it comes back as an
+ * ordinary result column — the row-identity fallback for tables with no
+ * primary key (#849). Aliased to its own bare name (`AS rowid` / `AS ctid`)
+ * so `resolveRowIdentity` can find it by name in the result; harmless when
+ * the table happens to also declare a real column with that name; SQLite
+ * `SELECT *, rowid` and Postgres `SELECT *, ctid` are both unambiguous
+ * because the star expansion and the pseudo-column reference different
+ * namespaces.
+ */
+export function qualifiedTableSql(
+  driver: string,
+  database: string,
+  table: string,
+  hiddenColumn?: string | null,
+): string {
+  const extra = hiddenColumn ? `, ${hiddenColumn}` : "";
+  // SQLite has a single attached namespace ("main"); leaving the
+  // db.table qualification off keeps the generated SELECT portable.
+  if (driver === "sqlite") return `SELECT *${extra} FROM ${quoteIdentFor(driver, table)}`;
+  return `SELECT *${extra} FROM ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
+}
+
+
 const MYSQL_SYSTEM_DATABASES = new Set([
   "information_schema",
   "performance_schema",
