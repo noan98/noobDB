@@ -640,6 +640,9 @@ const SidebarTabButton = forwardRef<
       py="1.75"
       fontSize="sm"
       fontWeight={600}
+      // 日本語ラベル (「スニペット」) が 2 行に折り返してタブの高さが揃わなくなるのを防ぐ (#1283)。
+      // 収まらない幅では親のタブ列が横スクロールで逃がす。
+      whiteSpace="nowrap"
       color={active ? "app.text" : "app.textMuted"}
       cursor="pointer"
       transition="background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)"
@@ -8690,6 +8693,8 @@ export default function App() {
         <Flex
           borderBottomWidth="1px"
           borderBottomColor="app.border"
+          // 最小幅・フォント拡大時は折り返さず横スクロール (ボトムパネルのタブ列と同じ方式, #1283)。
+          overflowX="auto"
           role="tablist"
           aria-label={t("sidebarTablistAria")}
         >
