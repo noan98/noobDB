@@ -1148,6 +1148,38 @@ export interface SchemaDriftTableChange {
   indexesAdded: number;
   indexesRemoved: number;
   indexesChanged: number;
+  /** 追加/削除/変更された列名 (`changed` テーブルのみ)。古いバックエンドでは欠ける。 */
+  addedColumns?: string[];
+  removedColumns?: string[];
+  changedColumns?: string[];
+  /** 追加/削除/変更されたインデックス名。 */
+  addedIndexes?: string[];
+  removedIndexes?: string[];
+  changedIndexes?: string[];
+}
+
+/** ダンプに使う外部クライアントツール。 */
+export type DumpToolName = "mysqldump" | "pg_dump";
+
+/**
+ * ダンプ用ツールの検出結果 (`dump_tool_status` / `install_dump_tool`)。ツールは
+ * noobDB を実行している**この PC** で動くので、導入先もこの PC (踏み台・DB サーバではない)。
+ */
+export interface DumpToolStatus {
+  tool: string;
+  /** 見つかった実行ファイルのパス。無ければ null。 */
+  path: string | null;
+  /** 導入方法。この OS で案内できなければ null。 */
+  install: {
+    /** `winget` / `brew` / `manual`。 */
+    manager: string;
+    /** 実行される (または手で実行する) コマンド。 */
+    command: string;
+    /** この PC 上のインストール先。 */
+    location: string;
+    /** アプリから実行できるか。false ならコマンドを手で実行してもらう。 */
+    oneClick: boolean;
+  } | null;
 }
 
 /** 2 世代間の変化サマリ全体。変化のあったテーブルのみ、名前順。 */
@@ -2974,6 +3006,17 @@ export const api = {
       path: params.path,
       options: params.options,
     }),
+
+  /** ダンプ用ツールがこの PC にあるか (無ければ導入方法も) を調べる。 */
+  dumpToolStatus: (tool: DumpToolName) =>
+    invoke<DumpToolStatus>("dump_tool_status", { tool }).then((r) =>
+      parseResponse(schemas.dumpToolStatus, r, "dump_tool_status"),
+    ),
+  /** ダンプ用ツールを OS のパッケージマネージャでこの PC に導入する (winget / Homebrew)。 */
+  installDumpTool: (tool: DumpToolName) =>
+    invoke<DumpToolStatus>("install_dump_tool", { tool }).then((r) =>
+      parseResponse(schemas.dumpToolStatus, r, "install_dump_tool"),
+    ),
 
   parseCsvPreview: (path: string, options: ImportOptions) =>
     invoke<CsvPreview>("parse_csv_preview", { path, options }).then((r) =>

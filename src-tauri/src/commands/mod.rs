@@ -6,6 +6,7 @@ pub mod cell_blob;
 pub mod connection;
 pub mod diff;
 pub mod dump;
+pub mod dump_tools;
 pub mod export;
 pub mod export_xlsx;
 pub mod file;

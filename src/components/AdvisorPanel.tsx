@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
@@ -8,10 +8,14 @@ import { semanticColorToken } from "../semanticColors";
 import {
   findingDescription,
   findingTarget,
+  nextAdvisorSort,
   reasonTextKey,
   ruleTitleKey,
   severityLabelKey,
   severityRole,
+  sortFindings,
+  type AdvisorSortDir,
+  type AdvisorSortKey,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
 import { CodePreview } from "./modalForm";
@@ -56,6 +60,14 @@ const thCss: SystemStyleObject = {
   textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
+};
+// クリックで並び替えできるヘッダ。th 自体をフォーカス可能にする (TableStatisticsPanel と同じ作法)。
+const sortableThCss: SystemStyleObject = {
+  ...thCss,
+  cursor: "pointer",
+  userSelect: "none",
+  _hover: { color: "var(--text)" },
+  _focusVisible: { outline: "none", boxShadow: "inset var(--focus-ring)" },
 };
 const tdCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border-subtle, var(--border))",
@@ -107,6 +119,7 @@ export function AdvisorPanel({
   const [report, setReport] = useState<SchemaHealthReport | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ key: AdvisorSortKey; dir: AdvisorSortDir } | null>(null);
 
   const run = useCallback(async () => {
     setRunning(true);
@@ -129,6 +142,52 @@ export function AdvisorPanel({
     [onInsertSql, toast, t],
   );
 
+  const findings = useMemo(() => {
+    if (!report) return [];
+    if (!sort) return report.findings;
+    return sortFindings(report.findings, sort.key, sort.dir, (f, key) => {
+      if (key === "rule") return t(ruleTitleKey(f.rule));
+      const desc = findingDescription(f);
+      return t(desc.key, desc.params);
+    });
+  }, [report, sort, t]);
+
+  // 各ソートヘッダ共通のプロパティ (クリック / Enter・Space / aria-sort)。
+  // th はネイティブに columnheader ロールを持つので role は上書きしない。
+  const headerProps = (key: AdvisorSortKey) => ({
+    tabIndex: 0,
+    "aria-sort": (sort?.key === key
+      ? sort.dir === "asc"
+        ? "ascending"
+        : "descending"
+      : "none") as "ascending" | "descending" | "none",
+    onClick: () => setSort((cur) => nextAdvisorSort(cur, key)),
+    onKeyDown: (e: ReactKeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setSort((cur) => nextAdvisorSort(cur, key));
+      }
+    },
+  });
+  const sortableTh = (key: AdvisorSortKey, label: string) => (
+    <chakra.th css={sortableThCss} {...headerProps(key)}>
+      <chakra.span display="inline-flex" alignItems="center" gap="1">
+        {label}
+        <chakra.span
+          display="inline-flex"
+          color={sort?.key === key ? "app.accent" : "app.textMuted"}
+          opacity={sort?.key === key ? 1 : 0.5}
+          aria-hidden
+        >
+          <Icon
+            name={sort?.key === key ? (sort.dir === "asc" ? "sort-asc" : "sort-desc") : "sort"}
+            size={ICON_SIZES.sm}
+          />
+        </chakra.span>
+      </chakra.span>
+    </chakra.th>
+  );
+
   const copyFix = useCallback(
     async (sql: string) => {
       const ok = await copyToClipboard(sql);
@@ -139,8 +198,10 @@ export function AdvisorPanel({
   );
 
   return (
-    <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
-
+    // 説明・実行ボタンは固定し、表だけをスクロールさせる。スクロール領域に上余白が
+    // あると sticky ヘッダの上を行が透けて流れ、ヘッダが浮いて見えていた。
+    <Box flex="1" minH={0} display="flex" flexDirection="column">
+    <Box flexShrink={0} pt="3.5" pb="3" px="4" display="flex" flexDirection="column" gap="3">
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
         {t("advisorDesc")}
       </chakra.p>
@@ -171,7 +232,9 @@ export function AdvisorPanel({
           </chakra.span>
         )}
       </Flex>
+    </Box>
 
+    <Box flex="1" minH={0} overflowY="auto" px="4" pb="3.5" display="flex" flexDirection="column" gap="3.5">
       {error && (
         // 診断失敗: errorHints の分類結果から共有イラストを割り当て、既存の
         // 実行/再実行ボタンと同じ導線を再取得アクションに配線する (#848)。
@@ -234,14 +297,14 @@ export function AdvisorPanel({
         <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
           <chakra.thead>
             <chakra.tr>
-              <chakra.th css={thCss}>{t("advisorColSeverity")}</chakra.th>
-              <chakra.th css={thCss}>{t("advisorColRule")}</chakra.th>
-              <chakra.th css={thCss}>{t("advisorColTarget")}</chakra.th>
-              <chakra.th css={thCss}>{t("advisorColDetail")}</chakra.th>
+              {sortableTh("severity", t("advisorColSeverity"))}
+              {sortableTh("rule", t("advisorColRule"))}
+              {sortableTh("target", t("advisorColTarget"))}
+              {sortableTh("detail", t("advisorColDetail"))}
             </chakra.tr>
           </chakra.thead>
           <chakra.tbody>
-            {report.findings.map((f, i) => {
+            {findings.map((f, i) => {
               const desc = findingDescription(f);
               return (
                 <chakra.tr key={`${f.rule}-${f.table}-${f.context.join(",")}-${i}`}>
@@ -270,15 +333,18 @@ export function AdvisorPanel({
                     {f.fix_ddl && (
                       <Box marginTop="2">
                         <CodePreview wrap>{f.fix_ddl}</CodePreview>
-                        <Flex gap="2" marginTop="1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => insertFix(f.fix_ddl as string)}
-                          >
-                            {t("advisorInsertFix")}
-                          </Button>
+                        <Flex gap="1" marginTop="1.5">
+                          <Tooltip label={t("advisorInsertFix")}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => insertFix(f.fix_ddl as string)}
+                              aria-label={t("advisorInsertFix")}
+                            >
+                              <Icon name="insert-sql" size={ICON_SIZES.sm} />
+                            </Button>
+                          </Tooltip>
                           <Tooltip label={t("advisorCopyFix")}>
                             <Button
                               type="button"
@@ -301,6 +367,7 @@ export function AdvisorPanel({
         </chakra.table>
         </MotionReveal>
       )}
+    </Box>
     </Box>
   );
 }

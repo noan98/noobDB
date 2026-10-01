@@ -178,7 +178,9 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
           </Button>
         )}
       </Flex>
-      <Box flex="1" minHeight={0}>
+      {/* Splitter のルートは flex 子として高さを受け取るので、器も flex 列にする。
+          ブロック要素のままだとグリッドが内容の高さまで伸び、縦スクロールが効かない。 */}
+      <Box flex="1" minHeight={0} display="flex" flexDirection="column" overflow="hidden">
         <Splitter
           direction="row"
           storageKey="noobdb.split.pinCompare"

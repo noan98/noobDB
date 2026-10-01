@@ -3,13 +3,16 @@ import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, DumpOptions, listenDumpStream, type DriverKind } from "../api/tauri";
+import { api, DumpOptions, listenDumpStream, type DriverKind, type DumpToolStatus } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { Callout } from "./Callout";
+import { copyToClipboard } from "./clipboard";
+import { Icon, ICON_SIZES } from "./Icon";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
@@ -133,6 +136,95 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
 /** 外部クライアントツールを使わずに接続から直接 SQL を生成するドライバ。 */
 const NATIVE_DUMP_DRIVERS: ReadonlySet<DriverKind> = new Set<DriverKind>(["sqlite"]);
 
+/** ドライバ → ダンプに使う外部ツール (SQLite は接続から直接生成するので無し)。 */
+const DUMP_TOOL: Partial<Record<DriverKind, "mysqldump" | "pg_dump">> = {
+  mysql: "mysqldump",
+  postgres: "pg_dump",
+};
+
+/**
+ * ダンプ用ツールが見つからないときの案内と、ワンクリック導入 (winget / Homebrew)。
+ *
+ * 「どこに入るのか」で迷わないよう、**この PC (noobDB を実行しているマシン) に入り、
+ * SSH の踏み台や DB サーバには入れない**ことと、インストール先のパスを明示する。
+ * ダンプはこの PC でツールを起動し、SSH トンネル経由で DB に接続する。
+ */
+function DumpToolNotice({
+  status,
+  installing,
+  installError,
+  onInstall,
+}: {
+  status: DumpToolStatus;
+  installing: boolean;
+  installError: string | null;
+  onInstall: () => void;
+}) {
+  const t = useT();
+  const toast = useToast();
+  const plan = status.install;
+  return (
+    <Callout tone="warning" title={t("dumpToolMissingTitle", { tool: status.tool })}>
+      <chakra.div display="flex" flexDirection="column" gap="2" fontSize="sm" lineHeight={1.5}>
+        <chakra.div>{t("dumpToolWhere", { tool: status.tool })}</chakra.div>
+        {plan ? (
+          <>
+            <chakra.div>
+              <chakra.span fontWeight={600}>{t("dumpToolLocation")}</chakra.span>{" "}
+              <chakra.code fontFamily="var(--font-mono)" wordBreak="break-all">
+                {plan.location}
+              </chakra.code>
+            </chakra.div>
+            <chakra.div fontWeight={600}>
+              {plan.oneClick ? t("dumpToolCommandAuto") : t("dumpToolCommandManual")}
+            </chakra.div>
+            <chakra.div display="flex" alignItems="flex-start" gap="1">
+              <CodePreview wrap flex="1" minW={0}>
+                {plan.command}
+              </CodePreview>
+              <Tooltip label={t("dumpToolCopyCommand")}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-label={t("dumpToolCopyCommand")}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(plan.command);
+                    if (ok) toast.success(t("dumpToolCopied"));
+                  }}
+                >
+                  <Icon name="copy" size={ICON_SIZES.sm} />
+                </Button>
+              </Tooltip>
+            </chakra.div>
+            {plan.oneClick && (
+              <chakra.div display="flex" alignItems="center" gap="2" flexWrap="wrap">
+                <LoadingButton
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  loading={installing}
+                  disabled={installing}
+                  onClick={onInstall}
+                >
+                  <Icon name="download" size={ICON_SIZES.sm} />
+                  {installing ? t("dumpToolInstalling") : t("dumpToolInstall", { tool: status.tool })}
+                </LoadingButton>
+                <chakra.span fontSize="xs" color="app.textMuted">
+                  {t("dumpToolInstallHint")}
+                </chakra.span>
+              </chakra.div>
+            )}
+          </>
+        ) : (
+          <chakra.div>{t("dumpToolNoPlan", { tool: status.tool })}</chakra.div>
+        )}
+        {installError && <ErrorNote>{t("dumpToolInstallFailed", { error: installError })}</ErrorNote>}
+      </chakra.div>
+    </Callout>
+  );
+}
+
 type Status =
   | { kind: "idle" }
   | { kind: "running" }
@@ -150,6 +242,43 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
   // clean up its subscription (#686).
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  // ダンプ用の外部ツールがこの PC にあるか (SQLite は不要なので null のまま)。
+  const toolName = DUMP_TOOL[driver] ?? null;
+  const [toolStatus, setToolStatus] = useState<DumpToolStatus | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const refreshToolStatus = useMemo(
+    () => async () => {
+      if (!toolName) return;
+      try {
+        setToolStatus(await api.dumpToolStatus(toolName));
+      } catch {
+        // 検出自体の失敗は致命的ではない (実行時のエラーで分かる) ので黙って続ける。
+        setToolStatus(null);
+      }
+    },
+    [toolName],
+  );
+  useEffect(() => {
+    void refreshToolStatus();
+  }, [refreshToolStatus]);
+  const toolMissing = !!toolStatus && toolStatus.path == null;
+
+  const handleInstallTool = async () => {
+    if (!toolName) return;
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      const next = await api.installDumpTool(toolName);
+      setToolStatus(next);
+      setStatus({ kind: "idle" });
+      toast.success(t("dumpToolInstalled", { tool: toolName, path: next.path ?? "" }));
+    } catch (e) {
+      setInstallError(String(e));
+    } finally {
+      setInstalling(false);
+    }
+  };
 
   // On unmount mid-dump, detach the event subscription AND cancel the backend
   // stream so it doesn't keep running (and writing) after the modal is gone.
@@ -222,6 +351,8 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
         onError: (e) => {
           cleanupStream();
           setStatus({ kind: "error", message: e.error });
+          // ツールが見つからない失敗なら、導入の案内を出すために検出し直す。
+          void refreshToolStatus();
           toast.error(t("dumpError", { error: e.error }));
           setProgress(null);
         },
@@ -261,7 +392,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
   return (
     <Modal
       onSubmit={handleDump}
-      submitDisabled={isRunning || !path.trim()}
+      submitDisabled={isRunning || installing || !path.trim()}
       width="620px"
       onClose={onClose}
       closeOnInteractOutside={!isRunning}
@@ -273,8 +404,22 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
 
       <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
-          {t(NATIVE_DUMP_DRIVERS.has(driver) ? "dumpNoteNative" : "dumpNote")}
+          {NATIVE_DUMP_DRIVERS.has(driver) ? t("dumpNoteNative") : t("dumpNote", { tool: toolName ?? "mysqldump" })}
         </chakra.div>
+
+        {toolStatus && toolMissing && (
+          <DumpToolNotice
+            status={toolStatus}
+            installing={installing}
+            installError={installError}
+            onInstall={() => void handleInstallTool()}
+          />
+        )}
+        {toolStatus?.path && (
+          <chakra.div fontSize="xs" color="app.textMuted" wordBreak="break-all">
+            {t("dumpToolFound", { tool: toolStatus.tool, path: toolStatus.path })}
+          </chakra.div>
+        )}
 
         <FormSection>
           <FieldLabel as="div">{t("dumpOptionsLabel")}</FieldLabel>
@@ -433,7 +578,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
           variant="primary"
           loading={isRunning}
           onClick={handleDump}
-          disabled={isRunning || !path.trim()}
+          disabled={isRunning || installing || !path.trim()}
         >
           {isRunning ? t("dumpRunning") : t("dumpExecute")}
         </LoadingButton>

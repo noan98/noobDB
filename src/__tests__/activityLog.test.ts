@@ -12,6 +12,7 @@ import {
   pushActivity,
   relativeActivityTime,
   type ActivityEntry,
+  mergeLogEntries,
 } from "../activityLog";
 
 // アクティビティセンター (#912) の共有ストアと純ロジック。UI (ActivityCenter.tsx)
@@ -120,5 +121,24 @@ describe("ストア (push / 既読 / クリア)", () => {
     const { entries } = getActivityState();
     expect(entries).toHaveLength(ACTIVITY_LIMIT);
     expect(entries[0].message).toBe(`m${ACTIVITY_LIMIT + 4}`);
+  });
+});
+
+describe("mergeLogEntries", () => {
+  const a = (id: number, message: string, at: number) => ({ id, severity: "info" as const, message, at });
+  it("新しい順に統合し、トーストと近い時刻の同じ文言のメッセージは落とす", () => {
+    const merged = mergeLogEntries(
+      [a(1, "connected", 1000)],
+      [
+        { ...a(1, "connected", 1500), repeat: 1 },
+        { ...a(2, "3 rows", 5000), repeat: 2 },
+        { ...a(3, "connected", 9000), repeat: 1 },
+      ],
+    );
+    expect(merged.map((e) => [e.key, e.message, e.repeat])).toEqual([
+      ["m3", "connected", 1],
+      ["m2", "3 rows", 2],
+      ["a1", "connected", 1],
+    ]);
   });
 });

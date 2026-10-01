@@ -137,7 +137,11 @@ export function ListboxSelect({
     const { height } = listEl.getBoundingClientRect();
     const viewportW = window.innerWidth;
     const viewportH = window.innerHeight;
-
+    // 候補ラベルを省略しないよう、ポップオーバーの幅は内容幅 (max-content、下の style)
+    // に任せ、トリガー幅を最小幅にする (トリガーが狭いと「READ CO…」と切れていた)。
+    // 位置のクランプ用の幅は transform (出現アニメーションの scale) の影響を受けない
+    // offsetWidth で測る。
+    const width = Math.max(anchor.width, listEl.offsetWidth);
     let top = anchor.bottom + POPOVER_GAP;
     if (top + height + MENU_MARGIN > viewportH) {
       top = anchor.top - POPOVER_GAP - height;
@@ -148,7 +152,7 @@ export function ListboxSelect({
     );
     const left = Math.min(
       Math.max(anchor.left, MENU_MARGIN),
-      Math.max(MENU_MARGIN, viewportW - anchor.width - MENU_MARGIN),
+      Math.max(MENU_MARGIN, viewportW - width - MENU_MARGIN),
     );
     setPos({ left, top, width: anchor.width });
   }, [open, options.length]);
@@ -277,7 +281,9 @@ export function ListboxSelect({
             style={{
               left: pos?.left ?? 0,
               top: pos?.top ?? 0,
-              width: pos?.width,
+              minWidth: pos?.width,
+              width: "max-content",
+              maxWidth: `calc(100vw - ${MENU_MARGIN * 2}px)`,
               visibility: pos ? "visible" : "hidden",
             }}
             // リスト内でのクリックはトリガーの blur (= closeListbox) を起こさせない。

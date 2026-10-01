@@ -1580,6 +1580,20 @@ export const schemaDriftGeneration = z.object({
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 
+/** ダンプ用ツール (`mysqldump` / `pg_dump`) の検出結果と導入方法。 */
+export const dumpToolStatus = z.object({
+  tool: z.string(),
+  path: z.string().nullable(),
+  install: z
+    .object({
+      manager: z.string(),
+      command: z.string(),
+      location: z.string(),
+      oneClick: z.boolean(),
+    })
+    .nullable(),
+});
+
 export const schemaDriftTableChange = z.object({
   table: z.string(),
   tableStatus: z.enum(["added", "removed", "changed"]),
@@ -1589,6 +1603,13 @@ export const schemaDriftTableChange = z.object({
   indexesAdded: z.number(),
   indexesRemoved: z.number(),
   indexesChanged: z.number(),
+  // 列名・インデックス名 (アクティビティの詳細表示用)。古いバックエンドは返さないので省略可。
+  addedColumns: z.array(z.string()).optional(),
+  removedColumns: z.array(z.string()).optional(),
+  changedColumns: z.array(z.string()).optional(),
+  addedIndexes: z.array(z.string()).optional(),
+  removedIndexes: z.array(z.string()).optional(),
+  changedIndexes: z.array(z.string()).optional(),
 });
 
 /** 2 世代間の変化サマリ (変化のあったテーブルのみ)。 */

@@ -50,7 +50,6 @@ describe("workspaceCommandItems", () => {
       "nav:toggle-sidebar",
       "nav:focus-explorer",
       "nav:output",
-      "nav:messages",
       "nav:activityPanel",
       "nav:advisor",
       "nav:inspector",
@@ -74,7 +73,6 @@ describe("workspaceCommandItems", () => {
       "nav:toggle-sidebar",
       "nav:focus-explorer",
       "nav:output",
-      "nav:messages",
       "nav:activityPanel",
       "nav:tasks",
     ]);
@@ -112,7 +110,6 @@ describe("workspaceCommandItems", () => {
     const items = workspaceCommandItems(base, acts, t);
     for (const [id, tab] of [
       ["nav:output", "output"],
-      ["nav:messages", "messages"],
       ["nav:activityPanel", "activity"],
     ] as const) {
       items.find((i) => i.id === id)?.run();

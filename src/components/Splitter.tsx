@@ -19,6 +19,13 @@ interface Props {
   // If set, the user's split ratio is persisted under this localStorage key.
   storageKey?: string;
   ariaLabel?: string;
+  /**
+   * true のとき 2 つ目のペインを「中身の高さ (幅) だけ」の帯として扱い、セパレータを
+   * 隠して 1 つ目のペインに残りを全部渡す。分割を閉じたり開いたりするたびに
+   * Splitter ごと出し入れすると `first` の中身 (エディタや結果グリッド) が別の親へ
+   * 移って再マウントされ、開閉が重くなる。このフラグで構造を保ったまま畳む。
+   */
+  secondCollapsed?: boolean;
 }
 
 function readStoredFraction(storageKey: string | undefined, fallback: number): number {
@@ -40,6 +47,7 @@ export function Splitter({
   minSize = 80,
   storageKey,
   ariaLabel,
+  secondCollapsed = false,
 }: Props) {
   const [fraction, setFraction] = useState<number>(() =>
     readStoredFraction(storageKey, defaultFraction),
@@ -187,10 +195,11 @@ export function Splitter({
         overflow="hidden"
         minW={0}
         minH={0}
-        style={{ flexGrow: fraction, flexShrink: 1, flexBasis: 0 }}
+        style={{ flexGrow: secondCollapsed ? 1 : fraction, flexShrink: 1, flexBasis: 0 }}
       >
         {first}
       </Box>
+      {!secondCollapsed && (
       <Box
         flex="0 0 auto"
         position="relative"
@@ -268,13 +277,18 @@ export function Splitter({
           <span />
         </Box>
       </Box>
+      )}
       <Box
         display="flex"
         flexDirection="column"
         overflow="hidden"
         minW={0}
         minH={0}
-        style={{ flexGrow: 1 - fraction, flexShrink: 1, flexBasis: 0 }}
+        style={
+          secondCollapsed
+            ? { flexGrow: 0, flexShrink: 0, flexBasis: "auto" }
+            : { flexGrow: 1 - fraction, flexShrink: 1, flexBasis: 0 }
+        }
       >
         {second}
       </Box>

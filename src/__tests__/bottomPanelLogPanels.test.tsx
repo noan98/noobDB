@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, renderWithProviders, screen } from "./testUtils";
 import { t } from "../i18n";
 import { OutputPanel } from "../components/OutputPanel";
-import { ActivityLogPanel, MessagesPanel } from "../components/SeverityLog";
+import { ActivityLogPanel } from "../components/SeverityLog";
 import { __resetOutputLog, pushOutput } from "../outputLog";
 import { __resetMessageLog, pushMessage } from "../messageLog";
 import { __resetActivityLog, getActivityState, pushActivity } from "../activityLog";
@@ -78,13 +78,13 @@ describe("OutputPanel", () => {
   });
 });
 
-describe("MessagesPanel", () => {
-  it("ステータスの履歴を並べ、畳んだ回数を添える", () => {
+describe("ActivityLogPanel (ステータスメッセージの統合)", () => {
+  it("ステータスの履歴もアクティビティに並べ、畳んだ回数を添える", () => {
     pushMessage("error", "boom", "text:boom");
     pushMessage("success", "10 rows", "key:statusStreamingDone");
     pushMessage("success", "12 rows", "key:statusStreamingDone");
-    renderWithProviders(<MessagesPanel />);
-    const items = screen.getByRole("list", { name: t("messagesListAria") }).querySelectorAll("li");
+    renderWithProviders(<ActivityLogPanel />);
+    const items = screen.getByRole("list", { name: t("activityListAria") }).querySelectorAll("li");
     expect(items).toHaveLength(2);
     expect(items[0].textContent).toContain("12 rows");
     expect(items[0].textContent).toContain(t("messagesRepeat", { count: 2 }));
@@ -94,11 +94,69 @@ describe("MessagesPanel", () => {
   it("重大度チップで絞り込める", () => {
     pushMessage("error", "boom", "text:boom");
     pushMessage("success", "ok", "key:x");
-    renderWithProviders(<MessagesPanel />);
+    renderWithProviders(<ActivityLogPanel />);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("activitySeverityError")}`) }));
-    const items = screen.getByRole("list", { name: t("messagesListAria") }).querySelectorAll("li");
+    const items = screen.getByRole("list", { name: t("activityListAria") }).querySelectorAll("li");
     expect(items).toHaveLength(1);
     expect(items[0].textContent).toContain("boom");
+  });
+
+  it("トーストと同じ文言のステータスメッセージは 1 行にまとめる", () => {
+    pushActivity("success", "Connected to local");
+    pushMessage("success", "Connected to local", "text:Connected to local");
+    renderWithProviders(<ActivityLogPanel />);
+    const items = screen.getByRole("list", { name: t("activityListAria") }).querySelectorAll("li");
+    expect(items).toHaveLength(1);
+  });
+
+  it("クリアでトーストとメッセージの両方を消す", () => {
+    pushActivity("success", "a");
+    pushMessage("error", "b", "text:b");
+    renderWithProviders(<ActivityLogPanel />);
+    fireEvent.click(screen.getByRole("button", { name: t("activityClear") }));
+    expect(screen.getByText(t("activityEmptyTitle"))).toBeInTheDocument();
+  });
+});
+
+describe("ActivityLogPanel (詳細の展開)", () => {
+  it("スキーマ変更はテーブルごとの列/インデックスの増減を表で見られる", () => {
+    pushActivity("warning", "schema changed", {
+      kind: "schemaDrift",
+      summary: {
+        tables: [
+          {
+            table: "orders",
+            tableStatus: "changed",
+            columnsAdded: 1,
+            columnsRemoved: 0,
+            columnsChanged: 0,
+            indexesAdded: 1,
+            indexesRemoved: 0,
+            indexesChanged: 0,
+            addedColumns: ["total"],
+            addedIndexes: ["ix_total"],
+          },
+          {
+            table: "audit",
+            tableStatus: "added",
+            columnsAdded: 0,
+            columnsRemoved: 0,
+            columnsChanged: 0,
+            indexesAdded: 0,
+            indexesRemoved: 0,
+            indexesChanged: 0,
+          },
+        ],
+      },
+    });
+    renderWithProviders(<ActivityLogPanel />);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("activityShowDetail")) }));
+    const table = screen.getByRole("table");
+    expect(table.textContent).toContain("orders");
+    expect(table.textContent).toContain("total");
+    expect(table.textContent).toContain("ix_total");
+    expect(table.textContent).toContain(t("schemaDriftTableAddedLabel"));
   });
 });
 

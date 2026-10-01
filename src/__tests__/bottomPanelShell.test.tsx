@@ -20,9 +20,7 @@ import {
 const label = (tab: BottomPanelTab) =>
   tab === "output"
     ? t("outputTitle")
-    : tab === "messages"
-      ? t("messagesTitle")
-      : tab === "activity"
+    : tab === "activity"
         ? t("activityCenterTitle")
         : tab === "advisor"
     ? t("advisorTitle")
@@ -105,11 +103,10 @@ describe("BottomPanel シェル (#1112)", () => {
 
   it("用途グループ (ログ / 診断 / 参照、#1114) の切れ目に区切り線を引く", () => {
     renderShell({ tabs: BOTTOM_PANEL_TABS.filter((tab) => tab !== "profile" && tab !== "structure") });
-    // ログ系 3 タブは接続に関係なく常に並ぶ。
+    // ログ系 2 タブは接続に関係なく常に並ぶ。
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.slice(0, 3).map((el) => el.textContent)).toEqual([
+    expect(tabs.slice(0, 2).map((el) => el.textContent)).toEqual([
       t("outputTitle"),
-      t("messagesTitle"),
       t("activityCenterTitle"),
     ]);
     // ログ | 診断 | 参照 の 2 箇所。区切り線はタブではない (矢印キー巡回に乗らない)。
@@ -123,7 +120,7 @@ describe("BottomPanel シェル (#1112)", () => {
   });
 
   it("グループが 1 つだけなら区切り線を引かない", () => {
-    renderShell({ tab: "output", tabs: ["output", "messages", "activity"] });
+    renderShell({ tab: "output", tabs: ["output", "activity"] });
     expect(screen.queryAllByTestId("bottom-panel-group-divider")).toHaveLength(0);
   });
 
@@ -195,7 +192,7 @@ describe("BottomPanelStrip (折りたたみ時のパネルバー)", () => {
         : t("appToolsNeedsSession");
   const entries: BottomPanelStripEntry[] = [
     { tab: "output", enabled: true, reason: null },
-    { tab: "messages", enabled: true, reason: null },
+    { tab: "activity", enabled: true, reason: null },
     { tab: "advisor", enabled: true, reason: null },
     { tab: "processes", enabled: false, reason: "needsSession" },
   ];
