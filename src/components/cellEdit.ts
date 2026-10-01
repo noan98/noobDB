@@ -537,6 +537,95 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
 }
 
 /**
+ * `SET` に書く値を列型に応じて分類したもの (#1259)。`literalFromInput` と同じ判定を
+ * SQL 文字列ではなく構造で表し、リテラル化 (方言別エスケープ) は Rust の
+ * `bulk_update_cells` が担う。
+ */
+export type BulkSetValue =
+  | { kind: "null" }
+  | { kind: "number"; text: string }
+  | { kind: "bool"; value: boolean }
+  | { kind: "text"; text: string };
+
+/**
+ * `literalFromInput` と同じ規則で、入力テキストを構造化した値へ分類する:
+ *   - "NULL" (大小無視・trim 後) → null
+ *   - 数値列 + 数値らしい入力 → number (trim 済みテキストをそのまま)
+ *   - BOOLEAN 列 + true/false/0/1 → bool
+ *   - BIT 列 + true/false/0/1 → number "1" / "0"
+ *   - それ以外 → 生の文字列 (trim しない)
+ */
+export function setValueFromInput(raw: string, col: Column): BulkSetValue {
+  const trimmed = raw.trim();
+  if (/^null$/i.test(trimmed)) return { kind: "null" };
+  const t = col.type_name.toUpperCase();
+  if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(trimmed)) {
+    return { kind: "number", text: trimmed };
+  }
+  if (t === "BOOLEAN" || t === "BOOL") {
+    const lc = trimmed.toLowerCase();
+    if (lc === "true" || lc === "1") return { kind: "bool", value: true };
+    if (lc === "false" || lc === "0") return { kind: "bool", value: false };
+  }
+  if (t === "BIT") {
+    const lc = trimmed.toLowerCase();
+    if (lc === "true" || lc === "1") return { kind: "number", text: "1" };
+    if (lc === "false" || lc === "0") return { kind: "number", text: "0" };
+  }
+  return { kind: "text", text: raw };
+}
+
+/** 同じ `SET` (列, 値) を適用する行の集合。`keys` は各行の元の主キー値。 */
+export interface UpdateGroup {
+  set: { column: string; value: BulkSetValue }[];
+  keys: CellValue[][];
+}
+
+/**
+ * 保留中のセル編集を、同じ (列, 値) の組ごとにまとめた構造化入力へ変換する (#1259)。
+ * `buildUpdateStatements` が 1 行 1 `UPDATE` (リテラル埋め込み) を返していたのに対し、
+ * こちらはグループ化だけを行い、SQL 組み立て (`UPDATE t SET c = v WHERE pk IN (…)`) と
+ * リテラル化は Rust の `bulk_update_cells` が担う。行の走査順・重複排除・元の主キー値
+ * での特定は `buildUpdateStatements` と同じ (`rows` を上から順に見る)。グループは
+ * 最初に現れた行の順に並ぶ。`rowCount` は編集対象の行数 (進捗表示用)。
+ */
+export function buildUpdateGroups(input: BuildUpdateInput): {
+  groups: UpdateGroup[];
+  rowCount: number;
+} {
+  if (input.pkIndices.length === 0) return { groups: [], rowCount: 0 };
+  const groups = new Map<string, UpdateGroup>();
+  const emitted = new Set<string>();
+  let rowCount = 0;
+  for (let rowIdx = 0; rowIdx < input.rows.length; rowIdx++) {
+    const row = input.rows[rowIdx];
+    if (!row) continue;
+    const key = rowEditKey(row, input.pkIndices, rowIdx);
+    if (emitted.has(key)) continue;
+    const rowEdits = input.edits[key];
+    if (!rowEdits) continue;
+    emitted.add(key);
+    const set: UpdateGroup["set"] = [];
+    for (const colKey of Object.keys(rowEdits)) {
+      const colIdx = Number(colKey);
+      const col = input.columns[colIdx];
+      if (!col) continue;
+      set.push({ column: col.name, value: setValueFromInput(rowEdits[colIdx], col) });
+    }
+    if (set.length === 0) continue;
+    rowCount++;
+    const sig = JSON.stringify(set);
+    let g = groups.get(sig);
+    if (!g) {
+      g = { set, keys: [] };
+      groups.set(sig, g);
+    }
+    g.keys.push(input.pkIndices.map((i) => row[i]));
+  }
+  return { groups: [...groups.values()], rowCount };
+}
+
+/**
  * 1 セルの BLOB を丸ごと差し替える `UPDATE` を 1 文組み立てる (#1148、ファイルからの
  * 読み込み)。`hex` は新しい内容の 16 進文字列。WHERE は行の**元の**主キー値で組む
  * (`buildUpdateStatements` と同じ規約)。主キーが無い / 列が範囲外なら null。

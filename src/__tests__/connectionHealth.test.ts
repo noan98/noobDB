@@ -1,21 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  HEALTH_CHECK_CONCURRENCY,
   LATENCY_CRITICAL_MS,
   LATENCY_SLOW_MS,
   buildHealthRows,
   changedHealthSessions,
-  checkAllConnections,
-  createHealthProber,
   formatHealthTarget,
   healthStatusRole,
   isServerlessDriver,
   latencyLevel,
-  probeConnectionHealth,
   pruneHealthResults,
   summarizeHealth,
-  withTimeout,
-  type HealthDeps,
+  toHealthProbeResult,
+  type HealthProbeItemLike,
   type HealthProbeResult,
   type HealthProfileLike,
   type HealthRow,
@@ -28,20 +24,6 @@ import {
  * 「サーバを持たない接続は N/A で縮退」「未接続プロファイルへ勝手に接続しない」を
  * ここで固定する。
  */
-
-const never = <T,>() => new Promise<T>(() => {});
-
-function deps(overrides: Partial<HealthDeps> = {}): HealthDeps {
-  let clock = 0;
-  return {
-    ping: async () => true,
-    version: async () => "8.0.36",
-    connections: async () => 12,
-    // 呼ばれるたびに 7ms 進む時計 (ping の前後で 1 回ずつ = 7ms)。
-    now: () => (clock += 7),
-    ...overrides,
-  };
-}
 
 const profile = (over: Partial<HealthProfileLike> = {}): HealthProfileLike => ({
   id: "p1",
@@ -74,197 +56,64 @@ describe("isServerlessDriver", () => {
   });
 });
 
-describe("withTimeout", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+describe("toHealthProbeResult (health_probe_all の観測値 → 表示状態, #1259)", () => {
+  const item = (over: Partial<HealthProbeItemLike> = {}): HealthProbeItemLike => ({
+    session_id: "s1",
+    status: "up",
+    latency_ms: 7,
+    version: "8.0.36",
+    connections: 12,
+    ...over,
+  });
+  const mysql = { sessionId: "s1", driver: "mysql" };
 
-  it("時間内に返れば ok", async () => {
-    await expect(withTimeout(Promise.resolve(1), 100)).resolves.toEqual({ kind: "ok", value: 1 });
+  it("up: レイテンシ・バージョン・接続数をそのまま反映する", () => {
+    expect(toHealthProbeResult(mysql, item())).toEqual({
+      status: "up",
+      latencyMs: 7,
+      version: "8.0.36",
+      connections: 12,
+    });
   });
 
-  it("失敗は例外にせず error に畳む (エラー文面を運ばない)", async () => {
-    const r = await withTimeout(Promise.reject(new Error("password=secret")), 100);
-    expect(r).toEqual({ kind: "error" });
-    expect(JSON.stringify(r)).not.toContain("secret");
-  });
-
-  it("返らなければ timeout", async () => {
-    const p = withTimeout(never<number>(), 100);
-    await vi.advanceTimersByTimeAsync(100);
-    await expect(p).resolves.toEqual({ kind: "timeout" });
-  });
-});
-
-describe("probeConnectionHealth", () => {
-  it("up: レイテンシ・バージョン・接続数を集約する", async () => {
-    const r = await probeConnectionHealth({ sessionId: "s1", driver: "mysql" }, deps());
-    expect(r).toEqual({ status: "up", latencyMs: 7, version: "8.0.36", connections: 12 });
-  });
-
-  it("ping が false なら down で、追加の問い合わせをしない", async () => {
-    const version = vi.fn(async () => "x");
-    const connections = vi.fn(async () => 1);
-    const r = await probeConnectionHealth(
-      { sessionId: "s1", driver: "postgres" },
-      deps({ ping: async () => false, version, connections }),
-    );
-    expect(r.status).toBe("down");
-    expect(r.latencyMs).toBeNull();
-    expect(version).not.toHaveBeenCalled();
-    expect(connections).not.toHaveBeenCalled();
-  });
-
-  it("ping が例外 (セッション不明など) でも down", async () => {
-    const r = await probeConnectionHealth(
-      { sessionId: "s1", driver: "mysql" },
-      deps({ ping: () => Promise.reject(new Error("session not found")) }),
-    );
-    expect(r.status).toBe("down");
-  });
-
-  it("ping が返らなければ timeout (キャッシュ済みバージョンは保つ)", async () => {
-    vi.useFakeTimers();
-    try {
-      const p = probeConnectionHealth(
-        { sessionId: "s1", driver: "mysql" },
-        deps({ ping: () => never<boolean>() }),
-        { timeoutMs: 50, cachedVersion: "8.0" },
-      );
-      await vi.advanceTimersByTimeAsync(50);
-      await expect(p).resolves.toEqual({
-        status: "timeout",
+  it("down / timeout ではレイテンシと接続数を持たず、キャッシュ済みバージョンは保つ", () => {
+    for (const status of ["down", "timeout"] as const) {
+      expect(toHealthProbeResult(mysql, item({ status, latency_ms: 3, connections: 5 }))).toEqual({
+        status,
         latencyMs: null,
-        version: "8.0",
+        version: "8.0.36",
         connections: null,
       });
-    } finally {
-      vi.useRealTimers();
     }
   });
 
-  it("SQLite は server_metrics を呼ばず接続数を N/A にする", async () => {
-    const connections = vi.fn(async () => 1);
-    for (const driver of ["sqlite"]) {
-      const r = await probeConnectionHealth({ sessionId: "s1", driver }, deps({ connections }));
-      expect(r.status).toBe("up");
-      expect(r.connections).toBe("na");
-    }
-    expect(connections).not.toHaveBeenCalled();
-  });
-
-  it("バージョンがキャッシュ済みなら server_info を呼ばない", async () => {
-    const version = vi.fn(async () => "new");
-    const r = await probeConnectionHealth({ sessionId: "s1", driver: "mysql" }, deps({ version }), {
-      cachedVersion: "cached",
+  it("SQLite は接続数を常に N/A にする", () => {
+    expect(toHealthProbeResult({ sessionId: "s1", driver: "sqlite" }, item({ connections: null }))).toMatchObject({
+      status: "up",
+      connections: "na",
     });
-    expect(r.version).toBe("cached");
-    expect(version).not.toHaveBeenCalled();
+    expect(
+      toHealthProbeResult({ sessionId: "s1", driver: "sqlite" }, item({ status: "down" })).connections,
+    ).toBe("na");
   });
 
-  it("メタ情報の失敗は up 判定と互いに影響しない", async () => {
-    const r = await probeConnectionHealth(
-      { sessionId: "s1", driver: "mysql" },
-      deps({ version: () => Promise.reject(new Error("x")) }),
-    );
-    expect(r).toMatchObject({ status: "up", version: null, connections: 12 });
-
-    const r2 = await probeConnectionHealth(
-      { sessionId: "s1", driver: "mysql" },
-      deps({ connections: () => Promise.reject(new Error("denied")) }),
-    );
-    expect(r2).toMatchObject({ status: "up", version: "8.0.36", connections: null });
+  it("接続数が取れなかったサーバ型 (up) は null のまま", () => {
+    expect(toHealthProbeResult(mysql, item({ connections: null })).connections).toBeNull();
   });
 
-  it("空白だけのバージョンは null", async () => {
-    const r = await probeConnectionHealth(
-      { sessionId: "s1", driver: "mysql" },
-      deps({ version: async () => "  " }),
-    );
-    expect(r.version).toBeNull();
-  });
-});
-
-describe("createHealthProber", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it("前回の ping が返っていないセッションには新しい ping を積まない", async () => {
-    const ping = vi.fn(() => never<boolean>());
-    const prober = createHealthProber(deps({ ping }));
-    const target = { sessionId: "s1", driver: "mysql" };
-
-    const first = prober.probe(target, { timeoutMs: 20 });
-    await vi.advanceTimersByTimeAsync(20);
-    expect((await first).status).toBe("timeout");
-    expect(prober.isInFlight("s1")).toBe(true);
-
-    // 2 回目: バックエンドの ping はまだ走っているので呼ばずに timeout。
-    const second = await prober.probe(target, { timeoutMs: 20 });
-    expect(second.status).toBe("timeout");
-    expect(ping).toHaveBeenCalledTimes(1);
+  it("空白だけ / 無いバージョンは null", () => {
+    expect(toHealthProbeResult(mysql, item({ version: "  " })).version).toBeNull();
+    expect(toHealthProbeResult(mysql, item({ version: null })).version).toBeNull();
+    expect(toHealthProbeResult(mysql, item({ version: " 16.2 " })).version).toBe("16.2");
   });
 
-  it("ping が返れば次の問い合わせは通常どおり行う", async () => {
-    let resolvePing: (v: boolean) => void = () => {};
-    const ping = vi
-      .fn<(sid: string) => Promise<boolean>>()
-      .mockImplementationOnce(() => new Promise((r) => (resolvePing = r)))
-      .mockImplementation(async () => true);
-    const prober = createHealthProber(deps({ ping }));
-    const target = { sessionId: "s1", driver: "mysql" };
-
-    const first = prober.probe(target, { timeoutMs: 20 });
-    await vi.advanceTimersByTimeAsync(20);
-    await first;
-    resolvePing(true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(prober.isInFlight("s1")).toBe(false);
-
-    const second = await prober.probe(target, { timeoutMs: 20 });
-    expect(second.status).toBe("up");
-    expect(ping).toHaveBeenCalledTimes(2);
-  });
-
-  it("in-flight はセッションごとに独立", async () => {
-    const ping = vi.fn((sid: string) => (sid === "hung" ? never<boolean>() : Promise.resolve(true)));
-    const prober = createHealthProber(deps({ ping }));
-    const hung = prober.probe({ sessionId: "hung", driver: "mysql" }, { timeoutMs: 20 });
-    const ok = await prober.probe({ sessionId: "ok", driver: "mysql" }, { timeoutMs: 20 });
-    expect(ok.status).toBe("up");
-    await vi.advanceTimersByTimeAsync(20);
-    expect((await hung).status).toBe("timeout");
-  });
-});
-
-describe("checkAllConnections", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it("1 接続の遅延が他の接続の結果をブロックしない (個別タイムアウト)", async () => {
-    const ping = (sid: string) => (sid === "slow" ? never<boolean>() : Promise.resolve(true));
-    const prober = createHealthProber(deps({ ping }));
-    const targets = ["a", "slow", "b", "c"].map((sessionId) => ({ sessionId, driver: "mysql" }));
-    const p = checkAllConnections(targets, (tgt) => prober.probe(tgt, { timeoutMs: 30 }));
-    await vi.advanceTimersByTimeAsync(30);
-    const out = await p;
-    expect(out.map((r) => r.status)).toEqual(["up", "timeout", "up", "up"]);
-  });
-
-  it("同時に問い合わせる本数を制限する", async () => {
-    let inFlight = 0;
-    let peak = 0;
-    const probe = async () => {
-      inFlight += 1;
-      peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 10));
-      inFlight -= 1;
-      return up();
-    };
-    const targets = Array.from({ length: 10 }, (_, i) => ({ sessionId: `s${i}`, driver: "mysql" }));
-    const p = checkAllConnections(targets, probe);
-    await vi.advanceTimersByTimeAsync(100);
-    await p;
-    expect(peak).toBe(HEALTH_CHECK_CONCURRENCY);
+  it("項目が返らなかったセッションは down 扱い", () => {
+    expect(toHealthProbeResult(mysql, undefined)).toEqual({
+      status: "down",
+      latencyMs: null,
+      version: null,
+      connections: null,
+    });
   });
 });
 

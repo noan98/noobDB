@@ -19,6 +19,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       listProcesses: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn(),
+      getProcessQuery: vi.fn(),
     },
   };
 });
@@ -88,7 +90,8 @@ describe("ProcessListPanel loading skeleton (#846)", () => {
         command: "Query",
         state: "executing",
         time_secs: 1,
-        query: "SELECT 1",
+        query_summary: "SELECT 1",
+        query_truncated: false,
         is_self: false,
       },
     ]);
@@ -145,7 +148,8 @@ describe("ProcessListPanel live motion (#1022)", () => {
     command: "Query",
     state: "executing",
     time_secs: 10,
-    query: "SELECT 1",
+    query_summary: "SELECT 1",
+    query_truncated: false,
     is_self: false,
   };
 
@@ -170,5 +174,53 @@ describe("ProcessListPanel live motion (#1022)", () => {
 
     await waitFor(() => expect(screen.queryByText("8")).not.toBeInTheDocument());
     await waitFor(() => expect(container.querySelectorAll("tbody > tr")).toHaveLength(1));
+  });
+});
+
+/**
+ * 一括 kill (#1259): 選択した id を `killProcesses` 1 回で送り、結果の件数・最初のエラーを
+ * 従来どおりの toast 文言にする。クエリ全文はツールチップ表示時だけ id 指定で取得する。
+ */
+describe("ProcessListPanel bulk kill & lazy query (#1259)", () => {
+  const base: ProcessInfo = {
+    id: 7,
+    user: "app",
+    host: "localhost",
+    database: "db",
+    command: "Query",
+    state: "executing",
+    time_secs: 10,
+    query_summary: "SELECT …",
+    query_truncated: true,
+    is_self: false,
+  };
+
+  it("選択した id を killProcesses 1 回で送り、失敗件数と最初のエラーを toast に出す", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 8 }]);
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 1, first_error: "denied" });
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    await waitFor(() => expect(screen.getByText("8")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText(t("processSelectAll")));
+    fireEvent.click(screen.getByRole("button", { name: t("processKillSelected", { count: 2 }) }));
+    fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
+
+    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [7, 8]));
+    expect(api.killProcesses).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(
+        screen.getByText(t("processKillFailed", { failed: 1, count: 2, error: "denied" })),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("全文はセルにポインタが乗ったときだけ id 指定で取得する", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base]);
+    vi.mocked(api.getProcessQuery).mockResolvedValue("SELECT * FROM big_table WHERE x = 1");
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
+    const cell = await screen.findByText("SELECT …");
+    expect(api.getProcessQuery).not.toHaveBeenCalled();
+    fireEvent.mouseEnter(cell.closest("td") as HTMLElement);
+    await waitFor(() => expect(api.getProcessQuery).toHaveBeenCalledWith("s1", 7));
   });
 });

@@ -147,8 +147,22 @@ export const processInfo = z.object({
   command: z.string().nullable(),
   state: z.string().nullable(),
   time_secs: z.number().nullable(),
-  query: z.string().nullable(),
+  query_summary: z.string().nullable(),
+  query_truncated: z.boolean(),
   is_self: z.boolean(),
+});
+
+/** `insert_generated_rows` の結果 (#1259)。 */
+export const insertRowsResult = z.object({
+  inserted: z.number(),
+  elapsed_ms: z.number(),
+});
+
+/** `kill_processes` の結果 (#1259)。 */
+export const killProcessesResult = z.object({
+  killed: z.number(),
+  failed: z.number(),
+  first_error: z.string().nullable(),
 });
 
 /** データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。 */
@@ -187,6 +201,16 @@ export const serverMetrics = z.object({
   slow_queries: z.number().nullable(),
   lock_waits: z.number().nullable(),
 });
+
+/** 接続ヘルスの一括プローブ (`health_probe_all`, #1259) の 1 セッション分。 */
+export const healthProbeItem = z.object({
+  session_id: z.string(),
+  status: z.enum(["up", "down", "timeout"]),
+  latency_ms: z.number().nullable(),
+  version: z.string().nullable(),
+  connections: z.number().nullable(),
+});
+export const healthProbeItemArray = z.array(healthProbeItem);
 
 /** SSH known_hosts の 1 エントリ (host:port + fingerprint)。#682。 */
 export const knownHost = z.object({
@@ -231,17 +255,21 @@ export const liveQuery = z.object({
   rows_examined: z.number().nullable(),
   running: z.boolean(),
   started_at_ms: z.number().nullable(),
+  /** Rust の `normalize_sql_fingerprint` による同型クエリキー (#1259)。 */
+  fingerprint: z.string(),
 });
 
-/** digest 単位の累積統計 1 行 (#746)。 */
-export const statementStat = z.object({
+/** digest 単位の差分統計 1 行 (#746 / #1259)。`fingerprint` (SQL 本文) は digest の初出時のみ。 */
+export const statementDeltaRow = z.object({
   digest: z.string(),
-  fingerprint: z.string(),
+  fingerprint: z.string().nullable(),
   database: z.string().nullable(),
   calls: z.number(),
   total_time_ms: z.number(),
+  mean_time_ms: z.number(),
   max_time_ms: z.number(),
   rows: z.number().nullable(),
+  n_plus_one: z.boolean(),
 });
 
 /** 上位頻出値 1 件 (#974)。件数は 2^53 超で十進文字列になりうる。 */
@@ -561,6 +589,12 @@ export const dataDiffLite = dataDiff.extend({
   rows: z.array(z.unknown()),
 });
 
+/** `compare_table_data` の戻り値: 表示用の差分 + バックエンド保持の差分 ID (#1259)。 */
+export const dataDiffHandle = z.object({
+  diff_id: z.string(),
+  diff: dataDiffLite,
+});
+
 // テーブル・タイムラプス (#739)。
 const timelapseGenerationMeta = z.object({
   id: z.number(),
@@ -638,7 +672,8 @@ const sandboxConflict = z.object({
 });
 
 export const sandboxTableDiffResult = z.object({
-  desired: dataDiff,
+  desired: dataDiffLite,
+  desired_diff_id: z.string(),
   conflicts: z.array(sandboxConflict),
   source_checked: z.boolean(),
 });
@@ -717,6 +752,7 @@ export const connectPhaseEvent = z.object({
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
 export const stringResponse = z.string();
+export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
 export const nullableStringResponse = z.string().nullable();
 
@@ -841,7 +877,7 @@ export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
 export const dbUserInfoArray = z.array(dbUserInfo);
 export const liveQueryArray = z.array(liveQuery);
-export const statementStatArray = z.array(statementStat);
+export const statementDeltaRowArray = z.array(statementDeltaRow);
 export const schemaObjectArray = z.array(schemaObject);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);

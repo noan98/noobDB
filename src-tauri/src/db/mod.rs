@@ -8,6 +8,8 @@ pub mod create_table;
 pub mod data_diff;
 pub mod diff;
 pub mod format;
+/// ライブクエリ・インスペクタ (#746) のフィンガープリント正規化と digest 差分集計 (#1259)。
+pub mod inspector;
 /// エクスポート時のデータマスキング (#733)。出力時だけの変換で DB には触れない。
 pub mod masking;
 pub mod mysql;
@@ -44,11 +46,11 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
-    group_tables_by_database, Column, DatabaseTables, DbUserInfo, ForeignKey, IndexInfo, LiveQuery,
-    LocalTableMeta, PreviewResult, ProcessInfo, QueryResult, QueryStatsSupport, RoutineSignature,
-    SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch, TableColumnInfo,
-    TableComment, TableIndexes, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    group_tables_by_database, Column, DatabaseTables, DbUserInfo, ForeignKey, IndexInfo,
+    KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo, QueryResult,
+    QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics, StatementStat,
+    StreamBatch, TableColumnInfo, TableComment, TableIndexes, TableRowEstimate, TableRowIdentity,
+    TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use upsert::ImportConflict;
 
@@ -990,6 +992,17 @@ impl Connection {
         }
     }
 
+    /// サーバのバージョン文字列だけを返す (#1259)。接続ヘルスの定期プローブ用で、
+    /// `server_info` の変数一覧 (MySQL の `SHOW VARIABLES` / PostgreSQL の
+    /// `pg_settings` / SQLite の PRAGMA 群) は取らない。取得できなければ空文字。
+    pub async fn server_version(&self) -> Result<String> {
+        match self {
+            Connection::MySql(c) => c.server_version().await,
+            Connection::Postgres(c) => c.server_version().await,
+            Connection::Sqlite(c) => c.server_version().await,
+        }
+    }
+
     /// Read-only server information (version + configuration variables) for the
     /// server-info panel. MySQL uses `SELECT VERSION()` + `SHOW VARIABLES`,
     /// PostgreSQL `version()` + `pg_settings`, SQLite `sqlite_version()` + a
@@ -1017,6 +1030,17 @@ impl Connection {
         }
     }
 
+    /// 接続ヘルス (`health_probe_all`, #1259) 用の現在の接続数。`server_metrics`
+    /// より軽い専用クエリ (MySQL は `SHOW GLOBAL STATUS LIKE 'Threads_connected'`、
+    /// PostgreSQL は `count(*)` 1 本)。SQLite は概念が無く `None`。
+    pub async fn connection_count(&self) -> Result<Option<i64>> {
+        match self {
+            Connection::MySql(c) => c.connection_count().await,
+            Connection::Postgres(c) => c.connection_count().await,
+            Connection::Sqlite(c) => c.connection_count().await,
+        }
+    }
+
     /// Server-side processes/connections for the process monitor panel.
     /// Reads the engine's in-memory state (`processlist` / `pg_stat_activity`)
     /// — no table I/O — so it is cheap enough to poll. SQLite has no server
@@ -1029,14 +1053,16 @@ impl Connection {
         }
     }
 
-    /// Terminates the server-side process/connection `id` (from
-    /// [`Connection::list_processes`]): MySQL `KILL <id>`, PostgreSQL
-    /// `pg_terminate_backend(pid)`. SQLite returns an error.
-    pub async fn kill_process(&self, id: i64) -> Result<()> {
+    /// Terminates the server-side processes/connections `ids` (from
+    /// [`Connection::list_processes`]): MySQL `KILL <id>` on one pooled
+    /// connection, PostgreSQL `pg_terminate_backend` over `unnest` in one
+    /// statement (#1259). Failures don't stop the rest; the result carries the
+    /// counts and the first error. SQLite returns an error.
+    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
         match self {
-            Connection::MySql(c) => c.kill_process(id).await,
-            Connection::Postgres(c) => c.kill_process(id).await,
-            Connection::Sqlite(c) => c.kill_process(id).await,
+            Connection::MySql(c) => c.kill_processes(ids).await,
+            Connection::Postgres(c) => c.kill_processes(ids).await,
+            Connection::Sqlite(c) => c.kill_processes(ids).await,
         }
     }
 
@@ -1055,12 +1081,18 @@ impl Connection {
 
     /// The CRUD + DDL privilege matrix for one user/role (see
     /// [`UserPrivileges`]). `host` narrows a MySQL account (`user@host`);
-    /// ignored by other drivers.
-    pub async fn user_privileges(&self, user: &str, host: Option<&str>) -> Result<UserPrivileges> {
+    /// ignored by other drivers. `database` narrows the per-table rows in SQL
+    /// (MySQL `Db`, PostgreSQL schema) instead of returning every database (#1259).
+    pub async fn user_privileges(
+        &self,
+        user: &str,
+        host: Option<&str>,
+        database: Option<&str>,
+    ) -> Result<UserPrivileges> {
         match self {
-            Connection::MySql(c) => c.user_privileges(user, host).await,
-            Connection::Postgres(c) => c.user_privileges(user, host).await,
-            Connection::Sqlite(c) => c.user_privileges(user, host).await,
+            Connection::MySql(c) => c.user_privileges(user, host, database).await,
+            Connection::Postgres(c) => c.user_privileges(user, host, database).await,
+            Connection::Sqlite(c) => c.user_privileges(user, host, database).await,
         }
     }
 
