@@ -1231,6 +1231,8 @@ pub fn run() {
             commands::result::release_result,
             commands::result::render_export_text,
             commands::dump::dump_database,
+            commands::dump_tools::dump_tool_status,
+            commands::dump_tools::install_dump_tool,
             commands::import::parse_csv_preview,
             commands::import::import_csv,
             commands::script::run_sql_script,

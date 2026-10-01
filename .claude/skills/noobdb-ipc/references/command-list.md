@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **158 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **160 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -228,10 +228,17 @@ EXPLAIN をまとめて実行し、正規化・フィンガープリント・世
 
 ## エクスポート / ダンプ / インポート / ファイル
 
-`export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
+`export_query_result` / `export_query_stream` / `dump_database` / `dump_tool_status` /
+`install_dump_tool` / `parse_csv_preview` /
 `import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_text_file` /
 `write_binary_file` / `fetch_cell_bytes` / `probe_cell_blob` / `save_cell_to_file` /
 `read_binary_file` / `get_import_skipped_text` / `save_import_skipped_rows`
+
+`dump_tool_status` / `install_dump_tool` (`commands/dump_tools.rs`) はダンプ用の外部ツール
+(`mysqldump` / `pg_dump`) を **noobDB を実行している PC** で探し (PATH → Homebrew の keg-only
+や `Program Files\MySQL\MySQL Server *\bin` などの既知の場所)、無ければ OS のパッケージ
+マネージャ (Windows: winget / macOS: Homebrew) で導入する。Linux は sudo が要るので
+コマンドを返すだけ。踏み台・DB サーバには何も入れない。`dump_database` も同じ解決関数を使う。
 
 `fetch_cell_bytes` / `probe_cell_blob` / `save_cell_to_file` / `read_binary_file`
 (`commands/cell_blob.rs`, #1148 / #1258) は BLOB セルのファイル入出力とプレビュー用。

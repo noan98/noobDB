@@ -88,19 +88,11 @@ export function workspaceCommandItems(
     run: () => actions.toggleBottomPanel("output"),
   });
   items.push({
-    id: "nav:messages",
-    group: "navigation",
-    label: t("cmdkMessages"),
-    icon: "list",
-    keywords: "messages status bar history errors メッセージ ステータス 履歴 エラー",
-    run: () => actions.toggleBottomPanel("messages"),
-  });
-  items.push({
     id: "nav:activityPanel",
     group: "navigation",
     label: t("cmdkActivityPanel"),
     icon: "bell",
-    keywords: "activity notifications toast panel アクティビティ 通知 トースト パネル",
+    keywords: "activity notifications toast panel messages status bar history アクティビティ 通知 トースト パネル メッセージ ステータス 履歴",
     run: () => actions.toggleBottomPanel("activity"),
   });
   // アドバイザは DB コンテキストが要る (ツールメニューと同じガード)。DB が解決

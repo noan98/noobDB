@@ -13,7 +13,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions } from "../motion";
 import { semanticColorToken, semanticColorVar, type SemanticRole } from "../semanticColors";
-import { pushActivity, type ActivitySeverity } from "../activityLog";
+import { pushActivity, type ActivityDetail, type ActivitySeverity } from "../activityLog";
 import { railDurationSeconds, railRatio } from "./toastProgress";
 
 export type ToastTone = "success" | "error" | "info";
@@ -72,6 +72,8 @@ export interface ToastOptions {
    * 見た目 (tone) は変えない。
    */
   severity?: ActivitySeverity;
+  /** アクティビティ側だけに残す詳細 (行を展開して表で見る)。トーストには出さない。 */
+  detail?: ActivityDetail;
 }
 
 interface ToastItem {
@@ -280,7 +282,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       // 自動消滅で失われないよう、同じ内容をアクティビティセンター (#912) へ
       // 残す。記録の入口をここ 1 か所にすることで、通知を出す側は従来どおり
       // toast を呼ぶだけで履歴に載る。
-      pushActivity(opts.severity ?? TONE_SEVERITY[tone], opts.message);
+      pushActivity(opts.severity ?? TONE_SEVERITY[tone], opts.message, opts.detail);
       setToasts((cur) => [
         ...cur,
         { id, message: opts.message, tone, action: opts.action, duration },

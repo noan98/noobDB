@@ -35,7 +35,7 @@ const connected = {
 };
 
 /** 接続に依存せず常に開けるログ系タブ (#1114)。 */
-const LOG_TABS = ["output", "messages", "activity"];
+const LOG_TABS = ["output", "activity"];
 
 describe("availableBottomPanelTabs", () => {
   it("未接続ではログ系 (出力 / メッセージ / アクティビティ) だけ開ける (#1114)", () => {
@@ -152,8 +152,9 @@ describe("resolveBottomPanelTab", () => {
 });
 
 describe("用途グループ (#1114)", () => {
-  it("Output / Messages / Activity / Advisor の用途で並ぶ (ログ → 診断 → 参照)", () => {
-    expect(BOTTOM_PANEL_TABS.slice(0, 4)).toEqual(["output", "messages", "activity", "advisor"]);
+  it("Output / Activity / Advisor の用途で並ぶ (ログ → 診断 → 参照)", () => {
+    // 旧「メッセージ」タブはアクティビティへ統合した (同じ出来事が 2 タブに並んでいた)。
+    expect(BOTTOM_PANEL_TABS.slice(0, 3)).toEqual(["output", "activity", "advisor"]);
     // 同じグループのタブは連続して並ぶ (グループが飛び飛びにならない)。
     const order = BOTTOM_PANEL_TABS.map((tab) => BOTTOM_PANEL_TAB_GROUP[tab]);
     const collapsed = order.filter((g, i) => i === 0 || g !== order[i - 1]);
@@ -265,13 +266,12 @@ describe("App.tsx の結線 (#1112)", () => {
     expect(appSource).toContain("onOpenData={handleOpenTable}");
   });
 
-  it("ログ系 3 タブ (#1114) を接続ガードより前で描き、記録元へ結線している", () => {
+  it("ログ系 2 タブ (#1114) を接続ガードより前で描き、記録元へ結線している", () => {
     const outputIdx = appSource.indexOf('activeBottomPanelTab === "output"');
     const guardIdx = appSource.indexOf("!sessionId ? null : activeBottomPanelTab");
     expect(outputIdx).toBeGreaterThan(0);
     expect(guardIdx).toBeGreaterThan(outputIdx);
     expect(appSource).toContain("<OutputPanel onOpenSql={handleOpenHistoryInNewTab} />");
-    expect(appSource).toContain("<MessagesPanel />");
     expect(appSource).toContain("<ActivityLogPanel />");
     // 出力は実行経路の結果受信地点で、メッセージはステータスの変化で積む。
     expect(appSource).toMatch(/recordOutput\(/);
@@ -301,8 +301,8 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
       "assertions",
       "health",
     ]);
-    expect(entries.slice(0, 3).every((e) => e.enabled && e.reason === null)).toBe(true);
-    for (const e of entries.slice(3)) {
+    expect(entries.slice(0, LOG_TABS.length).every((e) => e.enabled && e.reason === null)).toBe(true);
+    for (const e of entries.slice(LOG_TABS.length)) {
       expect(e).toMatchObject({ enabled: false, reason: "needsSession" });
     }
   });

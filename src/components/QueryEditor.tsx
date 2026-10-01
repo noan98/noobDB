@@ -1125,14 +1125,16 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const runIconPlay = <Icon name="play" size={ICON_SIZES.sm} />;
   const runIconSpinner = <Spinner size={12} />;
   const runStates: Record<"idle" | "running" | "disabled", BadgeState> = {
-    // Run はエディタの主要アクションなので、アクセント色 (primary 相当) で
-    // ツールバー上で唯一際立たせる (「主要アクション = primary」)。
-    idle: { label: runLabel, tone: "accent", icon: runIconPlay },
+    // Run は実際に書き込みうる本実行なので緑 (success)、Dry Run は常にロールバック
+    // するお試し実行なので橙 (warning) で色分けし、押す前に取り違えないようにする。
+    // (一度「主要 = accent / 補助 = 中立」に統一したが、2 つの実行ボタンが見分け
+    // にくくなったという声で色分けへ戻した。)
+    idle: { label: runLabel, tone: "success", icon: runIconPlay },
     // 実行中はスピナーのみを表示する。Run/Preview は英語ラベルのボタンであり、
     // 日本語の状態テキスト ("実行中...") を併記するとスピナーと意味が重複し、ボタン
     // ラベルとの言語的な齟齬も生むため、可視テキストは落とす。SR 向けには
-    // `srLabel` でアナウンスを残す。実行中もアクセント色を保ち状態の連続性を出す。
-    running: { label: "", srLabel: t("editorRunRunning"), tone: "accent", icon: runIconSpinner },
+    // `srLabel` でアナウンスを残す。実行中も同じ色を保ち状態の連続性を出す。
+    running: { label: "", srLabel: t("editorRunRunning"), tone: "success", icon: runIconSpinner },
     disabled: { label: runLabel, tone: "neutral", icon: runIconPlay },
   };
 
@@ -1143,10 +1145,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     disabled || !hasContent ? "disabled" : previewRunning ? "running" : "idle";
   const previewIconEye = <Icon name="eye" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.thin} />;
   const previewStates: Record<"idle" | "running" | "disabled", BadgeState> = {
-    // Dry Run は安全なプレビュー実行 (常にロールバック) なので、Run のような
-    // 主役色は使わず中立トーンに統一し、補助アクションとして落ち着かせる。
-    idle: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
-    running: { label: "", srLabel: t("editorPreviewRunning"), tone: "neutral", icon: runIconSpinner },
+    // Dry Run は安全なプレビュー実行 (常にロールバック)。Run の緑と取り違えない
+    // よう橙 (warning) で色分けする。
+    idle: { label: t("editorPreview"), tone: "warning", icon: previewIconEye },
+    running: { label: "", srLabel: t("editorPreviewRunning"), tone: "warning", icon: runIconSpinner },
     disabled: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
   };
 

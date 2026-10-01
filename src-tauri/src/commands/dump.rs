@@ -605,7 +605,11 @@ async fn dump_mysql(
     // password never appears in the process arguments or environment.
     let defaults = DefaultsFile::create(connect_options)?;
 
-    let mut cmd = Command::new("mysqldump");
+    // PATH に無くても既知のインストール先 (Homebrew の keg-only な mysql-client や
+    // winget で入れた `Program Files\MySQL\...\bin`) にあれば使う (dump_tools.rs)。
+    let mut cmd = Command::new(
+        super::dump_tools::resolve_dump_tool("mysqldump").unwrap_or_else(|| "mysqldump".into()),
+    );
     // `--defaults-extra-file` must be the first option on the command line.
     cmd.arg(format!(
         "--defaults-extra-file={}",
@@ -678,7 +682,9 @@ async fn dump_postgres(
 
     let pgpass = PgPassFile::create(connect_options, database)?;
 
-    let mut cmd = Command::new("pg_dump");
+    let mut cmd = Command::new(
+        super::dump_tools::resolve_dump_tool("pg_dump").unwrap_or_else(|| "pg_dump".into()),
+    );
     cmd.arg("--host").arg(&connect_options.host);
     cmd.arg("--port").arg(connect_options.port.to_string());
     cmd.arg("--username").arg(&connect_options.user);

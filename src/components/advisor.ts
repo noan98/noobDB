@@ -141,3 +141,58 @@ export function findingTarget(finding: HealthFinding): string {
   if (finding.columns.length === 0) return finding.table;
   return `${finding.table} (${finding.columns.join(", ")})`;
 }
+
+/** 指摘一覧のソート列 (表のヘッダ)。 */
+export type AdvisorSortKey = "severity" | "rule" | "target" | "detail";
+export type AdvisorSortDir = "asc" | "desc";
+
+/** 重要度の並び順。昇順 = 重要度の高い順 (high → medium → low) とする。 */
+const SEVERITY_ORDER: Record<AdvisorSeverity, number> = { high: 0, medium: 1, low: 2 };
+
+/**
+ * 指摘をヘッダの列でソートした新しい配列を返す (入力は不変)。
+ *
+ * - `severity` は文字列ではなく重要度順 (昇順 = high が先頭)。
+ * - `rule` / `detail` は画面に出ている翻訳済みの文字列で比べたいので、表示文字列を
+ *   `label` で受け取る (この関数を i18n に依存させないため)。
+ * - 同値は元の順序 (バックエンドの決定的な順) を保つ安定ソート。
+ */
+export function sortFindings(
+  findings: readonly HealthFinding[],
+  key: AdvisorSortKey,
+  dir: AdvisorSortDir,
+  label: (finding: HealthFinding, key: "rule" | "detail") => string,
+): HealthFinding[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const value = (f: HealthFinding): string | number => {
+    switch (key) {
+      case "severity":
+        return SEVERITY_ORDER[f.severity];
+      case "target":
+        return findingTarget(f);
+      case "rule":
+      case "detail":
+        return label(f, key);
+    }
+  };
+  return findings
+    .map((f, i) => ({ f, i, v: value(f) }))
+    .sort((a, b) => {
+      const cmp =
+        typeof a.v === "number" && typeof b.v === "number"
+          ? a.v - b.v
+          : String(a.v).localeCompare(String(b.v), undefined, { sensitivity: "base", numeric: true });
+      return cmp !== 0 ? sign * cmp : a.i - b.i;
+    })
+    .map((x) => x.f);
+}
+
+/** ヘッダをクリックしたときの次のソート状態。同じ列は 昇順 → 降順 → 解除 と巡回する。 */
+export function nextAdvisorSort(
+  current: { key: AdvisorSortKey; dir: AdvisorSortDir } | null,
+  key: AdvisorSortKey,
+): { key: AdvisorSortKey; dir: AdvisorSortDir } | null {
+  if (!current || current.key !== key) return { key, dir: "asc" };
+  if (current.dir === "asc") return { key, dir: "desc" };
+  return null;
+}

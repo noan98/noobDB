@@ -4,10 +4,12 @@ import type { HealthFinding } from "../api/tauri";
 import {
   findingDescription,
   findingTarget,
+  nextAdvisorSort,
   reasonTextKey,
   ruleTitleKey,
   severityLabelKey,
   severityRole,
+  sortFindings,
 } from "../components/advisor";
 import { dictionaries } from "../i18n";
 
@@ -144,5 +146,50 @@ describe("i18n キーが実在する", () => {
       expect(dictionaries.en[k], `missing en i18n key: ${k}`).toBeTruthy();
       expect(dictionaries.ja[k], `missing ja i18n key: ${k}`).toBeTruthy();
     }
+  });
+});
+
+describe("sortFindings", () => {
+  const list = [
+    finding({ rule: "unused_index", severity: "low", table: "b" }),
+    finding({ rule: "missing_primary_key", severity: "high", table: "c" }),
+    finding({ rule: "duplicate_index", severity: "medium", table: "a" }),
+    finding({ rule: "fk_missing_index", severity: "high", table: "a2" }),
+  ];
+  const label = (f: HealthFinding) => f.rule;
+
+  it("重要度の昇順は high → medium → low で、同値は元の順を保つ", () => {
+    expect(sortFindings(list, "severity", "asc", label).map((f) => f.table)).toEqual(["c", "a2", "a", "b"]);
+    expect(sortFindings(list, "severity", "desc", label).map((f) => f.severity)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "high",
+    ]);
+  });
+
+  it("対象は findingTarget の文字列、ルールは表示ラベルで比較する", () => {
+    expect(sortFindings(list, "target", "asc", label).map((f) => f.table)).toEqual(["a", "a2", "b", "c"]);
+    expect(sortFindings(list, "rule", "asc", label).map((f) => f.rule)).toEqual([
+      "duplicate_index",
+      "fk_missing_index",
+      "missing_primary_key",
+      "unused_index",
+    ]);
+  });
+
+  it("入力配列を書き換えない", () => {
+    const before = list.map((f) => f.table);
+    sortFindings(list, "target", "desc", label);
+    expect(list.map((f) => f.table)).toEqual(before);
+  });
+});
+
+describe("nextAdvisorSort", () => {
+  it("同じ列は 昇順 → 降順 → 解除、別の列は昇順から", () => {
+    expect(nextAdvisorSort(null, "rule")).toEqual({ key: "rule", dir: "asc" });
+    expect(nextAdvisorSort({ key: "rule", dir: "asc" }, "rule")).toEqual({ key: "rule", dir: "desc" });
+    expect(nextAdvisorSort({ key: "rule", dir: "desc" }, "rule")).toBeNull();
+    expect(nextAdvisorSort({ key: "rule", dir: "desc" }, "target")).toEqual({ key: "target", dir: "asc" });
   });
 });

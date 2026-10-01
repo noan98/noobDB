@@ -885,6 +885,15 @@ export const GRID_CSS: SystemStyleObject = {
   "& td.is-pending-edit.is-active-cell:not(:focus-within)": {
     boxShadow: "inset 2px 0 0 var(--preview-highlight), var(--focus-ring-inset)",
   },
+  // 入力欄でセルを編集している間は、入力欄自身の枠 + フォーカスリングが「どこを
+  // 編集中か」を示す。セル側の inset リングも残すと二重の枠になって見にくいので外す
+  // (未適用の編集を示す左端バーだけは残す)。
+  "& td.is-editable-cell:focus-within:has(.cell-edit-input)": {
+    boxShadow: "none",
+  },
+  "& td.is-pending-edit.is-editable-cell:focus-within:has(.cell-edit-input)": {
+    boxShadow: "inset 2px 0 0 var(--preview-highlight)",
+  },
   // 矩形範囲選択の各セルにも inset リングを付与し、選択範囲の輪郭を強調する。
   // アクティブセルと区別するため透明度を下げ (--focus-ring-inset より淡い)、
   // 「選択されているが現在のカーソル位置ではない」状態を視覚的に分離する。
@@ -7510,155 +7519,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             </chakra.span>
           </Tooltip>
         )}
-        {editableActive && (
-          // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
-          // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
-          <AnimatePresence>
-            {hasPendingEdits && (
-              <motion.div
-                key="edit-review-bar"
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 4 }}
-                transition={transitions.enter}
-                style={{ display: "inline-flex", alignItems: "stretch" }}
-              >
-          <Box
-            role="group"
-            aria-label={t("editToolbarAria")}
-            display="inline-flex"
-            alignItems="center"
-            gap="1.5"
-            py="0.5" px="2"
-            borderLeft="1px solid var(--border-subtle)"
-            borderRight="1px solid var(--border-subtle)"
-            background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
-          >
-            {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
-            <chakra.span
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              minW="18px"
-              height="18px"
-              px="1.5"
-              borderRadius="full"
-              fontSize="2xs"
-              fontWeight={700}
-              lineHeight="1"
-              color="var(--preview-highlight)"
-              background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
-              flexShrink={0}
-              aria-hidden
-            >
-              {editsCount}
-            </chakra.span>
-            <chakra.span
-              fontSize="xs"
-              color="var(--preview-highlight)"
-              fontWeight={500}
-              whiteSpace="nowrap"
-            >
-              {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
-            </chakra.span>
-            {editedRowCount > 1 && !hasInvalidEdit && (
-              // Preview only handles one row at a time; surface that
-              // limitation explicitly so users don't assume Apply has been
-              // dry-run-validated for every edited row.
-              <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
-                <chakra.span
-                  role="note"
-                  fontSize="xs"
-                  color="app.textMuted"
-                  fontStyle="italic"
-                  whiteSpace="nowrap"
-                >
-                  {t("editPreviewMultiRowBanner")}
-                </chakra.span>
-              </Tooltip>
-            )}
-            <Tooltip label={t("editUndoTitle")}>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                onClick={onUndoEdit}
-                disabled={!canUndo}
-                aria-label={t("editUndoTitle")}
-              >
-                <Icon name="undo" />
-              </Button>
-            </Tooltip>
-            <Tooltip label={t("editRedoTitle")}>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                onClick={onRedoEdit}
-                disabled={!canRedo}
-                aria-label={t("editRedoTitle")}
-              >
-                <Icon name="redo" />
-              </Button>
-            </Tooltip>
-            <Tooltip
-              focusableWrapper={!canPreview}
-              label={
-                hasInvalidEdit
-                  ? t("editApplyDisabledInvalid")
-                  : editedRowCount > 1
-                    ? t("editPreviewMultiRowTitle")
-                    : streaming
-                      ? t("editDisabledStreaming")
-                      : t("editorPreviewTitle")
-              }
-            >
-              <Button
-                variant="warning"
-                size="sm"
-                px="2.5"
-                onClick={onPreviewEdits}
-                disabled={!canPreview}
-              >
-                <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
-              </Button>
-            </Tooltip>
-            <Tooltip
-              focusableWrapper={!canApply}
-              label={
-                hasInvalidEdit
-                  ? t("editApplyDisabledInvalid")
-                  : streaming
-                    ? t("editDisabledStreaming")
-                    : t("editApplyButtonTitle")
-              }
-            >
-              <LoadingButton
-                variant="success"
-                size="sm"
-                px="2.5"
-                loading={applyingEdits}
-                onClick={onApplyEdits}
-                disabled={!canApply}
-              >
-                <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
-              </LoadingButton>
-            </Tooltip>
-            <Tooltip label={t("editCancelButtonTitle")}>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="2.5"
-              onClick={() => setShowDiscardConfirm(true)}
-            >
-              <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
-            </Button>
-            </Tooltip>
-          </Box>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        )}
         <AnimatePresence>
           {showDiscardConfirm && (
             <Modal
@@ -7840,6 +7700,158 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           </Tooltip>
         )}
       </Box>
+      {editableActive && (
+        // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
+        // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
+        // ツールバー (幅が足りないと横スクロール) の中に置くと、狭いウィンドウで
+        // 「適用」「キャンセル」が右端の外へ押し出されて見えなくなるため、
+        // ツールバー直下の独立した行に置き、足りなければ折り返す。
+        <AnimatePresence>
+          {hasPendingEdits && (
+            <motion.div
+              key="edit-review-bar"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
+              transition={transitions.enter}
+              style={{ flexShrink: 0 }}
+            >
+        <Box
+          role="group"
+          aria-label={t("editToolbarAria")}
+          display="flex"
+          alignItems="center"
+          flexWrap="wrap"
+          gap="1.5"
+          py="1" px="2"
+          borderBottom="1px solid var(--border-subtle)"
+          background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
+        >
+          {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
+          <chakra.span
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            minW="18px"
+            height="18px"
+            px="1.5"
+            borderRadius="full"
+            fontSize="2xs"
+            fontWeight={700}
+            lineHeight="1"
+            color="var(--preview-highlight)"
+            background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
+            flexShrink={0}
+            aria-hidden
+          >
+            {editsCount}
+          </chakra.span>
+          <chakra.span
+            fontSize="xs"
+            color="var(--preview-highlight)"
+            fontWeight={500}
+            whiteSpace="nowrap"
+          >
+            {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
+          </chakra.span>
+          {editedRowCount > 1 && !hasInvalidEdit && (
+            // Preview only handles one row at a time; surface that
+            // limitation explicitly so users don't assume Apply has been
+            // dry-run-validated for every edited row.
+            <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
+              <chakra.span
+                role="note"
+                fontSize="xs"
+                color="app.textMuted"
+                fontStyle="italic"
+                whiteSpace="nowrap"
+              >
+                {t("editPreviewMultiRowBanner")}
+              </chakra.span>
+            </Tooltip>
+          )}
+          <Tooltip label={t("editUndoTitle")}>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="1.5"
+              onClick={onUndoEdit}
+              disabled={!canUndo}
+              aria-label={t("editUndoTitle")}
+            >
+              <Icon name="undo" />
+            </Button>
+          </Tooltip>
+          <Tooltip label={t("editRedoTitle")}>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="1.5"
+              onClick={onRedoEdit}
+              disabled={!canRedo}
+              aria-label={t("editRedoTitle")}
+            >
+              <Icon name="redo" />
+            </Button>
+          </Tooltip>
+          <Tooltip
+            focusableWrapper={!canPreview}
+            label={
+              hasInvalidEdit
+                ? t("editApplyDisabledInvalid")
+                : editedRowCount > 1
+                  ? t("editPreviewMultiRowTitle")
+                  : streaming
+                    ? t("editDisabledStreaming")
+                    : t("editorPreviewTitle")
+            }
+          >
+            <Button
+              variant="warning"
+              size="sm"
+              px="2.5"
+              onClick={onPreviewEdits}
+              disabled={!canPreview}
+            >
+              <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
+            </Button>
+          </Tooltip>
+          <Tooltip
+            focusableWrapper={!canApply}
+            label={
+              hasInvalidEdit
+                ? t("editApplyDisabledInvalid")
+                : streaming
+                  ? t("editDisabledStreaming")
+                  : t("editApplyButtonTitle")
+            }
+          >
+            <LoadingButton
+              variant="success"
+              size="sm"
+              px="2.5"
+              loading={applyingEdits}
+              onClick={onApplyEdits}
+              disabled={!canApply}
+            >
+              <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
+            </LoadingButton>
+          </Tooltip>
+          <Tooltip label={t("editCancelButtonTitle")}>
+          <Button
+            variant="secondary"
+            size="sm"
+            px="2.5"
+            onClick={() => setShowDiscardConfirm(true)}
+          >
+            <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
+          </Button>
+          </Tooltip>
+        </Box>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
       <AnimatePresence initial={false}>
         {findOpen && (
           <motion.div

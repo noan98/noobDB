@@ -354,9 +354,10 @@ export function BottomPanelStrip({
 /**
  * ワークスペース (全画面サーフェス) とボトムパネルの縦分割 (#1112)。
  *
- * `bottom` が null のときは分割そのものを作らず `children` を素通しする — 閉じている
- * ときに 0 高のペインとセパレータを残すと、`<main>` の下端に押せない線が居座るため。
- * 代わりに `collapsed` (折りたたみ時のパネルバー) を `children` の下へ置く。
+ * `bottom` が null のときはセパレータを隠し、2 つ目のペインを `collapsed`
+ * (折りたたみ時のパネルバー) の高さだけの帯にする — 0 高のペインとセパレータを
+ * 残すと `<main>` の下端に押せない線が居座るため。Splitter 自体は閉じても残す
+ * (出し入れすると `children` が再マウントされて開閉が重くなる)。
  *
  * 分割の実装は既存の `Splitter` に委ねる。ドラッグ・キーボード操作 (矢印 / Home /
  * End / Enter)・localStorage 永続化・最小サイズのクランプはすべてそちらと
@@ -366,7 +367,7 @@ export function BottomPanelStrip({
  * 開閉はパネル全体を `variants.slideUp` で出し入れする (#1142)。高さは補間しない —
  * 分割比は `Splitter` が持っているので、高さを動かすとドラッグ中の比率計算と
  * 競合する。閉じるときは退場アニメーションが終わるまで分割を残し、
- * `onExitComplete` で初めて `children` の素通しへ戻す。起動時に前回開いていた
+ * `onExitComplete` で初めて折りたたみの帯へ戻す。起動時に前回開いていた
  * パネルは演出なしで出す (アプリの初期表示を遅く見せないため)。
  */
 export function WorkspaceSplit({
@@ -393,32 +394,33 @@ export function WorkspaceSplit({
     mounted.current = true;
   }, []);
 
-  if (!open && !split)
-    return (
-      <>
-        {children}
-        {collapsed}
-      </>
-    );
+  // 閉じていても Splitter は残し、2 つ目のペインを折りたたみ時のパネルバーの帯に
+  // するだけにする。開閉のたびに Splitter ごと出し入れすると、`children` (エディタと
+  // 結果グリッド) が別の親へ移って丸ごと再マウントされ、開閉が目に見えて遅くなる。
   return (
     <Splitter
       direction="column"
       first={children}
+      secondCollapsed={!open && !split}
       second={
-        <AnimatePresence onExitComplete={() => setSplit(false)}>
-          {open && (
-            <motion.div
-              key="bottom-panel"
-              initial={mounted.current ? variants.slideUp.initial : false}
-              animate={variants.slideUp.animate}
-              exit={variants.slideUp.initial}
-              transition={transitions.enter}
-              style={FILL_STYLE}
-            >
-              {bottom}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        !open && !split ? (
+          collapsed ?? null
+        ) : (
+          <AnimatePresence onExitComplete={() => setSplit(false)}>
+            {open && (
+              <motion.div
+                key="bottom-panel"
+                initial={mounted.current ? variants.slideUp.initial : false}
+                animate={variants.slideUp.animate}
+                exit={variants.slideUp.initial}
+                transition={transitions.enter}
+                style={FILL_STYLE}
+              >
+                {bottom}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )
       }
       defaultFraction={0.62}
       minSize={140}

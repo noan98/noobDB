@@ -641,22 +641,17 @@ describe("シナリオ: Bottom Panel のログ系タブ (#1114, 実ブラウザ)
     await outputList.getByRole("button", { expanded: false }).first().click();
     await expect.element(screen.getByRole("button", { name: t("outputOpenInEditor") })).toBeVisible();
 
-    // 3) 矢印キーでメッセージタブへ。ステータスバーに出た完了メッセージが残っている。
+    // 3) 矢印キーでアクティビティタブへ。ステータスバーに出た完了メッセージも
+    //    (旧「メッセージ」タブを統合したので) ここに残っている。同じ骨格 (フィルタ + クリア)。
     await screen.getByRole("tab", { name: t("outputTitle") }).click();
     await userEvent.keyboard("{ArrowRight}");
     await expect
-      .element(screen.getByRole("tab", { name: t("messagesTitle") }))
-      .toHaveAttribute("aria-selected", "true");
-    const messages = screen.getByRole("list", { name: t("messagesListAria") });
-    await expect
-      .element(messages.getByText(t("statusStreamingDone", { rows: 2, ms: 5 })))
-      .toBeVisible();
-
-    // 4) アクティビティタブも同じ骨格 (フィルタ + クリア) で開ける。
-    await screen.getByRole("tab", { name: t("activityCenterTitle") }).click();
-    await expect
       .element(screen.getByRole("tab", { name: t("activityCenterTitle") }))
       .toHaveAttribute("aria-selected", "true");
+    const activity = screen.getByRole("list", { name: t("activityListAria") });
+    await expect
+      .element(activity.getByText(t("statusStreamingDone", { rows: 2, ms: 5 })))
+      .toBeVisible();
     await expect
       .element(screen.getByRole("group", { name: t("activityFilterAria") }))
       .toBeVisible();
@@ -668,10 +663,10 @@ describe("シナリオ: Bottom Panel のログ系タブ (#1114, 実ブラウザ)
       .element(screen.getByRole("tab", { name: t("activityCenterTitle") }))
       .not.toBeInTheDocument();
 
-    // 6) ステータスバーの「メッセージ履歴を表示」からもメッセージタブへ辿れる。
+    // 6) ステータスバーの「履歴を表示」からもアクティビティタブへ辿れる。
     await screen.getByRole("button", { name: t("statusOpenMessages") }).click();
     await expect
-      .element(screen.getByRole("tab", { name: t("messagesTitle") }))
+      .element(screen.getByRole("tab", { name: t("activityCenterTitle") }))
       .toHaveAttribute("aria-selected", "true");
   });
 });

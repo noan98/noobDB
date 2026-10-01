@@ -109,6 +109,15 @@ pub struct TableChangeSummary {
     pub indexes_added: usize,
     pub indexes_removed: usize,
     pub indexes_changed: usize,
+    /// 追加/削除/変更された列名 (`Changed` テーブルのみ。名前順)。アクティビティの
+    /// 詳細表示で「どのテーブルにどの列が増えたか」を見せるために件数と並べて返す。
+    pub added_columns: Vec<String>,
+    pub removed_columns: Vec<String>,
+    pub changed_columns: Vec<String>,
+    /// 追加/削除/変更されたインデックス名 (名前順)。
+    pub added_indexes: Vec<String>,
+    pub removed_indexes: Vec<String>,
+    pub changed_indexes: Vec<String>,
 }
 
 /// 2 世代間の変化サマリ全体。変化のあったテーブルのみ、名前順。
@@ -251,6 +260,16 @@ pub fn summarize_drift(diff: &SchemaDiff, index_drift: &[IndexDriftEntry]) -> Dr
         let idx = by_table.get(t.name.as_str());
         let count =
             |s: IndexDriftStatus| idx.map_or(0, |v| v.iter().filter(|e| e.status == s).count());
+        let index_names = |st: IndexDriftStatus| -> Vec<String> {
+            let mut v: Vec<String> = idx.map_or_else(Vec::new, |v| {
+                v.iter()
+                    .filter(|e| e.status == st)
+                    .map(|e| e.index_name.clone())
+                    .collect()
+            });
+            v.sort();
+            v
+        };
         let indexes_added = count(IndexDriftStatus::Added);
         let indexes_removed = count(IndexDriftStatus::Removed);
         let indexes_changed = count(IndexDriftStatus::Changed);
@@ -263,6 +282,12 @@ pub fn summarize_drift(diff: &SchemaDiff, index_drift: &[IndexDriftEntry]) -> Dr
             indexes_added,
             indexes_removed,
             indexes_changed,
+            added_columns: Vec::new(),
+            removed_columns: Vec::new(),
+            changed_columns: Vec::new(),
+            added_indexes: index_names(IndexDriftStatus::Added),
+            removed_indexes: index_names(IndexDriftStatus::Removed),
+            changed_indexes: index_names(IndexDriftStatus::Changed),
         };
         match t.status {
             // source = 旧世代。旧にだけある = その後で削除された。
@@ -273,6 +298,19 @@ pub fn summarize_drift(diff: &SchemaDiff, index_drift: &[IndexDriftEntry]) -> Dr
                 summary.columns_added = n(DiffStatus::TargetOnly);
                 summary.columns_removed = n(DiffStatus::SourceOnly);
                 summary.columns_changed = n(DiffStatus::Different);
+                let names = |s: DiffStatus| -> Vec<String> {
+                    let mut v: Vec<String> = t
+                        .columns
+                        .iter()
+                        .filter(|c| c.status == s)
+                        .map(|c| c.name.clone())
+                        .collect();
+                    v.sort();
+                    v
+                };
+                summary.added_columns = names(DiffStatus::TargetOnly);
+                summary.removed_columns = names(DiffStatus::SourceOnly);
+                summary.changed_columns = names(DiffStatus::Different);
                 let has_change = t.status == DiffStatus::Different
                     || indexes_added > 0
                     || indexes_removed > 0
@@ -540,6 +578,11 @@ mod tests {
         assert_eq!(orders.columns_changed, 1);
         assert_eq!(orders.indexes_added, 1);
         assert_eq!(orders.indexes_removed, 0);
+        assert_eq!(orders.added_columns, ["total"]);
+        assert_eq!(orders.removed_columns, ["legacy"]);
+        assert_eq!(orders.changed_columns, ["id"]);
+        assert_eq!(orders.added_indexes, ["ix_b"]);
+        assert!(orders.removed_indexes.is_empty());
         let names: Vec<&str> = s.tables.iter().map(|t| t.table.as_str()).collect();
         assert_eq!(names, ["added", "orders", "removed"]);
     }

@@ -18,11 +18,13 @@
  * ボトムパネルに並ぶタブ。表示順もこの配列の順で、**用途のグループごとに並べる**
  * (#1114)。グループの切れ目はタブバーに区切り線として出る (`BOTTOM_PANEL_TAB_GROUP`)。
  *
- * 1. **ログ** (`output` / `messages` / `activity`) — このセッションで何が起きたか。
+ * 1. **ログ** (`output` / `activity`) — このセッションで何が起きたか。
  *    接続の有無に関係なく開ける (接続失敗のメッセージこそ未接続時に読みたい)。
  *    - 出力: 実行した文ごとの結末 (件数・所要時間・エラー本文)。`outputLog.ts`
- *    - メッセージ: ステータスバーに出た文の履歴 (最新 1 件しか出ないため)。`messageLog.ts`
- *    - アクティビティ: トーストの履歴 (ベルのポップオーバーと同じストア)。`activityLog.ts`
+ *    - アクティビティ: トーストの履歴 (ベルのポップオーバーと同じストア) と、
+ *      ステータスバーに出た文の履歴 (`messageLog.ts`) を時系列で 1 本にまとめたもの。
+ *      以前は「メッセージ」タブが別にあったが、同じ出来事がトーストとステータスの
+ *      両方に出るため 2 タブで似た行が並んでいた。
  * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `health`) —
  *    DB とサーバの状態・改善提案・データ品質の検証。
  * 3. **参照** (`whereUsed` / `structure` / `profile`) — 選んだオブジェクトの詳細。
@@ -47,7 +49,6 @@
  */
 export const BOTTOM_PANEL_TABS = [
   "output",
-  "messages",
   "activity",
   "advisor",
   "inspector",
@@ -67,7 +68,6 @@ export type BottomPanelTabGroup = "log" | "diagnostics" | "reference";
 
 export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup> = {
   output: "log",
-  messages: "log",
   activity: "log",
   advisor: "diagnostics",
   inspector: "diagnostics",

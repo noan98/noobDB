@@ -15,19 +15,23 @@ import {
   countBySeverity,
   filterActivity,
   markActivityRead,
+  mergeLogEntries,
   relativeActivityTime,
   useActivityLog,
   type ActivityEntry,
   type ActivitySeverity,
+  type MergedLogEntry,
 } from "../activityLog";
+import { ActivityDetailView } from "./ActivityDetailView";
 import { clearMessages, useMessageLog } from "../messageLog";
 
 /**
  * 重大度付きログ (アクティビティ / メッセージ) の一覧 UI (#1114)。
  *
  * タイトルバーのベルから開くアクティビティのポップオーバー (`ActivityCenter`) と、
- * Bottom Panel の「アクティビティ」「メッセージ」タブが**同じ行・同じフィルタ
- * チップ**で描かれるよう、ここに部品を集めた。画面ごとに別の一覧を書くと、同じ
+ * Bottom Panel の「アクティビティ」タブが**同じ行・同じフィルタチップ**で描かれるよう、
+ * ここに部品を集めた。Bottom Panel 側はトーストとステータスバーの履歴を 1 本にまとめて
+ * 出す (以前の「メッセージ」タブは同じ出来事が 2 タブに並ぶだけだったので統合した)。画面ごとに別の一覧を書くと、同じ
  * 「エラー」が場所によって別の色・別のアイコン・別の並びで出てしまう。
  */
 
@@ -95,6 +99,7 @@ export function SeverityLogRow({
   const t = useT();
   const role = ACTIVITY_SEVERITY_ROLE[entry.severity];
   const absolute = new Date(entry.at).toLocaleString();
+  const [expanded, setExpanded] = useState(false);
   return (
     <MotionLi
       variants={animated ? variants.staggerItem : undefined}
@@ -137,6 +142,36 @@ export function SeverityLogRow({
             </chakra.span>
           )}
         </chakra.span>
+        {entry.detail && (
+          <>
+            <chakra.button
+              type="button"
+              alignSelf="flex-start"
+              display="inline-flex"
+              alignItems="center"
+              gap="1"
+              mt="0.5"
+              px="1"
+              py="0.25"
+              ml="-1"
+              fontSize="xs"
+              fontWeight={600}
+              color="app.accent"
+              bg="transparent"
+              border="none"
+              borderRadius="sm"
+              cursor="pointer"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((v) => !v)}
+              _hover={{ bg: "app.hover" }}
+              _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+            >
+              <Icon name={expanded ? "chevron-down" : "chevron-right"} size={ICON_SIZES.sm} />
+              {expanded ? t("activityHideDetail") : t("activityShowDetail")}
+            </chakra.button>
+            {expanded && <ActivityDetailView detail={entry.detail} />}
+          </>
+        )}
       </Box>
     </MotionLi>
   );
@@ -235,14 +270,12 @@ function SeverityLogPanel({
   emptyTitle,
   emptyDescription,
   listAria,
-  repeatOf,
 }: {
-  entries: readonly ActivityEntry[];
+  entries: readonly MergedLogEntry[];
   onClear: () => void;
   emptyTitle: string;
   emptyDescription: string;
   listAria: string;
-  repeatOf?: (e: ActivityEntry) => number;
 }) {
   const t = useT();
   const [severity, setSeverity] = useState<ActivitySeverity | null>(null);
@@ -285,12 +318,12 @@ function SeverityLogPanel({
         <chakra.ul listStyleType="none" m={0} p={0} flex="1" minH={0} overflowY="auto" aria-label={listAria}>
           {shown.map((e) => (
             <SeverityLogRow
-              key={e.id}
+              key={e.key}
               entry={e}
               now={0}
               animated={false}
               time="clock"
-              repeat={repeatOf?.(e)}
+              repeat={e.repeat}
             />
           ))}
         </chakra.ul>
@@ -300,39 +333,28 @@ function SeverityLogPanel({
 }
 
 /**
- * Bottom Panel「アクティビティ」タブ。トーストの履歴 (ベルと同じストア) を
- * パネルで開きっぱなしにして読む。表示中は既読扱いにする (ベルの未読バッジが消える)。
+ * Bottom Panel「アクティビティ」タブ。トーストの履歴 (ベルと同じストア) と
+ * ステータスバーに出たメッセージの履歴を時系列で 1 本にまとめて、パネルで開き
+ * っぱなしにして読む。表示中は既読扱いにする (ベルの未読バッジが消える)。
  */
 export function ActivityLogPanel() {
   const t = useT();
   const { entries } = useActivityLog();
+  const messages = useMessageLog();
   useEffect(() => {
     markActivityRead();
   }, [entries]);
+  const merged = useMemo(() => mergeLogEntries(entries, messages), [entries, messages]);
   return (
     <SeverityLogPanel
-      entries={entries}
-      onClear={clearActivity}
+      entries={merged}
+      onClear={() => {
+        clearActivity();
+        clearMessages();
+      }}
       emptyTitle={t("activityEmptyTitle")}
-      emptyDescription={t("activityEmpty")}
+      emptyDescription={t("activityPanelEmpty")}
       listAria={t("activityListAria")}
-    />
-  );
-}
-
-/** Bottom Panel「メッセージ」タブ。ステータスバーに出たメッセージの履歴。 */
-export function MessagesPanel() {
-  const t = useT();
-  const entries = useMessageLog();
-  const repeats = useMemo(() => new Map(entries.map((e) => [e.id, e.repeat])), [entries]);
-  return (
-    <SeverityLogPanel
-      entries={entries}
-      onClear={clearMessages}
-      emptyTitle={t("messagesEmptyTitle")}
-      emptyDescription={t("messagesEmpty")}
-      listAria={t("messagesListAria")}
-      repeatOf={(e) => repeats.get(e.id) ?? 1}
     />
   );
 }

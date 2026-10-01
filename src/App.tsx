@@ -380,7 +380,7 @@ import type { StructureTarget } from "./components/tableStructure";
 import { workspaceCommandItems } from "./components/workspaceCommands";
 import { editorCommandItems } from "./components/editorCommands";
 import { toggleActivityCenter } from "./components/ActivityCenter";
-import { ActivityLogPanel, MessagesPanel } from "./components/SeverityLog";
+import { ActivityLogPanel } from "./components/SeverityLog";
 import { OutputPanel } from "./components/OutputPanel";
 import { statusLogClass, statusTone, type Status } from "./statusMessage";
 import { pushMessage } from "./messageLog";
@@ -2744,6 +2744,8 @@ export default function App() {
             message: translate("schemaDriftChangedToast", { detail: buildDriftDetail(res.summary) }),
             tone: "info",
             severity: "warning",
+            // アクティビティで行を展開すると、テーブルごとの列/インデックスの増減を表で見られる。
+            detail: { kind: "schemaDrift", summary: res.summary },
           });
         }
       } catch (e) {
@@ -7858,7 +7860,7 @@ export default function App() {
   const statusMessageKey =
     status.kind === "idle" ? "" : status.kind === "literal" ? status.text : status.key;
 
-  // Bottom Panel「メッセージ」タブ (#1114) へステータスの履歴を積む。フッターは
+  // Bottom Panel「アクティビティ」タブ (#1114。旧「メッセージ」タブを統合) へステータスの履歴を積む。フッターは
   // 最新 1 件しか見せないため、上書きされて消えたエラー文を後から読めるようにする。
   // 途中経過 (取得中… など) と idle は `statusLogClass` が落とす。依存は `status`
   // だけにして、言語切替で同じメッセージが再記録されないようにする。
@@ -8675,9 +8677,7 @@ export default function App() {
   const bottomPanelLabel = (tab: BottomPanelTab) =>
     tab === "output"
       ? t("outputTitle")
-      : tab === "messages"
-        ? t("messagesTitle")
-        : tab === "activity"
+      : tab === "activity"
           ? t("activityCenterTitle")
           : tab === "advisor"
       ? t("advisorTitle")
@@ -9214,8 +9214,6 @@ export default function App() {
                     // ガードより前で描く。出力の SQL は新しいタブで開き、今の
                     // エディタを上書きしない (履歴の「新しいタブで開く」と同じ)。
                     <OutputPanel onOpenSql={handleOpenHistoryInNewTab} />
-                  ) : activeBottomPanelTab === "messages" ? (
-                    <MessagesPanel />
                   ) : activeBottomPanelTab === "activity" ? (
                     <ActivityLogPanel />
                   ) : activeBottomPanelTab === "health" ? (
@@ -9851,7 +9849,7 @@ export default function App() {
                 </>
               )}
               {/* フッターは最新 1 件だけ。過去のメッセージは Bottom Panel の
-                  「メッセージ」タブで読み返せる (#1114)。 */}
+                  「アクティビティ」タブで読み返せる (#1114)。 */}
               <IconButton
                 type="button"
                 variant="ghost"
@@ -9860,7 +9858,7 @@ export default function App() {
                 color="currentColor"
                 title={t("statusOpenMessages")}
                 aria-label={t("statusOpenMessages")}
-                onClick={() => setBottomPanelTab("messages")}
+                onClick={() => setBottomPanelTab("activity")}
               >
                 <Icon name="list" size={ICON_SIZES.sm} />
               </IconButton>
@@ -10463,7 +10461,6 @@ export default function App() {
             { separator: true },
             // ログ系のボトムパネル (#1114)。接続に関係なく開ける。
             { label: t("outputTitle"), onSelect: () => toggleBottomPanel("output") },
-            { label: t("messagesTitle"), onSelect: () => toggleBottomPanel("messages") },
             { label: t("activityCenterTitle"), onSelect: () => toggleBottomPanel("activity") },
             { separator: true },
             // 検索系 (#1266 / #1267)。パレット (workspaceCommands) と同じ開ける条件。

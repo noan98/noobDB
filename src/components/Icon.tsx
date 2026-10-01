@@ -21,6 +21,7 @@ import {
   IconChevronRight,
   IconClock,
   IconCode,
+  IconCodePlus,
   IconColumns,
   IconCopy,
   IconDatabase,
@@ -164,6 +165,7 @@ export type IconName =
   | "database"
   | "server"
   | "query"
+  | "insert-sql"
   | "explain"
   | "key"
   | "link"
@@ -289,6 +291,8 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   server: IconServer,
   // クエリ (エディタ/クエリタブ): SQL を書く場所なのでコードの山括弧。
   query: IconCode,
+  // エディタへ挿入: コードに「+」= 生成した SQL をエディタへ足す操作。
+  "insert-sql": IconCodePlus,
   // 実行計画: 分岐するツリーとして読ませる。
   explain: IconGitBranch,
   key: IconKey,
