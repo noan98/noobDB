@@ -81,4 +81,18 @@ describe("computeTooltipPosition", () => {
     expect(pos.left).toBe(8);
     expect(pos.top).toBe(8);
   });
+
+  it("#1272: 画面上端に近い右上のボタンで top は下へフリップするが、left なら直下のボタンに重ならない", () => {
+    // モーダルの閉じるボタン相当 (上端付近・右端) と、その直下の「新規タスク」ボタン。
+    const close = rect({ top: 10, left: 940, width: 28, height: 28 });
+    const below = rect({ top: 60, left: 860, width: 100, height: 30 });
+    const size = { width: 60, height: 28 };
+    const overlaps = (p: { left: number; top: number }) =>
+      p.left < below.right && p.left + size.width > below.left && p.top < below.bottom && p.top + size.height > below.top;
+
+    // top だと上に収まらず下へフリップし、直下のボタンと重なる (既知の挙動)。
+    expect(overlaps(computeTooltipPosition(close, size, "top", 8, viewport))).toBe(true);
+    // left ならアンカーの左 (ヘッダ内の空き) に出て重ならない。
+    expect(overlaps(computeTooltipPosition(close, size, "left", 8, viewport))).toBe(false);
+  });
 });

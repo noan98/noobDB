@@ -190,7 +190,9 @@ export function ModalHeader({
       {/* アイコンのみのクローズボタンなので、ラベルは共有 `Tooltip` (#884) で出す。
           `closeDisabled` のときはブラウザがタブ順序から外すため
           `focusableWrapper` でキーボードからも到達できるようにする。 */}
-      <Tooltip label={closeLabel} focusableWrapper={closeDisabled}>
+      {/* 右上端のボタンなので左側 (ヘッダ内の空き) へ出す。既定の "top" だと画面上端に
+          近いモーダルで下へフリップし、直下の主要ボタンに重なる (#1272)。 */}
+      <Tooltip label={closeLabel} placement="left" focusableWrapper={closeDisabled}>
         <Button
           type="button"
           variant="ghost"
