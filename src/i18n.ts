@@ -2750,6 +2750,7 @@ const en = {
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "Tools",
+  appToolsTitle: "Tools: diagnostics, logs, and full-screen tools",
   appToolsNeedsSession: "Available while connected",
   appProcessesUnsupported: "Not available for SQLite connections",
   appUsersUnsupported: "Not available for SQLite connections",
@@ -3603,6 +3604,7 @@ const en = {
   toastSandboxNotOpen: 'Open sandbox "{name}" first to review its changes.',
   // タスクスケジューラ (#730)
   appTasks: "Tasks",
+  appTasksTitle: "Tasks: run exports and dumps on a schedule",
   taskManagerTitle: "Scheduled Tasks",
   taskManagerDesc:
     "Run a saved query export or database dump automatically while the app is open. This is not a replacement for the OS's own task scheduler — nothing fires while noobDB is closed.",
@@ -6481,6 +6483,7 @@ const ja: Dict = {
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "ツール",
+  appToolsTitle: "ツール: 診断・ログ・全画面ツールのメニュー",
   appToolsNeedsSession: "接続中のみ使用できます",
   appProcessesUnsupported: "SQLite 接続では使用できません",
   appUsersUnsupported: "SQLite 接続では使用できません",
@@ -7333,6 +7336,7 @@ const ja: Dict = {
   toastSandboxNotOpen: "サンドボックス「{name}」を開いてから変更を確認してください。",
   // タスクスケジューラ (#730)
   appTasks: "タスク",
+  appTasksTitle: "タスク: エクスポートやダンプの定期実行",
   taskManagerTitle: "タスクスケジューラ",
   taskManagerDesc:
     "保存済みクエリのエクスポートや DB ダンプを、アプリ起動中に自動実行します。OS 標準のタスクスケジューラの代替ではなく、noobDB を閉じている間は発火しません。",

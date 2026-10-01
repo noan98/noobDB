@@ -8654,7 +8654,7 @@ export default function App() {
                 const rect = e.currentTarget.getBoundingClientRect();
                 setToolsMenu({ x: rect.left, y: rect.bottom + 4 });
               }}
-              title={t("appTools")}
+              title={t("appToolsTitle")}
               aria-label={t("appTools")}
               aria-haspopup="menu"
             >
@@ -8870,28 +8870,28 @@ export default function App() {
         >
           <IconButton
             onClick={toggleTheme}
-            title={theme === "dark" ? t("appThemeToLight") : t("appThemeToDark")}
+            title={shortcutTooltip(theme === "dark" ? t("appThemeToLight") : t("appThemeToDark"), shortcutBindings, "toggleTheme")}
             aria-label={t("appThemeToggle")}
           >
             <Icon name={theme === "dark" ? "sun" : "moon"} />
           </IconButton>
           <IconButton
             onClick={() => openFullView("tasks")}
-            title={t("appTasks")}
+            title={t("appTasksTitle")}
             aria-label={t("appTasks")}
           >
             <Icon name="clock" />
           </IconButton>
           <IconButton
             onClick={() => openFullView("help")}
-            title={t("appHelp")}
+            title={shortcutTooltip(t("appHelp"), shortcutBindings, "openHelp")}
             aria-label={t("appHelp")}
           >
             <Icon name="help" />
           </IconButton>
           <IconButton
             onClick={() => openFullView("settings")}
-            title={t("appSettings")}
+            title={shortcutTooltip(t("appSettings"), shortcutBindings, "openSettings")}
             aria-label={t("appSettings")}
           >
             <Icon name="settings" />
