@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import appSource from "../App.tsx?raw";
+import queryEditorSource from "../components/QueryEditor.tsx?raw";
+import tabBarSource from "../components/TabBar.tsx?raw";
 import { describe, expect, it } from "vitest";
 import { labelWithShortcut, shortcutTooltip } from "../shortcutLabel";
 import { resolveShortcutBindings } from "../shortcuts";
@@ -38,8 +39,7 @@ describe("shortcutTooltip", () => {
 // ボタン側の結線 (#1265 / #1275 / #1278)。ツールチップのキー表記が手書きに
 // 戻らず、必ず解決済みバインド経由で出ていることを固定する。
 describe("button wiring", () => {
-  const read = (p: string) => readFileSync(resolve(__dirname, "..", p), "utf8");
-  const app = read("App.tsx");
+  const app = appSource;
 
   it("exposes the command palette button with its shortcut", () => {
     expect(app).toMatch(/onClick=\{\(\) => setShowCommandPalette\(true\)\}/);
@@ -59,9 +59,9 @@ describe("button wiring", () => {
 
   it("passes the new-tab combo to TabBar and run/preview tooltips use bindings", () => {
     expect(app).toContain("newTabCombo={shortcutBindings.newTab}");
-    const editor = read("components/QueryEditor.tsx");
+    const editor = queryEditorSource;
     expect(editor).toContain("labelWithShortcut(runTitleBase, runCombo)");
     expect(editor).toContain("onRunInNewTab");
-    expect(read("components/TabBar.tsx")).toContain("labelWithShortcut(t(\"tabNew\"), newTabCombo)");
+    expect(tabBarSource).toContain("labelWithShortcut(t(\"tabNew\"), newTabCombo)");
   });
 });
