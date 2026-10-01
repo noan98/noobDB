@@ -72,6 +72,8 @@ export const TreeRow = chakra("div", {
     ...TREE_ROW_TRANSITION,
     _hover: { bg: "app.hover" },
     _focusVisible: { outline: "none", boxShadow: TREE_FOCUS_RING },
+    // 行内の「…」ボタン (`TreeMoreButton`) はホバー / フォーカス中の行でだけ見せる (#1269)。
+    "&:hover [data-tree-more], &:focus-within [data-tree-more]": { opacity: 1 },
   },
 });
 
@@ -138,6 +140,36 @@ export const TreeChevronButton = chakra("button", {
     cursor: "pointer",
     _hover: { color: "app.text" },
     _focusVisible: { outline: "none", boxShadow: TREE_FOCUS_RING },
+  },
+});
+
+/**
+ * ツリー行末の「…」ボタン (#1269)。右クリックでしか開けなかった行メニューに、
+ * マウス / タッチからの可視の入口を足す。ホバー・フォーカス中の行でだけ表示し
+ * (`TreeRow` の `[data-tree-more]` ルール)、ホバーできない環境 (タッチ) では常時表示する。
+ * 利用側は `aria-label` を必ず渡し、メニューは右クリックと同じ関数で開くこと。
+ * 行の roving tabindex を増やさないよう `tabIndex={-1}` で使う (キーボードは
+ * Shift+F10 / ContextMenu キーが同じメニューを開く)。
+ */
+export const TreeMoreButton = chakra("button", {
+  base: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    bg: "transparent",
+    border: "none",
+    borderRadius: "sm",
+    p: "0.5",
+    color: "app.textMuted",
+    cursor: "pointer",
+    opacity: 0,
+    "@media (hover: none)": { opacity: 1 },
+    transitionProperty: "opacity, color, background",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: { color: "app.text", bg: "app.hover" },
+    _focusVisible: { outline: "none", boxShadow: TREE_FOCUS_RING, opacity: 1 },
   },
 });
 

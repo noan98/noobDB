@@ -1969,6 +1969,7 @@ const en = {
   treeLoading: "Loading...",
   treeTableTitle: "Click ▸ to expand columns, indexes and foreign keys; double-click to open the data; right-click for structure and more",
   treeToggleColumnsAria: "Expand or collapse columns of {table}",
+  treeMoreActionsAria: "More actions",
   treeRowEstimateTitle:
     "Approximate row count from engine statistics (no COUNT(*) scan); may be stale",
   colTipType: "Type",
@@ -5716,6 +5717,7 @@ const ja: Dict = {
   treeLoading: "読み込み中...",
   treeTableTitle: "▸ クリックで列・インデックス・外部キーを展開、ダブルクリックでデータを開く、右クリックで構造などの操作",
   treeToggleColumnsAria: "{table} のカラム一覧を開閉",
+  treeMoreActionsAria: "その他の操作",
   treeRowEstimateTitle:
     "統計情報に基づく概算レコード数 (COUNT(*) は実行していません)。古い可能性があります",
   colTipType: "型",

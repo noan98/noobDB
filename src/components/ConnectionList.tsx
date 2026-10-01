@@ -59,6 +59,7 @@ import {
   TreeBadge,
   TreeChevron,
   TreeChevronButton,
+  TreeMoreButton,
   TreeCollapse,
   TreeIcon,
   TreeLabel,
@@ -928,6 +929,27 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const onTreeItemFocus = (key: string) => (e: React.FocusEvent<HTMLElement>) => {
     if (e.target === e.currentTarget) setActiveTreeKey(key);
   };
+
+  /** 行末の「…」ボタン (#1269)。右クリックと同じメニュー組み立て関数 `openMenu` を、
+   *  ボタンの左下を起点にして開く (キーボードの Shift+F10 と同じアンカー規則)。 */
+  const renderMoreButton = (openMenu: (e: ContextMenuTriggerEvent) => void) => (
+    <TreeMoreButton
+      type="button"
+      data-tree-more=""
+      tabIndex={-1}
+      aria-label={t("treeMoreActionsAria")}
+      aria-haspopup="menu"
+      onClick={(e) => {
+        e.stopPropagation();
+        openMenu(contextMenuTriggerFromRect(e.currentTarget.getBoundingClientRect()));
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
+      {...treeTooltipProps(t("treeMoreActionsAria"))}
+    >
+      <Icon name="more" size={ICON_SIZES.sm} />
+    </TreeMoreButton>
+  );
 
   // --- 接続 / グループの並べ替え (#786) ---
   //
@@ -2040,6 +2062,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               {rowEstLabel}
             </TreeBadge>
           )}
+          {renderMoreButton((ev) =>
+            view ? handleViewContextMenu(ev, db, view) : handleTableContextMenu(ev, db, tbl),
+          )}
         </TreeRow>
         <TreeCollapse open={tOpen}>
           <TreeChildren>
@@ -2449,6 +2474,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                       <TreeIcon color="app.dbAccent" aria-hidden><Icon name="database" /></TreeIcon>
                       <TreeLabel fontWeight={400}><HighlightText text={db} query={q} /></TreeLabel>
+                      {renderMoreButton((ev) => handleDbContextMenu(ev, db))}
                     </TreeRow>
                     <TreeCollapse open={dbOpen}>
                       <TreeChildren>
