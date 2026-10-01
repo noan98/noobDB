@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **144 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **148 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -58,13 +58,13 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 ## スキーマ (`commands/schema.rs`)
 
-`list_databases` / `list_tables` / `describe_table` / `table_row_identity` /
+`list_databases` / `list_tables` / `describe_table` /
 `schema_overview` / `foreign_keys` / `list_schema_objects` / `get_object_definition` /
 `list_indexes` / `table_row_estimates` / `list_table_comments` / `get_routine_signature`
 (ストアドプロシージャ / 関数のパラメータ取得、#1003 — SQLite は未対応エラー) /
 `table_statistics` / `describe_database` / `alter_table_context` / `incoming_foreign_keys` (#1255)
 
-#1255 の 4 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
+#1255 の 148 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
 `table_statistics` はサイズ・行数に列数・インデックス数・PK 有無・FK 数を合成して返す
 (旧 `table_sizes` の置き換え)。`describe_database` は全テーブルの `describe_table` 相当
 (スキーマエクスポート / ER 図)。`alter_table_context` は列編集ダイアログの初期ロード一式
@@ -72,6 +72,22 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 `foreign_keys` のキャッシュから対象テーブルを参照する FK だけを返す(逆方向 FK ジャンプ)。
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
+
+## スキーマ・テーブルオープンの集約 (`commands/schema.rs` / `schema_tree.rs` / `table_open.rs`、#1263)
+
+`table_row_estimate` / `load_schema_tree` / `list_tables_all` / `open_table` / `open_tables`
+
+- `table_row_estimate` — `table_row_estimates` の 1 テーブル版 (MySQL `TABLE_NAME = ?` /
+  PG `relname = $2` / SQLite は `None`)。`open_table` が失敗したときのフォールバックで使う。
+- `open_table(session, db, table, limit, with_estimate)` — 列 + (PK 無しなら)行識別 + 初回
+  SELECT の SQL (`table_select_sql`、フロント `qualifiedTableSql` と共有ゴールデン
+  `tableSelectSql.json`) + 行数推定 (タイムアウト付き) を `tokio::join!` で並行取得して
+  1 IPC で返す。`open_tables` はセッション復元用の一括版 (テーブルごとの成功/失敗、行数推定なし)。
+- `load_schema_tree(session, open_dbs, open_table_keys)` — スキーマツリーの復元 / 更新用。
+  DB 一覧 + 開いている DB のテーブル・行数推定・非テーブルオブジェクト・コメント + 開いている
+  テーブルの列・インデックス (多いときは #1255 の一括取得) を 1 回で返す。
+- `list_tables_all` — 全 DB のテーブル一覧を SQL 1 本で返す (スキーマ検索用、MySQL
+  `information_schema.TABLES` / PG 全スキーマ / SQLite は単一 DB)。
 
 `describe_table` の各列は `comment` (列コメント) を、`list_table_comments` は
 テーブル / ビューのコメントを返す (#1002)。SQLite はコメント非対応で常に空。
