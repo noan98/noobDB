@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Column } from "../api/tauri";
-import { addPinned, resultsComparable, type PinnedResult } from "../pinnedCompare";
+import { addPinned, pinToastPlan, resultsComparable, type PinnedResult } from "../pinnedCompare";
 
 function cols(...names: string[]): Column[] {
   return names.map((name) => ({ name, type_name: "text" }));
@@ -59,5 +59,18 @@ describe("addPinned", () => {
     let list: PinnedResult[] = [];
     for (let i = 0; i < 5; i++) list = addPinned(list, pin(`p${i}`, i), 3);
     expect(list.map((p) => p.id)).toEqual(["p2", "p3", "p4"]);
+  });
+});
+
+describe("pinToastPlan (#1277)", () => {
+  it("2 件未満は案内のみでアクションを出さない", () => {
+    for (const n of [0, 1]) {
+      expect(pinToastPlan(n)).toEqual({ messageKey: "pinToastNeedOneMore", showOpenAction: false });
+    }
+  });
+  it("2 件以上は「比較を開く」アクションを出す", () => {
+    for (const n of [2, 6]) {
+      expect(pinToastPlan(n)).toEqual({ messageKey: "pinToastCompare", showOpenAction: true });
+    }
   });
 });
