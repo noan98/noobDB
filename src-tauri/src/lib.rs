@@ -39,6 +39,7 @@ pub mod __test_api {
     };
     pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
     pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
+    pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
         generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
@@ -47,6 +48,13 @@ pub mod __test_api {
     pub use crate::db::refresh_diff::{
         PatchPayload, PatchRun, RefreshBuilder, RefreshOutcome, RefreshSnapshot,
         RefreshSnapshotStore,
+    };
+    pub use crate::db::result_ops::{
+        column_stats, find, sort_filter, ColumnStatsOut, FilterOp, FilterSpec, FindHit,
+        FindOptions, FindOutput, NullMode, SortKind, SortSpec,
+    };
+    pub use crate::db::result_store::{
+        approx_row_bytes, ResultBuilder, ResultStore, MIN_RETAIN_ROWS, RESULT_GONE,
     };
     pub use crate::db::sandbox::filter_out_keys;
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
@@ -146,6 +154,12 @@ pub mod __test_api {
         create_local_session_inner, drop_local_table_inner, list_local_tables_inner,
         register_local_table_inner, save_local_database_inner, RegisterLocalTableRequest,
         MAX_LOCAL_TABLE_ROWS,
+    };
+
+    // 結果ハンドル (#1264) の IPC コア (State なし)。
+    pub use crate::commands::result::{
+        render_export_text_inner, resolve_rows, result_column_stats_inner, result_find_inner,
+        result_sort_filter_inner, RenderExportRequest,
     };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
@@ -1132,6 +1146,11 @@ pub fn run() {
             commands::export::export_query_result,
             commands::export::export_query_stream,
             commands::export::mask_export_rows,
+            commands::result::result_sort_filter,
+            commands::result::result_find,
+            commands::result::result_column_stats,
+            commands::result::release_result,
+            commands::result::render_export_text,
             commands::dump::dump_database,
             commands::import::parse_csv_preview,
             commands::import::import_csv,
