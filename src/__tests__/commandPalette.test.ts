@@ -10,6 +10,9 @@ import {
   recordMruUsage,
   pruneMruIds,
   shouldStaggerEntrance,
+  limitAndIndexGroups,
+  EMPTY_QUERY_GROUP_LIMIT,
+  SEARCH_RESULT_LIMIT,
   MAX_MRU_ITEMS,
   MAX_STAGGER_ITEMS,
   GROUP_ORDER,
@@ -356,5 +359,58 @@ describe("singleLine", () => {
 
   it("leaves short strings intact", () => {
     expect(singleLine("short", 100)).toBe("short");
+  });
+});
+
+describe("limitAndIndexGroups (#1320)", () => {
+  const many = (group: CommandItem["group"], n: number, prefix: string) =>
+    Array.from({ length: n }, (_, i) => item({ id: `${prefix}${i}`, group, label: `${prefix}${i}` }));
+
+  it("空クエリでは mru / navigation 以外をグループごとに絞り、隠れた件数を返す", () => {
+    const items = [...many("navigation", 12, "n"), ...many("tables", 2000, "t"), ...many("history", 3, "h")];
+    const v = limitAndIndexGroups(groupCommands(items, ""), "", false);
+    const count = (g: string) => v.groups.find((x) => x.group === g)?.items.length;
+    expect(count("navigation")).toBe(12);
+    expect(count("tables")).toBe(EMPTY_QUERY_GROUP_LIMIT);
+    expect(count("history")).toBe(3);
+    expect(v.hiddenCount).toBe(2000 - EMPTY_QUERY_GROUP_LIMIT);
+    expect(v.flat).toHaveLength(12 + EMPTY_QUERY_GROUP_LIMIT + 3);
+  });
+
+  it("flatIndex は表示順の添字で、flat と一致する (indexOf 不要)", () => {
+    const items = [...many("navigation", 3, "n"), ...many("tables", 20, "t")];
+    const v = limitAndIndexGroups(groupCommands(items, ""), "", false);
+    for (const g of v.groups) {
+      for (const { scored, flatIndex } of g.items) expect(v.flat[flatIndex]).toBe(scored);
+    }
+    expect(v.flat.map((x) => x.item.id)).toEqual(v.groups.flatMap((g) => g.items.map((i) => i.scored.item.id)));
+  });
+
+  it("MRU グループは空クエリでも絞らない", () => {
+    const items = many("tables", 50, "t");
+    const mru = items.slice(0, 8).map((i) => i.id);
+    const v = limitAndIndexGroups(groupCommands(items, "", mru), "", false);
+    expect(v.groups[0].group).toBe("mru");
+    expect(v.groups[0].items).toHaveLength(8);
+  });
+
+  it("クエリあり: 総件数を SEARCH_RESULT_LIMIT で打ち切る", () => {
+    const items = many("tables", SEARCH_RESULT_LIMIT + 40, "t");
+    const v = limitAndIndexGroups(groupCommands(items, "t"), "t", false);
+    expect(v.flat).toHaveLength(SEARCH_RESULT_LIMIT);
+    expect(v.hiddenCount).toBe(40);
+  });
+
+  it("expanded なら上限なし・hiddenCount は 0", () => {
+    const items = many("tables", 500, "t");
+    const v = limitAndIndexGroups(groupCommands(items, ""), "", true);
+    expect(v.flat).toHaveLength(500);
+    expect(v.hiddenCount).toBe(0);
+  });
+
+  it("上限以内なら何も隠さない", () => {
+    const v = limitAndIndexGroups(groupCommands(many("tables", 5, "t"), ""), "", false);
+    expect(v.hiddenCount).toBe(0);
+    expect(v.flat).toHaveLength(5);
   });
 });

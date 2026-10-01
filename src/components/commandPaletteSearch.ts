@@ -247,6 +247,77 @@ export function flattenGroups(grouped: GroupedCommands[]): ScoredItem[] {
   return grouped.flatMap((g) => g.items);
 }
 
+/** 空クエリ時にグループごとへ表示する件数の上限 (#1320)。 */
+export const EMPTY_QUERY_GROUP_LIMIT = 8;
+
+/** クエリあり時に一度に描画する総件数の上限 (#1320)。超過分は「さらに表示」で展開する。 */
+export const SEARCH_RESULT_LIMIT = 60;
+
+/** 空クエリでも件数を絞らないグループ (件数が少なく、常に見えてほしい入口)。 */
+const UNLIMITED_WHEN_EMPTY: ReadonlySet<CommandGroup> = new Set<CommandGroup>([
+  "mru",
+  "navigation",
+]);
+
+/** 表示用に index を付けた候補。`flatIndex` は表示順 (キーボードナビの添字)。 */
+export interface IndexedItem {
+  scored: ScoredItem;
+  flatIndex: number;
+}
+
+export interface IndexedGroup {
+  group: CommandGroup;
+  items: IndexedItem[];
+}
+
+export interface VisibleCommands {
+  groups: IndexedGroup[];
+  /** 表示順のフラット配列 (`groups` と同じ順・同じ件数)。 */
+  flat: ScoredItem[];
+  /** 上限で隠れている件数 (0 なら「さらに表示」は不要)。 */
+  hiddenCount: number;
+}
+
+/**
+ * グループ化済み候補に件数上限を掛け、表示順の index を 1 パスで付与する (#1320)。
+ * 行ごとの `flat.indexOf` (O(n^2)) を避けるための事前計算を兼ねる。
+ *
+ * - 空クエリ: `mru` / `navigation` 以外は各グループ先頭 `EMPTY_QUERY_GROUP_LIMIT` 件。
+ * - クエリあり: 表示順の先頭から合計 `SEARCH_RESULT_LIMIT` 件 (スコア順は保たれる)。
+ * - `expanded` が true なら上限なし。
+ */
+export function limitAndIndexGroups(
+  grouped: GroupedCommands[],
+  query: string,
+  expanded: boolean,
+): VisibleCommands {
+  const groups: IndexedGroup[] = [];
+  const flat: ScoredItem[] = [];
+  let hiddenCount = 0;
+  let remaining = SEARCH_RESULT_LIMIT;
+  for (const g of grouped) {
+    let take = g.items.length;
+    if (!expanded) {
+      if (query === "") {
+        if (!UNLIMITED_WHEN_EMPTY.has(g.group)) take = Math.min(take, EMPTY_QUERY_GROUP_LIMIT);
+      } else {
+        take = Math.min(take, remaining);
+        remaining -= take;
+      }
+    }
+    hiddenCount += g.items.length - take;
+    if (take === 0) continue;
+    const items: IndexedItem[] = [];
+    for (let i = 0; i < take; i++) {
+      const scored = g.items[i];
+      items.push({ scored, flatIndex: flat.length });
+      flat.push(scored);
+    }
+    groups.push({ group: g.group, items });
+  }
+  return { groups, flat, hiddenCount };
+}
+
 /**
  * 出現スタッガー (#976) を掛ける対象の上限件数。`motion.ts` の `staggerTiming.each`
  * (35ms) は件数に比例して最後の行の出現が遅れていくため、大量結果 (絞り込み前の
