@@ -8649,6 +8649,15 @@ export default function App() {
                   : t("appConnections")}
           </chakra.span>
           <Flex gap="1" align="center">
+            {/* コマンドパレットの常設入口 (#1265)。Cmd/Ctrl+K を知らなくても辿れる。
+                接続前でも開ける (パレットは常時有効) ので disabled にしない。 */}
+            <IconButton
+              onClick={() => setShowCommandPalette(true)}
+              title={shortcutTooltip(t("appCommandPalette"), shortcutBindings, "commandPalette")}
+              aria-label={t("appCommandPalette")}
+            >
+              <Icon name="search" />
+            </IconButton>
             <IconButton
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();

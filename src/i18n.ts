@@ -2750,6 +2750,7 @@ const en = {
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "Tools",
+  appCommandPalette: "Command palette",
   appToolsTitle: "Tools: diagnostics, logs, and full-screen tools",
   appToolsNeedsSession: "Available while connected",
   appProcessesUnsupported: "Not available for SQLite connections",
@@ -6483,6 +6484,7 @@ const ja: Dict = {
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "ツール",
+  appCommandPalette: "コマンドパレット",
   appToolsTitle: "ツール: 診断・ログ・全画面ツールのメニュー",
   appToolsNeedsSession: "接続中のみ使用できます",
   appProcessesUnsupported: "SQLite 接続では使用できません",
