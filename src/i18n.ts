@@ -2556,6 +2556,11 @@ const en = {
   appHelp: "Help",
   helpTitle: "Feature guide",
   helpClose: "Close",
+  helpSearchPlaceholder: "Search the guide…",
+  helpSearchNoMatch: "No matching entries",
+  helpNavAria: "Feature guide sections",
+  helpReplayTour: "Replay the tour",
+  helpOpenCheatSheet: "Open shortcut cheat sheet",
   helpIntro:
     "What each feature does, and whether running it changes the database. Check the badge on an entry before you run it.",
   helpImpactLabel: "DB impact",
@@ -6287,6 +6292,11 @@ const ja: Dict = {
   appHelp: "ヘルプ",
   helpTitle: "機能ガイド",
   helpClose: "閉じる",
+  helpSearchPlaceholder: "ガイドを検索…",
+  helpSearchNoMatch: "一致する項目がありません",
+  helpNavAria: "機能ガイドの節",
+  helpReplayTour: "ツアーをもう一度見る",
+  helpOpenCheatSheet: "ショートカット一覧を開く",
   helpIntro:
     "各機能の説明と、実行したとき DB に変更が反映されるかどうかの一覧です。実行前に各項目のバッジを確認してください。",
   helpImpactLabel: "DB への影響",

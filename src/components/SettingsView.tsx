@@ -16,9 +16,14 @@ import { Segmented } from "./Segmented";
 import { Input, Select, SelectableCard, Switch } from "./ui";
 import {
   SettingsHelp,
+  SettingsNavAside,
+  SettingsNavButton,
+  SettingsNavEmpty,
+  SettingsNavList,
   SettingsSection,
   SettingsSectionHeader,
 } from "./settingsLayout";
+import { filterSectionsByTitle, pickActiveSection } from "../sectionNav";
 import { copyToClipboard } from "./clipboard";
 import { DEFAULT_MASK_PATTERNS, formatMaskPatterns, parseMaskPatterns } from "./columnMask";
 import { useConfirm } from "./ConfirmDialog";
@@ -597,56 +602,6 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-backup", titleKey: "settingsBackup" },
 ];
 
-// セクションナビ (左ペイン) のレイアウト要素。
-const SettingsNavAside = chakra("aside", {
-  base: {
-    position: "sticky",
-    top: "0",
-    alignSelf: "flex-start",
-    display: "flex",
-    flexDirection: "column",
-    gap: "2",
-    minW: "180px",
-    maxW: "220px",
-    maxH: "calc(90vh - 120px)",
-    overflowY: "auto",
-    flexShrink: 0,
-    "& input": { fontSize: "sm" },
-  },
-});
-
-const SettingsNavList = chakra("div", {
-  base: { display: "flex", flexDirection: "column", gap: "0.5" },
-});
-
-const SettingsNavButton = chakra("button", {
-  base: {
-    textAlign: "left",
-    px: "2.5",
-    py: "1.5",
-    fontSize: "sm",
-    fontWeight: 500,
-    color: "app.textSecondary",
-    background: "transparent",
-    border: "none",
-    borderRadius: "sm",
-    cursor: "pointer",
-    transitionProperty: "background, color",
-    transitionDuration: "var(--dur-fast)",
-    transitionTimingFunction: "var(--ease)",
-    _hover: { background: "app.hover", color: "app.text" },
-    "&[aria-current=true]": {
-      background: "app.hover",
-      color: "app.text",
-      fontWeight: 600,
-    },
-  },
-});
-
-const SettingsNavEmpty = chakra("p", {
-  base: { margin: 0, px: "2.5", py: "1", fontSize: "sm", color: "app.textMuted" },
-});
-
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
   const toast = useToast();
@@ -663,11 +618,7 @@ export function SettingsView({ theme, onClose }: Props) {
   // スクロールイベントで「コンテナ上端に最も近いセクション」を判定する簡易実装)。
   const [navQuery, setNavQuery] = useState("");
   const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
-  const filteredSections = (() => {
-    const q = navQuery.trim().toLowerCase();
-    if (!q) return SECTIONS;
-    return SECTIONS.filter((sec) => t(sec.titleKey).toLowerCase().includes(q));
-  })();
+  const filteredSections = filterSectionsByTitle(SECTIONS, navQuery, (sec) => t(sec.titleKey));
   // ナビクリック直後は smooth スクロールの中間イベントでスクロールスパイが
   // ハイライトを巻き戻してしまう (#680 レビュー対応)。クリックから 600ms は
   // handleModalBodyScroll を早期リターンさせて抑制する。
@@ -690,23 +641,15 @@ export function SettingsView({ theme, onClose }: Props) {
     // する。最後のセクションが短いと先頭がコンテナ上端に到達しないまま末尾に着く
     // ことがあり、その場合でも一番下までスクロールしたら経路をここで補う
     // (#680 レビュー対応)。
-    if (container.scrollTop + container.clientHeight >= container.scrollHeight - 4) {
-      setActiveSection(sections[sections.length - 1].id);
-      return;
-    }
-    let current = sections[0].id;
-    for (const sec of sections) {
-      const el = document.getElementById(sec.id);
-      if (!el) continue;
-      // セクション先頭がコンテナ上端よりわずかに下 (24px 以内) までなら
-      // 「表示中」とみなす。上端を超えたら手前のセクションが依然アクティブ。
-      if (el.getBoundingClientRect().top - containerTop <= 24) {
-        current = sec.id;
-      } else {
-        break;
-      }
-    }
-    setActiveSection(current);
+    const next = pickActiveSection(
+      sections.map((sec) => sec.id),
+      sections.map((sec) => {
+        const el = document.getElementById(sec.id);
+        return el ? el.getBoundingClientRect().top - containerTop : null;
+      }),
+      container.scrollTop + container.clientHeight >= container.scrollHeight - 4,
+    );
+    if (next) setActiveSection(next);
   };
 
   // Local input state so users can clear the field while typing without

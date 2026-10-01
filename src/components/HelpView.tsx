@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
@@ -8,9 +9,16 @@ import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import {
   SettingsHelp,
+  SettingsNavAside,
+  SettingsNavButton,
+  SettingsNavEmpty,
+  SettingsNavList,
   SettingsSection,
   SettingsSectionHeader,
 } from "./settingsLayout";
+import { Button, Input } from "./ui";
+import { filterHelpSections } from "../helpSearch";
+import { pickActiveSection } from "../sectionNav";
 
 type Key = Parameters<ReturnType<typeof useT>>[0];
 type Impact = "yes" | "no";
@@ -243,60 +251,160 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
   );
 }
 
-export function HelpView({ onClose }: { onClose: () => void }) {
+/** 節ナビ / スクロール先に使う DOM id (節の見出し i18n キーから一意に決まる)。 */
+function sectionDomId(section: Section): string {
+  return `help-sec-${section.headerKey}`;
+}
+
+interface HelpViewProps {
+  onClose: () => void;
+  /** 「ツアーをもう一度見る」(#1274)。未指定ならボタンを出さない。 */
+  onStartTour?: () => void;
+  /** 「ショートカット一覧」(#1274)。未指定ならボタンを出さない。 */
+  onOpenCheatSheet?: () => void;
+}
+
+export function HelpView({ onClose, onStartTour, onOpenCheatSheet }: HelpViewProps) {
   const t = useT();
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
+
+  // 節ナビ + 検索 (#1273)。設定画面 (#680) と同じ構造・同じ純ロジック (`sectionNav.ts`)。
+  const [query, setQuery] = useState("");
+  const [activeSection, setActiveSection] = useState<string>(sectionDomId(SECTIONS[0]));
+  const suppressSpyUntilRef = useRef(0);
+
+  const featureTitle = (f: Feature) =>
+    f.shortcutId ? formatCombo(resolved[f.shortcutId]) : t(f.titleKey);
+  const visibleSections = filterHelpSections(
+    SECTIONS.map((sec) => ({
+      ...sec,
+      header: t(sec.headerKey),
+      desc: t(sec.descKey),
+    })),
+    query,
+    (f: Feature) => ({
+      title: featureTitle(f),
+      desc: t(f.descKey),
+      steps: f.stepKeys?.map((k) => t(k)),
+      note: f.noteKey ? t(f.noteKey) : undefined,
+    }),
+  );
+
+  const handleNavClick = (id: string) => {
+    setActiveSection(id);
+    suppressSpyUntilRef.current = Date.now() + 600;
+    document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (Date.now() < suppressSpyUntilRef.current) return;
+    const container = e.currentTarget;
+    const containerTop = container.getBoundingClientRect().top;
+    const ids = visibleSections.map(sectionDomId);
+    const next = pickActiveSection(
+      ids,
+      ids.map((id) => {
+        const el = document.getElementById(id);
+        return el ? el.getBoundingClientRect().top - containerTop : null;
+      }),
+      container.scrollTop + container.clientHeight >= container.scrollHeight - 4,
+    );
+    if (next) setActiveSection(next);
+  };
+
   return (
     <Modal
       // no-submit: 参照画面 (閉じるのみ)
-      onClose={onClose} width="920px">
+      onClose={onClose} width="1120px">
       <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
         {t("helpTitle")}
       </ModalHeader>
-      <ModalBody>
-        <chakra.div display="flex" flexDirection="column" gap="4.5">
-      <SettingsHelp fontSize="md" lineHeight="1.5">{t("helpIntro")}</SettingsHelp>
+      <ModalBody onScroll={handleScroll}>
+        <chakra.div display="flex" gap="4" alignItems="flex-start">
+          <SettingsNavAside aria-label={t("helpNavAria")}>
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("helpSearchPlaceholder")}
+              aria-label={t("helpSearchPlaceholder")}
+            />
+            {visibleSections.length === 0 ? (
+              <SettingsNavEmpty>{t("helpSearchNoMatch")}</SettingsNavEmpty>
+            ) : (
+              <SettingsNavList role="navigation" aria-label={t("helpTitle")}>
+                {visibleSections.map((sec) => (
+                  <SettingsNavButton
+                    key={sec.headerKey}
+                    type="button"
+                    aria-current={activeSection === sectionDomId(sec)}
+                    onClick={() => handleNavClick(sectionDomId(sec))}
+                  >
+                    {sec.header}
+                  </SettingsNavButton>
+                ))}
+              </SettingsNavList>
+            )}
+          </SettingsNavAside>
+          <chakra.div display="flex" flexDirection="column" gap="4.5" flex="1" minW={0}>
+            <SettingsHelp fontSize="md" lineHeight="1.5">{t("helpIntro")}</SettingsHelp>
 
-      {SECTIONS.map((section) => (
-        <SettingsSection key={section.headerKey}>
-          <SettingsSectionHeader>
-            <chakra.h3>{t(section.headerKey)}</chakra.h3>
-          </SettingsSectionHeader>
-          <SettingsHelp>{t(section.descKey)}</SettingsHelp>
-
-          <HelpFeatureGrid>
-            {section.features.map((f) => (
-              <HelpFeature key={f.titleKey}>
-                <HelpFeatureHead>
-                  <chakra.h4>
-                    {f.shortcutId ? formatCombo(resolved[f.shortcutId]) : t(f.titleKey)}
-                  </chakra.h4>
-                  {f.impact && <DbImpactBadge impact={f.impact} />}
-                </HelpFeatureHead>
-                <HelpFeatureDesc>{t(f.descKey)}</HelpFeatureDesc>
-
-                {f.stepKeys && (
-                  <>
-                    <HelpUsageTitle>{t("helpUsageTitle")}</HelpUsageTitle>
-                    <HelpSteps>
-                      {f.stepKeys.map((s) => (
-                        <chakra.li key={s}>{t(s)}</chakra.li>
-                      ))}
-                    </HelpSteps>
-                  </>
+            {(onStartTour || onOpenCheatSheet) && (
+              <chakra.div display="flex" gap="2" flexWrap="wrap">
+                {onStartTour && (
+                  <Button size="sm" onClick={onStartTour}>
+                    {t("helpReplayTour")}
+                  </Button>
                 )}
-
-                {f.noteKey && (
-                  <HelpNote>
-                    <chakra.strong>{t("helpNoteLabel")}:</chakra.strong> {t(f.noteKey)}
-                  </HelpNote>
+                {onOpenCheatSheet && (
+                  <Button size="sm" onClick={onOpenCheatSheet}>
+                    {t("helpOpenCheatSheet")}
+                  </Button>
                 )}
-              </HelpFeature>
+              </chakra.div>
+            )}
+
+            {visibleSections.map((section) => (
+              <SettingsSection
+                key={section.headerKey}
+                id={sectionDomId(section)}
+                scrollMarginTop="8px"
+              >
+                <SettingsSectionHeader>
+                  <chakra.h3>{section.header}</chakra.h3>
+                </SettingsSectionHeader>
+                <SettingsHelp>{section.desc}</SettingsHelp>
+
+                <HelpFeatureGrid>
+                  {section.features.map((f) => (
+                    <HelpFeature key={f.titleKey}>
+                      <HelpFeatureHead>
+                        <chakra.h4>{featureTitle(f)}</chakra.h4>
+                        {f.impact && <DbImpactBadge impact={f.impact} />}
+                      </HelpFeatureHead>
+                      <HelpFeatureDesc>{t(f.descKey)}</HelpFeatureDesc>
+
+                      {f.stepKeys && (
+                        <>
+                          <HelpUsageTitle>{t("helpUsageTitle")}</HelpUsageTitle>
+                          <HelpSteps>
+                            {f.stepKeys.map((s) => (
+                              <chakra.li key={s}>{t(s)}</chakra.li>
+                            ))}
+                          </HelpSteps>
+                        </>
+                      )}
+
+                      {f.noteKey && (
+                        <HelpNote>
+                          <chakra.strong>{t("helpNoteLabel")}:</chakra.strong> {t(f.noteKey)}
+                        </HelpNote>
+                      )}
+                    </HelpFeature>
+                  ))}
+                </HelpFeatureGrid>
+              </SettingsSection>
             ))}
-          </HelpFeatureGrid>
-        </SettingsSection>
-      ))}
+          </chakra.div>
         </chakra.div>
       </ModalBody>
     </Modal>
