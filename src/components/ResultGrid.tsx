@@ -7,6 +7,12 @@ import { markGridCommit } from "../perf";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
+  COLLAPSIBLE_TOOLBAR_ACTIONS,
+  nextCollapsedCount,
+  splitCollapsed,
+  type CollapsibleToolbarAction,
+} from "./resultToolbarOverflow";
+import {
   columnFilteringFeature,
   columnOrderingFeature,
   columnPinningFeature,
@@ -77,7 +83,7 @@ import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
 import { reorderColumnIds } from "./columnReorderFlip";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
-import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
+import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import {
   type CellKind,
   CELL_KIND_META,
@@ -6983,6 +6989,52 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     lookup: !!editable && pkIndices.length > 0 ? onLookupQuery : undefined,
   });
 
+  // ツールバーの幅適応 (#1270): はみ出す間、副次操作を右から順に「…」メニューへ畳む。
+  // 実測 (scrollWidth / clientWidth) で決めるので、フォント拡大・密度・日本語/英語の
+  // 文言差・編集バーの出入りにも追従する。判定は resultToolbarOverflow.ts (純関数)。
+  // フックなので下の早期 return より前で呼ぶ。
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const toolbarObservedRef = useRef<HTMLDivElement | null>(null);
+  const toolbarActionWidthsRef = useRef(new Map<CollapsibleToolbarAction, number>());
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(0);
+  const [toolbarTick, setToolbarTick] = useState(0);
+  const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null);
+  const overflowBtnRef = useRef<HTMLButtonElement | null>(null);
+  const presentToolbarActions = COLLAPSIBLE_TOOLBAR_ACTIONS.filter(
+    (id) =>
+      (id !== "transfer" || !!onTransferResult) && (id !== "autoRefresh" || !!onSetAutoRefresh),
+  );
+  const { visible: visibleToolbarActions, collapsed: collapsedToolbarActions } = splitCollapsed(
+    presentToolbarActions,
+    toolbarCollapsed,
+  );
+  useLayoutEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    // 表示中の操作の幅 (gap 込み) を控える。畳んだ後に「戻せるか」の判断に使う。
+    for (const node of Array.from(el.querySelectorAll<HTMLElement>("[data-toolbar-action]"))) {
+      const id = node.dataset.toolbarAction as CollapsibleToolbarAction;
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+      toolbarActionWidthsRef.current.set(id, node.getBoundingClientRect().width + gap);
+    }
+    const nextExpand = collapsedToolbarActions[0];
+    const next = nextCollapsedCount({
+      collapsed: toolbarCollapsed,
+      total: presentToolbarActions.length,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      nextExpandWidth: nextExpand ? (toolbarActionWidthsRef.current.get(nextExpand) ?? null) : null,
+    });
+    if (next !== toolbarCollapsed) setToolbarCollapsed(next);
+  });
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el || toolbarObservedRef.current === el || typeof ResizeObserver === "undefined") return;
+    toolbarObservedRef.current = el;
+    new ResizeObserver(() => setToolbarTick((n) => n + 1)).observe(el);
+  });
+  void toolbarTick;
+
   if (!result) {
     return (
       <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
@@ -7062,6 +7114,97 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         )
       : null;
 
+  // ツールバーの副次操作 (#1270)。ボタン表示と「…」メニューが同じ定義を共有する
+  // (二重実装しない)。無効時の理由は Tooltip / メニューの title に出す。
+  const exportBlockedReason = streaming
+    ? t("exportDisabledStreaming")
+    : !canExport
+      ? t("exportDisabledNoRows")
+      : null;
+  const toolbarButtonActions: Partial<
+    Record<
+      CollapsibleToolbarAction,
+      { label: string; icon: IconName; title: string; disabled: boolean; onSelect: () => void }
+    >
+  > = {
+    saveAsTable: {
+      label: t("saveAsTableButton"),
+      icon: "table",
+      title:
+        exportBlockedReason ??
+        (onSaveAsTable ? t("saveAsTableButtonTitle") : t("saveAsTableDisabledTitle")),
+      disabled: !canExport || !onSaveAsTable,
+      onSelect: () => onSaveAsTable?.(),
+    },
+    saveAsView: {
+      label: t("saveAsViewButton"),
+      icon: "view",
+      title:
+        exportBlockedReason ??
+        (onSaveAsView ? t("saveAsViewButtonTitle") : t("saveAsViewDisabledTitle")),
+      disabled: !canExport || !onSaveAsView,
+      onSelect: () => onSaveAsView?.(),
+    },
+    registerLocal: {
+      label: t("registerLocalTableButton"),
+      icon: "database",
+      title:
+        exportBlockedReason ??
+        (onRegisterLocalTable
+          ? t("registerLocalTableButtonTitle")
+          : t("registerLocalTableDisabledTitle")),
+      disabled: !canExport || !onRegisterLocalTable,
+      onSelect: () => onRegisterLocalTable?.(),
+    },
+    ...(onTransferResult
+      ? {
+          transfer: {
+            label: t("transferResultButton"),
+            icon: "transfer" as const,
+            title: exportBlockedReason ?? t("transferResultButtonTitle"),
+            disabled: !canExport,
+            onSelect: () => onTransferResult(),
+          },
+        }
+      : {}),
+  };
+  const overflowMenuItems: ContextMenuEntry[] = collapsedToolbarActions.flatMap(
+    (id): ContextMenuEntry[] => {
+      if (id === "autoRefresh") {
+        if (!onSetAutoRefresh) return [];
+        return [
+          {
+            label: t("autoRefreshLabel"),
+            title: autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle"),
+            disabled: !autoRefreshAllowed,
+            items: [
+              {
+                label: t("autoRefreshOff"),
+                icon: !autoRefreshOn ? "check" : undefined,
+                onSelect: () => onSetAutoRefresh(null),
+              },
+              ...AUTO_REFRESH_INTERVAL_OPTIONS.map((secs) => ({
+                label:
+                  secs % 60 === 0
+                    ? t("autoRefreshIntervalMins", { mins: secs / 60 })
+                    : t("autoRefreshIntervalSecs", { secs }),
+                icon: autoRefreshOn && autoRefreshSecs === secs ? ("check" as const) : undefined,
+                onSelect: () => {
+                  setIntervalChoice(secs);
+                  onSetAutoRefresh(secs);
+                },
+              })),
+            ],
+          },
+        ];
+      }
+      const a = toolbarButtonActions[id];
+      return a
+        ? [{ label: a.label, icon: a.icon, title: a.title, disabled: a.disabled, onSelect: a.onSelect }]
+        : [];
+    },
+  );
+
   return (
     <Box
       display="flex"
@@ -7127,6 +7270,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         alignItems="center"
         gap="1.5"
         py="1" px="2"
+        ref={toolbarRef}
         bg="app.toolbar"
         borderBottom="1px solid"
         borderColor="app.borderSubtle"
@@ -7168,97 +7312,34 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <Icon name="download" size={ICON_SIZES.md} /> {t("exportButton")}
           </Button>
         </Tooltip>
-        <Tooltip
-          focusableWrapper={!canExport || !onSaveAsTable}
-          label={
-            streaming
-              ? t("exportDisabledStreaming")
-              : !canExport
-                ? t("exportDisabledNoRows")
-                : onSaveAsTable
-                  ? t("saveAsTableButtonTitle")
-                  : t("saveAsTableDisabledTitle")
-          }
-        >
-          <Button
-            size="sm"
-            px="2.5"
-            onClick={() => onSaveAsTable?.()}
-            disabled={!canExport || !onSaveAsTable}
-          >
-            <Icon name="table" size={ICON_SIZES.md} /> {t("saveAsTableButton")}
-          </Button>
-        </Tooltip>
-        <Tooltip
-          focusableWrapper={!canExport || !onSaveAsView}
-          label={
-            streaming
-              ? t("exportDisabledStreaming")
-              : !canExport
-                ? t("exportDisabledNoRows")
-                : onSaveAsView
-                  ? t("saveAsViewButtonTitle")
-                  : t("saveAsViewDisabledTitle")
-          }
-        >
-          <Button
-            size="sm"
-            px="2.5"
-            onClick={() => onSaveAsView?.()}
-            disabled={!canExport || !onSaveAsView}
-          >
-            <Icon name="view" size={ICON_SIZES.md} /> {t("saveAsViewButton")}
-          </Button>
-        </Tooltip>
-        <Tooltip
-          focusableWrapper={!canExport || !onRegisterLocalTable}
-          label={
-            streaming
-              ? t("exportDisabledStreaming")
-              : !canExport
-                ? t("exportDisabledNoRows")
-                : onRegisterLocalTable
-                  ? t("registerLocalTableButtonTitle")
-                  : t("registerLocalTableDisabledTitle")
-          }
-        >
-          <Button
-            size="sm"
-            px="2.5"
-            onClick={() => onRegisterLocalTable?.()}
-            disabled={!canExport || !onRegisterLocalTable}
-          >
-            <Icon name="database" size={ICON_SIZES.md} /> {t("registerLocalTableButton")}
-          </Button>
-        </Tooltip>
-        {onTransferResult && (
-          <Tooltip
-            focusableWrapper={!canExport}
-            label={
-              streaming
-                ? t("exportDisabledStreaming")
-                : !canExport
-                  ? t("exportDisabledNoRows")
-                  : t("transferResultButtonTitle")
-            }
-          >
-            <Button
-              size="sm"
-              px="2.5"
-              onClick={() => onTransferResult()}
-              disabled={!canExport}
+        {visibleToolbarActions.map((id) => {
+          if (id === "autoRefresh") return null;
+          const a = toolbarButtonActions[id];
+          if (!a) return null;
+          return (
+            <chakra.span
+              key={id}
+              data-toolbar-action={id}
+              display="inline-flex"
+              flexShrink={0}
             >
-              <Icon name="transfer" size={ICON_SIZES.md} /> {t("transferResultButton")}
-            </Button>
-          </Tooltip>
-        )}
-        {onSetAutoRefresh && (
+              <Tooltip focusableWrapper={a.disabled} label={a.title}>
+                <Button size="sm" px="2.5" onClick={a.onSelect} disabled={a.disabled}>
+                  <Icon name={a.icon} size={ICON_SIZES.md} /> {a.label}
+                </Button>
+              </Tooltip>
+            </chakra.span>
+          );
+        })}
+        {onSetAutoRefresh && visibleToolbarActions.includes("autoRefresh") && (
           <Tooltip label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}>
           <Box
+            data-toolbar-action="autoRefresh"
             display="inline-flex"
             alignItems="center"
             gap="1.5"
             paddingLeft="2px"
+            flexShrink={0}
           >
             <chakra.label
               display="inline-flex"
@@ -7317,6 +7398,34 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             )}
           </Box>
           </Tooltip>
+        )}
+        {collapsedToolbarActions.length > 0 && (
+          <Tooltip label={t("resultToolbarMoreTitle")}>
+            <Button
+              ref={overflowBtnRef}
+              variant="secondary"
+              size="sm"
+              px="1.5"
+              flexShrink={0}
+              aria-label={t("resultToolbarMoreTitle")}
+              aria-haspopup="menu"
+              aria-expanded={!!overflowMenu}
+              onClick={() => {
+                const r = overflowBtnRef.current?.getBoundingClientRect();
+                if (r) setOverflowMenu({ x: r.left, y: r.bottom + 2 });
+              }}
+            >
+              <Icon name="more" />
+            </Button>
+          </Tooltip>
+        )}
+        {overflowMenu && (
+          <ContextMenu
+            x={overflowMenu.x}
+            y={overflowMenu.y}
+            items={overflowMenuItems}
+            onClose={() => setOverflowMenu(null)}
+          />
         )}
         {onToggleDiffHighlight && pkIndices.length > 0 && (
           <Tooltip label={t("diffHighlightTitle")}>
