@@ -137,7 +137,7 @@ export interface TooltipProps {
  * ない。位置決めは `computeTooltipPosition` (測定 → クランプ → フリップ) で、
  * `ColumnTooltip` が持つ独自のスキーマ用ホバーカードと同じ計算を使っている。
  *
- * Motion (`variants.fadeScale` + `transitions.enter`) は出現アニメーションのみに
+ * Portal は開くまで作らず (#1319)、閉じても退場アニメーション完了まで残す。Motion (`variants.fadeScale` + `transitions.enter`) は
  * 使う。`ContextMenu` と同じく退出アニメーションは無く、閉じるとバブルは即座に
  * アンマウントされる — これだけ短命な要素では体感できる差にならない。
  * reduced-motion はルートの `MotionConfig` (`motion.ts` 参照) により自動で
@@ -155,6 +155,13 @@ export function Tooltip({
   const bubbleRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  // Portal / AnimatePresence を実際に置いているか (#1319)。開いた時点で立て、
+  // 退場アニメーションが終わる (`onExitComplete`) まで残す。閉じたまま一度も
+  // 開かれていないインスタンスは Portal もファイバーも作らない。
+  const [portalMounted, setPortalMounted] = useState(false);
+  if (open && !portalMounted) setPortalMounted(true);
+  const openRef = useRef(open);
+  openRef.current = open;
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearShowTimer = () => {
@@ -270,8 +277,14 @@ export function Tooltip({
   return (
     <>
       {trigger}
-      {createPortal(
-        <AnimatePresence>
+      {portalMounted &&
+        createPortal(
+        <AnimatePresence
+          onExitComplete={() => {
+            // 退場中に再び開かれた場合は残す (open は閉じている間だけ false)。
+            if (!openRef.current) setPortalMounted(false);
+          }}
+        >
           {open && (
             <MotionBox
               ref={bubbleRef}
