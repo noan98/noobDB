@@ -231,6 +231,10 @@ export function TaskManager({
   };
 
   const sorted = useMemo(() => sortTasksForDisplay(tasks), [tasks]);
+  const openCreateForm = () => {
+    setEditing(null);
+    setShowForm(true);
+  };
   const profileName = (id: string) => profiles.find((p) => p.id === id)?.name ?? id;
 
   return (
@@ -266,10 +270,7 @@ export function TaskManager({
                   type="button"
                   variant="primary"
                   disabled={profiles.length === 0}
-                  onClick={() => {
-                    setEditing(null);
-                    setShowForm(true);
-                  }}
+                  onClick={openCreateForm}
                 >
                   <Icon name="plus" size={ICON_SIZES.sm} /> {t("taskCreate")}
                 </Button>
@@ -296,7 +297,13 @@ export function TaskManager({
                   action={{ label: t("taskRetry"), onClick: () => void load() }}
                 />
               ) : sorted.length === 0 && !loading ? (
-                <EmptyState illustration={<NoResultsIllustration />} icon="clock" title={t("taskEmpty")} />
+                <EmptyState
+                  illustration={<NoResultsIllustration />}
+                  icon="clock"
+                  title={t("taskEmpty")}
+                  // プロファイルが無いと作成できない (ヘッダの「新規タスク」も無効) ため CTA は出さない
+                  action={profiles.length > 0 ? { label: t("taskCreate"), onClick: openCreateForm } : undefined}
+                />
               ) : (
                 <chakra.div display="flex" flexDirection="column" gap="2">
                   {sorted.map((task) => (

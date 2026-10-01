@@ -116,3 +116,26 @@ describe("TaskManager 実行履歴の消去 (#910)", () => {
     expect(screen.queryByRole("button", { name: t("taskHistoryClear") })).not.toBeInTheDocument();
   });
 });
+
+describe("TaskManager 空状態の CTA (#1272)", () => {
+  it("タスクが 0 件のとき空状態の「新規タスク」から作成フォームを開ける", async () => {
+    listTasks.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    // ヘッダ + 空状態の 2 つ
+    const buttons = screen.getAllByRole("button", { name: t("taskCreate") });
+    expect(buttons).toHaveLength(2);
+    await user.click(buttons[1]);
+    await waitFor(() => expect(screen.getByText(t("taskFormName"))).toBeInTheDocument());
+  });
+
+  it("プロファイルが無いときは空状態に CTA を出さない", async () => {
+    listTasks.mockResolvedValue([]);
+    renderWithProviders(<TaskManager profiles={[]} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    expect(screen.getAllByRole("button", { name: t("taskCreate") })).toHaveLength(1);
+  });
+});
