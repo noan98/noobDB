@@ -11,6 +11,7 @@ import {
   Column,
   ConnectionProfile,
   DriverKind,
+  SchemaDriftGeneration,
   type LocalTableMeta,
   type ProfileImportStrategy,
   PreviewResult,
@@ -461,30 +462,12 @@ import {
 import {
   EMPTY_PLAN_WATCH,
   isWatched,
-  loadPlanWatch,
-  newGenerationId,
-  recordGeneration,
-  removeWatch,
-  savePlanWatch,
-  toggleWatch,
+  migrateLegacyPlanWatch,
+  planWatchStateFromEntries,
   watchedIds,
   type PlanWatchState,
 } from "./planWatch";
-import {
-  buildDriftDetail,
-  buildSnapshotPayload,
-  canDiff,
-  captureGeneration,
-  diffIndexes,
-  EMPTY_SCHEMA_DRIFT,
-  loadSchemaDrift,
-  recordSnapshotGeneration,
-  saveSchemaDrift,
-  summarizeDrift,
-  toDiffInput,
-  type SchemaDriftState,
-  type SnapshotTable,
-} from "./schemaDrift";
+import { buildDriftDetail, migrateLegacySchemaDrift } from "./schemaDrift";
 import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
 import { Tooltip } from "./components/Tooltip";
@@ -2523,19 +2506,47 @@ export default function App() {
   }, [selectedProfile?.id]);
 
   // 実行計画ウォッチ (#743): アクティブプロファイルのウォッチ状態と比較パネル。
+  // 世代は Rust の SQLite ストア (`plan_watch`, #1260) が持ち、フロントは表示用に
+  // `plan_watch_list` の結果を保持するだけ。
   const [planWatch, setPlanWatch] = useState<PlanWatchState>(EMPTY_PLAN_WATCH);
   const [planWatchOpen, setPlanWatchOpen] = useState(false);
   const [planWatchRefreshing, setPlanWatchRefreshing] = useState(false);
   const activeProfileIdRef = useRef<string | null>(null);
+  /** ストアの現在のウォッチ状態を読む。初回だけ旧 localStorage 世代を取り込む。 */
+  const loadPlanWatchState = useCallback(async (profileId: string): Promise<PlanWatchState> => {
+    await migrateLegacyPlanWatch(profileId, api.planWatchImportLegacy);
+    return planWatchStateFromEntries(await api.planWatchList(profileId));
+  }, []);
   useEffect(() => {
     const id = selectedProfile?.id ?? null;
     activeProfileIdRef.current = id;
-    setPlanWatch(id ? loadPlanWatch(id) : EMPTY_PLAN_WATCH);
+    setPlanWatch(EMPTY_PLAN_WATCH);
     setPlanWatchOpen(false);
-  }, [selectedProfile?.id]);
-  // 接続時の自動チェックが古いスニペット一覧を掴まないよう ref で追従する。
-  const snippetsRef = useRef<Snippet[]>([]);
-  useEffect(() => { snippetsRef.current = snippets; }, [snippets]);
+    if (!id) return;
+    let cancelled = false;
+    loadPlanWatchState(id)
+      .then((state) => {
+        if (!cancelled) setPlanWatch(state);
+      })
+      .catch(() => {
+        // 読み込み失敗は空のまま (ウォッチ操作時に改めてエラーが出る)。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProfile?.id, loadPlanWatchState]);
+  // スニペット削除時 (`handleDeleteSnippet`) に Rust 側が連鎖削除したウォッチを、
+  // アクティブプロファイルの表示へ反映する。
+  const reloadActivePlanWatch = useCallback(async () => {
+    const id = activeProfileIdRef.current;
+    if (!id) return;
+    try {
+      const state = await loadPlanWatchState(id);
+      if (activeProfileIdRef.current === id) setPlanWatch(state);
+    } catch {
+      // 表示の再読み込みに失敗しても致命的ではない。
+    }
+  }, [loadPlanWatchState]);
 
   // プロファイル単位の更新中フラグ (再入抑止) と、並行更新数のカウンタ
   // (`planWatchRefreshing` は複数プロファイルの背景更新が重なっても
@@ -2544,78 +2555,42 @@ export default function App() {
   const planWatchRefreshCountRef = useRef(0);
 
   /**
-   * ウォッチ中スニペットの EXPLAIN を実行して世代を記録し、前世代から構造的な
-   * 変化があればトーストで通知する。`run_query` (非ストリーミング) 経由なので
-   * クエリ履歴を汚さず、EXPLAIN は読み取り専用セッションでも許可される。
-   * `planDiff` は (dagre を含む) `explainPlan` に依存するため、初期バンドルを
-   * 太らせないよう動的 import で遅延ロードする。
-   *
-   * 保存は EXPLAIN 1 件ごとに「最新の状態を読み直し → 記録 → 保存」を await を
-   * 挟まず同期的に行う。ループ全体で 1 つの state を抱えて最後にまとめて保存
-   * すると、await 中に行われたウォッチ解除/登録 (同じく同期の load → save) を
-   * 古い state で上書きして復活・消失させてしまうため。更新中に解除された id は
-   * `recordGeneration` が no-op にし、同一プロファイルの重複更新は in-flight
-   * フラグで抑止する。
+   * ウォッチ中スニペットの EXPLAIN を Rust 側でまとめて実行して世代を記録し、前世代から
+   * 構造的な変化があればトーストで通知する (`plan_watch_refresh`, #1260)。EXPLAIN は
+   * クエリ履歴を汚さず、読み取り専用セッションでも許可される。EXPLAIN の実行・
+   * 正規化・フィンガープリント・前世代との比較はすべて Rust 内で行うため、IPC は
+   * 更新 1 回 + 一覧の読み直し 1 回で済む。同一プロファイルの重複更新は in-flight
+   * フラグで抑止し、更新中に解除されたウォッチには Rust 側のストアが何も記録しない。
    */
   const refreshPlanWatches = useCallback(
     async (sid: string, profile: ConnectionProfile, onlyIds?: string[]) => {
       if (planWatchInFlightRef.current.has(profile.id)) return;
-      const targets = watchedIds(loadPlanWatch(profile.id)).filter(
-        (id) => !onlyIds || onlyIds.includes(id),
-      );
-      if (targets.length === 0) return;
       planWatchInFlightRef.current.add(profile.id);
       planWatchRefreshCountRef.current += 1;
       setPlanWatchRefreshing(true);
       try {
-        const planDiff = await import("./components/planDiff");
-        let changed = 0;
-        for (const id of targets) {
-          const snippet = snippetsRef.current.find((s) => s.id === id);
-          if (!snippet) continue;
-          try {
-            const res = await api.runQuery(
-              sid,
-              `${explainPrefixFor(profile.driver)}${snippet.sql}`,
-            );
-            const snapshot = planDiff.snapshotFromResult(profile.driver, res);
-            if (!snapshot) continue;
-            const ops = planDiff.opsFromSnapshot(snapshot);
-            const rec = recordGeneration(loadPlanWatch(profile.id), id, {
-              id: newGenerationId(),
-              capturedAt: new Date().toISOString(),
-              driver: profile.driver,
-              payloadKind: snapshot.payloadKind,
-              payload: snapshot.payload,
-              fingerprint: planDiff.planFingerprint(ops),
-            });
-            if (rec.added) {
-              savePlanWatch(profile.id, rec.state);
-              if (rec.prev) {
-                const cmp = planDiff.comparePlans(planDiff.opsFromSnapshot(rec.prev), ops);
-                if (cmp.significant) changed += 1;
-              }
-            }
-          } catch (e) {
-            toast.error(
-              translate("planWatchRefreshFailedToast", { name: snippet.name, error: String(e) }),
-            );
-          }
+        // 旧 localStorage のウォッチがあれば、更新対象になるよう先に取り込む。
+        await migrateLegacyPlanWatch(profile.id, api.planWatchImportLegacy);
+        const res = await api.planWatchRefresh(sid, profile.id, onlyIds);
+        for (const err of res.errors) {
+          toast.error(translate("planWatchRefreshFailedToast", { name: err.name, error: err.error }));
         }
         // 更新中に別プロファイルへ切り替わっていたら、他所の状態で上書きしない。
-        if (activeProfileIdRef.current === profile.id) {
-          setPlanWatch(loadPlanWatch(profile.id));
+        if (res.recorded > 0 && activeProfileIdRef.current === profile.id) {
+          setPlanWatch(planWatchStateFromEntries(await api.planWatchList(profile.id)));
         }
-        if (changed > 0) {
+        if (res.changed > 0) {
           // 見た目は info のままだが、アクティビティセンター (#912) には
           // 「警告」として残す — 実行計画の変化は後から拾い直したい種類の
           // イベントで、重大度で絞り込めると見つけやすい。
           toast.notify({
-            message: translate("planWatchChangedToast", { count: changed }),
+            message: translate("planWatchChangedToast", { count: res.changed }),
             tone: "info",
             severity: "warning",
           });
         }
+      } catch (e) {
+        toast.error(translate("planWatchRefreshFailedToast", { name: profile.name, error: String(e) }));
       } finally {
         planWatchInFlightRef.current.delete(profile.id);
         planWatchRefreshCountRef.current -= 1;
@@ -2628,25 +2603,53 @@ export default function App() {
   const handleTogglePlanWatch = useCallback(
     (snippet: Snippet) => {
       if (!selectedProfile) return;
-      const next = toggleWatch(loadPlanWatch(selectedProfile.id), snippet.id);
-      savePlanWatch(selectedProfile.id, next);
-      setPlanWatch(next);
-      // 登録直後に接続中なら、最初の世代をその場で取得する。
-      if (isWatched(next, snippet.id) && sessionId) {
-        void refreshPlanWatches(sessionId, selectedProfile, [snippet.id]);
-      }
+      const profileId = selectedProfile.id;
+      const watched = !isWatched(planWatch, snippet.id);
+      void (async () => {
+        try {
+          await api.planWatchSet(profileId, snippet.id, watched);
+        } catch (e) {
+          toast.error(String(e));
+          return;
+        }
+        if (activeProfileIdRef.current === profileId) {
+          setPlanWatch((prev) => {
+            const watches = { ...prev.watches };
+            if (watched) watches[snippet.id] = watches[snippet.id] ?? [];
+            else delete watches[snippet.id];
+            return { watches };
+          });
+        }
+        // 登録直後に接続中なら、最初の世代をその場で取得する。
+        if (watched && sessionId) {
+          void refreshPlanWatches(sessionId, selectedProfile, [snippet.id]);
+        }
+      })();
     },
-    [selectedProfile, sessionId, refreshPlanWatches],
+    [selectedProfile, sessionId, planWatch, refreshPlanWatches, toast],
   );
 
   const handleUnwatchPlan = useCallback(
     (snippetId: string) => {
       if (!selectedProfile) return;
-      const next = removeWatch(loadPlanWatch(selectedProfile.id), snippetId);
-      savePlanWatch(selectedProfile.id, next);
-      setPlanWatch(next);
+      const profileId = selectedProfile.id;
+      void (async () => {
+        try {
+          await api.planWatchSet(profileId, snippetId, false);
+        } catch (e) {
+          toast.error(String(e));
+          return;
+        }
+        if (activeProfileIdRef.current === profileId) {
+          setPlanWatch((prev) => {
+            const watches = { ...prev.watches };
+            delete watches[snippetId];
+            return { watches };
+          });
+        }
+      })();
     },
-    [selectedProfile],
+    [selectedProfile, toast],
   );
 
   const watchedPlanIdList = useMemo(() => watchedIds(planWatch), [planWatch]);
@@ -2655,24 +2658,37 @@ export default function App() {
     if (sessionId && selectedProfile) void refreshPlanWatches(sessionId, selectedProfile);
   }, [sessionId, selectedProfile, refreshPlanWatches]);
 
-  // スキーマドリフト・タイムライン (#736): アクティブプロファイルのスナップ
-  // ショット状態と閲覧パネル。
-  const [schemaDrift, setSchemaDrift] = useState<SchemaDriftState>(EMPTY_SCHEMA_DRIFT);
+  // スキーマドリフト・タイムライン (#736): アクティブプロファイルの世代一覧と閲覧パネル。
+  // 世代は Rust の SQLite ストア (`schema_drift`, #1260) が持ち、フロントは一覧メタだけを
+  // 保持する (スナップショット本体は Rust 内で完結し、IPC を渡らない)。
+  const [schemaDrift, setSchemaDrift] = useState<SchemaDriftGeneration[]>([]);
   const [schemaDriftOpen, setSchemaDriftOpen] = useState(false);
   const [schemaDriftCapturing, setSchemaDriftCapturing] = useState(false);
   useEffect(() => {
     const id = selectedProfile?.id ?? null;
-    setSchemaDrift(id ? loadSchemaDrift(id) : EMPTY_SCHEMA_DRIFT);
+    setSchemaDrift([]);
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      await migrateLegacySchemaDrift(id, api.schemaDriftImportLegacy);
+      const list = await api.schemaDriftList(id);
+      if (!cancelled) setSchemaDrift(list);
+    })().catch(() => {
+      // 読み込み失敗は空のまま (取得操作時に改めてエラーが出る)。
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProfile?.id]);
   const schemaDriftInFlightRef = useRef<Set<string>>(new Set());
 
   /**
-   * プロファイルの既定データベースのスキーマ (テーブル・列・インデックス) を
-   * 取得して世代として記録する。前世代とフィンガープリントが異なるときだけ
-   * `diffSchemaSnapshots` (セッション不要、`compute_schema_diff` を流用) で
-   * 差分を計算し、控えめなトーストで要約を知らせる。読み取り操作のみで
-   * クエリ履歴は汚さない。デフォルトデータベースが無いプロファイル (SQLite の
-   * 空パス等) では静かに何もしない。
+   * プロファイルの既定データベースのスキーマ (テーブル・列・インデックス) を Rust 側で
+   * 一括取得して世代として記録し、前世代からの変化サマリを受け取る
+   * (`schema_drift_capture`, #1260: 列・インデックスはそれぞれ DB 全体を 1 クエリで取る)。
+   * 変化があれば控えめなトーストで要約を知らせる。読み取り操作のみでクエリ履歴は
+   * 汚さない。デフォルトデータベースが無いプロファイル (SQLite の空パス等) では静かに
+   * 何もしない。
    */
   const captureSchemaSnapshot = useCallback(
     async (sid: string, profile: ConnectionProfile) => {
@@ -2682,41 +2698,15 @@ export default function App() {
       schemaDriftInFlightRef.current.add(profile.id);
       setSchemaDriftCapturing(true);
       try {
-        const tableNames = await api.listTables(sid, database);
-        const tables: SnapshotTable[] = [];
-        for (const name of tableNames) {
-          try {
-            const [columns, indexes] = await Promise.all([
-              api.describeTable(sid, database, name),
-              api.listIndexes(sid, database, name),
-            ]);
-            tables.push({ name, columns, indexes });
-          } catch {
-            // 個々のテーブルの取得失敗はベストエフォートでスキップする
-            // (一部テーブルの権限不足などで全体を止めない)。
-          }
-        }
-        const payload = buildSnapshotPayload(profile.driver as DriverKind, database, tables);
-        const gen = captureGeneration(payload);
-        const rec = recordSnapshotGeneration(loadSchemaDrift(profile.id), gen);
-        if (!rec.added) return;
-        saveSchemaDrift(profile.id, rec.state);
-        if (activeProfileIdRef.current === profile.id) setSchemaDrift(rec.state);
-        if (!rec.prev || !canDiff(rec.prev) || !canDiff(gen)) return;
-        const source = toDiffInput(rec.prev);
-        const target = toDiffInput(gen);
-        if (!source || !target) return;
-        const diff = await api.diffSchemaSnapshots({
-          sourceDriver: rec.prev.driver,
-          targetDriver: gen.driver,
-          source,
-          target,
-        });
-        const summary = summarizeDrift(diff, diffIndexes(rec.prev, gen));
-        if (summary.tables.length > 0) {
+        // 旧 localStorage 世代があれば、前世代として比較に使えるよう先に取り込む。
+        await migrateLegacySchemaDrift(profile.id, api.schemaDriftImportLegacy);
+        const res = await api.schemaDriftCapture(sid, profile.id, database);
+        if (!res.added) return;
+        if (activeProfileIdRef.current === profile.id) setSchemaDrift(res.generations);
+        if (res.summary && res.summary.tables.length > 0) {
           // 実行計画ウォッチと同じく、見た目は info・記録は警告 (#912)。
           toast.notify({
-            message: translate("schemaDriftChangedToast", { detail: buildDriftDetail(summary) }),
+            message: translate("schemaDriftChangedToast", { detail: buildDriftDetail(res.summary) }),
             tone: "info",
             severity: "warning",
           });
@@ -5144,16 +5134,10 @@ export default function App() {
     const ok = await runWithErrorStatus(async () => {
       await api.deleteSnippet(id);
       await refreshSnippets();
-      // 実行計画ウォッチ (#743): 削除したスニペットのウォッチと世代データを
-      // 全プロファイルのストアから取り除く (孤立データを localStorage に
-      // 残さない。手動のウォッチ解除と同じ削除方針)。
-      for (const p of profiles) {
-        const cur = loadPlanWatch(p.id);
-        if (isWatched(cur, id)) savePlanWatch(p.id, removeWatch(cur, id));
-      }
-      if (activeProfileIdRef.current) {
-        setPlanWatch(loadPlanWatch(activeProfileIdRef.current));
-      }
+      // 実行計画ウォッチ (#743): 削除したスニペットのウォッチと世代データは Rust 側
+      // (`delete_snippet`) が全プロファイルのストアから連鎖削除する (#1260)。表示だけ
+      // アクティブプロファイルの最新状態へ読み直す。
+      await reloadActivePlanWatch();
       // クイックアクセス (#877): 削除したスニペットをお気に入り/最近実行から
       // 取り除く (実行計画ウォッチと同じく、Undo で元に戻ってもここは復元しない)。
       setSnippetQuickAccess((prev) => {
@@ -5185,7 +5169,7 @@ export default function App() {
         },
       },
     });
-  }, [runWithErrorStatus, refreshSnippets, profiles, toast]);
+  }, [runWithErrorStatus, refreshSnippets, reloadActivePlanWatch, toast]);
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
@@ -9775,7 +9759,7 @@ export default function App() {
         {schemaDriftOpen && selectedProfile && (
           <SchemaDriftPanel
             profile={selectedProfile}
-            state={schemaDrift}
+            generations={schemaDrift}
             canCapture={sessionId !== null}
             capturing={schemaDriftCapturing}
             onCapture={handleCaptureSchemaDrift}

@@ -1,32 +1,22 @@
-// 実行計画ウォッチ (#743) の世代ストア。
+// 実行計画ウォッチ (#743) のフロント側ロジック。
 //
-// `tableQuickAccess.ts` と同じく、プロファイルごとに localStorage へ永続化する。
-// スニペット (保存クエリ) 単位で EXPLAIN 計画のスナップショットを世代管理し、
-// 「内容が同一なら世代を増やさない」「上限でローテーション」を純関数で提供する
-// (Vitest でユニットテスト)。EXPLAIN の実行・変化通知・比較 UI は App.tsx /
-// PlanWatchPanel.tsx が担当し、計画の正規化・比較は `components/planDiff.ts` に任せる。
+// 世代の保存・dedupe・ローテーション・EXPLAIN の実行と前世代との比較は Rust の
+// `plan_watch` モジュールに移した (#1260: 旧実装は EXPLAIN を 1 件ずつ直列に
+// `runQuery` し、毎回 localStorage 全体を JSON で読み書きしていた)。ここに残るのは、
+// (1) ウォッチ状態 (スニペット ID → 世代列) の表現と読み取り専用ヘルパ、
+// (2) パネルの値変化フラッシュ判定、(3) 旧 localStorage ウォッチを Rust ストアへ
+// 一度だけ移す移行コードのみ。計画の比較・描画は `components/planDiff.ts` が
+// 保存済みペイロードから行う (表示専用)。
 
+import type { PlanWatchEntry, PlanWatchGeneration } from "./api/tauri";
 import type { LiveField } from "./components/liveDiff";
-import type { PlanPayloadKind } from "./components/planDiff";
 
 const STORAGE_PREFIX = "noobdb.planwatch.";
 
-/** 1 ウォッチあたり保持する世代の上限 (超過した古い世代は切り捨て)。 */
-export const MAX_GENERATIONS = 20;
+/** 旧ストアが 1 ウォッチあたり保持していた世代の上限 (移行時のクランプ用)。 */
+export const MAX_LEGACY_GENERATIONS = 20;
 
-/** 保存済みの計画 1 世代。新しい世代が先頭に並ぶ。 */
-export interface PlanGeneration {
-  id: string;
-  /** 取得時刻 (ISO 8601)。 */
-  capturedAt: string;
-  driver: string;
-  /** `planDiff.snapshotFromResult` が生成したペイロード種別。 */
-  payloadKind: PlanPayloadKind;
-  /** MySQL/PG: 生 JSON 文字列。SQLite: [id, parent, detail] 行の JSON。 */
-  payload: string;
-  /** `planDiff.planFingerprint` による構造フィンガープリント (dedupe 用)。 */
-  fingerprint: string;
-}
+export type PlanGeneration = PlanWatchGeneration;
 
 /** スニペット ID → 世代列 (新しい順)。エントリの存在 = ウォッチ登録済み。 */
 export interface PlanWatchState {
@@ -34,6 +24,13 @@ export interface PlanWatchState {
 }
 
 export const EMPTY_PLAN_WATCH: PlanWatchState = { watches: {} };
+
+/** `plan_watch_list` の結果をパネル / App が使う状態へ変換する (登録順を保つ)。 */
+export function planWatchStateFromEntries(entries: PlanWatchEntry[]): PlanWatchState {
+  const watches: Record<string, PlanGeneration[]> = {};
+  for (const e of entries) watches[e.snippetId] = e.generations;
+  return { watches };
+}
 
 /** 計画ウォッチパネルの 1 行 (ウォッチ中のスニペット)。 */
 export interface WatchedRowSnapshot {
@@ -44,7 +41,7 @@ export interface WatchedRowSnapshot {
 /**
  * 計画ウォッチパネルの値変化フラッシュ (#1022) の判定。最新世代が入れ替わった
  * (= 更新で新しい計画が記録された) ときだけ世代数の表示を光らせる。世代数は
- * 上限 (`MAX_GENERATIONS`) で頭打ちになるため、件数ではなく先頭世代の ID で見る。
+ * 上限で頭打ちになるため、件数ではなく先頭世代の ID で見る。
  * 件数の増減 (古い世代の刈り込みなど) も併せて変化とみなす。
  */
 export const PLAN_WATCH_LIVE_FIELDS: readonly LiveField<WatchedRowSnapshot, "generations">[] = [
@@ -61,35 +58,6 @@ export function watchedRowKey(row: WatchedRowSnapshot): string {
   return row.id;
 }
 
-function isValidGeneration(v: unknown): v is PlanGeneration {
-  if (!v || typeof v !== "object") return false;
-  const o = v as Record<string, unknown>;
-  return (
-    typeof o.id === "string" &&
-    typeof o.capturedAt === "string" &&
-    typeof o.driver === "string" &&
-    (o.payloadKind === "json" || o.payloadKind === "sqliteRows") &&
-    typeof o.payload === "string" &&
-    typeof o.fingerprint === "string"
-  );
-}
-
-/**
- * パース済み JSON を妥当な状態に整える。純粋 (ストレージ非依存) なのでユニット
- * テストできる。未知の形・不正な世代は捨て、世代数は上限でクランプする。
- */
-export function normalizePlanWatch(parsed: unknown): PlanWatchState {
-  if (!parsed || typeof parsed !== "object") return EMPTY_PLAN_WATCH;
-  const watchesRaw = (parsed as Record<string, unknown>).watches;
-  if (!watchesRaw || typeof watchesRaw !== "object") return EMPTY_PLAN_WATCH;
-  const watches: Record<string, PlanGeneration[]> = {};
-  for (const [snippetId, gens] of Object.entries(watchesRaw as Record<string, unknown>)) {
-    if (!Array.isArray(gens)) continue;
-    watches[snippetId] = gens.filter(isValidGeneration).slice(0, MAX_GENERATIONS);
-  }
-  return { watches };
-}
-
 export function isWatched(state: PlanWatchState, snippetId: string): boolean {
   return Object.prototype.hasOwnProperty.call(state.watches, snippetId);
 }
@@ -99,92 +67,72 @@ export function watchedIds(state: PlanWatchState): string[] {
   return Object.keys(state.watches);
 }
 
+// --- 旧 localStorage ウォッチの移行 (#1260) ---
+
+function isValidLegacyGeneration(v: unknown): v is PlanGeneration {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.capturedAt === "string" &&
+    typeof o.driver === "string" &&
+    (o.payloadKind === "json" || o.payloadKind === "sqliteRows") &&
+    typeof o.payload === "string"
+  );
+}
+
 /**
- * ウォッチを切り替える (純粋: 新しい状態を返す)。解除時は蓄積した世代ごと削除
- * する (実データ由来の計画 JSON をローカルに残さない)。
+ * 旧 localStorage のパース済み JSON から、Rust ストアへ渡せるウォッチ (登録順) を
+ * 取り出す (純粋)。未知の形・不正な世代は捨て、世代数は旧上限でクランプする。
+ * 世代を持たないウォッチ (登録だけ) も残す。
  */
-export function toggleWatch(state: PlanWatchState, snippetId: string): PlanWatchState {
-  if (isWatched(state, snippetId)) {
-    const watches = { ...state.watches };
-    delete watches[snippetId];
-    return { watches };
+export function normalizeLegacyPlanWatch(parsed: unknown): PlanWatchEntry[] {
+  if (!parsed || typeof parsed !== "object") return [];
+  const watchesRaw = (parsed as Record<string, unknown>).watches;
+  if (!watchesRaw || typeof watchesRaw !== "object") return [];
+  const out: PlanWatchEntry[] = [];
+  for (const [snippetId, gens] of Object.entries(watchesRaw as Record<string, unknown>)) {
+    if (!Array.isArray(gens)) continue;
+    out.push({
+      snippetId,
+      generations: gens.filter(isValidLegacyGeneration).slice(0, MAX_LEGACY_GENERATIONS),
+    });
   }
-  return { watches: { ...state.watches, [snippetId]: [] } };
+  return out;
 }
 
-/** ウォッチから 1 件除去する (純粋)。`toggleWatch` の解除側と同じ。 */
-export function removeWatch(state: PlanWatchState, snippetId: string): PlanWatchState {
-  if (!isWatched(state, snippetId)) return state;
-  return toggleWatch(state, snippetId);
-}
-
-/**
- * もう存在しないスニペット (削除済み) のウォッチを取り除く。`available` は
- * 現在実在するスニペット ID の集合。純粋。
- */
-export function pruneMissingWatches(state: PlanWatchState, available: string[]): PlanWatchState {
-  const ids = watchedIds(state).filter((id) => available.includes(id));
-  if (ids.length === watchedIds(state).length) return state;
-  const watches: Record<string, PlanGeneration[]> = {};
-  for (const id of ids) watches[id] = state.watches[id];
-  return { watches };
-}
-
-export interface RecordResult {
-  state: PlanWatchState;
-  /** 新しい世代として追加されたか (同一計画なら false のまま世代は増えない)。 */
-  added: boolean;
-  /** 追加時の直前世代 (初回取得なら null)。変化検知の比較相手。 */
-  prev: PlanGeneration | null;
+/** 移行元の localStorage キー。 */
+export function legacyPlanWatchKey(profileId: string): string {
+  return STORAGE_PREFIX + profileId;
 }
 
 /**
- * 取得した計画を世代として記録する (純粋)。未ウォッチのスニペットには何も
- * しない。最新世代とフィンガープリントが同一なら世代を増やさず、異なるときだけ
- * 先頭へ追加して `MAX_GENERATIONS` でローテーションする。
+ * このプロファイルの旧 localStorage ウォッチを Rust ストアへ一度だけ取り込み、成功したら
+ * キーを削除する。キーが無ければ何もしない。取り込みに失敗したとき (IPC エラー) は
+ * キーを残し、次回の起動で再試行する。破損した JSON はキーごと破棄する。
  */
-export function recordGeneration(
-  state: PlanWatchState,
-  snippetId: string,
-  gen: PlanGeneration,
-): RecordResult {
-  if (!isWatched(state, snippetId)) return { state, added: false, prev: null };
-  const gens = state.watches[snippetId];
-  const latest = gens.length > 0 ? gens[0] : null;
-  if (latest && latest.fingerprint === gen.fingerprint) {
-    return { state, added: false, prev: null };
-  }
-  const next = [gen, ...gens].slice(0, MAX_GENERATIONS);
-  return {
-    state: { watches: { ...state.watches, [snippetId]: next } },
-    added: true,
-    prev: latest,
-  };
-}
-
-/** 世代 ID を生成する (既存のタブ ID 生成と同じ形式)。 */
-export function newGenerationId(): string {
-  return `plan_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function loadPlanWatch(profileId: string): PlanWatchState {
+export async function migrateLegacyPlanWatch(
+  profileId: string,
+  importLegacy: (profileId: string, watches: PlanWatchEntry[]) => Promise<number>,
+  storage: Pick<Storage, "getItem" | "removeItem"> = localStorage,
+): Promise<void> {
+  const key = legacyPlanWatchKey(profileId);
+  let raw: string | null;
   try {
-    const raw = localStorage.getItem(STORAGE_PREFIX + profileId);
-    if (!raw) return EMPTY_PLAN_WATCH;
-    return normalizePlanWatch(JSON.parse(raw));
+    raw = storage.getItem(key);
   } catch {
-    return EMPTY_PLAN_WATCH;
+    return;
   }
-}
-
-export function savePlanWatch(profileId: string, state: PlanWatchState): void {
+  if (raw === null) return;
+  let watches: PlanWatchEntry[] = [];
   try {
-    if (watchedIds(state).length === 0) {
-      localStorage.removeItem(STORAGE_PREFIX + profileId);
-    } else {
-      localStorage.setItem(STORAGE_PREFIX + profileId, JSON.stringify(state));
-    }
+    watches = normalizeLegacyPlanWatch(JSON.parse(raw));
   } catch {
-    // ignore (quota / disabled storage)
+    watches = [];
+  }
+  try {
+    if (watches.length > 0) await importLegacy(profileId, watches);
+    storage.removeItem(key);
+  } catch {
+    // 取り込み失敗 (IPC エラー) / ストレージ不可: キーを残して次回再試行する。
   }
 }

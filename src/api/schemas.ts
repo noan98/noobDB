@@ -1562,3 +1562,72 @@ export function parseResponse<T>(
     `IPC レスポンス "${command}" が期待した形式と一致しません: ${summary}`,
   );
 }
+
+// --- スキーマドリフト (#736 / #1260) --------------------------------------
+//
+// Rust の `schema_drift` / `plan_watch` は localStorage 時代のフロント型に合わせて
+// camelCase で返す (`serde(rename_all = "camelCase")`)。
+
+/** 保存済みスキーマ世代のメタデータ (`schema_drift_list` / `schema_drift_capture`)。 */
+export const schemaDriftGeneration = z.object({
+  id: z.string(),
+  capturedAt: z.string(),
+  driver: driverKind,
+  database: z.string(),
+  fingerprint: z.string(),
+  tableCount: z.number(),
+  omitted: z.boolean(),
+});
+export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
+
+export const schemaDriftTableChange = z.object({
+  table: z.string(),
+  tableStatus: z.enum(["added", "removed", "changed"]),
+  columnsAdded: z.number(),
+  columnsRemoved: z.number(),
+  columnsChanged: z.number(),
+  indexesAdded: z.number(),
+  indexesRemoved: z.number(),
+  indexesChanged: z.number(),
+});
+
+/** 2 世代間の変化サマリ (変化のあったテーブルのみ)。 */
+export const schemaDriftSummary = z.object({
+  tables: z.array(schemaDriftTableChange),
+});
+export const schemaDriftSummaryOrNull = schemaDriftSummary.nullable();
+
+export const schemaDriftCapture = z.object({
+  added: z.boolean(),
+  generations: z.array(schemaDriftGeneration),
+  summary: schemaDriftSummary.nullable(),
+});
+
+// --- 実行計画ウォッチ (#743 / #1260) --------------------------------------
+
+export const planWatchGeneration = z.object({
+  id: z.string(),
+  capturedAt: z.string(),
+  driver: z.string(),
+  payloadKind: z.enum(["json", "sqliteRows"]),
+  payload: z.string(),
+  fingerprint: z.string(),
+});
+
+export const planWatchEntry = z.object({
+  snippetId: z.string(),
+  generations: z.array(planWatchGeneration),
+});
+export const planWatchEntryArray = z.array(planWatchEntry);
+
+export const planWatchRefreshResult = z.object({
+  recorded: z.number(),
+  changed: z.number(),
+  errors: z.array(
+    z.object({
+      snippetId: z.string(),
+      name: z.string(),
+      error: z.string(),
+    }),
+  ),
+});

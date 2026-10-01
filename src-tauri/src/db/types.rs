@@ -128,7 +128,7 @@ pub struct ServerMessage {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableColumnInfo {
     pub name: String,
     pub data_type: String,
@@ -190,7 +190,7 @@ pub struct ForeignKey {
 /// in order, and whether it is UNIQUE / the PRIMARY KEY. `method` is the access
 /// method when the engine exposes one (e.g. PostgreSQL `btree`/`gin`, MySQL
 /// `BTREE`/`HASH`); `None` for SQLite, which has no such concept.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexInfo {
     pub name: String,
     pub columns: Vec<String>,

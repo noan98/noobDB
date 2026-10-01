@@ -1791,6 +1791,184 @@ async fn postgres_cell_blob_probe_and_fetch() {
         .expect("cleanup");
 }
 
+// ── スキーマドリフト / 実行計画ウォッチ (#1260) ──
+
+/// #1260: スキーマドリフトのキャプチャ (`capture_payload`) は、テーブルごとの
+/// `columns` / `list_indexes` を並べたものと同じ内容でなければならない。
+async fn assert_drift_capture_matches_per_table(
+    conn: &t::Connection,
+    db: &str,
+) -> t::DriftSnapshotPayload {
+    let payload = t::capture_drift_payload(conn, db).await.expect("capture");
+    let tables = conn.tables(db).await.expect("tables");
+    assert!(!payload.tables.is_empty());
+    for table in &payload.tables {
+        assert!(
+            tables.contains(&table.name),
+            "unexpected table {}",
+            table.name
+        );
+        let cols = conn.columns(db, &table.name).await.expect("columns");
+        assert_eq!(
+            format!("{:?}", table.columns),
+            format!("{cols:?}"),
+            "columns of {} must match the per-table query",
+            table.name
+        );
+        let idx = conn.list_indexes(db, &table.name).await.expect("indexes");
+        assert_eq!(
+            format!("{:?}", table.indexes),
+            format!("{idx:?}"),
+            "indexes of {} must match the per-table query",
+            table.name
+        );
+    }
+    let names: Vec<&str> = payload.tables.iter().map(|x| x.name.as_str()).collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted, "tables are normalized to name order");
+    payload
+}
+
+/// #1260: 列とインデックスの追加がフィンガープリントとサマリに現れ、何も変えなければ
+/// フィンガープリントが安定する。
+fn assert_drift_summary_after_alter(
+    before: &t::DriftSnapshotPayload,
+    after: &t::DriftSnapshotPayload,
+    table: &str,
+) {
+    assert_ne!(
+        t::fingerprint_drift_payload(before).expect("fp"),
+        t::fingerprint_drift_payload(after).expect("fp"),
+        "an ALTER must change the fingerprint"
+    );
+    let summary = t::summarize_drift(before, after);
+    let changed = summary
+        .tables
+        .iter()
+        .find(|c| c.table == table)
+        .expect("altered table is reported");
+    assert_eq!(changed.columns_added, 1);
+    assert_eq!(changed.indexes_added, 1);
+    assert_eq!(
+        summary.tables.len(),
+        1,
+        "only the altered table is reported"
+    );
+}
+
+/// #1260: 実 DB の EXPLAIN がウォッチ用のペイロードに変換でき、フィンガープリントが
+/// 安定し、インデックス追加による計画の変化が比較で検出される。
+async fn plan_ops(conn: &t::Connection, driver: &str, sql: &str) -> Vec<t::PlanOp> {
+    let snap = t::explain_snapshot(conn, sql)
+        .await
+        .expect("explain")
+        .expect("plan rows");
+    t::ops_from_payload(driver, snap.payload_kind, &snap.payload)
+}
+
+async fn assert_plan_watch_detects_index(
+    conn: &t::Connection,
+    driver: &str,
+    sql: &str,
+    create_index: &str,
+    index_db: Option<&str>,
+) {
+    let before = plan_ops(conn, driver, sql).await;
+    assert!(
+        !before.is_empty(),
+        "EXPLAIN must normalize to at least one op"
+    );
+    assert_eq!(
+        t::plan_fingerprint(&before),
+        t::plan_fingerprint(&plan_ops(conn, driver, sql).await),
+        "the same plan must have a stable fingerprint"
+    );
+    conn.execute(create_index, index_db)
+        .await
+        .expect(create_index);
+    let after = plan_ops(conn, driver, sql).await;
+    let changes = t::compare_plans(&before, &after, t::DEFAULT_ROW_FACTOR);
+    assert!(
+        !changes.is_empty(),
+        "adding an index must change the plan: {before:?} -> {after:?}"
+    );
+    assert_ne!(t::plan_fingerprint(&before), t::plan_fingerprint(&after));
+}
+
+#[tokio::test]
+async fn postgres_schema_drift_capture_and_plan_watch() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // 同じ DB を他のテストが並列に DROP / CREATE するため、専用スキーマに閉じる。
+    let schema = format!("noobdb_drift1260_{}", std::process::id());
+    conn.execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"), None)
+        .await
+        .expect("drop schema");
+    for ddl in [
+        format!("CREATE SCHEMA {schema}"),
+        format!("CREATE TABLE {schema}.drift_parent (id integer PRIMARY KEY, name varchar(40))"),
+        format!(
+            "CREATE TABLE {schema}.drift_child (
+                id integer PRIMARY KEY,
+                pid integer NOT NULL REFERENCES {schema}.drift_parent (id),
+                k integer NOT NULL
+            )"
+        ),
+        format!("CREATE INDEX drift_child_pid ON {schema}.drift_child (pid)"),
+        format!("CREATE TABLE {schema}.drift_lonely (v text)"),
+    ] {
+        conn.execute(&ddl, None).await.expect(&ddl);
+    }
+
+    let before = assert_drift_capture_matches_per_table(&conn, &schema).await;
+    let again = t::capture_drift_payload(&conn, &schema)
+        .await
+        .expect("capture");
+    assert_eq!(
+        t::fingerprint_drift_payload(&before).expect("fp"),
+        t::fingerprint_drift_payload(&again).expect("fp"),
+        "an unchanged schema must have a stable fingerprint"
+    );
+    for ddl in [
+        format!("ALTER TABLE {schema}.drift_child ADD COLUMN extra varchar(20)"),
+        format!("CREATE INDEX drift_child_extra ON {schema}.drift_child (extra)"),
+    ] {
+        conn.execute(&ddl, None).await.expect(&ddl);
+    }
+    let after = assert_drift_capture_matches_per_table(&conn, &schema).await;
+    assert_drift_summary_after_alter(&before, &after, "drift_child");
+
+    // 実行計画ウォッチ: 十分な行数を入れて ANALYZE してからインデックスを足す。
+    for ddl in [
+        format!("INSERT INTO {schema}.drift_parent VALUES (1, 'p')"),
+        format!(
+            "INSERT INTO {schema}.drift_child (id, pid, k) SELECT g, 1, g FROM generate_series(1, 20000) g"
+        ),
+        format!("ANALYZE {schema}.drift_child"),
+    ] {
+        conn.execute(&ddl, None).await.expect(&ddl);
+    }
+    assert_plan_watch_detects_index(
+        &conn,
+        "postgres",
+        &format!("SELECT * FROM {schema}.drift_child WHERE k = 5"),
+        &format!("CREATE INDEX drift_child_k ON {schema}.drift_child (k)"),
+        None,
+    )
+    .await;
+
+    conn.execute(&format!("DROP SCHEMA {schema} CASCADE"), None)
+        .await
+        .expect("cleanup schema");
+    conn.close().await;
+}
+
 /// `load_schema_tree` / `open_table(s)` / `list_tables_all` / `table_row_estimate`
 /// (#1263) が、個別 IPC の結果と一致する。他のテストと干渉しないよう専用の
 /// スキーマ `noobdb_t1263` に閉じる。

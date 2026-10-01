@@ -114,6 +114,12 @@ function registerBaseHandlers() {
     { name: (args.database as string) === "betadb" ? "gadgets" : "fruits", estimate: null },
   ]);
   onCommand("list_schema_objects", () => []);
+  // 接続時の背景チェック (スキーマドリフト #736 / 実行計画ウォッチ #743)。どちらも
+  // Rust 内で完結する IPC (#1260) なので、ウォッチも世代も無い空の応答を固定で返す。
+  onCommand("plan_watch_list", () => []);
+  onCommand("plan_watch_refresh", () => ({ recorded: 0, changed: 0, errors: [] }));
+  onCommand("schema_drift_list", () => []);
+  onCommand("schema_drift_capture", () => ({ added: false, generations: [], summary: null }));
   onCommand("list_table_comments", () => []);
   // 集約 IPC (#1263): テーブルを開く処理とスキーマツリーの復元 / 検索は、
   // 個別コマンドの代わりにこれらを呼ぶ。内容は上の個別ハンドラと同じ。

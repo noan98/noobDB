@@ -116,9 +116,11 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   ウィンドウクローム。色決定は `titleBarContext.ts`)、`PlanWatchPanel` (実行計画
   ウォッチ #743。スニペット単位で EXPLAIN 計画をローカルに世代管理し、任意の 2 世代を
   `ExplainViewer` の並置 + 変化点リストで比較する。計画の正規化・フィンガープリント・
-  構造比較の純ロジックは `components/planDiff.ts`、世代ストア (localStorage・同一
-  フィンガープリントは世代を増やさない・`MAX_GENERATIONS` ローテーション・
-  プロファイル単位) は `planWatch.ts`。取得は `run_query` (非ストリーミング) 経由なので
-  クエリ履歴を汚さず、EXPLAIN は読み取り専用セッションでも動作する。接続時の自動
+  構造比較の純ロジックは `components/planDiff.ts` (表示用)。世代の保存・EXPLAIN の実行・
+  正規化・フィンガープリント・前世代との比較は Rust の `plan_watch` モジュール
+  (`<data_dir>/plan_watch.sqlite`、#1260) が担い、`plan_watch_refresh` 1 回で完結する
+  (Rust と `planDiff.ts` の二重実装は `fixtures/planWatchVectors.json` で固定)。
+  `planWatch.ts` は状態ヘルパと旧 localStorage ウォッチの一度きりの移行。EXPLAIN は
+  クエリ履歴を汚さず、読み取り専用セッションでも動作する。接続時の自動
   チェックは設定 `planWatchOnConnect` (既定オン) で切替でき、アクセス方式・使用
   インデックス・結合方式・推定行数の桁違いの変化をトーストで通知する)。

@@ -1,19 +1,22 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   EMPTY_PLAN_WATCH,
-  MAX_GENERATIONS,
   isWatched,
-  loadPlanWatch,
-  normalizePlanWatch,
-  pruneMissingWatches,
-  recordGeneration,
-  removeWatch,
-  savePlanWatch,
-  toggleWatch,
+  legacyPlanWatchKey,
+  MAX_LEGACY_GENERATIONS,
+  migrateLegacyPlanWatch,
+  normalizeLegacyPlanWatch,
+  planWatchStateFromEntries,
+  PLAN_WATCH_LIVE_FIELDS,
   watchedIds,
   type PlanGeneration,
-  type PlanWatchState,
 } from "../planWatch";
+
+// 世代の記録 (dedupe / ローテーション) とウォッチの登録・解除の元ロジック
+// (recordGeneration / toggleWatch / removeWatch / pruneMissingWatches) は Rust の
+// `plan_watch::store` へ移した (#1260)。同等の検証は `src-tauri/src/plan_watch/store.rs`
+// のユニットテストが持つ。ここにはフロントに残った状態ヘルパと旧 localStorage ウォッチの
+// 移行だけを置く。
 
 function gen(fingerprint: string, id = `g-${fingerprint}`): PlanGeneration {
   return {
@@ -26,133 +29,111 @@ function gen(fingerprint: string, id = `g-${fingerprint}`): PlanGeneration {
   };
 }
 
-describe("toggleWatch / isWatched / removeWatch", () => {
-  it("registers and unregisters a snippet", () => {
-    let state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    expect(isWatched(state, "s1")).toBe(true);
-    expect(watchedIds(state)).toEqual(["s1"]);
-    state = toggleWatch(state, "s1");
-    expect(isWatched(state, "s1")).toBe(false);
-    expect(watchedIds(state)).toEqual([]);
+class MemoryStorage {
+  private map = new Map<string, string>();
+  constructor(initial: Record<string, string> = {}) {
+    for (const [k, v] of Object.entries(initial)) this.map.set(k, v);
+  }
+  getItem(k: string): string | null {
+    return this.map.get(k) ?? null;
+  }
+  removeItem(k: string): void {
+    this.map.delete(k);
+  }
+  has(k: string): boolean {
+    return this.map.has(k);
+  }
+}
+
+describe("planWatchStateFromEntries / isWatched / watchedIds", () => {
+  it("keeps registration order and treats an entry without generations as watched", () => {
+    const state = planWatchStateFromEntries([
+      { snippetId: "b", generations: [] },
+      { snippetId: "a", generations: [gen("x")] },
+    ]);
+    expect(watchedIds(state)).toEqual(["b", "a"]);
+    expect(isWatched(state, "b")).toBe(true);
+    expect(isWatched(state, "c")).toBe(false);
+    expect(state.watches.a).toHaveLength(1);
   });
 
-  it("unwatching drops the stored generations", () => {
-    let state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    state = recordGeneration(state, "s1", gen("fp1")).state;
-    state = removeWatch(state, "s1");
-    state = toggleWatch(state, "s1");
-    expect(state.watches["s1"]).toEqual([]);
-  });
-
-  it("removeWatch is a no-op for unwatched ids", () => {
-    expect(removeWatch(EMPTY_PLAN_WATCH, "nope")).toBe(EMPTY_PLAN_WATCH);
-  });
-});
-
-describe("recordGeneration", () => {
-  it("does nothing for an unwatched snippet", () => {
-    const res = recordGeneration(EMPTY_PLAN_WATCH, "s1", gen("fp1"));
-    expect(res.added).toBe(false);
-    expect(res.state).toBe(EMPTY_PLAN_WATCH);
-  });
-
-  it("adds the first generation with a null prev", () => {
-    const state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    const res = recordGeneration(state, "s1", gen("fp1"));
-    expect(res.added).toBe(true);
-    expect(res.prev).toBeNull();
-    expect(res.state.watches["s1"]).toHaveLength(1);
-  });
-
-  it("skips a generation with an identical fingerprint (dedupe)", () => {
-    let state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    state = recordGeneration(state, "s1", gen("fp1", "first")).state;
-    const res = recordGeneration(state, "s1", gen("fp1", "second"));
-    expect(res.added).toBe(false);
-    expect(res.state.watches["s1"]).toHaveLength(1);
-    expect(res.state.watches["s1"][0].id).toBe("first");
-  });
-
-  it("prepends a changed plan and reports the previous generation", () => {
-    let state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    state = recordGeneration(state, "s1", gen("fp1")).state;
-    const res = recordGeneration(state, "s1", gen("fp2"));
-    expect(res.added).toBe(true);
-    expect(res.prev?.fingerprint).toBe("fp1");
-    expect(res.state.watches["s1"].map((g) => g.fingerprint)).toEqual(["fp2", "fp1"]);
-  });
-
-  it("rotates out old generations beyond MAX_GENERATIONS", () => {
-    let state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    for (let i = 0; i < MAX_GENERATIONS + 5; i++) {
-      state = recordGeneration(state, "s1", gen(`fp${i}`)).state;
-    }
-    const gens = state.watches["s1"];
-    expect(gens).toHaveLength(MAX_GENERATIONS);
-    // 最新が先頭、最古 (fp0〜fp4) はローテーションで消えている。
-    expect(gens[0].fingerprint).toBe(`fp${MAX_GENERATIONS + 4}`);
-    expect(gens.some((g) => g.fingerprint === "fp0")).toBe(false);
+  it("the empty state watches nothing", () => {
+    expect(watchedIds(EMPTY_PLAN_WATCH)).toEqual([]);
   });
 });
 
-describe("normalizePlanWatch", () => {
-  it("collapses garbage input to the empty state", () => {
-    expect(normalizePlanWatch(null)).toEqual(EMPTY_PLAN_WATCH);
-    expect(normalizePlanWatch("junk")).toEqual(EMPTY_PLAN_WATCH);
-    expect(normalizePlanWatch({ watches: 42 })).toEqual(EMPTY_PLAN_WATCH);
+describe("PLAN_WATCH_LIVE_FIELDS", () => {
+  const field = PLAN_WATCH_LIVE_FIELDS[0];
+  it("flags a newer head generation even when the count is capped", () => {
+    const a = { id: "s", generations: [gen("1"), gen("0")] };
+    const b = { id: "s", generations: [gen("2"), gen("1")] };
+    expect(field.changed(a, b)).toBe(true);
+    expect(field.changed(a, a)).toBe(false);
+  });
+});
+
+describe("normalizeLegacyPlanWatch", () => {
+  it("collapses garbage input to an empty list", () => {
+    expect(normalizeLegacyPlanWatch(null)).toEqual([]);
+    expect(normalizeLegacyPlanWatch("x")).toEqual([]);
+    expect(normalizeLegacyPlanWatch({})).toEqual([]);
+    expect(normalizeLegacyPlanWatch({ watches: 3 })).toEqual([]);
   });
 
-  it("drops invalid generations and keeps valid ones", () => {
-    const state = normalizePlanWatch({
+  it("drops invalid generations, keeps watch registrations, preserves order", () => {
+    const out = normalizeLegacyPlanWatch({
       watches: {
-        s1: [gen("fp1"), { id: "broken" }, "junk"],
-        s2: "not-an-array",
+        s1: [gen("a"), { id: "bad" }, gen("b")],
+        s2: [],
+        s3: "not-an-array",
       },
     });
-    expect(state.watches["s1"]).toHaveLength(1);
-    expect("s2" in state.watches).toBe(false);
+    expect(out.map((e) => e.snippetId)).toEqual(["s1", "s2"]);
+    expect(out[0].generations.map((g) => g.fingerprint)).toEqual(["a", "b"]);
+    expect(out[1].generations).toEqual([]);
   });
 
-  it("clamps generation lists to MAX_GENERATIONS", () => {
-    const many = Array.from({ length: MAX_GENERATIONS + 10 }, (_, i) => gen(`fp${i}`));
-    const state = normalizePlanWatch({ watches: { s1: many } });
-    expect(state.watches["s1"]).toHaveLength(MAX_GENERATIONS);
-  });
-});
-
-describe("pruneMissingWatches", () => {
-  it("removes watches for deleted snippets and keeps the rest", () => {
-    let state: PlanWatchState = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    state = toggleWatch(state, "s2");
-    const pruned = pruneMissingWatches(state, ["s2"]);
-    expect(watchedIds(pruned)).toEqual(["s2"]);
-  });
-
-  it("returns the same state when nothing is missing", () => {
-    const state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    expect(pruneMissingWatches(state, ["s1", "s2"])).toBe(state);
+  it("clamps generation lists to the legacy limit", () => {
+    const many = Array.from({ length: MAX_LEGACY_GENERATIONS + 4 }, (_, i) => gen(`f${i}`));
+    const out = normalizeLegacyPlanWatch({ watches: { s1: many } });
+    expect(out[0].generations).toHaveLength(MAX_LEGACY_GENERATIONS);
   });
 });
 
-describe("load/save round-trip (localStorage)", () => {
-  beforeEach(() => localStorage.clear());
+describe("migrateLegacyPlanWatch", () => {
+  const key = legacyPlanWatchKey("p1");
 
-  it("persists per profile and survives a reload", () => {
-    let state = toggleWatch(EMPTY_PLAN_WATCH, "s1");
-    state = recordGeneration(state, "s1", gen("fp1")).state;
-    savePlanWatch("profileA", state);
-    expect(loadPlanWatch("profileA")).toEqual(state);
-    expect(loadPlanWatch("profileB")).toEqual(EMPTY_PLAN_WATCH);
+  it("does nothing (and never calls the IPC) when there is no legacy key", async () => {
+    const importLegacy = vi.fn().mockResolvedValue(0);
+    await migrateLegacyPlanWatch("p1", importLegacy, new MemoryStorage());
+    expect(importLegacy).not.toHaveBeenCalled();
   });
 
-  it("removes the storage key when the last watch is removed", () => {
-    savePlanWatch("profileA", toggleWatch(EMPTY_PLAN_WATCH, "s1"));
-    savePlanWatch("profileA", EMPTY_PLAN_WATCH);
-    expect(localStorage.getItem("noobdb.planwatch.profileA")).toBeNull();
+  it("imports the normalized watches and removes the key", async () => {
+    const storage = new MemoryStorage({
+      [key]: JSON.stringify({ watches: { s1: [gen("a")], s2: [] } }),
+    });
+    const importLegacy = vi.fn().mockResolvedValue(2);
+    await migrateLegacyPlanWatch("p1", importLegacy, storage);
+    expect(importLegacy).toHaveBeenCalledTimes(1);
+    const [profileId, watches] = importLegacy.mock.calls[0] as [string, { snippetId: string }[]];
+    expect(profileId).toBe("p1");
+    expect(watches.map((w) => w.snippetId)).toEqual(["s1", "s2"]);
+    expect(storage.has(key)).toBe(false);
   });
 
-  it("tolerates corrupted JSON", () => {
-    localStorage.setItem("noobdb.planwatch.profileA", "{broken");
-    expect(loadPlanWatch("profileA")).toEqual(EMPTY_PLAN_WATCH);
+  it("keeps the key when the import fails so it is retried next time", async () => {
+    const storage = new MemoryStorage({ [key]: JSON.stringify({ watches: { s1: [gen("a")] } }) });
+    const importLegacy = vi.fn().mockRejectedValue(new Error("ipc down"));
+    await migrateLegacyPlanWatch("p1", importLegacy, storage);
+    expect(storage.has(key)).toBe(true);
+  });
+
+  it("discards corrupted JSON without calling the IPC", async () => {
+    const storage = new MemoryStorage({ [key]: "{nope" });
+    const importLegacy = vi.fn();
+    await migrateLegacyPlanWatch("p1", importLegacy, storage);
+    expect(importLegacy).not.toHaveBeenCalled();
+    expect(storage.has(key)).toBe(false);
   });
 });

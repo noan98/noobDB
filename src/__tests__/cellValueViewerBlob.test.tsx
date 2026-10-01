@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { CellValueViewer } from "../components/CellValueViewer";
 import type { CellBlobHandlers } from "../components/useCellBlobIo";
@@ -27,7 +28,15 @@ beforeEach(() => {
   });
   URL.revokeObjectURL = vi.fn();
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(async () => {
+  // ダイアログを閉じると focus-trap (zag) が `setTimeout(fn, 0)` でフォーカス復帰を予約する。
+  // 共通 setup の cleanup より先にここで閉じ、その 0ms タイマーを jsdom が生きている間に
+  // 消化しておく (負荷が高いとテスト環境の破棄が先に走り `document is not defined` の
+  // 未処理エラーで vitest が失敗するため)。
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  vi.restoreAllMocks();
+});
 
 describe("CellValueViewer BLOB preview (#1258)", () => {
   it("非画像は probe だけでサイズと種別を出し、本体は取得しない", async () => {
