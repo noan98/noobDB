@@ -10243,7 +10243,7 @@ export default function App() {
               icon: "search",
               onSelect: () => setShowDataSearch(true),
               disabled: !sessionId || !paletteDatabase,
-              title: !sessionId ? t("appToolsNeedsSession") : !paletteDatabase ? t("appSchemaDriftUnsupported") : undefined,
+              title: !sessionId ? t("appToolsNeedsSession") : !paletteDatabase ? t("appDataSearchNeedsDatabase") : undefined,
             },
             { separator: true },
             { label: t("appSchemaCompare"), onSelect: () => openFullView("compare") },
