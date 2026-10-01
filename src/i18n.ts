@@ -896,12 +896,12 @@ const en = {
   editorRunOnTable: "Run",
   editorRunRunning: "Running...",
   editorRunTitle: "Run the selection (or the whole editor)",
+  editorRunNewTab: "Run in new tab",
+  editorRunNewTabTitle: "Run the selection (or the whole editor) in a new result tab, keeping the current result.",
   editorRunOnTableTitle: "Runs against `{database}` — selection or whole editor",
-  editorRunShortcut: "Cmd/Ctrl+Enter",
   editorPreview: "Dry Run",
   editorPreviewRunning: "Previewing...",
   editorPreviewTitle: "Dry-run the statement in a transaction and show before/after — changes are rolled back.",
-  editorPreviewShortcut: "Shift+Cmd/Ctrl+Enter",
   editorBuilder: "Query Builder",
   editorBuilderTitle: "Build a SELECT/INSERT/UPDATE/DELETE statement from a guided form.",
   editorFormat: "Format",
@@ -2756,6 +2756,8 @@ const en = {
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "Tools",
+  appCommandPalette: "Command palette",
+  appToolsTitle: "Tools: diagnostics, logs, and full-screen tools",
   appToolsNeedsSession: "Available while connected",
   appProcessesUnsupported: "Not available for SQLite connections",
   appUsersUnsupported: "Not available for SQLite connections",
@@ -3612,6 +3614,7 @@ const en = {
   toastSandboxNotOpen: 'Open sandbox "{name}" first to review its changes.',
   // タスクスケジューラ (#730)
   appTasks: "Tasks",
+  appTasksTitle: "Tasks: run exports and dumps on a schedule",
   taskManagerTitle: "Scheduled Tasks",
   taskManagerDesc:
     "Run a saved query export or database dump automatically while the app is open. This is not a replacement for the OS's own task scheduler — nothing fires while noobDB is closed.",
@@ -4642,12 +4645,12 @@ const ja: Dict = {
   editorRunOnTable: "Run",
   editorRunRunning: "実行中...",
   editorRunTitle: "選択範囲（選択がなければ全体）を実行します",
+  editorRunNewTab: "新しいタブで実行",
+  editorRunNewTabTitle: "現在の結果を残したまま、選択範囲（選択がなければ全体）を新しい結果タブで実行します",
   editorRunOnTableTitle: "`{database}` を使用して実行（選択範囲またはエディタ全体）",
-  editorRunShortcut: "Cmd/Ctrl+Enter",
   editorPreview: "Dry Run",
   editorPreviewRunning: "プレビュー中...",
   editorPreviewTitle: "トランザクション内で試し実行し、Before/After を表示します（変更はロールバック）。",
-  editorPreviewShortcut: "Shift+Cmd/Ctrl+Enter",
   editorBuilder: "Query Builder",
   editorBuilderTitle: "フォームから SELECT/INSERT/UPDATE/DELETE 文を組み立てます。",
   editorFormat: "Format",
@@ -6496,6 +6499,8 @@ const ja: Dict = {
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "ツール",
+  appCommandPalette: "コマンドパレット",
+  appToolsTitle: "ツール: 診断・ログ・全画面ツールのメニュー",
   appToolsNeedsSession: "接続中のみ使用できます",
   appProcessesUnsupported: "SQLite 接続では使用できません",
   appUsersUnsupported: "SQLite 接続では使用できません",
@@ -7351,6 +7356,7 @@ const ja: Dict = {
   toastSandboxNotOpen: "サンドボックス「{name}」を開いてから変更を確認してください。",
   // タスクスケジューラ (#730)
   appTasks: "タスク",
+  appTasksTitle: "タスク: エクスポートやダンプの定期実行",
   taskManagerTitle: "タスクスケジューラ",
   taskManagerDesc:
     "保存済みクエリのエクスポートや DB ダンプを、アプリ起動中に自動実行します。OS 標準のタスクスケジューラの代替ではなく、noobDB を閉じている間は発火しません。",
