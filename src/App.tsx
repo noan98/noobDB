@@ -9339,12 +9339,7 @@ export default function App() {
                         : `${selectedProfile.user}@${selectedProfile.host}:${selectedProfile.port}${selectedProfile.database ? `/${selectedProfile.database}` : ""}`}
                     </chakra.span>
                   </>
-                ) : (
-                  <>
-                    <StatusDot variant="idle" />
-                    <chakra.span color="app.textMuted" fontSize="sm">{t("appDisconnected")}</chakra.span>
-                  </>
-                )}
+                ) : null /* 未接続の表記はステータスバーに 1 か所だけ出す (#1276) */}
               </Flex>
               <Box flex="1" />
               {sessionId && (
