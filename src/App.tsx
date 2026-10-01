@@ -10415,7 +10415,19 @@ export default function App() {
           )}
         </AnimatePresence>
         <AnimatePresence>
-          {showHelp && <HelpView onClose={() => setShowHelp(false)} />}
+          {showHelp && (
+            <HelpView
+              onClose={() => setShowHelp(false)}
+              onStartTour={() => {
+                setShowHelp(false);
+                handleStartTour();
+              }}
+              onOpenCheatSheet={() => {
+                setShowHelp(false);
+                setShowCheatSheet(true);
+              }}
+            />
+          )}
         </AnimatePresence>
       </Suspense>
       {/* enter のみのポップオーバー (ContextMenu と同方針) なので AnimatePresence
