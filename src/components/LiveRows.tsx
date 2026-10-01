@@ -132,6 +132,7 @@ export function LiveCell({
   css,
   innerCss,
   flash = null,
+  collapse = true,
   children,
   ...rest
 }: {
@@ -140,8 +141,27 @@ export function LiveCell({
   /** セル内側 (パディング・折り返し) のスタイル。 */
   innerCss: SystemStyleObject;
   flash?: number | null;
+  /**
+   * false にすると行の高さ補間用の `LiveCollapse` を省く (#1321)。行数の多い一覧では
+   * 1 行あたり 9 セル × motion 要素が重いため、`LiveTr` の fade だけで出入りを表し、
+   * 値が変わったセル (`flash` が非 null) だけが内側の `LiveFlash` 層を持つ。
+   */
+  collapse?: boolean;
   children?: ReactNode;
 } & Omit<HTMLChakraProps<"td">, "css">) {
+  if (!collapse) {
+    return flash === null ? (
+      <chakra.td css={{ ...css, ...innerCss }} {...rest}>
+        {children}
+      </chakra.td>
+    ) : (
+      <chakra.td css={{ ...css, ...cellShellCss }} {...rest}>
+        <LiveFlash token={flash} css={innerCss}>
+          {children}
+        </LiveFlash>
+      </chakra.td>
+    );
+  }
   return (
     <chakra.td css={{ ...css, ...cellShellCss }} {...rest}>
       <LiveCollapse>

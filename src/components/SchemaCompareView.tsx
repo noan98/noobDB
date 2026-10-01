@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
@@ -16,7 +16,7 @@ import {
   type TableColumnInfo,
   type TableDiff,
 } from "../api/tauri";
-import { useT } from "../i18n";
+import { useLocale, useT } from "../i18n";
 import { staggerContainer, transitions, variants as motionVariants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
@@ -336,6 +336,9 @@ export function coerceDriver(driver: string): DriverKind {
  * statement is checked, destructive ones (DROP / DELETE) stay opt-in so an
  * "apply" can never silently destroy data even when they were generated.
  */
+/** 同期プランを 1 度に描画する件数 (#1321)。 */
+export const SYNC_STATEMENT_PAGE = 300;
+
 function defaultSelection(plan: SyncPlan): Set<number> {
   const next = new Set<number>();
   plan.statements.forEach((s, i) => {
@@ -401,6 +404,9 @@ export function SchemaCompareView({
   const [plan, setPlan] = useState<SyncPlan | null>(null);
   const [planKind, setPlanKind] = useState<"schema" | "data" | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // 同期プランの描画件数 (#1321)。5,000 件超でも 1 画面ぶんだけ DOM に置き、続きは「さらに表示」。
+  // 選択・適用は全件 (`plan.statements`) が対象。
+  const [statementLimit, setStatementLimit] = useState(SYNC_STATEMENT_PAGE);
   const [generating, setGenerating] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
@@ -597,6 +603,7 @@ export function SchemaCompareView({
     try {
       const result = await api.generateSyncSql(diff, allowDestructive);
       setPlan(result);
+      setStatementLimit(SYNC_STATEMENT_PAGE);
       setPlanKind("schema");
       setSelected(defaultSelection(result));
     } catch (e) {
@@ -666,6 +673,7 @@ export function SchemaCompareView({
     try {
       const result = await api.generateDataSyncSql(dataDiffId, allowDelete);
       setPlan(result);
+      setStatementLimit(SYNC_STATEMENT_PAGE);
       setPlanKind("data");
       setSelected(defaultSelection(result));
     } catch (e) {
@@ -1022,16 +1030,37 @@ export function SchemaCompareView({
                   ) : (
                     <>
                       <chakra.ul css={statementsCss}>
-                        {plan.statements.map((stmt, i) => (
+                        {plan.statements.slice(0, statementLimit).map((stmt, i) => (
                           <SyncStatementRow
                             key={`${stmt.table}-${i}`}
+                            index={i}
                             statement={stmt}
                             checked={selected.has(i)}
-                            onToggle={() => toggleStatement(i)}
-                            t={t}
+                            onToggle={toggleStatement}
                           />
                         ))}
                       </chakra.ul>
+                      {plan.statements.length > statementLimit && (
+                        <Box css={actionsCss} display="flex" gap="2" alignItems="center">
+                          <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
+                            {t("schemaCompareStatementsShown", {
+                              shown: statementLimit,
+                              total: plan.statements.length,
+                            })}
+                          </chakra.span>
+                          <Button
+                            type="button"
+                            onClick={() => setStatementLimit((n) => n + SYNC_STATEMENT_PAGE)}
+                          >
+                            {t("schemaCompareStatementsMore", {
+                              count: Math.min(
+                                SYNC_STATEMENT_PAGE,
+                                plan.statements.length - statementLimit,
+                              ),
+                            })}
+                          </Button>
+                        </Box>
+                      )}
                       <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
                       <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
                         <PressableButton
@@ -1115,22 +1144,39 @@ function syncKindLabel(kind: SyncKind, t: ReturnType<typeof useT>): string {
   }
 }
 
-function SyncStatementRow({
+/** 同期文の外枠 CSS (#1321: 行ごとにオブジェクトを作り直さないよう 2 種類を使い回す)。 */
+const STATEMENT_CSS = { normal: statementCss(false), destructive: statementCss(true) };
+const KIND_CSS_CACHE = new Map<SyncKind, SystemStyleObject>();
+function cachedKindCss(kind: SyncKind): SystemStyleObject {
+  let c = KIND_CSS_CACHE.get(kind);
+  if (!c) {
+    c = kindCss(kind);
+    KIND_CSS_CACHE.set(kind, c);
+  }
+  return c;
+}
+
+/**
+ * 同期文 1 行 (#1321)。`memo` + index を引数に取る安定した `onToggle` により、
+ * チェックボックス 1 つの切替で再レンダーされるのは当該行だけ。
+ */
+export const SyncStatementRow = memo(function SyncStatementRow({
+  index,
   statement,
   checked,
   onToggle,
-  t,
 }: {
+  index: number;
   statement: SyncStatement;
   checked: boolean;
-  onToggle: () => void;
-  t: ReturnType<typeof useT>;
+  onToggle: (index: number) => void;
 }) {
+  const t = useT();
   return (
-    <chakra.li css={statementCss(statement.destructive)}>
+    <chakra.li css={statement.destructive ? STATEMENT_CSS.destructive : STATEMENT_CSS.normal}>
       <chakra.label css={statementHeadCss}>
-        <Checkbox checked={checked} onChange={onToggle} />
-        <chakra.span css={kindCss(statement.kind)}>
+        <Checkbox checked={checked} onChange={() => onToggle(index)} />
+        <chakra.span css={cachedKindCss(statement.kind)}>
           {syncKindLabel(statement.kind, t)}
         </chakra.span>
         {statement.destructive && (
@@ -1140,7 +1186,7 @@ function SyncStatementRow({
       <chakra.code css={sqlCss}>{statement.sql}</chakra.code>
     </chakra.li>
   );
-}
+});
 
 function SidePicker({
   label,
@@ -1233,7 +1279,15 @@ function statusLabel(status: DiffStatus, t: ReturnType<typeof useT>): string {
  * `export` するのは `SchemaCompareView.test.tsx` 相当の単体テストと、将来
  * 差分ツリーを他パネルから再利用する可能性のため (`coerceDriver` と同じ理由)。
  */
-export function TableDiffRow({ table, t }: { table: TableDiff; t: ReturnType<typeof useT> }) {
+export const TableDiffRow = memo(function TableDiffRow({
+  table,
+  t,
+}: {
+  table: TableDiff;
+  t: ReturnType<typeof useT>;
+}) {
+  // memo で親の再レンダーを遮断しても、言語切替では描き直す (t は参照が変わらない)。
+  useLocale();
   const expandable = table.columns.length > 0;
   const [open, setOpen] = useState(table.status === "different");
   const reduced = useReducedMotion() ?? false;
@@ -1300,7 +1354,7 @@ export function TableDiffRow({ table, t }: { table: TableDiff; t: ReturnType<typ
       </AnimatePresence>
     </Box>
   );
-}
+});
 
 function fieldLabel(field: string, t: ReturnType<typeof useT>): string {
   switch (field) {

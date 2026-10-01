@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type DriverKind, type ProcessInfo } from "../api/tauri";
@@ -86,6 +86,9 @@ function formatLiveProcessTime(n: number): string {
   return formatProcessTime(Math.round(n));
 }
 
+/** 一覧に描画する最大行数 (#1321)。これを超える分は件数表示のみで、選択・KILL は全件が対象。 */
+export const PROCESS_RENDER_LIMIT = 500;
+
 export function ProcessListPanel({
   sessionId,
   driver,
@@ -123,6 +126,12 @@ export function ProcessListPanel({
   // との差分から値変化フラッシュの再生キーを得る (#1022)。
   const rows = useMemo(() => uniqueByKey(processes, processKey), [processes]);
   const { flashToken } = useLiveChanges(rows, processKey, PROCESS_LIVE_FIELDS);
+  // 件数上限 (#1321): 数千件でも描画コストが頭打ちになるよう、先頭から上限件数だけ描く。
+  // 選択・全選択・件数表示は全件 (`rows`) を対象にする。
+  const visibleRows = useMemo(
+    () => (rows.length > PROCESS_RENDER_LIMIT ? rows.slice(0, PROCESS_RENDER_LIMIT) : rows),
+    [rows],
+  );
 
   const load = useCallback(async () => {
     if (busyRef.current) return;
@@ -365,63 +374,29 @@ export function ProcessListPanel({
                 <SkeletonTableRows columns={9} />
               ) : (
                 <LiveRowsPresence>
-                  {rows.map((p) => (
-                    <LiveTr key={p.id}>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss}>
-                        <Checkbox
-                          checked={selected.has(p.id)}
-                          aria-label={t("processSelectRow", { id: p.id })}
-                          onChange={() => toggleOne(p.id)}
-                        />
-                      </LiveCell>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss}>
-                        {p.id}
-                        {p.is_self && (
-                          <Tooltip label={t("processSelfBadgeTitle")} focusableWrapper>
-                            <chakra.span
-                              marginLeft="1.5"
-                              px="1.5"
-                              fontSize="var(--text-xs)"
-                              fontFamily="var(--font-sans)"
-                              color="var(--accent)"
-                              border="1px solid var(--accent)"
-                              borderRadius="var(--radius-sm)"
-                            >
-                              {t("processSelfBadge")}
-                            </chakra.span>
-                          </Tooltip>
-                        )}
-                      </LiveCell>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss}>{p.user ?? "–"}</LiveCell>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss}>{p.host ?? "–"}</LiveCell>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss}>{p.database ?? "–"}</LiveCell>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss} flash={flashToken(p.id, "command")}>
-                        {p.command ?? "–"}
-                      </LiveCell>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss} flash={flashToken(p.id, "state")}>
-                        {p.state ?? "–"}
-                      </LiveCell>
-                      <LiveCell css={tdCss} innerCss={cellInnerCss} flash={flashToken(p.id, "time")}>
-                        {/* 単調な増加は CountUp の補間で「進んでいる」ことを示し、
-                            巻き戻り (新しい文の開始) だけをフラッシュする。 */}
-                        {p.time_secs == null || p.time_secs < 0 ? (
-                          formatProcessTime(p.time_secs)
-                        ) : (
-                          <CountUp value={p.time_secs} formatter={formatLiveProcessTime} />
-                        )}
-                      </LiveCell>
-                      <ProcessQueryCell
-                        sessionId={sessionId}
-                        process={p}
-                        flash={flashToken(p.id, "query")}
-                      />
-                    </LiveTr>
+                  {visibleRows.map((p) => (
+                    <ProcessRow
+                      key={p.id}
+                      sessionId={sessionId}
+                      process={p}
+                      selected={selected.has(p.id)}
+                      onToggle={toggleOne}
+                      flashCommand={flashToken(p.id, "command")}
+                      flashState={flashToken(p.id, "state")}
+                      flashTime={flashToken(p.id, "time")}
+                      flashQuery={flashToken(p.id, "query")}
+                    />
                   ))}
                 </LiveRowsPresence>
               )}
             </tbody>
           </chakra.table>
         </Box>
+      )}
+      {!error && rows.length > visibleRows.length && (
+        <chakra.p margin={0} fontSize="xs" color="app.textMuted" data-testid="process-truncated">
+          {t("processTruncated", { shown: visibleRows.length, total: rows.length })}
+        </chakra.p>
       )}
         </>
       )}
@@ -430,6 +405,100 @@ export function ProcessListPanel({
     </Box>
   );
 }
+
+/** `ProcessInfo` の全フィールドが同値か (ポーリングごとに配列・オブジェクトは作り直されるため)。 */
+function sameProcess(a: ProcessInfo, b: ProcessInfo): boolean {
+  if (a === b) return true;
+  const ka = Object.keys(a) as (keyof ProcessInfo)[];
+  for (const k of ka) if (a[k] !== b[k]) return false;
+  return Object.keys(b).length === ka.length;
+}
+
+/**
+ * プロセス 1 行 (#1321)。ポーリングで内容が変わらなかった行・選択が変わらなかった行は
+ * 再レンダーしない。セルは `collapse={false}` の軽量構造で、値が変わったセルだけが
+ * フラッシュ用の内側 div を持つ。
+ */
+const ProcessRow = memo(
+  function ProcessRow({
+    sessionId,
+    process: p,
+    selected,
+    onToggle,
+    flashCommand,
+    flashState,
+    flashTime,
+    flashQuery,
+  }: {
+    sessionId: string;
+    process: ProcessInfo;
+    selected: boolean;
+    onToggle: (id: number) => void;
+    flashCommand: number | null;
+    flashState: number | null;
+    flashTime: number | null;
+    flashQuery: number | null;
+  }) {
+    const t = useT();
+    return (
+      <LiveTr>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+          <Checkbox
+            checked={selected}
+            aria-label={t("processSelectRow", { id: p.id })}
+            onChange={() => onToggle(p.id)}
+          />
+        </LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+          {p.id}
+          {p.is_self && (
+            <Tooltip label={t("processSelfBadgeTitle")} focusableWrapper>
+              <chakra.span
+                marginLeft="1.5"
+                px="1.5"
+                fontSize="var(--text-xs)"
+                fontFamily="var(--font-sans)"
+                color="var(--accent)"
+                border="1px solid var(--accent)"
+                borderRadius="var(--radius-sm)"
+              >
+                {t("processSelfBadge")}
+              </chakra.span>
+            </Tooltip>
+          )}
+        </LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>{p.user ?? "–"}</LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>{p.host ?? "–"}</LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>{p.database ?? "–"}</LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashCommand}>
+          {p.command ?? "–"}
+        </LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashState}>
+          {p.state ?? "–"}
+        </LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashTime}>
+          {/* 単調な増加は CountUp の補間で「進んでいる」ことを示し、
+              巻き戻り (新しい文の開始) だけをフラッシュする。CountUp はこの列だけ。 */}
+          {p.time_secs == null || p.time_secs < 0 ? (
+            formatProcessTime(p.time_secs)
+          ) : (
+            <CountUp value={p.time_secs} formatter={formatLiveProcessTime} />
+          )}
+        </LiveCell>
+        <ProcessQueryCell sessionId={sessionId} process={p} flash={flashQuery} />
+      </LiveTr>
+    );
+  },
+  (a, b) =>
+    a.sessionId === b.sessionId &&
+    a.selected === b.selected &&
+    a.onToggle === b.onToggle &&
+    a.flashCommand === b.flashCommand &&
+    a.flashState === b.flashState &&
+    a.flashTime === b.flashTime &&
+    a.flashQuery === b.flashQuery &&
+    sameProcess(a.process, b.process),
+);
 
 /**
  * クエリ列のセル。一覧が運ぶのは Rust 側で作った 1 行要約だけなので、ツールチップ用の
@@ -467,6 +536,7 @@ function ProcessQueryCell({
     <LiveCell
       css={queryTdCss}
       innerCss={queryInnerCss}
+      collapse={false}
       flash={flash}
       onMouseEnter={fetchFull}
       onFocus={fetchFull}

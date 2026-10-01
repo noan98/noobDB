@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
@@ -109,6 +109,49 @@ const tdCss: SystemStyleObject = {
   whiteSpace: "nowrap",
   verticalAlign: "top",
 };
+
+const PRIVILEGE_FLAGS = ["select", "insert", "update", "delete", "ddl"] as const;
+
+/**
+ * 権限タブの 1 行 (#1321)。1 行あたりチェックボックスが 5 個あるため、`memo` で
+ * 切り替えた行 (`flags` の参照が変わる) だけを再レンダーする。
+ */
+export const PrivilegeRow = memo(function PrivilegeRow({
+  table,
+  flags,
+  originalFlags,
+  readOnly,
+  onToggle,
+}: {
+  table: string;
+  flags: Flags;
+  originalFlags: Flags;
+  readOnly: boolean;
+  onToggle: (table: string, flag: keyof Flags) => void;
+}) {
+  const rowDirty = !flagsEqual(originalFlags, flags);
+  return (
+    <tr>
+      <chakra.td
+        css={tdCss}
+        fontFamily="var(--font-mono)"
+        color={rowDirty ? "var(--accent)" : undefined}
+      >
+        {table}
+      </chakra.td>
+      {PRIVILEGE_FLAGS.map((flag) => (
+        <chakra.td css={tdCss} key={flag}>
+          <Checkbox
+            checked={flags[flag]}
+            disabled={readOnly}
+            aria-label={`${table} ${flag}`}
+            onChange={() => onToggle(table, flag)}
+          />
+        </chakra.td>
+      ))}
+    </tr>
+  );
+});
 
 export function UsersPanel({
   sessionId,
@@ -676,36 +719,16 @@ export function UsersPanel({
                             </chakra.td>
                           </tr>
                         ) : (
-                          rowKeys.map((table) => {
-                            const flags = edited[table] ?? EMPTY_FLAGS;
-                            const rowDirty = !flagsEqual(
-                              original[table] ?? EMPTY_FLAGS,
-                              flags,
-                            );
-                            return (
-                              <tr key={table}>
-                                <chakra.td
-                                  css={tdCss}
-                                  fontFamily="var(--font-mono)"
-                                  color={rowDirty ? "var(--accent)" : undefined}
-                                >
-                                  {table}
-                                </chakra.td>
-                                {(["select", "insert", "update", "delete", "ddl"] as const).map(
-                                  (flag) => (
-                                    <chakra.td css={tdCss} key={flag}>
-                                      <Checkbox
-                                        checked={flags[flag]}
-                                        disabled={readOnly}
-                                        aria-label={`${table} ${flag}`}
-                                        onChange={() => toggleFlag(table, flag)}
-                                      />
-                                    </chakra.td>
-                                  ),
-                                )}
-                              </tr>
-                            );
-                          })
+                          rowKeys.map((table) => (
+                            <PrivilegeRow
+                              key={table}
+                              table={table}
+                              flags={edited[table] ?? EMPTY_FLAGS}
+                              originalFlags={original[table] ?? EMPTY_FLAGS}
+                              readOnly={readOnly}
+                              onToggle={toggleFlag}
+                            />
+                          ))
                         )}
                       </tbody>
                     </chakra.table>

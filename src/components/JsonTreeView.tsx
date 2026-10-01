@@ -1,4 +1,17 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+} from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { useRovingFocus } from "../keyboardNav";
@@ -44,14 +57,65 @@ interface Selection {
   node: JsonNode;
 }
 
-interface TreeCtx {
+/**
+ * ツリーの表示状態 (#1321)。行ごとに `useSyncExternalStore` で「自分に関係する部分」だけを
+ * 購読するため、選択の移動や 1 ノードの開閉で再レンダーされるのは影響する行だけになる
+ * (以前は `ctx` が毎回作り直され、可視行すべてが再レンダーされていた)。
+ */
+interface TreeState {
   search: JsonSearchResult | null;
-  isOpen: (key: string) => boolean;
-  toggle: (key: string) => void;
-  shownCount: (key: string) => number;
-  showMore: (key: string) => void;
+  /** `search` が変わるたびに増える世代番号 (祖先行の子の絞り込みを再計算させる)。 */
+  searchVersion: number;
+  expanded: ReadonlySet<string>;
+  searchCollapsed: ReadonlySet<string>;
+  pages: ReadonlyMap<string, number>;
   selectedKey: string | null;
+}
+
+interface TreeStore {
+  get: () => TreeState;
+  set: (next: TreeState) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createTreeStore(initial: TreeState): TreeStore {
+  let state = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => state,
+    set: (next) => {
+      state = next;
+      for (const l of listeners) l();
+    },
+    subscribe: (l) => {
+      listeners.add(l);
+      return () => {
+        listeners.delete(l);
+      };
+    },
+  };
+}
+
+interface TreeActions {
+  toggle: (key: string) => void;
+  showMore: (key: string) => void;
   onSelect: (sel: Selection) => void;
+}
+
+const TreeContext = createContext<{ store: TreeStore; actions: TreeActions } | null>(null);
+
+/** 1 行が見る状態を 1 本の文字列に畳む。同値なら再レンダーされない。 */
+function rowSnapshot(state: TreeState, key: string, firstFocusable: boolean): string {
+  const { search } = state;
+  const anc = search?.ancestors.has(key) ?? false;
+  const open = anc ? !state.searchCollapsed.has(key) : state.expanded.has(key);
+  const sel = state.selectedKey === key;
+  const match = search?.matches.has(key) ?? false;
+  const focusable = sel || (state.selectedKey === null && firstFocusable);
+  const shown = state.pages.get(key) ?? CHILD_PAGE_SIZE;
+  // 祖先行は子を一致の枝に絞るので、検索結果が変わったら (開いているときだけ) 描き直す。
+  const version = anc && open ? state.searchVersion : 0;
+  return `${open ? 1 : 0}${sel ? 1 : 0}${match ? 1 : 0}${anc ? 1 : 0}${focusable ? 1 : 0}:${shown}:${version}`;
 }
 
 /**
@@ -73,33 +137,77 @@ export function JsonTreeView({ root, columnName, driver }: Props) {
   const search = useMemo(() => searchJsonTree(root, deferredQuery), [root, deferredQuery]);
 
   const rootKey = pathKey([]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([rootKey]));
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set([rootKey]));
   // 検索中に自動展開された祖先をユーザが畳んだ記録。クエリが変わるたびに捨てる。
-  const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(() => new Set());
+  const [searchCollapsed, setSearchCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => setSearchCollapsed(new Set()), [deferredQuery]);
-  const [pages, setPages] = useState<Map<string, number>>(() => new Map());
+  const [pages, setPages] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [selected, setSelected] = useState<Selection | null>(null);
 
-  const ctx: TreeCtx = {
-    search,
-    isOpen: (key) =>
-      search?.ancestors.has(key) ? !searchCollapsed.has(key) : expanded.has(key),
-    toggle: (key) => {
-      const flip = (prev: Set<string>) => {
+  const selectedKey = selected ? pathKey(selected.path) : null;
+  // 初回描画から正しい状態で見えるよう、ストアは初回レンダーの値で作る。以降の変化は
+  // レイアウト効果でストアへ流し、変わった行だけが購読経由で再レンダーされる。
+  const searchVersionRef = useRef(0);
+  const storeRef = useRef<TreeStore | null>(null);
+  if (storeRef.current === null) {
+    storeRef.current = createTreeStore({
+      search,
+      searchVersion: 0,
+      expanded,
+      searchCollapsed,
+      pages,
+      selectedKey,
+    });
+  }
+  const store = storeRef.current;
+  const lastSearchRef = useRef(search);
+  useLayoutEffect(() => {
+    if (lastSearchRef.current !== search) {
+      lastSearchRef.current = search;
+      searchVersionRef.current += 1;
+    }
+    const cur = store.get();
+    if (
+      cur.search === search &&
+      cur.expanded === expanded &&
+      cur.searchCollapsed === searchCollapsed &&
+      cur.pages === pages &&
+      cur.selectedKey === selectedKey
+    ) {
+      return;
+    }
+    store.set({
+      search,
+      searchVersion: searchVersionRef.current,
+      expanded,
+      searchCollapsed,
+      pages,
+      selectedKey,
+    });
+  }, [store, search, expanded, searchCollapsed, pages, selectedKey]);
+
+  const toggle = useCallback(
+    (key: string) => {
+      const flip = (prev: ReadonlySet<string>) => {
         const next = new Set(prev);
         if (next.has(key)) next.delete(key);
         else next.add(key);
         return next;
       };
-      if (search?.ancestors.has(key)) setSearchCollapsed(flip);
+      if (store.get().search?.ancestors.has(key)) setSearchCollapsed(flip);
       else setExpanded(flip);
     },
-    shownCount: (key) => pages.get(key) ?? CHILD_PAGE_SIZE,
-    showMore: (key) =>
+    [store],
+  );
+  const showMore = useCallback(
+    (key: string) =>
       setPages((prev) => new Map(prev).set(key, (prev.get(key) ?? CHILD_PAGE_SIZE) + CHILD_PAGE_SIZE)),
-    selectedKey: selected ? pathKey(selected.path) : null,
-    onSelect: setSelected,
-  };
+    [],
+  );
+  const treeCtx = useMemo(
+    () => ({ store, actions: { toggle, showMore, onSelect: setSelected } }),
+    [store, toggle, showMore],
+  );
 
   const treeRef = useRef<HTMLDivElement>(null);
   const { onKeyDown } = useRovingFocus(treeRef, "[role=treeitem]", {
@@ -162,7 +270,9 @@ export function JsonTreeView({ root, columnName, driver }: Props) {
         borderColor="app.border"
         borderRadius="md"
       >
-        <JsonTreeRow ctx={ctx} node={root} path={[]} segment={null} level={0} firstFocusable />
+        <TreeContext.Provider value={treeCtx}>
+          <JsonTreeRow node={root} pkey={rootKey} segment={null} level={0} firstFocusable />
+        </TreeContext.Provider>
       </chakra.div>
 
       <chakra.div
@@ -230,14 +340,23 @@ export function JsonTreeView({ root, columnName, driver }: Props) {
 }
 
 interface RowProps {
-  ctx: TreeCtx;
   node: JsonNode;
-  path: JsonPathSegment[];
+  /**
+   * `pathKey(path)` (= パスの JSON)。配列の `path` を props に持つと毎回新しい参照になって
+   * memo が効かないため、文字列だけを渡して必要なときに復元する (#1321)。
+   */
+  pkey: string;
   /** 親から見たこのノードのキー / 添字 (ルートは null)。 */
   segment: JsonPathSegment | null;
   level: number;
   /** 何も選択されていないときに Tab で入れる行か (ルート)。 */
   firstFocusable?: boolean;
+}
+
+/** 親の `pathKey` に 1 セグメント足した子の `pathKey` (`pathKey([...path, segment])` と同値)。 */
+function childKey(parentKey: string, segment: JsonPathSegment): string {
+  const seg = JSON.stringify(segment);
+  return parentKey === "[]" ? `[${seg}]` : `${parentKey.slice(0, -1)},${seg}]`;
 }
 
 /** 行の字下げ。レベルごとに spacing トークン 1 段 (`--space-4`) ずつ下げる。 */
@@ -262,24 +381,28 @@ function scalarColor(node: JsonNode): string {
  * 1 ノード分の行と、展開中ならその子。行は展開ノードの子としてしか描かれない
  * ので、選択/展開状態が変わっても描画コストは「見えている行」ぶんに収まる。
  */
-function JsonTreeRow({
-  ctx,
-  node,
-  path,
-  segment,
-  level,
-  firstFocusable,
-}: RowProps) {
+const JsonTreeRow = memo(
+  function JsonTreeRow({ node, pkey: key, segment, level, firstFocusable }: RowProps) {
   const t = useT();
-  const key = pathKey(path);
+  const tree = useContext(TreeContext);
+  if (!tree) throw new Error("JsonTreeRow must be rendered inside TreeContext");
+  const { store, actions } = tree;
+  // 行ごとの購読 (#1321): 自分の開閉・選択・一致・ページ数が変わったときだけ再レンダーする。
+  useSyncExternalStore(
+    store.subscribe,
+    () => rowSnapshot(store.get(), key, !!firstFocusable),
+    () => rowSnapshot(store.get(), key, !!firstFocusable),
+  );
+  const state = store.get();
   const container = isContainer(node);
-  const open = container && ctx.isOpen(key);
+  const open = container && (state.search?.ancestors.has(key) ? !state.searchCollapsed.has(key) : state.expanded.has(key));
   const count = childCount(node);
-  const isSelected = ctx.selectedKey === key;
-  const isMatch = ctx.search?.matches.has(key) ?? false;
-  const focusable = isSelected || (ctx.selectedKey === null && !!firstFocusable);
+  const isSelected = state.selectedKey === key;
+  const isMatch = state.search?.matches.has(key) ?? false;
+  const focusable = isSelected || (state.selectedKey === null && !!firstFocusable);
+  const ctx = { toggle: actions.toggle, showMore: actions.showMore };
 
-  const select = () => ctx.onSelect({ path, node });
+  const select = () => actions.onSelect({ path: JSON.parse(key) as JsonPathSegment[], node });
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -298,21 +421,42 @@ function JsonTreeRow({
   };
 
   // 表示する子。検索中にこのノードが一致の祖先なら、一致に関わる枝だけに絞る。
-  let children: JsonChild[] = [];
-  let hidden = 0;
-  if (open) {
-    const search = ctx.search;
-    if (search && search.ancestors.has(key)) {
-      children = childSlice(node, 0, count).filter((c) => {
-        const k = pathKey([...path, c.segment]);
+  // 子の要素は、表示する子の集合が変わらない限り使い回す (#1321): 行自身の選択・フォーカス
+  // 表示が変わって再レンダーされても、子の再レンダーを誘発しない。
+  const searchAncestor = open && !!state.search?.ancestors.has(key);
+  const pageShown = state.pages.get(key) ?? CHILD_PAGE_SIZE;
+  const searchVersion = searchAncestor ? state.searchVersion : 0;
+  const { childRows, hidden } = useMemo(() => {
+    if (!open) return { childRows: [], hidden: 0 };
+    let kids: JsonChild[];
+    let hiddenCount = 0;
+    const search = store.get().search;
+    if (searchAncestor && search) {
+      kids = childSlice(node, 0, count).filter((c) => {
+        const k = childKey(key, c.segment);
         return search.matches.has(k) || search.ancestors.has(k);
       });
     } else {
-      const shown = Math.min(ctx.shownCount(key), count);
-      children = childSlice(node, 0, shown);
-      hidden = count - shown;
+      const shown = Math.min(pageShown, count);
+      kids = childSlice(node, 0, shown);
+      hiddenCount = count - shown;
     }
-  }
+    return {
+      childRows: kids.map((c, idx) => (
+        <JsonTreeRow
+          // 重複キーを持つオブジェクトもあり得るので位置を併用する。
+          key={`${idx}:${String(c.segment)}`}
+          node={c.node}
+          pkey={childKey(key, c.segment)}
+          segment={c.segment}
+          level={level + 1}
+        />
+      )),
+      hidden: hiddenCount,
+    };
+    // searchVersion は検索結果の入れ替わりを知らせる世代番号 (store から読む search 本体の代わり)。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, searchAncestor, searchVersion, pageShown, node, key, level, count, store]);
 
   return (
     <>
@@ -372,17 +516,7 @@ function JsonTreeRow({
         // でも重くならない。非コンテナ行では TreeCollapse 自体を作らない。
         <TreeCollapse open={open}>
           <chakra.div role="group">
-            {children.map((c, idx) => (
-              <JsonTreeRow
-                // 重複キーを持つオブジェクトもあり得るので位置を併用する。
-                key={`${idx}:${String(c.segment)}`}
-                ctx={ctx}
-                node={c.node}
-                path={[...path, c.segment]}
-                segment={c.segment}
-                level={level + 1}
-              />
-            ))}
+            {childRows}
             {hidden > 0 && (
               <TreeRow
                 role="treeitem"
@@ -409,4 +543,5 @@ function JsonTreeRow({
       )}
     </>
   );
-}
+  },
+);
