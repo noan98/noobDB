@@ -18,6 +18,30 @@ import { playwright } from "@vitest/browser-playwright";
 // 導入してから実行する (.github/workflows/ci.yml の frontend-visual ジョブ)。
 export default defineConfig({
   plugins: [react()],
+  // 遅延ロードされる画面 (エディタ・アクセシビリティ検査・Tauri プラグイン) の依存は、
+  // App を描画しないテストファイルが先に走ると実行途中で初めて発見される。そのとき Vite が
+  // 依存を再最適化してページをリロードし、並行中のテストが React の二重読み込み
+  // (`useRef` of null) で落ちる (#1270)。起動時にまとめて最適化させて実行順に依存させない。
+  optimizeDeps: {
+    include: [
+      "@codemirror/autocomplete",
+      "@codemirror/commands",
+      "@codemirror/language",
+      "@codemirror/lint",
+      "@codemirror/search",
+      "@codemirror/state",
+      "@codemirror/view",
+      "@lezer/highlight",
+      "sql-formatter",
+      "@tauri-apps/api/app",
+      "@tauri-apps/api/webview",
+      "@tauri-apps/api/window",
+      "@tauri-apps/plugin-notification",
+      "@tauri-apps/plugin-process",
+      "@tauri-apps/plugin-updater",
+      "axe-core",
+    ],
+  },
   test: {
     include: ["src/__tests__/browser/**/*.browser.test.tsx"],
     setupFiles: ["./src/__tests__/browser/setup.browser.ts"],
