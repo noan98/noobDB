@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -447,6 +447,30 @@ describe("スキーマツリーのコンテキストメニューをキーボー�
     const row = await screen.findByRole("treeitem", { name: "tbl1" });
 
     fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    const items = await screen.findAllByRole("menuitem");
+    expect(items[0]).toHaveTextContent(t("contextMenuOpenData"));
+    expect(items[1]).toHaveTextContent(t("contextMenuOpenStructure"));
+  });
+
+  it("DB 行の「…」ボタンで右クリックと同じメニューが開き、行は開閉されない (#1269)", async () => {
+    await openDb();
+    const row = await screen.findByRole("treeitem", { name: "db1" });
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    const btn = within(row).getByRole("button", { name: t("treeMoreActionsAria") });
+
+    fireEvent.click(btn);
+    expect(await screen.findByRole("menuitem", { name: t("contextMenuDump") })).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("テーブル行の「…」ボタンで右クリックと同じメニューが開く (#1269)", async () => {
+    await openDb({ onPickTable: vi.fn(), onOpenStructure: vi.fn() });
+    const row = await screen.findByRole("treeitem", { name: "tbl1" });
+    const btn = within(row).getByRole("button", { name: t("treeMoreActionsAria") });
+    // roving tabindex を増やさない。
+    expect(btn).toHaveAttribute("tabindex", "-1");
+
+    fireEvent.click(btn);
     const items = await screen.findAllByRole("menuitem");
     expect(items[0]).toHaveTextContent(t("contextMenuOpenData"));
     expect(items[1]).toHaveTextContent(t("contextMenuOpenStructure"));
