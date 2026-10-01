@@ -1,18 +1,29 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Kbd } from "./Kbd";
 import { Modal } from "./Modal";
 import { staggerContainer, transitions, variants } from "../motion";
 import {
-  flattenGroups,
   groupCommands,
+  limitAndIndexGroups,
   shouldStaggerEntrance,
   splitLabel,
   type CommandGroup,
   type CommandItem,
+  type ScoredItem,
 } from "./commandPaletteSearch";
 
 // motion 用 props は Chakra のスタイルプロップ名 (`transition`) と衝突したり、
@@ -69,8 +80,23 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   // 切っておくことでコンポーネント跨ぎの衝突を構造的に避ける。
   const highlightId = `cmdk-active-highlight-${useId()}`;
 
-  const grouped = useMemo(() => groupCommands(items, query, mruIds), [items, query, mruIds]);
-  const flat = useMemo(() => flattenGroups(grouped), [grouped]);
+  // スコア計算と大量行の再描画は優先度を下げ、入力欄の反応を先に返す (#1320)。
+  const deferredQuery = useDeferredValue(query);
+  const [expanded, setExpanded] = useState(false);
+
+  const grouped = useMemo(
+    () => groupCommands(items, deferredQuery, mruIds),
+    [items, deferredQuery, mruIds],
+  );
+  // 件数上限と表示順 index の事前計算。行ごとの flat.indexOf (O(n^2)) を持たない。
+  const {
+    groups: visibleGroups,
+    flat,
+    hiddenCount,
+  } = useMemo(
+    () => limitAndIndexGroups(grouped, deferredQuery, expanded),
+    [grouped, deferredQuery, expanded],
+  );
 
   const groupLabel: Record<CommandGroup, string> = {
     mru: t("cmdkGroupMru"),
@@ -84,7 +110,8 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   // クエリが変わって候補が並び替わるたび、選択を先頭へ戻す (範囲外防止も兼ねる)。
   useEffect(() => {
     setActiveIndex(0);
-  }, [query]);
+    setExpanded(false);
+  }, [deferredQuery]);
 
   // アクティブ候補が画面外なら追従スクロール。
   useEffect(() => {
@@ -93,17 +120,35 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
     itemRefs.current.get(active.item.id)?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, flat]);
 
-  const runAt = (index: number) => {
-    const target = flat[index]?.item;
+  // 行は memo されているので、ハンドラは参照が変わらないよう最新値を ref 経由で読む。
+  const latest = useRef({ flat, onClose, onSelectItem });
+  latest.current = { flat, onClose, onSelectItem };
+
+  const runAt = useCallback((index: number) => {
+    const { flat: list, onClose: close, onSelectItem: select } = latest.current;
+    const target = list[index]?.item;
     if (!target) return;
     // 先に閉じてから実行する。run が確認ダイアログ等を開いてもパレットが残らない。
-    onClose();
-    onSelectItem?.(target);
+    close();
+    select?.(target);
     target.run();
-  };
+  }, []);
+
+  const activate = useCallback((index: number) => setActiveIndex(index), []);
+
+  const registerRef = useCallback((id: string, el: HTMLButtonElement | null) => {
+    if (el) itemRefs.current.set(id, el);
+    else itemRefs.current.delete(id);
+  }, []);
 
   const move = (delta: number) => {
     if (flat.length === 0) return;
+    // 上限で隠れた候補があるとき、末尾から ↓ で進んだら続きを展開して次の行へ進む。
+    if (delta > 0 && hiddenCount > 0 && activeIndex === flat.length - 1) {
+      setExpanded(true);
+      setActiveIndex(activeIndex + 1);
+      return;
+    }
     setActiveIndex((cur) => (cur + delta + flat.length) % flat.length);
   };
 
@@ -201,35 +246,51 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
             {t("cmdkNoResults")}
           </Box>
         ) : (
-          grouped.map((g) => (
-            <Box key={g.group}>
-              <Box px="4" pt="2" pb="1" textStyle="overline">
-                {groupLabel[g.group]}
-              </Box>
-              {g.items.map((scored) => {
-                const flatIndex = flat.indexOf(scored);
-                const isActive = flatIndex === activeIndex;
-                return (
+          <>
+            {visibleGroups.map((g) => (
+              <Box key={g.group}>
+                <Box px="4" pt="2" pb="1" textStyle="overline">
+                  {groupLabel[g.group]}
+                </Box>
+                {g.items.map(({ scored, flatIndex }) => (
                   <CommandRow
                     key={scored.item.id}
-                    ref={(el) => {
-                      if (el) itemRefs.current.set(scored.item.id, el);
-                      else itemRefs.current.delete(scored.item.id);
-                    }}
-                    item={scored.item}
-                    labelSegments={splitLabel(scored.item.label, scored.ranges)}
-                    active={isActive}
+                    scored={scored}
+                    index={flatIndex}
+                    active={flatIndex === activeIndex}
                     animateEntrance={shouldStaggerEntrance(flatIndex)}
                     highlightId={highlightId}
-                    onMouseMove={() => {
-                      if (!isActive) setActiveIndex(flatIndex);
-                    }}
-                    onClick={() => runAt(flatIndex)}
+                    registerRef={registerRef}
+                    onActivate={activate}
+                    onRun={runAt}
                   />
-                );
-              })}
-            </Box>
-          ))
+                ))}
+              </Box>
+            ))}
+            {hiddenCount > 0 && (
+              <chakra.button
+                type="button"
+                tabIndex={-1}
+                onClick={() => {
+                  setExpanded(true);
+                  inputRef.current?.focus();
+                }}
+                display="block"
+                w="100%"
+                px="4"
+                py="2"
+                border="none"
+                bg="transparent"
+                cursor="pointer"
+                textAlign="left"
+                fontSize="xs"
+                color="app.textMuted"
+                _hover={{ bg: "app.hover", color: "app.text" }}
+              >
+                {t("cmdkShowMore", { count: hiddenCount })}
+              </chakra.button>
+            )}
+          </>
         )}
       </MotionListBox>
 
@@ -263,28 +324,41 @@ function Hint({ keys, label }: { keys: string; label: string }) {
 }
 
 interface CommandRowProps {
-  item: CommandItem;
-  labelSegments: { text: string; highlighted: boolean }[];
+  scored: ScoredItem;
+  /** 表示順の添字 (`limitAndIndexGroups` が事前計算)。 */
+  index: number;
   active: boolean;
   /** 結果グループのスタッガー出現 (#976) の対象か。上限を超えた行は即時表示。 */
   animateEntrance: boolean;
   /** アクティブ行のハイライトを滑らせる共有 `layoutId` (#976、`CommandPalette` 発行)。 */
   highlightId: string;
-  onMouseMove: () => void;
-  onClick: () => void;
-  ref?: (el: HTMLButtonElement | null) => void;
+  /** 参照の安定したコールバック (行を memo するため、index は行が自分で渡す)。 */
+  registerRef: (id: string, el: HTMLButtonElement | null) => void;
+  onActivate: (index: number) => void;
+  onRun: (index: number) => void;
 }
 
-function CommandRow({
-  item,
-  labelSegments,
+/** memo 済みの行 (#1320)。↑↓ では前後のアクティブ行 2 つだけが再レンダーされる。 */
+const CommandRow = memo(function CommandRow({
+  scored,
+  index,
   active,
   animateEntrance,
   highlightId,
-  onMouseMove,
-  onClick,
-  ref,
+  registerRef,
+  onActivate,
+  onRun,
 }: CommandRowProps) {
+  const { item, ranges } = scored;
+  const labelSegments = useMemo(() => splitLabel(item.label, ranges), [item.label, ranges]);
+  const ref = useCallback(
+    (el: HTMLButtonElement | null) => registerRef(item.id, el),
+    [registerRef, item.id],
+  );
+  const onMouseMove = useCallback(() => {
+    if (!active) onActivate(index);
+  }, [active, onActivate, index]);
+  const onClick = useCallback(() => onRun(index), [onRun, index]);
   return (
     <MotionRow
       ref={ref}
@@ -376,7 +450,7 @@ function CommandRow({
       </Flex>
     </MotionRow>
   );
-}
+});
 
 function Badge({ children }: { children: ReactNode }) {
   return (

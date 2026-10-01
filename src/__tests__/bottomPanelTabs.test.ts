@@ -111,7 +111,8 @@ describe("タイムラプスタブ (#739)", () => {
     expect(appSource).toContain("timelapseProfileId: selectedProfile?.id");
     expect(appSource).toContain('activeBottomPanelTab === "timelapse"');
     expect(appSource).toContain("<TableTimelapsePanel");
-    expect(appSource).toContain("onWatchTable={handleWatchTable}");
+    // ConnectionList へは `useStableCallbacks` の束 (`onWatchTable: handleWatchTable`) 経由で渡す (#1314)。
+    expect(appSource).toContain("onWatchTable: handleWatchTable");
   });
 });
 
@@ -262,7 +263,7 @@ describe("App.tsx の結線 (#1112)", () => {
   it("構造タブ (#1112) はツリーから開け、パネルからデータタブへ戻れる", () => {
     expect(appSource).toContain("structureTable: structureTarget?.table");
     expect(appSource).toContain('activeBottomPanelTab === "structure"');
-    expect(appSource).toContain("onOpenStructure={handleOpenStructure}");
+    expect(appSource).toContain("onOpenStructure: handleOpenStructure");
     expect(appSource).toContain("onOpenData={handleOpenTable}");
   });
 

@@ -51,6 +51,7 @@ import { useLocale, useT, type I18nKey } from "../i18n";
 import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { comboMatchesEvent, formatCombo } from "../shortcutKeys";
+import { beginColumnResizeDrag } from "./columnResizeDrag";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
 import {
   contextMenuPointFromRect,
@@ -770,6 +771,7 @@ export const GRID_CSS: SystemStyleObject = {
     opacity: 0.65,
   },
   "& thead th.is-resizing": { userSelect: "none" },
+  "& thead th.is-resizing .th-resize-handle": { background: "var(--accent)", opacity: 0.65 },
   // 列ヘッダ下端の常時 NULL 率ミニバー (#911)。ヘッダの**高さを変えない**よう
   // 絶対配置で下端に重ねる — こうすると密度設定 (Compact/Normal/Spacious) や
   // フォント拡大でヘッダ高さが変わっても、バーの有無で列間の整列が崩れない。
@@ -3146,6 +3148,26 @@ export const DataGrid = memo(function DataGrid({
     writeStoredColumnSizing(columnSizingStorageKey, next);
   };
 
+  // 列幅ドラッグ (#1312)。ドラッグ中は <col> / <table> の style を直接書き換え、離したとき
+  // だけ columnSizing (state) と localStorage を確定する。
+  const startColumnResize = (
+    e: React.MouseEvent | React.TouchEvent,
+    column: { id: string; getSize: () => number; columnDef: { minSize?: number; maxSize?: number } },
+  ) => {
+    const tableEl = gridTableRef.current;
+    beginColumnResizeDrag({
+      event: e,
+      startSize: column.getSize(),
+      minSize: column.columnDef.minSize ?? 20,
+      maxSize: column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER,
+      col: tableEl?.querySelector<HTMLElement>(`col[data-col-id="${column.id}"]`) ?? null,
+      table: tableEl,
+      header: (e.currentTarget as HTMLElement).closest("th"),
+      onCommit: (size) =>
+        handleColumnSizingChange((prev) => ({ ...prev, [column.id]: size })),
+    });
+  };
+
   // --- Column order & visibility, persisted per result shape ---
   const colStateKey = useMemo(
     () => colStateKeyFrom(columnSizingStorageKey),
@@ -5039,7 +5061,7 @@ export const DataGrid = memo(function DataGrid({
         <colgroup>
           <col style={{ width: ROW_INDEX_WIDTH }} />
           {table.getHeaderGroups()[0]?.headers.map((h) => (
-            <col key={h.id} style={{ width: h.getSize() }} />
+            <col key={h.id} data-col-id={h.id} style={{ width: h.getSize() }} />
           ))}
           {/* Absorbs any extra width so the row-index and data columns
               keep their declared sizes instead of stretching to fill. */}
@@ -5215,8 +5237,8 @@ export const DataGrid = memo(function DataGrid({
                       <Tooltip label={t("gridResizeColumn")}>
                         <div
                           className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
-                          onMouseDown={h.getResizeHandler()}
-                          onTouchStart={h.getResizeHandler()}
+                          onMouseDown={(e) => startColumnResize(e, h.column)}
+                          onTouchStart={(e) => startColumnResize(e, h.column)}
                           onDoubleClick={() => h.column.resetSize()}
                           aria-hidden
                         />

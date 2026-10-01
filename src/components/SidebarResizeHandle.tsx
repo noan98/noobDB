@@ -37,6 +37,44 @@ export function SidebarResizeHandle({
   ariaLabel: string;
 }) {
   const draggingRef = useRef(false);
+  const handleRef = useRef<HTMLDivElement | null>(null);
+  // ドラッグ / キー操作中の「いま見えている」幅 (#1312)。ドラッグ中は React の state
+  // (= App 全体の再レンダー) も localStorage も触らず、グリッド親の CSS 変数
+  // `--sidebar-width` を直接書き換える。確定 (pointerup / keyup / ダブルクリック) で
+  // `onWidthChange` を 1 回だけ呼び、App の state 更新と保存はそこで行う。
+  const liveWidthRef = useRef(width);
+  const dirtyRef = useRef(false);
+  const pendingXRef = useRef<number | null>(null);
+  const rafRef = useRef(0);
+  if (!dirtyRef.current && !draggingRef.current) liveWidthRef.current = width;
+
+  const applyLive = useCallback((w: number) => {
+    liveWidthRef.current = w;
+    dirtyRef.current = true;
+    const el = handleRef.current;
+    el?.parentElement?.style.setProperty("--sidebar-width", `${w}px`);
+    el?.setAttribute("aria-valuenow", String(Math.round(w)));
+  }, []);
+
+  const commit = useCallback(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+    const x = pendingXRef.current;
+    pendingXRef.current = null;
+    if (x !== null) applyLive(clampSidebarWidth(x));
+    if (!dirtyRef.current) return;
+    dirtyRef.current = false;
+    onWidthChange(liveWidthRef.current);
+  }, [applyLive, onWidthChange]);
+
+  useEffect(
+    () => () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    },
+    [],
+  );
 
   // ドラッグ中はカーソルを固定し、細いハンドルから外れてもちらつかないようにする。
   useEffect(() => {
@@ -65,14 +103,26 @@ export function SidebarResizeHandle({
   const onPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!draggingRef.current) return;
-      onWidthChange(clampSidebarWidth(e.clientX));
+      // 高リフレッシュレートでもフレームごとに 1 回だけ反映する。
+      pendingXRef.current = e.clientX;
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = 0;
+          const x = pendingXRef.current;
+          pendingXRef.current = null;
+          if (x !== null) applyLive(clampSidebarWidth(x));
+        });
+      }
     },
-    [onWidthChange],
+    [applyLive],
   );
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      draggingRef.current = false;
+      if (draggingRef.current) {
+        draggingRef.current = false;
+        commit();
+      }
       onResizingChange(false);
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
@@ -80,21 +130,28 @@ export function SidebarResizeHandle({
         // ignore
       }
     },
-    [onResizingChange],
+    [commit, onResizingChange],
   );
 
+  // キー操作も CSS 変数へ直接反映し、確定 (keyup / blur) で state と保存を 1 回だけ行う。
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      const next = sidebarWidthForKey(width, e.key, e.shiftKey);
+      const next = sidebarWidthForKey(liveWidthRef.current, e.key, e.shiftKey);
       if (next === null) return;
       e.preventDefault();
-      onWidthChange(next);
+      applyLive(next);
     },
-    [width, onWidthChange],
+    [applyLive],
   );
+
+  const onDoubleClick = useCallback(() => {
+    applyLive(SIDEBAR_DEFAULT_WIDTH);
+    commit();
+  }, [applyLive, commit]);
 
   return (
     <Box
+      ref={handleRef}
       position="absolute"
       top={0}
       bottom={0}
@@ -156,8 +213,10 @@ export function SidebarResizeHandle({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onDoubleClick={() => onWidthChange(SIDEBAR_DEFAULT_WIDTH)}
+      onDoubleClick={onDoubleClick}
       onKeyDown={onKeyDown}
+      onKeyUp={commit}
+      onBlur={commit}
     >
       <Box className="sidebar-resize-grip" aria-hidden>
         <span />

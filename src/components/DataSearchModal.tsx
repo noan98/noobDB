@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -86,6 +86,112 @@ interface Progress {
 // CommandPalette と同じ stagger 語彙 (#1212)。
 const MotionHitList = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
 const MotionHitCard = chakra(motion.div, {}, { forwardProps: ["variants"] });
+
+/** テーブル選択リストの 1 行 (#1321)。チェックの切替・絞り込みで他の行を再レンダーしない。 */
+const TableCheckRow = memo(function TableCheckRow({
+  name,
+  checked,
+  disabled,
+  onToggle,
+}: {
+  name: string;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: (name: string) => void;
+}) {
+  return (
+    <chakra.label
+      display="flex"
+      alignItems="center"
+      gap="2"
+      py="0.5"
+      px="1"
+      borderRadius="sm"
+      cursor="pointer"
+      userSelect="none"
+      _hover={{ bg: "app.rowHover" }}
+    >
+      <Checkbox checked={checked} onChange={() => onToggle(name)} disabled={disabled} />
+      <chakra.span fontSize="sm" fontFamily="mono" minW={0} truncate>
+        {name}
+      </chakra.span>
+    </chakra.label>
+  );
+});
+
+/**
+ * ヒットしたテーブルのカード (#1321)。ヒットが 1 件届くたびに既存カードを再レンダーしない。
+ * 列の型は `Map` で引く (ヒット列ごとに `columns.find` しない)。
+ */
+const HitCard = memo(function HitCard({
+  entry,
+  staggered,
+  onOpenColumn,
+  onOpenTable,
+}: {
+  entry: HitEntry;
+  staggered: boolean;
+  onOpenColumn: (table: string, column: string, dataType: string) => void;
+  onOpenTable: (entry: HitEntry) => void;
+}) {
+  const t = useT();
+  const dataTypes = useMemo(
+    () => new Map(entry.columns.map((c) => [c.name, c.dataType])),
+    [entry.columns],
+  );
+  return (
+    <MotionHitCard
+      variants={staggered ? variants.staggerItem : undefined}
+      border="1px solid"
+      borderColor="app.border"
+      borderRadius="md"
+      p="2"
+      display="flex"
+      flexDirection="column"
+      gap="1"
+    >
+      <chakra.div display="flex" alignItems="center" justifyContent="space-between" gap="2">
+        <chakra.span textStyle="subheading" fontFamily="mono">
+          {entry.table}
+        </chakra.span>
+        <Button type="button" variant="ghost" onClick={() => onOpenTable(entry)}>
+          {t("dataSearchOpenTable")}
+        </Button>
+      </chakra.div>
+      {entry.hits.map((h) => {
+        const dataType = dataTypes.get(h.column);
+        return (
+          <chakra.button
+            key={h.column}
+            type="button"
+            onClick={() => dataType !== undefined && onOpenColumn(entry.table, h.column, dataType)}
+            display="flex"
+            alignItems="center"
+            gap="2"
+            w="100%"
+            textAlign="left"
+            px="2"
+            py="1"
+            border="none"
+            borderRadius="sm"
+            cursor="pointer"
+            bg="transparent"
+            color="app.text"
+            _hover={{ bg: "app.rowHover" }}
+          >
+            <Icon name="columns" size={ICON_SIZES.sm} />
+            <chakra.span fontSize="sm" fontFamily="mono" flex="1" minW={0} truncate>
+              {h.column}
+            </chakra.span>
+            <chakra.span fontSize="xs" color="app.textMuted" flexShrink={0}>
+              {t("dataSearchHitCount", { count: h.count })}
+            </chakra.span>
+          </chakra.button>
+        );
+      })}
+    </MotionHitCard>
+  );
+});
 
 const MATCH_MODES: MatchMode[] = ["contains", "prefix", "exact"];
 
@@ -195,14 +301,14 @@ export function DataSearchModal({
     return { sum, hasUnknown };
   }, [targetTables, estimates]);
 
-  const toggleTable = (name: string) => {
+  const toggleTable = useCallback((name: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
       return next;
     });
-  };
+  }, []);
 
   const emptySelection = scope === "selected" && selected.size === 0;
   const canStart = meta.kind === "ready" && term.trim() !== "" && !emptySelection && targetTables.length > 0;
@@ -328,6 +434,16 @@ export function DataSearchModal({
     onOpenHit(sql, entry.table);
   };
 
+  // ヒットカードは memo 化しているため、親が毎回作り直す関数は ref 経由で安定化して渡す (#1321)。
+  const jumpRef = useRef({ openColumnHit, openTableHits });
+  jumpRef.current = { openColumnHit, openTableHits };
+  const stableOpenColumn = useCallback(
+    (table: string, column: string, dataType: string) =>
+      jumpRef.current.openColumnHit(table, column, dataType),
+    [],
+  );
+  const stableOpenTable = useCallback((entry: HitEntry) => jumpRef.current.openTableHits(entry), []);
+
   const hitEntries = results.filter((r): r is HitEntry => r.status === "hit");
   const skippedEntries = results.filter((r): r is SkippedEntry => r.status === "skipped");
   const noHitCount = results.filter((r) => r.status === "no-hit").length;
@@ -443,23 +559,13 @@ export function DataSearchModal({
                   flexDirection="column"
                 >
                   {filteredTables.map((tb) => (
-                    <chakra.label
+                    <TableCheckRow
                       key={tb}
-                      display="flex"
-                      alignItems="center"
-                      gap="2"
-                      py="0.5"
-                      px="1"
-                      borderRadius="sm"
-                      cursor="pointer"
-                      userSelect="none"
-                      _hover={{ bg: "app.rowHover" }}
-                    >
-                      <Checkbox checked={selected.has(tb)} onChange={() => toggleTable(tb)} disabled={scanning} />
-                      <chakra.span fontSize="sm" fontFamily="mono" minW={0} truncate>
-                        {tb}
-                      </chakra.span>
-                    </chakra.label>
+                      name={tb}
+                      checked={selected.has(tb)}
+                      disabled={scanning}
+                      onToggle={toggleTable}
+                    />
                   ))}
                   {filteredTables.length === 0 && (
                     // テーブル名フィルタで 0 件になったケース: 「検索一致なし」の
@@ -540,57 +646,13 @@ export function DataSearchModal({
                   animate="animate"
                 >
                   {hitEntries.map((entry, entryIndex) => (
-                    <MotionHitCard
+                    <HitCard
                       key={entry.table}
-                      variants={shouldStaggerEntrance(entryIndex) ? variants.staggerItem : undefined}
-                      border="1px solid"
-                      borderColor="app.border"
-                      borderRadius="md"
-                      p="2"
-                      display="flex"
-                      flexDirection="column"
-                      gap="1"
-                    >
-                      <chakra.div display="flex" alignItems="center" justifyContent="space-between" gap="2">
-                        <chakra.span textStyle="subheading" fontFamily="mono">
-                          {entry.table}
-                        </chakra.span>
-                        <Button type="button" variant="ghost" onClick={() => openTableHits(entry)}>
-                          {t("dataSearchOpenTable")}
-                        </Button>
-                      </chakra.div>
-                      {entry.hits.map((h) => {
-                        const col = entry.columns.find((c) => c.name === h.column);
-                        return (
-                          <chakra.button
-                            key={h.column}
-                            type="button"
-                            onClick={() => col && openColumnHit(entry.table, h.column, col.dataType)}
-                            display="flex"
-                            alignItems="center"
-                            gap="2"
-                            w="100%"
-                            textAlign="left"
-                            px="2"
-                            py="1"
-                            border="none"
-                            borderRadius="sm"
-                            cursor="pointer"
-                            bg="transparent"
-                            color="app.text"
-                            _hover={{ bg: "app.rowHover" }}
-                          >
-                            <Icon name="columns" size={ICON_SIZES.sm} />
-                            <chakra.span fontSize="sm" fontFamily="mono" flex="1" minW={0} truncate>
-                              {h.column}
-                            </chakra.span>
-                            <chakra.span fontSize="xs" color="app.textMuted" flexShrink={0}>
-                              {t("dataSearchHitCount", { count: h.count })}
-                            </chakra.span>
-                          </chakra.button>
-                        );
-                      })}
-                    </MotionHitCard>
+                      entry={entry}
+                      staggered={shouldStaggerEntrance(entryIndex)}
+                      onOpenColumn={stableOpenColumn}
+                      onOpenTable={stableOpenTable}
+                    />
                   ))}
                   {/* スキャン中は結果行の形を模した skeleton を末尾に出す (#1212)。 */}
                   {scanning && <SkeletonSearchRows rows={hitEntries.length === 0 ? 3 : 1} />}

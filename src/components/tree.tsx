@@ -254,9 +254,24 @@ const MotionCollapse = chakra(
  * フェードすることで、ブラウザのレイアウト/リフローを起こさず (合成のみで)
  * 軽量に開閉する。隣接項目はアニメーションせず即座に詰まる。
  */
-export function TreeCollapse({ open, children }: { open: boolean; children: ReactNode }) {
+export function TreeCollapse({
+  open,
+  children,
+  initial = false,
+  onExitComplete,
+}: {
+  open: boolean;
+  children: ReactNode;
+  /** マウント時点で既に開いている場合も enter アニメを再生するか。閉じている間は
+   *  `TreeCollapse` 自体をマウントしない呼び出し側 (スキーマツリーのテーブル行、#1314) が、
+   *  開く操作でマウントされたときだけ true にする。 */
+  initial?: boolean;
+  /** 退場アニメが終わった (子が外れた) とき。呼び出し側が `TreeCollapse` ごと
+   *  アンマウントする合図に使う。 */
+  onExitComplete?: () => void;
+}) {
   return (
-    <AnimatePresence initial={false}>
+    <AnimatePresence initial={initial} onExitComplete={onExitComplete}>
       {open && (
         <MotionCollapse {...variants.fade} transition={transitions.crossfade}>
           {children}
