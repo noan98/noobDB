@@ -6,6 +6,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
+import { labelWithShortcut } from "../shortcutLabel";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 
 // キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
@@ -46,6 +47,8 @@ interface Props {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
+  /** 「+」ボタンのツールチップに添える解決済みコンボ (#1278)。未指定ならキー表記なし。 */
+  newTabCombo?: string;
   /**
    * Drag/keyboard reorder. Called with the full tab-id list in its new
    * order. Omitted disables reordering (tabs render statically).
@@ -69,6 +72,7 @@ export function TabBar({
   onSelect,
   onClose,
   onNew,
+  newTabCombo,
   onReorder,
   disabled,
   onTabContextMenu,
@@ -639,7 +643,7 @@ export function TabBar({
           </AnimatePresence>
         </Box>
       )}
-      <Tooltip label={t("tabNew")} focusableWrapper={disabled}>
+      <Tooltip label={labelWithShortcut(t("tabNew"), newTabCombo)} focusableWrapper={disabled}>
         <chakra.button
           display="inline-flex"
           alignItems="center"

@@ -61,6 +61,7 @@ import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
 import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
 import { formatCombo as formatComboLabel } from "../shortcutKeys";
+import { labelWithShortcut } from "../shortcutLabel";
 import type { ShortcutId } from "../shortcuts";
 import { codeMirrorSqlDialectFor } from "./sqlDialect";
 import { formatSqlAsync } from "./sqlFormat";
@@ -173,6 +174,14 @@ export interface ActiveTable {
 
 interface Props {
   onRun: (sql: string) => void;
+  /**
+   * 結果を残したまま新しいタブで実行する (#1278)。`Mod+Shift+Enter` の
+   * 実行は既定ではエディタ内ではドライラン (preview) と同じキーになるため、
+   * マウスでも辿れるよう「…」メニューに入口を置く。未指定ならメニュー項目を出さない。
+   */
+  onRunInNewTab?: (sql: string) => void;
+  /** `runNewTab` の解決済みコンボ (メニュー項目のキー表記用)。 */
+  runNewTabCombo?: string;
   /** True while this tab's Run is streaming — flips the Run badge to its `running` state. */
   running?: boolean;
   /** True while this tab's Dry Run preview is streaming — flips the Preview badge to `running`. */
@@ -423,6 +432,8 @@ function buildSqlExtension(
 
 export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEditor({
   onRun,
+  onRunInNewTab,
+  runNewTabCombo,
   running,
   previewRunning,
   onPreview,
@@ -942,6 +953,15 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     }
   };
 
+  const runInNewTabSelectionOrAll = () => {
+    if (!onRunInNewTab) return;
+    const text = currentText();
+    if (text !== null) {
+      resetHistoryNav();
+      onRunInNewTab(text);
+    }
+  };
+
   const formatSelectionOrAll = () => {
     const view = viewRef.current;
     if (!view) return;
@@ -1086,7 +1106,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     : activeTable
       ? t("editorRunOnTableTitle", { database: activeTable.database, table: activeTable.name })
       : t("editorRunTitle");
-  const runTitle = `${runTitleBase} (${t("editorRunShortcut")})`;
+  const runTitle = labelWithShortcut(runTitleBase, runCombo);
 
   // When a button is disabled, its tooltip explains why instead of describing
   // the (currently unavailable) action — so a greyed-out button never looks
@@ -1139,6 +1159,19 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   // 無効時の理由 (`disabledReason` 等) は `title` としてそのまま持ち込むので、
   // ツールバーのボタンだったときと同じ説明がメニュー上でも読める。
   const overflowItems: ContextMenuEntry[] = [];
+  if (onRunInNewTab && !explainMode) {
+    overflowItems.push({
+      label: t("editorRunNewTab"),
+      icon: "play",
+      // 既定では runNewTab と preview が同じコンボ (スコープ違いで住み分け) なので、
+      // エディタ内で押すと別動作になるときはキー表記を出さない (嘘の案内を避ける)。
+      shortcut:
+        runNewTabCombo && runNewTabCombo !== previewCombo ? formatComboLabel(runNewTabCombo) : undefined,
+      title: disabledReason ?? t("editorRunNewTabTitle"),
+      disabled: disabled || !hasContent,
+      onSelect: runInNewTabSelectionOrAll,
+    });
+  }
   if (onExplain) {
     overflowItems.push({
       label: t("editorExplain"),
@@ -1247,7 +1280,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             states={previewStates}
             onClick={previewSelectionOrAll}
             disabled={previewState === "disabled"}
-            title={disabledReason ?? `${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
+            title={disabledReason ?? labelWithShortcut(t("editorPreviewTitle"), previewCombo)}
           />
         )}
         {/* 影響行数プリフライトのバッジ (#737)。実行ボタン付近に常時表示する。 */}

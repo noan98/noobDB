@@ -363,6 +363,7 @@ import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity
 import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
+import { shortcutTooltip } from "./shortcutLabel";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
 import { workspaceViewKey } from "./components/workspaceView";
 import {
@@ -1906,7 +1907,7 @@ export default function App() {
   const [pendingParams, setPendingParams] = useState<{
     tab: Tab;
     sql: string;
-    mode: "run" | "preview" | "explain";
+    mode: "run" | "runNewTab" | "preview" | "explain";
   } | null>(null);
 
   // The focused pane drives all the "active tab" handlers (sidebar inserts,
@@ -4959,9 +4960,10 @@ export default function App() {
   // Run the resolved SQL through whichever action the user triggered. Used both
   // directly (no parameters) and after the parameter modal substitutes values.
   const dispatchEditorAction = useCallback(
-    (tab: Tab, sql: string, mode: "run" | "preview" | "explain") => {
+    (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => {
       if (mode === "preview") previewQueryInTab(tab.id, sql);
       else if (mode === "explain") explainForTab(tab, sql);
+      else if (mode === "runNewTab") runInTabWithGate(tab, sql, { newTab: true });
       else runInTabWithGate(tab, sql);
     },
     [previewQueryInTab, explainForTab, runInTabWithGate],
@@ -4970,7 +4972,7 @@ export default function App() {
   // Editor run/preview/explain gate for {{variable}} parameters: when the SQL
   // has placeholders, prompt for values first; otherwise run straight through.
   const resolveParamsThen = useCallback(
-    (tab: Tab, sql: string, mode: "run" | "preview" | "explain") => {
+    (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => {
       if (extractQueryParams(sql).length === 0) {
         dispatchEditorAction(tab, sql, mode);
         return;
@@ -7815,6 +7817,7 @@ export default function App() {
           onSelect={(id) => selectTab(pane.id, id)}
           onClose={handleCloseTab}
           onNew={() => handleNewTab(pane.id)}
+          newTabCombo={shortcutBindings.newTab}
           onReorder={(ids) => reorderTabsInPane(pane.id, ids)}
           onTabContextMenu={openTabMenu}
           onSplit={split ? () => closePane(pane.id) : splitPane}
@@ -7896,6 +7899,8 @@ export default function App() {
                     running={tab.streaming && !tab.previewStreaming}
                     previewRunning={tab.previewStreaming}
                     onRun={(sql) => resolveParamsThen(tab, sql, "run")}
+                    onRunInNewTab={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "runNewTab")}
+                    runNewTabCombo={shortcutBindings.runNewTab}
                     onPreview={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "preview")}
                     onExplain={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "explain")}
                     onBroadcast={tab.kind === "explain" ? undefined : (sql) => requestBroadcast(sql, tab)}
@@ -8621,7 +8626,7 @@ export default function App() {
           <IconButton
             flexShrink="0"
             onClick={toggleSidebar}
-            title={t("sidebarCollapse")}
+            title={shortcutTooltip(t("sidebarCollapse"), shortcutBindings, "toggleSidebar")}
             aria-label={t("sidebarCollapse")}
           >
             <Icon name="chevron-left" />
@@ -8916,7 +8921,7 @@ export default function App() {
           transition={transitions.enter}
           style={{ position: "absolute", top: "9px", left: "var(--space-2)", zIndex: 46 }}
         >
-        <Tooltip label={t("sidebarExpand")}>
+        <Tooltip label={shortcutTooltip(t("sidebarExpand"), shortcutBindings, "toggleSidebar")}>
           <chakra.button
             display="inline-flex"
             alignItems="center"
