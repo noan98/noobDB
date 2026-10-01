@@ -139,7 +139,9 @@ describe("QueryBuilder INSERT full column expansion + required marks", () => {
     fireEvent.click(screen.getByRole("button", { name: "INSERT" }));
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
     const addAllBtn = await screen.findByRole("button", { name: t("qbAddAllColumns") });
-    await waitFor(() => expect(addAllBtn).not.toBeDisabled());
+    // 列は listDatabases → listTables → describeTable の 3 段の非同期取得の後に入る。
+    // CI のカバレッジ計測下では既定の 1 秒に間に合わないことがあるため余裕を持たせる。
+    await waitFor(() => expect(addAllBtn).not.toBeDisabled(), { timeout: 5000 });
     fireEvent.click(addAllBtn);
 
     expect(screen.getByDisplayValue("id")).toBeInTheDocument();
@@ -161,7 +163,9 @@ describe("QueryBuilder INSERT full column expansion + required marks", () => {
     fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "Alice" } });
 
     const addAllBtn = await screen.findByRole("button", { name: t("qbAddAllColumns") });
-    await waitFor(() => expect(addAllBtn).not.toBeDisabled());
+    // 列は listDatabases → listTables → describeTable の 3 段の非同期取得の後に入る。
+    // CI のカバレッジ計測下では既定の 1 秒に間に合わないことがあるため余裕を持たせる。
+    await waitFor(() => expect(addAllBtn).not.toBeDisabled(), { timeout: 5000 });
     fireEvent.click(addAllBtn);
 
     expect(screen.getByDisplayValue("Alice")).toBeInTheDocument();
