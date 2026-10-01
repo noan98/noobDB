@@ -358,7 +358,7 @@ import {
 } from "./queryNotify";
 import type { IncomingFk } from "./fkNavigation";
 import type { ValueLookup } from "./components/useValuePicker";
-import { addPinned, type PinnedResult } from "./pinnedCompare";
+import { addPinned, pinToastPlan, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
 import { semanticColorToken, semanticColorVar } from "./semanticColors";
@@ -1195,6 +1195,8 @@ export default function App() {
   // 再計算されるよう、現在のロケールを依存に含めるために購読する。
   const locale = useLocale();
   const toast = useToast();
+  // pinCurrentResult (#1277) が openFullView (後方で定義) を呼ぶための橋渡し。
+  const openFullViewRef = useRef<(view: "compareResults") => void>(() => {});
   // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
   // `await confirm({...})` の形で同期感覚で呼べる。
   const { confirm, dialog: confirmDialogElement } = useConfirm();
@@ -4958,8 +4960,20 @@ export default function App() {
       elapsedMs: tab.result.elapsed_ms,
       pinnedAt: Date.now(),
     };
-    setPinnedResults((prev) => addPinned(prev, item));
-  }, []);
+    const next = addPinned(pinnedResults, item);
+    setPinnedResults(next);
+    // ピン直後に比較ビューへ誘導する (#1277)。2 件未満は比較できないので案内のみ。
+    const plan = pinToastPlan(next.length);
+    toast.notify({
+      message: translate(plan.messageKey),
+      ...(plan.showOpenAction && {
+        action: {
+          label: translate("pinToastOpenCompare"),
+          onAction: () => openFullViewRef.current("compareResults"),
+        },
+      }),
+    });
+  }, [pinnedResults, toast]);
 
   // Run the resolved SQL through whichever action the user triggered. Used both
   // directly (no parameters) and after the parameter modal substitutes values.
@@ -7264,6 +7278,7 @@ export default function App() {
       setFormInstanceId((n) => n + 1);
     }
   }, []);
+  openFullViewRef.current = openFullView;
 
   /**
    * ボトムパネル (#1112) のタブを開く / 閉じる。ツールメニュー・コマンドパレット

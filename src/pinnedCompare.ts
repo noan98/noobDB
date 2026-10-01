@@ -49,3 +49,20 @@ export function addPinned(
   const next = [...list, item];
   return next.length > max ? next.slice(next.length - max) : next;
 }
+
+/** ピン直後のトーストの内容 (#1277)。 */
+export interface PinToastPlan {
+  messageKey: "pinToastCompare" | "pinToastNeedOneMore";
+  /** 「比較を開く」アクションを付けるか。 */
+  showOpenAction: boolean;
+}
+
+/**
+ * ピン留め後のトーストを決める。比較は 2 件そろって初めて成立するので、
+ * 2 件未満はアクションを出さず「もう 1 件ピンすると比較できます」と案内する。
+ */
+export function pinToastPlan(pinnedCount: number): PinToastPlan {
+  return pinnedCount >= 2
+    ? { messageKey: "pinToastCompare", showOpenAction: true }
+    : { messageKey: "pinToastNeedOneMore", showOpenAction: false };
+}
