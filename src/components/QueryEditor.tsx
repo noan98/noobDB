@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useEffect,
+  useLayoutEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -889,8 +890,9 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   // タブ切替 (#1308)。`EditorView` は作り直さず、離れるタブの state を保存して、戻る
   // タブの保存済み state (無ければ `initialSql` から新規) を `setState` で差し替える。
   // `setState` は update listener を呼ばないので、onChange / onSelectionChange の
-  // 誤発火 (別タブの内容を現在のタブへ書き戻す) は起きない。
-  useEffect(() => {
+  // 誤発火 (別タブの内容を現在のタブへ書き戻す) は起きない。描画前に差し替えて、前のタブの
+  // 本文が 1 フレーム見えないよう layout effect にする。
+  useLayoutEffect(() => {
     const view = viewRef.current;
     const prevTabId = activeTabIdRef.current;
     if (!view || tabId === undefined || prevTabId === tabId) {
