@@ -62,6 +62,10 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
     await editor.click();
     await browser.keys(["Control", "a"]);
     await browser.keys([sql]);
+    // 入力が自動補完などで化けていないことを確かめる (化けると別の SQL が走って原因が分かりにくい)。
+    const typed = await editor.getText();
+    console.log(`[E2E] エディタの入力内容: ${JSON.stringify(typed)}`);
+    expect(typed.replace(/\s+/g, " ").trim()).toBe(sql);
     const runBtn = await $('[data-testid="query-editor-run"]');
     await runBtn.waitForEnabled({ timeout: 10_000 });
     await runBtn.click();
