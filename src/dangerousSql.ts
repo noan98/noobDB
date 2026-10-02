@@ -511,47 +511,44 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
   return true;
 }
 
-const SCHEMA_MUTATING_PREFIXES = [
+/**
+ * スキーマを変えうる DDL 動詞。バックエンド `sql_may_change_schema` (`db/mod.rs`)
+ * と同じ集合・同じ判定 (共有ゴールデン `schemaMutatingVectors.json` で固定する)。
+ */
+const SCHEMA_MUTATING_KEYWORDS = [
   "create",
   "alter",
   "drop",
-  "rename",
   "truncate",
+  "rename",
+  // SQL Server 方言のコメント編集 (拡張プロパティ)。`describe_table` の列コメントを変える。
+  "sp_addextendedproperty",
+  "sp_updateextendedproperty",
+  "sp_dropextendedproperty",
 ];
 
 /**
  * Best-effort detection of DDL that can add/rename/remove tables, columns, or
- * indexes, so the editor's autocomplete schema cache can be refreshed
- * afterwards. Comments and quoted literals are masked first, then EVERY
- * `;`-separated statement's leading keyword is checked — so a schema change
- * hidden behind a leading comment (`-- note\nDROP TABLE t`) or after an earlier
- * statement (`SELECT 1; DROP TABLE t`) is still caught, not just a DDL verb at
- * the very start. Leans toward over-detection: a false positive only triggers a
- * cheap re-fetch, so when in doubt we report `true`.
+ * indexes (or edit their comments), mirroring the backend's
+ * `sql_may_change_schema` (#1221). Comments and quoted literals are masked first,
+ * then the WHOLE body is scanned for a DDL verb as a standalone word — not just
+ * each statement's leading keyword — so a schema change hidden behind a leading
+ * comment (`-- note\nDROP TABLE t`), after an earlier statement
+ * (`SELECT 1; DROP TABLE t`) or behind a CTE (`WITH x AS (...) CREATE ...`) is
+ * still caught. PostgreSQL's `COMMENT ON ...` is detected as a phrase.
  *
- * `create` / `alter` / `drop` already cover the compound DDL forms the verb
- * leads — `CREATE INDEX`, `DROP INDEX`, `ALTER TABLE ... RENAME COLUMN`,
- * `ALTER TABLE ... RENAME TO` — because only the leading keyword is matched.
+ * Leans toward over-detection: a false positive only triggers a cheap re-fetch,
+ * while a miss leaves stale schema, so when in doubt we report `true`.
  *
  * `driver` selects the string-escaping rules used while masking (#852, #1004).
  * Omit it only where the driver is genuinely unknown — see `isReadOnlySql`.
  */
 export function isSchemaMutatingSql(sql: string, driver?: string): boolean {
-  const masked = maskLiterals(sql, driver);
-  let start = 0;
-  for (let i = 0; i <= masked.length; i++) {
-    if (i === masked.length || masked[i] === ";") {
-      const body = masked.slice(start, i).toLowerCase().replace(/^[\s(]+/, "");
-      if (
-        body &&
-        SCHEMA_MUTATING_PREFIXES.some((kw) => startsWithKeyword(body, kw))
-      ) {
-        return true;
-      }
-      start = i + 1;
-    }
-  }
-  return false;
+  const masked = maskLiterals(sql, driver).toLowerCase();
+  return (
+    SCHEMA_MUTATING_KEYWORDS.some((kw) => containsWord(masked, kw)) ||
+    /\bcomment\s+on\b/.test(masked)
+  );
 }
 
 /**

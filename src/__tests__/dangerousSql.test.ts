@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   analyzeDangerousSql,
   isReadOnlySql,
-  isSchemaMutatingSql,
 } from "../dangerousSql";
 
 describe("analyzeDangerousSql", () => {
@@ -330,49 +329,8 @@ describe("CTE classification corpus (#286)", () => {
   }
 });
 
-// Schema-cache invalidation gate. Leans toward over-detection: every
-// `;`-separated statement is checked after masking comments/literals.
-const SCHEMA_MUTATING_CORPUS: { sql: string; mutates: boolean }[] = [
-  // Core DDL verbs.
-  { sql: "CREATE TABLE t (id INT)", mutates: true },
-  { sql: "DROP TABLE t", mutates: true },
-  { sql: "TRUNCATE TABLE t", mutates: true },
-  { sql: "RENAME TABLE a TO b", mutates: true },
-  // Compound DDL — leading verb already covers these.
-  { sql: "ALTER TABLE t RENAME COLUMN a TO b", mutates: true },
-  { sql: "ALTER TABLE t RENAME TO t2", mutates: true },
-  { sql: "CREATE INDEX idx ON t (a)", mutates: true },
-  { sql: "CREATE UNIQUE INDEX idx ON t (a)", mutates: true },
-  { sql: "DROP INDEX idx ON t", mutates: true },
-  { sql: "create index idx on t (a)", mutates: true },
-  // A leading comment must not hide the DDL.
-  { sql: "-- migrate\nDROP TABLE t", mutates: true },
-  { sql: "/* block */ CREATE TABLE t (id INT)", mutates: true },
-  // A schema change after an earlier statement still counts.
-  { sql: "SELECT 1; DROP TABLE t", mutates: true },
-  { sql: "INSERT INTO t VALUES (1); ALTER TABLE t ADD c INT", mutates: true },
-  // Wrapped in parens (e.g. tooling-prefixed) — leading "(" is skipped.
-  { sql: "( CREATE TABLE t (id INT) )", mutates: true },
-  // Plain DML / reads must NOT trip the gate.
-  { sql: "SELECT * FROM t", mutates: false },
-  { sql: "INSERT INTO t VALUES (1)", mutates: false },
-  { sql: "UPDATE t SET a = 1 WHERE id = 2", mutates: false },
-  { sql: "DELETE FROM t WHERE id = 2", mutates: false },
-  // The DDL keyword sitting inside a string/comment must not count.
-  { sql: "SELECT 'drop table t' AS note", mutates: false },
-  { sql: "SELECT * FROM t -- create table later", mutates: false },
-  // A column literally named like a keyword in DML stays a non-mutation.
-  { sql: "INSERT INTO logs (create_user) VALUES (1)", mutates: false },
-  { sql: "", mutates: false },
-];
-
-describe("isSchemaMutatingSql (#351)", () => {
-  for (const { sql, mutates } of SCHEMA_MUTATING_CORPUS) {
-    it(`${mutates ? "invalidates" : "keeps cache for"}: ${JSON.stringify(sql)}`, () => {
-      expect(isSchemaMutatingSql(sql)).toBe(mutates);
-    });
-  }
-});
+// isSchemaMutatingSql の判定は共有ゴールデン (fixtures/schemaMutatingVectors.json) を
+// schemaMutatingGolden.test.ts で検証する (#1221)。ここに手コピーのコーパスは持たない。
 
 // --- #1256: マスクの使い回しと、バックエンド判定値のヒント ---------------------
 

@@ -2082,7 +2082,16 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
 pub fn sql_may_change_schema(driver: DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
     let masked = mask_for_driver(driver, &orig);
-    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    // 空白の連なり (改行・タブ・連続スペース) は 1 つのスペースへ畳む。`COMMENT\nON`
+    // のようにフレーズ内の空白が揺れても「comment on」を取りこぼさないため。単語境界は
+    // 空白で区切られたままなので他のキーワード判定には影響しない。
+    let masked_lower: String = masked
+        .iter()
+        .collect::<String>()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     ["create", "alter", "drop", "truncate", "rename"]
         .iter()
         .any(|kw| contains_word(&masked_lower, kw))
@@ -3035,8 +3044,7 @@ mod tests {
     use super::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
         has_stacked_statements, has_stacked_statements_for, is_read_only_sql, is_read_only_sql_for,
-        is_session_init_sql, mask_sensitive_var, sql_may_change_schema, sum_size_parts, DriverKind,
-        SslMode, WriteKind,
+        is_session_init_sql, mask_sensitive_var, sum_size_parts, DriverKind, SslMode, WriteKind,
     };
 
     fn test_col(name: &str) -> super::types::TableColumnInfo {
@@ -3379,78 +3387,10 @@ mod tests {
         }
     }
 
-    /// Schema Cache (#1097) の invalidate 判定: DDL キーワードを含む文は検出
-    /// され、通常の DML / SELECT は検出されないこと。
-    #[test]
-    fn sql_may_change_schema_detects_ddl_keywords() {
-        let ddl = [
-            "CREATE TABLE t (id INT)",
-            "ALTER TABLE t ADD COLUMN c INT",
-            "DROP TABLE t",
-            "TRUNCATE TABLE t",
-            "RENAME TABLE t TO t2",
-            "CREATE INDEX idx ON t (c)",
-            "DROP VIEW v",
-            "CREATE OR REPLACE FUNCTION f() RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql",
-        ];
-        for sql in ddl {
-            for driver in STANDARD_DRIVERS {
-                assert!(
-                    sql_may_change_schema(driver, sql),
-                    "{driver:?} を DDL として検出できていない: {sql:?}"
-                );
-            }
-        }
-
-        let non_ddl = [
-            "SELECT * FROM t",
-            "INSERT INTO t (id) VALUES (1)",
-            "UPDATE t SET id = 1",
-            "DELETE FROM t WHERE id = 1",
-            "SELECT * FROM t WHERE note = 'please alter this later'",
-        ];
-        for sql in non_ddl {
-            for driver in STANDARD_DRIVERS {
-                assert!(
-                    !sql_may_change_schema(driver, sql),
-                    "{driver:?} が DML/SELECT を誤って DDL 判定した: {sql:?}"
-                );
-            }
-        }
-    }
-
-    /// マルチステートメントのうち後段だけが DDL でも検出できること
-    /// (`run_query_transaction` が渡す文配列の各要素がこの経路を通る想定)。
-    #[test]
-    fn sql_may_change_schema_scans_the_whole_body_not_just_the_leading_keyword() {
-        assert!(sql_may_change_schema(
-            DriverKind::Mysql,
-            "SELECT 1; ALTER TABLE t ADD COLUMN c INT"
-        ));
-    }
-
-    /// コメント編集 (#1002) もスキーマキャッシュを無効化する。`comment` という
-    /// 列名を読むだけの SELECT は対象外。
-    #[test]
-    fn sql_may_change_schema_detects_comment_edits() {
-        assert!(sql_may_change_schema(
-            DriverKind::Postgres,
-            "COMMENT ON COLUMN \"public\".\"t\".\"c\" IS 'x'"
-        ));
-        assert!(!sql_may_change_schema(
-            DriverKind::Postgres,
-            "SELECT comment FROM notes WHERE comment <> ''"
-        ));
-    }
-
-    /// 文字列リテラルの中身は DDL 判定に影響しない (マスク経由で走査するため)。
-    #[test]
-    fn sql_may_change_schema_ignores_keywords_inside_string_literals() {
-        assert!(!sql_may_change_schema(
-            DriverKind::Postgres,
-            "SELECT 'drop everything' AS warning"
-        ));
-    }
+    // `sql_may_change_schema` の判定は共有ゴールデン
+    // (`src/__tests__/fixtures/schemaMutatingVectors.json`) を
+    // `tests/schema_mutating_golden.rs` が読んで検証する (#1221)。ここに手コピーの
+    // ケースは持たない。
 
     /// The same fail-open shape, but through the dry-run preview's
     /// stacked-statement gate (#852). A DDL stacked behind a DML escapes the
