@@ -95,7 +95,14 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
     await nameInput.waitForExist({ timeout: 10_000 });
     await nameInput.setValue("E2E Test SQLite");
 
-    await (await $('[data-testid="connection-form-driver"]')).selectByAttribute("value", "sqlite");
+    // ネイティブ <select> は WebKitGTK + xvfb でポップアップが出て selectByAttribute が
+    // 固まることがある。値を直接セットして change を発火し、React の state を更新する。
+    const driverSelect = await $('[data-testid="connection-form-driver"]');
+    await browser.execute((el: HTMLSelectElement) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(el, "sqlite");
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }, driverSelect as unknown as HTMLSelectElement);
 
     const filePathInput = await $('[data-testid="connection-form-sqlite-path"]');
     await filePathInput.waitForExist({ timeout: 5_000 });
