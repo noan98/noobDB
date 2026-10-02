@@ -1317,7 +1317,7 @@ interface SchemaRowListProps {
   /** 現在結果パネルに開いているテーブルの行キー。窓の外でも常にマウントしておく。 */
   activeKey: string | null;
   /** このリストより上の要素の高さが変わりうる状態 (開閉・並べ替え)。変わったら位置を測り直す。 */
-  layoutToken: unknown;
+  layoutToken: string;
 }
 
 /**
@@ -1338,6 +1338,7 @@ const SchemaRowList = memo(function SchemaRowList({
   handleRef,
   store,
   activeKey,
+  layoutToken,
 }: SchemaRowListProps) {
   const virtual = rows.length > VIRTUALIZE_ROW_THRESHOLD;
   const listRef = useRef<HTMLDivElement>(null);
@@ -1409,18 +1410,53 @@ const SchemaRowList = memo(function SchemaRowList({
   const virtualRef = useRef(virtual);
   virtualRef.current = virtual;
 
-  // リストの先頭がスクロール要素の中のどこから始まるか。上のプロファイル / グループの開閉で
-  // 動くので、描画のたびに (読むだけ) 測り直す。変わらなければ state は更新しない。
+  // リストの先頭がスクロール要素の中のどこから始まるか (`scrollMargin`)。測るのは「位置が
+  // 変わりうるきっかけ」のときだけで、描画のたびには測らない (`getBoundingClientRect` は
+  // 直前の DOM 変更があると強制リフローになる, #1342)。きっかけは次の 3 つ。
+  //  1. 仮想化の ON/OFF・上の層の構造 (`layoutToken`: プロファイル / グループの開閉・増減)
+  //     が変わったコミット直後 (1 回だけ測る)。
+  //  2. リストより上にある兄弟要素 (祖先を scroller まで辿った各階層の前の兄弟) の大きさの変化。
+  //     開閉アニメーション中や、密度・フォント拡大で行の高さが変わる場合を拾う。
+  //     `ResizeObserver` のコールバックはレイアウト計算後に呼ばれるので、そこで読んでも
+  //     強制リフローにならない。
+  //  3. scroller 自体の大きさの変化 (ウィンドウサイズ) と、`<html>` の属性・style の変化
+  //     (`data-density` / `--font-scale`。上に兄弟が無くても余白が変わる)。rAF で 1 フレーム 1 回に間引く。
+  // 値が変わらなければ state は更新しない。
+  void layoutToken; // 依存として使う (測り直しのきっかけ)
   useLayoutEffect(() => {
     if (!virtual) return;
     const list = listRef.current;
     const scroller = scrollRef.current;
     if (!list || !scroller) return;
-    const offset = Math.round(
-      list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop,
-    );
-    setScrollMargin((prev) => (prev === offset ? prev : offset));
-  });
+    const measure = () => {
+      const offset = Math.round(
+        list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop,
+      );
+      setScrollMargin((prev) => (prev === offset ? prev : offset));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(scroller);
+    for (let node: HTMLElement | null = list; node && node !== scroller; node = node.parentElement) {
+      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) ro.observe(sib);
+    }
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        measure();
+      });
+    };
+    const mo = typeof MutationObserver === "undefined" ? null : new MutationObserver(schedule);
+    mo?.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-density"] });
+    return () => {
+      ro.disconnect();
+      mo?.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [virtual, layoutToken, scrollRef]);
 
   // 窓の外の行へのフォーカス: スクロールして描画させ、描画できたらフォーカスする。
   useLayoutEffect(() => {
@@ -3179,10 +3215,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     ? `tbl:${tableKey(activeTableDb, activeTableName)}`
     : null;
   // スキーマ行リストの位置を測り直すきっかけ: 上にあるプロファイル / グループの開閉・増減。
-  const rowListLayoutToken = useMemo(
-    () => ({ visibleProfiles, expandedGroups, expandedProfiles }),
-    [visibleProfiles, expandedGroups, expandedProfiles],
-  );
+  // 値 (文字列) で比べるので、`visibleProfiles` が毎レンダー作り直されても、構造が同じなら
+  // 同じトークンになる (再レンダーのたびに測り直さないため, #1342)。
+  const rowListLayoutToken = [
+    visibleProfiles.map((p) => `${p.id}\u0001${p.group ?? ""}`).join("\u0000"),
+    // グループは「キー無し = 開いている」なので、false も含めて (キー, 値) を並べる。
+    Object.entries(expandedGroups).map(([k, v]) => `${k}\u0001${v}`).join("\u0000"),
+    Object.entries(expandedProfiles).map(([k, v]) => `${k}\u0001${v}`).join("\u0000"),
+  ].join("\u0002");
+
 
   const renderProfile = (p: ConnectionProfile, siblingIds: string[]) => {
     const profileTreeKey = `profile:${p.id}`;
