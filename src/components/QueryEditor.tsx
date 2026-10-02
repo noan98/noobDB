@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  memo,
   useEffect,
   useLayoutEffect,
   useImperativeHandle,
@@ -465,7 +466,7 @@ function buildSqlExtension(
   });
 }
 
-export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEditor({
+export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function QueryEditor({
   onRun,
   onRunInNewTab,
   runNewTabCombo,
@@ -1553,4 +1554,4 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       </AnimatePresence>
     </Box>
   );
-});
+}));

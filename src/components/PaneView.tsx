@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useMemo, useSyncExternalStore, type ComponentProps, type MutableRefObject, type ReactNode } from "react";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
@@ -39,10 +39,8 @@ import { GRID_KEEP_ALIVE_LIMIT } from "./keepAliveSet";
 import { type Status } from "../statusMessage";
 import { estimatedTotalPages } from "../pagination";
 import { Tooltip } from "./Tooltip";
-import { memo } from "react";
 import type { Tab, PaneState } from "../App";
 import type { Settings } from "../settings";
-import type { MutableRefObject } from "react";
 import { useStoreSelector, type TabPaneStore } from "../tabPaneStore";
 
 
@@ -295,6 +293,37 @@ export const PaneView = memo(
     },
     sameTabs,
   );
+  // TabBar (memo) へ渡すペイン単位のコールバック。`actions` も `paneId` も不変なので参照が固定される。
+  const onSelectTab = useCallback((id: string) => actions.selectTab(paneId, id), [actions, paneId]);
+  const onNewTab = useCallback(() => actions.handleNewTab(paneId), [actions, paneId]);
+  const onReorderTabs = useCallback(
+    (ids: string[]) => actions.reorderTabsInPane(paneId, ids),
+    [actions, paneId],
+  );
+  const onSplit = useCallback(
+    () => (split ? actions.closePane(paneId) : actions.splitPane()),
+    [actions, paneId, split],
+  );
+  // QueryEditor (memo) へ渡す、タブに依存しないコールバック。
+  const onOpenSqlFile = useCallback(() => void actions.handleOpenSqlFile(), [actions]);
+  const onSaveSqlFile = useCallback(() => void actions.handleSaveSqlFile(), [actions]);
+  const onFormatError = useCallback(
+    (error: string) =>
+      actions.setStatus({ kind: "key", key: "statusFormatError", vars: { error }, error: true }),
+    [actions],
+  );
+  const onToggleEmergencyMode = useCallback(
+    (next: boolean) => void actions.handleToggleEmergencyMode(next),
+    [actions],
+  );
+  const onToggleEditorFocus = useCallback(
+    () => actions.setLayoutMode((m) => toggleLayoutMode(m, "editor")),
+    [actions],
+  );
+  const onToggleResultMaximize = useCallback(
+    () => actions.setLayoutMode((m) => toggleLayoutMode(m, "result")),
+    [actions],
+  );
   // TabBar へ渡すタブの一覧。dirty (SQL が最後の実行と違う) は `dirtyTick` が変わったとき
   // (TabDirtyWatcher が切り替わりを検知したとき) と、タブ自体が変わったときだけ再計算する。
   const tabBarItems = useMemo(
@@ -358,7 +387,7 @@ export const PaneView = memo(
     !tab.streaming &&
     (tab.result?.columns.length ?? 0) > 0 &&
     tab.lastExecutedSql.trim().length > 0
-      ? () => actions.explainForTab(tab, tab.lastExecutedSql)
+      ? gridStable.fn(`${tab.id}:explainCtx`, () => actions.explainForTab(tab, tab.lastExecutedSql))
       : null;
   return (
     <Flex
@@ -376,13 +405,13 @@ export const PaneView = memo(
       <TabBar
         tabs={tabBarItems}
         activeTabId={pane.activeTabId}
-        onSelect={(id) => actions.selectTab(pane.id, id)}
+        onSelect={onSelectTab}
         onClose={actions.handleCloseTab}
-        onNew={() => actions.handleNewTab(pane.id)}
+        onNew={onNewTab}
         newTabCombo={shortcutBindings.newTab}
-        onReorder={(ids) => actions.reorderTabsInPane(pane.id, ids)}
+        onReorder={onReorderTabs}
         onTabContextMenu={actions.openTabMenu}
-        onSplit={split ? () => actions.closePane(pane.id) : actions.splitPane}
+        onSplit={onSplit}
         splitMode={split ? "close" : "split"}
       />
       <Flex direction="column" flex="1" overflow="hidden">
@@ -457,52 +486,78 @@ export const PaneView = memo(
                   ref={getEditorRefSetter(pane.id)}
                   initialSql={getTabSql(tab)}
                   initialSelection={editorSelectionRef.current.get(tab.id) ?? tab.selection}
-                  onSelectionChange={(sel) => editorSelectionRef.current.set(tab.id, sel)}
+                  onSelectionChange={gridStable.fn(`${tab.id}:ed:selection`, (sel: { anchor: number; head: number }) =>
+                    editorSelectionRef.current.set(tab.id, sel),
+                  )}
                   running={tab.streaming && !tab.previewStreaming}
                   previewRunning={tab.previewStreaming}
-                  onRun={(sql) => actions.resolveParamsThen(tab, sql, "run")}
-                  onRunInNewTab={tab.kind === "explain" ? undefined : (sql) => actions.resolveParamsThen(tab, sql, "runNewTab")}
+                  onRun={gridStable.fn(`${tab.id}:ed:run`, (sql: string) => actions.resolveParamsThen(tab, sql, "run"))}
+                  onRunInNewTab={
+                    tab.kind === "explain"
+                      ? undefined
+                      : gridStable.fn(`${tab.id}:ed:runNewTab`, (sql: string) =>
+                          actions.resolveParamsThen(tab, sql, "runNewTab"),
+                        )
+                  }
                   runNewTabCombo={shortcutBindings.runNewTab}
-                  onPreview={tab.kind === "explain" ? undefined : (sql) => actions.resolveParamsThen(tab, sql, "preview")}
-                  onExplain={tab.kind === "explain" ? undefined : (sql) => actions.resolveParamsThen(tab, sql, "explain")}
-                  onBroadcast={tab.kind === "explain" ? undefined : (sql) => actions.requestBroadcast(sql, tab)}
+                  onPreview={
+                    tab.kind === "explain"
+                      ? undefined
+                      : gridStable.fn(`${tab.id}:ed:preview`, (sql: string) =>
+                          actions.resolveParamsThen(tab, sql, "preview"),
+                        )
+                  }
+                  onExplain={
+                    tab.kind === "explain"
+                      ? undefined
+                      : gridStable.fn(`${tab.id}:ed:explain`, (sql: string) =>
+                          actions.resolveParamsThen(tab, sql, "explain"),
+                        )
+                  }
+                  onBroadcast={
+                    tab.kind === "explain"
+                      ? undefined
+                      : gridStable.fn(`${tab.id}:ed:broadcast`, (sql: string) =>
+                          actions.requestBroadcast(sql, tab),
+                        )
+                  }
                   broadcastAvailable={broadcastAvailable}
                   explainMode={tab.kind === "explain"}
-                  onDocChange={(doc) => actions.handleEditorDocChange(tab.id, doc)}
-                  onPreflightImpact={(r) => preflightRef.current.set(tab.id, r)}
+                  onDocChange={gridStable.fn(`${tab.id}:ed:doc`, (doc: { toString(): string }) =>
+                    actions.handleEditorDocChange(tab.id, doc),
+                  )}
+                  onPreflightImpact={gridStable.fn(`${tab.id}:ed:preflight`, (r: PreflightResult | null) =>
+                    preflightRef.current.set(tab.id, r),
+                  )}
                   onSaveSnippet={actions.handleSaveSnippetFromEditor}
-                  onOpenFile={() => void actions.handleOpenSqlFile()}
-                  onSaveFile={() => void actions.handleSaveSqlFile()}
-                  onFormatError={(error) =>
-                    actions.setStatus({
-                      kind: "key",
-                      key: "statusFormatError",
-                      vars: { error },
-                      error: true,
-                    })
-                  }
+                  onOpenFile={onOpenSqlFile}
+                  onSaveFile={onSaveSqlFile}
+                  onFormatError={onFormatError}
                   disabled={!sessionId}
                   schemaTable={tab.schemaTable}
                   databaseSchema={paneSchema}
-                  activeTable={
-                    tab.kind === "table" && tab.database && tab.table
-                      ? { database: tab.database, name: tab.table }
-                      : null
-                  }
+                  activeTable={gridStable.memo(
+                    `${tab.id}:ed:activeTable`,
+                    [tab.kind, tab.database, tab.table],
+                    () =>
+                      tab.kind === "table" && tab.database && tab.table
+                        ? { database: tab.database, name: tab.table }
+                        : null,
+                  )}
                   sessionId={sessionId}
                   defaultDatabase={tab.database ?? selectedProfile?.database ?? null}
                   driver={selectedProfile?.driver ?? "mysql"}
                   builderSnapshot={tab.builderSnapshot}
-                  onBuilderPersist={(snapshot) => actions.updateTab(tab.id, { builderSnapshot: snapshot })}
+                  onBuilderPersist={gridStable.fn(`${tab.id}:ed:builder`, (snapshot: Tab["builderSnapshot"]) =>
+                    actions.updateTab(tab.id, { builderSnapshot: snapshot }),
+                  )}
                   readOnly={readOnly}
                   emergencyMode={emergencyMode}
-                  onToggleEmergencyMode={(next) => void actions.handleToggleEmergencyMode(next)}
+                  onToggleEmergencyMode={onToggleEmergencyMode}
                   queryHistory={queryHistory}
                   editorBindings={editorBindings}
                   focusMode={editorFocused}
-                  onToggleFocus={
-                    sessionId ? () => actions.setLayoutMode((m) => toggleLayoutMode(m, "editor")) : undefined
-                  }
+                  onToggleFocus={sessionId ? onToggleEditorFocus : undefined}
                 />
               </Suspense>
                 </Box>
@@ -834,21 +889,24 @@ export const PaneView = memo(
                       !!tab.prevResultSql && tab.prevResultSql === tab.lastExecutedSql
                     }
                     diffHighlightEnabled={tab.diffHighlight ?? false}
-                    onToggleDiffHighlight={() =>
-                      actions.patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight }))
-                    }
-                    onChangeView={(v) => actions.setResultView(tab.id, v)}
+                    onToggleDiffHighlight={gridStable.fn(`${tab.id}:diffToggle`, () =>
+                      actions.patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight })),
+                    )}
+                    onChangeView={gridStable.fn(`${tab.id}:view`, (v: ResultViewKind) =>
+                      actions.setResultView(tab.id, v),
+                    )}
                     onSaveAsTable={
                       sessionId &&
                       !readOnly &&
                       tab.lastExecutedSql &&
                       isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                       (tab.database ?? selectedProfile?.database)
-                        ? () =>
+                        ? gridStable.fn(`${tab.id}:saveAsTable`, () =>
                             actions.setSaveAsTableRequest({
                               sql: tab.lastExecutedSql,
                               database: (tab.database ?? selectedProfile?.database) as string,
-                            })
+                            }),
+                          )
                         : undefined
                     }
                     onSaveAsView={
@@ -857,36 +915,40 @@ export const PaneView = memo(
                       tab.lastExecutedSql &&
                       isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                       (tab.database ?? selectedProfile?.database)
-                        ? () =>
+                        ? gridStable.fn(`${tab.id}:saveAsView`, () =>
                             actions.setSaveAsViewRequest({
                               sql: tab.lastExecutedSql,
                               database: (tab.database ?? selectedProfile?.database) as string,
                               initialName: tab.editingViewName,
-                            })
+                            }),
+                          )
                         : undefined
                     }
                     onTransferResult={
                       sessionId &&
                       tab.lastExecutedSql &&
                       isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver)
-                        ? () =>
+                        ? gridStable.fn(`${tab.id}:transfer`, () =>
                             actions.setTransferSource({
                               kind: "query",
                               database: tab.database ?? selectedProfile?.database ?? null,
                               sql: tab.lastExecutedSql,
-                            })
+                            }),
+                          )
                         : undefined
                     }
                     onRegisterLocalTable={
                       sessionId && tab.result
-                        ? () => actions.handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql)
+                        ? gridStable.fn(`${tab.id}:registerLocal`, () =>
+                            actions.handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql),
+                          )
                         : undefined
                     }
-                    onClearEdits={() => actions.clearEditsForTab(tab.id)}
+                    onClearEdits={gridStable.fn(`${tab.id}:clearEdits`, () => actions.clearEditsForTab(tab.id))}
                     onUndoEdit={gridStable.fn(`${tab.id}:undo`, () => actions.undoCellEditForTab(tab.id))}
                     onRedoEdit={gridStable.fn(`${tab.id}:redo`, () => actions.redoCellEditForTab(tab.id))}
-                    onPreviewEdits={() => actions.previewEditsForTab(tab)}
-                    onApplyEdits={() => actions.applyEditsForTab(tab)}
+                    onPreviewEdits={gridStable.fn(`${tab.id}:previewEdits`, () => actions.previewEditsForTab(tab))}
+                    onApplyEdits={gridStable.fn(`${tab.id}:applyEdits`, () => actions.applyEditsForTab(tab))}
                     applyingEdits={tab.applyingEdits}
                     autoRefreshSecs={tab.autoRefreshSecs ?? null}
                     autoRefreshAllowed={
@@ -894,17 +956,19 @@ export const PaneView = memo(
                       readOnlyWithHint(tab.lastRunReadOnly, tab.lastExecutedSql, selectedProfile?.driver)
                     }
                     autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
-                    onSetAutoRefresh={(secs) => actions.setAutoRefreshForTab(tab.id, secs)}
+                    onSetAutoRefresh={gridStable.fn(`${tab.id}:autoRefresh`, (secs: number | null) =>
+                      actions.setAutoRefreshForTab(tab.id, secs),
+                    )}
                     queryError={tab.queryError ?? null}
                     onRetry={
                       tab.lastExecutedSql
-                        ? () => {
+                        ? gridStable.fn(`${tab.id}:retry`, () => {
                             if (tab.kind === "table") {
                               void actions.runQueryInTab(tab.id, tab.lastExecutedSql, tab.paginatable);
                               return;
                             }
                             actions.runInTabWithGate(tab, tab.lastExecutedSql);
-                          }
+                          })
                         : undefined
                     }
                     onFkJump={gridStable.fn(`${tab.id}:fkJump`, (sql: string) => actions.openAndRunQuery(sql))}
@@ -960,7 +1024,21 @@ export const PaneView = memo(
                     }
                     fullExport={
                       sessionId && (tab.kind === "table" ? tab.paginatable : tab.lastExecutedSql)
-                        ? {
+                        ? gridStable.memo(
+                            `${tab.id}:fullExport`,
+                            [
+                              sessionId,
+                              tab.kind,
+                              tab.paginatable,
+                              tab.lastExecutedSql,
+                              tab.serverFilter,
+                              tab.serverSort,
+                              tab.openTemplate?.wrapBrowse,
+                              selectedProfile?.driver,
+                              defaultDisplayCount,
+                              streamPrefetchSize,
+                            ],
+                            () => ({
                             sessionId,
                             // table タブは LIMIT を持たない base SQL を再実行して全件出す。
                             // アクティブなサーバ側ソート/フィルタ (#792) があれば、画面に
@@ -977,14 +1055,27 @@ export const PaneView = memo(
                                 : tab.lastExecutedSql,
                             initialBatch: Math.max(1, defaultDisplayCount),
                             chunkSize: Math.max(1, streamPrefetchSize),
-                          }
+                          }),
+                          )
                         : undefined
                     }
                     bundleContext={
                       // 調査バンドル (#745): 接続の非秘密メタ情報だけを渡す
                       // (パスワード・接続文字列は型ごと持たない)。
                       tab.result
-                        ? {
+                        ? gridStable.memo(
+                            `${tab.id}:bundle`,
+                            [
+                              sessionId,
+                              tab.lastExecutedSql,
+                              tab.lastRunAt,
+                              tab.lastRunReadOnly,
+                              tab.database,
+                              selectedProfile?.name,
+                              selectedProfile?.host,
+                              selectedProfile?.driver,
+                            ],
+                            () => ({
                             sql: tab.lastExecutedSql || null,
                             profileName: selectedProfile?.name ?? null,
                             host: selectedProfile?.host || null,
@@ -1006,13 +1097,14 @@ export const PaneView = memo(
                                       tab.database ?? null,
                                     )
                                 : undefined,
-                          }
+                          }),
+                          )
                         : undefined
                     }
                     lastEditAppliedAt={tab.lastEditAppliedAt}
                     maximized={maximized}
-                    onToggleMaximize={() => actions.setLayoutMode((m) => toggleLayoutMode(m, "result"))}
-                    onPinResult={() => actions.pinCurrentResult(tab)}
+                    onToggleMaximize={onToggleResultMaximize}
+                    onPinResult={gridStable.fn(`${tab.id}:pin`, () => actions.pinCurrentResult(tab))}
                     canPinResult={!!tab.result && !tab.streaming}
                   />
                   )}
@@ -1024,8 +1116,10 @@ export const PaneView = memo(
                       rowsOnPage={tab.result.rows.length}
                       totalPages={tableTotalPagesEstimate(tab, tab.pageSize ?? tab.previewRowLimit)}
                       loading={tab.loadingMore}
-                      onGoToPage={(p) => actions.goToPageInTab(tab.id, p)}
-                      onSetPageSize={(s) => actions.setPageSizeInTab(tab.id, s)}
+                      onGoToPage={gridStable.fn(`${tab.id}:goToPage`, (p: number) => actions.goToPageInTab(tab.id, p))}
+                      onSetPageSize={gridStable.fn(`${tab.id}:pageSize`, (s: number) =>
+                        actions.setPageSizeInTab(tab.id, s),
+                      )}
                     />
                   )}
                   </Flex>

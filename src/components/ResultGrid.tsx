@@ -6499,7 +6499,7 @@ function identityHintKeys(
   }
 }
 
-export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGrid({
+export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function ResultGrid({
   result,
   streaming,
   onStopStreaming,
@@ -8398,4 +8398,4 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       </AnimatePresence>
     </Box>
   );
-});
+}));
