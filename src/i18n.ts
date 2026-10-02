@@ -3388,6 +3388,9 @@ const en = {
   advisorRuleUnusedIndexTitle: "Unused index",
   advisorRuleFkTypeMismatchTitle: "Foreign key type mismatch",
   advisorRuleSqliteIntegerPkHintTitle: "Non-INTEGER integer primary key",
+  // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
+  advisorRuleUnknownTitle: "Other schema finding",
+  advisorRuleUnknownDesc: "{table}: the backend reported a schema finding this version cannot describe. Update the app to see the details.",
   // ルール説明 (パラメータ差し込み)
   advisorRuleFkMissingIndexDesc:
     "{table}({columns}) is a foreign key referencing {ref}, but no index leads with these columns. Joins and cascading deletes on it may be slow.",
@@ -7217,6 +7220,9 @@ const ja: Dict = {
   advisorRuleUnusedIndexTitle: "未使用インデックス",
   advisorRuleFkTypeMismatchTitle: "外部キーの型不一致",
   advisorRuleSqliteIntegerPkHintTitle: "INTEGER でない整数 PK",
+  // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
+  advisorRuleUnknownTitle: "その他のスキーマ指摘",
+  advisorRuleUnknownDesc: "{table}: このバージョンでは説明できないスキーマ指摘がバックエンドから返されました。詳細はアプリを更新すると確認できます。",
   // ルール説明 (パラメータ差し込み)
   advisorRuleFkMissingIndexDesc:
     "{table}({columns}) は {ref} を参照する外部キーですが、この列を先頭に持つインデックスがありません。JOIN やカスケード削除が遅くなる可能性があります。",
