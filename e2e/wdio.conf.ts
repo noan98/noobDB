@@ -29,8 +29,10 @@
  * 含めていない。詳細は .claude/skills/noobdb-testing/references/e2e.md を参照。
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { browser } from "@wdio/globals";
 import type { Options } from "@wdio/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -114,6 +116,15 @@ export const config: Options.Testrunner = {
       },
     ],
   ],
+
+  // 失敗時のスクリーンショットを e2e/screenshots/ へ保存する (CI がアーティファクトとして回収)。
+  afterTest: async (test, _context, { passed }) => {
+    if (passed) return;
+    const dir = path.resolve(__dirname, "screenshots");
+    fs.mkdirSync(dir, { recursive: true });
+    const name = test.title.replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 80);
+    await browser.saveScreenshot(path.join(dir, `${name}.png`));
+  },
 
   // ──────────────────────────────────────────────────────────────────────────
   // ログ
