@@ -4323,7 +4323,23 @@ export const DataGrid = memo(function DataGrid({
   // avoids a visible re-layout jump on the first paint and after switching
   // density (see the re-measure effect below).
   const density = useSettings().density;
+  // keep-alive (#1309) で隠れている間 (display:none) は仮想化を止める。隠れた要素の
+  // ResizeObserver は幅・高さ 0 を報告するので、そのまま動かすと測定済みの行高が 0 に
+  // 潰れ、再表示のたびに全行を測り直す再レンダーが連鎖していた (5,000 行で 1 回の切替が
+  // 20 commit)。止めている間は行を描かず、再表示で 1 回だけ測り直す。
+  const virtualizerEnabled = useKeepAliveActive();
+  // 再表示した最初のレンダーでも窓を計算できるよう、最後に測れたビューポートの寸法を
+  // 初期値に渡す。無いと「測定前は全行を描く」経路に落ち、5,000 行を一度に描いてしまう。
+  const lastViewportRef = useRef({ width: 0, height: 0 });
+  useLayoutEffect(() => {
+    const el = scrollContainerRef?.current;
+    if (virtualizerEnabled && el && el.clientHeight > 0) {
+      lastViewportRef.current = { width: el.clientWidth, height: el.clientHeight };
+    }
+  });
   const rowVirtualizer = useVirtualizer({
+    enabled: virtualizerEnabled,
+    initialRect: lastViewportRef.current,
     count: visibleRows.length,
     getScrollElement: () => scrollContainerRef?.current ?? null,
     estimateSize: () => DENSITY_ROW_ESTIMATE[density],
@@ -4375,6 +4391,8 @@ export const DataGrid = memo(function DataGrid({
     ROW_INDEX_WIDTH + leftPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
   const rightDeadZone = rightPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
   const columnVirtualizer = useVirtualizer({
+    enabled: virtualizerEnabled,
+    initialRect: lastViewportRef.current,
     horizontal: true,
     count: centerColumns.length,
     getScrollElement: () => scrollContainerRef?.current ?? null,
@@ -5308,6 +5326,9 @@ export const DataGrid = memo(function DataGrid({
               </td>
               <td className="col-filler" aria-hidden />
             </tr>
+          ) : virtualize && !virtualizerEnabled ? (
+            // keep-alive で隠れている間は行を描かない (全行へのフォールバックを避ける, #1309)。
+            null
           ) : virtualize && virtualItems.length > 0 ? (
             // `virtualItems.length > 0` gates the virtualized path: when the
             // scroll container has no measured height yet (first render before

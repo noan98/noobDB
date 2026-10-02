@@ -150,6 +150,23 @@ describe("結果グリッドの keep-alive (#1309)", () => {
     expect(calls[calls.length - 1]).toBe(handleA);
   });
 
+  it("隠れている間は行を描かず (全行フォールバックに落ちない)、再表示で描き直す", () => {
+    const register = vi.fn();
+    const view = renderWithProviders(<Host active="a" register={register} />);
+    const rowsIn = () =>
+      Array.from(document.querySelectorAll("[data-keep-alive-active]")).map((el) => [
+        (el as HTMLElement).dataset.keepAliveActive,
+        el.querySelectorAll("tbody tr").length,
+      ]);
+    expect(rowsIn()).toEqual([["true", 5]]);
+    view.rerender(<Host active="b" register={register} />);
+    const states = rowsIn();
+    expect(states).toContainEqual(["false", 0]); // a は保持しているが行は描かない
+    expect(states).toContainEqual(["true", 5]);
+    view.rerender(<Host active="a" register={register} />);
+    expect(rowsIn()).toContainEqual(["true", 5]);
+  });
+
   it("App は ResultGrid に key={tab.id} を付けず KeepAlive 経由で保持する", () => {
     const i = src.indexOf("<ResultGrid\n");
     expect(i).toBeGreaterThan(0);
