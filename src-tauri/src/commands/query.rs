@@ -201,20 +201,29 @@ pub(crate) async fn run_query_inner(
         );
     }
     if result.is_ok() {
-        // Schema Cache (#1097): DDL 相当の SQL が成功したら、このセッションの
-        // スキーマキャッシュを丸ごと invalidate する。判定は実行前ではなく成功後に
-        // 行う — 失敗した DDL (構文エラー等) でキャッシュを無駄に破棄しないため。
-        if crate::db::sql_may_change_schema(driver, sql) {
-            session.schema_cache.invalidate_all().await;
-        }
-        // Query Result Cache (#1097): DDL/DML を問わず書き込みが成功したら、
-        // このセッションのクエリ結果キャッシュを丸ごと invalidate する
-        // (Schema Cache と違い DML でも stale になるため対象が広い)。
-        if !crate::db::is_read_only_sql_for(driver, sql) {
-            session.query_cache.invalidate_all().await;
-        }
+        invalidate_caches_after_success(&session, sql).await;
     }
     result
+}
+
+/// 書き込み文の**成功後**にセッションのキャッシュ (Schema Cache / Query Result Cache)
+/// を無効化する共通処理 (#1220)。`run_query` とストリーミング経路 (`spawn_query_stream`)
+/// の両方がここを通ることで、片方だけ invalidate が抜けるドリフトを防ぐ。
+///
+/// - Schema Cache (#1097): DDL 相当 (`sql_may_change_schema`) なら丸ごと invalidate。
+///   判定は実行前ではなく成功後に行う — 失敗した DDL でキャッシュを無駄に破棄しないため。
+/// - Query Result Cache (#1097): DDL/DML を問わず書き込み (読み取り専用でない文) なら
+///   丸ごと invalidate (Schema Cache と違い DML でも stale になるため対象が広い)。
+///
+/// `sql` は auto-limit 適用前の元の文を渡す (LIMIT の注入は判定を変えない)。
+pub(crate) async fn invalidate_caches_after_success(session: &Session, sql: &str) {
+    let driver = session.conn.driver_kind();
+    if crate::db::sql_may_change_schema(driver, sql) {
+        session.schema_cache.invalidate_all().await;
+    }
+    if !crate::db::is_read_only_sql_for(driver, sql) {
+        session.query_cache.invalidate_all().await;
+    }
 }
 
 /// 値ピッカー (#1067) の候補取得 1 回で返す行数の既定値と上限。フロントが
@@ -1108,8 +1117,11 @@ async fn spawn_query_stream(
     // 判定値は Done メッセージにも載せるので 1 度だけ計算する (#1256)。
     let read_only = crate::db::is_read_only_sql_for(session.conn.driver_kind(), &sql);
     let schema_may_change = crate::db::sql_may_change_schema(session.conn.driver_kind(), &sql);
-    if result.is_ok() && !read_only {
-        session.query_cache.invalidate_all().await;
+    if result.is_ok() {
+        // Schema Cache (#1220): DDL 成功後は SchemaCache も invalidate する。以前は
+        // query_cache だけで、エディタ (ストリーミング) で流した ALTER / CREATE INDEX
+        // 後もツリー・補完・describe が最大 TTL まで旧スキーマのままだった。
+        invalidate_caches_after_success(&session, &sql).await;
     }
 
     match &result {

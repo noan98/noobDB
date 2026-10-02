@@ -1,0 +1,287 @@
+{
+  "description": "sql_may_change_schema (Rust db/mod.rs) と isSchemaMutatingSql (src/dangerousSql.ts) の共有ゴールデン (#1221)。schemaMutates は標準解釈 (PostgreSQL / SQLite / ドライバ不明)、schemaMutatesMysql は MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけに書く。誤検知は安全側 (再取得 1 回) だが見逃しは stale スキーマに直結するため fail-closed に倒す。",
+  "cases": [
+    {
+      "sql": "CREATE TABLE t (id INT)",
+      "schemaMutates": true,
+      "note": "CREATE TABLE"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN c INT",
+      "schemaMutates": true,
+      "note": "ALTER TABLE ADD COLUMN"
+    },
+    {
+      "sql": "DROP TABLE t",
+      "schemaMutates": true,
+      "note": "DROP TABLE"
+    },
+    {
+      "sql": "TRUNCATE TABLE t",
+      "schemaMutates": true,
+      "note": "TRUNCATE"
+    },
+    {
+      "sql": "RENAME TABLE a TO b",
+      "schemaMutates": true,
+      "note": "MySQL RENAME TABLE"
+    },
+    {
+      "sql": "ALTER TABLE t RENAME COLUMN a TO b",
+      "schemaMutates": true,
+      "note": "ALTER ... RENAME COLUMN"
+    },
+    {
+      "sql": "ALTER TABLE t RENAME TO t2",
+      "schemaMutates": true,
+      "note": "ALTER ... RENAME TO"
+    },
+    {
+      "sql": "CREATE INDEX idx ON t (a)",
+      "schemaMutates": true,
+      "note": "CREATE INDEX"
+    },
+    {
+      "sql": "CREATE UNIQUE INDEX idx ON t (a)",
+      "schemaMutates": true,
+      "note": "CREATE UNIQUE INDEX"
+    },
+    {
+      "sql": "DROP INDEX idx ON t",
+      "schemaMutates": true,
+      "note": "DROP INDEX"
+    },
+    {
+      "sql": "DROP VIEW v",
+      "schemaMutates": true,
+      "note": "DROP VIEW"
+    },
+    {
+      "sql": "CREATE OR REPLACE FUNCTION f() RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql",
+      "schemaMutates": true,
+      "note": "CREATE OR REPLACE FUNCTION"
+    },
+    {
+      "sql": "create index idx on t (a)",
+      "schemaMutates": true,
+      "note": "小文字"
+    },
+    {
+      "sql": "CrEaTe TaBlE t (id INT)",
+      "schemaMutates": true,
+      "note": "大小混在"
+    },
+    {
+      "sql": "  \n\tDROP TABLE t",
+      "schemaMutates": true,
+      "note": "先頭の空白・改行"
+    },
+    {
+      "sql": "DROP TABLE t;",
+      "schemaMutates": true,
+      "note": "末尾セミコロン"
+    },
+    {
+      "sql": "-- migrate\nDROP TABLE t",
+      "schemaMutates": true,
+      "note": "行コメントの後ろの DDL"
+    },
+    {
+      "sql": "/* block */ CREATE TABLE t (id INT)",
+      "schemaMutates": true,
+      "note": "ブロックコメントの後ろの DDL"
+    },
+    {
+      "sql": "# mysql comment\nDROP TABLE t",
+      "schemaMutates": true,
+      "note": "MySQL の # コメントの後ろの DDL (他方言では # は演算子だが本文走査なので検出)"
+    },
+    {
+      "sql": "SELECT 1; DROP TABLE t",
+      "schemaMutates": true,
+      "note": "2 文目が DDL"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1); ALTER TABLE t ADD c INT",
+      "schemaMutates": true,
+      "note": "DML の後ろの DDL"
+    },
+    {
+      "sql": "SELECT 1; SELECT 2",
+      "schemaMutates": false,
+      "note": "複数文でも DDL なし"
+    },
+    {
+      "sql": "DROP TABLE a; DROP TABLE b",
+      "schemaMutates": true,
+      "note": "複数 DDL"
+    },
+    {
+      "sql": "( CREATE TABLE t (id INT) )",
+      "schemaMutates": true,
+      "note": "括弧で包んだ DDL"
+    },
+    {
+      "sql": "WITH x AS (SELECT 1) CREATE TABLE t AS SELECT * FROM x",
+      "schemaMutates": true,
+      "note": "CTE 付き CREATE (本文走査で検出)"
+    },
+    {
+      "sql": "WITH x AS (SELECT 1) SELECT * FROM x",
+      "schemaMutates": false,
+      "note": "CTE 付き SELECT"
+    },
+    {
+      "sql": "EXPLAIN CREATE TABLE t (id INT)",
+      "schemaMutates": true,
+      "note": "EXPLAIN の中の DDL も安全側 (過剰検出)"
+    },
+    {
+      "sql": "COMMENT ON COLUMN \"public\".\"t\".\"c\" IS 'x'",
+      "schemaMutates": true,
+      "note": "PostgreSQL COMMENT ON (#1002)"
+    },
+    {
+      "sql": "comment on table t is 'x'",
+      "schemaMutates": true,
+      "note": "COMMENT ON 小文字"
+    },
+    {
+      "sql": "COMMENT\nON TABLE t IS 'x'",
+      "schemaMutates": true,
+      "note": "COMMENT と ON の間が改行"
+    },
+    {
+      "sql": "COMMENT   ON TABLE t IS 'x'",
+      "schemaMutates": true,
+      "note": "COMMENT と ON の間が連続スペース"
+    },
+    {
+      "sql": "SELECT comment FROM notes WHERE comment <> ''",
+      "schemaMutates": false,
+      "note": "comment 列を読むだけ"
+    },
+    {
+      "sql": "SELECT comment, on_hold FROM notes",
+      "schemaMutates": false,
+      "note": "comment と on の単語が隣接しない"
+    },
+    {
+      "sql": "EXEC sp_addextendedproperty 'MS_Description', 'x', 'SCHEMA', 'dbo'",
+      "schemaMutates": true,
+      "note": "sp_addextendedproperty"
+    },
+    {
+      "sql": "EXEC sp_updateextendedproperty 'MS_Description', 'x'",
+      "schemaMutates": true,
+      "note": "sp_updateextendedproperty"
+    },
+    {
+      "sql": "EXEC sp_dropextendedproperty 'MS_Description'",
+      "schemaMutates": true,
+      "note": "sp_dropextendedproperty"
+    },
+    {
+      "sql": "SELECT * FROM t",
+      "schemaMutates": false,
+      "note": "SELECT"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1)",
+      "schemaMutates": false,
+      "note": "INSERT"
+    },
+    {
+      "sql": "UPDATE t SET a = 1 WHERE id = 2",
+      "schemaMutates": false,
+      "note": "UPDATE"
+    },
+    {
+      "sql": "DELETE FROM t WHERE id = 2",
+      "schemaMutates": false,
+      "note": "DELETE"
+    },
+    {
+      "sql": "",
+      "schemaMutates": false,
+      "note": "空文字列"
+    },
+    {
+      "sql": "   \n ",
+      "schemaMutates": false,
+      "note": "空白のみ"
+    },
+    {
+      "sql": "-- DROP TABLE t",
+      "schemaMutates": false,
+      "note": "コメントだけ"
+    },
+    {
+      "sql": "SELECT 'drop table t' AS note",
+      "schemaMutates": false,
+      "note": "文字列リテラル内の DDL"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE note = 'please alter this later'",
+      "schemaMutates": false,
+      "note": "文字列リテラル内の alter"
+    },
+    {
+      "sql": "SELECT * FROM t -- create table later",
+      "schemaMutates": false,
+      "note": "行コメント内の DDL"
+    },
+    {
+      "sql": "SELECT /* drop table t */ 1",
+      "schemaMutates": false,
+      "note": "ブロックコメント内の DDL"
+    },
+    {
+      "sql": "SELECT \"create\" FROM t",
+      "schemaMutates": false,
+      "note": "二重引用符の識別子内 (マスクされる)"
+    },
+    {
+      "sql": "SELECT 'it''s'; DROP TABLE t",
+      "schemaMutates": true,
+      "note": "'' エスケープの直後の DDL"
+    },
+    {
+      "sql": "SELECT $$ drop table t $$",
+      "schemaMutates": false,
+      "note": "ドル引用の中の DDL (PostgreSQL)"
+    },
+    {
+      "sql": "INSERT INTO logs (create_user) VALUES (1)",
+      "schemaMutates": false,
+      "note": "create_user 列は単語として別"
+    },
+    {
+      "sql": "SELECT recreate, dropout, altered, truncated, renamed FROM t",
+      "schemaMutates": false,
+      "note": "キーワードを部分文字列に含む識別子"
+    },
+    {
+      "sql": "SELECT created_at FROM t",
+      "schemaMutates": false,
+      "note": "created_at"
+    },
+    {
+      "sql": "INSERT INTO t (drop) VALUES (1)",
+      "schemaMutates": true,
+      "note": "キーワードと同綴りの列名は過剰検出 (安全側: 再取得 1 回のみ)"
+    },
+    {
+      "sql": "SELECT 'a\\' ; DROP TABLE t -- '",
+      "schemaMutates": true,
+      "schemaMutatesMysql": false,
+      "note": "標準解釈では \\' で文字列が閉じ、後続の DROP が現れる"
+    },
+    {
+      "sql": "SELECT 'a\\'; DROP TABLE t; --'",
+      "schemaMutates": true,
+      "schemaMutatesMysql": false,
+      "note": "同上 (MySQL では 1 つの文字列リテラル)"
+    }
+  ]
+}

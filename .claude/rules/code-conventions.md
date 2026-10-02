@@ -14,8 +14,26 @@ unwrap/expect/panic を本体コードに入れると CI が自動で fail** し
 には `#[allow(clippy::unwrap_used)]` / `#[allow(clippy::panic)]` + **なぜ
 panic/unwrap が妥当かの日本語根拠コメント**を必ず付けてください。
 
-JS のリンタは設定されていません。フロントエンドは `tsc` (`pnpm run build` 経由) で
-型チェックされます。`tsconfig.json` では `strict`、`noUnusedLocals`、
+フロントエンドは `tsc` (`pnpm run build` 経由) で型チェックされ、さらに
+**typescript-eslint (flat config, `eslint.config.js`)** が `pnpm run lint` で CI の
+frontend ジョブ内のステップとして走ります (#1176)。ルールは高シグナルなものだけで、
+スタイル系は入れません。
+
+- `@typescript-eslint/no-floating-promises` (error): await 忘れの IPC 呼び出しは
+  握り潰された失敗になる。意図的な fire-and-forget は `void` で明示する (失敗が
+  呼び出し先の try/catch で処理済みであることを確認すること)。
+- `@typescript-eslint/no-misused-promises` (error): JSX 属性位置 (`onClick={async ...}`) は
+  対象外、引数・プロパティ位置は検査する。
+- `react-hooks/rules-of-hooks` (error)。
+- `react-hooks/exhaustive-deps` (**warn**): 既存の依存配列漏れが多いため段階導入。
+  `package.json` の `lint` が `--max-warnings` で件数を固定しており、新規の違反は
+  CI で落ちる。直して件数が減ったら閾値も下げる。
+- TypeScript 7 (ネイティブ版) は JS API を持たないため、`.pnpmfile.cjs` で
+  typescript-eslint 系パッケージだけ TS 6 互換パッケージ (`@typescript/typescript6`)
+  を参照させている。typescript-eslint が TS 7.1 以降に対応したら削除する
+  (typescript-eslint#10940)。
+
+`tsconfig.json` では `strict`、`noUnusedLocals`、
 `noUnusedParameters` が有効になっているため、未使用の import やパラメータがあると
 ビルドが失敗します。テストランナーには **Vitest** を採用しており、`pnpm test`
 (`vitest run`) で `src/__tests__/` 配下のユニットテストを実行します。テスト対象は
