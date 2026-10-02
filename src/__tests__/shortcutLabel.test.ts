@@ -1,4 +1,5 @@
 import appSource from "../App.tsx?raw";
+import paneViewSource from "../components/PaneView.tsx?raw";
 import queryEditorSource from "../components/QueryEditor.tsx?raw";
 import tabBarSource from "../components/TabBar.tsx?raw";
 import { describe, expect, it } from "vitest";
@@ -58,7 +59,7 @@ describe("button wiring", () => {
   });
 
   it("passes the new-tab combo to TabBar and run/preview tooltips use bindings", () => {
-    expect(app).toContain("newTabCombo={shortcutBindings.newTab}");
+    expect(paneViewSource).toContain("newTabCombo={shortcutBindings.newTab}");
     const editor = queryEditorSource;
     expect(editor).toContain("labelWithShortcut(runTitleBase, runCombo)");
     expect(editor).toContain("onRunInNewTab");

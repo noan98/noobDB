@@ -1,4 +1,4 @@
-import src from "../App.tsx?raw";
+import src from "../components/PaneView.tsx?raw";
 import { act } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "./testUtils";
@@ -167,7 +167,7 @@ describe("結果グリッドの keep-alive (#1309)", () => {
     expect(rowsIn()).toContainEqual(["true", 5]);
   });
 
-  it("App は ResultGrid に key={tab.id} を付けず KeepAlive 経由で保持する", () => {
+  it("PaneView は ResultGrid に key={tab.id} を付けず KeepAlive 経由で保持する", () => {
     const i = src.indexOf("<ResultGrid\n");
     expect(i).toBeGreaterThan(0);
     expect(src.slice(i, i + 120)).not.toMatch(/key=\{tab\.id\}/);

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, Input } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { useT } from "../i18n";
@@ -66,7 +66,7 @@ interface Props {
   splitMode?: "split" | "close";
 }
 
-export function TabBar({
+export const TabBar = memo(function TabBar({
   tabs,
   activeTabId,
   onSelect,
@@ -702,4 +702,4 @@ export function TabBar({
       )}
     </Box>
   );
-}
+});

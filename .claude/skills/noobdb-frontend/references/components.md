@@ -124,3 +124,20 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   クエリ履歴を汚さず、読み取り専用セッションでも動作する。接続時の自動
   チェックは設定 `planWatchOnConnect` (既定オン) で切替でき、アクセス方式・使用
   インデックス・結合方式・推定行数の桁違いの変化をトーストで通知する)。
+
+## タブ・ペインの状態とペインの描画 (#1318)
+
+- `tabs` / `panes` の正本は `src/tabPaneStore.ts` の `TabPaneStore` (外部ストア)。App の
+  `setTabs` / `setPanes` はその setter そのもので、`useState` と同じ形 (値 / 更新関数) で
+  同期的に反映される。`tabsRef.current` / `panesRef.current` もストアの最新値を返す
+  (commit を待たない)。App は `useSyncExternalStore` で全体を購読する。
+- 1 ペインぶんの描画は `components/PaneView.tsx` (memo)。自分のペインと所属タブだけを
+  `useStoreSelector` で購読するので、別ペインのタブ更新 (ストリーミングのバッチなど) では
+  再描画されない。App 由来の値は `PaneEnv` に集め、`memo` の比較は `env` の各フィールドの
+  `Object.is` (env 自体は毎回作り直してよい)。ハンドラは `useStableCallbacks` で参照を
+  固定した `PaneActions` で渡す。**PaneView 内で App のクロージャを直接読まない**
+  (memo で省かれた間の古い値を掴む)。ペインが読む値が増えたら `PaneEnv` に足す。
+- `TabBar` / `QueryEditor` / `ResultGrid` も `memo`。タブごとのコールバックは
+  `env.gridStable.fn(`${tab.id}:名前`, ...)` / `.memo(...)` で参照を固定する。
+- TabDirtyWatcher の切り替わりは `dirtyTick` (env) で PaneView に伝える。
+- ガード: `__tests__/tabPaneStore.test.ts` / `paneViewRerender.test.tsx`。
