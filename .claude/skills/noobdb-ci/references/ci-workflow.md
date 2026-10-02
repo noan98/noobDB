@@ -18,7 +18,8 @@
   依存プリバンドルも別個にコールドスタートしていた重複 — Rust ジョブ側の同型の
   重複を解消した #796 の横展開対象 — を統合で解消しました。詳細な判断根拠は
   `ci.yml` の `frontend` ジョブ直前のコメントを参照)。ジョブ本体は
-  `pnpm run build` に続けて
+  `pnpm run build` に続けて `pnpm run lint` (typescript-eslint。#1176。新しい必須
+  チェックは増やさずこのジョブ内のステップ)、
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
   (未使用エクスポート/到達不能コード検出。#470)、`pnpm test --coverage` (Vitest
   jsdom + カバレッジ閾値)、さらに `pnpm exec playwright install` +
