@@ -1,28 +1,52 @@
-# cargo-mutants の設定 (#528)
+# cargo-mutants の設定 (#528 / #1168)
 #
-# ミューテーションテストのスコープを「安全網モジュール」に限定する。
-# 行カバレッジが高くても境界バグをテストが捕捉できるとは限らないため、
-# 変異注入で既存テストの有効性を定量評価することが目的。
+# ミューテーションテストの対象を「安全網関数」にピンポイントで絞る。行カバレッジが
+# 高くてもテストが境界バグを捕捉できるとは限らないため、変異注入で既存テストの
+# 有効性を定量評価することが目的。
 #
-# ローカル実行例:
+# 対象関数リストの単一ソースは本ファイル (examine_globs + examine_re)。
+# mutants.yml のヘッダ宣言・実行コマンド・--list はすべて本ファイルを読むだけで、
+# 関数名を重複して書かない (宣言と実対象のドリフト防止, #1168)。
+#
+# ローカル実行例 (フラグ無しで本ファイルのスコープが効く):
 #   cd src-tauri
-#   cargo mutants --file src/db/mod.rs --file src/db/mysql.rs \
-#     --file src/db/sync.rs --file src/db/data_diff.rs
+#   cargo mutants
 #
 # 変異候補一覧のみ確認する (テストを走らせない):
-#   cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
+#   cargo mutants --list
+#
+# 対象関数 (実在するもののみ。DriverKind は Mysql / Postgres / Sqlite の 3 つ):
+#   db/mod.rs        is_read_only_sql / is_read_only_sql_for / is_read_only_sql_masked
+#                    apply_auto_limit / apply_auto_limit_for / apply_auto_limit_masked
+#                    has_stacked_statements / has_stacked_statements_for /
+#                    has_stacked_statements_masked
+#   db/mysql.rs      is_query_shape / with_cte_is_mutation / quote_ident
+#   db/postgres.rs   is_query_shape
+#   db/sqlite.rs     is_query_shape / quote_ident
+#   db/sync.rs       quote_ident
+#   db/data_diff.rs  sql_literal
+#   lib.rs           __test_api の has_stacked_statements_for / is_query_shape (ディスパッチ) /
+#                    quote_ident / sql_literal
 
-# 対象: 安全網ロジックを持つファイルのみ。
-# is_read_only_sql / apply_auto_limit / has_stacked_statements (mod.rs)
-# is_query_shape / with_cte_is_mutation (mysql.rs)
-# quote_ident (sync.rs) / sql_literal (data_diff.rs) — SQL インジェクション隣接の
-# 引用・エスケープ実装。共有ゴールデン (#880) で固定しているので、変異注入で
-# その有効性 (方言分岐や二重化の取りこぼし) を可視化する。
+# ファイルは「関数を持つファイル」に絞る。cargo-mutants は構造体フィールド削除
+# ("delete field ...") の変異に --re / --exclude-re を適用しないため、無関係な
+# ファイル (plan_watch / format / ssh など) が混入しないよう examine_globs でも
+# 絞る必要がある (--list で確認済み)。
 examine_globs = [
   "src/db/mod.rs",
   "src/db/mysql.rs",
+  "src/db/postgres.rs",
+  "src/db/sqlite.rs",
   "src/db/sync.rs",
   "src/db/data_diff.rs",
+  "src/lib.rs",
+]
+
+# 変異名 ("replace <fn> -> ..." / "replace == with != in <fn>" / "delete match arm ...
+# in <fn>") の関数名で絞る。ファイル丸ごと指定をやめ、上のファイル内の安全網関数
+# 以外 (接続・型デコード・diff ロジックなど) を変異対象から外す。
+examine_re = [
+  "(replace | in )([A-Za-z_0-9]+::)*(is_read_only_sql|is_read_only_sql_for|is_read_only_sql_masked|apply_auto_limit|apply_auto_limit_for|apply_auto_limit_masked|has_stacked_statements|has_stacked_statements_for|has_stacked_statements_masked|is_query_shape|with_cte_is_mutation|quote_ident|sql_literal)( -> |$)",
 ]
 
 # ベースラインテストが完走したときの倍率で各変異のタイムアウトを決める。
