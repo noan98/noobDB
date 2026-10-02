@@ -139,6 +139,20 @@
     { "sql": "PRAGMA table_info('users')", "readOnly": false, "note": "#1005: (旧 DuckDB 構文) 関数呼び出し形 PRAGMA (照会形、'=' を含まない)。3 ドライバとも拒否" },
     { "sql": "PRAGMA memory_limit='1GB'", "readOnly": false, "note": "#1005: PRAGMA の設定形 (代入 '=' を含む) は書き込みに準じるため拒否" },
     { "sql": "PRAGMA threads=4", "readOnly": false, "note": "#1005: PRAGMA 設定形の別例。'=' の有無で照会形と区別する" },
-    { "sql": "PRAGMA foreign_keys=ON", "readOnly": false, "note": "#1005: SQLite の PRAGMA 設定形の代表例。PRAGMA はどのドライバでも許可プレフィックスに無いため常に拒否 (SQLite で '=' の無い PRAGMA も同様に拒否のまま — 照会/設定の区別を持ち込まない)" }
+    { "sql": "PRAGMA foreign_keys=ON", "readOnly": false, "note": "#1005: SQLite の PRAGMA 設定形の代表例。PRAGMA はどのドライバでも許可プレフィックスに無いため常に拒否 (SQLite で '=' の無い PRAGMA も同様に拒否のまま — 照会/設定の区別を持ち込まない)" },
+
+    { "sql": "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) SELECT * FROM r", "readOnly": true, "note": "#1151: 再帰 CTE + SELECT" },
+    { "sql": "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON 1=1", "readOnly": true, "note": "#1151: 複数 CTE + SELECT" },
+    { "sql": "WITH c AS (SELECT 'delete from x' AS s) SELECT * FROM c", "readOnly": true, "note": "#1151: CTE 内の文字列リテラルに隠れた write キーワードはマスクされる" },
+    { "sql": "WITH c AS (SELECT deleted_at FROM logs) SELECT * FROM c", "readOnly": true, "note": "#1151: deleted_at 列名は delete キーワードと誤認しない (語境界)" },
+    { "sql": "WITH c AS (SELECT 1) SELECT * FROM c -- delete here", "readOnly": true, "note": "#1151: CTE 末尾の行コメント内の write はマスクされる" },
+    { "sql": "WITH c AS (SELECT REPLACE(name, 'a', 'b') FROM t) SELECT * FROM c", "readOnly": true, "note": "#1151: CTE 内の REPLACE() 文字列関数は REPLACE INTO ではない" },
+    { "sql": "WITH c AS (SELECT 1) DELETE FROM t", "readOnly": false, "note": "#1151: CTE の後ろの本体が DELETE" },
+    { "sql": "WITH c AS (SELECT 1) UPDATE t SET x = 1", "readOnly": false, "note": "#1151: CTE の後ろの本体が UPDATE" },
+    { "sql": "WITH c AS (SELECT 1) INSERT INTO t VALUES (1)", "readOnly": false, "note": "#1151: CTE の後ろの本体が INSERT" },
+    { "sql": "WITH d AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM d", "readOnly": false, "note": "#1151: INSERT ... RETURNING を包むデータ変更 CTE" },
+    { "sql": "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM t WHERE id IN (SELECT 1 FROM a)", "readOnly": false, "note": "#1151: 複数 CTE の後ろに DML 本体" },
+    { "sql": "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) DELETE FROM t WHERE id IN (SELECT n FROM r)", "readOnly": false, "note": "#1151: 再帰 CTE の後ろに DML 本体" },
+    { "sql": "WITH c AS (SELECT 1) SELECT * INTO backup FROM t", "readOnly": false, "note": "#1151: CTE 前置でも SELECT ... INTO は書き込み" }
   ]
 }
