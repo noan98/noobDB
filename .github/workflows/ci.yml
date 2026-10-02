@@ -81,7 +81,7 @@ jobs:
             # serde_schema_parity.rs / read_only_golden.rs / error_kind_golden.rs /
             # error_hint_golden.rs) が include_str! で読む共有フィクスチャだけが
             # 変わった PR は frontend==true だが rust==false になるため、
-            # `rust (test)` ジョブの if: にこの crosslang を OR で足して確実に
+            # `rust (test)` / `rust (coverage)` ジョブの if: にこの crosslang を OR で足して確実に
             # 実走させる (詳細は下の `crosslang parity` ジョブのコメント参照)。
             crosslang:
               - 'src/__tests__/fixtures/**'
@@ -121,7 +121,8 @@ jobs:
   # トレードオフ (要検討事項): 旧 `frontend` / `frontend-visual` は並列実行だった
   # ため壁時計は max(typecheck+build 系, ブラウザテスト系) だったが、統合後は
   # 直列実行の合計になる。実測ではいずれも Rust 側ジョブ (特に `rust (test)` の
-  # MySQL/PostgreSQL 統合テスト + カバレッジ計装) がワークフロー全体の
+  # MySQL/PostgreSQL 統合テスト。カバレッジ計装は #1153 で非ブロッキングの
+  # `rust (coverage)` へ分離済み) がワークフロー全体の
   # クリティカルパスであり、フロント側を直列化しても全体の壁時計時間への影響は
   # 小さいと判断した。一方でブラウザテスト側の「install/トランスパイル部」
   # (pnpm install の再実行・Vite 依存プリバンドルのコールドスタート) は統合により
@@ -355,7 +356,7 @@ jobs:
   #   - `src/__tests__/fixtures/**` のみ変更:
   #     フィクスチャは `src/**` の部分集合なので必ず frontend==true になり、
   #     上記「`src/**` のみ変更」と同じく `frontend` ジョブがカバーする
-  #     (このジョブは skip、Rust 側は `rust (test)` の `crosslang` OR 条件が別途カバー)。
+  #     (このジョブは skip、Rust 側は `rust (test)` / `rust (coverage)` の `crosslang` OR 条件が別途カバー)。
   #   - ワークフローファイルのみ変更 (workflow==true):
   #     下記 if: の後半 `workflow == 'true'` により常に実走する。
   #
@@ -363,9 +364,9 @@ jobs:
   # このジョブだけでは塞げない — `serde_schema_parity.rs` / `read_only_golden.rs` /
   # `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` /
   # `export_format_golden.rs` は
-  # `rust (test)` ジョブの中で実行されるため、`src/__tests__/fixtures/**` だけを変更する PR
+  # `rust (test)` (と `rust (coverage)`) ジョブの中で実行されるため、`src/__tests__/fixtures/**` だけを変更する PR
   # (`rust==false`) では引き続きスキップされてしまう。これは上の `changes` ジョブに
-  # 追加した `crosslang` フィルタ (フィクスチャパス限定) を `rust (test)` の if: へ
+  # 追加した `crosslang` フィルタ (フィクスチャパス限定) を `rust (test)` / `rust (coverage)` の if: へ
   # OR で足すことで塞ぐ (そちらのコメント参照。#1029 でも変更していない)。
   crosslang-parity:
     name: crosslang parity
@@ -644,9 +645,13 @@ jobs:
   rust-test:
     name: rust (test)
     needs: changes
+    # #1153: 計装なしの `cargo nextest run` を実行する PR ブロッキングの高速ジョブ。
+    # カバレッジ計装 (llvm-cov / lcov / 閾値) は並列の非ブロッキングジョブ
+    # `rust (coverage)` へ分離した。チェック名 `rust (test)` は必須チェック設定
+    # (branch protection) を変えないために維持している。
     # #853: 通常の rust==true / workflow==true に加え、crosslang==true
     # (src/__tests__/fixtures/** の変更) でも起動する。このジョブが実行する
-    # `cargo llvm-cov nextest` には Rust 側の言語横断ゴールデンテスト
+    # `cargo nextest run` には Rust 側の言語横断ゴールデンテスト
     # (serde_schema_parity.rs / read_only_golden.rs / error_kind_golden.rs /
     # error_hint_golden.rs。いずれも include_str! で共有フィクスチャを読む) が
     # 含まれており、フィクスチャだけを変更する PR (src-tauri/** は無変更 =
@@ -657,9 +662,235 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
+      # sccache をコンパイルキャッシュとして使う (#417)。計装なしビルドなので
+      # sccache が通常どおり効く (計装ビルドは `rust (coverage)` に分離, #1153)。
+      # rust-cache (target) とは別管理。
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: testdb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
+      # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
+      - name: Record job start time (#565)
+        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
+      # 前に sccache 本体を導入する。
+      - name: Install sccache
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: sccache
+
+      # clang + mold はビルド高速化用 (src-tauri/.cargo/config.toml が
+      # Linux ターゲットのリンカに clang + mold を指定している)。mold で
+      # テストバイナリ群のリンク時間を短縮する。
+      # openssh-server は SSH トンネル統合テスト (#331) 用。テスト内で sshd を
+      # 127.0.0.1:2222 に立て、パスワード/鍵認証のトンネル確立を実走させる。
+      #
+      # このジョブで最も重い I/O 律速ステップの一つ。後続の Rust ツールチェーン/
+      # ツール導入・キャッシュ復元・フロントビルドはいずれも apt パッケージを必要と
+      # しない (clang/mold はリンク時 = nextest 実行時に初めて要り、openssh-server は
+      # 後段の sshd 起動でのみ要る) ため、GitHub Actions のステップ並列実行 (GA /
+      # 2026-06) の background: true で非同期起動し、Rust プリアンブルと重ねて壁時計
+      # を短縮する。実際にパッケージが要る sshd 起動と nextest コンパイルの前に wait で
+      # 完了を保証する。dpkg のロックはこの apt ステップだけが握り、並走する他ステップ
+      # (setup-node / rustup / taiki-e ツール導入 / cache 復元) は apt/dpkg を使わない
+      # ため競合しない。
+      # クリッピージョブ側と同じ理由の stale インデックス対策 (ミラー差替 + 自前
+      # update)。詳細はそちらのコメントを参照。
+      - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+
+      - name: System deps (Tauri 2 prerequisites)
+        id: apt
+        background: true
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold openssh-server
+          # クリッピージョブ側と同じ理由のキーバンプ (tauri-2-ssh 〜 tauri-4-ssh は
+          # 2026-07-23 に空キャッシュで汚染)。詳細はそちらのコメントを参照。
+          version: tauri-5-ssh
+
+      # Rust の単体 / 統合テストは __test_api 経由で db::Connection を駆動するだけで
+      # webview も run() も起動せず、実フロント資産を必要としない。tauri::generate_context!
+      # が参照する frontendDist (../dist) を満たすには dist/index.html が存在すれば足りる
+      # ため、pnpm install + build の代わりに最小スタブを 1 枚生成する (#796)。実フロント
+      # ビルドの検証は専用の frontend ジョブに一本化しており、Rust ジョブで再ビルドしても
+      # カバレッジ上の意味はない。これにより 4 Rust ジョブ×(pnpm install + build) 分の時間・
+      # キャッシュ I/O と pnpm 関連ステップ (setup-node / corepack / store キャッシュ) を
+      # 削減する。
+      - name: Stub frontend dist (for tauri::generate_context!)
+        shell: bash
+        run: mkdir -p dist && echo "" > dist/index.html
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache cargo
+        id: rust-cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: test
+
+      # sccache のローカルディスクキャッシュを永続化する (ジョブ種別 test で分離)。
+      - name: Cache sccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-test-
+
+      # sshd 起動 (#331) は openssh-server を要するため、background 化した apt の完了を
+      # まず待つ。ここで待つのは apt だけで、sshd はこの後 background 起動し nextest 直前の
+      # wait で待つ。#770 では sshd 起動 (約 22 秒) を $GITHUB_ENV の
+      # タイミング安全性を優先して直列のまま critical path に残していたが、公式仕様では
+      # background ステップの env はそれを含む wait 以降で利用可能なので、sshd も
+      # background 化して Rust ツール導入 (DL 律速) と重ねられる (#771)。
+      # TLS 統合テスト用 DB セットアップ (#520/#795、下記) がフォールバックで
+      # apt-get install する場合の dpkg ロック競合を避けるため、ここで同じ apt 完了を
+      # 待ってから起動する。
+      - name: Wait for apt (openssh-server needed by sshd)
+        wait: [apt]
+
+      # SSH トンネル統合テスト (#331) 用の sshd を起動し、接続情報を $GITHUB_ENV へ。
+      # apt (openssh-server) 完了後に background: true で非同期起動し、下の
+      # cargo-nextest 導入 (DL 律速) と重ねて壁時計を短縮する。
+      # サービスコンテナ (要イメージ pull) ではなく apt の openssh-server を直接構成
+      # する方式 (ローカルでも同手順を再現・検証できる。scripts/ci-setup-sshd.sh)。
+      # 書き込む NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY は、この background を含む
+      # 下の wait 以降で初めて nextest から参照可能になる (公式仕様)。
+      - name: Setup test sshd (SSH tunnel integration)
+        id: sshd
+        background: true
+        run: bash scripts/ci-setup-sshd.sh
+
+      # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
+      # CA + サーバ証明書を生成し、TLS 必須の MySQL/PostgreSQL を別ポート
+      # (3307/5433) で起動する。下の「MySQL/PostgreSQL サービスコンテナ (平文)」とは
+      # 別の独立したインスタンスで、サービスコンテナは変更しない — サービスコンテナは
+      # 他のどのステップよりも前に起動するため証明書を後から渡せず、加えて
+      # `services:` には `command:` (エントリポイント引数上書き) が無く公式 postgres
+      # イメージへ `-c ssl=on` のような起動引数を渡す手段が無いため、サービス
+      # コンテナへの TLS 導入は最小侵襲にならないと判断した (詳細は
+      # scripts/ci-setup-tls-db.sh 冒頭のコメントと CLAUDE.md の
+      # 「TLS 統合テスト方針」を参照)。mysql-server/postgresql は ubuntu-latest
+      # ランナーに既定でプリインストール済みのため、通常はこの background 起動が
+      # 追加の apt ダウンロードを伴わず高速に完了する。sshd と同じく apt 完了後に
+      # background 起動し、下のツール導入と重ねる。
+      - name: Setup TLS test databases (TLS integration #520/#795)
+        id: tlsdb
+        background: true
+        run: bash scripts/ci-setup-tls-db.sh
+
+      # cargo-nextest の導入は DL 律速で、上の sshd / TLS DB 起動と
+      # CPU を食い合わないため重ねて走らせる。
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-nextest
+
+      # 残る background (sshd = SSH 接続情報 / tlsdb = TLS DB 接続情報。いずれも
+      # $GITHUB_ENV 経由) の完了を nextest の直前で待ち合わせる。両者の env は
+      # この wait 以降で利用可能になり、SSH トンネル統合テスト (#331) と TLS 統合
+      # テスト (#520/#795) が nextest で正しく実走する。dist/ は上のスタブステップで
+      # 既に用意済み。sshd/tlsdb のいずれかが失敗した場合はこの wait でジョブが
+      # fail する (公式仕様)。
+      - name: Wait for background setup (sshd, TLS test DBs)
+        wait: [sshd, tlsdb]
+
+      # 計装なしの nextest を実行する (PR ブロッキング)。MySQL/PostgreSQL の両
+      # サービスコンテナを指す URL を渡し、両ドライバの統合テストを CI で実走させる。
+      # SQLite は環境変数不要で常に走る。カバレッジ計装は `rust (coverage)` ジョブ。
+      # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
+      # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
+      # は、それぞれ background の「Setup test sshd」/「Setup TLS test databases」が
+      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb] 以降で参照可能になるため、
+      # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
+      - name: cargo nextest
+        working-directory: src-tauri
+        env:
+          NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
+          NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
+        run: cargo nextest run --locked --all-targets
+
+      # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
+      # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
+      # 拡張し、バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで
+      # fail はさせない。
+      - name: Job timing & cache summary (#565)
+        if: always()
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### rust (test) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit }} |"
+            echo ""
+            echo '<details><summary>sccache --show-stats</summary>'
+            echo ''
+            echo '```'
+            sccache --show-stats
+            echo '```'
+            echo ''
+            echo '</details>'
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rust-coverage:
+    name: rust (coverage)
+    needs: changes
+    # #1153: カバレッジ計装 (`cargo llvm-cov nextest`) を `rust (test)` から分離した
+    # 非ブロッキングのジョブ。計装ビルド (-C instrument-coverage) は sccache が
+    # キャッシュしないため遅く、`rust (test)` と同居させると全 PR のクリティカル
+    # パスになっていた。並列に走らせて PR のブロッキング経路から外す。
+    # **必須チェックには含めない** (閾値 `--fail-under-lines` の fail は赤く出るが
+    # 必須ではないのでマージは止めない運用)。`if:` は `rust (test)` と同じ条件
+    # (#853 の crosslang OR を含む)。
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: "0"
       # sccache をコンパイルキャッシュとして使う (#417)。カバレッジ計装ビルド
       # (-C instrument-coverage) は sccache がキャッシュ対象外として素通しするため、
       # 主な効果は依存クレートのコンパイルに現れる。rust-cache (target) とは別管理。
+      # キャッシュキーは `rust (test)` (計装なし) と分離する (#1153)。
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
     services:
@@ -760,16 +991,16 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: "./src-tauri -> target"
-          key: test
+          key: coverage
 
       # sccache のローカルディスクキャッシュを永続化する (ジョブ種別 test で分離)。
       - name: Cache sccache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
-          key: sccache-${{ runner.os }}-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: sccache-${{ runner.os }}-coverage-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            sccache-${{ runner.os }}-test-
+            sccache-${{ runner.os }}-coverage-
 
       # sshd 起動 (#331) は openssh-server を要するため、background 化した apt の完了を
       # まず待つ。ここで待つのは apt だけで、sshd はこの後 background 起動し nextest 直前の
@@ -888,7 +1119,7 @@ jobs:
         run: |
           ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
           {
-            echo "### rust (test) 所要時間・キャッシュ"
+            echo "### rust (coverage) 所要時間・キャッシュ"
             echo ""
             echo "| 項目 | 値 |"
             echo "| --- | --- |"

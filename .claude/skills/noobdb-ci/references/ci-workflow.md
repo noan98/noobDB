@@ -94,18 +94,19 @@
   (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
   `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` /
   `export_format_golden.rs` が `include_str!` で読む共有
-  フィクスチャだけを変更する PR で `rust (test)` がスキップされる問題) は
+  フィクスチャだけを変更する PR で `rust (test)` / `rust (coverage)` がスキップされる問題) は
   `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
-  限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます (#1029 でも
+  限定) を `rust (test)` / `rust (coverage)` の `if:` へ OR で足すことで塞いでいます (#1029 でも
   変更していません)。**必須チェックを設定する場合はこの `crosslang parity`
   ジョブも対象に含めてください。**
 
-  Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
+  Rust 系は 7 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 / PostgreSQL 16 のサービスコンテナに対し
-  `cargo llvm-cov nextest`
-  (カバレッジ計装下で nextest を実走) を実行します。起動条件は通常の
+  **計装なしの** `cargo nextest run --locked --all-targets` を実行します
+  (PR ブロッキング)。カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
+  (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
   確実に実走させるため)。`rust (test)` は加えて
@@ -122,7 +123,9 @@
   バイナリを導入)。`rust (test)` には MySQL 用の
   `NOOBDB_TEST_MYSQL_URL` と PostgreSQL 用の `NOOBDB_TEST_POSTGRES_URL` を両方
   渡しており、両ドライバの統合テストが CI で実走します (SQLite は環境変数不要で
-  常に走る)。カバレッジは `cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
+  常に走る)。`rust (coverage)` ジョブは `rust (test)` と同じ準備 (サービスコンテナ・sshd・
+  TLS DB・dist スタブ。複製しており composite action 化はしていない) の上で
+  `cargo llvm-cov nextest --no-report` を実行し、`cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
   Job Summary に出力して PR ごとに可視化し、加えて `--fail-under-lines` で行
   カバレッジの**下限を強制**します。閾値は**ラチェット式 (下げない)** で運用し
   (#482)、テスト整備で実測が上がったら実測をわずかに下回る値へ段階的に引き上げます
@@ -130,7 +133,14 @@
   per-file ではなく lines 全体のみで運用します (誤検出回避)。閾値割れで落ちても
   Job Summary には実測が残るよう、強制ステップはサマリ出力の後に置いています。
   llvm-cov の計装には `llvm-tools-preview` コンポーネントと `cargo-llvm-cov` が
-  必要で、いずれもこのジョブで導入しています。
+  必要で、いずれも `rust (coverage)` ジョブだけで導入しています。計装ビルド
+  (`-C instrument-coverage`) は sccache がキャッシュしない遅いビルドで、以前は
+  `rust (test)` に同居して全 PR のクリティカルパスになっていたため (#1153)、
+  `rust (test)` と**並列**の別ジョブへ切り出しました。`if:` 条件 (rust /
+  workflow / crosslang の OR) と sccache / rust-cache の設定は `rust (test)` と同等
+  ですが、キャッシュキーは `coverage` / `sccache-<os>-coverage-…` で分離しています。
+  **`rust (coverage)` は必須チェックに含めません** (`--fail-under-lines` 割れは
+  赤く出ますがマージはブロックしない運用)。
   clippy (cargo check 相当) と nextest (実バイナリ生成) は cargo が成果物を共有
   しないため、同一ジョブで直列にすると依存ツリーが二重コンパイルされて積み上がり
   ます。これを別ジョブで**並列**に走らせて壁時計時間を縮めています (rust-cache の
@@ -146,21 +156,23 @@
   不要の SQLite 統合テストのみ実走します。Tauri の全スタックビルド (WebView2 等) は
   不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows-clippy` /
   `windows-test` で Linux と分離しています。
-  さらに `rust (clippy)` / `rust (test)` / `rust (windows clippy)` /
-  `rust (windows test)` の各コンパイルジョブは
+  さらに `rust (clippy)` / `rust (test)` / `rust (coverage)` /
+  `rust (windows clippy)` / `rust (windows test)` の各コンパイルジョブは
   **sccache** を `RUSTC_WRAPPER` として有効化し (`taiki-e/install-action` で導入)、
   `SCCACHE_DIR` を `actions/cache` で永続化してブランチ跨ぎでコンパイル単位を再利用
   します (#417)。rust-cache が `target` ディレクトリをキャッシュするのに対し sccache
   は rustc 呼び出し単位をキャッシュする役割分担で、キャッシュキーは
   `sccache-<os>-<job>-<Cargo.lock ハッシュ>` で分離します。`config.toml` の sccache
   設定はコメントアウトのままで、CI 限定で環境変数により有効化しています。なお
-  `rust (test)` のカバレッジ計装ビルド (`-C instrument-coverage`) は sccache が
-  キャッシュ対象外として素通しするため、sccache の効果は主に clippy/windows ジョブと
-  依存クレートのコンパイルに現れます。
+  `rust (coverage)` のカバレッジ計装ビルド (`-C instrument-coverage`) は sccache が
+  キャッシュ対象外として素通しするため、sccache の効果は主に clippy / test / windows
+  ジョブと依存クレートのコンパイルに現れます。
   **必須チェックを設定する場合は `rust (check + clippy + test)` や旧
   `rust (windows)` ではなく `rust (clippy)` と `rust (test)` (必要なら
   `rust (deny)` / `rust (windows clippy)` / `rust (windows test)`) を
-  指定してください** (ジョブ分割でチェック名が変わったため)。
+  指定してください** (ジョブ分割でチェック名が変わったため)。`rust (test)` の名前は
+  #1153 の分割後も不変なので、既存の必須設定の変更は不要です。`rust (coverage)` は
+  必須に**含めないでください**。
 
 ## `automerge gate (script tests)` ジョブ (#1108)
 

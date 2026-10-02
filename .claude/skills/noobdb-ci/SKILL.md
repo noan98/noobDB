@@ -17,7 +17,8 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 |---|---|
 | `frontend (build + browser tests)` | 旧 `frontend (typecheck + build)` / `frontend (browser render + visual)` を #908 で統合 |
 | `crosslang parity` | 言語横断のパリティ/ゴールデンテスト。rust 専用差分の穴埋め用 |
-| `rust (clippy)` / `rust (test)` | 旧 `rust (check + clippy + test)` から分割 |
+| `rust (clippy)` / `rust (test)` | 旧 `rust (check + clippy + test)` から分割。`rust (test)` は計装なしの高速 nextest (#1153) |
+| `rust (coverage)` | **必須に含めない** (非ブロッキング)。カバレッジ計装 + 閾値 (#1153) |
 | `rust (deny)` | 依存ライセンス + RustSec 脆弱性チェック |
 | `rust (windows clippy)` / `rust (windows test)` | 旧 `rust (windows)` から分割 |
 
@@ -25,7 +26,7 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 
 | ファイル | 内容 |
 |---|---|
-| `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 6 ジョブ、カバレッジ閾値 |
+| `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 7 ジョブ、カバレッジ閾値 |
 | `references/release-workflow.md` | `release.yml` — タグビルド、キャッシュ温めの paths ゲート、`releaseDraft: false` の理由 |
 | `references/dependencies.md` | Dependabot / cargo-deny / pnpm audit の役割分担 |
 | `references/codex.md` | `automerge.yml` の Codex レビューゲート — 完了信号の取り方、CodeRabbit からの移行 (#1109)、`CODEX_PAT`、変更依頼ゲート (`/hold`・`do-not-merge`・定型句, #1108) |
