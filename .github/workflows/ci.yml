@@ -361,24 +361,19 @@ jobs:
       # 言語横断のパリティ/ゴールデンテストのみをピンポイントで実行する。
       # 型チェック・ビルド・knip・カバレッジは `frontend` ジョブの専管なので
       # ここでは行わない (このジョブの役割は起動条件の穴埋めのみ)。
+      #
+      # 対象は手書きのファイル列挙ではなく**命名規約**で導出する (#1152)。
+      # 手書き列挙は新規ゴールデンの追記漏れで「Rust 専用 PR で一度も走らない」
+      # テストを生むため、`src/__tests__/` の `*Golden.test.ts` / `*Parity.test.ts`
+      # は自動で拾われる。Rust ソースやフィクスチャを読むパリティテストを足すときは
+      # この命名規約に従うこと。規約に合わない例外 (awsIam.test.ts) だけ個別に足す。
+      # (Vitest の位置引数は「パスの部分一致」フィルタなので glob 相当になる。)
       - name: Cross-language parity/golden tests (Vitest)
         run: >-
           pnpm vitest run
-          src/__tests__/ipcCommandParity.test.ts
-          src/__tests__/ipcArgParity.test.ts
-          src/__tests__/streamEventParity.test.ts
-          src/__tests__/readOnlyGolden.test.ts
-          src/__tests__/maskGolden.test.ts
-          src/__tests__/statementSplitGolden.test.ts
-          src/__tests__/errorKindGolden.test.ts
-          src/__tests__/errorHintGolden.test.ts
-          src/__tests__/schemaParity.test.ts
-          src/__tests__/sqlQuotingGolden.test.ts
-          src/__tests__/exportFormatGolden.test.ts
-          src/__tests__/apiReachabilityParity.test.ts
-          src/__tests__/commandRegistrationParity.test.ts
-          src/__tests__/docCommandParity.test.ts
-          src/__tests__/sshHostKeyMismatchGolden.test.ts
+          Golden.test.ts
+          Parity.test.ts
+          src/__tests__/awsIam.test.ts
 
   # automerge の変更依頼ゲート (#1108) の判定ロジックのユニットテスト。
   # `automerge.yml` は GitHub Actions の実環境 (PR・コメント・レビュー) でしか
