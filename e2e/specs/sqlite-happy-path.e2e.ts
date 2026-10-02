@@ -77,7 +77,7 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
   });
 
   after(async () => {
-    if (tmpDir && fs.existsSync(tmpDir)) {
+    if (tmpDir) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -140,13 +140,20 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
 
     // Node 側でファイルを直接確認する: 空 (0 バイト) だった DB に SQLite ヘッダと
     // 書き込んだ行が実在する。
-    const stat = fs.statSync(tmpDbPath);
-    expect(stat.size).toBeGreaterThan(0);
-    const bytes = fs.readFileSync(tmpDbPath);
+    // 検査 (statSync / existsSync) と読み取りを分けると、その間にファイルが変わる
+    // 競合になる (CodeQL)。読み取りを 1 回で済ませ、読めなければ空として扱う。
+    const readOrEmpty = (file: string): Buffer => {
+      try {
+        return fs.readFileSync(file);
+      } catch {
+        return Buffer.alloc(0);
+      }
+    };
+    const bytes = readOrEmpty(tmpDbPath);
+    expect(bytes.length).toBeGreaterThan(0);
     expect(bytes.subarray(0, 15).toString("latin1")).toBe("SQLite format 3");
     // 既定はロールバックジャーナルだが、WAL 運用でも落ちないよう -wal も連結して探す。
-    const walPath = `${tmpDbPath}-wal`;
-    const all = fs.existsSync(walPath) ? Buffer.concat([bytes, fs.readFileSync(walPath)]) : bytes;
+    const all = Buffer.concat([bytes, readOrEmpty(`${tmpDbPath}-wal`)]);
     expect(all.includes(Buffer.from("e2e_items"))).toBe(true);
     expect(all.includes(Buffer.from("gamma"))).toBe(true);
   });
