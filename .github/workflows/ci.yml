@@ -373,6 +373,7 @@ jobs:
           src/__tests__/errorKindGolden.test.ts
           src/__tests__/errorHintGolden.test.ts
           src/__tests__/schemaParity.test.ts
+          src/__tests__/serdeCoverageParity.test.ts
           src/__tests__/sqlQuotingGolden.test.ts
           src/__tests__/exportFormatGolden.test.ts
           src/__tests__/apiReachabilityParity.test.ts
