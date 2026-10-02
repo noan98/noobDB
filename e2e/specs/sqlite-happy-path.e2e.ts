@@ -143,8 +143,10 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
 
   // CodeMirror は括弧・クォートの自動補完 (closeBrackets) が有効で、キー入力で
   // SQL が壊れることがある。以降の SQL は括弧・クォートを使わない形にする。
+  // また WebKitGTK では同じ文字の連続入力 (ALL の LL など) の片方が落ちる (UNION ALL が UNION AL になった)。
+  // 以降の SQL は同じ文字が続く語を避ける (UNION ALL ではなく UNION を使う)。
   it("書き込み (CREATE / INSERT 相当) を実行し、行が実 SQLite から返る", async () => {
-    await runSql("CREATE TABLE e2e_items AS SELECT 3 AS qty UNION ALL SELECT 4 UNION ALL SELECT 5");
+    await runSql("CREATE TABLE e2e_items AS SELECT 3 AS qty UNION SELECT 4 UNION SELECT 5");
     await runSql("SELECT qty FROM e2e_items ORDER BY qty");
 
     // 3 行 (3 / 4 / 5) が結果グリッドに出る (実 IPC → 実 SQLite → ストリーミング結果)。
