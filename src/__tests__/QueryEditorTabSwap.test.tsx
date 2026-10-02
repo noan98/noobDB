@@ -6,6 +6,7 @@ import { undo } from "@codemirror/commands";
 import { QueryEditor } from "../components/QueryEditor";
 import { setLocale } from "../i18n";
 import type { TableSchema } from "../api/tauri";
+import { TabSqlStore } from "../tabSqlStore";
 
 // #1308: タブを切り替えても EditorView を作り直さず、EditorState の差し替えで済ませる。
 // `new EditorView` の回数と、補完 (`sql()` 拡張) の組み立て回数を数えて固定する。
@@ -89,6 +90,65 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
       undo(view);
     });
     expect(view.state.doc.toString()).toBe("SELECT 1");
+  });
+
+  it("#1316: onDocChange だけなら打鍵で全文を文字列化せず、App は tab.sql を更新しなくても undo が残る", () => {
+    // App の配線を再現: tab.sql は古いまま、最新本文は TabSqlStore から読む。
+    const store = new TabSqlStore();
+    const staleTabSql = { a: "SELECT 1", b: "SELECT 2" };
+    const onDocChange = vi.fn((tabId: string, doc: { toString(): string }) => store.set(tabId, doc));
+    const el = (tabId: "a" | "b") => (
+      <QueryEditor
+        tabId={tabId}
+        onRun={() => {}}
+        onDocChange={(doc) => onDocChange(tabId, doc)}
+        initialSql={store.resolve(tabId, staleTabSql[tabId])}
+      />
+    );
+    const { rerender } = renderWithProviders(el("a"));
+    const view = currentView();
+    const toStringSpy = vi.spyOn(view.state.doc.constructor.prototype, "toString");
+    for (const ch of ["x", "y", "z"]) {
+      act(() => {
+        view.dispatch({ changes: { from: view.state.doc.length, insert: ch } });
+      });
+    }
+    expect(onDocChange).toHaveBeenCalledTimes(3);
+    // 打鍵中に Text 全体の toString は走らない (lint / プリフライトは debounce 側)。
+    expect(toStringSpy).not.toHaveBeenCalled();
+    toStringSpy.mockRestore();
+    expect(store.get("a")).toBe("SELECT 1xyz");
+
+    rerender(el("b"));
+    expect(view.state.doc.toString()).toBe("SELECT 2");
+    rerender(el("a"));
+    // 保存済み state が再利用され (= 最新本文との一致確認が通る)、undo 履歴が残る。
+    expect(view.state.doc.toString()).toBe("SELECT 1xyz");
+    act(() => {
+      undo(view);
+    });
+    expect(view.state.doc.toString()).toBe("SELECT 1");
+  });
+
+  it("#1316: 保存済み state が捨てられていても、最新本文 (store) から作り直し編集を失わない", () => {
+    const store = new TabSqlStore();
+    const el = (tabId: string, sql: string) => (
+      <QueryEditor
+        tabId={tabId}
+        onRun={() => {}}
+        onDocChange={(doc) => store.set(tabId, doc)}
+        initialSql={store.resolve(tabId, sql)}
+      />
+    );
+    const { rerender } = renderWithProviders(el("a", "SELECT 1"));
+    const view = currentView();
+    act(() => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: " -- edited" } });
+    });
+    // 上限を超える数のタブを経由して a の保存済み state を LRU から追い出す。
+    for (let i = 0; i < 30; i++) rerender(el(`x${i}`, `SELECT ${i}`));
+    rerender(el("a", "SELECT 1"));
+    expect(view.state.doc.toString()).toBe("SELECT 1 -- edited");
   });
 
   it("保存した本文が App 側のタブ本文と食い違うときは、保存分を捨てて作り直す", () => {
