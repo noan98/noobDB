@@ -91,8 +91,11 @@ describe("Result Grid の再レンダリング削減 (#1098)", () => {
     expect(tickOnlyDurations).toHaveLength(3);
     const medianTickDuration = [...tickOnlyDurations].sort((a, b) => a - b)[1];
 
+    const beforeAdd = durations.length;
     fireEvent.click(screen.getByText("add row"));
-    const realUpdateDuration = durations[durations.length - 1];
+    // 行の追加に続いて effect 起因の軽い再コミットが入ることがある (#1309 で
+    // マウント直後の余分な再レンダーを無くしたため、末尾の 1 件ではなく最大値を見る)。
+    const realUpdateDuration = Math.max(...durations.slice(beforeAdd));
 
     // props (columns/rows) が実際には変わらない tick だけの再レンダリングは
     // React.memo でバイパスされ、そのサブツリーはほぼ何もしない

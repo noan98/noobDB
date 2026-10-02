@@ -61,21 +61,21 @@ export function StatusBarIcon({ kind }: { kind: StatusBarIconKind }) {
  * `messageKey` を省略した場合は文言そのものを key にする。
  */
 export function StatusBarText({ text, messageKey }: { text: string; messageKey?: string }) {
+  // 退場アニメは持たない: `AnimatePresence mode="wait"` は短い間隔で key が続けて変わる
+  // (running → streaming → done が 100ms 前後で連続する) と退場の完了待ちで詰まり、
+  // 古い文言が残ったままになることがあった。旧文言は即座に外し、新文言だけ下から入れる。
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      <MotionSpan
-        key={messageKey ?? text}
-        initial={variants.slideUp.initial}
-        animate={variants.slideUp.animate}
-        exit={variants.slideUp.exit}
-        transition={STATUS_TRANSITION}
-        display="block"
-        whiteSpace="nowrap"
-        overflow="hidden"
-        textOverflow="ellipsis"
-      >
-        {text}
-      </MotionSpan>
-    </AnimatePresence>
+    <MotionSpan
+      key={messageKey ?? text}
+      initial={variants.slideUp.initial}
+      animate={variants.slideUp.animate}
+      transition={STATUS_TRANSITION}
+      display="block"
+      whiteSpace="nowrap"
+      overflow="hidden"
+      textOverflow="ellipsis"
+    >
+      {text}
+    </MotionSpan>
   );
 }

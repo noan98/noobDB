@@ -89,6 +89,11 @@ export interface KeepAliveProps {
   limit: number;
   /** 変わったら保持をすべて捨てる。 */
   resetKey?: string | null;
+  /**
+   * 指定すると、ここに含まれないキーは保持から外す (#1309)。キーが開閉する対象
+   * (閉じたタブなど) の中身を、LRU の上限に達するまで抱え続けないため。
+   */
+  liveKeys?: readonly string[];
   /** ルート要素の追加スタイル (重ねて置くときの `position: absolute` など)。 */
   rootStyle?: CSSProperties;
   /** 各アイテムの追加スタイル。 */
@@ -100,6 +105,7 @@ export function KeepAlive({
   children,
   limit,
   resetKey = null,
+  liveKeys,
   rootStyle,
   itemStyle,
 }: KeepAliveProps) {
@@ -118,7 +124,10 @@ export function KeepAlive({
   const resetting = state.reset !== resetKey;
   const gen = resetting ? state.gen + 1 : state.gen;
   if (resetting) cache.current.clear();
-  const nextKeys = touchKeepAlive(resetting ? [] : state.keys, activeKey, limit);
+  let nextKeys = touchKeepAlive(resetting ? [] : state.keys, activeKey, limit);
+  if (liveKeys && nextKeys.some((k) => !liveKeys.includes(k))) {
+    nextKeys = nextKeys.filter((k) => liveKeys.includes(k));
+  }
   if (resetting || nextKeys !== state.keys) {
     setState({ reset: resetKey, gen, keys: nextKeys });
   }
