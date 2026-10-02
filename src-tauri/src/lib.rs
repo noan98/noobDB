@@ -70,8 +70,8 @@ pub mod __test_api {
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
-        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, Connection, DbConnectOptions,
-        DriverKind, SslMode, WriteCapture, WriteKind,
+        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, sql_may_change_schema,
+        Connection, DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
@@ -165,6 +165,36 @@ pub mod __test_api {
         transfer_data_inner, TransferColumnInfo, TransferOutcome, TransferRequest,
     };
     pub use crate::db::transfer::TransferMode;
+
+    // IPC レスポンス型の serde ゴールデン網羅 (#1243)。`#[tauri::command]` の戻り値型を
+    // `serde_schema_parity.rs` のフィクスチャへ載せるための追加の再エクスポート
+    // (`serdeCoverageParity.test.ts` が戻り値型の載せ漏れを CI で検出する)。
+    pub use crate::commands::connection::HealthProbeItem;
+    pub use crate::commands::diff::DataDiffHandle;
+    pub use crate::commands::dump::DumpOptions;
+    pub use crate::commands::dump_tools::{DumpToolInstallPlan, DumpToolStatus};
+    pub use crate::commands::flight_recorder::{UndoOutcome, UndoPreviewResponse};
+    pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
+    pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
+    pub use crate::commands::schema::AlterTableContext;
+    pub use crate::commands::schema_drift::SchemaDriftCapture;
+    pub use crate::commands::ssh::ResolvedSshAlias;
+    pub use crate::commands::timelapse::{CaptureOutcome, WatchOutcome};
+    pub use crate::db::assertions::AssertionSql;
+    pub use crate::db::diff::TableColumns;
+    pub use crate::db::sandbox::SandboxConflict;
+    pub use crate::db::schema_insight::{IncomingForeignKey, TableStatistic};
+    pub use crate::db::types::DatabaseTables;
+    pub use crate::plan_watch::store::{PlanGeneration, WatchEntry};
+    pub use crate::schema_drift::{
+        GenerationMeta as DriftGenerationMeta, TableChangeStatus, TableChangeSummary,
+    };
+    pub use crate::tasks::{
+        AssertionRunRecord, SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
+    };
+    pub use crate::timelapse::{
+        GenerationDiff, GenerationMeta as TimelapseGenerationMeta, TableWatch,
+    };
 
     // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
     // 各 IPC ハンドラの `_inner` コア (State なし) を再公開する。
@@ -399,6 +429,13 @@ pub mod __test_api {
         database: Option<&str>,
     ) -> crate::error::Result<QueryResult> {
         crate::commands::query::run_query_inner(state, session_id, sql, database).await
+    }
+
+    /// ストリーミング実行 (`spawn_query_stream`) が書き込み成功後に呼ぶキャッシュ
+    /// invalidate (#1220)。`AppHandle` / `Channel` が要るため経路そのものは統合テスト
+    /// から駆動できないので、共通ヘルパを直接叩いて配線を固定する。
+    pub async fn invalidate_caches_after_stream_success(session: &Session, sql: &str) {
+        crate::commands::query::invalidate_caches_after_success(session, sql).await
     }
 
     /// Drives the `run_assertion` IPC command's core path (#742): rule → SQL

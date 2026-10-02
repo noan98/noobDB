@@ -2082,7 +2082,16 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
 pub fn sql_may_change_schema(driver: DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
     let masked = mask_for_driver(driver, &orig);
-    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    // 空白の連なり (改行・タブ・連続スペース) は 1 つのスペースへ畳む。`COMMENT\nON`
+    // のようにフレーズ内の空白が揺れても「comment on」を取りこぼさないため。単語境界は
+    // 空白で区切られたままなので他のキーワード判定には影響しない。
+    let masked_lower: String = masked
+        .iter()
+        .collect::<String>()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     ["create", "alter", "drop", "truncate", "rename"]
         .iter()
         .any(|kw| contains_word(&masked_lower, kw))
@@ -3035,8 +3044,7 @@ mod tests {
     use super::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
         has_stacked_statements, has_stacked_statements_for, is_read_only_sql, is_read_only_sql_for,
-        is_session_init_sql, mask_sensitive_var, sql_may_change_schema, sum_size_parts, DriverKind,
-        SslMode, WriteKind,
+        is_session_init_sql, mask_sensitive_var, sum_size_parts, DriverKind, SslMode, WriteKind,
     };
 
     fn test_col(name: &str) -> super::types::TableColumnInfo {
@@ -3379,78 +3387,10 @@ mod tests {
         }
     }
 
-    /// Schema Cache (#1097) の invalidate 判定: DDL キーワードを含む文は検出
-    /// され、通常の DML / SELECT は検出されないこと。
-    #[test]
-    fn sql_may_change_schema_detects_ddl_keywords() {
-        let ddl = [
-            "CREATE TABLE t (id INT)",
-            "ALTER TABLE t ADD COLUMN c INT",
-            "DROP TABLE t",
-            "TRUNCATE TABLE t",
-            "RENAME TABLE t TO t2",
-            "CREATE INDEX idx ON t (c)",
-            "DROP VIEW v",
-            "CREATE OR REPLACE FUNCTION f() RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql",
-        ];
-        for sql in ddl {
-            for driver in STANDARD_DRIVERS {
-                assert!(
-                    sql_may_change_schema(driver, sql),
-                    "{driver:?} を DDL として検出できていない: {sql:?}"
-                );
-            }
-        }
-
-        let non_ddl = [
-            "SELECT * FROM t",
-            "INSERT INTO t (id) VALUES (1)",
-            "UPDATE t SET id = 1",
-            "DELETE FROM t WHERE id = 1",
-            "SELECT * FROM t WHERE note = 'please alter this later'",
-        ];
-        for sql in non_ddl {
-            for driver in STANDARD_DRIVERS {
-                assert!(
-                    !sql_may_change_schema(driver, sql),
-                    "{driver:?} が DML/SELECT を誤って DDL 判定した: {sql:?}"
-                );
-            }
-        }
-    }
-
-    /// マルチステートメントのうち後段だけが DDL でも検出できること
-    /// (`run_query_transaction` が渡す文配列の各要素がこの経路を通る想定)。
-    #[test]
-    fn sql_may_change_schema_scans_the_whole_body_not_just_the_leading_keyword() {
-        assert!(sql_may_change_schema(
-            DriverKind::Mysql,
-            "SELECT 1; ALTER TABLE t ADD COLUMN c INT"
-        ));
-    }
-
-    /// コメント編集 (#1002) もスキーマキャッシュを無効化する。`comment` という
-    /// 列名を読むだけの SELECT は対象外。
-    #[test]
-    fn sql_may_change_schema_detects_comment_edits() {
-        assert!(sql_may_change_schema(
-            DriverKind::Postgres,
-            "COMMENT ON COLUMN \"public\".\"t\".\"c\" IS 'x'"
-        ));
-        assert!(!sql_may_change_schema(
-            DriverKind::Postgres,
-            "SELECT comment FROM notes WHERE comment <> ''"
-        ));
-    }
-
-    /// 文字列リテラルの中身は DDL 判定に影響しない (マスク経由で走査するため)。
-    #[test]
-    fn sql_may_change_schema_ignores_keywords_inside_string_literals() {
-        assert!(!sql_may_change_schema(
-            DriverKind::Postgres,
-            "SELECT 'drop everything' AS warning"
-        ));
-    }
+    // `sql_may_change_schema` の判定は共有ゴールデン
+    // (`src/__tests__/fixtures/schemaMutatingVectors.json`) を
+    // `tests/schema_mutating_golden.rs` が読んで検証する (#1221)。ここに手コピーの
+    // ケースは持たない。
 
     /// The same fail-open shape, but through the dry-run preview's
     /// stacked-statement gate (#852). A DDL stacked behind a DML escapes the
@@ -3744,73 +3684,9 @@ mod tests {
         assert!(!is_read_only_sql("SELECT * FROM t INTO OUTFILE '/tmp/x'"));
     }
 
-    /// Shared CTE corpus: mirrors the `READ_ONLY_CTE_CORPUS` table in
-    /// `src/__tests__/dangerousSql.test.ts`. The frontend `isReadOnlySql` and
-    /// this gate must agree on every entry — divergence is the integrity bug
-    /// the corpus is meant to surface. When updating one side, update the other.
-    const READ_ONLY_CTE_CORPUS: &[(&str, bool)] = &[
-        // Pure SELECT CTEs — accepted as read-only.
-        ("WITH t AS (SELECT 1) SELECT * FROM t", true),
-        (
-            "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) SELECT * FROM r",
-            true,
-        ),
-        (
-            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON 1=1",
-            true,
-        ),
-        // Write keyword hides inside a string literal — masking blanks it out.
-        (
-            "WITH c AS (SELECT 'delete from x' AS s) SELECT * FROM c",
-            true,
-        ),
-        // Identifier prefix containing "delete" must not match the bare keyword.
-        ("WITH c AS (SELECT deleted_at FROM logs) SELECT * FROM c", true),
-        // Write keyword living only inside a trailing comment.
-        ("WITH c AS (SELECT 1) SELECT * FROM c -- delete here", true),
-        // `REPLACE()` is a string function, not the REPLACE INTO write keyword.
-        (
-            "WITH c AS (SELECT REPLACE(name, 'a', 'b') FROM t) SELECT * FROM c",
-            true,
-        ),
-        // Mutation CTEs — rejected (not read-only).
-        ("WITH c AS (SELECT 1) DELETE FROM t", false),
-        ("WITH c AS (SELECT 1) UPDATE t SET x = 1", false),
-        ("WITH c AS (SELECT 1) INSERT INTO t VALUES (1)", false),
-        // Postgres data-modifying CTE bodies with RETURNING.
-        ("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false),
-        (
-            "WITH d AS (UPDATE t SET x = 1 RETURNING *) SELECT * FROM d",
-            false,
-        ),
-        (
-            "WITH d AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM d",
-            false,
-        ),
-        // Multiple CTEs followed by a DML main statement.
-        (
-            "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM t WHERE id IN (SELECT 1 FROM a)",
-            false,
-        ),
-        // Recursive CTE followed by a DML main statement.
-        (
-            "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) DELETE FROM t WHERE id IN (SELECT n FROM r)",
-            false,
-        ),
-        // SELECT ... INTO is a write-shaped statement even with a CTE prefix.
-        ("WITH c AS (SELECT 1) SELECT * INTO backup FROM t", false),
-    ];
-
-    #[test]
-    fn cte_corpus_matches_frontend_classification() {
-        for (sql, expected) in READ_ONLY_CTE_CORPUS {
-            assert_eq!(
-                is_read_only_sql(sql),
-                *expected,
-                "diverges from frontend isReadOnlySql for: {sql}"
-            );
-        }
-    }
+    // read-only の CTE 判定コーパスは共有ゴールデン
+    // `src/__tests__/fixtures/readOnlySqlVectors.json` (`tests/read_only_golden.rs`) に
+    // 一本化した (#1151)。ここに手コピーを置かない。
 
     #[test]
     fn ignores_keywords_hidden_in_comments_and_literals() {

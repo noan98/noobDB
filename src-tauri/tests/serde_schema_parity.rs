@@ -1,6 +1,6 @@
 // #825 でフィクスチャ数が増え、`serde_json::json!` マクロの再帰的展開が既定の
 // 再帰制限 (128) を超えるようになったため引き上げる。
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 //! zod ⇔ serde フィールド整合の共有ゴールデン (Rust 側、#625)。
 //!
@@ -57,8 +57,29 @@ use t::{
     SyncStatement, TableColumnInfo, TableComment, TableDiff, TableRowEstimate, TableRowIdentity,
     TableSchema, TableSizeInfo, Value,
 };
+// #1243: 全バリアント列挙 (`variants!`) に使う enum。
+use t::{
+    ExportFormat, HealthProbeStatus, PlanPayloadKind, RowCountOp, TableChangeStatus, WriteKind,
+};
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
+
+/// enum の全バリアントを列挙しつつ、**列挙漏れをコンパイルエラーにする** (#1195)。
+///
+/// `variants!(Ty [A, B])` は `vec![Ty::A, Ty::B]` を返す。同じ識別子リストから
+/// 網羅的な `match` も生成するので、enum にバリアントを足すとこのリストへの追記を
+/// 忘れた時点で「non-exhaustive patterns」でビルドが落ちる。
+macro_rules! variants {
+    ($ty:ident [$($v:ident),+ $(,)?]) => {{
+        #[allow(dead_code)]
+        fn exhaustive(x: $ty) {
+            match x {
+                $($ty::$v => {}),+
+            }
+        }
+        vec![$($ty::$v),+]
+    }};
+}
 
 /// 主要レスポンス型の代表インスタンスを serde で JSON 化し、
 /// `{ 型名: JSON }` のマップにまとめて返す。フロントのフィクスチャと同一内容。
@@ -749,6 +770,753 @@ fn build_fixtures() -> serde_json::Value {
         phase: "tunnel_connecting",
     };
 
+    // --- #1195: enum を含む型は全バリアントを最低 1 回シリアライズする -----------
+    //
+    // 代表インスタンス 1 個だと enum フィールドは 1 バリアントしか通らず、enum に
+    // 値を足しても serde / zod のどちらが古くても検知できない。以下の `*Variants`
+    // キーは「全バリアントを網羅した配列」で、`variants!` マクロが列挙漏れを
+    // コンパイルエラーにする。フロントは配列の各要素を同じ zod スキーマで検証する。
+
+    let all_rules = variants!(RuleId [
+        FkMissingIndex, DuplicateIndex, RedundantIndex, MissingPrimaryKey,
+        UnusedIndex, FkTypeMismatch, SqliteIntegerPkHint
+    ]);
+    let all_severities = variants!(Severity [High, Medium, Low]);
+    // ルール × 重要度を巡回させ、全ルールと全重要度を最低 1 回ずつ通す。
+    let health_finding_variants: Vec<HealthFinding> = all_rules
+        .iter()
+        .enumerate()
+        .map(|(i, rule)| HealthFinding {
+            rule: *rule,
+            severity: all_severities[i % all_severities.len()],
+            table: "orders".into(),
+            columns: vec!["user_id".into()],
+            context: vec![],
+            fix_ddl: None,
+            statistical: i % 2 == 0,
+        })
+        .collect();
+    let all_drivers = variants!(DriverKind [Mysql, Postgres, Sqlite]);
+    let schema_health_report_variants: Vec<SchemaHealthReport> = all_drivers
+        .iter()
+        .map(|driver| SchemaHealthReport {
+            driver: *driver,
+            tables_analyzed: 1,
+            findings: health_finding_variants.clone(),
+            // スキップされたルールも全ルールを通す。
+            skipped: all_rules
+                .iter()
+                .map(|rule| SkippedRule {
+                    rule: *rule,
+                    reason: "performance_schema_off".into(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    // サーバ通知の重要度 4 種 + `Value` の全形 (null / bool / int / uint / float /
+    // string / bytes) を 1 つの結果に載せる。
+    let query_result_variants = vec![QueryResult {
+        columns: vec![column.clone()],
+        rows: vec![vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(-1),
+            Value::UInt(1),
+            Value::Float(1.5),
+            Value::String("s".into()),
+            Value::Bytes("deadbeef".into()),
+        ]],
+        rows_affected: 0,
+        elapsed_ms: 1,
+        server_messages: variants!(ServerMessageSeverity [Error, Warning, Notice, Info])
+            .into_iter()
+            .map(|severity| ServerMessage {
+                severity,
+                text: "msg".into(),
+            })
+            .collect(),
+    }];
+
+    // 接続プロファイル: SslMode 5 種 × SshAuthMethod 3 種 (踏み台側も) を巡回。
+    let all_ssl_modes = variants!(SslMode [Disable, Prefer, Require, VerifyCa, VerifyFull]);
+    let all_auth_methods = variants!(SshAuthMethod [Key, Agent, Password]);
+    let connection_profile_variants: Vec<ProfileWithSecretFlags> = all_ssl_modes
+        .iter()
+        .enumerate()
+        .map(|(i, ssl_mode)| {
+            let mut profile = connection_profile.clone();
+            profile.profile.ssl_mode = Some(*ssl_mode);
+            if let Some(ssh) = profile.profile.ssh.as_mut() {
+                ssh.auth_method = all_auth_methods[i % all_auth_methods.len()];
+                if let Some(jump) = ssh.jump.as_mut() {
+                    jump.auth_method = all_auth_methods[(i + 1) % all_auth_methods.len()];
+                }
+            }
+            profile
+        })
+        .collect();
+
+    // スニペットの scope (`kind` タグ付き enum) 3 種。
+    let snippet_variants: Vec<Snippet> = vec![
+        SnippetScope::Any,
+        SnippetScope::Profile {
+            profile_id: "abc12345".into(),
+        },
+        SnippetScope::Group {
+            group: "production".into(),
+        },
+    ]
+    .into_iter()
+    .map(|scope| Snippet {
+        id: "snip0001".into(),
+        name: "Active users".into(),
+        folder: None,
+        tags: vec![],
+        sql: "SELECT 1".into(),
+        driver: None,
+        scope,
+    })
+    .collect();
+
+    // スキーマ差分: テーブル / 列それぞれで DiffStatus 4 種を通し、ドライバ組も巡回。
+    let all_diff_statuses = variants!(DiffStatus [SourceOnly, TargetOnly, Different, Same]);
+    let schema_diff_variants: Vec<SchemaDiff> = all_drivers
+        .iter()
+        .enumerate()
+        .map(|(i, source_driver)| SchemaDiff {
+            source_driver: *source_driver,
+            target_driver: all_drivers[(i + 1) % all_drivers.len()],
+            tables: all_diff_statuses
+                .iter()
+                .map(|table_status| TableDiff {
+                    name: "users".into(),
+                    status: *table_status,
+                    columns: all_diff_statuses
+                        .iter()
+                        .map(|column_status| ColumnDiff {
+                            name: "email".into(),
+                            status: *column_status,
+                            source: Some(table_column_info.clone()),
+                            target: Some(table_column_info.clone()),
+                            changed_fields: vec!["data_type".into()],
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    // 同期プラン: SyncKind 8 種すべて (destructive は DROP 系のみ true)。
+    let sync_plan_variants = vec![SyncPlan {
+        statements: variants!(SyncKind [
+            CreateTable, AddColumn, AlterColumn, DropColumn, DropTable,
+            InsertRow, UpdateRow, DeleteRow
+        ])
+        .into_iter()
+        .map(|kind| SyncStatement {
+            sql: "SELECT 1;".into(),
+            table: "users".into(),
+            kind,
+            destructive: matches!(kind, SyncKind::DropColumn | SyncKind::DropTable),
+        })
+        .collect(),
+        warnings: vec![],
+    }];
+
+    // データ差分: RowStatus 3 種を 1 つの結果に載せ、ドライバも巡回。
+    let data_diff_variants: Vec<DataDiff> = all_drivers
+        .iter()
+        .map(|driver| DataDiff {
+            target_driver: *driver,
+            table: "users".into(),
+            columns: vec!["id".into()],
+            primary_key: vec!["id".into()],
+            column_types: vec!["int".into()],
+            rows: variants!(RowStatus [SourceOnly, TargetOnly, Different])
+                .into_iter()
+                .map(|status| RowDiff {
+                    status,
+                    key: vec![Value::Int(1)],
+                    source: Some(vec![Value::Int(1)]),
+                    target: Some(vec![Value::Int(1)]),
+                    changed_columns: vec![],
+                    key_unreliable: false,
+                })
+                .collect(),
+            truncated: false,
+            source_count: 1,
+            target_count: 1,
+        })
+        .collect();
+
+    // ブロードキャスト比較の DiffMode 3 種。
+    let broadcast_env_message_variants: Vec<BroadcastMessage> =
+        variants!(DiffMode [Pk, Hash, None])
+            .into_iter()
+            .map(|mode| {
+                BroadcastMessage::Env(BroadcastEnvReport {
+                    session_id: "sess0001".into(),
+                    status: "done",
+                    columns: vec![column.clone()],
+                    rows: vec![],
+                    total_rows: 0,
+                    elapsed_ms: 1,
+                    error: None,
+                    diff: Some(BroadcastDiff {
+                        comparable: true,
+                        mode,
+                        changed_cells: vec![],
+                        changed_cell_count: 0,
+                        added_row_indices: vec![],
+                        removed_count: 0,
+                        truncated: false,
+                        has_diff: false,
+                    }),
+                })
+            })
+            .collect();
+
+    // バッチ実行結果の BatchStatus 3 種。
+    let batch_stream_results_message_variants = vec![BatchStreamMessage::Results {
+        results: variants!(BatchStatus [Ok, Error, Skipped])
+            .into_iter()
+            .map(|status| BatchStatementResult {
+                sql: "SELECT 1".into(),
+                status,
+                columns: None,
+                rows: None,
+                rows_affected: None,
+                elapsed_ms: None,
+                error: None,
+                server_messages: vec![],
+            })
+            .collect(),
+    }];
+
+    // Preview ストリームのうち代表値に無かった `afterRows` / `cancelled`。
+    let preview_stream_rows_message_variants = vec![
+        PreviewStreamMessage::BeforeRows { rows: vec![] },
+        PreviewStreamMessage::AfterRows {
+            rows: vec![vec![Value::Int(1)]],
+        },
+    ];
+    let preview_stream_cancelled_message = PreviewStreamMessage::Cancelled { delivered_rows: 5 };
+
+    // --- #1243: `#[tauri::command]` の戻り値型で、これまでフィクスチャに無かった型 ----
+    //
+    // `serdeCoverageParity.test.ts` が戻り値型を機械的に抽出し、フィクスチャへの載せ漏れ
+    // を CI で検出する。ここに足した型はその COVERED 表にも対応するキーを書く。
+
+    let alter_table_context = t::AlterTableContext {
+        columns: vec![table_column_info.clone()],
+        table_comment: "registered users".into(),
+        foreign_keys: vec![foreign_key.clone()],
+        table_names: vec!["users".into(), "orders".into()],
+    };
+    let assertion_sql = t::AssertionSql {
+        check_sql: "SELECT COUNT(*) FROM `users` WHERE `id` IS NULL".into(),
+        violations_sql: "SELECT * FROM `users` WHERE `id` IS NULL".into(),
+    };
+    let assertion_outcome = t::AssertionOutcome {
+        id: "asrt0001".into(),
+        passed: false,
+        observed: 3,
+        check_sql: assertion_sql.check_sql.clone(),
+        violations_sql: assertion_sql.violations_sql.clone(),
+        elapsed_ms: 4,
+    };
+    // 保存済みアサーション: ルールの全種 (`kind` タグ付き enum) を通す。
+    let assertion_variants: Vec<t::Assertion> = vec![
+        t::AssertionRule::NotNull {
+            column: "id".into(),
+        },
+        t::AssertionRule::Unique {
+            columns: vec!["id".into()],
+        },
+        t::AssertionRule::AcceptedValues {
+            column: "status".into(),
+            values: vec!["a".into(), "b".into()],
+        },
+        t::AssertionRule::Range {
+            column: "age".into(),
+            min: Some("0".into()),
+            max: None,
+        },
+        t::AssertionRule::Referential {
+            columns: vec!["user_id".into()],
+            ref_schema: None,
+            ref_table: "users".into(),
+            ref_columns: vec!["id".into()],
+        },
+        t::AssertionRule::RowCount {
+            op: t::RowCountOp::Between,
+            value: 1,
+            max: Some(10),
+        },
+    ]
+    .into_iter()
+    .map(|rule| t::Assertion {
+        id: "asrt0001".into(),
+        name: "check".into(),
+        scope: SnippetScope::Any,
+        schema: Some("public".into()),
+        table: "users".into(),
+        rule,
+    })
+    .collect();
+    // RowCountOp の全種は別個に通す (上の Between だけでは 1 種しか出ない)。
+    let row_count_op_variants: Vec<t::Assertion> =
+        variants!(RowCountOp [Gt, Gte, Lt, Lte, Eq, Between])
+            .into_iter()
+            .map(|op| t::Assertion {
+                id: "asrt0002".into(),
+                name: "row count".into(),
+                scope: SnippetScope::Any,
+                schema: None,
+                table: "users".into(),
+                rule: t::AssertionRule::RowCount {
+                    op,
+                    value: 1,
+                    max: None,
+                },
+            })
+            .collect();
+    let assertion_run_record = t::AssertionRunRecord {
+        id: 1,
+        task_id: "task0001".into(),
+        run_started_at: "2026-01-01T00:00:00Z".into(),
+        assertion_id: "asrt0001".into(),
+        assertion_name: "check".into(),
+        passed: true,
+        observed: Some(0),
+        error: None,
+        elapsed_ms: 5,
+    };
+    let write_capture_summary_variants: Vec<t::WriteCaptureSummary> =
+        variants!(WriteKind [Insert, Update, Delete, Other])
+            .into_iter()
+            .map(|kind| t::WriteCaptureSummary {
+                id: 101,
+                profile_id: Some("abc12345".into()),
+                driver: "mysql".into(),
+                database: Some("appdb".into()),
+                table: "users".into(),
+                kind,
+                sql: "DELETE FROM users WHERE id = 1".into(),
+                rows_affected: 1,
+                captured_at: "2026-01-01T00:00:00Z".into(),
+                undone: false,
+            })
+            .collect();
+    let health_probe_item_variants: Vec<t::HealthProbeItem> =
+        variants!(HealthProbeStatus [Up, Down, Timeout])
+            .into_iter()
+            .map(|status| t::HealthProbeItem {
+                session_id: "sess0001".into(),
+                status,
+                latency_ms: Some(12),
+                version: Some("8.0.36".into()),
+                connections: Some(5),
+            })
+            .collect();
+    let incoming_foreign_key = t::IncomingForeignKey {
+        table: "orders".into(),
+        column: "user_id".into(),
+        referenced_column: "id".into(),
+    };
+    let table_statistic = t::TableStatistic {
+        name: "users".into(),
+        row_estimate: Some(1234),
+        data_bytes: Some(65536),
+        index_bytes: Some(16384),
+        total_bytes: Some(81920),
+        column_count: Some(5),
+        index_count: 2,
+        has_primary_key: true,
+        foreign_key_count: 1,
+    };
+    let insert_rows_result = t::InsertRowsResult {
+        inserted: 100,
+        elapsed_ms: 8,
+    };
+    let open_table_result = t::OpenTableResult {
+        base: "`appdb`.`users`".into(),
+        sql: "SELECT * FROM `appdb`.`users`".into(),
+        columns: vec![table_column_info.clone()],
+        row_identity: Some(table_row_identity.clone()),
+        row_estimate: Some(1234),
+    };
+    // `result` と `error` はどちらか一方 (成功 / 失敗の 2 形)。
+    let open_table_entry_variants = vec![
+        t::OpenTableEntry {
+            database: "appdb".into(),
+            table: "users".into(),
+            result: Some(open_table_result.clone()),
+            error: None,
+        },
+        t::OpenTableEntry {
+            database: "appdb".into(),
+            table: "gone".into(),
+            result: None,
+            error: Some("table not found".into()),
+        },
+    ];
+    let database_tables = t::DatabaseTables {
+        database: "appdb".into(),
+        tables: vec!["users".into(), "orders".into()],
+    };
+    let schema_tree = t::SchemaTree {
+        databases: vec!["appdb".into()],
+        open: vec![t::SchemaTreeDatabase {
+            database: "appdb".into(),
+            tables: Some(vec!["users".into()]),
+            row_estimates: Some(vec![table_row_estimate.clone()]),
+            objects: vec![schema_object.clone()],
+            comments: Some(vec![table_comment.clone()]),
+        }],
+        tables: vec![t::SchemaTreeTable {
+            key: "appdb::users".into(),
+            columns: vec![table_column_info.clone()],
+            indexes: vec![index_info.clone()],
+        }],
+    };
+    let resolved_ssh_alias = t::ResolvedSshAlias {
+        host_name: Some("db.internal".into()),
+        port: Some(22),
+        user: Some("deploy".into()),
+        identity_file: Some("~/.ssh/id_ed25519".into()),
+        jump_host: Some("bastion.example.com".into()),
+        jump_port: Some(2222),
+        jump_user: Some("ops".into()),
+    };
+    let kill_processes_result = t::KillProcessesResult {
+        killed: 2,
+        failed: 1,
+        first_error: Some("permission denied".into()),
+    };
+    let db_user_info = t::DbUserInfo {
+        name: "app".into(),
+        host: Some("%".into()),
+        attributes: vec!["SUPER".into()],
+        member_of: vec![],
+        is_superuser: false,
+        can_login: true,
+    };
+    let privilege_row = t::TablePrivilegeRow {
+        table: "users".into(),
+        select: true,
+        insert: true,
+        update: false,
+        delete: false,
+        ddl: false,
+    };
+    let user_privileges = t::UserPrivileges {
+        global: Some(privilege_row.clone()),
+        tables: vec![privilege_row],
+    };
+    let object_hit = t::ObjectHit {
+        kind: "column".into(),
+        database: "appdb".into(),
+        table: "users".into(),
+        column: Some("email".into()),
+    };
+    let table_columns = t::TableColumns {
+        name: "users".into(),
+        columns: vec![table_column_info.clone()],
+    };
+
+    // サンドボックス (#747)。
+    let sandbox_record = t::SandboxRecord {
+        id: "sbx00001".into(),
+        name: "experiment".into(),
+        source_profile_id: Some("abc12345".into()),
+        source_driver: DriverKind::Mysql,
+        source_database: Some("appdb".into()),
+        tables: vec!["users".into()],
+        row_limit: 1000,
+        file_path: "/home/user/.local/share/noobDB/sandboxes/sbx00001.sqlite".into(),
+        created_at: "2026-01-01T00:00:00Z".into(),
+        truncated_tables: vec!["users".into()],
+    };
+    let sandbox_create_response = t::SandboxCreateResponse {
+        sandbox: sandbox_record.clone(),
+        session_id: "sess0002".into(),
+    };
+    let sandbox_table_diff_result = t::SandboxTableDiffResult {
+        desired: data_diff.clone(),
+        desired_diff_id: "diff0001".into(),
+        conflicts: variants!(RowStatus [SourceOnly, TargetOnly, Different])
+            .into_iter()
+            .map(|status| t::SandboxConflict {
+                key: vec![Value::Int(1)],
+                desired_status: status,
+                external_status: RowStatus::Different,
+                external_row: Some(vec![Value::Int(1)]),
+            })
+            .collect(),
+        source_checked: true,
+    };
+    let sandbox_schema_diff_result = t::SandboxSchemaDiffResult {
+        desired: schema_diff.clone(),
+        external_changed_tables: vec!["users".into()],
+        source_checked: true,
+    };
+    let data_diff_handle = t::DataDiffHandle {
+        diff_id: "diff0002".into(),
+        diff: data_diff.clone(),
+    };
+
+    // フライトレコーダーの Undo (#1259 周辺)。
+    let undo_conflict = t::UndoConflict {
+        key: vec![Value::Int(1)],
+        expected: Some(vec![Value::Int(1), Value::String("a".into())]),
+        current: None,
+    };
+    let undo_preview_response = t::UndoPreviewResponse {
+        statements: vec!["INSERT INTO users (id) VALUES (1);".into()],
+        conflicts: vec![undo_conflict.clone()],
+        warnings: vec!["row was modified".into()],
+    };
+    let undo_outcome = t::UndoOutcome {
+        applied: true,
+        rows_affected: 1,
+        conflicts: vec![undo_conflict],
+        warnings: vec![],
+    };
+
+    // タスクスケジューラ: アクション 3 種 × スケジュール 2 種 × 形式を通す。
+    let task_definition_variants: Vec<t::TaskDefinition> = vec![
+        (
+            t::TaskAction::ExportQuery {
+                sql: "SELECT 1".into(),
+                database: Some("appdb".into()),
+                format: t::ExportFormat::Sql,
+                output_path: "/tmp/out.sql".into(),
+                sql_table: Some("users".into()),
+                sql_batch_size: Some(100),
+            },
+            t::TaskSchedule::Interval { minutes: 30 },
+        ),
+        (
+            t::TaskAction::Dump {
+                database: "appdb".into(),
+                output_path: "/tmp/dump.sql".into(),
+                options: t::DumpOptions {
+                    pg_schema: Some("public".into()),
+                    ..Default::default()
+                },
+            },
+            t::TaskSchedule::Daily {
+                hour: 3,
+                minute: 15,
+            },
+        ),
+        (
+            t::TaskAction::RunAssertions {
+                database: None,
+                assertion_ids: vec!["asrt0001".into()],
+            },
+            t::TaskSchedule::Interval { minutes: 5 },
+        ),
+    ]
+    .into_iter()
+    .map(|(action, schedule)| t::TaskDefinition {
+        id: "task0001".into(),
+        name: "nightly".into(),
+        profile_id: "abc12345".into(),
+        action,
+        schedule,
+        enabled: true,
+        created_at: "2026-01-01T00:00:00Z".into(),
+        updated_at: "2026-01-02T00:00:00Z".into(),
+        next_run_at: Some("2026-01-03T00:00:00Z".into()),
+        last_run_at: Some("2026-01-02T00:00:00Z".into()),
+        last_status: Some("ok".into()),
+    })
+    .collect();
+    // ExportFormat 全種 (zod `exportFormat` と突き合わせる)。
+    let task_export_format_variants: Vec<t::TaskDefinition> = variants!(ExportFormat [
+        Csv, Json, Ndjson, Markdown, Sql, Xlsx
+    ])
+    .into_iter()
+    .map(|format| t::TaskDefinition {
+        id: "task0002".into(),
+        name: "export".into(),
+        profile_id: "abc12345".into(),
+        action: t::TaskAction::ExportQuery {
+            sql: "SELECT 1".into(),
+            database: None,
+            format,
+            output_path: "/tmp/out".into(),
+            sql_table: None,
+            sql_batch_size: None,
+        },
+        schedule: t::TaskSchedule::Interval { minutes: 60 },
+        enabled: false,
+        created_at: "2026-01-01T00:00:00Z".into(),
+        updated_at: "2026-01-02T00:00:00Z".into(),
+        next_run_at: None,
+        last_run_at: None,
+        last_status: None,
+    })
+    .collect();
+    let task_run = t::TaskRun {
+        id: 7,
+        task_id: "task0001".into(),
+        started_at: "2026-01-02T00:00:00Z".into(),
+        finished_at: "2026-01-02T00:00:03Z".into(),
+        status: "ok".into(),
+        error: None,
+        output_path: Some("/tmp/out.sql".into()),
+        rows: Some(100),
+        bytes: Some(4096),
+        elapsed_ms: 3000,
+        catch_up: true,
+    };
+    let scheduler_settings = t::SchedulerSettings {
+        catch_up_missed: true,
+    };
+
+    // タイムラプス (#735)。
+    let timelapse_watch_outcome = t::WatchOutcome {
+        watch_id: Some(3),
+        over_limit: false,
+        row_limit: 10_000,
+        generation_added: true,
+    };
+    let timelapse_capture_outcome = t::CaptureOutcome {
+        watch_id: 3,
+        database: "appdb".into(),
+        table: "users".into(),
+        added: true,
+        truncated: false,
+        error: None,
+    };
+    let table_watch = t::TableWatch {
+        id: 3,
+        profile_id: "abc12345".into(),
+        driver: "mysql".into(),
+        database: "appdb".into(),
+        table: "users".into(),
+        active: true,
+        partial: false,
+        created_at: "2026-01-01T00:00:00Z".into(),
+        generations: vec![t::TimelapseGenerationMeta {
+            id: 1,
+            captured_at: "2026-01-01T00:00:00Z".into(),
+            row_count: 10,
+            truncated: false,
+            bytes: 2048,
+        }],
+    };
+    let timelapse_generation_diff = t::GenerationDiff {
+        diff: data_diff.clone(),
+        columns_added: vec!["email".into()],
+        columns_removed: vec![],
+        partial: false,
+        from_captured_at: "2026-01-01T00:00:00Z".into(),
+        to_captured_at: "2026-01-02T00:00:00Z".into(),
+    };
+
+    // スキーマドリフト (#736 / #1260)。テーブル変化の種別 3 種を通す。
+    let schema_drift_generation = t::DriftGenerationMeta {
+        id: "gen00001".into(),
+        captured_at: "2026-01-01T00:00:00Z".into(),
+        driver: DriverKind::Postgres,
+        database: "appdb".into(),
+        fingerprint: "deadbeef".into(),
+        table_count: 12,
+        omitted: false,
+    };
+    let schema_drift_summary = t::DriftSummary {
+        tables: variants!(TableChangeStatus [Added, Removed, Changed])
+            .into_iter()
+            .map(|table_status| t::TableChangeSummary {
+                table: "users".into(),
+                table_status,
+                columns_added: 1,
+                columns_removed: 2,
+                columns_changed: 3,
+                indexes_added: 4,
+                indexes_removed: 5,
+                indexes_changed: 6,
+                added_columns: vec!["a".into()],
+                removed_columns: vec!["b".into()],
+                changed_columns: vec!["c".into()],
+                added_indexes: vec!["i1".into()],
+                removed_indexes: vec!["i2".into()],
+                changed_indexes: vec!["i3".into()],
+            })
+            .collect(),
+    };
+    let schema_drift_capture = t::SchemaDriftCapture {
+        added: true,
+        generations: vec![schema_drift_generation.clone()],
+        summary: Some(schema_drift_summary.clone()),
+    };
+
+    // 実行計画ウォッチ (#743 / #1260)。保存ペイロード種別 2 種を通す。
+    let plan_watch_entry_variants: Vec<t::WatchEntry> =
+        variants!(PlanPayloadKind [Json, SqliteRows])
+            .into_iter()
+            .map(|payload_kind| t::WatchEntry {
+                snippet_id: "snip0001".into(),
+                generations: vec![t::PlanGeneration {
+                    id: "pg000001".into(),
+                    captured_at: "2026-01-01T00:00:00Z".into(),
+                    driver: "mysql".into(),
+                    payload_kind,
+                    payload: "[]".into(),
+                    fingerprint: "deadbeef".into(),
+                }],
+            })
+            .collect();
+    let plan_watch_refresh_result = t::PlanWatchRefresh {
+        recorded: 3,
+        changed: 1,
+        errors: vec![t::PlanWatchRefreshError {
+            snippet_id: "snip0001".into(),
+            name: "slow query".into(),
+            error: "syntax error".into(),
+        }],
+    };
+
+    // ダンプツール (#546 周辺): 導入方法あり / なしの 2 形。
+    let dump_tool_status_variants = vec![
+        t::DumpToolStatus {
+            tool: "mysqldump".into(),
+            path: Some("/usr/bin/mysqldump".into()),
+            install: None,
+        },
+        t::DumpToolStatus {
+            tool: "pg_dump".into(),
+            path: None,
+            install: Some(t::DumpToolInstallPlan {
+                manager: "brew".into(),
+                command: "brew install libpq".into(),
+                location: "/opt/homebrew/opt/libpq/bin".into(),
+                one_click: true,
+            }),
+        },
+    ];
+
+    // プロファイルの暗号化バックアップ (#710)。
+    let encrypted_profile_export_result = t::EncryptedExportResult {
+        profiles: 3,
+        secrets: 2,
+        bytes: 1024,
+    };
+    let encrypted_profile_import_result = t::EncryptedImportResult {
+        result: ImportResult {
+            imported: 3,
+            skipped: 1,
+            overwritten: 0,
+            invalid: 0,
+        },
+        secrets: 2,
+    };
+
     json!({
         "column": column,
         "queryResult": query_result,
@@ -831,6 +1599,66 @@ fn build_fixtures() -> serde_json::Value {
         "scriptProgressEvent": script_progress_event,
         "scriptDoneEvent": script_done_event,
         "scriptErrorEvent": script_error_event,
+
+        // --- #1195: enum の全バリアントを網羅した配列 (`*Variants`) ---
+        "healthFindingVariants": health_finding_variants,
+        "schemaHealthReportVariants": schema_health_report_variants,
+        "queryResultVariants": query_result_variants,
+        "connectionProfileVariants": connection_profile_variants,
+        "snippetVariants": snippet_variants,
+        "schemaDiffVariants": schema_diff_variants,
+        "syncPlanVariants": sync_plan_variants,
+        "dataDiffVariants": data_diff_variants,
+        "broadcastEnvMessageVariants": broadcast_env_message_variants,
+        "batchStreamResultsMessageVariants": batch_stream_results_message_variants,
+        "previewStreamRowsMessageVariants": preview_stream_rows_message_variants,
+        "previewStreamCancelledMessage": preview_stream_cancelled_message,
+
+        // --- #1243: `#[tauri::command]` の戻り値型の載せ漏れ分 ---
+        "alterTableContext": alter_table_context,
+        "assertionSql": assertion_sql,
+        "assertionOutcome": assertion_outcome,
+        "assertionVariants": assertion_variants,
+        "assertionRowCountOpVariants": row_count_op_variants,
+        "assertionRunRecord": assertion_run_record,
+        "writeCaptureSummaryVariants": write_capture_summary_variants,
+        "healthProbeItemVariants": health_probe_item_variants,
+        "incomingForeignKey": incoming_foreign_key,
+        "tableStatistic": table_statistic,
+        "insertRowsResult": insert_rows_result,
+        "openTableResult": open_table_result,
+        "openTableEntryVariants": open_table_entry_variants,
+        "databaseTables": database_tables,
+        "schemaTree": schema_tree,
+        "resolvedSshAlias": resolved_ssh_alias,
+        "killProcessesResult": kill_processes_result,
+        "dbUserInfo": db_user_info,
+        "userPrivileges": user_privileges,
+        "objectSearchHit": object_hit,
+        "schemaSnapshotTable": table_columns,
+        "sandboxRecord": sandbox_record,
+        "sandboxCreateResponse": sandbox_create_response,
+        "sandboxTableDiffResult": sandbox_table_diff_result,
+        "sandboxSchemaDiffResult": sandbox_schema_diff_result,
+        "dataDiffHandle": data_diff_handle,
+        "undoPreviewResponse": undo_preview_response,
+        "undoOutcome": undo_outcome,
+        "taskDefinitionVariants": task_definition_variants,
+        "taskExportFormatVariants": task_export_format_variants,
+        "taskRun": task_run,
+        "schedulerSettings": scheduler_settings,
+        "timelapseWatchOutcome": timelapse_watch_outcome,
+        "timelapseCaptureOutcome": timelapse_capture_outcome,
+        "tableWatch": table_watch,
+        "timelapseGenerationDiff": timelapse_generation_diff,
+        "schemaDriftGeneration": schema_drift_generation,
+        "schemaDriftSummary": schema_drift_summary,
+        "schemaDriftCapture": schema_drift_capture,
+        "planWatchEntryVariants": plan_watch_entry_variants,
+        "planWatchRefreshResult": plan_watch_refresh_result,
+        "dumpToolStatusVariants": dump_tool_status_variants,
+        "encryptedProfileExportResult": encrypted_profile_export_result,
+        "encryptedProfileImportResult": encrypted_profile_import_result,
     })
 }
 

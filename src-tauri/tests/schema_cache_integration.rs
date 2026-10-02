@@ -80,6 +80,77 @@ async fn repeated_tables_call_reuses_the_cached_result() {
 // ---------------------------------------------------------------------------
 // 受け入れ条件: Refresh/DDL後にstale schemaが表示されない
 // ---------------------------------------------------------------------------
+// #1220: ストリーミング実行経路 (エディタ主経路) も DDL 成功後に invalidate する
+// ---------------------------------------------------------------------------
+
+/// `spawn_query_stream` は実行成功後に共通ヘルパ経由で invalidate する。経路自体は
+/// `AppHandle` / `Channel` が要るため、実行 (`execute`) + 成功後ヘルパの組で再現する。
+#[tokio::test]
+async fn ddl_via_stream_path_invalidates_the_schema_cache() {
+    let (conn, opts, _path) = temp_conn("ddl_stream").await;
+
+    let state = AppState::default();
+    let id = register(&state, "s1", conn, opts).await;
+    let session = state.get(&id).await.expect("session exists");
+
+    let before = session
+        .schema_cache
+        .tables("main", || session.conn.tables("main"))
+        .await
+        .expect("tables before create");
+    assert!(before.is_empty(), "作成前は空のはず: {before:?}");
+
+    let sql = "CREATE TABLE streamed (id INTEGER PRIMARY KEY)";
+    session.conn.execute(sql, None).await.expect("create table");
+    t::invalidate_caches_after_stream_success(&session, sql).await;
+
+    let after = session
+        .schema_cache
+        .tables("main", || session.conn.tables("main"))
+        .await
+        .expect("tables after create");
+    assert!(
+        after.iter().any(|t| t == "streamed"),
+        "ストリーミング DDL 後は再取得され、新しいテーブルが見えること: {after:?}"
+    );
+}
+
+/// ストリーミング経路の純 DML はスキーマキャッシュを破棄しない (過剰 invalidate 防止)。
+#[tokio::test]
+async fn dml_via_stream_path_keeps_the_schema_cache() {
+    let (conn, opts, _path) = temp_conn("dml_stream").await;
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create t");
+
+    let state = AppState::default();
+    let id = register(&state, "s1", conn, opts).await;
+    let session = state.get(&id).await.expect("session exists");
+
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    for step in 0..2 {
+        if step == 1 {
+            let sql = "INSERT INTO t (id) VALUES (1)";
+            session.conn.execute(sql, None).await.expect("insert");
+            t::invalidate_caches_after_stream_success(&session, sql).await;
+        }
+        session
+            .schema_cache
+            .tables("main", || async {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                session.conn.tables("main").await
+            })
+            .await
+            .expect("tables");
+    }
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "DML ではスキーマキャッシュはヒットしたままのはず"
+    );
+}
+
+// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn ddl_via_run_query_invalidates_the_cache() {

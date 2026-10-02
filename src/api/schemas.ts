@@ -624,7 +624,7 @@ export const timelapseWatchOutcome = z.object({
   generation_added: z.boolean(),
 });
 
-const timelapseCaptureOutcome = z.object({
+export const timelapseCaptureOutcome = z.object({
   watch_id: z.number(),
   database: z.string(),
   table: z.string(),
@@ -1367,7 +1367,9 @@ const dumpOptions = z.object({
   formatSql: z.boolean().optional(),
 });
 
-const exportFormat = z.enum(["csv", "json", "ndjson", "markdown", "sql"]);
+// `ExportFormat` (tauri.ts / Rust) と同じ全種。xlsx (#711) が抜けていると xlsx の
+// 定期タスクが `list_tasks` の zod 検証で落ちる (#1195 の全バリアントゴールデンが検出)。
+const exportFormat = z.enum(["csv", "json", "ndjson", "markdown", "sql", "xlsx"]);
 
 const taskAction = z.discriminatedUnion("kind", [
   z.object({

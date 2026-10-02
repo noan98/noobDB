@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   analyzeDangerousSql,
   isReadOnlySql,
-  isSchemaMutatingSql,
 } from "../dangerousSql";
 
 describe("analyzeDangerousSql", () => {
@@ -274,105 +273,11 @@ describe("isReadOnlySql", () => {
   });
 });
 
-/**
- * Shared CTE corpus. The frontend `isReadOnlySql` and the backend
- * `is_read_only_sql` (`src-tauri/src/db/mod.rs`) must agree on every entry in
- * this table — both names are gates that decide whether a `WITH ...` statement
- * may run on a read-only session. A duplicate of this table lives in the Rust
- * test module (search for `READ_ONLY_CTE_CORPUS`). Adding a case here without
- * mirroring it there (or vice versa) is the regression this corpus is meant to
- * catch.
- */
-export const READ_ONLY_CTE_CORPUS: { sql: string; readOnly: boolean }[] = [
-  // Pure SELECT CTEs — should be accepted as read-only on both sides.
-  { sql: "WITH t AS (SELECT 1) SELECT * FROM t", readOnly: true },
-  {
-    sql: "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) SELECT * FROM r",
-    readOnly: true,
-  },
-  { sql: "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON 1=1", readOnly: true },
-  // Write keyword hides inside a string literal — masking must blank it out.
-  { sql: "WITH c AS (SELECT 'delete from x' AS s) SELECT * FROM c", readOnly: true },
-  // Identifier prefix that contains "delete" must not match the bare keyword.
-  { sql: "WITH c AS (SELECT deleted_at FROM logs) SELECT * FROM c", readOnly: true },
-  // Write keyword living only inside a trailing comment.
-  { sql: "WITH c AS (SELECT 1) SELECT * FROM c -- delete here", readOnly: true },
-  // `REPLACE()` is a string function, not the REPLACE INTO write keyword.
-  { sql: "WITH c AS (SELECT REPLACE(name, 'a', 'b') FROM t) SELECT * FROM c", readOnly: true },
+// read-only の CTE 判定コーパスは共有ゴールデン `fixtures/readOnlySqlVectors.json`
+// (`readOnlyGolden.test.ts` が検証) に一本化した (#1151)。ここに手コピーを置かない。
 
-  // Mutation CTEs — must be rejected (not read-only).
-  { sql: "WITH c AS (SELECT 1) DELETE FROM t", readOnly: false },
-  { sql: "WITH c AS (SELECT 1) UPDATE t SET x = 1", readOnly: false },
-  { sql: "WITH c AS (SELECT 1) INSERT INTO t VALUES (1)", readOnly: false },
-  // Postgres data-modifying CTE bodies with RETURNING.
-  { sql: "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", readOnly: false },
-  { sql: "WITH d AS (UPDATE t SET x = 1 RETURNING *) SELECT * FROM d", readOnly: false },
-  { sql: "WITH d AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM d", readOnly: false },
-  // Multiple CTEs followed by a DML main statement.
-  {
-    sql: "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM t WHERE id IN (SELECT 1 FROM a)",
-    readOnly: false,
-  },
-  // Recursive CTE followed by a DML main statement.
-  {
-    sql: "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) DELETE FROM t WHERE id IN (SELECT n FROM r)",
-    readOnly: false,
-  },
-  // SELECT ... INTO is a write-shaped statement even with a CTE prefix.
-  { sql: "WITH c AS (SELECT 1) SELECT * INTO backup FROM t", readOnly: false },
-];
-
-describe("CTE classification corpus (#286)", () => {
-  for (const { sql, readOnly } of READ_ONLY_CTE_CORPUS) {
-    it(`${readOnly ? "accepts" : "rejects"}: ${sql}`, () => {
-      expect(isReadOnlySql(sql)).toBe(readOnly);
-    });
-  }
-});
-
-// Schema-cache invalidation gate. Leans toward over-detection: every
-// `;`-separated statement is checked after masking comments/literals.
-const SCHEMA_MUTATING_CORPUS: { sql: string; mutates: boolean }[] = [
-  // Core DDL verbs.
-  { sql: "CREATE TABLE t (id INT)", mutates: true },
-  { sql: "DROP TABLE t", mutates: true },
-  { sql: "TRUNCATE TABLE t", mutates: true },
-  { sql: "RENAME TABLE a TO b", mutates: true },
-  // Compound DDL — leading verb already covers these.
-  { sql: "ALTER TABLE t RENAME COLUMN a TO b", mutates: true },
-  { sql: "ALTER TABLE t RENAME TO t2", mutates: true },
-  { sql: "CREATE INDEX idx ON t (a)", mutates: true },
-  { sql: "CREATE UNIQUE INDEX idx ON t (a)", mutates: true },
-  { sql: "DROP INDEX idx ON t", mutates: true },
-  { sql: "create index idx on t (a)", mutates: true },
-  // A leading comment must not hide the DDL.
-  { sql: "-- migrate\nDROP TABLE t", mutates: true },
-  { sql: "/* block */ CREATE TABLE t (id INT)", mutates: true },
-  // A schema change after an earlier statement still counts.
-  { sql: "SELECT 1; DROP TABLE t", mutates: true },
-  { sql: "INSERT INTO t VALUES (1); ALTER TABLE t ADD c INT", mutates: true },
-  // Wrapped in parens (e.g. tooling-prefixed) — leading "(" is skipped.
-  { sql: "( CREATE TABLE t (id INT) )", mutates: true },
-  // Plain DML / reads must NOT trip the gate.
-  { sql: "SELECT * FROM t", mutates: false },
-  { sql: "INSERT INTO t VALUES (1)", mutates: false },
-  { sql: "UPDATE t SET a = 1 WHERE id = 2", mutates: false },
-  { sql: "DELETE FROM t WHERE id = 2", mutates: false },
-  // The DDL keyword sitting inside a string/comment must not count.
-  { sql: "SELECT 'drop table t' AS note", mutates: false },
-  { sql: "SELECT * FROM t -- create table later", mutates: false },
-  // A column literally named like a keyword in DML stays a non-mutation.
-  { sql: "INSERT INTO logs (create_user) VALUES (1)", mutates: false },
-  { sql: "", mutates: false },
-];
-
-describe("isSchemaMutatingSql (#351)", () => {
-  for (const { sql, mutates } of SCHEMA_MUTATING_CORPUS) {
-    it(`${mutates ? "invalidates" : "keeps cache for"}: ${JSON.stringify(sql)}`, () => {
-      expect(isSchemaMutatingSql(sql)).toBe(mutates);
-    });
-  }
-});
+// isSchemaMutatingSql の判定は共有ゴールデン (fixtures/schemaMutatingVectors.json) を
+// schemaMutatingGolden.test.ts で検証する (#1221)。ここに手コピーのコーパスは持たない。
 
 // --- #1256: マスクの使い回しと、バックエンド判定値のヒント ---------------------
 

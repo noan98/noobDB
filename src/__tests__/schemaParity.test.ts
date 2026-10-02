@@ -131,7 +131,78 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["exportResult", schemas.exportResult],
   ["exportStreamErrorEvent", schemas.exportStreamErrorEvent],
   ["connectPhaseEvent", schemas.connectPhaseEvent],
+
+  // #1195: enum を含む型は全バリアントを最低 1 回シリアライズした配列 (`*Variants`)
+  // を、各要素ごとに同じスキーマで検証する (enum に値を足したのに zod が古い、を検出)。
+  ["healthFindingVariants", schemas.healthFinding],
+  ["schemaHealthReportVariants", schemas.schemaHealthReport],
+  ["queryResultVariants", schemas.queryResult],
+  ["connectionProfileVariants", schemas.connectionProfile],
+  ["snippetVariants", schemas.snippet],
+  ["schemaDiffVariants", schemas.schemaDiff],
+  ["syncPlanVariants", schemas.syncPlan],
+  ["dataDiffVariants", schemas.dataDiff],
+  ["broadcastEnvMessageVariants", schemas.broadcastEnvMessage],
+  ["batchStreamResultsMessageVariants", schemas.batchStreamResultsMessage],
+  ["previewStreamRowsMessageVariants", schemas.previewStreamRowsMessageLite],
+  // Preview の cancelled は Query と同一シェイプ (`channelCancelledMessage` を共有)。
+  ["previewStreamCancelledMessage", schemas.channelCancelledMessage],
+
+  // #1243: `#[tauri::command]` の戻り値型で、これまでフィクスチャに無かった型
+  // (`serdeCoverageParity.test.ts` が載せ漏れを検出する)。
+  ["alterTableContext", schemas.alterTableContext],
+  ["assertionSql", schemas.assertionSql],
+  ["assertionOutcome", schemas.assertionOutcome],
+  ["assertionVariants", schemas.assertion],
+  ["assertionRowCountOpVariants", schemas.assertion],
+  ["assertionRunRecord", schemas.assertionRunRecord],
+  ["writeCaptureSummaryVariants", schemas.writeCaptureSummary],
+  ["healthProbeItemVariants", schemas.healthProbeItem],
+  ["incomingForeignKey", schemas.incomingForeignKey],
+  ["tableStatistic", schemas.tableStatistic],
+  ["insertRowsResult", schemas.insertRowsResult],
+  ["openTableResult", schemas.openTableResult],
+  ["openTableEntryVariants", schemas.openTableEntry],
+  ["databaseTables", schemas.databaseTables],
+  ["schemaTree", schemas.schemaTree],
+  ["resolvedSshAlias", schemas.resolvedSshAlias],
+  ["killProcessesResult", schemas.killProcessesResult],
+  ["dbUserInfo", schemas.dbUserInfo],
+  ["userPrivileges", schemas.userPrivileges],
+  ["objectSearchHit", schemas.objectSearchHit],
+  ["schemaSnapshotTable", schemas.schemaSnapshotTable],
+  ["sandboxRecord", schemas.sandboxRecord],
+  ["sandboxCreateResponse", schemas.sandboxCreateResponse],
+  ["sandboxTableDiffResult", schemas.sandboxTableDiffResult],
+  ["sandboxSchemaDiffResult", schemas.sandboxSchemaDiffResult],
+  ["dataDiffHandle", schemas.dataDiffHandle],
+  ["undoPreviewResponse", schemas.undoPreviewResponse],
+  ["undoOutcome", schemas.undoOutcome],
+  ["taskDefinitionVariants", schemas.taskDefinition],
+  ["taskExportFormatVariants", schemas.taskDefinition],
+  ["taskRun", schemas.taskRun],
+  ["schedulerSettings", schemas.schedulerSettings],
+  ["timelapseWatchOutcome", schemas.timelapseWatchOutcome],
+  ["timelapseCaptureOutcome", schemas.timelapseCaptureOutcome],
+  ["tableWatch", schemas.tableWatch],
+  ["timelapseGenerationDiff", schemas.timelapseGenerationDiff],
+  ["schemaDriftGeneration", schemas.schemaDriftGeneration],
+  ["schemaDriftSummary", schemas.schemaDriftSummary],
+  ["schemaDriftCapture", schemas.schemaDriftCapture],
+  ["planWatchEntryVariants", schemas.planWatchEntry],
+  ["planWatchRefreshResult", schemas.planWatchRefreshResult],
+  ["dumpToolStatusVariants", schemas.dumpToolStatus],
+  ["encryptedProfileExportResult", schemas.encryptedProfileExportResult],
+  ["encryptedProfileImportResult", schemas.encryptedProfileImportResult],
 ];
+
+/** `*Variants` キーは「全バリアントを網羅した配列」。それ以外は単一インスタンス。 */
+function instancesOf(name: string, fixture: unknown): unknown[] {
+  if (!name.endsWith("Variants")) return [fixture];
+  expect(Array.isArray(fixture), `${name} は配列であること`).toBe(true);
+  expect((fixture as unknown[]).length, `${name} は空でないこと`).toBeGreaterThan(0);
+  return fixture as unknown[];
+}
 
 describe("zod ⇔ serde フィールドパリティ (主要レスポンス型)", () => {
   for (const [name, schema] of cases) {
@@ -139,20 +210,24 @@ describe("zod ⇔ serde フィールドパリティ (主要レスポンス型)",
       const fixture = fixtures[name];
 
       it("Rust serde 出力が zod スキーマを通る", () => {
-        const result = schema.safeParse(fixture);
-        expect(
-          result.success,
-          result.success
-            ? ""
-            : `zod parse failed for ${name}: ${JSON.stringify(result.error.issues, null, 2)}`,
-        ).toBe(true);
+        for (const instance of instancesOf(name, fixture)) {
+          const result = schema.safeParse(instance);
+          expect(
+            result.success,
+            result.success
+              ? ""
+              : `zod parse failed for ${name}: ${JSON.stringify(result.error.issues, null, 2)}`,
+          ).toBe(true);
+        }
       });
 
       it("フィクスチャのキー集合が zod スキーマの shape と一致する", () => {
-        const fixtureKeys = Object.keys(fixture as Record<string, unknown>).sort();
         const schemaKeys = Object.keys(schema.shape).sort();
-        // ズレたら「どちらに / 何が」余分かをメッセージで示す。
-        expect(fixtureKeys).toEqual(schemaKeys);
+        for (const instance of instancesOf(name, fixture)) {
+          const fixtureKeys = Object.keys(instance as Record<string, unknown>).sort();
+          // ズレたら「どちらに / 何が」余分かをメッセージで示す。
+          expect(fixtureKeys).toEqual(schemaKeys);
+        }
       });
     });
   }
