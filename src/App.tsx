@@ -8946,7 +8946,7 @@ export default function App() {
                       icon="query"
                       title={t("tabsEmptyTitle")}
                       description={t("tabsEmpty")}
-                      action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab() }}
+                      action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab(), testId: "new-query-empty" }}
                       secondaryActions={tabsEmptySecondaryActions}
                     />
                   </PaneEmpty>

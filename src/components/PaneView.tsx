@@ -1136,7 +1136,7 @@ export const PaneView = memo(
               icon="query"
               title={t("tabsEmptyTitle")}
               description={t("tabsEmpty")}
-              action={{ label: t("tabsNewQuery"), onClick: () => actions.handleNewTab(pane.id) }}
+              action={{ label: t("tabsNewQuery"), onClick: () => actions.handleNewTab(pane.id), testId: "new-query-empty" }}
               secondaryActions={emptyActions}
             />
           </PaneEmpty>
