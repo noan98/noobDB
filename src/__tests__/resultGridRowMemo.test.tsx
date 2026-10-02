@@ -160,3 +160,35 @@ describe("結果グリッドの行単位の memo (#1341)", () => {
     });
   });
 });
+
+describe("行の中身が変わったときの再描画 (#1341)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setLocale("en");
+    reset();
+  });
+
+  it("行数が同じで途中の行だけが変わった更新 (自動リフレッシュの差分適用) でも、新しい値が表示される", () => {
+    // `applyRefreshPatch` と同じく、変わらない行は同じ配列を使い回し、変わった行だけを新しい配列にする。
+    const before = mk();
+    const { container, rerender } = renderWithProviders(<ResultGrid result={before} />);
+    expect(dataCells(container)[10][1].textContent).toContain("r10c1");
+    const rows = before.rows.slice();
+    rows[10] = [10, "r10c1-updated", "r10c2"];
+    reset();
+    rerender(<ResultGrid result={{ ...before, rows }} />);
+    expect(dataCells(container)[10][1].textContent).toContain("r10c1-updated");
+    // 変わった行だけが描き直され、ほかの行 (先頭・末尾を含む) は描き直されない。
+    expect(touchedRows()).toEqual([10]);
+  });
+
+  it("末尾に行を追記しても、既存の行は描き直されない", () => {
+    const before = mk();
+    const { container, rerender } = renderWithProviders(<ResultGrid result={before} />);
+    const rows = before.rows.concat([[ROWS, `r${ROWS}c1`, `r${ROWS}c2`]]);
+    reset();
+    rerender(<ResultGrid result={{ ...before, rows, rows_affected: rows.length }} />);
+    expect(dataCells(container)).toHaveLength(ROWS + 1);
+    expect(touchedRows()).toEqual([ROWS]);
+  });
+});

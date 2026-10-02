@@ -2948,8 +2948,14 @@ interface GridRowProps {
   handlers: GridRowHandlers;
 }
 
-/** `row` (TanStack の行オブジェクト) 以外をすべて参照比較する。 */
+/**
+ * すべての props を参照比較する。ただし `row` (TanStack の行オブジェクト) はデータ追記の
+ * たびに作り直されるので、行オブジェクトそのものではなく、行の中身 (`row.original`) と
+ * 行 id で比べる。`row.original` は行の配列ごとに使い回される (`rowShapeFor`) ため、
+ * 値が変わった行だけが再描画される。
+ */
 function gridRowPropsEqual(a: GridRowProps, b: GridRowProps): boolean {
+  if (a.row.original !== b.row.original || a.row.id !== b.row.id) return false;
   const keys = Object.keys(a) as Array<keyof GridRowProps>;
   for (const k of keys) {
     if (k === "row") continue;
@@ -3198,6 +3204,12 @@ const GridRow = memo(function GridRow({
  * WeakMap なので行配列が捨てられれば一緒に回収される。
  */
 const rowShapeCache = new WeakMap<CellValue[][], RowShape[]>();
+/**
+ * 行の配列 1 本ごとの変換結果。自動リフレッシュの差分適用 (`applyRefreshPatch`) は変わらない
+ * 行の配列をそのまま使い回し、変わった行だけを新しい配列にするので、行単位で覚えておけば
+ * 変わった行だけを作り直せる (`GridRow` の memo も `row.original` の参照で変化を検出する)。
+ */
+const rowShapeByRow = new WeakMap<CellValue[], RowShape>();
 
 // `React.memo` でラップする (#1098)。呼び出し元の `ResultGrid` は
 // ストリーミング経過時間表示 (200ms ごとに tick する `useStreamingElapsed`) や
@@ -4145,9 +4157,12 @@ export const DataGrid = memo(function DataGrid({
   // ので、誤って古い変換結果を返すことはない。
   const dataCacheRef = useRef<{ rows: CellValue[][]; data: RowShape[] }>({ rows: [], data: [] });
   const data = useMemo<RowShape[]>(() => {
-    const toRowShape = (r: CellValue[]): RowShape => {
+    const rowShapeFor = (r: CellValue[]): RowShape => {
+      const hit = rowShapeByRow.get(r);
+      if (hit) return hit;
       const o: RowShape = {};
       r.forEach((v, i) => (o[String(i)] = v));
+      rowShapeByRow.set(r, o);
       return o;
     };
     const memoized = rowShapeCache.get(rows);
@@ -4155,17 +4170,19 @@ export const DataGrid = memo(function DataGrid({
       dataCacheRef.current = { rows, data: memoized };
       return memoized;
     }
+    // 追記だけ (前回の行がすべて同じ配列のまま先頭に並ぶ) なら、前回の結果に足すだけにする。
+    // 先頭と末尾だけを比べると、行数が同じで途中の行だけが変わった更新 (自動リフレッシュの
+    // 差分適用) を「変化なし」と誤判定し、古い値を表示してしまうので、全行を参照比較する。
     const prev = dataCacheRef.current;
-    const isAppendOnly =
-      prev.rows.length > 0 &&
-      rows.length >= prev.rows.length &&
-      rows[0] === prev.rows[0] &&
-      rows[prev.rows.length - 1] === prev.rows[prev.rows.length - 1];
+    let isAppendOnly = prev.rows.length > 0 && rows.length >= prev.rows.length;
+    for (let i = 0; isAppendOnly && i < prev.rows.length; i++) {
+      if (rows[i] !== prev.rows[i]) isAppendOnly = false;
+    }
     const next = isAppendOnly
       ? rows.length === prev.rows.length
         ? prev.data
-        : prev.data.concat(rows.slice(prev.rows.length).map(toRowShape))
-      : rows.map(toRowShape);
+        : prev.data.concat(rows.slice(prev.rows.length).map(rowShapeFor))
+      : rows.map(rowShapeFor);
     dataCacheRef.current = { rows, data: next };
     rowShapeCache.set(rows, next);
     return next;
