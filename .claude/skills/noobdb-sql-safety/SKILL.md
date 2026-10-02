@@ -17,7 +17,8 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
    | フィクスチャ | 固定する対象 |
    |---|---|
    | `readOnlySqlVectors.json` | `is_read_only_sql` / `isReadOnlySql` |
-   | `maskVectors.json` | コメント/リテラルのマスク (全判定の土台) |
+   | `schemaMutatingVectors.json` | `sql_may_change_schema` / `isSchemaMutatingSql` (スキーマ変更検出、#1221)。Rust `tests/schema_mutating_golden.rs` と `schemaMutatingGolden.test.ts` |
+| `maskVectors.json` | コメント/リテラルのマスク (全判定の土台) |
    | `statementSplitVectors.json` | 文境界 (`splitSqlStatements` / `isMultiStatement`、#1074) |
    | `autoLimitVectors.json` | `apply_auto_limit_for` (5 ドライバ) |
    | `queryShapeVectors.json` | fetch/execute 経路の振り分け |
