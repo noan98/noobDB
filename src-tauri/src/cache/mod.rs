@@ -22,7 +22,7 @@
 //!   1. 明示的 Refresh — `refresh_schema_cache` IPC (`commands::schema`) を
 //!      フロントのスキーマツリー更新ボタンから呼ぶ。
 //!   2. DDL 相当の SQL 実行 — `commands::query::{run_query, run_query_transaction,
-//!      run_in_transaction}` が実行前の SQL を [`crate::db::sql_may_change_schema`]
+//!      run_in_transaction}` と、ストリーミング実行 (`run_query_stream`、#1220) が SQL を [`crate::db::sql_may_change_schema`]
 //!      で判定し、該当すれば実行後にこのセッションのキャッシュを丸ごと invalidate
 //!      する。同一トランザクション内の 1 文でも DDL 相当なら全体を invalidate
 //!      する (どのテーブルが変わったかを SQL から正確に特定するパーサは持たない

@@ -61,25 +61,14 @@ jobs:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
           version: tauri-2-mutants
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-
-      - name: Enable pnpm (corepack)
-        run: corepack enable
-
-      - name: Get pnpm store directory
+      # cargo-mutants は rust ジョブと同じ Rust テストスイートを変異下で回すだけで、
+      # webview も run() も起動せず実フロント資産を必要としない。
+      # tauri::generate_context! が参照する frontendDist (../dist) を満たすには
+      # dist/index.html が存在すれば足りるため、pnpm install + build の代わりに最小
+      # スタブを 1 枚生成する (#796 / #1169、ci.yml の rust ジョブと同じ方針)。
+      - name: Stub frontend dist (for tauri::generate_context!)
         shell: bash
-        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
-
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.PNPM_STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+        run: mkdir -p dist && echo "" > dist/index.html
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -94,12 +83,6 @@ jobs:
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: cargo-mutants
-
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend (needed for tauri::generate_context!)
-        run: pnpm run build
 
       # --list モード: 変異候補を一覧して Job Summary に出力するだけ。
       # workflow_dispatch の list_only=true で選択できる。
