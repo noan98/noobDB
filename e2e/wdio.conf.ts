@@ -107,6 +107,10 @@ export const config: Options.Testrunner = {
         // CI では PATH に tauri-driver が必要 (cargo install tauri-driver --locked)。
         // ローカルでは `~/.cargo/bin/tauri-driver` があれば自動検出される。
         autoInstallTauriDriver: false,
+        // @wdio/tauri-service 1.3 は driverProvider 未指定だと組み込み WebDriver
+        // (tauri-plugin-wdio-webdriver) を既定にし、tauri-driver を使わない。本アプリは
+        // そのプラグインを登録していないため、外部の tauri-driver を使うことを明示する。
+        driverProvider: "external",
       },
     ],
   ],
