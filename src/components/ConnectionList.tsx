@@ -17,8 +17,13 @@ import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
-import { useRovingFocus } from "../keyboardNav";
-import { resolveTreeArrowLeft, resolveTreeArrowRight, type TreeNavRow } from "../treeKeyboardNav";
+import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
+import {
+  resolveTreeArrowLeft,
+  resolveTreeArrowRight,
+  resolveTreeMove,
+  type TreeNavEntry,
+} from "../treeKeyboardNav";
 import {
   contextMenuTriggerFromRect,
   isContextMenuOpenKey,
@@ -46,12 +51,17 @@ import {
 } from "./maintenanceCommands";
 import { Input } from "./ui";
 import {
+  buildExplorerRows,
   explorerContainerKind,
+  explorerRowExpansion,
+  explorerRowLabel,
   foreignKeyTargetLabel,
+  isFocusableExplorerRow,
   partitionDatabaseNodes,
-  showTablesHeader,
-  tableChildGroups,
+  tableKey,
   type ExplorerForeignKey,
+  type ExplorerHeaderGroup,
+  type ExplorerRow,
   type ExplorerViewNode,
 } from "./explorerTree";
 import type { I18nKey } from "../i18n";
@@ -69,7 +79,6 @@ import {
   TREE_GROUP_HEADING_PY,
 } from "./tree";
 
-const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
 /** `api.listTables` に薄く重ねて、サンドボックス (#747) の影テーブル
  *  (`db::sandbox::shadow_table_name` の予約プレフィックス) をツリー・検索・
@@ -490,6 +499,8 @@ interface TreeActions {
   routineMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
   columnMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => void;
   indexMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, idx: IndexInfo) => void;
+  toggleDb: (db: string) => void;
+  dbMenu: (e: ContextMenuTriggerEvent, db: string) => void;
   activeTableIndicatorId: string;
 }
 
@@ -627,12 +638,16 @@ const QuickAccessRow = memo(function QuickAccessRow({
   refItem,
   kind,
   level,
+  posInSet,
+  setSize,
   removable,
 }: {
   refItem: TableRef;
   kind: "favorite" | "recent";
   /** `groupLevel` (グループ見出しがあるとき 1)。 */
   level: number;
+  posInSet?: number;
+  setSize?: number;
   /** お気に入り行に「解除」ボタンを出すか (トグル用ハンドラがあるとき)。 */
   removable: boolean;
 }) {
@@ -649,6 +664,8 @@ const QuickAccessRow = memo(function QuickAccessRow({
       pl="1"
       role="treeitem"
       aria-level={level + 2}
+      aria-posinset={posInSet}
+      aria-setsize={setSize}
       tabIndex={tabIndex}
       onFocus={onFocus}
       onKeyDown={actions.makeKeyDown(activate, openMenu)}
@@ -703,12 +720,16 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
   o,
   kindLabel,
   level,
+  posInSet,
+  setSize,
   q,
 }: {
   db: string;
   o: SchemaObject;
   kindLabel: string;
   level: number;
+  posInSet?: number;
+  setSize?: number;
   q: string;
 }) {
   const actions = useTreeActions();
@@ -728,6 +749,8 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       pl="1"
       role="treeitem"
       aria-level={level + 3}
+      aria-posinset={posInSet}
+      aria-setsize={setSize}
       tabIndex={tabIndex}
       onFocus={onFocus}
       onKeyDown={actions.makeKeyDown(activate, openMenu)}
@@ -752,12 +775,16 @@ const ColumnRow = memo(function ColumnRow({
   tbl,
   col,
   level,
+  posInSet,
+  setSize,
   q,
 }: {
   db: string;
   tbl: string;
   col: TableColumnInfo;
   level: number;
+  posInSet?: number;
+  setSize?: number;
   q: string;
 }) {
   const actions = useTreeActions();
@@ -775,6 +802,8 @@ const ColumnRow = memo(function ColumnRow({
       fontSize="sm"
       role="treeitem"
       aria-level={level + 4}
+      aria-posinset={posInSet}
+      aria-setsize={setSize}
       tabIndex={tabIndex}
       onFocus={onFocus}
       onKeyDown={actions.makeKeyDown(undefined, openMenu)}
@@ -811,11 +840,15 @@ const IndexRow = memo(function IndexRow({
   tbl,
   idx,
   level,
+  posInSet,
+  setSize,
 }: {
   db: string;
   tbl: string;
   idx: IndexInfo;
   level: number;
+  posInSet?: number;
+  setSize?: number;
 }) {
   const t = useT();
   const actions = useTreeActions();
@@ -831,6 +864,8 @@ const IndexRow = memo(function IndexRow({
       fontSize="sm"
       role="treeitem"
       aria-level={level + 4}
+      aria-posinset={posInSet}
+      aria-setsize={setSize}
       tabIndex={tabIndex}
       onFocus={onFocus}
       onKeyDown={actions.makeKeyDown(undefined, openMenu)}
@@ -868,11 +903,15 @@ const ForeignKeyRow = memo(function ForeignKeyRow({
   tbl,
   fk,
   level,
+  posInSet,
+  setSize,
 }: {
   db: string;
   tbl: string;
   fk: ExplorerForeignKey;
   level: number;
+  posInSet?: number;
+  setSize?: number;
 }) {
   const t = useT();
   const actions = useTreeActions();
@@ -887,6 +926,8 @@ const ForeignKeyRow = memo(function ForeignKeyRow({
       fontSize="sm"
       role="treeitem"
       aria-level={level + 4}
+      aria-posinset={posInSet}
+      aria-setsize={setSize}
       aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}`}
       tabIndex={tabIndex}
       onFocus={onFocus}
@@ -918,19 +959,18 @@ interface TableNodeProps {
   level: number;
   /** 子 (列・インデックス・外部キー) を展開しているか。 */
   open: boolean;
-  /** 検索で絞り込み中でも列を全部出すか。false なら列名がマッチする列だけ。 */
-  showAllCols: boolean;
-  cols: TableColumnInfo[] | undefined;
-  indexes: IndexInfo[] | undefined;
   rowEst: number | null | undefined;
   comment: string | undefined;
   /** 現在結果パネルに開いているテーブルか (#982)。 */
   isActive: boolean;
+  posInSet?: number;
+  setSize?: number;
 }
 
 /**
- * テーブル / ビューのノード (#1112)。ビューもテーブルと同じく列・インデックス・
- * 外部キーを展開でき、ダブルクリックでデータを開く。
+ * テーブル / ビューの 1 行 (#1112)。ビューもテーブルと同じく列・インデックス・
+ * 外部キーを展開でき、ダブルクリックでデータを開く。展開したときの子は、この行の中ではなく
+ * 別の行としてフラットな配列に並ぶ (`buildExplorerRows`、仮想化のため #1315)。
  *
  * `memo` 化しているので、props (自分のテーブルの状態) が変わらない限り、ほかの行の
  * フォーカス・ホバー・検索入力・ストリーミングでは描き直されない (#1314)。
@@ -942,12 +982,11 @@ const TableNode = memo(function TableNode({
   q,
   level,
   open: tOpen,
-  showAllCols,
-  cols,
-  indexes,
   rowEst,
   comment,
   isActive: isActiveTable,
+  posInSet,
+  setSize,
 }: TableNodeProps) {
   const t = useT();
   const actions = useTreeActions();
@@ -955,150 +994,566 @@ const TableNode = memo(function TableNode({
   const treeKey = `tbl:${tKey}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, treeKey);
   const rowEstLabel = typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
-  // 列・インデックス・外部キーの子グループ (#1112)。見出しは複数グループが
-  // 並ぶときだけ出す (`tableChildGroups`)。
-  const childGroups = useMemo(() => (cols ? tableChildGroups(cols, indexes) : null), [cols, indexes]);
   const openMenu = (e: ContextMenuTriggerEvent) =>
     view ? actions.viewMenu(e, db, view) : actions.tableMenu(e, db, tbl);
 
-  // 閉じているテーブルには `TreeCollapse` (= `AnimatePresence`) をマウントしない (#1314)。
-  // テーブルが数千件あっても、展開した行の分しかマウントされない。閉じるときは退場
-  // アニメを見せてからアンマウントする (`onExitComplete`)。
-  const [mounted, setMounted] = useState(tOpen);
-  if (tOpen && !mounted) setMounted(true);
-  const openRef = useRef(tOpen);
-  openRef.current = tOpen;
-  // 初期表示で既に開いている行は enter アニメしない (従来どおり)。開く操作で
-  // マウントされたとき (および一度閉じて再び開いたとき) だけフェードインする。
-  const animateIn = useRef(!tOpen);
-  const handleExitComplete = useCallback(() => {
-    if (openRef.current) return;
-    animateIn.current = true;
-    setMounted(false);
-  }, []);
-
   return (
-    <TreeNode>
-      <TreeRow
-        data-tree-key={treeKey}
-        pl="1"
-        role="treeitem"
-        /* 行のアクセシブルネームをテーブル名に固定する。既定の
-           content 由来の名前だと、内側のチェブロンボタンの
-           aria-label や行数バッジまで連結され、SR の読み上げと
-           ロール検索 (テスト含む) が不安定になるため。 */
-        aria-label={tbl}
-        aria-level={level + 3}
-        aria-expanded={tOpen}
-        tabIndex={tabIndex}
-        onFocus={onFocus}
-        onKeyDown={actions.makeKeyDown(() => actions.pickTable(db, tbl), openMenu)}
-        // 「現在地」表示 (#982): SR には aria-current、視覚には
-        // 下の共有 layoutId インジケータ (アクセントスパイン) で
-        // 示す。position: relative はインジケータの絶対配置の
-        // 基準になるが、非アクティブ行では不要なので付けない。
-        aria-current={isActiveTable ? "true" : undefined}
-        position={isActiveTable ? "relative" : undefined}
-        bg={isActiveTable ? "var(--bg-active)" : undefined}
-        onDoubleClick={() => actions.pickTable(db, tbl)}
-        onContextMenu={openMenu}
-        {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
-        _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
-      >
-        {isActiveTable && (
-          <MotionActiveIndicator
-            layoutId={actions.activeTableIndicatorId}
-            transition={transitions.emphasized}
-            position="absolute"
-            left="0"
-            top="0"
-            bottom="0"
-            width="2px"
-            bg="var(--accent)"
-            aria-hidden
-          />
-        )}
-        {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
-            ダブルクリック (テーブルを開く) の前に click が 2 回発火して
-            カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
-            連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
-            マウスでは唯一の展開手段になったためネイティブ button として描画し、
-            キーボード (Enter/Space) と支援技術からも操作できるようにする。
-            行本体からの ArrowRight/ArrowLeft (#1184) も、この button の
-            aria-expanded を目印にここをクリックしてトグルする
-            (`makeTreeItemKeyDown` 参照)。 */}
-        <TreeChevronButton
-          type="button"
-          transform={tOpen ? "rotate(90deg)" : undefined}
-          aria-label={t("treeToggleColumnsAria", { table: tbl })}
-          aria-expanded={tOpen}
-          onClick={(e) => {
-            e.stopPropagation();
-            actions.toggleTable(db, tbl);
-          }}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >▸</TreeChevronButton>
-        <TreeIcon color="app.textSecondary" aria-hidden><Icon name={view ? "view" : "table"} /></TreeIcon>
-        <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
-        {rowEstLabel && (
-          <TreeBadge
-            fontFamily="mono"
-            fontSize="2xs"
-            textTransform="none"
-            letterSpacing="0"
-            {...actions.treeTooltip(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
-          >
-            {rowEstLabel}
-          </TreeBadge>
-        )}
-        <TreeMoreActions onOpen={openMenu} />
-      </TreeRow>
-      {mounted && (
-        <TreeCollapse open={tOpen} initial={animateIn.current} onExitComplete={handleExitComplete}>
-          <TreeChildren>
-            {cols === undefined ? (
-              <LoadingRow />
-            ) : cols.length === 0 ? (
-              <TreeEmpty>{t("treeNoColumns")}</TreeEmpty>
-            ) : (
-              <>
-                {showAllCols && childGroups?.showColumnsHeader && (
-                  <QuickAccessHeader>{t("treeColumnsLabel")}</QuickAccessHeader>
-                )}
-                {cols
-                  .filter((col) => showAllCols || col.name.toLowerCase().includes(q))
-                  .map((col) => (
-                    <ColumnRow key={col.name} db={db} tbl={tbl} col={col} level={level} q={q} />
-                  ))}
-              </>
-            )}
-            {/* インデックス一覧。展開時に列と並行取得し、
-                列の下に小見出し付きで表示する。 */}
-            {showAllCols && (indexes?.length ?? 0) > 0 && (
-              <>
-                <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
-                {indexes!.map((idx) => (
-                  <IndexRow key={`idx:${idx.name}`} db={db} tbl={tbl} idx={idx} level={level} />
-                ))}
-              </>
-            )}
-            {/* 外部キー (#1112)。列行の鎖アイコンだけでは「どこを参照しているか」が
-                ホバーしないと分からないため、参照先をグループで並べる。クリックで
-                参照先テーブルのデータを開く (ツリーのダブルクリックと同じ導線)。 */}
-            {showAllCols && childGroups && childGroups.foreignKeys.length > 0 && (
-              <>
-                <QuickAccessHeader>{t("treeForeignKeysLabel")}</QuickAccessHeader>
-                {childGroups.foreignKeys.map((fk) => (
-                  <ForeignKeyRow key={`fk:${fk.column}`} db={db} tbl={tbl} fk={fk} level={level} />
-                ))}
-              </>
-            )}
-          </TreeChildren>
-        </TreeCollapse>
+    <TreeRow
+      data-tree-key={treeKey}
+      pl="1"
+      role="treeitem"
+      /* 行のアクセシブルネームをテーブル名に固定する。既定の
+         content 由来の名前だと、内側のチェブロンボタンの
+         aria-label や行数バッジまで連結され、SR の読み上げと
+         ロール検索 (テスト含む) が不安定になるため。 */
+      aria-label={tbl}
+      aria-level={level + 3}
+      aria-posinset={posInSet}
+      aria-setsize={setSize}
+      aria-expanded={tOpen}
+      tabIndex={tabIndex}
+      onFocus={onFocus}
+      onKeyDown={actions.makeKeyDown(() => actions.pickTable(db, tbl), openMenu)}
+      // 「現在地」表示 (#982): SR には aria-current、視覚には
+      // 下の共有 layoutId インジケータ (アクセントスパイン) で
+      // 示す。position: relative はインジケータの絶対配置の
+      // 基準になるが、非アクティブ行では不要なので付けない。
+      aria-current={isActiveTable ? "true" : undefined}
+      position={isActiveTable ? "relative" : undefined}
+      bg={isActiveTable ? "var(--bg-active)" : undefined}
+      onDoubleClick={() => actions.pickTable(db, tbl)}
+      onContextMenu={openMenu}
+      {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
+      _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
+    >
+      {isActiveTable && (
+        <MotionActiveIndicator
+          layoutId={actions.activeTableIndicatorId}
+          transition={transitions.emphasized}
+          position="absolute"
+          left="0"
+          top="0"
+          bottom="0"
+          width="2px"
+          bg="var(--accent)"
+          aria-hidden
+        />
       )}
-    </TreeNode>
+      {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
+          ダブルクリック (テーブルを開く) の前に click が 2 回発火して
+          カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
+          連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
+          マウスでは唯一の展開手段になったためネイティブ button として描画し、
+          キーボード (Enter/Space) と支援技術からも操作できるようにする。
+          行本体からの ArrowRight/ArrowLeft (#1184) も、この button の
+          aria-expanded を目印にここをクリックしてトグルする
+          (`makeTreeItemKeyDown` 参照)。 */}
+      <TreeChevronButton
+        type="button"
+        transform={tOpen ? "rotate(90deg)" : undefined}
+        aria-label={t("treeToggleColumnsAria", { table: tbl })}
+        aria-expanded={tOpen}
+        onClick={(e) => {
+          e.stopPropagation();
+          actions.toggleTable(db, tbl);
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >▸</TreeChevronButton>
+      <TreeIcon color="app.textSecondary" aria-hidden><Icon name={view ? "view" : "table"} /></TreeIcon>
+      <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
+      {rowEstLabel && (
+        <TreeBadge
+          fontFamily="mono"
+          fontSize="2xs"
+          textTransform="none"
+          letterSpacing="0"
+          {...actions.treeTooltip(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
+        >
+          {rowEstLabel}
+        </TreeBadge>
+      )}
+      <TreeMoreActions onOpen={openMenu} />
+    </TreeRow>
   );
 });
+
+/** データベース (PostgreSQL ではスキーマ) の 1 行。展開すると配下のテーブルが続く行になる (#1315)。 */
+const DbRow = memo(function DbRow({
+  db,
+  open,
+  level,
+  q,
+  containerLabel,
+  posInSet,
+  setSize,
+}: {
+  db: string;
+  open: boolean;
+  level: number;
+  q: string;
+  containerLabel: string;
+  posInSet?: number;
+  setSize?: number;
+}) {
+  const actions = useTreeActions();
+  const treeKey = `db:${db}`;
+  const { tabIndex, onFocus } = useTabStop(actions.store, treeKey);
+  const openMenu = (e: ContextMenuTriggerEvent) => actions.dbMenu(e, db);
+  return (
+    <TreeRow
+      data-tree-key={treeKey}
+      pl="1"
+      onClick={() => actions.toggleDb(db)}
+      onContextMenu={openMenu}
+      role="treeitem"
+      aria-label={db}
+      aria-level={level + 2}
+      aria-posinset={posInSet}
+      aria-setsize={setSize}
+      aria-expanded={open}
+      tabIndex={tabIndex}
+      onFocus={onFocus}
+      onKeyDown={actions.makeKeyDown(() => actions.toggleDb(db), openMenu)}
+      {...actions.treeTooltip(`${db} — ${containerLabel}`)}
+    >
+      <TreeChevron transform={open ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+      <TreeIcon color="app.dbAccent" aria-hidden><Icon name="database" /></TreeIcon>
+      <TreeLabel fontWeight={400}><HighlightText text={db} query={q} /></TreeLabel>
+      <TreeMoreActions onOpen={openMenu} />
+    </TreeRow>
+  );
+});
+
+/** 見出し行の文言。 */
+function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
+  const t = useT();
+  return (group) => {
+    switch (group) {
+      case "favorites": return t("quickAccessFavorites");
+      case "recent": return t("quickAccessRecent");
+      case "tables": return t("objGroupTables");
+      case "views":
+      case "view": return t("objGroupViews");
+      case "columns": return t("treeColumnsLabel");
+      case "indexes": return t("indexesLabel");
+      case "foreignKeys": return t("treeForeignKeysLabel");
+      case "materialized_view": return t("objGroupMatViews");
+      case "procedure": return t("objGroupProcedures");
+      case "function": return t("objGroupFunctions");
+      case "trigger": return t("objGroupTriggers");
+    }
+  };
+}
+
+interface SchemaRowContentProps {
+  row: ExplorerRow;
+  /** `groupLevel` (グループ見出しがあるとき 1)。 */
+  level: number;
+  q: string;
+  removableFavorites: boolean;
+  containerLabel: string;
+}
+
+/** フラットな行 (`ExplorerRow`) を、種別ごとの `memo` 行コンポーネントへ渡す。 */
+function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }: SchemaRowContentProps) {
+  const t = useT();
+  const headerLabel = useHeaderLabel();
+  switch (row.kind) {
+    case "header":
+      return (
+        <QuickAccessHeader>
+          {headerLabel(row.group)}
+          {row.count !== null && (
+            <>
+              {" "}
+              <chakra.span textStyle="numeric">({row.count})</chakra.span>
+            </>
+          )}
+        </QuickAccessHeader>
+      );
+    case "loading":
+      return <LoadingRow />;
+    case "empty":
+      return (
+        <TreeEmpty>
+          {row.message === "databases"
+            ? t("treeNoDatabases")
+            : row.message === "tables"
+              ? t("treeNoTables")
+              : t("treeNoColumns")}
+        </TreeEmpty>
+      );
+    case "quick":
+      return (
+        <QuickAccessRow
+          refItem={row.ref}
+          kind={row.variant}
+          level={level}
+          removable={removableFavorites}
+          posInSet={row.posInSet}
+          setSize={row.setSize}
+        />
+      );
+    case "db":
+      return (
+        <DbRow
+          db={row.db}
+          open={row.open}
+          level={level}
+          q={q}
+          containerLabel={containerLabel}
+          posInSet={row.posInSet}
+          setSize={row.setSize}
+        />
+      );
+    case "table":
+      return (
+        <TableNode
+          db={row.db}
+          tbl={row.tbl}
+          view={row.view}
+          q={q}
+          level={level}
+          open={row.open}
+          rowEst={row.rowEst}
+          comment={row.comment}
+          isActive={row.isActive}
+          posInSet={row.posInSet}
+          setSize={row.setSize}
+        />
+      );
+    case "column":
+      return (
+        <ColumnRow
+          db={row.db}
+          tbl={row.tbl}
+          col={row.col}
+          level={level}
+          q={q}
+          posInSet={row.posInSet}
+          setSize={row.setSize}
+        />
+      );
+    case "index":
+      return (
+        <IndexRow
+          db={row.db}
+          tbl={row.tbl}
+          idx={row.idx}
+          level={level}
+          posInSet={row.posInSet}
+          setSize={row.setSize}
+        />
+      );
+    case "foreignKey":
+      return (
+        <ForeignKeyRow
+          db={row.db}
+          tbl={row.tbl}
+          fk={row.fk}
+          level={level}
+          posInSet={row.posInSet}
+          setSize={row.setSize}
+        />
+      );
+    case "object":
+      return (
+        <SchemaObjectRow
+          db={row.db}
+          o={row.o}
+          kindLabel={headerLabel(row.o.kind)}
+          level={level}
+          q={q}
+          posInSet={row.posInSet}
+          setSize={row.setSize}
+        />
+      );
+  }
+}
+
+// --- スキーマツリーの仮想化 (#1315) ---
+
+/** フラットな行数がこれを超えたときだけ仮想化する。jsdom はレイアウトを持たず仮想化すると
+ *  0 行になるので、少ないツリー (と既存のユニットテスト) は全行をそのまま描く。 */
+const VIRTUALIZE_ROW_THRESHOLD = 200;
+/** 窓の上下に余分に描画する行数 (高速スクロール中の空白を減らす)。 */
+const VIRTUAL_OVERSCAN = 12;
+/** 実測するまでの行高の見積もり (種別ごとに最初の実測値で置き換える)。 */
+const ROW_HEIGHT_ESTIMATE = 28;
+const HEADER_HEIGHT_ESTIMATE = 22;
+const LOADING_HEIGHT_ESTIMATE = 90;
+/** 展開操作で増えた行がフェードインする時間 (ms) が過ぎたら、入場クラスを外す目安。 */
+const ENTER_CLASS_LIFETIME_MS = 400;
+
+const NO_KEYS: ReadonlySet<string> = new Set();
+const EMPTY_REFS: readonly TableRef[] = [];
+
+/** 破線インデントを `depth` 段ぶん重ねる (行ごとに入れ子の `TreeChildren` を再現する)。 */
+function Indent({ depth, children }: { depth: number; children: React.ReactNode }) {
+  let node = children;
+  for (let i = 0; i < depth; i++) node = <TreeChildren>{node}</TreeChildren>;
+  return <>{node}</>;
+}
+
+/** `ConnectionList` のキーボード操作から見たスキーマ行リストの窓口。 */
+interface SchemaRowListHandle {
+  /** 行リストのコンテナ要素 (DOM 上の位置の基準)。 */
+  element: () => HTMLElement | null;
+  /** フォーカスできる行を上から並べた、キーボード巡回用の一覧 (窓の外の行も含む)。 */
+  entries: () => (TreeNavEntry & { key: string })[];
+  /** 指定キーの行へフォーカスする。窓の外ならスクロールして描画してからフォーカスする。 */
+  focusKey: (key: string) => void;
+}
+
+interface SchemaRowListProps {
+  rows: ExplorerRow[];
+  level: number;
+  q: string;
+  removableFavorites: boolean;
+  containerLabel: string;
+  scrollRef: React.RefObject<HTMLElement | null>;
+  handleRef: { current: SchemaRowListHandle | null };
+  store: TabStopStore;
+  /** 現在結果パネルに開いているテーブルの行キー。窓の外でも常にマウントしておく。 */
+  activeKey: string | null;
+  /** このリストより上の要素の高さが変わりうる状態 (開閉・並べ替え)。変わったら位置を測り直す。 */
+  layoutToken: unknown;
+}
+
+/**
+ * アクティブ接続のスキーマのサブツリー (`ExplorerRow[]`) を描画する。
+ *
+ * 行数が `VIRTUALIZE_ROW_THRESHOLD` 以下なら全行を、超えたら `@tanstack/react-virtual` で
+ * 見えている窓の分だけを描く。スクロール要素 (`treeRef`) はプロファイル / グループの層と共有し、
+ * このリストが始まる位置を `scrollMargin` で補正する。位置合わせは `translateY` ではなく
+ * 上下 (と、ピン留め行の間) のスペーサーで行う (`layoutId` のインジケータが誤反応しないように)。
+ */
+const SchemaRowList = memo(function SchemaRowList({
+  rows,
+  level,
+  q,
+  removableFavorites,
+  containerLabel,
+  scrollRef,
+  handleRef,
+  store,
+  activeKey,
+}: SchemaRowListProps) {
+  const virtual = rows.length > VIRTUALIZE_ROW_THRESHOLD;
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  // Tab で止まる行 (roving tabindex) も窓の外へ出さない。フォーカス移動のたびに購読して
+  // 更新するが、再レンダーされるのはこのリストの枠だけ (行は `memo`)。
+  const tabStopKey = useSyncExternalStore(store.subscribe, store.get);
+
+  const keyIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    rows.forEach((r, i) => m.set(r.key, i));
+    return m;
+  }, [rows]);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const keyIndexRef = useRef(keyIndex);
+  keyIndexRef.current = keyIndex;
+  const levelRef = useRef(level);
+  levelRef.current = level;
+  const kindHeights = useRef(new Map<string, number>());
+  const pendingFocus = useRef<string | null>(null);
+
+  // 行ごとの高さは密度とフォント拡大で変わるので実測する (`measureElement`)。実測前の見積もりは、
+  // 同じ種別で最初に測れた高さを使い、スクロールバーの伸び縮みを抑える。
+  const estimateSize = (i: number) => {
+    const kind = rows[i]?.kind ?? "table";
+    const known = kindHeights.current.get(kind);
+    if (known !== undefined) return known;
+    if (kind === "header") return HEADER_HEIGHT_ESTIMATE;
+    if (kind === "loading") return LOADING_HEIGHT_ESTIMATE;
+    return ROW_HEIGHT_ESTIMATE;
+  };
+  const virtualizer = useVirtualizer({
+    count: virtual ? rows.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize,
+    overscan: VIRTUAL_OVERSCAN,
+    scrollMargin,
+    getItemKey: (i) => rows[i]?.key ?? i,
+    measureElement: (el, entry) => {
+      const box = entry?.borderBoxSize?.[0];
+      const h = Math.round(box ? box.blockSize : el.getBoundingClientRect().height);
+      const kind = (el as HTMLElement).dataset.kind;
+      if (kind && kind !== "loading" && h > 0) kindHeights.current.set(kind, h);
+      return h;
+    },
+    // フォーカス中の行・Tab で止まる行・現在地の行は、窓の外へ出てもアンマウントしない
+    // (アンマウントするとフォーカスが `body` へ落ちる)。
+    rangeExtractor: (range: Range) => {
+      const base = defaultRangeExtractor(range);
+      const pinned: number[] = [];
+      const pin = (key: string | null | undefined) => {
+        if (!key) return;
+        const i = keyIndex.get(key);
+        if (i !== undefined) pinned.push(i);
+      };
+      pin(tabStopKey);
+      pin(activeKey);
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && listRef.current?.contains(focused)) {
+        pin(focused.closest<HTMLElement>("[data-tree-key]")?.dataset.treeKey);
+      }
+      if (pinned.length === 0) return base;
+      return Array.from(new Set([...base, ...pinned])).sort((a, b) => a - b);
+    },
+  });
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+  const virtualRef = useRef(virtual);
+  virtualRef.current = virtual;
+
+  // リストの先頭がスクロール要素の中のどこから始まるか。上のプロファイル / グループの開閉で
+  // 動くので、描画のたびに (読むだけ) 測り直す。変わらなければ state は更新しない。
+  useLayoutEffect(() => {
+    if (!virtual) return;
+    const list = listRef.current;
+    const scroller = scrollRef.current;
+    if (!list || !scroller) return;
+    const offset = Math.round(
+      list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop,
+    );
+    setScrollMargin((prev) => (prev === offset ? prev : offset));
+  });
+
+  // 窓の外の行へのフォーカス: スクロールして描画させ、描画できたらフォーカスする。
+  useLayoutEffect(() => {
+    const key = pendingFocus.current;
+    if (!key) return;
+    const el = findRowElement(listRef.current, key);
+    if (el) {
+      pendingFocus.current = null;
+      el.focus();
+    } else if (!keyIndex.has(key)) {
+      pendingFocus.current = null;
+    }
+  });
+
+  useLayoutEffect(() => {
+    handleRef.current = {
+      element: () => listRef.current,
+      entries: () =>
+        rowsRef.current.filter(isFocusableExplorerRow).map((r) => ({
+          key: r.key,
+          level: levelRef.current + 2 + r.depth,
+          ...explorerRowExpansion(r),
+          label: explorerRowLabel(r),
+        })),
+      focusKey: (key) => {
+        const el = findRowElement(listRef.current, key);
+        if (el) {
+          el.focus();
+          return;
+        }
+        const i = keyIndexRef.current.get(key);
+        if (i === undefined || !virtualRef.current) return;
+        pendingFocus.current = key;
+        virtualizerRef.current.scrollToIndex(i, { align: "auto" });
+      },
+    };
+    return () => {
+      handleRef.current = null;
+    };
+  }, [handleRef]);
+
+  // 展開操作で増えた行だけ入場アニメを付ける (退場は廃止)。直前の行配列と比べ、
+  // 「閉じていた親の直下に新しく現れた行」だけを対象にする — 非同期ロードの完了や検索の
+  // 打鍵で増えた行はアニメしない。
+  const prevRowsRef = useRef<ExplorerRow[] | null>(null);
+  const enterKeys = useRef<ReadonlySet<string>>(NO_KEYS);
+  const computedFor = useRef<ExplorerRow[] | null>(null);
+  if (computedFor.current !== rows) {
+    computedFor.current = rows;
+    const prev = prevRowsRef.current;
+    if (prev && prev !== rows) {
+      const prevKeys = new Set<string>();
+      const prevOpen = new Map<string, boolean>();
+      for (const r of prev) {
+        prevKeys.add(r.key);
+        if (r.kind === "db" || r.kind === "table") prevOpen.set(r.key, r.open);
+      }
+      const added = new Set<string>();
+      for (const r of rows) {
+        if (!prevKeys.has(r.key) && prevOpen.get(r.parent) === false) added.add(r.key);
+      }
+      enterKeys.current = added.size > 0 ? added : NO_KEYS;
+    } else {
+      enterKeys.current = NO_KEYS;
+    }
+  }
+  useEffect(() => {
+    prevRowsRef.current = rows;
+    if (enterKeys.current === NO_KEYS) return;
+    const timer = setTimeout(() => {
+      enterKeys.current = NO_KEYS;
+    }, ENTER_CLASS_LIFETIME_MS);
+    return () => clearTimeout(timer);
+  }, [rows]);
+
+  const renderRow = (row: ExplorerRow, index: number, measure?: (el: Element | null) => void) => (
+    <div
+      key={row.key}
+      ref={measure}
+      data-index={index}
+      data-kind={row.kind}
+      className={enterKeys.current.has(row.key) ? "tree-row-enter" : undefined}
+    >
+      <Indent depth={row.depth}>
+        <SchemaRowContent
+          row={row}
+          level={level}
+          q={q}
+          removableFavorites={removableFavorites}
+          containerLabel={containerLabel}
+        />
+      </Indent>
+    </div>
+  );
+
+  let content: React.ReactNode;
+  if (!virtual) {
+    content = rows.map((row, i) => renderRow(row, i));
+  } else {
+    const items = virtualizer.getVirtualItems();
+    const out: React.ReactNode[] = [];
+    // リスト先頭からの相対位置。ピン留め行で窓が途切れる箇所にもスペーサーを挟む。
+    let cursor = 0;
+    for (const item of items) {
+      const row = rows[item.index];
+      if (!row) continue;
+      const start = item.start - scrollMargin;
+      if (start > cursor) out.push(<div key={`sp:${item.key}`} aria-hidden style={{ height: start - cursor }} />);
+      out.push(renderRow(row, item.index, virtualizer.measureElement));
+      cursor = item.end - scrollMargin;
+    }
+    const tail = virtualizer.getTotalSize() - cursor;
+    if (tail > 0) out.push(<div key="sp:tail" aria-hidden style={{ height: tail }} />);
+    content = out;
+  }
+
+  // `overflow-anchor: none`: ブラウザのスクロールアンカリングが、窓の移動で変わるスペーサーの
+  // 高さに反応してスクロール位置をずらさないようにする。
+  return (
+    <div ref={listRef} style={{ overflowAnchor: "none" }}>
+      {content}
+    </div>
+  );
+});
+
+/** リスト内の `data-tree-key` が一致する行要素。属性セレクタに任意文字列を埋め込まない。 */
+function findRowElement(list: HTMLElement | null, key: string): HTMLElement | null {
+  if (!list) return null;
+  for (const el of list.querySelectorAll<HTMLElement>("[data-tree-key]")) {
+    if (el.dataset.treeKey === key) return el;
+  }
+  return null;
+}
 
 // React.memo + forwardRef でラップし、App.tsx の再レンダリング (クエリ入力や
 // ストリーミングのたびに発生する) でツリー全体が無駄に再描画されるのを防ぐ。
@@ -1558,14 +2013,41 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     [tabStopStore, ensureTabStop],
   );
 
-  // ↑↓ / Home / End / 先頭文字ジャンプは既存の `useRovingFocus` (#815 で実装済みの
-  // type-ahead 込み) にそのまま委譲する。ツリー内のすべての `[role=treeitem]` が
-  // 対象 — 折りたたみ中のノードの子は `TreeCollapse` がそもそもマウントしないため、
-  // 常に「今見えている行」だけを拾う。
-  const { onKeyDown: onTreeRovingKeyDown } = useRovingFocus(treeRef, "[role=treeitem]", {
-    orientation: "vertical",
-    wrap: false,
-  });
+  // スキーマ行リスト (仮想化されていて窓の外の行は DOM に無い) の窓口。キーボード巡回は
+  // DOM の `[role=treeitem]` ではなく、ツリー全体を並べた配列で次の行を決める (#1315)。
+  const schemaListRef = useRef<SchemaRowListHandle | null>(null);
+
+  /** ツリー全体 (プロファイル / グループ見出し + スキーマ行リスト) を上から並べた巡回用の配列。
+   *  スキーマ行は窓の外の行も含め、DOM 上でリストが占める位置へ差し込む。 */
+  const buildNavSequence = () => {
+    const container = treeRef.current;
+    if (!container) return null;
+    type Entry = TreeNavEntry & { el?: HTMLElement; key?: string };
+    const list = schemaListRef.current;
+    const listEl = list?.element() ?? null;
+    const entries: Entry[] = [];
+    const pushList = () => {
+      if (list) for (const e of list.entries()) entries.push(e);
+    };
+    let listPushed = false;
+    for (const el of Array.from(container.querySelectorAll<HTMLElement>("[role=treeitem]"))) {
+      if (listEl?.contains(el)) continue;
+      if (listEl && !listPushed && listEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        pushList();
+        listPushed = true;
+      }
+      entries.push({
+        el,
+        level: Number(el.getAttribute("aria-level") ?? "1"),
+        expandable: el.hasAttribute("aria-expanded"),
+        open: el.getAttribute("aria-expanded") === "true",
+        // 先頭の開閉マーク「▸」は表示名ではない。
+        label: (el.getAttribute("aria-label") ?? el.textContent ?? "").replace(/^\s*▸/, ""),
+      });
+    }
+    if (listEl && !listPushed) pushList();
+    return entries;
+  };
 
   /**
    * ツリー行 (プロファイル/グループ見出しを含む全階層) で共有する keydown ハンドラの
@@ -1578,8 +2060,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
    *   右クリックの `onContextMenu` へそのまま渡せる `ContextMenuTriggerEvent` を
    *   組み立てる — メニューの組み立てロジック自体は右クリックと共有する。
    * - ArrowLeft/ArrowRight: 展開可能ノードの開閉、または親/子行へのフォーカス移動
-   *   (`treeKeyboardNav.ts` の判定を `aria-level`/`aria-expanded` から組み立てる)
-   * - それ以外 (↑↓/Home/End/先頭文字): `useRovingFocus` にそのまま委譲
+   *   (`treeKeyboardNav.ts` の判定を、ツリー全体を並べた配列から組み立てる)
+   * - ↑↓/Home/End/先頭文字ジャンプ: 同じ配列に対して `resolveTreeMove` で次の行を決める。
+   *   窓の外の行はスクロールして描画させてからフォーカスする (#1315)
    */
   const makeTreeItemKeyDown = useCallback(
     (activate?: () => void, openContextMenu?: (e: ContextMenuTriggerEvent) => void) =>
@@ -1598,20 +2081,27 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         openContextMenu(contextMenuTriggerFromRect(e.currentTarget.getBoundingClientRect()));
         return;
       }
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        const container = treeRef.current;
-        const row = e.currentTarget;
-        if (!container) return;
-        const items = Array.from(container.querySelectorAll<HTMLElement>("[role=treeitem]"));
-        const index = items.indexOf(row);
-        if (index === -1) return;
-        const rows: TreeNavRow[] = items.map((el) => ({
-          level: Number(el.getAttribute("aria-level") ?? "1"),
-          expandable: el.hasAttribute("aria-expanded"),
-          open: el.getAttribute("aria-expanded") === "true",
-        }));
+      const isArrowLR = e.key === "ArrowLeft" || e.key === "ArrowRight";
+      const isMove = e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End";
+      // 印字可能な単一文字のみ対象。修飾キー (Ctrl/Alt/Meta) 付きはショートカット用途と
+      // 衝突しうるため除外する (Shift は大文字入力に必要なので許可)。
+      const isTypeahead = !isArrowLR && !isMove && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
+      if (!isArrowLR && !isMove && !isTypeahead) return;
+
+      const row = e.currentTarget;
+      const entries = buildNavSequence();
+      if (!entries) return;
+      const rowKey = row.dataset.treeKey;
+      const index = entries.findIndex((en) => (en.el ? en.el === row : en.key === rowKey));
+      if (index === -1) return;
+      const focusEntry = (en: (typeof entries)[number]) => {
+        if (en.el) en.el.focus();
+        else if (en.key) schemaListRef.current?.focusKey(en.key);
+      };
+
+      if (isArrowLR) {
         const result =
-          e.key === "ArrowRight" ? resolveTreeArrowRight(rows, index) : resolveTreeArrowLeft(rows, index);
+          e.key === "ArrowRight" ? resolveTreeArrowRight(entries, index) : resolveTreeArrowLeft(entries, index);
         if (!result) return;
         e.preventDefault();
         e.stopPropagation();
@@ -1628,13 +2118,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           // 行から動かさない (APG Tree パターン) ため、行へ戻す。
           if (toggleTarget !== row) row.focus();
         } else {
-          items[result.index]?.focus();
+          focusEntry(entries[result.index]);
         }
         return;
       }
-      onTreeRovingKeyDown(e);
+
+      const target = resolveTreeMove(entries, index, e.key);
+      // 矢印 / Home / End は端でもブラウザ既定のスクロールを止める。先頭文字ジャンプは
+      // 一致が無いときに既定の挙動を妨げない。
+      if (isMove || target !== null) e.preventDefault();
+      if (target !== null) focusEntry(entries[target]);
     },
-    [onTreeRovingKeyDown],
+    // `buildNavSequence` は ref だけを読むので、依存は無し (ハンドラの参照を固定する)。
+    [],
   );
   // --- 接続 / グループの並べ替え (#786) ---
   //
@@ -2431,10 +2927,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
     return { colMatch, tableMatch, dbMatch };
   }, [lowerIndex, q, databases, tables]);
-  const columnNameMatches = (db: string, tbl: string) =>
-    schemaMatch?.colMatch.has(tableKey(db, tbl)) ?? false;
-  const tableNodeMatches = (db: string, tbl: string) =>
-    schemaMatch?.tableMatch.has(tableKey(db, tbl)) ?? false;
   const dbNodeMatches = (db: string) => schemaMatch?.dbMatch.has(db) ?? false;
 
   // The active connection's schema has a hit, so keep its profile visible even
@@ -2571,6 +3063,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const routineMenuEvent = useEvent(handleRoutineContextMenu);
   const columnMenuEvent = useEvent(handleColumnContextMenu);
   const indexMenuEvent = useEvent(handleIndexContextMenu);
+  const toggleDbEvent = useEvent((db: string) => void toggleDb(db));
+  const dbMenuEvent = useEvent(handleDbContextMenu);
   const treeActions = useMemo<TreeActions>(
     () => ({
       store: tabStopStore,
@@ -2586,6 +3080,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       routineMenu: routineMenuEvent,
       columnMenu: columnMenuEvent,
       indexMenu: indexMenuEvent,
+      toggleDb: toggleDbEvent,
+      dbMenu: dbMenuEvent,
       activeTableIndicatorId,
     }),
     [
@@ -2602,55 +3098,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       routineMenuEvent,
       columnMenuEvent,
       indexMenuEvent,
+      toggleDbEvent,
+      dbMenuEvent,
       activeTableIndicatorId,
     ],
   );
-
-  // 非テーブルのスキーマオブジェクトを種別ごとにグループ化して描画する。
-  // 選択すると onOpenObjectDefinition で定義 DDL を開く。`list_tables` と突き合った
-  // ビューは `partitionDatabaseNodes` がテーブル同等のノードへ移しているので、
-  // ここに来るのはルーチン / トリガーと、名前が突き合わなかったビューだけ (#1112)。
-  const renderSchemaObjects = (db: string, objs: readonly SchemaObject[]) => {
-    if (!onOpenObjectDefinition) return null;
-    if (objs.length === 0) return null;
-    const order: SchemaObject["kind"][] = [
-      "view",
-      "materialized_view",
-      "procedure",
-      "function",
-      "trigger",
-    ];
-    const labels: Record<string, string> = {
-      view: t("objGroupViews"),
-      materialized_view: t("objGroupMatViews"),
-      procedure: t("objGroupProcedures"),
-      function: t("objGroupFunctions"),
-      trigger: t("objGroupTriggers"),
-    };
-    return (
-      <>
-        {order.map((kind) => {
-          const items = objs.filter((o) => o.kind === kind);
-          if (items.length === 0) return null;
-          return (
-            <div key={kind}>
-              <QuickAccessHeader>{labels[kind] ?? kind}</QuickAccessHeader>
-              {items.map((o) => (
-                <SchemaObjectRow
-                  key={`so:${db}:${kind}:${o.name}:${o.id ?? ""}`}
-                  db={db}
-                  o={o}
-                  kindLabel={labels[kind] ?? kind}
-                  level={groupLevel}
-                  q={q}
-                />
-              ))}
-            </div>
-          );
-        })}
-      </>
-    );
-  };
 
   // `partitionDatabaseNodes` の結果を DB ごとに覚えておく (#1314)。毎レンダー作り直すと
   // ビューのノードが新しいオブジェクトになり、行の `memo` が効かなくなる。
@@ -2665,76 +3117,77 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     return groups;
   };
 
-  // テーブル / ビューのノード (#1112)。行の描画は `memo` 化した `TableNode` に任せ、
-  // ここでは「その行の表示に効く値」だけを props として取り出す (#1314)。
-  const renderTableNode = (
-    db: string,
-    tbl: string,
-    { schemaFiltered, dbNameHit, view }: { schemaFiltered: boolean; dbNameHit: boolean; view: ExplorerViewNode | null },
-  ) => {
-    const tKey = tableKey(db, tbl);
-    const tableNameHit = searching && tbl.toLowerCase().includes(q);
-    return (
-      <TableNode
-        key={tbl}
-        db={db}
-        tbl={tbl}
-        view={view}
-        q={q}
-        level={groupLevel}
-        open={!!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl))}
-        showAllCols={!schemaFiltered || dbNameHit || tableNameHit}
-        cols={tableColumns[tKey]}
-        indexes={tableIndexes[tKey]}
-        rowEst={rowEstimates[db]?.[tbl]}
-        comment={tableComments[db]?.[tbl]}
-        // 現在結果パネルに開いているテーブルかどうか (#982)。
-        // ツリーはアクティブ接続のみを表示するので db/table の
-        // 一致だけで十分 (プロファイル跨ぎの衝突はない)。
-        isActive={!!activeTable && activeTable.database === db && activeTable.table === tbl}
-      />
-    );
-  };
-
-  const renderQuickAccess = () => {
-    const favs = favorites ?? [];
-    const recents = recent ?? [];
-    if (favs.length === 0 && recents.length === 0) return null;
-    const row = (r: TableRef, kind: "favorite" | "recent") => (
-      <QuickAccessRow
-        key={`qa:${kind}:${tableKey(r.database, r.table)}`}
-        refItem={r}
-        kind={kind}
-        level={groupLevel}
-        removable={!!onToggleFavorite}
-      />
-    );
-    return (
-      <>
-        {favs.length > 0 && (
-          <>
-            <QuickAccessHeader>{t("quickAccessFavorites")}</QuickAccessHeader>
-            {favs.map((r) => row(r, "favorite"))}
-          </>
-        )}
-        {recents.length > 0 && (
-          <>
-            <QuickAccessHeader>{t("quickAccessRecent")}</QuickAccessHeader>
-            {recents.map((r) => row(r, "recent"))}
-          </>
-        )}
-      </>
-    );
-  };
+  // アクティブ接続のスキーマのサブツリーを、いま見えている行のフラットな配列にする (#1315)。
+  // 展開状態・検索時の強制展開・振り分けは `buildExplorerRows` (純関数) が持つ。
+  const activeProfile = profiles.find((p) => p.id === activeProfileId);
+  const activeSchemaFiltered = searching && !!activeProfile && !profileMetaMatches(activeProfile);
+  const activeTableDb = activeTable?.database;
+  const activeTableName = activeTable?.table;
+  const hasObjectDefinitionOpener = !!onOpenObjectDefinition;
+  const explorerRows = useMemo<ExplorerRow[]>(() => {
+    if (!activeProfileId || !sessionId) return [];
+    return buildExplorerRows({
+      databases,
+      tables,
+      schemaObjects,
+      tableColumns,
+      tableIndexes,
+      expandedDbs,
+      expandedTables,
+      query: q,
+      schemaFiltered: activeSchemaFiltered,
+      matchers: schemaMatch
+        ? {
+            db: (db) => schemaMatch.dbMatch.has(db),
+            table: (db, tbl) => schemaMatch.tableMatch.has(tableKey(db, tbl)),
+            column: (db, tbl) => schemaMatch.colMatch.has(tableKey(db, tbl)),
+          }
+        : null,
+      partition: partitionFor,
+      showObjects: hasObjectDefinitionOpener,
+      favorites: favorites ?? EMPTY_REFS,
+      recent: recent ?? EMPTY_REFS,
+      rowEstimate: (db, tbl) => rowEstimates[db]?.[tbl],
+      comment: (db, tbl) => tableComments[db]?.[tbl],
+      // 現在結果パネルに開いているテーブルかどうか (#982)。ツリーはアクティブ接続のみを
+      // 表示するので db/table の一致だけで十分 (プロファイル跨ぎの衝突はない)。
+      isActiveTable: (db, tbl) => activeTableDb === db && activeTableName === tbl,
+    });
+    // `partitionFor` は ref を介したキャッシュだけを使うので依存に含めない。
+  }, [
+    activeProfileId,
+    sessionId,
+    databases,
+    tables,
+    schemaObjects,
+    tableColumns,
+    tableIndexes,
+    expandedDbs,
+    expandedTables,
+    q,
+    activeSchemaFiltered,
+    schemaMatch,
+    hasObjectDefinitionOpener,
+    favorites,
+    recent,
+    rowEstimates,
+    tableComments,
+    activeTableDb,
+    activeTableName,
+  ]);
+  const activeRowKey = activeTableDb !== undefined && activeTableName !== undefined
+    ? `tbl:${tableKey(activeTableDb, activeTableName)}`
+    : null;
+  // スキーマ行リストの位置を測り直すきっかけ: 上にあるプロファイル / グループの開閉・増減。
+  const rowListLayoutToken = useMemo(
+    () => ({ visibleProfiles, expandedGroups, expandedProfiles }),
+    [visibleProfiles, expandedGroups, expandedProfiles],
+  );
 
   const renderProfile = (p: ConnectionProfile, siblingIds: string[]) => {
     const profileTreeKey = `profile:${p.id}`;
     const isActive = p.id === activeProfileId;
     const isOpen = !!expandedProfiles[p.id];
-    // When the query matches the connection's own metadata, show its full tree;
-    // otherwise treat the query as a schema search and filter the tree to
-    // matching databases / tables / columns.
-    const schemaFiltered = searching && !profileMetaMatches(p);
     const status = profileStatus(p);
     const accent = normalizeChipColor(p.color) ?? undefined;
     const refreshing = refreshingSession === sessionId;
@@ -2931,92 +3384,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
           <TreeChildren>
-            {isActive && sessionId && renderQuickAccess()}
-            {databases === null ? (
-              <LoadingRow />
-            ) : databases.length === 0 ? (
-              <TreeEmpty>{t("treeNoDatabases")}</TreeEmpty>
-            ) : (
-              databases
-                .filter((db) => !schemaFiltered || dbNodeMatches(db))
-                .map((db) => {
-                const dbNameHit = searching && db.toLowerCase().includes(q);
-                const dbOpen = !!expandedDbs[db] || (schemaFiltered && dbNodeMatches(db));
-                const dbTables = tables[db];
-                const dbTreeKey = `db:${db}`;
-                return (
-                  <TreeNode key={db}>
-                    <TabStop treeKey={dbTreeKey}>
-                    {({ tabIndex, onFocus }) => (
-                    <TreeRow
-                      data-tree-key={dbTreeKey}
-                      pl="1"
-                      onClick={() => toggleDb(db)}
-                      onContextMenu={(e) => handleDbContextMenu(e, db)}
-                      role="treeitem"
-                      aria-label={db}
-                      aria-level={groupLevel + 2}
-                      aria-expanded={dbOpen}
-                      tabIndex={tabIndex}
-                      onFocus={onFocus}
-                      onKeyDown={makeTreeItemKeyDown(() => void toggleDb(db), (e) => handleDbContextMenu(e, db))}
-                      {...treeTooltipProps(`${db} — ${containerLabel}`)}
-                    >
-                      <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
-                      <TreeIcon color="app.dbAccent" aria-hidden><Icon name="database" /></TreeIcon>
-                      <TreeLabel fontWeight={400}><HighlightText text={db} query={q} /></TreeLabel>
-                      <TreeMoreActions onOpen={(ev) => handleDbContextMenu(ev, db)} />
-                    </TreeRow>
-                    )}
-                    </TabStop>
-                    <TreeCollapse open={dbOpen}>
-                      <TreeChildren>
-                        {dbTables === undefined ? (
-                          <LoadingRow />
-                        ) : dbTables.length === 0 ? (
-                          <>
-                            <TreeEmpty>{t("treeNoTables")}</TreeEmpty>
-                            {!schemaFiltered && renderSchemaObjects(db, partitionFor(db, dbTables, schemaObjects[db]).objects)}
-                          </>
-                        ) : (
-                          (() => {
-                            const groups = partitionFor(db, dbTables, schemaObjects[db]);
-                            const visibleTables = groups.tables.filter(
-                              (tbl) => !schemaFiltered || dbNameHit || tableNodeMatches(db, tbl),
-                            );
-                            const visibleViews = groups.views.filter(
-                              (v) => !schemaFiltered || dbNameHit || tableNodeMatches(db, v.name),
-                            );
-                            return (
-                              <>
-                                {showTablesHeader(groups) && visibleTables.length > 0 && (
-                                  <QuickAccessHeader>
-                                    {t("objGroupTables")}{" "}
-                                    <chakra.span textStyle="numeric">({visibleTables.length})</chakra.span>
-                                  </QuickAccessHeader>
-                                )}
-                                {visibleTables.map((tbl) =>
-                                  renderTableNode(db, tbl, { schemaFiltered, dbNameHit, view: null }),
-                                )}
-                                {visibleViews.length > 0 && (
-                                  <QuickAccessHeader>
-                                    {t("objGroupViews")}{" "}
-                                    <chakra.span textStyle="numeric">({visibleViews.length})</chakra.span>
-                                  </QuickAccessHeader>
-                                )}
-                                {visibleViews.map((v) =>
-                                  renderTableNode(db, v.name, { schemaFiltered, dbNameHit, view: v }),
-                                )}
-                                {!schemaFiltered && renderSchemaObjects(db, groups.objects)}
-                              </>
-                            );
-                          })()
-                        )}
-                      </TreeChildren>
-                    </TreeCollapse>
-                  </TreeNode>
-                );
-              })
+            {isActive && sessionId && (
+              <SchemaRowList
+                rows={explorerRows}
+                level={groupLevel}
+                q={q}
+                removableFavorites={!!onToggleFavorite}
+                containerLabel={containerLabel}
+                scrollRef={treeRef}
+                handleRef={schemaListRef}
+                store={tabStopStore}
+                activeKey={activeRowKey}
+                layoutToken={rowListLayoutToken}
+              />
             )}
           </TreeChildren>
         </TreeCollapse>

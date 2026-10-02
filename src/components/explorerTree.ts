@@ -23,6 +23,7 @@
  */
 
 import type { IndexInfo, SchemaObject, SchemaObjectKind, TableColumnInfo } from "../api/tauri";
+import type { TableRef } from "../tableQuickAccess";
 
 /** ビューとして扱う (= テーブル一覧から外して「ビュー」グループへ置く) 種別。 */
 const VIEW_KINDS: ReadonlySet<SchemaObjectKind> = new Set(["view", "materialized_view"]);
@@ -154,4 +155,335 @@ export function tableChildGroups(
  */
 export function explorerContainerKind(driver: string): "database" | "schema" {
   return driver === "postgres" ? "schema" : "database";
+}
+
+// --- 見えている行のフラット配列 (#1315) ---
+//
+// スキーマツリーは数千行になりうるので、アクティブ接続のサブツリーを「いま見えている行」の
+// フラットな配列にして、`ConnectionList` が窓の分だけ描画する (仮想化)。展開状態と検索時の
+// 強制展開のルールはここ 1 か所に持ち、DOM を持たないので Vitest で境界ケースを固定できる。
+
+/** `describe_table` 済みのテーブルキー (`db::table`)。ツリー全体で共通の識別子。 */
+export const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
+
+/** 見出し行の種別。 */
+export type ExplorerHeaderGroup =
+  | "favorites"
+  | "recent"
+  | "tables"
+  | "views"
+  | "columns"
+  | "indexes"
+  | "foreignKeys"
+  | SchemaObjectKind;
+
+interface ExplorerRowBase {
+  /** 仮想化の行キー兼 `data-tree-key`。見出し・プレースホルダは `hdr:` / `ph:` 始まり。 */
+  key: string;
+  /** プロファイル直下を 0 とした入れ子の深さ (破線インデントの段数)。 */
+  depth: number;
+  /** 兄弟の集合 (`aria-posinset` / `aria-setsize` の単位)。 */
+  parent: string;
+  /** フォーカスできる行 (`role=treeitem`) だけが持つ。同じ親の中での位置 (1 始まり)。 */
+  posInSet?: number;
+  /** フォーカスできる行だけが持つ。同じ親の中の行数。 */
+  setSize?: number;
+}
+
+export type ExplorerRow = ExplorerRowBase &
+  (
+    | { kind: "header"; group: ExplorerHeaderGroup; count: number | null }
+    | { kind: "loading" }
+    | { kind: "empty"; message: "databases" | "tables" | "columns" }
+    | { kind: "quick"; ref: TableRef; variant: "favorite" | "recent" }
+    | { kind: "db"; db: string; open: boolean }
+    | {
+        kind: "table";
+        db: string;
+        tbl: string;
+        /** ビューなら振り分け結果のノード、テーブルなら null。 */
+        view: ExplorerViewNode | null;
+        open: boolean;
+        rowEst: number | null | undefined;
+        comment: string | undefined;
+        isActive: boolean;
+      }
+    | { kind: "column"; db: string; tbl: string; col: TableColumnInfo }
+    | { kind: "index"; db: string; tbl: string; idx: IndexInfo }
+    | { kind: "foreignKey"; db: string; tbl: string; fk: ExplorerForeignKey }
+    | { kind: "object"; db: string; o: SchemaObject }
+  );
+
+/** キーボードフォーカスを受ける行か (`role=treeitem` を持つ行)。 */
+export function isFocusableExplorerRow(row: ExplorerRow): boolean {
+  return row.kind !== "header" && row.kind !== "loading" && row.kind !== "empty";
+}
+
+/** `describe_table` の列情報ごとの外部キー。列配列が同一参照のあいだは同じ配列を返し、
+ *  行の `memo` (外部キーのオブジェクト参照で比較) が再構築で無効にならないようにする。 */
+const foreignKeyCache = new WeakMap<readonly TableColumnInfo[], ExplorerForeignKey[]>();
+function cachedForeignKeys(cols: readonly TableColumnInfo[]): ExplorerForeignKey[] {
+  let fks = foreignKeyCache.get(cols);
+  if (!fks) {
+    fks = foreignKeysOf(cols);
+    foreignKeyCache.set(cols, fks);
+  }
+  return fks;
+}
+
+/** 検索結果の照合関数 (検索していなければ null)。 */
+export interface ExplorerMatchers {
+  db: (db: string) => boolean;
+  table: (db: string, tbl: string) => boolean;
+  column: (db: string, tbl: string) => boolean;
+}
+
+export interface ExplorerRowsInput {
+  databases: readonly string[] | null;
+  tables: Readonly<Record<string, string[] | undefined>>;
+  schemaObjects: Readonly<Record<string, SchemaObject[] | undefined>>;
+  tableColumns: Readonly<Record<string, TableColumnInfo[] | undefined>>;
+  tableIndexes: Readonly<Record<string, IndexInfo[] | undefined>>;
+  expandedDbs: Readonly<Record<string, boolean | undefined>>;
+  expandedTables: Readonly<Record<string, boolean | undefined>>;
+  /** 小文字化・trim 済みの検索クエリ (検索していなければ空文字)。 */
+  query: string;
+  /** プロファイル自身のメタ情報ではなくスキーマ (DB / テーブル / 列) で絞り込んでいるか。 */
+  schemaFiltered: boolean;
+  matchers: ExplorerMatchers | null;
+  /** DB ごとの振り分け。呼び出し側がキャッシュして、ビューのノードを同一参照に保つ。 */
+  partition: (db: string, tables: string[], objects: SchemaObject[] | undefined) => ExplorerDatabaseGroups;
+  /** ルーチン / トリガーなどの定義を開ける (= そのグループを出す) か。 */
+  showObjects: boolean;
+  favorites: readonly TableRef[];
+  recent: readonly TableRef[];
+  rowEstimate: (db: string, tbl: string) => number | null | undefined;
+  comment: (db: string, tbl: string) => string | undefined;
+  isActiveTable: (db: string, tbl: string) => boolean;
+}
+
+const OBJECT_GROUP_ORDER: readonly SchemaObjectKind[] = [
+  "view",
+  "materialized_view",
+  "procedure",
+  "function",
+  "trigger",
+];
+
+/**
+ * アクティブ接続のサブツリーを、いま見えている行のフラットな配列にする。
+ *
+ * - データベースは `expandedDbs`、テーブルは `expandedTables` で開く。スキーマ検索で絞り込み中
+ *   (`schemaFiltered`) は、ヒットした DB / 列を持つテーブルを強制的に開く。
+ * - 絞り込み中は、DB 名 / テーブル名にヒットしたものだけを出し、テーブル名がヒットしない
+ *   テーブルは列名がヒットした列だけを出す (インデックス・外部キー・ルーチンは出さない)。
+ * - 閉じているノードの子は配列に入らない (行が無いので描画もされない)。
+ */
+export function buildExplorerRows(input: ExplorerRowsInput): ExplorerRow[] {
+  const { query: q, schemaFiltered, matchers } = input;
+  const searching = q.length > 0;
+  const rows: ExplorerRow[] = [];
+
+  const quick = (variant: "favorite" | "recent", refs: readonly TableRef[]) => {
+    const group = variant === "favorite" ? "favorites" : "recent";
+    if (refs.length === 0) return;
+    rows.push({ key: `hdr:${group}`, depth: 0, parent: "root", kind: "header", group, count: null });
+    for (const ref of refs) {
+      rows.push({
+        key: `qa:${variant}:${tableKey(ref.database, ref.table)}`,
+        depth: 0,
+        parent: "root",
+        kind: "quick",
+        ref,
+        variant,
+      });
+    }
+  };
+  quick("favorite", input.favorites);
+  quick("recent", input.recent);
+
+  const databases = input.databases;
+  if (databases === null) {
+    rows.push({ key: "ph:databases", depth: 0, parent: "root", kind: "loading" });
+  } else if (databases.length === 0) {
+    rows.push({ key: "ph:databases", depth: 0, parent: "root", kind: "empty", message: "databases" });
+  } else {
+    for (const db of databases) {
+      if (schemaFiltered && !(matchers?.db(db) ?? false)) continue;
+      const dbNameHit = searching && db.toLowerCase().includes(q);
+      const dbOpen = !!input.expandedDbs[db] || (schemaFiltered && (matchers?.db(db) ?? false));
+      const dbKey = `db:${db}`;
+      rows.push({ key: dbKey, depth: 0, parent: "root", kind: "db", db, open: dbOpen });
+      if (!dbOpen) continue;
+
+      const dbTables = input.tables[db];
+      if (dbTables === undefined) {
+        rows.push({ key: `ph:tables:${db}`, depth: 1, parent: dbKey, kind: "loading" });
+        continue;
+      }
+      const groups = input.partition(db, dbTables, input.schemaObjects[db]);
+      if (dbTables.length === 0) {
+        rows.push({ key: `ph:notables:${db}`, depth: 1, parent: dbKey, kind: "empty", message: "tables" });
+        if (!schemaFiltered && input.showObjects) pushObjects(rows, db, dbKey, groups.objects);
+        continue;
+      }
+      const visibleTables = groups.tables.filter(
+        (tbl) => !schemaFiltered || dbNameHit || (matchers?.table(db, tbl) ?? false),
+      );
+      const visibleViews = groups.views.filter(
+        (v) => !schemaFiltered || dbNameHit || (matchers?.table(db, v.name) ?? false),
+      );
+      if (showTablesHeader(groups) && visibleTables.length > 0) {
+        rows.push({
+          key: `hdr:tables:${db}`,
+          depth: 1,
+          parent: dbKey,
+          kind: "header",
+          group: "tables",
+          count: visibleTables.length,
+        });
+      }
+      for (const tbl of visibleTables) pushTable(input, rows, db, tbl, null, dbKey, dbNameHit);
+      if (visibleViews.length > 0) {
+        rows.push({
+          key: `hdr:views:${db}`,
+          depth: 1,
+          parent: dbKey,
+          kind: "header",
+          group: "views",
+          count: visibleViews.length,
+        });
+      }
+      for (const v of visibleViews) pushTable(input, rows, db, v.name, v, dbKey, dbNameHit);
+      if (!schemaFiltered && input.showObjects) pushObjects(rows, db, dbKey, groups.objects);
+    }
+  }
+
+  assignSetPositions(rows);
+  return rows;
+}
+
+function pushObjects(rows: ExplorerRow[], db: string, dbKey: string, objects: readonly SchemaObject[]): void {
+  if (objects.length === 0) return;
+  for (const kind of OBJECT_GROUP_ORDER) {
+    const items = objects.filter((o) => o.kind === kind);
+    if (items.length === 0) continue;
+    rows.push({ key: `hdr:obj:${db}:${kind}`, depth: 1, parent: dbKey, kind: "header", group: kind, count: null });
+    for (const o of items) {
+      rows.push({
+        key: `so:${db}:${kind}:${o.name}:${o.id ?? ""}`,
+        depth: 1,
+        parent: dbKey,
+        kind: "object",
+        db,
+        o,
+      });
+    }
+  }
+}
+
+function pushTable(
+  input: ExplorerRowsInput,
+  rows: ExplorerRow[],
+  db: string,
+  tbl: string,
+  view: ExplorerViewNode | null,
+  dbKey: string,
+  dbNameHit: boolean,
+): void {
+  const { query: q, schemaFiltered, matchers } = input;
+  const key = tableKey(db, tbl);
+  const rowKey = `tbl:${key}`;
+  const open = !!input.expandedTables[key] || (schemaFiltered && (matchers?.column(db, tbl) ?? false));
+  rows.push({
+    key: rowKey,
+    depth: 1,
+    parent: dbKey,
+    kind: "table",
+    db,
+    tbl,
+    view,
+    open,
+    rowEst: input.rowEstimate(db, tbl),
+    comment: input.comment(db, tbl),
+    isActive: input.isActiveTable(db, tbl),
+  });
+  if (!open) return;
+
+  // 絞り込み中でも、DB / テーブル自体がヒットしていれば列は全部出す。
+  const showAllCols = !schemaFiltered || dbNameHit || (q.length > 0 && tbl.toLowerCase().includes(q));
+  const cols = input.tableColumns[key];
+  const indexes = input.tableIndexes[key];
+  const fks = cols ? cachedForeignKeys(cols) : [];
+  if (cols === undefined) {
+    rows.push({ key: `ph:cols:${key}`, depth: 2, parent: rowKey, kind: "loading" });
+  } else if (cols.length === 0) {
+    rows.push({ key: `ph:nocols:${key}`, depth: 2, parent: rowKey, kind: "empty", message: "columns" });
+  } else {
+    // 列だけのテーブルで「列」見出しを出すのは冗長なので、他のグループと並ぶときだけ。
+    if (showAllCols && ((indexes?.length ?? 0) > 0 || fks.length > 0)) {
+      rows.push({ key: `hdr:cols:${key}`, depth: 2, parent: rowKey, kind: "header", group: "columns", count: null });
+    }
+    for (const col of cols) {
+      if (!showAllCols && !col.name.toLowerCase().includes(q)) continue;
+      rows.push({ key: `col:${key}:${col.name}`, depth: 2, parent: rowKey, kind: "column", db, tbl, col });
+    }
+  }
+  if (showAllCols && indexes && indexes.length > 0) {
+    rows.push({ key: `hdr:idx:${key}`, depth: 2, parent: rowKey, kind: "header", group: "indexes", count: null });
+    for (const idx of indexes) {
+      rows.push({ key: `idx:${key}:${idx.name}`, depth: 2, parent: rowKey, kind: "index", db, tbl, idx });
+    }
+  }
+  if (showAllCols && fks.length > 0) {
+    rows.push({ key: `hdr:fk:${key}`, depth: 2, parent: rowKey, kind: "header", group: "foreignKeys", count: null });
+    for (const fk of fks) {
+      rows.push({ key: `fk:${key}:${fk.column}`, depth: 2, parent: rowKey, kind: "foreignKey", db, tbl, fk });
+    }
+  }
+}
+
+/** フォーカスできる行に `aria-posinset` / `aria-setsize` 用の位置を振る (窓の外の兄弟は DOM に
+ *  無いので、支援技術は DOM を数えられない)。 */
+function assignSetPositions(rows: ExplorerRow[]): void {
+  const sizes = new Map<string, number>();
+  for (const row of rows) {
+    if (isFocusableExplorerRow(row)) sizes.set(row.parent, (sizes.get(row.parent) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  for (const row of rows) {
+    if (!isFocusableExplorerRow(row)) continue;
+    const n = (seen.get(row.parent) ?? 0) + 1;
+    seen.set(row.parent, n);
+    row.posInSet = n;
+    row.setSize = sizes.get(row.parent);
+  }
+}
+
+/** 行のラベル (先頭文字ジャンプの照合用)。フォーカスできない行は空。 */
+export function explorerRowLabel(row: ExplorerRow): string {
+  switch (row.kind) {
+    case "db":
+      return row.db;
+    case "table":
+      return row.tbl;
+    case "quick":
+      return row.ref.table;
+    case "column":
+      return row.col.name;
+    case "index":
+      return row.idx.columns.join(", ") || row.idx.name;
+    case "foreignKey":
+      return row.fk.column;
+    case "object":
+      return row.o.name;
+    default:
+      return "";
+  }
+}
+
+/** 行が展開できるノードか (`aria-expanded` を持つか) と、いま開いているか。 */
+export function explorerRowExpansion(row: ExplorerRow): { expandable: boolean; open: boolean } {
+  if (row.kind === "db" || row.kind === "table") return { expandable: true, open: row.open };
+  return { expandable: false, open: false };
 }
