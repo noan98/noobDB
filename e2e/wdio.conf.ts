@@ -97,6 +97,8 @@ export const config: Options.Testrunner = {
   mochaOpts: {
     ui: "bdd",
     timeout: 180_000,
+    // 最初の失敗で止める (後続は前提が崩れて連鎖失敗するだけで、ログが埋まって原因が読めなくなる)
+    bail: true,
   },
   reporters: ["spec"],
 
@@ -123,7 +125,7 @@ export const config: Options.Testrunner = {
     // 失敗の様子をジョブログへ直接出す (アーティファクトを取れない環境でも原因を追えるように)。
     // アプリが落ちていると取れないので、取れなければ「取れなかった」と出す。
     try {
-      const body = await browser.execute(() => document.body.innerText.slice(0, 1500));
+      const body = await browser.execute(() => (document.querySelector('[role="dialog"]') ?? document.body).innerText.slice(-1500));
       console.log(`[E2E 失敗時の画面テキスト] ${test.title}\n${body}`);
     } catch (e) {
       console.log(`[E2E 失敗時の画面テキスト] ${test.title}: 取得できませんでした (${String(e).slice(0, 200)})`);
