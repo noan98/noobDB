@@ -1879,17 +1879,51 @@ html, body, #root {
   100% { transform: translateX(100%); }
 }
 
+/* フラッシュ系 (#1322): box-shadow の補間は毎フレーム描画のやり直しになるため、
+   リングは疑似要素に静的な box-shadow として持たせ、`opacity` だけを動かす
+   (合成のみで描ける)。多数のセルが同時に変わる自動リフレッシュでも軽い。
+   対象は position が relative / sticky のセル (td・LiveFlash・ヘルス行の td)。 */
 @keyframes apply-flash {
+  0%   { opacity: 0; }
+  25%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* 結果内検索 (#644) の現在ヒットへの着地パルス。太いリングを一瞬重ねて消す
+   (定常状態は ResultGrid の is-find-current が 2px リングを維持)。 */
+@keyframes find-current-pulse {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.flash-ring::after,
+.flash-row > td::after,
+td.is-copy-flash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--preview-highlight) 70%, transparent);
+  opacity: 0;
+  animation: apply-flash 0.7s ease-out;
+}
+
+td.is-find-current::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 5px var(--status-warning);
+  opacity: 0;
+  animation: find-current-pulse 0.45s var(--ease-out);
+}
+
+/* 結果グリッド全体 (スクロールコンテナ) の適用成功フラッシュ。疑似要素だと
+   スクロールで流れてしまうため、1 要素・1 回きりのここだけ box-shadow を使う。 */
+@keyframes apply-flash-box {
   0%   { box-shadow: inset 0 0 0 0 transparent; }
   25%  { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--preview-highlight) 70%, transparent); }
   100% { box-shadow: inset 0 0 0 0 transparent; }
-}
-
-/* 結果内検索 (#644) の現在ヒットへの着地パルス。inset リングを一瞬太らせて
-   視線を誘導する (定常状態は ResultGrid の is-find-current が 2px リングを維持)。 */
-@keyframes find-current-pulse {
-  0%   { box-shadow: inset 0 0 0 5px var(--status-warning); }
-  100% { box-shadow: inset 0 0 0 2px var(--status-warning); }
 }
 
 /* `pane-overlay-in`: 結果最大化 / エディタ集中 (#618) の全画面オーバーレイの

@@ -88,11 +88,12 @@ export function LiveCollapse({
 }
 
 /**
- * `apply-flash` と同じキーフレームを同じ尺で再生する (ResultGrid の
+ * `apply-flash` と同じキーフレームを同じ尺で再生する (疑似要素の opacity のみ) (ResultGrid の
  * `is-apply-flash` と揃える)。
  */
 const flashCss: SystemStyleObject = {
-  animation: "apply-flash 0.7s ease-out",
+  // 光らせるのは疑似要素の opacity だけ (App.css の `.flash-ring::after`、#1322)。
+  position: "relative",
 };
 
 /**
@@ -112,6 +113,7 @@ export function LiveFlash({
     <chakra.div
       key={token === null ? "static" : `flash-${token}`}
       css={token === null ? css : { ...css, ...flashCss }}
+      className={token === null ? undefined : "flash-ring"}
       data-live-flash={token === null ? undefined : ""}
       {...rest}
     >

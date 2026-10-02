@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, Input } from "@chakra-ui/react";
-import { AnimatePresence, motion, Reorder } from "motion/react";
+import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
@@ -80,6 +80,8 @@ export function TabBar({
   splitMode = "split",
 }: Props) {
   const t = useT();
+  // opacity の補間は MotionConfig reducedMotion では止まらないので、個別に見て即時化する (#1322)。
+  const reducedMotion = useReducedMotion() ?? false;
   // Scope the sliding indicator's layoutId to this TabBar so a split view's two
   // bars don't share one indicator (which would fly between panes on select).
   const indicatorId = `tab-active-indicator-${useId()}`;
@@ -366,10 +368,13 @@ export function TabBar({
                 // 装飾的な補足情報のため、実害の小さいこの 1 箇所のみ native
                 // title を残す判断とする。
                 title={title}
-                initial={{ opacity: 0, width: 0 }}
-                animate={{ opacity: 1, width: "auto" }}
-                exit={{ opacity: 0, width: 0 }}
-                transition={transitions.enter}
+                // 追加・削除は opacity + scaleX だけで表す (#1322)。width を 0 ↔ auto に
+                // 補間すると隣のタブが毎フレーム再配置されるため。隣は即時に詰まる。
+                initial={variants.fadeScaleX.initial}
+                animate={variants.fadeScaleX.animate}
+                exit={variants.fadeScaleX.exit}
+                transition={reducedMotion ? { duration: 0 } : transitions.enter}
+                transformOrigin="left center"
                 position="relative"
                 display="inline-flex"
                 alignItems="center"

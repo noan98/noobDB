@@ -1,5 +1,6 @@
 import { chakra, Dialog, Portal } from "@chakra-ui/react";
-import { motion } from "motion/react";
+import { motion, useIsPresent } from "motion/react";
+import { useState } from "react";
 import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
 import { transitions, variants } from "../motion";
 import { Button } from "./ui";
@@ -37,6 +38,32 @@ import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
  *  style prop に飲まれず motion 側へ渡すため `forwardProps` に含める (TabBar と同方式)。 */
 const MotionBackdrop = chakra(motion.div, {}, { forwardProps: ["transition"] });
 const MotionContent = chakra(motion.div, {}, { forwardProps: ["transition"] });
+
+/**
+ * 全画面のバックドロップ。ぼかし (`backdrop-filter`) は、フェード中に毎フレーム
+ * 背後の内容ぶん再計算されるため、入場アニメーションが完了してから付け、退場が
+ * 始まったら外す (#1322)。フェード中は `--overlay` の色だけで暗くする。
+ * ぼかしは 2px と弱く、付与の瞬間の変化は目立たない。
+ */
+function ModalBackdrop() {
+  const isPresent = useIsPresent();
+  const [settled, setSettled] = useState(false);
+  return (
+    <MotionBackdrop
+      {...variants.fade}
+      transition={transitions.fade}
+      onAnimationComplete={() => setSettled(true)}
+      data-blurred={settled && isPresent ? "" : undefined}
+      css={{
+        position: "fixed",
+        inset: 0,
+        zIndex: "modal",
+        bg: "var(--overlay)",
+        "&[data-blurred]": { backdropFilter: "blur(2px)" },
+      }}
+    />
+  );
+}
 
 interface ModalProps {
   /** 制御された開閉フラグ。条件付きマウント前提で既定 true。 */
@@ -97,17 +124,7 @@ export function Modal({
         {/* バックドロップは Ark の挙動 (外側クリック判定) に必須ではない純粋な装飾
             なので Dialog.Backdrop ではなく motion.div で描画し、recipe アニメとの
             二重掛けを避ける。外側クリックでの close は Content の境界判定で効く。 */}
-        <MotionBackdrop
-          {...variants.fade}
-          transition={transitions.fade}
-          css={{
-            position: "fixed",
-            inset: 0,
-            zIndex: "modal",
-            bg: "var(--overlay)",
-            backdropFilter: "blur(2px)",
-          }}
-        />
+        <ModalBackdrop />
         <Dialog.Positioner
           css={{
             position: "fixed",

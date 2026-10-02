@@ -10,41 +10,45 @@ import { transitions } from "../motion";
  * モーダルの進捗表現と同じ語彙で示す。表示状態 (running) は呼び出し側の既存
  * 信号 (`tab.streaming` 等) をそのまま受け取り、二重管理しない。
  *
- * - 出入りは `transitions.progress` (motion.ts) の height/opacity 補間。
+ * - 2px の領域は常に確保し、出入りは `opacity` だけを `transitions.progress` で
+ *   補間する (#1322)。以前は height を 0 ↔ 2 に補間していたため、クエリの開始・
+ *   終了のたびに下のグリッドが毎フレーム再レイアウトされていた。
  * - スライドは既存の CSS keyframes `query-progress-slide` (App.css) を共有し、
- *   reduced-motion では App.css のメディアクエリと `MotionConfig` の両系統で
- *   自動的に静止・即時化される。
+ *   reduced-motion では App.css のメディアクエリで静止する。opacity の補間は
+ *   `MotionConfig` では止まらないため `useReducedMotion()` で即時化する。
  */
 export function StreamProgressBar({ active }: { active: boolean }) {
+  const reduced = useReducedMotion() ?? false;
   return (
-    <AnimatePresence initial={false}>
-      {active && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 2 }}
-          exit={{ opacity: 0, height: 0 }}
-          transition={transitions.progress}
-          aria-hidden
-          style={{
-            position: "relative",
-            flexShrink: 0,
-            overflow: "hidden",
-            background: "color-mix(in srgb, var(--accent) 16%, transparent)",
-          }}
-        >
-          <div
+    <div aria-hidden style={{ position: "relative", flexShrink: 0, height: "2px" }}>
+      <AnimatePresence initial={false}>
+        {active && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={reduced ? { duration: 0 } : transitions.progress}
             style={{
               position: "absolute",
               inset: 0,
-              width: "35%",
-              borderRadius: "var(--radius-pill)",
-              background: "var(--accent)",
-              animation: "query-progress-slide var(--dur-progress-loop) var(--ease) infinite",
+              overflow: "hidden",
+              background: "color-mix(in srgb, var(--accent) 16%, transparent)",
             }}
-          />
-        </motion.div>
-      )}
-    </AnimatePresence>
+          >
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "35%",
+                borderRadius: "var(--radius-pill)",
+                background: "var(--accent)",
+                animation: "query-progress-slide var(--dur-progress-loop) var(--ease) infinite",
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
