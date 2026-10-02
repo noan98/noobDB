@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { MotionConfig } from "motion/react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { render, waitFor } from "@testing-library/react";
@@ -9,13 +7,26 @@ import { TabBar, type TabInfo } from "../components/TabBar";
 import { variants } from "../motion";
 import { system } from "../theme";
 import { renderWithProviders, screen } from "./testUtils";
+// Vite の `?raw` でソース全文を文字列として取り込む (`designTokens.test.ts` と同じ方式)。
+import streamProgressBarSrc from "../components/StreamProgressBar.tsx?raw";
+import tabBarSrc from "../components/TabBar.tsx?raw";
+import appSrc from "../App.tsx?raw";
+import appCss from "../App.css?raw";
+import modalSrc from "../components/Modal.tsx?raw";
 
 /**
  * レイアウトを起こす補間 (height / width / grid-template-columns) と、描画のやり直しを
  * 伴う補間 (box-shadow) を軽い transform / opacity へ置き換えたこと、および reduced-motion
  * で opacity の補間が止まることを固定する (#1322)。
  */
-const read = (p: string) => readFileSync(resolve(__dirname, "..", p), "utf8");
+const SOURCES: Record<string, string> = {
+  "components/StreamProgressBar.tsx": streamProgressBarSrc,
+  "components/TabBar.tsx": tabBarSrc,
+  "App.tsx": appSrc,
+  "App.css": appCss,
+  "components/Modal.tsx": modalSrc,
+};
+const read = (p: string) => SOURCES[p];
 
 beforeAll(() => {
   if (!("ResizeObserver" in globalThis)) {
