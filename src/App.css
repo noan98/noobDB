@@ -1918,6 +1918,18 @@ html, body, #root {
   animation: grid-data-reveal var(--dur-base, 180ms) var(--ease-out, ease-out);
 }
 
+/* `tree-row-enter`: スキーマツリーで展開操作により増えた行 (#1315) のフェードイン。
+   仮想化したリストは行の退場アニメを持てないので、入場だけを CSS で付ける。下の
+   reduced-motion メディアクエリで静止化される。 */
+@keyframes tree-row-enter {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.tree-row-enter {
+  animation: tree-row-enter var(--dur-base, 180ms) var(--ease-out, ease-out);
+}
+
 /* ---------- Reduced motion ----------
    OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
    (点滅ドット等) を静止させ、トランジションを実質無効化する。

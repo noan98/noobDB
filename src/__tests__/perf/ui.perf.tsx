@@ -336,7 +336,8 @@ async function bootAndOpenTabs(): Promise<void> {
   const db = screen.getByRole("treeitem", { name: "appdb", exact: true });
   await expect.element(db).toBeVisible();
   await db.click();
-  await expect.element(screen.getByRole("treeitem", { name: TABLES[TABLE_COUNT - 1], exact: true })).toBeInTheDocument();
+  // ツリーは仮想化されていて (#1315)、末尾のテーブルは窓の外なので DOM に無い。先頭のテーブルで待つ。
+  await expect.element(screen.getByRole("treeitem", { name: TABLES[0], exact: true })).toBeInTheDocument();
   for (let i = 0; i < OPEN_TABS; i += 1) {
     await screen.getByRole("treeitem", { name: TABLES[i], exact: true }).dblClick();
     await expect.element(screen.getByRole("gridcell", { name: "value_0_1", exact: true })).toBeVisible();

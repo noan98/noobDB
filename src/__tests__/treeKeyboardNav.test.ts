@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { resolveTreeArrowLeft, resolveTreeArrowRight, type TreeNavRow } from "../treeKeyboardNav";
+import {
+  resolveTreeArrowLeft,
+  resolveTreeArrowRight,
+  resolveTreeMove,
+  type TreeNavEntry,
+  type TreeNavRow,
+} from "../treeKeyboardNav";
 
 /**
  * サイドバーのスキーマツリーの ArrowLeft/ArrowRight 判定 (#1184)。
@@ -78,5 +84,46 @@ describe("resolveTreeArrowLeft", () => {
       { level: 3, expandable: true, open: false },
     ];
     expect(resolveTreeArrowLeft(rows, 2)).toEqual({ type: "move", index: 1 });
+  });
+});
+
+describe("resolveTreeMove (#1315)", () => {
+  const entry = (label: string): TreeNavEntry => ({ level: 1, expandable: false, open: false, label });
+  const entries = ["alpha", "Beta", "gamma", "beam"].map(entry);
+
+  it("↓ は次の行へ、末尾では動かない (循環しない)", () => {
+    expect(resolveTreeMove(entries, 0, "ArrowDown")).toBe(1);
+    expect(resolveTreeMove(entries, 3, "ArrowDown")).toBeNull();
+  });
+
+  it("↑ は前の行へ、先頭では動かない", () => {
+    expect(resolveTreeMove(entries, 2, "ArrowUp")).toBe(1);
+    expect(resolveTreeMove(entries, 0, "ArrowUp")).toBeNull();
+  });
+
+  it("Home / End は先頭 / 末尾 (窓の外でも配列の端)", () => {
+    expect(resolveTreeMove(entries, 2, "Home")).toBe(0);
+    expect(resolveTreeMove(entries, 1, "End")).toBe(3);
+  });
+
+  it("先頭文字ジャンプは現在行の次から探し、大文字小文字を区別せず、末尾から先頭へ折り返す", () => {
+    expect(resolveTreeMove(entries, 0, "b")).toBe(1);
+    expect(resolveTreeMove(entries, 1, "b")).toBe(3);
+    // 末尾の beam から探すと、先頭側の Beta へ折り返す。
+    expect(resolveTreeMove(entries, 3, "B")).toBe(1);
+    // 現在行しか一致しないときは、自分自身に戻る (1 周する)。
+    expect(resolveTreeMove(entries, 2, "g")).toBe(2);
+  });
+
+  it("一致が無い文字や印字できないキーは null", () => {
+    expect(resolveTreeMove(entries, 0, "z")).toBeNull();
+    expect(resolveTreeMove(entries, 0, "Tab")).toBeNull();
+    expect(resolveTreeMove([], 0, "ArrowDown")).toBeNull();
+  });
+
+  it("現在行が不明 (-1) のときは、↓ と先頭文字は先頭から、↑ は末尾から", () => {
+    expect(resolveTreeMove(entries, -1, "ArrowDown")).toBe(0);
+    expect(resolveTreeMove(entries, -1, "ArrowUp")).toBe(3);
+    expect(resolveTreeMove(entries, -1, "g")).toBe(2);
   });
 });

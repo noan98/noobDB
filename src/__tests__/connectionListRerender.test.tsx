@@ -196,18 +196,19 @@ describe("スキーマツリーの再レンダー削減 (#1314)", () => {
     expect(counts.rows.size).toBe(0);
   });
 
-  it("閉じているテーブルには TreeCollapse をマウントせず、開いた行にだけマウントする", async () => {
+  it("テーブルの開閉は TreeCollapse を使わず、列の行を配列に足し引きするだけ (#1315)", async () => {
     await openTree();
-    // プロファイルと DB の 2 つだけ (テーブル 3 件はどれも閉じている)。
-    expect(counts.collapseMounts).toBe(2);
+    // プロファイル 1 つだけ。DB・テーブルの展開は仮想化したフラットな行で、
+    // 行ごとの TreeCollapse (退場アニメ待ち) はマウントしない。
+    expect(counts.collapseMounts).toBe(1);
 
     fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
     expect(await screen.findByText("id")).toBeInTheDocument();
-    expect(counts.collapseMounts).toBe(3);
+    expect(counts.collapseMounts).toBe(1);
 
-    // 閉じると、退場アニメの後に列が外れ、TreeCollapse ごとアンマウントされる。
+    // 閉じると列の行は退場アニメを待たずに外れる。
     fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
-    await waitFor(() => expect(screen.queryByText("id")).not.toBeInTheDocument());
+    expect(screen.queryByText("id")).not.toBeInTheDocument();
   });
 
   it("検索入力で絞り込まれ、ほかの行のフォーカス管理 (roving tabindex) は維持される", async () => {
