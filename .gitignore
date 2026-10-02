@@ -27,6 +27,8 @@ dist-ssr/
 
 # Coverage reports (Vitest v8 / cargo-llvm-cov)
 coverage/
+.vitest-reports/
+.vitest-reports-dl/
 src-tauri/lcov.info
 
 # ビジュアル回帰 (#306) の失敗時アーティファクト。ベースライン PNG 本体

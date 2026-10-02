@@ -21,8 +21,7 @@
   `pnpm run build` に続けて `pnpm run lint` (Biome。#1176。新しい必須
   チェックは増やさずこのジョブ内のステップ)、
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
-  (未使用エクスポート/到達不能コード検出。#470)、`pnpm test --coverage` (Vitest
-  jsdom + カバレッジ閾値)、さらに `pnpm exec playwright install` +
+  (未使用エクスポート/到達不能コード検出。#470)、さらに `pnpm exec playwright install` +
   `pnpm test:browser` (Vitest ブラウザモード。#306) を順に実行します。
   バンドルサイズはカバレッジと同じく当面は閾値による fail を設けず可視化のみで、
   `dist/` の JS/CSS の gzip 後サイズを Node 標準の zlib だけで集計します
@@ -41,6 +40,17 @@
   `frontend (browser render + visual)` を必須チェックに指定していた場合は、新しい
   `frontend (build + browser tests)` へ設定し直してください** (#908 のジョブ統合で
   チェック名が変わったため)。
+
+  **Vitest 単体テストは別ジョブに分割** (実測 約 4 分 15 秒がフロントの大半を占めていた
+  ため)。`frontend (unit shard N/3)` (`frontend-unit`、`--shard` で 3 並列、各 shard は
+  `--coverage --coverage.thresholds.lines=0 --reporter=blob` で blob を artifact へ保存) と、
+  それを `gh run download` で集めて `vitest run --merge-reports --coverage` で統合し
+  カバレッジ閾値 (`vite.config.ts` の `thresholds.lines`) を強制する
+  `frontend (unit tests)` (`frontend-unit-merge`) の 2 段です。**単体テストの合否と
+  カバレッジ閾値のゲートは `frontend (unit tests)` が担う**ので、必須チェックには
+  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の
+  `frontend (unit shard N/3)` は集約ジョブが `needs.frontend-unit.result` を見て fail
+  させるので必須に含めなくてよい)。
 
   **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
   インポートで `src-tauri/src/lib.rs` を読む) / `ipcArgParity.test.ts` /
@@ -156,6 +166,12 @@
   不要の SQLite 統合テストのみ実走します。Tauri の全スタックビルド (WebView2 等) は
   不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows-clippy` /
   `windows-test` で Linux と分離しています。
+  `rust (test)` は sshd / TLS DB のセットアップ (約 1 分) を待たずに
+  `cargo nextest run --no-run` でテストバイナリのビルドを先に始め、wait の後に実行します
+  (NOOBDB_TEST_* は実行時にしか読まないためコンパイルと重ねられる)。
+  Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
+  `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
+  PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
   さらに `rust (clippy)` / `rust (test)` / `rust (coverage)` /
   `rust (windows clippy)` / `rust (windows test)` の各コンパイルジョブは
   **sccache** を `RUSTC_WRAPPER` として有効化し (`taiki-e/install-action` で導入)、

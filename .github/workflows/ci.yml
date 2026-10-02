@@ -192,6 +192,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-vite-deps-
 
+      # このステップは apt / playwright の列挙だけで、後続の build / lint / knip は
+      # apt を使わないため background: true で重ね、実際にパッケージ一覧が要る
+      # 「Playwright system deps (apt cache)」の直前の wait で完了を保証する
+      # (rust ジョブの sshd / apt と同じ手法)。
+      # Playwright が chromium に要求する OS パッケージ (共有ライブラリ + スクリーン
+      # ショットの描画に効くフォント + xvfb) を列挙する (#1244)。パッケージ名を
+      # ハードコードせず、Playwright 自身の一覧 (`install-deps --dry-run` =
+      # `apt-get install -s` のシミュレーション結果) から取るため、Playwright /
+      # Chromium の更新に自動で追従する。`--with-deps` と同じ集合なのでフォント
+      # 構成もビジュアル回帰のベースライン生成環境と変わらない。cache-apt-pkgs-action
+      # のキャッシュキーはパッケージ一覧 + version のハッシュなので、一覧が変われば
+      # 新しいキーになる。
+      # ランナーイメージの apt インデックスは古く 404 になることがあるため、rust
+      # ジョブと同じくミラーを本家に差し替えて update してから列挙する
+      # (詳細は rust (clippy) の System deps 直前のコメントを参照)。
+      # dry-run は未導入パッケージがあると exit 1 を返すので `|| true` で受け、
+      # 「  <pkg>」形式の行だけを拾う。
+      - name: List Playwright system deps (#1244)
+        id: pw-deps
+        background: true
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+          PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
+          echo "Playwright system deps: ${PKGS:-<none>}"
+          echo "packages=${PKGS}" >> "$GITHUB_OUTPUT"
+
       - name: Type-check and build
         run: pnpm run build
 
@@ -214,10 +241,13 @@ jobs:
       - name: Dead-code / unused-export check (knip)
         run: pnpm run knip
 
-      # カバレッジ計測込みで実行し、`vite.config.ts` の coverage.thresholds を
-      # 下回ったらここで fail させる (品質ゲート / #290)。
-      - name: Unit tests (Vitest) + coverage threshold
-        run: pnpm test --coverage
+      # Vitest (jsdom) の単体テストは `frontend-unit` (3 分割 shard) と
+      # `frontend (unit tests)` (カバレッジ統合 + 閾値) に分離した。ここで直列に
+      # 走らせると約 4 分がこのジョブの壁時計を占めていたため、並列化して
+      # クリティカルパスから外している。
+
+      - name: Wait for background setup (Playwright deps list)
+        wait: [pw-deps]
 
       # Playwright の Chromium バイナリ本体をキャッシュする。バイナリ本体
       # (数十〜100MB超) の再ダウンロードはこれで避けられる。OS 側の共有ライブラリ /
@@ -234,30 +264,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
 
-      # Playwright が chromium に要求する OS パッケージ (共有ライブラリ + スクリーン
-      # ショットの描画に効くフォント + xvfb) を列挙する (#1244)。パッケージ名を
-      # ハードコードせず、Playwright 自身の一覧 (`install-deps --dry-run` =
-      # `apt-get install -s` のシミュレーション結果) から取るため、Playwright /
-      # Chromium の更新に自動で追従する。`--with-deps` と同じ集合なのでフォント
-      # 構成もビジュアル回帰のベースライン生成環境と変わらない。cache-apt-pkgs-action
-      # のキャッシュキーはパッケージ一覧 + version のハッシュなので、一覧が変われば
-      # 新しいキーになる。
-      # ランナーイメージの apt インデックスは古く 404 になることがあるため、rust
-      # ジョブと同じくミラーを本家に差し替えて update してから列挙する
-      # (詳細は rust (clippy) の System deps 直前のコメントを参照)。
-      # dry-run は未導入パッケージがあると exit 1 を返すので `|| true` で受け、
-      # 「  <pkg>」形式の行だけを拾う。
-      - name: List Playwright system deps (#1244)
-        id: pw-deps
-        run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
-          PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
-          echo "Playwright system deps: ${PKGS:-<none>}"
-          echo "packages=${PKGS}" >> "$GITHUB_OUTPUT"
-
       - name: Playwright system deps (apt cache)
+        id: pw-apt
         if: steps.pw-deps.outputs.packages != ''
+        background: true
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: ${{ steps.pw-deps.outputs.packages }}
@@ -271,6 +281,12 @@ jobs:
       # キャッシュヒットしていれば再ダウンロードをスキップする。
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --only-shell chromium
+
+      # apt キャッシュ導入 (background) の完了を、実際に OS 依存が要るブラウザ
+      # テストの直前で待つ。Chromium バイナリの導入 (上) はこの apt 導入と重なる。
+      - name: Wait for background setup (Playwright system deps)
+        if: steps.pw-deps.outputs.packages != ''
+        wait: [pw-apt]
 
       # 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) で
       # 主要画面のレンダリングとビジュアル回帰を検証する (#306)。上の jsdom 単体
@@ -314,6 +330,137 @@ jobs:
             echo "| Playwright ブラウザキャッシュヒット | ${{ steps.playwright-cache.outputs.cache-hit }} |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
+  # Vitest (jsdom) 単体テストの 3 分割実行。
+  #
+  # 以前は `frontend` ジョブの 1 ステップ (`pnpm test --coverage`) で、実測約 4 分 15 秒
+  # (ジョブ全体の約 3/4) を占めていた。ファイル数 (約 320) が多くワーカー単位で
+  # jsdom の起動と import が支配的なため、`--shard` で 3 ランナーに分けて壁時計を縮める。
+  # 各 shard はカバレッジ付きで走らせ、結果を blob として保存する。閾値の判定は
+  # 全 shard を統合した値でしか意味を持たないので、ここでは 0 にして下の
+  # `frontend (unit tests)` ジョブで統合してから強制する。
+  frontend-unit:
+    name: frontend (unit shard ${{ matrix.shard }}/3)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      # frontend ジョブと同じキーを共有する (同じ OS / lockfile で store の内容は同一)。
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests (Vitest, shard ${{ matrix.shard }}/3)
+        run: >-
+          pnpm vitest run
+          --shard=${{ matrix.shard }}/3
+          --coverage
+          --coverage.thresholds.lines=0
+          --reporter=blob
+          --outputFile=.vitest-reports/blob-${{ matrix.shard }}.json
+
+      - name: Upload Vitest blob
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: .vitest-reports/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # 全 shard の blob を統合し、カバレッジ閾値 (`vite.config.ts` の
+  # coverage.thresholds, #290 の品質ゲート) を統合値で強制する。単体テストの
+  # 合否ゲートもこのジョブが担う (shard のいずれかが落ちたらここで fail させる)。
+  # job レベルの `if:` で `!cancelled()` を使うのは、shard 失敗時に「skip」になる
+  # (skip は必須チェックを満たしてしまう) のを避け、確実に fail で終えるため。
+  frontend-unit-merge:
+    name: frontend (unit tests)
+    needs: [changes, frontend-unit]
+    if: ${{ !cancelled() && (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 同じ run の artifact を gh で取得するために actions: read が要る。
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require all shards to pass
+        env:
+          SHARDS_RESULT: ${{ needs.frontend-unit.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "::error::Vitest の shard が success ではありません: $SHARDS_RESULT"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 各 shard の blob (`vitest-blob-N` artifact) を 1 ディレクトリへ集める。
+      - name: Download Vitest blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .vitest-reports-dl .vitest-reports
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'vitest-blob-*' --dir .vitest-reports-dl
+          find .vitest-reports-dl -name 'blob-*.json' -exec mv {} .vitest-reports/ \;
+          ls -l .vitest-reports
+
+      # blob を統合し、`vite.config.ts` の閾値 (lines) を超えているか判定する。
+      - name: Merge reports + coverage threshold
+        run: pnpm vitest run --merge-reports=.vitest-reports --coverage
+
   # 言語横断のパリティ/ゴールデンテスト専用の軽量ジョブ (#853)。
   #
   # 背景: `ipcCommandParity.test.ts` / `ipcArgParity.test.ts` /
@@ -335,8 +482,8 @@ jobs:
   # だけをピンポイントで実行する。
   #
   # 起動条件 (#1029 で `frontend==true || rust==true || workflow==true` から
-  # 変更): このジョブが実行する 10 本の Vitest ファイルは、`frontend` ジョブの
-  # `pnpm test --coverage` (Vitest 全スイート) にも既に含まれている。したがって
+  # 変更): このジョブが実行する 10 本の Vitest ファイルは、`frontend-unit` の
+  # shard 群 (Vitest 全スイートの 3 分割実行) にも既に含まれている。したがって
   # `frontend==true` の PR (`src/__tests__/fixtures/**` ⊂ `src/**` なのでフィクスチャ
   # のみの PR も該当) では、`frontend` ジョブが直前に実行した 10 本を、このジョブが
   # 独自の checkout + setup-node + `pnpm install --frozen-lockfile` を挟んで
@@ -350,7 +497,7 @@ jobs:
   #
   # カバレッジが保たれることの確認 (4 経路):
   #   - `src/**` のみ変更 (frontend==true, rust==false):
-  #     `frontend` ジョブの `pnpm test --coverage` が 10 本すべてを実走 (このジョブは skip)。
+  #     `frontend-unit` の shard 群 が 10 本すべてを実走 (このジョブは skip)。
   #   - `src-tauri/**` のみ変更 (rust==true, frontend==false):
   #     `frontend` ジョブは skip されるため、このジョブが 10 本を実走 (下記 if: の前半)。
   #   - `src/__tests__/fixtures/**` のみ変更:
@@ -822,6 +969,16 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # テストバイナリのビルドだけを先に行う (--no-run)。sshd / TLS DB のセットアップ
+      # (sshd のユーザ作成などで実測約 1 分) は env を実行時にしか読まない
+      # (NOOBDB_TEST_* は env!/option_env! ではなく std::env 経由) ため、コンパイルと
+      # 重ねられる。以前は wait の後に nextest がビルドから始めており、この待ち時間が
+      # そのままクリティカルパスに乗っていた。ビルド済みなので下の実行ステップは
+      # 再コンパイルせずテスト実行に入る。
+      - name: Build tests (overlaps sshd / TLS DB setup)
+        working-directory: src-tauri
+        run: cargo nextest run --locked --all-targets --no-run
+
       # 残る background (sshd = SSH 接続情報 / tlsdb = TLS DB 接続情報。いずれも
       # $GITHUB_ENV 経由) の完了を nextest の直前で待ち合わせる。両者の env は
       # この wait 以降で利用可能になり、SSH トンネル統合テスト (#331) と TLS 統合
@@ -1206,9 +1363,16 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
           key: windows-clippy
+          # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
+          # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
+          # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
+      # main の push に限る (rust-cache の save-if と同じ理由)。
       - name: Cache sccache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sccache-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -1218,6 +1382,15 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
+      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
+      - name: Save sccache (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
@@ -1299,9 +1472,16 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
           key: windows-test
+          # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
+          # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
+          # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
+      # main の push に限る (rust-cache の save-if と同じ理由)。
       - name: Cache sccache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sccache-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -1318,6 +1498,15 @@ jobs:
       - name: cargo nextest run
         working-directory: src-tauri
         run: cargo nextest run --locked --all-targets
+
+      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
+      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
+      - name: Save sccache (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
