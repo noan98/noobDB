@@ -62,6 +62,7 @@ import { attachRowDiff } from "./resultDiff";
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
+import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
 import {
@@ -1225,6 +1226,10 @@ export default function App() {
   // 設定の「クエリタイムアウト」を課すので、読み取り専用セッションでも動き、
   // 大テーブルで無制限 fetch しない。SQL は対象テーブルを修飾済みなので database は渡さない。
   const lookupTimeoutSecs = settings.queryTimeoutSecs;
+  // 結果グリッド (memo 化した DataGrid) へ渡すコールバック・オブジェクトの参照を、タブごとに
+  // 固定するキー付きキャッシュ (#1313)。打鍵やストリーミングで App が再レンダーされても、
+  // 値が変わらない限り DataGrid の memo が効く。キーは `${tab.id}:名前`。
+  const gridStable = useKeyedStable();
   const lookupForSession = useCallback(
     (sid: string): ValueLookup =>
       (sql, rowCap) =>
@@ -1745,6 +1750,11 @@ export default function App() {
   const [statusDismissed, setStatusDismissed] = useState(false);
 
   const [tabs, setTabs] = useState<Tab[]>([]);
+  // 閉じたタブの結果グリッド用キャッシュ (gridStable) を捨てる (#1313)。
+  useEffect(() => {
+    const ids = new Set(tabs.map((tt) => tt.id));
+    gridStable.prune((key) => ids.has(key.slice(0, key.indexOf(":"))));
+  }, [tabs, gridStable]);
   const [panes, setPanes] = useState<PaneState[]>([]);
   const [activePaneId, setActivePaneId] = useState<string | null>(null);
   // Latest pane layout / focus, mirrored into refs so streaming callbacks,
@@ -8356,19 +8366,41 @@ export default function App() {
                           ? (gridScrollRef.current.get(tab.id) ?? tab.gridScrollTop)
                           : undefined
                       }
-                      onScroll={(top) => gridScrollRef.current.set(tab.id, top)}
+                      onScroll={gridStable.fn(`${tab.id}:scroll`, (top: number) =>
+                        gridScrollRef.current.set(tab.id, top),
+                      )}
                       streaming={tab.streaming}
-                      onStopStreaming={() => stopTab(tab)}
+                      onStopStreaming={gridStable.fn(`${tab.id}:stop`, () => stopTab(tab))}
                       loadingMore={tab.loadingMore}
                       canLoadMore={tab.kind === "table" && tab.paginatable ? false : tab.canLoadMore}
-                      onLoadMore={() => loadMoreInTab(tab.id)}
-                      pendingDeleteKeys={tab.pendingDeletes ? new Set(tab.pendingDeletes) : undefined}
-                      onToggleRowDelete={tableTabEditable(tab) ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
-                      onRequestInsertRow={tableTabEditable(tab) ? () => requestInsertRowForTab(tab.id) : undefined}
-                      onDuplicateRow={tableTabEditable(tab) ? (row) => requestDuplicateRowForTab(tab.id, row) : undefined}
+                      onLoadMore={gridStable.fn(`${tab.id}:loadMore`, () => loadMoreInTab(tab.id))}
+                      pendingDeleteKeys={gridStable.memo(
+                        `${tab.id}:pendingDeleteKeys`,
+                        [tab.pendingDeletes],
+                        () => (tab.pendingDeletes ? new Set(tab.pendingDeletes) : undefined),
+                      )}
+                      onToggleRowDelete={
+                        tableTabEditable(tab)
+                          ? gridStable.fn(`${tab.id}:toggleRowDelete`, (key: string) =>
+                              toggleRowDeleteForTab(tab.id, key),
+                            )
+                          : undefined
+                      }
+                      onRequestInsertRow={
+                        tableTabEditable(tab)
+                          ? gridStable.fn(`${tab.id}:requestInsertRow`, () => requestInsertRowForTab(tab.id))
+                          : undefined
+                      }
+                      onDuplicateRow={
+                        tableTabEditable(tab)
+                          ? gridStable.fn(`${tab.id}:duplicateRow`, (row: Parameters<typeof requestDuplicateRowForTab>[1]) =>
+                              requestDuplicateRowForTab(tab.id, row),
+                            )
+                          : undefined
+                      }
                       autoLimitApplied={tab.autoLimitApplied}
                       partialResult={tab.partialResult ?? null}
-                      onFetchAllRows={() => fetchAllForTab(tab)}
+                      onFetchAllRows={gridStable.fn(`${tab.id}:fetchAll`, () => fetchAllForTab(tab))}
                       driver={selectedProfile?.driver ?? "mysql"}
                       database={tab.database ?? selectedProfile?.database ?? null}
                       table={tab.table ?? null}
@@ -8386,22 +8418,43 @@ export default function App() {
                       rowIdentity={tab.rowIdentity}
                       blobIo={
                         sessionId && tab.kind === "table"
-                          ? {
-                              sessionId,
-                              onWrite: !tableTabEditable(tab)
-                                ? undefined
-                                : (r, c, hex) => writeBlobForTab(tab, r, c, hex),
-                            }
+                          ? gridStable.memo(
+                              `${tab.id}:blobIo`,
+                              [
+                                sessionId,
+                                tableTabEditable(tab),
+                                gridStable.fn(
+                                  `${tab.id}:blobWrite`,
+                                  (r: number, c: number, hex: string) => writeBlobForTab(tab, r, c, hex),
+                                ),
+                              ],
+                              () => ({
+                                sessionId,
+                                onWrite: !tableTabEditable(tab)
+                                  ? undefined
+                                  : gridStable.fn(
+                                      `${tab.id}:blobWrite`,
+                                      (r: number, c: number, hex: string) =>
+                                        writeBlobForTab(tab, r, c, hex),
+                                    ),
+                              }),
+                            )
                           : undefined
                       }
                       pendingEdits={tab.pendingEdits}
                       canUndo={(tab.editUndoStack?.length ?? 0) > 0}
                       canRedo={(tab.editRedoStack?.length ?? 0) > 0}
-                      onSetCellEdit={(r, c, v) => setCellEditForTab(tab.id, r, c, v)}
-                      onBulkEdit={(edits) => setBulkCellEditsForTab(tab.id, edits)}
+                      onSetCellEdit={gridStable.fn(`${tab.id}:setCellEdit`, (r: string, c: number, v: string | null) =>
+                        setCellEditForTab(tab.id, r, c, v),
+                      )}
+                      onBulkEdit={gridStable.fn(`${tab.id}:bulkEdit`, (edits: Parameters<typeof setBulkCellEditsForTab>[1]) =>
+                        setBulkCellEditsForTab(tab.id, edits),
+                      )}
                       onReplaceColumn={
                         tableTabEditable(tab) && tab.paginatable
-                          ? (sql) => void replaceColumnForTab(tab, sql)
+                          ? gridStable.fn(`${tab.id}:replaceColumn`, (sql: string) =>
+                              void replaceColumnForTab(tab, sql),
+                            )
                           : undefined
                       }
                       diffPrevRows={tab.prevResultRows ?? null}
@@ -8458,8 +8511,8 @@ export default function App() {
                           : undefined
                       }
                       onClearEdits={() => clearEditsForTab(tab.id)}
-                      onUndoEdit={() => undoCellEditForTab(tab.id)}
-                      onRedoEdit={() => redoCellEditForTab(tab.id)}
+                      onUndoEdit={gridStable.fn(`${tab.id}:undo`, () => undoCellEditForTab(tab.id))}
+                      onRedoEdit={gridStable.fn(`${tab.id}:redo`, () => redoCellEditForTab(tab.id))}
                       onPreviewEdits={() => previewEditsForTab(tab)}
                       onApplyEdits={() => applyEditsForTab(tab)}
                       applyingEdits={tab.applyingEdits}
@@ -8482,7 +8535,7 @@ export default function App() {
                             }
                           : undefined
                       }
-                      onFkJump={(sql) => openAndRunQuery(sql)}
+                      onFkJump={gridStable.fn(`${tab.id}:fkJump`, (sql: string) => openAndRunQuery(sql))}
                       incomingFks={
                         tab.kind === "table" && tab.table && tab.database && sessionId
                           ? incomingFkCache[incomingFkCacheKey(sessionId, tab.database, tab.table)] ??
@@ -8490,30 +8543,47 @@ export default function App() {
                           : undefined
                       }
                       onRunStatsQuery={
-                        sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
+                        sessionId
+                          ? gridStable.fn(`${tab.id}:statsQuery`, (sql: string) =>
+                              api.runQuery(sessionId, sql, null),
+                            )
+                          : undefined
                       }
                       onRunRelatedQuery={
                         sessionId
-                          ? (sql) => api.runQuery(sessionId, sql, tab.database ?? null)
+                          ? gridStable.fn(`${tab.id}:relatedQuery`, (sql: string) =>
+                              api.runQuery(sessionId, sql, tab.database ?? null),
+                            )
                           : undefined
                       }
-                      onLookupQuery={sessionId ? lookupForSession(sessionId) : undefined}
+                      onLookupQuery={
+                        sessionId
+                          ? gridStable.memo(`${tab.id}:lookup`, [sessionId, lookupForSession], () =>
+                              lookupForSession(sessionId),
+                            )
+                          : undefined
+                      }
                       onExploreColumn={
                         sessionId
-                          ? (target) =>
-                              handleExploreColumns(target.database ?? "", target.table, target.column)
+                          ? gridStable.fn(`${tab.id}:exploreColumn`, (target: { database?: string | null; table: string; column: string }) =>
+                              handleExploreColumns(target.database ?? "", target.table, target.column),
+                            )
                           : undefined
                       }
                       serverSort={tab.kind === "table" ? tab.serverSort ?? null : undefined}
                       serverFilter={tab.kind === "table" ? tab.serverFilter ?? null : undefined}
                       onSetServerSort={
                         tab.kind === "table" && sessionId && tab.paginatable
-                          ? (column, direction) => setServerSortInTab(tab.id, column, direction)
+                          ? gridStable.fn(`${tab.id}:serverSort`, (column: Parameters<typeof setServerSortInTab>[1], direction: Parameters<typeof setServerSortInTab>[2]) =>
+                              setServerSortInTab(tab.id, column, direction),
+                            )
                           : undefined
                       }
                       onSetServerFilter={
                         tab.kind === "table" && sessionId && tab.paginatable
-                          ? (column, filter) => setServerFilterInTab(tab.id, column, filter)
+                          ? gridStable.fn(`${tab.id}:serverFilter`, (column: Parameters<typeof setServerFilterInTab>[1], filter: Parameters<typeof setServerFilterInTab>[2]) =>
+                              setServerFilterInTab(tab.id, column, filter),
+                            )
                           : undefined
                       }
                       fullExport={

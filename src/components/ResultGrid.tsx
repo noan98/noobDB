@@ -6309,16 +6309,21 @@ export const DataGrid = memo(function DataGrid({
  * 「無の時間」やバッチ間では値が固まって見える。ここで `streaming` が真の間だけ
  * 200ms ごとに自前で計時し、経過時間が常に進んでいることを示す。reduced-motion とは
  * 無関係 (時間表示であってアニメーションではない) なので常時刻む。
+ *
+ * 200ms ごとの setState は `StreamingBanner` の中だけで起き、ラッパー (ResultGrid) と
+ * DataGrid は再レンダーされない (#1313)。開始時刻はラッパーが ref で持つので、
+ * スケルトン → 行流入でバナーが差し替わっても経過時間は途切れない。
  */
-function useStreamingElapsed(active: boolean): number {
-  const [elapsed, setElapsed] = useState(0);
+function useStreamingElapsed(startRef: { current: number | null }): number {
+  const [elapsed, setElapsed] = useState(() =>
+    startRef.current == null ? 0 : Date.now() - startRef.current,
+  );
   useEffect(() => {
-    if (!active) return;
-    const start = Date.now();
-    setElapsed(0);
-    const id = window.setInterval(() => setElapsed(Date.now() - start), 200);
+    const tick = () => setElapsed(startRef.current == null ? 0 : Date.now() - startRef.current);
+    tick();
+    const id = window.setInterval(tick, 200);
     return () => window.clearInterval(id);
-  }, [active]);
+  }, [startRef]);
   return elapsed;
 }
 
@@ -6335,18 +6340,19 @@ function useStreamingElapsed(active: boolean): number {
  */
 function StreamingBanner({
   rows,
-  elapsedMs,
+  startRef,
   hasColumns,
   onStop,
   timeoutSecs,
 }: {
   rows: number;
-  elapsedMs: number;
+  startRef: { current: number | null };
   hasColumns: boolean;
   onStop?: () => void;
   timeoutSecs: number;
 }) {
   const t = useT();
+  const elapsedMs = useStreamingElapsed(startRef);
   const timeoutMs = timeoutSecs > 0 ? timeoutSecs * 1000 : 0;
   const approaching = timeoutMs > 0 && elapsedMs >= timeoutMs * 0.8;
   const remainingSecs = Math.max(0, Math.ceil((timeoutMs - elapsedMs) / 1000));
@@ -6523,8 +6529,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // Live range-selection summary lifted from the inner DataGrid (#523).
   const [selSummary, setSelSummary] = useState<SelectionSummary | null>(null);
   const settings = useSettings();
-  // ストリーミング中はバックエンドのバッチ更新を待たず実時間で経過を刻む。
-  const streamElapsedMs = useStreamingElapsed(!!streaming);
+  // ストリーミング中の経過時間は StreamingBanner が自前で刻む (ここでは再レンダーしない)。
+  // 開始時刻だけをレンダー中に ref へ控える (streaming が真になった最初のレンダーで確定)。
+  const streamStartRef = useRef<number | null>(null);
+  if (streaming) {
+    if (streamStartRef.current == null) streamStartRef.current = Date.now();
+  } else {
+    streamStartRef.current = null;
+  }
   const paginateMode = settings.resultGridMode === "paginate";
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -7031,11 +7043,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // 実測 (scrollWidth / clientWidth) で決めるので、フォント拡大・密度・日本語/英語の
   // 文言差・編集バーの出入りにも追従する。判定は resultToolbarOverflow.ts (純関数)。
   // フックなので下の早期 return より前で呼ぶ。
-  const toolbarRef = useRef<HTMLDivElement | null>(null);
-  const toolbarObservedRef = useRef<HTMLDivElement | null>(null);
+  // 計測 (getComputedStyle / getBoundingClientRect / scrollWidth は強制リフローを起こす)
+  // は再レンダーのたびには行わない (#1313)。ResizeObserver (ツールバー本体と直下の子) と
+  // 子の増減 (MutationObserver) を rAF で 1 フレーム 1 回に間引いて測り、畳む個数が
+  // 変わったときだけ state を更新する。畳む個数・表示する操作の数が変わった直後だけは
+  // 描画前に同期して測り直し、はみ出しが 1 フレームでも見えないようにする。
+  const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null);
   const toolbarActionWidthsRef = useRef(new Map<CollapsibleToolbarAction, number>());
   const [toolbarCollapsed, setToolbarCollapsed] = useState(0);
-  const [toolbarTick, setToolbarTick] = useState(0);
   const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null);
   const overflowBtnRef = useRef<HTMLButtonElement | null>(null);
   const presentToolbarActions = COLLAPSIBLE_TOOLBAR_ACTIONS.filter(
@@ -7046,32 +7061,99 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     presentToolbarActions,
     toolbarCollapsed,
   );
-  useLayoutEffect(() => {
-    const el = toolbarRef.current;
+  // 測定時に最新の値を読むための ref (レンダー中に代入するだけで DOM には触れない)。
+  const toolbarMeasureInputRef = useRef({
+    collapsed: toolbarCollapsed,
+    total: presentToolbarActions.length,
+    nextExpand: collapsedToolbarActions[0] as CollapsibleToolbarAction | undefined,
+  });
+  toolbarMeasureInputRef.current = {
+    collapsed: toolbarCollapsed,
+    total: presentToolbarActions.length,
+    nextExpand: collapsedToolbarActions[0],
+  };
+  const measureToolbar = useCallback(() => {
+    const el = toolbarEl;
     if (!el) return;
+    const input = toolbarMeasureInputRef.current;
     // 表示中の操作の幅 (gap 込み) を控える。畳んだ後に「戻せるか」の判断に使う。
+    const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
     for (const node of Array.from(el.querySelectorAll<HTMLElement>("[data-toolbar-action]"))) {
       const id = node.dataset.toolbarAction as CollapsibleToolbarAction;
-      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
       toolbarActionWidthsRef.current.set(id, node.getBoundingClientRect().width + gap);
     }
-    const nextExpand = collapsedToolbarActions[0];
     const next = nextCollapsedCount({
-      collapsed: toolbarCollapsed,
-      total: presentToolbarActions.length,
+      collapsed: input.collapsed,
+      total: input.total,
       clientWidth: el.clientWidth,
       scrollWidth: el.scrollWidth,
-      nextExpandWidth: nextExpand ? (toolbarActionWidthsRef.current.get(nextExpand) ?? null) : null,
+      nextExpandWidth: input.nextExpand
+        ? (toolbarActionWidthsRef.current.get(input.nextExpand) ?? null)
+        : null,
     });
-    if (next !== toolbarCollapsed) setToolbarCollapsed(next);
-  });
+    if (next !== input.collapsed) setToolbarCollapsed(next);
+  }, [toolbarEl]);
+  // 内容が変わった直後 (畳む個数・操作の数) だけ、描画前に同期して測る。
+  useLayoutEffect(() => {
+    measureToolbar();
+  }, [measureToolbar, toolbarCollapsed, presentToolbarActions.length]);
   useEffect(() => {
-    const el = toolbarRef.current;
-    if (!el || toolbarObservedRef.current === el || typeof ResizeObserver === "undefined") return;
-    toolbarObservedRef.current = el;
-    new ResizeObserver(() => setToolbarTick((n) => n + 1)).observe(el);
-  });
-  void toolbarTick;
+    const el = toolbarEl;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        measureToolbar();
+      });
+    };
+    const ro = new ResizeObserver(schedule);
+    const observeChildren = () => {
+      ro.disconnect();
+      ro.observe(el);
+      for (const child of Array.from(el.children)) ro.observe(child);
+    };
+    observeChildren();
+    // 子の増減 (編集バーの出入りなど) では観測対象を取り直して測る。
+    const mo =
+      typeof MutationObserver === "undefined"
+        ? null
+        : new MutationObserver(() => {
+            observeChildren();
+            schedule();
+          });
+    mo?.observe(el, { childList: true });
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      ro.disconnect();
+      mo?.disconnect();
+    };
+  }, [toolbarEl, measureToolbar]);
+
+  // DataGrid の memo を破らないよう、emptyMessage は依存が変わるときだけ作り直す (#1313)。
+  const resultElapsedMs = result?.elapsed_ms;
+  const locale = useLocale();
+  const gridEmptyMessage = useMemo(
+    () =>
+      streaming ? undefined : queryError ? (
+        <EmptyState
+          illustration={errorIllustration(queryError)}
+          icon="warning"
+          title={t("gridQueryError")}
+          description={queryError}
+          action={onRetry ? { label: t("gridRetry"), onClick: onRetry } : undefined}
+        />
+      ) : (
+        <EmptyState
+          illustration={<NoResultsIllustration />}
+          icon="table"
+          title={t("gridZeroRows")}
+          description={t("gridZeroRowsHint", { ms: resultElapsedMs ?? 0 })}
+        />
+      ),
+    [streaming, queryError, onRetry, resultElapsedMs, locale],
+  );
 
   if (!result) {
     return (
@@ -7102,7 +7184,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           {/* カラム未着の段階でも経過時間・キャンセル導線を出し、「無の時間」を埋める */}
           <StreamingBanner
             rows={0}
-            elapsedMs={streamElapsedMs}
+            startRef={streamStartRef}
             hasColumns={false}
             onStop={onStopStreaming}
             timeoutSecs={settings.queryTimeoutSecs}
@@ -7268,7 +7350,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       {streaming && (
         <StreamingBanner
           rows={result.rows.length}
-          elapsedMs={streamElapsedMs}
+          startRef={streamStartRef}
           hasColumns
           onStop={onStopStreaming}
           timeoutSecs={settings.queryTimeoutSecs}
@@ -7308,7 +7390,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         alignItems="center"
         gap="1.5"
         py="1" px="2"
-        ref={toolbarRef}
+        ref={setToolbarEl}
         bg="app.toolbar"
         borderBottom="1px solid"
         borderColor="app.borderSubtle"
@@ -8088,24 +8170,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           serverFilter={serverFilter}
           onSetServerSort={onSetServerSort}
           onSetServerFilter={onSetServerFilter}
-          emptyMessage={
-            streaming ? undefined : queryError ? (
-              <EmptyState
-                illustration={errorIllustration(queryError)}
-                icon="warning"
-                title={t("gridQueryError")}
-                description={queryError}
-                action={onRetry ? { label: t("gridRetry"), onClick: onRetry } : undefined}
-              />
-            ) : (
-              <EmptyState
-                illustration={<NoResultsIllustration />}
-                icon="table"
-                title={t("gridZeroRows")}
-                description={t("gridZeroRowsHint", { ms: result.elapsed_ms })}
-              />
-            )
-          }
+          emptyMessage={gridEmptyMessage}
         />
         {!paginateMode && loadingMore && (
           <Box
