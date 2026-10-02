@@ -33,7 +33,10 @@
   (`node_modules/.vite`) と Playwright の Chromium バイナリ (`~/.cache/ms-playwright`)
   も `actions/cache` でブランチ跨ぎに温めます (#908。ブラウザテスト側の
   「install/トランスパイル部」の壁時計短縮が目的で、pnpm store キャッシュと同じ
-  パターンでキー付けします)。`paths-filter` は `package-lock.json` ではなく
+  パターンでキー付けします)。
+  Playwright の OS 依存 (apt: 共有ライブラリ・フォント・xvfb) は `playwright
+  install-deps --dry-run chromium` の出力からパッケージ一覧を動的に取り、rust ジョブと
+  同じ `cache-apt-pkgs-action` でキャッシュします (`--with-deps` は付けない, #1244)。`paths-filter` は `package-lock.json` ではなく
   `pnpm-lock.yaml` を監視します。**旧チェック名 `frontend (typecheck + build)` /
   `frontend (browser render + visual)` を必須チェックに指定していた場合は、新しい
   `frontend (build + browser tests)` へ設定し直してください** (#908 のジョブ統合で
