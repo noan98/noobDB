@@ -385,7 +385,7 @@ function ERDiagramInner({
     const animate = didLayoutOnce.current && !reduceMotion;
     didLayoutOnce.current = true;
     const id = window.setTimeout(() => {
-      fitView({ duration: animate ? 400 : 0 });
+      void fitView({ duration: animate ? 400 : 0 });
     }, 0);
     return () => window.clearTimeout(id);
   }, [graph, direction, density, database, handleOpen, t, reduceMotion, fitView, setNodes, setEdges]);

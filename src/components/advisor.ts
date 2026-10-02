@@ -50,6 +50,9 @@ export function ruleTitleKey(rule: AdvisorRuleId): I18nKey {
       return "advisorRuleFkTypeMismatchTitle";
     case "sqlite_integer_pk_hint":
       return "advisorRuleSqliteIntegerPkHintTitle";
+    default:
+      // fail-closed (#1194): union に無い未知ルールは空描画にせず汎用見出しへ倒す。
+      return "advisorRuleUnknownTitle";
   }
 }
 
@@ -117,6 +120,9 @@ export function findingDescription(finding: HealthFinding): {
           type: ctx[0] ?? "",
         },
       };
+    default:
+      // fail-closed (#1194): 未知ルールは `undefined` を返さず汎用説明へ倒す。
+      return { key: "advisorRuleUnknownDesc", params: { table: finding.table } };
   }
 }
 
