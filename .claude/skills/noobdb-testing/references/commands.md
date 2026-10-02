@@ -33,28 +33,32 @@ cargo test mysql_roundtrip_when_env_set             # テスト名を指定し�
 ミューテーションテスト (#528) — `cargo install cargo-mutants` でインストール後:
 
 ```sh
-# 安全網モジュール限定で実行 (推奨。フル実行は数十分かかる)
-cargo mutants --file src/db/mod.rs --file src/db/mysql.rs \
-  --file src/db/sync.rs --file src/db/data_diff.rs
+# 安全網関数限定で実行 (推奨。スコープは src-tauri/.cargo/mutants.toml が定める)
+cargo mutants
 
 # 変異候補の一覧のみ確認 (テストを走らせない)
-cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
+cargo mutants --list
 
 # 既存ビルドを流用して高速実行 (--in-place)
-cargo mutants --file src/db/mod.rs --file src/db/mysql.rs --in-place
+cargo mutants --in-place
 ```
 
-**運用方針**: スコープは安全網ロジックを持つ 4 ファイルに限定 —
-`src/db/mod.rs` (`is_read_only_sql` / `apply_auto_limit` / `has_stacked_statements`)、
-`src/db/mysql.rs` (`is_query_shape` / `with_cte_is_mutation`)、`src/db/sync.rs`
-(`quote_ident`)、`src/db/data_diff.rs` (`sql_literal`)。後者 2 つは SQL
+**運用方針**: スコープは**ファイル単位ではなく安全網関数単位** (#1168)。単一ソースは
+`src-tauri/.cargo/mutants.toml` の `examine_globs` (対象ファイル) + `examine_re` (変異名の
+関数名フィルタ) で、`mutants.yml` もフラグ無しで読むだけ。対象は `db/mod.rs`
+(`is_read_only_sql*` / `apply_auto_limit*` / `has_stacked_statements*`)、
+`db/{mysql,postgres,sqlite}.rs` の `is_query_shape`、`mysql.rs` の `with_cte_is_mutation`、
+`mysql.rs` / `sqlite.rs` / `sync.rs` の `quote_ident`、`data_diff.rs` の `sql_literal`、
+`lib.rs` の `__test_api` ディスパッチ。`quote_ident` / `sql_literal` は SQL
 インジェクション隣接の引用/エスケープで、共有ゴールデン (#880) で固定した後に
-その有効性を可視化する目的で追加しました。CI トリガは
+その有効性を可視化する目的で含めています。関数を足す・外すときは `mutants.toml` だけを
+直し、`cargo mutants --list` で確認する。cargo-mutants は構造体フィールド削除
+(`delete field ...`) の変異に `--re` を適用しないため、`examine_globs` でもファイルを
+絞っている。CI トリガは
 `.github/workflows/mutants.yml` の `workflow_dispatch` (手動) のみで、PR では
 走らせない。**fail させない** (可視化のみ) — バンドルサイズ (#443) ・カバレッジ
 (#482) と同じ漸進方針。生き残り変異 (MISSED) が出たら `db::tests` に境界ケースを
-追記して潰す。設定は `src-tauri/.cargo/mutants.toml`、生成物 `mutants.out/` は
-`.gitignore` 済み。
+追記して潰す。生成物 `mutants.out/` は `.gitignore` 済み。
 
 統合テストは対応する環境変数が設定されていない限りスキップされます (SQLite を除く):
 

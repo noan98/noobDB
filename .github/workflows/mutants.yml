@@ -2,9 +2,22 @@ name: mutation-test
 
 # ミューテーションテスト (#528)
 #
-# 安全網モジュール (is_read_only_sql / apply_auto_limit / has_stacked_statements /
+# 安全網関数 (is_read_only_sql / apply_auto_limit / has_stacked_statements /
 # is_query_shape / with_cte_is_mutation / quote_ident / sql_literal) に変異を
 # 注入し、既存テストが変異を捕捉できるかを定量評価する。
+#
+# 対象はファイル単位ではなく関数単位 (#1168)。対象関数リストの単一ソースは
+# src-tauri/.cargo/mutants.toml (examine_globs + examine_re) で、本ワークフローは
+# フラグ無しの `cargo mutants` / `cargo mutants --list` でそれを読むだけ。実在する
+# 実装は次のとおり (DriverKind は Mysql / Postgres / Sqlite の 3 つ)。
+#   db/mod.rs       is_read_only_sql* / apply_auto_limit* / has_stacked_statements*
+#   db/mysql.rs     is_query_shape / with_cte_is_mutation / quote_ident
+#   db/postgres.rs  is_query_shape
+#   db/sqlite.rs    is_query_shape / quote_ident
+#   db/sync.rs      quote_ident
+#   db/data_diff.rs sql_literal
+#   lib.rs          __test_api のディスパッチ (is_query_shape ほか)
+# 関数を足す・外すときは mutants.toml だけを直し、`cargo mutants --list` で確認する。
 #
 # 実行時間が長い (全変異で数十分以上) ため、PR では走らせず手動トリガのみ。
 # 可視化 (Job Summary + アーティファクト) だけを目的とし、fail させない方針。
@@ -30,7 +43,7 @@ env:
 
 jobs:
   mutants:
-    name: cargo-mutants (安全網モジュール)
+    name: cargo-mutants (安全網関数)
     runs-on: ubuntu-latest
     # フル実行は数十分かかるが、ハング時にデフォルト 6 時間ランナーを占有し続ける
     # のを防ぐため余裕を持った上限を付ける (正常時は影響なし)。
@@ -94,18 +107,13 @@ jobs:
         if: inputs.list_only
         working-directory: src-tauri
         run: |
-          echo '### Mutation candidates (安全網モジュール)' >> "$GITHUB_STEP_SUMMARY"
+          echo '### Mutation candidates (安全網関数)' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo mutants --list \
-            --file src/db/mod.rs \
-            --file src/db/mysql.rs \
-            --file src/db/sync.rs \
-            --file src/db/data_diff.rs \
-            2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
+          cargo mutants --list 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      # 変異テスト本体: 安全網モジュール群に限定して実行。
+      # 変異テスト本体: 安全網関数群に限定して実行 (対象は mutants.toml が定める)。
       # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (|| true)。
       # mutants.out/ をアーティファクトとして保存し、Job Summary にサマリを出す。
       - name: Run cargo-mutants
@@ -113,10 +121,6 @@ jobs:
         working-directory: src-tauri
         run: |
           cargo mutants \
-            --file src/db/mod.rs \
-            --file src/db/mysql.rs \
-            --file src/db/sync.rs \
-            --file src/db/data_diff.rs \
             --no-shuffle \
             2>&1 | tee mutants-output.txt || true
 
@@ -124,7 +128,7 @@ jobs:
         if: '!inputs.list_only'
         working-directory: src-tauri
         run: |
-          echo '### Mutation test results (安全網モジュール)' >> "$GITHUB_STEP_SUMMARY"
+          echo '### Mutation test results (安全網関数)' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
           if [ -f mutants.out/outcomes.json ]; then
             echo '```' >> "$GITHUB_STEP_SUMMARY"

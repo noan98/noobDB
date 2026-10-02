@@ -116,7 +116,7 @@ Rust の `db::sync::quote_ident` (MySQL/SQLite ドライバの `quote_ident` は
 危険入力: 各方言の引用文字 / バックスラッシュ / NUL / マルチバイト / 非 BMP / 空文字列)。
 BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別できない (JSON 上はただの
 16 進文字列) ため意図的に食い違い、その差分を `frontend` キーで明記しています。
-`cargo-mutants` のスコープにも `src/db/sync.rs` / `src/db/data_diff.rs` を追加済み
+`cargo-mutants` のスコープにも `sync.rs::quote_ident` / `data_diff.rs::sql_literal` を関数単位で追加済み (`src-tauri/.cargo/mutants.toml`)
 (可視化のみ・fail させない既存方針)。
 
 **自動行キャップ (LIMIT の挿入) も同じ方式で固定します (#990)。** `apply_auto_limit` は
