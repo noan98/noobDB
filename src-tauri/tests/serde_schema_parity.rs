@@ -1,6 +1,6 @@
 // #825 でフィクスチャ数が増え、`serde_json::json!` マクロの再帰的展開が既定の
 // 再帰制限 (128) を超えるようになったため引き上げる。
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 //! zod ⇔ serde フィールド整合の共有ゴールデン (Rust 側、#625)。
 //!
@@ -59,6 +59,23 @@ use t::{
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
+
+/// enum の全バリアントを列挙しつつ、**列挙漏れをコンパイルエラーにする** (#1195)。
+///
+/// `variants!(Ty [A, B])` は `vec![Ty::A, Ty::B]` を返す。同じ識別子リストから
+/// 網羅的な `match` も生成するので、enum にバリアントを足すとこのリストへの追記を
+/// 忘れた時点で「non-exhaustive patterns」でビルドが落ちる。
+macro_rules! variants {
+    ($ty:ident [$($v:ident),+ $(,)?]) => {{
+        #[allow(dead_code)]
+        fn exhaustive(x: $ty) {
+            match x {
+                $($ty::$v => {}),+
+            }
+        }
+        vec![$($ty::$v),+]
+    }};
+}
 
 /// 主要レスポンス型の代表インスタンスを serde で JSON 化し、
 /// `{ 型名: JSON }` のマップにまとめて返す。フロントのフィクスチャと同一内容。
@@ -749,6 +766,239 @@ fn build_fixtures() -> serde_json::Value {
         phase: "tunnel_connecting",
     };
 
+    // --- #1195: enum を含む型は全バリアントを最低 1 回シリアライズする -----------
+    //
+    // 代表インスタンス 1 個だと enum フィールドは 1 バリアントしか通らず、enum に
+    // 値を足しても serde / zod のどちらが古くても検知できない。以下の `*Variants`
+    // キーは「全バリアントを網羅した配列」で、`variants!` マクロが列挙漏れを
+    // コンパイルエラーにする。フロントは配列の各要素を同じ zod スキーマで検証する。
+
+    let all_rules = variants!(RuleId [
+        FkMissingIndex, DuplicateIndex, RedundantIndex, MissingPrimaryKey,
+        UnusedIndex, FkTypeMismatch, SqliteIntegerPkHint
+    ]);
+    let all_severities = variants!(Severity [High, Medium, Low]);
+    // ルール × 重要度を巡回させ、全ルールと全重要度を最低 1 回ずつ通す。
+    let health_finding_variants: Vec<HealthFinding> = all_rules
+        .iter()
+        .enumerate()
+        .map(|(i, rule)| HealthFinding {
+            rule: *rule,
+            severity: all_severities[i % all_severities.len()],
+            table: "orders".into(),
+            columns: vec!["user_id".into()],
+            context: vec![],
+            fix_ddl: None,
+            statistical: i % 2 == 0,
+        })
+        .collect();
+    let all_drivers = variants!(DriverKind [Mysql, Postgres, Sqlite]);
+    let schema_health_report_variants: Vec<SchemaHealthReport> = all_drivers
+        .iter()
+        .map(|driver| SchemaHealthReport {
+            driver: *driver,
+            tables_analyzed: 1,
+            findings: health_finding_variants.clone(),
+            // スキップされたルールも全ルールを通す。
+            skipped: all_rules
+                .iter()
+                .map(|rule| SkippedRule {
+                    rule: *rule,
+                    reason: "performance_schema_off".into(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    // サーバ通知の重要度 4 種 + `Value` の全形 (null / bool / int / uint / float /
+    // string / bytes) を 1 つの結果に載せる。
+    let query_result_variants = vec![QueryResult {
+        columns: vec![column.clone()],
+        rows: vec![vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(-1),
+            Value::UInt(1),
+            Value::Float(1.5),
+            Value::String("s".into()),
+            Value::Bytes("deadbeef".into()),
+        ]],
+        rows_affected: 0,
+        elapsed_ms: 1,
+        server_messages: variants!(ServerMessageSeverity [Error, Warning, Notice, Info])
+            .into_iter()
+            .map(|severity| ServerMessage {
+                severity,
+                text: "msg".into(),
+            })
+            .collect(),
+    }];
+
+    // 接続プロファイル: SslMode 5 種 × SshAuthMethod 3 種 (踏み台側も) を巡回。
+    let all_ssl_modes = variants!(SslMode [Disable, Prefer, Require, VerifyCa, VerifyFull]);
+    let all_auth_methods = variants!(SshAuthMethod [Key, Agent, Password]);
+    let connection_profile_variants: Vec<ProfileWithSecretFlags> = all_ssl_modes
+        .iter()
+        .enumerate()
+        .map(|(i, ssl_mode)| {
+            let mut profile = connection_profile.clone();
+            profile.profile.ssl_mode = Some(*ssl_mode);
+            if let Some(ssh) = profile.profile.ssh.as_mut() {
+                ssh.auth_method = all_auth_methods[i % all_auth_methods.len()];
+                if let Some(jump) = ssh.jump.as_mut() {
+                    jump.auth_method = all_auth_methods[(i + 1) % all_auth_methods.len()];
+                }
+            }
+            profile
+        })
+        .collect();
+
+    // スニペットの scope (`kind` タグ付き enum) 3 種。
+    let snippet_variants: Vec<Snippet> = vec![
+        SnippetScope::Any,
+        SnippetScope::Profile {
+            profile_id: "abc12345".into(),
+        },
+        SnippetScope::Group {
+            group: "production".into(),
+        },
+    ]
+    .into_iter()
+    .map(|scope| Snippet {
+        id: "snip0001".into(),
+        name: "Active users".into(),
+        folder: None,
+        tags: vec![],
+        sql: "SELECT 1".into(),
+        driver: None,
+        scope,
+    })
+    .collect();
+
+    // スキーマ差分: テーブル / 列それぞれで DiffStatus 4 種を通し、ドライバ組も巡回。
+    let all_diff_statuses = variants!(DiffStatus [SourceOnly, TargetOnly, Different, Same]);
+    let schema_diff_variants: Vec<SchemaDiff> = all_drivers
+        .iter()
+        .enumerate()
+        .map(|(i, source_driver)| SchemaDiff {
+            source_driver: *source_driver,
+            target_driver: all_drivers[(i + 1) % all_drivers.len()],
+            tables: all_diff_statuses
+                .iter()
+                .map(|table_status| TableDiff {
+                    name: "users".into(),
+                    status: *table_status,
+                    columns: all_diff_statuses
+                        .iter()
+                        .map(|column_status| ColumnDiff {
+                            name: "email".into(),
+                            status: *column_status,
+                            source: Some(table_column_info.clone()),
+                            target: Some(table_column_info.clone()),
+                            changed_fields: vec!["data_type".into()],
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    // 同期プラン: SyncKind 8 種すべて (destructive は DROP 系のみ true)。
+    let sync_plan_variants = vec![SyncPlan {
+        statements: variants!(SyncKind [
+            CreateTable, AddColumn, AlterColumn, DropColumn, DropTable,
+            InsertRow, UpdateRow, DeleteRow
+        ])
+        .into_iter()
+        .map(|kind| SyncStatement {
+            sql: "SELECT 1;".into(),
+            table: "users".into(),
+            kind,
+            destructive: matches!(kind, SyncKind::DropColumn | SyncKind::DropTable),
+        })
+        .collect(),
+        warnings: vec![],
+    }];
+
+    // データ差分: RowStatus 3 種を 1 つの結果に載せ、ドライバも巡回。
+    let data_diff_variants: Vec<DataDiff> = all_drivers
+        .iter()
+        .map(|driver| DataDiff {
+            target_driver: *driver,
+            table: "users".into(),
+            columns: vec!["id".into()],
+            primary_key: vec!["id".into()],
+            column_types: vec!["int".into()],
+            rows: variants!(RowStatus [SourceOnly, TargetOnly, Different])
+                .into_iter()
+                .map(|status| RowDiff {
+                    status,
+                    key: vec![Value::Int(1)],
+                    source: Some(vec![Value::Int(1)]),
+                    target: Some(vec![Value::Int(1)]),
+                    changed_columns: vec![],
+                    key_unreliable: false,
+                })
+                .collect(),
+            truncated: false,
+            source_count: 1,
+            target_count: 1,
+        })
+        .collect();
+
+    // ブロードキャスト比較の DiffMode 3 種。
+    let broadcast_env_message_variants: Vec<BroadcastMessage> =
+        variants!(DiffMode [Pk, Hash, None])
+            .into_iter()
+            .map(|mode| {
+                BroadcastMessage::Env(BroadcastEnvReport {
+                    session_id: "sess0001".into(),
+                    status: "done",
+                    columns: vec![column.clone()],
+                    rows: vec![],
+                    total_rows: 0,
+                    elapsed_ms: 1,
+                    error: None,
+                    diff: Some(BroadcastDiff {
+                        comparable: true,
+                        mode,
+                        changed_cells: vec![],
+                        changed_cell_count: 0,
+                        added_row_indices: vec![],
+                        removed_count: 0,
+                        truncated: false,
+                        has_diff: false,
+                    }),
+                })
+            })
+            .collect();
+
+    // バッチ実行結果の BatchStatus 3 種。
+    let batch_stream_results_message_variants = vec![BatchStreamMessage::Results {
+        results: variants!(BatchStatus [Ok, Error, Skipped])
+            .into_iter()
+            .map(|status| BatchStatementResult {
+                sql: "SELECT 1".into(),
+                status,
+                columns: None,
+                rows: None,
+                rows_affected: None,
+                elapsed_ms: None,
+                error: None,
+                server_messages: vec![],
+            })
+            .collect(),
+    }];
+
+    // Preview ストリームのうち代表値に無かった `afterRows` / `cancelled`。
+    let preview_stream_rows_message_variants = vec![
+        PreviewStreamMessage::BeforeRows { rows: vec![] },
+        PreviewStreamMessage::AfterRows {
+            rows: vec![vec![Value::Int(1)]],
+        },
+    ];
+    let preview_stream_cancelled_message = PreviewStreamMessage::Cancelled { delivered_rows: 5 };
+
     json!({
         "column": column,
         "queryResult": query_result,
@@ -831,6 +1081,20 @@ fn build_fixtures() -> serde_json::Value {
         "scriptProgressEvent": script_progress_event,
         "scriptDoneEvent": script_done_event,
         "scriptErrorEvent": script_error_event,
+
+        // --- #1195: enum の全バリアントを網羅した配列 (`*Variants`) ---
+        "healthFindingVariants": health_finding_variants,
+        "schemaHealthReportVariants": schema_health_report_variants,
+        "queryResultVariants": query_result_variants,
+        "connectionProfileVariants": connection_profile_variants,
+        "snippetVariants": snippet_variants,
+        "schemaDiffVariants": schema_diff_variants,
+        "syncPlanVariants": sync_plan_variants,
+        "dataDiffVariants": data_diff_variants,
+        "broadcastEnvMessageVariants": broadcast_env_message_variants,
+        "batchStreamResultsMessageVariants": batch_stream_results_message_variants,
+        "previewStreamRowsMessageVariants": preview_stream_rows_message_variants,
+        "previewStreamCancelledMessage": preview_stream_cancelled_message,
     })
 }
 

@@ -41,6 +41,25 @@
       }
     ]
   },
+  "batchStreamResultsMessageVariants": [
+    {
+      "kind": "results",
+      "results": [
+        {
+          "sql": "SELECT 1",
+          "status": "ok"
+        },
+        {
+          "sql": "SELECT 1",
+          "status": "error"
+        },
+        {
+          "sql": "SELECT 1",
+          "status": "skipped"
+        }
+      ]
+    }
+  ],
   "batchStreamStartedMessage": {
     "kind": "started",
     "total": 3
@@ -91,6 +110,83 @@
     "status": "done",
     "totalRows": 2
   },
+  "broadcastEnvMessageVariants": [
+    {
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INTEGER"
+        }
+      ],
+      "diff": {
+        "addedRowIndices": [],
+        "changedCellCount": 0,
+        "changedCells": [],
+        "comparable": true,
+        "hasDiff": false,
+        "mode": "pk",
+        "removedCount": 0,
+        "truncated": false
+      },
+      "elapsedMs": 1,
+      "error": null,
+      "kind": "env",
+      "rows": [],
+      "sessionId": "sess0001",
+      "status": "done",
+      "totalRows": 0
+    },
+    {
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INTEGER"
+        }
+      ],
+      "diff": {
+        "addedRowIndices": [],
+        "changedCellCount": 0,
+        "changedCells": [],
+        "comparable": true,
+        "hasDiff": false,
+        "mode": "hash",
+        "removedCount": 0,
+        "truncated": false
+      },
+      "elapsedMs": 1,
+      "error": null,
+      "kind": "env",
+      "rows": [],
+      "sessionId": "sess0001",
+      "status": "done",
+      "totalRows": 0
+    },
+    {
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INTEGER"
+        }
+      ],
+      "diff": {
+        "addedRowIndices": [],
+        "changedCellCount": 0,
+        "changedCells": [],
+        "comparable": true,
+        "hasDiff": false,
+        "mode": "none",
+        "removedCount": 0,
+        "truncated": false
+      },
+      "elapsedMs": 1,
+      "error": null,
+      "kind": "env",
+      "rows": [],
+      "sessionId": "sess0001",
+      "status": "done",
+      "totalRows": 0
+    }
+  ],
   "cancelStreamResponse": {
     "cancelled": true,
     "deliveredRows": 42
@@ -192,6 +288,228 @@
     "ssl_root_cert": "/etc/ssl/ca.pem",
     "user": "app"
   },
+  "connectionProfileVariants": [
+    {
+      "aws_iam": {
+        "profile": "work",
+        "region": "ap-northeast-1"
+      },
+      "color": "#dc2626",
+      "confirm_writes": true,
+      "database": "appdb",
+      "driver": "mysql",
+      "file_path": null,
+      "group": "production",
+      "has_db_password": true,
+      "has_ssh_jump_passphrase": false,
+      "has_ssh_jump_password": true,
+      "has_ssh_passphrase": false,
+      "has_ssh_password": false,
+      "host": "db.example.com",
+      "id": "abc12345",
+      "init_sql": "SET time_zone = '+00:00';",
+      "is_production": true,
+      "name": "Prod MySQL",
+      "port": 3306,
+      "read_only": false,
+      "skip_history": false,
+      "ssh": {
+        "auth_method": "key",
+        "host": "jump.example.com",
+        "jump": {
+          "auth_method": "agent",
+          "host": "bastion.example.com",
+          "port": 2222,
+          "private_key_path": "",
+          "user": "ops"
+        },
+        "port": 22,
+        "private_key_path": "/home/deploy/.ssh/id_ed25519",
+        "user": "deploy"
+      },
+      "ssl_client_cert": "/etc/ssl/client.pem",
+      "ssl_client_key": "/etc/ssl/client.key",
+      "ssl_mode": "disable",
+      "ssl_root_cert": "/etc/ssl/ca.pem",
+      "user": "app"
+    },
+    {
+      "aws_iam": {
+        "profile": "work",
+        "region": "ap-northeast-1"
+      },
+      "color": "#dc2626",
+      "confirm_writes": true,
+      "database": "appdb",
+      "driver": "mysql",
+      "file_path": null,
+      "group": "production",
+      "has_db_password": true,
+      "has_ssh_jump_passphrase": false,
+      "has_ssh_jump_password": true,
+      "has_ssh_passphrase": false,
+      "has_ssh_password": false,
+      "host": "db.example.com",
+      "id": "abc12345",
+      "init_sql": "SET time_zone = '+00:00';",
+      "is_production": true,
+      "name": "Prod MySQL",
+      "port": 3306,
+      "read_only": false,
+      "skip_history": false,
+      "ssh": {
+        "auth_method": "agent",
+        "host": "jump.example.com",
+        "jump": {
+          "auth_method": "password",
+          "host": "bastion.example.com",
+          "port": 2222,
+          "private_key_path": "",
+          "user": "ops"
+        },
+        "port": 22,
+        "private_key_path": "/home/deploy/.ssh/id_ed25519",
+        "user": "deploy"
+      },
+      "ssl_client_cert": "/etc/ssl/client.pem",
+      "ssl_client_key": "/etc/ssl/client.key",
+      "ssl_mode": "prefer",
+      "ssl_root_cert": "/etc/ssl/ca.pem",
+      "user": "app"
+    },
+    {
+      "aws_iam": {
+        "profile": "work",
+        "region": "ap-northeast-1"
+      },
+      "color": "#dc2626",
+      "confirm_writes": true,
+      "database": "appdb",
+      "driver": "mysql",
+      "file_path": null,
+      "group": "production",
+      "has_db_password": true,
+      "has_ssh_jump_passphrase": false,
+      "has_ssh_jump_password": true,
+      "has_ssh_passphrase": false,
+      "has_ssh_password": false,
+      "host": "db.example.com",
+      "id": "abc12345",
+      "init_sql": "SET time_zone = '+00:00';",
+      "is_production": true,
+      "name": "Prod MySQL",
+      "port": 3306,
+      "read_only": false,
+      "skip_history": false,
+      "ssh": {
+        "auth_method": "password",
+        "host": "jump.example.com",
+        "jump": {
+          "auth_method": "key",
+          "host": "bastion.example.com",
+          "port": 2222,
+          "private_key_path": "",
+          "user": "ops"
+        },
+        "port": 22,
+        "private_key_path": "/home/deploy/.ssh/id_ed25519",
+        "user": "deploy"
+      },
+      "ssl_client_cert": "/etc/ssl/client.pem",
+      "ssl_client_key": "/etc/ssl/client.key",
+      "ssl_mode": "require",
+      "ssl_root_cert": "/etc/ssl/ca.pem",
+      "user": "app"
+    },
+    {
+      "aws_iam": {
+        "profile": "work",
+        "region": "ap-northeast-1"
+      },
+      "color": "#dc2626",
+      "confirm_writes": true,
+      "database": "appdb",
+      "driver": "mysql",
+      "file_path": null,
+      "group": "production",
+      "has_db_password": true,
+      "has_ssh_jump_passphrase": false,
+      "has_ssh_jump_password": true,
+      "has_ssh_passphrase": false,
+      "has_ssh_password": false,
+      "host": "db.example.com",
+      "id": "abc12345",
+      "init_sql": "SET time_zone = '+00:00';",
+      "is_production": true,
+      "name": "Prod MySQL",
+      "port": 3306,
+      "read_only": false,
+      "skip_history": false,
+      "ssh": {
+        "auth_method": "key",
+        "host": "jump.example.com",
+        "jump": {
+          "auth_method": "agent",
+          "host": "bastion.example.com",
+          "port": 2222,
+          "private_key_path": "",
+          "user": "ops"
+        },
+        "port": 22,
+        "private_key_path": "/home/deploy/.ssh/id_ed25519",
+        "user": "deploy"
+      },
+      "ssl_client_cert": "/etc/ssl/client.pem",
+      "ssl_client_key": "/etc/ssl/client.key",
+      "ssl_mode": "verify_ca",
+      "ssl_root_cert": "/etc/ssl/ca.pem",
+      "user": "app"
+    },
+    {
+      "aws_iam": {
+        "profile": "work",
+        "region": "ap-northeast-1"
+      },
+      "color": "#dc2626",
+      "confirm_writes": true,
+      "database": "appdb",
+      "driver": "mysql",
+      "file_path": null,
+      "group": "production",
+      "has_db_password": true,
+      "has_ssh_jump_passphrase": false,
+      "has_ssh_jump_password": true,
+      "has_ssh_passphrase": false,
+      "has_ssh_password": false,
+      "host": "db.example.com",
+      "id": "abc12345",
+      "init_sql": "SET time_zone = '+00:00';",
+      "is_production": true,
+      "name": "Prod MySQL",
+      "port": 3306,
+      "read_only": false,
+      "skip_history": false,
+      "ssh": {
+        "auth_method": "agent",
+        "host": "jump.example.com",
+        "jump": {
+          "auth_method": "password",
+          "host": "bastion.example.com",
+          "port": 2222,
+          "private_key_path": "",
+          "user": "ops"
+        },
+        "port": 22,
+        "private_key_path": "/home/deploy/.ssh/id_ed25519",
+        "user": "deploy"
+      },
+      "ssl_client_cert": "/etc/ssl/client.pem",
+      "ssl_client_key": "/etc/ssl/client.key",
+      "ssl_mode": "verify_full",
+      "ssl_root_cert": "/etc/ssl/ca.pem",
+      "user": "app"
+    }
+  ],
   "csvPreview": {
     "headers": [
       "id",
@@ -246,6 +564,188 @@
     "target_driver": "postgres",
     "truncated": false
   },
+  "dataDiffVariants": [
+    {
+      "column_types": [
+        "int"
+      ],
+      "columns": [
+        "id"
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "rows": [
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "source_only",
+          "target": [
+            1
+          ]
+        },
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "target_only",
+          "target": [
+            1
+          ]
+        },
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "different",
+          "target": [
+            1
+          ]
+        }
+      ],
+      "source_count": 1,
+      "table": "users",
+      "target_count": 1,
+      "target_driver": "mysql",
+      "truncated": false
+    },
+    {
+      "column_types": [
+        "int"
+      ],
+      "columns": [
+        "id"
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "rows": [
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "source_only",
+          "target": [
+            1
+          ]
+        },
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "target_only",
+          "target": [
+            1
+          ]
+        },
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "different",
+          "target": [
+            1
+          ]
+        }
+      ],
+      "source_count": 1,
+      "table": "users",
+      "target_count": 1,
+      "target_driver": "postgres",
+      "truncated": false
+    },
+    {
+      "column_types": [
+        "int"
+      ],
+      "columns": [
+        "id"
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "rows": [
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "source_only",
+          "target": [
+            1
+          ]
+        },
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "target_only",
+          "target": [
+            1
+          ]
+        },
+        {
+          "changed_columns": [],
+          "key": [
+            1
+          ],
+          "key_unreliable": false,
+          "source": [
+            1
+          ],
+          "status": "different",
+          "target": [
+            1
+          ]
+        }
+      ],
+      "source_count": 1,
+      "table": "users",
+      "target_count": 1,
+      "target_driver": "sqlite",
+      "truncated": false
+    }
+  ],
   "dumpDoneEvent": {
     "bytes": 131072,
     "elapsedMs": 1200,
@@ -305,6 +805,85 @@
     "statistical": false,
     "table": "orders"
   },
+  "healthFindingVariants": [
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "rule": "fk_missing_index",
+      "severity": "high",
+      "statistical": true,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "rule": "duplicate_index",
+      "severity": "medium",
+      "statistical": false,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "rule": "redundant_index",
+      "severity": "low",
+      "statistical": true,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "rule": "missing_primary_key",
+      "severity": "high",
+      "statistical": false,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "rule": "unused_index",
+      "severity": "medium",
+      "statistical": true,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "rule": "fk_type_mismatch",
+      "severity": "low",
+      "statistical": false,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "rule": "sqlite_integer_pk_hint",
+      "severity": "high",
+      "statistical": true,
+      "table": "orders"
+    }
+  ],
   "historyEntry": {
     "database": "appdb",
     "driver": "mysql",
@@ -386,6 +965,10 @@
     "path": "/home/user/.local/share/noobDB/noobdb.log",
     "text": "2026-01-01T00:00:00Z INFO noobdb starting"
   },
+  "previewStreamCancelledMessage": {
+    "deliveredRows": 5,
+    "kind": "cancelled"
+  },
   "previewStreamDoneMessage": {
     "kind": "done"
   },
@@ -421,6 +1004,20 @@
       ]
     ]
   },
+  "previewStreamRowsMessageVariants": [
+    {
+      "kind": "beforeRows",
+      "rows": []
+    },
+    {
+      "kind": "afterRows",
+      "rows": [
+        [
+          1
+        ]
+      ]
+    }
+  ],
   "processInfo": {
     "command": "Query",
     "database": "testdb",
@@ -469,6 +1066,47 @@
       }
     ]
   },
+  "queryResultVariants": [
+    {
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INTEGER"
+        }
+      ],
+      "elapsed_ms": 1,
+      "rows": [
+        [
+          null,
+          true,
+          -1,
+          1,
+          1.5,
+          "s",
+          "deadbeef"
+        ]
+      ],
+      "rows_affected": 0,
+      "server_messages": [
+        {
+          "severity": "error",
+          "text": "msg"
+        },
+        {
+          "severity": "warning",
+          "text": "msg"
+        },
+        {
+          "severity": "notice",
+          "text": "msg"
+        },
+        {
+          "severity": "info",
+          "text": "msg"
+        }
+      ]
+    }
+  ],
   "queryStatsSupport": {
     "live_tail": true,
     "live_tail_reason": "stats_unreadable",
@@ -654,6 +1292,1490 @@
     ],
     "target_driver": "postgres"
   },
+  "schemaDiffVariants": [
+    {
+      "source_driver": "mysql",
+      "tables": [
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "source_only"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "target_only"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "different"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "same"
+        }
+      ],
+      "target_driver": "postgres"
+    },
+    {
+      "source_driver": "postgres",
+      "tables": [
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "source_only"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "target_only"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "different"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "same"
+        }
+      ],
+      "target_driver": "sqlite"
+    },
+    {
+      "source_driver": "sqlite",
+      "tables": [
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "source_only"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "target_only"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "different"
+        },
+        {
+          "columns": [
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "source_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "target_only",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "different",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            },
+            {
+              "changed_fields": [
+                "data_type"
+              ],
+              "name": "email",
+              "source": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              },
+              "status": "same",
+              "target": {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            }
+          ],
+          "name": "users",
+          "status": "same"
+        }
+      ],
+      "target_driver": "mysql"
+    }
+  ],
   "schemaHealthReport": {
     "driver": "mysql",
     "findings": [
@@ -679,6 +2801,347 @@
     ],
     "tables_analyzed": 3
   },
+  "schemaHealthReportVariants": [
+    {
+      "driver": "mysql",
+      "findings": [
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "fk_missing_index",
+          "severity": "high",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "duplicate_index",
+          "severity": "medium",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "redundant_index",
+          "severity": "low",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "missing_primary_key",
+          "severity": "high",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "unused_index",
+          "severity": "medium",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "fk_type_mismatch",
+          "severity": "low",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "sqlite_integer_pk_hint",
+          "severity": "high",
+          "statistical": true,
+          "table": "orders"
+        }
+      ],
+      "skipped": [
+        {
+          "reason": "performance_schema_off",
+          "rule": "fk_missing_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "duplicate_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "redundant_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "missing_primary_key"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "unused_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "fk_type_mismatch"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "sqlite_integer_pk_hint"
+        }
+      ],
+      "tables_analyzed": 1
+    },
+    {
+      "driver": "postgres",
+      "findings": [
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "fk_missing_index",
+          "severity": "high",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "duplicate_index",
+          "severity": "medium",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "redundant_index",
+          "severity": "low",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "missing_primary_key",
+          "severity": "high",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "unused_index",
+          "severity": "medium",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "fk_type_mismatch",
+          "severity": "low",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "sqlite_integer_pk_hint",
+          "severity": "high",
+          "statistical": true,
+          "table": "orders"
+        }
+      ],
+      "skipped": [
+        {
+          "reason": "performance_schema_off",
+          "rule": "fk_missing_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "duplicate_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "redundant_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "missing_primary_key"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "unused_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "fk_type_mismatch"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "sqlite_integer_pk_hint"
+        }
+      ],
+      "tables_analyzed": 1
+    },
+    {
+      "driver": "sqlite",
+      "findings": [
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "fk_missing_index",
+          "severity": "high",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "duplicate_index",
+          "severity": "medium",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "redundant_index",
+          "severity": "low",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "missing_primary_key",
+          "severity": "high",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "unused_index",
+          "severity": "medium",
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "fk_type_mismatch",
+          "severity": "low",
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "rule": "sqlite_integer_pk_hint",
+          "severity": "high",
+          "statistical": true,
+          "table": "orders"
+        }
+      ],
+      "skipped": [
+        {
+          "reason": "performance_schema_off",
+          "rule": "fk_missing_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "duplicate_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "redundant_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "missing_primary_key"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "unused_index"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "fk_type_mismatch"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "sqlite_integer_pk_hint"
+        }
+      ],
+      "tables_analyzed": 1
+    }
+  ],
   "schemaObject": {
     "id": "1234",
     "kind": "view",
@@ -762,6 +3225,43 @@
       "active"
     ]
   },
+  "snippetVariants": [
+    {
+      "driver": null,
+      "folder": null,
+      "id": "snip0001",
+      "name": "Active users",
+      "scope": {
+        "kind": "any"
+      },
+      "sql": "SELECT 1",
+      "tags": []
+    },
+    {
+      "driver": null,
+      "folder": null,
+      "id": "snip0001",
+      "name": "Active users",
+      "scope": {
+        "kind": "profile",
+        "profile_id": "abc12345"
+      },
+      "sql": "SELECT 1",
+      "tags": []
+    },
+    {
+      "driver": null,
+      "folder": null,
+      "id": "snip0001",
+      "name": "Active users",
+      "scope": {
+        "group": "production",
+        "kind": "group"
+      },
+      "sql": "SELECT 1",
+      "tags": []
+    }
+  ],
   "statementDeltaRow": {
     "calls": 1200,
     "database": "appdb",
@@ -790,6 +3290,61 @@
       "SQLite cannot alter columns in place"
     ]
   },
+  "syncPlanVariants": [
+    {
+      "statements": [
+        {
+          "destructive": false,
+          "kind": "create_table",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "add_column",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "alter_column",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": true,
+          "kind": "drop_column",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": true,
+          "kind": "drop_table",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "insert_row",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "update_row",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "delete_row",
+          "sql": "SELECT 1;",
+          "table": "users"
+        }
+      ],
+      "warnings": []
+    }
+  ],
   "tableColumnInfo": {
     "comment": "primary key",
     "data_type": "int",
