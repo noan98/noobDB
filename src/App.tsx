@@ -2311,7 +2311,7 @@ export default function App() {
     // 競わせ、両方終わったらスプラッシュを畳む。瞬間表示によるちらつきを防ぐ。
     let alive = true;
     const minVisible = new Promise<void>((resolve) => setTimeout(resolve, 350));
-    Promise.all([refreshProfiles(), refreshSandboxes(), minVisible]).finally(() => {
+    void Promise.all([refreshProfiles(), refreshSandboxes(), minVisible]).finally(() => {
       if (alive) setBooted(true);
     });
     return () => {
@@ -2465,7 +2465,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshSnippets();
+    void refreshSnippets();
   }, [refreshSnippets]);
 
   const runWithErrorStatus = useCallback(
@@ -4267,7 +4267,7 @@ export default function App() {
         if (tab.kind === "table" && tab.paginatable) {
           // `sid` は切替/接続で確定したばかりの新セッション。まだ再描画前なので
           // `runQueryInTab` のクロージャは切替元のセッションとタブ一覧を指している。
-          runQueryInTab(tab.id, getTabSql(tab), tab.paginatable, null, false, { sessionId: sid, tab });
+          void runQueryInTab(tab.id, getTabSql(tab), tab.paginatable, null, false, { sessionId: sid, tab });
         }
       }
       // Surface any table tabs that downgraded to query tabs. `skip_history`
@@ -4952,7 +4952,7 @@ export default function App() {
       void runTxInTab(target.id, sql);
       return;
     }
-    runQueryInTab(target.id, sql, null, autoLimit);
+    void runQueryInTab(target.id, sql, null, autoLimit);
   }, [
     runQueryInTab,
     runBatchInTab,
@@ -4983,7 +4983,7 @@ export default function App() {
       void runTxInTab(tabId, sql);
       return;
     }
-    runQueryInTab(tabId, sql, null, autoLimit);
+    void runQueryInTab(tabId, sql, null, autoLimit);
   }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
@@ -4992,7 +4992,7 @@ export default function App() {
   // sees the full result set.
   const fetchAllForTab = useCallback((tab: Tab) => {
     if (tab.autoLimitSql === null) return;
-    runQueryInTab(tab.id, tab.autoLimitSql, null, null);
+    void runQueryInTab(tab.id, tab.autoLimitSql, null, null);
   }, [runQueryInTab]);
 
   const explainForTab = useCallback((sourceTab: Tab, sql: string) => {
@@ -5042,7 +5042,7 @@ export default function App() {
   // directly (no parameters) and after the parameter modal substitutes values.
   const dispatchEditorAction = useCallback(
     (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => {
-      if (mode === "preview") previewQueryInTab(tab.id, sql);
+      if (mode === "preview") void previewQueryInTab(tab.id, sql);
       else if (mode === "explain") explainForTab(tab, sql);
       else if (mode === "runNewTab") runInTabWithGate(tab, sql, { newTab: true });
       else runInTabWithGate(tab, sql);
@@ -5428,7 +5428,7 @@ export default function App() {
     // Preview only handles one statement at a time; we surface the first
     // edited row so the user can sanity-check shape. Multi-row callers gate
     // the button so this branch is single-row in practice.
-    previewQueryInTab(tab.id, stmts[0]);
+    void previewQueryInTab(tab.id, stmts[0]);
   }, [sessionId, previewQueryInTab, selectedProfile?.driver]);
 
   const applyEditsForTab = useCallback(async (tab: Tab) => {
@@ -5540,7 +5540,7 @@ export default function App() {
       // サーバ側ソート/フィルタの表示 (#792) も解除しておく (SQL 未適用のままバッジ
       // だけ残るのを防ぐ)。
       patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [], serverSort: null, serverFilter: null }));
-      runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
+      void runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
     } else {
       patchTab(tabId, (tt) => {
         // Apply 実行中 (await 中) に追加/上書きされた編集は DB へ送信されていない
@@ -5805,7 +5805,7 @@ export default function App() {
       addTab(tab);
       // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
       // タブ自体と開いた時点のセッションを明示的に渡す。
-      runQueryInTab(tab.id, sql, base, null, false, { sessionId, tab });
+      void runQueryInTab(tab.id, sql, base, null, false, { sessionId, tab });
       // ストリーム開始を待たせないよう、ページネーションの総ページ数目安に使う
       // 行数推定は 1 テーブル分を並行・非同期で取得して後から反映する
       // (ベストエフォート。到着順に関わらず該当タブの値を更新するだけ)。
@@ -5858,7 +5858,7 @@ export default function App() {
     const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
     if (title) tab.title = title;
     addTab(tab);
-    runQueryInTab(tab.id, sql);
+    void runQueryInTab(tab.id, sql);
   }, [sessionId, runQueryInTab, addTab]);
 
   // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
@@ -6793,7 +6793,7 @@ export default function App() {
     );
     if (tab && tab.paginatable) {
       const limit = Math.max(1, tab.previewRowLimit || settings.defaultDisplayCount);
-      runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
+      void runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
       // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
       // サーバ側ソート/フィルタの表示 (#792) を state 側でも解除しておく — SQL は
       // 未適用なのに「適用中」バッジが残るのを防ぐ。
@@ -6958,7 +6958,7 @@ export default function App() {
   // pane's new active tab. A second pane emptied by the close collapses back
   // into a single pane.
   const handleCloseTab = useCallback((id: string) => {
-    cancelStreamForTab(id);
+    void cancelStreamForTab(id);
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     editorSelectionRef.current.delete(id);
     gridScrollRef.current.delete(id);
@@ -7262,8 +7262,12 @@ export default function App() {
         healthCheckBusyRef.current = false;
       }
     };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    // onFocus は内部で try/catch/finally 済み。イベントリスナには void を返す形で渡す。
+    const onFocusEvent = () => {
+      void onFocus();
+    };
+    window.addEventListener("focus", onFocusEvent);
+    return () => window.removeEventListener("focus", onFocusEvent);
   }, [sessionId, selectedProfile, connectingId]);
 
   // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
@@ -9866,9 +9870,9 @@ export default function App() {
           x={profileTransferMenu.x}
           y={profileTransferMenu.y}
           items={[
-            { label: t("profileImportAria"), onSelect: handleImportProfilesPick },
-            { label: t("profileExportAria"), onSelect: handleExportProfiles },
-            { label: t("profileBackupImportAria"), onSelect: handleBackupImportPick },
+            { label: t("profileImportAria"), onSelect: () => void handleImportProfilesPick() },
+            { label: t("profileExportAria"), onSelect: () => void handleExportProfiles() },
+            { label: t("profileBackupImportAria"), onSelect: () => void handleBackupImportPick() },
             { label: t("profileBackupExportAria"), onSelect: handleBackupExportPick },
           ]}
           onClose={() => setProfileTransferMenu(null)}

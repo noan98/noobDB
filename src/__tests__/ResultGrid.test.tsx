@@ -1119,7 +1119,7 @@ describe("キーボードセルナビゲーション (#406)", () => {
       // 隣のセルには付かない。
       expect(cells[0][1].classList.contains("is-copy-flash")).toBe(false);
       // 一定時間後に自動で外れる (apply-flash と同じ 700ms)。
-      act(() => vi.advanceTimersByTime(700));
+      act(() => { vi.advanceTimersByTime(700); });
       expect(cells[0][0].classList.contains("is-copy-flash")).toBe(false);
     } finally {
       vi.useRealTimers();

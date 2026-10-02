@@ -107,7 +107,7 @@ export function TestDataModal({
   // 警告ヒントで気付ける)。
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const cols: TableColumnInfo[] = await api.describeTable(sessionId, database, table);
         const inferred = cols.map(inferColumnSpec);

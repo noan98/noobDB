@@ -47,7 +47,7 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const [tbls, foreignKeys] = await Promise.all([
           api.listTables(sessionId, database),
