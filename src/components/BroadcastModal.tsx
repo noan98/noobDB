@@ -159,13 +159,13 @@ export function BroadcastModal({
   // アンマウント時 (モーダルを閉じたとき) は、まだ実行中の環境を個別に
   // キャンセルしてからリスナーを外す。閉じた後もバックエンドのタスク/接続を
   // 握ったままにしないため (他のストリーミングコマンドの後始末と同じ方針)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: アンマウント時だけ後始末する (ref 経由で最新値を読む)。
   useEffect(() => {
     return () => {
       cancelRunning();
       unlistenRef.current?.();
       unlistenRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleSelected = (sessionId: string) => {

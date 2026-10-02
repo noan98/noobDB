@@ -15,23 +15,24 @@ unwrap/expect/panic を本体コードに入れると CI が自動で fail** し
 panic/unwrap が妥当かの日本語根拠コメント**を必ず付けてください。
 
 フロントエンドは `tsc` (`pnpm run build` 経由) で型チェックされ、さらに
-**typescript-eslint (flat config, `eslint.config.js`)** が `pnpm run lint` で CI の
+**Biome (`biome.json`)** が `pnpm run lint` (= `scripts/biome-lint.mjs`) で CI の
 frontend ジョブ内のステップとして走ります (#1176)。ルールは高シグナルなものだけで、
-スタイル系は入れません。
+スタイル系・整形は入れません (formatter は無効)。
 
-- `@typescript-eslint/no-floating-promises` (error): await 忘れの IPC 呼び出しは
-  握り潰された失敗になる。意図的な fire-and-forget は `void` で明示する (失敗が
-  呼び出し先の try/catch で処理済みであることを確認すること)。
-- `@typescript-eslint/no-misused-promises` (error): JSX 属性位置 (`onClick={async ...}`) は
-  対象外、引数・プロパティ位置は検査する。
-- `react-hooks/rules-of-hooks` (error)。
-- `react-hooks/exhaustive-deps` (**warn**): 既存の依存配列漏れが多いため段階導入。
-  `package.json` の `lint` が `--max-warnings` で件数を固定しており、新規の違反は
-  CI で落ちる。直して件数が減ったら閾値も下げる。
-- TypeScript 7 (ネイティブ版) は JS API を持たないため、`.pnpmfile.cjs` で
-  typescript-eslint 系パッケージだけ TS 6 互換パッケージ (`@typescript/typescript6`)
-  を参照させている。typescript-eslint が TS 7.1 以降に対応したら削除する
-  (typescript-eslint#10940)。
+- `nursery/noFloatingPromises` (error): await 忘れの IPC 呼び出しは握り潰された失敗に
+  なる。意図的な fire-and-forget は `void` で明示する (失敗が呼び出し先の try/catch で
+  処理済みであることを確認すること)。
+- `nursery/noMisusedPromises` (error): Promise を条件式や void 戻りのコールバック位置に
+  渡すとエラー。Promise の null チェックは `!== null` と明示する。
+- `correctness/useHookAtTopLevel` (error): hooks の呼び出し規則。
+- `correctness/useExhaustiveDependencies` (**warn**): 既存の依存配列漏れが多いため
+  段階導入。Biome には `--max-warnings` が無いので `scripts/biome-lint.mjs` の
+  `WARNING_BUDGET` が違反フックの数を固定しており、新規の違反は CI で落ちる。
+  直して件数が減ったら `WARNING_BUDGET` も下げる。意図的に依存を絞る箇所は
+  `// biome-ignore lint/correctness/useExhaustiveDependencies: 理由` で明示する。
+- `noFloatingPromises` / `noMisusedPromises` は Biome 2 時点で `nursery` (試験的) 扱い。
+  卒業・改名で設定が壊れたら `biome migrate` を使う。TypeScript の JS API には依存しない
+  (TypeScript 7 のネイティブ版と衝突しない)。
 
 `tsconfig.json` では `strict`、`noUnusedLocals`、
 `noUnusedParameters` が有効になっているため、未使用の import やパラメータがあると

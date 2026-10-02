@@ -198,7 +198,6 @@ export function markGridCommit(rowCount: number): void {
   recentMetrics.push(metric);
   if (recentMetrics.length > RECENT_LIMIT) recentMetrics.shift();
   // SQL 本文・セルデータは含まない (件数と経過時間のみ)。
-  // eslint-disable-next-line no-console
   console.debug("[noobdb:perf]", metric);
 }
 

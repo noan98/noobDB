@@ -242,7 +242,6 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
       // 完了させる。まとめて連打すると `scrollToIndex` が毎回同じ古い
       // scrollOffset を基準に計算してしまい、最終的な列がウィンドウへ入らない
       // (実ブラウザでは各キー入力の間に十分な時間が空くため起きない)。
-      // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 0));
     }
 
@@ -291,7 +290,6 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
     const TARGET_COL = 18;
     for (let i = 0; i < TARGET_COL; i++) {
       fireEvent.keyDown(table, { key: "ArrowRight" });
-      // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 0));
     }
 
