@@ -42,9 +42,9 @@
   ライト/ダークの両テーマで `toMatchScreenshot` し、ビジュアル回帰を検出します。
   ベースライン PNG は `src/__tests__/browser/__screenshots__/` 配下に保存されます。
   ビジュアル回帰はコミット済みベースラインとの比較で、ベースラインが無い環境では
-  `toMatchScreenshot` が (skip ではなく) **失敗**します。そのため `VITE_RUN_VISUAL=1`
-  のときだけ実行する `describe.runIf` でゲートしており、通常の `pnpm test:browser`
-  (および現状の CI) では**スキップ**されます。ベースラインを CI 上で生成・コミット
+  のときだけ実行する `describe.runIf` でゲートしており、素の `pnpm test:browser`
+  ではスキップされます。CI の `Browser render smoke + visual regression` ステップは
+  `env: VITE_RUN_VISUAL: "1"` を立てて比較を必須化しています (#1167)。
   したのち、CI 側で `VITE_RUN_VISUAL=1` を立てれば比較を必須化できます。
 - **ベースラインは比較を行う CI と同一環境 (Linux/Chromium) で生成・コミット**します
   (OS/フォントの描画差による false positive を避けるため)。ローカル (macOS/Windows)
@@ -79,8 +79,8 @@
   導入して `pnpm test:browser` を実行します。旧来は jsdom 側と別ジョブ
   (`frontend-visual`) でしたが、pnpm install・Vite トランスパイルの重複を解消する
   ため 1 ジョブに統合しています (#908。詳細は `noobdb-ci` スキルと `ci.yml` の
-  コメントを参照)。現状はスモークのみが走り、ビジュアル回帰はベースライン整備後に
-  `VITE_RUN_VISUAL=1` で有効化する想定です。**必須チェックを設定する場合はこの
+  コメントを参照)。スモークに加えてビジュアル回帰も走ります (ステップに
+  `VITE_RUN_VISUAL=1` を設定, #1167)。**必須チェックを設定する場合はこの
   ジョブ名 (`frontend (build + browser tests)`) を指定してください** (旧
   `frontend (typecheck + build)` / `frontend (browser render + visual)` は
   #908 で消えています)。
