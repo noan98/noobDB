@@ -1419,6 +1419,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
           state={runState}
           states={runStates}
           onClick={runSelectionOrAll}
+          data-testid="query-editor-run"
           disabled={runState === "disabled"}
           title={disabledReason ?? runTitle}
         />
@@ -1522,6 +1523,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       )}
       <Box
         ref={hostRef}
+        data-testid="query-editor"
         flex="1"
         overflow="auto"
         bg="app.surface"

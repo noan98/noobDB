@@ -23,7 +23,7 @@ interface Props {
   /** Optional supporting line under the title. */
   description?: string;
   /** Optional primary call-to-action button. */
-  action?: { label: string; onClick: () => void };
+  action?: { label: string; onClick: () => void; testId?: string };
   /**
    * Optional secondary actions rendered as quieter buttons under the primary
    * action (#1271). `shortcut` is a display-only hint (resolve it via
@@ -139,7 +139,7 @@ export function EmptyState({
         </Text>
       )}
       {action && (
-        <PressableButton type="button" variant="primary" onClick={action.onClick} mt="1">
+        <PressableButton type="button" variant="primary" onClick={action.onClick} mt="1" data-testid={action.testId}>
           {action.label}
         </PressableButton>
       )}

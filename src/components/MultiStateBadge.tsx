@@ -44,6 +44,8 @@ interface Props<S extends string> {
   title?: string;
   /** Optional keyboard label. Defaults to the active state's label. */
   "aria-label"?: string;
+  /** E2E (tauri-driver) 用のセレクタ。属性を付けるだけで見た目・挙動には影響しない。 */
+  "data-testid"?: string;
 }
 
 // tone → Chakra トークン (bg, fg, hoverBg, hoverFg, borderColor)
@@ -108,6 +110,7 @@ export function MultiStateBadge<S extends string>({
   disabled,
   title,
   "aria-label": ariaLabel,
+  "data-testid": testId,
 }: Props<S>) {
   const current = states[state];
   const tone = TONE_TOKENS[current.tone];
@@ -119,6 +122,7 @@ export function MultiStateBadge<S extends string>({
       disabled={disabled}
       aria-label={ariaLabel ?? current.srLabel ?? current.label}
       aria-live="polite"
+      data-testid={testId}
       display="inline-flex"
       alignItems="center"
       gap="1.5"

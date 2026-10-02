@@ -3302,6 +3302,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           transition={springs.gentle}
           style={{ transformOrigin: "center left" }}
           data-tree-key={profileTreeKey}
+          data-testid="connection-profile-row"
+          data-profile-name={p.name}
           onClick={() => handleProfileClick(p)}
           onContextMenu={(e) => handleProfileContextMenu(e, p)}
           onKeyDown={handleProfileRowKeyDown(p, siblingIds)}
@@ -3485,7 +3487,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           icon="server"
           title={t("listEmptyTitle")}
           description={t("listEmptyDesc")}
-          action={{ label: t("listCreateFirst"), onClick: onCreate }}
+          action={{ label: t("listCreateFirst"), onClick: onCreate, testId: "connection-create-first" }}
         />
       ) : visibleProfiles.length === 0 ? (
         <Text color="app.textMuted" p="3">{t("listNoMatches")}</Text>
