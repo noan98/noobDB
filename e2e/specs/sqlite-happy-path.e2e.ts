@@ -52,7 +52,13 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
   /** testid でグリッドの全セル文字列を取る。 */
   const gridCellTexts = async (): Promise<string[]> => {
     const cells = await $$('[data-testid="result-grid"] td[role="gridcell"]');
-    return Promise.all(cells.map((c) => c.getText()));
+    // ElementArray の map は Promise を返すため Promise.all に渡せない (not iterable)。
+    // for ループで 1 つずつ読む。
+    const texts: string[] = [];
+    for (const cell of cells) {
+      texts.push(await cell.getText());
+    }
+    return texts;
   };
 
   /** エディタを全置換して実行ボタンを押す。 */
