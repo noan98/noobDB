@@ -1,4 +1,4 @@
-import { forwardRef, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { forwardRef, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -42,20 +42,7 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
-import {
-  applyEditsToRows,
-  buildDeleteStatements,
-  buildInsertStatements,
-  buildBlobUpdateStatement,
-  buildUpdateGroups,
-  buildUpdateStatements,
-  countEditedCells,
-  countEditedRows,
-  hasAmbiguousIdentity,
-  resolveRowIdentity,
-  type PendingEdits,
-  type PendingInsertRow,
-} from "./components/cellEdit";
+import { applyEditsToRows, buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
@@ -64,6 +51,8 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
+import { TabPaneStore } from "./tabPaneStore";
+import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
@@ -79,7 +68,7 @@ import {
   type NamespaceKind,
 } from "./components/databaseMaintenance";
 import type { AlterStatement } from "./components/alterTable";
-import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
+import { buildCreateTableAsSql } from "./components/resultsToTable";
 import type { TransferSource } from "./components/dataTransfer";
 import {
   buildCreateViewSql,
@@ -105,9 +94,6 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
-import { StreamProgressBar } from "./components/StreamProgressBar";
-import { ResultPaneSkeleton } from "./components/ResultPaneSkeleton";
-import { showsResultSkeletonFallback } from "./components/resultSkeleton";
 import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
@@ -123,10 +109,9 @@ import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
-import { ResultExplainContext, type ResultViewKind } from "./components/ResultViewSwitch";
-import { bundleExplainPrefix, bundlePlanSupported } from "./components/investigationBundle";
-import { buildExplainAnalyzeSql, explainAnalyzeSupported } from "./components/explainAnalyze";
-import { TabBar } from "./components/TabBar";
+import { type ResultViewKind } from "./components/ResultViewSwitch";
+import { bundleExplainPrefix } from "./components/investigationBundle";
+import { buildExplainAnalyzeSql } from "./components/explainAnalyze";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
@@ -143,7 +128,6 @@ import {
   TX_ISOLATION_DEFAULT,
   type TxIsolation,
 } from "./txOptions";
-import { LoadingButton } from "./components/LoadingButton";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { singleLine, type CommandItem } from "./components/commandPaletteSearch";
@@ -152,18 +136,6 @@ import { singleLine, type CommandItem } from "./components/commandPaletteSearch"
 // bundle the WebView parses and mounts on launch stays small. CodeMirror
 // (QueryEditor), TanStack Table (ResultGrid / PreviewGrid), the formatter and
 // the modal/full-screen views only load when first rendered.
-const QueryEditor = lazy(() =>
-  import("./components/QueryEditor").then((m) => ({ default: m.QueryEditor })),
-);
-const ResultGrid = lazy(() =>
-  import("./components/ResultGrid").then((m) => ({ default: m.ResultGrid })),
-);
-const PreviewGrid = lazy(() =>
-  import("./components/PreviewGrid").then((m) => ({ default: m.PreviewGrid })),
-);
-const ExplainViewer = lazy(() =>
-  import("./components/ExplainViewer").then((m) => ({ default: m.ExplainViewer })),
-);
 const ConnectionForm = lazy(() =>
   import("./components/ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
 );
@@ -205,9 +177,6 @@ const ProfileBackupExportDialog = lazy(() =>
     default: m.ProfileBackupExportDialog,
   })),
 );
-const PaginationBar = lazy(() =>
-  import("./components/PaginationBar").then((m) => ({ default: m.PaginationBar })),
-);
 const ObjectSearchModal = lazy(() =>
   import("./components/ObjectSearchModal").then((m) => ({ default: m.ObjectSearchModal })),
 );
@@ -243,18 +212,6 @@ const HostKeyMismatchDialog = lazy(() =>
 );
 const RowInsertModal = lazy(() =>
   import("./components/RowInsertModal").then((m) => ({ default: m.RowInsertModal })),
-);
-const ChartView = lazy(() =>
-  import("./components/ChartView").then((m) => ({ default: m.ChartView })),
-);
-const PivotView = lazy(() =>
-  import("./components/PivotView").then((m) => ({ default: m.PivotView })),
-);
-const ResultJsonView = lazy(() =>
-  import("./components/ResultJsonView").then((m) => ({ default: m.ResultJsonView })),
-);
-const BatchResultsView = lazy(() =>
-  import("./components/BatchResultsView").then((m) => ({ default: m.BatchResultsView })),
 );
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
@@ -329,13 +286,7 @@ const RoutineEditorModal = lazy(() =>
 const RunRoutineModal = lazy(() =>
   import("./components/RunRoutineModal").then((m) => ({ default: m.RunRoutineModal })),
 );
-import {
-  analyzeDangerousSql,
-  isReadOnlySql,
-  readOnlyWithHint,
-  type ReadOnlyHint,
-  type DangerFinding,
-} from "./dangerousSql";
+import { analyzeDangerousSql, isReadOnlySql, type ReadOnlyHint, type DangerFinding } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { isSingleCapturableStatement } from "./flightRecorder";
@@ -383,8 +334,6 @@ import {
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
 import { KeepAlive } from "./components/KeepAlive";
-import { ResultGridSlot } from "./components/ResultGridSlot";
-import { GRID_KEEP_ALIVE_LIMIT } from "./components/keepAliveSet";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
@@ -437,13 +386,7 @@ import {
 import { reorderIfPermutation } from "./tabReorder";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
-import {
-  buildPageSql,
-  canGoNext,
-  canGoPrev,
-  clampPage,
-  estimatedTotalPages,
-} from "./pagination";
+import { buildPageSql, canGoNext, canGoPrev, clampPage } from "./pagination";
 import {
   buildKeysetPageSql,
   keysetMoveFor,
@@ -533,23 +476,6 @@ function readInitialSidebarWidth(): number {
   } catch {
     return parseSidebarWidth(null);
   }
-}
-
-/** 中央寄せの空状態プレースホルダ。ペインに何もない時 / 遅延読み込み中に使う。 */
-function PaneEmpty({ children }: { children: ReactNode }) {
-  return (
-    <Flex
-      flex="1"
-      align="center"
-      justify="center"
-      color="app.textMuted"
-      fontSize="md"
-      p="6"
-      textAlign="center"
-    >
-      {children}
-    </Flex>
-  );
 }
 
 /** トップバーの密なアイコン専用ボタン。`Button` の既定 padding を詰めて
@@ -707,7 +633,7 @@ type TabKind = "table" | "query" | "explain";
 // 調査バンドル (#745) の実行計画同梱と同じ単一ソース。
 const explainPrefixFor = bundleExplainPrefix;
 
-interface Tab {
+export interface Tab {
   id: string;
   kind: TabKind;
   title: string;
@@ -915,7 +841,7 @@ interface Tab {
  * active. With a single pane the layout behaves exactly like the old single-tab
  * workspace; a second pane is added on demand for side-by-side viewing.
  */
-interface PaneState {
+export interface PaneState {
   id: string;
   tabIds: string[];
   activeTabId: string | null;
@@ -970,29 +896,6 @@ function newPaneId(): string {
 function newStreamId(tabId: string): string {
   return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
-
-/**
- * table タブの総ページ数目安 (#792)。`rowEstimateTotal` は統計情報ベースの全件
- * 概算行数なので、サーバ側フィルタ (WHERE) 適用中はもはや正しい母数ではない —
- * 誤って小さすぎる総ページ数を表示しないよう、その場合は未知 (null) として扱い
- * `canGoNext` の「直近ページが満杯なら続きがありそう」フォールバックに委ねる。
- * ソートのみ (WHERE なし) なら行数は変わらないので、そのまま概算を使う。
- */
-function tableTotalPagesEstimate(
-  tab: Pick<Tab, "serverFilter" | "rowEstimateTotal">,
-  pageSize: number,
-): number | null {
-  if (tab.serverFilter) return null;
-  return estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
-}
-
-/** 逆方向 FK のキャッシュキー (セッション + DB + テーブル)。 */
-function incomingFkCacheKey(sessionId: string, database: string, table: string): string {
-  return `${sessionId}\0${database}\0${table}`;
-}
-
-/** まだ取得できていないテーブルに渡す安定した空配列 (毎回新しい配列を作らない)。 */
-const NO_INCOMING_FKS: IncomingFk[] = [];
 
 // Cache key for a database's whole-schema autocomplete snapshot. The NUL
 // separator can't appear in a session id or database name, so it can't
@@ -1762,19 +1665,24 @@ export default function App() {
   // error is never silently hidden by a prior dismissal.
   const [statusDismissed, setStatusDismissed] = useState(false);
 
-  const [tabs, setTabs] = useState<Tab[]>([]);
+  // タブ・ペインの正本は外部ストア (#1318)。App は全体を購読する (まだ全画面系の
+  // 判定が `tabs` / `panes` を読むため) が、ペインの描画 (`PaneView`) は自分の
+  // ペインとタブだけを購読するので、変化していないペインは再描画されない。
+  const tabPaneStore = useMemo(() => new TabPaneStore<Tab, PaneState>(), []);
+  const { setTabs, setPanes } = tabPaneStore;
+  const tabs = useSyncExternalStore(tabPaneStore.subscribe, tabPaneStore.getTabs);
   // 閉じたタブの結果グリッド用キャッシュ (gridStable) を捨てる (#1313)。
   useEffect(() => {
     const ids = new Set(tabs.map((tt) => tt.id));
     gridStable.prune((key) => ids.has(key.slice(0, key.indexOf(":"))));
   }, [tabs, gridStable]);
-  const [panes, setPanes] = useState<PaneState[]>([]);
+  const panes = useSyncExternalStore(tabPaneStore.subscribe, tabPaneStore.getPanes);
   const [activePaneId, setActivePaneId] = useState<string | null>(null);
   // Latest pane layout / focus, mirrored into refs so streaming callbacks,
   // keyboard handlers and the persist helper can read committed state without
   // re-subscribing on every change.
-  const panesRef = useRef<PaneState[]>(panes);
-  useEffect(() => { panesRef.current = panes; }, [panes]);
+  // ストアは同期的に更新されるので、ref より新しい (commit を待たない) 値を返す。
+  const panesRef = useMemo(() => ({ get current() { return tabPaneStore.getPanes(); } }), [tabPaneStore]);
   const activePaneIdRef = useRef<string | null>(activePaneId);
   useEffect(() => { activePaneIdRef.current = activePaneId; }, [activePaneId]);
   // 新規タブ・タブ切替・接続直後のエディタ自動フォーカス (#816) が、モーダル/オーバー
@@ -2024,11 +1932,6 @@ export default function App() {
   // The active session rejects writes when read-only: drives both the Query
   // Builder's disabled Run button and whether inline cell editing is offered.
   const readOnly = selectedProfile?.read_only ?? false;
-  // テーブルタブで編集系の操作 (セル編集・行の追加/削除・BLOB 書き戻し・列置換) を
-  // 出してよいか。read_only 接続に加え、行を特定できないデフォルトクエリ (#1253) で
-  // 開いたタブも読み取り専用にする (誤った行を書き換えないよう再判定はしない)。
-  const tableTabEditable = (tab: Pick<Tab, "kind" | "openTemplate">): boolean =>
-    tab.kind === "table" && !readOnly && tab.openTemplate?.editable !== false;
   // アクティブセッションで緊急クエリ実行モードが有効か。read-only 接続のクエリ
   // パネルからの書き込み実行を一時的に許可する (バックエンドの
   // `Session.emergency_write` が真のガードで、これはその UI ミラー)。
@@ -2113,7 +2016,7 @@ export default function App() {
     [tabSqlStore],
   );
   // dirty 表示の切り替わりだけを検知して再描画する (連続入力中は再描画しない)。
-  const [, bumpDirty] = useReducer((n: number) => n + 1, 0);
+  const [dirtyTick, bumpDirty] = useReducer((n: number) => n + 1, 0);
   const tabsForDirtyRef = useRef<Tab[]>([]);
   const dirtyWatcher = useMemo(
     () =>
@@ -3626,8 +3529,8 @@ export default function App() {
 
   // Tabs ref kept in sync so streaming callbacks below can read the latest
   // committed tab state without re-creating themselves on every batch.
-  const tabsRef = useRef<Tab[]>(tabs);
-  useEffect(() => { tabsRef.current = tabs; tabsForDirtyRef.current = tabs; }, [tabs]);
+  const tabsRef = useMemo(() => ({ get current() { return tabPaneStore.getTabs(); } }), [tabPaneStore]);
+  useEffect(() => { tabsForDirtyRef.current = tabs; }, [tabs]);
 
   // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
   // かつウィンドウが非フォーカスのときだけ発火する (判定は queryNotify.ts の
@@ -8026,769 +7929,77 @@ export default function App() {
     formatCombo(shortcutBindings.commandPalette),
   );
 
-  const renderPane = (pane: PaneState) => {
-    const paneTabs = pane.tabIds
-      .map((id) => tabs.find((tt) => tt.id === id))
-      .filter((tt): tt is Tab => tt != null);
-    const tab = tabs.find((tt) => tt.id === pane.activeTabId) ?? null;
-    const split = panes.length > 1;
-    const isFocused = pane.id === activePane?.id;
-    const paneDatabase = tab?.database ?? selectedProfile?.database ?? null;
-    const paneSchema = schemaForDatabase(paneDatabase);
-    const summary = tab
-      ? { cells: countEditedCells(tab.pendingEdits), rows: countEditedRows(tab.pendingEdits) }
-      : { cells: 0, rows: 0 };
-    // フォーカス中ペインのアクティブタブの結果/エディタをモーダル全画面化するか。
-    // CSS でラッパを position: fixed の全画面オーバーレイに切り替えるため、React の
-    // 要素ツリーは保たれグリッドの状態 (スクロール/選択) やエディタの内容も維持される。
-    const maximized = layoutMode === "result" && isFocused && tab != null;
-    const editorFocused = layoutMode === "editor" && isFocused && tab != null;
-    // 結果領域が「どの軽量パネルを表示しているか」の判別子 (#788)。下の結果側
-    // 条件分岐 (explain → batch → chart → pivot → json → preview → grid) と同順で一致させ、
-    // これを AnimatePresence の key にすることで、パネルの種類が変わるとき (例:
-    // グリッド ⇔ EXPLAIN) だけ控えめなクロスフェードを添える。table ⇔ query の
-    // ように両者とも "grid" のままなら key は不変なので、重い ResultGrid を
-    // フェードのために再マウントしない (issue #788 の設計方針: 軽量パネル側に
-    // トランジションを限定)。tab が無い空状態は下の Splitter 分岐の外側で扱うため
-    // ここでは使われない (安全に "empty" を返すだけ)。
-    const contentMode = !tab
-      ? "empty"
-      : tab.kind === "explain"
-        ? "explain"
-        : tab.batchResults
-          ? "batch"
-          : tab.showChart && tab.result && !tab.streaming
-            ? "chart"
-            : tab.showPivot && tab.result && !tab.streaming
-              ? "pivot"
-              : tab.showJson && tab.result && !tab.streaming
-                ? "json"
-                : tab.preview
-                  ? "preview"
-                  : "grid";
-    // 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を専用の
-    // EXPLAIN タブで開く。keep-alive で保持するグリッドの中にも同じ Provider を置く (#1309)。
-    const explainCtxValue =
-      tab &&
-      sessionId &&
-      tab.kind !== "explain" &&
-      !tab.batchResults &&
-      !tab.streaming &&
-      (tab.result?.columns.length ?? 0) > 0 &&
-      tab.lastExecutedSql.trim().length > 0
-        ? () => explainForTab(tab, tab.lastExecutedSql)
-        : null;
-    return (
-      <Flex
-        key={pane.id}
-        direction="column"
-        flex="1 1 auto"
-        minW={0}
-        minH={0}
-        overflow="hidden"
-        borderTopWidth={split ? "2px" : undefined}
-        borderTopStyle={split ? "solid" : undefined}
-        borderTopColor={split ? (isFocused ? "var(--ws-accent)" : "transparent") : undefined}
-        onMouseDownCapture={() => focusPane(pane.id)}
-      >
-        <TabBar
-          tabs={paneTabs.map((tt) => ({
-            id: tt.id,
-            kind: tt.kind,
-            title: tt.title,
-            database: tt.database,
-            table: tt.table,
-            dirty: (() => {
-              const d = tt.kind === "query" && getTabSql(tt) !== tt.lastExecutedSql;
-              dirtyWatcher.recordShown(tt.id, d);
-              return d;
-            })(),
-          }))}
-          activeTabId={pane.activeTabId}
-          onSelect={(id) => selectTab(pane.id, id)}
-          onClose={handleCloseTab}
-          onNew={() => handleNewTab(pane.id)}
-          newTabCombo={shortcutBindings.newTab}
-          onReorder={(ids) => reorderTabsInPane(pane.id, ids)}
-          onTabContextMenu={openTabMenu}
-          onSplit={split ? () => closePane(pane.id) : splitPane}
-          splitMode={split ? "close" : "split"}
-        />
-        <Flex direction="column" flex="1" overflow="hidden">
-          {tab ? (
-            <Splitter
-              direction="column"
-              storageKey="noobdb.split.editor"
-              defaultFraction={0.4}
-              minSize={120}
-              ariaLabel={t("splitterEditorAria")}
-              first={
-                <Box
-                  display="flex"
-                  flexDirection="column"
-                  minH={0}
-                  minW={0}
-                  className={editorFocused ? "pane-overlay" : undefined}
-                  {...(editorFocused
-                    ? {
-                        // エディタ集中モード: エディタを全画面オーバーレイ化する。
-                        // タイトルバー (高さ 38px) は覆わずウィンドウ操作を残す。
-                        position: "fixed" as const,
-                        top: "38px",
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        zIndex: "modal" as const,
-                        bg: "app.surface",
-                        boxShadow: "lg",
-                      }
-                    : { flex: "1", position: "relative" as const })}
-                >
-                  {editorFocused && (
-                    <Flex
-                      align="center"
-                      gap="2"
-                      px="3"
-                      py="1.5"
-                      flex="none"
-                      borderBottomWidth="1px"
-                      borderBottomColor="app.border"
-                      bg="app.toolbar"
-                    >
-                      <Icon name="maximize" size={ICON_SIZES.md} />
-                      <chakra.span
-                        fontSize="sm"
-                        color="app.text"
-                        fontWeight={500}
-                        overflow="hidden"
-                        textOverflow="ellipsis"
-                        whiteSpace="nowrap"
-                      >
-                        {tab.title}
-                      </chakra.span>
-                      <chakra.span flex="1" />
-                      <Tooltip label={t("editorRestoreTitle")}>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => setLayoutMode("normal")}
-                        >
-                          <Icon name="minimize" size={ICON_SIZES.md} /> {t("editorFocusedLabel")}
-                        </Button>
-                      </Tooltip>
-                    </Flex>
-                  )}
-                  <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
-                <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-                  <QueryEditor
-                    tabId={tab.id}
-                    ref={getEditorRefSetter(pane.id)}
-                    initialSql={getTabSql(tab)}
-                    initialSelection={editorSelectionRef.current.get(tab.id) ?? tab.selection}
-                    onSelectionChange={(sel) => editorSelectionRef.current.set(tab.id, sel)}
-                    running={tab.streaming && !tab.previewStreaming}
-                    previewRunning={tab.previewStreaming}
-                    onRun={(sql) => resolveParamsThen(tab, sql, "run")}
-                    onRunInNewTab={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "runNewTab")}
-                    runNewTabCombo={shortcutBindings.runNewTab}
-                    onPreview={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "preview")}
-                    onExplain={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "explain")}
-                    onBroadcast={tab.kind === "explain" ? undefined : (sql) => requestBroadcast(sql, tab)}
-                    broadcastAvailable={
-                      !!sessionId &&
-                      !!selectedProfile &&
-                      openConnections.some(
-                        (c) =>
-                          c.sessionId !== sessionId &&
-                          c.profile.driver === selectedProfile.driver &&
-                          !isSandboxProfileId(c.profile.id),
-                      )
-                    }
-                    explainMode={tab.kind === "explain"}
-                    onDocChange={(doc) => handleEditorDocChange(tab.id, doc)}
-                    onPreflightImpact={(r) => preflightRef.current.set(tab.id, r)}
-                    onSaveSnippet={handleSaveSnippetFromEditor}
-                    onOpenFile={() => void handleOpenSqlFile()}
-                    onSaveFile={() => void handleSaveSqlFile()}
-                    onFormatError={(error) =>
-                      setStatus({
-                        kind: "key",
-                        key: "statusFormatError",
-                        vars: { error },
-                        error: true,
-                      })
-                    }
-                    disabled={!sessionId}
-                    schemaTable={tab.schemaTable}
-                    databaseSchema={paneSchema}
-                    activeTable={
-                      tab.kind === "table" && tab.database && tab.table
-                        ? { database: tab.database, name: tab.table }
-                        : null
-                    }
-                    sessionId={sessionId}
-                    defaultDatabase={tab.database ?? selectedProfile?.database ?? null}
-                    driver={selectedProfile?.driver ?? "mysql"}
-                    builderSnapshot={tab.builderSnapshot}
-                    onBuilderPersist={(snapshot) => updateTab(tab.id, { builderSnapshot: snapshot })}
-                    readOnly={readOnly}
-                    emergencyMode={emergencyMode}
-                    onToggleEmergencyMode={(next) => void handleToggleEmergencyMode(next)}
-                    queryHistory={queryHistory}
-                    editorBindings={editorBindings}
-                    focusMode={editorFocused}
-                    onToggleFocus={
-                      sessionId ? () => setLayoutMode((m) => toggleLayoutMode(m, "editor")) : undefined
-                    }
-                  />
-                </Suspense>
-                  </Box>
-                </Box>
-              }
-              second={
-                <Box
-                  display="flex"
-                  flexDirection="column"
-                  minH={0}
-                  minW={0}
-                  className={maximized ? "pane-overlay" : undefined}
-                  {...(maximized
-                    ? {
-                        // 結果セクションを全画面オーバーレイ化する。タイトルバー
-                        // (高さ 38px) は覆わず、ウィンドウ操作を残す。
-                        position: "fixed" as const,
-                        top: "38px",
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        zIndex: "modal" as const,
-                        bg: "app.surface",
-                        boxShadow: "lg",
-                      }
-                    : { flex: "1", position: "relative" as const })}
-                >
-                  {maximized && (
-                    <Flex
-                      align="center"
-                      gap="2"
-                      px="3"
-                      py="1.5"
-                      flex="none"
-                      borderBottomWidth="1px"
-                      borderBottomColor="app.border"
-                      bg="app.toolbar"
-                    >
-                      <Icon name="maximize" size={ICON_SIZES.md} />
-                      <chakra.span
-                        fontSize="sm"
-                        color="app.text"
-                        fontWeight={500}
-                        overflow="hidden"
-                        textOverflow="ellipsis"
-                        whiteSpace="nowrap"
-                      >
-                        {tab.title}
-                      </chakra.span>
-                      <chakra.span flex="1" />
-                      <Tooltip label={t("resultRestoreTitle")}>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => setLayoutMode("normal")}
-                        >
-                          <Icon name="minimize" size={ICON_SIZES.md} /> {t("resultMaximizedLabel")}
-                        </Button>
-                      </Tooltip>
-                    </Flex>
-                  )}
-                  {/* ストリーミング実行中の indeterminate 進捗バー (#872)。結果
-                      ペイン上端に置き、クエリ実行・プレビューの双方で「動いて
-                      いる」ことをモーダル系進捗と同じ語彙で示す。running 信号は
-                      既存の tab.streaming (フッター tone と同源) を共有する。 */}
-                  <StreamProgressBar active={!!tab.streaming} />
-                  <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
-                {/* 初回実行でグリッドのチャンクを読み込む間は、副次パネルと揃えた
-                    骨格を出す (#1071)。表の結果を待っていない場合は従来の Spinner。 */}
-                <Suspense
-                  fallback={
-                    showsResultSkeletonFallback(tab) ? (
-                      <ResultPaneSkeleton
-                        columnCount={tab.result?.columns.length ?? null}
-                        density={settings.density}
-                      />
-                    ) : (
-                      <PaneEmpty><Spinner size={20} /></PaneEmpty>
-                    )
-                  }
-                >
-                  {/* 結果パネルの種類が変わるとき (グリッド ⇔ EXPLAIN /
-                      チャート / ピボット / プレビュー / バッチ) に控えめな
-                      クロスフェードを添える (#788)。key は contentMode なので
-                      同種のまま (table ⇔ query タブ切替など) は再生されず、
-                      ResultGrid を余計に再マウントしない。reduced-motion は
-                      ルートの MotionConfig で自動抑制。initial={false} で
-                      ペイン初回描画時のフェードインは抑える。 */}
-                  {/* 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を
-                      専用の EXPLAIN タブで開く (エディタの EXPLAIN と同じ経路)。 */}
-                  <ResultExplainContext.Provider value={explainCtxValue}>
-                  {/* exit を持たせない: 旧パネルは即座に外れ、新パネルだけがフェードインする
-                      (`mode="wait"` だと退場 + 入場で 360ms の待ちが入っていた, #1311)。 */}
-                  <AnimatePresence initial={false}>
-                    {contentMode !== "grid" && (
-                    <motion.div
-                      key={contentMode}
-                      initial={variants.fade.initial}
-                      animate={variants.fade.animate}
-                      transition={transitions.enter}
-                      style={{
-                        flex: 1,
-                        minHeight: 0,
-                        minWidth: 0,
-                        display: "flex",
-                        flexDirection: "column",
-                        overflow: "hidden",
-                      }}
-                    >
-                  {tab.kind === "explain" ? (
-                    <ExplainViewer
-                      result={tab.result}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                      streaming={tab.streaming}
-                      analyze={{
-                        supported: explainAnalyzeSupported(selectedProfile?.driver),
-                        active: !!tab.explainAnalyze,
-                        onToggle: (next) => {
-                          if (tab.streaming) return;
-                          void runExplainInTab(tab.id, getTabSql(tab), next);
-                        },
-                      }}
-                    />
-                  ) : tab.batchResults ? (
-                    <BatchResultsView
-                      results={tab.batchResults}
-                      running={!!tab.batchRunning}
-                      onRerun={(stopOnError) => {
-                        if (tab.batchScript) void runBatchInTab(tab.id, tab.batchScript, stopOnError);
-                      }}
-                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, batchResults: undefined, batchScript: undefined }))}
-                    />
-                  ) : tab.showChart && tab.result && !tab.streaming ? (
-                    <ChartView
-                      result={tab.result}
-                      sourceSql={tab.lastExecutedSql}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                      onRunQuery={
-                        sessionId ? (sql) => api.runQuery(sessionId, sql, tab.database ?? null) : undefined
-                      }
-                      onChangeView={(v) => setResultView(tab.id, v)}
-                    />
-                  ) : tab.showJson && tab.result && !tab.streaming ? (
-                    <ResultJsonView
-                      result={tab.result}
-                      database={tab.database ?? selectedProfile?.database ?? null}
-                      table={tab.table ?? null}
-                      onChangeView={(v) => setResultView(tab.id, v)}
-                    />
-                  ) : tab.showPivot && tab.result && !tab.streaming ? (
-                    <PivotView
-                      result={tab.result}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                      sourceSql={tab.lastExecutedSql}
-                      onSendToEditor={openQueryInEditor}
-                      onChangeView={(v) => setResultView(tab.id, v)}
-                    />
-                  ) : tab.preview ? (
-                    <PreviewGrid
-                      result={tab.preview}
-                      rowLimit={tab.previewRowLimit}
-                      streaming={tab.streaming}
-                      onStop={() => stopTab(tab)}
-                      pendingEditsSummary={
-                        tab.kind === "table" && summary.cells > 0 ? summary : undefined
-                      }
-                      onApplyEdits={
-                        tab.kind === "table" && summary.cells > 0
-                          ? () => applyEditsForTab(tab)
-                          : undefined
-                      }
-                      onDiscardEdits={
-                        tab.kind === "table" && summary.cells > 0
-                          ? () => discardEditsAndPreviewForTab(tab.id)
-                          : undefined
-                      }
-                      applyingEdits={tab.applyingEdits}
-                    />
-                  ) : null}
-                    </motion.div>
-                    )}
-                  </AnimatePresence>
-                  </ResultExplainContext.Provider>
-                  {/* 結果グリッドは作り直さず非表示のまま保持する (#1309)。直近に開いた
-                      GRID_KEEP_ALIVE_LIMIT 個のタブぶんだけ (MRU)、閉じたタブは即座に外す。
-                      チャート / ピボット等の結果ビューへ切り替える間も隠れるだけで破棄しない
-                      ので、グリッドへ戻っても選択・Find・列設定が残り、全行の再変換も走らない。 */}
-                  <KeepAlive
-                    activeKey={contentMode === "grid" ? tab.id : null}
-                    limit={GRID_KEEP_ALIVE_LIMIT}
-                    liveKeys={pane.tabIds}
-                  >
-                  <ResultExplainContext.Provider value={explainCtxValue}>
-                    <Flex direction="column" h="100%" minH={0} minW={0}>
-                    {tab.kind === "table" && !readOnly &&
-                      ((tab.pendingInserts?.length ?? 0) > 0 || (tab.pendingDeletes?.length ?? 0) > 0) && (
-                      <Flex
-                        align="center"
-                        gap="2.5"
-                        px="3"
-                        py="1.5"
-                        flex="none"
-                        borderBottomWidth="1px"
-                        borderBottomColor="app.border"
-                        bg="color-mix(in srgb, var(--accent) 8%, transparent)"
-                        fontSize="sm"
-                      >
-                        <Icon name="table" size={ICON_SIZES.md} />
-                        <chakra.span color="app.text">
-                          {t("rowOpsBarSummary", {
-                            inserts: tab.pendingInserts?.length ?? 0,
-                            deletes: tab.pendingDeletes?.length ?? 0,
-                          })}
-                        </chakra.span>
-                        <chakra.span flex="1" />
-                        <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)} disabled={tab.applyingEdits}>
-                          <Icon name="close" size={ICON_SIZES.md} /> {t("rowOpsDiscard")}
-                        </Button>
-                        <LoadingButton type="button" variant="success" size="sm" loading={tab.applyingEdits} onClick={() => applyEditsForTab(tab)}>
-                          <Icon name="check" size={ICON_SIZES.md} /> {t("rowOpsApply")}
-                        </LoadingButton>
-                      </Flex>
-                    )}
-                    <ResultGridSlot register={getGridRefSetter(pane.id)}>
-                    {(gridRef) => (
-                    <ResultGrid
-                      ref={gridRef}
-                      gridBindings={gridBindings}
-                      result={tab.result}
-                      initialScrollTop={
-                        tab.kind === "table"
-                          ? (gridScrollRef.current.get(tab.id) ?? tab.gridScrollTop)
-                          : undefined
-                      }
-                      onScroll={gridStable.fn(`${tab.id}:scroll`, (top: number) =>
-                        gridScrollRef.current.set(tab.id, top),
-                      )}
-                      streaming={tab.streaming}
-                      onStopStreaming={gridStable.fn(`${tab.id}:stop`, () => stopTab(tab))}
-                      loadingMore={tab.loadingMore}
-                      canLoadMore={tab.kind === "table" && tab.paginatable ? false : tab.canLoadMore}
-                      onLoadMore={gridStable.fn(`${tab.id}:loadMore`, () => loadMoreInTab(tab.id))}
-                      pendingDeleteKeys={gridStable.memo(
-                        `${tab.id}:pendingDeleteKeys`,
-                        [tab.pendingDeletes],
-                        () => (tab.pendingDeletes ? new Set(tab.pendingDeletes) : undefined),
-                      )}
-                      onToggleRowDelete={
-                        tableTabEditable(tab)
-                          ? gridStable.fn(`${tab.id}:toggleRowDelete`, (key: string) =>
-                              toggleRowDeleteForTab(tab.id, key),
-                            )
-                          : undefined
-                      }
-                      onRequestInsertRow={
-                        tableTabEditable(tab)
-                          ? gridStable.fn(`${tab.id}:requestInsertRow`, () => requestInsertRowForTab(tab.id))
-                          : undefined
-                      }
-                      onDuplicateRow={
-                        tableTabEditable(tab)
-                          ? gridStable.fn(`${tab.id}:duplicateRow`, (row: Parameters<typeof requestDuplicateRowForTab>[1]) =>
-                              requestDuplicateRowForTab(tab.id, row),
-                            )
-                          : undefined
-                      }
-                      autoLimitApplied={tab.autoLimitApplied}
-                      partialResult={tab.partialResult ?? null}
-                      onFetchAllRows={gridStable.fn(`${tab.id}:fetchAll`, () => fetchAllForTab(tab))}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                      database={tab.database ?? selectedProfile?.database ?? null}
-                      table={tab.table ?? null}
-                      editable={tableTabEditable(tab)}
-                      readOnlyNotice={
-                        tab.kind === "table" && tab.openTemplate && !tab.openTemplate.editable
-                          ? t(
-                              tab.openTemplate.source === "override"
-                                ? "tableOpenQueryReadOnlyHintOverride"
-                                : "tableOpenQueryReadOnlyHintGlobal",
-                            )
-                          : null
-                      }
-                      tableColumns={tab.tableColumns}
-                      rowIdentity={tab.rowIdentity}
-                      blobIo={
-                        sessionId && tab.kind === "table"
-                          ? gridStable.memo(
-                              `${tab.id}:blobIo`,
-                              [
-                                sessionId,
-                                tableTabEditable(tab),
-                                gridStable.fn(
-                                  `${tab.id}:blobWrite`,
-                                  (r: number, c: number, hex: string) => writeBlobForTab(tab, r, c, hex),
-                                ),
-                              ],
-                              () => ({
-                                sessionId,
-                                onWrite: !tableTabEditable(tab)
-                                  ? undefined
-                                  : gridStable.fn(
-                                      `${tab.id}:blobWrite`,
-                                      (r: number, c: number, hex: string) =>
-                                        writeBlobForTab(tab, r, c, hex),
-                                    ),
-                              }),
-                            )
-                          : undefined
-                      }
-                      pendingEdits={tab.pendingEdits}
-                      canUndo={(tab.editUndoStack?.length ?? 0) > 0}
-                      canRedo={(tab.editRedoStack?.length ?? 0) > 0}
-                      onSetCellEdit={gridStable.fn(`${tab.id}:setCellEdit`, (r: string, c: number, v: string | null) =>
-                        setCellEditForTab(tab.id, r, c, v),
-                      )}
-                      onBulkEdit={gridStable.fn(`${tab.id}:bulkEdit`, (edits: Parameters<typeof setBulkCellEditsForTab>[1]) =>
-                        setBulkCellEditsForTab(tab.id, edits),
-                      )}
-                      onReplaceColumn={
-                        tableTabEditable(tab) && tab.paginatable
-                          ? gridStable.fn(`${tab.id}:replaceColumn`, (sql: string) =>
-                              void replaceColumnForTab(tab, sql),
-                            )
-                          : undefined
-                      }
-                      diffPrevRows={tab.prevResultRows ?? null}
-                      diffComparable={
-                        !!tab.prevResultSql && tab.prevResultSql === tab.lastExecutedSql
-                      }
-                      diffHighlightEnabled={tab.diffHighlight ?? false}
-                      onToggleDiffHighlight={() =>
-                        patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight }))
-                      }
-                      onChangeView={(v) => setResultView(tab.id, v)}
-                      onSaveAsTable={
-                        sessionId &&
-                        !readOnly &&
-                        tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
-                        (tab.database ?? selectedProfile?.database)
-                          ? () =>
-                              setSaveAsTableRequest({
-                                sql: tab.lastExecutedSql,
-                                database: (tab.database ?? selectedProfile?.database) as string,
-                              })
-                          : undefined
-                      }
-                      onSaveAsView={
-                        sessionId &&
-                        !readOnly &&
-                        tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
-                        (tab.database ?? selectedProfile?.database)
-                          ? () =>
-                              setSaveAsViewRequest({
-                                sql: tab.lastExecutedSql,
-                                database: (tab.database ?? selectedProfile?.database) as string,
-                                initialName: tab.editingViewName,
-                              })
-                          : undefined
-                      }
-                      onTransferResult={
-                        sessionId &&
-                        tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver)
-                          ? () =>
-                              setTransferSource({
-                                kind: "query",
-                                database: tab.database ?? selectedProfile?.database ?? null,
-                                sql: tab.lastExecutedSql,
-                              })
-                          : undefined
-                      }
-                      onRegisterLocalTable={
-                        sessionId && tab.result
-                          ? () => handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql)
-                          : undefined
-                      }
-                      onClearEdits={() => clearEditsForTab(tab.id)}
-                      onUndoEdit={gridStable.fn(`${tab.id}:undo`, () => undoCellEditForTab(tab.id))}
-                      onRedoEdit={gridStable.fn(`${tab.id}:redo`, () => redoCellEditForTab(tab.id))}
-                      onPreviewEdits={() => previewEditsForTab(tab)}
-                      onApplyEdits={() => applyEditsForTab(tab)}
-                      applyingEdits={tab.applyingEdits}
-                      autoRefreshSecs={tab.autoRefreshSecs ?? null}
-                      autoRefreshAllowed={
-                        !!tab.result &&
-                        readOnlyWithHint(tab.lastRunReadOnly, tab.lastExecutedSql, selectedProfile?.driver)
-                      }
-                      autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
-                      onSetAutoRefresh={(secs) => setAutoRefreshForTab(tab.id, secs)}
-                      queryError={tab.queryError ?? null}
-                      onRetry={
-                        tab.lastExecutedSql
-                          ? () => {
-                              if (tab.kind === "table") {
-                                void runQueryInTab(tab.id, tab.lastExecutedSql, tab.paginatable);
-                                return;
-                              }
-                              runInTabWithGate(tab, tab.lastExecutedSql);
-                            }
-                          : undefined
-                      }
-                      onFkJump={gridStable.fn(`${tab.id}:fkJump`, (sql: string) => openAndRunQuery(sql))}
-                      incomingFks={
-                        tab.kind === "table" && tab.table && tab.database && sessionId
-                          ? incomingFkCache[incomingFkCacheKey(sessionId, tab.database, tab.table)] ??
-                            NO_INCOMING_FKS
-                          : undefined
-                      }
-                      onRunStatsQuery={
-                        sessionId
-                          ? gridStable.fn(`${tab.id}:statsQuery`, (sql: string) =>
-                              api.runQuery(sessionId, sql, null),
-                            )
-                          : undefined
-                      }
-                      onRunRelatedQuery={
-                        sessionId
-                          ? gridStable.fn(`${tab.id}:relatedQuery`, (sql: string) =>
-                              api.runQuery(sessionId, sql, tab.database ?? null),
-                            )
-                          : undefined
-                      }
-                      onLookupQuery={
-                        sessionId
-                          ? gridStable.memo(`${tab.id}:lookup`, [sessionId, lookupForSession], () =>
-                              lookupForSession(sessionId),
-                            )
-                          : undefined
-                      }
-                      onExploreColumn={
-                        sessionId
-                          ? gridStable.fn(`${tab.id}:exploreColumn`, (target: { database?: string | null; table: string; column: string }) =>
-                              handleExploreColumns(target.database ?? "", target.table, target.column),
-                            )
-                          : undefined
-                      }
-                      serverSort={tab.kind === "table" ? tab.serverSort ?? null : undefined}
-                      serverFilter={tab.kind === "table" ? tab.serverFilter ?? null : undefined}
-                      onSetServerSort={
-                        tab.kind === "table" && sessionId && tab.paginatable
-                          ? gridStable.fn(`${tab.id}:serverSort`, (column: Parameters<typeof setServerSortInTab>[1], direction: Parameters<typeof setServerSortInTab>[2]) =>
-                              setServerSortInTab(tab.id, column, direction),
-                            )
-                          : undefined
-                      }
-                      onSetServerFilter={
-                        tab.kind === "table" && sessionId && tab.paginatable
-                          ? gridStable.fn(`${tab.id}:serverFilter`, (column: Parameters<typeof setServerFilterInTab>[1], filter: Parameters<typeof setServerFilterInTab>[2]) =>
-                              setServerFilterInTab(tab.id, column, filter),
-                            )
-                          : undefined
-                      }
-                      fullExport={
-                        sessionId && (tab.kind === "table" ? tab.paginatable : tab.lastExecutedSql)
-                          ? {
-                              sessionId,
-                              // table タブは LIMIT を持たない base SQL を再実行して全件出す。
-                              // アクティブなサーバ側ソート/フィルタ (#792) があれば、画面に
-                              // 見えている条件と食い違わないよう同じ WHERE/ORDER BY を効かせる。
-                              sql:
-                                tab.kind === "table"
-                                  ? applyServerBrowse(
-                                      tab.paginatable as string,
-                                      selectedProfile?.driver ?? "mysql",
-                                      tab.serverFilter ?? null,
-                                      tab.serverSort ?? null,
-                                      tab.openTemplate?.wrapBrowse ?? false,
-                                    )
-                                  : tab.lastExecutedSql,
-                              initialBatch: Math.max(1, settings.defaultDisplayCount),
-                              chunkSize: Math.max(1, settings.streamPrefetchSize),
-                            }
-                          : undefined
-                      }
-                      bundleContext={
-                        // 調査バンドル (#745): 接続の非秘密メタ情報だけを渡す
-                        // (パスワード・接続文字列は型ごと持たない)。
-                        tab.result
-                          ? {
-                              sql: tab.lastExecutedSql || null,
-                              profileName: selectedProfile?.name ?? null,
-                              host: selectedProfile?.host || null,
-                              executedAt: tab.lastRunAt ?? null,
-                              describe: sessionId
-                                ? (db, table) => api.describeTable(sessionId, db, table)
-                                : undefined,
-                              // EXPLAIN は対応ドライバかつ読み取り SQL のときだけ (複文の書き込みを
-                              // EXPLAIN 付きで送って実行してしまう事故を避ける)。
-                              loadPlan:
-                                sessionId &&
-                                tab.lastExecutedSql &&
-                                bundlePlanSupported(selectedProfile?.driver) &&
-                                readOnlyWithHint(tab.lastRunReadOnly, tab.lastExecutedSql, selectedProfile?.driver)
-                                  ? () =>
-                                      api.runQuery(
-                                        sessionId,
-                                        `${explainPrefixFor(selectedProfile?.driver)}${tab.lastExecutedSql}`,
-                                        tab.database ?? null,
-                                      )
-                                  : undefined,
-                            }
-                          : undefined
-                      }
-                      lastEditAppliedAt={tab.lastEditAppliedAt}
-                      maximized={maximized}
-                      onToggleMaximize={() => setLayoutMode((m) => toggleLayoutMode(m, "result"))}
-                      onPinResult={() => pinCurrentResult(tab)}
-                      canPinResult={!!tab.result && !tab.streaming}
-                    />
-                    )}
-                    </ResultGridSlot>
-                    {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (
-                      <PaginationBar
-                        page={tab.page ?? 1}
-                        pageSize={tab.pageSize ?? tab.previewRowLimit}
-                        rowsOnPage={tab.result.rows.length}
-                        totalPages={tableTotalPagesEstimate(tab, tab.pageSize ?? tab.previewRowLimit)}
-                        loading={tab.loadingMore}
-                        onGoToPage={(p) => goToPageInTab(tab.id, p)}
-                        onSetPageSize={(s) => setPageSizeInTab(tab.id, s)}
-                      />
-                    )}
-                    </Flex>
-                  </ResultExplainContext.Provider>
-                  </KeepAlive>
-                </Suspense>
-                  </Box>
-                </Box>
-              }
-            />
-          ) : (
-            <PaneEmpty>
-              <EmptyState
-                icon="query"
-                title={t("tabsEmptyTitle")}
-                description={t("tabsEmpty")}
-                action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab(pane.id) }}
-                secondaryActions={tabsEmptySecondaryActions}
-              />
-            </PaneEmpty>
-          )}
-        </Flex>
-      </Flex>
+  // ペインの描画 (`PaneView`) へ渡す App 由来のハンドラ。参照が固定された束なので、
+  // 呼び出し側の関数が毎レンダー作り直されても `PaneView` の memo は破られない (#1318)。
+  const paneActions = useStableCallbacks({
+    applyEditsForTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
+    explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
+    handleExploreColumns, handleNewTab, handleOpenSqlFile, handleRegisterLocalTable,
+    handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
+    openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
+    redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,
+    requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
+    runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
+    setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
+    setSaveAsTableRequest, setSaveAsViewRequest, setServerFilterInTab, setServerSortInTab, setStatus,
+    setTransferSource, splitPane, stopTab, toggleRowDeleteForTab, undoCellEditForTab, updateTab,
+    writeBlobForTab,
+    openSnippetsFromEmpty: () => {
+      if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+      else setSidebarUserCollapsed(false);
+      setSidebarTab("snippets");
+    },
+    openErDiagramFromEmpty: () => openFullView("erDiagram"),
+    openCommandPaletteFromEmpty: () => setShowCommandPalette(true),
+  });
+  const broadcastAvailable =
+    !!sessionId &&
+    !!selectedProfile &&
+    openConnections.some(
+      (c) =>
+        c.sessionId !== sessionId &&
+        c.profile.driver === selectedProfile.driver &&
+        !isSandboxProfileId(c.profile.id),
     );
+  const paneEnv: PaneEnv = {
+    store: tabPaneStore,
+    actions: paneActions,
+    t,
+    sessionId,
+    selectedProfile,
+    layoutMode,
+    readOnly,
+    emergencyMode,
+    broadcastAvailable,
+    queryHistory,
+    editorBindings,
+    gridBindings,
+    shortcutBindings,
+    density: settings.density,
+    defaultDisplayCount: settings.defaultDisplayCount,
+    streamPrefetchSize: settings.streamPrefetchSize,
+    incomingFkCache,
+    schemaForDatabase,
+    lookupForSession,
+    dirtyTick,
+    dirtyWatcher,
+    getTabSql,
+    gridStable,
+    editorSelectionRef,
+    gridScrollRef,
+    preflightRef,
+    getEditorRefSetter,
+    getGridRefSetter,
   };
+  const renderPane = (pane: PaneState) => (
+    <PaneView
+      key={pane.id}
+      paneId={pane.id}
+      split={panes.length > 1}
+      isFocused={pane.id === activePane?.id}
+      env={paneEnv}
+    />
+  );
 
   // タイトルバー帯とアクセントウォッシュ (#978) が共有する「今アクティブな接続」
   // の要約。両者とも `titleBarContext.connectionBandColor` と同じ優先順位

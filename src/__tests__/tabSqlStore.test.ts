@@ -1,7 +1,11 @@
-import src from "../App.tsx?raw";
+import appSrc from "../App.tsx?raw";
+import paneViewSrc from "../components/PaneView.tsx?raw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Text } from "@codemirror/state";
 import { TabDirtyWatcher, TabSqlStore } from "../tabSqlStore";
+
+// タブの本文を読む箇所は App と、ペインを描画する PaneView (#1318) の両方が対象。
+const src = `${appSrc}\n${paneViewSrc}`;
 
 // #1316: 打鍵ごとに tabs を更新しない代わりに、最新本文は TabSqlStore から読む。
 // 本文を読む各経路 (実行 / EXPLAIN / 永続化 / ファイル保存 / タブ切替 / 複製) が
