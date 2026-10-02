@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { HealthFinding } from "../api/tauri";
+import type { AdvisorRuleId, HealthFinding } from "../api/tauri";
 import {
   findingDescription,
   findingTarget,
@@ -191,5 +191,23 @@ describe("nextAdvisorSort", () => {
     expect(nextAdvisorSort({ key: "rule", dir: "asc" }, "rule")).toEqual({ key: "rule", dir: "desc" });
     expect(nextAdvisorSort({ key: "rule", dir: "desc" }, "rule")).toBeNull();
     expect(nextAdvisorSort({ key: "rule", dir: "desc" }, "target")).toEqual({ key: "target", dir: "asc" });
+  });
+});
+
+describe("未知ルールのフォールバック (#1194)", () => {
+  it("union に無いルールでも見出し・説明が空にならない", () => {
+    const unknown = "brand_new_rule" as unknown as AdvisorRuleId;
+    expect(ruleTitleKey(unknown)).toBe("advisorRuleUnknownTitle");
+    const d = findingDescription({
+      rule: unknown,
+      severity: "low",
+      table: "t",
+      columns: [],
+      context: [],
+      fix_ddl: null,
+      statistical: false,
+    });
+    expect(d.key).toBe("advisorRuleUnknownDesc");
+    expect(d.params.table).toBe("t");
   });
 });
