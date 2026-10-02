@@ -284,13 +284,15 @@ jobs:
       # workflow_dispatch で更新)。ローカル (macOS/Windows) の描画差による false
       # positive を避けるため、ベースライン生成は常にこの環境で行う。
       #
-      # 主要画面のレンダリングスモーク (screens.browser.test.tsx) を実行する。
-      # ビジュアル回帰 (visual.browser.test.tsx) は VITE_RUN_VISUAL=1 のときだけ走る
-      # ため、ここでは既定でスキップされる (ベースライン PNG が無い環境では
-      # toMatchScreenshot が失敗するため)。ベースラインを visual-baseline.yml の
-      # workflow_dispatch で生成・コミットしたら、この step に
-      # `env: VITE_RUN_VISUAL: "1"` を足してビジュアル回帰も必須化できる。
-      - name: Browser render smoke (Vitest)
+      # 主要画面のレンダリングスモーク (screens.browser.test.tsx) に加え、ビジュアル
+      # 回帰 (visual.browser.test.tsx) も実行する (#1167)。後者は VITE_RUN_VISUAL=1
+      # のときだけ走る describe.runIf でゲートされているため、ここで env を立てて
+      # コミット済みベースライン PNG との比較を必須チェックに含める。ベースラインは
+      # この環境 (ubuntu-latest / Chromium) と同一で生成されている前提。意図的に
+      # 見た目を変えたときは visual-baseline.yml を作業ブランチで実行して更新する。
+      - name: Browser render smoke + visual regression (Vitest)
+        env:
+          VITE_RUN_VISUAL: "1"
         run: pnpm test:browser
 
       # ジョブ所要時間とキャッシュヒット有無を Job Summary へ出力する (#565)。
