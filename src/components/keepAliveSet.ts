@@ -26,3 +26,6 @@ export function touchKeepAlive(
   next.push(active);
   return next.length > max ? next.slice(next.length - max) : next;
 }
+
+/** 結果グリッド (ResultGrid) を非表示のまま保持するタブ数の上限 (MRU, #1309)。 */
+export const GRID_KEEP_ALIVE_LIMIT = 4;

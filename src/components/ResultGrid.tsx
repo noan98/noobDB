@@ -1,4 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useKeepAliveActive } from "./KeepAlive";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
@@ -2648,6 +2649,31 @@ function ColumnStatsMenu({
 /** Pseudo-random width percentages for skeleton shimmer bars (cycles by column index). */
 const SKELETON_WIDTHS = [68, 85, 52, 90, 72, 58];
 
+/**
+ * `useEffect` と同じだが初回マウントでは実行しない (#1309)。ストレージ由来の state は
+ * `useState` の初期化子で既に読んでいるので、マウント直後に同じ内容を新しい配列 /
+ * オブジェクトで `setState` し直すと DataGrid が余計にもう 1 回フル再レンダーされる。
+ * キー (結果シェイプ) が変わったときだけ読み直す。
+ */
+function useReloadOnChange(effect: () => void, deps: readonly unknown[]): void {
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    effect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+/**
+ * 行配列 → RowShape 配列の変換結果。インスタンス (= タブ) をまたいで再利用し、keep-alive の
+ * 外れ (保持数の上限超え) で ResultGrid を作り直しても全行の再変換を避ける (#1309)。
+ * WeakMap なので行配列が捨てられれば一緒に回収される。
+ */
+const rowShapeCache = new WeakMap<CellValue[][], RowShape[]>();
+
 // `React.memo` でラップする (#1098)。呼び出し元の `ResultGrid` は
 // ストリーミング経過時間表示 (200ms ごとに tick する `useStreamingElapsed`) や
 // 検索バー/ページネーションの UI state を自身の state として持っており、
@@ -3018,7 +3044,7 @@ export const DataGrid = memo(function DataGrid({
   maskOverridesRef.current = maskOverrides;
   // Reload sort/filters when the result shape (table) changes. Persisting only
   // happens on user interaction (below), so this load never races a stale write.
-  useEffect(() => {
+  useReloadOnChange(() => {
     const s = readStoredGridView(gridViewKey);
     setSorting(s.sorting ?? []);
     setColumnFilters(s.filters ?? []);
@@ -3128,7 +3154,7 @@ export const DataGrid = memo(function DataGrid({
   // Reload (or clear) sizing when the storage key changes — i.e. a different
   // table/result shape. Persisting happens only on user resize (below), so
   // this load never races a stale write back to the new key.
-  useEffect(() => {
+  useReloadOnChange(() => {
     setColumnSizing(readStoredColumnSizing(columnSizingStorageKey));
   }, [columnSizingStorageKey]);
   // Persist on resize. Inlined into table options so the latest storage key
@@ -3176,7 +3202,7 @@ export const DataGrid = memo(function DataGrid({
   const columnVisibilityRef = useRef(columnVisibility);
   columnVisibilityRef.current = columnVisibility;
   // Reload (order/visibility/pinning) when the result shape changes.
-  useEffect(() => {
+  useReloadOnChange(() => {
     const s = readStoredColumnState(colStateKey);
     setColumnOrder(s.order ?? []);
     setColumnVisibility(s.visibility ?? {});
@@ -3256,7 +3282,7 @@ export const DataGrid = memo(function DataGrid({
   const footerAggsRef = useRef(footerAggs);
   footerAggsRef.current = footerAggs;
   // Reload footer state when the result shape (table) changes.
-  useEffect(() => {
+  useReloadOnChange(() => {
     const s = readStoredFooterState(footerStateKey);
     setFooterEnabled(s.enabled ?? false);
     setFooterAggs(s.aggs ?? {});
@@ -3590,6 +3616,11 @@ export const DataGrid = memo(function DataGrid({
       r.forEach((v, i) => (o[String(i)] = v));
       return o;
     };
+    const memoized = rowShapeCache.get(rows);
+    if (memoized) {
+      dataCacheRef.current = { rows, data: memoized };
+      return memoized;
+    }
     const prev = dataCacheRef.current;
     const isAppendOnly =
       prev.rows.length > 0 &&
@@ -3602,6 +3633,7 @@ export const DataGrid = memo(function DataGrid({
         : prev.data.concat(rows.slice(prev.rows.length).map(toRowShape))
       : rows.map(toRowShape);
     dataCacheRef.current = { rows, data: next };
+    rowShapeCache.set(rows, next);
     return next;
   }, [rows]);
 
@@ -6862,10 +6894,30 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const report = () => onScrollRef.current?.(el.scrollTop);
+    const report = () => {
+      // display:none の間はブラウザが scrollTop を 0 にしてスクロールイベントを出すことがある。
+      // 非アクティブ (keep-alive で隠れている) 間の値は記録しない。
+      if (!keepAliveActiveRef.current) return;
+      lastScrollTopRef.current = el.scrollTop;
+      onScrollRef.current?.(el.scrollTop);
+    };
     el.addEventListener("scroll", report, { passive: true });
     return () => el.removeEventListener("scroll", report);
   }, [hasResultForScroll]);
+
+  // keep-alive (#1309): 隠れていた間に失われたスクロール位置を、再表示した瞬間に戻す。
+  const keepAliveActive = useKeepAliveActive();
+  const keepAliveActiveRef = useRef(keepAliveActive);
+  keepAliveActiveRef.current = keepAliveActive;
+  const lastScrollTopRef = useRef(0);
+  const wasKeepAliveActiveRef = useRef(keepAliveActive);
+  useLayoutEffect(() => {
+    const was = wasKeepAliveActiveRef.current;
+    wasKeepAliveActiveRef.current = keepAliveActive;
+    if (!keepAliveActive || was) return;
+    const el = containerRef.current;
+    if (el && lastScrollTopRef.current > 0) el.scrollTop = lastScrollTopRef.current;
+  }, [keepAliveActive]);
 
   // Restore the persisted scroll position once, after rows first populate (#678).
   // Clamp to the scrollable range so a now-shorter result lands at the end

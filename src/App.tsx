@@ -383,6 +383,8 @@ import {
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
 import { KeepAlive } from "./components/KeepAlive";
+import { ResultGridSlot } from "./components/ResultGridSlot";
+import { GRID_KEEP_ALIVE_LIMIT } from "./components/keepAliveSet";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
@@ -8064,6 +8066,18 @@ export default function App() {
                 : tab.preview
                   ? "preview"
                   : "grid";
+    // 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を専用の
+    // EXPLAIN タブで開く。keep-alive で保持するグリッドの中にも同じ Provider を置く (#1309)。
+    const explainCtxValue =
+      tab &&
+      sessionId &&
+      tab.kind !== "explain" &&
+      !tab.batchResults &&
+      !tab.streaming &&
+      (tab.result?.columns.length ?? 0) > 0 &&
+      tab.lastExecutedSql.trim().length > 0
+        ? () => explainForTab(tab, tab.lastExecutedSql)
+        : null;
     return (
       <Flex
         key={pane.id}
@@ -8318,21 +8332,11 @@ export default function App() {
                       ペイン初回描画時のフェードインは抑える。 */}
                   {/* 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を
                       専用の EXPLAIN タブで開く (エディタの EXPLAIN と同じ経路)。 */}
-                  <ResultExplainContext.Provider
-                    value={
-                      sessionId &&
-                      tab.kind !== "explain" &&
-                      !tab.batchResults &&
-                      !tab.streaming &&
-                      (tab.result?.columns.length ?? 0) > 0 &&
-                      tab.lastExecutedSql.trim().length > 0
-                        ? () => explainForTab(tab, tab.lastExecutedSql)
-                        : null
-                    }
-                  >
+                  <ResultExplainContext.Provider value={explainCtxValue}>
                   {/* exit を持たせない: 旧パネルは即座に外れ、新パネルだけがフェードインする
                       (`mode="wait"` だと退場 + 入場で 360ms の待ちが入っていた, #1311)。 */}
                   <AnimatePresence initial={false}>
+                    {contentMode !== "grid" && (
                     <motion.div
                       key={contentMode}
                       initial={variants.fade.initial}
@@ -8416,7 +8420,21 @@ export default function App() {
                       }
                       applyingEdits={tab.applyingEdits}
                     />
-                  ) : (
+                  ) : null}
+                    </motion.div>
+                    )}
+                  </AnimatePresence>
+                  </ResultExplainContext.Provider>
+                  {/* 結果グリッドは作り直さず非表示のまま保持する (#1309)。直近に開いた
+                      GRID_KEEP_ALIVE_LIMIT 個のタブぶんだけ (MRU)、閉じたタブは即座に外す。
+                      チャート / ピボット等の結果ビューへ切り替える間も隠れるだけで破棄しない
+                      ので、グリッドへ戻っても選択・Find・列設定が残り、全行の再変換も走らない。 */}
+                  <KeepAlive
+                    activeKey={contentMode === "grid" ? tab.id : null}
+                    limit={GRID_KEEP_ALIVE_LIMIT}
+                    liveKeys={pane.tabIds}
+                  >
+                  <ResultExplainContext.Provider value={explainCtxValue}>
                     <Flex direction="column" h="100%" minH={0} minW={0}>
                     {tab.kind === "table" && !readOnly &&
                       ((tab.pendingInserts?.length ?? 0) > 0 || (tab.pendingDeletes?.length ?? 0) > 0) && (
@@ -8447,9 +8465,10 @@ export default function App() {
                         </LoadingButton>
                       </Flex>
                     )}
+                    <ResultGridSlot register={getGridRefSetter(pane.id)}>
+                    {(gridRef) => (
                     <ResultGrid
-                      key={tab.id}
-                      ref={getGridRefSetter(pane.id)}
+                      ref={gridRef}
                       gridBindings={gridBindings}
                       result={tab.result}
                       initialScrollTop={
@@ -8734,6 +8753,8 @@ export default function App() {
                       onPinResult={() => pinCurrentResult(tab)}
                       canPinResult={!!tab.result && !tab.streaming}
                     />
+                    )}
+                    </ResultGridSlot>
                     {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (
                       <PaginationBar
                         page={tab.page ?? 1}
@@ -8746,10 +8767,8 @@ export default function App() {
                       />
                     )}
                     </Flex>
-                  )}
-                    </motion.div>
-                  </AnimatePresence>
                   </ResultExplainContext.Provider>
+                  </KeepAlive>
                 </Suspense>
                   </Box>
                 </Box>
