@@ -426,6 +426,7 @@ const JsonTreeRow = memo(
   const searchAncestor = open && !!state.search?.ancestors.has(key);
   const pageShown = state.pages.get(key) ?? CHILD_PAGE_SIZE;
   const searchVersion = searchAncestor ? state.searchVersion : 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: searchVersion は検索結果の入れ替わりを知らせる世代番号 (store から読む search 本体の代わり)。
   const { childRows, hidden } = useMemo(() => {
     if (!open) return { childRows: [], hidden: 0 };
     let kids: JsonChild[];
@@ -455,7 +456,6 @@ const JsonTreeRow = memo(
       hidden: hiddenCount,
     };
     // searchVersion は検索結果の入れ替わりを知らせる世代番号 (store から読む search 本体の代わり)。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, searchAncestor, searchVersion, pageShown, node, key, level, count, store]);
 
   return (

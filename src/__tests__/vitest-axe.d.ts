@@ -10,7 +10,7 @@ interface AxeMatchers {
 }
 
 declare module "vitest" {
-  // eslint/tsc の未使用型パラメータ警告を避けつつ Vitest の Assertion を拡張する。
+  // tsc の未使用型パラメータ警告を避けつつ Vitest の Assertion を拡張する。
   interface Assertion<T = unknown> extends AxeMatchers {
     _axe?: T;
   }

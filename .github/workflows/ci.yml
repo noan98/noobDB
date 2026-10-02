@@ -71,10 +71,10 @@ jobs:
               # #1076: knip の設定だけを変えた PR (tags / ignore の追加など) でも
               # `pnpm run knip` を再実行し、デッドコード検出の緩和を素通りさせない。
               - 'knip.json'
-              # #1176: ESLint の設定 / pnpm の依存差し替えフックだけを変えた PR でも
+              # #1176: Biome の設定 / 警告件数チェックのスクリプトだけを変えた PR でも
               # `pnpm run lint` を再実行する。
-              - 'eslint.config.js'
-              - '.pnpmfile.cjs'
+              - 'biome.json'
+              - 'scripts/biome-lint.mjs'
             rust:
               - 'src-tauri/**'
             # #853: 言語横断のゴールデン/パリティテスト (Rust 側の
@@ -195,10 +195,10 @@ jobs:
       - name: Type-check and build
         run: pnpm run build
 
-      # typescript-eslint による静的 lint (#1176)。tsc / knip では拾えない握り潰された
-      # Promise (no-floating-promises / no-misused-promises) と hooks の誤用を止める。
+      # Biome による静的 lint (#1176)。tsc / knip では拾えない握り潰された
+      # Promise (noFloatingPromises / noMisusedPromises) と hooks の誤用を止める。
       # 新しい必須チェックは増やさず、frontend ジョブ内のステップとして実行する。
-      - name: Lint (typescript-eslint)
+      - name: Lint (Biome)
         run: pnpm run lint
 
       # ビルド成果物 (dist/) の JS/CSS サイズを計測して Job Summary に出力する

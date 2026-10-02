@@ -138,6 +138,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   const [remote, setRemote] = useState<
     { sql: string; model: ChartModel | null; error: string | null } | null
   >(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 結果列の参照は config と一緒に変わるので dbAggSql だけで十分。
   useEffect(() => {
     if (!dbAggSql || !onRunQuery || !config || config.aggregation === "none") return;
     let cancelled = false;
@@ -159,7 +160,6 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       cancelled = true;
     };
     // 結果列の参照は config と一緒に変わるので dbAggSql だけで十分。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbAggSql]);
   const remoteForSql = remote && remote.sql === dbAggSql ? remote : null;
   const model = remoteForSql?.model ?? clientModel;

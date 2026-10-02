@@ -2665,7 +2665,7 @@ function useReloadOnChange(effect: () => void, deps: readonly unknown[]): void {
       return;
     }
     effect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // biome-ignore lint/correctness/useExhaustiveDependencies: deps は呼び出し側が渡す配列をそのまま使う (初回マウントでは実行しない)。
   }, deps);
 }
 

@@ -23,7 +23,7 @@ async function ensurePermission(): Promise<boolean> {
   if (permissionState === "granted") return true;
   if (permissionState === "denied") return false;
   // 複数クエリがほぼ同時に完了しても権限要求は 1 回に集約する (in-flight 共有)。
-  if (permissionPromise) return permissionPromise;
+  if (permissionPromise !== null) return permissionPromise;
   permissionPromise = (async () => {
     try {
       let granted = await isPermissionGranted();

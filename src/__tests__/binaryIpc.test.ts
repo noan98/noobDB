@@ -25,7 +25,6 @@ describe("writeBinaryFile", () => {
     expect(cmd).toBe("write_binary_file");
     expect(body).toBe(data);
     const header = (options as { headers: Record<string, string> }).headers["x-noobdb-path"];
-    // eslint-disable-next-line no-control-regex
     expect(header).toMatch(/^[\x20-\x7e]*$/);
     expect(decodeURIComponent(header)).toBe(path);
   });
