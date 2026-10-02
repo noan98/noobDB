@@ -120,6 +120,14 @@ export const config: Options.Testrunner = {
   // 失敗時のスクリーンショットを e2e/screenshots/ へ保存する (CI がアーティファクトとして回収)。
   afterTest: async (test, _context, { passed }) => {
     if (passed) return;
+    // 失敗の様子をジョブログへ直接出す (アーティファクトを取れない環境でも原因を追えるように)。
+    // アプリが落ちていると取れないので、取れなければ「取れなかった」と出す。
+    try {
+      const body = await browser.execute(() => document.body.innerText.slice(0, 1500));
+      console.log(`[E2E 失敗時の画面テキスト] ${test.title}\n${body}`);
+    } catch (e) {
+      console.log(`[E2E 失敗時の画面テキスト] ${test.title}: 取得できませんでした (${String(e).slice(0, 200)})`);
+    }
     const dir = path.resolve(__dirname, "screenshots");
     fs.mkdirSync(dir, { recursive: true });
     const name = test.title.replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 80);
@@ -129,5 +137,5 @@ export const config: Options.Testrunner = {
   // ──────────────────────────────────────────────────────────────────────────
   // ログ
   // ──────────────────────────────────────────────────────────────────────────
-  logLevel: "info",
+  logLevel: "warn",
 };
