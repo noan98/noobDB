@@ -1,4 +1,4 @@
-import { forwardRef, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { forwardRef, lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -62,6 +62,7 @@ import { attachRowDiff } from "./resultDiff";
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
+import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
 import {
@@ -2081,9 +2082,43 @@ export default function App() {
     | null
   >(null);
 
+  // タブごとの SQL 本文の最新値 (#1316)。打鍵ごとに `setTabs` すると App 全体が再レンダー
+  // されるため、本文は CodeMirror の doc への参照だけをここへ置き、`tab.sql` は更新しない。
+  // 本文を読む経路は必ず `getTabSql` を通す (`tab.sql` を直接読まない)。
+  const tabSqlStore = useMemo(() => new TabSqlStore(), []);
+  const getTabSql = useCallback(
+    (tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql),
+    [tabSqlStore],
+  );
+  // dirty 表示の切り替わりだけを検知して再描画する (連続入力中は再描画しない)。
+  const [, bumpDirty] = useReducer((n: number) => n + 1, 0);
+  const tabsForDirtyRef = useRef<Tab[]>([]);
+  const dirtyWatcher = useMemo(
+    () =>
+      new TabDirtyWatcher(
+        (id) => {
+          const tt = tabsForDirtyRef.current.find((x) => x.id === id);
+          if (!tt) return undefined;
+          return tt.kind === "query" && tabSqlStore.resolve(tt.id, tt.sql) !== tt.lastExecutedSql;
+        },
+        bumpDirty,
+      ),
+    [tabSqlStore],
+  );
+  useEffect(() => () => dirtyWatcher.dispose(), [dirtyWatcher]);
+  const handleEditorDocChange = useCallback(
+    (tabId: string, doc: { toString(): string }) => {
+      tabSqlStore.set(tabId, doc);
+      dirtyWatcher.noteChange(tabId);
+    },
+    [tabSqlStore, dirtyWatcher],
+  );
+
   const updateTab = useCallback((id: string, patch: Partial<Tab>) => {
+    // `sql` をプログラムから書き換えるときは、エディタ側の最新値より新しい指定なので破棄する。
+    if ("sql" in patch) tabSqlStore.delete(id);
     setTabs((prev) => prev.map((tt) => (tt.id === id ? { ...tt, ...patch } : tt)));
-  }, []);
+  }, [tabSqlStore]);
 
   const patchTab = useCallback((id: string, patcher: (tab: Tab) => Tab) => {
     setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
@@ -2874,7 +2909,7 @@ export default function App() {
             .filter((tt): tt is Tab => tt != null)
             .map((tt) =>
               toPersistedTab(
-                tt,
+                tabSqlStore.withLatest(tt),
                 editorSelectionRef.current.get(tt.id),
                 gridScrollRef.current.get(tt.id),
               ),
@@ -2886,7 +2921,7 @@ export default function App() {
       activePane: Math.max(0, curPanes.findIndex((p) => p.id === activePaneIdRef.current)),
     };
     savePersistedWorkspace(profileId, ws);
-  }, []);
+  }, [tabSqlStore]);
 
   // Flushing on `beforeunload` lands the current state in localStorage as the
   // window tears down, so in-session tab updates (builder snapshots, SQL edits)
@@ -2910,6 +2945,8 @@ export default function App() {
       editorSelectionRef.current.delete(tt.id);
       gridScrollRef.current.delete(tt.id);
       preflightRef.current.delete(tt.id);
+      tabSqlStore.delete(tt.id);
+      dirtyWatcher.forget(tt.id);
     }
     setTabs([]);
     setPanes([]);
@@ -3554,7 +3591,7 @@ export default function App() {
   // Tabs ref kept in sync so streaming callbacks below can read the latest
   // committed tab state without re-creating themselves on every batch.
   const tabsRef = useRef<Tab[]>(tabs);
-  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+  useEffect(() => { tabsRef.current = tabs; tabsForDirtyRef.current = tabs; }, [tabs]);
 
   const nextRowCount = useCallback((tabId: string, justAdded: number) => {
     const tt = tabsRef.current.find((x) => x.id === tabId);
@@ -4269,7 +4306,7 @@ export default function App() {
         if (tab.kind === "table" && tab.paginatable) {
           // `sid` は切替/接続で確定したばかりの新セッション。まだ再描画前なので
           // `runQueryInTab` のクロージャは切替元のセッションとタブ一覧を指している。
-          runQueryInTab(tab.id, tab.sql, tab.paginatable, null, false, { sessionId: sid, tab });
+          runQueryInTab(tab.id, getTabSql(tab), tab.paginatable, null, false, { sessionId: sid, tab });
         }
       }
       // Surface any table tabs that downgraded to query tabs. `skip_history`
@@ -6915,7 +6952,7 @@ export default function App() {
         filters: [{ name: "SQL", extensions: ["sql"] }],
       });
       if (typeof dest !== "string" || !dest) return;
-      await api.writeTextFile(dest, tab.sql);
+      await api.writeTextFile(dest, getTabSql(tab));
       toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
     } catch (e) {
       toast.error(translate("saveSqlFileError", { error: String(e) }));
@@ -6965,6 +7002,8 @@ export default function App() {
     editorSelectionRef.current.delete(id);
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
+    tabSqlStore.delete(id);
+    dirtyWatcher.forget(id);
     const prevPanes = panesRef.current;
     let removedPaneId: string | null = null;
     let next = prevPanes.map((p) => {
@@ -7164,9 +7203,10 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       if (comboMatchesEvent(bindingsRef.current.runNewTab, e)) {
         const t = activeTab;
-        if (t && t.kind === "query" && t.sql.trim() && sessionId) {
+        const body = t ? getTabSql(t) : "";
+        if (t && t.kind === "query" && body.trim() && sessionId) {
           e.preventDefault();
-          runInTabWithGate(t, t.sql, { newTab: true });
+          runInTabWithGate(t, body, { newTab: true });
         }
       }
     };
@@ -7988,7 +8028,11 @@ export default function App() {
             title: tt.title,
             database: tt.database,
             table: tt.table,
-            dirty: tt.kind === "query" && tt.sql !== tt.lastExecutedSql,
+            dirty: (() => {
+              const d = tt.kind === "query" && getTabSql(tt) !== tt.lastExecutedSql;
+              dirtyWatcher.recordShown(tt.id, d);
+              return d;
+            })(),
           }))}
           activeTabId={pane.activeTabId}
           onSelect={(id) => selectTab(pane.id, id)}
@@ -8070,7 +8114,7 @@ export default function App() {
                   <QueryEditor
                     tabId={tab.id}
                     ref={getEditorRefSetter(pane.id)}
-                    initialSql={tab.sql}
+                    initialSql={getTabSql(tab)}
                     initialSelection={editorSelectionRef.current.get(tab.id) ?? tab.selection}
                     onSelectionChange={(sel) => editorSelectionRef.current.set(tab.id, sel)}
                     running={tab.streaming && !tab.previewStreaming}
@@ -8092,7 +8136,7 @@ export default function App() {
                       )
                     }
                     explainMode={tab.kind === "explain"}
-                    onChange={(sql) => updateTab(tab.id, { sql })}
+                    onDocChange={(doc) => handleEditorDocChange(tab.id, doc)}
                     onPreflightImpact={(r) => preflightRef.current.set(tab.id, r)}
                     onSaveSnippet={handleSaveSnippetFromEditor}
                     onOpenFile={() => void handleOpenSqlFile()}
@@ -8256,7 +8300,7 @@ export default function App() {
                         active: !!tab.explainAnalyze,
                         onToggle: (next) => {
                           if (tab.streaming) return;
-                          void runExplainInTab(tab.id, tab.sql, next);
+                          void runExplainInTab(tab.id, getTabSql(tab), next);
                         },
                       }}
                     />

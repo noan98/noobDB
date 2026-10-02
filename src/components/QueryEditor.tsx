@@ -11,7 +11,7 @@ import {
 } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
-import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -207,6 +207,12 @@ interface Props {
    */
   broadcastAvailable?: boolean;
   onChange?: (sql: string) => void;
+  /**
+   * 本文が変わるたびに、その時点の不変ドキュメントを渡す (#1316)。文字列化しないので打鍵ごとに
+   * 呼んでも O(1)。App はこれで「最新本文への参照」だけを保ち、`tabs` の state は更新しない
+   * (打鍵ごとの App 再レンダーを避ける)。文字列が要るときに呼び出し側が `toString()` する。
+   */
+  onDocChange?: (doc: Text) => void;
   onFormatError?: (error: string) => void;
   onSaveSnippet?: (sql: string) => void;
   /**
@@ -470,6 +476,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onBroadcast,
   broadcastAvailable,
   onChange,
+  onDocChange,
   onFormatError,
   onSaveSnippet,
   onOpenFile,
@@ -615,6 +622,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const preflightTimerRef = useRef<number | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onDocChangeRef = useRef(onDocChange);
+  onDocChangeRef.current = onDocChange;
   const onSelectionChangeRef = useRef(onSelectionChange);
   onSelectionChangeRef.current = onSelectionChange;
   const onFormatErrorRef = useRef(onFormatError);
@@ -840,7 +849,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               // その行が現在行になるのと同じ挙動。
               if (!navigatingRef.current) resetHistoryNav();
               setHasContent(u.state.doc.length > 0);
-              onChangeRef.current?.(u.state.doc.toString());
+              onDocChangeRef.current?.(u.state.doc);
+              // 全文の文字列化は、文字列を求める呼び出し側があるときだけ (#1316)。
+              const onChangeText = onChangeRef.current;
+              if (onChangeText) onChangeText(u.state.doc.toString());
             }
             // カーソル/選択の変化をタブ永続化用に通知 (#678)。ref マップ書き込みだけの
             // 軽量コールバックなので毎回発火してよい (React 再レンダは起こさない)。
