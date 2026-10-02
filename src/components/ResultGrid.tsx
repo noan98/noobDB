@@ -949,7 +949,7 @@ export const GRID_CSS: SystemStyleObject = {
   // Apply 成功時の一時的な成功フラッシュ。App.css の @keyframes apply-flash と
   // セットで動作する。is-apply-flash クラスは ResultGrid の useEffect で付与/除去される。
   "&.is-apply-flash": {
-    animation: "apply-flash 0.7s ease-out",
+    animation: "apply-flash-box 0.7s ease-out",
   },
   // 結果内検索 (Find in Results, #644) のヒットハイライト。行を隠す列フィルタと
   // 違い「読みながら探す」機能なので、選択 (アクセント色) と区別できる警告色系の
@@ -965,18 +965,10 @@ export const GRID_CSS: SystemStyleObject = {
     {
       background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 38%, var(--bg))`,
       boxShadow: `inset 0 0 0 2px ${semanticColorVar("warning", "solid")}`,
-      animation: "find-current-pulse 0.45s var(--ease-out)",
     },
-  // コピー成功時の範囲フラッシュ (#1159)。演出は apply-flash (インライン編集の
-  // 適用成功) をそのまま再利用する — どちらも「一瞬 inset リングで確認を示す」
-  // 同じ意味の演出のため、専用キーフレームを増やさない。クラスは `runCopy` が
-  // コピー成功時に対象セルの DOM 要素へ直接付け外しする (`flashCopyRange`)。
-  // ストライプ/ホバーの行背景より優先する必要があるため、is-find-current と同じ
-  // 3 セレクタで上書きする。
-  "& tbody td.is-copy-flash, & tbody tr.grid-row-stripe td.is-copy-flash, & tbody tr:hover td.is-copy-flash":
-    {
-      animation: "apply-flash 0.7s ease-out",
-    },
+  // コピー成功時の範囲フラッシュ (#1159) と現在ヒットのパルスは、疑似要素の opacity
+  // だけを動かす (App.css の `td.is-copy-flash::after` / `td.is-find-current::after`、#1322)。
+  // クラスは `runCopy` がコピー成功時に対象セルの DOM 要素へ直接付け外しする。
 };
 
 /**

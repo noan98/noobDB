@@ -185,6 +185,16 @@ export const variants = {
     animate: { opacity: 1, scale: 1 },
     exit: { opacity: 0, scale: 0.7 },
   },
+  /**
+   * 透明度 + 横方向のスケール (タブの追加/削除、#1322)。`width` の補間は隣の要素の
+   * 再配置を毎フレーム起こすため、レイアウトに関与しない transform で表す。
+   * 使う側は `transformOrigin` を出入りの起点側 (左端など) に指定する。
+   */
+  fadeScaleX: {
+    initial: { opacity: 0, scaleX: 0.6 },
+    animate: { opacity: 1, scaleX: 1 },
+    exit: { opacity: 0, scaleX: 0.6 },
+  },
   /** 下から少し上げて出し、上へ抜ける (テキストの差し替え等)。 */
   slideUp: {
     initial: { opacity: 0, y: 4 },

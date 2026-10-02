@@ -8870,13 +8870,10 @@ export default function App() {
         flex="1"
         minH={0}
         position="relative"
-        // 折りたたみ↔展開の width トランジション (#873)。グリッドトラック
-        // (0px ↔ サイドバー幅) を補間する。リサイズドラッグ中は無効化して
-        // ハンドル操作のキビキビ感を保ち、reduced-motion は App.css の
-        // グローバルメディアクエリが transition を実質無効化する。
-        transition={
-          sidebarResizing ? undefined : "grid-template-columns var(--dur-med) var(--ease)"
-        }
+        // グリッドトラックは補間せず即時に切り替える (#1322)。以前は
+        // grid-template-columns を補間しており、毎フレームワークスペース全体
+        // (エディタ・グリッド) が再レイアウトされていた。開閉の動きはサイドバー
+        // (aside) 側の transform / opacity だけで表す。
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
       <Flex
@@ -8888,13 +8885,25 @@ export default function App() {
         borderRightWidth="1px"
         borderRightColor="app.border"
         bg="app.surface"
-        // 折りたたみ中は内容もフェードアウトさせる (#873)。トラック幅の補間
-        // (Grid 側) と重ねることで「スッと消える」印象にする。子要素の幅を
-        // サイドバー幅へ固定し、収縮中にテキストが再折返しでガタつかず右端
-        // から静かにクリップされるようにする (絶対配置のスパインはインライン
-        // style の width が勝つため影響しない)。
+        // 開閉は transform (translateX) + opacity だけで描く (#873 / #1322)。
+        // 幅は常にサイドバー幅へ固定し、折りたたみ中はトラックが 0 でもはみ出した
+        // まま左へスライドアウトする (合成のみ、再レイアウトなし)。完全に隠れた後は
+        // visibility で描画から外す。展開後は transform: none に戻り、fixed 子孫の
+        // 包含ブロックにならない。幅は #1312 の `--sidebar-width` (リサイズ中は
+        // SidebarResizeHandle が DOM へ直接書く) をそのまま参照する。
+        width="var(--sidebar-width, 300px)"
+        zIndex={sidebarCollapsed ? 40 : undefined}
         opacity={sidebarCollapsed ? 0 : 1}
-        transition={sidebarResizing ? undefined : "opacity var(--dur-med) var(--ease)"}
+        visibility={sidebarCollapsed ? "hidden" : "visible"}
+        transform={sidebarCollapsed ? "translateX(-100%)" : "none"}
+        pointerEvents={sidebarCollapsed ? "none" : undefined}
+        transition={
+          sidebarResizing
+            ? undefined
+            : sidebarCollapsed
+              ? "transform var(--dur-med) var(--ease), opacity var(--dur-med) var(--ease), visibility 0s linear var(--dur-med)"
+              : "transform var(--dur-med) var(--ease), opacity var(--dur-med) var(--ease)"
+        }
         css={{ "& > *": { width: "var(--sidebar-width, 300px)" } }}
         // 折りたたみ中は不可視 (幅 0 + opacity 0) でも DOM 上はフォーカス可能な
         // ままなので、inert で配下のコントロールをタブ順から除外する (#873
@@ -10809,7 +10818,6 @@ export default function App() {
               alignItems: "center",
               justifyContent: "center",
               background: "color-mix(in srgb, var(--bg) 55%, transparent)",
-              backdropFilter: "blur(2px)",
             }}
           >
             <motion.div

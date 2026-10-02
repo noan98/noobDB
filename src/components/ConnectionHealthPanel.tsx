@@ -337,7 +337,8 @@ export function ConnectionHealthPanel({
                   <chakra.tr
                     key={`${row.profileId}:${row.sessionId ?? "-"}:${gen}`}
                     data-testid={`health-row-${row.profileId}`}
-                    css={gen > 0 ? { animation: "apply-flash 0.7s ease-out" } : undefined}
+                    css={gen > 0 ? { "& > td": { position: "relative" } } : undefined}
+                    className={gen > 0 ? "flash-row" : undefined}
                   >
                     <chakra.td css={tdCss}>
                       <Flex direction="column" gap="0.5">

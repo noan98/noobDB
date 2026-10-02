@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { readableInk, useIsDarkTheme } from "../colorScale";
@@ -442,10 +442,11 @@ export function CartesianChart({
   const labelStep = Math.ceil(n / 16);
   // 点が少ないときだけマーカーを描く (多いとつぶれて逆に読みにくい)。
   const showMarkers = type !== "bar" && n <= 60;
+  const reducedMotion = useReducedMotion() ?? false;
   // 出現アニメーションは要素数が一定以下のときだけ行う (大量要素の同時アニメは
-  // 描画コストが嵩むため静的描画にフォールバック)。reduced-motion 時はルートの
-  // MotionConfig が自動的に即時化するため、ここでは分岐不要。
-  const animate = model.series.length * n <= ANIM_MAX_ELEMENTS;
+  // 描画コストが嵩むため静的描画にフォールバック)。棒の height / pathLength の補間は
+  // MotionConfig reducedMotion では止まらないため、reduced-motion でも静的描画にする (#1322)。
+  const animate = !reducedMotion && model.series.length * n <= ANIM_MAX_ELEMENTS;
 
   // ポインタの X からバンドインデックスを逆算する。SVG は viewBox + width:100% +
   // maxHeight:100% のため、高さ制約時は preserveAspectRatio (既定 xMidYMid meet) で

@@ -1337,7 +1337,8 @@ export const TableDiffRow = memo(function TableDiffRow({
             initial="initial"
             animate="animate"
             exit="exit"
-            transition={transitions.layout}
+            // height / opacity の補間は MotionConfig では止まらないので個別に即時化 (#1322)
+            transition={reduced ? { duration: 0 } : transitions.layout}
           >
             <MotionColumnList
               variants={staggerContainer(reduced)}
