@@ -367,7 +367,11 @@ import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { shortcutTooltip } from "./shortcutLabel";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
-import { workspaceViewKey } from "./components/workspaceView";
+import {
+  WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT,
+  workspaceSurfaceKey,
+  workspaceViewKey,
+} from "./components/workspaceView";
 import {
   hasOpenNestedLayer,
   isEditableElement,
@@ -375,6 +379,7 @@ import {
 } from "./components/workspaceEscape";
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
+import { KeepAlive } from "./components/KeepAlive";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
@@ -597,9 +602,13 @@ const SIDEBAR_TAB_INDICATOR_ID = "sidebar-tab-active-indicator";
 // プロップ名と衝突するため明示的に転送する)。
 const MotionSidebarTabIndicator = chakra(motion.span, {}, { forwardProps: ["transition"] });
 
-// サイドバータブパネルのクロスフェード本体。flex 子として高さいっぱいに広がる
+// サイドバーのタブ数 (connections / snippets / history / local)。keep-alive の保持数の
+// 上限 (#1311): タブは有限なので、全タブを保持しても増え続けない。
+const SIDEBAR_TABS_KEEP_ALIVE_LIMIT = 4;
+
+// サイドバータブパネルの本体。flex 子として高さいっぱいに広がる
 // (`BottomPanel.tsx` の `FILL_STYLE` と同じ意図: 中身のスクロール・高さが
-// motion.div の挟み込みで壊れないようにする)。
+// ラッパの挟み込みで壊れないようにする)。
 const SIDEBAR_TABPANEL_FILL_STYLE: CSSProperties = {
   flex: 1,
   minHeight: 0,
@@ -8230,12 +8239,13 @@ export default function App() {
                         : null
                     }
                   >
-                  <AnimatePresence mode="wait" initial={false}>
+                  {/* exit を持たせない: 旧パネルは即座に外れ、新パネルだけがフェードインする
+                      (`mode="wait"` だと退場 + 入場で 360ms の待ちが入っていた, #1311)。 */}
+                  <AnimatePresence initial={false}>
                     <motion.div
                       key={contentMode}
                       initial={variants.fade.initial}
                       animate={variants.fade.animate}
-                      exit={variants.fade.exit}
                       transition={transitions.enter}
                       style={{
                         flex: 1,
@@ -9004,18 +9014,20 @@ export default function App() {
           flex="1"
           overflow="hidden"
         >
-          {/* サイドバー本体 (アプリ起動直後) の初期表示と二重にならないよう
-              initial={false}。BottomPanel (#1142) のタブ切替と同じ組み合わせ。 */}
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={sidebarTab}
-              initial={variants.fade.initial}
-              animate={variants.fade.animate}
-              exit={variants.fade.exit}
-              transition={transitions.crossfade}
-              style={SIDEBAR_TABPANEL_FILL_STYLE}
-            >
-          {sidebarTab === "connections" ? (
+          {/* サイドバーのタブは中身を破棄せず保持する (#1311)。
+              - ConnectionList は常に最新の props が要り (ref 経由の操作もある)、離れると
+                ツリーの再取得 (`loadSchemaTree`) が走るため、別枠で常駐させ非表示にするだけ。
+              - ほかの 3 タブは `KeepAlive` で遅延マウント + 保持。タブは 4 つで有限なので
+                保持数の上限はその数 (= 全タブを保持できる)。
+              非表示は hidden + inert (フォーカス・読み上げから外す)。 */}
+          <div
+            hidden={sidebarTab !== "connections"}
+            inert={sidebarTab !== "connections" || undefined}
+            style={{
+              ...SIDEBAR_TABPANEL_FILL_STYLE,
+              display: sidebarTab === "connections" ? "flex" : "none",
+            }}
+          >
           <ConnectionList
             ref={connectionListRef}
             profiles={visibleProfiles}
@@ -9031,7 +9043,12 @@ export default function App() {
             recent={quickAccess.recent}
             sandboxes={sandboxes}
           />
-        ) : sidebarTab === "snippets" ? (
+          </div>
+          <KeepAlive
+            activeKey={sidebarTab === "connections" ? null : sidebarTab}
+            limit={SIDEBAR_TABS_KEEP_ALIVE_LIMIT}
+          >
+          {sidebarTab === "snippets" ? (
           <SnippetList
             snippets={snippets}
             activeProfile={selectedProfile}
@@ -9067,8 +9084,7 @@ export default function App() {
             onSaveToFile={handleSaveLocalDatabase}
           />
         )}
-            </motion.div>
-          </AnimatePresence>
+          </KeepAlive>
         </Box>
         {/* グローバル操作 (テーマ / ヘルプ / 設定) のフッタ。接続先一覧とは無関係な
             操作のため、過密になったヘッダから下部へ退避 (VSCode の下部ギアと同配置)。 */}
@@ -9221,6 +9237,7 @@ export default function App() {
                 label={bottomPanelLabel}
                 onSelect={setBottomPanelTab}
                 onClose={() => setBottomPanelTab(null)}
+                resetKey={sessionId}
               >
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {activeBottomPanelTab === "output" ? (
@@ -9326,13 +9343,18 @@ export default function App() {
             ) : null
           }
         >
-        <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={workspaceView}
-          initial={variants.fade.initial}
-          animate={variants.fade.animate}
-          exit={variants.fade.exit}
-          transition={transitions.enter}
+        {/* 全画面サーフェスは常駐するワークスペース (エディタとグリッド) の**上に重ねる**
+            (#1311)。以前は三項チェーンで置き換えていたため、ER 図などを開くたびに
+            エディタと結果グリッドが破棄され、閉じると作り直されていた。ワークスペースは
+            `<main>` の下に残し、サーフェスが出ている間は `visibility: hidden` + `inert` で
+            フォーカス・読み上げから外す (`display: none` と違いレイアウトとスクロール位置
+            を保つ)。切替は退場を待たない (`mode="wait"` をやめた)。
+            ボトムパネルとその折りたたみバーは `WorkspaceSplit` の別ペインなので、
+            サーフェスの表示中も隠れない (#1280)。 */}
+        <Box position="relative" flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
+        <div
+          inert={workspaceView !== "workspace" || undefined}
+          aria-hidden={workspaceView !== "workspace" || undefined}
           style={{
             flex: 1,
             minHeight: 0,
@@ -9340,94 +9362,14 @@ export default function App() {
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
+            visibility: workspaceView === "workspace" ? "visible" : "hidden",
+            // サーフェスが出ていく間 (フェードイン中) は下のワークスペースを残し、
+            // 戻るときは即座に見せる (閉じるサーフェスを消す前に空白を挟まない)。
+            transition: "visibility 0s linear",
+            transitionDelay: workspaceView === "workspace" ? "0s" : "var(--dur-med)",
           }}
         >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-        {/* Escape で閉じる全画面サーフェスは `WorkspaceSurface` で包む (#1070)。
-            開いたらコンテナへフォーカスを移し、閉じたら開く前の要素へ戻す。
-            `onClose` は戻るボタンと同じ関数を渡す (導線を 1 つに揃える)。
-            フォーム 2 種は未保存入力の破棄を避けるため Escape 対象外。 */}
-        {showCompare ? (
-          <WorkspaceSurface view="compare" onClose={() => setShowCompare(false)}>
-            <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
-          </WorkspaceSurface>
-        ) : showErd && sessionId ? (
-          <WorkspaceSurface view="erd" onClose={() => setShowErd(false)}>
-            <ERDiagramView
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
-              onOpenTable={handleOpenTable}
-              onClose={() => setShowErd(false)}
-            />
-          </WorkspaceSurface>
-        ) : showUsers && sessionId ? (
-          <WorkspaceSurface view="users" onClose={() => setShowUsers(false)}>
-            <UsersPanel
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={activeTab?.database ?? selectedProfile?.database ?? null}
-              readOnly={selectedProfile?.read_only ?? false}
-              onClose={() => setShowUsers(false)}
-            />
-          </WorkspaceSurface>
-        ) : showServerInfo && sessionId ? (
-          <WorkspaceSurface view="serverInfo" onClose={() => setShowServerInfo(false)}>
-            <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
-          </WorkspaceSurface>
-        ) : showSizes && sizesTarget && sessionId ? (
-          <WorkspaceSurface view="sizes" onClose={() => setSizesTarget(null)}>
-            <TableStatisticsPanel
-              sessionId={sessionId}
-              database={sizesTarget}
-              onOpenTable={(table) => {
-                const db = sizesTarget;
-                setSizesTarget(null);
-                handleOpenTable(db, table);
-              }}
-              onClose={() => setSizesTarget(null)}
-            />
-          </WorkspaceSurface>
-        ) : showCompareResults ? (
-          <WorkspaceSurface view="compareResults" onClose={() => setShowCompareResults(false)}>
-            <PinnedComparisonView
-              pinned={pinnedResults}
-              driver={selectedProfile?.driver ?? "mysql"}
-              onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
-              onClear={() => setPinnedResults([])}
-              onClose={() => setShowCompareResults(false)}
-            />
-          </WorkspaceSurface>
-        ) : showForm ? (
-          <ConnectionForm
-            key={formInstanceId}
-            initial={editing}
-            profiles={profiles}
-            onSaved={async () => {
-              setShowForm(false);
-              setEditing(null);
-              await runWithErrorStatus(refreshProfiles, "statusFailedLoadProfiles");
-            }}
-            onCancel={() => { setShowForm(false); setEditing(null); }}
-          />
-        ) : showSnippetForm ? (
-          <SnippetForm
-            key={formInstanceId}
-            initial={editingSnippet}
-            snippets={snippets}
-            profiles={profiles}
-            activeProfile={selectedProfile}
-            initialSql={snippetFormSql}
-            onSaved={async () => {
-              setShowSnippetForm(false);
-              setEditingSnippet(null);
-              setSnippetFormSql("");
-              setSidebarTab("snippets");
-              await runWithErrorStatus(refreshSnippets, "statusFailedLoadSnippets");
-            }}
-            onCancel={() => { setShowSnippetForm(false); setEditingSnippet(null); setSnippetFormSql(""); }}
-          />
-        ) : (
           <>
             <Flex
               align="center"
@@ -9668,10 +9610,137 @@ export default function App() {
               </Flex>
             )}
           </>
-        )}
         </Suspense>
-        </motion.div>
+        </div>
+        {/* Escape で閉じる全画面サーフェスは `WorkspaceSurface` で包む (#1070)。
+            開いたらコンテナへフォーカスを移し、閉じたら開く前の要素へ戻す。
+            `onClose` は戻るボタンと同じ関数を渡す (導線を 1 つに揃える)。
+            フォーム 2 種は未保存入力の破棄を避けるため Escape 対象外。 */}
+        {/* 一度開いたサーフェスは非表示で保持し (遅延マウント + keep-alive)、スキーマ比較の
+            結果や ER 図の描画を、ほかの画面へ移っても失わない。キーに接続 / 対象 DB を
+            含めるので、接続や対象が変われば別インスタンスになる。保持数は
+            `WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT` で、古いものから捨てる。
+            **Suspense は KeepAlive の内側 (アイテム単位)** に置く: 外側 1 つだと、遅延
+            ロード中に保持している他のサーフェスまでフォールバックに差し替わる。 */}
+        <KeepAlive
+          activeKey={workspaceSurfaceKey(workspaceView, {
+            sessionId,
+            database: activeTab?.database ?? selectedProfile?.database ?? null,
+            sizesTarget,
+          })}
+          limit={WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT}
+          rootStyle={{ position: "absolute", inset: 0 }}
+          itemStyle={{ background: "var(--bg)" }}
+        >
+        <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+        {showCompare ? (
+          <WorkspaceSurface view="compare" onClose={() => setShowCompare(false)}>
+            <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
+          </WorkspaceSurface>
+        ) : showErd && sessionId ? (
+          <WorkspaceSurface view="erd" onClose={() => setShowErd(false)}>
+            <ERDiagramView
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+              onOpenTable={handleOpenTable}
+              onClose={() => setShowErd(false)}
+            />
+          </WorkspaceSurface>
+        ) : showUsers && sessionId ? (
+          <WorkspaceSurface view="users" onClose={() => setShowUsers(false)}>
+            <UsersPanel
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={activeTab?.database ?? selectedProfile?.database ?? null}
+              readOnly={selectedProfile?.read_only ?? false}
+              onClose={() => setShowUsers(false)}
+            />
+          </WorkspaceSurface>
+        ) : showServerInfo && sessionId ? (
+          <WorkspaceSurface view="serverInfo" onClose={() => setShowServerInfo(false)}>
+            <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+          </WorkspaceSurface>
+        ) : showSizes && sizesTarget && sessionId ? (
+          <WorkspaceSurface view="sizes" onClose={() => setSizesTarget(null)}>
+            <TableStatisticsPanel
+              sessionId={sessionId}
+              database={sizesTarget}
+              onOpenTable={(table) => {
+                const db = sizesTarget;
+                setSizesTarget(null);
+                handleOpenTable(db, table);
+              }}
+              onClose={() => setSizesTarget(null)}
+            />
+          </WorkspaceSurface>
+        ) : showCompareResults ? (
+          <WorkspaceSurface view="compareResults" onClose={() => setShowCompareResults(false)}>
+            <PinnedComparisonView
+              pinned={pinnedResults}
+              driver={selectedProfile?.driver ?? "mysql"}
+              onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
+              onClear={() => setPinnedResults([])}
+              onClose={() => setShowCompareResults(false)}
+            />
+          </WorkspaceSurface>
+        ) : null}
+        </Suspense>
+        </KeepAlive>
+        {/* フォームは未保存の入力を持つので保持しない (閉じたら破棄)。サーフェスと同じく
+            ワークスペースの上に重ね、退場は待たない。 */}
+        <AnimatePresence initial={false}>
+          {(workspaceView === "form" || workspaceView === "snippetForm") && (
+            <motion.div
+              key={workspaceView}
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              transition={transitions.enter}
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                background: "var(--bg)",
+              }}
+            >
+              <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+                {workspaceView === "form" ? (
+          <ConnectionForm
+            key={formInstanceId}
+            initial={editing}
+            profiles={profiles}
+            onSaved={async () => {
+              setShowForm(false);
+              setEditing(null);
+              await runWithErrorStatus(refreshProfiles, "statusFailedLoadProfiles");
+            }}
+            onCancel={() => { setShowForm(false); setEditing(null); }}
+          />
+                ) : (
+          <SnippetForm
+            key={formInstanceId}
+            initial={editingSnippet}
+            snippets={snippets}
+            profiles={profiles}
+            activeProfile={selectedProfile}
+            initialSql={snippetFormSql}
+            onSaved={async () => {
+              setShowSnippetForm(false);
+              setEditingSnippet(null);
+              setSnippetFormSql("");
+              setSidebarTab("snippets");
+              await runWithErrorStatus(refreshSnippets, "statusFailedLoadSnippets");
+            }}
+            onCancel={() => { setShowSnippetForm(false); setEditingSnippet(null); setSnippetFormSql(""); }}
+          />
+                )}
+              </Suspense>
+            </motion.div>
+          )}
         </AnimatePresence>
+        </Box>
         </WorkspaceSplit>
 
         {!statusDismissed && status.kind !== "idle" && (() => {
