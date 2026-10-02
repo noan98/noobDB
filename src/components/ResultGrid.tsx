@@ -1,11 +1,12 @@
-import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { useKeepAliveActive } from "./KeepAlive";
+import { useStableCallbacks } from "../useStableCallbacks";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみ。
 import { markGridCommit } from "../perf";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { measureElement as defaultMeasureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   COLLAPSIBLE_TOOLBAR_ACTIONS,
@@ -39,6 +40,7 @@ import {
   type SortFn,
   type SortingState,
   type Cell,
+  type Header,
   type Row,
 } from "@tanstack/react-table";
 import {
@@ -2667,6 +2669,529 @@ function useReloadOnChange(effect: () => void, deps: readonly unknown[]): void {
   }, deps);
 }
 
+/** `GridHeaderCell` が呼ぶハンドラの束 (`useStableCallbacks` で参照固定して渡す, #1341)。 */
+type GridHeaderHandlers = {
+  onDragOver: (e: ReactDragEvent<HTMLTableCellElement>, colId: string) => void;
+  onDrop: (e: ReactDragEvent<HTMLTableCellElement>, colId: string) => void;
+  onDragStart: (e: ReactDragEvent<HTMLElement>, colId: string) => void;
+  onDragEnd: () => void;
+  onOpenFilter: (colIdx: number, anchor: DOMRect) => void;
+  onStartResize: (
+    e: React.MouseEvent | React.TouchEvent,
+    column: Header<GridFeatures, RowShape, unknown>["column"],
+  ) => void;
+};
+
+/**
+ * 列ヘッダ 1 つぶん (#1341)。ヘッダは列数ぶんの Tooltip・アイコン・ボタンを持つので、
+ * アクティブセルの移動や keep-alive の再表示のたびに全部を描き直すと無視できない。
+ * その列に関係する値だけを props で受け、無関係な更新では再レンダーしない。
+ * 描画が読む値を足すときは `GridHeaderCellProps` に足し、`DataGrid` の呼び出しで渡すこと。
+ */
+interface GridHeaderCellProps {
+  /** TanStack のヘッダ。比較からは外す (列定義・各種プリミティブで代替)。 */
+  header: Header<GridFeatures, RowShape, unknown>;
+  columnDefs: ColumnDef<GridFeatures, RowShape>[];
+  colName: string;
+  kind: CellKind;
+  enableColumnControls: boolean;
+  canSort: boolean;
+  canResize: boolean;
+  isResizing: boolean;
+  sortDir: false | "asc" | "desc";
+  sortRank: number;
+  isChangedCol: boolean;
+  colFilterActive: boolean;
+  pinSide: ReturnType<typeof pinSideFromTable>;
+  /** ピン留め列の sticky オフセット (左なら left、右なら right)。 */
+  pinOffset: number;
+  dragActive: boolean;
+  isDragOver: boolean;
+  isDragSource: boolean;
+  filterOpen: boolean;
+  /** NULL 率 (%)。ミニバーを出さないときは null。 */
+  nullPct: number | null;
+  rowCount: number;
+  t: ReturnType<typeof useT>;
+  bindTooltip: ReturnType<typeof useDelegatedTooltip>["bind"];
+  handlers: GridHeaderHandlers;
+}
+
+function gridHeaderPropsEqual(a: GridHeaderCellProps, b: GridHeaderCellProps): boolean {
+  for (const k of Object.keys(a) as Array<keyof GridHeaderCellProps>) {
+    if (k === "header") continue;
+    if (!Object.is(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+const GridHeaderCell = memo(function GridHeaderCell({
+  header: h,
+  colName,
+  kind,
+  enableColumnControls,
+  canSort,
+  canResize,
+  isResizing,
+  sortDir,
+  sortRank,
+  isChangedCol,
+  colFilterActive,
+  pinSide,
+  pinOffset,
+  dragActive,
+  isDragOver,
+  isDragSource,
+  filterOpen,
+  nullPct,
+  rowCount,
+  t,
+  bindTooltip,
+  handlers,
+}: GridHeaderCellProps) {
+  const colIdx = Number(h.column.id);
+  const sortTitle =
+    sortDir === "asc"
+      ? t("gridSortDesc")
+      : sortDir === "desc"
+        ? t("gridSortClear")
+        : t("gridSortAsc");
+  const filterLabel = t("gridFilterAria", { column: colName });
+  const pinStyle: CSSProperties = pinSide
+    ? {
+        position: "sticky",
+        zIndex: 3,
+        ...(pinSide === "left" ? { left: pinOffset } : { right: pinOffset }),
+      }
+    : {};
+  return (
+    <th
+      data-col-id={h.column.id}
+      style={pinStyle}
+      className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${isDragOver ? "is-drag-over" : ""} ${isDragSource ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
+      aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
+      onDragOver={dragActive ? (e) => handlers.onDragOver(e, h.column.id) : undefined}
+      onDrop={dragActive ? (e) => handlers.onDrop(e, h.column.id) : undefined}
+    >
+      {enableColumnControls ? (
+        <div className="th-inner">
+          <Tooltip label={t("gridDragColumn")}>
+            <chakra.span
+              className="th-drag-grip"
+              draggable
+              role="button"
+              tabIndex={-1}
+              aria-label={t("gridDragColumn")}
+              onDragStart={(e) => handlers.onDragStart(e, h.column.id)}
+              onDragEnd={() => handlers.onDragEnd()}
+            >
+              <Icon name="columns" size={ICON_SIZES.sm} />
+            </chakra.span>
+          </Tooltip>
+          <Tooltip label={sortTitle}>
+            <chakra.button
+              type="button"
+              className="th-sort-button"
+              onClick={h.column.getToggleSortingHandler()}
+            >
+              {flexRender(h.column.columnDef.header, h.getContext())}
+              <chakra.span className="th-sort-indicator" aria-hidden>
+                {sortDir === "asc" ? (
+                  <Icon name="sort-asc" size={ICON_SIZES.sm} />
+                ) : sortDir === "desc" ? (
+                  <Icon name="sort-desc" size={ICON_SIZES.sm} />
+                ) : null}
+                {sortRank > 0 && (
+                  <chakra.span
+                    className="th-sort-rank"
+                    aria-label={t("gridSortPriority", { n: sortRank })}
+                  >
+                    {sortRank}
+                  </chakra.span>
+                )}
+              </chakra.span>
+            </chakra.button>
+          </Tooltip>
+          <Tooltip label={filterLabel}>
+            <chakra.button
+              type="button"
+              className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
+              onClick={(e) => handlers.onOpenFilter(colIdx, e.currentTarget.getBoundingClientRect())}
+              aria-label={filterLabel}
+              aria-haspopup="dialog"
+              aria-expanded={filterOpen}
+            >
+              <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.bold} />
+            </chakra.button>
+          </Tooltip>
+        </div>
+      ) : (
+        flexRender(h.column.columnDef.header, h.getContext())
+      )}
+      {nullPct !== null &&
+        (() => {
+          // 常時表示の NULL 率ミニバー (#911)。取得済み行のうち NULL が
+          // 占める割合を、ヘッダ下端の細い帯として列幅いっぱいに描く。
+          // 塗りは `.cell-databar` / 列統計ポップオーバーと同じ
+          // `accentFill` レシピ (#718) を共有し、色を二重定義しない。
+          // 幅は width ではなく scaleX で表現する (データバーと同じ理由)。
+          // 全列に必ず 1 本描くのでヘッダ高さは列ごとにブレず、密度/
+          // フォントサイズを変えても整列は崩れない。ツールチップは列数
+          // ぶんしか描かれないが、フォーカス不能な装飾要素にタブ
+          // ストップを増やさないよう、共有 Tooltip ではなくセルと同じ
+          // 委譲ツールチップ (hover 専用) に載せる。読み上げ向けの情報は
+          // `aria-label` が持つ。
+          const label = t("gridNullBarAria", {
+            column: colName,
+            percent: nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0),
+            count: rowCount.toLocaleString(),
+          });
+          return (
+            <div className="th-nullbar" role="img" aria-label={label} {...bindTooltip(label)}>
+              <div className="th-nullbar-fill" style={{ transform: `scaleX(${nullPct / 100})` }} />
+            </div>
+          );
+        })()}
+      {canResize && (
+        <Tooltip label={t("gridResizeColumn")}>
+          <div
+            className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
+            onMouseDown={(e) => handlers.onStartResize(e, h.column)}
+            onTouchStart={(e) => handlers.onStartResize(e, h.column)}
+            onDoubleClick={() => h.column.resetSize()}
+            aria-hidden
+          />
+        </Tooltip>
+      )}
+    </th>
+  );
+}, gridHeaderPropsEqual);
+
+/**
+ * `GridRow` が呼ぶイベントハンドラの束 (#1341)。
+ *
+ * `DataGrid` 本体の `useStableCallbacks` で参照を固定して渡す。ここに載せた関数は
+ * 呼ばれた時点の最新の state (編集中セル・アクティブセル・選択範囲など) を読むので、
+ * 行側は state を props で受け取らなくてよい。
+ */
+type GridRowHandlers = {
+  onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
+  onCellFocus: (e: ReactFocusEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
+  onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
+  onCellDoubleClick: (
+    rowIdx: number,
+    colIdx: number,
+    cell: { masked: boolean; editable: boolean; hasPending: boolean; pendingValue: string | undefined; originalDisplay: string },
+  ) => void;
+  onEditChange: (value: string) => void;
+  onEditBlur: (originalDisplay: string) => void;
+  onEditKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>, originalDisplay: string) => void;
+};
+
+/**
+ * 1 行ぶんの描画に影響する値だけを props に持つ (#1341)。`DataGrid` が行ごとに
+ * 「その行に関係する部分」だけを切り出して渡すので、アクティブセルの移動・範囲選択・
+ * 編集で再レンダーされるのは影響する行だけになる。
+ *
+ * 行の描画が読む値を props に載せ忘れると表示が古くなる。足すときは必ず
+ * `GridRowProps` に追加し、`DataGrid` の `renderRow` で渡すこと。
+ */
+interface GridRowProps {
+  /** TanStack の行。比較からは外す (`rowData` と列定義・レイアウトで代替)。 */
+  row: Row<GridFeatures, RowShape>;
+  /** 元の結果行 (`rows[row.index]`)。行の中身が変わったかの判定に使う。 */
+  rowData: CellValue[] | undefined;
+  rowIdx: number;
+  measureIndex: number | undefined;
+  measureRef: ((el: HTMLTableRowElement | null) => void) | undefined;
+  /** `rowEditKey` (保留中の編集・削除予定の突き合わせキー)。 */
+  rowKey: string;
+  pendingForRow: Record<number, string> | undefined;
+  markedDelete: boolean;
+  added: boolean;
+  changedRow: boolean[] | undefined;
+  columns: Column[];
+  columnKinds: CellKind[];
+  editable: boolean;
+  editableColumns: boolean[] | undefined;
+  /** 列定義 (セルの見た目: 条件付き書式・リッチ表示・ロケール・マスクなど)。 */
+  columnDefs: ColumnDef<GridFeatures, RowShape>[];
+  /** データバー / ヒートマップの min/max。条件付き書式が無いときは null (行を巻き込まない)。 */
+  statsVersion: unknown;
+  /** 列の並び・幅・ピン留め・表示を 1 本にした署名 (ピンの sticky オフセットに効く)。 */
+  layoutKey: string;
+  leftPinnedCount: number;
+  rightPinnedCount: number;
+  /** 列仮想化の窓 (中央列の添字)。窓が無いときは -1。 */
+  colWinFirst: number;
+  colWinLast: number;
+  /** この行で編集中のセル (別の行なら null)。 */
+  editing: { colIdx: number; value: string } | null;
+  activeColIdx: number | null;
+  /** この行が範囲選択に入っているときの列集合 (入っていなければ null)。 */
+  selColSet: Set<number> | null;
+  findHits: Set<string> | undefined;
+  /** この行の現在ヒットの列 (別の行なら null)。 */
+  findCurrentCol: number | null;
+  maskedCols: boolean[] | null;
+  /** この行に関係する reveal だけ (無関係なら null)。 */
+  reveal: RevealTarget | null;
+  /** 保留中の編集を持つ行・編集中の行にだけ渡す (他の行は undefined)。 */
+  validateEdit: ((colIdx: number, value: string) => I18nKey | null) | undefined;
+  /** 編集中の行にだけ渡す。 */
+  valuePicker: ValuePicker | undefined;
+  valuePickerListId: string;
+  t: ReturnType<typeof useT>;
+  /** セルのツールチップ (`useDelegatedTooltip().bind`) の参照固定ラッパー。 */
+  bindTooltip: ReturnType<typeof useDelegatedTooltip>["bind"];
+  cellRefs: RefObject<Map<string, HTMLTableCellElement>>;
+  handlers: GridRowHandlers;
+}
+
+/** `row` (TanStack の行オブジェクト) 以外をすべて参照比較する。 */
+function gridRowPropsEqual(a: GridRowProps, b: GridRowProps): boolean {
+  const keys = Object.keys(a) as Array<keyof GridRowProps>;
+  for (const k of keys) {
+    if (k === "row") continue;
+    if (!Object.is(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+const GridRow = memo(function GridRow({
+  row,
+  rowIdx,
+  measureIndex,
+  measureRef,
+  pendingForRow,
+  markedDelete,
+  added,
+  changedRow,
+  columns,
+  columnKinds,
+  editable,
+  editableColumns,
+  leftPinnedCount,
+  rightPinnedCount,
+  colWinFirst,
+  colWinLast,
+  editing,
+  activeColIdx,
+  selColSet,
+  findHits,
+  findCurrentCol,
+  maskedCols,
+  reveal,
+  validateEdit,
+  valuePicker,
+  valuePickerListId,
+  t,
+  bindTooltip,
+  cellRefs,
+  handlers,
+}: GridRowProps) {
+  const rowHasPending = !!pendingForRow && Object.keys(pendingForRow).length > 0;
+  const rowClass = [
+    // Zebra striping by visible position. Class-based (not `:nth-of-type`)
+    // because the virtualized body inserts spacer `<tr>` that would otherwise
+    // flip the parity as you scroll.
+    rowIdx % 2 === 1 ? "grid-row-stripe" : "",
+    rowHasPending ? "grid-row-pending" : "",
+    markedDelete ? "grid-row-deleting" : "",
+    added ? "grid-row-added" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const isNumericKind = (k: CellKind) => k === "number" || k === "decimal";
+  const renderCell = (cell: Cell<GridFeatures, RowShape>) => {
+    // Resolve original column index from the column id so reorder/hide
+    // and pinning don't misalign per-column lookups.
+    const colIdx = Number(cell.column.id);
+    const v = cell.getValue() as CellValue;
+    const kind = columnKinds[colIdx] ?? "string";
+    const isNull = v === null || v === undefined;
+    const isChanged = changedRow?.[colIdx] ?? false;
+    const colEditable = editable && (editableColumns?.[colIdx] ?? false);
+    const pendingValue = pendingForRow?.[colIdx];
+    const hasPending = pendingValue !== undefined;
+    const isEditingHere = editing !== null && editing.colIdx === colIdx;
+    const isActiveCell = activeColIdx === colIdx;
+    const inSelection = !!selColSet && selColSet.has(colIdx);
+    // 結果内検索 (#644) のヒット/現在ヒット。キーは cellRefs と同じ "row:col"。
+    const isFindHit = !!findHits?.has(`${row.index}:${colIdx}`);
+    const isFindCurrent = isFindHit && findCurrentCol === colIdx;
+    // 機微カラムの表示マスク (#1069)。マスク無しの結果では `maskedCols` が
+    // null なので、ここは null 判定 1 回で終わる (列仮想化のホットパス)。
+    const cellMasked = maskedCols !== null && isCellMasked(maskedCols, reveal, row.index, colIdx);
+    // Live validation of the value being typed, and of an
+    // already-buffered value that's sitting invalid in the grid.
+    const editPickerValues =
+      isEditingHere && valuePicker
+        ? valuePicker.candidates(columns[colIdx]?.name ?? "")
+        : EMPTY_PICKER_VALUES;
+    const editError =
+      isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
+    const pendingError =
+      hasPending && !isEditingHere && validateEdit ? validateEdit(colIdx, pendingValue) : null;
+    // Original display string — used both for the input's
+    // default contents and to detect "user typed it back to
+    // the original" (which clears the pending edit).
+    const originalDisplay = isNull ? "" : String(v);
+    const pinSide = pinSideFromTable(cell.column.getIsPinned());
+    const pinStyle: CSSProperties = pinSide
+      ? {
+          position: "sticky",
+          zIndex: 1,
+          ...(pinSide === "left"
+            ? { left: ROW_INDEX_WIDTH + cell.column.getStart("start") }
+            : { right: cell.column.getAfter("end") }),
+        }
+      : {};
+    return (
+      <td
+        key={cell.id}
+        role="gridcell"
+        tabIndex={isActiveCell ? 0 : -1}
+        style={pinStyle}
+        ref={(el) => {
+          const key = `${row.index}:${colIdx}`;
+          if (el) cellRefs.current.set(key, el);
+          else cellRefs.current.delete(key);
+        }}
+        className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}${cellMasked ? " is-masked-cell" : ""}`}
+        // マウス hover 用は行×列に比例するため native title ではなく
+        // `cellTooltipProps` (#884) に委譲する。キーボードでの同等手段は
+        // 既存の `gridInspector` ショートカット (`CellValueViewer`) が
+        // アクティブセルの全文を常に提供済みなので、後退にはならない。
+        {...bindTooltip(
+          isEditingHere
+            ? undefined
+            : cellMasked
+              ? t("gridMaskedCellTitle")
+              : hasPending
+                ? t("editPendingTitle", {
+                    original: isNull ? t("resultNull") : String(v),
+                    next: pendingValue,
+                  })
+                : isNull
+                  ? t("resultNull")
+                  : // 長文テキストは省略記号で切れて全長が分からないので、ホバーの
+                    // タイトルに文字数を添える。テキスト系の列だけが対象。
+                    (kind === "string" || kind === "json") && String(v).length > 40
+                    ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
+                    : String(v),
+        )}
+        onMouseDown={(e) => handlers.onCellMouseDown(e, row.index, colIdx)}
+        onFocus={(e) => handlers.onCellFocus(e, row.index, colIdx)}
+        onDoubleClick={() =>
+          handlers.onCellDoubleClick(row.index, colIdx, {
+            masked: cellMasked,
+            editable: colEditable,
+            hasPending,
+            pendingValue,
+            originalDisplay,
+          })
+        }
+        onContextMenu={(e) => handlers.onCellContextMenu(e, row.index, colIdx)}
+      >
+        {isEditingHere ? (
+          <div className="cell-edit-wrap">
+            <input
+              autoFocus
+              className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+              aria-invalid={editError ? true : undefined}
+              list={editPickerValues.length > 0 ? valuePickerListId : undefined}
+              value={editing!.value}
+              onChange={(e) => handlers.onEditChange(e.target.value)}
+              onBlur={() => handlers.onEditBlur(originalDisplay)}
+              onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
+            />
+            <ValueDatalist id={valuePickerListId} values={editPickerValues} />
+            {editError && (
+              <div className="cell-edit-error" role="alert">
+                {t(editError)}
+              </div>
+            )}
+          </div>
+        ) : cellMasked ? (
+          // マスク中は実値も保留中の編集値も出さない。固定長の伏せ字で、
+          // 値の長さ・型 (NULL かどうか) も漏らさない。
+          <span className="cell-masked" aria-label={t("gridMaskedCellAria")}>
+            {MASK_PLACEHOLDER}
+          </span>
+        ) : hasPending ? (
+          // 未適用編集の値は Motion で軽くハイライトする。`key` を
+          // pendingValue にして値が変わるたび (= 編集/Undo/Redo のたび) 再マウント
+          // させ、入場アニメを再生する。reduced-motion は MotionConfig 配下で
+          // 自動的に即時化される。
+          <motion.span
+            key={pendingValue}
+            className={
+              /^null$/i.test(pendingValue.trim())
+                ? "cell-null cell-pending-value"
+                : "cell-pending-value"
+            }
+            initial={variants.slideUp.initial}
+            animate={variants.slideUp.animate}
+            transition={transitions.crossfade}
+          >
+            {/^null$/i.test(pendingValue.trim()) ? t("resultNull") : pendingValue}
+          </motion.span>
+        ) : (
+          flexRender(cell.column.columnDef.cell, cell.getContext())
+        )}
+      </td>
+    );
+  };
+  // Split into pinned-left / center / pinned-right, matching the
+  // colgroup order (`row.getVisibleCells()` already groups pinned
+  // columns to the ends). Only the (usually much larger) center group
+  // gets windowed; pinned columns are always mounted.
+  const cells = row.getVisibleCells();
+  const leftCells = leftPinnedCount > 0 ? cells.slice(0, leftPinnedCount) : [];
+  const rightCells = rightPinnedCount > 0 ? cells.slice(cells.length - rightPinnedCount) : [];
+  const centerCells = cells.slice(leftPinnedCount, cells.length - rightPinnedCount);
+  const windowed = colWinFirst >= 0;
+  const firstCenterIdx = windowed ? colWinFirst : 0;
+  const lastCenterIdx = windowed ? colWinLast : centerCells.length - 1;
+  const windowCells: Array<Cell<GridFeatures, RowShape>> = [];
+  for (let i = firstCenterIdx; i <= lastCenterIdx; i++) {
+    const c = centerCells[i];
+    if (c) windowCells.push(c);
+  }
+  return (
+    <tr
+      role="row"
+      className={rowClass || undefined}
+      ref={measureRef}
+      data-index={measureIndex}
+    >
+      <td className="row-index">{rowIdx + 1}</td>
+      {leftCells.map(renderCell)}
+      {/* Spacer <td>s absorb the off-screen width of skipped center
+          columns so scroll width / sticky offsets stay correct — the
+          horizontal analogue of the vertical spacer <tr>s above. */}
+      {windowed && firstCenterIdx > 0 && (
+        <td
+          aria-hidden
+          colSpan={firstCenterIdx}
+          style={{ padding: 0, border: 0, background: "transparent" }}
+        />
+      )}
+      {windowCells.map(renderCell)}
+      {windowed && lastCenterIdx < centerCells.length - 1 && (
+        <td
+          aria-hidden
+          colSpan={centerCells.length - 1 - lastCenterIdx}
+          style={{ padding: 0, border: 0, background: "transparent" }}
+        />
+      )}
+      {rightCells.map(renderCell)}
+      <td className="col-filler" aria-hidden />
+    </tr>
+  );
+}, gridRowPropsEqual);
+
 /**
  * 行配列 → RowShape 配列の変換結果。インスタンス (= タブ) をまたいで再利用し、keep-alive の
  * 外れ (保持数の上限超え) で ResultGrid を作り直しても全行の再変換を避ける (#1309)。
@@ -2941,6 +3466,7 @@ export const DataGrid = memo(function DataGrid({
     columnMaskEnabled,
     columnMaskPatterns,
     columnMaskCopyPlaceholder,
+    fontSizePx,
   } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
   // セル内容の全文ツールチップ (省略記号で切れた値・条件付き書式のホバー説明
@@ -2950,6 +3476,14 @@ export const DataGrid = memo(function DataGrid({
   // (`useDelegatedTooltip`、#884) に一本化する。native title からの後退はなく
   // (セルは元々 tabIndex を持たない)、表示速度とテーマ追従だけを底上げする。
   const { hovered: hoveredCellTooltip, bind: cellTooltipProps } = useDelegatedTooltip();
+  // `bind` が掴むのは ref・setState・参照固定の hide だけなので、最新の関数へ委譲する
+  // 固定参照のラッパーを `GridRow` (memo) に渡しても古い値は掴まない (#1341)。
+  const cellTooltipBindRef = useRef(cellTooltipProps);
+  cellTooltipBindRef.current = cellTooltipProps;
+  const bindCellTooltip = useCallback<typeof cellTooltipProps>(
+    (value) => cellTooltipBindRef.current(value),
+    [],
+  );
 
   // グリッド系ショートカットの実効バインド (#681)。未指定のキーは今日の既定へ
   // フォールバックするので、`gridBindings` を渡さない呼び出し元 (プレビューの
@@ -3098,7 +3632,7 @@ export const DataGrid = memo(function DataGrid({
     [columns, columnMaskEnabled, columnMaskPatterns, maskOverrides],
   );
   // 一時 reveal (セル 1 つ or 列全体)。タイムアウトとウィンドウのフォーカス喪失で
-  // 再マスクする。reveal はセル描画 (`renderCell`) でだけ参照し、列定義
+  // 再マスクする。reveal はセル描画 (`GridRow`) でだけ参照し、列定義
   // (`tableColumns`) の依存には入れない — reveal の切替で react-table の列モデルを
   // 作り直さないため (#1098 と同じ配慮)。
   const [reveal, setReveal] = useState<RevealTarget | null>(null);
@@ -4337,12 +4871,38 @@ export const DataGrid = memo(function DataGrid({
       lastViewportRef.current = { width: el.clientWidth, height: el.clientHeight };
     }
   });
+  const rowSizeSig = `${density}|${fontSizePx}`;
+  const rowHeightRef = useRef<{ sig: string; height: number } | null>(null);
+  const knownRowHeight =
+    rowHeightRef.current?.sig === rowSizeSig ? rowHeightRef.current.height : undefined;
+  // 隠れている間に外した行の窓 (非表示の間も DOM に残して再表示で描き直さない, #1341)。
+  const windowSnapshotRef = useRef<{
+    indices: number[];
+    top: number;
+    bottom: number;
+    colFirst: number;
+    colLast: number;
+  } | null>(null);
   const rowVirtualizer = useVirtualizer({
     enabled: virtualizerEnabled,
     initialRect: lastViewportRef.current,
     count: visibleRows.length,
     getScrollElement: () => scrollContainerRef?.current ?? null,
-    estimateSize: () => DENSITY_ROW_ESTIMATE[density],
+    estimateSize: () => knownRowHeight ?? DENSITY_ROW_ESTIMATE[density],
+    // 行高は密度・フォント拡大が同じなら全行同じ (セルは 1 行表示)。測り済みの高さを
+    // インスタンスに残し、再表示などで行を作り直すときの同期計測 (行数ぶんの
+    // レイアウト読み出し) を省く。実寸は ResizeObserver が非同期に確かめて直す (#1341)。
+    measureElement: (el, entry, instance) => {
+      if (!virtualizerEnabled || (!entry && knownRowHeight !== undefined)) {
+        return knownRowHeight ?? DENSITY_ROW_ESTIMATE[density];
+      }
+      const h = defaultMeasureElement(el, entry, instance);
+      // 編集中の行は背が高いことがあるので、基準にしない。
+      if (h > 0 && !el.querySelector(".cell-edit-wrap")) {
+        rowHeightRef.current = { sig: rowSizeSig, height: h };
+      }
+      return h;
+    },
     overscan: 16,
   });
   // Density changes the row height via CSS vars; re-measure so the virtualizer's
@@ -4426,6 +4986,192 @@ export const DataGrid = memo(function DataGrid({
     if (virtualize) columnVirtualizer.measure();
   }, [virtualize, columnVirtualizer, columnSizing, columnOrder, columnPinning, columnVisibility]);
   const columnVirtualItems = virtualize ? columnVirtualizer.getVirtualItems() : [];
+  // 列仮想化の窓 (中央列の添字の範囲)。窓が無い (全列描画) ときは -1。`GridRow` へは
+  // 配列ではなく 2 つの数値で渡す (窓が動かない限り行の props が変わらない, #1341)。
+  // keep-alive で隠れている間は仮想化が止まり窓が空になるので、残してある行の列窓も
+  // 直前の値に固定する (全列を描き直さない)。
+  // 再表示した最初のレンダーで窓が計算できない (ビューポートの寸法が未取得) ときも同じ窓を使う。
+  // 全行描画へ落ちると行のツリー位置が変わって、残してあった行を作り直してしまう。
+  const hiddenWindow =
+    virtualize && (!virtualizerEnabled || virtualItems.length === 0)
+      ? windowSnapshotRef.current
+      : null;
+  const colWinFirst = hiddenWindow
+    ? hiddenWindow.colFirst
+    : columnVirtualItems.length > 0
+      ? columnVirtualItems[0].index
+      : -1;
+  const colWinLast = hiddenWindow
+    ? hiddenWindow.colLast
+    : columnVirtualItems.length > 0
+      ? columnVirtualItems[columnVirtualItems.length - 1].index
+      : -1;
+  if (virtualizerEnabled && virtualItems.length > 0) {
+    windowSnapshotRef.current = {
+      indices: virtualItems.map((vi) => vi.index),
+      top: virtualPaddingTop,
+      bottom: virtualPaddingBottom,
+      colFirst: colWinFirst,
+      colLast: colWinLast,
+    };
+  }
+  // 列の並び・幅・ピン留め・表示。行のセルはピンの sticky オフセット (列幅の合計) を持つので、
+  // これが変わったときは全行を描き直す。
+  const columnLayoutKey = table
+    .getVisibleLeafColumns()
+    .map((c) => `${c.id}:${c.getSize()}:${c.getIsPinned() || ""}`)
+    .join("|");
+  // 条件付き書式 (データバー / ヒートマップ) を使う列があるときだけ、統計の更新で行を描き直す。
+  const anyColFormat = Object.values(colFormats).some((m) => m !== "off");
+  // `GridHeaderCell` に渡すハンドラ (同上)。
+  const headerHandlers = useStableCallbacks({
+    onDragOver: (e: ReactDragEvent<HTMLTableCellElement>, colId: string) => {
+      e.preventDefault();
+      if (dragOverColId !== colId) setDragOverColId(colId);
+    },
+    onDrop: (e: ReactDragEvent<HTMLTableCellElement>, colId: string) => {
+      e.preventDefault();
+      if (dragColId) reorderColumn(dragColId, colId);
+      setDragColId(null);
+      setDragOverColId(null);
+    },
+    onDragStart: (e: ReactDragEvent<HTMLElement>, colId: string) => {
+      setDragColId(colId);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", colId);
+    },
+    onDragEnd: () => {
+      setDragColId(null);
+      setDragOverColId(null);
+    },
+    onOpenFilter: (colIdx: number, anchor: DOMRect) => setFilterMenu({ colIdx, anchor }),
+    onStartResize: (
+      e: React.MouseEvent | React.TouchEvent,
+      column: Header<GridFeatures, RowShape, unknown>["column"],
+    ) => startColumnResize(e, column),
+  });
+  // `GridRow` に渡すハンドラ。最新の state を読む関数を参照固定で渡す (#1341)。
+  const rowHandlers = useStableCallbacks({
+    onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
+      // Right-click opens the context menu (which can act on the current
+      // selection, e.g. bulk edit) — never clear the selection here.
+      if (e.button !== 0) return;
+      // Shift+click extends a rectangular selection from the active
+      // cell; a plain click clears any selection (focus sets active).
+      if (e.shiftKey && activeCell) {
+        e.preventDefault();
+        extendSelectionTo(rowIdx, colIdx);
+      } else if (selection) {
+        setSelection(null);
+      }
+    },
+    onCellFocus: (e: ReactFocusEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
+      if (e.target === e.currentTarget) {
+        setActiveCell({ rowIdx, colIdx });
+      }
+    },
+    onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
+      e.preventDefault();
+      setCopyMenu({ x: e.clientX, y: e.clientY, rowIdx, colIdx });
+    },
+    onCellDoubleClick: (
+      rowIdx: number,
+      colIdx: number,
+      cell: {
+        masked: boolean;
+        editable: boolean;
+        hasPending: boolean;
+        pendingValue: string | undefined;
+        originalDisplay: string;
+      },
+    ) => {
+      // マスク中のセルは編集欄も値ビューアも実値を表示してしまうので、
+      // reveal (右クリック) するまでどちらも開かない (#1069)。
+      if (cell.masked) {
+        toast.info(t("gridMaskedCellBlocked"));
+        return;
+      }
+      // Editable cells edit on double-click; everything else
+      // (read-only grids, PK/BLOB columns, preview panes) opens
+      // the full-value viewer instead, so the two never collide.
+      if (cell.editable && onSetCellEdit) {
+        setEditing({
+          rowIdx,
+          colIdx,
+          value: cell.hasPending ? (cell.pendingValue ?? "") : cell.originalDisplay,
+        });
+        return;
+      }
+      setViewer({ rowIdx, colIdx });
+    },
+    onEditChange: (value: string) => {
+      setEditing((cur) => (cur ? { rowIdx: cur.rowIdx, colIdx: cur.colIdx, value } : cur));
+    },
+    onEditBlur: (originalDisplay: string) => {
+      if (!editing) return;
+      const eRowIdx = editing.rowIdx;
+      const eColIdx = editing.colIdx;
+      const eValue = editing.value;
+      if (cellEditOnBlur !== "confirm") {
+        commitEdit(eRowIdx, eColIdx, eValue, originalDisplay);
+        setEditing(null);
+        return;
+      }
+      // Capture the row's stable key now: an auto-refresh while
+      // the dialog is open could shift `rows[eRowIdx]`.
+      const eRowKey = rowEditKey(rows[eRowIdx] ?? [], pkIndices ?? [], eRowIdx);
+      setEditing(null);
+      void (async () => {
+        const commit = await confirmBlur({
+          title: t("editBlurTitle"),
+          message: t("editBlurMessage"),
+          confirmLabel: t("editBlurCommit"),
+          cancelLabel: t("editBlurDiscard"),
+        });
+        if (commit && onSetCellEdit) {
+          onSetCellEdit(eRowKey, eColIdx, eValue === originalDisplay ? null : eValue);
+        }
+      })();
+    },
+    onEditKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>, originalDisplay: string) => {
+      if (!editing) return;
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const eRowIdx = editing.rowIdx;
+        const eColIdx = editing.colIdx;
+        commitEdit(eRowIdx, eColIdx, editing.value, originalDisplay);
+        setEditing(null);
+        const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
+        const ePos = visibleColIds.indexOf(eColIdx);
+        const lastPos = visibleColIds.length - 1;
+        if (!e.shiftKey) {
+          if (ePos >= 0 && ePos < lastPos) navigateCell(eRowIdx, visibleColIds[ePos + 1]);
+          else if (vi2 >= 0 && vi2 < visibleRows.length - 1)
+            navigateCell(visibleRows[vi2 + 1].index, visibleColIds[0] ?? 0);
+          else navigateCell(eRowIdx, eColIdx);
+        } else {
+          if (ePos > 0) navigateCell(eRowIdx, visibleColIds[ePos - 1]);
+          else if (vi2 > 0)
+            navigateCell(visibleRows[vi2 - 1].index, visibleColIds[lastPos] ?? 0);
+          else navigateCell(eRowIdx, eColIdx);
+        }
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const eRowIdx = editing.rowIdx;
+        const eColIdx = editing.colIdx;
+        commitEdit(eRowIdx, eColIdx, editing.value, originalDisplay);
+        setEditing(null);
+        const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
+        if (vi2 >= 0 && vi2 < visibleRows.length - 1)
+          navigateCell(visibleRows[vi2 + 1].index, eColIdx);
+        else navigateCell(eRowIdx, eColIdx);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setEditing(null);
+        navigateCell(editing.rowIdx, editing.colIdx);
+      }
+    },
+  });
   // Given an *original* column index, scroll it into view when it currently
   // sits outside the mounted column window (off-screen pinned columns are
   // always mounted, so only center columns need this). Mirrors
@@ -4686,345 +5432,72 @@ export const DataGrid = memo(function DataGrid({
   // `row.index` is the absolute index into `rows` used for edit/changed lookups.
   // `measureIndex` (when virtualizing) wires the row to the virtualizer so its
   // real height is measured.
+  //
+  // 行は `GridRow` (memo) に切り出し、その行に関係する値だけを props で渡す (#1341)。
+  // 行の描画が新しい値を読むようになったら、`GridRowProps` に足してここで渡すこと。
   const renderRow = (row: Row<GridFeatures, RowShape>, rowIdx: number, measureIndex?: number) => {
-    // Does this row hold any buffered edit? Drives the row-level pending marker.
-    // Looked up by the row's PK-derived identity, like the per-cell
-    // lookup below, so it tracks the row across pagination/sort.
-    const rowPendingKey = rowEditKey(rows[row.index] ?? [], pkIndices ?? [], row.index);
-    const rowHasPending =
-      !!pendingEdits?.[rowPendingKey] && Object.keys(pendingEdits[rowPendingKey]).length > 0;
-    const rowMarkedDelete = !!pendingDeleteKeys?.has(rowPendingKey);
-    // Re-run diff (#597): a row present in this result but not the previous one.
-    const rowAdded = !!addedRowIndices?.has(row.index);
-    const rowClass = [
-      // Zebra striping by visible position. Class-based (not `:nth-of-type`)
-      // because the virtualized body inserts spacer `<tr>` that would otherwise
-      // flip the parity as you scroll.
-      rowIdx % 2 === 1 ? "grid-row-stripe" : "",
-      rowHasPending ? "grid-row-pending" : "",
-      rowMarkedDelete ? "grid-row-deleting" : "",
-      rowAdded ? "grid-row-added" : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const rowData = rows[row.index];
+    // Buffered edits are keyed by the row's PK identity, so look
+    // them up by `rowEditKey` rather than the array position. Looked up by the
+    // row's PK-derived identity so it tracks the row across pagination/sort.
+    const rowKey = rowEditKey(rowData ?? [], pkIndices ?? [], row.index);
+    const pendingForRow = pendingEdits?.[rowKey];
+    const editingHere = editing !== null && editing.rowIdx === row.index;
     return (
-    <tr
-      key={row.id}
-      role="row"
-      className={rowClass || undefined}
-      ref={measureIndex === undefined ? undefined : rowVirtualizer.measureElement}
-      data-index={measureIndex}
-    >
-      <td className="row-index">{rowIdx + 1}</td>
-      {(() => {
-        // Split into pinned-left / center / pinned-right, matching the
-        // colgroup order (`row.getVisibleCells()` already groups pinned
-        // columns to the ends). Only the (usually much larger) center group
-        // gets windowed; pinned columns are always mounted.
-        const cells = row.getVisibleCells();
-        const leftCells = leftPinnedCount > 0 ? cells.slice(0, leftPinnedCount) : [];
-        const rightCells = rightPinnedCount > 0 ? cells.slice(cells.length - rightPinnedCount) : [];
-        const centerCells = cells.slice(leftPinnedCount, cells.length - rightPinnedCount);
-        const windowed = columnVirtualItems.length > 0;
-        const renderCell = (cell: Cell<GridFeatures, RowShape>) => {
-        // Resolve original column index from the column id so reorder/hide
-        // and pinning don't misalign per-column lookups.
-        const colIdx = Number(cell.column.id);
-        const v = cell.getValue() as CellValue;
-        const kind = columnKinds[colIdx] ?? "string";
-        const isNull = v === null || v === undefined;
-        const isChanged = changedCells?.[row.index]?.[colIdx] ?? false;
-        const colEditable = editable && (editableColumns?.[colIdx] ?? false);
-        // Buffered edits are keyed by the row's PK identity, so look
-        // them up by `rowEditKey` rather than the array position.
-        const rowKey = rowEditKey(
-          rows[row.index] ?? [],
-          pkIndices ?? [],
-          row.index,
-        );
-        const pendingForRow = pendingEdits?.[rowKey];
-        const pendingValue = pendingForRow?.[colIdx];
-        const hasPending = pendingValue !== undefined;
-        const isEditingHere =
-          editing !== null &&
-          editing.rowIdx === row.index &&
-          editing.colIdx === colIdx;
-        const isActiveCell = activeCell?.rowIdx === row.index && activeCell?.colIdx === colIdx;
-        const inSelection =
-          !!selectionRect && selectionRect.rowIndexSet.has(row.index) && selectionRect.colIdSet.has(colIdx);
-        // 結果内検索 (#644) のヒット/現在ヒット。キーは cellRefs と同じ "row:col"。
-        const findKey = `${row.index}:${colIdx}`;
-        const isFindHit = !!findHits?.has(findKey);
-        const isFindCurrent = isFindHit && findCurrentKey === findKey;
-        // 機微カラムの表示マスク (#1069)。マスク無しの結果では `maskedCols` が
-        // null なので、ここは null 判定 1 回で終わる (列仮想化のホットパス)。
-        const cellMasked = maskedCols !== null && cellMaskedNow(row.index, colIdx);
-        // Live validation of the value being typed, and of an
-        // already-buffered value that's sitting invalid in the grid.
-        const editPickerValues =
-          isEditingHere && valuePicker
-            ? valuePicker.candidates(columns[colIdx]?.name ?? "")
-            : EMPTY_PICKER_VALUES;
-        const editError =
-          isEditingHere && validateEdit
-            ? validateEdit(colIdx, editing!.value)
-            : null;
-        const pendingError =
-          hasPending && !isEditingHere && validateEdit
-            ? validateEdit(colIdx, pendingValue)
-            : null;
-        // Original display string — used both for the input's
-        // default contents and to detect "user typed it back to
-        // the original" (which clears the pending edit).
-        const originalDisplay = isNull ? "" : String(v);
-        const pinSide = pinSideFromTable(cell.column.getIsPinned());
-        const pinStyle: CSSProperties = pinSide
-          ? {
-              position: "sticky",
-              zIndex: 1,
-              ...(pinSide === "left"
-                ? { left: ROW_INDEX_WIDTH + cell.column.getStart("start") }
-                : { right: cell.column.getAfter("end") }),
-            }
-          : {};
-        const handleDoubleClick = () => {
-          // マスク中のセルは編集欄も値ビューアも実値を表示してしまうので、
-          // reveal (右クリック) するまでどちらも開かない (#1069)。
-          if (cellMasked) {
-            toast.info(t("gridMaskedCellBlocked"));
-            return;
-          }
-          // Editable cells edit on double-click; everything else
-          // (read-only grids, PK/BLOB columns, preview panes) opens
-          // the full-value viewer instead, so the two never collide.
-          if (colEditable && onSetCellEdit) {
-            setEditing({
-              rowIdx: row.index,
-              colIdx,
-              value: hasPending ? pendingValue : originalDisplay,
-            });
-            return;
-          }
-          setViewer({ rowIdx: row.index, colIdx });
-        };
-        return (
-          <td
-            key={cell.id}
-            role="gridcell"
-            tabIndex={isActiveCell ? 0 : -1}
-            style={pinStyle}
-            ref={(el) => {
-              const key = `${row.index}:${colIdx}`;
-              if (el) cellRefs.current.set(key, el);
-              else cellRefs.current.delete(key);
-            }}
-            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}${cellMasked ? " is-masked-cell" : ""}`}
-            // マウス hover 用は行×列に比例するため native title ではなく
-            // `cellTooltipProps` (#884) に委譲する。キーボードでの同等手段は
-            // 既存の `gridInspector` ショートカット (`CellValueViewer`) が
-            // アクティブセルの全文を常に提供済みなので、後退にはならない。
-            {...cellTooltipProps(
-              isEditingHere
-                ? undefined
-                : cellMasked
-                  ? t("gridMaskedCellTitle")
-                  : hasPending
-                  ? t("editPendingTitle", {
-                      original: isNull ? t("resultNull") : String(v),
-                      next: pendingValue,
-                    })
-                  : isNull
-                    ? t("resultNull")
-                    : // 長文テキストは省略記号で切れて全長が分からないので、ホバーの
-                      // タイトルに文字数を添える。テキスト系の列だけが対象。
-                      (kind === "string" || kind === "json") && String(v).length > 40
-                      ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
-                      : String(v)
-            )}
-            onMouseDown={(e) => {
-              // Right-click opens the context menu (which can act on the current
-              // selection, e.g. bulk edit) — never clear the selection here.
-              if (e.button !== 0) return;
-              // Shift+click extends a rectangular selection from the active
-              // cell; a plain click clears any selection (focus sets active).
-              if (e.shiftKey && activeCell) {
-                e.preventDefault();
-                extendSelectionTo(row.index, colIdx);
-              } else if (selection) {
-                setSelection(null);
-              }
-            }}
-            onFocus={(e) => {
-              if (e.target === e.currentTarget) {
-                setActiveCell({ rowIdx: row.index, colIdx });
-              }
-            }}
-            onDoubleClick={handleDoubleClick}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setCopyMenu({
-                x: e.clientX,
-                y: e.clientY,
-                rowIdx: row.index,
-                colIdx,
-              });
-            }}
-          >
-            {isEditingHere ? (
-              <div className="cell-edit-wrap">
-                <input
-                  autoFocus
-                  className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
-                  aria-invalid={editError ? true : undefined}
-                  list={editPickerValues.length > 0 ? valuePickerListId : undefined}
-                  value={editing!.value}
-                  onChange={(e) =>
-                    setEditing({
-                      rowIdx: editing!.rowIdx,
-                      colIdx: editing!.colIdx,
-                      value: e.target.value,
-                    })
-                  }
-                  onBlur={() => {
-                    const eRowIdx = editing!.rowIdx;
-                    const eColIdx = editing!.colIdx;
-                    const eValue = editing!.value;
-                    const eOrigDisplay = originalDisplay;
-                    if (cellEditOnBlur !== "confirm") {
-                      commitEdit(eRowIdx, eColIdx, eValue, eOrigDisplay);
-                      setEditing(null);
-                      return;
-                    }
-                    // Capture the row's stable key now: an auto-refresh while
-                    // the dialog is open could shift `rows[eRowIdx]`.
-                    const eRowKey = rowEditKey(rows[eRowIdx] ?? [], pkIndices ?? [], eRowIdx);
-                    setEditing(null);
-                    void (async () => {
-                      const commit = await confirmBlur({
-                        title: t("editBlurTitle"),
-                        message: t("editBlurMessage"),
-                        confirmLabel: t("editBlurCommit"),
-                        cancelLabel: t("editBlurDiscard"),
-                      });
-                      if (commit && onSetCellEdit) {
-                        onSetCellEdit(
-                          eRowKey,
-                          eColIdx,
-                          eValue === eOrigDisplay ? null : eValue,
-                        );
-                      }
-                    })();
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Tab") {
-                      e.preventDefault();
-                      const eRowIdx = editing!.rowIdx;
-                      const eColIdx = editing!.colIdx;
-                      commitEdit(eRowIdx, eColIdx, editing!.value, originalDisplay);
-                      setEditing(null);
-                      const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
-                      const ePos = visibleColIds.indexOf(eColIdx);
-                      const lastPos = visibleColIds.length - 1;
-                      if (!e.shiftKey) {
-                        if (ePos >= 0 && ePos < lastPos) navigateCell(eRowIdx, visibleColIds[ePos + 1]);
-                        else if (vi2 >= 0 && vi2 < visibleRows.length - 1)
-                          navigateCell(visibleRows[vi2 + 1].index, visibleColIds[0] ?? 0);
-                        else navigateCell(eRowIdx, eColIdx);
-                      } else {
-                        if (ePos > 0) navigateCell(eRowIdx, visibleColIds[ePos - 1]);
-                        else if (vi2 > 0)
-                          navigateCell(visibleRows[vi2 - 1].index, visibleColIds[lastPos] ?? 0);
-                        else navigateCell(eRowIdx, eColIdx);
-                      }
-                    } else if (e.key === "Enter") {
-                      e.preventDefault();
-                      const eRowIdx = editing!.rowIdx;
-                      const eColIdx = editing!.colIdx;
-                      commitEdit(eRowIdx, eColIdx, editing!.value, originalDisplay);
-                      setEditing(null);
-                      const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
-                      if (vi2 >= 0 && vi2 < visibleRows.length - 1)
-                        navigateCell(visibleRows[vi2 + 1].index, eColIdx);
-                      else navigateCell(eRowIdx, eColIdx);
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      setEditing(null);
-                      navigateCell(editing!.rowIdx, editing!.colIdx);
-                    }
-                  }}
-                />
-                <ValueDatalist id={valuePickerListId} values={editPickerValues} />
-                {editError && (
-                  <div className="cell-edit-error" role="alert">
-                    {t(editError)}
-                  </div>
-                )}
-              </div>
-            ) : cellMasked ? (
-              // マスク中は実値も保留中の編集値も出さない。固定長の伏せ字で、
-              // 値の長さ・型 (NULL かどうか) も漏らさない。
-              <span className="cell-masked" aria-label={t("gridMaskedCellAria")}>
-                {MASK_PLACEHOLDER}
-              </span>
-            ) : hasPending ? (
-              // 未適用編集の値は Motion で軽くハイライトする。`key` を
-              // pendingValue にして値が変わるたび (= 編集/Undo/Redo のたび) 再マウント
-              // させ、入場アニメを再生する。reduced-motion は MotionConfig 配下で
-              // 自動的に即時化される。
-              <motion.span
-                key={pendingValue}
-                className={
-                  /^null$/i.test(pendingValue.trim())
-                    ? "cell-null cell-pending-value"
-                    : "cell-pending-value"
-                }
-                initial={variants.slideUp.initial}
-                animate={variants.slideUp.animate}
-                transition={transitions.crossfade}
-              >
-                {/^null$/i.test(pendingValue.trim()) ? t("resultNull") : pendingValue}
-              </motion.span>
-            ) : (
-              flexRender(cell.column.columnDef.cell, cell.getContext())
-            )}
-          </td>
-        );
-        };
-        const firstCenterIdx = windowed ? columnVirtualItems[0].index : 0;
-        const lastCenterIdx = windowed
-          ? columnVirtualItems[columnVirtualItems.length - 1].index
-          : centerCells.length - 1;
-        return (
-          <>
-            {leftCells.map(renderCell)}
-            {/* Spacer <td>s absorb the off-screen width of skipped center
-                columns so scroll width / sticky offsets stay correct — the
-                horizontal analogue of the vertical spacer <tr>s above. */}
-            {windowed && firstCenterIdx > 0 && (
-              <td
-                aria-hidden
-                colSpan={firstCenterIdx}
-                style={{ padding: 0, border: 0, background: "transparent" }}
-              />
-            )}
-            {(windowed ? columnVirtualItems.map((vi) => centerCells[vi.index]) : centerCells).map(
-              renderCell,
-            )}
-            {windowed && lastCenterIdx < centerCells.length - 1 && (
-              <td
-                aria-hidden
-                colSpan={centerCells.length - 1 - lastCenterIdx}
-                style={{ padding: 0, border: 0, background: "transparent" }}
-              />
-            )}
-            {rightCells.map(renderCell)}
-          </>
-        );
-      })()}
-      <td className="col-filler" aria-hidden />
-    </tr>
+      <GridRow
+        key={row.id}
+        row={row}
+        rowData={rowData}
+        rowIdx={rowIdx}
+        measureIndex={measureIndex}
+        measureRef={measureIndex === undefined ? undefined : rowVirtualizer.measureElement}
+        rowKey={rowKey}
+        pendingForRow={pendingForRow}
+        markedDelete={!!pendingDeleteKeys?.has(rowKey)}
+        // Re-run diff (#597): a row present in this result but not the previous one.
+        added={!!addedRowIndices?.has(row.index)}
+        changedRow={changedCells?.[row.index]}
+        columns={columns}
+        columnKinds={columnKinds}
+        editable={editable}
+        editableColumns={editableColumns}
+        columnDefs={tableColumns}
+        statsVersion={anyColFormat ? columnStats : null}
+        layoutKey={columnLayoutKey}
+        leftPinnedCount={leftPinnedCount}
+        rightPinnedCount={rightPinnedCount}
+        colWinFirst={colWinFirst}
+        colWinLast={colWinLast}
+        editing={editingHere ? { colIdx: editing.colIdx, value: editing.value } : null}
+        activeColIdx={activeCell?.rowIdx === row.index ? activeCell.colIdx : null}
+        selColSet={selectionRect?.rowIndexSet.has(row.index) ? selectionRect.colIdSet : null}
+        findHits={findHits}
+        findCurrentCol={
+          findCurrentKey && findCurrentKey.startsWith(`${row.index}:`)
+            ? Number(findCurrentKey.slice(String(row.index).length + 1))
+            : null
+        }
+        maskedCols={maskedCols}
+        reveal={
+          reveal && (reveal.kind === "column" || reveal.rowIdx === row.index) ? reveal : null
+        }
+        validateEdit={editingHere || pendingForRow ? validateEdit : undefined}
+        valuePicker={editingHere ? valuePicker : undefined}
+        valuePickerListId={valuePickerListId}
+        t={t}
+        bindTooltip={bindCellTooltip}
+        cellRefs={cellRefs}
+        handlers={rowHandlers}
+      />
     );
   };
+
+  // 本体に描く行の添字と上下のスペーサ。隠れている間は直前の窓をそのまま残す (#1341)。
+  const bodyIndices = hiddenWindow
+    ? hiddenWindow.indices.filter((i) => i < visibleRows.length)
+    : virtualItems.map((vi) => vi.index);
+  const bodyPaddingTop = hiddenWindow ? hiddenWindow.top : virtualPaddingTop;
+  const bodyPaddingBottom = hiddenWindow ? hiddenWindow.bottom : virtualPaddingBottom;
 
   return (
     <>
@@ -5119,174 +5592,47 @@ export const DataGrid = memo(function DataGrid({
                 // original-order lookups (kind, name, changed flag, filter,
                 // pinning) from the column id (`String(originalIndex)`).
                 const colIdx = Number(h.column.id);
-                const kind = columnKinds[colIdx] ?? "string";
-                const canSort = enableColumnControls && h.column.getCanSort();
-                const canResize = h.column.getCanResize();
-                const isResizing = h.column.getIsResizing();
                 const sortDir = h.column.getIsSorted();
                 // Multi-column sort: a rank badge shows each key's
                 // priority when more than one column is sorted (Shift+click
                 // chains additional keys; plain click resets to single sort).
                 const multiSort = sorting.length > 1;
-                const sortRank = sortDir && multiSort ? h.column.getSortIndex() + 1 : 0;
-                const sortTitle =
-                  sortDir === "asc"
-                    ? t("gridSortDesc")
-                    : sortDir === "desc"
-                      ? t("gridSortClear")
-                      : t("gridSortAsc");
-                const isChangedCol = changedColumns?.[colIdx] ?? false;
-                const colFilterActive = isColumnFilterActive(
-                  h.column.getFilterValue() as ColumnFilter | undefined,
-                );
-                const filterLabel = t("gridFilterAria", { column: columns[colIdx]?.name ?? "" });
                 const pinSide = pinSideFromTable(h.column.getIsPinned());
-                const pinStyle: CSSProperties = pinSide
-                  ? {
-                      position: "sticky",
-                      zIndex: 3,
-                      ...(pinSide === "left"
-                        ? { left: ROW_INDEX_WIDTH + h.column.getStart("start") }
-                        : { right: h.column.getAfter("end") }),
-                    }
-                  : {};
                 return (
-                  <th
+                  <GridHeaderCell
                     key={h.id}
-                    data-col-id={h.column.id}
-                    style={pinStyle}
-                    className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${dragOverColId === h.column.id ? "is-drag-over" : ""} ${dragColId === h.column.id ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
-                    aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
-                    onDragOver={
-                      dragColId
-                        ? (e) => {
-                            e.preventDefault();
-                            if (dragOverColId !== h.column.id) setDragOverColId(h.column.id);
-                          }
-                        : undefined
-                    }
-                    onDrop={
-                      dragColId
-                        ? (e) => {
-                            e.preventDefault();
-                            reorderColumn(dragColId, h.column.id);
-                            setDragColId(null);
-                            setDragOverColId(null);
-                          }
-                        : undefined
-                    }
-                  >
-                    {enableColumnControls ? (
-                      <div className="th-inner">
-                        <Tooltip label={t("gridDragColumn")}>
-                          <chakra.span
-                            className="th-drag-grip"
-                            draggable
-                            role="button"
-                            tabIndex={-1}
-                            aria-label={t("gridDragColumn")}
-                            onDragStart={(e) => {
-                              setDragColId(h.column.id);
-                              e.dataTransfer.effectAllowed = "move";
-                              e.dataTransfer.setData("text/plain", h.column.id);
-                            }}
-                            onDragEnd={() => {
-                              setDragColId(null);
-                              setDragOverColId(null);
-                            }}
-                          >
-                            <Icon name="columns" size={ICON_SIZES.sm} />
-                          </chakra.span>
-                        </Tooltip>
-                        <Tooltip label={sortTitle}>
-                          <chakra.button
-                            type="button"
-                            className="th-sort-button"
-                            onClick={h.column.getToggleSortingHandler()}
-                          >
-                            {flexRender(h.column.columnDef.header, h.getContext())}
-                            <chakra.span className="th-sort-indicator" aria-hidden>
-                              {sortDir === "asc" ? (
-                                <Icon name="sort-asc" size={ICON_SIZES.sm} />
-                              ) : sortDir === "desc" ? (
-                                <Icon name="sort-desc" size={ICON_SIZES.sm} />
-                              ) : null}
-                              {sortRank > 0 && (
-                                <chakra.span
-                                  className="th-sort-rank"
-                                  aria-label={t("gridSortPriority", { n: sortRank })}
-                                >
-                                  {sortRank}
-                                </chakra.span>
-                              )}
-                            </chakra.span>
-                          </chakra.button>
-                        </Tooltip>
-                        <Tooltip label={filterLabel}>
-                          <chakra.button
-                            type="button"
-                            className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
-                            onClick={(e) =>
-                              setFilterMenu({
-                                colIdx,
-                                anchor: e.currentTarget.getBoundingClientRect(),
-                              })
-                            }
-                            aria-label={filterLabel}
-                            aria-haspopup="dialog"
-                            aria-expanded={filterMenu?.colIdx === colIdx}
-                          >
-                            <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.bold} />
-                          </chakra.button>
-                        </Tooltip>
-                      </div>
-                    ) : (
-                      flexRender(h.column.columnDef.header, h.getContext())
+                    header={h}
+                    columnDefs={tableColumns}
+                    colName={columns[colIdx]?.name ?? ""}
+                    kind={columnKinds[colIdx] ?? "string"}
+                    enableColumnControls={enableColumnControls}
+                    canSort={enableColumnControls && h.column.getCanSort()}
+                    canResize={h.column.getCanResize()}
+                    isResizing={h.column.getIsResizing()}
+                    sortDir={sortDir}
+                    sortRank={sortDir && multiSort ? h.column.getSortIndex() + 1 : 0}
+                    isChangedCol={changedColumns?.[colIdx] ?? false}
+                    colFilterActive={isColumnFilterActive(
+                      h.column.getFilterValue() as ColumnFilter | undefined,
                     )}
-                    {nullRates && (() => {
-                      // 常時表示の NULL 率ミニバー (#911)。取得済み行のうち NULL が
-                      // 占める割合を、ヘッダ下端の細い帯として列幅いっぱいに描く。
-                      // 塗りは `.cell-databar` / 列統計ポップオーバーと同じ
-                      // `accentFill` レシピ (#718) を共有し、色を二重定義しない。
-                      // 幅は width ではなく scaleX で表現する (データバーと同じ理由)。
-                      // 全列に必ず 1 本描くのでヘッダ高さは列ごとにブレず、密度/
-                      // フォントサイズを変えても整列は崩れない。ツールチップは列数
-                      // ぶんしか描かれないが、フォーカス不能な装飾要素にタブ
-                      // ストップを増やさないよう、共有 Tooltip ではなくセルと同じ
-                      // 委譲ツールチップ (hover 専用) に載せる。読み上げ向けの情報は
-                      // `aria-label` が持つ。
-                      const pct = nullRates[colIdx] ?? 0;
-                      const label = t("gridNullBarAria", {
-                        column: columns[colIdx]?.name ?? "",
-                        percent: pct.toFixed(pct > 0 && pct < 1 ? 1 : 0),
-                        count: rows.length.toLocaleString(),
-                      });
-                      return (
-                        <div
-                          className="th-nullbar"
-                          role="img"
-                          aria-label={label}
-                          {...cellTooltipProps(label)}
-                        >
-                          <div
-                            className="th-nullbar-fill"
-                            style={{ transform: `scaleX(${pct / 100})` }}
-                          />
-                        </div>
-                      );
-                    })()}
-                    {canResize && (
-                      <Tooltip label={t("gridResizeColumn")}>
-                        <div
-                          className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
-                          onMouseDown={(e) => startColumnResize(e, h.column)}
-                          onTouchStart={(e) => startColumnResize(e, h.column)}
-                          onDoubleClick={() => h.column.resetSize()}
-                          aria-hidden
-                        />
-                      </Tooltip>
-                    )}
-                  </th>
+                    pinSide={pinSide}
+                    pinOffset={
+                      pinSide === "left"
+                        ? ROW_INDEX_WIDTH + h.column.getStart("start")
+                        : pinSide
+                          ? h.column.getAfter("end")
+                          : 0
+                    }
+                    dragActive={!!dragColId}
+                    isDragOver={dragOverColId === h.column.id}
+                    isDragSource={dragColId === h.column.id}
+                    filterOpen={filterMenu?.colIdx === colIdx}
+                    nullPct={nullRates ? (nullRates[colIdx] ?? 0) : null}
+                    rowCount={nullRates ? rows.length : 0}
+                    t={t}
+                    bindTooltip={bindCellTooltip}
+                    handlers={headerHandlers}
+                  />
                 );
               })}
               <th className="col-filler" aria-hidden />
@@ -5326,10 +5672,11 @@ export const DataGrid = memo(function DataGrid({
               </td>
               <td className="col-filler" aria-hidden />
             </tr>
-          ) : virtualize && !virtualizerEnabled ? (
-            // keep-alive で隠れている間は行を描かない (全行へのフォールバックを避ける, #1309)。
+          ) : virtualize && !virtualizerEnabled && !hiddenWindow ? (
+            // keep-alive で隠れている間は、窓を測れていなければ行を描かない (全行への
+            // フォールバックを避ける, #1309)。
             null
-          ) : virtualize && virtualItems.length > 0 ? (
+          ) : virtualize && (hiddenWindow || virtualItems.length > 0) ? (
             // `virtualItems.length > 0` gates the virtualized path: when the
             // scroll container has no measured height yet (first render before
             // the ref attaches, or non-layout test environments like jsdom) the
@@ -5342,20 +5689,20 @@ export const DataGrid = memo(function DataGrid({
             <>
               {/* Spacer rows hold the off-screen height so the scrollbar and
                   sticky columns behave as if every row were present. */}
-              {virtualPaddingTop > 0 && (
+              {bodyPaddingTop > 0 && (
                 <tr aria-hidden>
                   <td
                     colSpan={totalColCount}
-                    style={{ height: virtualPaddingTop, padding: 0, border: 0, background: "transparent" }}
+                    style={{ height: bodyPaddingTop, padding: 0, border: 0, background: "transparent" }}
                   />
                 </tr>
               )}
-              {virtualItems.map((vi) => renderRow(visibleRows[vi.index], vi.index, vi.index))}
-              {virtualPaddingBottom > 0 && (
+              {bodyIndices.map((i) => renderRow(visibleRows[i], i, i))}
+              {bodyPaddingBottom > 0 && (
                 <tr aria-hidden>
                   <td
                     colSpan={totalColCount}
-                    style={{ height: virtualPaddingBottom, padding: 0, border: 0, background: "transparent" }}
+                    style={{ height: bodyPaddingBottom, padding: 0, border: 0, background: "transparent" }}
                   />
                 </tr>
               )}

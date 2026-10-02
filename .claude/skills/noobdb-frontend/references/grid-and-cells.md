@@ -160,7 +160,7 @@
   一時 reveal は右クリック/ヘッダメニューからセル 1 つまたは列全体を対象に
   `REVEAL_TIMEOUT_MS` (30 秒、#938 と同じ発想) 経過・ウィンドウ blur・
   `visibilitychange` (hidden) で自動再マスクし、結果 (列/行) が差し替わっても解除する。
-  reveal 状態はセル描画 (`renderCell`) でだけ参照し、`tableColumns` の依存に入れない
+  reveal 状態はセル描画 (`GridRow`) でだけ参照し、`tableColumns` の依存に入れない
   (reveal の切替で react-table の列モデルを作り直さない。#1098 と同じ配慮)。マスク
   無しの結果では `maskedCols` が `null` でホットパスは null 判定 1 回のみ。
   マスク中セルの他経路は「伏せ字のまま漏らさない」側に倒してある: コピー (セル/行/
@@ -188,3 +188,20 @@
   ユーザ定義 ENUM は `pg_enum` から、CHECK は `col IN (...)` / `= ANY (ARRAY[...])` /
   同一列の等値 OR だけを許可値として解析する。取れない・失敗した列は候補なし
   (= 従来のテキスト入力) に静かに縮退する。ドライバ別の対応表は `valuePicker.ts` 冒頭。
+
+## 行・列ヘッダの memo 化 (#1341)
+
+`ResultGrid.tsx` の本体の行は `GridRow`、列ヘッダは `GridHeaderCell` (どちらも `memo`、`row` /
+`header` 以外の props を参照比較) に切り出してある。`DataGrid` の `renderRow` が「その行に関係する
+値だけ」(保留中の編集・アクティブセルの列・範囲選択の列集合・編集中セル・Find・reveal など) を
+切り出して渡すので、1 セルの移動や範囲選択で再レンダーされるのは影響する行だけになる。
+
+- 行・ヘッダの描画が読む値を増やすときは、必ず `GridRowProps` / `GridHeaderCellProps` に足して
+  `DataGrid` から渡す。足し忘れると表示が古くなる。
+- コールバックは `useStableCallbacks` で参照を固定した束 (`rowHandlers` / `headerHandlers`) を渡す。
+  最新の state は呼び出し時に読まれるので、行側が state を持つ必要はない。
+- keep-alive で隠れている間は、直前の窓の行を DOM に残す (`windowSnapshotRef`)。再表示では同じ
+  行要素を使い回すので描き直さない。行高は密度・フォント拡大が同じ間インスタンスに残し、行の
+  作り直しで同期計測 (行数ぶんのレイアウト読み出し) をしない。
+- テスト: `resultGridRowMemo.test.tsx` (行・ヘッダの再レンダー回数) / `ResultGrid.virtualized.test.tsx`
+  (keep-alive 中の行の保持)。
