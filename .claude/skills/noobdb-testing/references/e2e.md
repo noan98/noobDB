@@ -1,6 +1,6 @@
-# Phase 3: tauri-driver による実 webview E2E 基盤 (#529 PoC)
+# Phase 3: tauri-driver による実 webview E2E 基盤 (#529 PoC / #1245 nightly 昇格)
 
-## Phase 3: tauri-driver による実 webview E2E 基盤 (#529 PoC)
+## Phase 3: tauri-driver による実 webview E2E 基盤 (#529 PoC / #1245 nightly 昇格)
 
 **位置づけ**: Phase 2 (#306) の Chromium ブラウザモードは「Web 層のレイアウト/ビジュアル
 退行」を検出するが、Tauri が実際に使う webview (Linux: WebKitGTK / Windows: WebView2)
@@ -14,8 +14,23 @@
 |---|---|
 | `e2e/wdio.conf.ts` | WebDriverIO の設定。`@wdio/tauri-service` を使い tauri-driver の起動/終了を自動化。アプリバイナリパスをプラットフォーム別に解決する |
 | `e2e/tsconfig.e2e.json` | E2E 専用 tsconfig (主 tsconfig.json の対象外として分離し tsc エラーを防ぐ) |
-| `e2e/specs/sqlite-happy-path.e2e.ts` | SQLite ハッピーパスのスペック。接続フォーム入力 → 接続確立 → SELECT 実行 → ResultGrid 表示 → セル編集 Apply (骨格) の 5 ステップ |
-| `.github/workflows/e2e.yml` | `workflow_dispatch` 手動トリガの CI ワークフロー。Linux (Ubuntu 22.04) 上で `webkit2gtk-driver` + `xvfb` + `tauri-driver` を使う |
+| `e2e/specs/sqlite-happy-path.e2e.ts` | SQLite ハッピーパスのスペック。「最初の接続を作成」→ フォーム入力 → 接続確立 → CREATE / INSERT / 集計 SELECT → 実エンジンの `sqlite_version()` と一時ファイルへの永続化確認 (IPC 固有アサーション)。セレクタは `data-testid` のみ |
+| `.github/workflows/e2e.yml` | `schedule: cron` (毎晩 UTC 18:00) + `workflow_dispatch` の nightly ワークフロー (必須チェックではない)。Linux (Ubuntu 22.04) 上で `webkit2gtk-driver` + `xvfb` + `tauri-driver` を使う |
+
+## E2E 用 `data-testid` 一覧 (#1245)
+
+スペックは文言・ロケールに依存しないよう、次の testid だけでアプリを操作する。いずれも
+属性追加のみで、見た目・挙動は変えていない。消す・名前を変えるときは
+`e2e/specs/sqlite-happy-path.e2e.ts` も合わせて直す (Vitest 側のガードは無いため、
+壊れると nightly でしか気づけない)。
+
+| testid | 場所 |
+|---|---|
+| `connection-create-first` | `ConnectionList.tsx` の空状態 CTA (`EmptyState` の `action.testId`) |
+| `connection-form-name` / `connection-form-driver` / `connection-form-sqlite-path` / `connection-form-save` | `ConnectionForm.tsx` |
+| `connection-profile-row` (+ `data-profile-name`) | `ConnectionList.tsx` のプロファイル行 |
+| `query-editor` / `query-editor-run` | `QueryEditor.tsx` (CodeMirror のホストと実行ボタン、`MultiStateBadge` の `data-testid`) |
+| `result-grid` | `ResultGrid.tsx` の `<table role="grid">` |
 
 ## ローカル実行手順
 
@@ -60,8 +75,8 @@ Phase 2 がレイアウト/ビジュアルの退行検出に強く、Phase 3 が
   4〜8 分程度。これに E2E テスト自体の 2〜5 分が加わり、PR ごとのゲートとして使うには
   コストが高い。
 - **安定性 (flaky リスク)**: WebKitWebDriver + xvfb の組み合わせはウィンドウ描画タイミング・
-  GTK 初期化順序に依存し、タイムアウトによる flaky が起きやすい。セレクタを
-  role/text ベースで書いているため UI 変更で壊れるリスクもある。
+  GTK 初期化順序に依存し、タイムアウトによる flaky が起きやすい。セレクタは #1245 で
+  `data-testid` ベースに置き換え済み (UI 文言の変更では壊れない)。
 - **メンテコスト**: tauri-driver は Tauri のバージョンに追従が必要。WebDriverIO
   のバージョン (`@wdio/tauri-service@1.0.0` は WebDriverIO v9 が必要) の固定管理も
   必要。
@@ -70,23 +85,30 @@ Phase 2 がレイアウト/ビジュアルの退行検出に強く、Phase 3 が
 
 ## CI 適用方針の結論
 
-**方針: `workflow_dispatch` 手動トリガで PoC 運用。安定化後に nightly を検討。**
+**方針: nightly (`schedule: cron`、毎晩 UTC 18:00 = JST 03:00) + `workflow_dispatch` に昇格済み (#1245)。必須チェックにはしない。**
 
-現時点での必須チェック化は行わない。理由:
+必須チェック (Required status checks) / PR ゲートにしない理由:
 
 1. **ビルド時間**: Tauri バイナリのビルドが PR ゲートを大幅に延ばし、#443/#482 の
    「漸進的品質向上」方針に反する (現在の CI 壁時計時間を倍増させるリスク)。
 2. **flaky リスク**: WebKitWebDriver + xvfb は安定実績が浅く、false negative で
    マージをブロックし続ける運用負荷が大きい。
-3. **補完対象が限定的**: 現在の E2E スペック (SQLite ハッピーパス 1 本) は
-   Phase 2 が既にカバーする範囲と重複しており、差分の価値がまだ低い。
 
-**nightly への昇格基準** (以下が揃ったら `schedule: cron` で週次に昇格を検討):
-- テストが 3 回連続で安定してグリーンになること
-- 実行時間が 15 分以内に収まること (キャッシュ暖機後)
-- セレクタを `data-testid` で安定化させること (Phase 3 専用 testid を最小限追加)
-- IPC 固有のアサーション (Chromium では検証不可なもの) が 1 件以上追加されること
+「実装済みだが自動では一度も走らない」状態を避けるため、手動専用だった PoC を nightly へ
+昇格した。失敗時はスクリーンショット / ログ (`e2e/screenshots/`・`e2e/logs/`) を
+アーティファクトに保存する (7 日保持)。
+
+**nightly への昇格基準と現状** (#1245 時点):
+
+| 基準 | 状況 |
+|---|---|
+| セレクタを `data-testid` で安定化 | 達成 (上の一覧) |
+| IPC 固有のアサーションが 1 件以上 | 達成 (実 `sqlite_version()` の取得と、一時ファイルへの書き込み永続化を Node 側で確認) |
+| テストが 3 回連続で安定してグリーン | **未確認** — nightly の実行履歴で確認する。確認できるまで「安定」とは扱わない |
+| 実行時間が 15 分以内 (キャッシュ暖機後) | **未確認** — 実測前。tauri-driver バイナリの `actions/cache` と apt の 1 回化で短縮を図っただけで、実績値ではない。実測で超えるなら `timeout-minutes` (現在 30) と合わせて見直す |
+
+必須チェック化を検討するのは、上 2 つの未確認項目が nightly の実績で満たされ、
+かつ flaky が出ていないことを確認してから。
 
 コスト: High (Tauri ビルド + flaky 管理) / メリット: 3 (実 webview 検証は価値あるが
-Phase 2 との差分は当面限定的) — まず PoC 運用で安定性を評価し、メリットが確認できた
-段階で昇格する。
+Phase 2 との差分は限定的) — nightly で安定性と実行時間の実績を集める。

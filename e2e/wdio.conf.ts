@@ -25,8 +25,8 @@
  *   pnpm test:e2e
  *
  * 【注意】
- * この設定は PoC・手動運用を前提としており、CI の必須チェックには含めていません。
- * 常設 E2E への昇格は安定性評価後に判断します (詳細は CLAUDE.md の Phase 3 節を参照)。
+ * この設定は nightly (.github/workflows/e2e.yml、#1245) で使う。CI の必須チェックには
+ * 含めていない。詳細は .claude/skills/noobdb-testing/references/e2e.md を参照。
  */
 
 import path from "node:path";

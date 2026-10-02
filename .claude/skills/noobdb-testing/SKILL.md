@@ -12,7 +12,7 @@ description: noobDB のテストを実行・追加するとき、統合テスト
 | Rust 単体 / 統合 | `cargo test` / `cargo nextest run` | 純ロジック + 実 DB (環境変数ゲート) |
 | フロント単体 (jsdom) | `pnpm test` | 純ロジック・コンポーネント挙動 |
 | 実ブラウザ | `pnpm test:browser` | 本物の CSS 上での描画・シナリオ・ビジュアル回帰 |
-| 実 webview E2E | `pnpm test:e2e` | 実 IPC + 実 SQLite (手動トリガのみ) |
+| 実 webview E2E | `pnpm test:e2e` | 実 IPC + 実 SQLite (nightly + 手動、非必須 #1245) |
 
 ## 言語横断のパリティ / ゴールデンテスト
 

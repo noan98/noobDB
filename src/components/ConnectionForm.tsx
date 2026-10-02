@@ -773,13 +773,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
       <Box gridColumn="span 2">
         <label htmlFor={`${fid}-name`}>{t("formName")}</label>
-        <Input id={`${fid}-name`} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
+        <Input id={`${fid}-name`} data-testid="connection-form-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
       </Box>
 
       <Box gridColumn="span 2">
         <label htmlFor={`${fid}-driver`}>{t("formDriver")}</label>
         <Select
           id={`${fid}-driver`}
+          data-testid="connection-form-driver"
           value={driver}
           onChange={(e) => handleDriverChange(e.target.value as DriverKind)}
         >
@@ -797,6 +798,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <Flex gap="2" align="end">
               <Input
                 id={`${fid}-sqlite-path`}
+                data-testid="connection-form-sqlite-path"
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
                 placeholder={t("formSqliteFilePathPlaceholder")}
@@ -1356,7 +1358,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Button type="button" variant="secondary" onClick={onCancel} disabled={saving || testing}>
           {t("formCancel")}
         </Button>
-        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave} disabled={testing}>
+        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave} disabled={testing} data-testid="connection-form-save">
           {t("formSave")}
         </LoadingButton>
       </Flex>

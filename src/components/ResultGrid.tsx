@@ -5586,6 +5586,7 @@ export const DataGrid = memo(function DataGrid({
       <table
         ref={gridTableRef}
         role="grid"
+        data-testid="result-grid"
         style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}
         onKeyDown={handleGridKeyDown}
         onPaste={handleGridPaste}

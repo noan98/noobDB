@@ -185,3 +185,15 @@ Node 標準の `node:test` だけを使い依存ゼロなので `pnpm install` �
 Vitest (`src/__tests__/`) ではなく `node:test` にしているのは、ワークフローが
 実行時に `node scripts/automerge-hold.mjs` を素の Node で直接呼ぶため
 (TypeScript / Vite を介さない同じ形でテストする) です。
+
+## `e2e.yml` (tauri-driver 実 webview E2E, nightly / #1245)
+
+`ci.yml` とは別の独立ワークフローで、`schedule: cron` (毎晩 UTC 18:00) と
+`workflow_dispatch` で走る。**必須チェックに含めない** (PR ゲートにもしない)。
+Linux (ubuntu-22.04) の WebKitGTK のみが対象で、SQLite の一時ファイルだけで完結する。
+tauri-driver は `taiki-e/install-action` の対応ツールではないため、
+`~/.cargo/bin/tauri-driver` を `actions/cache` で保持し、miss のときだけ
+`cargo install --locked` する (更新時はキーの `v1` を上げる)。失敗時は
+`e2e/screenshots/` と `e2e/logs/` をアーティファクト保存する。
+「3 回連続グリーン」と「15 分以内」は**未確認** (nightly の実績で確認する)。
+詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
