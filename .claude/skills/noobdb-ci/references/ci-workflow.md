@@ -45,7 +45,12 @@
   配下の `.rs` を網羅的に読む。前者は `commands/*.rs` 限定、後者は
   `src-tauri/src/**/*.rs` 再帰。#970) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
-  `schemaParity.test.ts` / `sqlQuotingGolden.test.ts` (#880) /
+  `schemaParity.test.ts` / `serdeCoverageParity.test.ts` (#1243。
+  `commands/**/*.rs` の `#[tauri::command]` 戻り値型を抽出し、すべてが serde ゴールデンの
+  フィクスチャ (`COVERED`) か理由つき除外 (`EXCLUDED`) に分類されていることを強制する。
+  新コマンドの戻り値型を足したら `serde_schema_parity.rs` に代表インスタンスを足し
+  `NOOBDB_WRITE_SERDE_FIXTURES=1 cargo test --test serde_schema_parity` で再生成する) /
+  `sqlQuotingGolden.test.ts` (#880) /
   `exportFormatGolden.test.ts` (#879) (Rust の統合テストと
   共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する)、および
   `apiReachabilityParity.test.ts` (#907。Rust ソースは読まないが、UI 未到達
