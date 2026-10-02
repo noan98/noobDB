@@ -1,10 +1,12 @@
 // スキーマツリーの仮想化 (#1315) を実ブラウザで固定する。jsdom はレイアウトを持たず
 // 窓の計算ができないため、描画行数・スクロール・窓の外の行へのキーボード移動は Chromium で測る。
 import "../../App.css";
-import { beforeEach, expect, test } from "vitest";
+import { useState } from "react";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import { ConnectionList } from "../../components/ConnectionList";
 import type { ConnectionProfile, TableColumnInfo } from "../../api/tauri";
+import type { TableRef } from "../../tableQuickAccess";
 import { renderInBrowser } from "./render";
 import { installTauriMock, onCommand } from "./tauriMock";
 
@@ -198,4 +200,138 @@ test("→ でテーブルを開くと列の行が続き、← で閉じる", asy
   await expect.poll(focusedKey).toBe("tbl:appdb::t0001");
   await userEvent.keyboard("{ArrowLeft}");
   await expect.poll(() => rowElement("col:appdb::t0001:id")).toBeNull();
+});
+
+// ---- scrollMargin (リスト先頭の位置) の追従 (#1342) ----
+// 位置の測定は「描画のたび」ではなく「きっかけのとき」だけ。上の層の開閉・クイックアクセスの増減・
+// 密度 / フォント拡大のあとも、窓の計算 (どの行を描くか) がずれていないことを確かめる。
+// 窓は overscan (12 行) ぶんだけ上下に余分な行を描く。位置が Δ ずれていると、ビューポートの上に
+// ある描画行の数が 12 から Δ / 行高 だけ増減するので、それを検出する。
+
+const OVERSCAN = 12;
+const GROUP_A = "A-grp";
+
+const mkProfile = (id: string, group: string | null): ConnectionProfile => ({ ...PROFILE, id, name: id, group });
+// A-grp (上) に 4 つ、B-grp (下) にアクティブなプロファイル。A-grp の開閉でリストの位置が動く。
+const GROUPED_PROFILES = [
+  mkProfile("a1", GROUP_A),
+  mkProfile("a2", GROUP_A),
+  mkProfile("a3", GROUP_A),
+  mkProfile("a4", GROUP_A),
+  mkProfile("p-virtual", "B-grp"),
+];
+
+let setFavoritesExternally: (refs: TableRef[]) => void = () => {};
+
+function Controlled({ profiles }: { profiles: ConnectionProfile[] }) {
+  const [favorites, setFavorites] = useState<TableRef[]>([]);
+  setFavoritesExternally = setFavorites;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "480px", width: "320px" }}>
+      <ConnectionList
+        profiles={profiles}
+        activeProfileId={PROFILE.id}
+        sessionId="sess-virtual"
+        connectingId={null}
+        errorProfileId={null}
+        onConnect={noop}
+        onCreate={noop}
+        onEdit={noop}
+        onDuplicate={noop}
+        onDelete={noop}
+        onPickTable={noop}
+        onImportTable={noop}
+        onDumpDatabase={noop}
+        onRunTableSelect={noop}
+        onInsertTableSelect={noop}
+        selectLimit={200}
+        favorites={favorites}
+      />
+    </div>
+  );
+}
+
+async function renderControlled(profiles: ConnectionProfile[]) {
+  await renderInBrowser(<Controlled profiles={profiles} />);
+  await expect.poll(() => rowElement("profile:p-virtual")).not.toBeNull();
+  await expect.poll(() => rowElement("db:appdb")).not.toBeNull();
+  rowElement("db:appdb")!.click();
+  await expect.poll(() => rowElement("tbl:appdb::t0001")).not.toBeNull();
+}
+
+/** 中ほどまでスクロールして、ビューポートの上に完全に隠れている描画行の数を返す。 */
+async function rowsAboveViewport() {
+  const box = scroller();
+  box.scrollTop = box.scrollHeight / 2;
+  await nextFrame();
+  await nextFrame();
+  await nextFrame();
+  const top = box.getBoundingClientRect().top;
+  // プロファイル / グループの行はリストの外 (スクロール要素の上の層) なので数えない。
+  return treeItems().filter(
+    (el) => el.dataset.treeKey?.startsWith("tbl:") && el.getBoundingClientRect().bottom <= top,
+  ).length;
+}
+
+async function expectWindowAligned() {
+  // 測り直しは ResizeObserver / rAF 経由なので、落ち着くまで待ってから測る。
+  await expect.poll(async () => Math.abs((await rowsAboveViewport()) - OVERSCAN), { timeout: 3000 }).toBeLessThanOrEqual(2);
+}
+
+const toggleGroup = async (name: string) => {
+  rowElement(`group:${name}`)!.click();
+  await nextFrame();
+};
+
+afterEach(() => {
+  const root = document.documentElement;
+  root.style.removeProperty("--font-scale");
+  root.removeAttribute("data-density");
+});
+
+test("上のグループを閉じて開いても、窓の位置がずれない", async () => {
+  await renderControlled(GROUPED_PROFILES);
+  await expectWindowAligned();
+  scroller().scrollTop = 0;
+  await nextFrame();
+  const before = scroller().querySelector("[data-tree-key='db:appdb']")!.getBoundingClientRect().top;
+  await toggleGroup(GROUP_A); // 閉じる (上の 4 行ぶんリストが上へ動く)
+  await expect.poll(() => rowElement("profile:a1")).toBeNull();
+  // 本当にリストが動いている (動かなければ、この試験は位置の追従を検証できない)。
+  scroller().scrollTop = 0;
+  await nextFrame();
+  expect(before - scroller().querySelector("[data-tree-key='db:appdb']")!.getBoundingClientRect().top).toBeGreaterThan(60);
+  await expectWindowAligned();
+  await toggleGroup(GROUP_A); // 開く
+  await expectWindowAligned();
+});
+
+test("アクティブなプロファイルを閉じて開き直しても、窓の位置がずれない", async () => {
+  await renderControlled(GROUPED_PROFILES);
+  await toggleGroup("B-grp");
+  await toggleGroup("B-grp");
+  await expect.poll(() => rowElement("db:appdb")).not.toBeNull();
+  await expectWindowAligned();
+});
+
+test("クイックアクセス (お気に入り) の件数が増減しても、窓の位置がずれない", async () => {
+  await renderControlled(GROUPED_PROFILES);
+  setFavoritesExternally(Array.from({ length: 5 }, (_, i) => ({ database: "appdb", table: `t${String(i + 1).padStart(4, "0")}` })));
+  await expect.poll(() => treeItems().some((el) => el.dataset.treeKey?.startsWith("qa:favorite:"))).toBe(true);
+  await expectWindowAligned();
+  setFavoritesExternally([]);
+  await expect.poll(() => treeItems().some((el) => el.dataset.treeKey?.startsWith("qa:favorite:"))).toBe(false);
+  await expectWindowAligned();
+});
+
+test("密度とフォント拡大を変えても、窓の位置がずれない", async () => {
+  await renderControlled(GROUPED_PROFILES);
+  await expectWindowAligned();
+  const root = document.documentElement;
+  root.style.setProperty("--font-scale", String(24 / 14));
+  root.setAttribute("data-density", "spacious");
+  await expectWindowAligned();
+  root.style.removeProperty("--font-scale");
+  root.removeAttribute("data-density");
+  await expectWindowAligned();
 });
