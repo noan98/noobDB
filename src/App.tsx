@@ -1,4 +1,4 @@
-import { forwardRef, lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { forwardRef, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -34,6 +34,7 @@ import { SandboxReviewModal } from "./components/SandboxReviewModal";
 import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profileBackup";
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
+import { createStreamRowFlusher, type StreamRowFlusher } from "./streamRowFlusher";
 import { sqlSaveFileName } from "./sqlFileIO";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
 // 本体は perf.ts に閉じる。
@@ -2185,7 +2186,21 @@ export default function App() {
     }
   }, [tabs, releaseResultHandle]);
 
+  // 行バッチの反映待ちバッファ (#1317)。タブごとに実行中のストリームが 1 本だけ持つ。
+  // detach (キャンセル・再実行) の直前に吐き出し、届いた行を取りこぼさない。
+  const streamFlushersRef = useRef<Map<string, StreamRowFlusher>>(new Map());
+  // 見えていなかったタブが表示された (ペインのアクティブタブが変わった) ら、保留中の
+  // 行をまとめて反映する。バックグラウンドのタブは貯めるだけで再レンダーを起こさない。
+  useEffect(() => {
+    for (const flusher of streamFlushersRef.current.values()) flusher.resume();
+  }, [panes]);
+
   const detachStreamListener = useCallback((tabId: string) => {
+    const flusher = streamFlushersRef.current.get(tabId);
+    if (flusher) {
+      flusher.flushNow();
+      streamFlushersRef.current.delete(tabId);
+    }
     const un = streamUnlistenRef.current.get(tabId);
     if (un) {
       un();
@@ -3612,12 +3627,6 @@ export default function App() {
   const tabsRef = useRef<Tab[]>(tabs);
   useEffect(() => { tabsRef.current = tabs; tabsForDirtyRef.current = tabs; }, [tabs]);
 
-  const nextRowCount = useCallback((tabId: string, justAdded: number) => {
-    const tt = tabsRef.current.find((x) => x.id === tabId);
-    if (tt?.result) return tt.result.rows.length;
-    return justAdded;
-  }, []);
-
   // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
   // かつウィンドウが非フォーカスのときだけ発火する (判定は queryNotify.ts の
   // 純関数)。通知本文には件数・経過時間・エラー先頭 1 行のみを含め、SQL 本文や
@@ -3778,7 +3787,55 @@ export default function App() {
         : {}),
     });
 
+    // 行バッチは貯めて 1 回にまとめて反映する (#1317)。見えているタブでも反映は
+    // 一定間隔に 1 回、`startTransition` で低優先にしてスクロール・入力を妨げない。
+    // 見えていないタブは貯めるだけ (表示された時点で `resume` が反映する)。
+    const isTabVisible = () => panesRef.current.some((p) => p.activeTabId === tabId);
+    const flusher = createStreamRowFlusher({
+      isVisible: isTabVisible,
+      apply: ({ chunks, stats, urgent }) => {
+        const commit = () => {
+          patchTab(tabId, (tt) => {
+            if (!tt.result) return tt;
+            // `concat` はスプレッド (`[...a, ...b]`) と違い引数展開のスタックを使わず、
+            // 貯めたチャンクを 1 回のコピーで結合できる (#1257, #1317)。
+            const nextRows = tt.result.rows.concat(...(chunks as CellValue[][][]));
+            // バックエンドが逐次更新した列統計を新しい行配列に紐づける。
+            attachStreamStats(nextRows, stats);
+            return {
+              ...tt,
+              result: {
+                ...tt.result,
+                rows: nextRows,
+                rows_affected: nextRows.length,
+                elapsed_ms: Date.now() - startedAt,
+              },
+            };
+          });
+          // 進捗表示は見えているタブだけ更新する (バックグラウンドのストリームが
+          // ステータスバーを書き換えて App を再レンダーしない)。
+          if (isTabVisible()) {
+            setStatus((prev) => {
+              // Only override the "running" / "streaming" status — avoid clobbering
+              // an error a user is reading.
+              if (prev.kind === "key" && prev.error) return prev;
+              return {
+                kind: "key",
+                key: "statusStreaming",
+                vars: { rows: flusher.receivedRows(), elapsed: formatElapsed(Date.now() - startedAt) },
+              };
+            });
+          }
+        };
+        if (urgent) commit();
+        else startTransition(commit);
+      },
+    });
+
     const finalize = () => {
+      if (streamFlushersRef.current.get(tabId) === flusher) {
+        streamFlushersRef.current.delete(tabId);
+      }
       const un = streamUnlistenRef.current.get(tabId);
       if (un) {
         un();
@@ -3790,6 +3847,7 @@ export default function App() {
     const unlisten = await listenQueryStream(streamId, {
       onColumns: ({ columns }) => {
         perfColumnCount = columns.length; // 計測 (#1094): onDone 時点の列数として使う
+        flusher.discard();
         patchTab(tabId, (tt) => ({
           ...tt,
           result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
@@ -3797,37 +3855,11 @@ export default function App() {
       },
       onRows: ({ rows, stats }) => {
         markFirstRow(streamId); // 計測 (#1094): Time to First Row (2 回目以降は no-op)
-        patchTab(tabId, (tt) => {
-          if (!tt.result) return tt;
-          // `concat` はスプレッド (`[...a, ...b]`) と違い引数展開のスタックを使わず、
-          // バックエンドが合流した数千行のバッチでも 1 回のコピーで済む (#1257)。
-          const nextRows = tt.result.rows.concat(rows as CellValue[][]);
-          // バックエンドが逐次更新した列統計を新しい行配列に紐づける。
-          attachStreamStats(nextRows, stats);
-          return {
-            ...tt,
-            result: {
-              ...tt.result,
-              rows: nextRows,
-              rows_affected: nextRows.length,
-              elapsed_ms: Date.now() - startedAt,
-            },
-          };
-        });
-        // Update live status with current row count.
-        setStatus((prev) => {
-          // Only override the "running" / "streaming" status — avoid clobbering
-          // an error a user is reading.
-          if (prev.kind === "key" && prev.error) return prev;
-          return {
-            kind: "key",
-            key: "statusStreaming",
-            vars: { rows: nextRowCount(tabId, rows.length), elapsed: formatElapsed(Date.now() - startedAt) },
-          };
-        });
+        flusher.push(rows as CellValue[][], stats);
       },
       onPatch: (patch) => {
         markFirstRow(streamId);
+        flusher.flushNow();
         patchTab(tabId, (tt) => {
           if (!tt.result) return tt;
           const applied = applyRefreshPatch(
@@ -3857,6 +3889,7 @@ export default function App() {
           columns: perfColumnCount,
           elapsedMs,
         });
+        flusher.flushNow(); // 貯めていた行を先に反映してから完了状態へ進める (#1317)
         patchTab(tabId, (tt) => {
           if (!hasColumns) {
             return {
@@ -3967,6 +4000,7 @@ export default function App() {
         }
       },
       onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
+        flusher.flushNow();
         patchTab(tabId, (tt) => ({
           ...tt,
           streaming: false,
@@ -4019,9 +4053,11 @@ export default function App() {
     // detach and bail instead.
     if (streamIdRef.current.get(tabId) !== streamId) {
       unlisten();
+      flusher.discard();
       return;
     }
     streamUnlistenRef.current.set(tabId, unlisten);
+    streamFlushersRef.current.set(tabId, flusher);
 
     try {
       await api.runQueryStream({
@@ -4049,6 +4085,7 @@ export default function App() {
         retainResult: true,
       });
     } catch (e) {
+      flusher.flushNow();
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
       if (!autoRefresh) {
