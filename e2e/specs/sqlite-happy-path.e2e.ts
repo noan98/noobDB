@@ -88,6 +88,14 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
     const createFirst = await $('[data-testid="connection-create-first"]');
     await createFirst.waitForExist({ timeout: 30_000 });
     await expect(createFirst).toBeDisplayed();
+
+    // 初回起動のオンボーディングツアーが全画面を覆い、背後のクリックを遮る (element click
+    // intercepted)。ユーザーと同じくスキップして閉じてから先へ進む。
+    const skip = await $('[data-testid="onboarding-skip"]');
+    if (await skip.waitForExist({ timeout: 5_000, reverse: false }).catch(() => false)) {
+      await skip.click();
+      await skip.waitForExist({ timeout: 5_000, reverse: true });
+    }
   });
 
   it("SQLite 接続フォームに設定を入力して保存できる", async () => {
