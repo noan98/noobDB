@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 
 import { api, type DriverKind } from "../api/tauri";
@@ -331,13 +332,16 @@ export function ServerMetricsPanel({
   }, [load]);
 
   // ポーリング。アンマウント (タブ切替/パネルを閉じる) で clearInterval → 停止。
+  // 非表示の間 (keep-alive, #1311) は止め、戻ったら 1 度取り直す。
+  const active = useKeepAliveActive();
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !active) return;
     const handle = setInterval(() => {
       void load();
     }, intervalSecs * 1000);
     return () => clearInterval(handle);
-  }, [autoRefresh, intervalSecs, load]);
+  }, [autoRefresh, intervalSecs, load, active]);
+  useRefreshOnReactivate(active, load);
 
   const points = useMemo(() => deriveSeries(samples), [samples]);
 

@@ -67,14 +67,14 @@ import type { Transition, Variants } from "motion/react";
  *   頻繁に再レンダーされるため `layout` は使わず、ドロップ確定の 1 回だけ計測する
  *   手書き FLIP (Web Animations API) で `durations.base` / `easings.out` を再利用する。
  *   Motion の外なので reduced-motion は `useReducedMotionConfig` で明示的に見る。
- * - 結果パネルの種類切替 (`App` — `AnimatePresence mode="wait"` + `variants.fade`)。
+ * - 結果パネルの種類切替 (`App` — exit 無しの `AnimatePresence` + `variants.fade` で入場だけ、#1311)。
  *   グリッド ⇔ EXPLAIN / チャート / ピボット / プレビュー / バッチのように「軽量
  *   パネルの種類が変わる」ときだけ控えめにクロスフェードする。key を表示内容の
  *   種類 (contentMode) にしているため、table ⇔ query タブ切替のように両者とも
  *   グリッドのままなら再生されず、重い `ResultGrid` をフェードのために再マウント
  *   しない (#788)。設定 / ヘルプ画面の開閉は `Modal` (上記) 経由で既にフェードする。
- * - ワークスペースの全画面ビュー切替 (`App` — `AnimatePresence mode="wait"` +
- *   `variants.fade`)。スキーマ比較 / ER 図 / プロセス監視 / ユーザ管理 /
+ * - ワークスペースの全画面ビュー切替 (`App` — 常駐ワークスペースの上に重ねる。
+ *   サーフェスは `KeepAlive` が保持し再表示で `variants.fade` 入場、退場は待たない, #1311)。スキーマ比較 / ER 図 / プロセス監視 / ユーザ管理 /
  *   Server Info / クエリインスペクタ / Advisor / 接続フォームのように「メイン
  *   領域を丸ごと占有するサーフェス」が入れ替わるとき、上記 #788 と**同じ尺**
  *   (`transitions.enter`) でクロスフェードする (#1020)。key は `workspaceView`

@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type DriverKind, type ProcessInfo } from "../api/tauri";
@@ -161,13 +162,17 @@ export function ProcessListPanel({
   }, [load]);
 
   // ポーリング。busyRef は load 側で見るので、ここは素朴な setInterval でよい。
+  // 別のボトムパネルのタブへ移っている間 (keep-alive で非表示, #1311) は止め、
+  // 戻ってきた時点で 1 度取り直す。
+  const active = useKeepAliveActive();
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !active) return;
     const handle = setInterval(() => {
       void load();
     }, intervalSecs * 1000);
     return () => clearInterval(handle);
-  }, [autoRefresh, intervalSecs, load]);
+  }, [autoRefresh, intervalSecs, load, active]);
+  useRefreshOnReactivate(active, load);
 
   const countParts = splitAroundCountUpToken(t("processCount", { count: COUNT_UP_TOKEN }));
 

@@ -825,3 +825,64 @@ describe("シナリオ: グローバルオブジェクト検索 (#1261, 実ブ�
     await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
   });
 });
+
+describe("シナリオ: keep-alive による切替 (#1311, 実ブラウザ)", () => {
+  it("サイドバーのタブを往復しても load_schema_tree が再実行されず、ツリーも即表示される", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await screen.getByRole("treeitem", { name: "appdb", exact: true }).click();
+    await expect
+      .element(screen.getByRole("treeitem", { name: "fruits", exact: true }))
+      .toBeVisible();
+    const loads = invocationsOf("load_schema_tree").length;
+    const history = invocationsOf("list_history").length;
+
+    await screen.getByRole("tab", { name: t("sidebarTabHistory") }).click();
+    await expect
+      .element(screen.getByRole("tabpanel", { name: t("sidebarTabHistory") }))
+      .toBeVisible();
+    await screen.getByRole("tab", { name: t("sidebarTabSnippets") }).click();
+    await screen.getByRole("tab", { name: t("sidebarTabHistory") }).click();
+    await screen.getByRole("tab", { name: t("sidebarTabConnections") }).click();
+
+    // 展開状態のまま、待たずにツリーが出ている。DB からの取り直しは起きない。
+    await expect
+      .element(screen.getByRole("treeitem", { name: "fruits", exact: true }))
+      .toBeVisible();
+    expect(invocationsOf("load_schema_tree").length).toBe(loads);
+    // 履歴も往復でマウントし直さない (一覧の取得は初回の 1 度だけ)。
+    expect(invocationsOf("list_history").length).toBeLessThanOrEqual(history + 1);
+  });
+
+  it("ER 図を開いて閉じても、ワークスペース (エディタとグリッド) は作り直されず状態が保たれる", async () => {
+    registerAutoStream();
+    onCommand("describe_database", () => []);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    const cell = screen.getByRole("gridcell", { name: "apple", exact: true });
+    await expect.element(cell).toBeVisible();
+    const cellEl = cell.element();
+    const editorEl = document.querySelector(".cm-content");
+    const runs = invocationsOf("run_query_stream").length;
+
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.keyboard(t("cmdkActionErDiagram"));
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(screen.getByRole("region", { name: t("erDiagramTitle") }))
+      .toBeVisible();
+    // ワークスペースは DOM に残るが、操作・読み上げ対象からは外れる。
+    expect(cellEl.isConnected).toBe(true);
+    expect(cellEl.closest("[inert]")).not.toBeNull();
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
+    // 同じ DOM ノードのまま (再マウントされていない) で、データの再取得も走っていない。
+    expect(screen.getByRole("gridcell", { name: "apple", exact: true }).element()).toBe(cellEl);
+    expect(document.querySelector(".cm-content")).toBe(editorEl);
+    expect(cellEl.closest("[inert]")).toBeNull();
+    expect(invocationsOf("run_query_stream").length).toBe(runs);
+  });
+});

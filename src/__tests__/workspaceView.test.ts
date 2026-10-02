@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import appSource from "../App.tsx?raw";
 import {
+  WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT,
+  workspaceSurfaceKey,
   workspaceViewKey,
   type WorkspaceViewInput,
   type WorkspaceViewKey,
@@ -17,8 +19,8 @@ import {
  * 変わっても key が変わらない」という 2 点が崩れると、切替が瞬間的に戻ったり
  * 逆に無用な再マウントが起きたりする。ここで純ロジックとして固定する。
  *
- * 併せて、`App.tsx` 側が実際にその判別子を `AnimatePresence mode="wait"` +
- * `variants.fade` に載せていること (= 判別子だけ作って結線を忘れていないこと) を
+ * 併せて、`App.tsx` 側が実際にその判別子をワークスペース常駐 + keep-alive の
+ * 重ね置き (#1311) に結線していること (= 判別子だけ作って結線を忘れていないこと) を
  * ソース走査で確認する (`?raw` インポートは `ipcCommandParity.test.ts` と同じ手法)。
  */
 
@@ -104,28 +106,69 @@ describe("workspaceViewKey", () => {
   });
 });
 
-describe("App.tsx の結線 (#1020)", () => {
-  it("全画面ビューを AnimatePresence mode=\"wait\" + variants.fade でクロスフェードする", () => {
-    // 判別子を計算しているか。
-    expect(appSource).toMatch(/const workspaceView = workspaceViewKey\(/);
-    // それを key にした motion.div が AnimatePresence mode="wait" 配下にあるか。
-    const wrapper = appSource.match(
-      /<AnimatePresence mode="wait" initial=\{false\}>\s*<motion\.div\s+key=\{workspaceView\}[\s\S]{0,400}?>/,
-    );
-    expect(wrapper).not.toBeNull();
-    const wrapperSrc = wrapper?.[0] ?? "";
-    // #788 の結果パネルと同じプリセットを流用し、尺を二重定義していないこと。
-    expect(wrapperSrc).toContain("variants.fade.initial");
-    expect(wrapperSrc).toContain("variants.fade.animate");
-    expect(wrapperSrc).toContain("variants.fade.exit");
-    expect(wrapperSrc).toContain("transitions.enter");
+describe("workspaceSurfaceKey (#1311)", () => {
+  const input = { sessionId: "s1", database: "app", sizesTarget: "app" };
+
+  it("フォーム 2 種と通常のワークスペースは保持の対象外 (null)", () => {
+    expect(workspaceSurfaceKey("form", input)).toBeNull();
+    expect(workspaceSurfaceKey("snippetForm", input)).toBeNull();
+    expect(workspaceSurfaceKey("workspace", input)).toBeNull();
   });
 
-  it("Suspense は AnimatePresence の外ではなく motion.div の内側に置く (退出が壊れないため)", () => {
-    // motion.div の開始タグ直後に Suspense が来る形を要求する。外側に置くと、
-    // 遅延ロードのサスペンドで退出中の旧ビューごとフォールバックへ差し替わる。
+  it("接続を持たないサーフェスは view 名のまま", () => {
+    expect(workspaceSurfaceKey("compare", { ...input, sessionId: null })).toBe("compare");
+    expect(workspaceSurfaceKey("compareResults", input)).toBe("compareResults");
+  });
+
+  it("接続スコープのサーフェスは接続と対象 DB が変われば別インスタンスになる", () => {
+    const erd = workspaceSurfaceKey("erd", input);
+    expect(workspaceSurfaceKey("erd", { ...input, sessionId: "s2" })).not.toBe(erd);
+    expect(workspaceSurfaceKey("erd", { ...input, database: "other" })).not.toBe(erd);
+    expect(workspaceSurfaceKey("erd", input)).toBe(erd);
+    const sizes = workspaceSurfaceKey("sizes", input);
+    expect(workspaceSurfaceKey("sizes", { ...input, sizesTarget: "other" })).not.toBe(sizes);
+    // view が違えば同じ接続・DB でも別キー。
+    expect(workspaceSurfaceKey("users", input)).not.toBe(erd);
+  });
+
+  it("保持数には上限がある", () => {
+    expect(WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT).toBeGreaterThanOrEqual(1);
+    expect(WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT).toBeLessThanOrEqual(5);
+  });
+});
+
+describe("App.tsx の結線 (#1311)", () => {
+  it("全画面サーフェスの切替に mode=\"wait\" を使わない (退場待ちをなくす)", () => {
+    expect(appSource).not.toMatch(/AnimatePresence mode="wait" initial=\{false\}/);
+    // サイドバー・ボトムパネルのタブ切替・結果ペイン・全画面サーフェスのいずれも。
+    expect(appSource).not.toMatch(/key=\{workspaceView\}[\s\S]{0,200}exit=\{variants\.fade\.exit\}/);
+  });
+
+  it("ワークスペースを常駐させ、サーフェスはその上に重ねる", () => {
+    expect(appSource).toMatch(/const workspaceView = workspaceViewKey\(/);
+    // 常駐するワークスペース層は、サーフェス表示中だけ inert + visibility:hidden。
+    expect(appSource).toMatch(/inert=\{workspaceView !== "workspace" \|\| undefined\}/);
+    expect(appSource).toMatch(/visibility: workspaceView === "workspace" \? "visible" : "hidden"/);
+    // サーフェスは keep-alive (遅延マウント + 上限付き保持)。
     expect(appSource).toMatch(
-      /key=\{workspaceView\}[\s\S]{0,400}?>\s*<Suspense fallback=\{<PaneEmpty><Spinner size=\{20\} \/><\/PaneEmpty>\}>/,
+      /<KeepAlive\s+activeKey=\{workspaceSurfaceKey\(workspaceView,[\s\S]{0,300}limit=\{WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT\}/,
     );
+  });
+
+  it("Suspense は KeepAlive の内側 (サーフェス単位) に置く", () => {
+    expect(appSource).toMatch(
+      /<KeepAlive[\s\S]{0,500}?>\s*<Suspense fallback=\{<PaneEmpty><Spinner size=\{20\} \/><\/PaneEmpty>\}>\s*\{showCompare \? \(/,
+    );
+  });
+
+  it("サイドバーの ConnectionList は常駐し (離れても loadSchemaTree をやり直さない)、ほかのタブは keep-alive", () => {
+    // ConnectionList はタブ分岐の三項に入れない (= タブ切替でアンマウントされない)。
+    expect(appSource).not.toMatch(/sidebarTab === "connections" \? \(\s*<ConnectionList/);
+    expect(appSource).toMatch(/hidden=\{sidebarTab !== "connections"\}[\s\S]{0,200}inert=\{sidebarTab !== "connections" \|\| undefined\}/);
+    expect(appSource).toMatch(/<KeepAlive\s+activeKey=\{sidebarTab === "connections" \? null : sidebarTab\}/);
+  });
+
+  it("ボトムパネルは接続切替で保持した中身を捨てる", () => {
+    expect(appSource).toMatch(/<BottomPanel[\s\S]{0,300}resetKey=\{sessionId\}/);
   });
 });

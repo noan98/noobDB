@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type ConnectionProfile } from "../api/tauri";
@@ -190,14 +191,17 @@ export function ConnectionHealthPanel({
   }, [sessionKey, runChecks]);
 
   // 定期更新。ウィンドウが隠れている間は叩かない (SSH 越しの接続を無駄に起こさない)。
+  // 別のタブへ移っている間 (keep-alive で非表示, #1311) は止め、戻ったら 1 度確認し直す。
+  const active = useKeepAliveActive();
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !active) return;
     const handle = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void runChecks();
     }, intervalSecs * 1000);
     return () => clearInterval(handle);
-  }, [autoRefresh, intervalSecs, runChecks]);
+  }, [autoRefresh, intervalSecs, runChecks, active]);
+  useRefreshOnReactivate(active, runChecks);
 
   const reconnect = useCallback(
     async (row: HealthRow) => {

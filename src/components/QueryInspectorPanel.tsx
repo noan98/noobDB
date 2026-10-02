@@ -363,7 +363,9 @@ export function QueryInspectorPanel({
 
   const stopRecording = useCallback(() => setRecording(false), []);
 
-  // 記録中のみポーリングする。停止/アンマウントで interval は必ず破棄され、
+  // 記録中のみポーリングする。ほかのボトムパネルのタブへ移っても (keep-alive で
+  // 非表示になるだけで) 記録は続ける — `useKeepAliveActive` で止めてはならない (#1311)。
+  // 停止/アンマウントで interval は必ず破棄され、
   // サーバへの問い合わせは完全に止まる (#746 受け入れ条件)。
   useEffect(() => {
     if (!recording) return;

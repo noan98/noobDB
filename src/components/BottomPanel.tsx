@@ -14,6 +14,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import {
+  BOTTOM_PANEL_TABS,
   bottomPanelGroupStarts,
   nextBottomPanelTab,
   type BottomPanelStripEntry,
@@ -21,6 +22,7 @@ import {
   type BottomPanelUnavailableReason,
 } from "./bottomPanelTabs";
 import { Icon, ICON_SIZES } from "./Icon";
+import { KeepAlive } from "./KeepAlive";
 import { Splitter } from "./Splitter";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
@@ -47,8 +49,8 @@ import { Button } from "./ui";
  *
  * ## モーション (#1142)
  *
- * 全画面サーフェス・結果ペイン種別の切替と同じ語彙で、タブ切替は本体を
- * `variants.fade` でクロスフェードし、開閉は `WorkspaceSplit` がパネル全体を
+ * タブ切替は本体を `KeepAlive` で保持し (#1311)、再表示のときだけ `variants.fade` で
+ * 入場する (退場を待たない)。開閉は `WorkspaceSplit` がパネル全体を
  * `variants.slideUp` で出し入れする。reduced-motion 時はルートの `MotionConfig`
  * が y 移動を抑制する (フェードだけが残る)。
  */
@@ -126,10 +128,13 @@ interface Props {
   label: (tab: BottomPanelTab) => string;
   onSelect: (tab: BottomPanelTab) => void;
   onClose: () => void;
+  /** 保持している中身を捨てる合図 (接続セッション id など)。変わると全タブの中身が作り直される。 */
+  resetKey?: string | null;
+  /** 表示中のタブの中身。ほかのタブの中身は最後に渡されたものが保持される。 */
   children: ReactNode;
 }
 
-export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: Props) {
+export function BottomPanel({ tab, tabs, label, onSelect, onClose, resetKey, children }: Props) {
   const t = useT();
   const tabRefs = useRef<Partial<Record<BottomPanelTab, HTMLButtonElement | null>>>({});
   // 用途グループ (ログ / 診断 / 参照、#1114) の切れ目に区切り線を引く。
@@ -233,20 +238,13 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, children }: P
         flexDirection="column"
         overflow="hidden"
       >
-        {/* 結果ペインの種別切替 (App.tsx) と同じ組み合わせ。初回表示はパネル
-            自体の出現 (WorkspaceSplit) と二重にならないよう initial={false}。 */}
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={tab}
-            initial={variants.fade.initial}
-            animate={variants.fade.animate}
-            exit={variants.fade.exit}
-            transition={transitions.crossfade}
-            style={FILL_STYLE}
-          >
-            {children}
-          </motion.div>
-        </AnimatePresence>
+        {/* 一度開いたタブの中身は破棄せず非表示で保持する (#1311)。離れるたびに
+            インスペクタの記録や診断結果が消え、戻るたびに IPC をやり直していた。
+            タブの種類は有限 (`BOTTOM_PANEL_TABS`) なので、上限はその数 = 全タブを保持
+            できる。接続が切り替わったら古いセッションの中身は捨てる (`resetKey`)。 */}
+        <KeepAlive activeKey={tab} limit={BOTTOM_PANEL_TABS.length} resetKey={resetKey}>
+          {children}
+        </KeepAlive>
       </Box>
     </Flex>
   );
