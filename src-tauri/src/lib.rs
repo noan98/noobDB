@@ -401,6 +401,13 @@ pub mod __test_api {
         crate::commands::query::run_query_inner(state, session_id, sql, database).await
     }
 
+    /// ストリーミング実行 (`spawn_query_stream`) が書き込み成功後に呼ぶキャッシュ
+    /// invalidate (#1220)。`AppHandle` / `Channel` が要るため経路そのものは統合テスト
+    /// から駆動できないので、共通ヘルパを直接叩いて配線を固定する。
+    pub async fn invalidate_caches_after_stream_success(session: &Session, sql: &str) {
+        crate::commands::query::invalidate_caches_after_success(session, sql).await
+    }
+
     /// Drives the `run_assertion` IPC command's core path (#742): rule → SQL
     /// conversion for the session's driver, then the always-read-only lookup
     /// path (timeout, no history, no result cache) and pass/fail evaluation.
