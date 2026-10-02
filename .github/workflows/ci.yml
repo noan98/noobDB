@@ -208,12 +208,12 @@ jobs:
       - name: Unit tests (Vitest) + coverage threshold
         run: pnpm test --coverage
 
-      # Playwright の Chromium バイナリ本体をキャッシュする。`--with-deps` が
-      # 導入する OS 側の共有ライブラリ (apt) はキャッシュ対象外 (ランナー単位の
-      # システム状態のため actions/cache に馴染まない) だが、バイナリ本体
-      # (数十〜100MB超) の再ダウンロードはこれで避けられる。キーは pnpm-lock.yaml
-      # のハッシュに追従させ、Playwright の更新時は自動的に新しいキャッシュキーへ
-      # 切り替わる。
+      # Playwright の Chromium バイナリ本体をキャッシュする。バイナリ本体
+      # (数十〜100MB超) の再ダウンロードはこれで避けられる。OS 側の共有ライブラリ /
+      # フォント (apt) は actions/cache に馴染まないため、下の「Playwright system
+      # deps」で cache-apt-pkgs-action (rust ジョブと同じ) に任せる (#1244)。キーは
+      # pnpm-lock.yaml のハッシュに追従させ、Playwright の更新時は自動的に新しい
+      # キャッシュキーへ切り替わる。
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -223,12 +223,43 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
 
-      # Playwright の Chromium とシステム依存を導入する。--only-shell で headless
-      # 実行に必要な chromium-headless-shell のみを入れて軽量化する。バイナリ本体は
-      # 上の Cache Playwright browsers でキャッシュヒットしていれば再ダウンロードを
-      # スキップする。
+      # Playwright が chromium に要求する OS パッケージ (共有ライブラリ + スクリーン
+      # ショットの描画に効くフォント + xvfb) を列挙する (#1244)。パッケージ名を
+      # ハードコードせず、Playwright 自身の一覧 (`install-deps --dry-run` =
+      # `apt-get install -s` のシミュレーション結果) から取るため、Playwright /
+      # Chromium の更新に自動で追従する。`--with-deps` と同じ集合なのでフォント
+      # 構成もビジュアル回帰のベースライン生成環境と変わらない。cache-apt-pkgs-action
+      # のキャッシュキーはパッケージ一覧 + version のハッシュなので、一覧が変われば
+      # 新しいキーになる。
+      # ランナーイメージの apt インデックスは古く 404 になることがあるため、rust
+      # ジョブと同じくミラーを本家に差し替えて update してから列挙する
+      # (詳細は rust (clippy) の System deps 直前のコメントを参照)。
+      # dry-run は未導入パッケージがあると exit 1 を返すので `|| true` で受け、
+      # 「  <pkg>」形式の行だけを拾う。
+      - name: List Playwright system deps (#1244)
+        id: pw-deps
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+          PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
+          echo "Playwright system deps: ${PKGS:-<none>}"
+          echo "packages=${PKGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Playwright system deps (apt cache)
+        if: steps.pw-deps.outputs.packages != ''
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: ${{ steps.pw-deps.outputs.packages }}
+          # rust ジョブと同じく、空キャッシュ汚染時にキーを進めて無効化するための版。
+          version: playwright-1
+
+      # Playwright の Chromium を導入する。システム依存は上の apt キャッシュ
+      # ステップで導入済みなので `--with-deps` は付けない (毎回の apt-get install を
+      # 避ける)。--only-shell で headless 実行に必要な chromium-headless-shell のみを
+      # 入れて軽量化する。バイナリ本体は上の Cache Playwright browsers で
+      # キャッシュヒットしていれば再ダウンロードをスキップする。
       - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps --only-shell chromium
+        run: pnpm exec playwright install --only-shell chromium
 
       # 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) で
       # 主要画面のレンダリングとビジュアル回帰を検証する (#306)。上の jsdom 単体
