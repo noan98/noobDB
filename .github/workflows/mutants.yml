@@ -114,20 +114,40 @@ jobs:
           echo '### Mutation test results (安全網関数)' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
           if [ -f mutants.out/outcomes.json ]; then
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            # caught / missed / timeout / unviable を集計して表示する
-            python3 - << 'PYEOF' | tee -a "$GITHUB_STEP_SUMMARY"
+            # outcomes.json の summary 実キー (CaughtMutant / MissedMutant / Unviable /
+            # Timeout / Success) で集計する。生存変異 (MISSED) を先頭に強調し、
+            # fail はさせない (可視化のみ)。
+            python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
           import json, pathlib, collections
           data = json.loads(pathlib.Path("mutants.out/outcomes.json").read_text())
           counts = collections.Counter(o.get("summary") for o in data.get("outcomes", []))
-          total = sum(counts.values())
-          caught = counts.get("MissedTests", 0) + counts.get("Caught", 0)
-          # cargo-mutants の summary キー名を確認して集計する
-          for k, v in sorted(counts.items()):
-            print(f"  {k}: {v}")
-          print(f"  total: {total}")
+          # baseline (無変異のテスト実行) は summary == "Success" で、変異ではない。
+          # 変異の母数は baseline を除いた総数。
+          caught = counts.get("CaughtMutant", 0)
+          missed = counts.get("MissedMutant", 0)
+          unviable = counts.get("Unviable", 0)
+          timeout = counts.get("Timeout", 0)
+          total = caught + missed + unviable + timeout
+          tested = caught + missed
+          score = f"{caught / tested * 100:.1f}%" if tested else "n/a"
+          if missed:
+              print(f"> :warning: **生存変異 (MISSED): {missed} 件** — テストが捕捉できていない変異があります。`mutants.out/missed.txt` を確認し、`db::tests` に境界ケースを追記してください。")
+          else:
+              print("> :white_check_mark: **生存変異 (MISSED): 0 件**")
+          print("")
+          print(f"変異スコア (caught / (caught + missed)): **{score}**")
+          print("")
+          print("```")
+          print(f"  MISSED   (MissedMutant): {missed}")
+          print(f"  caught   (CaughtMutant): {caught}")
+          print(f"  unviable (Unviable):     {unviable}")
+          print(f"  timeout  (Timeout):      {timeout}")
+          print(f"  total mutants:           {total}")
+          others = {k: v for k, v in counts.items() if k not in ("CaughtMutant", "MissedMutant", "Unviable", "Timeout", "Success")}
+          for k, v in sorted(others.items(), key=lambda kv: str(kv[0])):
+              print(f"  other {k}: {v}")
+          print("```")
           PYEOF
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo '変異テスト結果ファイルが見つかりませんでした。' >> "$GITHUB_STEP_SUMMARY"
             if [ -f mutants-output.txt ]; then
