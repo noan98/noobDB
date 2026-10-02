@@ -53,3 +53,52 @@ export function resolveTreeArrowLeft(rows: readonly TreeNavRow[], index: number)
   }
   return null;
 }
+
+/** 上下 / Home / End / 先頭文字ジャンプの判定に必要な、1 行ぶんの情報 (#1315)。 */
+export interface TreeNavEntry extends TreeNavRow {
+  /** 先頭文字ジャンプの照合に使う表示名 (小文字化は判定側で行う)。 */
+  label: string;
+}
+
+/**
+ * ↑ / ↓ / Home / End / 先頭文字ジャンプで、次にフォーカスする行の位置を返す。
+ *
+ * スキーマツリーは仮想化していて窓の外の行が DOM に無いため、DOM から行を集めて決める
+ * のではなく、「ツリー全体を上から並べた配列」(`entries`) に対して判定する。端 (先頭の ↑、
+ * 末尾の ↓) では動かず null を返す (循環しない)。`current` が -1 (不明) のときは
+ * ↓ / 先頭文字ジャンプは先頭から、↑ / End は末尾から数える。
+ *
+ * 先頭文字ジャンプは現在行の次から末尾方向へ、最後まで探して見つからなければ先頭へ
+ * 折り返して探す。印字可能な 1 文字 (修飾キー無し) 以外は呼び出し側が渡さない。
+ */
+export function resolveTreeMove(
+  entries: readonly TreeNavEntry[],
+  current: number,
+  key: string,
+): number | null {
+  const n = entries.length;
+  if (n === 0) return null;
+  switch (key) {
+    case "ArrowDown": {
+      const next = current + 1;
+      return next < n ? next : null;
+    }
+    case "ArrowUp": {
+      if (current === -1) return n - 1;
+      return current > 0 ? current - 1 : null;
+    }
+    case "Home":
+      return 0;
+    case "End":
+      return n - 1;
+    default: {
+      if (key.length !== 1) return null;
+      const needle = key.toLowerCase();
+      for (let step = 1; step <= n; step++) {
+        const i = (((current + step) % n) + n) % n;
+        if (entries[i].label.trim().toLowerCase().startsWith(needle)) return i;
+      }
+      return null;
+    }
+  }
+}

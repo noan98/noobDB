@@ -8,9 +8,8 @@
  * プロセス監視 / クエリインスペクタ / アドバイザは #1112 (Epic #1110 Phase 2) で
  * **ボトムパネル**へ移した — ワークスペースを置き換えず同時に見えるため、全画面
  * サーフェスの排他集合には属さない (状態は `bottomPanelTabs.ts` が持つ)。この関数はそのチェーンと同順・同条件で
- * 「今どれか」を 1 つの文字列へ畳み、`AnimatePresence mode="wait"` の `key` として
- * 使う — 結果パネル側のクロスフェード (#788 の `contentMode`) と同じ発想で、
- * ビューが入れ替わるときだけ控えめにフェードを添えるための判別子である。
+ * 「今どれか」を 1 つの文字列へ畳み、ワークスペース (常駐) の上に重ねるサーフェスの
+ * 出し分け (#1311) とフォームのフェードの `key` として使う判別子である。
  *
  * ここに切り出しているのは、判定順序 (= どのサーフェスが優先されるか) が
  * ワークスペース切替の見え方を直接決めるにもかかわらず、`App.tsx` の巨大な JSX の
@@ -68,4 +67,50 @@ export function workspaceViewKey(input: WorkspaceViewInput): WorkspaceViewKey {
   if (input.showForm) return "form";
   if (input.showSnippetForm) return "snippetForm";
   return "workspace";
+}
+
+/**
+ * 保持 (keep-alive) するサーフェスの数の上限 (#1311)。ER 図・スキーマ比較などは重い
+ * ので、よく使う数個だけを残し、古いものから捨てる。
+ */
+export const WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT = 3;
+
+/** `workspaceSurfaceKey` の入力。 */
+export type WorkspaceSurfaceKeyInput = {
+  sessionId: string | null;
+  /** ER 図 / ユーザ管理が初期値として使う DB (アクティブタブ → プロファイル既定)。 */
+  database: string | null;
+  /** テーブル統計の対象 DB。 */
+  sizesTarget: string | null;
+};
+
+/**
+ * 全画面サーフェスを keep-alive で保持するときのインスタンスキー。
+ *
+ * 接続スコープのサーフェスは接続 (`sessionId`) と、開くときに渡す対象 DB をキーに
+ * 含める: 接続や対象が変わったのに前のインスタンスを見せないため。接続を持たない
+ * スキーマ比較 / 結果比較は view 名のまま。フォーム 2 種と通常のワークスペースは
+ * 保持の対象外 (フォームは未保存の入力を持つ・ワークスペースは常駐) なので null。
+ */
+export function workspaceSurfaceKey(
+  view: WorkspaceViewKey,
+  input: WorkspaceSurfaceKeyInput,
+): string | null {
+  const sid = input.sessionId ?? "";
+  switch (view) {
+    case "compare":
+    case "compareResults":
+      return view;
+    case "erd":
+    case "users":
+      return `${view}:${sid}:${input.database ?? ""}`;
+    case "serverInfo":
+      return `serverInfo:${sid}`;
+    case "sizes":
+      return `sizes:${sid}:${input.sizesTarget ?? ""}`;
+    case "form":
+    case "snippetForm":
+    case "workspace":
+      return null;
+  }
 }

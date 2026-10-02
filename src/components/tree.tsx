@@ -257,21 +257,12 @@ const MotionCollapse = chakra(
 export function TreeCollapse({
   open,
   children,
-  initial = false,
-  onExitComplete,
 }: {
   open: boolean;
   children: ReactNode;
-  /** マウント時点で既に開いている場合も enter アニメを再生するか。閉じている間は
-   *  `TreeCollapse` 自体をマウントしない呼び出し側 (スキーマツリーのテーブル行、#1314) が、
-   *  開く操作でマウントされたときだけ true にする。 */
-  initial?: boolean;
-  /** 退場アニメが終わった (子が外れた) とき。呼び出し側が `TreeCollapse` ごと
-   *  アンマウントする合図に使う。 */
-  onExitComplete?: () => void;
 }) {
   return (
-    <AnimatePresence initial={initial} onExitComplete={onExitComplete}>
+    <AnimatePresence initial={false}>
       {open && (
         <MotionCollapse {...variants.fade} transition={transitions.crossfade}>
           {children}

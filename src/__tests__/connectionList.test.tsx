@@ -145,6 +145,8 @@ describe("ConnectionList render smoke (#604)", () => {
 describe("ConnectionList のアクティブテーブル行インジケータ (#982)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 展開状態は localStorage に永続化されるので、前のテストの展開状態を持ち越さない。
+    localStorage.clear();
   });
 
   it("activeTable と一致するテーブル行にだけ aria-current を付与する", async () => {
@@ -197,6 +199,8 @@ describe("ConnectionList のアクティブテーブル行インジケータ (#9
 describe("Database Explorer の階層 (#1112)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 展開状態は localStorage に永続化されるので、前のテストの展開状態を持ち越さない。
+    localStorage.clear();
   });
 
   const col = (name: string, over: Record<string, unknown> = {}) => ({
