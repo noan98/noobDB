@@ -3,6 +3,7 @@ import { fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "./testUtils";
 import { ResultGrid } from "../components/ResultGrid";
+import { KeepAlive } from "../components/KeepAlive";
 import type { Column, QueryResult } from "../api/tauri";
 import { setLocale, getLocale, t } from "../i18n";
 
@@ -318,4 +319,37 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
     expect(targetCell).toBeTruthy();
     expect(targetCell?.classList.contains("is-active-cell")).toBe(true);
   }, 60000);
+});
+
+describe("ResultGrid keep-alive 中の行の保持 (#1341)", () => {
+  function Host({ active }: { active: "a" | "b" }) {
+    return (
+      <KeepAlive activeKey={active} limit={4} liveKeys={["a", "b"]}>
+        <ResultGrid result={BIG_RESULT} gridBindings={{} as never} />
+      </KeepAlive>
+    );
+  }
+
+  it("隠れている間も窓の分の行を DOM に残し、再表示で同じ行要素を使い回す", () => {
+    const view = renderWithProviders(<Host active="a" />);
+    const aPane = () =>
+      document.querySelector<HTMLElement>('[data-keep-alive-active]:not([hidden])') ?? document.body;
+    const before = dataRows(aPane());
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.length).toBeLessThan(TOTAL);
+    const firstRow = before[0];
+
+    view.rerender(<Host active="b" />);
+    // a は hidden になったが、行は残っている (再表示で描き直さない)。
+    expect(firstRow.isConnected).toBe(true);
+    expect(dataRows(firstRow.closest("[data-keep-alive-active]") as HTMLElement)).toHaveLength(
+      before.length,
+    );
+
+    view.rerender(<Host active="a" />);
+    expect(firstRow.isConnected).toBe(true);
+    const after = dataRows(aPane());
+    expect(after).toHaveLength(before.length);
+    expect(after[0]).toBe(firstRow);
+  });
 });
