@@ -104,6 +104,15 @@ describe("TabDirtyWatcher", () => {
   });
 });
 
+// `tab.sql` の直読みを許す行。行末で終わるかを見るのは最後の 1 つだけなので、正規表現を分けて
+// 書く (1 本の `|` にまとめると、`$` がどこまでに掛かるかが紛らわしい)。
+const ALLOWED_DIRECT_READS = [
+  /tabSqlStore\.resolve/,
+  /toPersistedTab/,
+  /const out: PersistedTab/,
+  /\btab\.sql\),$/,
+];
+
 describe("App.tsx の本文の読み方 (#1316 静的ガード)", () => {
   it("打鍵ごとに updateTab({ sql }) で tabs を更新しない", () => {
     expect(src).not.toMatch(/updateTab\([^)]*\{\s*sql\s*\}/);
@@ -118,7 +127,7 @@ describe("App.tsx の本文の読み方 (#1316 静的ガード)", () => {
       return `${line}:${src.split("\n")[line - 1].trim()}`;
     });
     const allowed = direct.filter(
-      (l) => !/^\d+:\/\//.test(l) && !/tabSqlStore\.resolve|toPersistedTab|const out: PersistedTab|\btab\.sql\),$/.test(l),
+      (l) => !/^\d+:\/\//.test(l) && !ALLOWED_DIRECT_READS.some((re) => re.test(l)),
     );
     expect(allowed).toEqual([]);
   });
