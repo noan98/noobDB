@@ -245,6 +245,7 @@ export function OnboardingTour({ onClose }: Props) {
       <Flex align="center" justify="space-between" mt="1" gap="2">
         <chakra.button
           type="button"
+          data-testid="onboarding-skip"
           onClick={onClose}
           fontSize="xs"
           color="app.textMuted"
