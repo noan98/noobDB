@@ -379,6 +379,7 @@ jobs:
           src/__tests__/commandRegistrationParity.test.ts
           src/__tests__/docCommandParity.test.ts
           src/__tests__/sshHostKeyMismatchGolden.test.ts
+          src/__tests__/fixtureBothSidesParity.test.ts
 
   # automerge の変更依頼ゲート (#1108) の判定ロジックのユニットテスト。
   # `automerge.yml` は GitHub Actions の実環境 (PR・コメント・レビュー) でしか
