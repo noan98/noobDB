@@ -367,6 +367,7 @@ jobs:
           --coverage
           --coverage.thresholds.lines=0
           --reporter=blob
+          --reporter=dot
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
 
       - name: Upload Vitest blob
