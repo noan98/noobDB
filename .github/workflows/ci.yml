@@ -74,7 +74,6 @@ jobs:
               # #1176: Biome の設定 / 警告件数チェックのスクリプトだけを変えた PR でも
               # `pnpm run lint` を再実行する。
               - 'biome.json'
-              - 'scripts/biome-lint.mjs'
             rust:
               - 'src-tauri/**'
             # #853: 言語横断のゴールデン/パリティテスト (Rust 側の

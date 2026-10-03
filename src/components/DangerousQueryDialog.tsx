@@ -72,6 +72,7 @@ export function DangerousQueryDialog({
   const typedMatches = !requiresTyped || typedConfirmMatches(typedValue, typedConfirmTarget);
   // 同一インスタンスを使い回す呼び出し側でも、対象が変わったら前回入力を
   // 持ち越さない (安全網の入力欄が汚染されないようにする)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 確認対象が変わったら入力を捨てるトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     setTypedValue("");
   }, [typedConfirmTarget]);

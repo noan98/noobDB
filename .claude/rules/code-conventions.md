@@ -15,7 +15,7 @@ unwrap/expect/panic を本体コードに入れると CI が自動で fail** し
 panic/unwrap が妥当かの日本語根拠コメント**を必ず付けてください。
 
 フロントエンドは `tsc` (`pnpm run build` 経由) で型チェックされ、さらに
-**Biome (`biome.json`)** が `pnpm run lint` (= `scripts/biome-lint.mjs`) で CI の
+**Biome (`biome.json`)** が `pnpm run lint` (= `biome lint src`) で CI の
 frontend ジョブ内のステップとして走ります (#1176)。ルールは高シグナルなものだけで、
 スタイル系・整形は入れません (formatter は無効)。
 
@@ -25,11 +25,10 @@ frontend ジョブ内のステップとして走ります (#1176)。ルールは
 - `nursery/noMisusedPromises` (error): Promise を条件式や void 戻りのコールバック位置に
   渡すとエラー。Promise の null チェックは `!== null` と明示する。
 - `correctness/useHookAtTopLevel` (error): hooks の呼び出し規則。
-- `correctness/useExhaustiveDependencies` (**warn**): 既存の依存配列漏れが多いため
-  段階導入。Biome には `--max-warnings` が無いので `scripts/biome-lint.mjs` の
-  `WARNING_BUDGET` が違反フックの数を固定しており、新規の違反は CI で落ちる。
-  直して件数が減ったら `WARNING_BUDGET` も下げる。意図的に依存を絞る箇所は
-  `// biome-ignore lint/correctness/useExhaustiveDependencies: 理由` で明示する。
+- `correctness/useExhaustiveDependencies` (error): フックの依存配列の漏れ・余分を検出する
+  (#1378 で全件解消して error に昇格済み)。意図的に依存を絞る箇所 (トリガー目的の依存や、
+  足すと再実行ループになるもの) は
+  `// biome-ignore lint/correctness/useExhaustiveDependencies: 理由` を直前に書いて明示する。
 - `noFloatingPromises` / `noMisusedPromises` は Biome 2 時点で `nursery` (試験的) 扱い。
   卒業・改名で設定が壊れたら `biome migrate` を使う。TypeScript の JS API には依存しない
   (TypeScript 7 のネイティブ版と衝突しない)。

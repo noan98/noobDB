@@ -122,6 +122,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   const rowIdCounter = useRef(0);
   const nextRowId = () => `row${++rowIdCounter.current}`;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: driver の変化で再取得するためのトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     let cancelled = false;
     setLoading(true);

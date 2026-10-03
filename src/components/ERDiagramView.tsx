@@ -263,6 +263,7 @@ function ERDiagramInner({
   // Load the database list so the picker can offer alternatives and so a
   // database is chosen even when none was passed in (e.g. SQLite's "main").
   // Never overrides an already-chosen database.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryAttempt の変化で再取得するトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     let cancelled = false;
     api
@@ -297,6 +298,7 @@ function ERDiagramInner({
 
   // Fetch + build the graph for the chosen database. Layout (positions) is a
   // separate effect so direction/density changes re-layout without refetching.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryAttempt の変化で再取得するトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     if (!database) return;
     let cancelled = false;

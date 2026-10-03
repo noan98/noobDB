@@ -862,6 +862,7 @@ export function SettingsView({ theme, onClose }: Props) {
       setLogLoading(false);
     }
   };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ログはマウント時に 1 回だけ読む。loadLogs は毎レンダー再生成されるので依存に入れると再読込ループになる
   useEffect(() => {
     void loadLogs();
   }, []);

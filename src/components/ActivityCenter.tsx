@@ -100,6 +100,7 @@ function ActivityPanel({
 
   // アンカー (ベルボタン) の直下にビューポート内へクランプして配置する
   // (`ColumnStatsMenu` / `ColumnFilterMenu` と同じ方式)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 項目数 (shown.length) の変化を再配置の起点にする。effect 内では参照しないトリガ依存
   useLayoutEffect(() => {
     const el = panelRef.current;
     if (!el) return;

@@ -162,6 +162,7 @@ export function ScrollEdgeShadows({
   }, [scrollRef]);
 
   // inset (ピン留め幅) が変わったら判定し直す。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: insetStart / insetEnd は本体では使わず、変わったら影の判定をやり直すためのトリガー
   useEffect(() => {
     measureRef.current();
   }, [insetStart, insetEnd]);

@@ -433,6 +433,7 @@ export function SchemaCompareView({
 
   // Any change to the schema diff invalidates a previously generated plan and
   // any in-flight data comparison (the connections / databases changed).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: diff は本体では使わず、スキーマ差分が変わったら計画・データ比較を無効化するためのトリガー
   useEffect(() => {
     setPlan(null);
     setPlanKind(null);

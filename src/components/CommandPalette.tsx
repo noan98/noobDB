@@ -108,6 +108,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   };
 
   // クエリが変わって候補が並び替わるたび、選択を先頭へ戻す (範囲外防止も兼ねる)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: クエリ変化で選択を先頭へ戻すトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     setActiveIndex(0);
     setExpanded(false);

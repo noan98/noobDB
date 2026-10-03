@@ -81,6 +81,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
 
   const scopeId = showAll ? null : profileId;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey の変化で再読み込みするトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     let cancelled = false;
     setLoading(true);

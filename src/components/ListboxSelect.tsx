@@ -125,6 +125,7 @@ export function ListboxSelect({
 
   // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
   // (`ComboSelect` と同じ「測定 → フリップ → クランプ」の流れ)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (options.length) の変化でポップオーバーを測り直すトリガ依存
   useLayoutEffect(() => {
     if (!open) {
       setPos(null);

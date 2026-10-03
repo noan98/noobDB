@@ -70,6 +70,7 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   lookupRef.current = lookup;
 
   // テーブルが変わったら取得済みの候補を捨てる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tableKey は本体では使わず、テーブルが変わったら取得済みの候補を捨てるためのトリガー
   useEffect(() => {
     allowedRequested.current = null;
     fkState.current = new Map();

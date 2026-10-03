@@ -254,6 +254,7 @@ export function ImportModal({
   }, [sessionId, database, table]);
 
   // 別のファイルを選んだら前のブックのシート指定を捨てる (先頭シートに戻す)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: path の変化でシート指定を捨てるトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     setSheet("");
   }, [path]);

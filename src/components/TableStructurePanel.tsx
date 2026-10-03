@@ -147,6 +147,7 @@ export function TableStructurePanel({
 
   const { database, table } = target;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey は本体では使わず、再読み込みボタンで同じテーブルを取り直すためのトリガー
   useEffect(() => {
     let cancelled = false;
     setColumns(null);

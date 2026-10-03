@@ -201,6 +201,7 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
     );
   }, [positioned, maxCost, selectedId, onSelect, setNodes, setEdges]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: グラフ配置 (positioned) が変わるたび全体表示へ合わせ直すトリガ依存
   useEffect(() => {
     const id = window.setTimeout(() => fitView({ duration: reduceMotion ? 0 : 300 }), 0);
     return () => window.clearTimeout(id);

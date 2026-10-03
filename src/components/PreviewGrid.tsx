@@ -175,6 +175,7 @@ export function PreviewGrid({
   const afterBodyRef = useRef<HTMLDivElement | null>(null);
   const [syncScroll, setSyncScroll] = useState<boolean>(() => readSyncScrollPref());
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hasSnapshots が切り替わるとスクロール要素 (ref) が付け替わるため、リスナーを張り直すためのトリガー
   useEffect(() => {
     if (!syncScroll) return;
     const before = beforeBodyRef.current;
