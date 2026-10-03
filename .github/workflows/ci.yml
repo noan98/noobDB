@@ -1351,7 +1351,7 @@ jobs:
       # main の push に限る (rust-cache の save-if と同じ理由)。
       - name: Cache sccache
         id: sccache-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -1361,6 +1361,15 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
+      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
+      - name: Save sccache (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
@@ -1451,7 +1460,7 @@ jobs:
       # main の push に限る (rust-cache の save-if と同じ理由)。
       - name: Cache sccache
         id: sccache-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -1468,6 +1477,15 @@ jobs:
       - name: cargo nextest run
         working-directory: src-tauri
         run: cargo nextest run --locked --all-targets
+
+      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
+      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
+      - name: Save sccache (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
