@@ -1,6 +1,6 @@
 ---
 name: noobdb-ci
-description: noobDB の CI が落ちたとき、GitHub Actions ワークフローを変更するとき、必須チェック名・キャッシュ戦略・依存関係の自動更新 (Dependabot / cargo-deny / pnpm audit)・Codex レビューゲートと automerge・Rust ビルドの高速化設定 (mold / sccache / LTO) を調べるときに読む。
+description: noobDB の CI が落ちたとき、GitHub Actions ワークフローを変更するとき、必須チェック名・キャッシュ戦略・依存関係の自動更新 (Dependabot / cargo-deny / pnpm audit)・automerge (変更依頼ゲート)・Rust ビルドの高速化設定 (mold / sccache / LTO) を調べるときに読む。
 ---
 
 # noobDB の CI / リリース / ビルド設定
@@ -28,7 +28,7 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 | `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 6 ジョブ、カバレッジ閾値 |
 | `references/release-workflow.md` | `release.yml` — タグビルド、キャッシュ温めの paths ゲート、`releaseDraft: false` の理由 |
 | `references/dependencies.md` | Dependabot / cargo-deny / pnpm audit の役割分担 |
-| `references/codex.md` | `automerge.yml` の Codex レビューゲート — 完了信号の取り方、CodeRabbit からの移行 (#1109)、`CODEX_PAT`、変更依頼ゲート (`/hold`・`do-not-merge`・定型句, #1108) |
+| `references/automerge.md` | `automerge.yml` の判定フロー — Codex ゲート撤去の経緯、変更依頼ゲート (`/hold`・`do-not-merge`・定型句, #1108) |
 | `references/build-performance.md` | `mold` / `lld-link` / sccache / LTO 設定。**Linux では `clang` と `mold` が必須** |
 
 ## 落とし穴
@@ -37,12 +37,9 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
   (`references/build-performance.md`)。
 - **`releaseDraft: true` に戻さない** — 成果物が不可視のドラフトへ迷子になります
   (`references/release-workflow.md`)。
-- **`automerge.yml` の Codex 完了信号 (レビュー提出 / 👍 リアクション) を減らさない**
-  — 指摘ゼロの PR が永久にマージされなくなる、または指摘が届く前にマージされる
-  (`references/codex.md`)。
-- **push 観測時刻に git の committer date を使わない** — 👍 判定と待ち時間の
-  2 つの防御が同時に破られます (`references/codex.md`)。
+- **push 観測時刻に git の committer date を使わない** — 変更依頼ゲートの「依頼より
+  後の push で解除」の判定が壊れます (`references/automerge.md`)。
 - **automerge の変更依頼ゲート (#1108) の判定を `automerge.yml` のシェルに書かない**
   — `scripts/automerge-hold.mjs` の純関数に置き、`scripts/automerge-hold.test.mjs`
   に境界ケースを足す (`pnpm run test:scripts`)。判定失敗は fail-closed
-  (`references/codex.md`)。
+  (`references/automerge.md`)。
