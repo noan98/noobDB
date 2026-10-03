@@ -214,11 +214,6 @@ jobs:
       - name: Dead-code / unused-export check (knip)
         run: pnpm run knip
 
-      # カバレッジ計測込みで実行し、`vite.config.ts` の coverage.thresholds を
-      # 下回ったらここで fail させる (品質ゲート / #290)。
-      - name: Unit tests (Vitest) + coverage threshold
-        run: pnpm test --coverage
-
       # Playwright の Chromium バイナリ本体をキャッシュする。バイナリ本体
       # (数十〜100MB超) の再ダウンロードはこれで避けられる。OS 側の共有ライブラリ /
       # フォント (apt) は actions/cache に馴染まないため、下の「Playwright system
@@ -314,6 +309,144 @@ jobs:
             echo "| Playwright ブラウザキャッシュヒット | ${{ steps.playwright-cache.outputs.cache-hit }} |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
+  # Vitest (jsdom) 単体テストの 4 分割実行。
+  #
+  # 以前は `frontend` ジョブの 1 ステップ (`pnpm test --coverage`) で、実測約 4 分 15 秒
+  # (ジョブ全体の約 3/4) を占めていた。ファイル数 (約 320) が多くワーカー単位で
+  # jsdom の起動と import が支配的なため、`--shard` で 4 ランナーに分けて壁時計を縮める。
+  # 各 shard はカバレッジ付きで走らせ、結果を blob として保存する。閾値の判定は
+  # 全 shard を統合した値でしか意味を持たないので、ここでは 0 にして下の
+  # `frontend (unit tests)` ジョブで統合してから強制する。
+  frontend-unit:
+    name: frontend (unit shard ${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 以前は 3 分割だったが、shard ごとの所要時間にばらつきがあった (実測 75〜120 秒)。
+        # 4 分割にして最長を縮める。なお `--project dom` / `--project node` で分ける案は、
+        # blob を統合したカバレッジが実際より大きく低く出る (全件実行 78.45% に対し 63.35%)
+        # ため採用しない。プロジェクトを跨ぐ blob の統合は損失がある。
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      # frontend ジョブと同じキーを共有する (同じ OS / lockfile で store の内容は同一)。
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests (Vitest, shard ${{ matrix.shard }}/4)
+        run: >-
+          pnpm vitest run
+          --shard=${{ matrix.shard }}/4
+          --coverage
+          --coverage.thresholds.lines=0
+          --reporter=blob
+          --reporter=dot
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+
+      - name: Upload Vitest blob
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # 隠しディレクトリ (先頭 `.`) は upload-artifact が既定で除外するため、
+          # 先頭に `.` を付けない名前にする (付けると blob が 0 件になり統合で失敗する)。
+          name: vitest-blob-${{ matrix.shard }}
+          path: vitest-reports/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # 全 shard の blob を統合し、カバレッジ閾値 (`vite.config.ts` の
+  # coverage.thresholds, #290 の品質ゲート) を統合値で強制する。単体テストの
+  # 合否ゲートもこのジョブが担う (shard のいずれかが落ちたらここで fail させる)。
+  # job レベルの `if:` で `!cancelled()` を使うのは、shard 失敗時に「skip」になる
+  # (skip は必須チェックを満たしてしまう) のを避け、確実に fail で終えるため。
+  frontend-unit-merge:
+    name: frontend (unit tests)
+    needs: [changes, frontend-unit]
+    if: ${{ !cancelled() && (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 同じ run の artifact を gh で取得するために actions: read が要る。
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require all shards to pass
+        env:
+          SHARDS_RESULT: ${{ needs.frontend-unit.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "::error::Vitest の shard が success ではありません: $SHARDS_RESULT"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 各 shard の blob (`vitest-blob-N` artifact) を 1 ディレクトリへ集める。
+      - name: Download Vitest blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p vitest-reports-dl vitest-reports
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'vitest-blob-*' --dir vitest-reports-dl
+          find vitest-reports-dl -name 'blob-*.json' -exec mv {} vitest-reports/ \;
+          ls -l vitest-reports
+
+      # blob を統合し、`vite.config.ts` の閾値 (lines) を超えているか判定する。
+      - name: Merge reports + coverage threshold
+        run: pnpm vitest run --merge-reports=vitest-reports --coverage
+
   # 言語横断のパリティ/ゴールデンテスト専用の軽量ジョブ (#853)。
   #
   # 背景: `ipcCommandParity.test.ts` / `ipcArgParity.test.ts` /
@@ -335,8 +468,8 @@ jobs:
   # だけをピンポイントで実行する。
   #
   # 起動条件 (#1029 で `frontend==true || rust==true || workflow==true` から
-  # 変更): このジョブが実行する 10 本の Vitest ファイルは、`frontend` ジョブの
-  # `pnpm test --coverage` (Vitest 全スイート) にも既に含まれている。したがって
+  # 変更): このジョブが実行する 10 本の Vitest ファイルは、`frontend-unit` の
+  # shard 群 (Vitest 全スイートの 4 分割実行) にも既に含まれている。したがって
   # `frontend==true` の PR (`src/__tests__/fixtures/**` ⊂ `src/**` なのでフィクスチャ
   # のみの PR も該当) では、`frontend` ジョブが直前に実行した 10 本を、このジョブが
   # 独自の checkout + setup-node + `pnpm install --frozen-lockfile` を挟んで
@@ -350,7 +483,7 @@ jobs:
   #
   # カバレッジが保たれることの確認 (4 経路):
   #   - `src/**` のみ変更 (frontend==true, rust==false):
-  #     `frontend` ジョブの `pnpm test --coverage` が 10 本すべてを実走 (このジョブは skip)。
+  #     `frontend-unit` の shard 群 が 10 本すべてを実走 (このジョブは skip)。
   #   - `src-tauri/**` のみ変更 (rust==true, frontend==false):
   #     `frontend` ジョブは skip されるため、このジョブが 10 本を実走 (下記 if: の前半)。
   #   - `src/__tests__/fixtures/**` のみ変更:
@@ -667,32 +800,6 @@ jobs:
       # rust-cache (target) とは別管理。
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: rootpw
-          MYSQL_DATABASE: testdb
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -795,12 +902,16 @@ jobs:
       - name: Setup test sshd (SSH tunnel integration)
         id: sshd
         background: true
+        env:
+          # useradd (35 秒前後) を避けるため既存のランナーユーザを使う。
+          SSH_USER: runner
         run: bash scripts/ci-setup-sshd.sh
 
       # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
       # CA + サーバ証明書を生成し、TLS 必須の MySQL/PostgreSQL を別ポート
-      # (3307/5433) で起動する。下の「MySQL/PostgreSQL サービスコンテナ (平文)」とは
-      # 別の独立したインスタンスで、サービスコンテナは変更しない — サービスコンテナは
+      # (3307/5433) で起動する。下の平文の MySQL/PostgreSQL (3306/5432) とは別の独立した
+      # インスタンス。かつて平文側をサービスコンテナにしていた頃にこの方式を選んだ理由 —
+      # サービスコンテナは
       # 他のどのステップよりも前に起動するため証明書を後から渡せず、加えて
       # `services:` には `command:` (エントリポイント引数上書き) が無く公式 postgres
       # イメージへ `-c ssl=on` のような起動引数を渡す手段が無いため、サービス
@@ -815,6 +926,15 @@ jobs:
         background: true
         run: bash scripts/ci-setup-tls-db.sh
 
+      # 平文接続の MySQL / PostgreSQL (3306 / 5432)。以前は `services:` のコンテナ
+      # (mysql:8.0 / postgres:16) だったが、イメージ pull とヘルスチェックで起動時に約 30 秒
+      # かかっていたため、ランナー同梱のサーバを TLS 版と同じ方式で background 起動する。
+      # 接続情報はコンテナ時代と同じ (scripts/ci-setup-plain-db.sh)。
+      - name: Setup plain test databases (MySQL / PostgreSQL integration)
+        id: plaindb
+        background: true
+        run: bash scripts/ci-setup-plain-db.sh
+
       # cargo-nextest の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
       - name: Install cargo-nextest
@@ -822,14 +942,18 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # 残る background (sshd = SSH 接続情報 / tlsdb = TLS DB 接続情報。いずれも
-      # $GITHUB_ENV 経由) の完了を nextest の直前で待ち合わせる。両者の env は
-      # この wait 以降で利用可能になり、SSH トンネル統合テスト (#331) と TLS 統合
-      # テスト (#520/#795) が nextest で正しく実走する。dist/ は上のスタブステップで
-      # 既に用意済み。sshd/tlsdb のいずれかが失敗した場合はこの wait でジョブが
-      # fail する (公式仕様)。
-      - name: Wait for background setup (sshd, TLS test DBs)
-        wait: [sshd, tlsdb]
+      # テストバイナリのビルドだけを先に行い、アーカイブに固める。sshd / TLS DB のセットアップ
+      # (sshd のユーザ作成などで実測 40〜50 秒) とコンパイルを重ねるのが目的。
+      # 単純な `cargo nextest run --no-run` では足りなかった: 後続の `cargo nextest run` が
+      # 環境変数 (NOOBDB_TEST_* が増える) の違いで noobdb クレートを再コンパイルし
+      # (実測 約 51 秒)、重ねた分が相殺されていた。アーカイブから実行すれば cargo を
+      # 呼ばないので再コンパイルは起きない。
+      - name: Build tests (overlaps sshd / TLS DB setup)
+        working-directory: src-tauri
+        run: cargo nextest archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
+
+      - name: Wait for background setup (sshd, TLS / plain test DBs)
+        wait: [sshd, tlsdb, plaindb]
 
       # 計装なしの nextest を実行する (PR ブロッキング)。MySQL/PostgreSQL の両
       # サービスコンテナを指す URL を渡し、両ドライバの統合テストを CI で実走させる。
@@ -837,14 +961,14 @@ jobs:
       # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
       # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
       # は、それぞれ background の「Setup test sshd」/「Setup TLS test databases」が
-      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb] 以降で参照可能になるため、
+      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb, plaindb] 以降で参照可能になるため、
       # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
       - name: cargo nextest
         working-directory: src-tauri
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        run: cargo nextest run --locked --all-targets
+        run: cargo nextest run --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
@@ -893,32 +1017,6 @@ jobs:
       # キャッシュキーは `rust (test)` (計装なし) と分離する (#1153)。
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: rootpw
-          MYSQL_DATABASE: testdb
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -1024,12 +1122,16 @@ jobs:
       - name: Setup test sshd (SSH tunnel integration)
         id: sshd
         background: true
+        env:
+          # useradd (35 秒前後) を避けるため既存のランナーユーザを使う。
+          SSH_USER: runner
         run: bash scripts/ci-setup-sshd.sh
 
       # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
       # CA + サーバ証明書を生成し、TLS 必須の MySQL/PostgreSQL を別ポート
-      # (3307/5433) で起動する。下の「MySQL/PostgreSQL サービスコンテナ (平文)」とは
-      # 別の独立したインスタンスで、サービスコンテナは変更しない — サービスコンテナは
+      # (3307/5433) で起動する。下の平文の MySQL/PostgreSQL (3306/5432) とは別の独立した
+      # インスタンス。かつて平文側をサービスコンテナにしていた頃にこの方式を選んだ理由 —
+      # サービスコンテナは
       # 他のどのステップよりも前に起動するため証明書を後から渡せず、加えて
       # `services:` には `command:` (エントリポイント引数上書き) が無く公式 postgres
       # イメージへ `-c ssl=on` のような起動引数を渡す手段が無いため、サービス
@@ -1043,6 +1145,15 @@ jobs:
         id: tlsdb
         background: true
         run: bash scripts/ci-setup-tls-db.sh
+
+      # 平文接続の MySQL / PostgreSQL (3306 / 5432)。以前は `services:` のコンテナ
+      # (mysql:8.0 / postgres:16) だったが、イメージ pull とヘルスチェックで起動時に約 30 秒
+      # かかっていたため、ランナー同梱のサーバを TLS 版と同じ方式で background 起動する。
+      # 接続情報はコンテナ時代と同じ (scripts/ci-setup-plain-db.sh)。
+      - name: Setup plain test databases (MySQL / PostgreSQL integration)
+        id: plaindb
+        background: true
+        run: bash scripts/ci-setup-plain-db.sh
 
       # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
@@ -1062,8 +1173,8 @@ jobs:
       # テスト (#520/#795) が nextest で正しく実走する。dist/ は上のスタブステップで
       # 既に用意済み。sshd/tlsdb のいずれかが失敗した場合はこの wait でジョブが
       # fail する (公式仕様)。
-      - name: Wait for background setup (sshd, TLS test DBs)
-        wait: [sshd, tlsdb]
+      - name: Wait for background setup (sshd, TLS / plain test DBs)
+        wait: [sshd, tlsdb, plaindb]
 
       # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
       # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
@@ -1071,14 +1182,14 @@ jobs:
       # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
       # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
       # は、それぞれ background の「Setup test sshd」/「Setup TLS test databases」が
-      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb] 以降で参照可能になるため、
+      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb, plaindb] 以降で参照可能になるため、
       # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
       - name: cargo llvm-cov nextest
         working-directory: src-tauri
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        run: cargo llvm-cov nextest --no-report --locked --all-targets
+        run: cargo llvm-cov nextest --no-report --locked --lib --test '*'
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
       # PR ごとのカバレッジを可視化する。
@@ -1170,6 +1281,12 @@ jobs:
         shell: bash
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
+      # Defender のリアルタイム保護は cargo / rustc の大量のファイル書き込みを
+      # スキャンして遅くする。ランナーは使い捨てなので止めてよい。
+      - name: Disable Defender real-time protection
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -1206,9 +1323,16 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
           key: windows-clippy
+          # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
+          # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
+          # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
+      # main の push に限る (rust-cache の save-if と同じ理由)。
       - name: Cache sccache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sccache-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -1218,6 +1342,15 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
+      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
+      - name: Save sccache (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
@@ -1256,6 +1389,12 @@ jobs:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      # CI のテストビルドだけデバッグ情報を出さない。MSVC は統合テストのバイナリごとに
+      # PDB を書き出すため、リンクの時間とキャッシュの容量が大きく減る。Cargo.toml の
+      # `[profile.dev] debug = "line-tables-only"` はローカル開発用にそのまま残す
+      # (Cargo の環境変数での上書き)。Windows で落ちたテストのバックトレースには
+      # 行番号が出なくなるが、同じテストは Linux ジョブでも走り、そちらには残る。
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -1264,6 +1403,13 @@ jobs:
       - name: Record job start time (#565)
         shell: bash
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # Defender のリアルタイム保護は、cargo / rustc が書く大量のファイルを 1 つずつ
+      # スキャンして遅くする。ランナーは使い捨てなので止めてよい。checkout より前に置くのは、
+      # checkout 自体の書き込みも速くするため。
+      - name: Disable Defender real-time protection
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1299,9 +1445,16 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
           key: windows-test
+          # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
+          # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
+          # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
+      # main の push に限る (rust-cache の save-if と同じ理由)。
       - name: Cache sccache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sccache-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -1317,7 +1470,16 @@ jobs:
       # 実行される。MySQL/PostgreSQL は URL 環境変数を渡していないのでスキップ。
       - name: cargo nextest run
         working-directory: src-tauri
-        run: cargo nextest run --locked --all-targets
+        run: cargo nextest run --locked --lib --test '*'
+
+      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
+      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
+      - name: Save sccache (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ

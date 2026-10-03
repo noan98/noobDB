@@ -21,8 +21,7 @@
   `pnpm run build` に続けて `pnpm run lint` (Biome。#1176。新しい必須
   チェックは増やさずこのジョブ内のステップ)、
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
-  (未使用エクスポート/到達不能コード検出。#470)、`pnpm test --coverage` (Vitest
-  jsdom + カバレッジ閾値)、さらに `pnpm exec playwright install` +
+  (未使用エクスポート/到達不能コード検出。#470)、さらに `pnpm exec playwright install` +
   `pnpm test:browser` (Vitest ブラウザモード。#306) を順に実行します。
   バンドルサイズはカバレッジと同じく当面は閾値による fail を設けず可視化のみで、
   `dist/` の JS/CSS の gzip 後サイズを Node 標準の zlib だけで集計します
@@ -41,6 +40,17 @@
   `frontend (browser render + visual)` を必須チェックに指定していた場合は、新しい
   `frontend (build + browser tests)` へ設定し直してください** (#908 のジョブ統合で
   チェック名が変わったため)。
+
+  **Vitest 単体テストは別ジョブに分割** (実測 約 4 分 15 秒がフロントの大半を占めていた
+  ため)。`frontend (unit shard N/3)` (`frontend-unit`、`--shard` で 3 並列、各 shard は
+  `--coverage --coverage.thresholds.lines=0 --reporter=blob` で blob を artifact へ保存) と、
+  それを `gh run download` で集めて `vitest run --merge-reports --coverage` で統合し
+  カバレッジ閾値 (`vite.config.ts` の `thresholds.lines`) を強制する
+  `frontend (unit tests)` (`frontend-unit-merge`) の 2 段です。**単体テストの合否と
+  カバレッジ閾値のゲートは `frontend (unit tests)` が担う**ので、必須チェックには
+  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の
+  `frontend (unit shard N/3)` は集約ジョブが `needs.frontend-unit.result` を見て fail
+  させるので必須に含めなくてよい)。
 
   **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
   インポートで `src-tauri/src/lib.rs` を読む) / `ipcArgParity.test.ts` /
@@ -103,8 +113,8 @@
   Rust 系は 7 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
-  が MySQL 8 / PostgreSQL 16 のサービスコンテナに対し
-  **計装なしの** `cargo nextest run --locked --all-targets` を実行します
+  が MySQL / PostgreSQL に対し
+  **計装なしの** nextest (`--lib --test '*'`。テストの無い bin ターゲットはビルドしない) を実行します
   (PR ブロッキング)。カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
@@ -113,7 +123,9 @@
   `scripts/ci-setup-sshd.sh` で apt の `openssh-server` を 127.0.0.1:2222 に立て、
   `NOOBDB_TEST_SSH_URL` / `NOOBDB_TEST_SSH_KEY` を `$GITHUB_ENV` に渡すことで SSH
   トンネル統合テスト (#331) も実走します (サービスコンテナはイメージ pull が要るため
-  使わず、apt 構成で再現性を確保)。`rust (fmt)` が
+  使わず、apt 構成で再現性を確保)。平文の MySQL (3306) / PostgreSQL (5432) も同じ理由で
+  サービスコンテナをやめ、ランナー同梱のサーバを `scripts/ci-setup-plain-db.sh` で
+  background 起動します (起動時の約 30 秒の待ちが消え、他のセットアップと重なる)。`rust (fmt)` が
   `cargo fmt --all -- --check` を、`rust (deny)` が
   `cargo deny --manifest-path src-tauri/Cargo.toml check` (依存ライセンスの許可
   リスト検査と RustSec Advisory DB による脆弱性チェック。設定は
@@ -123,7 +135,7 @@
   バイナリを導入)。`rust (test)` には MySQL 用の
   `NOOBDB_TEST_MYSQL_URL` と PostgreSQL 用の `NOOBDB_TEST_POSTGRES_URL` を両方
   渡しており、両ドライバの統合テストが CI で実走します (SQLite は環境変数不要で
-  常に走る)。`rust (coverage)` ジョブは `rust (test)` と同じ準備 (サービスコンテナ・sshd・
+  常に走る)。`rust (coverage)` ジョブは `rust (test)` と同じ準備 (平文 DB・sshd・
   TLS DB・dist スタブ。複製しており composite action 化はしていない) の上で
   `cargo llvm-cov nextest --no-report` を実行し、`cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
   Job Summary に出力して PR ごとに可視化し、加えて `--fail-under-lines` で行
@@ -156,6 +168,18 @@
   不要の SQLite 統合テストのみ実走します。Tauri の全スタックビルド (WebView2 等) は
   不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows-clippy` /
   `windows-test` で Linux と分離しています。
+  `rust (test)` は sshd / TLS DB のセットアップ (約 1 分) を待たずに
+  `cargo nextest archive` でテストバイナリのビルドを先に始め、wait の後にアーカイブから実行します
+  (NOOBDB_TEST_* は実行時にしか読まないためコンパイルと重ねられる。アーカイブ経由なので
+  環境変数の違いによる再コンパイルも起きない)。
+  Rust の統合テストは `src-tauri/Cargo.toml` の `[[test]]` で 4 本の実行ファイルに束ねてあり
+  (golden / integration / external と単独の serde_schema_parity。`autotests = false`。詳細は
+  `noobdb-testing` の commands.md)、リンク回数を減らしています。Windows の 2 ジョブは
+  `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
+  フロントの単体テストは `--shard` の 4 分割です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
+  Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
+  `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
+  PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
   さらに `rust (clippy)` / `rust (test)` / `rust (coverage)` /
   `rust (windows clippy)` / `rust (windows test)` の各コンパイルジョブは
   **sccache** を `RUSTC_WRAPPER` として有効化し (`taiki-e/install-action` で導入)、

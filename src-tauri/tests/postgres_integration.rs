@@ -8,7 +8,7 @@
 //! and round-trip CRUD against an isolated temporary table. Preview must
 //! leave the live table untouched.
 
-mod common;
+use super::common; // 共有ヘルパは groups/external.rs が 1 度だけ取り込む
 
 use noobdb_lib::__test_api as t;
 

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom (localStorage / DOM に触れるため。DOM を使わないテストは node 環境で走る)
 import { describe, expect, it, vi } from "vitest";
 import { TabPaneStore, useStoreSelector, type PaneShape } from "../tabPaneStore";
 import { renderHook, act } from "@testing-library/react";

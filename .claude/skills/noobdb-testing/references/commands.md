@@ -25,10 +25,21 @@ Rust バックエンド (`src-tauri/` から実行):
 cargo fmt --all -- --check                          # 整形チェック (CI と同じ)
 cargo clippy --all-targets --locked -- -D warnings  # 型チェック込みの lint
 cargo test                                          # ユニットテスト
-cargo nextest run --all-targets                     # CI が使うテストランナー
-cargo test --test mysql_integration                 # 統合テストファイルを単体で実行
+cargo nextest run --lib --test '*'                  # CI が使うテストランナー
+cargo test --test external mysql_integration::      # 統合テストのファイル単位で実行 (下の注参照)
 cargo test mysql_roundtrip_when_env_set             # テスト名を指定して単体で実行
 ```
+
+> **統合テストは 4 本の実行ファイルに束ねてある** (`src-tauri/Cargo.toml` の `[[test]]`、
+> `autotests = false`)。Tauri / sqlx / russh を含むテストバイナリのリンクをファイル数ぶん
+> 繰り返すと、CI (特に Windows) で大きな固定コストになるため。個々のテストは従来どおり
+> `src-tauri/tests/<名前>.rs` に置き、`tests/groups/{golden,integration,external}.rs` が
+> `#[path]` で取り込む。**新しい `tests/*.rs` を足したら該当グループに `mod` を 1 行足す**
+> (足し忘れるとそのテストは走らない)。ファイル単位で動かすときは
+> `cargo test --test <golden|integration|external> <ファイル名>::`。`serde_schema_parity` だけは
+> `#![recursion_limit]` の都合で単独の実行ファイル。プロセスを共有するため
+> `cargo test` ではファイルをまたぐ共有状態 (環境変数・ユーザデータの JSON) に注意
+> (nextest はテストごとにプロセスを分けるので影響しない)。
 
 ミューテーションテスト (#528) — `cargo install cargo-mutants` でインストール後:
 
@@ -64,9 +75,9 @@ cargo mutants --in-place
 
 ```sh
 NOOBDB_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \
-  cargo test --test mysql_integration
+  cargo test --test external mysql_integration::
 NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
-  cargo test --test postgres_integration
+  cargo test --test external postgres_integration::
 ```
 
 SSH トンネル統合テスト (`tests/ssh_integration.rs`、#331) は `NOOBDB_TEST_SSH_URL`
@@ -83,7 +94,7 @@ known_hosts パスを制御して網羅済みです。
 SSH_PORT=2222 bash scripts/ci-setup-sshd.sh   # sshd を起動し env を出力
 NOOBDB_TEST_SSH_URL=ssh://sshtest:sshpw123@127.0.0.1:2222 \
 NOOBDB_TEST_SSH_KEY=/tmp/noobdb-sshtest/client_key \
-  cargo test --test ssh_integration
+  cargo test --test external ssh_integration::
 ```
 
 `tests/sqlite_integration.rs` は外部サーバを必要とせず、`std::env::temp_dir()`

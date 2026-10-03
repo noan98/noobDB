@@ -1,3 +1,4 @@
+// @vitest-environment jsdom (localStorage / DOM に触れるため。DOM を使わないテストは node 環境で走る)
 import { describe, expect, it, vi } from "vitest";
 import { beginColumnResizeDrag, resizedColumnWidth } from "../components/columnResizeDrag";
 
