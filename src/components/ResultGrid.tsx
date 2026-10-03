@@ -1734,6 +1734,7 @@ function ColumnFilterMenu({
   // icon, flipping up/left when it would overflow. Re-runs on `draft.op` too,
   // since switching to `between` adds a row and changes the menu height — a
   // popup opened near the bottom edge must re-measure so it doesn't overflow.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draft.op は本体で読まないが、`between` への切替でメニュー高さが変わるため再計測の契機として意図的に依存へ入れている
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el) return;
@@ -2345,6 +2346,7 @@ function ColumnStatsMenu({
 
   // Clamp into the viewport once measured (mirrors ColumnFilterMenu). Re-runs on
   // `full`/`loadingFull` since the panel grows when the all-rows section appears.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: full / loadingFull / fullError は本体で読まないが、全件セクションの出入りでパネル高さが変わるため再計測の契機として意図的に依存へ入れている
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el) return;
@@ -3665,9 +3667,11 @@ export const DataGrid = memo(function DataGrid({
   }, [reveal]);
   // 結果 (列構成) が変わったら reveal は無効。セル単位の reveal は行インデックスで
   // 持つため、行が差し替わったら別の行を見せてしまわないよう解除する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 列構成が差し替わったことを契機に reveal を解除する (columns は本体で読まない) ため意図的に依存へ入れている
   useEffect(() => {
     setReveal(null);
   }, [columns]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 行が差し替わったことを契機にセル単位の reveal を解除する (rows は本体で読まない) ため意図的に依存へ入れている
   useEffect(() => {
     setReveal((r) => (r && r.kind === "cell" ? null : r));
   }, [rows]);
@@ -3967,7 +3971,7 @@ export const DataGrid = memo(function DataGrid({
               <span
                 className={`cell-empty cell-empty-${emptyKind}`}
                 aria-label={t(badge.labelKey)}
-                {...cellTooltipProps(t(badge.labelKey))}
+                {...bindCellTooltip(t(badge.labelKey))}
               >
                 {badge.glyph}
               </span>
@@ -3984,14 +3988,14 @@ export const DataGrid = memo(function DataGrid({
             const num = toNumber(v);
             if (mode === "off" || !stats || num === null) {
               return (
-                <span className={`cell-number ${extraClass}`} {...cellTooltipProps(title)}>
+                <span className={`cell-number ${extraClass}`} {...bindCellTooltip(title)}>
                   {display}
                 </span>
               );
             }
             if (mode === "bar") {
               return (
-                <span className="cell-cf-wrap" {...cellTooltipProps(title)}>
+                <span className="cell-cf-wrap" {...bindCellTooltip(title)}>
                   <span
                     className="cell-databar"
                     style={{ transform: `scaleX(${dataBarPercent(num, stats) / 100})` }}
@@ -4018,7 +4022,7 @@ export const DataGrid = memo(function DataGrid({
             // 不透明な塗りにし、`readableInk` で塗り色そのものから文字色を
             // 決めることで、テーマに関わらず十分なコントラストを確保する。
             return (
-              <span className="cell-cf-wrap" {...cellTooltipProps(title)} style={{ background: color }}>
+              <span className="cell-cf-wrap" {...bindCellTooltip(title)} style={{ background: color }}>
                 <span
                   className={`cell-number cell-cf-value ${extraClass}`}
                   style={{ color: readableInk(color) }}
@@ -4059,7 +4063,7 @@ export const DataGrid = memo(function DataGrid({
                 ? formatDateTimeDisplay(raw, locale)
                 : null;
             return formatted !== null ? (
-              <span className="cell-date" {...cellTooltipProps(raw)}>
+              <span className="cell-date" {...bindCellTooltip(raw)}>
                 {formatted}
               </span>
             ) : (
@@ -4071,7 +4075,7 @@ export const DataGrid = memo(function DataGrid({
             // グリッド内では空白を畳んだコンパクト表現にする (表示専用、原文は title)。
             const compact = richCellRendering ? formatJsonCompact(raw) : null;
             return compact !== null ? (
-              <span className="cell-json" {...cellTooltipProps(raw)}>
+              <span className="cell-json" {...bindCellTooltip(raw)}>
                 {compact}
               </span>
             ) : (
@@ -4087,7 +4091,7 @@ export const DataGrid = memo(function DataGrid({
             // ツールチップ + イベント委譲、#884) を使う。
             if (!richCellRendering) {
               return (
-                <span className="cell-string" {...cellTooltipProps(raw)}>
+                <span className="cell-string" {...bindCellTooltip(raw)}>
                   {raw}
                 </span>
               );
@@ -4095,7 +4099,7 @@ export const DataGrid = memo(function DataGrid({
             return (
               <span
                 className="cell-enum-badge"
-                {...cellTooltipProps(raw)}
+                {...bindCellTooltip(raw)}
                 style={{ "--enum-hue": enumBadgeHue(raw) } as CSSProperties}
               >
                 {raw}
@@ -4107,7 +4111,7 @@ export const DataGrid = memo(function DataGrid({
             const label = t("gridBlobBytes", { size: formatBytes(Math.floor(s.length / 2)) });
             const { preview } = truncateHexPreview(s);
             return (
-              <span className="cell-binary" {...cellTooltipProps(`${label} — 0x${s}`)}>
+              <span className="cell-binary" {...bindCellTooltip(`${label} — 0x${s}`)}>
                 <span className="cell-binary-tag">{label}</span>0x{preview}
               </span>
             );
@@ -4120,7 +4124,7 @@ export const DataGrid = memo(function DataGrid({
           // たびに大量のマウント/アンマウントを引き起こし性能リスクがあるため。
           const rawStr = String(v);
           return (
-            <span className="cell-string" {...cellTooltipProps(rawStr)}>
+            <span className="cell-string" {...bindCellTooltip(rawStr)}>
               {rawStr}
             </span>
           );
@@ -4143,6 +4147,7 @@ export const DataGrid = memo(function DataGrid({
     heatPaletteKey,
     maskedCols,
     isDarkTheme,
+    bindCellTooltip, // 参照固定のラッパーなので再生成の原因にならない
   ]);
 
   // ストリーミング中は 1 行バッチが届くたびに呼び出し元 (App.tsx) が
@@ -4206,6 +4211,7 @@ export const DataGrid = memo(function DataGrid({
   const handleRequestKeyStr = handleRequest ? handleRequestKey(handleRequest) : "";
   // `order` が null のときは「並びも絞り込みも無い」(元の行順そのまま)。
   const [handleOrder, setHandleOrder] = useState<{ id: string; order: number[] | null } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 条件は handleRequestKeyStr (JSON キー) で比較する。handleRequest は描画ごとに参照が変わるので依存に入れると再実行ループになる
   useEffect(() => {
     if (!activeHandleId || !handleRequest) {
       setHandleOrder(null);
@@ -4344,6 +4350,7 @@ export const DataGrid = memo(function DataGrid({
     for (const el of copyFlashElsRef.current) el.classList.remove("is-copy-flash");
     copyFlashElsRef.current = [];
   };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clearCopyFlash は ref だけを触る毎レンダー再生成の関数。アンマウント時に最後の ref を掃除するだけなので依存は空で良い
   useEffect(() => clearCopyFlash, []);
   const flashCopyRange = (rowIndices: readonly number[], colIndices: readonly number[]) => {
     // 直前のフラッシュが再生中なら止め、同じセルへ再度当たっても最初から
@@ -4677,6 +4684,7 @@ export const DataGrid = memo(function DataGrid({
     : null;
   const selectionStatsRef = useRef(selectionStats);
   selectionStatsRef.current = selectionStats;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selectionStats は毎レンダー新しいオブジェクトになるため、値の同一性は selectionStatsKey (プリミティブ) で見る。最新値は ref 経由で読む
   useEffect(() => {
     onSelectionSummary?.(selectionStatsRef.current);
   }, [selectionStatsKey, onSelectionSummary]);
@@ -4924,6 +4932,7 @@ export const DataGrid = memo(function DataGrid({
   });
   // Density changes the row height via CSS vars; re-measure so the virtualizer's
   // cached sizes (and total scroll height) follow instead of lagging by a paint.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: density は本体で読まないが、行高が CSS 変数で変わるため再計測の契機として意図的に依存へ入れている
   useEffect(() => {
     if (virtualize) rowVirtualizer.measure();
   }, [density, virtualize, rowVirtualizer]);
@@ -4999,6 +5008,7 @@ export const DataGrid = memo(function DataGrid({
   // measurements memo), so they don't strictly need this `.measure()` kick —
   // it's here for `estimateSize`'s per-index *values* (opaque to virtual-core
   // until asked to remeasure), which the same state changes also affect.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 列サイズ・順序・ピン留め・表示状態は estimateSize の結果を変えるため、本体で読まなくても再計測の契機として意図的に依存へ入れている
   useEffect(() => {
     if (virtualize) columnVirtualizer.measure();
   }, [virtualize, columnVirtualizer, columnSizing, columnOrder, columnPinning, columnVisibility]);
@@ -5204,6 +5214,7 @@ export const DataGrid = memo(function DataGrid({
   // スクロール/フォーカスするため、要求を ref に保留して毎レンダーの効果で消化する。
   const pendingFindNavRef = useRef<GridFindNav | null>(null);
   const findNavSeq = findNav?.seq ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: findNav は seq 単調増加のワンショット要求。seq (findNavSeq) だけを依存にして同一要求での二重発火を防ぐ (findNav / table / paginationState は発火時点の最新値を読めばよい)
   useEffect(() => {
     if (!findNav) return;
     pendingFindNavRef.current = findNav;
@@ -7096,6 +7107,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
     findCaseSensitive,
     findWholeCell,
   ]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 検索条件は remoteFindKey (JSON キー) に畳んである。個別の値を依存に入れると同じ条件で二重に問い合わせてしまう
   useEffect(() => {
     if (!activeFindHandleId) {
       setRemoteFind(null);
@@ -7237,6 +7249,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
       containerRef.current?.focus();
     },
   }), []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: findFocusSeq は本体で読まないが、検索バーを開き直したときに入力欄へフォーカス・全選択し直す契機として意図的に依存へ入れている
   useEffect(() => {
     if (!findOpen) return;
     const el = findInputRef.current;
@@ -7257,6 +7270,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   // end (e.g. the table fits in the viewport and natural scroll never
   // happens). Disabled in paginate mode — loading is triggered from the
   // paginator footer instead.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows.length は本体で読まないが、行が届くたびにしきい値を再判定して続きの読み込みを起こす契機として意図的に依存へ入れている
   useEffect(() => {
     if (paginateMode || !canLoadMore || loadingMore) return;
     const el = containerRef.current;
@@ -7270,13 +7284,14 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
     trigger();
     el.addEventListener("scroll", trigger, { passive: true });
     return () => el.removeEventListener("scroll", trigger);
-  }, [canLoadMore, loadingMore, result?.rows.length]);
+  }, [paginateMode, canLoadMore, loadingMore, result?.rows.length]);
 
   // Report the grid's scroll position so table tabs can restore where the user
   // was (#678). Independent of the load-more listener (which is conditional).
   // Re-binds only when the container mounts/unmounts (result toggles null ↔ set);
   // the same DOM node persists across result replacements, so it stays attached.
   const hasResultForScroll = result != null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hasResultForScroll は本体で読まないが、結果の有無でスクロールコンテナが付け外しされるため再バインドの契機として意図的に依存へ入れている
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -7524,6 +7539,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
     if (next !== input.collapsed) setToolbarCollapsed(next);
   }, [toolbarEl]);
   // 内容が変わった直後 (畳む個数・操作の数) だけ、描画前に同期して測る。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: toolbarCollapsed / presentToolbarActions.length は本体で読まないが、畳む個数・操作数が変わった直後に再計測する契機として意図的に依存へ入れている
   useLayoutEffect(() => {
     measureToolbar();
   }, [measureToolbar, toolbarCollapsed, presentToolbarActions.length]);
@@ -7564,6 +7580,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   // DataGrid の memo を破らないよう、emptyMessage は依存が変わるときだけ作り直す (#1313)。
   const resultElapsedMs = result?.elapsed_ms;
   const locale = useLocale();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: t は locale 変更で文言が変わるモジュール関数 (useT) で、locale を再生成の契機として意図的に依存へ入れている
   const gridEmptyMessage = useMemo(
     () =>
       streaming ? undefined : queryError ? (

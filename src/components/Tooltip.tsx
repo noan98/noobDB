@@ -200,6 +200,7 @@ export function Tooltip({
     showTimer.current = setTimeout(() => setOpen(true), delay);
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clearShowTimer は ref (showTimer) しか触らないのでクロージャが古くても挙動は変わらない。マウント時 1 回だけ登録する
   useEffect(() => {
     const close = hideRef.current!;
     return () => {
@@ -208,6 +209,7 @@ export function Tooltip({
     };
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hide は ref の遅延初期化で全レンダ同一の関数、中身が触るのは ref と setOpen のみで、open の切替時だけ購読し直せばよい
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -225,6 +227,7 @@ export function Tooltip({
     };
   }, [open]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: label が変わると吹き出し寸法が変わるため、本体で参照しなくても再計測のトリガーとして依存に含めている
   useLayoutEffect(() => {
     if (!open) {
       setPos(null);
@@ -504,6 +507,7 @@ export function TooltipBubble({
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: label が変わると吹き出し寸法が変わるため、本体で参照しなくても再計測のトリガーとして依存に含めている
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;

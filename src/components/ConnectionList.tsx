@@ -1423,6 +1423,7 @@ const SchemaRowList = memo(function SchemaRowList({
   //     (`data-density` / `--font-scale`。上に兄弟が無くても余白が変わる)。rAF で 1 フレーム 1 回に間引く。
   // 値が変わらなければ state は更新しない。
   void layoutToken; // 依存として使う (測り直しのきっかけ)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: layoutToken は本体で参照しないが、仮想化の ON/OFF・上の層の構造が変わったコミット直後に scrollMargin を測り直すためのトリガーとして意図的に依存へ含めている
   useLayoutEffect(() => {
     if (!virtual) return;
     const list = listRef.current;
@@ -2100,6 +2101,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
    * - ↑↓/Home/End/先頭文字ジャンプ: 同じ配列に対して `resolveTreeMove` で次の行を決める。
    *   窓の外の行はスクロールして描画させてからフォーカスする (#1315)
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buildNavSequence は毎レンダーで作り直されるが ref だけを読むため、依存に入れずハンドラの参照を固定する (下の依存配列のコメント参照)
   const makeTreeItemKeyDown = useCallback(
     (activate?: () => void, openContextMenu?: (e: ContextMenuTriggerEvent) => void) =>
       (e: React.KeyboardEvent<HTMLElement>) => {
@@ -2974,6 +2976,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // 判定はストアが覚えているマウント中のキーとの照合なので O(1) で、止まり先が消えて
   // いるときだけ DOM を読む。依存を明示しているので、打鍵・ホバー・フォーカス移動の
   // レンダーでは走らない。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ensureTabStop は本体で使うが、ツリー構造の変化 (profiles / databases / 展開状態など) の後にだけ止まり先を確認したいので、それらを再実行のトリガーとして意図的に依存へ含めている
   useLayoutEffect(() => {
     ensureTabStop();
   }, [
@@ -3160,6 +3163,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const activeTableDb = activeTable?.database;
   const activeTableName = activeTable?.table;
   const hasObjectDefinitionOpener = !!onOpenObjectDefinition;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: partitionFor は毎レンダーで作り直される関数だが、中身は ref (partitionCacheRef) のキャッシュだけを使う。依存に入れると毎回再計算されるため除外する (下の依存配列に入力値を列挙済み)
   const explorerRows = useMemo<ExplorerRow[]>(() => {
     if (!activeProfileId || !sessionId) return [];
     return buildExplorerRows({
@@ -3731,6 +3735,7 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: TooltipR
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: col は測定対象の列が変わったときに吹き出しを再配置するためのトリガー (本体では ref 経由で DOM を測るだけ) として意図的に依存へ含めている
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;

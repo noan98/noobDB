@@ -198,6 +198,7 @@ export const TabBar = memo(function TabBar({
 
   // Recompute on resize (ResizeObserver) and whenever the tab set changes. The
   // scroll listener keeps the arrow enabled-state in sync as the user scrolls.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tabs.length はタブ数の変化でオーバーフロー状態を再計算するためのトリガーとして意図的に依存へ含めている
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -213,6 +214,7 @@ export const TabBar = memo(function TabBar({
 
   // Keep the active tab visible — when selection moves to an off-screen tab
   // (e.g. via keyboard or programmatic open), scroll it into view horizontally.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tabs.length はタブ追加/削除時にアクティブタブを再度表示域へ入れるためのトリガーとして意図的に依存へ含めている
   useEffect(() => {
     if (!activeTabId) return;
     const el = tabRefs.current.get(activeTabId);
@@ -252,6 +254,7 @@ export const TabBar = memo(function TabBar({
     };
   }, [listOpen]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: MRU 順は mruRef (ref) から読むため、ドロップダウンを開くたびに listOpen で並びを再計算する意図で依存に含めている
   const listTabs = useMemo(() => {
     const order = new Map(tabs.map((tt, i) => [tt.id, i]));
     const mruRank = new Map(mruRef.current.map((id, i) => [id, i]));
