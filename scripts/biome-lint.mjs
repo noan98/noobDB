@@ -5,7 +5,7 @@
 // WARNING_BUDGET で固定し、新規の違反は CI で落とす。直して件数が減ったらこの値も下げる。
 import { spawnSync } from "node:child_process";
 
-const WARNING_BUDGET = 128;
+const WARNING_BUDGET = 74;
 
 const result = spawnSync(
   "pnpm",

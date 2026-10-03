@@ -1450,6 +1450,7 @@ export default function App() {
   // ベストエフォート — オフライン/マニフェスト取得失敗は静かに無視して起動を
   // ブロックしない。更新があればユーザ承認制の確認ダイアログを出し、承認された
   // ときだけダウンロード・適用・再起動する (勝手には再起動しない)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 起動時に一度だけ実行する。t/toast/confirm は初回の値で足りるので依存に含めない (再実行すると更新確認が重複する)
   useEffect(() => {
     if (!getSettings().autoUpdateCheckEnabled) return;
     let cancelled = false;
@@ -1683,6 +1684,10 @@ export default function App() {
   // re-subscribing on every change.
   // ストアは同期的に更新されるので、ref より新しい (commit を待たない) 値を返す。
   const panesRef = useMemo(() => ({ get current() { return tabPaneStore.getPanes(); } }), [tabPaneStore]);
+  // Tabs ref kept in sync so streaming callbacks below can read the latest
+  // committed tab state without re-creating themselves on every batch.
+  const tabsRef = useMemo(() => ({ get current() { return tabPaneStore.getTabs(); } }), [tabPaneStore]);
+  // (tabsRef は依存配列からも参照するため、使用箇所より前のここで定義する)
   const activePaneIdRef = useRef<string | null>(activePaneId);
   useEffect(() => { activePaneIdRef.current = activePaneId; }, [activePaneId]);
   // 新規タブ・タブ切替・接続直後のエディタ自動フォーカス (#816) が、モーダル/オーバー
@@ -1809,6 +1814,7 @@ export default function App() {
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替ごとにトランザクション状態を捨てる
   useEffect(() => { setTxActive(false); }, [sessionId]);
   // 切断時はセッション依存のモーダル状態をリセットする (検索モーダルが
   // 再接続時に意図せず再表示されるのを防ぐ)。
@@ -2043,11 +2049,11 @@ export default function App() {
     // `sql` をプログラムから書き換えるときは、エディタ側の最新値より新しい指定なので破棄する。
     if ("sql" in patch) tabSqlStore.delete(id);
     setTabs((prev) => prev.map((tt) => (tt.id === id ? { ...tt, ...patch } : tt)));
-  }, [tabSqlStore]);
+  }, [tabSqlStore, setTabs]);
 
   const patchTab = useCallback((id: string, patcher: (tab: Tab) => Tab) => {
     setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
-  }, []);
+  }, [setTabs]);
 
   /**
    * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。3 択は排他な
@@ -2096,6 +2102,7 @@ export default function App() {
   const streamFlushersRef = useRef<Map<string, StreamRowFlusher>>(new Map());
   // 見えていなかったタブが表示された (ペインのアクティブタブが変わった) ら、保留中の
   // 行をまとめて反映する。バックグラウンドのタブは貯めるだけで再レンダーを起こさない。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: panes は「アクティブタブが変わった」ことを検知するトリガー。本体は ref のフラッシャだけを読む
   useEffect(() => {
     for (const flusher of streamFlushersRef.current.values()) flusher.resume();
   }, [panes]);
@@ -2153,7 +2160,7 @@ export default function App() {
     // 切り替え先がクエリタブならエディタへ自動フォーカスする (#816)。table/explain
     // タブへの切替では発火しない。
     focusEditorIfQueryTab(paneId, tabsRef.current.find((t) => t.id === tabId)?.kind);
-  }, [focusEditorIfQueryTab]);
+  }, [focusEditorIfQueryTab, setPanes, tabsRef]);
 
   // Append a freshly built tab to a pane (the focused pane by default) and make
   // it active there. Used by every "open in a new tab" entry point.
@@ -2171,7 +2178,7 @@ export default function App() {
       );
     });
     if (paneId) setActivePaneId(paneId);
-  }, []);
+  }, [setPanes, setTabs]);
 
   // Activate an already-open tab wherever it lives, focusing its pane.
   const activateTab = useCallback((tabId: string) => {
@@ -2179,7 +2186,7 @@ export default function App() {
     if (!owner) return;
     setActivePaneId(owner.id);
     setPanes((prev) => prev.map((p) => (p.id === owner.id ? { ...p, activeTabId: tabId } : p)));
-  }, []);
+  }, [setPanes, panesRef]);
 
   // Open a second pane on demand. If the source pane has more than one tab the
   // active tab is moved into the new pane; otherwise a fresh query tab is
@@ -2207,7 +2214,7 @@ export default function App() {
       setPanes([...prev, { id: newPid, tabIds: [tab.id], activeTabId: tab.id }]);
     }
     setActivePaneId(newPid);
-  }, []);
+  }, [setPanes, setTabs, panesRef]);
 
   // Close a pane, merging its open tabs (and their live streams) into the other
   // pane rather than discarding them. Only meaningful when two panes exist.
@@ -2231,7 +2238,7 @@ export default function App() {
         ),
     );
     setActivePaneId(other.id);
-  }, []);
+  }, [setPanes, panesRef]);
 
   // Move a single tab to the other pane (creating it if needed). A source pane
   // emptied by the move is dropped, collapsing back to a single pane.
@@ -2264,7 +2271,7 @@ export default function App() {
       ]);
       setActivePaneId(newPid);
     }
-  }, []);
+  }, [setPanes, panesRef]);
 
   // Reorder tabs within a pane via drag/keyboard. `orderedIds` is the
   // pane's full tab-id list in its new order; we only accept a permutation of
@@ -2281,7 +2288,7 @@ export default function App() {
         return validated ? { ...p, tabIds: validated } : p;
       }),
     );
-  }, []);
+  }, [setPanes]);
 
   const openTabMenu = useCallback((tabId: string, x: number, y: number) => {
     setTabMenu({ tabId, x, y });
@@ -2351,7 +2358,7 @@ export default function App() {
     } catch (e) {
       toast.error(translate("profileExportError", { error: String(e) }));
     }
-  }, [profiles.length, toast, translate]);
+  }, [profiles.length, toast]);
 
   // 接続プロファイルのインポート: ファイルを選び、衝突解決ダイアログを開く。
   const handleImportProfilesPick = useCallback(async () => {
@@ -2366,7 +2373,7 @@ export default function App() {
     } catch (e) {
       toast.error(translate("profileImportError", { error: String(e) }));
     }
-  }, [toast, translate]);
+  }, [toast]);
 
   const handleImportProfilesConfirm = useCallback(
     async (strategy: ProfileImportStrategy) => {
@@ -2381,7 +2388,7 @@ export default function App() {
         toast.error(translate("profileImportError", { error: String(e) }));
       }
     },
-    [importProfilesPath, refreshProfiles, toast, translate],
+    [importProfilesPath, refreshProfiles, toast],
   );
 
   // 暗号化バックアップの書き出し (#710): パスフレーズ確定 → 保存先選択 → 書き出し。
@@ -2392,7 +2399,7 @@ export default function App() {
       return;
     }
     setBackupExportOpen(true);
-  }, [profiles.length, toast, translate]);
+  }, [profiles.length, toast]);
 
   const handleBackupExportConfirm = useCallback(
     async (passphrase: string) => {
@@ -2416,7 +2423,7 @@ export default function App() {
         toast.error(translate("profileBackupExportError", { error: String(e) }));
       }
     },
-    [toast, translate],
+    [toast],
   );
 
   const handleBackupImportPick = useCallback(async () => {
@@ -2431,7 +2438,7 @@ export default function App() {
     } catch (e) {
       toast.error(translate("profileBackupImportError", { error: String(e) }));
     }
-  }, [toast, translate]);
+  }, [toast]);
 
   const handleBackupImportConfirm = useCallback(
     async (strategy: ProfileImportStrategy, passphrase: string) => {
@@ -2452,7 +2459,7 @@ export default function App() {
         });
       }
     },
-    [backupImport, refreshProfiles, toast, translate],
+    [backupImport, refreshProfiles, toast],
   );
 
   const refreshSnippets = useCallback(async () => {
@@ -2860,7 +2867,7 @@ export default function App() {
       activePane: Math.max(0, curPanes.findIndex((p) => p.id === activePaneIdRef.current)),
     };
     savePersistedWorkspace(profileId, ws);
-  }, [tabSqlStore]);
+  }, [tabSqlStore, panesRef, tabsRef]);
 
   // Flushing on `beforeunload` lands the current state in localStorage as the
   // window tears down, so in-session tab updates (builder snapshots, SQL edits)
@@ -2890,7 +2897,7 @@ export default function App() {
     setTabs([]);
     setPanes([]);
     setActivePaneId(null);
-  }, [cancelStreamForTab]);
+  }, [cancelStreamForTab, dirtyWatcher, tabSqlStore, setPanes, setTabs, tabsRef]);
 
   // 既に開いている接続へ即座に切り替える (#複数同時接続)。再接続せず、生存中の
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
@@ -2928,7 +2935,7 @@ export default function App() {
     }
     setStatus({ kind: "idle" });
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs]);
 
   // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
   // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
@@ -3122,6 +3129,8 @@ export default function App() {
     captureTimelapse,
     toast,
     confirm,
+    setPanes,
+    setTabs,
   ]);
 
   // Host-key mismatch recovery (#682): pin the fingerprint the user approved in
@@ -3161,7 +3170,7 @@ export default function App() {
     } finally {
       setReTrustingHostKey(false);
     }
-  }, [hostKeyMismatch, handleConnect, toast, translate]);
+  }, [hostKeyMismatch, handleConnect, toast]);
 
   // Abort the in-flight connection attempt (#684): the awaiting connect command
   // rejects with a "cancelled" error, which handleConnect's catch surfaces.
@@ -3476,6 +3485,7 @@ export default function App() {
 
   // Drop every cached schema when the session changes so a new connection
   // never autocompletes against the previous database's tables.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替時にキャッシュを捨てる
   useEffect(() => {
     setSchemaCache({});
     schemaInFlightRef.current.clear();
@@ -3527,9 +3537,6 @@ export default function App() {
     [sessionId],
   );
 
-  // Tabs ref kept in sync so streaming callbacks below can read the latest
-  // committed tab state without re-creating themselves on every batch.
-  const tabsRef = useMemo(() => ({ get current() { return tabPaneStore.getTabs(); } }), [tabPaneStore]);
   useEffect(() => { tabsForDirtyRef.current = tabs; }, [tabs]);
 
   // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
@@ -4021,6 +4028,7 @@ export default function App() {
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
+    panesRef,
   ]);
 
   // 環境横断ブロードキャスト実行 (#738): クエリエディタの「複数の接続で実行」から
@@ -4033,7 +4041,7 @@ export default function App() {
       return;
     }
     setBroadcastRequest({ sql, tableColumns: tab?.tableColumns ?? null });
-  }, [toast, translate]);
+  }, [toast]);
 
   // ---- Auto-refresh (scheduled re-execution) -------------------------------
   // Latest `runQueryInTab` / `sessionId` kept in refs so a long-lived timer
@@ -4058,6 +4066,7 @@ export default function App() {
   const autoRefreshSignature = tabs
     .map((tt) => `${tt.id}:${tt.autoRefreshSecs ?? 0}`)
     .join("|");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: autoRefreshSignature は (tabId, secs) の組が変わったときだけタイマーを張り直すためのトリガー。本体は tabsRef から直接読む
   useEffect(() => {
     const timers = autoRefreshTimers.current;
     const desired = new Map<string, number>();
@@ -4286,7 +4295,7 @@ export default function App() {
         );
       }
     },
-    [runQueryInTab, settings.defaultDisplayCount, settings.tableOpenQueryTemplate, settings.tableOpenQueryOverrides, toast, focusEditorIfQueryTab],
+    [runQueryInTab, settings.defaultDisplayCount, settings.tableOpenQueryTemplate, settings.tableOpenQueryOverrides, toast, focusEditorIfQueryTab, getTabSql, setPanes, setTabs],
   );
 
   useEffect(() => {
@@ -4447,6 +4456,7 @@ export default function App() {
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
+    tabsRef,
   ]);
 
   const loadMoreInTab = useCallback(async (tabId: string) => {
@@ -4510,7 +4520,7 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, settings.streamPrefetchSize, patchTab]);
+  }, [sessionId, settings.streamPrefetchSize, patchTab, tabsRef]);
 
   // ページネーション: table タブの `paginatable` base SQL から N ページ目を
   // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
@@ -4629,7 +4639,7 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, patchTab, selectedProfile?.driver]);
+  }, [sessionId, patchTab, selectedProfile?.driver, tabsRef]);
 
   // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
   // 新サイズを goToPageInTab に直接渡す。
@@ -4745,7 +4755,7 @@ export default function App() {
       finish();
       finishRun({ error: String(e) });
     }
-  }, [sessionId, selectedProfile?.database, patchTab, recordOutput]);
+  }, [sessionId, selectedProfile?.database, patchTab, recordOutput, tabsRef]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -4858,7 +4868,7 @@ export default function App() {
     if (!ok) return;
     updateTab(tabId, { explainAnalyze: true });
     void runQueryInTab(tabId, built.sql, null, null, false, { ...override, forceReadOnly: true });
-  }, [selectedProfile?.driver, runQueryInTab, updateTab, toast, translate, confirm]);
+  }, [selectedProfile?.driver, runQueryInTab, updateTab, toast, confirm]);
 
   const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
@@ -4955,6 +4965,7 @@ export default function App() {
     void runQueryInTab(target.id, sql, null, autoLimit);
   }, [
     runQueryInTab,
+    runExplainInTab,
     runBatchInTab,
     runTxInTab,
     addTab,
@@ -4984,7 +4995,7 @@ export default function App() {
       return;
     }
     void runQueryInTab(tabId, sql, null, autoLimit);
-  }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab]);
+  }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
 
@@ -5007,7 +5018,7 @@ export default function App() {
     addTab(tab, owner?.id);
     // 新規 EXPLAIN タブは常に推定モードから始める (実測は EXPLAIN タブのトグルで opt-in)。
     void runExplainInTab(tab.id, sql, false);
-  }, [runExplainInTab, addTab]);
+  }, [runExplainInTab, addTab, panesRef]);
 
   // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
   // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
@@ -6041,7 +6052,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
   // ビューの DROP (#851)。確認導線・実行経路は `handleDropTable` をそのまま流用する
   // (Issue の方針: 「削除は既存の DROP 確認導線を流用」)。
@@ -6062,7 +6073,7 @@ export default function App() {
         .filter((tt) => tt.editingViewName === name && tt.database === database)
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
   const handleRenameTableSubmit = useCallback(async (newName: string) => {
     const target = renameTarget;
@@ -6080,7 +6091,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
-  }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl]);
+  }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl, tabsRef]);
 
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
@@ -6143,7 +6154,7 @@ export default function App() {
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
     }
-  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
+  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache, tabsRef]);
 
   // データベース / スキーマの新規作成 (#1190)。PostgreSQL の CREATE DATABASE は
   // トランザクション内で実行できないので、`run_query_transaction` ではなく単文の
@@ -6162,8 +6173,11 @@ export default function App() {
     }
   }, [sessionId, invalidateSchemaCache, toast]);
 
-  const namespaceKindLabel = (kind: NamespaceKind) =>
-    translate(kind === "database" ? "namespaceKindDatabase" : "namespaceKindSchema");
+  const namespaceKindLabel = useCallback(
+    (kind: NamespaceKind) =>
+      translate(kind === "database" ? "namespaceKindDatabase" : "namespaceKindSchema"),
+    [],
+  );
 
   const handleCreateNamespaceRun = useCallback(async (sql: string, kind: NamespaceKind, name: string) => {
     const success = await runNamespaceDdl(sql);
@@ -6176,7 +6190,7 @@ export default function App() {
         : translate("createNamespaceSuccess", { kind: namespaceKindLabel(kind), name }),
     );
     setCreateNamespaceOpen(false);
-  }, [runNamespaceDdl, selectedProfile?.driver, toast]);
+  }, [runNamespaceDdl, selectedProfile?.driver, toast, namespaceKindLabel]);
 
   const handleCreateNamespaceToEditor = useCallback((sql: string) => {
     setCreateNamespaceOpen(false);
@@ -6208,7 +6222,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === name)
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, runNamespaceDdl, toast]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, runNamespaceDdl, toast, namespaceKindLabel, tabsRef]);
 
   // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
   // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
@@ -6623,7 +6637,7 @@ export default function App() {
     setShowServerInfo(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
-  }, []);
+  }, [t]);
   // Actually perform the deferred backend delete once the Undo window lapses.
   const finalizeProfileDelete = useCallback(async (id: string) => {
     pendingProfileDeleteTimers.current.delete(id);
@@ -6799,7 +6813,7 @@ export default function App() {
       // 未適用なのに「適用中」バッジが残るのを防ぐ。
       patchTab(tab.id, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
     }
-  }, [runQueryInTab, settings.defaultDisplayCount, patchTab]);
+  }, [runQueryInTab, settings.defaultDisplayCount, patchTab, tabsRef]);
 
   const handleNewTab = useCallback((paneId?: string) => {
     const tab = makeQueryTab();
@@ -6818,7 +6832,7 @@ export default function App() {
         if (owner) editorRefs.current.get(owner.id)?.focus();
       });
     });
-  }, [addTab]);
+  }, [addTab, panesRef]);
 
   /**
    * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
@@ -6918,7 +6932,7 @@ export default function App() {
     } catch (e) {
       toast.error(translate("saveSqlFileError", { error: String(e) }));
     }
-  }, [toast]);
+  }, [toast, getTabSql]);
 
   // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
@@ -6987,7 +7001,7 @@ export default function App() {
     if (removedPaneId && activePaneIdRef.current === removedPaneId) {
       setActivePaneId(next[0]?.id ?? null);
     }
-  }, [cancelStreamForTab]);
+  }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef]);
 
   // Latest handlers held in a ref so the global keydown listener below can
   // call them without re-attaching on every tab change.
@@ -7132,7 +7146,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
+  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab, panesRef, tabsRef]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -7173,7 +7187,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, sessionId, runInTabWithGate]);
+  }, [activeTab, sessionId, runInTabWithGate, getTabSql]);
 
   // Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z で、アクティブなテーブルタブの未適用インライン
   // セル編集を Undo / Redo する。トーストやツールバーのボタンと同じ編集
@@ -7454,6 +7468,7 @@ export default function App() {
     setBottomPanelTab("structure");
   }, []);
   // 接続先が変わったら前のセッションのテーブルを指したままにしない。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、接続先の切替ごとに対象をリセットする
   useEffect(() => {
     setProfileTarget(null);
     setStructureTarget(null);
@@ -7534,6 +7549,7 @@ export default function App() {
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
   // 組み立てると全テーブル分の項目生成が行バッチのたびに走っていた。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: locale は本体で読まないが、`t` は識別子が安定なので、言語切替で候補の文言を再計算させるために依存へ残す
   const commandItems = useMemo<CommandItem[]>(() => {
     if (!showCommandPalette) return EMPTY_COMMAND_ITEMS;
     const items: CommandItem[] = [];
@@ -7821,6 +7837,9 @@ export default function App() {
     theme,
     t,
     locale,
+    selectedProfile?.driver,
+    selectedProfile?.database,
+    handleOpenSchemaDrift,
     shortcutBindings,
     handleNewTab,
     handleOpenSqlFile,
@@ -7876,6 +7895,7 @@ export default function App() {
   // 最新 1 件しか見せないため、上書きされて消えたエラー文を後から読めるようにする。
   // 途中経過 (取得中… など) と idle は `statusLogClass` が落とす。依存は `status`
   // だけにして、言語切替で同じメッセージが再記録されないようにする。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 依存は status だけ。t を入れると言語切替で同じメッセージが再記録される (上のコメント参照)
   useEffect(() => {
     const text =
       status.kind === "idle" ? "" : status.kind === "literal" ? status.text : t(status.key, status.vars);
@@ -7906,6 +7926,7 @@ export default function App() {
 
   // Any new status (new query, connect/disconnect, connection switch) re-enables
   // the status bar so it is never permanently suppressed by a prior dismissal.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: status は「ステータスが更新された」トリガー。本体では status を読まないが、変化のたびに閉じた状態を戻す
   useEffect(() => {
     setStatusDismissed(false);
   }, [status]);
