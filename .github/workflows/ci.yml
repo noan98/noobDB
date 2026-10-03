@@ -1326,7 +1326,7 @@ jobs:
           # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
           # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
           # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
-          save-if: ${{ (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
       # main の push に限る (rust-cache の save-if と同じ理由)。
@@ -1346,7 +1346,7 @@ jobs:
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
       - name: Save sccache (main only)
-        if: always() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.sccache-cache.outputs.cache-hit != 'true'
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
@@ -1448,7 +1448,7 @@ jobs:
           # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
           # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
           # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
-          save-if: ${{ (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
       # main の push に限る (rust-cache の save-if と同じ理由)。
@@ -1475,7 +1475,7 @@ jobs:
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
       - name: Save sccache (main only)
-        if: always() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.sccache-cache.outputs.cache-hit != 'true'
+        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
