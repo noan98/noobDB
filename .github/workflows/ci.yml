@@ -192,33 +192,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-vite-deps-
 
-      # このステップは apt / playwright の列挙だけで、後続の build / lint / knip は
-      # apt を使わないため background: true で重ね、実際にパッケージ一覧が要る
-      # 「Playwright system deps (apt cache)」の直前の wait で完了を保証する
-      # (rust ジョブの sshd / apt と同じ手法)。
-      # Playwright が chromium に要求する OS パッケージ (共有ライブラリ + スクリーン
-      # ショットの描画に効くフォント + xvfb) を列挙する (#1244)。パッケージ名を
-      # ハードコードせず、Playwright 自身の一覧 (`install-deps --dry-run` =
-      # `apt-get install -s` のシミュレーション結果) から取るため、Playwright /
-      # Chromium の更新に自動で追従する。`--with-deps` と同じ集合なのでフォント
-      # 構成もビジュアル回帰のベースライン生成環境と変わらない。cache-apt-pkgs-action
-      # のキャッシュキーはパッケージ一覧 + version のハッシュなので、一覧が変われば
-      # 新しいキーになる。
-      # ランナーイメージの apt インデックスは古く 404 になることがあるため、rust
-      # ジョブと同じくミラーを本家に差し替えて update してから列挙する
-      # (詳細は rust (clippy) の System deps 直前のコメントを参照)。
-      # dry-run は未導入パッケージがあると exit 1 を返すので `|| true` で受け、
-      # 「  <pkg>」形式の行だけを拾う。
-      - name: List Playwright system deps (#1244)
-        id: pw-deps
-        background: true
-        run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
-          PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
-          echo "Playwright system deps: ${PKGS:-<none>}"
-          echo "packages=${PKGS}" >> "$GITHUB_OUTPUT"
-
       - name: Type-check and build
         run: pnpm run build
 
@@ -241,14 +214,6 @@ jobs:
       - name: Dead-code / unused-export check (knip)
         run: pnpm run knip
 
-      # Vitest (jsdom) の単体テストは `frontend-unit` (3 分割 shard) と
-      # `frontend (unit tests)` (カバレッジ統合 + 閾値) に分離した。ここで直列に
-      # 走らせると約 4 分がこのジョブの壁時計を占めていたため、並列化して
-      # クリティカルパスから外している。
-
-      - name: Wait for background setup (Playwright deps list)
-        wait: [pw-deps]
-
       # Playwright の Chromium バイナリ本体をキャッシュする。バイナリ本体
       # (数十〜100MB超) の再ダウンロードはこれで避けられる。OS 側の共有ライブラリ /
       # フォント (apt) は actions/cache に馴染まないため、下の「Playwright system
@@ -264,10 +229,30 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
 
+      # Playwright が chromium に要求する OS パッケージ (共有ライブラリ + スクリーン
+      # ショットの描画に効くフォント + xvfb) を列挙する (#1244)。パッケージ名を
+      # ハードコードせず、Playwright 自身の一覧 (`install-deps --dry-run` =
+      # `apt-get install -s` のシミュレーション結果) から取るため、Playwright /
+      # Chromium の更新に自動で追従する。`--with-deps` と同じ集合なのでフォント
+      # 構成もビジュアル回帰のベースライン生成環境と変わらない。cache-apt-pkgs-action
+      # のキャッシュキーはパッケージ一覧 + version のハッシュなので、一覧が変われば
+      # 新しいキーになる。
+      # ランナーイメージの apt インデックスは古く 404 になることがあるため、rust
+      # ジョブと同じくミラーを本家に差し替えて update してから列挙する
+      # (詳細は rust (clippy) の System deps 直前のコメントを参照)。
+      # dry-run は未導入パッケージがあると exit 1 を返すので `|| true` で受け、
+      # 「  <pkg>」形式の行だけを拾う。
+      - name: List Playwright system deps (#1244)
+        id: pw-deps
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+          PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
+          echo "Playwright system deps: ${PKGS:-<none>}"
+          echo "packages=${PKGS}" >> "$GITHUB_OUTPUT"
+
       - name: Playwright system deps (apt cache)
-        id: pw-apt
         if: steps.pw-deps.outputs.packages != ''
-        background: true
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: ${{ steps.pw-deps.outputs.packages }}
@@ -281,12 +266,6 @@ jobs:
       # キャッシュヒットしていれば再ダウンロードをスキップする。
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --only-shell chromium
-
-      # apt キャッシュ導入 (background) の完了を、実際に OS 依存が要るブラウザ
-      # テストの直前で待つ。Chromium バイナリの導入 (上) はこの apt 導入と重なる。
-      - name: Wait for background setup (Playwright system deps)
-        if: steps.pw-deps.outputs.packages != ''
-        wait: [pw-apt]
 
       # 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) で
       # 主要画面のレンダリングとビジュアル回帰を検証する (#306)。上の jsdom 単体
