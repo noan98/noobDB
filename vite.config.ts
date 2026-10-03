@@ -20,7 +20,26 @@ export default defineConfig(async () => ({
   // 環境を使う。純粋ロジックのテストも jsdom 上で問題なく走る。setup.ts で
   // jest-dom のマッチャ拡張と各テスト後の DOM クリーンアップを行う。
   test: {
-    environment: "jsdom",
+    // 環境はプロジェクト単位で分ける (下の `projects`)。DOM を触らない純ロジックの
+    // `*.test.ts` を node 環境で走らせ、jsdom の起動コスト (全体の大半) を避ける。
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "dom",
+          environment: "jsdom",
+          include: ["**/*.test.tsx"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "node",
+          environment: "node",
+          include: ["**/*.test.ts"],
+        },
+      },
+    ],
     setupFiles: ["./src/__tests__/setup.ts"],
     css: true,
     // 実ブラウザ用テストは jsdom では動かない (vitest/browser を import)。

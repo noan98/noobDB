@@ -10,7 +10,7 @@ description: noobDB のテストを実行・追加するとき、統合テスト
 | 層 | 実行 | 対象 |
 |---|---|---|
 | Rust 単体 / 統合 | `cargo test` / `cargo nextest run` | 純ロジック + 実 DB (環境変数ゲート) |
-| フロント単体 (jsdom) | `pnpm test` | 純ロジック・コンポーネント挙動 |
+| フロント単体 (`*.test.tsx` = jsdom / `*.test.ts` = node) | `pnpm test` | 純ロジック・コンポーネント挙動 |
 | 実ブラウザ | `pnpm test:browser` | 本物の CSS 上での描画・シナリオ・ビジュアル回帰 |
 | 実 webview E2E | `pnpm test:e2e` | 実 IPC + 実 SQLite (nightly + 手動、非必須 #1245) |
 
@@ -45,3 +45,10 @@ description: noobDB のテストを実行・追加するとき、統合テスト
   必ず失敗します。作業ブランチで `visual-baseline.yml` を実行してください。
 - **統合テストは環境変数が無いと黙ってスキップされます。** SQLite / ローカル横断
   クエリのテストだけが常時実走します。
+
+## 単体テストの実行環境 (node / jsdom)
+
+`vite.config.ts` の `test.projects` で、`*.test.tsx` は jsdom、`*.test.ts` は **node** 環境で
+走ります (jsdom の起動コストを純ロジックのテストに払わないため)。`*.test.ts` が
+`localStorage` / `document` / `window` に触れて `... is not defined` で落ちたら、そのファイルの
+先頭に `// @vitest-environment jsdom` を書いてください (既存の 14 ファイルが同じ形です)。

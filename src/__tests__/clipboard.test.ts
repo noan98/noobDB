@@ -1,3 +1,4 @@
+// @vitest-environment jsdom (localStorage / DOM に触れるため。DOM を使わないテストは node 環境で走る)
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { copyToClipboard } from "../components/clipboard";
 
