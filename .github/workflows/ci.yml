@@ -923,6 +923,9 @@ jobs:
       - name: Setup test sshd (SSH tunnel integration)
         id: sshd
         background: true
+        env:
+          # useradd (35 秒前後) を避けるため既存のランナーユーザを使う。
+          SSH_USER: runner
         run: bash scripts/ci-setup-sshd.sh
 
       # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
@@ -1156,6 +1159,9 @@ jobs:
       - name: Setup test sshd (SSH tunnel integration)
         id: sshd
         background: true
+        env:
+          # useradd (35 秒前後) を避けるため既存のランナーユーザを使う。
+          SSH_USER: runner
         run: bash scripts/ci-setup-sshd.sh
 
       # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名

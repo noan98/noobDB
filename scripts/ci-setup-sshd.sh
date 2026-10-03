@@ -10,9 +10,6 @@
 # 直接構成する方式にしている (イメージ pull 不要で、ローカルでも同手順を再現・検証
 # できる)。ローカル検証時は SSH_PORT / SSH_DIR / SSH_USER を上書きできる。
 set -euo pipefail
-# 診断用 (sshd セットアップが 40〜50 秒かかる原因の特定。特定後に削除する)
-PS4="+ [\$(date +%T.%N)] "
-set -x
 
 SSH_PORT="${SSH_PORT:-2222}"
 SSH_DIR="${SSH_DIR:-/tmp/noobdb-sshtest}"
@@ -41,7 +38,9 @@ mkdir -p "$SSH_DIR"
 ssh-keygen -t ed25519 -f "$SSH_DIR/ssh_host_ed25519_key" -N "" -q
 ssh-keygen -t ed25519 -f "$SSH_DIR/client_key" -N "" -q
 
-echo "==> テストユーザ $SSH_USER を作成"
+# CI では SSH_USER に既存のランナーユーザ (runner) を指定して useradd を省く。
+# 新規ユーザの `useradd -m` が GitHub Actions のランナーで 35 秒前後かかるため。
+echo "==> テストユーザ $SSH_USER を用意"
 if ! id "$SSH_USER" >/dev/null 2>&1; then
   $SUDO useradd -m -s /bin/bash "$SSH_USER"
 fi
@@ -74,14 +73,16 @@ echo "==> sshd を起動 (127.0.0.1:$SSH_PORT)"
 $SUDO mkdir -p /run/sshd
 $SUDO "$SSHD_BIN" -f "$SSH_DIR/sshd_config" -E "$SSH_DIR/sshd.log"
 
-# 起動を待ち、待ち受けを確認。
-for _ in $(seq 1 10); do
-  if grep -q "Server listening" "$SSH_DIR/sshd.log" 2>/dev/null; then
+# 起動を待ち、待ち受けを確認。sshd.log は root 所有 (0600) で一般ユーザからは読めない
+# (以前はログを grep していたため常に空振りして 3 秒待っていた) ので、実際に TCP で
+# 接続できるかを見る。最大 5 秒。
+for _ in $(seq 1 50); do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$SSH_PORT") 2>/dev/null; then
     break
   fi
-  sleep 0.3
+  sleep 0.1
 done
-cat "$SSH_DIR/sshd.log" || true
+$SUDO cat "$SSH_DIR/sshd.log" || true
 
 SSH_URL="ssh://$SSH_USER:$SSH_PASS@127.0.0.1:$SSH_PORT"
 SSH_KEY="$SSH_DIR/client_key"
