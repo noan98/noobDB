@@ -1405,7 +1405,8 @@ jobs:
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
       # Defender のリアルタイム保護は、cargo / rustc が書く大量のファイルを 1 つずつ
-      # スキャンして遅くする。ランナーは使い捨てなので止めてよい (checkout より前に置く)。
+      # スキャンして遅くする。ランナーは使い捨てなので止めてよい。checkout より前に置くのは、
+      # checkout 自体の書き込みも速くするため。
       - name: Disable Defender real-time protection
         shell: pwsh
         run: Set-MpPreference -DisableRealtimeMonitoring $true
