@@ -30,10 +30,9 @@
 name: E2E (tauri-driver / nightly)
 
 on:
-  # TODO(#1245): E2E が安定して緑になるまで schedule (毎晩 UTC 18:00 = JST 03:00) は外している。
-  #   安定したら次の 2 行を戻す。
-  #   schedule:
-  #     - cron: "0 18 * * *"
+  # 毎晩 UTC 18:00 (= JST 03:00)。3 回連続グリーン・約 11〜12 分を確認して復活した (#1245)。
+  schedule:
+    - cron: "0 18 * * *"
   # 手動トリガ。対象ブランチを選択して実行できる。
   workflow_dispatch:
     inputs:

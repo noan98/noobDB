@@ -195,5 +195,5 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 `~/.cargo/bin/tauri-driver` を `actions/cache` で保持し、miss のときだけ
 `cargo install --locked` する (更新時はキーの `v1` を上げる)。失敗時は
 `e2e/screenshots/` と `e2e/logs/` をアーティファクト保存する。
-「3 回連続グリーン」と「15 分以内」は**未確認** (nightly の実績で確認する)。
+「3 回連続グリーン」と「15 分以内」は確認済み (2026-10-03 JST、run 18〜20、約 11〜12 分)。
 詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
