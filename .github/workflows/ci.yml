@@ -309,16 +309,16 @@ jobs:
             echo "| Playwright ブラウザキャッシュヒット | ${{ steps.playwright-cache.outputs.cache-hit }} |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-  # Vitest (jsdom) 単体テストの 3 分割実行。
+  # Vitest (jsdom) 単体テストの 4 分割実行 (dom 3 + node 1)。
   #
   # 以前は `frontend` ジョブの 1 ステップ (`pnpm test --coverage`) で、実測約 4 分 15 秒
   # (ジョブ全体の約 3/4) を占めていた。ファイル数 (約 320) が多くワーカー単位で
-  # jsdom の起動と import が支配的なため、`--shard` で 3 ランナーに分けて壁時計を縮める。
+  # jsdom の起動と import が支配的なため、`--shard` で 4 ランナーに分けて壁時計を縮める。
   # 各 shard はカバレッジ付きで走らせ、結果を blob として保存する。閾値の判定は
   # 全 shard を統合した値でしか意味を持たないので、ここでは 0 にして下の
   # `frontend (unit tests)` ジョブで統合してから強制する。
   frontend-unit:
-    name: frontend (unit shard ${{ matrix.shard }}/3)
+    name: frontend (unit ${{ matrix.id }})
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
@@ -326,7 +326,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # jsdom の `.test.tsx` (dom) は重く、node 環境の `.test.ts` は軽い。ファイル名順の
+        # 単純な `--shard` だと dom が先頭の shard に偏って遅くなる (実測 120 秒 vs 75 秒)
+        # ため、プロジェクト (vite.config.ts の `test.projects`) ごとに分ける。dom を 3 分割、
+        # node を 1 本にすると、どれも同じ程度の時間 (ローカル実測で dom 148 秒 ÷ 3 と node 44 秒)
+        # で終わる。
+        include:
+          - { id: dom-1, args: "--project dom --shard=1/3" }
+          - { id: dom-2, args: "--project dom --shard=2/3" }
+          - { id: dom-3, args: "--project dom --shard=3/3" }
+          - { id: node, args: "--project node" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -356,14 +365,14 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      - name: Unit tests (Vitest, shard ${{ matrix.shard }}/3)
+      - name: Unit tests (Vitest, ${{ matrix.id }})
         run: >-
           pnpm vitest run
-          --shard=${{ matrix.shard }}/3
+          ${{ matrix.args }}
           --coverage
           --coverage.thresholds.lines=0
           --reporter=blob
-          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+          --outputFile=vitest-reports/blob-${{ matrix.id }}.json
 
       - name: Upload Vitest blob
         if: always()
@@ -371,7 +380,7 @@ jobs:
         with:
           # 隠しディレクトリ (先頭 `.`) は upload-artifact が既定で除外するため、
           # 先頭に `.` を付けない名前にする (付けると blob が 0 件になり統合で失敗する)。
-          name: vitest-blob-${{ matrix.shard }}
+          name: vitest-blob-${{ matrix.id }}
           path: vitest-reports/
           retention-days: 1
           if-no-files-found: ignore
@@ -464,7 +473,7 @@ jobs:
   #
   # 起動条件 (#1029 で `frontend==true || rust==true || workflow==true` から
   # 変更): このジョブが実行する 10 本の Vitest ファイルは、`frontend-unit` の
-  # shard 群 (Vitest 全スイートの 3 分割実行) にも既に含まれている。したがって
+  # shard 群 (Vitest 全スイートの 4 分割実行) にも既に含まれている。したがって
   # `frontend==true` の PR (`src/__tests__/fixtures/**` ⊂ `src/**` なのでフィクスチャ
   # のみの PR も該当) では、`frontend` ジョブが直前に実行した 10 本を、このジョブが
   # 独自の checkout + setup-node + `pnpm install --frozen-lockfile` を挟んで
@@ -961,7 +970,7 @@ jobs:
       # 呼ばないので再コンパイルは起きない。
       - name: Build tests (overlaps sshd / TLS DB setup)
         working-directory: src-tauri
-        run: cargo nextest archive --locked --all-targets --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
+        run: cargo nextest archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
 
       - name: Wait for background setup (sshd, TLS test DBs)
         wait: [sshd, tlsdb]
@@ -1216,7 +1225,7 @@ jobs:
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        run: cargo llvm-cov nextest --no-report --locked --all-targets
+        run: cargo llvm-cov nextest --no-report --locked --lib --test '*'
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
       # PR ごとのカバレッジを可視化する。
@@ -1307,6 +1316,12 @@ jobs:
       - name: Record job start time (#565)
         shell: bash
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # Defender のリアルタイム保護は cargo / rustc の大量のファイル書き込みを
+      # スキャンして遅くする。ランナーは使い捨てなので止めてよい。
+      - name: Disable Defender real-time protection
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1410,6 +1425,12 @@ jobs:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      # CI のテストビルドだけデバッグ情報を出さない。MSVC は統合テストのバイナリごとに
+      # PDB を書き出すため、リンクの時間とキャッシュの容量が大きく減る。Cargo.toml の
+      # `[profile.dev] debug = "line-tables-only"` はローカル開発用にそのまま残す
+      # (Cargo の環境変数での上書き)。Windows で落ちたテストのバックトレースには
+      # 行番号が出なくなるが、同じテストは Linux ジョブでも走り、そちらには残る。
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -1418,6 +1439,12 @@ jobs:
       - name: Record job start time (#565)
         shell: bash
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # Defender のリアルタイム保護は、cargo / rustc が書く大量のファイルを 1 つずつ
+      # スキャンして遅くする。ランナーは使い捨てなので止めてよい (checkout より前に置く)。
+      - name: Disable Defender real-time protection
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1478,7 +1505,7 @@ jobs:
       # 実行される。MySQL/PostgreSQL は URL 環境変数を渡していないのでスキップ。
       - name: cargo nextest run
         working-directory: src-tauri
-        run: cargo nextest run --locked --all-targets
+        run: cargo nextest run --locked --lib --test '*'
 
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。

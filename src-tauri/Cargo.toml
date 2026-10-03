@@ -171,6 +171,14 @@ custom-protocol = ["tauri/custom-protocol"]
 # 反復が速くなる。バックトレースのファイル:行情報は保持される (変数や型の情報は落ちる)。
 [profile.dev]
 debug = "line-tables-only"
+# dev / test ビルドでは LTO を完全に切る。既定 (false) は「自クレート内だけの thin-local LTO」
+# を行うので、`off` にすると最終のコード生成が少し速くなる (実行時性能が要る release は別)。
+lto = "off"
+
+# 依存クレートのデバッグ情報は dev ビルドで使わない (自クレートの行番号は上で保持)。
+# リンクに渡すデータと target / キャッシュの容量が減る。
+[profile.dev.package."*"]
+debug = false
 
 # リリースバイナリ (NSIS で配布する Windows 実行ファイル) のビルド設定。この
 # プロファイルは `tauri build` (release.yml) のリリースビルドにのみ効き、CI の
