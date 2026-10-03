@@ -166,6 +166,7 @@ export function TableTimelapsePanel({
     }
   }, [profileId]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey は本体では使わず、親からの更新要求で一覧を取り直すためのトリガー
   useEffect(() => {
     void reload();
   }, [reload, refreshKey]);

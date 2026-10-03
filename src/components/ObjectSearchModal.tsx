@@ -102,6 +102,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
     return () => clearTimeout(timer);
   }, [sessionId, searchScope, query]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: query / scope は本体では使わず、変わったら選択位置を先頭へ戻すためのトリガーとして依存に置いている
   useEffect(() => {
     setActiveIndex(0);
   }, [query, scope]);

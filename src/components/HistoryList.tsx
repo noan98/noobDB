@@ -343,6 +343,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   const { from, to } = useMemo(() => historyPeriodRange(periodFilter), [periodFilter]);
   const hasActiveFilter = Boolean(debounced) || statusFilter !== "all" || periodFilter !== "all";
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey の変化で再読み込みするトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     let cancelled = false;
     api

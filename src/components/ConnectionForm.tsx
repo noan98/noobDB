@@ -107,7 +107,12 @@ function PasswordInput({
 
   // Drop the plaintext (and any pending timer) when the field unmounts — e.g.
   // switching the SSH auth method away from "password" while it is revealed.
-  useEffect(() => clearHideTimer, []);
+  useEffect(
+    () => () => {
+      if (hideTimer.current !== null) clearTimeout(hideTimer.current);
+    },
+    [],
+  );
 
   const hideRevealed = () => {
     clearHideTimer();

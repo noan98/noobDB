@@ -186,6 +186,7 @@ export function ConnectionHealthPanel({
 
   // 開いている接続の集合が変わったら (接続・切断) すぐ確認し直す。
   const sessionKey = connections.map((c) => c.sessionId).join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 接続集合 (sessionKey) の変化で再確認するトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     void runChecks();
   }, [sessionKey, runChecks]);

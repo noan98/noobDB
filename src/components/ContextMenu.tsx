@@ -195,6 +195,7 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
 
   // Clamp into the viewport once the menu has measured itself, flipping back
   // from the anchor when it would overflow the right/bottom edge.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: entries の変化でメニューを測り直すトリガ依存 (effect 内では参照しない)
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el) return;
@@ -209,6 +210,7 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
   }, [anchor, entries]);
 
   // Focus the first enabled item so keyboard users can navigate immediately.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: entries の変化でフォーカスし直すトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     if (!autoFocus) return;
     menuRef.current?.querySelector<HTMLButtonElement>(ENABLED_ITEM)?.focus();

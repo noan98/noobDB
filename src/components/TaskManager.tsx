@@ -472,6 +472,7 @@ function TaskRow({
 function AssertionTrendList({ taskId, refreshKey }: { taskId: string; refreshKey: unknown }) {
   const t = useT();
   const [trends, setTrends] = useState<AssertionTrend[] | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey は本体では使わず、実行履歴の更新で推移を取り直すためのトリガー
   useEffect(() => {
     let active = true;
     void api

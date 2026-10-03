@@ -326,6 +326,7 @@ export const PaneView = memo(
   );
   // TabBar へ渡すタブの一覧。dirty (SQL が最後の実行と違う) は `dirtyTick` が変わったとき
   // (TabDirtyWatcher が切り替わりを検知したとき) と、タブ自体が変わったときだけ再計算する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: dirtyTick は TabDirtyWatcher の切り替わりで dirty を再計算するための再計算トリガー (本体では参照しない)
   const tabBarItems = useMemo(
     () =>
       paneTabs.map((tt) => ({

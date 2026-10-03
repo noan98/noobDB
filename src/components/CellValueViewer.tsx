@@ -137,6 +137,7 @@ export function CellValueViewer({
   blobRef.current = blob;
   const hasBlob = !!blob;
   const [preview, setPreview] = useState<BlobPreview | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: value が変わったら blob プレビューを作り直すトリガ依存 (blob 等は value 由来)
   useEffect(() => {
     if (!isBinary || !hasBlob || isNull) {
       setPreview(null);

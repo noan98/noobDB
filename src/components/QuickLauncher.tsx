@@ -211,6 +211,7 @@ export function QuickLauncher({
   const visibleSections = sections.filter((s) => s.items.length > 0);
   const [popoverPos, setPopoverPos] = useState<Point | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: bounds / visibleSections.length は本体では使わないが、ポップオーバーの大きさ・位置が変わるので測り直すためのトリガー
   useLayoutEffect(() => {
     if (!open) {
       setPopoverPos(null);

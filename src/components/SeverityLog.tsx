@@ -341,6 +341,7 @@ export function ActivityLogPanel() {
   const t = useT();
   const { entries } = useActivityLog();
   const messages = useMessageLog();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: entries は本体では使わず、履歴が更新されるたびに既読化し直すためのトリガー
   useEffect(() => {
     markActivityRead();
   }, [entries]);

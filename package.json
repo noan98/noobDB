@@ -13,7 +13,7 @@
     "test:browser:update": "VITE_RUN_VISUAL=1 vitest run --config vitest.browser.config.ts --update",
     "test:e2e": "wdio run e2e/wdio.conf.ts",
     "bench:ui": "vitest run --config vitest.perf.config.ts",
-    "lint": "node scripts/biome-lint.mjs",
+    "lint": "biome lint --max-diagnostics=none src",
     "knip": "knip",
     "bundle-size": "node scripts/bundle-size.mjs",
     "test:scripts": "node --test scripts/automerge-hold.test.mjs",

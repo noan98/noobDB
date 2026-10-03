@@ -142,6 +142,7 @@ export function ComboSelect({
 
   // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
   // (`ContextMenu` と同じ「測定 → フリップ → クランプ」の流れ)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (filtered.length) の変化でポップオーバーを測り直すトリガ依存
   useLayoutEffect(() => {
     if (!open) {
       setPos(null);

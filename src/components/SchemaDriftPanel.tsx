@@ -70,6 +70,7 @@ export function SchemaDriftPanel({
     [genA, genB],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: genA / genB は state から毎回新しい参照で渡るため id だけを依存にする。compareAttempt は再取得ボタン専用のトリガー (下のコメント参照)
   useEffect(() => {
     if (!genA || !genB || genA.id === genB.id || !canDiff(genA) || !canDiff(genB)) {
       setSummary(null);

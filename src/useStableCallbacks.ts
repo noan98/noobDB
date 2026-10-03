@@ -21,6 +21,7 @@ export function useStableCallbacks<T extends Record<string, AnyFn | undefined>>(
     .map((key) => `${key}:${latest[key] === undefined ? 0 : 1}`)
     .join(",");
   // `presence` が変わらない限りラッパーは同一参照のまま (ref の中身だけが更新される)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: presence は「どのキーが定義済みか」の署名で、本体は ref 経由で最新値を読むため latest は依存に入れない (入れると毎レンダーでラッパーが作り直される)
   return useMemo(() => {
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(ref.current)) {

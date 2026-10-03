@@ -188,6 +188,7 @@ export function WhereUsedPanel({
   );
 
   // ツリーの右クリック / コマンドパレットからの要求: フォームを埋め、必要なら走らせる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run / onRequestConsumed は再生成されるため依存に入れず、要求オブジェクトの変化だけで 1 度実行する (下のコメント参照)
   useEffect(() => {
     if (!request) return;
     setDatabase(request.target.database);

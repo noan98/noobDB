@@ -88,6 +88,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
   }, [sessionId, database]);
 
   // 既定の保存先を OS のダウンロードフォルダにする (ExportModal と同じ方針)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: database はモーダルの存続中は不変で、マウント時の 1 回だけ既定の保存先を決める (userEditedPathRef で上書きも防ぐ)
   useEffect(() => {
     let cancelled = false;
     void (async () => {

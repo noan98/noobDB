@@ -140,6 +140,7 @@ export function JsonTreeView({ root, columnName, driver }: Props) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set([rootKey]));
   // 検索中に自動展開された祖先をユーザが畳んだ記録。クエリが変わるたびに捨てる。
   const [searchCollapsed, setSearchCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: クエリ変化で畳んだ記録を捨てるトリガ依存 (effect 内では参照しない)
   useEffect(() => setSearchCollapsed(new Set()), [deferredQuery]);
   const [pages, setPages] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [selected, setSelected] = useState<Selection | null>(null);
