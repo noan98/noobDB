@@ -6,7 +6,7 @@
 //! Parses the URL and exercises the `Connection::MySql` path end-to-end:
 //! connect, run a query, list databases.
 
-mod common;
+use super::common; // 共有ヘルパは groups/external.rs が 1 度だけ取り込む
 
 use noobdb_lib::__test_api as t;
 

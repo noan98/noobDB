@@ -804,32 +804,6 @@ jobs:
       # rust-cache (target) とは別管理。
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: rootpw
-          MYSQL_DATABASE: testdb
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -939,8 +913,9 @@ jobs:
 
       # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
       # CA + サーバ証明書を生成し、TLS 必須の MySQL/PostgreSQL を別ポート
-      # (3307/5433) で起動する。下の「MySQL/PostgreSQL サービスコンテナ (平文)」とは
-      # 別の独立したインスタンスで、サービスコンテナは変更しない — サービスコンテナは
+      # (3307/5433) で起動する。下の平文の MySQL/PostgreSQL (3306/5432) とは別の独立した
+      # インスタンス。かつて平文側をサービスコンテナにしていた頃にこの方式を選んだ理由 —
+      # サービスコンテナは
       # 他のどのステップよりも前に起動するため証明書を後から渡せず、加えて
       # `services:` には `command:` (エントリポイント引数上書き) が無く公式 postgres
       # イメージへ `-c ssl=on` のような起動引数を渡す手段が無いため、サービス
@@ -954,6 +929,15 @@ jobs:
         id: tlsdb
         background: true
         run: bash scripts/ci-setup-tls-db.sh
+
+      # 平文接続の MySQL / PostgreSQL (3306 / 5432)。以前は `services:` のコンテナ
+      # (mysql:8.0 / postgres:16) だったが、イメージ pull とヘルスチェックで起動時に約 30 秒
+      # かかっていたため、ランナー同梱のサーバを TLS 版と同じ方式で background 起動する。
+      # 接続情報はコンテナ時代と同じ (scripts/ci-setup-plain-db.sh)。
+      - name: Setup plain test databases (MySQL / PostgreSQL integration)
+        id: plaindb
+        background: true
+        run: bash scripts/ci-setup-plain-db.sh
 
       # cargo-nextest の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
@@ -972,8 +956,8 @@ jobs:
         working-directory: src-tauri
         run: cargo nextest archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
 
-      - name: Wait for background setup (sshd, TLS test DBs)
-        wait: [sshd, tlsdb]
+      - name: Wait for background setup (sshd, TLS / plain test DBs)
+        wait: [sshd, tlsdb, plaindb]
 
       # 計装なしの nextest を実行する (PR ブロッキング)。MySQL/PostgreSQL の両
       # サービスコンテナを指す URL を渡し、両ドライバの統合テストを CI で実走させる。
@@ -981,7 +965,7 @@ jobs:
       # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
       # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
       # は、それぞれ background の「Setup test sshd」/「Setup TLS test databases」が
-      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb] 以降で参照可能になるため、
+      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb, plaindb] 以降で参照可能になるため、
       # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
       - name: cargo nextest
         working-directory: src-tauri
@@ -1037,32 +1021,6 @@ jobs:
       # キャッシュキーは `rust (test)` (計装なし) と分離する (#1153)。
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: rootpw
-          MYSQL_DATABASE: testdb
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -1175,8 +1133,9 @@ jobs:
 
       # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
       # CA + サーバ証明書を生成し、TLS 必須の MySQL/PostgreSQL を別ポート
-      # (3307/5433) で起動する。下の「MySQL/PostgreSQL サービスコンテナ (平文)」とは
-      # 別の独立したインスタンスで、サービスコンテナは変更しない — サービスコンテナは
+      # (3307/5433) で起動する。下の平文の MySQL/PostgreSQL (3306/5432) とは別の独立した
+      # インスタンス。かつて平文側をサービスコンテナにしていた頃にこの方式を選んだ理由 —
+      # サービスコンテナは
       # 他のどのステップよりも前に起動するため証明書を後から渡せず、加えて
       # `services:` には `command:` (エントリポイント引数上書き) が無く公式 postgres
       # イメージへ `-c ssl=on` のような起動引数を渡す手段が無いため、サービス
@@ -1190,6 +1149,15 @@ jobs:
         id: tlsdb
         background: true
         run: bash scripts/ci-setup-tls-db.sh
+
+      # 平文接続の MySQL / PostgreSQL (3306 / 5432)。以前は `services:` のコンテナ
+      # (mysql:8.0 / postgres:16) だったが、イメージ pull とヘルスチェックで起動時に約 30 秒
+      # かかっていたため、ランナー同梱のサーバを TLS 版と同じ方式で background 起動する。
+      # 接続情報はコンテナ時代と同じ (scripts/ci-setup-plain-db.sh)。
+      - name: Setup plain test databases (MySQL / PostgreSQL integration)
+        id: plaindb
+        background: true
+        run: bash scripts/ci-setup-plain-db.sh
 
       # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
@@ -1209,8 +1177,8 @@ jobs:
       # テスト (#520/#795) が nextest で正しく実走する。dist/ は上のスタブステップで
       # 既に用意済み。sshd/tlsdb のいずれかが失敗した場合はこの wait でジョブが
       # fail する (公式仕様)。
-      - name: Wait for background setup (sshd, TLS test DBs)
-        wait: [sshd, tlsdb]
+      - name: Wait for background setup (sshd, TLS / plain test DBs)
+        wait: [sshd, tlsdb, plaindb]
 
       # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
       # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
@@ -1218,7 +1186,7 @@ jobs:
       # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
       # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
       # は、それぞれ background の「Setup test sshd」/「Setup TLS test databases」が
-      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb] 以降で参照可能になるため、
+      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb, plaindb] 以降で参照可能になるため、
       # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
       - name: cargo llvm-cov nextest
         working-directory: src-tauri

@@ -8,6 +8,10 @@ rust-version = "1.77"
 # 配布専用のデスクトップアプリで crates.io へ公開しないため publish = false。
 # cargo-deny のライセンス検査でも自クレートを非公開扱いで除外できる。
 publish = false
+# tests/ 直下のファイルを 1 つずつ実行ファイルにしない (自動検出を切る)。下の [[test]] で
+# 束ねた数本だけをビルドする。Tauri / sqlx / russh を含むテストバイナリのリンクを
+# ファイル数ぶん繰り返すのが CI (特に Windows) の大きな固定コストだったため。
+autotests = false
 
 # staticlib / cdylib はモバイル (iOS/Android) 専用の生成物。本プロジェクトは
 # デスクトップ専用 (tauri.conf.json の targets は nsis のみ) で、バイナリ
@@ -150,6 +154,25 @@ keyring = { version = "3", features = ["apple-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["linux-native"] }
+
+# 統合テストの実行ファイル。個々のテストは tests/*.rs に置いたまま、tests/groups/*.rs が
+# `#[path]` で取り込む。新しい tests/*.rs を足したら、該当グループに `mod` を足すこと。
+[[test]]
+name = "golden"
+path = "tests/groups/golden.rs"
+
+[[test]]
+name = "integration"
+path = "tests/groups/integration.rs"
+
+[[test]]
+name = "external"
+path = "tests/groups/external.rs"
+
+# `#![recursion_limit]` がクレート全体の属性なので、束ねずに単独の実行ファイルにする。
+[[test]]
+name = "serde_schema_parity"
+path = "tests/serde_schema_parity.rs"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
