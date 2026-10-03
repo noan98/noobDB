@@ -10,6 +10,9 @@
 # 直接構成する方式にしている (イメージ pull 不要で、ローカルでも同手順を再現・検証
 # できる)。ローカル検証時は SSH_PORT / SSH_DIR / SSH_USER を上書きできる。
 set -euo pipefail
+# 診断用 (sshd セットアップが 40〜50 秒かかる原因の特定。特定後に削除する)
+PS4="+ [\$(date +%T.%N)] "
+set -x
 
 SSH_PORT="${SSH_PORT:-2222}"
 SSH_DIR="${SSH_DIR:-/tmp/noobdb-sshtest}"

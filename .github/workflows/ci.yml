@@ -950,22 +950,16 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # テストバイナリのビルドだけを先に行う (--no-run)。sshd / TLS DB のセットアップ
-      # (sshd のユーザ作成などで実測約 1 分) は env を実行時にしか読まない
-      # (NOOBDB_TEST_* は env!/option_env! ではなく std::env 経由) ため、コンパイルと
-      # 重ねられる。以前は wait の後に nextest がビルドから始めており、この待ち時間が
-      # そのままクリティカルパスに乗っていた。ビルド済みなので下の実行ステップは
-      # 再コンパイルせずテスト実行に入る。
+      # テストバイナリのビルドだけを先に行い、アーカイブに固める。sshd / TLS DB のセットアップ
+      # (sshd のユーザ作成などで実測 40〜50 秒) とコンパイルを重ねるのが目的。
+      # 単純な `cargo nextest run --no-run` では足りなかった: 後続の `cargo nextest run` が
+      # 環境変数 (NOOBDB_TEST_* が増える) の違いで noobdb クレートを再コンパイルし
+      # (実測 約 51 秒)、重ねた分が相殺されていた。アーカイブから実行すれば cargo を
+      # 呼ばないので再コンパイルは起きない。
       - name: Build tests (overlaps sshd / TLS DB setup)
         working-directory: src-tauri
-        run: cargo nextest run --locked --all-targets --no-run
+        run: cargo nextest archive --locked --all-targets --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
 
-      # 残る background (sshd = SSH 接続情報 / tlsdb = TLS DB 接続情報。いずれも
-      # $GITHUB_ENV 経由) の完了を nextest の直前で待ち合わせる。両者の env は
-      # この wait 以降で利用可能になり、SSH トンネル統合テスト (#331) と TLS 統合
-      # テスト (#520/#795) が nextest で正しく実走する。dist/ は上のスタブステップで
-      # 既に用意済み。sshd/tlsdb のいずれかが失敗した場合はこの wait でジョブが
-      # fail する (公式仕様)。
       - name: Wait for background setup (sshd, TLS test DBs)
         wait: [sshd, tlsdb]
 
@@ -982,7 +976,7 @@ jobs:
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        run: cargo nextest run --locked --all-targets
+        run: cargo nextest run --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
