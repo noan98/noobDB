@@ -641,6 +641,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
 
   const { copied, copy } = useCopyFeedback();
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: database / driver は「未選択なら既定 DB を自動選択」の判定にだけ使う。依存に入れると選択のたびに一覧を再取得してしまうため sessionId 変更時のみ実行する
   useEffect(() => {
     let cancelled = false;
     api.listDatabases(sessionId)
@@ -656,6 +657,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     return () => { cancelled = true; };
   }, [sessionId]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: table は「未選択なら先頭テーブルを自動選択」の判定にだけ使う。依存に入れると選択のたびに一覧を再取得してしまうため database 変更時のみ実行する
   useEffect(() => {
     if (!database) {
       setTables([]);
@@ -1441,6 +1443,7 @@ function SqlPreview({ sql, driver }: SqlPreviewProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sql は初期ドキュメントとしてのみ使う。sql の変化で EditorView を作り直すと状態が失われるため、反映は下の effect の dispatch が担う (driver 変更時だけ再生成)
   useEffect(() => {
     if (!hostRef.current) return;
     const view = new EditorView({

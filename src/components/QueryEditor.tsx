@@ -742,6 +742,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     },
   ];
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: EditorView はマウント時に一度だけ作る。initialSql / initialSelection と各種 build* は初期 state の構築にだけ使い、最新値は ref 経由で読む。依存に入れると編集内容が失われるため空配列にしている
   useEffect(() => {
     if (!hostRef.current) return;
     const startDoc = initialSql ?? "";
@@ -905,6 +906,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // `setState` は update listener を呼ばないので、onChange / onSelectionChange の
   // 誤発火 (別タブの内容を現在のタブへ書き戻す) は起きない。描画前に差し替えて、前のタブの
   // 本文が 1 フレーム見えないよう layout effect にする。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: タブ切替 (tabId の変化) のときだけ実行する。initialSql / initialSelection は切替後のタブ本文として読むだけで、props の変化では EditorView の state を差し替えない (#1308)
   useLayoutEffect(() => {
     const view = viewRef.current;
     const prevTabId = activeTabIdRef.current;
@@ -963,6 +965,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   //     スキーマで作られていた場合もここで追従する。
   //   - 構文チェック: オン/オフ、または診断メッセージ (言語切替) が変わったとき。
   //   - キーマップ: ショートカットの上書きが変わったとき (#557)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 設定の最新値は desiredConfigRef / appliedConfigRef (ref) から読み、実際の差分判定は本体で行う。依存の desiredConfig.* と tabId は再判定のトリガー。Compartment・build*Extension・driver 等を依存に入れると毎レンダーで走るため除外する
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -1019,6 +1022,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // 結果が変わるたび親へ通知 (危険クエリ確認ダイアログへの件数引き継ぎ用)。
   // タブ切替直後に結果が変わらない (同じ SQL) 場合も、新しいタブのコールバックへ
   // 通知し直す (#1308)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tabId はタブ切替直後に結果が変わらない場合も新しいタブのコールバックへ通知し直すためのトリガーとして意図的に依存へ含めている (#1308)
   useEffect(() => {
     onPreflightImpactRef.current?.(preflight);
   }, [preflight, tabId]);
@@ -1038,6 +1042,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     view.focus();
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ハンドラは初回だけ構築する設計 (上のコメント参照)。insertAtCursor / resetHistoryNav / runStatementUnderCursor は毎レンダーで作り直されるが ref だけを読むため、古いクロージャでも最新の状態を参照できる
   useImperativeHandle(ref, () => ({
     insertText: insertAtCursor,
     setText: (text: string) => {

@@ -402,6 +402,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   );
   const previewSourceRows =
     masks.length === 0 ? previewRows : currentMasked && "rows" in currentMasked ? currentMasked.rows : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buildBundleHtmlSync は毎レンダーで作り直される関数なので依存に入れられない。実際に決める値 (bundle 系・scope・locale 等) は下の配列にあり、biome の指摘 (余分) はこの関数経由の間接依存
   const previewContent = useMemo(
     () =>
       previewSourceRows === null
@@ -498,6 +499,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // (相対パス) なので、ネイティブの保存ダイアログが任意の場所に着地しないよう、
   // マウント時に一度だけダウンロードディレクトリを前置きする。ユーザが手で編集
   // 済みのとき、またはディレクトリ取得に失敗したときはファイル名のまま据え置く。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: マウント時に一度だけ実行する意図 (format / initialBasename はマウント直後の値を使い、後の変更で編集中のパスを上書きしない)
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -523,6 +525,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // When the format changes, swap the extension on the current path. This
   // keeps the user's chosen directory but reflects the new format. If the
   // path is empty, just set the default.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initialBasename は意図的に除外 (タイムスタンプ更新で編集中のパスを上書きしない)。format の変化時だけ拡張子を差し替える
   useEffect(() => {
     setPath((cur) => {
       if (!cur) return `${initialBasename}${extensionFor(format)}`;
