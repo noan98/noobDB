@@ -363,14 +363,16 @@ jobs:
           --coverage
           --coverage.thresholds.lines=0
           --reporter=blob
-          --outputFile=.vitest-reports/blob-${{ matrix.shard }}.json
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
 
       - name: Upload Vitest blob
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          # 隠しディレクトリ (先頭 `.`) は upload-artifact が既定で除外するため、
+          # 先頭に `.` を付けない名前にする (付けると blob が 0 件になり統合で失敗する)。
           name: vitest-blob-${{ matrix.shard }}
-          path: .vitest-reports/
+          path: vitest-reports/
           retention-days: 1
           if-no-files-found: ignore
 
@@ -431,14 +433,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p .vitest-reports-dl .vitest-reports
-          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'vitest-blob-*' --dir .vitest-reports-dl
-          find .vitest-reports-dl -name 'blob-*.json' -exec mv {} .vitest-reports/ \;
-          ls -l .vitest-reports
+          mkdir -p vitest-reports-dl vitest-reports
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'vitest-blob-*' --dir vitest-reports-dl
+          find vitest-reports-dl -name 'blob-*.json' -exec mv {} vitest-reports/ \;
+          ls -l vitest-reports
 
       # blob を統合し、`vite.config.ts` の閾値 (lines) を超えているか判定する。
       - name: Merge reports + coverage threshold
-        run: pnpm vitest run --merge-reports=.vitest-reports --coverage
+        run: pnpm vitest run --merge-reports=vitest-reports --coverage
 
   # 言語横断のパリティ/ゴールデンテスト専用の軽量ジョブ (#853)。
   #
