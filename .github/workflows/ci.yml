@@ -309,7 +309,7 @@ jobs:
             echo "| Playwright ブラウザキャッシュヒット | ${{ steps.playwright-cache.outputs.cache-hit }} |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-  # Vitest (jsdom) 単体テストの 4 分割実行 (dom 3 + node 1)。
+  # Vitest (jsdom) 単体テストの 4 分割実行。
   #
   # 以前は `frontend` ジョブの 1 ステップ (`pnpm test --coverage`) で、実測約 4 分 15 秒
   # (ジョブ全体の約 3/4) を占めていた。ファイル数 (約 320) が多くワーカー単位で
@@ -318,7 +318,7 @@ jobs:
   # 全 shard を統合した値でしか意味を持たないので、ここでは 0 にして下の
   # `frontend (unit tests)` ジョブで統合してから強制する。
   frontend-unit:
-    name: frontend (unit ${{ matrix.id }})
+    name: frontend (unit shard ${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
@@ -326,16 +326,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # jsdom の `.test.tsx` (dom) は重く、node 環境の `.test.ts` は軽い。ファイル名順の
-        # 単純な `--shard` だと dom が先頭の shard に偏って遅くなる (実測 120 秒 vs 75 秒)
-        # ため、プロジェクト (vite.config.ts の `test.projects`) ごとに分ける。dom を 3 分割、
-        # node を 1 本にすると、どれも同じ程度の時間 (ローカル実測で dom 148 秒 ÷ 3 と node 44 秒)
-        # で終わる。
-        include:
-          - { id: dom-1, args: "--project dom --shard=1/3" }
-          - { id: dom-2, args: "--project dom --shard=2/3" }
-          - { id: dom-3, args: "--project dom --shard=3/3" }
-          - { id: node, args: "--project node" }
+        # 以前は 3 分割だったが、shard ごとの所要時間にばらつきがあった (実測 75〜120 秒)。
+        # 4 分割にして最長を縮める。なお `--project dom` / `--project node` で分ける案は、
+        # blob を統合したカバレッジが実際より大きく低く出る (全件実行 78.45% に対し 63.35%)
+        # ため採用しない。プロジェクトを跨ぐ blob の統合は損失がある。
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -365,14 +360,14 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      - name: Unit tests (Vitest, ${{ matrix.id }})
+      - name: Unit tests (Vitest, shard ${{ matrix.shard }}/4)
         run: >-
           pnpm vitest run
-          ${{ matrix.args }}
+          --shard=${{ matrix.shard }}/4
           --coverage
           --coverage.thresholds.lines=0
           --reporter=blob
-          --outputFile=vitest-reports/blob-${{ matrix.id }}.json
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
 
       - name: Upload Vitest blob
         if: always()
@@ -380,7 +375,7 @@ jobs:
         with:
           # 隠しディレクトリ (先頭 `.`) は upload-artifact が既定で除外するため、
           # 先頭に `.` を付けない名前にする (付けると blob が 0 件になり統合で失敗する)。
-          name: vitest-blob-${{ matrix.id }}
+          name: vitest-blob-${{ matrix.shard }}
           path: vitest-reports/
           retention-days: 1
           if-no-files-found: ignore

@@ -176,7 +176,7 @@
   (golden / integration / external と単独の serde_schema_parity。`autotests = false`。詳細は
   `noobdb-testing` の commands.md)、リンク回数を減らしています。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
-  フロントの単体テストは dom 3 分割 + node 1 本 (`--project` + `--shard`) の 4 shard です。
+  フロントの単体テストは `--shard` の 4 分割です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
