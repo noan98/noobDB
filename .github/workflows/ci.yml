@@ -41,6 +41,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       workflow: ${{ steps.filter.outputs.workflow }}
       crosslang: ${{ steps.filter.outputs.crosslang }}
+      ci-scripts: ${{ steps.filter.outputs.ci-scripts }}
       docs: ${{ steps.filter.outputs.docs }}
       automerge: ${{ steps.filter.outputs.automerge }}
     steps:
@@ -74,6 +75,9 @@ jobs:
               # #1176: Biome の設定 / 警告件数チェックのスクリプトだけを変えた PR でも
               # `pnpm run lint` を再実行する。
               - 'biome.json'
+              # #1359: frontend ジョブが呼ぶバンドルサイズ計測スクリプトだけを変えたPRでも
+              # 実走させる。
+              - 'scripts/bundle-size.mjs'
             rust:
               - 'src-tauri/**'
             # #853: 言語横断のゴールデン/パリティテスト (Rust 側の
@@ -84,6 +88,12 @@ jobs:
             # 実走させる (詳細は下の `crosslang parity` ジョブのコメント参照)。
             crosslang:
               - 'src/__tests__/fixtures/**'
+            # #1359: SSH / TLS / 平文DB統合テストが依存するCIセットアップスクリプト
+            # だけを変えたPRは rust==false になり、変更したスクリプトがPR上で一度も
+            # 実行されない。`rust (test)` / `rust (coverage)` の if: にORで足して実走させる
+            # (crosslang と同じパターン)。
+            ci-scripts:
+              - 'scripts/ci-setup-*.sh'
             # docCommandParity.test.ts が ?raw で読む IPC コマンド一覧ドキュメント。
             # このファイルだけを編集した PR (一覧から誤ってコマンドを消した等) でも
             # パリティ検証が実走するよう、`crosslang parity` ジョブの if: へ OR で
@@ -789,7 +799,8 @@ jobs:
     # 含まれており、フィクスチャだけを変更する PR (src-tauri/** は無変更 =
     # rust==false) でもこの OR がないとまさにその変更を検証すべきテストが
     # 1 本もスキップされてしまう。
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true'
+    # #1359: ci-scripts==true (scripts/ci-setup-*.sh の変更) でも起動する。
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1004,8 +1015,8 @@ jobs:
     # パスになっていた。並列に走らせて PR のブロッキング経路から外す。
     # **必須チェックには含めない** (閾値 `--fail-under-lines` の fail は赤く出るが
     # 必須ではないのでマージは止めない運用)。`if:` は `rust (test)` と同じ条件
-    # (#853 の crosslang OR を含む)。
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true'
+    # (#853 の crosslang OR / #1359 の ci-scripts OR を含む)。
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
