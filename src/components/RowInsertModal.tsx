@@ -121,9 +121,11 @@ export function RowInsertModal({
           // 真偽値だけセレクタにする。日付系はネイティブ入力だと明示的な NULL
           // (ヒント文の "null" 入力) を表現できないため、テキスト入力のままにする。
           // 種別は初期値で決め、入力中に切り替わらないようにする。
-          const typed =
-            resolveTypedEditor(c.type_name, initialValues?.[i] ?? "")?.control === "bool";
           const boolStart = initialValues?.[i] ?? "";
+          // 初期値がどの選択肢にも一致しない ("TRUE" など) 場合は値を失わないようテキスト入力。
+          const typed =
+            resolveTypedEditor(c.type_name, boolStart)?.control === "bool" &&
+            (boolStart === "" || boolOptions(boolStart).includes(boolStart));
           return (
           <Flex key={c.name} align="center" gap="2.5">
             <Tooltip label={`${c.name} (${c.type_name})`}>

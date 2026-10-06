@@ -937,6 +937,15 @@ export const GRID_CSS: SystemStyleObject = {
     outline: "none",
     boxShadow: "var(--focus-ring)",
   },
+  // 日時入力は秒とピッカーアイコンが狭い列で欠けるので、列幅を超えて広げる (#1355)。
+  "& .cell-edit-input[type=datetime-local]": {
+    position: "absolute",
+    zIndex: 4,
+    top: "calc(var(--space-0-75) * -1)",
+    left: "calc(var(--space-1-5) * -1)",
+    margin: 0,
+    width: "max(100% + var(--space-3), 26ch)",
+  },
   "& .cell-edit-input.is-invalid": {
     borderColor: "var(--error-solid)",
     boxShadow: "var(--focus-ring-danger)",
