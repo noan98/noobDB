@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
-import { api, type ColumnProfile, type TableColumnInfo } from "../api/tauri";
+import { api, type ColumnProfile, type ProfileCount, type TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { chartSeriesColors } from "./chartData";
 import { CartesianChart } from "./ChartView";
@@ -20,6 +20,7 @@ import {
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
+import { StatTile } from "./StatTile";
 import { Spinner } from "./Spinner";
 import { Skeleton, SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
@@ -69,39 +70,9 @@ const MotionReveal = chakra(motion.div, {}, {
   forwardProps: ["initial", "animate", "transition"],
 });
 
-function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <Box
-      minW="120px"
-      flex="1"
-      px="3"
-      py="2"
-      borderRadius="md"
-      borderWidth="1px"
-      borderColor="app.border"
-      bg="app.surface"
-    >
-      <chakra.div textStyle="overline" color="app.textMuted">
-        {label}
-      </chakra.div>
-      <chakra.div
-        fontSize="md"
-        fontWeight={600}
-        fontFamily="var(--font-mono)"
-        overflow="hidden"
-        textOverflow="ellipsis"
-        whiteSpace="nowrap"
-      >
-        {value}
-      </chakra.div>
-      {sub && (
-        <chakra.div fontSize="xs" color="app.textMuted">
-          {sub}
-        </chakra.div>
-      )}
-    </Box>
-  );
-}
+// 件数は number ならカウントアップ、2^53 超の文字列は丸めず文字列のまま出す (#1238)。
+const countTile = (c: ProfileCount | null | undefined) =>
+  typeof c === "number" ? c : formatProfileCount(c);
 
 export function ColumnProfilePanel({
   sessionId,
@@ -300,15 +271,21 @@ export function ColumnProfilePanel({
 
           <Flex gap="2" flexWrap="wrap">
             <StatTile label={t("profileType")} value={profile.data_type} />
-            <StatTile label={t("profileTotal")} value={formatProfileCount(profile.total_count)} />
+            <StatTile
+              label={t("profileTotal")}
+              value={countTile(profile.total_count)}
+              formatter={formatProfileCount}
+            />
             <StatTile
               label={t("profileNulls")}
-              value={formatPercent(profilePercent(profile.null_count, profile.total_count))}
+              value={profilePercent(profile.null_count, profile.total_count) ?? "—"}
+              formatter={formatPercent}
               sub={formatProfileCount(profile.null_count)}
             />
             <StatTile
               label={t("profileDistinct")}
-              value={formatProfileCount(profile.distinct_count)}
+              value={countTile(profile.distinct_count)}
+              formatter={formatProfileCount}
               sub={profile.distinct_approximate ? t("profileApproxMark") : undefined}
             />
             <StatTile label={t("profileMin")} value={profileValueLabel(profile.min_value) ?? "NULL"} />
