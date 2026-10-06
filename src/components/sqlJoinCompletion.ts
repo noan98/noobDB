@@ -1,5 +1,5 @@
 import type { ForeignKey } from "../api/tauri";
-import { quoteIdentFor } from "./sqlDialect";
+import { codeMirrorSqlDialectFor, quoteIdentFor } from "./sqlDialect";
 
 /**
  * FK メタデータから JOIN 補完 (#1356) を作る純ロジック。CodeMirror には依存せず、
@@ -66,7 +66,11 @@ function lastPart(ref: string): string {
 
 function quoteIfNeeded(driver: string, name: string): string {
   const plain = driver === "postgres" ? /^[a-z_][a-z0-9_]*$/ : /^[A-Za-z_]\w*$/;
-  return plain.test(name) && !RESERVED.has(name.toLowerCase()) ? name : quoteIdentFor(driver, name);
+  const lower = name.toLowerCase();
+  const kw = (codeMirrorSqlDialectFor(driver).spec.keywords ?? "").split(" ");
+  return plain.test(name) && !RESERVED.has(lower) && !kw.includes(lower)
+    ? name
+    : quoteIdentFor(driver, name);
 }
 
 function parseRefs(masked: string): TableRef[] {
@@ -104,7 +108,13 @@ function linksBetween(fks: ForeignKey[], existing: string, other: string): Link[
     if (g) g.pairs.push(pair);
     else groups.set(id, { pairs: [pair] });
   }
-  return [...groups.values()];
+  // PostgreSQL は複合 FK を交差積で返し、列順も分からないため正しく復元できない。
+  // 同じ列が左右どちらかに 2 回以上出るグループは捨てる。
+  return [...groups.values()].filter((g) => {
+    const l = g.pairs.map((p) => p[0].toLowerCase());
+    const r = g.pairs.map((p) => p[1].toLowerCase());
+    return new Set(l).size === l.length && new Set(r).size === r.length;
+  });
 }
 
 function condition(driver: string, link: Link, existingKey: string, otherKey: string): string {
@@ -126,6 +136,9 @@ export function joinCompletions(opts: {
 }): JoinCompletion | null {
   const { driver, fks } = opts;
   if (fks.length === 0) return null;
+  // 毎打鍵の全文マスクを避ける: カーソル直前が JOIN / ON 文脈でなければ即終了。
+  if (!/\b(?:JOIN|ON)\s+[\w`".]*$/i.test(opts.text.slice(-400))) return null;
+  // ponytail: 文字列/コメントのマスクは簡易実装 (ドル引用符・ネストコメントは未対応)。
   const full = mask(opts.text);
   const start = full.lastIndexOf(";") + 1;
   const masked = full.slice(start);
@@ -149,6 +162,10 @@ export function joinCompletions(opts: {
   // JOIN <partial>
   const jt = masked.match(/\bJOIN\s+([\w`"]*)$/i);
   if (jt) {
+    // NATURAL / CROSS JOIN は ON を取らない。
+    if (/\b(?:NATURAL|CROSS)\s+(?:(?:LEFT|RIGHT|FULL)\s+)?(?:OUTER\s+)?$/i.test(masked.slice(0, jt.index))) {
+      return null;
+    }
     const refs = parseRefs(masked.slice(0, jt.index));
     const options: JoinCandidate[] = [];
     const seen = new Set<string>();

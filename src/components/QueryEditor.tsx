@@ -464,16 +464,21 @@ function buildSqlExtension(
   // FK から `JOIN other ON ...` を提案する補完ソース (#1356)。言語データとして
   // 足すので、lang-sql 標準のスキーマ補完と併存する。
   const joinSource = (ctx: CompletionContext): CompletionResult | null => {
-    const r = joinCompletions({
-      driver,
-      text: ctx.state.sliceDoc(0, ctx.pos),
-      fks: getFks(),
-    });
-    if (!r) return null;
-    return {
-      from: r.from,
-      options: r.options.map((o) => ({ ...o, type: "keyword", boost: 99 })),
-    };
+    // CodeMirror は補完ソースの同期例外で補完全体が止まるため、握りつぶして null を返す。
+    try {
+      const r = joinCompletions({
+        driver,
+        text: ctx.state.sliceDoc(0, ctx.pos),
+        fks: getFks(),
+      });
+      if (!r) return null;
+      return {
+        from: r.from,
+        options: r.options.map((o) => ({ ...o, type: "keyword", boost: 99 })),
+      };
+    } catch {
+      return null;
+    }
   };
   return [
     sql({
@@ -619,7 +624,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // JOIN 補完 (#1356) 用の FK 一覧。DB 単位で取得 (バックエンドがキャッシュ済み) し、
   // 補完ソースは ref 越しに読む。DDL でスキーマキャッシュが更新されたら取り直す。
   const fksRef = useRef<ForeignKey[]>([]);
-  const fkDatabase = defaultDatabase ?? schemaTable?.database ?? null;
+  const fkDatabase = schemaTable?.database ?? defaultDatabase ?? null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後の再取得トリガー
   useEffect(() => {
     fksRef.current = [];

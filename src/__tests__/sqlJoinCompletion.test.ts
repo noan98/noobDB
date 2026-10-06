@@ -62,13 +62,36 @@ describe("joinCompletions: JOIN の相手テーブル", () => {
     expect(r?.options[0]?.apply).toBe("b ON b.x = a.x AND b.y = a.y");
   });
 
+  it("PostgreSQL の交差積で返る複合 FK は候補にしない", () => {
+    const fks = [
+      fk("t", "a", "u", "x", "c"),
+      fk("t", "a", "u", "y", "c"),
+      fk("t", "b", "u", "x", "c"),
+      fk("t", "b", "u", "y", "c"),
+    ];
+    expect(run("SELECT * FROM t JOIN ", "postgres", fks)).toBeNull();
+  });
+
+  it("NATURAL / CROSS JOIN の直後は候補にしない", () => {
+    expect(run("SELECT * FROM orders NATURAL JOIN ")).toBeNull();
+    expect(run("SELECT * FROM orders CROSS JOIN ")).toBeNull();
+    expect(run("SELECT * FROM orders NATURAL LEFT OUTER JOIN ")).toBeNull();
+  });
+
+  it("方言の予約語はクォートする", () => {
+    const fks = [fk("a", "to", "b", "end", "c")];
+    expect(run("SELECT * FROM a JOIN ", "mysql", fks)?.options[0]?.apply).toBe(
+      "b ON b.`end` = a.`to`",
+    );
+  });
+
   it("方言ごとにクォートする (予約語・大文字)", () => {
     const fks = [fk("Order", "UserId", "user", "id", "c")];
     expect(run("SELECT * FROM `Order` JOIN ", "mysql", fks)?.options[0]?.apply).toBe(
       "`user` ON `user`.id = `Order`.UserId",
     );
     expect(run('SELECT * FROM "Order" JOIN ', "postgres", fks)?.options[0]?.apply).toBe(
-      '"user" ON "user".id = "Order"."UserId"',
+      '"user" ON "user"."id" = "Order"."UserId"',
     );
     expect(run('SELECT * FROM "Order" JOIN ', "sqlite", fks)?.options[0]?.apply).toBe(
       '"user" ON "user".id = "Order".UserId',
