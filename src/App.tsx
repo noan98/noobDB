@@ -6115,7 +6115,7 @@ export default function App() {
       }
       return;
     }
-    // DROP: 1 回の確認 (本番接続では DB 名のタイプ入力を要求、#675) の後、1 テーブルずつ実行する。
+    // DROP: 1 回の確認 (本番接続では DB 名のタイプ入力を要求、#675) の後、MySQL / PostgreSQL は 1 文にまとめて、SQLite は 1 件ずつ実行する。
     // 一覧が長くなりすぎないよう先頭数件だけ並べ、残りは件数で示す。
     const { shown, rest } = abbreviateList(tables, 8);
     const tableList = shown.join(", ") + (rest > 0 ? translate("bulkDropMore", { count: rest }) : "");

@@ -100,7 +100,9 @@ export function BulkExportModal({ sessionId, driver, database, tables, onClose }
       if (cancelledRef.current || disposedRef.current) break;
       setRunning({ current: i + 1, table });
       try {
-        await exportOne(table, paths[i] ?? bulkExportPaths(dir, [table], format)[0] ?? dir);
+        const path = paths[i];
+        if (path === undefined) throw new Error("export path was not resolved");
+        await exportOne(table, path);
         finished += 1;
       } catch (e) {
         const message = t("bulkExportFailed", { table, error: String(e) });
