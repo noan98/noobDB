@@ -4,7 +4,8 @@ import { useT } from "../i18n";
 import type { Column, TableColumnInfo } from "../api/tauri";
 import type { PendingInsertRow } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, PressableButton } from "./ui";
+import { Button, Input, PressableButton, Select } from "./ui";
+import { boolOptions, resolveTypedEditor } from "./typedEditor";
 import { Tooltip } from "./Tooltip";
 import { useValuePicker, ValueDatalist, type ValueLookup } from "./useValuePicker";
 import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
@@ -53,7 +54,11 @@ export function RowInsertModal({
 }: Props) {
   const t = useT();
   const [values, setValues] = useState<Record<number, string>>(initialValues ?? {});
-  const firstRef = useRef<HTMLInputElement>(null);
+  // 先頭列は入力でもセレクタでもあり得るので、コールバック ref で要素を保持する。
+  const firstRef = useRef<HTMLElement | null>(null);
+  const setFirstRef = (el: HTMLElement | null) => {
+    firstRef.current = el;
+  };
   const listIdBase = useId();
   const picker = useValuePicker({ driver, database, table, columns: tableColumns, lookup });
   // フォーカス中の列の候補を (再) 取得する。FK は入力に応じて前方一致で絞る。
@@ -112,6 +117,15 @@ export function RowInsertModal({
           const pickerKind = picker.kindOf(c.name);
           const pickerValues = picker.candidates(c.name);
           const listId = `${listIdBase}-${i}`;
+          const cur = values[i] ?? "";
+          // 真偽値だけセレクタにする。日付系はネイティブ入力だと明示的な NULL
+          // (ヒント文の "null" 入力) を表現できないため、テキスト入力のままにする。
+          // 種別は初期値で決め、入力中に切り替わらないようにする。
+          const boolStart = initialValues?.[i] ?? "";
+          // 初期値がどの選択肢にも一致しない ("TRUE" など) 場合は値を失わないようテキスト入力。
+          const typed =
+            resolveTypedEditor(c.type_name, boolStart)?.control === "bool" &&
+            (boolStart === "" || boolOptions(boolStart).includes(boolStart));
           return (
           <Flex key={c.name} align="center" gap="2.5">
             <Tooltip label={`${c.name} (${c.type_name})`}>
@@ -130,17 +144,38 @@ export function RowInsertModal({
                 </chakra.span>
               </chakra.label>
             </Tooltip>
-            <Input
-              ref={i === 0 ? firstRef : undefined}
-              value={values[i] ?? ""}
-              list={pickerValues.length > 0 ? listId : undefined}
-              onFocus={() => setFocused(i)}
-              onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
-              }}
-              flex="1"
-            />
+            {typed ? (
+              <Select
+                ref={i === 0 ? setFirstRef : undefined}
+                value={cur}
+                aria-label={c.name}
+                onFocus={() => setFocused(i)}
+                onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit();
+                }}
+                flex="1"
+              >
+                <option value="">{t("rowOpsInsertDefaultOption")}</option>
+                {boolOptions(boolStart).map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Input
+                ref={i === 0 ? setFirstRef : undefined}
+                value={cur}
+                list={pickerValues.length > 0 ? listId : undefined}
+                onFocus={() => setFocused(i)}
+                onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit();
+                }}
+                flex="1"
+              />
+            )}
             <ValueDatalist id={listId} values={pickerValues} />
             {pickerKind && (
               <Tooltip label={badgeTitle(pickerKind, c.name)}>
