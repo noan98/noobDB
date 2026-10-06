@@ -38,6 +38,8 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   completionStatus,
+  type CompletionContext,
+  type CompletionResult,
 } from "@codemirror/autocomplete";
 import {
   bracketMatching,
@@ -47,7 +49,8 @@ import {
   syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import type { TableSchema } from "../api/tauri";
+import { api, type ForeignKey, type TableSchema } from "../api/tauri";
+import { joinCompletions } from "./sqlJoinCompletion";
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
@@ -421,6 +424,7 @@ function buildSqlExtension(
   schemaTable: SchemaTable | null | undefined,
   databaseSchema: TableSchema[] | null | undefined,
   defaultDatabase: string | null | undefined,
+  getFks: () => ForeignKey[],
 ) {
   // Collect every known table → columns mapping. The full-database overview is
   // the bulk of it; the active table is folded in too so its columns are
@@ -457,13 +461,30 @@ function buildSqlExtension(
     defaultTable = schemaTable?.name;
     defaultSchema = namespaceDb;
   }
-  return sql({
-    dialect: codeMirrorSqlDialectFor(driver),
-    schema,
-    defaultTable,
-    defaultSchema,
-    upperCaseKeywords: true,
-  });
+  // FK から `JOIN other ON ...` を提案する補完ソース (#1356)。言語データとして
+  // 足すので、lang-sql 標準のスキーマ補完と併存する。
+  const joinSource = (ctx: CompletionContext): CompletionResult | null => {
+    const r = joinCompletions({
+      driver,
+      text: ctx.state.sliceDoc(0, ctx.pos),
+      fks: getFks(),
+    });
+    if (!r) return null;
+    return {
+      from: r.from,
+      options: r.options.map((o) => ({ ...o, type: "keyword", boost: 99 })),
+    };
+  };
+  return [
+    sql({
+      dialect: codeMirrorSqlDialectFor(driver),
+      schema,
+      defaultTable,
+      defaultSchema,
+      upperCaseKeywords: true,
+    }),
+    EditorState.languageData.of(() => [{ autocomplete: joinSource }]),
+  ];
 }
 
 export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function QueryEditor({
@@ -595,6 +616,25 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // 古い値ではなく現在の値を使うため ref 越しに読む。
   const sqlArgsRef = useRef({ driver, schemaTable, databaseSchema, defaultDatabase });
   sqlArgsRef.current = { driver, schemaTable, databaseSchema, defaultDatabase };
+  // JOIN 補完 (#1356) 用の FK 一覧。DB 単位で取得 (バックエンドがキャッシュ済み) し、
+  // 補完ソースは ref 越しに読む。DDL でスキーマキャッシュが更新されたら取り直す。
+  const fksRef = useRef<ForeignKey[]>([]);
+  const fkDatabase = defaultDatabase ?? schemaTable?.database ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後の再取得トリガー
+  useEffect(() => {
+    fksRef.current = [];
+    if (!sessionId || !fkDatabase) return;
+    let cancelled = false;
+    api
+      .foreignKeys(sessionId, fkDatabase)
+      .then((r) => {
+        if (!cancelled) fksRef.current = r;
+      })
+      .catch(() => { /* 補完は best-effort */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, fkDatabase, databaseSchema]);
   // 現在アクティブな state の compartment に入っている設定。
   const appliedConfigRef = useRef<AppliedEditorConfig>(desiredConfig);
   // タブ別 state の保存先と、新規 state の作成関数 (マウント時に一度だけ組み立てる)。
@@ -804,6 +844,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
               sqlArgsRef.current.schemaTable,
               sqlArgsRef.current.databaseSchema,
               sqlArgsRef.current.defaultDatabase,
+              () => fksRef.current,
             ),
           ),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
@@ -979,7 +1020,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     if (sqlChanged) {
       effects.push(
         sqlCompartment.reconfigure(
-          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase),
+          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase, () => fksRef.current),
         ),
       );
     }
