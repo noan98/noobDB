@@ -76,12 +76,15 @@ describe("joinCompletions: JOIN の相手テーブル", () => {
     expect(run("SELECT * FROM orders NATURAL JOIN ")).toBeNull();
     expect(run("SELECT * FROM orders CROSS JOIN ")).toBeNull();
     expect(run("SELECT * FROM orders NATURAL LEFT OUTER JOIN ")).toBeNull();
+    expect(run("SELECT * FROM orders NATURAL INNER JOIN ")).toBeNull();
   });
 
-  it("方言の予約語はクォートする", () => {
-    const fks = [fk("a", "to", "b", "end", "c")];
-    expect(run("SELECT * FROM a JOIN ", "mysql", fks)?.options[0]?.apply).toBe(
-      "b ON b.`end` = a.`to`",
+  it("予約語はクォートし、id / value などの一般語はクォートしない", () => {
+    const fks = [fk("a", "to", "b", "end", "c"), fk("a", "value", "b", "id", "d")];
+    const o = run("SELECT * FROM a JOIN ", "mysql", fks)?.options.map((x) => x.apply);
+    expect(o).toEqual(["b ON b.`end` = a.`to`", "b ON b.id = a.value"]);
+    expect(run("SELECT * FROM a JOIN ", "postgres", fks)?.options[1]?.apply).toBe(
+      "b ON b.id = a.value",
     );
   });
 
@@ -91,7 +94,7 @@ describe("joinCompletions: JOIN の相手テーブル", () => {
       "`user` ON `user`.id = `Order`.UserId",
     );
     expect(run('SELECT * FROM "Order" JOIN ', "postgres", fks)?.options[0]?.apply).toBe(
-      '"user" ON "user"."id" = "Order"."UserId"',
+      '"user" ON "user".id = "Order"."UserId"',
     );
     expect(run('SELECT * FROM "Order" JOIN ', "sqlite", fks)?.options[0]?.apply).toBe(
       '"user" ON "user".id = "Order".UserId',

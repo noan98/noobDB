@@ -1,5 +1,5 @@
 import type { ForeignKey } from "../api/tauri";
-import { codeMirrorSqlDialectFor, quoteIdentFor } from "./sqlDialect";
+import { quoteIdentFor } from "./sqlDialect";
 
 /**
  * FK メタデータから JOIN 補完 (#1356) を作る純ロジック。CodeMirror には依存せず、
@@ -40,6 +40,10 @@ const RESERVED = new Set([
   "order", "group", "user", "select", "table", "from", "join", "where", "index",
   "key", "desc", "asc", "limit", "references", "constraint", "primary", "check",
   "column", "default", "range", "rank", "row", "rows", "partition", "window",
+  "to", "end", "in", "is", "on", "as", "all", "and", "or", "not", "null", "case",
+  "when", "then", "else", "values", "for", "by", "into", "distinct", "having",
+  "union", "using", "exists", "like", "between", "insert", "update", "delete",
+  "create", "drop", "alter", "set", "with", "true", "false", "unique", "foreign",
 ]);
 
 /** コメントと文字列リテラルを同じ長さの空白に置き換える (オフセットを保つ)。 */
@@ -67,10 +71,7 @@ function lastPart(ref: string): string {
 function quoteIfNeeded(driver: string, name: string): string {
   const plain = driver === "postgres" ? /^[a-z_][a-z0-9_]*$/ : /^[A-Za-z_]\w*$/;
   const lower = name.toLowerCase();
-  const kw = (codeMirrorSqlDialectFor(driver).spec.keywords ?? "").split(" ");
-  return plain.test(name) && !RESERVED.has(lower) && !kw.includes(lower)
-    ? name
-    : quoteIdentFor(driver, name);
+  return plain.test(name) && !RESERVED.has(lower) ? name : quoteIdentFor(driver, name);
 }
 
 function parseRefs(masked: string): TableRef[] {
@@ -163,7 +164,7 @@ export function joinCompletions(opts: {
   const jt = masked.match(/\bJOIN\s+([\w`"]*)$/i);
   if (jt) {
     // NATURAL / CROSS JOIN は ON を取らない。
-    if (/\b(?:NATURAL|CROSS)\s+(?:(?:LEFT|RIGHT|FULL)\s+)?(?:OUTER\s+)?$/i.test(masked.slice(0, jt.index))) {
+    if (/\b(?:NATURAL|CROSS)\s+(?:(?:INNER|LEFT|RIGHT|FULL)\s+)?(?:OUTER\s+)?$/i.test(masked.slice(0, jt.index))) {
       return null;
     }
     const refs = parseRefs(masked.slice(0, jt.index));
