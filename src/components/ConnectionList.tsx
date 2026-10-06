@@ -2954,6 +2954,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // The schema tree only shows the active connection, so its read-only flag
   // governs whether write-y table actions (Import CSV) are offered.
   const [tableSelection, setTableSelection] = useState<TableSelection>(EMPTY_TABLE_SELECTION);
+  // アクティブな接続が変わったら選択を捨てる (同名のテーブルを別接続で誤って対象にしない)。
+  const [selectionProfileId, setSelectionProfileId] = useState(activeProfileId);
+  if (selectionProfileId !== activeProfileId) {
+    setSelectionProfileId(activeProfileId);
+    setTableSelection(EMPTY_TABLE_SELECTION);
+  }
   const activeReadOnly = !!profiles.find((p) => p.id === activeProfileId)?.read_only;
   // 保守コマンドの SQL 方言はアクティブ接続のドライバで決まる (ツリーは
   // アクティブ接続のみを表示する)。
@@ -3566,7 +3572,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       ) : visibleProfiles.length === 0 ? (
         <Text color="app.textMuted" p="3">{t("listNoMatches")}</Text>
       ) : (
-        <Box ref={treeRef} flex="1" overflowY="auto" py="1" fontSize="md" color="app.text" role="tree">
+        <Box ref={treeRef} flex="1" overflowY="auto" py="1" fontSize="md" color="app.text" role="tree" aria-multiselectable="true">
           {grouped === null ? (
             // ungrouped の 1 本のフラットな並び: そのままプロファイルの並び順
             // (ドラッグ/キーボードで動かせる)。

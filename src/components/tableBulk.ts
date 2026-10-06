@@ -30,10 +30,24 @@ export function joinTableDdls(ddls: readonly string[]): string {
     .join("\n\n");
 }
 
-/** `dir` 直下に書き出すファイルのパス。区切り文字は `dir` が使っているものに合わせ、
- *  テーブル名のうちファイル名に使えない文字は `_` に置き換える。 */
-export function bulkExportPath(dir: string, table: string, format: ExportFormat): string {
+/** `dir` 直下に書き出す各テーブルのファイルパス (`tables` と同じ順)。区切り文字は `dir` が
+ *  使っているものに合わせ、ファイル名に使えない文字は `_` に置き換える。置き換えや大文字小文字
+ *  だけの違い (`a/b` と `a_b`、`Users` と `users`) で名前が重なるときは、大文字小文字を無視して
+ *  比べ、後ろの方に `_2` `_3` … を付けて必ず別ファイルにする。 */
+export function bulkExportPaths(dir: string, tables: readonly string[], format: ExportFormat): string[] {
   const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
-  const stem = table.replace(/[\\/:*?"<>|]/g, "_").replace(/[ .]+$/, "") || "table";
-  return `${dir.replace(/[\\/]+$/, "")}${sep}${stem}${EXTENSIONS[format]}`;
+  const base = dir.replace(/[\\/]+$/, "");
+  const used = new Set<string>();
+  return tables.map((table) => {
+    const stem = table.replace(/[\\/:*?"<>|]/g, "_").replace(/[ .]+$/, "") || "table";
+    let name = stem;
+    for (let n = 2; used.has(name.toLowerCase()); n += 1) name = `${stem}_${n}`;
+    used.add(name.toLowerCase());
+    return `${base}${sep}${name}${EXTENSIONS[format]}`;
+  });
+}
+
+/** 長い一覧を先頭 `max` 件に切り詰める。残りの件数は `rest` (0 なら切り詰め無し)。 */
+export function abbreviateList<T>(items: readonly T[], max: number): { shown: T[]; rest: number } {
+  return { shown: items.slice(0, max), rest: Math.max(0, items.length - max) };
 }

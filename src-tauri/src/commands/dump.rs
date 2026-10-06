@@ -150,13 +150,22 @@ pub struct DumpOptions {
 fn validated_dump_tables(options: &DumpOptions) -> Result<Vec<&str>> {
     let mut out = Vec::new();
     for t in options.tables.as_deref().unwrap_or_default() {
-        let t = t.trim();
-        if t.is_empty() || t.starts_with('-') {
+        // 名前はそのまま使う (前後の空白も名前の一部になりうるので trim しない)。
+        if t.trim().is_empty() || t.starts_with('-') {
             return Err(AppError::InvalidInput(format!("invalid table name: {t:?}")));
         }
-        out.push(t);
+        out.push(t.as_str());
     }
     Ok(out)
+}
+
+/// `pg_dump --table` に渡すパターン `"schema"."table"`。`-t` は psql のパターン構文で、
+/// 無引用だと小文字化・`*` `?` のワイルドカード・`.` のスキーマ区切りとして解釈される
+/// うえ、`--schema` は無視される。各部を二重引用符で囲む (内側の `"` は `""`) と、
+/// 大文字・記号入りの名前も、指定したスキーマの 1 テーブルだけに一致する。
+fn pg_table_pattern(schema: &str, table: &str) -> String {
+    let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    format!("{}.{}", quote(schema), quote(table))
 }
 
 /// Dump `database` to `path` as a streaming, cancelable operation (#686).
@@ -736,9 +745,19 @@ async fn dump_postgres(
             cmd.arg("--schema").arg(schema);
         }
     }
-    // 選択テーブルだけのダンプ (#1399)。スキーマの絞り込みは `pg_schema` (--schema) に任せる。
-    for table in validated_dump_tables(options)? {
-        cmd.arg("--table").arg(table);
+    // 選択テーブルだけのダンプ (#1399)。`-t` 指定時は `--schema` が無視されるので、
+    // スキーマ修飾した引用済みパターンで 1 テーブルずつ指定する (`pg_table_pattern`)。
+    let tables = validated_dump_tables(options)?;
+    if !tables.is_empty() {
+        let schema = options.pg_schema.as_deref().unwrap_or_default();
+        if schema.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "pg_schema is required when dumping selected tables".into(),
+            ));
+        }
+        for table in tables {
+            cmd.arg("--table").arg(pg_table_pattern(schema, table));
+        }
     }
     // AWS IAM auth (#734) requires TLS; the token is only accepted over SSL.
     if connect_options.aws_iam.is_some() {
@@ -793,6 +812,17 @@ async fn dump_sqlite(
         .await?;
     // 選択テーブルだけのダンプ (#1399)。空なら全テーブル。
     let wanted = validated_dump_tables(options)?;
+    // 指定したのに存在しないテーブルは黙って除外せず、エラーにする。
+    if let Some(missing) = wanted.iter().find(|w| {
+        !tables
+            .rows
+            .iter()
+            .any(|r| matches!(r.first(), Some(Value::String(n)) if n == **w))
+    }) {
+        return Err(AppError::InvalidInput(format!(
+            "table not found for dump: {missing:?}"
+        )));
+    }
     let selected: Vec<&Vec<Value>> = tables
         .rows
         .iter()
@@ -1195,6 +1225,15 @@ mod tests {
     static CRED_FILE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
+    fn pg_table_pattern_quotes_schema_and_table_literally() {
+        assert_eq!(pg_table_pattern("public", "users"), "\"public\".\"users\"");
+        // 大文字・`.`・`*` はそのまま (引用内ではワイルドカード / 区切りにならない)。
+        assert_eq!(pg_table_pattern("My", "Users.*"), "\"My\".\"Users.*\"");
+        // 内側の `"` は二重化する。
+        assert_eq!(pg_table_pattern("s\"x", "t\"y"), "\"s\"\"x\".\"t\"\"y\"");
+    }
+
+    #[test]
     fn validated_dump_tables_rejects_option_like_and_empty_names() {
         let with = |tables: Option<Vec<&str>>| DumpOptions {
             tables: tables.map(|v| v.into_iter().map(String::from).collect()),
@@ -1203,7 +1242,7 @@ mod tests {
         assert!(validated_dump_tables(&with(None)).unwrap().is_empty());
         assert_eq!(
             validated_dump_tables(&with(Some(vec![" a ", "b"]))).unwrap(),
-            vec!["a", "b"]
+            vec![" a ", "b"]
         );
         assert!(validated_dump_tables(&with(Some(vec!["--all-databases"]))).is_err());
         assert!(validated_dump_tables(&with(Some(vec!["  "]))).is_err());

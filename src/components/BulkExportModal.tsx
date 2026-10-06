@@ -11,7 +11,7 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 import { DEFAULT_SQL_BATCH } from "./exportPreview";
 import { qualifiedTableSql } from "./sqlDialect";
-import { BULK_EXPORT_FORMATS, bulkExportPath } from "./tableBulk";
+import { BULK_EXPORT_FORMATS, bulkExportPaths } from "./tableBulk";
 
 interface Props {
   sessionId: string;
@@ -56,7 +56,7 @@ export function BulkExportModal({ sessionId, driver, database, tables, onClose }
   };
 
   /** 1 テーブルを書き出し、完了で resolve・失敗で reject する。 */
-  const exportOne = async (table: string): Promise<void> => {
+  const exportOne = async (table: string, path: string): Promise<void> => {
     const streamId = `export_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     streamRef.current = streamId;
     let settle: { resolve: () => void; reject: (e: Error) => void } | null = null;
@@ -75,7 +75,7 @@ export function BulkExportModal({ sessionId, driver, database, tables, onClose }
         sql: qualifiedTableSql(driver, database, table),
         database,
         format,
-        path: bulkExportPath(dir, table, format),
+        path,
         initialBatch: settings.defaultDisplayCount,
         chunkSize: settings.streamPrefetchSize,
         queryTimeoutSecs: null,
@@ -94,11 +94,13 @@ export function BulkExportModal({ sessionId, driver, database, tables, onClose }
     cancelledRef.current = false;
     setError(null);
     let finished = 0;
+    // 名前が重なるテーブルがあっても別ファイルになるよう、出力先は先に全件ぶん決める。
+    const paths = bulkExportPaths(dir, tables, format);
     for (const [i, table] of tables.entries()) {
       if (cancelledRef.current || disposedRef.current) break;
       setRunning({ current: i + 1, table });
       try {
-        await exportOne(table);
+        await exportOne(table, paths[i] ?? bulkExportPaths(dir, [table], format)[0] ?? dir);
         finished += 1;
       } catch (e) {
         const message = t("bulkExportFailed", { table, error: String(e) });
@@ -136,7 +138,7 @@ export function BulkExportModal({ sessionId, driver, database, tables, onClose }
         {t("bulkExportTitle", { count: tables.length })}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
-        <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
+        <chakra.div fontSize="sm" color="app.textMuted" lineHeight="normal">
           {t("bulkExportNote")}
         </chakra.div>
         <FormSection>

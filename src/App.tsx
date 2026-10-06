@@ -56,10 +56,11 @@ import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type 
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
-import { joinTableDdls, type BulkTableAction } from "./components/tableBulk";
+import { abbreviateList, joinTableDdls, type BulkTableAction } from "./components/tableBulk";
 import {
   buildDropIndexSql,
   buildDropTableSql,
+  buildDropTablesSql,
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
@@ -6115,10 +6116,13 @@ export default function App() {
       return;
     }
     // DROP: 1 回の確認 (本番接続では DB 名のタイプ入力を要求、#675) の後、1 テーブルずつ実行する。
+    // 一覧が長くなりすぎないよう先頭数件だけ並べ、残りは件数で示す。
+    const { shown, rest } = abbreviateList(tables, 8);
+    const tableList = shown.join(", ") + (rest > 0 ? translate("bulkDropMore", { count: rest }) : "");
     const ok = await confirm({
       title: translate("bulkDropConfirmTitle", { count: tables.length }),
       message: maintenanceMessage(
-        translate("bulkDropConfirmBody", { database, tables: tables.join(", ") }),
+        translate("bulkDropConfirmBody", { database, tables: tableList }),
       ),
       confirmLabel: translate("bulkDropConfirmOk", { count: tables.length }),
       tone: "danger",
@@ -6126,18 +6130,23 @@ export default function App() {
     });
     if (!ok) return;
     const driver = selectedProfile?.driver ?? "mysql";
+    // MySQL / PostgreSQL は 1 文にまとめて FK 依存の順序を DB に任せ、SQLite は 1 件ずつ。
+    const statements = buildDropTablesSql(driver, database, tables);
+    const perTable = statements.length === tables.length;
     const dropped: string[] = [];
     let failure: { table: string; error: string } | null = null;
-    for (const tbl of tables) {
+    for (const [i, sql] of statements.entries()) {
       try {
-        await api.runQuery(sessionId, buildDropTableSql(driver, database, tbl), database);
-        dropped.push(tbl);
+        await api.runQuery(sessionId, sql, database);
+        if (perTable) dropped.push(tables[i] ?? "");
+        else dropped.push(...tables);
       } catch (e) {
-        failure = { table: tbl, error: String(e) };
+        failure = { table: perTable ? (tables[i] ?? "") : "", error: String(e) };
         break;
       }
     }
-    if (dropped.length > 0) {
+    // 失敗しても一部が消えている可能性があるので、スキーマは常に取り直す。
+    if (dropped.length > 0 || failure) {
       invalidateSchemaCache(database);
       connectionListRef.current?.refreshSchema();
       // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
@@ -6147,7 +6156,9 @@ export default function App() {
     }
     if (failure) {
       toast.error(
-        translate("bulkDropPartial", { done: dropped.length, count: tables.length, ...failure }),
+        failure.table
+          ? translate("bulkDropPartial", { done: dropped.length, count: tables.length, ...failure })
+          : translate("bulkDropFailed", { error: failure.error }),
       );
     } else {
       toast.success(translate("bulkDropDone", { count: tables.length }));
