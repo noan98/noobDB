@@ -1579,12 +1579,13 @@
 }
 
 /* ── Theme preset: Tokyo Night (#1237) ────────────────────────────────────
-   folke/tokyonight.nvim の Night (ダーク) と Day (ライト) を使う、ライト/
-   ダーク両対応プリセット。hc- / cb- / solarized と同じく light/dark トグルに
-   追従する (`tokyo-night-light` / `tokyo-night-dark`)。公式値のままでは AA を
-   満たさないペア (Night の comment #565f89、Day の red / green / cyan など) は、
-   ダークでは明色側へ・ライトでは暗色側へ調整している (themeContrast.test.ts が
-   自動検証)。 */
+   Tokyo Night 系の配色 (Night は folke/tokyonight.nvim 準拠の bg #1a1b26 /
+   fg #c0caf5、Day は Tokyo Night Light 系の bg #e1e2e7 / fg #343b58) を基にした
+   独自調整パレットで、ライト/ダーク両対応。hc- / cb- / solarized と同じく
+   light/dark トグルに追従する (`tokyo-night-light` / `tokyo-night-dark`)。
+   公式値のままでは AA を満たさないペア (Night の comment #565f89、Day の
+   red / green / cyan など) は、ダークでは明色側へ・ライトでは暗色側へ調整している
+   (themeContrast.test.ts が自動検証)。 */
 :root[data-theme="tokyo-night-light"] {
   --bg: #e1e2e7;
   --bg-elevated: #ebecf2;
@@ -1601,7 +1602,7 @@
   --bg-row-hover: #d3dbf1;
 
   --text: #343b58;
-  --text-secondary: #4a5275;
+  --text-secondary: #3e4566;
   --text-muted: #4c5578;
   --text-null: #505a80;
   --text-error: #b81f48;

@@ -433,7 +433,10 @@ describe("data-viz palettes stay dark-theme aware (#1187)", () => {
   it("discovers at least the known dark-family backgrounds", () => {
     // 退行検知: フィルタ条件の変更などで 0 件になっても素通りしないようにする。
     expect(Object.keys(darkBackgrounds)).toEqual(
-      expect.arrayContaining(["dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark"]),
+      expect.arrayContaining([
+        "dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark",
+        "catppuccin-dark", "tokyo-night-dark",
+      ]),
     );
   });
 
