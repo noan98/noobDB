@@ -28,6 +28,13 @@ describe("themePresetDataTheme (#465)", () => {
     expect(themePresetDataTheme("solarized", "dark")).toBe("solarized-dark");
   });
 
+  it("catppuccin is dark-only; tokyo-night follows the light/dark toggle (#1237)", () => {
+    expect(themePresetDataTheme("catppuccin", "light")).toBe("catppuccin-dark");
+    expect(themePresetDataTheme("catppuccin", "dark")).toBe("catppuccin-dark");
+    expect(themePresetDataTheme("tokyo-night", "light")).toBe("tokyo-night-light");
+    expect(themePresetDataTheme("tokyo-night", "dark")).toBe("tokyo-night-dark");
+  });
+
   it("every dark-variant preset name ends with 'dark' so conditions.dark matches", () => {
     for (const preset of THEME_PRESET_ORDER) {
       const dataTheme = themePresetDataTheme(preset, "dark");

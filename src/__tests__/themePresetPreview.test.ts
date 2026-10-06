@@ -85,14 +85,14 @@ describe("themePresetPreview: 静的マップと App.css の同期", () => {
     }
   });
 
-  it("dracula/nord/one-dark はダーク専用として light/dark で同じ色を返す", () => {
-    for (const preset of ["dracula", "nord", "one-dark"] as const) {
+  it("dracula/nord/one-dark/catppuccin はダーク専用として light/dark で同じ色を返す", () => {
+    for (const preset of ["dracula", "nord", "one-dark", "catppuccin"] as const) {
       expect(themePreviewColors(preset, "light")).toEqual(themePreviewColors(preset, "dark"));
     }
   });
 
-  it("solarized/high-contrast/colorblind は light/dark で異なる色を返す", () => {
-    for (const preset of ["solarized", "high-contrast", "colorblind"] as const) {
+  it("solarized/tokyo-night/high-contrast/colorblind は light/dark で異なる色を返す", () => {
+    for (const preset of ["solarized", "tokyo-night", "high-contrast", "colorblind"] as const) {
       expect(themePreviewColors(preset, "light")).not.toEqual(themePreviewColors(preset, "dark"));
     }
   });

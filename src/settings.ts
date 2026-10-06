@@ -311,6 +311,9 @@ export interface Settings {
  *   (`solarized-light` / `solarized-dark`, #598). Accent hues darkened /
  *   brightened from the canonical values where needed to keep WCAG AA.
  * - `one-dark` — dark-only One Dark (Atom) palette (#598).
+ * - `catppuccin` — dark-only Catppuccin Mocha palette (#1237).
+ * - `tokyo-night` — Tokyo Night palette that follows the light/dark toggle
+ *   (`tokyo-night-light` = Day / `tokyo-night-dark` = Night, #1237).
  */
 export type ThemePreset =
   | "default"
@@ -318,6 +321,8 @@ export type ThemePreset =
   | "nord"
   | "solarized"
   | "one-dark"
+  | "catppuccin"
+  | "tokyo-night"
   | "high-contrast"
   | "colorblind";
 
@@ -328,6 +333,8 @@ export const THEME_PRESET_ORDER: ThemePreset[] = [
   "nord",
   "solarized",
   "one-dark",
+  "catppuccin",
+  "tokyo-night",
   "high-contrast",
   "colorblind",
 ];
@@ -345,6 +352,8 @@ export function themePresetDataTheme(preset: ThemePreset, theme: Theme): string 
   // 終わるため theme.ts の conditions.dark ([data-theme$=dark]) に一致する。
   if (preset === "nord") return "nord-dark";
   if (preset === "one-dark") return "one-dark";
+  if (preset === "catppuccin") return "catppuccin-dark";
+  if (preset === "tokyo-night") return theme === "dark" ? "tokyo-night-dark" : "tokyo-night-light";
   // solarized / high-contrast / colorblind keep the light/dark axis: the
   // matching App.css block (`solarized-light`/`solarized-dark`,
   // `hc-light`/`hc-dark`, `cb-light`/`cb-dark`) fully overrides the palette

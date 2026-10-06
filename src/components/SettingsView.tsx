@@ -531,6 +531,8 @@ const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof 
   nord: "themePresetNord",
   solarized: "themePresetSolarized",
   "one-dark": "themePresetOneDark",
+  catppuccin: "themePresetCatppuccin",
+  "tokyo-night": "themePresetTokyoNight",
   "high-contrast": "themePresetHighContrast",
   colorblind: "themePresetColorblind",
 };

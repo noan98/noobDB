@@ -306,6 +306,10 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
         "solarized-light",
         "solarized-dark",
         "one-dark",
+        // モダンプリセット (#1237)。
+        "catppuccin-dark",
+        "tokyo-night-light",
+        "tokyo-night-dark",
       ]),
     );
   });
@@ -403,8 +407,11 @@ describe("data-viz palettes stay dark-theme aware (#1187)", () => {
   });
 
   it("agrees with the suffix rule for every known data-theme value", () => {
-    const darkValues = ["dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark"];
-    const lightValues = ["light", "hc-light", "cb-light", "solarized-light"];
+    const darkValues = [
+      "dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark",
+      "catppuccin-dark", "tokyo-night-dark",
+    ];
+    const lightValues = ["light", "hc-light", "cb-light", "solarized-light", "tokyo-night-light"];
     for (const v of darkValues) expect(isDarkDataTheme(v)).toBe(true);
     for (const v of lightValues) expect(isDarkDataTheme(v)).toBe(false);
     expect(isDarkDataTheme(null)).toBe(false);
