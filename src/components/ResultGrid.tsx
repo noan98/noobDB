@@ -103,6 +103,7 @@ import {
   fromNativeValue,
   resolveTypedEditor,
   toNativeValue,
+  type TypedEditor,
 } from "./typedEditor";
 import {
   type CondFormatMode,
@@ -2938,7 +2939,7 @@ interface GridRowProps {
   colWinFirst: number;
   colWinLast: number;
   /** この行で編集中のセル (別の行なら null)。 */
-  editing: { colIdx: number; value: string } | null;
+  editing: { colIdx: number; value: string; start: string; typed: TypedEditor | null } | null;
   activeColIdx: number | null;
   /** この行が範囲選択に入っているときの列集合 (入っていなければ null)。 */
   selColSet: Set<number> | null;
@@ -3047,10 +3048,7 @@ const GridRow = memo(function GridRow({
       isEditingHere && valuePicker
         ? valuePicker.candidates(columns[colIdx]?.name ?? "")
         : EMPTY_PICKER_VALUES;
-    const typedEditor =
-      isEditingHere && columns[colIdx]
-        ? resolveTypedEditor(columns[colIdx].type_name, editing!.value)
-        : null;
+    const typedEditor = isEditingHere ? editing!.typed : null;
     const editError =
       isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
     const pendingError =
@@ -3124,12 +3122,12 @@ const GridRow = memo(function GridRow({
                 className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
                 aria-invalid={editError ? true : undefined}
                 aria-label={columns[colIdx]?.name}
-                value={boolSelectValue(editing!.value)}
+                value={boolSelectValue(editing!.value, editing!.start)}
                 onChange={(e) => handlers.onEditChange(e.target.value)}
                 onBlur={() => handlers.onEditBlur(originalDisplay)}
                 onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
               >
-                {boolOptions(editing!.value).map((o) => (
+                {boolOptions(editing!.start).map((o) => (
                   <option key={o} value={o}>
                     {o}
                   </option>
@@ -3142,10 +3140,16 @@ const GridRow = memo(function GridRow({
                 aria-invalid={editError ? true : undefined}
                 type={typedEditor.inputType}
                 step={typedEditor.inputType === "date" ? undefined : 1}
-                value={toNativeValue(typedEditor.inputType, editing!.value)}
-                onChange={(e) =>
-                  handlers.onEditChange(fromNativeValue(typedEditor.inputType, e.target.value, "NULL"))
-                }
+                // 非制御: 一部の欄だけ消した途中状態 (badInput) を React が巻き戻さないため。
+                defaultValue={toNativeValue(typedEditor.inputType, editing!.start)}
+                onChange={(e) => {
+                  // 一部の欄だけ消した状態 (badInput) は value が "" になるが NULL
+                  // 確定ではないので、保留値を更新しない。
+                  if (e.target.value === "" && e.target.validity.badInput) return;
+                  handlers.onEditChange(
+                    fromNativeValue(typedEditor.inputType, e.target.value, "NULL", editing!.start),
+                  );
+                }}
                 onBlur={() => handlers.onEditBlur(originalDisplay)}
                 onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
               />
@@ -4338,9 +4342,27 @@ export const DataGrid = memo(function DataGrid({
   // Inline-edit state: the cell currently being typed into (if any) plus
   // the buffered text. Lives in DataGrid so navigation between cells is
   // local — committed values are lifted via `onSetCellEdit`.
+  // `start` / `typed` は編集開始時の値で一度だけ決める (型別エディタ #1355。打鍵の
+  // 途中でコントロールが切り替わらないように)。
   const [editing, setEditing] = useState<
-    { rowIdx: number; colIdx: number; value: string } | null
+    {
+      rowIdx: number;
+      colIdx: number;
+      value: string;
+      start: string;
+      typed: TypedEditor | null;
+    } | null
   >(null);
+  const beginEdit = (rowIdx: number, colIdx: number, value: string, typeable = true) => {
+    const typeName = columns[colIdx]?.type_name;
+    setEditing({
+      rowIdx,
+      colIdx,
+      value,
+      start: value,
+      typed: typeable && typeName ? resolveTypedEditor(typeName, value) : null,
+    });
+  };
   // スマート値ピッカー (#1067): 編集中セルの列について候補を (再) 取得する。
   // FK は入力に応じて前方一致で絞り込み、ENUM / CHECK は初回に 1 度だけ引く。
   const valuePickerListId = useId();
@@ -4562,7 +4584,9 @@ export const DataGrid = memo(function DataGrid({
     const rowKey = rowEditKey(rows[rowIdx] ?? [], pkIndices ?? [], rowIdx);
     // Re-typing the original value clears the pending edit so the user
     // can "undo" without hitting Cancel.
-    if (value === originalDisplay) {
+    const col = columns[colIdx];
+    const cur = rows[rowIdx]?.[colIdx];
+    if (value === originalDisplay || (col && cur !== undefined && editIsNoop(value, col, cur))) {
       onSetCellEdit(rowKey, colIdx, null);
     } else {
       onSetCellEdit(rowKey, colIdx, value);
@@ -5169,17 +5193,13 @@ export const DataGrid = memo(function DataGrid({
       // (read-only grids, PK/BLOB columns, preview panes) opens
       // the full-value viewer instead, so the two never collide.
       if (cell.editable && onSetCellEdit) {
-        setEditing({
-          rowIdx,
-          colIdx,
-          value: cell.hasPending ? (cell.pendingValue ?? "") : cell.originalDisplay,
-        });
+        beginEdit(rowIdx, colIdx, cell.hasPending ? (cell.pendingValue ?? "") : cell.originalDisplay);
         return;
       }
       setViewer({ rowIdx, colIdx });
     },
     onEditChange: (value: string) => {
-      setEditing((cur) => (cur ? { rowIdx: cur.rowIdx, colIdx: cur.colIdx, value } : cur));
+      setEditing((cur) => (cur ? { ...cur, value } : cur));
     },
     onEditBlur: (originalDisplay: string) => {
       if (!editing) return;
@@ -5465,11 +5485,11 @@ export const DataGrid = memo(function DataGrid({
           const v = rows[rowIdx]?.[colIdx] ?? null;
           const rowKey = rowEditKey(rows[rowIdx] ?? [], pkIndices ?? [], rowIdx);
           const pending = pendingEdits?.[rowKey]?.[colIdx];
-          setEditing({
+          beginEdit(
             rowIdx,
             colIdx,
-            value: pending !== undefined ? pending : (v === null || v === undefined ? "" : String(v)),
-          });
+            pending !== undefined ? pending : v === null || v === undefined ? "" : String(v),
+          );
         } else if (visIdx < rowCount - 1) {
           navigateCell(visibleRows[visIdx + 1].index, colIdx);
         }
@@ -5499,7 +5519,7 @@ export const DataGrid = memo(function DataGrid({
               toast.info(t("gridMaskedCellBlocked"));
               return;
             }
-            setEditing({ rowIdx, colIdx, value: e.key });
+            beginEdit(rowIdx, colIdx, e.key, false);
           }
         }
     }
@@ -5546,7 +5566,11 @@ export const DataGrid = memo(function DataGrid({
         rightPinnedCount={rightPinnedCount}
         colWinFirst={colWinFirst}
         colWinLast={colWinLast}
-        editing={editingHere ? { colIdx: editing.colIdx, value: editing.value } : null}
+        editing={
+          editingHere
+            ? { colIdx: editing.colIdx, value: editing.value, start: editing.start, typed: editing.typed }
+            : null
+        }
         activeColIdx={activeCell?.rowIdx === row.index ? activeCell.colIdx : null}
         selColSet={selectionRect?.rowIndexSet.has(row.index) ? selectionRect.colIdSet : null}
         findHits={findHits}

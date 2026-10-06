@@ -5,12 +5,7 @@ import type { Column, TableColumnInfo } from "../api/tauri";
 import type { PendingInsertRow } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton, Select } from "./ui";
-import {
-  boolOptions,
-  fromNativeValue,
-  resolveTypedEditor,
-  toNativeValue,
-} from "./typedEditor";
+import { boolOptions, resolveTypedEditor } from "./typedEditor";
 import { Tooltip } from "./Tooltip";
 import { useValuePicker, ValueDatalist, type ValueLookup } from "./useValuePicker";
 import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
@@ -59,7 +54,11 @@ export function RowInsertModal({
 }: Props) {
   const t = useT();
   const [values, setValues] = useState<Record<number, string>>(initialValues ?? {});
-  const firstRef = useRef<HTMLInputElement>(null);
+  // 先頭列は入力でもセレクタでもあり得るので、コールバック ref で要素を保持する。
+  const firstRef = useRef<HTMLElement | null>(null);
+  const setFirstRef = (el: HTMLElement | null) => {
+    firstRef.current = el;
+  };
   const listIdBase = useId();
   const picker = useValuePicker({ driver, database, table, columns: tableColumns, lookup });
   // フォーカス中の列の候補を (再) 取得する。FK は入力に応じて前方一致で絞る。
@@ -119,7 +118,12 @@ export function RowInsertModal({
           const pickerValues = picker.candidates(c.name);
           const listId = `${listIdBase}-${i}`;
           const cur = values[i] ?? "";
-          const typed = resolveTypedEditor(c.type_name, cur);
+          // 真偽値だけセレクタにする。日付系はネイティブ入力だと明示的な NULL
+          // (ヒント文の "null" 入力) を表現できないため、テキスト入力のままにする。
+          // 種別は初期値で決め、入力中に切り替わらないようにする。
+          const typed =
+            resolveTypedEditor(c.type_name, initialValues?.[i] ?? "")?.control === "bool";
+          const boolStart = initialValues?.[i] ?? "";
           return (
           <Flex key={c.name} align="center" gap="2.5">
             <Tooltip label={`${c.name} (${c.type_name})`}>
@@ -138,39 +142,28 @@ export function RowInsertModal({
                 </chakra.span>
               </chakra.label>
             </Tooltip>
-            {typed?.control === "bool" ? (
+            {typed ? (
               <Select
+                ref={i === 0 ? setFirstRef : undefined}
                 value={cur}
                 aria-label={c.name}
                 onFocus={() => setFocused(i)}
                 onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit();
+                }}
                 flex="1"
               >
                 <option value="">{t("rowOpsInsertDefaultOption")}</option>
-                {boolOptions(cur).map((o) => (
+                {boolOptions(boolStart).map((o) => (
                   <option key={o} value={o}>
                     {o}
                   </option>
                 ))}
               </Select>
-            ) : typed ? (
-              <Input
-                type={typed.inputType}
-                step={typed.inputType === "date" ? undefined : 1}
-                value={toNativeValue(typed.inputType, cur)}
-                aria-label={c.name}
-                onFocus={() => setFocused(i)}
-                onChange={(e) =>
-                  setValues((prev) => ({
-                    ...prev,
-                    [i]: fromNativeValue(typed.inputType, e.target.value, ""),
-                  }))
-                }
-                flex="1"
-              />
             ) : (
               <Input
-                ref={i === 0 ? firstRef : undefined}
+                ref={i === 0 ? setFirstRef : undefined}
                 value={cur}
                 list={pickerValues.length > 0 ? listId : undefined}
                 onFocus={() => setFocused(i)}
