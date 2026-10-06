@@ -760,7 +760,7 @@ function ExplainViewerBody({ result, driver, streaming }: Omit<Props, "analyze">
           )}
           {analyzed && <chakra.span css={indexBadgeCss}>{t("explainAnalyzeBadge")}</chakra.span>}
           {root.cost !== null && (
-            <chakra.span css={totalCostCss}>
+            <chakra.span css={totalCostCss} textStyle="numeric">
               {t("explainTotalCost", { cost: formatNumber(root.cost) })}
             </chakra.span>
           )}

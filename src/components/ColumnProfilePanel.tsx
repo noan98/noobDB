@@ -21,6 +21,7 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { StatTile } from "./StatTile";
+import { integerCountUpTarget } from "../useCountUp";
 import { Spinner } from "./Spinner";
 import { Skeleton, SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
@@ -72,7 +73,9 @@ const MotionReveal = chakra(motion.div, {}, {
 
 // 件数は number ならカウントアップ、2^53 超の文字列は丸めず文字列のまま出す (#1238)。
 const countTile = (c: ProfileCount | null | undefined) =>
-  typeof c === "number" ? c : formatProfileCount(c);
+  integerCountUpTarget(c) ?? formatProfileCount(c);
+// 補間中の小数は四捨五入してから整形する (CountUp 既定と同じ)。
+const formatCount = (n: number) => formatProfileCount(Math.round(n));
 
 export function ColumnProfilePanel({
   sessionId,
@@ -274,7 +277,7 @@ export function ColumnProfilePanel({
             <StatTile
               label={t("profileTotal")}
               value={countTile(profile.total_count)}
-              formatter={formatProfileCount}
+              formatter={formatCount}
             />
             <StatTile
               label={t("profileNulls")}
@@ -285,7 +288,7 @@ export function ColumnProfilePanel({
             <StatTile
               label={t("profileDistinct")}
               value={countTile(profile.distinct_count)}
-              formatter={formatProfileCount}
+              formatter={formatCount}
               sub={profile.distinct_approximate ? t("profileApproxMark") : undefined}
             />
             <StatTile label={t("profileMin")} value={profileValueLabel(profile.min_value) ?? "NULL"} />

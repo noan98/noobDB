@@ -69,3 +69,41 @@ describe("ColumnProfilePanel running skeleton (#1211)", () => {
     expect(screen.getByText(t("profileTotal"))).toBeInTheDocument();
   });
 });
+
+describe("ColumnProfilePanel StatTile (#1238)", () => {
+  const base = {
+    data_type: "bigint",
+    null_count: 0,
+    distinct_count: 0,
+    distinct_approximate: false,
+    min_value: null,
+    max_value: null,
+    top_values: [],
+    histogram: [],
+    notes: [],
+  };
+  const renderPanel = () =>
+    renderWithProviders(
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="mysql"
+        target={{ database: "app", table: "orders", column: "id" }}
+        onSelectColumn={() => {}}
+      />,
+    );
+
+  it("2^53 超の件数 (文字列) は丸めず桁区切りだけで出す", async () => {
+    vi.mocked(api.profileColumn).mockResolvedValueOnce({
+      ...base,
+      total_count: "9007199254740993",
+    } as never);
+    renderPanel();
+    expect((await screen.findAllByText("9,007,199,254,740,993")).length).toBeGreaterThan(0);
+  });
+
+  it("総数 0 のとき NULL 率は「—」になる", async () => {
+    vi.mocked(api.profileColumn).mockResolvedValueOnce({ ...base, total_count: 0 } as never);
+    renderPanel();
+    expect((await screen.findAllByText("—")).length).toBeGreaterThan(0);
+  });
+});
