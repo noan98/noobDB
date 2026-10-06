@@ -685,6 +685,7 @@ export const PaneView = memo(
                   />
                 ) : tab.batchResults ? (
                   <BatchResultsView
+                    key={tab.id}
                     results={tab.batchResults}
                     running={!!tab.batchRunning}
                     onRerun={(stopOnError) => {
@@ -694,6 +695,7 @@ export const PaneView = memo(
                   />
                 ) : tab.showChart && tab.result && !tab.streaming ? (
                   <ChartView
+                    key={tab.id}
                     result={tab.result}
                     sourceSql={tab.lastExecutedSql}
                     driver={selectedProfile?.driver ?? "mysql"}
@@ -704,6 +706,7 @@ export const PaneView = memo(
                   />
                 ) : tab.showJson && tab.result && !tab.streaming ? (
                   <ResultJsonView
+                    key={tab.id}
                     result={tab.result}
                     database={tab.database ?? selectedProfile?.database ?? null}
                     table={tab.table ?? null}
@@ -711,6 +714,7 @@ export const PaneView = memo(
                   />
                 ) : tab.showPivot && tab.result && !tab.streaming ? (
                   <PivotView
+                    key={tab.id}
                     result={tab.result}
                     driver={selectedProfile?.driver ?? "mysql"}
                     sourceSql={tab.lastExecutedSql}
@@ -719,6 +723,7 @@ export const PaneView = memo(
                   />
                 ) : tab.preview ? (
                   <PreviewGrid
+                    key={tab.id}
                     result={tab.preview}
                     rowLimit={tab.previewRowLimit}
                     streaming={tab.streaming}
