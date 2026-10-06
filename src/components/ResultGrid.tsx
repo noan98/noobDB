@@ -98,6 +98,13 @@ import {
   truncateHexPreview,
 } from "./cellTypeMeta";
 import {
+  boolOptions,
+  boolSelectValue,
+  fromNativeValue,
+  resolveTypedEditor,
+  toNativeValue,
+} from "./typedEditor";
+import {
   type CondFormatMode,
   type NumericStats,
   toNumber,
@@ -2887,7 +2894,10 @@ type GridRowHandlers = {
   ) => void;
   onEditChange: (value: string) => void;
   onEditBlur: (originalDisplay: string) => void;
-  onEditKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>, originalDisplay: string) => void;
+  onEditKeyDown: (
+    e: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>,
+    originalDisplay: string,
+  ) => void;
 };
 
 /**
@@ -3037,6 +3047,10 @@ const GridRow = memo(function GridRow({
       isEditingHere && valuePicker
         ? valuePicker.candidates(columns[colIdx]?.name ?? "")
         : EMPTY_PICKER_VALUES;
+    const typedEditor =
+      isEditingHere && columns[colIdx]
+        ? resolveTypedEditor(columns[colIdx].type_name, editing!.value)
+        : null;
     const editError =
       isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
     const pendingError =
@@ -3104,16 +3118,49 @@ const GridRow = memo(function GridRow({
       >
         {isEditingHere ? (
           <div className="cell-edit-wrap">
-            <input
-              autoFocus
-              className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
-              aria-invalid={editError ? true : undefined}
-              list={editPickerValues.length > 0 ? valuePickerListId : undefined}
-              value={editing!.value}
-              onChange={(e) => handlers.onEditChange(e.target.value)}
-              onBlur={() => handlers.onEditBlur(originalDisplay)}
-              onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
-            />
+            {typedEditor?.control === "bool" ? (
+              <select
+                autoFocus
+                className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                aria-invalid={editError ? true : undefined}
+                aria-label={columns[colIdx]?.name}
+                value={boolSelectValue(editing!.value)}
+                onChange={(e) => handlers.onEditChange(e.target.value)}
+                onBlur={() => handlers.onEditBlur(originalDisplay)}
+                onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
+              >
+                {boolOptions(editing!.value).map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            ) : typedEditor ? (
+              <input
+                autoFocus
+                className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                aria-invalid={editError ? true : undefined}
+                type={typedEditor.inputType}
+                step={typedEditor.inputType === "date" ? undefined : 1}
+                value={toNativeValue(typedEditor.inputType, editing!.value)}
+                onChange={(e) =>
+                  handlers.onEditChange(fromNativeValue(typedEditor.inputType, e.target.value, "NULL"))
+                }
+                onBlur={() => handlers.onEditBlur(originalDisplay)}
+                onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
+              />
+            ) : (
+              <input
+                autoFocus
+                className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                aria-invalid={editError ? true : undefined}
+                list={editPickerValues.length > 0 ? valuePickerListId : undefined}
+                value={editing!.value}
+                onChange={(e) => handlers.onEditChange(e.target.value)}
+                onBlur={() => handlers.onEditBlur(originalDisplay)}
+                onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
+              />
+            )}
             <ValueDatalist id={valuePickerListId} values={editPickerValues} />
             {editError && (
               <div className="cell-edit-error" role="alert">
@@ -5160,7 +5207,10 @@ export const DataGrid = memo(function DataGrid({
         }
       })();
     },
-    onEditKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>, originalDisplay: string) => {
+    onEditKeyDown: (
+      e: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>,
+      originalDisplay: string,
+    ) => {
       if (!editing) return;
       if (e.key === "Tab") {
         e.preventDefault();

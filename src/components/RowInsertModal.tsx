@@ -4,7 +4,13 @@ import { useT } from "../i18n";
 import type { Column, TableColumnInfo } from "../api/tauri";
 import type { PendingInsertRow } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, PressableButton } from "./ui";
+import { Button, Input, PressableButton, Select } from "./ui";
+import {
+  boolOptions,
+  fromNativeValue,
+  resolveTypedEditor,
+  toNativeValue,
+} from "./typedEditor";
 import { Tooltip } from "./Tooltip";
 import { useValuePicker, ValueDatalist, type ValueLookup } from "./useValuePicker";
 import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
@@ -112,6 +118,8 @@ export function RowInsertModal({
           const pickerKind = picker.kindOf(c.name);
           const pickerValues = picker.candidates(c.name);
           const listId = `${listIdBase}-${i}`;
+          const cur = values[i] ?? "";
+          const typed = resolveTypedEditor(c.type_name, cur);
           return (
           <Flex key={c.name} align="center" gap="2.5">
             <Tooltip label={`${c.name} (${c.type_name})`}>
@@ -130,17 +138,49 @@ export function RowInsertModal({
                 </chakra.span>
               </chakra.label>
             </Tooltip>
-            <Input
-              ref={i === 0 ? firstRef : undefined}
-              value={values[i] ?? ""}
-              list={pickerValues.length > 0 ? listId : undefined}
-              onFocus={() => setFocused(i)}
-              onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
-              }}
-              flex="1"
-            />
+            {typed?.control === "bool" ? (
+              <Select
+                value={cur}
+                aria-label={c.name}
+                onFocus={() => setFocused(i)}
+                onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                flex="1"
+              >
+                <option value="">{t("rowOpsInsertDefaultOption")}</option>
+                {boolOptions(cur).map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </Select>
+            ) : typed ? (
+              <Input
+                type={typed.inputType}
+                step={typed.inputType === "date" ? undefined : 1}
+                value={toNativeValue(typed.inputType, cur)}
+                aria-label={c.name}
+                onFocus={() => setFocused(i)}
+                onChange={(e) =>
+                  setValues((prev) => ({
+                    ...prev,
+                    [i]: fromNativeValue(typed.inputType, e.target.value, ""),
+                  }))
+                }
+                flex="1"
+              />
+            ) : (
+              <Input
+                ref={i === 0 ? firstRef : undefined}
+                value={cur}
+                list={pickerValues.length > 0 ? listId : undefined}
+                onFocus={() => setFocused(i)}
+                onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit();
+                }}
+                flex="1"
+              />
+            )}
             <ValueDatalist id={listId} values={pickerValues} />
             {pickerKind && (
               <Tooltip label={badgeTitle(pickerKind, c.name)}>
