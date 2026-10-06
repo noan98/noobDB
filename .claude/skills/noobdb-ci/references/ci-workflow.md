@@ -119,7 +119,10 @@
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
-  確実に実走させるため)。`rust (test)` は加えて
+  確実に実走させるため)。同様に `ci-scripts` フィルタ (`scripts/ci-setup-*.sh`)
+  もORで見ています (#1359。セットアップスクリプトだけの変更がPR上で無検証に
+  ならないため)。`scripts/bundle-size.mjs` は `frontend` フィルタに含めています。
+  `rust (test)` は加えて
   `scripts/ci-setup-sshd.sh` で apt の `openssh-server` を 127.0.0.1:2222 に立て、
   `NOOBDB_TEST_SSH_URL` / `NOOBDB_TEST_SSH_KEY` を `$GITHUB_ENV` に渡すことで SSH
   トンネル統合テスト (#331) も実走します (サービスコンテナはイメージ pull が要るため
