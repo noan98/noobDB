@@ -56,6 +56,7 @@ import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type 
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
+import { joinTableDdls, type BulkTableAction } from "./components/tableBulk";
 import {
   buildDropIndexSql,
   buildDropTableSql,
@@ -162,6 +163,9 @@ const ScriptRunModal = lazy(() =>
 );
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
+);
+const BulkExportModal = lazy(() =>
+  import("./components/BulkExportModal").then((m) => ({ default: m.BulkExportModal })),
 );
 const SchemaExportModal = lazy(() =>
   import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
@@ -1739,6 +1743,10 @@ export default function App() {
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
+  // 選択したテーブルだけをダンプするときの対象 (#1399。未設定ならデータベース全体)。
+  const [dumpTables, setDumpTables] = useState<string[] | undefined>(undefined);
+  // 複数テーブルの一括エクスポートモーダルの対象 (#1399)。
+  const [bulkExportTarget, setBulkExportTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // `.sql` スクリプト実行モーダルの対象 DB (#973。null で閉じる)。
   const [scriptTarget, setScriptTarget] = useState<string | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
@@ -5855,6 +5863,7 @@ export default function App() {
   }, []);
 
   const handleDumpDatabase = useCallback((database: string) => {
+    setDumpTables(undefined);
     setDumpTarget(database);
   }, []);
 
@@ -6074,6 +6083,76 @@ export default function App() {
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
+
+  // スキーマツリーで複数選択したテーブルへの一括操作 (#1399)。実行は既存経路の束ね:
+  // DDL = get_object_definition、エクスポート = export_query_stream (BulkExportModal)、
+  // ダンプ = dump_database の `tables`、DROP = run_query (read_only はバックエンドが拒否)。
+  const handleBulkTables = useCallback(async (action: BulkTableAction, database: string, tables: string[]) => {
+    if (!sessionId || tables.length === 0) return;
+    if (action === "export") {
+      setBulkExportTarget({ database, tables });
+      return;
+    }
+    if (action === "dump") {
+      setDumpTables(tables);
+      setDumpTarget(database);
+      return;
+    }
+    if (action === "copyDdl" || action === "showDdl") {
+      try {
+        const ddls = await Promise.all(
+          tables.map((tbl) => api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, tbl, null)),
+        );
+        const script = joinTableDdls(ddls);
+        if (action === "showDdl") {
+          openQueryInEditor(script);
+        } else if (await copyToClipboard(script)) {
+          toast.success(translate("bulkDdlCopied", { count: tables.length }));
+        }
+      } catch (e) {
+        toast.error(translate("objDefinitionError", { error: String(e) }));
+      }
+      return;
+    }
+    // DROP: 1 回の確認 (本番接続では DB 名のタイプ入力を要求、#675) の後、1 テーブルずつ実行する。
+    const ok = await confirm({
+      title: translate("bulkDropConfirmTitle", { count: tables.length }),
+      message: maintenanceMessage(
+        translate("bulkDropConfirmBody", { database, tables: tables.join(", ") }),
+      ),
+      confirmLabel: translate("bulkDropConfirmOk", { count: tables.length }),
+      tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? database : undefined,
+    });
+    if (!ok) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const dropped: string[] = [];
+    let failure: { table: string; error: string } | null = null;
+    for (const tbl of tables) {
+      try {
+        await api.runQuery(sessionId, buildDropTableSql(driver, database, tbl), database);
+        dropped.push(tbl);
+      } catch (e) {
+        failure = { table: tbl, error: String(e) };
+        break;
+      }
+    }
+    if (dropped.length > 0) {
+      invalidateSchemaCache(database);
+      connectionListRef.current?.refreshSchema();
+      // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === database && tt.table !== undefined && dropped.includes(tt.table))
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    }
+    if (failure) {
+      toast.error(
+        translate("bulkDropPartial", { done: dropped.length, count: tables.length, ...failure }),
+      );
+    } else {
+      toast.success(translate("bulkDropDone", { count: tables.length }));
+    }
+  }, [sessionId, confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, invalidateSchemaCache, openQueryInEditor, toast, tabsRef]);
 
   const handleRenameTableSubmit = useCallback(async (newName: string) => {
     const target = renameTarget;
@@ -8151,6 +8230,7 @@ export default function App() {
     onDropNamespace: handleDropNamespace,
     onTruncateTable: handleTruncateTable,
     onDropTable: handleDropTable,
+    onBulkTables: handleBulkTables,
     onRenameTable: (database: string, table: string) => setRenameTarget({ database, table }),
     onAlterTable: (database: string, table: string) => setAlterTableTarget({ database, table }),
     onCreateIndex: (database: string, table: string) => setCreateIndexTarget({ database, table }),
@@ -9514,7 +9594,20 @@ export default function App() {
             sessionId={sessionId}
             database={dumpTarget}
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            tables={dumpTables}
             onClose={() => setDumpTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {bulkExportTarget && sessionId && (
+          <BulkExportModal
+            sessionId={sessionId}
+            driver={selectedProfile?.driver ?? "mysql"}
+            database={bulkExportTarget.database}
+            tables={bulkExportTarget.tables}
+            onClose={() => setBulkExportTarget(null)}
           />
         )}
       </AnimatePresence>

@@ -50,8 +50,13 @@ import {
   type MaintenanceKind,
 } from "./maintenanceCommands";
 import { Input } from "./ui";
+import type { BulkTableAction } from "./tableBulk";
 import {
+  applyTableSelectClick,
   buildExplorerRows,
+  EMPTY_TABLE_SELECTION,
+  resolveTableSelection,
+  type TableSelection,
   explorerContainerKind,
   explorerRowExpansion,
   explorerRowLabel,
@@ -328,6 +333,9 @@ interface Props {
   /** テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。read_only では無効化される。 */
   onTruncateTable?: (database: string, table: string) => void;
   onDropTable?: (database: string, table: string) => void;
+  /** ツリーで複数選択したテーブルへの一括操作 (DDL / エクスポート / ダンプ / DROP、#1399)。
+   *  DROP は read_only では無効化し、確認と実行は呼び出し側 (App) が担う。 */
+  onBulkTables?: (action: BulkTableAction, database: string, tables: string[]) => void;
   onRenameTable?: (database: string, table: string) => void;
   /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
   onAlterTable?: (database: string, table: string) => void;
@@ -492,6 +500,8 @@ interface TreeActions {
   ) => (e: React.KeyboardEvent<HTMLElement>) => void;
   pickTable: (db: string, tbl: string) => void;
   toggleTable: (db: string, tbl: string) => void;
+  /** テーブル行のクリック: Ctrl/Cmd で追加・解除、Shift で範囲、修飾キー無しで選択解除 (#1399)。 */
+  selectTable: (e: React.MouseEvent, db: string, tbl: string) => void;
   toggleFavorite: (db: string, tbl: string) => void;
   openObjectDefinition: (db: string, kind: string, name: string, id: string | null) => void;
   tableMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string) => void;
@@ -963,6 +973,8 @@ interface TableNodeProps {
   comment: string | undefined;
   /** 現在結果パネルに開いているテーブルか (#982)。 */
   isActive: boolean;
+  /** 一括操作の対象として複数選択されているか (#1399)。 */
+  selected: boolean;
   posInSet?: number;
   setSize?: number;
 }
@@ -985,6 +997,7 @@ const TableNode = memo(function TableNode({
   rowEst,
   comment,
   isActive: isActiveTable,
+  selected,
   posInSet,
   setSize,
 }: TableNodeProps) {
@@ -1020,11 +1033,14 @@ const TableNode = memo(function TableNode({
       // 基準になるが、非アクティブ行では不要なので付けない。
       aria-current={isActiveTable ? "true" : undefined}
       position={isActiveTable ? "relative" : undefined}
-      bg={isActiveTable ? "var(--bg-active)" : undefined}
+      bg={selected ? "var(--bg-active-strong)" : isActiveTable ? "var(--bg-active)" : undefined}
+      aria-selected={view ? undefined : selected}
+      // ビューは一括操作 (DROP TABLE など) の対象外なので選択しない (#1399)。
+      onClick={view ? undefined : (e) => actions.selectTable(e, db, tbl)}
       onDoubleClick={() => actions.pickTable(db, tbl)}
       onContextMenu={openMenu}
       {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
-      _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
+      _hover={{ bg: selected ? "var(--bg-active-strong)" : isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
     >
       {isActiveTable && (
         <MotionActiveIndicator
@@ -1147,6 +1163,8 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
 
 interface SchemaRowContentProps {
   row: ExplorerRow;
+  /** 複数選択中のテーブルキー (#1399)。 */
+  selectedKeys: ReadonlySet<string>;
   /** `groupLevel` (グループ見出しがあるとき 1)。 */
   level: number;
   q: string;
@@ -1155,7 +1173,7 @@ interface SchemaRowContentProps {
 }
 
 /** フラットな行 (`ExplorerRow`) を、種別ごとの `memo` 行コンポーネントへ渡す。 */
-function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }: SchemaRowContentProps) {
+function SchemaRowContent({ row, selectedKeys, level, q, removableFavorites, containerLabel }: SchemaRowContentProps) {
   const t = useT();
   const headerLabel = useHeaderLabel();
   switch (row.kind) {
@@ -1218,6 +1236,7 @@ function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }:
           rowEst={row.rowEst}
           comment={row.comment}
           isActive={row.isActive}
+          selected={selectedKeys.has(tableKey(row.db, row.tbl))}
           posInSet={row.posInSet}
           setSize={row.setSize}
         />
@@ -1307,6 +1326,8 @@ interface SchemaRowListHandle {
 
 interface SchemaRowListProps {
   rows: ExplorerRow[];
+  /** 複数選択中のテーブルキー (#1399)。 */
+  selectedKeys: ReadonlySet<string>;
   level: number;
   q: string;
   removableFavorites: boolean;
@@ -1330,6 +1351,7 @@ interface SchemaRowListProps {
  */
 const SchemaRowList = memo(function SchemaRowList({
   rows,
+  selectedKeys,
   level,
   q,
   removableFavorites,
@@ -1544,6 +1566,7 @@ const SchemaRowList = memo(function SchemaRowList({
       <Indent depth={row.depth}>
         <SchemaRowContent
           row={row}
+          selectedKeys={selectedKeys}
           level={level}
           q={q}
           removableFavorites={removableFavorites}
@@ -1635,6 +1658,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onAlterTable,
   onCreateIndex,
   onDropIndex,
+  onBulkTables,
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onSyncIdentity,
@@ -2343,6 +2367,35 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const handleTableContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string) => {
     e.preventDefault();
     e.stopPropagation();
+    // 複数選択中のテーブルを右クリックしたら一括操作メニュー (#1399)。選択外の行なら選択を解く。
+    if (tableSelection.keys.size > 0) {
+      const sel = resolvedTableSelection;
+      if (onBulkTables && sel && sel.db === db && sel.tables.length >= 2 && sel.tables.includes(tbl)) {
+        const count = sel.tables.length;
+        const bulk = (action: BulkTableAction) => () => onBulkTables(action, sel.db, sel.tables);
+        setMenu({
+          x: e.clientX,
+          y: e.clientY,
+          items: [
+            { label: t("bulkMenuCopyDdl", { count }), onSelect: bulk("copyDdl") },
+            { label: t("bulkMenuShowDdl", { count }), onSelect: bulk("showDdl") },
+            { separator: true },
+            { label: t("bulkMenuExport", { count }), onSelect: bulk("export") },
+            { label: t("bulkMenuDump", { count }), onSelect: bulk("dump") },
+            { separator: true },
+            {
+              label: t("bulkMenuDrop", { count }),
+              onSelect: bulk("drop"),
+              disabled: activeReadOnly,
+              title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+              danger: true,
+            },
+          ],
+        });
+        return;
+      }
+      setTableSelection(EMPTY_TABLE_SELECTION);
+    }
     // 先頭はテーブル選択後の 2 つの行き先 (#1112): データ (ダブルクリックと同じ) と
     // 構造 (ボトムパネル)。
     const items: ContextMenuEntry[] = [
@@ -2900,6 +2953,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const activeExpanded = activeProfileId ? !!expandedProfiles[activeProfileId] : false;
   // The schema tree only shows the active connection, so its read-only flag
   // governs whether write-y table actions (Import CSV) are offered.
+  const [tableSelection, setTableSelection] = useState<TableSelection>(EMPTY_TABLE_SELECTION);
   const activeReadOnly = !!profiles.find((p) => p.id === activeProfileId)?.read_only;
   // 保守コマンドの SQL 方言はアクティブ接続のドライバで決まる (ツリーは
   // アクティブ接続のみを表示する)。
@@ -3093,6 +3147,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // (行の props / context が変わらず、描き直されない)。
   const pickTable = useEvent((db: string, tbl: string) => onPickTable(db, tbl));
   const toggleTableEvent = useEvent((db: string, tbl: string) => void toggleTable(db, tbl));
+  const selectTableEvent = useEvent((e: React.MouseEvent, db: string, tbl: string) => {
+    const mode = e.shiftKey ? "range" : e.ctrlKey || e.metaKey ? "toggle" : "single";
+    setTableSelection((cur) => applyTableSelectClick(cur, explorerRows, db, tbl, mode));
+  });
   const toggleFavoriteEvent = useEvent((db: string, tbl: string) => onToggleFavorite?.(db, tbl));
   const openObjectDefinitionEvent = useEvent((db: string, kind: string, name: string, id: string | null) =>
     onOpenObjectDefinition?.(db, kind, name, id),
@@ -3112,6 +3170,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       makeKeyDown: makeTreeItemKeyDown,
       pickTable,
       toggleTable: toggleTableEvent,
+      selectTable: selectTableEvent,
       toggleFavorite: toggleFavoriteEvent,
       openObjectDefinition: openObjectDefinitionEvent,
       tableMenu: tableMenuEvent,
@@ -3130,6 +3189,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       makeTreeItemKeyDown,
       pickTable,
       toggleTableEvent,
+      selectTableEvent,
       toggleFavoriteEvent,
       openObjectDefinitionEvent,
       tableMenuEvent,
@@ -3215,6 +3275,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     activeTableDb,
     activeTableName,
   ]);
+  // 複数選択 (#1399)。見えている行にあるものだけを有効な選択として扱う。
+  const resolvedTableSelection = useMemo(
+    () => resolveTableSelection(tableSelection, explorerRows),
+    [tableSelection, explorerRows],
+  );
+  const selectedTableKeys = useMemo<ReadonlySet<string>>(
+    () => new Set((resolvedTableSelection?.tables ?? []).map((tbl) => tableKey(resolvedTableSelection?.db ?? "", tbl))),
+    [resolvedTableSelection],
+  );
   const activeRowKey = activeTableDb !== undefined && activeTableName !== undefined
     ? `tbl:${tableKey(activeTableDb, activeTableName)}`
     : null;
@@ -3434,6 +3503,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             {isActive && sessionId && (
               <SchemaRowList
                 rows={explorerRows}
+                selectedKeys={selectedTableKeys}
                 level={groupLevel}
                 q={q}
                 removableFavorites={!!onToggleFavorite}
