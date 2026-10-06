@@ -685,6 +685,7 @@ export const PaneView = memo(
                   />
                 ) : tab.batchResults ? (
                   <BatchResultsView
+                    // 以下の結果ビューは同じcontentModeでもタブごとに作り直す。useState初期化子で設定を決めるため、使い回すと前タブの設定が残る(#1323)
                     key={tab.id}
                     results={tab.batchResults}
                     running={!!tab.batchRunning}
