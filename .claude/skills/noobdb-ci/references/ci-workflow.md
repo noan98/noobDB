@@ -7,7 +7,7 @@
   ジョブを走らせて全 PR ブランチがフォールバック復元できる main スコープを温めます
   (これが無いと新規 PR ブランチの初回 Rust ビルドは毎回コールド)。マージ後の main
   の健全性確認も兼ねます。`dorny/paths-filter` で
-  変更領域 (frontend / rust / workflow / crosslang) を判定し、ジョブ単位の `if:` で
+  変更領域 (frontend / rust / workflow / crosslang / ci-scripts) を判定し、ジョブ単位の `if:` で
   出し分けします (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
   ジョブを skip させる方式。push イベントでは paths-filter が git 履歴比較を行う
   ため `changes` ジョブは checkout してから filter を実行します)。`frontend`
@@ -152,7 +152,7 @@
   (`-C instrument-coverage`) は sccache がキャッシュしない遅いビルドで、以前は
   `rust (test)` に同居して全 PR のクリティカルパスになっていたため (#1153)、
   `rust (test)` と**並列**の別ジョブへ切り出しました。`if:` 条件 (rust /
-  workflow / crosslang の OR) と sccache / rust-cache の設定は `rust (test)` と同等
+  workflow / crosslang / ci-scripts の OR) と sccache / rust-cache の設定は `rust (test)` と同等
   ですが、キャッシュキーは `coverage` / `sccache-<os>-coverage-…` で分離しています。
   **`rust (coverage)` は必須チェックに含めません** (`--fail-under-lines` 割れは
   赤く出ますがマージはブロックしない運用)。
