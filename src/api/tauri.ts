@@ -1503,6 +1503,8 @@ export interface DumpOptions {
    * by the server / generator). Best-effort; intended for review/version control.
    */
   formatSql?: boolean;
+  /** 指定したテーブルだけをダンプする (#1399)。未指定 / 空はデータベース全体。 */
+  tables?: string[] | null;
 }
 
 // --- タスクスケジューラ (#730) -------------------------------------------

@@ -487,3 +487,67 @@ export function explorerRowExpansion(row: ExplorerRow): { expandable: boolean; o
   if (row.kind === "db" || row.kind === "table") return { expandable: true, open: row.open };
   return { expandable: false, open: false };
 }
+
+// --- テーブルの複数選択 (#1399) ---
+//
+// Ctrl / Cmd クリックで 1 件ずつ、Shift クリックで範囲を選ぶ。一括操作 (DDL / エクスポート /
+// ダンプ / DROP) は 1 つの DB を対象にするので、選択は常に同じ DB のテーブルに限る
+// (別 DB の行を選んだら選び直し)。ビューは DROP TABLE などの対象外なので選ばない。
+
+/** 選択中のテーブルキー (`tableKey`) とアンカー (Shift 範囲選択の起点)。 */
+export interface TableSelection {
+  keys: ReadonlySet<string>;
+  anchor: string | null;
+}
+
+export const EMPTY_TABLE_SELECTION: TableSelection = { keys: new Set(), anchor: null };
+
+/** クリックの種類。`single` は修飾キー無し (選択を解除して起点だけ置く)。 */
+export type TableSelectMode = "single" | "toggle" | "range";
+
+/** いま見えているテーブル行 (ビューを除く) を上から並べる。 */
+export function selectableTableRows(rows: readonly ExplorerRow[]): { db: string; tbl: string }[] {
+  const out: { db: string; tbl: string }[] = [];
+  for (const r of rows) if (r.kind === "table" && r.view === null) out.push({ db: r.db, tbl: r.tbl });
+  return out;
+}
+
+/** クリックを選択状態へ反映した新しい選択を返す。 */
+export function applyTableSelectClick(
+  sel: TableSelection,
+  rows: readonly ExplorerRow[],
+  db: string,
+  tbl: string,
+  mode: TableSelectMode,
+): TableSelection {
+  const key = tableKey(db, tbl);
+  if (mode === "single") return { keys: new Set(), anchor: key };
+  // 既存の選択が別 DB のものなら捨てて選び直す。
+  const sameDb = (k: string) => k.startsWith(`${db}::`);
+  if (mode === "toggle") {
+    const next = new Set([...sel.keys].filter(sameDb));
+    if (!next.delete(key)) next.add(key);
+    return { keys: next, anchor: key };
+  }
+  const visible = selectableTableRows(rows);
+  const anchor = sel.anchor !== null && sameDb(sel.anchor) ? sel.anchor : null;
+  const from = anchor === null ? -1 : visible.findIndex((v) => tableKey(v.db, v.tbl) === anchor);
+  const to = visible.findIndex((v) => tableKey(v.db, v.tbl) === key);
+  if (from < 0 || to < 0) return { keys: new Set([key]), anchor: key };
+  const [lo, hi] = from <= to ? [from, to] : [to, from];
+  const next = new Set<string>();
+  for (const v of visible.slice(lo, hi + 1)) if (v.db === db) next.add(tableKey(v.db, v.tbl));
+  return { keys: next, anchor };
+}
+
+/** 選択のうち、いま見えている行にあるものを行順で返す (折りたたみ・検索で隠れた分は除く)。 */
+export function resolveTableSelection(
+  sel: TableSelection,
+  rows: readonly ExplorerRow[],
+): { db: string; tables: string[] } | null {
+  if (sel.keys.size === 0) return null;
+  const hit = selectableTableRows(rows).filter((v) => sel.keys.has(tableKey(v.db, v.tbl)));
+  const first = hit[0];
+  if (!first) return null;
+  return { db: first.db, tables: hit.filter((v) => v.db === first.db).map((v) => v.tbl) };
+}

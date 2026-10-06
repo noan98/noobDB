@@ -137,6 +137,35 @@ pub struct DumpOptions {
     /// 内容は保たれるが配置が変わりうるため、再取り込み重視ならオフのままにする。
     #[serde(default)]
     pub format_sql: bool,
+
+    /// 指定したテーブルだけをダンプする (#1399)。`None` / 空はデータベース全体。
+    /// MySQL は `mysqldump <db> <tables...>`、PostgreSQL は `--table` (パターン照合)、
+    /// SQLite は対象テーブルとそのインデックス / トリガーだけを書き出す。
+    #[serde(default)]
+    pub tables: Option<Vec<String>>,
+}
+
+/// `options.tables` の検証済みリスト。空 / `-` 始まりの名前 (オプションに誤解釈されうる)
+/// は拒否する。`None` / 空配列はデータベース全体を表す空リスト。
+fn validated_dump_tables(options: &DumpOptions) -> Result<Vec<&str>> {
+    let mut out = Vec::new();
+    for t in options.tables.as_deref().unwrap_or_default() {
+        // 名前はそのまま使う (前後の空白も名前の一部になりうるので trim しない)。
+        if t.trim().is_empty() || t.starts_with('-') {
+            return Err(AppError::InvalidInput(format!("invalid table name: {t:?}")));
+        }
+        out.push(t.as_str());
+    }
+    Ok(out)
+}
+
+/// `pg_dump --table` に渡すパターン `"schema"."table"`。`-t` は psql のパターン構文で、
+/// 無引用だと小文字化・`*` `?` のワイルドカード・`.` のスキーマ区切りとして解釈される
+/// うえ、`--schema` は無視される。各部を二重引用符で囲む (内側の `"` は `""`) と、
+/// 大文字・記号入りの名前も、指定したスキーマの 1 テーブルだけに一致する。
+fn pg_table_pattern(schema: &str, table: &str) -> String {
+    let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    format!("{}.{}", quote(schema), quote(table))
 }
 
 /// Dump `database` to `path` as a streaming, cancelable operation (#686).
@@ -653,6 +682,10 @@ async fn dump_mysql(
     // 引数インジェクションを防ぐ (上の `starts_with('-')` チェックと合わせた多層防御)。
     cmd.arg("--");
     cmd.arg(database);
+    // 以降の位置引数はテーブル名 (#1399)。`--` の後ろなのでオプションとは解釈されない。
+    for table in validated_dump_tables(options)? {
+        cmd.arg(table);
+    }
 
     // Hold the option file until the child finishes reading it — the streamer
     // spawns the child, so keeping `defaults` alive across the await is required.
@@ -712,6 +745,20 @@ async fn dump_postgres(
             cmd.arg("--schema").arg(schema);
         }
     }
+    // 選択テーブルだけのダンプ (#1399)。`-t` 指定時は `--schema` が無視されるので、
+    // スキーマ修飾した引用済みパターンで 1 テーブルずつ指定する (`pg_table_pattern`)。
+    let tables = validated_dump_tables(options)?;
+    if !tables.is_empty() {
+        let schema = options.pg_schema.as_deref().unwrap_or_default();
+        if schema.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "pg_schema is required when dumping selected tables".into(),
+            ));
+        }
+        for table in tables {
+            cmd.arg("--table").arg(pg_table_pattern(schema, table));
+        }
+    }
     // AWS IAM auth (#734) requires TLS; the token is only accepted over SSL.
     if connect_options.aws_iam.is_some() {
         cmd.env("PGSSLMODE", "require");
@@ -763,9 +810,30 @@ async fn dump_sqlite(
             None,
         )
         .await?;
-    let total_tables = tables.rows.len() as u64;
+    // 選択テーブルだけのダンプ (#1399)。空なら全テーブル。
+    let wanted = validated_dump_tables(options)?;
+    // 指定したのに存在しないテーブルは黙って除外せず、エラーにする。
+    if let Some(missing) = wanted.iter().find(|w| {
+        !tables
+            .rows
+            .iter()
+            .any(|r| matches!(r.first(), Some(Value::String(n)) if n == **w))
+    }) {
+        return Err(AppError::InvalidInput(format!(
+            "table not found for dump: {missing:?}"
+        )));
+    }
+    let selected: Vec<&Vec<Value>> = tables
+        .rows
+        .iter()
+        .filter(|r| {
+            wanted.is_empty()
+                || matches!(r.first(), Some(Value::String(n)) if wanted.contains(&n.as_str()))
+        })
+        .collect();
+    let total_tables = selected.len() as u64;
     let mut processed = 0u64;
-    for row in &tables.rows {
+    for row in selected {
         let (name, create_sql) = match (row.first(), row.get(1)) {
             (Some(Value::String(n)), Some(Value::String(s))) => (n.clone(), s.clone()),
             _ => {
@@ -826,11 +894,26 @@ async fn dump_sqlite(
     // Indexes / triggers / views come after the data (they may reference table
     // rows). Skipped entirely for a data-only dump.
     if !options.no_create_info {
+        // テーブルを絞ったときは、そのテーブルのインデックス / トリガーだけを出す (ビューは除く)。
+        let scope = if wanted.is_empty() {
+            "type IN ('index','trigger','view')".to_string()
+        } else {
+            let list: Vec<String> = wanted
+                .iter()
+                .map(|n| format!("'{}'", n.replace('\'', "''")))
+                .collect();
+            format!(
+                "type IN ('index','trigger') AND tbl_name IN ({})",
+                list.join(", ")
+            )
+        };
         let objs = conn
             .execute(
-                "SELECT sql FROM sqlite_master \
-                 WHERE type IN ('index','trigger','view') AND name NOT LIKE 'sqlite_%' \
-                 AND sql IS NOT NULL ORDER BY type, name",
+                &format!(
+                    "SELECT sql FROM sqlite_master \
+                     WHERE {scope} AND name NOT LIKE 'sqlite_%' \
+                     AND sql IS NOT NULL ORDER BY type, name"
+                ),
                 None,
             )
             .await?;
@@ -1140,6 +1223,30 @@ mod tests {
     /// `noobdb-dump-*` credential files in the shared temp dir so none of
     /// them observe another's file appearing/disappearing mid-assertion.
     static CRED_FILE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn pg_table_pattern_quotes_schema_and_table_literally() {
+        assert_eq!(pg_table_pattern("public", "users"), "\"public\".\"users\"");
+        // 大文字・`.`・`*` はそのまま (引用内ではワイルドカード / 区切りにならない)。
+        assert_eq!(pg_table_pattern("My", "Users.*"), "\"My\".\"Users.*\"");
+        // 内側の `"` は二重化する。
+        assert_eq!(pg_table_pattern("s\"x", "t\"y"), "\"s\"\"x\".\"t\"\"y\"");
+    }
+
+    #[test]
+    fn validated_dump_tables_rejects_option_like_and_empty_names() {
+        let with = |tables: Option<Vec<&str>>| DumpOptions {
+            tables: tables.map(|v| v.into_iter().map(String::from).collect()),
+            ..Default::default()
+        };
+        assert!(validated_dump_tables(&with(None)).unwrap().is_empty());
+        assert_eq!(
+            validated_dump_tables(&with(Some(vec![" a ", "b"]))).unwrap(),
+            vec![" a ", "b"]
+        );
+        assert!(validated_dump_tables(&with(Some(vec!["--all-databases"]))).is_err());
+        assert!(validated_dump_tables(&with(Some(vec!["  "]))).is_err());
+    }
 
     #[test]
     fn dump_temp_path_is_a_sibling_in_the_same_dir() {

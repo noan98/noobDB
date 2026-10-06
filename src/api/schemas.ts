@@ -1365,6 +1365,7 @@ const dumpOptions = z.object({
   noPrivileges: z.boolean().optional(),
   pgSchema: z.string().nullable().optional(),
   formatSql: z.boolean().optional(),
+  tables: z.array(z.string()).nullable().optional(),
 });
 
 // `ExportFormat` (tauri.ts / Rust) と同じ全種。xlsx (#711) が抜けていると xlsx の

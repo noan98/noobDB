@@ -47,6 +47,8 @@ interface Props {
   sessionId: string;
   database: string;
   driver: DriverKind;
+  /** 指定するとこのテーブルだけをダンプする (#1399)。未指定はデータベース全体。 */
+  tables?: string[];
   onClose: () => void;
 }
 
@@ -230,12 +232,17 @@ type Status =
   | { kind: "running" }
   | { kind: "error"; message: string };
 
-export function DumpModal({ sessionId, database, driver, onClose }: Props) {
+export function DumpModal({ sessionId, database, driver, tables, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const initialBasename = useMemo(() => defaultBasename(database), [database]);
   const [path, setPath] = useState<string>(`${initialBasename}.sql`);
-  const [options, setOptions] = useState<DumpOptions>(DEFAULT_OPTIONS);
+  // テーブル指定時 (#1399): PostgreSQL のツリー階層はスキーマなので、`--schema` も同じ名前に絞る。
+  const [options, setOptions] = useState<DumpOptions>(() =>
+    tables && tables.length > 0
+      ? { ...DEFAULT_OPTIONS, tables, pgSchema: driver === "postgres" ? database : null }
+      : DEFAULT_OPTIONS,
+  );
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [progress, setProgress] = useState<DumpProgress | null>(null);
   // Active dump's stream id + event unlistener, so the modal can cancel and
@@ -399,7 +406,9 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
       closeOnEscape={!isRunning}
     >
       <ModalHeader onClose={onClose} closeLabel={t("dumpClose")} closeDisabled={isRunning}>
-        {t("dumpTitle", { database })}
+        {tables && tables.length > 0
+          ? t("dumpTitleTables", { database, count: tables.length })
+          : t("dumpTitle", { database })}
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="4">

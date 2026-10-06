@@ -27,6 +27,17 @@ export function buildDropTableSql(driver: string, database: string | null, table
 }
 
 /**
+ * 複数テーブルの一括 DROP (#1399)。MySQL / PostgreSQL は `DROP TABLE a, b, c;` の 1 文にして、
+ * 選択内の FK 依存 (参照先を先に消すと失敗する順序) を DB に解決させる。SQLite は
+ * 複数テーブルの DROP 構文が無いので 1 テーブル 1 文。
+ */
+export function buildDropTablesSql(driver: string, database: string | null, tables: readonly string[]): string[] {
+  if (driver === "sqlite") return tables.map((t) => buildDropTableSql(driver, database, t));
+  if (tables.length === 0) return [];
+  return [`DROP TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`];
+}
+
+/**
  * RENAME 文。`ALTER TABLE ... RENAME TO ...` は MySQL 8 / PostgreSQL / SQLite の
  * すべてで使える。新しい名前はスキーマ非修飾 (同じスキーマ内での改名)。
  */
