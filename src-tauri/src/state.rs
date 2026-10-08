@@ -36,6 +36,9 @@ pub enum StreamKind {
     /// 検索系 (Where-used / DB 全体からの値検索、#1261)。`delivered_rows` は値検索が
     /// 結果を送り終えたテーブル数。キャンセルは Channel の `Cancelled` で通知する。
     Search,
+    /// AI リクエスト (#690)。`delivered_rows` は送信済みの本文差分 (delta) の件数。
+    /// キャンセルは `ai-stream:cancelled` で通知する。
+    Ai,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`

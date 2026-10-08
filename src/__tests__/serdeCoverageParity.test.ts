@@ -26,6 +26,7 @@ const commandModules = import.meta.glob("../../src-tauri/src/commands/**/*.rs", 
 
 /** Rust の型名 → フィクスチャキー。 */
 const COVERED: Record<string, string> = {
+  AiConnectionTestResult: "aiConnectionTestResult",
   AlterTableContext: "alterTableContext",
   Assertion: "assertionVariants",
   AssertionOutcome: "assertionOutcome",

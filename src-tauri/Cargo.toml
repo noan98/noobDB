@@ -103,6 +103,20 @@ aes-gcm = { version = "0.11", default-features = false, features = ["aes", "allo
 # ゼロ埋めする (#710)。
 zeroize = "1"
 
+# AI 基盤 (#690): Anthropic Messages API を直接叩く薄いクライアント用。Rust には公式
+# SDK が無い。reqwest 0.13 では TLS の feature 名が `rustls` (aws-lc-rs を引き込む) /
+# `rustls-no-provider` になり、旧 `rustls-tls` は存在しない。依存グラフには既に
+# tauri-plugin-updater 経由で `rustls-no-provider` 構成の reqwest 0.13.3 が入っており、
+# 暗号プロバイダは sqlx の ring を使うため、同じ構成にして新規クレートを増やさない
+# (cargo deny の許可リストもそのまま通る)。`system-proxy` は updater と同じく OS の
+# プロキシ設定に従うため。
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "json",
+    "stream",
+    "system-proxy",
+] }
+
 # Serialization & errors
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -40,22 +40,22 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport,
-    BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff,
-    ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff,
-    DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
-    ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
-    HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
-    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
-    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
-    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
-    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
-    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
-    StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
-    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo, Value,
+    AiConnectionStatus, AiConnectionTestResult, BatchStatementResult, BatchStatus,
+    BatchStreamMessage, BroadcastDiff, BroadcastEnvReport, BroadcastMessage, CancelStreamResult,
+    CellBlobProbe, ChangedRow, Column, ColumnDiff, ColumnProfile, ConnectPhaseEvent,
+    ConnectResponse, ConnectionProfile, CsvPreview, DataDiff, DiffMode, DiffStatus, DriverKind,
+    DumpDoneEvent, DumpErrorEvent, DumpProgressEvent, ExportDoneEvent, ExportErrorEvent,
+    ExportProgressEvent, ForeignKey, HealthFinding, HistoryEntry, ImportDoneEvent,
+    ImportErrorEvent, ImportProgressEvent, ImportResult, ImportStartedEvent, IndexInfo, KnownHost,
+    LiveQuery, LocalTableMeta, LogView, PatchRun, PreviewStreamMessage, ProcessListItem,
+    ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags, QueryResult,
+    QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
+    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
+    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage, ServerMessageSeverity,
+    ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope,
+    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow, StreamCancelledEvent,
+    StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment,
+    TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -394,6 +394,13 @@ fn build_fixtures() -> serde_json::Value {
     let cancel_stream_response = CancelStreamResult {
         cancelled: true,
         delivered_rows: 42,
+    };
+
+    let ai_connection_test_result = AiConnectionTestResult {
+        status: AiConnectionStatus::Success,
+        message: "ok".into(),
+        model: Some("claude-opus-5-5".into()),
+        elapsed_ms: 812,
     };
 
     let known_host = KnownHost {
@@ -1550,6 +1557,7 @@ fn build_fixtures() -> serde_json::Value {
         "localTableMeta": local_table_meta,
         "profileImportResult": profile_import_result,
         "cancelStreamResponse": cancel_stream_response,
+        "aiConnectionTestResult": ai_connection_test_result,
         "knownHost": known_host,
         "schemaDiff": schema_diff,
         "syncPlan": sync_plan,

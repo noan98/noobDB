@@ -688,6 +688,7 @@ const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
 const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
 const EV_SCRIPT_CANCELLED: &str = "sql-script:cancelled";
+const EV_AI_CANCELLED: &str = "ai-stream:cancelled";
 const EV_TRANSFER_CANCELLED: &str = "transfer-stream:cancelled";
 
 /// 自動リフレッシュの差分パッチ (#1257) を要求するパラメータ。
@@ -1734,6 +1735,8 @@ pub async fn cancel_stream(
                     // transaction); an open transaction is rolled back by the
                     // runner's drop guard (#973).
                     StreamKind::Script => Some(EV_SCRIPT_CANCELLED),
+                    // AI リクエスト (#690)。`delivered_rows` は送信済みの delta 件数。
+                    StreamKind::Ai => Some(EV_AI_CANCELLED),
                     // 接続間転送 (#986)。`create` / `replace` では作りかけのテーブルを
                     // 後始末で DROP するため、`delivered_rows` (書き込み済み行数) が
                     // 永続化されて残るのは `append` のときだけ。

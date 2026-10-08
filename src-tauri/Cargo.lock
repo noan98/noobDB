@@ -3103,6 +3103,7 @@ dependencies = [
  "proptest",
  "rand 0.10.3",
  "regex",
+ "reqwest",
  "russh",
  "rust_decimal",
  "rust_xlsxwriter",

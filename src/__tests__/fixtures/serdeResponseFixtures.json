@@ -1,4 +1,10 @@
 {
+  "aiConnectionTestResult": {
+    "elapsedMs": 812,
+    "message": "ok",
+    "model": "claude-opus-5-5",
+    "status": "success"
+  },
   "alterTableContext": {
     "columns": [
       {
