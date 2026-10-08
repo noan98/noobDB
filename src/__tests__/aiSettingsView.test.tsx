@@ -1,20 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
 
 const setAiApiKey = vi.fn().mockResolvedValue(undefined);
 const hasAiApiKey = vi.fn().mockResolvedValue(false);
 const testAiConnection = vi.fn();
+const runAiRequest = vi.fn().mockResolvedValue(undefined);
+let handlers: import("../api/tauri").AiStreamHandlers | null = null;
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   return {
     ...actual,
+    listenAiStream: vi.fn(async (_id: string, h: import("../api/tauri").AiStreamHandlers) => {
+      handlers = h;
+      return () => {};
+    }),
     api: {
       ...actual.api,
       setAiApiKey: (...a: unknown[]) => setAiApiKey(...a),
       hasAiApiKey: () => hasAiApiKey(),
       testAiConnection: (...a: unknown[]) => testAiConnection(...a),
+      runAiRequest: (...a: unknown[]) => runAiRequest(...a),
+      cancelStream: vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 }),
     },
   };
 });
@@ -95,5 +103,57 @@ describe("AiSettings (#690)", () => {
     await waitFor(() => expect(btn).not.toBeDisabled());
     fireEvent.click(btn);
     await screen.findByText(t("aiTestAuthError", { message: "rejected" }));
+  });
+});
+
+// ストリーミング (サンプル要求) の状態遷移と、モデル ID を渡さない契約 (#690)。
+describe("AiSettings サンプル要求 (#690)", () => {
+  const base = { streamId: "s" };
+  const usage = { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+
+  async function start() {
+    hasAiApiKey.mockResolvedValue(true);
+    replaceAllSettings({ ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true } });
+    renderWithProviders(<AiSettings />);
+    const btn = await screen.findByRole("button", { name: t("aiSampleRequest") });
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+  }
+
+  beforeEach(() => {
+    handlers = null;
+  });
+
+  it("delta が表示され、done で完了表示になる。runAiRequest にモデル ID は渡らない", async () => {
+    await start();
+    const args = runAiRequest.mock.calls[0][0] as Record<string, unknown>;
+    expect(Object.keys(args).sort()).toEqual(["prompt", "settings", "streamId", "task"]);
+    expect(args.task).toBe("generic");
+    expect(JSON.stringify(args.settings)).toContain("defaultModel"); // 設定スナップショットとしては渡る
+    expect(Object.keys(args)).not.toContain("model");
+    act(() => handlers?.onDelta?.({ ...base, text: "Hel" }));
+    act(() => handlers?.onDelta?.({ ...base, text: "lo" }));
+    expect(screen.getByTestId("ai-sample-text").textContent).toBe("Hello");
+    act(() =>
+      handlers?.onDone?.({ ...base, model: "claude-opus-5-5", requestedModel: "claude-opus-5-5", fallbackUsed: false, stopReason: "end_turn", usage }),
+    );
+    await screen.findByText(t("aiSampleDone", { model: "claude-opus-5-5", input: 1, output: 2 }));
+  });
+
+  it("error と refusal と cancelled を区別して表示する", async () => {
+    await start();
+    act(() => handlers?.onError?.({ ...base, error: "boom", kind: "aiApi" }));
+    await screen.findByText(t("aiSampleError", { message: "boom" }));
+  });
+
+  it("refusal は警告表示、cancelled は中止表示", async () => {
+    await start();
+    act(() => handlers?.onError?.({ ...base, error: "no", kind: "aiRefused" }));
+    await screen.findByText(t("aiSampleRefused", { message: "no" }));
+    cleanup();
+    await start();
+    act(() => handlers?.onCancelled?.({ streamId: "s", deliveredRows: 0 }));
+    await screen.findByText(t("aiSampleCancelled"));
   });
 });

@@ -142,6 +142,12 @@ pub struct StreamAccumulator {
     pub stop_reason: Option<String>,
     pub usage: AiUsage,
     pub text: String,
+    /// refusal の `stop_details.category`。
+    pub stop_category: Option<String>,
+    /// 出力の途中でフォールバックが起きた (`content_block_start` の `fallback` ブロック)。
+    pub fallback_seen: bool,
+    /// フォールバック先のモデル (`to.model`)。応答モデルとして `model` を上書きする。
+    pub fallback_model: Option<String>,
 }
 
 impl StreamAccumulator {
@@ -165,6 +171,16 @@ impl StreamAccumulator {
                 }
                 Ok(StreamStep::Nothing)
             }
+            "content_block_start" => {
+                let block = &json["content_block"];
+                if block.get("type").and_then(Value::as_str) == Some("fallback") {
+                    self.fallback_seen = true;
+                    if let Some(m) = block["to"].get("model").and_then(Value::as_str) {
+                        self.fallback_model = Some(m.to_string());
+                    }
+                }
+                Ok(StreamStep::Nothing)
+            }
             "content_block_delta" => {
                 let delta = &json["delta"];
                 // thinking_delta / input_json_delta などは本文ではないので無視する。
@@ -179,6 +195,12 @@ impl StreamAccumulator {
             "message_delta" => {
                 if let Some(r) = json["delta"].get("stop_reason").and_then(Value::as_str) {
                     self.stop_reason = Some(r.to_string());
+                }
+                if let Some(c) = json["delta"]["stop_details"]
+                    .get("category")
+                    .and_then(Value::as_str)
+                {
+                    self.stop_category = Some(c.to_string());
                 }
                 if let Some(u) = json.get("usage") {
                     self.usage.merge(u);

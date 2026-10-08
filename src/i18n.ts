@@ -3906,7 +3906,7 @@ const en = {
   helpAiPricingDesc: "Approximate API prices per 1M tokens (input / output). Actual billing follows Anthropic.",
   helpAiPriceOpus: "Claude Opus 5.5: $4 / $20",
   helpAiPriceSonnet: "Claude Sonnet 5.5: $2 / $10",
-  helpAiPriceHaiku: "Claude Haiku 5.5: $0.10 / $0.50",
+  helpAiPriceHaiku: "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
 };
 
@@ -7809,7 +7809,7 @@ const ja: Dict = {
   helpAiPricingDesc: "100 万トークンあたりの API 価格の目安 (入力 / 出力) です。実際の請求は Anthropic に従います。",
   helpAiPriceOpus: "Claude Opus 5.5: $4 / $20",
   helpAiPriceSonnet: "Claude Sonnet 5.5: $2 / $10",
-  helpAiPriceHaiku: "Claude Haiku 5.5: $0.10 / $0.50",
+  helpAiPriceHaiku: "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
 };
 

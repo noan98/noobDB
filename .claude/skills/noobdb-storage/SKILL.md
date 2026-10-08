@@ -10,7 +10,7 @@ description: noobDB のプロファイル・秘密情報 (keyring) の分離、J
 | 置き場所 | 入れるもの |
 |---|---|
 | `profiles.json` (data_dir) | **非秘密のみ** — 名前・ホスト・ポート・ユーザ・SSH 設定・TLS 証明書の**パス**・`init_sql` など |
-| OS keyring (サービス名 `noobDB`) | **秘密のみ** — `db_password` / `ssh_passphrase` / `ssh_password` (+ 踏み台用の `*_hop0`) |
+| OS keyring (サービス名 `noobDB`) | **秘密のみ** — `db_password` / `ssh_passphrase` / `ssh_password` (+ 踏み台用の `*_hop0`)、および AI 基盤 (#690) の Anthropic API キー `ai/anthropic_api_key` (プロファイルに属さない名前空間 `ai`。暗号化バックアップ (#710) の対象外で、エクスポートにも含まれない) |
 
 - **秘密情報を `profiles.json` に入れない。ログにも出さない。**
 - `save_profile` の `Option<String>` は 3 状態: `None` = 変更なし、`Some("")` =

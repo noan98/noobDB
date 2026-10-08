@@ -48,24 +48,39 @@ pub struct AiCompletion {
     pub usage: AiUsage,
 }
 
-fn finish(
-    spec: &AiRequestSpec,
+/// 応答の終端情報。ストリーミング / 非ストリーミングで共通。
+struct Finish {
     text: String,
     model: Option<String>,
     stop_reason: Option<String>,
+    /// refusal の `stop_details.category` (取れなければ `None`)。
+    stop_category: Option<String>,
+    /// 出力の途中でフォールバックが起きたか (`content_block` の `fallback`)。
+    fallback_seen: bool,
     usage: AiUsage,
-) -> Result<AiCompletion> {
+}
+
+fn finish(spec: &AiRequestSpec, f: Finish) -> Result<AiCompletion> {
+    let Finish {
+        text,
+        model,
+        stop_reason,
+        stop_category,
+        fallback_seen,
+        usage,
+    } = f;
     let requested_model = spec.model.id().to_string();
     let model = model.unwrap_or_else(|| requested_model.clone());
     let stop_reason = stop_reason.unwrap_or_default();
     // refusal は成功扱いにせず必ず分岐してユーザに分かるエラーにする。
     if stop_reason == "refusal" {
-        return Err(AppError::AiRefused(format!(
-            "model {model} declined to respond to this request"
-        )));
+        return Err(AppError::AiRefused(match stop_category {
+            Some(c) => format!("model {model} declined to respond to this request (category: {c})"),
+            None => format!("model {model} declined to respond to this request"),
+        }));
     }
     Ok(AiCompletion {
-        fallback_used: model != requested_model,
+        fallback_used: fallback_seen || model != requested_model,
         text,
         model,
         requested_model,
@@ -159,7 +174,17 @@ pub async fn run_streaming<T: AiTransport, F: FnMut(&str)>(
             "the response stream ended before the message completed".into(),
         ));
     }
-    finish(spec, acc.text, acc.model, acc.stop_reason, acc.usage)
+    finish(
+        spec,
+        Finish {
+            text: acc.text,
+            model: acc.fallback_model.or(acc.model),
+            stop_reason: acc.stop_reason,
+            stop_category: acc.stop_category,
+            fallback_seen: acc.fallback_seen,
+            usage: acc.usage,
+        },
+    )
 }
 
 /// 非ストリーミング要求 (接続テスト用)。`spec.stream` は false であること。
@@ -193,12 +218,20 @@ pub async fn run_once<T: AiTransport>(
     }
     finish(
         spec,
-        text,
-        json.get("model").and_then(Value::as_str).map(String::from),
-        json.get("stop_reason")
-            .and_then(Value::as_str)
-            .map(String::from),
-        usage,
+        Finish {
+            text,
+            model: json.get("model").and_then(Value::as_str).map(String::from),
+            stop_reason: json
+                .get("stop_reason")
+                .and_then(Value::as_str)
+                .map(String::from),
+            stop_category: json["stop_details"]
+                .get("category")
+                .and_then(Value::as_str)
+                .map(String::from),
+            fallback_seen: false,
+            usage,
+        },
     )
 }
 
@@ -221,6 +254,11 @@ pub struct ReqwestTransport {
 
 impl ReqwestTransport {
     pub fn new() -> Result<Self> {
+        // reqwest の `rustls-no-provider` 構成は、プロセス既定の暗号プロバイダが未登録だと
+        // Client 構築時に panic する (sqlx は既定に登録せず、updater は更新チェック時にしか
+        // 登録しない)。更新チェック前でも安全なよう、updater と同じ ring をここで登録する。
+        // 冪等で、すでに登録済みなら Err が返るだけなので無視してよい。
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             // ストリームの無音がこれ以上続いたら諦める (全体の長さは制限しない)。
@@ -235,7 +273,15 @@ impl AiTransport for ReqwestTransport {
     type Body = ReqwestBody;
 
     async fn post(&self, api_key: &str, body: &Value) -> Result<AiHttpResponse<ReqwestBody>> {
-        let mut req = self.client.post(API_URL).header("x-api-key", api_key);
+        // キーはヘッダ値として不正な文字 (改行など) を含みうる。値自体はメッセージに出さない。
+        let mut key = reqwest::header::HeaderValue::from_str(api_key).map_err(|_| {
+            AppError::AiAuth(
+                "the API key contains characters that cannot be sent in a header".into(),
+            )
+        })?;
+        // デバッグ出力などにキーが現れないようにする。
+        key.set_sensitive(true);
+        let mut req = self.client.post(API_URL).header("x-api-key", key);
         for (k, v) in static_headers() {
             req = req.header(k, v);
         }
@@ -367,6 +413,66 @@ mod tests {
         assert_eq!(done.model, "claude-sonnet-5-5");
         assert_eq!(done.requested_model, "claude-opus-5-5");
         assert!(done.fallback_used);
+    }
+
+    #[test]
+    fn transport_can_be_built_without_a_preinstalled_crypto_provider() {
+        // 回帰防止: プロバイダ未登録だと reqwest が panic する。
+        assert!(ReqwestTransport::new().is_ok());
+    }
+
+    #[tokio::test]
+    async fn mid_stream_fallback_block_overrides_model() {
+        let events = sse(&[
+            ("message_start", START),
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"fallback","from":{"model":"claude-opus-5-5"},"to":{"model":"claude-haiku-5-5"}}}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+            ),
+            ("message_stop", r#"{"type":"message_stop"}"#),
+        ]);
+        let stub = Stub::new(200, events.iter().map(String::as_str).collect());
+        let done = run_streaming(&stub, "k", &spec(true), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(done.model, "claude-haiku-5-5");
+        assert!(done.fallback_used);
+    }
+
+    #[tokio::test]
+    async fn refusal_message_includes_category_when_present() {
+        let events = sse(&[
+            ("message_start", START),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"category":"cyber"}},"usage":{"output_tokens":1}}"#,
+            ),
+            ("message_stop", r#"{"type":"message_stop"}"#),
+        ]);
+        let stub = Stub::new(200, events.iter().map(String::as_str).collect());
+        let err = run_streaming(&stub, "k", &spec(true), |_| {})
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("cyber"));
+        // null は正当な値 (カテゴリ無し)。
+        let events = sse(&[
+            ("message_start", START),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":null},"usage":{"output_tokens":1}}"#,
+            ),
+            ("message_stop", r#"{"type":"message_stop"}"#),
+        ]);
+        let stub = Stub::new(200, events.iter().map(String::as_str).collect());
+        let err = run_streaming(&stub, "k", &spec(true), |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), "aiRefused");
+        assert!(!err.to_string().contains("category"));
     }
 
     #[tokio::test]

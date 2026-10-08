@@ -18,6 +18,7 @@ import { useT, type I18nKey } from "../i18n";
 import {
   setAiAllowRowData,
   setAiDefaultModel,
+  giveAiConsent,
   setAiEnabled,
   setAiSendScope,
   setAiTaskEffort,
@@ -82,6 +83,7 @@ export function AiSettings() {
   const [sample, setSample] = useState<SampleState>({ kind: "idle" });
   const sampleStreamRef = useRef<string | null>(null);
   const sampleUnlistenRef = useRef<UnlistenFn | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     let alive = true;
@@ -105,8 +107,10 @@ export function AiSettings() {
   }, []);
 
   // 画面を閉じたら実行中のサンプル要求を止める。
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       const sid = sampleStreamRef.current;
       if (sid) {
         void api.cancelStream(sid).catch(() => {
@@ -115,9 +119,8 @@ export function AiSettings() {
       }
       sampleUnlistenRef.current?.();
       sampleUnlistenRef.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const handleToggle = async (checked: boolean) => {
     // 初回の有効化だけ、Anthropic の API へ送信することへの明示同意を取る。
@@ -129,6 +132,7 @@ export function AiSettings() {
         tone: "warning",
       });
       if (!ok) return;
+      giveAiConsent();
     }
     setAiEnabled(checked);
   };
@@ -187,7 +191,7 @@ export function AiSettings() {
     setSample({ kind: "running", text });
     try {
       // 購読してから開始する (最初の delta を取りこぼさない)。
-      sampleUnlistenRef.current = await listenAiStream(streamId, {
+      const unlisten = await listenAiStream(streamId, {
         onDelta: (e) => {
           text += e.text;
           setSample({ kind: "running", text });
@@ -216,6 +220,14 @@ export function AiSettings() {
           setSample({ kind: "cancelled", text });
         },
       });
+      // 購読の確立中にアンマウントされると、cleanup の cancelStream は登録前に走って空振りし
+      // リスナーが残る。確立後に確認して、残っていれば外して要求を出さない。
+      if (!mountedRef.current) {
+        unlisten();
+        sampleStreamRef.current = null;
+        return;
+      }
+      sampleUnlistenRef.current = unlisten;
       await api.runAiRequest({
         streamId,
         task: "generic",

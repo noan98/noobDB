@@ -63,7 +63,8 @@ describe("AI 定義の Rust ⇔ フロント パリティ (#690)", () => {
     for (const k of ["thinking", "temperature", "top_p", "top_k", "tool_choice"]) {
       expect(body).not.toContain(`"${k}"`);
     }
-    expect(body).toContain('"fallbacks": "default"');
+    expect(body).toContain('body["fallbacks"] = json!("default")');
+    expect(body).toContain("AiModel::Haiku55"); // Haiku はサーバー側フォールバック無しで送らない
     expect(requestRs).toContain('"server-side-fallback-2026-07-01"');
   });
 });

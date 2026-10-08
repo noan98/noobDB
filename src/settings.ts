@@ -1730,7 +1730,12 @@ function patchAi(patch: Partial<AiSettings>): void {
 
 /** AI 機能の有効/無効。有効化するときは呼び出し側が同意ダイアログを通すこと。 */
 export function setAiEnabled(enabled: boolean): void {
-  patchAi(enabled ? { enabled, consentGiven: true } : { enabled });
+  patchAi({ enabled });
+}
+
+/** 初回有効化時の送信同意を記録する (同意ダイアログで承諾されたときだけ呼ぶ)。 */
+export function giveAiConsent(): void {
+  patchAi({ consentGiven: true });
 }
 
 export function setAiDefaultModel(model: AiModelId): void {
