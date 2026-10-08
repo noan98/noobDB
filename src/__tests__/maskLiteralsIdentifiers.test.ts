@@ -43,3 +43,28 @@ describe("maskLiterals の keepQuotedIdentifiers (#1419)", () => {
     expect(maskLiterals(sql, "mysql", KEEP)).toBe("SELECT '    ' FROM `t`");
   });
 });
+
+describe("maskLiterals の補完向けオプション (#1419 再レビュー)", () => {
+  it("cache: false は結果を変えない (安全網と同じ値)", () => {
+    const sql = "SELECT 'a' FROM `t` -- c";
+    expect(maskLiterals(sql, "mysql", { keepQuotedIdentifiers: true, cache: false })).toBe(
+      maskLiterals(sql, "mysql", KEEP),
+    );
+  });
+
+  it("MySQL では \"...\" の中身を keepQuotedIdentifiers でも潰す (` は残す)", () => {
+    expect(maskLiterals('SELECT "a b", `c d` FROM t', "mysql", KEEP)).toBe(
+      'SELECT "   ", `c d` FROM t',
+    );
+  });
+
+  it("PostgreSQL / SQLite では \"...\" の中身を残す", () => {
+    const sql = 'SELECT "a b" FROM t';
+    expect(maskLiterals(sql, "postgres", KEEP)).toBe(sql);
+    expect(maskLiterals(sql, "sqlite", KEEP)).toBe(sql);
+  });
+
+  it("安全網の呼び出し (オプション無し) は MySQL の \"...\" も従来どおり潰す", () => {
+    expect(maskLiterals('SELECT "a b" FROM t', "mysql")).toBe('SELECT "   " FROM t');
+  });
+});

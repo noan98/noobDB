@@ -133,7 +133,8 @@ export function joinCompletions(opts: {
   // 毎打鍵の全文マスクを避ける: カーソル直前が JOIN / ON 文脈でなければ即終了。
   if (!/\b(?:JOIN|ON)\s+[\w`".]*$/i.test(opts.text.slice(-400))) return null;
   // 文字列・コメントは方言つきのマスク (`maskLiterals`) で潰す。識別子は残す (列名を読むため)。
-  const full = maskLiterals(opts.text, driver, { keepQuotedIdentifiers: true });
+  // キャッシュは使わない (安全網の判定用エントリを毎打鍵で押し出さないため)。
+  const full = maskLiterals(opts.text, driver, { keepQuotedIdentifiers: true, cache: false });
   const start = full.lastIndexOf(";") + 1;
   const masked = full.slice(start);
 

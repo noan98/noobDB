@@ -330,3 +330,35 @@ describe("derivedCompletions: UNION 等の枝をまたがない (#1419)", () => 
     expect(labels("SELECT a AS n FROM t UNION SELECT b AS m FROM u ORDER BY ")).toBeNull();
   });
 });
+
+describe("derivedCompletions: 方言の引用と大きな入力 (#1419 再レビュー)", () => {
+  it("MySQL の \"...\" は文字列なので、中の FROM (...) e は派生表として見ない", () => {
+    const text = 'SELECT * FROM t WHERE note = "FROM (SELECT z FROM q) e" AND e.';
+    expect(labels(text, "mysql")).toBeNull();
+  });
+
+  it("PostgreSQL / SQLite の \"...\" は識別子のまま (修飾子として使える)", () => {
+    const text = 'SELECT * FROM (SELECT z FROM q) e WHERE "e".';
+    expect(labels(text, "postgres")).toEqual(['"e".z']);
+    expect(labels(text, "sqlite")).toEqual(['"e".z']);
+  });
+
+  it("カーソルが文字列の途中で、後ろで閉じていても補完しない (1 回のマスクで判定)", () => {
+    const text = "WITH x AS (SELECT a FROM t) SELECT 'x.' AS s";
+    const pos = text.indexOf("x.") + 2;
+    expect(derivedCompletions({ driver: "mysql", text, pos })).toBeNull();
+  });
+
+  it("大きな 1 文 (約 1MB) でも例外なく、CTE の列を出す", () => {
+    const text = `WITH x AS (SELECT a, b FROM t) SELECT ${"a, ".repeat(300000)}x.`;
+    expect(text.length).toBeGreaterThan(900_000);
+    expect(labels(text)).toEqual(["x.a", "x.b"]);
+  });
+
+  it("大きな文書 (約 1MB、多数の文) の末尾でも例外なく補完する", () => {
+    const head = "SELECT 1 FROM t WHERE c = 'x';\n".repeat(36000);
+    const text = `${head}WITH x AS (SELECT a, b FROM t) SELECT x.`;
+    expect(text.length).toBeGreaterThan(900_000);
+    expect(labels(text)).toEqual(["x.a", "x.b"]);
+  });
+});

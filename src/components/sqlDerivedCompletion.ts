@@ -23,6 +23,8 @@ import { quoteIfNeeded, unquote } from "./sqlJoinCompletion";
  *
  * 既知の制約 (安全側に倒して補完を止める / 対象外):
  * - カンマ区切りの派生表 (`FROM t, (SELECT ...) d`) と LATERAL は対象外
+ * - PostgreSQL の JSON 演算子 `#>` / `#>>` がある行では、その行の以降で補完が止まる
+ *   (安全網と共有のマスクが `#` を行コメントとして扱うため。安全側に倒している)
  * - 文字列・コメントは方言つきの `maskLiterals` で読む (MySQL のバックスラッシュ・`#`、
  *   PostgreSQL の `$$` 引用に対応)。UNION 等の別の枝の派生表・別名は出さない
  * - 候補の種別 (cte / derived / alias) は呼び出し側で表示語に変換する (i18n)
@@ -137,17 +139,31 @@ function openGroups(s: string, idx: number): number[] {
   return stack;
 }
 
-/** 補完の列名読み取りのため、引用識別子の中身は残すマスク指定。 */
-const MASK_KEEP_IDENT: MaskOptions = { keepQuotedIdentifiers: true };
+/**
+ * 補完の列名読み取りのため引用識別子の中身は残し、安全網のキャッシュは使わない
+ * (毎打鍵の大きな入力で判定用エントリを押し出さないため)。
+ */
+const MASK_OPTIONS: MaskOptions = { keepQuotedIdentifiers: true, cache: false };
 
 /**
- * カーソル直前が文字列 / コメントの閉じていない途中かどうか。途中なら補完しない。
- * 末尾に印を足してマスクする: カーソルが文字列 / コメントの中なら、印もその中として潰される。
- * 方言の判定 (MySQL のバックスラッシュ・`#` コメント、PostgreSQL の `$$`) は `maskLiterals` に任せる。
+ * カーソル位置に入れる印。全文を 1 回マスクし、印が潰れていれば (= カーソルが文字列 / コメントの
+ * 中なら) 補完しない。方言の判定 (MySQL のバックスラッシュ・`#`、PostgreSQL の `$$`) は
+ * `maskLiterals` に任せる。
  */
 const CURSOR_SENTINEL = "\u0001";
-function cursorInLiteral(pre: string, driver: string): boolean {
-  return !maskLiterals(pre + CURSOR_SENTINEL, driver, MASK_KEEP_IDENT).endsWith(CURSOR_SENTINEL);
+
+/**
+ * マスク前の安価な早期 return (直前 400 文字だけを見る)。補完の文脈になりうるか:
+ * 句キーワードがある / 修飾子 (`x.`) を打っている / 式の区切り (`,` `(` 演算子) の直後。
+ * 当てはまらなければ全文マスクを避ける。長い SELECT 列の途中の裸の語など取りこぼしうるが、
+ * 補完は句や修飾子が見える場面に限る方針。
+ */
+const CONTEXT_KW_RE = /\b(?:SELECT|FROM|JOIN|WHERE|ON|HAVING|BY|WITH|UNION|INTERSECT|EXCEPT)\b/i;
+function maybeCompletionContext(tail: string, token: string): boolean {
+  if (token.includes(".")) return true;
+  if (CONTEXT_KW_RE.test(tail)) return true;
+  const prefix = tail.slice(0, tail.length - token.length).trimEnd();
+  return /[,(=<>+\-*\/]$/.test(prefix);
 }
 
 /** UNION / UNION ALL / INTERSECT / EXCEPT の個数 (同じ括弧レベルでの枝の区切り)。 */
@@ -357,14 +373,22 @@ export function derivedCompletions(opts: {
   // 入力中の語: 識別子・引用符・ドット。`x.` / `d.a` のような修飾子付きも 1 語として扱う。
   const token = /[\w`".]*$/.exec(text.slice(Math.max(0, pos - 256), pos))?.[0] ?? "";
   const tokenStart = pos - token.length;
-  if (cursorInLiteral(text.slice(0, pos), driver)) return null;
+  if (!maybeCompletionContext(text.slice(Math.max(0, pos - 400), pos), token)) return null;
   const parts = token.split(".");
   if (parts.length > 2) return null;
   const qualRaw = parts.length === 2 ? parts[0] : null;
   if (qualRaw === "") return null;
 
+  // 全文を 1 回だけマスクする。カーソルの印が潰れていれば文字列 / コメントの中なので補完しない。
+  // 印は 1 文字なので、印を取り除いた結果は元の文字列と同じオフセットを持つ。
+  const withCursor = maskLiterals(
+    text.slice(0, pos) + CURSOR_SENTINEL + text.slice(pos),
+    driver,
+    MASK_OPTIONS,
+  );
+  if (withCursor.charAt(pos) !== CURSOR_SENTINEL) return null;
   // 構造は文字列・コメントを除いた全文で見る。文は `;` で区切る。
-  const full = maskLiterals(text, driver, MASK_KEEP_IDENT);
+  const full = withCursor.slice(0, pos) + withCursor.slice(pos + 1);
   const semi = tokenStart > 0 ? full.lastIndexOf(";", tokenStart - 1) : -1;
   const stmtStart = semi + 1;
   const endSemi = full.indexOf(";", pos);

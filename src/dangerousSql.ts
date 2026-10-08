@@ -42,13 +42,18 @@ export interface DangerFinding {
  * Mirrors the backend `mask_for_analysis_impl` (`src-tauri/src/db/mod.rs`)
  * closely enough that a shared golden (`fixtures/maskVectors.json`, #988)
  * pins both implementations to the same output for the same input.
+ *
+ * `options` (`keepQuotedIdentifiers` と `cache`) は TS 専用の補完向けオプションで、Rust の
+ * `mask_for_analysis_impl` と共有ゴールデン (`fixtures/maskVectors.json`) の対象外。
+ * 安全網の呼び出しは何も渡さない。
  */
 export function maskLiterals(sql: string, driver?: string, options?: MaskOptions): string {
   // 1 回の実行ゲート〜実行後処理の間に、同じ SQL が文分割・危険判定・読み取り専用判定・
   // スキーマ変更判定などから 3〜5 回マスクされる (どれも全文走査)。直近の結果を小さな
   // キャッシュに持ち、同じ (driver, options, sql) は 1 回しか走査しない (#1256)。
   const keepIdent = options?.keepQuotedIdentifiers === true;
-  if (sql.length > MASK_CACHE_MAX_SQL_CHARS) {
+  // 補完は毎打鍵で大きな文書を渡すので、安全網のキャッシュ (直近 8 件) を押し出さないよう外せる。
+  if (options?.cache === false || sql.length > MASK_CACHE_MAX_SQL_CHARS) {
     return maskLiteralsUncached(sql, driver, keepIdent);
   }
   // オプション未指定のキーは従来どおり `driver\0sql` (既存のキャッシュ挙動を変えない)。
@@ -72,10 +77,15 @@ export function maskLiterals(sql: string, driver?: string, options?: MaskOptions
  */
 export interface MaskOptions {
   /**
-   * true なら `` `x` `` / `"x"` の中身を潰さずに残す (区切り記号は従来どおり残る)。
-   * 文字列リテラル `'…'`・コメント・ドル引用は従来どおり潰す。
+   * true なら `` `x` `` の中身を潰さずに残す (区切り記号は従来どおり残る)。`"x"` も残すが、
+   * MySQL では `"…"` が既定で文字列なので潰す。`'…'`・コメント・ドル引用は従来どおり潰す。
    */
   keepQuotedIdentifiers?: boolean;
+  /**
+   * false ならマスク結果キャッシュを読まず・書かない。補完のように大きな入力を毎打鍵
+   * 渡す呼び出しが、安全網の判定用エントリを追い出さないために使う。既定は true。
+   */
+  cache?: boolean;
 }
 
 /** マスク結果キャッシュの上限エントリ数。直近数回の実行ぶんで足りる。 */
@@ -193,8 +203,10 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): 
       // input unmasked. Fail-closed, mirrors the backend
       // `mask_for_analysis_impl`, which masks every remaining character up to
       // EOF for an unterminated literal (#988).
-      // 引用識別子は補完の列名読み取りのため、オプション指定時は中身を残す。
-      if (!keepIdent || quote === "'") blank(i + 1, closed ? j - 1 : j);
+      // 引用識別子は補完の列名読み取りのため、オプション指定時は中身を残す。ただし MySQL の
+      // `"…"` は既定で文字列 (ANSI_QUOTES 無効) なので残さない。
+      const keepContent = keepIdent && (quote === "`" || (quote === '"' && driver !== "mysql"));
+      if (!keepContent) blank(i + 1, closed ? j - 1 : j);
       i = j;
       continue;
     }
