@@ -49,6 +49,8 @@ const RESERVED = new Set([
 /**
  * コメントと文字列リテラルの範囲。識別子 (`"x"` / `` `x` ``) は残す (列名・別名を読むため)。
  * `sqlJoinCompletion.ts` と `sqlDerivedCompletion.ts` で共有する。
+ * 注意: `g` フラグ付きなので `.test` / `.exec` で使わないこと (`lastIndex` が共有される)。
+ * 列挙は `matchAll` / `replace` で行う。
  */
 export const COMMENT_OR_STRING_RE = /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*(?:'|$)/g;
 

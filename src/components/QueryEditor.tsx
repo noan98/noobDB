@@ -52,7 +52,7 @@ import { tags } from "@lezer/highlight";
 import { api, type ForeignKey, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
 import { derivedCompletions } from "./sqlDerivedCompletion";
-import { useT } from "../i18n";
+import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset } from "../sqlScript";
@@ -492,9 +492,19 @@ function buildSqlExtension(
         pos: ctx.pos,
       });
       if (!r) return null;
+      // 候補の種別は純モジュールから受け、表示語はここで現在のロケールに変換する。
+      const kindLabel = {
+        cte: t("editorCompletionCte"),
+        derived: t("editorCompletionDerived"),
+        alias: t("editorCompletionAlias"),
+      } as const;
       return {
         from: r.from,
-        options: r.options.map((o) => ({ ...o, boost: 90 })),
+        options: r.options.map(({ kind, ...o }) => ({
+          ...o,
+          detail: kindLabel[kind],
+          boost: 90,
+        })),
       };
     } catch {
       return null;

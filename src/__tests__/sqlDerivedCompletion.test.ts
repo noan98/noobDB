@@ -21,8 +21,8 @@ describe("derivedCompletions: CTE", () => {
     const r = run(text);
     expect(r?.from).toBe(text.length - 2);
     expect(r?.options).toEqual([
-      { label: "x.a", apply: "x.a", type: "property", detail: "CTE" },
-      { label: "x.b", apply: "x.b", type: "property", detail: "CTE" },
+      { label: "x.a", apply: "x.a", type: "property", kind: "cte" },
+      { label: "x.b", apply: "x.b", type: "property", kind: "cte" },
     ]);
   });
 
@@ -96,7 +96,7 @@ describe("derivedCompletions: CTE", () => {
     const text = 'WITH "Xy" AS (SELECT "Col" AS "Mixed Name" FROM t) SELECT Xy.';
     const r = run(text, "postgres");
     expect(r?.options).toEqual([
-      { label: "Xy.Mixed Name", apply: '"Xy"."Mixed Name"', type: "property", detail: "CTE" },
+      { label: "Xy.Mixed Name", apply: '"Xy"."Mixed Name"', type: "property", kind: "cte" },
     ]);
   });
 });
@@ -152,11 +152,33 @@ describe("derivedCompletions: SELECT 別名", () => {
     expect(labels("SELECT a AS n FROM t GROUP BY ", "postgres")).toEqual(["n"]);
   });
 
-  it("WHERE の別名は MySQL / SQLite だけ出し、PostgreSQL では出さない", () => {
+  it("WHERE の別名は SQLite だけ出す (MySQL / PostgreSQL は Unknown column になるので出さない)", () => {
     const t = "SELECT a AS n FROM t WHERE ";
+    expect(labels(t, "mysql")).toBeNull();
+    expect(labels(t, "sqlite")).toEqual(["n"]);
+    expect(labels(t, "postgres")).toBeNull();
+  });
+
+  it("HAVING の別名は MySQL / SQLite で出し、PostgreSQL では出さない", () => {
+    const t = "SELECT a AS n FROM t GROUP BY a HAVING ";
     expect(labels(t, "mysql")).toEqual(["n"]);
     expect(labels(t, "sqlite")).toEqual(["n"]);
     expect(labels(t, "postgres")).toBeNull();
+  });
+
+  it("候補の種別 (kind) を返し、別名は alias として区別する", () => {
+    const r = run("SELECT a AS n FROM t ORDER BY ");
+    expect(r?.options).toEqual([{ label: "n", apply: "n", type: "variable", kind: "alias" }]);
+  });
+
+  it("派生表の候補は derived、CTE は cte の種別を持つ", () => {
+    const r = run("WITH x AS (SELECT a FROM t) SELECT * FROM (SELECT b FROM u) d WHERE ");
+    expect(r?.options.map((o) => [o.label, o.kind])).toEqual([
+      ["x", "cte"],
+      ["x.a", "cte"],
+      ["d", "derived"],
+      ["d.b", "derived"],
+    ]);
   });
 
   it("SELECT 句の中では別名を出さない", () => {
@@ -168,10 +190,45 @@ describe("derivedCompletions: SELECT 別名", () => {
     expect(labels("SELECT x BETWEEN 1 AND 2 FROM t ORDER BY ")).toBeNull();
   });
 
+  it("SELECT a AS の命名位置では候補を出さない", () => {
+    expect(labels("WITH x AS (SELECT a FROM t) SELECT a AS ")).toBeNull();
+    expect(labels("WITH x AS (SELECT a FROM t) SELECT a AS n")).toBeNull();
+  });
+
   it("別名は外側の SELECT のものだけ (サブクエリの別名を素の名前で混ぜない)", () => {
     // 派生表 s の列 inner_n は s.inner_n としてのみ出る。素の inner_n は出さない。
     const t = "SELECT * FROM (SELECT a AS inner_n FROM t) s ORDER BY ";
     expect(labels(t)).toEqual(["s", "s.inner_n"]);
+  });
+});
+
+describe("derivedCompletions: 括弧の中の文脈 (関数・式)", () => {
+  it("関数引数の中でも CTE の列を出す", () => {
+    expect(labels("WITH x AS (SELECT a, b FROM t) SELECT sum(x.")).toEqual(["x.a", "x.b"]);
+  });
+
+  it("式の括弧の中でも句 (WHERE) の文脈で列を出す", () => {
+    expect(labels("WITH x AS (SELECT a, b FROM t) SELECT * FROM t WHERE (x.")).toEqual([
+      "x.a",
+      "x.b",
+    ]);
+  });
+
+  it("IN リストの途中でも外側の WHERE の文脈で列を出す", () => {
+    expect(
+      labels("WITH x AS (SELECT a, b FROM t) SELECT * FROM t WHERE x.a IN (1, x."),
+    ).toEqual(["x.a", "x.b"]);
+  });
+
+  it("関数引数の中の派生表の別名を出す", () => {
+    expect(labels("SELECT * FROM (SELECT a FROM t) d WHERE coalesce(d.")).toEqual(["d.a"]);
+  });
+});
+
+describe("derivedCompletions: 集合演算・ロック語を別名にしない", () => {
+  it("別名の無い派生表の直後の EXCEPT / INTERSECT を別名と誤認しない", () => {
+    expect(labels("SELECT * FROM (SELECT a FROM t) EXCEPT SELECT ")).toBeNull();
+    expect(labels("SELECT * FROM (SELECT a FROM t) INTERSECT SELECT ")).toBeNull();
   });
 });
 

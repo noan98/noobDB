@@ -12,8 +12,9 @@ import {
  * - `WITH x AS (SELECT a, b ...) SELECT |`  : CTE 名 `x` と列 `x.a` / `x.b`
  * - `FROM (SELECT a ...) d WHERE d.|`       : 派生表の別名 `d` と列 `d.a`
  * - `SELECT a AS n FROM t ORDER BY |`        : SELECT 別名 `n`
- *   (ORDER BY / GROUP BY は全 DB、WHERE / HAVING は MySQL・SQLite のみ。PostgreSQL は
- *   WHERE で出力列名を参照できないため出さない)
+ *   別名の参照可否は DB ごとに違うため次のとおり (それ以外では出さない):
+ *   ORDER BY / GROUP BY = 全 DB、HAVING = MySQL・SQLite、WHERE = SQLite のみ
+ *   (MySQL / PostgreSQL は WHERE で列別名を参照できない)
  *
  * 方針は「誤爆 (存在しない列を出す) より取りこぼし」。解決できないものは出さない:
  * - `SELECT *` を含む CTE / 派生表は列を出さない (名前だけ出す)
@@ -21,13 +22,24 @@ import {
  *   (`count(*)` など) は列にしない
  * - 文字列・コメントの中では何も出さない
  * - 派生表の別名は、そのサブクエリを囲む括弧グループがカーソルを含むときだけ見せる
+ * - 句は、カーソルを囲む括弧のうち SELECT で始まるサブクエリ (と文全体) から決める。
+ *   関数呼び出し・式の括弧 (`sum(x.` / `WHERE (x.`) の中でも外側の句で候補を出す
+ *
+ * 既知の制約 (安全側に倒して補完を止める / 対象外):
+ * - MySQL のバックスラッシュエスケープ (`\'`) と `#` コメント、PostgreSQL のドル引用 (`$$`)
+ *   は文字列・コメントとして正しく読めない。その後ろの補完は出ないことがある
+ * - カンマ区切りの派生表 (`FROM t, (SELECT ...) d`) と LATERAL は対象外
+ * - 候補の種別 (cte / derived / alias) は呼び出し側で表示語に変換する (i18n)
  */
+
+/** 候補の種別。表示語 (CTE / 派生表 / 別名) への変換は呼び出し側 (i18n) が行う。 */
+export type DerivedKind = "cte" | "derived" | "alias";
 
 export interface DerivedCandidate {
   label: string;
   apply: string;
   type: string;
-  detail: string;
+  kind: DerivedKind;
 }
 
 interface DerivedCompletion {
@@ -70,6 +82,8 @@ const ALIAS_STOP = new Set([
   "LIMIT", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "NATURAL", "OUTER",
   "UNION", "WINDOW", "FETCH", "OFFSET", "LATERAL", "WITH", "SET", "AS", "INTO",
   "SELECT", "BY", "RETURNING", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+  // 派生表の直後に来うる集合演算・ロック・サンプリング指定など (別名と誤認しない)。
+  "EXCEPT", "INTERSECT", "FOR", "LOCK", "TABLESAMPLE", "STRAIGHT_JOIN", "QUALIFY",
 ]);
 
 /**
@@ -307,9 +321,9 @@ function candidate(
   label: string,
   apply: string,
   type: string,
-  detail: string,
+  kind: DerivedKind,
 ): DerivedCandidate {
-  return { label, apply, type, detail };
+  return { label, apply, type, kind };
 }
 
 function finish(from: number, options: DerivedCandidate[]): DerivedCompletion | null {
@@ -351,14 +365,28 @@ export function derivedCompletions(opts: {
   const cursor = tokenStart - stmtStart;
   const tokenEnd = pos - stmtStart;
 
-  // カーソルが属する括弧グループ内で、直前の句 (FROM / SELECT / ON ...) を見る。
-  const owners = openGroups(s, cursor);
-  const gStart = owners.length > 0 ? owners[owners.length - 1] + 1 : 0;
-  const gText = s.slice(gStart, cursor);
-  const gTop = topView(gText);
+  // カーソルを囲む括弧グループを内側から順に見て、句キーワードを持つ最初のグループで文脈を決める。
+  // 関数呼び出し・式の括弧 (`sum(x.` / `(x.`) は句を持たないので飛ばし、サブクエリ (SELECT で
+  // 始まる括弧) と文全体 (最外) だけを句の所有者とみなす。
+  let gText = s.slice(0, cursor);
   let lastKw = "";
-  for (const m of gTop.matchAll(KW_RE)) lastKw = m[1].toUpperCase().replace(/\s+/g, " ");
+  const owners = openGroups(s, cursor);
+  for (let k = owners.length; k >= 0; k--) {
+    const start = k === 0 ? 0 : owners[k - 1] + 1;
+    const text = s.slice(start, cursor);
+    if (k > 0 && !/^\s*(?:SELECT|WITH)\b/i.test(text)) continue;
+    let kw = "";
+    for (const m of topView(text).matchAll(KW_RE)) kw = m[1].toUpperCase().replace(/\s+/g, " ");
+    if (kw !== "") {
+      gText = text;
+      lastKw = kw;
+      break;
+    }
+  }
+  const gTop = topView(gText);
   const trimmed = gTop.trimEnd();
+  // `SELECT a AS |` は別名の命名位置。ここでは候補を出さない。
+  if (/\bAS$/i.test(s.slice(0, cursor).trimEnd())) return null;
   // FROM / JOIN の直後、または FROM 句のカンマ区切りの次だけテーブル位置。
   const isTable =
     /\b(?:FROM|JOIN)$/i.test(trimmed) || (trimmed.endsWith(",") && lastKw === "FROM");
@@ -367,7 +395,12 @@ export function derivedCompletions(opts: {
   let aliasOk = false;
   if (isTable) mode = "table";
   else if (lastKw === "SELECT" || lastKw === "ON") mode = "expr";
-  else if (lastKw === "WHERE" || lastKw === "HAVING") {
+  else if (lastKw === "WHERE") {
+    // MySQL / PostgreSQL は WHERE で列別名を参照できない (Unknown column)。SQLite だけ可。
+    mode = "expr";
+    aliasOk = driver === "sqlite";
+  } else if (lastKw === "HAVING") {
+    // HAVING は MySQL / SQLite で別名を参照できる。PostgreSQL は不可。
     mode = "expr";
     aliasOk = driver !== "postgres";
   } else if (lastKw === "ORDER BY" || lastKw === "GROUP BY") {
@@ -392,7 +425,7 @@ export function derivedCompletions(opts: {
     return finish(
       tokenStart,
       src.columns.map((c) =>
-        candidate(`${qualRaw}.${c}`, `${qa(src.name)}.${qa(c)}`, "property", src.kind === "cte" ? "CTE" : "派生表"),
+        candidate(`${qualRaw}.${c}`, `${qa(src.name)}.${qa(c)}`, "property", src.kind),
       ),
     );
   }
@@ -400,19 +433,18 @@ export function derivedCompletions(opts: {
   const options: DerivedCandidate[] = [];
   if (mode === "table") {
     for (const src of sources) {
-      if (src.kind === "cte") options.push(candidate(src.name, qa(src.name), "class", "CTE"));
+      if (src.kind === "cte") options.push(candidate(src.name, qa(src.name), "class", "cte"));
     }
   } else {
     for (const src of sources) {
-      const detail = src.kind === "cte" ? "CTE" : "派生表";
-      options.push(candidate(src.name, qa(src.name), "class", detail));
+      options.push(candidate(src.name, qa(src.name), "class", src.kind));
       for (const c of src.columns) {
-        options.push(candidate(`${src.name}.${c}`, `${qa(src.name)}.${qa(c)}`, "property", detail));
+        options.push(candidate(`${src.name}.${c}`, `${qa(src.name)}.${qa(c)}`, "property", src.kind));
       }
     }
     if (aliasOk) {
       for (const a of selectAliases(gText)) {
-        options.push(candidate(a, qa(a), "variable", "別名"));
+        options.push(candidate(a, qa(a), "variable", "alias"));
       }
     }
   }
