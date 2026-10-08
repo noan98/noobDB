@@ -56,8 +56,10 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
     直前の SQL の実行計画を EXPLAIN タブで開く。
   - グリッド右クリックの「コピー」に CSV / JSON (`gridCopyFormats.ts`、書式は
     エクスポートの `buildCsv` / `buildJson` を再利用、マスク規則は TSV コピーと同じ)。
-- `api/tauri.ts` — 全 IPC の型付きラッパーとイベント購読ヘルパー (上述)。各 `invoke`
-  ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
+- `api/tauri.ts` — 全 IPC の型付きラッパーを束ねた `api` とイベント購読ヘルパー (上述)。
+  ラッパー本体は `api/commands/<module>.ts` (Rust の `commands/<module>.rs` と 1 対 1)、
+  `invoke` とエラー正規化は `api/invoke.ts`、Channel の受け渡しは `api/streamChannels.ts`。
+  各 `invoke` ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。
 - `components/` (接続・クエリ) — `ConnectionList`/`ConnectionForm` (接続)、`QueryEditor`
   (CodeMirror 6 + スキーマ補完 + リアルタイム構文チェック。後述の #704 lint 統合。

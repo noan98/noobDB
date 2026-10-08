@@ -73,11 +73,12 @@ describe("IPC コマンドとドキュメントのパリティ", () => {
     ).toEqual([]);
   });
 
-  it("command-list.md が名乗るコマンド総数が実際の登録数と一致する", () => {
-    // 「合計 98 コマンド」のような宣言を本文から拾い、実数と突き合わせる。
-    // 一覧に追記しても総数の記述を直し忘れる、という半端な更新を防ぐ。
+  it("command-list.md はコマンド総数を手書きしない", () => {
+    // 以前は「**160 コマンド**」の宣言を実数と突き合わせていたが、並列の PR が
+    // どちらも 160 → 161 と同じ書き換えをすると git は衝突なしでマージし、main で
+    // 初めて数が合わなくなる。記載漏れは上の集合チェックで検出できるので、総数は
+    // 書かない運用にした (再び書かれたらここで落とす)。
     const declared = /\*\*(\d+)\s*コマンド\*\*/.exec(commandListDoc);
-    expect(declared, "command-list.md にコマンド総数の記述が見つからない").not.toBeNull();
-    expect(Number(declared?.[1])).toBe(registered.size);
+    expect(declared?.[0] ?? null, "コマンド総数は書かずに一覧だけを更新してください").toBeNull();
   });
 });
