@@ -102,7 +102,7 @@ describe("RowInsertModal defaults and auto-increment (#1357)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: t("rowOpsInsertAdd") }));
     expect(onConfirm).toHaveBeenCalledWith({
-      1: { fn: "current_timestamp", sql: "CURRENT_TIMESTAMP" },
+      1: { fn: "current_timestamp" },
     });
   });
 
@@ -125,5 +125,100 @@ describe("RowInsertModal defaults and auto-increment (#1357)", () => {
     expect(chip).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(screen.getByRole("button", { name: t("rowOpsInsertAdd") }));
     expect(onConfirm).toHaveBeenCalledWith({});
+  });
+});
+
+/**
+ * #1357 レビュー対応: 結果列の型名は長さが落ちる (MySQL の CHAR)。列メタの型で判定する。
+ * 生成列は入力できず、行の複製の種からも外れる。
+ */
+describe("RowInsertModal metadata-driven affordances (#1357)", () => {
+  const cols = [
+    { name: "public_id", type_name: "CHAR" },
+    { name: "id", type_name: "INT" },
+    { name: "full", type_name: "VARCHAR" },
+  ];
+  const meta2: TableColumnInfo[] = [
+    {
+      name: "public_id",
+      data_type: "char(36)",
+      nullable: false,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "auto_increment",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "full",
+      data_type: "varchar(64)",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "VIRTUAL GENERATED",
+      referenced_table: null,
+      referenced_column: null,
+    },
+  ];
+
+  it("offers the UUID chip for a MySQL CHAR(36) column even though the result type is bare CHAR", () => {
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={cols}
+        driver="mysql"
+        tableColumns={meta2}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("insert-fn-public_id-uuid")).toHaveTextContent("UUID()");
+  });
+
+  it("disables a generated column and offers no function chips for it", () => {
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={cols}
+        driver="mysql"
+        tableColumns={meta2}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getAllByRole("textbox")[2]).toBeDisabled();
+    expect(screen.getByTestId("insert-default-hint-full")).toHaveTextContent(
+      t("rowOpsInsertGeneratedHint"),
+    );
+    expect(screen.queryByTestId("insert-fn-full-uuid")).toBeNull();
+  });
+
+  it("drops the auto-increment and generated values from a duplicated row's seed", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={cols}
+        initialValues={{ 0: "9f3c", 1: "42", 2: "stale" }}
+        driver="mysql"
+        tableColumns={meta2}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    expect((screen.getAllByRole("textbox")[1] as HTMLInputElement).value).toBe("");
+    expect((screen.getAllByRole("textbox")[2] as HTMLInputElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: t("rowOpsInsertAdd") }));
+    expect(onConfirm).toHaveBeenCalledWith({ 0: "9f3c" });
   });
 });

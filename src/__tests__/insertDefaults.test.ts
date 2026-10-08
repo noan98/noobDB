@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { TableColumnInfo } from "../api/tauri";
-import { insertDefaultHint, insertFunctionChips } from "../components/insertDefaults";
+import {
+  insertDefaultHint,
+  insertFunctionChips,
+  stripNonInsertableSeed,
+} from "../components/insertDefaults";
 import { insertFunctionSql } from "../components/sqlDialect";
 
 // #1357: 行追加モーダルの「既定値 / 自動採番」判定と関数値チップ。方言差 (auto_increment /
@@ -105,31 +109,31 @@ describe("insertFunctionSql (dialect catalogue)", () => {
 describe("insertFunctionChips", () => {
   it("offers CURRENT_TIMESTAMP and NOW() for datetime columns on MySQL / PostgreSQL", () => {
     expect(insertFunctionChips("mysql", "DATETIME")).toEqual([
-      { fn: "current_timestamp", sql: "CURRENT_TIMESTAMP" },
-      { fn: "now", sql: "NOW()" },
+      { fn: "current_timestamp" },
+      { fn: "now" },
     ]);
     expect(insertFunctionChips("postgres", "timestamp with time zone")).toEqual([
-      { fn: "current_timestamp", sql: "CURRENT_TIMESTAMP" },
-      { fn: "now", sql: "NOW()" },
+      { fn: "current_timestamp" },
+      { fn: "now" },
     ]);
   });
 
   it("omits NOW() on SQLite datetime columns", () => {
     expect(insertFunctionChips("sqlite", "DATETIME")).toEqual([
-      { fn: "current_timestamp", sql: "CURRENT_TIMESTAMP" },
+      { fn: "current_timestamp" },
     ]);
   });
 
   it("offers the date and time keywords for date and time columns", () => {
-    expect(insertFunctionChips("mysql", "DATE")).toEqual([{ fn: "current_date", sql: "CURRENT_DATE" }]);
-    expect(insertFunctionChips("postgres", "time")).toEqual([{ fn: "current_time", sql: "CURRENT_TIME" }]);
+    expect(insertFunctionChips("mysql", "DATE")).toEqual([{ fn: "current_date" }]);
+    expect(insertFunctionChips("postgres", "time")).toEqual([{ fn: "current_time" }]);
   });
 
   it("offers UUID for PostgreSQL uuid columns and MySQL CHAR(36) columns", () => {
     expect(insertFunctionChips("postgres", "uuid")).toEqual([
-      { fn: "uuid", sql: "gen_random_uuid()" },
+      { fn: "uuid" },
     ]);
-    expect(insertFunctionChips("mysql", "CHAR(36)")).toEqual([{ fn: "uuid", sql: "UUID()" }]);
+    expect(insertFunctionChips("mysql", "CHAR(36)")).toEqual([{ fn: "uuid" }]);
     expect(insertFunctionChips("mysql", "VARCHAR(255)")).toEqual([]);
   });
 
@@ -137,5 +141,56 @@ describe("insertFunctionChips", () => {
     expect(insertFunctionChips("sqlite", "TEXT")).toEqual([]);
     expect(insertFunctionChips("sqlite", "INTEGER")).toEqual([]);
     expect(insertFunctionChips("sqlite", "CHAR(36)")).toEqual([]);
+  });
+});
+
+describe("insertDefaultHint: generated columns (#1357)", () => {
+  it("flags MySQL VIRTUAL / STORED generated columns as not insertable", () => {
+    const v = meta({ name: "full", data_type: "varchar(64)", extra: "VIRTUAL GENERATED" });
+    const s = meta({ name: "slug", data_type: "varchar(64)", extra: "STORED GENERATED" });
+    expect(insertDefaultHint("mysql", v, [v])).toEqual({ kind: "generated" });
+    expect(insertDefaultHint("mysql", s, [s])).toEqual({ kind: "generated" });
+  });
+
+  it("does not flag an ordinary column as generated", () => {
+    const c = meta({ name: "n", data_type: "int", extra: "" });
+    expect(insertDefaultHint("mysql", c, [c])).toBeNull();
+  });
+});
+
+describe("insertFunctionChips: declared type and time-with-zone (#1357)", () => {
+  it("uses the table metadata type when the result column type lost its length", () => {
+    // 結果列の型は MySQL では "CHAR" (長さなし) になるが、列メタは "char(36)"。
+    expect(insertFunctionChips("mysql", "CHAR", "char(36)")).toEqual([{ fn: "uuid" }]);
+    expect(insertFunctionChips("mysql", "CHAR")).toEqual([]);
+  });
+
+  it("offers CURRENT_TIME for PostgreSQL timetz columns", () => {
+    expect(insertFunctionChips("postgres", "timetz")).toEqual([{ fn: "current_time" }]);
+    expect(insertFunctionChips("postgres", "time with time zone")).toEqual([{ fn: "current_time" }]);
+  });
+});
+
+describe("stripNonInsertableSeed (#1357 row duplication)", () => {
+  const columns = [
+    { name: "id", type_name: "INT" },
+    { name: "full", type_name: "VARCHAR" },
+    { name: "note", type_name: "VARCHAR" },
+  ];
+  const table: TableColumnInfo[] = [
+    meta({ name: "id", data_type: "int", key: "PRI", extra: "auto_increment" }),
+    meta({ name: "full", data_type: "varchar(64)", extra: "VIRTUAL GENERATED" }),
+    meta({ name: "note", data_type: "varchar(64)" }),
+  ];
+
+  it("drops auto-increment and generated values from the seed, keeps the rest", () => {
+    expect(
+      stripNonInsertableSeed("mysql", { 0: "42", 1: "x", 2: "keep" }, columns, table),
+    ).toEqual({ 2: "keep" });
+  });
+
+  it("leaves the seed untouched when there is no table metadata", () => {
+    const seed = { 0: "42", 1: "x" };
+    expect(stripNonInsertableSeed("mysql", seed, columns, [])).toEqual(seed);
   });
 });

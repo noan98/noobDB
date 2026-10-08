@@ -10,7 +10,8 @@ import {
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton, Select } from "./ui";
 import { boolOptions, resolveTypedEditor } from "./typedEditor";
-import { insertDefaultHint, insertFunctionChips } from "./insertDefaults";
+import { insertDefaultHint, insertFunctionChips, stripNonInsertableSeed } from "./insertDefaults";
+import { insertFunctionSql } from "./sqlDialect";
 import { Tooltip } from "./Tooltip";
 import { useValuePicker, ValueDatalist, type ValueLookup } from "./useValuePicker";
 import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
@@ -51,10 +52,13 @@ interface Props {
   lookup?: ValueLookup;
 }
 
-/** 行追加セルの表示文字列。関数値は式そのもの (引用されない) をそのまま見せる。 */
-function cellText(v: PendingInsertValue | undefined): string {
+/**
+ * 行追加セルの表示文字列。関数値は、そのドライバの式 (`insertFunctionSql`、引用されない)
+ * をそのまま見せる。
+ */
+function cellText(v: PendingInsertValue | undefined, driver: string): string {
   if (v === undefined) return "";
-  return typeof v === "string" ? v : v.sql;
+  return typeof v === "string" ? v : (insertFunctionSql(driver, v.fn) ?? "");
 }
 
 /** 初期値 (複製の種) の文字列。種は文字列だけだが、型上は関数値も含み得るため文字列のみ採る。 */
@@ -74,7 +78,10 @@ export function RowInsertModal({
   lookup,
 }: Props) {
   const t = useT();
-  const [values, setValues] = useState<PendingInsertRow>(initialValues ?? {});
+  // 複製の種から、DB が決める列 (自動採番・生成列) の値は外しておく (#1357)。
+  const [values, setValues] = useState<PendingInsertRow>(() =>
+    stripNonInsertableSeed(driver, initialValues ?? {}, columns, tableColumns ?? []),
+  );
   // 先頭列は入力でもセレクタでもあり得るので、コールバック ref で要素を保持する。
   const firstRef = useRef<HTMLElement | null>(null);
   const setFirstRef = (el: HTMLElement | null) => {
@@ -140,7 +147,7 @@ export function RowInsertModal({
           const pickerValues = picker.candidates(c.name);
           const listId = `${listIdBase}-${i}`;
           const cell = values[i];
-          const cur = cellText(cell);
+          const cur = cellText(cell, driver);
           const activeFn = typeof cell === "object" ? cell.fn : null;
           // 真偽値だけセレクタにする。日付系はネイティブ入力だと明示的な NULL
           // (ヒント文の "null" 入力) を表現できないため、テキスト入力のままにする。
@@ -153,13 +160,19 @@ export function RowInsertModal({
           // 既定値 / 自動採番 (空欄なら DB に任せる) の明示と、型に合う関数値チップ (#1357)。
           const meta = tableColumns?.find((m) => m.name === c.name);
           const hint = meta && tableColumns ? insertDefaultHint(driver, meta, tableColumns) : null;
-          const chips = insertFunctionChips(driver, c.type_name);
+          // 生成列は値を入れられないので入力欄を無効化し、関数チップも出さない。
+          const generated = hint?.kind === "generated";
+          const chips = generated
+            ? []
+            : insertFunctionChips(driver, c.type_name, meta?.data_type);
           const hintText =
             hint?.kind === "auto"
               ? t("rowOpsInsertAutoHint")
               : hint?.kind === "default"
                 ? t("rowOpsInsertDefaultHint", { expr: hint.expr })
-                : null;
+                : hint?.kind === "generated"
+                  ? t("rowOpsInsertGeneratedHint")
+                  : null;
           const placeholder =
             hint?.kind === "auto"
               ? t("rowOpsInsertAutoPlaceholder")
@@ -189,6 +202,7 @@ export function RowInsertModal({
                   <Select
                     ref={i === 0 ? setFirstRef : undefined}
                     value={cur}
+                    disabled={generated}
                     aria-label={c.name}
                     onFocus={() => setFocused(i)}
                     onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
@@ -208,6 +222,7 @@ export function RowInsertModal({
                   <Input
                     ref={i === 0 ? setFirstRef : undefined}
                     value={cur}
+                    disabled={generated}
                     placeholder={placeholder}
                     list={pickerValues.length > 0 ? listId : undefined}
                     onFocus={() => setFocused(i)}
@@ -261,8 +276,13 @@ export function RowInsertModal({
                   )}
                   {chips.map((chip) => {
                     const active = activeFn === chip.fn;
+                    const sql = insertFunctionSql(driver, chip.fn) ?? "";
+                    const tip =
+                      chip.fn === "uuid" && driver === "postgres"
+                        ? `${t("rowOpsInsertFnTitle", { sql })} ${t("rowOpsInsertFnPg13")}`
+                        : t("rowOpsInsertFnTitle", { sql });
                     return (
-                      <Tooltip key={chip.fn} label={t("rowOpsInsertFnTitle", { sql: chip.sql })}>
+                      <Tooltip key={chip.fn} label={tip}>
                         <Button
                           type="button"
                           size="sm"
@@ -272,10 +292,10 @@ export function RowInsertModal({
                           fontSize="2xs"
                           data-testid={`insert-fn-${c.name}-${chip.fn}`}
                           onClick={() =>
-                            setValues((prev) => ({ ...prev, [i]: active ? "" : chip }))
+                            setValues((prev) => ({ ...prev, [i]: active ? "" : { fn: chip.fn } }))
                           }
                         >
-                          {chip.sql}
+                          {sql}
                         </Button>
                       </Tooltip>
                     );

@@ -760,8 +760,8 @@ describe("buildInsertStatements", () => {
       table: "events",
       columns: [col("id", "INT"), col("at", "DATETIME"), col("note", "VARCHAR")],
       inserts: [
-        { 1: { fn: "now", sql: "NOW()" }, 2: "NOW()" },
-        { 1: { fn: "current_timestamp", sql: "CURRENT_TIMESTAMP" } },
+        { 1: { fn: "now" }, 2: "NOW()" },
+        { 1: { fn: "current_timestamp" } },
       ],
     });
     expect(stmts).toEqual([
@@ -776,9 +776,40 @@ describe("buildInsertStatements", () => {
       database: "public",
       table: "t",
       columns: [col("id", "UUID")],
-      inserts: [{ 0: { fn: "uuid", sql: "gen_random_uuid()" } }],
+      inserts: [{ 0: { fn: "uuid" } }],
     });
     expect(stmts).toEqual(['INSERT INTO "public"."t" ("id") VALUES (gen_random_uuid());']);
+  });
+
+  // #1357: 式は値に保存されず、毎回 driver から固定カタログで作られる。
+  it("derives the expression from the driver at build time, not from stored text", () => {
+    const build = (driver: string) =>
+      buildInsertStatements({
+        driver,
+        database: "db",
+        table: "t",
+        columns: [col("id", "CHAR(36)")],
+        inserts: [{ 0: { fn: "uuid" } }],
+      });
+    expect(build("mysql")).toEqual(["INSERT INTO `db`.`t` (`id`) VALUES (UUID());"]);
+    expect(build("postgres")).toEqual(['INSERT INTO "db"."t" ("id") VALUES (gen_random_uuid());']);
+  });
+
+  it("excludes a row whose function the driver does not have, and keeps the others", () => {
+    const stmts = buildInsertStatements({
+      driver: "sqlite",
+      database: "main",
+      table: "t",
+      columns: [col("id", "INTEGER"), col("at", "TEXT"), col("name", "TEXT")],
+      inserts: [
+        { 1: { fn: "now" }, 2: "a" },
+        { 2: "b" },
+        { 0: { fn: "uuid" } },
+      ],
+    });
+    expect(stmts).toEqual([
+      'INSERT INTO "t" ("name") VALUES (\'b\');',
+    ]);
   });
 });
 
