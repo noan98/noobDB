@@ -1,6 +1,6 @@
 import { CellValue, Column, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import type { I18nKey } from "../i18n";
-import { quoteIdentFor } from "./sqlDialect";
+import { quoteIdentFor, type InsertFunctionId } from "./sqlDialect";
 
 /**
  * Inline cell edits awaiting Preview/Apply.
@@ -650,16 +650,38 @@ export function buildBlobUpdateStatement(input: {
   return `UPDATE ${ref} SET ${quoteIdentFor(driver, col.name)} = ${blobLiteral(driver, hex.toLowerCase())} WHERE ${where.join(" AND ")};`;
 }
 
+/**
+ * 行追加で DB 側の関数を式として入れる値 (#1357)。`sql` は `insertFunctionSql` の
+ * 固定カタログ由来で、利用者が打った文字列は決してここに入らない (打った文字列は
+ * 通常どおり `string` として `literalFromInput` で引用される)。
+ */
+export interface InsertFunctionValue {
+  fn: InsertFunctionId;
+  sql: string;
+}
+
+/** 行追加バッファの 1 セル。`string` は利用者の入力 (リテラル化される)、関数値は式そのまま。 */
+export type PendingInsertValue = string | InsertFunctionValue;
+
 /** One pending new row: column index → typed value. Unset columns are
  *  omitted from the INSERT so the database applies defaults / auto-increment.
  *  A value of `"null"` (any case) becomes SQL `NULL`. */
-export type PendingInsertRow = Record<number, string>;
+export type PendingInsertRow = Record<number, PendingInsertValue>;
+
+/**
+ * 空欄 (`""` / 未設定) の行追加セルか。空欄は INSERT の列から省き、DB の既定値 /
+ * 自動採番に委ねる (#1357)。関数値は空欄ではない。
+ */
+export function isEmptyInsertValue(v: PendingInsertValue | undefined): boolean {
+  return v === undefined || v === "";
+}
 
 /**
  * Builds one `INSERT INTO ... (cols) VALUES (...)` per pending new row.
- * Only the columns the user filled are included; the typed value is converted
- * with the same `literalFromInput` coercion used by cell edits. Rows with no
- * filled columns are skipped.
+ * Only the columns the user filled are included (empty cells are omitted so the
+ * database applies its default / auto-increment). Typed text goes through the
+ * same `literalFromInput` coercion used by cell edits; function values are
+ * emitted as bare expressions. Rows with no filled columns are skipped.
  */
 export function buildInsertStatements(input: {
   driver: string;
@@ -673,11 +695,16 @@ export function buildInsertStatements(input: {
   for (const row of input.inserts) {
     const idxs = Object.keys(row)
       .map(Number)
-      .filter((i) => input.columns[i] !== undefined);
+      .filter((i) => input.columns[i] !== undefined && !isEmptyInsertValue(row[i]));
     if (idxs.length === 0) continue;
     const cols = idxs.map((i) => quoteIdentFor(input.driver, input.columns[i].name)).join(", ");
     const vals = idxs
-      .map((i) => literalFromInput(input.driver, row[i], input.columns[i]))
+      .map((i) => {
+        const v = row[i];
+        return typeof v === "string"
+          ? literalFromInput(input.driver, v, input.columns[i])
+          : v.sql;
+      })
       .join(", ");
     stmts.push(`INSERT INTO ${ref} (${cols}) VALUES (${vals});`);
   }

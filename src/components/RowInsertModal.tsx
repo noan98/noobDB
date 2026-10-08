@@ -2,10 +2,15 @@ import { useEffect, useId, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { Column, TableColumnInfo } from "../api/tauri";
-import type { PendingInsertRow } from "./cellEdit";
+import {
+  isEmptyInsertValue,
+  type PendingInsertRow,
+  type PendingInsertValue,
+} from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton, Select } from "./ui";
 import { boolOptions, resolveTypedEditor } from "./typedEditor";
+import { insertDefaultHint, insertFunctionChips } from "./insertDefaults";
 import { Tooltip } from "./Tooltip";
 import { useValuePicker, ValueDatalist, type ValueLookup } from "./useValuePicker";
 import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
@@ -19,6 +24,11 @@ import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
  * 参照先の既存値、ENUM / SET / CHECK 列には許可値を `<datalist>` の候補として
  * 出す。候補は入力補助にすぎず (自由入力可)、確定値は従来どおりこのフォームの
  * 文字列として PendingInsertRow に載るだけ。候補が取れない列はテキスト入力のまま。
+ *
+ * 既定値・自動採番・関数値の支援 (#1357): 自動採番列 / DEFAULT 式を持つ列は、空欄の
+ * ままだと DB が値を決めることを入力欄の下に明示する。型に合う関数 (`CURRENT_TIMESTAMP`
+ * / `NOW()` / UUID など) はチップで入れられ、チップで選んだ値だけが式として確定する
+ * (入力欄に打った文字列は従来どおり引用される)。
  */
 interface Props {
   table: string;
@@ -41,6 +51,17 @@ interface Props {
   lookup?: ValueLookup;
 }
 
+/** 行追加セルの表示文字列。関数値は式そのもの (引用されない) をそのまま見せる。 */
+function cellText(v: PendingInsertValue | undefined): string {
+  if (v === undefined) return "";
+  return typeof v === "string" ? v : v.sql;
+}
+
+/** 初期値 (複製の種) の文字列。種は文字列だけだが、型上は関数値も含み得るため文字列のみ採る。 */
+function seedText(v: PendingInsertValue | undefined): string {
+  return typeof v === "string" ? v : "";
+}
+
 export function RowInsertModal({
   table,
   columns,
@@ -53,7 +74,7 @@ export function RowInsertModal({
   lookup,
 }: Props) {
   const t = useT();
-  const [values, setValues] = useState<Record<number, string>>(initialValues ?? {});
+  const [values, setValues] = useState<PendingInsertRow>(initialValues ?? {});
   // 先頭列は入力でもセレクタでもあり得るので、コールバック ref で要素を保持する。
   const firstRef = useRef<HTMLElement | null>(null);
   const setFirstRef = (el: HTMLElement | null) => {
@@ -65,9 +86,10 @@ export function RowInsertModal({
   const [focused, setFocused] = useState<number | null>(null);
   const focusedName = focused === null ? null : (columns[focused]?.name ?? null);
   // 複製 (#820) の種の値のままなら絞り込まずに候補を出し、打ち替え始めたら前方一致で絞る。
-  const focusedRaw = focused === null ? "" : (values[focused] ?? "");
+  // 関数値 (チップで選んだ式) は絞り込みの対象にしない。
+  const focusedRaw = focused === null ? "" : seedText(values[focused]);
   const focusedValue =
-    focused !== null && focusedRaw === (initialValues?.[focused] ?? "") ? "" : focusedRaw;
+    focused !== null && focusedRaw === seedText(initialValues?.[focused]) ? "" : focusedRaw;
   useEffect(() => {
     if (focusedName !== null) picker.request(focusedName, focusedValue);
   }, [picker, focusedName, focusedValue]);
@@ -99,7 +121,7 @@ export function RowInsertModal({
   const submit = () => {
     const row: PendingInsertRow = {};
     for (const [k, v] of Object.entries(values)) {
-      if (v !== "") row[Number(k)] = v;
+      if (!isEmptyInsertValue(v)) row[Number(k)] = v;
     }
     onConfirm(row);
   };
@@ -117,88 +139,155 @@ export function RowInsertModal({
           const pickerKind = picker.kindOf(c.name);
           const pickerValues = picker.candidates(c.name);
           const listId = `${listIdBase}-${i}`;
-          const cur = values[i] ?? "";
+          const cell = values[i];
+          const cur = cellText(cell);
+          const activeFn = typeof cell === "object" ? cell.fn : null;
           // 真偽値だけセレクタにする。日付系はネイティブ入力だと明示的な NULL
           // (ヒント文の "null" 入力) を表現できないため、テキスト入力のままにする。
           // 種別は初期値で決め、入力中に切り替わらないようにする。
-          const boolStart = initialValues?.[i] ?? "";
+          const boolStart = seedText(initialValues?.[i]);
           // 初期値がどの選択肢にも一致しない ("TRUE" など) 場合は値を失わないようテキスト入力。
           const typed =
             resolveTypedEditor(c.type_name, boolStart)?.control === "bool" &&
             (boolStart === "" || boolOptions(boolStart).includes(boolStart));
+          // 既定値 / 自動採番 (空欄なら DB に任せる) の明示と、型に合う関数値チップ (#1357)。
+          const meta = tableColumns?.find((m) => m.name === c.name);
+          const hint = meta && tableColumns ? insertDefaultHint(driver, meta, tableColumns) : null;
+          const chips = insertFunctionChips(driver, c.type_name);
+          const hintText =
+            hint?.kind === "auto"
+              ? t("rowOpsInsertAutoHint")
+              : hint?.kind === "default"
+                ? t("rowOpsInsertDefaultHint", { expr: hint.expr })
+                : null;
+          const placeholder =
+            hint?.kind === "auto"
+              ? t("rowOpsInsertAutoPlaceholder")
+              : hint?.kind === "default"
+                ? t("rowOpsInsertDefaultPlaceholder", { expr: hint.expr })
+                : undefined;
           return (
-          <Flex key={c.name} align="center" gap="2.5">
-            <Tooltip label={`${c.name} (${c.type_name})`}>
-              <chakra.label
-                minW="160px"
-                fontSize="sm"
-                fontFamily="mono"
-                color="app.text"
-                overflow="hidden"
-                textOverflow="ellipsis"
-                whiteSpace="nowrap"
-              >
-                {c.name}
-                <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
-                  {c.type_name}
-                </chakra.span>
-              </chakra.label>
-            </Tooltip>
-            {typed ? (
-              <Select
-                ref={i === 0 ? setFirstRef : undefined}
-                value={cur}
-                aria-label={c.name}
-                onFocus={() => setFocused(i)}
-                onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submit();
-                }}
-                flex="1"
-              >
-                <option value="">{t("rowOpsInsertDefaultOption")}</option>
-                {boolOptions(boolStart).map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </Select>
-            ) : (
-              <Input
-                ref={i === 0 ? setFirstRef : undefined}
-                value={cur}
-                list={pickerValues.length > 0 ? listId : undefined}
-                onFocus={() => setFocused(i)}
-                onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submit();
-                }}
-                flex="1"
-              />
-            )}
-            <ValueDatalist id={listId} values={pickerValues} />
-            {pickerKind && (
-              <Tooltip label={badgeTitle(pickerKind, c.name)}>
-                <chakra.span
-                  flexShrink={0}
-                  maxW="140px"
-                  overflow="hidden"
-                  textOverflow="ellipsis"
-                  whiteSpace="nowrap"
-                  fontSize="2xs"
-                  fontFamily="mono"
-                  color="app.textMuted"
-                  borderWidth="1px"
-                  borderColor="app.border"
-                  borderRadius="sm"
-                  px="1"
-                  data-testid={`value-picker-badge-${c.name}`}
+            <Flex key={c.name} direction="column" gap="1">
+              <Flex align="center" gap="2.5">
+                <Tooltip label={`${c.name} (${c.type_name})`}>
+                  <chakra.label
+                    minW="160px"
+                    fontSize="sm"
+                    fontFamily="mono"
+                    color="app.text"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                  >
+                    {c.name}
+                    <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
+                      {c.type_name}
+                    </chakra.span>
+                  </chakra.label>
+                </Tooltip>
+                {typed ? (
+                  <Select
+                    ref={i === 0 ? setFirstRef : undefined}
+                    value={cur}
+                    aria-label={c.name}
+                    onFocus={() => setFocused(i)}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submit();
+                    }}
+                    flex="1"
+                  >
+                    <option value="">{t("rowOpsInsertDefaultOption")}</option>
+                    {boolOptions(boolStart).map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <Input
+                    ref={i === 0 ? setFirstRef : undefined}
+                    value={cur}
+                    placeholder={placeholder}
+                    list={pickerValues.length > 0 ? listId : undefined}
+                    onFocus={() => setFocused(i)}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submit();
+                    }}
+                    flex="1"
+                  />
+                )}
+                <ValueDatalist id={listId} values={pickerValues} />
+                {pickerKind && (
+                  <Tooltip label={badgeTitle(pickerKind, c.name)}>
+                    <chakra.span
+                      flexShrink={0}
+                      maxW="140px"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                      fontSize="2xs"
+                      fontFamily="mono"
+                      color="app.textMuted"
+                      borderWidth="1px"
+                      borderColor="app.border"
+                      borderRadius="sm"
+                      px="1"
+                      data-testid={`value-picker-badge-${c.name}`}
+                    >
+                      {badgeLabel(pickerKind, c.name)}
+                    </chakra.span>
+                  </Tooltip>
+                )}
+              </Flex>
+              {(hintText !== null || chips.length > 0) && (
+                <Flex
+                  align="center"
+                  wrap="wrap"
+                  gap="2.5"
+                  data-testid={`insert-affordance-${c.name}`}
                 >
-                  {badgeLabel(pickerKind, c.name)}
-                </chakra.span>
-              </Tooltip>
-            )}
-          </Flex>
+                  {/* 入力欄の位置 (ラベル幅ぶん) を空けて、説明と関数チップを入力欄の下に揃える。 */}
+                  <chakra.span minW="160px" flexShrink={0} aria-hidden="true" />
+                  {hintText !== null && (
+                    <chakra.span
+                      fontSize="2xs"
+                      color="app.textMuted"
+                      data-testid={`insert-default-hint-${c.name}`}
+                    >
+                      {hintText}
+                    </chakra.span>
+                  )}
+                  {chips.map((chip) => {
+                    const active = activeFn === chip.fn;
+                    return (
+                      <Tooltip key={chip.fn} label={t("rowOpsInsertFnTitle", { sql: chip.sql })}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={active ? "primary" : "secondary"}
+                          aria-pressed={active}
+                          fontFamily="mono"
+                          fontSize="2xs"
+                          data-testid={`insert-fn-${c.name}-${chip.fn}`}
+                          onClick={() =>
+                            setValues((prev) => ({ ...prev, [i]: active ? "" : chip }))
+                          }
+                        >
+                          {chip.sql}
+                        </Button>
+                      </Tooltip>
+                    );
+                  })}
+                  {activeFn !== null && (
+                    <chakra.span fontSize="2xs" color="app.textMuted">
+                      {t("rowOpsInsertFnActive")}
+                    </chakra.span>
+                  )}
+                </Flex>
+              )}
+            </Flex>
           );
         })}
       </ModalBody>

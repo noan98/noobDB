@@ -727,6 +727,59 @@ describe("buildInsertStatements", () => {
     });
     expect(stmts).toEqual(['INSERT INTO "public"."t" ("id", "name") VALUES (5, NULL);']);
   });
+
+  // #1357: 空欄は INSERT から省き DB の既定値 / 自動採番に委ねる。
+  it("omits empty cells so the database fills them (auto-increment / DEFAULT)", () => {
+    const stmts = buildInsertStatements({
+      driver: "mysql",
+      database: "shop",
+      table: "users",
+      columns,
+      inserts: [{ 0: "", 1: "Alice", 2: "" }],
+    });
+    expect(stmts).toEqual(["INSERT INTO `shop`.`users` (`name`) VALUES ('Alice');"]);
+  });
+
+  it("skips a row whose cells are all empty (nothing to insert)", () => {
+    const stmts = buildInsertStatements({
+      driver: "mysql",
+      database: "shop",
+      table: "users",
+      columns,
+      inserts: [{ 0: "", 1: "" }],
+    });
+    expect(stmts).toEqual([]);
+  });
+
+  // #1357: 関数値は引用されず式としてそのまま VALUES に入る。ユーザが打った "NOW()" は
+  // 従来どおり文字列として引用される (式として解釈されない)。
+  it("emits function values as bare expressions and still quotes typed text", () => {
+    const stmts = buildInsertStatements({
+      driver: "mysql",
+      database: "shop",
+      table: "events",
+      columns: [col("id", "INT"), col("at", "DATETIME"), col("note", "VARCHAR")],
+      inserts: [
+        { 1: { fn: "now", sql: "NOW()" }, 2: "NOW()" },
+        { 1: { fn: "current_timestamp", sql: "CURRENT_TIMESTAMP" } },
+      ],
+    });
+    expect(stmts).toEqual([
+      "INSERT INTO `shop`.`events` (`at`, `note`) VALUES (NOW(), 'NOW()');",
+      "INSERT INTO `shop`.`events` (`at`) VALUES (CURRENT_TIMESTAMP);",
+    ]);
+  });
+
+  it("treats a function value as filled even though it is not text", () => {
+    const stmts = buildInsertStatements({
+      driver: "postgres",
+      database: "public",
+      table: "t",
+      columns: [col("id", "UUID")],
+      inserts: [{ 0: { fn: "uuid", sql: "gen_random_uuid()" } }],
+    });
+    expect(stmts).toEqual(['INSERT INTO "public"."t" ("id") VALUES (gen_random_uuid());']);
+  });
 });
 
 describe("buildDeleteStatements", () => {
