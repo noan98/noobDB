@@ -255,3 +255,78 @@ describe("derivedCompletions: 出さない文脈", () => {
     expect(labels("WITH x AS (SELECT a FROM t) SELECT db.x.")).toBeNull();
   });
 });
+
+describe("derivedCompletions: PostgreSQL の ORDER BY / GROUP BY は項目の先頭だけ別名", () => {
+  const sel = "SELECT a AS n FROM t ";
+
+  it("関数引数・式の途中では別名を出さない (PostgreSQL)", () => {
+    expect(labels(`${sel}ORDER BY abs(`, "postgres")).toBeNull();
+    expect(labels(`${sel}ORDER BY n + `, "postgres")).toBeNull();
+    expect(labels(`${sel}GROUP BY abs(`, "postgres")).toBeNull();
+  });
+
+  it("項目の先頭 (BY 直後・カンマ直後) では別名を出す (PostgreSQL)", () => {
+    expect(labels(`${sel}ORDER BY `, "postgres")).toEqual(["n"]);
+    expect(labels(`${sel}ORDER BY a, `, "postgres")).toEqual(["n"]);
+    expect(labels(`${sel}GROUP BY `, "postgres")).toEqual(["n"]);
+  });
+
+  it("MySQL / SQLite は関数引数の中でも従来どおり別名を出す", () => {
+    expect(labels(`${sel}ORDER BY abs(`, "mysql")).toEqual(["n"]);
+    expect(labels(`${sel}ORDER BY abs(`, "sqlite")).toEqual(["n"]);
+  });
+});
+
+describe("derivedCompletions: 方言つきの文字列・コメント (#1419)", () => {
+  it("MySQL のバックスラッシュエスケープ '...\\'...' の後も CTE 補完が効く", () => {
+    const text = "WITH x AS (SELECT a FROM t WHERE c = 'a\\'b') SELECT x.";
+    expect(labels(text, "mysql")).toEqual(["x.a"]);
+  });
+
+  it("MySQL の # コメント (中の ' を含む) の後も CTE 補完が効く", () => {
+    const text = "# don't\nWITH x AS (SELECT a FROM t) SELECT x.";
+    expect(labels(text, "mysql")).toEqual(["x.a"]);
+  });
+
+  it("PostgreSQL のドル引用 $$...$$ (中の ' を含む) の後も CTE 補完が効く", () => {
+    const text = "WITH x AS (SELECT a FROM t WHERE c = $$it's$$) SELECT x.";
+    expect(labels(text, "postgres")).toEqual(["x.a"]);
+  });
+
+  it("PostgreSQL のドル引用の後の派生表補完も効く", () => {
+    const text = "SELECT $$it's$$ AS z FROM (SELECT a FROM t) d WHERE d.";
+    expect(labels(text, "postgres")).toEqual(["d.a"]);
+  });
+
+  it("引用識別子の中の -- や ' は文字列扱いしない", () => {
+    const text = 'WITH "a--b" AS (SELECT "it\'s" FROM t) SELECT ';
+    // ラベルは引用を外した名前。挿入時は apply 側で引用し直す。
+    expect(labels(text, "postgres")).toEqual(["a--b", "a--b.it's"]);
+  });
+});
+
+describe("derivedCompletions: UNION 等の枝をまたがない (#1419)", () => {
+  it("別の枝の派生表の列を出さない", () => {
+    expect(labels("SELECT d.a FROM (SELECT a FROM t) d UNION SELECT d.")).toBeNull();
+    expect(labels("SELECT d.a FROM (SELECT a FROM t) d UNION ALL SELECT d.")).toBeNull();
+  });
+
+  it("同じ枝の派生表は出す", () => {
+    expect(
+      labels("SELECT a FROM u UNION SELECT * FROM (SELECT b FROM t) d WHERE d."),
+    ).toEqual(["d.b"]);
+  });
+
+  it("CTE は WITH が全枝に効くので、どの枝でも出す", () => {
+    expect(labels("WITH x AS (SELECT a FROM t) SELECT 1 UNION SELECT x.")).toEqual(["x.a"]);
+  });
+
+  it("SELECT 別名は同じ枝のものだけ出す (WHERE は SQLite)", () => {
+    const t = "SELECT a AS n FROM t UNION SELECT b AS m FROM u WHERE ";
+    expect(labels(t, "sqlite")).toEqual(["m"]);
+  });
+
+  it("UNION の後ろの ORDER BY (全枝にかかる) では別名を出さない", () => {
+    expect(labels("SELECT a AS n FROM t UNION SELECT b AS m FROM u ORDER BY ")).toBeNull();
+  });
+});

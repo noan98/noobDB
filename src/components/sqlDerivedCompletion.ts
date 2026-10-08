@@ -1,9 +1,5 @@
-import {
-  COMMENT_OR_STRING_RE,
-  mask,
-  quoteIfNeeded,
-  unquote,
-} from "./sqlJoinCompletion";
+import { maskLiterals, type MaskOptions } from "../dangerousSql";
+import { quoteIfNeeded, unquote } from "./sqlJoinCompletion";
 
 /**
  * エディタ本文の構造から補完候補を作る純ロジック (#1419)。CodeMirror には依存せず、
@@ -26,9 +22,9 @@ import {
  *   関数呼び出し・式の括弧 (`sum(x.` / `WHERE (x.`) の中でも外側の句で候補を出す
  *
  * 既知の制約 (安全側に倒して補完を止める / 対象外):
- * - MySQL のバックスラッシュエスケープ (`\'`) と `#` コメント、PostgreSQL のドル引用 (`$$`)
- *   は文字列・コメントとして正しく読めない。その後ろの補完は出ないことがある
  * - カンマ区切りの派生表 (`FROM t, (SELECT ...) d`) と LATERAL は対象外
+ * - 文字列・コメントは方言つきの `maskLiterals` で読む (MySQL のバックスラッシュ・`#`、
+ *   PostgreSQL の `$$` 引用に対応)。UNION 等の別の枝の派生表・別名は出さない
  * - 候補の種別 (cte / derived / alias) は呼び出し側で表示語に変換する (i18n)
  */
 
@@ -141,20 +137,23 @@ function openGroups(s: string, idx: number): number[] {
   return stack;
 }
 
+/** 補完の列名読み取りのため、引用識別子の中身は残すマスク指定。 */
+const MASK_KEEP_IDENT: MaskOptions = { keepQuotedIdentifiers: true };
+
 /**
  * カーソル直前が文字列 / コメントの閉じていない途中かどうか。途中なら補完しない。
- * `mask` と同じ規則 (`COMMENT_OR_STRING_RE`) で末尾の範囲を見る。
+ * 末尾に印を足してマスクする: カーソルが文字列 / コメントの中なら、印もその中として潰される。
+ * 方言の判定 (MySQL のバックスラッシュ・`#` コメント、PostgreSQL の `$$`) は `maskLiterals` に任せる。
  */
-function cursorInLiteral(pre: string): boolean {
-  let last: RegExpMatchArray | null = null;
-  for (const m of pre.matchAll(COMMENT_OR_STRING_RE)) last = m;
-  if (!last) return false;
-  const t = last[0];
-  if ((last.index ?? 0) + t.length !== pre.length) return false;
-  if (t.startsWith("--")) return true;
-  if (t.startsWith("/*")) return !t.endsWith("*/") || t.length < 4;
-  if (t.startsWith("'")) return t.length < 2 || !t.endsWith("'");
-  return false;
+const CURSOR_SENTINEL = "\u0001";
+function cursorInLiteral(pre: string, driver: string): boolean {
+  return !maskLiterals(pre + CURSOR_SENTINEL, driver, MASK_KEEP_IDENT).endsWith(CURSOR_SENTINEL);
+}
+
+/** UNION / UNION ALL / INTERSECT / EXCEPT の個数 (同じ括弧レベルでの枝の区切り)。 */
+const SET_OP_RE = /\b(?:UNION(?:\s+(?:ALL|DISTINCT))?|INTERSECT|EXCEPT)\b/gi;
+function setOpCount(text: string): number {
+  return [...topView(text).matchAll(SET_OP_RE)].length;
 }
 
 /** 別名・名前として妥当なら SelectItem を返す。予約語・数字始まりは null。 */
@@ -283,6 +282,9 @@ function parseDerived(s: string, cursor: number, tokenEnd: number): Source[] {
     const owner = openGroups(s, kw);
     const ownerOpen = owner.length > 0 ? owner[owner.length - 1] : -1;
     if (ownerOpen >= 0 && !cur.includes(ownerOpen)) continue;
+    // 同じ括弧レベルで UNION 等を挟んだ別の枝の派生表は見せない (カーソルと同じ枝だけ)。
+    const levelStart = ownerOpen + 1;
+    if (setOpCount(s.slice(levelStart, kw)) !== setOpCount(s.slice(levelStart, cursor))) continue;
     aliasRe.lastIndex = close + 1;
     const a = aliasRe.exec(s);
     if (!a) continue;
@@ -302,14 +304,19 @@ function parseDerived(s: string, cursor: number, tokenEnd: number): Source[] {
 }
 
 /**
- * カーソルを含むグループ内で最後に現れる SELECT の別名一覧。ORDER BY / GROUP BY /
- * (MySQL・SQLite の) WHERE / HAVING で参照できる。
+ * カーソルを含むグループ内で、カーソルと同じ枝の最後の SELECT の別名一覧。ORDER BY /
+ * GROUP BY / HAVING / WHERE で参照できる (可否は呼び出し側が方言で決める)。
+ * UNION 等の後ろの ORDER BY は UNION 全体にかかり、どの枝の別名か決まらないので出さない。
  */
-function selectAliases(gText: string): string[] {
+function selectAliases(gText: string, orderBy: boolean): string[] {
+  let segStart = 0;
+  for (const m of topView(gText).matchAll(SET_OP_RE)) segStart = (m.index ?? 0) + m[0].length;
+  if (segStart > 0 && orderBy) return [];
+  const seg = gText.slice(segStart);
   let at = -1;
-  for (const m of topView(gText).matchAll(/\bSELECT\b/gi)) at = m.index ?? at;
+  for (const m of topView(seg).matchAll(/\bSELECT\b/gi)) at = m.index ?? at;
   if (at < 0) return [];
-  const info = selectInfo(gText.slice(at));
+  const info = selectInfo(seg.slice(at));
   return info ? info.items.filter((i) => i.alias).map((i) => i.name) : [];
 }
 
@@ -350,14 +357,14 @@ export function derivedCompletions(opts: {
   // 入力中の語: 識別子・引用符・ドット。`x.` / `d.a` のような修飾子付きも 1 語として扱う。
   const token = /[\w`".]*$/.exec(text.slice(Math.max(0, pos - 256), pos))?.[0] ?? "";
   const tokenStart = pos - token.length;
-  if (cursorInLiteral(text.slice(0, pos))) return null;
+  if (cursorInLiteral(text.slice(0, pos), driver)) return null;
   const parts = token.split(".");
   if (parts.length > 2) return null;
   const qualRaw = parts.length === 2 ? parts[0] : null;
   if (qualRaw === "") return null;
 
   // 構造は文字列・コメントを除いた全文で見る。文は `;` で区切る。
-  const full = mask(text);
+  const full = maskLiterals(text, driver, MASK_KEEP_IDENT);
   const semi = tokenStart > 0 ? full.lastIndexOf(";", tokenStart - 1) : -1;
   const stmtStart = semi + 1;
   const endSemi = full.indexOf(";", pos);
@@ -405,7 +412,9 @@ export function derivedCompletions(opts: {
     aliasOk = driver !== "postgres";
   } else if (lastKw === "ORDER BY" || lastKw === "GROUP BY") {
     mode = "expr";
-    aliasOk = true;
+    // PostgreSQL は出力列名をソートキー / グループキーそのものとしてしか参照できない
+    // (`ORDER BY abs(n)` や `ORDER BY n + 1` はエラー)。項目の先頭 (BY 直後・カンマ直後) だけ出す。
+    aliasOk = driver !== "postgres" || /(?:\bBY|,)$/i.test(trimmed);
   }
   if (mode === null) return null;
 
@@ -443,7 +452,7 @@ export function derivedCompletions(opts: {
       }
     }
     if (aliasOk) {
-      for (const a of selectAliases(gText)) {
+      for (const a of selectAliases(gText, lastKw === "ORDER BY")) {
         options.push(candidate(a, qa(a), "variable", "alias"));
       }
     }
