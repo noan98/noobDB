@@ -4,6 +4,7 @@ import {
   IconAlertTriangle,
   IconAlignLeft,
   IconArrowBackUp,
+  IconPencil,
   IconArrowForwardUp,
   IconArrowsExchange,
   IconArrowsSort,
@@ -185,6 +186,7 @@ export type IconName =
   | "filter"
   | "lock"
   | "undo"
+  | "pencil"
   | "redo"
   | "view"
   | "routine"
@@ -321,6 +323,7 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   filter: IconFilter,
   lock: IconLock,
   undo: IconArrowBackUp,
+  pencil: IconPencil,
   redo: IconArrowForwardUp,
   // ビュー: 実テーブルに別名を与えた派生表、という意味で table 系のグリフに寄せる
   // (`table` と並んだときに同じ家族に見えることを優先)。

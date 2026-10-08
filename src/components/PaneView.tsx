@@ -2,7 +2,7 @@ import { lazy, memo, Suspense, useCallback, useMemo, useSyncExternalStore, type 
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
-import { countEditedCells, countEditedRows, type PendingInsertRow } from "./cellEdit";
+import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
 import { useKeyedStable } from "../useKeyedStable";
@@ -132,7 +132,7 @@ function sameTabs(a: Tab[], b: Tab[]): boolean {
  * - ここに無い値を `App` のクロージャ越しに読まない (古い値を掴むため)。
  */
 export interface PaneActions {
-  applyEditsForTab: (tab: Tab) => unknown;
+  applyEditsForTab: (tab: Tab, rowScope?: PendingEdits) => Promise<boolean>;
   clearEditsForTab: (tabId: string) => void;
   closePane: (paneId: string) => void;
   discardEditsAndPreviewForTab: (tabId: string) => void;
@@ -956,6 +956,15 @@ export const PaneView = memo(
                     onRedoEdit={gridStable.fn(`${tab.id}:redo`, () => actions.redoCellEditForTab(tab.id))}
                     onPreviewEdits={gridStable.fn(`${tab.id}:previewEdits`, () => actions.previewEditsForTab(tab))}
                     onApplyEdits={gridStable.fn(`${tab.id}:applyEdits`, () => actions.applyEditsForTab(tab))}
+                    onApplyRowEdits={
+                      tableTabEditable(tab)
+                        ? gridStable.fn(
+                            `${tab.id}:applyRowEdits`,
+                            (rowKey: string, edits: Record<number, string>) =>
+                              actions.applyEditsForTab(tab, { [rowKey]: edits }),
+                          )
+                        : undefined
+                    }
                     applyingEdits={tab.applyingEdits}
                     autoRefreshSecs={tab.autoRefreshSecs ?? null}
                     autoRefreshAllowed={
