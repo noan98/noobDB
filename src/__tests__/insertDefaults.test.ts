@@ -137,6 +137,11 @@ describe("insertFunctionChips", () => {
     expect(insertFunctionChips("mysql", "VARCHAR(255)")).toEqual([]);
   });
 
+  it("offers UUID for MariaDB uuid columns, with UUID() as the expression", () => {
+    expect(insertFunctionChips("mysql", "uuid")).toEqual([{ fn: "uuid" }]);
+    expect(insertFunctionChips("mysql", "UUID", "uuid")).toEqual([{ fn: "uuid" }]);
+  });
+
   it("offers nothing for SQLite text or numeric columns", () => {
     expect(insertFunctionChips("sqlite", "TEXT")).toEqual([]);
     expect(insertFunctionChips("sqlite", "INTEGER")).toEqual([]);
@@ -150,6 +155,23 @@ describe("insertDefaultHint: generated columns (#1357)", () => {
     const s = meta({ name: "slug", data_type: "varchar(64)", extra: "STORED GENERATED" });
     expect(insertDefaultHint("mysql", v, [v])).toEqual({ kind: "generated" });
     expect(insertDefaultHint("mysql", s, [s])).toEqual({ kind: "generated" });
+  });
+
+  it("does not mistake MySQL 8 DEFAULT_GENERATED extras for generated columns", () => {
+    // MySQL 8.0.13+ の式既定値 (`DEFAULT (expr)`) や ON UPDATE 付き既定値は EXTRA に
+    // DEFAULT_GENERATED が出るが、値を入れられる通常の列なので生成列ではない。
+    const expr = meta({ name: "a", data_type: "int", extra: "DEFAULT_GENERATED" });
+    expect(insertDefaultHint("mysql", expr, [expr])).toBeNull();
+    const ts = meta({
+      name: "updated_at",
+      data_type: "timestamp",
+      default: "CURRENT_TIMESTAMP",
+      extra: "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+    });
+    expect(insertDefaultHint("mysql", ts, [ts])).toEqual({
+      kind: "default",
+      expr: "CURRENT_TIMESTAMP",
+    });
   });
 
   it("does not flag an ordinary column as generated", () => {

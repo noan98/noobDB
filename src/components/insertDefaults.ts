@@ -117,6 +117,8 @@ function isUuidType(driver: string, typeName: string): boolean {
   const t = typeName.trim().toUpperCase();
   if (driver === "postgres") return t === "UUID";
   if (driver === "sqlite") return false;
+  // MariaDB 10.7 以降の uuid 型 (MySQL にはネイティブ型が無い)。
+  if (t === "UUID") return true;
   return /^(CHAR|VARCHAR)\(36\)$/.test(t);
 }
 
