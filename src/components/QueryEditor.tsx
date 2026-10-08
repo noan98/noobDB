@@ -51,6 +51,7 @@ import {
 import { tags } from "@lezer/highlight";
 import { api, type ForeignKey, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
+import { derivedCompletions } from "./sqlDerivedCompletion";
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
@@ -480,6 +481,25 @@ function buildSqlExtension(
       return null;
     }
   };
+  // WITH の CTE 名・その列、派生表の別名・その列、SELECT の別名を補完する (#1419)。
+  // JOIN 補完と同じく languageData に並べ、lang-sql の標準補完と併存させる。
+  const derivedSource = (ctx: CompletionContext): CompletionResult | null => {
+    // 同期例外は補完全体を止めるため、握りつぶして null を返す (joinSource と同じ理由)。
+    try {
+      const r = derivedCompletions({
+        driver,
+        text: ctx.state.doc.toString(),
+        pos: ctx.pos,
+      });
+      if (!r) return null;
+      return {
+        from: r.from,
+        options: r.options.map((o) => ({ ...o, boost: 90 })),
+      };
+    } catch {
+      return null;
+    }
+  };
   return [
     sql({
       dialect: codeMirrorSqlDialectFor(driver),
@@ -488,7 +508,10 @@ function buildSqlExtension(
       defaultSchema,
       upperCaseKeywords: true,
     }),
-    EditorState.languageData.of(() => [{ autocomplete: joinSource }]),
+    EditorState.languageData.of(() => [
+      { autocomplete: joinSource },
+      { autocomplete: derivedSource },
+    ]),
   ];
 }
 

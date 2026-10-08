@@ -46,15 +46,18 @@ const RESERVED = new Set([
   "create", "drop", "alter", "set", "with", "true", "false", "unique", "foreign",
 ]);
 
+/**
+ * コメントと文字列リテラルの範囲。識別子 (`"x"` / `` `x` ``) は残す (列名・別名を読むため)。
+ * `sqlJoinCompletion.ts` と `sqlDerivedCompletion.ts` で共有する。
+ */
+export const COMMENT_OR_STRING_RE = /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*(?:'|$)/g;
+
 /** コメントと文字列リテラルを同じ長さの空白に置き換える (オフセットを保つ)。 */
-function mask(sql: string): string {
-  return sql.replace(
-    /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*(?:'|$)/g,
-    (m) => " ".repeat(m.length),
-  );
+export function mask(sql: string): string {
+  return sql.replace(COMMENT_OR_STRING_RE, (m) => " ".repeat(m.length));
 }
 
-function unquote(ident: string): string {
+export function unquote(ident: string): string {
   const q = ident[0];
   if ((q === "`" || q === '"') && ident.length >= 2) {
     return ident.slice(1, -1).replace(new RegExp(q + q, "g"), q);
@@ -68,7 +71,7 @@ function lastPart(ref: string): string {
   return unquote(m ? m[1] : ref);
 }
 
-function quoteIfNeeded(driver: string, name: string): string {
+export function quoteIfNeeded(driver: string, name: string): string {
   const plain = driver === "postgres" ? /^[a-z_][a-z0-9_]*$/ : /^[A-Za-z_]\w*$/;
   const lower = name.toLowerCase();
   return plain.test(name) && !RESERVED.has(lower) ? name : quoteIdentFor(driver, name);
