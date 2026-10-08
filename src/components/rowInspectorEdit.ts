@@ -25,9 +25,13 @@ import {
 /** 下書き: 列インデックス → 編集中の生の入力文字列 (グリッドの保留編集と同じ表現)。 */
 export type InspectorDraft = Record<number, string>;
 
-/** 列ごとの入力コントロール。文字列入力・ネイティブ日時入力・真偽値セレクタのいずれか。 */
+/**
+ * 列ごとの入力コントロール。文字列入力・複数行 (textarea)・ネイティブ日時入力・
+ * 真偽値セレクタのいずれか。
+ */
 export type InspectorControl =
   | { kind: "text" }
+  | { kind: "textarea" }
   | { kind: "native"; inputType: NativeInputType }
   | { kind: "bool"; options: string[] };
 
@@ -55,16 +59,20 @@ export function inspectorEditableColumns(input: {
  * グリッド編集」。どれにも当たらなければ `null` (編集できる)。
  *
  * - 読み込み中: 行がまだ確定していない (ストリーミング中) ので値を固定できない。
+ * - 一括適用の実行中: グリッドの Apply と並行して同じ行を書くと、結果の取り込みが
+ *   食い違うため待たせる。
  * - 削除予定: 削除と更新を同じ行に併存させない。
  * - 保留中のグリッド編集: インスペクタの「適用」は行単位の差分だけを送るため、
  *   既存の保留を黙って上書き・取り込みしない。先にグリッド側で適用/破棄してもらう。
  */
 export function inspectorRowEditBlock(input: {
   streaming: boolean;
+  applying: boolean;
   pendingDelete: boolean;
   hasPendingEdit: boolean;
 }): I18nKey | null {
   if (input.streaming) return "rowInspectorEditBlockedStreaming";
+  if (input.applying) return "rowInspectorEditBlockedApplying";
   if (input.pendingDelete) return "rowInspectorEditBlockedDelete";
   if (input.hasPendingEdit) return "rowInspectorEditBlockedPending";
   return null;
@@ -83,10 +91,15 @@ export function draftFromRow(values: CellValue[], columnCount: number): Inspecto
   return draft;
 }
 
+/** 長文を入れる型 (TEXT / CLOB / JSON / XML 系)。1 行入力では改行が消えるので複数行欄にする。 */
+export function isMultilineColumn(typeName: string): boolean {
+  return /TEXT|CLOB|JSON|XML/i.test(typeName);
+}
+
 /**
  * 1 列の入力コントロールを決める。`resolveTypedEditor` の規則に従い、表現できない
- * 値 (真偽値の想定外表記など) は文字列入力に落として値を失わない。
- * `original` は編集開始時の値 (NULL は `null`)。
+ * 値 (真偽値の想定外表記など) は文字列入力に落として値を失わない。改行を含む値や
+ * 長文型は複数行欄にして改行を保つ。`original` は編集開始時の値 (NULL は `null`)。
  */
 export function inspectorControlFor(typeName: string, original: CellValue): InspectorControl {
   const start = original === null || original === undefined ? "" : String(original);
@@ -98,7 +111,25 @@ export function inspectorControlFor(typeName: string, original: CellValue): Insp
       return { kind: "bool", options: boolOptions(start) };
     }
   }
+  if (isMultilineColumn(typeName) || start.includes("\n")) return { kind: "textarea" };
   return { kind: "text" };
+}
+
+/**
+ * 編集開始後に、行の値 (base = 編集開始時の値) が変わったか。自動リフレッシュや
+ * グリッドの Apply で同じ行が更新されたときに、古い差分を送らないための判定。
+ */
+export function rowChangedSince(base: CellValue[], current: CellValue[], columnCount: number): boolean {
+  for (let i = 0; i < columnCount; i++) {
+    const a = base[i] ?? null;
+    const b = current[i] ?? null;
+    if (a === null || b === null) {
+      if (a !== b) return true;
+      continue;
+    }
+    if (String(a) !== String(b)) return true;
+  }
+  return false;
 }
 
 /** 変更差分と、その中の検証エラー。 */
@@ -113,14 +144,19 @@ export interface InspectorEditResult {
  * 下書きと編集開始時の値を比べ、変更差分と検証エラーを返す。
  *
  * - 編集不可の列は無視する (下書きに値があっても送らない)。
- * - 元の値と同じ結果になる入力は差分に含めない (`editIsNoop`、NULL の再入力や
+ * - 操作していない列 (下書きが編集開始時の下書き `initial` と同じ) は触らない。
+ *   文字列 "NULL" を持つ列を SQL NULL に化けさせないため、これを先に除外する。
+ * - 元の値 `base` と同じ結果になる入力は差分に含めない (`editIsNoop`、NULL の再入力や
  *   `0` と `0.0` 相当など)。グリッドのセル編集と同じ判定。
  * - 数値は文字列のまま扱い Number 化しない。64bit 整数の精度を落とさないため、
  *   比較も `cellValueFromInput` 経由の文字列比較に任せる。
  */
 export function collectInspectorEdits(input: {
   columns: Column[];
-  values: CellValue[];
+  /** 編集開始時の行の値 (差分の基準)。 */
+  base: CellValue[];
+  /** 編集開始時の下書き (`draftFromRow(base)`)。これと同じ列は未操作として扱う。 */
+  initial: InspectorDraft;
   draft: InspectorDraft;
   editable: boolean[];
   validate: (colIdx: number, raw: string) => I18nKey | null;
@@ -131,7 +167,8 @@ export function collectInspectorEdits(input: {
     if (!input.editable[i]) return;
     const raw = input.draft[i];
     if (raw === undefined) return;
-    const current = input.values[i] ?? null;
+    if (raw === input.initial[i]) return;
+    const current = input.base[i] ?? null;
     if (editIsNoop(raw, col, current)) return;
     const err = input.validate(i, raw);
     if (err) {

@@ -29,13 +29,14 @@ import { Segmented } from "./Segmented";
 import type { RelatedEntry } from "../relatedRows";
 import type { I18nKey } from "../i18n";
 import { FieldError, FieldLabel } from "./modalForm";
-import { Button, Input, PressableButton, Select } from "./ui";
+import { Button, Input, PressableButton, Select, Textarea } from "./ui";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { boolSelectValue, fromNativeValue, toNativeValue } from "./typedEditor";
 import {
   collectInspectorEdits,
   draftFromRow,
   inspectorControlFor,
+  rowChangedSince,
   type InspectorDraft,
 } from "./rowInspectorEdit";
 
@@ -153,8 +154,12 @@ export function RowInspector({
   // フォーム編集の下書き (#1394)。行が変われば破棄する (行送りの方向と同じく、描画中に
   // 確定させて古い下書きを一瞬も表示しない)。`session` は編集開始ごとに変え、非制御の
   // 入力欄 (ネイティブ日時入力の badInput 対策) を作り直すための鍵。
+  // `base` / `initial` は編集開始時点の値と下書き。差分はこれを基準にする (最新の
+  // values prop を基準にすると、編集中に変わった行の値を黙って巻き戻してしまうため)。
   const [editState, setEditState] = useState<{
     key: string;
+    base: CellValue[];
+    initial: InspectorDraft;
     draft: InspectorDraft;
     session: number;
   } | null>(null);
@@ -167,12 +172,13 @@ export function RowInspector({
   const canEdit =
     edit !== undefined && activeView === "fields" && edit.editableColumns.some(Boolean);
 
-  // 編集中の差分と検証結果。値 (values) は編集開始時点のものを基準にする。
+  // 編集中の差分と検証結果。基準は編集開始時の値 (base)。
   const edited =
     editing && edit && editState
       ? collectInspectorEdits({
           columns,
-          values,
+          base: editState.base,
+          initial: editState.initial,
           draft: editState.draft,
           editable: edit.editableColumns,
           validate: edit.validate,
@@ -180,15 +186,28 @@ export function RowInspector({
       : null;
   const changedCount = edited ? Object.keys(edited.edits).length : 0;
   const hasErrors = edited ? Object.keys(edited.errors).length > 0 : false;
+  // 編集中に行の値が変わった (自動リフレッシュ・グリッドの Apply など)。古い基準の差分は
+  // 送らず、編集し直してもらう。
+  const stale =
+    editing && editState ? rowChangedSince(editState.base, values, columns.length) : false;
   const canApply =
-    !!edit && !!edited && changedCount > 0 && !hasErrors && edit.blockedReason === null && !applying;
+    !!edit &&
+    !!edited &&
+    changedCount > 0 &&
+    !hasErrors &&
+    !stale &&
+    edit.blockedReason === null &&
+    !applying;
 
   const startEdit = () => {
     if (!edit || edit.blockedReason !== null) return;
     sessionRef.current += 1;
+    const draft = draftFromRow(values, columns.length);
     setEditState({
       key: edit.rowKey,
-      draft: draftFromRow(values, columns.length),
+      base: [...values],
+      initial: { ...draft },
+      draft,
       session: sessionRef.current,
     });
   };
@@ -198,25 +217,36 @@ export function RowInspector({
   const applyEdit = async () => {
     if (!edit || !edited || !canApply) return;
     setApplying(true);
-    const ok = await edit.onApply(edited.edits);
-    setApplying(false);
+    let ok = false;
+    try {
+      ok = await edit.onApply(edited.edits);
+    } catch {
+      // 適用の失敗は呼び出し側 (App) がステータスで伝える。ここでは下書きを残すだけ。
+      ok = false;
+    } finally {
+      setApplying(false);
+    }
     // 成功時は結果グリッドの行が更新され、下書きは役目を終える。失敗・確認で止めた場合は
     // 下書きを残して、直してから再度適用できるようにする。
     if (ok) setEditState(null);
   };
 
-  // Esc: 編集中は下書きを捨てて閲覧に戻す (閉じるのは次の Esc)。それ以外は閉じる。
+  // Esc: 編集中は下書きを捨てて閲覧に戻す (閉じるのは次の Esc)。適用の実行中
+  // (確認ダイアログ表示中を含む) は何もしない。それ以外は閉じる。
   // Esc closes the inspector when focus is inside it (the grid handler covers
   // the case where focus is still on a cell).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (editing) setEditState(null);
-      else onClose();
+      if (editing) {
+        if (!applying) setEditState(null);
+        return;
+      }
+      onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, editing]);
+  }, [onClose, editing, applying]);
 
   // Cmd/Ctrl+Enter で適用 (フォーム全体で有効。SQL エディタ・モーダルと同じキー)。
   const onFormKeyDown = (e: ReactKeyboardEvent) => {
@@ -279,6 +309,20 @@ export function RowInspector({
             if (e.target.value === "" && e.target.validity.badInput) return;
             setCell(i, fromNativeValue(control.inputType, e.target.value, "NULL", start));
           }}
+        />
+      );
+    } else if (control.kind === "textarea") {
+      // 長文型・改行を含む値は複数行欄 (1 行入力は改行を落とすため)。Cmd/Ctrl+Enter で適用、
+      // 素の Enter は改行。
+      input = (
+        <Textarea
+          {...a11y}
+          value={raw}
+          rows={Math.min(8, Math.max(2, raw.split("\n").length))}
+          resize="vertical"
+          fontFamily="mono"
+          fontSize="sm"
+          onChange={(e) => setCell(i, e.target.value)}
         />
       );
     } else {
@@ -676,15 +720,17 @@ export function RowInspector({
               flex="1"
               minW="0"
               fontSize="xs"
-              color={edit.blockedReason ? "app.textWarning" : "app.textMuted"}
+              color={edit.blockedReason || stale ? "app.textWarning" : "app.textMuted"}
             >
               {edit.blockedReason
                 ? t(edit.blockedReason)
-                : hasErrors
-                  ? t("rowInspectorEditHasErrors")
-                  : changedCount > 0
-                    ? t("rowInspectorChangeCount", { count: changedCount })
-                    : t("rowInspectorEditNoChanges")}
+                : stale
+                  ? t("rowInspectorEditStale")
+                  : hasErrors
+                    ? t("rowInspectorEditHasErrors")
+                    : changedCount > 0
+                      ? t("rowInspectorChangeCount", { count: changedCount })
+                      : t("rowInspectorEditNoChanges")}
             </chakra.span>
             <Button type="button" variant="secondary" onClick={cancelEdit}>
               {t("rowInspectorEditCancel")}

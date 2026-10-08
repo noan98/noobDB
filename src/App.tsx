@@ -42,7 +42,8 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
-import { applyEditsToRows, buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
@@ -1046,33 +1047,6 @@ function emptyResult(columns: Column[]): QueryResult {
   return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
 }
 
-// Apply 完了後、実際に DB へ送信・コミットされたセル編集 (`applied`) だけを
-// `current` の pendingEdits から取り除く。Apply の往復中に追加/上書きされた
-// 編集 (= `applied` に無いか、値が食い違うもの) はまだ DB 未送信なので保持し、
-// 「未送信の編集が黙ってコミット済み扱いになる」事故 (#F2) を防ぐ。
-function pendingEditsAfterApply(current: PendingEdits, applied: PendingEdits): PendingEdits {
-  const next: PendingEdits = {};
-  for (const rowKey of Object.keys(current)) {
-    const currentRow = current[rowKey];
-    const appliedRow = applied[rowKey];
-    if (!appliedRow) {
-      next[rowKey] = currentRow;
-      continue;
-    }
-    const remainingRow: Record<number, string> = {};
-    for (const colKey of Object.keys(currentRow)) {
-      const colIdx = Number(colKey);
-      // 送信した値のままなら反映済みなので削除。Apply 中にさらに書き換えられて
-      // いれば (値が食い違う)、まだ未送信の新しい編集として残す。
-      if (appliedRow[colIdx] !== undefined && currentRow[colIdx] === appliedRow[colIdx]) {
-        continue;
-      }
-      remainingRow[colIdx] = currentRow[colIdx];
-    }
-    if (Object.keys(remainingRow).length > 0) next[rowKey] = remainingRow;
-  }
-  return next;
-}
 
 function emptyPreview(): PreviewResult {
   return {
@@ -5569,37 +5543,8 @@ export default function App() {
         // ため、送信済みスナップショット (`pendingEdits`、この関数冒頭で捕捉) だけを
         // グリッドへ反映し pendingEdits から取り除く。それ以外の新規編集は pending
         // のまま保持する (#F2)。
-        // 行スコープの適用では、削除予定・新規行・取り消し履歴は送っていないので保つ。
-        const keepOps = scoped
-          ? { pendingDeletes: tt.pendingDeletes, pendingInserts: tt.pendingInserts }
-          : { pendingDeletes: [], pendingInserts: [] };
-        const keepUndo = scoped
-          ? { editUndoStack: tt.editUndoStack, editRedoStack: tt.editRedoStack }
-          : { editUndoStack: [], editRedoStack: [] };
-        if (!tt.result) {
-          return {
-            ...tt,
-            pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
-            ...keepUndo,
-            preview: null,
-            ...keepOps,
-          };
-        }
-        const nextRows = applyEditsToRows({
-          columns: tt.result.columns,
-          rows: tt.result.rows,
-          pkIndices,
-          edits: pendingEdits,
-          deleteKeys: new Set(scoped ? [] : (tt.pendingDeletes ?? [])),
-        });
-        return {
-          ...tt,
-          result: { ...tt.result, rows: nextRows, rows_affected: nextRows.length },
-          pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
-          ...keepUndo,
-          preview: null,
-          ...keepOps,
-        };
+        // 状態遷移は純関数 `tabStateAfterApply` (editApplyState.ts) に任せる。
+        return { ...tabStateAfterApply(tt, { pkIndices, sent: pendingEdits, scoped }), preview: null };
       });
     }
     patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));

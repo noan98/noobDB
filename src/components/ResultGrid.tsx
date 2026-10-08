@@ -3311,6 +3311,7 @@ export const DataGrid = memo(function DataGrid({
   validateEdit,
   onApplyRowEdits,
   streaming: rowStreaming = false,
+  applyingEdits: rowApplying = false,
   columnSizingStorageKey,
   emptyMessage,
   skeleton = false,
@@ -3410,6 +3411,8 @@ export const DataGrid = memo(function DataGrid({
   onApplyRowEdits?: (rowKey: string, edits: Record<number, string>) => Promise<boolean>;
   /** ストリーミング中は行インスペクタの編集を始めさせない (#1394)。 */
   streaming?: boolean;
+  /** グリッドの一括 Apply 進行中は行インスペクタの編集を待たせる (#1394)。 */
+  applyingEdits?: boolean;
   /**
    * When set, user-adjusted column widths persist to `localStorage` under
    * this key and are restored for matching result shapes. Omit (preview
@@ -6814,6 +6817,7 @@ export const DataGrid = memo(function DataGrid({
                     }),
                     blockedReason: inspectorRowEditBlock({
                       streaming: rowStreaming,
+                      applying: rowApplying,
                       pendingDelete: pendingDeleteKeys?.has(inspRowKey) ?? false,
                       hasPendingEdit: Object.keys(pendingEdits?.[inspRowKey] ?? {}).length > 0,
                     }),
@@ -8711,6 +8715,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
           validateEdit={validateEdit}
           onApplyRowEdits={editableActive ? onApplyRowEdits : undefined}
           streaming={streaming}
+          applyingEdits={applyingEdits}
           rowSqlDriver={driver}
           rowSqlDatabase={database}
           rowSqlTable={table}
