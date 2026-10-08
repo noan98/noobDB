@@ -16,7 +16,7 @@ noobDB は MySQL / PostgreSQL / SQLite に対応した軽量デスクトップ D
 | ディレクトリ | 役割 | 詳しいスキル |
 |---|---|---|
 | `db/` | ドライバ層。`enum Connection` でディスパッチ。安全網 (`is_read_only_sql` / `apply_auto_limit`) もここ | `noobdb-db-layer` / `noobdb-sql-safety` |
-| `commands/` | IPC ハンドラ (164 コマンド)。薄いラッパーに徹し、コアは `*_inner` に切る | `noobdb-ipc` / `noobdb-features` |
+| `commands/` | IPC ハンドラ。薄いラッパーに徹し、コアは `*_inner` に切る | `noobdb-ipc` / `noobdb-features` |
 | `ssh/` | トンネル、ホスト鍵検証 (TOFU)、`~/.ssh/config` パーサ | `noobdb-sessions` |
 | `profiles/` `snippets/` `sandboxes/` `tasks/` | JSON ストア 4 種 (並行書き込み対策が必須) | `noobdb-storage` |
 | `history/` `flight_recorder/` `timelapse/` `schema_drift/` `plan_watch/` | ローカル SQLite ストア (`timelapse/` はテーブル・タイムラプス #739 の世代スナップショット、`schema_drift/` はスキーマドリフト #736、`plan_watch/` は実行計画ウォッチ #743 の世代。後 2 つは #1260 で localStorage から移行) | `noobdb-storage` / `noobdb-features` |
@@ -32,7 +32,8 @@ noobDB は MySQL / PostgreSQL / SQLite に対応した軽量デスクトップ D
 - **フロントエンド** (`src/`): React 19 + TypeScript + Vite。UI の状態はすべて
   ここで保持しますが、セッションやプロファイルに関してはバックエンドの状態が
   正となります。UI から Rust への通信は `invoke(...)` のみ — `src/api/tauri.ts`
-  が Tauri コマンド全体への型付けされた単一のラッパーです。JS 側の引数名は
+  の `api` が Tauri コマンド全体への型付けされた単一の入口です (本体は
+  `src/api/commands/<module>.ts` に分割)。JS 側の引数名は
   camelCase の規約 (例: `sessionId`) で、Tauri が自動的に Rust 側の `snake_case`
   に変換します。ストリーミングコマンドの結果は `invoke` の戻り値ではなくイベント
   (`listen`) で受け取ります — `tauri.ts` の `listenQueryStream` /

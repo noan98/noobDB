@@ -42,7 +42,8 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
-import { applyEditsToRows, buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
@@ -1046,33 +1047,6 @@ function emptyResult(columns: Column[]): QueryResult {
   return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
 }
 
-// Apply 完了後、実際に DB へ送信・コミットされたセル編集 (`applied`) だけを
-// `current` の pendingEdits から取り除く。Apply の往復中に追加/上書きされた
-// 編集 (= `applied` に無いか、値が食い違うもの) はまだ DB 未送信なので保持し、
-// 「未送信の編集が黙ってコミット済み扱いになる」事故 (#F2) を防ぐ。
-function pendingEditsAfterApply(current: PendingEdits, applied: PendingEdits): PendingEdits {
-  const next: PendingEdits = {};
-  for (const rowKey of Object.keys(current)) {
-    const currentRow = current[rowKey];
-    const appliedRow = applied[rowKey];
-    if (!appliedRow) {
-      next[rowKey] = currentRow;
-      continue;
-    }
-    const remainingRow: Record<number, string> = {};
-    for (const colKey of Object.keys(currentRow)) {
-      const colIdx = Number(colKey);
-      // 送信した値のままなら反映済みなので削除。Apply 中にさらに書き換えられて
-      // いれば (値が食い違う)、まだ未送信の新しい編集として残す。
-      if (appliedRow[colIdx] !== undefined && currentRow[colIdx] === appliedRow[colIdx]) {
-        continue;
-      }
-      remainingRow[colIdx] = currentRow[colIdx];
-    }
-    if (Object.keys(remainingRow).length > 0) next[rowKey] = remainingRow;
-  }
-  return next;
-}
 
 function emptyPreview(): PreviewResult {
   return {
@@ -5442,10 +5416,21 @@ export default function App() {
     void previewQueryInTab(tab.id, stmts[0]);
   }, [sessionId, previewQueryInTab, selectedProfile?.driver]);
 
-  const applyEditsForTab = useCallback(async (tab: Tab) => {
-    if (!sessionId) return;
-    const { result, tableColumns, database, table, pendingEdits, paginatable, rowIdentity } = tab;
-    if (!result || !tableColumns || !database || !table) return;
+  /**
+   * 保留中の編集を一括適用する。`rowScope` (rowEditKey → 列 → 生の入力値) を渡すと、
+   * その行のセル編集だけを送り、ほかの保留編集・削除予定・新規行は保留のまま残す
+   * (行インスペクタからの適用、#1394)。戻り値は適用が完了したか (確認で止めた・
+   * 失敗した・送るものが無いときは false)。
+   */
+  const applyEditsForTab = useCallback(async (tab: Tab, rowScope?: PendingEdits): Promise<boolean> => {
+    if (!sessionId) return false;
+    const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
+    if (!result || !tableColumns || !database || !table) return false;
+    const scoped = rowScope !== undefined;
+    const pendingEdits: PendingEdits = scoped ? rowScope : tab.pendingEdits;
+    // 行スコープの適用では削除予定・新規行は送らず、保留のまま残す。
+    const pendingDeletes = scoped ? [] : (tab.pendingDeletes ?? []);
+    const pendingInserts = scoped ? [] : (tab.pendingInserts ?? []);
     const { indices: pkIndices, strategy: identityStrategy } = resolveRowIdentity(
       result.columns,
       tableColumns,
@@ -5461,15 +5446,15 @@ export default function App() {
     });
     const deletes = buildDeleteStatements({
       driver, database, table, columns: result.columns, rows: result.rows, pkIndices,
-      deleteKeys: new Set(tab.pendingDeletes ?? []),
+      deleteKeys: new Set(pendingDeletes),
     });
     const inserts = buildInsertStatements({
-      driver, database, table, columns: result.columns, inserts: tab.pendingInserts ?? [],
+      driver, database, table, columns: result.columns, inserts: pendingInserts,
     });
     const extraStatements = [...deletes, ...inserts];
     // 行ごとの操作数 (編集行 + 削除 + 新規)。確認文とステータスの件数表示に使う。
     const opCount = updateRowCount + extraStatements.length;
-    if (opCount === 0) return;
+    if (opCount === 0) return false;
     // 主キーが無く全列一致で行を識別しているとき (#849) は一意性を保証できない
     // ため、Apply 前に必ず警告する — 本番/confirm_writes の設定に関わらず、常に
     // このテーブル特有の安全網として機能する。表示中の行に実際に重複がある
@@ -5485,7 +5470,7 @@ export default function App() {
         confirmLabel: translate("editApplyButton"),
         tone: "warning",
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
     // 本番接続で書き込み承認 (confirm_writes) が有効なときは、通常のクエリ実行
     // ゲートと同じく、インライン編集の一括 Apply にも確認を要求する (#659)。
@@ -5501,7 +5486,7 @@ export default function App() {
         confirmLabel: translate("editApplyButton"),
         tone: "warning",
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
     const tabId = tab.id;
     patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
@@ -5535,14 +5520,14 @@ export default function App() {
         vars: { total: opCount, error: failure },
         error: true,
       });
-      return;
+      return false;
     }
     // 成功時はコミット済みの変更を、取得済みの結果行へその場で反映する。これにより
     // 編集セルが新しい値を表示し、ユーザのスクロール/ページ位置も保たれる。以前は
     // 常に 1 ページ目 (`LIMIT 既定件数`) を取り直していたため、2 ページ目以降や
     // 「さらに読み込む」で表示した行を編集すると、Apply 後に表示が先頭ページへ戻り、
     // 編集対象の行が消えたり編集前の値に見えたりしていた。
-    const hasInserts = (tab.pendingInserts ?? []).length > 0;
+    const hasInserts = pendingInserts.length > 0;
     if (hasInserts && paginatable) {
       // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
       // ここだけは再取得して反映する。
@@ -5558,34 +5543,8 @@ export default function App() {
         // ため、送信済みスナップショット (`pendingEdits`、この関数冒頭で捕捉) だけを
         // グリッドへ反映し pendingEdits から取り除く。それ以外の新規編集は pending
         // のまま保持する (#F2)。
-        if (!tt.result) {
-          return {
-            ...tt,
-            pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
-            editUndoStack: [],
-            editRedoStack: [],
-            preview: null,
-            pendingDeletes: [],
-            pendingInserts: [],
-          };
-        }
-        const nextRows = applyEditsToRows({
-          columns: tt.result.columns,
-          rows: tt.result.rows,
-          pkIndices,
-          edits: pendingEdits,
-          deleteKeys: new Set(tt.pendingDeletes ?? []),
-        });
-        return {
-          ...tt,
-          result: { ...tt.result, rows: nextRows, rows_affected: nextRows.length },
-          pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
-          editUndoStack: [],
-          editRedoStack: [],
-          preview: null,
-          pendingDeletes: [],
-          pendingInserts: [],
-        };
+        // 状態遷移は純関数 `tabStateAfterApply` (editApplyState.ts) に任せる。
+        return { ...tabStateAfterApply(tt, { pkIndices, sent: pendingEdits, scoped }), preview: null };
       });
     }
     patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
@@ -5594,6 +5553,7 @@ export default function App() {
       key: "statusAppliedEdits",
       vars: { rows: totalAffected, count: opCount },
     });
+    return true;
   }, [
     sessionId,
     patchTab,

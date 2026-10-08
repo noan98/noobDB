@@ -73,6 +73,7 @@ import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } fro
 /** 候補なしを表す共有の空配列 (レンダーごとに新しい配列を作らない)。 */
 const EMPTY_PICKER_VALUES: string[] = [];
 import { RowInspector } from "./RowInspector";
+import { inspectorEditableColumns, inspectorRowEditBlock } from "./rowInspectorEdit";
 import { resolveRelatedEntries } from "../relatedRows";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
@@ -1091,6 +1092,12 @@ interface Props {
   onApplyEdits?: () => void;
   /** True while the Apply transaction is in flight — shows an inline spinner. */
   applyingEdits?: boolean;
+  /**
+   * 行インスペクタのフォーム編集 (#1394) からの 1 行適用。`rowKey` (rowEditKey) の
+   * 行の差分 (列インデックス → 生の入力値) だけを、グリッドの Apply と同じ経路で送る。
+   * 戻り値は適用が完了したか。未指定ならインスペクタは閲覧専用。
+   */
+  onApplyRowEdits?: (rowKey: string, edits: Record<number, string>) => Promise<boolean>;
   /** Current auto-refresh cadence (seconds), or null when polling is off. */
   autoRefreshSecs?: number | null;
   /**
@@ -3302,6 +3309,9 @@ export const DataGrid = memo(function DataGrid({
   onRequestInsertRow,
   onDuplicateRow,
   validateEdit,
+  onApplyRowEdits,
+  streaming: rowStreaming = false,
+  applyingEdits: rowApplying = false,
   columnSizingStorageKey,
   emptyMessage,
   skeleton = false,
@@ -3397,6 +3407,12 @@ export const DataGrid = memo(function DataGrid({
    * inline error shown under the edit box and the invalid-cell highlight.
    */
   validateEdit?: (colIdx: number, value: string) => I18nKey | null;
+  /** 行インスペクタのフォーム編集からの 1 行適用 (#1394)。`ResultGrid` から渡す。 */
+  onApplyRowEdits?: (rowKey: string, edits: Record<number, string>) => Promise<boolean>;
+  /** ストリーミング中は行インスペクタの編集を始めさせない (#1394)。 */
+  streaming?: boolean;
+  /** グリッドの一括 Apply 進行中は行インスペクタの編集を待たせる (#1394)。 */
+  applyingEdits?: boolean;
   /**
    * When set, user-adjusted column widths persist to `localStorage` under
    * this key and are restored for matching result shapes. Omit (preview
@@ -6758,6 +6774,10 @@ export const DataGrid = memo(function DataGrid({
       </AnimatePresence>
       {inspectorOpen && activeCell && rows[activeCell.rowIdx] && (() => {
         const inspVis = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
+        const inspMasked = maskedCols
+          ? columns.map((_, ci) => cellMaskedNow(activeCell.rowIdx, ci))
+          : undefined;
+        const inspRowKey = rowEditKey(rows[activeCell.rowIdx] ?? [], pkIndices ?? [], activeCell.rowIdx);
         const moveTo = (visTarget: number) => {
           const r = visibleRows[visTarget];
           if (r) navigateCell(r.index, activeCell.colIdx);
@@ -6767,11 +6787,7 @@ export const DataGrid = memo(function DataGrid({
             columns={columns}
             comments={columnCommentsFor(columns.map((c) => c.name), columnMeta)}
             values={rows[activeCell.rowIdx]}
-            maskedColumns={
-              maskedCols
-                ? columns.map((_, ci) => cellMaskedNow(activeCell.rowIdx, ci))
-                : undefined
-            }
+            maskedColumns={inspMasked}
             columnKinds={columnKinds}
             related={
               onRunRelatedQuery && incomingFks && incomingFks.length > 0
@@ -6786,6 +6802,27 @@ export const DataGrid = memo(function DataGrid({
                     database: rowSqlDatabase ?? null,
                     runQuery: onRunRelatedQuery,
                     onOpenInGrid: onFkJump,
+                  }
+                : undefined
+            }
+            edit={
+              onApplyRowEdits
+                ? {
+                    rowKey: inspRowKey,
+                    editableColumns: inspectorEditableColumns({
+                      columnCount: columns.length,
+                      gridEditable: !!editable,
+                      editableColumns,
+                      maskedColumns: inspMasked,
+                    }),
+                    blockedReason: inspectorRowEditBlock({
+                      streaming: rowStreaming,
+                      applying: rowApplying,
+                      pendingDelete: pendingDeleteKeys?.has(inspRowKey) ?? false,
+                      hasPendingEdit: Object.keys(pendingEdits?.[inspRowKey] ?? {}).length > 0,
+                    }),
+                    validate: (ci, raw) => validateEdit?.(ci, raw) ?? null,
+                    onApply: (edits) => onApplyRowEdits(inspRowKey, edits),
                   }
                 : undefined
             }
@@ -7013,6 +7050,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   bundleContext,
   lastEditAppliedAt,
   applyingEdits,
+  onApplyRowEdits,
   onRunStatsQuery,
   onLookupQuery,
   onExploreColumn,
@@ -8675,6 +8713,9 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
           canUndo={canUndo}
           canRedo={canRedo}
           validateEdit={validateEdit}
+          onApplyRowEdits={editableActive ? onApplyRowEdits : undefined}
+          streaming={streaming}
+          applyingEdits={applyingEdits}
           rowSqlDriver={driver}
           rowSqlDatabase={database}
           rowSqlTable={table}

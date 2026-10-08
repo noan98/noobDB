@@ -51,7 +51,8 @@ import {
 import { tags } from "@lezer/highlight";
 import { api, type ForeignKey, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
-import { useT } from "../i18n";
+import { derivedCompletions } from "./sqlDerivedCompletion";
+import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset } from "../sqlScript";
@@ -480,6 +481,35 @@ function buildSqlExtension(
       return null;
     }
   };
+  // WITH の CTE 名・その列、派生表の別名・その列、SELECT の別名を補完する (#1419)。
+  // JOIN 補完と同じく languageData に並べ、lang-sql の標準補完と併存させる。
+  const derivedSource = (ctx: CompletionContext): CompletionResult | null => {
+    // 同期例外は補完全体を止めるため、握りつぶして null を返す (joinSource と同じ理由)。
+    try {
+      const r = derivedCompletions({
+        driver,
+        text: ctx.state.doc.toString(),
+        pos: ctx.pos,
+      });
+      if (!r) return null;
+      // 候補の種別は純モジュールから受け、表示語はここで現在のロケールに変換する。
+      const kindLabel = {
+        cte: t("editorCompletionCte"),
+        derived: t("editorCompletionDerived"),
+        alias: t("editorCompletionAlias"),
+      } as const;
+      return {
+        from: r.from,
+        options: r.options.map(({ kind, ...o }) => ({
+          ...o,
+          detail: kindLabel[kind],
+          boost: 90,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  };
   return [
     sql({
       dialect: codeMirrorSqlDialectFor(driver),
@@ -488,7 +518,10 @@ function buildSqlExtension(
       defaultSchema,
       upperCaseKeywords: true,
     }),
-    EditorState.languageData.of(() => [{ autocomplete: joinSource }]),
+    EditorState.languageData.of(() => [
+      { autocomplete: joinSource },
+      { autocomplete: derivedSource },
+    ]),
   ];
 }
 
@@ -549,6 +582,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     unknownStatementStart: t("editorLintUnknownStatement"),
     unterminatedComment: t("editorLintUnterminatedComment"),
     clauseOrder: t("editorLintClauseOrder"),
+    keywordTypo: t("editorLintKeywordTypo"),
+    missingOperand: t("editorLintMissingOperand"),
+    extraComma: t("editorLintExtraComma"),
+    missingBy: t("editorLintMissingBy"),
+    incompleteStatement: t("editorLintIncomplete"),
   };
   const lintMessagesRef = useRef(lintMessages);
   lintMessagesRef.current = lintMessages;
@@ -557,7 +595,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
 
   // オンのときだけ linter + lintGutter を返し、オフでは空 (診断を一切出さない)。
   // クロージャは ref からメッセージを読むので、言語切替時は下の useEffect が
-  // compartment を作り直して再 lint する。
+  // compartment を作り直して再 lint する。「文が途中で終わっている」判定はカーソルが
+  // 文の末尾にある間 (= 入力中) は出さないので、カーソル移動でも再 lint する。
   const buildLintExtension = (enabled: boolean) =>
     enabled
       ? [
@@ -568,8 +607,9 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
                 syntaxTree(view.state),
                 view.state.doc.toString(),
                 lintMessagesRef.current,
+                { cursor: view.state.selection.main.head },
               ),
-            { delay: SQL_LINT_DELAY_MS },
+            { delay: SQL_LINT_DELAY_MS, needsRefresh: (u) => u.selectionSet },
           ),
         ]
       : [];
@@ -612,6 +652,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       lintMessages.unknownStatementStart,
       lintMessages.unterminatedComment,
       lintMessages.clauseOrder,
+      lintMessages.keywordTypo,
+      lintMessages.missingOperand,
+      lintMessages.extraComma,
+      lintMessages.missingBy,
+      lintMessages.incompleteStatement,
     ].join("\u0000"),
     keymap: [runCombo, runStatementCombo, previewCombo, formatCombo, explainCombo].join("\u0000"),
   };
