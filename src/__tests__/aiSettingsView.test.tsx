@@ -141,7 +141,7 @@ describe("AiSettings サンプル要求 (#690)", () => {
     await screen.findByText(t("aiSampleDone", { model: "claude-opus-5-5", input: 1, output: 2 }));
   });
 
-  it("error と refusal と cancelled を区別して表示する", async () => {
+  it("error イベントはエラー表示になる", async () => {
     await start();
     act(() => handlers?.onError?.({ ...base, error: "boom", kind: "aiApi" }));
     await screen.findByText(t("aiSampleError", { message: "boom" }));

@@ -415,6 +415,11 @@ mod tests {
         assert!(done.fallback_used);
     }
 
+    /// 回帰テスト: `install_default` を外すと reqwest が `panic!("No provider set")` する。
+    /// 前提として、この lib テストバイナリ内で他にプロセス既定の暗号プロバイダを登録する
+    /// テストを置かないこと (sqlx は `builder_with_provider` で自前のものを渡すだけ)。
+    /// 既定プロバイダはプロセスで 1 つなので、先に別のテストが登録すると本テストは
+    /// install 行の有無に関わらず通ってしまい、回帰を検出できなくなる。
     #[test]
     fn transport_can_be_built_without_a_preinstalled_crypto_provider() {
         // 回帰防止: プロバイダ未登録だと reqwest が panic する。
