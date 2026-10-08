@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 // 依存しないため、frontend の `tsc` 型チェック (build) でも追加の型定義が不要。
 // `?raw` の型宣言は `vite/client` (src/vite-env.d.ts で参照) が提供する。
 import libRs from "../../src-tauri/src/lib.rs?raw";
-import tauriTs from "../api/tauri.ts?raw";
+// `tauri.ts` と `api/commands/*.ts` の連結 (ラッパー本体はモジュール別ファイルに分割済み)。
+import { apiWrapperSource as tauriTs } from "./apiSources";
 
 // IPC コマンド登録 ↔ フロント (tauri.ts) ラッパのパリティ検証。
 //

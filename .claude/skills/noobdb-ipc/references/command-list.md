@@ -1,7 +1,12 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **160 コマンド**の
-全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている全コマンドの
+一覧です。`src/api/tauri.ts` の `api` オブジェクト (本体は `src/api/commands/*.ts`) が
+これをミラーします。
+
+コマンド名は **1 行 1 コマンドの箇条書き**で書いてください (`a` / `b` と 1 行に並べると、
+同じセクションにコマンドを足す並列の PR が同じ行を書き換えて衝突します)。件数も
+書きません。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
 > `generate_handler!` と突き合わせています。** コマンドを追加・削除したらここも
@@ -9,25 +14,41 @@
 
 ## 接続 (`commands/connection.rs`)
 
-`test_connection` / `connect` / `cancel_connect` / `ping_session` / `health_probe_all` /
-`disconnect` / `reconnect`
+- `test_connection`
+- `connect`
+- `cancel_connect`
+- `ping_session`
+- `health_probe_all`
+- `disconnect`
+- `reconnect`
 
 `health_probe_all(sessionIds, timeoutMs, refreshVersion)` (#1259) は接続ヘルスの一括プローブ。
 Rust が全セッションを並列に問い合わせ、各セッションを `tokio::time::timeout` で打ち切る。
 
 ## SSH (`commands/ssh.rs`)
 
-`list_known_hosts` / `forget_host_key` / `trust_host_key` / `resolve_ssh_config_host`
+- `list_known_hosts`
+- `forget_host_key`
+- `trust_host_key`
+- `resolve_ssh_config_host`
 
 ## クエリ実行・トランザクション (`commands/query.rs`)
 
-`run_query` / `run_query_transaction` / `run_query_stream` / `preview_query_stream` /
-`cancel_stream` / `set_emergency_mode` / `run_lookup_query` / `begin_transaction` (任意引数 `isolation` / `readOnly`, #1166) / `run_in_transaction` /
-`finish_transaction`
+- `run_query`
+- `run_query_transaction`
+- `run_query_stream`
+- `preview_query_stream`
+- `cancel_stream`
+- `set_emergency_mode`
+- `run_lookup_query`
+- `begin_transaction` (任意引数 `isolation` / `readOnly`, #1166)
+- `run_in_transaction`
+- `finish_transaction`
 
 ## 一括書き込み (`commands/bulk_write.rs`, #1259)
 
-`bulk_update_cells` / `insert_generated_rows`
+- `bulk_update_cells`
+- `insert_generated_rows`
 
 - `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements)` は結果グリッドの
   セル編集 Apply。フロント (`cellEdit.buildUpdateGroups`) が同じ (列, 値) ごとにまとめた
@@ -58,11 +79,21 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 ## スキーマ (`commands/schema.rs`)
 
-`list_databases` / `list_tables` / `describe_table` /
-`schema_overview` / `foreign_keys` / `list_schema_objects` / `get_object_definition` /
-`list_indexes` / `table_row_estimates` / `list_table_comments` / `get_routine_signature`
-(ストアドプロシージャ / 関数のパラメータ取得、#1003 — SQLite は未対応エラー) /
-`table_statistics` / `describe_database` / `alter_table_context` / `incoming_foreign_keys` (#1255)
+- `list_databases`
+- `list_tables`
+- `describe_table`
+- `schema_overview`
+- `foreign_keys`
+- `list_schema_objects`
+- `get_object_definition`
+- `list_indexes`
+- `table_row_estimates`
+- `list_table_comments`
+- `get_routine_signature` (ストアドプロシージャ / 関数のパラメータ取得、#1003 — SQLite は未対応エラー)
+- `table_statistics`
+- `describe_database`
+- `alter_table_context`
+- `incoming_foreign_keys` (#1255)
 
 #1255 の 148 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
 `table_statistics` はサイズ・行数に列数・インデックス数・PK 有無・FK 数を合成して返す
@@ -75,7 +106,11 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 ## スキーマ・テーブルオープンの集約 (`commands/schema.rs` / `schema_tree.rs` / `table_open.rs`、#1263)
 
-`table_row_estimate` / `load_schema_tree` / `list_tables_all` / `open_table` / `open_tables`
+- `table_row_estimate`
+- `load_schema_tree`
+- `list_tables_all`
+- `open_table`
+- `open_tables`
 
 - `table_row_estimate` — `table_row_estimates` の 1 テーブル版 (MySQL `TABLE_NAME = ?` /
   PG `relname = $2` / SQLite は `None`)。`open_table` が失敗したときのフォールバックで使う。
@@ -91,7 +126,9 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 ## 検索 (`commands/search.rs`, #1261)
 
-`search_schema_objects` / `find_where_used` / `data_search_stream`
+- `search_schema_objects`
+- `find_where_used`
+- `data_search_stream`
 
 検索系 3 機能を Rust 側で実行する。いずれもカタログまたは SELECT だけの読み取り操作で
 `read_only` でも動く。
@@ -125,31 +162,49 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
-`compare_schema` / `compare_table_data` /
-`generate_sync_sql` / `generate_data_sync_sql` / `release_data_diffs` / `apply_sync_sql`
+- `compare_schema`
+- `compare_table_data`
+- `generate_sync_sql`
+- `generate_data_sync_sql`
+- `release_data_diffs`
+- `apply_sync_sql`
 
 `compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys)` は
 ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。
 
 ## サンドボックス (`commands/sandbox.rs`)
 
-`create_sandbox` / `list_sandboxes` / `discard_sandbox` / `sandbox_table_diff` /
-`sandbox_schema_diff` / `sandbox_advance_base` (`diffId` + `skipKeys`, #1259)
+- `create_sandbox`
+- `list_sandboxes`
+- `discard_sandbox`
+- `sandbox_table_diff`
+- `sandbox_schema_diff`
+- `sandbox_advance_base` (`diffId` + `skipKeys`, #1259)
 
 ## プロセス管理・ユーザ / 権限 (`commands/process.rs`, `commands/privileges.rs`)
 
-`list_processes` / `get_process_query` / `kill_processes` / `list_db_users` / `list_user_privileges` /
-`generate_create_user_sql` / `generate_drop_user_sql` / `generate_alter_password_sql` /
-`generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成) / `apply_privilege_sql`
-(`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、
-全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 /
-MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。
-`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る)
+- `list_processes`
+- `get_process_query`
+- `kill_processes`
+- `list_db_users`
+- `list_user_privileges`
+- `generate_create_user_sql`
+- `generate_drop_user_sql`
+- `generate_alter_password_sql`
+- `generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成)
+- `apply_privilege_sql`
+
+`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 / MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
-`analyze_schema_health` / `query_stats_support` / `sample_live_queries` /
-`start_statement_recording` / `sample_statement_delta` (#1259。baseline 差分と N+1 目安を Rust 側で集計) / `server_info` / `server_metrics`
+- `analyze_schema_health`
+- `query_stats_support`
+- `sample_live_queries`
+- `start_statement_recording`
+- `sample_statement_delta` (#1259。baseline 差分と N+1 目安を Rust 側で集計)
+- `server_info`
+- `server_metrics`
 
 ## 列データプロファイル (`commands/profile.rs`)
 
@@ -158,67 +213,95 @@ MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}
 
 ## テーブル・タイムラプス (`commands/timelapse.rs`)
 
-`timelapse_watch_table` / `timelapse_capture` / `timelapse_list_watches` /
-`timelapse_diff_generations` / `timelapse_unwatch` / `timelapse_clear_all`
-(#739。ウォッチ登録したテーブルの世代スナップショットを `<data_dir>/table_timelapse.sqlite`
-に保存し、任意の 2 世代を `compute_data_diff` で比較。取得は PK 順の単一 SELECT
-(最大 `MAX_DATA_ROWS`) で履歴に記録せず、read_only セッションでも可。PK 必須)
+- `timelapse_watch_table`
+- `timelapse_capture`
+- `timelapse_list_watches`
+- `timelapse_diff_generations`
+- `timelapse_unwatch`
+- `timelapse_clear_all`
+
+#739。ウォッチ登録したテーブルの世代スナップショットを `<data_dir>/table_timelapse.sqlite` に保存し、任意の 2 世代を `compute_data_diff` で比較。取得は PK 順の単一 SELECT (最大 `MAX_DATA_ROWS`) で履歴に記録せず、read_only セッションでも可。PK 必須
 
 ## スキーマドリフト (`commands/schema_drift.rs`)
 
-`schema_drift_capture` / `schema_drift_list` / `schema_drift_compare` /
-`schema_drift_import_legacy`
-(#736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで
-DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存
-(最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。
-`import_legacy` は旧 localStorage 世代を初回だけ取り込む)
+- `schema_drift_capture`
+- `schema_drift_list`
+- `schema_drift_compare`
+- `schema_drift_import_legacy`
+
+#736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存 (最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。`import_legacy` は旧 localStorage 世代を初回だけ取り込む
 
 ## 実行計画ウォッチ (`commands/plan_watch.rs`)
 
-`plan_watch_list` / `plan_watch_set` / `plan_watch_refresh` /
-`plan_watch_import_legacy`
-(#743 / #1260。世代は `<data_dir>/plan_watch.sqlite`。`refresh` はウォッチ中スニペットの
-EXPLAIN をまとめて実行し、正規化・フィンガープリント・世代記録・前世代との比較を Rust 内で
-完結して件数だけを返す。履歴に記録せず、read_only セッションでも可。スニペット削除
-(`delete_snippet`) は全プロファイルのウォッチを連鎖削除する)
+- `plan_watch_list`
+- `plan_watch_set`
+- `plan_watch_refresh`
+- `plan_watch_import_legacy`
+
+#743 / #1260。世代は `<data_dir>/plan_watch.sqlite`。`refresh` はウォッチ中スニペットの EXPLAIN をまとめて実行し、正規化・フィンガープリント・世代記録・前世代との比較を Rust 内で完結して件数だけを返す。履歴に記録せず、read_only セッションでも可。スニペット削除 (`delete_snippet`) は全プロファイルのウォッチを連鎖削除する
 
 ## タスクスケジューラ (`commands/tasks.rs`)
 
-`list_tasks` / `save_task` / `delete_task` / `set_task_enabled` / `run_task_now` /
-`list_task_runs` / `list_assertion_runs` / `clear_task_runs` / `get_scheduler_settings` /
-`set_scheduler_settings`
+- `list_tasks`
+- `save_task`
+- `delete_task`
+- `set_task_enabled`
+- `run_task_now`
+- `list_task_runs`
+- `list_assertion_runs`
+- `clear_task_runs`
+- `get_scheduler_settings`
+- `set_scheduler_settings`
 
 ## データ品質アサーション (`commands/assertions.rs`)
 
-`list_assertions` / `save_assertion` / `delete_assertion` / `preview_assertion_sql` /
-`run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック
-`db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも
-可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
+- `list_assertions`
+- `save_assertion`
+- `delete_assertion`
+- `preview_assertion_sql`
+- `run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 
-`list_flight_records` / `clear_flight_records` / `preview_undo` / `undo_flight_record`
+- `list_flight_records`
+- `clear_flight_records`
+- `preview_undo`
+- `undo_flight_record`
 
 ## ローカル横断クエリ (`commands/local.rs`)
 
-`create_local_session` / `register_local_table` / `list_local_tables` /
-`drop_local_table` / `save_local_database`
+- `create_local_session`
+- `register_local_table`
+- `list_local_tables`
+- `drop_local_table`
+- `save_local_database`
 
 ## プロファイル (`commands/profiles.rs`)
 
-`list_profiles` / `reveal_profile_secret` / `save_profile` / `delete_profile` /
-`reorder_profiles` / `export_profiles` / `import_profiles`
+- `list_profiles`
+- `reveal_profile_secret`
+- `save_profile`
+- `delete_profile`
+- `reorder_profiles`
+- `export_profiles`
+- `import_profiles`
 
 ## プロファイルの暗号化バックアップ (`commands/profile_backup.rs`)
 
-`export_profiles_encrypted` / `import_profiles_encrypted` (#710。keyring の秘密込みで
-パスフレーズ暗号化 — Argon2id + AES-256-GCM、形式は `profiles/backup.rs` の
-モジュール doc。引数は `req` 構造体でパスフレーズを受け、応答は件数のみ)
+- `export_profiles_encrypted`
+- `import_profiles_encrypted` (#710。keyring の秘密込みでパスフレーズ暗号化 — Argon2id + AES-256-GCM、形式は `profiles/backup.rs` のモジュール doc。引数は `req` 構造体でパスフレーズを受け、応答は件数のみ)
 
 ## スニペット・履歴・ログ (`commands/snippets.rs`, `history.rs`, `logs.rs`)
 
-`list_snippets` / `save_snippet` / `delete_snippet` / `list_history` / `get_history_sql` /
-`list_history_sql` / `clear_history` / `read_logs` / `clear_logs`
+- `list_snippets`
+- `save_snippet`
+- `delete_snippet`
+- `list_history`
+- `get_history_sql`
+- `list_history_sql`
+- `clear_history`
+- `read_logs`
+- `clear_logs`
 
 履歴 (#1256): `list_history` は SQL 全文ではなく `sql_preview` (空白を畳んだ先頭 400
 文字、超過は `…`) と `sql_len` を返す。全文は `get_history_sql(id)` を復元・コピー・
@@ -228,11 +311,23 @@ EXPLAIN をまとめて実行し、正規化・フィンガープリント・世
 
 ## エクスポート / ダンプ / インポート / ファイル
 
-`export_query_result` / `export_query_stream` / `dump_database` / `dump_tool_status` /
-`install_dump_tool` / `parse_csv_preview` /
-`import_csv` / `preview_create_table_ddl` / `read_text_file` / `write_text_file` /
-`write_binary_file` / `fetch_cell_bytes` / `probe_cell_blob` / `save_cell_to_file` /
-`read_binary_file` / `get_import_skipped_text` / `save_import_skipped_rows`
+- `export_query_result`
+- `export_query_stream`
+- `dump_database`
+- `dump_tool_status`
+- `install_dump_tool`
+- `parse_csv_preview`
+- `import_csv`
+- `preview_create_table_ddl`
+- `read_text_file`
+- `write_text_file`
+- `write_binary_file`
+- `fetch_cell_bytes`
+- `probe_cell_blob`
+- `save_cell_to_file`
+- `read_binary_file`
+- `get_import_skipped_text`
+- `save_import_skipped_rows`
 
 `dump_tool_status` / `install_dump_tool` (`commands/dump_tools.rs`) はダンプ用の外部ツール
 (`mysqldump` / `pg_dump`) を **noobDB を実行している PC** で探し (PATH → Homebrew の keg-only

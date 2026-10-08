@@ -9,7 +9,8 @@ import { describe, expect, it } from "vitest";
 // 5 モジュールが漏れていた)。`import.meta.glob` で `commands/*.rs` を機械的に
 // 全件取り込むことで、モジュール追加時の追記漏れ自体を構造的に無くす。
 import libRs from "../../src-tauri/src/lib.rs?raw";
-import tauriTs from "../api/tauri.ts?raw";
+// `tauri.ts` と `api/commands/*.ts` の連結 (ラッパー本体はモジュール別ファイルに分割済み)。
+import { apiWrapperSource as tauriTs } from "./apiSources";
 
 const commandModules = import.meta.glob("../../src-tauri/src/commands/*.rs", {
   eager: true,

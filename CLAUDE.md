@@ -47,7 +47,7 @@
 - **`lib.rs::run()` の `.setup(...)` 内で `tokio::spawn` を使わない** —
   Tokio ランタイム外なので panic する。`tauri::async_runtime::spawn` を使う。
 - **IPC は 3 点セット + ドキュメントで揃える**: Rust ハンドラ追加 → `lib.rs` の
-  `generate_handler!` に登録 → `src/api/tauri.ts` に型付きラッパー追加 → **UI から
+  `generate_handler!` に登録 → `src/api/commands/<module>.ts` に型付きラッパー追加 → **UI から
   実際に呼ぶ** → `.claude/skills/noobdb-ipc/references/command-list.md` に追記。
   どれが欠けても対応するパリティテストが落ちます。
 - **本体 Rust コードの `unwrap()` / `expect()` / `panic!` は CI が fail させます。**
@@ -149,7 +149,7 @@ SSH トンネルをファーストクラスでサポートします。
   通信は `src/api/tauri.ts` の型付きラッパー (`invoke`) のみ。ストリーミング結果は
   戻り値ではなくイベント (`listen`) で受け取る。
 - **バックエンド** (`src-tauri/src/`): Tauri 2 + Tokio。`lib.rs::run()` が
-  **160 個の IPC コマンド**を登録し `AppState` を管理ステートとして持つ。
+  IPC コマンドを登録し `AppState` を管理ステートとして持つ。
 - **DB レイヤ**: トレイトオブジェクトではなく手書きの `enum db::Connection` で
   ドライバをディスパッチ (`db/mod.rs`)。
 - **秘密情報**: `profiles.json` (非秘密) と OS keyring (秘密) を厳密に分離。
