@@ -323,7 +323,7 @@ const en = {
   settingsSqlLint: "SQL syntax check",
   settingsSqlLintHelp: "Underlines likely syntax errors in the editor as you type, before you run — a best-effort editing aid, not a safety check.",
   settingsSqlLintEnabled: "Enable syntax check",
-  settingsSqlLintEnabledHelp: "Flags misspelled statement keywords, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsSqlLintEnabledHelp: "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
 
   settingsPreflightImpact: "Impact-row preflight",
   settingsPreflightImpactHelp: "For a plain UPDATE/DELETE in the editor, show a badge estimating how many rows it will affect — before you run — so an unexpected magnitude (or a whole-table write) is visible ahead of the confirmation dialog.",
@@ -935,6 +935,11 @@ const en = {
   editorLintUnterminatedComment: "Unterminated block comment (/* without */)",
   editorLintClauseOrder:
     "Clause out of order — expected WHERE → GROUP BY → HAVING → ORDER BY → LIMIT",
+  editorLintKeywordTypo: "Possible typo — did you mean {keyword}?",
+  editorLintMissingOperand: "Missing expression or name here — this clause is empty",
+  editorLintExtraComma: "Extra comma",
+  editorLintMissingBy: "GROUP / ORDER must be followed by BY",
+  editorLintIncomplete: "Statement ends unexpectedly — something is missing after this",
 
   // Impact-row preflight badge (#737).
   editorPreflightImpact: "Affects ~{count} rows",
@@ -2635,9 +2640,9 @@ const en = {
 
   helpSqlLintTitle: "Syntax check",
   helpSqlLintDesc:
-    "Underlines likely syntax errors as you type, so you can fix them before running: misspelled statement keywords (SELEC), misordered clauses (WHERE after ORDER BY), unmatched brackets, and unterminated strings or block comments. Follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
+    "Underlines likely syntax errors as you type, so you can fix them before running: misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE, id = AND), extra commas (id, FROM), GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (WHERE after ORDER BY), unmatched brackets, and unterminated strings or block comments. Follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
   helpSqlLintNote:
-    "An editing aid, not a validity check. The parser is lenient, so mid-statement typos or missing commas are not flagged, and the server may still reject the query. Toggle it in Settings › SQL syntax check.",
+    "An editing aid, not a validity check. Only patterns that are almost always wrong are flagged (e.g. a missing comma between column names is not), and the server may still reject the query. A statement that ends mid-clause is only flagged once your cursor leaves it or it ends with a semicolon. Toggle it in Settings › SQL syntax check.",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
@@ -4162,7 +4167,7 @@ const ja: Dict = {
   settingsSqlLint: "SQL 構文チェック",
   settingsSqlLintHelp: "入力中にエディタ上で構文エラーの可能性を下線表示します（実行前に気付けます）。ベストエフォートの編集支援であり、安全性の判定ではありません。",
   settingsSqlLintEnabled: "構文チェックを有効化",
-  settingsSqlLintEnabledHelp: "文頭キーワードのタイポ・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsSqlLintEnabledHelp: "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
 
   settingsPreflightImpact: "影響行数プリフライト",
   settingsPreflightImpactHelp: "エディタの単純な UPDATE / DELETE に対し、実行前に「約 N 行に影響」というバッジを表示します。確認ダイアログより手前で、桁違いの影響やテーブル全行への書き込みに気付けます。",
@@ -4773,6 +4778,11 @@ const ja: Dict = {
   editorLintUnterminatedComment: "ブロックコメント (/* ... */) が閉じられていません",
   editorLintClauseOrder:
     "句の順序が不正です — WHERE → GROUP BY → HAVING → ORDER BY → LIMIT の順に置きます",
+  editorLintKeywordTypo: "打ち間違いの可能性があります — {keyword} ではありませんか？",
+  editorLintMissingOperand: "ここに式や名前が必要です (句の中身が空です)",
+  editorLintExtraComma: "余分なカンマがあります",
+  editorLintMissingBy: "GROUP / ORDER の後には BY が必要です",
+  editorLintIncomplete: "文が途中で終わっています — この後に続きが必要です",
 
   // 影響行数プリフライトのバッジ (#737)。
   editorPreflightImpact: "影響: 約 {count} 行",
@@ -6467,9 +6477,9 @@ const ja: Dict = {
 
   helpSqlLintTitle: "構文チェック",
   helpSqlLintDesc:
-    "入力中の SQL に含まれる構文エラーの可能性を下線で示し、実行前に修正できるようにします。検出対象は、文頭キーワードのタイポ (SELEC など)・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントです。接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
+    "入力中の SQL に含まれる構文エラーの可能性を下線で示し、実行前に修正できるようにします。検出対象は、キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE、id = AND など)・余分なカンマ (id, FROM など)・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントです。接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
   helpSqlLintNote:
-    "あくまで編集支援であり、妥当性の検証ではありません。パーサは寛容なため、文中のタイポやカンマ抜けは検出できず、サーバが受理するかどうかも保証しません。設定の「SQL 構文チェック」でオン/オフできます。",
+    "あくまで編集支援であり、妥当性の検証ではありません。ほぼ確実に誤りといえる並びだけを検出するため、列名の間のカンマ抜けなどは検出できず、サーバが受理するかどうかも保証しません。途中で終わった文は、カーソルがその文を離れるか、文末に ; があるときだけ表示します。設定の「SQL 構文チェック」でオン/オフできます。",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:

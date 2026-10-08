@@ -13,6 +13,11 @@ const MSG: SqlLintMessages = {
   unknownStatementStart: "unknown-start",
   unterminatedComment: "unterminated-comment",
   clauseOrder: "clause-order",
+  keywordTypo: "typo:{keyword}",
+  missingOperand: "missing-operand",
+  extraComma: "extra-comma",
+  missingBy: "missing-by",
+  incompleteStatement: "incomplete",
 };
 
 function diags(sql: string, dialect = MySQL) {
@@ -119,8 +124,8 @@ describe("computeSqlDiagnostics — 文の先頭キーワードのタイポ", ()
 
   it("does not flag mid-statement identifiers or aliases", () => {
     expect(diags("SELECT * FROM users u JOIN orders o ON u.id = o.uid")).toEqual([]);
-    // FORM のような文中のタイポは検出対象外 (保守的方針)。
-    expect(diags("SELECT * FORM users")).toEqual([]);
+    // FORM のような文中のタイポは文頭タイポではなく、句キーワードのタイポとして出す。
+    expect(diags("SELECT * FORM users").map((d) => d.message)).toEqual(["typo:FROM"]);
   });
 
   it("accepts common statement starters across dialects", () => {
@@ -271,6 +276,11 @@ describe("diagnosticsFromTree — diagnostic shape", () => {
       unknownStatementStart: "UNK",
       unterminatedComment: "CMT",
       clauseOrder: "CLS",
+      keywordTypo: "TYP",
+      missingOperand: "OPR",
+      extraComma: "CMA",
+      missingBy: "BY",
+      incompleteStatement: "INC",
     };
     const sql = "SELECT 'x";
     const d = diagnosticsFromTree(parseSqlTree(sql, MySQL), sql, custom);
@@ -290,5 +300,109 @@ describe("computeSqlDiagnostics — dialect awareness", () => {
       const d = computeSqlDiagnostics("SELECT * FROM t)", dialect, MSG);
       expect(d.length).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe("computeSqlDiagnostics — DML token patterns", () => {
+  const DIALECTS = [MySQL, PostgreSQL, SQLite];
+
+  /** [SQL, 期待するメッセージ, 下線が付くテキスト] */
+  const flagged: Array<[string, string, string]> = [
+    ["SELECT * FRM users", "typo:FROM", "FRM"],
+    ["SELECT * FROM users WHER id = 1", "typo:WHERE", "WHER"],
+    ["SELECT * FROM t ODER BY a", "typo:ORDER", "ODER"],
+    ["SELECT * FROM t GRUOP BY a", "typo:GROUP", "GRUOP"],
+    ["SELECT * FROM a LEFT JION b ON a.id = b.id", "typo:JOIN", "JION"],
+    ["SELECT id, FROM users", "extra-comma", ","],
+    ["SELECT a, , b FROM t", "extra-comma", ","],
+    ["SELECT , a FROM t", "extra-comma", ","],
+    ["SELECT * FROM WHERE id = 1", "missing-operand", "FROM"],
+    ["UPDATE users SET WHERE id = 1", "missing-operand", "SET"],
+    ["SELECT * FROM a JOIN b ON WHERE x = 1", "missing-operand", "ON"],
+    ["SELECT * FROM t WHERE a = 1 AND ORDER BY a", "missing-operand", "AND"],
+    ["SELECT * FROM t WHERE a = ORDER BY a", "missing-operand", "="],
+    ["SELECT * FROM users GROUP id", "missing-by", "GROUP"],
+    ["SELECT * FROM users ORDER id", "missing-by", "ORDER"],
+    ["SELECT * FROM users WHERE;", "incomplete", "WHERE"],
+    ["SELECT * FROM users WHERE id = ;", "incomplete", "="],
+    ["SELECT * FROM users WHERE id = 1 AND;", "incomplete", "AND"],
+    ["SELECT * FROM users LIMIT;", "incomplete", "LIMIT"],
+  ];
+  for (const [sql, message, text] of flagged) {
+    it(`flags ${JSON.stringify(sql)} as ${message}`, () => {
+      for (const dialect of DIALECTS) {
+        const hit = diags(sql, dialect).find((d) => d.message === message);
+        expect(hit, String(dialect)).toBeDefined();
+        expect(sql.slice(hit!.from, hit!.to)).toBe(text);
+      }
+    });
+  }
+
+  it("reports keyword typos as warnings (heuristic)", () => {
+    const d = diags("SELECT * FRM users").find((x) => x.message === "typo:FROM");
+    expect(d?.severity).toBe("warning");
+  });
+
+  // 方言で合法なもの・DDL / DCL・列名や別名が句キーワードに似ているものは出さない。
+  const valid = [
+    "SELECT FROM t",
+    "SELECT;",
+    "INSERT INTO t DEFAULT VALUES;",
+    "INSERT INTO t (a, b) VALUES (1, 2), (3, 4) ON CONFLICT (a) DO UPDATE SET b = excluded.b WHERE t.a > 0;",
+    "INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = a + 1;",
+    "INSERT OR REPLACE INTO t VALUES (1);",
+    "UPDATE OR IGNORE t SET a = 1;",
+    "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY x) FROM t;",
+    "SELECT a, count(*) FROM t GROUP BY a HAVING count(*) > 1 ORDER BY a DESC LIMIT 10 OFFSET 5;",
+    "SELECT * FROM t LIMIT 10, 20;",
+    "SELECT * FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE o.id IS NULL;",
+    "SELECT name AS form FROM t;",
+    "SELECT form, forms, limits, groups, orders FROM t;",
+    "SELECT a form FROM t;",
+    "SELECT * FROM t1, orders o WHERE t1.id = o.id;",
+    "UPDATE groups SET a = 1;",
+    "SELECT * FROM t FOR UPDATE;",
+    "SELECT * FROM t WHERE d > NOW() - INTERVAL 1 DAY;",
+    "SELECT * FROM t WHERE a BETWEEN 1 AND 2;",
+    "SELECT 1 UNION ALL SELECT 2;",
+    "GRANT SELECT, INSERT ON t TO u;",
+    "CREATE GROUP admins;",
+    "SET search_path TO public, other;",
+    "SELECT * FROM t WHERE NOT EXISTS (SELECT 1 FROM u WHERE u.id = t.id);",
+    "SELECT * FROM t1 NATURAL JOIN t2;",
+    "DELETE FROM t RETURNING *;",
+    "SELECT CASE WHEN a = 1 THEN 'x' ELSE 'y' END FROM t;",
+    "SELECT DISTINCT ON (a) a, b FROM t ORDER BY a, b;",
+    "SELECT id, name FROM users john WHERE john.id = 1;",
+    "VALUES (1, 2), (3, 4);",
+    // 入力途中 (カーソル情報なし・`;` なし) は出さない
+    "SELECT * FROM t WHERE",
+    "SELECT a,",
+    "SELECT * FROM t ORDER B",
+    "SELECT * FROM t WHER",
+  ];
+  for (const sql of valid) {
+    it(`does not flag: ${JSON.stringify(sql)}`, () => {
+      for (const dialect of DIALECTS) {
+        expect(diags(sql, dialect), String(dialect)).toEqual([]);
+      }
+    });
+  }
+
+  it("skips an incomplete statement while the cursor is at its end", () => {
+    const sql = "SELECT * FROM t WHERE ";
+    expect(computeSqlDiagnostics(sql, MySQL, MSG, { cursor: sql.length })).toEqual([]);
+  });
+
+  it("flags an incomplete statement once the cursor leaves it", () => {
+    const sql = "SELECT * FROM t WHERE";
+    // カーソルが文の先頭 (= 末尾を入力中ではない) にあれば `;` が無くても出す。
+    expect(computeSqlDiagnostics(sql, MySQL, MSG, { cursor: 0 }).map((x) => x.message)).toEqual([
+      "incomplete",
+    ]);
+    // `;` で区切った前の文は、カーソルが後ろの文にあれば出す。
+    const multi = "SELECT * FROM t WHERE id = 1 AND;\nSELECT 1";
+    const d = computeSqlDiagnostics(multi, MySQL, MSG, { cursor: multi.length });
+    expect(d.map((x) => x.message)).toEqual(["incomplete"]);
   });
 });

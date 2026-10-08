@@ -9,7 +9,9 @@
 // 文法は寛容 (error-tolerant) で、カンマ抜けや文中のタイポなど多くの誤りは
 // エラーにならない。検出できるのは「括弧の不整合」「未終端の文字列/引用符」
 // 「未終端のブロックコメント」と、「文の先頭キーワードのタイポ (`SELEC` など。
-// パースツリー上で先頭トークンが Keyword にならない文)」で、`apply_auto_limit` と
+// パースツリー上で先頭トークンが Keyword にならない文)」、および DML 文のトップレベル
+// トークン列に対するパターン判定 (句キーワードのタイポ・空の句・余分なカンマ・
+// BY の抜け・途中で終わった文) で、`apply_auto_limit` と
 // 同じく**誤検出を出すより見逃す側に倒す**保守的方針をとる。エディタの
 // `closeBrackets()` が括弧/クオートをタイプ中に自動で閉じるため、括弧系の検出は
 // 主に貼り付け・削除後に効き、タイプ中の主戦力は文頭キーワード判定になる。
@@ -18,7 +20,7 @@
 //
 // 副作用が無いので Vitest (`src/__tests__/sqlLint.test.ts`) でユニットテストする。
 
-import type { Tree } from "@lezer/common";
+import type { SyntaxNode, Tree } from "@lezer/common";
 import type { SQLDialect } from "@codemirror/lang-sql";
 import type { Diagnostic } from "@codemirror/lint";
 
@@ -34,6 +36,29 @@ export interface SqlLintMessages {
   unterminatedComment: string;
   /** 句の順序ミス (`ORDER BY` の後の `WHERE` など) のメッセージ。 */
   clauseOrder: string;
+  /**
+   * 句キーワードのタイポ (`FRM` → `FROM` など) のメッセージ。`{keyword}` を
+   * 推定したキーワード (大文字) に置き換える。
+   */
+  keywordTypo: string;
+  /** 句の中身が空 (`FROM WHERE` / `id = AND` など) のメッセージ。 */
+  missingOperand: string;
+  /** 余分なカンマ (`id, FROM` / `a, , b` など) のメッセージ。 */
+  extraComma: string;
+  /** `GROUP` / `ORDER` の後に `BY` が無いときのメッセージ。 */
+  missingBy: string;
+  /** 文が途中で終わっている (`... WHERE;` など) ときのメッセージ。 */
+  incompleteStatement: string;
+}
+
+/** `diagnosticsFromTree` の追加入力。 */
+export interface SqlLintOptions {
+  /**
+   * カーソル位置 (エディタの選択 head)。「文が途中で終わっている」判定で、
+   * カーソルがその文の末尾にある (= まだ入力中) なら報告しないために使う。
+   * 未指定のときは `;` で閉じられた文だけを報告する。
+   */
+  cursor?: number;
 }
 
 /** 文字列/引用符の開始とみなすクオート文字。 */
@@ -129,6 +154,10 @@ function isUnterminatedQuote(text: string): boolean {
  *   flag しないよう、先頭トークンの後に別トークンが続くときだけ報告し、
  *   ヒューリスティックである旨を込めて severity は `warning` にする。
  *   `unknownStatementStart`。
+ * - **DML 文のトークンパターン** (`collectTokenPatternIssues`): 句キーワードの
+ *   タイポ (`FRM` / `WHER`)・空の句 (`FROM WHERE`)・余分なカンマ (`id, FROM`)・
+ *   BY の抜け (`GROUP id`)・途中で終わった文 (`... WHERE;`)。Lezer の SQL 文法は
+ *   これらをエラーにしないため、トップレベルのトークン列を見て判定する。
  * - **句の順序ミス**: `SELECT * FROM t ORDER BY x WHERE ...` のように、文の
  *   トップレベルで句キーワードが正規の並び (`WHERE → GROUP BY → HAVING →
  *   ORDER BY → LIMIT`) に反して現れたとき、その句を `warning` で報告する。
@@ -139,6 +168,7 @@ export function diagnosticsFromTree(
   tree: Tree,
   doc: string,
   messages: SqlLintMessages,
+  options: SqlLintOptions = {},
 ): Diagnostic[] {
   // エラーノードの生の範囲を収集する。
   const errorRanges: Array<{ from: number; to: number }> = [];
@@ -187,6 +217,7 @@ export function diagnosticsFromTree(
 
   const unknownStarts = collectUnknownStatementStarts(tree, doc, messages);
   const clauseOrder = collectClauseOrderIssues(tree, doc, messages);
+  const patterns = collectTokenPatternIssues(tree, doc, messages, options.cursor);
 
   const docLen = doc.length;
   const errors = mergeErrorRanges(errorRanges).map(({ from, to }) => {
@@ -207,7 +238,7 @@ export function diagnosticsFromTree(
     } satisfies Diagnostic;
   });
 
-  return [...unterminated, ...unknownStarts, ...clauseOrder, ...errors];
+  return [...unterminated, ...unknownStarts, ...clauseOrder, ...patterns, ...errors];
 }
 
 /**
@@ -306,6 +337,257 @@ function collectUnknownStatementStarts(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// DML 文のトークンパターン判定 (#704 フォロー)
+//
+// Lezer の SQL 文法は「トークンを並べるだけ」に近く、`SELECT * FRM users` も
+// `Keyword Operator Identifier Identifier` という正常な並びとして受理する。そこで
+// 文の**直下の**トークン列 (`Parens` の中には降りない) に、正当な SQL では起こり
+// えない並びだけを探す。誤検出を避けるため次の 3 点で対象を絞る。
+//
+// - 対象は DML 文 (`DML_START` で始まる文) だけ。`GRANT SELECT, INSERT ON ...` や
+//   `CREATE GROUP` など、DDL / DCL では同じ単語が別の意味で並ぶため。
+// - 「キーワード」の判定は `RESERVED` (3 方言で予約語の語) に限る。PostgreSQL の
+//   方言表は `id` などの非予約語も `Keyword` としてトークン化するため、トークン
+//   種別だけで判定すると列名を構文要素と取り違える。
+// - `SELECT FROM t` (PostgreSQL では合法) や `SELECT;` のように方言で合法なものは
+//   報告しない。
+// ---------------------------------------------------------------------------
+
+/** パターン判定の対象にする文の先頭キーワード (小文字)。 */
+const DML_START = new Set(["select", "with", "insert", "update", "delete", "replace", "values"]);
+
+/**
+ * 構文上の役割を持つ語 (小文字)。3 方言とも予約語で、クオート無しで列名・別名に
+ * ならない。これ以外の `Keyword` トークン (PostgreSQL の `id` など) は名前とみなす。
+ */
+const RESERVED = new Set([
+  "select", "from", "where", "group", "order", "by", "having", "limit", "offset",
+  "join", "inner", "left", "right", "full", "outer", "cross", "natural", "on", "using",
+  "and", "or", "not", "as", "union", "intersect", "except", "all", "distinct",
+  "insert", "into", "values", "update", "set", "delete", "with", "case", "when",
+  "then", "else", "end", "in", "is", "like", "between", "exists", "null", "true",
+  "false", "asc", "desc", "returning", "for", "window", "fetch",
+]);
+
+/** 直後に式・名前が必要な語 (小文字)。直後に `CLAUSE_FOLLOWER` が来たら空の句。 */
+const NEEDS_OPERAND = new Set(["from", "where", "set", "having", "by", "join", "on", "and", "or"]);
+
+/**
+ * 式・名前の直後にしか来ない語 (小文字)。`NEEDS_OPERAND` / 比較演算子 / カンマの
+ * 直後に現れたら、その間の要素が抜けている。`FROM` は `SELECT FROM t`
+ * (PostgreSQL では合法) を誤検出しないよう含めない。
+ */
+const CLAUSE_FOLLOWER = new Set(["where", "group", "order", "having", "limit", "and", "or", "on"]);
+
+/** 直後にカンマが来てはいけない語 (`SELECT , a` / `ORDER BY , a` / `SET , a`)。 */
+const NO_COMMA_AFTER = new Set(["select", "by", "set"]);
+
+/**
+ * 文の最後のトークンになりえない語 (小文字)。`SELECT;` (PostgreSQL では合法) と
+ * `DEFAULT VALUES` があるため `select` / `values` は含めない。
+ */
+const DANGLING_END = new Set([
+  "from", "where", "and", "or", "set", "by", "having", "join", "on", "limit", "group", "order",
+]);
+
+/** タイポ判定の候補にする句キーワード (小文字)。 */
+const TYPO_TARGETS = ["from", "where", "group", "order", "having", "limit", "join", "union"];
+
+/** `JOIN` の直前に来る語。`LEFT JION b` のように前が予約語でもタイポ判定する。 */
+const JOIN_PREFIX = new Set(["left", "right", "inner", "outer", "full", "cross", "natural"]);
+
+const BY = new Set(["by"]);
+const GROUP_ORDER = new Set(["group", "order"]);
+const FROM = new Set(["from"]);
+/** `UNION` のタイポの直後に来る語 (`UNOIN SELECT` / `UNOIN ALL`)。 */
+const UNION_NEXT = new Set(["select", "all"]);
+
+/** 名前・値として扱うトークン種別。 */
+const NAME_LIKE_TYPES = new Set([
+  "Identifier", "QuotedIdentifier", "CompositeIdentifier", "Number", "String",
+]);
+
+/** キーワード系のトークン種別 (方言表により語が振り分けられる)。 */
+const KEYWORD_TYPES = new Set(["Keyword", "Type", "Builtin"]);
+
+interface Tok {
+  type: string;
+  /** 小文字化したテキスト。 */
+  word: string;
+  from: number;
+  to: number;
+}
+
+function isReserved(tok: Tok | undefined, set: Set<string> = RESERVED): boolean {
+  return !!tok && tok.type === "Keyword" && set.has(tok.word);
+}
+
+/** 名前・値に当たるトークンか (非予約語のキーワードを含む)。 */
+function isNameLike(tok: Tok | undefined): boolean {
+  if (!tok) return false;
+  if (NAME_LIKE_TYPES.has(tok.type)) return true;
+  return KEYWORD_TYPES.has(tok.type) && !RESERVED.has(tok.word);
+}
+
+function isComma(tok: Tok | undefined): boolean {
+  return !!tok && tok.type === "Punctuation" && tok.word === ",";
+}
+
+/** 二項の比較・算術演算子か。`SELECT *` の `*` は列の全選択なので除く。 */
+function isBinaryOperator(tok: Tok | undefined): boolean {
+  return !!tok && tok.type === "Operator" && tok.word !== "*";
+}
+
+/**
+ * 制限付き Damerau-Levenshtein 距離 (隣接文字の入れ替えを 1 とする)。
+ * 短い単語同士の比較にしか使わないので素直な DP で十分。
+ */
+function editDistance(a: string, b: string): number {
+  const d: number[][] = [];
+  for (let i = 0; i <= a.length; i++) d.push([i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, d[i - 2][j - 2] + 1);
+      }
+      d[i][j] = v;
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/** `word` がどの句キーワードのタイポらしいか。先頭文字一致 + 距離 1 のみ。 */
+function typoTarget(word: string): string | null {
+  if (word.length < 3 || !WORD_RE.test(word)) return null;
+  for (const kw of TYPO_TARGETS) {
+    if (word[0] === kw[0] && word !== kw && editDistance(word, kw) === 1) return kw;
+  }
+  return null;
+}
+
+/** 文の直下のトークン列 (コメントを除く) と、`;` で閉じているかを返す。 */
+function statementTokens(stmt: SyntaxNode, doc: string): { toks: Tok[]; terminated: boolean } {
+  const toks: Tok[] = [];
+  let terminated = false;
+  for (let c = stmt.firstChild; c; c = c.nextSibling) {
+    const type = c.type.name;
+    if (type === "LineComment" || type === "BlockComment") continue;
+    if (type === ";") {
+      terminated = true;
+      continue;
+    }
+    toks.push({ type, word: doc.slice(c.from, c.to).toLowerCase(), from: c.from, to: c.to });
+  }
+  return { toks, terminated };
+}
+
+/**
+ * DML 文のトップレベルのトークン列から、Lezer がエラーにしない典型的な誤りを
+ * 報告する (判定の考え方はこのセクション冒頭のコメント参照)。
+ */
+function collectTokenPatternIssues(
+  tree: Tree,
+  doc: string,
+  messages: SqlLintMessages,
+  cursor: number | undefined,
+): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  const push = (
+    tok: Tok,
+    message: string,
+    severity: Diagnostic["severity"] = "error",
+  ) => {
+    out.push({ from: tok.from, to: tok.to, severity, message, source: "sql-syntax" });
+  };
+
+  for (let stmt = tree.topNode.firstChild; stmt; stmt = stmt.nextSibling) {
+    if (stmt.type.name !== "Statement") continue;
+    const { toks, terminated } = statementTokens(stmt, doc);
+    if (toks.length === 0 || !isReserved(toks[0], DML_START)) continue;
+
+    for (let i = 0; i < toks.length; i++) {
+      const prev = toks[i - 1];
+      const tok = toks[i];
+      const next = toks[i + 1];
+
+      // 句キーワードのタイポ: 名前と名前に挟まれた位置の素の識別子。
+      // 打ちかけ (後ろにまだ何も無い) は報告しない。
+      if (tok.type === "Identifier" && prev && next) {
+        const kw = typoTarget(tok.word);
+        if (kw) {
+          const prevOk =
+            isNameLike(prev) ||
+            prev.type === "Parens" ||
+            (prev.type === "Operator" && prev.word === "*") ||
+            (kw === "join" && isReserved(prev, JOIN_PREFIX));
+          const nextOk =
+            isNameLike(next) ||
+            ((kw === "group" || kw === "order") && isReserved(next, BY)) ||
+            (kw === "union" && isReserved(next, UNION_NEXT));
+          if (prevOk && nextOk) {
+            push(tok, messages.keywordTypo.split("{keyword}").join(kw.toUpperCase()), "warning");
+            continue;
+          }
+        }
+      }
+
+      // 余分なカンマ: `a, FROM` / `a, , b` / `SELECT , a`。
+      if (isComma(tok)) {
+        if (
+          isReserved(next, CLAUSE_FOLLOWER) ||
+          isReserved(next, FROM) ||
+          isComma(next) ||
+          isReserved(prev, NO_COMMA_AFTER)
+        ) {
+          push(tok, messages.extraComma);
+        }
+        continue;
+      }
+
+      // 空の句: `FROM WHERE` / `SET WHERE` / `id = AND` / `JOIN ON`。
+      if (
+        (isReserved(tok, NEEDS_OPERAND) || isBinaryOperator(tok)) &&
+        isReserved(next, CLAUSE_FOLLOWER)
+      ) {
+        push(tok, messages.missingOperand);
+        continue;
+      }
+
+      // BY の抜け: `GROUP id` / `ORDER id`。`WITHIN GROUP (ORDER BY ...)` は
+      // 直後が Parens なので対象外。`ORDER B` (BY の打ちかけ) も報告しない。
+      if (
+        isReserved(tok, GROUP_ORDER) &&
+        next &&
+        !isReserved(next, BY) &&
+        next.type !== "Parens" &&
+        !(next.type === "Identifier" && "by".startsWith(next.word))
+      ) {
+        push(tok, messages.missingBy);
+      }
+    }
+
+    // 途中で終わった文: 最後のトークンが句キーワード・演算子・カンマ。
+    // 入力中 (カーソルが最後のトークン〜直後の空白にある) は報告しない。カーソル不明時は
+    // `;` で閉じた文だけを対象にする。
+    const last = toks[toks.length - 1];
+    const dangling = isReserved(last, DANGLING_END) || isBinaryOperator(last) || isComma(last);
+    if (toks.length > 1 && dangling) {
+      let end = last.to;
+      while (end < doc.length && /\s/.test(doc[end])) end++;
+      const typing = cursor !== undefined && cursor >= last.from && cursor <= end;
+      const report = cursor === undefined ? terminated : !typing;
+      // カンマ・BY 抜けで既に報告済みの末尾トークンは二重に出さない。
+      const already = out.some((d) => d.from === last.from && d.to === last.to);
+      if (report && !already) push(last, messages.incompleteStatement);
+    }
+  }
+  return out;
+}
+
 /**
  * 隣接/重複するエラー範囲を 1 つにまとめる (`SELECT * FROM t))` の連続する `)` を
  * 1 件へ)。入力は from 昇順とは限らないのでソートしてから畳む。gap が 1 以下の
@@ -344,6 +626,7 @@ export function computeSqlDiagnostics(
   doc: string,
   dialect: SQLDialect,
   messages: SqlLintMessages,
+  options: SqlLintOptions = {},
 ): Diagnostic[] {
-  return diagnosticsFromTree(parseSqlTree(doc, dialect), doc, messages);
+  return diagnosticsFromTree(parseSqlTree(doc, dialect), doc, messages, options);
 }
