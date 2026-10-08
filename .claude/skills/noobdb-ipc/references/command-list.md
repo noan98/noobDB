@@ -25,6 +25,24 @@
 `health_probe_all(sessionIds, timeoutMs, refreshVersion)` (#1259) は接続ヘルスの一括プローブ。
 Rust が全セッションを並列に問い合わせ、各セッションを `tokio::time::timeout` で打ち切る。
 
+## AI 基盤 (`commands/ai.rs`, #690)
+
+- `set_ai_api_key`
+- `has_ai_api_key`
+- `run_ai_request`
+- `test_ai_connection`
+
+- API キーは OS keyring (`ai/anthropic_api_key`) のみ。`set_ai_api_key(key)` は `None` = 変更なし /
+  `Some("")` = 削除。`has_ai_api_key` は bool だけ返し、値を返す IPC は無い。
+- `run_ai_request(streamId, task, system, prompt, settings)` はストリーミング。結果は
+  `ai-stream:delta` / `:done` / `:error` / `:cancelled` (`listenAiStream`、`streamId` で絞る)。
+  中断は既存の `cancel_stream` (`StreamKind::Ai`)。モデル・エフォートは呼び出し側から渡さず、
+  `task` + `settings` (設定スナップショット) からバックエンド (`ai/models.rs`) が
+  `taskModels[kind] ?? defaultModel` / `taskEfforts[kind] ?? 推奨` で解決する。
+- `test_ai_connection(settings)` は短い非ストリーミング要求。認証 / ネットワーク / API / refusal は
+  戻り値の `status` で区別する。
+- エラー kind: `aiRefused` / `aiAuth` / `aiNetwork` / `aiApi`。
+
 ## SSH (`commands/ssh.rs`)
 
 - `list_known_hosts`

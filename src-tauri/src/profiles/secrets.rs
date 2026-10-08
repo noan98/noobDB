@@ -168,6 +168,30 @@ pub fn delete_kind(profile_id: &str, kind: &str) -> Result<()> {
     delete_secret(profile_id, kind)
 }
 
+/// AI 基盤 (#690) の Anthropic API キー。プロファイルに属さないので、プロファイル ID の
+/// 代わりに固定の名前空間 `ai` を使い、keyring 上は `ai/anthropic_api_key` になる
+/// (プロファイル ID は英数字 8 文字なので衝突しない)。`profiles.json`・設定ストア・
+/// ログには一切出さず、値を返すのはバックエンド内部の API 呼び出しだけ (IPC では
+/// 「設定済みか」の bool しか返さない)。
+const AI_NAMESPACE: &str = "ai";
+const AI_API_KEY_KIND: &str = "anthropic_api_key";
+
+pub fn set_ai_api_key(key: &str) -> Result<()> {
+    set_secret(AI_NAMESPACE, AI_API_KEY_KIND, key)
+}
+
+pub fn get_ai_api_key() -> Result<Option<String>> {
+    get_secret(AI_NAMESPACE, AI_API_KEY_KIND)
+}
+
+pub fn has_ai_api_key() -> bool {
+    has_secret(AI_NAMESPACE, AI_API_KEY_KIND)
+}
+
+pub fn delete_ai_api_key() -> Result<()> {
+    delete_secret(AI_NAMESPACE, AI_API_KEY_KIND)
+}
+
 pub fn delete_all(profile_id: &str) -> Result<()> {
     delete_db_password(profile_id)?;
     delete_ssh_passphrase(profile_id)?;

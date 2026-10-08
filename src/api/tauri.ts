@@ -49,6 +49,7 @@ import { timelapseCommands } from "./commands/timelapse";
 import { schemaDriftCommands } from "./commands/schemaDrift";
 import { planWatchCommands } from "./commands/planWatch";
 import { tasksCommands } from "./commands/tasks";
+import { aiCommands } from "./commands/ai";
 
 // エラー正規化は `./invoke.ts` に置く。既存の呼び出し側 (`from "../api/tauri"`) を
 // 変えないためにここから再エクスポートする。
@@ -1726,6 +1727,7 @@ export const api = {
   ...schemaDriftCommands,
   ...planWatchCommands,
   ...tasksCommands,
+  ...aiCommands,
 };
 
 /** `cancelStream` の戻り値 (#685)。`cancelled` が `false` のときはストリームが
@@ -2928,5 +2930,93 @@ export async function listenTaskRunEvents(handlers: {
     listen<TaskRunEvent>("task-run:error", (e) => {
       handlers.onError?.(parse("task-run:error", e.payload));
     }),
+  ]);
+}
+
+// --- AI 基盤 (#690) ---------------------------------------------------------
+
+export type AiConnectionStatus = "success" | "authError" | "networkError" | "apiError" | "refused";
+
+export interface AiConnectionTestResult {
+  status: AiConnectionStatus;
+  /** 成功時は応答本文 (短縮)、失敗時はエラーメッセージ。API キーは含まれない。 */
+  message: string;
+  model: string | null;
+  elapsedMs: number;
+}
+
+export interface AiDeltaEvent {
+  streamId: string;
+  text: string;
+}
+
+export interface AiUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+}
+
+export interface AiDoneEvent {
+  streamId: string;
+  /** 実際に応答したモデル。フォールバックが働くと `requestedModel` と異なる。 */
+  model: string;
+  requestedModel: string;
+  fallbackUsed: boolean;
+  stopReason: string;
+  usage: AiUsage;
+}
+
+export interface AiErrorEvent {
+  streamId: string;
+  error: string;
+  /** `AppError.kind` (`aiRefused` / `aiAuth` / `aiNetwork` / `aiApi`)。 */
+  kind: string;
+}
+
+export interface AiStreamHandlers {
+  onDelta?: (event: AiDeltaEvent) => void;
+  onDone?: (event: AiDoneEvent) => void;
+  onError?: (event: AiErrorEvent) => void;
+  /** `deliveredRows` は送信済みの本文差分 (delta) の件数。 */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
+/**
+ * AI リクエスト (#690) の `ai-stream:*` イベントを `streamId` で絞って購読する。
+ * 戻り値の関数ですべてのリスナーを外す。
+ */
+export async function listenAiStream(
+  streamId: string,
+  handlers: AiStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  return registerListeners([
+    listen<AiDeltaEvent>(
+      "ai-stream:delta",
+      filter(schemas.aiDeltaEvent, "ai-stream:delta", handlers.onDelta),
+    ),
+    listen<AiDoneEvent>(
+      "ai-stream:done",
+      filter(schemas.aiDoneEvent, "ai-stream:done", handlers.onDone),
+    ),
+    listen<AiErrorEvent>(
+      "ai-stream:error",
+      filter(schemas.aiErrorEvent, "ai-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "ai-stream:cancelled",
+      filter(schemas.streamCancelledEvent, "ai-stream:cancelled", handlers.onCancelled),
+    ),
   ]);
 }
