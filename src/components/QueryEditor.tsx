@@ -549,6 +549,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     unknownStatementStart: t("editorLintUnknownStatement"),
     unterminatedComment: t("editorLintUnterminatedComment"),
     clauseOrder: t("editorLintClauseOrder"),
+    keywordTypo: t("editorLintKeywordTypo"),
+    missingOperand: t("editorLintMissingOperand"),
+    extraComma: t("editorLintExtraComma"),
+    missingBy: t("editorLintMissingBy"),
+    incompleteStatement: t("editorLintIncomplete"),
   };
   const lintMessagesRef = useRef(lintMessages);
   lintMessagesRef.current = lintMessages;
@@ -557,7 +562,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
 
   // オンのときだけ linter + lintGutter を返し、オフでは空 (診断を一切出さない)。
   // クロージャは ref からメッセージを読むので、言語切替時は下の useEffect が
-  // compartment を作り直して再 lint する。
+  // compartment を作り直して再 lint する。「文が途中で終わっている」判定はカーソルが
+  // 文の末尾にある間 (= 入力中) は出さないので、カーソル移動でも再 lint する。
   const buildLintExtension = (enabled: boolean) =>
     enabled
       ? [
@@ -568,8 +574,9 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
                 syntaxTree(view.state),
                 view.state.doc.toString(),
                 lintMessagesRef.current,
+                { cursor: view.state.selection.main.head },
               ),
-            { delay: SQL_LINT_DELAY_MS },
+            { delay: SQL_LINT_DELAY_MS, needsRefresh: (u) => u.selectionSet },
           ),
         ]
       : [];
@@ -612,6 +619,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       lintMessages.unknownStatementStart,
       lintMessages.unterminatedComment,
       lintMessages.clauseOrder,
+      lintMessages.keywordTypo,
+      lintMessages.missingOperand,
+      lintMessages.extraComma,
+      lintMessages.missingBy,
+      lintMessages.incompleteStatement,
     ].join("\u0000"),
     keymap: [runCombo, runStatementCombo, previewCombo, formatCombo, explainCombo].join("\u0000"),
   };
