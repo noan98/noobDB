@@ -1,4 +1,5 @@
 import type { ForeignKey } from "../api/tauri";
+import { maskLiterals } from "../dangerousSql";
 import { quoteIdentFor } from "./sqlDialect";
 
 /**
@@ -46,15 +47,7 @@ const RESERVED = new Set([
   "create", "drop", "alter", "set", "with", "true", "false", "unique", "foreign",
 ]);
 
-/** コメントと文字列リテラルを同じ長さの空白に置き換える (オフセットを保つ)。 */
-function mask(sql: string): string {
-  return sql.replace(
-    /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*(?:'|$)/g,
-    (m) => " ".repeat(m.length),
-  );
-}
-
-function unquote(ident: string): string {
+export function unquote(ident: string): string {
   const q = ident[0];
   if ((q === "`" || q === '"') && ident.length >= 2) {
     return ident.slice(1, -1).replace(new RegExp(q + q, "g"), q);
@@ -68,7 +61,7 @@ function lastPart(ref: string): string {
   return unquote(m ? m[1] : ref);
 }
 
-function quoteIfNeeded(driver: string, name: string): string {
+export function quoteIfNeeded(driver: string, name: string): string {
   const plain = driver === "postgres" ? /^[a-z_][a-z0-9_]*$/ : /^[A-Za-z_]\w*$/;
   const lower = name.toLowerCase();
   return plain.test(name) && !RESERVED.has(lower) ? name : quoteIdentFor(driver, name);
@@ -139,8 +132,9 @@ export function joinCompletions(opts: {
   if (fks.length === 0) return null;
   // 毎打鍵の全文マスクを避ける: カーソル直前が JOIN / ON 文脈でなければ即終了。
   if (!/\b(?:JOIN|ON)\s+[\w`".]*$/i.test(opts.text.slice(-400))) return null;
-  // ponytail: 文字列/コメントのマスクは簡易実装 (ドル引用符・ネストコメントは未対応)。
-  const full = mask(opts.text);
+  // 文字列・コメントは方言つきのマスク (`maskLiterals`) で潰す。識別子は残す (列名を読むため)。
+  // キャッシュは使わない (安全網の判定用エントリを毎打鍵で押し出さないため)。
+  const full = maskLiterals(opts.text, driver, { keepQuotedIdentifiers: true, cache: false });
   const start = full.lastIndexOf(";") + 1;
   const masked = full.slice(start);
 

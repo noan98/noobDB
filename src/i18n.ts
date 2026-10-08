@@ -157,6 +157,9 @@ const en = {
   editorOpenFileTitle: "Open a .sql/.txt file in a new tab.",
   editorSaveFile: "Save as...",
   editorSaveFileTitle: "Save this tab's SQL to a .sql file.",
+  editorCompletionCte: "CTE",
+  editorCompletionDerived: "Derived table",
+  editorCompletionAlias: "Alias",
 
   snippetSearchPlaceholder: "Filter snippets...",
   snippetShowAllScopes: "Show all scopes",
@@ -4022,6 +4025,9 @@ const ja: Dict = {
   editorOpenFileTitle: ".sql/.txt ファイルを新しいタブで開きます。",
   editorSaveFile: "Save as...",
   editorSaveFileTitle: "このタブの SQL を .sql ファイルとして保存します。",
+  editorCompletionCte: "CTE",
+  editorCompletionDerived: "派生表",
+  editorCompletionAlias: "別名",
 
   snippetSearchPlaceholder: "スニペットを検索...",
   snippetShowAllScopes: "すべてのスコープを表示",
