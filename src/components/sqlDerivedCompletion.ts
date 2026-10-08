@@ -23,6 +23,7 @@ import { quoteIfNeeded, unquote } from "./sqlJoinCompletion";
  *
  * 既知の制約 (安全側に倒して補完を止める / 対象外):
  * - カンマ区切りの派生表 (`FROM t, (SELECT ...) d`) と LATERAL は対象外
+ * - MySQL では `"…"` を文字列として扱うため、ANSI_QUOTES 有効環境の `"ident"` は補完対象外
  * - PostgreSQL の JSON 演算子 `#>` / `#>>` がある行では、その行の以降で補完が止まる
  *   (安全網と共有のマスクが `#` を行コメントとして扱うため。安全側に倒している)
  * - 文字列・コメントは方言つきの `maskLiterals` で読む (MySQL のバックスラッシュ・`#`、
@@ -152,6 +153,9 @@ const MASK_OPTIONS: MaskOptions = { keepQuotedIdentifiers: true, cache: false };
  */
 const CURSOR_SENTINEL = "\u0001";
 
+/** カーソルがこの 2 文字記号の間に入ると、印でマスクの結果が変わるので補完しない。 */
+const SPLIT_PAIRS = new Set(["--", "/*", "*/", "''", '""', "``"]);
+
 /**
  * マスク前の安価な早期 return (直前 400 文字だけを見る)。補完の文脈になりうるか:
  * 句キーワードがある / 修飾子 (`x.`) を打っている / 式の区切り (`,` `(` 演算子) の直後。
@@ -159,11 +163,13 @@ const CURSOR_SENTINEL = "\u0001";
  * 補完は句や修飾子が見える場面に限る方針。
  */
 const CONTEXT_KW_RE = /\b(?:SELECT|FROM|JOIN|WHERE|ON|HAVING|BY|WITH|UNION|INTERSECT|EXCEPT)\b/i;
+/** 直前にこれがあると、次に式 (列・修飾子) が来る。 */
+const OPERAND_KW_RE = /\b(?:AND|OR|NOT|WHEN|THEN|ELSE|CASE|IN|IS|LIKE|BETWEEN)$/i;
 function maybeCompletionContext(tail: string, token: string): boolean {
   if (token.includes(".")) return true;
   if (CONTEXT_KW_RE.test(tail)) return true;
   const prefix = tail.slice(0, tail.length - token.length).trimEnd();
-  return /[,(=<>+\-*\/]$/.test(prefix);
+  return /[,(=<>+\-*\/]$/.test(prefix) || OPERAND_KW_RE.test(prefix);
 }
 
 /** UNION / UNION ALL / INTERSECT / EXCEPT の個数 (同じ括弧レベルでの枝の区切り)。 */
@@ -176,7 +182,8 @@ function setOpCount(text: string): number {
 function named(raw: string, alias: boolean): SelectItem | null {
   const name = unquote(raw);
   const plain = raw[0] !== '"' && raw[0] !== "`";
-  if (name === "") return null;
+  // 空白だけの名前は捨てる (MySQL では "…" が文字列として空白に潰されるため、名前として残らない)。
+  if (name.trim() === "") return null;
   if (plain && (/^\d/.test(name) || ALIAS_STOP.has(name.toUpperCase()))) return null;
   return { name, alias };
 }
@@ -238,7 +245,8 @@ function selectInfo(body: string): SelectInfo | null {
 function explicitColumns(list: string): string[] {
   const names = list.split(",").map((p) => p.trim());
   if (!names.every((n) => new RegExp(`^${IDENT}$`).test(n))) return [];
-  return names.map((n) => unquote(n));
+  const cols = names.map((n) => unquote(n));
+  return cols.every((c) => c.trim() !== "") ? cols : [];
 }
 
 function columnsOf(info: SelectInfo | null, explicit: string[] | null): string[] {
@@ -267,11 +275,14 @@ function parseCtes(s: string, cursor: number): Source[] {
     // 閉じていない / カーソルを含む定義は、まだ確定していないので候補にしない。
     if (close < 0 || (open < cursor && cursor <= close)) break;
     const explicit = m[2] !== undefined ? explicitColumns(m[2]) : null;
-    out.push({
-      name: unquote(m[1]),
-      kind: "cte",
-      columns: columnsOf(selectInfo(s.slice(open + 1, close)), explicit),
-    });
+    const nm = named(m[1], false);
+    if (nm) {
+      out.push({
+        name: nm.name,
+        kind: "cte",
+        columns: columnsOf(selectInfo(s.slice(open + 1, close)), explicit),
+      });
+    }
     commaRe.lastIndex = close + 1;
     const c = commaRe.exec(s);
     if (!c) break;
@@ -370,6 +381,10 @@ export function derivedCompletions(opts: {
 }): DerivedCompletion | null {
   const { driver, text } = opts;
   const pos = Math.max(0, Math.min(opts.pos, text.length));
+  // 2 文字記号 (コメント開始・終了、空文字・空識別子) の間や `$` 引用の途中では印を入れると
+  // 記号の意味が変わるため、安全側に倒して補完しない。
+  const splitPair = pos > 0 ? text.slice(pos - 1, pos + 1) : "";
+  if (SPLIT_PAIRS.has(splitPair) || text[pos] === "$") return null;
   // 入力中の語: 識別子・引用符・ドット。`x.` / `d.a` のような修飾子付きも 1 語として扱う。
   const token = /[\w`".]*$/.exec(text.slice(Math.max(0, pos - 256), pos))?.[0] ?? "";
   const tokenStart = pos - token.length;

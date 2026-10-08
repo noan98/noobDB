@@ -362,3 +362,46 @@ describe("derivedCompletions: 方言の引用と大きな入力 (#1419 再レビ
     expect(labels(text)).toEqual(["x.a", "x.b"]);
   });
 });
+
+describe("derivedCompletions: MySQL の \"…\" と空白名・境界 (#1419 再レビュー)", () => {
+  it("MySQL では \"abc\" (文字列扱い) を列名にせず、空白の名前を出さない", () => {
+    const text = 'WITH x AS (SELECT "abc", b FROM t) SELECT x.';
+    expect(labels(text, "mysql")).toEqual(["x.b"]);
+  });
+
+  it("MySQL で空白だけに潰れた名前は候補にしない (各箇所)", () => {
+    expect(labels('SELECT * FROM (SELECT "k" FROM t) d WHERE d.', "mysql")).toBeNull();
+    expect(labels('WITH "x" AS (SELECT a FROM t) SELECT * FROM ', "mysql")).toBeNull();
+    // MySQL では "p" は文字列で列名として不正なので、列リスト全体を解釈不能として列を出さない。
+    expect(labels('WITH x("p", q) AS (SELECT a, b FROM t) SELECT x.', "mysql")).toBeNull();
+    expect(labels('SELECT * FROM (SELECT a FROM t) AS "d" WHERE ', "mysql")).toBeNull();
+    expect(labels('SELECT "abc" n, a AS "m" FROM t ORDER BY ', "mysql")).toEqual(["n"]);
+  });
+
+  it("PostgreSQL の \"abc\" は従来どおり名前として出る", () => {
+    expect(labels('WITH x AS (SELECT "abc", b FROM t) SELECT x.', "postgres")).toEqual([
+      'x.abc',
+      "x.b",
+    ]);
+  });
+
+  it("2 文字記号 (-- など) の間に立つカーソルでは補完しない", () => {
+    const text = "SELECT x.a -- FROM (SELECT z FROM q) e";
+    const pos = text.indexOf("--") + 1;
+    expect(derivedCompletions({ driver: "mysql", text, pos })).toBeNull();
+  });
+
+  it("$ の直前では補完しない", () => {
+    const text = "WITH x AS (SELECT a FROM t) SELECT $$x.$$";
+    const pos = text.indexOf("$$x") ;
+    expect(derivedCompletions({ driver: "postgres", text, pos })).toBeNull();
+  });
+
+  it("長い AND の連続の後の裸の AND でも修飾子候補を出す", () => {
+    const cond = " AND x.a <> 0".repeat(30);
+    const text = `WITH x AS (SELECT a, b FROM t) SELECT * FROM t WHERE x.a = 1${cond} AND `;
+    const got = labels(text) ?? [];
+    expect(got).toContain("x.a");
+    expect(got).toContain("x");
+  });
+});
