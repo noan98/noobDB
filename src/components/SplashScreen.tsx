@@ -56,7 +56,7 @@ export function SplashScreen() {
         transition={{ duration: durations.med, ease: easings.out, delay: 0.08 }}
       >
         <Flex direction="column" align="center" gap="1.5">
-          <Wordmark fontSize="var(--text-xl)" />
+          <Wordmark fontSize="var(--text-3xl)" />
           <chakra.span fontSize="var(--text-sm)" color="app.textMuted">
             {t("splashTagline")}
           </chakra.span>

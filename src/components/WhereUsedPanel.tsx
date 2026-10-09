@@ -219,7 +219,7 @@ export function WhereUsedPanel({
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3">
-      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+      <chakra.p margin={0} textStyle="body" color="app.textMuted">
         {t("whereUsedDesc")}
       </chakra.p>
 
@@ -282,7 +282,7 @@ export function WhereUsedPanel({
         <FieldError display="block">{formError}</FieldError>
       )}
 
-      <chakra.div fontSize="xs" color="app.textMuted" display="flex" flexDirection="column" gap="0.5">
+      <chakra.div textStyle="caption" display="flex" flexDirection="column" gap="0.5">
         {unsupported.length > 0 && (
           <span>
             {t("whereUsedUnsupported", {
@@ -345,7 +345,7 @@ function WhereUsedResults({
       {report.matches.length === 0 ? (
         <EmptyState compact icon="search" title={t("whereUsedNone", counts)} />
       ) : (
-        <chakra.div fontSize="sm" color="app.textMuted">
+        <chakra.div textStyle="body" color="app.textMuted">
           {t("whereUsedSummary", counts)}
         </chakra.div>
       )}
@@ -489,7 +489,7 @@ function WhereUsedMatchRow({
 
 function ProblemList({ title, items }: { title: string; items: string[] }) {
   return (
-    <chakra.details fontSize="xs" color="app.textMuted">
+    <chakra.details textStyle="caption">
       <chakra.summary cursor="pointer">{title}</chakra.summary>
       <chakra.ul margin={0} marginTop="1" paddingLeft="4">
         {items.map((s, i) => (

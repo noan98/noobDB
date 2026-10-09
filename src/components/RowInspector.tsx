@@ -553,7 +553,7 @@ export function RowInspector({
                 transition={transitions.enter}
               >
                 {editing && (
-                  <chakra.p fontSize="xs" color="app.textMuted" mb="1">
+                  <chakra.p textStyle="caption" mb="1">
                     {t("rowInspectorNullHint")}
                   </chakra.p>
                 )}
