@@ -456,15 +456,19 @@ export const GRID_CSS: SystemStyleObject = {
     textDecorationStyle: "solid",
     textDecorationColor: "var(--accent)",
   },
+  // ボタン幅ぶんの右余白を常時確保する。FK は整数 ID が多く右寄せなので、表示時だけ
+  // 余白を変えると文字がずれ、確保しないと値の末尾がボタンに隠れる。
+  "& td.is-fk": { paddingInlineEnd: "var(--space-6)" },
+  // 上下は td に張り付けて高さを合わせる (Compact 密度でも欠けない)。
   "& td.is-fk .cell-fk-jump": {
     position: "absolute",
-    top: "50%",
+    top: "var(--space-0-5)",
+    bottom: "var(--space-0-5)",
     right: "var(--space-1)",
-    transform: "translateY(-50%)",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: "var(--space-0-5)",
+    padding: "0 var(--space-0-5)",
     color: "var(--accent)",
     background: "var(--bg-elevated)",
     border: "1px solid var(--border)",
@@ -3104,7 +3108,7 @@ const GridRow = memo(function GridRow({
     // FK リンク・アフォーダンス (#1393)。NULL・マスク中・編集中・保留中の編集があるセルは
     // 出さない (値が無い / 実値を書き出せない / 見えている値が元の値でない)。
     const fkTable = fkCols?.[colIdx] ?? null;
-    const isFkCell = fkTable !== null && !isNull && !cellMasked && !isEditingHere && !hasPending;
+    const isFkCell = fkTable !== null && !isNull && v !== "" && !cellMasked && !isEditingHere && !hasPending;
     // Live validation of the value being typed, and of an
     // already-buffered value that's sitting invalid in the grid.
     const editPickerValues =
@@ -3272,6 +3276,7 @@ const GridRow = memo(function GridRow({
                 className="cell-fk-jump"
                 tabIndex={-1}
                 aria-label={t("gridFkJump", { table: fkTable })}
+                {...bindTooltip(t("gridFkJump", { table: fkTable }))}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -4058,22 +4063,24 @@ export const DataGrid = memo(function DataGrid({
 
   // 列ごとの FK 参照先テーブル (#1393)。ジャンプ先 SQL を作れる列 (参照先テーブル + 列が
   // 解決できる) だけ埋める。`onFkJump` が無い画面ではアフォーダンスごと出さない。
+  const metaByName = useMemo(
+    () => (columnMeta ? new Map(columnMeta.map((m) => [m.name, m])) : null),
+    [columnMeta],
+  );
   const fkCols = useMemo<(string | null)[] | null>(() => {
-    if (!onFkJump || !columnMeta) return null;
-    const byName = new Map(columnMeta.map((m) => [m.name, m]));
+    if (!onFkJump || !metaByName) return null;
     return columns.map((c) => {
-      const m = byName.get(c.name);
+      const m = metaByName.get(c.name);
       return m?.referenced_table && m.referenced_column ? m.referenced_table : null;
     });
-  }, [onFkJump, columnMeta, columns]);
+  }, [onFkJump, metaByName, columns]);
 
   const tableColumns = useMemo<ColumnDef<GridFeatures, RowShape>[]>(() => {
     // 列ごとの線形探索 (find) は横に広いテーブルで O(列数²) になるため、
     // 名前 → メタデータの Map を 1 度だけ作って引く。
-    const metaByName = new Map(columnMeta?.map((m) => [m.name, m]) ?? []);
     return columns.map((c, i) => {
       const kind = columnKinds[i];
-      const fkInfo = metaByName.get(c.name);
+      const fkInfo = metaByName?.get(c.name);
       const fkTable = fkInfo?.referenced_table ?? null;
       return {
         id: String(i),
@@ -4297,7 +4304,7 @@ export const DataGrid = memo(function DataGrid({
   }, [
     columns,
     columnKinds,
-    columnMeta,
+    metaByName,
     t,
     enableColumnControls,
     richCellRendering,
@@ -5259,7 +5266,7 @@ export const DataGrid = memo(function DataGrid({
   // セルの FK 順方向ジャンプ先 (参照先テーブル + SELECT)。FK でない / 参照先が解決できない /
   // マスク中なら null。右クリックメニューと FK セルのジャンプアイコンで共有する (#1393)。
   const fkJumpFor = (rowIdx: number, colIdx: number): { refTable: string; sql: string } | null => {
-    const fkMeta = columnMeta?.find((m) => m.name === columns[colIdx]?.name);
+    const fkMeta = metaByName?.get(columns[colIdx]?.name ?? "");
     if (!fkMeta?.referenced_table || !fkMeta.referenced_column) return null;
     if (cellMaskedNow(rowIdx, colIdx)) return null;
     return {

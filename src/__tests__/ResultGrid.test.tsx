@@ -6,7 +6,7 @@ import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, read
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
-import { setColumnNullBars, setRichCellRendering } from "../settings";
+import { setColumnMaskEnabled, setColumnMaskPatterns, setColumnNullBars, setRichCellRendering } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 import { TOOLTIP_OPEN_DELAY_MS } from "../components/Tooltip";
 
@@ -1999,6 +1999,69 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
     fireEvent.click(buttons[0]);
     expect(onFkJump).toHaveBeenCalledTimes(1);
     expect(onFkJump.mock.calls[0][0]).toContain("users");
+  });
+
+  const renderFk = (extra: Record<string, unknown> = {}, onFkJump = vi.fn()) =>
+    renderWithProviders(
+      <ResultGrid result={result} tableColumns={meta("users", "id")} onFkJump={onFkJump} driver="mysql" {...extra} />,
+    );
+
+  it("マスク中のセルには出さない", () => {
+    setColumnMaskEnabled(true);
+    setColumnMaskPatterns(["user_id"]);
+    try {
+      const { container } = renderFk();
+      expect(container.querySelector(".cell-fk-jump")).toBeNull();
+    } finally {
+      setColumnMaskEnabled(false);
+      setColumnMaskPatterns([]);
+    }
+  });
+
+  it("保留中の編集があるセルには出さない", () => {
+    const rowKey = rowEditKey([1, 7], [0], 0);
+    const { container } = renderFk({ editable: true, onSetCellEdit: () => {}, pendingEdits: { [rowKey]: { 1: "9" } } });
+    expect(container.querySelector(".cell-fk-jump")).toBeNull();
+  });
+
+  it("編集中のセルには出さない", async () => {
+    const user = userEvent.setup();
+    const { container } = renderFk({ editable: true, onSetCellEdit: () => {} });
+    expect(container.querySelector(".cell-fk-jump")).not.toBeNull();
+    await user.dblClick(container.querySelector("td.is-fk") as HTMLElement);
+    expect(container.querySelector("td.is-fk .cell-edit-input, td .cell-edit-input")).not.toBeNull();
+    expect(container.querySelector(".cell-fk-jump")).toBeNull();
+  });
+
+  it("空文字の FK 値には出さない", () => {
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(columns, [[1, ""]])} tableColumns={meta("users", "id")} onFkJump={vi.fn()} />,
+    );
+    expect(container.querySelector(".cell-fk-jump")).toBeNull();
+  });
+
+  it("ボタンの mousedown ではアクティブセルが変わらず、ダブルクリックでも編集 / ビューアが開かない", () => {
+    const { container } = renderFk({ editable: true, onSetCellEdit: () => {} });
+    const other = container.querySelector("td.col-number") as HTMLElement;
+    act(() => other.focus());
+    expect(other.classList.contains("is-active-cell")).toBe(true);
+    const btn = container.querySelector("button.cell-fk-jump") as HTMLElement;
+    fireEvent.mouseDown(btn);
+    fireEvent.doubleClick(btn);
+    expect(other.classList.contains("is-active-cell")).toBe(true);
+    expect(container.querySelector(".cell-edit-input")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("右クリックメニューの「Jump to」はアイコンと同じ SQL を渡す", async () => {
+    const onFkJump = vi.fn();
+    const { container } = renderFk({}, onFkJump);
+    fireEvent.click(container.querySelector("button.cell-fk-jump") as HTMLElement);
+    const iconSql = onFkJump.mock.calls[0][0];
+    fireEvent.contextMenu(container.querySelector("td.is-fk") as HTMLElement);
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("gridFkJump", { table: "users" }) }));
+    expect(onFkJump).toHaveBeenCalledTimes(2);
+    expect(onFkJump.mock.calls[1][0]).toBe(iconSql);
   });
 
   it("参照先が解決できない / onFkJump が無いときは出さない", () => {
