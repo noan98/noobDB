@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
@@ -415,6 +415,9 @@ export function SchemaCompareView({
   const [applyResult, setApplyResult] = useState<string | null>(null);
   // AI リスク要約 (#697) の結果。同期文の行にバッジを付けるだけで、適用フローには影響しない。
   const [risks, setRisks] = useState<RiskByIndex | null>(null);
+  // プラン生成時に使ったフラグ。生成後にチェックを切り替えてもプランは作り直されないので、
+  // AI には現在のチェック値ではなくこちらを渡す (#697)。
+  const [planFlags, setPlanFlags] = useState({ allowDestructive: false, allowDelete: false });
 
   // Data sync state.
   const [dataTable, setDataTable] = useState<string>("");
@@ -608,6 +611,8 @@ export function SchemaCompareView({
     try {
       const result = await api.generateSyncSql(diff, allowDestructive);
       setPlan(result);
+      setRisks(null);
+      setPlanFlags({ allowDestructive, allowDelete: false });
       setStatementLimit(SYNC_STATEMENT_PAGE);
       setPlanKind("schema");
       setSelected(defaultSelection(result));
@@ -678,6 +683,8 @@ export function SchemaCompareView({
     try {
       const result = await api.generateDataSyncSql(dataDiffId, allowDelete);
       setPlan(result);
+      setRisks(null);
+      setPlanFlags({ allowDestructive: false, allowDelete });
       setStatementLimit(SYNC_STATEMENT_PAGE);
       setPlanKind("data");
       setSelected(defaultSelection(result));
@@ -1074,19 +1081,14 @@ export function SchemaCompareView({
                           diff={diff}
                           dataSummary={
                             planKind === "data" && dataDiff
-                              ? {
-                                  table: dataDiff.table,
-                                  inserts: dataCounts.source_only,
-                                  updates: dataCounts.different,
-                                  deletes: dataCounts.target_only,
-                                  truncated: dataDiff.truncated,
-                                }
+                              ? { table: dataDiff.table, truncated: dataDiff.truncated }
                               : null
                           }
                           sourceDriver={coerceDriver(sourceDriver)}
                           targetDriver={coerceDriver(targetDriver)}
-                          allowDestructive={allowDestructive}
-                          allowDelete={allowDelete}
+                          allowDestructive={planFlags.allowDestructive}
+                          allowDelete={planFlags.allowDelete}
+                          kindLabel={(k) => syncKindLabel(k, t)}
                           isProduction={!!sourceProfile?.is_production || !!targetProfile?.is_production}
                           onRisks={setRisks}
                         />
@@ -1217,7 +1219,13 @@ export const SyncStatementRow = memo(function SyncStatementRow({
         )}
       </chakra.label>
       <chakra.code css={sqlCss}>{statement.sql}</chakra.code>
-      {risks?.map((r, i) => <RiskBadge key={i} item={r} />)}
+      {risks && risks.length > 0 && (
+        <Flex direction="column" gap="1" mt="1">
+          {risks.map((r, i) => (
+            <RiskBadge key={i} item={r} />
+          ))}
+        </Flex>
+      )}
     </chakra.li>
   );
 });

@@ -3,6 +3,8 @@ import type { SchemaDiff, SyncStatement, TableColumnInfo } from "../api/tauri";
 import {
   buildSyncRiskPrompt,
   buildSyncRiskSystem,
+  countDmlStatements,
+  selectStatementsForPrompt,
   finalizeRiskItems,
   isDestructiveStatement,
   parseSyncRiskResponse,
@@ -119,7 +121,7 @@ describe("buildSyncRiskPrompt (#697)", () => {
           stmt("UPDATE `users` SET `email`='bob@example.com' WHERE `id`=2", "update_row"),
           stmt("DELETE FROM `users` WHERE `id`=3", "delete_row", true),
         ],
-        dataSummary: { table: "users", inserts: 1, updates: 1, deletes: 1, truncated: false },
+        dataSummary: { table: "users", truncated: false },
       }),
     );
     expect(p).toContain("rows to insert: 1");
@@ -131,6 +133,39 @@ describe("buildSyncRiskPrompt (#697)", () => {
     expect(p).not.toContain("DELETE FROM");
     // スキーマ差分も付けない。
     expect(p).not.toContain("Schema differences");
+  });
+
+  it("データ比較の件数は生成された DML の件数 (allow_delete=false で DELETE が無ければ 0)", () => {
+    const p = buildSyncRiskPrompt(
+      input({
+        planKind: "data",
+        allowDelete: false,
+        statements: [stmt("INSERT INTO `users` VALUES (1)", "insert_row"), stmt("UPDATE `users` SET a=1", "update_row")],
+        dataSummary: { table: "users", truncated: false },
+      }),
+    );
+    expect(p).toContain("rows to insert: 1");
+    expect(p).toContain("rows to update: 1");
+    expect(p).toContain("rows to delete: 0");
+    expect(p).toContain("allow_delete=false");
+    expect(countDmlStatements([stmt("x", "insert_row"), stmt("y", "delete_row", true), stmt("z", "add_column")])).toEqual({
+      inserts: 1,
+      updates: 0,
+      deletes: 1,
+    });
+  });
+
+  it("スキーマ比較のフラグは生成時の値を「許可されていたか」の形で渡す", () => {
+    const p = buildSyncRiskPrompt(input({ allowDestructive: false }));
+    expect(p).toContain("allow_destructive=false (whether DROP");
+  });
+
+  it("破壊的な文が上限を超えるときは非破壊の文を除外する", () => {
+    const many = Array.from({ length: SYNC_RISK_MAX_STATEMENTS + 20 }, (_, i) => stmt(`DROP TABLE d${i}`, "drop_table", true));
+    many.push(stmt("ALTER TABLE keep_me ADD c int", "add_column"));
+    const p = buildSyncRiskPrompt(input({ statements: many }));
+    expect(p).not.toContain("keep_me");
+    expect(selectStatementsForPrompt(many)).toHaveLength(SYNC_RISK_MAX_STATEMENTS);
   });
 
   it("巨大プランでも破壊的な文を優先して上限内に収め、index は元のまま", () => {

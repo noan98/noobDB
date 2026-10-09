@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream, type DriverKind, type SchemaDiff, type SyncPlan } from "../api/tauri";
+import { api, listenAiStream, type DriverKind, type SchemaDiff, type SyncKind, type SyncPlan } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { dialectLabel, needsSendScopeConfirm } from "../ai/errorExplain";
 import {
   buildSyncRiskPrompt,
+  countDmlStatements,
   buildSyncRiskSystem,
   finalizeRiskItems,
   groupRiskByIndex,
   parseSyncRiskResponse,
+  selectStatementsForPrompt,
   SYNC_RISK_FORMAT,
   type DataSyncSummary,
   type SyncRiskItem,
@@ -91,8 +93,11 @@ export interface AiSyncRiskProps {
   dataSummary: DataSyncSummary | null;
   sourceDriver: DriverKind;
   targetDriver: DriverKind;
+  /** プラン生成時に使ったフラグ。 */
   allowDestructive: boolean;
   allowDelete: boolean;
+  /** 同期文の種別ラベル (一覧表示用)。 */
+  kindLabel: (kind: SyncKind) => string;
   /** どちらかの接続が本番扱いか。 */
   isProduction: boolean;
   /** 結果 (または null=クリア) を親へ渡す。親が各同期文にバッジを描く。 */
@@ -156,19 +161,23 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
     onRisks(null);
   }, [props.plan]);
 
-  const sendsLine = () =>
-    props.planKind === "data" && props.dataSummary
-      ? t("aiSyncRiskSendsData", {
-          dialect: dialectLabel(props.targetDriver),
-          inserts: props.dataSummary.inserts,
-          updates: props.dataSummary.updates,
-          deletes: props.dataSummary.deletes,
-        })
-      : t("aiSyncRiskSendsSchema", {
-          dialect: dialectLabel(props.targetDriver),
-          count: props.plan.statements.length,
-          sql: ai.maskLiterals ? t("aiSyncRiskSqlMasked") : t("aiSyncRiskSqlRaw"),
-        });
+  const sendsLine = () => {
+    if (props.planKind === "data") {
+      const n = countDmlStatements(props.plan.statements);
+      return t("aiSyncRiskSendsData", {
+        dialect: dialectLabel(props.targetDriver),
+        inserts: n.inserts,
+        updates: n.updates,
+        deletes: n.deletes,
+      });
+    }
+    const total = props.plan.statements.length;
+    const shown = selectStatementsForPrompt(props.plan.statements).length;
+    const sql = ai.maskLiterals ? t("aiSyncRiskSqlMasked") : t("aiSyncRiskSqlRaw");
+    return shown < total
+      ? t("aiSyncRiskSendsSchemaCapped", { dialect: dialectLabel(props.targetDriver), total, shown, sql })
+      : t("aiSyncRiskSendsSchema", { dialect: dialectLabel(props.targetDriver), count: total, sql });
+  };
 
   const run = async () => {
     if (busyRef.current) return;
@@ -336,8 +345,8 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
               <FieldLabel as="div">{t("aiSyncRiskRisks")}</FieldLabel>
               {state.items.map((it, i) => (
                 <Flex key={`${it.statement_index}-${i}`} align="baseline" gap="1.5">
-                  <chakra.span color="app.textMuted" fontFamily="mono" fontSize="xs">
-                    {props.plan.statements[it.statement_index]?.table}
+                  <chakra.span color="app.textMuted" fontFamily="mono" fontSize="xs" flexShrink={0}>
+                    {`#${it.statement_index + 1} ${props.kindLabel(props.plan.statements[it.statement_index]?.kind ?? "add_column")} ${props.plan.statements[it.statement_index]?.table ?? ""}`}
                   </chakra.span>
                   <RiskBadge item={it} />
                 </Flex>

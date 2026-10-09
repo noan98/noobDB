@@ -161,14 +161,26 @@ export function summarizeSchemaDiff(diff: SchemaDiff): string[] {
   return lines;
 }
 
-/** データ比較のメタ情報 (行数のみ)。 */
+/** データ比較のメタ情報。件数は比較結果ではなく**実際に生成された DML** (`countDmlStatements`) を使う。 */
 export interface DataSyncSummary {
   table: string;
+  /** 行数上限で比較が打ち切られたか。 */
+  truncated: boolean;
+}
+
+/** 生成された行 DML の件数 (`allow_delete` 無効・上限打ち切り・PK 欠落などで比較結果の行数とは一致しない)。 */
+export function countDmlStatements(statements: readonly Pick<SyncStatement, "kind">[]): {
   inserts: number;
   updates: number;
   deletes: number;
-  /** 行数上限で比較が打ち切られたか。 */
-  truncated: boolean;
+} {
+  const c = { inserts: 0, updates: 0, deletes: 0 };
+  for (const s of statements) {
+    if (s.kind === "insert_row") c.inserts += 1;
+    else if (s.kind === "update_row") c.updates += 1;
+    else if (s.kind === "delete_row") c.deletes += 1;
+  }
+  return c;
 }
 
 export interface SyncRiskInput {
@@ -177,6 +189,7 @@ export interface SyncRiskInput {
   targetDriver: DriverKind;
   statements: readonly SyncStatement[];
   warnings: readonly string[];
+  /** **プラン生成時**に使ったフラグ (生成後にチェックを切り替えても変わらない)。 */
   allowDestructive: boolean;
   allowDelete: boolean;
   /** スキーマ比較の結果 (`planKind === "schema"` のとき)。 */
@@ -223,19 +236,20 @@ export function buildSyncRiskPrompt(input: SyncRiskInput): string {
   lines.push(`Plan type: ${input.planKind === "schema" ? "schema (DDL)" : "row data (DML)"}`);
   lines.push(
     input.planKind === "schema"
-      ? `allow_destructive (DROP TABLE / DROP COLUMN statements were generated): ${input.allowDestructive}`
-      : `allow_delete (DELETE statements were generated): ${input.allowDelete}`,
+      ? `Plan was generated with allow_destructive=${input.allowDestructive} (whether DROP TABLE / DROP COLUMN statements were allowed to be generated)`
+      : `Plan was generated with allow_delete=${input.allowDelete} (whether DELETE statements were allowed to be generated)`,
   );
   if (input.targetDriver === "mysql" && input.planKind === "schema") {
     lines.push("Note: MySQL DDL implicitly commits; the apply is not atomic.");
   }
   if (input.planKind === "data" && input.dataSummary) {
     const d = input.dataSummary;
+    const n = countDmlStatements(input.statements);
     lines.push("");
-    lines.push(`Data comparison (table ${d.table}) — row counts only, no cell values:`);
-    lines.push(`- rows to insert: ${d.inserts}`);
-    lines.push(`- rows to update: ${d.updates}`);
-    lines.push(`- rows to delete: ${d.deletes}`);
+    lines.push(`Data comparison (table ${d.table}) — generated statement counts only, no cell values:`);
+    lines.push(`- rows to insert: ${n.inserts}`);
+    lines.push(`- rows to update: ${n.updates}`);
+    lines.push(`- rows to delete: ${n.deletes}`);
     if (d.truncated) lines.push("- the comparison was capped by the row limit, so the result is partial");
   }
   if (input.planKind === "schema" && input.diff) {

@@ -32,6 +32,19 @@ import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 import { setAiKeyPresent } from "../ai/aiKeyStore";
 import type { SyncPlan } from "../api/tauri";
 
+const PLAN_B: SyncPlan = {
+  statements: [{ sql: "ALTER TABLE other ADD COLUMN z int", table: "other", kind: "add_column", destructive: false }],
+  warnings: [],
+};
+
+const DML_PLAN: SyncPlan = {
+  statements: [
+    { sql: "INSERT INTO `users` (`id`,`email`) VALUES (1,'alice@example.com')", table: "users", kind: "insert_row", destructive: false },
+    { sql: "UPDATE `users` SET `email`='bob@example.com' WHERE `id`=2", table: "users", kind: "update_row", destructive: false },
+  ],
+  warnings: [],
+};
+
 const PLAN: SyncPlan = {
   statements: [
     { sql: "ALTER TABLE users ADD COLUMN age int", table: "users", kind: "add_column", destructive: false },
@@ -47,15 +60,24 @@ function enable(sendScope: "schemaOnly" | "schemaAndSql" = "schemaAndSql", enabl
   });
 }
 
-function Harness({ isProduction = false, planKind = "schema" as "schema" | "data" }) {
+function Harness({
+  isProduction = false,
+  planKind = "schema" as "schema" | "data",
+  plan = PLAN,
+}: {
+  isProduction?: boolean;
+  planKind?: "schema" | "data";
+  plan?: SyncPlan;
+}) {
   const [risks, setRisks] = useState<RiskByIndex | null>(null);
   return (
     <div>
       <AiSyncRisk
-        plan={PLAN}
+        plan={plan}
+        kindLabel={(k) => k}
         planKind={planKind}
         diff={null}
-        dataSummary={planKind === "data" ? { table: "users", inserts: 2, updates: 1, deletes: 1, truncated: false } : null}
+        dataSummary={planKind === "data" ? { table: "users", truncated: false } : null}
         sourceDriver="mysql"
         targetDriver="mysql"
         allowDestructive
@@ -64,7 +86,7 @@ function Harness({ isProduction = false, planKind = "schema" as "schema" | "data
         onRisks={setRisks}
       />
       <ul>
-        {PLAN.statements.map((s, i) => (
+        {plan.statements.map((s, i) => (
           <SyncStatementRow key={i} index={i} statement={s} checked onToggle={() => {}} risks={risks?.get(i)} />
         ))}
       </ul>
@@ -172,13 +194,59 @@ describe("AiSyncRisk (#697)", () => {
   });
 
   it("本番接続なら確認し、データ比較のプロンプトに SQL 本文を含めない", async () => {
-    renderWithProviders(<Harness isProduction planKind="data" />);
+    renderWithProviders(<Harness isProduction planKind="data" plan={DML_PLAN} />);
     await click();
     await screen.findByText(t("aiSyncRiskProdTitle"));
     fireEvent.click(screen.getByRole("button", { name: t("aiSyncRiskConfirmSend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
     const prompt = runAiRequest.mock.calls[0][0].prompt as string;
-    expect(prompt).toContain("rows to insert: 2");
+    expect(prompt).toContain("rows to insert: 1");
+    expect(prompt).toContain("rows to delete: 0");
     expect(prompt).not.toContain("DROP TABLE legacy");
+    expect(prompt).not.toContain("INSERT INTO");
+    expect(prompt).not.toContain("alice@example.com");
+    expect(prompt).not.toContain("bob@example.com");
+  });
+
+  it("データ比較では schemaOnly でも SQL 本文確認ダイアログは出ない", async () => {
+    enable("schemaOnly");
+    renderWithProviders(<Harness planKind="data" plan={DML_PLAN} />);
+    await click();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(t("aiSyncRiskScopeTitle"))).toBeNull();
+  });
+
+  it("実行中にプランが差し替わると中止し、古い応答は表示しない", async () => {
+    const { rerender } = renderWithProviders(<Harness />);
+    await click();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    const staleHandlers = handlers;
+    rerender(<Harness plan={PLAN_B} />);
+    await waitFor(() => expect(cancelStream).toHaveBeenCalledTimes(1));
+    act(() => {
+      staleHandlers?.onDelta?.({ streamId: "x", text: response });
+      staleHandlers?.onDone?.({} as never);
+    });
+    await act(async () => {});
+    expect(screen.queryByText("Adds a column and drops a table")).toBeNull();
+    expect(screen.queryAllByTestId("ai-sync-risk-badge").length).toBe(0);
+    // idle に戻っていてボタンが押せる。
+    expect((screen.getByRole("button", { name: t("aiSyncRiskButton") }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(t("aiSyncRiskRunning"))).toBeNull();
+  });
+
+  it("完了後にプランが差し替わると結果とバッジを破棄する", async () => {
+    const { rerender } = renderWithProviders(<Harness />);
+    await click();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: response });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("Adds a column and drops a table");
+    rerender(<Harness plan={PLAN_B} />);
+    await act(async () => {});
+    expect(screen.queryByText("Adds a column and drops a table")).toBeNull();
+    expect(screen.queryAllByTestId("ai-sync-risk-badge").length).toBe(0);
   });
 });
