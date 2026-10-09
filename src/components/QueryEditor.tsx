@@ -984,11 +984,12 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
             },
             drop(e, view) {
               if (!hasSchemaDragData(e.dataTransfer)) return false;
+              if (view.state.readOnly) return true;
               // 既定の text/plain ドロップ (二重挿入) を止める。
               e.preventDefault();
               const item = parseSchemaDragItem(e.dataTransfer?.getData(SCHEMA_DRAG_MIME) ?? "");
               if (!item) return true;
-              const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head;
+              const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false) ?? view.state.selection.main.head;
               const text = schemaDropText(item, {
                 driver: sqlArgsRef.current.driver,
                 alt: e.altKey,

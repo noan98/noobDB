@@ -1,8 +1,9 @@
 // スキーマツリーのテーブル / 列を SQL エディタへドラッグ&ドロップ挿入する (#1414) ための
 // 純ロジック。ドラッグ元 (ConnectionList) は「何を掴んだか」だけをペイロードに載せ、
 // ドロップ先 (QueryEditor) が自分のドライバで整形する — ツリー側にドライバ依存の整形を
-// 持ち込まない。接続 / グループの並べ替え D&D は Motion の pointer ドラッグで、
-// HTML5 の dataTransfer を使わないため、内部 MIME で衝突なく区別できる。
+// 持ち込まない。接続 / グループの並べ替え D&D は Motion の pointer ドラッグで
+// HTML5 の dataTransfer を使わない (内部 MIME で区別できる)。ただし Reorder.Item は子孫の
+// 押下でも発火するため、ツリー行側 (SchemaRowList) でネイティブ pointerdown を止めて分離する。
 
 import { qualifiedTableSql } from "./components/sqlDialect";
 import { columnInsertText, qualifiedColumnInsertText, tableInsertText } from "./schemaInsertText";

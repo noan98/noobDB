@@ -332,6 +332,15 @@ describe("Database Explorer の階層 (#1112)", () => {
     const colRow = await screen.findByRole("treeitem", { name: /^id/ });
     expect(colRow).toHaveAttribute("draggable", "true");
     const setData2 = vi.fn();
+    // 祖先の Reorder.Item (接続ブロック) の pointerdown リスナーに届かない
+    // (届くと接続ごと並べ替えドラッグが始まる)。ツリー行以外の押下は従来どおり届く。
+    const seen = vi.fn();
+    document.body.addEventListener("pointerdown", seen);
+    fireEvent.pointerDown(tableRow);
+    fireEvent.pointerDown(colRow);
+    expect(seen).not.toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByText("tbl1").closest("[role=tree], body") as HTMLElement);
+    document.body.removeEventListener("pointerdown", seen);
     fireEvent.dragStart(colRow, { dataTransfer: { setData: setData2 } });
     expect(setData2).toHaveBeenCalledWith(SCHEMA_DRAG_MIME, expect.stringContaining('"column":"id"'));
     expect(setData2).toHaveBeenCalledWith("text/plain", "tbl1.id");
