@@ -886,3 +886,37 @@ describe("シナリオ: keep-alive による切替 (#1311, 実ブラウザ)", ()
     expect(invocationsOf("run_query_stream").length).toBe(runs);
   });
 });
+
+describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () => {
+  it("Cmd/Ctrl+W で閉じたクエリタブが Ctrl+Shift+T で SQL ごと戻る", async () => {
+    registerAutoStream();
+    localStorage.setItem(
+      `noobdb.tabs.${ALPHA.id}`,
+      JSON.stringify({
+        panes: [
+          {
+            tabs: [
+              { kind: "query", title: "Keep", sql: "SELECT 2" },
+              { kind: "query", title: "My scratch", sql: "SELECT 1" },
+            ],
+            activeIndex: 1,
+          },
+        ],
+        activePane: 0,
+      }),
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(screen.getByRole("tab", { name: /My scratch/ })).toBeVisible();
+
+    await userEvent.keyboard("{Control>}w{/Control}");
+    await expect.element(screen.getByRole("tab", { name: /My scratch/ })).not.toBeInTheDocument();
+
+    await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
+    await expect.element(screen.getByRole("tab", { name: /My scratch/ })).toBeVisible();
+    await vi.waitFor(() => {
+      const content = document.querySelector(".cm-content")?.textContent ?? "";
+      if (!content.includes("SELECT 1")) throw new Error("closed tab SQL not restored");
+    }, { timeout: 5000 });
+  });
+});

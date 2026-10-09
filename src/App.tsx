@@ -53,6 +53,13 @@ import { ConnectionList, type ConnectionListHandle } from "./components/Connecti
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
 import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
+import {
+  closedTabsForScope,
+  pushClosedTab,
+  snapshotClosedTab,
+  takeClosedTab,
+  type ClosedTab,
+} from "./closedTabs";
 import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
@@ -2023,6 +2030,11 @@ export default function App() {
   // されるため、本文は CodeMirror の doc への参照だけをここへ置き、`tab.sql` は更新しない。
   // 本文を読む経路は必ず `getTabSql` を通す (`tab.sql` を直接読まない)。
   const tabSqlStore = useMemo(() => new TabSqlStore(), []);
+  // 最近閉じたタブ (#1353)。メモリ上のみ (再起動を跨いでは持たない)。パレットの一覧表示用に
+  // state、同一ティック内の連続クローズ (一括クローズ) と keydown 用に ref を併せ持つ。
+  const [closedTabs, setClosedTabs] = useState<ClosedTab[]>([]);
+  const closedTabsRef = useRef<ClosedTab[]>([]);
+  const closedTabSeqRef = useRef(0);
   const getTabSql = useCallback(
     (tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql),
     [tabSqlStore],
@@ -7142,9 +7154,29 @@ export default function App() {
   const handleCloseTab = useCallback((id: string) => {
     void cancelStreamForTab(id);
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
-    editorSelectionRef.current.delete(id);
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
+    // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
+    // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
+    const closing = tabsRef.current.find((tt) => tt.id === id);
+    if (closing) {
+      closedTabSeqRef.current += 1;
+      const snap = snapshotClosedTab(
+        closing,
+        tabSqlStore.resolve(closing.id, closing.sql),
+        {
+          id: `closed-${Date.now()}-${closedTabSeqRef.current}`,
+          scope: sessionIdRef.current ?? "",
+          closedAt: Date.now(),
+        },
+        editorSelectionRef.current.get(id),
+      );
+      if (snap) {
+        closedTabsRef.current = pushClosedTab(closedTabsRef.current, snap);
+        setClosedTabs(closedTabsRef.current);
+      }
+    }
+    editorSelectionRef.current.delete(id);
     tabSqlStore.delete(id);
     dirtyWatcher.forget(id);
     const prevPanes = panesRef.current;
@@ -7169,7 +7201,44 @@ export default function App() {
     if (removedPaneId && activePaneIdRef.current === removedPaneId) {
       setActivePaneId(next[0]?.id ?? null);
     }
-  }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef]);
+  }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef, tabsRef]);
+
+  // 閉じたタブの復元 (#1353)。`id` 省略時は現在の接続で最後に閉じたタブ。復元先は現在
+  // アクティブなペイン。table タブは通常の開き方 (handleOpenTable)、それ以外は SQL 本文と
+  // 接続先 DB から再構築する (結果・セル編集は復元しない)。
+  const reopenClosedTab = useCallback((id?: string) => {
+    const { entry, rest } = takeClosedTab(closedTabsRef.current, sessionIdRef.current ?? "", id);
+    if (!entry) return;
+    closedTabsRef.current = rest;
+    setClosedTabs(rest);
+    if (entry.kind === "table" && entry.database && entry.table) {
+      handleOpenTableRef.current(entry.database, entry.table);
+      return;
+    }
+    const base = entry.kind === "explain"
+      ? makeTab("explain", entry.title, entry.sql)
+      : makeTab("query", entry.title, entry.sql);
+    const restored: Tab = {
+      ...base,
+      database: entry.database,
+      builderSnapshot: entry.builderSnapshot ?? null,
+      selection: entry.selection,
+    };
+    addTab(restored);
+    if (restored.kind === "query") {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (overlayOpenRef.current) return;
+          const owner = panesRef.current.find((p) => p.tabIds.includes(restored.id));
+          if (owner) editorRefs.current.get(owner.id)?.focus();
+        });
+      });
+    }
+  }, [addTab, panesRef]);
+  const reopenClosedTabRef = useRef(reopenClosedTab);
+  reopenClosedTabRef.current = reopenClosedTab;
+  const handleOpenTableRef = useRef<(database: string, table: string) => void>(() => {});
+  handleOpenTableRef.current = handleOpenTable;
 
   // タブの一括クローズ (#1354)。対象は基点タブが属するペイン内のタブ (tabBulkClose.ts)。
   // 各タブには既存の `handleCloseTab` を適用する (ストリーム中断・ref 掃除・ペイン畳み込みを
@@ -7245,6 +7314,13 @@ export default function App() {
       if (comboMatchesEvent(bindingsRef.current.newTab, e)) {
         e.preventDefault();
         handleNewTab();
+        return;
+      }
+      // Cmd/Ctrl+Shift+T → 最近閉じたタブを開き直す (#1353)。履歴が無いときも webview 既定の
+      // 挙動を抑止するだけで何もしない。
+      if (comboMatchesEvent(bindingsRef.current.reopenClosedTab, e)) {
+        e.preventDefault();
+        reopenClosedTabRef.current();
         return;
       }
       if (comboMatchesEvent(bindingsRef.current.closeTab, e)) {
@@ -7765,6 +7841,21 @@ export default function App() {
         shortcut: formatCombo(shortcutBindings.newTab),
         run: () => handleNewTab(),
       });
+      // 最近閉じたタブ (#1353)。履歴があるときだけ出し、複数件は 1 件ずつ選べる
+      // (新しい順。先頭の「開き直す」だけがショートカットを表示する)。
+      const closedForSession = closedTabsForScope(closedTabs, sessionId);
+      closedForSession.forEach((c, i) => {
+        items.push({
+          id: `nav:reopen-closed-tab:${c.id}`,
+          group: "navigation",
+          label: i === 0 ? t("cmdkReopenClosedTab") : t("cmdkReopenClosedTabItem", { title: c.title }),
+          sublabel: i === 0 ? c.title : undefined,
+          icon: "undo",
+          keywords: `reopen restore closed recent tab undo close 閉じた タブ 復元 開き直す 最近 ${c.title} ${c.sql}`,
+          shortcut: i === 0 ? formatCombo(shortcutBindings.reopenClosedTab) : undefined,
+          run: () => reopenClosedTabRef.current(c.id),
+        });
+      });
       // .sql スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。D&D 非対応の
       // キーボード/コマンドパレット中心のユーザ向け導線で、読み込みは D&D 経路
       // (`handleFilesDropped`) をそのまま共有する。
@@ -8053,6 +8144,7 @@ export default function App() {
     handleOpenSchemaDrift,
     shortcutBindings,
     handleNewTab,
+    closedTabs,
     handleOpenSqlFile,
     handleSaveSqlFile,
     handleDisconnect,
