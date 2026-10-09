@@ -399,6 +399,7 @@ import {
   type PersistedWorkspace,
 } from "./tabPersistence";
 import { reorderIfPermutation } from "./tabReorder";
+import { duplicateSpec, tabsToClose, type TabBulkCloseMode } from "./tabMenuActions";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
 import { buildPageSql, canGoNext, canGoPrev, clampPage } from "./pagination";
@@ -7151,6 +7152,24 @@ export default function App() {
     }
   }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef]);
 
+  // タブを複製して元タブと同じペインの末尾に開く (#1354)。内容の決め方は
+  // `duplicateSpec`。エディタ未反映の編集も含めるため SQL は tabSqlStore から取る。
+  const duplicateTab = useCallback((id: string) => {
+    const src = tabsRef.current.find((tt) => tt.id === id);
+    if (!src) return;
+    const spec = duplicateSpec({
+      kind: src.kind,
+      title: src.title,
+      sql: tabSqlStore.resolve(src.id, src.sql),
+    });
+    const base = spec.kind === "explain" ? makeExplainTab(spec.sql) : makeQueryTab();
+    const owner = panesRef.current.find((p) => p.tabIds.includes(id));
+    addTab(
+      { ...base, title: spec.title, sql: spec.sql, lastExecutedSql: spec.sql, database: src.database },
+      owner?.id,
+    );
+  }, [addTab, tabSqlStore, tabsRef, panesRef]);
+
   // Latest handlers held in a ref so the global keydown listener below can
   // call them without re-attaching on every tab change.
   const handleCloseTabRef = useRef(handleCloseTab);
@@ -10097,13 +10116,22 @@ export default function App() {
         const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
         // Moving is only possible when it won't leave a single pane empty.
         const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
+        const closeBulk = (mode: TabBulkCloseMode) =>
+          tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, mode).forEach((id) => handleCloseTab(id));
+        const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
+        const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [
+          { label: t("tabDuplicate"), onSelect: () => duplicateTab(tabMenu.tabId) },
           {
             label: t("tabMoveOtherPane"),
             onSelect: () => moveTabToOtherPane(tabMenu.tabId),
             disabled: !canMove,
             title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
           },
+          { separator: true },
+          { label: t("tabCloseOthers"), onSelect: () => closeBulk("others"), disabled: !hasOthers },
+          { label: t("tabCloseRight"), onSelect: () => closeBulk("right"), disabled: !hasRight },
+          { label: t("tabCloseAll"), onSelect: () => closeBulk("all"), danger: true },
           { separator: true },
           {
             label: t("tabClose"),
