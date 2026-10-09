@@ -45,9 +45,9 @@ export function WelcomeIllustration({ size = 96 }: IllustrationProps) {
       role="img"
     >
       <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
-      <rect x="30" y="20" width="68" height="20" rx="4" fill="var(--illust-body-fill)" opacity="0.5" />
-      <rect x="30" y="46" width="68" height="20" rx="4" fill="var(--illust-body-fill)" opacity="0.75" />
-      <rect x="30" y="72" width="68" height="14" rx="4" fill="var(--illust-body-fill)" opacity="0.4" />
+      <rect x="30" y="20" width="68" height="20" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.5" />
+      <rect x="30" y="46" width="68" height="20" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.75" />
+      <rect x="30" y="72" width="68" height="14" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.4" />
       <circle cx="42" cy="30" r="2.5" fill="currentColor" stroke="none" opacity="0.6" />
       <circle cx="42" cy="56" r="2.5" fill="currentColor" stroke="none" opacity="0.8" />
       {/* アクセントの「+」スパーク (新規作成の合図) */}
@@ -112,7 +112,7 @@ export function NoResultsIllustration({ size = 84 }: IllustrationProps) {
       role="img"
     >
       <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
-      <rect x="24" y="20" width="64" height="52" rx="4" fill="var(--illust-body-fill)" opacity="0.6" />
+      <rect x="24" y="20" width="64" height="52" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.6" />
       <path d="M24 34h64M46 20v52M46 34" opacity="0.45" />
       <path d="M24 48h64M24 60h64" opacity="0.3" />
       {/* 虫眼鏡 (アクセント) */}
@@ -142,8 +142,8 @@ export function ConnectionFailedIllustration({ size = 96 }: IllustrationProps) {
     >
       <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* サーバスタック */}
-      <rect x="20" y="18" width="60" height="18" rx="4" fill="var(--illust-body-fill)" opacity="0.5" />
-      <rect x="20" y="42" width="60" height="18" rx="4" fill="var(--illust-body-fill)" opacity="0.7" />
+      <rect x="20" y="18" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.5" />
+      <rect x="20" y="42" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.7" />
       <circle cx="30" cy="27" r="2.5" fill="currentColor" stroke="none" opacity="0.5" />
       <circle cx="30" cy="51" r="2.5" fill="currentColor" stroke="none" opacity="0.7" />
       {/* 断線ケーブル */}
@@ -223,7 +223,7 @@ export function PermissionDeniedIllustration({ size = 96 }: IllustrationProps) {
     >
       <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* 錠前ボディ */}
-      <rect x="38" y="46" width="36" height="30" rx="4" fill="var(--illust-body-fill)" opacity="0.7" />
+      <rect x="38" y="46" width="36" height="30" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.7" />
       {/* 錠前アーチ */}
       <path d="M46 46V36a10 10 0 0 1 20 0v10" opacity="0.6" />
       {/* キーホール */}
@@ -259,9 +259,9 @@ export function ProductionWarningIllustration({ size = 96 }: IllustrationProps) 
     >
       <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* サーバスタック */}
-      <rect x="18" y="20" width="60" height="18" rx="4" fill="var(--illust-body-fill)" opacity="0.5" />
-      <rect x="18" y="44" width="60" height="18" rx="4" fill="var(--illust-body-fill)" opacity="0.75" />
-      <rect x="18" y="68" width="60" height="14" rx="4" fill="var(--illust-body-fill)" opacity="0.4" />
+      <rect x="18" y="20" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.5" />
+      <rect x="18" y="44" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.75" />
+      <rect x="18" y="68" width="60" height="14" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.4" />
       <circle cx="28" cy="29" r="2.5" fill="currentColor" stroke="none" opacity="0.5" />
       <circle cx="28" cy="53" r="2.5" fill="currentColor" stroke="none" opacity="0.75" />
       {/* 警告三角 (アクセント: amber 系はトークンに乗せず ws-accent で統一) */}
@@ -294,7 +294,7 @@ export function SchemaLoadFailedIllustration({ size = 96 }: IllustrationProps) {
     >
       <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* テーブルグリッド (左上半分は正常) */}
-      <rect x="14" y="16" width="70" height="56" rx="4" fill="var(--illust-body-fill)" opacity="0.55" />
+      <rect x="14" y="16" width="70" height="56" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.55" />
       <path d="M14 32h70M36 16v56" opacity="0.4" />
       <path d="M14 48h70M14 62h52" opacity="0.3" />
       {/* 右下が欠けた破断線 */}

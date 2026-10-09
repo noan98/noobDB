@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 // Vite の `?raw` で CSS / SVG の中身を文字列として取り込み、色値のドリフトを検証する
 // (型は `vite/client` が提供。Node の fs/types に依存しない)。
 import brandCss from "../App.css?raw";
+import illustrationsSrc from "../components/illustrations.tsx?raw";
 import faviconSvg from "../../public/brand-icon.svg?raw";
 import {
   BRAND_BLUE,
@@ -104,6 +105,21 @@ describe("brand colors (#619)", () => {
       expect(block, `${theme} ブロックが見つかる`).toBeTruthy();
       expect(block![1]).toMatch(/--hero-halo:\s*none;/);
       expect(block![1]).toMatch(/--hero-rule:\s*none;/);
+      expect(block![1]).toMatch(/--hero-rule-display:\s*none;/);
     }
+  });
+
+  it("イラストの duotone は hc-* で地と接地影を消し、全 svg が noob-illust を持つ (#1216)", () => {
+    const hc = brandCss.match(
+      /:root\[data-theme="hc-light"\] \.noob-illust,\s*:root\[data-theme="hc-dark"\] \.noob-illust\s*\{([\s\S]*?)\}/,
+    );
+    expect(hc, "hc-* の .noob-illust 上書きがある").toBeTruthy();
+    expect(hc![1]).toMatch(/--illust-body-fill:\s*none;/);
+    expect(hc![1]).toMatch(/--illust-ground:\s*none;/);
+
+    const src = illustrationsSrc;
+    // 全イラストは className="noob-illust" を付ける Svg ラッパ経由で、生の ChakraSvg は 1 箇所のみ。
+    expect(src.match(/<ChakraSvg\b/g)?.length).toBe(1);
+    expect(src).toContain('className="noob-illust"');
   });
 });

@@ -267,7 +267,7 @@
   /* ── Hero halo / rule (#1216) ─────────────────────────────────────────
      Welcome / Splash のイラスト・ロゴの背後に敷く放射状のブランドの光彩と、見出し下の
      短いブランドグラデーションの罫線。`--hero-wash` と同じく brand-blue / brand-violet
-     (テーマを跨いで固定) を単一ソースとし、不透明度は控えめ (24% 以下) に留めて前景の
+     (テーマを跨いで固定) を単一ソースとし、不透明度は控えめ (25% 以下) に留めて前景の
      コントラストを損なわない。静止装飾のため reduced-motion の影響は無い。
      hc-* では装飾より AAA を優先して `none` に上書きする。 */
   --hero-halo: radial-gradient(
@@ -277,6 +277,7 @@
     transparent 100%
   );
   --hero-rule: var(--brand-gradient);
+  --hero-rule-display: block;
 
   --bg: #f5f7fa;
   --bg-elevated: #ffffff;
@@ -704,6 +705,7 @@
   --hero-wash: none;
   --hero-halo: none;
   --hero-rule: none;
+  --hero-rule-display: none;
 
   --bg: #ffffff;
   --bg-elevated: #ffffff;
@@ -806,6 +808,7 @@
   --hero-wash: none;
   --hero-halo: none;
   --hero-rule: none;
+  --hero-rule-display: none;
 
   --bg: #000000;
   /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
@@ -2081,7 +2084,7 @@ td.is-find-current::after {
    線のみにする。 */
 .noob-illust {
   --illust-accent: var(--ws-accent, var(--accent));
-  --illust-body-fill: color-mix(in srgb, var(--illust-accent) 9%, transparent);
+  --illust-body-fill: color-mix(in srgb, var(--illust-accent) 12%, transparent);
   --illust-tint: color-mix(in srgb, var(--illust-accent) 18%, transparent);
   --illust-error-tint: color-mix(in srgb, var(--text-error) 16%, transparent);
   --illust-ground: color-mix(in srgb, var(--text) 10%, transparent);

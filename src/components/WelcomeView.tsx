@@ -165,7 +165,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
           w="48px"
           h="3px"
           rounded="pill"
-          css={{ background: "var(--hero-rule)" }}
+          css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
         />
         <Text color="app.textMuted" fontSize="sm" lineHeight="1.6">
           {t("welcomeSubtitle")}
