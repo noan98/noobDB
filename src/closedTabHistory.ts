@@ -117,3 +117,62 @@ export function summarizeClosedGroup<T>(
   const first = orderForRestore(group.entries)[0];
   return { title: first ? titleOf(first.snapshot) : "", extra: Math.max(0, group.entries.length - 1) };
 }
+
+/** `sanitizeClosedTabSnapshot` が既定値へ戻すフィールドの形 (`Tab` の部分集合)。 */
+export interface ClosedTabVolatileFields {
+  result: unknown;
+  preview: unknown;
+  streaming: boolean;
+  previewStreaming: boolean;
+  loadingMore: boolean;
+  canLoadMore: boolean;
+  autoLimitApplied: number | null;
+  autoLimitSql: string | null;
+  queryError: string | null;
+  pendingEdits: Record<string, unknown>;
+  editUndoStack: unknown[];
+  editRedoStack: unknown[];
+}
+
+/**
+ * 閉じたタブのスナップショットから、実行中フラグ・結果・未確定編集・差分用の前回結果を
+ * 取り除く。復元後に「実行中のまま止まる」(例: `batchRunning: true` が再実行ガードに
+ * 掛かる) ことや、最大 20 タブ分の結果行がメモリに残ることを防ぐ。
+ *
+ * 除外リスト方式: 列挙したものだけを既定値に戻し、それ以外 (タイトル・手動命名フラグ・
+ * SQL・DB・ビルダー状態など) は丸ごと引き継ぐ。`Tab` に項目が増えても、結果や実行状態
+ * でない限りこの関数を触らずに復元対象になる。
+ */
+export function sanitizeClosedTabSnapshot<T extends ClosedTabVolatileFields>(tab: T): T {
+  return {
+    ...tab,
+    result: null,
+    preview: null,
+    streaming: false,
+    previewStreaming: false,
+    loadingMore: false,
+    canLoadMore: false,
+    autoLimitApplied: null,
+    autoLimitSql: null,
+    queryError: null,
+    pendingEdits: {},
+    editUndoStack: [],
+    editRedoStack: [],
+    // 以下は省略可能な項目。undefined / 既定値に戻す (キー自体は残して上書きを保証する)。
+    pendingDeletes: undefined,
+    pendingInserts: undefined,
+    previewPrevPaginatable: undefined,
+    batchResults: undefined,
+    batchScript: undefined,
+    batchRunning: false,
+    applyingEdits: false,
+    lastEditAppliedAt: undefined,
+    autoRefreshSecs: null,
+    autoRefreshLastRunAt: null,
+    prevResultRows: null,
+    prevResultSql: null,
+    diffHighlight: false,
+    partialResult: null,
+    explainSourceSql: undefined,
+  };
+}

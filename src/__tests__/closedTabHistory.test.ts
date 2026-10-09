@@ -7,6 +7,7 @@ import {
   popClosedGroup,
   pushClosedGroup,
   resolveRestorePaneId,
+  sanitizeClosedTabSnapshot,
   shouldRememberClosedTab,
   summarizeClosedGroup,
   type ClosedTabGroup,
@@ -133,5 +134,66 @@ describe("summarizeClosedGroup", () => {
     const g = group("a", 3);
     expect(summarizeClosedGroup(g, (s) => s.toUpperCase())).toEqual({ title: "A-0", extra: 2 });
     expect(summarizeClosedGroup(group("e", 0), (s) => s)).toEqual({ title: "", extra: 0 });
+  });
+});
+
+describe("sanitizeClosedTabSnapshot", () => {
+  const dirty = {
+    id: "t1",
+    title: "my query",
+    titleManual: true,
+    sql: "SELECT 1",
+    result: { rows: [[1]] },
+    preview: { rows: [] },
+    streaming: true,
+    previewStreaming: true,
+    loadingMore: true,
+    canLoadMore: true,
+    autoLimitApplied: 100,
+    autoLimitSql: "SELECT 1",
+    queryError: "boom",
+    pendingEdits: { 0: { 1: "x" } },
+    editUndoStack: [{}],
+    editRedoStack: [{}],
+    pendingDeletes: ["a"],
+    pendingInserts: [{}],
+    batchRunning: true,
+    batchResults: [{}],
+    batchScript: "SELECT 1;",
+    applyingEdits: true,
+    autoRefreshSecs: 5,
+    prevResultRows: [[1]],
+    prevResultSql: "SELECT 1",
+    diffHighlight: true,
+    partialResult: { reason: "timeout", rows: 3 },
+  };
+
+  it("実行中フラグ・結果・未確定編集・前回結果を既定値へ戻す", () => {
+    const s = sanitizeClosedTabSnapshot(dirty);
+    expect(s.batchRunning).toBe(false);
+    expect(s.streaming).toBe(false);
+    expect(s.previewStreaming).toBe(false);
+    expect(s.applyingEdits).toBe(false);
+    expect(s.result).toBeNull();
+    expect(s.preview).toBeNull();
+    expect(s.prevResultRows).toBeNull();
+    expect(s.prevResultSql).toBeNull();
+    expect(s.partialResult).toBeNull();
+    expect(s.diffHighlight).toBe(false);
+    expect(s.batchResults).toBeUndefined();
+    expect(s.pendingDeletes).toBeUndefined();
+    expect(s.pendingInserts).toBeUndefined();
+    expect(s.pendingEdits).toEqual({});
+    expect(s.editUndoStack).toEqual([]);
+    expect(s.autoRefreshSecs).toBeNull();
+    expect(s.queryError).toBeNull();
+  });
+
+  it("タイトル・手動命名フラグ・SQL など結果でない項目は引き継ぎ、元は破壊しない", () => {
+    const s = sanitizeClosedTabSnapshot(dirty);
+    expect(s.title).toBe("my query");
+    expect(s.titleManual).toBe(true);
+    expect(s.sql).toBe("SELECT 1");
+    expect(dirty.batchRunning).toBe(true);
   });
 });

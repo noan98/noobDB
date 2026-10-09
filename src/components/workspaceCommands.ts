@@ -69,7 +69,7 @@ export function workspaceCommandItems(
 ): CommandItem[] {
   const items: CommandItem[] = [];
 
-  // --- 最近閉じたタブ (#1353)。最新を戻す候補 + 2 件以上あれば個別に選べる ---
+  // --- 最近閉じたタブ (#1353)。最新を戻す候補 + 2 件以上あれば 2 件目以降を個別に選べる ---
   if (ctx.closedTabs.length > 0) {
     items.push({
       id: "tab:reopen-closed",
@@ -81,7 +81,8 @@ export function workspaceCommandItems(
       run: () => actions.reopenClosedTab(),
     });
     if (ctx.closedTabs.length > 1) {
-      for (const g of ctx.closedTabs) {
+      // 先頭 (最新) は上の「最近閉じたタブを開く」と同じ動作なので重複させない。
+      for (const g of ctx.closedTabs.slice(1)) {
         items.push({
           id: `tab:reopen-closed:${g.id}`,
           group: "navigation",

@@ -407,6 +407,7 @@ import {
   popClosedGroup,
   pushClosedGroup,
   resolveRestorePaneId,
+  sanitizeClosedTabSnapshot,
   shouldRememberClosedTab,
   summarizeClosedGroup,
   type ClosedTabEntry,
@@ -7173,24 +7174,12 @@ export default function App() {
     if (!tab || !pane) return null;
     const sql = tabSqlStore.resolve(tab.id, tab.sql);
     if (!shouldRememberClosedTab({ kind: tab.kind, sql })) return null;
-    const snapshot: Tab = {
+    const snapshot = sanitizeClosedTabSnapshot<Tab>({
       ...tab,
       sql,
       selection: editorSelectionRef.current.get(id) ?? tab.selection,
       gridScrollTop: gridScrollRef.current.get(id) ?? tab.gridScrollTop,
-      result: null,
-      preview: null,
-      streaming: false,
-      previewStreaming: false,
-      loadingMore: false,
-      canLoadMore: false,
-      queryError: null,
-      pendingEdits: {},
-      editUndoStack: [],
-      editRedoStack: [],
-      applyingEdits: false,
-      autoRefreshSecs: null,
-    };
+    });
     return { snapshot, paneId: pane.id, index: pane.tabIds.indexOf(id) };
   }, [tabsRef, panesRef, tabSqlStore]);
 
@@ -7287,7 +7276,10 @@ export default function App() {
         activePaneIdRef.current = paneId;
         setActivePaneId(paneId);
       } else {
-        setPanes([{ id: newPaneId(), tabIds: [tab.id], activeTabId: tab.id }]);
+        const newId = newPaneId();
+        setPanes([{ id: newId, tabIds: [tab.id], activeTabId: tab.id }]);
+        activePaneIdRef.current = newId;
+        setActivePaneId(newId);
       }
     }
   }, [toast, panesRef, setTabs, setPanes, handleOpenTable]);

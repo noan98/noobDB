@@ -198,10 +198,21 @@ describe("App.tsx の結線 (#1112)", () => {
       };
       const items = workspaceCommandItems(ctx, a, t);
       const per = items.filter((i) => i.id.startsWith("tab:reopen-closed:"));
-      expect(per.map((i) => i.id)).toEqual(["tab:reopen-closed:g0", "tab:reopen-closed:g1"]);
-      expect(per[0].label).toContain("bulk");
-      per[1].run();
+      expect(per.map((i) => i.id)).toEqual(["tab:reopen-closed:g1"]);
+      expect(per[0].label).toContain("q1");
+      per[0].run();
       expect(a.reopenClosedTab).toHaveBeenCalledWith("g1");
+    });
+
+    it("App.tsx の結線: スナップショットは handleCloseTab 内で tabSqlStore.delete より前", () => {
+      const start = appSource.indexOf("const handleCloseTab = useCallback(");
+      const end = appSource.indexOf("const closeTabsAsGroup", start);
+      const body = appSource.slice(start, end);
+      const snap = body.indexOf("snapshotClosedTab(");
+      const del = body.indexOf("tabSqlStore.delete(");
+      expect(snap).toBeGreaterThan(-1);
+      expect(del).toBeGreaterThan(-1);
+      expect(snap).toBeLessThan(del);
     });
   });
 });
