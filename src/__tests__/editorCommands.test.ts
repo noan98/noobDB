@@ -36,6 +36,8 @@ function actions() {
     formatSql: vi.fn(),
     explain: vi.fn(),
     focusEditor: vi.fn(),
+    openAiQuery: vi.fn(),
+    aiSql: vi.fn(),
     toggleActivity: vi.fn(),
     switchConnection: vi.fn(),
   };
@@ -116,5 +118,63 @@ describe("editorCommandItems", () => {
     expect(appSource).toContain("...editorCommandItems(");
     expect(appSource).toContain("activeEditor()?.runAll()");
     expect(appSource).toContain("toggleActivityCenter()");
+  });
+});
+
+describe("editorCommandItems: AI にクエリを依頼 (#691)", () => {
+  it("AI 利用可・接続中・通常タブのときだけ出て、アクションを呼ぶ", () => {
+    const a = actions();
+    const item = editorCommandItems({ ...base, aiAvailable: true }, a, t).find((i) => i.id === "editor:ai-query");
+    expect(item).toBeTruthy();
+    item?.run();
+    expect(a.openAiQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["AI 無効", { aiAvailable: false }],
+    ["AI 未指定", {}],
+    ["未接続", { aiAvailable: true, sessionId: null }],
+    ["エディタ無し", { aiAvailable: true, hasEditor: false }],
+    ["EXPLAIN タブ", { aiAvailable: true, explainTab: true }],
+  ])("%s では出さない", (_name, patch) => {
+    expect(ids({ ...base, ...patch })).not.toContain("editor:ai-query");
+  });
+});
+
+describe("App.tsx の AI 依頼結線 (#691)", () => {
+  it("パレットはアクティブなエディタの openAiQuery を呼び、AI 利用可否を渡す", () => {
+    expect(appSource).toContain("activeEditor()?.openAiQuery()");
+    expect(appSource).toContain("aiAvailable,");
+  });
+
+  it("新しいタブで開く経路は生成時の DB を tab.database に載せる", () => {
+    expect(appSource).toContain("if (database) tab.database = database;");
+  });
+});
+
+describe("editorCommandItems: SQL の AI 解説 / 最適化案 (#695)", () => {
+  it("AI 利用可・接続中・通常タブのときだけ 2 つ出て、種別つきでアクションを呼ぶ", () => {
+    const a = actions();
+    const items = editorCommandItems({ ...base, aiAvailable: true }, a, t);
+    items.find((i) => i.id === "editor:ai-sql-explain")?.run();
+    items.find((i) => i.id === "editor:ai-sql-rewrite")?.run();
+    expect(a.aiSql).toHaveBeenNthCalledWith(1, "explain");
+    expect(a.aiSql).toHaveBeenNthCalledWith(2, "rewrite");
+  });
+
+  it.each([
+    ["AI 無効", { aiAvailable: false }],
+    ["AI 未指定", {}],
+    ["未接続", { aiAvailable: true, sessionId: null }],
+    ["エディタ無し", { aiAvailable: true, hasEditor: false }],
+    ["EXPLAIN タブ", { aiAvailable: true, explainTab: true }],
+  ])("%s では出さない", (_name, patch) => {
+    const got = ids({ ...base, ...patch });
+    expect(got).not.toContain("editor:ai-sql-explain");
+    expect(got).not.toContain("editor:ai-sql-rewrite");
+  });
+
+  it("App.tsx のパレットからエディタのハンドルへ結線されている", () => {
+    expect(appSource).toContain("activeEditor()?.requestAiSql(kind)");
   });
 });

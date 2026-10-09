@@ -41,6 +41,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       workflow: ${{ steps.filter.outputs.workflow }}
       crosslang: ${{ steps.filter.outputs.crosslang }}
+      ci-scripts: ${{ steps.filter.outputs.ci-scripts }}
       docs: ${{ steps.filter.outputs.docs }}
       automerge: ${{ steps.filter.outputs.automerge }}
     steps:
@@ -74,6 +75,9 @@ jobs:
               # #1176: Biome の設定 / 警告件数チェックのスクリプトだけを変えた PR でも
               # `pnpm run lint` を再実行する。
               - 'biome.json'
+              # #1359: frontend ジョブが呼ぶバンドルサイズ計測スクリプトだけを変えたPRでも
+              # 実走させる。
+              - 'scripts/bundle-size.mjs'
             rust:
               - 'src-tauri/**'
             # #853: 言語横断のゴールデン/パリティテスト (Rust 側の
@@ -84,6 +88,12 @@ jobs:
             # 実走させる (詳細は下の `crosslang parity` ジョブのコメント参照)。
             crosslang:
               - 'src/__tests__/fixtures/**'
+            # #1359: SSH / TLS / 平文DB統合テストが依存するCIセットアップスクリプト
+            # だけを変えたPRは rust==false になり、変更したスクリプトがPR上で一度も
+            # 実行されない。`rust (test)` / `rust (coverage)` の if: にORで足して実走させる
+            # (crosslang と同じパターン)。
+            ci-scripts:
+              - 'scripts/ci-setup-*.sh'
             # docCommandParity.test.ts が ?raw で読む IPC コマンド一覧ドキュメント。
             # このファイルだけを編集した PR (一覧から誤ってコマンドを消した等) でも
             # パリティ検証が実走するよう、`crosslang parity` ジョブの if: へ OR で
@@ -631,7 +641,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップ
       # (rust-cache のツールチェーン情報取得など) より前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: sccache
 
@@ -767,7 +777,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-deny
 
@@ -789,7 +799,8 @@ jobs:
     # 含まれており、フィクスチャだけを変更する PR (src-tauri/** は無変更 =
     # rust==false) でもこの OR がないとまさにその変更を検証すべきテストが
     # 1 本もスキップされてしまう。
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true'
+    # #1359: ci-scripts==true (scripts/ci-setup-*.sh の変更) でも起動する。
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -812,7 +823,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: sccache
 
@@ -937,7 +948,7 @@ jobs:
       # cargo-nextest の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-nextest
 
@@ -1004,8 +1015,8 @@ jobs:
     # パスになっていた。並列に走らせて PR のブロッキング経路から外す。
     # **必須チェックには含めない** (閾値 `--fail-under-lines` の fail は赤く出るが
     # 必須ではないのでマージは止めない運用)。`if:` は `rust (test)` と同じ条件
-    # (#853 の crosslang OR を含む)。
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true'
+    # (#853 の crosslang OR / #1359 の ci-scripts OR を含む)。
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1029,7 +1040,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: sccache
 
@@ -1157,12 +1168,12 @@ jobs:
       # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-nextest
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-llvm-cov
 
@@ -1293,7 +1304,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: sccache
 
@@ -1417,7 +1428,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: sccache
 
@@ -1461,7 +1472,7 @@ jobs:
             sccache-${{ runner.os }}-windows-test-
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-nextest
 

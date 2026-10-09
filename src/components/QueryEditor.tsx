@@ -38,6 +38,8 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   completionStatus,
+  type CompletionContext,
+  type CompletionResult,
 } from "@codemirror/autocomplete";
 import {
   bracketMatching,
@@ -47,8 +49,10 @@ import {
   syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import type { TableSchema } from "../api/tauri";
-import { useT } from "../i18n";
+import { api, type ForeignKey, type TableSchema } from "../api/tauri";
+import { joinCompletions } from "./sqlJoinCompletion";
+import { derivedCompletions } from "./sqlDerivedCompletion";
+import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset } from "../sqlScript";
@@ -64,6 +68,9 @@ import {
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
+import { AiQueryModal } from "./AiQueryModal";
+import { useAiAvailable } from "../ai/useAiAvailable";
+import type { AiSqlEditorAction, SqlAssistKind } from "../ai/sqlAssist";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
 import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
@@ -273,6 +280,14 @@ interface Props {
    */
   readOnly?: boolean;
   /**
+   * 本番プロファイルか (#691)。AI にクエリを依頼する前に送信確認を挟むのに使う。
+   */
+  isProduction?: boolean;
+  /**
+   * AI が生成した SQL を新しいクエリタブで開く (#691。実行はしない)。
+   */
+  onOpenSqlInNewTab?: (sql: string, database: string | null) => void;
+  /**
    * 緊急クエリ実行モード (read-only セッションの一時的な書き込み許可) の現在値。
    * `onToggleEmergencyMode` とセットで渡され、かつ `readOnly` のときだけ
    * ツールバーにトグルを表示する。有効化の合意 (接続先名のタイプ確認) は App 側の
@@ -302,6 +317,11 @@ interface Props {
    * 保持し、危険クエリ確認ダイアログへ件数を引き継ぐのに使う。
    */
   onPreflightImpact?: (result: PreflightResult | null) => void;
+  /**
+   * 「この SQL を解説」「最適化案を提案」(#695) の起動先。選択範囲 (無ければ全文) を渡す。
+   * 結果はボトムパネルに出る。AI が使えないときは渡されても項目を出さない。
+   */
+  onAiSqlAction?: (action: AiSqlEditorAction) => void;
 }
 
 export interface QueryEditorHandle {
@@ -309,6 +329,10 @@ export interface QueryEditorHandle {
   insertText: (text: string) => void;
   /** Replaces the entire editor contents (used to restore a history entry). */
   setText: (text: string) => void;
+  /** エディタ本文の全文 (#692。失敗した SQL の範囲探索用)。 */
+  getText: () => string;
+  /** `[from, to)` だけを置き換える。undo 履歴に載る (#692)。 */
+  replaceRange: (from: number, to: number, text: string) => void;
   /** キーボードフォーカスをエディタへ移す (ペインフォーカス循環 #681)。 */
   focus: () => void;
   /**
@@ -321,6 +345,10 @@ export interface QueryEditorHandle {
   runStatement: () => void;
   formatSql: () => void;
   explain: () => void;
+  /** 「AI にクエリを依頼」モーダルを開く (#691。コマンドパレット用)。 */
+  openAiQuery: () => void;
+  /** 選択範囲 (無ければ全文) の SQL を AI で解説 / リライトする (#695。コマンドパレット用)。 */
+  requestAiSql: (kind: SqlAssistKind) => void;
 }
 
 /**
@@ -421,6 +449,7 @@ function buildSqlExtension(
   schemaTable: SchemaTable | null | undefined,
   databaseSchema: TableSchema[] | null | undefined,
   defaultDatabase: string | null | undefined,
+  getFks: () => ForeignKey[],
 ) {
   // Collect every known table → columns mapping. The full-database overview is
   // the bulk of it; the active table is folded in too so its columns are
@@ -457,13 +486,67 @@ function buildSqlExtension(
     defaultTable = schemaTable?.name;
     defaultSchema = namespaceDb;
   }
-  return sql({
-    dialect: codeMirrorSqlDialectFor(driver),
-    schema,
-    defaultTable,
-    defaultSchema,
-    upperCaseKeywords: true,
-  });
+  // FK から `JOIN other ON ...` を提案する補完ソース (#1356)。言語データとして
+  // 足すので、lang-sql 標準のスキーマ補完と併存する。
+  const joinSource = (ctx: CompletionContext): CompletionResult | null => {
+    // CodeMirror は補完ソースの同期例外で補完全体が止まるため、握りつぶして null を返す。
+    try {
+      const r = joinCompletions({
+        driver,
+        text: ctx.state.sliceDoc(0, ctx.pos),
+        fks: getFks(),
+      });
+      if (!r) return null;
+      return {
+        from: r.from,
+        options: r.options.map((o) => ({ ...o, type: "keyword", boost: 99 })),
+      };
+    } catch {
+      return null;
+    }
+  };
+  // WITH の CTE 名・その列、派生表の別名・その列、SELECT の別名を補完する (#1419)。
+  // JOIN 補完と同じく languageData に並べ、lang-sql の標準補完と併存させる。
+  const derivedSource = (ctx: CompletionContext): CompletionResult | null => {
+    // 同期例外は補完全体を止めるため、握りつぶして null を返す (joinSource と同じ理由)。
+    try {
+      const r = derivedCompletions({
+        driver,
+        text: ctx.state.doc.toString(),
+        pos: ctx.pos,
+      });
+      if (!r) return null;
+      // 候補の種別は純モジュールから受け、表示語はここで現在のロケールに変換する。
+      const kindLabel = {
+        cte: t("editorCompletionCte"),
+        derived: t("editorCompletionDerived"),
+        alias: t("editorCompletionAlias"),
+      } as const;
+      return {
+        from: r.from,
+        options: r.options.map(({ kind, ...o }) => ({
+          ...o,
+          detail: kindLabel[kind],
+          boost: 90,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  };
+  return [
+    sql({
+      dialect: codeMirrorSqlDialectFor(driver),
+      schema,
+      defaultTable,
+      defaultSchema,
+      upperCaseKeywords: true,
+    }),
+    EditorState.languageData.of(() => [
+      { autocomplete: joinSource },
+      { autocomplete: derivedSource },
+    ]),
+  ];
 }
 
 export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function QueryEditor({
@@ -497,6 +580,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   builderSnapshot,
   onBuilderPersist,
   readOnly,
+  isProduction,
+  onOpenSqlInNewTab,
   emergencyMode,
   onToggleEmergencyMode,
   queryHistory,
@@ -504,6 +589,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   focusMode,
   onToggleFocus,
   onPreflightImpact,
+  onAiSqlAction,
 }: Props, ref) {
   const t = useT();
   const settings = useSettings();
@@ -523,6 +609,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     unknownStatementStart: t("editorLintUnknownStatement"),
     unterminatedComment: t("editorLintUnterminatedComment"),
     clauseOrder: t("editorLintClauseOrder"),
+    keywordTypo: t("editorLintKeywordTypo"),
+    missingOperand: t("editorLintMissingOperand"),
+    extraComma: t("editorLintExtraComma"),
+    missingBy: t("editorLintMissingBy"),
+    incompleteStatement: t("editorLintIncomplete"),
   };
   const lintMessagesRef = useRef(lintMessages);
   lintMessagesRef.current = lintMessages;
@@ -531,7 +622,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
 
   // オンのときだけ linter + lintGutter を返し、オフでは空 (診断を一切出さない)。
   // クロージャは ref からメッセージを読むので、言語切替時は下の useEffect が
-  // compartment を作り直して再 lint する。
+  // compartment を作り直して再 lint する。「文が途中で終わっている」判定はカーソルが
+  // 文の末尾にある間 (= 入力中) は出さないので、カーソル移動でも再 lint する。
   const buildLintExtension = (enabled: boolean) =>
     enabled
       ? [
@@ -542,8 +634,9 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
                 syntaxTree(view.state),
                 view.state.doc.toString(),
                 lintMessagesRef.current,
+                { cursor: view.state.selection.main.head },
               ),
-            { delay: SQL_LINT_DELAY_MS },
+            { delay: SQL_LINT_DELAY_MS, needsRefresh: (u) => u.selectionSet },
           ),
         ]
       : [];
@@ -586,6 +679,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       lintMessages.unknownStatementStart,
       lintMessages.unterminatedComment,
       lintMessages.clauseOrder,
+      lintMessages.keywordTypo,
+      lintMessages.missingOperand,
+      lintMessages.extraComma,
+      lintMessages.missingBy,
+      lintMessages.incompleteStatement,
     ].join("\u0000"),
     keymap: [runCombo, runStatementCombo, previewCombo, formatCombo, explainCombo].join("\u0000"),
   };
@@ -595,6 +693,25 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // 古い値ではなく現在の値を使うため ref 越しに読む。
   const sqlArgsRef = useRef({ driver, schemaTable, databaseSchema, defaultDatabase });
   sqlArgsRef.current = { driver, schemaTable, databaseSchema, defaultDatabase };
+  // JOIN 補完 (#1356) 用の FK 一覧。DB 単位で取得 (バックエンドがキャッシュ済み) し、
+  // 補完ソースは ref 越しに読む。DDL でスキーマキャッシュが更新されたら取り直す。
+  const fksRef = useRef<ForeignKey[]>([]);
+  const fkDatabase = schemaTable?.database ?? defaultDatabase ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後の再取得トリガー
+  useEffect(() => {
+    fksRef.current = [];
+    if (!sessionId || !fkDatabase) return;
+    let cancelled = false;
+    api
+      .foreignKeys(sessionId, fkDatabase)
+      .then((r) => {
+        if (!cancelled) fksRef.current = r;
+      })
+      .catch(() => { /* 補完は best-effort */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, fkDatabase, databaseSchema]);
   // 現在アクティブな state の compartment に入っている設定。
   const appliedConfigRef = useRef<AppliedEditorConfig>(desiredConfig);
   // タブ別 state の保存先と、新規 state の作成関数 (マウント時に一度だけ組み立てる)。
@@ -606,6 +723,14 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   const activeTabIdRef = useRef(tabId);
   const [hasContent, setHasContent] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
+  const [showAiQuery, setShowAiQuery] = useState(false);
+  const aiAvailable = useAiAvailable();
+  // エディタはタブ間で再利用されるので、タブ / セッション / EXPLAIN 化が変わったら閉じる
+  // (条件が戻ったときにモーダルが勝手に再表示されないように)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 値の変化をトリガーにするだけ
+  useEffect(() => {
+    setShowAiQuery(false);
+  }, [tabId, sessionId, explainMode]);
   // 「…」オーバーフローメニュー (#915) のアンカー (ビューポート座標)。開いている
   // 間だけ非 null。位置決め・外側クリック/Escape での閉じ・キーボード操作は共有の
   // `ContextMenu` に任せる。
@@ -637,6 +762,10 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   onExplainRef.current = onExplain;
   const onPreflightImpactRef = useRef(onPreflightImpact);
   onPreflightImpactRef.current = onPreflightImpact;
+  const onAiSqlActionRef = useRef(onAiSqlAction);
+  onAiSqlActionRef.current = onAiSqlAction;
+  const tabIdRef = useRef(tabId);
+  tabIdRef.current = tabId;
   const driverRef = useRef(driver);
   driverRef.current = driver;
   // 履歴ナビゲーション用。エディタは初回だけ生成されキーマップ内のクロージャ
@@ -804,6 +933,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
               sqlArgsRef.current.schemaTable,
               sqlArgsRef.current.databaseSchema,
               sqlArgsRef.current.defaultDatabase,
+              () => fksRef.current,
             ),
           ),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
@@ -979,7 +1109,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     if (sqlChanged) {
       effects.push(
         sqlCompartment.reconfigure(
-          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase),
+          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase, () => fksRef.current),
         ),
       );
     }
@@ -1042,6 +1172,20 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     view.focus();
   };
 
+  // 選択範囲 (無ければ全文) の SQL を AI の解説 / 最適化案へ渡す (#695)。ref だけを読むので、
+  // 初回だけ構築するハンドルから呼んでも古いクロージャにならない。
+  const requestAiSql = (kind: SqlAssistKind) => {
+    const view = viewRef.current;
+    const cb = onAiSqlActionRef.current;
+    const id = tabIdRef.current;
+    if (!view || !cb || !id) return;
+    const sel = view.state.selection.main;
+    const range = sel.empty ? null : { from: sel.from, to: sel.to };
+    const sqlText = range ? view.state.sliceDoc(range.from, range.to) : view.state.doc.toString();
+    if (sqlText.trim() === "") return;
+    cb({ kind, sql: sqlText, range, tabId: id });
+  };
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: ハンドラは初回だけ構築する設計 (上のコメント参照)。insertAtCursor / resetHistoryNav / runStatementUnderCursor は毎レンダーで作り直されるが ref だけを読むため、古いクロージャでも最新の状態を参照できる
   useImperativeHandle(ref, () => ({
     insertText: insertAtCursor,
@@ -1051,6 +1195,16 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: text },
         selection: { anchor: text.length },
+      });
+      view.focus();
+    },
+    getText: () => viewRef.current?.state.doc.toString() ?? "",
+    replaceRange: (from: number, to: number, text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({
+        changes: { from, to, insert: text },
+        selection: { anchor: from + text.length },
       });
       view.focus();
     },
@@ -1082,6 +1236,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       const text = selectionOrAllText(view);
       if (text !== null) explain(text);
     },
+    openAiQuery: () => setShowAiQuery(true),
+    requestAiSql,
   }), []);
 
   const currentText = (): string | null => {
@@ -1157,6 +1313,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       case "explain":
         explainSelectionOrAll();
         break;
+      case "aiExplain":
+      case "aiRewrite":
+        // 結果はボトムパネルに出る。フォーカスはエディタに戻さず、パネルへ移る余地を残す。
+        requestAiSql(action === "aiExplain" ? "explain" : "rewrite");
+        return;
       case "format":
         formatSelectionOrAll();
         break;
@@ -1230,6 +1391,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       canPreview: !!onPreview,
       canExplain: !!onExplain,
       canSaveSnippet: !!onSaveSnippet,
+      canAi: aiAvailable && !!sessionId && !!onAiSqlAction,
     }).map((spec) => {
       if ("separator" in spec) return spec;
       const combo = spec.shortcutId ? combos[spec.shortcutId] : undefined;
@@ -1449,6 +1611,20 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
           </chakra.span>
           {t("editorFormat")}
         </ToolbarButton>
+        {/* AI にクエリを依頼 (#691)。AI 有効かつ API キー登録済みで接続中のときだけ出す。 */}
+        {aiAvailable && sessionId && !explainMode && (
+          <ToolbarButton
+            onClick={() => setShowAiQuery(true)}
+            disabled={disabled}
+            title={disabledReason ?? t("editorAiQueryTitle")}
+            data-testid="query-editor-ai"
+          >
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <Icon name="sparkles" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.thin} />
+            </chakra.span>
+            {t("editorAiQuery")}
+          </ToolbarButton>
+        )}
         {/* 副次アクションのオーバーフロー (#915)。項目が 1 つも無い呼び出し
             (プレビュー用の最小構成など) ではボタン自体を出さない。 */}
         {overflowItems.length > 0 && (
@@ -1543,6 +1719,18 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
         />
       )}
       <AnimatePresence>
+        {showAiQuery && aiAvailable && sessionId && !explainMode && (
+          <AiQueryModal
+            sessionId={sessionId}
+            driver={driver}
+            database={defaultDatabase ?? activeTable?.database ?? null}
+            readOnly={!!readOnly}
+            isProduction={!!isProduction}
+            onInsert={insertAtCursor}
+            onOpenInNewTab={(sql, db) => onOpenSqlInNewTab?.(sql, db)}
+            onClose={() => setShowAiQuery(false)}
+          />
+        )}
         {showBuilder && sessionId && !explainMode && (
           <QueryBuilder
             sessionId={sessionId}

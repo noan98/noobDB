@@ -1,12 +1,32 @@
-import { useEffect, useMemo, useState } from "react";
-import { chakra } from "@chakra-ui/react";
-import { api, type CellValue, type TableColumnInfo } from "../api/tauri";
-import { useT, type I18nKey } from "../i18n";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { chakra, Flex } from "@chakra-ui/react";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { api, listenAiStream, type CellValue, type TableColumnInfo } from "../api/tauri";
+import { toAiSnapshot } from "../ai/aiSettings";
+import {
+  buildTestDataAiContext,
+  buildTestDataPlan,
+  buildTestDataPrompt,
+  buildTestDataSystem,
+  generateAiRows,
+  isAiEligible,
+  parseTestDataResponse,
+  summarizeTestDataSend,
+  TEST_DATA_FORMAT,
+  TEST_DATA_HINT_MAX,
+  resolveUniqueColumns,
+  type TestDataAiPlan,
+  type UniqueColumnInfo,
+} from "../ai/testData";
+import { useAiAvailable } from "../ai/useAiAvailable";
+import { useLocale, useT, type I18nKey } from "../i18n";
+import { useSettings } from "../settings";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Select } from "./ui";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { Callout } from "./Callout";
+import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import { Tooltip } from "./Tooltip";
@@ -46,6 +66,8 @@ interface Props {
 
 const MAX_ROWS = 10000;
 const PREVIEW_ROWS = 5;
+/** AI モードは生成結果の見た目を確認したいので、プレビューを広めに取る。 */
+const AI_PREVIEW_ROWS = 20;
 const FK_CANDIDATE_LIMIT = 1000;
 
 const STRATEGY_LABEL_KEYS: Record<GenStrategy, I18nKey> = {
@@ -78,6 +100,19 @@ function strategyOptions(spec: ColumnGenSpec): GenStrategy[] {
   return opts;
 }
 
+let aiSeq = 0;
+function makeStreamId(): string {
+  aiSeq += 1;
+  return `ai_testdata_${Date.now().toString(36)}_${aiSeq.toString(36)}`;
+}
+
+type AiState =
+  | { kind: "idle" }
+  | { kind: "running"; chars: number }
+  | { kind: "raw"; raw: string }
+  | { kind: "error"; message: string; refused: boolean }
+  | { kind: "cancelled" };
+
 function randomSeed(): number {
   return Math.floor(Math.random() * 0xffffffff);
 }
@@ -93,7 +128,25 @@ export function TestDataModal({
 }: Props) {
   const t = useT();
   const toast = useToast();
+  const locale = useLocale();
+  const aiSettings = useSettings().ai;
+  const aiAvailable = useAiAvailable();
   const { confirm, dialog: confirmDialog } = useConfirm();
+
+  const [mode, setMode] = useState<"rule" | "ai">("rule");
+  const [cols, setCols] = useState<TableColumnInfo[] | null>(null);
+  const [uniqueInfo, setUniqueInfo] = useState<UniqueColumnInfo>({ columns: [], composite: [] });
+  const [hints, setHints] = useState<Record<string, string>>({});
+  const [aiState, setAiState] = useState<AiState>({ kind: "idle" });
+  const [plan, setPlan] = useState<TestDataAiPlan | null>(null);
+  const busyRef = useRef(false);
+  const cancelRequestedRef = useRef(false);
+  const streamRef = useRef<string | null>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+  const mountedRef = useRef(true);
+  // AI が使えない状態 (無効化・キー削除) では必ずルールベースとして扱う。
+  const aiMode = aiAvailable && mode === "ai";
+  const aiRunning = aiState.kind === "running";
 
   const [specs, setSpecs] = useState<ColumnGenSpec[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -109,8 +162,17 @@ export function TestDataModal({
     let cancelled = false;
     void (async () => {
       try {
-        const cols: TableColumnInfo[] = await api.describeTable(sessionId, database, table);
-        const inferred = cols.map(inferColumnSpec);
+        const [described, indexes] = await Promise.all([
+          api.describeTable(sessionId, database, table),
+          // describe_table の key は MySQL の UNI しか持たないため、PG / SQLite の UNIQUE index は
+          // インデックス一覧から補う (取れなくても開ける)。
+          api.listIndexes(sessionId, database, table).catch(() => []),
+        ]);
+        if (!cancelled) {
+          setCols(described);
+          setUniqueInfo(resolveUniqueColumns(described, indexes));
+        }
+        const inferred = described.map(inferColumnSpec);
         const withFk = await Promise.all(
           inferred.map(async (spec) => {
             if (spec.strategy !== "fkRef" || !spec.fkTable || !spec.fkColumn) return spec;
@@ -146,12 +208,22 @@ export function TestDataModal({
 
   const insertColumns = useMemo(() => (specs ? activeSpecs(specs) : []), [specs]);
 
+  const aiContext = useMemo(
+    () => (cols && specs ? buildTestDataAiContext(cols, specs, hints, uniqueInfo.columns) : null),
+    [cols, specs, hints, uniqueInfo],
+  );
+  const aiDataset = useMemo(() => {
+    if (!aiMode || !plan || !specs || !cols || !rowCountValid) return null;
+    return generateAiRows({ specs, plan, uniqueColumns: uniqueInfo.columns, count: rowCount }, seed);
+  }, [aiMode, plan, specs, cols, rowCountValid, rowCount, seed, uniqueInfo]);
+
   // プレビュー: 先頭 PREVIEW_ROWS 行。実投入と同じシード/設定で生成するため、
   // 先頭行はプレビューと完全に一致する (generateRows は決定論的)。
   const previewRows = useMemo(() => {
+    if (aiMode) return aiDataset ? aiDataset.rows.slice(0, AI_PREVIEW_ROWS) : [];
     if (!specs || insertColumns.length === 0) return [];
     return generateRows(specs, Math.min(PREVIEW_ROWS, Math.max(rowCount, 1)), seed);
-  }, [specs, insertColumns.length, rowCount, seed]);
+  }, [aiMode, aiDataset, specs, insertColumns.length, rowCount, seed]);
 
   const fkEmptyColumns = useMemo(
     () => (specs ?? []).filter((s) => s.strategy === "fkRef" && s.choices.length === 0),
@@ -167,8 +239,154 @@ export function TestDataModal({
     });
   };
 
+  // 別のストリームに置き換わっている場合は触らない (ID が一致するときだけ解除する)。
+  const stopListener = useCallback((streamId: string) => {
+    if (streamRef.current !== streamId) return;
+    unlistenRef.current?.();
+    unlistenRef.current = null;
+    streamRef.current = null;
+    busyRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const sid = streamRef.current;
+      if (sid) {
+        void api.cancelStream(sid).catch(() => {
+          /* すでに完了 */
+        });
+      }
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+    };
+  }, []);
+
+  const aiSends = useMemo(
+    () => (aiContext ? summarizeTestDataSend(table, aiContext, rowCount, locale) : null),
+    [aiContext, table, rowCount, locale],
+  );
+  const aiSendsLine = aiSends
+    ? t("testDataAiSends", {
+        table: aiSends.table,
+        columns: aiSends.columns,
+        fks: aiSends.foreignKeys,
+        rows: aiSends.rows,
+        locale: aiSends.locale === "ja" ? t("testDataAiLocaleJa") : t("testDataAiLocaleEn"),
+      })
+    : null;
+  const canAiGenerate =
+    aiMode && !!aiContext && aiContext.columns.length > 0 && rowCountValid && !aiRunning && !running;
+
+  const cancelAi = () => {
+    cancelRequestedRef.current = true;
+    const sid = streamRef.current;
+    if (sid) {
+      void api.cancelStream(sid).catch(() => {
+        /* すでに完了 */
+      });
+    }
+  };
+
+  const generateWithAi = async () => {
+    if (!canAiGenerate || !aiContext) return;
+    // 二重実行 (連打・Cmd+Enter の連続) で 2 本のストリームが走らないよう、同期的に弾く。
+    if (busyRef.current) return;
+    busyRef.current = true;
+    cancelRequestedRef.current = false;
+    try {
+      await generateWithAiInner(aiContext);
+    } catch (e) {
+      busyRef.current = false;
+      setAiState({ kind: "error", message: String(e), refused: false });
+    }
+  };
+
+  const generateWithAiInner = async (context: NonNullable<typeof aiContext>) => {
+    if (isProduction) {
+      const ok = await confirm({
+        title: t("testDataAiConfirmTitle"),
+        message: (
+          <>
+            <chakra.p m={0}>{t("testDataAiConfirmBody")}</chakra.p>
+            <chakra.p m={0} mt="2" color="app.textMuted">
+              {aiSendsLine ?? ""}
+            </chakra.p>
+          </>
+        ),
+        confirmLabel: t("testDataAiConfirmSend"),
+        tone: "warning",
+      });
+      if (!ok) {
+        busyRef.current = false;
+        return;
+      }
+    }
+    const streamId = makeStreamId();
+    streamRef.current = streamId;
+    let text = "";
+    setAiState({ kind: "running", chars: 0 });
+    try {
+      const unlisten = await listenAiStream(streamId, {
+        onDelta: (e) => {
+          text += e.text;
+          if (mountedRef.current) setAiState({ kind: "running", chars: text.length });
+        },
+        onDone: () => {
+          stopListener(streamId);
+          const parsed = parseTestDataResponse(text);
+          if (parsed.ok) {
+            setPlan(buildTestDataPlan(parsed.value, context.columns));
+            setAiState({ kind: "idle" });
+          } else {
+            setAiState({ kind: "raw", raw: parsed.raw });
+          }
+        },
+        onError: (e) => {
+          stopListener(streamId);
+          setAiState({ kind: "error", message: e.error, refused: e.kind === "aiRefused" });
+        },
+        onCancelled: () => {
+          stopListener(streamId);
+          setAiState({ kind: "cancelled" });
+        },
+      });
+      // 購読の登録待ちの間に中止 / アンマウントされたら、リクエストを送らずに後始末する。
+      if (!mountedRef.current || cancelRequestedRef.current) {
+        unlisten();
+        void api.cancelStream(streamId).catch(() => {
+          /* まだ始まっていない */
+        });
+        if (streamRef.current === streamId) streamRef.current = null;
+        busyRef.current = false;
+        if (mountedRef.current) setAiState({ kind: "cancelled" });
+        return;
+      }
+      unlistenRef.current = unlisten;
+      await api.runAiRequest({
+        streamId,
+        task: "testData",
+        system: buildTestDataSystem({ driver, table, rowCount, locale, context }),
+        prompt: buildTestDataPrompt(table, rowCount),
+        settings: toAiSnapshot(aiSettings),
+        format: TEST_DATA_FORMAT,
+      });
+      // 送信中に中止 / アンマウントされていたら、走り出したストリームを止める。
+      if (!mountedRef.current || cancelRequestedRef.current) {
+        void api.cancelStream(streamId).catch(() => {
+          /* すでに完了 */
+        });
+      }
+    } catch (e) {
+      stopListener(streamId);
+      setAiState({ kind: "error", message: String(e), refused: false });
+    }
+  };
+
   const handleRun = async () => {
-    if (!specs || !rowCountValid || insertColumns.length === 0 || running) return;
+    if (!specs || !rowCountValid || insertColumns.length === 0 || running || aiRunning) return;
+    if (aiMode && !aiDataset) return;
     setRunError(null);
     // 本番接続では対象テーブル名のタイプ入力を要求する強確認 (#675 と同じ流儀)。
     if (isProduction) {
@@ -183,7 +401,7 @@ export function TestDataModal({
     }
     setRunning(true);
     try {
-      const rows = generateRows(specs, rowCount, seed);
+      const rows = aiMode && aiDataset ? aiDataset.rows : generateRows(specs, rowCount, seed);
       // 生成行を Rust の `insert_generated_rows` (`Connection::import_rows`、1 トランザクション)
       // へそのまま渡す。100 行ずつのリテラル INSERT 文を JS で組み立てて送る経路は廃止 (#1259)。
       const result = await api.insertGeneratedRows({
@@ -203,10 +421,18 @@ export function TestDataModal({
     }
   };
 
+  const insertDisabled =
+    running ||
+    aiRunning ||
+    !specs ||
+    !rowCountValid ||
+    insertColumns.length === 0 ||
+    (aiMode && !aiDataset);
+
   return (
     <Modal
       onSubmit={handleRun}
-      submitDisabled={running || !specs || !rowCountValid || insertColumns.length === 0}
+      submitDisabled={insertDisabled}
       width="760px"
       onClose={onClose}
       closeOnInteractOutside={!running}
@@ -220,6 +446,22 @@ export function TestDataModal({
         <chakra.p fontSize="xs" color="app.textMuted" m={0}>
           {t("testDataHint")}
         </chakra.p>
+
+        {aiAvailable && (
+          <FormSection>
+            <FieldLabel htmlFor="testdata-mode">{t("testDataModeLabel")}</FieldLabel>
+            <Select
+              id="testdata-mode"
+              maxW="260px"
+              value={mode}
+              onChange={(e) => setMode(e.target.value === "ai" ? "ai" : "rule")}
+              disabled={running || aiRunning}
+            >
+              <option value="rule">{t("testDataModeRule")}</option>
+              <option value="ai">{t("testDataModeAi")}</option>
+            </Select>
+          </FormSection>
+        )}
 
         <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
           <chakra.div display="flex" flexDirection="column" gap="1.5">
@@ -391,6 +633,17 @@ export function TestDataModal({
                       />
                     </chakra.label>
                   )}
+                  {aiMode && isAiEligible(spec) && (
+                    <Input
+                      css={{ width: "200px" }}
+                      value={hints[spec.column] ?? ""}
+                      maxLength={TEST_DATA_HINT_MAX}
+                      onChange={(e) => setHints((prev) => ({ ...prev, [spec.column]: e.target.value }))}
+                      disabled={running || aiRunning}
+                      placeholder={t("testDataAiHintPlaceholder")}
+                      aria-label={t("testDataAiHintAria", { column: spec.column })}
+                    />
+                  )}
                   {spec.strategy === "fkRef" && (
                     <chakra.span fontSize="2xs" color="app.textMuted">
                       {t("testDataFkSource", {
@@ -403,6 +656,97 @@ export function TestDataModal({
                 </chakra.div>
               ))}
             </chakra.div>
+          </FormSection>
+        )}
+
+        {aiMode && specs && (
+          <FormSection data-testid="testdata-ai-panel">
+            <chakra.p fontSize="xs" color="app.textMuted" m={0}>
+              {t("testDataAiHint")}
+            </chakra.p>
+            {aiContext && aiContext.columns.length === 0 && (
+              <Callout tone="warning" role="status">
+                {t("testDataAiNoTarget")}
+              </Callout>
+            )}
+            {aiSendsLine && (
+              <chakra.span color="app.textMuted" fontSize="xs" data-testid="testdata-ai-sends">
+                {aiSendsLine}
+              </chakra.span>
+            )}
+            {aiState.kind === "running" && (
+              <Flex align="center" gap="2" color="app.textMuted" fontSize="sm" aria-live="polite">
+                <Spinner size={12} />
+                {t("testDataAiRunning", { chars: aiState.chars })}
+                <Button type="button" variant="secondary" size="sm" onClick={cancelAi}>
+                  {t("testDataAiCancel")}
+                </Button>
+              </Flex>
+            )}
+            {aiState.kind === "raw" && (
+              <Flex direction="column" gap="1">
+                <ErrorNote role="alert">{t("testDataAiParseError")}</ErrorNote>
+                <CodePreview wrap maxH="160px">
+                  {aiState.raw}
+                </CodePreview>
+              </Flex>
+            )}
+            {aiState.kind === "error" &&
+              (aiState.refused ? (
+                <Callout tone="warning" role="alert">
+                  {t("testDataAiRefused", { message: aiState.message })}
+                </Callout>
+              ) : (
+                <ErrorNote role="alert">{t("testDataAiError", { message: aiState.message })}</ErrorNote>
+              ))}
+            {aiState.kind === "cancelled" && (
+              <Callout tone="info" role="status">
+                {t("testDataAiCancelled")}
+              </Callout>
+            )}
+            {uniqueInfo.composite.length > 0 && (
+              <Callout tone="warning" role="status">
+                {t("testDataAiWarnComposite", {
+                  columns: uniqueInfo.composite.map((c) => `(${c.join(", ")})`).join(" / "),
+                })}
+              </Callout>
+            )}
+            {plan && (aiState.kind === "raw" || aiState.kind === "error" || aiState.kind === "cancelled") && (
+              <Callout tone="info" role="status">
+                {t("testDataAiKeepingPlan")}
+              </Callout>
+            )}
+            {plan && aiState.kind === "idle" && (
+              <Callout tone="success" role="status">
+                {t("testDataAiPlanReady", { count: Object.keys(plan.columns).length })}
+              </Callout>
+            )}
+            {plan?.warnings.map((w) => (
+              <Callout key={w.code} tone="warning" role="status">
+                {t(
+                  w.code === "unknownColumn"
+                    ? "testDataAiWarnUnknown"
+                    : w.code === "unusableChoices"
+                      ? "testDataAiWarnUnusable"
+                      : "testDataAiWarnMisaligned",
+                  { columns: w.columns.join(", ") },
+                )}
+              </Callout>
+            ))}
+            {plan && plan.rules.length > 0 && (
+              <chakra.div fontSize="xs" color="app.textMuted">
+                {plan.rules.map((r) => (
+                  <chakra.div key={r.columns.join("|")}>
+                    {t("testDataAiRule", { columns: r.columns.join(", "), description: r.description })}
+                  </chakra.div>
+                ))}
+              </chakra.div>
+            )}
+            {!plan && aiState.kind === "idle" && (
+              <Callout tone="info" role="status">
+                {t("testDataAiNeedPlan")}
+              </Callout>
+            )}
           </FormSection>
         )}
 
@@ -482,6 +826,11 @@ export function TestDataModal({
       </ModalBody>
 
       <ModalFooter>
+        {aiMode && (
+          <Button type="button" variant="secondary" onClick={() => void generateWithAi()} disabled={!canAiGenerate}>
+            {plan ? t("testDataAiRegenerate") : t("testDataAiGenerate")}
+          </Button>
+        )}
         <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onClose} disabled={running}>
           {t("testDataClose")}
@@ -492,7 +841,7 @@ export function TestDataModal({
           variant="primary"
           loading={running}
           onClick={handleRun}
-          disabled={running || !specs || !rowCountValid || insertColumns.length === 0}
+          disabled={insertDisabled}
         >
           {running ? t("testDataRunning") : t("testDataRun")}
         </LoadingButton>

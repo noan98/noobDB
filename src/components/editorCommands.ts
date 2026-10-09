@@ -24,6 +24,8 @@ export interface EditorCommandContext {
   hasEditor: boolean;
   /** アクティブタブが EXPLAIN タブか。 */
   explainTab: boolean;
+  /** AI 機能が使えるか (設定で有効 かつ API キー登録済み, #691)。 */
+  aiAvailable?: boolean;
   /** 開いている接続 (アクティブ + 背景)。`active` はいま前面にある接続。 */
   openConnections: readonly { profileId: string; name: string; driver: string; active: boolean }[];
   /** 表示用に解決済みのショートカット (`formatCombo` の戻り値)。 */
@@ -41,6 +43,9 @@ export interface EditorCommandActions {
   formatSql: () => void;
   explain: () => void;
   focusEditor: () => void;
+  openAiQuery: () => void;
+  /** 選択範囲 (無ければ全文) の SQL を AI で解説 / 最適化リライトする (#695)。 */
+  aiSql: (kind: "explain" | "rewrite") => void;
   toggleActivity: () => void;
   switchConnection: (profileId: string) => void;
 }
@@ -75,6 +80,32 @@ export function editorCommandItems(
           shortcut: ctx.shortcuts.runStatement,
           run: () => actions.runStatement(),
         });
+        if (ctx.aiAvailable) {
+          items.push({
+            id: "editor:ai-query",
+            group: "navigation",
+            label: t("cmdkAiQuery"),
+            icon: "sparkles",
+            keywords: "ai nl2sql natural language generate query sql 自然言語 生成 クエリ 依頼 AI",
+            run: () => actions.openAiQuery(),
+          });
+          items.push({
+            id: "editor:ai-sql-explain",
+            group: "navigation",
+            label: t("aiSqlCmdExplain"),
+            icon: "sparkles",
+            keywords: "ai explain sql selection cte subquery window 解説 説明 選択 AI",
+            run: () => actions.aiSql("explain"),
+          });
+          items.push({
+            id: "editor:ai-sql-rewrite",
+            group: "navigation",
+            label: t("aiSqlCmdRewrite"),
+            icon: "sparkles",
+            keywords: "ai optimize rewrite performance sql selection 最適化 リライト 高速化 提案 AI",
+            run: () => actions.aiSql("rewrite"),
+          });
+        }
         items.push({
           id: "editor:explain",
           group: "navigation",

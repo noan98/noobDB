@@ -41,6 +41,37 @@ vi.mock("../components/TabBar", async (importOriginal) => {
   };
 });
 
+/**
+ * Issue #1323: チャート / ピボットは useState の初期化だけで設定を決めるため、同じ表示モードの
+ * タブ同士の切替で使い回されると前のタブの設定が残る。マウントされた回数を数えるスタブで
+ * 「タブごとに作り直される (key={tab.id})」ことを固定する。
+ */
+const viewMounts = vi.hoisted(() => ({ chart: 0, pivot: 0 }));
+
+vi.mock("../components/ChartView", async () => {
+  const React = await import("react");
+  return {
+    ChartView: () => {
+      React.useEffect(() => {
+        viewMounts.chart += 1;
+      }, []);
+      return <div>chart-stub</div>;
+    },
+  };
+});
+
+vi.mock("../components/PivotView", async () => {
+  const React = await import("react");
+  return {
+    PivotView: () => {
+      React.useEffect(() => {
+        viewMounts.pivot += 1;
+      }, []);
+      return <div>pivot-stub</div>;
+    },
+  };
+});
+
 function makeTab(id: string, title: string): Tab {
   return {
     id,
@@ -216,6 +247,24 @@ describe("PaneView の再レンダー境界 (#1318)", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: /改名 B/ })).toBeTruthy());
     expect(renders.pb).toBeGreaterThan(base.pb);
     expect(renders.pa).toBe(base.pa);
+  });
+
+  it.each([
+    ["showChart", "chart"],
+    ["showPivot", "pivot"],
+  ] as const)("同じ表示モード (%s) のタブ同士を切り替えると、ビューが作り直される (#1323)", async (flag, kind) => {
+    const { store } = setup();
+    await waitFor(() => expect(screen.getAllByRole("tab").length).toBe(3));
+    const result = { columns: [], rows: [] } as never;
+    act(() =>
+      store.setTabs((prev) =>
+        prev.map((x) => (x.id === "a1" || x.id === "a2" ? { ...x, [flag]: true, result } : x)),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText(`${kind}-stub`)).toBeTruthy());
+    const before = viewMounts[kind];
+    act(() => store.setPanes((prev) => prev.map((p) => (p.id === "pa" ? { ...p, activeTabId: "a2" } : p))));
+    await waitFor(() => expect(viewMounts[kind]).toBeGreaterThan(before));
   });
 
   it("env の値 (接続など) が変わったら、全ペインが再レンダーされる", async () => {

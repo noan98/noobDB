@@ -1,4 +1,11 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
+} from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -20,6 +27,18 @@ import { MASK_PLACEHOLDER } from "./columnMask";
 import { RelatedRowsPanel } from "./RelatedRowsPanel";
 import { Segmented } from "./Segmented";
 import type { RelatedEntry } from "../relatedRows";
+import type { I18nKey } from "../i18n";
+import { FieldError, FieldLabel } from "./modalForm";
+import { Button, Input, PressableButton, Select, Textarea } from "./ui";
+import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
+import { boolSelectValue, fromNativeValue, toNativeValue } from "./typedEditor";
+import {
+  collectInspectorEdits,
+  draftFromRow,
+  inspectorControlFor,
+  rowChangedSince,
+  type InspectorDraft,
+} from "./rowInspectorEdit";
 
 /**
  * 「関連」タブ (master-detail、#1028) の入力。被参照 FK が 1 件以上あるテーブルの
@@ -31,6 +50,24 @@ export interface RowInspectorRelated {
   database: string | null;
   runQuery: (sql: string) => Promise<QueryResult>;
   onOpenInGrid?: (sql: string) => void;
+}
+
+/**
+ * 行のフォーム編集 (#1394)。結果グリッドが「テーブルタブで編集できる (PK あり・読み取り
+ * 専用でない)」ときだけ渡す。列の可否・行の状態・検証・適用はグリッドと同じ判定を
+ * 呼び出し側から受け取るので、ここでは判定を持たない。
+ */
+export interface RowInspectorEdit {
+  /** 行の識別 (`rowEditKey`)。行が変わると編集中の下書きは破棄する。 */
+  rowKey: string;
+  /** 列ごとの編集可否 (`inspectorEditableColumns` 済み)。全部 false なら編集ボタンを出さない。 */
+  editableColumns: boolean[];
+  /** 行単位で編集を始められない理由 (`inspectorRowEditBlock`)。`null` なら編集可。 */
+  blockedReason: I18nKey | null;
+  /** 1 セルの検証 (グリッドの `validateEdit` と同じ)。 */
+  validate: (colIdx: number, raw: string) => I18nKey | null;
+  /** 変更差分を適用する。戻り値は適用が完了したか (確認で止めた・失敗は false)。 */
+  onApply: (edits: Record<number, string>) => Promise<boolean>;
 }
 
 interface Props {
@@ -50,6 +87,8 @@ interface Props {
   maskedColumns?: boolean[];
   /** 「関連」タブ (#1028)。省略時・0 件のときはタブ自体を出さない。 */
   related?: RowInspectorRelated;
+  /** フォーム編集 (#1394)。省略時は閲覧専用。 */
+  edit?: RowInspectorEdit;
   /** 1-based visible row number shown in the header. */
   rowNumber: number;
   onClose: () => void;
@@ -86,6 +125,7 @@ export function RowInspector({
   columnKinds,
   maskedColumns,
   related,
+  edit,
   rowNumber,
   onClose,
   onPrev,
@@ -95,6 +135,7 @@ export function RowInspector({
 }: Props) {
   const t = useT();
   const toast = useToast();
+  const baseId = useId();
   // タブは ↑/↓ で行を移っても保持する (関連を眺めながら親行を送る探索のため)。
   const [view, setView] = useState<"fields" | "related">("fields");
   const hasRelated = !!related && related.entries.length > 0;
@@ -110,20 +151,227 @@ export function RowInspector({
   // 幅は MotionConfig の自動抑制対象外 (transform ではない) なので明示的に即時化する。
   const reduced = useReducedMotion();
 
+  // フォーム編集の下書き (#1394)。行が変われば破棄する (行送りの方向と同じく、描画中に
+  // 確定させて古い下書きを一瞬も表示しない)。`session` は編集開始ごとに変え、非制御の
+  // 入力欄 (ネイティブ日時入力の badInput 対策) を作り直すための鍵。
+  // `base` / `initial` は編集開始時点の値と下書き。差分はこれを基準にする (最新の
+  // values prop を基準にすると、編集中に変わった行の値を黙って巻き戻してしまうため)。
+  const [editState, setEditState] = useState<{
+    key: string;
+    base: CellValue[];
+    initial: InspectorDraft;
+    draft: InspectorDraft;
+    session: number;
+  } | null>(null);
+  const sessionRef = useRef(0);
+  const [applying, setApplying] = useState(false);
+  if (editState && edit?.rowKey !== editState.key) setEditState(null);
+  // 編集は「フィールド」タブでだけ。下書きがある間はタブを切り替えさせない (隠れた
+  // 下書きを残さないため)。
+  const editing = editState !== null && edit !== undefined && activeView === "fields";
+  const canEdit =
+    edit !== undefined && activeView === "fields" && edit.editableColumns.some(Boolean);
+
+  // 編集中の差分と検証結果。基準は編集開始時の値 (base)。
+  const edited =
+    editing && edit && editState
+      ? collectInspectorEdits({
+          columns,
+          base: editState.base,
+          initial: editState.initial,
+          draft: editState.draft,
+          editable: edit.editableColumns,
+          validate: edit.validate,
+        })
+      : null;
+  const changedCount = edited ? Object.keys(edited.edits).length : 0;
+  const hasErrors = edited ? Object.keys(edited.errors).length > 0 : false;
+  // 編集中に行の値が変わった (自動リフレッシュ・グリッドの Apply など)。古い基準の差分は
+  // 送らず、編集し直してもらう。
+  const stale =
+    editing && editState ? rowChangedSince(editState.base, values, columns.length) : false;
+  const canApply =
+    !!edit &&
+    !!edited &&
+    changedCount > 0 &&
+    !hasErrors &&
+    !stale &&
+    edit.blockedReason === null &&
+    !applying;
+
+  const startEdit = () => {
+    if (!edit || edit.blockedReason !== null) return;
+    sessionRef.current += 1;
+    const draft = draftFromRow(values, columns.length);
+    setEditState({
+      key: edit.rowKey,
+      base: [...values],
+      initial: { ...draft },
+      draft,
+      session: sessionRef.current,
+    });
+  };
+  const cancelEdit = () => setEditState(null);
+  const setCell = (colIdx: number, raw: string) =>
+    setEditState((prev) => (prev ? { ...prev, draft: { ...prev.draft, [colIdx]: raw } } : prev));
+  const applyEdit = async () => {
+    if (!edit || !edited || !canApply) return;
+    setApplying(true);
+    let ok = false;
+    try {
+      ok = await edit.onApply(edited.edits);
+    } catch {
+      // 適用の失敗は呼び出し側 (App) がステータスで伝える。ここでは下書きを残すだけ。
+      ok = false;
+    } finally {
+      setApplying(false);
+    }
+    // 成功時は結果グリッドの行が更新され、下書きは役目を終える。失敗・確認で止めた場合は
+    // 下書きを残して、直してから再度適用できるようにする。
+    if (ok) setEditState(null);
+  };
+
+  // Esc: 編集中は下書きを捨てて閲覧に戻す (閉じるのは次の Esc)。適用の実行中
+  // (確認ダイアログ表示中を含む) は何もしない。それ以外は閉じる。
   // Esc closes the inspector when focus is inside it (the grid handler covers
   // the case where focus is still on a cell).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (editing) {
+        if (!applying) setEditState(null);
+        return;
+      }
+      onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, editing, applying]);
+
+  // Cmd/Ctrl+Enter で適用 (フォーム全体で有効。SQL エディタ・モーダルと同じキー)。
+  const onFormKeyDown = (e: ReactKeyboardEvent) => {
+    if (!editing) return;
+    if (isModalSubmitKey(pickModalKeys(e))) {
+      e.preventDefault();
+      void applyEdit();
+    }
+  };
 
   const copyField = async (raw: string) => {
     const ok = await copyToClipboard(raw);
     toast[ok ? "success" : "error"](
       ok ? t("gridCopied") : t("clipboardCopyFailed"),
+    );
+  };
+
+  /** 編集可能な列のフォーム欄 (#1394)。入力コントロールは `inspectorControlFor` で決める。 */
+  const renderEditField = (i: number): ReactElement | null => {
+    const col = columns[i];
+    if (!col || !edit || !editState) return null;
+    const original = values[i] ?? null;
+    const start = original === null || original === undefined ? "" : String(original);
+    const raw = editState.draft[i] ?? "";
+    const control = inspectorControlFor(col.type_name, original);
+    const id = `${baseId}-f${i}`;
+    const error = edited?.errors[i];
+    const changed = edited !== null && edited.edits[i] !== undefined;
+    const a11y = {
+      id,
+      "aria-invalid": error ? true : undefined,
+      "aria-describedby": error ? `${id}-err` : undefined,
+    };
+    let input: ReactElement;
+    if (control.kind === "bool") {
+      input = (
+        <Select
+          {...a11y}
+          value={boolSelectValue(raw, start)}
+          onChange={(e) => setCell(i, e.target.value)}
+        >
+          {control.options.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </Select>
+      );
+    } else if (control.kind === "native") {
+      // 非制御: 一部の欄だけ消した途中状態 (badInput) を React が巻き戻さないため
+      // (グリッドの型別エディタ #1355 と同じ理由)。`session` で編集開始ごとに作り直す。
+      input = (
+        <Input
+          key={`${editState.session}-${i}`}
+          {...a11y}
+          type={control.inputType}
+          step={control.inputType === "date" ? undefined : 1}
+          defaultValue={/^null$/i.test(raw.trim()) ? "" : toNativeValue(control.inputType, raw)}
+          onChange={(e) => {
+            if (e.target.value === "" && e.target.validity.badInput) return;
+            setCell(i, fromNativeValue(control.inputType, e.target.value, "NULL", start));
+          }}
+        />
+      );
+    } else if (control.kind === "textarea") {
+      // 長文型・改行を含む値は複数行欄 (1 行入力は改行を落とすため)。Cmd/Ctrl+Enter で適用、
+      // 素の Enter は改行。
+      input = (
+        <Textarea
+          {...a11y}
+          value={raw}
+          rows={Math.min(8, Math.max(2, raw.split("\n").length))}
+          resize="vertical"
+          fontFamily="mono"
+          fontSize="sm"
+          onChange={(e) => setCell(i, e.target.value)}
+        />
+      );
+    } else {
+      input = (
+        <Input
+          {...a11y}
+          value={raw}
+          onChange={(e) => setCell(i, e.target.value)}
+        />
+      );
+    }
+    return (
+      <Box
+        key={`${col.name}-${i}`}
+        display="flex"
+        flexDirection="column"
+        gap="0.5"
+        py="1.5"
+        borderBottom="1px solid"
+        borderColor="app.borderSubtle"
+      >
+        <Box display="flex" alignItems="center" gap="1.5" minW="0">
+          <FieldLabel
+            htmlFor={id}
+            flex="1"
+            minW="0"
+            textTransform="none"
+            letterSpacing="normal"
+            fontFamily="mono"
+            fontSize="xs"
+            color="app.textMuted"
+            overflow="hidden"
+            textOverflow="ellipsis"
+            whiteSpace="nowrap"
+          >
+            {col.name}
+          </FieldLabel>
+          <chakra.span fontSize="2xs" fontFamily="mono" color="app.textMuted" flexShrink={0}>
+            {col.type_name}
+          </chakra.span>
+          {changed && (
+            <chakra.span fontSize="2xs" color="app.textWarning" flexShrink={0}>
+              {t("rowInspectorFieldChanged")}
+            </chakra.span>
+          )}
+        </Box>
+        {input}
+        {error && <FieldError id={`${id}-err`}>{t(error)}</FieldError>}
+      </Box>
     );
   };
 
@@ -162,7 +410,34 @@ export function RowInspector({
           <chakra.span textStyle="subheading" flex="1">
             {t("gridRowInspectorTitle", { row: rowNumber })}
           </chakra.span>
-          <Tooltip label={t("gridInspectorPrev")} focusableWrapper={!hasPrev}>
+          {canEdit && !editing && (
+            <Tooltip
+              label={edit?.blockedReason ? t(edit.blockedReason) : t("rowInspectorEdit")}
+              focusableWrapper={edit?.blockedReason != null}
+            >
+              <chakra.button
+                type="button"
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="24px"
+                h="24px"
+                border="none"
+                bg="transparent"
+                color="app.textMuted"
+                borderRadius="sm"
+                cursor="pointer"
+                _hover={{ bg: "app.hover", color: "app.text" }}
+                _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
+                disabled={edit?.blockedReason != null}
+                onClick={startEdit}
+                aria-label={t("rowInspectorEdit")}
+              >
+                <Icon name="pencil" size={ICON_SIZES.md} />
+              </chakra.button>
+            </Tooltip>
+          )}
+          <Tooltip label={t("gridInspectorPrev")} focusableWrapper={!hasPrev || editing}>
             <chakra.button
               type="button"
               display="inline-flex"
@@ -177,14 +452,14 @@ export function RowInspector({
               cursor="pointer"
               _hover={{ bg: "app.hover", color: "app.text" }}
               _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-              disabled={!hasPrev}
+              disabled={!hasPrev || editing}
               onClick={onPrev}
               aria-label={t("gridInspectorPrev")}
             >
               <Icon name="chevron-left" size={ICON_SIZES.md} />
             </chakra.button>
           </Tooltip>
-          <Tooltip label={t("gridInspectorNext")} focusableWrapper={!hasNext}>
+          <Tooltip label={t("gridInspectorNext")} focusableWrapper={!hasNext || editing}>
             <chakra.button
               type="button"
               display="inline-flex"
@@ -199,7 +474,7 @@ export function RowInspector({
               cursor="pointer"
               _hover={{ bg: "app.hover", color: "app.text" }}
               _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-              disabled={!hasNext}
+              disabled={!hasNext || editing}
               onClick={onNext}
               aria-label={t("gridInspectorNext")}
             >
@@ -232,7 +507,9 @@ export function RowInspector({
           <Box px="3" pt="2" flexShrink={0}>
             <Segmented
               value={activeView}
-              onChange={setView}
+              onChange={(v) => {
+                if (!editing) setView(v);
+              }}
               ariaLabel={t("inspectorTabsAria")}
               options={[
                 { value: "fields", label: t("inspectorTabFields") },
@@ -254,6 +531,7 @@ export function RowInspector({
           css={{ scrollbarWidth: "thin" }}
           px="3"
           py="2"
+          onKeyDown={onFormKeyDown}
         >
           {activeView === "related" && related ? (
             <RelatedRowsPanel
@@ -274,6 +552,11 @@ export function RowInspector({
                 exit="exit"
                 transition={transitions.enter}
               >
+                {editing && (
+                  <chakra.p textStyle="caption" mb="1">
+                    {t("rowInspectorNullHint")}
+                  </chakra.p>
+                )}
                 {columns.length === 0 ? (
                   <chakra.div
                     fontStyle="italic"
@@ -297,6 +580,9 @@ export function RowInspector({
                     const display = json ?? raw;
                     const masked = !!maskedColumns?.[i];
                     const comment = comments?.[i] ?? null;
+                    if (editing && edit?.editableColumns[i]) {
+                      return renderEditField(i);
+                    }
                     return (
                       <Box
                         key={`${col.name}-${i}`}
@@ -326,6 +612,15 @@ export function RowInspector({
                               {col.name}
                             </chakra.span>
                           </Tooltip>
+                          {editing && !edit?.editableColumns[i] && (
+                            <chakra.span
+                              fontSize="2xs"
+                              color="app.textMuted"
+                              flexShrink={0}
+                            >
+                              {t("rowInspectorFieldReadonly")}
+                            </chakra.span>
+                          )}
                           <Tooltip
                             label={
                               masked
@@ -409,6 +704,47 @@ export function RowInspector({
             </AnimatePresence>
           )}
         </Box>
+
+        {editing && edit && (
+          <Box
+            display="flex"
+            alignItems="center"
+            gap="2"
+            px="3"
+            py="2"
+            borderTop="1px solid"
+            borderColor="app.border"
+            flexShrink={0}
+          >
+            <chakra.span
+              flex="1"
+              minW="0"
+              fontSize="xs"
+              color={edit.blockedReason || stale ? "app.textWarning" : "app.textMuted"}
+            >
+              {edit.blockedReason
+                ? t(edit.blockedReason)
+                : stale
+                  ? t("rowInspectorEditStale")
+                  : hasErrors
+                    ? t("rowInspectorEditHasErrors")
+                    : changedCount > 0
+                      ? t("rowInspectorChangeCount", { count: changedCount })
+                      : t("rowInspectorEditNoChanges")}
+            </chakra.span>
+            <Button type="button" variant="secondary" onClick={cancelEdit}>
+              {t("rowInspectorEditCancel")}
+            </Button>
+            <PressableButton
+              type="button"
+              variant="primary"
+              disabled={!canApply}
+              onClick={() => void applyEdit()}
+            >
+              {t("editApplyButton")}
+            </PressableButton>
+          </Box>
+        )}
       </MotionDrawer>
     </AnimatePresence>,
     document.body,

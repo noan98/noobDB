@@ -75,6 +75,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["localTableMeta", schemas.localTableMeta],
   ["profileImportResult", schemas.profileImportResult],
   ["cancelStreamResponse", schemas.cancelStreamResponse],
+  // AI 基盤 (#690)
+  ["aiConnectionTestResult", schemas.aiConnectionTestResult],
   ["knownHost", schemas.knownHost],
   ["schemaDiff", schemas.schemaDiff],
   ["syncPlan", schemas.syncPlan],

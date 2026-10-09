@@ -61,6 +61,23 @@ pub enum AppError {
     #[error("config dir not found")]
     ConfigDir,
 
+    /// AI 基盤 (#690): モデルが `stop_reason: "refusal"` で応答を拒否した。
+    #[error("AI refused to respond: {0}")]
+    AiRefused(String),
+
+    /// AI 基盤 (#690): API キー未設定、または Anthropic API が 401/403 を返した。
+    /// メッセージに API キーそのものは決して含めない。
+    #[error("AI API key problem: {0}")]
+    AiAuth(String),
+
+    /// AI 基盤 (#690): Anthropic API へ到達できない (DNS・接続・TLS・タイムアウト)。
+    #[error("AI network error: {0}")]
+    AiNetwork(String),
+
+    /// AI 基盤 (#690): 認証以外の API エラー (レート制限・過負荷・不正な要求・応答の解釈不能など)。
+    #[error("AI API error: {0}")]
+    AiApi(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -105,6 +122,10 @@ impl AppError {
             AppError::Serde(_) => "serde",
             AppError::Keyring(_) => "keyring",
             AppError::ConfigDir => "configDir",
+            AppError::AiRefused(_) => "aiRefused",
+            AppError::AiAuth(_) => "aiAuth",
+            AppError::AiNetwork(_) => "aiNetwork",
+            AppError::AiApi(_) => "aiApi",
             AppError::Other(_) => "other",
         }
     }
@@ -223,6 +244,10 @@ mod tests {
         );
         assert_eq!(AppError::Keyring("x".into()).kind(), "keyring");
         assert_eq!(AppError::ConfigDir.kind(), "configDir");
+        assert_eq!(AppError::AiRefused("x".into()).kind(), "aiRefused");
+        assert_eq!(AppError::AiAuth("x".into()).kind(), "aiAuth");
+        assert_eq!(AppError::AiNetwork("x".into()).kind(), "aiNetwork");
+        assert_eq!(AppError::AiApi("x".into()).kind(), "aiApi");
         assert_eq!(AppError::Other("x".into()).kind(), "other");
     }
 

@@ -7,7 +7,7 @@
   ジョブを走らせて全 PR ブランチがフォールバック復元できる main スコープを温めます
   (これが無いと新規 PR ブランチの初回 Rust ビルドは毎回コールド)。マージ後の main
   の健全性確認も兼ねます。`dorny/paths-filter` で
-  変更領域 (frontend / rust / workflow / crosslang) を判定し、ジョブ単位の `if:` で
+  変更領域 (frontend / rust / workflow / crosslang / ci-scripts) を判定し、ジョブ単位の `if:` で
   出し分けします (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
   ジョブを skip させる方式。push イベントでは paths-filter が git 履歴比較を行う
   ため `changes` ジョブは checkout してから filter を実行します)。`frontend`
@@ -119,7 +119,10 @@
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
-  確実に実走させるため)。`rust (test)` は加えて
+  確実に実走させるため)。同様に `ci-scripts` フィルタ (`scripts/ci-setup-*.sh`)
+  もORで見ています (#1359。セットアップスクリプトだけの変更がPR上で無検証に
+  ならないため)。`scripts/bundle-size.mjs` は `frontend` フィルタに含めています。
+  `rust (test)` は加えて
   `scripts/ci-setup-sshd.sh` で apt の `openssh-server` を 127.0.0.1:2222 に立て、
   `NOOBDB_TEST_SSH_URL` / `NOOBDB_TEST_SSH_KEY` を `$GITHUB_ENV` に渡すことで SSH
   トンネル統合テスト (#331) も実走します (サービスコンテナはイメージ pull が要るため
@@ -149,7 +152,7 @@
   (`-C instrument-coverage`) は sccache がキャッシュしない遅いビルドで、以前は
   `rust (test)` に同居して全 PR のクリティカルパスになっていたため (#1153)、
   `rust (test)` と**並列**の別ジョブへ切り出しました。`if:` 条件 (rust /
-  workflow / crosslang の OR) と sccache / rust-cache の設定は `rust (test)` と同等
+  workflow / crosslang / ci-scripts の OR) と sccache / rust-cache の設定は `rust (test)` と同等
   ですが、キャッシュキーは `coverage` / `sccache-<os>-coverage-…` で分離しています。
   **`rust (coverage)` は必須チェックに含めません** (`--fail-under-lines` 割れは
   赤く出ますがマージはブロックしない運用)。

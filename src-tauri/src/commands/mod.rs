@@ -1,4 +1,5 @@
 pub mod advisor;
+pub mod ai;
 pub mod assertions;
 pub mod broadcast;
 pub mod bulk_write;

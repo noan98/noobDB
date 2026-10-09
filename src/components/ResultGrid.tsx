@@ -73,6 +73,7 @@ import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } fro
 /** 候補なしを表す共有の空配列 (レンダーごとに新しい配列を作らない)。 */
 const EMPTY_PICKER_VALUES: string[] = [];
 import { RowInspector } from "./RowInspector";
+import { inspectorEditableColumns, inspectorRowEditBlock } from "./rowInspectorEdit";
 import { resolveRelatedEntries } from "../relatedRows";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
@@ -86,6 +87,8 @@ import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
 import { reorderColumnIds } from "./columnReorderFlip";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
+import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
+import { useRowCrossfade } from "./useRowCrossfade";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import {
@@ -97,6 +100,14 @@ import {
   resolveBoolTruthy,
   truncateHexPreview,
 } from "./cellTypeMeta";
+import {
+  boolOptions,
+  boolSelectValue,
+  fromNativeValue,
+  resolveTypedEditor,
+  toNativeValue,
+  type TypedEditor,
+} from "./typedEditor";
 import {
   type CondFormatMode,
   type NumericStats,
@@ -435,6 +446,48 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
   },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
+  // FK セルのリンク・アフォーダンス (#1393)。値に控えめな点線下線を引き、ホバー /
+  // アクティブセルで accent の実線 + 右端のジャンプアイコンを出す。アイコンは FK 列の
+  // 非 NULL セルにだけ常設し、出し分けは CSS のみ (行数に比例する JS コストを持たない)。
+  "& td.is-fk > span:not(.cell-fk-jump)": {
+    textDecoration: "underline dotted",
+    textDecorationColor: "color-mix(in srgb, var(--accent) 45%, transparent)",
+    textUnderlineOffset: "0.2em",
+  },
+  "& td.is-fk:hover > span:not(.cell-fk-jump), & td.is-fk.is-active-cell > span:not(.cell-fk-jump)": {
+    textDecorationStyle: "solid",
+    textDecorationColor: "var(--accent)",
+  },
+  // ボタン幅ぶんの右余白を常時確保する。FK は整数 ID が多く右寄せなので、表示時だけ
+  // 余白を変えると文字がずれ、確保しないと値の末尾がボタンに隠れる。
+  "& td.is-fk": { paddingInlineEnd: "var(--space-6)" },
+  // 上下は td に張り付けて高さを合わせる (Compact 密度でも欠けない)。
+  "& td.is-fk .cell-fk-jump": {
+    position: "absolute",
+    top: "var(--space-0-5)",
+    bottom: "var(--space-0-5)",
+    right: "var(--space-1)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "0 var(--space-0-5)",
+    color: "var(--accent)",
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
+    opacity: 0,
+    pointerEvents: "none",
+  },
+  "& td.is-fk:hover .cell-fk-jump, & td.is-fk.is-active-cell .cell-fk-jump, & td.is-fk .cell-fk-jump:focus-visible": {
+    opacity: 1,
+    pointerEvents: "auto",
+  },
+  "& td.is-fk .cell-fk-jump:hover": {
+    background: "color-mix(in srgb, var(--accent) 16%, var(--bg-elevated))",
+    borderColor: "var(--accent)",
+  },
+  "& td.is-fk .cell-fk-jump:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
   // 機微カラムの表示マスク (#1069)。伏せ字は値の長さを漏らさない固定長で、
   // 色は --text-muted (テーマ追従) なのでライト/ダーク両方で読める。
   "& .cell-masked": {
@@ -929,6 +982,15 @@ export const GRID_CSS: SystemStyleObject = {
     outline: "none",
     boxShadow: "var(--focus-ring)",
   },
+  // 日時入力は秒とピッカーアイコンが狭い列で欠けるので、列幅を超えて広げる (#1355)。
+  "& .cell-edit-input[type=datetime-local]": {
+    position: "absolute",
+    zIndex: 4,
+    top: "calc(var(--space-0-75) * -1)",
+    left: "calc(var(--space-1-5) * -1)",
+    margin: 0,
+    width: "max(100% + var(--space-3), 26ch)",
+  },
   "& .cell-edit-input.is-invalid": {
     borderColor: "var(--error-solid)",
     boxShadow: "var(--focus-ring-danger)",
@@ -1074,6 +1136,12 @@ interface Props {
   onApplyEdits?: () => void;
   /** True while the Apply transaction is in flight — shows an inline spinner. */
   applyingEdits?: boolean;
+  /**
+   * 行インスペクタのフォーム編集 (#1394) からの 1 行適用。`rowKey` (rowEditKey) の
+   * 行の差分 (列インデックス → 生の入力値) だけを、グリッドの Apply と同じ経路で送る。
+   * 戻り値は適用が完了したか。未指定ならインスペクタは閲覧専用。
+   */
+  onApplyRowEdits?: (rowKey: string, edits: Record<number, string>) => Promise<boolean>;
   /** Current auto-refresh cadence (seconds), or null when polling is off. */
   autoRefreshSecs?: number | null;
   /**
@@ -2880,6 +2948,8 @@ type GridRowHandlers = {
   onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
   onCellFocus: (e: ReactFocusEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
   onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
+  /** FK セルのジャンプアイコン (#1393)。右クリックメニューの「参照先へジャンプ」と同じ経路。 */
+  onFkCellJump: (rowIdx: number, colIdx: number) => void;
   onCellDoubleClick: (
     rowIdx: number,
     colIdx: number,
@@ -2887,7 +2957,10 @@ type GridRowHandlers = {
   ) => void;
   onEditChange: (value: string) => void;
   onEditBlur: (originalDisplay: string) => void;
-  onEditKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>, originalDisplay: string) => void;
+  onEditKeyDown: (
+    e: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>,
+    originalDisplay: string,
+  ) => void;
 };
 
 /**
@@ -2928,7 +3001,7 @@ interface GridRowProps {
   colWinFirst: number;
   colWinLast: number;
   /** この行で編集中のセル (別の行なら null)。 */
-  editing: { colIdx: number; value: string } | null;
+  editing: { colIdx: number; value: string; start: string; typed: TypedEditor | null } | null;
   activeColIdx: number | null;
   /** この行が範囲選択に入っているときの列集合 (入っていなければ null)。 */
   selColSet: Set<number> | null;
@@ -2936,6 +3009,8 @@ interface GridRowProps {
   /** この行の現在ヒットの列 (別の行なら null)。 */
   findCurrentCol: number | null;
   maskedCols: boolean[] | null;
+  /** 列ごとの FK 参照先テーブル名 (解決できない列は null)。`onFkJump` が無ければ全体が null (#1393)。 */
+  fkCols: (string | null)[] | null;
   /** この行に関係する reveal だけ (無関係なら null)。 */
   reveal: RevealTarget | null;
   /** 保留中の編集を持つ行・編集中の行にだけ渡す (他の行は undefined)。 */
@@ -2989,6 +3064,7 @@ const GridRow = memo(function GridRow({
   findHits,
   findCurrentCol,
   maskedCols,
+  fkCols,
   reveal,
   validateEdit,
   valuePicker,
@@ -3031,12 +3107,17 @@ const GridRow = memo(function GridRow({
     // 機微カラムの表示マスク (#1069)。マスク無しの結果では `maskedCols` が
     // null なので、ここは null 判定 1 回で終わる (列仮想化のホットパス)。
     const cellMasked = maskedCols !== null && isCellMasked(maskedCols, reveal, row.index, colIdx);
+    // FK リンク・アフォーダンス (#1393)。NULL・マスク中・編集中・保留中の編集があるセルは
+    // 出さない (値が無い / 実値を書き出せない / 見えている値が元の値でない)。
+    const fkTable = fkCols?.[colIdx] ?? null;
+    const isFkCell = fkTable !== null && !isNull && v !== "" && !cellMasked && !isEditingHere && !hasPending;
     // Live validation of the value being typed, and of an
     // already-buffered value that's sitting invalid in the grid.
     const editPickerValues =
       isEditingHere && valuePicker
         ? valuePicker.candidates(columns[colIdx]?.name ?? "")
         : EMPTY_PICKER_VALUES;
+    const typedEditor = isEditingHere ? editing!.typed : null;
     const editError =
       isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
     const pendingError =
@@ -3066,7 +3147,7 @@ const GridRow = memo(function GridRow({
           if (el) cellRefs.current.set(key, el);
           else cellRefs.current.delete(key);
         }}
-        className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}${cellMasked ? " is-masked-cell" : ""}`}
+        className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}${cellMasked ? " is-masked-cell" : ""}${isFkCell ? " is-fk" : ""}`}
         // マウス hover 用は行×列に比例するため native title ではなく
         // `cellTooltipProps` (#884) に委譲する。キーボードでの同等手段は
         // 既存の `gridInspector` ショートカット (`CellValueViewer`) が
@@ -3104,16 +3185,55 @@ const GridRow = memo(function GridRow({
       >
         {isEditingHere ? (
           <div className="cell-edit-wrap">
-            <input
-              autoFocus
-              className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
-              aria-invalid={editError ? true : undefined}
-              list={editPickerValues.length > 0 ? valuePickerListId : undefined}
-              value={editing!.value}
-              onChange={(e) => handlers.onEditChange(e.target.value)}
-              onBlur={() => handlers.onEditBlur(originalDisplay)}
-              onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
-            />
+            {typedEditor?.control === "bool" ? (
+              <select
+                autoFocus
+                className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                aria-invalid={editError ? true : undefined}
+                aria-label={columns[colIdx]?.name}
+                value={boolSelectValue(editing!.value, editing!.start)}
+                onChange={(e) => handlers.onEditChange(e.target.value)}
+                onBlur={() => handlers.onEditBlur(originalDisplay)}
+                onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
+              >
+                {boolOptions(editing!.start).map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            ) : typedEditor ? (
+              <input
+                autoFocus
+                className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                aria-invalid={editError ? true : undefined}
+                type={typedEditor.inputType}
+                step={typedEditor.inputType === "date" ? undefined : 1}
+                // 非制御: 一部の欄だけ消した途中状態 (badInput) を React が巻き戻さないため。
+                defaultValue={toNativeValue(typedEditor.inputType, editing!.start)}
+                onChange={(e) => {
+                  // 一部の欄だけ消した状態 (badInput) は value が "" になるが NULL
+                  // 確定ではないので、保留値を更新しない。
+                  if (e.target.value === "" && e.target.validity.badInput) return;
+                  handlers.onEditChange(
+                    fromNativeValue(typedEditor.inputType, e.target.value, "NULL", editing!.start),
+                  );
+                }}
+                onBlur={() => handlers.onEditBlur(originalDisplay)}
+                onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
+              />
+            ) : (
+              <input
+                autoFocus
+                className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                aria-invalid={editError ? true : undefined}
+                list={editPickerValues.length > 0 ? valuePickerListId : undefined}
+                value={editing!.value}
+                onChange={(e) => handlers.onEditChange(e.target.value)}
+                onBlur={() => handlers.onEditBlur(originalDisplay)}
+                onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
+              />
+            )}
             <ValueDatalist id={valuePickerListId} values={editPickerValues} />
             {editError && (
               <div className="cell-edit-error" role="alert">
@@ -3146,7 +3266,33 @@ const GridRow = memo(function GridRow({
             {/^null$/i.test(pendingValue.trim()) ? t("resultNull") : pendingValue}
           </motion.span>
         ) : (
-          flexRender(cell.column.columnDef.cell, cell.getContext())
+          <>
+            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+            {isFkCell && (
+              // ジャンプはこのアイコンのクリックに限る。セル本体のクリックは選択、
+              // ダブルクリックは編集 / ビューアのままにして誤爆を防ぐ。
+              // 出し分けは CSS (hover / アクティブセル) だけ。キーボードは右クリック
+              // メニュー (Shift+F10) の同じ項目から辿れるので tabIndex は外す。
+              <button
+                type="button"
+                className="cell-fk-jump"
+                tabIndex={-1}
+                aria-label={t("gridFkJump", { table: fkTable })}
+                {...bindTooltip(t("gridFkJump", { table: fkTable }))}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlers.onFkCellJump(row.index, colIdx);
+                }}
+              >
+                <Icon name="link" size={ICON_SIZES.sm} />
+              </button>
+            )}
+          </>
         )}
       </td>
     );
@@ -3242,6 +3388,9 @@ export const DataGrid = memo(function DataGrid({
   onRequestInsertRow,
   onDuplicateRow,
   validateEdit,
+  onApplyRowEdits,
+  streaming: rowStreaming = false,
+  applyingEdits: rowApplying = false,
   columnSizingStorageKey,
   emptyMessage,
   skeleton = false,
@@ -3337,6 +3486,12 @@ export const DataGrid = memo(function DataGrid({
    * inline error shown under the edit box and the invalid-cell highlight.
    */
   validateEdit?: (colIdx: number, value: string) => I18nKey | null;
+  /** 行インスペクタのフォーム編集からの 1 行適用 (#1394)。`ResultGrid` から渡す。 */
+  onApplyRowEdits?: (rowKey: string, edits: Record<number, string>) => Promise<boolean>;
+  /** ストリーミング中は行インスペクタの編集を始めさせない (#1394)。 */
+  streaming?: boolean;
+  /** グリッドの一括 Apply 進行中は行インスペクタの編集を待たせる (#1394)。 */
+  applyingEdits?: boolean;
   /**
    * When set, user-adjusted column widths persist to `localStorage` under
    * this key and are restored for matching result shapes. Omit (preview
@@ -3908,13 +4063,26 @@ export const DataGrid = memo(function DataGrid({
     handleColumnOrderChange(next);
   };
 
+  // 列ごとの FK 参照先テーブル (#1393)。ジャンプ先 SQL を作れる列 (参照先テーブル + 列が
+  // 解決できる) だけ埋める。`onFkJump` が無い画面ではアフォーダンスごと出さない。
+  const metaByName = useMemo(
+    () => (columnMeta ? new Map(columnMeta.map((m) => [m.name, m])) : null),
+    [columnMeta],
+  );
+  const fkCols = useMemo<(string | null)[] | null>(() => {
+    if (!onFkJump || !metaByName) return null;
+    return columns.map((c) => {
+      const m = metaByName.get(c.name);
+      return m?.referenced_table && m.referenced_column ? m.referenced_table : null;
+    });
+  }, [onFkJump, metaByName, columns]);
+
   const tableColumns = useMemo<ColumnDef<GridFeatures, RowShape>[]>(() => {
     // 列ごとの線形探索 (find) は横に広いテーブルで O(列数²) になるため、
     // 名前 → メタデータの Map を 1 度だけ作って引く。
-    const metaByName = new Map(columnMeta?.map((m) => [m.name, m]) ?? []);
     return columns.map((c, i) => {
       const kind = columnKinds[i];
-      const fkInfo = metaByName.get(c.name);
+      const fkInfo = metaByName?.get(c.name);
       const fkTable = fkInfo?.referenced_table ?? null;
       return {
         id: String(i),
@@ -4138,7 +4306,7 @@ export const DataGrid = memo(function DataGrid({
   }, [
     columns,
     columnKinds,
-    columnMeta,
+    metaByName,
     t,
     enableColumnControls,
     richCellRendering,
@@ -4210,7 +4378,20 @@ export const DataGrid = memo(function DataGrid({
   );
   const handleRequestKeyStr = handleRequest ? handleRequestKey(handleRequest) : "";
   // `order` が null のときは「並びも絞り込みも無い」(元の行順そのまま)。
-  const [handleOrder, setHandleOrder] = useState<{ id: string; order: number[] | null } | null>(null);
+  const [handleOrder, setHandleOrder] = useState<{
+    id: string;
+    order: number[] | null;
+    /** この順序を要求した時点のクロスフェード用キー (#1416)。 */
+    fade: RowCrossfadeKeys;
+  } | null>(null);
+  // 順序の要求を出した時点の状態キー。順序が届いたコミットでだけフェードを再生するため、
+  // handleOrder に一緒に保存する (非同期の間は前の並びのままなので、状態由来のキーでは早すぎる)。
+  const fadeKeys = useMemo(
+    () => rowCrossfadeKeys(sorting, columnFilters, globalFilter),
+    [sorting, columnFilters, globalFilter],
+  );
+  const fadeKeysRef = useRef(fadeKeys);
+  fadeKeysRef.current = fadeKeys;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 条件は handleRequestKeyStr (JSON キー) で比較する。handleRequest は描画ごとに参照が変わるので依存に入れると再実行ループになる
   useEffect(() => {
     if (!activeHandleId || !handleRequest) {
@@ -4218,10 +4399,11 @@ export const DataGrid = memo(function DataGrid({
       return;
     }
     if (isIdentityRequest(handleRequest)) {
-      setHandleOrder({ id: activeHandleId, order: null });
+      setHandleOrder({ id: activeHandleId, order: null, fade: fadeKeysRef.current });
       return;
     }
     let cancelled = false;
+    const requestFade = fadeKeysRef.current;
     api
       .resultSortFilter({ resultId: activeHandleId, ...handleRequest })
       .then((order) => {
@@ -4231,7 +4413,7 @@ export const DataGrid = memo(function DataGrid({
           setGoneHandleId(activeHandleId);
           return;
         }
-        setHandleOrder({ id: activeHandleId, order });
+        setHandleOrder({ id: activeHandleId, order, fade: requestFade });
       })
       .catch(() => {
         if (!cancelled) setGoneHandleId(activeHandleId);
@@ -4291,9 +4473,27 @@ export const DataGrid = memo(function DataGrid({
   // Inline-edit state: the cell currently being typed into (if any) plus
   // the buffered text. Lives in DataGrid so navigation between cells is
   // local — committed values are lifted via `onSetCellEdit`.
+  // `start` / `typed` は編集開始時の値で一度だけ決める (型別エディタ #1355。打鍵の
+  // 途中でコントロールが切り替わらないように)。
   const [editing, setEditing] = useState<
-    { rowIdx: number; colIdx: number; value: string } | null
+    {
+      rowIdx: number;
+      colIdx: number;
+      value: string;
+      start: string;
+      typed: TypedEditor | null;
+    } | null
   >(null);
+  const beginEdit = (rowIdx: number, colIdx: number, value: string, typeable = true) => {
+    const typeName = columns[colIdx]?.type_name;
+    setEditing({
+      rowIdx,
+      colIdx,
+      value,
+      start: value,
+      typed: typeable && typeName ? resolveTypedEditor(typeName, value) : null,
+    });
+  };
   // スマート値ピッカー (#1067): 編集中セルの列について候補を (再) 取得する。
   // FK は入力に応じて前方一致で絞り込み、ENUM / CHECK は初回に 1 度だけ引く。
   const valuePickerListId = useId();
@@ -4325,6 +4525,10 @@ export const DataGrid = memo(function DataGrid({
   // 本体セルは `cellRefs` から引く。
   const gridTableRef = useRef<HTMLTableElement>(null);
   const columnFlip = useColumnReorderFlip(gridTableRef, cellRefs);
+  // クライアント側ソート / フィルタ適用時の <tbody> クロスフェード (#1416)。
+  const gridTbodyRef = useRef<HTMLTableSectionElement>(null);
+  // ハンドル経由 (非同期ソート) の間は、順序が届いたコミットで再生するよう適用済みの順序のキーを使う。
+  useRowCrossfade(gridTbodyRef, handleManual && handleOrder ? handleOrder.fade : fadeKeys, gridViewKey ?? "");
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
@@ -4515,7 +4719,9 @@ export const DataGrid = memo(function DataGrid({
     const rowKey = rowEditKey(rows[rowIdx] ?? [], pkIndices ?? [], rowIdx);
     // Re-typing the original value clears the pending edit so the user
     // can "undo" without hitting Cancel.
-    if (value === originalDisplay) {
+    const col = columns[colIdx];
+    const cur = rows[rowIdx]?.[colIdx];
+    if (value === originalDisplay || (col && cur !== undefined && editIsNoop(value, col, cur))) {
       onSetCellEdit(rowKey, colIdx, null);
     } else {
       onSetCellEdit(rowKey, colIdx, value);
@@ -5077,6 +5283,23 @@ export const DataGrid = memo(function DataGrid({
       column: Header<GridFeatures, RowShape, unknown>["column"],
     ) => startColumnResize(e, column),
   });
+  // セルの FK 順方向ジャンプ先 (参照先テーブル + SELECT)。FK でない / 参照先が解決できない /
+  // マスク中なら null。右クリックメニューと FK セルのジャンプアイコンで共有する (#1393)。
+  const fkJumpFor = (rowIdx: number, colIdx: number): { refTable: string; sql: string } | null => {
+    const fkMeta = metaByName?.get(columns[colIdx]?.name ?? "");
+    if (!fkMeta?.referenced_table || !fkMeta.referenced_column) return null;
+    if (cellMaskedNow(rowIdx, colIdx)) return null;
+    return {
+      refTable: fkMeta.referenced_table,
+      sql: buildFkJumpSql({
+        driver: rowSqlDriver ?? "mysql",
+        database: rowSqlDatabase,
+        refTable: fkMeta.referenced_table,
+        refColumn: fkMeta.referenced_column,
+        value: rows[rowIdx]?.[colIdx] ?? null,
+      }),
+    };
+  };
   // `GridRow` に渡すハンドラ。最新の state を読む関数を参照固定で渡す (#1341)。
   const rowHandlers = useStableCallbacks({
     onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
@@ -5101,6 +5324,10 @@ export const DataGrid = memo(function DataGrid({
       e.preventDefault();
       setCopyMenu({ x: e.clientX, y: e.clientY, rowIdx, colIdx });
     },
+    onFkCellJump: (rowIdx: number, colIdx: number) => {
+      const jump = fkJumpFor(rowIdx, colIdx);
+      if (jump) onFkJump?.(jump.sql);
+    },
     onCellDoubleClick: (
       rowIdx: number,
       colIdx: number,
@@ -5122,17 +5349,13 @@ export const DataGrid = memo(function DataGrid({
       // (read-only grids, PK/BLOB columns, preview panes) opens
       // the full-value viewer instead, so the two never collide.
       if (cell.editable && onSetCellEdit) {
-        setEditing({
-          rowIdx,
-          colIdx,
-          value: cell.hasPending ? (cell.pendingValue ?? "") : cell.originalDisplay,
-        });
+        beginEdit(rowIdx, colIdx, cell.hasPending ? (cell.pendingValue ?? "") : cell.originalDisplay);
         return;
       }
       setViewer({ rowIdx, colIdx });
     },
     onEditChange: (value: string) => {
-      setEditing((cur) => (cur ? { rowIdx: cur.rowIdx, colIdx: cur.colIdx, value } : cur));
+      setEditing((cur) => (cur ? { ...cur, value } : cur));
     },
     onEditBlur: (originalDisplay: string) => {
       if (!editing) return;
@@ -5160,7 +5383,10 @@ export const DataGrid = memo(function DataGrid({
         }
       })();
     },
-    onEditKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>, originalDisplay: string) => {
+    onEditKeyDown: (
+      e: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>,
+      originalDisplay: string,
+    ) => {
       if (!editing) return;
       if (e.key === "Tab") {
         e.preventDefault();
@@ -5415,11 +5641,11 @@ export const DataGrid = memo(function DataGrid({
           const v = rows[rowIdx]?.[colIdx] ?? null;
           const rowKey = rowEditKey(rows[rowIdx] ?? [], pkIndices ?? [], rowIdx);
           const pending = pendingEdits?.[rowKey]?.[colIdx];
-          setEditing({
+          beginEdit(
             rowIdx,
             colIdx,
-            value: pending !== undefined ? pending : (v === null || v === undefined ? "" : String(v)),
-          });
+            pending !== undefined ? pending : v === null || v === undefined ? "" : String(v),
+          );
         } else if (visIdx < rowCount - 1) {
           navigateCell(visibleRows[visIdx + 1].index, colIdx);
         }
@@ -5449,7 +5675,7 @@ export const DataGrid = memo(function DataGrid({
               toast.info(t("gridMaskedCellBlocked"));
               return;
             }
-            setEditing({ rowIdx, colIdx, value: e.key });
+            beginEdit(rowIdx, colIdx, e.key, false);
           }
         }
     }
@@ -5496,7 +5722,11 @@ export const DataGrid = memo(function DataGrid({
         rightPinnedCount={rightPinnedCount}
         colWinFirst={colWinFirst}
         colWinLast={colWinLast}
-        editing={editingHere ? { colIdx: editing.colIdx, value: editing.value } : null}
+        editing={
+          editingHere
+            ? { colIdx: editing.colIdx, value: editing.value, start: editing.start, typed: editing.typed }
+            : null
+        }
         activeColIdx={activeCell?.rowIdx === row.index ? activeCell.colIdx : null}
         selColSet={selectionRect?.rowIndexSet.has(row.index) ? selectionRect.colIdSet : null}
         findHits={findHits}
@@ -5506,6 +5736,7 @@ export const DataGrid = memo(function DataGrid({
             : null
         }
         maskedCols={maskedCols}
+        fkCols={fkCols}
         reveal={
           reveal && (reveal.kind === "column" || reveal.rowIdx === row.index) ? reveal : null
         }
@@ -5668,7 +5899,7 @@ export const DataGrid = memo(function DataGrid({
             </tr>
           ))}
         </thead>
-        <tbody>
+        <tbody ref={gridTbodyRef}>
           {skeleton && rows.length === 0 ? (
             // Skeleton shimmer rows shown while the first batch of a streaming query
             // has not yet arrived. Rows fade out progressively to create visual depth.
@@ -6180,28 +6411,14 @@ export const DataGrid = memo(function DataGrid({
               const reverse: ContextMenuEntry[] = [];
 
               // 順方向: クリックしたセルが FK なら参照先テーブルへジャンプ。
-              const fkMeta = columnMeta?.find(
-                (m) => m.name === columns[copyMenu.colIdx]?.name,
-              );
               // FK ジャンプの SQL はエディタに値をそのまま書き出すため、マスク中の
               // セル (#1069) からは辿らない (順方向・逆方向とも)。
-              if (
-                fkMeta?.referenced_table &&
-                fkMeta.referenced_column &&
-                !cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)
-              ) {
-                const refTable = fkMeta.referenced_table;
-                const sql = buildFkJumpSql({
-                  driver,
-                  database: rowSqlDatabase,
-                  refTable,
-                  refColumn: fkMeta.referenced_column,
-                  value: rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null,
-                });
+              const fwd = fkJumpFor(copyMenu.rowIdx, copyMenu.colIdx);
+              if (fwd) {
                 items.push({
-                  label: t("gridFkJump", { table: refTable }),
+                  label: t("gridFkJump", { table: fwd.refTable }),
                   title: t("gridFkJumpTitle"),
-                  onSelect: () => { setCopyMenu(null); onFkJump(sql); },
+                  onSelect: () => { setCopyMenu(null); onFkJump(fwd.sql); },
                 });
               }
 
@@ -6675,6 +6892,10 @@ export const DataGrid = memo(function DataGrid({
       </AnimatePresence>
       {inspectorOpen && activeCell && rows[activeCell.rowIdx] && (() => {
         const inspVis = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
+        const inspMasked = maskedCols
+          ? columns.map((_, ci) => cellMaskedNow(activeCell.rowIdx, ci))
+          : undefined;
+        const inspRowKey = rowEditKey(rows[activeCell.rowIdx] ?? [], pkIndices ?? [], activeCell.rowIdx);
         const moveTo = (visTarget: number) => {
           const r = visibleRows[visTarget];
           if (r) navigateCell(r.index, activeCell.colIdx);
@@ -6684,11 +6905,7 @@ export const DataGrid = memo(function DataGrid({
             columns={columns}
             comments={columnCommentsFor(columns.map((c) => c.name), columnMeta)}
             values={rows[activeCell.rowIdx]}
-            maskedColumns={
-              maskedCols
-                ? columns.map((_, ci) => cellMaskedNow(activeCell.rowIdx, ci))
-                : undefined
-            }
+            maskedColumns={inspMasked}
             columnKinds={columnKinds}
             related={
               onRunRelatedQuery && incomingFks && incomingFks.length > 0
@@ -6703,6 +6920,27 @@ export const DataGrid = memo(function DataGrid({
                     database: rowSqlDatabase ?? null,
                     runQuery: onRunRelatedQuery,
                     onOpenInGrid: onFkJump,
+                  }
+                : undefined
+            }
+            edit={
+              onApplyRowEdits
+                ? {
+                    rowKey: inspRowKey,
+                    editableColumns: inspectorEditableColumns({
+                      columnCount: columns.length,
+                      gridEditable: !!editable,
+                      editableColumns,
+                      maskedColumns: inspMasked,
+                    }),
+                    blockedReason: inspectorRowEditBlock({
+                      streaming: rowStreaming,
+                      applying: rowApplying,
+                      pendingDelete: pendingDeleteKeys?.has(inspRowKey) ?? false,
+                      hasPendingEdit: Object.keys(pendingEdits?.[inspRowKey] ?? {}).length > 0,
+                    }),
+                    validate: (ci, raw) => validateEdit?.(ci, raw) ?? null,
+                    onApply: (edits) => onApplyRowEdits(inspRowKey, edits),
                   }
                 : undefined
             }
@@ -6930,6 +7168,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   bundleContext,
   lastEditAppliedAt,
   applyingEdits,
+  onApplyRowEdits,
   onRunStatsQuery,
   onLookupQuery,
   onExploreColumn,
@@ -8592,6 +8831,9 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
           canUndo={canUndo}
           canRedo={canRedo}
           validateEdit={validateEdit}
+          onApplyRowEdits={editableActive ? onApplyRowEdits : undefined}
+          streaming={streaming}
+          applyingEdits={applyingEdits}
           rowSqlDriver={driver}
           rowSqlDatabase={database}
           rowSqlTable={table}

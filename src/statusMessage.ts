@@ -9,17 +9,24 @@ import type { ActivitySeverity } from "./activityLog";
  * ステータスバーは**最新の 1 件しか見せない** (次の実行で上書きされる) ので、
  * 見逃したエラー文を後から読み返す置き場が「メッセージ」タブになる。
  */
+/** 失敗した SQL の文脈 (#692)。AI 解説ボタンが SQL と対象タブを知るために付ける。 */
+export interface StatusErrorContext {
+  tabId: string;
+  sql: string;
+  database: string | null;
+}
+
 export type Status =
   // No status to surface (e.g. freshly connected, no query run yet). The
   // footer bar is hidden entirely; one-shot confirmations like "connected"
   // live in the toast notifications instead.
   | { kind: "idle" }
-  | { kind: "literal"; text: string; error?: boolean; errorKind?: string | null }
+  | { kind: "literal"; text: string; error?: boolean; errorKind?: string | null; aiContext?: StatusErrorContext }
   // `errorKind` carries the structured `AppError.kind` (#683) so the hint/
   // illustration resolver can classify reliably instead of pattern-matching the
   // message text. Optional: paths that only have a plain string omit it and the
   // resolver falls back to message matching.
-  | { kind: "key"; key: I18nKey; vars?: Record<string, string | number>; error?: boolean; errorKind?: string | null };
+  | { kind: "key"; key: I18nKey; vars?: Record<string, string | number>; error?: boolean; errorKind?: string | null; aiContext?: StatusErrorContext };
 
 // エラーは重大度別に区別する。`critical` は接続喪失など回復に再接続を要する
 // 致命的状態 (赤、目立つバッジ)、`warning` はタイムアウトなど接続は生きている軽度

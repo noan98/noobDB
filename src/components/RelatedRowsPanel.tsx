@@ -71,7 +71,7 @@ export function RelatedRowsPanel({ entries, driver, database, runQuery, onOpenIn
 
   return (
     <Box display="flex" flexDirection="column" gap="1.5">
-      <chakra.div fontSize="xs" color="app.textMuted">
+      <chakra.div textStyle="caption">
         {t("relatedRowsHint")}
       </chakra.div>
       {entries.map((entry) => (
@@ -169,7 +169,7 @@ function RelatedSection({
         </chakra.span>
       </chakra.button>
       {blocked && (
-        <chakra.div px="2" py="1" fontSize="xs" color="app.textMuted">
+        <chakra.div px="2" py="1" textStyle="caption">
           {blocked}
         </chakra.div>
       )}
@@ -274,7 +274,7 @@ function RelatedRowsBody({
   return (
     <Box px="2" py="1.5" display="flex" flexDirection="column" gap="1.5">
       {state.kind === "loading" && (
-        <chakra.div fontSize="xs" color="app.textMuted" aria-live="polite">
+        <chakra.div textStyle="caption" aria-live="polite">
           {t("relatedRowsLoading")}
         </chakra.div>
       )}
@@ -284,7 +284,7 @@ function RelatedRowsBody({
         </ErrorNote>
       )}
       {split && split.rows.length === 0 && (
-        <chakra.div fontSize="xs" color="app.textMuted">
+        <chakra.div textStyle="caption">
           {t("relatedRowsEmpty")}
         </chakra.div>
       )}
@@ -370,7 +370,7 @@ function RelatedRowsBody({
         </Box>
       )}
       {split?.hasMore && next === null && (
-        <chakra.div fontSize="xs" color="app.textMuted">
+        <chakra.div textStyle="caption">
           {t("relatedRowsCapReached", { count: RELATED_ROWS_MAX })}
         </chakra.div>
       )}

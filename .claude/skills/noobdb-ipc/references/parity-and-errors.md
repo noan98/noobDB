@@ -10,7 +10,7 @@ UI で使われているため **knip では原理的にプロパティ単位の
 `ipcCommandParity` は集合完全一致を強制するので UI 未接続のラッパーを消すと CI が
 落ちる — 結果としてデッドラッパーが構造的に不可視でした。
 `src/__tests__/apiReachabilityParity.test.ts` が `Object.keys(api)` と `src/` 配下
-(`api/tauri.ts` と `__tests__/` を除く) の `api.<name>` 参照を突き合わせ、**どこからも
+(`api/` 配下と `__tests__/` を除く) の `api.<name>` 参照を突き合わせ、**どこからも
 呼ばれないラッパーがあれば落ちます**。逃げ道の許可リスト
 `INTENTIONALLY_UNREACHABLE` は**空のまま維持するのが理想**で、追加するときは理由を
 併記してください (「まだ UI を作っていない」は理由になりません — UI を足すか、
@@ -41,7 +41,7 @@ wrapper above is intentionally a one-liner over this.」のような**説明文�
 (`error.rs::Serialize` / `AppError::kind()` を参照。#683)。`kind` はバリアント由来の
 安定した判別子 (`ssh` / `sshHostKeyMismatch` / `timeout` / `readOnly` /
 `connectionLost` / `invalidInput` / `db` ...) で、`message` は従来の `Display` 文字列
-です。フロントの `src/api/tauri.ts` の `invoke` ラッパーが reject 値を
+です。フロントの `src/api/invoke.ts` の `invoke` ラッパーが reject 値を
 `BackendError` (`.kind` / `.message` を持つ。`toString()` は `message` を返すので
 既存の `String(e)` 経路は不変) に正規化し、**旧形式の素の文字列も後方互換で受け付け**
 ます (`normalizeBackendError`)。`src/errorHints.ts` は「`kind` による確実な分類

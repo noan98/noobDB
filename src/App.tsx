@@ -42,7 +42,8 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
-import { applyEditsToRows, buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
@@ -98,6 +99,10 @@ import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
+import { AiErrorExplain } from "./components/AiErrorExplain";
+import { findSqlRange, sqlForRangeReplace } from "./ai/errorExplain";
+import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sqlAssist";
+import type { AiSqlRequest } from "./components/AiSqlPanel";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -162,6 +167,9 @@ const ScriptRunModal = lazy(() =>
 );
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
+);
+const AiSchemaDocModal = lazy(() =>
+  import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
 );
 const SchemaExportModal = lazy(() =>
   import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
@@ -264,6 +272,10 @@ const TableTimelapsePanel = lazy(() =>
 const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
+// SQL の AI 解説 / 最適化案 (#695)。ボトムパネルを開くまで読み込まない。
+const AiSqlPanel = lazy(() =>
+  import("./components/AiSqlPanel").then((m) => ({ default: m.AiSqlPanel })),
+);
 // データ品質アサーション (#742)。ボトムパネルを開くまで読み込まない。
 const AssertionsPanel = lazy(() =>
   import("./components/AssertionsPanel").then((m) => ({ default: m.AssertionsPanel })),
@@ -339,6 +351,7 @@ import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
 import { workspaceCommandItems } from "./components/workspaceCommands";
 import { editorCommandItems } from "./components/editorCommands";
+import { useAiAvailable } from "./ai/useAiAvailable";
 import { toggleActivityCenter } from "./components/ActivityCenter";
 import { ActivityLogPanel } from "./components/SeverityLog";
 import { OutputPanel } from "./components/OutputPanel";
@@ -659,6 +672,12 @@ export interface Tab {
    * 再実行も実測で走る。永続化しない (復元したタブは推定 EXPLAIN から始める)。
    */
   explainAnalyze?: boolean;
+  /**
+   * EXPLAIN タブで直近に実行した、EXPLAIN プレフィックス無しの元 SQL (#693)。エディタの
+   * バッファは実行後に編集でき、選択範囲だけを EXPLAIN することもあるため、計画と対に
+   * なる SQL (AI 解釈に送る) はここから取る。永続化しない。
+   */
+  explainSourceSql?: string;
   result: QueryResult | null;
   preview: PreviewResult | null;
   schemaTable: SchemaTable | null;
@@ -1046,33 +1065,6 @@ function emptyResult(columns: Column[]): QueryResult {
   return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
 }
 
-// Apply 完了後、実際に DB へ送信・コミットされたセル編集 (`applied`) だけを
-// `current` の pendingEdits から取り除く。Apply の往復中に追加/上書きされた
-// 編集 (= `applied` に無いか、値が食い違うもの) はまだ DB 未送信なので保持し、
-// 「未送信の編集が黙ってコミット済み扱いになる」事故 (#F2) を防ぐ。
-function pendingEditsAfterApply(current: PendingEdits, applied: PendingEdits): PendingEdits {
-  const next: PendingEdits = {};
-  for (const rowKey of Object.keys(current)) {
-    const currentRow = current[rowKey];
-    const appliedRow = applied[rowKey];
-    if (!appliedRow) {
-      next[rowKey] = currentRow;
-      continue;
-    }
-    const remainingRow: Record<number, string> = {};
-    for (const colKey of Object.keys(currentRow)) {
-      const colIdx = Number(colKey);
-      // 送信した値のままなら反映済みなので削除。Apply 中にさらに書き換えられて
-      // いれば (値が食い違う)、まだ未送信の新しい編集として残す。
-      if (appliedRow[colIdx] !== undefined && currentRow[colIdx] === appliedRow[colIdx]) {
-        continue;
-      }
-      remainingRow[colIdx] = currentRow[colIdx];
-    }
-    if (Object.keys(remainingRow).length > 0) next[rowKey] = remainingRow;
-  }
-  return next;
-}
 
 function emptyPreview(): PreviewResult {
   return {
@@ -1137,6 +1129,8 @@ export default function App() {
   const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
+  // AI にクエリを依頼する入口 (パレット項目) を出してよいか (#691)。
+  const aiAvailable = useAiAvailable();
   // スマート値ピッカー (#1067) の候補取得。バックエンドの `run_lookup_query` が
   // 読み取り専用ガード (セッションの read_only に関係なく常時)・行数上限・
   // 設定の「クエリタイムアウト」を課すので、読み取り専用セッションでも動き、
@@ -1243,6 +1237,9 @@ export default function App() {
   const [structureTarget, setStructureTarget] = useState<StructureTarget | null>(null);
   // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
   const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
+  // SQL の AI 解説 / 最適化案 (#695) の依頼。エディタの右クリック / パレットで埋まり、パネルが消費する。
+  const [aiSqlRequest, setAiSqlRequest] = useState<AiSqlRequest | null>(null);
+  const aiSqlSeqRef = useRef(0);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
   // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
   const [showUsers, setShowUsers] = useState(false);
@@ -1743,6 +1740,8 @@ export default function App() {
   const [scriptTarget, setScriptTarget] = useState<string | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
+  // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
+  const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む
@@ -3954,7 +3953,13 @@ export default function App() {
             error: true,
           });
         } else {
-          setStatus({ kind: "key", key: "statusQueryError", vars: { error }, error: true });
+          setStatus({
+            kind: "key",
+            key: "statusQueryError",
+            vars: { error },
+            error: true,
+            aiContext: { tabId, sql, database: tab?.database ?? null },
+          });
         }
       },
     });
@@ -3999,7 +4004,14 @@ export default function App() {
     } catch (e) {
       flusher.flushNow();
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+        errorKind: errorKindOf(e),
+        aiContext: { tabId, sql, database: tab?.database ?? null },
+      });
       if (!autoRefresh) {
         recordOutput(
           { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
@@ -4804,10 +4816,17 @@ export default function App() {
       );
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+        errorKind: errorKindOf(e),
+        aiContext: { tabId, sql, database: tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null },
+      });
       recordOutput({ sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, null);
     }
-  }, [sessionId, patchTab, recordOutput]);
+  }, [sessionId, patchTab, recordOutput, tabsRef]);
 
   // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
@@ -4849,7 +4868,7 @@ export default function App() {
   ) => {
     const driver = selectedProfile?.driver;
     if (!analyze) {
-      updateTab(tabId, { explainAnalyze: false });
+      updateTab(tabId, { explainAnalyze: false, explainSourceSql: sql });
       void runQueryInTab(tabId, `${explainPrefixFor(driver)}${sql}`, null, null, false, override);
       return;
     }
@@ -4866,7 +4885,7 @@ export default function App() {
       tone: "warning",
     });
     if (!ok) return;
-    updateTab(tabId, { explainAnalyze: true });
+    updateTab(tabId, { explainAnalyze: true, explainSourceSql: sql });
     void runQueryInTab(tabId, built.sql, null, null, false, { ...override, forceReadOnly: true });
   }, [selectedProfile?.driver, runQueryInTab, updateTab, toast, confirm]);
 
@@ -5192,6 +5211,128 @@ export default function App() {
     }
   }, [activeTab, sessionId, activeEditor, addTab]);
 
+  // AI の修正 SQL 案 (#692) を、失敗したタブのエディタへ反映する。実行はしない。
+  // 表示中ならエディタ (CodeMirror) へ dispatch して undo 履歴に載せ、裏のタブなら
+  // `tab.sql` を書き換える。失敗した SQL が本文中でちょうど 1 箇所見つかればその範囲だけ、
+  // そうでなければ確認のうえ全文を置き換える。
+  const handleApplyAiSql = useCallback(
+    async (tabId: string, failedSql: string, newSql: string): Promise<"applied" | "cancelled" | "closed"> => {
+      // 対象タブの現在の状態を引く。確認ダイアログ中にペインの表示タブが変わりうるので、
+      // await の前後で毎回取り直す。
+      const locate = () => {
+        const tab = tabsRef.current.find((tt) => tt.id === tabId);
+        if (!tab) return null;
+        const pane = panesRef.current.find((p) => p.activeTabId === tabId && p.tabIds.includes(tabId));
+        const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+        const visible = pane !== undefined;
+        const current = visible ? (editor ? editor.getText() : "") : tabSqlStore.resolve(tab.id, tab.sql);
+        return { tab, editor, visible, current };
+      };
+      const before = locate();
+      if (!before) return "closed";
+      // 表示中なのにエディタが未生成 / 空 (ビュー未準備) のときは何も書き換えない。
+      if (before.visible && (!before.editor || before.current === "")) return "cancelled";
+      let confirmedReplaceAll = false;
+      if (!findSqlRange(before.current, failedSql)) {
+        const ok = await confirm({
+          title: translate("aiErrorExplainReplaceAllTitle"),
+          message: translate("aiErrorExplainReplaceAllBody"),
+          confirmLabel: translate("aiErrorExplainReplaceAllConfirm"),
+          tone: "warning",
+        });
+        if (!ok) return "cancelled";
+        confirmedReplaceAll = true;
+      }
+      const live = locate();
+      if (!live) return "closed";
+      if (live.visible && (!live.editor || (!confirmedReplaceAll && live.current === ""))) return "cancelled";
+      const range = confirmedReplaceAll ? null : findSqlRange(live.current, failedSql);
+      if (!confirmedReplaceAll && !range) return "cancelled";
+      if (live.visible && live.editor) {
+        if (range) live.editor.replaceRange(range.from, range.to, sqlForRangeReplace(newSql));
+        else live.editor.setText(newSql);
+      } else {
+        const next = range
+          ? live.current.slice(0, range.from) + sqlForRangeReplace(newSql) + live.current.slice(range.to)
+          : newSql;
+        updateTab(tabId, { sql: next });
+      }
+      return "applied";
+    },
+    [confirm, tabSqlStore, updateTab, tabsRef, panesRef],
+  );
+
+  // 「この SQL を解説」「最適化案を提案」(#695): 選択範囲 (無ければ全文) と方言・DB をパネルへ渡し、
+  // ボトムパネルの AI 解説タブを開く。送信はパネルが (必要な確認のあとで) 自動で行う。
+  const handleAiSqlAction = useCallback((action: AiSqlEditorAction) => {
+    const tab = tabsRef.current.find((tt) => tt.id === action.tabId);
+    aiSqlSeqRef.current += 1;
+    setAiSqlRequest({
+      id: aiSqlSeqRef.current,
+      ...action,
+      database: tab?.database ?? selectedProfile?.database ?? null,
+      autoRun: true,
+    });
+    setBottomPanelTab("aiSql");
+  }, [tabsRef, selectedProfile?.database]);
+
+  // 別の接続へ切り替わったら、前の接続の依頼 (タブ ID・SQL) は捨てる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId の変化だけをトリガーにしたい
+  useEffect(() => {
+    setAiSqlRequest(null);
+  }, [sessionId]);
+
+  // リライト案 (#695) を依頼元のエディタへ適用する。実行はしない。表示中のタブは CodeMirror へ
+  // dispatch して undo 履歴に載せ、裏のタブは `tab.sql` を書き換える。起動時の範囲に元の SQL が
+  // そのまま残っていなければ、置き換える範囲を示して確認する。
+  const handleApplyAiSqlRewrite = useCallback(
+    async (req: AiSqlRequest, newSql: string): Promise<"applied" | "cancelled" | "closed"> => {
+      const locate = () => {
+        const tab = tabsRef.current.find((tt) => tt.id === req.tabId);
+        if (!tab) return null;
+        const pane = panesRef.current.find((p) => p.activeTabId === req.tabId && p.tabIds.includes(req.tabId));
+        const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+        const visible = pane !== undefined;
+        const current = visible ? (editor ? editor.getText() : "") : tabSqlStore.resolve(tab.id, tab.sql);
+        return { editor, visible, current };
+      };
+      const before = locate();
+      if (!before) return "closed";
+      // 表示中なのにエディタが未生成 / 空 (ビュー未準備) のときは何も書き換えない。
+      if (before.visible && (!before.editor || before.current === "")) return "cancelled";
+      const planned = locateApplyTarget(before.current, req.sql, req.range);
+      if (!planned.exact) {
+        const wholeDoc = planned.from === 0 && planned.to === before.current.length;
+        const ok = await confirm({
+          title: translate("aiSqlMovedTitle"),
+          message: translate(wholeDoc ? "aiSqlMovedAllBody" : "aiSqlMovedRangeBody"),
+          confirmLabel: translate("aiSqlMovedConfirm"),
+          tone: "warning",
+        });
+        if (!ok) return "cancelled";
+      }
+      // 確認ダイアログ中に編集された可能性があるので、現在の本文で範囲を取り直す。
+      const live = locate();
+      if (!live) return "closed";
+      if (live.visible && (!live.editor || live.current === "")) return "cancelled";
+      // 範囲がずれていて確認を取った場合、確認中に本文が変わっていたら (確認した範囲が無効になるので) 取りやめる。
+      if (!planned.exact && live.current !== before.current) return "cancelled";
+      const target = planned.exact ? locateApplyTarget(live.current, req.sql, req.range) : planned;
+      // 確認なしで進めるつもりだった範囲が確認中に変わっていたら、書き換えずに取りやめる。
+      if (planned.exact && !target.exact) return "cancelled";
+      const text = sqlForApply(newSql, target, live.current);
+      if (live.visible && live.editor) {
+        live.editor.replaceRange(target.from, target.to, text);
+      } else {
+        updateTab(req.tabId, {
+          sql: live.current.slice(0, target.from) + text + live.current.slice(target.to),
+        });
+      }
+      return "applied";
+    },
+    [confirm, tabSqlStore, updateTab, tabsRef, panesRef],
+  );
+
   // Always open history SQL in a fresh query tab, never overwriting the editor.
   const handleOpenHistoryInNewTab = useCallback((sql: string) => {
     addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
@@ -5442,10 +5583,21 @@ export default function App() {
     void previewQueryInTab(tab.id, stmts[0]);
   }, [sessionId, previewQueryInTab, selectedProfile?.driver]);
 
-  const applyEditsForTab = useCallback(async (tab: Tab) => {
-    if (!sessionId) return;
-    const { result, tableColumns, database, table, pendingEdits, paginatable, rowIdentity } = tab;
-    if (!result || !tableColumns || !database || !table) return;
+  /**
+   * 保留中の編集を一括適用する。`rowScope` (rowEditKey → 列 → 生の入力値) を渡すと、
+   * その行のセル編集だけを送り、ほかの保留編集・削除予定・新規行は保留のまま残す
+   * (行インスペクタからの適用、#1394)。戻り値は適用が完了したか (確認で止めた・
+   * 失敗した・送るものが無いときは false)。
+   */
+  const applyEditsForTab = useCallback(async (tab: Tab, rowScope?: PendingEdits): Promise<boolean> => {
+    if (!sessionId) return false;
+    const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
+    if (!result || !tableColumns || !database || !table) return false;
+    const scoped = rowScope !== undefined;
+    const pendingEdits: PendingEdits = scoped ? rowScope : tab.pendingEdits;
+    // 行スコープの適用では削除予定・新規行は送らず、保留のまま残す。
+    const pendingDeletes = scoped ? [] : (tab.pendingDeletes ?? []);
+    const pendingInserts = scoped ? [] : (tab.pendingInserts ?? []);
     const { indices: pkIndices, strategy: identityStrategy } = resolveRowIdentity(
       result.columns,
       tableColumns,
@@ -5461,15 +5613,15 @@ export default function App() {
     });
     const deletes = buildDeleteStatements({
       driver, database, table, columns: result.columns, rows: result.rows, pkIndices,
-      deleteKeys: new Set(tab.pendingDeletes ?? []),
+      deleteKeys: new Set(pendingDeletes),
     });
     const inserts = buildInsertStatements({
-      driver, database, table, columns: result.columns, inserts: tab.pendingInserts ?? [],
+      driver, database, table, columns: result.columns, inserts: pendingInserts,
     });
     const extraStatements = [...deletes, ...inserts];
     // 行ごとの操作数 (編集行 + 削除 + 新規)。確認文とステータスの件数表示に使う。
     const opCount = updateRowCount + extraStatements.length;
-    if (opCount === 0) return;
+    if (opCount === 0) return false;
     // 主キーが無く全列一致で行を識別しているとき (#849) は一意性を保証できない
     // ため、Apply 前に必ず警告する — 本番/confirm_writes の設定に関わらず、常に
     // このテーブル特有の安全網として機能する。表示中の行に実際に重複がある
@@ -5485,7 +5637,7 @@ export default function App() {
         confirmLabel: translate("editApplyButton"),
         tone: "warning",
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
     // 本番接続で書き込み承認 (confirm_writes) が有効なときは、通常のクエリ実行
     // ゲートと同じく、インライン編集の一括 Apply にも確認を要求する (#659)。
@@ -5501,7 +5653,7 @@ export default function App() {
         confirmLabel: translate("editApplyButton"),
         tone: "warning",
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
     const tabId = tab.id;
     patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
@@ -5535,14 +5687,14 @@ export default function App() {
         vars: { total: opCount, error: failure },
         error: true,
       });
-      return;
+      return false;
     }
     // 成功時はコミット済みの変更を、取得済みの結果行へその場で反映する。これにより
     // 編集セルが新しい値を表示し、ユーザのスクロール/ページ位置も保たれる。以前は
     // 常に 1 ページ目 (`LIMIT 既定件数`) を取り直していたため、2 ページ目以降や
     // 「さらに読み込む」で表示した行を編集すると、Apply 後に表示が先頭ページへ戻り、
     // 編集対象の行が消えたり編集前の値に見えたりしていた。
-    const hasInserts = (tab.pendingInserts ?? []).length > 0;
+    const hasInserts = pendingInserts.length > 0;
     if (hasInserts && paginatable) {
       // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
       // ここだけは再取得して反映する。
@@ -5558,34 +5710,8 @@ export default function App() {
         // ため、送信済みスナップショット (`pendingEdits`、この関数冒頭で捕捉) だけを
         // グリッドへ反映し pendingEdits から取り除く。それ以外の新規編集は pending
         // のまま保持する (#F2)。
-        if (!tt.result) {
-          return {
-            ...tt,
-            pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
-            editUndoStack: [],
-            editRedoStack: [],
-            preview: null,
-            pendingDeletes: [],
-            pendingInserts: [],
-          };
-        }
-        const nextRows = applyEditsToRows({
-          columns: tt.result.columns,
-          rows: tt.result.rows,
-          pkIndices,
-          edits: pendingEdits,
-          deleteKeys: new Set(tt.pendingDeletes ?? []),
-        });
-        return {
-          ...tt,
-          result: { ...tt.result, rows: nextRows, rows_affected: nextRows.length },
-          pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
-          editUndoStack: [],
-          editRedoStack: [],
-          preview: null,
-          pendingDeletes: [],
-          pendingInserts: [],
-        };
+        // 状態遷移は純関数 `tabStateAfterApply` (editApplyState.ts) に任せる。
+        return { ...tabStateAfterApply(tt, { pkIndices, sent: pendingEdits, scoped }), preview: null };
       });
     }
     patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
@@ -5594,6 +5720,7 @@ export default function App() {
       key: "statusAppliedEdits",
       vars: { rows: totalAffected, count: opCount },
     });
+    return true;
   }, [
     sessionId,
     patchTab,
@@ -5873,9 +6000,10 @@ export default function App() {
   }, [sessionId, runQueryInTab, addTab]);
 
   // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
-  const openQueryInEditor = useCallback((sql: string, title?: string) => {
+  const openQueryInEditor = useCallback((sql: string, title?: string, database?: string) => {
     const tab: Tab = { ...makeQueryTab(), sql };
     if (title) tab.title = title;
+    if (database) tab.database = database;
     addTab(tab);
   }, [addTab]);
 
@@ -5888,6 +6016,14 @@ export default function App() {
     if (assertionDatabase) tab.database = assertionDatabase;
     addTab(tab);
   }, [addTab, assertionDatabase]);
+
+  // AI が生成した SQL (#691) を新しいクエリタブで開く。**実行はしない**。生成時にスキーマを
+  // 読んだデータベースを `tab.database` に載せ、別 DB の同名テーブルを叩かないようにする。
+  const handleOpenAiSql = useCallback((sql: string, database: string | null) => {
+    const tab: Tab = { ...makeQueryTab(), sql };
+    if (database) tab.database = database;
+    addTab(tab);
+  }, [addTab]);
 
   // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する。
   const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
@@ -7606,6 +7742,16 @@ export default function App() {
           keywords: "schema export ai markdown claude llm スキーマ 出力 エクスポート",
           run: () => setSchemaExportTarget(paletteDatabase),
         });
+        if (aiAvailable) {
+          items.push({
+            id: "nav:ai-schema-doc",
+            group: "navigation",
+            label: t("cmdkActionAiSchemaDoc"),
+            icon: "sparkles",
+            keywords: "ai schema document markdown documentation onboarding スキーマ ドキュメント 仕様書 AI",
+            run: () => setSchemaDocTarget({ database: paletteDatabase, tables: [] }),
+          });
+        }
       }
     }
     items.push(
@@ -7669,6 +7815,7 @@ export default function App() {
           sessionId,
           hasEditor: !!activeTab,
           explainTab: activeTab?.kind === "explain",
+          aiAvailable,
           openConnections: openConnections.map((c) => ({
             profileId: c.profile.id,
             name: c.profile.name,
@@ -7690,6 +7837,9 @@ export default function App() {
           // パレットが閉じてフォーカスを戻し終えてから移す (focusExplorer と同じ理由)。
           focusEditor: () =>
             requestAnimationFrame(() => requestAnimationFrame(() => activeEditor()?.focus())),
+          // パレットが閉じてフォーカスを戻し終えてからモーダルを開く (フォーカストラップ対策)。
+          openAiQuery: () => requestAnimationFrame(() => activeEditor()?.openAiQuery()),
+          aiSql: (kind) => requestAnimationFrame(() => activeEditor()?.requestAiSql(kind)),
           toggleActivity: () => requestAnimationFrame(() => toggleActivityCenter()),
           switchConnection: (profileId) => {
             const target = openConnectionsRef.current.find((c) => c.profile.id === profileId);
@@ -7862,6 +8012,7 @@ export default function App() {
     toggleSidebar,
     focusExplorer,
     handleOpenStructure,
+    aiAvailable,
   ]);
 
   // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
@@ -7959,7 +8110,7 @@ export default function App() {
   const paneActions = useStableCallbacks({
     applyEditsForTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
     explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
-    handleExploreColumns, handleNewTab, handleOpenSqlFile, handleRegisterLocalTable,
+    handleAiSqlAction, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,
@@ -8083,6 +8234,9 @@ export default function App() {
     // 折りたたみ時のパネルバーが SQLite 非対応 (プロセス / インスペクタ) を
     // 「無効 + 理由」で見せるために使う。開ける判定には影響しない。
     driver: sessionId ? (selectedProfile?.driver ?? null) : null,
+    // SQL の AI 解説タブ (#695) は AI 利用可で、解説 / 最適化の依頼があるときだけ開ける。
+    aiAvailable,
+    aiSqlTarget: !!aiSqlRequest,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
   // 閉じているときに `<main>` の下端へ常設するパネルバー。中核機能 (プロセスモニタ・
@@ -8118,7 +8272,9 @@ export default function App() {
                 ? t("structureTitle")
                 : tab === "timelapse"
                   ? t("timelapseTitle")
-                  : t("processTitle");
+                  : tab === "aiSql"
+                    ? t("aiSqlTitle")
+                    : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -8736,6 +8892,18 @@ export default function App() {
                         if (snip) openQueryInEditor(snip.sql, snip.name);
                       }}
                     />
+                  ) : activeBottomPanelTab === "aiSql" ? (
+                    <AiSqlPanel
+                      key={`${sessionId}:${aiSqlRequest?.id ?? 0}`}
+                      sessionId={sessionId}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      isProduction={selectedProfile?.is_production ?? false}
+                      request={aiSqlRequest}
+                      onRequestConsumed={() =>
+                        setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))
+                      }
+                      onApply={handleApplyAiSqlRewrite}
+                    />
                   ) : activeBottomPanelTab === "assertions" ? (
                     <AssertionsPanel
                       key={sessionId}
@@ -9059,6 +9227,9 @@ export default function App() {
               driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
               initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
               onOpenTable={handleOpenTable}
+              onGenerateDoc={
+                aiAvailable ? (database, tables) => setSchemaDocTarget({ database, tables }) : undefined
+              }
               onClose={() => setShowErd(false)}
             />
           </WorkspaceSurface>
@@ -9392,6 +9563,27 @@ export default function App() {
             </Flex>
           );
         })()}
+        {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時だけ出る。 */}
+        {!statusDismissed &&
+          status.kind !== "idle" &&
+          status.error &&
+          status.aiContext &&
+          sessionId &&
+          selectedProfile && (
+            <AiErrorExplain
+              key={`${status.aiContext.tabId}\u0000${status.aiContext.sql}\u0000${status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}`}
+              sessionId={sessionId}
+              driver={selectedProfile.driver}
+              isProduction={selectedProfile.is_production ?? false}
+              errorKind={status.errorKind ?? null}
+              message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
+              sql={status.aiContext.sql}
+              database={status.aiContext.database ?? activeTab?.database ?? selectedProfile.database ?? null}
+              onApply={(suggestedSql) =>
+                handleApplyAiSql(status.aiContext?.tabId ?? "", status.aiContext?.sql ?? "", suggestedSql)
+              }
+            />
+          )}
       </Flex>
 
       <Suspense fallback={null}>
@@ -9527,6 +9719,21 @@ export default function App() {
             database={scriptTarget}
             isProduction={selectedProfile?.is_production ?? false}
             onClose={() => setScriptTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {schemaDocTarget && sessionId && aiAvailable && (
+          <AiSchemaDocModal
+            key={schemaDocTarget.database}
+            sessionId={sessionId}
+            driver={selectedProfile?.driver ?? "mysql"}
+            database={schemaDocTarget.database}
+            profileName={selectedProfile?.name ?? ""}
+            isProduction={selectedProfile?.is_production ?? false}
+            initialTables={schemaDocTarget.tables}
+            onClose={() => setSchemaDocTarget(null)}
           />
         )}
       </AnimatePresence>
@@ -9854,6 +10061,19 @@ export default function App() {
             writeApproval={pendingDangerous.writeApproval}
             typedConfirmTarget={pendingDangerous.typedConfirmTarget}
             impact={pendingDangerous.impact}
+            aiContext={
+              sessionId && selectedProfile
+                ? {
+                    sessionId,
+                    driver: selectedProfile.driver,
+                    database:
+                      tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                      selectedProfile.database ??
+                      null,
+                    sql: pendingDangerous.sql,
+                  }
+                : null
+            }
             onConfirm={handleConfirmDangerous}
             onCancel={handleCancelDangerous}
           />

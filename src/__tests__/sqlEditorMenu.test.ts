@@ -108,3 +108,28 @@ describe("sqlEditorMenuSpec", () => {
     expect(find(base, "format")?.shortcutId).toBe("format");
   });
 });
+
+describe("sqlEditorMenuSpec: AI 解説 / 最適化案 (#695)", () => {
+  it("canAi のときだけ EXPLAIN の直後に 2 項目を出す", () => {
+    expect(actions({ ...base, canAi: true }).slice(0, 6)).toEqual([
+      "run",
+      "runStatement",
+      "preview",
+      "explain",
+      "aiExplain",
+      "aiRewrite",
+    ]);
+    expect(actions(base)).not.toContain("aiExplain");
+    expect(actions({ ...base, canAi: false })).not.toContain("aiRewrite");
+  });
+
+  it("EXPLAIN タブでは出さず、空本文 / 未接続では理由付きで無効", () => {
+    expect(actions({ ...base, canAi: true, explainMode: true })).not.toContain("aiExplain");
+    const empty = { ...base, canAi: true, hasContent: false };
+    expect(find(empty, "aiExplain")?.disabled).toBe(true);
+    expect(find(empty, "aiExplain")?.disabledReasonKey).toBe("editorHintEmpty");
+    const off = { ...base, canAi: true, disabled: true };
+    expect(find(off, "aiRewrite")?.disabledReasonKey).toBe("editorHintDisabled");
+  });
+});
+
