@@ -101,6 +101,8 @@ import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { AiErrorExplain } from "./components/AiErrorExplain";
 import { findSqlRange, sqlForRangeReplace } from "./ai/errorExplain";
+import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sqlAssist";
+import type { AiSqlRequest } from "./components/AiSqlPanel";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -165,6 +167,9 @@ const ScriptRunModal = lazy(() =>
 );
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
+);
+const AiSchemaDocModal = lazy(() =>
+  import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
 );
 const SchemaExportModal = lazy(() =>
   import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
@@ -266,6 +271,10 @@ const TableTimelapsePanel = lazy(() =>
 );
 const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
+);
+// SQL の AI 解説 / 最適化案 (#695)。ボトムパネルを開くまで読み込まない。
+const AiSqlPanel = lazy(() =>
+  import("./components/AiSqlPanel").then((m) => ({ default: m.AiSqlPanel })),
 );
 // データ品質アサーション (#742)。ボトムパネルを開くまで読み込まない。
 const AssertionsPanel = lazy(() =>
@@ -1228,6 +1237,9 @@ export default function App() {
   const [structureTarget, setStructureTarget] = useState<StructureTarget | null>(null);
   // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
   const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
+  // SQL の AI 解説 / 最適化案 (#695) の依頼。エディタの右クリック / パレットで埋まり、パネルが消費する。
+  const [aiSqlRequest, setAiSqlRequest] = useState<AiSqlRequest | null>(null);
+  const aiSqlSeqRef = useRef(0);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
   // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
   const [showUsers, setShowUsers] = useState(false);
@@ -1728,6 +1740,8 @@ export default function App() {
   const [scriptTarget, setScriptTarget] = useState<string | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
+  // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
+  const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む
@@ -5248,6 +5262,77 @@ export default function App() {
     [confirm, tabSqlStore, updateTab, tabsRef, panesRef],
   );
 
+  // 「この SQL を解説」「最適化案を提案」(#695): 選択範囲 (無ければ全文) と方言・DB をパネルへ渡し、
+  // ボトムパネルの AI 解説タブを開く。送信はパネルが (必要な確認のあとで) 自動で行う。
+  const handleAiSqlAction = useCallback((action: AiSqlEditorAction) => {
+    const tab = tabsRef.current.find((tt) => tt.id === action.tabId);
+    aiSqlSeqRef.current += 1;
+    setAiSqlRequest({
+      id: aiSqlSeqRef.current,
+      ...action,
+      database: tab?.database ?? selectedProfile?.database ?? null,
+      autoRun: true,
+    });
+    setBottomPanelTab("aiSql");
+  }, [tabsRef, selectedProfile?.database]);
+
+  // 別の接続へ切り替わったら、前の接続の依頼 (タブ ID・SQL) は捨てる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId の変化だけをトリガーにしたい
+  useEffect(() => {
+    setAiSqlRequest(null);
+  }, [sessionId]);
+
+  // リライト案 (#695) を依頼元のエディタへ適用する。実行はしない。表示中のタブは CodeMirror へ
+  // dispatch して undo 履歴に載せ、裏のタブは `tab.sql` を書き換える。起動時の範囲に元の SQL が
+  // そのまま残っていなければ、置き換える範囲を示して確認する。
+  const handleApplyAiSqlRewrite = useCallback(
+    async (req: AiSqlRequest, newSql: string): Promise<"applied" | "cancelled" | "closed"> => {
+      const locate = () => {
+        const tab = tabsRef.current.find((tt) => tt.id === req.tabId);
+        if (!tab) return null;
+        const pane = panesRef.current.find((p) => p.activeTabId === req.tabId && p.tabIds.includes(req.tabId));
+        const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+        const visible = pane !== undefined;
+        const current = visible ? (editor ? editor.getText() : "") : tabSqlStore.resolve(tab.id, tab.sql);
+        return { editor, visible, current };
+      };
+      const before = locate();
+      if (!before) return "closed";
+      // 表示中なのにエディタが未生成 / 空 (ビュー未準備) のときは何も書き換えない。
+      if (before.visible && (!before.editor || before.current === "")) return "cancelled";
+      const planned = locateApplyTarget(before.current, req.sql, req.range);
+      if (!planned.exact) {
+        const wholeDoc = planned.from === 0 && planned.to === before.current.length;
+        const ok = await confirm({
+          title: translate("aiSqlMovedTitle"),
+          message: translate(wholeDoc ? "aiSqlMovedAllBody" : "aiSqlMovedRangeBody"),
+          confirmLabel: translate("aiSqlMovedConfirm"),
+          tone: "warning",
+        });
+        if (!ok) return "cancelled";
+      }
+      // 確認ダイアログ中に編集された可能性があるので、現在の本文で範囲を取り直す。
+      const live = locate();
+      if (!live) return "closed";
+      if (live.visible && (!live.editor || live.current === "")) return "cancelled";
+      // 範囲がずれていて確認を取った場合、確認中に本文が変わっていたら (確認した範囲が無効になるので) 取りやめる。
+      if (!planned.exact && live.current !== before.current) return "cancelled";
+      const target = planned.exact ? locateApplyTarget(live.current, req.sql, req.range) : planned;
+      // 確認なしで進めるつもりだった範囲が確認中に変わっていたら、書き換えずに取りやめる。
+      if (planned.exact && !target.exact) return "cancelled";
+      const text = sqlForApply(newSql, target, live.current);
+      if (live.visible && live.editor) {
+        live.editor.replaceRange(target.from, target.to, text);
+      } else {
+        updateTab(req.tabId, {
+          sql: live.current.slice(0, target.from) + text + live.current.slice(target.to),
+        });
+      }
+      return "applied";
+    },
+    [confirm, tabSqlStore, updateTab, tabsRef, panesRef],
+  );
+
   // Always open history SQL in a fresh query tab, never overwriting the editor.
   const handleOpenHistoryInNewTab = useCallback((sql: string) => {
     addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
@@ -7657,6 +7742,16 @@ export default function App() {
           keywords: "schema export ai markdown claude llm スキーマ 出力 エクスポート",
           run: () => setSchemaExportTarget(paletteDatabase),
         });
+        if (aiAvailable) {
+          items.push({
+            id: "nav:ai-schema-doc",
+            group: "navigation",
+            label: t("cmdkActionAiSchemaDoc"),
+            icon: "sparkles",
+            keywords: "ai schema document markdown documentation onboarding スキーマ ドキュメント 仕様書 AI",
+            run: () => setSchemaDocTarget({ database: paletteDatabase, tables: [] }),
+          });
+        }
       }
     }
     items.push(
@@ -7744,6 +7839,7 @@ export default function App() {
             requestAnimationFrame(() => requestAnimationFrame(() => activeEditor()?.focus())),
           // パレットが閉じてフォーカスを戻し終えてからモーダルを開く (フォーカストラップ対策)。
           openAiQuery: () => requestAnimationFrame(() => activeEditor()?.openAiQuery()),
+          aiSql: (kind) => requestAnimationFrame(() => activeEditor()?.requestAiSql(kind)),
           toggleActivity: () => requestAnimationFrame(() => toggleActivityCenter()),
           switchConnection: (profileId) => {
             const target = openConnectionsRef.current.find((c) => c.profile.id === profileId);
@@ -8014,7 +8110,7 @@ export default function App() {
   const paneActions = useStableCallbacks({
     applyEditsForTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
     explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
-    handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
+    handleAiSqlAction, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,
@@ -8138,6 +8234,9 @@ export default function App() {
     // 折りたたみ時のパネルバーが SQLite 非対応 (プロセス / インスペクタ) を
     // 「無効 + 理由」で見せるために使う。開ける判定には影響しない。
     driver: sessionId ? (selectedProfile?.driver ?? null) : null,
+    // SQL の AI 解説タブ (#695) は AI 利用可で、解説 / 最適化の依頼があるときだけ開ける。
+    aiAvailable,
+    aiSqlTarget: !!aiSqlRequest,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
   // 閉じているときに `<main>` の下端へ常設するパネルバー。中核機能 (プロセスモニタ・
@@ -8173,7 +8272,9 @@ export default function App() {
                 ? t("structureTitle")
                 : tab === "timelapse"
                   ? t("timelapseTitle")
-                  : t("processTitle");
+                  : tab === "aiSql"
+                    ? t("aiSqlTitle")
+                    : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -8791,6 +8892,18 @@ export default function App() {
                         if (snip) openQueryInEditor(snip.sql, snip.name);
                       }}
                     />
+                  ) : activeBottomPanelTab === "aiSql" ? (
+                    <AiSqlPanel
+                      key={`${sessionId}:${aiSqlRequest?.id ?? 0}`}
+                      sessionId={sessionId}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      isProduction={selectedProfile?.is_production ?? false}
+                      request={aiSqlRequest}
+                      onRequestConsumed={() =>
+                        setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))
+                      }
+                      onApply={handleApplyAiSqlRewrite}
+                    />
                   ) : activeBottomPanelTab === "assertions" ? (
                     <AssertionsPanel
                       key={sessionId}
@@ -9114,6 +9227,9 @@ export default function App() {
               driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
               initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
               onOpenTable={handleOpenTable}
+              onGenerateDoc={
+                aiAvailable ? (database, tables) => setSchemaDocTarget({ database, tables }) : undefined
+              }
               onClose={() => setShowErd(false)}
             />
           </WorkspaceSurface>
@@ -9603,6 +9719,21 @@ export default function App() {
             database={scriptTarget}
             isProduction={selectedProfile?.is_production ?? false}
             onClose={() => setScriptTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {schemaDocTarget && sessionId && aiAvailable && (
+          <AiSchemaDocModal
+            key={schemaDocTarget.database}
+            sessionId={sessionId}
+            driver={selectedProfile?.driver ?? "mysql"}
+            database={schemaDocTarget.database}
+            profileName={selectedProfile?.name ?? ""}
+            isProduction={selectedProfile?.is_production ?? false}
+            initialTables={schemaDocTarget.tables}
+            onClose={() => setSchemaDocTarget(null)}
           />
         )}
       </AnimatePresence>
