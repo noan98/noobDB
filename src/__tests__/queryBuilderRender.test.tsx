@@ -131,6 +131,24 @@ describe("QueryBuilder no-WHERE band (改善 3)", () => {
   });
 });
 
+/**
+ * 有効になった「全カラムを追加」ボタンを返す。
+ *
+ * このボタンは列 (listDatabases → listTables → describeTable の 3 段の非同期取得) が
+ * 届くまで無効で、無効の間だけ Tooltip の `focusableWrapper` (フォーカス可能な
+ * `<span>` 包み) の中に置かれる。列が届くと包みが外れて `<button>` が別の DOM ノードに
+ * 作り直されるため、列の到着前に `findByRole` で掴んだ参照は document から切り離され、
+ * 無効のまま二度と変わらない (負荷で列の到着が遅れた CI でだけ落ちていた原因)。
+ * そのため「有効なボタンが document にある」ことを、毎回取り直しながら待つ。
+ */
+async function findEnabledAddAllButton(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const btn = screen.getByRole("button", { name: t("qbAddAllColumns") });
+    expect(btn).toBeEnabled();
+    return btn;
+  });
+}
+
 describe("QueryBuilder INSERT full column expansion + required marks", () => {
   it("expands all non-auto-generated columns via '全カラムを追加' and marks required ones", async () => {
     renderWithProviders(
@@ -138,10 +156,7 @@ describe("QueryBuilder INSERT full column expansion + required marks", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "INSERT" }));
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
-    const addAllBtn = await screen.findByRole("button", { name: t("qbAddAllColumns") });
-    // 列は listDatabases → listTables → describeTable の 3 段の非同期取得の後に入る。
-    // CI のカバレッジ計測下では既定の 1 秒に間に合わないことがあるため余裕を持たせる。
-    await waitFor(() => expect(addAllBtn).not.toBeDisabled(), { timeout: 5000 });
+    const addAllBtn = await findEnabledAddAllButton();
     fireEvent.click(addAllBtn);
 
     expect(screen.getByDisplayValue("id")).toBeInTheDocument();
@@ -151,9 +166,7 @@ describe("QueryBuilder INSERT full column expansion + required marks", () => {
     // `id` と `active` は NOT NULL かつ default なし (auto_increment でもない) の
     // 必須カラム。`name` は nullable なので必須マークは付かない — 2 件のみ。
     expect(screen.getAllByLabelText(t("qbRequiredColumn"))).toHaveLength(2);
-    // 上の waitFor (5 秒) がテスト既定の制限時間 (5 秒) と同じだと、負荷の高い CI では
-    // waitFor が終わる前にテストごと打ち切られる。待ち時間より長い制限時間を与える。
-  }, 15_000);
+  });
 
   it("preserves an already-entered value for a column that gets expanded", async () => {
     renderWithProviders(
@@ -164,14 +177,11 @@ describe("QueryBuilder INSERT full column expansion + required marks", () => {
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "name" } });
     fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "Alice" } });
 
-    const addAllBtn = await screen.findByRole("button", { name: t("qbAddAllColumns") });
-    // 列は listDatabases → listTables → describeTable の 3 段の非同期取得の後に入る。
-    // CI のカバレッジ計測下では既定の 1 秒に間に合わないことがあるため余裕を持たせる。
-    await waitFor(() => expect(addAllBtn).not.toBeDisabled(), { timeout: 5000 });
+    const addAllBtn = await findEnabledAddAllButton();
     fireEvent.click(addAllBtn);
 
     expect(screen.getByDisplayValue("Alice")).toBeInTheDocument();
-  }, 15_000);
+  });
 });
 
 describe("QueryBuilder insert into editor", () => {

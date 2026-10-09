@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -48,10 +48,15 @@ describe("SettingsView render smoke (#604)", () => {
   it("invokes onClose when the close control is activated", async () => {
     const onClose = vi.fn();
     renderWithProviders(<SettingsView theme="dark" onClose={onClose} />);
-    await waitFor(() =>
-      expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: t("settingsClose") }));
+    // 閉じるボタンは `ModalHeader` でタイトル (見出し) と並んでいるので、見出しの親
+    // (= ヘッダ) に絞って探す。設定画面には 140 個を超えるボタンがあり、画面全体へ
+    // `getByRole("button", { name })` を投げると jsdom ではボタンごとに祖先の
+    // getComputedStyle を辿る可視性判定が走って 1 回で約 0.8 秒かかる。負荷のある CI
+    // ではそれだけでテストの制限時間 (5 秒) を使い切っていた。
+    const heading = await screen.findByRole("heading", { name: t("settingsTitle") });
+    const header = heading.parentElement;
+    if (!header) throw new Error("settings modal header not found");
+    fireEvent.click(within(header).getByRole("button", { name: t("settingsClose") }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
