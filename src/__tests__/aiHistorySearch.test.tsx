@@ -270,3 +270,14 @@ describe("AiHistorySearch (#699)", () => {
     await screen.findByText(t("aiHistoryError", { message: "boom" }));
   });
 });
+
+describe("AiHistorySearch 候補 0 件 (#699)", () => {
+  it("SQL 全文を 1 件も取得できなければ送信せず案内を出す", async () => {
+    getHistorySql.mockRejectedValue(new Error("gone"));
+    renderWithProviders(<AiHistorySearch entries={[entry(1)]} periodLabel="All time" onOpen={onOpen} />);
+    await typeAndSearch();
+    await confirmSend();
+    await screen.findByText(t("aiHistoryNoCandidates"));
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+});

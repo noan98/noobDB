@@ -44,6 +44,7 @@ type Mode = "search" | "summary";
 
 type State =
   | { kind: "idle" }
+  | { kind: "empty" }
   | { kind: "running"; sends: string }
   | { kind: "matches"; sends: string; matches: HistorySearchMatch[]; notes: string[] }
   | { kind: "summary"; sends: string; text: string; notes: string[] }
@@ -147,7 +148,7 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
       busyRef.current = false;
     };
     if (limited.length === 0) {
-      setState({ kind: "idle" });
+      setState({ kind: "empty" });
       return abort();
     }
     const connName = (e: HistoryEntry) =>
@@ -231,7 +232,7 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
     const formatted: FormattedCandidates = formatCandidates(candidates, ai.maskLiterals);
     if (formatted.included.length === 0) {
       busyRef.current = false;
-      setState({ kind: "idle" });
+      setState({ kind: "empty" });
       return;
     }
     if (formatted.truncated && !overflow) notes.push(t("aiHistoryTruncated"));
@@ -385,7 +386,12 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
           {t("aiHistoryOverflow", { total: entries.length, max: HISTORY_SEARCH_MAX_CANDIDATES })}
         </Callout>
       )}
-      {state.kind !== "idle" && state.sends !== "" && (
+      {state.kind === "empty" && (
+        <Callout tone="info" role="status">
+          {t("aiHistoryNoCandidates")}
+        </Callout>
+      )}
+      {state.kind !== "idle" && state.kind !== "empty" && state.sends !== "" && (
         <chakra.span color="app.textMuted" fontSize="xs">
           {state.sends}
         </chakra.span>
