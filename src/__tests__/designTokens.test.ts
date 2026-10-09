@@ -150,6 +150,25 @@ describe("design tokens: タイポグラフィ", () => {
     ).toEqual([]);
   });
 
+  it("ディスプレイ用タイプスケール (2xl / 3xl) は第一印象面のファイルだけで使う (#1214)", () => {
+    const allowed = new Set([
+      "../components/WelcomeView.tsx",
+      "../components/ProfileCardGrid.tsx",
+      "../components/SplashScreen.tsx",
+      "../theme.ts",
+    ]);
+    const offenders = findViolations(
+      /\bfontSize(?:=\{?|\s*:\s*)"(?:2xl|3xl)"|var\(--text-(?:2xl|3xl)\)/,
+      () => true,
+      (path) => !allowed.has(path),
+    );
+    expect(
+      offenders,
+      "2xl / 3xl はウェルカム / プロファイル一覧 / スプラッシュの見出し専用。" +
+        "密なグリッド・ツールバー・モーダルには使わない。",
+    ).toEqual([]);
+  });
+
   it("スタイルオブジェクトの fontSize も px 直値を使わない", () => {
     const offenders = findViolations(/\bfontSize\s*:\s*"[^"]*[0-9](?:px|pt)/, () => true);
     expect(
