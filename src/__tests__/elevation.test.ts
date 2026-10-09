@@ -3,6 +3,8 @@ import css from "../App.css?raw";
 import modalSrc from "../components/Modal.tsx?raw";
 import ctxSrc from "../components/ContextMenu.tsx?raw";
 import toastSrc from "../components/Toast.tsx?raw";
+import statTileSrc from "../components/StatTile.tsx?raw";
+import serverMetricsSrc from "../components/ServerMetricsPanel.tsx?raw";
 
 /**
  * エレベーション/レイヤリング体系の回帰テスト。z-index スケールの順序と
@@ -56,5 +58,17 @@ describe("overlays reference layering tokens, not magic numbers (#500)", () => {
   it("Toast uses the toast layer token", () => {
     expect(toastSrc).toMatch(/zIndex="toast"/);
     expect(toastSrc).not.toMatch(/zIndex=\{2000\}/);
+  });
+});
+
+describe("コンテンツカードの静止エレベーション (#1239)", () => {
+  it("--elevation-raised は --shadow-sm と同値で、可視化ノードの影と質感が揃う", () => {
+    expect(root).toMatch(/--elevation-raised:\s*var\(--shadow-sm\)/);
+  });
+  it("StatTile と ServerMetricsPanel のカードは elevationRaised を持ち、border も併用する", () => {
+    for (const src of [statTileSrc, serverMetricsSrc]) {
+      expect(src).toMatch(/shadow="elevationRaised"/);
+      expect(src).toMatch(/borderColor="app\.border"/);
+    }
   });
 });

@@ -145,7 +145,14 @@ function MetricChart({
   const yAt = (v: number) => PAD.top + PLOT_H - (v / yTop) * PLOT_H;
 
   return (
-    <Box borderWidth="1px" borderColor="app.border" borderRadius="md" p="3" bg="app.surface">
+    <Box
+      borderWidth="1px"
+      borderColor="app.border"
+      borderRadius="md"
+      p="3"
+      bg="app.surface"
+      shadow="elevationRaised"
+    >
       <Flex align="baseline" justify="space-between" gap="2" mb="1.5" flexWrap="wrap">
         <Heading as="h3" role="subheading">
           {t(def.titleKey)}
