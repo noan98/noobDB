@@ -145,6 +145,7 @@ export interface PaneActions {
   handleEditorDocChange: (tabId: string, doc: { toString(): string }) => void;
   handleExploreColumns: (database: string, table: string, column?: string | null) => void;
   handleNewTab: (paneId?: string) => void;
+  handleOpenAiSql: (sql: string, database: string | null) => void;
   handleOpenSqlFile: () => unknown;
   handleRegisterLocalTable: (result: QueryResult, sourceSql: string) => void;
   handleSaveSnippetFromEditor: (sql: string) => void;
@@ -553,6 +554,8 @@ export const PaneView = memo(
                     actions.updateTab(tab.id, { builderSnapshot: snapshot }),
                   )}
                   readOnly={readOnly}
+                  isProduction={selectedProfile?.is_production ?? false}
+                  onOpenSqlInNewTab={actions.handleOpenAiSql}
                   emergencyMode={emergencyMode}
                   onToggleEmergencyMode={onToggleEmergencyMode}
                   queryHistory={queryHistory}
