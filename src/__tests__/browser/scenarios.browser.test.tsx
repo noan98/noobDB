@@ -926,7 +926,13 @@ describe("シナリオ: 未確定のセル編集があるタブを閉じる (#13
       .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
       .toBeVisible();
 
-    // 改めて閉じて OK すると、タブが閉じる。
+    // 改めて閉じて OK すると、タブが閉じる。前の確認ダイアログの退場アニメと
+    // フォーカス返却が終わる前に次を開くと、返却されたフォーカスが新しいダイアログの
+    // 外側操作とみなされて閉じられるため、ダイアログが消えフォーカスが戻るのを待つ。
+    await vi.waitFor(() => {
+      if (document.querySelector("[role=dialog],[role=alertdialog]")) throw new Error("previous dialog still mounted");
+      if (document.activeElement === document.body) throw new Error("focus not restored yet");
+    }, { timeout: 5000 });
     await userEvent.keyboard("{Control>}w{/Control}");
     await screen.getByRole("button", { name: t("tabCloseDiscardAction") }).click();
     await expect
