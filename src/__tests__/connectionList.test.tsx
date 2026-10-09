@@ -340,6 +340,7 @@ describe("Database Explorer の階層 (#1112)", () => {
     fireEvent.pointerDown(colRow);
     expect(seen).not.toHaveBeenCalled();
     fireEvent.pointerDown(screen.getByText("tbl1").closest("[role=tree], body") as HTMLElement);
+    expect(seen).toHaveBeenCalledTimes(1);
     document.body.removeEventListener("pointerdown", seen);
     fireEvent.dragStart(colRow, { dataTransfer: { setData: setData2 } });
     expect(setData2).toHaveBeenCalledWith(SCHEMA_DRAG_MIME, expect.stringContaining('"column":"id"'));
