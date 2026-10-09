@@ -15,7 +15,7 @@ import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
 import { isEditableObjectKind, supportsRoutineEditing, type EditableObjectKind } from "./routineMaintenance";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
-import { useTabOpenFlightFor } from "../sharedElement";
+import { beginTabOpenFlight, useTabOpenFlightFor } from "../sharedElement";
 import { FlightIcon } from "./FlightIcon";
 import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
@@ -1025,7 +1025,11 @@ const TableNode = memo(function TableNode({
       aria-current={isActiveTable ? "true" : undefined}
       position={isActiveTable ? "relative" : undefined}
       bg={isActiveTable ? "var(--bg-active)" : undefined}
-      onDoubleClick={() => actions.pickTable(db, tbl)}
+      onDoubleClick={() => {
+        // ダブルクリックで開くときだけ、行のアイコンが新規タブへ morph する (#1415)。
+        beginTabOpenFlight(db, tbl);
+        actions.pickTable(db, tbl);
+      }}
       onContextMenu={openMenu}
       {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
       _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}

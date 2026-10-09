@@ -33,7 +33,13 @@ export function tabOpenFlightId(database: string, table: string): string {
  * (`transitions.enter`) と layout の移動 (`transitions.emphasized` = `durations.med`)
  * を余裕を持って覆う長さ。新しい duration は足さず既存トークンから導く。
  */
-export const TAB_OPEN_FLIGHT_MS = Math.round((durations.med + durations.slow) * 1000);
+export const TAB_OPEN_FLIGHT_MS = Math.round((durations.med + durations.fast) * 1000);
+
+/**
+ * タブが現れないまま (IPC のハング・既存タブの再選択など) ID が残り続けないための保険。
+ * `begin` が張り、`end` が張り直す。
+ */
+export const TAB_OPEN_FLIGHT_MAX_MS = Math.round(durations.slow * 1000 * 10);
 
 let current: string | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -48,12 +54,21 @@ function emit(next: string | null) {
 /** 新規テーブルタブを開く直前に呼ぶ。起点行のアイコンに layoutId が付く。 */
 export function beginTabOpenFlight(database: string, table: string): void {
   if (timer) clearTimeout(timer);
-  timer = null;
+  timer = setTimeout(() => {
+    timer = null;
+    emit(null);
+  }, TAB_OPEN_FLIGHT_MAX_MS);
   emit(tabOpenFlightId(database, table));
 }
 
-/** タブが追加されたあとに呼ぶ。morph の尺だけ待ってから ID を外す。失敗時も `force` で即解除できる。 */
-export function endTabOpenFlight(force = false): void {
+/**
+ * タブが追加されたあと (または開かないと分かったとき) に呼ぶ。`id` が現在の飛行と
+ * 一致するときだけ作用し、連続して開いた別テーブルの飛行を巻き込まない。
+ * 通常は morph の尺だけ待ってから外し、`force` なら即時に外す。
+ * (IPC がハングした場合は `begin` が張った保険のタイマーで外れる。)
+ */
+export function endTabOpenFlight(id: string, force = false): void {
+  if (current !== id) return;
   if (timer) clearTimeout(timer);
   if (force) {
     timer = null;

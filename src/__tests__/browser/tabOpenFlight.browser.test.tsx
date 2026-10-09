@@ -44,7 +44,10 @@ async function frame() {
 }
 
 /** タブ生成の直後から約 0.5 秒、毎フレームのアイコン top を記録する。 */
+let originOpacities: number[] = [];
+
 async function openTab(): Promise<number[]> {
+  originOpacities = [];
   beginTabOpenFlight("appdb", "users");
   await frame();
   (document.querySelector('[data-testid="open"]') as HTMLElement).click();
@@ -54,6 +57,8 @@ async function openTab(): Promise<number[]> {
     await frame();
     const el = tabIcon();
     if (el) tops.push(el.getBoundingClientRect().top);
+    const o = document.querySelector('[data-testid="origin"] svg')?.parentElement;
+    if (o) originOpacities.push(Number(getComputedStyle(o).opacity));
   }
   return tops;
 }
@@ -83,6 +88,8 @@ describe("新規タブ生成の shared-element morph (#1415, 実ブラウザ)", 
     const tops = await openTab();
     const final = tops[tops.length - 1];
     expect(Math.max(...tops) - final).toBeLessThan(2);
+    // 共有 layoutId のクロスフェードも走らせない: 飛行中も起点は消えない。
+    expect(Math.min(...originOpacities)).toBe(1);
   });
 
   it("飛行が終わったあと、起点アイコンは不透明に戻る", async () => {

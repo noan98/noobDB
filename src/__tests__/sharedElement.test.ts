@@ -5,6 +5,7 @@ import {
   beginTabOpenFlight,
   endTabOpenFlight,
   resetTabOpenFlightForTest,
+  TAB_OPEN_FLIGHT_MAX_MS,
   TAB_OPEN_FLIGHT_MS,
   tabOpenFlightId,
   useTabOpenFlight,
@@ -34,7 +35,7 @@ describe("tab open flight (#1415)", () => {
     expect(orders.result.current).toBeNull();
     expect(any.result.current).toBe(tabOpenFlightId("appdb", "users"));
 
-    act(() => endTabOpenFlight());
+    act(() => endTabOpenFlight(tabOpenFlightId("appdb", "users")));
     expect(users.result.current).not.toBeNull();
     act(() => {
       vi.advanceTimersByTime(TAB_OPEN_FLIGHT_MS);
@@ -42,10 +43,28 @@ describe("tab open flight (#1415)", () => {
     expect(users.result.current).toBeNull();
   });
 
+  it("別テーブルの飛行を始めたあと、古い飛行の end は作用しない", () => {
+    const h = renderHook(() => useTabOpenFlight());
+    act(() => beginTabOpenFlight("appdb", "users"));
+    act(() => beginTabOpenFlight("appdb", "orders"));
+    act(() => endTabOpenFlight(tabOpenFlightId("appdb", "users"), true));
+    expect(h.result.current).toBe(tabOpenFlightId("appdb", "orders"));
+  });
+
+  it("end が呼ばれなくても保険のタイマーで外れる", () => {
+    vi.useFakeTimers();
+    const h = renderHook(() => useTabOpenFlight());
+    act(() => beginTabOpenFlight("appdb", "users"));
+    act(() => {
+      vi.advanceTimersByTime(TAB_OPEN_FLIGHT_MAX_MS);
+    });
+    expect(h.result.current).toBeNull();
+  });
+
   it("force で即時に解除できる", () => {
     const h = renderHook(() => useTabOpenFlight());
     act(() => beginTabOpenFlight("appdb", "users"));
-    act(() => endTabOpenFlight(true));
+    act(() => endTabOpenFlight(tabOpenFlightId("appdb", "users"), true));
     expect(h.result.current).toBeNull();
   });
 });
