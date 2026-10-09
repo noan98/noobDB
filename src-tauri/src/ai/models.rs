@@ -80,11 +80,44 @@ impl AiEffort {
 pub enum AiTaskKind {
     ConnectionTest,
     Generic,
+    /// DB エラーの AI 解説と修正提案 (#692)。
+    ErrorExplain,
+    /// 自然言語から SQL 生成。
+    Nl2sql,
+    /// 実行計画の解釈。
+    ExplainInterpret,
+    /// 危険クエリの影響分析。
+    ImpactAnalysis,
+    /// SQL の解説。
+    SqlExplain,
+    /// SQL の最適化リライト。
+    SqlRewrite,
+    /// スキーマドキュメント生成。
+    SchemaDoc,
+    /// 同期 SQL のリスク要約。
+    SyncRisk,
+    /// テストデータ生成。
+    TestData,
+    /// 履歴の自然言語検索。
+    HistorySearch,
 }
 
 impl AiTaskKind {
     #[cfg(test)]
-    pub const ALL: [AiTaskKind; 2] = [AiTaskKind::ConnectionTest, AiTaskKind::Generic];
+    pub const ALL: [AiTaskKind; 12] = [
+        AiTaskKind::ConnectionTest,
+        AiTaskKind::Generic,
+        AiTaskKind::ErrorExplain,
+        AiTaskKind::Nl2sql,
+        AiTaskKind::ExplainInterpret,
+        AiTaskKind::ImpactAnalysis,
+        AiTaskKind::SqlExplain,
+        AiTaskKind::SqlRewrite,
+        AiTaskKind::SchemaDoc,
+        AiTaskKind::SyncRisk,
+        AiTaskKind::TestData,
+        AiTaskKind::HistorySearch,
+    ];
 
     /// このタスク種別の推奨モデル (設定で上書きされない場合の目安。UI の「(推奨)」表示用)。
     // 推奨モデルの表の単一ソース。UI の「(推奨)」表示はフロント `AI_TASK_DEFS` が持ち、
@@ -92,7 +125,18 @@ impl AiTaskKind {
     #[allow(dead_code)]
     pub fn recommended_model(self) -> AiModel {
         match self {
-            AiTaskKind::ConnectionTest | AiTaskKind::Generic => AiModel::Opus55,
+            AiTaskKind::ConnectionTest => AiModel::Opus55,
+            AiTaskKind::Generic => AiModel::Opus55,
+            AiTaskKind::ErrorExplain => AiModel::Opus55,
+            AiTaskKind::Nl2sql => AiModel::Opus55,
+            AiTaskKind::ExplainInterpret => AiModel::Opus55,
+            AiTaskKind::ImpactAnalysis => AiModel::Opus55,
+            AiTaskKind::SqlExplain => AiModel::Opus55,
+            AiTaskKind::SqlRewrite => AiModel::Opus55,
+            AiTaskKind::SchemaDoc => AiModel::Opus55,
+            AiTaskKind::SyncRisk => AiModel::Opus55,
+            AiTaskKind::TestData => AiModel::Opus55,
+            AiTaskKind::HistorySearch => AiModel::Opus55,
         }
     }
 
@@ -101,6 +145,16 @@ impl AiTaskKind {
         match self {
             AiTaskKind::ConnectionTest => AiEffort::Low,
             AiTaskKind::Generic => AiEffort::Medium,
+            AiTaskKind::ErrorExplain => AiEffort::Low,
+            AiTaskKind::Nl2sql => AiEffort::High,
+            AiTaskKind::ExplainInterpret => AiEffort::High,
+            AiTaskKind::ImpactAnalysis => AiEffort::High,
+            AiTaskKind::SqlExplain => AiEffort::Medium,
+            AiTaskKind::SqlRewrite => AiEffort::High,
+            AiTaskKind::SchemaDoc => AiEffort::Medium,
+            AiTaskKind::SyncRisk => AiEffort::High,
+            AiTaskKind::TestData => AiEffort::Medium,
+            AiTaskKind::HistorySearch => AiEffort::Low,
         }
     }
 }

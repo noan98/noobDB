@@ -36,6 +36,11 @@ export const aiCommands = {
     system?: string | null;
     prompt: string;
     settings: AiSettingsSnapshot;
+    /**
+     * 構造化出力 (`output_config.format`)。`{ type: "json_schema", schema }` の形で、
+     * 省略すると通常のテキスト応答。
+     */
+    format?: { type: "json_schema"; schema: Record<string, unknown> } | null;
   }) =>
     invoke<void>("run_ai_request", {
       streamId: params.streamId,
@@ -43,5 +48,6 @@ export const aiCommands = {
       system: params.system ?? null,
       prompt: params.prompt,
       settings: params.settings,
+      format: params.format ?? null,
     }),
 };

@@ -34,7 +34,7 @@ describe("AI 定義の Rust ⇔ フロント パリティ (#690)", () => {
 
   it("タスク種別が一致する", () => {
     const body = modelsRs.slice(modelsRs.indexOf("pub enum AiTaskKind"));
-    const variants = [...body.slice(0, body.indexOf("}")).matchAll(/^\s+([A-Z][A-Za-z]+),$/gm)].map(
+    const variants = [...body.slice(0, body.indexOf("}")).matchAll(/^\s+([A-Z][A-Za-z0-9]+),$/gm)].map(
       (m) => m[1][0].toLowerCase() + m[1].slice(1),
     );
     expect(variants).toEqual([...AI_TASK_KINDS]);

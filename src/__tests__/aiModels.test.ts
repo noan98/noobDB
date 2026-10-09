@@ -65,8 +65,11 @@ describe("AI 設定の正規化 (#690)", () => {
     expect(DEFAULT_AI_SETTINGS.allowRowData).toBe(false);
     expect(DEFAULT_AI_SETTINGS.sendScope).toBe("schemaOnly");
     expect(DEFAULT_AI_SETTINGS.defaultModel).toBe("claude-opus-5-5");
-    expect(DEFAULT_AI_SETTINGS.taskModels).toEqual({ connectionTest: null, generic: null });
-    expect(DEFAULT_AI_SETTINGS.taskEfforts).toEqual({ connectionTest: null, generic: null });
+    expect(DEFAULT_AI_SETTINGS.maskLiterals).toBe(true);
+    for (const k of AI_TASK_KINDS) {
+      expect(DEFAULT_AI_SETTINGS.taskModels[k]).toBeNull();
+      expect(DEFAULT_AI_SETTINGS.taskEfforts[k]).toBeNull();
+    }
   });
 
   it("不正値は既定へ丸める", () => {
@@ -80,10 +83,14 @@ describe("AI 設定の正規化 (#690)", () => {
     });
     expect(s.enabled).toBe(false);
     expect(s.defaultModel).toBe("claude-opus-5-5");
-    expect(s.taskModels).toEqual({ connectionTest: "claude-haiku-5-5", generic: null });
-    expect(s.taskEfforts).toEqual({ connectionTest: null, generic: "max" });
+    expect(s.taskModels.connectionTest).toBe("claude-haiku-5-5");
+    expect(s.taskModels.generic).toBeNull();
+    expect(s.taskEfforts.connectionTest).toBeNull();
+    expect(s.taskEfforts.generic).toBe("max");
     expect(s.sendScope).toBe("schemaOnly");
     expect(s.allowRowData).toBe(false);
+    expect(s.maskLiterals).toBe(true);
+    expect(sanitizeAiSettings({ maskLiterals: false }).maskLiterals).toBe(false);
   });
 
   it("有効な値は保たれ、Settings 全体の normalize も通る", () => {

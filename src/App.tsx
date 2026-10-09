@@ -99,6 +99,8 @@ import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
+import { AiErrorExplain } from "./components/AiErrorExplain";
+import { findSqlRange, sqlForRangeReplace } from "./ai/errorExplain";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -3928,7 +3930,13 @@ export default function App() {
             error: true,
           });
         } else {
-          setStatus({ kind: "key", key: "statusQueryError", vars: { error }, error: true });
+          setStatus({
+            kind: "key",
+            key: "statusQueryError",
+            vars: { error },
+            error: true,
+            aiContext: { tabId, sql, database: tab?.database ?? null },
+          });
         }
       },
     });
@@ -3973,7 +3981,14 @@ export default function App() {
     } catch (e) {
       flusher.flushNow();
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+        errorKind: errorKindOf(e),
+        aiContext: { tabId, sql, database: tab?.database ?? null },
+      });
       if (!autoRefresh) {
         recordOutput(
           { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
@@ -4778,10 +4793,17 @@ export default function App() {
       );
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+        errorKind: errorKindOf(e),
+        aiContext: { tabId, sql, database: tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null },
+      });
       recordOutput({ sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, null);
     }
-  }, [sessionId, patchTab, recordOutput]);
+  }, [sessionId, patchTab, recordOutput, tabsRef]);
 
   // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
@@ -5165,6 +5187,57 @@ export default function App() {
       addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
     }
   }, [activeTab, sessionId, activeEditor, addTab]);
+
+  // AI の修正 SQL 案 (#692) を、失敗したタブのエディタへ反映する。実行はしない。
+  // 表示中ならエディタ (CodeMirror) へ dispatch して undo 履歴に載せ、裏のタブなら
+  // `tab.sql` を書き換える。失敗した SQL が本文中でちょうど 1 箇所見つかればその範囲だけ、
+  // そうでなければ確認のうえ全文を置き換える。
+  const handleApplyAiSql = useCallback(
+    async (tabId: string, failedSql: string, newSql: string): Promise<"applied" | "cancelled" | "closed"> => {
+      // 対象タブの現在の状態を引く。確認ダイアログ中にペインの表示タブが変わりうるので、
+      // await の前後で毎回取り直す。
+      const locate = () => {
+        const tab = tabsRef.current.find((tt) => tt.id === tabId);
+        if (!tab) return null;
+        const pane = panesRef.current.find((p) => p.activeTabId === tabId && p.tabIds.includes(tabId));
+        const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+        const visible = pane !== undefined;
+        const current = visible ? (editor ? editor.getText() : "") : tabSqlStore.resolve(tab.id, tab.sql);
+        return { tab, editor, visible, current };
+      };
+      const before = locate();
+      if (!before) return "closed";
+      // 表示中なのにエディタが未生成 / 空 (ビュー未準備) のときは何も書き換えない。
+      if (before.visible && (!before.editor || before.current === "")) return "cancelled";
+      let confirmedReplaceAll = false;
+      if (!findSqlRange(before.current, failedSql)) {
+        const ok = await confirm({
+          title: translate("aiErrorExplainReplaceAllTitle"),
+          message: translate("aiErrorExplainReplaceAllBody"),
+          confirmLabel: translate("aiErrorExplainReplaceAllConfirm"),
+          tone: "warning",
+        });
+        if (!ok) return "cancelled";
+        confirmedReplaceAll = true;
+      }
+      const live = locate();
+      if (!live) return "closed";
+      if (live.visible && (!live.editor || (!confirmedReplaceAll && live.current === ""))) return "cancelled";
+      const range = confirmedReplaceAll ? null : findSqlRange(live.current, failedSql);
+      if (!confirmedReplaceAll && !range) return "cancelled";
+      if (live.visible && live.editor) {
+        if (range) live.editor.replaceRange(range.from, range.to, sqlForRangeReplace(newSql));
+        else live.editor.setText(newSql);
+      } else {
+        const next = range
+          ? live.current.slice(0, range.from) + sqlForRangeReplace(newSql) + live.current.slice(range.to)
+          : newSql;
+        updateTab(tabId, { sql: next });
+      }
+      return "applied";
+    },
+    [confirm, tabSqlStore, updateTab, tabsRef, panesRef],
+  );
 
   // Always open history SQL in a fresh query tab, never overwriting the editor.
   const handleOpenHistoryInNewTab = useCallback((sql: string) => {
@@ -9352,6 +9425,27 @@ export default function App() {
             </Flex>
           );
         })()}
+        {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時だけ出る。 */}
+        {!statusDismissed &&
+          status.kind !== "idle" &&
+          status.error &&
+          status.aiContext &&
+          sessionId &&
+          selectedProfile && (
+            <AiErrorExplain
+              key={`${status.aiContext.tabId}\u0000${status.aiContext.sql}\u0000${status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}`}
+              sessionId={sessionId}
+              driver={selectedProfile.driver}
+              isProduction={selectedProfile.is_production ?? false}
+              errorKind={status.errorKind ?? null}
+              message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
+              sql={status.aiContext.sql}
+              database={status.aiContext.database ?? activeTab?.database ?? selectedProfile.database ?? null}
+              onApply={(suggestedSql) =>
+                handleApplyAiSql(status.aiContext?.tabId ?? "", status.aiContext?.sql ?? "", suggestedSql)
+              }
+            />
+          )}
       </Flex>
 
       <Suspense fallback={null}>

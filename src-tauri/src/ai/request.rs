@@ -28,6 +28,8 @@ pub struct AiRequestSpec {
     pub prompt: String,
     pub max_tokens: u32,
     pub stream: bool,
+    /// 構造化出力 (`output_config.format`)。`{ "type": "json_schema", "schema": {...} }` の形。
+    pub format: Option<Value>,
 }
 
 /// 必須ヘッダ (API キー以外)。キーは `x-api-key` として呼び出し側が別に付ける。
@@ -47,6 +49,9 @@ pub fn build_body(spec: &AiRequestSpec) -> Value {
         "messages": [{ "role": "user", "content": spec.prompt }],
         "output_config": { "effort": spec.effort.as_str() },
     });
+    if let Some(format) = &spec.format {
+        body["output_config"]["format"] = format.clone();
+    }
     if spec.model != AiModel::Haiku55 {
         body["fallbacks"] = json!("default");
     }
@@ -68,6 +73,7 @@ mod tests {
             prompt: "hello".into(),
             max_tokens: DEFAULT_MAX_TOKENS,
             stream: true,
+            format: None,
         }
     }
 
@@ -109,6 +115,17 @@ mod tests {
         assert!(build_body(&s).get("system").is_none());
         s.system = None;
         assert!(build_body(&s).get("system").is_none());
+    }
+
+    #[test]
+    fn format_is_added_to_output_config_only_when_given() {
+        let mut s = spec();
+        assert!(build_body(&s)["output_config"].get("format").is_none());
+        s.format = Some(json!({ "type": "json_schema", "schema": { "type": "object" } }));
+        let b = build_body(&s);
+        assert_eq!(b["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(b["output_config"]["format"]["schema"]["type"], "object");
+        assert_eq!(b["output_config"]["effort"], "medium");
     }
 
     #[test]

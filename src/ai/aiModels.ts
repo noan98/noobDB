@@ -28,7 +28,20 @@ export const AI_MODEL_LABELS: Record<AiModelId, string> = {
 export const AI_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type AiEffort = (typeof AI_EFFORTS)[number];
 
-export const AI_TASK_KINDS = ["connectionTest", "generic"] as const;
+export const AI_TASK_KINDS = [
+  "connectionTest",
+  "generic",
+  "errorExplain",
+  "nl2sql",
+  "explainInterpret",
+  "impactAnalysis",
+  "sqlExplain",
+  "sqlRewrite",
+  "schemaDoc",
+  "syncRisk",
+  "testData",
+  "historySearch",
+] as const;
 export type AiTaskKind = (typeof AI_TASK_KINDS)[number];
 
 /**
@@ -42,6 +55,16 @@ export const AI_TASK_DEFS: Record<
 > = {
   connectionTest: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
   generic: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+  errorExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
+  nl2sql: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+  explainInterpret: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+  impactAnalysis: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+  sqlExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+  sqlRewrite: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+  schemaDoc: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+  syncRisk: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+  testData: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+  historySearch: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
 };
 
 export interface AiSelectOption<V extends string> {

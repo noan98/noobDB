@@ -1760,6 +1760,11 @@ export function setAiAllowRowData(value: boolean): void {
   patchAi({ allowRowData: value });
 }
 
+/** SQL 内の文字列リテラルをマスクして AI へ送るか (#692)。 */
+export function setAiMaskLiterals(value: boolean): void {
+  patchAi({ maskLiterals: value });
+}
+
 /**
  * コマンドパレット (#845) で候補を選択したときに MRU の先頭へ記録する。並び替え・
  * 上限クランプは `recordMruUsage` (`components/commandPaletteSearch.ts`) を共有

@@ -353,6 +353,7 @@ mod tests {
             prompt: "hi".into(),
             max_tokens: 100,
             stream,
+            format: None,
         }
     }
 

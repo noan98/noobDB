@@ -28,6 +28,8 @@ export interface AiSettings {
   sendScope: AiSendScope;
   /** 行データ (セルの値) を送ってよいか。既定は送らない。 */
   allowRowData: boolean;
+  /** SQL 内の文字列リテラルをマスクして送る (#692)。既定オン。 */
+  maskLiterals: boolean;
 }
 
 function nullRecord<V>(): Record<AiTaskKind, V | null> {
@@ -42,6 +44,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   taskEfforts: nullRecord<AiEffort>(),
   sendScope: "schemaOnly",
   allowRowData: false,
+  maskLiterals: true,
 };
 
 function sanitizeRecord<V>(
@@ -71,6 +74,8 @@ export function sanitizeAiSettings(input: unknown): AiSettings {
       ? (p.sendScope as AiSendScope)
       : "schemaOnly",
     allowRowData: p.allowRowData === true,
+    // 未保存 (旧設定) はオン。明示的に false のときだけオフ。
+    maskLiterals: p.maskLiterals !== false,
   };
 }
 
