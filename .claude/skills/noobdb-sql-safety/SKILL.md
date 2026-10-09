@@ -1,6 +1,6 @@
 ---
 name: noobdb-sql-safety
-description: noobDB の SQL 安全網を変更するとき — 読み取り専用ガード (is_read_only_sql)、自動 LIMIT/TOP 挿入、コメント/文字列リテラルのマスク、危険クエリ検出、そして Rust とフロントの二重実装を固定する共有ゴールデンベクタ (src/__tests__/fixtures/*.json) を扱うときに読む。
+description: noobDB の SQL 安全網を変更するとき — 読み取り専用ガード (is_read_only_sql)、自動 LIMIT 挿入、コメント/文字列リテラルのマスク、危険クエリ検出、そして Rust とフロントの二重実装を固定する共有ゴールデンベクタ (src/__tests__/fixtures/*.json) を扱うときに読む。
 ---
 
 # noobDB の SQL 安全網

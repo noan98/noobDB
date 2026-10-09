@@ -67,6 +67,11 @@ import type { Transition, Variants } from "motion/react";
  *   頻繁に再レンダーされるため `layout` は使わず、ドロップ確定の 1 回だけ計測する
  *   手書き FLIP (Web Animations API) で `durations.base` / `easings.out` を再利用する。
  *   Motion の外なので reduced-motion は `useReducedMotionConfig` で明示的に見る。
+ * - 結果グリッドのクライアント側ソート / フィルタ適用 (`ResultGrid` — `useRowCrossfade`、
+ *   #1416)。行方向の per-row FLIP は仮想化グリッドで重いため避け、`<tbody>` 1 要素の
+ *   opacity だけを Web Animations API で 1 回再生する (`transitions.crossfade` 相当の
+ *   `durations.quick`)。key で再マウントしないのでスクロール・選択・編集状態は保たれ、
+ *   reduced-motion は `useReducedMotionConfig` で見る。
  * - 結果パネルの種類切替 (`App` — exit 無しの `AnimatePresence` + `variants.fade` で入場だけ、#1311)。
  *   グリッド ⇔ EXPLAIN / チャート / ピボット / プレビュー / バッチのように「軽量
  *   パネルの種類が変わる」ときだけ控えめにクロスフェードする。key を表示内容の
@@ -82,6 +87,10 @@ import type { Transition, Variants } from "motion/react";
  *   遅延ロード (`React.lazy`) されたビューがサスペンドしても退出中の旧ビューを
  *   巻き込まないよう、`Suspense` は `AnimatePresence` の外ではなく各
  *   `motion.div` の内側に置く。
+ * - サイドバーのテーブル行 → 新規テーブルタブのアイコンの morph (`FlightIcon` /
+ *   `sharedElement.ts` — コンポーネント境界を跨ぐ `layoutId`, #1415)。頻度の低い
+ *   「タブ生成」1 箇所に限定し、IPC の間から morph が終わるまでの飛行中だけ起点に
+ *   ID を付ける。`transitions.emphasized` を再利用し、reduced-motion は MotionConfig に従う。
  * - ライブ監視パネルの行の出入りと値変化フラッシュ (`ProcessListPanel` /
  *   `PlanWatchPanel` — `LiveRows.tsx` の `LiveRowsPresence` + `variants.collapse`、
  *   フラッシュは既存の `@keyframes apply-flash`、数値は `CountUp`) (#1022)。
@@ -237,6 +246,9 @@ export const variants = {
     animate: { opacity: 1, y: 0, transition: transitions.enter },
   },
 } satisfies Record<string, Variants>;
+
+/** 結果グリッドの行クロスフェード (#1416) の開始 opacity。控えめに暗転するだけの値。 */
+export const rowCrossfadeFrom = 0.35;
 
 /**
  * 方向付きスライドの移動量 (px)。行送りのように「隣へ移った」空間的手がかりを

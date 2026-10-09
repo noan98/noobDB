@@ -4,6 +4,7 @@ import {
   IconAlertTriangle,
   IconAlignLeft,
   IconArrowBackUp,
+  IconPencil,
   IconArrowForwardUp,
   IconArrowsExchange,
   IconArrowsSort,
@@ -58,6 +59,7 @@ import {
   IconShieldExclamation,
   IconSortAscending,
   IconSortDescending,
+  IconSparkles,
   IconStar,
   IconStarFilled,
   IconSun,
@@ -185,6 +187,7 @@ export type IconName =
   | "filter"
   | "lock"
   | "undo"
+  | "pencil"
   | "redo"
   | "view"
   | "routine"
@@ -219,6 +222,7 @@ export type IconName =
   | "bell"
   | "broadcast"
   | "flask"
+  | "sparkles"
   | "info"
   | "alert-circle"
   | "play"
@@ -321,6 +325,7 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   filter: IconFilter,
   lock: IconLock,
   undo: IconArrowBackUp,
+  pencil: IconPencil,
   redo: IconArrowForwardUp,
   // ビュー: 実テーブルに別名を与えた派生表、という意味で table 系のグリフに寄せる
   // (`table` と並んだときに同じ家族に見えることを優先)。
@@ -366,6 +371,7 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   bell: IconBell,
   broadcast: IconBroadcast,
   flask: IconFlask,
+  sparkles: IconSparkles,
   // 実行 (再生): Run ボタンの塗り三角。塗り glyph だが `star-filled` と同様、
   // fill/stroke の切り替えはコンポーネント側が持つのでここでは通常通り登録する。
   play: IconPlayerPlayFilled,

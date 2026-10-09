@@ -209,6 +209,35 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    // AI 基盤 (#690)。何を送る / 送らないか、モデルの保持要件、価格の目安を明記する。
+    headerKey: "helpSectionAi",
+    descKey: "helpSectionAiDesc",
+    features: [
+      {
+        titleKey: "helpAiPolicyTitle",
+        descKey: "helpAiPolicyDesc",
+        stepKeys: [
+          "helpAiPolicySend",
+          "helpAiPolicyNotSend",
+          "helpAiPolicyKey",
+          "helpAiPolicyRetention",
+        ],
+        noteKey: "helpAiPolicyNote",
+      },
+      {
+        titleKey: "helpAiImpactTitle",
+        descKey: "helpAiImpactDesc",
+        stepKeys: ["helpAiImpactStep1", "helpAiImpactStep2"],
+        noteKey: "helpAiImpactNote",
+      },
+      {
+        titleKey: "helpAiPricingTitle",
+        descKey: "helpAiPricingDesc",
+        stepKeys: ["helpAiPriceOpus", "helpAiPriceSonnet", "helpAiPriceHaiku", "helpAiPriceFable"],
+      },
+    ],
+  },
+  {
     headerKey: "helpSectionShortcuts",
     descKey: "helpSectionShortcutsDesc",
     // ショートカット一覧は `shortcuts.ts` の単一ソースから生成し、`?` で開く

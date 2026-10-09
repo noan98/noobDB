@@ -19,8 +19,9 @@ import { api } from "../api/tauri";
 // どちらかを迫られる。
 
 /**
- * `src/` 配下の全 TS/TSX を `?raw` で読み込む。`api/tauri.ts` 自身と、
- * このテストを含む `__tests__/` 配下は「UI からの到達性」の対象外
+ * `src/` 配下の全 TS/TSX を `?raw` で読み込む。`api/` 配下 (`tauri.ts` と、ラッパー
+ * 本体を分割した `api/commands/*.ts`) と、このテストを含む `__tests__/` 配下は
+ * 「UI からの到達性」の対象外
  * (テストが呼んでいるだけのラッパーは UI から到達できていない)。
  */
 const allSources = import.meta.glob("../**/*.{ts,tsx}", {
@@ -30,7 +31,7 @@ const allSources = import.meta.glob("../**/*.{ts,tsx}", {
 }) as Record<string, string>;
 
 const consumerSources = Object.entries(allSources).filter(
-  ([path]) => !path.includes("/api/tauri.ts") && !path.includes("/__tests__/"),
+  ([path]) => !path.includes("/api/") && !path.includes("/__tests__/"),
 );
 
 /**

@@ -1240,6 +1240,46 @@ export const streamCancelledEvent = z.object({
   deliveredRows: z.number(),
 });
 
+// --- AI 基盤 (#690) ----------------------------------------------------------
+
+/** `test_ai_connection` の戻り値 (`commands/ai.rs::AiConnectionTestResult`)。 */
+export const aiConnectionTestResult = z.object({
+  status: z.enum(["success", "authError", "networkError", "apiError", "refused"]),
+  message: z.string(),
+  model: z.string().nullable(),
+  elapsedMs: z.number(),
+});
+
+/** `ai-stream:delta` イベント。 */
+export const aiDeltaEvent = z.object({
+  streamId: z.string(),
+  text: z.string(),
+});
+
+const aiUsage = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadInputTokens: z.number(),
+  cacheCreationInputTokens: z.number(),
+});
+
+/** `ai-stream:done` イベント。`model` は実際に応答したモデル (フォールバック時は要求と異なる)。 */
+export const aiDoneEvent = z.object({
+  streamId: z.string(),
+  model: z.string(),
+  requestedModel: z.string(),
+  fallbackUsed: z.boolean(),
+  stopReason: z.string(),
+  usage: aiUsage,
+});
+
+/** `ai-stream:error` イベント。`kind` は `AppError.kind` (`aiRefused` など)。 */
+export const aiErrorEvent = z.object({
+  streamId: z.string(),
+  error: z.string(),
+  kind: z.string(),
+});
+
 export const importStartedEvent = z.object({
   streamId: z.string(),
   total: z.number(),

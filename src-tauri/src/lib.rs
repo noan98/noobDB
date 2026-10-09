@@ -3,6 +3,7 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod ai;
 mod assertions;
 mod cache;
 mod commands;
@@ -26,6 +27,7 @@ mod timelapse;
 #[doc(hidden)]
 pub mod __test_api {
     pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
+    pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult};
     pub use crate::commands::assertions::AssertionOutcome;
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
@@ -1273,6 +1275,10 @@ pub fn run() {
             commands::import::parse_csv_preview,
             commands::import::import_csv,
             commands::script::run_sql_script,
+            commands::ai::set_ai_api_key,
+            commands::ai::has_ai_api_key,
+            commands::ai::run_ai_request,
+            commands::ai::test_ai_connection,
             commands::script::run_sql_batch,
             commands::transfer::transfer_data,
             commands::import::preview_create_table_ddl,

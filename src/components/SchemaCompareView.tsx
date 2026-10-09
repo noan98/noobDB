@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
@@ -16,12 +16,14 @@ import {
   type TableColumnInfo,
   type TableDiff,
 } from "../api/tauri";
+import type { SyncRiskItem } from "../ai/syncRisk";
 import { useLocale, useT } from "../i18n";
 import { staggerContainer, transitions, variants as motionVariants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
+import { AiSyncRisk, RiskBadge, type RiskByIndex } from "./AiSyncRisk";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { Tooltip } from "./Tooltip";
@@ -411,6 +413,11 @@ export function SchemaCompareView({
   const [syncError, setSyncError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
+  // AI リスク要約 (#697) の結果。同期文の行にバッジを付けるだけで、適用フローには影響しない。
+  const [risks, setRisks] = useState<RiskByIndex | null>(null);
+  // プラン生成時に使ったフラグ。生成後にチェックを切り替えてもプランは作り直されないので、
+  // AI には現在のチェック値ではなくこちらを渡す (#697)。
+  const [planFlags, setPlanFlags] = useState({ allowDestructive: false, allowDelete: false });
 
   // Data sync state.
   const [dataTable, setDataTable] = useState<string>("");
@@ -604,6 +611,8 @@ export function SchemaCompareView({
     try {
       const result = await api.generateSyncSql(diff, allowDestructive);
       setPlan(result);
+      setRisks(null);
+      setPlanFlags({ allowDestructive, allowDelete: false });
       setStatementLimit(SYNC_STATEMENT_PAGE);
       setPlanKind("schema");
       setSelected(defaultSelection(result));
@@ -674,6 +683,8 @@ export function SchemaCompareView({
     try {
       const result = await api.generateDataSyncSql(dataDiffId, allowDelete);
       setPlan(result);
+      setRisks(null);
+      setPlanFlags({ allowDestructive: false, allowDelete });
       setStatementLimit(SYNC_STATEMENT_PAGE);
       setPlanKind("data");
       setSelected(defaultSelection(result));
@@ -1038,6 +1049,7 @@ export function SchemaCompareView({
                             statement={stmt}
                             checked={selected.has(i)}
                             onToggle={toggleStatement}
+                            risks={risks?.get(i)}
                           />
                         ))}
                       </chakra.ul>
@@ -1061,6 +1073,25 @@ export function SchemaCompareView({
                             })}
                           </Button>
                         </Box>
+                      )}
+                      {planKind && sourceDriver && targetDriver && (
+                        <AiSyncRisk
+                          plan={plan}
+                          planKind={planKind}
+                          diff={diff}
+                          dataSummary={
+                            planKind === "data" && dataDiff
+                              ? { table: dataDiff.table, truncated: dataDiff.truncated }
+                              : null
+                          }
+                          sourceDriver={coerceDriver(sourceDriver)}
+                          targetDriver={coerceDriver(targetDriver)}
+                          allowDestructive={planFlags.allowDestructive}
+                          allowDelete={planFlags.allowDelete}
+                          kindLabel={(k) => syncKindLabel(k, t)}
+                          isProduction={!!sourceProfile?.is_production || !!targetProfile?.is_production}
+                          onRisks={setRisks}
+                        />
                       )}
                       <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
                       <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
@@ -1166,11 +1197,14 @@ export const SyncStatementRow = memo(function SyncStatementRow({
   statement,
   checked,
   onToggle,
+  risks,
 }: {
   index: number;
   statement: SyncStatement;
   checked: boolean;
   onToggle: (index: number) => void;
+  /** AI リスク要約 (#697) の該当項目。未実行なら undefined。 */
+  risks?: readonly SyncRiskItem[];
 }) {
   const t = useT();
   return (
@@ -1185,6 +1219,13 @@ export const SyncStatementRow = memo(function SyncStatementRow({
         )}
       </chakra.label>
       <chakra.code css={sqlCss}>{statement.sql}</chakra.code>
+      {risks && risks.length > 0 && (
+        <Flex direction="column" gap="1" mt="1">
+          {risks.map((r, i) => (
+            <RiskBadge key={i} item={r} />
+          ))}
+        </Flex>
+      )}
     </chakra.li>
   );
 });

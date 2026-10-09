@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
@@ -23,9 +23,14 @@ import {
   chartRampGradient,
   chartSeriesColors,
   chartValueColors,
+  DONUT_INNER_RATIO,
   defaultChartConfig,
+  donutSlicePath,
+  isDonut,
   inferNumericColumns,
   niceTicks,
+  parsePx,
+  roundedBarPath,
   readStoredChartConfig,
   valueExtent,
   writeStoredChartConfig,
@@ -220,6 +225,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   const setX = (xCol: number) => setConfig({ ...config, xCol });
   const setAgg = (aggregation: Aggregation) => setConfig({ ...config, aggregation });
   const setPalette = (palette: ChartPaletteKey) => setConfig({ ...config, palette });
+  const setDonut = (donut: boolean) => setConfig({ ...config, donut });
   const toggleY = (c: number) =>
     setConfig({
       ...config,
@@ -292,6 +298,12 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             ]}
           />
         </Field>
+        {config.type === "pie" && (
+          <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
+            <Checkbox checked={isDonut(config)} onChange={(e) => setDonut(e.target.checked)} />
+            {t("chartDonut")}
+          </chakra.label>
+        )}
         {onRunQuery && canAggregateInDb(result.columns, config, sourceSql) && (
           <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
             <Checkbox checked={dbAgg} onChange={(e) => setDbAgg(e.target.checked)} />
@@ -378,7 +390,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         ) : config.yCols.length === 0 ? (
           <EmptyState compact icon="filter" title={t("chartPickY")} />
         ) : config.type === "pie" ? (
-          <PieChart model={model} palette={config.palette ?? DEFAULT_CHART_PALETTE} isDark={isDark} />
+          <PieChart model={model} palette={config.palette ?? DEFAULT_CHART_PALETTE} isDark={isDark} donut={isDonut(config)} />
         ) : (
           <CartesianChart
             model={model}
@@ -405,6 +417,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const W = 900;
 const H = 440;
 const PAD = { left: 60, right: 20, top: 16, bottom: 66 };
+// 棒の角丸の半径 (radius トークン `sm`) の実値 (px)。SVG のパスには CSS 変数を渡せない
+// ため、実行時に `--radius-sm` を読む。読めない環境 (jsdom など) は 4 で代用する。
+// 注意: getPropertyValue は calc() を解決しないので、`--radius-sm` が calc 化されると
+// 黙って 4 に戻る (その場合は computed な長さを得る方式へ改める)。
+function readBarRadius(): number {
+  if (typeof document === "undefined") return 4;
+  return parsePx(getComputedStyle(document.documentElement).getPropertyValue("--radius-sm"), 4);
+}
 
 export function CartesianChart({
   model,
@@ -426,6 +446,10 @@ export function CartesianChart({
 }) {
   // ホバー中のバンド (X インデックス)。値を読み取るためのガイド/ツールチップに使う。
   const [hover, setHover] = useState<number | null>(null);
+  // グラデ/クリップの id。チャートが同時に複数描画されても衝突しないよう useId 由来にする
+  // (`:` は url(#…) で扱いづらいので除く)。
+  const uid = useId().replace(/:/g, "");
+  const barRadius = useMemo(readBarRadius, []);
   const { min, max } = valueExtent(model, type);
   const span = max - min || 1;
   const plotW = W - PAD.left - PAD.right;
@@ -474,6 +498,25 @@ export function CartesianChart({
       onMouseMove={onMove}
       onMouseLeave={() => setHover(null)}
     >
+      <defs>
+        {/* 面グラフの縦グラデ: 系列色をプロット上端で濃く、下端で透明へ (userSpaceOnUse で
+            負値や全 0 の面でも外接矩形に左右されない)。色は系列色 (colorScale 由来) のまま。 */}
+        {type === "area" &&
+          model.series.map((_, si) => (
+            <linearGradient
+              key={si}
+              id={`${uid}-area-${si}`}
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1={PAD.top}
+              x2="0"
+              y2={PAD.top + plotH}
+            >
+              <stop offset="0%" stopColor={colors[si % colors.length]} stopOpacity={0.38} />
+              <stop offset="100%" stopColor={colors[si % colors.length]} stopOpacity={0.02} />
+            </linearGradient>
+          ))}
+      </defs>
       {/* 水平グリッド線 + Y 目盛ラベル。0 基線だけ濃く実線にする。 */}
       {ticks.map((v, i) => {
         const y = yAt(v);
@@ -548,16 +591,20 @@ export function CartesianChart({
                 const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
                 const y = Math.min(yAt(v), zeroY);
                 const h = Math.abs(yAt(v) - zeroY);
-                // 棒は 0 基線から伸びるように出現させる (y/height を基線 → 値へ補間)。
+                // 棒は 0 基線から伸びるように出現させる (最終形のパスを基線起点で scaleY
+                // 0 → 1)。上端 (負の値は下端) だけを丸めたいが rect の rx は四隅に効く
+                // ため、値側の端だけ丸めたパスで描く。半径は radius トークンの実値を
+                // `barRadius` で読み、トークンを単一ソースに保つ。
+                const up = v >= 0;
                 return (
-                  <motion.rect
+                  <motion.path
                     key={i}
-                    x={x}
-                    width={Math.max(1, barW)}
+                    d={roundedBarPath(x, y, Math.max(1, barW), h, barRadius, up)}
                     fill={valueColors?.[i] ?? color}
                     fillOpacity={hover == null || hover === i ? 1 : 0.5}
-                    initial={animate ? { y: zeroY, height: 0 } : false}
-                    animate={{ y, height: Math.max(0, h) }}
+                    style={{ originX: 0.5, originY: up ? 1 : 0 }}
+                    initial={animate ? { scaleY: 0 } : false}
+                    animate={{ scaleY: 1 }}
                     transition={
                       animate
                         ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
@@ -577,8 +624,7 @@ export function CartesianChart({
             {type === "area" && (
               <motion.path
                 d={areaPath}
-                fill={color}
-                fillOpacity={0.18}
+                fill={`url(#${uid}-area-${si})`}
                 initial={animate ? { opacity: 0 } : false}
                 animate={{ opacity: 1 }}
                 transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
@@ -659,16 +705,19 @@ function HoverTooltip({
   const top = PAD.top + 6;
   return (
     <g pointerEvents="none">
-      <rect
-        x={left}
-        y={top}
-        width={boxW}
-        height={boxH}
-        rx={6}
-        fill="var(--bg-elevated)"
-        stroke="var(--border)"
-        opacity={0.98}
-      />
+      {/* 背面は HTML の箱にして `elevationPopover` の影を `--shadow-*` 経由で
+          全テーマに追従させる (SVG の drop-shadow は spread/色リテラルが要る)。 */}
+      <foreignObject x={left} y={top} width={boxW} height={boxH} overflow="visible">
+        <chakra.div
+          w="100%"
+          h="100%"
+          bg="app.surface"
+          borderWidth="1px"
+          borderColor="app.border"
+          borderRadius="md"
+          shadow="elevationPopover"
+        />
+      </foreignObject>
       <text x={left + 10} y={top + 18} style={{ fontSize: "var(--text-xs)" }} fontWeight={700} fill="var(--text)">
         {header}
       </text>
@@ -690,7 +739,18 @@ function HoverTooltip({
   );
 }
 
-function PieChart({ model, palette, isDark }: { model: ChartModel; palette: string; isDark: boolean }) {
+function PieChart({
+  model,
+  palette,
+  isDark,
+  donut,
+}: {
+  model: ChartModel;
+  palette: string;
+  isDark: boolean;
+  /** 中央に穴を開けるドーナツ表示 (#1215)。 */
+  donut: boolean;
+}) {
   // 円グラフは先頭系列のみ。負値は 0 にクランプ。
   const [hover, setHover] = useState<number | null>(null);
   const series = model.series[0];
@@ -706,6 +766,9 @@ function PieChart({ model, palette, isDark }: { model: ChartModel; palette: stri
   const cx = 220;
   const cy = 210;
   const r = 170;
+  const rInner = donut ? r * DONUT_INNER_RATIO : 0;
+  // ラベルは扇形なら中心寄り、ドーナツなら環の中央に置く。
+  const labelR = donut ? (r + rInner) / 2 : r * 0.62;
   let angle = -Math.PI / 2;
   return (
     <chakra.svg viewBox="0 0 720 440" width="100%" style={{ maxHeight: "100%" }} role="img">
@@ -717,64 +780,37 @@ function PieChart({ model, palette, isDark }: { model: ChartModel; palette: stri
           const start = angle;
           const end = angle + frac * Math.PI * 2;
           angle = end;
-          const large = end - start > Math.PI ? 1 : 0;
           const mid = (start + end) / 2;
           // ホバー中のスライスは中心から少し飛び出させて強調する。
           const pop = hover === i ? 10 : 0;
           const ox = Math.cos(mid) * pop;
           const oy = Math.sin(mid) * pop;
-          const x1 = cx + ox + r * Math.cos(start);
-          const y1 = cy + oy + r * Math.sin(start);
-          const x2 = cx + ox + r * Math.cos(end);
-          const y2 = cy + oy + r * Math.sin(end);
           const color = colors[i % colors.length];
           const pct = frac * 100;
           // ラベルは十分大きいスライスにだけ重ねる (小さいと文字がはみ出す)。
-          const lx = cx + ox + r * 0.62 * Math.cos(mid);
-          const ly = cy + oy + r * 0.62 * Math.sin(mid);
-          // 1 スライスで全周 (frac がほぼ 1) のとき、始点と終点が一致し弧の
-          // 経路が退化して何も描かれなくなる (SVG の A コマンドは開始角=終了角だと
-          // 面積 0 になる)。この場合は弧ではなく単純な円で描画するフォールバックに
-          // 切り替える。複数スライスでも浮動小数の丸めで実質全周になるケースを
-          // 想定し、スライス数ではなく frac の値で判定する。
-          const isFullCircle = frac >= 1 - 1e-9;
+          const lx = cx + ox + labelR * Math.cos(mid);
+          const ly = cy + oy + labelR * Math.sin(mid);
+          // 全周 (frac がほぼ 1) のときの経路の退化は `donutSlicePath` が半円 2 つで
+          // 吸収する。環では穴を抜くため evenodd で塗る。
           return (
             <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
-              {isFullCircle ? (
-                <motion.circle
-                  cx={cx + ox}
-                  cy={cy + oy}
-                  r={r}
-                  fill={color}
-                  stroke="var(--bg-elevated)"
-                  strokeWidth={1}
-                  initial={animate ? { opacity: 0 } : false}
-                  animate={{ opacity: 1 }}
-                  transition={
-                    animate
-                      ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
-                      : { duration: 0 }
-                  }
-                >
-                  <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
-                </motion.circle>
-              ) : (
-                <motion.path
-                  d={`M ${cx + ox} ${cy + oy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`}
-                  fill={color}
-                  stroke="var(--bg-elevated)"
-                  strokeWidth={1}
-                  initial={animate ? { opacity: 0 } : false}
-                  animate={{ opacity: 1 }}
-                  transition={
-                    animate
-                      ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
-                      : { duration: 0 }
-                  }
-                >
-                  <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
-                </motion.path>
-              )}
+              <motion.path
+                d={donutSlicePath(cx + ox, cy + oy, r, rInner, start, end)}
+                fillRule="evenodd"
+                fill={color}
+                stroke="var(--bg-elevated)"
+                strokeWidth={donut ? 2 : 1}
+                strokeLinejoin="round"
+                initial={animate ? { opacity: 0 } : false}
+                animate={{ opacity: 1 }}
+                transition={
+                  animate
+                    ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
+                    : { duration: 0 }
+                }
+              >
+                <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
+              </motion.path>
               {frac >= 0.05 && (
                 <text x={lx} y={ly} textAnchor="middle" style={{ fontSize: "var(--text-sm)" }} fontWeight={700} fill={readableInk(color)} pointerEvents="none">
                   {pct.toFixed(0)}%
@@ -783,6 +819,17 @@ function PieChart({ model, palette, isDark }: { model: ChartModel; palette: stri
             </g>
           );
         })
+      )}
+      {/* ドーナツの中央に合計と系列名を置く。 */}
+      {donut && total > 0 && (
+        <g pointerEvents="none">
+          <text x={cx} y={cy + 4} textAnchor="middle" style={{ fontSize: "var(--text-xl)" }} fontWeight={700} fill="var(--text)">
+            {formatValue(total)}
+          </text>
+          <text x={cx} y={cy + 24} textAnchor="middle" style={{ fontSize: "var(--text-xs)" }} fill="var(--text-muted)">
+            {truncate(series.name, 18)}
+          </text>
+        </g>
       )}
       {/* 凡例 (ラベル + 値 + 割合) */}
       {model.labels.map((lab, i) => {

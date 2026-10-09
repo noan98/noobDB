@@ -39,6 +39,10 @@
   --text-base: calc(14px * var(--font-scale));
   --text-lg: calc(16px * var(--font-scale));
   --text-xl: calc(20px * var(--font-scale));
+  /* ディスプレイ用の上位ステップ (#1214)。ウェルカム / プロファイル一覧 / スプラッシュ
+     の見出し専用で、密なグリッドやツールバーには使わない。 */
+  --text-2xl: calc(28px * var(--font-scale));
+  --text-3xl: calc(36px * var(--font-scale));
 
   /* ── Typography rhythm (#490) ─────────────────────────────────────────
      タイプスケール (--text-*) は上記の通り --font-scale に追従するため、フォント
@@ -152,6 +156,9 @@
   --radius-xl: 16px;
   --radius-pill: 999px;
 
+  /* ER 図のホバー連動で無関係なテーブル / 線を減光する不透明度 (#1360) */
+  --er-dim-opacity: 0.3;
+
   /* Elevation (light) */
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
   --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.14);
@@ -259,6 +266,21 @@
     color-mix(in srgb, var(--brand-violet) 8%, transparent) 45%,
     transparent 75%
   );
+
+  /* ── Hero halo / rule (#1216) ─────────────────────────────────────────
+     Welcome / Splash のイラスト・ロゴの背後に敷く放射状のブランドの光彩と、見出し下の
+     短いブランドグラデーションの罫線。`--hero-wash` と同じく brand-blue / brand-violet
+     (テーマを跨いで固定) を単一ソースとし、不透明度は控えめ (25% 以下) に留めて前景の
+     コントラストを損なわない。静止装飾のため reduced-motion の影響は無い。
+     hc-* では装飾より AAA を優先して `none` に上書きする。 */
+  --hero-halo: radial-gradient(
+    circle closest-side,
+    color-mix(in srgb, var(--brand-blue) 22%, transparent) 0%,
+    color-mix(in srgb, var(--brand-violet) 12%, transparent) 55%,
+    transparent 100%
+  );
+  --hero-rule: var(--brand-gradient);
+  --hero-rule-display: block;
 
   --bg: #f5f7fa;
   --bg-elevated: #ffffff;
@@ -684,6 +706,9 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --hero-halo: none;
+  --hero-rule: none;
+  --hero-rule-display: none;
 
   --bg: #ffffff;
   --bg-elevated: #ffffff;
@@ -784,6 +809,9 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --hero-halo: none;
+  --hero-rule: none;
+  --hero-rule-display: none;
 
   --bg: #000000;
   /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
@@ -2301,4 +2329,120 @@ td.is-find-current::after {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
+}
+
+/* ---------- React Flow (ER 図 / EXPLAIN 図) のクロムをテーマへ統合 (#1361) ----------
+   @xyflow/react の style.css は `.react-flow` / `.react-flow.dark` に固定の明/暗色を
+   `--xy-*-default` として持ち、実際の描画は `var(--xy-*, var(--xy-*-default))` で読む。
+   接尾辞なしの `--xy-*` をここで既存トークンへ向ければ、11 テーマ・font-scale に
+   追従する (値の単一ソースは App.css のまま。サイズ系は上書きしない)。`colorMode`
+   (dark) は `.react-flow.dark` の既定色 (エッジ・選択枠・ハンドル) を切り替えるが、
+   クロムとエッジの色は下の上書きが優先するのでテーマが決める。 */
+.react-flow {
+  /* 親の面 (ER 図・EXPLAIN 図で異なる) をそのまま継ぐ */
+  --xy-background-color: transparent;
+  --xy-background-pattern-color: var(--border-strong);
+
+  --xy-controls-button-background-color: var(--bg-elevated);
+  --xy-controls-button-background-color-hover: var(--bg-hover);
+  --xy-controls-button-color: var(--text-secondary);
+  --xy-controls-button-color-hover: var(--accent);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: var(--shadow-sm);
+
+  --xy-minimap-background-color: var(--bg-elevated);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--bg) 70%, transparent);
+  --xy-minimap-mask-stroke-color: var(--accent);
+  --xy-minimap-node-background-color: var(--border-strong);
+  --xy-minimap-node-stroke-color: var(--border);
+
+  /* colorMode=dark の暗い既定エッジ (#3e3e3e) はダーク系テーマで沈むためテーマ色へ */
+  --xy-edge-stroke: var(--border-strong);
+  --xy-edge-stroke-selected: var(--accent);
+}
+
+/* ---------- ER 図: リレーション記号とホバー連動ハイライト (#1360) ----------
+   線の両端のクロウフット / 縦棒 / 丸は ERDiagramView の `ErRelationEdge` が描く。
+   線色は上の `--xy-edge-stroke` と同じトークンに揃え、ハイライト時は accent にする。 */
+.er-flow {
+  /* キャンバスの地。「ゼロ」の丸がこの色で線を隠す */
+  --er-canvas: var(--bg);
+  background: var(--er-canvas);
+}
+.er-card {
+  --er-accent: var(--er-driver, var(--border));
+}
+/* 高コントラスト系はドライバ色の帯を使わず境界色に戻す */
+:root[data-theme="hc-light"] .er-card,
+:root[data-theme="hc-dark"] .er-card {
+  --er-accent: var(--border-strong);
+}
+.react-flow__edge .er-rel-glyph {
+  fill: none;
+  stroke: var(--xy-edge-stroke, var(--border-strong));
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+/* 「ゼロ」の丸は線を隠す背景色で塗る */
+.react-flow__edge .er-rel-glyph circle {
+  fill: var(--er-canvas, var(--bg));
+}
+.react-flow__edge.er-hl .er-rel-glyph {
+  stroke: var(--accent);
+}
+.react-flow__edge.er-hl .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.react-flow__node.er-hl .er-card {
+  border-color: var(--accent);
+}
+/* 無関係なテーブル / 線は減光。動きの抑制は末尾の reduced-motion 規則が transition を止める */
+.er-flow .react-flow__node,
+.er-flow .react-flow__edge {
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.er-flow .react-flow__node.er-dim,
+.er-flow .react-flow__edge.er-dim {
+  opacity: var(--er-dim-opacity);
+}
+
+/* 高コントラスト系はミニマップのビューポート枠を太くして判別しやすくする */
+:root[data-theme="hc-light"] .react-flow,
+:root[data-theme="hc-dark"] .react-flow {
+  --xy-minimap-mask-stroke-width: 2;
+  /* 高コントラスト系は減光しすぎて読めなくならないよう弱める */
+  --er-dim-opacity: 0.55;
+}
+
+.react-flow__minimap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* ── イラストの duotone トークン (#1216) ──────────────────────────────
+   illustrations.tsx の <svg class="noob-illust"> が参照する。`--ws-accent` は接続ごとに
+   祖先要素で上書きされるため、`:root` ではなく要素側で解決する。本体は淡いアクセント地、
+   強調部はアクセント地 + 縁取りの 2 トーン、足元は接地影。地はアクセント基準の
+   不透明度なのでダーク系でも沈まない。hc-* は装飾より AAA を優先し、地と接地影を消して
+   線のみにする。 */
+.noob-illust {
+  --illust-accent: var(--ws-accent, var(--accent));
+  --illust-body-fill: color-mix(in srgb, var(--illust-accent) 12%, transparent);
+  --illust-tint: color-mix(in srgb, var(--illust-accent) 18%, transparent);
+  --illust-error-tint: color-mix(in srgb, var(--text-error) 16%, transparent);
+  --illust-ground: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+:root[data-theme="hc-light"] .noob-illust,
+:root[data-theme="hc-dark"] .noob-illust {
+  --illust-body-fill: none;
+  --illust-ground: none;
 }

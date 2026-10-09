@@ -42,16 +42,25 @@ export interface DangerFinding {
  * Mirrors the backend `mask_for_analysis_impl` (`src-tauri/src/db/mod.rs`)
  * closely enough that a shared golden (`fixtures/maskVectors.json`, #988)
  * pins both implementations to the same output for the same input.
+ *
+ * `options` (`keepQuotedIdentifiers` と `cache`) は TS 専用の補完向けオプションで、Rust の
+ * `mask_for_analysis_impl` と共有ゴールデン (`fixtures/maskVectors.json`) の対象外。
+ * 安全網の呼び出しは何も渡さない。
  */
-export function maskLiterals(sql: string, driver?: string): string {
+export function maskLiterals(sql: string, driver?: string, options?: MaskOptions): string {
   // 1 回の実行ゲート〜実行後処理の間に、同じ SQL が文分割・危険判定・読み取り専用判定・
   // スキーマ変更判定などから 3〜5 回マスクされる (どれも全文走査)。直近の結果を小さな
-  // キャッシュに持ち、同じ (driver, sql) は 1 回しか走査しない (#1256)。
-  if (sql.length > MASK_CACHE_MAX_SQL_CHARS) return maskLiteralsUncached(sql, driver);
-  const key = `${driver ?? ""}\u0000${sql}`;
+  // キャッシュに持ち、同じ (driver, options, sql) は 1 回しか走査しない (#1256)。
+  const keepIdent = options?.keepQuotedIdentifiers === true;
+  // 補完は毎打鍵で大きな文書を渡すので、安全網のキャッシュ (直近 8 件) を押し出さないよう外せる。
+  if (options?.cache === false || sql.length > MASK_CACHE_MAX_SQL_CHARS) {
+    return maskLiteralsUncached(sql, driver, keepIdent);
+  }
+  // オプション未指定のキーは従来どおり `driver\0sql` (既存のキャッシュ挙動を変えない)。
+  const key = `${keepIdent ? "ident\u0001" : ""}${driver ?? ""}\u0000${sql}`;
   const hit = maskCache.get(key);
   if (hit !== undefined) return hit;
-  const masked = maskLiteralsUncached(sql, driver);
+  const masked = maskLiteralsUncached(sql, driver, keepIdent);
   if (maskCache.size >= MASK_CACHE_ENTRIES) {
     // Map は挿入順なので、先頭 = 最も古いエントリを捨てる (FIFO)。
     const oldest = maskCache.keys().next();
@@ -61,13 +70,31 @@ export function maskLiterals(sql: string, driver?: string): string {
   return masked;
 }
 
+/**
+ * `maskLiterals` のオプション。補完 (#1419) は列名・別名を読むために引用識別子の中身を
+ * 残したいので `keepQuotedIdentifiers` を使う。安全網の呼び出しは何も渡さない (従来どおり
+ * 引用識別子も潰す)。
+ */
+export interface MaskOptions {
+  /**
+   * true なら `` `x` `` の中身を潰さずに残す (区切り記号は従来どおり残る)。`"x"` も残すが、
+   * MySQL では `"…"` が既定で文字列なので潰す。`'…'`・コメント・ドル引用は従来どおり潰す。
+   */
+  keepQuotedIdentifiers?: boolean;
+  /**
+   * false ならマスク結果キャッシュを読まず・書かない。補完のように大きな入力を毎打鍵
+   * 渡す呼び出しが、安全網の判定用エントリを追い出さないために使う。既定は true。
+   */
+  cache?: boolean;
+}
+
 /** マスク結果キャッシュの上限エントリ数。直近数回の実行ぶんで足りる。 */
 const MASK_CACHE_ENTRIES = 8;
 /** これを超える巨大な SQL はキャッシュしない (キー + 値でメモリを抱え込まないため)。 */
 const MASK_CACHE_MAX_SQL_CHARS = 256 * 1024;
 const maskCache = new Map<string, string>();
 
-function maskLiteralsUncached(sql: string, driver?: string): string {
+function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): string {
   const backslashEscapes = driverBackslashEscapes(driver);
   const out = sql.split("");
   const n = sql.length;
@@ -176,7 +203,10 @@ function maskLiteralsUncached(sql: string, driver?: string): string {
       // input unmasked. Fail-closed, mirrors the backend
       // `mask_for_analysis_impl`, which masks every remaining character up to
       // EOF for an unterminated literal (#988).
-      blank(i + 1, closed ? j - 1 : j);
+      // 引用識別子は補完の列名読み取りのため、オプション指定時は中身を残す。ただし MySQL の
+      // `"…"` は既定で文字列 (ANSI_QUOTES 無効) なので残さない。
+      const keepContent = keepIdent && (quote === "`" || (quote === '"' && driver !== "mysql"));
+      if (!keepContent) blank(i + 1, closed ? j - 1 : j);
       i = j;
       continue;
     }

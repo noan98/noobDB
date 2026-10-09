@@ -67,6 +67,9 @@ const config = defineConfig({
         base: { value: "var(--text-base)" },
         lg: { value: "var(--text-lg)" },
         xl: { value: "var(--text-xl)" },
+        // ディスプレイ用 (第一印象面の見出し専用, #1214)
+        "2xl": { value: "var(--text-2xl)" },
+        "3xl": { value: "var(--text-3xl)" },
       },
       // 縦リズム。`lineHeight="snug"` / `letterSpacing="wide"` のように
       // 役割名で参照でき、App.css の --leading-* / --tracking-* を正とする。
@@ -345,9 +348,10 @@ const config = defineConfig({
     textStyles: defineTextStyles({
       display: {
         value: {
-          fontSize: "xl",
+          fontSize: "2xl",
           fontWeight: "700",
           lineHeight: "tight",
+          letterSpacing: "tight",
           color: "app.text",
         },
       },

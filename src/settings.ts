@@ -17,6 +17,13 @@ import {
   sanitizeQuickLauncherSectionLimits,
   type QuickLauncherSectionLimits,
 } from "./quickLauncher";
+import {
+  DEFAULT_AI_SETTINGS,
+  sanitizeAiSettings,
+  type AiSendScope,
+  type AiSettings,
+} from "./ai/aiSettings";
+import type { AiEffort, AiModelId, AiTaskKind } from "./ai/aiModels";
 
 export type Theme = "light" | "dark";
 
@@ -291,6 +298,10 @@ export interface Settings {
   quickLauncherEnabled: boolean;
   /** ランチャーの各セクションの表示件数。 */
   quickLauncherSectionLimits: QuickLauncherSectionLimits;
+  /**
+   * AI 機能 (#690)。既定オフの明示オプトイン。API キーは含めない (OS keyring のみ)。
+   */
+  ai: AiSettings;
 }
 
 /**
@@ -752,6 +763,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tableOpenQueryOverrides: [],
   quickLauncherEnabled: true,
   quickLauncherSectionLimits: { ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS },
+  ai: DEFAULT_AI_SETTINGS,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -982,6 +994,7 @@ export function normalizeSettings(input: unknown): Settings {
     tableOpenQueryOverrides?: unknown;
     quickLauncherEnabled?: unknown;
     quickLauncherSectionLimits?: unknown;
+    ai?: unknown;
   };
   return {
     syntaxColors: {
@@ -1139,6 +1152,7 @@ export function normalizeSettings(input: unknown): Settings {
     quickLauncherEnabled:
       typeof parsed.quickLauncherEnabled === "boolean" ? parsed.quickLauncherEnabled : true,
     quickLauncherSectionLimits: sanitizeQuickLauncherSectionLimits(parsed.quickLauncherSectionLimits),
+    ai: sanitizeAiSettings(parsed.ai),
   };
 }
 
@@ -1709,6 +1723,55 @@ export function setQuickLauncherSectionLimit(
   current = { ...current, quickLauncherSectionLimits: next };
   persist();
   listeners.forEach((cb) => cb());
+}
+
+/** AI 設定 (#690) の一部を更新して永続化する。変化が無ければ何もしない。 */
+function patchAi(patch: Partial<AiSettings>): void {
+  const next: AiSettings = { ...current.ai, ...patch };
+  const same = (Object.keys(patch) as (keyof AiSettings)[]).every(
+    (k) => JSON.stringify(current.ai[k]) === JSON.stringify(next[k]),
+  );
+  if (same) return;
+  current = { ...current, ai: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** AI 機能の有効/無効。有効化するときは呼び出し側が同意ダイアログを通すこと。 */
+export function setAiEnabled(enabled: boolean): void {
+  patchAi({ enabled });
+}
+
+/** 初回有効化時の送信同意を記録する (同意ダイアログで承諾されたときだけ呼ぶ)。 */
+export function giveAiConsent(): void {
+  patchAi({ consentGiven: true });
+}
+
+export function setAiDefaultModel(model: AiModelId): void {
+  patchAi({ defaultModel: model });
+}
+
+/** タスク種別ごとのモデル上書き。`null` = 既定モデルに従う。 */
+export function setAiTaskModel(kind: AiTaskKind, model: AiModelId | null): void {
+  patchAi({ taskModels: { ...current.ai.taskModels, [kind]: model } });
+}
+
+/** タスク種別ごとのエフォート。`null` = 推奨エフォート。 */
+export function setAiTaskEffort(kind: AiTaskKind, effort: AiEffort | null): void {
+  patchAi({ taskEfforts: { ...current.ai.taskEfforts, [kind]: effort } });
+}
+
+export function setAiSendScope(scope: AiSendScope): void {
+  patchAi({ sendScope: scope });
+}
+
+export function setAiAllowRowData(value: boolean): void {
+  patchAi({ allowRowData: value });
+}
+
+/** SQL 内の文字列リテラルをマスクして AI へ送るか (#692)。 */
+export function setAiMaskLiterals(value: boolean): void {
+  patchAi({ maskLiterals: value });
 }
 
 /**

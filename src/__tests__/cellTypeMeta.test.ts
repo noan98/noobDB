@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  normalizeTypeForClassify,
+  classifyTypeName as classifyForEr,
+  baseTypeName,
+  shortTypeName,
   CELL_KIND_META,
   cellKindIcon,
   classifyEmptyValue,
@@ -150,5 +154,35 @@ describe("truncateHexPreview (#647)", () => {
       preview: `${"b".repeat(64)}…`,
       truncated: true,
     });
+  });
+});
+
+describe("shortTypeName / baseTypeName (#1360)", () => {
+  it("括弧の引数を落とし、PostgreSQL の正式名を短縮する", () => {
+    expect(baseTypeName("decimal(10, 2)")).toBe("decimal");
+    expect(shortTypeName("VARCHAR(255)")).toBe("varchar");
+    expect(shortTypeName("character varying")).toBe("varchar");
+    expect(shortTypeName("timestamp with time zone")).toBe("timestamptz");
+    expect(shortTypeName("int unsigned")).toBe("int unsigned");
+    expect(shortTypeName("")).toBe("");
+  });
+});
+
+describe("normalizeTypeForClassify (#1360)", () => {
+  const kind = (t: string) => classifyForEr(normalizeTypeForClassify(t));
+  it("PostgreSQL の正式名を分類できる", () => {
+    expect(kind("timestamp without time zone")).toBe("date");
+    expect(kind("timestamp with time zone")).toBe("date");
+    expect(kind("time without time zone")).toBe("time");
+    expect(kind("double precision")).toBe("number");
+    expect(kind("bytea")).toBe("binary");
+    expect(kind("integer")).toBe("number");
+    expect(kind("boolean")).toBe("bool");
+    expect(kind("character varying(20)")).toBe("string");
+  });
+  it("MySQL の unsigned / zerofill 修飾を落とす", () => {
+    expect(kind("bigint unsigned zerofill")).toBe("number");
+    expect(kind("int(10) unsigned")).toBe("number");
+    expect(kind("decimal(10,2) unsigned")).toBe("decimal");
   });
 });

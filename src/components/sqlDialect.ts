@@ -77,3 +77,32 @@ export function sqlFormatterLanguageFor(driver: string): "mysql" | "postgresql" 
   if (driver === "sqlite") return "sqlite";
   return "mysql";
 }
+
+/**
+ * 行追加で DB 側に評価させる関数 (#1357)。UI の関数値チップと INSERT の式の単一ソース。
+ * 利用者の入力文字列はここを経由せず、固定カタログからのみ式が生まれる。
+ */
+export type InsertFunctionId = "current_timestamp" | "now" | "current_date" | "current_time" | "uuid";
+
+/**
+ * 関数の SQL 式を方言ごとに返す。そのドライバに存在しない関数は `null` (UI は
+ * チップを出さない)。未知のドライバは MySQL 扱い (本ファイルの他の関数と同じ規約)。
+ * - `now`: SQLite に `NOW()` は無い
+ * - `uuid`: PostgreSQL は `gen_random_uuid()` (PG 13 以降の組み込み)、MySQL は `UUID()`、
+ *   SQLite は UUID 生成関数を持たないため無し
+ */
+export function insertFunctionSql(driver: string, fn: InsertFunctionId): string | null {
+  switch (fn) {
+    case "current_timestamp":
+      return "CURRENT_TIMESTAMP";
+    case "current_date":
+      return "CURRENT_DATE";
+    case "current_time":
+      return "CURRENT_TIME";
+    case "now":
+      return driver === "sqlite" ? null : "NOW()";
+    case "uuid":
+      if (driver === "sqlite") return null;
+      return driver === "postgres" ? "gen_random_uuid()" : "UUID()";
+  }
+}

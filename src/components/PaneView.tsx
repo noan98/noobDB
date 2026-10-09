@@ -2,7 +2,7 @@ import { lazy, memo, Suspense, useCallback, useMemo, useSyncExternalStore, type 
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
-import { countEditedCells, countEditedRows, type PendingInsertRow } from "./cellEdit";
+import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
 import { useKeyedStable } from "../useKeyedStable";
@@ -41,6 +41,7 @@ import { estimatedTotalPages } from "../pagination";
 import { Tooltip } from "./Tooltip";
 import type { Tab, PaneState } from "../App";
 import type { Settings } from "../settings";
+import type { AiSqlEditorAction } from "../ai/sqlAssist";
 import { useStoreSelector, type TabPaneStore } from "../tabPaneStore";
 
 
@@ -132,7 +133,7 @@ function sameTabs(a: Tab[], b: Tab[]): boolean {
  * - ここに無い値を `App` のクロージャ越しに読まない (古い値を掴むため)。
  */
 export interface PaneActions {
-  applyEditsForTab: (tab: Tab) => unknown;
+  applyEditsForTab: (tab: Tab, rowScope?: PendingEdits) => Promise<boolean>;
   clearEditsForTab: (tabId: string) => void;
   closePane: (paneId: string) => void;
   discardEditsAndPreviewForTab: (tabId: string) => void;
@@ -145,6 +146,8 @@ export interface PaneActions {
   handleEditorDocChange: (tabId: string, doc: { toString(): string }) => void;
   handleExploreColumns: (database: string, table: string, column?: string | null) => void;
   handleNewTab: (paneId?: string) => void;
+  handleOpenAiSql: (sql: string, database: string | null) => void;
+  handleAiSqlAction: (action: AiSqlEditorAction) => void;
   handleOpenSqlFile: () => unknown;
   handleRegisterLocalTable: (result: QueryResult, sourceSql: string) => void;
   handleSaveSnippetFromEditor: (sql: string) => void;
@@ -152,7 +155,7 @@ export interface PaneActions {
   handleToggleEmergencyMode: (next: boolean) => unknown;
   loadMoreInTab: (tabId: string) => unknown;
   openAndRunQuery: (sql: string, title?: string) => void;
-  openQueryInEditor: (sql: string, title?: string) => void;
+  openQueryInEditor: (sql: string, title?: string, database?: string) => void;
   openTabMenu: (tabId: string, x: number, y: number) => void;
   patchTab: (id: string, patcher: (tab: Tab) => Tab) => void;
   pinCurrentResult: (tab: Tab) => void;
@@ -553,6 +556,9 @@ export const PaneView = memo(
                     actions.updateTab(tab.id, { builderSnapshot: snapshot }),
                   )}
                   readOnly={readOnly}
+                  isProduction={selectedProfile?.is_production ?? false}
+                  onOpenSqlInNewTab={actions.handleOpenAiSql}
+                  onAiSqlAction={actions.handleAiSqlAction}
                   emergencyMode={emergencyMode}
                   onToggleEmergencyMode={onToggleEmergencyMode}
                   queryHistory={queryHistory}
@@ -674,6 +680,19 @@ export const PaneView = memo(
                     result={tab.result}
                     driver={selectedProfile?.driver ?? "mysql"}
                     streaming={tab.streaming}
+                    ai={
+                      sessionId && selectedProfile
+                        ? {
+                            sessionId,
+                            isProduction: selectedProfile.is_production ?? false,
+                            readOnly,
+                            sql: tab.explainSourceSql ?? getTabSql(tab),
+                            database: tab.database ?? selectedProfile.database ?? null,
+                            // 新しいタブに開くのは、EXPLAIN タブに DDL を入れると EXPLAIN CREATE INDEX になるため。
+                            onInsertSql: (sql) => actions.openQueryInEditor(sql, undefined, tab.database),
+                          }
+                        : undefined
+                    }
                     analyze={{
                       supported: explainAnalyzeSupported(selectedProfile?.driver),
                       active: !!tab.explainAnalyze,
@@ -685,6 +704,8 @@ export const PaneView = memo(
                   />
                 ) : tab.batchResults ? (
                   <BatchResultsView
+                    // 以下の結果ビューは同じcontentModeでもタブごとに作り直す。useState初期化子で設定を決めるため、使い回すと前タブの設定が残る(#1323)
+                    key={tab.id}
                     results={tab.batchResults}
                     running={!!tab.batchRunning}
                     onRerun={(stopOnError) => {
@@ -694,6 +715,7 @@ export const PaneView = memo(
                   />
                 ) : tab.showChart && tab.result && !tab.streaming ? (
                   <ChartView
+                    key={tab.id}
                     result={tab.result}
                     sourceSql={tab.lastExecutedSql}
                     driver={selectedProfile?.driver ?? "mysql"}
@@ -704,6 +726,7 @@ export const PaneView = memo(
                   />
                 ) : tab.showJson && tab.result && !tab.streaming ? (
                   <ResultJsonView
+                    key={tab.id}
                     result={tab.result}
                     database={tab.database ?? selectedProfile?.database ?? null}
                     table={tab.table ?? null}
@@ -711,6 +734,7 @@ export const PaneView = memo(
                   />
                 ) : tab.showPivot && tab.result && !tab.streaming ? (
                   <PivotView
+                    key={tab.id}
                     result={tab.result}
                     driver={selectedProfile?.driver ?? "mysql"}
                     sourceSql={tab.lastExecutedSql}
@@ -719,6 +743,7 @@ export const PaneView = memo(
                   />
                 ) : tab.preview ? (
                   <PreviewGrid
+                    key={tab.id}
                     result={tab.preview}
                     rowLimit={tab.previewRowLimit}
                     streaming={tab.streaming}
@@ -950,6 +975,15 @@ export const PaneView = memo(
                     onRedoEdit={gridStable.fn(`${tab.id}:redo`, () => actions.redoCellEditForTab(tab.id))}
                     onPreviewEdits={gridStable.fn(`${tab.id}:previewEdits`, () => actions.previewEditsForTab(tab))}
                     onApplyEdits={gridStable.fn(`${tab.id}:applyEdits`, () => actions.applyEditsForTab(tab))}
+                    onApplyRowEdits={
+                      tableTabEditable(tab)
+                        ? gridStable.fn(
+                            `${tab.id}:applyRowEdits`,
+                            (rowKey: string, edits: Record<number, string>) =>
+                              actions.applyEditsForTab(tab, { [rowKey]: edits }),
+                          )
+                        : undefined
+                    }
                     applyingEdits={tab.applyingEdits}
                     autoRefreshSecs={tab.autoRefreshSecs ?? null}
                     autoRefreshAllowed={

@@ -151,7 +151,9 @@ describe("QueryBuilder INSERT full column expansion + required marks", () => {
     // `id` と `active` は NOT NULL かつ default なし (auto_increment でもない) の
     // 必須カラム。`name` は nullable なので必須マークは付かない — 2 件のみ。
     expect(screen.getAllByLabelText(t("qbRequiredColumn"))).toHaveLength(2);
-  });
+    // 上の waitFor (5 秒) がテスト既定の制限時間 (5 秒) と同じだと、負荷の高い CI では
+    // waitFor が終わる前にテストごと打ち切られる。待ち時間より長い制限時間を与える。
+  }, 15_000);
 
   it("preserves an already-entered value for a column that gets expanded", async () => {
     renderWithProviders(
@@ -169,7 +171,7 @@ describe("QueryBuilder INSERT full column expansion + required marks", () => {
     fireEvent.click(addAllBtn);
 
     expect(screen.getByDisplayValue("Alice")).toBeInTheDocument();
-  });
+  }, 15_000);
 });
 
 describe("QueryBuilder insert into editor", () => {

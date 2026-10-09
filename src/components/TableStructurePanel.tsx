@@ -258,7 +258,7 @@ export function TableStructurePanel({
                   <chakra.td css={tdCss}>
                     <chakra.div fontFamily="var(--font-mono)">{r.name}</chakra.div>
                     {r.comment && (
-                      <chakra.div fontSize="xs" color="app.textMuted">
+                      <chakra.div textStyle="caption">
                         {r.comment}
                       </chakra.div>
                     )}

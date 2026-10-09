@@ -136,6 +136,11 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
     >
       <MotionDiv
         aria-hidden
+        // イラストの背後に敷くブランドの光彩 (#1216)。値は App.css の `--hero-halo` が
+        // 単一ソース (hc-* では none)。
+        css={{ backgroundImage: "var(--hero-halo)", backgroundRepeat: "no-repeat" }}
+        px="10"
+        py="6"
         initial={{ opacity: 0, scale: 0.92 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={transitions.emphasized}
@@ -145,11 +150,23 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
 
       <Flex direction="column" align="center" gap="1.5" maxW="46ch" textAlign="center">
         <Flex align="center" gap="2">
-          <BrandMark size={26} />
+          <BrandMark
+            size={34}
+            width="calc(34px * var(--font-scale))"
+            height="calc(34px * var(--font-scale))"
+          />
           <Heading role="display">
             {t("welcomeTitle")}
           </Heading>
         </Flex>
+        {/* 見出し下のブランドグラデーションの短い罫線 (#1216、hc-* では none) */}
+        <chakra.div
+          aria-hidden
+          w="48px"
+          h="3px"
+          rounded="pill"
+          css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
+        />
         <Text color="app.textMuted" fontSize="sm" lineHeight="1.6">
           {t("welcomeSubtitle")}
         </Text>

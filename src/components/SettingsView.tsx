@@ -29,6 +29,7 @@ import { DEFAULT_MASK_PATTERNS, formatMaskPatterns, parseMaskPatterns } from "./
 import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { KnownHostsPanel } from "./KnownHostsPanel";
+import { AiSettings } from "./AiSettings";
 import { QuickLauncherSettings } from "./QuickLauncherSettings";
 import { TableOpenQuerySettings } from "./TableOpenQuerySettings";
 import { useToast } from "./Toast";
@@ -596,6 +597,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
   { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
   { id: "settings-sec-quick-launcher", titleKey: "quickLauncherSettingsTitle" },
+  { id: "settings-sec-ai", titleKey: "aiSettingsTitle" },
   { id: "settings-sec-safety", titleKey: "settingsSafety" },
   { id: "settings-sec-notifications", titleKey: "settingsNotifications" },
   { id: "settings-sec-tab-persistence", titleKey: "settingsTabPersistence" },
@@ -1540,6 +1542,14 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsSectionHeader>
         <SettingsHelp>{t("quickLauncherSettingsHelp")}</SettingsHelp>
         <QuickLauncherSettings />
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-ai" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("aiSettingsTitle")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("aiSettingsHelp")}</SettingsHelp>
+        <AiSettings />
       </SettingsSection>
 
       <SettingsSection id="settings-sec-safety" scrollMarginTop="8px">

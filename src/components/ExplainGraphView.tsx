@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
@@ -69,7 +69,7 @@ const cardBaseCss: SystemStyleObject = {
   padding: "var(--space-2) var(--space-2-5)",
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
-  boxShadow: "var(--shadow-sm)",
+  boxShadow: "var(--elevation-raised)",
   cursor: "pointer",
   overflow: "hidden",
   fontSize: "var(--text-sm)",
@@ -169,6 +169,7 @@ interface ExplainGraphViewProps {
 function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraphViewProps) {
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
+  const isDark = useIsDarkTheme();
   const [nodes, setNodes, onNodesChange] = useNodesState<PlanFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -207,6 +208,13 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
     return () => window.clearTimeout(id);
   }, [positioned, fitView, reduceMotion]);
 
+  // ミニマップのノードはカードと同じコストヒート色で塗る (コスト無しは中立色。関数は string を返す必要がある)。
+  const miniMapNodeColor = useCallback(
+    (n: PlanFlowNode) =>
+      n.data.heat === null ? "var(--border-strong)" : sampleRamp(n.data.heat, rampStops(SEQUENTIAL_RAMPS.blue, isDark)),
+    [isDark],
+  );
+
   return (
     <ReactFlow
       nodes={nodes}
@@ -219,11 +227,12 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
       edgesFocusable={false}
       fitView
       minZoom={0.1}
+      colorMode={isDark ? "dark" : "light"}
       proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable />
+      <MiniMap<PlanFlowNode> pannable zoomable nodeColor={miniMapNodeColor} />
     </ReactFlow>
   );
 }

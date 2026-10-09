@@ -32,6 +32,8 @@ const connected = {
   structureTable: "users",
   timelapseProfileId: "prof1",
   openConnectionCount: 1,
+  aiAvailable: true,
+  aiSqlTarget: true,
 };
 
 /** 接続に依存せず常に開けるログ系タブ (#1114)。 */
@@ -113,6 +115,41 @@ describe("タイムラプスタブ (#739)", () => {
     expect(appSource).toContain("<TableTimelapsePanel");
     // ConnectionList へは `useStableCallbacks` の束 (`onWatchTable: handleWatchTable`) 経由で渡す (#1314)。
     expect(appSource).toContain("onWatchTable: handleWatchTable");
+  });
+});
+
+describe("AI 解説タブ (#695)", () => {
+  it("接続中 + AI 利用可のときだけ開ける (参照グループ)", () => {
+    expect(availableBottomPanelTabs(connected)).toContain("aiSql");
+    for (const ai of [false, undefined]) {
+      expect(availableBottomPanelTabs({ ...connected, aiAvailable: ai })).not.toContain("aiSql");
+    }
+    // 依頼 (対象) が無ければ並べない
+    for (const target of [false, undefined]) {
+      expect(availableBottomPanelTabs({ ...connected, aiSqlTarget: target })).not.toContain("aiSql");
+    }
+    expect(
+      availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
+    ).not.toContain("aiSql");
+    expect(BOTTOM_PANEL_TAB_GROUP.aiSql).toBe("reference");
+  });
+
+  it("AI が使えなくなったら開いていたタブを閉じる", () => {
+    expect(resolveBottomPanelTab("aiSql", { ...connected, aiAvailable: false })).toBeNull();
+    expect(resolveBottomPanelTab("aiSql", connected)).toBe("aiSql");
+  });
+
+  it("パネルバー (折りたたみ時) には並べない", () => {
+    expect(bottomPanelStripTabs(connected).map((e) => e.tab)).not.toContain("aiSql");
+  });
+
+  it("App.tsx にパネルと AI 利用可の文脈が結線されている", () => {
+    expect(appSource).toContain("aiAvailable,");
+    expect(appSource).toContain('activeBottomPanelTab === "aiSql"');
+    expect(appSource).toContain("<AiSqlPanel");
+    expect(appSource).toContain("aiSqlTarget: !!aiSqlRequest");
+    // 接続が切り替わったら前の接続の依頼を破棄する
+    expect(appSource).toMatch(/setAiSqlRequest\(null\);\s*\}, \[sessionId\]\)/);
   });
 });
 
@@ -206,8 +243,8 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "timelapse", 1)).toBe("output");
-    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("timelapse");
+    expect(nextBottomPanelTab(tabs, "aiSql", 1)).toBe("output");
+    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("aiSql");
   });
 
   it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {

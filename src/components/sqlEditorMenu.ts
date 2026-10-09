@@ -27,6 +27,8 @@ export type SqlEditorMenuAction =
   | "runStatement"
   | "preview"
   | "explain"
+  | "aiExplain"
+  | "aiRewrite"
   | "format"
   | "toggleComment"
   | "cut"
@@ -46,6 +48,8 @@ export interface SqlEditorMenuContext {
   canPreview: boolean;
   canExplain: boolean;
   canSaveSnippet: boolean;
+  /** AI 利用可 (有効 + API キーあり) で、解説 / 最適化案の起動先がある (#695)。 */
+  canAi?: boolean;
 }
 
 export interface SqlEditorMenuItemSpec {
@@ -121,6 +125,24 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
       labelKey: "editorMenuExplain",
       icon: "explain",
       shortcutId: "explain",
+      disabled: execBlocked,
+      disabledReasonKey: execReason,
+    });
+  }
+
+  // --- AI (#695): 選択範囲 (無ければ全文) の解説と最適化案。結果はボトムパネルに出る ---
+  if (ctx.canAi && !ctx.explainMode) {
+    entries.push({
+      action: "aiExplain",
+      labelKey: "aiSqlMenuExplain",
+      icon: "sparkles",
+      disabled: execBlocked,
+      disabledReasonKey: execReason,
+    });
+    entries.push({
+      action: "aiRewrite",
+      labelKey: "aiSqlMenuRewrite",
+      icon: "sparkles",
       disabled: execBlocked,
       disabledReasonKey: execReason,
     });
