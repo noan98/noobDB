@@ -1971,3 +1971,43 @@ describe("コンテキストメニューをキーボードから開く (Shift+F1
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });
+
+describe("FK セルのリンク・アフォーダンス (#1393)", () => {
+  beforeEach(() => setLocale("en"));
+  const columns: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "user_id", type_name: "INT" },
+  ];
+  const meta = (refTable: string | null, refColumn: string | null): TableColumnInfo[] => [
+    { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
+    { name: "user_id", data_type: "int", nullable: true, key: "MUL", default: null, extra: "", referenced_table: refTable, referenced_column: refColumn },
+  ];
+  const result = makeResult(columns, [
+    [1, 7],
+    [2, null],
+  ]);
+
+  it("FK 列の非 NULL セルだけにジャンプアイコンを出し、クリックで onFkJump を呼ぶ", () => {
+    const onFkJump = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid result={result} tableColumns={meta("users", "id")} onFkJump={onFkJump} driver="mysql" />,
+    );
+    const buttons = container.querySelectorAll("button.cell-fk-jump");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAttribute("aria-label", t("gridFkJump", { table: "users" }));
+    expect(container.querySelectorAll("td.is-fk")).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(onFkJump).toHaveBeenCalledTimes(1);
+    expect(onFkJump.mock.calls[0][0]).toContain("users");
+  });
+
+  it("参照先が解決できない / onFkJump が無いときは出さない", () => {
+    const a = renderWithProviders(
+      <ResultGrid result={result} tableColumns={meta("users", null)} onFkJump={vi.fn()} />,
+    );
+    expect(a.container.querySelector(".cell-fk-jump")).toBeNull();
+    a.unmount();
+    const b = renderWithProviders(<ResultGrid result={result} tableColumns={meta("users", "id")} />);
+    expect(b.container.querySelector(".cell-fk-jump")).toBeNull();
+  });
+});

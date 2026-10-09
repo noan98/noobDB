@@ -444,6 +444,44 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
   },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
+  // FK セルのリンク・アフォーダンス (#1393)。値に控えめな点線下線を引き、ホバー /
+  // アクティブセルで accent の実線 + 右端のジャンプアイコンを出す。アイコンは FK 列の
+  // 非 NULL セルにだけ常設し、出し分けは CSS のみ (行数に比例する JS コストを持たない)。
+  "& td.is-fk > span:not(.cell-fk-jump)": {
+    textDecoration: "underline dotted",
+    textDecorationColor: "color-mix(in srgb, var(--accent) 45%, transparent)",
+    textUnderlineOffset: "0.2em",
+  },
+  "& td.is-fk:hover > span:not(.cell-fk-jump), & td.is-fk.is-active-cell > span:not(.cell-fk-jump)": {
+    textDecorationStyle: "solid",
+    textDecorationColor: "var(--accent)",
+  },
+  "& td.is-fk .cell-fk-jump": {
+    position: "absolute",
+    top: "50%",
+    right: "var(--space-1)",
+    transform: "translateY(-50%)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "var(--space-0-5)",
+    color: "var(--accent)",
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
+    opacity: 0,
+    pointerEvents: "none",
+  },
+  "& td.is-fk:hover .cell-fk-jump, & td.is-fk.is-active-cell .cell-fk-jump, & td.is-fk .cell-fk-jump:focus-visible": {
+    opacity: 1,
+    pointerEvents: "auto",
+  },
+  "& td.is-fk .cell-fk-jump:hover": {
+    background: "color-mix(in srgb, var(--accent) 16%, var(--bg-elevated))",
+    borderColor: "var(--accent)",
+  },
+  "& td.is-fk .cell-fk-jump:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
   // 機微カラムの表示マスク (#1069)。伏せ字は値の長さを漏らさない固定長で、
   // 色は --text-muted (テーマ追従) なのでライト/ダーク両方で読める。
   "& .cell-masked": {
@@ -2904,6 +2942,8 @@ type GridRowHandlers = {
   onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
   onCellFocus: (e: ReactFocusEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
   onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
+  /** FK セルのジャンプアイコン (#1393)。右クリックメニューの「参照先へジャンプ」と同じ経路。 */
+  onFkCellJump: (rowIdx: number, colIdx: number) => void;
   onCellDoubleClick: (
     rowIdx: number,
     colIdx: number,
@@ -2963,6 +3003,8 @@ interface GridRowProps {
   /** この行の現在ヒットの列 (別の行なら null)。 */
   findCurrentCol: number | null;
   maskedCols: boolean[] | null;
+  /** 列ごとの FK 参照先テーブル名 (解決できない列は null)。`onFkJump` が無ければ全体が null (#1393)。 */
+  fkCols: (string | null)[] | null;
   /** この行に関係する reveal だけ (無関係なら null)。 */
   reveal: RevealTarget | null;
   /** 保留中の編集を持つ行・編集中の行にだけ渡す (他の行は undefined)。 */
@@ -3016,6 +3058,7 @@ const GridRow = memo(function GridRow({
   findHits,
   findCurrentCol,
   maskedCols,
+  fkCols,
   reveal,
   validateEdit,
   valuePicker,
@@ -3058,6 +3101,10 @@ const GridRow = memo(function GridRow({
     // 機微カラムの表示マスク (#1069)。マスク無しの結果では `maskedCols` が
     // null なので、ここは null 判定 1 回で終わる (列仮想化のホットパス)。
     const cellMasked = maskedCols !== null && isCellMasked(maskedCols, reveal, row.index, colIdx);
+    // FK リンク・アフォーダンス (#1393)。NULL・マスク中・編集中・保留中の編集があるセルは
+    // 出さない (値が無い / 実値を書き出せない / 見えている値が元の値でない)。
+    const fkTable = fkCols?.[colIdx] ?? null;
+    const isFkCell = fkTable !== null && !isNull && !cellMasked && !isEditingHere && !hasPending;
     // Live validation of the value being typed, and of an
     // already-buffered value that's sitting invalid in the grid.
     const editPickerValues =
@@ -3094,7 +3141,7 @@ const GridRow = memo(function GridRow({
           if (el) cellRefs.current.set(key, el);
           else cellRefs.current.delete(key);
         }}
-        className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}${cellMasked ? " is-masked-cell" : ""}`}
+        className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}${cellMasked ? " is-masked-cell" : ""}${isFkCell ? " is-fk" : ""}`}
         // マウス hover 用は行×列に比例するため native title ではなく
         // `cellTooltipProps` (#884) に委譲する。キーボードでの同等手段は
         // 既存の `gridInspector` ショートカット (`CellValueViewer`) が
@@ -3213,7 +3260,32 @@ const GridRow = memo(function GridRow({
             {/^null$/i.test(pendingValue.trim()) ? t("resultNull") : pendingValue}
           </motion.span>
         ) : (
-          flexRender(cell.column.columnDef.cell, cell.getContext())
+          <>
+            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+            {isFkCell && (
+              // ジャンプはこのアイコンのクリックに限る。セル本体のクリックは選択、
+              // ダブルクリックは編集 / ビューアのままにして誤爆を防ぐ。
+              // 出し分けは CSS (hover / アクティブセル) だけ。キーボードは右クリック
+              // メニュー (Shift+F10) の同じ項目から辿れるので tabIndex は外す。
+              <button
+                type="button"
+                className="cell-fk-jump"
+                tabIndex={-1}
+                aria-label={t("gridFkJump", { table: fkTable })}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlers.onFkCellJump(row.index, colIdx);
+                }}
+              >
+                <Icon name="link" size={ICON_SIZES.sm} />
+              </button>
+            )}
+          </>
         )}
       </td>
     );
@@ -3983,6 +4055,17 @@ export const DataGrid = memo(function DataGrid({
     columnFlip.capture();
     handleColumnOrderChange(next);
   };
+
+  // 列ごとの FK 参照先テーブル (#1393)。ジャンプ先 SQL を作れる列 (参照先テーブル + 列が
+  // 解決できる) だけ埋める。`onFkJump` が無い画面ではアフォーダンスごと出さない。
+  const fkCols = useMemo<(string | null)[] | null>(() => {
+    if (!onFkJump || !columnMeta) return null;
+    const byName = new Map(columnMeta.map((m) => [m.name, m]));
+    return columns.map((c) => {
+      const m = byName.get(c.name);
+      return m?.referenced_table && m.referenced_column ? m.referenced_table : null;
+    });
+  }, [onFkJump, columnMeta, columns]);
 
   const tableColumns = useMemo<ColumnDef<GridFeatures, RowShape>[]>(() => {
     // 列ごとの線形探索 (find) は横に広いテーブルで O(列数²) になるため、
@@ -5173,6 +5256,23 @@ export const DataGrid = memo(function DataGrid({
       column: Header<GridFeatures, RowShape, unknown>["column"],
     ) => startColumnResize(e, column),
   });
+  // セルの FK 順方向ジャンプ先 (参照先テーブル + SELECT)。FK でない / 参照先が解決できない /
+  // マスク中なら null。右クリックメニューと FK セルのジャンプアイコンで共有する (#1393)。
+  const fkJumpFor = (rowIdx: number, colIdx: number): { refTable: string; sql: string } | null => {
+    const fkMeta = columnMeta?.find((m) => m.name === columns[colIdx]?.name);
+    if (!fkMeta?.referenced_table || !fkMeta.referenced_column) return null;
+    if (cellMaskedNow(rowIdx, colIdx)) return null;
+    return {
+      refTable: fkMeta.referenced_table,
+      sql: buildFkJumpSql({
+        driver: rowSqlDriver ?? "mysql",
+        database: rowSqlDatabase,
+        refTable: fkMeta.referenced_table,
+        refColumn: fkMeta.referenced_column,
+        value: rows[rowIdx]?.[colIdx] ?? null,
+      }),
+    };
+  };
   // `GridRow` に渡すハンドラ。最新の state を読む関数を参照固定で渡す (#1341)。
   const rowHandlers = useStableCallbacks({
     onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
@@ -5196,6 +5296,10 @@ export const DataGrid = memo(function DataGrid({
     onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
       e.preventDefault();
       setCopyMenu({ x: e.clientX, y: e.clientY, rowIdx, colIdx });
+    },
+    onFkCellJump: (rowIdx: number, colIdx: number) => {
+      const jump = fkJumpFor(rowIdx, colIdx);
+      if (jump) onFkJump?.(jump.sql);
     },
     onCellDoubleClick: (
       rowIdx: number,
@@ -5605,6 +5709,7 @@ export const DataGrid = memo(function DataGrid({
             : null
         }
         maskedCols={maskedCols}
+        fkCols={fkCols}
         reveal={
           reveal && (reveal.kind === "column" || reveal.rowIdx === row.index) ? reveal : null
         }
@@ -6279,28 +6384,14 @@ export const DataGrid = memo(function DataGrid({
               const reverse: ContextMenuEntry[] = [];
 
               // 順方向: クリックしたセルが FK なら参照先テーブルへジャンプ。
-              const fkMeta = columnMeta?.find(
-                (m) => m.name === columns[copyMenu.colIdx]?.name,
-              );
               // FK ジャンプの SQL はエディタに値をそのまま書き出すため、マスク中の
               // セル (#1069) からは辿らない (順方向・逆方向とも)。
-              if (
-                fkMeta?.referenced_table &&
-                fkMeta.referenced_column &&
-                !cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)
-              ) {
-                const refTable = fkMeta.referenced_table;
-                const sql = buildFkJumpSql({
-                  driver,
-                  database: rowSqlDatabase,
-                  refTable,
-                  refColumn: fkMeta.referenced_column,
-                  value: rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null,
-                });
+              const fwd = fkJumpFor(copyMenu.rowIdx, copyMenu.colIdx);
+              if (fwd) {
                 items.push({
-                  label: t("gridFkJump", { table: refTable }),
+                  label: t("gridFkJump", { table: fwd.refTable }),
                   title: t("gridFkJumpTitle"),
-                  onSelect: () => { setCopyMenu(null); onFkJump(sql); },
+                  onSelect: () => { setCopyMenu(null); onFkJump(fwd.sql); },
                 });
               }
 
