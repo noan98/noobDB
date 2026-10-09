@@ -136,7 +136,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
       await runInner();
     } catch (e) {
       busyRef.current = false;
-      setState({ kind: "error", sends: "", message: String(e), refused: false });
+      setState({ kind: "error", sends: sendsLine(tableRefs.length), message: String(e), refused: false });
     }
   };
 
@@ -168,6 +168,8 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
       if (!ok) return abort();
     }
     setOpen(true);
+    // スキーマ取得中もスピナーを出す。
+    setState({ kind: "running", sends: sendsLine(tableRefs.length) });
 
     // スキーマ情報はベストエフォート。取得できないものは黙って落とす。行データは取得しない。
     const resolved = tableRefs.map((ref) => ({
@@ -175,38 +177,36 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
       db: resolveTableDatabase(ref, props.database, props.driver),
     }));
     const dbs = [...new Set(resolved.map((r) => r.db).filter((d): d is string => d !== null))];
-    const perDb = new Map<string, { fks: ImpactForeignKey[]; estimates: Map<string, number | null> }>();
+    const perDb = new Map<string, ImpactForeignKey[]>();
     await Promise.all(
       dbs.map(async (db) => {
-        const [fks, est] = await Promise.all([
-          api.foreignKeys(props.sessionId, db).catch(() => [] as ImpactForeignKey[]),
-          api.tableRowEstimates(props.sessionId, db).catch(() => []),
-        ]);
-        perDb.set(db, {
-          fks,
-          estimates: new Map(est.map((e) => [e.name.toLowerCase(), e.estimate])),
-        });
+        perDb.set(db, await api.foreignKeys(props.sessionId, db).catch(() => [] as ImpactForeignKey[]));
       }),
     );
     const fetched = await Promise.all(
       resolved.map(async ({ ref, db }): Promise<ImpactTable | null> => {
         if (!db) return null;
         try {
-          const columns = await api.describeTable(props.sessionId, db, ref.table);
-          return {
-            name: ref.table,
-            columns,
-            estimatedRows: perDb.get(db)?.estimates.get(ref.table.toLowerCase()) ?? null,
-          };
+          const [columns, estimatedRows] = await Promise.all([
+            api.describeTable(props.sessionId, db, ref.table),
+            // 1 テーブル版 (統計なし・ビュー・SQLite は null)。取れなくても分析は続ける。
+            api.tableRowEstimate(props.sessionId, db, ref.table).catch(() => null),
+          ]);
+          return { name: ref.table, columns, estimatedRows };
         } catch {
           return null;
         }
       }),
     );
+    // スキーマ取得中にダイアログが閉じられたら、要求を出さずに終える。
+    if (!mountedRef.current) {
+      busyRef.current = false;
+      return;
+    }
     const tables = fetched.filter((x): x is ImpactTable => x !== null);
     const names = tables.map((x) => x.name);
     const foreignKeys = selectRelatedForeignKeys(
-      [...perDb.values()].flatMap((v) => v.fks),
+      [...perDb.values()].flat(),
       names,
     );
     const sends = sendsLine(tables.length);
@@ -414,6 +414,9 @@ function ResultView({ value }: { value: ImpactAnalysisResponse }) {
       {value.cascades.length > 0 && (
         <Flex direction="column" gap="1">
           <FieldLabel as="div">{t("dangerousAiCascades")}</FieldLabel>
+          <chakra.span color="app.textMuted" fontSize="xs">
+            {t("dangerousAiCascadesNote")}
+          </chakra.span>
           {value.cascades.map((c, i) => (
             <chakra.span key={`${i}-${c.from}-${c.to}`} fontFamily="mono">
               {c.from} → {c.to} ({c.via})

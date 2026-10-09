@@ -198,7 +198,8 @@ export function buildImpactAnalysisSystem(locale: "ja" | "en"): string {
     "Answer only with the JSON object described by the schema.",
     "summary: what the statement will do and how far it reaches, in plain words.",
     "affected_tables: each table that is changed or lost; estimated_rows is a short human-readable estimate (e.g. \"all ~12,000 rows\", \"unknown\"); reason explains why.",
-    "cascades: effects that propagate through foreign keys (from -> to, via = constraint or column); use an empty array when none are indicated by the given schema.",
+    "cascades: effects that may propagate through foreign keys (from -> to, via = constraint or column); use an empty array when none are indicated by the given schema.",
+    "ON DELETE / ON UPDATE rules are NOT provided. Describe cascades only as possibilities that depend on the rule (CASCADE / SET NULL / RESTRICT), and recommend checking the rule.",
     "risk: high (data loss / whole table / irreversible), medium, or low.",
     "recommendations: concrete safeguards before running (backup, WHERE clause, transaction, dry run); an empty array when none.",
     "Use only the schema information provided; never invent data values or foreign keys that are not listed.",
@@ -248,7 +249,7 @@ export function buildImpactAnalysisPrompt(input: ImpactAnalysisInput): string {
   }
   if (input.foreignKeys.length > 0) {
     lines.push("");
-    lines.push("Foreign keys touching these tables (child.column -> parent.column):");
+    lines.push("Foreign keys touching these tables (child.column -> parent.column) (referential actions unknown):");
     for (const fk of input.foreignKeys) {
       lines.push(
         `- ${fk.table}.${fk.column} -> ${fk.referenced_table}.${fk.referenced_column ?? "?"}${

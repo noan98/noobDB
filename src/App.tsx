@@ -9913,7 +9913,10 @@ export default function App() {
                 ? {
                     sessionId,
                     driver: selectedProfile.driver,
-                    database: activeTab?.database ?? selectedProfile.database ?? null,
+                    database:
+                      tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                      selectedProfile.database ??
+                      null,
                     sql: pendingDangerous.sql,
                   }
                 : null

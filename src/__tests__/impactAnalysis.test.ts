@@ -140,6 +140,11 @@ describe("プロンプト (#694)", () => {
     for (const s of ["ROW_DATA_SENTINEL", "DEFAULT_SENTINEL", "COMMENT_SENTINEL"]) expect(p).not.toContain(s);
   });
 
+  it("FK の削除 / 更新規則が未取得であることを AI に伝える", () => {
+    expect(buildImpactAnalysisPrompt(base)).toContain("(referential actions unknown)");
+    expect(buildImpactAnalysisSystem("en")).toContain("ON DELETE / ON UPDATE rules are NOT provided");
+  });
+
   it("システムプロンプトは出力言語を切り替える", () => {
     expect(buildImpactAnalysisSystem("ja")).toContain("Japanese");
     expect(buildImpactAnalysisSystem("en")).toContain("English");

@@ -6,7 +6,7 @@ const hasAiApiKey = vi.fn().mockResolvedValue(true);
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
 const describeTable = vi.fn();
 const foreignKeys = vi.fn().mockResolvedValue([]);
-const tableRowEstimates = vi.fn().mockResolvedValue([]);
+const tableRowEstimate = vi.fn().mockResolvedValue(null);
 const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 });
 const unlisten = vi.fn();
 let handlers: import("../api/tauri").AiStreamHandlers | null = null;
@@ -25,7 +25,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       runAiRequest: (...a: unknown[]) => runAiRequest(...a),
       describeTable: (...a: unknown[]) => describeTable(...a),
       foreignKeys: (...a: unknown[]) => foreignKeys(...a),
-      tableRowEstimates: (...a: unknown[]) => tableRowEstimates(...a),
+      tableRowEstimate: (...a: unknown[]) => tableRowEstimate(...a),
       cancelStream: (...a: unknown[]) => cancelStream(...a),
     },
   };
@@ -79,7 +79,7 @@ beforeEach(() => {
   foreignKeys.mockResolvedValue([
     { table: "order_items", column: "order_id", referenced_table: "orders", referenced_column: "id", constraint_name: "fk_items" },
   ]);
-  tableRowEstimates.mockResolvedValue([{ name: "orders", estimate: 12000 }]);
+  tableRowEstimate.mockResolvedValue(12000);
   handlers = null;
   enable();
 });
@@ -123,6 +123,39 @@ describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
     expect(req.prompt).not.toContain("DEFAULT_SENTINEL");
   });
 
+  it("2 回クリックしても要求は 1 本だけ", async () => {
+    renderWithProviders(ui());
+    const btn = await analyze();
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(runAiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("分析中にアンマウントすると stream ID 付きで中止し unlisten する", async () => {
+    const { unmount } = renderWithProviders(ui());
+    fireEvent.click(await analyze());
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    const streamId = runAiRequest.mock.calls[0][0].streamId;
+    unmount();
+    expect(cancelStream).toHaveBeenCalledWith(streamId);
+    expect(unlisten).toHaveBeenCalled();
+  });
+
+  it("スキーマ取得中にアンマウントすると要求を出さない", async () => {
+    let release: (v: unknown[]) => void = () => {};
+    describeTable.mockReturnValue(new Promise((r) => { release = r; }));
+    const { unmount } = renderWithProviders(ui());
+    fireEvent.click(await analyze());
+    await waitFor(() => expect(describeTable).toHaveBeenCalled());
+    await screen.findByText(t("dangerousAiRunning"));
+    unmount();
+    release([]);
+    await act(async () => {});
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
   it("結果を表示し、常に UX ガードの注意書きを出す", async () => {
     renderWithProviders(ui());
     expect(await screen.findByText(t("dangerousAiGuardNote"))).toBeTruthy();
@@ -133,6 +166,7 @@ describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("SUMMARY_TEXT");
+    expect(screen.getByText(t("dangerousAiCascadesNote"))).toBeTruthy();
     expect(screen.getByText(/REC_TEXT/)).toBeTruthy();
     expect(screen.getByText(t("dangerousAiRiskHigh")).getAttribute("data-risk")).toBe("high");
     // 折りたたみ
