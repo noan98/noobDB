@@ -76,7 +76,8 @@ export function workspaceCommandItems(
       group: "navigation",
       label: t("cmdkReopenClosedTab"),
       icon: "undo",
-      keywords: "reopen restore undo close closed recent tab 閉じたタブ 復元 再オープン 開き直す 元に戻す 最近",
+      // 最新の 1 件は個別候補に出さないので、タイトルでも引けるよう keywords に含める。
+      keywords: `reopen restore undo close closed recent tab 閉じたタブ 復元 再オープン 開き直す 元に戻す 最近 ${ctx.closedTabs[0].title}`,
       shortcut: ctx.shortcuts.reopenClosedTab,
       run: () => actions.reopenClosedTab(),
     });
