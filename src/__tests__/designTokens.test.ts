@@ -226,6 +226,121 @@ describe("design tokens: 等幅数字 (#1072)", () => {
   });
 });
 
+describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
+  // 手書き caption (`fontSize="xs"` + `color="app.textMuted"`) の残存数のベースライン。
+  // theme.ts の textStyles.caption (xs / snug / textMuted) と同じ組み合わせを
+  // 手書きすると行間・字間の階層から外れるため、ヘルプ / 補足 / メタ情報は
+  // textStyle="caption" を使う。ここに残るのは「バッジ・ツールバー・フォームの
+  // 密な部品や inline の span」など、まだ置換していない箇所。置換が進んだら件数を
+  // 減らす (増やすのは禁止)。新しいファイルはここに足さず textStyle="caption" を使う。
+  const HANDWRITTEN_CAPTION_BASELINE = new Map<string, number>([
+    ["../components/AiErrorExplain.tsx", 1],
+    ["../components/AiExplainInterpret.tsx", 2],
+    ["../components/AiHistorySearch.tsx", 4],
+    ["../components/AiImpactAnalysis.tsx", 2],
+    ["../components/AiQueryModal.tsx", 2],
+    ["../components/AiSchemaDocModal.tsx", 2],
+    ["../components/AiSqlPanel.tsx", 1],
+    ["../components/AiSyncRisk.tsx", 2],
+    ["../components/AlterTableModal.tsx", 7],
+    ["../components/AssertionsPanel.tsx", 1],
+    ["../components/BatchResultsView.tsx", 2],
+    ["../components/BroadcastModal.tsx", 2],
+    ["../components/ChartView.tsx", 4],
+    ["../components/ColumnProfilePanel.tsx", 1],
+    ["../components/CommandPalette.tsx", 2],
+    ["../components/ConnectionForm.tsx", 17],
+    ["../components/ConnectionHealthPanel.tsx", 2],
+    ["../components/CreateIndexModal.tsx", 1],
+    ["../components/DataSearchModal.tsx", 4],
+    ["../components/DataTransferModal.tsx", 1],
+    ["../components/DumpModal.tsx", 4],
+    ["../components/EmptyState.tsx", 1],
+    ["../components/ExportMaskingSection.tsx", 4],
+    ["../components/ExportModal.tsx", 4],
+    ["../components/GridReplaceModal.tsx", 3],
+    ["../components/ImportModal.tsx", 7],
+    ["../components/JsonTreeView.tsx", 2],
+    ["../components/LocalTablesPanel.tsx", 5],
+    ["../components/MigrationExportModal.tsx", 2],
+    ["../components/ObjectSearchModal.tsx", 1],
+    ["../components/OnboardingTour.tsx", 2],
+    ["../components/OutputPanel.tsx", 1],
+    ["../components/PaginationBar.tsx", 1],
+    ["../components/ParameterInputModal.tsx", 1],
+    ["../components/PivotView.tsx", 2],
+    ["../components/PlanWatchPanel.tsx", 2],
+    ["../components/ProcessListPanel.tsx", 2],
+    ["../components/ProfileImportDialog.tsx", 1],
+    ["../components/QueryInspectorPanel.tsx", 4],
+    ["../components/QuickLauncher.tsx", 2],
+    ["../components/RegisterLocalTableModal.tsx", 2],
+    ["../components/RelatedRowsPanel.tsx", 1],
+    ["../components/ResultGrid.tsx", 5],
+    ["../components/RowInsertModal.tsx", 1],
+    ["../components/RowInspector.tsx", 2],
+    ["../components/RunRoutineModal.tsx", 1],
+    ["../components/SandboxCreateModal.tsx", 2],
+    ["../components/SandboxReviewModal.tsx", 4],
+    ["../components/SaveAsTableModal.tsx", 1],
+    ["../components/SaveAsViewModal.tsx", 1],
+    ["../components/SchemaCompareView.tsx", 1],
+    ["../components/SchemaDriftPanel.tsx", 1],
+    ["../components/SchemaExportModal.tsx", 3],
+    ["../components/ScriptRunModal.tsx", 5],
+    ["../components/ServerInfoPanel.tsx", 1],
+    ["../components/ServerMetricsPanel.tsx", 2],
+    ["../components/SeverityLog.tsx", 1],
+    ["../components/SnippetForm.tsx", 2],
+    ["../components/TabBar.tsx", 1],
+    ["../components/TableConstraintEditor.tsx", 2],
+    ["../components/TableOpenQueryModal.tsx", 1],
+    ["../components/TableOpenQuerySettings.tsx", 1],
+    ["../components/TableStructurePanel.tsx", 2],
+    ["../components/TableTimelapsePanel.tsx", 3],
+    ["../components/TaskManager.tsx", 7],
+    ["../components/TestDataModal.tsx", 5],
+    ["../components/UsersPanel.tsx", 1],
+    ["../components/WelcomeView.tsx", 1],
+    ["../components/WhereUsedPanel.tsx", 1],
+  ]);
+
+  // JSX 開始タグ単位で数える (属性を複数行に分けても素通りしない)。
+  const OPEN_TAG = /<[A-Za-z][\w.]*\b[^>]*>/gs;
+  function countHandwrittenCaptions(content: string): number {
+    return (content.match(OPEN_TAG) ?? []).filter(
+      (tag) => /fontSize="xs"/.test(tag) && /color="app\.textMuted"/.test(tag),
+    ).length;
+  }
+
+  it("fontSize=\"xs\" + color=\"app.textMuted\" の手書き caption を増やさず、減ったらベースラインも下げる", () => {
+    const counts = new Map<string, number>();
+    for (const [path, content] of sources) {
+      if (!path.startsWith("../components/")) continue;
+      const n = countHandwrittenCaptions(content);
+      if (n > 0) counts.set(path, n);
+    }
+    const paths = new Set([...counts.keys(), ...HANDWRITTEN_CAPTION_BASELINE.keys()]);
+    const offenders: string[] = [];
+    for (const path of paths) {
+      const n = counts.get(path) ?? 0;
+      const allowed = HANDWRITTEN_CAPTION_BASELINE.get(path) ?? 0;
+      if (n > allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所 (許容 ${allowed})`);
+      else if (n < allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所に減った。ベースラインを ${n} へ下げてください (許容 ${allowed})`);
+    }
+    expect(
+      offenders,
+      "補足テキストは fontSize=\"xs\" color=\"app.textMuted\" を手書きせず " +
+        "textStyle=\"caption\" を使う (標準本文は textStyle=\"body\")。減らしたらベースラインも下げる。",
+    ).toEqual([]);
+  });
+
+  it("body / caption の textStyle が theme.ts に定義されている", () => {
+    expect(themeTs).toMatch(/caption:\s*\{\s*value:\s*\{\s*fontSize:\s*"xs",\s*fontWeight:\s*"400",\s*lineHeight:\s*"snug",\s*color:\s*"app\.textMuted"/);
+    expect(themeTs).toMatch(/body:\s*\{\s*value:\s*\{\s*fontSize:\s*"sm",\s*fontWeight:\s*"400",\s*lineHeight:\s*"normal",\s*color:\s*"app\.text"/);
+  });
+});
+
 describe("design tokens: 角丸 (radius)", () => {
   it("borderRadius は px 直値ではなく radii トークン (xs/sm/md/lg/pill) を使う", () => {
     const offenders = findViolations(

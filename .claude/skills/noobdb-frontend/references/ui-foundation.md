@@ -101,3 +101,4 @@
   `components/scrollEdges.ts` (`computeScrollEdges`) で、`scrollEdges.test.tsx` と
   `browser/scrollEdges.browser.test.tsx` が固定する。色は `var(--text)` 由来の
   `color-mix` (ピン留め境界影と同じ) で新規色は定義しない。
+- タイポグラフィの本文 / 補足 — ヘルプ・補足は `textStyle="caption"`、標準本文は `textStyle="body"` (#1392)。`fontSize="xs"` + `color="app.textMuted"` の手書きはガードが検出する (`.claude/rules/ui-design-system.md` §2)。
