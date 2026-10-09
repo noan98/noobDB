@@ -9,6 +9,10 @@ import {
   chartModelFromAggregatedRows,
   chartConfigKeyFrom,
   chartNotices,
+  donutSlicePath,
+  isDonut,
+  parsePx,
+  roundedBarPath,
   chartPalette,
   chartRampGradient,
   chartSeriesColors,
@@ -625,5 +629,70 @@ describe("DB 側集計モード (#1257)", () => {
     expect(Object.fromEntries(db.labels.map((l, i) => [l, db.series[0].values[i]]))).toEqual(
       Object.fromEntries(js.labels.map((l, i) => [l, js.series[0].values[i]])),
     );
+  });
+});
+
+describe("ドーナツ (#1215)", () => {
+  it("isDonut は未設定 (旧設定) をドーナツ、false だけを純パイとする", () => {
+    expect(isDonut({})).toBe(true);
+    expect(isDonut({ donut: true })).toBe(true);
+    expect(isDonut({ donut: false })).toBe(false);
+  });
+
+  it("sanitizeChartConfig は boolean の donut だけ引き継ぎ、欠損・不正は付けない", () => {
+    const columns = [col("a"), col("b")];
+    const base = { type: "pie", xCol: 0, yCols: [1], aggregation: "none" };
+    expect(sanitizeChartConfig({ ...base, donut: false }, columns)?.donut).toBe(false);
+    expect(sanitizeChartConfig({ ...base, donut: true }, columns)?.donut).toBe(true);
+    expect(sanitizeChartConfig(base, columns)).not.toHaveProperty("donut");
+    expect(sanitizeChartConfig({ ...base, donut: "yes" }, columns)).not.toHaveProperty("donut");
+  });
+
+  it("donutSlicePath: 部分スライスは外弧 + 内弧の環、rInner=0 は中心への扇形", () => {
+    const ring = donutSlicePath(0, 0, 10, 6, 0, Math.PI / 2);
+    expect(ring).toBe("M 10 0 A 10 10 0 0 1 0 10 L 0 6 A 6 6 0 0 0 6 0 Z");
+    expect(donutSlicePath(0, 0, 10, 0, 0, Math.PI / 2)).toBe("M 0 0 L 10 0 A 10 10 0 0 1 0 10 Z");
+  });
+
+  it("donutSlicePath: 半周を超えると large-arc フラグが立つ", () => {
+    expect(donutSlicePath(0, 0, 10, 6, 0, Math.PI * 1.5)).toContain("A 10 10 0 1 1");
+    expect(donutSlicePath(0, 0, 10, 6, 0, Math.PI * 1.5)).toContain("A 6 6 0 1 0");
+  });
+
+  it("donutSlicePath: 全周は退化せず半円 2 つの円 (環なら内円を逆回りで足す)", () => {
+    const pie = donutSlicePath(0, 0, 10, 0, -Math.PI / 2, (Math.PI * 3) / 2);
+    expect(pie).toBe("M -10 0 A 10 10 0 1 1 10 0 A 10 10 0 1 1 -10 0 Z");
+    const ring = donutSlicePath(0, 0, 10, 6, 0, Math.PI * 2);
+    expect(ring.match(/M /g)).toHaveLength(2);
+    // frac=1-1e-7 (丸めで始点終点が一致する境界) でも全周として描かれる
+    const near = donutSlicePath(220, 210, 170, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - 1e-7));
+    expect(near.match(/A /g)).toHaveLength(2);
+    expect(ring).toContain("A 6 6 0 1 0");
+  });
+});
+
+describe("棒の角丸 (#1215)", () => {
+  it("parsePx は px だけ数値化し、それ以外は fallback", () => {
+    expect(parsePx("4px", 1)).toBe(4);
+    expect(parsePx(" 2.5px ", 1)).toBe(2.5);
+    expect(parsePx("0.25rem", 1)).toBe(1);
+    expect(parsePx("", 7)).toBe(7);
+    expect(parsePx(null, 7)).toBe(7);
+  });
+
+  it("正の棒は上端、負の棒は下端だけ丸める", () => {
+    expect(roundedBarPath(0, 0, 10, 20, 4, true)).toBe(
+      "M 0 20 L 0 4 A 4 4 0 0 1 4 0 L 6 0 A 4 4 0 0 1 10 4 L 10 20 Z",
+    );
+    expect(roundedBarPath(0, 0, 10, 20, 4, false)).toBe(
+      "M 0 0 L 0 16 A 4 4 0 0 0 4 20 L 6 20 A 4 4 0 0 0 10 16 L 10 0 Z",
+    );
+  });
+
+  it("半径は幅の半分・高さで頭打ち、高さ/幅 0 は空", () => {
+    expect(roundedBarPath(0, 0, 6, 20, 99, true)).toContain("A 3 3");
+    expect(roundedBarPath(0, 0, 10, 2, 4, true)).toContain("A 2 2");
+    expect(roundedBarPath(0, 0, 10, 0, 4, true)).toBe("");
+    expect(roundedBarPath(0, 0, 0, 10, 4, true)).toBe("");
   });
 });

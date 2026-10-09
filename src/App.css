@@ -39,6 +39,10 @@
   --text-base: calc(14px * var(--font-scale));
   --text-lg: calc(16px * var(--font-scale));
   --text-xl: calc(20px * var(--font-scale));
+  /* ディスプレイ用の上位ステップ (#1214)。ウェルカム / プロファイル一覧 / スプラッシュ
+     の見出し専用で、密なグリッドやツールバーには使わない。 */
+  --text-2xl: calc(28px * var(--font-scale));
+  --text-3xl: calc(36px * var(--font-scale));
 
   /* ── Typography rhythm (#490) ─────────────────────────────────────────
      タイプスケール (--text-*) は上記の通り --font-scale に追従するため、フォント
@@ -2001,4 +2005,52 @@ td.is-find-current::after {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
+}
+
+/* ---------- React Flow (ER 図 / EXPLAIN 図) のクロムをテーマへ統合 (#1361) ----------
+   @xyflow/react の style.css は `.react-flow` / `.react-flow.dark` に固定の明/暗色を
+   `--xy-*-default` として持ち、実際の描画は `var(--xy-*, var(--xy-*-default))` で読む。
+   接尾辞なしの `--xy-*` をここで既存トークンへ向ければ、11 テーマ・font-scale に
+   追従する (値の単一ソースは App.css のまま。サイズ系は上書きしない)。`colorMode`
+   (dark) は `.react-flow.dark` の既定色 (エッジ・選択枠・ハンドル) を切り替えるが、
+   クロムとエッジの色は下の上書きが優先するのでテーマが決める。 */
+.react-flow {
+  /* 親の面 (ER 図・EXPLAIN 図で異なる) をそのまま継ぐ */
+  --xy-background-color: transparent;
+  --xy-background-pattern-color: var(--border-strong);
+
+  --xy-controls-button-background-color: var(--bg-elevated);
+  --xy-controls-button-background-color-hover: var(--bg-hover);
+  --xy-controls-button-color: var(--text-secondary);
+  --xy-controls-button-color-hover: var(--accent);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: var(--shadow-sm);
+
+  --xy-minimap-background-color: var(--bg-elevated);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--bg) 70%, transparent);
+  --xy-minimap-mask-stroke-color: var(--accent);
+  --xy-minimap-node-background-color: var(--border-strong);
+  --xy-minimap-node-stroke-color: var(--border);
+
+  /* colorMode=dark の暗い既定エッジ (#3e3e3e) はダーク系テーマで沈むためテーマ色へ */
+  --xy-edge-stroke: var(--border-strong);
+  --xy-edge-stroke-selected: var(--accent);
+}
+
+/* 高コントラスト系はミニマップのビューポート枠を太くして判別しやすくする */
+:root[data-theme="hc-light"] .react-flow,
+:root[data-theme="hc-dark"] .react-flow {
+  --xy-minimap-mask-stroke-width: 2;
+}
+
+.react-flow__minimap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }

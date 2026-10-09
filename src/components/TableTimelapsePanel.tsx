@@ -497,7 +497,7 @@ export function TableTimelapsePanel({
               </Flex>
 
               {generations.length < 2 || !effectivePair ? (
-                <chakra.p fontSize="sm" color="app.textMuted">
+                <chakra.p textStyle="body" color="app.textMuted">
                   {t("timelapseNeedTwo")}
                 </chakra.p>
               ) : (
@@ -574,12 +574,12 @@ export function TableTimelapsePanel({
                     </chakra.p>
                   )}
                   {masked && (
-                    <chakra.p fontSize="xs" color="app.textMuted">
+                    <chakra.p textStyle="caption">
                       {t("timelapseMaskedNote")}
                     </chakra.p>
                   )}
                   {rows.length === 0 ? (
-                    <chakra.p fontSize="sm" color="app.textMuted">
+                    <chakra.p textStyle="body" color="app.textMuted">
                       {t("timelapseNoChanges")}
                     </chakra.p>
                   ) : (

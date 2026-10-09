@@ -145,7 +145,11 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
 
       <Flex direction="column" align="center" gap="1.5" maxW="46ch" textAlign="center">
         <Flex align="center" gap="2">
-          <BrandMark size={26} />
+          <BrandMark
+            size={34}
+            width="calc(34px * var(--font-scale))"
+            height="calc(34px * var(--font-scale))"
+          />
           <Heading role="display">
             {t("welcomeTitle")}
           </Heading>
