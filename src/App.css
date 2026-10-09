@@ -1501,6 +1501,306 @@
   color-scheme: dark;
 }
 
+/* ── Theme preset: Catppuccin Mocha (#1237) ───────────────────────────────
+   Catppuccin の Mocha フレーバーのダーク専用プリセット。`data-theme=
+   "catppuccin-dark"` で選択され、名前が "dark" で終わるため theme.ts の
+   `conditions.dark` ([data-theme$=dark]) に一致する。base / mantle / surface
+   系を地と面に、text / subtext 系を文字に、blue / green / yellow / red /
+   peach / mauve を状態色・型別色に割り当てる。公式パレットのうち overlay0/1
+   (#6c7086 / #7f849c) は文字として AA を満たさないため、muted / comment 系は
+   overlay2 (#9399b2) 付近まで明度を上げている (themeContrast.test.ts が自動検証)。 */
+:root[data-theme="catppuccin-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.62);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
+
+  --bg: #1e1e2e;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #11111b;
+  --bg-elevated: #282839;
+  --bg-muted: #181825;
+  --bg-hover: #313244;
+  --bg-active: #3b3d52;
+  --bg-active-strong: #45475a;
+  --bg-toolbar: #181825;
+  --bg-header: #181825;
+  --bg-error: #3b2330;
+  --bg-warning: #3a3328;
+  --bg-input: #181825;
+  --bg-stripe: #232334;
+  --bg-row-hover: #3a3f5c;
+
+  --text: #cdd6f4;
+  --text-secondary: #bac2de;
+  --text-muted: #9399b2;
+  --text-null: #9aa0ba;
+  --text-error: #f38ba8;
+  --text-warning: #f9e2af;
+  --text-success: #a6e3a1;
+
+  --border: #45475a;
+  --border-strong: #585b70;
+  --border-subtle: #313244;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。Catppuccin 公式の
+     blue / green / yellow / red を基準に、subtle は地に 10〜15% 混ぜた暗色。 */
+  --info-subtle: #232c42;
+  --info-border: #5d7fb0;
+  --info-solid: #89b4fa;
+  --info-text: #89b4fa;
+  --success-subtle: #25332f;
+  --success-border: #6c9a6c;
+  --success-solid: #a6e3a1;
+  --success-text: #a6e3a1;
+  --warning-subtle: #3a3328;
+  --warning-border: #a08a62;
+  --warning-solid: #f9e2af;
+  --warning-text: #f9e2af;
+  --error-subtle: #3b2330;
+  --error-border: #a45a74;
+  --error-solid: #f38ba8;
+  --error-text: #f38ba8;
+
+  --scrollbar-thumb: #45475a;
+  --scrollbar-thumb-hover: #585b70;
+
+  --accent: #89b4fa;
+  --accent-hover: #a6c6fc;
+  --accent-text: #11111b;
+
+  --cm-selection: #3b3d52;
+
+  --cell-number: #fab387;
+  --cell-decimal: #fab387;
+  --cell-bool-true: #89b4fa;
+  --cell-bool-false: #f5c2e7;
+  --cell-date: #f9e2af;
+  --key-accent: #f9e2af;
+  --cell-json: #cba6f7;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 72%;
+  --cell-binary: #9aa0ba;
+
+  --status-connected: #a6e3a1;
+  --status-connecting: #f9e2af;
+  --status-error: #f38ba8;
+  --status-warning: #fab387;
+  --status-success: #a6e3a1;
+  --status-info: #89b4fa;
+  --status-idle: #7f849c;
+
+  --syntax-keyword: #cba6f7;
+  --syntax-string: #a6e3a1;
+  --syntax-number: #fab387;
+  --syntax-comment: #8c92ac;
+  --syntax-function: #89b4fa;
+  --syntax-operator: #89dceb;
+
+  --preview-highlight: #89b4fa;
+  --preview-banner-bg: #3a3328;
+  --preview-banner-border: #6b5e3f;
+  --preview-banner-text: #f9e2af;
+  --preview-banner-dot: #f9e2af;
+
+  color-scheme: dark;
+}
+
+/* ── Theme preset: Tokyo Night (#1237) ────────────────────────────────────
+   Tokyo Night 系の配色 (Night は folke/tokyonight.nvim 準拠の bg #1a1b26 /
+   fg #c0caf5、Day は Tokyo Night Light 系の bg #e1e2e7 / fg #343b58) を基にした
+   独自調整パレットで、ライト/ダーク両対応。hc- / cb- / solarized と同じく
+   light/dark トグルに追従する (`tokyo-night-light` / `tokyo-night-dark`)。
+   公式値のままでは AA を満たさないペア (Night の comment #565f89、Day の
+   red / green / cyan など) は、ダークでは明色側へ・ライトでは暗色側へ調整している
+   (themeContrast.test.ts が自動検証)。 */
+:root[data-theme="tokyo-night-light"] {
+  --bg: #e1e2e7;
+  --bg-elevated: #ebecf2;
+  --bg-muted: #d6d9e6;
+  --bg-hover: #cfd3e2;
+  --bg-active: #c4cbe3;
+  --bg-active-strong: #b4bddb;
+  --bg-toolbar: #d6d9e6;
+  --bg-header: #d6d9e6;
+  --bg-error: #f5dde3;
+  --bg-warning: #efe6d0;
+  --bg-input: #ebecf2;
+  --bg-stripe: #e6e8ef;
+  --bg-row-hover: #d3dbf1;
+
+  --text: #343b58;
+  --text-secondary: #3e4566;
+  --text-muted: #4c5578;
+  --text-null: #505a80;
+  --text-error: #b81f48;
+  --text-warning: #8c5a00;
+  --text-success: #3d6b1f;
+
+  --border: #c1c6d9;
+  --border-strong: #9aa1c0;
+  --border-subtle: #d6d9e6;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。solid は白文字
+     (--on-solid の既定) が AA を満たす濃さにしている。 */
+  --info-subtle: #dde6f7;
+  --info-border: #7c9ad6;
+  --info-solid: #2e5fc4;
+  --info-text: #2e5fc4;
+  --success-subtle: #dfead4;
+  --success-border: #8aae6a;
+  --success-solid: #3d6b1f;
+  --success-text: #3d6b1f;
+  --warning-subtle: #efe6d0;
+  --warning-border: #c6a35e;
+  --warning-solid: #8c5a00;
+  --warning-text: #8c5a00;
+  --error-subtle: #f5dde3;
+  --error-border: #d9809a;
+  --error-solid: #b81f48;
+  --error-text: #b81f48;
+
+  --scrollbar-thumb: #b4bad0;
+  --scrollbar-thumb-hover: #9aa1c0;
+
+  --accent: #2e5fc4;
+  --accent-hover: #244ca0;
+  --accent-text: #ffffff;
+
+  --cm-selection: #c4cbe3;
+
+  --cell-number: #8c5a00;
+  --cell-decimal: #3d6b1f;
+  --cell-bool-true: #2e5fc4;
+  --cell-bool-false: #7a3fd0;
+  --cell-date: #8c5a00;
+  --key-accent: #8c5a00;
+  --cell-json: #006b8f;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 35%;
+  --cell-binary: #505a80;
+
+  --status-connected: #3d6b1f;
+  --status-connecting: #8c5a00;
+  --status-error: #b81f48;
+  --status-warning: #8c5a00;
+  --status-success: #3d6b1f;
+  --status-info: #2e5fc4;
+  --status-idle: #6a7090;
+
+  --syntax-keyword: #7a3fd0;
+  --syntax-string: #3d6b1f;
+  --syntax-number: #8c5a00;
+  --syntax-comment: #565f89;
+  --syntax-function: #2e5fc4;
+  --syntax-operator: #006b8f;
+
+  --preview-highlight: #2e5fc4;
+  --preview-banner-bg: #efe6d0;
+  --preview-banner-border: #d2b676;
+  --preview-banner-text: #6b4500;
+  --preview-banner-dot: #8c5a00;
+
+  color-scheme: light;
+}
+
+:root[data-theme="tokyo-night-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.62);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
+
+  --bg: #1a1b26;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #16161e;
+  --bg-elevated: #1f2335;
+  --bg-muted: #16161e;
+  --bg-hover: #292e42;
+  --bg-active: #2f3549;
+  --bg-active-strong: #3b4261;
+  --bg-toolbar: #16161e;
+  --bg-header: #16161e;
+  --bg-error: #3a2030;
+  --bg-warning: #36301f;
+  --bg-input: #16161e;
+  --bg-stripe: #1e2030;
+  --bg-row-hover: #2d3558;
+
+  --text: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --text-muted: #8089b3;
+  --text-null: #868fb8;
+  --text-error: #f7768e;
+  --text-warning: #e0af68;
+  --text-success: #9ece6a;
+
+  --border: #292e42;
+  --border-strong: #3b4261;
+  --border-subtle: #232637;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。Tokyo Night 公式の
+     blue / green / yellow / red を基準に、subtle は地に混ぜた暗色。 */
+  --info-subtle: #1f2a44;
+  --info-border: #4b6aa8;
+  --info-solid: #7aa2f7;
+  --info-text: #7aa2f7;
+  --success-subtle: #232e22;
+  --success-border: #5f8a46;
+  --success-solid: #9ece6a;
+  --success-text: #9ece6a;
+  --warning-subtle: #36301f;
+  --warning-border: #98763f;
+  --warning-solid: #e0af68;
+  --warning-text: #e0af68;
+  --error-subtle: #3a2030;
+  --error-border: #a04a62;
+  --error-solid: #f7768e;
+  --error-text: #f7768e;
+
+  --scrollbar-thumb: #3b4261;
+  --scrollbar-thumb-hover: #4c5578;
+
+  --accent: #7aa2f7;
+  --accent-hover: #9ab8fa;
+  --accent-text: #10162a;
+
+  --cm-selection: #2f3549;
+
+  --cell-number: #ff9e64;
+  --cell-decimal: #ff9e64;
+  --cell-bool-true: #7aa2f7;
+  --cell-bool-false: #bb9af7;
+  --cell-date: #e0af68;
+  --key-accent: #e0af68;
+  --cell-json: #7dcfff;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 72%;
+  --cell-binary: #868fb8;
+
+  --status-connected: #9ece6a;
+  --status-connecting: #e0af68;
+  --status-error: #f7768e;
+  --status-warning: #ff9e64;
+  --status-success: #9ece6a;
+  --status-info: #7aa2f7;
+  --status-idle: #6c7599;
+
+  --syntax-keyword: #bb9af7;
+  --syntax-string: #9ece6a;
+  --syntax-number: #ff9e64;
+  --syntax-comment: #7f89b2;
+  --syntax-function: #7aa2f7;
+  --syntax-operator: #89ddff;
+
+  --preview-highlight: #7aa2f7;
+  --preview-banner-bg: #36301f;
+  --preview-banner-border: #6b5a30;
+  --preview-banner-text: #e0af68;
+  --preview-banner-dot: #e0af68;
+
+  color-scheme: dark;
+}
+
 /* Density overrides (#410, #620). The grid-facing tokens and the control
    padding multiplier (--density-control-scale) shift together so the same
    preset tunes the grid *and* every form / button / field; horizontal padding

@@ -144,7 +144,8 @@ export const CATEGORICAL: string[] = [
 /**
  * `CATEGORICAL` のダーク用並行パレット (#1187)。同じ色相順・CB セーフ性を保ちつつ
  * 明度を上げ、暗系テーマ全種 (`dark` / `dracula-dark` / `hc-dark` / `cb-dark` /
- * `nord-dark` / `solarized-dark` / `one-dark`) の `--bg` に対し各系列 ≥3:1 の
+ * `nord-dark` / `solarized-dark` / `one-dark` / `catppuccin-dark` /
+ * `tokyo-night-dark`) の `--bg` に対し各系列 ≥3:1 の
  * コントラストを確保する (`__tests__/themeContrast.test.ts` で固定)。
  */
 export const CATEGORICAL_DARK: string[] = [
@@ -164,7 +165,8 @@ export const CATEGORICAL_DARK: string[] = [
  * 属性値末尾一致セレクタ) と同じ基準 — 値が `"dark"` で終わるか — をそのまま
  * 再利用する (新しい判定方法を発明しない)。`"dark"` 自身に加え、
  * `"dracula-dark"` / `"nord-dark"` / `"hc-dark"` / `"cb-dark"` /
- * `"solarized-dark"` / `"one-dark"` などのダーク系プリセットも真になる。
+ * `"solarized-dark"` / `"one-dark"` / `"catppuccin-dark"` /
+ * `"tokyo-night-dark"` などのダーク系プリセットも真になる。
  */
 export function isDarkDataTheme(dataTheme: string | null | undefined): boolean {
   return !!dataTheme && dataTheme.endsWith("dark");

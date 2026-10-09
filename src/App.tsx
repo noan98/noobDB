@@ -375,6 +375,7 @@ import {
   BASE_FONT_SIZE_PX,
   monoFontStack,
   uiFontStack,
+  effectiveTheme,
   themePresetDataTheme,
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
@@ -1289,12 +1290,15 @@ export default function App() {
   }, [dataTheme, theme]);
 
   useEffect(() => {
-    const colors = settings.syntaxColors[theme];
+    // ダーク専用プリセットでは light/dark トグルが light のままでも画面はダーク。
+    // テーマ別の設定は実効テーマで選ぶ (トグル値で選ぶと暗い面に明るい用の文字色が載る)。
+    const effTheme = effectiveTheme(settings.themePreset, theme);
+    const colors = settings.syntaxColors[effTheme];
     const root = document.documentElement;
     for (const [key, val] of Object.entries(colors)) {
       root.style.setProperty(`--syntax-${key}`, val);
     }
-    root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
+    root.style.setProperty("--preview-highlight", settings.previewHighlight[effTheme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
 
     // フォントファミリ: 設定があれば共有フォールバック付きのスタックを
@@ -1316,7 +1320,7 @@ export default function App() {
     // タブ・コマンドパレット等) が参照する --bg-active / --bg-active-strong 自体も
     // 上書きすることで、個別コンポーネントを書き換えずに一括で波及させる。
     if (settings.accentColor) {
-      const v = accentVars(settings.accentColor, theme);
+      const v = accentVars(settings.accentColor, effTheme);
       root.style.setProperty("--accent", v.accent);
       root.style.setProperty("--accent-hover", v.accentHover);
       root.style.setProperty("--accent-text", v.accentText);
