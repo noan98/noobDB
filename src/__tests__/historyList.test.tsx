@@ -242,9 +242,10 @@ describe("HistoryList の AI 検索入口 (#699)", () => {
       ...DEFAULT_SETTINGS,
       ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true },
     });
-    // 表示用の一覧 (limit 無し) は 200 件で切れ、AI 用の取り直し (limit 301) は 301 件返る。
+    // 表示用の一覧 (limit 無し) は数件に留め、AI 用の取り直し (limit 301) だけ 301 件返す。
+    // 表示用に 200 件描画すると、カバレッジ付きの CI で 5 秒のタイムアウトを超えるため。
     listHistory.mockImplementation(async (params: { limit?: number | null }) =>
-      Array.from({ length: params.limit ?? 200 }, (_, i) => makeHistoryEntry({ id: i + 1 })),
+      Array.from({ length: params.limit ?? 3 }, (_, i) => makeHistoryEntry({ id: i + 1 })),
     );
     renderList();
     fireEvent.click(await screen.findByRole("button", { name: t("aiHistoryToggle") }));
