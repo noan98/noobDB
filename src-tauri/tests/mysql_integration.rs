@@ -2309,3 +2309,106 @@ async fn mysql_tree_and_open_table_match_individual_ipcs() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// #1422: 安全整数 (2^53 - 1) の境界を跨ぐ BIGINT 主キーが、デコード → JSON →
+/// インラインセル編集の `WHERE` まで丸められずに往復し、隣の値の行を巻き込まない
+/// ことを実 MySQL で固定する。デコーダが `Value::Int` を直接組み立てて 2^53 + 1 を
+/// 数値のまま返すと、JSON で 2^53 に丸まり、`WHERE id = 9007199254740992` で別の行
+/// (`b`) を書き換えてしまう。
+#[tokio::test]
+async fn mysql_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = opts.database.clone().expect("database in url");
+    let tbl = format!("noobdb_bigpk1422_{}", std::process::id());
+    conn.execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        &format!("CREATE TABLE {tbl} (id BIGINT PRIMARY KEY, name VARCHAR(10))"),
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        &format!(
+            "INSERT INTO {tbl} VALUES (9007199254740993, 'a'), (9007199254740992, 'b'), \
+             (9007199254740991, 'c'), (-9007199254740993, 'd'), (-9007199254740992, 'e')"
+        ),
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+
+    let res = conn
+        .execute(
+            &format!("SELECT id, name FROM {tbl} ORDER BY name"),
+            Some(&db),
+        )
+        .await
+        .expect("select");
+    let ids: Vec<t::Value> = res.rows.iter().map(|r| r[0].clone()).collect();
+    for v in &ids {
+        assert!(v.is_js_safe(), "decoded id must be JSON-safe, got {v:?}");
+    }
+    // JSON を跨いでも十進表現が保たれる (フロントが受け取る形)。
+    let json: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&ids).expect("ser")).expect("de");
+    assert_eq!(
+        json,
+        serde_json::json!([
+            "9007199254740993",
+            "9007199254740992",
+            9007199254740991_i64,
+            "-9007199254740993",
+            "-9007199254740992"
+        ])
+    );
+
+    let session = t::make_session("bigpk1422", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    // デコードされた値をそのままキーに使う (インラインセル編集と同じ経路)。
+    let res = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "name".into(),
+                value: t::BulkSetValue::Text { text: "x".into() },
+            }],
+            keys: vec![vec![ids[0].clone()], vec![ids[3].clone()]],
+        }],
+        vec![],
+    )
+    .await
+    .expect("bulk update");
+    assert_eq!(res.rows_affected, 2);
+    let s = state.get(&sid).await.expect("session");
+    let r = s
+        .conn
+        .execute(&format!("SELECT name FROM {tbl} ORDER BY id"), Some(&db))
+        .await
+        .expect("verify");
+    let names: Vec<String> = r
+        .rows
+        .iter()
+        .map(|row| match &row[0] {
+            t::Value::String(v) => v.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    // ORDER BY id: -2^53-1, -2^53, 2^53-1, 2^53, 2^53+1。隣の b / e は書き換わらない。
+    assert_eq!(names, vec!["x", "e", "c", "b", "x"]);
+    s.conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await
+        .expect("cleanup");
+}

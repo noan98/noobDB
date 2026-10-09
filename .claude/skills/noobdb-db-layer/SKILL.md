@@ -23,7 +23,9 @@ description: noobDB の DB ドライバ層 (src-tauri/src/db/) を変更する�
   `from_i128_lossless` / `from_u128_lossless` を必ず経由する。** `Value` は
   `#[serde(untagged)]` なので素の JSON 数値になり、`Number.MAX_SAFE_INTEGER` を
   超えると丸められます。表示が狂うだけでなく、インラインセル編集が丸めた値で
-  `WHERE pk = ...` を組み立て、**意図しない行を書き換えます。**
+  `WHERE pk = ...` を組み立て、**意図しない行を書き換えます。** デコーダ本体で
+  `Value::Int(` / `Value::UInt(` を直接組み立てると静的ガードで、安全範囲外を返すと
+  `decode_cell` の `debug_assert_js_safe` でテストが落ちます (#1422)。
 - **PostgreSQL のデコードは「非 NULL の値を `Value::Null` にしない」** ことを
   不変条件とします。素朴なフォールバックだと uuid・配列・inet などが NULL に
   化け、Diff/Sync が実差分を見逃します。最終フォールバックは

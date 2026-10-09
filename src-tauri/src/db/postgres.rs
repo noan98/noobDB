@@ -2106,7 +2106,13 @@ fn row_to_values(row: &PgRow) -> Vec<Value> {
         .collect()
 }
 
+/// 1 セルをデコードし、安全整数の外の `Int` / `UInt` を返していないことを
+/// debug ビルドで検査する (#1422。[`Value::debug_assert_js_safe`])。
 fn decode_cell(row: &PgRow, i: usize) -> Value {
+    decode_cell_unchecked(row, i).debug_assert_js_safe()
+}
+
+fn decode_cell_unchecked(row: &PgRow, i: usize) -> Value {
     let raw = match row.try_get_raw(i) {
         Ok(r) => r,
         Err(_) => return Value::Null,
@@ -2127,12 +2133,16 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
     // Integer family. Postgres has signed-only int2/int4/int8 (no unsigned).
     if ti(type_name, &["INT2"]) {
         if let Ok(v) = row.try_get::<Option<i16>, _>(i) {
-            return v.map(|n| Value::Int(n as i64)).unwrap_or(Value::Null);
+            return v
+                .map(|n| Value::from_i64_lossless(i64::from(n)))
+                .unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["INT4"]) {
         if let Ok(v) = row.try_get::<Option<i32>, _>(i) {
-            return v.map(|n| Value::Int(n as i64)).unwrap_or(Value::Null);
+            return v
+                .map(|n| Value::from_i64_lossless(i64::from(n)))
+                .unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["INT8"]) {
@@ -2299,7 +2309,7 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
         if ti(type_name, &["OID", "XID", "CID"]) {
             if let Ok(b) = raw.as_bytes() {
                 if let Ok(arr) = <[u8; 4]>::try_from(b) {
-                    return Value::Int(u32::from_be_bytes(arr) as i64);
+                    return Value::from_i64_lossless(i64::from(u32::from_be_bytes(arr)));
                 }
             }
         }
