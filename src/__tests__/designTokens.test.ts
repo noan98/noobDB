@@ -142,7 +142,7 @@ describe("design tokens: 余白 (spacing)", () => {
 });
 
 describe("design tokens: タイポグラフィ", () => {
-  it("fontSize は px 直値ではなくタイプスケール (3xs〜xl) を使う", () => {
+  it("fontSize は px 直値ではなくタイプスケール (3xs〜3xl) を使う", () => {
     const offenders = findViolations(/\bfontSize=\{?"[0-9.]+(?:px|pt)"/, () => true);
     expect(
       offenders,
