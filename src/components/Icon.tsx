@@ -112,6 +112,7 @@ import {
  * | ルーチン/プロシージャ/関数 | `routine`       |
  * | トリガー                   | `trigger`       |
  * | 主キー                     | `key`           |
+ * | SQL 補完の候補種別 (テーブル/列/キーワード/関数) | `table` / `columns` / `text` / `routine` |
  * | 本番接続 (危険)            | `production`    |
  * | 読み取り専用               | `lock`          |
  * | 並び替え (無指定/昇/降)    | `sort` / `sort-asc` / `sort-desc` |

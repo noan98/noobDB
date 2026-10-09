@@ -2097,6 +2097,34 @@ html, body, #root {
 .cm-completionDetail { color: var(--text-muted); font-style: normal; }
 .cm-completionMatchedText { color: var(--accent); text-decoration: none; font-weight: 600; }
 
+/* 補完候補の種別アイコン (#1413)。グリフは Icon.tsx、色は種別ごとのトークン。 */
+.cm-completionKindIcon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: var(--space-2);
+  color: var(--text-muted);
+}
+.cm-completionKindIcon-table { color: var(--accent); }
+.cm-completionKindIcon-column { color: var(--text-secondary); }
+.cm-completionKindIcon-keyword { color: var(--syntax-keyword); }
+.cm-completionKindIcon-function { color: var(--syntax-function); }
+
+/* 列候補の情報パネル (#1413)。ポップアップ本体と同じ面・影に揃える。 */
+.cm-tooltip.cm-completionInfo {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.cm-completionInfoPanel { display: flex; flex-direction: column; gap: var(--space-1); }
+.cm-completionInfoType { color: var(--text); font-weight: 600; }
+.cm-completionInfoFlags { color: var(--text-muted); }
+.cm-completionInfoFk { color: var(--accent); }
+
 /* エディタ内検索・置換パネル (#464、@codemirror/search)。ライト/ダーク・アクセント・
    シンタックステーマに追従させるためトークンで配色する。 */
 .cm-editor .cm-panels {

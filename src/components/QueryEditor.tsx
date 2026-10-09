@@ -1,6 +1,7 @@
 import {
   forwardRef,
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useImperativeHandle,
@@ -38,6 +39,7 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   completionStatus,
+  ifNotIn,
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
@@ -49,9 +51,19 @@ import {
   syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { api, type ForeignKey, type TableSchema } from "../api/tauri";
+import { api, type ForeignKey, type TableColumnInfo, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
 import { derivedCompletions } from "./sqlDerivedCompletion";
+import {
+  buildCompletionNamespace,
+  dialectWords,
+  functionCompletions,
+  keywordCompletionBuilder,
+  describeColumn,
+  findForeignKey,
+} from "./sqlCompletionSchema";
+import { buildColumnInfoDom } from "./sqlCompletionInfo";
+import { renderCompletionKindIcon } from "./completionIcon";
 import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
@@ -450,6 +462,8 @@ function buildSqlExtension(
   databaseSchema: TableSchema[] | null | undefined,
   defaultDatabase: string | null | undefined,
   getFks: () => ForeignKey[],
+  getColumnMeta: (database: string, table: string) => Promise<TableColumnInfo[] | null>,
+  getInfoDb: () => string | null,
 ) {
   // Collect every known table → columns mapping. The full-database overview is
   // the bulk of it; the active table is folded in too so its columns are
@@ -468,24 +482,43 @@ function buildSqlExtension(
     tableColumns[schemaTable.name] = schemaTable.columns;
   }
 
-  let schema: SQLNamespace | undefined;
-  let defaultTable: string | undefined;
-  let defaultSchema: string | undefined;
-  if (Object.keys(tableColumns).length > 0) {
-    // Expose each table both bare (`table` / `table.column`) and namespaced
-    // under its database (`db.table.column`), mirroring CodeMirror's expected
-    // SQLNamespace shape. SQLite has no real database qualifier, so the bare
-    // form alone is enough there.
-    const namespaceDb = schemaTable?.database ?? defaultDatabase ?? undefined;
-    schema =
-      namespaceDb && driver !== "sqlite"
-        ? { ...tableColumns, [namespaceDb]: { ...tableColumns } }
-        : { ...tableColumns };
-    // Prefer the active table for unqualified column completion; otherwise the
-    // dialect still completes once the user qualifies with a table name.
-    defaultTable = schemaTable?.name;
-    defaultSchema = namespaceDb;
-  }
+  // 列候補の情報パネル (#1413): 型・NULL 可否・FK 参照先。メタは開いたときに
+  // 既存の describe_table を遅延取得し、取れなければ FK だけに縮退する。
+  const columnInfo = (table: string, column: string) => async () => {
+    const infoDb = getInfoDb();
+    const metas = infoDb ? await getColumnMeta(infoDb, table) : null;
+    const view = describeColumn(
+      metas?.find((m) => m.name === column),
+      findForeignKey(getFks(), table, column),
+    );
+    if (!view) return null;
+    return buildColumnInfoDom(view, {
+      nullable: t("editorCompletionNullable"),
+      notNull: t("editorCompletionNotNull"),
+      primaryKey: t("editorCompletionPrimaryKey"),
+      foreignKey: (target) => t("editorCompletionForeignKey", { target }),
+    });
+  };
+  const ns = buildCompletionNamespace({
+    driver,
+    tableColumns,
+    activeTable: schemaTable,
+    defaultDatabase,
+    columnInfo,
+  });
+  const schema: SQLNamespace | undefined = ns?.schema;
+  const defaultTable = ns?.defaultTable;
+  const defaultSchema = ns?.defaultSchema;
+  // 組み込み関数 (#1413)。lang-sql は関数を返さないので type: "function" で補う。
+  // キーワード一覧にある関数名は keywordCompletion で function 型に変換して重複を避け、
+  // ここでは一覧に無い関数 (NOW / IFNULL 等) だけを足す。
+  const kwWords = dialectWords(driver);
+  const functions = functionCompletions(driver, (lower) => lower in kwWords);
+  const functionSource = ifNotIn(["QuotedIdentifier", "String", "LineComment", "BlockComment", "."], (ctx) => {
+    const word = ctx.matchBefore(/\w+/);
+    if (!word) return null;
+    return { from: word.from, options: functions, validFor: /^\w*$/ };
+  });
   // FK から `JOIN other ON ...` を提案する補完ソース (#1356)。言語データとして
   // 足すので、lang-sql 標準のスキーマ補完と併存する。
   const joinSource = (ctx: CompletionContext): CompletionResult | null => {
@@ -541,8 +574,10 @@ function buildSqlExtension(
       defaultTable,
       defaultSchema,
       upperCaseKeywords: true,
+      keywordCompletion: keywordCompletionBuilder(driver),
     }),
     EditorState.languageData.of(() => [
+      { autocomplete: functionSource },
       { autocomplete: joinSource },
       { autocomplete: derivedSource },
     ]),
@@ -712,6 +747,30 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       cancelled = true;
     };
   }, [sessionId, fkDatabase, databaseSchema]);
+  // 列候補の情報パネル (#1413) 用の列メタ。既存の describe_table を補完を開いた列の
+  // テーブル単位で遅延取得して使い回す。DDL 後 (databaseSchema 更新) と接続切替で捨てる。
+  const columnMetaRef = useRef(new Map<string, Promise<TableColumnInfo[] | null>>());
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後のキャッシュ破棄トリガー
+  useEffect(() => {
+    columnMetaRef.current = new Map();
+  }, [sessionId, databaseSchema]);
+  const getColumnMeta = useCallback((database: string, table: string) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return Promise.resolve(null);
+    const key = `${database}\u0000${table}`;
+    let p = columnMetaRef.current.get(key);
+    if (!p) {
+      const map = columnMetaRef.current;
+      p = api.describeTable(sid, database, table).catch(() => {
+        map.delete(key); // 失敗は次回再試行できるようキャッシュしない
+        return null;
+      });
+      map.set(key, p);
+    }
+    return p;
+  }, []);
   // 現在アクティブな state の compartment に入っている設定。
   const appliedConfigRef = useRef<AppliedEditorConfig>(desiredConfig);
   // タブ別 state の保存先と、新規 state の作成関数 (マウント時に一度だけ組み立てる)。
@@ -916,7 +975,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
           bracketMatching(),
           closeBrackets(),
           syntaxHighlighting(noobDBHighlightStyle, { fallback: true }),
-          autocompletion(),
+          autocompletion({
+            // 既定のグリフは使わず、Icon.tsx の語彙で種別アイコンを描く (#1413)。
+            icons: false,
+            addToOptions: [{ render: renderCompletionKindIcon, position: 20 }],
+          }),
           // エディタ内検索・置換。検索パネルはエディタ上部に出し、選択語の
           // 同一語ハイライトも有効化する。キーバインドは下の keymap に searchKeymap
           // を含める (Mod-f はエディタにフォーカスがあるときだけ起動し、結果横断検索
@@ -934,6 +997,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
               sqlArgsRef.current.databaseSchema,
               sqlArgsRef.current.defaultDatabase,
               () => fksRef.current,
+              getColumnMeta,
+              () => sqlArgsRef.current.schemaTable?.database ?? sqlArgsRef.current.defaultDatabase ?? null,
             ),
           ),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
@@ -1109,7 +1174,15 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     if (sqlChanged) {
       effects.push(
         sqlCompartment.reconfigure(
-          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase, () => fksRef.current),
+          buildSqlExtension(
+            driver,
+            schemaTable,
+            databaseSchema,
+            defaultDatabase,
+            () => fksRef.current,
+            getColumnMeta,
+            () => sqlArgsRef.current.schemaTable?.database ?? sqlArgsRef.current.defaultDatabase ?? null,
+          ),
         ),
       );
     }
