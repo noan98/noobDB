@@ -7159,6 +7159,8 @@ export default function App() {
         const un = await webview.onDragDropEvent((event) => {
           const payload = event.payload;
           if (payload.type === "enter") {
+            // 内部の HTML5 ドラッグ (スキーマツリー → エディタ, #1414) はパスを持たない。
+            if (payload.paths.length === 0) return;
             setDragFeedback(dragFeedbackFor(payload.paths));
           } else if (payload.type === "leave") {
             setDragFeedback(null);

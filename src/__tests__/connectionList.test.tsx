@@ -1,3 +1,4 @@
+import { SCHEMA_DRAG_MIME } from "../schemaDragDrop";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
@@ -314,6 +315,36 @@ describe("Database Explorer の階層 (#1112)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
     fireEvent.doubleClick(await screen.findByRole("treeitem", { name: /^id/ }));
     expect(onInsertColumn).toHaveBeenCalledWith("tbl1", "id", false);
+  });
+
+  it("テーブル行 / 列行は draggable で、dragstart に内部 MIME と text/plain を載せる (#1414)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+    await openDb({});
+
+    const tableRow = await screen.findByRole("treeitem", { name: "tbl1" });
+    expect(tableRow).toHaveAttribute("draggable", "true");
+    const setData = vi.fn();
+    fireEvent.dragStart(tableRow, { dataTransfer: { setData } });
+    expect(setData).toHaveBeenCalledWith(SCHEMA_DRAG_MIME, expect.stringContaining('"kind":"table"'));
+    expect(setData).toHaveBeenCalledWith("text/plain", "tbl1");
+
+    fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+    const colRow = await screen.findByRole("treeitem", { name: /^id/ });
+    expect(colRow).toHaveAttribute("draggable", "true");
+    const setData2 = vi.fn();
+    // 祖先の Reorder.Item (接続ブロック) の pointerdown リスナーに届かない
+    // (届くと接続ごと並べ替えドラッグが始まる)。ツリー行以外の押下は従来どおり届く。
+    const seen = vi.fn();
+    document.body.addEventListener("pointerdown", seen);
+    fireEvent.pointerDown(tableRow);
+    fireEvent.pointerDown(colRow);
+    expect(seen).not.toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByText("tbl1").closest("[role=tree], body") as HTMLElement);
+    expect(seen).toHaveBeenCalledTimes(1);
+    document.body.removeEventListener("pointerdown", seen);
+    fireEvent.dragStart(colRow, { dataTransfer: { setData: setData2 } });
+    expect(setData2).toHaveBeenCalledWith(SCHEMA_DRAG_MIME, expect.stringContaining('"column":"id"'));
+    expect(setData2).toHaveBeenCalledWith("text/plain", "tbl1.id");
   });
 });
 

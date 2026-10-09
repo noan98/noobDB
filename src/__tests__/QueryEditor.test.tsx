@@ -4,6 +4,7 @@ import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { createRef } from "react";
 import { cleanup, fireEvent } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
+import { SCHEMA_DRAG_MIME } from "../schemaDragDrop";
 import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
@@ -323,3 +324,39 @@ describe("QueryEditor.requestAiSql (#695)", () => {
   });
 });
 
+
+describe("スキーマツリーからのドロップ挿入 (#1414)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  const dropData = (item: object) => ({
+    types: [SCHEMA_DRAG_MIME, "text/plain"],
+    getData: (type: string) => (type === SCHEMA_DRAG_MIME ? JSON.stringify(item) : "x"),
+  });
+
+  it("列をドロップすると列名が挿入され、既定のテキスト drop は止まる", async () => {
+    renderWithProviders(<QueryEditor onRun={vi.fn()} initialSql="SELECT  FROM t" driver="mysql" />);
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
+    expect(view).toBeTruthy();
+    view?.dispatch({ selection: { anchor: 7 } });
+    const ev = new Event("drop", { bubbles: true, cancelable: true }) as Event & Record<string, unknown>;
+    ev.dataTransfer = dropData({ kind: "column", database: "d", table: "t", column: "id" });
+    ev.clientX = 0;
+    ev.clientY = 0;
+    content.dispatchEvent(ev);
+    await waitFor(() => expect(view?.state.doc.toString()).toContain("id"));
+    expect(ev.defaultPrevented).toBe(true);
+    expect(view?.state.doc.toString().match(/id/g)).toHaveLength(1);
+  });
+
+  it("内部 MIME の無いドロップには介入しない", () => {
+    renderWithProviders(<QueryEditor onRun={vi.fn()} initialSql="SELECT 1" />);
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    const ev = new Event("dragover", { bubbles: true, cancelable: true }) as Event & Record<string, unknown>;
+    ev.dataTransfer = { types: ["text/plain"], getData: () => "" };
+    content.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+});

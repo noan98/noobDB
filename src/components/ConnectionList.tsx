@@ -1,4 +1,4 @@
-import { createContext, forwardRef, memo, useCallback, useContext, useDeferredValue, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, forwardRef, memo, useCallback, useContext, useDeferredValue, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { findIdentityColumn } from "./identitySync";
 import { isProtectedNamespace, treeNamespaceKind } from "./databaseMaintenance";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
@@ -7,6 +7,7 @@ import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, SchemaT
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
 import { isSandboxShadowTableName } from "../sandbox";
+import { fillSchemaDragData } from "../schemaDragDrop";
 import { Callout } from "./Callout";
 import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
@@ -816,6 +817,13 @@ const ColumnRow = memo(function ColumnRow({
       onKeyDown={actions.makeKeyDown(undefined, openMenu)}
       onContextMenu={openMenu}
       onDoubleClick={() => actions.insertColumn(tbl, col.name)}
+      // SQL エディタへのドラッグ挿入 (#1414)。接続 / グループの並べ替えは Motion の
+      // pointer ドラッグで別物だが、祖先の Reorder.Item が子孫の押下でも発火するため、
+      // SchemaRowList がネイティブ pointerdown を止めて切り分けている。
+      draggable
+      onDragStart={(e: DragEvent<HTMLDivElement>) =>
+        fillSchemaDragData(e.dataTransfer, { kind: "column", database: db, table: tbl, column: col.name })
+      }
       {...actions.columnTooltip(col)}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1037,6 +1045,11 @@ const TableNode = memo(function TableNode({
         actions.pickTable(db, tbl);
       }}
       onContextMenu={openMenu}
+      // SQL エディタへのドラッグ挿入 (#1414)。
+      draggable
+      onDragStart={(e: DragEvent<HTMLDivElement>) =>
+        fillSchemaDragData(e.dataTransfer, { kind: "table", database: db, table: tbl })
+      }
       {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
       _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
     >
@@ -1427,6 +1440,20 @@ const SchemaRowList = memo(function SchemaRowList({
   virtualizerRef.current = virtualizer;
   const virtualRef = useRef(virtual);
   virtualRef.current = virtual;
+
+  // 上の層の `Reorder.Item` (接続 / グループ) は自要素にネイティブ `pointerdown` を付け、
+  // 子孫の押下でも並べ替えドラッグを始める。draggable なテーブル / 列行 (HTML5 D&D, #1414)
+  // を掴んだときに接続ブロックごと浮かないよう、行の押下だけ祖先へ伝播させない。
+  // React の合成イベントはルート委譲で間に合わないためネイティブで付ける。
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const stop = (e: PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest('[draggable="true"]')) e.stopPropagation();
+    };
+    el.addEventListener("pointerdown", stop);
+    return () => el.removeEventListener("pointerdown", stop);
+  }, []);
 
   // リストの先頭がスクロール要素の中のどこから始まるか (`scrollMargin`)。測るのは「位置が
   // 変わりうるきっかけ」のときだけで、描画のたびには測らない (`getBoundingClientRect` は

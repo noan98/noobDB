@@ -16,6 +16,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
   Decoration,
+  dropCursor,
   EditorView,
   keymap,
   lineNumbers,
@@ -52,6 +53,7 @@ import {
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { api, type ForeignKey, type TableColumnInfo, type TableSchema } from "../api/tauri";
+import { SCHEMA_DRAG_MIME, hasSchemaDragData, parseSchemaDragItem, schemaDropText } from "../schemaDragDrop";
 import { joinCompletions } from "./sqlJoinCompletion";
 import { derivedCompletions } from "./sqlDerivedCompletion";
 import {
@@ -970,6 +972,38 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
         extensions: [
           lineNumbers(),
           highlightActiveLine(),
+          // スキーマツリーからのドラッグ挿入 (#1414) の着地点キャレット。
+          dropCursor(),
+          EditorView.domEventHandlers({
+            dragover(e) {
+              if (!hasSchemaDragData(e.dataTransfer)) return false;
+              // drop を許可する。キャレット描画は dropCursor が担う。
+              e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+              return true;
+            },
+            drop(e, view) {
+              if (!hasSchemaDragData(e.dataTransfer)) return false;
+              if (view.state.readOnly) return true;
+              // 既定の text/plain ドロップ (二重挿入) を止める。
+              e.preventDefault();
+              const item = parseSchemaDragItem(e.dataTransfer?.getData(SCHEMA_DRAG_MIME) ?? "");
+              if (!item) return true;
+              const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false) ?? view.state.selection.main.head;
+              const text = schemaDropText(item, {
+                driver: sqlArgsRef.current.driver,
+                alt: e.altKey,
+                editorBlank: view.state.doc.toString().trim() === "",
+              });
+              view.dispatch({
+                changes: { from: pos, insert: text },
+                selection: { anchor: pos + text.length },
+                userEvent: "input.drop",
+              });
+              view.focus();
+              return true;
+            },
+          }),
           history(),
           indentOnInput(),
           bracketMatching(),
