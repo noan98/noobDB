@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildSqlAssistPrompt,
   buildSqlAssistSystem,
+  countStatements,
+  DIFF_MAX_CELLS,
   diffLines,
   hasDiffChanges,
   locateApplyTarget,
   parseSqlExplainResponse,
   parseSqlRewriteResponse,
+  restoreMaskedLiterals,
   SQL_ASSIST_TASK,
   SQL_EXPLAIN_FORMAT,
   SQL_REWRITE_FORMAT,
@@ -109,6 +112,9 @@ describe("プロンプト", () => {
     expect(buildSqlAssistSystem("explain", "en")).toContain("steps");
     expect(buildSqlAssistSystem("rewrite", "en")).toContain("rewritten_sql");
     expect(buildSqlAssistSystem("rewrite", "en")).toContain("never row data");
+    // 全文対象でも文の数を変えさせない
+    expect(buildSqlAssistSystem("rewrite", "en")).toContain("same number of statements");
+    expect(buildSqlAssistSystem("rewrite", "en")).not.toContain("one complete statement");
   });
 });
 
@@ -171,5 +177,72 @@ describe("適用範囲", () => {
     expect(sqlForApply("SELECT 2;;", withSemi, doc)).toBe("SELECT 2;");
     const noSemi = locateApplyTarget(doc, "SELECT 1", { from: 0, to: 8 });
     expect(sqlForApply("SELECT 2;\n", noSemi, doc)).toBe("SELECT 2");
+  });
+});
+
+describe("sqlForApply: 空白の保持", () => {
+  it("元の範囲の先頭・末尾の空白 / 改行を保つ", () => {
+    const doc = "\n  SELECT 1;\n\n";
+    const target = locateApplyTarget(doc, doc, null);
+    expect(sqlForApply("SELECT 2", target, doc)).toBe("\n  SELECT 2;\n\n");
+    const noSemi = "  SELECT 1  ";
+    expect(sqlForApply("SELECT 2;", locateApplyTarget(noSemi, noSemi, null), noSemi)).toBe("  SELECT 2  ");
+  });
+});
+
+describe("restoreMaskedLiterals", () => {
+  it("空白リテラルの個数が元と一致したら出現順に差し戻す", () => {
+    const orig = "SELECT * FROM t WHERE a = 'x''y' AND b = 'bob' -- 'c'";
+    const prop = "SELECT id FROM t WHERE a = '    ' AND b = '   '";
+    expect(restoreMaskedLiterals(orig, prop)).toEqual({
+      sql: "SELECT id FROM t WHERE a = 'x''y' AND b = 'bob'",
+      status: "restored",
+    });
+  });
+
+  it("空リテラル '' も数える", () => {
+    expect(restoreMaskedLiterals("SELECT '', 'a'", "SELECT '', ' '")).toEqual({
+      sql: "SELECT '', 'a'",
+      status: "restored",
+    });
+  });
+
+  it("提案に空白リテラルが無ければ何もしない (none)", () => {
+    expect(restoreMaskedLiterals("SELECT 'a'", "SELECT 1")).toEqual({ sql: "SELECT 1", status: "none" });
+  });
+
+  it("個数が合わなければ差し戻さず missing", () => {
+    const prop = "SELECT ' ' , ' '";
+    expect(restoreMaskedLiterals("SELECT 'a'", prop)).toEqual({ sql: prop, status: "missing" });
+    expect(restoreMaskedLiterals("SELECT 1", "SELECT ' '")).toEqual({ sql: "SELECT ' '", status: "missing" });
+  });
+
+  it("コメント・二重引用符内の引用符はリテラルに数えない", () => {
+    expect(restoreMaskedLiterals('SELECT "it\'s", \'a\' /* \'z\' */', "SELECT \" \", ' '")).toEqual({
+      sql: "SELECT \" \", 'a'",
+      status: "restored",
+    });
+  });
+});
+
+describe("countStatements", () => {
+  it("; 区切りの文を数え、コメント / リテラル内の ; と空の文は数えない", () => {
+    expect(countStatements("SELECT 1; SELECT ';'; -- a;b\n", "mysql")).toBe(2);
+    expect(countStatements("SELECT 1", "postgres")).toBe(1);
+    expect(countStatements(" ; ; ", "sqlite")).toBe(0);
+  });
+});
+
+describe("diffLines: 上限", () => {
+  it("n*m が上限を超えたら中央部を全行削除 + 全行追加に落とす", () => {
+    const n = Math.ceil(Math.sqrt(DIFF_MAX_CELLS)) + 1;
+    const a = ["head", ...Array.from({ length: n }, (_, i) => `a${i}`), "tail"].join("\n");
+    const b = ["head", ...Array.from({ length: n }, (_, i) => `b${i}`), "tail"].join("\n");
+    const d = diffLines(a, b);
+    expect(d).toHaveLength(n * 2 + 2);
+    expect(d[0]).toEqual({ type: "same", text: "head" });
+    expect(d[d.length - 1]).toEqual({ type: "same", text: "tail" });
+    expect(d.filter((l) => l.type === "del")).toHaveLength(n);
+    expect(d.filter((l) => l.type === "add")).toHaveLength(n);
   });
 });

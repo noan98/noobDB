@@ -33,6 +33,7 @@ const connected = {
   timelapseProfileId: "prof1",
   openConnectionCount: 1,
   aiAvailable: true,
+  aiSqlTarget: true,
 };
 
 /** 接続に依存せず常に開けるログ系タブ (#1114)。 */
@@ -123,6 +124,10 @@ describe("AI 解説タブ (#695)", () => {
     for (const ai of [false, undefined]) {
       expect(availableBottomPanelTabs({ ...connected, aiAvailable: ai })).not.toContain("aiSql");
     }
+    // 依頼 (対象) が無ければ並べない
+    for (const target of [false, undefined]) {
+      expect(availableBottomPanelTabs({ ...connected, aiSqlTarget: target })).not.toContain("aiSql");
+    }
     expect(
       availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
     ).not.toContain("aiSql");
@@ -142,6 +147,9 @@ describe("AI 解説タブ (#695)", () => {
     expect(appSource).toContain("aiAvailable,");
     expect(appSource).toContain('activeBottomPanelTab === "aiSql"');
     expect(appSource).toContain("<AiSqlPanel");
+    expect(appSource).toContain("aiSqlTarget: !!aiSqlRequest");
+    // 接続が切り替わったら前の接続の依頼を破棄する
+    expect(appSource).toMatch(/setAiSqlRequest\(null\);\s*\}, \[sessionId\]\)/);
   });
 });
 

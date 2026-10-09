@@ -5310,6 +5310,8 @@ export default function App() {
       const live = locate();
       if (!live) return "closed";
       if (live.visible && (!live.editor || live.current === "")) return "cancelled";
+      // 範囲がずれていて確認を取った場合、確認中に本文が変わっていたら (確認した範囲が無効になるので) 取りやめる。
+      if (!planned.exact && live.current !== before.current) return "cancelled";
       const target = planned.exact ? locateApplyTarget(live.current, req.sql, req.range) : planned;
       // 確認なしで進めるつもりだった範囲が確認中に変わっていたら、書き換えずに取りやめる。
       if (planned.exact && !target.exact) return "cancelled";
@@ -8217,8 +8219,9 @@ export default function App() {
     // 折りたたみ時のパネルバーが SQLite 非対応 (プロセス / インスペクタ) を
     // 「無効 + 理由」で見せるために使う。開ける判定には影響しない。
     driver: sessionId ? (selectedProfile?.driver ?? null) : null,
-    // SQL の AI 解説タブ (#695) は AI 利用可のときだけ開ける。
+    // SQL の AI 解説タブ (#695) は AI 利用可で、解説 / 最適化の依頼があるときだけ開ける。
     aiAvailable,
+    aiSqlTarget: !!aiSqlRequest,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
   // 閉じているときに `<main>` の下端へ常設するパネルバー。中核機能 (プロセスモニタ・

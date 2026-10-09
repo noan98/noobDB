@@ -234,4 +234,77 @@ describe("AiSqlPanel (#695)", () => {
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
     expect(runAiRequest.mock.calls[0][0].task).toBe("sqlRewrite");
   });
+
+  it("マスク有効: 空白リテラルを元の値に差し戻して diff に出し、適用 SQL にも反映する", async () => {
+    renderWithProviders(ui(req({ kind: "rewrite", sql: "SELECT * FROM users WHERE name = 'bob'" })));
+    await finish(JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT id FROM users WHERE name = '   '" }));
+    await screen.findByText(t("aiSqlRestoredNote"));
+    // diff の左辺は生の元 SQL、右辺は差し戻し後
+    const texts = Array.from(document.querySelectorAll("[data-diff]")).map((e) => e.textContent);
+    expect(texts.some((x) => x?.includes("name = 'bob'") && x.startsWith("+"))).toBe(true);
+    expect(texts.some((x) => x?.includes("SELECT * FROM users WHERE name = 'bob'") && x.startsWith("-"))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlApply") }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+    expect(onApply.mock.calls[0][1]).toBe("SELECT id FROM users WHERE name = 'bob'");
+  });
+
+  it("マスク有効で差し戻せないときは警告を出し、確認で取りやめると適用しない", async () => {
+    renderWithProviders(ui(req({ kind: "rewrite", sql: "SELECT * FROM users" })));
+    await finish(JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT id FROM users WHERE n = ' '" }));
+    await screen.findByText(t("aiSqlMaskedNote"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlApply") }));
+    await screen.findByText(t("aiSqlMissingTitle"));
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    fireEvent.click(cancels[cancels.length - 1]);
+    await screen.findByText(t("aiSqlApplyCancelled"));
+    expect(onApply).not.toHaveBeenCalled();
+    // 取りやめた後は再度押せて、承認すれば適用される
+    await waitFor(() => expect(screen.queryByText(t("aiSqlMissingTitle"))).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlApply") }));
+    await screen.findByText(t("aiSqlMissingTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlApplyAnyway") }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+  });
+
+  it("文の数が違う提案は適用前に確認する", async () => {
+    enable("schemaAndSql", false);
+    renderWithProviders(ui(req({ kind: "rewrite", sql: "SELECT 1;\nSELECT 2;" })));
+    await finish(JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT 1;" }));
+    fireEvent.click(await screen.findByRole("button", { name: t("aiSqlApply") }));
+    await screen.findByText(t("aiSqlStmtTitle"));
+    expect(onApply).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlApplyAnyway") }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+  });
+
+  it("適用ボタンを続けて 2 回押しても 1 回しか適用されず、適用後は無効になる", async () => {
+    let resolve: (v: string) => void = () => {};
+    onApply.mockImplementationOnce(() => new Promise<string>((r) => { resolve = r; }));
+    renderWithProviders(ui(req({ kind: "rewrite" })));
+    await finish(rewriteJson);
+    const btn = (await screen.findByRole("button", { name: t("aiSqlApply") })) as HTMLButtonElement;
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    await act(async () => resolve("applied"));
+    await screen.findByText(t("aiSqlApplied"));
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(onApply).toHaveBeenCalledTimes(1);
+  });
+
+  it("key (依頼) が変わると実行中のストリームを中止する", async () => {
+    const wrap = (id: number) => <div key={id}>{ui(req({ id }))}</div>;
+    const { rerender } = renderWithProviders(wrap(1));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    rerender(wrap(2));
+    expect(cancelStream).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+  });
+
+  it("自動送信時にパネルへフォーカスを移す", async () => {
+    renderWithProviders(ui(req()));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    expect(document.activeElement).toBe(screen.getByTestId("ai-sql-panel"));
+  });
 });

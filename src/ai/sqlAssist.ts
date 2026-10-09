@@ -3,6 +3,7 @@
 // 表名抽出・リテラルマスク・送信範囲の判定は #692 (`errorExplain.ts`) の実装を共有する。
 
 import { z } from "zod";
+import { maskLiterals } from "../dangerousSql";
 import {
   dialectLabel,
   findSqlRange,
@@ -136,7 +137,7 @@ export function buildSqlAssistSystem(kind: SqlAssistKind, locale: "ja" | "en"): 
   }
   return [
     "You are a database performance expert proposing an optimized rewrite of a SQL statement.",
-    "rewritten_sql: one complete statement for the given dialect that returns exactly the same result as the original. Preserve column names, order of output columns and semantics (NULL handling, duplicates, ordering).",
+    "rewritten_sql: the complete rewritten SQL for the given dialect. Return the same number of statements, in the same order, as the input (each statement separated by a semicolon); every output statement must return exactly the same result as its input statement. Preserve column names, order of output columns and semantics (NULL handling, duplicates, ordering).",
     "If no safe improvement exists, return the original statement unchanged and say so in caveats.",
     "changes: each change with what was changed and why it helps.",
     "equivalence_notes: reasoning why the rewrite is equivalent, including any assumptions (e.g. unique or NOT NULL columns).",
@@ -182,6 +183,9 @@ export function buildSqlAssistPrompt(input: SqlAssistPromptInput): string {
   return lines.join("\n");
 }
 
+/** LCS の表のセル数の上限。超えたら中央部は全行削除 + 全行追加で表示する。 */
+export const DIFF_MAX_CELLS = 2_000_000;
+
 export interface DiffLine {
   type: "same" | "add" | "del";
   text: string;
@@ -210,6 +214,15 @@ export function diffLines(before: string, after: string): DiffLine[] {
   const bm = b.slice(head, b.length - tail);
   const n = am.length;
   const m = bm.length;
+  // 巨大な SQL で n*m の表がメモリ / 時間を食わないよう、上限を超えたら全行削除 + 全行追加に落とす。
+  if (n * m > DIFF_MAX_CELLS) {
+    return [
+      ...a.slice(0, head).map((text): DiffLine => ({ type: "same", text })),
+      ...am.map((text): DiffLine => ({ type: "del", text })),
+      ...bm.map((text): DiffLine => ({ type: "add", text })),
+      ...b.slice(b.length - tail).map((text): DiffLine => ({ type: "same", text })),
+    ];
+  }
   // lcs[i][j] = am[i..] と bm[j..] の LCS 長。
   const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i--) {
@@ -274,13 +287,98 @@ export function locateApplyTarget(
 }
 
 /**
- * 適用する SQL。元の範囲の末尾に `;` が含まれていたときだけ提案の `;` を残し、そうでなければ
- * 落とす (範囲の外側に既にある `;` と重ならないように)。前後の空白は落とす。
+ * 適用する SQL。元の範囲の先頭・末尾の空白 / 改行は保つ。元の範囲の末尾に `;` が含まれていたときだけ
+ * 提案の `;` を残し、そうでなければ落とす (範囲の外側に既にある `;` と重ならないように)。
  */
 export function sqlForApply(newSql: string, target: ApplyTarget, current: string): string {
-  const body = newSql.trim();
   const original = current.slice(target.from, target.to);
-  const keep = target.exact && /;\s*$/.test(original);
-  const bare = body.replace(/;+\s*$/, "");
-  return keep ? `${bare};` : bare;
+  const lead = /^\s*/.exec(original)?.[0] ?? "";
+  const trail = original.trim() === "" ? "" : (/\s*$/.exec(original)?.[0] ?? "");
+  const keep = /;\s*$/.test(original);
+  const bare = newSql.trim().replace(/;+\s*$/, "");
+  return `${lead}${keep ? `${bare};` : bare}${trail}`;
+}
+
+interface LiteralSpan {
+  /** 開始クォートの位置。 */
+  from: number;
+  /** 終了クォートの次の位置。 */
+  to: number;
+  /** クォートを含まない中身。 */
+  inner: string;
+}
+
+/** SQL 中の単一引用符リテラルを出現順に集める (コメント・二重引用符・バッククォートは飛ばす)。 */
+function scanStringLiterals(sql: string): LiteralSpan[] {
+  const out: LiteralSpan[] = [];
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i];
+    const next = sql[i + 1];
+    if (c === "-" && next === "-") {
+      while (i < sql.length && sql[i] !== "\n") i++;
+    } else if (c === "/" && next === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? sql.length : end + 2;
+    } else if (c === '"' || c === "`") {
+      const end = sql.indexOf(c, i + 1);
+      i = end < 0 ? sql.length : end + 1;
+    } else if (c === "'") {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === "\\") j += 2;
+        else if (sql[j] === "'") {
+          if (sql[j + 1] === "'") j += 2;
+          else break;
+        } else j++;
+      }
+      const to = Math.min(j + 1, sql.length);
+      out.push({ from: i, to, inner: sql.slice(i + 1, Math.min(j, sql.length)) });
+      i = to;
+    } else {
+      i++;
+    }
+  }
+  return out;
+}
+
+export interface RestoredLiterals {
+  /** 差し戻し後の提案 SQL (差し戻せなかったときは提案そのまま)。 */
+  sql: string;
+  /**
+   * - `none`: 提案に空白だけのリテラルが無い (差し戻し不要)。
+   * - `restored`: 元 SQL のリテラルを出現順に差し戻した。
+   * - `missing`: 個数が合わず差し戻せなかった (空白リテラルが残る)。
+   */
+  status: "none" | "restored" | "missing";
+}
+
+/**
+ * マスクして送った場合、AI の提案に含まれるリテラルは空白になっている。提案中の「空白だけの
+ * リテラル」の個数が元 SQL のリテラルの個数と一致したときだけ、出現順に元の値を差し戻す。
+ */
+export function restoreMaskedLiterals(original: string, proposal: string): RestoredLiterals {
+  const orig = scanStringLiterals(original);
+  const prop = scanStringLiterals(proposal);
+  const blanks = prop.filter((l) => l.inner.trim() === "");
+  if (blanks.length === 0) return { sql: proposal, status: "none" };
+  if (blanks.length !== orig.length) return { sql: proposal, status: "missing" };
+  let out = "";
+  let pos = 0;
+  let k = 0;
+  for (const l of prop) {
+    if (l.inner.trim() !== "") continue;
+    out += proposal.slice(pos, l.from) + original.slice(orig[k].from, orig[k].to);
+    pos = l.to;
+    k++;
+  }
+  out += proposal.slice(pos);
+  return { sql: out, status: "restored" };
+}
+
+/** `;` 区切りの文の数。コメントとリテラルはマスクして数え、空の文は数えない。 */
+export function countStatements(sql: string, driver: string): number {
+  return maskLiterals(sql, driver, { keepQuotedIdentifiers: true, cache: false })
+    .split(";")
+    .filter((p) => p.trim() !== "").length;
 }

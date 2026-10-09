@@ -49,7 +49,7 @@
  *
  * `aiSql` (SQL の AI 解説 / 最適化案、#695) は、エディタの選択範囲を見比べながら読む
  * 参照情報 (解説・diff) なので Modal ではなくここに置く。開ける条件は接続中 + AI 利用可
- * (設定で有効 かつ API キー登録済み)。
+ * (設定で有効 かつ API キー登録済み) かつ、エディタからの依頼がある (参照グループは対象が決まってから)。
  */
 export const BOTTOM_PANEL_TABS = [
   "output",
@@ -139,6 +139,11 @@ export interface BottomPanelContext {
   driver?: string | null;
   /** AI 機能が使えるか (設定で有効 かつ API キー登録済み)。`aiSql` タブの開ける条件 (#695)。 */
   aiAvailable?: boolean;
+  /**
+   * エディタから解説 / 最適化の依頼が出ているか。参照グループは対象が決まってから開く
+   * 規則 (§7.1) なので、依頼が無ければ `aiSql` タブは並べない。
+   */
+  aiSqlTarget?: boolean;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
@@ -152,7 +157,7 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
     if (tab === "profile") return !!ctx.profileTable;
     if (tab === "structure") return !!ctx.structureTable;
     if (tab === "timelapse") return !!ctx.timelapseProfileId;
-    if (tab === "aiSql") return !!ctx.aiAvailable;
+    if (tab === "aiSql") return !!ctx.aiAvailable && !!ctx.aiSqlTarget;
     return true;
   });
 }

@@ -8,19 +8,21 @@ import {
   extractTableRefs,
   needsSendScopeConfirm,
   resolveTableDatabase,
-  sqlForAi,
   type ExplainTable,
 } from "../ai/errorExplain";
 import {
   buildSqlAssistPrompt,
   buildSqlAssistSystem,
+  countStatements,
   diffLines,
   hasDiffChanges,
   parseSqlExplainResponse,
   parseSqlRewriteResponse,
+  restoreMaskedLiterals,
   SQL_ASSIST_TASK,
   sqlAssistFormat,
   type DiffLine,
+  type RestoredLiterals,
   type SqlAssistKind,
   type SqlExplainResponse,
   type SqlRewriteResponse,
@@ -61,7 +63,17 @@ type State =
   | { kind: "idle" }
   | { kind: "running"; chars: number }
   | { kind: "explain"; value: SqlExplainResponse }
-  | { kind: "rewrite"; value: SqlRewriteResponse; sent: string; masked: boolean }
+  | {
+      kind: "rewrite";
+      value: SqlRewriteResponse;
+      /** diff の左辺と適用の基準になる、マスク前の元 SQL。 */
+      original: string;
+      /** 適用する提案 SQL (マスクして送ったときはリテラルを差し戻した後)。 */
+      proposal: string;
+      restore: RestoredLiterals["status"];
+      /** 元 SQL と提案で文の数が違う。 */
+      statementCounts: { before: number; after: number } | null;
+    }
   | { kind: "raw"; raw: string }
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
@@ -98,6 +110,9 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   const streamRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const mountedRef = useRef(true);
+  // 「エディタに適用」の再入防止。確認ダイアログ中・適用済みの間は 2 回目を受け付けない。
+  const applyingRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   const stopListener = useCallback((streamId: string) => {
     if (streamRef.current !== streamId) return;
@@ -158,6 +173,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     }
     if (!mountedRef.current) return abort();
     setApplied(null);
+    applyingRef.current = false;
     // テーブル定義はベストエフォート。取得できないテーブルは黙って落とす。
     const fetched = await Promise.all(
       tableRefs.map(async (ref): Promise<ExplainTable | null> => {
@@ -191,11 +207,24 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
             setState(parsed.ok ? { kind: "explain", value: parsed.value } : { kind: "raw", raw: parsed.raw });
           } else {
             const parsed = parseSqlRewriteResponse(text);
-            setState(
-              parsed.ok
-                ? { kind: "rewrite", value: parsed.value, sent: sqlForAi(req.sql, props.driver, masked), masked }
-                : { kind: "raw", raw: parsed.raw },
-            );
+            if (!parsed.ok) {
+              setState({ kind: "raw", raw: parsed.raw });
+              return;
+            }
+            // マスクして送ったときは、提案の空白リテラルを元の値へ差し戻せるか試す。
+            const restored: RestoredLiterals = masked
+              ? restoreMaskedLiterals(req.sql, parsed.value.rewritten_sql)
+              : { sql: parsed.value.rewritten_sql, status: "none" };
+            const before = countStatements(req.sql, props.driver);
+            const after = countStatements(restored.sql, props.driver);
+            setState({
+              kind: "rewrite",
+              value: parsed.value,
+              original: req.sql,
+              proposal: restored.sql,
+              restore: restored.status,
+              statementCounts: before !== after ? { before, after } : null,
+            });
           }
         },
         onError: (e) => {
@@ -257,8 +286,45 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   useEffect(() => {
     if (!autoRun || !autoKind) return;
     consumedRef.current();
+    // 右クリック / Shift+F10 から起動したときにキーボード操作がパネルへ続くよう、フォーカスを移す。
+    rootRef.current?.focus({ preventScroll: true });
     void runRef.current(autoKind);
   }, [autoRun, autoKind]);
+
+  const applyRewrite = async (s: Extract<State, { kind: "rewrite" }>) => {
+    if (!request || applyingRef.current) return;
+    applyingRef.current = true;
+    const giveUp = () => {
+      applyingRef.current = false;
+      setApplied("cancelled");
+    };
+    try {
+      if (s.restore === "missing") {
+        const ok = await confirm({
+          title: t("aiSqlMissingTitle"),
+          message: t("aiSqlMissingBody"),
+          confirmLabel: t("aiSqlApplyAnyway"),
+          tone: "warning",
+        });
+        if (!ok) return giveUp();
+      }
+      if (s.statementCounts) {
+        const ok = await confirm({
+          title: t("aiSqlStmtTitle"),
+          message: t("aiSqlStmtBody", s.statementCounts),
+          confirmLabel: t("aiSqlApplyAnyway"),
+          tone: "warning",
+        });
+        if (!ok) return giveUp();
+      }
+      const r = await props.onApply(request, s.proposal);
+      setApplied(r);
+      // 適用済みの間はボタンを無効にする。取りやめ / タブ消失なら再試行できるようにする。
+      if (r !== "applied") applyingRef.current = false;
+    } catch {
+      applyingRef.current = false;
+    }
+  };
 
   const cancel = () => {
     const sid = streamRef.current;
@@ -278,6 +344,9 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
 
   return (
     <Flex
+      ref={rootRef}
+      tabIndex={-1}
+      outline="none"
       direction="column"
       gap="2"
       p="3"
@@ -319,11 +388,12 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       {state.kind === "rewrite" && (
         <RewriteResult
           value={state.value}
-          sent={state.sent}
-          masked={state.masked}
+          original={state.original}
+          proposal={state.proposal}
+          restore={state.restore}
           applied={applied}
           onApply={() => {
-            void props.onApply(request, state.value.rewritten_sql).then(setApplied);
+            void applyRewrite(state);
           }}
         />
       )}
@@ -450,26 +520,33 @@ function DiffView({ lines }: { lines: readonly DiffLine[] }) {
 
 function RewriteResult({
   value,
-  sent,
-  masked,
+  original,
+  proposal,
+  restore,
   applied,
   onApply,
 }: {
   value: SqlRewriteResponse;
-  sent: string;
-  masked: boolean;
+  original: string;
+  proposal: string;
+  restore: RestoredLiterals["status"];
   applied: null | "applied" | "closed" | "cancelled";
   onApply: () => void;
 }) {
   const t = useT();
-  const lines = useMemo(() => diffLines(sent, value.rewritten_sql), [sent, value.rewritten_sql]);
+  const lines = useMemo(() => diffLines(original, proposal), [original, proposal]);
   const changed = hasDiffChanges(lines);
   return (
     <Flex direction="column" gap="2" aria-live="polite" data-testid="ai-sql-rewrite">
       <Callout tone="warning" role="status">
         {t("aiSqlRewriteWarning")}
       </Callout>
-      {masked && (
+      {restore === "restored" && (
+        <Callout tone="info" role="status">
+          {t("aiSqlRestoredNote")}
+        </Callout>
+      )}
+      {restore === "missing" && (
         <Callout tone="warning" role="status">
           {t("aiSqlMaskedNote")}
         </Callout>
@@ -485,7 +562,7 @@ function RewriteResult({
         )}
       </Flex>
       <Flex align="center" gap="2" wrap="wrap">
-        <Button type="button" variant="primary" size="sm" disabled={!changed} onClick={onApply}>
+        <Button type="button" variant="primary" size="sm" disabled={!changed || applied === "applied"} onClick={onApply}>
           {t("aiSqlApply")}
         </Button>
         {applied === "applied" && (
