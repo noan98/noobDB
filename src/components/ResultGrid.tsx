@@ -87,6 +87,8 @@ import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
 import { reorderColumnIds } from "./columnReorderFlip";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
+import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
+import { useRowCrossfade } from "./useRowCrossfade";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import {
@@ -4376,7 +4378,20 @@ export const DataGrid = memo(function DataGrid({
   );
   const handleRequestKeyStr = handleRequest ? handleRequestKey(handleRequest) : "";
   // `order` が null のときは「並びも絞り込みも無い」(元の行順そのまま)。
-  const [handleOrder, setHandleOrder] = useState<{ id: string; order: number[] | null } | null>(null);
+  const [handleOrder, setHandleOrder] = useState<{
+    id: string;
+    order: number[] | null;
+    /** この順序を要求した時点のクロスフェード用キー (#1416)。 */
+    fade: RowCrossfadeKeys;
+  } | null>(null);
+  // 順序の要求を出した時点の状態キー。順序が届いたコミットでだけフェードを再生するため、
+  // handleOrder に一緒に保存する (非同期の間は前の並びのままなので、状態由来のキーでは早すぎる)。
+  const fadeKeys = useMemo(
+    () => rowCrossfadeKeys(sorting, columnFilters, globalFilter),
+    [sorting, columnFilters, globalFilter],
+  );
+  const fadeKeysRef = useRef(fadeKeys);
+  fadeKeysRef.current = fadeKeys;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 条件は handleRequestKeyStr (JSON キー) で比較する。handleRequest は描画ごとに参照が変わるので依存に入れると再実行ループになる
   useEffect(() => {
     if (!activeHandleId || !handleRequest) {
@@ -4384,10 +4399,11 @@ export const DataGrid = memo(function DataGrid({
       return;
     }
     if (isIdentityRequest(handleRequest)) {
-      setHandleOrder({ id: activeHandleId, order: null });
+      setHandleOrder({ id: activeHandleId, order: null, fade: fadeKeysRef.current });
       return;
     }
     let cancelled = false;
+    const requestFade = fadeKeysRef.current;
     api
       .resultSortFilter({ resultId: activeHandleId, ...handleRequest })
       .then((order) => {
@@ -4397,7 +4413,7 @@ export const DataGrid = memo(function DataGrid({
           setGoneHandleId(activeHandleId);
           return;
         }
-        setHandleOrder({ id: activeHandleId, order });
+        setHandleOrder({ id: activeHandleId, order, fade: requestFade });
       })
       .catch(() => {
         if (!cancelled) setGoneHandleId(activeHandleId);
@@ -4509,6 +4525,10 @@ export const DataGrid = memo(function DataGrid({
   // 本体セルは `cellRefs` から引く。
   const gridTableRef = useRef<HTMLTableElement>(null);
   const columnFlip = useColumnReorderFlip(gridTableRef, cellRefs);
+  // クライアント側ソート / フィルタ適用時の <tbody> クロスフェード (#1416)。
+  const gridTbodyRef = useRef<HTMLTableSectionElement>(null);
+  // ハンドル経由 (非同期ソート) の間は、順序が届いたコミットで再生するよう適用済みの順序のキーを使う。
+  useRowCrossfade(gridTbodyRef, handleManual && handleOrder ? handleOrder.fade : fadeKeys, gridViewKey ?? "");
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
@@ -5879,7 +5899,7 @@ export const DataGrid = memo(function DataGrid({
             </tr>
           ))}
         </thead>
-        <tbody>
+        <tbody ref={gridTbodyRef}>
           {skeleton && rows.length === 0 ? (
             // Skeleton shimmer rows shown while the first batch of a streaming query
             // has not yet arrived. Rows fade out progressively to create visual depth.
