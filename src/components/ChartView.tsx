@@ -419,6 +419,8 @@ const H = 440;
 const PAD = { left: 60, right: 20, top: 16, bottom: 66 };
 // 棒の角丸の半径 (radius トークン `sm`) の実値 (px)。SVG のパスには CSS 変数を渡せない
 // ため、実行時に `--radius-sm` を読む。読めない環境 (jsdom など) は 4 で代用する。
+// 注意: getPropertyValue は calc() を解決しないので、`--radius-sm` が calc 化されると
+// 黙って 4 に戻る (その場合は computed な長さを得る方式へ改める)。
 function readBarRadius(): number {
   if (typeof document === "undefined") return 4;
   return parsePx(getComputedStyle(document.documentElement).getPropertyValue("--radius-sm"), 4);
@@ -497,10 +499,19 @@ export function CartesianChart({
       onMouseLeave={() => setHover(null)}
     >
       <defs>
-        {/* 面グラフの縦グラデ: 系列色を上端で濃く、基線側で透明へ。色は系列色 (colorScale 由来) のまま。 */}
+        {/* 面グラフの縦グラデ: 系列色をプロット上端で濃く、下端で透明へ (userSpaceOnUse で
+            負値や全 0 の面でも外接矩形に左右されない)。色は系列色 (colorScale 由来) のまま。 */}
         {type === "area" &&
           model.series.map((_, si) => (
-            <linearGradient key={si} id={`${uid}-area-${si}`} x1="0" y1="0" x2="0" y2="1">
+            <linearGradient
+              key={si}
+              id={`${uid}-area-${si}`}
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1={PAD.top}
+              x2="0"
+              y2={PAD.top + plotH}
+            >
               <stop offset="0%" stopColor={colors[si % colors.length]} stopOpacity={0.38} />
               <stop offset="100%" stopColor={colors[si % colors.length]} stopOpacity={0.02} />
             </linearGradient>

@@ -597,7 +597,9 @@ export function donutSlicePath(
 ): string {
   const f = (n: number) => Number(n.toFixed(3));
   const pt = (r: number, a: number) => `${f(cx + r * Math.cos(a))} ${f(cy + r * Math.sin(a))}`;
-  const full = end - start >= Math.PI * 2 - 1e-9;
+  // 座標は小数 3 桁へ丸めるため、全周判定も丸めに見合った幅 (1e-4 rad) にする。
+  // 狭いと始点と終点が丸め後に同一座標になり、A コマンドが弧を描かず消える。
+  const full = end - start >= Math.PI * 2 - 1e-4;
   if (full) {
     const circle = (r: number, sweep: 0 | 1) =>
       `M ${f(cx - r)} ${f(cy)} A ${r} ${r} 0 1 ${sweep} ${f(cx + r)} ${f(cy)} A ${r} ${r} 0 1 ${sweep} ${f(cx - r)} ${f(cy)} Z`;
@@ -610,7 +612,11 @@ export function donutSlicePath(
   return `M ${pt(rOuter, start)} A ${rOuter} ${rOuter} 0 ${large} 1 ${pt(rOuter, end)} L ${pt(rInner, end)} A ${rInner} ${rInner} 0 ${large} 0 ${pt(rInner, start)} Z`;
 }
 
-/** CSS の長さ文字列 (`"4px"` など) を数値へ。`px` 以外・不正は `fallback` (#1215)。 */
+/**
+ * CSS の長さ文字列 (`"4px"` など) を数値へ。`px` 以外・不正は `fallback` (#1215)。
+ * `getPropertyValue` は calc() を解決しないため、トークンが calc 化されると黙って
+ * `fallback` に戻る点に注意 (呼び出し側の既定値を実値と揃えておくこと)。
+ */
 export function parsePx(raw: string | null | undefined, fallback: number): number {
   const m = /^\s*(\d+(?:\.\d+)?)px\s*$/.exec(raw ?? "");
   return m ? Number(m[1]) : fallback;

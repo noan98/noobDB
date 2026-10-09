@@ -664,6 +664,9 @@ describe("ドーナツ (#1215)", () => {
     expect(pie).toBe("M -10 0 A 10 10 0 1 1 10 0 A 10 10 0 1 1 -10 0 Z");
     const ring = donutSlicePath(0, 0, 10, 6, 0, Math.PI * 2);
     expect(ring.match(/M /g)).toHaveLength(2);
+    // frac=1-1e-7 (丸めで始点終点が一致する境界) でも全周として描かれる
+    const near = donutSlicePath(220, 210, 170, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - 1e-7));
+    expect(near.match(/A /g)).toHaveLength(2);
     expect(ring).toContain("A 6 6 0 1 0");
   });
 });
