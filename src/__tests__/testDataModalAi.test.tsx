@@ -10,7 +10,7 @@ const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows:
 const hasAiApiKey = vi.fn().mockResolvedValue(true);
 const unlisten = vi.fn();
 let handlers: import("../api/tauri").AiStreamHandlers | null = null;
-let listenGate: Promise<void> | null = null;
+let listenGate: Promise<void> = Promise.resolve();
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -18,7 +18,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     listenAiStream: vi.fn(async (_id: string, h: import("../api/tauri").AiStreamHandlers) => {
       handlers = h;
-      if (listenGate) await listenGate;
+      await listenGate;
       return unlisten;
     }),
     api: {
@@ -90,7 +90,7 @@ beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   handlers = null;
-  listenGate = null;
+  listenGate = Promise.resolve();
   describeTable.mockResolvedValue([
     column("id", { data_type: "int", key: "PRI", extra: "auto_increment" }),
     column("customer_id", { data_type: "int", referenced_table: "customers", referenced_column: "id" }),
