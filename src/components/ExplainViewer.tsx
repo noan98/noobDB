@@ -8,6 +8,7 @@ import { Button, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Skeleton } from "./Skeleton";
+import { AiExplainInterpret, type AiExplainInterpretProps } from "./AiExplainInterpret";
 import { staggerContainer, variants } from "../motion";
 import { EXPLAIN_SKELETON_ROWS, staggerPlanIds } from "./explainSkeleton";
 import {
@@ -419,6 +420,11 @@ interface Props {
    * 実測モード (EXPLAIN ANALYZE, #1164) のトグル。未指定ならトグルを出さない。
    * `supported` が false (SQLite など) のときは無効化して理由を Tooltip に出す。
    */
+  /**
+   * AI による実行計画の解釈 (#693)。未指定なら入口を出さない。AI 無効 / API キー未設定の
+   * ときは指定しても何も描かない。計画・方言・実測フラグは ExplainViewer 自身が渡す。
+   */
+  ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze">;
   analyze?: {
     supported: boolean;
     active: boolean;
@@ -597,17 +603,32 @@ function AnalyzeBar({ analyze }: { analyze: NonNullable<Props["analyze"]> }) {
   );
 }
 
-export function ExplainViewer({ result, driver, streaming, analyze }: Props) {
-  if (!analyze) return <ExplainViewerBody result={result} driver={driver} streaming={streaming} />;
+export function ExplainViewer({ result, driver, streaming, analyze, ai }: Props) {
+  // 計画の生テキスト (AI 解釈に渡す)。ストリーミング中は確定していないので渡さない。
+  const plan = useMemo(
+    () => (ai && !streaming ? parseExplainForDriver(driver, result).raw : null),
+    [ai, streaming, driver, result],
+  );
+  if (!analyze && !ai) return <ExplainViewerBody result={result} driver={driver} streaming={streaming} />;
   return (
     <Box flex="1 1 auto" minHeight={0} minWidth={0} display="flex" flexDirection="column" overflow="hidden">
-      <AnalyzeBar analyze={analyze} />
+      {analyze && <AnalyzeBar analyze={analyze} />}
+      {ai && (
+        <AiExplainInterpret
+          // 別の計画 (再実行・実測切替) では状態を作り直し、実行中のストリームは中止する。
+          key={plan ?? ""}
+          {...ai}
+          driver={driver}
+          plan={plan}
+          analyze={!!analyze?.active && analyze.supported}
+        />
+      )}
       <ExplainViewerBody result={result} driver={driver} streaming={streaming} />
     </Box>
   );
 }
 
-function ExplainViewerBody({ result, driver, streaming }: Omit<Props, "analyze">) {
+function ExplainViewerBody({ result, driver, streaming }: Pick<Props, "result" | "driver" | "streaming">) {
   const t = useT();
   const { raw, root, error } = useMemo(
     () => parseExplainForDriver(driver, result),

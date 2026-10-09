@@ -5906,9 +5906,10 @@ export default function App() {
   }, [sessionId, runQueryInTab, addTab]);
 
   // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
-  const openQueryInEditor = useCallback((sql: string, title?: string) => {
+  const openQueryInEditor = useCallback((sql: string, title?: string, database?: string) => {
     const tab: Tab = { ...makeQueryTab(), sql };
     if (title) tab.title = title;
+    if (database) tab.database = database;
     addTab(tab);
   }, [addTab]);
 
