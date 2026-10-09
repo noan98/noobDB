@@ -72,6 +72,11 @@ const PREVIEW_COLORS_BY_DATA_THEME: Record<string, ThemePreviewColors> = {
   },
   // One Dark (ダーク専用)
   "one-dark": { bg: "#282c34", surface: "#2f343e", accent: "#61afef", text: "#d7dae0", keyword: "#c678dd" },
+  // Catppuccin Mocha (ダーク専用)
+  "catppuccin-dark": { bg: "#1e1e2e", surface: "#282839", accent: "#89b4fa", text: "#cdd6f4", keyword: "#cba6f7" },
+  // Tokyo Night (light/dark 追従)
+  "tokyo-night-light": { bg: "#e1e2e7", surface: "#ebecf2", accent: "#2e5fc4", text: "#343b58", keyword: "#7a3fd0" },
+  "tokyo-night-dark": { bg: "#1a1b26", surface: "#1f2335", accent: "#7aa2f7", text: "#c0caf5", keyword: "#bb9af7" },
   // High contrast (light/dark 追従)
   "hc-light": { bg: "#ffffff", surface: "#ffffff", accent: "#0033cc", text: "#000000", keyword: "#0000cc" },
   "hc-dark": { bg: "#000000", surface: "#121212", accent: "#66a3ff", text: "#ffffff", keyword: "#d98cff" },

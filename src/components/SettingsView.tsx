@@ -84,6 +84,7 @@ import {
   replaceAllSettings,
   resetAllSettings,
   resetAppearanceDefaults,
+  effectiveTheme,
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
@@ -532,6 +533,8 @@ const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof 
   nord: "themePresetNord",
   solarized: "themePresetSolarized",
   "one-dark": "themePresetOneDark",
+  catppuccin: "themePresetCatppuccin",
+  "tokyo-night": "themePresetTokyoNight",
   "high-contrast": "themePresetHighContrast",
   colorblind: "themePresetColorblind",
 };
@@ -608,11 +611,14 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-backup", titleKey: "settingsBackup" },
 ];
 
-export function SettingsView({ theme, onClose }: Props) {
+export function SettingsView({ theme: toggleTheme, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const settings = useSettings();
+  // 編集対象は画面に実際に適用されている配色 (ダーク専用プリセットではトグル値ではなく
+  // 実効テーマ) に揃える。
+  const theme = effectiveTheme(settings.themePreset, toggleTheme);
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
   const themeLabel = t(theme === "dark" ? "settingsThemeDark" : "settingsThemeLight");
@@ -1061,7 +1067,7 @@ export function SettingsView({ theme, onClose }: Props) {
           <ThemePresetRow role="group" aria-label={t("settingsThemePreset")}>
             {THEME_PRESET_ORDER.map((p) => {
               const selected = settings.themePreset === p;
-              const colors = themePreviewColors(p, theme);
+              const colors = themePreviewColors(p, toggleTheme);
               const chipTitle = THEME_PREVIEW_CHIP_ORDER.map((chip) =>
                 t(THEME_PREVIEW_CHIP_LABEL_KEYS[chip]),
               ).join(" / ");

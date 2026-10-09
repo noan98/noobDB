@@ -116,10 +116,13 @@ describe("categoricalColor (#525)", () => {
 
 describe("isDarkDataTheme (#1187)", () => {
   it("matches theme.ts's [data-theme$=dark] suffix rule for known values", () => {
-    for (const v of ["dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark"]) {
+    for (const v of [
+      "dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark",
+      "catppuccin-dark", "tokyo-night-dark",
+    ]) {
       expect(isDarkDataTheme(v)).toBe(true);
     }
-    for (const v of ["light", "hc-light", "cb-light", "solarized-light"]) {
+    for (const v of ["light", "hc-light", "cb-light", "solarized-light", "tokyo-night-light"]) {
       expect(isDarkDataTheme(v)).toBe(false);
     }
   });
