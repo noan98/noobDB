@@ -16,7 +16,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     listenAiStream: vi.fn(async (_id: string, h: import("../api/tauri").AiStreamHandlers) => {
       handlers = h;
-      if (listenGate) await listenGate;
+      if (listenGate !== null) await listenGate;
       return unlisten;
     }),
     api: {
