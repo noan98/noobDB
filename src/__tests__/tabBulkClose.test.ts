@@ -34,3 +34,24 @@ describe("tabsToClose", () => {
     expect(input).toEqual(["a", "b"]);
   });
 });
+
+import { duplicateTabSpec } from "../tabBulkClose";
+
+describe("duplicateTabSpec", () => {
+  it("query: タイトル・DB・SQL を引き継ぎ未実行扱い", () => {
+    expect(duplicateTabSpec({ kind: "query", title: "q1", database: "db" }, "SELECT 1")).toEqual({
+      kind: "query", title: "q1", sql: "SELECT 1", database: "db", lastExecutedSql: "",
+    });
+  });
+  it("table: クエリタブとして複製しテーブル名タイトルを引き継ぐ", () => {
+    const s = duplicateTabSpec({ kind: "table", title: "users", database: "app" }, "SELECT * FROM users");
+    expect(s.kind).toBe("query");
+    expect(s.title).toBe("users");
+  });
+  it("explain: クエリタブになりタイトルは引き継がない", () => {
+    const s = duplicateTabSpec({ kind: "explain", title: "Explain: x" }, "EXPLAIN SELECT 1");
+    expect(s).toEqual({
+      kind: "query", title: null, sql: "EXPLAIN SELECT 1", database: undefined, lastExecutedSql: "",
+    });
+  });
+});

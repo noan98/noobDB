@@ -52,7 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
-import { tabsToClose, type BulkCloseMode } from "./tabBulkClose";
+import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
@@ -7150,7 +7150,9 @@ export default function App() {
 
   // タブの一括クローズ (#1354)。対象は基点タブが属するペイン内のタブ (tabBulkClose.ts)。
   // 各タブには既存の `handleCloseTab` を適用する (ストリーム中断・ref 掃除・ペイン畳み込みを
-  // 1 件ずつの × と同じ経路に通す。閉じる処理へのフックは handleCloseTab に足せば効く)。
+  // 1 件ずつの × と同じ経路に通す。同期的なフック (スナップショット保存など) は handleCloseTab に
+  // 足せば一括でも効く。確認ダイアログのような非同期の割り込みを足す場合は、一括クローズ側で
+  // 1 回だけ確認するか、ループを await にする必要がある)。
   const closeTabsBulk = useCallback((tabId: string, mode: BulkCloseMode) => {
     const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
     if (!owner) return;
@@ -7158,19 +7160,19 @@ export default function App() {
   }, [panesRef, handleCloseTab]);
 
   // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
-  // query / explain は SQL (未実行の編集中本文を含む) と接続先 DB を引き継ぐ。table タブは
-  // `handleOpenTable` が既存タブを再利用して何も増えないため、現在の SQL を持つクエリタブとして
-  // 複製する (テーブルを土台に別クエリを試す用途)。結果・編集状態は引き継がない。
+  // 結果を引き継がないため、table / explain も含め常にクエリタブとして SQL (未実行の編集中
+  // 本文を含む) と接続先 DB をコピーする (判定は duplicateTabSpec)。
   const duplicateTab = useCallback((tabId: string) => {
     const src = tabsRef.current.find((tt) => tt.id === tabId);
     if (!src) return;
     const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
-    const sql = tabSqlStore.resolve(src.id, src.sql);
-    const kind: TabKind = src.kind === "explain" ? "explain" : "query";
+    const spec = duplicateTabSpec(src, tabSqlStore.resolve(src.id, src.sql));
     const copy: Tab = {
-      ...makeTab(kind, src.title, sql),
-      database: src.database,
-      lastExecutedSql: kind === "query" ? "" : sql,
+      ...makeQueryTab(),
+      title: spec.title ?? translate("tabUntitledQuery"),
+      sql: spec.sql,
+      lastExecutedSql: spec.lastExecutedSql,
+      database: spec.database,
     };
     addTab(copy, owner?.id);
   }, [tabsRef, panesRef, tabSqlStore, addTab]);

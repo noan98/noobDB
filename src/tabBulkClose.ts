@@ -29,3 +29,35 @@ export function tabsToClose(
       return paneTabIds.slice();
   }
 }
+
+/** 複製元タブのうち、複製の組み立てに必要な最小限のフィールド。 */
+export interface DuplicateSource {
+  kind: "table" | "query" | "explain";
+  title: string;
+  database?: string;
+}
+
+/** 複製タブの仕様 (`makeQueryTab` を土台に上書きするフィールド)。 */
+export interface DuplicateTabSpec {
+  kind: "query";
+  /** 複製元のタイトルを引き継ぐ。explain は元のタイトルが計画用なので null (無題クエリ)。 */
+  title: string | null;
+  sql: string;
+  database: string | undefined;
+  /** 未実行扱い (dirty 表示) にするため常に空。 */
+  lastExecutedSql: string;
+}
+
+/**
+ * タブ複製 (#1354) の仕様。結果を引き継がないため、table / explain も含め複製は常に
+ * クエリタブ (SQL のコピー) になる。`sql` は編集中の最新本文を渡す。
+ */
+export function duplicateTabSpec(src: DuplicateSource, sql: string): DuplicateTabSpec {
+  return {
+    kind: "query",
+    title: src.kind === "explain" ? null : src.title,
+    sql,
+    database: src.database,
+    lastExecutedSql: "",
+  };
+}
