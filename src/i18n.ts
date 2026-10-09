@@ -2204,6 +2204,10 @@ const en = {
 
   tabNew: "New query tab",
   tabClose: "Close tab",
+  tabDuplicate: "Duplicate tab",
+  tabCloseOthers: "Close other tabs",
+  tabCloseRight: "Close tabs to the right",
+  tabCloseAll: "Close all tabs",
   tabDirty: "Unsaved changes (not yet run)",
   tabUntitledQuery: "Query",
   tabExplainTitle: "Explain",
@@ -6465,6 +6469,10 @@ const ja: Dict = {
 
   tabNew: "新しいクエリタブ",
   tabClose: "タブを閉じる",
+  tabDuplicate: "このタブを複製",
+  tabCloseOthers: "他のタブを閉じる",
+  tabCloseRight: "右側のタブを閉じる",
+  tabCloseAll: "すべてのタブを閉じる",
   tabDirty: "未実行の変更があります",
   tabUntitledQuery: "クエリ",
   tabExplainTitle: "実行計画",

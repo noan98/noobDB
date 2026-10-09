@@ -52,6 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
+import { tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
@@ -7147,6 +7148,33 @@ export default function App() {
     }
   }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef]);
 
+  // タブの一括クローズ (#1354)。対象は基点タブが属するペイン内のタブ (tabBulkClose.ts)。
+  // 各タブには既存の `handleCloseTab` を適用する (ストリーム中断・ref 掃除・ペイン畳み込みを
+  // 1 件ずつの × と同じ経路に通す。閉じる処理へのフックは handleCloseTab に足せば効く)。
+  const closeTabsBulk = useCallback((tabId: string, mode: BulkCloseMode) => {
+    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+    if (!owner) return;
+    for (const id of tabsToClose(owner.tabIds, tabId, mode)) handleCloseTab(id);
+  }, [panesRef, handleCloseTab]);
+
+  // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
+  // query / explain は SQL (未実行の編集中本文を含む) と接続先 DB を引き継ぐ。table タブは
+  // `handleOpenTable` が既存タブを再利用して何も増えないため、現在の SQL を持つクエリタブとして
+  // 複製する (テーブルを土台に別クエリを試す用途)。結果・編集状態は引き継がない。
+  const duplicateTab = useCallback((tabId: string) => {
+    const src = tabsRef.current.find((tt) => tt.id === tabId);
+    if (!src) return;
+    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+    const sql = tabSqlStore.resolve(src.id, src.sql);
+    const kind: TabKind = src.kind === "explain" ? "explain" : "query";
+    const copy: Tab = {
+      ...makeTab(kind, src.title, sql),
+      database: src.database,
+      lastExecutedSql: kind === "query" ? "" : sql,
+    };
+    addTab(copy, owner?.id);
+  }, [tabsRef, panesRef, tabSqlStore, addTab]);
+
   // Latest handlers held in a ref so the global keydown listener below can
   // call them without re-attaching on every tab change.
   const handleCloseTabRef = useRef(handleCloseTab);
@@ -10093,6 +10121,8 @@ export default function App() {
         const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
         // Moving is only possible when it won't leave a single pane empty.
         const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
+        const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
+        const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [
           {
             label: t("tabMoveOtherPane"),
@@ -10100,12 +10130,32 @@ export default function App() {
             disabled: !canMove,
             title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
           },
+          {
+            label: t("tabDuplicate"),
+            onSelect: () => duplicateTab(tabMenu.tabId),
+          },
+          { separator: true },
+          {
+            label: t("tabCloseOthers"),
+            onSelect: () => closeTabsBulk(tabMenu.tabId, "others"),
+            disabled: !hasOthers,
+          },
+          {
+            label: t("tabCloseRight"),
+            onSelect: () => closeTabsBulk(tabMenu.tabId, "right"),
+            disabled: !hasRight,
+          },
           { separator: true },
           {
             label: t("tabClose"),
             icon: "close",
             shortcut: formatCombo(shortcutBindings.closeTab),
             onSelect: () => handleCloseTab(tabMenu.tabId),
+            danger: true,
+          },
+          {
+            label: t("tabCloseAll"),
+            onSelect: () => closeTabsBulk(tabMenu.tabId, "all"),
             danger: true,
           },
         ];
