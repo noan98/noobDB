@@ -225,6 +225,12 @@ const SECTIONS: Section[] = [
         noteKey: "helpAiPolicyNote",
       },
       {
+        titleKey: "helpAiImpactTitle",
+        descKey: "helpAiImpactDesc",
+        stepKeys: ["helpAiImpactStep1", "helpAiImpactStep2"],
+        noteKey: "helpAiImpactNote",
+      },
+      {
         titleKey: "helpAiPricingTitle",
         descKey: "helpAiPricingDesc",
         stepKeys: ["helpAiPriceOpus", "helpAiPriceSonnet", "helpAiPriceHaiku", "helpAiPriceFable"],

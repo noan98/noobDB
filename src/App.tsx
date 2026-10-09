@@ -9908,6 +9908,16 @@ export default function App() {
             writeApproval={pendingDangerous.writeApproval}
             typedConfirmTarget={pendingDangerous.typedConfirmTarget}
             impact={pendingDangerous.impact}
+            aiContext={
+              sessionId && selectedProfile
+                ? {
+                    sessionId,
+                    driver: selectedProfile.driver,
+                    database: activeTab?.database ?? selectedProfile.database ?? null,
+                    sql: pendingDangerous.sql,
+                  }
+                : null
+            }
             onConfirm={handleConfirmDangerous}
             onCancel={handleCancelDangerous}
           />
