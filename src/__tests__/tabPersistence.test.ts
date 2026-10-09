@@ -236,4 +236,19 @@ describe("normalizePersistedWorkspace", () => {
     ]);
     expect(ws.panes[0].tabs[0].builderSnapshot).toBeUndefined();
   });
+
+  it("titleManual (#1390): true は引き継ぎ、旧データ(欠落)・不正な型は無しとして読む", () => {
+    const ws = normalizePersistedWorkspace([
+      { kind: "query", title: "月次", sql: "SELECT 1", titleManual: true },
+      { kind: "query", title: "旧", sql: "SELECT 2" },
+      { kind: "query", title: "false", sql: "SELECT 3", titleManual: false },
+      { kind: "query", title: "不正", sql: "SELECT 4", titleManual: "yes" },
+    ]);
+    const tabs = ws.panes[0].tabs;
+    expect(tabs).toHaveLength(4);
+    expect(tabs[0].titleManual).toBe(true);
+    expect(tabs[1].titleManual).toBeUndefined();
+    expect(tabs[2].titleManual).toBeUndefined();
+    expect(tabs[3].titleManual).toBeUndefined();
+  });
 });
