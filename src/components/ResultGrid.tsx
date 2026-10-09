@@ -87,6 +87,8 @@ import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
 import { reorderColumnIds } from "./columnReorderFlip";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
+import { rowCrossfadeKey } from "./rowCrossfade";
+import { useRowCrossfade } from "./useRowCrossfade";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import {
@@ -4509,6 +4511,9 @@ export const DataGrid = memo(function DataGrid({
   // 本体セルは `cellRefs` から引く。
   const gridTableRef = useRef<HTMLTableElement>(null);
   const columnFlip = useColumnReorderFlip(gridTableRef, cellRefs);
+  // クライアント側ソート / フィルタ適用時の <tbody> クロスフェード (#1416)。
+  const gridTbodyRef = useRef<HTMLTableSectionElement>(null);
+  useRowCrossfade(gridTbodyRef, rowCrossfadeKey(sorting, columnFilters, globalFilter));
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
@@ -5879,7 +5884,7 @@ export const DataGrid = memo(function DataGrid({
             </tr>
           ))}
         </thead>
-        <tbody>
+        <tbody ref={gridTbodyRef}>
           {skeleton && rows.length === 0 ? (
             // Skeleton shimmer rows shown while the first batch of a streaming query
             // has not yet arrived. Rows fade out progressively to create visual depth.

@@ -67,6 +67,11 @@ import type { Transition, Variants } from "motion/react";
  *   頻繁に再レンダーされるため `layout` は使わず、ドロップ確定の 1 回だけ計測する
  *   手書き FLIP (Web Animations API) で `durations.base` / `easings.out` を再利用する。
  *   Motion の外なので reduced-motion は `useReducedMotionConfig` で明示的に見る。
+ * - 結果グリッドのクライアント側ソート / フィルタ適用 (`ResultGrid` — `useRowCrossfade`、
+ *   #1416)。行方向の per-row FLIP は仮想化グリッドで重いため避け、`<tbody>` 1 要素の
+ *   opacity だけを Web Animations API で 1 回再生する (`transitions.crossfade` 相当の
+ *   `durations.quick`)。key で再マウントしないのでスクロール・選択・編集状態は保たれ、
+ *   reduced-motion は `useReducedMotionConfig` で見る。
  * - 結果パネルの種類切替 (`App` — exit 無しの `AnimatePresence` + `variants.fade` で入場だけ、#1311)。
  *   グリッド ⇔ EXPLAIN / チャート / ピボット / プレビュー / バッチのように「軽量
  *   パネルの種類が変わる」ときだけ控えめにクロスフェードする。key を表示内容の
