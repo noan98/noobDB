@@ -44,6 +44,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
   };
 });
 
+import { listenAiStream } from "../api/tauri";
 import { copyToClipboard } from "../components/clipboard";
 import { AiSchemaDocModal } from "../components/AiSchemaDocModal";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
@@ -144,7 +145,7 @@ describe("AiSchemaDocModal (#696)", () => {
     expect(listIndexes).toHaveBeenCalledTimes(3);
 
     act(() => handlers?.onDelta?.({ streamId: "x", text: "# 店舗" }));
-    await screen.findByText(t("aiSchemaDocRunning", { chars: 4 }));
+    await screen.findByText(/4 characters received|4 文字受信/);
     expect(screen.getByLabelText(t("aiSchemaDocResult")).textContent).toBe("# 店舗");
     act(() => {
       handlers?.onDelta?.({ streamId: "x", text: "\n\n本文" });
@@ -236,5 +237,162 @@ describe("AiSchemaDocModal (#696)", () => {
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     act(() => handlers?.onError?.({ streamId: "x", error: "boom", kind: "aiRequest" } as never));
     await screen.findByText(t("aiSchemaDocError", { message: "boom" }));
+  });
+});
+
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe("AiSchemaDocModal の中止・安全網 (#696)", () => {
+  it("リスナー登録中に中止すると、リクエストを送らず cancelled になる", async () => {
+    const d = deferred<() => void>();
+    vi.mocked(listenAiStream).mockImplementationOnce(async () => d.promise);
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(listenAiStream).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: t("aiSchemaDocCancel") }));
+    await act(async () => d.resolve(unlisten));
+    await screen.findByText(t("aiSchemaDocCancelled"));
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("リクエスト登録前にアンマウントしても、登録後に cancelStream が呼ばれる", async () => {
+    const d = deferred();
+    runAiRequest.mockReturnValueOnce(d.promise);
+    const { unmount } = renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    const callsAtUnmount = cancelStream.mock.calls.length;
+    await act(async () => d.resolve());
+    await waitFor(() => expect(cancelStream.mock.calls.length).toBe(callsAtUnmount + 1));
+    const streamId = runAiRequest.mock.calls[0][0].streamId;
+    expect(cancelStream).toHaveBeenLastCalledWith(streamId);
+  });
+
+  it("リクエスト登録前に中止しても、登録後に cancelStream が呼ばれる", async () => {
+    const d = deferred();
+    runAiRequest.mockReturnValueOnce(d.promise);
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSchemaDocCancel") }));
+    const callsAtCancel = cancelStream.mock.calls.length;
+    await act(async () => d.resolve());
+    await waitFor(() => expect(cancelStream.mock.calls.length).toBeGreaterThan(callsAtCancel));
+  });
+
+  it("収集中に中止すると runAiRequest を呼ばない", async () => {
+    const d = deferred<never[]>();
+    listIndexes.mockReturnValue(d.promise);
+    renderWithProviders(ui());
+    await generate();
+    fireEvent.click(await screen.findByRole("button", { name: t("aiSchemaDocCancel") }));
+    await act(async () => d.resolve([]));
+    await screen.findByText(t("aiSchemaDocCancelled"));
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("収集中にアンマウントしても runAiRequest を呼ばない", async () => {
+    const d = deferred<never[]>();
+    listIndexes.mockReturnValue(d.promise);
+    const { unmount } = renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(listIndexes).toHaveBeenCalled());
+    unmount();
+    await act(async () => d.resolve([]));
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("本番では確認で拒否すると何も呼ばず、承諾すると送る", async () => {
+    renderWithProviders(ui({ isProduction: true }));
+    await generate();
+    await screen.findByText(t("aiSchemaDocConfirmTitle"));
+    expect(runAiRequest).not.toHaveBeenCalled();
+    expect(listIndexes).not.toHaveBeenCalled();
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    fireEvent.click(cancels[cancels.length - 1]);
+    await waitFor(() => expect(screen.queryByText(t("aiSchemaDocConfirmTitle"))).toBeNull());
+    expect(runAiRequest).not.toHaveBeenCalled();
+    expect(listIndexes).not.toHaveBeenCalled();
+    await generate();
+    await screen.findByText(t("aiSchemaDocConfirmTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSchemaDocConfirmSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(listIndexes).toHaveBeenCalled();
+  });
+
+  it("出力上限 (max_tokens) で終わったら途中切れの警告を出し、保存は許可する", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: "# T" });
+      handlers?.onDone?.({ stopReason: "max_tokens" } as never);
+    });
+    await screen.findByText(t("aiSchemaDocTruncated"));
+    const saveBtn = screen.getByRole("button", { name: t("aiSchemaDocSave") }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+  });
+
+  it("通常終了 (end_turn) では途中切れの警告を出さない", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => {
+      handlers?.onDone?.({ stopReason: "end_turn" } as never);
+    });
+    await screen.findByLabelText(t("aiSchemaDocResult"));
+    expect(screen.queryByText(t("aiSchemaDocTruncated"))).toBeNull();
+  });
+
+  it("aiRefused は辞退として表示する", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => handlers?.onError?.({ streamId: "x", error: "no", kind: "aiRefused" } as never));
+    await screen.findByText(t("aiSchemaDocRefused", { message: "no" }));
+  });
+
+  it("300 テーブル超は警告を出す", async () => {
+    describeDatabase.mockResolvedValue(
+      Array.from({ length: 301 }, (_, i) => ({ name: `t${i}`, columns: [col("id")] })),
+    );
+    renderWithProviders(ui());
+    await screen.findByText(/This scope is large|対象が大きくなっています/);
+  });
+
+  it("送信内容が 1 MiB を超えるなら送らずに絞り込みを促す", async () => {
+    describeDatabase.mockResolvedValue([
+      { name: "big", columns: [{ ...col("id"), comment: "x".repeat(1_100_000) }] },
+    ]);
+    renderWithProviders(ui());
+    await generate();
+    await screen.findByText(/1024 KB/);
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("外部キーを取得できないときは関係が含まれない旨を出す", async () => {
+    foreignKeys.mockRejectedValue(new Error("x"));
+    renderWithProviders(ui());
+    await screen.findByText(t("aiSchemaDocFkMissing"));
+  });
+
+  it("選択スコープの送信行は、ルーチン定義を送らないと明記する", async () => {
+    renderWithProviders(ui({ initialTables: ["orders"] }));
+    const line = await screen.findByTestId("ai-schema-doc-sends");
+    expect(line.textContent).toMatch(/Routine definitions|ルーチンの定義/);
+  });
+
+  it("実行中は送信した概算サイズを出す", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    expect(screen.getByText(/sent about \d+ KB|約 \d+ KB 送信/)).toBeTruthy();
   });
 });

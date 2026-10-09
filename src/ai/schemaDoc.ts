@@ -128,24 +128,12 @@ export function schemaDocConcurrency(tableCount: number): number {
   return tableCount > SCHEMA_DOC_THROTTLE_TABLES ? LARGE_CONCURRENCY : NORMAL_CONCURRENCY;
 }
 
-/** 非同期関数を最大 `limit` 件ずつ並列に適用する。結果は入力と同じ順序で返る。 */
-export async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next;
-      next += 1;
-      results[i] = await fn(items[i], i);
-    }
-  };
-  const n = Math.max(1, Math.min(limit, items.length));
-  await Promise.all(Array.from({ length: n }, worker));
-  return results;
+/** バックエンドが 1 リクエストで受け付ける system + prompt の上限 (バイト)。`commands/ai.rs` と揃える。 */
+export const SCHEMA_DOC_MAX_PROMPT_BYTES = 1024 * 1024;
+
+/** UTF-8 でのバイト数 (バックエンドの上限判定と同じ数え方)。 */
+export function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 /** 定義が長すぎる場合に切り詰める (切り詰めた印を末尾に付ける)。 */

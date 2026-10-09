@@ -14,14 +14,15 @@ import {
   buildSchemaDocSystem,
   defaultSchemaDocFilename,
   filterForeignKeysInScope,
-  mapWithConcurrency,
   resolveSchemaDocScope,
+  SCHEMA_DOC_MAX_PROMPT_BYTES,
   schemaDocConcurrency,
   selectDocObjects,
   summarizeSchemaDocSend,
   type SchemaDocContext,
   type SchemaDocForeignKey,
   type SchemaDocScopeMode,
+  utf8Bytes,
   type SchemaDocTable,
 } from "../ai/schemaDoc";
 import { useLocale, useT } from "../i18n";
@@ -31,6 +32,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { mapLimited } from "./mapLimited";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -48,14 +50,17 @@ type Loaded =
       tables: SchemaDocTable[];
       foreignKeys: SchemaDocForeignKey[];
       objects: SchemaObject[];
+      /** 外部キーを取得できなかった (関係が含まれない)。 */
+      fkFailed: boolean;
     }
   | { kind: "error"; message: string };
 
 type State =
   | { kind: "idle" }
   | { kind: "collecting" }
-  | { kind: "running"; chars: number; text: string }
-  | { kind: "done"; doc: string }
+  | { kind: "running"; chars: number; text: string; sentKb: number }
+  | { kind: "done"; doc: string; truncated: boolean }
+  | { kind: "tooBig"; kb: number }
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
 
@@ -103,10 +108,14 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   useEffect(() => {
     let alive = true;
     setLoaded({ kind: "loading" });
+    let fkFailed = false;
     Promise.all([
       api.describeDatabase(sessionId, database),
       // 以下は補助情報。取れなくてもドキュメント生成は続ける。
-      api.foreignKeys(sessionId, database).catch(() => []),
+      api.foreignKeys(sessionId, database).catch(() => {
+        fkFailed = true;
+        return [];
+      }),
       api.listSchemaObjects(sessionId, database).catch(() => [] as SchemaObject[]),
       api.listTableComments(sessionId, database).catch(() => []),
     ])
@@ -138,6 +147,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
             referenced_column: f.referenced_column,
           })),
           objects,
+          fkFailed,
         });
       })
       .catch((e) => {
@@ -209,7 +219,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
 
   const sendsLine =
     loaded.kind === "ready" && summary.tableCount > 0
-      ? t("aiSchemaDocSends", {
+      ? t(mode === "all" ? "aiSchemaDocSends" : "aiSchemaDocSendsSelected", {
           database,
           tables: summary.tableCount,
           columns: summary.columnCount,
@@ -262,13 +272,13 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     setState({ kind: "collecting" });
     // インデックスとビュー / ルーチンの定義はテーブル数ぶんの呼び出しになるので、並列度を抑える。
     const limit = schemaDocConcurrency(scopedTables.length);
-    const withIndexes = await mapWithConcurrency(scopedTables, limit, async (tb) => {
+    const withIndexes = await mapLimited(scopedTables, limit, async (tb) => {
       if (abortRef.current || tb.isView) return tb;
       const indexes = await api.listIndexes(sessionId, database, tb.name).catch(() => []);
       return { ...tb, indexes };
     });
     const targets = selectDocObjects(ready.objects, mode === "all" ? null : scopeNames);
-    const objects = await mapWithConcurrency(targets, limit, async (o) => {
+    const objects = await mapLimited(targets, limit, async (o) => {
       if (abortRef.current) return { kind: o.kind, name: o.name, definition: null };
       const definition = await api
         .getObjectDefinition(sessionId, database, o.kind, o.name, o.id)
@@ -292,19 +302,33 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
       driver: props.driver,
       locale,
     });
+    const system = buildSchemaDocSystem({ driver: props.driver, database, locale, context });
+    const prompt = buildSchemaDocPrompt(locale);
+    // 実際に送るバイト数。バックエンドの上限を超えるなら送らずに絞り込みを促す。
+    const sentBytes = utf8Bytes(system) + utf8Bytes(prompt);
+    if (sentBytes > SCHEMA_DOC_MAX_PROMPT_BYTES) {
+      busyRef.current = false;
+      setState({ kind: "tooBig", kb: approxKb(sentBytes) });
+      return;
+    }
+    const sentKb = approxKb(sentBytes);
     const streamId = makeStreamId();
     streamRef.current = streamId;
     let text = "";
-    setState({ kind: "running", chars: 0, text: "" });
+    setState({ kind: "running", chars: 0, text: "", sentKb });
     try {
       const unlisten = await listenAiStream(streamId, {
         onDelta: (e) => {
           text += e.text;
-          if (mountedRef.current) setState({ kind: "running", chars: text.length, text });
+          if (mountedRef.current) setState({ kind: "running", chars: text.length, text, sentKb });
         },
-        onDone: () => {
+        onDone: (e) => {
           stopListener(streamId);
-          setState({ kind: "done", doc: assembleSchemaDoc(header, text) });
+          setState({
+            kind: "done",
+            doc: assembleSchemaDoc(header, text),
+            truncated: e.stopReason === "max_tokens",
+          });
         },
         onError: (e) => {
           stopListener(streamId);
@@ -322,13 +346,26 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
         return;
       }
       unlistenRef.current = unlisten;
+      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
+      if (abortRef.current) {
+        stopListener(streamId);
+        setState({ kind: "cancelled" });
+        return;
+      }
       await api.runAiRequest({
         streamId,
         task: "schemaDoc",
-        system: buildSchemaDocSystem({ driver: props.driver, database, locale, context }),
-        prompt: buildSchemaDocPrompt(locale),
+        system,
+        prompt,
         settings: toAiSnapshot(ai),
       });
+      // バックエンドはリクエストの登録が最後なので、登録前の中止 / クローズは cancel_stream が
+      // 空振りする。登録が済んだ今、改めて取り消す (生成が裏で続いて課金されるのを防ぐ)。
+      if (abortRef.current || !mountedRef.current) {
+        void api.cancelStream(streamId).catch(() => {
+          /* すでに完了 */
+        });
+      }
     } catch (e) {
       stopListener(streamId);
       setState({ kind: "error", message: String(e), refused: false });
@@ -499,6 +536,11 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
               )}
             </FormSection>
           )}
+          {loaded.kind === "ready" && loaded.fkFailed && (
+            <Callout tone="info" role="status">
+              {t("aiSchemaDocFkMissing")}
+            </Callout>
+          )}
           {summary.level === "tooLarge" && (
             <Callout tone="warning" role="status">
               {t("aiSchemaDocLargeSchema", { tables: summary.tableCount, kb: approxKb(summary.approxChars) })}
@@ -516,7 +558,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
           {state.kind === "running" && (
             <Flex align="center" gap="2" color="app.textMuted" fontSize="sm" aria-live="polite">
               <Spinner size={12} />
-              {t("aiSchemaDocRunning", { chars: state.chars })}
+              {t("aiSchemaDocRunning", { chars: state.chars, kb: state.sentKb })}
               <Button type="button" variant="secondary" size="sm" onClick={cancel}>
                 {t("aiSchemaDocCancel")}
               </Button>
@@ -538,6 +580,16 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
             ) : (
               <ErrorNote role="alert">{t("aiSchemaDocError", { message: state.message })}</ErrorNote>
             ))}
+          {state.kind === "done" && state.truncated && (
+            <Callout tone="warning" role="status">
+              {t("aiSchemaDocTruncated")}
+            </Callout>
+          )}
+          {state.kind === "tooBig" && (
+            <ErrorNote role="alert">
+              {t("aiSchemaDocTooBig", { kb: state.kb, limit: SCHEMA_DOC_MAX_PROMPT_BYTES / 1024 })}
+            </ErrorNote>
+          )}
           {state.kind === "cancelled" && (
             <Callout tone="info" role="status">
               {t("aiSchemaDocCancelled")}

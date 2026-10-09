@@ -7,12 +7,12 @@ import {
   buildSchemaDocSystem,
   defaultSchemaDocFilename,
   filterForeignKeysInScope,
-  mapWithConcurrency,
   resolveSchemaDocScope,
   schemaDocConcurrency,
   selectDocObjects,
   summarizeSchemaDocSend,
   truncateDefinition,
+  utf8Bytes,
   SCHEMA_DOC_DEFINITION_MAX_CHARS,
   SCHEMA_DOC_MAX_OBJECTS,
   type SchemaDocContext,
@@ -97,22 +97,9 @@ describe("並列度", () => {
     expect(schemaDocConcurrency(101)).toBe(4);
   });
 
-  it("mapWithConcurrency は上限を超えて同時実行せず、順序を保つ", async () => {
-    let running = 0;
-    let peak = 0;
-    const out = await mapWithConcurrency([1, 2, 3, 4, 5, 6, 7, 8, 9], 4, async (n) => {
-      running += 1;
-      peak = Math.max(peak, running);
-      await new Promise((r) => setTimeout(r, 2));
-      running -= 1;
-      return n * 2;
-    });
-    expect(peak).toBeLessThanOrEqual(4);
-    expect(out).toEqual([2, 4, 6, 8, 10, 12, 14, 16, 18]);
-  });
-
-  it("空配列でも解決する", async () => {
-    expect(await mapWithConcurrency([], 4, async (n: number) => n)).toEqual([]);
+  it("utf8Bytes はバックエンドと同じくバイト数で数える", () => {
+    expect(utf8Bytes("abc")).toBe(3);
+    expect(utf8Bytes("あ")).toBe(3);
   });
 });
 
