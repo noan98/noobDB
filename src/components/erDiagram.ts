@@ -1,6 +1,7 @@
 import dagre from "@dagrejs/dagre";
 
 import type { ForeignKey } from "../api/tauri";
+import { classifyTypeName, normalizeTypeForClassify, shortTypeName, type CellKind } from "./cellTypeMeta";
 
 /**
  * Pure graph-building and layout for the ER diagram, kept separate
@@ -17,6 +18,35 @@ export interface ErColumn {
   isPk: boolean;
   /** True when the column references another table (a foreign key). */
   isFk: boolean;
+  /** 表示用の短縮型名 (`shortTypeName`)。型情報が無ければ空文字。 */
+  typeName: string;
+  /** 型アイコンの選択に使う分類。型情報が無ければ `null` (アイコンを出さない)。 */
+  kind: CellKind | null;
+}
+
+/** 列ごとのスキーマ情報 (describe_database 由来)。カーディナリティ判定と型表示に使う。 */
+export interface ErColumnMeta {
+  dataType: string;
+  nullable: boolean;
+  /** 単独で UNIQUE な列 (`key === "UNI"`)。複合 UNIQUE の一部は判定できないので false 扱い。 */
+  unique: boolean;
+}
+
+/** リレーション端の記法。`many` = クロウフット、`one` = 縦棒。 */
+export type ErCardinality = "many-to-one" | "one-to-one";
+
+/**
+ * FK 列が子側で「多」か「一」かを判定する。FK 列が **単一列の主キー** か **単独 UNIQUE**
+ * なら参照元は最大 1 行 (1:1)。`key === "UNI"` を返すのは MySQL のみ (PostgreSQL /
+ * SQLite は `PRI` か空)。そのため PG / SQLite では単一列 PK の FK だけが 1:1 になり、
+ * UNIQUE な FK は N:1 に倒れる (安全側の既定)。複合 PK の一部・インデックスだけの列・型情報が無い列は
+ * 判定できないため、既定は「多」(N:1、最も一般的な FK) とする。
+ */
+export function fkCardinality(opts: {
+  isSolePk: boolean;
+  unique: boolean;
+}): ErCardinality {
+  return opts.isSolePk || opts.unique ? "one-to-one" : "many-to-one";
 }
 
 /** The data carried by one table node (React Flow `node.data`). */
@@ -39,6 +69,10 @@ export interface ErEdge {
   target: string;
   sourceColumn: string;
   targetColumn: string | null;
+  /** 子側 (source) が多か一か。型情報が無いときは `many-to-one`。 */
+  cardinality: ErCardinality;
+  /** FK 列が NULL 可 = 親側 (target) が任意 (0..1)。不明なら false (必須扱い)。 */
+  optional: boolean;
 }
 
 export interface ErGraph {
@@ -99,7 +133,11 @@ export function nodeHeight(visibleColumns: number, hiddenColumns: number): numbe
  * unit-testable.
  */
 export function nodeWidth(data: ErTableData): number {
-  const longestCol = data.columns.reduce((m, c) => Math.max(m, c.name.length), 0);
+  // 型ラベルは列名の右に並ぶので、名前 + 間隔 2 文字 + 型名で行幅を見積もる。
+  const longestCol = data.columns.reduce(
+    (m, c) => Math.max(m, c.name.length + (c.typeName ? c.typeName.length + 2 : 0)),
+    0,
+  );
   const longest = Math.max(data.table.length, longestCol);
   const raw = ER_NODE_HPAD + longest * ER_CHAR_WIDTH;
   return Math.round(Math.max(ER_NODE_MIN_WIDTH, Math.min(ER_NODE_MAX_WIDTH, raw)));
@@ -131,6 +169,8 @@ export interface BuildErGraphInput {
   foreignKeys: ForeignKey[];
   /** Primary-key column names per table, when known (describe_database). */
   pkByTable?: Record<string, string[]>;
+  /** 列ごとの型・NULL 可・UNIQUE (テーブル名 → 列名 → 情報)。無ければ型表示なし・N:1 既定。 */
+  columnMeta?: Record<string, Record<string, ErColumnMeta>>;
 }
 
 /**
@@ -140,7 +180,7 @@ export interface BuildErGraphInput {
  * repeats.
  */
 export function buildErGraph(input: BuildErGraphInput): ErGraph {
-  const { tables, foreignKeys, pkByTable } = input;
+  const { tables, foreignKeys, pkByTable, columnMeta } = input;
   const totalTables = tables.length;
 
   // FK degree per table (incoming + outgoing) drives which tables survive the
@@ -179,11 +219,16 @@ export function buildErGraph(input: BuildErGraphInput): ErGraph {
 
   const nodes: ErNode[] = kept.map((t) => {
     const pkSet = new Set(pkByTable?.[t.name] ?? []);
-    const all: ErColumn[] = t.columns.map((name) => ({
-      name,
-      isPk: pkSet.has(name),
-      isFk: fkColumns.has(fkKey(t.name, name)),
-    }));
+    const all: ErColumn[] = t.columns.map((name) => {
+      const meta = columnMeta?.[t.name]?.[name];
+      return {
+        name,
+        isPk: pkSet.has(name),
+        isFk: fkColumns.has(fkKey(t.name, name)),
+        typeName: meta ? shortTypeName(meta.dataType) : "",
+        kind: meta ? classifyTypeName(normalizeTypeForClassify(meta.dataType)) : null,
+      };
+    });
     const visible = all.slice(0, MAX_VISIBLE_COLUMNS);
     return {
       id: t.name,
@@ -205,12 +250,19 @@ export function buildErGraph(input: BuildErGraphInput): ErGraph {
     const id = JSON.stringify([fk.table, fk.column, fk.referenced_table, target]);
     if (seen.has(id)) continue;
     seen.add(id);
+    const meta = columnMeta?.[fk.table]?.[fk.column];
+    const pk = pkByTable?.[fk.table] ?? [];
     edges.push({
       id,
       source: fk.table,
       target: fk.referenced_table,
       sourceColumn: fk.column,
       targetColumn: fk.referenced_column,
+      cardinality: fkCardinality({
+        isSolePk: pk.length === 1 && pk[0] === fk.column,
+        unique: meta?.unique ?? false,
+      }),
+      optional: meta?.nullable ?? false,
     });
   }
 
@@ -266,4 +318,92 @@ export function layoutErGraph(graph: ErGraph, options: ErLayoutOptions = {}): Po
   });
 
   return { nodes, edges: graph.edges };
+}
+
+/** ホバー連動ハイライトの対象 (ホバー中のテーブルとそこへ繋がるテーブル / 線)。 */
+export interface ErHighlight {
+  nodeIds: Set<string>;
+  edgeIds: Set<string>;
+}
+
+/**
+ * ホバー中のテーブル 1 つから、強調するテーブルと線を求める。そのテーブルを端点に持つ
+ * 線と、その反対側のテーブルが対象 (自己参照は自分のみ)。ホバーが無ければ `null`
+ * (= すべて通常表示)。それ以外のテーブル / 線は呼び出し側が減光する。
+ */
+export function erHighlight(
+  hovered: string | null,
+  edges: readonly { id: string; source: string; target: string }[],
+): ErHighlight | null {
+  if (hovered === null) return null;
+  const nodeIds = new Set<string>([hovered]);
+  const edgeIds = new Set<string>();
+  for (const e of edges) {
+    if (e.source !== hovered && e.target !== hovered) continue;
+    edgeIds.add(e.id);
+    nodeIds.add(e.source);
+    nodeIds.add(e.target);
+  }
+  return { nodeIds, edgeIds };
+}
+
+/** リレーション線の端に描く記号。親側 (target) か子側 (source) か、必須 / 任意かで決まる。 */
+export type ErEndKind = "many" | "one-mandatory" | "one-optional";
+
+/** 子側 (source) の端記号: 多 = クロウフット、一 (1:1) = 縦棒 + 丸 (親が無い行もあり得るため任意)。 */
+export function sourceEndKind(cardinality: ErCardinality): ErEndKind {
+  return cardinality === "many-to-one" ? "many" : "one-optional";
+}
+
+/** 親側 (target) の端記号: FK 列が NULL 可なら 0..1 (縦棒 + 丸)、NOT NULL なら 1 (二重縦棒)。 */
+export function targetEndKind(optional: boolean): ErEndKind {
+  return optional ? "one-optional" : "one-mandatory";
+}
+
+export type ErEndSide = "left" | "right" | "top" | "bottom";
+
+export interface ErEndGlyph {
+  /** `<path d>` の列 (クロウフット / 縦棒)。 */
+  paths: string[];
+  /** 「ゼロ」を示す丸。無ければ `null`。 */
+  circle: { cx: number; cy: number; r: number } | null;
+}
+
+/** 記号の寸法 (SVG ユーザ単位 = React Flow のフロー座標)。 */
+const END_SPREAD = 6;
+const END_REACH = 12;
+const END_BAR = 5;
+const END_CIRCLE_R = 3.5;
+
+/**
+ * ノード縁の点 (x, y) から線が出ていく向き `side` に合わせて、端記号の幾何を返す。
+ * `side` はハンドルの位置 (ノードのどの辺か)。外向きの単位ベクトルを d、直交を p として
+ * 局所座標 (d 方向に dist, p 方向に off) をそのまま絶対座標へ写す。
+ */
+export function endGlyph(kind: ErEndKind, side: ErEndSide, x: number, y: number): ErEndGlyph {
+  const d = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] }[side];
+  const p = [-d[1], d[0]];
+  const at = (dist: number, off: number) =>
+    `${+(x + d[0] * dist + p[0] * off).toFixed(2)} ${+(y + d[1] * dist + p[1] * off).toFixed(2)}`;
+  const bar = (dist: number) => `M ${at(dist, -END_BAR)} L ${at(dist, END_BAR)}`;
+  if (kind === "many") {
+    return {
+      paths: [
+        `M ${at(END_REACH, 0)} L ${at(0, END_SPREAD)}`,
+        `M ${at(END_REACH, 0)} L ${at(0, -END_SPREAD)}`,
+        `M ${at(END_REACH, 0)} L ${at(0, 0)}`,
+      ],
+      circle: null,
+    };
+  }
+  if (kind === "one-mandatory") return { paths: [bar(6), bar(10)], circle: null };
+  const cd = 10 + END_CIRCLE_R;
+  return {
+    paths: [bar(6)],
+    circle: {
+      cx: +(x + d[0] * cd).toFixed(2),
+      cy: +(y + d[1] * cd).toFixed(2),
+      r: END_CIRCLE_R,
+    },
+  };
 }

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 // Vite の `?raw` で CSS / SVG の中身を文字列として取り込み、色値のドリフトを検証する
 // (型は `vite/client` が提供。Node の fs/types に依存しない)。
 import brandCss from "../App.css?raw";
+import illustrationsSrc from "../components/illustrations.tsx?raw";
 import faviconSvg from "../../public/brand-icon.svg?raw";
 import {
   BRAND_BLUE,
@@ -88,5 +89,37 @@ describe("brand colors (#619)", () => {
     expect(hcDark, "hc-dark ブロックが見つかる").toBeTruthy();
     expect(hcLight![1]).toMatch(/--hero-wash:\s*none;/);
     expect(hcDark![1]).toMatch(/--hero-wash:\s*none;/);
+  });
+  it("hero halo / rule は brand 単一ソースを参照し、不透明度は 25% 以下、hc-* では無効化する (#1216)", () => {
+    const m = brandCss.match(/--hero-halo:\s*radial-gradient\(([\s\S]*?)\n\s*\);/);
+    expect(m, "--hero-halo (radial-gradient) が :root に定義されている").toBeTruthy();
+    expect(m![1]).toContain("var(--brand-blue)");
+    expect(m![1]).toContain("var(--brand-violet)");
+    const pcts = [...m![1].matchAll(/color-mix\(in srgb, var\(--brand-\w+\) (\d+)%/g)].map(([, p]) => Number(p));
+    expect(pcts.length).toBeGreaterThan(0);
+    for (const pct of pcts) expect(pct).toBeLessThanOrEqual(25);
+    expect(brandCss).toMatch(/--hero-rule:\s*var\(--brand-gradient\);/);
+
+    for (const theme of ["hc-light", "hc-dark"]) {
+      const block = brandCss.match(new RegExp(`:root\\[data-theme="${theme}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`));
+      expect(block, `${theme} ブロックが見つかる`).toBeTruthy();
+      expect(block![1]).toMatch(/--hero-halo:\s*none;/);
+      expect(block![1]).toMatch(/--hero-rule:\s*none;/);
+      expect(block![1]).toMatch(/--hero-rule-display:\s*none;/);
+    }
+  });
+
+  it("イラストの duotone は hc-* で地と接地影を消し、全 svg が noob-illust を持つ (#1216)", () => {
+    const hc = brandCss.match(
+      /:root\[data-theme="hc-light"\] \.noob-illust,\s*:root\[data-theme="hc-dark"\] \.noob-illust\s*\{([\s\S]*?)\}/,
+    );
+    expect(hc, "hc-* の .noob-illust 上書きがある").toBeTruthy();
+    expect(hc![1]).toMatch(/--illust-body-fill:\s*none;/);
+    expect(hc![1]).toMatch(/--illust-ground:\s*none;/);
+
+    const src = illustrationsSrc;
+    // 全イラストは className="noob-illust" を付ける Svg ラッパ経由で、生の ChakraSvg は 1 箇所のみ。
+    expect(src.match(/<ChakraSvg\b/g)?.length).toBe(1);
+    expect(src).toContain('className="noob-illust"');
   });
 });
