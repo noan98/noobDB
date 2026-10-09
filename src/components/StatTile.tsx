@@ -52,8 +52,8 @@ export function StatTile({
         {typeof value === "number" ? <CountUp value={value} formatter={formatter} /> : value}
       </chakra.div>
       {sub != null && sub !== false && (
-        <chakra.div fontSize="xs" color="app.textMuted" textStyle="numeric">
-          {sub}
+        <chakra.div textStyle="caption">
+          <chakra.span textStyle="numeric">{sub}</chakra.span>
         </chakra.div>
       )}
     </Box>
