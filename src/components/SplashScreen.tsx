@@ -34,8 +34,15 @@ export function SplashScreen() {
       alignItems="center"
       justifyContent="center"
       gap="5"
-      bg="app.bg"
-      css={{ userSelect: "none", WebkitUserSelect: "none" }}
+      // `bg` はショートハンド `background` で hero-wash の background-image を打ち消すため bgColor を使う。
+      bgColor="app.bg"
+      // 起動の第一印象にブランドウォッシュを敷く (#1216、値は App.css の `--hero-wash`、hc-* では none)。
+      css={{
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        backgroundImage: "var(--hero-wash)",
+        backgroundRepeat: "no-repeat",
+      }}
       aria-hidden
       initial={{ opacity: 1 }}
       animate={{ opacity: 1 }}
@@ -46,8 +53,18 @@ export function SplashScreen() {
         initial={{ opacity: 0, scale: 0.86, y: 6 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: durations.slow, ease: easings.out }}
+        position="relative"
       >
-        <BrandMark size={96} />
+        {/* マークの背後のブランド光彩 (#1216、値は App.css の `--hero-halo`、hc-* では none)。
+            背面レイヤに分けるので本来のレイアウトは変わらない。 */}
+        <chakra.div
+          aria-hidden
+          position="absolute"
+          inset="-40px"
+          pointerEvents="none"
+          css={{ backgroundImage: "var(--hero-halo)", backgroundRepeat: "no-repeat" }}
+        />
+        <BrandMark size={96} style={{ position: "relative" }} />
       </MotionDiv>
 
       <MotionDiv

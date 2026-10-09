@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
 import { illustrationForError } from "../errorHints";
 
@@ -8,10 +8,21 @@ import { illustrationForError } from "../errorHints";
  * 依存ライブラリは増やさず、すべてここに直接 SVG を持つ。線は `currentColor`
  * (= 周囲のテキスト色) を継承し、強調部のみワークスペースアクセント
  * (`var(--ws-accent)` / `var(--accent)`) を使うため、ライト/ダーク・アクセント色に
- * 自動追従する。装飾なので `aria-hidden`。Motion はラッパー (EmptyState) 側で付く。
+ * 自動追従する。本体は淡いアクセント地 (`--illust-body-fill`)、強調部はアクセント地 +
+ * 縁取りの 2 トーン (duotone)、足元に接地影 (`--illust-ground`) を敷いて奥行きを出す (#1216)。
+ * 装飾なので `aria-hidden`。Motion はラッパー (EmptyState) 側で付く。
  */
 
-const Svg = chakra("svg");
+const ChakraSvg = chakra("svg");
+
+/**
+ * duotone 用トークン (`--illust-*`) は `App.css` の `.noob-illust` が単一ソース。
+ * `:root` ではなくクラス側に置くのは、`--ws-accent` が接続ごとに祖先で上書きされるため
+ * (`:root` で解決すると上書きが届かない)。hc-* プリセットでは装飾を無効化する。
+ */
+function Svg(props: ComponentProps<typeof ChakraSvg>) {
+  return <ChakraSvg className="noob-illust" {...props} />;
+}
 
 interface IllustrationProps {
   size?: number;
@@ -33,14 +44,15 @@ export function WelcomeIllustration({ size = 96 }: IllustrationProps) {
       aria-hidden="true"
       role="img"
     >
-      <rect x="30" y="20" width="68" height="20" rx="4" opacity="0.5" />
-      <rect x="30" y="46" width="68" height="20" rx="4" opacity="0.75" />
-      <rect x="30" y="72" width="68" height="14" rx="4" opacity="0.4" />
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
+      <rect x="30" y="20" width="68" height="20" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.5" />
+      <rect x="30" y="46" width="68" height="20" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.75" />
+      <rect x="30" y="72" width="68" height="14" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.4" />
       <circle cx="42" cy="30" r="2.5" fill="currentColor" stroke="none" opacity="0.6" />
       <circle cx="42" cy="56" r="2.5" fill="currentColor" stroke="none" opacity="0.8" />
       {/* アクセントの「+」スパーク (新規作成の合図) */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
-        <circle cx="98" cy="22" r="11" fill="color-mix(in srgb, var(--ws-accent, var(--accent)) 16%, transparent)" />
+        <circle cx="98" cy="22" r="11" fill="var(--illust-tint)" />
         <path d="M98 17v10M93 22h10" />
       </g>
     </Svg>
@@ -63,12 +75,13 @@ export function DisconnectedIllustration({ size = 96 }: IllustrationProps) {
       aria-hidden="true"
       role="img"
     >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* 左のソケット */}
       <path d="M20 48h22" opacity="0.6" />
       <path d="M30 38v8M30 50v8" opacity="0.6" />
-      <rect x="42" y="36" width="16" height="24" rx="4" />
+      <rect x="42" y="36" width="16" height="24" rx="4" fill="var(--illust-body-fill)" />
       {/* 右のプラグ (離れている = 未接続) */}
-      <rect x="74" y="36" width="16" height="24" rx="4" />
+      <rect x="74" y="36" width="16" height="24" rx="4" fill="var(--illust-body-fill)" />
       <path d="M90 48h18" opacity="0.6" />
       <path d="M82 30v6M82 60v6" />
       {/* 切断のスパーク */}
@@ -98,12 +111,13 @@ export function NoResultsIllustration({ size = 84 }: IllustrationProps) {
       aria-hidden="true"
       role="img"
     >
-      <rect x="24" y="20" width="64" height="52" rx="4" opacity="0.6" />
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
+      <rect x="24" y="20" width="64" height="52" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.6" />
       <path d="M24 34h64M46 20v52M46 34" opacity="0.45" />
       <path d="M24 48h64M24 60h64" opacity="0.3" />
       {/* 虫眼鏡 (アクセント) */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
-        <circle cx="84" cy="64" r="14" fill="color-mix(in srgb, var(--ws-accent, var(--accent)) 12%, transparent)" />
+        <circle cx="84" cy="64" r="14" fill="var(--illust-tint)" />
         <path d="M94 74l10 10" />
       </g>
     </Svg>
@@ -126,9 +140,10 @@ export function ConnectionFailedIllustration({ size = 96 }: IllustrationProps) {
       aria-hidden="true"
       role="img"
     >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* サーバスタック */}
-      <rect x="20" y="18" width="60" height="18" rx="4" opacity="0.5" />
-      <rect x="20" y="42" width="60" height="18" rx="4" opacity="0.7" />
+      <rect x="20" y="18" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.5" />
+      <rect x="20" y="42" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.7" />
       <circle cx="30" cy="27" r="2.5" fill="currentColor" stroke="none" opacity="0.5" />
       <circle cx="30" cy="51" r="2.5" fill="currentColor" stroke="none" opacity="0.7" />
       {/* 断線ケーブル */}
@@ -139,7 +154,7 @@ export function ConnectionFailedIllustration({ size = 96 }: IllustrationProps) {
           cx="104"
           cy="27"
           r="14"
-          fill="color-mix(in srgb, var(--text-error) 12%, transparent)"
+          fill="var(--illust-error-tint)"
           stroke="var(--text-error)"
         />
         <path d="M97 20l14 14M111 20L97 34" />
@@ -164,6 +179,7 @@ export function TimeoutIllustration({ size = 96 }: IllustrationProps) {
       aria-hidden="true"
       role="img"
     >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* 砂時計外枠 */}
       <path
         d="M42 14h44M42 82h44M48 14C48 14 38 32 48 48C38 64 48 82 48 82H80C80 82 90 64 80 48C90 32 80 14 80 14Z"
@@ -181,7 +197,7 @@ export function TimeoutIllustration({ size = 96 }: IllustrationProps) {
           cx="100"
           cy="22"
           r="14"
-          fill="color-mix(in srgb, var(--ws-accent, var(--accent)) 14%, transparent)"
+          fill="var(--illust-tint)"
         />
         <path d="M100 14v8l5 4" />
       </g>
@@ -205,8 +221,9 @@ export function PermissionDeniedIllustration({ size = 96 }: IllustrationProps) {
       aria-hidden="true"
       role="img"
     >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* 錠前ボディ */}
-      <rect x="38" y="46" width="36" height="30" rx="4" opacity="0.7" />
+      <rect x="38" y="46" width="36" height="30" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.7" />
       {/* 錠前アーチ */}
       <path d="M46 46V36a10 10 0 0 1 20 0v10" opacity="0.6" />
       {/* キーホール */}
@@ -216,7 +233,7 @@ export function PermissionDeniedIllustration({ size = 96 }: IllustrationProps) {
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
         <path
           d="M96 14l16 6v14c0 8-7 15-16 18C87 49 80 42 80 34V20z"
-          fill="color-mix(in srgb, var(--ws-accent, var(--accent)) 14%, transparent)"
+          fill="var(--illust-tint)"
         />
         <path d="M90 32l5 5 8-8" />
       </g>
@@ -240,17 +257,18 @@ export function ProductionWarningIllustration({ size = 96 }: IllustrationProps) 
       aria-hidden="true"
       role="img"
     >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* サーバスタック */}
-      <rect x="18" y="20" width="60" height="18" rx="4" opacity="0.5" />
-      <rect x="18" y="44" width="60" height="18" rx="4" opacity="0.75" />
-      <rect x="18" y="68" width="60" height="14" rx="4" opacity="0.4" />
+      <rect x="18" y="20" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.5" />
+      <rect x="18" y="44" width="60" height="18" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.75" />
+      <rect x="18" y="68" width="60" height="14" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.4" />
       <circle cx="28" cy="29" r="2.5" fill="currentColor" stroke="none" opacity="0.5" />
       <circle cx="28" cy="53" r="2.5" fill="currentColor" stroke="none" opacity="0.75" />
       {/* 警告三角 (アクセント: amber 系はトークンに乗せず ws-accent で統一) */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
         <path
           d="M96 12l24 42H72z"
-          fill="color-mix(in srgb, var(--ws-accent, var(--accent)) 16%, transparent)"
+          fill="var(--illust-tint)"
         />
         <path d="M96 26v14M96 46v4" />
       </g>
@@ -274,8 +292,9 @@ export function SchemaLoadFailedIllustration({ size = 96 }: IllustrationProps) {
       aria-hidden="true"
       role="img"
     >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
       {/* テーブルグリッド (左上半分は正常) */}
-      <rect x="14" y="16" width="70" height="56" rx="4" opacity="0.55" />
+      <rect x="14" y="16" width="70" height="56" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.55" />
       <path d="M14 32h70M36 16v56" opacity="0.4" />
       <path d="M14 48h70M14 62h52" opacity="0.3" />
       {/* 右下が欠けた破断線 */}
@@ -291,7 +310,7 @@ export function SchemaLoadFailedIllustration({ size = 96 }: IllustrationProps) {
           cx="103"
           cy="65"
           r="16"
-          fill="color-mix(in srgb, var(--ws-accent, var(--accent)) 14%, transparent)"
+          fill="var(--illust-tint)"
         />
         <path d="M103 55v12M103 73v3" />
       </g>

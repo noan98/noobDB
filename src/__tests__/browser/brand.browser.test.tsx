@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { renderInBrowser } from "./render";
 import { t } from "../../i18n";
 import { BrandMark, BrandLockup } from "../../brand";
@@ -23,5 +23,25 @@ describe("ブランドビジュアル (実ブラウザ)", () => {
   it("スプラッシュがタグラインを描画する", async () => {
     const screen = await renderInBrowser(<SplashScreen />);
     await expect.element(screen.getByText(t("splashTagline"))).toBeVisible();
+  });
+
+  describe("スプラッシュの hero-wash (#1216)", () => {
+    afterEach(() => document.documentElement.removeAttribute("data-theme"));
+    const rootBg = () => {
+      const el = document.querySelector('[aria-hidden="true"]');
+      return getComputedStyle(el as Element).backgroundImage;
+    };
+
+    it("通常テーマでは radial-gradient が描画される (bg ショートハンドに打ち消されない)", async () => {
+      document.documentElement.setAttribute("data-theme", "light");
+      await renderInBrowser(<SplashScreen />);
+      await expect.poll(rootBg).toContain("radial-gradient");
+    });
+
+    it("hc-dark では none", async () => {
+      document.documentElement.setAttribute("data-theme", "hc-dark");
+      await renderInBrowser(<SplashScreen />);
+      await expect.poll(rootBg).toBe("none");
+    });
   });
 });
