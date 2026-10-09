@@ -276,7 +276,15 @@ function MetricChart({
 function MetricChartSkeleton({ def }: { def: ChartDef }) {
   const t = useT();
   return (
-    <Box borderWidth="1px" borderColor="app.border" borderRadius="md" p="3" bg="app.surface" aria-hidden>
+    <Box
+      borderWidth="1px"
+      borderColor="app.border"
+      borderRadius="md"
+      p="3"
+      bg="app.surface"
+      shadow="elevationRaised"
+      aria-hidden
+    >
       <Flex align="baseline" justify="space-between" gap="2" mb="1.5">
         <Heading as="h3" role="subheading">
           {t(def.titleKey)}

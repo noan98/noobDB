@@ -82,7 +82,7 @@ const cardCss: SystemStyleObject = {
   background: "var(--bg-elevated)",
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
-  boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.12))",
+  boxShadow: "var(--elevation-raised)",
   overflow: "hidden",
   fontSize: "var(--text-sm)",
 };

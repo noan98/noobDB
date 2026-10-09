@@ -5,6 +5,8 @@ import ctxSrc from "../components/ContextMenu.tsx?raw";
 import toastSrc from "../components/Toast.tsx?raw";
 import statTileSrc from "../components/StatTile.tsx?raw";
 import serverMetricsSrc from "../components/ServerMetricsPanel.tsx?raw";
+import erSrc from "../components/ERDiagramView.tsx?raw";
+import explainSrc from "../components/ExplainGraphView.tsx?raw";
 
 /**
  * エレベーション/レイヤリング体系の回帰テスト。z-index スケールの順序と
@@ -65,10 +67,16 @@ describe("コンテンツカードの静止エレベーション (#1239)", () =>
   it("--elevation-raised は --shadow-sm と同値で、可視化ノードの影と質感が揃う", () => {
     expect(root).toMatch(/--elevation-raised:\s*var\(--shadow-sm\)/);
   });
-  it("StatTile と ServerMetricsPanel のカードは elevationRaised を持ち、border も併用する", () => {
-    for (const src of [statTileSrc, serverMetricsSrc]) {
-      expect(src).toMatch(/shadow="elevationRaised"/);
-      expect(src).toMatch(/borderColor="app\.border"/);
+  it("StatTile と ServerMetricsPanel のカード (スケルトン含む) は同じ開始タグで elevationRaised と border を併用する", () => {
+    // 1 つの <Box ...> 開始タグ内に shadow と borderColor が両方あることを検査する
+    const cardTag = /<Box\b(?=[^>]*\bshadow="elevationRaised")(?=[^>]*\bborderColor="app\.border")[^>]*>/g;
+    expect(statTileSrc.match(cardTag)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(serverMetricsSrc.match(cardTag)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+  it("ER / EXPLAIN のノードは --elevation-raised を参照する", () => {
+    for (const src of [erSrc, explainSrc]) {
+      expect(src).toMatch(/boxShadow:\s*"var\(--elevation-raised\)"/);
+      expect(src).not.toMatch(/var\(--shadow-sm/);
     }
   });
 });
