@@ -4,7 +4,7 @@ import { t } from "../i18n";
 import { generateRows, inferColumnSpec } from "../components/testDataGen";
 
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
-const describeTable: ReturnType<typeof vi.fn> = vi.fn();
+const describeTable = vi.fn<(...a: unknown[]) => Promise<ReturnType<typeof column>[]>>();
 const runQuery = vi.fn();
 const insertGeneratedRows = vi.fn();
 const listIndexes = vi.fn();
@@ -263,7 +263,7 @@ describe("TestDataModal AI モード (#698)", () => {
     await screen.findByLabelText(t("testDataStrategyAria", { column: "product_name" }));
     fireEvent.change(screen.getByLabelText(t("testDataSeed")), { target: { value: "123" } });
     fireEvent.change(screen.getByLabelText(t("testDataRowCount")), { target: { value: "5" } });
-    const specs = (await describeTable()).map(inferColumnSpec).map((sp) =>
+    const specs = (await describeTable("s1", "app", "orders")).map(inferColumnSpec).map((sp) =>
       sp.column === "customer_id" ? { ...sp, choices: [98765, 98766, 98767] } : sp,
     );
     const expected = generateRows(specs, 5, 123).map((r) => r.map((v) => String(v)));
