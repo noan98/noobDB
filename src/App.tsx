@@ -52,6 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
+import { isTabDirty, tabsWithPendingChanges } from "./tabDirty";
 import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
@@ -2065,7 +2066,7 @@ export default function App() {
         (id) => {
           const tt = tabsForDirtyRef.current.find((x) => x.id === id);
           if (!tt) return undefined;
-          return tt.kind === "query" && tabSqlStore.resolve(tt.id, tt.sql) !== tt.lastExecutedSql;
+          return isTabDirty(tt, tabSqlStore.resolve(tt.id, tt.sql));
         },
         bumpDirty,
       ),
@@ -2934,12 +2935,28 @@ export default function App() {
     setActivePaneId(null);
   }, [cancelStreamForTab, dirtyWatcher, tabSqlStore, setPanes, setTabs, tabsRef]);
 
+  // 接続の切替 / 切断はすべてのタブを閉じる。Apply 前のセル編集はメモリだけにあり
+  // (退避にも含まれない)、失うと回復できないので、1 つでもあれば確認する (#1391)。
+  // 接続が既に切れて自動で片付ける経路 (tearDownLostSession) は、止める意味が
+  // ないので対象外。ウィンドウ自体を閉じる経路は既存の仕組みが無くスコープ外。
+  const confirmDiscardPendingEdits = useCallback(async (): Promise<boolean> => {
+    const pending = tabsWithPendingChanges(tabsRef.current);
+    if (pending.length === 0) return true;
+    return confirm({
+      title: translate("connDiscardTitle"),
+      message: translate("connDiscardBody", { count: pending.length }),
+      confirmLabel: translate("connDiscardAction"),
+      tone: "danger",
+    });
+  }, [confirm, tabsRef]);
+
   // 既に開いている接続へ即座に切り替える (#複数同時接続)。再接続せず、生存中の
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
   const switchToOpenConnection = useCallback(async (target: OpenConnection) => {
     if (target.sessionId === sessionId) return;
+    if (!(await confirmDiscardPendingEdits())) return;
     // 進行中の自動再接続ループは手動切替で中断する。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -2970,7 +2987,7 @@ export default function App() {
     }
     setStatus({ kind: "idle" });
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits]);
 
   // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
   // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
@@ -3030,6 +3047,8 @@ export default function App() {
       });
       if (!ok) return;
     }
+    // 別接続へ張り替えると現在のタブはすべて閉じる。未確定の編集があれば先に確認する。
+    if (sessionId && !(await confirmDiscardPendingEdits())) return;
     // 手動接続は進行中の自動再接続ループより優先する: ループを中断させる。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3150,6 +3169,7 @@ export default function App() {
     closeAllTabs,
     persistTabsForProfile,
     switchToOpenConnection,
+    confirmDiscardPendingEdits,
     upsertOpenConnection,
     ensureLocalSession,
     settings.connectTimeoutSecs,
@@ -3219,6 +3239,7 @@ export default function App() {
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
+    if (!(await confirmDiscardPendingEdits())) return;
     // 明示切断は進行中の自動再接続ループを中断させる。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3249,7 +3270,7 @@ export default function App() {
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, confirmDiscardPendingEdits]);
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
@@ -7271,6 +7292,41 @@ export default function App() {
     for (const id of ids) handleCloseTab(id, { remember: false });
   }, [snapshotClosedTab, updateClosedHistory, handleCloseTab]);
 
+  // ユーザ操作で閉じる経路 (Cmd+W / タブメニュー / TabBar の × ・中クリック) の入口 (#1391)。
+  // Apply 前の編集があるタブは確認し、キャンセルならスナップショットも取らずに中断する
+  // (履歴に残ると復元時に重複する)。閉じたタブ復元は編集内容を戻さないので文言で伝える。
+  // DROP などで自動的に閉じる経路は確認不要なので `handleCloseTab` を直接使う。
+  const requestCloseTab = useCallback(async (id: string) => {
+    const tab = tabsRef.current.find((tt) => tt.id === id);
+    if (tab && tabsWithPendingChanges([tab]).length > 0) {
+      const ok = await confirm({
+        title: translate("tabCloseDiscardTitle"),
+        message: translate("tabCloseDiscardBody", { name: tab.title || tab.table || "" }),
+        confirmLabel: translate("tabCloseDiscardAction"),
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    handleCloseTab(id);
+  }, [confirm, tabsRef, handleCloseTab]);
+
+  // 一括クローズ版。対象に未確定の編集を持つタブがあれば 1 回だけまとめて確認し、
+  // キャンセルなら何も閉じない (全か無か)。確定した ID だけを `closeTabsAsGroup` へ渡す。
+  const requestCloseTabs = useCallback(async (ids: readonly string[]) => {
+    const targets = tabsRef.current.filter((tt) => ids.includes(tt.id));
+    const pending = tabsWithPendingChanges(targets);
+    if (pending.length > 0) {
+      const ok = await confirm({
+        title: translate("tabCloseDiscardTitle"),
+        message: translate("tabCloseDiscardBodyMany", { count: pending.length }),
+        confirmLabel: translate("tabCloseDiscardAction"),
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    closeTabsAsGroup(ids);
+  }, [confirm, tabsRef, closeTabsAsGroup]);
+
   // 閉じたタブを開き直す (#1353)。`groupId` 省略で最新。クエリ/EXPLAIN タブはスナップ
   // ショットから元のペイン・位置へ復元し、テーブルタブは開き直し (最新データを取得)。
   const reopenClosedTab = useCallback((groupId?: string) => {
@@ -7360,6 +7416,8 @@ export default function App() {
   // call them without re-attaching on every tab change.
   const handleCloseTabRef = useRef(handleCloseTab);
   handleCloseTabRef.current = handleCloseTab;
+  const requestCloseTabRef = useRef(requestCloseTab);
+  requestCloseTabRef.current = requestCloseTab;
   const reopenClosedTabRef = useRef(reopenClosedTab);
   reopenClosedTabRef.current = reopenClosedTab;
 
@@ -7415,7 +7473,7 @@ export default function App() {
         // tabbed workspace.
         e.preventDefault();
         const active = focusedPane()?.activeTabId;
-        if (active) handleCloseTabRef.current(active);
+        if (active) void requestCloseTabRef.current(active);
         return;
       }
       // Alt+←/→ → フォーカス中ペインのアクティブタブがページング可能なテーブル
@@ -8341,7 +8399,7 @@ export default function App() {
   // 呼び出し側の関数が毎レンダー作り直されても `PaneView` の memo は破られない (#1318)。
   const paneActions = useStableCallbacks({
     applyEditsForTab, cancelRenameTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
-    explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
+    explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab: requestCloseTab, handleEditorDocChange,
     handleAiSqlAction, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
@@ -10321,7 +10379,7 @@ export default function App() {
         // Moving is only possible when it won't leave a single pane empty.
         const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
         const closeBulk = (mode: TabBulkCloseMode) =>
-          closeTabsAsGroup(tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, mode));
+          void requestCloseTabs(tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, mode));
         const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
         const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [
@@ -10345,7 +10403,7 @@ export default function App() {
             label: t("tabClose"),
             icon: "close",
             shortcut: formatCombo(shortcutBindings.closeTab),
-            onSelect: () => handleCloseTab(tabMenu.tabId),
+            onSelect: () => void requestCloseTab(tabMenu.tabId),
             danger: true,
           },
         ];
