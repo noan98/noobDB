@@ -1422,7 +1422,13 @@ fn row_to_values(row: &SqliteRow) -> Vec<Value> {
         .collect()
 }
 
+/// 1 セルをデコードし、安全整数の外の `Int` / `UInt` を返していないことを
+/// debug ビルドで検査する (#1422。[`Value::debug_assert_js_safe`])。
 fn decode_cell(row: &SqliteRow, i: usize) -> Value {
+    decode_cell_unchecked(row, i).debug_assert_js_safe()
+}
+
+fn decode_cell_unchecked(row: &SqliteRow, i: usize) -> Value {
     let raw = match row.try_get_raw(i) {
         Ok(r) => r,
         Err(_) => return Value::Null,

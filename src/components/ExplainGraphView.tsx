@@ -69,7 +69,7 @@ const cardBaseCss: SystemStyleObject = {
   padding: "var(--space-2) var(--space-2-5)",
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
-  boxShadow: "var(--shadow-sm)",
+  boxShadow: "var(--elevation-raised)",
   cursor: "pointer",
   overflow: "hidden",
   fontSize: "var(--text-sm)",

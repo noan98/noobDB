@@ -1,3 +1,8 @@
+---
+paths:
+  - "src/**/*.{ts,tsx,css}"
+---
+
 # UI Design System 運用ルール
 
 noobDB の UI を変更するときに守るルール。Epic #1110 (UI/UX Refresh) の Phase 1

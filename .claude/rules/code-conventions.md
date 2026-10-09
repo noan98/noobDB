@@ -1,3 +1,13 @@
+---
+paths:
+  - "src/**/*.{ts,tsx}"
+  - "src-tauri/**/*.rs"
+  - "src-tauri/clippy.toml"
+  - "biome.json"
+  - "knip.json"
+  - "tsconfig*.json"
+---
+
 # コード規約とリンタ運用
 
 Rust / TypeScript 両側の lint・デッドコード検出の運用方針。
