@@ -1721,12 +1721,15 @@ export default function App() {
       if (overlayOpenRef.current) return;
       // タブ名のインライン編集中 (ダブルクリックの 1 回目の選択で予約された rAF が
       // 後から走る場合を含む) は、エディタへフォーカスを奪って blur 確定させない (#1390)。
-      if (renamingTabIdRef.current) return;
+      // リネーム中のタブが blur を経ずに消えた (接続切替等) 場合に ID が残っても
+      // 自動フォーカスが止まり続けないよう、まだ存在するタブだけを見る。
+      const renaming = renamingTabIdRef.current;
+      if (renaming && tabsRef.current.some((t) => t.id === renaming)) return;
       const ae = document.activeElement;
       if (ae instanceof HTMLInputElement && ae.closest('[role="tab"]')) return;
       editorRefs.current.get(paneId)?.focus();
     });
-  }, []);
+  }, [tabsRef]);
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
