@@ -270,7 +270,7 @@ export function ProcessListPanel({
         <ServerMetricsPanel sessionId={sessionId} driver={driver} />
       ) : (
         <>
-      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+      <chakra.p margin={0} textStyle="body" color="app.textMuted">
         {t("processDesc")}
       </chakra.p>
 
@@ -328,7 +328,7 @@ export function ProcessListPanel({
       </Flex>
 
       {readOnly && (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+        <chakra.p margin={0} textStyle="body" color="app.textMuted">
           {t("processReadOnlyHint")}
         </chakra.p>
       )}
@@ -399,7 +399,7 @@ export function ProcessListPanel({
         </Box>
       )}
       {!error && rows.length > visibleRows.length && (
-        <chakra.p margin={0} fontSize="xs" color="app.textMuted" data-testid="process-truncated">
+        <chakra.p margin={0} textStyle="caption" data-testid="process-truncated">
           {t("processTruncated", { shown: visibleRows.length, total: rows.length })}
         </chakra.p>
       )}

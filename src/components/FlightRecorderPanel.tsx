@@ -180,7 +180,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         {t("flightRecorderTitle")}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="2" minHeight="50vh">
-        <chakra.p m={0} fontSize="xs" color="app.textMuted">
+        <chakra.p m={0} textStyle="caption">
           {t("flightRecorderIntro")}
         </chakra.p>
         <Flex align="center" justify="space-between" gap="2" flexWrap="wrap">
@@ -211,7 +211,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
               {error}
             </chakra.p>
           ) : loading ? (
-            <chakra.p m={0} p="3" fontSize="sm" color="app.textMuted">
+            <chakra.p m={0} p="3" textStyle="body" color="app.textMuted">
               {t("flightRecorderLoading")}
             </chakra.p>
           ) : entries.length === 0 ? (
@@ -263,7 +263,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
           )}
         </Box>
         {!sessionId && entries.length > 0 && (
-          <chakra.p m={0} fontSize="xs" color="app.textMuted">
+          <chakra.p m={0} textStyle="caption">
             {t("flightRecorderNeedConnection")}
           </chakra.p>
         )}
