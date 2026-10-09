@@ -163,6 +163,42 @@ export function baseTypeName(dataType: string): string {
   return dataType.replace(/\s*\(.*?\)/g, "").trim();
 }
 
+/**
+ * DB カタログの型名を {@link classifyTypeName} の語彙 (大文字・修飾なし) へ正規化する。
+ * PostgreSQL の正式名 (`timestamp with time zone` / `double precision` / `bytea` …) や
+ * MySQL の修飾 (`bigint unsigned zerofill`) は完全一致集合に無いので、分類の前に
+ * ここで寄せる。`classifyTypeName` 側の集合は dataSearch など他の利用箇所に影響するため
+ * 広げず、ER 図など表示側が使う。
+ */
+export function normalizeTypeForClassify(dataType: string): string {
+  const base = baseTypeName(dataType)
+    .toLowerCase()
+    .replace(/\b(unsigned|signed|zerofill)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const alias: Record<string, string> = {
+    "timestamp with time zone": "timestamp",
+    "timestamp without time zone": "timestamp",
+    timestamptz: "timestamp",
+    "time with time zone": "time",
+    "time without time zone": "time",
+    timetz: "time",
+    "double precision": "double",
+    bytea: "blob",
+    "character varying": "varchar",
+    int2: "smallint",
+    int4: "int",
+    int8: "bigint",
+    smallserial: "smallint",
+    serial: "int",
+    bigserial: "bigint",
+    float4: "float",
+    float8: "double",
+    bool: "boolean",
+  };
+  return (alias[base] ?? base).toUpperCase();
+}
+
 /** 長い型名の短縮表記 (表示専用)。キーは小文字の括弧なし型名。 */
 const TYPE_ABBREVIATIONS: Record<string, string> = {
   "character varying": "varchar",

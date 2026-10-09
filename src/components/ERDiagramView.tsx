@@ -136,7 +136,7 @@ const pkRowCss: SystemStyleObject = {
 const colTypeCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "1",
+  gap: "var(--space-1)",
   flexShrink: 0,
   marginLeft: "auto",
   fontSize: "var(--text-xs)",
@@ -169,7 +169,7 @@ const ErTableNode = memo(function ErTableNode({ data }: NodeProps<ErFlowNode>) {
     <Box
       css={cardCss}
       className="er-card"
-      style={{ ["--er-accent" as string]: data.accent }}
+      style={{ ["--er-driver" as string]: data.accent }}
     >
       {/* Handles are invisible anchors edges attach to. */}
       <Handle type="target" position={targetPos} style={{ opacity: 0 }} />
@@ -182,7 +182,7 @@ const ErTableNode = memo(function ErTableNode({ data }: NodeProps<ErFlowNode>) {
           className="nodrag"
           aria-label={data.openTitle}
         >
-          <chakra.span color="var(--er-accent, currentColor)" display="inline-flex">
+          <chakra.span color="var(--text-secondary)" display="inline-flex">
             <Icon name="table" size={ICON_SIZES.sm} />
           </chakra.span>
           <chakra.span css={colNameCss} flex="1">
@@ -484,6 +484,9 @@ function ERDiagramInner({
   useEffect(() => {
     if (!graph || !database) return;
     const positioned = layoutErGraph(graph, { direction, density });
+    // 再レイアウトでノードを作り直すのでホバー状態も捨てる (className が落ちるため)。
+    // 直後のハイライト effect が hoverId=null を反映して整合を取る。
+    setHoverId(null);
     setNodes(
       positioned.nodes.map((n) => ({
         id: n.id,
@@ -519,6 +522,12 @@ function ERDiagramInner({
     }, 0);
     return () => window.clearTimeout(id);
   }, [graph, direction, density, database, driver, handleOpen, t, reduceMotion, fitView, setNodes, setEdges]);
+
+  const onNodeMouseEnter = useCallback(
+    (_: unknown, n: { id: string }) => setHoverId(n.id),
+    [],
+  );
+  const onNodeMouseLeave = useCallback(() => setHoverId(null), []);
 
   // ホバー連動ハイライト: 関連テーブル / 線に `er-hl`、それ以外に `er-dim` を付ける。
   // className が変わらないノード / 線は同じオブジェクトを返すので、React Flow は変化した
@@ -705,8 +714,9 @@ function ERDiagramInner({
             onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            onNodeMouseEnter={(_, n) => setHoverId(n.id)}
-            onNodeMouseLeave={() => setHoverId(null)}
+            className="er-flow"
+            onNodeMouseEnter={onNodeMouseEnter}
+            onNodeMouseLeave={onNodeMouseLeave}
             defaultEdgeOptions={defaultEdgeOptions}
             nodesConnectable={false}
             edgesFocusable={false}

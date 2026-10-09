@@ -2039,6 +2039,19 @@ td.is-find-current::after {
 /* ---------- ER 図: リレーション記号とホバー連動ハイライト (#1360) ----------
    線の両端のクロウフット / 縦棒 / 丸は ERDiagramView の `ErRelationEdge` が描く。
    線色は上の `--xy-edge-stroke` と同じトークンに揃え、ハイライト時は accent にする。 */
+.er-flow {
+  /* キャンバスの地。「ゼロ」の丸がこの色で線を隠す */
+  --er-canvas: var(--bg);
+  background: var(--er-canvas);
+}
+.er-card {
+  --er-accent: var(--er-driver, var(--border));
+}
+/* 高コントラスト系はドライバ色の帯を使わず境界色に戻す */
+:root[data-theme="hc-light"] .er-card,
+:root[data-theme="hc-dark"] .er-card {
+  --er-accent: var(--border-strong);
+}
 .react-flow__edge .er-rel-glyph {
   fill: none;
   stroke: var(--xy-edge-stroke, var(--border-strong));
@@ -2047,7 +2060,7 @@ td.is-find-current::after {
 }
 /* 「ゼロ」の丸は線を隠す背景色で塗る */
 .react-flow__edge .er-rel-glyph circle {
-  fill: var(--bg);
+  fill: var(--er-canvas, var(--bg));
 }
 .react-flow__edge.er-hl .er-rel-glyph {
   stroke: var(--accent);
@@ -2060,12 +2073,12 @@ td.is-find-current::after {
   border-color: var(--accent);
 }
 /* 無関係なテーブル / 線は減光。動きの抑制は末尾の reduced-motion 規則が transition を止める */
-.react-flow__node,
-.react-flow__edge {
-  transition: opacity 0.15s ease;
+.er-flow .react-flow__node,
+.er-flow .react-flow__edge {
+  transition: opacity var(--dur-fast) var(--ease);
 }
-.react-flow__node.er-dim,
-.react-flow__edge.er-dim {
+.er-flow .react-flow__node.er-dim,
+.er-flow .react-flow__edge.er-dim {
   opacity: var(--er-dim-opacity);
 }
 

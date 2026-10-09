@@ -1,7 +1,7 @@
 import dagre from "@dagrejs/dagre";
 
 import type { ForeignKey } from "../api/tauri";
-import { baseTypeName, classifyTypeName, shortTypeName, type CellKind } from "./cellTypeMeta";
+import { classifyTypeName, normalizeTypeForClassify, shortTypeName, type CellKind } from "./cellTypeMeta";
 
 /**
  * Pure graph-building and layout for the ER diagram, kept separate
@@ -37,7 +37,9 @@ export type ErCardinality = "many-to-one" | "one-to-one";
 
 /**
  * FK 列が子側で「多」か「一」かを判定する。FK 列が **単一列の主キー** か **単独 UNIQUE**
- * なら参照元は最大 1 行 (1:1)。複合 PK の一部・インデックスだけの列・型情報が無い列は
+ * なら参照元は最大 1 行 (1:1)。`key === "UNI"` を返すのは MySQL のみ (PostgreSQL /
+ * SQLite は `PRI` か空)。そのため PG / SQLite では単一列 PK の FK だけが 1:1 になり、
+ * UNIQUE な FK は N:1 に倒れる (安全側の既定)。複合 PK の一部・インデックスだけの列・型情報が無い列は
  * 判定できないため、既定は「多」(N:1、最も一般的な FK) とする。
  */
 export function fkCardinality(opts: {
@@ -224,7 +226,7 @@ export function buildErGraph(input: BuildErGraphInput): ErGraph {
         isPk: pkSet.has(name),
         isFk: fkColumns.has(fkKey(t.name, name)),
         typeName: meta ? shortTypeName(meta.dataType) : "",
-        kind: meta ? classifyTypeName(baseTypeName(meta.dataType)) : null,
+        kind: meta ? classifyTypeName(normalizeTypeForClassify(meta.dataType)) : null,
       };
     });
     const visible = all.slice(0, MAX_VISIBLE_COLUMNS);
