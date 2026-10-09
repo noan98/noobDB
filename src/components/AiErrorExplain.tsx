@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { api, listenAiStream } from "../api/tauri";
@@ -9,6 +9,8 @@ import {
   dialectLabel,
   ERROR_EXPLAIN_FORMAT,
   extractTableRefs,
+  needsSendScopeConfirm,
+  resolveTableDatabase,
   parseErrorExplainResponse,
   type ErrorExplainResponse,
   type ExplainTable,
@@ -31,7 +33,7 @@ function makeStreamId(): string {
 type State =
   | { kind: "idle" }
   | { kind: "running"; sends: string }
-  | { kind: "done"; sends: string; value: ErrorExplainResponse }
+  | { kind: "done"; sends: string; value: ErrorExplainResponse; masked: boolean }
   | { kind: "raw"; sends: string; raw: string }
   | { kind: "error"; sends: string; message: string; refused: boolean }
   | { kind: "cancelled"; sends: string };
@@ -46,8 +48,11 @@ export interface AiErrorExplainProps {
   sql: string;
   /** 失敗した実行のデータベース (テーブル定義の引き先)。 */
   database: string | null;
-  /** 修正 SQL 案を現在のタブのエディタへ反映する (実行はしない)。 */
-  onApply: (sql: string) => void;
+  /**
+   * 修正 SQL 案を失敗したタブのエディタへ反映する (実行はしない)。
+   * `closed` = タブが既に無い / `cancelled` = 全文置換の確認で取り消された。
+   */
+  onApply: (sql: string) => Promise<"applied" | "cancelled" | "closed">;
 }
 
 /**
@@ -63,7 +68,8 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
   const { confirm, dialog } = useConfirm();
   const [hasKey, setHasKey] = useState(false);
   const [state, setState] = useState<State>({ kind: "idle" });
-  const [applied, setApplied] = useState(false);
+  const [applied, setApplied] = useState<null | "applied" | "closed">(null);
+  const busyRef = useRef(false);
   const streamRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const mountedRef = useRef(true);
@@ -83,10 +89,13 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
     };
   }, []);
 
-  const stopListener = useCallback(() => {
+  // 別のストリームに置き換わっている場合は触らない (ID が一致するときだけ解除する)。
+  const stopListener = useCallback((streamId: string) => {
+    if (streamRef.current !== streamId) return;
     unlistenRef.current?.();
     unlistenRef.current = null;
     streamRef.current = null;
+    busyRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -104,7 +113,7 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
     };
   }, []);
 
-  const tableRefs = extractTableRefs(props.sql, props.driver);
+  const tableRefs = useMemo(() => extractTableRefs(props.sql, props.driver), [props.sql, props.driver]);
   const sendsLine = (tableCount: number) =>
     t("aiErrorExplainSends", {
       sql: ai.maskLiterals ? t("aiErrorExplainSqlMasked") : t("aiErrorExplainSqlRaw"),
@@ -114,6 +123,31 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
     });
 
   const run = async () => {
+    // 二重クリックで 2 本のストリームが走らないよう、同期的に弾く。
+    if (busyRef.current) return;
+    busyRef.current = true;
+    try {
+      await runInner();
+    } catch (e) {
+      busyRef.current = false;
+      setState({ kind: "error", sends: "", message: String(e), refused: false });
+    }
+  };
+
+  const runInner = async () => {
+    // busyRef はストリームの終了 (stopListener) まで保持する。送信前に取りやめた場合は戻す。
+    const abort = () => {
+      busyRef.current = false;
+    };
+    if (needsSendScopeConfirm(ai.sendScope)) {
+      const ok = await confirm({
+        title: t("aiErrorExplainScopeTitle"),
+        message: `${t("aiErrorExplainScopeBody")}\n${sendsLine(tableRefs.length)}`,
+        confirmLabel: t("aiErrorExplainConfirmSend"),
+        tone: "warning",
+      });
+      if (!ok) return abort();
+    }
     if (props.isProduction) {
       const ok = await confirm({
         title: t("aiErrorExplainConfirmTitle"),
@@ -121,13 +155,13 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
         confirmLabel: t("aiErrorExplainConfirmSend"),
         tone: "warning",
       });
-      if (!ok) return;
+      if (!ok) return abort();
     }
-    setApplied(false);
+    setApplied(null);
     // テーブル定義はベストエフォート。取得できないテーブルは黙って落とす。
     const fetched = await Promise.all(
       tableRefs.map(async (ref): Promise<ExplainTable | null> => {
-        const db = ref.database ?? props.database;
+        const db = resolveTableDatabase(ref, props.database, props.driver);
         if (!db) return null;
         try {
           const columns = await api.describeTable(props.sessionId, db, ref.table);
@@ -149,26 +183,27 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
           text += e.text;
         },
         onDone: () => {
-          stopListener();
+          stopListener(streamId);
           const parsed = parseErrorExplainResponse(text);
           setState(
             parsed.ok
-              ? { kind: "done", sends, value: parsed.value }
+              ? { kind: "done", sends, value: parsed.value, masked: ai.maskLiterals }
               : { kind: "raw", sends, raw: parsed.raw },
           );
         },
         onError: (e) => {
-          stopListener();
+          stopListener(streamId);
           setState({ kind: "error", sends, message: e.error, refused: e.kind === "aiRefused" });
         },
         onCancelled: () => {
-          stopListener();
+          stopListener(streamId);
           setState({ kind: "cancelled", sends });
         },
       });
       if (!mountedRef.current) {
         unlisten();
         streamRef.current = null;
+        busyRef.current = false;
         return;
       }
       unlistenRef.current = unlisten;
@@ -189,7 +224,7 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
         format: ERROR_EXPLAIN_FORMAT,
       });
     } catch (e) {
-      stopListener();
+      stopListener(streamId);
       setState({ kind: "error", sends, message: String(e), refused: false });
     }
   };
@@ -249,12 +284,17 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
         </chakra.span>
       )}
       {state.kind === "done" && (
-        <Flex direction="column" gap="2" aria-live="polite">
+        <Flex direction="column" gap="2" aria-live="polite" maxH="320px" overflow="auto">
           <Section label={t("aiErrorExplainExplanation")}>{state.value.explanation}</Section>
           <Section label={t("aiErrorExplainCause")}>{state.value.cause}</Section>
           {state.value.suggestedSql && (
             <Flex direction="column" gap="1">
               <FieldLabel as="div">{t("aiErrorExplainSuggested")}</FieldLabel>
+              {state.masked && (
+                <Callout tone="warning" role="status">
+                  {t("aiErrorExplainMaskedNote")}
+                </Callout>
+              )}
               <CodePreview wrap maxH="160px">
                 {state.value.suggestedSql}
               </CodePreview>
@@ -264,15 +304,21 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
                   variant="primary"
                   size="sm"
                   onClick={() => {
-                    props.onApply(state.value.suggestedSql ?? "");
-                    setApplied(true);
+                    void props.onApply(state.value.suggestedSql ?? "").then((r) => {
+                      if (r === "applied" || r === "closed") setApplied(r);
+                    });
                   }}
                 >
                   {t("aiErrorExplainApply")}
                 </Button>
-                {applied && (
+                {applied === "applied" && (
                   <chakra.span color="app.textSuccess" role="status">
                     {t("aiErrorExplainApplied")}
+                  </chakra.span>
+                )}
+                {applied === "closed" && (
+                  <chakra.span color="app.textWarning" role="status">
+                    {t("aiErrorExplainTabClosed")}
                   </chakra.span>
                 )}
               </Flex>
@@ -280,8 +326,8 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
           )}
           {state.value.notes.length > 0 && (
             <Callout tone="warning" title={t("aiErrorExplainNotes")} role="status">
-              {state.value.notes.map((n) => (
-                <chakra.div key={n}>{n}</chakra.div>
+              {state.value.notes.map((n, i) => (
+                <chakra.div key={`${i}-${n}`}>{n}</chakra.div>
               ))}
             </Callout>
           )}

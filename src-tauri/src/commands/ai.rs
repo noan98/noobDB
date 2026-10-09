@@ -127,17 +127,18 @@ fn require_api_key() -> Result<String> {
         .ok_or_else(|| AppError::AiAuth("no API key is configured".into()))
 }
 
-/// 構造化出力の指定 (`output_config.format`) を検証する。`{ "type": "json_schema",
-/// "schema": {...} }` の形だけを通し、任意の JSON を API へ素通しさせない。
-fn validate_format(format: &serde_json::Value) -> Result<()> {
-    let ok = format.get("type").and_then(|v| v.as_str()) == Some("json_schema")
-        && format.get("schema").is_some_and(|v| v.is_object());
-    if ok {
-        Ok(())
-    } else {
-        Err(AppError::InvalidInput(
+/// 構造化出力の指定 (`output_config.format`) を検証し、`type` / `schema` だけで組み直す。
+/// `{ "type": "json_schema", "schema": {...} }` の形だけを通し、他のキーは API へ素通しさせない。
+fn validate_format(format: &serde_json::Value) -> Result<serde_json::Value> {
+    let schema = format
+        .get("schema")
+        .filter(|v| v.is_object())
+        .filter(|_| format.get("type").and_then(|v| v.as_str()) == Some("json_schema"));
+    match schema {
+        Some(schema) => Ok(serde_json::json!({ "type": "json_schema", "schema": schema })),
+        None => Err(AppError::InvalidInput(
             "format must be { \"type\": \"json_schema\", \"schema\": {...} }".into(),
-        ))
+        )),
     }
 }
 
@@ -199,9 +200,7 @@ pub async fn run_ai_request(
     state: State<'_, AppState>,
 ) -> Result<()> {
     require_enabled(&settings)?;
-    if let Some(f) = &format {
-        validate_format(f)?;
-    }
+    let format = format.as_ref().map(validate_format).transpose()?;
     if prompt.trim().is_empty() {
         return Err(AppError::InvalidInput("the prompt is empty".into()));
     }
@@ -374,6 +373,10 @@ mod tests {
     fn format_validation_accepts_only_json_schema() {
         let ok = serde_json::json!({ "type": "json_schema", "schema": { "type": "object" } });
         assert!(validate_format(&ok).is_ok());
+        let extra = serde_json::json!({ "type": "json_schema", "schema": {}, "evil": 1 });
+        let rebuilt = validate_format(&extra).unwrap();
+        assert!(rebuilt.get("evil").is_none());
+        assert_eq!(rebuilt["type"], "json_schema");
         for bad in [
             serde_json::json!({ "type": "text" }),
             serde_json::json!({ "type": "json_schema" }),

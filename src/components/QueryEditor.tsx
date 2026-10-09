@@ -313,6 +313,10 @@ export interface QueryEditorHandle {
   insertText: (text: string) => void;
   /** Replaces the entire editor contents (used to restore a history entry). */
   setText: (text: string) => void;
+  /** エディタ本文の全文 (#692。失敗した SQL の範囲探索用)。 */
+  getText: () => string;
+  /** `[from, to)` だけを置き換える。undo 履歴に載る (#692)。 */
+  replaceRange: (from: number, to: number, text: string) => void;
   /** キーボードフォーカスをエディタへ移す (ペインフォーカス循環 #681)。 */
   focus: () => void;
   /**
@@ -1142,6 +1146,16 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: text },
         selection: { anchor: text.length },
+      });
+      view.focus();
+    },
+    getText: () => viewRef.current?.state.doc.toString() ?? "",
+    replaceRange: (from: number, to: number, text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({
+        changes: { from, to, insert: text },
+        selection: { anchor: from + text.length },
       });
       view.focus();
     },

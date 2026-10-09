@@ -123,3 +123,70 @@ describe("応答パース", () => {
     expect(ERROR_EXPLAIN_FORMAT.schema.additionalProperties).toBe(false);
   });
 });
+
+import { findSqlRange, maskErrorMessage, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
+
+describe("エラー文のマスク (#692)", () => {
+  it("SQL のリテラルと一致する部分を伏せ、識別子は残す", () => {
+    const sql = "SELECT nme FROM users WHERE email = 'secret@example.com'";
+    const out = maskErrorMessage("Unknown column 'nme'; bad value secret@example.com", sql);
+    expect(out).toContain("'nme'");
+    expect(out).not.toContain("secret@example.com");
+  });
+
+  it("既知パターンの値部分を伏せる", () => {
+    expect(maskErrorMessage("Duplicate entry 'bob@x.com' for key 'users.email'", "")).toBe(
+      "Duplicate entry '…' for key 'users.email'",
+    );
+    expect(maskErrorMessage("Incorrect integer value: 'abc' for column 'n' at row 1", "")).toBe(
+      "Incorrect integer value: '…' for column 'n' at row 1",
+    );
+    expect(maskErrorMessage("Key (email)=(bob@x.com) already exists.", "")).toBe(
+      "Key (email)=(…) already exists.",
+    );
+    expect(maskErrorMessage("null value ... Failing row contains (1, bob, null).", "")).toBe(
+      "null value ... Failing row contains (…).",
+    );
+  });
+
+  it("プロンプトはマスク有効のときだけエラー文を伏せる", () => {
+    const m = "Duplicate entry 'bob' for key 'k'";
+    const on = buildErrorExplainPrompt({ ...base, message: m, maskLiterals: true });
+    const off = buildErrorExplainPrompt({ ...base, message: m, maskLiterals: false });
+    expect(on).not.toContain("'bob'");
+    expect(off).toContain("'bob'");
+  });
+});
+
+describe("失敗した SQL の範囲検索 / 送信範囲 / テーブル抽出の補強 (#692)", () => {
+  it("ちょうど 1 箇所のときだけ範囲を返す", () => {
+    const text = "SELECT 1;\nSELECT nme FROM users;\nSELECT 2;";
+    const r = findSqlRange(text, "SELECT nme FROM users;");
+    expect(r && text.slice(r.from, r.to)).toBe("SELECT nme FROM users");
+    expect(findSqlRange("SELECT 1; SELECT 1;", "SELECT 1")).toBeNull();
+    expect(findSqlRange("SELECT 2", "SELECT 1")).toBeNull();
+    expect(findSqlRange("x", "  ")).toBeNull();
+  });
+
+  it("schemaOnly のときだけ毎回確認が要る", () => {
+    expect(needsSendScopeConfirm("schemaOnly")).toBe(true);
+    expect(needsSendScopeConfirm("schemaAndSql")).toBe(false);
+  });
+
+  it("SQLite は DB 未指定なら main", () => {
+    expect(resolveTableDatabase({ database: null, table: "t" }, null, "sqlite")).toBe("main");
+    expect(resolveTableDatabase({ database: null, table: "t" }, null, "mysql")).toBeNull();
+    expect(resolveTableDatabase({ database: "a", table: "t" }, "b", "mysql")).toBe("a");
+    expect(resolveTableDatabase({ database: null, table: "t" }, "b", "mysql")).toBe("b");
+  });
+
+  it("FROM / UPDATE を含む別構文を誤検出せず、INSERT IGNORE / REPLACE INTO を拾う", () => {
+    const tables = (sql: string) => extractTableRefs(sql, "mysql").map((r) => r.table);
+    expect(tables("SELECT EXTRACT(YEAR FROM created) FROM t")).toEqual(["t"]);
+    expect(tables("SELECT 1 FROM a WHERE x IS DISTINCT FROM y")).toEqual(["a"]);
+    expect(tables("INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = 2")).toEqual(["t"]);
+    expect(tables("SELECT * FROM t FOR UPDATE")).toEqual(["t"]);
+    expect(tables("INSERT IGNORE INTO t (a) VALUES (1)")).toEqual(["t"]);
+    expect(tables("REPLACE INTO t (a) VALUES (1)")).toEqual(["t"]);
+  });
+});

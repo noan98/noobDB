@@ -100,6 +100,7 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { AiErrorExplain } from "./components/AiErrorExplain";
+import { findSqlRange } from "./ai/errorExplain";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -4798,11 +4799,11 @@ export default function App() {
         vars: { error: String(e) },
         error: true,
         errorKind: errorKindOf(e),
-        aiContext: { tabId, sql, database: null },
+        aiContext: { tabId, sql, database: tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null },
       });
       recordOutput({ sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, null);
     }
-  }, [sessionId, patchTab, recordOutput]);
+  }, [sessionId, patchTab, recordOutput, tabsRef]);
 
   // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
@@ -5186,6 +5187,42 @@ export default function App() {
       addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
     }
   }, [activeTab, sessionId, activeEditor, addTab]);
+
+  // AI の修正 SQL 案 (#692) を、失敗したタブのエディタへ反映する。実行はしない。
+  // 表示中ならエディタ (CodeMirror) へ dispatch して undo 履歴に載せ、裏のタブなら
+  // `tab.sql` を書き換える。失敗した SQL が本文中でちょうど 1 箇所見つかればその範囲だけ、
+  // そうでなければ確認のうえ全文を置き換える。
+  const handleApplyAiSql = useCallback(
+    async (tabId: string, failedSql: string, newSql: string): Promise<"applied" | "cancelled" | "closed"> => {
+      const tab = tabsRef.current.find((tt) => tt.id === tabId);
+      if (!tab) return "closed";
+      const pane = panesRef.current.find((p) => p.activeTabId === tabId && p.tabIds.includes(tabId));
+      const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+      const current = editor ? editor.getText() : tabSqlStore.resolve(tab.id, tab.sql);
+      const range = findSqlRange(current, failedSql);
+      if (!range) {
+        const ok = await confirm({
+          title: translate("aiErrorExplainReplaceAllTitle"),
+          message: translate("aiErrorExplainReplaceAllBody"),
+          confirmLabel: translate("aiErrorExplainReplaceAllConfirm"),
+          tone: "warning",
+        });
+        if (!ok) return "cancelled";
+      }
+      // 確認中にタブが閉じられていたら反映しない。
+      const live = tabsRef.current.find((tt) => tt.id === tabId);
+      if (!live) return "closed";
+      if (editor) {
+        if (range) editor.replaceRange(range.from, range.to, newSql);
+        else editor.setText(newSql);
+      } else {
+        const next = range ? current.slice(0, range.from) + newSql + current.slice(range.to) : newSql;
+        updateTab(tabId, { sql: next });
+      }
+      return "applied";
+    },
+    [confirm, tabSqlStore, updateTab, tabsRef, panesRef],
+  );
 
   // Always open history SQL in a fresh query tab, never overwriting the editor.
   const handleOpenHistoryInNewTab = useCallback((sql: string) => {
@@ -9389,7 +9426,9 @@ export default function App() {
               message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
               sql={status.aiContext.sql}
               database={status.aiContext.database ?? activeTab?.database ?? selectedProfile.database ?? null}
-              onApply={(suggestedSql) => updateTab(status.aiContext?.tabId ?? "", { sql: suggestedSql })}
+              onApply={(suggestedSql) =>
+                handleApplyAiSql(status.aiContext?.tabId ?? "", status.aiContext?.sql ?? "", suggestedSql)
+              }
             />
           )}
       </Flex>

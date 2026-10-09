@@ -60,9 +60,18 @@ export interface TableRef {
 
 const IDENT = String.raw`(?:` + "`[^`]+`" + String.raw`|"[^"]+"|\[[^\]]+\]|[A-Za-z_][\w$]*)`;
 const TABLE_RE = new RegExp(
-  String.raw`\b(?:FROM|JOIN|UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(${IDENT}(?:\s*\.\s*${IDENT})?)`,
+  String.raw`\b(?:FROM|JOIN|UPDATE|(?:INSERT(?:\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE|OR\s+\w+))*|REPLACE)\s+INTO|DELETE\s+FROM)\s+(${IDENT}(?:\s*\.\s*${IDENT})?)`,
   "gi",
 );
+
+/** FROM / UPDATE を含むが表名を取らない構文 (誤検出の元) を空白に潰す。 */
+const NON_TABLE_PATTERNS: RegExp[] = [
+  /\b(?:EXTRACT|TRIM|SUBSTRING|OVERLAY)\s*\([^()]*\)/gi,
+  /\bDISTINCT\s+FROM\b/gi,
+  /\bDUPLICATE\s+KEY\s+UPDATE\b/gi,
+  /\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b/gi,
+  /\bDO\s+UPDATE\b/gi,
+];
 
 function unquote(ident: string): string {
   const first = ident[0];
@@ -77,7 +86,8 @@ function unquote(ident: string): string {
  * 直後の識別子 (`db.table` も可) を拾う。サブクエリ `(` や重複は除く。
  */
 export function extractTableRefs(sql: string, driver?: string | null): TableRef[] {
-  const masked = maskLiterals(sql, driver ?? undefined, { keepQuotedIdentifiers: true, cache: false });
+  let masked = maskLiterals(sql, driver ?? undefined, { keepQuotedIdentifiers: true, cache: false });
+  for (const re of NON_TABLE_PATTERNS) masked = masked.replace(re, (m) => " ".repeat(m.length));
   const seen = new Set<string>();
   const out: TableRef[] = [];
   for (const m of masked.matchAll(TABLE_RE)) {
@@ -92,6 +102,15 @@ export function extractTableRefs(sql: string, driver?: string | null): TableRef[
     if (out.length >= ERROR_EXPLAIN_MAX_TABLES) break;
   }
   return out;
+}
+
+/** テーブル定義を引くデータベース名。SQLite で未指定なら `main`。引けなければ null。 */
+export function resolveTableDatabase(
+  ref: TableRef,
+  fallbackDatabase: string | null,
+  driver: string,
+): string | null {
+  return ref.database ?? fallbackDatabase ?? (driver === "sqlite" ? "main" : null);
 }
 
 export interface ExplainColumn {
@@ -135,6 +154,50 @@ export function dialectLabel(driver: string): string {
   return DIALECT_LABEL[driver] ?? driver;
 }
 
+/** SQL 中の文字列リテラル (`'...'`) の中身を集める。 */
+function literalContents(sql: string): string[] {
+  const out: string[] = [];
+  for (const m of sql.matchAll(/'((?:[^'\\]|\\.|'')*)'/g)) {
+    if (m[1].length >= 2) out.push(m[1].replace(/''/g, "'"));
+  }
+  return out;
+}
+
+/**
+ * エラー文に含まれるセル値を伏せる。(a) 元 SQL の文字列リテラルの中身と一致する部分を
+ * `'…'` に、(b) 既知パターン (Duplicate entry / Incorrect ... value / `(col)=(値)` /
+ * Failing row contains) の値部分を `…` にする。`Unknown column 'nme'` のような識別子は残す。
+ */
+export function maskErrorMessage(message: string, sql: string): string {
+  let out = message;
+  const lits = [...new Set(literalContents(sql))].sort((a, b) => b.length - a.length);
+  for (const lit of lits) out = out.split(lit).join("…");
+  out = out.replace(/(Duplicate entry )'(?:[^']|'')*'/gi, "$1'…'");
+  out = out.replace(/(Incorrect [\w ]+? value: )'(?:[^']|'')*'/gi, "$1'…'");
+  out = out.replace(/\(([^()]*)\)=\(([^()]*)\)/g, "($1)=(…)");
+  out = out.replace(/(Failing row contains )\([^)]*\)/gi, "$1(…)");
+  return out;
+}
+
+/**
+ * エディタ本文 `text` の中で、失敗した SQL `failed` が**ちょうど 1 箇所**見つかったときだけ
+ * その範囲を返す。0 件・複数件は null (呼び出し側が全文置換を確認する)。
+ * 末尾の空白と `;` は無視して探す。
+ */
+export function findSqlRange(text: string, failed: string): { from: number; to: number } | null {
+  const needle = failed.trim().replace(/;+\s*$/, "").trim();
+  if (needle === "") return null;
+  const first = text.indexOf(needle);
+  if (first < 0) return null;
+  if (text.indexOf(needle, first + needle.length) >= 0) return null;
+  return { from: first, to: first + needle.length };
+}
+
+/** 送信範囲が「スキーマ情報のみ」のとき、SQL 本文を送る前に毎回確認が要る。 */
+export function needsSendScopeConfirm(sendScope: string): boolean {
+  return sendScope !== "schemaAndSql";
+}
+
 export function buildErrorExplainSystem(locale: "ja" | "en"): string {
   const lang = locale === "ja" ? "Japanese" : "English";
   return [
@@ -154,7 +217,7 @@ export function buildErrorExplainPrompt(input: ErrorExplainInput): string {
   lines.push(`Dialect: ${dialectLabel(input.driver)}`);
   lines.push(`Error kind: ${input.errorKind ?? "unknown"}`);
   lines.push("Error message:");
-  lines.push(input.message);
+  lines.push(input.maskLiterals ? maskErrorMessage(input.message, input.sql) : input.message);
   lines.push("");
   lines.push(
     input.maskLiterals

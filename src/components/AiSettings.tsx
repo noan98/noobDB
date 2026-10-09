@@ -439,6 +439,9 @@ export function AiSettings() {
             </option>
           ))}
         </Select>
+        <chakra.span fontSize="sm" color="app.textMuted">
+          {t("aiSendScopeHelp")}
+        </chakra.span>
         <chakra.label
           htmlFor="settings-ai-allow-row-data"
           display="inline-flex"

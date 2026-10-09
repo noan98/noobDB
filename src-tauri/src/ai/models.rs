@@ -124,9 +124,20 @@ impl AiTaskKind {
     // `aiParity.test.ts` / 下のテストで一致を固定するため、本体からは呼ばれない。
     #[allow(dead_code)]
     pub fn recommended_model(self) -> AiModel {
-        // 現状は全タスク種別が Opus 5.5 (タスク別に変えるときは match に戻す)。
-        let _ = self;
-        AiModel::Opus55
+        match self {
+            AiTaskKind::ConnectionTest => AiModel::Opus55,
+            AiTaskKind::Generic => AiModel::Opus55,
+            AiTaskKind::ErrorExplain => AiModel::Opus55,
+            AiTaskKind::Nl2sql => AiModel::Opus55,
+            AiTaskKind::ExplainInterpret => AiModel::Opus55,
+            AiTaskKind::ImpactAnalysis => AiModel::Opus55,
+            AiTaskKind::SqlExplain => AiModel::Opus55,
+            AiTaskKind::SqlRewrite => AiModel::Opus55,
+            AiTaskKind::SchemaDoc => AiModel::Opus55,
+            AiTaskKind::SyncRisk => AiModel::Opus55,
+            AiTaskKind::TestData => AiModel::Opus55,
+            AiTaskKind::HistorySearch => AiModel::Opus55,
+        }
     }
 
     /// このタスク種別の推奨エフォート。`taskEfforts[kind]` が `null` のときに使う。
