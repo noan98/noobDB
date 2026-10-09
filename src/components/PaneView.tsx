@@ -553,6 +553,8 @@ export const PaneView = memo(
                     actions.updateTab(tab.id, { builderSnapshot: snapshot }),
                   )}
                   readOnly={readOnly}
+                  isProduction={selectedProfile?.is_production ?? false}
+                  onOpenSqlInNewTab={actions.openQueryInEditor}
                   emergencyMode={emergencyMode}
                   onToggleEmergencyMode={onToggleEmergencyMode}
                   queryHistory={queryHistory}
