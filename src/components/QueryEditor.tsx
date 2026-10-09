@@ -39,6 +39,7 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   completionStatus,
+  ifNotIn,
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
@@ -55,7 +56,9 @@ import { joinCompletions } from "./sqlJoinCompletion";
 import { derivedCompletions } from "./sqlDerivedCompletion";
 import {
   buildCompletionNamespace,
+  dialectWords,
   functionCompletions,
+  keywordCompletionBuilder,
   describeColumn,
   findForeignKey,
 } from "./sqlCompletionSchema";
@@ -507,12 +510,15 @@ function buildSqlExtension(
   const defaultTable = ns?.defaultTable;
   const defaultSchema = ns?.defaultSchema;
   // 組み込み関数 (#1413)。lang-sql は関数を返さないので type: "function" で補う。
-  const functions = functionCompletions(driver);
-  const functionSource = (ctx: CompletionContext): CompletionResult | null => {
+  // キーワード一覧にある関数名は keywordCompletion で function 型に変換して重複を避け、
+  // ここでは一覧に無い関数 (NOW / IFNULL 等) だけを足す。
+  const kwWords = dialectWords(driver);
+  const functions = functionCompletions(driver, (lower) => lower in kwWords);
+  const functionSource = ifNotIn(["QuotedIdentifier", "String", "LineComment", "BlockComment", "."], (ctx) => {
     const word = ctx.matchBefore(/\w+/);
     if (!word) return null;
     return { from: word.from, options: functions, validFor: /^\w*$/ };
-  };
+  });
   // FK から `JOIN other ON ...` を提案する補完ソース (#1356)。言語データとして
   // 足すので、lang-sql 標準のスキーマ補完と併存する。
   const joinSource = (ctx: CompletionContext): CompletionResult | null => {
@@ -568,6 +574,7 @@ function buildSqlExtension(
       defaultTable,
       defaultSchema,
       upperCaseKeywords: true,
+      keywordCompletion: keywordCompletionBuilder(driver),
     }),
     EditorState.languageData.of(() => [
       { autocomplete: functionSource },

@@ -1,8 +1,8 @@
-import type { Completion } from "@codemirror/autocomplete";
+import { snippetCompletion, type Completion } from "@codemirror/autocomplete";
 import type { SQLNamespace } from "@codemirror/lang-sql";
 import type { ForeignKey, TableColumnInfo } from "../api/tauri";
 import type { IconName } from "./Icon";
-import { quoteIdentFor } from "./sqlDialect";
+import { codeMirrorSqlDialectFor, quoteIdentFor } from "./sqlDialect";
 
 /**
  * SQL 補完 (#1413) の名前空間と情報パネルのモデルを作る純ロジック。
@@ -27,6 +27,8 @@ export function completionKind(type: string | undefined): CompletionKind | null 
     case "property":
     case "column":
       return "column";
+    case "namespace":
+      return null; // DB 名はアイコンを出さない
     case "keyword":
     case "type":
     case "variable":
@@ -106,20 +108,48 @@ const COMMON_FUNCTIONS = [
 ];
 const DRIVER_FUNCTIONS: Record<"mysql" | "postgres" | "sqlite", string[]> = {
   mysql: ["NOW", "IFNULL", "CONCAT", "SUBSTRING", "DATE_FORMAT", "CURDATE", "GROUP_CONCAT", "IF"],
-  postgres: ["NOW", "CONCAT", "SUBSTRING", "TO_CHAR", "DATE_TRUNC", "STRING_AGG", "CURRENT_DATE"],
+  postgres: ["NOW", "CONCAT", "SUBSTRING", "TO_CHAR", "DATE_TRUNC", "STRING_AGG"],
   sqlite: ["IFNULL", "SUBSTR", "DATE", "DATETIME", "STRFTIME", "GROUP_CONCAT", "TYPEOF"],
 };
 
-/** 方言ごとの主要な組み込み関数の補完 (`type: "function"`)。lang-sql は関数を返さないため補う。 */
-export function functionCompletions(driver: string): Completion[] {
+/** 方言ごとの主要な組み込み関数名 (大文字)。括弧なしで書く関数 (CURRENT_DATE 等) は含めない。 */
+function functionNames(driver: string): Set<string> {
   const specific =
     driver === "postgres" ? DRIVER_FUNCTIONS.postgres : driver === "sqlite" ? DRIVER_FUNCTIONS.sqlite : DRIVER_FUNCTIONS.mysql;
-  return [...COMMON_FUNCTIONS, ...specific].map((name) => ({
-    label: name,
-    apply: `${name}(`,
-    type: "function",
-    boost: -1,
-  }));
+  return new Set([...COMMON_FUNCTIONS, ...specific]);
+}
+
+/**
+ * 方言のキーワード語彙 (小文字名 → 種別)。lang-sql は型定義に出していないが、
+ * `keywordCompletionSource` が実行時に `dialect.dialect.words` を読むのと同じ参照。
+ */
+export function dialectWords(driver: string): Record<string, unknown> {
+  const d = codeMirrorSqlDialectFor(driver) as unknown as { dialect?: { words?: Record<string, unknown> } };
+  return d.dialect?.words ?? {};
+}
+
+function functionCompletion(name: string): Completion {
+  // 括弧の中にカーソルを置く。
+  return snippetCompletion(`${name}(\${})`, { label: name, type: "function", boost: -1 });
+}
+
+/**
+ * lang-sql の `SQLConfig.keywordCompletion` に渡すビルダー。キーワード一覧に含まれる
+ * 関数名 (COUNT 等) を `function` 型の補完へ変換し、キーワード行と関数行の二重表示を防ぐ。
+ */
+export function keywordCompletionBuilder(driver: string): (label: string, type: string) => Completion {
+  const names = functionNames(driver);
+  return (label, type) =>
+    names.has(label.toUpperCase()) ? functionCompletion(label.toUpperCase()) : { label, type, boost: -1 };
+}
+
+/**
+ * 方言のキーワード一覧に無い組み込み関数 (NOW / IFNULL / TO_CHAR / STRFTIME 等) の補完。
+ * `isKeyword` は小文字名がキーワード一覧にあるかの判定で、ある名前は
+ * `keywordCompletionBuilder` 側が出すので重複させない。
+ */
+export function functionCompletions(driver: string, isKeyword: (lower: string) => boolean): Completion[] {
+  return [...functionNames(driver)].filter((n) => !isKeyword(n.toLowerCase())).map(functionCompletion);
 }
 
 export interface CompletionNamespaceInput {
@@ -164,6 +194,8 @@ export function buildCompletionNamespace(input: CompletionNamespaceInput): Compl
   }
   const namespaceDb = activeTable?.database ?? defaultDatabase ?? undefined;
   const schema: SQLNamespace =
-    namespaceDb && driver !== "sqlite" ? { ...tables, [namespaceDb]: { ...tables } } : { ...tables };
+    namespaceDb && driver !== "sqlite"
+      ? { ...tables, [namespaceDb]: { self: { label: namespaceDb, type: "namespace" }, children: { ...tables } } }
+      : { ...tables };
   return { schema, defaultTable: activeTable?.name, defaultSchema: namespaceDb };
 }

@@ -7,7 +7,9 @@ import {
   completionIconName,
   completionKind,
   functionCompletions,
+  dialectWords,
   identApply,
+  keywordCompletionBuilder,
   describeColumn,
   findForeignKey,
 } from "../components/sqlCompletionSchema";
@@ -97,7 +99,9 @@ describe("buildCompletionNamespace", () => {
     });
     const schema = r?.schema as Record<string, unknown>;
     expect(Object.keys(schema).sort()).toEqual(["app", "customers", "orders"]);
-    expect(Object.keys(schema.app as object).sort()).toEqual(["customers", "orders"]);
+    const app = schema.app as { self: { type: string }; children: object };
+    expect(app.self.type).toBe("namespace");
+    expect(Object.keys(app.children).sort()).toEqual(["customers", "orders"]);
     expect((schema.orders as { self: unknown }).self).toEqual({ label: "orders", type: "table" });
     expect(r?.defaultTable).toBe("orders");
     expect(r?.defaultSchema).toBe("app");
@@ -176,16 +180,42 @@ describe("identApply", () => {
   });
 });
 
-describe("functionCompletions", () => {
-  it("function 型で共通関数と方言固有関数を返す", () => {
-    const labels = (d: string) => functionCompletions(d).map((c) => c.label);
-    expect(functionCompletions("mysql").every((c) => c.type === "function")).toBe(true);
+describe("functionCompletions / keywordCompletionBuilder", () => {
+  const all = (d: string) => {
+    const words = dialectWords(d);
+    const build = keywordCompletionBuilder(d);
+    const kws = Object.keys(words).map((k) => build(k.toUpperCase(), "keyword"));
+    const fns = functionCompletions(d, (l) => l in words);
+    return { kws, fns, all: [...kws, ...fns] };
+  };
+  it("方言語彙が取得できる", () => {
+    expect(Object.keys(dialectWords("mysql")).length).toBeGreaterThan(100);
+  });
+  it("キーワード ∪ 関数でラベルが一意 (全ドライバ)", () => {
     for (const d of ["mysql", "postgres", "sqlite"]) {
-      expect(labels(d)).toEqual(expect.arrayContaining(["COUNT", "SUM", "COALESCE", "CAST"]));
+      const labels = all(d).all.map((c) => c.label);
+      expect(new Set(labels).size, d).toBe(labels.length);
     }
-    expect(labels("postgres")).toContain("NOW");
-    expect(labels("sqlite")).not.toContain("NOW");
-    expect(labels("sqlite")).toContain("STRFTIME");
-    expect(labels("mysql")).toContain("IFNULL");
+  });
+  it("関数名は function 型で、共通関数と方言固有関数が揃う", () => {
+    for (const d of ["mysql", "postgres", "sqlite"]) {
+      const fnLabels = all(d).all.filter((c) => c.type === "function").map((c) => c.label);
+      expect(fnLabels, d).toEqual(expect.arrayContaining(["COUNT", "SUM", "COALESCE", "CAST"]));
+    }
+    expect(all("postgres").all.filter((c) => c.type === "function").map((c) => c.label)).toContain("NOW");
+    expect(all("sqlite").all.map((c) => c.label)).not.toContain("NOW");
+    expect(all("sqlite").fns.map((c) => c.label)).toContain("STRFTIME");
+    expect(all("mysql").fns.map((c) => c.label)).toContain("IFNULL");
+  });
+  it("CURRENT_DATE は括弧付き関数にしない", () => {
+    const cur = all("postgres").all.find((c) => c.label === "CURRENT_DATE");
+    expect(cur?.type).not.toBe("function");
+  });
+  it("通常キーワードはそのまま", () => {
+    expect(keywordCompletionBuilder("mysql")("SELECT", "keyword")).toEqual({
+      label: "SELECT",
+      type: "keyword",
+      boost: -1,
+    });
   });
 });

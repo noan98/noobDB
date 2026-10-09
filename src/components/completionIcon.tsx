@@ -33,3 +33,9 @@ export function renderCompletionKindIcon(completion: { type?: string }): Node {
   if (icon) el.appendChild(icon);
   return el;
 }
+
+// React のライフサイクル中に初回の flushSync が走って警告になるのを避けるため、
+// 読み込み時に全種別を先に描画しておく (DOM が無い環境では何もしない)。
+if (typeof document !== "undefined") {
+  for (const kind of ["table", "column", "keyword", "function"] as const) iconNode(kind);
+}
