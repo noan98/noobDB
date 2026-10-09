@@ -1422,6 +1422,12 @@ const SchemaRowList = memo(function SchemaRowList({
   //  3. scroller 自体の大きさの変化 (ウィンドウサイズ) と、`<html>` の属性・style の変化
   //     (`data-density` / `--font-scale`。上に兄弟が無くても余白が変わる)。rAF で 1 フレーム 1 回に間引く。
   // 値が変わらなければ state は更新しない。
+  // 位置は `getBoundingClientRect` ではなく `layoutTop` (transform を含まない) で測る。上の層の
+  // `Reorder.Item` (`layout="position"`) は、兄弟の開閉で位置が変わると translate の FLIP で
+  // 元の位置から滑らせる。その間に読む `getBoundingClientRect` は「見た目の位置」で、
+  // アニメーション開始直後に測ると transform のぶん (開閉した行の高さ) ずれた値になる。
+  // transform の変化では ResizeObserver が発火しないので、ずれた値のまま測り直されず、
+  // 窓が数行ずれたまま残っていた (CPU が遅い環境でだけ、測る瞬間が FLIP の開始と重なる)。
   void layoutToken; // 依存として使う (測り直しのきっかけ)
   // biome-ignore lint/correctness/useExhaustiveDependencies: layoutToken は本体で参照しないが、仮想化の ON/OFF・上の層の構造が変わったコミット直後に scrollMargin を測り直すためのトリガーとして意図的に依存へ含めている
   useLayoutEffect(() => {
@@ -1430,9 +1436,8 @@ const SchemaRowList = memo(function SchemaRowList({
     const scroller = scrollRef.current;
     if (!list || !scroller) return;
     const measure = () => {
-      const offset = Math.round(
-        list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop,
-      );
+      // スクロール要素のボーダーボックス上端からの、スクロールしていないときの位置。
+      const offset = layoutTop(list) - layoutTop(scroller);
       setScrollMargin((prev) => (prev === offset ? prev : offset));
     };
     measure();
@@ -1582,6 +1587,20 @@ const SchemaRowList = memo(function SchemaRowList({
     </div>
   );
 });
+
+/**
+ * 要素のボーダーボックス上端の、レイアウト上の y 座標 (`offsetParent` を辿った `offsetTop` の和)。
+ * `getBoundingClientRect` と違い、要素と祖先の CSS transform (Motion の layout アニメーションの
+ * FLIP) を含まず、途中のスクロール要素のスクロール量にも依存しない。同じ文書内の 2 要素の差が、
+ * transform が無いときの `getBoundingClientRect().top` の差 (+ 間のスクロール量) と一致する。
+ */
+function layoutTop(el: HTMLElement): number {
+  let y = 0;
+  for (let node: HTMLElement | null = el; node; node = node.offsetParent as HTMLElement | null) {
+    y += node.offsetTop;
+  }
+  return y;
+}
 
 /** リスト内の `data-tree-key` が一致する行要素。属性セレクタに任意文字列を埋め込まない。 */
 function findRowElement(list: HTMLElement | null, key: string): HTMLElement | null {
