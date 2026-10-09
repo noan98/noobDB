@@ -23,7 +23,13 @@ const base: WorkspaceCommandContext = {
     { database: "app", table: "users" },
     { database: "app", table: "orders" },
   ],
-  shortcuts: { toggleSidebar: "Ctrl+B", sidebarFilter: "Ctrl+P", objectSearch: "Ctrl+Shift+O" },
+  shortcuts: {
+    toggleSidebar: "Ctrl+B",
+    sidebarFilter: "Ctrl+P",
+    objectSearch: "Ctrl+Shift+O",
+    reopenClosedTab: "Ctrl+Shift+T",
+  },
+  closedTabs: [],
 };
 
 function actions() {
@@ -38,6 +44,7 @@ function actions() {
     openUsers: vi.fn(),
     openServerInfo: vi.fn(),
     openTasks: vi.fn(),
+    reopenClosedTab: vi.fn(),
   };
 }
 
@@ -163,5 +170,49 @@ describe("workspaceCommandItems", () => {
 describe("App.tsx の結線 (#1112)", () => {
   it("パレットは workspaceCommandItems 経由で Shell の操作を並べる", () => {
     expect(appSource).toContain("...workspaceCommandItems(");
+  });
+
+  describe("最近閉じたタブ (#1353)", () => {
+    const closed = (...titles: string[]) =>
+      titles.map((title, i) => ({ id: `g${i}`, title, extra: 0 }));
+
+    it("履歴が空なら候補を出さない", () => {
+      expect(ids(base).some((id) => id.startsWith("tab:reopen-closed"))).toBe(false);
+    });
+
+    it("1 件なら最新を戻す候補だけ (ショートカット付き)", () => {
+      const a = actions();
+      const items = workspaceCommandItems({ ...base, closedTabs: closed("q1") }, a, t);
+      const reopen = items.filter((i) => i.id.startsWith("tab:reopen-closed"));
+      expect(reopen.map((i) => i.id)).toEqual(["tab:reopen-closed"]);
+      expect(reopen[0].shortcut).toBe("Ctrl+Shift+T");
+      reopen[0].run();
+      expect(a.reopenClosedTab).toHaveBeenCalledWith();
+    });
+
+    it("2 件以上なら個別選択の候補が並び、グループ id を渡す", () => {
+      const a = actions();
+      const ctx = {
+        ...base,
+        closedTabs: [{ id: "g0", title: "bulk", extra: 2 }, { id: "g1", title: "q1", extra: 0 }],
+      };
+      const items = workspaceCommandItems(ctx, a, t);
+      const per = items.filter((i) => i.id.startsWith("tab:reopen-closed:"));
+      expect(per.map((i) => i.id)).toEqual(["tab:reopen-closed:g1"]);
+      expect(per[0].label).toContain("q1");
+      per[0].run();
+      expect(a.reopenClosedTab).toHaveBeenCalledWith("g1");
+    });
+
+    it("App.tsx の結線: スナップショットは handleCloseTab 内で tabSqlStore.delete より前", () => {
+      const start = appSource.indexOf("const handleCloseTab = useCallback(");
+      const end = appSource.indexOf("const closeTabsAsGroup", start);
+      const body = appSource.slice(start, end);
+      const snap = body.indexOf("snapshotClosedTab(");
+      const del = body.indexOf("tabSqlStore.delete(");
+      expect(snap).toBeGreaterThan(-1);
+      expect(del).toBeGreaterThan(-1);
+      expect(snap).toBeLessThan(del);
+    });
   });
 });
