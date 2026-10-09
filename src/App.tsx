@@ -52,7 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
-import { isTabDirty, tabsWithPendingChanges } from "./tabDirty";
+import { closeGuard, hasPendingChanges, isTabDirty, tabsWithPendingChanges } from "./tabDirty";
 import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
@@ -1152,6 +1152,18 @@ export default function App() {
   // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
   // `await confirm({...})` の形で同期感覚で呼べる。
   const { confirm, dialog: confirmDialogElement } = useConfirm();
+  // 未確定の編集の破棄確認 (#1391) を表示している間は true。タブ系のグローバル
+  // ショートカット (Cmd+W / Ctrl+Tab / Cmd+Shift+T …) を無視して、確認の二重起動や
+  // 確認中のタブ操作を防ぐ。
+  const discardConfirmBusyRef = useRef(false);
+  const confirmDiscard = useCallback(async (opts: Parameters<typeof confirm>[0]) => {
+    discardConfirmBusyRef.current = true;
+    try {
+      return await confirm(opts);
+    } finally {
+      discardConfirmBusyRef.current = false;
+    }
+  }, [confirm]);
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
   // AI にクエリを依頼する入口 (パレット項目) を出してよいか (#691)。
@@ -2942,13 +2954,13 @@ export default function App() {
   const confirmDiscardPendingEdits = useCallback(async (): Promise<boolean> => {
     const pending = tabsWithPendingChanges(tabsRef.current);
     if (pending.length === 0) return true;
-    return confirm({
+    return confirmDiscard({
       title: translate("connDiscardTitle"),
       message: translate("connDiscardBody", { count: pending.length }),
       confirmLabel: translate("connDiscardAction"),
       tone: "danger",
     });
-  }, [confirm, tabsRef]);
+  }, [confirmDiscard, tabsRef]);
 
   // 既に開いている接続へ即座に切り替える (#複数同時接続)。再接続せず、生存中の
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
@@ -3237,9 +3249,11 @@ export default function App() {
     });
   }, [connectAttempt]);
 
-  const handleDisconnect = useCallback(async () => {
-    if (!sessionId) return;
-    if (!(await confirmDiscardPendingEdits())) return;
+  // 戻り値は「切断できたか」。未確定の編集の確認でキャンセルされたら false
+  // (呼び出し側は後続の破壊的処理を中断する)。`force` は確認済みの呼び出し用。
+  const handleDisconnect = useCallback(async (opts?: { force?: boolean }): Promise<boolean> => {
+    if (!sessionId) return true;
+    if (!opts?.force && !(await confirmDiscardPendingEdits())) return false;
     // 明示切断は進行中の自動再接続ループを中断させる。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3270,17 +3284,17 @@ export default function App() {
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
+    return true;
   }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, confirmDiscardPendingEdits]);
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
   // 落とす。アクティブ接続を閉じる場合は handleDisconnect と同じ後始末を行う。
-  const handleDisconnectProfile = useCallback(async (profileId: string) => {
+  const handleDisconnectProfile = useCallback(async (profileId: string, opts?: { force?: boolean }): Promise<boolean> => {
     const entry = openConnectionsRef.current.find((c) => c.profile.id === profileId);
-    if (!entry) return;
+    if (!entry) return true;
     if (entry.profile.id === selectedProfile?.id) {
-      await handleDisconnect();
-      return;
+      return handleDisconnect(opts);
     }
     // 背景接続: タブは退避済みなので、セッションを落としてレジストリから外すだけ。
     removeOpenConnection(profileId);
@@ -3291,6 +3305,7 @@ export default function App() {
     }
     clearEmergencyFor(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
+    return true;
   }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor]);
 
   // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
@@ -3321,7 +3336,8 @@ export default function App() {
 
   const handleDiscardSandbox = useCallback(
     async (record: SandboxRecord) => {
-      await handleDisconnectProfile(sandboxProfileId(record.id));
+      // 未確定の編集の破棄をキャンセルされたら、サンドボックス破棄も中断する (#1391)。
+      if (!(await handleDisconnectProfile(sandboxProfileId(record.id)))) return;
       try {
         await api.discardSandbox(record.id, null);
         setSandboxes((prev) => prev.filter((s) => s.id !== record.id));
@@ -3364,8 +3380,12 @@ export default function App() {
       gaveUpAfter?: number;
     }) => {
       const lostProfileId = profile?.id ?? null;
+      // 接続が切れた後に確認しても意味がないので止めないが、失われる未 Apply の
+      // 編集の件数は知らせる (#1391)。
+      const lostEdits = tabsWithPendingChanges(tabsRef.current).length;
       if (profile) persistTabsForProfile(profile.id);
       await closeAllTabs();
+      if (lostEdits > 0) toast.error(translate("toastPendingEditsLost", { count: lostEdits }));
       // 死んだ接続をレジストリから外す (#複数同時接続)。
       if (lostProfileId) removeOpenConnection(lostProfileId);
       if (oldSessionId) {
@@ -3393,7 +3413,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor],
+    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor, tabsRef, toast],
   );
 
   // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
@@ -4173,7 +4193,7 @@ export default function App() {
         // runQueryInTab は常に pendingEdits / editUndoStack / editRedoStack を
         // リセットするため、ここでスキップしないと編集中のセルと Undo/Redo 履歴が
         // 黙って破棄されてしまう (#F1)。
-        if (Object.keys(tt.pendingEdits).length > 0) return;
+        if (hasPendingChanges(tt)) return;
         const sql = tt.lastExecutedSql;
         // Defence in depth: never poll a non-read-only statement (the backend
         // enforces this too via the auto-refresh guard).
@@ -5813,11 +5833,7 @@ export default function App() {
     async (tab: Tab, sql: string) => {
       if (!sessionId || !tab.database || !tab.table) return;
       const driver = selectedProfile?.driver;
-      if (
-        Object.keys(tab.pendingEdits).length > 0 ||
-        (tab.pendingDeletes ?? []).length > 0 ||
-        (tab.pendingInserts ?? []).length > 0
-      ) {
+      if (hasPendingChanges(tab)) {
         setStatus({ kind: "key", key: "statusColumnReplaceBlockedByEdits", error: true });
         return;
       }
@@ -6879,7 +6895,9 @@ export default function App() {
       // (CodeRabbit レビュー対応)。`handleDisconnectProfile` は対象が未接続なら
       // 何もしない (no-op) ので、常時呼んでよい。Undo 済み (finalize 自体が
       // キャンセル) の場合はここに到達しないので、切断は起きない。
-      await handleDisconnectProfile(id);
+      // 未確定の編集の確認は削除操作時 (handleDeleteProfile) に済ませてあるので、
+      // Undo 満了後の無関係なタイミングで再確認しない (force)。
+      await handleDisconnectProfile(id, { force: true });
       await api.deleteProfile(id);
       await refreshProfiles();
       // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
@@ -6894,9 +6912,13 @@ export default function App() {
     });
   }, [runWithErrorStatus, refreshProfiles, handleDisconnectProfile]);
 
-  const handleDeleteProfile = useCallback((profile: ConnectionProfile) => {
+  const handleDeleteProfile = useCallback(async (profile: ConnectionProfile) => {
     const id = profile.id;
     // Ignore a repeat delete of an already-pending profile.
+    if (pendingProfileDeleteTimers.current.has(id)) return;
+    // アクティブ接続の削除は切断を伴いタブを閉じる。未確定の編集があればここで確認し、
+    // キャンセルならプロファイルを隠さず何もしない (#1391)。
+    if (id === selectedProfile?.id && !(await confirmDiscardPendingEdits())) return;
     if (pendingProfileDeleteTimers.current.has(id)) return;
     // Hide from the sidebar right away, but defer the irreversible backend delete
     // (which wipes keyring secrets) so Undo can cancel it (#676).
@@ -6927,7 +6949,7 @@ export default function App() {
         },
       },
     });
-  }, [finalizeProfileDelete, toast]);
+  }, [finalizeProfileDelete, toast, selectedProfile?.id, confirmDiscardPendingEdits]);
 
   // 接続リストのドラッグ/キーボード並べ替え (#786)。`ConnectionList` は
   // `visibleProfiles` (Undo 待ちの削除中プロファイルを除いた表示用の部分集合) を
@@ -7297,9 +7319,14 @@ export default function App() {
   // (履歴に残ると復元時に重複する)。閉じたタブ復元は編集内容を戻さないので文言で伝える。
   // DROP などで自動的に閉じる経路は確認不要なので `handleCloseTab` を直接使う。
   const requestCloseTab = useCallback(async (id: string) => {
-    const tab = tabsRef.current.find((tt) => tt.id === id);
-    if (tab && tabsWithPendingChanges([tab]).length > 0) {
-      const ok = await confirm({
+    const guard = closeGuard(tabsRef.current, [id]);
+    if (guard.kind === "applying") {
+      toast.info(translate("tabCloseApplying"));
+      return;
+    }
+    if (guard.kind === "confirm") {
+      const tab = guard.pending[0];
+      const ok = await confirmDiscard({
         title: translate("tabCloseDiscardTitle"),
         message: translate("tabCloseDiscardBody", { name: tab.title || tab.table || "" }),
         confirmLabel: translate("tabCloseDiscardAction"),
@@ -7308,24 +7335,27 @@ export default function App() {
       if (!ok) return;
     }
     handleCloseTab(id);
-  }, [confirm, tabsRef, handleCloseTab]);
+  }, [confirmDiscard, tabsRef, handleCloseTab, toast]);
 
   // 一括クローズ版。対象に未確定の編集を持つタブがあれば 1 回だけまとめて確認し、
   // キャンセルなら何も閉じない (全か無か)。確定した ID だけを `closeTabsAsGroup` へ渡す。
   const requestCloseTabs = useCallback(async (ids: readonly string[]) => {
-    const targets = tabsRef.current.filter((tt) => ids.includes(tt.id));
-    const pending = tabsWithPendingChanges(targets);
-    if (pending.length > 0) {
-      const ok = await confirm({
+    const guard = closeGuard(tabsRef.current, ids);
+    if (guard.kind === "applying") {
+      toast.info(translate("tabCloseApplying"));
+      return;
+    }
+    if (guard.kind === "confirm") {
+      const ok = await confirmDiscard({
         title: translate("tabCloseDiscardTitle"),
-        message: translate("tabCloseDiscardBodyMany", { count: pending.length }),
+        message: translate("tabCloseDiscardBodyMany", { count: guard.pending.length }),
         confirmLabel: translate("tabCloseDiscardAction"),
         tone: "danger",
       });
       if (!ok) return;
     }
     closeTabsAsGroup(ids);
-  }, [confirm, tabsRef, closeTabsAsGroup]);
+  }, [confirmDiscard, tabsRef, closeTabsAsGroup, toast]);
 
   // 閉じたタブを開き直す (#1353)。`groupId` 省略で最新。クエリ/EXPLAIN タブはスナップ
   // ショットから元のペイン・位置へ復元し、テーブルタブは開き直し (最新データを取得)。
@@ -7431,6 +7461,8 @@ export default function App() {
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
+      // 未確定の編集の破棄確認を表示中は、タブ系ショートカットを一切受け付けない (#1391)。
+      if (discardConfirmBusyRef.current) return;
       const mod = e.metaKey || e.ctrlKey;
       // Cmd/Ctrl+F → open the focused pane's find-in-results bar (#644; no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
@@ -9413,7 +9445,7 @@ export default function App() {
                 </Flex>
               )}
               {sessionId && (
-                <Button variant="dangerOutline" size="sm" onClick={handleDisconnect}>
+                <Button variant="dangerOutline" size="sm" onClick={() => void handleDisconnect()}>
                   <Icon name="unplug" size={ICON_SIZES.md} />
                   {t("appDisconnect")}
                 </Button>

@@ -42,3 +42,22 @@ export function isTabDirty(tab: DirtyTabLike, currentSql: string): boolean {
 export function tabsWithPendingChanges<T extends DirtyTabLike>(tabs: readonly T[]): T[] {
   return tabs.filter((tt) => hasPendingChanges(tt));
 }
+
+/** タブを閉じる前に必要な手続き。 */
+export type CloseGuard<T> =
+  | { kind: "ok" }
+  /** Apply 実行中のタブが含まれる。トランザクション中なので閉じるのを保留する。 */
+  | { kind: "applying" }
+  /** 未確定の編集を持つタブがある。確認が必要。 */
+  | { kind: "confirm"; pending: T[] };
+
+/** `ids` のタブを閉じてよいか / 確認が要るか / 保留すべきかを返す (存在しない ID は無視)。 */
+export function closeGuard<T extends DirtyTabLike & { id: string; applyingEdits?: boolean }>(
+  tabs: readonly T[],
+  ids: readonly string[],
+): CloseGuard<T> {
+  const targets = tabs.filter((tt) => ids.includes(tt.id));
+  if (targets.some((tt) => tt.applyingEdits)) return { kind: "applying" };
+  const pending = tabsWithPendingChanges(targets);
+  return pending.length > 0 ? { kind: "confirm", pending } : { kind: "ok" };
+}

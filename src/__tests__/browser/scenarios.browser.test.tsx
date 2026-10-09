@@ -886,3 +886,51 @@ describe("シナリオ: keep-alive による切替 (#1311, 実ブラウザ)", ()
     expect(invocationsOf("run_query_stream").length).toBe(runs);
   });
 });
+
+describe("シナリオ: 未確定のセル編集があるタブを閉じる (#1391)", () => {
+  it("Ctrl+W で確認が出て、キャンセルするとタブも編集も残り、履歴にも積まれない", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    await vi.waitFor(() => {
+      const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+      if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
+    }, { timeout: 5000 });
+
+    await screen.getByRole("gridcell", { name: "3", exact: true }).dblClick();
+    const input = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
+      if (!el) throw new Error("cell edit input not open");
+      return el;
+    }, { timeout: 5000 });
+    await page.elementLocator(input).fill("42");
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .toBeVisible();
+
+    // Ctrl+W → 確認ダイアログ。キャンセルでタブと編集が残る。
+    await userEvent.keyboard("{Control>}w{/Control}");
+    await expect.element(screen.getByText(t("tabCloseDiscardTitle"))).toBeVisible();
+    await screen.getByRole("button", { name: t("confirmDefaultCancel"), exact: true }).first().click();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .toBeVisible();
+
+    // キャンセルしたタブは履歴に積まれていない (復元しても何も戻らない)。
+    await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
+    await expect.element(screen.getByText(t("tabReopenNone"))).toBeVisible();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .toBeVisible();
+
+    // 改めて閉じて OK すると、タブが閉じる。
+    await userEvent.keyboard("{Control>}w{/Control}");
+    await screen.getByRole("button", { name: t("tabCloseDiscardAction") }).click();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+});

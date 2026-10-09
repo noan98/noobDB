@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasPendingChanges, isTabDirty, tabsWithPendingChanges, type DirtyTabLike } from "../tabDirty";
+import { closeGuard, hasPendingChanges, isTabDirty, tabsWithPendingChanges, type DirtyTabLike } from "../tabDirty";
 
 const base = (over: Partial<DirtyTabLike> = {}): DirtyTabLike => ({
   kind: "table",
@@ -50,5 +50,31 @@ describe("tabsWithPendingChanges", () => {
     const b = { id: "b", ...base({ pendingEdits: { "0": { 0: "1" } } }) };
     const c = { id: "c", ...base({ pendingInserts: [{}] }) };
     expect(tabsWithPendingChanges([a, b, c]).map((x) => x.id)).toEqual(["b", "c"]);
+  });
+});
+
+describe("closeGuard", () => {
+  const mk = (id: string, over: Partial<DirtyTabLike> & { applyingEdits?: boolean } = {}) => ({ id, ...base(over) });
+
+  it("未確定編集が無ければ ok", () => {
+    expect(closeGuard([mk("a"), mk("b")], ["a", "b"])).toEqual({ kind: "ok" });
+  });
+
+  it("対象外のタブの未確定編集は無視する", () => {
+    expect(closeGuard([mk("a"), mk("b", { pendingDeletes: ["1"] })], ["a"])).toEqual({ kind: "ok" });
+  });
+
+  it("対象に未確定編集があれば confirm とその一覧", () => {
+    const b = mk("b", { pendingEdits: { "0": { 0: "x" } } });
+    expect(closeGuard([mk("a"), b], ["a", "b"])).toEqual({ kind: "confirm", pending: [b] });
+  });
+
+  it("Apply 中のタブが含まれれば applying (確認より優先)", () => {
+    const b = mk("b", { pendingEdits: { "0": { 0: "x" } }, applyingEdits: true });
+    expect(closeGuard([b], ["b"])).toEqual({ kind: "applying" });
+  });
+
+  it("存在しない ID は無視する", () => {
+    expect(closeGuard([mk("a")], ["zzz"])).toEqual({ kind: "ok" });
   });
 });
