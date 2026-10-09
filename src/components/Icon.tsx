@@ -59,6 +59,7 @@ import {
   IconShieldExclamation,
   IconSortAscending,
   IconSortDescending,
+  IconSparkles,
   IconStar,
   IconStarFilled,
   IconSun,
@@ -221,6 +222,7 @@ export type IconName =
   | "bell"
   | "broadcast"
   | "flask"
+  | "sparkles"
   | "info"
   | "alert-circle"
   | "play"
@@ -369,6 +371,7 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   bell: IconBell,
   broadcast: IconBroadcast,
   flask: IconFlask,
+  sparkles: IconSparkles,
   // 実行 (再生): Run ボタンの塗り三角。塗り glyph だが `star-filled` と同様、
   // fill/stroke の切り替えはコンポーネント側が持つのでここでは通常通り登録する。
   play: IconPlayerPlayFilled,
