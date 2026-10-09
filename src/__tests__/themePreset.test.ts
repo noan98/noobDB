@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { themePresetDataTheme, THEME_PRESET_ORDER } from "../settings";
+import app from "../App.tsx?raw";
+import view from "../components/SettingsView.tsx?raw";
+import {
+  DEFAULT_SYNTAX_COLORS,
+  effectiveTheme,
+  themePresetDataTheme,
+  THEME_PRESET_ORDER,
+  type Theme,
+  type ThemePreset,
+} from "../settings";
 
 /**
  * テーマプリセットの data-theme 合成ロジック。プリセット名が
@@ -41,5 +50,41 @@ describe("themePresetDataTheme (#465)", () => {
       // light の場合 light で終わる、それ以外は dark 系。dark トグル時は必ず dark で終わる。
       expect(dataTheme.endsWith("dark") || dataTheme.endsWith("light")).toBe(true);
     }
+  });
+});
+
+describe("effectiveTheme (#1237 レビュー指摘)", () => {
+  const darkOnly: ThemePreset[] = ["dracula", "nord", "one-dark", "catppuccin"];
+  const follows: ThemePreset[] = ["default", "solarized", "tokyo-night", "high-contrast", "colorblind"];
+
+  it("ダーク専用プリセットはトグルに関わらず dark", () => {
+    for (const p of darkOnly) {
+      expect(effectiveTheme(p, "light")).toBe("dark");
+      expect(effectiveTheme(p, "dark")).toBe("dark");
+    }
+  });
+
+  it("ライト/ダーク追従プリセットはトグルに従う", () => {
+    for (const p of follows) {
+      expect(effectiveTheme(p, "light")).toBe("light");
+      expect(effectiveTheme(p, "dark")).toBe("dark");
+    }
+  });
+
+  it("全プリセットを網羅している", () => {
+    expect([...darkOnly, ...follows].sort()).toEqual([...THEME_PRESET_ORDER].sort());
+  });
+
+  it("トグル light + Catppuccin ではダーク用の syntaxColors が選ばれる", () => {
+    const toggle: Theme = "light";
+    const picked = DEFAULT_SYNTAX_COLORS[effectiveTheme("catppuccin", toggle)];
+    expect(picked).toBe(DEFAULT_SYNTAX_COLORS.dark);
+    expect(picked).not.toBe(DEFAULT_SYNTAX_COLORS.light);
+  });
+
+  it("App.tsx / SettingsView は syntaxColors をトグル値ではなく実効テーマで引く", () => {
+    expect(app).not.toMatch(/syntaxColors\[theme\]/);
+    expect(app).toMatch(/syntaxColors\[effTheme\]/);
+    expect(view).toMatch(/effectiveTheme\(settings\.themePreset/);
   });
 });
