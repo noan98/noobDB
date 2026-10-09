@@ -18,7 +18,7 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 | `frontend (build + browser tests)` | 旧 `frontend (typecheck + build)` / `frontend (browser render + visual)` を #908 で統合 |
 | `crosslang parity` | 言語横断のパリティ/ゴールデンテスト。rust 専用差分の穴埋め用 |
 | `rust (clippy)` / `rust (test)` | 旧 `rust (check + clippy + test)` から分割。`rust (test)` は計装なしの高速 nextest (#1153) |
-| `rust (coverage)` | **必須に含めない** (非ブロッキング)。カバレッジ計装 + 閾値 (#1153) |
+| `rust (coverage)` | **必須に含めない** (非ブロッキング)。カバレッジ計装 + 閾値 (#1153)。main push 限定で PR では走らない (#1420) |
 | `rust (deny)` | 依存ライセンス + RustSec 脆弱性チェック |
 | `rust (windows clippy)` / `rust (windows test)` | 旧 `rust (windows)` から分割 |
 
