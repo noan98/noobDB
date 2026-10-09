@@ -1155,13 +1155,15 @@ export default function App() {
   // 未確定の編集の破棄確認 (#1391) を表示している間は true。タブ系のグローバル
   // ショートカット (Cmd+W / Ctrl+Tab / Cmd+Shift+T …) を無視して、確認の二重起動や
   // 確認中のタブ操作を防ぐ。
-  const discardConfirmBusyRef = useRef(false);
+  // 確認が重なる (前の確認が false で解決されて finally が後から走る) 場合に
+  // 早く下りないよう、真偽値ではなく表示中の件数で持つ。
+  const discardConfirmBusyRef = useRef(0);
   const confirmDiscard = useCallback(async (opts: Parameters<typeof confirm>[0]) => {
-    discardConfirmBusyRef.current = true;
+    discardConfirmBusyRef.current += 1;
     try {
       return await confirm(opts);
     } finally {
-      discardConfirmBusyRef.current = false;
+      discardConfirmBusyRef.current -= 1;
     }
   }, [confirm]);
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
@@ -7462,7 +7464,11 @@ export default function App() {
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
       // 未確定の編集の破棄確認を表示中は、タブ系ショートカットを一切受け付けない (#1391)。
-      if (discardConfirmBusyRef.current) return;
+      if (discardConfirmBusyRef.current > 0) {
+        // Cmd/Ctrl+W の WebView 既定動作 (ウィンドウを閉じる) には届かせない。
+        if (comboMatchesEvent(bindingsRef.current.closeTab, e)) e.preventDefault();
+        return;
+      }
       const mod = e.metaKey || e.ctrlKey;
       // Cmd/Ctrl+F → open the focused pane's find-in-results bar (#644; no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
