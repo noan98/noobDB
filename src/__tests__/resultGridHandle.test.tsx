@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { act } from "@testing-library/react";
@@ -213,5 +213,63 @@ describe("ResultGrid 結果ハンドル経由の結果内検索 (#1264)", () => 
     await user.type(screen.getByLabelText(t("gridFindInputAria")), "row-5$");
     await waitFor(() => expect(screen.getByText(t("gridFindCount", { current: 1, total: 1 }))).toBeInTheDocument());
     expect(api.resultFind).not.toHaveBeenCalled();
+  });
+});
+
+describe("ResultGrid 結果ハンドル経由のソートの行クロスフェード (#1416)", () => {
+  const animate = vi.fn(() => ({ cancel: vi.fn() }));
+  beforeEach(() => {
+    animate.mockClear();
+    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "animate");
+  });
+
+  it("順序の応答が届く前は再生せず、届いたコミットで 1 回だけ再生する", async () => {
+    const result = makeBigResult();
+    attachResultHandle(result.rows, "qs_fade");
+    let resolve: (order: number[]) => void = () => {};
+    vi.mocked(api.resultSortFilter).mockImplementation(
+      () => new Promise<number[]>((r) => { resolve = r; }),
+    );
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={result} />);
+    await user.click(screen.getByRole("button", { name: /^id/ }));
+    await waitFor(() => expect(api.resultSortFilter).toHaveBeenCalled());
+    // 応答前: まだ前の並びのまま。古い並びをフェードさせない。
+    expect(animate).not.toHaveBeenCalled();
+    await act(async () => {
+      resolve(Array.from({ length: TOTAL }, (_, i) => TOTAL - 1 - i));
+    });
+    await waitFor(() => expect(labels(container)[0]).toBe(`row-${TOTAL}`));
+    expect(animate).toHaveBeenCalledTimes(1);
+  });
+
+  it("2 回目以降のソートは、応答前に再生せず応答後に 1 回再生する", async () => {
+    const result = makeBigResult();
+    attachResultHandle(result.rows, "qs_fade2");
+    vi.mocked(api.resultSortFilter).mockResolvedValueOnce(
+      Array.from({ length: TOTAL }, (_, i) => TOTAL - 1 - i),
+    );
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={result} />);
+    await user.click(screen.getByRole("button", { name: /^id/ }));
+    await waitFor(() => expect(labels(container)[0]).toBe(`row-${TOTAL}`));
+    animate.mockClear();
+
+    let resolve: (order: number[]) => void = () => {};
+    vi.mocked(api.resultSortFilter).mockImplementationOnce(
+      () => new Promise<number[]>((r) => { resolve = r; }),
+    );
+    await user.click(screen.getByRole("button", { name: /^id/ }));
+    await waitFor(() => expect(api.resultSortFilter).toHaveBeenCalledTimes(2));
+    expect(animate).not.toHaveBeenCalled();
+    expect(labels(container)[0]).toBe(`row-${TOTAL}`);
+    await act(async () => {
+      resolve(Array.from({ length: TOTAL }, (_, i) => i));
+    });
+    await waitFor(() => expect(labels(container)[0]).toBe("row-1"));
+    expect(animate).toHaveBeenCalledTimes(1);
   });
 });

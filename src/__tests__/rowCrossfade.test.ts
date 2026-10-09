@@ -1,21 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { rowCrossfadeKey } from "../components/rowCrossfade";
+import { rowCrossfadeKeys } from "../components/rowCrossfade";
 
-describe("rowCrossfadeKey (#1416)", () => {
+describe("rowCrossfadeKeys (#1416)", () => {
   it("同じ状態なら同じキー", () => {
-    const a = rowCrossfadeKey([{ id: "1", desc: false }], [], "x");
-    expect(rowCrossfadeKey([{ id: "1", desc: false }], [], "x")).toBe(a);
+    expect(rowCrossfadeKeys([{ id: "1", desc: false }], [], "x")).toEqual(
+      rowCrossfadeKeys([{ id: "1", desc: false }], [], "x"),
+    );
   });
-  it("ソート・列フィルタ・グローバルフィルタの変化でキーが変わる", () => {
-    const base = rowCrossfadeKey([], [], "");
-    expect(rowCrossfadeKey([{ id: "1", desc: true }], [], "")).not.toBe(base);
-    expect(rowCrossfadeKey([], [{ id: "1", value: "a" }], "")).not.toBe(base);
-    expect(rowCrossfadeKey([], [], "abc")).not.toBe(base);
+  it("ソートは sort、列フィルタ・グローバルフィルタは filter のキーだけを変える", () => {
+    const base = rowCrossfadeKeys([], [], "");
+    const s = rowCrossfadeKeys([{ id: "1", desc: true }], [], "");
+    expect(s.sort).not.toBe(base.sort);
+    expect(s.filter).toBe(base.filter);
+    const c = rowCrossfadeKeys([], [{ id: "1", value: "a" }], "");
+    expect(c.filter).not.toBe(base.filter);
+    expect(c.sort).toBe(base.sort);
+    expect(rowCrossfadeKeys([], [], "abc").filter).not.toBe(base.filter);
   });
   it("グローバルフィルタの前後空白と null / undefined は同一視", () => {
-    const base = rowCrossfadeKey([], [], "");
-    expect(rowCrossfadeKey([], [], "  ")).toBe(base);
-    expect(rowCrossfadeKey([], [], undefined)).toBe(base);
-    expect(rowCrossfadeKey([], [], null)).toBe(base);
+    const base = rowCrossfadeKeys([], [], "");
+    expect(rowCrossfadeKeys([], [], "  ")).toEqual(base);
+    expect(rowCrossfadeKeys([], [], undefined)).toEqual(base);
+    expect(rowCrossfadeKeys([], [], null)).toEqual(base);
   });
 });

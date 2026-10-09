@@ -243,6 +243,9 @@ export const variants = {
   },
 } satisfies Record<string, Variants>;
 
+/** 結果グリッドの行クロスフェード (#1416) の開始 opacity。控えめに暗転するだけの値。 */
+export const rowCrossfadeFrom = 0.35;
+
 /**
  * 方向付きスライドの移動量 (px)。行送りのように「隣へ移った」空間的手がかりを
  * 出す控えめなスライドで使う (#1234)。コンポーネントに数値を直書きしない。
