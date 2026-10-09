@@ -5,6 +5,8 @@ import { createRef } from "react";
 import { fireEvent } from "@testing-library/react";
 import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
+import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
+import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 // QueryEditor の主要な実行フロー (Run ボタン / Ctrl+Enter ショートカット / 空状態
 // での無効化 / 選択範囲優先実行) の退行を検出するテスト。CodeMirror を
@@ -240,5 +242,35 @@ describe("QueryEditor ツールバーのオーバーフロー (#915)", () => {
     expect(onRun).toHaveBeenLastCalledWith("SELECT 1");
     ref.current?.explain();
     expect(onExplain).toHaveBeenCalledWith("SELECT 1;\nSELECT 2");
+  });
+});
+
+describe("QueryEditor: AI にクエリを依頼 (#691)", () => {
+  beforeEach(() => {
+    setLocale("en");
+    resetAiKeyStoreForTest();
+  });
+
+  function setAi(enabled: boolean, key: boolean) {
+    replaceAllSettings({ ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, enabled, consentGiven: true } });
+    setAiKeyPresent(key);
+  }
+
+  it("AI 有効・キーあり・接続中ならツールバーにボタンが出る", async () => {
+    setAi(true, true);
+    renderWithProviders(<QueryEditor onRun={vi.fn()} sessionId="s1" />);
+    expect(await screen.findByTestId("query-editor-ai")).toBeTruthy();
+  });
+
+  it.each([
+    ["AI 無効", { enabled: false, key: true, session: "s1", explain: false }],
+    ["キー未登録", { enabled: true, key: false, session: "s1", explain: false }],
+    ["未接続", { enabled: true, key: true, session: null, explain: false }],
+    ["EXPLAIN タブ", { enabled: true, key: true, session: "s1", explain: true }],
+  ])("%s ではボタンを出さない", async (_n, c) => {
+    setAi(c.enabled, c.key);
+    renderWithProviders(<QueryEditor onRun={vi.fn()} sessionId={c.session} explainMode={c.explain} />);
+    await waitFor(() => expect(document.querySelector(".cm-content")).toBeTruthy());
+    expect(screen.queryByTestId("query-editor-ai")).toBeNull();
   });
 });

@@ -68,6 +68,8 @@ import {
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
+import { AiQueryModal } from "./AiQueryModal";
+import { useAiAvailable } from "../ai/useAiAvailable";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
 import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
@@ -277,6 +279,14 @@ interface Props {
    */
   readOnly?: boolean;
   /**
+   * 本番プロファイルか (#691)。AI にクエリを依頼する前に送信確認を挟むのに使う。
+   */
+  isProduction?: boolean;
+  /**
+   * AI が生成した SQL を新しいクエリタブで開く (#691。実行はしない)。
+   */
+  onOpenSqlInNewTab?: (sql: string, database: string | null) => void;
+  /**
    * 緊急クエリ実行モード (read-only セッションの一時的な書き込み許可) の現在値。
    * `onToggleEmergencyMode` とセットで渡され、かつ `readOnly` のときだけ
    * ツールバーにトグルを表示する。有効化の合意 (接続先名のタイプ確認) は App 側の
@@ -329,6 +339,8 @@ export interface QueryEditorHandle {
   runStatement: () => void;
   formatSql: () => void;
   explain: () => void;
+  /** 「AI にクエリを依頼」モーダルを開く (#691。コマンドパレット用)。 */
+  openAiQuery: () => void;
 }
 
 /**
@@ -560,6 +572,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   builderSnapshot,
   onBuilderPersist,
   readOnly,
+  isProduction,
+  onOpenSqlInNewTab,
   emergencyMode,
   onToggleEmergencyMode,
   queryHistory,
@@ -700,6 +714,14 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   const activeTabIdRef = useRef(tabId);
   const [hasContent, setHasContent] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
+  const [showAiQuery, setShowAiQuery] = useState(false);
+  const aiAvailable = useAiAvailable();
+  // エディタはタブ間で再利用されるので、タブ / セッション / EXPLAIN 化が変わったら閉じる
+  // (条件が戻ったときにモーダルが勝手に再表示されないように)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 値の変化をトリガーにするだけ
+  useEffect(() => {
+    setShowAiQuery(false);
+  }, [tabId, sessionId, explainMode]);
   // 「…」オーバーフローメニュー (#915) のアンカー (ビューポート座標)。開いている
   // 間だけ非 null。位置決め・外側クリック/Escape での閉じ・キーボード操作は共有の
   // `ContextMenu` に任せる。
@@ -1187,6 +1209,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       const text = selectionOrAllText(view);
       if (text !== null) explain(text);
     },
+    openAiQuery: () => setShowAiQuery(true),
   }), []);
 
   const currentText = (): string | null => {
@@ -1554,6 +1577,20 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
           </chakra.span>
           {t("editorFormat")}
         </ToolbarButton>
+        {/* AI にクエリを依頼 (#691)。AI 有効かつ API キー登録済みで接続中のときだけ出す。 */}
+        {aiAvailable && sessionId && !explainMode && (
+          <ToolbarButton
+            onClick={() => setShowAiQuery(true)}
+            disabled={disabled}
+            title={disabledReason ?? t("editorAiQueryTitle")}
+            data-testid="query-editor-ai"
+          >
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <Icon name="sparkles" size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.thin} />
+            </chakra.span>
+            {t("editorAiQuery")}
+          </ToolbarButton>
+        )}
         {/* 副次アクションのオーバーフロー (#915)。項目が 1 つも無い呼び出し
             (プレビュー用の最小構成など) ではボタン自体を出さない。 */}
         {overflowItems.length > 0 && (
@@ -1648,6 +1685,18 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
         />
       )}
       <AnimatePresence>
+        {showAiQuery && aiAvailable && sessionId && !explainMode && (
+          <AiQueryModal
+            sessionId={sessionId}
+            driver={driver}
+            database={defaultDatabase ?? activeTable?.database ?? null}
+            readOnly={!!readOnly}
+            isProduction={!!isProduction}
+            onInsert={insertAtCursor}
+            onOpenInNewTab={(sql, db) => onOpenSqlInNewTab?.(sql, db)}
+            onClose={() => setShowAiQuery(false)}
+          />
+        )}
         {showBuilder && sessionId && !explainMode && (
           <QueryBuilder
             sessionId={sessionId}

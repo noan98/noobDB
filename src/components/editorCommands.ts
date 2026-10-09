@@ -24,6 +24,8 @@ export interface EditorCommandContext {
   hasEditor: boolean;
   /** アクティブタブが EXPLAIN タブか。 */
   explainTab: boolean;
+  /** AI 機能が使えるか (設定で有効 かつ API キー登録済み, #691)。 */
+  aiAvailable?: boolean;
   /** 開いている接続 (アクティブ + 背景)。`active` はいま前面にある接続。 */
   openConnections: readonly { profileId: string; name: string; driver: string; active: boolean }[];
   /** 表示用に解決済みのショートカット (`formatCombo` の戻り値)。 */
@@ -41,6 +43,7 @@ export interface EditorCommandActions {
   formatSql: () => void;
   explain: () => void;
   focusEditor: () => void;
+  openAiQuery: () => void;
   toggleActivity: () => void;
   switchConnection: (profileId: string) => void;
 }
@@ -75,6 +78,16 @@ export function editorCommandItems(
           shortcut: ctx.shortcuts.runStatement,
           run: () => actions.runStatement(),
         });
+        if (ctx.aiAvailable) {
+          items.push({
+            id: "editor:ai-query",
+            group: "navigation",
+            label: t("cmdkAiQuery"),
+            icon: "sparkles",
+            keywords: "ai nl2sql natural language generate query sql 自然言語 生成 クエリ 依頼 AI",
+            run: () => actions.openAiQuery(),
+          });
+        }
         items.push({
           id: "editor:explain",
           group: "navigation",

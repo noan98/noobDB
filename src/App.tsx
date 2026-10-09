@@ -342,6 +342,7 @@ import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
 import { workspaceCommandItems } from "./components/workspaceCommands";
 import { editorCommandItems } from "./components/editorCommands";
+import { useAiAvailable } from "./ai/useAiAvailable";
 import { toggleActivityCenter } from "./components/ActivityCenter";
 import { ActivityLogPanel } from "./components/SeverityLog";
 import { OutputPanel } from "./components/OutputPanel";
@@ -1119,6 +1120,8 @@ export default function App() {
   const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
+  // AI にクエリを依頼する入口 (パレット項目) を出してよいか (#691)。
+  const aiAvailable = useAiAvailable();
   // スマート値ピッカー (#1067) の候補取得。バックエンドの `run_lookup_query` が
   // 読み取り専用ガード (セッションの read_only に関係なく常時)・行数上限・
   // 設定の「クエリタイムアウト」を課すので、読み取り専用セッションでも動き、
@@ -5929,6 +5932,14 @@ export default function App() {
     addTab(tab);
   }, [addTab, assertionDatabase]);
 
+  // AI が生成した SQL (#691) を新しいクエリタブで開く。**実行はしない**。生成時にスキーマを
+  // 読んだデータベースを `tab.database` に載せ、別 DB の同名テーブルを叩かないようにする。
+  const handleOpenAiSql = useCallback((sql: string, database: string | null) => {
+    const tab: Tab = { ...makeQueryTab(), sql };
+    if (database) tab.database = database;
+    addTab(tab);
+  }, [addTab]);
+
   // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する。
   const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
     if (!sessionId) return;
@@ -7709,6 +7720,7 @@ export default function App() {
           sessionId,
           hasEditor: !!activeTab,
           explainTab: activeTab?.kind === "explain",
+          aiAvailable,
           openConnections: openConnections.map((c) => ({
             profileId: c.profile.id,
             name: c.profile.name,
@@ -7730,6 +7742,8 @@ export default function App() {
           // パレットが閉じてフォーカスを戻し終えてから移す (focusExplorer と同じ理由)。
           focusEditor: () =>
             requestAnimationFrame(() => requestAnimationFrame(() => activeEditor()?.focus())),
+          // パレットが閉じてフォーカスを戻し終えてからモーダルを開く (フォーカストラップ対策)。
+          openAiQuery: () => requestAnimationFrame(() => activeEditor()?.openAiQuery()),
           toggleActivity: () => requestAnimationFrame(() => toggleActivityCenter()),
           switchConnection: (profileId) => {
             const target = openConnectionsRef.current.find((c) => c.profile.id === profileId);
@@ -7902,6 +7916,7 @@ export default function App() {
     toggleSidebar,
     focusExplorer,
     handleOpenStructure,
+    aiAvailable,
   ]);
 
   // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
@@ -7999,7 +8014,7 @@ export default function App() {
   const paneActions = useStableCallbacks({
     applyEditsForTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
     explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
-    handleExploreColumns, handleNewTab, handleOpenSqlFile, handleRegisterLocalTable,
+    handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,
