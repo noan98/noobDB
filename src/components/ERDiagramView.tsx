@@ -24,6 +24,8 @@ import { useReducedMotion } from "motion/react";
 
 import { api, type DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
+import { useIsDarkTheme } from "../colorScale";
+import { driverColor } from "../profileIdentity";
 import { semanticColorToken } from "../semanticColors";
 import {
   buildErGraph,
@@ -213,6 +215,7 @@ function ERDiagramInner({
   const t = useT();
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
+  const isDark = useIsDarkTheme();
   const [databases, setDatabases] = useState<string[]>(
     initialDatabase ? [initialDatabase] : [],
   );
@@ -565,11 +568,13 @@ function ERDiagramInner({
             edgesFocusable={false}
             fitView
             minZoom={0.1}
+            colorMode={isDark ? "dark" : "light"}
+            defaultMarkerColor="var(--border-strong)"
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable />
+            <MiniMap pannable zoomable nodeColor={driverColor(driver)} />
           </ReactFlow>
         )}
       </Box>
