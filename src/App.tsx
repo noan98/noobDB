@@ -327,6 +327,7 @@ import type { IncomingFk } from "./fkNavigation";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinned, pinToastPlan, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
+import { beginTabOpenFlight, endTabOpenFlight } from "./sharedElement";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
 import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
@@ -5887,6 +5888,8 @@ export default function App() {
     if (!sessionId) return;
     const limit = Math.max(1, settings.defaultDisplayCount);
     const driver = selectedProfile?.driver ?? "mysql";
+    // サイドバー行のアイコン → 新規タブのアイコンの morph (#1415)。IPC の間に起点へ ID を付けておく。
+    beginTabOpenFlight(database, table);
     void (async () => {
       // 事前にスキーマ (主キー有無) と、無い場合の行識別フォールバック
       // (rowid/ctid、#849)、初回 SELECT、行数推定を `open_table` 1 回で解決してから
@@ -5941,6 +5944,7 @@ export default function App() {
         rowEstimateTotal: null,
       };
       addTab(tab);
+      endTabOpenFlight();
       // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
       // タブ自体と開いた時点のセッションを明示的に渡す。
       void runQueryInTab(tab.id, sql, base, null, false, { sessionId, tab });

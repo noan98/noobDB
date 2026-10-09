@@ -15,6 +15,8 @@ import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
 import { isEditableObjectKind, supportsRoutineEditing, type EditableObjectKind } from "./routineMaintenance";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
+import { useTabOpenFlightFor } from "../sharedElement";
+import { FlightIcon } from "./FlightIcon";
 import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
@@ -991,6 +993,8 @@ const TableNode = memo(function TableNode({
   const t = useT();
   const actions = useTreeActions();
   const tKey = tableKey(db, tbl);
+  // 新規タブを開く飛行中だけ行のアイコンが layoutId を持つ (#1415)。
+  const openFlight = useTabOpenFlightFor(db, tbl);
   const treeKey = `tbl:${tKey}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, treeKey);
   const rowEstLabel = typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
@@ -1059,7 +1063,11 @@ const TableNode = memo(function TableNode({
         }}
         onDoubleClick={(e) => e.stopPropagation()}
       >▸</TreeChevronButton>
-      <TreeIcon color="app.textSecondary" aria-hidden><Icon name={view ? "view" : "table"} /></TreeIcon>
+      <TreeIcon color="app.textSecondary" aria-hidden>
+        <FlightIcon flightId={openFlight}>
+          <Icon name={view ? "view" : "table"} />
+        </FlightIcon>
+      </TreeIcon>
       <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
       {rowEstLabel && (
         <TreeBadge

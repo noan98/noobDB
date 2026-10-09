@@ -82,6 +82,10 @@ import type { Transition, Variants } from "motion/react";
  *   遅延ロード (`React.lazy`) されたビューがサスペンドしても退出中の旧ビューを
  *   巻き込まないよう、`Suspense` は `AnimatePresence` の外ではなく各
  *   `motion.div` の内側に置く。
+ * - サイドバーのテーブル行 → 新規テーブルタブのアイコンの morph (`FlightIcon` /
+ *   `sharedElement.ts` — コンポーネント境界を跨ぐ `layoutId`, #1415)。頻度の低い
+ *   「タブ生成」1 箇所に限定し、IPC の間から morph が終わるまでの飛行中だけ起点に
+ *   ID を付ける。`transitions.emphasized` を再利用し、reduced-motion は MotionConfig に従う。
  * - ライブ監視パネルの行の出入りと値変化フラッシュ (`ProcessListPanel` /
  *   `PlanWatchPanel` — `LiveRows.tsx` の `LiveRowsPresence` + `variants.collapse`、
  *   フラッシュは既存の `@keyframes apply-flash`、数値は `CountUp`) (#1022)。
