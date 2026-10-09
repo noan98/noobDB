@@ -120,6 +120,8 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
   const streamRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const mountedRef = useRef(true);
+  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
+  const abortRef = useRef(false);
   const { onRisks } = props;
 
   const stopListener = useCallback((streamId: string) => {
@@ -131,6 +133,7 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
   }, []);
 
   const cancelCurrent = useCallback(() => {
+    abortRef.current = true;
     const sid = streamRef.current;
     if (sid) {
       void api.cancelStream(sid).catch(() => {
@@ -217,6 +220,7 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
     const statements = props.plan.statements;
     const streamId = makeStreamId();
     streamRef.current = streamId;
+    abortRef.current = false;
     let text = "";
     onRisks(null);
     setState({ kind: "running", sends });
@@ -264,6 +268,12 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
         return;
       }
       unlistenRef.current = unlisten;
+      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
+      if (abortRef.current) {
+        stopListener(streamId);
+        setState({ kind: "cancelled", sends });
+        return;
+      }
       await api.runAiRequest({
         streamId,
         task: "syncRisk",
@@ -283,6 +293,12 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
         settings: toAiSnapshot(ai),
         format: SYNC_RISK_FORMAT,
       });
+      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
+      if (abortRef.current || !mountedRef.current) {
+        void api.cancelStream(streamId).catch(() => {
+          /* すでに完了 */
+        });
+      }
     } catch (e) {
       stopListener(streamId);
       setState({ kind: "error", sends, message: String(e), refused: false });

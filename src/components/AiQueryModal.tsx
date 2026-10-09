@@ -79,6 +79,8 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const streamRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const mountedRef = useRef(true);
+  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
+  const abortRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const database = resolveNl2SqlDatabase(props.database, props.driver);
@@ -185,6 +187,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
     setDone(null);
     const streamId = makeStreamId();
     streamRef.current = streamId;
+    abortRef.current = false;
     let text = "";
     setState({ kind: "running", chars: 0 });
     try {
@@ -214,6 +217,12 @@ export function AiQueryModal(props: AiQueryModalProps) {
         return;
       }
       unlistenRef.current = unlisten;
+      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
+      if (abortRef.current) {
+        stopListener(streamId);
+        setState({ kind: "cancelled" });
+        return;
+      }
       await api.runAiRequest({
         streamId,
         task: "nl2sql",
@@ -229,6 +238,12 @@ export function AiQueryModal(props: AiQueryModalProps) {
         settings: toAiSnapshot(ai),
         format: NL2SQL_FORMAT,
       });
+      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
+      if (abortRef.current || !mountedRef.current) {
+        void api.cancelStream(streamId).catch(() => {
+          /* すでに完了 */
+        });
+      }
     } catch (e) {
       stopListener(streamId);
       setState({ kind: "error", message: String(e), refused: false });
@@ -236,6 +251,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
   };
 
   const cancel = () => {
+    abortRef.current = true;
     const sid = streamRef.current;
     if (sid) {
       void api.cancelStream(sid).catch(() => {
