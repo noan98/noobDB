@@ -5925,6 +5925,14 @@ export default function App() {
     addTab(tab);
   }, [addTab, assertionDatabase]);
 
+  // AI が生成した SQL (#691) を新しいクエリタブで開く。**実行はしない**。生成時にスキーマを
+  // 読んだデータベースを `tab.database` に載せ、別 DB の同名テーブルを叩かないようにする。
+  const handleOpenAiSql = useCallback((sql: string, database: string | null) => {
+    const tab: Tab = { ...makeQueryTab(), sql };
+    if (database) tab.database = database;
+    addTab(tab);
+  }, [addTab]);
+
   // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する。
   const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
     if (!sessionId) return;
@@ -7999,7 +8007,7 @@ export default function App() {
   const paneActions = useStableCallbacks({
     applyEditsForTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
     explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
-    handleExploreColumns, handleNewTab, handleOpenSqlFile, handleRegisterLocalTable,
+    handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,

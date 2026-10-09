@@ -139,3 +139,14 @@ describe("editorCommandItems: AI にクエリを依頼 (#691)", () => {
     expect(ids({ ...base, ...patch })).not.toContain("editor:ai-query");
   });
 });
+
+describe("App.tsx の AI 依頼結線 (#691)", () => {
+  it("パレットはアクティブなエディタの openAiQuery を呼び、AI 利用可否を渡す", () => {
+    expect(appSource).toContain("activeEditor()?.openAiQuery()");
+    expect(appSource).toContain("aiAvailable,");
+  });
+
+  it("新しいタブで開く経路は生成時の DB を tab.database に載せる", () => {
+    expect(appSource).toContain("if (database) tab.database = database;");
+  });
+});

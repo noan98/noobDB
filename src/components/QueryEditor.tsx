@@ -285,7 +285,7 @@ interface Props {
   /**
    * AI が生成した SQL を新しいクエリタブで開く (#691。実行はしない)。
    */
-  onOpenSqlInNewTab?: (sql: string) => void;
+  onOpenSqlInNewTab?: (sql: string, database: string | null) => void;
   /**
    * 緊急クエリ実行モード (read-only セッションの一時的な書き込み許可) の現在値。
    * `onToggleEmergencyMode` とセットで渡され、かつ `readOnly` のときだけ
@@ -716,6 +716,12 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   const [showBuilder, setShowBuilder] = useState(false);
   const [showAiQuery, setShowAiQuery] = useState(false);
   const aiAvailable = useAiAvailable();
+  // エディタはタブ間で再利用されるので、タブ / セッション / EXPLAIN 化が変わったら閉じる
+  // (条件が戻ったときにモーダルが勝手に再表示されないように)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 値の変化をトリガーにするだけ
+  useEffect(() => {
+    setShowAiQuery(false);
+  }, [tabId, sessionId, explainMode]);
   // 「…」オーバーフローメニュー (#915) のアンカー (ビューポート座標)。開いている
   // 間だけ非 null。位置決め・外側クリック/Escape での閉じ・キーボード操作は共有の
   // `ContextMenu` に任せる。
@@ -1687,7 +1693,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
             readOnly={!!readOnly}
             isProduction={!!isProduction}
             onInsert={insertAtCursor}
-            onOpenInNewTab={(sql) => onOpenSqlInNewTab?.(sql)}
+            onOpenInNewTab={(sql, db) => onOpenSqlInNewTab?.(sql, db)}
             onClose={() => setShowAiQuery(false)}
           />
         )}

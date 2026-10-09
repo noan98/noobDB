@@ -56,7 +56,8 @@ export interface AiQueryModalProps {
   /** 現在のエディタのカーソル位置へ挿入する (実行はしない)。 */
   onInsert: (sql: string) => void;
   /** 新しいクエリタブで開く (実行はしない)。 */
-  onOpenInNewTab: (sql: string) => void;
+  /** 生成時にスキーマを読んだデータベースも渡す (新しいタブがそのDBを向くように)。 */
+  onOpenInNewTab: (sql: string, database: string | null) => void;
   onClose: () => void;
 }
 
@@ -152,7 +153,8 @@ export function AiQueryModal(props: AiQueryModalProps) {
 
   const running = state.kind === "running";
   const trimmed = request.trim();
-  const canGenerate = !!database && schema.kind === "ready" && trimmed !== "" && !running;
+  const emptySchema = schema.kind === "ready" && schema.tables.length === 0;
+  const canGenerate = !!database && schema.kind === "ready" && !emptySchema && trimmed !== "" && !running;
 
   const run = async () => {
     if (schema.kind !== "ready" || trimmed === "") return;
@@ -285,6 +287,11 @@ export function AiQueryModal(props: AiQueryModalProps) {
         {schema.kind === "error" && (
           <ErrorNote role="alert">{t("aiQuerySchemaError", { message: schema.message })}</ErrorNote>
         )}
+        {emptySchema && (
+          <Callout tone="warning" role="status">
+            {t("aiQueryEmptySchema")}
+          </Callout>
+        )}
         {summary?.large && (
           <Callout tone="warning" role="status">
             {t("aiQueryLargeSchema", { tables: summary.tableCount, kb: approxKb(summary.approxChars) })}
@@ -328,7 +335,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
                   variant="secondary"
                   size="sm"
                   onClick={() => {
-                    props.onOpenInNewTab(state.value.sql);
+                    props.onOpenInNewTab(state.value.sql, database);
                     setDone("newTab");
                   }}
                 >

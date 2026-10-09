@@ -15,6 +15,7 @@ import {
 import { AI_SEND_SCOPES, toAiSnapshot, type AiSendScope } from "../ai/aiSettings";
 import { connectionTestView } from "../ai/connectionTest";
 import { useT, type I18nKey } from "../i18n";
+import { setAiKeyPresent } from "../ai/aiKeyStore";
 import {
   setAiAllowRowData,
   setAiDefaultModel,
@@ -102,6 +103,7 @@ export function AiSettings() {
       .hasAiApiKey()
       .then((v) => {
         if (alive) setHasKey(v);
+        setAiKeyPresent(v);
       })
       .catch(() => {
         /* 未取得なら「未設定」表示のまま */
@@ -155,6 +157,7 @@ export function AiSettings() {
     try {
       await api.setAiApiKey(key);
       setHasKey(true);
+      setAiKeyPresent(true);
       toast.success(t("aiApiKeySaved"));
     } catch (e) {
       toast.error(t("aiApiKeyError", { error: String(e) }));
@@ -170,6 +173,7 @@ export function AiSettings() {
     try {
       await api.setAiApiKey("");
       setHasKey(false);
+      setAiKeyPresent(false);
       setTestResult(null);
       toast.success(t("aiApiKeyDeleted"));
     } catch (e) {

@@ -112,7 +112,7 @@ describe("AiQueryModal (#691)", () => {
     expect(onInsert).toHaveBeenCalledWith("SELECT 1");
     await screen.findByText(t("aiQueryInserted"));
     fireEvent.click(screen.getByRole("button", { name: t("aiQueryOpenInNewTab") }));
-    expect(onOpenInNewTab).toHaveBeenCalledWith("SELECT 1");
+    expect(onOpenInNewTab).toHaveBeenCalledWith("SELECT 1", "app");
     // 挿入後も説明・注意点は見えたまま。
     expect(screen.getByText("説明です")).toBeTruthy();
   });
@@ -176,5 +176,25 @@ describe("AiQueryModal (#691)", () => {
     renderWithProviders(ui({ driver: "mysql", database: null }));
     await screen.findByText(t("aiQueryNoDatabase"));
     expect((screen.getByRole("button", { name: t("aiQueryGenerate") }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("テーブルが 0 件なら警告を出して生成を無効にする", async () => {
+    schemaOverview.mockResolvedValue([]);
+    renderWithProviders(ui());
+    await screen.findByText(t("aiQueryEmptySchema"));
+    fireEvent.change(screen.getByLabelText(t("aiQueryRequestLabel")), { target: { value: "x" } });
+    expect((screen.getByRole("button", { name: t("aiQueryGenerate") }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("onError と aiRefused を表示し分ける", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => handlers?.onError?.({ streamId: "x", error: "boom", kind: "aiApi" }));
+    await screen.findByText(t("aiQueryError", { message: "boom" }));
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    act(() => handlers?.onError?.({ streamId: "x", error: "no", kind: "aiRefused" }));
+    await screen.findByText(t("aiQueryRefused", { message: "no" }));
   });
 });
