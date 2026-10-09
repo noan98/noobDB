@@ -270,7 +270,7 @@ export function ProcessListPanel({
         <ServerMetricsPanel sessionId={sessionId} driver={driver} />
       ) : (
         <>
-      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+      <chakra.p margin={0} textStyle="body" color="app.textMuted">
         {t("processDesc")}
       </chakra.p>
 
@@ -328,7 +328,7 @@ export function ProcessListPanel({
       </Flex>
 
       {readOnly && (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+        <chakra.p margin={0} textStyle="body" color="app.textMuted">
           {t("processReadOnlyHint")}
         </chakra.p>
       )}

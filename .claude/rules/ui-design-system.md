@@ -100,6 +100,16 @@ theme.ts (Chakra トークン)
 > **ガード**: `designTokens.test.ts` の「タイポグラフィ」/「等幅数字」
 > (SVG の単位無し `fontSize="<数値>"` も検査対象)
 
+- ヘルプ・補足・メタ情報は `textStyle="caption"` (xs / snug / `app.textMuted`)、標準本文は
+  `textStyle="body"` (sm / normal / `app.text`)。`fontSize="xs"` + `color="app.textMuted"` を
+  手書きしない (#1392)。本文でも淡色にしたいときは `textStyle="body" color="app.textMuted"`
+  のように個別 props を **textStyle より後ろ** に書く (Chakra v3 は props の記述順で合成するため、
+  前に書くと textStyle に上書きされる)。密な UI 部品 (ボタン・バッジ・グリッドセル・ツリー行) は対象外。
+
+> **ガード**: `designTokens.test.ts` の「本文 / 補足の textStyle (#1392)」
+> — 開始タグ内に `fontSize="xs"` と `color="app.textMuted"` が両方ある手書き caption を
+> ファイル別ベースラインで固定する (増加も、置換後のベースライン未更新も fail)
+
 ---
 
 ## 3. 角丸 (radius)

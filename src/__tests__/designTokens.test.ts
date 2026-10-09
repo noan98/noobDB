@@ -229,6 +229,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/BroadcastModal.tsx", 2],
     ["../components/ChartView.tsx", 4],
     ["../components/ColumnProfilePanel.tsx", 1],
+    ["../components/CommandPalette.tsx", 2],
     ["../components/ConnectionForm.tsx", 17],
     ["../components/ConnectionHealthPanel.tsx", 2],
     ["../components/CreateIndexModal.tsx", 1],
@@ -241,26 +242,27 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/GridReplaceModal.tsx", 3],
     ["../components/ImportModal.tsx", 7],
     ["../components/JsonTreeView.tsx", 2],
-    ["../components/LocalTablesPanel.tsx", 4],
+    ["../components/LocalTablesPanel.tsx", 5],
     ["../components/MigrationExportModal.tsx", 2],
     ["../components/ObjectSearchModal.tsx", 1],
-    ["../components/OnboardingTour.tsx", 1],
+    ["../components/OnboardingTour.tsx", 2],
     ["../components/OutputPanel.tsx", 1],
     ["../components/PaginationBar.tsx", 1],
     ["../components/ParameterInputModal.tsx", 1],
     ["../components/PivotView.tsx", 2],
-    ["../components/PlanWatchPanel.tsx", 1],
+    ["../components/PlanWatchPanel.tsx", 2],
     ["../components/ProcessListPanel.tsx", 2],
     ["../components/ProfileImportDialog.tsx", 1],
     ["../components/QueryInspectorPanel.tsx", 4],
-    ["../components/QuickLauncher.tsx", 1],
-    ["../components/RegisterLocalTableModal.tsx", 1],
+    ["../components/QuickLauncher.tsx", 2],
+    ["../components/RegisterLocalTableModal.tsx", 2],
     ["../components/RelatedRowsPanel.tsx", 1],
-    ["../components/ResultGrid.tsx", 1],
+    ["../components/ResultGrid.tsx", 5],
     ["../components/RowInsertModal.tsx", 1],
+    ["../components/RowInspector.tsx", 2],
     ["../components/RunRoutineModal.tsx", 1],
-    ["../components/SandboxCreateModal.tsx", 1],
-    ["../components/SandboxReviewModal.tsx", 3],
+    ["../components/SandboxCreateModal.tsx", 2],
+    ["../components/SandboxReviewModal.tsx", 4],
     ["../components/SaveAsTableModal.tsx", 1],
     ["../components/SaveAsViewModal.tsx", 1],
     ["../components/SchemaCompareView.tsx", 1],
@@ -271,6 +273,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/ServerMetricsPanel.tsx", 2],
     ["../components/SeverityLog.tsx", 1],
     ["../components/SnippetForm.tsx", 2],
+    ["../components/TabBar.tsx", 1],
     ["../components/TableConstraintEditor.tsx", 2],
     ["../components/TableOpenQueryModal.tsx", 1],
     ["../components/TableOpenQuerySettings.tsx", 1],
@@ -283,28 +286,39 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/WhereUsedPanel.tsx", 1],
   ]);
 
-  it("fontSize=\"xs\" + color=\"app.textMuted\" の手書き caption を増やさない", () => {
+  // JSX 開始タグ単位で数える (属性を複数行に分けても素通りしない)。
+  const OPEN_TAG = /<[A-Za-z][\w.]*\b[^>]*>/gs;
+  function countHandwrittenCaptions(content: string): number {
+    return (content.match(OPEN_TAG) ?? []).filter(
+      (tag) => /fontSize="xs"/.test(tag) && /color="app\.textMuted"/.test(tag),
+    ).length;
+  }
+
+  it("fontSize=\"xs\" + color=\"app.textMuted\" の手書き caption を増やさず、減ったらベースラインも下げる", () => {
     const counts = new Map<string, number>();
     for (const [path, content] of sources) {
       if (!path.startsWith("../components/")) continue;
-      const n = content
-        .split("\n")
-        .filter((l) => /fontSize="xs"/.test(l) && /color="app\.textMuted"/.test(l)).length;
+      const n = countHandwrittenCaptions(content);
       if (n > 0) counts.set(path, n);
     }
-    const offenders = [...counts]
-      .filter(([path, n]) => n > (HANDWRITTEN_CAPTION_BASELINE.get(path) ?? 0))
-      .map(([path, n]) => `${toDisplayPath(path)}: ${n} 箇所 (許容 ${HANDWRITTEN_CAPTION_BASELINE.get(path) ?? 0})`);
+    const paths = new Set([...counts.keys(), ...HANDWRITTEN_CAPTION_BASELINE.keys()]);
+    const offenders: string[] = [];
+    for (const path of paths) {
+      const n = counts.get(path) ?? 0;
+      const allowed = HANDWRITTEN_CAPTION_BASELINE.get(path) ?? 0;
+      if (n > allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所 (許容 ${allowed})`);
+      else if (n < allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所に減った。ベースラインを ${n} へ下げてください (許容 ${allowed})`);
+    }
     expect(
       offenders,
       "補足テキストは fontSize=\"xs\" color=\"app.textMuted\" を手書きせず " +
-        "textStyle=\"caption\" を使う (標準本文は textStyle=\"body\")。",
+        "textStyle=\"caption\" を使う (標準本文は textStyle=\"body\")。減らしたらベースラインも下げる。",
     ).toEqual([]);
   });
 
   it("body / caption の textStyle が theme.ts に定義されている", () => {
-    expect(themeTs).toMatch(/caption:\s*\{\s*value:\s*\{\s*fontSize:\s*"xs"/);
-    expect(themeTs).toMatch(/body:\s*\{\s*value:\s*\{\s*fontSize:\s*"sm"/);
+    expect(themeTs).toMatch(/caption:\s*\{\s*value:\s*\{\s*fontSize:\s*"xs",\s*fontWeight:\s*"400",\s*lineHeight:\s*"snug",\s*color:\s*"app\.textMuted"/);
+    expect(themeTs).toMatch(/body:\s*\{\s*value:\s*\{\s*fontSize:\s*"sm",\s*fontWeight:\s*"400",\s*lineHeight:\s*"normal",\s*color:\s*"app\.text"/);
   });
 });
 

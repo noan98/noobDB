@@ -456,7 +456,7 @@ export function UsersPanel({
         </Tooltip>
       </chakra.header>
 
-      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+      <chakra.p margin={0} textStyle="body" color="app.textMuted">
         {t("usersDesc")}
       </chakra.p>
 

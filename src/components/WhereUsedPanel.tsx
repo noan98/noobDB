@@ -219,7 +219,7 @@ export function WhereUsedPanel({
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3">
-      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+      <chakra.p margin={0} textStyle="body" color="app.textMuted">
         {t("whereUsedDesc")}
       </chakra.p>
 
@@ -345,7 +345,7 @@ function WhereUsedResults({
       {report.matches.length === 0 ? (
         <EmptyState compact icon="search" title={t("whereUsedNone", counts)} />
       ) : (
-        <chakra.div fontSize="sm" color="app.textMuted">
+        <chakra.div textStyle="body" color="app.textMuted">
           {t("whereUsedSummary", counts)}
         </chakra.div>
       )}

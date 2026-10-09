@@ -211,7 +211,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
               {error}
             </chakra.p>
           ) : loading ? (
-            <chakra.p m={0} p="3" fontSize="sm" color="app.textMuted">
+            <chakra.p m={0} p="3" textStyle="body" color="app.textMuted">
               {t("flightRecorderLoading")}
             </chakra.p>
           ) : entries.length === 0 ? (

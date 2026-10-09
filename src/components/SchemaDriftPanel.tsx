@@ -183,11 +183,11 @@ export function SchemaDriftPanel({
 
               <Box flex="1" minHeight={0} overflowY="auto" border="1px solid" borderColor="app.border" borderRadius="md" px="3" py="2">
                 {!genA || !genB || genA.id === genB.id ? (
-                  <chakra.p m={0} fontSize="sm" color="app.textMuted">
+                  <chakra.p m={0} textStyle="body" color="app.textMuted">
                     {t("schemaDriftPickTwo")}
                   </chakra.p>
                 ) : !bothDiffable ? (
-                  <chakra.p m={0} fontSize="sm" color="app.textMuted">
+                  <chakra.p m={0} textStyle="body" color="app.textMuted">
                     {t("schemaDriftOmittedNote")}
                   </chakra.p>
                 ) : comparing ? (
@@ -217,7 +217,7 @@ export function SchemaDriftPanel({
                     action={{ label: t("schemaDriftRetry"), onClick: retryCompare }}
                   />
                 ) : summary && summary.tables.length === 0 ? (
-                  <chakra.p m={0} fontSize="sm" color="app.textMuted">
+                  <chakra.p m={0} textStyle="body" color="app.textMuted">
                     {t("schemaDriftNoChanges")}
                   </chakra.p>
                 ) : summary ? (
