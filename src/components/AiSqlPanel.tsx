@@ -110,6 +110,8 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   const streamRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const mountedRef = useRef(true);
+  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
+  const abortRef = useRef(false);
   // 「エディタに適用」の再入防止。確認ダイアログ中・適用済みの間は 2 回目を受け付けない。
   const applyingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -190,6 +192,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     const tables = fetched.filter((x): x is ExplainTable => x !== null);
     const streamId = makeStreamId();
     streamRef.current = streamId;
+    abortRef.current = false;
     let text = "";
     const masked = ai.maskLiterals;
     setState({ kind: "running", chars: 0 });
@@ -243,6 +246,12 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
         return;
       }
       unlistenRef.current = unlisten;
+      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
+      if (abortRef.current) {
+        stopListener(streamId);
+        setState({ kind: "cancelled" });
+        return;
+      }
       await api.runAiRequest({
         streamId,
         task: SQL_ASSIST_TASK[kind],
@@ -257,6 +266,12 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
         settings: toAiSnapshot(ai),
         format: sqlAssistFormat(kind),
       });
+      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
+      if (abortRef.current || !mountedRef.current) {
+        void api.cancelStream(streamId).catch(() => {
+          /* すでに完了 */
+        });
+      }
     } catch (e) {
       stopListener(streamId);
       setState({ kind: "error", message: String(e), refused: false });
@@ -327,6 +342,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   };
 
   const cancel = () => {
+    abortRef.current = true;
     const sid = streamRef.current;
     if (sid) {
       void api.cancelStream(sid).catch(() => {

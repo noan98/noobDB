@@ -8,6 +8,7 @@ const foreignKeys = vi.fn();
 const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 });
 const unlisten = vi.fn();
 let handlers: import("../api/tauri").AiStreamHandlers | null = null;
+let listenGate: Promise<void> | null = null;
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -15,6 +16,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     listenAiStream: vi.fn(async (_id: string, h: import("../api/tauri").AiStreamHandlers) => {
       handlers = h;
+      if (listenGate !== null) await listenGate;
       return unlisten;
     }),
     api: {
@@ -68,6 +70,7 @@ beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   handlers = null;
+  listenGate = null;
   schemaOverview.mockResolvedValue([{ name: "orders", columns: ["id", "amount"] }]);
   foreignKeys.mockResolvedValue([]);
   enable();
@@ -136,6 +139,37 @@ describe("AiQueryModal (#691)", () => {
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
     unmount();
     expect(cancelStream).toHaveBeenCalledTimes(2);
+  });
+
+  it("購読の完了前に中止したら、リクエストを送らずに中止表示にする", async () => {
+    let release: () => void = () => {};
+    listenGate = new Promise<void>((r) => {
+      release = r;
+    });
+    renderWithProviders(ui());
+    await generate();
+    fireEvent.click(await screen.findByRole("button", { name: t("aiQueryCancel") }));
+    await act(async () => release());
+    await screen.findByText(t("aiQueryCancelled"));
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("リクエスト登録前に中止したら、登録後に同じ streamId であらためて cancelStream する", async () => {
+    let finish: () => void = () => {};
+    runAiRequest.mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          finish = () => r();
+        }),
+    );
+    renderWithProviders(ui());
+    await generate();
+    fireEvent.click(await screen.findByRole("button", { name: t("aiQueryCancel") }));
+    const streamId = runAiRequest.mock.calls[0][0].streamId;
+    expect(cancelStream).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+    await waitFor(() => expect(cancelStream).toHaveBeenCalledTimes(2));
+    expect(cancelStream.mock.calls.map((c) => c[0])).toEqual([streamId, streamId]);
   });
 
   it("JSON でない応答は本文をそのまま見せる", async () => {
