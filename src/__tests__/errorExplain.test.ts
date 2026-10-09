@@ -7,6 +7,13 @@ import {
   sqlForAi,
 } from "../ai/errorExplain";
 import { DEFAULT_AI_SETTINGS } from "../ai/aiSettings";
+import {
+  findSqlRange,
+  maskErrorMessage,
+  needsSendScopeConfirm,
+  resolveTableDatabase,
+  sqlForRangeReplace,
+} from "../ai/errorExplain";
 
 const base = {
   errorKind: "db",
@@ -124,7 +131,6 @@ describe("応答パース", () => {
   });
 });
 
-import { findSqlRange, maskErrorMessage, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
 
 describe("エラー文のマスク (#692)", () => {
   it("SQL のリテラルと一致する部分を伏せ、識別子は残す", () => {
@@ -188,5 +194,32 @@ describe("失敗した SQL の範囲検索 / 送信範囲 / テーブル抽出�
     expect(tables("SELECT * FROM t FOR UPDATE")).toEqual(["t"]);
     expect(tables("INSERT IGNORE INTO t (a) VALUES (1)")).toEqual(["t"]);
     expect(tables("REPLACE INTO t (a) VALUES (1)")).toEqual(["t"]);
+  });
+});
+
+describe("境界・セミコロン・語境界 (#692 再レビュー)", () => {
+  it("部分一致 (user が user_list に一致) は範囲にしない", () => {
+    expect(findSqlRange("SELECT * FROM user_list", "SELECT * FROM user")).toBeNull();
+    expect(findSqlRange("SELECT * FROM user_list WHERE 1", "SELECT * FROM user")).toBeNull();
+    const text = "SELECT * FROM user_list;\nSELECT * FROM user;";
+    const r = findSqlRange(text, "SELECT * FROM user");
+    expect(r && text.slice(r.from, r.to)).toBe("SELECT * FROM user");
+  });
+
+  it("範囲置換では末尾の ; を落とす", () => {
+    expect(sqlForRangeReplace("SELECT 1;\n")).toBe("SELECT 1");
+    expect(sqlForRangeReplace("SELECT 1")).toBe("SELECT 1");
+  });
+
+  it("リテラル一致は語境界のみ。識別子の一部は伏せない", () => {
+    const sql = "SELECT 1 WHERE a = 'user'";
+    expect(maskErrorMessage("Unknown column 'user_id'", sql)).toBe("Unknown column 'user_id'");
+    expect(maskErrorMessage("bad value user here", sql)).toBe("bad value … here");
+  });
+
+  it("PostgreSQL の invalid input 形式の値を伏せる", () => {
+    expect(maskErrorMessage('invalid input syntax for type integer: "abc"', "")).toBe(
+      'invalid input syntax for type integer: "…"',
+    );
   });
 });

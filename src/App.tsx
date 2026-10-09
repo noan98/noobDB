@@ -100,7 +100,7 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { AiErrorExplain } from "./components/AiErrorExplain";
-import { findSqlRange } from "./ai/errorExplain";
+import { findSqlRange, sqlForRangeReplace } from "./ai/errorExplain";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -5194,13 +5194,23 @@ export default function App() {
   // そうでなければ確認のうえ全文を置き換える。
   const handleApplyAiSql = useCallback(
     async (tabId: string, failedSql: string, newSql: string): Promise<"applied" | "cancelled" | "closed"> => {
-      const tab = tabsRef.current.find((tt) => tt.id === tabId);
-      if (!tab) return "closed";
-      const pane = panesRef.current.find((p) => p.activeTabId === tabId && p.tabIds.includes(tabId));
-      const editor = pane ? editorRefs.current.get(pane.id) : undefined;
-      const current = editor ? editor.getText() : tabSqlStore.resolve(tab.id, tab.sql);
-      const range = findSqlRange(current, failedSql);
-      if (!range) {
+      // 対象タブの現在の状態を引く。確認ダイアログ中にペインの表示タブが変わりうるので、
+      // await の前後で毎回取り直す。
+      const locate = () => {
+        const tab = tabsRef.current.find((tt) => tt.id === tabId);
+        if (!tab) return null;
+        const pane = panesRef.current.find((p) => p.activeTabId === tabId && p.tabIds.includes(tabId));
+        const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+        const visible = pane !== undefined;
+        const current = visible ? (editor ? editor.getText() : "") : tabSqlStore.resolve(tab.id, tab.sql);
+        return { tab, editor, visible, current };
+      };
+      const before = locate();
+      if (!before) return "closed";
+      // 表示中なのにエディタが未生成 / 空 (ビュー未準備) のときは何も書き換えない。
+      if (before.visible && (!before.editor || before.current === "")) return "cancelled";
+      let confirmedReplaceAll = false;
+      if (!findSqlRange(before.current, failedSql)) {
         const ok = await confirm({
           title: translate("aiErrorExplainReplaceAllTitle"),
           message: translate("aiErrorExplainReplaceAllBody"),
@@ -5208,15 +5218,20 @@ export default function App() {
           tone: "warning",
         });
         if (!ok) return "cancelled";
+        confirmedReplaceAll = true;
       }
-      // 確認中にタブが閉じられていたら反映しない。
-      const live = tabsRef.current.find((tt) => tt.id === tabId);
+      const live = locate();
       if (!live) return "closed";
-      if (editor) {
-        if (range) editor.replaceRange(range.from, range.to, newSql);
-        else editor.setText(newSql);
+      if (live.visible && (!live.editor || (!confirmedReplaceAll && live.current === ""))) return "cancelled";
+      const range = confirmedReplaceAll ? null : findSqlRange(live.current, failedSql);
+      if (!confirmedReplaceAll && !range) return "cancelled";
+      if (live.visible && live.editor) {
+        if (range) live.editor.replaceRange(range.from, range.to, sqlForRangeReplace(newSql));
+        else live.editor.setText(newSql);
       } else {
-        const next = range ? current.slice(0, range.from) + newSql + current.slice(range.to) : newSql;
+        const next = range
+          ? live.current.slice(0, range.from) + sqlForRangeReplace(newSql) + live.current.slice(range.to)
+          : newSql;
         updateTab(tabId, { sql: next });
       }
       return "applied";

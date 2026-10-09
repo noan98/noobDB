@@ -171,10 +171,15 @@ function literalContents(sql: string): string[] {
 export function maskErrorMessage(message: string, sql: string): string {
   let out = message;
   const lits = [...new Set(literalContents(sql))].sort((a, b) => b.length - a.length);
-  for (const lit of lits) out = out.split(lit).join("…");
+  for (const lit of lits) {
+    // 語の途中 (`user_id` の `user` など) には一致させない。
+    const re = new RegExp(`(?<![\\w])${lit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w])`, "g");
+    out = out.replace(re, "…");
+  }
   out = out.replace(/(Duplicate entry )'(?:[^']|'')*'/gi, "$1'…'");
   out = out.replace(/(Incorrect [\w ]+? value: )'(?:[^']|'')*'/gi, "$1'…'");
   out = out.replace(/\(([^()]*)\)=\(([^()]*)\)/g, "($1)=(…)");
+  out = out.replace(/(for type \w+: )"(?:[^"]|"")*"/gi, '$1"…"');
   out = out.replace(/(Failing row contains )\([^)]*\)/gi, "$1(…)");
   return out;
 }
@@ -182,15 +187,29 @@ export function maskErrorMessage(message: string, sql: string): string {
 /**
  * エディタ本文 `text` の中で、失敗した SQL `failed` が**ちょうど 1 箇所**見つかったときだけ
  * その範囲を返す。0 件・複数件は null (呼び出し側が全文置換を確認する)。
- * 末尾の空白と `;` は無視して探す。
+ * 末尾の空白と `;` は無視して探す。一致の直前は「文頭 / 空白 / `;`」、直後は
+ * 「文末 / 空白 / `;`」のものだけを数える (`user` が `user_list` に一致しないように)。
  */
 export function findSqlRange(text: string, failed: string): { from: number; to: number } | null {
   const needle = failed.trim().replace(/;+\s*$/, "").trim();
   if (needle === "") return null;
-  const first = text.indexOf(needle);
-  if (first < 0) return null;
-  if (text.indexOf(needle, first + needle.length) >= 0) return null;
-  return { from: first, to: first + needle.length };
+  const isBoundary = (ch: string | undefined) => ch === undefined || ch === ";" || /\s/.test(ch);
+  let found: { from: number; to: number } | null = null;
+  let from = text.indexOf(needle);
+  while (from >= 0) {
+    const to = from + needle.length;
+    if (isBoundary(text[from - 1]) && isBoundary(text[to])) {
+      if (found) return null;
+      found = { from, to };
+    }
+    from = text.indexOf(needle, from + 1);
+  }
+  return found;
+}
+
+/** 範囲置換で挿入する SQL。元の文の後ろに `;` が残るので、末尾の `;` を落として `;;` を避ける。 */
+export function sqlForRangeReplace(newSql: string): string {
+  return newSql.trim().replace(/;+\s*$/, "");
 }
 
 /** 送信範囲が「スキーマ情報のみ」のとき、SQL 本文を送る前に毎回確認が要る。 */
