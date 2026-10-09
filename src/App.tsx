@@ -85,6 +85,7 @@ import {
 } from "./components/identitySync";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
+import { columnInsertText, qualifiedColumnInsertText } from "./schemaInsertText";
 import {
   applyServerBrowse,
   type ServerFilter,
@@ -6718,14 +6719,31 @@ export default function App() {
   // Insert SELECT * into the focused pane's editor, or open a fresh query tab
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
-  const handleInsertTableSelect = useCallback((database: string, table: string) => {
-    const sql = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
+  const insertSqlIntoEditor = useCallback((sql: string) => {
     if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
       activeEditor()?.insertText(sql);
     } else if (sessionId) {
       addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
     }
-  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
+  }, [activeTab, sessionId, activeEditor, addTab]);
+
+  const handleInsertTableSelect = useCallback((database: string, table: string) => {
+    insertSqlIntoEditor(qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table));
+  }, [selectedProfile?.driver, insertSqlIntoEditor]);
+
+  // スキーマツリーの列を挿入 / コピー (#1352)。整形は schemaInsertText.ts。
+  const handleInsertColumn = useCallback((table: string, column: string, qualified: boolean) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    insertSqlIntoEditor(
+      qualified ? qualifiedColumnInsertText(driver, table, column) : columnInsertText(driver, column),
+    );
+  }, [selectedProfile?.driver, insertSqlIntoEditor]);
+
+  const handleCopyColumnName = useCallback(async (column: string) => {
+    if (await copyToClipboard(column)) {
+      toast.success(translate("columnNameCopied", { column }));
+    }
+  }, [toast]);
 
   // テーブルの CREATE TABLE DDL の表示 / コピー (#1001)。全ドライバで
   // `get_object_definition` (kind = "table") を使う — MySQL/SQLite は
@@ -8311,6 +8329,8 @@ export default function App() {
     onSchemaExport: handleSchemaExport,
     onRunTableSelect: handleRunTableSelect,
     onInsertTableSelect: handleInsertTableSelect,
+    onInsertColumn: handleInsertColumn,
+    onCopyColumnName: handleCopyColumnName,
     onShowCreateTable: handleShowCreateTable,
     onCopyTableDdl: handleCopyTableDdl,
     onToggleFavorite: handleToggleFavorite,
