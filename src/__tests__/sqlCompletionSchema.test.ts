@@ -211,6 +211,12 @@ describe("functionCompletions / keywordCompletionBuilder", () => {
     const cur = all("postgres").all.find((c) => c.label === "CURRENT_DATE");
     expect(cur?.type).not.toBe("function");
   });
+  it("構文キーワードを兼ねる IF / REPLACE / DATE は関数スニペットにしない", () => {
+    expect(keywordCompletionBuilder("mysql")("IF", "keyword")).toEqual({ label: "IF", type: "keyword", boost: -1 });
+    expect(keywordCompletionBuilder("mysql")("REPLACE", "keyword").type).toBe("keyword");
+    expect(keywordCompletionBuilder("postgres")("REPLACE", "keyword").type).toBe("keyword");
+    expect(keywordCompletionBuilder("sqlite")("DATE", "type").type).toBe("type");
+  });
   it("通常キーワードはそのまま", () => {
     expect(keywordCompletionBuilder("mysql")("SELECT", "keyword")).toEqual({
       label: "SELECT",

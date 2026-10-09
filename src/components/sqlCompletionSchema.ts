@@ -134,13 +134,22 @@ function functionCompletion(name: string): Completion {
 }
 
 /**
+ * 関数としても構文キーワード / 型名としても使う語。`DROP TABLE IF EXISTS` /
+ * `CREATE OR REPLACE VIEW` / `REPLACE INTO` / `col DATE` で `IF()` 等が挿入されないよう、
+ * キーワード一覧に載っている場合は関数スニペットへ変換せずキーワードのまま残す。
+ */
+const KEYWORD_FIRST = new Set(["IF", "REPLACE", "DATE"]);
+
+/**
  * lang-sql の `SQLConfig.keywordCompletion` に渡すビルダー。キーワード一覧に含まれる
  * 関数名 (COUNT 等) を `function` 型の補完へ変換し、キーワード行と関数行の二重表示を防ぐ。
  */
 export function keywordCompletionBuilder(driver: string): (label: string, type: string) => Completion {
   const names = functionNames(driver);
-  return (label, type) =>
-    names.has(label.toUpperCase()) ? functionCompletion(label.toUpperCase()) : { label, type, boost: -1 };
+  return (label, type) => {
+    const upper = label.toUpperCase();
+    return names.has(upper) && !KEYWORD_FIRST.has(upper) ? functionCompletion(upper) : { label, type, boost: -1 };
+  };
 }
 
 /**
