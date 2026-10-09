@@ -574,7 +574,7 @@ export function TableTimelapsePanel({
                     </chakra.p>
                   )}
                   {masked && (
-                    <chakra.p fontSize="xs" color="app.textMuted">
+                    <chakra.p textStyle="caption">
                       {t("timelapseMaskedNote")}
                     </chakra.p>
                   )}

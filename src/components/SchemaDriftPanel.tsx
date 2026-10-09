@@ -139,7 +139,7 @@ export function SchemaDriftPanel({
                         {formatCaptured(g.capturedAt)}
                         {i === 0 && ` ${t("schemaDriftLatestSuffix")}`}
                       </chakra.div>
-                      <chakra.div fontSize="xs" color="app.textMuted">
+                      <chakra.div textStyle="caption">
                         {t("schemaDriftGenerationTables", { count: g.tableCount })}
                         {g.omitted && ` · ${t("schemaDriftOmittedBadge")}`}
                       </chakra.div>

@@ -282,7 +282,7 @@ export function WhereUsedPanel({
         <FieldError display="block">{formError}</FieldError>
       )}
 
-      <chakra.div fontSize="xs" color="app.textMuted" display="flex" flexDirection="column" gap="0.5">
+      <chakra.div textStyle="caption" display="flex" flexDirection="column" gap="0.5">
         {unsupported.length > 0 && (
           <span>
             {t("whereUsedUnsupported", {
@@ -489,7 +489,7 @@ function WhereUsedMatchRow({
 
 function ProblemList({ title, items }: { title: string; items: string[] }) {
   return (
-    <chakra.details fontSize="xs" color="app.textMuted">
+    <chakra.details textStyle="caption">
       <chakra.summary cursor="pointer">{title}</chakra.summary>
       <chakra.ul margin={0} marginTop="1" paddingLeft="4">
         {items.map((s, i) => (

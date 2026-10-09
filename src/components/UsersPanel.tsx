@@ -652,7 +652,7 @@ export function UsersPanel({
 
               {globalRow && (
                 <Box borderBottom="1px solid" borderColor="app.border" paddingBottom="2">
-                  <chakra.p margin={0} fontSize="xs" color="app.textMuted">
+                  <chakra.p margin={0} textStyle="caption">
                     {t("usersGlobalRowHint")}
                   </chakra.p>
                   <Flex gap="3" marginTop="1" fontSize="sm">
