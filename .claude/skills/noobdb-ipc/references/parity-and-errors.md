@@ -22,6 +22,20 @@ UI で使われているため **knip では原理的にプロパティ単位の
 UI 未接続と分かりましたが、#910 が `FlightRecorderPanel` の「全消去」/ `TaskManager`
 の「実行履歴をクリア」導線を追加して解消済みです。
 
+**到達性はモジュールグラフで判定します (#1421)。** 以前は `src/` 配下の**どこか**に文字列
+`api.<name>` があれば到達可能と数えていたため、UI の入口 (App からの import) を外した機能でも、
+コンポーネント同士やテストが互いに import し合っている限り参照が残り、Rust コマンド +
+ラッパー + UI 一式が推移的に死蔵されたまま通過していました (knip はテストもエントリに
+数えるので、テストからだけ import されるモジュールを「使われている」とみなす)。現在は
+`src/__tests__/moduleGraph.ts` が `src/main.tsx` から実際の import (静的 import・
+`export … from`・`import()`・`new URL("./x", import.meta.url)` の Worker) をたどり、
+**到達したモジュール内の参照だけ**を数えます。型だけの import (`import type` / `import { type X }`
+だけの文) は実行時に読み込まれないので辿りません。構文解析は Vite が公開する oxc パーサ
+(`parseSync`) で、TypeScript 7 (ネイティブ版) の JS API には依存しません。
+同じグラフで「**テスト以外の全モジュールが `main.tsx` から到達できる**」ことも検査しており、
+入口が外れて孤立したモジュールがあれば落ちます (許可リスト `INTENTIONALLY_UNREACHABLE_MODULES`
+も空のまま維持)。合成ソースでのリグレッションテストは `moduleGraph.test.ts`。
+
 **「3 点コントラクト」の残る 1 辺 (#1031)。** `ipcCommandParity` は `generate_handler!`
 の**登録**集合を「正」とみなして `tauri.ts` と突き合わせるため、`#[tauri::command]`
 が付いているのに `generate_handler!` から**登録し忘れた**関数はどちらの集合にも
