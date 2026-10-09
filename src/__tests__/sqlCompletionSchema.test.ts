@@ -6,6 +6,8 @@ import {
   buildCompletionNamespace,
   completionIconName,
   completionKind,
+  functionCompletions,
+  identApply,
   describeColumn,
   findForeignKey,
 } from "../components/sqlCompletionSchema";
@@ -32,7 +34,9 @@ const fk = (over: Partial<ForeignKey> = {}): ForeignKey => ({
 
 describe("completionKind / completionIconName", () => {
   it("CodeMirror の型を 4 種別に写し、種別ごとに別アイコンになる", () => {
-    expect(completionKind("type")).toBe("table");
+    expect(completionKind("table")).toBe("table");
+    expect(completionKind("type")).toBe("keyword"); // INT などのデータ型名
+    expect(completionKind("variable")).toBe("keyword");
     expect(completionKind("property")).toBe("column");
     expect(completionKind("keyword")).toBe("keyword");
     expect(completionKind("function")).toBe("function");
@@ -94,6 +98,7 @@ describe("buildCompletionNamespace", () => {
     const schema = r?.schema as Record<string, unknown>;
     expect(Object.keys(schema).sort()).toEqual(["app", "customers", "orders"]);
     expect(Object.keys(schema.app as object).sort()).toEqual(["customers", "orders"]);
+    expect((schema.orders as { self: unknown }).self).toEqual({ label: "orders", type: "table" });
     expect(r?.defaultTable).toBe("orders");
     expect(r?.defaultSchema).toBe("app");
   });
@@ -111,14 +116,26 @@ describe("buildCompletionNamespace", () => {
         return () => null;
       },
     });
-    const cols = (r?.schema as Record<string, { label: string; type: string; info: unknown }[]>).orders;
+    const cols = (r?.schema as Record<string, { children: { label: string; type: string; info: unknown }[] }>)
+      .orders.children;
     expect(cols.map((c) => c.label)).toEqual(["id", "customer_id"]);
     expect(cols.every((c) => c.type === "property" && typeof c.info === "function")).toBe(true);
     expect(calls).toContain("orders.customer_id");
   });
+  it("PostgreSQL は DB 修飾し、大文字・空白・日本語の名前は二重引用符で apply する", () => {
+    const r = buildCompletionNamespace({
+      driver: "postgres",
+      tableColumns: { Users: ["UserId", "order date", "名前", "snake_case"] },
+      defaultDatabase: "app",
+    });
+    const schema = r?.schema as unknown as Record<string, { self: { apply?: string }; children: { label: string; apply?: string }[] }>;
+    expect(Object.keys(schema).sort()).toEqual(["Users", "app"]);
+    expect(schema.Users.self.apply).toBe('"Users"');
+    expect(schema.Users.children.map((c) => c.apply)).toEqual(['"UserId"', '"order date"', '"名前"', undefined]);
+  });
   it("columnInfo が無ければ info を持たない", () => {
     const r = buildCompletionNamespace({ driver: "sqlite", tableColumns });
-    const cols = (r?.schema as Record<string, object[]>).orders;
+    const cols = (r?.schema as Record<string, { children: object[] }>).orders.children;
     expect("info" in cols[0]).toBe(false);
   });
 });
@@ -145,5 +162,30 @@ describe("buildColumnInfoDom", () => {
       labels,
     );
     expect(el.children).toHaveLength(1);
+  });
+});
+
+describe("identApply", () => {
+  it("snake_case は apply なし、大文字・空白・日本語・数字始まりは方言のクォートで apply", () => {
+    expect(identApply("mysql", "order_id")).toEqual({});
+    expect(identApply("mysql", "UserId")).toEqual({ apply: "`UserId`" });
+    expect(identApply("mysql", "order date")).toEqual({ apply: "`order date`" });
+    expect(identApply("postgres", "名前")).toEqual({ apply: '"名前"' });
+    expect(identApply("sqlite", "1col")).toEqual({ apply: '"1col"' });
+    expect(identApply("postgres", 'a"b')).toEqual({ apply: '"a""b"' });
+  });
+});
+
+describe("functionCompletions", () => {
+  it("function 型で共通関数と方言固有関数を返す", () => {
+    const labels = (d: string) => functionCompletions(d).map((c) => c.label);
+    expect(functionCompletions("mysql").every((c) => c.type === "function")).toBe(true);
+    for (const d of ["mysql", "postgres", "sqlite"]) {
+      expect(labels(d)).toEqual(expect.arrayContaining(["COUNT", "SUM", "COALESCE", "CAST"]));
+    }
+    expect(labels("postgres")).toContain("NOW");
+    expect(labels("sqlite")).not.toContain("NOW");
+    expect(labels("sqlite")).toContain("STRFTIME");
+    expect(labels("mysql")).toContain("IFNULL");
   });
 });

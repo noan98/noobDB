@@ -2,6 +2,7 @@ import type { Completion } from "@codemirror/autocomplete";
 import type { SQLNamespace } from "@codemirror/lang-sql";
 import type { ForeignKey, TableColumnInfo } from "../api/tauri";
 import type { IconName } from "./Icon";
+import { quoteIdentFor } from "./sqlDialect";
 
 /**
  * SQL 補完 (#1413) の名前空間と情報パネルのモデルを作る純ロジック。
@@ -13,19 +14,22 @@ import type { IconName } from "./Icon";
 export type CompletionKind = "table" | "column" | "keyword" | "function";
 
 /**
- * CodeMirror の `Completion.type` → 種別。lang-sql はテーブルに `type`、列に
- * `property`、キーワードに `keyword`、関数に `function` を付ける。未知の型は null
- * (アイコンを出さない)。
+ * CodeMirror の `Completion.type` → 種別。lang-sql はテーブルを `type`、キーワードを
+ * `keyword` / `type` (INT などのデータ型名) / `variable` (組み込み) で返し、関数は
+ * 返さない。そのためテーブルは名前空間の self タグで `table` を明示し、`type` は
+ * キーワード扱いにする。関数は本モジュールの `functionCompletions` が `function` を付ける。
+ * 未知の型は null。
  */
 export function completionKind(type: string | undefined): CompletionKind | null {
   switch (type) {
-    case "type":
     case "table":
       return "table";
     case "property":
     case "column":
       return "column";
     case "keyword":
+    case "type":
+    case "variable":
       return "keyword";
     case "function":
     case "method":
@@ -38,7 +42,7 @@ export function completionKind(type: string | undefined): CompletionKind | null 
 const KIND_ICON: Record<CompletionKind, IconName> = {
   table: "table",
   column: "columns",
-  keyword: "key",
+  keyword: "text",
   function: "routine",
 };
 
@@ -87,6 +91,37 @@ export function findForeignKey(
   return fks.find((f) => f.table === table && f.column === column);
 }
 
+/**
+ * lang-sql が文字列候補にだけ付ける識別子クォート規則 (`^[a-z_][a-z_\d]*$` に合わない
+ * 名前は挿入時にクォートする) の再現。候補をオブジェクトにするとこの処理が外れるため、
+ * 自前で `apply` を組み立てる。方言のクォート文字は `quoteIdentFor` に従う。
+ */
+export function identApply(driver: string, name: string): { apply?: string } {
+  return /^[a-z_][a-z_\d]*$/.test(name) ? {} : { apply: quoteIdentFor(driver, name) };
+}
+
+const COMMON_FUNCTIONS = [
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "NULLIF", "CAST",
+  "LOWER", "UPPER", "LENGTH", "TRIM", "REPLACE", "ABS", "ROUND",
+];
+const DRIVER_FUNCTIONS: Record<"mysql" | "postgres" | "sqlite", string[]> = {
+  mysql: ["NOW", "IFNULL", "CONCAT", "SUBSTRING", "DATE_FORMAT", "CURDATE", "GROUP_CONCAT", "IF"],
+  postgres: ["NOW", "CONCAT", "SUBSTRING", "TO_CHAR", "DATE_TRUNC", "STRING_AGG", "CURRENT_DATE"],
+  sqlite: ["IFNULL", "SUBSTR", "DATE", "DATETIME", "STRFTIME", "GROUP_CONCAT", "TYPEOF"],
+};
+
+/** 方言ごとの主要な組み込み関数の補完 (`type: "function"`)。lang-sql は関数を返さないため補う。 */
+export function functionCompletions(driver: string): Completion[] {
+  const specific =
+    driver === "postgres" ? DRIVER_FUNCTIONS.postgres : driver === "sqlite" ? DRIVER_FUNCTIONS.sqlite : DRIVER_FUNCTIONS.mysql;
+  return [...COMMON_FUNCTIONS, ...specific].map((name) => ({
+    label: name,
+    apply: `${name}(`,
+    type: "function",
+    boost: -1,
+  }));
+}
+
 export interface CompletionNamespaceInput {
   driver: string;
   /** テーブル名 → 列名。 */
@@ -119,9 +154,13 @@ export function buildCompletionNamespace(input: CompletionNamespaceInput): Compl
     const columns: Completion[] = tableColumns[table].map((column) => ({
       label: column,
       type: "property",
+      ...identApply(driver, column),
       ...(columnInfo ? { info: columnInfo(table, column) } : {}),
     }));
-    tables[table] = columns;
+    tables[table] = {
+      self: { label: table, type: "table", ...identApply(driver, table) },
+      children: columns,
+    };
   }
   const namespaceDb = activeTable?.database ?? defaultDatabase ?? undefined;
   const schema: SQLNamespace =

@@ -55,6 +55,7 @@ import { joinCompletions } from "./sqlJoinCompletion";
 import { derivedCompletions } from "./sqlDerivedCompletion";
 import {
   buildCompletionNamespace,
+  functionCompletions,
   describeColumn,
   findForeignKey,
 } from "./sqlCompletionSchema";
@@ -459,6 +460,7 @@ function buildSqlExtension(
   defaultDatabase: string | null | undefined,
   getFks: () => ForeignKey[],
   getColumnMeta: (database: string, table: string) => Promise<TableColumnInfo[] | null>,
+  getInfoDb: () => string | null,
 ) {
   // Collect every known table → columns mapping. The full-database overview is
   // the bulk of it; the active table is folded in too so its columns are
@@ -479,8 +481,8 @@ function buildSqlExtension(
 
   // 列候補の情報パネル (#1413): 型・NULL 可否・FK 参照先。メタは開いたときに
   // 既存の describe_table を遅延取得し、取れなければ FK だけに縮退する。
-  const infoDb = schemaTable?.database ?? defaultDatabase ?? null;
   const columnInfo = (table: string, column: string) => async () => {
+    const infoDb = getInfoDb();
     const metas = infoDb ? await getColumnMeta(infoDb, table) : null;
     const view = describeColumn(
       metas?.find((m) => m.name === column),
@@ -504,6 +506,13 @@ function buildSqlExtension(
   const schema: SQLNamespace | undefined = ns?.schema;
   const defaultTable = ns?.defaultTable;
   const defaultSchema = ns?.defaultSchema;
+  // 組み込み関数 (#1413)。lang-sql は関数を返さないので type: "function" で補う。
+  const functions = functionCompletions(driver);
+  const functionSource = (ctx: CompletionContext): CompletionResult | null => {
+    const word = ctx.matchBefore(/\w+/);
+    if (!word) return null;
+    return { from: word.from, options: functions, validFor: /^\w*$/ };
+  };
   // FK から `JOIN other ON ...` を提案する補完ソース (#1356)。言語データとして
   // 足すので、lang-sql 標準のスキーマ補完と併存する。
   const joinSource = (ctx: CompletionContext): CompletionResult | null => {
@@ -561,6 +570,7 @@ function buildSqlExtension(
       upperCaseKeywords: true,
     }),
     EditorState.languageData.of(() => [
+      { autocomplete: functionSource },
       { autocomplete: joinSource },
       { autocomplete: derivedSource },
     ]),
@@ -745,8 +755,12 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     const key = `${database}\u0000${table}`;
     let p = columnMetaRef.current.get(key);
     if (!p) {
-      p = api.describeTable(sid, database, table).catch(() => null);
-      columnMetaRef.current.set(key, p);
+      const map = columnMetaRef.current;
+      p = api.describeTable(sid, database, table).catch(() => {
+        map.delete(key); // 失敗は次回再試行できるようキャッシュしない
+        return null;
+      });
+      map.set(key, p);
     }
     return p;
   }, []);
@@ -977,6 +991,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
               sqlArgsRef.current.defaultDatabase,
               () => fksRef.current,
               getColumnMeta,
+              () => sqlArgsRef.current.schemaTable?.database ?? sqlArgsRef.current.defaultDatabase ?? null,
             ),
           ),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
@@ -1159,6 +1174,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
             defaultDatabase,
             () => fksRef.current,
             getColumnMeta,
+            () => sqlArgsRef.current.schemaTable?.database ?? sqlArgsRef.current.defaultDatabase ?? null,
           ),
         ),
       );

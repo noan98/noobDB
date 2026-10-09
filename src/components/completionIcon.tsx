@@ -1,24 +1,35 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { Icon } from "./Icon";
-import { completionIconName, completionKind } from "./sqlCompletionSchema";
+import { completionIconName, completionKind, type CompletionKind } from "./sqlCompletionSchema";
 
-const cache = new Map<string, string>();
+const cache = new Map<CompletionKind, Node>();
+
+/** 切り離した要素へ `<Icon>` を一度だけ描画してキャッシュする (描画のたびに cloneNode)。 */
+function iconNode(kind: CompletionKind): Node | null {
+  let node = cache.get(kind);
+  if (!node) {
+    const host = document.createElement("span");
+    const root = createRoot(host);
+    flushSync(() => root.render(<Icon name={completionIconName(kind)} size="sm" />));
+    if (!host.firstChild) return null;
+    node = host.firstChild;
+    cache.set(kind, node);
+    root.unmount();
+  }
+  return node.cloneNode(true);
+}
 
 /**
- * `Icon.tsx` の語彙を静的マークアップにして使う。
- * 色は `App.css` の `.cm-completionKindIcon-*` が `var()` で与える。
- * `<Icon>` を静的マークアップにして使う。色は `App.css` の `.cm-completionKindIcon-*` が `var()` で与える。
+ * 補完候補の種別アイコン (`autocompletion({ addToOptions })` の render)。
+ * `Icon.tsx` の語彙を使い、色は `App.css` の `.cm-completionKindIcon-*` が `var()` で与える。
+ * 未知の種別も同幅の空 span を返して行頭を揃える。
  */
-export function renderCompletionKindIcon(completion: { type?: string }): Node | null {
+export function renderCompletionKindIcon(completion: { type?: string }): Node {
   const kind = completionKind(completion.type);
-  if (!kind) return null;
-  let html = cache.get(kind);
-  if (html === undefined) {
-    html = renderToStaticMarkup(<Icon name={completionIconName(kind)} size="sm" />);
-    cache.set(kind, html);
-  }
   const el = document.createElement("span");
-  el.className = `cm-completionKindIcon cm-completionKindIcon-${kind}`;
-  el.innerHTML = html;
+  el.className = `cm-completionKindIcon${kind ? ` cm-completionKindIcon-${kind}` : ""}`;
+  const icon = kind ? iconNode(kind) : null;
+  if (icon) el.appendChild(icon);
   return el;
 }
