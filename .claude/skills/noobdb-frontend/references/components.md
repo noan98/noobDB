@@ -103,7 +103,7 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `RenameTableDialog` (行追加・行インスペクタ・テーブル名変更。行インスペクタの
   「関連」タブ #1028 は `RelatedRowsPanel` で被参照 FK ごとに子行をアコーディオン
   展開する master-detail。SQL は `relatedRows.ts` が `fkNavigation.ts` の
-  `buildReverseRefSql` に方言別の `LIMIT` / `TOP` を足して生成し、App の
+  `buildReverseRefSql` に `LIMIT` を足して生成し、App の
   `onRunRelatedQuery` = `run_query` (履歴に残らない内部クエリ) で取得する。
   子行の機微カラムは #1069 の設定パターンで伏せ字、キー列がマスク中なら辿らない)、`SchemaCompareView`
   (スキーマ/データ比較 → 同期 SQL 生成 UI。バックの Diff/Sync コマンドを駆動)、
