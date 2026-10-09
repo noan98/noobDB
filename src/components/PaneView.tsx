@@ -155,7 +155,7 @@ export interface PaneActions {
   handleToggleEmergencyMode: (next: boolean) => unknown;
   loadMoreInTab: (tabId: string) => unknown;
   openAndRunQuery: (sql: string, title?: string) => void;
-  openQueryInEditor: (sql: string, title?: string) => void;
+  openQueryInEditor: (sql: string, title?: string, database?: string) => void;
   openTabMenu: (tabId: string, x: number, y: number) => void;
   patchTab: (id: string, patcher: (tab: Tab) => Tab) => void;
   pinCurrentResult: (tab: Tab) => void;
@@ -680,6 +680,19 @@ export const PaneView = memo(
                     result={tab.result}
                     driver={selectedProfile?.driver ?? "mysql"}
                     streaming={tab.streaming}
+                    ai={
+                      sessionId && selectedProfile
+                        ? {
+                            sessionId,
+                            isProduction: selectedProfile.is_production ?? false,
+                            readOnly,
+                            sql: tab.explainSourceSql ?? getTabSql(tab),
+                            database: tab.database ?? selectedProfile.database ?? null,
+                            // 新しいタブに開くのは、EXPLAIN タブに DDL を入れると EXPLAIN CREATE INDEX になるため。
+                            onInsertSql: (sql) => actions.openQueryInEditor(sql, undefined, tab.database),
+                          }
+                        : undefined
+                    }
                     analyze={{
                       supported: explainAnalyzeSupported(selectedProfile?.driver),
                       active: !!tab.explainAnalyze,

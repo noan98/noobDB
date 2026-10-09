@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
 import { typedConfirmMatches } from "../typeToConfirm";
 import { semanticColorToken } from "../semanticColors";
+import { AiImpactAnalysis } from "./AiImpactAnalysis";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input } from "./ui";
@@ -33,6 +34,18 @@ interface Props {
    * 併記する。null のときは何も出さない。
    */
   impact?: PreflightImpact | null;
+  /**
+   * AI 影響分析 (#694) に必要な接続コンテキスト。渡されたときだけ「影響を AI で分析」を
+   * 出す (AI 無効 / キー未設定のときは AiImpactAnalysis 側が何も描かない)。
+   * UX ガードであり、バックエンド強制ではない。
+   */
+  aiContext?: {
+    sessionId: string;
+    /** `mysql` / `postgres` / `sqlite`。 */
+    driver: string;
+    database: string | null;
+    sql: string;
+  } | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -58,6 +71,7 @@ export function DangerousQueryDialog({
   writeApproval,
   typedConfirmTarget,
   impact,
+  aiContext,
   onConfirm,
   onCancel,
 }: Props) {
@@ -158,6 +172,18 @@ export function DangerousQueryDialog({
               {t("dangerousImpactNote")}
             </chakra.span>
           </Callout>
+        )}
+        {aiContext && (
+          // オンデマンドの AI 影響分析 (#694)。分析中も下の実行 / キャンセルは押せる。
+          <AiImpactAnalysis
+            sessionId={aiContext.sessionId}
+            driver={aiContext.driver}
+            database={aiContext.database}
+            sql={aiContext.sql}
+            findings={findings}
+            isProduction={isProduction}
+            preflight={impact ?? null}
+          />
         )}
         {requiresTyped && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">
