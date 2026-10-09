@@ -3,6 +3,10 @@ import { describe, it, expect } from "vitest";
 import type { ForeignKey } from "../api/tauri";
 import {
   buildErGraph,
+  endGlyph,
+  erHighlight,
+  sourceEndKind,
+  targetEndKind,
   layoutErGraph,
   nodeHeight,
   nodeWidth,
@@ -173,7 +177,7 @@ describe("nodeHeight", () => {
 describe("nodeWidth", () => {
   const data = (table: string, columns: string[]): ErTableData => ({
     table,
-    columns: columns.map((name) => ({ name, isPk: false, isFk: false })),
+    columns: columns.map((name) => ({ name, isPk: false, isFk: false, typeName: "", kind: null })),
     hiddenColumns: 0,
   });
 
@@ -253,5 +257,120 @@ describe("layoutErGraph", () => {
     const a = layoutErGraph(graph());
     const b = layoutErGraph(graph(), { direction: "LR", density: "comfortable" });
     expect(a.nodes.map((n) => [n.x, n.y])).toEqual(b.nodes.map((n) => [n.x, n.y]));
+  });
+});
+
+describe("fkCardinality / 型・カーディナリティ (#1360)", () => {
+  const tables = [
+    { name: "users", columns: ["id", "name"] },
+    { name: "orders", columns: ["id", "user_id"] },
+    { name: "profiles", columns: ["user_id", "bio"] },
+    { name: "tags_users", columns: ["user_id", "tag_id"] },
+  ];
+  const foreignKeys = [
+    fk("orders", "user_id", "users", "id"),
+    fk("profiles", "user_id", "users", "id"),
+    fk("tags_users", "user_id", "users", "id"),
+  ];
+  const pkByTable = {
+    users: ["id"],
+    orders: ["id"],
+    profiles: ["user_id"],
+    tags_users: ["user_id", "tag_id"],
+  };
+  const columnMeta = {
+    orders: { user_id: { dataType: "int", nullable: true, unique: false } },
+    profiles: { user_id: { dataType: "int", nullable: false, unique: false } },
+  };
+
+  it("既定 (型情報なし) は N:1・必須", () => {
+    const g = buildErGraph({ tables, foreignKeys });
+    expect(g.edges.every((e) => e.cardinality === "many-to-one" && !e.optional)).toBe(true);
+    expect(g.nodes[0].data.columns[0]).toMatchObject({ typeName: "", kind: null });
+  });
+
+  it("単一列 PK / 単独 UNIQUE の FK は 1:1、複合 PK の一部は N:1", () => {
+    const g = buildErGraph({ tables, foreignKeys, pkByTable, columnMeta });
+    const by = (t: string) => g.edges.find((e) => e.source === t)!;
+    expect(by("orders").cardinality).toBe("many-to-one");
+    expect(by("profiles").cardinality).toBe("one-to-one");
+    expect(by("tags_users").cardinality).toBe("many-to-one");
+    expect(
+      buildErGraph({
+        tables,
+        foreignKeys: [fk("orders", "user_id", "users", "id")],
+        columnMeta: { orders: { user_id: { dataType: "int", nullable: false, unique: true } } },
+      }).edges[0].cardinality,
+    ).toBe("one-to-one");
+  });
+
+  it("FK 列の NULL 可で親側が任意になる", () => {
+    const g = buildErGraph({ tables, foreignKeys, pkByTable, columnMeta });
+    expect(g.edges.find((e) => e.source === "orders")!.optional).toBe(true);
+    expect(g.edges.find((e) => e.source === "profiles")!.optional).toBe(false);
+  });
+
+  it("列に短縮型名と分類が付き、カード幅に型ラベル分が加わる", () => {
+    const g = buildErGraph({
+      tables: [{ name: "t", columns: ["a"] }],
+      foreignKeys: [],
+      columnMeta: {
+        t: { a: { dataType: "character varying(255)", nullable: false, unique: false } },
+      },
+    });
+    expect(g.nodes[0].data.columns[0]).toMatchObject({ typeName: "varchar", kind: "string" });
+    const long = "x".repeat(20);
+    const plain: ErTableData = {
+      table: "t",
+      columns: [{ name: long, isPk: false, isFk: false, typeName: "", kind: null }],
+      hiddenColumns: 0,
+    };
+    const typed: ErTableData = {
+      ...plain,
+      columns: [{ ...plain.columns[0], typeName: "varchar", kind: "string" }],
+    };
+    expect(nodeWidth(typed)).toBeGreaterThan(nodeWidth(plain));
+  });
+});
+
+describe("erHighlight", () => {
+  const edges = [
+    { id: "e1", source: "a", target: "b" },
+    { id: "e2", source: "c", target: "a" },
+    { id: "e3", source: "d", target: "e" },
+    { id: "e4", source: "f", target: "f" },
+  ];
+  it("ホバーなしは null", () => {
+    expect(erHighlight(null, edges)).toBeNull();
+  });
+  it("端点の線と反対側のテーブルを返す", () => {
+    const h = erHighlight("a", edges)!;
+    expect([...h.nodeIds].sort()).toEqual(["a", "b", "c"]);
+    expect([...h.edgeIds].sort()).toEqual(["e1", "e2"]);
+  });
+  it("線の無いテーブルは自分だけ、自己参照は自分と自分の線", () => {
+    expect([...erHighlight("z", edges)!.nodeIds]).toEqual(["z"]);
+    const h = erHighlight("f", edges)!;
+    expect([...h.nodeIds]).toEqual(["f"]);
+    expect([...h.edgeIds]).toEqual(["e4"]);
+  });
+});
+
+describe("端記号", () => {
+  it("子側は N:1 でクロウフット、1:1 で縦棒 + 丸。親側は NULL 可で丸付き", () => {
+    expect(sourceEndKind("many-to-one")).toBe("many");
+    expect(sourceEndKind("one-to-one")).toBe("one-optional");
+    expect(targetEndKind(false)).toBe("one-mandatory");
+    expect(targetEndKind(true)).toBe("one-optional");
+  });
+  it("endGlyph は向きに合わせて外向きに伸びる", () => {
+    const many = endGlyph("many", "right", 100, 50);
+    expect(many.paths).toHaveLength(3);
+    expect(many.paths[0]).toBe("M 112 50 L 100 56");
+    expect(many.circle).toBeNull();
+    const left = endGlyph("one-optional", "left", 100, 50);
+    expect(left.paths).toEqual(["M 94 55 L 94 45"]);
+    expect(left.circle).toEqual({ cx: 86.5, cy: 50, r: 3.5 });
+    expect(endGlyph("one-mandatory", "bottom", 0, 0).paths).toHaveLength(2);
   });
 });
