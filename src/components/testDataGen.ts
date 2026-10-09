@@ -129,7 +129,7 @@ export function parseEnumChoices(dataType: string): string[] | null {
 }
 
 /** `varchar(255)` のような宣言から最大長を取り出す (なければ null)。 */
-function declaredLength(dataType: string): number | null {
+export function declaredLength(dataType: string): number | null {
   const m = dataType.trim().match(/^[a-z ]+\(\s*(\d+)\s*[,)]/i);
   if (!m) return null;
   const n = Number(m[1]);
@@ -137,7 +137,7 @@ function declaredLength(dataType: string): number | null {
 }
 
 /** 日時系の宣言型から出力書式を推定する。 */
-function temporalFormatOf(dataType: string): TemporalFormat {
+export function temporalFormatOf(dataType: string): TemporalFormat {
   const t = dataType.trim().toLowerCase();
   if (t.includes("timestamp") || t.includes("datetime")) return "datetime";
   if (t.startsWith("date")) return "date";

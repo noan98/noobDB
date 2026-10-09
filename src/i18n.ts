@@ -2713,7 +2713,7 @@ const en = {
   testDataAiHintPlaceholder: "Hint (optional)",
   testDataAiHintAria: "AI hint for column {column}",
   testDataAiSends:
-    "Sends: the schema of {table} ({columns} columns, {fks} foreign keys), {rows} rows, locale {locale}. Existing row data, sample values and defaults are not sent.",
+    "Sends: the schema of {table} ({columns} columns, {fks} foreign keys), your column hints, {rows} rows, locale {locale}. Existing row data, sample values and defaults are not sent.",
   testDataAiLocaleJa: "Japanese",
   testDataAiLocaleEn: "English",
   testDataAiGenerate: "Generate with AI",
@@ -2734,6 +2734,9 @@ const en = {
   testDataAiWarnUnusable: "No usable values for {columns}; rule-based generation is used for them.",
   testDataAiWarnMisaligned: "The consistency rule could not be applied to {columns} because the value counts differ.",
   testDataAiRule: "Consistency: {columns} — {description}",
+  testDataAiWarnComposite:
+    "Composite unique constraints ({columns}) cannot be guaranteed by generated values; the insert may fail on duplicates.",
+  testDataAiKeepingPlan: "The previous AI result is still in use.",
 
   appHelp: "Help",
   helpTitle: "Feature guide",
@@ -6842,7 +6845,7 @@ const ja: Dict = {
   testDataAiHintPlaceholder: "ヒント (任意)",
   testDataAiHintAria: "カラム {column} の AI へのヒント",
   testDataAiSends:
-    "送信内容: {table} のスキーマ (列 {columns} 件・外部キー {fks} 件)・生成件数 {rows} 件・ロケール {locale}。既存の行データ・サンプル値・デフォルト値は送りません。",
+    "送信内容: {table} のスキーマ (列 {columns} 件・外部キー {fks} 件)・入力したヒント・生成件数 {rows} 件・ロケール {locale}。既存の行データ・サンプル値・デフォルト値は送りません。",
   testDataAiLocaleJa: "日本語",
   testDataAiLocaleEn: "英語",
   testDataAiGenerate: "AI で生成",
@@ -6863,6 +6866,9 @@ const ja: Dict = {
   testDataAiWarnUnusable: "{columns} は使える値がなかったため、ルールベースで生成します。",
   testDataAiWarnMisaligned: "{columns} は値の個数が揃わないため、整合ルールを適用できませんでした。",
   testDataAiRule: "整合: {columns} — {description}",
+  testDataAiWarnComposite:
+    "複合 UNIQUE 制約 ({columns}) は生成値では重複を避けきれないため、投入が重複エラーになる可能性があります。",
+  testDataAiKeepingPlan: "前回の AI 生成結果を使用中です。",
 
   appHelp: "ヘルプ",
   helpTitle: "機能ガイド",

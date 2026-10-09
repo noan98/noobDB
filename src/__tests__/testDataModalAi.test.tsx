@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
+import { generateRows, inferColumnSpec } from "../components/testDataGen";
 
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
-const describeTable = vi.fn();
+const describeTable: ReturnType<typeof vi.fn> = vi.fn();
 const runQuery = vi.fn();
 const insertGeneratedRows = vi.fn();
+const listIndexes = vi.fn();
 const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 });
 const hasAiApiKey = vi.fn().mockResolvedValue(true);
 const unlisten = vi.fn();
@@ -27,6 +29,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       describeTable: (...a: unknown[]) => describeTable(...a),
       runQuery: (...a: unknown[]) => runQuery(...a),
       insertGeneratedRows: (...a: unknown[]) => insertGeneratedRows(...a),
+      listIndexes: (...a: unknown[]) => listIndexes(...a),
       cancelStream: (...a: unknown[]) => cancelStream(...a),
       hasAiApiKey: () => hasAiApiKey(),
     },
@@ -97,7 +100,8 @@ beforeEach(() => {
     column("product_name"),
     column("unit_price", { data_type: "int" }),
   ]);
-  runQuery.mockResolvedValue({ rows: [[1], [2], [3]] });
+  runQuery.mockResolvedValue({ rows: [[98765], [98766], [98767]] });
+  listIndexes.mockResolvedValue([]);
   insertGeneratedRows.mockResolvedValue({ elapsed_ms: 5 });
   enable();
 });
@@ -145,7 +149,8 @@ describe("TestDataModal AI モード (#698)", () => {
     expect(req.system).not.toContain("SECRET-DEFAULT");
     // 親テーブルの既存 PK (runQuery の結果) はプロンプトに載らない。
     expect(req.system).toContain("customer_id -> customers.id");
-    expect(`${req.system}${req.prompt}`).not.toMatch(/1, 2, 3|\[1,2,3\]/);
+    expect(`${req.system}${req.prompt}`).not.toContain("98765");
+    expect(`${req.system}${req.prompt}`).not.toContain("98766");
     expect(screen.getByTestId("testdata-ai-sends").textContent).toContain("orders");
     // 投入はまだできない (計画が無い)。
     expect((screen.getByRole("button", { name: t("testDataRun") }) as HTMLButtonElement).disabled).toBe(true);
@@ -164,7 +169,7 @@ describe("TestDataModal AI モード (#698)", () => {
     expect(arg.columns).toEqual(["customer_id", "product_name", "unit_price"]);
     expect(arg.rows).toHaveLength(100);
     for (const r of arg.rows) {
-      expect([1, 2, 3]).toContain(r[0]); // 既存の親 PK から選ばれる (FK が壊れない)
+      expect([98765, 98766, 98767]).toContain(r[0]); // 既存の親 PK から選ばれる (FK が壊れない)
       expect(["ペン:120", "ノート:250"]).toContain(`${r[1]}:${r[2]}`);
     }
     await waitFor(() => expect(onInserted).toHaveBeenCalled());
@@ -238,5 +243,74 @@ describe("TestDataModal AI モード (#698)", () => {
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
     act(() => handlers?.onError?.({ streamId: "x", error: "no", kind: "aiRefused" }));
     await screen.findByText(t("testDataAiRefused", { message: "no" }));
+  });
+
+  it("入力したヒントが system プロンプトに入る", async () => {
+    renderWithProviders(ui());
+    await selectAiMode();
+    fireEvent.change(screen.getByLabelText(t("testDataAiHintAria", { column: "product_name" })), {
+      target: { value: "文房具の商品名" },
+    });
+    const btn = screen.getByRole("button", { name: t("testDataAiGenerate") });
+    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(btn);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].system).toContain("user hint: 文房具の商品名");
+  });
+
+  it("AI が使える状態でもルールベースを選べば、従来どおり generateRows と同一のプレビューになる", async () => {
+    renderWithProviders(ui());
+    await screen.findByLabelText(t("testDataStrategyAria", { column: "product_name" }));
+    fireEvent.change(screen.getByLabelText(t("testDataSeed")), { target: { value: "123" } });
+    fireEvent.change(screen.getByLabelText(t("testDataRowCount")), { target: { value: "5" } });
+    const specs = (await describeTable()).map(inferColumnSpec).map((sp) =>
+      sp.column === "customer_id" ? { ...sp, choices: [98765, 98766, 98767] } : sp,
+    );
+    const expected = generateRows(specs, 5, 123).map((r) => r.map((v) => String(v)));
+    await waitFor(() => {
+      const rows = Array.from(document.querySelectorAll("tbody tr")).map((tr) =>
+        Array.from(tr.querySelectorAll("td")).map((td) => td.textContent ?? ""),
+      );
+      expect(rows).toEqual(expected);
+    });
+    expect(screen.queryByTestId("testdata-ai-panel")).toBeNull();
+  });
+
+  it("PostgreSQL の UNIQUE index の列を一意列として AI コンテキストに渡し、複合 UNIQUE は警告する", async () => {
+    describeTable.mockResolvedValue([
+      column("id", { data_type: "integer", key: "PRI", extra: "" }),
+      column("email"),
+      column("a"),
+      column("b"),
+    ]);
+    listIndexes.mockResolvedValue([
+      { name: "u_email", columns: ["email"], unique: true, primary: false, method: "btree" },
+      { name: "u_ab", columns: ["a", "b"], unique: true, primary: false, method: "btree" },
+    ]);
+    renderWithProviders(ui({ driver: "postgres" }));
+    await screen.findByLabelText(t("testDataModeLabel"));
+    await screen.findByLabelText(t("testDataStrategyAria", { column: "email" }));
+    fireEvent.change(screen.getByLabelText(t("testDataModeLabel")), { target: { value: "ai" } });
+    await screen.findByText(t("testDataAiWarnComposite", { columns: "(a, b)" }));
+    const btn = screen.getByRole("button", { name: t("testDataAiGenerate") });
+    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(btn);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].system).toContain("- email: varchar(100) NOT NULL UNIQUE");
+  });
+
+  it("再生成が失敗したときは前回の計画を使用中と表示する", async () => {
+    renderWithProviders(ui());
+    await startGenerate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: aiResponse });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText(t("testDataAiPlanReady", { count: 2 }));
+    fireEvent.click(screen.getByRole("button", { name: t("testDataAiRegenerate") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    act(() => handlers?.onError?.({ streamId: "x", error: "boom", kind: "aiApi" }));
+    await screen.findByText(t("testDataAiKeepingPlan"));
   });
 });

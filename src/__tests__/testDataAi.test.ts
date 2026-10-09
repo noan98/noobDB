@@ -6,12 +6,13 @@ import {
   buildTestDataPlan,
   buildTestDataPrompt,
   buildTestDataSystem,
-  generateAiDataset,
+  generateAiRows,
+  isValidTemporal,
+  resolveUniqueColumns,
   parseTestDataResponse,
   summarizeTestDataSend,
   TEST_DATA_FORMAT,
   TEST_DATA_MAX_CHOICES,
-  uniqueColumnNames,
   type TestDataAiResponse,
 } from "../ai/testData";
 
@@ -40,7 +41,7 @@ const orderCols: TableColumnInfo[] = [
 
 function setup(hints: Record<string, string> = {}) {
   const specs = orderCols.map(inferColumnSpec);
-  const context = buildTestDataAiContext(orderCols, specs, hints);
+  const context = buildTestDataAiContext(orderCols, specs, hints, resolveUniqueColumns(orderCols, []).columns);
   return { specs, context };
 }
 
@@ -164,16 +165,16 @@ describe("buildTestDataPlan", () => {
   });
 });
 
-describe("generateAiDataset (#698)", () => {
+describe("generateAiRows (#698)", () => {
   function build(count: number, seed: number) {
     const { specs, context } = setup();
     // customer_id は取得済みの親 PK から選ぶ (既存の buildFkSelectSql 経路と同じ)。
     const withFk = specs.map((s) => (s.column === "customer_id" ? { ...s, choices: [10, 20, 30] } : s));
     const plan = buildTestDataPlan(response, context.columns);
-    return generateAiDataset(
-      [{ table: "orders", specs: withFk, plan, uniqueColumns: uniqueColumnNames(orderCols), count }],
+    return generateAiRows(
+      { specs: withFk, plan, uniqueColumns: resolveUniqueColumns(orderCols, []).columns, count },
       seed,
-    ).orders;
+    );
   }
 
   it("同じシードなら常に同じ行、違うシードなら変わる", () => {
@@ -197,7 +198,7 @@ describe("generateAiDataset (#698)", () => {
     const { rows } = build(500, 1);
     const emails = rows.map((r) => String(r[4]));
     expect(new Set(emails).size).toBe(500);
-    expect(emails[0]).toMatch(/^(user|member)1@example\.(com|jp)$/);
+    expect(emails[0]).toMatch(/^(user|member)\d+@example\.(com|jp)$/);
   });
 
   it("候補が少ない UNIQUE 文字列列は連番サフィックスで一意化する", () => {
@@ -205,9 +206,9 @@ describe("generateAiDataset (#698)", () => {
     const specs = cols.map(inferColumnSpec);
     const plan = buildTestDataPlan(
       { columns: [{ name: "code", kind: "choices", choices: ["A", "B", "C"], notes: "" }], consistency_rules: [] },
-      buildTestDataAiContext(cols, specs, {}).columns,
+      buildTestDataAiContext(cols, specs, {}, ["code"]).columns,
     );
-    const { rows } = generateAiDataset([{ table: "t", specs, plan, uniqueColumns: ["code"], count: 8 }], 3).t;
+    const { rows } = generateAiRows({ specs, plan, uniqueColumns: ["code"], count: 8 }, 3);
     const vals = rows.map((r) => String(r[0]));
     expect(new Set(vals).size).toBe(8);
     expect(vals.filter((v) => ["A", "B", "C"].includes(v))).toHaveLength(3);
@@ -215,41 +216,136 @@ describe("generateAiDataset (#698)", () => {
 
   it("計画の無い列はルールベースで生成する", () => {
     const { specs } = setup();
-    const { rows } = generateAiDataset(
-      [{ table: "orders", specs, plan: null, uniqueColumns: [], count: 5 }],
-      9,
-    ).orders;
+    const { rows } = generateAiRows({ specs, plan: null, uniqueColumns: [], count: 5 }, 9);
     expect(rows).toHaveLength(5);
     expect(rows.every((r) => r.length === 5)).toBe(true);
   });
 
-  it("親も同時に生成する場合は親の生成値だけを子の FK に配る (参照が壊れない)", () => {
-    const parentCols = [col({ name: "id", data_type: "int", key: "PRI" }), col({ name: "name" })];
-    const childCols = [
-      col({ name: "id", data_type: "int", key: "PRI", extra: "auto_increment" }),
-      col({ name: "parent_id", data_type: "int", referenced_table: "parents", referenced_column: "id" }),
-      col({ name: "title" }),
-    ];
-    const parentSpecs = parentCols.map(inferColumnSpec); // id: serial
-    const childSpecs = childCols.map(inferColumnSpec); // parent_id: fkRef (候補なし)
+  it("UNIQUE 文字列は宣言長を超えず、メールは @ の前にサフィックスが入り、大小違いも衝突とみなす", () => {
+    const cols = [col({ name: "email", data_type: "varchar(20)", key: "UNI" })];
+    const specs = cols.map(inferColumnSpec);
+    const plan = buildTestDataPlan(
+      { columns: [{ name: "email", kind: "choices", choices: ["Taro@ex.com", "taro@ex.com"], notes: "" }], consistency_rules: [] },
+      buildTestDataAiContext(cols, specs, {}, ["email"]).columns,
+    );
+    const { rows } = generateAiRows({ specs, plan, uniqueColumns: ["email"], count: 30 }, 5);
+    const vals = rows.map((r) => String(r[0]));
+    expect(new Set(vals.map((v) => v.toLowerCase())).size).toBe(30);
+    for (const v of vals) {
+      expect(v.length).toBeLessThanOrEqual(20);
+      expect(v.endsWith("@ex.com")).toBe(true);
+    }
+  });
+
+  it("{n} の開始値はシードで変わるが、同じシードなら同じ", () => {
+    const cols = [col({ name: "code", key: "UNI" })];
+    const specs = cols.map(inferColumnSpec);
+    const plan = buildTestDataPlan(
+      { columns: [{ name: "code", kind: "pattern", choices: ["C{n}"], notes: "" }], consistency_rules: [] },
+      buildTestDataAiContext(cols, specs, {}, ["code"]).columns,
+    );
+    const gen = (seed: number) => generateAiRows({ specs, plan, uniqueColumns: ["code"], count: 3 }, seed).rows;
+    expect(gen(1)).toEqual(gen(1));
+    expect(gen(1)).not.toEqual(gen(2));
+  });
+});
+
+describe("候補の検証 (#698 レビュー)", () => {
+  const cols = [
+    col({ name: "product_name", data_type: "varchar(5)" }),
+    col({ name: "unit_price", data_type: "int" }),
+    col({ name: "qty", data_type: "int" }),
+    col({ name: "created", data_type: "datetime" }),
+    col({ name: "birth", data_type: "date" }),
+    col({ name: "at", data_type: "time" }),
+    col({ name: "note", data_type: "varchar(10)" }),
+  ];
+  const ctx = () => buildTestDataAiContext(cols, cols.map(inferColumnSpec), {}, []).columns;
+
+  it("整合ルールの列は除外後に添字がずれない (空要素・不正値の行は全列から落ちる)", () => {
     const plan = buildTestDataPlan(
       {
-        columns: [{ name: "name", kind: "choices", choices: ["山田", "佐藤"], notes: "" }],
+        columns: [
+          { name: "product_name", kind: "choices", choices: ["A", "", "C"], notes: "" },
+          { name: "unit_price", kind: "choices", choices: ["1", "2", "x"], notes: "" },
+        ],
+        consistency_rules: [{ columns: ["product_name", "unit_price"], description: "対応" }],
+      },
+      ctx(),
+    );
+    // 添字 0 だけが両列で有効。A:1 のみで、C:2 のような誤った組は作らない。
+    expect(plan.columns.product_name.choices).toEqual(["A"]);
+    expect(plan.columns.unit_price.choices).toEqual(["1"]);
+    expect(plan.groups).toEqual([["product_name", "unit_price"]]);
+  });
+
+  it("整合ルールで加工前の個数が揃わなければ、除外後に揃っても適用しない", () => {
+    const plan = buildTestDataPlan(
+      {
+        columns: [
+          { name: "product_name", kind: "choices", choices: ["A", "B", ""], notes: "" },
+          { name: "unit_price", kind: "choices", choices: ["1", "2"], notes: "" },
+        ],
+        consistency_rules: [{ columns: ["product_name", "unit_price"], description: "対応" }],
+      },
+      ctx(),
+    );
+    expect(plan.groups).toEqual([]);
+    expect(plan.warnings.some((w) => w.code === "misaligned")).toBe(true);
+  });
+
+  it("整数列は小数・非数を除き、文字列は宣言長超過と NULL を除く", () => {
+    const plan = buildTestDataPlan(
+      {
+        columns: [
+          { name: "qty", kind: "choices", choices: ["1", "2.5", "1e3", "abc", "-3"], notes: "" },
+          { name: "product_name", kind: "choices", choices: ["12345", "123456", "null", "NULL"], notes: "" },
+        ],
         consistency_rules: [],
       },
-      buildTestDataAiContext(parentCols, parentSpecs, {}).columns,
+      ctx(),
     );
-    // 子を先頭に渡しても、親 → 子の順で生成される。
-    const out = generateAiDataset(
-      [
-        { table: "children", specs: childSpecs, plan: null, uniqueColumns: [], count: 30 },
-        { table: "parents", specs: parentSpecs, plan, uniqueColumns: ["id"], count: 5 },
-      ],
-      11,
+    expect(plan.columns.qty.choices).toEqual(["1", "-3"]);
+    expect(plan.columns.product_name.choices).toEqual(["12345"]);
+  });
+
+  it("日時列は書式と実在を検証し、pattern は許可しない", () => {
+    const plan = buildTestDataPlan(
+      {
+        columns: [
+          { name: "created", kind: "choices", choices: ["2024-02-29 10:00:00", "2023-02-29 10:00:00", "2024-01-01", "2024-01-01 24:00:00"], notes: "" },
+          { name: "birth", kind: "choices", choices: ["2024-13-01", "1999-12-31", "2024-1-1"], notes: "" },
+          { name: "at", kind: "pattern", choices: ["10:{n}:00"], notes: "" },
+        ],
+        consistency_rules: [],
+      },
+      ctx(),
     );
-    const parentIds = new Set(out.parents.rows.map((r) => r[0]));
-    expect(parentIds.size).toBe(5);
-    const fkIdx = out.children.columns.indexOf("parent_id");
-    for (const r of out.children.rows) expect(parentIds.has(r[fkIdx])).toBe(true);
+    expect(plan.columns.created.choices).toEqual(["2024-02-29 10:00:00"]);
+    expect(plan.columns.birth.choices).toEqual(["1999-12-31"]);
+    expect(plan.columns.at).toBeUndefined();
+    expect(isValidTemporal("23:59:59", "time")).toBe(true);
+    expect(isValidTemporal("23:60:00", "time")).toBe(false);
+  });
+
+  it("pattern は {n} 展開後の長さが宣言長を超えるものを除く", () => {
+    const plan = buildTestDataPlan(
+      { columns: [{ name: "note", kind: "pattern", choices: ["a{n}", "abcdefg{n}"], notes: "" }], consistency_rules: [] },
+      ctx(),
+    );
+    expect(plan.columns.note.choices).toEqual(["a{n}"]);
+  });
+});
+
+describe("resolveUniqueColumns (#698 レビュー)", () => {
+  it("PostgreSQL / SQLite の単一列 UNIQUE index を拾い、複合は composite に分ける", () => {
+    const cs = [col({ name: "id", key: "PRI" }), col({ name: "email" }), col({ name: "a" }), col({ name: "b" })];
+    const r = resolveUniqueColumns(cs, [
+      { columns: ["email"], unique: true, primary: false },
+      { columns: ["a", "b"], unique: true, primary: false },
+      { columns: ["b"], unique: false, primary: false },
+    ]);
+    expect(r.columns).toEqual(["id", "email"]);
+    expect(r.composite).toEqual([["a", "b"]]);
   });
 });

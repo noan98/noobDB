@@ -8,14 +8,15 @@ import {
   buildTestDataPlan,
   buildTestDataPrompt,
   buildTestDataSystem,
-  generateAiDataset,
+  generateAiRows,
   isAiEligible,
   parseTestDataResponse,
   summarizeTestDataSend,
   TEST_DATA_FORMAT,
   TEST_DATA_HINT_MAX,
-  uniqueColumnNames,
+  resolveUniqueColumns,
   type TestDataAiPlan,
+  type UniqueColumnInfo,
 } from "../ai/testData";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { useLocale, useT, type I18nKey } from "../i18n";
@@ -134,6 +135,7 @@ export function TestDataModal({
 
   const [mode, setMode] = useState<"rule" | "ai">("rule");
   const [cols, setCols] = useState<TableColumnInfo[] | null>(null);
+  const [uniqueInfo, setUniqueInfo] = useState<UniqueColumnInfo>({ columns: [], composite: [] });
   const [hints, setHints] = useState<Record<string, string>>({});
   const [aiState, setAiState] = useState<AiState>({ kind: "idle" });
   const [plan, setPlan] = useState<TestDataAiPlan | null>(null);
@@ -160,8 +162,16 @@ export function TestDataModal({
     let cancelled = false;
     void (async () => {
       try {
-        const described: TableColumnInfo[] = await api.describeTable(sessionId, database, table);
-        if (!cancelled) setCols(described);
+        const [described, indexes] = await Promise.all([
+          api.describeTable(sessionId, database, table),
+          // describe_table の key は MySQL の UNI しか持たないため、PG / SQLite の UNIQUE index は
+          // インデックス一覧から補う (取れなくても開ける)。
+          api.listIndexes(sessionId, database, table).catch(() => []),
+        ]);
+        if (!cancelled) {
+          setCols(described);
+          setUniqueInfo(resolveUniqueColumns(described, indexes));
+        }
         const inferred = described.map(inferColumnSpec);
         const withFk = await Promise.all(
           inferred.map(async (spec) => {
@@ -199,16 +209,13 @@ export function TestDataModal({
   const insertColumns = useMemo(() => (specs ? activeSpecs(specs) : []), [specs]);
 
   const aiContext = useMemo(
-    () => (cols && specs ? buildTestDataAiContext(cols, specs, hints) : null),
-    [cols, specs, hints],
+    () => (cols && specs ? buildTestDataAiContext(cols, specs, hints, uniqueInfo.columns) : null),
+    [cols, specs, hints, uniqueInfo],
   );
   const aiDataset = useMemo(() => {
     if (!aiMode || !plan || !specs || !cols || !rowCountValid) return null;
-    return generateAiDataset(
-      [{ table, specs, plan, uniqueColumns: uniqueColumnNames(cols), count: rowCount }],
-      seed,
-    )[table];
-  }, [aiMode, plan, specs, cols, rowCountValid, table, rowCount, seed]);
+    return generateAiRows({ specs, plan, uniqueColumns: uniqueInfo.columns, count: rowCount }, seed);
+  }, [aiMode, plan, specs, cols, rowCountValid, rowCount, seed, uniqueInfo]);
 
   // プレビュー: 先頭 PREVIEW_ROWS 行。実投入と同じシード/設定で生成するため、
   // 先頭行はプレビューと完全に一致する (generateRows は決定論的)。
@@ -300,7 +307,14 @@ export function TestDataModal({
     if (isProduction) {
       const ok = await confirm({
         title: t("testDataAiConfirmTitle"),
-        message: `${t("testDataAiConfirmBody")}\n${aiSendsLine ?? ""}`,
+        message: (
+          <>
+            <chakra.p m={0}>{t("testDataAiConfirmBody")}</chakra.p>
+            <chakra.p m={0} mt="2" color="app.textMuted">
+              {aiSendsLine ?? ""}
+            </chakra.p>
+          </>
+        ),
         confirmLabel: t("testDataAiConfirmSend"),
         tone: "warning",
       });
@@ -688,6 +702,18 @@ export function TestDataModal({
             {aiState.kind === "cancelled" && (
               <Callout tone="info" role="status">
                 {t("testDataAiCancelled")}
+              </Callout>
+            )}
+            {uniqueInfo.composite.length > 0 && (
+              <Callout tone="warning" role="status">
+                {t("testDataAiWarnComposite", {
+                  columns: uniqueInfo.composite.map((c) => `(${c.join(", ")})`).join(" / "),
+                })}
+              </Callout>
+            )}
+            {plan && (aiState.kind === "raw" || aiState.kind === "error" || aiState.kind === "cancelled") && (
+              <Callout tone="info" role="status">
+                {t("testDataAiKeepingPlan")}
               </Callout>
             )}
             {plan && aiState.kind === "idle" && (
