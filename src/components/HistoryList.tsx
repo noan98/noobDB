@@ -32,6 +32,8 @@ import {
   HistoryStatusFilter,
 } from "./historyFilters";
 import { Tooltip } from "./Tooltip";
+import { AiHistorySearch } from "./AiHistorySearch";
+import { useAiAvailable } from "../ai/useAiAvailable";
 
 // ステータス/期間の 2 択セグメント。SettingsView の SettingsSegment と同じ
 // 見た目のローカル版 (この 1 画面でしか使わないため共有コンポーネント化はしない)。
@@ -292,6 +294,8 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   const [showAll, setShowAll] = useState(false);
   const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<HistoryPeriodFilter>("all");
+  const [aiSearchOpen, setAiSearchOpen] = useState(false);
+  const aiAvailable = useAiAvailable();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const { copiedKey: copiedId, copy } = useKeyedCopyFeedback<number>();
@@ -434,7 +438,26 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
             </FilterSegmentButton>
           ))}
         </FilterSegment>
+        {aiAvailable && (
+          <Tooltip label={t("aiHistoryToggleHint")}>
+            <PressableButton
+              type="button"
+              variant="secondary"
+              aria-pressed={aiSearchOpen}
+              onClick={() => setAiSearchOpen((v) => !v)}
+            >
+              {t("aiHistoryToggle")}
+            </PressableButton>
+          </Tooltip>
+        )}
       </TreeSearch>
+      {aiAvailable && aiSearchOpen && (
+        <AiHistorySearch
+          entries={entries}
+          periodLabel={t(PERIOD_FILTER_LABEL_KEYS[periodFilter])}
+          onOpen={restoreById}
+        />
+      )}
 
       <TreeSearch borderTop="none" pt={0} display="flex" gap="1.5">
         <PressableButton type="button" variant="secondary" onClick={() => setFlightRecorderOpen(true)}>

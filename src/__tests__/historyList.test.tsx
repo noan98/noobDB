@@ -24,6 +24,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { HistoryList } from "../components/HistoryList";
+import { setAiKeyPresent } from "../ai/aiKeyStore";
+import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 function makeHistoryEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
   return {
@@ -194,5 +196,43 @@ describe("HistoryList の「スニペットとして保存」行アクション 
 
     await screen.findByText(entry.sql_preview);
     expect(screen.queryByLabelText(t("historySaveAsSnippet"))).not.toBeInTheDocument();
+  });
+});
+
+describe("HistoryList の AI 検索入口 (#699)", () => {
+  const renderList = () =>
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={() => {}}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+
+  it("AI 無効 / キー未設定のときはトグルを出さず、従来の検索 UI のまま", async () => {
+    setAiKeyPresent(false);
+    replaceAllSettings({ ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, enabled: false } });
+    renderList();
+    await waitFor(() => expect(listHistory).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: t("aiHistoryToggle") })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(t("historySearchPlaceholder"))).toBeInTheDocument();
+  });
+
+  it("AI 有効ならトグルで AI 検索パネルを開閉でき、LIKE 検索欄は残る", async () => {
+    setAiKeyPresent(true);
+    replaceAllSettings({
+      ...DEFAULT_SETTINGS,
+      ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true },
+    });
+    renderList();
+    const toggle = await screen.findByRole("button", { name: t("aiHistoryToggle") });
+    expect(screen.queryByTestId("ai-history-search")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(await screen.findByTestId("ai-history-search")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(t("historySearchPlaceholder"))).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("ai-history-search")).not.toBeInTheDocument();
   });
 });
