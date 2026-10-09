@@ -29,22 +29,29 @@ describe("tabsToClose", () => {
 
 describe("duplicateSpec", () => {
   it("query は SQL とタイトルを引き継ぐ", () => {
-    expect(duplicateSpec({ kind: "query", title: "q", sql: "SELECT 1" })).toEqual({
+    expect(duplicateSpec({ kind: "query", title: "q", sql: "SELECT 1", lastExecutedSql: "SELECT 1" })).toEqual({
       kind: "query",
       title: "q",
       sql: "SELECT 1",
+      lastExecutedSql: "SELECT 1",
     });
   });
+  it("dirty な元タブは lastExecutedSql を引き継ぎ、複製も dirty のまま", () => {
+    const r = duplicateSpec({ kind: "query", title: "q", sql: "SELECT 2", lastExecutedSql: "SELECT 1" });
+    expect(r.sql).toBe("SELECT 2");
+    expect(r.lastExecutedSql).toBe("SELECT 1");
+  });
   it("explain は explain のまま複製する", () => {
-    expect(duplicateSpec({ kind: "explain", title: "e", sql: "EXPLAIN SELECT 1" }).kind).toBe(
+    expect(duplicateSpec({ kind: "explain", title: "e", sql: "EXPLAIN SELECT 1", lastExecutedSql: "EXPLAIN SELECT 1" }).kind).toBe(
       "explain",
     );
   });
   it("table は query タブになる", () => {
-    expect(duplicateSpec({ kind: "table", title: "users", sql: "SELECT * FROM users" })).toEqual({
+    expect(duplicateSpec({ kind: "table", title: "users", sql: "SELECT * FROM users", lastExecutedSql: "SELECT * FROM users" })).toEqual({
       kind: "query",
       title: "users",
       sql: "SELECT * FROM users",
+      lastExecutedSql: "SELECT * FROM users",
     });
   });
 });

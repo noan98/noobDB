@@ -7161,11 +7161,12 @@ export default function App() {
       kind: src.kind,
       title: src.title,
       sql: tabSqlStore.resolve(src.id, src.sql),
+      lastExecutedSql: src.lastExecutedSql,
     });
     const base = spec.kind === "explain" ? makeExplainTab(spec.sql) : makeQueryTab();
     const owner = panesRef.current.find((p) => p.tabIds.includes(id));
     addTab(
-      { ...base, title: spec.title, sql: spec.sql, lastExecutedSql: spec.sql, database: src.database },
+      { ...base, title: spec.title, sql: spec.sql, lastExecutedSql: spec.lastExecutedSql, database: src.database },
       owner?.id,
     );
   }, [addTab, tabSqlStore, tabsRef, panesRef]);
@@ -10131,7 +10132,7 @@ export default function App() {
           { separator: true },
           { label: t("tabCloseOthers"), onSelect: () => closeBulk("others"), disabled: !hasOthers },
           { label: t("tabCloseRight"), onSelect: () => closeBulk("right"), disabled: !hasRight },
-          { label: t("tabCloseAll"), onSelect: () => closeBulk("all"), danger: true },
+          { label: t(panes.length > 1 ? "tabCloseAllInPane" : "tabCloseAll"), onSelect: () => closeBulk("all"), danger: true },
           { separator: true },
           {
             label: t("tabClose"),

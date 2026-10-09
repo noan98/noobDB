@@ -38,6 +38,8 @@ export interface DuplicateSource {
   title: string;
   /** エディタの最新テキスト (未反映の編集を含む)。 */
   sql: string;
+  /** 元タブの最終実行 SQL。dirty 判定 (sql との差) を複製にも引き継ぐために使う。 */
+  lastExecutedSql: string;
 }
 
 /** 複製で作るタブの内容。 */
@@ -49,6 +51,7 @@ export interface DuplicateSpec {
   kind: "query" | "explain";
   title: string;
   sql: string;
+  lastExecutedSql: string;
 }
 
 /**
@@ -60,5 +63,6 @@ export function duplicateSpec(source: DuplicateSource): DuplicateSpec {
     kind: source.kind === "explain" ? "explain" : "query",
     title: source.title,
     sql: source.sql,
+    lastExecutedSql: source.lastExecutedSql,
   };
 }
