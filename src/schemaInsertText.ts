@@ -1,12 +1,13 @@
 // スキーマツリーのノード (列など) を SQL エディタへ挿入する / コピーするときの
 // テキスト整形 (#1352)。コンポーネントから切り離した純関数で、ドラッグ挿入 (#1414)
-// からも再利用する。識別子のクォートは `quoteIdentFor` に必ず委ねる。
+// からも再利用する。識別子は `quoteIfNeeded` に委ね、素の識別子 (`id`, `users.id`) は
+// クォートせず、大文字を含む PG 名・予約語・記号/空白入りの名前だけクォートする。
 
-import { quoteIdentFor } from "./components/sqlDialect";
+import { quoteIfNeeded } from "./components/sqlJoinCompletion";
 
 /** 列名のみ (`col`)。 */
 export function columnInsertText(driver: string, column: string): string {
-  return quoteIdentFor(driver, column);
+  return quoteIfNeeded(driver, column);
 }
 
 /**
@@ -14,5 +15,5 @@ export function columnInsertText(driver: string, column: string): string {
  * FROM 句はたいてい表名だけで参照するため、`表.列` の形が最も貼り付けやすい。
  */
 export function qualifiedColumnInsertText(driver: string, table: string, column: string): string {
-  return `${quoteIdentFor(driver, table)}.${quoteIdentFor(driver, column)}`;
+  return `${quoteIfNeeded(driver, table)}.${quoteIfNeeded(driver, column)}`;
 }

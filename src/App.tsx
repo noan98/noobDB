@@ -6716,28 +6716,21 @@ export default function App() {
     openAndRunQuery(`${base} LIMIT ${limit}`, table);
   }, [openAndRunQuery, settings.defaultDisplayCount, selectedProfile?.driver]);
 
+  // 挿入先の分岐は handleLauncherInsertSql を共用する。
   // Insert SELECT * into the focused pane's editor, or open a fresh query tab
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
-  const insertSqlIntoEditor = useCallback((sql: string) => {
-    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
-      activeEditor()?.insertText(sql);
-    } else if (sessionId) {
-      addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
-    }
-  }, [activeTab, sessionId, activeEditor, addTab]);
-
   const handleInsertTableSelect = useCallback((database: string, table: string) => {
-    insertSqlIntoEditor(qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table));
-  }, [selectedProfile?.driver, insertSqlIntoEditor]);
+    handleLauncherInsertSql(qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table));
+  }, [selectedProfile?.driver, handleLauncherInsertSql]);
 
   // スキーマツリーの列を挿入 / コピー (#1352)。整形は schemaInsertText.ts。
   const handleInsertColumn = useCallback((table: string, column: string, qualified: boolean) => {
     const driver = selectedProfile?.driver ?? "mysql";
-    insertSqlIntoEditor(
+    handleLauncherInsertSql(
       qualified ? qualifiedColumnInsertText(driver, table, column) : columnInsertText(driver, column),
     );
-  }, [selectedProfile?.driver, insertSqlIntoEditor]);
+  }, [selectedProfile?.driver, handleLauncherInsertSql]);
 
   const handleCopyColumnName = useCallback(async (column: string) => {
     if (await copyToClipboard(column)) {

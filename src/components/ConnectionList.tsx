@@ -2679,8 +2679,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  // 列ノードの右クリック: 影響分析 (#1027)。列を RENAME / DROP する前に、その列を
-  // 参照しているビュー・ルーチン・トリガー・スニペットを探す。
+  // 列ノードの右クリック。エディタへの列名 / 修飾名の挿入と列名コピー (#1352)、
+  // および影響分析 (#1027: 列を RENAME / DROP する前に、その列を参照している
+  // ビュー・ルーチン・トリガー・スニペットを探す)。出せる項目が無ければメニューを開かない。
   const handleColumnContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => {
     const items: ContextMenuEntry[] = [];
     if (onInsertColumn) {
