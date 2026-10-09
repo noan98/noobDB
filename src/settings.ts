@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { isDarkDataTheme } from "./colorScale";
 import { pruneMruIds, recordMruUsage, sanitizeMruIds } from "./components/commandPaletteSearch";
 import { DEFAULT_MASK_PATTERNS, sanitizeMaskPatterns } from "./components/columnMask";
 import {
@@ -322,6 +323,9 @@ export interface Settings {
  *   (`solarized-light` / `solarized-dark`, #598). Accent hues darkened /
  *   brightened from the canonical values where needed to keep WCAG AA.
  * - `one-dark` — dark-only One Dark (Atom) palette (#598).
+ * - `catppuccin` — dark-only Catppuccin Mocha palette (#1237).
+ * - `tokyo-night` — Tokyo Night palette that follows the light/dark toggle
+ *   (`tokyo-night-light` = Day / `tokyo-night-dark` = Night, #1237).
  */
 export type ThemePreset =
   | "default"
@@ -329,6 +333,8 @@ export type ThemePreset =
   | "nord"
   | "solarized"
   | "one-dark"
+  | "catppuccin"
+  | "tokyo-night"
   | "high-contrast"
   | "colorblind";
 
@@ -339,6 +345,8 @@ export const THEME_PRESET_ORDER: ThemePreset[] = [
   "nord",
   "solarized",
   "one-dark",
+  "catppuccin",
+  "tokyo-night",
   "high-contrast",
   "colorblind",
 ];
@@ -356,6 +364,8 @@ export function themePresetDataTheme(preset: ThemePreset, theme: Theme): string 
   // 終わるため theme.ts の conditions.dark ([data-theme$=dark]) に一致する。
   if (preset === "nord") return "nord-dark";
   if (preset === "one-dark") return "one-dark";
+  if (preset === "catppuccin") return "catppuccin-dark";
+  if (preset === "tokyo-night") return theme === "dark" ? "tokyo-night-dark" : "tokyo-night-light";
   // solarized / high-contrast / colorblind keep the light/dark axis: the
   // matching App.css block (`solarized-light`/`solarized-dark`,
   // `hc-light`/`hc-dark`, `cb-light`/`cb-dark`) fully overrides the palette
@@ -364,6 +374,16 @@ export function themePresetDataTheme(preset: ThemePreset, theme: Theme): string 
   if (preset === "high-contrast") return theme === "dark" ? "hc-dark" : "hc-light";
   if (preset === "colorblind") return theme === "dark" ? "cb-dark" : "cb-light";
   return theme;
+}
+
+/**
+ * 実効の light/dark。ダーク専用プリセット (Catppuccin など) はユーザの light/dark
+ * トグルに関わらず data-theme がダークになるため、SQL 構文色・プレビュー強調・
+ * アクセントの派生など「テーマ別に持つ設定」はトグル値ではなくこの値で選ぶ。
+ * 判定は `themePresetDataTheme` の結果を `isDarkDataTheme` に通すだけ (二重定義しない)。
+ */
+export function effectiveTheme(preset: ThemePreset, theme: Theme): Theme {
+  return isDarkDataTheme(themePresetDataTheme(preset, theme)) ? "dark" : "light";
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";

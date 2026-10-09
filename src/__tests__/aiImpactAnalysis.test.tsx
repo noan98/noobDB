@@ -85,6 +85,27 @@ beforeEach(() => {
 });
 
 const last = (els: HTMLElement[]) => els[els.length - 1];
+
+/**
+ * ダイアログを描画し、Ark (zag) の Dialog が「ダイアログ外を aria-hidden にする」処理を
+ * 終えるまで待つ。入れ子の確認ダイアログを開くテストはこれで描画する。
+ *
+ * zag はこの処理を開いた後の requestAnimationFrame まで遅らせ、実行時点の `<body>`
+ * 直下にある自分以外の要素をすべて aria-hidden にする。その前に入れ子の確認ダイアログ
+ * (別のポータル) を開くと、後から走った外側の処理が入れ子側まで aria-hidden にし、外側が
+ * 閉じるまで外れない。すると確認ボタンがアクセシビリティツリーから消え、`getByRole` /
+ * `findByRole` で見つからなくなる (`findByText` は aria-hidden を見ないので通ってしまう)。
+ * 負荷で rAF が遅れた CI でだけ落ちていた原因。人の操作では外側が開いてから 1 フレーム
+ * 以内に AI ボタンは押せないので、製品側では起きない。
+ *
+ * 外側の処理が済むと、描画コンテナ (`<body>` 直下でダイアログのポータルの兄弟) に
+ * aria-hidden が付くので、それを待つ。
+ */
+async function renderSettled(element: ReturnType<typeof ui>) {
+  const { container } = renderWithProviders(element);
+  await waitFor(() => expect(container).toHaveAttribute("aria-hidden", "true"));
+}
+
 const analyze = () => screen.findByRole("button", { name: t("dangerousAiButton") });
 
 describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
@@ -213,7 +234,7 @@ describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
 
   it("schemaOnly では SQL 送信前に確認し、取り消すと送らない", async () => {
     enable("schemaOnly");
-    renderWithProviders(ui());
+    await renderSettled(ui());
     fireEvent.click(await analyze());
     await screen.findByText(t("dangerousAiScopeTitle"));
     expect(runAiRequest).not.toHaveBeenCalled();
@@ -225,7 +246,7 @@ describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
   });
 
   it("本番接続では確認し、承認すると送信してフォーカスがボタンへ戻る", async () => {
-    renderWithProviders(ui({ isProduction: true }));
+    await renderSettled(ui({ isProduction: true }));
     fireEvent.click(await analyze());
     await screen.findByText(t("dangerousAiProdTitle"));
     expect(runAiRequest).not.toHaveBeenCalled();
