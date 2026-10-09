@@ -83,9 +83,15 @@ theme.ts (Chakra トークン)
 | 軸 | トークン | 値 |
 |---|---|---|
 | `fontSize` | `3xs` / `2xs` / `xs` / `sm` / `md` / `base` / `lg` / `xl` | 9 / 10 / 11 / 12 / 13 / 14 / 16 / 20px |
+| `fontSize` (ディスプレイ専用) | `2xl` / `3xl` | 28 / 36px |
 | `lineHeight` | `tight` / `snug` / `normal` / `relaxed` | 1.25 / 1.4 / 1.55 / 1.6 |
 | `letterSpacing` | `tight` / `normal` / `wide` / `wider` | -0.01 / 0 / 0.02 / 0.05em |
 
+- `2xl` / `3xl` (#1214) は**ディスプレイ専用**。使ってよいのはウェルカム / プロファイル一覧 /
+  スプラッシュの見出し (`WelcomeView.tsx` / `ProfileCardGrid.tsx` / `SplashScreen.tsx` と、
+  `textStyle="display"` を定義する `theme.ts`) だけ。密なグリッド・ツールバー・モーダルでは使わない。
+  > ガード: `designTokens.test.ts` の「ディスプレイ用タイプスケール」
+  > — 上記以外のファイルでの `fontSize="2xl|3xl"` / `var(--text-2xl|3xl)` を検出して fail する
 - `fontSize="11px"` のような px 直値は禁止 (`--text-*` も `--font-scale` を内包する)。
   SVG の `<text>` も同様で、`fontSize="11"` (単位を省略すると px 相当になる) を直書き
   せず `style={{ fontSize: "var(--text-xs)" }}` の形でトークンを参照する

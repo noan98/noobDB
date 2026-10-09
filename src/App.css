@@ -39,6 +39,10 @@
   --text-base: calc(14px * var(--font-scale));
   --text-lg: calc(16px * var(--font-scale));
   --text-xl: calc(20px * var(--font-scale));
+  /* ディスプレイ用の上位ステップ (#1214)。ウェルカム / プロファイル一覧 / スプラッシュ
+     の見出し専用で、密なグリッドやツールバーには使わない。 */
+  --text-2xl: calc(28px * var(--font-scale));
+  --text-3xl: calc(36px * var(--font-scale));
 
   /* ── Typography rhythm (#490) ─────────────────────────────────────────
      タイプスケール (--text-*) は上記の通り --font-scale に追従するため、フォント

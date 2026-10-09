@@ -142,11 +142,30 @@ describe("design tokens: 余白 (spacing)", () => {
 });
 
 describe("design tokens: タイポグラフィ", () => {
-  it("fontSize は px 直値ではなくタイプスケール (3xs〜xl) を使う", () => {
+  it("fontSize は px 直値ではなくタイプスケール (3xs〜3xl) を使う", () => {
     const offenders = findViolations(/\bfontSize=\{?"[0-9.]+(?:px|pt)"/, () => true);
     expect(
       offenders,
       "文字サイズは App.css の --text-* (theme.ts の fontSizes トークン) を使う。",
+    ).toEqual([]);
+  });
+
+  it("ディスプレイ用タイプスケール (2xl / 3xl) は第一印象面のファイルだけで使う (#1214)", () => {
+    const allowed = new Set([
+      "../components/WelcomeView.tsx",
+      "../components/ProfileCardGrid.tsx",
+      "../components/SplashScreen.tsx",
+      "../theme.ts",
+    ]);
+    const offenders = findViolations(
+      /\bfontSize(?:=\{?|\s*:\s*)"(?:2xl|3xl)"|var\(--text-(?:2xl|3xl)\)/,
+      () => true,
+      (path) => !allowed.has(path),
+    );
+    expect(
+      offenders,
+      "2xl / 3xl はウェルカム / プロファイル一覧 / スプラッシュの見出し専用。" +
+        "密なグリッド・ツールバー・モーダルには使わない。",
     ).toEqual([]);
   });
 
