@@ -166,6 +166,9 @@ const ScriptRunModal = lazy(() =>
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
 );
+const AiSchemaDocModal = lazy(() =>
+  import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
+);
 const SchemaExportModal = lazy(() =>
   import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
 );
@@ -1722,6 +1725,8 @@ export default function App() {
   const [scriptTarget, setScriptTarget] = useState<string | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
+  // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
+  const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む
@@ -7650,6 +7655,16 @@ export default function App() {
           keywords: "schema export ai markdown claude llm スキーマ 出力 エクスポート",
           run: () => setSchemaExportTarget(paletteDatabase),
         });
+        if (aiAvailable) {
+          items.push({
+            id: "nav:ai-schema-doc",
+            group: "navigation",
+            label: t("cmdkActionAiSchemaDoc"),
+            icon: "sparkles",
+            keywords: "ai schema document markdown documentation onboarding スキーマ ドキュメント 仕様書 AI",
+            run: () => setSchemaDocTarget({ database: paletteDatabase, tables: [] }),
+          });
+        }
       }
     }
     items.push(
@@ -9107,6 +9122,9 @@ export default function App() {
               driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
               initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
               onOpenTable={handleOpenTable}
+              onGenerateDoc={
+                aiAvailable ? (database, tables) => setSchemaDocTarget({ database, tables }) : undefined
+              }
               onClose={() => setShowErd(false)}
             />
           </WorkspaceSurface>
@@ -9596,6 +9614,21 @@ export default function App() {
             database={scriptTarget}
             isProduction={selectedProfile?.is_production ?? false}
             onClose={() => setScriptTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {schemaDocTarget && sessionId && aiAvailable && (
+          <AiSchemaDocModal
+            key={schemaDocTarget.database}
+            sessionId={sessionId}
+            driver={selectedProfile?.driver ?? "mysql"}
+            database={schemaDocTarget.database}
+            profileName={selectedProfile?.name ?? ""}
+            isProduction={selectedProfile?.is_production ?? false}
+            initialTables={schemaDocTarget.tables}
+            onClose={() => setSchemaDocTarget(null)}
           />
         )}
       </AnimatePresence>
