@@ -82,6 +82,28 @@ describe("planForAi / maskPlanLiterals", () => {
   it("単引用符リテラルの中身を空にする", () => {
     expect(maskPlanLiterals("Filter: (name = 'a''b') AND (x = 'c')")).toBe("Filter: (name = '') AND (x = '')");
   });
+  it("MySQL JSON の `\\'` を含む条件でも後ろの値が残らない", () => {
+    const cond = "((`u`.`name` = 'it\\'s') and (`u`.`email` = 'bob@example.com'))";
+    const plan = JSON.stringify({ query_block: { table: { attached_condition: cond } } });
+    expect(plan).toContain("it\\\\'s");
+    const out = maskPlanLiterals(plan);
+    expect(out).not.toContain("bob@example.com");
+    expect(out).not.toContain("it\\'s");
+    expect(JSON.parse(out).query_block.table.attached_condition).toBe(
+      "((`u`.`name` = '') and (`u`.`email` = ''))",
+    );
+  });
+  it("計画中に単独の `'` があっても別の値の後ろの値が残らない", () => {
+    const plan = JSON.stringify([
+      { Plan: { Message: "can't", Filter: "(email = 'x@y')" } },
+    ]);
+    const out = maskPlanLiterals(plan);
+    expect(out).not.toContain("x@y");
+    expect(JSON.parse(out)[0].Plan.Message).toBe("can't");
+  });
+  it("JSON でない計画 (テキストツリー) は正規表現でマスクする", () => {
+    expect(maskPlanLiterals("-> Filter: (a = 'secret')")).toBe("-> Filter: (a = '')");
+  });
   it("上限を超えたら切り詰める", () => {
     const out = planForAi("x".repeat(EXPLAIN_INTERPRET_MAX_PLAN_CHARS + 10), false);
     expect(out.endsWith("(truncated)")).toBe(true);

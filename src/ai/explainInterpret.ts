@@ -10,7 +10,6 @@ export const EXPLAIN_INTERPRET_MAX_PLAN_CHARS = 24000;
 
 /** 提案 1 件あたりの SQL 種別。 */
 export const SUGGESTION_KINDS = ["ddl", "rewrite"] as const;
-export type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
 
 /** 構造化出力で受け取る応答の形 (`run_ai_request` の `format` にそのまま渡す)。 */
 export const EXPLAIN_INTERPRET_FORMAT = {
@@ -101,7 +100,28 @@ export function parseExplainInterpretResponse(text: string): ParsedExplainInterp
  * 元 SQL と同じく `ai.maskLiterals` が有効なら単引用符リテラルの中身を空にして送る。
  */
 export function maskPlanLiterals(plan: string): string {
-  return plan.replace(/'(?:[^'\\]|\\.|'')*'/g, "''");
+  // JSON の計画 (MySQL 非実測 / PostgreSQL) はデコードした文字列値ごとにマスクする。
+  // 生テキストのまま正規表現を当てると、MySQL が `\'` と出力する値 (JSON 上は `\\'`) の
+  // エスケープ解釈がずれ、後ろの値が残ってしまう。
+  try {
+    return JSON.stringify(maskJsonStrings(JSON.parse(plan)));
+  } catch {
+    /* JSON でない (テキストツリー・切り詰め後) */
+  }
+  return maskLiteralsInText(plan);
+}
+
+function maskLiteralsInText(text: string): string {
+  return text.replace(/'(?:[^'\\]|\\.|'')*'/g, "''");
+}
+
+function maskJsonStrings(v: unknown): unknown {
+  if (typeof v === "string") return maskLiteralsInText(v);
+  if (Array.isArray(v)) return v.map(maskJsonStrings);
+  if (v !== null && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskJsonStrings(x)]));
+  }
+  return v;
 }
 
 /** 実行計画を送信用に整える (リテラルのマスクと長さ制限)。 */

@@ -77,7 +77,7 @@ const tdCss: SystemStyleObject = {
   verticalAlign: "top",
 };
 
-function SeverityBadge({ severity }: { severity: HealthFinding["severity"] }) {
+export function SeverityBadge({ severity }: { severity: HealthFinding["severity"] }) {
   const t = useT();
   const role = severityRole(severity);
   return (

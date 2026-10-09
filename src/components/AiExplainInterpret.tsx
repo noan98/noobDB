@@ -14,8 +14,7 @@ import {
 import { dialectLabel, extractTableRefs, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
 import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
-import { semanticColorToken } from "../semanticColors";
-import { severityLabelKey, severityRole } from "./advisor";
+import { SeverityBadge } from "./AdvisorPanel";
 import { Button } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -120,7 +119,12 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
     t("explainAiSends", {
       sql: ai.maskLiterals ? t("explainAiSqlMasked") : t("explainAiSqlRaw"),
       dialect: dialectLabel(props.driver),
-      tables: tableCount > 0 ? t("explainAiTablesSome", { count: tableCount }) : t("explainAiTablesNone"),
+      tables:
+        tableCount === 0
+          ? t("explainAiTablesNone")
+          : tableCount === 1
+            ? t("explainAiTablesOne")
+            : t("explainAiTablesSome", { count: tableCount }),
     });
 
   const run = async () => {
@@ -310,32 +314,15 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
             {state.value.bottlenecks.length === 0 ? (
               <chakra.span color="app.textMuted">{t("explainAiNoBottlenecks")}</chakra.span>
             ) : (
-              state.value.bottlenecks.map((b, i) => {
-                const role = severityRole(b.severity);
-                return (
-                  <Flex key={`${i}-${b.node}`} gap="2" align="flex-start" data-testid="ai-explain-bottleneck">
-                    <chakra.span
-                      flexShrink={0}
-                      px="2"
-                      py="0.5"
-                      textStyle="overline"
-                      lineHeight={1.4}
-                      borderRadius="sm"
-                      whiteSpace="nowrap"
-                      bg={semanticColorToken(role, "subtle")}
-                      color={semanticColorToken(role, "text")}
-                      border="1px solid"
-                      borderColor={semanticColorToken(role, "border")}
-                    >
-                      {t(severityLabelKey(b.severity))}
-                    </chakra.span>
-                    <chakra.span whiteSpace="pre-wrap">
-                      <chakra.span fontWeight="600">{b.node}</chakra.span>
-                      {` ${b.reason}`}
-                    </chakra.span>
-                  </Flex>
-                );
-              })
+              state.value.bottlenecks.map((b, i) => (
+                <Flex key={`${i}-${b.node}`} gap="2" align="flex-start" data-testid="ai-explain-bottleneck">
+                  <SeverityBadge severity={b.severity} />
+                  <chakra.span whiteSpace="pre-wrap">
+                    <chakra.span fontWeight="600">{b.node}</chakra.span>
+                    {` ${b.reason}`}
+                  </chakra.span>
+                </Flex>
+              ))
             )}
           </Flex>
           {state.value.suggestions.length > 0 && (

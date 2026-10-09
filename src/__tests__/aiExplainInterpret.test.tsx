@@ -32,6 +32,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
 import { ExplainViewer } from "../components/ExplainViewer";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 import type { QueryResult } from "../api/tauri";
+import paneSource from "../components/PaneView.tsx?raw";
+import appSource from "../App.tsx?raw";
 
 const onInsertSql = vi.fn();
 
@@ -49,10 +51,13 @@ function sqliteResult(): QueryResult {
   } as unknown as QueryResult;
 }
 
-function ui(opts: { readOnly?: boolean; isProduction?: boolean; withAi?: boolean } = {}) {
+function ui(
+  opts: { readOnly?: boolean; isProduction?: boolean; withAi?: boolean; streaming?: boolean; result?: QueryResult } = {},
+) {
   return (
     <ExplainViewer
-      result={sqliteResult()}
+      result={opts.result ?? sqliteResult()}
+      streaming={opts.streaming}
       driver="sqlite"
       ai={
         opts.withAi === false
@@ -197,5 +202,59 @@ describe("AiExplainInterpret (#693)", () => {
     expect(runAiRequest).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: t("explainAiConfirmSend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+  });
+
+  it("ストリーミング中はボタンが無効", async () => {
+    renderWithProviders(ui({ streaming: true }));
+    const btn = await screen.findByRole("button", { name: t("explainAiButton") });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("二重クリックしても要求は 1 本だけ", async () => {
+    renderWithProviders(ui());
+    const btn = await clickInterpret();
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+  });
+
+  it("計画が変わると作り直され、実行中のストリームは cancelStream される", async () => {
+    const { rerender } = renderWithProviders(ui());
+    await clickInterpret();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    const next = { columns: ["id", "parent", "notused", "detail"], rows: [[2, 0, 0, "SEARCH users"]] } as unknown as QueryResult;
+    rerender(ui({ result: next }));
+    await waitFor(() => expect(cancelStream).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(t("explainAiCancel"))).toBeNull();
+  });
+
+  it("listIndexes に失敗したテーブルは落とし、行数推定の失敗は unknown で送る", async () => {
+    listIndexes.mockRejectedValueOnce(new Error("no table"));
+    renderWithProviders(ui());
+    await clickInterpret();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].prompt).not.toContain("Tables referenced");
+    cleanup();
+    vi.clearAllMocks();
+    hasAiApiKey.mockResolvedValue(true);
+    listIndexes.mockResolvedValue([]);
+    tableRowEstimate.mockRejectedValueOnce(new Error("no stats"));
+    renderWithProviders(ui());
+    await clickInterpret();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].prompt).toContain("estimated rows: unknown");
+  });
+});
+
+describe("EXPLAIN タブの配線 (#693)", () => {
+  const pane = paneSource;
+  const app = appSource;
+  it("AI には EXPLAIN 前の元 SQL (explainSourceSql) を渡し、挿入は tab.database を引き継ぐ", () => {
+    expect(pane).toContain("sql: tab.explainSourceSql ?? getTabSql(tab)");
+    expect(pane).toContain("actions.openQueryInEditor(sql, undefined, tab.database)");
+  });
+  it("runExplainInTab が推定・実測の両方で元 SQL をタブに保存する", () => {
+    expect(app).toContain("{ explainAnalyze: false, explainSourceSql: sql }");
+    expect(app).toContain("{ explainAnalyze: true, explainSourceSql: sql }");
   });
 });

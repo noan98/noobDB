@@ -680,8 +680,9 @@ export const PaneView = memo(
                             sessionId,
                             isProduction: selectedProfile.is_production ?? false,
                             readOnly,
-                            sql: getTabSql(tab),
+                            sql: tab.explainSourceSql ?? getTabSql(tab),
                             database: tab.database ?? selectedProfile.database ?? null,
+                            // 新しいタブに開くのは、EXPLAIN タブに DDL を入れると EXPLAIN CREATE INDEX になるため。
                             onInsertSql: (sql) => actions.openQueryInEditor(sql, undefined, tab.database),
                           }
                         : undefined

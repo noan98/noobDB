@@ -420,16 +420,16 @@ interface Props {
    * 実測モード (EXPLAIN ANALYZE, #1164) のトグル。未指定ならトグルを出さない。
    * `supported` が false (SQLite など) のときは無効化して理由を Tooltip に出す。
    */
-  /**
-   * AI による実行計画の解釈 (#693)。未指定なら入口を出さない。AI 無効 / API キー未設定の
-   * ときは指定しても何も描かない。計画・方言・実測フラグは ExplainViewer 自身が渡す。
-   */
-  ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze">;
   analyze?: {
     supported: boolean;
     active: boolean;
     onToggle: (next: boolean) => void;
   };
+  /**
+   * AI による実行計画の解釈 (#693)。未指定なら入口を出さない。AI 無効 / API キー未設定の
+   * ときは指定しても何も描かない。計画・方言・実測フラグは ExplainViewer 自身が渡す。
+   */
+  ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze">;
 }
 
 interface NodeRowProps {
@@ -604,12 +604,12 @@ function AnalyzeBar({ analyze }: { analyze: NonNullable<Props["analyze"]> }) {
 }
 
 export function ExplainViewer({ result, driver, streaming, analyze, ai }: Props) {
-  // 計画の生テキスト (AI 解釈に渡す)。ストリーミング中は確定していないので渡さない。
-  const plan = useMemo(
-    () => (ai && !streaming ? parseExplainForDriver(driver, result).raw : null),
-    [ai, streaming, driver, result],
-  );
-  if (!analyze && !ai) return <ExplainViewerBody result={result} driver={driver} streaming={streaming} />;
+  // 計画のパースはここで 1 回だけ行い、Body と AI 解釈で共有する。
+  const parsed = useMemo(() => parseExplainForDriver(driver, result), [driver, result]);
+  // AI 解釈に渡す計画の生テキスト。ストリーミング中は確定していないので渡さない。
+  const hasAi = !!ai;
+  const plan = hasAi && !streaming ? parsed.raw : null;
+  if (!analyze && !ai) return <ExplainViewerBody parsed={parsed} streaming={streaming} />;
   return (
     <Box flex="1 1 auto" minHeight={0} minWidth={0} display="flex" flexDirection="column" overflow="hidden">
       {analyze && <AnalyzeBar analyze={analyze} />}
@@ -623,17 +623,20 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai }: Props)
           analyze={!!analyze?.active && analyze.supported}
         />
       )}
-      <ExplainViewerBody result={result} driver={driver} streaming={streaming} />
+      <ExplainViewerBody parsed={parsed} streaming={streaming} />
     </Box>
   );
 }
 
-function ExplainViewerBody({ result, driver, streaming }: Pick<Props, "result" | "driver" | "streaming">) {
+function ExplainViewerBody({
+  parsed,
+  streaming,
+}: {
+  parsed: ReturnType<typeof parseExplainForDriver>;
+  streaming?: boolean;
+}) {
   const t = useT();
-  const { raw, root, error } = useMemo(
-    () => parseExplainForDriver(driver, result),
-    [driver, result],
-  );
+  const { raw, root, error } = parsed;
   const [view, setView] = useState<"tree" | "graph">("tree");
   const max = useMemo(() => (root ? maxCost(root) : 0), [root]);
   const score = useMemo(() => (root ? scorePlan(root) : null), [root]);
