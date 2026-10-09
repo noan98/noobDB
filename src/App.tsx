@@ -85,6 +85,7 @@ import {
 } from "./components/identitySync";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
+import { columnInsertText, qualifiedColumnInsertText } from "./components/columnInsert";
 import {
   applyServerBrowse,
   type ServerFilter,
@@ -6727,6 +6728,24 @@ export default function App() {
     }
   }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
 
+  // 列名 / 表.列 をエディタへ挿入 (#1352)。テーブル側 (handleInsertTableSelect) と同じ経路で、
+  // エディタを持たないタブでは新しいクエリタブに入れて開く。
+  const handleInsertColumn = useCallback((_database: string, table: string, column: string, qualified: boolean) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    const text = qualified ? qualifiedColumnInsertText(driver, table, column) : columnInsertText(driver, column);
+    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+      activeEditor()?.insertText(text);
+    } else if (sessionId) {
+      addTab({ ...makeQueryTab(), sql: text, lastExecutedSql: text });
+    }
+  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
+
+  const handleCopyColumnName = useCallback(async (column: string) => {
+    if (await copyToClipboard(column)) {
+      toast.success(translate("columnNameCopied", { column }));
+    }
+  }, [toast]);
+
   // テーブルの CREATE TABLE DDL の表示 / コピー (#1001)。全ドライバで
   // `get_object_definition` (kind = "table") を使う — MySQL/SQLite は
   // ネイティブ DDL、PostgreSQL はカタログから再構成した DDL。純粋な読み取り
@@ -8330,6 +8349,8 @@ export default function App() {
     onExploreColumns: (database: string, table: string) => handleExploreColumns(database, table),
     onWatchTable: handleWatchTable,
     onCopyTableName: handleCopyTableName,
+    onInsertColumn: handleInsertColumn,
+    onCopyColumnName: handleCopyColumnName,
     onOpenObjectDefinition: handleOpenObjectDefinition,
     onEditViewDefinition: handleEditViewDefinition,
     onFindUsages: handleFindUsages,

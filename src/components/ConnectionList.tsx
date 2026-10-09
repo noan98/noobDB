@@ -370,6 +370,13 @@ interface Props {
   onDiscardSandbox?: (record: SandboxRecord) => void;
   /** テーブル名をクリップボードへコピー。 */
   onCopyTableName?: (table: string) => void;
+  /**
+   * 列をエディタへ挿入する (#1352)。`qualified` なら `表.列`、そうでなければ列名のみ。
+   * 列のコンテキストメニューとダブルクリックから呼ぶ。未指定なら挿入項目を出さない。
+   */
+  onInsertColumn?: (database: string, table: string, column: string, qualified: boolean) => void;
+  /** 列名をクリップボードへコピーする (#1352)。未指定ならメニュー項目を出さない。 */
+  onCopyColumnName?: (column: string) => void;
   /** スキーマオブジェクトの定義を開く。`id` は同名衝突を避ける一意識別子。 */
   onOpenObjectDefinition?: (database: string, kind: string, name: string, id: string | null) => void;
   /**
@@ -500,6 +507,7 @@ interface TreeActions {
   viewMenu: (e: ContextMenuTriggerEvent, db: string, view: ExplorerViewNode, asNode?: boolean) => void;
   routineMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
   columnMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => void;
+  insertColumn: (db: string, tbl: string, column: string) => void;
   indexMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, idx: IndexInfo) => void;
   toggleDb: (db: string) => void;
   dbMenu: (e: ContextMenuTriggerEvent, db: string) => void;
@@ -810,6 +818,7 @@ const ColumnRow = memo(function ColumnRow({
       onFocus={onFocus}
       onKeyDown={actions.makeKeyDown(undefined, openMenu)}
       onContextMenu={openMenu}
+      onDoubleClick={() => actions.insertColumn(db, tbl, col.name)}
       {...actions.columnTooltip(col)}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1680,6 +1689,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onReviewSandbox,
   onDiscardSandbox,
   onCopyTableName,
+  onInsertColumn,
+  onCopyColumnName,
   onOpenObjectDefinition,
   onEditViewDefinition,
   onDropView,
@@ -2671,17 +2682,28 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  // 列ノードの右クリック: 影響分析 (#1027)。列を RENAME / DROP する前に、その列を
-  // 参照しているビュー・ルーチン・トリガー・スニペットを探す。
+  // 列ノードの右クリック: エディタへ挿入・列名コピー (#1352) と影響分析 (#1027)。
+  // 影響分析は列を RENAME / DROP する前に、その列を参照しているビュー・ルーチン・
+  // トリガー・スニペットを探す。
   const handleColumnContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => {
-    if (!onFindUsages) return;
+    const items: ContextMenuEntry[] = [];
+    if (onInsertColumn) {
+      items.push(
+        { label: t("contextMenuInsertColumnName"), onSelect: () => onInsertColumn(db, tbl, column, false) },
+        { label: t("contextMenuInsertQualifiedColumn"), onSelect: () => onInsertColumn(db, tbl, column, true) },
+      );
+    }
+    if (onCopyColumnName) {
+      items.push({ label: t("contextMenuCopyColumnName"), onSelect: () => onCopyColumnName(column) });
+    }
+    if (onFindUsages) {
+      if (items.length > 0) items.push({ separator: true });
+      items.push({ label: t("contextMenuFindColumnUsages"), onSelect: () => onFindUsages(db, tbl, column) });
+    }
+    if (items.length === 0) return;
     e.preventDefault();
     e.stopPropagation();
-    setMenu({
-      x: e.clientX,
-      y: e.clientY,
-      items: [{ label: t("contextMenuFindColumnUsages"), onSelect: () => onFindUsages(db, tbl, column) }],
-    });
+    setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   // インデックスノードの右クリック: DROP INDEX (#850)。PK インデックスは
@@ -3132,6 +3154,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const viewMenuEvent = useEvent(handleViewContextMenu);
   const routineMenuEvent = useEvent(handleRoutineContextMenu);
   const columnMenuEvent = useEvent(handleColumnContextMenu);
+  const insertColumnEvent = useEvent((db: string, tbl: string, column: string) =>
+    onInsertColumn?.(db, tbl, column, false),
+  );
   const indexMenuEvent = useEvent(handleIndexContextMenu);
   const toggleDbEvent = useEvent((db: string) => void toggleDb(db));
   const dbMenuEvent = useEvent(handleDbContextMenu);
@@ -3149,6 +3174,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       viewMenu: viewMenuEvent,
       routineMenu: routineMenuEvent,
       columnMenu: columnMenuEvent,
+      insertColumn: insertColumnEvent,
       indexMenu: indexMenuEvent,
       toggleDb: toggleDbEvent,
       dbMenu: dbMenuEvent,
@@ -3167,6 +3193,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       viewMenuEvent,
       routineMenuEvent,
       columnMenuEvent,
+      insertColumnEvent,
       indexMenuEvent,
       toggleDbEvent,
       dbMenuEvent,

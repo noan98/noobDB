@@ -280,6 +280,80 @@ describe("Database Explorer の階層 (#1112)", () => {
     fireEvent.click(fkRow);
     expect(onPickTable).toHaveBeenCalledWith("db1", "users");
   });
+
+  describe("列のコンテキストメニューとダブルクリック (#1352)", () => {
+    async function openColumnRow(props: Partial<Parameters<typeof ConnectionList>[0]>) {
+      vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+      await openDb(props);
+      await screen.findByRole("treeitem", { name: "tbl1" });
+      fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+      // 列行は data-tree-key (`col:<db>::<tbl>:<name>` 形式) で特定する。
+      return waitFor(() => {
+        const el = document.querySelector<HTMLElement>('[data-tree-key^="col:"][data-tree-key$=":id"]');
+        if (!el) throw new Error("列行 id がまだ無い");
+        return el;
+      });
+    }
+
+    it("挿入 → 修飾名 → コピー → 区切り線 → 参照元検索の順で並び、各項目が引数つきで呼ばれる", async () => {
+      const onInsertColumn = vi.fn();
+      const onCopyColumnName = vi.fn();
+      const onFindUsages = vi.fn();
+      const row = await openColumnRow({ onInsertColumn, onCopyColumnName, onFindUsages });
+
+      fireEvent.contextMenu(row);
+      const items = await screen.findAllByRole("menuitem");
+      expect(items.map((i) => i.textContent)).toEqual([
+        t("contextMenuInsertColumnName"),
+        t("contextMenuInsertQualifiedColumn"),
+        t("contextMenuCopyColumnName"),
+        t("contextMenuFindColumnUsages"),
+      ]);
+      expect(screen.getAllByRole("separator")).toHaveLength(1);
+      expect(items[2].compareDocumentPosition(screen.getByRole("separator"))).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+
+      fireEvent.click(items[0]);
+      expect(onInsertColumn).toHaveBeenLastCalledWith("db1", "tbl1", "id", false);
+      fireEvent.contextMenu(row);
+      fireEvent.click((await screen.findAllByRole("menuitem"))[1]);
+      expect(onInsertColumn).toHaveBeenLastCalledWith("db1", "tbl1", "id", true);
+      fireEvent.contextMenu(row);
+      fireEvent.click((await screen.findAllByRole("menuitem"))[2]);
+      expect(onCopyColumnName).toHaveBeenCalledWith("id");
+      fireEvent.contextMenu(row);
+      fireEvent.click((await screen.findAllByRole("menuitem"))[3]);
+      expect(onFindUsages).toHaveBeenCalledWith("db1", "tbl1", "id");
+    });
+
+    it("onFindUsages だけなら参照元検索のみ (区切り線なし)", async () => {
+      const row = await openColumnRow({ onFindUsages: vi.fn() });
+      fireEvent.contextMenu(row);
+      const items = await screen.findAllByRole("menuitem");
+      expect(items.map((i) => i.textContent)).toEqual([t("contextMenuFindColumnUsages")]);
+      expect(screen.queryByRole("separator")).toBeNull();
+    });
+
+    it("onInsertColumn だけなら挿入 2 項目のみ", async () => {
+      const row = await openColumnRow({ onInsertColumn: vi.fn() });
+      fireEvent.contextMenu(row);
+      const items = await screen.findAllByRole("menuitem");
+      expect(items.map((i) => i.textContent)).toEqual([
+        t("contextMenuInsertColumnName"),
+        t("contextMenuInsertQualifiedColumn"),
+      ]);
+      expect(screen.queryByRole("separator")).toBeNull();
+    });
+
+    it("ダブルクリックで列名のみ (qualified=false) を挿入する", async () => {
+      const onInsertColumn = vi.fn();
+      const row = await openColumnRow({ onInsertColumn });
+      fireEvent.doubleClick(row);
+      expect(onInsertColumn).toHaveBeenCalledTimes(1);
+      expect(onInsertColumn).toHaveBeenCalledWith("db1", "tbl1", "id", false);
+    });
+  });
 });
 
 describe("スキーマツリーのキーボード操作 (#1184)", () => {

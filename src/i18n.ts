@@ -3533,6 +3533,10 @@ const en = {
   whereUsedNeedTable: "Enter a table or view name.",
   contextMenuFindUsages: "Find usages (impact analysis)",
   contextMenuFindColumnUsages: "Find usages of this column",
+  contextMenuInsertColumnName: "Insert column name into editor",
+  contextMenuInsertQualifiedColumn: "Insert qualified name (table.column)",
+  contextMenuCopyColumnName: "Copy column name",
+  columnNameCopied: "Copied column name: {column}",
   cmdkWhereUsed: "Where used (impact analysis)",
 
   // データ品質アサーション (#742)
@@ -7793,6 +7797,10 @@ const ja: Dict = {
   whereUsedNeedTable: "テーブル名またはビュー名を入力してください。",
   contextMenuFindUsages: "参照元を検索 (影響分析)",
   contextMenuFindColumnUsages: "この列の参照元を検索",
+  contextMenuInsertColumnName: "列名をエディタへ挿入",
+  contextMenuInsertQualifiedColumn: "修飾名 (表.列) をエディタへ挿入",
+  contextMenuCopyColumnName: "列名をコピー",
+  columnNameCopied: "列名をコピーしました: {column}",
   cmdkWhereUsed: "影響分析 (参照元の検索)",
 
   // データ品質アサーション (#742)
