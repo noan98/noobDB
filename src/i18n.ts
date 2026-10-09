@@ -246,6 +246,10 @@ const en = {
   editorCompletionCte: "CTE",
   editorCompletionDerived: "Derived table",
   editorCompletionAlias: "Alias",
+  editorCompletionNullable: "NULL allowed",
+  editorCompletionNotNull: "NOT NULL",
+  editorCompletionPrimaryKey: "Primary key",
+  editorCompletionForeignKey: "FK \u2192 {target}",
 
   snippetSearchPlaceholder: "Filter snippets...",
   snippetShowAllScopes: "Show all scopes",
@@ -4512,6 +4516,10 @@ const ja: Dict = {
   editorCompletionCte: "CTE",
   editorCompletionDerived: "派生表",
   editorCompletionAlias: "別名",
+  editorCompletionNullable: "NULL 可",
+  editorCompletionNotNull: "NOT NULL",
+  editorCompletionPrimaryKey: "主キー",
+  editorCompletionForeignKey: "FK \u2192 {target}",
 
   snippetSearchPlaceholder: "スニペットを検索...",
   snippetShowAllScopes: "すべてのスコープを表示",
