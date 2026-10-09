@@ -160,7 +160,8 @@ describe("AiSyncRisk (#697)", () => {
     await click();
     await screen.findByText(t("aiSyncRiskScopeTitle"));
     expect(runAiRequest).not.toHaveBeenCalled();
-    fireEvent.click(screen.getAllByRole("button", { name: t("confirmDefaultCancel") }).at(-1) as HTMLElement);
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    fireEvent.click(cancels[cancels.length - 1]);
     await act(async () => {});
     expect(runAiRequest).not.toHaveBeenCalled();
     // もう一度押せば再び確認される (毎回)。
