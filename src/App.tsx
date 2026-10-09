@@ -666,6 +666,12 @@ export interface Tab {
    * 再実行も実測で走る。永続化しない (復元したタブは推定 EXPLAIN から始める)。
    */
   explainAnalyze?: boolean;
+  /**
+   * EXPLAIN タブで直近に実行した、EXPLAIN プレフィックス無しの元 SQL (#693)。エディタの
+   * バッファは実行後に編集でき、選択範囲だけを EXPLAIN することもあるため、計画と対に
+   * なる SQL (AI 解釈に送る) はここから取る。永続化しない。
+   */
+  explainSourceSql?: string;
   result: QueryResult | null;
   preview: PreviewResult | null;
   schemaTable: SchemaTable | null;
@@ -4853,7 +4859,7 @@ export default function App() {
   ) => {
     const driver = selectedProfile?.driver;
     if (!analyze) {
-      updateTab(tabId, { explainAnalyze: false });
+      updateTab(tabId, { explainAnalyze: false, explainSourceSql: sql });
       void runQueryInTab(tabId, `${explainPrefixFor(driver)}${sql}`, null, null, false, override);
       return;
     }
@@ -4870,7 +4876,7 @@ export default function App() {
       tone: "warning",
     });
     if (!ok) return;
-    updateTab(tabId, { explainAnalyze: true });
+    updateTab(tabId, { explainAnalyze: true, explainSourceSql: sql });
     void runQueryInTab(tabId, built.sql, null, null, false, { ...override, forceReadOnly: true });
   }, [selectedProfile?.driver, runQueryInTab, updateTab, toast, confirm]);
 
@@ -5914,9 +5920,10 @@ export default function App() {
   }, [sessionId, runQueryInTab, addTab]);
 
   // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
-  const openQueryInEditor = useCallback((sql: string, title?: string) => {
+  const openQueryInEditor = useCallback((sql: string, title?: string, database?: string) => {
     const tab: Tab = { ...makeQueryTab(), sql };
     if (title) tab.title = title;
+    if (database) tab.database = database;
     addTab(tab);
   }, [addTab]);
 
@@ -9956,6 +9963,19 @@ export default function App() {
             writeApproval={pendingDangerous.writeApproval}
             typedConfirmTarget={pendingDangerous.typedConfirmTarget}
             impact={pendingDangerous.impact}
+            aiContext={
+              sessionId && selectedProfile
+                ? {
+                    sessionId,
+                    driver: selectedProfile.driver,
+                    database:
+                      tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                      selectedProfile.database ??
+                      null,
+                    sql: pendingDangerous.sql,
+                  }
+                : null
+            }
             onConfirm={handleConfirmDangerous}
             onCancel={handleCancelDangerous}
           />
