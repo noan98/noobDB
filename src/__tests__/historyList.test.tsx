@@ -235,4 +235,25 @@ describe("HistoryList の AI 検索入口 (#699)", () => {
     fireEvent.click(toggle);
     expect(screen.queryByTestId("ai-history-search")).not.toBeInTheDocument();
   });
+
+  it("AI 検索の候補は一覧の件数上限ではなく limit 301 で取り直し、超過を確認文で案内する", async () => {
+    setAiKeyPresent(true);
+    replaceAllSettings({
+      ...DEFAULT_SETTINGS,
+      ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true },
+    });
+    // 表示用の一覧 (limit 無し) は 200 件で切れ、AI 用の取り直し (limit 301) は 301 件返る。
+    listHistory.mockImplementation(async (params: { limit?: number | null }) =>
+      Array.from({ length: params.limit ?? 200 }, (_, i) => makeHistoryEntry({ id: i + 1 })),
+    );
+    renderList();
+    fireEvent.click(await screen.findByRole("button", { name: t("aiHistoryToggle") }));
+    fireEvent.change(await screen.findByLabelText(t("aiHistoryQueryLabel")), {
+      target: { value: "売上" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("aiHistorySearchRun") }));
+    await screen.findByText(t("aiHistoryConfirmTitle"));
+    expect(listHistory).toHaveBeenCalledWith(expect.objectContaining({ limit: 301, profileId: "p-test" }));
+    expect(screen.getAllByText(t("aiHistoryOverflow", { max: 300 })).length).toBeGreaterThan(0);
+  });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { api, listenAiStream } from "../api/tauri";
@@ -42,19 +42,34 @@ const FETCH_BATCH = 20;
 
 type Mode = "search" | "summary";
 
+/** 結果の 1 行。完了時の候補を写して持つので、後から一覧のフィルタが変わっても消えない。 */
+interface MatchRow extends HistorySearchMatch {
+  preview: string;
+  executedAt: string;
+}
+
+/** 候補を取り直すときの履歴フィルタ (`api.listHistory` の引数と同じ意味)。 */
+export interface HistoryFilterParams {
+  profileId: string | null;
+  search: string | null;
+  status: string | null;
+  from: string | null;
+  to: string | null;
+}
+
 type State =
   | { kind: "idle" }
   | { kind: "empty" }
   | { kind: "running"; sends: string }
-  | { kind: "matches"; sends: string; matches: HistorySearchMatch[]; notes: string[] }
+  | { kind: "matches"; sends: string; matches: MatchRow[]; notes: string[] }
   | { kind: "summary"; sends: string; text: string; notes: string[] }
   | { kind: "raw"; sends: string; raw: string }
   | { kind: "error"; sends: string; message: string; refused: boolean }
   | { kind: "cancelled"; sends: string };
 
 export interface AiHistorySearchProps {
-  /** 現在の絞り込み (検索語・期間・ステータス・接続) を通った履歴。新しい順。 */
-  entries: HistoryEntry[];
+  /** 現在の絞り込み (検索語・期間・ステータス・接続)。送信前にこの条件で候補を取り直す。 */
+  filters: HistoryFilterParams;
   /** 期間フィルタの表示名 (確認文とサマリのプロンプトに使う)。 */
   periodLabel: string;
   /** 結果の行を押したときに SQL をエディタへ復元する。 */
@@ -66,7 +81,7 @@ export interface AiHistorySearchProps {
  * 既存の LIKE 検索 / 期間 / 接続フィルタで絞った候補 (最大 300 件) だけを送り、送信前に
  * 必ず件数・期間・接続を示して確認する。AI が使えない (無効 / キー未設定) ときは何も描かない。
  */
-export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearchProps) {
+export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearchProps) {
   const t = useT();
   const locale = useLocale();
   const ai = useSettings().ai;
@@ -75,27 +90,12 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
   const { copied, copy } = useCopyFeedback();
   const [query, setQuery] = useState("");
   const [state, setState] = useState<State>({ kind: "idle" });
-  const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const stopRef = useRef(false);
   const streamRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const mountedRef = useRef(true);
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .listProfiles()
-      .then((p) => {
-        if (alive) setProfiles(p);
-      })
-      .catch(() => {
-        /* 接続名が引けなければ「不明」と表示するだけ */
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   const stopListener = useCallback((streamId: string) => {
     if (streamRef.current !== streamId) return;
@@ -103,6 +103,7 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
     unlistenRef.current = null;
     streamRef.current = null;
     busyRef.current = false;
+    setBusy(false);
   }, []);
 
   useEffect(() => {
@@ -121,12 +122,15 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
     };
   }, []);
 
-  const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
-  const { items: limited, overflow } = useMemo(() => limitCandidates(entries), [entries]);
+  const releaseBusy = useCallback(() => {
+    busyRef.current = false;
+    setBusy(false);
+  }, []);
 
-  const sendsLine = (count: number) =>
+  const sendsLine = (count: number, databases: string) =>
     t("aiHistorySends", {
       count,
+      databases,
       sql: ai.maskLiterals ? t("aiHistoryConfirmSqlMasked") : t("aiHistoryConfirmSqlRaw"),
     });
 
@@ -134,37 +138,57 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
     if (busyRef.current) return;
     if (mode === "search" && query.trim() === "") return;
     busyRef.current = true;
+    setBusy(true);
     stopRef.current = false;
     try {
       await runInner(mode);
     } catch (e) {
-      busyRef.current = false;
+      releaseBusy();
       if (mountedRef.current) setState({ kind: "error", sends: "", message: String(e), refused: false });
     }
   };
 
   const runInner = async (mode: Mode) => {
-    const abort = () => {
-      busyRef.current = false;
-    };
+    // 候補は送信前の今のフィルタで取り直す。表示中の一覧は 200 件で切れているため、
+    // 301 件目の有無で「上限を超えた」ことを確かめる (一覧の state には触れない)。
+    let listed: HistoryEntry[];
+    try {
+      listed = await api.listHistory({ ...filters, limit: HISTORY_SEARCH_MAX_CANDIDATES + 1 });
+    } catch (e) {
+      releaseBusy();
+      setState({ kind: "error", sends: "", message: String(e), refused: false });
+      return;
+    }
+    if (!mountedRef.current) return releaseBusy();
+    const { items: limited, overflow } = limitCandidates(listed);
     if (limited.length === 0) {
       setState({ kind: "empty" });
-      return abort();
+      return releaseBusy();
     }
+    // 本番判定は確認の直前に最新のプロファイルで行う。取得できなければ安全側 (本番扱い) に倒す。
+    let profiles: ConnectionProfile[] = [];
+    let profilesFailed = false;
+    try {
+      profiles = await api.listProfiles();
+    } catch {
+      profilesFailed = true;
+    }
+    if (!mountedRef.current) return releaseBusy();
+    const profileById = new Map(profiles.map((p) => [p.id, p]));
+    const productionIds = new Set(profiles.filter((p) => p.is_production).map((p) => p.id));
     const connName = (e: HistoryEntry) =>
       (e.profile_id ? profileById.get(e.profile_id)?.name : undefined) ?? "";
-    const production = new Set(
-      limited.flatMap((e) => {
-        const p = e.profile_id ? profileById.get(e.profile_id) : undefined;
-        return p?.is_production ? [p.name] : [];
-      }),
-    );
     const scope = describeCandidateScope(
       limited.map((e) => ({ executedAt: e.executed_at, connection: connName(e) })),
-      production,
+      new Set(),
     );
     const unknown = limited.some((e) => connName(e) === "");
     const connections = [...scope.connections, ...(unknown ? [t("aiHistoryConnUnknown")] : [])].join(", ");
+    const databases =
+      [...new Set(limited.map((e) => e.database).filter((d): d is string => !!d))].join(", ") ||
+      t("aiHistoryConnUnknown");
+    const includesProduction =
+      profilesFailed || limited.some((e) => e.profile_id !== null && productionIds.has(e.profile_id));
     const period =
       scope.from && scope.to
         ? `${periodLabel} (${t("aiHistoryPeriodRange", {
@@ -172,36 +196,46 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
             to: new Date(scope.to).toLocaleString(),
           })})`
         : periodLabel;
+    // プロンプト側の期間は表示用のローカル書式ではなく ISO にそろえる。
+    const promptPeriod =
+      scope.from && scope.to ? `${periodLabel} (${scope.from} - ${scope.to})` : periodLabel;
+    const notes: string[] = [];
+    if (overflow) notes.push(t("aiHistoryOverflow", { max: HISTORY_SEARCH_MAX_CANDIDATES }));
     // 送信前の確認は必ず行う。履歴 SQL にはリテラルとして実データが含まれうる。
     const lines = [
       t("aiHistoryConfirmBody", {
         count: scope.count,
         period,
         connections,
+        databases,
         sql: ai.maskLiterals ? t("aiHistoryConfirmSqlMasked") : t("aiHistoryConfirmSqlRaw"),
       }),
     ];
     if (needsSendScopeConfirm(ai.sendScope)) lines.push(t("aiHistoryConfirmScopeOnly"));
-    if (scope.includesProduction) lines.push(t("aiHistoryConfirmProduction"));
+    if (profilesFailed) lines.push(t("aiHistoryConfirmProductionUnknown"));
+    else if (includesProduction) lines.push(t("aiHistoryConfirmProduction"));
+    lines.push(...notes);
     const ok = await confirm({
       title: t("aiHistoryConfirmTitle"),
-      message: lines.join("\n"),
+      message: (
+        <Flex direction="column" gap="2">
+          {lines.map((l) => (
+            <chakra.p key={l}>{l}</chakra.p>
+          ))}
+        </Flex>
+      ),
       confirmLabel: t("aiHistoryConfirmSend"),
       tone: "warning",
     });
-    if (!ok) return abort();
-    if (!mountedRef.current) return abort();
+    if (!ok) return releaseBusy();
+    if (!mountedRef.current) return releaseBusy();
 
-    const notes: string[] = [];
-    if (overflow) {
-      notes.push(
-        t("aiHistoryOverflow", { total: entries.length, max: HISTORY_SEARCH_MAX_CANDIDATES }),
-      );
-    }
-    setState({ kind: "running", sends: sendsLine(limited.length) });
+    const sendsPre = sendsLine(limited.length, databases);
+    setState({ kind: "running", sends: sendsPre });
 
-    // SQL 全文は一覧に無いので、確認後に必要な分だけ取る。取れない行 (削除済み等) は落とす。
+    // SQL 全文は一覧に無いので、確認後に必要な分だけ取る。取れない行 (削除済み等) は数えて通知する。
     const candidates: HistoryCandidate[] = [];
+    let failedFetch = 0;
     for (let i = 0; i < limited.length; i += FETCH_BATCH) {
       const batch = limited.slice(i, i + FETCH_BATCH);
       const got = await Promise.all(
@@ -222,22 +256,32 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
           }
         }),
       );
-      for (const c of got) if (c) candidates.push(c);
+      for (const c of got) {
+        if (c) candidates.push(c);
+        else failedFetch += 1;
+      }
       if (!mountedRef.current || stopRef.current) {
-        busyRef.current = false;
-        if (mountedRef.current) setState({ kind: "cancelled", sends: sendsLine(limited.length) });
+        releaseBusy();
+        if (mountedRef.current) setState({ kind: "cancelled", sends: sendsPre });
         return;
       }
     }
-    const formatted: FormattedCandidates = formatCandidates(candidates, ai.maskLiterals);
-    if (formatted.included.length === 0) {
-      busyRef.current = false;
-      setState({ kind: "empty" });
+    if (candidates.length === 0) {
+      releaseBusy();
+      setState({
+        kind: "error",
+        sends: sendsPre,
+        message: t("aiHistoryFetchAllFailed"),
+        refused: false,
+      });
       return;
     }
+    if (failedFetch > 0) notes.push(t("aiHistoryFetchFailed", { count: failedFetch }));
+    const formatted: FormattedCandidates = formatCandidates(candidates, ai.maskLiterals);
     if (formatted.truncated && !overflow) notes.push(t("aiHistoryTruncated"));
+    const snapshot = new Map(limited.map((e) => [e.id, e]));
     const allowed = new Set(formatted.included.map((c) => c.id));
-    const sends = sendsLine(formatted.included.length);
+    const sends = sendsLine(formatted.included.length, databases);
     const streamId = makeStreamId();
     streamRef.current = streamId;
     let text = "";
@@ -254,11 +298,15 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
             return;
           }
           const parsed = parseHistorySearchResponse(text, allowed);
-          setState(
-            parsed.ok
-              ? { kind: "matches", sends, matches: parsed.matches, notes }
-              : { kind: "raw", sends, raw: parsed.raw },
-          );
+          if (!parsed.ok) {
+            setState({ kind: "raw", sends, raw: parsed.raw });
+            return;
+          }
+          const matches: MatchRow[] = parsed.matches.flatMap((m) => {
+            const row = snapshot.get(m.historyId);
+            return row ? [{ ...m, preview: row.sql_preview, executedAt: row.executed_at }] : [];
+          });
+          setState({ kind: "matches", sends, matches, notes });
         },
         onError: (e) => {
           stopListener(streamId);
@@ -272,13 +320,19 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
       if (!mountedRef.current) {
         unlisten();
         streamRef.current = null;
-        busyRef.current = false;
+        releaseBusy();
         void api.cancelStream(streamId).catch(() => {
           /* まだ登録前 / すでに完了 */
         });
         return;
       }
       unlistenRef.current = unlisten;
+      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
+      if (stopRef.current) {
+        stopListener(streamId);
+        setState({ kind: "cancelled", sends });
+        return;
+      }
       await api.runAiRequest({
         streamId,
         task: "historySearch",
@@ -286,7 +340,7 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
         prompt:
           mode === "search"
             ? buildHistorySearchPrompt({ query, candidates: formatted })
-            : buildHistorySummaryPrompt({ periodLabel: period, candidates: formatted }),
+            : buildHistorySummaryPrompt({ periodLabel: promptPeriod, candidates: formatted }),
         settings: toAiSnapshot(ai),
         ...(mode === "search" ? { format: HISTORY_SEARCH_FORMAT } : {}),
       });
@@ -313,8 +367,7 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
   };
 
   if (!available) return null;
-  const running = state.kind === "running";
-  const rowById = new Map(entries.map((e) => [e.id, e]));
+  const running = busy;
 
   return (
     <Flex
@@ -353,7 +406,7 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
           type="button"
           variant="primary"
           size="sm"
-          disabled={running || query.trim() === "" || entries.length === 0}
+          disabled={running || query.trim() === ""}
           onClick={() => {
             void run("search");
           }}
@@ -364,7 +417,7 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
           type="button"
           variant="secondary"
           size="sm"
-          disabled={running || entries.length === 0}
+          disabled={running}
           onClick={() => {
             void run("summary");
           }}
@@ -381,11 +434,6 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
           </>
         )}
       </Flex>
-      {overflow && state.kind === "idle" && (
-        <Callout tone="warning" role="status">
-          {t("aiHistoryOverflow", { total: entries.length, max: HISTORY_SEARCH_MAX_CANDIDATES })}
-        </Callout>
-      )}
       {state.kind === "empty" && (
         <Callout tone="info" role="status">
           {t("aiHistoryNoCandidates")}
@@ -410,8 +458,6 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
         ) : (
           <Flex direction="column" gap="1.5" aria-live="polite" maxH="320px" overflow="auto">
             {state.matches.map((m) => {
-              const row = rowById.get(m.historyId);
-              if (!row) return null;
               return (
                 <chakra.button
                   key={m.historyId}
@@ -424,22 +470,22 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
                   bg="app.bg"
                   cursor="pointer"
                   _hover={{ bg: "app.hover" }}
-                  aria-label={`${t("aiHistoryOpen")}: ${row.sql_preview}`}
+                  aria-label={`${t("aiHistoryOpen")}: ${m.preview}`}
                   onClick={() => onOpen(m.historyId)}
                 >
                   <Flex gap="2" align="baseline">
-                    <chakra.span color="app.accent" fontSize="xs" textStyle="numeric" flexShrink={0}>
+                    <chakra.span color="app.textMuted" fontSize="xs" textStyle="numeric" flexShrink={0}>
                       {t("aiHistoryMatchScore", { score: m.relevance })}
                     </chakra.span>
                     <chakra.span fontFamily="mono" fontSize="xs" truncate>
-                      {row.sql_preview}
+                      {m.preview}
                     </chakra.span>
                   </Flex>
                   <chakra.div color="app.textMuted" fontSize="xs" whiteSpace="pre-wrap">
                     {m.reason}
                   </chakra.div>
                   <chakra.div color="app.textMuted" fontSize="2xs">
-                    {new Date(row.executed_at).toLocaleString()}
+                    {new Date(m.executedAt).toLocaleString()}
                   </chakra.div>
                 </chakra.button>
               );
@@ -459,9 +505,19 @@ export function AiHistorySearch({ entries, periodLabel, onOpen }: AiHistorySearc
               copiedLabel={t("historyCopied")}
             />
           </Flex>
-          <CodePreview wrap maxH="240px">
+          <chakra.div
+            whiteSpace="pre-wrap"
+            maxH="240px"
+            overflow="auto"
+            p="2"
+            borderWidth="1px"
+            borderColor="app.border"
+            borderRadius="md"
+            bg="app.bg"
+            fontSize="sm"
+          >
             {state.text}
-          </CodePreview>
+          </chakra.div>
         </Flex>
       )}
       {state.kind === "raw" && (

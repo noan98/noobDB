@@ -453,7 +453,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
       </TreeSearch>
       {aiAvailable && aiSearchOpen && (
         <AiHistorySearch
-          entries={entries}
+          filters={{ profileId: scopeId, search: debounced || null, status: statusParam, from, to }}
           periodLabel={t(PERIOD_FILTER_LABEL_KEYS[periodFilter])}
           onOpen={restoreById}
         />
