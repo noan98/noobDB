@@ -35,7 +35,13 @@ export function SplashScreen() {
       justifyContent="center"
       gap="5"
       bg="app.bg"
-      css={{ userSelect: "none", WebkitUserSelect: "none" }}
+      // 起動の第一印象にブランドウォッシュを敷く (#1216、値は App.css の `--hero-wash`、hc-* では none)。
+      css={{
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        backgroundImage: "var(--hero-wash)",
+        backgroundRepeat: "no-repeat",
+      }}
       aria-hidden
       initial={{ opacity: 1 }}
       animate={{ opacity: 1 }}
@@ -46,6 +52,9 @@ export function SplashScreen() {
         initial={{ opacity: 0, scale: 0.86, y: 6 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: durations.slow, ease: easings.out }}
+        // マークの背後のブランド光彩 (#1216、値は App.css の `--hero-halo`、hc-* では none)。
+        css={{ backgroundImage: "var(--hero-halo)", backgroundRepeat: "no-repeat" }}
+        p="10"
       >
         <BrandMark size={96} />
       </MotionDiv>

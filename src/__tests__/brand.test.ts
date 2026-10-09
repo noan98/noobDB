@@ -89,4 +89,21 @@ describe("brand colors (#619)", () => {
     expect(hcLight![1]).toMatch(/--hero-wash:\s*none;/);
     expect(hcDark![1]).toMatch(/--hero-wash:\s*none;/);
   });
+  it("hero halo / rule は brand 単一ソースを参照し、不透明度は 25% 以下、hc-* では無効化する (#1216)", () => {
+    const m = brandCss.match(/--hero-halo:\s*radial-gradient\(([\s\S]*?)\n\s*\);/);
+    expect(m, "--hero-halo (radial-gradient) が :root に定義されている").toBeTruthy();
+    expect(m![1]).toContain("var(--brand-blue)");
+    expect(m![1]).toContain("var(--brand-violet)");
+    const pcts = [...m![1].matchAll(/color-mix\(in srgb, var\(--brand-\w+\) (\d+)%/g)].map(([, p]) => Number(p));
+    expect(pcts.length).toBeGreaterThan(0);
+    for (const pct of pcts) expect(pct).toBeLessThanOrEqual(25);
+    expect(brandCss).toMatch(/--hero-rule:\s*var\(--brand-gradient\);/);
+
+    for (const theme of ["hc-light", "hc-dark"]) {
+      const block = brandCss.match(new RegExp(`:root\\[data-theme="${theme}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`));
+      expect(block, `${theme} ブロックが見つかる`).toBeTruthy();
+      expect(block![1]).toMatch(/--hero-halo:\s*none;/);
+      expect(block![1]).toMatch(/--hero-rule:\s*none;/);
+    }
+  });
 });
