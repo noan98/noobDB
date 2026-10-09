@@ -70,6 +70,7 @@ import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { AiQueryModal } from "./AiQueryModal";
 import { useAiAvailable } from "../ai/useAiAvailable";
+import type { AiSqlEditorAction, SqlAssistKind } from "../ai/sqlAssist";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
 import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
@@ -316,6 +317,11 @@ interface Props {
    * 保持し、危険クエリ確認ダイアログへ件数を引き継ぐのに使う。
    */
   onPreflightImpact?: (result: PreflightResult | null) => void;
+  /**
+   * 「この SQL を解説」「最適化案を提案」(#695) の起動先。選択範囲 (無ければ全文) を渡す。
+   * 結果はボトムパネルに出る。AI が使えないときは渡されても項目を出さない。
+   */
+  onAiSqlAction?: (action: AiSqlEditorAction) => void;
 }
 
 export interface QueryEditorHandle {
@@ -341,6 +347,8 @@ export interface QueryEditorHandle {
   explain: () => void;
   /** 「AI にクエリを依頼」モーダルを開く (#691。コマンドパレット用)。 */
   openAiQuery: () => void;
+  /** 選択範囲 (無ければ全文) の SQL を AI で解説 / リライトする (#695。コマンドパレット用)。 */
+  requestAiSql: (kind: SqlAssistKind) => void;
 }
 
 /**
@@ -581,6 +589,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   focusMode,
   onToggleFocus,
   onPreflightImpact,
+  onAiSqlAction,
 }: Props, ref) {
   const t = useT();
   const settings = useSettings();
@@ -753,6 +762,10 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   onExplainRef.current = onExplain;
   const onPreflightImpactRef = useRef(onPreflightImpact);
   onPreflightImpactRef.current = onPreflightImpact;
+  const onAiSqlActionRef = useRef(onAiSqlAction);
+  onAiSqlActionRef.current = onAiSqlAction;
+  const tabIdRef = useRef(tabId);
+  tabIdRef.current = tabId;
   const driverRef = useRef(driver);
   driverRef.current = driver;
   // 履歴ナビゲーション用。エディタは初回だけ生成されキーマップ内のクロージャ
@@ -1159,6 +1172,20 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     view.focus();
   };
 
+  // 選択範囲 (無ければ全文) の SQL を AI の解説 / 最適化案へ渡す (#695)。ref だけを読むので、
+  // 初回だけ構築するハンドルから呼んでも古いクロージャにならない。
+  const requestAiSql = (kind: SqlAssistKind) => {
+    const view = viewRef.current;
+    const cb = onAiSqlActionRef.current;
+    const id = tabIdRef.current;
+    if (!view || !cb || !id) return;
+    const sel = view.state.selection.main;
+    const range = sel.empty ? null : { from: sel.from, to: sel.to };
+    const sqlText = range ? view.state.sliceDoc(range.from, range.to) : view.state.doc.toString();
+    if (sqlText.trim() === "") return;
+    cb({ kind, sql: sqlText, range, tabId: id });
+  };
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: ハンドラは初回だけ構築する設計 (上のコメント参照)。insertAtCursor / resetHistoryNav / runStatementUnderCursor は毎レンダーで作り直されるが ref だけを読むため、古いクロージャでも最新の状態を参照できる
   useImperativeHandle(ref, () => ({
     insertText: insertAtCursor,
@@ -1210,6 +1237,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       if (text !== null) explain(text);
     },
     openAiQuery: () => setShowAiQuery(true),
+    requestAiSql,
   }), []);
 
   const currentText = (): string | null => {
@@ -1285,6 +1313,11 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       case "explain":
         explainSelectionOrAll();
         break;
+      case "aiExplain":
+      case "aiRewrite":
+        // 結果はボトムパネルに出る。フォーカスはエディタに戻さず、パネルへ移る余地を残す。
+        requestAiSql(action === "aiExplain" ? "explain" : "rewrite");
+        return;
       case "format":
         formatSelectionOrAll();
         break;
@@ -1358,6 +1391,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       canPreview: !!onPreview,
       canExplain: !!onExplain,
       canSaveSnippet: !!onSaveSnippet,
+      canAi: aiAvailable && !!sessionId && !!onAiSqlAction,
     }).map((spec) => {
       if ("separator" in spec) return spec;
       const combo = spec.shortcutId ? combos[spec.shortcutId] : undefined;

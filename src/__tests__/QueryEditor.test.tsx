@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { createRef } from "react";
-import { fireEvent } from "@testing-library/react";
+import { cleanup, fireEvent } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
 import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
@@ -274,3 +275,51 @@ describe("QueryEditor: AI にクエリを依頼 (#691)", () => {
     expect(screen.queryByTestId("query-editor-ai")).toBeNull();
   });
 });
+
+describe("QueryEditor.requestAiSql (#695)", () => {
+  const setup = (initialSql: string) => {
+    const onAiSqlAction = vi.fn();
+    const ref = createRef<QueryEditorHandle>();
+    renderWithProviders(
+      <QueryEditor ref={ref} onRun={vi.fn()} tabId="tab1" initialSql={initialSql} onAiSqlAction={onAiSqlAction} />,
+    );
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
+    if (!view) throw new Error("no view");
+    return { ref, view, onAiSqlAction };
+  };
+
+  it("選択が無ければ全文を、range なしで渡す", () => {
+    const { ref, onAiSqlAction } = setup("SELECT 1;\nSELECT 2");
+    ref.current?.requestAiSql("explain");
+    expect(onAiSqlAction).toHaveBeenCalledWith({
+      kind: "explain",
+      sql: "SELECT 1;\nSELECT 2",
+      range: null,
+      tabId: "tab1",
+    });
+  });
+
+  it("選択があれば選択範囲とその位置を渡す", () => {
+    const { ref, view, onAiSqlAction } = setup("SELECT 1;\nSELECT 2");
+    view.dispatch({ selection: { anchor: 10, head: 18 } });
+    ref.current?.requestAiSql("rewrite");
+    expect(onAiSqlAction).toHaveBeenCalledWith({
+      kind: "rewrite",
+      sql: "SELECT 2",
+      range: { from: 10, to: 18 },
+      tabId: "tab1",
+    });
+  });
+
+  it("空白だけの選択 / 空の本文では何もしない", () => {
+    const a = setup("SELECT 1;\n   ");
+    a.view.dispatch({ selection: { anchor: 9, head: 13 } });
+    a.ref.current?.requestAiSql("explain");
+    expect(a.onAiSqlAction).not.toHaveBeenCalled();
+    cleanup();
+    const b = setup("");
+    b.ref.current?.requestAiSql("explain");
+    expect(b.onAiSqlAction).not.toHaveBeenCalled();
+  });
+});
+

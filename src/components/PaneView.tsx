@@ -41,6 +41,7 @@ import { estimatedTotalPages } from "../pagination";
 import { Tooltip } from "./Tooltip";
 import type { Tab, PaneState } from "../App";
 import type { Settings } from "../settings";
+import type { AiSqlEditorAction } from "../ai/sqlAssist";
 import { useStoreSelector, type TabPaneStore } from "../tabPaneStore";
 
 
@@ -146,6 +147,7 @@ export interface PaneActions {
   handleExploreColumns: (database: string, table: string, column?: string | null) => void;
   handleNewTab: (paneId?: string) => void;
   handleOpenAiSql: (sql: string, database: string | null) => void;
+  handleAiSqlAction: (action: AiSqlEditorAction) => void;
   handleOpenSqlFile: () => unknown;
   handleRegisterLocalTable: (result: QueryResult, sourceSql: string) => void;
   handleSaveSnippetFromEditor: (sql: string) => void;
@@ -556,6 +558,7 @@ export const PaneView = memo(
                   readOnly={readOnly}
                   isProduction={selectedProfile?.is_production ?? false}
                   onOpenSqlInNewTab={actions.handleOpenAiSql}
+                  onAiSqlAction={actions.handleAiSqlAction}
                   emergencyMode={emergencyMode}
                   onToggleEmergencyMode={onToggleEmergencyMode}
                   queryHistory={queryHistory}
