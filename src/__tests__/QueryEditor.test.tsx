@@ -7,6 +7,7 @@ import { EditorView } from "@codemirror/view";
 import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
+import { TREE_DRAG_MIME } from "../components/treeDragInsert";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 // QueryEditor の主要な実行フロー (Run ボタン / Ctrl+Enter ショートカット / 空状態
@@ -323,3 +324,65 @@ describe("QueryEditor.requestAiSql (#695)", () => {
   });
 });
 
+
+describe("QueryEditor: スキーマツリー行のドロップ挿入 (#1414)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  function mount(sql: string, driver = "mysql") {
+    renderWithProviders(<QueryEditor onRun={vi.fn()} initialSql={sql} driver={driver} />);
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) as EditorView;
+    // jsdom にはレイアウトが無く posAtCoords が使えないので、ドロップ位置を固定する。
+    view.posAtCoords = () => 7;
+    return { content, view };
+  }
+
+  function dropData(payload: Record<string, unknown> | null) {
+    const store: Record<string, string> = {};
+    if (payload) {
+      store[TREE_DRAG_MIME] = JSON.stringify(payload);
+      store["text/plain"] = "fallback";
+    }
+    return {
+      types: Object.keys(store),
+      getData: (f: string) => store[f] ?? "",
+      dropEffect: "none",
+    };
+  }
+
+  it("テーブル行を落とすとドロップ位置に SELECT 雛形が 1 回だけ入る (既定のテキスト挿入と二重にならない)", () => {
+    const { content, view } = mount("ab cd");
+    view.posAtCoords = () => 3;
+    const dataTransfer = dropData({ kind: "table", database: "shop", table: "orders" });
+    const notCancelled = fireEvent.drop(content, { dataTransfer, clientX: 1, clientY: 1 });
+    expect(notCancelled).toBe(false); // preventDefault 済み
+    expect(view.state.doc.toString()).toBe("ab SELECT * FROM `shop`.`orders`cd");
+  });
+
+  it("列行は表.列、Alt を押していれば列名のみを挿入する", () => {
+    const { content, view } = mount("ab cd", "postgres");
+    view.posAtCoords = () => 3;
+    const payload = { kind: "column", database: "shop", table: "orders", column: "id" };
+    fireEvent.drop(content, { dataTransfer: dropData(payload), clientX: 1, clientY: 1 });
+    expect(view.state.doc.toString()).toBe("ab orders.idcd");
+    fireEvent.drop(content, { dataTransfer: dropData(payload), clientX: 1, clientY: 1, altKey: true });
+    expect(view.state.doc.toString()).toContain("id");
+    expect(view.state.doc.toString().match(/id/g)?.length).toBe(2);
+  });
+
+  it("ツリー行のペイロードが無いドロップはこのハンドラでは処理しない", () => {
+    const { content, view } = mount("ab cd");
+    fireEvent.drop(content, { dataTransfer: dropData(null), clientX: 1, clientY: 1 });
+    expect(view.state.doc.toString()).toBe("ab cd");
+  });
+
+  it("dragover はツリー行のときだけ drop を許可 (preventDefault + copy) する", () => {
+    const { content } = mount("ab cd");
+    const withItem = dropData({ kind: "table", database: "d", table: "t" });
+    expect(fireEvent.dragOver(content, { dataTransfer: withItem })).toBe(false);
+    expect(withItem.dropEffect).toBe("copy");
+    expect(fireEvent.dragOver(content, { dataTransfer: dropData(null) })).toBe(true);
+  });
+});

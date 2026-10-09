@@ -9,6 +9,7 @@ import { tableRefEquals } from "../tableQuickAccess";
 import { isSandboxShadowTableName } from "../sandbox";
 import { Callout } from "./Callout";
 import { SandboxSection } from "./SandboxSection";
+import { writeTreeDragData } from "./treeDragInsert";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
@@ -819,6 +820,8 @@ const ColumnRow = memo(function ColumnRow({
       onKeyDown={actions.makeKeyDown(undefined, openMenu)}
       onContextMenu={openMenu}
       onDoubleClick={() => actions.insertColumn(db, tbl, col.name)}
+      draggable
+      onDragStart={(e) => writeTreeDragData(e.dataTransfer, { kind: "column", database: db, table: tbl, column: col.name })}
       {...actions.columnTooltip(col)}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1040,6 +1043,8 @@ const TableNode = memo(function TableNode({
         actions.pickTable(db, tbl);
       }}
       onContextMenu={openMenu}
+      draggable
+      onDragStart={(e) => writeTreeDragData(e.dataTransfer, { kind: "table", database: db, table: tbl })}
       {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
       _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
     >

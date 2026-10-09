@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
+import { TREE_DRAG_MIME, parseTreeDragItem } from "../components/treeDragInsert";
 
 /**
  * 接続一覧サイドパネル (#604)。マウント時のスキーマ取得 (`listDatabases`) は
@@ -352,6 +353,53 @@ describe("Database Explorer の階層 (#1112)", () => {
       fireEvent.doubleClick(row);
       expect(onInsertColumn).toHaveBeenCalledTimes(1);
       expect(onInsertColumn).toHaveBeenCalledWith("db1", "tbl1", "id", false);
+    });
+  });
+
+  describe("テーブル / 列行のドラッグ挿入 (#1414)", () => {
+    function dragStart(el: HTMLElement) {
+      const store: Record<string, string> = {};
+      const dataTransfer = { effectAllowed: "", setData: (f: string, d: string) => void (store[f] = d) };
+      fireEvent.dragStart(el, { dataTransfer });
+      return { store, dataTransfer };
+    }
+
+    it("テーブル行は draggable で、内部 MIME にテーブルを載せる", async () => {
+      await openDb({ onInsertTableSelect: vi.fn() });
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      expect(row).toHaveAttribute("draggable", "true");
+      const { store, dataTransfer } = dragStart(row);
+      expect(dataTransfer.effectAllowed).toBe("copy");
+      expect(parseTreeDragItem(store[TREE_DRAG_MIME] ?? "")).toEqual({ kind: "table", database: "db1", table: "tbl1" });
+      expect(store["text/plain"]).toBe("tbl1");
+    });
+
+    it("列行は draggable で、内部 MIME に列を載せる", async () => {
+      vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+      await openDb({});
+      await screen.findByRole("treeitem", { name: "tbl1" });
+      fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+      const row = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>('[data-tree-key^="col:"][data-tree-key$=":id"]');
+        if (!el) throw new Error("列行 id がまだ無い");
+        return el;
+      });
+      expect(row).toHaveAttribute("draggable", "true");
+      const { store } = dragStart(row);
+      expect(parseTreeDragItem(store[TREE_DRAG_MIME] ?? "")).toEqual({
+        kind: "column",
+        database: "db1",
+        table: "tbl1",
+        column: "id",
+      });
+    });
+
+    it("接続行は HTML5 ドラッグ対象ではない (並べ替えは別経路)", async () => {
+      await openDb({ onReorderProfiles: vi.fn() });
+      const dbRow = await screen.findByRole("treeitem", { name: "tbl1" });
+      const profileRow = document.querySelector<HTMLElement>('[data-tree-key^="profile:"]');
+      expect(profileRow?.getAttribute("draggable")).not.toBe("true");
+      expect(dbRow).toBeTruthy();
     });
   });
 });

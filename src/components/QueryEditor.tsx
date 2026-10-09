@@ -11,10 +11,12 @@ import {
   type ReactNode,
 } from "react";
 import { Box, chakra } from "@chakra-ui/react";
+import { dropInsertText, hasTreeDragItem } from "./treeDragInsert";
 import { AnimatePresence, motion } from "motion/react";
 import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
   Decoration,
+  dropCursor,
   EditorView,
   keymap,
   lineNumbers,
@@ -924,6 +926,35 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
           search({ top: true }),
           highlightSelectionMatches(),
           stmtFlashField,
+          // スキーマツリーのテーブル / 列行のドロップ挿入 (#1414)。着地点はキャレット位置に
+          // 縦線を出す `dropCursor` (色は App.css の `.cm-dropCursor`) で示す。
+          dropCursor(),
+          EditorView.domEventHandlers({
+            dragover: (e) => {
+              if (!hasTreeDragItem(e.dataTransfer?.types)) return false;
+              // 許可しないと drop が発火しない。コピー扱いで「挿入」であることを示す。
+              e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+              return false;
+            },
+            drop: (e, view) => {
+              const dt = e.dataTransfer;
+              if (!dt || !hasTreeDragItem(dt.types)) return false;
+              const text = dropInsertText(driverRef.current, (f) => dt.getData(f), e.altKey);
+              if (text === null) return false;
+              // CodeMirror 既定のドロップ (text/plain の挿入) と二重にならないよう、
+              // ここで処理済みにして既定ハンドラへ渡さない。
+              e.preventDefault();
+              const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.doc.length;
+              view.dispatch({
+                changes: { from: pos, insert: text },
+                selection: { anchor: pos + text.length },
+                userEvent: "input.drop",
+              });
+              view.focus();
+              return true;
+            },
+          }),
           // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
           // 再構成できるようにする。作成時点の設定値で初期化する。
           lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),
