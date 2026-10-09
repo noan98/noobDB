@@ -2007,10 +2007,12 @@ td.is-find-current::after {
    @xyflow/react の style.css は `.react-flow` / `.react-flow.dark` に固定の明/暗色を
    `--xy-*-default` として持ち、実際の描画は `var(--xy-*, var(--xy-*-default))` で読む。
    接尾辞なしの `--xy-*` をここで既存トークンへ向ければ、11 テーマ・font-scale に
-   追従する (値の単一ソースは App.css のまま)。`colorMode` は node 側の既定色の
-   切り替え用に別途渡すが、下の上書きがあるのでクロムの色はテーマが決める。 */
+   追従する (値の単一ソースは App.css のまま。サイズ系は上書きしない)。`colorMode`
+   (dark) は `.react-flow.dark` の既定色 (エッジ・選択枠・ハンドル) を切り替えるが、
+   クロムとエッジの色は下の上書きが優先するのでテーマが決める。 */
 .react-flow {
-  --xy-background-color: var(--bg);
+  /* 親の面 (ER 図・EXPLAIN 図で異なる) をそのまま継ぐ */
+  --xy-background-color: transparent;
   --xy-background-pattern-color: var(--border-strong);
 
   --xy-controls-button-background-color: var(--bg-elevated);
@@ -2025,6 +2027,16 @@ td.is-find-current::after {
   --xy-minimap-mask-stroke-color: var(--accent);
   --xy-minimap-node-background-color: var(--border-strong);
   --xy-minimap-node-stroke-color: var(--border);
+
+  /* colorMode=dark の暗い既定エッジ (#3e3e3e) はダーク系テーマで沈むためテーマ色へ */
+  --xy-edge-stroke: var(--border-strong);
+  --xy-edge-stroke-selected: var(--accent);
+}
+
+/* 高コントラスト系はミニマップのビューポート枠を太くして判別しやすくする */
+:root[data-theme="hc-light"] .react-flow,
+:root[data-theme="hc-dark"] .react-flow {
+  --xy-minimap-mask-stroke-width: 2;
 }
 
 .react-flow__minimap {
@@ -2037,8 +2049,4 @@ td.is-find-current::after {
 .react-flow__controls {
   border-radius: var(--radius-md);
   overflow: hidden;
-}
-
-.react-flow__controls-button svg {
-  fill: currentColor;
 }

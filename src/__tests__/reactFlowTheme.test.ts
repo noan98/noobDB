@@ -23,7 +23,12 @@ describe("React Flow クロムのテーマ統合", () => {
 
   it("色リテラルを書かずトークンへ橋渡しする", () => {
     const decls = [...block.matchAll(/^\s+--xy-[a-z-]+:\s*(.+);/gm)].map((m) => m[1]);
-    for (const d of decls) expect(d).toMatch(/var\(--/);
+    for (const d of decls) expect(d).toMatch(/var\(--|^transparent$|^2$/);
+  });
+
+  it("エッジ色はテーマへ向け、colorMode=dark の暗い既定色に負けない", () => {
+    expect(block).toMatch(/--xy-edge-stroke:\s*var\(--border-strong\)/);
+    expect(block).toMatch(/--xy-edge-stroke-selected:\s*var\(--accent\)/);
   });
 
   it.each(["components/ERDiagramView.tsx", "components/ExplainGraphView.tsx"])("%s は colorMode を渡す", (f) => {

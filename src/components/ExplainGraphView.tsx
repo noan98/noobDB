@@ -208,12 +208,10 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
     return () => window.clearTimeout(id);
   }, [positioned, fitView, reduceMotion]);
 
-  // ミニマップのノードはカードと同じコストヒート色で塗る (コスト無しは CSS 既定の中立色)。
+  // ミニマップのノードはカードと同じコストヒート色で塗る (コスト無しは中立色。関数は string を返す必要がある)。
   const miniMapNodeColor = useCallback(
-    (n: Node) => {
-      const heat = (n.data as PlanNodeData).heat;
-      return heat === null ? "var(--border-strong)" : sampleRamp(heat, rampStops(SEQUENTIAL_RAMPS.blue, isDark));
-    },
+    (n: PlanFlowNode) =>
+      n.data.heat === null ? "var(--border-strong)" : sampleRamp(n.data.heat, rampStops(SEQUENTIAL_RAMPS.blue, isDark)),
     [isDark],
   );
 
@@ -234,7 +232,7 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable nodeColor={miniMapNodeColor} />
+      <MiniMap<PlanFlowNode> pannable zoomable nodeColor={miniMapNodeColor} />
     </ReactFlow>
   );
 }
