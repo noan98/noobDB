@@ -5,7 +5,8 @@ import { makeProfile } from "./fixtures/componentFixtures";
 /**
  * Issue #1342: 仮想化したスキーマ行リストの `scrollMargin` を、再レンダーのたびに
  * `getBoundingClientRect` で測っていた (強制リフロー)。ConnectionList が再レンダーされても
- * レイアウトを読まないことを、呼び出し回数で固定する。
+ * レイアウトを読まないことを、呼び出し回数で固定する。測定は transform を含まない
+ * `offsetTop` (の `offsetParent` チェーン) に替えたので、そちらの読み取りも数える。
  */
 const TABLES = vi.hoisted(() => Array.from({ length: 300 }, (_, i) => `t${String(i).padStart(4, "0")}`));
 
@@ -66,7 +67,7 @@ describe("スキーマ行リストの位置計測 (#1342)", () => {
     if (protoW) Object.defineProperty(HTMLElement.prototype, "offsetWidth", protoW);
   });
 
-  it("仮想化中に ConnectionList が再レンダーされても getBoundingClientRect を呼ばない", async () => {
+  it("仮想化中に ConnectionList が再レンダーされても getBoundingClientRect / offsetTop を読まない", async () => {
     const view = renderWithProviders(<ConnectionList {...baseProps} />);
     fireEvent.click(await screen.findByRole("treeitem", { name: "db1" }));
     // 窓の位置は寸法モック次第なので、どのテーブル行でもよい (描画されていれば仮想化が動いている)。
@@ -78,9 +79,20 @@ describe("スキーマ行リストの位置計測 (#1342)", () => {
     // 自身 (スキーマ行リストの scrollMargin の計測) が呼んだ回数だけを数える。
     const orig = HTMLElement.prototype.getBoundingClientRect;
     let own = 0;
-    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const countOwn = () => {
       if ((new Error().stack ?? "").includes("components/ConnectionList.tsx")) own += 1;
+    };
+    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      countOwn();
       return orig.call(this);
+    });
+    const protoTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetTop");
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get(this: HTMLElement) {
+        countOwn();
+        return protoTop?.get?.call(this) ?? 0;
+      },
     });
     try {
       for (let i = 1; i <= 5; i++) {
@@ -93,6 +105,7 @@ describe("スキーマ行リストの位置計測 (#1342)", () => {
       expect(own).toBe(0);
     } finally {
       spy.mockRestore();
+      if (protoTop) Object.defineProperty(HTMLElement.prototype, "offsetTop", protoTop);
     }
   });
 });

@@ -67,4 +67,4 @@
 `list_tasks` / `save_task` / `delete_task` / `set_task_enabled` / `run_task_now` /
 `list_task_runs` / `list_assertion_runs` / `clear_task_runs` / `get_scheduler_settings` /
 `set_scheduler_settings`。UI は `components/TaskManager.tsx`、表示整形の純ロジックは
-`components/taskFormat.ts`。
+`src/taskFormat.ts`。

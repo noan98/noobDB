@@ -67,6 +67,39 @@ impl Value {
             Value::String(v.to_string())
         }
     }
+
+    /// JSON を跨いでも値が変わらないか (#1422)。
+    ///
+    /// `Int` / `UInt` は安全整数 (±[`JS_MAX_SAFE_INTEGER`]) の範囲内のときだけ `true`。
+    /// それ以外のバリアントは数値の丸めが起きないので常に `true`
+    /// (`Float` はもともと f64 で、JS の `number` と同じ精度)。
+    pub fn is_js_safe(&self) -> bool {
+        match self {
+            Value::Int(v) => (-JS_MAX_SAFE_INTEGER..=JS_MAX_SAFE_INTEGER).contains(v),
+            Value::UInt(v) => *v <= JS_MAX_SAFE_INTEGER as u64,
+            _ => true,
+        }
+    }
+
+    /// デコーダの出口で「安全整数の外の `Int` / `UInt` を作っていない」ことを
+    /// debug ビルドで検査し、値をそのまま返す (#1422)。
+    ///
+    /// 3 ドライバの `decode_cell` はすべてこれを通して値を返す。新しいデコーダ分岐が
+    /// `Value::Int(n)` を直接組み立てて 2^53 を超える値を素通しすると、テスト
+    /// (debug ビルド) の時点でここが落ちる。リリースビルドでは何もしない
+    /// (実行時コストを足さず、ユーザの操作も止めない)。
+    pub fn debug_assert_js_safe(self) -> Self {
+        // debug_assert を使う根拠: この不変条件が破れると、インラインセル編集の
+        // `WHERE pk = <丸めた値>` が実在する別の行を書き換えうる (静かな行破壊)。
+        // 開発中・CI のテストで確実に止めたい一方、リリースで panic させると
+        // 結果表示ごと落ちるため、検査は debug ビルドに限る。
+        debug_assert!(
+            self.is_js_safe(),
+            "安全整数 (2^53 - 1) を超える整数を Value::Int/UInt のまま返しました: {self:?}。\
+             デコーダは Value::from_i64_lossless / from_u64_lossless を経由してください (#1422)"
+        );
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -780,5 +813,127 @@ mod group_tables_tests {
         let got = group_tables_by_database(vec![s("a")], vec![(s("hidden"), s("t"))]);
         assert_eq!(got.len(), 1);
         assert!(got[0].tables.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod js_safe_tests {
+    use super::*;
+
+    const SAFE: i64 = JS_MAX_SAFE_INTEGER;
+
+    #[test]
+    fn lossless_constructors_always_produce_js_safe_values() {
+        // 2^53 ± 1 と i64 / u64 / i128 / u128 の端を通し、どの入口からでも
+        // 安全範囲外は文字列になる (= is_js_safe) ことを固定する。
+        let i64_cases = [
+            0,
+            1,
+            -1,
+            SAFE,
+            SAFE + 1,
+            -SAFE,
+            -SAFE - 1,
+            i64::MAX,
+            i64::MIN,
+        ];
+        for v in i64_cases {
+            let got = Value::from_i64_lossless(v);
+            assert!(got.is_js_safe(), "from_i64_lossless({v}) = {got:?}");
+            assert_eq!(matches!(got, Value::Int(_)), (-SAFE..=SAFE).contains(&v));
+        }
+        let u64_cases = [0, SAFE as u64, SAFE as u64 + 1, u64::MAX];
+        for v in u64_cases {
+            let got = Value::from_u64_lossless(v);
+            assert!(got.is_js_safe(), "from_u64_lossless({v}) = {got:?}");
+        }
+        let i128_cases = [
+            SAFE as i128,
+            SAFE as i128 + 1,
+            -(SAFE as i128) - 1,
+            i128::MAX,
+            i128::MIN,
+        ];
+        for v in i128_cases {
+            let got = Value::from_i128_lossless(v);
+            assert!(got.is_js_safe(), "from_i128_lossless({v}) = {got:?}");
+        }
+        for v in [SAFE as u128, SAFE as u128 + 1, u128::MAX] {
+            let got = Value::from_u128_lossless(v);
+            assert!(got.is_js_safe(), "from_u128_lossless({v}) = {got:?}");
+        }
+    }
+
+    #[test]
+    fn is_js_safe_rejects_only_out_of_range_integers() {
+        assert!(Value::Int(SAFE).is_js_safe());
+        assert!(Value::Int(-SAFE).is_js_safe());
+        assert!(!Value::Int(SAFE + 1).is_js_safe());
+        assert!(!Value::Int(-SAFE - 1).is_js_safe());
+        assert!(!Value::Int(i64::MIN).is_js_safe());
+        assert!(Value::UInt(SAFE as u64).is_js_safe());
+        assert!(!Value::UInt(SAFE as u64 + 1).is_js_safe());
+        assert!(Value::String("9007199254740993".into()).is_js_safe());
+        assert!(Value::Float(1e300).is_js_safe());
+        assert!(Value::Null.is_js_safe());
+    }
+
+    #[test]
+    fn debug_assert_js_safe_passes_safe_values_through() {
+        assert_eq!(Value::Int(SAFE).debug_assert_js_safe(), Value::Int(SAFE));
+        assert_eq!(
+            Value::String("x".into()).debug_assert_js_safe(),
+            Value::String("x".into())
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "#1422")]
+    fn debug_assert_js_safe_panics_on_out_of_range_int_in_debug_builds() {
+        // cargo test は debug_assertions 有効でビルドされる。
+        let _ = Value::Int(SAFE + 1).debug_assert_js_safe();
+    }
+
+    #[test]
+    #[should_panic(expected = "#1422")]
+    fn debug_assert_js_safe_panics_on_out_of_range_uint_in_debug_builds() {
+        let _ = Value::UInt(u64::MAX).debug_assert_js_safe();
+    }
+
+    /// 3 ドライバのデコーダ本体 (テストモジュールより前) に、`Value::Int(` /
+    /// `Value::UInt(` を直接組み立てる行が無いことを固定する (#1422)。
+    ///
+    /// PostgreSQL の INT2 / INT4 / OID のように元の型が 2^53 に収まる場合でも、
+    /// 直接構築の前例があると BIGINT 相当の新しい分岐がそれをコピーして静かに
+    /// 丸めを再発させる。整数は必ず `from_*_lossless` を経由させる。
+    /// `=>` を含む行 (match のパターン) と `matches!` / `if let` は「読む側」なので対象外。
+    #[test]
+    fn driver_decoders_never_construct_raw_int_values() {
+        let sources = [
+            ("mysql.rs", include_str!("mysql.rs")),
+            ("postgres.rs", include_str!("postgres.rs")),
+            ("sqlite.rs", include_str!("sqlite.rs")),
+        ];
+        let mut offenders = Vec::new();
+        for (name, src) in sources {
+            for (no, line) in src.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or("");
+                if code.trim_start().starts_with("#[cfg(test)]") {
+                    break;
+                }
+                let constructs = code.contains("Value::Int(") || code.contains("Value::UInt(");
+                let is_pattern =
+                    code.contains("=>") || code.contains("matches!") || code.contains("if let");
+                if constructs && !is_pattern {
+                    offenders.push(format!("{name}:{}: {}", no + 1, line.trim()));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "デコーダが Value::Int/UInt を直接組み立てています。\
+             Value::from_i64_lossless / from_u64_lossless を経由してください (#1422):\n{}",
+            offenders.join("\n")
+        );
     }
 }
