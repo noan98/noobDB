@@ -291,6 +291,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/ServerMetricsPanel.tsx", 2],
     ["../components/SeverityLog.tsx", 1],
     ["../components/SnippetForm.tsx", 2],
+    ["../components/StatTile.tsx", 1],
     ["../components/TabBar.tsx", 1],
     ["../components/TableConstraintEditor.tsx", 2],
     ["../components/TableOpenQueryModal.tsx", 1],

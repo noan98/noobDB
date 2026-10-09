@@ -5,35 +5,22 @@
 
 **詳細は `.claude/skills/` の各スキルに分割してあります。** スキルの説明文は自動で
 読み込まれるので、作業に関係するスキルを開いてください (`noobdb-architecture` が
-出発点)。必ず守る規約は `.claude/rules/` にあり、要点はこのファイルに転記しています。
+出発点)。必ず守る規約は `.claude/rules/` にあり、要点はこのファイルに転記しています
+(`ui-design-system.md` / `code-conventions.md` は `paths:` 指定により該当ファイルを
+扱うときだけ読み込まれる)。
 
 ## 絶対に守るルール
 
-### 言語 (例外なし)
+### 言語・Issue・PR
 
-- **ユーザへの応答はすべて日本語で行ってください。** 説明・質問・確認プロンプト・
-  ツール実行前の説明・進捗報告・エラー説明・最終サマリーなど、チャットに出力する
-  すべての文章を日本語で記述します (コード・コマンド・識別子など本来英語で書くべき
-  ものは除く)。Claude Code on the web (クラウド実行環境) を含むすべての状況に適用。
-- **PR のタイトル・本文・サマリー・テスト計画もすべて日本語で記述してください。**
-- **返答に書く時刻は必ず JST (日本時間) で書く。** UTC のまま書かない (9 時間足して
-  「JST」と明記する)。
-- このルールは `.claude/settings.json` (`language` 設定 + `UserPromptSubmit`
-  フック) で強制しています。設定を変更した場合は `/hooks` を一度開くか、
-  セッションを再起動しないと反映されません。
-- 詳細: `.claude/rules/language.md`
+`.claude/rules/language.md` と `.claude/rules/issues-and-prs.md` は毎セッション自動で
+読み込まれるので、ここには要点だけ置く。
 
-### Issue と PR
-
-- 新規 Issue には**必ずコストとメリットのラベルを両方**付ける
-  (`cost:Low|Mid|High` / `benefit:1`〜`benefit:5`)。
-- 関連 Issue がある PR は**本文の独立行に `Closes #123`** を必ず入れる
-  (タイトルの `(#123)` や本文中の `#123` 単独では close されない)。Epic は最後の
-  子を解消する PR でのみ閉じる。
-- **対応 DB は MySQL / PostgreSQL / SQLite の 3 つに固定。** それ以外のドライバ
-  (DuckDB・SQL Server・Oracle・ClickHouse など) の追加・再導入や、それらとの
-  パリティを前提にした Issue は**作らない** (提案もしない)。
-- 詳細: `.claude/rules/issues-and-prs.md`
+- 応答・PR (タイトル / 本文 / テスト計画) はすべて**日本語**。時刻は **JST** で書く。
+- 新規 Issue には `cost:Low|Mid|High` と `benefit:1`〜`benefit:5` の**両方**を付ける。
+- 関連 Issue がある PR は本文の独立行に `Closes #123`。Epic は最後の子を解消する PR でのみ閉じる。
+- **対応 DB は MySQL / PostgreSQL / SQLite の 3 つに固定。** 他ドライバの追加・パリティ前提の
+  Issue は作らない。
 
 ### コードの不変条件
 

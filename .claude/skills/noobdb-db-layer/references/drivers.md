@@ -38,6 +38,21 @@ JSON で安全に扱えるよう 16 進エンコードした文字列 (`Value::B
 時に文字列へ退避するのと同じ方針で、フロントの `cellEdit.ts` もこの前提で書かれて
 います)。**新しい整数型の分岐を足すときは必ずこのヘルパを経由してください。**
 
+この不変条件は 2 段で機械的に守っています (#1422):
+
+- **静的ガード**: `db/types.rs` の `driver_decoders_never_construct_raw_int_values` が
+  `mysql.rs` / `postgres.rs` / `sqlite.rs` の本体 (テストモジュールより前) を走査し、
+  `Value::Int(` / `Value::UInt(` を直接組み立てる行があると fail します。元の型が 2^53 に
+  収まる INT2 / INT4 / OID でも `Value::from_i64_lossless(i64::from(n))` と書きます
+  (直接構築の前例が BIGINT 相当の分岐にコピーされるのを防ぐため)。`=>` を含む行
+  (match のパターン) と `matches!` / `if let` は読む側なので対象外です。
+- **実行時ガード**: 3 ドライバの `decode_cell` は `Value::debug_assert_js_safe` を通して
+  値を返し、安全整数の外の `Int` / `UInt` を返すと debug ビルド (= テスト) で panic
+  します。リリースビルドでは何もしません。
+- 実 DB での往復は `*_bigint_pk_roundtrips_losslessly_into_cell_edit_where`
+  (3 ドライバの統合テスト) が、2^53 ± 1 の BIGINT 主キーをデコード → JSON →
+  `bulk_update_cells` の `WHERE` まで通して隣の行を巻き込まないことを固定しています。
+
 **PostgreSQL のデコードは「非 NULL の値を `Value::Null` にしない」ことを不変条件と
 します。** sqlx の通常の `try_get` は型互換チェックを通すため、`String` が受け付ける
 TEXT/VARCHAR/BPCHAR/NAME/UNKNOWN/citext 以外 (uuid・配列・inet/cidr・macaddr・money・

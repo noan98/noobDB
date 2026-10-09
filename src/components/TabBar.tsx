@@ -8,6 +8,8 @@ import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
 import { labelWithShortcut } from "../shortcutLabel";
 import { DropInsertionMarker } from "./DropInsertionMarker";
+import { FlightIcon } from "./FlightIcon";
+import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
 
 // キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
 const focusRing = "var(--focus-ring)";
@@ -80,6 +82,8 @@ export const TabBar = memo(function TabBar({
   splitMode = "split",
 }: Props) {
   const t = useT();
+  // サイドバー行から開いた新規テーブルタブのアイコンだけが、起点と layoutId を共有して morph する (#1415)。
+  const openFlight = useTabOpenFlight();
   // opacity の補間は MotionConfig reducedMotion では止まらないので、個別に見て即時化する (#1322)。
   const reducedMotion = useReducedMotion() ?? false;
   // Scope the sliding indicator's layoutId to this TabBar so a split view's two
@@ -433,7 +437,19 @@ export const TabBar = memo(function TabBar({
                   transitionDuration="var(--dur-med)"
                   transitionTimingFunction="var(--ease)"
                 >
-                  <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
+                  <FlightIcon
+                    flightId={
+                      openFlight !== null &&
+                      tab.kind === "table" &&
+                      tab.database &&
+                      tab.table &&
+                      openFlight === tabOpenFlightId(tab.database, tab.table)
+                        ? openFlight
+                        : null
+                    }
+                  >
+                    <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
+                  </FlightIcon>
                 </chakra.span>
                 <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" maxW="180px">
                   {tab.title}
