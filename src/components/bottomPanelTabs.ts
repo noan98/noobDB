@@ -46,6 +46,10 @@
  * 追う」ための診断情報なので、ここ (診断グループ) に置く。検証するデータベースはアクティブタブ →
  * プロファイル既定の順で決まり (未決定ならセッションの既定)、開ける条件は接続中で
  * あることだけ。追加・編集は `AssertionEditorModal` (一時的な操作 = Modal)。
+ *
+ * `aiSql` (SQL の AI 解説 / 最適化案、#695) は、エディタの選択範囲を見比べながら読む
+ * 参照情報 (解説・diff) なので Modal ではなくここに置く。開ける条件は接続中 + AI 利用可
+ * (設定で有効 かつ API キー登録済み)。
  */
 export const BOTTOM_PANEL_TABS = [
   "output",
@@ -59,6 +63,7 @@ export const BOTTOM_PANEL_TABS = [
   "structure",
   "profile",
   "timelapse",
+  "aiSql",
 ] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
@@ -78,6 +83,7 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   structure: "reference",
   profile: "reference",
   timelapse: "reference",
+  aiSql: "reference",
 };
 
 /**
@@ -131,6 +137,8 @@ export interface BottomPanelContext {
    * 出すため、開けること自体は変えない)。`ConnectionProfile.driver` と同じ生の文字列。
    */
   driver?: string | null;
+  /** AI 機能が使えるか (設定で有効 かつ API キー登録済み)。`aiSql` タブの開ける条件 (#695)。 */
+  aiAvailable?: boolean;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
@@ -144,6 +152,7 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
     if (tab === "profile") return !!ctx.profileTable;
     if (tab === "structure") return !!ctx.structureTable;
     if (tab === "timelapse") return !!ctx.timelapseProfileId;
+    if (tab === "aiSql") return !!ctx.aiAvailable;
     return true;
   });
 }
