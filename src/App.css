@@ -2002,3 +2002,43 @@ td.is-find-current::after {
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
 }
+
+/* ---------- React Flow (ER 図 / EXPLAIN 図) のクロムをテーマへ統合 (#1361) ----------
+   @xyflow/react の style.css は `.react-flow` / `.react-flow.dark` に固定の明/暗色を
+   `--xy-*-default` として持ち、実際の描画は `var(--xy-*, var(--xy-*-default))` で読む。
+   接尾辞なしの `--xy-*` をここで既存トークンへ向ければ、11 テーマ・font-scale に
+   追従する (値の単一ソースは App.css のまま)。`colorMode` は node 側の既定色の
+   切り替え用に別途渡すが、下の上書きがあるのでクロムの色はテーマが決める。 */
+.react-flow {
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-color: var(--border-strong);
+
+  --xy-controls-button-background-color: var(--bg-elevated);
+  --xy-controls-button-background-color-hover: var(--bg-hover);
+  --xy-controls-button-color: var(--text-secondary);
+  --xy-controls-button-color-hover: var(--accent);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: var(--shadow-sm);
+
+  --xy-minimap-background-color: var(--bg-elevated);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--bg) 70%, transparent);
+  --xy-minimap-mask-stroke-color: var(--accent);
+  --xy-minimap-node-background-color: var(--border-strong);
+  --xy-minimap-node-stroke-color: var(--border);
+}
+
+.react-flow__minimap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+}

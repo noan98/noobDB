@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
@@ -169,6 +169,7 @@ interface ExplainGraphViewProps {
 function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraphViewProps) {
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
+  const isDark = useIsDarkTheme();
   const [nodes, setNodes, onNodesChange] = useNodesState<PlanFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -207,6 +208,15 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
     return () => window.clearTimeout(id);
   }, [positioned, fitView, reduceMotion]);
 
+  // ミニマップのノードはカードと同じコストヒート色で塗る (コスト無しは CSS 既定の中立色)。
+  const miniMapNodeColor = useCallback(
+    (n: Node) => {
+      const heat = (n.data as PlanNodeData).heat;
+      return heat === null ? "var(--border-strong)" : sampleRamp(heat, rampStops(SEQUENTIAL_RAMPS.blue, isDark));
+    },
+    [isDark],
+  );
+
   return (
     <ReactFlow
       nodes={nodes}
@@ -219,11 +229,12 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
       edgesFocusable={false}
       fitView
       minZoom={0.1}
+      colorMode={isDark ? "dark" : "light"}
       proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable />
+      <MiniMap pannable zoomable nodeColor={miniMapNodeColor} />
     </ReactFlow>
   );
 }
