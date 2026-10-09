@@ -35,6 +35,12 @@ export interface ChartConfig {
    * `chartPalette()` を通すので未設定でも安全に既定へ倒れる。
    */
   palette?: ChartPaletteKey;
+  /**
+   * 円グラフをドーナツ (中央に穴) で描くか (#1215)。省略 = ドーナツ。`false` を
+   * 明示したときだけ従来の純パイ。後から足したフィールドなので旧設定は未設定のまま
+   * 通り、`isDonut` が既定へ倒す。円グラフ以外では無視される。
+   */
+  donut?: boolean;
 }
 
 export interface ChartSeries {
@@ -535,7 +541,10 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
   // 縮退させず既定へ埋める (他フィールドと違い、参照の整合性を壊さないため)。
   const palette = chartPalette(typeof o.palette === "string" ? o.palette : undefined).key;
 
-  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation, palette };
+  // ドーナツ指定 (#1215) も後付けなので、boolean のときだけ引き継ぐ (欠損は既定)。
+  const donut = typeof o.donut === "boolean" ? { donut: o.donut } : {};
+
+  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation, palette, ...donut };
 }
 
 /**
@@ -562,4 +571,62 @@ export function writeStoredChartConfig(key: string | undefined, config: ChartCon
   } catch {
     // ignore (private mode, quota)
   }
+}
+
+/** ドーナツの穴の半径 / 外半径の比 (#1215)。 */
+export const DONUT_INNER_RATIO = 0.6;
+
+/** 円グラフをドーナツで描くか。未設定 (旧設定) は既定のドーナツ (#1215)。 */
+export function isDonut(config: Pick<ChartConfig, "donut">): boolean {
+  return config.donut !== false;
+}
+
+/**
+ * 円/ドーナツのスライスの SVG パス (#1215)。角度はラジアンで、終了 - 開始が全周
+ * (ほぼ 2π) のときは弧の始点終点が一致して経路が退化するため、半円 2 つで円を作る。
+ * `rInner > 0` なら内側の弧を逆回りで足した環になる (全周のときは穴を抜くので
+ * 描画側で `fillRule="evenodd"` を指定すること)。
+ */
+export function donutSlicePath(
+  cx: number,
+  cy: number,
+  rOuter: number,
+  rInner: number,
+  start: number,
+  end: number,
+): string {
+  const f = (n: number) => Number(n.toFixed(3));
+  const pt = (r: number, a: number) => `${f(cx + r * Math.cos(a))} ${f(cy + r * Math.sin(a))}`;
+  const full = end - start >= Math.PI * 2 - 1e-9;
+  if (full) {
+    const circle = (r: number, sweep: 0 | 1) =>
+      `M ${f(cx - r)} ${f(cy)} A ${r} ${r} 0 1 ${sweep} ${f(cx + r)} ${f(cy)} A ${r} ${r} 0 1 ${sweep} ${f(cx - r)} ${f(cy)} Z`;
+    return rInner > 0 ? `${circle(rOuter, 1)} ${circle(rInner, 0)}` : circle(rOuter, 1);
+  }
+  const large = end - start > Math.PI ? 1 : 0;
+  if (rInner <= 0) {
+    return `M ${f(cx)} ${f(cy)} L ${pt(rOuter, start)} A ${rOuter} ${rOuter} 0 ${large} 1 ${pt(rOuter, end)} Z`;
+  }
+  return `M ${pt(rOuter, start)} A ${rOuter} ${rOuter} 0 ${large} 1 ${pt(rOuter, end)} L ${pt(rInner, end)} A ${rInner} ${rInner} 0 ${large} 0 ${pt(rInner, start)} Z`;
+}
+
+/** CSS の長さ文字列 (`"4px"` など) を数値へ。`px` 以外・不正は `fallback` (#1215)。 */
+export function parsePx(raw: string | null | undefined, fallback: number): number {
+  const m = /^\s*(\d+(?:\.\d+)?)px\s*$/.exec(raw ?? "");
+  return m ? Number(m[1]) : fallback;
+}
+
+/**
+ * 値側の端だけを丸めた棒の SVG パス (#1215)。`up` なら上端 (正の値)、そうでなければ
+ * 下端 (負の値) を半径 `r` で丸め、基線側は直角のまま。`r` は幅の半分と高さで頭打ちにする。
+ * 高さ 0 以下は描くものが無いので空文字を返す。
+ */
+export function roundedBarPath(x: number, y: number, w: number, h: number, r: number, up: boolean): string {
+  if (!(h > 0) || !(w > 0)) return "";
+  const rr = Math.max(0, Math.min(r, w / 2, h));
+  const f = (n: number) => Number(n.toFixed(3));
+  if (up) {
+    return `M ${f(x)} ${f(y + h)} L ${f(x)} ${f(y + rr)} A ${f(rr)} ${f(rr)} 0 0 1 ${f(x + rr)} ${f(y)} L ${f(x + w - rr)} ${f(y)} A ${f(rr)} ${f(rr)} 0 0 1 ${f(x + w)} ${f(y + rr)} L ${f(x + w)} ${f(y + h)} Z`;
+  }
+  return `M ${f(x)} ${f(y)} L ${f(x)} ${f(y + h - rr)} A ${f(rr)} ${f(rr)} 0 0 0 ${f(x + rr)} ${f(y + h)} L ${f(x + w - rr)} ${f(y + h)} A ${f(rr)} ${f(rr)} 0 0 0 ${f(x + w)} ${f(y + h - rr)} L ${f(x + w)} ${f(y)} Z`;
 }
