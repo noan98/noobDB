@@ -47,7 +47,7 @@ export interface RenameResult {
 /**
  * インライン編集 / メニューからのリネーム確定。前後の空白は落とす。
  * 空文字なら手動指定を解除して自動命名へ戻す (`sql` から導出し直す。空 SQL なら既定名)。
- * 入力が現在のタイトルと同じで、すでに手動なら変更なし (`null`)。
+ * 入力が現在のタイトルと同じなら変更なし (`null`。未編集で手動名に固定しない)。
  */
 export function applyRename(
   tab: AutoTitleTab,
@@ -61,6 +61,7 @@ export function applyRename(
     if (!tab.titleManual && title === tab.title) return null;
     return { title, titleManual: false };
   }
-  if (tab.titleManual && name === tab.title) return null;
+  // 未変更 (現在のタイトルと同じ) なら、手動/自動を問わず何も変えない。
+  if (name === tab.title) return null;
   return { title: name, titleManual: true };
 }

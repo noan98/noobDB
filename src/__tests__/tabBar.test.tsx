@@ -100,6 +100,44 @@ describe("TabBar rename (#1390)", () => {
     expect(fns.onRename).toHaveBeenCalledWith("t1", "月次");
   });
 
+  it("未編集のまま blur / Enter では確定せず取消扱い", () => {
+    const fns = setup();
+    const input = screen.getByRole("textbox");
+    fireEvent.blur(input);
+    expect(fns.onRename).not.toHaveBeenCalled();
+    expect(fns.onRenameCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("blur 確定ではタブへフォーカスを戻さず、Enter 確定では戻す", async () => {
+    const fns = setup();
+    const tab = screen.getAllByRole("tab")[0];
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "a" } });
+    fireEvent.blur(input);
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(fns.onRename).toHaveBeenCalledWith("t1", "a");
+    expect(document.activeElement).not.toBe(tab);
+  });
+
+  it("Enter 確定ではタブへフォーカスを戻す", async () => {
+    setup();
+    const tab = screen.getAllByRole("tab")[0];
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "a" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(document.activeElement).toBe(tab);
+  });
+
+  it("F2 で query タブのリネームを開始し、table タブでは開始しない", () => {
+    const fns = setup(null);
+    const [q, tbl] = screen.getAllByRole("tab");
+    fireEvent.keyDown(q, { key: "F2" });
+    expect(fns.onRenameRequest).toHaveBeenCalledWith("t1");
+    fireEvent.keyDown(tbl, { key: "F2" });
+    expect(fns.onRenameRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("Esc で取り消し、確定しない", () => {
     const fns = setup();
     const input = screen.getByRole("textbox");

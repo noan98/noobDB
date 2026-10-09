@@ -84,14 +84,18 @@ interface Props {
  * 親タブへ伝えない (Delete・Backspace で閉じる、中クリックで閉じる、ドラッグ開始を避ける)。
  * 空文字の確定は呼び出し側で「自動命名へ戻す」と解釈する。
  */
+type RenameEnd = "enter" | "escape" | "blur";
+
 function RenameInput({
   initial,
   ariaLabel,
+  placeholder,
   onDone,
 }: {
   initial: string;
   ariaLabel: string;
-  onDone: (name: string | null) => void;
+  placeholder: string;
+  onDone: (name: string | null, reason: RenameEnd) => void;
 }) {
   const [value, setValue] = useState(initial);
   const doneRef = useRef(false);
@@ -100,16 +104,19 @@ function RenameInput({
     ref.current?.focus();
     ref.current?.select();
   }, []);
-  const finish = (name: string | null) => {
+  const finish = (reason: RenameEnd) => {
     if (doneRef.current) return;
     doneRef.current = true;
-    onDone(name);
+    // Esc と未編集 (初期値のまま) は取消扱い。未編集で手動名に固定しない。
+    onDone(reason === "escape" || value === initial ? null : value, reason);
   };
   return (
     <chakra.input
       ref={ref}
       value={value}
       aria-label={ariaLabel}
+      placeholder={placeholder}
+      maxLength={100}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={(e) => {
         e.stopPropagation();
@@ -117,13 +124,13 @@ function RenameInput({
         if (e.nativeEvent.isComposing) return;
         if (e.key === "Enter") {
           e.preventDefault();
-          finish(value);
+          finish("enter");
         } else if (e.key === "Escape") {
           e.preventDefault();
-          finish(null);
+          finish("escape");
         }
       }}
-      onBlur={() => finish(value)}
+      onBlur={() => finish("blur")}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
@@ -199,10 +206,12 @@ export const TabBar = memo(function TabBar({
   useEffect(() => clearDropFlash, [clearDropFlash]);
 
   // リネーム確定 / 取消のあと、キーボード操作を続けられるようタブへフォーカスを戻す。
-  const endRename = useCallback((id: string, name: string | null) => {
+  // blur (他所をクリック) で確定したときは、フォーカスを奪い返さない: 戻すと直後の
+  // Backspace / Delete でタブが閉じる事故になる。Enter / Esc のときだけ戻す。
+  const endRename = useCallback((id: string, name: string | null, reason: RenameEnd) => {
     if (name === null) onRenameCancel?.();
     else onRename?.(id, name);
-    requestAnimationFrame(() => tabRefs.current.get(id)?.focus());
+    if (reason !== "blur") requestAnimationFrame(() => tabRefs.current.get(id)?.focus());
   }, [onRename, onRenameCancel]);
 
   /** ArrowLeft/Right/Home/End でフォーカスとアクティブタブを同時に移動する。
@@ -214,6 +223,15 @@ export const TabBar = memo(function TabBar({
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         onSelect(currentId);
+        return;
+      }
+      // F2: query タブのリネームを開始 (ダブルクリック / メニューと同じ)。
+      if (e.key === "F2" && onRenameRequest && onRename) {
+        const cur = tabs.find((tt) => tt.id === currentId);
+        if (cur?.kind === "query") {
+          e.preventDefault();
+          onRenameRequest(currentId);
+        }
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -255,7 +273,7 @@ export const TabBar = memo(function TabBar({
         }
       }
     },
-    [tabs, onSelect, onClose, onReorder, setDropIndicator],
+    [tabs, onSelect, onClose, onReorder, onRenameRequest, onRename, setDropIndicator],
   );
 
   const tabIds = tabs.map((tab) => tab.id);
@@ -461,7 +479,7 @@ export const TabBar = memo(function TabBar({
                 // アニメーションが壊れる。低頻度 (開いているタブ数だけ) の
                 // 装飾的な補足情報のため、実害の小さいこの 1 箇所のみ native
                 // title を残す判断とする。
-                title={title}
+                title={renamingTabId === tab.id ? undefined : title}
                 // 追加・削除は opacity + scaleX だけで表す (#1322)。width を 0 ↔ auto に
                 // 補間すると隣のタブが毎フレーム再配置されるため。隣は即時に詰まる。
                 initial={variants.fadeScaleX.initial}
@@ -547,7 +565,8 @@ export const TabBar = memo(function TabBar({
                   <RenameInput
                     initial={tab.title}
                     ariaLabel={t("tabRenameAria")}
-                    onDone={(name) => endRename(tab.id, name)}
+                    placeholder={t("tabRenamePlaceholder")}
+                    onDone={(name, reason) => endRename(tab.id, name, reason)}
                   />
                 ) : (
                   <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" maxW="180px">

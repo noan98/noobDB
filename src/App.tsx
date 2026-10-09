@@ -1714,10 +1714,16 @@ export default function App() {
   // パターン、#1219 付近参照)。F6 巡回 (paneFocusCursorRef) や
   // フォーカストラップ (keyboardNav.ts) の状態には触れない — こちらは
   // フォーカスを直接移すだけの単発処理。
+  const renamingTabIdRef = useRef<string | null>(null);
   const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
     if (!paneId || tabKind !== "query") return;
     requestAnimationFrame(() => {
       if (overlayOpenRef.current) return;
+      // タブ名のインライン編集中 (ダブルクリックの 1 回目の選択で予約された rAF が
+      // 後から走る場合を含む) は、エディタへフォーカスを奪って blur 確定させない (#1390)。
+      if (renamingTabIdRef.current) return;
+      const ae = document.activeElement;
+      if (ae instanceof HTMLInputElement && ae.closest('[role="tab"]')) return;
       editorRefs.current.get(paneId)?.focus();
     });
   }, []);
@@ -4716,6 +4722,7 @@ export default function App() {
     const db = tab.database ?? selectedProfile?.database ?? null;
     patchTab(tabId, (tt) => ({
       ...tt,
+      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
       batchRunning: true,
       batchScript: sql,
       batchResults: [],
@@ -4796,6 +4803,7 @@ export default function App() {
     if (!sessionId) return;
     patchTab(tabId, (tt) => ({
       ...tt,
+      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
       streaming: true,
       queryError: null,
       showChart: false,
@@ -6021,7 +6029,10 @@ export default function App() {
   const openAndRunQuery = useCallback((sql: string, title?: string) => {
     if (!sessionId) return;
     const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
-    if (title) tab.title = title;
+    if (title) {
+      tab.title = title;
+      tab.titleManual = true;
+    }
     addTab(tab);
     void runQueryInTab(tab.id, sql);
   }, [sessionId, runQueryInTab, addTab]);
@@ -7205,6 +7216,7 @@ export default function App() {
   // タブのリネーム (#1390)。編集中のタブ ID を持ち、TabBar のインライン編集を制御する。
   // 確定は `applyRename` が空文字 (自動命名へ戻す) / 変更なしを判定する。
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  renamingTabIdRef.current = renamingTabId;
   const requestRenameTab = useCallback((id: string) => setRenamingTabId(id), []);
   const cancelRenameTab = useCallback(() => setRenamingTabId(null), []);
   const renameTab = useCallback((id: string, input: string) => {

@@ -61,10 +61,7 @@ describe("applyRename", () => {
     expect(applyRename({ kind: "query", title: "月次", titleManual: true }, "月次", "x", U)).toBeNull();
     expect(applyRename({ kind: "query", title: "SELECT 1" }, "", "SELECT 1", U)).toBeNull();
   });
-  it("自動命名と同じ文字列でも、明示入力なら手動として固定する", () => {
-    expect(applyRename({ kind: "query", title: "SELECT 1" }, "SELECT 1", "SELECT 1", U)).toEqual({
-      title: "SELECT 1",
-      titleManual: true,
-    });
+  it("未編集 (現在のタイトルと同じ入力) なら手動名に固定しない", () => {
+    expect(applyRename({ kind: "query", title: "SELECT 1" }, "SELECT 1", "SELECT 1", U)).toBeNull();
   });
 });
