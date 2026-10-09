@@ -1,3 +1,5 @@
+import type { DragEvent } from "react";
+import { fillSchemaDragData } from "../schemaDragDrop";
 import { createContext, forwardRef, memo, useCallback, useContext, useDeferredValue, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { findIdentityColumn } from "./identitySync";
 import { isProtectedNamespace, treeNamespaceKind } from "./databaseMaintenance";
@@ -816,6 +818,12 @@ const ColumnRow = memo(function ColumnRow({
       onKeyDown={actions.makeKeyDown(undefined, openMenu)}
       onContextMenu={openMenu}
       onDoubleClick={() => actions.insertColumn(tbl, col.name)}
+      // SQL エディタへのドラッグ挿入 (#1414)。接続 / グループの並べ替えは Motion の
+      // pointer ドラッグで別物。
+      draggable
+      onDragStart={(e: DragEvent<HTMLDivElement>) =>
+        fillSchemaDragData(e.dataTransfer, { kind: "column", database: db, table: tbl, column: col.name })
+      }
       {...actions.columnTooltip(col)}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1037,6 +1045,11 @@ const TableNode = memo(function TableNode({
         actions.pickTable(db, tbl);
       }}
       onContextMenu={openMenu}
+      // SQL エディタへのドラッグ挿入 (#1414)。
+      draggable
+      onDragStart={(e: DragEvent<HTMLDivElement>) =>
+        fillSchemaDragData(e.dataTransfer, { kind: "table", database: db, table: tbl })
+      }
       {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
       _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
     >

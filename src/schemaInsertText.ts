@@ -17,3 +17,12 @@ export function columnInsertText(driver: string, column: string): string {
 export function qualifiedColumnInsertText(driver: string, table: string, column: string): string {
   return `${quoteIfNeeded(driver, table)}.${quoteIfNeeded(driver, column)}`;
 }
+
+/**
+ * 修飾テーブル名 (`db.table`)。SQLite は名前空間が 1 つ ("main") なので `table` のみ。
+ * 編集中の FROM 句へそのまま貼れる形 (ドラッグ挿入 #1414)。
+ */
+export function tableInsertText(driver: string, database: string, table: string): string {
+  if (driver === "sqlite") return quoteIfNeeded(driver, table);
+  return `${quoteIfNeeded(driver, database)}.${quoteIfNeeded(driver, table)}`;
+}
