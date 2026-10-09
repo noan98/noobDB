@@ -5,6 +5,7 @@ import { api, ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
 import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
+import { isTabDirty } from "../tabDirty";
 import { useKeyedStable } from "../useKeyedStable";
 import { isCtasEligibleSql } from "./resultsToTable";
 import { applyServerBrowse, type ServerFilterOp, type ServerSortDirection } from "./serverBrowse";
@@ -344,7 +345,7 @@ export const PaneView = memo(
         database: tt.database,
         table: tt.table,
         dirty: (() => {
-          const d = tt.kind === "query" && getTabSql(tt) !== tt.lastExecutedSql;
+          const d = isTabDirty(tt, getTabSql(tt));
           dirtyWatcher.recordShown(tt.id, d);
           return d;
         })(),
