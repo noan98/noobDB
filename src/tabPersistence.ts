@@ -5,6 +5,11 @@ const STORAGE_PREFIX = "noobdb.tabs.";
 export interface PersistedTab {
   kind: "table" | "query" | "explain";
   title: string;
+  /**
+   * ユーザが明示的にリネームした (または名前付きで開いた) タブ (#1390)。true のタブは
+   * 実行時の自動命名で上書きしない。旧データには無いので、欠落は false 扱い。
+   */
+  titleManual?: boolean;
   database?: string;
   table?: string;
   sql: string;
@@ -127,6 +132,8 @@ function sanitizeTab(raw: unknown): PersistedTab | null {
   const out: PersistedTab = { kind: o.kind, title: o.title, sql: o.sql };
   if (typeof o.database === "string") out.database = o.database;
   if (typeof o.table === "string") out.table = o.table;
+  // 真のときだけ持つ (旧データ・不正な型は無視して自動命名のまま)。
+  if (o.titleManual === true) out.titleManual = true;
   if (isValidBuilderSnapshot(o.builderSnapshot)) {
     out.builderSnapshot = o.builderSnapshot;
   }

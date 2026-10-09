@@ -36,6 +36,8 @@ export function tabsToClose(
 export interface DuplicateSource {
   kind: "table" | "query" | "explain";
   title: string;
+  /** 手動リネーム済みか。複製にも引き継ぐ (複製直後の実行で名前が消えないように)。 */
+  titleManual?: boolean;
   /** エディタの最新テキスト (未反映の編集を含む)。 */
   sql: string;
   /** 元タブの最終実行 SQL。dirty 判定 (sql との差) を複製にも引き継ぐために使う。 */
@@ -50,6 +52,7 @@ export interface DuplicateSpec {
    */
   kind: "query" | "explain";
   title: string;
+  titleManual: boolean;
   sql: string;
   lastExecutedSql: string;
 }
@@ -62,6 +65,7 @@ export function duplicateSpec(source: DuplicateSource): DuplicateSpec {
   return {
     kind: source.kind === "explain" ? "explain" : "query",
     title: source.title,
+    titleManual: source.titleManual === true,
     sql: source.sql,
     lastExecutedSql: source.lastExecutedSql,
   };

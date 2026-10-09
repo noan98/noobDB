@@ -32,6 +32,7 @@ describe("duplicateSpec", () => {
     expect(duplicateSpec({ kind: "query", title: "q", sql: "SELECT 1", lastExecutedSql: "SELECT 1" })).toEqual({
       kind: "query",
       title: "q",
+      titleManual: false,
       sql: "SELECT 1",
       lastExecutedSql: "SELECT 1",
     });
@@ -40,6 +41,11 @@ describe("duplicateSpec", () => {
     const r = duplicateSpec({ kind: "query", title: "q", sql: "SELECT 2", lastExecutedSql: "SELECT 1" });
     expect(r.sql).toBe("SELECT 2");
     expect(r.lastExecutedSql).toBe("SELECT 1");
+  });
+  it("手動リネーム済みのフラグを複製にも引き継ぐ (#1390)", () => {
+    const r = duplicateSpec({ kind: "query", title: "月次集計", titleManual: true, sql: "SELECT 1", lastExecutedSql: "" });
+    expect(r.titleManual).toBe(true);
+    expect(r.title).toBe("月次集計");
   });
   it("explain は explain のまま複製する", () => {
     expect(duplicateSpec({ kind: "explain", title: "e", sql: "EXPLAIN SELECT 1", lastExecutedSql: "EXPLAIN SELECT 1" }).kind).toBe(
@@ -50,6 +56,7 @@ describe("duplicateSpec", () => {
     expect(duplicateSpec({ kind: "table", title: "users", sql: "SELECT * FROM users", lastExecutedSql: "SELECT * FROM users" })).toEqual({
       kind: "query",
       title: "users",
+      titleManual: false,
       sql: "SELECT * FROM users",
       lastExecutedSql: "SELECT * FROM users",
     });

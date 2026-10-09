@@ -60,3 +60,71 @@ describe("TabBar render smoke (#604)", () => {
     expect(onNew).toHaveBeenCalledOnce();
   });
 });
+
+describe("TabBar rename (#1390)", () => {
+  function setup(renamingTabId: string | null = "t1") {
+    const fns = {
+      onClose: vi.fn(),
+      onSelect: vi.fn(),
+      onRename: vi.fn(),
+      onRenameCancel: vi.fn(),
+      onRenameRequest: vi.fn(),
+    };
+    renderWithProviders(
+      <TabBar
+        tabs={TABS}
+        activeTabId="t1"
+        onNew={() => {}}
+        renamingTabId={renamingTabId}
+        {...fns}
+      />,
+    );
+    return fns;
+  }
+
+  it("ダブルクリックで query タブのリネームを要求し、table タブでは要求しない", () => {
+    const fns = setup(null);
+    fireEvent.doubleClick(screen.getByText("Query 1"));
+    expect(fns.onRenameRequest).toHaveBeenCalledWith("t1");
+    fireEvent.doubleClick(screen.getByText("users"));
+    expect(fns.onRenameRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("Enter で確定し、続く blur では二重に確定しない", () => {
+    const fns = setup();
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "月次" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.blur(input);
+    expect(fns.onRename).toHaveBeenCalledTimes(1);
+    expect(fns.onRename).toHaveBeenCalledWith("t1", "月次");
+  });
+
+  it("Esc で取り消し、確定しない", () => {
+    const fns = setup();
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "x" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    fireEvent.blur(input);
+    expect(fns.onRenameCancel).toHaveBeenCalledTimes(1);
+    expect(fns.onRename).not.toHaveBeenCalled();
+  });
+
+  it("blur で確定し、空文字もそのまま渡す (自動命名へ戻す指示)", () => {
+    const fns = setup();
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    expect(fns.onRename).toHaveBeenCalledWith("t1", "");
+  });
+
+  it("編集中の Delete / Backspace / 中クリックでタブを閉じない", () => {
+    const fns = setup();
+    const input = screen.getByRole("textbox");
+    fireEvent.keyDown(input, { key: "Delete" });
+    fireEvent.keyDown(input, { key: "Backspace" });
+    fireEvent.mouseDown(input, { button: 1 });
+    expect(fns.onClose).not.toHaveBeenCalled();
+  });
+});
+
