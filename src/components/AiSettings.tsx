@@ -20,6 +20,7 @@ import {
   setAiDefaultModel,
   giveAiConsent,
   setAiEnabled,
+  setAiMaskLiterals,
   setAiSendScope,
   setAiTaskEffort,
   setAiTaskModel,
@@ -34,6 +35,16 @@ import { useToast } from "./Toast";
 const TASK_LABEL: Record<AiTaskKind, I18nKey> = {
   connectionTest: "aiTaskConnectionTest",
   generic: "aiTaskGeneric",
+  errorExplain: "aiTaskErrorExplain",
+  nl2sql: "aiTaskNl2sql",
+  explainInterpret: "aiTaskExplainInterpret",
+  impactAnalysis: "aiTaskImpactAnalysis",
+  sqlExplain: "aiTaskSqlExplain",
+  sqlRewrite: "aiTaskSqlRewrite",
+  schemaDoc: "aiTaskSchemaDoc",
+  syncRisk: "aiTaskSyncRisk",
+  testData: "aiTaskTestData",
+  historySearch: "aiTaskHistorySearch",
 };
 
 const EFFORT_LABEL: Record<AiEffort, I18nKey> = {
@@ -446,6 +457,25 @@ export function AiSettings() {
         </chakra.label>
         <chakra.span fontSize="sm" color="app.textMuted">
           {t("aiAllowRowDataHelp")}
+        </chakra.span>
+        <chakra.label
+          htmlFor="settings-ai-mask-literals"
+          display="inline-flex"
+          alignItems="center"
+          gap="2"
+          fontSize="md"
+          fontWeight={500}
+          color="app.text"
+        >
+          <Switch
+            id="settings-ai-mask-literals"
+            checked={ai.maskLiterals}
+            onChange={setAiMaskLiterals}
+          />
+          {t("aiMaskLiterals")}
+        </chakra.label>
+        <chakra.span fontSize="sm" color="app.textMuted">
+          {t("aiMaskLiteralsHelp")}
         </chakra.span>
       </FormSection>
 

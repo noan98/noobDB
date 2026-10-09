@@ -99,6 +99,7 @@ import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
+import { AiErrorExplain } from "./components/AiErrorExplain";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -3928,7 +3929,13 @@ export default function App() {
             error: true,
           });
         } else {
-          setStatus({ kind: "key", key: "statusQueryError", vars: { error }, error: true });
+          setStatus({
+            kind: "key",
+            key: "statusQueryError",
+            vars: { error },
+            error: true,
+            aiContext: { tabId, sql, database: tab?.database ?? null },
+          });
         }
       },
     });
@@ -3973,7 +3980,14 @@ export default function App() {
     } catch (e) {
       flusher.flushNow();
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+        errorKind: errorKindOf(e),
+        aiContext: { tabId, sql, database: tab?.database ?? null },
+      });
       if (!autoRefresh) {
         recordOutput(
           { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
@@ -4778,7 +4792,14 @@ export default function App() {
       );
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+        errorKind: errorKindOf(e),
+        aiContext: { tabId, sql, database: null },
+      });
       recordOutput({ sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, null);
     }
   }, [sessionId, patchTab, recordOutput]);
@@ -9352,6 +9373,25 @@ export default function App() {
             </Flex>
           );
         })()}
+        {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時だけ出る。 */}
+        {!statusDismissed &&
+          status.kind !== "idle" &&
+          status.error &&
+          status.aiContext &&
+          sessionId &&
+          selectedProfile && (
+            <AiErrorExplain
+              key={`${status.aiContext.tabId}\u0000${status.aiContext.sql}\u0000${status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}`}
+              sessionId={sessionId}
+              driver={selectedProfile.driver}
+              isProduction={selectedProfile.is_production ?? false}
+              errorKind={status.errorKind ?? null}
+              message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
+              sql={status.aiContext.sql}
+              database={status.aiContext.database ?? activeTab?.database ?? selectedProfile.database ?? null}
+              onApply={(suggestedSql) => updateTab(status.aiContext?.tabId ?? "", { sql: suggestedSql })}
+            />
+          )}
       </Flex>
 
       <Suspense fallback={null}>

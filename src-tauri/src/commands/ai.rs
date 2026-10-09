@@ -2,7 +2,7 @@
 //!
 //! - `set_ai_api_key` / `has_ai_api_key`: API キーは OS keyring のみ (`ai/anthropic_api_key`)。
 //!   値を返す IPC は無く、`has_ai_api_key` は bool だけ返す。
-//! - `run_ai_request`: ストリーミング要求。`ai-stream:delta` / `:done` / `:error` /
+//! - `run_ai_request`: ストリーミング要求 (任意の `format` で構造化出力 JSON Schema を指定可)。`ai-stream:delta` / `:done` / `:error` /
 //!   `:cancelled` を `stream_id` で絞って購読する。`cancel_stream` で中断できる。
 //! - `test_ai_connection`: 短い非ストリーミング要求で疎通を確認する。
 //!
@@ -127,6 +127,20 @@ fn require_api_key() -> Result<String> {
         .ok_or_else(|| AppError::AiAuth("no API key is configured".into()))
 }
 
+/// 構造化出力の指定 (`output_config.format`) を検証する。`{ "type": "json_schema",
+/// "schema": {...} }` の形だけを通し、任意の JSON を API へ素通しさせない。
+fn validate_format(format: &serde_json::Value) -> Result<()> {
+    let ok = format.get("type").and_then(|v| v.as_str()) == Some("json_schema")
+        && format.get("schema").is_some_and(|v| v.is_object());
+    if ok {
+        Ok(())
+    } else {
+        Err(AppError::InvalidInput(
+            "format must be { \"type\": \"json_schema\", \"schema\": {...} }".into(),
+        ))
+    }
+}
+
 fn build_spec(
     task: AiTaskKind,
     settings: &AiSettingsSnapshot,
@@ -134,6 +148,7 @@ fn build_spec(
     prompt: String,
     max_tokens: u32,
     stream: bool,
+    format: Option<serde_json::Value>,
 ) -> AiRequestSpec {
     AiRequestSpec {
         model: resolve_model(task, settings),
@@ -142,6 +157,7 @@ fn build_spec(
         prompt,
         max_tokens,
         stream,
+        format,
     }
 }
 
@@ -169,6 +185,8 @@ pub async fn has_ai_api_key() -> Result<bool> {
 }
 
 /// AI へのストリーミング要求。結果は `ai-stream:*` イベントで届く。
+// Tauri コマンドの引数は IPC の形そのもの (app/state は注入) で、まとめると呼び出し側の契約が変わるため許容する。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn run_ai_request(
     app: AppHandle,
@@ -177,9 +195,13 @@ pub async fn run_ai_request(
     system: Option<String>,
     prompt: String,
     settings: AiSettingsSnapshot,
+    format: Option<serde_json::Value>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     require_enabled(&settings)?;
+    if let Some(f) = &format {
+        validate_format(f)?;
+    }
     if prompt.trim().is_empty() {
         return Err(AppError::InvalidInput("the prompt is empty".into()));
     }
@@ -187,7 +209,15 @@ pub async fn run_ai_request(
         return Err(AppError::InvalidInput("the prompt is too large".into()));
     }
     let api_key = require_api_key()?;
-    let spec = build_spec(task, &settings, system, prompt, DEFAULT_MAX_TOKENS, true);
+    let spec = build_spec(
+        task,
+        &settings,
+        system,
+        prompt,
+        DEFAULT_MAX_TOKENS,
+        true,
+        format,
+    );
     let transport = ReqwestTransport::new()?;
 
     let delivered = Arc::new(AtomicU64::new(0));
@@ -279,6 +309,7 @@ pub async fn test_ai_connection(settings: AiSettingsSnapshot) -> Result<AiConnec
             TEST_PROMPT.to_string(),
             TEST_MAX_TOKENS,
             false,
+            None,
         );
         match tokio::time::timeout(
             Duration::from_secs(TEST_TIMEOUT_SECS),
@@ -337,6 +368,20 @@ mod tests {
     #[test]
     fn non_ai_errors_stay_ipc_errors() {
         assert!(classify_connection_test(Err(AppError::Keyring("x".into())), 1).is_err());
+    }
+
+    #[test]
+    fn format_validation_accepts_only_json_schema() {
+        let ok = serde_json::json!({ "type": "json_schema", "schema": { "type": "object" } });
+        assert!(validate_format(&ok).is_ok());
+        for bad in [
+            serde_json::json!({ "type": "text" }),
+            serde_json::json!({ "type": "json_schema" }),
+            serde_json::json!({ "type": "json_schema", "schema": "x" }),
+            serde_json::json!("json_schema"),
+        ] {
+            assert!(validate_format(&bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
