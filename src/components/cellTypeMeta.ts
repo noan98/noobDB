@@ -157,3 +157,68 @@ export function truncateHexPreview(hex: string, maxChars = 64): HexPreview {
   if (hex.length <= maxChars) return { preview: hex, truncated: false };
   return { preview: `${hex.slice(0, maxChars)}…`, truncated: true };
 }
+
+/** 括弧の引数 (`varchar(255)` の `(255)`) を除いた型名。`classifyTypeName` に渡す前処理。 */
+export function baseTypeName(dataType: string): string {
+  return dataType.replace(/\s*\(.*?\)/g, "").trim();
+}
+
+/**
+ * DB カタログの型名を {@link classifyTypeName} の語彙 (大文字・修飾なし) へ正規化する。
+ * PostgreSQL の正式名 (`timestamp with time zone` / `double precision` / `bytea` …) や
+ * MySQL の修飾 (`bigint unsigned zerofill`) は完全一致集合に無いので、分類の前に
+ * ここで寄せる。`classifyTypeName` 側の集合は dataSearch など他の利用箇所に影響するため
+ * 広げず、ER 図など表示側が使う。
+ */
+export function normalizeTypeForClassify(dataType: string): string {
+  const base = baseTypeName(dataType)
+    .toLowerCase()
+    .replace(/\b(unsigned|signed|zerofill)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const alias: Record<string, string> = {
+    "timestamp with time zone": "timestamp",
+    "timestamp without time zone": "timestamp",
+    timestamptz: "timestamp",
+    "time with time zone": "time",
+    "time without time zone": "time",
+    timetz: "time",
+    "double precision": "double",
+    bytea: "blob",
+    "character varying": "varchar",
+    int2: "smallint",
+    int4: "int",
+    int8: "bigint",
+    smallserial: "smallint",
+    serial: "int",
+    bigserial: "bigint",
+    float4: "float",
+    float8: "double",
+    bool: "boolean",
+  };
+  return (alias[base] ?? base).toUpperCase();
+}
+
+/** 長い型名の短縮表記 (表示専用)。キーは小文字の括弧なし型名。 */
+const TYPE_ABBREVIATIONS: Record<string, string> = {
+  "character varying": "varchar",
+  character: "char",
+  integer: "int",
+  boolean: "bool",
+  "double precision": "double",
+  "timestamp without time zone": "timestamp",
+  "timestamp with time zone": "timestamptz",
+  "time without time zone": "time",
+  "time with time zone": "timetz",
+};
+
+/**
+ * DB カタログの型名を ER 図などの狭い列行向けに短縮する (表示専用)。小文字化し、
+ * 括弧の引数 (長さ・精度) は落として、PostgreSQL の冗長な正式名を一般的な別名へ寄せる
+ * (`character varying(255)` → `varchar`、`timestamp with time zone` → `timestamptz`)。
+ * 空文字は空文字を返す。
+ */
+export function shortTypeName(dataType: string): string {
+  const base = baseTypeName(dataType).toLowerCase();
+  return TYPE_ABBREVIATIONS[base] ?? base;
+}

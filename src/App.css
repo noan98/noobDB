@@ -156,6 +156,9 @@
   --radius-xl: 16px;
   --radius-pill: 999px;
 
+  /* ER 図のホバー連動で無関係なテーブル / 線を減光する不透明度 (#1360) */
+  --er-dim-opacity: 0.3;
+
   /* Elevation (light) */
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
   --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.14);
@@ -2037,10 +2040,58 @@ td.is-find-current::after {
   --xy-edge-stroke-selected: var(--accent);
 }
 
+/* ---------- ER 図: リレーション記号とホバー連動ハイライト (#1360) ----------
+   線の両端のクロウフット / 縦棒 / 丸は ERDiagramView の `ErRelationEdge` が描く。
+   線色は上の `--xy-edge-stroke` と同じトークンに揃え、ハイライト時は accent にする。 */
+.er-flow {
+  /* キャンバスの地。「ゼロ」の丸がこの色で線を隠す */
+  --er-canvas: var(--bg);
+  background: var(--er-canvas);
+}
+.er-card {
+  --er-accent: var(--er-driver, var(--border));
+}
+/* 高コントラスト系はドライバ色の帯を使わず境界色に戻す */
+:root[data-theme="hc-light"] .er-card,
+:root[data-theme="hc-dark"] .er-card {
+  --er-accent: var(--border-strong);
+}
+.react-flow__edge .er-rel-glyph {
+  fill: none;
+  stroke: var(--xy-edge-stroke, var(--border-strong));
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+/* 「ゼロ」の丸は線を隠す背景色で塗る */
+.react-flow__edge .er-rel-glyph circle {
+  fill: var(--er-canvas, var(--bg));
+}
+.react-flow__edge.er-hl .er-rel-glyph {
+  stroke: var(--accent);
+}
+.react-flow__edge.er-hl .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.react-flow__node.er-hl .er-card {
+  border-color: var(--accent);
+}
+/* 無関係なテーブル / 線は減光。動きの抑制は末尾の reduced-motion 規則が transition を止める */
+.er-flow .react-flow__node,
+.er-flow .react-flow__edge {
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.er-flow .react-flow__node.er-dim,
+.er-flow .react-flow__edge.er-dim {
+  opacity: var(--er-dim-opacity);
+}
+
 /* 高コントラスト系はミニマップのビューポート枠を太くして判別しやすくする */
 :root[data-theme="hc-light"] .react-flow,
 :root[data-theme="hc-dark"] .react-flow {
   --xy-minimap-mask-stroke-width: 2;
+  /* 高コントラスト系は減光しすぎて読めなくならないよう弱める */
+  --er-dim-opacity: 0.55;
 }
 
 .react-flow__minimap {
