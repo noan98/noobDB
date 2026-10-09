@@ -16,12 +16,14 @@ import {
   type TableColumnInfo,
   type TableDiff,
 } from "../api/tauri";
+import type { SyncRiskItem } from "../ai/syncRisk";
 import { useLocale, useT } from "../i18n";
 import { staggerContainer, transitions, variants as motionVariants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
+import { AiSyncRisk, RiskBadge, type RiskByIndex } from "./AiSyncRisk";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { Tooltip } from "./Tooltip";
@@ -411,6 +413,8 @@ export function SchemaCompareView({
   const [syncError, setSyncError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
+  // AI リスク要約 (#697) の結果。同期文の行にバッジを付けるだけで、適用フローには影響しない。
+  const [risks, setRisks] = useState<RiskByIndex | null>(null);
 
   // Data sync state.
   const [dataTable, setDataTable] = useState<string>("");
@@ -1038,6 +1042,7 @@ export function SchemaCompareView({
                             statement={stmt}
                             checked={selected.has(i)}
                             onToggle={toggleStatement}
+                            risks={risks?.get(i)}
                           />
                         ))}
                       </chakra.ul>
@@ -1061,6 +1066,30 @@ export function SchemaCompareView({
                             })}
                           </Button>
                         </Box>
+                      )}
+                      {planKind && sourceDriver && targetDriver && (
+                        <AiSyncRisk
+                          plan={plan}
+                          planKind={planKind}
+                          diff={diff}
+                          dataSummary={
+                            planKind === "data" && dataDiff
+                              ? {
+                                  table: dataDiff.table,
+                                  inserts: dataCounts.source_only,
+                                  updates: dataCounts.different,
+                                  deletes: dataCounts.target_only,
+                                  truncated: dataDiff.truncated,
+                                }
+                              : null
+                          }
+                          sourceDriver={coerceDriver(sourceDriver)}
+                          targetDriver={coerceDriver(targetDriver)}
+                          allowDestructive={allowDestructive}
+                          allowDelete={allowDelete}
+                          isProduction={!!sourceProfile?.is_production || !!targetProfile?.is_production}
+                          onRisks={setRisks}
+                        />
                       )}
                       <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
                       <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
@@ -1166,11 +1195,14 @@ export const SyncStatementRow = memo(function SyncStatementRow({
   statement,
   checked,
   onToggle,
+  risks,
 }: {
   index: number;
   statement: SyncStatement;
   checked: boolean;
   onToggle: (index: number) => void;
+  /** AI リスク要約 (#697) の該当項目。未実行なら undefined。 */
+  risks?: readonly SyncRiskItem[];
 }) {
   const t = useT();
   return (
@@ -1185,6 +1217,7 @@ export const SyncStatementRow = memo(function SyncStatementRow({
         )}
       </chakra.label>
       <chakra.code css={sqlCss}>{statement.sql}</chakra.code>
+      {risks?.map((r, i) => <RiskBadge key={i} item={r} />)}
     </chakra.li>
   );
 });
