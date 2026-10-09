@@ -29,7 +29,17 @@ export interface WorkspaceCommandContext {
   /** スキーマキャッシュ済みのテーブル (アクティブ接続のもの)。 */
   tables: readonly { database: string; table: string }[];
   /** 表示用に解決済みのショートカット (`formatCombo` の戻り値)。 */
-  shortcuts: { toggleSidebar?: string; sidebarFilter?: string; objectSearch?: string };
+  shortcuts: {
+    toggleSidebar?: string;
+    sidebarFilter?: string;
+    objectSearch?: string;
+    reopenClosedTab?: string;
+  };
+  /**
+   * 最近閉じたタブ (#1353)。新しい順。一括クローズは 1 グループで、`extra` は先頭タブ
+   * 以外の枚数。空なら「開き直す」候補を出さない。
+   */
+  closedTabs: readonly { id: string; title: string; extra: number }[];
 }
 
 export interface WorkspaceCommandActions {
@@ -43,6 +53,8 @@ export interface WorkspaceCommandActions {
   openUsers: () => void;
   openServerInfo: () => void;
   openTasks: () => void;
+  /** 閉じたタブを開き直す。`groupId` 省略で最新。 */
+  reopenClosedTab: (groupId?: string) => void;
 }
 
 type Translate = (key: I18nKey, vars?: Record<string, string | number>) => string;
@@ -56,6 +68,34 @@ export function workspaceCommandItems(
   t: Translate,
 ): CommandItem[] {
   const items: CommandItem[] = [];
+
+  // --- 最近閉じたタブ (#1353)。最新を戻す候補 + 2 件以上あれば個別に選べる ---
+  if (ctx.closedTabs.length > 0) {
+    items.push({
+      id: "tab:reopen-closed",
+      group: "navigation",
+      label: t("cmdkReopenClosedTab"),
+      icon: "undo",
+      keywords: "reopen restore undo close closed recent tab 閉じたタブ 復元 再オープン 開き直す 元に戻す 最近",
+      shortcut: ctx.shortcuts.reopenClosedTab,
+      run: () => actions.reopenClosedTab(),
+    });
+    if (ctx.closedTabs.length > 1) {
+      for (const g of ctx.closedTabs) {
+        items.push({
+          id: `tab:reopen-closed:${g.id}`,
+          group: "navigation",
+          label:
+            g.extra > 0
+              ? t("cmdkReopenClosedTabMore", { title: g.title, count: g.extra })
+              : t("cmdkReopenClosedTabItem", { title: g.title }),
+          icon: "undo",
+          keywords: `reopen closed tab ${g.title} 閉じたタブ 再オープン`,
+          run: () => actions.reopenClosedTab(g.id),
+        });
+      }
+    }
+  }
 
   // --- Sidebar (Database Explorer) ---
   items.push({

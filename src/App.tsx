@@ -401,6 +401,17 @@ import {
 } from "./tabPersistence";
 import { reorderIfPermutation } from "./tabReorder";
 import { duplicateSpec, tabsToClose, type TabBulkCloseMode } from "./tabMenuActions";
+import {
+  insertTabIdAt,
+  orderForRestore,
+  popClosedGroup,
+  pushClosedGroup,
+  resolveRestorePaneId,
+  shouldRememberClosedTab,
+  summarizeClosedGroup,
+  type ClosedTabEntry,
+  type ClosedTabHistory,
+} from "./closedTabHistory";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
 import { buildPageSql, canGoNext, canGoPrev, clampPage } from "./pagination";
@@ -908,6 +919,12 @@ function connectPhaseI18nKey(
     default:
       return "connectPhasePreparing";
   }
+}
+
+let closedGroupSeq = 0;
+function newClosedGroupId(): string {
+  closedGroupSeq += 1;
+  return `closed_${Date.now().toString(36)}_${closedGroupSeq.toString(36)}`;
 }
 
 let paneSeq = 0;
@@ -6200,7 +6217,7 @@ export default function App() {
       // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { remember: false }));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
@@ -6221,7 +6238,7 @@ export default function App() {
       // 定義を編集中だった同名ビューのタブは整合性が取れなくなるので閉じる。
       tabsRef.current
         .filter((tt) => tt.editingViewName === name && tt.database === database)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { remember: false }));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
@@ -6239,7 +6256,7 @@ export default function App() {
       // 開いている対象テーブルのタブは旧名のままなので閉じる (新名で開き直せる)。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { remember: false }));
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl, tabsRef]);
 
@@ -6300,7 +6317,7 @@ export default function App() {
       // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { remember: false }));
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
     }
@@ -6370,7 +6387,7 @@ export default function App() {
       // 削除したノード配下のテーブルタブは整合性が取れなくなるので閉じる。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === name)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { remember: false }));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, runNamespaceDdl, toast, namespaceKindLabel, tabsRef]);
 
@@ -7128,10 +7145,66 @@ export default function App() {
     };
   }, [handleFilesDropped]);
 
+  // 最近閉じたタブ (#1353)。履歴はメモリのみ (再起動で消える)。キーハンドラが最新値を
+  // 同期的に読めるよう ref にも持ち、パレット表示用に state でも持つ。
+  const [closedHistory, setClosedHistory] = useState<ClosedTabHistory<Tab>>([]);
+  const closedHistoryRef = useRef<ClosedTabHistory<Tab>>([]);
+  const updateClosedHistory = useCallback(
+    (fn: (h: ClosedTabHistory<Tab>) => ClosedTabHistory<Tab>) => {
+      const next = fn(closedHistoryRef.current);
+      closedHistoryRef.current = next;
+      setClosedHistory(next);
+    },
+    [],
+  );
+  // 接続が変わると別 DB のタブになるので履歴は引き継がない。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId の変化だけを契機に履歴を捨てる
+  useEffect(() => {
+    closedHistoryRef.current = [];
+    setClosedHistory([]);
+  }, [sessionId]);
+  // 閉じる直前のタブを履歴用スナップショットにする。`tabSqlStore.delete` より前に呼ぶこと
+  // (エディタ未反映の編集 SQL・カーソル・スクロール位置も含めるため)。結果行や未 Apply の
+  // セル編集 (#1391 で別途保護) は重いので持たず、復元時は再実行で得る。`Tab` はスプレッドで
+  // 丸ごと保つ — 後から増えた項目も自然に引き継がれる。
+  const snapshotClosedTab = useCallback((id: string): ClosedTabEntry<Tab> | null => {
+    const tab = tabsRef.current.find((tt) => tt.id === id);
+    const pane = panesRef.current.find((p) => p.tabIds.includes(id));
+    if (!tab || !pane) return null;
+    const sql = tabSqlStore.resolve(tab.id, tab.sql);
+    if (!shouldRememberClosedTab({ kind: tab.kind, sql })) return null;
+    const snapshot: Tab = {
+      ...tab,
+      sql,
+      selection: editorSelectionRef.current.get(id) ?? tab.selection,
+      gridScrollTop: gridScrollRef.current.get(id) ?? tab.gridScrollTop,
+      result: null,
+      preview: null,
+      streaming: false,
+      previewStreaming: false,
+      loadingMore: false,
+      canLoadMore: false,
+      queryError: null,
+      pendingEdits: {},
+      editUndoStack: [],
+      editRedoStack: [],
+      applyingEdits: false,
+      autoRefreshSecs: null,
+    };
+    return { snapshot, paneId: pane.id, index: pane.tabIds.indexOf(id) };
+  }, [tabsRef, panesRef, tabSqlStore]);
+
   // Close a tab, removing it from its pane and picking a neighbour as that
   // pane's new active tab. A second pane emptied by the close collapses back
   // into a single pane.
-  const handleCloseTab = useCallback((id: string) => {
+  const handleCloseTab = useCallback((id: string, opts?: { remember?: boolean }) => {
+    // 閉じた後に開き直せるよう、破棄より前にスナップショットを取る (#1353)。
+    if (opts?.remember !== false) {
+      const entry = snapshotClosedTab(id);
+      if (entry) {
+        updateClosedHistory((h) => pushClosedGroup(h, { id: newClosedGroupId(), entries: [entry] }));
+      }
+    }
     void cancelStreamForTab(id);
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     editorSelectionRef.current.delete(id);
@@ -7161,7 +7234,63 @@ export default function App() {
     if (removedPaneId && activePaneIdRef.current === removedPaneId) {
       setActivePaneId(next[0]?.id ?? null);
     }
-  }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef]);
+  }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef, snapshotClosedTab, updateClosedHistory]);
+
+  // 一括クローズ (#1354: 他を閉じる / 右側を閉じる / すべて閉じる) は全タブを 1 グループ
+  // として履歴へ積み、Cmd/Ctrl+Shift+T 1 回でまとめて元の位置へ戻せるようにする (#1353)。
+  // 位置 (index) は 1 枚ずつ閉じて詰まる前に全員分を先に採る。
+  const closeTabsAsGroup = useCallback((ids: readonly string[]) => {
+    const entries = ids
+      .map((id) => snapshotClosedTab(id))
+      .filter((e): e is ClosedTabEntry<Tab> => e !== null);
+    if (entries.length > 0) {
+      updateClosedHistory((h) => pushClosedGroup(h, { id: newClosedGroupId(), entries }));
+    }
+    for (const id of ids) handleCloseTab(id, { remember: false });
+  }, [snapshotClosedTab, updateClosedHistory, handleCloseTab]);
+
+  // 閉じたタブを開き直す (#1353)。`groupId` 省略で最新。クエリ/EXPLAIN タブはスナップ
+  // ショットから元のペイン・位置へ復元し、テーブルタブは開き直し (最新データを取得)。
+  const reopenClosedTab = useCallback((groupId?: string) => {
+    const { group, history } = popClosedGroup(closedHistoryRef.current, groupId);
+    if (!group) {
+      toast.info(translate("tabReopenNone"));
+      return;
+    }
+    closedHistoryRef.current = history;
+    setClosedHistory(history);
+    for (const entry of orderForRestore(group.entries)) {
+      const snap = entry.snapshot;
+      const paneId = resolveRestorePaneId(
+        panesRef.current.map((p) => p.id),
+        entry.paneId,
+        activePaneIdRef.current,
+      );
+      if (snap.kind === "table" && snap.database && snap.table) {
+        if (paneId) {
+          activePaneIdRef.current = paneId;
+          setActivePaneId(paneId);
+        }
+        handleOpenTable(snap.database, snap.table);
+        continue;
+      }
+      const tab: Tab = { ...snap, id: newTabId() };
+      setTabs((prev) => [...prev, tab]);
+      if (paneId) {
+        setPanes((prev) =>
+          prev.map((p) =>
+            p.id === paneId
+              ? { ...p, tabIds: insertTabIdAt(p.tabIds, entry.index, tab.id), activeTabId: tab.id }
+              : p,
+          ),
+        );
+        activePaneIdRef.current = paneId;
+        setActivePaneId(paneId);
+      } else {
+        setPanes([{ id: newPaneId(), tabIds: [tab.id], activeTabId: tab.id }]);
+      }
+    }
+  }, [toast, panesRef, setTabs, setPanes, handleOpenTable]);
 
   // タブを複製して元タブと同じペインの末尾に開く (#1354)。内容の決め方は
   // `duplicateSpec`。エディタ未反映の編集も含めるため SQL は tabSqlStore から取る。
@@ -7186,6 +7315,8 @@ export default function App() {
   // call them without re-attaching on every tab change.
   const handleCloseTabRef = useRef(handleCloseTab);
   handleCloseTabRef.current = handleCloseTab;
+  const reopenClosedTabRef = useRef(reopenClosedTab);
+  reopenClosedTabRef.current = reopenClosedTab;
 
   // App-wide keyboard shortcuts for the tabbed workspace: tab management
   // and focusing the result search. Editor-scoped shortcuts
@@ -7227,6 +7358,11 @@ export default function App() {
       if (comboMatchesEvent(bindingsRef.current.newTab, e)) {
         e.preventDefault();
         handleNewTab();
+        return;
+      }
+      if (comboMatchesEvent(bindingsRef.current.reopenClosedTab, e)) {
+        e.preventDefault();
+        reopenClosedTabRef.current();
         return;
       }
       if (comboMatchesEvent(bindingsRef.current.closeTab, e)) {
@@ -7907,9 +8043,15 @@ export default function App() {
             toggleSidebar: formatCombo(shortcutBindings.toggleSidebar),
             sidebarFilter: formatCombo(shortcutBindings.sidebarFilter),
             objectSearch: formatCombo(shortcutBindings.objectSearch),
+            reopenClosedTab: formatCombo(shortcutBindings.reopenClosedTab),
           },
+          closedTabs: closedHistory.map((g) => ({
+            id: g.id,
+            ...summarizeClosedGroup(g, (tab) => tab.title),
+          })),
         },
         {
+          reopenClosedTab,
           toggleBottomPanel,
           toggleSidebar,
           focusExplorer,
@@ -8034,6 +8176,8 @@ export default function App() {
     selectedProfile?.database,
     handleOpenSchemaDrift,
     shortcutBindings,
+    closedHistory,
+    reopenClosedTab,
     handleNewTab,
     handleOpenSqlFile,
     handleSaveSqlFile,
@@ -10131,7 +10275,7 @@ export default function App() {
         // Moving is only possible when it won't leave a single pane empty.
         const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
         const closeBulk = (mode: TabBulkCloseMode) =>
-          tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, mode).forEach((id) => handleCloseTab(id));
+          closeTabsAsGroup(tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, mode));
         const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
         const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [

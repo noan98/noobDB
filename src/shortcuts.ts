@@ -38,6 +38,7 @@ export type ShortcutId =
   | "runNewTab"
   | "newTab"
   | "closeTab"
+  | "reopenClosedTab"
   | "run"
   | "runStatement"
   | "preview"
@@ -135,6 +136,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutMaximizeResultTitle", descKey: "shortcutMaximizeResultDesc", category: "grid", id: "maximizeResult", scope: "global", defaultCombo: "Mod+Shift+M" },
   { keysKey: "helpShortcutNewTabTitle", descKey: "helpShortcutNewTabDesc", category: "tabs", id: "newTab", scope: "global", defaultCombo: "Mod+T" },
   { keysKey: "helpShortcutCloseTabTitle", descKey: "helpShortcutCloseTabDesc", category: "tabs", id: "closeTab", scope: "global", defaultCombo: "Mod+W" },
+  { keysKey: "shortcutReopenClosedTabTitle", descKey: "shortcutReopenClosedTabDesc", category: "tabs", id: "reopenClosedTab", scope: "global", defaultCombo: "Mod+Shift+T" },
   { keysKey: "helpShortcutCycleTabTitle", descKey: "helpShortcutCycleTabDesc", category: "tabs" },
   { keysKey: "helpShortcutNthTabTitle", descKey: "helpShortcutNthTabDesc", category: "tabs" },
 ];
