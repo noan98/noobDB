@@ -156,6 +156,12 @@
   ですが、キャッシュキーは `coverage` / `sccache-<os>-coverage-…` で分離しています。
   **`rust (coverage)` は必須チェックに含めません** (`--fail-under-lines` 割れは
   赤く出ますがマージはブロックしない運用)。
+  さらに #1420 で **`rust (coverage)` は main への push でのみ走らせ、PR では
+  スキップ**しています (`if:` の先頭に `github.event_name == 'push' &&`)。`rust (test)`
+  と同一の最重量の統合環境 (sshd + TLS DB + 平文 DB) を PR ごとに二重に構築していた
+  ため、rust に触れる PR の計算量をおよそ半減するのが目的です。60% の閾値ゲートと
+  Job Summary の可視化は main で維持し、閾値割れはマージ直後の main の赤で検出します。
+  PR でカバレッジを見たい場合は、マージ後の main の実行結果を参照してください。
   clippy (cargo check 相当) と nextest (実バイナリ生成) は cargo が成果物を共有
   しないため、同一ジョブで直列にすると依存ツリーが二重コンパイルされて積み上がり
   ます。これを別ジョブで**並列**に走らせて壁時計時間を縮めています (rust-cache の
