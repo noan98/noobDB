@@ -10,8 +10,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       listDatabases: vi.fn().mockResolvedValue(["appdb"]),
       describeDatabase: vi.fn().mockResolvedValue([
-        { name: "customers", columns: [{ name: "id", key: "PRI" }] },
-        { name: "orders", columns: [{ name: "id", key: "PRI" }] },
+        { name: "customers", columns: [{ name: "id", data_type: "int", nullable: false, key: "PRI" }] },
+        { name: "orders", columns: [{ name: "id", data_type: "int", nullable: false, key: "PRI" }] },
       ]),
       foreignKeys: vi.fn().mockResolvedValue([]),
     },

@@ -1,20 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
   BackgroundVariant,
   Controls,
+  BaseEdge,
   Handle,
-  MarkerType,
   MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
   getNodesBounds,
+  getSmoothStepPath,
   useEdgesState,
   useNodesState,
   useReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
@@ -29,7 +31,13 @@ import { driverColor } from "../profileIdentity";
 import { semanticColorToken } from "../semanticColors";
 import {
   buildErGraph,
+  endGlyph,
+  erHighlight,
   layoutErGraph,
+  sourceEndKind,
+  targetEndKind,
+  type ErCardinality,
+  type ErEndSide,
   type ErGraph,
   type ErLayoutDensity,
   type ErLayoutDirection,
@@ -37,6 +45,7 @@ import {
 } from "./erDiagram";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { cellKindIcon } from "./cellTypeMeta";
 import { errorIllustration } from "./illustrations";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
@@ -73,6 +82,8 @@ interface ErNodeData extends ErTableData {
   fkTitle: string;
   /** Rank direction, so handles anchor on the correct edges (#560). */
   direction: ErLayoutDirection;
+  /** ヘッダの帯に使うドライバ色 (CSS 変数 `--er-accent` として流す)。 */
+  accent: string;
   [key: string]: unknown;
 }
 type ErFlowNode = Node<ErNodeData, "erTable">;
@@ -87,6 +98,8 @@ const cardCss: SystemStyleObject = {
   boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.12))",
   overflow: "hidden",
   fontSize: "var(--text-sm)",
+  // 連動ハイライト中 (`.er-hl`) は枠を accent にして関連テーブルを際立たせる (App.css 側の
+  // `.react-flow__node.er-hl .er-card`)。
 };
 const cardHeaderCss: SystemStyleObject = {
   display: "flex",
@@ -95,6 +108,8 @@ const cardHeaderCss: SystemStyleObject = {
   width: "100%",
   padding: "var(--space-1-75) var(--space-2-5)",
   background: "var(--bg-muted)",
+  // ドライバ色の控えめな帯 (上辺)。ヘッダ自体の面はテーマの --bg-muted のまま。
+  borderTop: "2px solid var(--er-accent, var(--border))",
   borderBottom: "1px solid var(--border)",
   fontFamily: "var(--font-mono)",
   textStyle: "subheading",
@@ -113,6 +128,20 @@ const colRowCss: SystemStyleObject = {
   color: "var(--text-secondary)",
   borderTop: "1px solid var(--border-subtle, transparent)",
 };
+// PK 行は薄い琥珀の地 + 太めの列名で、FK/通常列より一段優位に見せる。
+const pkRowCss: SystemStyleObject = {
+  background: "color-mix(in srgb, var(--key-accent) 10%, transparent)",
+};
+// 列行右端の型ラベル (アイコン + 短縮型名)。名前が長いときは名前側が先に省略される。
+const colTypeCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "1",
+  flexShrink: 0,
+  marginLeft: "auto",
+  fontSize: "var(--text-xs)",
+  color: "var(--text-muted)",
+};
 const colNameCss: SystemStyleObject = {
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -125,7 +154,7 @@ const moreRowCss: SystemStyleObject = {
 };
 
 /** One table card. React Flow drags it; the header opens the table tab. */
-function ErTableNode({ data }: NodeProps<ErFlowNode>) {
+const ErTableNode = memo(function ErTableNode({ data }: NodeProps<ErFlowNode>) {
   // Anchor handles on the edges the rank flows along so connectors stay tidy
   // when the layout direction changes (#560): LR → left/right, TB → top/bottom.
   const targetPos = data.direction === "TB" ? Position.Top : Position.Left;
@@ -137,7 +166,11 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
   // hover のみ対応でも native title からの後退はない。
   const { hovered, bind } = useDelegatedTooltip();
   return (
-    <Box css={cardCss}>
+    <Box
+      css={cardCss}
+      className="er-card"
+      style={{ ["--er-accent" as string]: data.accent }}
+    >
       {/* Handles are invisible anchors edges attach to. */}
       <Handle type="target" position={targetPos} style={{ opacity: 0 }} />
       <Handle type="source" position={sourcePos} style={{ opacity: 0 }} />
@@ -149,14 +182,16 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
           className="nodrag"
           aria-label={data.openTitle}
         >
-          <Icon name="table" size={ICON_SIZES.sm} />
+          <chakra.span color="var(--er-accent, currentColor)" display="inline-flex">
+            <Icon name="table" size={ICON_SIZES.sm} />
+          </chakra.span>
           <chakra.span css={colNameCss} flex="1">
             {data.table}
           </chakra.span>
         </chakra.button>
       </Tooltip>
       {data.columns.map((col) => (
-        <Box key={col.name} css={colRowCss}>
+        <Box key={col.name} css={col.isPk ? { ...colRowCss, ...pkRowCss } : colRowCss}>
           {/* PK の鍵アイコンは接続ツリー (ConnectionList) と同じ --key-accent の
               琥珀で統一する (FK は両者とも accent)。--key-accent は PK 表示専用の
               意味トークンで、--cell-date (日付型セル色) とは独立している (#717)。 */}
@@ -171,9 +206,20 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
           ) : (
             <chakra.span width="12px" flexShrink={0} />
           )}
-          <chakra.span css={colNameCss} flex="1" color={col.isPk ? "var(--text)" : undefined}>
+          <chakra.span
+            css={colNameCss}
+            flex="1"
+            color={col.isPk ? "var(--text)" : undefined}
+            fontWeight={col.isPk ? "semibold" : undefined}
+          >
             {col.name}
           </chakra.span>
+          {col.kind !== null && col.typeName !== "" && (
+            <chakra.span css={colTypeCss}>
+              <Icon name={cellKindIcon(col.kind)} size={ICON_SIZES.sm} />
+              {col.typeName}
+            </chakra.span>
+          )}
         </Box>
       ))}
       {data.hiddenColumns > 0 && (
@@ -182,14 +228,68 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
       {hovered && <TooltipBubble label={hovered.label} anchor={hovered.rect} />}
     </Box>
   );
+});
+
+interface ErRelationData {
+  cardinality: ErCardinality;
+  optional: boolean;
+  [key: string]: unknown;
 }
+
+/**
+ * リレーション線: smoothstep の線の両端にクロウフット記法の記号を描く。記号は端点の
+ * 座標から直接組み立てた `<path>` / `<circle>` で、`<defs>` のマーカーを使わないので
+ * 複数の図が同時にあっても id が衝突しない (幾何は `endGlyph`、純関数)。
+ */
+const ErRelationEdge = memo(function ErRelationEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+}: EdgeProps<Edge<ErRelationData, "erRelation">>) {
+  const [path] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  });
+  const src = endGlyph(
+    sourceEndKind(data?.cardinality ?? "many-to-one"),
+    sourcePosition as ErEndSide,
+    sourceX,
+    sourceY,
+  );
+  const dst = endGlyph(
+    targetEndKind(data?.optional ?? false),
+    targetPosition as ErEndSide,
+    targetX,
+    targetY,
+  );
+  return (
+    <>
+      <BaseEdge id={id} path={path} />
+      {[src, dst].map((g, i) => (
+        <g key={i === 0 ? "source" : "target"} className="er-rel-glyph">
+          {g.paths.map((d) => (
+            <path key={d} d={d} />
+          ))}
+          {g.circle && <circle cx={g.circle.cx} cy={g.circle.cy} r={g.circle.r} />}
+        </g>
+      ))}
+    </>
+  );
+});
 
 // Stable reference so React Flow doesn't warn about a new nodeTypes each render.
 const nodeTypes = { erTable: ErTableNode };
-const defaultEdgeOptions = {
-  type: "smoothstep",
-  markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-} as const;
+const edgeTypes = { erRelation: ErRelationEdge };
+const defaultEdgeOptions = { type: "erRelation" } as const;
 
 interface ERDiagramViewProps {
   sessionId: string;
@@ -233,6 +333,8 @@ function ERDiagramInner({
   const [density, setDensity] = useState<ErLayoutDensity>("comfortable");
   const [nodes, setNodes, onNodesChange] = useNodesState<ErFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  // 連動ハイライト用: ホバー中のテーブル ID は 1 つだけ。関連判定は純関数 `erHighlight`。
+  const [hoverId, setHoverId] = useState<string | null>(null);
   // 再取得ボタン用のカウンタ (#848)。データベース一覧・グラフ取得のどちらの
   // 失敗でも、これをインクリメントして両 effect を再実行させれば復旧できる。
   const [retryAttempt, setRetryAttempt] = useState(0);
@@ -327,6 +429,21 @@ function ERDiagramInner({
         name: tb.name,
         columns: tb.columns.map((c) => c.name),
       }));
+      const columnMeta = Object.fromEntries(
+        described.map((tb) => [
+          tb.name,
+          Object.fromEntries(
+            tb.columns.map((c) => [
+              c.name,
+              {
+                dataType: c.data_type,
+                nullable: c.nullable,
+                unique: c.key.toUpperCase() === "UNI",
+              },
+            ]),
+          ),
+        ]),
+      );
       const pkByTable = Object.fromEntries(
         described.map((tb) => [
           tb.name,
@@ -334,7 +451,7 @@ function ERDiagramInner({
         ]),
       );
 
-      const built = buildErGraph({ tables, foreignKeys, pkByTable });
+      const built = buildErGraph({ tables, foreignKeys, pkByTable, columnMeta });
       setGraph(built);
       setSummary({
         shown: built.nodes.length,
@@ -376,6 +493,7 @@ function ERDiagramInner({
         data: {
           ...n.data,
           direction,
+          accent: driverColor(driver),
           onOpen: () => handleOpen(database, n.data.table),
           openTitle: t("erDiagramOpenTable", { table: n.data.table }),
           pkTitle: t("erDiagramPk"),
@@ -388,6 +506,7 @@ function ERDiagramInner({
         id: e.id,
         source: e.source,
         target: e.target,
+        data: { cardinality: e.cardinality, optional: e.optional },
       })),
     );
     // Animate the fit only on relayout, not the initial render (the `fitView`
@@ -399,7 +518,29 @@ function ERDiagramInner({
       void fitView({ duration: animate ? 400 : 0 });
     }, 0);
     return () => window.clearTimeout(id);
-  }, [graph, direction, density, database, handleOpen, t, reduceMotion, fitView, setNodes, setEdges]);
+  }, [graph, direction, density, database, driver, handleOpen, t, reduceMotion, fitView, setNodes, setEdges]);
+
+  // ホバー連動ハイライト: 関連テーブル / 線に `er-hl`、それ以外に `er-dim` を付ける。
+  // className が変わらないノード / 線は同じオブジェクトを返すので、React Flow は変化した
+  // 要素だけを再描画する (大きなスキーマでも全ノード再レンダーにならない)。見た目は
+  // App.css の `.er-hl` / `.er-dim` (減光の遷移は reduced-motion で自動的に止まる)。
+  useEffect(() => {
+    const hl = graph ? erHighlight(hoverId, graph.edges) : null;
+    const cls = (related: boolean): string | undefined =>
+      hl === null ? undefined : related ? "er-hl" : "er-dim";
+    setNodes((ns) =>
+      ns.map((n) => {
+        const c = cls(hl?.nodeIds.has(n.id) ?? false);
+        return n.className === c ? n : { ...n, className: c };
+      }),
+    );
+    setEdges((es) =>
+      es.map((e) => {
+        const c = cls(hl?.edgeIds.has(e.id) ?? false);
+        return e.className === c ? e : { ...e, className: c };
+      }),
+    );
+  }, [hoverId, graph, setNodes, setEdges]);
 
   const truncated = summary != null && summary.shown < summary.total;
 
@@ -563,6 +704,9 @@ function ERDiagramInner({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodeMouseEnter={(_, n) => setHoverId(n.id)}
+            onNodeMouseLeave={() => setHoverId(null)}
             defaultEdgeOptions={defaultEdgeOptions}
             nodesConnectable={false}
             edgesFocusable={false}

@@ -152,3 +152,15 @@ describe("truncateHexPreview (#647)", () => {
     });
   });
 });
+
+import { baseTypeName, shortTypeName } from "../components/cellTypeMeta";
+describe("shortTypeName / baseTypeName (#1360)", () => {
+  it("括弧の引数を落とし、PostgreSQL の正式名を短縮する", () => {
+    expect(baseTypeName("decimal(10, 2)")).toBe("decimal");
+    expect(shortTypeName("VARCHAR(255)")).toBe("varchar");
+    expect(shortTypeName("character varying")).toBe("varchar");
+    expect(shortTypeName("timestamp with time zone")).toBe("timestamptz");
+    expect(shortTypeName("int unsigned")).toBe("int unsigned");
+    expect(shortTypeName("")).toBe("");
+  });
+});
