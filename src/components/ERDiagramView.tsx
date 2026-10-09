@@ -194,6 +194,11 @@ interface ERDiagramViewProps {
   driver: DriverKind;
   initialDatabase: string | null;
   onOpenTable: (database: string, table: string) => void;
+  /**
+   * AI でスキーマドキュメントを生成する (#696)。渡されたときだけツールバーにボタンを出す
+   * (AI 利用可のときだけ親が渡す)。選択中のノードのテーブル名を一緒に渡す。
+   */
+  onGenerateDoc?: (database: string, selectedTables: string[]) => void;
   onClose: () => void;
 }
 
@@ -202,6 +207,7 @@ function ERDiagramInner({
   driver,
   initialDatabase,
   onOpenTable,
+  onGenerateDoc,
   onClose,
 }: ERDiagramViewProps) {
   const t = useT();
@@ -452,7 +458,25 @@ function ERDiagramInner({
           </chakra.span>
         )}
         {!loading && !error && nodes.length > 0 && (
-          <chakra.span marginLeft="auto">
+          <chakra.span marginLeft="auto" display="inline-flex" alignItems="center" gap="2">
+            {onGenerateDoc && database && (
+              <Tooltip label={t("erDiagramAiDocTooltip")}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    onGenerateDoc(
+                      database,
+                      nodes.filter((n) => n.selected).map((n) => n.data.table),
+                    )
+                  }
+                >
+                  <Icon name="sparkles" size={ICON_SIZES.md} />
+                  <span style={{ marginInlineStart: "var(--space-1-5)" }}>{t("erDiagramAiDoc")}</span>
+                </Button>
+              </Tooltip>
+            )}
             <ImageExportButton
               filenameBase={`er_${database ?? "diagram"}`}
               makePng={() => {
