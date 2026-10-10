@@ -17,6 +17,7 @@ import {
 import { CountUp } from "./CountUp";
 import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
 import { uniqueByKey } from "./liveDiff";
+import { AiLockDiagnose } from "./AiLockDiagnose";
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
@@ -338,6 +339,17 @@ export function ProcessListPanel({
         <chakra.p margin={0} textStyle="body" color="app.textMuted">
           {t("processReadOnlyHint")}
         </chakra.p>
+      )}
+
+      {/* AI 解説 (#1478)。AI 無効 / SQLite では何も描かない。KILL は下の既存ボタンで行う。 */}
+      {!error && (
+        <AiLockDiagnose
+          key={sessionId}
+          sessionId={sessionId}
+          driver={driver}
+          processes={rows}
+          selectedIds={selected}
+        />
       )}
 
       {!error && blockingRows.length > 0 && (
