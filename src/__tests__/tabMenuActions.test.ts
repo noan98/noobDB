@@ -47,10 +47,10 @@ describe("duplicateSpec", () => {
     expect(r.titleManual).toBe(true);
     expect(r.title).toBe("月次集計");
   });
-  it("explain は explain のまま複製する", () => {
-    expect(duplicateSpec({ kind: "explain", title: "e", sql: "EXPLAIN SELECT 1", lastExecutedSql: "EXPLAIN SELECT 1" }).kind).toBe(
-      "explain",
-    );
+  it("explain は query タブになり、計画用タイトルは引き継がない", () => {
+    expect(
+      duplicateSpec({ kind: "explain", title: "EXPLAIN: x", titleManual: true, sql: "SELECT 1", lastExecutedSql: "SELECT 1" }),
+    ).toEqual({ kind: "query", title: null, titleManual: false, sql: "SELECT 1", lastExecutedSql: "SELECT 1" });
   });
   it("table は query タブになる", () => {
     expect(duplicateSpec({ kind: "table", title: "users", sql: "SELECT * FROM users", lastExecutedSql: "SELECT * FROM users" })).toEqual({

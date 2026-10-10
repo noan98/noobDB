@@ -50,22 +50,25 @@ export interface DuplicateSpec {
    * table は `handleOpenTable` が同じテーブルの既存タブを前面化するだけで新規タブを
    * 作らないため、現在の SQL を土台にした独立クエリタブとして複製する。
    */
-  kind: "query" | "explain";
-  title: string;
+  kind: "query";
+  /** explain の元タイトルは計画用 (`EXPLAIN: …`) なので引き継がず null (= 無題クエリ)。 */
+  title: string | null;
   titleManual: boolean;
   sql: string;
   lastExecutedSql: string;
 }
 
 /**
- * タブを複製するときの新規タブ内容。query / explain は種別・タイトル・SQL をそのまま
- * 引き継ぎ、table は SQL を持つ query タブ (タイトルはテーブル名) にする。
+ * タブを複製するときの新規タブ内容。結果を引き継がないため、table / explain も含め複製は
+ * 常に query タブ (SQL のコピー) にする。query / table はタイトルを引き継ぎ (table は
+ * テーブル名)、explain はタイトルを引き継がない。
  */
 export function duplicateSpec(source: DuplicateSource): DuplicateSpec {
+  const isExplain = source.kind === "explain";
   return {
-    kind: source.kind === "explain" ? "explain" : "query",
-    title: source.title,
-    titleManual: source.titleManual === true,
+    kind: "query",
+    title: isExplain ? null : source.title,
+    titleManual: !isExplain && source.titleManual === true,
     sql: source.sql,
     lastExecutedSql: source.lastExecutedSql,
   };

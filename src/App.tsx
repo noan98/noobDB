@@ -7419,10 +7419,9 @@ export default function App() {
       sql: tabSqlStore.resolve(src.id, src.sql),
       lastExecutedSql: src.lastExecutedSql,
     });
-    const base = spec.kind === "explain" ? makeExplainTab(spec.sql) : makeQueryTab();
     const owner = panesRef.current.find((p) => p.tabIds.includes(id));
     addTab(
-      { ...base, title: spec.title, titleManual: spec.titleManual, sql: spec.sql, lastExecutedSql: spec.lastExecutedSql, database: src.database },
+      { ...makeQueryTab(), title: spec.title ?? translate("tabUntitledQuery"), titleManual: spec.titleManual, sql: spec.sql, lastExecutedSql: spec.lastExecutedSql, database: src.database },
       owner?.id,
     );
   }, [addTab, tabSqlStore, tabsRef, panesRef]);
