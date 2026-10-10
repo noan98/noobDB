@@ -12,6 +12,13 @@ import { TabSqlStore } from "../tabSqlStore";
 // `new EditorView` の回数と、補完 (`sql()` 拡張) の組み立て回数を数えて固定する。
 const counters = vi.hoisted(() => ({ views: 0, sqlExt: 0 }));
 
+// FK の取得 (補完の外部キー列の種別・#1413) はテストごとに差し替える。
+const apiMock = vi.hoisted(() => ({ foreignKeys: vi.fn() }));
+vi.mock("../api/tauri", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/tauri")>();
+  return { ...actual, api: { ...actual.api, foreignKeys: apiMock.foreignKeys } };
+});
+
 vi.mock("@codemirror/view", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@codemirror/view")>();
   class CountingEditorView extends actual.EditorView {
@@ -49,6 +56,8 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
     setLocale("en");
     counters.views = 0;
     counters.sqlExt = 0;
+    apiMock.foreignKeys.mockReset();
+    apiMock.foreignKeys.mockResolvedValue([]);
   });
 
   it("タブを切り替えても EditorView を作り直さず、本文が差し替わる", () => {
@@ -218,5 +227,50 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
       <QueryEditor tabId="a" onRun={() => {}} initialSql="SELECT 1" databaseSchema={schema("t2")} />,
     );
     expect(counters.sqlExt).toBe(before + 2);
+  });
+
+  it("FK の補完再構成は内容が変わったときだけ (空のまま・同じ内容の取り直しでは走らない) (#1413)", async () => {
+    const fk = (column: string) => ({
+      table: "t1",
+      column,
+      referenced_table: "u",
+      referenced_column: "id",
+      constraint_name: null,
+    });
+    const ds = schema("t1");
+    const el = (databaseSchema: TableSchema[]) => (
+      <QueryEditor
+        tabId="a"
+        onRun={() => {}}
+        initialSql="SELECT 1"
+        sessionId="s1"
+        defaultDatabase="db"
+        databaseSchema={databaseSchema}
+      />
+    );
+    // FK が無い (空) なら、取得が終わってもマウント時の 1 回から増えない。
+    const { rerender } = renderWithProviders(el(ds));
+    await act(async () => {});
+    expect(apiMock.foreignKeys).toHaveBeenCalledTimes(1);
+    expect(counters.sqlExt).toBe(1);
+
+    // 同じ内容 (空) をスキーマ更新で取り直しても作り直さない。
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(apiMock.foreignKeys).toHaveBeenCalledTimes(2);
+    expect(counters.sqlExt).toBe(2); // schema 参照が変わった分の 1 回だけ
+
+    // FK が届いたら 1 回だけ作り直す。
+    apiMock.foreignKeys.mockResolvedValue([fk("c1")]);
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(counters.sqlExt).toBe(4); // schema 参照の変更 + FK 内容の変更
+
+    // 同じ FK を取り直しても (順序が違っても) 内容キーは同じなので増えない。
+    apiMock.foreignKeys.mockResolvedValue([fk("c1")]);
+    const before = counters.sqlExt;
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(counters.sqlExt).toBe(before + 1); // schema 参照の変更のみ
   });
 });

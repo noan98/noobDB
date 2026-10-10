@@ -453,6 +453,14 @@ function clampSelection(
   };
 }
 
+/** FK 一覧の内容キー。並び順に依存しないよう `table.column>参照先` をソートして連結する。 */
+function fkContentKey(fks: ForeignKey[]): string {
+  return fks
+    .map((f) => `${f.table}.${f.column}>${f.referenced_table}.${f.referenced_column ?? ""}`.toLowerCase())
+    .sort()
+    .join(",");
+}
+
 /** 列の情報パネル (#1413) の見出し。呼び出し時点のロケールで解決する。 */
 function columnInfoLabels(): ColumnInfoLabels {
   return {
@@ -703,13 +711,14 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // いま props が求めている compartment 設定 (補完・構文チェック・アクションキーマップ)。
   // view / state 側に入っている設定 (`appliedConfigRef`) と食い違ったときだけ
   // reconfigure する (#1308: 初回マウントやタブ切替で無駄に作り直さない)。
-  // FK が届いたら補完 (外部キー列の種別) を作り直すための版数。キーに混ぜて再構成を促す。
-  const [fkRev, setFkRev] = useState(0);
+  // 届いた FK の内容キー (`table.column` を並べ替えて連結)。補完 (外部キー列の種別) は
+  // これが変わったときだけ作り直すので、同じ内容が届き直しても再構成しない。
+  const [fkKey, setFkKey] = useState("");
   const schemaKey = `${
     schemaTable
       ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}`
       : ""
-  }|fk${fkRev}`;
+  }|fk:${fkKey}`;
   const desiredConfig: AppliedEditorConfig = {
     driver,
     schemaKey,
@@ -752,8 +761,12 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     if (cached !== undefined) return cached;
     const p = api.describeTable(sessionId, fkDatabase, table);
     columnCacheRef.current.set(key, p);
-    // 失敗はキャッシュしない (次の選択で再試行)。
-    p.catch(() => columnCacheRef.current.delete(key));
+    // 失敗はキャッシュしない (次の選択で再試行)。スキーマ更新で Map が差し替わっていたら
+    // 新しい Map の同じキーを消さないよう、作成時の Map を保持して照合する。
+    const cache = columnCacheRef.current;
+    p.catch(() => {
+      if (cache.get(key) === p) cache.delete(key);
+    });
     return p;
   };
   const getColumns = (table: string) => loadColumnsRef.current(table);
@@ -761,14 +774,17 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   useEffect(() => {
     fksRef.current = [];
     columnCacheRef.current = new Map();
-    if (!sessionId || !fkDatabase) return;
+    if (!sessionId || !fkDatabase) {
+      setFkKey("");
+      return;
+    }
     let cancelled = false;
     api
       .foreignKeys(sessionId, fkDatabase)
       .then((r) => {
         if (cancelled) return;
         fksRef.current = r;
-        setFkRev((n) => n + 1);
+        setFkKey(fkContentKey(r));
       })
       .catch(() => { /* 補完は best-effort */ });
     return () => {

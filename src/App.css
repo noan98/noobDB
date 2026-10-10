@@ -2097,11 +2097,15 @@ html, body, #root {
 .cm-completionDetail { color: var(--text-muted); font-style: normal; }
 .cm-completionMatchedText { color: var(--accent); text-decoration: none; font-weight: 600; }
 
-/* 補完の種別アイコン (#1413)。共通 Icon の静的 SVG を差し込み、色は種別ごとの
-   トークンで与える (単目的トークン --db-accent / --key-accent はエクスプローラと共通)。 */
+/* 補完の種別アイコン (#1413)。共通 Icon の SVG を差し込み、色はアイコンの種類ごとの
+   トークンで与える。意味づけはエクスプローラ / ER 図と揃える: DB・テーブル =
+   --db-accent、外部キー (link) = --accent、関数 = --syntax-function。--key-accent は
+   主キー専用なので使わない。 */
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon {
   display: inline-flex;
   width: auto;
+  /* アイコンの無い候補 (未知の種別) でもラベル左端が揃うよう、枠にアイコン幅を確保する。 */
+  min-width: 1em;
   box-sizing: content-box;
   vertical-align: middle;
   align-items: center;
@@ -2115,12 +2119,11 @@ html, body, #root {
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon::after { content: none; }
 .cm-tooltip-autocomplete .cm-completionIcon-table,
 .cm-tooltip-autocomplete .cm-completionIcon-database { color: var(--db-accent); }
-.cm-tooltip-autocomplete .cm-completionIcon-column,
-.cm-tooltip-autocomplete .cm-completionIcon-property { color: var(--text-secondary); }
-.cm-tooltip-autocomplete .cm-completionIcon-key { color: var(--key-accent); }
-.cm-tooltip-autocomplete .cm-completionIcon-function { color: var(--accent); }
-.cm-tooltip-autocomplete .cm-completionIcon-keyword,
-.cm-tooltip-autocomplete .cm-completionIcon-datatype { color: var(--text-muted); }
+.cm-tooltip-autocomplete .cm-completionIcon-columns { color: var(--text-secondary); }
+.cm-tooltip-autocomplete .cm-completionIcon-link { color: var(--accent); }
+.cm-tooltip-autocomplete .cm-completionIcon-routine { color: var(--syntax-function); }
+.cm-tooltip-autocomplete .cm-completionIcon-braces,
+.cm-tooltip-autocomplete .cm-completionIcon-hash { color: var(--text-muted); }
 
 /* 列候補の情報パネル (#1413)。補完ポップアップ本体と同じ面・縁・影で揃える。 */
 .cm-tooltip.cm-completionInfo {

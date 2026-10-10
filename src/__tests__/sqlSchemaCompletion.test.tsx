@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Completion } from "@codemirror/autocomplete";
+import type { Completion, CompletionContext } from "@codemirror/autocomplete";
+import { keywordCompletionSource, MySQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
+import { EditorState } from "@codemirror/state";
 import type { ForeignKey, TableColumnInfo } from "../api/tauri";
 import {
   buildSchemaNamespace,
@@ -58,7 +60,7 @@ describe("buildSchemaNamespace", () => {
     ]);
   });
 
-  it("FK 列は key 種別で、参照先を detail に出す", () => {
+  it("FK 列は fk 種別で、参照先を detail に出す", () => {
     const ns = buildSchemaNamespace({
       ...base,
       tables: { orders: ["id", "user_id"] },
@@ -67,7 +69,7 @@ describe("buildSchemaNamespace", () => {
     const [id, userId] = ns.orders.children;
     expect(id.type).toBe("column");
     expect(id.detail).toBeUndefined();
-    expect(userId.type).toBe("key");
+    expect(userId.type).toBe("fk");
     expect(userId.detail).toBe("→ users.id");
   });
 
@@ -123,11 +125,44 @@ describe("buildSchemaNamespace", () => {
   });
 });
 
+/** 実際の lang-sql のキーワード候補を、私たちの `keywordCompletionOption` 経由で取り出す。 */
+function keywordOptions(dialect: typeof MySQL): Map<string, Completion> {
+  const source = keywordCompletionSource(dialect, true, keywordCompletionOption);
+  const state = EditorState.create({ doc: "x" });
+  const ctx = { state, pos: 1, explicit: true, matchBefore: () => ({ from: 0, to: 1, text: "x" }) };
+  const result = source(ctx as unknown as CompletionContext);
+  const options = (result as { options: Completion[] } | null)?.options ?? [];
+  return new Map(options.map((o) => [o.label, o]));
+}
+
 describe("keywordCompletionOption", () => {
-  it("lang-sql の種別を keyword / datatype / function に寄せる", () => {
-    expect(keywordCompletionOption("SELECT", "keyword").type).toBe("keyword");
-    expect(keywordCompletionOption("INT", "type").type).toBe("datatype");
-    expect(keywordCompletionOption("COUNT", "variable").type).toBe("function");
+  it("lang-sql の種別を keyword / datatype / function に寄せ、すべて boost: -1 を保つ", () => {
+    expect(keywordCompletionOption("SELECT", "keyword")).toEqual({ label: "SELECT", type: "keyword", boost: -1 });
+    expect(keywordCompletionOption("INT", "type")).toEqual({ label: "INT", type: "datatype", boost: -1 });
+    expect(keywordCompletionOption("COUNT", "keyword")).toEqual({ label: "COUNT", type: "function", boost: -1 });
+    expect(keywordCompletionOption("count", "keyword").type).toBe("function");
+    expect(keywordCompletionOption("QUIT", "variable")).toEqual({ label: "QUIT", type: "keyword", boost: -1 });
+  });
+
+  it.each([
+    ["MySQL", MySQL],
+    ["PostgreSQL", PostgreSQL],
+    ["SQLite", SQLite],
+  ])("%s の実データ: 関数名は function、NULL / TRUE / クライアントコマンドは function にならず、全件 boost: -1", (_n, dialect) => {
+    const opts = keywordOptions(dialect);
+    expect(opts.size).toBeGreaterThan(100);
+    expect(opts.get("COUNT")?.type).toBe("function");
+    expect(opts.get("SELECT")?.type).toBe("keyword");
+    for (const word of ["NULL", "TRUE", "FALSE", "UNKNOWN"]) {
+      expect(opts.get(word)?.type).toBe("keyword");
+    }
+    expect(opts.get("INT")?.type ?? opts.get("INTEGER")?.type).toBe("datatype");
+    for (const o of opts.values()) expect(o.boost).toBe(-1);
+  });
+
+  it("MySQL のクライアントコマンド (variable) と SQLite のドットコマンドは function にならない", () => {
+    expect(keywordOptions(MySQL).get("QUIT")?.type).toBe("keyword");
+    expect(keywordOptions(SQLite).get("DUMP")?.type).toBe("keyword");
   });
 });
 
@@ -182,18 +217,25 @@ describe("findColumnInfo", () => {
 
 describe("completionIconName", () => {
   it("種別ごとに別のアイコンを返す", () => {
-    const names = ["table", "column", "key", "function", "keyword"].map((t) => completionIconName(t));
-    expect(new Set(names).size).toBe(5);
+    const names = ["table", "database", "column", "fk", "function", "keyword", "datatype"].map((t) =>
+      completionIconName(t),
+    );
+    expect(new Set(names).size).toBe(7);
   });
-  it("他ソースの種別 (property / type / constant) も解決し、未知は null", () => {
+  it("FK 列は link (主キー用の key ではない)", () => {
+    expect(completionIconName("fk")).toBe("link");
+  });
+  it("他ソースの種別 (JOIN / CTE・派生表・別名 / 名前空間階層) も解決し、未知は null", () => {
+    expect(completionIconName("class")).toBe("table"); // CTE・派生表
     expect(completionIconName("property")).toBe("columns");
-    expect(completionIconName("type")).toBe("table");
+    expect(completionIconName("variable")).toBe("columns"); // SELECT 別名
+    expect(completionIconName("type")).toBe("database"); // lang-sql 自動生成の階層
     expect(completionIconName("constant")).toBe("link");
     expect(completionIconName("unknown")).toBeNull();
     expect(completionIconName(undefined)).toBeNull();
   });
   it("空白区切りの複数種別は先頭の既知種別を使う", () => {
-    expect(completionIconName("zzz key")).toBe("key");
+    expect(completionIconName("zzz fk")).toBe("link");
   });
 });
 
@@ -212,10 +254,27 @@ describe("DOM 描画", () => {
     expect(el.querySelector(".cm-sqlInfo-comment")?.textContent).toBe("memo");
   });
 
-  it("種別アイコンは種別クラスと svg を持ち、未知種別は空の枠", () => {
+  it("種別アイコンは対応づけたアイコン名のクラス 1 つと svg を持つ", () => {
     const el = renderCompletionIcon("table");
     expect(el.classList.contains("cm-completionIcon-table")).toBe(true);
     expect(el.querySelector("svg")).not.toBeNull();
+    // 同じ種別を 2 回描いても、それぞれ独立した要素になる (テンプレートの使い回しで共有しない)。
+    const again = renderCompletionIcon("table");
+    expect(again.querySelector("svg")).not.toBe(el.querySelector("svg"));
+    // FK 列は link アイコンのクラスだけが付く。
+    const fkIcon = renderCompletionIcon("fk");
+    expect([...fkIcon.classList]).toEqual(["cm-completionIcon", "cm-completionIcon-link"]);
+    // lang-sql の階層 (type) は database アイコン + db-accent のクラス。
+    expect(renderCompletionIcon("type").classList.contains("cm-completionIcon-database")).toBe(true);
+  });
+
+  it("JOIN / CTE・派生表・SELECT 別名の種別 (class / property / variable) にもアイコンが付く", () => {
+    for (const type of ["class", "property", "variable"]) {
+      expect(renderCompletionIcon(type).querySelector("svg"), type).not.toBeNull();
+    }
+  });
+
+  it("未知種別は svg の無い空の枠 (CSS の min-width で幅を保つ)", () => {
     const none = renderCompletionIcon("unknown");
     expect(none.classList.contains("cm-completionIcon")).toBe(true);
     expect(none.querySelector("svg")).toBeNull();

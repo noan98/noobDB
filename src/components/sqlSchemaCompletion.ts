@@ -8,8 +8,9 @@ import type { ForeignKey, TableColumnInfo } from "../api/tauri";
  * `completionInfoPanel.ts` が担う。
  *
  * 種別 (`Completion.type`) は次の語彙で、`completionIcons.ts` がアイコンに対応づける:
- * `table` (テーブル) / `database` (DB 名前空間) / `column` (列) / `key` (外部キー列) /
- * `function` (関数) / `keyword` / `datatype` (データ型名)。
+ * `table` (テーブル) / `database` (DB 名前空間) / `column` (列) / `fk` (外部キー列) /
+ * `function` (関数) / `keyword` / `datatype` (データ型名)。主キーは補完時点では見分けず、
+ * 情報パネルに出す。
  */
 
 /** (テーブル名, 列名) から、その列候補の `info` を返す。 */
@@ -65,7 +66,7 @@ function fkTargets(fks: ForeignKey[]): Map<string, string> {
 
 /**
  * `sql({ schema })` に渡す名前空間を作る。lang-sql 既定の名前空間 (テーブル = `type`、
- * 列 = `property`) の代わりに、テーブル = `table`、列 = `column`、外部キー列 = `key`
+ * 列 = `property`) の代わりに、テーブル = `table`、列 = `column`、外部キー列 = `fk`
  * を付け、列には `info` と FK 参照先の補足 (`detail`) を足す。
  * クォート規則は lang-sql の `nameCompletion` と同じ。
  */
@@ -75,7 +76,7 @@ export function buildSchemaNamespace(o: SchemaNamespaceOptions): SQLNamespace {
   for (const [table, columns] of Object.entries(o.tables)) {
     const children: Completion[] = columns.map((col) => {
       const ref = targets.get(`${table.toLowerCase()}\u0000${col.toLowerCase()}`);
-      const base = nameOption(col, ref ? "key" : "column", o);
+      const base = nameOption(col, ref ? "fk" : "column", o);
       const info = o.columnInfo?.(table, col);
       return {
         ...base,
@@ -92,11 +93,31 @@ export function buildSchemaNamespace(o: SchemaNamespaceOptions): SQLNamespace {
   };
 }
 
-/** lang-sql 標準のキーワード候補 (`keyword` / `type` / `variable`) を私たちの種別へ寄せる。 */
+/**
+ * 3 方言で共通して使う代表的な関数名 (集約・文字列・数値・日付・NULL 処理)。lang-sql の
+ * 辞書は関数を種別で区別しない (`COUNT` や `COALESCE` も `keyword`) ので、ラベルで見分ける。
+ * 辞書に無い名前は候補に出ないだけで害はない。
+ */
+const FUNCTION_NAMES: ReadonlySet<string> = new Set([
+  "COUNT", "SUM", "AVG", "MIN", "MAX",
+  "COALESCE", "NULLIF", "IFNULL", "NVL", "IIF",
+  "CONCAT", "LENGTH", "LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM", "SUBSTRING", "SUBSTR", "INSTR",
+  "ROUND", "ABS", "CEIL", "CEILING", "FLOOR", "MOD", "POWER", "SQRT",
+  "NOW", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "DATE_TRUNC", "DATE_FORMAT",
+  "STRFTIME", "EXTRACT", "CAST", "GREATEST", "LEAST", "GROUP_CONCAT", "STRING_AGG",
+  "ROW_NUMBER", "RANK", "DENSE_RANK", "LEAD", "LAG",
+]);
+
+/**
+ * lang-sql 標準のキーワード候補 (`keyword` / `type` / `variable`) を私たちの種別へ寄せる。
+ * 既定の `defaultKeyword` と同じく `boost: -1` を付け、テーブル・列より下位に並べる。
+ * `type` はデータ型、代表的な関数名は `function`、それ以外 (`TRUE` / `NULL` や、方言の
+ * クライアントコマンドを指す `variable` を含む) は `keyword`。
+ */
 export function keywordCompletionOption(label: string, type: string): Completion {
-  if (type === "type") return { label, type: "datatype" };
-  if (type === "variable") return { label, type: "function" };
-  return { label, type: "keyword" };
+  if (type === "type") return { label, type: "datatype", boost: -1 };
+  if (FUNCTION_NAMES.has(label.toUpperCase())) return { label, type: "function", boost: -1 };
+  return { label, type: "keyword", boost: -1 };
 }
 
 /** 情報パネルの 1 行 (見出しと値)。 */
@@ -157,7 +178,6 @@ export type CompletionIconName =
   | "table"
   | "database"
   | "columns"
-  | "key"
   | "routine"
   | "braces"
   | "hash"
@@ -167,13 +187,18 @@ const ICON_BY_TYPE: Record<string, CompletionIconName> = {
   table: "table",
   database: "database",
   column: "columns",
-  key: "key",
+  // 外部キー列は エクスプローラ / ER 図と同じ link アイコン (鍵は主キー専用)。
+  fk: "link",
   function: "routine",
   keyword: "braces",
   datatype: "hash",
-  // 他の補完ソース (JOIN / CTE・派生表・別名) が付ける lang-sql 由来の種別。
+  // 他の補完ソースが付ける lang-sql 由来の種別。JOIN / CTE・派生表・別名は
+  // sqlDerivedCompletion.ts が `class` (CTE・派生表) / `property` (その列) / `variable`
+  // (SELECT 別名) を付け、lang-sql 自動生成の名前空間階層は `type` を付ける。
+  class: "table",
   property: "columns",
-  type: "table",
+  variable: "columns",
+  type: "database",
   constant: "link",
 };
 
