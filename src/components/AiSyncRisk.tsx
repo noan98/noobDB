@@ -26,6 +26,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 
 /** index ごとのリスク項目 (同期文の行バッジ用)。 */
 export type RiskByIndex = ReadonlyMap<number, readonly SyncRiskItem[]>;
@@ -291,6 +292,7 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
           </Flex>
         </Flex>
       )}
+      <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("aiSyncRiskParseError")}</ErrorNote>

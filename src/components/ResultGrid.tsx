@@ -91,6 +91,7 @@ import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
 import { useRowCrossfade } from "./useRowCrossfade";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+import { useAiAvailable } from "../ai/useAiAvailable";
 import {
   type CellKind,
   CELL_KIND_META,
@@ -1243,6 +1244,11 @@ interface Props {
    * 未指定ならボタン自体を出さない。表示条件は Export と揃える。
    */
   onTransferResult?: () => void;
+  /**
+   * 結果を AI で要約する (#1476)。ボトムパネルの AI 要約タブを開く。AI が使えない
+   * (設定オフ / API キー未設定) ときは、渡されていてもツールバーに入口を出さない。
+   */
+  onSummarizeWithAi?: () => void;
   /**
    * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
@@ -7164,6 +7170,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   onSaveAsView,
   onRegisterLocalTable,
   onTransferResult,
+  onSummarizeWithAi,
   fullExport,
   bundleContext,
   lastEditAppliedAt,
@@ -7189,6 +7196,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   // Live range-selection summary lifted from the inner DataGrid (#523).
   const [selSummary, setSelSummary] = useState<SelectionSummary | null>(null);
   const settings = useSettings();
+  const aiAvailable = useAiAvailable();
   // ストリーミング中の経過時間は StreamingBanner が自前で刻む (ここでは再レンダーしない)。
   // 開始時刻だけをレンダー中に ref へ控える (streaming が真になった最初のレンダーで確定)。
   const streamStartRef = useRef<number | null>(null);
@@ -7739,7 +7747,9 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   const overflowBtnRef = useRef<HTMLButtonElement | null>(null);
   const presentToolbarActions = COLLAPSIBLE_TOOLBAR_ACTIONS.filter(
     (id) =>
-      (id !== "transfer" || !!onTransferResult) && (id !== "autoRefresh" || !!onSetAutoRefresh),
+      (id !== "transfer" || !!onTransferResult) &&
+      (id !== "aiSummary" || (aiAvailable && !!onSummarizeWithAi)) &&
+      (id !== "autoRefresh" || !!onSetAutoRefresh),
   );
   const { visible: visibleToolbarActions, collapsed: collapsedToolbarActions } = splitCollapsed(
     presentToolbarActions,
@@ -7962,6 +7972,17 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
       disabled: !canExport || !onRegisterLocalTable,
       onSelect: () => onRegisterLocalTable?.(),
     },
+    ...(aiAvailable && onSummarizeWithAi
+      ? {
+          aiSummary: {
+            label: t("aiResultSummaryToolbar"),
+            icon: "sparkles" as const,
+            title: exportBlockedReason ?? t("aiResultSummaryToolbarTitle"),
+            disabled: !canExport,
+            onSelect: () => onSummarizeWithAi(),
+          },
+        }
+      : {}),
     ...(onTransferResult
       ? {
           transfer: {

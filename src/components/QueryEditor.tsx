@@ -1401,6 +1401,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       view.dispatch({
         changes: { from, to, insert: text },
         selection: { anchor: from + text.length },
+        scrollIntoView: true,
       });
       view.focus();
     },

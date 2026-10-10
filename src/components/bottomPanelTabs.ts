@@ -50,6 +50,10 @@
  * `aiSql` (SQL の AI 解説 / 最適化案、#695) は、エディタの選択範囲を見比べながら読む
  * 参照情報 (解説・diff) なので Modal ではなくここに置く。開ける条件は接続中 + AI 利用可
  * (設定で有効 かつ API キー登録済み) かつ、エディタからの依頼がある (参照グループは対象が決まってから)。
+ *
+ * `aiResultSummary` (結果グリッドの AI 要約、#1476) は、結果グリッドを見比べながら読む
+ * 傾向・外れ値・次の切り口なので、Modal ではなくここに置く。開ける条件は `aiSql` と同じ
+ * (接続中 + AI 利用可 + グリッドからの依頼がある)。
  */
 export const BOTTOM_PANEL_TABS = [
   "output",
@@ -64,6 +68,7 @@ export const BOTTOM_PANEL_TABS = [
   "profile",
   "timelapse",
   "aiSql",
+  "aiResultSummary",
 ] as const;
 
 export type BottomPanelTab = (typeof BOTTOM_PANEL_TABS)[number];
@@ -84,6 +89,7 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   profile: "reference",
   timelapse: "reference",
   aiSql: "reference",
+  aiResultSummary: "reference",
 };
 
 /**
@@ -144,6 +150,8 @@ export interface BottomPanelContext {
    * 規則 (§7.1) なので、依頼が無ければ `aiSql` タブは並べない。
    */
   aiSqlTarget?: boolean;
+  /** 結果グリッドから AI 要約の依頼が出ているか。無ければ `aiResultSummary` タブは並べない (#1476)。 */
+  aiResultSummaryTarget?: boolean;
 }
 
 /** 与えられた文脈で実際に開けるタブ (表示順を保つ)。 */
@@ -158,6 +166,7 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
     if (tab === "structure") return !!ctx.structureTable;
     if (tab === "timelapse") return !!ctx.timelapseProfileId;
     if (tab === "aiSql") return !!ctx.aiAvailable && !!ctx.aiSqlTarget;
+    if (tab === "aiResultSummary") return !!ctx.aiAvailable && !!ctx.aiResultSummaryTarget;
     return true;
   });
 }

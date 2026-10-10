@@ -4,6 +4,14 @@ import { api } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiStream } from "../ai/useAiStream";
 import {
+  appendExchange,
+  exchangesToMessages,
+  historyBudget,
+  MAX_HISTORY_EXCHANGES,
+  trimExchanges,
+  type AiExchange,
+} from "../ai/conversation";
+import {
   dialectLabel,
   extractTableRefs,
   needsSendScopeConfirm,
@@ -30,12 +38,13 @@ import {
 import { useLocale, useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { useSettings } from "../settings";
-import { Button } from "./ui";
+import { Button, Textarea } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
-import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
+import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 
 /** エディタのアクション (右クリック / パレット) が組み立てる依頼。 */
 export interface AiSqlRequest {
@@ -72,6 +81,18 @@ type State =
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
 
+/**
+ * 追い質問 (#1471) の会話。往復は「送った文字列」をそのまま持つので、送信範囲の方針
+ * (リテラルマスク・スキーマのみ) は記録時点のものが保たれる。設定がその後に変わったら
+ * 履歴を使い回さない (`maskLiterals` / `sendScope` を持ち、現在値と違えば追い質問を出さない)。
+ */
+interface Conversation {
+  kind: SqlAssistKind;
+  exchanges: AiExchange[];
+  maskLiterals: boolean;
+  sendScope: string;
+}
+
 export interface AiSqlPanelProps {
   sessionId: string;
   /** `mysql` / `postgres` / `sqlite`。 */
@@ -101,6 +122,8 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [applied, setApplied] = useState<null | "applied" | "closed" | "cancelled">(null);
   const stream = useAiStream({ idPrefix: "ai_sql" });
+  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [followUp, setFollowUp] = useState("");
   // 「エディタに適用」の再入防止。確認ダイアログ中・適用済みの間は 2 回目を受け付けない。
   const applyingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -115,6 +138,111 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       dialect: dialectLabel(props.driver),
       tables: tableCount > 0 ? t("aiSqlTablesSome", { count: tableCount }) : t("aiSqlTablesNone"),
     });
+
+  /**
+   * 完了した本文を解釈して結果を表示し、解釈できたら往復を会話に積む。
+   * `history` は今回の要求に付けた履歴 (新規なら空)。
+   */
+  const finish = (
+    req: AiSqlRequest,
+    kind: SqlAssistKind,
+    masked: boolean,
+    text: string,
+    prompt: string,
+    history: readonly AiExchange[],
+  ) => {
+    let ok = true;
+    if (kind === "explain") {
+      const parsed = parseSqlExplainResponse(text);
+      ok = parsed.ok;
+      setState(parsed.ok ? { kind: "explain", value: parsed.value } : { kind: "raw", raw: parsed.raw });
+    } else {
+      const parsed = parseSqlRewriteResponse(text);
+      if (!parsed.ok) {
+        ok = false;
+        setState({ kind: "raw", raw: parsed.raw });
+      } else {
+        // マスクして送ったときは、提案の空白リテラルを元の値へ差し戻せるか試す。
+        const restored: RestoredLiterals = masked
+          ? restoreMaskedLiterals(req.sql, parsed.value.rewritten_sql)
+          : { sql: parsed.value.rewritten_sql, status: "none" };
+        const before = countStatements(req.sql, props.driver);
+        const after = countStatements(restored.sql, props.driver);
+        setState({
+          kind: "rewrite",
+          value: parsed.value,
+          original: req.sql,
+          proposal: restored.sql,
+          restore: restored.status,
+          statementCounts: before !== after ? { before, after } : null,
+        });
+      }
+    }
+    // 解釈できた回答だけを会話に積む (壊れた本文を次の依頼に混ぜない)。
+    if (ok) {
+      setConversation({
+        kind,
+        exchanges: appendExchange(history, { prompt, answer: text }, { keepFirst: true }),
+        maskLiterals: masked,
+        sendScope: ai.sendScope,
+      });
+      setFollowUp("");
+    }
+  };
+
+  /** 追い質問。解説 / リライトと同じ system・形式で、これまでの往復を履歴として付けて送る。 */
+  const runFollowUp = async () => {
+    const text = followUp.trim();
+    if (!request || !conversation || text === "") return;
+    if (!stream.acquire()) return;
+    const { kind, exchanges } = conversation;
+    const masked = conversation.maskLiterals;
+    const system = buildSqlAssistSystem(kind, locale);
+    // 最初の往復 (元の SQL とテーブル定義) は上限でも落とさない。
+    const kept = trimExchanges(exchanges, { maxBytes: historyBudget(system, text), keepFirst: true });
+    try {
+      // 追い質問も SQL 本文を含む履歴を送り直すので、送信範囲の確認は初回と同じく出す。
+      // 本番確認は最初の送信で済んでいるため省く。
+      if (needsSendScopeConfirm(ai.sendScope)) {
+        const ok = await confirm({
+          title: t("aiSqlScopeTitle"),
+          message: `${t("aiSqlScopeBody")}\n${sendsLine(tableRefs.length)}`,
+          confirmLabel: t("aiSqlConfirmSend"),
+          tone: "warning",
+        });
+        if (!ok) {
+          stream.release();
+          return;
+        }
+      }
+      if (!stream.isMounted()) {
+        stream.release();
+        return;
+      }
+      setApplied(null);
+      applyingRef.current = false;
+      setState({ kind: "running", assist: kind });
+      await stream.start(
+        {
+          task: SQL_ASSIST_TASK[kind],
+          system,
+          history: exchangesToMessages(kept),
+          prompt: text,
+          settings: toAiSnapshot(ai),
+          format: sqlAssistFormat(kind),
+        },
+        {
+          // 履歴に入れた往復だけを引き継ぐ (上限で落ちた古い往復は会話からも外れる)。
+          onDone: ({ text: answer }) => finish(request, kind, masked, answer, text, kept),
+          onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
+          onCancelled: () => setState({ kind: "cancelled" }),
+        },
+      );
+    } catch (e) {
+      stream.release();
+      setState({ kind: "error", message: String(e), refused: false });
+    }
+  };
 
   const runInner = async (req: AiSqlRequest, kind: SqlAssistKind) => {
     // 確保した実行権はストリームの終了までフックが保持する。送信前に取りやめた場合は戻す。
@@ -158,48 +286,26 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     const tables = fetched.filter((x): x is ExplainTable => x !== null);
     const masked = ai.maskLiterals;
     setState({ kind: "running", assist: kind });
+    // 新しい解説 / リライトは新しい会話の始まり。古い往復は持ち越さない。
+    setConversation(null);
+    const prompt = buildSqlAssistPrompt({
+      kind,
+      sql: req.sql,
+      driver: props.driver,
+      tables,
+      maskLiterals: masked,
+    });
     await stream.start(
       {
         task: SQL_ASSIST_TASK[kind],
         system: buildSqlAssistSystem(kind, locale),
-        prompt: buildSqlAssistPrompt({
-          kind,
-          sql: req.sql,
-          driver: props.driver,
-          tables,
-          maskLiterals: masked,
-        }),
+        prompt,
         settings: toAiSnapshot(ai),
         format: sqlAssistFormat(kind),
       },
       {
         // 種別ごとにスキーマが違うので、パースは完了時に本文から行う。
-        onDone: ({ text }) => {
-          if (kind === "explain") {
-            const parsed = parseSqlExplainResponse(text);
-            setState(parsed.ok ? { kind: "explain", value: parsed.value } : { kind: "raw", raw: parsed.raw });
-          } else {
-            const parsed = parseSqlRewriteResponse(text);
-            if (!parsed.ok) {
-              setState({ kind: "raw", raw: parsed.raw });
-              return;
-            }
-            // マスクして送ったときは、提案の空白リテラルを元の値へ差し戻せるか試す。
-            const restored: RestoredLiterals = masked
-              ? restoreMaskedLiterals(req.sql, parsed.value.rewritten_sql)
-              : { sql: parsed.value.rewritten_sql, status: "none" };
-            const before = countStatements(req.sql, props.driver);
-            const after = countStatements(restored.sql, props.driver);
-            setState({
-              kind: "rewrite",
-              value: parsed.value,
-              original: req.sql,
-              proposal: restored.sql,
-              restore: restored.status,
-              statementCounts: before !== after ? { before, after } : null,
-            });
-          }
-        },
+        onDone: ({ text }) => finish(req, kind, masked, text, prompt, []),
         onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
         onCancelled: () => setState({ kind: "cancelled" }),
       },
@@ -274,6 +380,12 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     );
   }
   const running = state.kind === "running";
+  // 追い質問は、会話があり、記録時と同じ送信方針のときだけ出す (方針が変わったら履歴を使い回さない)。
+  const followUpAvailable =
+    !running &&
+    conversation !== null &&
+    conversation.maskLiterals === ai.maskLiterals &&
+    conversation.sendScope === ai.sendScope;
 
   return (
     <Flex
@@ -331,6 +443,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
           }}
         />
       )}
+      <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("aiSqlParseError")}</ErrorNote>
@@ -351,6 +464,38 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
         <Callout tone="info" role="status">
           {t("aiSqlCancelled")}
         </Callout>
+      )}
+      {followUpAvailable && (
+        <FormSection data-testid="ai-sql-followup">
+          <FieldLabel htmlFor="ai-sql-followup-input">{t("aiFollowUpLabel")}</FieldLabel>
+          <Textarea
+            id="ai-sql-followup-input"
+            rows={2}
+            value={followUp}
+            onChange={(e) => setFollowUp(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void runFollowUp();
+              }
+            }}
+            placeholder={t("aiFollowUpPlaceholder")}
+          />
+          <Flex align="center" gap="2" wrap="wrap">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={followUp.trim() === ""}
+              onClick={() => void runFollowUp()}
+            >
+              {t("aiFollowUpSend")}
+            </Button>
+            <chakra.span textStyle="caption" color="app.textMuted">
+              {t("aiFollowUpHint", { count: MAX_HISTORY_EXCHANGES })}
+            </chakra.span>
+          </Flex>
+        </FormSection>
       )}
       {dialog}
     </Flex>

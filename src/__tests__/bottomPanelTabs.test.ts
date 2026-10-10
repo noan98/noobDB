@@ -34,6 +34,7 @@ const connected = {
   openConnectionCount: 1,
   aiAvailable: true,
   aiSqlTarget: true,
+  aiResultSummaryTarget: true,
 };
 
 /** 接続に依存せず常に開けるログ系タブ (#1114)。 */
@@ -139,6 +140,17 @@ describe("AI 解説タブ (#695)", () => {
     expect(resolveBottomPanelTab("aiSql", connected)).toBe("aiSql");
   });
 
+  it("AI 結果要約 (#1476) は AI 利用可 + グリッドからの依頼があるときだけ開ける参照タブ", () => {
+    expect(availableBottomPanelTabs(connected)).toContain("aiResultSummary");
+    expect(availableBottomPanelTabs({ ...connected, aiAvailable: false })).not.toContain("aiResultSummary");
+    expect(availableBottomPanelTabs({ ...connected, aiResultSummaryTarget: false })).not.toContain("aiResultSummary");
+    expect(availableBottomPanelTabs({ ...connected, sessionId: null })).not.toContain("aiResultSummary");
+    expect(BOTTOM_PANEL_TAB_GROUP.aiResultSummary).toBe("reference");
+    expect(bottomPanelStripTabs(connected).map((e) => e.tab)).not.toContain("aiResultSummary");
+    expect(appSource).toContain('activeBottomPanelTab === "aiResultSummary"');
+    expect(appSource).toContain("aiResultSummaryTarget: !!aiResultSummaryRequest");
+  });
+
   it("パネルバー (折りたたみ時) には並べない", () => {
     expect(bottomPanelStripTabs(connected).map((e) => e.tab)).not.toContain("aiSql");
   });
@@ -149,7 +161,7 @@ describe("AI 解説タブ (#695)", () => {
     expect(appSource).toContain("<AiSqlPanel");
     expect(appSource).toContain("aiSqlTarget: !!aiSqlRequest");
     // 接続が切り替わったら前の接続の依頼を破棄する
-    expect(appSource).toMatch(/setAiSqlRequest\(null\);\s*\}, \[sessionId\]\)/);
+    expect(appSource).toMatch(/setAiSqlRequest\(null\);\s*setAiResultSummaryRequest\(null\);\s*\}, \[sessionId\]\)/);
   });
 });
 
@@ -243,8 +255,9 @@ describe("nextBottomPanelTab", () => {
   });
 
   it("端では折り返す", () => {
-    expect(nextBottomPanelTab(tabs, "aiSql", 1)).toBe("output");
-    expect(nextBottomPanelTab(tabs, "output", -1)).toBe("aiSql");
+    const last = tabs[tabs.length - 1];
+    expect(nextBottomPanelTab(tabs, last, 1)).toBe("output");
+    expect(nextBottomPanelTab(tabs, "output", -1)).toBe(last);
   });
 
   it("影響分析 (#1027) は対象 DB が決まらなくても開ける (DB はパネル内で選ぶ)", () => {
