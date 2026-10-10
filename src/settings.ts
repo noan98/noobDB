@@ -24,6 +24,7 @@ import {
   type AiSendScope,
   type AiSettings,
 } from "./ai/aiSettings";
+import { addUsage, emptyUsageTotals, type AiUsageEventLike } from "./ai/aiUsage";
 import type { AiEffort, AiModelId, AiTaskKind } from "./ai/aiModels";
 
 export type Theme = "light" | "dark";
@@ -1783,6 +1784,16 @@ export function setAiAllowRowData(value: boolean): void {
 /** SQL 内の文字列リテラルをマスクして AI へ送るか (#692)。 */
 export function setAiMaskLiterals(value: boolean): void {
   patchAi({ maskLiterals: value });
+}
+
+/** AI の完了イベント 1 件を今月 (JST) の累計に加算する (#1474)。`useAiStream` から 1 か所で呼ぶ。 */
+export function recordAiUsage(event: AiUsageEventLike, now: Date = new Date()): void {
+  patchAi({ usage: addUsage(current.ai.usage, event, now) });
+}
+
+/** 今月の累計をリセットする (#1474)。 */
+export function resetAiUsage(now: Date = new Date()): void {
+  patchAi({ usage: emptyUsageTotals(now) });
 }
 
 /**

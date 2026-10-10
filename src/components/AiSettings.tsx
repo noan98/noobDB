@@ -12,6 +12,7 @@ import {
   type AiTaskKind,
 } from "../ai/aiModels";
 import { AI_SEND_SCOPES, toAiSnapshot, type AiSendScope } from "../ai/aiSettings";
+import { formatTokens, modelLabel, rollUsageMonth, sumUsage } from "../ai/aiUsage";
 import { connectionTestView } from "../ai/connectionTest";
 import { useT, type I18nKey } from "../i18n";
 import { setAiKeyPresent } from "../ai/aiKeyStore";
@@ -20,6 +21,7 @@ import {
   setAiAllowRowData,
   setAiDefaultModel,
   giveAiConsent,
+  resetAiUsage,
   setAiEnabled,
   setAiMaskLiterals,
   setAiSendScope,
@@ -28,6 +30,7 @@ import {
   useSettings,
 } from "../settings";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -208,6 +211,56 @@ export function AiSettings() {
   const usable = ai.enabled && hasKey;
   const sampleRunning = sample.kind === "running";
   const view = testResult ? connectionTestView(testResult) : null;
+
+  // 今月 (JST) の累計 (#1474)。月が替わっていれば保存値が古くても空として見せる。
+  const usageTotals = rollUsageMonth(ai.usage, new Date());
+  const usageSum = sumUsage(usageTotals);
+  const usageModels = Object.entries(usageTotals.byModel);
+  const usageSection = (
+    <FormSection data-testid="ai-usage-month">
+      <Flex align="center" gap="2" wrap="wrap">
+        <FieldLabel as="div">{t("aiUsageMonthTitle")}</FieldLabel>
+        <SettingsInfo>{t("aiUsageMonthHelp")}</SettingsInfo>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={usageModels.length === 0}
+          onClick={() => resetAiUsage()}
+        >
+          {t("aiUsageReset")}
+        </Button>
+      </Flex>
+      {usageModels.length === 0 ? (
+        <chakra.span fontSize="sm" color="app.textMuted">
+          {t("aiUsageMonthEmpty")}
+        </chakra.span>
+      ) : (
+        <>
+          {usageModels.map(([model, u]) => (
+            <chakra.span key={model} fontSize="sm" color="app.text">
+              {t("aiUsageMonthRow", {
+                model: modelLabel(model),
+                requests: u.requests,
+                input: formatTokens(u.inputTokens),
+                output: formatTokens(u.outputTokens),
+              })}
+              {u.cacheReadInputTokens > 0 &&
+                t("aiUsageMonthRowCache", { cache: formatTokens(u.cacheReadInputTokens) })}
+            </chakra.span>
+          ))}
+          <chakra.span fontSize="sm" fontWeight={500} color="app.text">
+            {t("aiUsageMonthTotal", {
+              month: usageTotals.month,
+              requests: usageSum.requests,
+              input: formatTokens(usageSum.inputTokens),
+              output: formatTokens(usageSum.outputTokens),
+            })}
+          </chakra.span>
+        </>
+      )}
+    </FormSection>
+  );
 
   return (
     <Flex direction="column" gap="3" px="2">
@@ -483,6 +536,7 @@ export function AiSettings() {
           {stream.text}
         </chakra.div>
       )}
+      <AiUsageNote event={stream.done} />
       {sample.kind === "done" && (
         <Callout tone={sample.fallback ? "warning" : "success"} role="status">
           {sample.info}
@@ -502,6 +556,7 @@ export function AiSettings() {
           {t("aiSampleCancelled")}
         </Callout>
       )}
+      {usageSection}
       {dialog}
     </Flex>
   );

@@ -36,6 +36,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 
 /** エディタのアクション (右クリック / パレット) が組み立てる依頼。 */
 export interface AiSqlRequest {
@@ -331,6 +332,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
           }}
         />
       )}
+      <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("aiSqlParseError")}</ErrorNote>

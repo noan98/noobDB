@@ -10,6 +10,7 @@ import {
   type AiModelId,
   type AiTaskKind,
 } from "./aiModels";
+import { emptyUsageTotals, sanitizeAiUsageTotals, type AiUsageTotals } from "./aiUsage";
 
 /** プロンプトに含めてよい情報の範囲。 */
 export const AI_SEND_SCOPES = ["schemaOnly", "schemaAndSql"] as const;
@@ -30,6 +31,8 @@ export interface AiSettings {
   allowRowData: boolean;
   /** SQL 内の文字列リテラルをマスクして送る (#692)。既定オン。 */
   maskLiterals: boolean;
+  /** 今月 (JST) の使用トークン累計 (#1474)。秘密ではない。`useAiStream` の完了時に加算する。 */
+  usage: AiUsageTotals;
 }
 
 function nullRecord<V>(): Record<AiTaskKind, V | null> {
@@ -45,6 +48,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   sendScope: "schemaOnly",
   allowRowData: false,
   maskLiterals: true,
+  usage: emptyUsageTotals(new Date(0)),
 };
 
 function sanitizeRecord<V>(
@@ -76,11 +80,17 @@ export function sanitizeAiSettings(input: unknown): AiSettings {
     allowRowData: p.allowRowData === true,
     // 未保存 (旧設定) はオン。明示的に false のときだけオフ。
     maskLiterals: p.maskLiterals !== false,
+    usage: sanitizeAiUsageTotals(p.usage),
   };
 }
 
 function structuredCloneSettings(s: AiSettings): AiSettings {
-  return { ...s, taskModels: { ...s.taskModels }, taskEfforts: { ...s.taskEfforts } };
+  return {
+    ...s,
+    taskModels: { ...s.taskModels },
+    taskEfforts: { ...s.taskEfforts },
+    usage: { ...s.usage, byModel: { ...s.usage.byModel } },
+  };
 }
 
 /**

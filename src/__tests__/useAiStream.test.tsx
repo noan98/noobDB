@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, renderWithProviders, screen } from "./testUtils";
+import { getSettings, resetAiUsage } from "../settings";
 import type { AiDoneEvent, AiStreamHandlers as WireHandlers } from "../api/tauri";
 
 const runAiRequest = vi.fn();
@@ -102,6 +103,19 @@ describe("useAiStream (#1470)", () => {
     expect(unlisten).toHaveBeenCalled();
     // 実行権が戻っているので次の要求を受け付ける。
     expect(result.current.acquire()).toBe(true);
+  });
+
+  it("完了時に今月の使用量累計へ 1 件加算する (#1474)", async () => {
+    resetAiUsage();
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    result.current.acquire();
+    await act(async () => {
+      await result.current.start(request, handlers());
+    });
+    act(() => wire?.onDone?.(doneEvent));
+    const m = getSettings().ai.usage.byModel[doneEvent.model];
+    expect(m).toMatchObject({ requests: 1, inputTokens: doneEvent.usage.inputTokens });
+    resetAiUsage();
   });
 
   it("エラー / 拒否 (aiRefused) / 中止を区別して通知する", async () => {

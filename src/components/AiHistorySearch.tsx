@@ -29,6 +29,7 @@ import { CopyButton } from "./CopyButton";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { useCopyFeedback } from "./useCopyFeedback";
 
 /** SQL 全文の取得を同時に走らせる件数。 */
@@ -448,6 +449,7 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
           </chakra.div>
         </Flex>
       )}
+      <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("aiHistoryParseError")}</ErrorNote>

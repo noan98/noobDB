@@ -24,6 +24,7 @@ import { useSettings } from "../settings";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Select } from "./ui";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { Callout } from "./Callout";
@@ -601,6 +602,7 @@ export function TestDataModal({
                 </Button>
               </Flex>
             )}
+            <AiUsageNote event={stream.done} />
             {aiState.kind === "raw" && (
               <Flex direction="column" gap="1">
                 <ErrorNote role="alert">{t("testDataAiParseError")}</ErrorNote>

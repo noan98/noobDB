@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { recordAiUsage } from "../settings";
 import { api, listenAiStream, type AiDoneEvent } from "../api/tauri";
 
 /** `run_ai_request` に渡す引数 (ストリーム ID はフックが採番する)。 */
@@ -167,6 +168,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     streamRef.current = null;
     busyRef.current = false;
     setRunning(false);
+    setDone(null);
   }, [cancelRemote]);
 
   const start = useCallback(
@@ -194,6 +196,8 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
           },
           onDone: (e) => {
             if (!stopListener(streamId)) return;
+            // 使用量の累計 (#1474) はここ 1 か所で加算する。画面側では加算しない。
+            recordAiUsage(e);
             setDone(e);
             handlers.onDone({
               text: body,
