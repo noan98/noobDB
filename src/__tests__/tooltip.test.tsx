@@ -173,6 +173,75 @@ describe("Tooltip", () => {
     fireEvent.focus(screen.getByRole("button", { name: "trigger" }));
     expect(screen.getByRole("tooltip").textContent).toBe("ヒント\n\nSELECT 1");
   });
+
+  it("クリックやショートカットの直後のフォーカスでは開かない (残り続けるのを防ぐ)", () => {
+    // ボタンはクリックでフォーカスを得る。モーダルの初期フォーカスや閉じたあとの
+    // 戻りフォーカスも同じで、ポインタがそこに無いので mouseleave が来ず、開くと
+    // blur するまで吹き出しが残り続けていた。
+    renderWithProviders(
+      <Tooltip label="ヒント">
+        <button type="button">trigger</button>
+      </Tooltip>,
+    );
+    const trigger = screen.getByRole("button", { name: "trigger" });
+    fireEvent.pointerDown(window);
+    fireEvent.focus(trigger);
+    expect(trigger.getAttribute("aria-describedby")).toBeNull();
+    fireEvent.blur(trigger);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.focus(trigger);
+    expect(trigger.getAttribute("aria-describedby")).toBeNull();
+    fireEvent.blur(trigger);
+
+    // Tab で移ってきたフォーカスでは従来どおり即座に開く。
+    fireEvent.keyDown(window, { key: "Tab" });
+    fireEvent.focus(trigger);
+    expect(trigger.getAttribute("aria-describedby")).not.toBeNull();
+  });
+
+  it("ポインタがトリガーの外へ移ったら mouseleave が来なくても閉じる", () => {
+    renderWithProviders(
+      <div>
+        <Tooltip label="ヒント" openDelay={0}>
+          <button type="button">trigger</button>
+        </Tooltip>
+        <span>outside</span>
+      </div>,
+    );
+    const trigger = screen.getByRole("button", { name: "trigger" });
+    fireEvent.mouseEnter(trigger);
+    expect(trigger.getAttribute("aria-describedby")).not.toBeNull();
+    // トリガー内での移動では閉じない。
+    fireEvent.mouseOver(trigger);
+    expect(trigger.getAttribute("aria-describedby")).not.toBeNull();
+    fireEvent.mouseOver(screen.getByText("outside"));
+    expect(trigger.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("押すと閉じ、openOnClick のときだけクリックで開く", () => {
+    renderWithProviders(
+      <div>
+        <Tooltip label="通常" openDelay={0}>
+          <button type="button">plain</button>
+        </Tooltip>
+        <Tooltip label="説明" openOnClick>
+          <button type="button">info</button>
+        </Tooltip>
+      </div>,
+    );
+    const plain = screen.getByRole("button", { name: "plain" });
+    fireEvent.mouseEnter(plain);
+    expect(plain.getAttribute("aria-describedby")).not.toBeNull();
+    fireEvent.pointerDown(plain);
+    fireEvent.click(plain);
+    expect(plain.getAttribute("aria-describedby")).toBeNull();
+
+    const info = screen.getByRole("button", { name: "info" });
+    fireEvent.pointerDown(info);
+    fireEvent.click(info);
+    expect(describedText(info)).toBe("説明");
+  });
 });
 
 describe("useDelegatedTooltip", () => {
@@ -187,6 +256,14 @@ describe("useDelegatedTooltip", () => {
       </div>
     );
   }
+
+  it("表示中の行が mouseleave なしに外れても、ポインタが外へ移れば閉じる", () => {
+    renderWithProviders(<DelegatedList openDelay={0} />);
+    fireEvent.mouseEnter(screen.getByText("row1"));
+    expect(screen.getByRole("tooltip").textContent).toBe("1 行目の説明");
+    fireEvent.mouseOver(screen.getByText("row3"));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
 
   it("行ごとに 1 つの共有バブルを出し、離れると消える", () => {
     renderWithProviders(<DelegatedList openDelay={0} />);

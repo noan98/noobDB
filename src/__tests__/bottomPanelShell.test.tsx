@@ -226,6 +226,8 @@ describe("BottomPanelStrip (折りたたみ時のパネルバー)", () => {
 
   it("無効な項目にフォーカスすると理由をツールチップで示す", async () => {
     renderStrip();
+    // フォーカス起因の吹き出しはキーボード移動のときだけ開く (Tab で到達した想定)。
+    fireEvent.keyDown(window, { key: "Tab" });
     fireEvent.focus(screen.getByRole("button", { name: t("processTitle") }));
     await waitFor(() =>
       expect(screen.getByRole("tooltip")).toHaveTextContent(t("appToolsNeedsSession")),

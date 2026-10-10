@@ -265,9 +265,18 @@ export function TableStatisticsPanel({
       </chakra.p>
 
       <Flex align="center" gap="3" flexWrap="wrap">
-        <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("sizeRefresh")}
-        </Button>
+        <Tooltip label={t("sizeRefresh")} focusableWrapper={loading}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={t("sizeRefresh")}
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
         {loading && <Spinner size={14} />}
         <chakra.input
           type="text"

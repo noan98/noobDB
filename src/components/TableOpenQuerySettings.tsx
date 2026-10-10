@@ -111,10 +111,12 @@ export function TableOpenQuerySettings() {
                     type="button"
                     variant="ghost"
                     size="sm"
+                    color="app.textError"
+                    _hover={{ color: "app.textError", bg: "app.hover" }}
                     aria-label={t("tableOpenQueryOverrideRemoveAria", { table: o.table })}
                     onClick={() => removeTableOpenQueryOverride(o.profileId, o.database, o.table)}
                   >
-                    <Icon name="close" size={ICON_SIZES.sm} />
+                    <Icon name="trash" size={ICON_SIZES.sm} />
                   </Button>
                 </Tooltip>
               </chakra.li>

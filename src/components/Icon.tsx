@@ -69,6 +69,7 @@ import {
   IconTableAlias,
   IconToggleLeft,
   IconTool,
+  IconTrash,
   IconUpload,
   IconX,
   type TablerIcon,
@@ -129,6 +130,7 @@ import {
  * | 実行 (再生)                | `play`          |
  * | 整形 (フォーマット)        | `format`        |
  * | もっと見る (オーバーフローメニュー) | `more`  |
+ * | 削除 (行・項目を消す破壊的操作) | `trash`    |
  *
  * ## サイズ / ストローク規約
  *
@@ -231,7 +233,8 @@ export type IconName =
   | "format"
   | "more"
   | "send"
-  | "external-link";
+  | "external-link"
+  | "trash";
 
 /**
  * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
@@ -387,6 +390,9 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   send: IconSend,
   // 新しいタブで開く: 枠から外へ出る矢印。
   "external-link": IconExternalLink,
+  // 削除 (行・項目を消す破壊的操作): ゴミ箱。閉じる/解除の `close` (×) と区別し、
+  // 取り消せない削除であることを形で伝える。危険色と組み合わせて使う。
+  trash: IconTrash,
 };
 
 interface IconProps {

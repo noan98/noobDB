@@ -480,17 +480,33 @@ export function UsersPanel({
           paddingRight="4"
           overflowY="auto"
         >
-          <Flex align="center" justifyContent="space-between" gap="2">
-            <Button type="button" onClick={() => void loadUsers()} disabled={loadingUsers}>
-              <Icon name="refresh" size={ICON_SIZES.sm} /> {t("usersRefresh")}
-            </Button>
+          <Flex align="center" gap="1">
+            <Tooltip label={t("usersRefresh")} focusableWrapper={loadingUsers}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={t("usersRefresh")}
+                onClick={() => void loadUsers()}
+                disabled={loadingUsers}
+              >
+                <Icon name="refresh" size={ICON_SIZES.md} />
+              </Button>
+            </Tooltip>
+            <Tooltip label={readOnly ? t("usersReadOnlyHint") : t("usersNewUser")} focusableWrapper={readOnly}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={t("usersNewUser")}
+                disabled={readOnly}
+                onClick={() => setShowCreate((v) => !v)}
+              >
+                <Icon name="plus" size={ICON_SIZES.md} />
+              </Button>
+            </Tooltip>
             {loadingUsers && <Spinner size={14} />}
           </Flex>
-          <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
-            <Button type="button" disabled={readOnly} onClick={() => setShowCreate((v) => !v)}>
-              <Icon name="plus" size={ICON_SIZES.sm} /> {t("usersNewUser")}
-            </Button>
-          </Tooltip>
 
           {showCreate && (
             <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)" }}>
@@ -736,7 +752,7 @@ export function UsersPanel({
 
                   <Flex gap="2" justifyContent="flex-end">
                     {dirty && (
-                      <Button type="button" onClick={discardChanges} disabled={busy}>
+                      <Button type="button" variant="dangerOutline" onClick={discardChanges} disabled={busy}>
                         {t("usersDiscardChanges")}
                       </Button>
                     )}

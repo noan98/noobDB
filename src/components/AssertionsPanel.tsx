@@ -289,10 +289,17 @@ export function AssertionsPanel({
             <chakra.span marginLeft="1.5">{t("assertRunAll")}</chakra.span>
           </Button>
         )}
-        <Button type="button" variant="secondary" onClick={openAdd} disabled={runningAll}>
-          <Icon name="plus" size={ICON_SIZES.sm} />
-          <chakra.span marginLeft="1.5">{t("assertAdd")}</chakra.span>
-        </Button>
+        <Tooltip label={t("assertAdd")} focusableWrapper={runningAll}>
+          <Button
+            type="button"
+            variant="secondary"
+            aria-label={t("assertAdd")}
+            onClick={openAdd}
+            disabled={runningAll}
+          >
+            <Icon name="plus" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
         {aiAvailable && (
           <Button type="button" variant="secondary" onClick={() => setSuggesting(true)} disabled={runningAll}>
             <Icon name="sparkles" size={ICON_SIZES.sm} />
@@ -433,11 +440,13 @@ export function AssertionsPanel({
                           type="button"
                           size="sm"
                           variant="ghost"
+                          color="app.textError"
+                          _hover={{ color: "app.textError", bg: "app.hover" }}
                           aria-label={t("assertDelete")}
                           disabled={runningAll}
                           onClick={() => void handleDelete(a)}
                         >
-                          <Icon name="close" size={ICON_SIZES.sm} />
+                          <Icon name="trash" size={ICON_SIZES.sm} />
                         </Button>
                       </Tooltip>
                     </Flex>

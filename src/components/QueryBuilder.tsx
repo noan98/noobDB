@@ -1300,13 +1300,19 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
         <Box flex={1} />
         {onInsertToEditor && (
           // Run/Dry Run より控えめな secondary — 実行はしないため危険度が低い
-          // アクションであることを見た目でも示す。
+          // アクションであることを見た目でも示す。Ask Agent / アドバイザの
+          // 「エディタに挿入」と同じくアイコンのみ (名前は aria-label とツールチップ)。
           <Tooltip
             label={insertToEditorDisabled ? t("qbValidationNoTable") : t("qbInsertToEditorTitle")}
             focusableWrapper={insertToEditorDisabled}
           >
-            <Button variant="secondary" onClick={handleInsertToEditor} disabled={insertToEditorDisabled}>
-              {t("qbInsertToEditor")}
+            <Button
+              variant="secondary"
+              onClick={handleInsertToEditor}
+              disabled={insertToEditorDisabled}
+              aria-label={t("qbInsertToEditor")}
+            >
+              <Icon name="insert-sql" size={ICON_SIZES.md} />
             </Button>
           </Tooltip>
         )}
@@ -1338,7 +1344,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           }
           focusableWrapper={runDisabled}
         >
-          <Button variant="primary" onClick={handleExecute} disabled={runDisabled}>
+          <Button variant="success" onClick={handleExecute} disabled={runDisabled}>
             <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
               <Icon name="play" size={ICON_SIZES.sm} />
             </chakra.span>

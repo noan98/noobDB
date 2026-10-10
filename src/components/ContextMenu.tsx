@@ -150,6 +150,9 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       position="fixed"
       inset={0}
       zIndex="popover"
+      // モーダル表示中は body の `pointer-events: none` を継承してしまうため
+      // (`ComboSelect` と同じ理由)、明示的に受け取り直す。
+      pointerEvents="auto"
       onMouseDown={onClose}
       onContextMenu={(e) => {
         e.preventDefault();

@@ -269,6 +269,9 @@ export function ListboxSelect({
             aria-label={ariaLabel}
             position="fixed"
             zIndex="var(--z-popover)"
+            // モーダル表示中は body の `pointer-events: none` を継承してしまうため
+            // (`ComboSelect` と同じ理由)、明示的に受け取り直す。
+            pointerEvents="auto"
             maxH="260px"
             overflowY="auto"
             bg="var(--bg-elevated)"

@@ -22,6 +22,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview } from "./modalForm";
 import { clockTime, FilterChip, LogToolbar } from "./SeverityLog";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 
 /**
@@ -205,17 +206,19 @@ function OutputRow({
             <Button type="button" size="sm" variant="secondary" onClick={() => onOpenSql(entry.sql)}>
               {t("outputOpenInEditor")}
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={async () => {
-                if (await copyToClipboard(entry.sql)) toast.success(t("outputCopied"));
-              }}
-            >
-              <Icon name="copy" size={ICON_SIZES.sm} />
-              {t("outputCopySql")}
-            </Button>
+            <Tooltip label={t("outputCopySql")}>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                aria-label={t("outputCopySql")}
+                onClick={async () => {
+                  if (await copyToClipboard(entry.sql)) toast.success(t("outputCopied"));
+                }}
+              >
+                <Icon name="copy" size={ICON_SIZES.md} />
+              </Button>
+            </Tooltip>
           </Flex>
         </Flex>
       )}

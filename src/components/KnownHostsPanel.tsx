@@ -3,6 +3,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { api, type KnownHost } from "../api/tauri";
 import { useT } from "../i18n";
 import { useConfirm } from "./ConfirmDialog";
+import { Icon, ICON_SIZES } from "./Icon";
 import {
   SettingsInfo,
   SettingsLabelWithInfo,
@@ -10,6 +11,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 
 /**
@@ -68,9 +70,18 @@ export function KnownHostsPanel() {
           <chakra.h3>{t("knownHostsTitle")}</chakra.h3>
           <SettingsInfo>{t("knownHostsDesc")}</SettingsInfo>
         </SettingsLabelWithInfo>
-        <Button type="button" variant="secondary" size="sm" onClick={reload} disabled={loading}>
-          {t("knownHostsRefresh")}
-        </Button>
+        <Tooltip label={t("knownHostsRefresh")} focusableWrapper={loading}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={t("knownHostsRefresh")}
+            onClick={reload}
+            disabled={loading}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
       </SettingsSectionHeader>
       {hosts.length === 0 ? (
         <chakra.p fontSize="sm" color="app.textMuted" py="1">
@@ -103,7 +114,7 @@ export function KnownHostsPanel() {
               </Flex>
               <Button
                 type="button"
-                variant="secondary"
+                variant="dangerOutline"
                 size="sm"
                 onClick={() => handleForget(h)}
               >

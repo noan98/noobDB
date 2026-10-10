@@ -270,6 +270,10 @@ export function ComboSelect({
             role="listbox"
             position="fixed"
             zIndex="var(--z-popover)"
+            // モーダル (Chakra Dialog) を開いている間は body に `pointer-events: none`
+            // が付く。body 直下へ portal したリストはそれを継承し、ホイールスクロールも
+            // クリックも背後のダイアログへ抜けてしまうため、明示的に受け取り直す。
+            pointerEvents="auto"
             maxH="260px"
             overflowY="auto"
             bg="var(--bg-elevated)"

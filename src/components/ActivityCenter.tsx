@@ -5,6 +5,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { Button } from "./ui";
 import { springs, staggerContainer, transitions, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import { useFocusTrap, useReturnFocus } from "../keyboardNav";
@@ -194,24 +195,18 @@ function ActivityPanel({
               {t("activityOpenInPanel")}
             </chakra.button>
           )}
-          <chakra.button
+          <Button
             type="button"
+            variant="dangerOutline"
+            size="sm"
             onClick={clearActivity}
             disabled={entries.length === 0}
             fontSize="var(--text-xs)"
             px="1.5"
             py="0.5"
-            borderRadius="sm"
-            border="1px solid"
-            borderColor="app.border"
-            bg="transparent"
-            color="app.textMuted"
-            cursor="pointer"
-            _hover={{ bg: "app.hover", color: "app.text" }}
-            _disabled={{ opacity: 0.5, cursor: "not-allowed", _hover: { bg: "transparent" } }}
           >
             {t("activityClear")}
-          </chakra.button>
+          </Button>
           <chakra.button
             type="button"
             onClick={onClose}
