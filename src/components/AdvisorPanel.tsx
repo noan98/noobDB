@@ -6,6 +6,7 @@ import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import {
+  DEFAULT_ADVISOR_SORT,
   findingDescription,
   findingTarget,
   nextAdvisorSort,
@@ -14,7 +15,7 @@ import {
   severityLabelKey,
   severityRole,
   sortFindings,
-  type AdvisorSortDir,
+  type AdvisorSort,
   type AdvisorSortKey,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
@@ -119,7 +120,7 @@ export function AdvisorPanel({
   const [report, setReport] = useState<SchemaHealthReport | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sort, setSort] = useState<{ key: AdvisorSortKey; dir: AdvisorSortDir } | null>(null);
+  const [sort, setSort] = useState<AdvisorSort>(DEFAULT_ADVISOR_SORT);
 
   const run = useCallback(async () => {
     setRunning(true);
@@ -144,7 +145,6 @@ export function AdvisorPanel({
 
   const findings = useMemo(() => {
     if (!report) return [];
-    if (!sort) return report.findings;
     return sortFindings(report.findings, sort.key, sort.dir, (f, key) => {
       if (key === "rule") return t(ruleTitleKey(f.rule));
       const desc = findingDescription(f);
@@ -156,7 +156,7 @@ export function AdvisorPanel({
   // th はネイティブに columnheader ロールを持つので role は上書きしない。
   const headerProps = (key: AdvisorSortKey) => ({
     tabIndex: 0,
-    "aria-sort": (sort?.key === key
+    "aria-sort": (sort.key === key
       ? sort.dir === "asc"
         ? "ascending"
         : "descending"
@@ -175,12 +175,12 @@ export function AdvisorPanel({
         {label}
         <chakra.span
           display="inline-flex"
-          color={sort?.key === key ? "app.accent" : "app.textMuted"}
-          opacity={sort?.key === key ? 1 : 0.5}
+          color={sort.key === key ? "app.accent" : "app.textMuted"}
+          opacity={sort.key === key ? 1 : 0.5}
           aria-hidden
         >
           <Icon
-            name={sort?.key === key ? (sort.dir === "asc" ? "sort-asc" : "sort-desc") : "sort"}
+            name={sort.key === key ? (sort.dir === "asc" ? "sort-asc" : "sort-desc") : "sort"}
             size={ICON_SIZES.sm}
           />
         </chakra.span>

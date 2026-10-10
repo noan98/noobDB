@@ -193,12 +193,18 @@ export function sortFindings(
     .map((x) => x.f);
 }
 
-/** ヘッダをクリックしたときの次のソート状態。同じ列は 昇順 → 降順 → 解除 と巡回する。 */
-export function nextAdvisorSort(
-  current: { key: AdvisorSortKey; dir: AdvisorSortDir } | null,
-  key: AdvisorSortKey,
-): { key: AdvisorSortKey; dir: AdvisorSortDir } | null {
-  if (!current || current.key !== key) return { key, dir: "asc" };
+/** 指摘一覧の並び状態。 */
+export type AdvisorSort = { key: AdvisorSortKey; dir: AdvisorSortDir };
+
+/** 既定の並び: 重要度の高い順 (high → medium → low)。同重要度はバックエンドの順を保つ。 */
+export const DEFAULT_ADVISOR_SORT: AdvisorSort = { key: "severity", dir: "asc" };
+
+/**
+ * ヘッダをクリックしたときの次のソート状態。同じ列は 昇順 → 降順 → 解除 と巡回し、
+ * 解除したときは「ソートなし」ではなく既定の重要度順 (DEFAULT_ADVISOR_SORT) に戻る。
+ */
+export function nextAdvisorSort(current: AdvisorSort, key: AdvisorSortKey): AdvisorSort {
+  if (current.key !== key) return { key, dir: "asc" };
   if (current.dir === "asc") return { key, dir: "desc" };
-  return null;
+  return DEFAULT_ADVISOR_SORT;
 }
