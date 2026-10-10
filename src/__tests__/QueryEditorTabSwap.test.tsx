@@ -10,7 +10,18 @@ import { TabSqlStore } from "../tabSqlStore";
 
 // #1308: タブを切り替えても EditorView を作り直さず、EditorState の差し替えで済ませる。
 // `new EditorView` の回数と、補完 (`sql()` 拡張) の組み立て回数を数えて固定する。
-const counters = vi.hoisted(() => ({ views: 0, sqlExt: 0 }));
+const counters = vi.hoisted(() => ({
+  views: 0,
+  sqlExt: 0,
+  lastSchema: undefined as unknown,
+}));
+
+// FK の取得 (補完の外部キー列の種別・#1413) はテストごとに差し替える。
+const apiMock = vi.hoisted(() => ({ foreignKeys: vi.fn() }));
+vi.mock("../api/tauri", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/tauri")>();
+  return { ...actual, api: { ...actual.api, foreignKeys: apiMock.foreignKeys } };
+});
 
 vi.mock("@codemirror/view", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@codemirror/view")>();
@@ -29,6 +40,7 @@ vi.mock("@codemirror/lang-sql", async (importOriginal) => {
     ...actual,
     sql: (...args: Parameters<typeof actual.sql>) => {
       counters.sqlExt += 1;
+      counters.lastSchema = args[0]?.schema;
       return actual.sql(...args);
     },
   };
@@ -49,6 +61,8 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
     setLocale("en");
     counters.views = 0;
     counters.sqlExt = 0;
+    apiMock.foreignKeys.mockReset();
+    apiMock.foreignKeys.mockResolvedValue([]);
   });
 
   it("タブを切り替えても EditorView を作り直さず、本文が差し替わる", () => {
@@ -218,5 +232,160 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
       <QueryEditor tabId="a" onRun={() => {}} initialSql="SELECT 1" databaseSchema={schema("t2")} />,
     );
     expect(counters.sqlExt).toBe(before + 2);
+  });
+
+  it("FK の補完再構成は内容が変わったときだけ (空のまま・同じ内容の取り直しでは走らない) (#1413)", async () => {
+    const fk = (column: string) => ({
+      table: "t1",
+      column,
+      referenced_table: "u",
+      referenced_column: "id",
+      constraint_name: null,
+    });
+    const ds = schema("t1");
+    const el = (databaseSchema: TableSchema[]) => (
+      <QueryEditor
+        tabId="a"
+        onRun={() => {}}
+        initialSql="SELECT 1"
+        sessionId="s1"
+        defaultDatabase="db"
+        databaseSchema={databaseSchema}
+      />
+    );
+    // FK が無い (空) なら、取得が終わってもマウント時の 1 回から増えない。
+    const { rerender } = renderWithProviders(el(ds));
+    await act(async () => {});
+    expect(apiMock.foreignKeys).toHaveBeenCalledTimes(1);
+    expect(counters.sqlExt).toBe(1);
+
+    // 同じ内容 (空) をスキーマ更新で取り直しても作り直さない。
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(apiMock.foreignKeys).toHaveBeenCalledTimes(2);
+    expect(counters.sqlExt).toBe(2); // schema 参照が変わった分の 1 回だけ
+
+    // FK が届いたら 1 回だけ作り直す。
+    apiMock.foreignKeys.mockResolvedValue([fk("c1")]);
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(counters.sqlExt).toBe(4); // schema 参照の変更 + FK 内容の変更
+
+    // 同じ FK を取り直しても (順序が違っても) 内容キーは同じなので増えない。
+    apiMock.foreignKeys.mockResolvedValue([fk("c1")]);
+    const before = counters.sqlExt;
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(counters.sqlExt).toBe(before + 1); // schema 参照の変更のみ
+  });
+
+  it("スキーマ更新で FK を取り直しても、FK 列の種別と参照先が消えない (#1413)", async () => {
+    apiMock.foreignKeys.mockResolvedValue([
+      { table: "t1", column: "id", referenced_table: "u", referenced_column: "id", constraint_name: null },
+    ]);
+    const el = (databaseSchema: TableSchema[]) => (
+      <QueryEditor
+        tabId="a"
+        onRun={() => {}}
+        initialSql="SELECT 1"
+        sessionId="s1"
+        defaultDatabase="db"
+        databaseSchema={databaseSchema}
+      />
+    );
+    const idCol = () => {
+      const ns = counters.lastSchema as Record<string, { children: Array<{ type: string; detail?: string }> }>;
+      return ns.t1.children[0];
+    };
+    const { rerender } = renderWithProviders(el(schema("t1")));
+    await act(async () => {});
+    expect(idCol()).toMatchObject({ type: "fk", detail: "→ u.id" });
+    // DDL 後の取り直し (同じ FK が返る)。再構成が FK 無しで走ったままにならない。
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(idCol()).toMatchObject({ type: "fk", detail: "→ u.id" });
+  });
+});
+
+// FK のスコープ (session と DB の組) が変わったときの追従 (#1413)。スコープが変わったら
+// 旧スコープの FK を捨てて作り直し、同じスコープで FK の内容が変わったときも必ず作り直す。
+describe("QueryEditor の FK 補完のスコープ追従 (#1413)", () => {
+  type Ns = Record<string, { children: Array<{ label: string; type: string }> }>;
+  const idType = () =>
+    (counters.lastSchema as Ns | undefined)?.t1?.children?.find((c) => c.label === "id")?.type;
+  const FK = [
+    { table: "t1", column: "id", referenced_table: "u", referenced_column: "id", constraint_name: null },
+  ];
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+  const el = (p: { sessionId?: string; db?: string; ds: TableSchema[] }) => (
+    <QueryEditor
+      tabId="a"
+      onRun={() => {}}
+      initialSql="SELECT 1"
+      sessionId={p.sessionId ?? "s1"}
+      defaultDatabase={p.db ?? "db"}
+      databaseSchema={p.ds}
+    />
+  );
+
+  beforeEach(() => {
+    setLocale("en");
+    counters.sqlExt = 0;
+    apiMock.foreignKeys.mockReset();
+  });
+
+  it("同じ構成の別 DB へ切り替えると、取得中は旧 DB の FK が混ざらず、取得後に fk になる", async () => {
+    const db2 = deferred<unknown>();
+    apiMock.foreignKeys.mockImplementation((_s: string, db: string) =>
+      db === "db" ? Promise.resolve(FK) : db2.promise,
+    );
+    const { rerender } = renderWithProviders(el({ ds: schema("t1") }));
+    await act(async () => {});
+    expect(idType()).toBe("fk");
+    rerender(el({ db: "db2", ds: schema("t1") }));
+    await act(async () => {});
+    expect(idType()).toBe("column");
+    await act(async () => {
+      db2.resolve(FK);
+    });
+    expect(idType()).toBe("fk");
+  });
+
+  it("databaseSchema の参照が同じまま session だけ切り替えても、旧 session の FK を捨てる", async () => {
+    const s2 = deferred<unknown>();
+    apiMock.foreignKeys.mockImplementation((s: string) =>
+      s === "s1" ? Promise.resolve(FK) : s2.promise,
+    );
+    const ds = schema("t1");
+    const { rerender } = renderWithProviders(el({ ds }));
+    await act(async () => {});
+    expect(idType()).toBe("fk");
+    rerender(el({ sessionId: "s2", ds }));
+    await act(async () => {});
+    expect(idType()).toBe("column");
+    await act(async () => {
+      s2.resolve([]);
+    });
+    expect(idType()).toBe("column");
+  });
+
+  it("同じスコープで FK が消えて (DROP) また付く (ADD) と、そのたびに追従する", async () => {
+    apiMock.foreignKeys.mockResolvedValueOnce(FK).mockResolvedValue([]);
+    const { rerender } = renderWithProviders(el({ ds: schema("t1") }));
+    await act(async () => {});
+    expect(idType()).toBe("fk");
+    rerender(el({ ds: schema("t1") }));
+    await act(async () => {});
+    expect(idType()).toBe("column");
+    apiMock.foreignKeys.mockResolvedValue(FK);
+    rerender(el({ ds: schema("t1") }));
+    await act(async () => {});
+    expect(idType()).toBe("fk");
   });
 });

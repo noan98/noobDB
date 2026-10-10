@@ -52,9 +52,18 @@ import {
   syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { api, type ForeignKey, type TableSchema } from "../api/tauri";
+import { api, type ForeignKey, type TableColumnInfo, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
 import { derivedCompletions } from "./sqlDerivedCompletion";
+import {
+  buildSchemaNamespace,
+  describeColumn,
+  findColumnInfo,
+  keywordCompletionOption,
+  type ColumnInfoLabels,
+} from "./sqlSchemaCompletion";
+import { renderColumnInfo } from "./completionInfoPanel";
+import { renderCompletionIcon } from "./completionIcons";
 import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
@@ -484,12 +493,34 @@ function clampSelection(
   };
 }
 
+/** FK 一覧の内容キー。並び順に依存しないよう `table.column>参照先` をソートして連結する。 */
+function fkContentKey(fks: ForeignKey[]): string {
+  return fks
+    .map((f) => `${f.table}.${f.column}>${f.referenced_table}.${f.referenced_column ?? ""}`.toLowerCase())
+    .sort()
+    .join(",");
+}
+
+/** 列の情報パネル (#1413) の見出し。呼び出し時点のロケールで解決する。 */
+function columnInfoLabels(): ColumnInfoLabels {
+  return {
+    type: t("editorColInfoType"),
+    nullable: t("editorColInfoNullable"),
+    nullAllowed: t("editorColInfoNullAllowed"),
+    notNull: t("editorColInfoNotNull"),
+    primaryKey: t("editorColInfoPrimaryKey"),
+    references: t("editorColInfoReferences"),
+    defaultValue: t("editorColInfoDefault"),
+  };
+}
+
 function buildSqlExtension(
   driver: string,
   schemaTable: SchemaTable | null | undefined,
   databaseSchema: TableSchema[] | null | undefined,
   defaultDatabase: string | null | undefined,
   getFks: () => ForeignKey[],
+  getColumns: (table: string) => Promise<TableColumnInfo[]>,
 ) {
   // Collect every known table → columns mapping. The full-database overview is
   // the bulk of it; the active table is folded in too so its columns are
@@ -517,10 +548,25 @@ function buildSqlExtension(
     // SQLNamespace shape. SQLite has no real database qualifier, so the bare
     // form alone is enough there.
     const namespaceDb = schemaTable?.database ?? defaultDatabase ?? undefined;
-    schema =
-      namespaceDb && driver !== "sqlite"
-        ? { ...tableColumns, [namespaceDb]: { ...tableColumns } }
-        : { ...tableColumns };
+    // 種別 (table / column / fk) と列の情報パネル (#1413) を付けた名前空間を作る。
+    // 情報パネルの中身は選択時に `describe_table` (キャッシュ済み) から遅延取得する。
+    const dialectSpec = codeMirrorSqlDialectFor(driver).spec;
+    schema = buildSchemaNamespace({
+      tables: tableColumns,
+      namespaceDb: namespaceDb && driver !== "sqlite" ? namespaceDb : null,
+      idQuote: dialectSpec.identifierQuotes?.[0] ?? '"',
+      idCaseInsensitive: !!dialectSpec.caseInsensitiveIdentifiers,
+      fks: getFks(),
+      columnInfo: (table, column) => async () => {
+        try {
+          const meta = findColumnInfo(await getColumns(table), column);
+          return meta ? renderColumnInfo(describeColumn(meta, columnInfoLabels())) : null;
+        } catch {
+          // 情報パネルは best-effort。取得できなければパネルを出さない。
+          return null;
+        }
+      },
+    });
     // Prefer the active table for unqualified column completion; otherwise the
     // dialect still completes once the user qualifies with a table name.
     defaultTable = schemaTable?.name;
@@ -581,6 +627,7 @@ function buildSqlExtension(
       defaultTable,
       defaultSchema,
       upperCaseKeywords: true,
+      keywordCompletion: keywordCompletionOption,
     }),
     EditorState.languageData.of(() => [
       { autocomplete: joinSource },
@@ -704,9 +751,16 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // いま props が求めている compartment 設定 (補完・構文チェック・アクションキーマップ)。
   // view / state 側に入っている設定 (`appliedConfigRef`) と食い違ったときだけ
   // reconfigure する (#1308: 初回マウントやタブ切替で無駄に作り直さない)。
-  const schemaKey = schemaTable
-    ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}`
-    : "";
+  // 届いた FK の内容キー (`fkContentKey`) は ref に持ち、内容が変わったときだけ小さな版数
+  // (state) を進める。補完 (外部キー列の種別) は版数が変わったときだけ作り直すので、同じ
+  // 内容が届き直しても再構成しないし、キーの文字列を毎レンダー比較することもない。
+  const fkKeyRef = useRef("");
+  const [fkRev, setFkRev] = useState(0);
+  const schemaKey = `${
+    schemaTable
+      ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}`
+      : ""
+  }|fk:${fkRev}`;
   const desiredConfig: AppliedEditorConfig = {
     driver,
     schemaKey,
@@ -736,16 +790,56 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // JOIN 補完 (#1356) 用の FK 一覧。DB 単位で取得 (バックエンドがキャッシュ済み) し、
   // 補完ソースは ref 越しに読む。DDL でスキーマキャッシュが更新されたら取り直す。
   const fksRef = useRef<ForeignKey[]>([]);
+  // 列の情報パネル (#1413) 用の `describe_table` キャッシュ。スキーマ更新で捨てる。
+  const columnCacheRef = useRef(new Map<string, Promise<TableColumnInfo[]>>());
   const fkDatabase = schemaTable?.database ?? defaultDatabase ?? null;
+  const loadColumnsRef = useRef<(table: string) => Promise<TableColumnInfo[]>>(() =>
+    Promise.reject(new Error("no session")),
+  );
+  loadColumnsRef.current = (table) => {
+    if (!sessionId || !fkDatabase) return Promise.reject(new Error("no session"));
+    const key = `${fkDatabase}\u0000${table}`;
+    const cached = columnCacheRef.current.get(key);
+    if (cached !== undefined) return cached;
+    const p = api.describeTable(sessionId, fkDatabase, table);
+    columnCacheRef.current.set(key, p);
+    // 失敗はキャッシュしない (次の選択で再試行)。スキーマ更新で Map が差し替わっていたら
+    // 新しい Map の同じキーを消さないよう、作成時の Map を保持して照合する。
+    const cache = columnCacheRef.current;
+    p.catch(() => {
+      if (cache.get(key) === p) cache.delete(key);
+    });
+    return p;
+  };
+  const getColumns = (table: string) => loadColumnsRef.current(table);
+  const fkScopeRef = useRef<string | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後の再取得トリガー
   useEffect(() => {
-    fksRef.current = [];
+    columnCacheRef.current = new Map();
+    // FK は同じ session / DB での取り直し (DDL 後など) では空にしない。空にすると同じコミットの
+    // 補完再構成が FK 無しで走り、同じ FK が返っても内容キーが変わらず作り直されない。
+    // session / DB が変わったときだけ FK を捨てる。
+    const scope = `${sessionId ?? ""}\u0000${fkDatabase ?? ""}`;
+    if (fkScopeRef.current !== scope) {
+      fkScopeRef.current = scope;
+      fksRef.current = [];
+      if (fkKeyRef.current !== "") {
+        fkKeyRef.current = "";
+        setFkRev((n) => n + 1);
+      }
+    }
     if (!sessionId || !fkDatabase) return;
     let cancelled = false;
     api
       .foreignKeys(sessionId, fkDatabase)
       .then((r) => {
-        if (!cancelled) fksRef.current = r;
+        if (cancelled) return;
+        fksRef.current = r;
+        const key = fkContentKey(r);
+        if (key !== fkKeyRef.current) {
+          fkKeyRef.current = key;
+          setFkRev((n) => n + 1);
+        }
       })
       .catch(() => { /* 補完は best-effort */ });
     return () => {
@@ -956,7 +1050,12 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
           bracketMatching(),
           closeBrackets(),
           syntaxHighlighting(noobDBHighlightStyle, { fallback: true }),
-          autocompletion(),
+          // 種別アイコンは CodeMirror 既定のグリフではなく共通 `Icon` で描く (#1413)。
+          // `icons: false` で既定を止め、同じ位置 (20) に自前のアイコンを差す。
+          autocompletion({
+            icons: false,
+            addToOptions: [{ render: (c) => renderCompletionIcon(c.type), position: 20 }],
+          }),
           // エディタ内検索・置換。検索パネルはエディタ上部に出し、選択語の
           // 同一語ハイライトも有効化する。キーバインドは下の keymap に searchKeymap
           // を含める (Mod-f はエディタにフォーカスがあるときだけ起動し、結果横断検索
@@ -976,6 +1075,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
               sqlArgsRef.current.databaseSchema,
               sqlArgsRef.current.defaultDatabase,
               () => fksRef.current,
+              getColumns,
             ),
           ),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
@@ -1169,7 +1269,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     if (sqlChanged) {
       effects.push(
         sqlCompartment.reconfigure(
-          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase, () => fksRef.current),
+          buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase, () => fksRef.current, getColumns),
         ),
       );
     }

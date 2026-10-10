@@ -40,6 +40,9 @@ export default defineConfig({
       "@tauri-apps/plugin-process",
       "@tauri-apps/plugin-updater",
       "axe-core",
+      // SQL 補完の種別アイコンを静的 SVG に描くため、遅延ロードされるエディタが
+      // `react-dom/client` を読む (#1413)。同じ理由で起動時に最適化しておく。
+      "react-dom/client",
     ],
   },
   test: {

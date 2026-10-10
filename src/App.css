@@ -2108,6 +2108,61 @@ html, body, #root {
 .cm-completionDetail { color: var(--text-muted); font-style: normal; }
 .cm-completionMatchedText { color: var(--accent); text-decoration: none; font-weight: 600; }
 
+/* 補完の種別アイコン (#1413)。共通 Icon の SVG を差し込み、色はアイコンの種類ごとの
+   トークンで与える。意味づけはエクスプローラ / ER 図と揃える: DB・テーブル =
+   --db-accent、外部キー (link) = --accent、関数 = --syntax-function。--key-accent は
+   主キー専用なので使わない。 */
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon {
+  display: inline-flex;
+  width: auto;
+  /* アイコンの無い候補 (未知の種別) でもラベル左端が揃うよう、枠にアイコン幅を確保する。 */
+  min-width: calc(13px * var(--font-scale)); /* ICON_SIZES.sm と同値 */
+  box-sizing: content-box;
+  vertical-align: middle;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding-right: var(--space-1-5);
+  opacity: 1;
+  color: var(--text-muted);
+}
+/* CodeMirror 既定の文字グリフ (::after) は止める。 */
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon::after { content: none; }
+.cm-tooltip-autocomplete .cm-completionIcon-table,
+.cm-tooltip-autocomplete .cm-completionIcon-database { color: var(--db-accent); }
+.cm-tooltip-autocomplete .cm-completionIcon-columns { color: var(--text-secondary); }
+.cm-tooltip-autocomplete .cm-completionIcon-link { color: var(--accent); }
+.cm-tooltip-autocomplete .cm-completionIcon-routine { color: var(--syntax-function); }
+.cm-tooltip-autocomplete .cm-completionIcon-braces,
+.cm-tooltip-autocomplete .cm-completionIcon-hash { color: var(--text-muted); }
+
+/* 列候補の情報パネル (#1413)。補完ポップアップ本体と同じ面・縁・影で揃える。 */
+.cm-tooltip.cm-completionInfo {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+.cm-sqlInfo { display: flex; flex-direction: column; gap: var(--space-1-5); min-width: 0; }
+.cm-sqlInfo-title { font-family: var(--font-mono); font-weight: 600; color: var(--text); }
+.cm-sqlInfo-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-0-5) var(--space-3);
+  margin: 0;
+}
+.cm-sqlInfo-rows dt { color: var(--text-muted); font-size: var(--text-xs); }
+.cm-sqlInfo-rows dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.cm-sqlInfo-comment {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-1-5);
+}
+
 /* エディタ内検索・置換パネル (#464、@codemirror/search)。ライト/ダーク・アクセント・
    シンタックステーマに追従させるためトークンで配色する。 */
 .cm-editor .cm-panels {
