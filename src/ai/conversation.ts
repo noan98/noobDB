@@ -31,8 +31,19 @@ function byteLength(s: string): number {
 }
 
 /** 往復の追加。上限を超えた古い往復は捨てる (表示用の状態が際限なく伸びないように)。 */
-export function appendExchange(exchanges: readonly AiExchange[], next: AiExchange): AiExchange[] {
-  return [...exchanges, next].slice(-MAX_HISTORY_EXCHANGES);
+export function appendExchange(
+  exchanges: readonly AiExchange[],
+  next: AiExchange,
+  options: { keepFirst?: boolean } = {},
+): AiExchange[] {
+  return pickRecent([...exchanges, next], MAX_HISTORY_EXCHANGES, options.keepFirst === true);
+}
+
+/** 直近 `max` 件を残す。`keepFirst` なら先頭 1 件 + 直近 `max - 1` 件。 */
+function pickRecent<T>(list: readonly T[], max: number, keepFirst: boolean): T[] {
+  if (list.length <= max) return [...list];
+  if (!keepFirst || max <= 1) return list.slice(-max);
+  return [list[0], ...list.slice(-(max - 1))];
 }
 
 export interface BuildHistoryOptions {
@@ -40,6 +51,11 @@ export interface BuildHistoryOptions {
   maxExchanges?: number;
   /** 履歴に使えるバイト数 (上限 - system - 今回のプロンプト)。既定は `MAX_PROMPT_BYTES`。 */
   maxBytes?: number;
+  /**
+   * 最初の往復を固定で残す (先頭 1 + 直近 N-1)。最初の往復が元の SQL やテーブル定義を
+   * 含む画面向け。バイト予算が足りないときも、まず中間の往復から捨て、最後に先頭を捨てる。
+   */
+  keepFirst?: boolean;
 }
 
 /**
@@ -54,10 +70,13 @@ export function trimExchanges(
   const maxExchanges = Math.max(0, options.maxExchanges ?? MAX_HISTORY_EXCHANGES);
   const maxBytes = options.maxBytes ?? MAX_PROMPT_BYTES;
   const usable = exchanges.filter((e) => e.prompt.trim() !== "" && e.answer.trim() !== "");
-  let kept = maxExchanges === 0 ? [] : usable.slice(-maxExchanges);
+  const keepFirst = options.keepFirst === true;
+  let kept = maxExchanges === 0 ? [] : pickRecent(usable, maxExchanges, keepFirst);
   const size = (list: readonly AiExchange[]) =>
     list.reduce((n, e) => n + byteLength(e.prompt) + byteLength(e.answer), 0);
-  while (kept.length > 0 && size(kept) > maxBytes) kept = kept.slice(1);
+  while (kept.length > 0 && size(kept) > maxBytes) {
+    kept = keepFirst && kept.length > 1 ? [kept[0], ...kept.slice(2)] : kept.slice(1);
+  }
   return kept;
 }
 

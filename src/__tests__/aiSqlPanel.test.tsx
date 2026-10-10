@@ -167,6 +167,33 @@ describe("AiSqlPanel (#695)", () => {
     await waitFor(() => expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull());
   });
 
+  it("schemaOnly では追い質問も送信範囲を確認し、取りやめると送らない (本番確認は出さない) (#1471)", async () => {
+    enable("schemaOnly");
+    renderWithProviders(ui(req(), true));
+    // 初回: 送信範囲 → 本番の順に確認する。
+    await screen.findByText(t("aiSqlScopeTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlConfirmSend") }));
+    await screen.findByText(t("aiSqlProdTitle"));
+    const sends = screen.getAllByRole("button", { name: t("aiSqlConfirmSend") });
+    fireEvent.click(sends[sends.length - 1]);
+    await finish(explainJson);
+    await screen.findByText("OVERVIEW");
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "もっと短く" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await screen.findByText(t("aiSqlScopeTitle"));
+    expect(runAiRequest).toHaveBeenCalledTimes(1);
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    fireEvent.click(cancels[cancels.length - 1]);
+    await waitFor(() => expect(screen.queryByText(t("aiSqlScopeTitle"))).toBeNull());
+    expect(runAiRequest).toHaveBeenCalledTimes(1);
+    // 承認すれば (本番確認なしで) 履歴つきで送られる。
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await screen.findByText(t("aiSqlScopeTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlConfirmSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    expect(runAiRequest.mock.calls[1][0].history).toHaveLength(2);
+  });
+
   it("マスク有効なら文字列リテラルを送らない", async () => {
     renderWithProviders(ui(req({ sql: "SELECT * FROM users WHERE name = 'secret-value'" })));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());

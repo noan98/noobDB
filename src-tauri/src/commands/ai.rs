@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::ai::client::{run_once, run_streaming, AiCompletion, ReqwestTransport};
 use crate::ai::models::{resolve_effort, resolve_model, AiSettingsSnapshot, AiTaskKind};
-use crate::ai::request::{AiChatMessage, AiRequestSpec, DEFAULT_MAX_TOKENS};
+use crate::ai::request::{AiChatMessage, AiChatRole, AiRequestSpec, DEFAULT_MAX_TOKENS};
 use crate::ai::sse::AiUsage;
 use crate::error::{AppError, Result};
 use crate::profiles::secrets;
@@ -156,7 +156,11 @@ fn validate_history(history: &[AiChatMessage]) -> Result<()> {
         return invalid("the conversation history must end with an assistant message");
     }
     for (i, m) in history.iter().enumerate() {
-        let expected = if i % 2 == 0 { "user" } else { "assistant" };
+        let expected = if i % 2 == 0 {
+            AiChatRole::User
+        } else {
+            AiChatRole::Assistant
+        };
         if m.role != expected {
             return invalid("the conversation history must alternate user and assistant");
         }
@@ -447,7 +451,11 @@ mod tests {
 
     fn m(role: &str, content: &str) -> AiChatMessage {
         AiChatMessage {
-            role: role.into(),
+            role: if role == "user" {
+                AiChatRole::User
+            } else {
+                AiChatRole::Assistant
+            },
             content: content.into(),
         }
     }
@@ -467,12 +475,11 @@ mod tests {
 
     #[test]
     fn history_validation_rejects_bad_shapes() {
-        // user で終わる / assistant 始まり / 同じ role の連続 / 空 / 不明な role / 長すぎる。
+        // user で終わる / assistant 始まり / 同じ role の連続 / 空 / 長すぎる (不明な role は serde が拒否)。
         assert!(validate_history(&[m("user", "q")]).is_err());
         assert!(validate_history(&[m("assistant", "a"), m("user", "q")]).is_err());
         assert!(validate_history(&[m("user", "q"), m("user", "q2")]).is_err());
         assert!(validate_history(&[m("user", " "), m("assistant", "a")]).is_err());
-        assert!(validate_history(&[m("system", "q"), m("assistant", "a")]).is_err());
         let long: Vec<AiChatMessage> = (0..=MAX_HISTORY_MESSAGES)
             .map(|i| m(if i % 2 == 0 { "user" } else { "assistant" }, "x"))
             .collect();

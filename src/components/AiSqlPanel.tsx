@@ -181,7 +181,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     if (ok) {
       setConversation({
         kind,
-        exchanges: appendExchange(history, { prompt, answer: text }),
+        exchanges: appendExchange(history, { prompt, answer: text }, { keepFirst: true }),
         maskLiterals: masked,
         sendScope: ai.sendScope,
       });
@@ -197,11 +197,30 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     const { kind, exchanges } = conversation;
     const masked = conversation.maskLiterals;
     const system = buildSqlAssistSystem(kind, locale);
-    const kept = trimExchanges(exchanges, { maxBytes: historyBudget(system, text) });
-    setApplied(null);
-    applyingRef.current = false;
-    setState({ kind: "running", assist: kind });
+    // 最初の往復 (元の SQL とテーブル定義) は上限でも落とさない。
+    const kept = trimExchanges(exchanges, { maxBytes: historyBudget(system, text), keepFirst: true });
     try {
+      // 追い質問も SQL 本文を含む履歴を送り直すので、送信範囲の確認は初回と同じく出す。
+      // 本番確認は最初の送信で済んでいるため省く。
+      if (needsSendScopeConfirm(ai.sendScope)) {
+        const ok = await confirm({
+          title: t("aiSqlScopeTitle"),
+          message: `${t("aiSqlScopeBody")}\n${sendsLine(tableRefs.length)}`,
+          confirmLabel: t("aiSqlConfirmSend"),
+          tone: "warning",
+        });
+        if (!ok) {
+          stream.release();
+          return;
+        }
+      }
+      if (!stream.isMounted()) {
+        stream.release();
+        return;
+      }
+      setApplied(null);
+      applyingRef.current = false;
+      setState({ kind: "running", assist: kind });
       await stream.start(
         {
           task: SQL_ASSIST_TASK[kind],

@@ -30,10 +30,18 @@ pub const DEFAULT_MAX_TOKENS: u32 = 64_000;
 /// 短さを誤って「十分長い」と判定しにくい。
 const BYTES_PER_TOKEN: usize = 4;
 
+/// 会話履歴の発言者。IPC では `"user"` / `"assistant"` だけを受け付ける。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiChatRole {
+    User,
+    Assistant,
+}
+
 /// 会話履歴の 1 発言 (#1471)。`role` は `user` / `assistant`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiChatMessage {
-    pub role: String,
+    pub role: AiChatRole,
     pub content: String,
 }
 
@@ -84,12 +92,18 @@ fn build_system_blocks(spec: &AiRequestSpec) -> Option<Value> {
 }
 
 /// ブロックの `text` がモデルの最小キャッシュ長 (UTF-8 バイト数で見積もり) 以上なら
-/// `cache_control: ephemeral` を付ける。system 以外のブロック (#1471 で直前の user ターンに
-/// ブレークポイントを置くとき) からも使えるよう、`text` を持つブロックを直接受ける。
+/// `cache_control: ephemeral` を付ける。`text` を持つブロックを直接受ける。
 fn mark_cacheable(block: &mut Value, model: AiModel) {
+    mark_cacheable_after(block, model, 0);
+}
+
+/// `mark_cacheable` の、ブロックより前の内容 (`preceding_bytes`) も数える版。API の最小長は
+/// 先頭からブレークポイントまでの累積トークン数で判定されるので、履歴末尾のブレークポイントは
+/// system と履歴全体の合計で判定する (#1471)。
+fn mark_cacheable_after(block: &mut Value, model: AiModel, preceding_bytes: usize) {
     let long_enough = block["text"]
         .as_str()
-        .is_some_and(|t| t.len() >= model.cache_min_tokens() * BYTES_PER_TOKEN);
+        .is_some_and(|t| preceding_bytes + t.len() >= model.cache_min_tokens() * BYTES_PER_TOKEN);
     if long_enough {
         block["cache_control"] = json!({ "type": "ephemeral" });
     }
@@ -99,13 +113,21 @@ fn mark_cacheable(block: &mut Value, model: AiModel) {
 /// (直前までの会話をキャッシュ対象にし、今回の `prompt` は毎回変わるので付けない)。
 fn build_messages(spec: &AiRequestSpec) -> Value {
     let last = spec.history.len().checked_sub(1);
+    // 履歴末尾のブレークポイントまでの累積バイト数 (system 固定部分 + 可変部分 + 履歴の手前)。
+    let mut preceding: usize = [&spec.system_cached, &spec.system]
+        .into_iter()
+        .flatten()
+        .filter(|t| !t.trim().is_empty())
+        .map(String::len)
+        .sum();
     let mut messages: Vec<Value> = Vec::with_capacity(spec.history.len() + 1);
     for (i, m) in spec.history.iter().enumerate() {
         if Some(i) == last {
             let mut block = json!({ "type": "text", "text": m.content });
-            mark_cacheable(&mut block, spec.model);
+            mark_cacheable_after(&mut block, spec.model, preceding);
             messages.push(json!({ "role": m.role, "content": [block] }));
         } else {
+            preceding += m.content.len();
             messages.push(json!({ "role": m.role, "content": m.content }));
         }
     }
@@ -275,7 +297,11 @@ mod tests {
 
     fn msg(role: &str, content: &str) -> AiChatMessage {
         AiChatMessage {
-            role: role.into(),
+            role: if role == "user" {
+                AiChatRole::User
+            } else {
+                AiChatRole::Assistant
+            },
             content: content.into(),
         }
     }
@@ -312,6 +338,45 @@ mod tests {
             .get("cache_control")
             .is_none());
         assert_eq!(b["messages"][1]["content"][0]["text"], "a1");
+    }
+
+    #[test]
+    fn breakpoint_length_is_judged_on_cumulative_bytes() {
+        // 末尾の発言 1 件は最小長未満でも、system と履歴の累積が最小長以上なら印が付く。
+        let mut s = spec();
+        s.system = None;
+        s.system_cached = Some("c".repeat(MIN_BYTES - 10));
+        s.history = vec![msg("user", "q"), msg("assistant", &"a".repeat(10))];
+        let b = build_body(&s);
+        assert_eq!(
+            b["messages"][1]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        // 累積が 1 バイト足りなければ付かない (q の 1 バイト + a の 10 バイトで境界)。
+        s.history = vec![msg("user", "q"), msg("assistant", &"a".repeat(8))];
+        let b = build_body(&s);
+        assert!(b["messages"][1]["content"][0]
+            .get("cache_control")
+            .is_none());
+    }
+
+    #[test]
+    fn role_serializes_lowercase_and_rejects_unknown() {
+        let m: AiChatMessage =
+            serde_json::from_value(json!({ "role": "assistant", "content": "x" })).unwrap();
+        assert_eq!(m.role, AiChatRole::Assistant);
+        assert!(serde_json::from_value::<AiChatMessage>(
+            json!({ "role": "system", "content": "x" })
+        )
+        .is_err());
+        assert_eq!(
+            build_body(&{
+                let mut s = spec();
+                s.history = vec![msg("user", "q"), msg("assistant", "a")];
+                s
+            })["messages"][0]["role"],
+            "user"
+        );
     }
 
     #[test]

@@ -251,6 +251,56 @@ describe("AiQueryModal (#691)", () => {
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
   });
 
+  async function generateAndFinish(text: string, out = result) {
+    await generate(text);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: out });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByLabelText(t("aiFollowUpLabel"));
+  }
+
+  it("本番でも追い質問では再確認せず、新規の生成は会話をリセットして history を付けない (#1471)", async () => {
+    renderWithProviders(ui({ isProduction: true }));
+    await generate("注文を集計して");
+    await screen.findByText(t("aiQueryConfirmTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiQueryConfirmSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "絞って" } });
+    fireEvent.click(await screen.findByRole("button", { name: t("aiFollowUpSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(t("aiQueryConfirmTitle"))).toBeNull();
+    expect(runAiRequest.mock.calls[1][0].history).toHaveLength(2);
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByLabelText(t("aiFollowUpLabel"));
+    // 新規の生成は本番確認が出て、history なしで送られる。
+    fireEvent.change(screen.getByLabelText(t("aiQueryRequestLabel")), { target: { value: "別の依頼" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiQueryGenerate") }));
+    await screen.findByText(t("aiQueryConfirmTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiQueryConfirmSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(3));
+    expect(runAiRequest.mock.calls[2][0].history).toBeUndefined();
+    expect(runAiRequest.mock.calls[2][0].prompt).toBe("別の依頼");
+  });
+
+  it("接続 / データベースが変わると会話を捨て、追い質問欄も消える (#1471)", async () => {
+    const view = renderWithProviders(ui());
+    await generateAndFinish("注文を集計して");
+    fireEvent.change(screen.getByLabelText(t("aiFollowUpLabel")), { target: { value: "絞って" } });
+    view.rerender(ui({ database: "other" }));
+    await waitFor(() => expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull());
+    view.rerender(ui({ sessionId: "s2", database: "other" }));
+    expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull();
+  });
+
   it("テーブルが多いスキーマは送信前に件数を見せる", async () => {
     schemaOverview.mockResolvedValue(Array.from({ length: 301 }, (_, i) => ({ name: `t${i}`, columns: ["id"] })));
     renderWithProviders(ui());

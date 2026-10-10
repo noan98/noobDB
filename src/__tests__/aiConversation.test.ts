@@ -55,6 +55,18 @@ describe("会話履歴の組み立て (#1471)", () => {
     expect(trimExchanges([jp], { maxBytes: 59 })).toHaveLength(0);
   });
 
+  it("keepFirst: 最初の往復を残し、先頭 1 + 直近 N-1 にする (予算超過では中間から捨てる)", () => {
+    const all = Array.from({ length: 8 }, (_, i) => ex(i + 1));
+    expect(trimExchanges(all, { keepFirst: true }).map((e) => e.prompt)).toEqual(["q1", "q5", "q6", "q7", "q8"]);
+    expect(appendExchange(all.slice(0, 5), ex(9), { keepFirst: true }).map((e) => e.prompt)).toEqual([
+      "q1", "q3", "q4", "q5", "q9",
+    ]);
+    const list = [ex(1, 100), ex(2, 100), ex(3, 100)];
+    expect(trimExchanges(list, { maxBytes: 400, keepFirst: true }).map((e) => e.prompt.slice(0, 2))).toEqual(["q1", "q3"]);
+    expect(trimExchanges(list, { maxBytes: 200, keepFirst: true }).map((e) => e.prompt.slice(0, 2))).toEqual(["q1"]);
+    expect(trimExchanges(list, { maxBytes: 100, keepFirst: true })).toEqual([]);
+  });
+
   it("空のプロンプト / 回答の往復は含めない", () => {
     expect(buildHistory([{ prompt: " ", answer: "a" }, { prompt: "q", answer: "" }, ex(1)])).toHaveLength(2);
   });

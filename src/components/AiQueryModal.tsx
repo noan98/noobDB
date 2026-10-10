@@ -80,12 +80,18 @@ export function AiQueryModal(props: AiQueryModalProps) {
   // 追い質問 (#1471): これまでの往復 (送ったプロンプトと回答の本文)。新規の生成で作り直す。
   const [exchanges, setExchanges] = useState<AiExchange[]>([]);
   const [followUp, setFollowUp] = useState("");
+  // 最初の生成で送信を確認した宛先。追い質問の本番確認を省けるのは、これと今の値が一致するときだけ。
+  const confirmedRef = useRef<{ sessionId: string; database: string | null; isProduction: boolean } | null>(null);
   const stream = useAiStream({ idPrefix: "ai_nl2sql" });
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const database = resolveNl2SqlDatabase(props.database, props.driver);
 
   useEffect(() => {
+    // 接続 / データベースが変わったら会話を捨てる (別の宛先・別スキーマに古い履歴を送らない)。
+    setExchanges([]);
+    setFollowUp("");
+    confirmedRef.current = null;
     if (!database) return;
     let alive = true;
     setSchema({ kind: "loading" });
@@ -154,8 +160,14 @@ export function AiQueryModal(props: AiQueryModalProps) {
     ready: { tables: Nl2SqlTable[]; foreignKeys: Nl2SqlForeignKey[] },
     followUpText?: string,
   ) => {
-    // 追い質問は同じ内容を同じ宛先へ送り直すだけなので、最初の送信で確認済みとして再確認しない。
-    if (props.isProduction && followUpText === undefined) {
+    // 追い質問は、最初の送信で確認した宛先と同じときだけ再確認しない。
+    const c = confirmedRef.current;
+    const sameTarget =
+      c !== null &&
+      c.sessionId === props.sessionId &&
+      c.database === database &&
+      c.isProduction === props.isProduction;
+    if (props.isProduction && !(followUpText !== undefined && sameTarget)) {
       const ok = await confirm({
         title: t("aiQueryConfirmTitle"),
         message: `${t("aiQueryConfirmBody")}\n${sendsLine ?? ""}`,
@@ -167,6 +179,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
         return;
       }
     }
+    confirmedRef.current = { sessionId: props.sessionId, database, isProduction: props.isProduction };
     setDone(null);
     // 新規の生成は新しい会話の始まり。表示中の結果が消えるので、古い往復も持ち越さない。
     if (followUpText === undefined) setExchanges([]);
@@ -224,8 +237,9 @@ export function AiQueryModal(props: AiQueryModalProps) {
       width="680px"
       onClose={props.onClose}
       onSubmit={() => {
-        // 追い質問の入力があればそれを送り、無ければ新規の生成。
-        if (canFollowUp) void run(followUpTrimmed);
+        // フォーカス中の欄で振り分ける。メインの依頼欄なら新規生成、それ以外で追い質問の入力があれば追い質問。
+        if (document.activeElement === inputRef.current) void run();
+        else if (canFollowUp) void run(followUpTrimmed);
         else void run();
       }}
       submitDisabled={!canGenerate && !canFollowUp}
