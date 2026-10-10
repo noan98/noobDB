@@ -123,6 +123,23 @@ describe("窓の切り口が複数行リテラル / コメントの途中でも�
     expect(r?.prompt).not.toContain("token ");
     expect(r?.prompt).not.toContain("hidden");
   });
+  it("閉じ $$ がカーソル後の窓より先にあっても、ドル引用の中では問い合わせない", () => {
+    const head = "SELECT $$secret-token\nSELECT * FROM users ";
+    const doc = `${head}${" x".repeat(600)}$$;`;
+    expect(req(doc, head.length, { driver: "postgres" })).toBeNull();
+    expect(req(doc, head.length, { driver: "postgres", maskLiterals: false })).toBeNull();
+  });
+  it("カーソルより前で閉じたドル引用 (関数本体など) の中身は送らない", () => {
+    const head = "SELECT $tag$secret-token\n$tag$ FROM users WHERE ";
+    const doc = `${head}${" ".repeat(10)}${"y".repeat(1100)}`;
+    const r = req(doc, head.length, { driver: "postgres" });
+    expect(r).not.toBeNull();
+    expect(r?.prompt).not.toContain("secret-token");
+    const body = "CREATE FUNCTION f() RETURNS int AS $$\nBEGIN\n  RETURN 1;\nEND;\n$$ LANGUAGE plpgsql;\nSELECT * FROM users WHERE ";
+    const r2 = req(`${body}\n${"-- pad\n".repeat(200)}`, body.length, { driver: "postgres" });
+    expect(r2).not.toBeNull();
+    expect(r2?.prompt).not.toContain("RETURN 1");
+  });
   it("マスクがオフでもリテラル / コメントの中では問い合わせない", () => {
     expect(req("SELECT * FROM users WHERE name = 'abc ", undefined, { maskLiterals: false })).toBeNull();
     expect(req("SELECT 1 -- memo ", undefined, { maskLiterals: false })).toBeNull();

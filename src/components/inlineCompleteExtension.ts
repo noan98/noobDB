@@ -214,8 +214,12 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
       }
 
       private fire(): void {
-        // IME 変換中は未確定のかなを送らず、変換 DOM も乱さない。
-        if (this.view.composing || this.view.compositionStarted) return;
+        // IME 変換中は未確定のかなを送らず、変換 DOM も乱さない。確定で文書が変わらない
+        // (候補がすでに入っている) こともあるので、取りやめずに予約し直す。
+        if (this.view.composing || this.view.compositionStarted) {
+          this.schedule();
+          return;
+        }
         const cfg = options.getConfig();
         if (!cfg) return;
         const state = this.view.state;

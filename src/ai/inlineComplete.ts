@@ -129,20 +129,26 @@ export function relevantTables(text: string, tables: InlineTable[]): InlineTable
 }
 
 /**
- * カーソルが文字列リテラル / コメントの内側か。文頭からカーソルまでをマスクし、直後に置いた
- * 識別子文字が空白に潰されるかで判定する (マスク設定・カーソル直前の空白に依らない)。
+ * カーソルが文字列リテラル / コメントの内側か。文書全体のカーソル位置に識別子文字を差し込んでマスクし、
+ * それが空白に潰されるかで判定する (マスク設定・カーソル直前の空白に依らない)。
+ * 文書全体を見るのは、PostgreSQL のドル引用 (`$$…$$`) が閉じタグが見つかったときだけ
+ * 文字列として扱われるため (文頭〜カーソルだけだと閉じタグが見えず「外側」と誤判定する)。
  */
-function insideLiteralOrComment(prefix: string, driver: string): boolean {
-  const probe = maskLiterals(`${prefix}Z`, driver, { keepQuotedIdentifiers: true, cache: false });
-  return probe[probe.length - 1] === " ";
+function insideLiteralOrComment(doc: string, pos: number, driver: string): boolean {
+  const probe = maskLiterals(`${doc.slice(0, pos)}Z${doc.slice(pos)}`, driver, {
+    keepQuotedIdentifiers: true,
+    cache: false,
+  });
+  return probe[pos] === " ";
 }
 
 /**
  * 問い合わせの内容を組み立てる。送らないと決めたら null
  * (入力が短い・単語の途中・リテラル / コメントの中)。
- * マスクは文頭からカーソル後の窓の終わりまで掛けてから窓で切る (`maskLiterals` は長さを保つ)。
+ * マスクは文書全体に掛けてから窓で切る (`maskLiterals` は長さを保つ)。
  * 窓で切ってからマスクすると、切り口が複数行リテラル / ブロックコメントの途中に来たときに
- * 字句状態が反転し、リテラルの中身が素で送られてしまう。
+ * 字句状態が反転し、リテラルの中身が素で送られてしまう。窓の終わりで切っても、閉じタグが窓の外にある
+ * ドル引用 (`$$…$$`) が文字列と認識されず中身が素で送られる。
  */
 export function buildInlineRequest(input: InlineContextInput): InlineRequestParts | null {
   const pos = Math.max(0, Math.min(input.pos, input.doc.length));
@@ -156,12 +162,12 @@ export function buildInlineRequest(input: InlineContextInput): InlineRequestPart
   // 単語の途中 (直後が識別子文字) では続きを出さない。
   if (/^[\w$]/.test(rawAfter)) return null;
   // リテラル / コメントの中身への補完は無意味。マスク設定がオフでも出さない。
-  if (insideLiteralOrComment(input.doc.slice(0, pos), input.driver)) return null;
+  if (insideLiteralOrComment(input.doc, pos, input.driver)) return null;
 
   let before = rawBefore;
   let after = rawAfter;
   if (input.maskLiterals) {
-    const maskedAll = maskLiterals(input.doc.slice(0, pos + INLINE_AFTER_MAX_CHARS), input.driver, {
+    const maskedAll = maskLiterals(input.doc, input.driver, {
       keepQuotedIdentifiers: true,
       cache: false,
     });
