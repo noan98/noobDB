@@ -874,6 +874,67 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
         .expect("count");
     assert!(matches!(&after_commit.rows[0][0], t::Value::Int(1)));
 
+    // SAVEPOINT (#1418): コマンド経路 (savepoint_inner) で 1295 にならず一連が通ること。
+    // 現在の件数は 1 (id=2)。
+    {
+        let state = t::AppState::default();
+        let sp_opts = t::parse_mysql_url(&url).expect("valid url");
+        let sp_conn = t::connect(&sp_opts).await.expect("connect sp");
+        let id = state
+            .insert(t::make_session("sp", sp_conn, sp_opts, false))
+            .await;
+        let sess = state.get(&id).await.expect("session");
+        sess.conn
+            .begin_transaction(Some(&db))
+            .await
+            .expect("begin sp");
+        sess.conn
+            .execute_in_transaction("INSERT INTO noobdb_objtest_idx (id, sku) VALUES (10, 'x')")
+            .await
+            .expect("insert 10");
+        t::savepoint_via_command(&state, &id, "sp_1", "create")
+            .await
+            .expect("sp_1");
+        sess.conn
+            .execute_in_transaction("INSERT INTO noobdb_objtest_idx (id, sku) VALUES (11, 'y')")
+            .await
+            .expect("insert 11");
+        t::savepoint_via_command(&state, &id, "sp_2", "create")
+            .await
+            .expect("sp_2");
+        sess.conn
+            .execute_in_transaction("INSERT INTO noobdb_objtest_idx (id, sku) VALUES (12, 'z')")
+            .await
+            .expect("insert 12");
+        assert!(sess
+            .conn
+            .execute_in_transaction("INSERT INTO noobdb_objtest_idx (id, sku) VALUES (10, 'dup')")
+            .await
+            .is_err());
+        t::savepoint_via_command(&state, &id, "sp_1", "rollback_to")
+            .await
+            .expect("rollback to sp_1");
+        assert!(t::savepoint_via_command(&state, &id, "sp_2", "release")
+            .await
+            .is_err());
+        t::savepoint_via_command(&state, &id, "sp_1", "release")
+            .await
+            .expect("release sp_1");
+        assert!(t::savepoint_via_command(&state, &id, "bad name", "create")
+            .await
+            .is_err());
+        sess.conn.finish_transaction(true).await.expect("commit sp");
+        let n = conn
+            .execute("SELECT COUNT(*) AS c FROM noobdb_objtest_idx", Some(&db))
+            .await
+            .expect("count");
+        assert!(
+            matches!(&n.rows[0][0], t::Value::Int(2)),
+            "{:?}",
+            n.rows[0][0]
+        );
+    }
+
     // health_check.
     conn.health_check().await.expect("health check");
 

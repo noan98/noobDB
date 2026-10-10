@@ -436,6 +436,18 @@ impl Connection {
         }
     }
 
+    /// 明示トランザクション内でトランザクション制御文 (SAVEPOINT 系, #1418) を流す。
+    /// MySQL はプリペアド文プロトコルが SAVEPOINT 等を受け付けない (1295) ため
+    /// テキストプロトコル (`raw_sql`) で実行する。PostgreSQL / SQLite は通常の
+    /// [`Self::execute_in_transaction`] と同じ。
+    pub async fn execute_tx_control(&self, sql: &str) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.tx_control(sql).await,
+            Connection::Postgres(c) => c.tx_execute(sql).await.map(|_| ()),
+            Connection::Sqlite(c) => c.tx_execute(sql).await.map(|_| ()),
+        }
+    }
+
     /// Commit (`true`) or roll back (`false`) the active explicit transaction
     /// and release the held connection. Errs if none is active.
     pub async fn finish_transaction(&self, commit: bool) -> Result<()> {

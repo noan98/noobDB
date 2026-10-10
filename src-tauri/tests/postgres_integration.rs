@@ -437,6 +437,97 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
         .expect("count");
     assert!(matches!(&after_commit.rows[0][0], t::Value::Int(1)));
 
+    // SAVEPOINT (#1418): コマンド経路で一連が通ること + aborted 状態からの回復。
+    {
+        let state = t::AppState::default();
+        let sp_opts = t::parse_postgres_url(&url).expect("valid url");
+        let sp_conn = t::connect(&sp_opts).await.expect("connect sp");
+        let id = state
+            .insert(t::make_session("sp", sp_conn, sp_opts, false))
+            .await;
+        let sess = state.get(&id).await.expect("session");
+        sess.conn.begin_transaction(None).await.expect("begin sp");
+        sess.conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (10, 'x')",
+            )
+            .await
+            .expect("insert 10");
+        t::savepoint_via_command(&state, &id, "sp_1", "create")
+            .await
+            .expect("sp_1");
+        sess.conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (11, 'y')",
+            )
+            .await
+            .expect("insert 11");
+        t::savepoint_via_command(&state, &id, "sp_2", "create")
+            .await
+            .expect("sp_2");
+        // 失敗で aborted になり、以後の文は 25P02。
+        assert!(sess
+            .conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (10, 'dup')"
+            )
+            .await
+            .is_err());
+        let aborted = sess
+            .conn
+            .execute_in_transaction("SELECT 1")
+            .await
+            .expect_err("aborted tx rejects statements");
+        assert!(
+            aborted
+                .to_string()
+                .contains("current transaction is aborted"),
+            "{aborted}"
+        );
+        t::savepoint_via_command(&state, &id, "sp_1", "rollback_to")
+            .await
+            .expect("rollback to sp_1");
+        sess.conn
+            .execute_in_transaction("SELECT 1")
+            .await
+            .expect("recovered");
+        assert!(t::savepoint_via_command(&state, &id, "sp_2", "release")
+            .await
+            .is_err());
+        // sp_2 の失敗でトランザクションは再び aborted。ROLLBACK TO sp_1 で復旧して解放する。
+        t::savepoint_via_command(&state, &id, "sp_1", "rollback_to")
+            .await
+            .expect("rollback again");
+        t::savepoint_via_command(&state, &id, "sp_1", "release")
+            .await
+            .expect("release sp_1");
+        sess.conn.finish_transaction(true).await.expect("commit sp");
+        let n = conn
+            .execute("SELECT COUNT(*) AS c FROM public.noobdb_objtest_idx", None)
+            .await
+            .expect("count");
+        assert!(
+            matches!(&n.rows[0][0], t::Value::Int(2)),
+            "{:?}",
+            n.rows[0][0]
+        );
+
+        // aborted のまま COMMIT するとエラー (黙ってロールバックしない)。
+        sess.conn
+            .begin_transaction(None)
+            .await
+            .expect("begin abort");
+        assert!(sess
+            .conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (2, 'dup')"
+            )
+            .await
+            .is_err());
+        assert!(sess.conn.finish_transaction(true).await.is_err());
+        assert!(!sess.conn.transaction_active().await);
+    }
+
     conn.health_check().await.expect("health check");
 
     // Cleanup.

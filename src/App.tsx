@@ -149,7 +149,7 @@ import {
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
-import { afterRelease, afterRollbackTo, pushSavepoint, savepointName } from "./savepoints";
+import { afterRelease, afterRollbackTo, isMissingSavepointError, pushSavepoint, savepointName } from "./savepoints";
 import { isMruRecordable, singleLine, type CommandItem } from "./components/commandPaletteSearch";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
@@ -4954,10 +4954,11 @@ export default function App() {
 
   const handleCreateSavepoint = useCallback(async () => {
     if (!sessionId) return;
-    const name = savepointName(savepointCounterRef.current + 1);
+    // 連打で同名が二重作成されないよう、await の前に連番を確定する。
+    savepointCounterRef.current += 1;
+    const name = savepointName(savepointCounterRef.current);
     try {
       await api.createSavepoint(sessionId, name);
-      savepointCounterRef.current += 1;
       setSavepoints((s) => pushSavepoint(s, name));
       toast.success(translate("savepointCreated", { name }));
     } catch (e) {
@@ -4967,8 +4968,9 @@ export default function App() {
 
   const handleRollbackToSavepoint = useCallback(async (name: string) => {
     if (!sessionId) return;
-    // 本番 + confirm_writes のときだけ確認する (full ROLLBACK と同じく UI レベルの誤操作防止)。
-    if (selectedProfile?.is_production && selectedProfile?.confirm_writes) {
+    // 書き込み承認 (requireWriteApproval) と同じ条件 (本番 + confirm_writes、読み取り専用を除く)
+    // のときだけ確認する。UI レベルの誤操作防止のみ。
+    if (selectedProfile?.is_production && selectedProfile?.confirm_writes && !selectedProfile?.read_only) {
       const ok = await confirm({
         title: translate("savepointRollbackConfirmTitle"),
         message: translate("savepointRollbackConfirmBody", { name }),
@@ -4982,9 +4984,11 @@ export default function App() {
       setSavepoints((s) => afterRollbackTo(s, name));
       toast.success(translate("savepointRolledBack", { name }));
     } catch (e) {
+      // DB 側に既に無い SAVEPOINT なら、その名前とそれより新しいものを一覧から外す。
+      if (isMissingSavepointError(String(e))) setSavepoints((s) => afterRelease(s, name));
       toast.error(String(e));
     }
-  }, [sessionId, selectedProfile?.is_production, selectedProfile?.confirm_writes, confirm, toast]);
+  }, [sessionId, selectedProfile?.is_production, selectedProfile?.confirm_writes, selectedProfile?.read_only, confirm, toast]);
 
   const handleReleaseSavepoint = useCallback(async (name: string) => {
     if (!sessionId) return;
@@ -4993,6 +4997,7 @@ export default function App() {
       setSavepoints((s) => afterRelease(s, name));
       toast.success(translate("savepointReleased", { name }));
     } catch (e) {
+      if (isMissingSavepointError(String(e))) setSavepoints((s) => afterRelease(s, name));
       toast.error(String(e));
     }
   }, [sessionId, toast]);
@@ -5004,7 +5009,9 @@ export default function App() {
       setTxActive(false);
       toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
     } catch (e) {
-      toast.error(String(e));
+      // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
+      setTxActive(false);
+      toast.error(String(e).includes("25P02") ? translate("txAbortedRolledBack") : String(e));
     }
   }, [sessionId, toast]);
 

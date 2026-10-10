@@ -55,4 +55,8 @@ DB の意味論: `ROLLBACK TO` は指定 SAVEPOINT を残し新しいものを�
 新しいものを破棄。PostgreSQL ではエラーで aborted になった TX も `ROLLBACK TO` で回復できる。
 フロントはスタックを `src/savepoints.ts` (`afterRollbackTo` / `afterRelease`) で同じ
 意味論に追従させ、`SavepointControl` (TX 中のヘッダのメニュー) から操作する。
-本番 + `confirm_writes` のときだけ ROLLBACK TO の確認ダイアログを出す (UI レベルのみ)。
+書き込み承認 (`requireWriteApproval`) と同じ条件 (本番 + `confirm_writes`、読み取り専用を除く) のときだけ ROLLBACK TO の確認ダイアログを出す (UI レベルのみ)。
+
+MySQL は SAVEPOINT をプリペアド文で受け付けない (1295) ため、`Connection::execute_tx_control` が
+MySQL だけ保持接続へ `raw_sql` で流す。PostgreSQL は aborted (25P02) のまま COMMIT すると
+黙って ROLLBACK 扱いになるので、`tx_finish` が検出してエラーにする (トランザクションは終了扱い)。

@@ -574,7 +574,7 @@ pub(crate) async fn savepoint_inner(
         SavepointOp::RollbackTo => crate::db::savepoint::rollback_to_sql(driver, name)?,
         SavepointOp::Release => crate::db::savepoint::release_sql(driver, name)?,
     };
-    session.conn.execute_in_transaction(&sql).await?;
+    session.conn.execute_tx_control(&sql).await?;
     Ok(())
 }
 

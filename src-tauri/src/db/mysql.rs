@@ -151,6 +151,21 @@ impl MySqlConn {
         run_sql_on(conn, sql).await
     }
 
+    /// SAVEPOINT 等の制御文を保持接続のテキストプロトコルで実行する (#1418, 1295 回避)。
+    /// `sql` は `db::savepoint` が検証済みの名前から組み立てたものだけを渡すこと。
+    pub async fn tx_control(&self, sql: &str) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        sqlx::Executor::execute(
+            &mut **conn,
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string())),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
         let mut guard = self.tx.lock().await;
         let mut conn = guard

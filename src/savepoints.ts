@@ -15,7 +15,11 @@ export function savepointName(counter: number): string {
   return `sp_${counter}`;
 }
 
-/** SAVEPOINT 作成後のスタック。同名は DB 側で上書き (新しい方が有効) になるので末尾へ移す。 */
+/**
+ * SAVEPOINT 作成後のスタック。同名の再作成は MySQL では古い方を上書きし、PostgreSQL / SQLite では
+ * 両方が残って新しい方が名前を隠す。どちらも「その名前の操作は新しい方に効く」ので末尾へ移す。
+ * (自動名は連番で衝突しない。これは防御的な扱い。)
+ */
 export function pushSavepoint(stack: SavepointStack, name: string): SavepointStack {
   return [...stack.filter((n) => n !== name), name];
 }
@@ -30,4 +34,9 @@ export function afterRollbackTo(stack: SavepointStack, name: string): SavepointS
 export function afterRelease(stack: SavepointStack, name: string): SavepointStack {
   const i = stack.lastIndexOf(name);
   return i < 0 ? stack : stack.slice(0, i);
+}
+
+/** 「その SAVEPOINT は存在しない」系のエラーか (MySQL 1305 / PostgreSQL 3B001 / SQLite)。 */
+export function isMissingSavepointError(message: string): boolean {
+  return /\b1305\b|3B001|no such savepoint|savepoint .* does not exist/i.test(message);
 }

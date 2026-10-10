@@ -514,6 +514,27 @@ pub mod __test_api {
         crate::commands::query::run_in_transaction_inner(state, session_id, sql).await
     }
 
+    /// SAVEPOINT 系 3 コマンドのコア経路 (#1418)。`op` は "create" / "rollback_to" / "release"。
+    pub async fn savepoint_via_command(
+        state: &AppState,
+        session_id: &str,
+        name: &str,
+        op: &str,
+    ) -> crate::error::Result<()> {
+        use crate::commands::query::SavepointOp;
+        let op = match op {
+            "create" => SavepointOp::Create,
+            "rollback_to" => SavepointOp::RollbackTo,
+            "release" => SavepointOp::Release,
+            other => {
+                return Err(crate::error::AppError::InvalidInput(format!(
+                    "unknown savepoint op: {other}"
+                )))
+            }
+        };
+        crate::commands::query::savepoint_inner(state, session_id, name, op).await
+    }
+
     /// ファイル → 新規テーブル作成 → ロードの経路 (#985) を Tauri ランタイム無しで
     /// 駆動する。`import_csv` と同じ検証 (read_only ガード・新規テーブル定義) を
     /// 掛けてから同じコア (`run_import_core`) を走らせる。引数は IPC と同じ JSON
