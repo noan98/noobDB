@@ -487,3 +487,138 @@ export function explorerRowExpansion(row: ExplorerRow): { expandable: boolean; o
   if (row.kind === "db" || row.kind === "table") return { expandable: true, open: row.open };
   return { expandable: false, open: false };
 }
+
+// --- テーブルの複数選択 (#1399) ---
+//
+// Ctrl(Cmd) / Shift クリックで選んだテーブルをまとめて DDL 取得 / エクスポート / ダンプ / DROP
+// できるようにする選択モデルの純ロジック。選択は「同一接続・同一データベース (PostgreSQL では
+// スキーマ)」の中に限る — 別のデータベースのテーブルを選んだら選択を取り直す (一括 DROP の対象が
+// 画面外のデータベースへ広がる事故を避ける)。ビューは対象外 (DDL の kind・DROP 文が異なるため)。
+
+/** テーブルの選択状態。`keys` は `tableKey(db, tbl)`、`anchor` は Shift 範囲選択の起点。 */
+export interface TableSelection {
+  /** 選択が属するデータベース。`keys` が空で起点だけのときも、その起点のデータベース。 */
+  db: string | null;
+  keys: ReadonlySet<string>;
+  /** Shift クリック / Shift+矢印の起点となる `tableKey`。無ければ null。 */
+  anchor: string | null;
+}
+
+export const EMPTY_TABLE_SELECTION: TableSelection = { db: null, keys: new Set(), anchor: null };
+
+/** 選択できる行 (ビューを除くテーブル行)。 */
+export function isSelectableTableRow(
+  row: ExplorerRow,
+): row is Extract<ExplorerRow, { kind: "table" }> & { view: null } {
+  return row.kind === "table" && row.view === null;
+}
+
+export function isTableSelected(sel: TableSelection, db: string, tbl: string): boolean {
+  return sel.db === db && sel.keys.has(tableKey(db, tbl));
+}
+
+/** 選択中のテーブル数。 */
+export function selectedTableCount(sel: TableSelection): number {
+  return sel.keys.size;
+}
+
+/** 通常クリック: 選択を解除し、そのテーブルを Shift 範囲選択の起点にする。 */
+export function anchorTableSelection(sel: TableSelection, db: string, tbl: string): TableSelection {
+  const key = tableKey(db, tbl);
+  if (sel.keys.size === 0 && sel.db === db && sel.anchor === key) return sel;
+  return { db, keys: new Set(), anchor: key };
+}
+
+/**
+ * Ctrl(Cmd) クリック: そのテーブルを選択に出し入れする。別のデータベースのテーブルなら
+ * 選択を取り直してそのテーブルだけにする。
+ */
+export function toggleTableSelection(sel: TableSelection, db: string, tbl: string): TableSelection {
+  const key = tableKey(db, tbl);
+  if (sel.db !== db) return { db, keys: new Set([key]), anchor: key };
+  const keys = new Set(sel.keys);
+  if (keys.has(key)) keys.delete(key);
+  else keys.add(key);
+  return { db, keys, anchor: key };
+}
+
+/**
+ * Shift クリック: 起点から `tbl` までの、見えているテーブル行を選ぶ。起点が無い / 別のデータベース /
+ * 画面に無いときは `tbl` だけを選んで起点にする。`additive` (Ctrl+Shift) なら既存の選択に足す。
+ * 起点は動かさない (続けて Shift クリックすると同じ起点から範囲が伸び縮みする)。
+ */
+export function rangeTableSelection(
+  sel: TableSelection,
+  rows: readonly ExplorerRow[],
+  db: string,
+  tbl: string,
+  additive = false,
+): TableSelection {
+  const key = tableKey(db, tbl);
+  const selectable = rows.filter(isSelectableTableRow).filter((r) => r.db === db);
+  const to = selectable.findIndex((r) => r.tbl === tbl);
+  const anchorKey = sel.db === db ? sel.anchor : null;
+  const from = anchorKey === null ? -1 : selectable.findIndex((r) => tableKey(r.db, r.tbl) === anchorKey);
+  if (to === -1 || from === -1) {
+    return { db, keys: new Set(sel.db === db && additive ? [...sel.keys, key] : [key]), anchor: key };
+  }
+  const [lo, hi] = from <= to ? [from, to] : [to, from];
+  const keys = new Set<string>(sel.db === db && additive ? sel.keys : []);
+  for (let i = lo; i <= hi; i++) {
+    const r = selectable[i];
+    if (r) keys.add(tableKey(r.db, r.tbl));
+  }
+  return { db, keys, anchor: anchorKey };
+}
+
+/**
+ * Shift+↑/↓: 現在の行から隣のテーブル行へ範囲を伸ばす。隣がテーブル行でない (別の見出し・
+ * ビュー・列など) ときは null (呼び出し側は通常のフォーカス移動に任せる)。起点が無ければ
+ * 現在の行を起点にする。戻り値の `focusKey` は次にフォーカスする行の `data-tree-key`。
+ */
+export function extendTableSelection(
+  sel: TableSelection,
+  rows: readonly ExplorerRow[],
+  db: string,
+  tbl: string,
+  direction: 1 | -1,
+): { selection: TableSelection; focusKey: string } | null {
+  const here = rows.findIndex((r) => r.kind === "table" && r.db === db && r.tbl === tbl);
+  if (here === -1) return null;
+  let next = here + direction;
+  while (next >= 0 && next < rows.length) {
+    const r = rows[next];
+    if (r && isFocusableExplorerRow(r)) break;
+    next += direction;
+  }
+  const target = rows[next];
+  if (!target || !isSelectableTableRow(target) || target.db !== db) return null;
+  const base =
+    sel.db === db && sel.anchor !== null ? sel : { db, keys: new Set([tableKey(db, tbl)]), anchor: tableKey(db, tbl) };
+  return {
+    selection: rangeTableSelection(base, rows, db, target.tbl),
+    focusKey: target.key,
+  };
+}
+
+/** 一覧から消えたテーブルを選択から外す。変化が無ければ同じ参照を返す。 */
+export function pruneTableSelection(
+  sel: TableSelection,
+  tables: Readonly<Record<string, readonly string[] | undefined>>,
+): TableSelection {
+  if (sel.db === null) return sel;
+  const live = tables[sel.db];
+  if (live === undefined) return EMPTY_TABLE_SELECTION;
+  const present = new Set(live.map((t) => tableKey(sel.db as string, t)));
+  const keys = [...sel.keys].filter((k) => present.has(k));
+  const anchor = sel.anchor !== null && present.has(sel.anchor) ? sel.anchor : null;
+  if (keys.length === sel.keys.size && anchor === sel.anchor) return sel;
+  return keys.length === 0 && anchor === null ? EMPTY_TABLE_SELECTION : { db: sel.db, keys: new Set(keys), anchor };
+}
+
+/** 選択中のテーブル名を、データベース内の並び (`dbTables`) の順で返す。 */
+export function orderedSelectedTables(sel: TableSelection, dbTables: readonly string[]): string[] {
+  if (sel.db === null) return [];
+  const db = sel.db;
+  return dbTables.filter((t) => sel.keys.has(tableKey(db, t)));
+}

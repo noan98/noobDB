@@ -333,7 +333,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 - `export_query_result`
 - `export_query_stream`
-- `dump_database`
+- `dump_database` (`options.tables` で対象テーブルを絞れる (#1399): MySQL は `mysqldump <db> <tbl>...`、PostgreSQL は `pg_dump --table` (スキーマ修飾)、SQLite は指定テーブル + 付随する索引/トリガー。未指定は DB 全体)
 - `dump_tool_status`
 - `install_dump_tool`
 - `parse_csv_preview`

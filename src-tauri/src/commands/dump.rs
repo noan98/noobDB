@@ -137,6 +137,93 @@ pub struct DumpOptions {
     /// 内容は保たれるが配置が変わりうるため、再取り込み重視ならオフのままにする。
     #[serde(default)]
     pub format_sql: bool,
+
+    // ── テーブル指定 (#1399) ──
+    /// 指定したテーブルだけをダンプする (スキーマツリーで複数選択したテーブルの一括ダンプ)。
+    /// `None` は従来どおりデータベース全体。`Some` のときは空リスト・空名を `InvalidInput`
+    /// で拒否する (空のままだと「全体ダンプ」に化けて意図より大きく書き出してしまうため)。
+    /// - MySQL: `mysqldump <db> <tbl>...`。`routines` / `events` が真でも `--routines` /
+    ///   `--events` は付けない (付けるとテーブル指定でもルーチン等が出てしまうため)。
+    /// - PostgreSQL: `pg_dump --table "<schema>"."<tbl>"` を表ごとに。スキーマは `pg_schema`、
+    ///   空なら `dump_database` の `database` 引数 (ツリーのスキーマ) で修飾する。
+    /// - SQLite: 指定テーブルとその索引 / トリガーだけを書き出す (ビューは含めない)。存在しない
+    ///   テーブル名は `InvalidInput`
+    #[serde(default)]
+    pub tables: Option<Vec<String>>,
+}
+
+/// `DumpOptions::tables` を検証して重複を除いた一覧にする。`None` は全体ダンプ。
+fn selected_tables(options: &DumpOptions) -> Result<Option<Vec<String>>> {
+    let Some(tables) = options.tables.as_ref() else {
+        return Ok(None);
+    };
+    if tables.is_empty() {
+        return Err(AppError::InvalidInput("table list is empty".into()));
+    }
+    let mut out: Vec<String> = Vec::with_capacity(tables.len());
+    for name in tables {
+        if name.trim().is_empty() || name.contains('\0') {
+            return Err(AppError::InvalidInput("table name is invalid".into()));
+        }
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+    Ok(Some(out))
+}
+
+/// 指定テーブルがすべて存在することを確かめる (SQLite の部分ダンプ)。無い名前があれば
+/// 黙って落とさず `InvalidInput` にする。
+fn ensure_tables_exist<'a>(
+    selected: &[String],
+    existing: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let existing: Vec<&str> = existing.collect();
+    let missing: Vec<&str> = selected
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !existing.contains(n))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::InvalidInput(format!(
+            "table not found: {}",
+            missing.join(", ")
+        )))
+    }
+}
+
+/// 接続プロファイルの DB 名 (前後空白除去、空なら None)。pg_dump の `--dbname` と .pgpass の DB 欄に使う。
+fn pg_connect_database(opts: &DbConnectOptions) -> Option<&str> {
+    opts.database
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// `pg_dump --dbname` / .pgpass の DB 欄に使う接続先 DB。タスク経路 (`database_is_connection_db`) は
+/// 入力された `database` (空白除去済み) をそのまま、ツリー / DumpModal 経路は接続プロファイルの DB。
+fn pg_dbname<'a>(
+    opts: &'a DbConnectOptions,
+    database: &'a str,
+    database_is_connection_db: bool,
+) -> Option<&'a str> {
+    if database_is_connection_db {
+        Some(database)
+    } else {
+        pg_connect_database(opts)
+    }
+}
+
+/// `pg_dump --table` に渡すパターン。二重引用符で囲むと大文字小文字を保ち、`*` / `?` /
+/// `.` もワイルドカード扱いされない (同名の別テーブルを巻き込まない)。
+fn pg_table_pattern(schema: Option<&str>, table: &str) -> String {
+    let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    match schema {
+        Some(s) if !s.is_empty() => format!("{}.{}", quote(s), quote(table)),
+        _ => quote(table),
+    }
 }
 
 /// Dump `database` to `path` as a streaming, cancelable operation (#686).
@@ -235,7 +322,7 @@ async fn spawn_dump(
 ) {
     let started = Instant::now();
     let result = run_dump(
-        &app, &session, &stream_id, &database, &path, &options, &counter, started,
+        &app, &session, &stream_id, &database, false, &path, &options, &counter, started,
     )
     .await;
 
@@ -283,6 +370,9 @@ pub(crate) async fn run_dump(
     session: &Session,
     stream_id: &str,
     database: &str,
+    // `database` を PostgreSQL の接続先 DB 名として扱うか (タスク実行の自由入力)。false は
+    // ツリー / DumpModal 経路で、`database` は pg_namespace (スキーマ) 名。
+    database_is_connection_db: bool,
     final_path: &str,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
@@ -321,7 +411,15 @@ pub(crate) async fn run_dump(
         }
         DriverKind::Postgres => {
             dump_postgres(
-                app, stream_id, &dump_opts, database, tmp_file, options, counter, started,
+                app,
+                stream_id,
+                &dump_opts,
+                database,
+                database_is_connection_db,
+                tmp_file,
+                options,
+                counter,
+                started,
             )
             .await?
         }
@@ -618,10 +716,13 @@ async fn dump_mysql(
     if options.single_transaction {
         cmd.arg("--single-transaction");
     }
-    if options.routines {
+    // テーブル指定時は mysqldump が `--routines` / `--events` でもルーチン等を出してしまうので、
+    // バックエンドで付けないことを保証する (#1399)。
+    let table_scoped = options.tables.is_some();
+    if options.routines && !table_scoped {
         cmd.arg("--routines");
     }
-    if options.events {
+    if options.events && !table_scoped {
         cmd.arg("--events");
     }
     cmd.arg(if options.triggers {
@@ -653,6 +754,11 @@ async fn dump_mysql(
     // 引数インジェクションを防ぐ (上の `starts_with('-')` チェックと合わせた多層防御)。
     cmd.arg("--");
     cmd.arg(database);
+    // テーブル指定 (#1399): DB 名のあとにテーブル名を並べる。`--` の後ろなので、
+    // `-` 始まりの名前もオプションとして解釈されない。
+    if let Some(tables) = selected_tables(options)? {
+        cmd.args(&tables);
+    }
 
     // Hold the option file until the child finishes reading it — the streamer
     // spawns the child, so keeping `defaults` alive across the await is required.
@@ -673,6 +779,7 @@ async fn dump_postgres(
     stream_id: &str,
     connect_options: &DbConnectOptions,
     database: &str,
+    database_is_connection_db: bool,
     file: tokio::fs::File,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
@@ -680,7 +787,11 @@ async fn dump_postgres(
 ) -> Result<u64> {
     let database = validate_dump_database(database)?;
 
-    let pgpass = PgPassFile::create(connect_options, database)?;
+    // PostgreSQL のツリーの「database」階層は pg_namespace (スキーマ) なので、`database` は
+    // 接続先 DB 名ではない。`--dbname` / .pgpass の DB 欄は接続プロファイルの DB を使い、
+    // 未指定なら `--dbname` を付けない (pg_dump の既定 = PGDATABASE / ユーザ名に任せる)。
+    let dbname = pg_dbname(connect_options, database, database_is_connection_db);
+    let pgpass = PgPassFile::create(connect_options, dbname)?;
 
     let mut cmd = Command::new(
         super::dump_tools::resolve_dump_tool("pg_dump").unwrap_or_else(|| "pg_dump".into()),
@@ -688,7 +799,9 @@ async fn dump_postgres(
     cmd.arg("--host").arg(&connect_options.host);
     cmd.arg("--port").arg(connect_options.port.to_string());
     cmd.arg("--username").arg(&connect_options.user);
-    cmd.arg("--dbname").arg(database);
+    if let Some(db) = dbname {
+        cmd.arg("--dbname").arg(db);
+    }
     // Never prompt for a password interactively; rely on PGPASSFILE instead.
     cmd.arg("--no-password");
     if options.no_data {
@@ -706,11 +819,27 @@ async fn dump_postgres(
     if options.no_privileges {
         cmd.arg("--no-privileges");
     }
-    if let Some(schema) = options.pg_schema.as_deref() {
-        let schema = schema.trim();
-        if !schema.is_empty() {
-            cmd.arg("--schema").arg(schema);
+    let pg_schema = options
+        .pg_schema
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(tables) = selected_tables(options)? {
+        // テーブル指定 (#1399): スキーマ修飾したパターンで表ごとに `--table`。
+        // `--schema` との併用は積集合になり分かりづらいので、修飾で絞る。
+        // `pg_schema` が空なら、ツリーで選んだスキーマ (= `database` 引数) で修飾する。
+        // タスク経路 (`database` が接続先 DB 名) ではスキーマ扱いしないので、テーブル指定する
+        // 場合は `pg_schema` が必要 (無いと非修飾の表名になり search_path 依存)。
+        let schema = if database_is_connection_db {
+            pg_schema
+        } else {
+            pg_schema.or(Some(database))
+        };
+        for table in &tables {
+            cmd.arg("--table").arg(pg_table_pattern(schema, table));
         }
+    } else if let Some(schema) = pg_schema {
+        cmd.arg("--schema").arg(schema);
     }
     // AWS IAM auth (#734) requires TLS; the token is only accepted over SSL.
     if connect_options.aws_iam.is_some() {
@@ -744,6 +873,8 @@ async fn dump_sqlite(
     counter: &Arc<AtomicU64>,
     started: Instant,
 ) -> Result<u64> {
+    // テーブル指定 (#1399)。検証は書き込み開始前に済ませる。
+    let selected = selected_tables(options)?;
     let mut writer = BufWriter::new(file);
 
     write_chunk(
@@ -763,9 +894,25 @@ async fn dump_sqlite(
             None,
         )
         .await?;
-    let total_tables = tables.rows.len() as u64;
+    let table_rows: Vec<&Vec<Value>> = tables
+        .rows
+        .iter()
+        .filter(|row| match (&selected, row.first()) {
+            (Some(sel), Some(Value::String(n))) => sel.contains(n),
+            (Some(_), _) => false,
+            (None, _) => true,
+        })
+        .collect();
+    if let Some(sel) = &selected {
+        let existing = tables.rows.iter().filter_map(|r| match r.first() {
+            Some(Value::String(n)) => Some(n.as_str()),
+            _ => None,
+        });
+        ensure_tables_exist(sel, existing)?;
+    }
+    let total_tables = table_rows.len() as u64;
     let mut processed = 0u64;
-    for row in &tables.rows {
+    for row in table_rows {
         let (name, create_sql) = match (row.first(), row.get(1)) {
             (Some(Value::String(n)), Some(Value::String(s))) => (n.clone(), s.clone()),
             _ => {
@@ -828,7 +975,7 @@ async fn dump_sqlite(
     if !options.no_create_info {
         let objs = conn
             .execute(
-                "SELECT sql FROM sqlite_master \
+                "SELECT sql, type, tbl_name FROM sqlite_master \
                  WHERE type IN ('index','trigger','view') AND name NOT LIKE 'sqlite_%' \
                  AND sql IS NOT NULL ORDER BY type, name",
                 None,
@@ -836,6 +983,18 @@ async fn dump_sqlite(
             .await?;
         let mut chunk = String::new();
         for row in &objs.rows {
+            if let Some(sel) = &selected {
+                // テーブル指定時は、指定テーブルに紐づく索引 / トリガーだけを書き出す
+                // (ビューは別オブジェクトなので含めない)。
+                let owned = matches!(
+                    (row.get(1), row.get(2)),
+                    (Some(Value::String(ty)), Some(Value::String(tbl)))
+                        if ty != "view" && sel.contains(tbl)
+                );
+                if !owned {
+                    continue;
+                }
+            }
             if let Some(Value::String(sql)) = row.first() {
                 chunk.push_str(sql);
                 chunk.push_str(";\n");
@@ -1051,7 +1210,7 @@ struct PgPassFile {
 }
 
 impl PgPassFile {
-    fn create(opts: &DbConnectOptions, database: &str) -> Result<Self> {
+    fn create(opts: &DbConnectOptions, dbname: Option<&str>) -> Result<Self> {
         use std::io::Write;
 
         // `DUMP_CREDENTIAL_FILE_PREFIX`/`.pgpass` naming is also what
@@ -1067,7 +1226,8 @@ impl PgPassFile {
             "{}:{}:{}:{}:{}\n",
             pgpass_escape(&opts.host),
             opts.port,
-            pgpass_escape(database),
+            // DB 未指定のときは任意の DB に一致するワイルドカード。
+            dbname.map_or_else(|| "*".to_string(), pgpass_escape),
             pgpass_escape(&opts.user),
             pgpass_escape(&opts.password),
         );
@@ -1168,6 +1328,119 @@ mod tests {
     }
 
     #[test]
+    fn selected_tables_validates_and_dedups() {
+        let mut o = DumpOptions::default();
+        assert_eq!(selected_tables(&o).unwrap(), None);
+        o.tables = Some(vec![]);
+        assert!(matches!(
+            selected_tables(&o),
+            Err(AppError::InvalidInput(_))
+        ));
+        o.tables = Some(vec!["a".into(), "  ".into()]);
+        assert!(matches!(
+            selected_tables(&o),
+            Err(AppError::InvalidInput(_))
+        ));
+        o.tables = Some(vec!["b".into(), "a".into(), "b".into()]);
+        assert_eq!(
+            selected_tables(&o).unwrap(),
+            Some(vec!["b".to_string(), "a".to_string()])
+        );
+    }
+
+    #[test]
+    fn ensure_tables_exist_rejects_unknown_names() {
+        let sel = vec!["a".to_string(), "b".to_string()];
+        assert!(ensure_tables_exist(&sel, ["a", "b", "c"].into_iter()).is_ok());
+        match ensure_tables_exist(&sel, ["a", "c"].into_iter()) {
+            Err(AppError::InvalidInput(m)) => assert!(m.ends_with(": b"), "{m}"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pg_connect_database_uses_profile_db_not_schema() {
+        let mut o = DbConnectOptions {
+            host: "h".into(),
+            port: 5432,
+            user: "u".into(),
+            password: "p".into(),
+            database: Some(" app ".into()),
+            driver: DriverKind::Postgres,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+            aws_iam: None,
+        };
+        assert_eq!(pg_connect_database(&o), Some("app"));
+        o.database = Some("  ".into());
+        assert_eq!(pg_connect_database(&o), None);
+        o.database = None;
+        assert_eq!(pg_connect_database(&o), None);
+    }
+
+    #[test]
+    fn pg_dbname_task_path_uses_input_tree_path_uses_profile() {
+        let mut o = DbConnectOptions {
+            host: "h".into(),
+            port: 5432,
+            user: "u".into(),
+            password: "p".into(),
+            database: Some("profiledb".into()),
+            driver: DriverKind::Postgres,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+            aws_iam: None,
+        };
+        // タスク経路: 入力された DB 名が --dbname になる。
+        assert_eq!(pg_dbname(&o, "realdb", true), Some("realdb"));
+        // ツリー経路: database はスキーマ名なので、プロファイルの DB を使う。
+        assert_eq!(pg_dbname(&o, "public", false), Some("profiledb"));
+        o.database = None;
+        assert_eq!(pg_dbname(&o, "public", false), None);
+        assert_eq!(pg_dbname(&o, "realdb", true), Some("realdb"));
+    }
+
+    #[test]
+    fn pg_table_pattern_quotes_and_qualifies() {
+        assert_eq!(pg_table_pattern(None, "Users"), "\"Users\"");
+        assert_eq!(
+            pg_table_pattern(Some("public"), "a*b"),
+            "\"public\".\"a*b\""
+        );
+        assert_eq!(pg_table_pattern(Some(""), "t"), "\"t\"");
+        assert_eq!(
+            pg_table_pattern(Some("s\"x"), "t\"y"),
+            "\"s\"\"x\".\"t\"\"y\""
+        );
+    }
+
+    #[test]
+    fn dump_options_tables_defaults_to_none_when_omitted() {
+        let o: DumpOptions = serde_json::from_str(
+            r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,
+                "addDropTable":true,"extendedInsert":true,"completeInsert":false,
+                "noData":false,"noCreateInfo":false}"#,
+        )
+        .unwrap();
+        assert!(o.tables.is_none());
+        let o: DumpOptions = serde_json::from_str(
+            r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,
+                "addDropTable":true,"extendedInsert":true,"completeInsert":false,
+                "noData":false,"noCreateInfo":false,"tables":["a","b"]}"#,
+        )
+        .unwrap();
+        assert_eq!(o.tables, Some(vec!["a".to_string(), "b".to_string()]));
+    }
+
+    #[test]
     fn sqlite_quote_ident_doubles_quotes() {
         assert_eq!(sqlite_quote_ident("users"), "\"users\"");
         assert_eq!(sqlite_quote_ident("a\"b"), "\"a\"\"b\"");
@@ -1190,7 +1463,7 @@ mod tests {
             port: 5432,
             user: "postgres".into(),
             password: "p:w".into(),
-            database: None,
+            database: Some("testdb".into()),
             driver: DriverKind::Postgres,
             file_path: None,
             ssl_mode: None,
@@ -1201,7 +1474,7 @@ mod tests {
             aws_iam: None,
         };
         let path = {
-            let f = PgPassFile::create(&opts, "testdb").expect("create");
+            let f = PgPassFile::create(&opts, Some("testdb")).expect("create");
             let p = f.path().to_path_buf();
             assert!(p.exists());
             let body = std::fs::read_to_string(&p).expect("read");

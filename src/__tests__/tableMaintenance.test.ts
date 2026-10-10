@@ -3,6 +3,7 @@ import {
   buildCreateIndexSql,
   buildDropIndexSql,
   buildDropTableSql,
+  buildDropTablesSql,
   buildRenameTableSql,
   buildTruncateSql,
 } from "../components/tableMaintenance";
@@ -89,5 +90,20 @@ describe("buildDropIndexSql (#850)", () => {
       'DROP INDEX "idx_orders_user_id";',
     );
     expect(buildDropIndexSql("sqlite", "main", "t", "idx_t_a")).toBe('DROP INDEX "idx_t_a";');
+  });
+});
+
+describe("buildDropTablesSql (#1399)", () => {
+  it("MySQL / PostgreSQL は 1 文にまとめる", () => {
+    expect(buildDropTablesSql("mysql", "shop", ["a", "b`c"])).toEqual(["DROP TABLE `shop`.`a`, `shop`.`b``c`;"]);
+    expect(buildDropTablesSql("postgres", "public", ["a", "B"])).toEqual(['DROP TABLE "public"."a", "public"."B";']);
+  });
+
+  it("SQLite はテーブルごとの文", () => {
+    expect(buildDropTablesSql("sqlite", "main", ["a", "b"])).toEqual(['DROP TABLE "a";', 'DROP TABLE "b";']);
+  });
+
+  it("空なら文を作らない", () => {
+    expect(buildDropTablesSql("mysql", "shop", [])).toEqual([]);
   });
 });
