@@ -5011,7 +5011,11 @@ export default function App() {
     } catch (e) {
       // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
       setTxActive(false);
-      toast.error(String(e).includes("25P02") ? translate("txAbortedRolledBack") : String(e));
+      toast.error(
+        String(e).includes("25P02")
+          ? translate("txAbortedRolledBack")
+          : `${String(e)} ${translate("txFinishFailedHint")}`,
+      );
     }
   }, [sessionId, toast]);
 

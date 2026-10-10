@@ -517,6 +517,12 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
             .begin_transaction(None)
             .await
             .expect("begin abort");
+        sess.conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (99, 'gone')",
+            )
+            .await
+            .expect("insert 99");
         assert!(sess
             .conn
             .execute_in_transaction(
@@ -525,6 +531,20 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
             .await
             .is_err());
         assert!(sess.conn.finish_transaction(true).await.is_err());
+        // データは残らず、その後プール接続で次のクエリが正常に流れる。
+        let n2 = conn
+            .execute("SELECT COUNT(*) AS c FROM public.noobdb_objtest_idx", None)
+            .await
+            .expect("count after aborted commit");
+        assert!(
+            matches!(&n2.rows[0][0], t::Value::Int(2)),
+            "{:?}",
+            n2.rows[0][0]
+        );
+        sess.conn
+            .execute("SELECT 1", None)
+            .await
+            .expect("pool usable after aborted commit");
         assert!(!sess.conn.transaction_active().await);
     }
 

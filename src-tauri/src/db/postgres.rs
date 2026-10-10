@@ -160,13 +160,19 @@ impl PostgresConn {
             if let Err(sqlx::Error::Database(db)) =
                 sqlx::query("SELECT 1").execute(&mut *conn).await
             {
-                if db.code().as_deref() == Some("25P02") {
-                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                    return Err(AppError::InvalidInput(
-                        "transaction is in an aborted state (25P02) and was rolled back instead of committed"
-                            .into(),
-                    ));
+                // 25P02 以外 (例: 57014 キャンセル) でも、このまま COMMIT すると
+                // 黙って ROLLBACK 扱いになり得るので、コードを問わず ROLLBACK してエラーで返す。
+                let msg = if db.code().as_deref() == Some("25P02") {
+                    "transaction is in an aborted state (25P02) and was rolled back instead of committed"
+                        .to_string()
+                } else {
+                    format!("transaction could not be committed and was rolled back: {db}")
+                };
+                if sqlx::query("ROLLBACK").execute(&mut *conn).await.is_err() {
+                    // ROLLBACK も失敗したら不定状態なのでプールへ返さず破棄する。
+                    drop(conn.detach());
                 }
+                return Err(AppError::InvalidInput(msg));
             }
         }
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
