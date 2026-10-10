@@ -179,21 +179,21 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
     setState({ kind: "running", sends });
     await stream.start(
       {
-      task: "impactAnalysis",
-      system: buildImpactAnalysisSystem(locale),
-      prompt: buildImpactAnalysisPrompt({
-        driver: props.driver,
-        sql: props.sql,
-        findings: props.findings,
-        tables,
-        foreignKeys,
-        preflight: props.preflight,
-        isProduction: props.isProduction,
-        maskLiterals: ai.maskLiterals,
-        locale,
-      }),
-      settings: toAiSnapshot(ai),
-      format: IMPACT_ANALYSIS_FORMAT,
+        task: "impactAnalysis",
+        system: buildImpactAnalysisSystem(locale),
+        prompt: buildImpactAnalysisPrompt({
+          driver: props.driver,
+          sql: props.sql,
+          findings: props.findings,
+          tables,
+          foreignKeys,
+          preflight: props.preflight,
+          isProduction: props.isProduction,
+          maskLiterals: ai.maskLiterals,
+          locale,
+        }),
+        settings: toAiSnapshot(ai),
+        format: IMPACT_ANALYSIS_FORMAT,
       },
       {
         parse: parseImpactAnalysisResponse,

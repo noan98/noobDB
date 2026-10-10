@@ -281,11 +281,11 @@ export function TestDataModal({
     setAiState({ kind: "running" });
     await stream.start(
       {
-      task: "testData",
-      system: buildTestDataSystem({ driver, table, rowCount, locale, context }),
-      prompt: buildTestDataPrompt(table, rowCount),
-      settings: toAiSnapshot(aiSettings),
-      format: TEST_DATA_FORMAT,
+        task: "testData",
+        system: buildTestDataSystem({ driver, table, rowCount, locale, context }),
+        prompt: buildTestDataPrompt(table, rowCount),
+        settings: toAiSnapshot(aiSettings),
+        format: TEST_DATA_FORMAT,
       },
       {
         parse: parseTestDataResponse,

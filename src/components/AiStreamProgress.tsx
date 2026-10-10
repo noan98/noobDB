@@ -32,7 +32,10 @@ export function AiStreamProgress({ stream, fields, previewText = true, waitingLa
     <Flex direction="column" gap="1" data-testid="ai-stream-progress" minW="0">
       <Flex align="center" gap="2" wrap="wrap" color="app.textMuted" textStyle="caption">
         <Spinner size={12} />
-        <chakra.span>{text.length > 0 ? t("aiStreamReceiving") : (waitingLabel ?? t("aiStreamWaiting"))}</chakra.span>
+        <chakra.span role="status">
+          {text.length > 0 ? t("aiStreamReceiving") : (waitingLabel ?? t("aiStreamWaiting"))}
+        </chakra.span>
+        {/* 毎秒変わる値は読み上げ領域 (role="status") の外に置く。 */}
         <chakra.span data-testid="ai-stream-elapsed">{t("aiStreamElapsed", { sec: elapsedSec })}</chakra.span>
         {text.length > 0 && <chakra.span>{t("aiStreamChars", { count: text.length })}</chakra.span>}
       </Flex>

@@ -45,6 +45,8 @@ function scanString(text: string, start: number): ScannedString {
     out += SIMPLE_ESCAPES[esc] ?? esc;
     i += 2;
   }
+  // 末尾が上位サロゲート単独 (下位が未着) なら捨てる。表示で文字化けさせない。
+  if (/[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1);
   return { value: out, closed: false, next: text.length };
 }
 

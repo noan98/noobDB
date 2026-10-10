@@ -33,6 +33,12 @@ describe("extractPartialJsonStrings (#1470)", () => {
     expect(extractPartialJsonStrings('{"a":"abc\\u3042')).toEqual({ a: "abcあ" });
   });
 
+  it("末尾が上位サロゲートだけで切れていたら捨て、揃えば文字として返す", () => {
+    const emoji = "😀"; // \uD83D\uDE00
+    expect(extractPartialJsonStrings(`{"a":"x${emoji.slice(0, 1)}`)).toEqual({ a: "x" });
+    expect(extractPartialJsonStrings(`{"a":"x${emoji}`)).toEqual({ a: `x${emoji}` });
+  });
+
   it("入れ子のオブジェクトや配列の中の文字列は拾わない", () => {
     const text = '{"items":[{"explanation":"inner"},"s"],"meta":{"explanation":"inner2"},"explanation":"outer"}';
     expect(extractPartialJsonStrings(text)).toEqual({ explanation: "outer" });

@@ -253,14 +253,14 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
     setPreparing(false);
     await stream.start(
       {
-      task: "historySearch",
-      system: mode === "search" ? buildHistorySearchSystem(locale) : buildHistorySummarySystem(locale),
-      prompt:
-        mode === "search"
-          ? buildHistorySearchPrompt({ query, candidates: formatted })
-          : buildHistorySummaryPrompt({ periodLabel: promptPeriod, candidates: formatted }),
-      settings: toAiSnapshot(ai),
-      ...(mode === "search" ? { format: HISTORY_SEARCH_FORMAT } : {}),
+        task: "historySearch",
+        system: mode === "search" ? buildHistorySearchSystem(locale) : buildHistorySummarySystem(locale),
+        prompt:
+          mode === "search"
+            ? buildHistorySearchPrompt({ query, candidates: formatted })
+            : buildHistorySummaryPrompt({ periodLabel: promptPeriod, candidates: formatted }),
+        settings: toAiSnapshot(ai),
+        ...(mode === "search" ? { format: HISTORY_SEARCH_FORMAT } : {}),
       },
       {
         onDone: ({ text }) => {

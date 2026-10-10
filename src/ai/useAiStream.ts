@@ -138,6 +138,10 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
   const acquire = useCallback(() => {
     if (busyRef.current) return false;
     busyRef.current = true;
+    // 前回の本文 / 経過秒数 / 完了イベントを持ち越さない (準備中に古い内容が「受信中」に出ない)。
+    setText("");
+    setElapsedSec(0);
+    setDone(null);
     return true;
   }, []);
 
@@ -221,7 +225,9 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
         // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
         if (abortRef.current || !mountedRef.current || genRef.current !== gen) cancelRemote(streamId);
       } catch (e) {
-        fail(String(e), "invoke");
+        // AppError (`kind` を持つ) ならそれを引き継ぎ、無ければ IPC 失敗として扱う。
+        const kind = (e as { kind?: unknown } | null)?.kind;
+        fail(String(e), typeof kind === "string" ? kind : "invoke");
       }
     },
     [idPrefix, stopListener, cancelRemote],

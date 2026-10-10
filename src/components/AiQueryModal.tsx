@@ -153,18 +153,18 @@ export function AiQueryModal(props: AiQueryModalProps) {
     setState({ kind: "running" });
     await stream.start(
       {
-      task: "nl2sql",
-      system: buildNl2SqlSystem({
-        driver: props.driver,
-        database,
-        locale,
-        readOnly: props.readOnly,
-        tables: ready.tables,
-        foreignKeys: ready.foreignKeys,
-      }),
-      prompt: buildNl2SqlPrompt(request),
-      settings: toAiSnapshot(ai),
-      format: NL2SQL_FORMAT,
+        task: "nl2sql",
+        system: buildNl2SqlSystem({
+          driver: props.driver,
+          database,
+          locale,
+          readOnly: props.readOnly,
+          tables: ready.tables,
+          foreignKeys: ready.foreignKeys,
+        }),
+        prompt: buildNl2SqlPrompt(request),
+        settings: toAiSnapshot(ai),
+        format: NL2SQL_FORMAT,
       },
       {
         parse: parseNl2SqlResponse,

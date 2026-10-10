@@ -178,22 +178,22 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
     setState({ kind: "running", sends });
     await stream.start(
       {
-      task: "syncRisk",
-      system: buildSyncRiskSystem(locale),
-      prompt: buildSyncRiskPrompt({
-        planKind: props.planKind,
-        sourceDriver: props.sourceDriver,
-        targetDriver: props.targetDriver,
-        statements,
-        warnings: props.plan.warnings,
-        allowDestructive: props.allowDestructive,
-        allowDelete: props.allowDelete,
-        diff: props.diff,
-        dataSummary: props.dataSummary,
-        maskLiterals: ai.maskLiterals,
-      }),
-      settings: toAiSnapshot(ai),
-      format: SYNC_RISK_FORMAT,
+        task: "syncRisk",
+        system: buildSyncRiskSystem(locale),
+        prompt: buildSyncRiskPrompt({
+          planKind: props.planKind,
+          sourceDriver: props.sourceDriver,
+          targetDriver: props.targetDriver,
+          statements,
+          warnings: props.plan.warnings,
+          allowDestructive: props.allowDestructive,
+          allowDelete: props.allowDelete,
+          diff: props.diff,
+          dataSummary: props.dataSummary,
+          maskLiterals: ai.maskLiterals,
+        }),
+        settings: toAiSnapshot(ai),
+        format: SYNC_RISK_FORMAT,
       },
       {
         parse: parseSyncRiskResponse,

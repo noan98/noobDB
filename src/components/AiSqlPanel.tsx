@@ -160,17 +160,17 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     setState({ kind: "running", assist: kind });
     await stream.start(
       {
-      task: SQL_ASSIST_TASK[kind],
-      system: buildSqlAssistSystem(kind, locale),
-      prompt: buildSqlAssistPrompt({
-        kind,
-        sql: req.sql,
-        driver: props.driver,
-        tables,
-        maskLiterals: masked,
-      }),
-      settings: toAiSnapshot(ai),
-      format: sqlAssistFormat(kind),
+        task: SQL_ASSIST_TASK[kind],
+        system: buildSqlAssistSystem(kind, locale),
+        prompt: buildSqlAssistPrompt({
+          kind,
+          sql: req.sql,
+          driver: props.driver,
+          tables,
+          maskLiterals: masked,
+        }),
+        settings: toAiSnapshot(ai),
+        format: sqlAssistFormat(kind),
       },
       {
         // 種別ごとにスキーマが違うので、パースは完了時に本文から行う。

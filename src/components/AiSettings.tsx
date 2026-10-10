@@ -182,9 +182,9 @@ export function AiSettings() {
     setSample({ kind: "running" });
     await stream.start(
       {
-      task: "generic",
-      prompt: t("aiSamplePrompt"),
-      settings: toAiSnapshot(ai),
+        task: "generic",
+        prompt: t("aiSamplePrompt"),
+        settings: toAiSnapshot(ai),
       },
       {
         onDone: ({ event: e }) =>

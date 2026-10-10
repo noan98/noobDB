@@ -267,6 +267,125 @@ describe("useAiStream (#1470)", () => {
     expect(result.current.acquire()).toBe(true);
   });
 
+  it("acquire は前回の本文 / 経過秒数 / 完了イベントを消す", async () => {
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    result.current.acquire();
+    await act(async () => {
+      await result.current.start(request, handlers());
+    });
+    act(() => {
+      wire?.onDelta?.({ streamId: "x", text: "old" });
+      wire?.onDone?.(doneEvent);
+    });
+    expect(result.current.text).toBe("old");
+    expect(result.current.done).toEqual(doneEvent);
+    act(() => {
+      result.current.acquire();
+    });
+    expect(result.current.text).toBe("");
+    expect(result.current.elapsedSec).toBe(0);
+    expect(result.current.done).toBeNull();
+  });
+
+  it("run_ai_request が AppError (kind あり) で失敗したら、その kind を通知する", async () => {
+    runAiRequest.mockRejectedValueOnce({ kind: "aiAuth", message: "bad key" });
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    const h = handlers();
+    result.current.acquire();
+    await act(async () => {
+      await result.current.start(request, h);
+    });
+    expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ kind: "aiAuth", refused: false }));
+  });
+
+  it("完了 / エラーイベントの後に run_ai_request が失敗しても、結果を上書きしない", async () => {
+    let fail: (e: unknown) => void = () => {};
+    runAiRequest.mockReturnValueOnce(
+      new Promise<void>((_, rej) => {
+        fail = rej;
+      }),
+    );
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    const h = handlers();
+    result.current.acquire();
+    let p: Promise<void> = Promise.resolve();
+    await act(async () => {
+      p = result.current.start(request, h);
+    });
+    act(() => wire?.onDone?.(doneEvent));
+    await act(async () => {
+      fail(new Error("late"));
+      await p;
+    });
+    expect(h.onDone).toHaveBeenCalledTimes(1);
+    expect(h.onError).not.toHaveBeenCalled();
+
+    runAiRequest.mockReturnValueOnce(
+      new Promise<void>((_, rej) => {
+        fail = rej;
+      }),
+    );
+    const h2 = handlers();
+    result.current.acquire();
+    await act(async () => {
+      p = result.current.start(request, h2);
+    });
+    act(() => wire?.onError?.({ streamId: "x", error: "first", kind: "aiApi" }));
+    await act(async () => {
+      fail(new Error("late"));
+      await p;
+    });
+    expect(h2.onError).toHaveBeenCalledTimes(1);
+    expect(h2.onError).toHaveBeenCalledWith(expect.objectContaining({ message: "first" }));
+  });
+
+  it("購読の確立待ち中の reset: 確立後に購読を外し、要求を送らず、ハンドラも呼ばない", async () => {
+    let open: () => void = () => {};
+    subscribeGate = new Promise<void>((r) => {
+      open = r;
+    });
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    const h = handlers();
+    result.current.acquire();
+    let p: Promise<void> = Promise.resolve();
+    act(() => {
+      p = result.current.start(request, h);
+    });
+    act(() => result.current.reset());
+    await act(async () => {
+      open();
+      await p;
+    });
+    expect(unlisten).toHaveBeenCalled();
+    expect(runAiRequest).not.toHaveBeenCalled();
+    expect(h.onCancelled).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(result.current.acquire()).toBe(true);
+  });
+
+  it("run_ai_request の応答待ち中の reset: 応答後に cancel_stream を取り直す", async () => {
+    let finish: () => void = () => {};
+    runAiRequest.mockReturnValueOnce(
+      new Promise<void>((r) => {
+        finish = r;
+      }),
+    );
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    result.current.acquire();
+    let p: Promise<void> = Promise.resolve();
+    await act(async () => {
+      p = result.current.start(request, handlers());
+    });
+    const id = runAiRequest.mock.calls[0][0].streamId;
+    act(() => result.current.reset());
+    cancelStream.mockClear();
+    await act(async () => {
+      finish();
+      await p;
+    });
+    expect(cancelStream).toHaveBeenCalledWith(id);
+  });
+
   it("受信中は経過秒数が進み、完了すると止まる", async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));

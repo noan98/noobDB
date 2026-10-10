@@ -246,13 +246,13 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     // インデックスとビュー / ルーチンの定義はテーブル数ぶんの呼び出しになるので、並列度を抑える。
     const limit = schemaDocConcurrency(scopedTables.length);
     const withIndexes = await mapLimited(scopedTables, limit, async (tb) => {
-      if (collectAbortRef.current || tb.isView) return tb;
+      if (collectAbortRef.current || !stream.isMounted() || tb.isView) return tb;
       const indexes = await api.listIndexes(sessionId, database, tb.name).catch(() => []);
       return { ...tb, indexes };
     });
     const targets = selectDocObjects(ready.objects, mode === "all" ? null : scopeNames);
     const objects = await mapLimited(targets, limit, async (o) => {
-      if (collectAbortRef.current) return { kind: o.kind, name: o.name, definition: null };
+      if (collectAbortRef.current || !stream.isMounted()) return { kind: o.kind, name: o.name, definition: null };
       const definition = await api
         .getObjectDefinition(sessionId, database, o.kind, o.name, o.id)
         .catch(() => null);
