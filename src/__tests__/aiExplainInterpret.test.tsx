@@ -101,6 +101,7 @@ describe("AiExplainInterpret (#693)", () => {
     const { container, unmount } = renderWithProviders(ui());
     await act(async () => {});
     expect(container.querySelector("[data-testid=ai-explain-interpret]")).toBeNull();
+    expect(container.querySelector("[data-testid=ai-setup-hint]")).not.toBeNull();
     unmount();
     enable();
     const r = renderWithProviders(ui({ withAi: false }));

@@ -6,6 +6,10 @@ import { api } from "../api/tauri";
 
 let hasKey = false;
 let loaded = false;
+// キーの有無を IPC / 設定画面から一度でも確定できたか (取得前は「未登録」と区別する)。
+// IPC が失敗したときは false のまま: 「未登録」と断定できないので、キー未登録の案内
+// (AiSetupHint) は出さない側 (安全側) に倒す。入口は元々 AI が使えない扱いで何も出ない。
+let known = false;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -15,7 +19,9 @@ function emit() {
 /** キーの有無を更新する (保存 / 削除の成功後に呼ぶ)。 */
 export function setAiKeyPresent(v: boolean): void {
   loaded = true;
-  if (hasKey === v) return;
+  const wasKnown = known;
+  known = true;
+  if (hasKey === v && wasKnown) return;
   hasKey = v;
   emit();
 }
@@ -45,9 +51,15 @@ export function useAiKeyPresent(): boolean {
   return useSyncExternalStore(subscribe, () => hasKey, () => false);
 }
 
+/** キーの有無が確定済みか。取得前に「未登録」の案内を出さないために使う (#1475)。 */
+export function useAiKeyKnown(): boolean {
+  return useSyncExternalStore(subscribe, () => known, () => false);
+}
+
 /** テスト用: ストアを初期状態へ戻す。 */
 export function resetAiKeyStoreForTest(): void {
   hasKey = false;
   loaded = false;
+  known = false;
   listeners.clear();
 }

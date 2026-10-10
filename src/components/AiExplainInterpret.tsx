@@ -20,6 +20,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSetupHint } from "./AiSetupHint";
 import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
@@ -177,7 +178,8 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
     );
   };
 
-  if (!ai.enabled || !hasKey) return null;
+  // AI が使えないときは、設定へ案内する控えめなリンクだけを出す (#1475)。
+  if (!ai.enabled || !hasKey) return <AiSetupHint entry="explainInterpret" />;
   const running = state.kind === "running";
   const hasDdl = state.kind === "done" && state.value.suggestions.some((s) => s.kind === "ddl");
   const hasResult = state.kind !== "idle" && state.kind !== "running";
