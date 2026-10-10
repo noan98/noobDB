@@ -28,6 +28,8 @@ import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSetupHint } from "./AiSetupHint";
+import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
 type State =
@@ -209,7 +211,8 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
     );
   };
 
-  if (!ai.enabled || !hasKey) return null;
+  // AI が使えないときは、設定へ案内する控えめなリンクだけを出す (#1475)。
+  if (!ai.enabled || !hasKey) return <AiSetupHint entry="impactAnalysis" />;
   const running = state.kind === "running";
   const hasResult = state.kind !== "idle" && state.kind !== "running";
 
@@ -266,6 +269,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
       {(running || (hasResult && open)) && (
         <Flex direction="column" gap="2" maxH="260px" overflow="auto" aria-live="polite">
           {state.kind === "done" && <ResultView value={state.value} />}
+          <AiUsageNote event={stream.done} />
           {state.kind === "raw" && (
             <Flex direction="column" gap="1">
               <ErrorNote role="alert">{t("dangerousAiParseError")}</ErrorNote>

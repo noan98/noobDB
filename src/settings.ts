@@ -1785,6 +1785,11 @@ export function setAiMaskLiterals(value: boolean): void {
   patchAi({ maskLiterals: value });
 }
 
+/** AI 無効時の案内リンクを今後表示しないか (#1475)。AI 設定画面から戻せる。 */
+export function setAiHideSetupHint(value: boolean): void {
+  patchAi({ hideSetupHint: value });
+}
+
 /**
  * コマンドパレット (#845) で候補を選択したときに MRU の先頭へ記録する。並び替え・
  * 上限クランプは `recordMruUsage` (`components/commandPaletteSearch.ts`) を共有

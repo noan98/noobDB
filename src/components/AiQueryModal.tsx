@@ -34,6 +34,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { Spinner } from "./Spinner";
 
 type Schema =
@@ -471,6 +472,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
             )}
           </Flex>
         )}
+        <AiUsageNote event={stream.done} />
         {state.kind === "raw" && (
           <Flex direction="column" gap="1">
             <ErrorNote role="alert">{t("aiQueryParseError")}</ErrorNote>

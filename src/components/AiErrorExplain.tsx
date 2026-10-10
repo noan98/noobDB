@@ -22,6 +22,8 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSetupHint } from "./AiSetupHint";
+import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
 type State =
@@ -170,7 +172,8 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
     );
   };
 
-  if (!ai.enabled || !hasKey) return null;
+  // AI が使えないときは、設定へ案内する控えめなリンクだけを出す (#1475)。
+  if (!ai.enabled || !hasKey) return <AiSetupHint entry="errorExplain" />;
   const running = state.kind === "running";
 
   return (
@@ -264,6 +267,7 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
           )}
         </Flex>
       )}
+      <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("aiErrorExplainParseError")}</ErrorNote>

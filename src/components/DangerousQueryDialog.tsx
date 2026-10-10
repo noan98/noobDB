@@ -36,7 +36,7 @@ interface Props {
   impact?: PreflightImpact | null;
   /**
    * AI 影響分析 (#694) に必要な接続コンテキスト。渡されたときだけ「影響を AI で分析」を
-   * 出す (AI 無効 / キー未設定のときは AiImpactAnalysis 側が何も描かない)。
+   * 出す (AI 無効 / キー未設定のときは AiImpactAnalysis 側が設定へ案内するリンクだけを描く)。
    * UX ガードであり、バックエンド強制ではない。
    */
   aiContext?: {
