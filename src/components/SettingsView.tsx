@@ -644,7 +644,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     if (!initialSection) return;
     setActiveSection(initialSection);
     suppressSpyUntilRef.current = Date.now() + 600;
-    document.getElementById(initialSection)?.scrollIntoView({ block: "start" });
+    document.getElementById(initialSection)?.scrollIntoView?.({ block: "start" });
   }, [initialSection]);
   const handleModalBodyScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (Date.now() < suppressSpyUntilRef.current) return;

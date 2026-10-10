@@ -7,6 +7,8 @@ import { api } from "../api/tauri";
 let hasKey = false;
 let loaded = false;
 // キーの有無を IPC / 設定画面から一度でも確定できたか (取得前は「未登録」と区別する)。
+// IPC が失敗したときは false のまま: 「未登録」と断定できないので、キー未登録の案内
+// (AiSetupHint) は出さない側 (安全側) に倒す。入口は元々 AI が使えない扱いで何も出ない。
 let known = false;
 const listeners = new Set<() => void>();
 

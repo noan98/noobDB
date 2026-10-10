@@ -1,7 +1,7 @@
 import { chakra, Flex } from "@chakra-ui/react";
 import { useAiKeyKnown, useAiKeyPresent } from "../ai/aiKeyStore";
 import { requestOpenAiSettings } from "../ai/aiSettingsNav";
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 import { setAiHideSetupHint, useSettings } from "../settings";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -12,9 +12,18 @@ import { Button } from "./ui";
  * 「AI で解説 (設定で有効化)」を押すと AI 設定を開く。何も送信しない。
  * 「今後表示しない」は設定 (`ai.hideSetupHint`) に保存し、AI 設定画面から戻せる。
  * AI が使えるとき・非表示設定のとき・キーの有無が未確定のときは何も描かない。
- * 各入口では AI 無効の分岐 (`return null`) の代わりに `<AiSetupHint label=... />` と書く。
+ * 各入口では AI 無効の分岐 (`return null`) の代わりに `<AiSetupHint entry="..." />` と書く。
  */
-export function AiSetupHint({ label }: { label?: string }) {
+export type AiSetupHintEntry = "errorExplain" | "explainInterpret" | "impactAnalysis";
+
+// 入口ごとの文言 (AI オフ / 有効だがキー未登録)。
+const LABELS: Record<AiSetupHintEntry, { off: I18nKey; noKey: I18nKey }> = {
+  errorExplain: { off: "aiSetupHintLabel", noKey: "aiSetupHintNoKeyLabel" },
+  explainInterpret: { off: "aiSetupHintExplainInterpret", noKey: "aiSetupHintExplainInterpretNoKey" },
+  impactAnalysis: { off: "aiSetupHintImpactAnalysis", noKey: "aiSetupHintImpactAnalysisNoKey" },
+};
+
+export function AiSetupHint({ entry = "errorExplain" }: { entry?: AiSetupHintEntry }) {
   const t = useT();
   const ai = useSettings().ai;
   const hasKey = useAiKeyPresent();
@@ -35,7 +44,7 @@ export function AiSetupHint({ label }: { label?: string }) {
       <Tooltip label={t("aiSetupHintTooltip")}>
         <Button type="button" variant="ghost" size="sm" onClick={requestOpenAiSettings}>
           <Icon name="sparkles" size={ICON_SIZES.sm} />
-          <chakra.span>{label ?? t("aiSetupHintLabel")}</chakra.span>
+          <chakra.span>{t(ai.enabled ? LABELS[entry].noKey : LABELS[entry].off)}</chakra.span>
         </Button>
       </Tooltip>
       <Button type="button" variant="ghost" size="sm" onClick={() => setAiHideSetupHint(true)}>

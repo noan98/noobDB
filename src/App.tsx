@@ -10179,7 +10179,7 @@ export default function App() {
             </Flex>
           );
         })()}
-        {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時だけ出る。 */}
+        {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時は解説ボタン、無効時は設定への案内リンクが出る。 */}
         {!statusDismissed &&
           status.kind !== "idle" &&
           status.error &&

@@ -211,7 +211,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
   };
 
   // AI が使えないときは、設定へ案内する控えめなリンクだけを出す (#1475)。
-  if (!ai.enabled || !hasKey) return <AiSetupHint />;
+  if (!ai.enabled || !hasKey) return <AiSetupHint entry="impactAnalysis" />;
   const running = state.kind === "running";
   const hasResult = state.kind !== "idle" && state.kind !== "running";
 

@@ -45,6 +45,16 @@ describe("SettingsView render smoke (#604)", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("initialSection を渡すと該当セクションのナビが選択状態になる (#1475)", async () => {
+    renderWithProviders(<SettingsView theme="light" onClose={() => {}} initialSection="settings-sec-ai" />);
+    const nav = await screen.findByRole("navigation", { name: t("settingsTitle") });
+    await waitFor(() =>
+      expect(within(nav).getByText(t("aiSettingsTitle")).closest("button")?.getAttribute("aria-current")).toBe(
+        "true",
+      ),
+    );
+  });
+
   it("invokes onClose when the close control is activated", async () => {
     const onClose = vi.fn();
     renderWithProviders(<SettingsView theme="dark" onClose={onClose} />);
