@@ -2105,7 +2105,50 @@ const MDL_OBJECT_CONFLICT: [[bool; 10]; 10] = {
     ]
 };
 
-/// スコープロック (GLOBAL / SCHEMA / COMMIT / BACKUP 系など) の衝突。IX / S / X のみ。
+/// 待ち側の行列 (`m_waiting_incompatible[0]`)。行 = 要求 (PENDING の待ち手)、列 = 先に並んでいる
+/// 他スレッドの PENDING で、`true` = その PENDING の後ろで待たされる。添字は
+/// [`mdl_object_lock_index`] (S SH SR SW SWLP SU SRO SNW SNRW X)。`max_write_lock_count` が
+/// 既定値 (非常に大きい) で、piglet / hog の切替が起きていない前提の既定行列。
+/// 一次情報: MySQL 8.0 `sql/mdl.cc` の `MDL_lock::m_object_lock_strategy`
+/// (コメントの表は古く、実際のビットマップはこちらの内容)。
+const MDL_OBJECT_WAIT_CONFLICT: [[bool; 10]; 10] = {
+    const O: bool = false;
+    const X: bool = true;
+    [
+        //  S  SH SR SW SWLP SU SRO SNW SNRW X
+        [O, O, O, O, O, O, O, O, O, X], // S
+        [O, O, O, O, O, O, O, O, O, O], // SH
+        [O, O, O, O, O, O, O, O, X, X], // SR
+        [O, O, O, O, O, O, O, X, X, X], // SW
+        [O, O, O, O, O, O, X, X, X, X], // SWLP
+        [O, O, O, O, O, O, O, O, O, X], // SU
+        [O, O, O, X, O, O, O, O, X, X], // SRO
+        [O, O, O, O, O, O, O, O, O, X], // SNW
+        [O, O, O, O, O, O, O, O, O, X], // SNRW
+        [O, O, O, O, O, O, O, O, O, O], // X
+    ]
+};
+
+/// `mdl.cc` の `get_strategy` でスコープロック扱いになる名前空間か。performance_schema の
+/// `OBJECT_TYPE` 名 (GLOBAL / SCHEMA / COMMIT / TABLESPACE / BACKUP LOCK / RESOURCE GROUPS /
+/// FOREIGN KEY / CHECK CONSTRAINT) で判定し、それ以外 (TABLE / FUNCTION / PROCEDURE / TRIGGER /
+/// EVENT など) はオブジェクトロック扱い。
+fn mdl_is_scoped(object_type: &str) -> bool {
+    matches!(
+        object_type,
+        "GLOBAL"
+            | "TABLESPACE"
+            | "SCHEMA"
+            | "COMMIT"
+            | "BACKUP LOCK"
+            | "RESOURCE GROUPS"
+            | "FOREIGN KEY"
+            | "CHECK CONSTRAINT"
+    )
+}
+
+/// スコープロックの GRANTED 衝突 (`m_granted_incompatible`): IX は S / X と、S は IX / X と、
+/// X は全てと衝突する。
 fn mdl_scope_conflict(a: &str, b: &str) -> bool {
     matches!(
         (a, b),
@@ -2116,21 +2159,31 @@ fn mdl_scope_conflict(a: &str, b: &str) -> bool {
     )
 }
 
+/// スコープロックの待ち側 (`m_waiting_incompatible[0]`): IX 要求は PENDING の S / X に、
+/// S 要求は PENDING の X に止められる。X 要求は止められない。
+fn mdl_scope_wait_conflict(waiter: &str, pending: &str) -> bool {
+    matches!(
+        (waiter, pending),
+        ("INTENTION_EXCLUSIVE", "SHARED" | "EXCLUSIVE") | ("SHARED", "EXCLUSIVE")
+    )
+}
+
 /// `waiter_lock` を待っている要求が、`holder_lock` の保持者 (または先に並ぶ待ち) に
-/// ブロックされるか (#1417)。
-/// - GRANTED の保持者: 互換行列で衝突するときだけブロッカー。
-/// - PENDING の他者: 優先度の高い要求 (X / SNRW / SNW) だけが後続を待たせる。優先要求同士は
-///   順序が分からず相互待ちに見えてしまうので、待つ側が優先要求のときは数えない。
-///   SH は優先度が高く待たない。
+/// ブロックされるか (#1417)。GRANTED の保持者には granted 互換行列
+/// (`m_granted_incompatible`)、他スレッドの PENDING には待ち側の行列
+/// (`m_waiting_incompatible[0]`) を使う。
 fn mdl_blocks(
     object_type: &str,
     waiter_lock: &str,
     holder_lock: &str,
     holder_pending: bool,
 ) -> bool {
-    if object_type != "TABLE" {
-        // スコープ系は保守的に GRANTED の IX / S / X の衝突だけを見る。
-        return !holder_pending && mdl_scope_conflict(waiter_lock, holder_lock);
+    if mdl_is_scoped(object_type) {
+        return if holder_pending {
+            mdl_scope_wait_conflict(waiter_lock, holder_lock)
+        } else {
+            mdl_scope_conflict(waiter_lock, holder_lock)
+        };
     }
     let (Some(w), Some(h)) = (
         mdl_object_lock_index(waiter_lock),
@@ -2138,12 +2191,11 @@ fn mdl_blocks(
     ) else {
         return false;
     };
-    if !holder_pending {
-        return MDL_OBJECT_CONFLICT[w][h];
+    if holder_pending {
+        MDL_OBJECT_WAIT_CONFLICT[w][h]
+    } else {
+        MDL_OBJECT_CONFLICT[w][h]
     }
-    // 優先要求の判定: SNW(7) / SNRW(8) / X(9)。
-    let is_priority = |i: usize| i >= 7;
-    is_priority(h) && !is_priority(w) && w != 1 && MDL_OBJECT_CONFLICT[w][h]
 }
 
 /// [`MdlCandidate`] から、実際に待ちが発生している `(待つ側, ブロッカー)` の組だけを返す。
@@ -3055,31 +3107,58 @@ mod tests {
     }
 
     #[test]
-    fn mdl_pending_exclusive_blocks_later_readers_but_not_other_priority_requests() {
-        // ALTER の PENDING X の後ろで待つ SELECT (SR) / UPDATE (SW)。
-        assert_eq!(
-            mdl_wait_pairs(&[cand("SHARED_READ", "EXCLUSIVE", true)]),
-            vec![(3, 2)]
-        );
-        assert_eq!(
-            mdl_wait_pairs(&[cand("SHARED_WRITE", "EXCLUSIVE", true)]),
-            vec![(3, 2)]
-        );
-        // SH は優先度が高く待たない。
-        assert!(mdl_wait_pairs(&[cand("SHARED_HIGH_PRIO", "EXCLUSIVE", true)]).is_empty());
-        // 優先要求同士 (X と X) は順序不明なので相互待ちを作らない。
-        assert!(mdl_wait_pairs(&[cand("EXCLUSIVE", "EXCLUSIVE", true)]).is_empty());
-        // 保留中の SR は誰も待たせない。
-        assert!(mdl_wait_pairs(&[cand("EXCLUSIVE", "SHARED_READ", true)]).is_empty());
+    fn mdl_pending_requests_follow_the_waiting_matrix() {
+        let blocked = |w: &str, h: &str| !mdl_wait_pairs(&[cand(w, h, true)]).is_empty();
+        // ALTER の PENDING X の後ろで待つ SR / SW / SNW / SNRW / SU。SH は待たない。
+        assert!(blocked("SHARED_READ", "EXCLUSIVE"));
+        assert!(blocked("SHARED_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_NO_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_NO_READ_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_UPGRADABLE", "EXCLUSIVE"));
+        assert!(!blocked("SHARED_HIGH_PRIO", "EXCLUSIVE"));
+        // X 要求は PENDING に止められないので、X 同士が相互待ちにならない。
+        assert!(!blocked("EXCLUSIVE", "EXCLUSIVE"));
+        assert!(!blocked("EXCLUSIVE", "SHARED_READ"));
+        // (1) PENDING SW は後続の SRO を、PENDING SRO は後続の SWLP を待たせる。
+        assert!(blocked("SHARED_READ_ONLY", "SHARED_WRITE"));
+        assert!(blocked("SHARED_WRITE_LOW_PRIO", "SHARED_READ_ONLY"));
+        // (2) SU 要求は PENDING の SNW / SNRW には止められない (X だけ)。
+        assert!(!blocked("SHARED_UPGRADABLE", "SHARED_NO_WRITE"));
+        assert!(!blocked("SHARED_UPGRADABLE", "SHARED_NO_READ_WRITE"));
+        // (3) PENDING X は SNW / SNRW 要求も待たせる。
+        assert!(blocked("SHARED_NO_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_NO_READ_WRITE", "EXCLUSIVE"));
+        // SR は PENDING SNRW に止められるが、PENDING SW には止められない。
+        assert!(blocked("SHARED_READ", "SHARED_NO_READ_WRITE"));
+        assert!(!blocked("SHARED_READ", "SHARED_WRITE"));
     }
 
     #[test]
     fn mdl_scope_locks_use_intention_matrix() {
-        let mut c = cand("INTENTION_EXCLUSIVE", "INTENTION_EXCLUSIVE", false);
-        c.object_type = "GLOBAL".into();
-        assert!(mdl_wait_pairs(&[c.clone()]).is_empty());
-        c.holder_lock = "SHARED".into();
-        assert_eq!(mdl_wait_pairs(&[c]), vec![(3, 2)]);
+        let scope = |w: &str, h: &str, pending: bool| {
+            let mut c = cand(w, h, pending);
+            c.object_type = "GLOBAL".into();
+            !mdl_wait_pairs(&[c]).is_empty()
+        };
+        // GRANTED: IX 同士は互換、IX と S は衝突。
+        assert!(!scope("INTENTION_EXCLUSIVE", "INTENTION_EXCLUSIVE", false));
+        assert!(scope("INTENTION_EXCLUSIVE", "SHARED", false));
+        // (4) FTWRL (GLOBAL S PENDING) の後ろの INSERT (GLOBAL IX) は FTWRL を待つ。
+        assert!(scope("INTENTION_EXCLUSIVE", "SHARED", true));
+        assert!(scope("INTENTION_EXCLUSIVE", "EXCLUSIVE", true));
+        assert!(scope("SHARED", "EXCLUSIVE", true));
+        assert!(!scope("SHARED", "INTENTION_EXCLUSIVE", true));
+        assert!(!scope("EXCLUSIVE", "SHARED", true));
+    }
+
+    #[test]
+    fn mdl_scope_namespaces_follow_get_strategy() {
+        for t in ["GLOBAL", "SCHEMA", "COMMIT", "TABLESPACE", "BACKUP LOCK"] {
+            assert!(mdl_is_scoped(t), "{t}");
+        }
+        for t in ["TABLE", "FUNCTION", "PROCEDURE", "TRIGGER", "EVENT"] {
+            assert!(!mdl_is_scoped(t), "{t}");
+        }
     }
 
     #[test]
