@@ -38,7 +38,8 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   `{ type: "json_schema", schema }` (構造化出力 `output_config.format`、他の形は拒否)。結果は
   `ai-stream:delta` / `:done` / `:error` / `:cancelled` (`listenAiStream`、`streamId` で絞る)。
   `systemCached` は任意 (#1473): system の固定部分 (スキーマなど)。`system` より前のブロックになり、
-  `CACHE_MIN_CHARS` 以上のとき `cache_control: ephemeral` が付く (省略時は `system` 単独が対象)。
+  モデルの最小キャッシュ長 (`AiModel::cache_min_tokens`、UTF-8 バイト数で判定) 以上のとき
+  `cache_control: ephemeral` が付く。キャッシュは `systemCached` を渡したときだけ (オプトイン)。
   中断は既存の `cancel_stream` (`StreamKind::Ai`)。モデル・エフォートは呼び出し側から渡さず、
   `task` + `settings` (設定スナップショット) からバックエンド (`ai/models.rs`) が
   `taskModels[kind] ?? defaultModel` / `taskEfforts[kind] ?? 推奨` で解決する。

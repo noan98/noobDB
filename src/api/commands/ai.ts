@@ -43,8 +43,9 @@ export const aiCommands = {
     format?: { type: "json_schema"; schema: Record<string, unknown> } | null;
     /**
      * system のうち繰り返し同じになる固定部分 (スキーマなど、#1473)。`system` より前に置かれ、
-     * 十分長いときバックエンドが `cache_control` を付けてプロンプトキャッシュに載せる。
-     * 省略時は `system` 単独が (長ければ) キャッシュ対象になる。
+     * モデルの最小キャッシュ長以上のときバックエンドが `cache_control` を付けて
+     * プロンプトキャッシュに載せる。キャッシュはこれを渡したときだけ (オプトイン)。毎回変わる
+     * 値は `system` 側に置く。
      */
     systemCached?: string | null;
   }) =>

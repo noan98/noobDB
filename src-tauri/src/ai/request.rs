@@ -21,15 +21,11 @@ pub const ANTHROPIC_BETA: &str = "server-side-fallback-2026-07-01";
 /// ストリーミング要求の既定 `max_tokens` (接続テストは別に小さい値を使う)。
 pub const DEFAULT_MAX_TOKENS: u32 = 64_000;
 
-/// プロンプトキャッシュを付ける最小の文字数 (目安)。
-///
-/// Claude API のキャッシュ可能な最小プロンプト長はモデルにより 1024〜4096 トークン
-/// (Sonnet / Opus 4.8 系は 1024、Opus 4.5 / 4.6 と Haiku 4.5 は 4096。
-/// https://docs.claude.com/en/docs/build-with-claude/prompt-caching の "Cache limitations")。
-/// これ未満に `cache_control` を付けても API はエラーにせずキャッシュしないだけだが、
-/// 無駄な印を送らないよう、最大の 4096 トークンを 1 トークン約 3 文字 (識別子が多い
-/// スキーマ文字列は英文より粗い) で見積もった文字数を境にする。
-pub const CACHE_MIN_CHARS: usize = 12_288;
+/// キャッシュ可否の判定で 1 トークンを何バイトとみなすか。
+/// 英文は 1 トークン約 4 バイト。日本語 (UTF-8 で 3 バイト/文字) は 1 文字 1 トークン以上
+/// なので、バイト数で見積もれば実トークン数を多く見積もりすぎず、キャッシュが効かない
+/// 短さを誤って「十分長い」と判定しにくい。
+const BYTES_PER_TOKEN: usize = 4;
 
 /// 1 回の要求の仕様。モデルは `models::resolve_model` で解決済みのもの。
 #[derive(Debug, Clone)]
@@ -39,7 +35,8 @@ pub struct AiRequestSpec {
     /// 毎回変わる system の部分 (キャッシュ対象にしない)。
     pub system: Option<String>,
     /// 繰り返し同じになる system の固定部分 (スキーマなど)。`system` より前に置かれ、
-    /// 十分長いときだけ `cache_control` が付く。省略時は `system` 単独を対象にする。
+    /// 十分長いときだけ `cache_control` が付く。キャッシュは**これを渡したときだけ**
+    /// (オプトイン)。毎回変わる値を含みうる `system` 単独には付けない (書き込み割増の無駄払い防止)。
     pub system_cached: Option<String>,
     pub prompt: String,
     pub max_tokens: u32,
@@ -57,37 +54,29 @@ pub fn static_headers() -> [(&'static str, &'static str); 3] {
     ]
 }
 
-/// system をブロック配列にする。キャッシュ対象 (固定部分、無ければ system 単独) が
-/// `CACHE_MIN_CHARS` 以上のときだけ、そのブロックに `cache_control` を付ける。
-/// 固定部分は先頭に置く (キャッシュは先頭からの一致なので、可変部分は後ろ)。
+/// system をブロック配列にする。`system_cached` (固定部分) を先頭に置き、`system`
+/// (可変部分) を後ろに続ける。`cache_control` は固定部分にだけ、モデルの最小キャッシュ長
+/// 以上のときに付く。キャッシュは先頭からの一致なので固定部分が前でなければならない。
 fn build_system_blocks(spec: &AiRequestSpec) -> Option<Value> {
     let non_blank = |s: &Option<String>| s.clone().filter(|s| !s.trim().is_empty());
-    let cached = non_blank(&spec.system_cached);
-    let variable = non_blank(&spec.system);
     let text_block = |text: String| json!({ "type": "text", "text": text });
     let mut blocks: Vec<Value> = Vec::new();
-    match (cached, variable) {
-        (None, None) => return None,
-        (Some(c), v) => {
-            let mut block = text_block(c);
-            mark_cacheable(&mut block);
-            blocks.push(block);
-            blocks.extend(v.map(text_block));
-        }
-        (None, Some(v)) => {
-            let mut block = text_block(v);
-            mark_cacheable(&mut block);
-            blocks.push(block);
-        }
+    if let Some(cached) = non_blank(&spec.system_cached) {
+        let mut block = text_block(cached);
+        mark_cacheable(&mut block, spec.model);
+        blocks.push(block);
     }
-    Some(Value::Array(blocks))
+    blocks.extend(non_blank(&spec.system).map(text_block));
+    (!blocks.is_empty()).then_some(Value::Array(blocks))
 }
 
-/// ブロックが十分長ければ `cache_control: ephemeral` を付ける。
-fn mark_cacheable(block: &mut Value) {
+/// ブロックの `text` がモデルの最小キャッシュ長 (UTF-8 バイト数で見積もり) 以上なら
+/// `cache_control: ephemeral` を付ける。system 以外のブロック (#1471 で直前の user ターンに
+/// ブレークポイントを置くとき) からも使えるよう、`text` を持つブロックを直接受ける。
+fn mark_cacheable(block: &mut Value, model: AiModel) {
     let long_enough = block["text"]
         .as_str()
-        .is_some_and(|t| t.chars().count() >= CACHE_MIN_CHARS);
+        .is_some_and(|t| t.len() >= model.cache_min_tokens() * BYTES_PER_TOKEN);
     if long_enough {
         block["cache_control"] = json!({ "type": "ephemeral" });
     }
@@ -171,38 +160,56 @@ mod tests {
         assert!(build_body(&s).get("system").is_none());
     }
 
-    fn long() -> String {
-        "a".repeat(CACHE_MIN_CHARS)
-    }
+    /// 最小キャッシュ長ちょうどのバイト数 (Opus 5.5 = 512 トークン x 4 = 2048 バイト)。
+    const MIN_BYTES: usize = 512 * BYTES_PER_TOKEN;
 
-    #[test]
-    fn short_system_has_no_cache_control() {
-        let b = build_body(&spec());
-        assert!(b["system"][0].get("cache_control").is_none());
+    fn cached_spec(text: String) -> AiRequestSpec {
         let mut s = spec();
         s.system = None;
-        s.system_cached = Some("x".repeat(CACHE_MIN_CHARS - 1));
-        assert!(build_body(&s)["system"][0].get("cache_control").is_none());
+        s.system_cached = Some(text);
+        s
     }
 
     #[test]
-    fn long_system_alone_gets_cache_control() {
+    fn model_min_tokens_is_512_for_all_models() {
+        for m in AiModel::ALL {
+            assert_eq!(m.cache_min_tokens(), 512);
+        }
+    }
+
+    #[test]
+    fn cached_part_threshold_is_byte_based() {
+        let below = build_body(&cached_spec("a".repeat(MIN_BYTES - 1)));
+        assert!(below["system"][0].get("cache_control").is_none());
+        let at = build_body(&cached_spec("a".repeat(MIN_BYTES)));
+        assert_eq!(at["system"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn multibyte_text_is_judged_by_bytes_not_chars() {
+        // 「あ」は 3 バイト。682 文字 = 2046 バイト (未満)、683 文字 = 2049 バイト (以上)。
+        let below = build_body(&cached_spec("あ".repeat(682)));
+        assert!(below["system"][0].get("cache_control").is_none());
+        let above = build_body(&cached_spec("あ".repeat(683)));
+        assert_eq!(above["system"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn variable_system_alone_is_never_cached() {
         let mut s = spec();
-        s.system = Some(long());
+        s.system = Some("a".repeat(MIN_BYTES * 10));
         let b = build_body(&s);
-        assert_eq!(b["system"].as_array().map(Vec::len), Some(1));
-        assert_eq!(b["system"][0]["cache_control"]["type"], "ephemeral");
+        assert!(b["system"][0].get("cache_control").is_none());
     }
 
     #[test]
     fn cached_part_comes_first_and_variable_part_is_not_cached() {
-        let mut s = spec();
-        s.system_cached = Some(long());
+        let mut s = cached_spec("a".repeat(MIN_BYTES));
         s.system = Some("今回だけの指示".into());
         let b = build_body(&s);
         let blocks = b["system"].as_array().unwrap();
         assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0]["text"], long());
+        assert_eq!(blocks[0]["text"], "a".repeat(MIN_BYTES));
         assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
         assert_eq!(blocks[1]["text"], "今回だけの指示");
         assert!(blocks[1].get("cache_control").is_none());
@@ -210,12 +217,8 @@ mod tests {
 
     #[test]
     fn cached_part_without_variable_part_is_single_block() {
-        let mut s = spec();
-        s.system = None;
-        s.system_cached = Some(long());
-        let b = build_body(&s);
+        let b = build_body(&cached_spec("a".repeat(MIN_BYTES)));
         assert_eq!(b["system"].as_array().map(Vec::len), Some(1));
-        assert_eq!(b["system"][0]["cache_control"]["type"], "ephemeral");
     }
 
     #[test]
