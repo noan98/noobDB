@@ -110,6 +110,7 @@ function proc(id: number, overrides: Partial<ProcessInfo> = {}): ProcessInfo {
     query_summary: "SELECT 1",
     query_truncated: false,
     is_self: false,
+    blocked_by: [],
     ...overrides,
   };
 }

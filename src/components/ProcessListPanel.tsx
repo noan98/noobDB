@@ -8,6 +8,7 @@ import { semanticColorToken } from "../semanticColors";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
 import {
+  buildBlockingTree,
   formatProcessTime,
   processKey,
   PROCESS_LIVE_FIELDS,
@@ -193,12 +194,16 @@ export function ProcessListPanel({
     });
   }, []);
 
-  const killSelected = useCallback(async () => {
-    const ids = [...selected].sort((a, b) => a - b);
+  // 待機チェーン (#1417)。ブロッカー → 被ブロッカーのツリー。
+  const blockingRows = useMemo(() => buildBlockingTree(rows), [rows]);
+
+  // 確認 → 一括 kill → 再取得。選択 kill と待機ツリーのブロッカー kill で共通 (#1417)。
+  const killIds = useCallback(async (rawIds: number[]) => {
+    const ids = [...rawIds].sort((a, b) => a - b);
     if (ids.length === 0 || killing) return;
     // 自アプリのプール接続を kill するとこのセッション自体が切断されるため、
     // 選択に含まれている場合は確認文に強い警告を足す (#自己kill による切断)。
-    const includesSelf = processes.some((p) => selected.has(p.id) && p.is_self);
+    const includesSelf = processes.some((p) => ids.includes(p.id) && p.is_self);
     const ok = await confirm({
       title: t("processKillConfirmTitle"),
       message: (
@@ -250,7 +255,9 @@ export function ProcessListPanel({
       );
     }
     await load();
-  }, [selected, killing, processes, confirm, t, sessionId, toast, load]);
+  }, [killing, processes, confirm, t, sessionId, toast, load]);
+  const killSelected = useCallback(() => killIds([...selected]), [killIds, selected]);
+  const killBlocker = useCallback((id: number) => killIds([id]), [killIds]);
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
@@ -331,6 +338,82 @@ export function ProcessListPanel({
         <chakra.p margin={0} textStyle="body" color="app.textMuted">
           {t("processReadOnlyHint")}
         </chakra.p>
+      )}
+
+      {!error && blockingRows.length > 0 && (
+        <Box
+          border="1px solid"
+          borderColor="app.border"
+          borderRadius="md"
+          padding="3"
+          data-testid="blocking-tree"
+        >
+          <chakra.p margin={0} fontWeight={600} fontSize="sm">
+            {t("processBlockingTitle")}
+          </chakra.p>
+          <chakra.p margin={0} marginBottom="2" textStyle="caption" color="app.textMuted">
+            {t("processBlockingDesc")}
+          </chakra.p>
+          <chakra.ul listStyleType="none" margin={0} padding={0} role="tree">
+            {blockingRows.map((r, i) => (
+              <chakra.li
+                key={`${r.process.id}-${i}`}
+                role="treeitem"
+                aria-level={r.depth + 1}
+                display="flex"
+                alignItems="center"
+                gap="2"
+                paddingLeft={`calc(${r.depth} * var(--space-4))`}
+                paddingY="1"
+                fontSize="sm"
+                fontFamily="var(--font-mono)"
+              >
+                <chakra.span color="app.textMuted">{r.depth === 0 ? "●" : "└"}</chakra.span>
+                <chakra.span fontWeight={r.isRoot ? 700 : 400}>#{r.process.id}</chakra.span>
+                <chakra.span color="app.textMuted">{r.process.user ?? "–"}</chakra.span>
+                {r.process.time_secs != null && (
+                  <chakra.span color="app.textMuted">
+                    {formatProcessTime(r.process.time_secs)}
+                  </chakra.span>
+                )}
+                <chakra.span
+                  color="app.textSecondary"
+                  overflow="hidden"
+                  textOverflow="ellipsis"
+                  whiteSpace="nowrap"
+                  flex="1"
+                  minWidth={0}
+                >
+                  {r.process.query_summary ?? ""}
+                </chakra.span>
+                {r.repeated && (
+                  <chakra.span color="app.textWarning" fontFamily="var(--font-sans)">
+                    {t("processBlockingRepeated")}
+                  </chakra.span>
+                )}
+                {r.isRoot && (
+                  <chakra.span color="app.textError" fontFamily="var(--font-sans)">
+                    {t("processBlockingRoot", { count: r.victims })}
+                  </chakra.span>
+                )}
+                {!r.repeated && r.victims > 0 && (
+                  <Tooltip label={readOnly ? t("processReadOnlyHint") : undefined} focusableWrapper={readOnly}>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      size="sm"
+                      disabled={readOnly || killing}
+                      aria-label={t("processBlockingKillAria", { id: r.process.id })}
+                      onClick={() => void killBlocker(r.process.id)}
+                    >
+                      {t("processBlockingKill")}
+                    </Button>
+                  </Tooltip>
+                )}
+              </chakra.li>
+            ))}
+          </chakra.ul>
+        </Box>
       )}
 
       {error ? (

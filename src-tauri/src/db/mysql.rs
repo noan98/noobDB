@@ -764,6 +764,9 @@ impl MySqlConn {
         } else {
             primary?
         };
+        // 待機チェーン (#1417)。取得できなければ (権限不足・MySQL 5.7 / MariaDB・
+        // performance_schema OFF) エラーにせず空へ縮退する。
+        let blockers = blocked_by_map(self.list_lock_waits().await);
         Ok(rows
             .into_iter()
             .map(|r| ProcessInfo {
@@ -789,8 +792,40 @@ impl MySqlConn {
                     .or_else(|_| r.try_get::<i32, _>(8).map(i64::from))
                     .map(|v| v != 0)
                     .unwrap_or(false),
+                blocked_by: Vec::new(),
+            })
+            .map(|mut p| {
+                p.blocked_by = blockers.get(&p.id).cloned().unwrap_or_default();
+                p
             })
             .collect())
+    }
+
+    /// `(待たされている processlist id, ブロッカーの processlist id)` の組を返す (#1417)。
+    /// `data_lock_waits` のスレッド id を `threads` で processlist id へ引き直す。
+    /// 取得できない場合は空 (呼び出し側で縮退)。
+    async fn list_lock_waits(&self) -> Vec<(i64, i64)> {
+        let rows = sqlx::query(
+            "SELECT rt.PROCESSLIST_ID, bt.PROCESSLIST_ID \
+             FROM performance_schema.data_lock_waits w \
+             JOIN performance_schema.threads rt ON rt.THREAD_ID = w.REQUESTING_THREAD_ID \
+             JOIN performance_schema.threads bt ON bt.THREAD_ID = w.BLOCKING_THREAD_ID \
+             WHERE rt.PROCESSLIST_ID IS NOT NULL AND bt.PROCESSLIST_ID IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+        rows.iter()
+            .filter_map(|r| {
+                let get = |i: usize| {
+                    r.try_get::<u64, _>(i)
+                        .map(|v| v as i64)
+                        .or_else(|_| r.try_get::<i64, _>(i))
+                        .ok()
+                };
+                Some((get(0)?, get(1)?))
+            })
+            .collect()
     }
 
     /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。
@@ -1936,6 +1971,22 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
 /// since the connection running this very query always appears in it.
 /// Split out as a pure, generic function so the branch selection is
 /// unit-testable without a live server (#641).
+/// `(待たされている id, ブロッカー id)` の組を、待たされている id ごとのブロッカー一覧へ
+/// まとめる (#1417)。重複は除き、自己参照は捨てる。
+fn blocked_by_map(pairs: Vec<(i64, i64)>) -> std::collections::HashMap<i64, Vec<i64>> {
+    let mut map: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for (waiter, blocker) in pairs {
+        if waiter == blocker {
+            continue;
+        }
+        let entry = map.entry(waiter).or_default();
+        if !entry.contains(&blocker) {
+            entry.push(blocker);
+        }
+    }
+    map
+}
+
 fn process_list_needs_fallback<T>(primary: &std::result::Result<Vec<T>, sqlx::Error>) -> bool {
     match primary {
         Ok(rows) => rows.is_empty(),
@@ -2761,6 +2812,15 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blocked_by_map_groups_dedups_and_drops_self_references() {
+        let map = super::blocked_by_map(vec![(2, 1), (3, 1), (3, 2), (3, 1), (4, 4)]);
+        assert_eq!(map.get(&2), Some(&vec![1]));
+        assert_eq!(map.get(&3), Some(&vec![1, 2]));
+        assert!(!map.contains_key(&4));
+        assert!(super::blocked_by_map(Vec::new()).is_empty());
+    }
+
     use super::*;
 
     #[test]

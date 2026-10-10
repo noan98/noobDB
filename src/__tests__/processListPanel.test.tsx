@@ -93,6 +93,7 @@ describe("ProcessListPanel loading skeleton (#846)", () => {
         query_summary: "SELECT 1",
         query_truncated: false,
         is_self: false,
+        blocked_by: [],
       },
     ]);
 
@@ -151,6 +152,7 @@ describe("ProcessListPanel live motion (#1022)", () => {
     query_summary: "SELECT 1",
     query_truncated: false,
     is_self: false,
+    blocked_by: [],
   };
 
   it("変化したセルだけをフラッシュし、消えた行は取り除く", async () => {
@@ -193,6 +195,7 @@ describe("ProcessListPanel bulk kill & lazy query (#1259)", () => {
     query_summary: "SELECT …",
     query_truncated: true,
     is_self: false,
+    blocked_by: [],
   };
 
   it("選択した id を killProcesses 1 回で送り、失敗件数と最初のエラーを toast に出す", async () => {
@@ -222,5 +225,54 @@ describe("ProcessListPanel bulk kill & lazy query (#1259)", () => {
     expect(api.getProcessQuery).not.toHaveBeenCalled();
     fireEvent.mouseEnter(cell.closest("td") as HTMLElement);
     await waitFor(() => expect(api.getProcessQuery).toHaveBeenCalledWith("s1", 7));
+  });
+});
+
+/** ロック待ちの連鎖 (#1417): 待機ツリーを描き、根のブロッカーを確認付きで kill する。 */
+describe("ProcessListPanel blocking tree (#1417)", () => {
+  const base: ProcessInfo = {
+    id: 1,
+    user: "app",
+    host: "localhost",
+    database: "db",
+    command: "Query",
+    state: "idle in transaction",
+    time_secs: 10,
+    query_summary: "UPDATE t SET a = 1",
+    query_truncated: false,
+    is_self: false,
+    blocked_by: [],
+  };
+
+  it("待機が無ければツリーを出さない", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    await waitFor(() => expect(screen.getByTestId("process-count")).toBeInTheDocument());
+    expect(screen.queryByTestId("blocking-tree")).not.toBeInTheDocument();
+  });
+
+  it("根のブロッカーの Kill が確認後に killProcesses へ根の id だけを送る", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      base,
+      { ...base, id: 2, blocked_by: [1] },
+      { ...base, id: 3, blocked_by: [2] },
+    ]);
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    await screen.findByTestId("blocking-tree");
+    expect(screen.getAllByRole("treeitem")).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: t("processBlockingKillAria", { id: 1 }) }));
+    fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
+    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [1]));
+  });
+
+  it("read_only ではブロッカーの Kill を無効化する", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 2, blocked_by: [1] }]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly />);
+    await screen.findByTestId("blocking-tree");
+    expect(
+      screen.getByRole("button", { name: t("processBlockingKillAria", { id: 1 }) }),
+    ).toBeDisabled();
   });
 });

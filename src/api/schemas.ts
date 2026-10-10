@@ -150,6 +150,7 @@ export const processInfo = z.object({
   query_summary: z.string().nullable(),
   query_truncated: z.boolean(),
   is_self: z.boolean(),
+  blocked_by: z.array(z.number()),
 });
 
 /** `insert_generated_rows` の結果 (#1259)。 */

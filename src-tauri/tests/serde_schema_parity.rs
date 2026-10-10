@@ -193,6 +193,7 @@ fn build_fixtures() -> serde_json::Value {
         query_summary: Some("SELECT 1".into()),
         query_truncated: false,
         is_self: true,
+        blocked_by: vec![41],
     };
     let query_stats_support = QueryStatsSupport {
         live_tail: true,

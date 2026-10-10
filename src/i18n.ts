@@ -3359,6 +3359,13 @@ const en = {
   processKillFailed: "{failed} of {count} kill(s) failed: {error}",
   processLoadError: "Failed to load processes: {error}",
   processEmpty: "No processes to show.",
+  processBlockingTitle: "Blocking chains",
+  processBlockingDesc:
+    "Processes waiting on locks, shown under the process that blocks them. Killing a root blocker releases the whole chain.",
+  processBlockingRoot: "Root blocker ({count} waiting)",
+  processBlockingRepeated: "(already shown)",
+  processBlockingKill: "Kill",
+  processBlockingKillAria: "Kill blocker {id}",
   processTruncated: "Showing the first {shown} of {total} processes.",
   processReadOnlyHint:
     "This is a read-only session: killing processes is disabled (enforced by the backend).",
@@ -7649,6 +7656,13 @@ const ja: Dict = {
   processKillFailed: "{count} 件中 {failed} 件の kill に失敗しました: {error}",
   processLoadError: "プロセス一覧の取得に失敗しました: {error}",
   processEmpty: "表示するプロセスがありません。",
+  processBlockingTitle: "ロック待ちの連鎖",
+  processBlockingDesc:
+    "ロック待ちのプロセスを、待たせているプロセスの下に表示します。根のブロッカーを kill すると連鎖全体が解消します。",
+  processBlockingRoot: "根のブロッカー ({count} 件が待機中)",
+  processBlockingRepeated: "(表示済み)",
+  processBlockingKill: "Kill",
+  processBlockingKillAria: "ブロッカー {id} を kill",
   processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processReadOnlyHint:
     "読み取り専用セッションのため、プロセスの kill は無効です (バックエンドで強制されます)。",

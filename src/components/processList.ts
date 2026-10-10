@@ -72,3 +72,86 @@ export function pruneSelection(
   }
   return next;
 }
+
+/** 待機ツリーを平らに並べた 1 行 (#1417)。 */
+export interface BlockingTreeRow {
+  process: ProcessInfo;
+  /** 根 (他を待たせているが自分は待っていない) を 0 とする深さ。 */
+  depth: number;
+  /** 待機チェーンの根か。デッドロックなど根が無い循環では、循環の先頭を根として扱う。 */
+  isRoot: boolean;
+  /**
+   * 既に別の場所 (または祖先) で展開済みのプロセスへの参照行。複数のブロッカーに待たされる
+   * プロセスや循環 (デッドロック) で現れ、子は展開しない (無限再帰・爆発の防止)。
+   */
+  repeated: boolean;
+  /** このプロセスが (直接・間接に) 待たせているプロセスの数 (重複なし)。参照行は 0。 */
+  victims: number;
+}
+
+/**
+ * `blocked_by` 関係から待機チェーンのツリーを作り、表示順 (深さ優先) の平らな行にする (#1417)。
+ *
+ * - 一覧に存在しない id・自己参照のブロッカーは無視する。
+ * - 他を待たせている or 待たされているプロセスだけが対象 (無関係なプロセスは含まない)。
+ * - 根 = 待たされておらず、他を待たせているプロセス。根から辿れない循環 (デッドロック) は、
+ *   一覧順で最初のメンバーを根として拾う。
+ * - 各プロセスは 1 回だけ展開し、2 回目以降 (複数ブロッカー・循環) は `repeated` の参照行にする。
+ */
+export function buildBlockingTree(processes: readonly ProcessInfo[]): BlockingTreeRow[] {
+  const byId = new Map<number, ProcessInfo>();
+  for (const p of processes) if (!byId.has(p.id)) byId.set(p.id, p);
+
+  const blockersOf = new Map<number, number[]>();
+  const waitersOf = new Map<number, number[]>();
+  for (const p of byId.values()) {
+    const valid: number[] = [];
+    for (const b of p.blocked_by ?? []) {
+      if (b === p.id || !byId.has(b) || valid.includes(b)) continue;
+      valid.push(b);
+      const list = waitersOf.get(b);
+      if (list) list.push(p.id);
+      else waitersOf.set(b, [p.id]);
+    }
+    blockersOf.set(p.id, valid);
+  }
+
+  const rows: BlockingTreeRow[] = [];
+  const expanded = new Set<number>();
+
+  const victimCount = (id: number): number => {
+    const seen = new Set<number>();
+    const stack = [...(waitersOf.get(id) ?? [])];
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      if (cur === undefined || cur === id || seen.has(cur)) continue;
+      seen.add(cur);
+      stack.push(...(waitersOf.get(cur) ?? []));
+    }
+    return seen.size;
+  };
+
+  const visit = (id: number, depth: number, isRoot: boolean) => {
+    const process = byId.get(id);
+    if (!process) return;
+    if (expanded.has(id)) {
+      rows.push({ process, depth, isRoot: false, repeated: true, victims: 0 });
+      return;
+    }
+    expanded.add(id);
+    rows.push({ process, depth, isRoot, repeated: false, victims: victimCount(id) });
+    for (const child of waitersOf.get(id) ?? []) visit(child, depth + 1, false);
+  };
+
+  const participants = [...byId.values()].filter(
+    (p) => (blockersOf.get(p.id)?.length ?? 0) > 0 || (waitersOf.get(p.id)?.length ?? 0) > 0,
+  );
+  for (const p of participants) {
+    if ((blockersOf.get(p.id)?.length ?? 0) === 0) visit(p.id, 0, true);
+  }
+  // 根から辿れなかった循環 (デッドロック) を拾う。
+  for (const p of participants) {
+    if (!expanded.has(p.id)) visit(p.id, 0, true);
+  }
+  return rows;
+}
