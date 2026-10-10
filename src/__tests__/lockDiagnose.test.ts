@@ -126,6 +126,22 @@ describe("buildLockDiagnosePrompt (#1478)", () => {
     expect(p).toContain("orders (estimated rows: 12000)");
     expect(p).toContain("id int (key=PRI, not null)");
     expect(p).not.toContain("10.0.0.9");
+    // DB ユーザ名は送らない。
+    expect(p).not.toContain("user=");
+    expect(p).not.toContain("app");
+  });
+
+  it("idle in transaction の経過は since_last_query と書き分ける", () => {
+    const p = buildLockDiagnosePrompt({
+      ...base,
+      driver: "postgres",
+      processes: [
+        toLockDiagnoseProcess(proc(3, { command: "idle in transaction", time_secs: 40 }), "UPDATE orders SET a = 1"),
+        toLockDiagnoseProcess(proc(4, { command: "active", time_secs: 7 }), "SELECT 1"),
+      ],
+    });
+    expect(p).toContain("since_last_query=40s");
+    expect(p).toContain("running=7s");
   });
 
   it("本文が無いプロセスは (none) と書く", () => {
@@ -154,6 +170,20 @@ describe("lockDiagnoseTableRefs / parse (#1478)", () => {
     expect(lockDiagnoseTableRefs([a, b], "mysql")).toEqual([
       { database: "shop", table: "orders" },
       { database: "other", table: "items" },
+    ]);
+  });
+
+  it("PostgreSQL: 修飾の無いテーブルはスキーマ (既定 public) で引き、別 DB のプロセスは除く", () => {
+    const mine = toLockDiagnoseProcess(proc(1, { database: "appdb" }), "UPDATE orders SET a = 1");
+    const other = toLockDiagnoseProcess(proc(2, { database: "otherdb" }), "SELECT * FROM secret_t");
+    const qualified = toLockDiagnoseProcess(proc(3, { database: "appdb" }), "SELECT * FROM audit.logs");
+    const refs = lockDiagnoseTableRefs([mine, other, qualified], "postgres", { connectedDatabase: "appdb" });
+    expect(refs).toEqual([
+      { database: "public", table: "orders" },
+      { database: "audit", table: "logs" },
+    ]);
+    expect(lockDiagnoseTableRefs([mine], "postgres", { connectedDatabase: "appdb", schema: "sales" })).toEqual([
+      { database: "sales", table: "orders" },
     ]);
   });
 

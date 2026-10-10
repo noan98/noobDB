@@ -9426,6 +9426,7 @@ export default function App() {
                       sessionId={sessionId}
                       driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                       readOnly={selectedProfile?.read_only ?? false}
+                      isProduction={selectedProfile?.is_production ?? false}
                     />
                   ) : activeBottomPanelTab === "profile" ? (
                     profileTarget ? (

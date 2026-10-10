@@ -85,9 +85,7 @@ export function selectLockDiagnoseTargets(
     const comp = chainComponent(processes, selected);
     const head = comp.filter((p) => selectedIds.has(p.id));
     const rest = comp.filter((p) => !selectedIds.has(p.id));
-    const picked = processes.filter((p) => selectedIds.has(p.id));
-    const merged = [...new Map([...head, ...picked, ...rest].map((p) => [p.id, p] as const)).values()];
-    return capTargets("selection", merged);
+    return capTargets("selection", [...head, ...rest]);
   }
   const chained = processes.filter((p) => (p.blocked_by ?? []).length > 0).map((p) => p.id);
   if (chained.length > 0) {
@@ -111,7 +109,7 @@ export function selectLockDiagnoseTargets(
   return null;
 }
 
-/** プロンプトに載せる 1 プロセス (接続元ホストは含めない)。`query` は未マスクの本文。 */
+/** プロンプトに載せる 1 プロセス (接続元ホスト・DB ユーザ名は含めない)。`query` は未マスクの本文。 */
 export interface LockDiagnoseProcess {
   id: number;
   user: string | null;
@@ -138,18 +136,34 @@ export function toLockDiagnoseProcess(p: ProcessInfo, fullQuery: string | null):
   };
 }
 
+export interface LockDiagnoseTableRefOptions {
+  /** PostgreSQL: 接続中の DB 名 (datname)。別 DB のプロセスのテーブルは引けないので除く。不明なら除かない。 */
+  connectedDatabase?: string | null;
+  /** PostgreSQL: 修飾の無いテーブルを引くスキーマ。省略時は `public`。 */
+  schema?: string | null;
+}
+
 /**
  * クエリ本文から関連テーブルを集める (重複なし・上限 `ERROR_EXPLAIN_MAX_TABLES`)。
- * 修飾が無いテーブルはそのプロセスの接続先 DB で引く。
+ * 返す `database` は `describeTable` の第 2 引数。MySQL は修飾の無いテーブルをそのプロセスの
+ * 接続先 DB で引く。PostgreSQL の「database」階層はスキーマなので、修飾が無ければ
+ * `options.schema` (既定 `public`) を使い、接続先と別 DB (datname 違い) のプロセスは除く。
  */
-export function lockDiagnoseTableRefs(processes: readonly LockDiagnoseProcess[], driver: string): TableRef[] {
+export function lockDiagnoseTableRefs(
+  processes: readonly LockDiagnoseProcess[],
+  driver: string,
+  options: LockDiagnoseTableRefOptions = {},
+): TableRef[] {
   const seen = new Set<string>();
   const out: TableRef[] = [];
+  const pg = driver === "postgres";
   for (const p of processes) {
     if (!p.query) continue;
+    if (pg && options.connectedDatabase && p.database !== options.connectedDatabase) continue;
     for (const ref of extractTableRefs(p.query, driver)) {
       if (out.length >= ERROR_EXPLAIN_MAX_TABLES) return out;
-      const resolved: TableRef = { database: ref.database ?? p.database, table: ref.table };
+      const fallback = pg ? (options.schema ?? "public") : p.database;
+      const resolved: TableRef = { database: ref.database ?? fallback, table: ref.table };
       const key = `${resolved.database ?? ""}.${resolved.table}`.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -271,7 +285,7 @@ const SCOPE_DESCRIPTION: Record<LockDiagnoseScope, string> = {
   longRunning: "the longest-running active queries",
 };
 
-/** ユーザプロンプトを組み立てる。行データ・接続元ホストは含めない。 */
+/** ユーザプロンプトを組み立てる。行データ・接続元ホスト・DB ユーザ名は含めない。 */
 export function buildLockDiagnosePrompt(input: LockDiagnoseInput): string {
   const lines: string[] = [];
   lines.push(`Dialect: ${dialectLabel(input.driver)}`);
@@ -291,11 +305,11 @@ export function buildLockDiagnosePrompt(input: LockDiagnoseInput): string {
   lines.push("Sessions:");
   for (const p of input.processes) {
     const meta = [
-      `user=${p.user ?? "-"}`,
       `db=${p.database ?? "-"}`,
       `command=${p.command ?? "-"}`,
       `state=${p.state ?? "-"}`,
-      `running=${p.timeSecs !== null ? `${p.timeSecs}s` : "unknown"}`,
+      // PostgreSQL の idle in transaction の経過は「最後の文からの時間」で、実行時間ではない。
+      `${/^idle/i.test(p.command ?? "") ? "since_last_query" : "running"}=${p.timeSecs !== null ? `${p.timeSecs}s` : "unknown"}`,
       p.isSelf ? "this-app-connection" : "",
     ].filter(Boolean);
     lines.push(`- #${p.id} (${meta.join(", ")})`);

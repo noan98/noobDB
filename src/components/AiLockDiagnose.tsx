@@ -4,7 +4,7 @@ import { api, type ProcessInfo } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { useAiStream } from "../ai/useAiStream";
-import { dialectLabel, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
+import { dialectLabel, ERROR_EXPLAIN_MAX_TABLES, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
 import { riskTone, type ImpactRisk } from "../ai/impactAnalysis";
 import {
   buildLockDiagnosePrompt,
@@ -45,6 +45,10 @@ export interface AiLockDiagnoseProps {
   processes: readonly ProcessInfo[];
   /** 一覧で選択中のプロセス id。 */
   selectedIds: ReadonlySet<number>;
+  /** 本番接続か。true のときは送信前に本番である旨の確認を出す。 */
+  isProduction?: boolean;
+  /** PostgreSQL で修飾の無いテーブルを引くスキーマ。省略時は `public`。 */
+  schema?: string | null;
 }
 
 /**
@@ -69,12 +73,17 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
     [props.processes, props.selectedIds],
   );
 
-  const sendsLine = (tableCount: number) =>
+  // 件数が分かる前 (ボタンのツールチップなど) は件数を出さず、上限つきの言い方にする。
+  const sendsLine = (tableCount: number | null) =>
     t("lockDiagnoseSends", {
       sql: ai.maskLiterals ? t("dangerousAiSqlMasked") : t("dangerousAiSqlRaw"),
       dialect: dialectLabel(props.driver),
       tables:
-        tableCount > 0 ? t("dangerousAiTablesSome", { count: tableCount }) : t("dangerousAiTablesNone"),
+        tableCount === null
+          ? t("lockDiagnoseTablesUnknown", { max: ERROR_EXPLAIN_MAX_TABLES })
+          : tableCount > 0
+            ? t("dangerousAiTablesSome", { count: tableCount })
+            : t("dangerousAiTablesNone"),
     });
 
   const run = async () => {
@@ -85,7 +94,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
       await runInner(targets);
     } catch (e) {
       stream.release();
-      setState({ kind: "error", sends: sendsLine(0), message: String(e), refused: false });
+      setState({ kind: "error", sends: sendsLine(null), message: String(e), refused: false });
     }
   };
 
@@ -94,19 +103,8 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
       stream.release();
     };
     buttonRef.current?.focus();
-    if (needsSendScopeConfirm(ai.sendScope)) {
-      const ok = await confirm({
-        title: t("lockDiagnoseScopeTitle"),
-        message: `${t("lockDiagnoseScopeBody")}\n${sendsLine(0)}`,
-        confirmLabel: t("dangerousAiConfirmSend"),
-        tone: "warning",
-      });
-      if (!ok) return abort();
-    }
-    setOpen(true);
-    setState({ kind: "running", sends: sendsLine(0) });
-
     // 一覧は 200 文字の要約しか持たないので、対象だけ全文を取り直す (取れなければ要約)。
+    // 確認ダイアログに実際に引くテーブル数を出すため、確認より先に行う (読み取りのみ・送信なし)。
     const procs = await Promise.all(
       tg.processes.map(async (p) => {
         const full = p.query_summary
@@ -115,9 +113,32 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
         return toLockDiagnoseProcess(p, full);
       }),
     );
+    const refs = lockDiagnoseTableRefs(procs, props.driver, {
+      connectedDatabase: props.processes.find((p) => p.is_self)?.database ?? null,
+      schema: props.schema,
+    });
+    if (needsSendScopeConfirm(ai.sendScope)) {
+      const ok = await confirm({
+        title: t("lockDiagnoseScopeTitle"),
+        message: `${t("lockDiagnoseScopeBody")}\n${sendsLine(refs.length)}`,
+        confirmLabel: t("dangerousAiConfirmSend"),
+        tone: "warning",
+      });
+      if (!ok) return abort();
+    }
+    if (props.isProduction) {
+      const ok = await confirm({
+        title: t("lockDiagnoseProdTitle"),
+        message: `${t("lockDiagnoseProdBody")}\n${sendsLine(refs.length)}`,
+        confirmLabel: t("dangerousAiConfirmSend"),
+        tone: "warning",
+      });
+      if (!ok) return abort();
+    }
+    setOpen(true);
+    setState({ kind: "running", sends: sendsLine(refs.length) });
 
     // スキーマ情報はベストエフォート。取得できないものは黙って落とす。行データは取得しない。
-    const refs = lockDiagnoseTableRefs(procs, props.driver);
     const fetched = await Promise.all(
       refs.map(async (ref): Promise<LockDiagnoseTable | null> => {
         const db = resolveTableDatabase(ref, null, props.driver);
@@ -183,7 +204,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
   return (
     <Flex direction="column" gap="2" fontSize="sm" color="app.text" data-testid="ai-lock-diagnose">
       <Flex align="center" gap="2" wrap="wrap">
-        <Tooltip label={targets ? sendsLine(0) : t("lockDiagnoseNoTarget")} focusableWrapper={!targets}>
+        <Tooltip label={targets ? sendsLine(null) : t("lockDiagnoseNoTarget")} focusableWrapper={!targets}>
           <Button
             ref={buttonRef}
             type="button"
@@ -253,9 +274,11 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
         </Flex>
       )}
       {/* AI は KILL を実行しない。停止は一覧の既存ボタンでユーザが行う。 */}
-      <Callout tone="info" role="note">
-        {t("lockDiagnoseGuardNote")}
-      </Callout>
+      {(running || hasResult) && (
+        <Callout tone="info" role="note">
+          {t("lockDiagnoseGuardNote")}
+        </Callout>
+      )}
       {dialog}
     </Flex>
   );

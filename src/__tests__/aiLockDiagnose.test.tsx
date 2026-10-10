@@ -167,6 +167,48 @@ describe("AiLockDiagnose (#1478)", () => {
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
   });
 
+  it("本番接続では送信前に確認し、拒否したら送らない / 承諾したら送る。件数は実際の値", async () => {
+    renderWithProviders(ui({ isProduction: true }));
+    fireEvent.click(await ask());
+    await screen.findByText(t("lockDiagnoseProdTitle"));
+    // 事前推定したテーブル数 (orders の 1 件) が出る。0 固定ではない。
+    expect(screen.getByText(/1 件|1 tables/)).toBeTruthy();
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    fireEvent.click(cancels[cancels.length - 1]);
+    await act(async () => {});
+    expect(runAiRequest).not.toHaveBeenCalled();
+    fireEvent.click(await ask());
+    fireEvent.click(await screen.findByRole("button", { name: t("dangerousAiConfirmSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+  });
+
+  it("DB ユーザ名はプロンプトに含めない", async () => {
+    renderWithProviders(ui());
+    fireEvent.click(await ask());
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const prompt = runAiRequest.mock.calls[0][0].prompt as string;
+    expect(prompt).not.toContain("user=");
+    expect(prompt).not.toContain("app");
+  });
+
+  it("長時間実行クエリ (待機なし・未選択) を対象にして送る", async () => {
+    renderWithProviders(
+      ui({ processes: [proc(4, { time_secs: 120, query_summary: "SELECT * FROM big_t" })] }),
+    );
+    expect((await screen.findByTestId("ai-lock-scope")).textContent).toContain(t("lockDiagnoseScopeLong"));
+    fireEvent.click(await ask());
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const prompt = runAiRequest.mock.calls[0][0].prompt as string;
+    expect(prompt).toContain("#4");
+    expect(prompt).toContain("running=120s");
+  });
+
+  it("注意書きは実行後にだけ出す", async () => {
+    renderWithProviders(ui());
+    await ask();
+    expect(screen.queryByText(t("lockDiagnoseGuardNote"))).toBeNull();
+  });
+
   it("確認を拒否すると要求しない", async () => {
     enable({ sendScope: "schemaOnly" });
     renderWithProviders(ui());
@@ -180,7 +222,6 @@ describe("AiLockDiagnose (#1478)", () => {
 
   it("結果 (待機・止める候補・再発防止) を表示し、KILL は自動実行せず注意書きを出す", async () => {
     renderWithProviders(ui());
-    expect(await screen.findByText(t("lockDiagnoseGuardNote"))).toBeTruthy();
     fireEvent.click(await ask());
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     act(() => {
@@ -192,6 +233,7 @@ describe("AiLockDiagnose (#1478)", () => {
     expect(screen.getByText("STOP_REASON")).toBeTruthy();
     expect(screen.getByText(/PREVENT_TEXT/)).toBeTruthy();
     expect(screen.getByText(t("lockDiagnoseStopNote"))).toBeTruthy();
+    expect(screen.getByText(t("lockDiagnoseGuardNote"))).toBeTruthy();
   });
 
   it("実行中は中止でき、中止の表示になる", async () => {

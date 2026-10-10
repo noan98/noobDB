@@ -96,10 +96,13 @@ export function ProcessListPanel({
   sessionId,
   driver,
   readOnly,
+  isProduction = false,
 }: {
   sessionId: string;
   driver: DriverKind;
   readOnly: boolean;
+  /** 本番接続か (AI 解説の送信前確認に使う)。 */
+  isProduction?: boolean;
 }) {
   const t = useT();
   const toast = useToast();
@@ -349,6 +352,7 @@ export function ProcessListPanel({
           driver={driver}
           processes={rows}
           selectedIds={selected}
+          isProduction={isProduction}
         />
       )}
 
