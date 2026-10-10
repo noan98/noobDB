@@ -2579,3 +2579,114 @@ async fn mysql_metadata_lock_wait_is_listed_as_blocked() {
         .expect("cleanup");
     admin.close().await;
 }
+
+/// MDL の互換判定と待ち優先度 (#1417): T1 が SELECT (SR)、T2 が UPDATE (SW) を保持、
+/// (`LOCK TABLES READ` = SRO は準備済み文プロトコルで発行できないため単体テストで見る)T3 の ALTER (X) が PENDING になり、
+/// その後ろに T4 の SELECT (SR) が並ぶ。T4 のブロッカーは PENDING の ALTER (T3) で、
+/// SR 同士は互換なので T1 はブロッカー扱いしない。
+#[tokio::test]
+async fn mysql_metadata_lock_reader_behind_pending_alter_waits_on_the_alter() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let admin = t::connect(&opts).await.expect("connect admin");
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_mdl3", Some(&db))
+        .await
+        .expect("drop");
+    admin
+        .execute(
+            "CREATE TABLE noobdb_it_mdl3 (id int PRIMARY KEY) ENGINE=InnoDB",
+            Some(&db),
+        )
+        .await
+        .expect("create");
+
+    let t1 = t::connect(&opts).await.expect("connect T1");
+    t1.begin_transaction(Some(&db)).await.expect("begin T1");
+    let res = t1
+        .execute_in_transaction("SELECT CONNECTION_ID() AS id")
+        .await
+        .expect("id");
+    let t1_id = match &res.rows[0][0] {
+        t::Value::Int(v) => *v,
+        t::Value::UInt(v) => *v as i64,
+        other => panic!("unexpected CONNECTION_ID: {other:?}"),
+    };
+    t1.execute_in_transaction("SELECT * FROM noobdb_it_mdl3")
+        .await
+        .expect("T1 select");
+
+    let t2 = t::connect(&opts).await.expect("connect T2");
+    t2.begin_transaction(Some(&db)).await.expect("begin T2");
+    t2.execute_in_transaction("UPDATE noobdb_it_mdl3 SET id = id WHERE id < 0")
+        .await
+        .expect("T2 update (SW)");
+
+    let t3 = std::sync::Arc::new(t::connect(&opts).await.expect("connect T3"));
+    let t3_task = {
+        let t3 = t3.clone();
+        let db = db.clone();
+        tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                t3.execute("ALTER TABLE noobdb_it_mdl3 ADD COLUMN c int", Some(&db)),
+            )
+            .await
+        })
+    };
+    let mut alter_id: Option<i64> = None;
+    for _ in 0..50 {
+        let list = admin.list_processes().await.expect("list");
+        if let Some(p) = list.iter().find(|p| p.blocked_by.contains(&t1_id)) {
+            alter_id = Some(p.id);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let alter_id = alter_id.expect("ALTER must be blocked by T1");
+
+    let t4 = std::sync::Arc::new(t::connect(&opts).await.expect("connect T4"));
+    let t4_task = {
+        let t4 = t4.clone();
+        let db = db.clone();
+        tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                t4.execute("SELECT * FROM noobdb_it_mdl3", Some(&db)),
+            )
+            .await
+        })
+    };
+    let mut reader: Option<Vec<i64>> = None;
+    for _ in 0..50 {
+        let list = admin.list_processes().await.expect("list");
+        if let Some(p) = list.iter().find(|p| p.blocked_by.contains(&alter_id)) {
+            reader = Some(p.blocked_by.clone());
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let reader = reader.expect("the reader queued behind the ALTER must be blocked by it");
+    assert_eq!(
+        reader,
+        vec![alter_id],
+        "SR/SW holders are compatible with the reader; only the pending ALTER blocks it"
+    );
+
+    t1.finish_transaction(false).await.expect("end T1");
+    t2.finish_transaction(false).await.expect("end T2");
+    assert!(matches!(t3_task.await.expect("join"), Ok(Ok(_))));
+    assert!(matches!(t4_task.await.expect("join"), Ok(Ok(_))));
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_mdl3", Some(&db))
+        .await
+        .expect("cleanup");
+    admin.close().await;
+}

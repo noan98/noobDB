@@ -7666,13 +7666,13 @@ const ja: Dict = {
   processEmpty: "表示するプロセスがありません。",
   processBlockingTitle: "ロック待ちの連鎖",
   processBlockingDesc:
-    "ロック待ちのプロセスを、待たせているプロセスの下に表示します。根のブロッカーを kill すると連鎖全体が解消します。",
+    "ロック待ちのプロセスを、待たせているプロセスの下に表示します。根のブロッカーを強制終了すると連鎖全体が解消します。",
   processBlockingRoot: "根のブロッカー ({count} 件が待機中)",
   processBlockingRepeated: "(表示済み)",
   processBlockingDeadlock: "デッドロック (循環待ち)",
   processBlockingExternal: "一覧外のブロッカー #{id} ({count} 件が待機中)",
   processBlockingKill: "強制終了",
-  processBlockingKillAria: "ブロッカー {id} を kill",
+  processBlockingKillAria: "ブロッカー {id} を強制終了",
   processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processReadOnlyHint:
     "読み取り専用セッションのため、プロセスの kill は無効です (バックエンドで強制されます)。",

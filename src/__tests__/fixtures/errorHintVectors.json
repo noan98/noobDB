@@ -56,6 +56,9 @@
 
     { "id": "permission-denied-generic-hint", "note": "#732 で errorHintInsufficientPrivilege を追加し、illustrationForError と matchErrorHint の非対称 (illustration のみ permissionDenied でヒントは null) を解消した", "backendKind": "sqlxProtocol", "message": "permission denied for table users", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
     { "id": "insufficient-privilege-generic-hint", "note": "同上。insufficient privilege も errorHintInsufficientPrivilege に分類されるようになった", "backendKind": "sqlxProtocol", "message": "insufficient privilege to execute this command", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
-    { "id": "sqlite-database-locked", "note": "SQLite の書き込みロック競合 (SQLITE_BUSY) は errorHintSqliteLocked に分類される (#1417)", "backendKind": "sqlxProtocol", "message": "error returned from database: (code: 5) database is locked", "hintKey": "errorHintSqliteLocked", "illustration": "queryFailed" }
+    { "id": "sqlite-database-locked", "note": "SQLite の書き込みロック競合 (SQLITE_BUSY) は errorHintSqliteLocked に分類される (#1417)", "backendKind": "sqlxProtocol", "message": "error returned from database: (code: 5) database is locked", "hintKey": "errorHintSqliteLocked", "illustration": "queryFailed" },
+    { "id": "sqlite-database-table-locked", "note": "database table is locked (SQLITE_LOCKED) も SQLite ロックのヒント", "backendKind": "sqlxProtocol", "message": "error returned from database: (code: 6) database table is locked", "hintKey": "errorHintSqliteLocked", "illustration": "queryFailed" },
+    { "id": "sqlite-busy-bare-code", "note": "SQLITE_BUSY 単独の文言も SQLite ロックのヒント", "backendKind": "sqlxProtocol", "message": "SQLITE_BUSY", "hintKey": "errorHintSqliteLocked", "illustration": "queryFailed" },
+    { "id": "mysql-lock-wait-timeout-no-hint", "note": "MySQL の Lock wait timeout は SQLite ロックのヒントに誤分類しない", "backendKind": "sqlxProtocol", "message": "Lock wait timeout exceeded; try restarting transaction", "hintKey": null, "illustration": "timeout" }
   ]
 }
