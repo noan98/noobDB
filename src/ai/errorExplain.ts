@@ -155,7 +155,7 @@ export function dialectLabel(driver: string): string {
 }
 
 /** SQL 中の文字列リテラル (`'...'`) の中身を集める。 */
-function literalContents(sql: string): string[] {
+export function literalContents(sql: string): string[] {
   const out: string[] = [];
   for (const m of sql.matchAll(/'((?:[^'\\]|\\.|'')*)'/g)) {
     if (m[1].length >= 2) out.push(m[1].replace(/''/g, "'"));
@@ -210,6 +210,21 @@ export function findSqlRange(text: string, failed: string): { from: number; to: 
 /** 範囲置換で挿入する SQL。元の文の後ろに `;` が残るので、末尾の `;` を落として `;;` を避ける。 */
 export function sqlForRangeReplace(newSql: string): string {
   return newSql.trim().replace(/;+\s*$/, "");
+}
+
+/**
+ * エディタの末尾へ文を 1 つ追記するための差分。`doc.slice(0, from) + text` が新しい本文になる。
+ * 既存本文の最後の文 (コメント・空白を除いた末尾) が `;` で終わっていなければ、その直後に `;` を補う
+ * (行コメントの後ろに足すと `;` ごとコメントになるため、コメントの手前に置く)。追記する SQL も `;` で終える。
+ * `sqlScript.ts` は `;` だけで文を区切るので、これが無いと前の文とつながって 1 文になる。
+ */
+export function sqlForAppend(doc: string, newSql: string): { from: number; text: string } {
+  const stmt = `${newSql.trim().replace(/;+\s*$/, "")};`;
+  const masked = maskLiterals(doc);
+  const lastIdx = masked.trimEnd().length - 1;
+  if (lastIdx < 0) return { from: doc.length, text: doc.trim() === "" ? stmt : `\n\n${stmt}` };
+  if (masked[lastIdx] === ";") return { from: doc.length, text: `\n\n${stmt}` };
+  return { from: lastIdx + 1, text: `;${doc.slice(lastIdx + 1)}\n\n${stmt}` };
 }
 
 /** 送信範囲が「スキーマ情報のみ」のとき、SQL 本文を送る前に毎回確認が要る。 */

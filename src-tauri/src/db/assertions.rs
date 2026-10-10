@@ -73,6 +73,57 @@ fn bound_literal(driver: DriverKind, raw: &str) -> String {
     }
 }
 
+/// 先頭キーワードが `SELECT` / `WITH` か (前後の空白・開き括弧は許す)。
+fn starts_with_select_or_with(sql: &str) -> bool {
+    let body = sql.trim_start().trim_start_matches('(').trim_start();
+    let word: String = body
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    word.eq_ignore_ascii_case("select") || word.eq_ignore_ascii_case("with")
+}
+
+/// 文字列・識別子クォートとコメントの外で括弧が釣り合っているか。サブクエリの
+/// 閉じ括弧を先取りして包みから抜け出す本文を弾く。コメント内の括弧は読み飛ばす。
+fn parens_balanced(sql: &str) -> bool {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut depth: i64 = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\'' | '"' | '`' => {
+                i += 1;
+                while i < chars.len() && chars[i] != c {
+                    i += 1;
+                }
+            }
+            '-' if chars.get(i + 1) == Some(&'-') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 1;
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    depth == 0
+}
+
 /// ルールの入力検証。保存時 (`save_assertion`) と SQL 生成時の両方で使う。
 pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
     if !non_blank(table) {
@@ -126,6 +177,26 @@ pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
                 ));
             }
         }
+        AssertionRule::CustomSql { sql } => {
+            if !non_blank(sql) {
+                return Err(invalid("sql is required"));
+            }
+            // ドライバ非依存の保守的判定。ドライバ別の再検証は `build_sql` の末尾で行う。
+            if !crate::db::is_read_only_sql(sql) {
+                return Err(AppError::ReadOnly(
+                    "custom assertion SQL must be a single read-only statement".into(),
+                ));
+            }
+            // SHOW / EXPLAIN / TABLE などは読み取り専用でもサブクエリに包めない。
+            if !starts_with_select_or_with(sql) {
+                return Err(invalid(
+                    "custom assertion SQL must start with SELECT or WITH",
+                ));
+            }
+            if !parens_balanced(sql) {
+                return Err(invalid("custom assertion SQL has unbalanced parentheses"));
+            }
+        }
         AssertionRule::RowCount { op, value, max } => {
             if *op == RowCountOp::Between {
                 match max {
@@ -148,6 +219,7 @@ pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
 /// | `range` | 非 NULL で範囲 (両端含む) の外にある行数 |
 /// | `referential` | 参照列がすべて非 NULL で、参照先に対応行が無い行数 |
 /// | `row_count` | 総行数 (pass/fail は [`evaluate`] が条件と比較して決める) |
+/// | `custom_sql` | 利用者の SELECT が返す行数 (0 行なら pass) |
 pub fn build_sql(
     driver: DriverKind,
     schema: Option<&str>,
@@ -237,6 +309,17 @@ pub fn build_sql(
             (
                 format!("SELECT {count} AS observed FROM {from} AS a_src WHERE {where_}"),
                 format!("SELECT a_src.* FROM {from} AS a_src WHERE {where_}"),
+            )
+        }
+        AssertionRule::CustomSql { sql } => {
+            // 末尾の `;` と空白を落とし、サブクエリに包む。改行で挟むのは末尾の
+            // `--` コメントが閉じ括弧を巻き込まないようにするため。
+            let body = sql
+                .trim()
+                .trim_end_matches(|c: char| c == ';' || c.is_whitespace());
+            (
+                format!("SELECT {count} AS observed FROM (\n{body}\n) AS a_custom"),
+                body.to_string(),
             )
         }
         AssertionRule::RowCount { .. } => (
@@ -329,6 +412,9 @@ mod tests {
                 op: RowCountOp::Gt,
                 value: 0,
                 max: None,
+            },
+            AssertionRule::CustomSql {
+                sql: s("SELECT * FROM t WHERE a > b;"),
             },
         ]
     }
@@ -550,6 +636,36 @@ mod tests {
                     Err(e) => panic!("{driver:?} {rule:?}: {e}"),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn custom_sql_wraps_as_subquery_and_rejects_writes() {
+        let rule = AssertionRule::CustomSql {
+            sql: s("SELECT id FROM t WHERE end_at < start_at -- コメント\n;"),
+        };
+        for driver in ALL {
+            let out = sql(driver, None, "t", &rule);
+            assert!(out.check_sql.contains("AS a_custom"), "{}", out.check_sql);
+            assert!(out.violations_sql.ends_with("start_at -- コメント"));
+        }
+        for bad in [
+            "DELETE FROM t",
+            "SELECT 1; DELETE FROM t",
+            "UPDATE t SET a = 1",
+            "   ",
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
+            "SELECT * FROM t FOR UPDATE",
+            "SHOW TABLES",
+            "EXPLAIN SELECT 1",
+            "TABLE t",
+            "SELECT 1) AS a_custom UNION SELECT (1",
+        ] {
+            let rule = AssertionRule::CustomSql { sql: s(bad) };
+            assert!(
+                build_sql(DriverKind::Postgres, None, "t", &rule).is_err(),
+                "{bad}"
+            );
         }
     }
 

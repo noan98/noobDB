@@ -17,6 +17,7 @@ import {
 import { CountUp } from "./CountUp";
 import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
 import { uniqueByKey } from "./liveDiff";
+import { AiLockDiagnose } from "./AiLockDiagnose";
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
@@ -95,10 +96,16 @@ export function ProcessListPanel({
   sessionId,
   driver,
   readOnly,
+  isProduction = false,
+  schema,
 }: {
   sessionId: string;
   driver: DriverKind;
   readOnly: boolean;
+  /** 本番接続か (AI 解説の送信前確認に使う)。 */
+  isProduction?: boolean;
+  /** 開いているスキーマ (PostgreSQL)。AI 解説で修飾の無いテーブルを引くときに使う。 */
+  schema?: string | null;
 }) {
   const t = useT();
   const toast = useToast();
@@ -338,6 +345,19 @@ export function ProcessListPanel({
         <chakra.p margin={0} textStyle="body" color="app.textMuted">
           {t("processReadOnlyHint")}
         </chakra.p>
+      )}
+
+      {/* AI 解説 (#1478)。AI 無効 / SQLite では何も描かない。KILL は下の既存ボタンで行う。 */}
+      {!error && (
+        <AiLockDiagnose
+          key={sessionId}
+          sessionId={sessionId}
+          driver={driver}
+          processes={rows}
+          selectedIds={selected}
+          isProduction={isProduction}
+          schema={schema ?? undefined}
+        />
       )}
 
       {!error && blockingRows.length > 0 && (

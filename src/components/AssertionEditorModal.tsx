@@ -359,6 +359,22 @@ export function AssertionEditorModal({ initial, driver, profile, onSave, onClose
           </Flex>
         )}
 
+        {draft.kind === "custom_sql" && (
+          <FormSection>
+            <FieldLabel htmlFor="assert-sql">{t("assertFieldSql")}</FieldLabel>
+            <Textarea
+              id="assert-sql"
+              rows={5}
+              value={draft.sql}
+              onChange={(e) => set("sql", e.target.value)}
+              placeholder={t("assertFieldSqlPlaceholder")}
+              fontFamily="mono"
+              spellCheck={false}
+            />
+            {err("sql", "assertErrSql")}
+          </FormSection>
+        )}
+
         <FormSection>
           <FieldLabel as="div">{t("assertPreviewCheck")}</FieldLabel>
           <CodePreview wrap minH="40px" maxH="120px">

@@ -203,6 +203,25 @@ describe("useAiStream (#1470)", () => {
     expect(result.current.acquire()).toBe(true);
   });
 
+  it("start より前 (確認ダイアログ・スキーマ取得中) の中止: start は要求を送らず onCancelled を呼ぶ", async () => {
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    const h = handlers();
+    result.current.acquire();
+    act(() => result.current.cancel());
+    await act(async () => {
+      await result.current.start(request, h);
+    });
+    expect(runAiRequest).not.toHaveBeenCalled();
+    expect(h.onCancelled).toHaveBeenCalledTimes(1);
+    expect(result.current.running).toBe(false);
+    // 次の実行では中止フラグが下りている。
+    expect(result.current.acquire()).toBe(true);
+    await act(async () => {
+      await result.current.start(request, handlers());
+    });
+    expect(runAiRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("登録前の中止 (run_ai_request の応答待ち): 登録が済んだ後に cancel_stream を取り直す", async () => {
     let finish: () => void = () => {};
     runAiRequest.mockReturnValueOnce(
