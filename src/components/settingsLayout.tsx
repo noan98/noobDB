@@ -1,4 +1,8 @@
+import type { ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
+import { useT } from "../i18n";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Tooltip } from "./Tooltip";
 
 /**
  * 設定画面 / ヘルプ画面で共有する Chakra レイアウトプリミティブ群。
@@ -14,6 +18,54 @@ import { chakra } from "@chakra-ui/react";
 
 export const SettingsHelp = chakra("p", {
   base: { margin: 0, fontSize: "sm", color: "app.textMuted" },
+});
+
+const SettingsInfoButton = chakra("button", {
+  base: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    p: "0.5",
+    color: "app.textMuted",
+    background: "transparent",
+    border: "none",
+    borderRadius: "pill",
+    cursor: "help",
+    transitionProperty: "color",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: { color: "app.text" },
+    _focusVisible: { outline: "none", boxShadow: "var(--focus-ring)" },
+  },
+});
+
+/**
+ * 設定項目の詳しい説明を出すインフォメーションアイコン。説明文を常時表示すると
+ * 設定画面が文章で埋まるため、ラベルの横にアイコンだけを置き、hover / フォーカス /
+ * クリックで吹き出しに本文を出す。吹き出しは `Tooltip` が `aria-describedby` で
+ * ボタンに結び付けるので、キーボードでフォーカスすると読み上げにも本文が載る。
+ * WKWebView (macOS) はクリックでボタンにフォーカスを移さないため、クリック時に
+ * 明示的に focus してフォーカス経路で即時に開く。
+ */
+export function SettingsInfo({ children }: { children: ReactNode }) {
+  const t = useT();
+  return (
+    <Tooltip label={children} maxWidth="360px">
+      <SettingsInfoButton
+        type="button"
+        aria-label={t("settingsInfoAria")}
+        onClick={(e) => e.currentTarget.focus()}
+      >
+        <Icon name="info" size={ICON_SIZES.sm} />
+      </SettingsInfoButton>
+    </Tooltip>
+  );
+}
+
+/** ラベルとインフォメーションアイコンを横に並べる入れ物。 */
+export const SettingsLabelWithInfo = chakra("span", {
+  base: { display: "inline-flex", alignItems: "center", gap: "1", minW: 0 },
 });
 
 export const SettingsSection = chakra("section", {

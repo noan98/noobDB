@@ -3,7 +3,12 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { api, type KnownHost } from "../api/tauri";
 import { useT } from "../i18n";
 import { useConfirm } from "./ConfirmDialog";
-import { SettingsHelp, SettingsSection, SettingsSectionHeader } from "./settingsLayout";
+import {
+  SettingsInfo,
+  SettingsLabelWithInfo,
+  SettingsSection,
+  SettingsSectionHeader,
+} from "./settingsLayout";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 
@@ -59,12 +64,14 @@ export function KnownHostsPanel() {
     <SettingsSection>
       {dialog}
       <SettingsSectionHeader>
-        <chakra.h3>{t("knownHostsTitle")}</chakra.h3>
+        <SettingsLabelWithInfo>
+          <chakra.h3>{t("knownHostsTitle")}</chakra.h3>
+          <SettingsInfo>{t("knownHostsDesc")}</SettingsInfo>
+        </SettingsLabelWithInfo>
         <Button type="button" variant="secondary" size="sm" onClick={reload} disabled={loading}>
           {t("knownHostsRefresh")}
         </Button>
       </SettingsSectionHeader>
-      <SettingsHelp>{t("knownHostsDesc")}</SettingsHelp>
       {hosts.length === 0 ? (
         <chakra.p fontSize="sm" color="app.textMuted" py="1">
           {t("knownHostsEmpty")}

@@ -21,7 +21,8 @@ import {
   useSettings,
 } from "../settings";
 import {
-  SettingsHelp,
+  SettingsInfo,
+  SettingsLabelWithInfo,
   SettingsSection,
   SettingsSectionHeader,
 } from "./settingsLayout";
@@ -121,7 +122,10 @@ export function KeybindingSettings() {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <chakra.h3>{t("settingsShortcuts")}</chakra.h3>
+        <SettingsLabelWithInfo>
+          <chakra.h3>{t("settingsShortcuts")}</chakra.h3>
+          <SettingsInfo>{t("settingsShortcutsHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
         <SmallButton
           type="button"
           onClick={() => {
@@ -133,7 +137,6 @@ export function KeybindingSettings() {
           {t("settingsShortcutsResetAll")}
         </SmallButton>
       </SettingsSectionHeader>
-      <SettingsHelp>{t("settingsShortcutsHelp")}</SettingsHelp>
 
       {SHORTCUT_CATEGORY_ORDER.map((category) => {
         const items = REBINDABLE_SHORTCUTS.filter((s) => s.category === category);

@@ -3868,6 +3868,7 @@ const en = {
 
   settingsSearchPlaceholder: "Search settings…",
   settingsSearchNoMatch: "No matching settings",
+  settingsInfoAria: "Details",
   settingsNavAria: "Settings sections",
 
   resultStatusBar: "{rows} rows · {ms} ms",
@@ -8159,6 +8160,7 @@ const ja: Dict = {
 
   settingsSearchPlaceholder: "設定を検索…",
   settingsSearchNoMatch: "一致する設定がありません",
+  settingsInfoAria: "詳しい説明",
   settingsNavAria: "設定セクション",
 
   resultStatusBar: "{rows} 件 · {ms} ms",
