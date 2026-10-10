@@ -59,10 +59,12 @@ export default defineConfig({
     // `frontend (build + browser tests)` が PR をブロックするのを避ける。2 回以上は再試行
     // しない (本物の退行を隠さない)。ビジュアル回帰 (visual.browser.test.tsx) は真の pixel
     // diff を隠すため、そのファイル側で `retry: 0` に上書きしている。再試行を要したテストは
-    // `scripts/flaky-reporter.mjs` (カスタムレポーター) が拾って Job Summary に出す (揺らぎの可視化)。
+    // 標準の `github-actions` レポーターが Job Summary の「Flaky Tests」節に出す (揺らぎの可視化)。
     retry: 1,
-    // `default` に加え、retry で通ったテストを Job Summary / アノテーションに出す。
-    reporters: ["default", "./scripts/flaky-reporter.mjs"],
+    // retry で合格したテストは `github-actions` レポーターが $GITHUB_STEP_SUMMARY の
+    // 「Flaky Tests」節に出す。`reporters` を明示すると Vitest が GITHUB_ACTIONS 時に自動で
+    // 足す同レポーターが外れるため、CI のときだけ明示的に足す。
+    reporters: process.env.GITHUB_ACTIONS === "true" ? ["default", "github-actions"] : ["default"],
     expect: { poll: { timeout: 5_000 } },
     browser: {
       provider: playwright(),

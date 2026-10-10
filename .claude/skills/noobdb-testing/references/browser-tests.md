@@ -95,7 +95,7 @@
   再試行しない)。**ビジュアル回帰 (`visual.browser.test.tsx`) は `describe` 側の `{ retry: 0 }`
   で除外**している。再試行は真の pixel diff を「2 回目で通った」ことにして隠すため。
   ビジュアル系のテストを足すときは同じく `retry: 0` を付ける。
-- retry で合格したテストは緑のままなので、カスタムレポーター `scripts/flaky-reporter.mjs`
-  (config の `reporters`) が Job Summary (`$GITHUB_STEP_SUMMARY`) に表と `::warning::` を出す
-  (fail はさせない)。Vitest の JSON reporter は `retryCount` を出さないためカスタムにしている。
-  ユニットテストは `pnpm run test:scripts`。表に同じテストが繰り返し出るなら retry で隠さず原因を直す。
+- retry で合格したテストは緑のままだが、標準の `github-actions` レポーターが Job Summary
+  (`$GITHUB_STEP_SUMMARY`) の「Flaky Tests」節に出す。config は `reporters` を明示しており
+  (明示すると自動追加が外れるため)、`GITHUB_ACTIONS=true` のときだけ `github-actions` を足している。
+  同じテストが繰り返し出るなら retry で隠さず原因を直す。
