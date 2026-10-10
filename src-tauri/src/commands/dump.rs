@@ -828,7 +828,8 @@ async fn dump_postgres(
         // テーブル指定 (#1399): スキーマ修飾したパターンで表ごとに `--table`。
         // `--schema` との併用は積集合になり分かりづらいので、修飾で絞る。
         // `pg_schema` が空なら、ツリーで選んだスキーマ (= `database` 引数) で修飾する。
-        // タスク経路 (`database` が接続先 DB 名) ではスキーマ扱いしない。
+        // タスク経路 (`database` が接続先 DB 名) ではスキーマ扱いしないので、テーブル指定する
+        // 場合は `pg_schema` が必要 (無いと非修飾の表名になり search_path 依存)。
         let schema = if database_is_connection_db {
             pg_schema
         } else {

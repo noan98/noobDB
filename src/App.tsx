@@ -7018,7 +7018,17 @@ export default function App() {
     // 失敗しても念のためツリーは読み直す。
     invalidateSchemaCache(database);
     connectionListRef.current?.refreshSchema();
-    const dropped = failed ? [] : tables;
+    let dropped: string[] = failed ? [] : tables;
+    if (failed) {
+      // MySQL の `DROP TABLE a, b` は途中失敗でも存在した分は落とす。読み直した一覧から消えた
+      // テーブルだけ「落ちた」とみなしてタブを閉じる (一覧が取れなければ何もしない)。
+      try {
+        const remaining = new Set(await api.listTables(sessionId, database));
+        dropped = tables.filter((tbl) => !remaining.has(tbl));
+      } catch {
+        dropped = [];
+      }
+    }
     if (dropped.length > 0) {
       // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
       const gone = new Set(dropped);

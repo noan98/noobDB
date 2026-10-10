@@ -250,7 +250,11 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
     [database, tableScope?.length],
   );
   const [path, setPath] = useState<string>(`${initialBasename}.sql`);
-  const [options, setOptions] = useState<DumpOptions>(DEFAULT_OPTIONS);
+  const [options, setOptions] = useState<DumpOptions>(() =>
+    // PostgreSQL のツリーの「database」はスキーマ。スキーマノードからの全体ダンプは、タイトルの範囲と
+    // 揃えるためスキーマ欄を初期入力する (一括 = tables 指定は送信時に database で固定される)。
+    driver === "postgres" && !(tables && tables.length > 0) ? { ...DEFAULT_OPTIONS, pgSchema: database } : DEFAULT_OPTIONS,
+  );
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [progress, setProgress] = useState<DumpProgress | null>(null);
   // Active dump's stream id + event unlistener, so the modal can cancel and
