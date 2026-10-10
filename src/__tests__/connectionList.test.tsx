@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
@@ -358,6 +358,9 @@ describe("Database Explorer の階層 (#1112)", () => {
 
   describe("テーブル / 列行のポインタ・ドラッグ挿入 (#1414)", () => {
     const originalElementFromPoint = document.elementFromPoint;
+    afterEach(() => {
+      document.elementFromPoint = originalElementFromPoint;
+    });
     function setupTarget() {
       const editor = document.createElement("div");
       document.body.appendChild(editor);
@@ -374,7 +377,6 @@ describe("Database Explorer の階層 (#1112)", () => {
         cleanup: () => {
           unregister();
           editor.remove();
-          document.elementFromPoint = originalElementFromPoint;
         },
       };
     }
@@ -420,6 +422,22 @@ describe("Database Explorer の階層 (#1112)", () => {
       window.dispatchEvent(ptr("pointermove", 40));
       window.dispatchEvent(ptr("pointerup", 40, { altKey: true }));
       expect(insert).toHaveBeenCalledWith({ kind: "column", database: "db1", table: "tbl1", column: "id" }, 5, false);
+      cleanup();
+    });
+
+    it("ドラッグ中にツールチップは出ず、ドロップ後にも戻らない", async () => {
+      await openDb({});
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      const { cleanup } = setupTarget();
+      fireEvent.mouseOver(row);
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 40));
+      // 表示予約 (400ms) を過ぎるまで待っても出ない。
+      await new Promise((r) => setTimeout(r, 600));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      window.dispatchEvent(ptr("pointerup", 40));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole("tooltip")).toBeNull();
       cleanup();
     });
 

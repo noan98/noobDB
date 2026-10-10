@@ -211,6 +211,8 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     phase = cancelPhase();
     setCurrent(null, 0, 0);
     publish(INACTIVE);
+    // カーソルは離すのを待たずに戻す (user-select は離すまで維持)。
+    document.body.style.cursor = prevCursor;
     // pointermove は外さない: キャンセル後も buttons===0 を検知して後始末するため。
     // (phase は idle なので再びゴーストが出ることはない)
     window.removeEventListener("keydown", onKey, true);

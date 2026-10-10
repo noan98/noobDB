@@ -378,10 +378,11 @@ function composeHandler<E extends ReactMouseEvent | ReactFocusEvent>(
  * `bind` の戻り値にマージすること。
  */
 export function useDelegatedTooltip(openDelay: number = TOOLTIP_OPEN_DELAY_MS) {
-  const { hovered, bind } = useDelegatedHover<string>(openDelay);
+  const { hovered, bind, hide } = useDelegatedHover<string>(openDelay);
   return {
     hovered: hovered && { label: hovered.value, rect: hovered.rect, target: hovered.target },
     bind,
+    hide,
   };
 }
 
@@ -485,7 +486,7 @@ export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) 
     };
   };
 
-  return { hovered: state, bind };
+  return { hovered: state, bind, hide };
 }
 
 /**

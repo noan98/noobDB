@@ -582,17 +582,24 @@ function useLazyBind<V>(ref: TooltipBindRef<V>): HoverBind<V> {
 
 /** ツリー行の単純テキストツールチップ (1 つの共有バブル + イベント委譲、#884)。 */
 function TreeTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<string> }) {
-  const { hovered, bind } = useDelegatedTooltip();
+  const { hovered, bind, hide } = useDelegatedTooltip();
   // ドラッグ中は pointer capture で mouseleave が来ないため、元行のツールチップを抑止する (#1414)。
+  // 描画を隠すだけでは hovered と表示タイマーが残り、ドロップ直後に戻ってしまうので状態ごと閉じる。
   const dragging = useTreeDragActive();
+  useEffect(() => {
+    if (dragging) hide();
+  }, [dragging, hide]);
   bindRef.current = bind;
   return hovered && !dragging ? <TooltipBubble label={hovered.label} anchor={hovered.rect} maxWidth="320px" /> : null;
 }
 
 /** カラム行の詳細ホバーカード (`ColumnTooltip`)。 */
 function ColumnTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<TableColumnInfo> }) {
-  const { hovered, bind } = useDelegatedHover<TableColumnInfo>();
+  const { hovered, bind, hide } = useDelegatedHover<TableColumnInfo>();
   const dragging = useTreeDragActive();
+  useEffect(() => {
+    if (dragging) hide();
+  }, [dragging, hide]);
   bindRef.current = bind;
   return hovered && !dragging ? <ColumnTooltip col={hovered.value} anchor={hovered.rect} /> : null;
 }

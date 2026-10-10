@@ -147,6 +147,36 @@ test("エディタの外で離す / Esc でキャンセルすると何も挿入�
   expect(view?.state.doc.toString()).toBe("");
 });
 
+const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+// framer-motion の Reorder は move を同期的に連続で送ると起動しないため、
+// 各 move の前に 1 フレーム待つ。移動先は Beta 行の中心より 60px 下 (Alpha ノード全体が Beta を越える距離)。
+async function dragToBelowBeta(source: Element, betaRow: Element) {
+  const from = center(source);
+  const to = center(betaRow);
+  const dest = { x: to.x, y: to.y + 60 };
+  source.dispatchEvent(pointer("pointerdown", from.x, from.y));
+  const steps = 20;
+  for (let i = 1; i <= steps; i++) {
+    await nextFrame();
+    const x = from.x + ((dest.x - from.x) * i) / steps;
+    const y = from.y + ((dest.y - from.y) * i) / steps;
+    window.dispatchEvent(pointer("pointermove", x, y));
+  }
+  await nextFrame();
+  window.dispatchEvent(pointer("pointerup", dest.x, dest.y));
+  await nextFrame();
+}
+
+test("陽性対照: 接続行そのものを下へドラッグすると並べ替えが呼ばれる (テスト手段が有効であることの固定)", async () => {
+  const onReorderProfiles = vi.fn();
+  const screen = await setup(onReorderProfiles);
+  const alpha = screen.getByText("Alpha DB").element();
+  const betaRow = screen.getByText("Beta DB").element();
+  await dragToBelowBeta(alpha, betaRow);
+  expect(onReorderProfiles).toHaveBeenCalledTimes(1);
+});
+
 test("テーブル行を下の接続行までドラッグして離しても、接続の並べ替えは起きない", async () => {
   const onReorderProfiles = vi.fn();
   const screen = await setup(onReorderProfiles);
@@ -157,13 +187,8 @@ test("テーブル行を下の接続行までドラッグして離しても、�
   const editorEl = document.querySelector(".cm-editor") as HTMLElement;
   const view = EditorView.findFromDOM(editorEl);
   const betaRow = screen.getByText("Beta DB").element();
-  const from = center(row);
-  const to = center(betaRow);
 
-  row.dispatchEvent(pointer("pointerdown", from.x, from.y));
-  window.dispatchEvent(pointer("pointermove", from.x, from.y + 10));
-  window.dispatchEvent(pointer("pointermove", to.x, to.y));
-  window.dispatchEvent(pointer("pointerup", to.x, to.y));
+  await dragToBelowBeta(row, betaRow);
 
   await expect.poll(() => document.querySelector('[data-testid="tree-drag-ghost"]')).toBeNull();
   expect(onReorderProfiles).not.toHaveBeenCalled();

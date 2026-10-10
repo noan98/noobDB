@@ -93,8 +93,12 @@ describe("treeDragStore (ポインタ・ドラッグ)", () => {
     window.dispatchEvent(ptr("pointermove", 30, 0));
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(getTreeDragSnapshot().active).toBe(false);
+    // 離すのを待たずにカーソルは戻る (user-select は離すまで維持)。
+    expect(document.body.style.cursor).not.toBe("grabbing");
+    expect(document.body.style.userSelect).toBe("none");
     window.dispatchEvent(ptr("pointermove", 40, 0));
     window.dispatchEvent(ptr("pointerup", 40, 0));
+    expect(document.body.style.userSelect).not.toBe("none");
     expect(target.insert).not.toHaveBeenCalled();
   });
 
