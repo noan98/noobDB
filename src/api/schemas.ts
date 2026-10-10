@@ -150,6 +150,7 @@ export const processInfo = z.object({
   query_summary: z.string().nullable(),
   query_truncated: z.boolean(),
   is_self: z.boolean(),
+  blocked_by: z.array(z.number()),
 });
 
 /** `insert_generated_rows` の結果 (#1259)。 */
@@ -1405,6 +1406,7 @@ const dumpOptions = z.object({
   noPrivileges: z.boolean().optional(),
   pgSchema: z.string().nullable().optional(),
   formatSql: z.boolean().optional(),
+  tables: z.array(z.string()).nullable().optional(),
 });
 
 // `ExportFormat` (tauri.ts / Rust) と同じ全種。xlsx (#711) が抜けていると xlsx の

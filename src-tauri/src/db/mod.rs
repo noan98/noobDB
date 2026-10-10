@@ -30,6 +30,7 @@ pub mod refresh_diff;
 pub mod result_ops;
 pub mod result_store;
 pub mod sandbox;
+pub mod savepoint;
 /// 一括取得したスキーマ情報の画面向け結合 (テーブル統計・逆方向 FK、#1255)。
 pub mod schema_insight;
 /// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
@@ -432,6 +433,18 @@ impl Connection {
             Connection::MySql(c) => c.tx_execute(sql).await,
             Connection::Postgres(c) => c.tx_execute(sql).await,
             Connection::Sqlite(c) => c.tx_execute(sql).await,
+        }
+    }
+
+    /// 明示トランザクション内でトランザクション制御文 (SAVEPOINT 系, #1418) を流す。
+    /// MySQL はプリペアド文プロトコルが SAVEPOINT 等を受け付けない (1295) ため
+    /// テキストプロトコル (`raw_sql`) で実行する。PostgreSQL / SQLite は通常の
+    /// [`Self::execute_in_transaction`] と同じ。
+    pub async fn execute_tx_control(&self, sql: &str) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.tx_control(sql).await,
+            Connection::Postgres(c) => c.tx_execute(sql).await.map(|_| ()),
+            Connection::Sqlite(c) => c.tx_execute(sql).await.map(|_| ()),
         }
     }
 
@@ -1120,6 +1133,16 @@ impl Connection {
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         match self {
             Connection::MySql(c) => c.list_processes().await,
+            Connection::Postgres(c) => c.list_processes().await,
+            Connection::Sqlite(c) => c.list_processes().await,
+        }
+    }
+
+    /// [`Connection::list_processes`] からロック待ち (`blocked_by`) の照会を省いた版 (#1417)。
+    /// 1 件のクエリ本文を引くだけなど待機チェーンが要らない経路用。
+    pub async fn list_processes_without_locks(&self) -> Result<Vec<ProcessInfo>> {
+        match self {
+            Connection::MySql(c) => c.list_processes_opts(false).await,
             Connection::Postgres(c) => c.list_processes().await,
             Connection::Sqlite(c) => c.list_processes().await,
         }

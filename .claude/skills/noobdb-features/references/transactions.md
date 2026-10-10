@@ -40,3 +40,23 @@ SQL 片は `db/tx_options.rs` の enum (`TxIsolation`) からのみ組み立て�
 | SQLite | 非対応。指定されると `InvalidInput` で拒否 (黙って無視しない)。UI もトグルを無効化 |
 
 フロントの判定は `src/txOptions.ts` (`supportsTxOptions` / `resolveTxOptions`)。
+
+## SAVEPOINT / 部分ロールバック (#1418)
+
+明示トランザクション上に `create_savepoint` / `rollback_to_savepoint` / `release_savepoint`
+(いずれも `sessionId` + `name`) を足している。3 ドライバとも構文は共通
+(`SAVEPOINT` / `ROLLBACK TO SAVEPOINT` / `RELEASE SAVEPOINT`)。SQL 組み立ては
+`db/savepoint.rs` (純ロジック): 名前は `[A-Za-z_][A-Za-z0-9_]{0,62}` のみ許可し、さらに
+`sync::quote_ident` でクォートする。`execute_in_transaction` と同じ保持接続で流すので
+トランザクションが無ければエラー。SAVEPOINT 自体は書き込みではないため読み取り専用
+ガードは通さない (書き込み文は `run_in_transaction` のガードが従来どおり拒否)。
+
+DB の意味論: `ROLLBACK TO` は指定 SAVEPOINT を残し新しいものを破棄、`RELEASE` は指定と
+新しいものを破棄。PostgreSQL ではエラーで aborted になった TX も `ROLLBACK TO` で回復できる。
+フロントはスタックを `src/savepoints.ts` (`afterRollbackTo` / `afterRelease`) で同じ
+意味論に追従させ、`SavepointControl` (TX 中のヘッダのメニュー) から操作する。
+書き込み承認 (`requireWriteApproval`) と同じ条件 (本番 + `confirm_writes`、読み取り専用を除く) のときだけ ROLLBACK TO の確認ダイアログを出す (UI レベルのみ)。
+
+MySQL は SAVEPOINT をプリペアド文で受け付けない (1295) ため、`Connection::execute_tx_control` が
+MySQL だけ保持接続へ `raw_sql` で流す。PostgreSQL は aborted (25P02) のまま COMMIT すると
+黙って ROLLBACK 扱いになるので、`tx_finish` が検出してエラーにする (トランザクションは終了扱い)。

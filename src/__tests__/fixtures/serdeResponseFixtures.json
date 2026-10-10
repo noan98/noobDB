@@ -1492,6 +1492,9 @@
     }
   ],
   "processInfo": {
+    "blocked_by": [
+      41
+    ],
     "command": "Query",
     "database": "testdb",
     "host": "127.0.0.1:53344",
@@ -4359,6 +4362,7 @@
           "pgSchema": "public",
           "routines": false,
           "singleTransaction": false,
+          "tables": null,
           "triggers": false
         },
         "output_path": "/tmp/dump.sql"

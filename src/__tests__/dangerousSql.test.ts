@@ -325,3 +325,97 @@ describe("readOnlyWithHint (#1256)", () => {
     expect(readOnlyWithHint({ sql: "SELECT 1", readOnly: true }, "DELETE FROM t", "mysql")).toBe(false);
   });
 });
+
+// Stryker (#1358) の生存変異を潰す境界ケース。
+describe("analyzeDangerousSql: 変異テストで補強した境界ケース", () => {
+  it("括弧が閉じたあとのトップレベル WHERE は守りとして認める", () => {
+    // 閉じ括弧で depth が戻らないと WHERE を見落とす (depth-- の変異)
+    expect(
+      analyzeDangerousSql("UPDATE t SET c = (SELECT 1) WHERE id = 1"),
+    ).toEqual([]);
+    expect(
+      analyzeDangerousSql("DELETE FROM t WHERE id IN (SELECT 1)"),
+    ).toEqual([]);
+  });
+
+  it("括弧が深くなる前の余分な ) があっても depth が負にならない", () => {
+    expect(analyzeDangerousSql("UPDATE t SET c = 1) WHERE id = 1")).toEqual([]);
+  });
+
+  it("WHERE が文頭・文末ぎりぎりでも単語境界で判定する", () => {
+    expect(analyzeDangerousSql("UPDATE t SET c = 1 WHERE")).toEqual([]);
+    expect(analyzeDangerousSql("UPDATE t SET somewhere = 1")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("UPDATE t SET c = 1 WHEREx")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("UPDATE t SET xwhere = 1")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
+  });
+
+  it("対象テーブル名の引用符 (` \" []) を外し、空白の多い構文も解釈する", () => {
+    expect(analyzeDangerousSql("DELETE   FROM   `my db`.x")).toEqual([
+      { kind: "deleteNoWhere", target: "my db" },
+    ]);
+    expect(analyzeDangerousSql('DELETE FROM "Users"')).toEqual([
+      { kind: "deleteNoWhere", target: "Users" },
+    ]);
+    expect(analyzeDangerousSql("DELETE FROM [dbo]")).toEqual([
+      { kind: "deleteNoWhere", target: "dbo" },
+    ]);
+    expect(analyzeDangerousSql("UPDATE   `t` SET a = 1")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("TRUNCATE   TABLE   t")).toEqual([
+      { kind: "truncate", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("TRUNCATE   t")).toEqual([
+      { kind: "truncate", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("DROP   TABLE   IF   EXISTS   t")).toEqual([
+      { kind: "drop", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("DROP   DATABASE   d")).toEqual([
+      { kind: "drop", target: "d" },
+    ]);
+  });
+
+  it("対象が読み取れないときは target が null になる", () => {
+    expect(analyzeDangerousSql("DELETE FROM ")).toEqual([
+      { kind: "deleteNoWhere", target: null },
+    ]);
+    expect(analyzeDangerousSql("TRUNCATE ``")).toEqual([
+      { kind: "truncate", target: null },
+    ]);
+  });
+
+  it("コメント・文字列内の WHERE は守りにならず、target は元のリテラルから取る", () => {
+    expect(analyzeDangerousSql("DELETE FROM t -- WHERE id = 1")).toEqual([
+      { kind: "deleteNoWhere", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("UPDATE t SET c = 'WHERE'")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
+  });
+});
+
+describe("isReadOnlySql: 変異テストで補強した境界ケース", () => {
+  it("READCOMMITTEDLOCK ヒントは読み取りではない", () => {
+    expect(isReadOnlySql("SELECT * FROM t WITH (READCOMMITTEDLOCK)")).toBe(false);
+  });
+
+  it("空・コメントのみ・区切りだけの文は読み取り専用ではない", () => {
+    expect(isReadOnlySql("")).toBe(false);
+    expect(isReadOnlySql("   ")).toBe(false);
+    expect(isReadOnlySql(";;; ")).toBe(false);
+    expect(isReadOnlySql("-- only comment")).toBe(false);
+  });
+
+  it("ヒント群の外側にあるロックヒント名は無視し、群内は必ず見る", () => {
+    expect(isReadOnlySql("SELECT updlock FROM t")).toBe(true);
+    expect(isReadOnlySql("SELECT * FROM t WITH (INDEX(1) , UPDLOCK)")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t WITH (NOLOCK) JOIN u WITH (XLOCK) ON 1=1")).toBe(false);
+  });
+});

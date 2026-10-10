@@ -153,6 +153,28 @@ impl PostgresConn {
         let mut conn = guard
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        // aborted 状態 (25P02) のトランザクションを COMMIT すると PostgreSQL は黙って
+        // ROLLBACK 扱いにする。成功したように見せないため、軽い文で状態を検知して
+        // ROLLBACK し、エラーで返す (トランザクションはここで終了、#1418)。
+        if commit {
+            if let Err(sqlx::Error::Database(db)) =
+                sqlx::query("SELECT 1").execute(&mut *conn).await
+            {
+                // 25P02 以外 (例: 57014 キャンセル) でも、このまま COMMIT すると
+                // 黙って ROLLBACK 扱いになり得るので、コードを問わず ROLLBACK してエラーで返す。
+                let msg = if db.code().as_deref() == Some("25P02") {
+                    "transaction is in an aborted state (25P02) and was rolled back instead of committed"
+                        .to_string()
+                } else {
+                    format!("transaction could not be committed and was rolled back: {db}")
+                };
+                if sqlx::query("ROLLBACK").execute(&mut *conn).await.is_err() {
+                    // ROLLBACK も失敗したら不定状態なのでプールへ返さず破棄する。
+                    drop(conn.detach());
+                }
+                return Err(AppError::InvalidInput(msg));
+            }
+        }
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
         let result = sqlx::query(stmt).execute(&mut *conn).await;
         if let Err(e) = result {
@@ -604,7 +626,8 @@ impl PostgresConn {
                       wait_event,
                       EXTRACT(EPOCH FROM (now() - query_start))::bigint,
                       query,
-                      pid = pg_backend_pid()
+                      pid = pg_backend_pid(),
+                      CASE WHEN wait_event_type = 'Lock' THEN pg_blocking_pids(pid) END
                FROM pg_stat_activity
                WHERE backend_type = 'client backend'
                ORDER BY pid"#,
@@ -623,6 +646,15 @@ impl PostgresConn {
                 time_secs: r.try_get::<Option<i64>, _>(6).ok().flatten(),
                 query: r.try_get::<Option<String>, _>(7).ok().flatten(),
                 is_self: r.try_get::<bool, _>(8).unwrap_or(false),
+                // 待機チェーン (#1417)。取れなければ空へ縮退する。
+                // Lock 待ちの行だけ `pg_blocking_pids` を呼ぶ (全行呼ぶと lock manager に
+                // 負荷がかかるため)。それ以外は NULL = 空配列。
+                blocked_by: r
+                    .try_get::<Option<Vec<i32>>, _>(9)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.into_iter().map(i64::from).collect())
+                    .unwrap_or_default(),
             })
             .collect())
     }

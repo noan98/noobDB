@@ -59,6 +59,10 @@ pub mod __test_api {
         approx_row_bytes, ResultBuilder, ResultStore, MIN_RETAIN_ROWS, RESULT_GONE,
     };
     pub use crate::db::sandbox::filter_out_keys;
+    pub use crate::db::savepoint::{
+        create_sql as savepoint_create_sql, release_sql as savepoint_release_sql,
+        rollback_to_sql as savepoint_rollback_to_sql,
+    };
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
@@ -508,6 +512,27 @@ pub mod __test_api {
         sql: &str,
     ) -> crate::error::Result<QueryResult> {
         crate::commands::query::run_in_transaction_inner(state, session_id, sql).await
+    }
+
+    /// SAVEPOINT 系 3 コマンドのコア経路 (#1418)。`op` は "create" / "rollback_to" / "release"。
+    pub async fn savepoint_via_command(
+        state: &AppState,
+        session_id: &str,
+        name: &str,
+        op: &str,
+    ) -> crate::error::Result<()> {
+        use crate::commands::query::SavepointOp;
+        let op = match op {
+            "create" => SavepointOp::Create,
+            "rollback_to" => SavepointOp::RollbackTo,
+            "release" => SavepointOp::Release,
+            other => {
+                return Err(crate::error::AppError::InvalidInput(format!(
+                    "unknown savepoint op: {other}"
+                )))
+            }
+        };
+        crate::commands::query::savepoint_inner(state, session_id, name, op).await
     }
 
     /// ファイル → 新規テーブル作成 → ロードの経路 (#985) を Tauri ランタイム無しで
@@ -1162,6 +1187,9 @@ pub fn run() {
             commands::query::begin_transaction,
             commands::query::run_in_transaction,
             commands::query::finish_transaction,
+            commands::query::create_savepoint,
+            commands::query::rollback_to_savepoint,
+            commands::query::release_savepoint,
             commands::query::run_query_stream,
             commands::broadcast::broadcast_compare,
             commands::query::set_emergency_mode,

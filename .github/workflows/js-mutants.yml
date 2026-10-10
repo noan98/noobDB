@@ -1,0 +1,200 @@
+name: js-mutation-test
+
+# フロント (TS) 安全網のミューテーションテスト (#1358)
+#
+# mutants.yml (cargo-mutants) は Rust の安全網だけが対象。フロント側の同種ロジック
+# (危険 SQL 検出・リテラルマスク / 文分割 / UPDATE・DELETE 影響行数プリフライト /
+# 64bit lossless・セル編集のリテラル生成) に Stryker Mutator で変異を注入し、
+# 既存テストが捕捉できるかを定量評価する。
+#   src/dangerousSql.ts / src/sqlScript.ts
+#   src/components/preflight.ts / src/components/cellEdit.ts
+# 対象と実行するテストの単一ソースは stryker.conf.json (mutate) と
+# vitest.mutants.config.ts (include)。
+#
+# 実行時間が長い (全変異で数十分) ため、PR では走らせず手動トリガのみ。
+# 可視化 (Job Summary + アーティファクト) だけを目的とし、fail させない方針。
+# mutants.yml・バンドルサイズ (#443)・カバレッジ (#482) と同じ漸進方針。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 手動トリガを連続起動したとき、長時間ジョブが重複して走らないようにする。
+concurrency:
+  group: js-mutants-${{ github.ref }}
+  cancel-in-progress: true
+
+# corepack が pnpm を取得する際の対話プロンプトを無効化 (CI は非対話)。
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  js-mutants:
+    name: Stryker (フロント安全網)
+    outputs:
+      exit_code: ${{ steps.stryker.outputs.exit_code }}
+      score: ${{ steps.summary.outputs.score }}
+      survived: ${{ steps.summary.outputs.survived }}
+    runs-on: ubuntu-latest
+    # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ上限 (正常時は影響なし)。
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 変異テスト本体。失敗しても CI を落とさない (exit 0 で終える)。
+      # reports/mutation/ (mutation.json / mutation.html) をアーティファクトにする。
+      # 終了コードは $GITHUB_OUTPUT (exit_code) に残す (後続の集計ジョブ用, #1395)。
+      - name: Run Stryker
+        id: stryker
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          pnpm run mutants:js 2>&1 | tee stryker-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Mutation test summary
+        id: summary
+        run: |
+          echo '### Mutation test results (フロント安全網)' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f reports/mutation/mutation.json ]; then
+            python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, pathlib, collections
+          data = json.loads(pathlib.Path("reports/mutation/mutation.json").read_text())
+          rows = []
+          tot = collections.Counter()
+          for path, f in sorted(data.get("files", {}).items()):
+              c = collections.Counter(m.get("status") for m in f.get("mutants", []))
+              rows.append((path, c))
+              tot.update(c)
+          def score(c):
+              # Stryker の mutation score: (Killed + Timeout) / (検出可能な変異の総数)。
+              # Ignored / CompileError / RuntimeError は母数から除く。
+              det = c["Killed"] + c["Timeout"]
+              den = det + c["Survived"] + c["NoCoverage"]
+              return f"{det / den * 100:.1f}%" if den else "n/a"
+          surv = tot["Survived"] + tot["NoCoverage"]
+          # 後続ジョブ (#1395) 用に score= / survived= を step output へ残す。
+          out = os.environ.get("GITHUB_OUTPUT")
+          if out:
+              with open(out, "a") as fh:
+                  fh.write(f"score={score(tot)}\nsurvived={surv}\n")
+          if surv:
+              print(f"> :warning: **生存変異 (Survived + NoCoverage): {surv} 件** — テストが捕捉できていない変異があります。`reports/mutation/mutation.html` を確認し、対応する `*.test.ts` に境界ケースを追記してください。")
+          else:
+              print("> :white_check_mark: **生存変異: 0 件**")
+          print("")
+          print(f"変異スコア ((Killed + Timeout) / (Killed + Timeout + Survived + NoCoverage)): **{score(tot)}**")
+          print("")
+          print("| モジュール | スコア | Killed | Timeout | Survived | NoCoverage |")
+          print("|---|---|---|---|---|---|")
+          for path, c in rows:
+              print(f"| `{path}` | {score(c)} | {c['Killed']} | {c['Timeout']} | {c['Survived']} | {c['NoCoverage']} |")
+          print(f"| **合計** | **{score(tot)}** | {tot['Killed']} | {tot['Timeout']} | {tot['Survived']} | {tot['NoCoverage']} |")
+          PYEOF
+          else
+            echo '変異テスト結果ファイルが見つかりませんでした。' >> "$GITHUB_STEP_SUMMARY"
+            if [ -f stryker-output.txt ]; then
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              tail -50 stryker-output.txt >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+      - name: Upload Stryker report artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stryker-report
+          path: reports/mutation/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 結果の通知 (#1395)。mutants.yml と同じ方針: 実行失敗は必ず upsert、生存変異は
+  # (生存数, スコア) が前回通知から変わったときだけコメント追記、生存 0 件で正常終了なら
+  # 自動クローズ。既定ブランチ以外の実行では通知しない。ラベルは ci:js-mutants。`issues: write` は本ジョブにだけ付与する。
+  notify:
+    name: 結果の通知 (トラッキング Issue)
+    needs: js-mutants
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.js-mutants.result == 'success' || needs.js-mutants.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/upsert-tracking-issue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: トラッキング Issue を upsert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          M_RESULT: ${{ needs.js-mutants.result }}
+          M_EXIT: ${{ needs.js-mutants.outputs.exit_code }}
+          M_SCORE: ${{ needs.js-mutants.outputs.score }}
+          M_SURVIVED: ${{ needs.js-mutants.outputs.survived }}
+          TRACK_LABEL: ci:js-mutants
+          TRACK_EXTRA_LABELS: cost:Mid,benefit:4
+        run: |
+          # stryker.conf.json は thresholds.break: null のためスコアでは非ゼロ終了しない。
+          # 終了コード 0 かつスコアあり ("n/a" = 母数 0 を除く) のときだけ「実行成功」とする。
+          run_ok=0
+          if [ "${M_EXIT:-}" = "0" ] && [ -n "$M_SCORE" ] && [ "$M_SCORE" != "n/a" ]; then run_ok=1; fi
+          if [ "$M_RESULT" = "success" ] && [ "$run_ok" = "1" ] && [ "${M_SURVIVED:-0}" = "0" ]; then
+            TRACK_STATE=ok bash scripts/upsert-tracking-issue.sh
+            exit 0
+          fi
+          {
+            if [ "$run_ok" = "1" ]; then
+              echo "Stryker (フロント安全網) で生存変異が検出されたため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- 生存変異 (Survived + NoCoverage): **${M_SURVIVED} 件** / 変異スコア: **${M_SCORE}** (Stryker 終了コード: \`${M_EXIT:-不明}\`)"
+              echo "- 詳細は実行ページの Job Summary と Artifacts (\`stryker-report\`, \`mutation.html\`) を確認し、対応する \`*.test.ts\` に境界ケースを追記してください。"
+              key="survived=${M_SURVIVED};score=${M_SCORE}"
+            else
+              echo "Stryker の実行が失敗した (結果ファイルが得られなかった) ため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- ジョブ結果: \`${M_RESULT}\` / Stryker 終了コード: \`${M_EXIT:-不明}\`"
+              echo "- 実行ページの Job Summary 末尾 50 行を確認してください。"
+              key="failed;exit=${M_EXIT:-unknown}"
+            fi
+            echo ""
+            echo "同一結果の連続実行ではコメントを追記しません。生存 0 件で正常に完了すると自動クローズされます。"
+          } > issue-body.md
+          TRACK_STATE=problem \
+            TRACK_TITLE="[js-mutants] フロント安全網の変異テストで生存変異 / 実行失敗を検出" \
+            TRACK_BODY_FILE=issue-body.md \
+            TRACK_DEDUP_KEY="$key" \
+            bash scripts/upsert-tracking-issue.sh

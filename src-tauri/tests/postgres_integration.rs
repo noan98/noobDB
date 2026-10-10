@@ -437,6 +437,117 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
         .expect("count");
     assert!(matches!(&after_commit.rows[0][0], t::Value::Int(1)));
 
+    // SAVEPOINT (#1418): コマンド経路で一連が通ること + aborted 状態からの回復。
+    {
+        let state = t::AppState::default();
+        let sp_opts = t::parse_postgres_url(&url).expect("valid url");
+        let sp_conn = t::connect(&sp_opts).await.expect("connect sp");
+        let id = state
+            .insert(t::make_session("sp", sp_conn, sp_opts, false))
+            .await;
+        let sess = state.get(&id).await.expect("session");
+        sess.conn.begin_transaction(None).await.expect("begin sp");
+        sess.conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (10, 'x')",
+            )
+            .await
+            .expect("insert 10");
+        t::savepoint_via_command(&state, &id, "sp_1", "create")
+            .await
+            .expect("sp_1");
+        sess.conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (11, 'y')",
+            )
+            .await
+            .expect("insert 11");
+        t::savepoint_via_command(&state, &id, "sp_2", "create")
+            .await
+            .expect("sp_2");
+        // 失敗で aborted になり、以後の文は 25P02。
+        assert!(sess
+            .conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (10, 'dup')"
+            )
+            .await
+            .is_err());
+        let aborted = sess
+            .conn
+            .execute_in_transaction("SELECT 1")
+            .await
+            .expect_err("aborted tx rejects statements");
+        assert!(
+            aborted
+                .to_string()
+                .contains("current transaction is aborted"),
+            "{aborted}"
+        );
+        t::savepoint_via_command(&state, &id, "sp_1", "rollback_to")
+            .await
+            .expect("rollback to sp_1");
+        sess.conn
+            .execute_in_transaction("SELECT 1")
+            .await
+            .expect("recovered");
+        assert!(t::savepoint_via_command(&state, &id, "sp_2", "release")
+            .await
+            .is_err());
+        // sp_2 の失敗でトランザクションは再び aborted。ROLLBACK TO sp_1 で復旧して解放する。
+        t::savepoint_via_command(&state, &id, "sp_1", "rollback_to")
+            .await
+            .expect("rollback again");
+        t::savepoint_via_command(&state, &id, "sp_1", "release")
+            .await
+            .expect("release sp_1");
+        sess.conn.finish_transaction(true).await.expect("commit sp");
+        let n = conn
+            .execute("SELECT COUNT(*) AS c FROM public.noobdb_objtest_idx", None)
+            .await
+            .expect("count");
+        assert!(
+            matches!(&n.rows[0][0], t::Value::Int(2)),
+            "{:?}",
+            n.rows[0][0]
+        );
+
+        // aborted のまま COMMIT するとエラー (黙ってロールバックしない)。
+        sess.conn
+            .begin_transaction(None)
+            .await
+            .expect("begin abort");
+        sess.conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (99, 'gone')",
+            )
+            .await
+            .expect("insert 99");
+        assert!(sess
+            .conn
+            .execute_in_transaction(
+                "INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (2, 'dup')"
+            )
+            .await
+            .is_err());
+        assert!(sess.conn.finish_transaction(true).await.is_err());
+        // データは残らず、その後プール接続で次のクエリが正常に流れる。
+        let n2 = conn
+            .execute("SELECT COUNT(*) AS c FROM public.noobdb_objtest_idx", None)
+            .await
+            .expect("count after aborted commit");
+        assert!(
+            matches!(&n2.rows[0][0], t::Value::Int(2)),
+            "{:?}",
+            n2.rows[0][0]
+        );
+        sess.conn
+            .execute("SELECT 1", None)
+            .await
+            .expect("pool usable after aborted commit");
+        assert!(!sess.conn.transaction_active().await);
+    }
+
     conn.health_check().await.expect("health check");
 
     // Cleanup.
@@ -2138,4 +2249,86 @@ async fn postgres_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
         .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
         .await
         .expect("cleanup");
+}
+
+/// #1417 — 待機チェーン: 接続 A が行をロックしたまま、接続 B が同じ行を UPDATE して待つ。
+/// `list_processes` で B の `blocked_by` に A の pid が入り、A を kill すると待機が解消する。
+#[tokio::test]
+async fn postgres_blocking_chain_is_listed_and_resolved_by_kill() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let admin = t::connect(&opts).await.expect("connect admin");
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_blocking", None)
+        .await
+        .expect("drop");
+    admin
+        .execute(
+            "CREATE TABLE noobdb_it_blocking (id int PRIMARY KEY, v int)",
+            None,
+        )
+        .await
+        .expect("create");
+    admin
+        .execute("INSERT INTO noobdb_it_blocking VALUES (1, 0)", None)
+        .await
+        .expect("insert");
+
+    // A: 明示トランザクションで行ロックを保持する。
+    let a = t::connect(&opts).await.expect("connect A");
+    a.begin_transaction(None).await.expect("begin A");
+    let res = a
+        .execute_in_transaction("SELECT pg_backend_pid() AS pid")
+        .await
+        .expect("pid A");
+    let a_pid = match &res.rows[0][0] {
+        t::Value::Int(v) => *v,
+        other => panic!("unexpected pid: {other:?}"),
+    };
+    a.execute_in_transaction("UPDATE noobdb_it_blocking SET v = 1 WHERE id = 1")
+        .await
+        .expect("A update");
+
+    // B: 同じ行を UPDATE して待たされる (別タスク)。
+    let b = std::sync::Arc::new(t::connect(&opts).await.expect("connect B"));
+    let b_task = {
+        let b = b.clone();
+        tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                b.execute("UPDATE noobdb_it_blocking SET v = 2 WHERE id = 1", None),
+            )
+            .await
+        })
+    };
+
+    let mut waiter: Option<i64> = None;
+    for _ in 0..50 {
+        let list = admin.list_processes().await.expect("list");
+        if let Some(p) = list.iter().find(|p| p.blocked_by.contains(&a_pid)) {
+            waiter = Some(p.id);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let waiter = waiter.expect("B must be reported as blocked by A");
+    assert_ne!(waiter, a_pid);
+
+    // 根のブロッカー A を kill すると B の UPDATE が進む。
+    let killed = admin.kill_processes(&[a_pid]).await.expect("kill A");
+    assert_eq!(killed.killed, 1, "{killed:?}");
+    let outcome = b_task.await.expect("join B");
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "B must complete once the blocker is killed: {outcome:?}"
+    );
+
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_blocking", None)
+        .await
+        .expect("cleanup");
+    admin.close().await;
 }

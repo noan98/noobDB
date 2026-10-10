@@ -69,9 +69,11 @@ import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type 
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
+import { joinTableDdls, summarizeTableNames } from "./components/batchTables";
 import {
   buildDropIndexSql,
   buildDropTableSql,
+  buildDropTablesSql,
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
@@ -148,6 +150,8 @@ import {
 } from "./txOptions";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
+import { SavepointControl } from "./components/SavepointControl";
+import { afterRelease, afterRollbackTo, isMissingSavepointError, pushSavepoint, savepointName } from "./savepoints";
 import { isMruRecordable, singleLine, type CommandItem } from "./components/commandPaletteSearch";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
@@ -180,6 +184,9 @@ const ScriptRunModal = lazy(() =>
 );
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
+);
+const TablesExportModal = lazy(() =>
+  import("./components/TablesExportModal").then((m) => ({ default: m.TablesExportModal })),
 );
 const AiSchemaDocModal = lazy(() =>
   import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
@@ -218,6 +225,9 @@ const CreateNamespaceModal = lazy(() =>
 );
 const CreateIndexModal = lazy(() =>
   import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
+);
+const TableCloneModal = lazy(() =>
+  import("./components/TableCloneModal").then((m) => ({ default: m.TableCloneModal })),
 );
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
@@ -324,6 +334,7 @@ import {
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
+import { isPartialCloneFailure } from "./tableClone";
 import {
   isAppWindowFocused,
   registerNotificationClickFocus,
@@ -1797,6 +1808,10 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  const [cloneTarget, setCloneTarget] = useState<{ database: string; table: string } | null>(null);
+  // スキーマツリーで複数選択したテーブルの一括エクスポート / ダンプ (#1399): 対象。null で閉じる。
+  const [exportTablesTarget, setExportTablesTarget] = useState<{ database: string; tables: string[] } | null>(null);
+  const [dumpTablesTarget, setDumpTablesTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
@@ -1858,6 +1873,11 @@ export default function App() {
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替ごとにトランザクション状態を捨てる
   useEffect(() => { setTxActive(false); }, [sessionId]);
+  // 明示トランザクション内の SAVEPOINT スタック (#1418)。TX の開始/終了/セッション切替で空にする。
+  const [savepoints, setSavepoints] = useState<readonly string[]>([]);
+  const savepointCounterRef = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId / txActive の変化をリセットの合図に使う
+  useEffect(() => { setSavepoints([]); savepointCounterRef.current = 0; }, [sessionId, txActive]);
   // 切断時はセッション依存のモーダル状態をリセットする (検索モーダルが
   // 再接続時に意図せず再表示されるのを防ぐ)。
   useEffect(() => {
@@ -2990,6 +3010,8 @@ export default function App() {
     // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
     setImportTarget(null);
     setDumpTarget(null);
+    setDumpTablesTarget(null);
+    setExportTablesTarget(null);
     setScriptTarget(null);
     setSchemaExportTarget(null);
     setErrorProfileId(null);
@@ -3284,6 +3306,8 @@ export default function App() {
     setSelectedProfile(null);
     setImportTarget(null);
     setDumpTarget(null);
+    setDumpTablesTarget(null);
+    setExportTablesTarget(null);
     setScriptTarget(null);
     setSchemaExportTarget(null);
     // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
@@ -3408,6 +3432,8 @@ export default function App() {
       setSelectedProfile(null);
       setImportTarget(null);
       setDumpTarget(null);
+      setDumpTablesTarget(null);
+      setExportTablesTarget(null);
       setScriptTarget(null);
       setSchemaExportTarget(null);
       setConnectionStatus("connected");
@@ -4945,6 +4971,56 @@ export default function App() {
     }
   }, [sessionId, selectedProfile?.database, selectedProfile?.driver, txIsolation, txReadOnly, toast]);
 
+  const handleCreateSavepoint = useCallback(async () => {
+    if (!sessionId) return;
+    // 連打で同名が二重作成されないよう、await の前に連番を確定する。
+    savepointCounterRef.current += 1;
+    const name = savepointName(savepointCounterRef.current);
+    try {
+      await api.createSavepoint(sessionId, name);
+      setSavepoints((s) => pushSavepoint(s, name));
+      toast.success(translate("savepointCreated", { name }));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [sessionId, toast]);
+
+  const handleRollbackToSavepoint = useCallback(async (name: string) => {
+    if (!sessionId) return;
+    // 書き込み承認 (requireWriteApproval) と同じ条件 (本番 + confirm_writes、読み取り専用を除く)
+    // のときだけ確認する。UI レベルの誤操作防止のみ。
+    if (selectedProfile?.is_production && selectedProfile?.confirm_writes && !selectedProfile?.read_only) {
+      const ok = await confirm({
+        title: translate("savepointRollbackConfirmTitle"),
+        message: translate("savepointRollbackConfirmBody", { name }),
+        confirmLabel: translate("savepointRollbackConfirmAction"),
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    try {
+      await api.rollbackToSavepoint(sessionId, name);
+      setSavepoints((s) => afterRollbackTo(s, name));
+      toast.success(translate("savepointRolledBack", { name }));
+    } catch (e) {
+      // DB 側に既に無い SAVEPOINT なら、その名前とそれより新しいものを一覧から外す。
+      if (isMissingSavepointError(String(e))) setSavepoints((s) => afterRelease(s, name));
+      toast.error(String(e));
+    }
+  }, [sessionId, selectedProfile?.is_production, selectedProfile?.confirm_writes, selectedProfile?.read_only, confirm, toast]);
+
+  const handleReleaseSavepoint = useCallback(async (name: string) => {
+    if (!sessionId) return;
+    try {
+      await api.releaseSavepoint(sessionId, name);
+      setSavepoints((s) => afterRelease(s, name));
+      toast.success(translate("savepointReleased", { name }));
+    } catch (e) {
+      if (isMissingSavepointError(String(e))) setSavepoints((s) => afterRelease(s, name));
+      toast.error(String(e));
+    }
+  }, [sessionId, toast]);
+
   const handleFinishTransaction = useCallback(async (commit: boolean) => {
     if (!sessionId) return;
     try {
@@ -4952,7 +5028,13 @@ export default function App() {
       setTxActive(false);
       toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
     } catch (e) {
-      toast.error(String(e));
+      // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
+      setTxActive(false);
+      toast.error(
+        String(e).includes("25P02")
+          ? translate("txAbortedRolledBack")
+          : `${String(e)} ${translate("txFinishFailedHint")}`,
+      );
     }
   }, [sessionId, toast]);
 
@@ -6342,6 +6424,43 @@ export default function App() {
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl, tabsRef]);
 
+  // テーブル複製 (#1398)。モーダルは確定と同時に閉じ (RenameTableDialog と同じ流儀)、
+  // 生成済みの文 (CREATE TABLE → CREATE INDEX → 任意で INSERT ... SELECT) を既存の
+  // `run_query_transaction` (read_only ガード付き) で流す。新しい書き込み経路は増やさない。
+  const handleCloneTableConfirm = useCallback((newName: string, statements: string[]) => {
+    const target = cloneTarget;
+    setCloneTarget(null);
+    if (!target || !sessionId) return;
+    void (async () => {
+      try {
+        await api.runQueryTransaction(sessionId, statements, target.database);
+        invalidateSchemaCache(target.database);
+        connectionListRef.current?.refreshSchema();
+        toast.success(translate("cloneTableSuccess", { source: target.table, table: newName }));
+      } catch (e) {
+        // MySQL は CREATE TABLE が暗黙コミットされるので、後続の文が失敗しても空の複製が残りうる。
+        // 失敗時もツリーを再読込し、作成済みかどうかを一覧で確かめて通知を出し分ける
+        // (補償 DROP は自動では行わない)。
+        invalidateSchemaCache(target.database);
+        connectionListRef.current?.refreshSchema();
+        const driver = selectedProfile?.driver ?? "mysql";
+        let after: string[] | null = null;
+        if (driver === "mysql" && statements.length > 1) {
+          try {
+            after = await api.listTables(sessionId, target.database);
+          } catch {
+            after = null;
+          }
+        }
+        toast.error(
+          isPartialCloneFailure(driver, statements.length, after, newName)
+            ? translate("cloneTablePartialFailure", { table: newName, error: String(e) })
+            : translate("statusQueryError", { error: String(e) }),
+        );
+      }
+    })();
+  }, [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast]);
+
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
   // (CreateTableModal の `onSendToEditor` と同じ流儀)。
@@ -6868,6 +6987,122 @@ export default function App() {
       toast.error(translate("objDefinitionError", { error: String(e) }));
     }
   }, [sessionId, toast]);
+
+  // 複数選択したテーブルの一括 DDL 取得 (#1399)。単一の `handleShowCreateTable` /
+  // `handleCopyTableDdl` と同じ `get_object_definition` (kind = "table", 読み取りのみ) を
+  // テーブルの数だけ呼ぶ。一部の取得に失敗しても取れた分は使い、失敗したテーブルをトーストで知らせる。
+  const fetchTablesDdl = useCallback(async (database: string, tables: string[]) => {
+    if (!sessionId) return null;
+    const settled = await Promise.allSettled(
+      tables.map((table) => api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null)),
+    );
+    const entries: { table: string; ddl: string }[] = [];
+    const failed: string[] = [];
+    settled.forEach((r, i) => {
+      const table = tables[i] as string;
+      if (r.status === "fulfilled") entries.push({ table, ddl: r.value });
+      else failed.push(table);
+    });
+    if (failed.length > 0) {
+      toast.error(translate("batchDdlFailed", { count: failed.length, tables: failed.join(", ") }));
+    }
+    return entries.length > 0 ? entries : null;
+  }, [sessionId, toast]);
+
+  const handleShowCreateTables = useCallback(async (database: string, tables: string[]) => {
+    const entries = await fetchTablesDdl(database, tables);
+    if (!entries) return;
+    openQueryInEditor(
+      joinTableDdls(entries),
+      translate("batchDdlTabTitle", { count: entries.length }),
+      database,
+    );
+  }, [fetchTablesDdl, openQueryInEditor]);
+
+  const handleCopyTablesDdl = useCallback(async (database: string, tables: string[]) => {
+    const entries = await fetchTablesDdl(database, tables);
+    if (!entries) return;
+    if (await copyToClipboard(joinTableDdls(entries))) {
+      toast.success(translate("batchDdlCopied", { count: entries.length }));
+    }
+  }, [fetchTablesDdl, toast]);
+
+  // 複数選択したテーブルの一括 DROP (#1399)。確認導線は単一の `handleDropTable` と同じ
+  // `confirm` + 本番接続のタイプ入力ゲート (#675)。対象が複数なので、対象のテーブル名を本文に
+  // 並べ、本番ではデータベース名の入力を求める。実行は `buildDropTablesSql` の文を流す
+  // (MySQL / PostgreSQL は 1 文、SQLite は 1 トランザクションで全件成功か全件失敗)。read_only は
+  // メニュー無効化に加え、バックエンドのガードが拒否する。
+  const handleDropTables = useCallback(async (database: string, tables: string[]) => {
+    if (tables.length === 0) return;
+    // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
+    const production = Boolean(selectedProfile?.is_production);
+    const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
+    const body: ReactNode = production ? (
+      <>
+        {translate("batchDropConfirmBodyList", { count: tables.length, database })}
+        <Box as="ul" mt="2" maxH="40vh" overflowY="auto" pl="5" data-testid="batch-drop-table-list">
+          {tables.map((tbl) => (
+            <Box as="li" key={tbl} wordBreak="break-all">
+              {tbl}
+            </Box>
+          ))}
+        </Box>
+      </>
+    ) : (
+      translate("batchDropConfirmBody", { count: tables.length, database, tables: names })
+    );
+    const ok = await confirm({
+      title: translate("batchDropConfirmTitle", { count: tables.length }),
+      message: maintenanceMessage(body),
+      confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
+      tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? database : undefined,
+    });
+    if (!ok || !sessionId) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const statements = buildDropTablesSql(driver, database, tables);
+    // SQLite は複数形の DROP が無いので、`PRAGMA defer_foreign_keys=ON` + 全 DROP を 1 トランザクション
+    // (`run_query_transaction`、文ごとに read_only ガード) で流す。FK チェックは COMMIT まで遅延するため
+    // 親子の順序に依存せず、循環 FK も通る。選択外の子に行が残っていれば COMMIT で失敗して全件ロールバック
+    // される (全件成功か全件失敗)。MySQL / PostgreSQL は `DROP TABLE a, b` の 1 文。
+    let failed = false;
+    try {
+      if (driver === "sqlite") {
+        await api.runQueryTransaction(sessionId, ["PRAGMA defer_foreign_keys=ON", ...statements], database);
+      } else {
+        for (const sql of statements) await api.runQuery(sessionId, sql, database);
+      }
+    } catch (e) {
+      failed = true;
+      toast.error(
+        translate(driver === "sqlite" ? "batchDropRolledBack" : "statusQueryError", { error: String(e) }),
+      );
+    }
+    // 失敗しても念のためツリーは読み直す。
+    invalidateSchemaCache(database);
+    connectionListRef.current?.refreshSchema();
+    let dropped: string[] = failed ? [] : tables;
+    if (failed) {
+      // MySQL の `DROP TABLE a, b` は途中失敗でも存在した分は落とす。読み直した一覧から消えた
+      // テーブルだけ「落ちた」とみなしてタブを閉じる (一覧が取れなければ何もしない)。
+      try {
+        const remaining = new Set(await api.listTables(sessionId, database));
+        dropped = tables.filter((tbl) => !remaining.has(tbl));
+      } catch {
+        dropped = [];
+      }
+    }
+    if (dropped.length > 0) {
+      // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
+      const gone = new Set(dropped);
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === database && tt.table !== undefined && gone.has(tt.table))
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+    }
+    if (!failed) {
+      toast.success(translate("batchDropSuccess", { count: dropped.length }));
+    }
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, toast, tabsRef]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
@@ -8588,9 +8823,11 @@ export default function App() {
   // 閉じているときに `<main>` の下端へ常設するパネルバー。中核機能 (プロセスモニタ・
   // インスペクタ・アドバイザ・接続ヘルス) の入口をレンチメニューの外にも置く。
   const bottomPanelStripEntries = bottomPanelStripTabs(bottomPanelCtx);
-  const bottomPanelReasonLabel = (reason: BottomPanelUnavailableReason) =>
+  const bottomPanelReasonLabel = (reason: BottomPanelUnavailableReason, tab: BottomPanelTab) =>
     reason === "sqliteUnsupported"
-      ? t("appProcessesUnsupported")
+      ? tab === "inspector"
+        ? t("appQueryInspectorUnsupported")
+        : t("appProcessesUnsupported")
       : reason === "needsDatabase"
         ? t("appAdvisorUnsupported")
         : t("appToolsNeedsSession");
@@ -8654,6 +8891,12 @@ export default function App() {
     onTruncateTable: handleTruncateTable,
     onDropTable: handleDropTable,
     onRenameTable: (database: string, table: string) => setRenameTarget({ database, table }),
+    onCloneTable: (database: string, table: string) => setCloneTarget({ database, table }),
+    onShowCreateTables: handleShowCreateTables,
+    onCopyTablesDdl: handleCopyTablesDdl,
+    onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
+    onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
+    onDropTables: handleDropTables,
     onAlterTable: (database: string, table: string) => setAlterTableTarget({ database, table }),
     onCreateIndex: (database: string, table: string) => setCreateIndexTarget({ database, table }),
     onDropIndex: handleDropIndex,
@@ -9410,6 +9653,12 @@ export default function App() {
                           {t("txActiveBadge")}
                         </chakra.span>
                       </Tooltip>
+                      <SavepointControl
+                        stack={savepoints}
+                        onCreate={() => void handleCreateSavepoint()}
+                        onRollbackTo={(n) => void handleRollbackToSavepoint(n)}
+                        onRelease={(n) => void handleReleaseSavepoint(n)}
+                      />
                       <Button variant="success" size="sm" onClick={() => handleFinishTransaction(true)}>
                         {t("txCommit")}
                       </Button>
@@ -10060,6 +10309,32 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {dumpTablesTarget && sessionId && (
+          <DumpModal
+            sessionId={sessionId}
+            database={dumpTablesTarget.database}
+            tables={dumpTablesTarget.tables}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            onClose={() => setDumpTablesTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {exportTablesTarget && sessionId && (
+          <Suspense fallback={null}>
+            <TablesExportModal
+              sessionId={sessionId}
+              driver={selectedProfile?.driver ?? "mysql"}
+              database={exportTablesTarget.database}
+              tables={exportTablesTarget.tables}
+              onClose={() => setExportTablesTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {scriptTarget && sessionId && (
           <ScriptRunModal
             key={scriptTarget}
@@ -10201,6 +10476,21 @@ export default function App() {
               table={renameTarget.table}
               onConfirm={handleRenameTableSubmit}
               onCancel={() => setRenameTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {cloneTarget && sessionId && (
+          <Suspense fallback={null}>
+            <TableCloneModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={cloneTarget.database}
+              sourceTable={cloneTarget.table}
+              onConfirm={handleCloneTableConfirm}
+              onClose={() => setCloneTarget(null)}
             />
           </Suspense>
         )}

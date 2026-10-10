@@ -837,6 +837,11 @@ export interface ProcessInfo {
    * エフォート: 同じプールの別接続までは判別できない。
    */
   is_self: boolean;
+  /**
+   * このプロセスをロック待ちで止めているブロッカーの id (#1417)。待っていない / 取得
+   * できない (権限不足・SQLite) ときは空。待機チェーンのツリー化はフロント側で行う。
+   */
+  blocked_by: number[];
 }
 
 /**
@@ -1466,6 +1471,11 @@ export interface DumpOptions {
    * by the server / generator). Best-effort; intended for review/version control.
    */
   formatSql?: boolean;
+  /**
+   * 指定したテーブルだけをダンプする (#1399)。未指定 / null はデータベース全体。
+   * 空配列は不可 (バックエンドが拒否する)。MySQL ではルーチン / イベントは対象外。
+   */
+  tables?: string[] | null;
 }
 
 // --- タスクスケジューラ (#730) -------------------------------------------

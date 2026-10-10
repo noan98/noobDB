@@ -27,6 +27,16 @@ export const queryCommands = {
   /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する。 */
   finishTransaction: (sessionId: string, commit: boolean) =>
     invoke<void>("finish_transaction", { sessionId, commit }),
+
+  // 明示トランザクション内の SAVEPOINT (#1418)。名前は英数字と _ のみ。
+  createSavepoint: (sessionId: string, name: string) =>
+    invoke<void>("create_savepoint", { sessionId, name }),
+
+  rollbackToSavepoint: (sessionId: string, name: string) =>
+    invoke<void>("rollback_to_savepoint", { sessionId, name }),
+
+  releaseSavepoint: (sessionId: string, name: string) =>
+    invoke<void>("release_savepoint", { sessionId, name }),
   /**
    * 読み取り専用セッションの「緊急クエリ実行モード」を切り替える。有効な間は
    * バックエンドの read-only ガードが SQL 実行経路 (run_query / トランザクション /

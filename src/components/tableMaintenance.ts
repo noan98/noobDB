@@ -27,6 +27,18 @@ export function buildDropTableSql(driver: string, database: string | null, table
 }
 
 /**
+ * 複数テーブルの DROP (#1399)。MySQL / PostgreSQL は 1 文 (`DROP TABLE a, b`) にまとめる —
+ * 選んだテーブル同士が外部キーで参照し合っていても順序を気にせず落とせ、PostgreSQL では
+ * 1 文なので全件成功か全件失敗になる。SQLite には複数形が無いのでテーブルごとの文を返す
+ * (呼び出し側が `PRAGMA defer_foreign_keys=ON` と合わせて 1 トランザクションで流す)。
+ */
+export function buildDropTablesSql(driver: string, database: string | null, tables: readonly string[]): string[] {
+  if (tables.length === 0) return [];
+  if (driver === "sqlite") return tables.map((t) => buildDropTableSql(driver, database, t));
+  return [`DROP TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`];
+}
+
+/**
  * RENAME 文。`ALTER TABLE ... RENAME TO ...` は MySQL 8 / PostgreSQL / SQLite の
  * すべてで使える。新しい名前はスキーマ非修飾 (同じスキーマ内での改名)。
  */
@@ -86,3 +98,4 @@ export function buildDropIndexSql(
   }
   return `DROP INDEX ${quoteIdentFor(driver, indexName)};`;
 }
+

@@ -31,6 +31,9 @@ pub struct MySqlConn {
     /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
     /// タスク。ドロップで停止する。パスワード認証では `None`。
     _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
+    /// `information_schema.INNODB_LOCK_WAITS` が無いと分かったら立てる (#1417)。MySQL 8.0 で
+    /// 削除済みなので、`performance_schema` が使えない 8.x で毎ポーリング失敗する照会を投げない。
+    innodb_lock_waits_missing: std::sync::atomic::AtomicBool,
 }
 
 /// 接続オプション (プールが新しい物理接続を張るときに使う) を組み立てる。
@@ -103,6 +106,7 @@ impl MySqlConn {
             pool,
             tx: tokio::sync::Mutex::new(None),
             _iam_refresh: iam_refresh,
+            innodb_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -149,6 +153,21 @@ impl MySqlConn {
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         run_sql_on(conn, sql).await
+    }
+
+    /// SAVEPOINT 等の制御文を保持接続のテキストプロトコルで実行する (#1418, 1295 回避)。
+    /// `sql` は `db::savepoint` が検証済みの名前から組み立てたものだけを渡すこと。
+    pub async fn tx_control(&self, sql: &str) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        sqlx::Executor::execute(
+            &mut **conn,
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string())),
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
@@ -740,6 +759,12 @@ impl MySqlConn {
     /// running with `performance_schema = OFF`), which takes a thread-list
     /// mutex but is harmless at this panel's polling cadence.
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
+        self.list_processes_opts(true).await
+    }
+
+    /// `with_locks = false` のときはロック待ち照会 (`blocked_by`) を省く。1 件のクエリ本文を
+    /// 引くだけの経路 (`get_process_query`) など、待機チェーンが要らない呼び出し用 (#1417)。
+    pub async fn list_processes_opts(&self, with_locks: bool) -> Result<Vec<ProcessInfo>> {
         let projection =
             "SELECT ID, USER, HOST, DB, COMMAND, STATE, TIME, INFO, ID = CONNECTION_ID() FROM";
         let primary = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -755,7 +780,8 @@ impl MySqlConn {
         // query always appears — so empty unambiguously means "disabled".
         // The decision itself is split into `process_list_needs_fallback` so
         // it can be unit-tested without a live server (#587, #641).
-        let rows: Vec<MySqlRow> = if process_list_needs_fallback(&primary) {
+        let used_fallback = process_list_needs_fallback(&primary);
+        let rows: Vec<MySqlRow> = if used_fallback {
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{projection} information_schema.PROCESSLIST ORDER BY ID"
             )))
@@ -763,6 +789,20 @@ impl MySqlConn {
             .await?
         } else {
             primary?
+        };
+        // 待機チェーン (#1417)。取得できなければ (権限不足・MySQL 5.7 / MariaDB・
+        // performance_schema OFF) エラーにせず空へ縮退する。
+        let blockers = if with_locks {
+            // メタデータロック照会は、待ち状態の行があるときだけ投げる (ポーリング負荷の抑制)。
+            let may_wait_mdl = rows.iter().any(|r| {
+                r.try_get::<Option<String>, _>(5)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|st| state_suggests_lock_wait(&st))
+            });
+            blocked_by_map(self.list_lock_waits(!used_fallback, may_wait_mdl).await)
+        } else {
+            std::collections::HashMap::new()
         };
         Ok(rows
             .into_iter()
@@ -789,8 +829,105 @@ impl MySqlConn {
                     .or_else(|_| r.try_get::<i32, _>(8).map(i64::from))
                     .map(|v| v != 0)
                     .unwrap_or(false),
+                blocked_by: Vec::new(),
+            })
+            .map(|mut p| {
+                p.blocked_by = blockers.get(&p.id).cloned().unwrap_or_default();
+                p
             })
             .collect())
+    }
+
+    /// `(待たされている processlist id, ブロッカーの processlist id)` の組を集める (#1417)。
+    /// - 行ロック待ち: MySQL 8 は `performance_schema.data_lock_waits`、取れなければ
+    ///   (5.7 / MariaDB) `information_schema.INNODB_LOCK_WAITS` + `INNODB_TRX`。
+    /// - メタデータロック待ち (`ALTER TABLE` が `Waiting for table metadata lock` など):
+    ///   `performance_schema.metadata_locks` の PENDING を、他スレッドの GRANTED / 優先度の高い
+    ///   PENDING と突き合わせ、ロック種別が衝突する組だけを残す ([`mdl_wait_pairs`])。
+    ///   待ち状態の行が無いとき (`may_wait_mdl = false`) は照会しない。
+    ///
+    /// `performance_schema` が使えない (`perf_schema_ok = false`) ときは `performance_schema`
+    /// 側の照会を省く。いずれの照会も失敗したら (権限不足など) 空へ縮退し、エラーにしない。
+    async fn list_lock_waits(&self, perf_schema_ok: bool, may_wait_mdl: bool) -> Vec<(i64, i64)> {
+        use std::sync::atomic::Ordering;
+        const DATA_LOCK_WAITS: &str = "SELECT rt.PROCESSLIST_ID, bt.PROCESSLIST_ID \
+             FROM performance_schema.data_lock_waits w \
+             JOIN performance_schema.threads rt ON rt.THREAD_ID = w.REQUESTING_THREAD_ID \
+             JOIN performance_schema.threads bt ON bt.THREAD_ID = w.BLOCKING_THREAD_ID \
+             WHERE rt.PROCESSLIST_ID IS NOT NULL AND bt.PROCESSLIST_ID IS NOT NULL";
+        const INNODB_LOCK_WAITS: &str = "SELECT rt.trx_mysql_thread_id, bt.trx_mysql_thread_id \
+             FROM information_schema.INNODB_LOCK_WAITS w \
+             JOIN information_schema.INNODB_TRX rt ON rt.trx_id = w.requesting_trx_id \
+             JOIN information_schema.INNODB_TRX bt ON bt.trx_id = w.blocking_trx_id";
+        const METADATA_LOCK_WAITS: &str = "SELECT rt.PROCESSLIST_ID, gt.PROCESSLIST_ID, \
+                    p.LOCK_TYPE, g.LOCK_TYPE, p.OBJECT_TYPE, g.LOCK_STATUS \
+             FROM performance_schema.metadata_locks p \
+             JOIN performance_schema.metadata_locks g \
+               ON g.OBJECT_TYPE = p.OBJECT_TYPE \
+              AND g.OBJECT_SCHEMA <=> p.OBJECT_SCHEMA \
+              AND g.OBJECT_NAME <=> p.OBJECT_NAME \
+              AND g.LOCK_STATUS IN ('GRANTED', 'PENDING') \
+              AND g.OWNER_THREAD_ID <> p.OWNER_THREAD_ID \
+             JOIN performance_schema.threads rt ON rt.THREAD_ID = p.OWNER_THREAD_ID \
+             JOIN performance_schema.threads gt ON gt.THREAD_ID = g.OWNER_THREAD_ID \
+             WHERE p.LOCK_STATUS = 'PENDING' \
+               AND rt.PROCESSLIST_ID IS NOT NULL AND gt.PROCESSLIST_ID IS NOT NULL";
+        let mut pairs = Vec::new();
+        let mut row_locks: Option<Vec<(i64, i64)>> = None;
+        if perf_schema_ok {
+            row_locks = self.query_id_pairs(DATA_LOCK_WAITS).await;
+        }
+        if row_locks.is_none() && !self.innodb_lock_waits_missing.load(Ordering::Relaxed) {
+            row_locks = self.query_id_pairs(INNODB_LOCK_WAITS).await;
+            if row_locks.is_none() {
+                self.innodb_lock_waits_missing
+                    .store(true, Ordering::Relaxed);
+            }
+        }
+        pairs.extend(row_locks.unwrap_or_default());
+        if perf_schema_ok && may_wait_mdl {
+            if let Ok(rows) = sqlx::query(METADATA_LOCK_WAITS).fetch_all(&self.pool).await {
+                let cands: Vec<MdlCandidate> = rows
+                    .iter()
+                    .filter_map(|r| {
+                        let get = |i: usize| {
+                            r.try_get::<u64, _>(i)
+                                .map(|v| v as i64)
+                                .or_else(|_| r.try_get::<i64, _>(i))
+                                .ok()
+                        };
+                        Some(MdlCandidate {
+                            waiter: get(0)?,
+                            holder: get(1)?,
+                            waiter_lock: r.try_get::<String, _>(2).ok()?,
+                            holder_lock: r.try_get::<String, _>(3).ok()?,
+                            object_type: r.try_get::<String, _>(4).ok()?,
+                            holder_pending: r.try_get::<String, _>(5).ok()? == "PENDING",
+                        })
+                    })
+                    .collect();
+                pairs.extend(mdl_wait_pairs(&cands));
+            }
+        }
+        pairs
+    }
+
+    /// 2 列 (id, id) を返す照会を実行する。失敗 (テーブル無し・権限不足) は `None`。
+    async fn query_id_pairs(&self, sql: &'static str) -> Option<Vec<(i64, i64)>> {
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await.ok()?;
+        Some(
+            rows.iter()
+                .filter_map(|r| {
+                    let get = |i: usize| {
+                        r.try_get::<u64, _>(i)
+                            .map(|v| v as i64)
+                            .or_else(|_| r.try_get::<i64, _>(i))
+                            .ok()
+                    };
+                    Some((get(0)?, get(1)?))
+                })
+                .collect(),
+        )
     }
 
     /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。
@@ -1927,6 +2064,187 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
     Ok(())
 }
 
+/// `processlist.STATE` がロック待ち (`Waiting for table metadata lock` /
+/// `Waiting for global read lock` など) を示すか (#1417)。メタデータロック照会の要否判定。
+fn state_suggests_lock_wait(state: &str) -> bool {
+    let s = state.trim().to_ascii_lowercase();
+    s.starts_with("waiting for") && s.ends_with("lock")
+}
+
+/// `metadata_locks` の PENDING 行と、同じ対象に対する他スレッドの行 (GRANTED / PENDING) の組。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MdlCandidate {
+    waiter: i64,
+    holder: i64,
+    waiter_lock: String,
+    holder_lock: String,
+    object_type: String,
+    holder_pending: bool,
+}
+
+/// MDL のオブジェクトロック種別 (MySQL `sql/mdl.cc` の S/SH/SR/SW/SWLP/SU/SRO/SNW/SNRW/X) の
+/// 添字。performance_schema の `LOCK_TYPE` 名から引く。
+fn mdl_object_lock_index(name: &str) -> Option<usize> {
+    Some(match name {
+        "SHARED" => 0,
+        "SHARED_HIGH_PRIO" => 1,
+        "SHARED_READ" => 2,
+        "SHARED_WRITE" => 3,
+        "SHARED_WRITE_LOW_PRIO" => 4,
+        "SHARED_UPGRADABLE" => 5,
+        "SHARED_READ_ONLY" => 6,
+        "SHARED_NO_WRITE" => 7,
+        "SHARED_NO_READ_WRITE" => 8,
+        "EXCLUSIVE" => 9,
+        _ => return None,
+    })
+}
+
+/// 取得済み (GRANTED) のロックに対し、要求 (行) が互換でないか。`mdl.cc` の
+/// granted 互換行列 (`+` = 互換) を `true` = 衝突で表す。添字は [`mdl_object_lock_index`]。
+const MDL_OBJECT_CONFLICT: [[bool; 10]; 10] = {
+    const O: bool = false; // 互換
+    const X: bool = true; // 衝突
+    [
+        //  S  SH SR SW SWLP SU SRO SNW SNRW X
+        [O, O, O, O, O, O, O, O, O, X], // S
+        [O, O, O, O, O, O, O, O, O, X], // SH
+        [O, O, O, O, O, O, O, O, X, X], // SR
+        [O, O, O, O, O, O, X, X, X, X], // SW
+        [O, O, O, O, O, O, X, X, X, X], // SWLP
+        [O, O, O, O, O, X, O, X, X, X], // SU
+        [O, O, O, X, X, O, O, O, X, X], // SRO
+        [O, O, O, X, X, X, O, X, X, X], // SNW
+        [O, O, X, X, X, X, X, X, X, X], // SNRW
+        [X, X, X, X, X, X, X, X, X, X], // X
+    ]
+};
+
+/// 待ち側の行列 (`m_waiting_incompatible[0]`)。行 = 要求 (PENDING の待ち手)、列 = 先に並んでいる
+/// 他スレッドの PENDING で、`true` = その PENDING の後ろで待たされる。添字は
+/// [`mdl_object_lock_index`] (S SH SR SW SWLP SU SRO SNW SNRW X)。`max_write_lock_count` が
+/// 既定値 (非常に大きい) で、piglet / hog の切替が起きていない前提の既定行列。
+/// 一次情報: MySQL 8.0 `sql/mdl.cc` の `MDL_lock::m_object_lock_strategy`
+/// (コメントの表は古く、実際のビットマップはこちらの内容)。
+const MDL_OBJECT_WAIT_CONFLICT: [[bool; 10]; 10] = {
+    const O: bool = false;
+    const X: bool = true;
+    [
+        //  S  SH SR SW SWLP SU SRO SNW SNRW X
+        [O, O, O, O, O, O, O, O, O, X], // S
+        [O, O, O, O, O, O, O, O, O, O], // SH
+        [O, O, O, O, O, O, O, O, X, X], // SR
+        [O, O, O, O, O, O, O, X, X, X], // SW
+        [O, O, O, O, O, O, X, X, X, X], // SWLP
+        [O, O, O, O, O, O, O, O, O, X], // SU
+        [O, O, O, X, O, O, O, O, X, X], // SRO
+        [O, O, O, O, O, O, O, O, O, X], // SNW
+        [O, O, O, O, O, O, O, O, O, X], // SNRW
+        [O, O, O, O, O, O, O, O, O, O], // X
+    ]
+};
+
+/// `mdl.cc` の `get_strategy` でスコープロック扱いになる名前空間か。performance_schema の
+/// `OBJECT_TYPE` 名 (GLOBAL / SCHEMA / COMMIT / TABLESPACE / BACKUP LOCK / RESOURCE GROUPS /
+/// FOREIGN KEY / CHECK CONSTRAINT) で判定し、それ以外 (TABLE / FUNCTION / PROCEDURE / TRIGGER /
+/// EVENT など) はオブジェクトロック扱い。
+fn mdl_is_scoped(object_type: &str) -> bool {
+    matches!(
+        object_type,
+        "GLOBAL"
+            | "TABLESPACE"
+            | "SCHEMA"
+            | "COMMIT"
+            | "BACKUP LOCK"
+            | "RESOURCE GROUPS"
+            | "FOREIGN KEY"
+            | "CHECK CONSTRAINT"
+    )
+}
+
+/// スコープロックの GRANTED 衝突 (`m_granted_incompatible`): IX は S / X と、S は IX / X と、
+/// X は全てと衝突する。
+fn mdl_scope_conflict(a: &str, b: &str) -> bool {
+    matches!(
+        (a, b),
+        ("EXCLUSIVE", _)
+            | (_, "EXCLUSIVE")
+            | ("INTENTION_EXCLUSIVE", "SHARED")
+            | ("SHARED", "INTENTION_EXCLUSIVE")
+    )
+}
+
+/// スコープロックの待ち側 (`m_waiting_incompatible[0]`): IX 要求は PENDING の S / X に、
+/// S 要求は PENDING の X に止められる。X 要求は止められない。
+fn mdl_scope_wait_conflict(waiter: &str, pending: &str) -> bool {
+    matches!(
+        (waiter, pending),
+        ("INTENTION_EXCLUSIVE", "SHARED" | "EXCLUSIVE") | ("SHARED", "EXCLUSIVE")
+    )
+}
+
+/// `waiter_lock` を待っている要求が、`holder_lock` の保持者 (または先に並ぶ待ち) に
+/// ブロックされるか (#1417)。GRANTED の保持者には granted 互換行列
+/// (`m_granted_incompatible`)、他スレッドの PENDING には待ち側の行列
+/// (`m_waiting_incompatible[0]`) を使う。
+fn mdl_blocks(
+    object_type: &str,
+    waiter_lock: &str,
+    holder_lock: &str,
+    holder_pending: bool,
+) -> bool {
+    if mdl_is_scoped(object_type) {
+        return if holder_pending {
+            mdl_scope_wait_conflict(waiter_lock, holder_lock)
+        } else {
+            mdl_scope_conflict(waiter_lock, holder_lock)
+        };
+    }
+    let (Some(w), Some(h)) = (
+        mdl_object_lock_index(waiter_lock),
+        mdl_object_lock_index(holder_lock),
+    ) else {
+        return false;
+    };
+    if holder_pending {
+        MDL_OBJECT_WAIT_CONFLICT[w][h]
+    } else {
+        MDL_OBJECT_CONFLICT[w][h]
+    }
+}
+
+/// [`MdlCandidate`] から、実際に待ちが発生している `(待つ側, ブロッカー)` の組だけを返す。
+fn mdl_wait_pairs(cands: &[MdlCandidate]) -> Vec<(i64, i64)> {
+    cands
+        .iter()
+        .filter(|c| {
+            mdl_blocks(
+                &c.object_type,
+                &c.waiter_lock,
+                &c.holder_lock,
+                c.holder_pending,
+            )
+        })
+        .map(|c| (c.waiter, c.holder))
+        .collect()
+}
+
+/// `(待たされている id, ブロッカー id)` の組を、待たされている id ごとのブロッカー一覧へ
+/// まとめる (#1417)。重複は除き、自己参照は捨てる。
+fn blocked_by_map(pairs: Vec<(i64, i64)>) -> std::collections::HashMap<i64, Vec<i64>> {
+    let mut map: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for (waiter, blocker) in pairs {
+        if waiter == blocker {
+            continue;
+        }
+        let entry = map.entry(waiter).or_default();
+        if !entry.contains(&blocker) {
+            entry.push(blocker);
+        }
+    }
+    map
+}
+
 /// Decides whether `list_processes` must fall back from
 /// `performance_schema.processlist` to `information_schema.PROCESSLIST`
 /// (#587). A query error (table missing on pre-8.0.22 / MariaDB) always
@@ -2762,6 +3080,118 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cand(w: &str, h: &str, pending: bool) -> MdlCandidate {
+        MdlCandidate {
+            waiter: 3,
+            holder: 2,
+            waiter_lock: w.into(),
+            holder_lock: h.into(),
+            object_type: "TABLE".into(),
+            holder_pending: pending,
+        }
+    }
+
+    #[test]
+    fn mdl_compatible_granted_locks_are_not_blockers() {
+        // SR 同士・SW が SR を待たない・SW が SW を待たない。
+        assert!(mdl_wait_pairs(&[cand("SHARED_READ", "SHARED_READ", false)]).is_empty());
+        assert!(mdl_wait_pairs(&[cand("SHARED_WRITE", "SHARED_READ", false)]).is_empty());
+        assert!(mdl_wait_pairs(&[cand("SHARED_WRITE", "SHARED_WRITE", false)]).is_empty());
+    }
+
+    #[test]
+    fn mdl_conflicting_granted_locks_are_blockers() {
+        // LOCK TABLES READ (SRO) は書き込み (SW) を止めるが、読み取り (SR) の保持者は止めない。
+        assert_eq!(
+            mdl_wait_pairs(&[cand("SHARED_WRITE", "SHARED_READ_ONLY", false)]),
+            vec![(3, 2)]
+        );
+        assert!(mdl_wait_pairs(&[cand("SHARED_WRITE", "SHARED_READ", false)]).is_empty());
+        // ALTER (X) は SR の保持者に待たされる。
+        assert_eq!(
+            mdl_wait_pairs(&[cand("EXCLUSIVE", "SHARED_READ", false)]),
+            vec![(3, 2)]
+        );
+        // SNRW (ALTER の途中) は SR を待たせるが S / SH とは共存する。
+        assert_eq!(
+            mdl_wait_pairs(&[cand("SHARED_NO_READ_WRITE", "SHARED_READ", false)]),
+            vec![(3, 2)]
+        );
+        assert!(mdl_wait_pairs(&[cand("SHARED_NO_READ_WRITE", "SHARED", false)]).is_empty());
+    }
+
+    #[test]
+    fn mdl_pending_requests_follow_the_waiting_matrix() {
+        let blocked = |w: &str, h: &str| !mdl_wait_pairs(&[cand(w, h, true)]).is_empty();
+        // ALTER の PENDING X の後ろで待つ SR / SW / SNW / SNRW / SU。SH は待たない。
+        assert!(blocked("SHARED_READ", "EXCLUSIVE"));
+        assert!(blocked("SHARED_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_NO_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_NO_READ_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_UPGRADABLE", "EXCLUSIVE"));
+        assert!(!blocked("SHARED_HIGH_PRIO", "EXCLUSIVE"));
+        // X 要求は PENDING に止められないので、X 同士が相互待ちにならない。
+        assert!(!blocked("EXCLUSIVE", "EXCLUSIVE"));
+        assert!(!blocked("EXCLUSIVE", "SHARED_READ"));
+        // (1) PENDING SW は後続の SRO を、PENDING SRO は後続の SWLP を待たせる。
+        assert!(blocked("SHARED_READ_ONLY", "SHARED_WRITE"));
+        assert!(blocked("SHARED_WRITE_LOW_PRIO", "SHARED_READ_ONLY"));
+        // (2) SU 要求は PENDING の SNW / SNRW には止められない (X だけ)。
+        assert!(!blocked("SHARED_UPGRADABLE", "SHARED_NO_WRITE"));
+        assert!(!blocked("SHARED_UPGRADABLE", "SHARED_NO_READ_WRITE"));
+        // (3) PENDING X は SNW / SNRW 要求も待たせる。
+        assert!(blocked("SHARED_NO_WRITE", "EXCLUSIVE"));
+        assert!(blocked("SHARED_NO_READ_WRITE", "EXCLUSIVE"));
+        // SR は PENDING SNRW に止められるが、PENDING SW には止められない。
+        assert!(blocked("SHARED_READ", "SHARED_NO_READ_WRITE"));
+        assert!(!blocked("SHARED_READ", "SHARED_WRITE"));
+    }
+
+    #[test]
+    fn mdl_scope_locks_use_intention_matrix() {
+        let scope = |w: &str, h: &str, pending: bool| {
+            let mut c = cand(w, h, pending);
+            c.object_type = "GLOBAL".into();
+            !mdl_wait_pairs(&[c]).is_empty()
+        };
+        // GRANTED: IX 同士は互換、IX と S は衝突。
+        assert!(!scope("INTENTION_EXCLUSIVE", "INTENTION_EXCLUSIVE", false));
+        assert!(scope("INTENTION_EXCLUSIVE", "SHARED", false));
+        // (4) FTWRL (GLOBAL S PENDING) の後ろの INSERT (GLOBAL IX) は FTWRL を待つ。
+        assert!(scope("INTENTION_EXCLUSIVE", "SHARED", true));
+        assert!(scope("INTENTION_EXCLUSIVE", "EXCLUSIVE", true));
+        assert!(scope("SHARED", "EXCLUSIVE", true));
+        assert!(!scope("SHARED", "INTENTION_EXCLUSIVE", true));
+        assert!(!scope("EXCLUSIVE", "SHARED", true));
+    }
+
+    #[test]
+    fn mdl_scope_namespaces_follow_get_strategy() {
+        for t in ["GLOBAL", "SCHEMA", "COMMIT", "TABLESPACE", "BACKUP LOCK"] {
+            assert!(mdl_is_scoped(t), "{t}");
+        }
+        for t in ["TABLE", "FUNCTION", "PROCEDURE", "TRIGGER", "EVENT"] {
+            assert!(!mdl_is_scoped(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn lock_wait_states_are_detected() {
+        assert!(state_suggests_lock_wait("Waiting for table metadata lock"));
+        assert!(state_suggests_lock_wait("Waiting for global read lock"));
+        assert!(!state_suggests_lock_wait("executing"));
+        assert!(!state_suggests_lock_wait("Waiting on empty queue"));
+    }
+
+    #[test]
+    fn blocked_by_map_groups_dedups_and_drops_self_references() {
+        let map = blocked_by_map(vec![(2, 1), (3, 1), (3, 2), (3, 1), (4, 4)]);
+        assert_eq!(map.get(&2), Some(&vec![1]));
+        assert_eq!(map.get(&3), Some(&vec![1, 2]));
+        assert!(!map.contains_key(&4));
+        assert!(blocked_by_map(Vec::new()).is_empty());
+    }
 
     #[test]
     fn warning_rows_map_to_severity_and_prefix_code() {

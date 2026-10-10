@@ -325,3 +325,84 @@ describe("buildPreflightPlan — 長さ上限 (#1256)", () => {
     expect(buildPreflightPlan(atLimit + " ")).toBeNull();
   });
 });
+
+// Stryker (#1358) の生存変異を潰す境界ケース。誤った COUNT を影響行数バッジに出す
+// (= 無関係な行数を「影響行数」と誤表示する) 方向の誤判定に絞っている。
+describe("buildPreflightPlan — 推定不可への降格 (変異テスト補強)", () => {
+  const unest = (verb: "update" | "delete") => ({
+    verb,
+    table: null,
+    allRows: false,
+    countSql: null,
+  });
+
+  it("トップレベルの句キーワードごとに降格する", () => {
+    const tails = [
+      "JOIN b ON a.id = b.id",
+      "USING b",
+      "ORDER BY id",
+      "LIMIT 1",
+      "GROUP BY id",
+      "HAVING 1",
+      "UNION SELECT 1",
+      "INTERSECT SELECT 1",
+      "EXCEPT SELECT 1",
+    ];
+    for (const tail of tails) {
+      expect(buildPreflightPlan(`DELETE FROM t WHERE a = 1 ${tail}`)).toEqual(unest("delete"));
+      expect(buildPreflightPlan(`UPDATE t SET a = 1 WHERE a = 1 ${tail}`)).toEqual(unest("update"));
+    }
+    // 括弧内のサブクエリは降格しない
+    expect(buildPreflightPlan("DELETE FROM t WHERE id IN (SELECT id FROM u ORDER BY id)")?.countSql).toBe(
+      "SELECT COUNT(*) FROM t WHERE id IN (SELECT id FROM u ORDER BY id)",
+    );
+  });
+
+  it("動詞だけ・対象が読めない・別名付きの形は verb を保ったまま降格する", () => {
+    expect(buildPreflightPlan("DELETE")).toEqual(unest("delete"));
+    expect(buildPreflightPlan("DELETE t FROM u WHERE a = 1")).toEqual(unest("delete"));
+    expect(buildPreflightPlan("DELETE FROM")).toEqual(unest("delete"));
+    expect(buildPreflightPlan("DELETE FROM t x WHERE a = 1")).toEqual(unest("delete"));
+    expect(buildPreflightPlan("UPDATE")).toEqual(unest("update"));
+    expect(buildPreflightPlan("UPDATE t")).toEqual(unest("update"));
+    expect(buildPreflightPlan("UPDATE t x SET a = 1")).toEqual(unest("update"));
+    expect(buildPreflightPlan("UPDATE a, b SET a.x = 1")).toEqual(unest("update"));
+  });
+
+  it("テーブル参照が読めない形 (空/未終端クオート・数字始まり・括弧・打ちかけのドット)", () => {
+    for (const bad of ['""', "``", '"abc', "1t", "(t)", "db.", "`db`.", "db.(x)", "[t]"]) {
+      expect(buildPreflightPlan(`DELETE FROM ${bad} WHERE a = 1`)).toEqual(unest("delete"));
+      expect(buildPreflightPlan(`UPDATE ${bad} SET a = 1`)).toEqual(unest("update"));
+    }
+  });
+
+  it("括弧だけ・動詞が無い文は null", () => {
+    expect(buildPreflightPlan("(1)")).toBeNull();
+    expect(buildPreflightPlan("(DELETE FROM t)")).toBeNull();
+    expect(buildPreflightPlan(";")).toBeNull();
+  });
+
+  it("空白の量に関わらずテーブル参照を正しく切り出す", () => {
+    expect(buildPreflightPlan("DELETE FROM   t   WHERE a = 1")?.table).toBe("t");
+    expect(buildPreflightPlan('DELETE FROM"t" WHERE a = 1')?.table).toBe('"t"');
+    expect(buildPreflightPlan("UPDATE\n\tdb . t SET a = 1")?.table).toBe("db . t");
+  });
+
+  it("RETURNING は条件から切り落とし、WHERE 直後の RETURNING は降格する", () => {
+    expect(buildPreflightPlan("DELETE FROM t WHERE a = 1 RETURNING id", "postgres")?.countSql).toBe(
+      "SELECT COUNT(*) FROM t WHERE a = 1",
+    );
+    expect(buildPreflightPlan("UPDATE t SET a = 1 WHERE b = 2 RETURNING *", "postgres")?.countSql).toBe(
+      "SELECT COUNT(*) FROM t WHERE b = 2",
+    );
+    expect(buildPreflightPlan("DELETE FROM t WHERE RETURNING id", "postgres")).toEqual(unest("delete"));
+    expect(buildPreflightPlan("DELETE FROM t WHERE", "postgres")).toEqual(unest("delete"));
+  });
+
+  it("preflightTone の境界", () => {
+    expect(preflightTone(false, null)).toBe("neutral");
+    expect(preflightTone(false, PREFLIGHT_LARGE_THRESHOLD - 1)).toBe("neutral");
+    expect(preflightTone(false, PREFLIGHT_LARGE_THRESHOLD)).toBe("warning");
+    expect(preflightTone(true, null)).toBe("danger");
+  });
+});
