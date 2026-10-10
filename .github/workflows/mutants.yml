@@ -44,6 +44,10 @@ env:
 jobs:
   mutants:
     name: cargo-mutants (安全網関数)
+    outputs:
+      exit_code: ${{ steps.mutants.outputs.exit_code }}
+      score: ${{ steps.summary.outputs.score }}
+      survived: ${{ steps.summary.outputs.survived }}
     runs-on: ubuntu-latest
     # フル実行は数十分かかるが、ハング時にデフォルト 6 時間ランナーを占有し続ける
     # のを防ぐため余裕を持った上限を付ける (正常時は影響なし)。
@@ -97,17 +101,28 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       # 変異テスト本体: 安全網関数群に限定して実行 (対象は mutants.toml が定める)。
-      # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (|| true)。
+      # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (終了コードは下の
+      # Run cargo-mutants ステップで step output に残し、exit 0 で終える)。
       # mutants.out/ をアーティファクトとして保存し、Job Summary にサマリを出す。
+      # 終了コードは $GITHUB_OUTPUT (exit_code) に残す (後続の通知ジョブ用, #1395)。
+      # cargo-mutants は 0=全捕捉 / 2=生存変異あり / 3=タイムアウトあり / 4=baseline 失敗
+      # など。いずれも本ステップは exit 0 で終える (CI は落とさない)。
       - name: Run cargo-mutants
+        id: mutants
         if: '!inputs.list_only'
         working-directory: src-tauri
+        shell: bash
         run: |
+          set +e
+          set -o pipefail
           cargo mutants \
             --no-shuffle \
-            2>&1 | tee mutants-output.txt || true
+            2>&1 | tee mutants-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Mutation test summary
+        id: summary
         if: '!inputs.list_only'
         working-directory: src-tauri
         run: |
@@ -118,7 +133,7 @@ jobs:
             # Timeout / Success) で集計する。生存変異 (MISSED) を先頭に強調し、
             # fail はさせない (可視化のみ)。
             python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
-          import json, pathlib, collections
+          import json, os, pathlib, collections
           data = json.loads(pathlib.Path("mutants.out/outcomes.json").read_text())
           counts = collections.Counter(o.get("summary") for o in data.get("outcomes", []))
           # baseline (無変異のテスト実行) は summary == "Success" で、変異ではない。
@@ -130,6 +145,11 @@ jobs:
           total = caught + missed + unviable + timeout
           tested = caught + missed
           score = f"{caught / tested * 100:.1f}%" if tested else "n/a"
+          # 後続の通知ジョブ (#1395) 用に score= / survived= を step output へ残す。
+          out = os.environ.get("GITHUB_OUTPUT")
+          if out:
+              with open(out, "a") as fh:
+                  fh.write(f"score={score}\nsurvived={missed}\n")
           if missed:
               print(f"> :warning: **生存変異 (MISSED): {missed} 件** — テストが捕捉できていない変異があります。`mutants.out/missed.txt` を確認し、`db::tests` に境界ケースを追記してください。")
           else:
@@ -165,3 +185,71 @@ jobs:
           path: src-tauri/mutants.out/
           if-no-files-found: ignore
           retention-days: 14
+
+  # 結果の通知 (#1395)。手動実行の可視化専用で見に行かなければ腐るため、トラッキング
+  # Issue (ラベル ci:mutants) に結果を残す。生存変異は毎回「ある」のが普通でノイズに
+  # なるので、通知条件は次のとおりに絞る。
+  #   - 実行失敗 (結果ファイル無し / baseline 失敗 等) … 必ず upsert
+  #   - 生存変異が 1 件以上 … 前回通知と (生存数, スコア) が変わったときだけコメント
+  #     追記 (TRACK_DEDUP_KEY で同一結果の連投を抑止)
+  #   - 実行成功かつ生存 0 件 … 回復としてクローズ
+  # `issues: write` は本ジョブにだけ付与。list_only 実行と既定ブランチ以外の実行では通知しない。
+  notify:
+    name: 結果の通知 (トラッキング Issue)
+    needs: mutants
+    if: always() && !inputs.list_only && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.mutants.result == 'success' || needs.mutants.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/upsert-tracking-issue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: トラッキング Issue を upsert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          M_RESULT: ${{ needs.mutants.result }}
+          M_EXIT: ${{ needs.mutants.outputs.exit_code }}
+          M_SCORE: ${{ needs.mutants.outputs.score }}
+          M_SURVIVED: ${{ needs.mutants.outputs.survived }}
+          TRACK_LABEL: ci:mutants
+          # 生存変異の潰しはテスト追記で 1〜数日。安全網 (読み取り専用ガード) の強化なので恩恵は大きい。
+          TRACK_EXTRA_LABELS: cost:Mid,benefit:4
+        run: |
+          # exit_code は 0 / 2 (生存変異あり) / 3 (タイムアウトあり) が「実行成功」。
+          # スコアが取れていない場合 (結果ファイル無し) も実行失敗として扱う。
+          run_ok=0
+          # スコアが "n/a" (母数 0 = 変異が 1 つも評価されていない) も実行失敗扱いにする。
+          case "${M_EXIT:-}" in 0|2|3) [ -n "$M_SCORE" ] && [ "$M_SCORE" != "n/a" ] && run_ok=1 ;; esac
+          if [ "$M_RESULT" = "success" ] && [ "$run_ok" = "1" ] && [ "${M_SURVIVED:-0}" = "0" ]; then
+            TRACK_STATE=ok bash scripts/upsert-tracking-issue.sh
+            exit 0
+          fi
+          {
+            if [ "$run_ok" = "1" ]; then
+              echo "cargo-mutants (安全網関数) で生存変異が検出されたため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- 生存変異 (MISSED): **${M_SURVIVED} 件** / 変異スコア: **${M_SCORE}**"
+              echo "- 詳細は実行ページの Job Summary と Artifacts (\`mutants-out\`, \`missed.txt\`) を確認し、\`db::tests\` に境界ケースを追記してください。"
+              key="survived=${M_SURVIVED};score=${M_SCORE}"
+            else
+              echo "cargo-mutants の実行が失敗した (結果ファイルが得られなかった) ため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- ジョブ結果: \`${M_RESULT}\` / 終了コード: \`${M_EXIT:-不明}\`"
+              echo "- 実行ページの Job Summary 末尾 50 行を確認してください。"
+              key="failed;exit=${M_EXIT:-unknown}"
+            fi
+            echo ""
+            echo "同一結果の連続実行ではコメントを追記しません。生存 0 件で正常に完了すると自動クローズされます。"
+          } > issue-body.md
+          TRACK_STATE=problem \
+            TRACK_TITLE="[mutants] 安全網関数の変異テストで生存変異 / 実行失敗を検出" \
+            TRACK_BODY_FILE=issue-body.md \
+            TRACK_DEDUP_KEY="$key" \
+            bash scripts/upsert-tracking-issue.sh

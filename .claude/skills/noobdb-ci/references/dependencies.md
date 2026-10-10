@@ -26,6 +26,6 @@ PR の自動生成と脆弱性の可視化を次のように役割分担して�
   `schedule: cron` (毎週月曜) + `workflow_dispatch` で定期実行し、`pnpm audit` の
   結果を Job Summary に出力します。pnpm は既存 CI と同じく `corepack enable` で
   用意します。バンドルサイズ (#443) ・カバレッジ (#482) と同じ漸進方針で、
-  **当面 fail させず可視化のみ**とし (`|| true` で吸収)、PR ごとではなく週次
+  **当面 fail させず可視化のみ**とし (終了コードは step output に残して吸収。検出は `notify` ジョブがトラッキング Issue へ通知する、`references/scheduled-notify.md`)、PR ごとではなく週次
   スケジュールにしているのは、依存を変更しない PR でも毎回外部の npm advisory DB
   に問い合わせるコストを避けるためです。

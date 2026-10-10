@@ -32,6 +32,10 @@ env:
 jobs:
   js-mutants:
     name: Stryker (フロント安全網)
+    outputs:
+      exit_code: ${{ steps.stryker.outputs.exit_code }}
+      score: ${{ steps.summary.outputs.score }}
+      survived: ${{ steps.summary.outputs.survived }}
     runs-on: ubuntu-latest
     # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ上限 (正常時は影響なし)。
     timeout-minutes: 120
@@ -133,3 +137,64 @@ jobs:
           path: reports/mutation/
           if-no-files-found: ignore
           retention-days: 14
+
+  # 結果の通知 (#1395)。mutants.yml と同じ方針: 実行失敗は必ず upsert、生存変異は
+  # (生存数, スコア) が前回通知から変わったときだけコメント追記、生存 0 件で正常終了なら
+  # 自動クローズ。既定ブランチ以外の実行では通知しない。ラベルは ci:js-mutants。`issues: write` は本ジョブにだけ付与する。
+  notify:
+    name: 結果の通知 (トラッキング Issue)
+    needs: js-mutants
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.js-mutants.result == 'success' || needs.js-mutants.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/upsert-tracking-issue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: トラッキング Issue を upsert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          M_RESULT: ${{ needs.js-mutants.result }}
+          M_EXIT: ${{ needs.js-mutants.outputs.exit_code }}
+          M_SCORE: ${{ needs.js-mutants.outputs.score }}
+          M_SURVIVED: ${{ needs.js-mutants.outputs.survived }}
+          TRACK_LABEL: ci:js-mutants
+          TRACK_EXTRA_LABELS: cost:Mid,benefit:4
+        run: |
+          # stryker.conf.json は thresholds.break: null のためスコアでは非ゼロ終了しない。
+          # 終了コード 0 かつスコアあり ("n/a" = 母数 0 を除く) のときだけ「実行成功」とする。
+          run_ok=0
+          if [ "${M_EXIT:-}" = "0" ] && [ -n "$M_SCORE" ] && [ "$M_SCORE" != "n/a" ]; then run_ok=1; fi
+          if [ "$M_RESULT" = "success" ] && [ "$run_ok" = "1" ] && [ "${M_SURVIVED:-0}" = "0" ]; then
+            TRACK_STATE=ok bash scripts/upsert-tracking-issue.sh
+            exit 0
+          fi
+          {
+            if [ "$run_ok" = "1" ]; then
+              echo "Stryker (フロント安全網) で生存変異が検出されたため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- 生存変異 (Survived + NoCoverage): **${M_SURVIVED} 件** / 変異スコア: **${M_SCORE}** (Stryker 終了コード: \`${M_EXIT:-不明}\`)"
+              echo "- 詳細は実行ページの Job Summary と Artifacts (\`stryker-report\`, \`mutation.html\`) を確認し、対応する \`*.test.ts\` に境界ケースを追記してください。"
+              key="survived=${M_SURVIVED};score=${M_SCORE}"
+            else
+              echo "Stryker の実行が失敗した (結果ファイルが得られなかった) ため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- ジョブ結果: \`${M_RESULT}\` / Stryker 終了コード: \`${M_EXIT:-不明}\`"
+              echo "- 実行ページの Job Summary 末尾 50 行を確認してください。"
+              key="failed;exit=${M_EXIT:-unknown}"
+            fi
+            echo ""
+            echo "同一結果の連続実行ではコメントを追記しません。生存 0 件で正常に完了すると自動クローズされます。"
+          } > issue-body.md
+          TRACK_STATE=problem \
+            TRACK_TITLE="[js-mutants] フロント安全網の変異テストで生存変異 / 実行失敗を検出" \
+            TRACK_BODY_FILE=issue-body.md \
+            TRACK_DEDUP_KEY="$key" \
+            bash scripts/upsert-tracking-issue.sh

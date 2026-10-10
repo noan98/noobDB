@@ -179,3 +179,53 @@ jobs:
             e2e/screenshots/
             e2e/logs/
           retention-days: 7
+
+  # nightly の結果通知 (#1395)。失敗しても PR / マージはブロックされず、翌朝 Actions を
+  # 見に行かなければ腐る (silent rot) ため、失敗時はトラッキング Issue (ラベル
+  # ci:e2e-nightly) を upsert し、成功に戻ったら「回復した」とコメントして自動クローズする。
+  # `issues: write` はこのジョブにだけ付与し、E2E 本体の権限は増やさない。
+  # schedule / workflow_dispatch のみ通知 (PR 起点は通知しない)。既定ブランチ以外の手動実行と
+  # キャンセルでは通知しない (試験ブランチの結果で Issue を open / close しないため)。
+  notify:
+    name: nightly 結果の通知 (トラッキング Issue)
+    needs: e2e-linux
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.e2e-linux.result == 'success' || needs.e2e-linux.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/upsert-tracking-issue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: トラッキング Issue を upsert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          E2E_RESULT: ${{ needs.e2e-linux.result }}
+          TRACK_LABEL: ci:e2e-nightly
+          # 原因調査は flaky 切り分けを含み半日〜1 日。回帰検知の導線なので恩恵は大きめ。
+          TRACK_EXTRA_LABELS: cost:Mid,benefit:3
+        run: |
+          if [ "$E2E_RESULT" = "success" ]; then
+            TRACK_STATE=ok bash scripts/upsert-tracking-issue.sh
+          else
+            run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            {
+              echo "nightly の E2E (tauri-driver / WebKitGTK) が失敗したため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- ジョブ結果: \`${E2E_RESULT}\` (トリガ: \`${GITHUB_EVENT_NAME}\` / ブランチ: \`${GITHUB_REF_NAME}\`)"
+              echo "- 失敗時のスクリーンショット / ログは [実行ページ](${run_url}) の Artifacts (\`e2e-screenshots-*\`, 7 日保持) から取得できます。"
+              echo "- 調査手順は \`.claude/skills/noobdb-testing/references/e2e.md\` を参照してください。"
+              echo ""
+              echo "成功に戻ると次回の nightly で自動クローズされます。連続失敗時はこの Issue にコメントが追記されます。"
+            } > issue-body.md
+            TRACK_STATE=problem \
+              TRACK_TITLE="[E2E nightly] 実 webview E2E が失敗しています" \
+              TRACK_BODY_FILE=issue-body.md \
+              bash scripts/upsert-tracking-issue.sh
+          fi
