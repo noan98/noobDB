@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
+import { registerTreeDropTarget } from "../components/treeDragStore";
 
 /**
  * 接続一覧サイドパネル (#604)。マウント時のスキーマ取得 (`listDatabases`) は
@@ -352,6 +353,105 @@ describe("Database Explorer の階層 (#1112)", () => {
       fireEvent.doubleClick(row);
       expect(onInsertColumn).toHaveBeenCalledTimes(1);
       expect(onInsertColumn).toHaveBeenCalledWith("db1", "tbl1", "id", false);
+    });
+  });
+
+  describe("テーブル / 列行のポインタ・ドラッグ挿入 (#1414)", () => {
+    const originalElementFromPoint = document.elementFromPoint;
+    afterEach(() => {
+      document.elementFromPoint = originalElementFromPoint;
+    });
+    function setupTarget() {
+      const editor = document.createElement("div");
+      document.body.appendChild(editor);
+      document.elementFromPoint = () => editor;
+      const insert = vi.fn();
+      const unregister = registerTreeDropTarget({
+        element: editor,
+        posAtCoords: () => 5,
+        setMarker: vi.fn(),
+        insert,
+      });
+      return {
+        insert,
+        cleanup: () => {
+          unregister();
+          editor.remove();
+        },
+      };
+    }
+    const ptr = (type: string, x: number, init: PointerEventInit = {}) =>
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, cancelable: true, clientX: x, clientY: 1, ...init });
+
+    it("テーブル行は HTML5 の draggable ではなく、ポインタ移動でエディタへ挿入される", async () => {
+      await openDb({ onInsertTableSelect: vi.fn() });
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      expect(row).not.toHaveAttribute("draggable");
+      const { insert, cleanup } = setupTarget();
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 40));
+      window.dispatchEvent(ptr("pointerup", 40));
+      expect(insert).toHaveBeenCalledTimes(1);
+      expect(insert).toHaveBeenCalledWith({ kind: "table", database: "db1", table: "tbl1" }, 5, true);
+      cleanup();
+    });
+
+    it("しきい値未満の移動はクリック扱いで挿入しない", async () => {
+      await openDb({ onInsertTableSelect: vi.fn() });
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      const { insert, cleanup } = setupTarget();
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 2));
+      window.dispatchEvent(ptr("pointerup", 2));
+      expect(insert).not.toHaveBeenCalled();
+      cleanup();
+    });
+
+    it("列行からのドラッグは列を渡す", async () => {
+      vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+      await openDb({});
+      await screen.findByRole("treeitem", { name: "tbl1" });
+      fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+      const row = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>('[data-tree-key^="col:"][data-tree-key$=":id"]');
+        if (!el) throw new Error("列行 id がまだ無い");
+        return el;
+      });
+      const { insert, cleanup } = setupTarget();
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 40));
+      window.dispatchEvent(ptr("pointerup", 40, { altKey: true }));
+      expect(insert).toHaveBeenCalledWith({ kind: "column", database: "db1", table: "tbl1", column: "id" }, 5, false);
+      cleanup();
+    });
+
+    it("ドラッグ中にツールチップは出ず、ドロップ後にも戻らない", async () => {
+      await openDb({});
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      const { cleanup } = setupTarget();
+      fireEvent.mouseOver(row);
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 40));
+      // 表示予約 (400ms) を過ぎるまで待っても出ない。
+      await new Promise((r) => setTimeout(r, 600));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      window.dispatchEvent(ptr("pointerup", 40));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      cleanup();
+    });
+
+    it("テーブル行の pointerdown は接続行 (並べ替え) へ伝播しない", async () => {
+      await openDb({ onReorderProfiles: vi.fn() });
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      const onDown = vi.fn();
+      const node = row.parentElement as HTMLElement;
+      node.addEventListener("pointerdown", onDown);
+      row.dispatchEvent(ptr("pointerdown", 0));
+      expect(onDown).not.toHaveBeenCalled();
+      window.dispatchEvent(ptr("pointerup", 0));
+      const profileRow = document.querySelector<HTMLElement>('[data-tree-key^="profile:"]') as HTMLElement;
+      expect(profileRow.getAttribute("draggable")).not.toBe("true");
     });
   });
 });

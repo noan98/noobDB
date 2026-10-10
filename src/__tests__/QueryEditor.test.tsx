@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { createRef } from "react";
@@ -7,6 +7,8 @@ import { EditorView } from "@codemirror/view";
 import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
+import { attachTreeDragSource } from "../components/treeDragStore";
+import type { TreeDragItem } from "../components/treeDragInsert";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 // QueryEditor の主要な実行フロー (Run ボタン / Ctrl+Enter ショートカット / 空状態
@@ -323,3 +325,74 @@ describe("QueryEditor.requestAiSql (#695)", () => {
   });
 });
 
+
+describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿入 (#1414)", () => {
+  const originalElementFromPoint = document.elementFromPoint;
+  beforeEach(() => {
+    setLocale("en");
+  });
+  afterEach(() => {
+    document.elementFromPoint = originalElementFromPoint;
+  });
+
+  function mount(sql: string, driver = "mysql") {
+    renderWithProviders(<QueryEditor onRun={vi.fn()} initialSql={sql} driver={driver} />);
+    const editorEl = document.querySelector(".cm-editor") as HTMLElement;
+    const view = EditorView.findFromDOM(editorEl) as EditorView;
+    // jsdom にはレイアウトが無く posAtCoords / elementFromPoint が使えないので固定する。
+    view.posAtCoords = vi.fn(() => 3) as unknown as EditorView["posAtCoords"];
+    document.elementFromPoint = () => editorEl;
+    return { view };
+  }
+
+  function drag(item: TreeDragItem, init: PointerEventInit = {}) {
+    const source = document.createElement("div");
+    document.body.appendChild(source);
+    const detach = attachTreeDragSource(source, () => item);
+    const ev = (type: string, x: number, extra: PointerEventInit = {}) =>
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, clientX: x, clientY: 1, ...extra });
+    source.dispatchEvent(ev("pointerdown", 0));
+    window.dispatchEvent(ev("pointermove", 40));
+    window.dispatchEvent(ev("pointerup", 40, init));
+    detach();
+    source.remove();
+  }
+
+  it("テーブル行を落とすとドロップ位置に SELECT 雛形が 1 回だけ入る", () => {
+    const { view } = mount("ab cd");
+    drag({ kind: "table", database: "shop", table: "orders" });
+    expect(view.state.doc.toString()).toBe("ab SELECT * FROM `shop`.`orders`cd");
+  });
+
+  it("文書外 (ガター等) でも最寄りの位置に寄せるため posAtCoords は precise=false で呼ぶ", () => {
+    const { view } = mount("ab cd");
+    drag({ kind: "table", database: "shop", table: "orders" });
+    expect(vi.mocked(view.posAtCoords)).toHaveBeenCalledWith(expect.objectContaining({ x: 40 }), false);
+  });
+
+  it("列行は表.列、Alt を押していれば列名のみを挿入する", () => {
+    const { view } = mount("ab cd", "postgres");
+    const column: TreeDragItem = { kind: "column", database: "shop", table: "orders", column: "id" };
+    drag(column);
+    expect(view.state.doc.toString()).toBe("ab orders.idcd");
+    drag(column, { altKey: true });
+    expect(view.state.doc.toString().match(/id/g)?.length).toBe(2);
+    expect(view.state.doc.toString()).not.toContain("orders.id orders");
+  });
+
+  it("ドラッグ中は挿入予定位置にマーカーが出て、終わると消える", () => {
+    mount("ab cd");
+    const source = document.createElement("div");
+    document.body.appendChild(source);
+    const detach = attachTreeDragSource(source, () => ({ kind: "table", database: "d", table: "t" }));
+    const ev = (type: string, x: number) =>
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, clientX: x, clientY: 1 });
+    source.dispatchEvent(ev("pointerdown", 0));
+    window.dispatchEvent(ev("pointermove", 40));
+    expect(document.querySelector(".cm-tree-drop-caret")).not.toBeNull();
+    window.dispatchEvent(ev("pointerup", 40));
+    expect(document.querySelector(".cm-tree-drop-caret")).toBeNull();
+    detach();
+    source.remove();
+  });
+});

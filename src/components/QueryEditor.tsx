@@ -11,10 +11,13 @@ import {
   type ReactNode,
 } from "react";
 import { Box, chakra } from "@chakra-ui/react";
+import { registerTreeDropTarget } from "./treeDragStore";
+import { treeItemInsertText } from "./treeDragInsert";
 import { AnimatePresence, motion } from "motion/react";
 import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
   Decoration,
+  WidgetType,
   EditorView,
   keymap,
   lineNumbers,
@@ -154,6 +157,43 @@ const stmtFlashField = StateField.define<DecorationSet>({
           e.value && e.value.to > e.value.from
             ? Decoration.set([stmtFlashMark.range(e.value.from, e.value.to)])
             : Decoration.none;
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+// スキーマツリーのテーブル / 列行をドラッグしている間 (#1414)、挿入予定位置に出す
+// キャレット相当のマーカー。HTML5 の drag イベントに依存する `dropCursor` 拡張は使えない
+// (ポインタ操作方式) ので、`treeDropMarkerEffect` で位置をセット/クリアする自前の装飾。
+// 見た目は App.css の `.cm-tree-drop-caret`。
+const treeDropMarkerEffect = StateEffect.define<number | null>();
+class TreeDropCaretWidget extends WidgetType {
+  eq(other: WidgetType) {
+    return other instanceof TreeDropCaretWidget;
+  }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = "cm-tree-drop-caret";
+    el.setAttribute("aria-hidden", "true");
+    return el;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+const treeDropCaretDeco = Decoration.widget({ widget: new TreeDropCaretWidget(), side: 1 });
+const treeDropMarkerField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(treeDropMarkerEffect)) {
+        deco =
+          e.value === null
+            ? Decoration.none
+            : Decoration.set([treeDropCaretDeco.range(Math.min(e.value, tr.state.doc.length))]);
       }
     }
     return deco;
@@ -924,6 +964,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
           search({ top: true }),
           highlightSelectionMatches(),
           stmtFlashField,
+          // スキーマツリー行のドラッグ挿入 (#1414) の着地点マーカー。
+          treeDropMarkerField,
           // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
           // 再構成できるようにする。作成時点の設定値で初期化する。
           lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),
@@ -1016,6 +1058,23 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       state: makeState(startDoc, clampSelection(initialSelection, startDoc.length)),
     });
     viewRef.current = view;
+    // スキーマツリー行のドラッグ挿入のドロップ先 (#1414)。ポインタ位置 → キャレット位置は
+    // `posAtCoords` で決める。文書の外 (行番号ガター・余白) は最寄りの位置に寄せる (precise=false)。
+    const unregisterTreeDrop = registerTreeDropTarget({
+      element: view.dom,
+      posAtCoords: (x, y) => view.posAtCoords({ x, y }, false),
+      setMarker: (pos) => view.dispatch({ effects: treeDropMarkerEffect.of(pos) }),
+      insert: (item, pos, qualified) => {
+        const text = treeItemInsertText(driverRef.current, item, qualified);
+        const at = pos ?? view.state.doc.length;
+        view.dispatch({
+          changes: { from: at, insert: text },
+          selection: { anchor: at + text.length },
+          userEvent: "input.drop",
+        });
+        view.focus();
+      },
+    });
     appliedConfigRef.current = desiredConfigRef.current;
     setHasContent(startDoc.length > 0);
     // 復元されたタブが書き込み DML なら、マウント直後からプリフライトを効かせる。
@@ -1023,6 +1082,7 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     preflightSqlRef.current = initPreflightText;
     setPreflightSql(initPreflightText);
     return () => {
+      unregisterTreeDrop();
       if (preflightTimerRef.current !== null) {
         window.clearTimeout(preflightTimerRef.current);
         preflightTimerRef.current = null;

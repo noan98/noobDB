@@ -9,6 +9,8 @@ import { tableRefEquals } from "../tableQuickAccess";
 import { isSandboxShadowTableName } from "../sandbox";
 import { Callout } from "./Callout";
 import { SandboxSection } from "./SandboxSection";
+import { TreeDragGhost } from "./TreeDragGhost";
+import { useTreeDragActive, useTreeDragSource } from "./useTreeDragSource";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
@@ -580,16 +582,26 @@ function useLazyBind<V>(ref: TooltipBindRef<V>): HoverBind<V> {
 
 /** ツリー行の単純テキストツールチップ (1 つの共有バブル + イベント委譲、#884)。 */
 function TreeTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<string> }) {
-  const { hovered, bind } = useDelegatedTooltip();
+  const { hovered, bind, hide } = useDelegatedTooltip();
+  // ドラッグ中は pointer capture で mouseleave が来ないため、元行のツールチップを抑止する (#1414)。
+  // 描画を隠すだけでは hovered と表示タイマーが残り、ドロップ直後に戻ってしまうので状態ごと閉じる。
+  const dragging = useTreeDragActive();
+  useEffect(() => {
+    if (dragging) hide();
+  }, [dragging, hide]);
   bindRef.current = bind;
-  return hovered ? <TooltipBubble label={hovered.label} anchor={hovered.rect} maxWidth="320px" /> : null;
+  return hovered && !dragging ? <TooltipBubble label={hovered.label} anchor={hovered.rect} maxWidth="320px" /> : null;
 }
 
 /** カラム行の詳細ホバーカード (`ColumnTooltip`)。 */
 function ColumnTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<TableColumnInfo> }) {
-  const { hovered, bind } = useDelegatedHover<TableColumnInfo>();
+  const { hovered, bind, hide } = useDelegatedHover<TableColumnInfo>();
+  const dragging = useTreeDragActive();
+  useEffect(() => {
+    if (dragging) hide();
+  }, [dragging, hide]);
   bindRef.current = bind;
-  return hovered ? <ColumnTooltip col={hovered.value} anchor={hovered.rect} /> : null;
+  return hovered && !dragging ? <ColumnTooltip col={hovered.value} anchor={hovered.rect} /> : null;
 }
 
 /** ローディングのスケルトン行。 */
@@ -803,6 +815,8 @@ const ColumnRow = memo(function ColumnRow({
   const colKey = `col:${tableKey(db, tbl)}:${col.name}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, colKey);
   const openMenu = (e: ContextMenuTriggerEvent) => actions.columnMenu(e, db, tbl, col.name);
+  // ポインタ操作でエディタへドラッグ挿入 (#1414)。HTML5 の draggable は使わない。
+  const dragRef = useTreeDragSource({ kind: "column", database: db, table: tbl, column: col.name });
   return (
     <TreeRow
       data-tree-key={colKey}
@@ -819,6 +833,7 @@ const ColumnRow = memo(function ColumnRow({
       onKeyDown={actions.makeKeyDown(undefined, openMenu)}
       onContextMenu={openMenu}
       onDoubleClick={() => actions.insertColumn(db, tbl, col.name)}
+      ref={dragRef}
       {...actions.columnTooltip(col)}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1009,6 +1024,8 @@ const TableNode = memo(function TableNode({
   const rowEstLabel = typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
   const openMenu = (e: ContextMenuTriggerEvent) =>
     view ? actions.viewMenu(e, db, view) : actions.tableMenu(e, db, tbl);
+  // ポインタ操作でエディタへドラッグ挿入 (#1414)。HTML5 の draggable は使わない。
+  const dragRef = useTreeDragSource({ kind: "table", database: db, table: tbl });
 
   return (
     <TreeRow
@@ -1040,6 +1057,7 @@ const TableNode = memo(function TableNode({
         actions.pickTable(db, tbl);
       }}
       onContextMenu={openMenu}
+      ref={dragRef}
       {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
       _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
     >
@@ -3516,6 +3534,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           描き直されるのはこの 2 つだけ (#1314)。 */}
       <TreeTooltipLayer bindRef={treeTooltipBindRef} />
       <ColumnTooltipLayer bindRef={columnTooltipBindRef} />
+      <TreeDragGhost />
       <Box px="2.5" py="2" borderBottom="1px solid" borderColor="app.borderSubtle">
         <Input
           ref={filterInputRef}
