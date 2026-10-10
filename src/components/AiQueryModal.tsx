@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import { api } from "../api/tauri";
+import { api, type TableColumnInfo } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiStream } from "../ai/useAiStream";
 import {
@@ -22,6 +22,7 @@ import {
   restrictSchema,
   selectRelevantTables,
   summarizeSchemaSend,
+  type Nl2SqlColumn,
   type Nl2SqlForeignKey,
   type Nl2SqlResponse,
   type Nl2SqlTable,
@@ -49,6 +50,29 @@ type State =
   | { kind: "raw"; raw: string }
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
+
+/** 大きい DB で送信時にテーブルごとの詳細 (`describeTable`) を取るときの同時実行数。 */
+const DETAIL_CONCURRENCY = 6;
+
+/** `describeTable` の結果を送信用の列表現にする。 */
+function toNl2SqlColumns(cols: TableColumnInfo[]): Nl2SqlColumn[] {
+  return cols.map((c) => ({
+    name: c.name,
+    type: c.data_type,
+    primaryKey: c.key.toUpperCase() === "PRI",
+    nullable: c.nullable,
+    comment: c.comment ?? null,
+  }));
+}
+
+/** テーブルの列を、取得済みの詳細 (型・PK・コメント) で置き換える。詳細が無いテーブルは列名だけのまま。 */
+function withDetails(tables: Nl2SqlTable[], details: ReadonlyMap<string, Nl2SqlColumn[]>): Nl2SqlTable[] {
+  if (details.size === 0) return tables;
+  return tables.map((x) => {
+    const cols = details.get(x.name);
+    return cols ? { ...x, columns: cols } : x;
+  });
+}
 
 /** 関連テーブルの手動選択欄に一度に描く行数の上限 (残りは絞り込みで探す)。 */
 const PICKER_MAX_ROWS = 200;
@@ -89,6 +113,8 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const [pickFilter, setPickFilter] = useState("");
   // 追い質問は最初の生成で送ったテーブル集合を引き継ぐ (会話の途中でスキーマ = キャッシュ対象を変えない)。
   const [lockedNames, setLockedNames] = useState<ReadonlySet<string> | null>(null);
+  // 大きい DB: 送信時に取ったテーブルごとの詳細 (型・PK・コメント)。追い質問で同じ内容を再利用する。
+  const [details, setDetails] = useState<ReadonlyMap<string, Nl2SqlColumn[]>>(() => new Map());
   // 追い質問 (#1471): これまでの往復 (送ったプロンプトと回答の本文)。新規の生成で作り直す。
   const [exchanges, setExchanges] = useState<AiExchange[]>([]);
   const [followUp, setFollowUp] = useState("");
@@ -106,35 +132,42 @@ export function AiQueryModal(props: AiQueryModalProps) {
     setPicked(null);
     setPickFilter("");
     setLockedNames(null);
+    setDetails(new Map());
     confirmedRef.current = null;
     if (!database) return;
     let alive = true;
     setSchema({ kind: "loading" });
     Promise.all([
-      // 列の型・主キー・NULL 可・コメントを含む一括取得。
-      api.describeDatabase(props.sessionId, database),
+      // テーブル数の判定と候補選択は、キャッシュの効く概要 (テーブル名・列名) で行う。
+      api.schemaOverview(props.sessionId, database),
       // 外部キー・テーブルコメントは補助情報。取れなくても生成自体は続ける (SQLite のコメントは常に無い)。
       api.foreignKeys(props.sessionId, database).catch(() => []),
       api.listTableComments(props.sessionId, database).catch(() => []),
     ])
-      .then(([described, fks, comments]) => {
-        if (!alive) return;
+      .then(async ([overview, fks, comments]) => {
         const commentOf = new Map(comments.map((c) => [c.name, c.comment]));
-        const tables: Nl2SqlTable[] = described.map((x) => ({
+        const large = overview.length > NL2SQL_LARGE_SCHEMA_TABLES;
+        let tables: Nl2SqlTable[] = overview.map((x) => ({
           name: x.name,
           comment: commentOf.get(x.name) ?? null,
-          columns: x.columns.map((c) => ({
-            name: c.name,
-            type: c.data_type,
-            primaryKey: c.key.toUpperCase() === "PRI",
-            nullable: c.nullable,
-            comment: c.comment ?? null,
-          })),
+          columns: x.columns.map((name) => ({ name })),
         }));
+        // 閾値以下は全テーブルを送るので、型・PK・コメントまで一括取得する (取れなければ列名だけで続ける)。
+        if (!large && tables.length > 0) {
+          const described = await api.describeDatabase(props.sessionId, database).catch(() => null);
+          if (described) {
+            tables = described.map((x) => ({
+              name: x.name,
+              comment: commentOf.get(x.name) ?? null,
+              columns: toNl2SqlColumns(x.columns),
+            }));
+          }
+        }
+        if (!alive) return;
         setSchema({
           kind: "ready",
           tables,
-          large: tables.length > NL2SQL_LARGE_SCHEMA_TABLES,
+          large,
           foreignKeys: fks.map((f) => ({
             table: f.table,
             column: f.column,
@@ -159,12 +192,15 @@ export function AiQueryModal(props: AiQueryModalProps) {
     [schema, request],
   );
   const selectedNames: ReadonlySet<string> | null = picked ?? suggested;
+  // 追い質問の途中 (最初の生成で送った集合が固定されている) は、その集合が実際に送る内容。
+  const followingUp = exchanges.length > 0 && lockedNames !== null;
+  const sendNames = followingUp ? lockedNames : selectedNames;
   const sending = useMemo(() => {
     if (schema.kind !== "ready") return null;
-    return schema.large && selectedNames
-      ? restrictSchema(schema.tables, schema.foreignKeys, selectedNames)
-      : schema;
-  }, [schema, selectedNames]);
+    const base =
+      schema.large && sendNames ? restrictSchema(schema.tables, schema.foreignKeys, sendNames) : schema;
+    return { tables: withDetails(base.tables, details), foreignKeys: base.foreignKeys };
+  }, [schema, sendNames, details]);
   const summary = useMemo(
     () =>
       schema.kind === "ready" && sending
@@ -209,6 +245,8 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const run = async (followUpText?: string) => {
     const promptText = followUpText ?? trimmed;
     if (schema.kind !== "ready" || promptText === "") return;
+    // 新規生成は送るテーブルが無いと走らせない (選択 0 件の大きい DB で Cmd+Enter されたとき)。
+    if (followUpText === undefined && !canGenerate) return;
     // 二重実行 (連打・Cmd+Enter の連続) で 2 本のストリームが走らないよう、同期的に弾く。
     if (!stream.acquire()) return;
     try {
@@ -219,13 +257,38 @@ export function AiQueryModal(props: AiQueryModalProps) {
     }
   };
 
+  /** まだ詳細を持っていないテーブルの `describeTable` を取り、取得済みと合わせた Map を返す (失敗した表は列名だけ)。 */
+  const fetchDetails = async (targets: Nl2SqlTable[]): Promise<ReadonlyMap<string, Nl2SqlColumn[]>> => {
+    const missing = targets.filter((x) => !details.has(x.name));
+    if (missing.length === 0 || !database) return details;
+    const next = new Map(details);
+    for (let i = 0; i < missing.length; i += DETAIL_CONCURRENCY) {
+      await Promise.all(
+        missing.slice(i, i + DETAIL_CONCURRENCY).map(async (x) => {
+          try {
+            next.set(x.name, toNl2SqlColumns(await api.describeTable(props.sessionId, database, x.name)));
+          } catch {
+            /* 詳細が取れない表は概要の列名だけで送る (生成自体は止めない) */
+          }
+        }),
+      );
+    }
+    setDetails(next);
+    return next;
+  };
+
   const runInner = async (followUpText?: string) => {
     // 実際に送る内容を、送信確認の表示にもそのまま使う。
-    if (schema.kind !== "ready" || !sending) return;
-    const ready =
+    if (schema.kind !== "ready") return;
+    const target =
       followUpText !== undefined && schema.large && lockedNames
         ? restrictSchema(schema.tables, schema.foreignKeys, lockedNames)
-        : sending;
+        : schema.large && selectedNames
+          ? restrictSchema(schema.tables, schema.foreignKeys, selectedNames)
+          : schema;
+    // 大きい DB は送るテーブルだけ、テーブル単位でキャッシュされる describeTable で型・PK・コメントを取る。
+    const merged = schema.large ? await fetchDetails(target.tables) : details;
+    const ready = { tables: withDetails(target.tables, merged), foreignKeys: target.foreignKeys };
     const sentSummary = summarizeSchemaSend(ready.tables, ready.foreignKeys, schema.tables.length);
     // 追い質問は、最初の送信で確認した宛先と同じときだけ再確認しない。
     const c = confirmedRef.current;
@@ -383,7 +446,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
                   />
                   <chakra.span>{x.name}</chakra.span>
                   {x.comment && (
-                    <chakra.span textStyle="caption" color="app.textMuted">
+                    <chakra.span textStyle="caption" color="app.textMuted" minW="0" truncate title={x.comment}>
                       {x.comment}
                     </chakra.span>
                   )}

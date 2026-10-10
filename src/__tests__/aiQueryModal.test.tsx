@@ -4,6 +4,8 @@ import { t } from "../i18n";
 
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
 const describeDatabase = vi.fn();
+const schemaOverview = vi.fn();
+const describeTable = vi.fn();
 const listTableComments = vi.fn();
 const foreignKeys = vi.fn();
 const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 });
@@ -24,6 +26,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       runAiRequest: (...a: unknown[]) => runAiRequest(...a),
       describeDatabase: (...a: unknown[]) => describeDatabase(...a),
+      schemaOverview: (...a: unknown[]) => schemaOverview(...a),
+      describeTable: (...a: unknown[]) => describeTable(...a),
       listTableComments: (...a: unknown[]) => listTableComments(...a),
       foreignKeys: (...a: unknown[]) => foreignKeys(...a),
       cancelStream: (...a: unknown[]) => cancelStream(...a),
@@ -73,11 +77,20 @@ beforeEach(() => {
   vi.clearAllMocks();
   handlers = null;
   listenGate = null;
-  describeDatabase.mockResolvedValue([table("orders", ["id", "amount"])]);
+  setDb([table("orders", ["id", "amount"])]);
   listTableComments.mockResolvedValue([]);
   foreignKeys.mockResolvedValue([]);
   enable();
 });
+
+/** 概要 (schemaOverview)・一括詳細 (describeDatabase)・テーブル単位 (describeTable) を同じ内容で用意する。 */
+function setDb(tables: ReturnType<typeof table>[]) {
+  schemaOverview.mockResolvedValue(tables.map((x) => ({ name: x.name, columns: x.columns.map((c) => c.name) })));
+  describeDatabase.mockResolvedValue(tables);
+  describeTable.mockImplementation(async (_s: string, _d: string, name: string) => {
+    return tables.find((x) => x.name === name)?.columns ?? [];
+  });
+}
 
 function table(name: string, cols: string[]) {
   return {
@@ -321,7 +334,7 @@ describe("AiQueryModal (#691)", () => {
   });
 
   it("テーブルが多いスキーマは送信前に件数を見せる", async () => {
-    describeDatabase.mockResolvedValue(Array.from({ length: 301 }, (_, i) => table(`t${i}`, ["id"])));
+    setDb(Array.from({ length: 301 }, (_, i) => table(`t${i}`, ["id"])));
     renderWithProviders(ui());
     const sends = await screen.findByTestId("ai-query-sends");
     expect(sends.textContent).toContain("301");
@@ -336,7 +349,7 @@ describe("AiQueryModal (#691)", () => {
     ];
 
     it("依頼文に関連するテーブルだけを送り、送信量の表示にも反映する。追い質問は同じ集合を使う", async () => {
-      describeDatabase.mockResolvedValue(bigSchema());
+      setDb(bigSchema());
       listTableComments.mockResolvedValue([{ name: "customers", comment: "顧客" }]);
       foreignKeys.mockResolvedValue([
         { table: "orders", column: "id", referenced_table: "customers", referenced_column: "id" },
@@ -348,6 +361,10 @@ describe("AiQueryModal (#691)", () => {
       expect(first.systemCached).toContain("- orders(");
       expect(first.systemCached).toContain('- customers "顧客"(');
       expect(first.systemCached).not.toContain("misc_0");
+      // 大きい DB は全列の一括取得 (describeDatabase) を使わず、送るテーブルだけ describeTable で型・PK を取る。
+      expect(describeDatabase).not.toHaveBeenCalled();
+      expect(first.systemCached).toContain("id bigint PK");
+      expect(describeTable.mock.calls.map((c) => c[2]).sort()).toEqual(["customers", "orders"]);
       expect(screen.getByTestId("ai-query-sends").textContent).toContain("2");
       expect(screen.getByTestId("ai-query-sends").textContent).toContain("302");
       act(() => {
@@ -361,10 +378,54 @@ describe("AiQueryModal (#691)", () => {
       fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
       await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
       expect(runAiRequest.mock.calls[1][0].systemCached).toBe(first.systemCached);
+      // 追い質問では詳細を取り直さない。
+      expect(describeTable).toHaveBeenCalledTimes(2);
+    });
+
+    it("本番の確認文面に絞り込み後の件数と、型・キー・コメントも送る旨が出る", async () => {
+      setDb(bigSchema());
+      renderWithProviders(ui({ isProduction: true }));
+      await generate("orders amount");
+      await screen.findByText(t("aiQueryConfirmTitle"));
+      const dialog = screen.getByText((c) => c.includes(t("aiQueryConfirmBody")));
+      // 全 302 テーブルではなく、絞り込み後の 1 テーブル を示す。
+      expect(dialog.textContent).toMatch(/1 of 302 tables|302 件中 1 件/);
+      expect(dialog.textContent).toMatch(/types, keys and comments|型・キー・コメント/);
+      expect(runAiRequest).not.toHaveBeenCalled();
+    });
+
+    it("DB を切り替えると、固定した集合と手動選択がリセットされる", async () => {
+      setDb(bigSchema());
+      const view = renderWithProviders(ui());
+      await generate("orders amount");
+      await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+      act(() => {
+        handlers?.onDelta?.({ streamId: "x", text: result });
+        handlers?.onDone?.({} as never);
+      });
+      await screen.findByText(t("aiFollowUpLabel"));
+      expect(screen.getByTestId("ai-query-followup").textContent).toContain(t("aiQueryTablesLocked", { count: 1 }));
+      fireEvent.click(screen.getByLabelText("misc_5"));
+      view.rerender(ui({ database: "other" }));
+      await waitFor(() => expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull());
+      // 手動選択 (misc_5) も消え、依頼文からの自動提案に戻る。
+      await waitFor(() => expect((screen.getByLabelText("misc_5") as HTMLInputElement).checked).toBe(false));
+      expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true);
+    });
+
+    it("選択 0 件では Cmd+Enter でも新規生成が走らない", async () => {
+      setDb(bigSchema());
+      renderWithProviders(ui());
+      const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
+      fireEvent.change(input, { target: { value: "ほげふが" } });
+      await screen.findByText(t("aiQueryTablesNone"));
+      fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+      await act(async () => {});
+      expect(runAiRequest).not.toHaveBeenCalled();
     });
 
     it("ユーザがテーブルを追加・除外でき、1 件も無いと生成できない", async () => {
-      describeDatabase.mockResolvedValue(bigSchema());
+      setDb(bigSchema());
       renderWithProviders(ui());
       const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
       fireEvent.change(input, { target: { value: "ほげふが" } });
@@ -381,7 +442,7 @@ describe("AiQueryModal (#691)", () => {
   });
 
   it("閾値以下の DB は全テーブルを固定順で送る", async () => {
-    describeDatabase.mockResolvedValue([table("b", ["id"]), table("a", ["id"])]);
+    setDb([table("b", ["id"]), table("a", ["id"])]);
     renderWithProviders(ui());
     await generate("a");
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
@@ -398,7 +459,7 @@ describe("AiQueryModal (#691)", () => {
   });
 
   it("テーブルが 0 件なら警告を出して生成を無効にする", async () => {
-    describeDatabase.mockResolvedValue([]);
+    setDb([]);
     renderWithProviders(ui());
     await screen.findByText(t("aiQueryEmptySchema"));
     fireEvent.change(screen.getByLabelText(t("aiQueryRequestLabel")), { target: { value: "x" } });
