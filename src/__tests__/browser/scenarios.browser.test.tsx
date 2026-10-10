@@ -887,6 +887,41 @@ describe("シナリオ: keep-alive による切替 (#1311, 実ブラウザ)", ()
   });
 });
 
+/** 保存済みワークスペースとしてクエリタブを仕込む (先頭がアクティブ)。 */
+function seedQueryTabs(profileId: string, tabs: { title: string; sql: string }[]) {
+  localStorage.setItem(
+    `noobdb.tabs.${profileId}`,
+    JSON.stringify({
+      panes: [{ tabs: tabs.map((x) => ({ kind: "query", ...x })), activeIndex: 0 }],
+      activePane: 0,
+    }),
+  );
+}
+
+/** ワークスペースのタブ (サイドバーのタブは draggable でない) の表示順。title 属性がタイトル。 */
+function tabTitles(): string[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="tab"][draggable]')).map(
+    (el) => el.getAttribute("title") ?? "",
+  );
+}
+
+/** ワークスペースのタブ (「A」など) を、サイドバーの「Connections」と区別して引く。 */
+function workTab(screen: Screen, title: string) {
+  return screen.getByRole("tab", { name: new RegExp(`^${title} `) });
+}
+
+/** タブの右クリックメニューから「すべて閉じる」を選ぶ (メニューは再描画で DOM が差し替わるため DOM で押す)。 */
+async function closeAllTabsFromMenu(screen: Screen) {
+  await workTab(screen, "A").click({ button: "right" });
+  await vi.waitFor(() => {
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (el) => (el.textContent ?? "").includes(t("tabCloseAll")),
+    );
+    if (!item) throw new Error("menu item missing");
+    item.click();
+  }, { timeout: 5000 });
+}
+
 describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () => {
   it("Cmd/Ctrl+W で閉じたクエリタブが Ctrl+Shift+T で SQL ごと戻る", async () => {
     registerAutoStream();
@@ -918,5 +953,113 @@ describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () =
       const content = document.querySelector(".cm-content")?.textContent ?? "";
       if (!content.includes("SELECT 1")) throw new Error("closed tab SQL not restored");
     }, { timeout: 5000 });
+  });
+
+  it("エディタで打ったばかりの本文 (タブ state 未反映) も復元される", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [{ title: "My scratch", sql: "SELECT 1" }]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(screen.getByRole("tab", { name: /My scratch/ })).toBeVisible();
+
+    const editor = document.querySelector<HTMLElement>(".cm-content");
+    if (!editor) throw new Error("editor missing");
+    await page.elementLocator(editor).click();
+    await userEvent.keyboard("{Control>}{End}{/Control}");
+    await userEvent.keyboard(" zzqq");
+    await vi.waitFor(() => {
+      if (!(document.querySelector(".cm-content")?.textContent ?? "").includes("zzqq")) {
+        throw new Error("typed text not in editor");
+      }
+    });
+
+    await userEvent.keyboard("{Control>}w{/Control}");
+    await expect.element(screen.getByRole("tab", { name: /My scratch/ })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
+    await expect.element(screen.getByRole("tab", { name: /My scratch/ })).toBeVisible();
+    await vi.waitFor(() => {
+      const content = document.querySelector(".cm-content")?.textContent ?? "";
+      if (!content.includes("SELECT 1") || !content.includes("zzqq")) {
+        throw new Error("typed text not restored");
+      }
+    }, { timeout: 5000 });
+  });
+
+  it("「すべて閉じる」の後に連続で復元すると、件数も並びも元どおりになる", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [
+      { title: "A", sql: "SELECT 'a'" },
+      { title: "B", sql: "SELECT 'b'" },
+      { title: "C", sql: "SELECT 'c'" },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(workTab(screen, "C")).toBeVisible();
+    expect(tabTitles()).toEqual(["A", "B", "C"]);
+
+    await closeAllTabsFromMenu(screen);
+    await expect.element(workTab(screen, "A")).not.toBeInTheDocument();
+
+    for (const title of ["A", "B", "C"]) {
+      await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
+      await expect.element(workTab(screen, title)).toBeVisible();
+    }
+    expect(tabTitles()).toEqual(["A", "B", "C"]);
+
+    // 履歴を使い切ったあとの Ctrl+Shift+T は何もしない。
+    await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
+    expect(tabTitles()).toEqual(["A", "B", "C"]);
+  });
+
+  it("パレットは空クエリでは固定項目だけ、検索語があれば個別項目も出す", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [
+      { title: "A", sql: "SELECT 'a'" },
+      { title: "B", sql: "SELECT 'b'" },
+      { title: "C", sql: "SELECT 'c'" },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(workTab(screen, "C")).toBeVisible();
+    await closeAllTabsFromMenu(screen);
+    await expect.element(workTab(screen, "A")).not.toBeInTheDocument();
+
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await expect.element(screen.getByRole("option", { name: new RegExp(t("cmdkReopenClosedTab")) })).toBeVisible();
+    const reopenRows = () =>
+      Array.from(document.querySelectorAll('[role="option"]')).filter((el) =>
+        (el.textContent ?? "").includes(t("cmdkReopenClosedTab")),
+      );
+    expect(reopenRows()).toHaveLength(1);
+
+    await userEvent.keyboard(t("cmdkReopenClosedTab"));
+    await vi.waitFor(() => expect(reopenRows().length).toBeGreaterThan(1), { timeout: 5000 });
+  });
+
+  it("別の接続で閉じたタブは、接続を切り替えたあとの復元に出てこない", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [
+      { title: "A", sql: "SELECT 'a'" },
+      { title: "B", sql: "SELECT 'b'" },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(workTab(screen, "B")).toBeVisible();
+    await userEvent.keyboard("{Control>}w{/Control}");
+    await expect.element(workTab(screen, "A")).not.toBeInTheDocument();
+
+    await connectToProfile(screen, /Beta DB/, "betadb");
+    await expect.element(screen.getByText(t("tabsEmptyTitle"), { exact: true })).toBeVisible();
+
+    await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
+    expect(tabTitles()).toEqual([]);
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await userEvent.keyboard(t("cmdkReopenClosedTab"));
+    await vi.waitFor(() => {
+      const rows = Array.from(document.querySelectorAll('[role="option"]'));
+      expect(rows.some((el) => (el.textContent ?? "").includes(t("cmdkReopenClosedTab")))).toBe(false);
+    });
   });
 });

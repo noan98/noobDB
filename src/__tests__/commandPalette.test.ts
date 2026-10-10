@@ -9,6 +9,7 @@ import {
   sanitizeMruIds,
   recordMruUsage,
   pruneMruIds,
+  isMruRecordable,
   shouldStaggerEntrance,
   limitAndIndexGroups,
   EMPTY_QUERY_GROUP_LIMIT,
@@ -18,6 +19,7 @@ import {
   GROUP_ORDER,
   type CommandItem,
 } from "../components/commandPaletteSearch";
+import { REOPEN_CLOSED_TAB_COMMAND_ID, closedTabItemId } from "../closedTabs";
 
 const noop = () => {};
 
@@ -412,5 +414,31 @@ describe("limitAndIndexGroups (#1320)", () => {
     const v = limitAndIndexGroups(groupCommands(many("tables", 5, "t"), ""), "", false);
     expect(v.hiddenCount).toBe(0);
     expect(v.flat).toHaveLength(5);
+  });
+});
+
+describe("閉じたタブの復元項目 (#1353)", () => {
+  const items: CommandItem[] = [
+    item({ id: "nav:new-tab", group: "navigation", label: "新しいタブ" }),
+    item({ id: REOPEN_CLOSED_TAB_COMMAND_ID, group: "navigation", label: "閉じたタブを開き直す" }),
+    item({ id: closedTabItemId("c2"), group: "navigation", label: "開き直す: scratch", searchOnly: true }),
+    item({ id: closedTabItemId("c3"), group: "navigation", label: "開き直す: other", searchOnly: true }),
+  ];
+
+  it("空クエリでは先頭の固定項目だけが出て、個別項目は出ない", () => {
+    const ids = flattenGroups(groupCommands(items, "")).map((s) => s.item.id);
+    expect(ids).toEqual(["nav:new-tab", REOPEN_CLOSED_TAB_COMMAND_ID]);
+  });
+
+  it("検索語があれば個別項目も出る", () => {
+    const ids = flattenGroups(groupCommands(items, "scratch")).map((s) => s.item.id);
+    expect(ids).toContain(closedTabItemId("c2"));
+  });
+
+  it("MRU に記録してよいのは固定項目だけ (個別項目と履歴は除外)", () => {
+    expect(isMruRecordable(items[1])).toBe(true);
+    expect(isMruRecordable(items[2])).toBe(false);
+    expect(isMruRecordable({ id: "history:0", group: "history" })).toBe(false);
+    expect(isMruRecordable({ id: "nav:new-tab", group: "navigation" })).toBe(true);
   });
 });

@@ -11,6 +11,21 @@ import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 /** 保持する最大件数 (スコープ = 接続セッションごと)。一括クローズで閉じた分を戻せる余裕を持たせる。 */
 export const MAX_CLOSED_TABS = 20;
 
+/** パレットの「閉じたタブを開き直す」(引数なしで最新を開く) の固定 id。MRU に記録してよい。 */
+export const REOPEN_CLOSED_TAB_COMMAND_ID = "nav:reopen-closed-tab";
+
+const CLOSED_TAB_ITEM_PREFIX = `${REOPEN_CLOSED_TAB_COMMAND_ID}:`;
+
+/** パレットの個別復元項目の id。履歴の id は一時的なので MRU には記録しない。 */
+export function closedTabItemId(closedId: string): string {
+  return `${CLOSED_TAB_ITEM_PREFIX}${closedId}`;
+}
+
+/** 個別復元項目の id か。 */
+export function isClosedTabItemId(id: string): boolean {
+  return id.startsWith(CLOSED_TAB_ITEM_PREFIX);
+}
+
 /** 閉じたタブ 1 件のスナップショット。 */
 export interface ClosedTab {
   /** 一意な id (パレットの項目キー・個別復元に使う)。 */
@@ -104,6 +119,11 @@ export function pushClosedTab(
 /** 指定スコープの一覧 (新しい順)。 */
 export function closedTabsForScope(list: readonly ClosedTab[], scope: string): ClosedTab[] {
   return list.filter((e) => e.scope === scope);
+}
+
+/** 指定スコープの履歴を捨てる (接続セッションの終了時)。他スコープは保つ。入力は破壊しない。 */
+export function dropClosedTabsForScope(list: readonly ClosedTab[], scope: string): ClosedTab[] {
+  return list.filter((e) => e.scope !== scope);
 }
 
 /**

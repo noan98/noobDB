@@ -54,7 +54,10 @@ import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
 import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import {
+  REOPEN_CLOSED_TAB_COMMAND_ID,
+  closedTabItemId,
   closedTabsForScope,
+  dropClosedTabsForScope,
   pushClosedTab,
   snapshotClosedTab,
   takeClosedTab,
@@ -144,7 +147,7 @@ import {
 } from "./txOptions";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
-import { singleLine, type CommandItem } from "./components/commandPaletteSearch";
+import { isMruRecordable, singleLine, type CommandItem } from "./components/commandPaletteSearch";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
 // bundle the WebView parses and mounts on launch stays small. CodeMirror
@@ -2035,6 +2038,16 @@ export default function App() {
   const [closedTabs, setClosedTabs] = useState<ClosedTab[]>([]);
   const closedTabsRef = useRef<ClosedTab[]>([]);
   const closedTabSeqRef = useRef(0);
+  // 接続セッションが終わったとき (手動切断 / セッション喪失 / プロファイル削除) にそのスコープの
+  // 履歴を捨てる。自動再接続 (同じ sessionId で張り直す) と接続切替 (背景セッションは生きている)
+  // では呼ばない。
+  const forgetClosedTabs = useCallback((scope: string | null | undefined) => {
+    if (!scope) return;
+    const next = dropClosedTabsForScope(closedTabsRef.current, scope);
+    if (next.length === closedTabsRef.current.length) return;
+    closedTabsRef.current = next;
+    setClosedTabs(next);
+  }, []);
   const getTabSql = useCallback(
     (tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql),
     [tabSqlStore],
@@ -3218,6 +3231,7 @@ export default function App() {
       console.warn(e);
     }
     clearEmergencyFor(sessionId);
+    forgetClosedTabs(sessionId);
     setSessionId(null);
     setSelectedProfile(null);
     setImportTarget(null);
@@ -3232,7 +3246,7 @@ export default function App() {
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, forgetClosedTabs]);
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
@@ -3252,8 +3266,9 @@ export default function App() {
       console.warn(e);
     }
     clearEmergencyFor(entry.sessionId);
+    forgetClosedTabs(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
-  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor]);
+  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor, forgetClosedTabs]);
 
   // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
   // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
@@ -3334,6 +3349,7 @@ export default function App() {
         try { await api.disconnect(oldSessionId); } catch (e) { console.warn(e); }
       }
       clearEmergencyFor(oldSessionId);
+      forgetClosedTabs(oldSessionId);
       setSessionId(null);
       setSelectedProfile(null);
       setImportTarget(null);
@@ -3355,7 +3371,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor],
+    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor, forgetClosedTabs],
   );
 
   // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
@@ -6212,7 +6228,7 @@ export default function App() {
       // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
@@ -6233,7 +6249,7 @@ export default function App() {
       // 定義を編集中だった同名ビューのタブは整合性が取れなくなるので閉じる。
       tabsRef.current
         .filter((tt) => tt.editingViewName === name && tt.database === database)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
@@ -6251,7 +6267,7 @@ export default function App() {
       // 開いている対象テーブルのタブは旧名のままなので閉じる (新名で開き直せる)。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl, tabsRef]);
 
@@ -6312,7 +6328,7 @@ export default function App() {
       // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
     }
@@ -6382,7 +6398,7 @@ export default function App() {
       // 削除したノード配下のテーブルタブは整合性が取れなくなるので閉じる。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === name)
-        .forEach((tt) => handleCloseTabRef.current(tt.id));
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, runNamespaceDdl, toast, namespaceKindLabel, tabsRef]);
 
@@ -6995,24 +7011,26 @@ export default function App() {
     }
   }, [runQueryInTab, settings.defaultDisplayCount, patchTab, tabsRef]);
 
-  const handleNewTab = useCallback((paneId?: string) => {
-    const tab = makeQueryTab();
-    addTab(tab, paneId);
-    // 新規タブは常にクエリタブなので、生成先のペインが確定次第エディタへ自動
-    // フォーカスする (#816)。addTab は既存ペインが 0 件のとき新規ペイン ID を
-    // 内部 (setPanes 更新関数) で生成するため、渡した paneId をそのまま使わず
-    // 実際にタブを収めたペインを tabIds から逆引きする (activateTab と同じ手法)。
-    // panesRef は setPanes 後の useEffect で更新されるため (commit と同期の
-    // callback ref ではない)、1 フレームだと未反映のことがあり、二重
-    // requestAnimationFrame で effect の反映を待ってから読む。
+  // 追加直後のクエリタブが属するペインのエディタへ自動フォーカスする (#816)。addTab は既存
+  // ペインが 0 件のとき新規ペイン ID を内部 (setPanes 更新関数) で生成するため、呼び出し側の
+  // paneId は使わず、実際にタブを収めたペインを tabIds から逆引きする (activateTab と同じ手法)。
+  // panesRef は setPanes 後の useEffect で更新されるため (commit と同期の callback ref ではない)、
+  // 1 フレームだと未反映のことがあり、二重 requestAnimationFrame で effect の反映を待ってから読む。
+  const focusEditorOfTab = useCallback((tabId: string) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (overlayOpenRef.current) return;
-        const owner = panesRef.current.find((p) => p.tabIds.includes(tab.id));
+        const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
         if (owner) editorRefs.current.get(owner.id)?.focus();
       });
     });
-  }, [addTab, panesRef]);
+  }, [panesRef]);
+
+  const handleNewTab = useCallback((paneId?: string) => {
+    const tab = makeQueryTab();
+    addTab(tab, paneId);
+    focusEditorOfTab(tab.id);
+  }, [addTab, focusEditorOfTab]);
 
   /**
    * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
@@ -7151,14 +7169,18 @@ export default function App() {
   // Close a tab, removing it from its pane and picking a neighbour as that
   // pane's new active tab. A second pane emptied by the close collapses back
   // into a single pane.
-  const handleCloseTab = useCallback((id: string) => {
+  // `opts.record === false` は DROP / RENAME / ALTER 後の自動クローズなど、ユーザの操作ではない
+  // クローズ用 (#1353)。対象のテーブルはもう存在しない / 名前が変わっているので、復元履歴には残さない。
+  const handleCloseTab = useCallback((id: string, opts?: { record?: boolean }) => {
     void cancelStreamForTab(id);
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
     // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
     // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
-    const closing = tabsRef.current.find((tt) => tt.id === id);
+    // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は
+    // 復元しない (snapshotClosedTab が table タブでは本文を使わない)。
+    const closing = opts?.record === false ? undefined : tabsRef.current.find((tt) => tt.id === id);
     if (closing) {
       closedTabSeqRef.current += 1;
       const snap = snapshotClosedTab(
@@ -7225,16 +7247,8 @@ export default function App() {
       selection: entry.selection,
     };
     addTab(restored);
-    if (restored.kind === "query") {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (overlayOpenRef.current) return;
-          const owner = panesRef.current.find((p) => p.tabIds.includes(restored.id));
-          if (owner) editorRefs.current.get(owner.id)?.focus();
-        });
-      });
-    }
-  }, [addTab, panesRef]);
+    if (restored.kind === "query") focusEditorOfTab(restored.id);
+  }, [addTab, focusEditorOfTab]);
   const reopenClosedTabRef = useRef(reopenClosedTab);
   reopenClosedTabRef.current = reopenClosedTab;
   const handleOpenTableRef = useRef<(database: string, table: string) => void>(() => {});
@@ -7248,7 +7262,9 @@ export default function App() {
   const closeTabsBulk = useCallback((tabId: string, mode: BulkCloseMode) => {
     const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
     if (!owner) return;
-    for (const id of tabsToClose(owner.tabIds, tabId, mode)) handleCloseTab(id);
+    // 右端から閉じる: 履歴は新しい順なので、Cmd+Shift+T を連続で押すと左のタブから順に戻り、
+    // 末尾へ追加される復元タブの並びが元の並びと一致する (#1353)。
+    for (const id of tabsToClose(owner.tabIds, tabId, mode).reverse()) handleCloseTab(id);
   }, [panesRef, handleCloseTab]);
 
   // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
@@ -7845,14 +7861,30 @@ export default function App() {
       // (新しい順。先頭の「開き直す」だけがショートカットを表示する)。
       const closedForSession = closedTabsForScope(closedTabs, sessionId);
       closedForSession.forEach((c, i) => {
+        // 先頭の「開き直す」だけが固定 id (引数なしで常に最新を開く = MRU に記録しても意味が
+        // 変わらない)。個別項目は一時的な id なので MRU 対象外で、検索語があるときだけ出して
+        // 空クエリの定番操作を押し出さない。
+        const keywords = `reopen restore closed recent tab undo close 閉じた タブ 復元 開き直す 最近 ${c.title} ${c.sql}`;
+        if (i === 0) {
+          items.push({
+            id: REOPEN_CLOSED_TAB_COMMAND_ID,
+            group: "navigation",
+            label: t("cmdkReopenClosedTab"),
+            sublabel: c.title,
+            icon: "undo",
+            keywords,
+            shortcut: formatCombo(shortcutBindings.reopenClosedTab),
+            run: () => reopenClosedTabRef.current(),
+          });
+          return;
+        }
         items.push({
-          id: `nav:reopen-closed-tab:${c.id}`,
+          id: closedTabItemId(c.id),
           group: "navigation",
-          label: i === 0 ? t("cmdkReopenClosedTab") : t("cmdkReopenClosedTabItem", { title: c.title }),
-          sublabel: i === 0 ? c.title : undefined,
+          label: t("cmdkReopenClosedTabItem", { title: c.title }),
           icon: "undo",
-          keywords: `reopen restore closed recent tab undo close 閉じた タブ 復元 開き直す 最近 ${c.title} ${c.sql}`,
-          shortcut: i === 0 ? formatCombo(shortcutBindings.reopenClosedTab) : undefined,
+          keywords,
+          searchOnly: true,
           run: () => reopenClosedTabRef.current(c.id),
         });
       });
@@ -8171,9 +8203,10 @@ export default function App() {
   // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
   // の id は配列インデックス由来で、新しいクエリが実行されるたびに指す先が変わって
   // しまい「最近使った項目」として記録しても意味が変わってしまうため対象外にする
-  // (接続・テーブル・スニペット・画面遷移の id はすべて安定な識別子)。
+  // (接続・テーブル・スニペット・画面遷移の id はすべて安定な識別子)。閉じたタブの個別項目
+  // (`nav:reopen-closed-tab:<id>`、#1353) も一時的な id なので対象外 (`isMruRecordable`)。
   const handleCommandPaletteSelect = useCallback((item: CommandItem) => {
-    if (item.group === "history") return;
+    if (!isMruRecordable(item)) return;
     recordCommandPaletteUsage(item.id);
   }, []);
 

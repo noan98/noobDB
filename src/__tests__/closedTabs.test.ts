@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_CLOSED_TABS,
+  closedTabItemId,
   closedTabsForScope,
+  dropClosedTabsForScope,
+  isClosedTabItemId,
+  REOPEN_CLOSED_TAB_COMMAND_ID,
   pushClosedTab,
   snapshotClosedTab,
   takeClosedTab,
@@ -82,5 +86,21 @@ describe("takeClosedTab", () => {
   it("空・該当なしなら entry は null で一覧は変わらない", () => {
     expect(takeClosedTab([], "s1")).toEqual({ entry: null, rest: [] });
     expect(takeClosedTab(list, "zz").rest).toHaveLength(3);
+  });
+});
+
+describe("dropClosedTabsForScope", () => {
+  it("指定スコープだけを捨て、他スコープと入力は保つ", () => {
+    const list = [entry({ id: "a" }), entry({ id: "b", scope: "s2" }), entry({ id: "c" })];
+    expect(dropClosedTabsForScope(list, "s1").map((e) => e.id)).toEqual(["b"]);
+    expect(dropClosedTabsForScope(list, "zz")).toHaveLength(3);
+    expect(list).toHaveLength(3);
+  });
+});
+
+describe("パレット項目 id", () => {
+  it("個別項目の id だけが一時 id として判定され、固定 id は含まれない", () => {
+    expect(isClosedTabItemId(closedTabItemId("closed-1"))).toBe(true);
+    expect(isClosedTabItemId(REOPEN_CLOSED_TAB_COMMAND_ID)).toBe(false);
   });
 });
