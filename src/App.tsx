@@ -219,6 +219,9 @@ const CreateNamespaceModal = lazy(() =>
 const CreateIndexModal = lazy(() =>
   import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
 );
+const TableCloneModal = lazy(() =>
+  import("./components/TableCloneModal").then((m) => ({ default: m.TableCloneModal })),
+);
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
 );
@@ -1797,6 +1800,7 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  const [cloneTarget, setCloneTarget] = useState<{ database: string; table: string } | null>(null);
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
@@ -6342,6 +6346,25 @@ export default function App() {
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl, tabsRef]);
 
+  // テーブル複製 (#1398)。モーダルは確定と同時に閉じ (RenameTableDialog と同じ流儀)、
+  // 生成済みの文 (CREATE TABLE → CREATE INDEX → 任意で INSERT ... SELECT) を既存の
+  // `run_query_transaction` (read_only ガード付き) で流す。新しい書き込み経路は増やさない。
+  const handleCloneTableConfirm = useCallback((newName: string, statements: string[]) => {
+    const target = cloneTarget;
+    setCloneTarget(null);
+    if (!target || !sessionId) return;
+    void (async () => {
+      try {
+        await api.runQueryTransaction(sessionId, statements, target.database);
+        invalidateSchemaCache(target.database);
+        connectionListRef.current?.refreshSchema();
+        toast.success(translate("cloneTableSuccess", { source: target.table, table: newName }));
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+      }
+    })();
+  }, [cloneTarget, sessionId, invalidateSchemaCache, toast]);
+
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
   // (CreateTableModal の `onSendToEditor` と同じ流儀)。
@@ -8654,6 +8677,7 @@ export default function App() {
     onTruncateTable: handleTruncateTable,
     onDropTable: handleDropTable,
     onRenameTable: (database: string, table: string) => setRenameTarget({ database, table }),
+    onCloneTable: (database: string, table: string) => setCloneTarget({ database, table }),
     onAlterTable: (database: string, table: string) => setAlterTableTarget({ database, table }),
     onCreateIndex: (database: string, table: string) => setCreateIndexTarget({ database, table }),
     onDropIndex: handleDropIndex,
@@ -10201,6 +10225,21 @@ export default function App() {
               table={renameTarget.table}
               onConfirm={handleRenameTableSubmit}
               onCancel={() => setRenameTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {cloneTarget && sessionId && (
+          <Suspense fallback={null}>
+            <TableCloneModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={cloneTarget.database}
+              sourceTable={cloneTarget.table}
+              onConfirm={handleCloneTableConfirm}
+              onClose={() => setCloneTarget(null)}
             />
           </Suspense>
         )}
