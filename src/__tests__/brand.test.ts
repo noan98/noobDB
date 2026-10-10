@@ -5,21 +5,18 @@ import brandCss from "../App.css?raw";
 import illustrationsSrc from "../components/illustrations.tsx?raw";
 import faviconSvg from "../../public/brand-icon.svg?raw";
 import {
-  BRAND_BLUE,
-  BRAND_INDIGO,
-  BRAND_VIOLET,
+  BRAND_NAVY,
+  BRAND_NAVY_RAISED,
+  BRAND_TEAL,
   BRAND_GRADIENT_STOPS,
-  BRAND_MARK_BG,
-  BRAND_MARK_BG_DARK,
-  BRAND_MARK_ACCENT,
 } from "../brand";
 import { SANDBOX_BAND_COLOR } from "../sandbox";
 
 /**
- * ブランドカラー (#619) の整合性を固定する。色値は 3 か所に出る:
+ * ブランドカラー (#619、ロゴ「n Tunnel」) の整合性を固定する。色値は 3 か所に出る:
  *   - `brand.tsx` の定数 (TS から参照)
- *   - `App.css` の `--brand-*` / `--brand-mark-*` (CSS / スプラッシュ / ロゴマークが参照)
- *   - `public/brand-icon.svg` (favicon。ロゴマークの色)
+ *   - `App.css` の `--brand-*` (CSS / スプラッシュ / ロゴマークが参照)
+ *   - `public/brand-icon.svg` (favicon。CSS 変数を使えないので直書き)
  * いずれかだけ変えるとブランドがちぐはぐになるため、ここで一致を検証してドリフトを
  * 防ぐ。
  */
@@ -27,62 +24,70 @@ describe("brand colors (#619)", () => {
   const HEX = /^#[0-9a-f]{6}$/;
 
   it("exposes valid 6-digit hex constants", () => {
-    expect(BRAND_BLUE).toMatch(HEX);
-    expect(BRAND_INDIGO).toMatch(HEX);
-    expect(BRAND_VIOLET).toMatch(HEX);
+    expect(BRAND_NAVY).toMatch(HEX);
+    expect(BRAND_NAVY_RAISED).toMatch(HEX);
+    expect(BRAND_TEAL).toMatch(HEX);
   });
 
-  it("gradient runs blue -> violet", () => {
-    expect(BRAND_GRADIENT_STOPS).toEqual([BRAND_BLUE, BRAND_VIOLET]);
+  it("gradient runs navy-raised -> teal", () => {
+    expect(BRAND_GRADIENT_STOPS).toEqual([BRAND_NAVY_RAISED, BRAND_TEAL]);
+    expect(brandCss).toContain(
+      "--brand-gradient: linear-gradient(135deg, var(--brand-navy-raised), var(--brand-teal));",
+    );
   });
 
   it("matches the --brand-* CSS variables in App.css", () => {
-    expect(brandCss).toContain(`--brand-blue: ${BRAND_BLUE}`);
-    expect(brandCss).toContain(`--brand-indigo: ${BRAND_INDIGO}`);
-    expect(brandCss).toContain(`--brand-violet: ${BRAND_VIOLET}`);
+    expect(brandCss).toContain(`--brand-navy: ${BRAND_NAVY}`);
+    expect(brandCss).toContain(`--brand-navy-raised: ${BRAND_NAVY_RAISED}`);
+    expect(brandCss).toContain(`--brand-teal: ${BRAND_TEAL}`);
+    // 旧ブランド色 (青→紫) は廃止済み。
+    expect(brandCss).not.toMatch(/--brand-(blue|indigo|violet)\b/);
   });
 
-  it("sandbox band color stays in sync with the brand violet (#1111)", () => {
-    // サンドボックス (ローカルコピー) の帯色は brand violet と同一色相で運用する。
+  it("ロゴのタイル色とワードマーク色はダーク系プリセットでだけ切り替わる", () => {
+    expect(brandCss).toContain("--brand-mark-tile: var(--brand-navy);");
+    expect(brandCss).toContain("--brand-wordmark: var(--brand-navy);");
+    // 名前が "dark" で終わる全プリセットに効く共通ブロック。
+    const dark = brandCss.match(/:root\[data-theme\$="dark"\]\s*\{([\s\S]*?)\n\}/);
+    expect(dark, ':root[data-theme$="dark"] ブロックがある').toBeTruthy();
+    expect(dark![1]).toContain("--brand-mark-tile: var(--brand-navy-raised);");
+    expect(dark![1]).toContain("--brand-wordmark: var(--text);");
+    expect(brandCss).toContain("--brand-wordmark-tracking: -0.015em;");
+  });
+
+  it("favicon は明るい地用のロゴ色を直書きする", () => {
+    // タイルと、横線の縁取り (タイル色) の両方が navy、横線の塗りが teal。
+    expect(faviconSvg).toContain(`fill="${BRAND_NAVY}"`);
+    expect(faviconSvg).toContain(`stroke="${BRAND_NAVY}"`);
+    expect(faviconSvg).toContain(`fill="${BRAND_TEAL}"`);
+  });
+
+  it("sandbox band color stays in sync with --sandbox-violet (#1111)", () => {
+    // サンドボックス (ローカルコピー) の帯色はブランドとは独立した固定の紫。
     // `sandbox.ts` の定数 (TitleBar の帯がインラインスタイルで参照) と App.css の
     // `--sandbox-solid` (ProfileBadge が Chakra トークン経由で参照) が別々の値に
     // ドリフトすると、同じ「サンドボックス」を指す UI が 2 色に割れる。
-    expect(SANDBOX_BAND_COLOR).toBe(BRAND_VIOLET);
-    expect(brandCss).toContain("--sandbox-solid: var(--brand-violet)");
-  });
-
-  it("ロゴマークの色が App.css と favicon で一致する", () => {
-    for (const hex of [BRAND_MARK_BG, BRAND_MARK_BG_DARK, BRAND_MARK_ACCENT]) {
-      expect(hex).toMatch(HEX);
-    }
-    expect(brandCss).toContain(`--brand-mark-bg: ${BRAND_MARK_BG}`);
-    expect(brandCss).toContain(`--brand-mark-accent: ${BRAND_MARK_ACCENT}`);
-    // ダーク系テーマ (名前が "dark" で終わる) だけ地色を明るい紺に上書きする。
-    const dark = brandCss.match(/:root\[data-theme\$="dark"\]\s*\{([\s\S]*?)\n\}/);
-    expect(dark, ':root[data-theme$="dark"] ブロックがある').toBeTruthy();
-    expect(dark![1]).toContain(`--brand-mark-bg: ${BRAND_MARK_BG_DARK}`);
-    // favicon は CSS 変数を使えないため、ライト系の地色と差し色を直書きする。
-    expect(faviconSvg).toContain(`fill="${BRAND_MARK_BG}"`);
-    expect(faviconSvg).toContain(`fill="${BRAND_MARK_ACCENT}"`);
+    expect(brandCss).toContain(`--sandbox-violet: ${SANDBOX_BAND_COLOR}`);
+    expect(brandCss).toContain("--sandbox-solid: var(--sandbox-violet)");
   });
 
   /**
    * ウェルカム/プロファイルカード画面のヒーロー背景 (#1163)。
    *
-   * `--hero-wash` はハードコードした色を持たず、`--brand-blue` / `--brand-violet`
+   * `--hero-wash` はハードコードした色を持たず、`--brand-navy-raised` / `--brand-teal`
    * (このスイートで一致を固定している単一ソース) を `color-mix` で薄めて作る。
    * 値そのものの正規表現検証は App.css を書き換えるたびに更新が要って壊れやすい
    * ため避け、代わりに「単一ソースを参照していること」と「不透明度が控えめな
    * 範囲に収まっていること」を固定する。後者は、将来誰かが視認性を上げようとして
    * 割合を大きくし、本文/カードのコントラストを損なう回帰を検知する。
    */
-  it("hero wash は brand-blue/violet を単一ソースとして参照し、不透明度が控えめに収まる (#1163)", () => {
+  it("hero wash は brand-navy-raised/teal を単一ソースとして参照し、不透明度が控えめに収まる (#1163)", () => {
     const m = brandCss.match(/--hero-wash:\s*radial-gradient\(([\s\S]*?)\n\s*\);/);
     expect(m, "--hero-wash (radial-gradient) が :root に定義されている").toBeTruthy();
     const body = m![1];
 
-    expect(body).toContain("var(--brand-blue)");
-    expect(body).toContain("var(--brand-violet)");
+    expect(body).toContain("var(--brand-navy-raised)");
+    expect(body).toContain("var(--brand-teal)");
 
     // color-mix(in srgb, var(--brand-*) N%, transparent) の N (%) を全て抽出し、
     // 「控えめ」の閾値 (15%) を超えないことを確認する。
@@ -106,8 +111,8 @@ describe("brand colors (#619)", () => {
   it("hero halo / rule は brand 単一ソースを参照し、不透明度は 25% 以下、hc-* では無効化する (#1216)", () => {
     const m = brandCss.match(/--hero-halo:\s*radial-gradient\(([\s\S]*?)\n\s*\);/);
     expect(m, "--hero-halo (radial-gradient) が :root に定義されている").toBeTruthy();
-    expect(m![1]).toContain("var(--brand-blue)");
-    expect(m![1]).toContain("var(--brand-violet)");
+    expect(m![1]).toContain("var(--brand-navy-raised)");
+    expect(m![1]).toContain("var(--brand-teal)");
     const pcts = [...m![1].matchAll(/color-mix\(in srgb, var\(--brand-\w+\) (\d+)%/g)].map(([, p]) => Number(p));
     expect(pcts.length).toBeGreaterThan(0);
     for (const pct of pcts) expect(pct).toBeLessThanOrEqual(25);

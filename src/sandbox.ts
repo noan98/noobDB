@@ -24,6 +24,8 @@ export const SANDBOX_SHADOW_PREFIX = "__noobdb_sandbox_base__";
  * サンドボックスを示す専用色 (violet 系)。`TitleBar` の帯色 (`titleBarContext.ts`)
  * と `ProfileBadge.tsx` の `SandboxBadge` が共有し、「接続先へは一切影響しない
  * ローカルコピー」であることをタブ/ツールバーへ常時・一貫した色で明示する (#747)。
+ * ブランド色とは独立した固定色で、`App.css` の `--sandbox-violet` と一致させる
+ * (`brand.test.ts`)。
  */
 export const SANDBOX_BAND_COLOR = "#8b5cf6";
 

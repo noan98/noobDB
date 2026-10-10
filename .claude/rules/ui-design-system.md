@@ -176,7 +176,7 @@ theme.ts (Chakra トークン)
 - `colorScale.ts` / `accent.ts` — 色の演算とプリセット
 - `settings.ts` — SQL シンタックスハイライト配色 (ユーザが上書きできるデータ)
 - `profileIdentity.ts` — ドライバ色・プロファイル識別色 (`profiles.json` に保存)
-- `sandbox.ts` — サンドボックス帯色 (brand violet と parity 固定)
+- `sandbox.ts` — サンドボックス帯色 (App.css の `--sandbox-violet` と parity 固定)
 - `components/imageExport.ts` — 非 DOM 環境のフォールバック
 
 **`<input type="color">` に渡す値は CSS 変数を受け付けない**ため具体的な hex が要る。

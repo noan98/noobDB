@@ -193,9 +193,9 @@ const config = defineConfig({
           // ロゴマーク・スプラッシュ・ブランド面が参照する。値は App.css の
           // --brand-* と brand.tsx の定数に一致。
           brand: {
-            blue: { value: "var(--brand-blue)" },
-            indigo: { value: "var(--brand-indigo)" },
-            violet: { value: "var(--brand-violet)" },
+            navy: { value: "var(--brand-navy)" },
+            navyRaised: { value: "var(--brand-navy-raised)" },
+            teal: { value: "var(--brand-teal)" },
           },
           // 拡張ニュートラル階調。0=地, 950=最も濃い文字。テーマ反転は
           // App.css 側で吸収するため、ここは var() ブリッジのみ。
