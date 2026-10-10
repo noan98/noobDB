@@ -1996,6 +1996,8 @@ const en = {
   batchDropConfirmTitle: "Drop {count} tables?",
   batchDropConfirmBody:
     "This permanently removes these {count} tables in {database} and all their data: {tables}. This cannot be undone.",
+  batchDropConfirmBodyList:
+    "This permanently removes these {count} tables in {database} and all their data. This cannot be undone. Targets:",
   batchDropConfirmOk: "Drop {count} tables",
   batchDropSuccess: "Dropped {count} tables",
   batchDropPartial: "Dropped {done} of {count} tables; stopped at {table}",
@@ -2015,7 +2017,7 @@ const en = {
   batchExportError: "Export failed: {error}",
   dumpTablesTitle: "Dump {count} tables from \"{database}\"",
   dumpTablesScopeTitle: "Only these {count} tables are dumped",
-  dumpTablesScopeHint: "Routines and events are not included when tables are specified.",
+  dumpTablesScopeHint: "Routines and events are not included when tables are specified (MySQL).",
   contextMenuAlterTable: "Edit columns...",
   contextMenuCreateIndex: "Create index...",
   contextMenuTruncateTable: "Truncate table...",
@@ -6344,6 +6346,8 @@ const ja: Dict = {
   batchDropConfirmTitle: "{count} 件のテーブルを DROP しますか?",
   batchDropConfirmBody:
     "{database} の次の {count} テーブルとそのデータをすべて完全に削除します: {tables}。この操作は取り消せません。",
+  batchDropConfirmBodyList:
+    "{database} の次の {count} テーブルとそのデータをすべて完全に削除します。この操作は取り消せません。対象:",
   batchDropConfirmOk: "{count} 件を DROP TABLE",
   batchDropSuccess: "{count} 件のテーブルを DROP しました",
   batchDropPartial: "{count} 件中 {done} 件を DROP しました ({table} で停止)",
@@ -6363,7 +6367,7 @@ const ja: Dict = {
   batchExportError: "エクスポートに失敗しました: {error}",
   dumpTablesTitle: "「{database}」の {count} テーブルをダンプ",
   dumpTablesScopeTitle: "次の {count} テーブルだけをダンプします",
-  dumpTablesScopeHint: "テーブルを指定した場合、ルーチンとイベントは含まれません。",
+  dumpTablesScopeHint: "テーブルを指定した場合、ルーチンとイベントは含まれません (MySQL)。",
   contextMenuAlterTable: "列を編集",
   contextMenuCreateIndex: "インデックスを作成",
   contextMenuTruncateTable: "テーブルを TRUNCATE",

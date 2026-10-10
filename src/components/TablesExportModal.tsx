@@ -11,7 +11,7 @@ import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 import { qualifiedTableSql } from "./sqlDialect";
-import { batchExportFileName } from "./batchTables";
+import { batchExportFileName, batchTimestamp } from "./batchTables";
 
 const FORMATS: ExportFormat[] = ["csv", "json", "ndjson", "markdown", "sql", "xlsx"];
 
@@ -153,6 +153,8 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
     if (isRunning || !dir.trim()) return;
     cancelledRef.current = false;
     const used = new Set<string>();
+    // 保存先の既存ファイルを上書きしないよう、この実行の日時をファイル名に付ける。
+    const stamp = batchTimestamp();
     const failures: { table: string; error: string }[] = [];
     let written = 0;
     for (let i = 0; i < tables.length; i++) {
@@ -161,7 +163,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
       setStatus({ kind: "running", index: i, table, rows: 0 });
       let result: OneResult;
       try {
-        const path = await join(dir, batchExportFileName(table, format, used));
+        const path = await join(dir, batchExportFileName(table, format, used, stamp));
         result = await exportOne(table, path, i);
       } catch (e) {
         result = { ok: false, error: String(e) };

@@ -557,7 +557,7 @@ interface TreeActions {
   selection: TableSelectionStore;
   /** テーブル行のクリック: Ctrl(Cmd) で出し入れ、Shift で範囲、修飾なしは選択解除 + 起点。 */
   clickTable: (e: React.MouseEvent, db: string, tbl: string) => void;
-  /** テーブル行のキー操作 (Ctrl+Space で出し入れ、Shift+↑↓ で範囲、Esc で解除)。処理したら true。 */
+  /** テーブル行のキー操作 (Shift+Space または Ctrl/Cmd+Space で出し入れ、Shift+↑↓ で範囲、Esc で解除)。処理したら true。 */
   selectionKeyDown: (e: React.KeyboardEvent<HTMLElement>, db: string, tbl: string) => boolean;
   toggleTable: (db: string, tbl: string) => void;
   toggleFavorite: (db: string, tbl: string) => void;
@@ -2211,11 +2211,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // DOM の `[role=treeitem]` ではなく、ツリー全体を並べた配列で次の行を決める (#1315)。
   const schemaListRef = useRef<SchemaRowListHandle | null>(null);
 
-  /** テーブル行のキー操作 (#1399): Ctrl/Cmd+Space で出し入れ、Shift+↑↓ で範囲を伸縮。 */
+  /** テーブル行のキー操作 (#1399): Shift+Space (または Ctrl/Cmd+Space) で出し入れ、Shift+↑↓ で範囲を伸縮。 */
   const selectionKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLElement>, db: string, tbl: string): boolean => {
       const sel = selectionStore.get();
-      if ((e.ctrlKey || e.metaKey) && e.key === " ") {
+      // Ctrl/Cmd+Space は macOS の入力ソース切替 / Spotlight と衝突するので、Shift+Space も受ける。
+      if ((e.ctrlKey || e.metaKey || e.shiftKey) && !e.altKey && e.key === " ") {
         e.preventDefault();
         selectionStore.set(toggleTableSelection(sel, db, tbl));
         return true;

@@ -49,8 +49,10 @@ interface Props {
   driver: DriverKind;
   /**
    * 指定すると、データベース全体ではなくこのテーブルだけをダンプする (#1399)。スキーマツリーで
-   * 複数選択したテーブルの一括ダンプ。ルーチン / イベントは対象外になるので、そのスイッチは隠す。
-   * PostgreSQL ではツリーの階層がスキーマなので、`pg_dump` の対象スキーマは `database` に固定する。
+   * 複数選択したテーブルの一括ダンプ。ルーチン / イベントは (MySQL ではバックエンドが
+   * `--routines` / `--events` を付けないので) 対象外になるため、そのスイッチは隠す。
+   * PostgreSQL ではツリーの階層がスキーマなので、`database` は `--table` の修飾にだけ使われる
+   * (接続先 DB はプロファイルのもの)。
    */
   tables?: string[];
   onClose: () => void;
@@ -236,7 +238,7 @@ type Status =
   | { kind: "running" }
   | { kind: "error"; message: string };
 
-/** テーブル指定のダンプでは意味を持たない (mysqldump がテーブル指定時は無視する) スイッチ。 */
+/** テーブル指定のダンプでは意味を持たない (テーブル指定時はバックエンドが無効にする) スイッチ。 */
 const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>(["routines", "events"]);
 
 export function DumpModal({ sessionId, database, driver, tables, onClose }: Props) {
@@ -435,9 +437,11 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
             <chakra.div fontSize="sm" wordBreak="break-all" data-testid="dump-tables-scope">
               {tableScope.join(", ")}
             </chakra.div>
-            <chakra.div textStyle="caption" mt="1">
-              {t("dumpTablesScopeHint")}
-            </chakra.div>
+            {driver === "mysql" && (
+              <chakra.div textStyle="caption" mt="1">
+                {t("dumpTablesScopeHint")}
+              </chakra.div>
+            )}
           </Callout>
         )}
 

@@ -74,6 +74,7 @@ import {
   buildDropIndexSql,
   buildDropTableSql,
   buildDropTablesSql,
+  orderTablesChildrenFirst,
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
@@ -3003,6 +3004,8 @@ export default function App() {
     // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
     setImportTarget(null);
     setDumpTarget(null);
+    setDumpTablesTarget(null);
+    setExportTablesTarget(null);
     setScriptTarget(null);
     setSchemaExportTarget(null);
     setErrorProfileId(null);
@@ -3297,6 +3300,8 @@ export default function App() {
     setSelectedProfile(null);
     setImportTarget(null);
     setDumpTarget(null);
+    setDumpTablesTarget(null);
+    setExportTablesTarget(null);
     setScriptTarget(null);
     setSchemaExportTarget(null);
     // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
@@ -3421,6 +3426,8 @@ export default function App() {
       setSelectedProfile(null);
       setImportTarget(null);
       setDumpTarget(null);
+      setDumpTablesTarget(null);
+      setExportTablesTarget(null);
       setScriptTarget(null);
       setSchemaExportTarget(null);
       setConnectionStatus("connected");
@@ -6965,19 +6972,42 @@ export default function App() {
   // バックエンドの `run_query` ガードが拒否する。
   const handleDropTables = useCallback(async (database: string, tables: string[]) => {
     if (tables.length === 0) return;
+    // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
+    const production = Boolean(selectedProfile?.is_production);
     const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
+    const body: ReactNode = production ? (
+      <>
+        {translate("batchDropConfirmBodyList", { count: tables.length, database })}
+        <Box as="ul" mt="2" maxH="40vh" overflowY="auto" pl="5" data-testid="batch-drop-table-list">
+          {tables.map((tbl) => (
+            <Box as="li" key={tbl} wordBreak="break-all">
+              {tbl}
+            </Box>
+          ))}
+        </Box>
+      </>
+    ) : (
+      translate("batchDropConfirmBody", { count: tables.length, database, tables: names })
+    );
     const ok = await confirm({
       title: translate("batchDropConfirmTitle", { count: tables.length }),
-      message: maintenanceMessage(
-        translate("batchDropConfirmBody", { count: tables.length, database, tables: names }),
-      ),
+      message: maintenanceMessage(body),
       confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
       tone: "danger",
       typedConfirmation: selectedProfile?.is_production ? database : undefined,
     });
     if (!ok || !sessionId) return;
     const driver = selectedProfile?.driver ?? "mysql";
-    const statements = buildDropTablesSql(driver, database, tables);
+    // SQLite は複数形の DROP も明示トランザクションも無いので、選択内の外部キーで子から順に落とす。
+    let dropOrder = tables;
+    if (driver === "sqlite") {
+      try {
+        dropOrder = orderTablesChildrenFirst(tables, await api.foreignKeys(sessionId, database));
+      } catch {
+        // FK を取れなければ選択順のまま実行する (失敗しても DROP 自体は安全側に倒れる)。
+      }
+    }
+    const statements = buildDropTablesSql(driver, database, dropOrder);
     // 文ごとに実行し、失敗したらそこで止める。
     let executed = 0;
     let failed = false;
@@ -6997,7 +7027,7 @@ export default function App() {
     connectionListRef.current?.refreshSchema();
     // 文がテーブルごとに分かれているとき (SQLite) だけ、失敗しても落とせた分が分かる。
     const perTable = statements.length === tables.length;
-    const dropped = !failed ? tables : perTable ? tables.slice(0, executed) : [];
+    const dropped = !failed ? tables : perTable ? dropOrder.slice(0, executed) : [];
     if (dropped.length > 0) {
       // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
       const gone = new Set(dropped);
@@ -7012,7 +7042,7 @@ export default function App() {
         translate("batchDropPartial", {
           done: dropped.length,
           count: tables.length,
-          table: tables[executed] ?? "",
+          table: dropOrder[executed] ?? "",
         }),
       );
     }
