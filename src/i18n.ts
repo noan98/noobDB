@@ -2000,7 +2000,7 @@ const en = {
     "This permanently removes these {count} tables in {database} and all their data. This cannot be undone. Targets:",
   batchDropConfirmOk: "Drop {count} tables",
   batchDropSuccess: "Dropped {count} tables",
-  batchDropPartial: "Dropped {done} of {count} tables; stopped at {table}",
+  batchDropRolledBack: "Could not drop the tables; everything was rolled back and no table was dropped: {error}",
   batchTablesMore: "and {count} more",
   batchExportTitle: "Export {count} tables",
   batchExportNote:
@@ -6350,7 +6350,7 @@ const ja: Dict = {
     "{database} の次の {count} テーブルとそのデータをすべて完全に削除します。この操作は取り消せません。対象:",
   batchDropConfirmOk: "{count} 件を DROP TABLE",
   batchDropSuccess: "{count} 件のテーブルを DROP しました",
-  batchDropPartial: "{count} 件中 {done} 件を DROP しました ({table} で停止)",
+  batchDropRolledBack: "テーブルを DROP できませんでした。すべてロールバックされ、どのテーブルも削除されていません: {error}",
   batchTablesMore: "ほか {count} 件",
   batchExportTitle: "{count} テーブルのエクスポート",
   batchExportNote:

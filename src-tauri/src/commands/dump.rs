@@ -202,6 +202,20 @@ fn pg_connect_database(opts: &DbConnectOptions) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
+/// `pg_dump --dbname` / .pgpass の DB 欄に使う接続先 DB。タスク経路 (`database_is_connection_db`) は
+/// 入力された `database` (空白除去済み) をそのまま、ツリー / DumpModal 経路は接続プロファイルの DB。
+fn pg_dbname<'a>(
+    opts: &'a DbConnectOptions,
+    database: &'a str,
+    database_is_connection_db: bool,
+) -> Option<&'a str> {
+    if database_is_connection_db {
+        Some(database)
+    } else {
+        pg_connect_database(opts)
+    }
+}
+
 /// `pg_dump --table` に渡すパターン。二重引用符で囲むと大文字小文字を保ち、`*` / `?` /
 /// `.` もワイルドカード扱いされない (同名の別テーブルを巻き込まない)。
 fn pg_table_pattern(schema: Option<&str>, table: &str) -> String {
@@ -308,7 +322,7 @@ async fn spawn_dump(
 ) {
     let started = Instant::now();
     let result = run_dump(
-        &app, &session, &stream_id, &database, &path, &options, &counter, started,
+        &app, &session, &stream_id, &database, false, &path, &options, &counter, started,
     )
     .await;
 
@@ -356,6 +370,9 @@ pub(crate) async fn run_dump(
     session: &Session,
     stream_id: &str,
     database: &str,
+    // `database` を PostgreSQL の接続先 DB 名として扱うか (タスク実行の自由入力)。false は
+    // ツリー / DumpModal 経路で、`database` は pg_namespace (スキーマ) 名。
+    database_is_connection_db: bool,
     final_path: &str,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
@@ -394,7 +411,15 @@ pub(crate) async fn run_dump(
         }
         DriverKind::Postgres => {
             dump_postgres(
-                app, stream_id, &dump_opts, database, tmp_file, options, counter, started,
+                app,
+                stream_id,
+                &dump_opts,
+                database,
+                database_is_connection_db,
+                tmp_file,
+                options,
+                counter,
+                started,
             )
             .await?
         }
@@ -754,6 +779,7 @@ async fn dump_postgres(
     stream_id: &str,
     connect_options: &DbConnectOptions,
     database: &str,
+    database_is_connection_db: bool,
     file: tokio::fs::File,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
@@ -764,7 +790,8 @@ async fn dump_postgres(
     // PostgreSQL のツリーの「database」階層は pg_namespace (スキーマ) なので、`database` は
     // 接続先 DB 名ではない。`--dbname` / .pgpass の DB 欄は接続プロファイルの DB を使い、
     // 未指定なら `--dbname` を付けない (pg_dump の既定 = PGDATABASE / ユーザ名に任せる)。
-    let pgpass = PgPassFile::create(connect_options)?;
+    let dbname = pg_dbname(connect_options, database, database_is_connection_db);
+    let pgpass = PgPassFile::create(connect_options, dbname)?;
 
     let mut cmd = Command::new(
         super::dump_tools::resolve_dump_tool("pg_dump").unwrap_or_else(|| "pg_dump".into()),
@@ -772,7 +799,7 @@ async fn dump_postgres(
     cmd.arg("--host").arg(&connect_options.host);
     cmd.arg("--port").arg(connect_options.port.to_string());
     cmd.arg("--username").arg(&connect_options.user);
-    if let Some(db) = pg_connect_database(connect_options) {
+    if let Some(db) = dbname {
         cmd.arg("--dbname").arg(db);
     }
     // Never prompt for a password interactively; rely on PGPASSFILE instead.
@@ -801,7 +828,12 @@ async fn dump_postgres(
         // テーブル指定 (#1399): スキーマ修飾したパターンで表ごとに `--table`。
         // `--schema` との併用は積集合になり分かりづらいので、修飾で絞る。
         // `pg_schema` が空なら、ツリーで選んだスキーマ (= `database` 引数) で修飾する。
-        let schema = pg_schema.or(Some(database));
+        // タスク経路 (`database` が接続先 DB 名) ではスキーマ扱いしない。
+        let schema = if database_is_connection_db {
+            pg_schema
+        } else {
+            pg_schema.or(Some(database))
+        };
         for table in &tables {
             cmd.arg("--table").arg(pg_table_pattern(schema, table));
         }
@@ -1177,7 +1209,7 @@ struct PgPassFile {
 }
 
 impl PgPassFile {
-    fn create(opts: &DbConnectOptions) -> Result<Self> {
+    fn create(opts: &DbConnectOptions, dbname: Option<&str>) -> Result<Self> {
         use std::io::Write;
 
         // `DUMP_CREDENTIAL_FILE_PREFIX`/`.pgpass` naming is also what
@@ -1194,7 +1226,7 @@ impl PgPassFile {
             pgpass_escape(&opts.host),
             opts.port,
             // DB 未指定のときは任意の DB に一致するワイルドカード。
-            pg_connect_database(opts).map_or_else(|| "*".to_string(), pgpass_escape),
+            dbname.map_or_else(|| "*".to_string(), pgpass_escape),
             pgpass_escape(&opts.user),
             pgpass_escape(&opts.password),
         );
@@ -1350,6 +1382,32 @@ mod tests {
     }
 
     #[test]
+    fn pg_dbname_task_path_uses_input_tree_path_uses_profile() {
+        let mut o = DbConnectOptions {
+            host: "h".into(),
+            port: 5432,
+            user: "u".into(),
+            password: "p".into(),
+            database: Some("profiledb".into()),
+            driver: DriverKind::Postgres,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+            aws_iam: None,
+        };
+        // タスク経路: 入力された DB 名が --dbname になる。
+        assert_eq!(pg_dbname(&o, "realdb", true), Some("realdb"));
+        // ツリー経路: database はスキーマ名なので、プロファイルの DB を使う。
+        assert_eq!(pg_dbname(&o, "public", false), Some("profiledb"));
+        o.database = None;
+        assert_eq!(pg_dbname(&o, "public", false), None);
+        assert_eq!(pg_dbname(&o, "realdb", true), Some("realdb"));
+    }
+
+    #[test]
     fn pg_table_pattern_quotes_and_qualifies() {
         assert_eq!(pg_table_pattern(None, "Users"), "\"Users\"");
         assert_eq!(
@@ -1415,7 +1473,7 @@ mod tests {
             aws_iam: None,
         };
         let path = {
-            let f = PgPassFile::create(&opts).expect("create");
+            let f = PgPassFile::create(&opts, Some("testdb")).expect("create");
             let p = f.path().to_path_buf();
             assert!(p.exists());
             let body = std::fs::read_to_string(&p).expect("read");

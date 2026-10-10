@@ -4,7 +4,6 @@ import {
   buildDropIndexSql,
   buildDropTableSql,
   buildDropTablesSql,
-  orderTablesChildrenFirst,
   buildRenameTableSql,
   buildTruncateSql,
 } from "../components/tableMaintenance";
@@ -106,30 +105,5 @@ describe("buildDropTablesSql (#1399)", () => {
 
   it("空なら文を作らない", () => {
     expect(buildDropTablesSql("mysql", "shop", [])).toEqual([]);
-  });
-});
-
-describe("orderTablesChildrenFirst (#1399)", () => {
-  it("子 (参照する側) を親より先に並べる", () => {
-    const fks = [
-      { table: "order_items", referenced_table: "orders" },
-      { table: "orders", referenced_table: "users" },
-    ];
-    expect(orderTablesChildrenFirst(["users", "orders", "order_items"], fks)).toEqual(["order_items", "orders", "users"]);
-  });
-  it("選択外への参照・自己参照は無視し、元の順序を保つ", () => {
-    const fks = [
-      { table: "a", referenced_table: "outside" },
-      { table: "b", referenced_table: "b" },
-    ];
-    expect(orderTablesChildrenFirst(["a", "b"], fks)).toEqual(["a", "b"]);
-  });
-  it("循環は元の順序で末尾に回す", () => {
-    const fks = [
-      { table: "a", referenced_table: "b" },
-      { table: "b", referenced_table: "a" },
-      { table: "c", referenced_table: "a" },
-    ];
-    expect(orderTablesChildrenFirst(["a", "b", "c"], fks)).toEqual(["c", "a", "b"]);
   });
 });

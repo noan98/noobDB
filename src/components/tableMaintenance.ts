@@ -29,7 +29,8 @@ export function buildDropTableSql(driver: string, database: string | null, table
 /**
  * 複数テーブルの DROP (#1399)。MySQL / PostgreSQL は 1 文 (`DROP TABLE a, b`) にまとめる —
  * 選んだテーブル同士が外部キーで参照し合っていても順序を気にせず落とせ、PostgreSQL では
- * 1 文なので全件成功か全件失敗になる。SQLite には複数形が無いのでテーブルごとの文を返す。
+ * 1 文なので全件成功か全件失敗になる。SQLite には複数形が無いのでテーブルごとの文を返す
+ * (呼び出し側が `PRAGMA defer_foreign_keys=ON` と合わせて 1 トランザクションで流す)。
  */
 export function buildDropTablesSql(driver: string, database: string | null, tables: readonly string[]): string[] {
   if (tables.length === 0) return [];
@@ -98,47 +99,3 @@ export function buildDropIndexSql(
   return `DROP INDEX ${quoteIdentFor(driver, indexName)};`;
 }
 
-/**
- * SQLite の一括 DROP 用に、選択内の外部キーで「参照する側 (子) → 参照される側 (親)」の順へ並べる (#1399)。
- * SQLite は複数形の DROP が無く、明示トランザクションも使えないため、親を先に落とすと子の行が
- * 残っていて失敗する。選択外のテーブルへの参照と自己参照は無視し、循環は元の順序で末尾に回す。
- */
-export function orderTablesChildrenFirst(
-  tables: readonly string[],
-  fks: readonly { table: string; referenced_table: string }[],
-): string[] {
-  const inSel = new Set(tables);
-  // parents[t] = t が参照している (選択内の) 親テーブル
-  const referencedBy = new Map<string, Set<string>>(); // 親 -> それを参照する子
-  const pending = new Map<string, number>(); // 子 -> 未処理の「自分を参照する子」の数
-  for (const t of tables) {
-    referencedBy.set(t, new Set());
-    pending.set(t, 0);
-  }
-  for (const fk of fks) {
-    if (fk.table === fk.referenced_table || !inSel.has(fk.table) || !inSel.has(fk.referenced_table)) continue;
-    const children = referencedBy.get(fk.referenced_table);
-    if (!children || children.has(fk.table)) continue;
-    children.add(fk.table);
-    pending.set(fk.referenced_table, (pending.get(fk.referenced_table) ?? 0) + 1);
-  }
-  // 「自分を参照する子がもう残っていない」テーブルから落としていく。
-  const out: string[] = [];
-  const done = new Set<string>();
-  let progressed = true;
-  while (out.length < tables.length && progressed) {
-    progressed = false;
-    for (const t of tables) {
-      if (done.has(t) || (pending.get(t) ?? 0) > 0) continue;
-      done.add(t);
-      out.push(t);
-      progressed = true;
-      // t が消えたので、t が参照していた親の待ち数を減らす。
-      for (const [parent, children] of referencedBy) {
-        if (children.has(t)) pending.set(parent, (pending.get(parent) ?? 1) - 1);
-      }
-    }
-  }
-  for (const t of tables) if (!done.has(t)) out.push(t);
-  return out;
-}

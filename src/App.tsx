@@ -74,7 +74,6 @@ import {
   buildDropIndexSql,
   buildDropTableSql,
   buildDropTablesSql,
-  orderTablesChildrenFirst,
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
@@ -6967,9 +6966,9 @@ export default function App() {
 
   // 複数選択したテーブルの一括 DROP (#1399)。確認導線は単一の `handleDropTable` と同じ
   // `confirm` + 本番接続のタイプ入力ゲート (#675)。対象が複数なので、対象のテーブル名を本文に
-  // 並べ、本番ではデータベース名の入力を求める。実行は `buildDropTablesSql` の文を順に流す
-  // (MySQL / PostgreSQL は 1 文、SQLite はテーブルごと)。read_only はメニュー無効化に加え、
-  // バックエンドの `run_query` ガードが拒否する。
+  // 並べ、本番ではデータベース名の入力を求める。実行は `buildDropTablesSql` の文を流す
+  // (MySQL / PostgreSQL は 1 文、SQLite は 1 トランザクションで全件成功か全件失敗)。read_only は
+  // メニュー無効化に加え、バックエンドのガードが拒否する。
   const handleDropTables = useCallback(async (database: string, tables: string[]) => {
     if (tables.length === 0) return;
     // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
@@ -6998,36 +6997,28 @@ export default function App() {
     });
     if (!ok || !sessionId) return;
     const driver = selectedProfile?.driver ?? "mysql";
-    // SQLite は複数形の DROP も明示トランザクションも無いので、選択内の外部キーで子から順に落とす。
-    let dropOrder = tables;
-    if (driver === "sqlite") {
-      try {
-        dropOrder = orderTablesChildrenFirst(tables, await api.foreignKeys(sessionId, database));
-      } catch {
-        // FK を取れなければ選択順のまま実行する (失敗しても DROP 自体は安全側に倒れる)。
-      }
-    }
-    const statements = buildDropTablesSql(driver, database, dropOrder);
-    // 文ごとに実行し、失敗したらそこで止める。
-    let executed = 0;
+    const statements = buildDropTablesSql(driver, database, tables);
+    // SQLite は複数形の DROP が無いので、`PRAGMA defer_foreign_keys=ON` + 全 DROP を 1 トランザクション
+    // (`run_query_transaction`、文ごとに read_only ガード) で流す。FK チェックは COMMIT まで遅延するため
+    // 親子の順序に依存せず、循環 FK も通る。選択外の子に行が残っていれば COMMIT で失敗して全件ロールバック
+    // される (全件成功か全件失敗)。MySQL / PostgreSQL は `DROP TABLE a, b` の 1 文。
     let failed = false;
-    for (const sql of statements) {
-      try {
-        await api.runQuery(sessionId, sql, database);
-        executed += 1;
-      } catch (e) {
-        toast.error(translate("statusQueryError", { error: String(e) }));
-        failed = true;
-        break;
+    try {
+      if (driver === "sqlite") {
+        await api.runQueryTransaction(sessionId, ["PRAGMA defer_foreign_keys=ON", ...statements], database);
+      } else {
+        for (const sql of statements) await api.runQuery(sessionId, sql, database);
       }
+    } catch (e) {
+      failed = true;
+      toast.error(
+        translate(driver === "sqlite" ? "batchDropRolledBack" : "statusQueryError", { error: String(e) }),
+      );
     }
-    // 失敗しても一部は落ちていることがある (SQLite の途中停止 / MySQL の複数テーブル DROP) ので、
-    // ツリーは成否に関わらず読み直す。
+    // 失敗しても念のためツリーは読み直す。
     invalidateSchemaCache(database);
     connectionListRef.current?.refreshSchema();
-    // 文がテーブルごとに分かれているとき (SQLite) だけ、失敗しても落とせた分が分かる。
-    const perTable = statements.length === tables.length;
-    const dropped = !failed ? tables : perTable ? dropOrder.slice(0, executed) : [];
+    const dropped = failed ? [] : tables;
     if (dropped.length > 0) {
       // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
       const gone = new Set(dropped);
@@ -7037,14 +7028,6 @@ export default function App() {
     }
     if (!failed) {
       toast.success(translate("batchDropSuccess", { count: dropped.length }));
-    } else if (dropped.length > 0) {
-      toast.error(
-        translate("batchDropPartial", {
-          done: dropped.length,
-          count: tables.length,
-          table: dropOrder[executed] ?? "",
-        }),
-      );
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, toast, tabsRef]);
 

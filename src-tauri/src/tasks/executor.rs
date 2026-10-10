@@ -211,6 +211,8 @@ async fn run_action(
                 // どのタブとも衝突しない専用の識別子で十分。
                 &format!("task-{}", task.id),
                 database,
+                // タスクの database は自由入力で、PostgreSQL では接続先 DB 名として扱う。
+                true,
                 &path,
                 options,
                 &counter,
