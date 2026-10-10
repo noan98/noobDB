@@ -1063,3 +1063,87 @@ describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () =
     });
   });
 });
+
+describe("シナリオ: クエリタブの自動命名とリネーム (#1390, 実ブラウザ)", () => {
+  /** ツールバーの Run ボタンで実行する (エディタ描画待ちで右クリックメニューが不安定なため)。 */
+  async function runFromToolbar(screen: Screen) {
+    await screen.getByRole("button", { name: t("editorRun"), exact: true }).click();
+  }
+
+  /** メニューは再描画で DOM が差し替わるため、ロケータではなく DOM で押す。 */
+  async function clickMenuItemByDom(label: string) {
+    await vi.waitFor(() => {
+      const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (el) => (el.textContent ?? "").startsWith(label),
+      );
+      if (!item) throw new Error("menu item missing");
+      item.click();
+    }, { timeout: 5000 });
+  }
+
+  it("実行で SQL から自動命名され、ダブルクリックのリネーム後は上書きされず、空で自動に戻る", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [{ title: t("tabUntitledQuery"), sql: "SELECT * FROM fruits" }]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(tabTitles()).toEqual([t("tabUntitledQuery")]), { timeout: 5000 });
+
+    // 1) 実行すると、無題のタブが SQL の先頭行で命名される。
+    await runFromToolbar(screen);
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["SELECT * FROM fruits"]), { timeout: 5000 });
+
+    // 2) タイトルのダブルクリックでインライン編集 → Enter で確定。
+    const tabEl = () => document.querySelector<HTMLElement>('[role="tab"][draggable]');
+    const titleEl = () => Array.from(tabEl()?.querySelectorAll<HTMLElement>("span") ?? []).find(
+      (el) => el.textContent === "SELECT * FROM fruits",
+    );
+    const titleLocator = await vi.waitFor(() => {
+      const el = titleEl();
+      if (!el) throw new Error("title missing");
+      return el;
+    });
+    await page.elementLocator(titleLocator).dblClick();
+    const input = screen.getByRole("textbox", { name: t("tabRenameAria") });
+    await expect.element(input).toBeVisible();
+    await userEvent.keyboard("{Control>}a{/Control}Fruit report{Enter}");
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["Fruit report"]), { timeout: 5000 });
+    await expect.element(input).not.toBeInTheDocument();
+
+    // 3) 手動名は再実行しても上書きされない。
+    await runFromToolbar(screen);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(tabTitles()).toEqual(["Fruit report"]);
+
+    // 4) 右クリックメニューの「名前を変更」→ 空で確定すると自動命名に戻る。
+    await page.elementLocator(tabEl() as HTMLElement).click({ button: "right" });
+    await clickMenuItemByDom(t("tabRename"));
+    await expect.element(screen.getByRole("textbox", { name: t("tabRenameAria") })).toBeVisible();
+    await userEvent.keyboard("{Control>}a{/Control}{Backspace}{Enter}");
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["SELECT * FROM fruits"]), { timeout: 5000 });
+
+    // 5) Esc ではキャンセルされ、名前は変わらない。
+    await page.elementLocator(tabEl() as HTMLElement).click({ button: "right" });
+    await clickMenuItemByDom(t("tabRename"));
+    await userEvent.keyboard("{Control>}a{/Control}Discarded{Escape}");
+    await vi.waitFor(() => {
+      if (document.querySelector('input[aria-label="' + t("tabRenameAria") + '"]')) throw new Error("still editing");
+    });
+    expect(tabTitles()).toEqual(["SELECT * FROM fruits"]);
+  });
+
+  it("テーブルタブはダブルクリックしても編集欄にならず、メニューの名前変更は無効", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+
+    const tabEl = document.querySelector<HTMLElement>('[role="tab"][draggable]');
+    if (!tabEl) throw new Error("tab missing");
+    await page.elementLocator(tabEl).dblClick();
+    expect(document.querySelector('input[aria-label="' + t("tabRenameAria") + '"]')).toBeNull();
+
+    await page.elementLocator(tabEl).click({ button: "right" });
+    await expect.element(screen.getByRole("menuitem", { name: t("tabRename") })).toBeDisabled();
+  });
+});

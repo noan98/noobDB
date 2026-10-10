@@ -52,6 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
+import { autoTitleOnRun, deriveQueryTabTitle, resolveNewTabTitle, resolveRename } from "./tabTitle";
 import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import {
   REOPEN_CLOSED_TAB_COMMAND_ID,
@@ -664,6 +665,11 @@ export interface Tab {
   id: string;
   kind: TabKind;
   title: string;
+  /**
+   * 利用者が手動で付けたタブ名か (#1390)。true の間は実行時の自動命名で上書きしない。
+   * 永続化する (tabPersistence.ts)。
+   */
+  titleManual?: boolean;
   database?: string;
   table?: string;
   sql: string;
@@ -942,9 +948,7 @@ function schemaCacheKey(sessionId: string, database: string): string {
  * 1 行を短く切り詰める。空なら既定の無題タイトル。
  */
 function deriveResultTabTitle(sql: string): string {
-  const firstLine = sql.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
-  if (!firstLine) return translate("tabUntitledQuery");
-  return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
+  return deriveQueryTabTitle(sql) ?? translate("tabUntitledQuery");
 }
 
 /** 共通の初期状態でタブを生成する。呼び出し側は必要なフィールドだけ上書きする。 */
@@ -1038,6 +1042,7 @@ function toPersistedTab(
   liveGridScrollTop?: number,
 ): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
+  if (tab.titleManual) out.titleManual = true;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   // Carry the Query Builder snapshot through so the inputs come back on
@@ -1710,6 +1715,9 @@ export default function App() {
   // 前面にモーダルが乗っている)。依存配列なしの effect で毎レンダ最新値に同期し、
   // requestAnimationFrame 越しの非同期フォーカス実行時点の値を参照できるようにする。
   const overlayOpenRef = useRef(false);
+  // タブ名のインライン編集中か (#1390)。ダブルクリックの 2 回目のクリックが起こす「エディタへ
+  // 自動フォーカス」(rAF 遅延) が編集欄のフォーカスを奪って即確定してしまうのを防ぐ。
+  const renamingRef = useRef(false);
   useEffect(() => {
     overlayOpenRef.current =
       showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
@@ -1725,12 +1733,14 @@ export default function App() {
   const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
     if (!paneId || tabKind !== "query") return;
     requestAnimationFrame(() => {
-      if (overlayOpenRef.current) return;
+      if (overlayOpenRef.current || renamingRef.current) return;
       editorRefs.current.get(paneId)?.focus();
     });
   }, []);
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+  // インライン名前変更中のタブ (#1390)。タブのダブルクリックと右クリックメニューの両方から立てる。
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
   // メニューのアンカー座標 (viewport coords)。ヘッダのボタン過密対策 (2 ボタン → 1)。
   const [profileTransferMenu, setProfileTransferMenu] = useState<{ x: number; y: number } | null>(null);
@@ -2195,7 +2205,9 @@ export default function App() {
 
   // Append a freshly built tab to a pane (the focused pane by default) and make
   // it active there. Used by every "open in a new tab" entry point.
-  const addTab = useCallback((tab: Tab, paneId?: string) => {
+  const addTab = useCallback((tabIn: Tab, paneId?: string) => {
+    // 無題のクエリタブは SQL から自動命名し、明示タイトルは手動扱いにして保護する (#1390)。
+    const tab: Tab = { ...tabIn, ...resolveNewTabTitle(tabIn, translate("tabUntitledQuery")) };
     setTabs((prev) => [...prev, tab]);
     setPanes((prev) => {
       if (prev.length === 0) {
@@ -2324,6 +2336,27 @@ export default function App() {
   const openTabMenu = useCallback((tabId: string, x: number, y: number) => {
     setTabMenu({ tabId, x, y });
   }, []);
+
+  // タブの名前変更 (#1390)。query タブのみ。確定値の解釈 (空 = 自動命名へ戻す / 手動フラグ) は
+  // resolveRename (tabTitle.ts)。
+  const startRenameTab = useCallback((tabId: string) => {
+    const tt = tabsRef.current.find((x) => x.id === tabId);
+    if (tt?.kind !== "query") return;
+    renamingRef.current = true;
+    setRenamingTabId(tabId);
+  }, [tabsRef]);
+  const cancelRenameTab = useCallback(() => {
+    renamingRef.current = false;
+    setRenamingTabId(null);
+  }, []);
+  const commitRenameTab = useCallback((tabId: string, value: string) => {
+    renamingRef.current = false;
+    setRenamingTabId(null);
+    const tt = tabsRef.current.find((x) => x.id === tabId);
+    if (!tt) return;
+    const patch = resolveRename(tt, value, tabSqlStore.resolve(tt.id, tt.sql), translate("tabUntitledQuery"));
+    if (patch) setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)));
+  }, [tabsRef, tabSqlStore, setTabs]);
 
   const refreshProfiles = useCallback(async () => {
     try {
@@ -4275,6 +4308,8 @@ export default function App() {
         }
         return {
           ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
+          // 明示することで addTab 相当の推測を避け、保存時の手動/自動の区別をそのまま戻す (#1390)。
+          titleManual: s.kind === "query" && s.titleManual === true,
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
           selection: s.selection,
@@ -4950,6 +4985,11 @@ export default function App() {
       target = newTab;
       openedInNewTab = true;
     }
+    // 結果を同じタブに出す通常実行: 手動命名でない query タブは直近に実行した SQL で自動命名する (#1390)。
+    if (target === tab) {
+      const autoTitle = autoTitleOnRun(tab, sql);
+      if (autoTitle !== null) updateTab(tab.id, { title: autoTitle });
+    }
     // Auto LIMIT only guards free-form editor queries; table tabs carry their
     // own LIMIT. Writes pass through here too but the backend parser leaves
     // them untouched.
@@ -5018,6 +5058,7 @@ export default function App() {
     }
     void runQueryInTab(target.id, sql, null, autoLimit);
   }, [
+    updateTab,
     runQueryInTab,
     runExplainInTab,
     runBatchInTab,
@@ -7248,6 +7289,8 @@ export default function App() {
       : makeTab("query", entry.title, entry.sql);
     const restored: Tab = {
       ...base,
+      // 手動名は復元後も自動命名で上書きしない。明示することで addTab の推測を避ける (#1390)。
+      titleManual: entry.kind === "query" && entry.titleManual === true,
       database: entry.database,
       builderSnapshot: entry.builderSnapshot ?? null,
       selection: entry.selection,
@@ -7284,7 +7327,14 @@ export default function App() {
     const spec = duplicateTabSpec(src, tabSqlStore.resolve(src.id, src.sql));
     const copy: Tab = {
       ...makeQueryTab(),
-      title: spec.title ?? translate("tabUntitledQuery"),
+      // 手動名は同名が並ばないよう接尾辞を付けて手動扱いのまま引き継ぐ。それ以外 (自動名・
+      // table・explain) は自動命名の対象で、SQL が実行されると SQL 由来の名前になる (#1390)。
+      title: spec.title === null
+        ? translate("tabUntitledQuery")
+        : spec.titleManual
+          ? `${spec.title} ${translate("tabCopySuffix")}`
+          : spec.title,
+      titleManual: spec.titleManual,
       sql: spec.sql,
       lastExecutedSql: spec.lastExecutedSql,
       database: spec.database,
@@ -8305,7 +8355,7 @@ export default function App() {
     explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
     handleAiSqlAction, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
-    openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
+    openAndRunQuery, openQueryInEditor, openTabMenu, startRenameTab, commitRenameTab, cancelRenameTab, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,
     requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
     runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
@@ -8351,6 +8401,7 @@ export default function App() {
     schemaForDatabase,
     lookupForSession,
     dirtyTick,
+    renamingTabId,
     dirtyWatcher,
     getTabSql,
     gridStable,
@@ -10280,6 +10331,7 @@ export default function App() {
         const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
         // Moving is only possible when it won't leave a single pane empty.
         const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
+        const tabMenuIsQuery = tabs.find((x) => x.id === tabMenu.tabId)?.kind === "query";
         const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
         const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [
@@ -10288,6 +10340,12 @@ export default function App() {
             onSelect: () => moveTabToOtherPane(tabMenu.tabId),
             disabled: !canMove,
             title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
+          },
+          {
+            label: t("tabRename"),
+            onSelect: () => startRenameTab(tabMenu.tabId),
+            disabled: !tabMenuIsQuery,
+            title: tabMenuIsQuery ? undefined : t("tabRenameDisabled"),
           },
           {
             label: t("tabDuplicate"),

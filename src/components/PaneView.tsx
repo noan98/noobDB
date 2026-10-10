@@ -157,6 +157,10 @@ export interface PaneActions {
   openAndRunQuery: (sql: string, title?: string) => void;
   openQueryInEditor: (sql: string, title?: string, database?: string) => void;
   openTabMenu: (tabId: string, x: number, y: number) => void;
+  /** タブのインライン名前変更 (#1390)。 */
+  startRenameTab: (tabId: string) => void;
+  commitRenameTab: (tabId: string, value: string) => void;
+  cancelRenameTab: () => void;
   patchTab: (id: string, patcher: (tab: Tab) => Tab) => void;
   pinCurrentResult: (tab: Tab) => void;
   previewEditsForTab: (tab: Tab) => void;
@@ -223,6 +227,8 @@ export interface PaneEnv {
   lookupForSession: (sid: string) => ValueLookup;
   /** dirty 表示の切り替わり (TabDirtyWatcher) で増える。TabBar の dirty ドットを再計算させる。 */
   dirtyTick: number;
+  /** インライン名前変更中のタブ id (#1390)。 */
+  renamingTabId: string | null;
   dirtyWatcher: TabDirtyWatcher;
   getTabSql: (tab: Tab) => string;
   gridStable: ReturnType<typeof useKeyedStable>;
@@ -257,7 +263,7 @@ export const PaneView = memo(
   const {
     store, actions, t, sessionId, selectedProfile, layoutMode, readOnly, emergencyMode, broadcastAvailable,
     queryHistory, editorBindings, gridBindings, shortcutBindings, density, defaultDisplayCount,
-    streamPrefetchSize, incomingFkCache, schemaForDatabase, lookupForSession, dirtyTick, dirtyWatcher,
+    streamPrefetchSize, incomingFkCache, schemaForDatabase, lookupForSession, dirtyTick, renamingTabId, dirtyWatcher,
     getTabSql, gridStable, editorSelectionRef, gridScrollRef, preflightRef, getEditorRefSetter,
     getGridRefSetter,
   } = env;
@@ -336,6 +342,7 @@ export const PaneView = memo(
         id: tt.id,
         kind: tt.kind,
         title: tt.title,
+        renamable: tt.kind === "query",
         database: tt.database,
         table: tt.table,
         dirty: (() => {
@@ -415,6 +422,10 @@ export const PaneView = memo(
         newTabCombo={shortcutBindings.newTab}
         onReorder={onReorderTabs}
         onTabContextMenu={actions.openTabMenu}
+        renamingId={renamingTabId}
+        onRenameStart={actions.startRenameTab}
+        onRenameCommit={actions.commitRenameTab}
+        onRenameCancel={actions.cancelRenameTab}
         onSplit={onSplit}
         splitMode={split ? "close" : "split"}
       />

@@ -136,6 +136,7 @@ function makeEnv(store: TabPaneStore<Tab, PaneState>, overrides: Partial<PaneEnv
     schemaForDatabase: () => null,
     lookupForSession: () => async () => ({ rows: [], columns: [] }) as never,
     dirtyTick: 0,
+    renamingTabId: null,
     dirtyWatcher: new TabDirtyWatcher(() => false, noop),
     getTabSql: (tab) => tabSqlStore.resolve(tab.id, tab.sql),
     gridStable: {

@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
+import { TAB_RENAME_MAX } from "../tabTitle";
 import { Tooltip } from "./Tooltip";
 import { labelWithShortcut } from "../shortcutLabel";
 import { DropInsertionMarker } from "./DropInsertionMarker";
@@ -38,9 +39,77 @@ export interface TabInfo {
   id: string;
   kind: "table" | "query" | "explain";
   title: string;
+  /** ダブルクリックでインライン名前変更できるか (#1390)。query タブのみ true。 */
+  renamable?: boolean;
   database?: string;
   table?: string;
   dirty?: boolean;
+}
+
+/**
+ * タブ名のインライン編集欄 (#1390)。Enter で確定・Esc でキャンセル・フォーカスが外れたら確定。
+ * 確定値の解釈 (空 = 自動命名へ戻す、同名は変更なし) は呼び出し側 (resolveRename)。
+ * キー・ポインタ操作はタブ側のハンドラ (選択 / 削除 / 矢印移動 / ドラッグ開始) へ伝えない。
+ */
+function TabRenameInput({
+  initial,
+  ariaLabel,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  ariaLabel: string;
+  /** `viaKey`: Enter での確定 (フォーカスをタブへ戻してよい)。blur 確定では戻さない。 */
+  onCommit: (value: string, viaKey: boolean) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  // Enter/Esc の直後に続く blur で二重に確定しない。
+  const settled = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // 右クリックメニューから開始したとき、メニューの片付け (フォーカスを持つ項目の除去) が
+  // マウントと同じコミットで起きて autoFocus を打ち消すので、次フレームでフォーカスする。
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const settle = (fn: () => void) => {
+    if (settled.current) return;
+    settled.current = true;
+    fn();
+  };
+  return (
+    <Input
+      ref={inputRef}
+      size="xs"
+      value={value}
+      maxLength={TAB_RENAME_MAX}
+      aria-label={ariaLabel}
+      w="150px"
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => settle(() => onCommit(value, false))}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        // IME 変換中の Enter は確定にしない。
+        if (e.nativeEvent.isComposing) {
+          e.stopPropagation();
+          return;
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          settle(() => onCommit(value, true));
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          settle(onCancel);
+        }
+        e.stopPropagation();
+      }}
+    />
+  );
 }
 
 interface Props {
@@ -60,6 +129,14 @@ interface Props {
   /** Right-click on a tab (viewport coords) — opens the move/close menu. */
   onTabContextMenu?: (id: string, x: number, y: number) => void;
   /**
+   * インライン名前変更 (#1390)。`renamingId` のタブが編集欄になる。`onRenameStart` を
+   * 省略するとダブルクリックでの開始を無効にする。
+   */
+  renamingId?: string | null;
+  onRenameStart?: (id: string) => void;
+  onRenameCommit?: (id: string, value: string) => void;
+  onRenameCancel?: () => void;
+  /**
    * Split control. With `splitMode === "split"` the button opens a second pane;
    * with `"close"` it closes this pane (merging its tabs into the other one).
    * Omitted entirely when splitting isn't available.
@@ -78,6 +155,10 @@ export const TabBar = memo(function TabBar({
   onReorder,
   disabled,
   onTabContextMenu,
+  renamingId,
+  onRenameStart,
+  onRenameCommit,
+  onRenameCancel,
   onSplit,
   splitMode = "split",
 }: Props) {
@@ -333,6 +414,7 @@ export const TabBar = memo(function TabBar({
         <AnimatePresence initial={false}>
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
+            const isRenaming = tab.id === renamingId && !!tab.renamable;
             const title =
               tab.kind === "table" && tab.database && tab.table
                 ? `${tab.database}.${tab.table}`
@@ -355,7 +437,7 @@ export const TabBar = memo(function TabBar({
                 // 浮き上がり (scale + 影 + 前面化) を表現し、reduced-motion 配下は
                 // MotionConfig により即時化される。
                 value={tab.id}
-                drag={onReorder ? true : false}
+                drag={onReorder && !isRenaming ? true : false}
                 whileDrag={{ scale: 1.04, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
                 onDragStart={onReorder ? () => setDropIndicator(tab.id, false) : undefined}
                 onDragEnd={onReorder ? () => setDropIndicator(null) : undefined}
@@ -406,6 +488,13 @@ export const TabBar = memo(function TabBar({
                 _hover={isActive ? undefined : { bg: "app.hover", color: "app.text" }}
                 _focusVisible={{ outline: "none", boxShadow: focusRing }}
                 onClick={() => onSelect(tab.id)}
+                // ダブルクリックでインライン名前変更 (#1390)。ドラッグ (Reorder.Item) と併用するため
+                // 個々の子要素ではなくタブ全体で受ける。閉じるボタンは自前で止める。
+                onDoubleClick={
+                  onRenameStart && tab.renamable
+                    ? () => onRenameStart(tab.id)
+                    : undefined
+                }
                 onMouseDown={(e) => {
                   if (e.button === 1) {
                     e.preventDefault();
@@ -451,9 +540,30 @@ export const TabBar = memo(function TabBar({
                     <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
                   </FlightIcon>
                 </chakra.span>
-                <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" maxW="180px">
-                  {tab.title}
-                </chakra.span>
+                {isRenaming ? (
+                  <TabRenameInput
+                    initial={tab.title}
+                    ariaLabel={t("tabRenameAria")}
+                    onCommit={(v, viaKey) => {
+                      onRenameCommit?.(tab.id, v);
+                      if (viaKey) requestAnimationFrame(() => tabRefs.current.get(tab.id)?.focus());
+                    }}
+                    onCancel={() => {
+                      onRenameCancel?.();
+                      // 編集欄が消えたあとタブへフォーカスを戻し、矢印キー操作を続けられるようにする。
+                      requestAnimationFrame(() => tabRefs.current.get(tab.id)?.focus());
+                    }}
+                  />
+                ) : (
+                  <chakra.span
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                    maxW="180px"
+                  >
+                    {tab.title}
+                  </chakra.span>
+                )}
                 {tab.dirty && (
                   <Tooltip label={t("tabDirty")} focusableWrapper>
                     <chakra.span
@@ -492,6 +602,7 @@ export const TabBar = memo(function TabBar({
                     transitionTimingFunction="var(--ease)"
                     _hover={{ bg: isActive ? "app.active" : "app.hover", color: "app.text" }}
                     aria-label={t("tabClose")}
+                    onDoubleClick={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
                       onClose(tab.id);

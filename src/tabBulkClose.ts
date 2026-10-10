@@ -35,6 +35,8 @@ export interface DuplicateSource {
   kind: "table" | "query" | "explain";
   title: string;
   database?: string;
+  /** 手動命名か (#1390)。 */
+  titleManual?: boolean;
 }
 
 /** 複製タブの仕様 (`makeQueryTab` を土台に上書きするフィールド)。 */
@@ -42,6 +44,12 @@ export interface DuplicateTabSpec {
   kind: "query";
   /** 複製元のタイトルを引き継ぐ。explain は元のタイトルが計画用なので null (無題クエリ)。 */
   title: string | null;
+  /**
+   * 複製タブの手動命名フラグ (#1390)。query タブの手動名だけ引き継ぐ (呼び出し側は同名が
+   * 並ばないよう接尾辞を付ける)。table は表示名がテーブル名なだけで手動命名ではなく、
+   * 複製後は SQL 由来の自動命名に任せる。
+   */
+  titleManual: boolean;
   sql: string;
   database: string | undefined;
   /** 未実行扱い (dirty 表示) にするため常に空。 */
@@ -56,6 +64,7 @@ export function duplicateTabSpec(src: DuplicateSource, sql: string): DuplicateTa
   return {
     kind: "query",
     title: src.kind === "explain" ? null : src.title,
+    titleManual: src.kind === "query" && src.titleManual === true,
     sql,
     database: src.database,
     lastExecutedSql: "",

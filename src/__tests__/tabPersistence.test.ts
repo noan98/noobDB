@@ -236,4 +236,28 @@ describe("normalizePersistedWorkspace", () => {
     ]);
     expect(ws.panes[0].tabs[0].builderSnapshot).toBeUndefined();
   });
+
+  describe("titleManual (#1390)", () => {
+    const wsOf = (tab: Record<string, unknown>) => ({ panes: [{ tabs: [tab], activeIndex: 0 }], activePane: 0 });
+    const base = { kind: "query", title: "mine", sql: "SELECT 1" };
+
+    it("true は保持する", () => {
+      const ws = normalizePersistedWorkspace(wsOf({ ...base, titleManual: true }));
+      expect(ws.panes[0].tabs[0].titleManual).toBe(true);
+    });
+    it("フラグの無い古い保存データも読め、自動命名扱い (フラグ無し) になる", () => {
+      const ws = normalizePersistedWorkspace(wsOf(base));
+      expect(ws.panes[0].tabs).toHaveLength(1);
+      expect(ws.panes[0].tabs[0]).not.toHaveProperty("titleManual");
+      // 旧形式 (配列) でも同様
+      expect(normalizePersistedWorkspace([base]).panes[0].tabs[0]).not.toHaveProperty("titleManual");
+    });
+    it("false / 不正な型は捨てるが、タブ自体は読める", () => {
+      for (const v of [false, "true", 1, null]) {
+        const ws = normalizePersistedWorkspace(wsOf({ ...base, titleManual: v }));
+        expect(ws.panes[0].tabs).toHaveLength(1);
+        expect(ws.panes[0].tabs[0]).not.toHaveProperty("titleManual");
+      }
+    });
+  });
 });

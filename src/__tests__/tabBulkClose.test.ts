@@ -40,18 +40,23 @@ import { duplicateTabSpec } from "../tabBulkClose";
 describe("duplicateTabSpec", () => {
   it("query: タイトル・DB・SQL を引き継ぎ未実行扱い", () => {
     expect(duplicateTabSpec({ kind: "query", title: "q1", database: "db" }, "SELECT 1")).toEqual({
-      kind: "query", title: "q1", sql: "SELECT 1", database: "db", lastExecutedSql: "",
+      kind: "query", title: "q1", titleManual: false, sql: "SELECT 1", database: "db", lastExecutedSql: "",
     });
+  });
+  it("query: 手動命名は引き継ぎ、自動名は自動のまま (#1390)", () => {
+    expect(duplicateTabSpec({ kind: "query", title: "mine", titleManual: true }, "x").titleManual).toBe(true);
+    expect(duplicateTabSpec({ kind: "query", title: "SELECT 1", titleManual: false }, "x").titleManual).toBe(false);
   });
   it("table: クエリタブとして複製しテーブル名タイトルを引き継ぐ", () => {
     const s = duplicateTabSpec({ kind: "table", title: "users", database: "app" }, "SELECT * FROM users");
     expect(s.kind).toBe("query");
     expect(s.title).toBe("users");
+    expect(s.titleManual).toBe(false);
   });
   it("explain: クエリタブになりタイトルは引き継がない", () => {
     const s = duplicateTabSpec({ kind: "explain", title: "Explain: x" }, "EXPLAIN SELECT 1");
     expect(s).toEqual({
-      kind: "query", title: null, sql: "EXPLAIN SELECT 1", database: undefined, lastExecutedSql: "",
+      kind: "query", title: null, titleManual: false, sql: "EXPLAIN SELECT 1", database: undefined, lastExecutedSql: "",
     });
   });
 });

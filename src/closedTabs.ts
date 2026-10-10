@@ -34,6 +34,8 @@ export interface ClosedTab {
   scope: string;
   kind: "table" | "query" | "explain";
   title: string;
+  /** 手動命名か (#1390)。復元後も自動命名で上書きしないために持つ。 */
+  titleManual?: boolean;
   /** 閉じた時点の最新本文 (エディタに未反映の編集を含む)。 */
   sql: string;
   database?: string;
@@ -47,6 +49,7 @@ export interface ClosedTab {
 export interface ClosableTab {
   kind: "table" | "query" | "explain";
   title: string;
+  titleManual?: boolean;
   database?: string;
   table?: string;
   builderSnapshot?: QueryBuilderSnapshot | null;
@@ -77,6 +80,7 @@ export function snapshotClosedTab(
     sql,
     closedAt: meta.closedAt,
   };
+  if (tab.titleManual) out.titleManual = true;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   if (tab.builderSnapshot) out.builderSnapshot = tab.builderSnapshot;
@@ -91,6 +95,7 @@ function sameContent(a: ClosedTab, b: ClosedTab): boolean {
     a.scope === b.scope &&
     a.kind === b.kind &&
     a.title === b.title &&
+    !!a.titleManual === !!b.titleManual &&
     a.sql === b.sql &&
     a.database === b.database &&
     a.table === b.table
