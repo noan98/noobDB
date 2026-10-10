@@ -217,7 +217,7 @@ function Header({
       <Heading>{t("pinCompareTitle")}</Heading>
       <chakra.span flex="1" />
       {/* 同上 — 可視テキストと同じ文字列の native `title=` は削除する (#884)。 */}
-      <Button size="sm" variant="secondary" onClick={onClear} disabled={clearDisabled}>
+      <Button size="sm" variant="dangerOutline" onClick={onClear} disabled={clearDisabled}>
         {t("pinCompareClearAll")}
       </Button>
       <Tooltip label={t("pinCompareClose")}>

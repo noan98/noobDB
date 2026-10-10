@@ -247,9 +247,18 @@ export function ConnectionHealthPanel({
       </chakra.p>
 
       <Flex align="center" gap="3" flexWrap="wrap">
-        <Button type="button" onClick={() => void runChecks({ refetchVersion: true })} disabled={loading}>
-          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("healthRefresh")}
-        </Button>
+        <Tooltip label={t("healthRefresh")} focusableWrapper={loading}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={t("healthRefresh")}
+            onClick={() => void runChecks({ refetchVersion: true })}
+            disabled={loading}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
         <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm">
           <Checkbox
             checked={autoRefresh}

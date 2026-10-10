@@ -128,9 +128,18 @@ export function ServerInfoPanel({
       )}
 
       <Flex align="center" gap="3" flexWrap="wrap">
-        <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("serverInfoRefresh")}
-        </Button>
+        <Tooltip label={t("serverInfoRefresh")} focusableWrapper={loading}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={t("serverInfoRefresh")}
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
         <Input
           type="search"
           value={filter}

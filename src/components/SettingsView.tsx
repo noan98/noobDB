@@ -8,7 +8,6 @@ import {
   themePreviewGradient,
 } from "../themePresetPreview";
 import { useT, type I18nKey } from "../i18n";
-import { semanticColorToken } from "../semanticColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
@@ -1920,9 +1919,16 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
             <SettingsInfo>{t("settingsLogsHelp")}</SettingsInfo>
           </SettingsLabelWithInfo>
           <SettingsLogsActions>
-            <SettingsReset onClick={loadLogs} disabled={logLoading}>
-              {t("settingsLogsRefresh")}
-            </SettingsReset>
+            <Tooltip label={t("settingsLogsRefresh")} focusableWrapper={logLoading}>
+              <SettingsLogsIconButton
+                type="button"
+                onClick={loadLogs}
+                disabled={logLoading}
+                aria-label={t("settingsLogsRefresh")}
+              >
+                <Icon name="refresh" size={ICON_SIZES.md} />
+              </SettingsLogsIconButton>
+            </Tooltip>
             <Tooltip label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")} focusableWrapper={!logText}>
               <SettingsLogsIconButton
                 type="button"
@@ -1933,9 +1939,9 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                 <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
               </SettingsLogsIconButton>
             </Tooltip>
-            <SettingsReset onClick={clearLogs} disabled={!logText}>
+            <Button type="button" variant="dangerOutline" size="sm" onClick={clearLogs} disabled={!logText}>
               {t("settingsLogsClear")}
-            </SettingsReset>
+            </Button>
           </SettingsLogsActions>
         </SettingsSectionHeader>
         <SettingsLogsView
@@ -2008,13 +2014,9 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
           <SettingsInfo>{t("settingsBackupExcludesProfiles")}</SettingsInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsReset
-            type="button"
-            color={semanticColorToken("danger", "text")}
-            onClick={handleResetAllSettings}
-          >
+          <Button type="button" variant="dangerOutline" size="sm" onClick={handleResetAllSettings}>
             {t("settingsBackupResetAll")}
-          </SettingsReset>
+          </Button>
           <SettingsInfo>{t("settingsBackupResetAllHelp")}</SettingsInfo>
         </SettingsToggleRow>
       </SettingsSection>

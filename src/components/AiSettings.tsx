@@ -226,7 +226,7 @@ export function AiSettings() {
         <SettingsInfo>{t("aiUsageMonthHelp")}</SettingsInfo>
         <Button
           type="button"
-          variant="secondary"
+          variant="dangerOutline"
           size="sm"
           disabled={usageModels.length === 0}
           onClick={() => {

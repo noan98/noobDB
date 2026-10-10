@@ -299,9 +299,18 @@ export function ProcessListPanel({
             {t("processKillSelected", { count: selected.size })}
           </Button>
         </Tooltip>
-        <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("processRefresh")}
-        </Button>
+        <Tooltip label={t("processRefresh")} focusableWrapper={loading}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={t("processRefresh")}
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
         <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
           <Checkbox
             checked={autoRefresh}

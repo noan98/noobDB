@@ -20,6 +20,7 @@ describe("icon lexicon (#489)", () => {
     "play",
     "format",
     "more",
+    "trash",
   ];
 
   it.each(semantic)("renders an SVG for the %s glyph", (name) => {

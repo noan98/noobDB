@@ -83,11 +83,11 @@ export function ResultJsonView({ result, database, table, onChangeView }: Props)
             type="button"
             variant="secondary"
             size="sm"
+            aria-label={t("resultJsonCopy")}
             onClick={() => void copyAll()}
             disabled={json.shown === 0}
           >
-            <Icon name="copy" size={ICON_SIZES.sm} />
-            {t("resultJsonCopy")}
+            <Icon name="copy" size={ICON_SIZES.md} />
           </Button>
         </Tooltip>
       </Flex>

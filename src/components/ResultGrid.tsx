@@ -2233,9 +2233,11 @@ function ColumnFilterMenu({
         >
           {t("gridFilterClearColumn")}
         </Button>
-        <Button variant="secondary" size="sm" px="2.5" onClick={onClose}>
-          {t("gridFilterCloseMenu")}
-        </Button>
+        <Tooltip label={t("gridFilterCloseMenu")}>
+          <Button variant="ghost" size="sm" aria-label={t("gridFilterCloseMenu")} onClick={onClose}>
+            <Icon name="close" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
       </Box>
     </Box>,
     document.body,
@@ -8132,11 +8134,12 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
         >
           <Button
             size="sm"
-            px="2.5"
+            px="1.5"
+            aria-label={t("exportButton")}
             onClick={() => setShowExport(true)}
             disabled={!canExport}
           >
-            <Icon name="download" size={ICON_SIZES.md} /> {t("exportButton")}
+            <Icon name="download" size={ICON_SIZES.md} />
           </Button>
         </Tooltip>
         {visibleToolbarActions.map((id) => {

@@ -102,10 +102,12 @@ export function LocalTablesPanel({
                       type="button"
                       variant="ghost"
                       size="sm"
+                      color="app.textError"
+                      _hover={{ color: "app.textError", bg: "app.hover" }}
                       aria-label={t("localPanelDropTable")}
                       onClick={() => onDropTable(tbl.name)}
                     >
-                      <Icon name="close" size={ICON_SIZES.sm} />
+                      <Icon name="trash" size={ICON_SIZES.sm} />
                     </PressableButton>
                   </Tooltip>
                 </Flex>

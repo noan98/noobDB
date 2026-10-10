@@ -340,11 +340,11 @@ export function PlanWatchPanel({
         >
           <Button
             variant="secondary"
+            aria-label={refreshing ? t("planWatchRefreshing") : t("planWatchRefresh")}
             disabled={!canRefresh || refreshing || watched.length === 0}
             onClick={onRefresh}
           >
-            <Icon name="refresh" size={ICON_SIZES.sm} />{" "}
-            {refreshing ? t("planWatchRefreshing") : t("planWatchRefresh")}
+            <Icon name="refresh" size={ICON_SIZES.md} />
           </Button>
         </Tooltip>
         <Button variant="primary" onClick={onClose}>

@@ -8,7 +8,9 @@ import { useCopyFeedback } from "./useCopyFeedback";
 import { JsonTreeView } from "./JsonTreeView";
 import { parseJsonLossless, serializeJson, formatJsonLossless } from "./jsonTree";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Icon, ICON_SIZES } from "./Icon";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 import { Button, Switch } from "./ui";
 import { Segmented } from "./Segmented";
 import { FieldError } from "./modalForm";
@@ -345,9 +347,15 @@ export function CellValueViewer({
             </chakra.span>
             {isJson && !nullDraft && (
               <>
-                <Button type="button" onClick={() => reformatJson(false)}>
-                  {t("cellViewerFormat")}
-                </Button>
+                <Tooltip label={t("cellViewerFormat")}>
+                  <Button
+                    type="button"
+                    aria-label={t("cellViewerFormat")}
+                    onClick={() => reformatJson(false)}
+                  >
+                    <Icon name="format" size={ICON_SIZES.md} />
+                  </Button>
+                </Tooltip>
                 <Button type="button" onClick={() => reformatJson(true)}>
                   {t("cellViewerMinify")}
                 </Button>

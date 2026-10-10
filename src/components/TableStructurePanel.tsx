@@ -211,10 +211,18 @@ export function TableStructurePanel({
           <Icon name="table" size={ICON_SIZES.sm} />
           <chakra.span marginLeft="1.5">{t("structureOpenData")}</chakra.span>
         </Button>
-        <Button type="button" variant="secondary" size="sm" onClick={reload} disabled={!rows && !error}>
-          <Icon name="refresh" size={ICON_SIZES.sm} />
-          <chakra.span marginLeft="1.5">{t("structureReload")}</chakra.span>
-        </Button>
+        <Tooltip label={t("structureReload")} focusableWrapper={!rows && !error}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            aria-label={t("structureReload")}
+            onClick={reload}
+            disabled={!rows && !error}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
       </Flex>
 
       {error ? (

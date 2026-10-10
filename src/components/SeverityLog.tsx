@@ -252,7 +252,7 @@ export function LogToolbar({
         {filters}
       </Flex>
       {extra}
-      <Button type="button" size="sm" variant="secondary" onClick={onClear} disabled={clearDisabled}>
+      <Button type="button" size="sm" variant="dangerOutline" onClick={onClear} disabled={clearDisabled}>
         {t("activityClear")}
       </Button>
     </Flex>

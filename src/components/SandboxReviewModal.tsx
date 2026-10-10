@@ -19,9 +19,11 @@ import {
 } from "../sandbox";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
+import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel } from "./modalForm";
+import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Radio, Select } from "./ui";
 
 interface Props {
@@ -511,9 +513,16 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         )}
       </ModalBody>
       <ModalFooter>
-        <Button type="button" onClick={loadAll} disabled={loading || applying}>
-          {t("sandboxReviewRefresh")}
-        </Button>
+        <Tooltip label={t("sandboxReviewRefresh")} focusableWrapper={loading || applying}>
+          <Button
+            type="button"
+            aria-label={t("sandboxReviewRefresh")}
+            onClick={loadAll}
+            disabled={loading || applying}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
         <LoadingButton
           loading={generating}
           onClick={generate}

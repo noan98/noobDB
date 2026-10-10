@@ -141,7 +141,7 @@ export function TableOpenQueryModal({
       </ModalBody>
       <ModalFooter>
         {hasOverride && (
-          <Button type="button" variant="ghost" onClick={() => onSave("")}>
+          <Button type="button" variant="dangerOutline" onClick={() => onSave("")}>
             {t("tableOpenQueryModalRemove")}
           </Button>
         )}
