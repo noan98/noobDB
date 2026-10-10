@@ -3,6 +3,7 @@ import {
   approxKb,
   buildNl2SqlPrompt,
   buildNl2SqlSystem,
+  buildNl2SqlSystemParts,
   buildSchemaText,
   identifierQuoteRule,
   NL2SQL_FORMAT,
@@ -109,5 +110,22 @@ describe("parseNl2SqlResponse", () => {
     expect(NL2SQL_FORMAT.type).toBe("json_schema");
     expect(NL2SQL_FORMAT.schema.additionalProperties).toBe(false);
     expect(NL2SQL_FORMAT.schema.required).toEqual(["sql", "explanation", "warnings", "tables_used"]);
+  });
+});
+
+describe("buildNl2SqlSystemParts (#1473)", () => {
+  it("方言・規則・スキーマは固定部分に入り、可変部分は空", () => {
+    const { cached, variable } = buildNl2SqlSystemParts(base);
+    expect(cached).toContain("MySQL");
+    expect(cached).toContain("- orders(id, customer_id, amount, created_at)");
+    expect(variable).toBe("");
+  });
+
+  it("同じ入力なら固定部分は毎回完全一致する (キャッシュ先頭一致の前提)", () => {
+    expect(buildNl2SqlSystemParts(base).cached).toBe(buildNl2SqlSystemParts({ ...base }).cached);
+  });
+
+  it("buildNl2SqlSystem は固定部分と一致する", () => {
+    expect(buildNl2SqlSystem(base)).toBe(buildNl2SqlSystemParts(base).cached);
   });
 });

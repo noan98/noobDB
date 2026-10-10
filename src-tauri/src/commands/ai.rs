@@ -142,10 +142,13 @@ fn validate_format(format: &serde_json::Value) -> Result<serde_json::Value> {
     }
 }
 
+// 要求仕様の各項目をそのまま受ける組み立て関数で、構造体に包むと呼び出し側が冗長になるため許容する。
+#[allow(clippy::too_many_arguments)]
 fn build_spec(
     task: AiTaskKind,
     settings: &AiSettingsSnapshot,
     system: Option<String>,
+    system_cached: Option<String>,
     prompt: String,
     max_tokens: u32,
     stream: bool,
@@ -155,6 +158,7 @@ fn build_spec(
         model: resolve_model(task, settings),
         effort: resolve_effort(task, settings),
         system,
+        system_cached,
         prompt,
         max_tokens,
         stream,
@@ -197,6 +201,7 @@ pub async fn run_ai_request(
     prompt: String,
     settings: AiSettingsSnapshot,
     format: Option<serde_json::Value>,
+    system_cached: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     require_enabled(&settings)?;
@@ -204,7 +209,11 @@ pub async fn run_ai_request(
     if prompt.trim().is_empty() {
         return Err(AppError::InvalidInput("the prompt is empty".into()));
     }
-    if prompt.len() + system.as_ref().map_or(0, String::len) > MAX_PROMPT_BYTES {
+    if prompt.len()
+        + system.as_ref().map_or(0, String::len)
+        + system_cached.as_ref().map_or(0, String::len)
+        > MAX_PROMPT_BYTES
+    {
         return Err(AppError::InvalidInput("the prompt is too large".into()));
     }
     let api_key = require_api_key()?;
@@ -212,6 +221,7 @@ pub async fn run_ai_request(
         task,
         &settings,
         system,
+        system_cached,
         prompt,
         DEFAULT_MAX_TOKENS,
         true,
@@ -304,6 +314,7 @@ pub async fn test_ai_connection(settings: AiSettingsSnapshot) -> Result<AiConnec
         let spec = build_spec(
             AiTaskKind::ConnectionTest,
             &settings,
+            None,
             None,
             TEST_PROMPT.to_string(),
             TEST_MAX_TOKENS,

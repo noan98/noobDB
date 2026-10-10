@@ -107,8 +107,19 @@ export function buildSchemaText(tables: Nl2SqlTable[], foreignKeys: Nl2SqlForeig
   return lines.join("\n");
 }
 
-/** system プロンプト。方言・識別子クオート規則・読み取り専用制約・スキーマを含める。 */
-export function buildNl2SqlSystem(input: Nl2SqlSystemInput): string {
+/** system プロンプトを「同じ DB なら毎回同じ固定部分」と「毎回変わりうる部分」に分けたもの (#1473)。 */
+export interface Nl2SqlSystemParts {
+  /** 方言・規則・スキーマ。プロンプトキャッシュの対象にする (`systemCached`)。 */
+  cached: string;
+  /** 固定部分の後ろに足す可変部分 (今は無く、空文字)。 */
+  variable: string;
+}
+
+/**
+ * system プロンプトの固定部分と可変部分。スキーマは大きく同じ DB で何度も送られるので
+ * 固定部分に置く。キャッシュは先頭からの一致なので、変わりうるものは `variable` に出す。
+ */
+export function buildNl2SqlSystemParts(input: Nl2SqlSystemInput): Nl2SqlSystemParts {
   const lang = input.locale === "ja" ? "Japanese" : "English";
   const dialect = dialectLabel(input.driver);
   const lines = [
@@ -132,7 +143,13 @@ export function buildNl2SqlSystem(input: Nl2SqlSystemInput): string {
   lines.push(input.database ? `Database: ${input.database}` : "Database: (default)");
   lines.push("Tables (name(columns)):");
   lines.push(buildSchemaText(input.tables, input.foreignKeys));
-  return lines.join("\n");
+  return { cached: lines.join("\n"), variable: "" };
+}
+
+/** system プロンプト全体 (固定部分 + 可変部分)。分けて送れない呼び出し側向け。 */
+export function buildNl2SqlSystem(input: Nl2SqlSystemInput): string {
+  const { cached, variable } = buildNl2SqlSystemParts(input);
+  return variable ? `${cached}\n\n${variable}` : cached;
 }
 
 /** ユーザプロンプト = 依頼文そのもの (SQL 本文・行データは含めない)。 */

@@ -350,6 +350,7 @@ mod tests {
             model: AiModel::Opus55,
             effort: AiEffort::Low,
             system: None,
+            system_cached: None,
             prompt: "hi".into(),
             max_tokens: 100,
             stream,

@@ -39,6 +39,16 @@ impl AiModel {
             AiModel::Fable51 => "claude-fable-5-1",
         }
     }
+
+    /// プロンプトキャッシュが効く最小のプロンプト長 (トークン数、#1473)。
+    /// 現行 4 モデルはいずれも 512 トークン。モデルを足すときは公式資料
+    /// (https://docs.claude.com/en/docs/build-with-claude/prompt-caching の
+    /// "Cache limitations") で値を確認して見直す (網羅的 match なのでコンパイルが気付かせる)。
+    pub fn cache_min_tokens(self) -> usize {
+        match self {
+            AiModel::Opus55 | AiModel::Sonnet55 | AiModel::Haiku55 | AiModel::Fable51 => 512,
+        }
+    }
 }
 
 /// `output_config.effort` の段階。
