@@ -3,8 +3,14 @@
 // `components/inlineCompleteExtension.ts` が持つ。
 // 行データは扱わない。送るのはカーソル前後の SQL と、そこに出てくるテーブルのスキーマだけ。
 
-import { sqlForAi, dialectLabel, needsSendScopeConfirm } from "./errorExplain";
-import { buildSchemaText, type Nl2SqlTable } from "./nl2sql";
+import { maskLiterals } from "../dangerousSql";
+import { dialectLabel, needsSendScopeConfirm } from "./errorExplain";
+
+/** 補完に渡すテーブル (名前と列名)。nl2sql の型には依存しない。 */
+export interface InlineTable {
+  name: string;
+  columns: string[];
+}
 
 /** 入力が止まってから問い合わせるまでの待ち (ms)。 */
 export const INLINE_DEBOUNCE_MS = 600;
@@ -53,14 +59,14 @@ export function inlineCompleteAllowed(input: InlineGateInput): boolean {
 }
 
 export interface InlineContextInput {
-  /** エディタ全文。 */
+  /** エディタ全文 (窓で切る前。字句状態をずらさないため、マスクは文頭から掛ける)。 */
   doc: string;
   /** カーソル位置 (ドキュメントオフセット)。 */
   pos: number;
   driver: string;
   maskLiterals: boolean;
   /** エディタが補完用に持っているスキーマ。 */
-  tables: Nl2SqlTable[];
+  tables: InlineTable[];
   database: string | null;
 }
 
@@ -101,15 +107,15 @@ export function sliceInlineWindow(doc: string, pos: number): { before: string; a
 
 const IDENT_RE = /[A-Za-z_\u0080-￿][\w$\u0080-￿]*/g;
 
-/** 窓の中に出てくるテーブル名に一致するスキーマだけを選ぶ (大小無視・出現順・上限あり)。 */
-export function relevantTables(text: string, tables: Nl2SqlTable[]): Nl2SqlTable[] {
-  const byName = new Map<string, Nl2SqlTable>();
+/** 窓の中に出てくるテーブル名に一致するスキーマだけを選ぶ (大小無視・上限あり。結果は名前順)。 */
+export function relevantTables(text: string, tables: InlineTable[]): InlineTable[] {
+  const byName = new Map<string, InlineTable>();
   for (const t of tables) {
     const k = t.name.toLowerCase();
     if (!byName.has(k)) byName.set(k, t);
   }
   const seen = new Set<string>();
-  const out: Nl2SqlTable[] = [];
+  const out: InlineTable[] = [];
   for (const m of text.matchAll(IDENT_RE)) {
     const k = m[0].toLowerCase();
     const t = byName.get(k);
@@ -118,35 +124,51 @@ export function relevantTables(text: string, tables: Nl2SqlTable[]): Nl2SqlTable
     out.push({ name: t.name, columns: t.columns.slice(0, INLINE_MAX_COLUMNS) });
     if (out.length >= INLINE_MAX_TABLES) break;
   }
-  return out;
+  // systemCached は先頭一致でキャッシュされるので、出現順ではなく名前順に固定する。
+  return out.sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
 }
 
 /**
- * カーソルが文字列リテラル / コメントの内側か (マスク前後で、カーソル直前の非空白が空白に
- * 変わっているかで判定する)。リテラルの中身への補完は無意味で、値を送る危険もあるので問い合わせない。
+ * カーソルが文字列リテラル / コメントの内側か。文頭からカーソルまでをマスクし、直後に置いた
+ * 識別子文字が空白に潰されるかで判定する (マスク設定・カーソル直前の空白に依らない)。
  */
-function insideMaskedRegion(original: string, masked: string): boolean {
-  const i = original.length - 1;
-  if (i < 0) return false;
-  return original[i].trim() !== "" && masked[i].trim() === "";
+function insideLiteralOrComment(prefix: string, driver: string): boolean {
+  const probe = maskLiterals(`${prefix}Z`, driver, { keepQuotedIdentifiers: true, cache: false });
+  return probe[probe.length - 1] === " ";
 }
 
 /**
  * 問い合わせの内容を組み立てる。送らないと決めたら null
  * (入力が短い・単語の途中・リテラル / コメントの中)。
- * マスクは窓全体にかけてからカーソル位置で分ける (`maskLiterals` は長さを保つ)。
+ * マスクは文頭からカーソル後の窓の終わりまで掛けてから窓で切る (`maskLiterals` は長さを保つ)。
+ * 窓で切ってからマスクすると、切り口が複数行リテラル / ブロックコメントの途中に来たときに
+ * 字句状態が反転し、リテラルの中身が素で送られてしまう。
  */
 export function buildInlineRequest(input: InlineContextInput): InlineRequestParts | null {
-  const { before: rawBefore, after: rawAfter } = sliceInlineWindow(input.doc, input.pos);
+  const pos = Math.max(0, Math.min(input.pos, input.doc.length));
+  const rawBefore = tailWindow(input.doc.slice(0, pos), INLINE_BEFORE_MAX_LINES, INLINE_BEFORE_MAX_CHARS);
+  const rawAfter = headWindow(
+    input.doc.slice(pos, pos + INLINE_AFTER_MAX_CHARS),
+    INLINE_AFTER_MAX_LINES,
+    INLINE_AFTER_MAX_CHARS,
+  );
   if (rawBefore.replace(/\s/g, "").length < INLINE_MIN_CHARS) return null;
   // 単語の途中 (直後が識別子文字) では続きを出さない。
   if (/^[\w$]/.test(rawAfter)) return null;
+  // リテラル / コメントの中身への補完は無意味。マスク設定がオフでも出さない。
+  if (insideLiteralOrComment(input.doc.slice(0, pos), input.driver)) return null;
 
-  const whole = rawBefore + rawAfter;
-  const masked = sqlForAi(whole, input.driver, input.maskLiterals);
-  const before = masked.slice(0, rawBefore.length);
-  const after = masked.slice(rawBefore.length);
-  if (input.maskLiterals && insideMaskedRegion(rawBefore, before)) return null;
+  let before = rawBefore;
+  let after = rawAfter;
+  if (input.maskLiterals) {
+    const maskedAll = maskLiterals(input.doc.slice(0, pos + INLINE_AFTER_MAX_CHARS), input.driver, {
+      keepQuotedIdentifiers: true,
+      cache: false,
+    });
+    before = tailWindow(maskedAll.slice(0, pos), INLINE_BEFORE_MAX_LINES, INLINE_BEFORE_MAX_CHARS);
+    after = headWindow(maskedAll.slice(pos), INLINE_AFTER_MAX_LINES, INLINE_AFTER_MAX_CHARS);
+  }
+  const masked = before + after;
 
   const tables = relevantTables(masked, input.tables);
   const dialect = dialectLabel(input.driver);
@@ -160,7 +182,7 @@ export function buildInlineRequest(input: InlineContextInput): InlineRequestPart
     "",
     input.database ? `Database: ${input.database}` : "Database: (default)",
     tables.length > 0 ? "Tables (name(columns)):" : "Tables: (none matched)",
-    buildSchemaText(tables, []),
+    tables.map((t) => `- ${t.name}(${t.columns.join(", ")})`).join("\n"),
   ].join("\n");
   const prompt = ["<before_cursor>", before, "</before_cursor>", "<after_cursor>", after, "</after_cursor>"].join(
     "\n",

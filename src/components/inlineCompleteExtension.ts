@@ -23,11 +23,11 @@ import { completionStatus } from "@codemirror/autocomplete";
 import { api, listenAiStream, type AiStreamHandlers } from "../api/tauri";
 import { recordAiUsage } from "../ai/aiUsageStore";
 import type { AiSettingsSnapshot } from "../ai/aiSettings";
-import type { Nl2SqlTable } from "../ai/nl2sql";
 import {
   buildInlineRequest,
   cleanInlineCompletion,
   InlineCompleteCache,
+  type InlineTable,
   INLINE_AFTER_MAX_CHARS,
   INLINE_BEFORE_MAX_CHARS,
   INLINE_DEBOUNCE_MS,
@@ -41,7 +41,7 @@ import {
 export interface InlineCompleteConfig {
   driver: string;
   maskLiterals: boolean;
-  tables: Nl2SqlTable[];
+  tables: InlineTable[];
   database: string | null;
   settings: AiSettingsSnapshot;
 }
@@ -178,10 +178,18 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
       // 入力・カーソル移動のたびに進める。古い応答が新しい状態へ出るのを防ぐ。
       private gen = 0;
 
-      constructor(private readonly view: EditorView) {}
+      constructor(private readonly view: EditorView) {
+        // 保存済みの state (タブ切替で復元されたもの) に古い提案が残っていたら消す。
+        // 構築中は dispatch できないので次のマイクロタスクで。
+        if (inlineSuggestionOf(view.state)) {
+          queueMicrotask(() => {
+            if (inlineSuggestionOf(this.view.state)) this.view.dispatch({ effects: setSuggestionEffect.of(null) });
+          });
+        }
+      }
 
       update(u: ViewUpdate): void {
-        const userTyped = u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
+        const userTyped = u.transactions.some((tr) => tr.isUserEvent("input.type"));
         if (u.docChanged || u.selectionSet) this.invalidate();
         if (u.docChanged && userTyped) this.schedule();
       }
@@ -206,16 +214,19 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
       }
 
       private fire(): void {
+        // IME 変換中は未確定のかなを送らず、変換 DOM も乱さない。
+        if (this.view.composing || this.view.compositionStarted) return;
         const cfg = options.getConfig();
         if (!cfg) return;
         const state = this.view.state;
         const sel = state.selection.main;
-        if (!sel.empty || completionStatus(state) === "active") return;
+        if (state.selection.ranges.length !== 1 || !sel.empty || completionStatus(state) === "active") return;
         const from = Math.max(0, sel.head - INLINE_BEFORE_MAX_CHARS);
         const to = Math.min(state.doc.length, sel.head + INLINE_AFTER_MAX_CHARS);
         const req = buildInlineRequest({
-          doc: state.doc.sliceString(from, to),
-          pos: sel.head - from,
+          // 字句状態を保つため、マスクは文頭から掛ける (窓への切り出しは純関数側)。
+          doc: state.doc.toString(),
+          pos: sel.head,
           driver: cfg.driver,
           maskLiterals: cfg.maskLiterals,
           tables: cfg.tables,
@@ -227,8 +238,10 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
         const gen = this.gen;
         const startedAt = Date.now();
         const show = (text: string) => {
+          if (this.view.composing || this.view.compositionStarted) return;
           const cur = this.view.state.selection.main;
           if (
+            this.view.state.selection.ranges.length !== 1 ||
             this.gen !== gen ||
             !shouldShowSuggestion({
               text,

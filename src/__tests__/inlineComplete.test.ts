@@ -104,12 +104,41 @@ describe("buildInlineRequest", () => {
   });
 });
 
+describe("窓の切り口が複数行リテラル / コメントの途中でもマスクが効く", () => {
+  it("45 行にわたる文字列リテラルの中身を送らない", () => {
+    const lines = ["INSERT INTO t VALUES ('line0"];
+    for (let i = 1; i < 45; i++) lines.push(`secret-${i}`);
+    lines.push("password123'); SELECT * FROM users WHERE id = 1 ");
+    const doc = lines.join("\n");
+    const r = req(doc);
+    expect(r).not.toBeNull();
+    expect(r?.prompt).not.toContain("password123");
+    expect(r?.prompt).not.toContain("secret-");
+    expect(r?.prompt).toContain("SELECT * FROM users");
+  });
+  it("45 行にわたる /* */ コメントの中身を送らない", () => {
+    const doc = `/* hidden\n${Array.from({ length: 45 }, (_, i) => `token ${i}`).join("\n")}\n*/ SELECT a FROM b `;
+    const r = req(doc, undefined, { driver: "postgres" });
+    expect(r).not.toBeNull();
+    expect(r?.prompt).not.toContain("token ");
+    expect(r?.prompt).not.toContain("hidden");
+  });
+  it("マスクがオフでもリテラル / コメントの中では問い合わせない", () => {
+    expect(req("SELECT * FROM users WHERE name = 'abc ", undefined, { maskLiterals: false })).toBeNull();
+    expect(req("SELECT 1 -- memo ", undefined, { maskLiterals: false })).toBeNull();
+    expect(req("SELECT 1 /* memo \n more ", undefined, { maskLiterals: false })).toBeNull();
+    expect(req("SELECT * FROM users WHERE ", undefined, { maskLiterals: false })).not.toBeNull();
+  });
+});
+
 describe("relevantTables", () => {
   it("大小無視・出現順・重複なし・上限あり", () => {
     const many = Array.from({ length: 20 }, (_, i) => ({ name: `t${i}`, columns: ["a"] }));
     const text = many.map((t) => t.name.toUpperCase()).join(" ");
     expect(relevantTables(text, many).length).toBe(8);
     expect(relevantTables("USERS users Users", tables).map((t) => t.name)).toEqual(["users"]);
+    // 結果は出現順ではなく名前順 (systemCached を安定させる)。
+    expect(relevantTables("users orders", tables).map((t) => t.name)).toEqual(["orders", "users"]);
   });
 });
 

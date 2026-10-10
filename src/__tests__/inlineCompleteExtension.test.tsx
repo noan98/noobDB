@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView, runScopeHandlers } from "@codemirror/view";
 import {
   inlineCompleteExtension,
@@ -176,9 +176,12 @@ describe("AI インライン補完の CodeMirror 拡張", () => {
     type(h.view, "SELECT * FROM users ");
     await vi.advanceTimersByTimeAsync(700);
     await respond(h, "WHERE id = 1");
-    // 1 文字足して消す → 同じ文脈に戻る。
-    type(h.view, "x");
-    h.view.dispatch({ changes: { from: 20, to: 21 }, userEvent: "delete.backward" });
+    // 同じ文脈のまま入力し直す (全文を同じ内容で置き換える)。
+    h.view.dispatch({
+      changes: { from: 0, to: 20, insert: "SELECT * FROM users " },
+      selection: { anchor: 20 },
+      userEvent: "input.type",
+    });
     expect(inlineSuggestionOf(h.view.state)).toBeNull();
     await vi.advanceTimersByTimeAsync(700);
     expect(h.run).toHaveBeenCalledTimes(1);
@@ -199,6 +202,38 @@ describe("AI インライン補完の CodeMirror 拡張", () => {
     h.view.dispatch({ changes: { from: 0, insert: "SELECT * FROM users " } });
     await vi.advanceTimersByTimeAsync(5000);
     expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it("IME 変換中は問い合わせない", async () => {
+    const h = setup();
+    type(h.view, "SELECT * FROM users ");
+    Object.defineProperty(h.view, "composing", { value: true, configurable: true });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it("複数カーソルでは出さない", async () => {
+    const h = setup();
+    type(h.view, "SELECT * FROM users ");
+    h.view.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(20), EditorSelection.cursor(3)], 0) });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it("貼り付けや削除では問い合わせを予約しない", async () => {
+    const h = setup();
+    h.view.dispatch({ changes: { from: 0, insert: "SELECT * FROM users " }, userEvent: "input.paste" });
+    h.view.dispatch({ changes: { from: 19, to: 20 }, userEvent: "delete.backward" });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it("destroy で進行中の要求を中止する", async () => {
+    const h = setup();
+    type(h.view, "SELECT * FROM users ");
+    await vi.advanceTimersByTimeAsync(700);
+    h.view.destroy();
+    expect(h.cancel).toHaveBeenCalledTimes(1);
   });
 
   it("入力が短い間は送らない", async () => {
