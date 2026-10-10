@@ -8,7 +8,7 @@ import {
   type QuickLauncherSectionId,
 } from "../quickLauncher";
 import { setQuickLauncherEnabled, setQuickLauncherSectionLimit, useSettings } from "../settings";
-import { SettingsInfo } from "./settingsLayout";
+import { SettingsInfo, SettingsNumberRow, SettingsToggleLabel, SettingsToggleRow } from "./settingsLayout";
 import { Button, Input, Switch } from "./ui";
 
 /** セクション → 見出しの i18n キー (ランチャー本体と共有)。 */
@@ -40,31 +40,18 @@ export function QuickLauncherSettings() {
   const t = useT();
   const settings = useSettings();
   return (
-    <Flex direction="column" gap="2" px="2">
-      <chakra.label
-        htmlFor="settings-quick-launcher-enabled"
-        display="inline-flex"
-        alignItems="center"
-        gap="2"
-        fontSize="md"
-        fontWeight={500}
-        color="app.text"
-      >
+    <Flex direction="column" gap="2">
+      <SettingsToggleRow>
+        <SettingsToggleLabel htmlFor="settings-quick-launcher-enabled">
+          {t("quickLauncherSettingsEnabled")}
+        </SettingsToggleLabel>
         <Switch
           id="settings-quick-launcher-enabled"
           checked={settings.quickLauncherEnabled}
           onChange={setQuickLauncherEnabled}
         />
-        {t("quickLauncherSettingsEnabled")}
-      </chakra.label>
-      <chakra.div
-        display="grid"
-        gridTemplateColumns="200px 120px"
-        alignItems="center"
-        gap="2"
-        role="group"
-        aria-label={t("quickLauncherSettingsLimits")}
-      >
+      </SettingsToggleRow>
+      <Flex direction="column" gap="2" role="group" aria-label={t("quickLauncherSettingsLimits")}>
         {QUICK_LAUNCHER_SECTIONS.map((id) => (
           <SectionLimitRow
             key={id}
@@ -74,7 +61,7 @@ export function QuickLauncherSettings() {
             disabled={!settings.quickLauncherEnabled}
           />
         ))}
-      </chakra.div>
+      </Flex>
       <chakra.span fontSize="sm" color="app.textMuted">
         {t("quickLauncherSettingsLimitsHelp", {
           min: MIN_QUICK_LAUNCHER_SECTION_LIMIT,
@@ -104,10 +91,8 @@ function SectionLimitRow({
 }) {
   const inputId = `settings-quick-launcher-limit-${id}`;
   return (
-    <>
-      <chakra.label htmlFor={inputId} fontSize="sm" color="app.text">
-        {label}
-      </chakra.label>
+    <SettingsNumberRow>
+      <chakra.label htmlFor={inputId}>{label}</chakra.label>
       <Input
         id={inputId}
         type="number"
@@ -120,6 +105,6 @@ function SectionLimitRow({
           if (Number.isFinite(n)) setQuickLauncherSectionLimit(id, n);
         }}
       />
-    </>
+    </SettingsNumberRow>
   );
 }

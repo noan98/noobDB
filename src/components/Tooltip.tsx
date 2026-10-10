@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type FocusEvent as ReactFocusEvent,
   type ReactElement,
   type ReactNode,
@@ -64,6 +65,56 @@ function releaseTooltip(close: () => void) {
 }
 
 /**
+ * フォーカスで吹き出しを出してよいのは、キーボードでフォーカスを移したときだけ。
+ * クリック (ボタンはクリックでフォーカスを得る) や、モーダルの初期フォーカス・
+ * 閉じたあとの戻りフォーカスのようなプログラムからのフォーカスで開くと、
+ * ポインタはそこに無いので `mouseleave` が来ず、blur するまで吹き出しが画面に
+ * 残り続ける。直前の入力がポインタ操作か「移動キー以外のキー」(ショートカット・
+ * Escape・Enter など) なら、フォーカス起因の表示を抑える。
+ */
+const FOCUS_NAV_KEYS = new Set([
+  "Tab",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "F6",
+  // Shift+Tab の Shift。続く Tab で改めて判定される。
+  "Shift",
+]);
+let focusTooltipSuppressed = false;
+let focusIntentInstalled = false;
+
+function installFocusIntentListeners() {
+  if (focusIntentInstalled || typeof window === "undefined") return;
+  focusIntentInstalled = true;
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      focusTooltipSuppressed = true;
+    },
+    true,
+  );
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      focusTooltipSuppressed = !FOCUS_NAV_KEYS.has(e.key);
+    },
+    true,
+  );
+}
+
+/** ポインタの下の要素が `anchor` の外へ移ったら吹き出しを閉じる安全網。
+ *  トリガーが無効化された・再描画で差し替わった・モーダルが上に開いた、などで
+ *  `mouseleave` が届かなかった場合でも、次にマウスが動いた時点で閉じる。 */
+function isOutsideAnchor(anchor: EventTarget | null, target: EventTarget | null): boolean {
+  if (!(anchor instanceof Node) || !anchor.isConnected) return true;
+  return !(target instanceof Node && anchor.contains(target));
+}
+
+/**
  * `Tooltip` がトリガーに要求する最小限のプロップ表面。実際に使う要素
  * (Chakra の `Button`/`chakra.*`、native タグ) はいずれもこれらを問題なく
  * 受け取れるが、@types/react 19 では `ReactElement` のプロップ型の既定値が
@@ -73,6 +124,8 @@ function releaseTooltip(close: () => void) {
 interface TriggerProps {
   onMouseEnter?: (e: ReactMouseEvent) => void;
   onMouseLeave?: (e: ReactMouseEvent) => void;
+  onPointerDown?: (e: ReactPointerEvent) => void;
+  onClick?: (e: ReactMouseEvent) => void;
   onFocus?: (e: ReactFocusEvent) => void;
   onBlur?: (e: ReactFocusEvent) => void;
   ref?: Ref<unknown>;
@@ -125,6 +178,11 @@ export interface TooltipProps {
    * (`SettingsInfo`) のように段落単位の説明を出すときだけ広げる。
    */
   maxWidth?: string;
+  /**
+   * クリックでも即座に開く。説明を出すためだけのボタン (設定画面の ⓘ など) 用。
+   * 通常のボタンはクリックで吹き出しを閉じる (native title と同じ)。
+   */
+  openOnClick?: boolean;
 }
 
 /**
@@ -155,6 +213,7 @@ export function Tooltip({
   openDelay = TOOLTIP_OPEN_DELAY_MS,
   focusableWrapper = false,
   maxWidth = "280px",
+  openOnClick = false,
 }: TooltipProps) {
   const id = useId();
   const anchorRef = useRef<HTMLElement | null>(null);
@@ -206,8 +265,18 @@ export function Tooltip({
     showTimer.current = setTimeout(() => setOpen(true), delay);
   };
 
+  // キーボード由来のフォーカスでだけ開く。
+  const showOnFocus = () => {
+    if (!focusTooltipSuppressed) show(0);
+  };
+  // クリックしたら閉じる (押した結果を吹き出しが覆わないように)。説明専用の
+  // ボタンだけはクリックで開く。
+  const onTriggerPointerDown = () => hide();
+  const onTriggerClick = openOnClick ? () => show(0) : undefined;
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: clearShowTimer は ref (showTimer) しか触らないのでクロージャが古くても挙動は変わらない。マウント時 1 回だけ登録する
   useEffect(() => {
+    installFocusIntentListeners();
     const close = hideRef.current!;
     return () => {
       clearShowTimer();
@@ -221,15 +290,24 @@ export function Tooltip({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") hide();
     };
+    const onMouseOver = (e: MouseEvent) => {
+      if (isOutsideAnchor(anchorRef.current, e.target)) hide();
+    };
     window.addEventListener("keydown", onKeyDown);
     // スクロール/リサイズを無視すると、アンカーに追従も連動非表示もされない
     // まま、古い位置に吹き出しが浮いた状態で残ってしまう。
     window.addEventListener("scroll", hide, true);
     window.addEventListener("resize", hide);
+    // `mouseleave` が届かなかった場合の安全網 (`isOutsideAnchor`)。ウィンドウ
+    // 自体からフォーカスが外れた (別アプリへ切り替えた) ときも閉じる。
+    document.addEventListener("mouseover", onMouseOver, true);
+    window.addEventListener("blur", hide);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("scroll", hide, true);
       window.removeEventListener("resize", hide);
+      document.removeEventListener("mouseover", onMouseOver, true);
+      window.removeEventListener("blur", hide);
     };
   }, [open]);
 
@@ -265,7 +343,9 @@ export function Tooltip({
       tabIndex={0}
       onMouseEnter={() => show(openDelay)}
       onMouseLeave={hide}
-      onFocus={() => show(0)}
+      onPointerDown={onTriggerPointerDown}
+      onClick={onTriggerClick}
+      onFocus={showOnFocus}
       onBlur={hide}
       aria-describedby={describedBy}
       _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
@@ -277,7 +357,9 @@ export function Tooltip({
       ref: mergeRefs(anchorRef, elementRef(children)),
       onMouseEnter: composeHandler(children.props.onMouseEnter, () => show(openDelay)),
       onMouseLeave: composeHandler(children.props.onMouseLeave, hide),
-      onFocus: composeHandler(children.props.onFocus, () => show(0)),
+      onPointerDown: composeHandler(children.props.onPointerDown, onTriggerPointerDown),
+      ...(onTriggerClick ? { onClick: composeHandler(children.props.onClick, onTriggerClick) } : {}),
+      onFocus: composeHandler(children.props.onFocus, showOnFocus),
       onBlur: composeHandler(children.props.onBlur, hide),
       "aria-describedby": describedBy,
     } as Partial<TriggerProps> & { "aria-describedby"?: string })
@@ -353,7 +435,7 @@ function mergeRefs<T>(...refs: Array<Ref<T> | undefined>): (node: T | null) => v
   };
 }
 
-function composeHandler<E extends ReactMouseEvent | ReactFocusEvent>(
+function composeHandler<E extends ReactMouseEvent | ReactFocusEvent | ReactPointerEvent>(
   existing: ((e: E) => void) | undefined,
   extra: (e: E) => void,
 ): (e: E) => void {
@@ -443,14 +525,26 @@ export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) 
 
   // アンカーはイベント時点の座標スナップショットなので、スクロール/リサイズで
   // 追従できずバブルだけが古い位置に浮いてしまう (`Tooltip` 本体と同じ理由)。
+  // 行が再描画で差し替わる・仮想スクロールで外れると `mouseleave` が来ないので、
+  // ポインタが表示中の要素の外へ移った時点でも閉じる (`Tooltip` 本体と同じ安全網)。
+  // クリックしたときも閉じる。
   useEffect(() => {
     if (!state) return;
     const close = hideRef.current!;
+    const onMouseOver = (e: MouseEvent) => {
+      if (isOutsideAnchor(state.target, e.target)) close();
+    };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("pointerdown", close, true);
+    document.addEventListener("mouseover", onMouseOver, true);
     return () => {
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("pointerdown", close, true);
+      document.removeEventListener("mouseover", onMouseOver, true);
     };
   }, [state]);
 

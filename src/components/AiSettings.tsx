@@ -36,7 +36,12 @@ import { AiUsageNote, cacheUsageSuffix } from "./AiUsageNote";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
-import { SettingsInfo, SettingsLabelWithInfo } from "./settingsLayout";
+import {
+  SettingsInfo,
+  SettingsLabelWithInfo,
+  SettingsToggleLabel,
+  SettingsToggleRow,
+} from "./settingsLayout";
 import { Button, Input, Select, Switch } from "./ui";
 import { useToast } from "./Toast";
 
@@ -270,16 +275,11 @@ export function AiSettings() {
   );
 
   return (
-    <Flex direction="column" gap="3" px="2">
-      <chakra.label
-        htmlFor="settings-ai-enabled"
-        display="inline-flex"
-        alignItems="center"
-        gap="2"
-        fontSize="md"
-        fontWeight={500}
-        color="app.text"
-      >
+    <Flex direction="column" gap="2">
+      <SettingsToggleRow>
+        <SettingsToggleLabel htmlFor="settings-ai-enabled">
+          {t("aiEnable")}
+        </SettingsToggleLabel>
         <Switch
           id="settings-ai-enabled"
           checked={ai.enabled}
@@ -287,38 +287,31 @@ export function AiSettings() {
             void handleToggle(checked);
           }}
         />
-        {t("aiEnable")}
-      </chakra.label>
+      </SettingsToggleRow>
       <chakra.span fontSize="sm" color="app.textMuted">
         {t("aiEnableHelp")}
       </chakra.span>
 
-      <SettingsLabelWithInfo>
-        <chakra.label
-          htmlFor="settings-ai-setup-hint"
-          display="inline-flex"
-          alignItems="center"
-          gap="2"
-          fontSize="md"
-          fontWeight={500}
-          color="app.text"
-        >
-          <Switch
-            id="settings-ai-setup-hint"
-            checked={!ai.hideSetupHint}
-            onChange={(v) => setAiHideSetupHint(!v)}
-          />
-          {t("aiHideSetupHint")}
-        </chakra.label>
-        <SettingsInfo>{t("aiHideSetupHintHelp")}</SettingsInfo>
-      </SettingsLabelWithInfo>
-
-      <FormSection>
+      <SettingsToggleRow>
         <SettingsLabelWithInfo>
-          <FieldLabel htmlFor="settings-ai-key">{t("aiApiKeyLabel")}</FieldLabel>
+          <SettingsToggleLabel htmlFor="settings-ai-setup-hint">
+            {t("aiHideSetupHint")}
+          </SettingsToggleLabel>
+          <SettingsInfo>{t("aiHideSetupHintHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
+        <Switch
+          id="settings-ai-setup-hint"
+          checked={!ai.hideSetupHint}
+          onChange={(v) => setAiHideSetupHint(!v)}
+        />
+      </SettingsToggleRow>
+
+      <SettingsToggleRow>
+        <SettingsLabelWithInfo>
+          <SettingsToggleLabel htmlFor="settings-ai-key">{t("aiApiKeyLabel")}</SettingsToggleLabel>
           <SettingsInfo>{t("aiApiKeyHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
-        <Flex align="center" gap="2" wrap="wrap">
+        <Flex align="center" justify="flex-end" gap="2" wrap="wrap">
           <chakra.span
             fontSize="sm"
             fontWeight={500}
@@ -351,7 +344,7 @@ export function AiSettings() {
           {hasKey && (
             <Button
               type="button"
-              variant="secondary"
+              variant="dangerOutline"
               size="sm"
               disabled={keyBusy}
               onClick={() => {
@@ -362,11 +355,13 @@ export function AiSettings() {
             </Button>
           )}
         </Flex>
-      </FormSection>
+      </SettingsToggleRow>
 
-      <FormSection>
+      <SettingsToggleRow>
         <SettingsLabelWithInfo>
-          <FieldLabel htmlFor="settings-ai-default-model">{t("aiDefaultModel")}</FieldLabel>
+          <SettingsToggleLabel htmlFor="settings-ai-default-model">
+            {t("aiDefaultModel")}
+          </SettingsToggleLabel>
           <SettingsInfo>{t("aiDefaultModelHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
         <Select
@@ -383,7 +378,7 @@ export function AiSettings() {
             </option>
           ))}
         </Select>
-      </FormSection>
+      </SettingsToggleRow>
 
       <FormSection>
         <SettingsLabelWithInfo>
@@ -448,82 +443,68 @@ export function AiSettings() {
       </FormSection>
 
       <FormSection>
-        <SettingsLabelWithInfo>
-          <FieldLabel htmlFor="settings-ai-send-scope">{t("aiSendScope")}</FieldLabel>
-          <SettingsInfo>{t("aiSendScopeHelp")}</SettingsInfo>
-        </SettingsLabelWithInfo>
-        <Select
-          id="settings-ai-send-scope"
-          width="auto"
-          value={ai.sendScope}
-          onChange={(e) => {
-            const v = e.target.value as AiSendScope;
-            if ((AI_SEND_SCOPES as readonly string[]).includes(v)) setAiSendScope(v);
-          }}
-        >
-          {AI_SEND_SCOPES.map((s) => (
-            <option key={s} value={s}>
-              {t(SEND_SCOPE_LABEL[s])}
-            </option>
-          ))}
-        </Select>
-        <SettingsLabelWithInfo>
-          <chakra.label
-            htmlFor="settings-ai-allow-row-data"
-            display="inline-flex"
-            alignItems="center"
-            gap="2"
-            fontSize="md"
-            fontWeight={500}
-            color="app.text"
+        <SettingsToggleRow>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-ai-send-scope">
+              {t("aiSendScope")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("aiSendScopeHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+          <Select
+            id="settings-ai-send-scope"
+            width="auto"
+            value={ai.sendScope}
+            onChange={(e) => {
+              const v = e.target.value as AiSendScope;
+              if ((AI_SEND_SCOPES as readonly string[]).includes(v)) setAiSendScope(v);
+            }}
           >
-            <Switch
-              id="settings-ai-allow-row-data"
-              checked={ai.allowRowData}
-              onChange={setAiAllowRowData}
-            />
-            {t("aiAllowRowData")}
-          </chakra.label>
-          <SettingsInfo>{t("aiAllowRowDataHelp")}</SettingsInfo>
-        </SettingsLabelWithInfo>
-        <SettingsLabelWithInfo>
-          <chakra.label
-            htmlFor="settings-ai-mask-literals"
-            display="inline-flex"
-            alignItems="center"
-            gap="2"
-            fontSize="md"
-            fontWeight={500}
-            color="app.text"
-          >
-            <Switch
-              id="settings-ai-mask-literals"
-              checked={ai.maskLiterals}
-              onChange={setAiMaskLiterals}
-            />
-            {t("aiMaskLiterals")}
-          </chakra.label>
-          <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
-        </SettingsLabelWithInfo>
-        <SettingsLabelWithInfo>
-          <chakra.label
-            htmlFor="settings-ai-inline-complete"
-            display="inline-flex"
-            alignItems="center"
-            gap="2"
-            fontSize="md"
-            fontWeight={500}
-            color="app.text"
-          >
-            <Switch
-              id="settings-ai-inline-complete"
-              checked={ai.inlineComplete}
-              onChange={setAiInlineComplete}
-            />
-            {t("aiInlineComplete")}
-          </chakra.label>
-          <SettingsInfo>{t("aiInlineCompleteHelp")}</SettingsInfo>
-        </SettingsLabelWithInfo>
+            {AI_SEND_SCOPES.map((s) => (
+              <option key={s} value={s}>
+                {t(SEND_SCOPE_LABEL[s])}
+              </option>
+            ))}
+          </Select>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-ai-allow-row-data">
+              {t("aiAllowRowData")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("aiAllowRowDataHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+          <Switch
+            id="settings-ai-allow-row-data"
+            checked={ai.allowRowData}
+            onChange={setAiAllowRowData}
+          />
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-ai-mask-literals">
+              {t("aiMaskLiterals")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+          <Switch
+            id="settings-ai-mask-literals"
+            checked={ai.maskLiterals}
+            onChange={setAiMaskLiterals}
+          />
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-ai-inline-complete">
+              {t("aiInlineComplete")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("aiInlineCompleteHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+          <Switch
+            id="settings-ai-inline-complete"
+            checked={ai.inlineComplete}
+            onChange={setAiInlineComplete}
+          />
+        </SettingsToggleRow>
         {ai.inlineComplete && ai.sendScope !== "schemaAndSql" && (
           <Callout tone="info">{t("aiInlineCompleteNeedsScope")}</Callout>
         )}

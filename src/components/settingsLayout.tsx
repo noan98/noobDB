@@ -45,18 +45,14 @@ const SettingsInfoButton = chakra("button", {
  * 設定画面が文章で埋まるため、ラベルの横にアイコンだけを置き、hover / フォーカス /
  * クリックで吹き出しに本文を出す。吹き出しは `Tooltip` が `aria-describedby` で
  * ボタンに結び付けるので、キーボードでフォーカスすると読み上げにも本文が載る。
- * WKWebView (macOS) はクリックでボタンにフォーカスを移さないため、クリック時に
- * 明示的に focus してフォーカス経路で即時に開く。
+ * クリックでは `openOnClick` で即時に開く (クリック由来のフォーカスでは
+ * ツールチップを開かない規約のため、フォーカス経路には頼らない)。
  */
 export function SettingsInfo({ children }: { children: ReactNode }) {
   const t = useT();
   return (
-    <Tooltip label={children} maxWidth="360px">
-      <SettingsInfoButton
-        type="button"
-        aria-label={t("settingsInfoAria")}
-        onClick={(e) => e.currentTarget.focus()}
-      >
+    <Tooltip label={children} maxWidth="360px" openOnClick>
+      <SettingsInfoButton type="button" aria-label={t("settingsInfoAria")}>
         <Icon name="info" size={ICON_SIZES.sm} />
       </SettingsInfoButton>
     </Tooltip>
@@ -66,6 +62,53 @@ export function SettingsInfo({ children }: { children: ReactNode }) {
 /** ラベルとインフォメーションアイコンを横に並べる入れ物。 */
 export const SettingsLabelWithInfo = chakra("span", {
   base: { display: "inline-flex", alignItems: "center", gap: "1", minW: 0 },
+});
+
+// ラベル (と ⓘ) を左、トグル・選択欄などの操作部品を右端に寄せる。
+export const SettingsToggleRow = chakra("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: "2.5",
+    p: "2",
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+  },
+});
+
+export const SettingsToggleLabel = chakra("label", {
+  base: {
+    margin: 0,
+    fontSize: "md",
+    fontWeight: 500,
+    color: "app.text",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "2",
+  },
+});
+
+// 数値・選択の行。ラベルが残りの幅を取り、入力欄 (固定幅) を右端に置く。
+export const SettingsNumberRow = chakra("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "3",
+    px: "2",
+    py: "1.5",
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+    "& > :first-child": { flex: 1, minW: 0 },
+    "& > input, & > select": { width: "120px", flexShrink: 0 },
+    "& label": { margin: 0, fontSize: "md", fontWeight: 500, color: "app.text" },
+    "& input": { fontSize: "md", borderRadius: "sm" },
+  },
 });
 
 export const SettingsSection = chakra("section", {
