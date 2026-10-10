@@ -97,7 +97,7 @@ import {
 } from "./components/identitySync";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
-import { columnInsertText, qualifiedColumnInsertText } from "./components/columnInsert";
+import { treeItemInsertText } from "./components/treeDragInsert";
 import {
   applyServerBrowse,
   type ServerFilter,
@@ -6790,7 +6790,7 @@ export default function App() {
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
   const handleInsertTableSelect = useCallback((database: string, table: string) => {
-    const sql = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
+    const sql = treeItemInsertText(selectedProfile?.driver ?? "mysql", { kind: "table", database, table });
     if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
       activeEditor()?.insertText(sql);
     } else if (sessionId) {
@@ -6800,9 +6800,12 @@ export default function App() {
 
   // 列名 / 表.列 をエディタへ挿入 (#1352)。テーブル側 (handleInsertTableSelect) と同じ経路で、
   // エディタを持たないタブでは新しいクエリタブに入れて開く。
-  const handleInsertColumn = useCallback((_database: string, table: string, column: string, qualified: boolean) => {
-    const driver = selectedProfile?.driver ?? "mysql";
-    const text = qualified ? qualifiedColumnInsertText(driver, table, column) : columnInsertText(driver, column);
+  const handleInsertColumn = useCallback((database: string, table: string, column: string, qualified: boolean) => {
+    const text = treeItemInsertText(
+      selectedProfile?.driver ?? "mysql",
+      { kind: "column", database, table, column },
+      qualified,
+    );
     if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
       activeEditor()?.insertText(text);
     } else if (sessionId) {

@@ -910,14 +910,35 @@ function workTab(screen: Screen, title: string) {
   return screen.getByRole("tab", { name: new RegExp(`^${title} `) });
 }
 
-/** タブの右クリックメニューから「すべて閉じる」を選ぶ (メニューは再描画で DOM が差し替わるため DOM で押す)。 */
+/**
+ * タブの右クリックメニューから「すべて閉じる」を選ぶ (メニューは再描画で DOM が差し替わるため DOM で押す)。
+ * マウスの右クリック (pointerdown / mousedown / contextmenu / mouseup の連続) は Chromium の版に
+ * よって外側クリック判定と競合しメニューが開いた直後に閉じることがあるため、`contextmenu`
+ * イベントを直接送ってメニューを開く。開いていなければ待ちの間に開き直す。
+ */
 async function closeAllTabsFromMenu(screen: Screen) {
-  await workTab(screen, "A").click({ button: "right" });
+  const tabEl = workTab(screen, "A").element() as HTMLElement;
+  const openMenu = () => {
+    const r = tabEl.getBoundingClientRect();
+    tabEl.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
+      }),
+    );
+  };
+  openMenu();
   await vi.waitFor(() => {
     const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
       (el) => (el.textContent ?? "").includes(t("tabCloseAll")),
     );
-    if (!item) throw new Error("menu item missing");
+    if (!item) {
+      openMenu();
+      throw new Error("menu item missing");
+    }
     item.click();
   }, { timeout: 5000 });
 }
