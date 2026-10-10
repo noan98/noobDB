@@ -38,6 +38,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { formatSqlAsync } from "./sqlFormat";
+import { SQL_TOKEN_STYLE, sqlHighlightSegments } from "./sqlHighlight";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -491,7 +492,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
         display="flex"
         gap="4"
         // Body は flex: 1 (basis 0) なので height は効かない。最小の高さで 2 ペインの縦幅を確保する。
-        minH="min(560px, 70vh)"
+        minH={showResult ? "min(560px, 70vh)" : undefined}
         overflow="hidden"
         data-testid="ai-query-modal"
       >
@@ -537,8 +538,17 @@ export function AiQueryModal(props: AiQueryModalProps) {
               {t("aiQueryReadOnlyNote")}
             </Callout>
           )}
-          <Flex
-            direction="column"
+          {/* チャット欄も右ペインと同じく、最初の送信で出す (それまでは入力欄だけ)。 */}
+          <AnimatePresence initial={false}>
+          {showResult && (
+          <MotionFlex
+            key="log"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={transitions.emphasized}
+            display="flex"
+            flexDirection="column"
             gap="2"
             flex="1"
             minH="0"
@@ -551,11 +561,6 @@ export function AiQueryModal(props: AiQueryModalProps) {
             aria-live="polite"
             data-testid="ai-query-log"
           >
-            {log.length === 0 && !running && (
-              <chakra.span textStyle="caption">
-                {focusTable ? t("aiQueryChatEmptyFocus", { table: focusTable }) : t("aiQueryChatEmpty")}
-              </chakra.span>
-            )}
             {log.map((entry, i) =>
               entry.role === "user" ? (
                 <chakra.div
@@ -608,7 +613,9 @@ export function AiQueryModal(props: AiQueryModalProps) {
               </Flex>
             )}
             <div ref={logEndRef} />
-          </Flex>
+          </MotionFlex>
+          )}
+          </AnimatePresence>
           {summary?.large && !inConversation && (
             <Callout tone="warning" role="status">
               {t("aiQueryLargeSchema", { total: summary.totalTables, tables: summary.tableCount, kb: approxKb(summary.approxChars) })}
@@ -662,7 +669,13 @@ export function AiQueryModal(props: AiQueryModalProps) {
               rows={3}
               value={request}
               onChange={(e) => setRequest(e.target.value)}
-              placeholder={inConversation ? t("aiFollowUpPlaceholder") : t("aiQueryRequestPlaceholder")}
+              placeholder={
+                inConversation
+                  ? t("aiFollowUpPlaceholder")
+                  : focusTable
+                    ? t("aiQueryRequestPlaceholderFocus", { table: focusTable })
+                    : t("aiQueryRequestPlaceholder")
+              }
             />
             <Flex align="flex-start" gap="2">
               <chakra.span textStyle="caption" flex="1" minW="0" data-testid="ai-query-sends">
@@ -775,8 +788,16 @@ export function AiQueryModal(props: AiQueryModalProps) {
                     _hover={{ bg: "app.hover", color: "app.text" }}
                   />
                 </Flex>
-                <CodePreview wrap maxH="260px">
-                  {result.sql}
+                <CodePreview wrap maxH="260px" data-testid="ai-query-sql">
+                  {sqlHighlightSegments(result.sql, props.driver).map((seg, i) =>
+                    seg.kind === null ? (
+                      seg.text
+                    ) : (
+                      <span key={i} style={SQL_TOKEN_STYLE[seg.kind]}>
+                        {seg.text}
+                      </span>
+                    ),
+                  )}
                 </CodePreview>
                 {done && (
                   <chakra.span color="app.textSuccess" fontSize="sm" role="status">

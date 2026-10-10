@@ -178,6 +178,8 @@ describe("AiSqlPanel (#695)", () => {
     fireEvent.click(sends[sends.length - 1]);
     await finish(explainJson);
     await screen.findByText("OVERVIEW");
+    // 本番確認ダイアログの退場アニメーション中は背後が aria-hidden のままなので、閉じ切るのを待つ。
+    await waitFor(() => expect(screen.queryByText(t("aiSqlProdTitle"))).toBeNull());
     fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "もっと短く" } });
     fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
     await screen.findByText(t("aiSqlScopeTitle"));
