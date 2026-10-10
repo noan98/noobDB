@@ -518,6 +518,66 @@ pub async fn finish_transaction(
     Ok(())
 }
 
+/// 明示トランザクション内に SAVEPOINT を作る (#1418)。名前は英数字と `_` のみ。
+#[tauri::command]
+pub async fn create_savepoint(
+    session_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    savepoint_inner(state.inner(), &session_id, &name, SavepointOp::Create).await
+}
+
+/// 指定 SAVEPOINT まで巻き戻す (#1418)。PostgreSQL の aborted 状態からも回復できる。
+#[tauri::command]
+pub async fn rollback_to_savepoint(
+    session_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    savepoint_inner(state.inner(), &session_id, &name, SavepointOp::RollbackTo).await
+}
+
+/// 指定 SAVEPOINT を解放する (#1418)。それより新しい SAVEPOINT も同時に消える。
+#[tauri::command]
+pub async fn release_savepoint(
+    session_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    savepoint_inner(state.inner(), &session_id, &name, SavepointOp::Release).await
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum SavepointOp {
+    Create,
+    RollbackTo,
+    Release,
+}
+
+/// SAVEPOINT 系 3 コマンドの共通コア。SAVEPOINT 自体はデータを書かないため
+/// 読み取り専用ガードは通さない (READ ONLY トランザクションでも使える)。
+/// 書き込み文の拒否は `run_in_transaction` 側の既存ガードが担う。
+pub(crate) async fn savepoint_inner(
+    state: &AppState,
+    session_id: &str,
+    name: &str,
+    op: SavepointOp,
+) -> Result<()> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    let driver = session.conn.driver_kind();
+    let sql = match op {
+        SavepointOp::Create => crate::db::savepoint::create_sql(driver, name)?,
+        SavepointOp::RollbackTo => crate::db::savepoint::rollback_to_sql(driver, name)?,
+        SavepointOp::Release => crate::db::savepoint::release_sql(driver, name)?,
+    };
+    session.conn.execute_in_transaction(&sql).await?;
+    Ok(())
+}
+
 // 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
 // (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
 // ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の

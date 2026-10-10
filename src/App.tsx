@@ -148,6 +148,8 @@ import {
 } from "./txOptions";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
+import { SavepointControl } from "./components/SavepointControl";
+import { afterRelease, afterRollbackTo, pushSavepoint, savepointName } from "./savepoints";
 import { isMruRecordable, singleLine, type CommandItem } from "./components/commandPaletteSearch";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
@@ -1858,6 +1860,11 @@ export default function App() {
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替ごとにトランザクション状態を捨てる
   useEffect(() => { setTxActive(false); }, [sessionId]);
+  // 明示トランザクション内の SAVEPOINT スタック (#1418)。TX の開始/終了/セッション切替で空にする。
+  const [savepoints, setSavepoints] = useState<readonly string[]>([]);
+  const savepointCounterRef = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId / txActive の変化をリセットの合図に使う
+  useEffect(() => { setSavepoints([]); savepointCounterRef.current = 0; }, [sessionId, txActive]);
   // 切断時はセッション依存のモーダル状態をリセットする (検索モーダルが
   // 再接続時に意図せず再表示されるのを防ぐ)。
   useEffect(() => {
@@ -4944,6 +4951,51 @@ export default function App() {
       toast.error(String(e));
     }
   }, [sessionId, selectedProfile?.database, selectedProfile?.driver, txIsolation, txReadOnly, toast]);
+
+  const handleCreateSavepoint = useCallback(async () => {
+    if (!sessionId) return;
+    const name = savepointName(savepointCounterRef.current + 1);
+    try {
+      await api.createSavepoint(sessionId, name);
+      savepointCounterRef.current += 1;
+      setSavepoints((s) => pushSavepoint(s, name));
+      toast.success(translate("savepointCreated", { name }));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [sessionId, toast]);
+
+  const handleRollbackToSavepoint = useCallback(async (name: string) => {
+    if (!sessionId) return;
+    // 本番 + confirm_writes のときだけ確認する (full ROLLBACK と同じく UI レベルの誤操作防止)。
+    if (selectedProfile?.is_production && selectedProfile?.confirm_writes) {
+      const ok = await confirm({
+        title: translate("savepointRollbackConfirmTitle"),
+        message: translate("savepointRollbackConfirmBody", { name }),
+        confirmLabel: translate("savepointRollbackConfirmAction"),
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    try {
+      await api.rollbackToSavepoint(sessionId, name);
+      setSavepoints((s) => afterRollbackTo(s, name));
+      toast.success(translate("savepointRolledBack", { name }));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [sessionId, selectedProfile?.is_production, selectedProfile?.confirm_writes, confirm, toast]);
+
+  const handleReleaseSavepoint = useCallback(async (name: string) => {
+    if (!sessionId) return;
+    try {
+      await api.releaseSavepoint(sessionId, name);
+      setSavepoints((s) => afterRelease(s, name));
+      toast.success(translate("savepointReleased", { name }));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [sessionId, toast]);
 
   const handleFinishTransaction = useCallback(async (commit: boolean) => {
     if (!sessionId) return;
@@ -9410,6 +9462,12 @@ export default function App() {
                           {t("txActiveBadge")}
                         </chakra.span>
                       </Tooltip>
+                      <SavepointControl
+                        stack={savepoints}
+                        onCreate={() => void handleCreateSavepoint()}
+                        onRollbackTo={(n) => void handleRollbackToSavepoint(n)}
+                        onRelease={(n) => void handleReleaseSavepoint(n)}
+                      />
                       <Button variant="success" size="sm" onClick={() => handleFinishTransaction(true)}>
                         {t("txCommit")}
                       </Button>

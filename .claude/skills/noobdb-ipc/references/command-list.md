@@ -63,6 +63,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `begin_transaction` (任意引数 `isolation` / `readOnly`, #1166)
 - `run_in_transaction`
 - `finish_transaction`
+- `create_savepoint` / `rollback_to_savepoint` / `release_savepoint` (明示 TX 内の SAVEPOINT, #1418)
 
 ## 一括書き込み (`commands/bulk_write.rs`, #1259)
 

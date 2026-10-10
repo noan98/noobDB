@@ -4150,3 +4150,60 @@ async fn sqlite_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
     assert_eq!(names, vec!["x", "e", "c", "b", "x"]);
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn sqlite_savepoint_create_rollback_release_commit() {
+    // #1418: SAVEPOINT 作成 → 複数文 → 特定 SAVEPOINT へ ROLLBACK TO → RELEASE → COMMIT。
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_sp_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    let d = t::DriverKind::Sqlite;
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+
+    conn.begin_transaction(None).await.expect("begin");
+    conn.execute_in_transaction("INSERT INTO t (id) VALUES (1)")
+        .await
+        .expect("insert 1");
+    let sp1 = t::savepoint_create_sql(d, "sp_1").expect("sql");
+    conn.execute_in_transaction(&sp1).await.expect("sp_1");
+    conn.execute_in_transaction("INSERT INTO t (id) VALUES (2)")
+        .await
+        .expect("insert 2");
+    let sp2 = t::savepoint_create_sql(d, "sp_2").expect("sql");
+    conn.execute_in_transaction(&sp2).await.expect("sp_2");
+    conn.execute_in_transaction("INSERT INTO t (id) VALUES (3)")
+        .await
+        .expect("insert 3");
+    // 失敗する文があっても SAVEPOINT へ戻れば続行できる。
+    assert!(conn
+        .execute_in_transaction("INSERT INTO t (id) VALUES (1)")
+        .await
+        .is_err());
+    let rb = t::savepoint_rollback_to_sql(d, "sp_1").expect("sql");
+    conn.execute_in_transaction(&rb)
+        .await
+        .expect("rollback to sp_1");
+    // sp_1 自身は残る。より新しい sp_2 は消えているので解放はエラー。
+    let rel2 = t::savepoint_release_sql(d, "sp_2").expect("sql");
+    assert!(conn.execute_in_transaction(&rel2).await.is_err());
+    let rel1 = t::savepoint_release_sql(d, "sp_1").expect("sql");
+    conn.execute_in_transaction(&rel1)
+        .await
+        .expect("release sp_1");
+    conn.finish_transaction(true).await.expect("commit");
+
+    let res = conn
+        .execute("SELECT COUNT(*) AS c FROM t", None)
+        .await
+        .expect("count");
+    assert!(matches!(&res.rows[0][0], t::Value::Int(1)));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}

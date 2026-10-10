@@ -59,6 +59,10 @@ pub mod __test_api {
         approx_row_bytes, ResultBuilder, ResultStore, MIN_RETAIN_ROWS, RESULT_GONE,
     };
     pub use crate::db::sandbox::filter_out_keys;
+    pub use crate::db::savepoint::{
+        create_sql as savepoint_create_sql, release_sql as savepoint_release_sql,
+        rollback_to_sql as savepoint_rollback_to_sql,
+    };
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
@@ -1162,6 +1166,9 @@ pub fn run() {
             commands::query::begin_transaction,
             commands::query::run_in_transaction,
             commands::query::finish_transaction,
+            commands::query::create_savepoint,
+            commands::query::rollback_to_savepoint,
+            commands::query::release_savepoint,
             commands::query::run_query_stream,
             commands::broadcast::broadcast_compare,
             commands::query::set_emergency_mode,

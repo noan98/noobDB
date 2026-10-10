@@ -30,6 +30,7 @@ pub mod refresh_diff;
 pub mod result_ops;
 pub mod result_store;
 pub mod sandbox;
+pub mod savepoint;
 /// 一括取得したスキーマ情報の画面向け結合 (テーブル統計・逆方向 FK、#1255)。
 pub mod schema_insight;
 /// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
