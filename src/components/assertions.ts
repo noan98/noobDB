@@ -35,6 +35,7 @@ export const ASSERTION_RULE_KINDS: readonly AssertionRuleKind[] = [
   "range",
   "referential",
   "row_count",
+  "custom_sql",
 ];
 
 export const ROW_COUNT_OPS: readonly RowCountOp[] = ["gt", "gte", "lt", "lte", "eq", "between"];
@@ -64,6 +65,8 @@ export interface AssertionDraft {
   op: RowCountOp;
   count: string;
   countMax: string;
+  /** custom_sql の違反行を返す SELECT (#1477)。 */
+  sql: string;
 }
 
 /** フィールド単位の入力エラー。モーダルが対応するフィールドの横に出す。 */
@@ -78,6 +81,7 @@ export type AssertionDraftError =
   | "refColumns"
   | "count"
   | "countMax"
+  | "sql"
   | "scopeGroup";
 
 export function emptyAssertionDraft(init?: { schema?: string | null; table?: string | null }): AssertionDraft {
@@ -98,6 +102,7 @@ export function emptyAssertionDraft(init?: { schema?: string | null; table?: str
     op: "gt",
     count: "0",
     countMax: "",
+    sql: "",
   };
 }
 
@@ -137,6 +142,9 @@ export function draftFromAssertion(a: Assertion): AssertionDraft {
       d.op = r.op;
       d.count = String(r.value);
       d.countMax = r.max === null ? "" : String(r.max);
+      break;
+    case "custom_sql":
+      d.sql = r.sql;
       break;
   }
   return d;
@@ -230,6 +238,11 @@ export function draftToRule(d: AssertionDraft): DraftRuleResult {
       if (max === null || max < value) return { ok: false, error: "countMax" };
       return { ok: true, rule: { kind: "row_count", op: d.op, value, max } };
     }
+    case "custom_sql": {
+      const sql = d.sql.trim();
+      if (!sql) return { ok: false, error: "sql" };
+      return { ok: true, rule: { kind: "custom_sql", sql } };
+    }
   }
 }
 
@@ -285,6 +298,7 @@ export const RULE_KIND_LABEL_KEY: Record<AssertionRuleKind, I18nKey> = {
   range: "assertRuleRange",
   referential: "assertRuleReferential",
   row_count: "assertRuleRowCount",
+  custom_sql: "assertRuleCustomSql",
 };
 
 export const ROW_COUNT_OP_SYMBOL: Record<RowCountOp, string> = {
@@ -327,6 +341,8 @@ export function describeRule(a: Pick<Assertion, "schema" | "table" | "rule">): I
         },
       };
     }
+    case "custom_sql":
+      return { key: "assertDescCustomSql", params: { table, sql: r.sql.replace(/\s+/g, " ").trim() } };
     case "row_count":
       return r.op === "between"
         ? { key: "assertDescRowCountBetween", params: { table, min: String(r.value), max: String(r.max ?? r.value) } }

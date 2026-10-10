@@ -76,6 +76,7 @@ describe("AiErrorExplain (#692)", () => {
     const { container } = renderWithProviders(ui());
     await act(async () => {});
     expect(container.querySelector("[data-testid=ai-error-explain]")).toBeNull();
+    expect(container.querySelector("[data-testid=ai-setup-hint]")).not.toBeNull();
   });
 
   it("二重クリックしても要求は 1 本だけ", async () => {

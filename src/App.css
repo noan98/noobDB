@@ -2512,3 +2512,11 @@ td.is-find-current::after {
   --illust-body-fill: none;
   --illust-ground: none;
 }
+
+/* AI インライン補完 (#1479) のゴーストテキスト。確定前の提案なので本文より薄く見せる。 */
+.cm-editor .cm-inline-suggest {
+  color: var(--text-muted);
+  opacity: 0.7;
+  white-space: pre;
+  pointer-events: none;
+}

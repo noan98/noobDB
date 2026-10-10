@@ -434,6 +434,7 @@ const assertionRule = z.discriminatedUnion("kind", [
     value: z.number(),
     max: z.number().nullable(),
   }),
+  z.object({ kind: z.literal("custom_sql"), sql: z.string() }),
 ]);
 
 export const assertion = z.object({

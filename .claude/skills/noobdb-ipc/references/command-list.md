@@ -34,9 +34,17 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 
 - API キーは OS keyring (`ai/anthropic_api_key`) のみ。`set_ai_api_key(key)` は `None` = 変更なし /
   `Some("")` = 削除。`has_ai_api_key` は bool だけ返し、値を返す IPC は無い。
-- `run_ai_request(streamId, task, system, prompt, settings, format)` はストリーミング。`format` は任意で
+- `run_ai_request(streamId, task, system, prompt, settings, format, systemCached, history)` はストリーミング。`format` は任意で
   `{ type: "json_schema", schema }` (構造化出力 `output_config.format`、他の形は拒否)。結果は
   `ai-stream:delta` / `:done` / `:error` / `:cancelled` (`listenAiStream`、`streamId` で絞る)。
+  `systemCached` は任意 (#1473): system の固定部分 (スキーマなど)。`system` より前のブロックになり、
+  モデルの最小キャッシュ長 (`AiModel::cache_min_tokens`、UTF-8 バイト数で判定) 以上のとき
+  `cache_control: ephemeral` が付く。キャッシュは `systemCached` を渡したときだけ (オプトイン)。
+  `history` は任意 (#1471): 追い質問用の会話履歴 `[{ role, content }]` (user 始まり・user / assistant 交互・
+  assistant 終わりで、今回の `prompt` が末尾の user になる)。20 件超・形が崩れた履歴・空の発言は拒否し、
+  `prompt` / `system` / `systemCached` / 履歴の合算が `MAX_PROMPT_BYTES` を超えても拒否する。
+  履歴の最後の発言にもキャッシュのブレークポイントを置く (system 固定部分と合わせて最大 2 個)。
+  フロントは直近 5 往復に絞って渡す (`src/ai/conversation.ts`)。
   中断は既存の `cancel_stream` (`StreamKind::Ai`)。モデル・エフォートは呼び出し側から渡さず、
   `task` + `settings` (設定スナップショット) からバックエンド (`ai/models.rs`) が
   `taskModels[kind] ?? defaultModel` / `taskEfforts[kind] ?? 推奨` で解決する。

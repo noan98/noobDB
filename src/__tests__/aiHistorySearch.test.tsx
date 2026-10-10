@@ -209,6 +209,26 @@ describe("AiHistorySearch (#699)", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("- 売上テーブルを集計"));
   });
 
+  it("2 回目の実行では、準備中に前回の本文を「受信中」として出さない (#1470)", async () => {
+    renderWithProviders(ui());
+    fireEvent.click(await screen.findByRole("button", { name: t("aiHistorySummaryRun") }));
+    await confirmSend();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: "- 前回の要約\n" });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText(/前回の要約/);
+    // 2 回目: SQL 全文の取得を止めて「準備中」の画面を観察する。
+    getHistorySql.mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(await screen.findByRole("button", { name: t("aiHistorySummaryRun") }));
+    await confirmSend();
+    await screen.findByTestId("ai-stream-progress");
+    expect(screen.queryByTestId("ai-stream-preview")).toBeNull();
+    expect(screen.queryByText(t("aiStreamReceiving"))).toBeNull();
+    expect(screen.queryByText(t("aiStreamChars", { count: 9 }))).toBeNull();
+  });
+
   it("実行中の中止で cancelStream を呼び、onCancelled で表示を変える", async () => {
     renderWithProviders(ui());
     await typeAndSearch();

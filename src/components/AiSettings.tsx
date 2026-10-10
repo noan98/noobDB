@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream, type AiConnectionTestResult } from "../api/tauri";
+import { api, type AiConnectionTestResult } from "../api/tauri";
 import {
   AI_TASK_DEFS,
   AI_TASK_KINDS,
@@ -13,20 +12,27 @@ import {
   type AiTaskKind,
 } from "../ai/aiModels";
 import { AI_SEND_SCOPES, toAiSnapshot, type AiSendScope } from "../ai/aiSettings";
+import { formatTokens, modelLabel, sumUsage } from "../ai/aiUsage";
+import { resetAiUsage, useAiUsage } from "../ai/aiUsageStore";
 import { connectionTestView } from "../ai/connectionTest";
 import { useT, type I18nKey } from "../i18n";
 import { setAiKeyPresent } from "../ai/aiKeyStore";
+import { useAiStream } from "../ai/useAiStream";
 import {
   setAiAllowRowData,
   setAiDefaultModel,
   giveAiConsent,
   setAiEnabled,
+  setAiHideSetupHint,
+  setAiInlineComplete,
   setAiMaskLiterals,
   setAiSendScope,
   setAiTaskEffort,
   setAiTaskModel,
   useSettings,
 } from "../settings";
+import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote, cacheUsageSuffix } from "./AiUsageNote";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -47,6 +53,11 @@ const TASK_LABEL: Record<AiTaskKind, I18nKey> = {
   syncRisk: "aiTaskSyncRisk",
   testData: "aiTaskTestData",
   historySearch: "aiTaskHistorySearch",
+  advisorExplain: "aiTaskAdvisorExplain",
+  resultSummary: "aiTaskResultSummary",
+  assertionSuggest: "aiTaskAssertionSuggest",
+  lockDiagnose: "aiTaskLockDiagnose",
+  inlineComplete: "aiTaskInlineComplete",
 };
 
 const EFFORT_LABEL: Record<AiEffort, I18nKey> = {
@@ -62,18 +73,12 @@ const SEND_SCOPE_LABEL: Record<AiSendScope, I18nKey> = {
   schemaAndSql: "aiSendScopeSchemaAndSql",
 };
 
-let sampleSeq = 0;
-function makeSampleStreamId(): string {
-  sampleSeq += 1;
-  return `ai_${Date.now().toString(36)}_${sampleSeq.toString(36)}`;
-}
-
 type SampleState =
   | { kind: "idle" }
-  | { kind: "running"; text: string }
-  | { kind: "done"; text: string; info: string; fallback: string | null }
-  | { kind: "error"; text: string; message: string; refused: boolean }
-  | { kind: "cancelled"; text: string };
+  | { kind: "running" }
+  | { kind: "done"; fallback: boolean }
+  | { kind: "error"; message: string; refused: boolean }
+  | { kind: "cancelled" };
 
 /**
  * 設定画面「AI アシスタント」(#690) の中身。有効化 (初回は送信への明示同意)・API キー
@@ -94,9 +99,8 @@ export function AiSettings() {
   const [testResult, setTestResult] = useState<AiConnectionTestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [sample, setSample] = useState<SampleState>({ kind: "idle" });
-  const sampleStreamRef = useRef<string | null>(null);
-  const sampleUnlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
+  // サンプル要求の本文 (`stream.text`) は完了 / 中止 / エラー後も次の要求まで残して表示する。
+  const stream = useAiStream({ idPrefix: "ai" });
 
   useEffect(() => {
     let alive = true;
@@ -111,28 +115,6 @@ export function AiSettings() {
       });
     return () => {
       alive = false;
-    };
-  }, []);
-
-  const stopSampleListener = useCallback(() => {
-    sampleUnlistenRef.current?.();
-    sampleUnlistenRef.current = null;
-    sampleStreamRef.current = null;
-  }, []);
-
-  // 画面を閉じたら実行中のサンプル要求を止める。
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const sid = sampleStreamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      sampleUnlistenRef.current?.();
-      sampleUnlistenRef.current = null;
     };
   }, []);
 
@@ -201,73 +183,91 @@ export function AiSettings() {
   // (非ストリーミング) とは別に、ストリーミング経路 (delta / done / error / cancel) を
   // 実際に通して確かめられるようにしている。
   const runSample = async () => {
-    const streamId = makeSampleStreamId();
-    sampleStreamRef.current = streamId;
-    let text = "";
-    setSample({ kind: "running", text });
-    try {
-      // 購読してから開始する (最初の delta を取りこぼさない)。
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-          setSample({ kind: "running", text });
-        },
-        onDone: (e) => {
-          stopSampleListener();
-          setSample({
-            kind: "done",
-            text,
-            info: t("aiSampleDone", {
-              model: e.model,
-              input: e.usage.inputTokens,
-              output: e.usage.outputTokens,
-            }),
-            fallback: e.fallbackUsed
-              ? t("aiSampleFallback", { model: e.model, requested: e.requestedModel })
-              : null,
-          });
-        },
-        onError: (e) => {
-          stopSampleListener();
-          setSample({ kind: "error", text, message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopSampleListener();
-          setSample({ kind: "cancelled", text });
-        },
-      });
-      // 購読の確立中にアンマウントされると、cleanup の cancelStream は登録前に走って空振りし
-      // リスナーが残る。確立後に確認して、残っていれば外して要求を出さない。
-      if (!mountedRef.current) {
-        unlisten();
-        sampleStreamRef.current = null;
-        return;
-      }
-      sampleUnlistenRef.current = unlisten;
-      await api.runAiRequest({
-        streamId,
+    if (!stream.acquire()) return;
+    setSample({ kind: "running" });
+    await stream.start(
+      {
         task: "generic",
         prompt: t("aiSamplePrompt"),
         settings: toAiSnapshot(ai),
-      });
-    } catch (e) {
-      stopSampleListener();
-      setSample({ kind: "error", text, message: String(e), refused: false });
-    }
-  };
-
-  const cancelSample = () => {
-    const sid = sampleStreamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
+      },
+      {
+        onDone: ({ event: e }) =>
+          setSample({ kind: "done", fallback: e.fallbackUsed }),
+        onError: (f) => setSample({ kind: "error", message: f.message, refused: f.refused }),
+        onCancelled: () => setSample({ kind: "cancelled" }),
+      },
+    );
   };
 
   const usable = ai.enabled && hasKey;
   const sampleRunning = sample.kind === "running";
   const view = testResult ? connectionTestView(testResult) : null;
+
+  // 今月 (JST) の累計 (#1474)。月替わりの判定はストア側。
+  const usageTotals = useAiUsage();
+  const usageSum = sumUsage(usageTotals);
+  const usageModels = Object.entries(usageTotals.byModel);
+  const usageCache = (u: ReturnType<typeof sumUsage>) =>
+    cacheUsageSuffix(
+      t,
+      u.cacheCreationInputTokens > 0 ? formatTokens(u.cacheCreationInputTokens) : null,
+      u.cacheReadInputTokens > 0 ? formatTokens(u.cacheReadInputTokens) : null,
+    );
+  const usageSection = (
+    <FormSection data-testid="ai-usage-month">
+      <Flex align="center" gap="2" wrap="wrap">
+        <FieldLabel as="div">{t("aiUsageMonthTitle")}</FieldLabel>
+        <SettingsInfo>{t("aiUsageMonthHelp")}</SettingsInfo>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={usageModels.length === 0}
+          onClick={() => {
+            void confirm({
+              title: t("aiUsageResetConfirmTitle"),
+              message: t("aiUsageResetConfirmBody"),
+              confirmLabel: t("aiUsageReset"),
+              tone: "warning",
+            }).then((ok) => {
+              if (ok) resetAiUsage();
+            });
+          }}
+        >
+          {t("aiUsageReset")}
+        </Button>
+      </Flex>
+      {usageModels.length === 0 ? (
+        <chakra.span fontSize="sm" color="app.textMuted">
+          {t("aiUsageMonthEmpty")}
+        </chakra.span>
+      ) : (
+        <>
+          {usageModels.map(([model, u]) => (
+            <chakra.span key={model} fontSize="sm" color="app.text">
+              {t("aiUsageMonthRow", {
+                model: modelLabel(model),
+                requests: u.requests,
+                input: formatTokens(u.inputTokens),
+                output: formatTokens(u.outputTokens),
+                cache: usageCache(u),
+              })}
+            </chakra.span>
+          ))}
+          <chakra.span fontSize="sm" fontWeight={500} color="app.text">
+            {t("aiUsageMonthTotal", {
+              month: usageTotals.month,
+              requests: usageSum.requests,
+              input: formatTokens(usageSum.inputTokens),
+              output: formatTokens(usageSum.outputTokens),
+              cache: usageCache(usageSum),
+            })}
+          </chakra.span>
+        </>
+      )}
+    </FormSection>
+  );
 
   return (
     <Flex direction="column" gap="3" px="2">
@@ -292,6 +292,26 @@ export function AiSettings() {
       <chakra.span fontSize="sm" color="app.textMuted">
         {t("aiEnableHelp")}
       </chakra.span>
+
+      <SettingsLabelWithInfo>
+        <chakra.label
+          htmlFor="settings-ai-setup-hint"
+          display="inline-flex"
+          alignItems="center"
+          gap="2"
+          fontSize="md"
+          fontWeight={500}
+          color="app.text"
+        >
+          <Switch
+            id="settings-ai-setup-hint"
+            checked={!ai.hideSetupHint}
+            onChange={(v) => setAiHideSetupHint(!v)}
+          />
+          {t("aiHideSetupHint")}
+        </chakra.label>
+        <SettingsInfo>{t("aiHideSetupHintHelp")}</SettingsInfo>
+      </SettingsLabelWithInfo>
 
       <FormSection>
         <SettingsLabelWithInfo>
@@ -485,6 +505,28 @@ export function AiSettings() {
           </chakra.label>
           <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
+        <SettingsLabelWithInfo>
+          <chakra.label
+            htmlFor="settings-ai-inline-complete"
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            fontSize="md"
+            fontWeight={500}
+            color="app.text"
+          >
+            <Switch
+              id="settings-ai-inline-complete"
+              checked={ai.inlineComplete}
+              onChange={setAiInlineComplete}
+            />
+            {t("aiInlineComplete")}
+          </chakra.label>
+          <SettingsInfo>{t("aiInlineCompleteHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
+        {ai.inlineComplete && ai.sendScope !== "schemaAndSql" && (
+          <Callout tone="info">{t("aiInlineCompleteNeedsScope")}</Callout>
+        )}
       </FormSection>
 
       <Flex align="center" gap="2" wrap="wrap">
@@ -525,13 +567,14 @@ export function AiSettings() {
           {t("aiSampleRequest")}
         </Button>
         {sampleRunning && (
-          <Button type="button" variant="secondary" size="sm" onClick={cancelSample}>
+          <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
             {t("aiSampleCancel")}
           </Button>
         )}
         <SettingsInfo>{t("aiSampleRequestHelp")}</SettingsInfo>
       </Flex>
-      {sample.kind !== "idle" && sample.text !== "" && (
+      {sampleRunning && <AiStreamProgress stream={stream} previewText={false} />}
+      {sample.kind !== "idle" && stream.text !== "" && (
         <chakra.div
           whiteSpace="pre-wrap"
           fontSize="sm"
@@ -539,13 +582,12 @@ export function AiSettings() {
           aria-live="polite"
           data-testid="ai-sample-text"
         >
-          {sample.text}
+          {stream.text}
         </chakra.div>
       )}
       {sample.kind === "done" && (
         <Callout tone={sample.fallback ? "warning" : "success"} role="status">
-          {sample.info}
-          {sample.fallback ? ` ${sample.fallback}` : ""}
+          <AiUsageNote event={stream.done} />
         </Callout>
       )}
       {sample.kind === "error" &&
@@ -561,6 +603,7 @@ export function AiSettings() {
           {t("aiSampleCancelled")}
         </Callout>
       )}
+      {usageSection}
       {dialog}
     </Flex>
   );

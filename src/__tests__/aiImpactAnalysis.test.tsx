@@ -114,6 +114,7 @@ describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
     renderWithProviders(ui());
     await act(async () => {});
     expect(screen.queryByRole("button", { name: t("dangerousAiButton") })).toBeNull();
+    expect(screen.queryByTestId("ai-setup-hint")).not.toBeNull();
     cleanup();
     enable();
     hasAiApiKey.mockResolvedValue(false);

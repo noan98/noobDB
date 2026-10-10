@@ -50,11 +50,18 @@ describe("AI 定義の Rust ⇔ フロント パリティ (#690)", () => {
     }
   });
 
-  it("推奨モデルは現状すべて Opus 5.5 (Rust 側も同じ)", () => {
+  it("タスク種別ごとの推奨モデルが一致する", () => {
     const body = rustMatchBody("recommended_model");
-    expect(body).toContain("AiModel::Opus55");
+    const modelVariant: Record<string, string> = {
+      "claude-opus-5-5": "Opus55",
+      "claude-sonnet-5-5": "Sonnet55",
+      "claude-haiku-5-5": "Haiku55",
+      "claude-fable-5-1": "Fable51",
+    };
     for (const kind of AI_TASK_KINDS) {
-      expect(AI_TASK_DEFS[kind].recommendedModel).toBe("claude-opus-5-5");
+      const variant = kind[0].toUpperCase() + kind.slice(1);
+      const model = modelVariant[AI_TASK_DEFS[kind].recommendedModel];
+      expect(body).toMatch(new RegExp(`AiTaskKind::${variant}\\s*=>\\s*AiModel::${model}\\b`));
     }
   });
 

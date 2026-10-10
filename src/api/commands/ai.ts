@@ -41,6 +41,18 @@ export const aiCommands = {
      * 省略すると通常のテキスト応答。
      */
     format?: { type: "json_schema"; schema: Record<string, unknown> } | null;
+    /**
+     * system のうち繰り返し同じになる固定部分 (スキーマなど、#1473)。`system` より前に置かれ、
+     * モデルの最小キャッシュ長以上のときバックエンドが `cache_control` を付けて
+     * プロンプトキャッシュに載せる。キャッシュはこれを渡したときだけ (オプトイン)。毎回変わる
+     * 値は `system` 側に置く。
+     */
+    systemCached?: string | null;
+    /**
+     * 今回の `prompt` より前の会話 (#1471)。user / assistant 交互で user 始まり assistant 終わり。
+     * 省略すると従来どおりの単発。組み立ては `ai/conversation.ts`。
+     */
+    history?: ReadonlyArray<{ role: "user" | "assistant"; content: string }> | null;
   }) =>
     invoke<void>("run_ai_request", {
       streamId: params.streamId,
@@ -49,5 +61,7 @@ export const aiCommands = {
       prompt: params.prompt,
       settings: params.settings,
       format: params.format ?? null,
+      systemCached: params.systemCached ?? null,
+      history: params.history ?? null,
     }),
 };

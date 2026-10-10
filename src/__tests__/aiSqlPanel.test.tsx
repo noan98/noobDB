@@ -103,7 +103,7 @@ describe("AiSqlPanel (#695)", () => {
     expect(screen.queryByRole("button", { name: t("bottomPanelClose") })).toBeNull();
   });
 
-  it("解説: 自動送信し (task: sqlExplain)、受信中は文字数、完了後に構造化表示する", async () => {
+  it("解説: 自動送信し (task: sqlExplain)、受信中は経過 / 途中の文章、完了後に構造化表示する", async () => {
     renderWithProviders(ui(req()));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
     expect(onRequestConsumed).toHaveBeenCalled();
@@ -112,15 +112,86 @@ describe("AiSqlPanel (#695)", () => {
     expect(arg.model).toBeUndefined();
     expect(arg.format.type).toBe("json_schema");
     act(() => handlers?.onDelta?.({ streamId: "x", text: "{\"over" }));
-    await screen.findByText(t("aiSqlRunning", { chars: 6 }));
+    await screen.findByText(t("aiStreamChars", { count: 6 }));
+    const mid = explainJson.indexOf("VIEW") + 2;
+    act(() => handlers?.onDelta?.({ streamId: "x", text: explainJson.slice(6, mid) }));
+    expect((await screen.findByTestId("ai-stream-preview")).textContent).toBe("OVERVI");
     act(() => {
-      handlers?.onDelta?.({ streamId: "x", text: explainJson.slice(6) });
+      handlers?.onDelta?.({ streamId: "x", text: explainJson.slice(mid) });
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("OVERVIEW");
     expect(screen.getByText("STEP1")).toBeTruthy();
     expect(screen.getByText("DETAIL1")).toBeTruthy();
     expect(screen.getByText("CAVEAT1")).toBeTruthy();
+  });
+
+  it("追い質問: 前回のプロンプト (マスク済み) と回答が履歴に載り、元の SQL のリテラルは送らない (#1471)", async () => {
+    renderWithProviders(ui(req({ sql: "SELECT * FROM users WHERE name = 'secret-value'" })));
+    await finish(explainJson);
+    await screen.findByText("OVERVIEW");
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "もっと短く" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    const first = runAiRequest.mock.calls[0][0];
+    const second = runAiRequest.mock.calls[1][0];
+    expect(first.history).toBeUndefined();
+    expect(second.task).toBe("sqlExplain");
+    expect(second.prompt).toBe("もっと短く");
+    expect(second.system).toBe(first.system);
+    expect(second.history).toEqual([
+      { role: "user", content: first.prompt },
+      { role: "assistant", content: explainJson },
+    ]);
+    expect(JSON.stringify(second)).not.toContain("secret-value");
+  });
+
+  it("追い質問: リライトでも同じ形式で再提案できる。送信方針が変わると出さない (#1471)", async () => {
+    const view = renderWithProviders(ui(req({ kind: "rewrite" })));
+    await finish(rewriteJson);
+    await screen.findByTestId("ai-sql-rewrite");
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "JOIN は使わないで" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    expect(runAiRequest.mock.calls[1][0].task).toBe("sqlRewrite");
+    expect(runAiRequest.mock.calls[1][0].history).toHaveLength(2);
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: rewriteJson });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByTestId("ai-sql-rewrite");
+    expect(screen.getByLabelText(t("aiFollowUpLabel"))).toBeTruthy();
+    // マスク設定を変えたら、記録時の履歴は使い回さない。
+    act(() => enable("schemaAndSql", false));
+    view.rerender(ui(req({ kind: "rewrite", autoRun: false })));
+    await waitFor(() => expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull());
+  });
+
+  it("schemaOnly では追い質問も送信範囲を確認し、取りやめると送らない (本番確認は出さない) (#1471)", async () => {
+    enable("schemaOnly");
+    renderWithProviders(ui(req(), true));
+    // 初回: 送信範囲 → 本番の順に確認する。
+    await screen.findByText(t("aiSqlScopeTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlConfirmSend") }));
+    await screen.findByText(t("aiSqlProdTitle"));
+    const sends = screen.getAllByRole("button", { name: t("aiSqlConfirmSend") });
+    fireEvent.click(sends[sends.length - 1]);
+    await finish(explainJson);
+    await screen.findByText("OVERVIEW");
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "もっと短く" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await screen.findByText(t("aiSqlScopeTitle"));
+    expect(runAiRequest).toHaveBeenCalledTimes(1);
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    fireEvent.click(cancels[cancels.length - 1]);
+    await waitFor(() => expect(screen.queryByText(t("aiSqlScopeTitle"))).toBeNull());
+    expect(runAiRequest).toHaveBeenCalledTimes(1);
+    // 承認すれば (本番確認なしで) 履歴つきで送られる。
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await screen.findByText(t("aiSqlScopeTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlConfirmSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    expect(runAiRequest.mock.calls[1][0].history).toHaveLength(2);
   });
 
   it("マスク有効なら文字列リテラルを送らない", async () => {

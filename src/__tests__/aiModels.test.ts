@@ -35,8 +35,10 @@ describe("AI モデル / エフォートのプルダウン (#690)", () => {
       const opts = modelOptions(kind, SUFFIX);
       const labelled = opts.filter((o) => o.label.endsWith(SUFFIX));
       expect(labelled.map((o) => o.value)).toEqual([AI_TASK_DEFS[kind].recommendedModel]);
-      expect(AI_TASK_DEFS[kind].recommendedModel).toBe("claude-opus-5-5");
     }
+    // インライン補完 (#1479) だけは入力のたびに呼ぶため軽量モデルを推奨する。
+    expect(AI_TASK_DEFS.inlineComplete.recommendedModel).toBe("claude-haiku-5-5");
+    expect(AI_TASK_DEFS.nl2sql.recommendedModel).toBe("claude-opus-5-5");
   });
 
   it("エフォートは connectionTest=low / generic=medium に (推奨) が付く", () => {

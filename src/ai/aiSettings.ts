@@ -30,6 +30,13 @@ export interface AiSettings {
   allowRowData: boolean;
   /** SQL 内の文字列リテラルをマスクして送る (#692)。既定オン。 */
   maskLiterals: boolean;
+  /** AI 無効時の「ここで AI が使える」案内 (AiSetupHint) を出さない (#1475)。既定は出す。 */
+  hideSetupHint: boolean;
+  /**
+   * エディタのインライン補完 (#1479)。既定オフ。入力が止まるたびに SQL 本文を送るので
+   * 料金が増える。送信範囲が `schemaAndSql` のときだけ動く。
+   */
+  inlineComplete: boolean;
 }
 
 function nullRecord<V>(): Record<AiTaskKind, V | null> {
@@ -45,6 +52,8 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   sendScope: "schemaOnly",
   allowRowData: false,
   maskLiterals: true,
+  hideSetupHint: false,
+  inlineComplete: false,
 };
 
 function sanitizeRecord<V>(
@@ -76,6 +85,8 @@ export function sanitizeAiSettings(input: unknown): AiSettings {
     allowRowData: p.allowRowData === true,
     // 未保存 (旧設定) はオン。明示的に false のときだけオフ。
     maskLiterals: p.maskLiterals !== false,
+    hideSetupHint: p.hideSetupHint === true,
+    inlineComplete: p.inlineComplete === true,
   };
 }
 

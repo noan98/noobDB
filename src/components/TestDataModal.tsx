@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream, type CellValue, type TableColumnInfo } from "../api/tauri";
+import { api, type CellValue, type TableColumnInfo } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import {
   buildTestDataAiContext,
   buildTestDataPlan,
@@ -23,6 +23,8 @@ import { useLocale, useT, type I18nKey } from "../i18n";
 import { useSettings } from "../settings";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Select } from "./ui";
+import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { Callout } from "./Callout";
@@ -100,15 +102,9 @@ function strategyOptions(spec: ColumnGenSpec): GenStrategy[] {
   return opts;
 }
 
-let aiSeq = 0;
-function makeStreamId(): string {
-  aiSeq += 1;
-  return `ai_testdata_${Date.now().toString(36)}_${aiSeq.toString(36)}`;
-}
-
 type AiState =
   | { kind: "idle" }
-  | { kind: "running"; chars: number }
+  | { kind: "running" }
   | { kind: "raw"; raw: string }
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
@@ -139,11 +135,7 @@ export function TestDataModal({
   const [hints, setHints] = useState<Record<string, string>>({});
   const [aiState, setAiState] = useState<AiState>({ kind: "idle" });
   const [plan, setPlan] = useState<TestDataAiPlan | null>(null);
-  const busyRef = useRef(false);
-  const cancelRequestedRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
+  const stream = useAiStream({ idPrefix: "ai_testdata" });
   // AI が使えない状態 (無効化・キー削除) では必ずルールベースとして扱う。
   const aiMode = aiAvailable && mode === "ai";
   const aiRunning = aiState.kind === "running";
@@ -239,30 +231,6 @@ export function TestDataModal({
     });
   };
 
-  // 別のストリームに置き換わっている場合は触らない (ID が一致するときだけ解除する)。
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const sid = streamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    };
-  }, []);
-
   const aiSends = useMemo(
     () => (aiContext ? summarizeTestDataSend(table, aiContext, rowCount, locale) : null),
     [aiContext, table, rowCount, locale],
@@ -279,26 +247,14 @@ export function TestDataModal({
   const canAiGenerate =
     aiMode && !!aiContext && aiContext.columns.length > 0 && rowCountValid && !aiRunning && !running;
 
-  const cancelAi = () => {
-    cancelRequestedRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
-  };
-
   const generateWithAi = async () => {
     if (!canAiGenerate || !aiContext) return;
     // 二重実行 (連打・Cmd+Enter の連続) で 2 本のストリームが走らないよう、同期的に弾く。
-    if (busyRef.current) return;
-    busyRef.current = true;
-    cancelRequestedRef.current = false;
+    if (!stream.acquire()) return;
     try {
       await generateWithAiInner(aiContext);
     } catch (e) {
-      busyRef.current = false;
+      stream.release();
       setAiState({ kind: "error", message: String(e), refused: false });
     }
   };
@@ -319,23 +275,22 @@ export function TestDataModal({
         tone: "warning",
       });
       if (!ok) {
-        busyRef.current = false;
+        stream.release();
         return;
       }
     }
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    let text = "";
-    setAiState({ kind: "running", chars: 0 });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-          if (mountedRef.current) setAiState({ kind: "running", chars: text.length });
-        },
-        onDone: () => {
-          stopListener(streamId);
-          const parsed = parseTestDataResponse(text);
+    setAiState({ kind: "running" });
+    await stream.start(
+      {
+        task: "testData",
+        system: buildTestDataSystem({ driver, table, rowCount, locale, context }),
+        prompt: buildTestDataPrompt(table, rowCount),
+        settings: toAiSnapshot(aiSettings),
+        format: TEST_DATA_FORMAT,
+      },
+      {
+        parse: parseTestDataResponse,
+        onDone: ({ parsed }) => {
           if (parsed.ok) {
             setPlan(buildTestDataPlan(parsed.value, context.columns));
             setAiState({ kind: "idle" });
@@ -343,45 +298,10 @@ export function TestDataModal({
             setAiState({ kind: "raw", raw: parsed.raw });
           }
         },
-        onError: (e) => {
-          stopListener(streamId);
-          setAiState({ kind: "error", message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopListener(streamId);
-          setAiState({ kind: "cancelled" });
-        },
-      });
-      // 購読の登録待ちの間に中止 / アンマウントされたら、リクエストを送らずに後始末する。
-      if (!mountedRef.current || cancelRequestedRef.current) {
-        unlisten();
-        void api.cancelStream(streamId).catch(() => {
-          /* まだ始まっていない */
-        });
-        if (streamRef.current === streamId) streamRef.current = null;
-        busyRef.current = false;
-        if (mountedRef.current) setAiState({ kind: "cancelled" });
-        return;
-      }
-      unlistenRef.current = unlisten;
-      await api.runAiRequest({
-        streamId,
-        task: "testData",
-        system: buildTestDataSystem({ driver, table, rowCount, locale, context }),
-        prompt: buildTestDataPrompt(table, rowCount),
-        settings: toAiSnapshot(aiSettings),
-        format: TEST_DATA_FORMAT,
-      });
-      // 送信中に中止 / アンマウントされていたら、走り出したストリームを止める。
-      if (!mountedRef.current || cancelRequestedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      setAiState({ kind: "error", message: String(e), refused: false });
-    }
+        onError: (f) => setAiState({ kind: "error", message: f.message, refused: f.refused }),
+        onCancelled: () => setAiState({ kind: "cancelled" }),
+      },
+    );
   };
 
   const handleRun = async () => {
@@ -675,14 +595,14 @@ export function TestDataModal({
               </chakra.span>
             )}
             {aiState.kind === "running" && (
-              <Flex align="center" gap="2" color="app.textMuted" fontSize="sm" aria-live="polite">
-                <Spinner size={12} />
-                {t("testDataAiRunning", { chars: aiState.chars })}
-                <Button type="button" variant="secondary" size="sm" onClick={cancelAi}>
+              <Flex align="center" gap="2" fontSize="sm" wrap="wrap">
+                <AiStreamProgress stream={stream} previewText={false} waitingLabel={t("testDataAiRunning")} />
+                <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
                   {t("testDataAiCancel")}
                 </Button>
               </Flex>
             )}
+            <AiUsageNote event={stream.done} />
             {aiState.kind === "raw" && (
               <Flex direction="column" gap="1">
                 <ErrorNote role="alert">{t("testDataAiParseError")}</ErrorNote>
