@@ -122,6 +122,8 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const confirmedRef = useRef<{ sessionId: string; database: string | null; isProduction: boolean } | null>(null);
   const stream = useAiStream({ idPrefix: "ai_nl2sql" });
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 接続 / DB が変わるたびに進める世代。詳細取得の途中で宛先が変わったら、古い結果を使わない。
+  const schemaGenRef = useRef(0);
 
   const database = resolveNl2SqlDatabase(props.database, props.driver);
 
@@ -134,6 +136,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
     setLockedNames(null);
     setDetails(new Map());
     confirmedRef.current = null;
+    schemaGenRef.current += 1;
     if (!database) return;
     let alive = true;
     setSchema({ kind: "loading" });
@@ -258,7 +261,8 @@ export function AiQueryModal(props: AiQueryModalProps) {
   };
 
   /** まだ詳細を持っていないテーブルの `describeTable` を取り、取得済みと合わせた Map を返す (失敗した表は列名だけ)。 */
-  const fetchDetails = async (targets: Nl2SqlTable[]): Promise<ReadonlyMap<string, Nl2SqlColumn[]>> => {
+  const fetchDetails = async (targets: Nl2SqlTable[]): Promise<ReadonlyMap<string, Nl2SqlColumn[]> | null> => {
+    const gen = schemaGenRef.current;
     const missing = targets.filter((x) => !details.has(x.name));
     if (missing.length === 0 || !database) return details;
     const next = new Map(details);
@@ -273,6 +277,8 @@ export function AiQueryModal(props: AiQueryModalProps) {
         }),
       );
     }
+    // 取得中に接続 / DB が変わった・閉じられたなら、古い DB の詳細を書き戻さず送信もしない。
+    if (gen !== schemaGenRef.current || !stream.isMounted()) return null;
     setDetails(next);
     return next;
   };
@@ -287,7 +293,12 @@ export function AiQueryModal(props: AiQueryModalProps) {
           ? restrictSchema(schema.tables, schema.foreignKeys, selectedNames)
           : schema;
     // 大きい DB は送るテーブルだけ、テーブル単位でキャッシュされる describeTable で型・PK・コメントを取る。
-    const merged = schema.large ? await fetchDetails(target.tables) : details;
+    // 追い質問は取り直さない (送る内容が変わるとプロンプトキャッシュが外れ、最初に確認した内容ともずれる)。
+    const merged = schema.large && followUpText === undefined ? await fetchDetails(target.tables) : details;
+    if (merged === null) {
+      stream.release();
+      return;
+    }
     const ready = { tables: withDetails(target.tables, merged), foreignKeys: target.foreignKeys };
     const sentSummary = summarizeSchemaSend(ready.tables, ready.foreignKeys, schema.tables.length);
     // 追い質問は、最初の送信で確認した宛先と同じときだけ再確認しない。
