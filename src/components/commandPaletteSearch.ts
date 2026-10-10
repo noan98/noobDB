@@ -149,7 +149,7 @@ export function fuzzyMatch(query: string, text: string): FuzzyMatch | null {
 
 /** 1 候補を query でスコアリング。マッチしなければ `null`。 */
 export function scoreItem(item: CommandItem, query: string): ScoredItem | null {
-  if (query === "") return item.searchOnly ? null :  { item, score: 0, ranges: [] };
+  if (query === "") return item.searchOnly ? null : { item, score: 0, ranges: [] };
   const labelMatch = fuzzyMatch(query, item.label);
   const extra = [item.sublabel, item.keywords].filter(Boolean).join(" ");
   const extraMatch = extra ? fuzzyMatch(query, extra) : null;

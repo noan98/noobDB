@@ -7180,15 +7180,21 @@ export default function App() {
     // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
     // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は
     // 復元しない (snapshotClosedTab が table タブでは本文を使わない)。
-    const closing = opts?.record === false ? undefined : tabsRef.current.find((tt) => tt.id === id);
-    if (closing) {
+    // 未接続 (sessionId が無い) ときは積まない。スコープ "" の履歴は切断時の破棄
+    // (forgetClosedTabs) で消せず、残り続けるため。
+    const closeScope = sessionIdRef.current;
+    const closing =
+      opts?.record === false || !closeScope
+        ? undefined
+        : tabsRef.current.find((tt) => tt.id === id);
+    if (closing && closeScope) {
       closedTabSeqRef.current += 1;
       const snap = snapshotClosedTab(
         closing,
         tabSqlStore.resolve(closing.id, closing.sql),
         {
           id: `closed-${Date.now()}-${closedTabSeqRef.current}`,
-          scope: sessionIdRef.current ?? "",
+          scope: closeScope,
           closedAt: Date.now(),
         },
         editorSelectionRef.current.get(id),
@@ -7263,7 +7269,8 @@ export default function App() {
     const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
     if (!owner) return;
     // 右端から閉じる: 履歴は新しい順なので、Cmd+Shift+T を連続で押すと左のタブから順に戻り、
-    // 末尾へ追加される復元タブの並びが元の並びと一致する (#1353)。
+    // 末尾へ追加される復元タブの並びが元の並びと一致する (#1353)。履歴の上限
+    // (MAX_CLOSED_TABS) を超えて閉じた場合は、先に閉じた右端側のタブから捨てられる。
     for (const id of tabsToClose(owner.tabIds, tabId, mode).reverse()) handleCloseTab(id);
   }, [panesRef, handleCloseTab]);
 
