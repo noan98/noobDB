@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
 import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
+import { useSettings } from "../settings";
 import { semanticColorToken } from "../semanticColors";
 import {
   DEFAULT_ADVISOR_SORT,
@@ -19,6 +20,7 @@ import {
   type AdvisorSortKey,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
+import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { CodePreview } from "./modalForm";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -45,6 +47,10 @@ import { transitions, variants } from "../motion";
  *   確認) を通る。
  * - **縮退の明示**: 前提を満たさずスキップしたルール (未使用インデックスなど) は
  *   理由コードを有効化手順つきの文言にして表示し、黙って 0 件にしない (#587)。
+ *
+ * - **AI 解説 (#1468)**: AI 有効 + キー設定済みのときだけ、各指摘に「AI に聞く」を出す。
+ *   解説は行内に展開し、AI は説明を返すだけで SQL は実行しない (本体の「読み取りのみ・
+ *   自動実行しない」は変えない)。
  *
  * ルール判定の純ロジックはバック `db::advisor` にあり、表示ロジック (ルール →
  * i18n キー/パラメータ) は `advisor.ts` に分離してテストする。
@@ -116,6 +122,25 @@ export function AdvisorPanel({
 }) {
   const t = useT();
   const toast = useToast();
+  const aiEnabled = useSettings().ai.enabled;
+  // 「AI に聞く」は AI 有効 + API キー設定済みのときだけ出す。キーの有無は行ごとではなく
+  // ここで 1 回だけ確認する (#1468)。取得できなければ非表示のまま。
+  const [hasAiKey, setHasAiKey] = useState(false);
+  useEffect(() => {
+    if (!aiEnabled) return;
+    let alive = true;
+    api
+      .hasAiApiKey()
+      .then((v) => {
+        if (alive) setHasAiKey(v);
+      })
+      .catch(() => {
+        /* 取得できなければ非表示のまま */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [aiEnabled]);
 
   const [report, setReport] = useState<SchemaHealthReport | null>(null);
   const [running, setRunning] = useState(false);
@@ -358,6 +383,14 @@ export function AdvisorPanel({
                           </Tooltip>
                         </Flex>
                       </Box>
+                    )}
+                    {aiEnabled && hasAiKey && report && (
+                      <AiAdvisorExplain
+                        sessionId={sessionId}
+                        driver={report.driver}
+                        database={database}
+                        finding={f}
+                      />
                     )}
                   </chakra.td>
                 </chakra.tr>
