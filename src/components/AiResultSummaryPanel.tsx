@@ -21,6 +21,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 
 /** 結果グリッドの「AI で要約」が組み立てる依頼。 */
 export interface AiResultSummaryRequest {
@@ -221,6 +222,7 @@ export function AiResultSummaryPanel(props: AiResultSummaryPanelProps) {
           }}
         />
       )}
+      <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("aiSqlParseError")}</ErrorNote>

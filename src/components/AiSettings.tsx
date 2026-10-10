@@ -12,7 +12,8 @@ import {
   type AiTaskKind,
 } from "../ai/aiModels";
 import { AI_SEND_SCOPES, toAiSnapshot, type AiSendScope } from "../ai/aiSettings";
-import { formatTokens, modelLabel, rollUsageMonth, sumUsage } from "../ai/aiUsage";
+import { formatTokens, modelLabel, sumUsage } from "../ai/aiUsage";
+import { resetAiUsage, useAiUsage } from "../ai/aiUsageStore";
 import { connectionTestView } from "../ai/connectionTest";
 import { useT, type I18nKey } from "../i18n";
 import { setAiKeyPresent } from "../ai/aiKeyStore";
@@ -21,7 +22,6 @@ import {
   setAiAllowRowData,
   setAiDefaultModel,
   giveAiConsent,
-  resetAiUsage,
   setAiEnabled,
   setAiMaskLiterals,
   setAiSendScope,
@@ -30,7 +30,7 @@ import {
   useSettings,
 } from "../settings";
 import { AiStreamProgress } from "./AiStreamProgress";
-import { AiUsageNote } from "./AiUsageNote";
+import { AiUsageNote, cacheUsageSuffix } from "./AiUsageNote";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -74,7 +74,7 @@ const SEND_SCOPE_LABEL: Record<AiSendScope, I18nKey> = {
 type SampleState =
   | { kind: "idle" }
   | { kind: "running" }
-  | { kind: "done"; info: string; fallback: string | null }
+  | { kind: "done"; fallback: boolean }
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
 
@@ -191,17 +191,7 @@ export function AiSettings() {
       },
       {
         onDone: ({ event: e }) =>
-          setSample({
-            kind: "done",
-            info: t("aiSampleDone", {
-              model: e.model,
-              input: e.usage.inputTokens,
-              output: e.usage.outputTokens,
-            }),
-            fallback: e.fallbackUsed
-              ? t("aiSampleFallback", { model: e.model, requested: e.requestedModel })
-              : null,
-          }),
+          setSample({ kind: "done", fallback: e.fallbackUsed }),
         onError: (f) => setSample({ kind: "error", message: f.message, refused: f.refused }),
         onCancelled: () => setSample({ kind: "cancelled" }),
       },
@@ -212,10 +202,16 @@ export function AiSettings() {
   const sampleRunning = sample.kind === "running";
   const view = testResult ? connectionTestView(testResult) : null;
 
-  // 今月 (JST) の累計 (#1474)。月が替わっていれば保存値が古くても空として見せる。
-  const usageTotals = rollUsageMonth(ai.usage, new Date());
+  // 今月 (JST) の累計 (#1474)。月替わりの判定はストア側。
+  const usageTotals = useAiUsage();
   const usageSum = sumUsage(usageTotals);
   const usageModels = Object.entries(usageTotals.byModel);
+  const usageCache = (u: ReturnType<typeof sumUsage>) =>
+    cacheUsageSuffix(
+      t,
+      u.cacheCreationInputTokens > 0 ? formatTokens(u.cacheCreationInputTokens) : null,
+      u.cacheReadInputTokens > 0 ? formatTokens(u.cacheReadInputTokens) : null,
+    );
   const usageSection = (
     <FormSection data-testid="ai-usage-month">
       <Flex align="center" gap="2" wrap="wrap">
@@ -226,7 +222,16 @@ export function AiSettings() {
           variant="secondary"
           size="sm"
           disabled={usageModels.length === 0}
-          onClick={() => resetAiUsage()}
+          onClick={() => {
+            void confirm({
+              title: t("aiUsageResetConfirmTitle"),
+              message: t("aiUsageResetConfirmBody"),
+              confirmLabel: t("aiUsageReset"),
+              tone: "warning",
+            }).then((ok) => {
+              if (ok) resetAiUsage();
+            });
+          }}
         >
           {t("aiUsageReset")}
         </Button>
@@ -244,9 +249,8 @@ export function AiSettings() {
                 requests: u.requests,
                 input: formatTokens(u.inputTokens),
                 output: formatTokens(u.outputTokens),
+                cache: usageCache(u),
               })}
-              {u.cacheReadInputTokens > 0 &&
-                t("aiUsageMonthRowCache", { cache: formatTokens(u.cacheReadInputTokens) })}
             </chakra.span>
           ))}
           <chakra.span fontSize="sm" fontWeight={500} color="app.text">
@@ -255,6 +259,7 @@ export function AiSettings() {
               requests: usageSum.requests,
               input: formatTokens(usageSum.inputTokens),
               output: formatTokens(usageSum.outputTokens),
+              cache: usageCache(usageSum),
             })}
           </chakra.span>
         </>
@@ -536,11 +541,9 @@ export function AiSettings() {
           {stream.text}
         </chakra.div>
       )}
-      <AiUsageNote event={stream.done} />
       {sample.kind === "done" && (
         <Callout tone={sample.fallback ? "warning" : "success"} role="status">
-          {sample.info}
-          {sample.fallback ? ` ${sample.fallback}` : ""}
+          <AiUsageNote event={stream.done} />
         </Callout>
       )}
       {sample.kind === "error" &&

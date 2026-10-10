@@ -1,5 +1,5 @@
 // AI の使用量表示と今月の累計 (#1474)。完了イベント (`ai-stream:done`) の整形と、
-// JST 基準の月次累計の加算・月替わり判定を純関数で持つ。保存は `settings.ts` (`ai.usage`)。
+// JST 基準の月次累計の加算・月替わり判定を純関数で持つ。保存は `aiUsageStore.ts`。
 // 料金の概算は扱わない (単価は変わるため。トークン数だけを見せる)。
 
 import { AI_MODEL_LABELS, isAiModelId } from "./aiModels";
@@ -156,7 +156,9 @@ export interface AiUsageSummary {
   fallbackFrom: string | null;
   input: string;
   output: string;
-  /** キャッシュ読み取り分があるときだけ。 */
+  /** キャッシュ書き込み (作成) 分。0 のときは `null`。 */
+  cacheWrite: string | null;
+  /** キャッシュ読み取り分。0 のときは `null`。 */
   cacheRead: string | null;
 }
 
@@ -165,10 +167,11 @@ export function summarizeUsage(event: AiUsageEventLike): AiUsageSummary {
   return {
     model: modelLabel(event.model),
     fallbackFrom: event.fallbackUsed ? modelLabel(event.requestedModel) : null,
-    // キャッシュ作成・読み取りも入力側のトークンなので、表示の「入力」には含めない
-    // (API の input_tokens はキャッシュ分を除いた値)。キャッシュ読み取りは別に併記する。
+    // API の `input_tokens` はキャッシュ分を含まない。入力が少なく見えないよう、
+    // キャッシュの書き込み / 読み取りは 0 より大きいときだけ別に併記する。
     input: formatTokens(u.inputTokens),
     output: formatTokens(u.outputTokens),
+    cacheWrite: u.cacheCreationInputTokens > 0 ? formatTokens(u.cacheCreationInputTokens) : null,
     cacheRead: u.cacheReadInputTokens > 0 ? formatTokens(u.cacheReadInputTokens) : null,
   };
 }

@@ -303,7 +303,7 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
           )}
         </Flex>
       )}
-      <AiUsageNote event={stream.done} />
+      {!collapsed && <AiUsageNote event={stream.done} />}
       {!collapsed && state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("explainAiParseError")}</ErrorNote>

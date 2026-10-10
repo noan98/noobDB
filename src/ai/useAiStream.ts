@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { recordAiUsage } from "../settings";
+import { recordAiUsage } from "./aiUsageStore";
 import { api, listenAiStream, type AiDoneEvent } from "../api/tauri";
 
 /** `run_ai_request` に渡す引数 (ストリーム ID はフックが採番する)。 */

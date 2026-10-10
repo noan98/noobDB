@@ -61,6 +61,16 @@ describe("addUsage / rollUsageMonth", () => {
   });
 });
 
+describe("summarizeUsage キャッシュ作成", () => {
+  it("キャッシュ書き込みは 0 より大きいときだけ併記する", () => {
+    const s = summarizeUsage(
+      ev({ usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 1500 } }),
+    );
+    expect(s.cacheWrite).toBe("1.5k");
+    expect(s.cacheRead).toBeNull();
+  });
+});
+
 describe("sanitizeAiUsageTotals", () => {
   const now = new Date("2026-10-10T00:00:00Z");
   it("壊れた値は空にする", () => {
@@ -102,8 +112,10 @@ describe("formatTokens / summarizeUsage", () => {
       fallbackFrom: "Claude Opus 5.5",
       input: "100",
       output: "50",
+      cacheWrite: null,
       cacheRead: "2k",
     });
+    expect(s.cacheWrite).toBeNull();
     expect(summarizeUsage(ev()).fallbackFrom).toBeNull();
     expect(summarizeUsage(ev()).cacheRead).toBeNull();
   });
