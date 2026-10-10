@@ -55,9 +55,11 @@ case "$TRACK_STATE" in
 
     if [ -n "$existing" ]; then
       if [ -n "$key" ]; then
-        last_key="$(gh issue view "$existing" --repo "$GITHUB_REPOSITORY" --json body,comments \
-          --jq '[.body, (.comments[].body)] | join("\n")' \
-          | grep -o '<!-- tracking-key: .* -->' | tail -n 1 || true)"
+        # コメントは gh issue view だと件数上限があるため、REST をページングして最新まで読む。
+        last_key="$({
+          gh issue view "$existing" --repo "$GITHUB_REPOSITORY" --json body --jq '.body'
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${existing}/comments" --jq '.[].body'
+        } | grep -o '<!-- tracking-key: .* -->' | tail -n 1 || true)"
         if [ "$last_key" = "<!-- tracking-key: ${key} -->" ]; then
           echo "前回通知と同じ結果 (${key}) のためコメントを省略します (#${existing})"
           exit 0
@@ -65,14 +67,20 @@ case "$TRACK_STATE" in
       fi
       gh_write issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body"
     else
-      # ラベルが無ければ作成 (--force は既存なら更新するだけで冪等)。
+      # ラベルが無ければ作成する。--force は既存ラベルの色 / 説明を上書きする (cost:* /
+      # benefit:* を壊す) ので使わず、既存なら失敗するだけなので `|| true` で吸収する。
+      # --color を省くと gh はランダム色を選ぶため、必ず固定色を渡す。
       all_labels="${TRACK_LABEL}"
       [ -n "${TRACK_EXTRA_LABELS:-}" ] && all_labels="${all_labels},${TRACK_EXTRA_LABELS}"
       IFS=',' read -r -a arr <<< "$all_labels"
       args=()
       for l in "${arr[@]}"; do
         [ -n "$l" ] || continue
-        gh_write label create "$l" --repo "$GITHUB_REPOSITORY" --force >/dev/null 2>&1 || true
+        case "$l" in
+          ci:*) gh_write label create "$l" --repo "$GITHUB_REPOSITORY" --color 5319e7 \
+                  --description "定期 / 可視化専用ワークフローのトラッキング Issue (自動生成)" || true ;;
+          *)    gh_write label create "$l" --repo "$GITHUB_REPOSITORY" --color ededed || true ;;
+        esac
         args+=(--label "$l")
       done
       gh_write issue create --repo "$GITHUB_REPOSITORY" --title "$TRACK_TITLE" \

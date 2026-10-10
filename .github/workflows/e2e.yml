@@ -184,11 +184,12 @@ jobs:
   # 見に行かなければ腐る (silent rot) ため、失敗時はトラッキング Issue (ラベル
   # ci:e2e-nightly) を upsert し、成功に戻ったら「回復した」とコメントして自動クローズする。
   # `issues: write` はこのジョブにだけ付与し、E2E 本体の権限は増やさない。
-  # schedule / workflow_dispatch のみ通知 (PR 起点は通知しない)。キャンセルは通知しない。
+  # schedule / workflow_dispatch のみ通知 (PR 起点は通知しない)。既定ブランチ以外の手動実行と
+  # キャンセルでは通知しない (試験ブランチの結果で Issue を open / close しないため)。
   notify:
     name: nightly 結果の通知 (トラッキング Issue)
     needs: e2e-linux
-    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.e2e-linux.result == 'success' || needs.e2e-linux.result == 'failure')
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.e2e-linux.result == 'success' || needs.e2e-linux.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

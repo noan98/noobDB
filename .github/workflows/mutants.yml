@@ -101,7 +101,8 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       # 変異テスト本体: 安全網関数群に限定して実行 (対象は mutants.toml が定める)。
-      # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (|| true)。
+      # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (終了コードは下の
+      # Run cargo-mutants ステップで step output に残し、exit 0 で終える)。
       # mutants.out/ をアーティファクトとして保存し、Job Summary にサマリを出す。
       # 終了コードは $GITHUB_OUTPUT (exit_code) に残す (後続の通知ジョブ用, #1395)。
       # cargo-mutants は 0=全捕捉 / 2=生存変異あり / 3=タイムアウトあり / 4=baseline 失敗
@@ -192,11 +193,11 @@ jobs:
   #   - 生存変異が 1 件以上 … 前回通知と (生存数, スコア) が変わったときだけコメント
   #     追記 (TRACK_DEDUP_KEY で同一結果の連投を抑止)
   #   - 実行成功かつ生存 0 件 … 回復としてクローズ
-  # `issues: write` は本ジョブにだけ付与。list_only 実行では通知しない。
+  # `issues: write` は本ジョブにだけ付与。list_only 実行と既定ブランチ以外の実行では通知しない。
   notify:
     name: 結果の通知 (トラッキング Issue)
     needs: mutants
-    if: always() && !inputs.list_only && (needs.mutants.result == 'success' || needs.mutants.result == 'failure')
+    if: always() && !inputs.list_only && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.mutants.result == 'success' || needs.mutants.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -224,7 +225,8 @@ jobs:
           # exit_code は 0 / 2 (生存変異あり) / 3 (タイムアウトあり) が「実行成功」。
           # スコアが取れていない場合 (結果ファイル無し) も実行失敗として扱う。
           run_ok=0
-          case "${M_EXIT:-}" in 0|2|3) [ -n "$M_SCORE" ] && run_ok=1 ;; esac
+          # スコアが "n/a" (母数 0 = 変異が 1 つも評価されていない) も実行失敗扱いにする。
+          case "${M_EXIT:-}" in 0|2|3) [ -n "$M_SCORE" ] && [ "$M_SCORE" != "n/a" ] && run_ok=1 ;; esac
           if [ "$M_RESULT" = "success" ] && [ "$run_ok" = "1" ] && [ "${M_SURVIVED:-0}" = "0" ]; then
             TRACK_STATE=ok bash scripts/upsert-tracking-issue.sh
             exit 0
