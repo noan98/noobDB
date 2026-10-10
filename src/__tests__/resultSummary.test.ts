@@ -8,6 +8,7 @@ import {
   RESULT_SUMMARY_MAX_COLUMNS,
   RESULT_SUMMARY_MAX_QUERIES,
   RESULT_SUMMARY_MAX_ROWS,
+  safeColumnName,
   truncateCell,
 } from "../ai/resultSummary";
 
@@ -101,6 +102,39 @@ describe("buildResultSummaryPrompt (#1476)", () => {
   });
 });
 
+describe("列名・長さからの値の漏れ (#1476)", () => {
+  it("`SELECT 'secret'` 型: リテラルが列名に出る結果でも、マスク有効なら列名を伏せ値を送らない", () => {
+    for (const name of ["secret@x.example", "'secret@x.example'"]) {
+      const prompt = buildResultSummaryPrompt({
+        driver: "mysql",
+        sql: "SELECT 'secret@x.example'",
+        columns: [{ name, type_name: "VARCHAR" }],
+        rows: [["secret@x.example"]],
+        allowRowData: false,
+        maskLiterals: true,
+      });
+      expect(prompt).not.toContain("secret@x.example");
+      expect(prompt).toContain("- col1 VARCHAR");
+      expect(prompt).not.toContain("length=");
+    }
+  });
+
+  it("数字だけの列名 (SELECT 12345) も伏せる。通常の列名は残す", () => {
+    expect(safeColumnName("12345", 0, "SELECT 12345", true)).toBe("col1");
+    expect(safeColumnName("email", 1, "SELECT email FROM t WHERE x = 'abc'", true)).toBe("email");
+    expect(safeColumnName("12345", 0, "SELECT 12345", false)).toBe("12345");
+  });
+
+  it("オフでは長さ範囲は文字列列で、非 NULL 2 件以上かつ異なり数 2 以上のときだけ送る", () => {
+    const mk = (r: CellValue[][], type = "VARCHAR") =>
+      buildResultSummaryPrompt({ ...base, columns: [{ name: "c", type_name: type }], rows: r, allowRowData: false });
+    expect(mk([["ab"], ["abcd"]])).toContain("length=2..4");
+    expect(mk([["ab"]])).not.toContain("length=");
+    expect(mk([["ab"], ["ab"]])).not.toContain("length=");
+    expect(mk([[10], [1000]], "INT")).not.toContain("length=");
+  });
+});
+
 describe("truncateCell", () => {
   it("NULL・改行・長さ", () => {
     expect(truncateCell(null)).toBe("NULL");
@@ -128,6 +162,18 @@ describe("parseResultSummaryResponse", () => {
     if (r.ok) expect(r.value.next_queries.map((q) => q.title)).toEqual(["q1"]);
   });
 
+  it("SQLite の PRAGMA 代入などの書き込み系は落とす", () => {
+    const text = JSON.stringify({
+      ...ok,
+      next_queries: [
+        { title: "p", sql: "PRAGMA writable_schema = 1", reason: "r" },
+        { title: "ok", sql: "SELECT 1", reason: "r" },
+      ],
+    });
+    const r = parseResultSummaryResponse(text, "sqlite");
+    expect(r.ok && r.value.next_queries.map((q) => q.title)).toEqual(["ok"]);
+  });
+
   it("コードフェンスで囲まれていても受け付ける", () => {
     expect(parseResultSummaryResponse("```json\n" + JSON.stringify(ok) + "\n```", "mysql").ok).toBe(true);
   });
@@ -142,6 +188,7 @@ describe("parseResultSummaryResponse", () => {
       })),
     };
     const r = parseResultSummaryResponse(JSON.stringify(many), "postgres");
+    expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.next_queries).toHaveLength(RESULT_SUMMARY_MAX_QUERIES);
   });
 

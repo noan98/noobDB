@@ -13,8 +13,8 @@ import { z } from "zod";
 import type { CellValue, Column } from "../api/tauri";
 import { classifyTypeName, type CellKind } from "../components/cellTypeMeta";
 import { columnStats, nullRatePercentOf, type ColumnStats } from "../components/gridStats";
-import { isReadOnlySql } from "../dangerousSql";
-import { dialectLabel, sqlForAi } from "./errorExplain";
+import { isReadOnlySql, maskLiterals } from "../dangerousSql";
+import { dialectLabel, literalContents, sqlForAi } from "./errorExplain";
 
 /** `allowRowData` オン時に送る先頭行数。 */
 export const RESULT_SUMMARY_MAX_ROWS = 20;
@@ -119,6 +119,21 @@ export interface SummaryColumn {
   stats: ColumnStats;
 }
 
+/**
+ * 送る列名。MySQL / SQLite は式の列名が式そのもの (`SELECT 'alice@x'` の列名は `alice@x` / `'alice@x'`) で、
+ * 値がそのまま列名に出る。`maskLiterals` オンのとき、SQL の文字列リテラルの中身を含む列名・引用符付きリテラルを
+ * 含む列名・数字だけの列名は `col<i>` に伏せる。
+ */
+export function safeColumnName(name: string, index: number, sql: string, mask: boolean): string {
+  if (!mask) return name;
+  const lower = name.toLowerCase();
+  const leaks =
+    /^[\s\d.+-]+$/.test(name) ||
+    maskLiterals(name) !== name ||
+    literalContents(sql).some((lit) => lower.includes(lit.toLowerCase()));
+  return leaks ? `col${index + 1}` : name;
+}
+
 export function summarizeColumns(
   columns: Column[],
   rows: CellValue[][],
@@ -153,7 +168,11 @@ export function columnStatsLine(col: SummaryColumn, allowRowData: boolean): stri
     `nulls=${s.nullCount} (${fmtNum(nullRatePercentOf(s))}%)`,
     `distinct=${s.distinctCount}`,
   ];
-  if (s.minLen !== null && s.maxLen !== null) parts.push(`length=${s.minLen}..${s.maxLen}`);
+  // 文字列長は値の手がかりになる (1 行だけ・異なり数 1 だと値の長さそのもの) ので、オフでは
+  // 文字列系の列で、非 NULL が 2 件以上かつ異なり数が 2 以上のときだけ送る。
+  const lengthOk =
+    allowRowData || (col.kind === "string" && s.nonNullCount >= 2 && s.distinctCount >= 2);
+  if (lengthOk && s.minLen !== null && s.maxLen !== null) parts.push(`length=${s.minLen}..${s.maxLen}`);
   if (allowRowData) {
     if (s.numericCount > 0 && s.min !== null && s.max !== null) {
       parts.push(`min=${fmtNum(s.min)}`, `max=${fmtNum(s.max)}`);
@@ -188,7 +207,12 @@ export function buildResultSummarySystem(locale: "ja" | "en", allowRowData: bool
 
 /** ユーザプロンプト全体。`allowRowData` オフのときセルの値は 1 つも含まない。 */
 export function buildResultSummaryPrompt(input: ResultSummaryInput): string {
-  const { columns, omittedColumns, statsRows } = summarizeColumns(input.columns, input.rows);
+  const summarized = summarizeColumns(input.columns, input.rows);
+  const { omittedColumns, statsRows } = summarized;
+  const columns = summarized.columns.map((c, i) => ({
+    ...c,
+    name: safeColumnName(c.name, i, input.sql, input.maskLiterals),
+  }));
   const lines: string[] = [];
   lines.push(`Dialect: ${dialectLabel(input.driver)}`);
   lines.push("SQL:");

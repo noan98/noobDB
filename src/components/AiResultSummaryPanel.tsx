@@ -28,6 +28,8 @@ export interface AiResultSummaryRequest {
   id: number;
   /** 結果を出したエディタタブ (追加 SQL 案の挿入先)。 */
   tabId: string;
+  /** 結果を出したタブの表示名 (パネルに依頼元を示す)。 */
+  tabTitle: string;
   /** 結果を出した SQL (マスク前)。 */
   sql: string;
   /** テーブル定義の引き先データベース (挿入先タブの既定にも使う)。 */
@@ -48,7 +50,6 @@ type State =
   | { kind: "cancelled" };
 
 export interface AiResultSummaryPanelProps {
-  sessionId: string;
   /** `mysql` / `postgres` / `sqlite`。 */
   driver: string;
   isProduction: boolean;
@@ -189,6 +190,9 @@ export function AiResultSummaryPanel(props: AiResultSummaryPanelProps) {
       color="app.text"
       data-testid="ai-result-summary-panel"
     >
+      <chakra.span textStyle="caption" data-testid="ai-result-summary-source">
+        {t("aiResultSummarySource", { title: request.tabTitle })}
+      </chakra.span>
       <Flex align="center" gap="2" wrap="wrap">
         <Button type="button" variant="secondary" size="sm" disabled={running} onClick={() => void run()}>
           {t("aiResultSummaryButton")}

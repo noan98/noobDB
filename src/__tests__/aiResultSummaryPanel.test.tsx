@@ -41,6 +41,7 @@ function setAi(patch: Partial<typeof DEFAULT_SETTINGS.ai> = {}) {
 const req = (patch: Partial<AiResultSummaryRequest> = {}): AiResultSummaryRequest => ({
   id: 1,
   tabId: "tab1",
+  tabTitle: "Query 1",
   sql: "SELECT email, amount FROM users",
   database: "app",
   columns: [
@@ -58,7 +59,6 @@ const req = (patch: Partial<AiResultSummaryRequest> = {}): AiResultSummaryReques
 function ui(request: AiResultSummaryRequest | null, isProduction = false) {
   return (
     <AiResultSummaryPanel
-      sessionId="s1"
       driver="mysql"
       isProduction={isProduction}
       request={request}
@@ -108,6 +108,7 @@ describe("AiResultSummaryPanel (#1476)", () => {
     expect(sent).not.toContain("alice@secret.example");
     expect(sent).not.toContain("bob@secret.example");
     expect(sent).toContain("email VARCHAR");
+    expect(screen.getByTestId("ai-result-summary-source").textContent).toContain("Query 1");
     expect(screen.getByTestId("ai-result-summary-sends").textContent).toContain(t("aiResultSummaryRowsNone"));
   });
 

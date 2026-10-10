@@ -1045,9 +1045,11 @@ export const PaneView = memo(
                           )
                         : undefined
                     }
-                    onSummarizeWithAi={gridStable.fn(`${tab.id}:aiSummary`, () =>
-                      actions.handleAiResultSummary(tab),
-                    )}
+                    onSummarizeWithAi={
+                      sessionId && tab.result
+                        ? gridStable.fn(`${tab.id}:aiSummary`, () => actions.handleAiResultSummary(tab))
+                        : undefined
+                    }
                     onExploreColumn={
                       sessionId
                         ? gridStable.fn(`${tab.id}:exploreColumn`, (target: { database?: string | null; table: string; column: string }) =>

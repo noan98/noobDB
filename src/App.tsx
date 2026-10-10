@@ -115,9 +115,10 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { AiErrorExplain } from "./components/AiErrorExplain";
-import { findSqlRange, sqlForRangeReplace } from "./ai/errorExplain";
+import { findSqlRange, sqlForAppend, sqlForRangeReplace } from "./ai/errorExplain";
 import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sqlAssist";
 import type { AiSqlRequest } from "./components/AiSqlPanel";
+import { RESULT_SUMMARY_STATS_MAX_ROWS } from "./ai/resultSummary";
 import type { AiResultSummaryRequest } from "./components/AiResultSummaryPanel";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
@@ -297,11 +298,12 @@ const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
 // SQL の AI 解説 / 最適化案 (#695)。ボトムパネルを開くまで読み込まない。
-const AiResultSummaryPanel = lazy(() =>
-  import("./components/AiResultSummaryPanel").then((m) => ({ default: m.AiResultSummaryPanel })),
-);
 const AiSqlPanel = lazy(() =>
   import("./components/AiSqlPanel").then((m) => ({ default: m.AiSqlPanel })),
+);
+// 結果グリッドの AI 要約 (#1476)。ボトムパネルを開くまで読み込まない。
+const AiResultSummaryPanel = lazy(() =>
+  import("./components/AiResultSummaryPanel").then((m) => ({ default: m.AiResultSummaryPanel })),
 );
 // データ品質アサーション (#742)。ボトムパネルを開くまで読み込まない。
 const AssertionsPanel = lazy(() =>
@@ -5482,10 +5484,14 @@ export default function App() {
     setAiResultSummaryRequest({
       id: aiResultSummarySeqRef.current,
       tabId: tab.id,
+      tabTitle: tab.title,
       sql: tab.lastExecutedSql,
       database: tab.database ?? selectedProfile?.database ?? null,
       columns: tab.result.columns,
-      rows: tab.result.rows,
+      // プロンプトに必要な分 (統計用の上限) だけ持つ。先頭行はその先頭に含まれる。
+      rows: tab.result.rows.length > RESULT_SUMMARY_STATS_MAX_ROWS
+        ? tab.result.rows.slice(0, RESULT_SUMMARY_STATS_MAX_ROWS)
+        : tab.result.rows,
       autoRun: true,
     });
     setBottomPanelTab("aiResultSummary");
@@ -5499,14 +5505,15 @@ export default function App() {
       if (!tab) return "closed";
       const pane = panesRef.current.find((p) => p.activeTabId === tab.id && p.tabIds.includes(tab.id));
       const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+      // 追記は前の文を `;` で閉じてから足す (閉じないと `;` 区切りの分割で前の文とつながる)。
       if (pane && editor) {
         const current = editor.getText();
-        const text = sqlForRangeReplace(sql);
-        editor.replaceRange(current.length, current.length, current === "" ? text : `\n\n${text}`);
+        const { from, text } = sqlForAppend(current, sql);
+        editor.replaceRange(from, current.length, text);
       } else {
         const current = tabSqlStore.resolve(tab.id, tab.sql);
-        const text = sqlForRangeReplace(sql);
-        updateTab(tab.id, { sql: current.trim() === "" ? text : `${current}\n\n${text}` });
+        const { from, text } = sqlForAppend(current, sql);
+        updateTab(tab.id, { sql: current.slice(0, from) + text });
       }
       return "inserted";
     },
@@ -9548,7 +9555,6 @@ export default function App() {
                   ) : activeBottomPanelTab === "aiResultSummary" ? (
                     <AiResultSummaryPanel
                       key={`${sessionId}:${aiResultSummaryRequest?.id ?? 0}`}
-                      sessionId={sessionId}
                       driver={selectedProfile?.driver ?? "mysql"}
                       isProduction={selectedProfile?.is_production ?? false}
                       request={aiResultSummaryRequest}
