@@ -1117,13 +1117,8 @@ describe("シナリオ: 未確定のセル編集があるタブを閉じる (#13
       .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
       .toBeVisible();
 
-    // キャンセルしたタブは履歴に積まれていない (復元しても別タブが増えない)。
-    const tabsBefore = document.querySelectorAll('[role="tab"]').length;
-    await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
-    expect(document.querySelectorAll('[role="tab"]').length).toBe(tabsBefore);
-    await expect
-      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
-      .toBeVisible();
+    // キャンセル時に閉じたタブ履歴へ積まれないことは pendingEditsGuard.test.ts の構造検査で
+    // 固定する (テーブルタブの復元は既存タブの前面化になり、タブ数では判別できないため)。
 
     // 改めて閉じて OK すると、タブが閉じる。前の確認ダイアログの退場アニメと
     // フォーカス返却が終わる前に次を開くと、返却されたフォーカスが新しいダイアログの

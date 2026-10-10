@@ -120,6 +120,9 @@ function RenameInput({
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={(e) => {
         e.stopPropagation();
+        // 伝播を止めると App の Cmd/Ctrl+W ハンドラが preventDefault できないため、
+        // WebView 既定動作 (ウィンドウを閉じる) にだけはここで届かせない。
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") e.preventDefault();
         // IME 変換確定の Enter では確定しない。
         if (e.nativeEvent.isComposing) return;
         if (e.key === "Enter") {
