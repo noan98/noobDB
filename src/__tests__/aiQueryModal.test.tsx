@@ -101,8 +101,8 @@ describe("AiQueryModal (#691)", () => {
     const req = runAiRequest.mock.calls[0][0];
     expect(req.task).toBe("nl2sql");
     expect(req.prompt).toBe("注文を集計して");
-    expect(req.system).toContain("PostgreSQL");
-    expect(req.system).toContain("- orders(id, amount)");
+    expect(req.systemCached).toContain("PostgreSQL");
+    expect(req.systemCached).toContain("- orders(id, amount)");
     expect(req.format.type).toBe("json_schema");
     act(() => {
       handlers?.onDelta?.({ streamId: "x", text: result });
@@ -124,7 +124,7 @@ describe("AiQueryModal (#691)", () => {
     renderWithProviders(ui({ readOnly: true }));
     await generate();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
-    expect(runAiRequest.mock.calls[0][0].system).toContain("READ-ONLY");
+    expect(runAiRequest.mock.calls[0][0].systemCached).toContain("READ-ONLY");
   });
 
   it("中止でき、アンマウント時は実行中ストリームを cancelStream する", async () => {

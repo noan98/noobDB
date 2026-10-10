@@ -7,7 +7,7 @@ import { dialectLabel } from "../ai/errorExplain";
 import {
   approxKb,
   buildNl2SqlPrompt,
-  buildNl2SqlSystem,
+  buildNl2SqlSystemParts,
   NL2SQL_FORMAT,
   parseNl2SqlResponse,
   resolveNl2SqlDatabase,
@@ -151,17 +151,20 @@ export function AiQueryModal(props: AiQueryModalProps) {
     }
     setDone(null);
     setState({ kind: "running" });
+    // スキーマを含む固定部分はプロンプトキャッシュの対象にする (#1473)。
+    const systemParts = buildNl2SqlSystemParts({
+      driver: props.driver,
+      database,
+      locale,
+      readOnly: props.readOnly,
+      tables: ready.tables,
+      foreignKeys: ready.foreignKeys,
+    });
     await stream.start(
       {
         task: "nl2sql",
-        system: buildNl2SqlSystem({
-          driver: props.driver,
-          database,
-          locale,
-          readOnly: props.readOnly,
-          tables: ready.tables,
-          foreignKeys: ready.foreignKeys,
-        }),
+        systemCached: systemParts.cached,
+        system: systemParts.variable || undefined,
         prompt: buildNl2SqlPrompt(request),
         settings: toAiSnapshot(ai),
         format: NL2SQL_FORMAT,
