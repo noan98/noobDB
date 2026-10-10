@@ -149,6 +149,7 @@ export interface PaneActions {
   handleNewTab: (paneId?: string) => void;
   handleOpenAiSql: (sql: string, database: string | null) => void;
   handleAiSqlAction: (action: AiSqlEditorAction) => void;
+  handleAiResultSummary: (tab: Tab) => void;
   handleOpenSqlFile: () => unknown;
   handleRegisterLocalTable: (result: QueryResult, sourceSql: string) => void;
   handleSaveSnippetFromEditor: (sql: string) => void;
@@ -1044,6 +1045,9 @@ export const PaneView = memo(
                           )
                         : undefined
                     }
+                    onSummarizeWithAi={gridStable.fn(`${tab.id}:aiSummary`, () =>
+                      actions.handleAiResultSummary(tab),
+                    )}
                     onExploreColumn={
                       sessionId
                         ? gridStable.fn(`${tab.id}:exploreColumn`, (target: { database?: string | null; table: string; column: string }) =>

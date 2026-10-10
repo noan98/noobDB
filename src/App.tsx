@@ -118,6 +118,7 @@ import { AiErrorExplain } from "./components/AiErrorExplain";
 import { findSqlRange, sqlForRangeReplace } from "./ai/errorExplain";
 import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sqlAssist";
 import type { AiSqlRequest } from "./components/AiSqlPanel";
+import type { AiResultSummaryRequest } from "./components/AiResultSummaryPanel";
 import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -296,6 +297,9 @@ const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
 // SQL の AI 解説 / 最適化案 (#695)。ボトムパネルを開くまで読み込まない。
+const AiResultSummaryPanel = lazy(() =>
+  import("./components/AiResultSummaryPanel").then((m) => ({ default: m.AiResultSummaryPanel })),
+);
 const AiSqlPanel = lazy(() =>
   import("./components/AiSqlPanel").then((m) => ({ default: m.AiSqlPanel })),
 );
@@ -1282,6 +1286,9 @@ export default function App() {
   // SQL の AI 解説 / 最適化案 (#695) の依頼。エディタの右クリック / パレットで埋まり、パネルが消費する。
   const [aiSqlRequest, setAiSqlRequest] = useState<AiSqlRequest | null>(null);
   const aiSqlSeqRef = useRef(0);
+  // 結果グリッドの AI 要約 (#1476) の依頼。ツールバーの「AI で要約」で埋まり、パネルが消費する。
+  const [aiResultSummaryRequest, setAiResultSummaryRequest] = useState<AiResultSummaryRequest | null>(null);
+  const aiResultSummarySeqRef = useRef(0);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
   // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
   const [showUsers, setShowUsers] = useState(false);
@@ -5464,7 +5471,47 @@ export default function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId の変化だけをトリガーにしたい
   useEffect(() => {
     setAiSqlRequest(null);
+    setAiResultSummaryRequest(null);
   }, [sessionId]);
+
+  // 結果グリッドの「AI で要約」(#1476): そのタブの結果 (列・取得済み行) と実行した SQL をパネルへ渡し、
+  // ボトムパネルの AI 要約タブを開く。送信はパネルが (必要な確認のあとで) 自動で行う。
+  const handleAiResultSummary = useCallback((tab: Tab) => {
+    if (!tab.result) return;
+    aiResultSummarySeqRef.current += 1;
+    setAiResultSummaryRequest({
+      id: aiResultSummarySeqRef.current,
+      tabId: tab.id,
+      sql: tab.lastExecutedSql,
+      database: tab.database ?? selectedProfile?.database ?? null,
+      columns: tab.result.columns,
+      rows: tab.result.rows,
+      autoRun: true,
+    });
+    setBottomPanelTab("aiResultSummary");
+  }, [selectedProfile?.database]);
+
+  // 要約の追加 SQL 案 (#1476) を依頼元のエディタの末尾へ挿入する。実行はしない。表示中のタブは
+  // CodeMirror へ dispatch して undo 履歴に載せ、裏のタブは `tab.sql` を書き換える。
+  const handleInsertAiResultSummarySql = useCallback(
+    async (req: AiResultSummaryRequest, sql: string): Promise<"inserted" | "closed"> => {
+      const tab = tabsRef.current.find((tt) => tt.id === req.tabId);
+      if (!tab) return "closed";
+      const pane = panesRef.current.find((p) => p.activeTabId === tab.id && p.tabIds.includes(tab.id));
+      const editor = pane ? editorRefs.current.get(pane.id) : undefined;
+      if (pane && editor) {
+        const current = editor.getText();
+        const text = sqlForRangeReplace(sql);
+        editor.replaceRange(current.length, current.length, current === "" ? text : `\n\n${text}`);
+      } else {
+        const current = tabSqlStore.resolve(tab.id, tab.sql);
+        const text = sqlForRangeReplace(sql);
+        updateTab(tab.id, { sql: current.trim() === "" ? text : `${current}\n\n${text}` });
+      }
+      return "inserted";
+    },
+    [tabSqlStore, updateTab, tabsRef, panesRef],
+  );
 
   // リライト案 (#695) を依頼元のエディタへ適用する。実行はしない。表示中のタブは CodeMirror へ
   // dispatch して undo 履歴に載せ、裏のタブは `tab.sql` を書き換える。起動時の範囲に元の SQL が
@@ -8690,7 +8737,7 @@ export default function App() {
   const paneActions = useStableCallbacks({
     applyEditsForTab, cancelRenameTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
     explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab: requestCloseTab, handleEditorDocChange,
-    handleAiSqlAction, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
+    handleAiSqlAction, handleAiResultSummary, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
@@ -8818,6 +8865,7 @@ export default function App() {
     // SQL の AI 解説タブ (#695) は AI 利用可で、解説 / 最適化の依頼があるときだけ開ける。
     aiAvailable,
     aiSqlTarget: !!aiSqlRequest,
+    aiResultSummaryTarget: !!aiResultSummaryRequest,
   };
   const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
   // 閉じているときに `<main>` の下端へ常設するパネルバー。中核機能 (プロセスモニタ・
@@ -8857,7 +8905,9 @@ export default function App() {
                   ? t("timelapseTitle")
                   : tab === "aiSql"
                     ? t("aiSqlTitle")
-                    : t("processTitle");
+                    : tab === "aiResultSummary"
+                      ? t("aiResultSummaryTitle")
+                      : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -9494,6 +9544,18 @@ export default function App() {
                         setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))
                       }
                       onApply={handleApplyAiSqlRewrite}
+                    />
+                  ) : activeBottomPanelTab === "aiResultSummary" ? (
+                    <AiResultSummaryPanel
+                      key={`${sessionId}:${aiResultSummaryRequest?.id ?? 0}`}
+                      sessionId={sessionId}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      isProduction={selectedProfile?.is_production ?? false}
+                      request={aiResultSummaryRequest}
+                      onRequestConsumed={() =>
+                        setAiResultSummaryRequest((r) => (r ? { ...r, autoRun: false } : r))
+                      }
+                      onInsert={handleInsertAiResultSummarySql}
                     />
                   ) : activeBottomPanelTab === "assertions" ? (
                     <AssertionsPanel

@@ -20,6 +20,7 @@ export const COLLAPSIBLE_TOOLBAR_ACTIONS = [
   "saveAsView",
   "registerLocal",
   "transfer",
+  "aiSummary",
   "autoRefresh",
 ] as const;
 
