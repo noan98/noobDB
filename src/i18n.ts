@@ -1067,6 +1067,11 @@ const en = {
   aiQueryRequestLabel: "What do you want to get?",
   aiQueryRequestPlaceholder: "e.g. Total last month's orders per customer, highest amount first",
   aiQueryGenerate: "Generate",
+  // 追い質問 (#1471)。AI の NL2SQL / SQL 解説・リライトで共通。
+  aiFollowUpLabel: "Follow-up",
+  aiFollowUpPlaceholder: "e.g. Only last month, or sort by amount descending",
+  aiFollowUpSend: "Refine",
+  aiFollowUpHint: "Sent together with your previous request and the answer (up to the last {count} exchanges).",
   aiQueryRunning: "Generating...",
   aiQueryCancel: "Stop",
   aiQueryCancelled: "Generation was stopped.",
@@ -5455,6 +5460,11 @@ const ja: Dict = {
   aiQueryRequestLabel: "どんな結果が欲しいですか?",
   aiQueryRequestPlaceholder: "例: 先月の注文を顧客ごとに集計して金額の大きい順に",
   aiQueryGenerate: "生成",
+  // 追い質問 (#1471)。AI の NL2SQL / SQL 解説・リライトで共通。
+  aiFollowUpLabel: "追い質問",
+  aiFollowUpPlaceholder: "例: 先月分だけに絞って / 金額の多い順に",
+  aiFollowUpSend: "修正を依頼",
+  aiFollowUpHint: "直前の依頼と回答を踏まえて送ります (直近 {count} 往復まで)。",
   aiQueryRunning: "生成中...",
   aiQueryCancel: "中止",
   aiQueryCancelled: "生成を中止しました。",

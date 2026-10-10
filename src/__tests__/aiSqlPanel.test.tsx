@@ -126,6 +126,47 @@ describe("AiSqlPanel (#695)", () => {
     expect(screen.getByText("CAVEAT1")).toBeTruthy();
   });
 
+  it("追い質問: 前回のプロンプト (マスク済み) と回答が履歴に載り、元の SQL のリテラルは送らない (#1471)", async () => {
+    renderWithProviders(ui(req({ sql: "SELECT * FROM users WHERE name = 'secret-value'" })));
+    await finish(explainJson);
+    await screen.findByText("OVERVIEW");
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "もっと短く" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    const first = runAiRequest.mock.calls[0][0];
+    const second = runAiRequest.mock.calls[1][0];
+    expect(first.history).toBeUndefined();
+    expect(second.task).toBe("sqlExplain");
+    expect(second.prompt).toBe("もっと短く");
+    expect(second.system).toBe(first.system);
+    expect(second.history).toEqual([
+      { role: "user", content: first.prompt },
+      { role: "assistant", content: explainJson },
+    ]);
+    expect(JSON.stringify(second)).not.toContain("secret-value");
+  });
+
+  it("追い質問: リライトでも同じ形式で再提案できる。送信方針が変わると出さない (#1471)", async () => {
+    const view = renderWithProviders(ui(req({ kind: "rewrite" })));
+    await finish(rewriteJson);
+    await screen.findByTestId("ai-sql-rewrite");
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "JOIN は使わないで" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    expect(runAiRequest.mock.calls[1][0].task).toBe("sqlRewrite");
+    expect(runAiRequest.mock.calls[1][0].history).toHaveLength(2);
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: rewriteJson });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByTestId("ai-sql-rewrite");
+    expect(screen.getByLabelText(t("aiFollowUpLabel"))).toBeTruthy();
+    // マスク設定を変えたら、記録時の履歴は使い回さない。
+    act(() => enable("schemaAndSql", false));
+    view.rerender(ui(req({ kind: "rewrite", autoRun: false })));
+    await waitFor(() => expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull());
+  });
+
   it("マスク有効なら文字列リテラルを送らない", async () => {
     renderWithProviders(ui(req({ sql: "SELECT * FROM users WHERE name = 'secret-value'" })));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());

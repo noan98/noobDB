@@ -48,6 +48,11 @@ export const aiCommands = {
      * 値は `system` 側に置く。
      */
     systemCached?: string | null;
+    /**
+     * 今回の `prompt` より前の会話 (#1471)。user / assistant 交互で user 始まり assistant 終わり。
+     * 省略すると従来どおりの単発。組み立ては `ai/conversation.ts`。
+     */
+    history?: ReadonlyArray<{ role: "user" | "assistant"; content: string }> | null;
   }) =>
     invoke<void>("run_ai_request", {
       streamId: params.streamId,
@@ -57,5 +62,6 @@ export const aiCommands = {
       settings: params.settings,
       format: params.format ?? null,
       systemCached: params.systemCached ?? null,
+      history: params.history ?? null,
     }),
 };

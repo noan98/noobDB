@@ -10,7 +10,10 @@
 //!   ただし Haiku 5.5 にはサーバー側フォールバックが無いので `fallbacks` は送らない。
 //! - system はブロック配列で送り、繰り返し同じになる固定部分 (スキーマなど) に
 //!   `cache_control` を付けてプロンプトキャッシュに載せる (#1473)。
+//! - 会話履歴 (`history`) があるときは、その最後の発言にもブレークポイントを置く (#1471)。
+//!   ブレークポイントは system 固定部分 + 履歴末尾の最大 2 個で、API の上限 (4 個) に収まる。
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::models::{AiEffort, AiModel};
@@ -27,6 +30,13 @@ pub const DEFAULT_MAX_TOKENS: u32 = 64_000;
 /// 短さを誤って「十分長い」と判定しにくい。
 const BYTES_PER_TOKEN: usize = 4;
 
+/// 会話履歴の 1 発言 (#1471)。`role` は `user` / `assistant`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
 /// 1 回の要求の仕様。モデルは `models::resolve_model` で解決済みのもの。
 #[derive(Debug, Clone)]
 pub struct AiRequestSpec {
@@ -38,6 +48,9 @@ pub struct AiRequestSpec {
     /// 十分長いときだけ `cache_control` が付く。キャッシュは**これを渡したときだけ**
     /// (オプトイン)。毎回変わる値を含みうる `system` 単独には付けない (書き込み割増の無駄払い防止)。
     pub system_cached: Option<String>,
+    /// 今回の `prompt` より前の会話 (user / assistant 交互、user 始まり assistant 終わり)。
+    /// 空なら従来どおり単発。最後の発言にプロンプトキャッシュのブレークポイントを置く (#1471)。
+    pub history: Vec<AiChatMessage>,
     pub prompt: String,
     pub max_tokens: u32,
     pub stream: bool,
@@ -82,12 +95,30 @@ fn mark_cacheable(block: &mut Value, model: AiModel) {
     }
 }
 
+/// `messages` 配列を作る。履歴の最後の発言だけブロック形式にして `cache_control` を試みる
+/// (直前までの会話をキャッシュ対象にし、今回の `prompt` は毎回変わるので付けない)。
+fn build_messages(spec: &AiRequestSpec) -> Value {
+    let last = spec.history.len().checked_sub(1);
+    let mut messages: Vec<Value> = Vec::with_capacity(spec.history.len() + 1);
+    for (i, m) in spec.history.iter().enumerate() {
+        if Some(i) == last {
+            let mut block = json!({ "type": "text", "text": m.content });
+            mark_cacheable(&mut block, spec.model);
+            messages.push(json!({ "role": m.role, "content": [block] }));
+        } else {
+            messages.push(json!({ "role": m.role, "content": m.content }));
+        }
+    }
+    messages.push(json!({ "role": "user", "content": spec.prompt }));
+    Value::Array(messages)
+}
+
 pub fn build_body(spec: &AiRequestSpec) -> Value {
     let mut body = json!({
         "model": spec.model.id(),
         "max_tokens": spec.max_tokens,
         "stream": spec.stream,
-        "messages": [{ "role": "user", "content": spec.prompt }],
+        "messages": build_messages(spec),
         "output_config": { "effort": spec.effort.as_str() },
     });
     if let Some(format) = &spec.format {
@@ -112,6 +143,7 @@ mod tests {
             effort: AiEffort::Medium,
             system: Some("sys".into()),
             system_cached: None,
+            history: Vec::new(),
             prompt: "hello".into(),
             max_tokens: DEFAULT_MAX_TOKENS,
             stream: true,
@@ -239,6 +271,70 @@ mod tests {
         assert_eq!(b["output_config"]["format"]["type"], "json_schema");
         assert_eq!(b["output_config"]["format"]["schema"]["type"], "object");
         assert_eq!(b["output_config"]["effort"], "medium");
+    }
+
+    fn msg(role: &str, content: &str) -> AiChatMessage {
+        AiChatMessage {
+            role: role.into(),
+            content: content.into(),
+        }
+    }
+
+    #[test]
+    fn single_shot_messages_have_only_the_prompt() {
+        let b = build_body(&spec());
+        let m = b["messages"].as_array().unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0]["content"], "hello");
+    }
+
+    #[test]
+    fn history_comes_before_the_prompt_in_order() {
+        let mut s = spec();
+        s.history = vec![msg("user", "q1"), msg("assistant", "a1")];
+        s.prompt = "q2".into();
+        let b = build_body(&s);
+        let m = b["messages"].as_array().unwrap();
+        assert_eq!(m.len(), 3);
+        assert_eq!(m[0]["role"], "user");
+        assert_eq!(m[0]["content"], "q1");
+        assert_eq!(m[1]["role"], "assistant");
+        assert_eq!(m[2]["role"], "user");
+        assert_eq!(m[2]["content"], "q2");
+    }
+
+    #[test]
+    fn short_history_gets_no_breakpoint() {
+        let mut s = spec();
+        s.history = vec![msg("user", "q1"), msg("assistant", "a1")];
+        let b = build_body(&s);
+        assert!(b["messages"][1]["content"][0]
+            .get("cache_control")
+            .is_none());
+        assert_eq!(b["messages"][1]["content"][0]["text"], "a1");
+    }
+
+    #[test]
+    fn long_history_marks_only_the_last_history_message() {
+        let mut s = spec();
+        s.history = vec![
+            msg("user", &"q".repeat(MIN_BYTES)),
+            msg("assistant", &"a".repeat(MIN_BYTES)),
+        ];
+        s.system = None;
+        s.system_cached = Some("c".repeat(MIN_BYTES));
+        let b = build_body(&s);
+        // 先頭の発言と今回のプロンプトは文字列のままで、ブレークポイントを持たない。
+        assert!(b["messages"][0]["content"].is_string());
+        assert!(b["messages"][2]["content"].is_string());
+        assert_eq!(
+            b["messages"][1]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        // system 固定部分 + 履歴末尾 = 2 個。API の上限 (4 個) を超えない。
+        let count = b.to_string().matches("cache_control").count();
+        assert_eq!(count, 2);
+        assert!(count <= 4);
     }
 
     #[test]
