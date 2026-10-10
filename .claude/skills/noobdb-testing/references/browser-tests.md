@@ -88,3 +88,14 @@
   / Windows: WebView2) とは描画エンジンが異なります。移行に伴う Web 層のレイアウト/
   見た目退行は十分捕捉できますが、実 webview 固有の描画差はカバー範囲外です
   (将来のフル Tauri E2E = Phase 3 の領域)。
+
+## flaky 対策: 限定 retry と揺らぎの可視化 (#1396)
+
+- `vitest.browser.config.ts` は `test.retry: 1` を設定している (描画 / 操作系のみ。2 回以上は
+  再試行しない)。**ビジュアル回帰 (`visual.browser.test.tsx`) は `describe` 側の `{ retry: 0 }`
+  で除外**している。再試行は真の pixel diff を「2 回目で通った」ことにして隠すため。
+  ビジュアル系のテストを足すときは同じく `retry: 0` を付ける。
+- retry で合格したテストは緑のままなので、カスタムレポーター `scripts/flaky-reporter.mjs`
+  (config の `reporters`) が Job Summary (`$GITHUB_STEP_SUMMARY`) に表と `::warning::` を出す
+  (fail はさせない)。Vitest の JSON reporter は `retryCount` を出さないためカスタムにしている。
+  ユニットテストは `pnpm run test:scripts`。表に同じテストが繰り返し出るなら retry で隠さず原因を直す。

@@ -16,7 +16,7 @@
     "lint": "biome lint --max-diagnostics=none src",
     "knip": "knip",
     "bundle-size": "node scripts/bundle-size.mjs",
-    "test:scripts": "node --test scripts/automerge-hold.test.mjs",
+    "test:scripts": "node --test scripts/automerge-hold.test.mjs scripts/flaky-reporter.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

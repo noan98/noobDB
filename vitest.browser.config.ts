@@ -54,6 +54,15 @@ export default defineConfig({
     // コールドスタートでも完走できるよう、テスト全体と locator 自動リトライ
     // (expect.element / expect.poll) の上限を広めに取る。
     testTimeout: 30_000,
+    // 描画 / 操作系のブラウザテストだけ 1 回だけ再試行する (#1396)。実 Chromium + 遅延
+    // ロードのコールドスタートで稀に起きる非決定的な落ち方 (タイミング競合) で必須チェック
+    // `frontend (build + browser tests)` が PR をブロックするのを避ける。2 回以上は再試行
+    // しない (本物の退行を隠さない)。ビジュアル回帰 (visual.browser.test.tsx) は真の pixel
+    // diff を隠すため、そのファイル側で `retry: 0` に上書きしている。再試行を要したテストは
+    // `scripts/flaky-reporter.mjs` (カスタムレポーター) が拾って Job Summary に出す (揺らぎの可視化)。
+    retry: 1,
+    // `default` に加え、retry で通ったテストを Job Summary / アノテーションに出す。
+    reporters: ["default", "./scripts/flaky-reporter.mjs"],
     expect: { poll: { timeout: 5_000 } },
     browser: {
       provider: playwright(),
