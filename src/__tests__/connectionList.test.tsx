@@ -357,6 +357,7 @@ describe("Database Explorer の階層 (#1112)", () => {
   });
 
   describe("テーブル / 列行のポインタ・ドラッグ挿入 (#1414)", () => {
+    const originalElementFromPoint = document.elementFromPoint;
     function setupTarget() {
       const editor = document.createElement("div");
       document.body.appendChild(editor);
@@ -368,10 +369,17 @@ describe("Database Explorer の階層 (#1112)", () => {
         setMarker: vi.fn(),
         insert,
       });
-      return { insert, cleanup: () => (unregister(), editor.remove()) };
+      return {
+        insert,
+        cleanup: () => {
+          unregister();
+          editor.remove();
+          document.elementFromPoint = originalElementFromPoint;
+        },
+      };
     }
     const ptr = (type: string, x: number, init: PointerEventInit = {}) =>
-      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, bubbles: true, cancelable: true, clientX: x, clientY: 1, ...init });
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, cancelable: true, clientX: x, clientY: 1, ...init });
 
     it("テーブル行は HTML5 の draggable ではなく、ポインタ移動でエディタへ挿入される", async () => {
       await openDb({ onInsertTableSelect: vi.fn() });

@@ -10,7 +10,7 @@ import { isSandboxShadowTableName } from "../sandbox";
 import { Callout } from "./Callout";
 import { SandboxSection } from "./SandboxSection";
 import { TreeDragGhost } from "./TreeDragGhost";
-import { useTreeDragSource } from "./useTreeDragSource";
+import { useTreeDragActive, useTreeDragSource } from "./useTreeDragSource";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
@@ -583,15 +583,18 @@ function useLazyBind<V>(ref: TooltipBindRef<V>): HoverBind<V> {
 /** ツリー行の単純テキストツールチップ (1 つの共有バブル + イベント委譲、#884)。 */
 function TreeTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<string> }) {
   const { hovered, bind } = useDelegatedTooltip();
+  // ドラッグ中は pointer capture で mouseleave が来ないため、元行のツールチップを抑止する (#1414)。
+  const dragging = useTreeDragActive();
   bindRef.current = bind;
-  return hovered ? <TooltipBubble label={hovered.label} anchor={hovered.rect} maxWidth="320px" /> : null;
+  return hovered && !dragging ? <TooltipBubble label={hovered.label} anchor={hovered.rect} maxWidth="320px" /> : null;
 }
 
 /** カラム行の詳細ホバーカード (`ColumnTooltip`)。 */
 function ColumnTooltipLayer({ bindRef }: { bindRef: TooltipBindRef<TableColumnInfo> }) {
   const { hovered, bind } = useDelegatedHover<TableColumnInfo>();
+  const dragging = useTreeDragActive();
   bindRef.current = bind;
-  return hovered ? <ColumnTooltip col={hovered.value} anchor={hovered.rect} /> : null;
+  return hovered && !dragging ? <ColumnTooltip col={hovered.value} anchor={hovered.rect} /> : null;
 }
 
 /** ローディングのスケルトン行。 */

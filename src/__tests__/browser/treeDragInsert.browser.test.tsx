@@ -47,12 +47,13 @@ function setup(onReorderProfiles: () => void) {
   } catch {
     // 無くても動く
   }
-  const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+  // 並べ替えが起きないことを確かめるため、下に別の接続を置いておく。
+  const profiles = [makeProfile({ id: "p-a", name: "Alpha DB" }), makeProfile({ id: "p-b", name: "Beta DB" })];
   return renderInBrowser(
     <div style={{ display: "flex", gap: "8px", height: "480px" }}>
       <div style={{ width: "280px" }}>
         <ConnectionList
-          profiles={[profile]}
+          profiles={profiles}
           activeProfileId="p-a"
           sessionId="s1"
           connectingId={null}
@@ -83,6 +84,7 @@ function pointer(type: string, x: number, y: number, init: PointerEventInit = {}
     pointerId: 1,
     isPrimary: true,
     button: 0,
+    buttons: 1,
     bubbles: true,
     cancelable: true,
     clientX: x,
@@ -142,5 +144,28 @@ test("エディタの外で離す / Esc でキャンセルすると何も挿入�
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   window.dispatchEvent(pointer("pointerup", to.x, to.y));
 
+  expect(view?.state.doc.toString()).toBe("");
+});
+
+test("テーブル行を下の接続行までドラッグして離しても、接続の並べ替えは起きない", async () => {
+  const onReorderProfiles = vi.fn();
+  const screen = await setup(onReorderProfiles);
+  await screen.getByRole("treeitem", { name: "db1" }).click();
+  const rowLocator = screen.getByRole("treeitem", { name: "tbl1" });
+  await expect.element(rowLocator).toBeVisible();
+  const row = rowLocator.element();
+  const editorEl = document.querySelector(".cm-editor") as HTMLElement;
+  const view = EditorView.findFromDOM(editorEl);
+  const betaRow = screen.getByText("Beta DB").element();
+  const from = center(row);
+  const to = center(betaRow);
+
+  row.dispatchEvent(pointer("pointerdown", from.x, from.y));
+  window.dispatchEvent(pointer("pointermove", from.x, from.y + 10));
+  window.dispatchEvent(pointer("pointermove", to.x, to.y));
+  window.dispatchEvent(pointer("pointerup", to.x, to.y));
+
+  await expect.poll(() => document.querySelector('[data-testid="tree-drag-ghost"]')).toBeNull();
+  expect(onReorderProfiles).not.toHaveBeenCalled();
   expect(view?.state.doc.toString()).toBe("");
 });

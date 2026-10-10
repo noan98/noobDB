@@ -2047,13 +2047,14 @@ html, body, #root {
 .cm-editor .cm-cursor,
 .cm-editor .cm-dropCursor { border-left-color: var(--accent); }
 
-/* スキーマツリー行をドラッグ中の挿入予定位置 (#1414)。幅ゼロの縦線をキャレットの代わりに立てる。 */
+/* スキーマツリー行をドラッグ中の挿入予定位置 (#1414)。幅ゼロ (レイアウトに影響しない) の縦線をキャレットの代わりに立てる。 */
 .cm-editor .cm-tree-drop-caret {
   display: inline-block;
   height: 1.2em;
   vertical-align: text-bottom;
-  margin-left: -1px;
-  border-left: 2px solid var(--accent);
+  width: 0;
+  /* 線は box-shadow で描く (border だと幅を持ち、ポインタ移動のたびに後続文字がずれる)。 */
+  box-shadow: -1px 0 0 1px var(--accent);
   pointer-events: none;
 }
 

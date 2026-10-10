@@ -10,7 +10,7 @@ import type { TreeDragItem } from "../components/treeDragInsert";
 const item: TreeDragItem = { kind: "column", database: "d", table: "t", column: "c" };
 
 function ptr(type: string, x: number, y: number, init: PointerEventInit = {}) {
-  return new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, bubbles: true, cancelable: true, clientX: x, clientY: y, ...init });
+  return new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, cancelable: true, clientX: x, clientY: y, ...init });
 }
 
 describe("treeDragStore (ポインタ・ドラッグ)", () => {
@@ -20,6 +20,7 @@ describe("treeDragStore (ポインタ・ドラッグ)", () => {
   let detach: () => void;
   let unregister: () => void;
   let hit: Element | null;
+  const originalElementFromPoint = document.elementFromPoint;
 
   beforeEach(() => {
     source = document.createElement("div");
@@ -36,7 +37,10 @@ describe("treeDragStore (ポインタ・ドラッグ)", () => {
     unregister = registerTreeDropTarget(target);
     detach = attachTreeDragSource(source, () => item);
   });
-  afterEach(() => {
+  afterEach(async () => {
+    // ドラッグ後に張られるクリック握りつぶしは setTimeout(0) で外れる。次のテストへ持ち越さない。
+    await new Promise((r) => setTimeout(r, 0));
+    document.elementFromPoint = originalElementFromPoint;
     detach();
     unregister();
     source.remove();
@@ -92,6 +96,69 @@ describe("treeDragStore (ポインタ・ドラッグ)", () => {
     window.dispatchEvent(ptr("pointermove", 40, 0));
     window.dispatchEvent(ptr("pointerup", 40, 0));
     expect(target.insert).not.toHaveBeenCalled();
+  });
+
+  it("しきい値未満なら click は source に届く (握りつぶされない)", () => {
+    const onClick = vi.fn();
+    source.addEventListener("click", onClick);
+    source.dispatchEvent(ptr("pointerdown", 0, 0));
+    window.dispatchEvent(ptr("pointermove", 2, 1));
+    window.dispatchEvent(ptr("pointerup", 2, 1));
+    source.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    source.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("buttons=0 の pointermove (pointerup の取り逃し) でキャンセルされ、次の pointerup で挿入されない", () => {
+    source.dispatchEvent(ptr("pointerdown", 0, 0));
+    window.dispatchEvent(ptr("pointermove", 30, 0));
+    expect(getTreeDragSnapshot().active).toBe(true);
+    window.dispatchEvent(ptr("pointermove", 31, 0, { buttons: 0 }));
+    expect(getTreeDragSnapshot().active).toBe(false);
+    expect(target.setMarker).toHaveBeenLastCalledWith(null);
+    window.dispatchEvent(ptr("pointerup", 40, 0));
+    expect(target.insert).not.toHaveBeenCalled();
+  });
+
+  it("window の blur でキャンセルされる", () => {
+    source.dispatchEvent(ptr("pointerdown", 0, 0));
+    window.dispatchEvent(ptr("pointermove", 30, 0));
+    expect(getTreeDragSnapshot().active).toBe(true);
+    window.dispatchEvent(new Event("blur"));
+    expect(getTreeDragSnapshot().active).toBe(false);
+    window.dispatchEvent(ptr("pointerup", 40, 0));
+    expect(target.insert).not.toHaveBeenCalled();
+  });
+
+  it("ドラッグ中にドロップ先が登録解除されたら dispatch せず、離しても挿入しない", () => {
+    source.dispatchEvent(ptr("pointerdown", 0, 0));
+    window.dispatchEvent(ptr("pointermove", 30, 0));
+    unregister();
+    vi.mocked(target.setMarker).mockClear();
+    window.dispatchEvent(ptr("pointermove", 35, 0));
+    window.dispatchEvent(ptr("pointerup", 35, 0));
+    expect(target.setMarker).not.toHaveBeenCalled();
+    expect(target.insert).not.toHaveBeenCalled();
+    unregister = registerTreeDropTarget(target);
+  });
+
+  it("位置が変わらない pointermove ではマーカーを更新し直さない", () => {
+    source.dispatchEvent(ptr("pointerdown", 0, 0));
+    window.dispatchEvent(ptr("pointermove", 30, 0));
+    window.dispatchEvent(ptr("pointermove", 31, 0));
+    window.dispatchEvent(ptr("pointermove", 32, 0));
+    expect(target.setMarker).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(ptr("pointerup", 32, 0));
+  });
+
+  it("しきい値未満の Esc は伝播を止めない (ドラッグ開始後の Esc だけ止める)", () => {
+    const onKey = vi.fn();
+    document.body.addEventListener("keydown", onKey);
+    source.dispatchEvent(ptr("pointerdown", 0, 0));
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(onKey).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(ptr("pointerup", 0, 0));
+    document.body.removeEventListener("keydown", onKey);
   });
 
   it("pointercancel でも挿入せず後始末する", () => {

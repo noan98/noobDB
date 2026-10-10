@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { createRef } from "react";
@@ -327,8 +327,12 @@ describe("QueryEditor.requestAiSql (#695)", () => {
 
 
 describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿入 (#1414)", () => {
+  const originalElementFromPoint = document.elementFromPoint;
   beforeEach(() => {
     setLocale("en");
+  });
+  afterEach(() => {
+    document.elementFromPoint = originalElementFromPoint;
   });
 
   function mount(sql: string, driver = "mysql") {
@@ -336,7 +340,7 @@ describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿
     const editorEl = document.querySelector(".cm-editor") as HTMLElement;
     const view = EditorView.findFromDOM(editorEl) as EditorView;
     // jsdom にはレイアウトが無く posAtCoords / elementFromPoint が使えないので固定する。
-    view.posAtCoords = () => 3;
+    view.posAtCoords = vi.fn(() => 3) as unknown as EditorView["posAtCoords"];
     document.elementFromPoint = () => editorEl;
     return { view };
   }
@@ -346,7 +350,7 @@ describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿
     document.body.appendChild(source);
     const detach = attachTreeDragSource(source, () => item);
     const ev = (type: string, x: number, extra: PointerEventInit = {}) =>
-      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, bubbles: true, clientX: x, clientY: 1, ...extra });
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, clientX: x, clientY: 1, ...extra });
     source.dispatchEvent(ev("pointerdown", 0));
     window.dispatchEvent(ev("pointermove", 40));
     window.dispatchEvent(ev("pointerup", 40, init));
@@ -358,6 +362,12 @@ describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿
     const { view } = mount("ab cd");
     drag({ kind: "table", database: "shop", table: "orders" });
     expect(view.state.doc.toString()).toBe("ab SELECT * FROM `shop`.`orders`cd");
+  });
+
+  it("文書外 (ガター等) でも最寄りの位置に寄せるため posAtCoords は precise=false で呼ぶ", () => {
+    const { view } = mount("ab cd");
+    drag({ kind: "table", database: "shop", table: "orders" });
+    expect(vi.mocked(view.posAtCoords)).toHaveBeenCalledWith(expect.objectContaining({ x: 40 }), false);
   });
 
   it("列行は表.列、Alt を押していれば列名のみを挿入する", () => {
@@ -376,7 +386,7 @@ describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿
     document.body.appendChild(source);
     const detach = attachTreeDragSource(source, () => ({ kind: "table", database: "d", table: "t" }));
     const ev = (type: string, x: number) =>
-      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, bubbles: true, clientX: x, clientY: 1 });
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, clientX: x, clientY: 1 });
     source.dispatchEvent(ev("pointerdown", 0));
     window.dispatchEvent(ev("pointermove", 40));
     expect(document.querySelector(".cm-tree-drop-caret")).not.toBeNull();

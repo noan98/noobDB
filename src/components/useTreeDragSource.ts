@@ -24,3 +24,9 @@ export function useTreeDragSource(item: TreeDragItem): RefCallback<HTMLElement> 
 export function useTreeDragSnapshot(): TreeDragSnapshot {
   return useSyncExternalStore(subscribeTreeDrag, getTreeDragSnapshot, getTreeDragSnapshot);
 }
+
+/** ドラッグ中かどうかだけを購読する (位置の更新では再レンダーしない)。ツールチップの抑止用。 */
+export function useTreeDragActive(): boolean {
+  const active = () => getTreeDragSnapshot().active;
+  return useSyncExternalStore(subscribeTreeDrag, active, active);
+}

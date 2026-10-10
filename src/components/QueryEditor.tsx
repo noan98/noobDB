@@ -1059,10 +1059,10 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     });
     viewRef.current = view;
     // スキーマツリー行のドラッグ挿入のドロップ先 (#1414)。ポインタ位置 → キャレット位置は
-    // `posAtCoords` で決め、座標が文書の外 (空のエディタなど) なら末尾にする。
+    // `posAtCoords` で決める。文書の外 (行番号ガター・余白) は最寄りの位置に寄せる (precise=false)。
     const unregisterTreeDrop = registerTreeDropTarget({
       element: view.dom,
-      posAtCoords: (x, y) => view.posAtCoords({ x, y }) ?? view.state.doc.length,
+      posAtCoords: (x, y) => view.posAtCoords({ x, y }, false),
       setMarker: (pos) => view.dispatch({ effects: treeDropMarkerEffect.of(pos) }),
       insert: (item, pos, qualified) => {
         const text = treeItemInsertText(driverRef.current, item, qualified);

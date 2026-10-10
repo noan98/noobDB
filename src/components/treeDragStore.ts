@@ -99,10 +99,26 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
   const prevUserSelect = document.body.style.userSelect;
   const prevCursor = document.body.style.cursor;
 
+  // 直前にマーカーを出した位置。同じなら dispatch しない (pointermove は高頻度)。
+  let lastPos: number | null | undefined;
+
+  // ドラッグ中にエディタがアンマウントされる (Ctrl+W 等) と登録が外れる。解除済みのビューへ
+  // dispatch しないよう、使う直前に登録中か確認する。
   const setCurrent = (next: TreeDropTarget | null, x: number, y: number) => {
-    if (current && current !== next) current.setMarker(null);
-    current = next;
-    current?.setMarker(current.posAtCoords(x, y));
+    if (current && current !== next) {
+      if (targets.has(current)) current.setMarker(null);
+      lastPos = undefined;
+    }
+    current = next && targets.has(next) ? next : null;
+    if (!current) {
+      lastPos = undefined;
+      return;
+    }
+    const pos = current.posAtCoords(x, y);
+    if (pos !== lastPos) {
+      lastPos = pos;
+      current.setMarker(pos);
+    }
   };
 
   const cleanup = () => {
@@ -110,6 +126,7 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     window.removeEventListener("pointerup", onUp, true);
     window.removeEventListener("pointercancel", onCancel, true);
     window.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("blur", onBlur);
     setCurrent(null, 0, 0);
     if (dragged) {
       document.body.style.userSelect = prevUserSelect;
@@ -135,6 +152,12 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
 
   const onMove = (e: PointerEvent) => {
     if (e.pointerId !== down.pointerId) return;
+    // ウィンドウ外で離した / Alt+Tab 等で pointerup を取り逃すと、ボタンが離れているのに
+    // 動きだけ届く。そのままだと次の普通のクリックがドロップ扱いになるので、ここで打ち切る。
+    if (e.buttons === 0) {
+      onCancel(e);
+      return;
+    }
     altKey = e.altKey;
     phase = movePhase(phase, e.clientX, e.clientY);
     if (phase.kind !== "dragging") return;
@@ -158,7 +181,7 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     const wasDragged = dragged;
     const { drop } = releasePhase(phase);
     phase = IDLE_PHASE;
-    const target = current;
+    const target = current && targets.has(current) ? current : null;
     const pos = target ? target.posAtCoords(e.clientX, e.clientY) : null;
     cleanup();
     if (wasDragged) swallowClick();
@@ -173,14 +196,23 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     if (wasDragged) swallowClick();
   };
 
+  // フォーカスを失った (Alt+Tab 等) ら pointerup は届かないので、その場で打ち切る。
+  const onBlur = () => {
+    phase = cancelPhase();
+    cleanup();
+  };
+
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
+    // しきい値未満 (まだクリック扱い) の Esc は他の処理 (モーダルを閉じる等) に譲る。
+    if (!dragged) return;
     e.stopPropagation();
     // ボタンを離すまで pointerup を待ち、離した時点で何もせず終わる (クリックも握りつぶす)。
     phase = cancelPhase();
     setCurrent(null, 0, 0);
     publish(INACTIVE);
-    window.removeEventListener("pointermove", onMove, true);
+    // pointermove は外さない: キャンセル後も buttons===0 を検知して後始末するため。
+    // (phase は idle なので再びゴーストが出ることはない)
     window.removeEventListener("keydown", onKey, true);
   };
 
@@ -188,4 +220,5 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
   window.addEventListener("pointerup", onUp, true);
   window.addEventListener("pointercancel", onCancel, true);
   window.addEventListener("keydown", onKey, true);
+  window.addEventListener("blur", onBlur);
 }
