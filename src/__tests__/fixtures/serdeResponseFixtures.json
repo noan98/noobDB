@@ -4362,6 +4362,7 @@
           "pgSchema": "public",
           "routines": false,
           "singleTransaction": false,
+          "tables": null,
           "triggers": false
         },
         "output_path": "/tmp/dump.sql"
