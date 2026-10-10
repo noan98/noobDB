@@ -249,6 +249,11 @@
   --brand-indigo: #4f6bf6;
   --brand-violet: #8b5cf6;
   --brand-gradient: linear-gradient(135deg, var(--brand-blue), var(--brand-violet));
+  /* ロゴマーク (BrandMark / favicon / アプリアイコン) の地色と差し色。地色は
+     ダーク系テーマでだけ一段明るい紺に上書きし、暗い面に沈まないようにする
+     (下の `:root[data-theme$="dark"]`)。値は brand.tsx の定数と一致。 */
+  --brand-mark-bg: #12355b;
+  --brand-mark-accent: #2dd4bf;
 
   /* ── Hero wash (#1163) ────────────────────────────────────────────────
      起動直後の「第一印象」画面 (WelcomeView / ProfileCardGrid) のルートに敷く、
@@ -452,6 +457,11 @@
   line-height: var(--leading-normal);
   color: var(--text);
   background: var(--bg);
+}
+
+:root[data-theme$="dark"] {
+  /* ダーク系テーマ共通 (名前が "dark" で終わる)。ロゴの地色だけ一段明るくする。 */
+  --brand-mark-bg: #1d4a7a;
 }
 
 :root[data-theme="dark"] {

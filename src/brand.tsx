@@ -1,24 +1,24 @@
 import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
-import { useId } from "react";
 
 /**
  * ブランドビジュアルアイデンティティの単一の出所 (#619)。
  *
- * アプリアイコン (`src-tauri/icons/`) は「noobDB の頭文字 *n* を象ったアーチが
- * データベースのシリンダを抱える」モチーフを青→紫グラデーションで描く。これまで
- * タイトルバーには無関係なマスコット SVG がインラインで埋まっており、インストール
- * 済みアイコンと**ブランドがちぐはぐ**だった。ここに正となるロゴマーク (`BrandMark`)
- * とワードマーク (`Wordmark` / `BrandLockup`) を集約し、タイトルバー・スプラッシュ・
- * 将来のオンボーディングが同じマークを参照できるようにする。
+ * ロゴマークは「角丸の紺の地に、noobDB の頭文字 *n* を白い太線で描き、右脚に
+ * ティールのバーを差し込む」図像。アプリアイコン (`src-tauri/icons/`) ・favicon
+ * (`public/brand-icon.svg`) ・画面内のマーク (`BrandMark`) が同じ形と色を持つ。
+ * ここに正となるロゴマーク (`BrandMark`) とワードマーク (`Wordmark` /
+ * `BrandLockup`) を集約し、タイトルバー・スプラッシュ・ウェルカム画面が同じマークを
+ * 参照できるようにする。
  *
  * ## 配色方針
  *
- * - ブランドカラーはテーマ (light/dark) を跨いで**固定** (`App.css` の `--brand-*`、
- *   下の定数とも一致)。アクセント色 (`--accent`、接続ごとに動的) とは独立で、第一
- *   印象を環境差で揺らさない。
- * - マークは自己完結した塗り (グラデーションのアーチ + 明色のシリンダ) を持つため、
- *   light/dark どちらのサーフェス上でも破綻しない。`tone="mono"` は周囲の文字色
- *   (`currentColor`) 1 色で描き、低彩度な文脈 (ローディングのインライン等) で使う。
+ * - マークの地色 (`--brand-mark-bg`) はライト系で濃紺、ダーク系テーマ
+ *   (`data-theme` が "dark" で終わる) では一段明るい紺に切り替え、暗い面に沈ませない。
+ *   差し色のティール (`--brand-mark-accent`) はテーマを跨いで固定。
+ * - 青→紫のブランドグラデーション (`--brand-*`) はマークとは独立に、ヒーロー背景・
+ *   サンドボックス帯などの面の装飾に使い続ける (テーマを跨いで固定)。
+ * - `tone="mono"` は周囲の文字色 (`currentColor`) 1 色で描き、低彩度な文脈
+ *   (ローディングのインライン等) で使う。
  *
  * 依存ライブラリは増やさず SVG を直接持つ (`illustrations.tsx` と同じ方針)。
  */
@@ -29,8 +29,14 @@ export const BRAND_BLUE = "#3b82f6";
 export const BRAND_INDIGO = "#4f6bf6";
 export const BRAND_VIOLET = "#8b5cf6";
 
-/** ブランドグラデーションの停止色 (青→紫)。`BrandMark` のアーチ塗りに使う。 */
+/** ブランドグラデーションの停止色 (青→紫)。ヒーロー背景などの面の装飾に使う。 */
 export const BRAND_GRADIENT_STOPS: readonly [string, string] = [BRAND_BLUE, BRAND_VIOLET];
+
+/** ロゴマークの地色 (ライト系) / ダーク系テーマでの地色 / 差し色 (ティール)。
+ *  `App.css` の `--brand-mark-*` と favicon に一致させる (`brand.test.ts`)。 */
+export const BRAND_MARK_BG = "#12355b";
+export const BRAND_MARK_BG_DARK = "#1d4a7a";
+export const BRAND_MARK_ACCENT = "#2dd4bf";
 
 /** マークの描画トーン。 */
 export type BrandTone = "brand" | "mono";
@@ -39,25 +45,20 @@ export interface BrandMarkProps extends Omit<HTMLChakraProps<"svg">, "css"> {
   /** 一辺のピクセルサイズ (正方形)。既定 24。 */
   size?: number;
   /**
-   * `"brand"` (既定): 青→紫グラデーションのアーチ + 明色シリンダのフルカラー。
+   * `"brand"` (既定): 紺の地 + 白い *n* + ティールのバーのフルカラー。
    * `"mono"`: すべて `currentColor` 1 色 (周囲の文字色を継承)。
    */
   tone?: BrandTone;
 }
 
 /**
- * ブランドロゴマーク。noobDB の *n* を象ったアーチがデータベースシリンダを抱える
- * 図像で、アプリアイコンを平面化した正となるベクタ。`size` でスケールし、`tone` で
- * フルカラー / モノクロを切り替える。装飾用途のため既定で `aria-hidden`。
+ * ブランドロゴマーク。アプリアイコンを平面化した正となるベクタで、`size` で
+ * スケールし、`tone` でフルカラー / モノクロを切り替える。装飾用途のため既定で
+ * `aria-hidden`。
  */
 export function BrandMark({ size = 24, tone = "brand", ...rest }: BrandMarkProps) {
-  // グラデーション ID はインスタンスごとに一意でないと、同一ページに複数の
-  // BrandMark がある場合に SVG の id 衝突で塗りが壊れる。React の useId で隔離する。
-  const gid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  const arch = tone === "brand" ? `url(#${gid}-arch)` : "currentColor";
-  // シリンダ面。brand は淡い水色面 + 濃紺の輪郭、mono は地を抜いて currentColor の線画。
-  const discFill = tone === "brand" ? "#eaf2ff" : "none";
-  const discStroke = tone === "brand" ? "#1e3a8a" : "currentColor";
+  const isBrand = tone === "brand";
+  const bg = "var(--brand-mark-bg)";
 
   return (
     <chakra.svg
@@ -70,41 +71,34 @@ export function BrandMark({ size = 24, tone = "brand", ...rest }: BrandMarkProps
       role="img"
       {...rest}
     >
-      {tone === "brand" && (
-        <defs>
-          <linearGradient id={`${gid}-arch`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor={BRAND_BLUE} />
-            <stop offset="100%" stopColor={BRAND_VIOLET} />
-          </linearGradient>
-        </defs>
-      )}
-      {/* n のアーチ (∩): 太い丸ストロークの反転 U。左脚=青寄り、右脚=紫寄りへ
-          グラデーションが流れる。データベースを「抱える」シルエット。 */}
-      <path
-        d="M11 41 L11 23 A13 13 0 0 1 37 23 L37 41"
-        fill="none"
-        stroke={arch}
-        strokeWidth="7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+      {/* 角丸の地。mono は塗らずに輪郭だけ描く。 */}
+      <rect
+        x={isBrand ? 3 : 4}
+        y={isBrand ? 3 : 4}
+        width={isBrand ? 42 : 40}
+        height={isBrand ? 42 : 40}
+        rx="10"
+        fill={isBrand ? bg : "none"}
+        stroke={isBrand ? "none" : "currentColor"}
+        strokeWidth={isBrand ? undefined : 2}
       />
-      {/* アーチが抱えるデータベースシリンダ (3 段)。 */}
-      <g stroke={discStroke} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round">
-        {/* 胴体 (上楕円の縁から下楕円まで) */}
-        <path
-          d="M17 21 L17 33 A7 3.2 0 0 0 31 33 L31 21"
-          fill={discFill}
-        />
-        {/* 天面の楕円 */}
-        <ellipse cx="24" cy="21" rx="7" ry="3.2" fill={discFill} />
-        {/* 段の区切り */}
-        <path d="M17 25 A7 3.2 0 0 0 31 25" fill="none" />
-        <path d="M17 29 A7 3.2 0 0 0 31 29" fill="none" />
-      </g>
-      {/* 左上のスパーク (アイコンと同じ「きらめき」。brand はブランド青、mono は線色)。 */}
+      {/* 頭文字 n のアーチ。 */}
       <path
-        d="M12 9 L13.4 12.6 L17 14 L13.4 15.4 L12 19 L10.6 15.4 L7 14 L10.6 12.6 Z"
-        fill={tone === "brand" ? BRAND_BLUE : "currentColor"}
+        d="M14 35 V22 A8 8 0 0 1 30 22 V35"
+        fill="none"
+        stroke={isBrand ? "#ffffff" : "currentColor"}
+        strokeWidth="5.5"
+      />
+      {/* 右脚に差し込むバー。brand は地色の縁取りで脚から切り離して見せる。 */}
+      <rect
+        x="19"
+        y="24.75"
+        width="16"
+        height="5"
+        rx="2.5"
+        fill={isBrand ? "var(--brand-mark-accent)" : "currentColor"}
+        stroke={isBrand ? bg : "none"}
+        strokeWidth={isBrand ? 2 : undefined}
       />
     </chakra.svg>
   );

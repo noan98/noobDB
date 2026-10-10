@@ -9,14 +9,17 @@ import {
   BRAND_INDIGO,
   BRAND_VIOLET,
   BRAND_GRADIENT_STOPS,
+  BRAND_MARK_BG,
+  BRAND_MARK_BG_DARK,
+  BRAND_MARK_ACCENT,
 } from "../brand";
 import { SANDBOX_BAND_COLOR } from "../sandbox";
 
 /**
  * ブランドカラー (#619) の整合性を固定する。色値は 3 か所に出る:
  *   - `brand.tsx` の定数 (TS から参照)
- *   - `App.css` の `--brand-*` (CSS / スプラッシュのグラデーションが参照)
- *   - `public/brand-icon.svg` (favicon)
+ *   - `App.css` の `--brand-*` / `--brand-mark-*` (CSS / スプラッシュ / ロゴマークが参照)
+ *   - `public/brand-icon.svg` (favicon。ロゴマークの色)
  * いずれかだけ変えるとブランドがちぐはぐになるため、ここで一致を検証してドリフトを
  * 防ぐ。
  */
@@ -48,9 +51,19 @@ describe("brand colors (#619)", () => {
     expect(brandCss).toContain("--sandbox-solid: var(--brand-violet)");
   });
 
-  it("matches the favicon gradient stops", () => {
-    expect(faviconSvg).toContain(`stop-color="${BRAND_BLUE}"`);
-    expect(faviconSvg).toContain(`stop-color="${BRAND_VIOLET}"`);
+  it("ロゴマークの色が App.css と favicon で一致する", () => {
+    for (const hex of [BRAND_MARK_BG, BRAND_MARK_BG_DARK, BRAND_MARK_ACCENT]) {
+      expect(hex).toMatch(HEX);
+    }
+    expect(brandCss).toContain(`--brand-mark-bg: ${BRAND_MARK_BG}`);
+    expect(brandCss).toContain(`--brand-mark-accent: ${BRAND_MARK_ACCENT}`);
+    // ダーク系テーマ (名前が "dark" で終わる) だけ地色を明るい紺に上書きする。
+    const dark = brandCss.match(/:root\[data-theme\$="dark"\]\s*\{([\s\S]*?)\n\}/);
+    expect(dark, ':root[data-theme$="dark"] ブロックがある').toBeTruthy();
+    expect(dark![1]).toContain(`--brand-mark-bg: ${BRAND_MARK_BG_DARK}`);
+    // favicon は CSS 変数を使えないため、ライト系の地色と差し色を直書きする。
+    expect(faviconSvg).toContain(`fill="${BRAND_MARK_BG}"`);
+    expect(faviconSvg).toContain(`fill="${BRAND_MARK_ACCENT}"`);
   });
 
   /**
