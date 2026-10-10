@@ -52,7 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
-import { autoTitleOnRun, copyTitle, deriveQueryTabTitle, resolveNewTabTitle, resolveRename, resolveRestoredTitle } from "./tabTitle";
+import { autoTitleOnRun, copyTitle, deriveQueryTabTitle, persistedTitleManual, resolveNewTabTitle, resolveRename, resolveRestoredTitle } from "./tabTitle";
 import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import {
   REOPEN_CLOSED_TAB_COMMAND_ID,
@@ -1042,8 +1042,10 @@ function toPersistedTab(
   liveGridScrollTop?: number,
 ): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
-  // 自動名 (false) も書き出す: フラグ無しの旧データと区別し、復元時に明示タイトルを手動扱いへ推定しないため。
-  if (tab.kind === "query" && typeof tab.titleManual === "boolean") out.titleManual = tab.titleManual;
+  // query タブは自動名 (false) も必ず書き出す: フラグ無しの旧データと区別し、復元時に
+  // 自動名を手動扱いへ推定しないため (判定は persistedTitleManual)。
+  const titleManual = persistedTitleManual(tab);
+  if (titleManual !== undefined) out.titleManual = titleManual;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   // Carry the Query Builder snapshot through so the inputs come back on

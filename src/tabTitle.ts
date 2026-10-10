@@ -126,3 +126,16 @@ export function resolveRestoredTitle(
   const r = resolveNewTabTitle({ kind: "query", ...saved }, untitled);
   return { title: r.title, titleManual: r.titleManual === true };
 }
+
+/**
+ * 保存データに書く `titleManual` (#1390)。query タブは常に boolean を書く。
+ *
+ * 動いているタブは今のバージョンで作られたものなので、フラグが無い (`undefined`) のは
+ * 「手動名ではない」を意味する。分割ペインの新規タブのように `addTab` を通らない経路では
+ * `titleManual` が付かないため、`undefined` を書かずにおくと、復元時に
+ * {@link resolveRestoredTitle} が「フラグ無しの旧データ」と判断し、実行後に SQL を
+ * 書き換えたタブの自動名を手動名として固定してしまう。table / EXPLAIN タブは書かない。
+ */
+export function persistedTitleManual(tab: Pick<TitledTab, "kind" | "titleManual">): boolean | undefined {
+  return tab.kind === "query" ? tab.titleManual === true : undefined;
+}

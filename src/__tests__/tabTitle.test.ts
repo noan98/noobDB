@@ -6,6 +6,7 @@ import {
   deriveQueryTabTitle,
   resolveNewTabTitle,
   copyTitle,
+  persistedTitleManual,
   resolveRename,
   resolveRestoredTitle,
 } from "../tabTitle";
@@ -160,5 +161,30 @@ describe("resolveRestoredTitle", () => {
   });
   it("旧データで SQL 由来のタイトルは自動のまま", () => {
     expect(resolveRestoredTitle({ title: "SELECT 1", sql: "SELECT 1" }, UNTITLED)).toEqual({ title: "SELECT 1", titleManual: false });
+  });
+});
+
+describe("persistedTitleManual", () => {
+  it("query タブはフラグが無くても boolean を書く (無しは自動名)", () => {
+    expect(persistedTitleManual({ kind: "query" })).toBe(false);
+    expect(persistedTitleManual({ kind: "query", titleManual: false })).toBe(false);
+    expect(persistedTitleManual({ kind: "query", titleManual: true })).toBe(true);
+  });
+  it("table / EXPLAIN タブは書かない", () => {
+    expect(persistedTitleManual({ kind: "table", titleManual: true })).toBeUndefined();
+    expect(persistedTitleManual({ kind: "explain" })).toBeUndefined();
+  });
+  it("分割ペインの新規タブ (フラグ無し) を自動命名後に SQL だけ書き換えて保存・復元しても、手動名にならない", () => {
+    // addTab を通らない新規タブは titleManual が付かず、自動命名 (autoNameTab) もフラグを足さない。
+    const tab = { kind: "query" as const, title: "SELECT * FROM fruits" };
+    const saved = {
+      title: tab.title,
+      titleManual: persistedTitleManual(tab),
+      sql: "SELECT * FROM fruits zz",
+    };
+    expect(resolveRestoredTitle(saved, UNTITLED)).toEqual({
+      title: "SELECT * FROM fruits",
+      titleManual: false,
+    });
   });
 });
