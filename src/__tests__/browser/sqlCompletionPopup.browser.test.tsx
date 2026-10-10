@@ -156,7 +156,9 @@ describe("SQL 補完ポップアップ (実ブラウザ)", () => {
     expect(invocationsOf("describe_table").length).toBe(1);
     // 閉じて、スキーマ更新 (databaseSchema の参照が変わる) 後に開き直す。
     document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    const fkCalls = invocationsOf("foreign_keys").length;
     bumpSchema();
+    await expect.poll(() => invocationsOf("foreign_keys").length, { timeout: 5_000 }).toBeGreaterThan(fkCalls);
     await expect
       .poll(
         () => {
@@ -166,5 +168,11 @@ describe("SQL 補完ポップアップ (実ブラウザ)", () => {
         { timeout: 5_000 },
       )
       .toBeGreaterThan(1);
+    // スキーマ更新後も FK 列の link アイコンは付いたまま。
+    await expect
+      .poll(() => (openCompletion(), document.querySelector(".cm-completionIcon-link svg") !== null), {
+        timeout: 5_000,
+      })
+      .toBe(true);
   });
 });

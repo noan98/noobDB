@@ -230,7 +230,7 @@ describe("completionIconName", () => {
     expect(completionIconName("property")).toBe("columns");
     expect(completionIconName("variable")).toBe("columns"); // SELECT 別名
     expect(completionIconName("type")).toBe("database"); // lang-sql 自動生成の階層
-    expect(completionIconName("constant")).toBe("link");
+    expect(completionIconName("constant")).toBe("table");
     expect(completionIconName("unknown")).toBeNull();
     expect(completionIconName(undefined)).toBeNull();
   });

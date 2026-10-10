@@ -10,7 +10,11 @@ import { TabSqlStore } from "../tabSqlStore";
 
 // #1308: タブを切り替えても EditorView を作り直さず、EditorState の差し替えで済ませる。
 // `new EditorView` の回数と、補完 (`sql()` 拡張) の組み立て回数を数えて固定する。
-const counters = vi.hoisted(() => ({ views: 0, sqlExt: 0 }));
+const counters = vi.hoisted(() => ({
+  views: 0,
+  sqlExt: 0,
+  lastSchema: undefined as unknown,
+}));
 
 // FK の取得 (補完の外部キー列の種別・#1413) はテストごとに差し替える。
 const apiMock = vi.hoisted(() => ({ foreignKeys: vi.fn() }));
@@ -36,6 +40,7 @@ vi.mock("@codemirror/lang-sql", async (importOriginal) => {
     ...actual,
     sql: (...args: Parameters<typeof actual.sql>) => {
       counters.sqlExt += 1;
+      counters.lastSchema = args[0]?.schema;
       return actual.sql(...args);
     },
   };
@@ -272,5 +277,32 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
     rerender(el(schema("t1")));
     await act(async () => {});
     expect(counters.sqlExt).toBe(before + 1); // schema 参照の変更のみ
+  });
+
+  it("スキーマ更新で FK を取り直しても、FK 列の種別と参照先が消えない (#1413)", async () => {
+    apiMock.foreignKeys.mockResolvedValue([
+      { table: "t1", column: "id", referenced_table: "u", referenced_column: "id", constraint_name: null },
+    ]);
+    const el = (databaseSchema: TableSchema[]) => (
+      <QueryEditor
+        tabId="a"
+        onRun={() => {}}
+        initialSql="SELECT 1"
+        sessionId="s1"
+        defaultDatabase="db"
+        databaseSchema={databaseSchema}
+      />
+    );
+    const idCol = () => {
+      const ns = counters.lastSchema as Record<string, { children: Array<{ type: string; detail?: string }> }>;
+      return ns.t1.children[0];
+    };
+    const { rerender } = renderWithProviders(el(schema("t1")));
+    await act(async () => {});
+    expect(idCol()).toMatchObject({ type: "fk", detail: "→ u.id" });
+    // DDL 後の取り直し (同じ FK が返る)。再構成が FK 無しで走ったままにならない。
+    rerender(el(schema("t1")));
+    await act(async () => {});
+    expect(idCol()).toMatchObject({ type: "fk", detail: "→ u.id" });
   });
 });

@@ -7,7 +7,7 @@ import type { ForeignKey, TableColumnInfo } from "../api/tauri";
  * DOM には依存せず、`QueryEditor.tsx` が `sql({ schema })` に渡し、DOM への描画は
  * `completionInfoPanel.ts` が担う。
  *
- * 種別 (`Completion.type`) は次の語彙で、`completionIcons.ts` がアイコンに対応づける:
+ * 種別 (`Completion.type`) は次の語彙で、`completionIcons.tsx` がアイコンに対応づける:
  * `table` (テーブル) / `database` (DB 名前空間) / `column` (列) / `fk` (外部キー列) /
  * `function` (関数) / `keyword` / `datatype` (データ型名)。主キーは補完時点では見分けず、
  * 情報パネルに出す。
@@ -25,7 +25,7 @@ export interface SchemaNamespaceOptions {
   idQuote: string;
   /** 識別子の大文字小文字を区別しない方言か (クォート要否の判定に使う)。 */
   idCaseInsensitive: boolean;
-  /** 外部キー一覧。列の種別 (`key`) と `→ 参照先` の補足に使う。 */
+  /** 外部キー一覧。列の種別 (`fk`) と `→ 参照先` の補足に使う。 */
   fks: ForeignKey[];
   /** 列候補の `info` を作る関数。未指定なら情報パネルなし。 */
   columnInfo?: ColumnInfoLoader;
@@ -199,7 +199,7 @@ const ICON_BY_TYPE: Record<string, CompletionIconName> = {
   property: "columns",
   variable: "columns",
   type: "database",
-  constant: "link",
+  constant: "table", // lang-sql では FROM 句のテーブル別名
 };
 
 /** 補完候補の種別文字列 (空白区切りで複数可) から、先頭の既知種別のアイコン名を返す。 */

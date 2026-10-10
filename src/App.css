@@ -2105,7 +2105,7 @@ html, body, #root {
   display: inline-flex;
   width: auto;
   /* アイコンの無い候補 (未知の種別) でもラベル左端が揃うよう、枠にアイコン幅を確保する。 */
-  min-width: 1em;
+  min-width: calc(13px * var(--font-scale)); /* ICON_SIZES.sm と同値 */
   box-sizing: content-box;
   vertical-align: middle;
   align-items: center;

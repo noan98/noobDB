@@ -508,7 +508,7 @@ function buildSqlExtension(
     // SQLNamespace shape. SQLite has no real database qualifier, so the bare
     // form alone is enough there.
     const namespaceDb = schemaTable?.database ?? defaultDatabase ?? undefined;
-    // 種別 (table / column / key) と列の情報パネル (#1413) を付けた名前空間を作る。
+    // 種別 (table / column / fk) と列の情報パネル (#1413) を付けた名前空間を作る。
     // 情報パネルの中身は選択時に `describe_table` (キャッシュ済み) から遅延取得する。
     const dialectSpec = codeMirrorSqlDialectFor(driver).spec;
     schema = buildSchemaNamespace({
@@ -711,14 +711,16 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // いま props が求めている compartment 設定 (補完・構文チェック・アクションキーマップ)。
   // view / state 側に入っている設定 (`appliedConfigRef`) と食い違ったときだけ
   // reconfigure する (#1308: 初回マウントやタブ切替で無駄に作り直さない)。
-  // 届いた FK の内容キー (`table.column` を並べ替えて連結)。補完 (外部キー列の種別) は
-  // これが変わったときだけ作り直すので、同じ内容が届き直しても再構成しない。
-  const [fkKey, setFkKey] = useState("");
+  // 届いた FK の内容キー (`fkContentKey`) は ref に持ち、内容が変わったときだけ小さな版数
+  // (state) を進める。補完 (外部キー列の種別) は版数が変わったときだけ作り直すので、同じ
+  // 内容が届き直しても再構成しないし、キーの文字列を毎レンダー比較することもない。
+  const fkKeyRef = useRef("");
+  const [fkRev, setFkRev] = useState(0);
   const schemaKey = `${
     schemaTable
       ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}`
       : ""
-  }|fk:${fkKey}`;
+  }|fk:${fkRev}`;
   const desiredConfig: AppliedEditorConfig = {
     driver,
     schemaKey,
@@ -770,21 +772,34 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
     return p;
   };
   const getColumns = (table: string) => loadColumnsRef.current(table);
+  const fkScopeRef = useRef<string | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後の再取得トリガー
   useEffect(() => {
-    fksRef.current = [];
     columnCacheRef.current = new Map();
-    if (!sessionId || !fkDatabase) {
-      setFkKey("");
-      return;
+    // FK は同じ session / DB での取り直し (DDL 後など) では空にしない。空にすると同じコミットの
+    // 補完再構成が FK 無しで走り、同じ FK が返っても内容キーが変わらず作り直されない。
+    // session / DB が変わったときだけ FK を捨てる。
+    const scope = `${sessionId ?? ""}\u0000${fkDatabase ?? ""}`;
+    if (fkScopeRef.current !== scope) {
+      fkScopeRef.current = scope;
+      fksRef.current = [];
+      if (fkKeyRef.current !== "") {
+        fkKeyRef.current = "";
+        setFkRev((n) => n + 1);
+      }
     }
+    if (!sessionId || !fkDatabase) return;
     let cancelled = false;
     api
       .foreignKeys(sessionId, fkDatabase)
       .then((r) => {
         if (cancelled) return;
         fksRef.current = r;
-        setFkKey(fkContentKey(r));
+        const key = fkContentKey(r);
+        if (key !== fkKeyRef.current) {
+          fkKeyRef.current = key;
+          setFkRev((n) => n + 1);
+        }
       })
       .catch(() => { /* 補完は best-effort */ });
     return () => {
