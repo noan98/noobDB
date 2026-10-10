@@ -98,7 +98,9 @@ const NO_NUMERIC_RESULT: QueryResult = {
 // `VITE_RUN_VISUAL=1` を立てて比較を必須化できる。
 const RUN_VISUAL = import.meta.env.VITE_RUN_VISUAL === "1";
 
-describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", () => {
+// `retry: 0`: vitest.browser.config.ts の全体 retry を打ち消す。再試行は本物の pixel diff を
+// 「2 回目で通った」ことにして隠しうるので、ビジュアル回帰だけは再試行しない (#1396)。
+describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0 }, () => {
   for (const theme of ["light", "dark"] as const) {
     it(`結果グリッド (${theme})`, async () => {
       const root = await renderVisual(<ResultGrid result={RESULT} />, theme);
