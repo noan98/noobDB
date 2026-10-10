@@ -52,6 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
+import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
@@ -85,6 +86,7 @@ import {
 } from "./components/identitySync";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
+import { columnInsertText, qualifiedColumnInsertText } from "./components/columnInsert";
 import {
   applyServerBrowse,
   type ServerFilter,
@@ -375,6 +377,7 @@ import {
   BASE_FONT_SIZE_PX,
   monoFontStack,
   uiFontStack,
+  effectiveTheme,
   themePresetDataTheme,
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
@@ -1289,12 +1292,15 @@ export default function App() {
   }, [dataTheme, theme]);
 
   useEffect(() => {
-    const colors = settings.syntaxColors[theme];
+    // ダーク専用プリセットでは light/dark トグルが light のままでも画面はダーク。
+    // テーマ別の設定は実効テーマで選ぶ (トグル値で選ぶと暗い面に明るい用の文字色が載る)。
+    const effTheme = effectiveTheme(settings.themePreset, theme);
+    const colors = settings.syntaxColors[effTheme];
     const root = document.documentElement;
     for (const [key, val] of Object.entries(colors)) {
       root.style.setProperty(`--syntax-${key}`, val);
     }
-    root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
+    root.style.setProperty("--preview-highlight", settings.previewHighlight[effTheme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
 
     // フォントファミリ: 設定があれば共有フォールバック付きのスタックを
@@ -1316,7 +1322,7 @@ export default function App() {
     // タブ・コマンドパレット等) が参照する --bg-active / --bg-active-strong 自体も
     // 上書きすることで、個別コンポーネントを書き換えずに一括で波及させる。
     if (settings.accentColor) {
-      const v = accentVars(settings.accentColor, theme);
+      const v = accentVars(settings.accentColor, effTheme);
       root.style.setProperty("--accent", v.accent);
       root.style.setProperty("--accent-hover", v.accentHover);
       root.style.setProperty("--accent-text", v.accentText);
@@ -6723,6 +6729,24 @@ export default function App() {
     }
   }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
 
+  // 列名 / 表.列 をエディタへ挿入 (#1352)。テーブル側 (handleInsertTableSelect) と同じ経路で、
+  // エディタを持たないタブでは新しいクエリタブに入れて開く。
+  const handleInsertColumn = useCallback((_database: string, table: string, column: string, qualified: boolean) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    const text = qualified ? qualifiedColumnInsertText(driver, table, column) : columnInsertText(driver, column);
+    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+      activeEditor()?.insertText(text);
+    } else if (sessionId) {
+      addTab({ ...makeQueryTab(), sql: text, lastExecutedSql: text });
+    }
+  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
+
+  const handleCopyColumnName = useCallback(async (column: string) => {
+    if (await copyToClipboard(column)) {
+      toast.success(translate("columnNameCopied", { column }));
+    }
+  }, [toast]);
+
   // テーブルの CREATE TABLE DDL の表示 / コピー (#1001)。全ドライバで
   // `get_object_definition` (kind = "table") を使う — MySQL/SQLite は
   // ネイティブ DDL、PostgreSQL はカタログから再構成した DDL。純粋な読み取り
@@ -7146,6 +7170,35 @@ export default function App() {
       setActivePaneId(next[0]?.id ?? null);
     }
   }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef]);
+
+  // タブの一括クローズ (#1354)。対象は基点タブが属するペイン内のタブ (tabBulkClose.ts)。
+  // 各タブには既存の `handleCloseTab` を適用する (ストリーム中断・ref 掃除・ペイン畳み込みを
+  // 1 件ずつの × と同じ経路に通す。同期的なフック (スナップショット保存など) は handleCloseTab に
+  // 足せば一括でも効く。確認ダイアログのような非同期の割り込みを足す場合は、一括クローズ側で
+  // 1 回だけ確認するか、ループを await にする必要がある)。
+  const closeTabsBulk = useCallback((tabId: string, mode: BulkCloseMode) => {
+    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+    if (!owner) return;
+    for (const id of tabsToClose(owner.tabIds, tabId, mode)) handleCloseTab(id);
+  }, [panesRef, handleCloseTab]);
+
+  // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
+  // 結果を引き継がないため、table / explain も含め常にクエリタブとして SQL (未実行の編集中
+  // 本文を含む) と接続先 DB をコピーする (判定は duplicateTabSpec)。
+  const duplicateTab = useCallback((tabId: string) => {
+    const src = tabsRef.current.find((tt) => tt.id === tabId);
+    if (!src) return;
+    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+    const spec = duplicateTabSpec(src, tabSqlStore.resolve(src.id, src.sql));
+    const copy: Tab = {
+      ...makeQueryTab(),
+      title: spec.title ?? translate("tabUntitledQuery"),
+      sql: spec.sql,
+      lastExecutedSql: spec.lastExecutedSql,
+      database: spec.database,
+    };
+    addTab(copy, owner?.id);
+  }, [tabsRef, panesRef, tabSqlStore, addTab]);
 
   // Latest handlers held in a ref so the global keydown listener below can
   // call them without re-attaching on every tab change.
@@ -8326,6 +8379,8 @@ export default function App() {
     onExploreColumns: (database: string, table: string) => handleExploreColumns(database, table),
     onWatchTable: handleWatchTable,
     onCopyTableName: handleCopyTableName,
+    onInsertColumn: handleInsertColumn,
+    onCopyColumnName: handleCopyColumnName,
     onOpenObjectDefinition: handleOpenObjectDefinition,
     onEditViewDefinition: handleEditViewDefinition,
     onFindUsages: handleFindUsages,
@@ -10093,6 +10148,8 @@ export default function App() {
         const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
         // Moving is only possible when it won't leave a single pane empty.
         const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
+        const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
+        const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [
           {
             label: t("tabMoveOtherPane"),
@@ -10100,12 +10157,32 @@ export default function App() {
             disabled: !canMove,
             title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
           },
+          {
+            label: t("tabDuplicate"),
+            onSelect: () => duplicateTab(tabMenu.tabId),
+          },
+          { separator: true },
+          {
+            label: t("tabCloseOthers"),
+            onSelect: () => closeTabsBulk(tabMenu.tabId, "others"),
+            disabled: !hasOthers,
+          },
+          {
+            label: t("tabCloseRight"),
+            onSelect: () => closeTabsBulk(tabMenu.tabId, "right"),
+            disabled: !hasRight,
+          },
           { separator: true },
           {
             label: t("tabClose"),
             icon: "close",
             shortcut: formatCombo(shortcutBindings.closeTab),
             onSelect: () => handleCloseTab(tabMenu.tabId),
+            danger: true,
+          },
+          {
+            label: t("tabCloseAll"),
+            onSelect: () => closeTabsBulk(tabMenu.tabId, "all"),
             danger: true,
           },
         ];

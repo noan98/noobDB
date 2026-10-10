@@ -25,7 +25,9 @@ PR がどちらも同じ数に書き換えると、git は衝突なしでマー�
    → ズレると `ipcCommandParity.test.ts` / `ipcArgParity.test.ts` /
    `streamEventParity.test.ts` / `apiModuleLayout.test.ts` (置き場所) が落ちます
 4. **UI から実際に呼ぶ**
-   → どこからも呼ばれないと `apiReachabilityParity.test.ts` が落ちます。
+   → `src/main.tsx` から import でたどれるモジュールのどこからも呼ばれないと
+   `apiReachabilityParity.test.ts` が落ちます (#1421。テストや孤立したコンポーネント
+   からの参照は数えない)。
    許可リスト `INTENTIONALLY_UNREACHABLE` は**空のまま維持するのが理想**で、
    「まだ UI を作っていない」は理由になりません — UI を足すか、ラッパーと Rust
    コマンドを一緒に消してください。

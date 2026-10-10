@@ -1014,9 +1014,17 @@ jobs:
     # キャッシュしないため遅く、`rust (test)` と同居させると全 PR のクリティカル
     # パスになっていた。並列に走らせて PR のブロッキング経路から外す。
     # **必須チェックには含めない** (閾値 `--fail-under-lines` の fail は赤く出るが
-    # 必須ではないのでマージは止めない運用)。`if:` は `rust (test)` と同じ条件
-    # (#853 の crosslang OR / #1359 の ci-scripts OR を含む)。
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true'
+    # 必須ではないのでマージは止めない運用)。
+    #
+    # #1420: main への push でのみ走らせ、PR では走らせない。このジョブは `rust (test)` と
+    # 同一の最重量の統合環境 (sshd + TLS DB + 平文 DB) を立て、全件 nextest を計装下で
+    # 再実行する。非ブロッキングの情報提供 1 本のために rust に触れる全 PR で統合環境を
+    # 二重に構築していたため、PR 経路から外してランナー分をおよそ半減する。60% の閾値
+    # ゲート (下の Enforce coverage threshold) と Job Summary の可視化は main で維持し、
+    # 閾値割れはマージ直後の main の赤で検出する (PR のマージは元々止めていない)。
+    # 変更パス条件は `rust (test)` と同じ (#853 の crosslang OR / #1359 の ci-scripts OR
+    # を含む)。push 時の changes は直前コミットとの差分で判定される。
+    if: github.event_name == 'push' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1202,7 +1210,7 @@ jobs:
         run: cargo llvm-cov nextest --no-report --locked --lib --test '*'
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
-      # PR ごとのカバレッジを可視化する。
+      # main の push ごとのカバレッジを可視化する (#1420 で PR からは外した)。
       - name: Coverage report
         working-directory: src-tauri
         run: |
