@@ -63,18 +63,27 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      # 変異テスト本体。失敗しても CI を落とさない (|| true)。
+      # 変異テスト本体。失敗しても CI を落とさない (exit 0 で終える)。
       # reports/mutation/ (mutation.json / mutation.html) をアーティファクトにする。
+      # 終了コードは $GITHUB_OUTPUT (exit_code) に残す (後続の集計ジョブ用, #1395)。
       - name: Run Stryker
-        run: pnpm run mutants:js 2>&1 | tee stryker-output.txt || true
+        id: stryker
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          pnpm run mutants:js 2>&1 | tee stryker-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Mutation test summary
+        id: summary
         run: |
           echo '### Mutation test results (フロント安全網)' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
           if [ -f reports/mutation/mutation.json ]; then
             python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
-          import json, pathlib, collections
+          import json, os, pathlib, collections
           data = json.loads(pathlib.Path("reports/mutation/mutation.json").read_text())
           rows = []
           tot = collections.Counter()
@@ -89,6 +98,11 @@ jobs:
               den = det + c["Survived"] + c["NoCoverage"]
               return f"{det / den * 100:.1f}%" if den else "n/a"
           surv = tot["Survived"] + tot["NoCoverage"]
+          # 後続ジョブ (#1395) 用に score= / survived= を step output へ残す。
+          out = os.environ.get("GITHUB_OUTPUT")
+          if out:
+              with open(out, "a") as fh:
+                  fh.write(f"score={score(tot)}\nsurvived={surv}\n")
           if surv:
               print(f"> :warning: **生存変異 (Survived + NoCoverage): {surv} 件** — テストが捕捉できていない変異があります。`reports/mutation/mutation.html` を確認し、対応する `*.test.ts` に境界ケースを追記してください。")
           else:

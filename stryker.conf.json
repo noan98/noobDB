@@ -32,8 +32,17 @@
   "vitest": {
     "configFile": "vitest.mutants.config.ts"
   },
-  "tsconfigFile": "tsconfig.stryker-none.json",
+  "tsconfigFile": "__stryker_skip_tsconfig_rewrite__.json",
   "plugins": [
     "@stryker-mutator/vitest-runner"
+  ],
+  "ignorePatterns": [
+    "src-tauri",
+    "e2e",
+    "dist",
+    "biome.json",
+    ".stryker-tmp",
+    "reports",
+    "scripts"
   ]
 }

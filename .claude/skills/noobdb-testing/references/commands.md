@@ -94,7 +94,16 @@ PR では走らせない。**fail させない** (可視化のみ) — mutants.y
 Job Summary にスコアとモジュール別の生存数、アーティファクト `stryker-report` に
 HTML/JSON レポートを出す。生き残り変異 (Survived / NoCoverage) は `reports/mutation/mutation.html`
 で確認し、対応する `*.test.ts` に境界ケースを追記して潰す (等価変異や性能目的の
-キャッシュ分岐は無理に潰さない)。生成物 `reports/` / `.stryker-tmp/` は `.gitignore` 済み。
+キャッシュ分岐は無理に潰さない)。生成物 `reports/mutation/` / `.stryker-tmp/` は `.gitignore` 済み。
+`tsconfigFile` の `__stryker_skip_tsconfig_rewrite__.json` は意図的に存在しない名前
+(Stryker による tsconfig 書き換えを避けるため)。
+
+直近の実測 (#1358 レビュー対応後、cellEdit.ts + preflight.ts): cellEdit 87.98% (84.63% から)、
+preflight 93.22%、合計 88.97%。残る生存は主に等価変異または対象外 —
+i18n キー文字列・`validateCellInput` / `classifyEditType` の分類 (安全網のリテラル生成とは別経路)、
+`i <= rows.length` 等の境界 (範囲外は直後の `if (!row) continue` で吸収される)、
+`encodePkPart` のタグ単独除去 (単独では値域が衝突しない)、プリフライトの `depth` ガードや
+`\s*` の正規表現 (マスク済み文字列では到達しない/結果が同じ)。
 
 統合テストは対応する環境変数が設定されていない限りスキップされます (SQLite を除く):
 

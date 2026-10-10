@@ -153,6 +153,14 @@
     { "sql": "WITH d AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM d", "readOnly": false, "note": "#1151: INSERT ... RETURNING を包むデータ変更 CTE" },
     { "sql": "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM t WHERE id IN (SELECT 1 FROM a)", "readOnly": false, "note": "#1151: 複数 CTE の後ろに DML 本体" },
     { "sql": "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) DELETE FROM t WHERE id IN (SELECT n FROM r)", "readOnly": false, "note": "#1151: 再帰 CTE の後ろに DML 本体" },
-    { "sql": "WITH c AS (SELECT 1) SELECT * INTO backup FROM t", "readOnly": false, "note": "#1151: CTE 前置でも SELECT ... INTO は書き込み" }
+    { "sql": "WITH c AS (SELECT 1) SELECT * INTO backup FROM t", "readOnly": false, "note": "#1151: CTE 前置でも SELECT ... INTO は書き込み" },
+    { "sql": "SELECT * FROM t WITH (READCOMMITTEDLOCK)", "readOnly": false, "note": "#1358: READCOMMITTEDLOCK ヒントは読み取りではない" },
+    { "sql": "", "readOnly": false, "note": "#1358: 空文字は読み取り専用ではない" },
+    { "sql": "   ", "readOnly": false, "note": "#1358: 空白のみ" },
+    { "sql": ";;; ", "readOnly": false, "note": "#1358: 区切りだけの文" },
+    { "sql": "-- only comment", "readOnly": false, "note": "#1358: コメントのみ" },
+    { "sql": "SELECT updlock FROM t", "readOnly": true, "note": "#1358: WITH (...) の外にあるロックヒント名は無視" },
+    { "sql": "SELECT * FROM t WITH (INDEX(1) , UPDLOCK)", "readOnly": false, "note": "#1358: ヒント群の内側のロックヒントは INDEX(...) の後ろでも検出" },
+    { "sql": "SELECT * FROM t WITH (NOLOCK) JOIN u WITH (XLOCK) ON 1=1", "readOnly": false, "note": "#1358: 2 つ目のヒント群の XLOCK も検出" }
   ]
 }

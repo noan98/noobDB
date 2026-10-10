@@ -1,7 +1,8 @@
 // Stryker (JS ミューテーションテスト, #1358) 専用の Vitest 設定。
-// 変異対象の安全網モジュール (と共有ゴールデン) を検証する純ロジックのテストだけに絞り、全スイートを変異ごとに
-// 回さない (全体は jsdom 込みで重く、初回ドライランがタイムアウトする)。
-// すべて純ロジックのテストなので node 環境で足りる。
+// 変異対象の安全網モジュールと、それを (間接的にも) 使う純ロジックのテスト、共有
+// ゴールデンだけに絞る。全スイートを変異ごとに回すと初回ドライランがタイムアウトし、
+// App.css を読む UI 規約テストなどは node 環境の単体では通らない。
+// 対象モジュールを検証するテストを足したら include にも足す。
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -28,6 +29,16 @@ export default defineConfig({
       "src/__tests__/statementSplitGolden.test.ts",
       "src/__tests__/streamStats.test.ts",
       "src/__tests__/valuePicker.test.ts",
+      "src/__tests__/keysetPagination.test.ts",
+      "src/__tests__/fkNavigation.test.ts",
+      "src/__tests__/typedEditor.test.ts",
+      "src/__tests__/insertDefaults.test.ts",
+      "src/__tests__/jsonTree.test.ts",
+      "src/__tests__/QueryBuilder.test.ts",
+      "src/__tests__/routineCall.test.ts",
+      "src/__tests__/serverBrowse.test.ts",
+      "src/__tests__/queryParams.test.ts",
+      "src/__tests__/tabDirty.test.ts",
     ],
   },
 });
