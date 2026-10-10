@@ -69,9 +69,11 @@ import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type 
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
+import { joinTableDdls, summarizeTableNames } from "./components/batchTables";
 import {
   buildDropIndexSql,
   buildDropTableSql,
+  buildDropTablesSql,
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
@@ -180,6 +182,9 @@ const ScriptRunModal = lazy(() =>
 );
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
+);
+const TablesExportModal = lazy(() =>
+  import("./components/TablesExportModal").then((m) => ({ default: m.TablesExportModal })),
 );
 const AiSchemaDocModal = lazy(() =>
   import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
@@ -1802,6 +1807,9 @@ export default function App() {
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   const [cloneTarget, setCloneTarget] = useState<{ database: string; table: string } | null>(null);
+  // スキーマツリーで複数選択したテーブルの一括エクスポート / ダンプ (#1399): 対象。null で閉じる。
+  const [exportTablesTarget, setExportTablesTarget] = useState<{ database: string; tables: string[] } | null>(null);
+  const [dumpTablesTarget, setDumpTablesTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
@@ -6911,6 +6919,105 @@ export default function App() {
     }
   }, [sessionId, toast]);
 
+  // 複数選択したテーブルの一括 DDL 取得 (#1399)。単一の `handleShowCreateTable` /
+  // `handleCopyTableDdl` と同じ `get_object_definition` (kind = "table", 読み取りのみ) を
+  // テーブルの数だけ呼ぶ。一部の取得に失敗しても取れた分は使い、失敗したテーブルをトーストで知らせる。
+  const fetchTablesDdl = useCallback(async (database: string, tables: string[]) => {
+    if (!sessionId) return null;
+    const settled = await Promise.allSettled(
+      tables.map((table) => api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null)),
+    );
+    const entries: { table: string; ddl: string }[] = [];
+    const failed: string[] = [];
+    settled.forEach((r, i) => {
+      const table = tables[i] as string;
+      if (r.status === "fulfilled") entries.push({ table, ddl: r.value });
+      else failed.push(table);
+    });
+    if (failed.length > 0) {
+      toast.error(translate("batchDdlFailed", { count: failed.length, tables: failed.join(", ") }));
+    }
+    return entries.length > 0 ? entries : null;
+  }, [sessionId, toast]);
+
+  const handleShowCreateTables = useCallback(async (database: string, tables: string[]) => {
+    const entries = await fetchTablesDdl(database, tables);
+    if (!entries) return;
+    openQueryInEditor(
+      joinTableDdls(entries),
+      translate("batchDdlTabTitle", { count: entries.length }),
+      database,
+    );
+  }, [fetchTablesDdl, openQueryInEditor]);
+
+  const handleCopyTablesDdl = useCallback(async (database: string, tables: string[]) => {
+    const entries = await fetchTablesDdl(database, tables);
+    if (!entries) return;
+    if (await copyToClipboard(joinTableDdls(entries))) {
+      toast.success(translate("batchDdlCopied", { count: entries.length }));
+    }
+  }, [fetchTablesDdl, toast]);
+
+  // 複数選択したテーブルの一括 DROP (#1399)。確認導線は単一の `handleDropTable` と同じ
+  // `confirm` + 本番接続のタイプ入力ゲート (#675)。対象が複数なので、対象のテーブル名を本文に
+  // 並べ、本番ではデータベース名の入力を求める。実行は `buildDropTablesSql` の文を順に流す
+  // (MySQL / PostgreSQL は 1 文、SQLite はテーブルごと)。read_only はメニュー無効化に加え、
+  // バックエンドの `run_query` ガードが拒否する。
+  const handleDropTables = useCallback(async (database: string, tables: string[]) => {
+    if (tables.length === 0) return;
+    const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
+    const ok = await confirm({
+      title: translate("batchDropConfirmTitle", { count: tables.length }),
+      message: maintenanceMessage(
+        translate("batchDropConfirmBody", { count: tables.length, database, tables: names }),
+      ),
+      confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
+      tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? database : undefined,
+    });
+    if (!ok || !sessionId) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const statements = buildDropTablesSql(driver, database, tables);
+    // 文ごとに実行し、失敗したらそこで止める。
+    let executed = 0;
+    let failed = false;
+    for (const sql of statements) {
+      try {
+        await api.runQuery(sessionId, sql, database);
+        executed += 1;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        failed = true;
+        break;
+      }
+    }
+    // 失敗しても一部は落ちていることがある (SQLite の途中停止 / MySQL の複数テーブル DROP) ので、
+    // ツリーは成否に関わらず読み直す。
+    invalidateSchemaCache(database);
+    connectionListRef.current?.refreshSchema();
+    // 文がテーブルごとに分かれているとき (SQLite) だけ、失敗しても落とせた分が分かる。
+    const perTable = statements.length === tables.length;
+    const dropped = !failed ? tables : perTable ? tables.slice(0, executed) : [];
+    if (dropped.length > 0) {
+      // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
+      const gone = new Set(dropped);
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === database && tt.table !== undefined && gone.has(tt.table))
+        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+    }
+    if (!failed) {
+      toast.success(translate("batchDropSuccess", { count: dropped.length }));
+    } else if (dropped.length > 0) {
+      toast.error(
+        translate("batchDropPartial", {
+          done: dropped.length,
+          count: tables.length,
+          table: tables[executed] ?? "",
+        }),
+      );
+    }
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, toast, tabsRef]);
+
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
   // モジュールレベルの `t`・`api`、useCallback 済みの refreshProfiles のみ。
@@ -8697,6 +8804,11 @@ export default function App() {
     onDropTable: handleDropTable,
     onRenameTable: (database: string, table: string) => setRenameTarget({ database, table }),
     onCloneTable: (database: string, table: string) => setCloneTarget({ database, table }),
+    onShowCreateTables: handleShowCreateTables,
+    onCopyTablesDdl: handleCopyTablesDdl,
+    onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
+    onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
+    onDropTables: handleDropTables,
     onAlterTable: (database: string, table: string) => setAlterTableTarget({ database, table }),
     onCreateIndex: (database: string, table: string) => setCreateIndexTarget({ database, table }),
     onDropIndex: handleDropIndex,
@@ -10099,6 +10211,32 @@ export default function App() {
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             onClose={() => setDumpTarget(null)}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {dumpTablesTarget && sessionId && (
+          <DumpModal
+            sessionId={sessionId}
+            database={dumpTablesTarget.database}
+            tables={dumpTablesTarget.tables}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            onClose={() => setDumpTablesTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {exportTablesTarget && sessionId && (
+          <Suspense fallback={null}>
+            <TablesExportModal
+              sessionId={sessionId}
+              driver={selectedProfile?.driver ?? "mysql"}
+              database={exportTablesTarget.database}
+              tables={exportTablesTarget.tables}
+              onClose={() => setExportTablesTarget(null)}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 

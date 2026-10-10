@@ -137,6 +137,46 @@ pub struct DumpOptions {
     /// 内容は保たれるが配置が変わりうるため、再取り込み重視ならオフのままにする。
     #[serde(default)]
     pub format_sql: bool,
+
+    // ── テーブル指定 (#1399) ──
+    /// 指定したテーブルだけをダンプする (スキーマツリーで複数選択したテーブルの一括ダンプ)。
+    /// `None` は従来どおりデータベース全体。`Some` のときは空リスト・空名を `InvalidInput`
+    /// で拒否する (空のままだと「全体ダンプ」に化けて意図より大きく書き出してしまうため)。
+    /// - MySQL: `mysqldump <db> <tbl>...` (ルーチン / イベントは対象外になる)
+    /// - PostgreSQL: `pg_dump --table "<schema>"."<tbl>"` を表ごとに (`pg_schema` があれば修飾)
+    /// - SQLite: 指定テーブルとその索引 / トリガーだけを書き出す (ビューは含めない)
+    #[serde(default)]
+    pub tables: Option<Vec<String>>,
+}
+
+/// `DumpOptions::tables` を検証して重複を除いた一覧にする。`None` は全体ダンプ。
+fn selected_tables(options: &DumpOptions) -> Result<Option<Vec<String>>> {
+    let Some(tables) = options.tables.as_ref() else {
+        return Ok(None);
+    };
+    if tables.is_empty() {
+        return Err(AppError::InvalidInput("table list is empty".into()));
+    }
+    let mut out: Vec<String> = Vec::with_capacity(tables.len());
+    for name in tables {
+        if name.trim().is_empty() || name.contains('\0') {
+            return Err(AppError::InvalidInput("table name is invalid".into()));
+        }
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+    Ok(Some(out))
+}
+
+/// `pg_dump --table` に渡すパターン。二重引用符で囲むと大文字小文字を保ち、`*` / `?` /
+/// `.` もワイルドカード扱いされない (同名の別テーブルを巻き込まない)。
+fn pg_table_pattern(schema: Option<&str>, table: &str) -> String {
+    let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    match schema {
+        Some(s) if !s.is_empty() => format!("{}.{}", quote(s), quote(table)),
+        _ => quote(table),
+    }
 }
 
 /// Dump `database` to `path` as a streaming, cancelable operation (#686).
@@ -653,6 +693,11 @@ async fn dump_mysql(
     // 引数インジェクションを防ぐ (上の `starts_with('-')` チェックと合わせた多層防御)。
     cmd.arg("--");
     cmd.arg(database);
+    // テーブル指定 (#1399): DB 名のあとにテーブル名を並べる。`--` の後ろなので、
+    // `-` 始まりの名前もオプションとして解釈されない。
+    if let Some(tables) = selected_tables(options)? {
+        cmd.args(&tables);
+    }
 
     // Hold the option file until the child finishes reading it — the streamer
     // spawns the child, so keeping `defaults` alive across the await is required.
@@ -706,11 +751,19 @@ async fn dump_postgres(
     if options.no_privileges {
         cmd.arg("--no-privileges");
     }
-    if let Some(schema) = options.pg_schema.as_deref() {
-        let schema = schema.trim();
-        if !schema.is_empty() {
-            cmd.arg("--schema").arg(schema);
+    let pg_schema = options
+        .pg_schema
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(tables) = selected_tables(options)? {
+        // テーブル指定 (#1399): スキーマ修飾したパターンで表ごとに `--table`。
+        // `--schema` との併用は積集合になり分かりづらいので、修飾で絞る。
+        for table in &tables {
+            cmd.arg("--table").arg(pg_table_pattern(pg_schema, table));
         }
+    } else if let Some(schema) = pg_schema {
+        cmd.arg("--schema").arg(schema);
     }
     // AWS IAM auth (#734) requires TLS; the token is only accepted over SSL.
     if connect_options.aws_iam.is_some() {
@@ -744,6 +797,8 @@ async fn dump_sqlite(
     counter: &Arc<AtomicU64>,
     started: Instant,
 ) -> Result<u64> {
+    // テーブル指定 (#1399)。検証は書き込み開始前に済ませる。
+    let selected = selected_tables(options)?;
     let mut writer = BufWriter::new(file);
 
     write_chunk(
@@ -763,9 +818,18 @@ async fn dump_sqlite(
             None,
         )
         .await?;
-    let total_tables = tables.rows.len() as u64;
+    let table_rows: Vec<&Vec<Value>> = tables
+        .rows
+        .iter()
+        .filter(|row| match (&selected, row.first()) {
+            (Some(sel), Some(Value::String(n))) => sel.contains(n),
+            (Some(_), _) => false,
+            (None, _) => true,
+        })
+        .collect();
+    let total_tables = table_rows.len() as u64;
     let mut processed = 0u64;
-    for row in &tables.rows {
+    for row in table_rows {
         let (name, create_sql) = match (row.first(), row.get(1)) {
             (Some(Value::String(n)), Some(Value::String(s))) => (n.clone(), s.clone()),
             _ => {
@@ -828,7 +892,7 @@ async fn dump_sqlite(
     if !options.no_create_info {
         let objs = conn
             .execute(
-                "SELECT sql FROM sqlite_master \
+                "SELECT sql, type, tbl_name FROM sqlite_master \
                  WHERE type IN ('index','trigger','view') AND name NOT LIKE 'sqlite_%' \
                  AND sql IS NOT NULL ORDER BY type, name",
                 None,
@@ -836,6 +900,18 @@ async fn dump_sqlite(
             .await?;
         let mut chunk = String::new();
         for row in &objs.rows {
+            if let Some(sel) = &selected {
+                // テーブル指定時は、指定テーブルに紐づく索引 / トリガーだけを書き出す
+                // (ビューは別オブジェクトなので含めない)。
+                let owned = matches!(
+                    (row.get(1), row.get(2)),
+                    (Some(Value::String(ty)), Some(Value::String(tbl)))
+                        if ty != "view" && sel.contains(tbl)
+                );
+                if !owned {
+                    continue;
+                }
+            }
             if let Some(Value::String(sql)) = row.first() {
                 chunk.push_str(sql);
                 chunk.push_str(";\n");
@@ -1165,6 +1241,59 @@ mod tests {
         assert_eq!(sqlite_literal(&Value::Bytes("0xDEAD".into())), "X'DEAD'");
         assert_eq!(sqlite_literal(&Value::Bytes("beef".into())), "X'beef'");
         assert_eq!(sqlite_literal(&Value::Float(f64::INFINITY)), "NULL");
+    }
+
+    #[test]
+    fn selected_tables_validates_and_dedups() {
+        let mut o = DumpOptions::default();
+        assert_eq!(selected_tables(&o).unwrap(), None);
+        o.tables = Some(vec![]);
+        assert!(matches!(
+            selected_tables(&o),
+            Err(AppError::InvalidInput(_))
+        ));
+        o.tables = Some(vec!["a".into(), "  ".into()]);
+        assert!(matches!(
+            selected_tables(&o),
+            Err(AppError::InvalidInput(_))
+        ));
+        o.tables = Some(vec!["b".into(), "a".into(), "b".into()]);
+        assert_eq!(
+            selected_tables(&o).unwrap(),
+            Some(vec!["b".to_string(), "a".to_string()])
+        );
+    }
+
+    #[test]
+    fn pg_table_pattern_quotes_and_qualifies() {
+        assert_eq!(pg_table_pattern(None, "Users"), "\"Users\"");
+        assert_eq!(
+            pg_table_pattern(Some("public"), "a*b"),
+            "\"public\".\"a*b\""
+        );
+        assert_eq!(pg_table_pattern(Some(""), "t"), "\"t\"");
+        assert_eq!(
+            pg_table_pattern(Some("s\"x"), "t\"y"),
+            "\"s\"\"x\".\"t\"\"y\""
+        );
+    }
+
+    #[test]
+    fn dump_options_tables_defaults_to_none_when_omitted() {
+        let o: DumpOptions = serde_json::from_str(
+            r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,
+                "addDropTable":true,"extendedInsert":true,"completeInsert":false,
+                "noData":false,"noCreateInfo":false}"#,
+        )
+        .unwrap();
+        assert!(o.tables.is_none());
+        let o: DumpOptions = serde_json::from_str(
+            r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,
+                "addDropTable":true,"extendedInsert":true,"completeInsert":false,
+                "noData":false,"noCreateInfo":false,"tables":["a","b"]}"#,
+        )
+        .unwrap();
+        assert_eq!(o.tables, Some(vec!["a".to_string(), "b".to_string()]));
     }
 
     #[test]

@@ -55,14 +55,25 @@ import {
 } from "./maintenanceCommands";
 import { Input } from "./ui";
 import {
+  anchorTableSelection,
   buildExplorerRows,
+  EMPTY_TABLE_SELECTION,
   explorerContainerKind,
   explorerRowExpansion,
   explorerRowLabel,
+  extendTableSelection,
   foreignKeyTargetLabel,
   isFocusableExplorerRow,
+  isSelectableTableRow,
+  isTableSelected,
+  orderedSelectedTables,
   partitionDatabaseNodes,
+  pruneTableSelection,
+  rangeTableSelection,
+  selectedTableCount,
   tableKey,
+  toggleTableSelection,
+  type TableSelection,
   type ExplorerForeignKey,
   type ExplorerHeaderGroup,
   type ExplorerRow,
@@ -335,6 +346,16 @@ interface Props {
   onRenameTable?: (database: string, table: string) => void;
   /** テーブルを複製するダイアログを開く (#1398)。read_only では無効化される。 */
   onCloneTable?: (database: string, table: string) => void;
+  /**
+   * テーブルの複数選択 (#1399) 時の一括操作。選んだ 2 件以上のテーブル (同一データベース内、
+   * データベース内の並び順) を渡す。未指定ならそのメニュー項目を出さない。実行は呼び出し側 (App) が
+   * 既存コマンドを束ねる。DROP だけは read_only でメニューを無効化する (バックエンドも拒否する)。
+   */
+  onShowCreateTables?: (database: string, tables: string[]) => void;
+  onCopyTablesDdl?: (database: string, tables: string[]) => void;
+  onExportTables?: (database: string, tables: string[]) => void;
+  onDumpTables?: (database: string, tables: string[]) => void;
+  onDropTables?: (database: string, tables: string[]) => void;
   /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
   onAlterTable?: (database: string, table: string) => void;
   /** テーブル右クリックからインデックス作成の軽量モーダルを開く (#850)。`AlterTable`
@@ -486,6 +507,34 @@ function createTabStopStore(): TabStopStore {
   };
 }
 
+/** テーブルの複数選択 (#1399) の外部ストア。`TabStopStore` と同じ理由で state ではなく
+ *  ストアに置き、行は自分が選択に入っているかだけを購読する (選択の変化で再描画されるのは
+ *  入れ替わった行だけ)。 */
+interface TableSelectionStore {
+  get: () => TableSelection;
+  set: (next: TableSelection) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createTableSelectionStore(): TableSelectionStore {
+  let current: TableSelection = EMPTY_TABLE_SELECTION;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    set: (next) => {
+      if (next === current) return;
+      current = next;
+      for (const l of Array.from(listeners)) l();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
 type HoverHandlers = {
   onMouseEnter: (e: React.MouseEvent<HTMLElement>) => void;
   onMouseLeave: (e: React.MouseEvent<HTMLElement>) => void;
@@ -504,6 +553,12 @@ interface TreeActions {
     openContextMenu?: (e: ContextMenuTriggerEvent) => void,
   ) => (e: React.KeyboardEvent<HTMLElement>) => void;
   pickTable: (db: string, tbl: string) => void;
+  /** テーブルの複数選択 (#1399)。 */
+  selection: TableSelectionStore;
+  /** テーブル行のクリック: Ctrl(Cmd) で出し入れ、Shift で範囲、修飾なしは選択解除 + 起点。 */
+  clickTable: (e: React.MouseEvent, db: string, tbl: string) => void;
+  /** テーブル行のキー操作 (Ctrl+Space で出し入れ、Shift+↑↓ で範囲、Esc で解除)。処理したら true。 */
+  selectionKeyDown: (e: React.KeyboardEvent<HTMLElement>, db: string, tbl: string) => boolean;
   toggleTable: (db: string, tbl: string) => void;
   toggleFavorite: (db: string, tbl: string) => void;
   openObjectDefinition: (db: string, kind: string, name: string, id: string | null) => void;
@@ -1028,6 +1083,15 @@ const TableNode = memo(function TableNode({
     view ? actions.viewMenu(e, db, view) : actions.tableMenu(e, db, tbl);
   // ポインタ操作でエディタへドラッグ挿入 (#1414)。HTML5 の draggable は使わない。
   const dragRef = useTreeDragSource({ kind: "table", database: db, table: tbl });
+  // 複数選択 (#1399)。ビューは対象外 (`aria-selected` も付けない)。
+  const selected = useSyncExternalStore(actions.selection.subscribe, () =>
+    !view && isTableSelected(actions.selection.get(), db, tbl),
+  );
+  const baseKeyDown = actions.makeKeyDown(() => actions.pickTable(db, tbl), openMenu);
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!view && e.target === e.currentTarget && actions.selectionKeyDown(e, db, tbl)) return;
+    baseKeyDown(e);
+  };
 
   return (
     <TreeRow
@@ -1045,14 +1109,17 @@ const TableNode = memo(function TableNode({
       aria-expanded={tOpen}
       tabIndex={tabIndex}
       onFocus={onFocus}
-      onKeyDown={actions.makeKeyDown(() => actions.pickTable(db, tbl), openMenu)}
+      onKeyDown={onKeyDown}
+      aria-selected={view ? undefined : selected}
+      data-selected={selected ? "true" : undefined}
+      onClick={(e) => actions.clickTable(e, db, tbl)}
       // 「現在地」表示 (#982): SR には aria-current、視覚には
       // 下の共有 layoutId インジケータ (アクセントスパイン) で
       // 示す。position: relative はインジケータの絶対配置の
       // 基準になるが、非アクティブ行では不要なので付けない。
       aria-current={isActiveTable ? "true" : undefined}
       position={isActiveTable ? "relative" : undefined}
-      bg={isActiveTable ? "var(--bg-active)" : undefined}
+      bg={selected ? "var(--accent-selection)" : isActiveTable ? "var(--bg-active)" : undefined}
       onDoubleClick={() => {
         // ダブルクリックで開くときだけ、行のアイコンが新規タブへ morph する (#1415)。
         beginTabOpenFlight(db, tbl);
@@ -1061,7 +1128,7 @@ const TableNode = memo(function TableNode({
       onContextMenu={openMenu}
       ref={dragRef}
       {...actions.treeTooltip(withComment(t("treeTableTitle"), comment))}
-      _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
+      _hover={{ bg: selected ? "var(--accent-selection)" : isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
     >
       {isActiveTable && (
         <MotionActiveIndicator
@@ -1693,6 +1760,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDropTable,
   onRenameTable,
   onCloneTable,
+  onShowCreateTables,
+  onCopyTablesDdl,
+  onExportTables,
+  onDumpTables,
+  onDropTables,
   onAlterTable,
   onCreateIndex,
   onDropIndex,
@@ -2093,6 +2165,28 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // 止まり先が消えたとき (ストアが空になったとき) だけ DOM を読む。
   const treeRef = useRef<HTMLDivElement>(null);
   const [tabStopStore] = useState(createTabStopStore);
+
+  // --- テーブルの複数選択 (#1399) ---
+  //
+  // 選択の算出は `explorerTree.ts` の純ロジック。ここは store への橋渡しと、クリック / キーの
+  // 解釈だけを持つ。行の並び (範囲選択の基準) は、後で作る `explorerRows` を ref 越しに読む。
+  const [selectionStore] = useState(createTableSelectionStore);
+  const explorerRowsRef = useRef<ExplorerRow[]>([]);
+  const clickTable = useCallback(
+    (e: React.MouseEvent, db: string, tbl: string) => {
+      const sel = selectionStore.get();
+      const additive = e.ctrlKey || e.metaKey;
+      if (e.shiftKey) {
+        selectionStore.set(rangeTableSelection(sel, explorerRowsRef.current, db, tbl, additive));
+      } else if (additive) {
+        selectionStore.set(toggleTableSelection(sel, db, tbl));
+      } else {
+        // 通常クリックは選択を解除し、Shift 範囲選択の起点だけを覚える。
+        selectionStore.set(anchorTableSelection(sel, db, tbl));
+      }
+    },
+    [selectionStore],
+  );
   const ensureTabStop = useCallback(() => {
     const container = treeRef.current;
     if (!container) return;
@@ -2116,6 +2210,28 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // スキーマ行リスト (仮想化されていて窓の外の行は DOM に無い) の窓口。キーボード巡回は
   // DOM の `[role=treeitem]` ではなく、ツリー全体を並べた配列で次の行を決める (#1315)。
   const schemaListRef = useRef<SchemaRowListHandle | null>(null);
+
+  /** テーブル行のキー操作 (#1399): Ctrl/Cmd+Space で出し入れ、Shift+↑↓ で範囲を伸縮。 */
+  const selectionKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLElement>, db: string, tbl: string): boolean => {
+      const sel = selectionStore.get();
+      if ((e.ctrlKey || e.metaKey) && e.key === " ") {
+        e.preventDefault();
+        selectionStore.set(toggleTableSelection(sel, db, tbl));
+        return true;
+      }
+      if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        const next = extendTableSelection(sel, explorerRowsRef.current, db, tbl, e.key === "ArrowDown" ? 1 : -1);
+        if (!next) return false;
+        e.preventDefault();
+        selectionStore.set(next.selection);
+        schemaListRef.current?.focusKey(next.focusKey);
+        return true;
+      }
+      return false;
+    },
+    [selectionStore],
+  );
 
   /** ツリー全体 (プロファイル / グループ見出し + スキーマ行リスト) を上から並べた巡回用の配列。
    *  スキーマ行は窓の外の行も含め、DOM 上でリストが占める位置へ差し込む。 */
@@ -2403,9 +2519,62 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     });
   };
 
+  // 複数選択したテーブルの一括操作メニュー (#1399)。単一対象の項目 (テーブル複製・名前変更・
+  // 列編集など) は意味が変わるので出さない。実行は呼び出し側が既存コマンドを束ねる。
+  const openBatchTablesMenu = (e: ContextMenuTriggerEvent, db: string, selected: string[]) => {
+    const count = selected.length;
+    const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
+    const ddlTitle = isSynthesizedTableDdl(activeDriver) ? t("tableDdlSynthesizedHint") : undefined;
+    const items: ContextMenuEntry[] = [];
+    if (onShowCreateTables) {
+      items.push({
+        label: t("batchMenuShowDdl", { count }),
+        onSelect: () => onShowCreateTables(db, selected),
+        title: ddlTitle,
+      });
+    }
+    if (onCopyTablesDdl) {
+      items.push({
+        label: t("batchMenuCopyDdl", { count }),
+        onSelect: () => onCopyTablesDdl(db, selected),
+        title: ddlTitle,
+      });
+    }
+    if (onExportTables) {
+      items.push({ label: t("batchMenuExport", { count }), onSelect: () => onExportTables(db, selected) });
+    }
+    if (onDumpTables) {
+      items.push({ label: t("batchMenuDump", { count }), onSelect: () => onDumpTables(db, selected) });
+    }
+    if (items.length > 0) items.push({ separator: true });
+    items.push({ label: t("batchMenuClearSelection"), onSelect: () => selectionStore.set(EMPTY_TABLE_SELECTION) });
+    if (onDropTables) {
+      items.push(
+        { separator: true },
+        {
+          label: t("batchMenuDrop", { count }),
+          onSelect: () => onDropTables(db, selected),
+          disabled: activeReadOnly,
+          title: roTitle,
+          danger: true,
+        },
+      );
+    }
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
   const handleTableContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string) => {
     e.preventDefault();
     e.stopPropagation();
+    // 選択中のテーブルの上なら一括メニュー、選択の外なら選択を取り直して単一対象のメニュー (#1399)。
+    const sel = selectionStore.get();
+    if (selectedTableCount(sel) >= 2 && isTableSelected(sel, db, tbl)) {
+      openBatchTablesMenu(e, db, orderedSelectedTables(sel, tables[db] ?? []));
+      return;
+    }
+    if (selectedTableCount(sel) > 0 && !isTableSelected(sel, db, tbl)) {
+      selectionStore.set(anchorTableSelection(sel, db, tbl));
+    }
     // 先頭はテーブル選択後の 2 つの行き先 (#1112): データ (ダブルクリックと同じ) と
     // 構造 (ボトムパネル)。
     const items: ContextMenuEntry[] = [
@@ -3196,6 +3365,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       columnTooltip: columnTooltipProps,
       makeKeyDown: makeTreeItemKeyDown,
       pickTable,
+      selection: selectionStore,
+      clickTable,
+      selectionKeyDown,
       toggleTable: toggleTableEvent,
       toggleFavorite: toggleFavoriteEvent,
       openObjectDefinition: openObjectDefinitionEvent,
@@ -3215,6 +3387,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       columnTooltipProps,
       makeTreeItemKeyDown,
       pickTable,
+      selectionStore,
+      clickTable,
+      selectionKeyDown,
       toggleTableEvent,
       toggleFavoriteEvent,
       openObjectDefinitionEvent,
@@ -3302,6 +3477,23 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     activeTableDb,
     activeTableName,
   ]);
+  explorerRowsRef.current = explorerRows;
+  // 選択は接続を切り替えたら取り直す (同一接続内に限る, #1399)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId / activeProfileId は本体で参照しないが、接続が変わったら選択を捨てるためのトリガーとして意図的に依存へ含めている
+  useEffect(() => {
+    selectionStore.set(EMPTY_TABLE_SELECTION);
+  }, [sessionId, activeProfileId, selectionStore]);
+  // 見えなくなったテーブル (DB を畳んだ・検索で絞った・DROP / 更新で消えた) は選択から外す。
+  // 画面に無いテーブルが一括 DROP の対象に残らないようにする。
+  useEffect(() => {
+    const sel = selectionStore.get();
+    if (sel.db === null) return;
+    const visible: Record<string, string[]> = {};
+    for (const r of explorerRows) {
+      if (isSelectableTableRow(r)) (visible[r.db] ??= []).push(r.tbl);
+    }
+    selectionStore.set(pruneTableSelection(sel, visible));
+  }, [explorerRows, selectionStore]);
   const activeRowKey = activeTableDb !== undefined && activeTableName !== undefined
     ? `tbl:${tableKey(activeTableDb, activeTableName)}`
     : null;
@@ -3584,7 +3776,24 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       ) : visibleProfiles.length === 0 ? (
         <Text color="app.textMuted" p="3">{t("listNoMatches")}</Text>
       ) : (
-        <Box ref={treeRef} flex="1" overflowY="auto" py="1" fontSize="md" color="app.text" role="tree">
+        <Box
+          ref={treeRef}
+          flex="1"
+          overflowY="auto"
+          py="1"
+          fontSize="md"
+          color="app.text"
+          role="tree"
+          aria-multiselectable
+          onKeyDown={(e) => {
+            // Esc でテーブルの複数選択を解除する (#1399)。メニューを開いている間は
+            // メニュー側の Esc を優先する。
+            if (e.key !== "Escape" || e.defaultPrevented || menu) return;
+            if (selectedTableCount(selectionStore.get()) === 0) return;
+            e.preventDefault();
+            selectionStore.set(EMPTY_TABLE_SELECTION);
+          }}
+        >
           {grouped === null ? (
             // ungrouped の 1 本のフラットな並び: そのままプロファイルの並び順
             // (ドラッグ/キーボードで動かせる)。

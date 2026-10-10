@@ -1466,6 +1466,11 @@ export interface DumpOptions {
    * by the server / generator). Best-effort; intended for review/version control.
    */
   formatSql?: boolean;
+  /**
+   * 指定したテーブルだけをダンプする (#1399)。未指定 / null はデータベース全体。
+   * 空配列は不可 (バックエンドが拒否する)。MySQL ではルーチン / イベントは対象外。
+   */
+  tables?: string[] | null;
 }
 
 // --- タスクスケジューラ (#730) -------------------------------------------

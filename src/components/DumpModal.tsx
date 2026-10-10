@@ -47,6 +47,12 @@ interface Props {
   sessionId: string;
   database: string;
   driver: DriverKind;
+  /**
+   * 指定すると、データベース全体ではなくこのテーブルだけをダンプする (#1399)。スキーマツリーで
+   * 複数選択したテーブルの一括ダンプ。ルーチン / イベントは対象外になるので、そのスイッチは隠す。
+   * PostgreSQL ではツリーの階層がスキーマなので、`pg_dump` の対象スキーマは `database` に固定する。
+   */
+  tables?: string[];
   onClose: () => void;
 }
 
@@ -73,9 +79,9 @@ function sanitizeForFilename(s: string): string {
     .trim();
 }
 
-function defaultBasename(database: string): string {
+function defaultBasename(database: string, tableCount?: number): string {
   const schema = sanitizeForFilename(database) || "database";
-  return `${schema}_dump_${timestamp()}`;
+  return tableCount ? `${schema}_${tableCount}tables_dump_${timestamp()}` : `${schema}_dump_${timestamp()}`;
 }
 
 const DEFAULT_OPTIONS: DumpOptions = {
@@ -230,10 +236,17 @@ type Status =
   | { kind: "running" }
   | { kind: "error"; message: string };
 
-export function DumpModal({ sessionId, database, driver, onClose }: Props) {
+/** テーブル指定のダンプでは意味を持たない (mysqldump がテーブル指定時は無視する) スイッチ。 */
+const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>(["routines", "events"]);
+
+export function DumpModal({ sessionId, database, driver, tables, onClose }: Props) {
   const t = useT();
   const toast = useToast();
-  const initialBasename = useMemo(() => defaultBasename(database), [database]);
+  const tableScope = tables && tables.length > 0 ? tables : null;
+  const initialBasename = useMemo(
+    () => defaultBasename(database, tableScope?.length),
+    [database, tableScope?.length],
+  );
   const [path, setPath] = useState<string>(`${initialBasename}.sql`);
   const [options, setOptions] = useState<DumpOptions>(DEFAULT_OPTIONS);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -300,8 +313,10 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
   const isRunning = status.kind === "running";
   const visibleRows = useMemo(() => {
     const allowed = new Set(DRIVER_OPTIONS[driver]);
-    return OPTION_ROWS.filter((row) => allowed.has(row.key));
-  }, [driver]);
+    return OPTION_ROWS.filter(
+      (row) => allowed.has(row.key) && !(tableScope && TABLE_SCOPE_HIDDEN_OPTIONS.has(row.key)),
+    );
+  }, [driver, tableScope]);
 
   const toggle = (key: BoolOptionKey) =>
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -364,7 +379,15 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
         },
       });
 
-      await api.dumpDatabase({ sessionId, streamId, database, path, options });
+      await api.dumpDatabase({
+        sessionId,
+        streamId,
+        database,
+        path,
+        options: tableScope
+          ? { ...options, tables: tableScope, pgSchema: driver === "postgres" ? database : options.pgSchema }
+          : options,
+      });
     } catch (e) {
       // Subscription or kick-off (validation) failure — terminal events never
       // fire in this case, so reset the UI here.
@@ -399,13 +422,24 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
       closeOnEscape={!isRunning}
     >
       <ModalHeader onClose={onClose} closeLabel={t("dumpClose")} closeDisabled={isRunning}>
-        {t("dumpTitle", { database })}
+        {tableScope ? t("dumpTablesTitle", { database, count: tableScope.length }) : t("dumpTitle", { database })}
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
           {NATIVE_DUMP_DRIVERS.has(driver) ? t("dumpNoteNative") : t("dumpNote", { tool: toolName ?? "mysqldump" })}
         </chakra.div>
+
+        {tableScope && (
+          <Callout tone="info" title={t("dumpTablesScopeTitle", { count: tableScope.length })}>
+            <chakra.div fontSize="sm" wordBreak="break-all" data-testid="dump-tables-scope">
+              {tableScope.join(", ")}
+            </chakra.div>
+            <chakra.div textStyle="caption" mt="1">
+              {t("dumpTablesScopeHint")}
+            </chakra.div>
+          </Callout>
+        )}
 
         {toolStatus && toolMissing && (
           <DumpToolNotice
@@ -467,7 +501,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
               </Tooltip>
             ))}
           </chakra.div>
-          {driver === "postgres" && (
+          {driver === "postgres" && !tableScope && (
             <chakra.div mt="2.5" display="flex" flexDirection="column" gap="1">
               <FieldLabel htmlFor="dump-pg-schema">{t("dumpOptPgSchema")}</FieldLabel>
               <Input
