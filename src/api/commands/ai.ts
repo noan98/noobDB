@@ -41,6 +41,12 @@ export const aiCommands = {
      * 省略すると通常のテキスト応答。
      */
     format?: { type: "json_schema"; schema: Record<string, unknown> } | null;
+    /**
+     * system のうち繰り返し同じになる固定部分 (スキーマなど、#1473)。`system` より前に置かれ、
+     * 十分長いときバックエンドが `cache_control` を付けてプロンプトキャッシュに載せる。
+     * 省略時は `system` 単独が (長ければ) キャッシュ対象になる。
+     */
+    systemCached?: string | null;
   }) =>
     invoke<void>("run_ai_request", {
       streamId: params.streamId,
@@ -49,5 +55,6 @@ export const aiCommands = {
       prompt: params.prompt,
       settings: params.settings,
       format: params.format ?? null,
+      systemCached: params.systemCached ?? null,
     }),
 };
