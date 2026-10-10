@@ -2250,3 +2250,85 @@ async fn postgres_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
         .await
         .expect("cleanup");
 }
+
+/// #1417 — 待機チェーン: 接続 A が行をロックしたまま、接続 B が同じ行を UPDATE して待つ。
+/// `list_processes` で B の `blocked_by` に A の pid が入り、A を kill すると待機が解消する。
+#[tokio::test]
+async fn postgres_blocking_chain_is_listed_and_resolved_by_kill() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let admin = t::connect(&opts).await.expect("connect admin");
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_blocking", None)
+        .await
+        .expect("drop");
+    admin
+        .execute(
+            "CREATE TABLE noobdb_it_blocking (id int PRIMARY KEY, v int)",
+            None,
+        )
+        .await
+        .expect("create");
+    admin
+        .execute("INSERT INTO noobdb_it_blocking VALUES (1, 0)", None)
+        .await
+        .expect("insert");
+
+    // A: 明示トランザクションで行ロックを保持する。
+    let a = t::connect(&opts).await.expect("connect A");
+    a.begin_transaction(None).await.expect("begin A");
+    let res = a
+        .execute_in_transaction("SELECT pg_backend_pid() AS pid")
+        .await
+        .expect("pid A");
+    let a_pid = match &res.rows[0][0] {
+        t::Value::Int(v) => *v,
+        other => panic!("unexpected pid: {other:?}"),
+    };
+    a.execute_in_transaction("UPDATE noobdb_it_blocking SET v = 1 WHERE id = 1")
+        .await
+        .expect("A update");
+
+    // B: 同じ行を UPDATE して待たされる (別タスク)。
+    let b = std::sync::Arc::new(t::connect(&opts).await.expect("connect B"));
+    let b_task = {
+        let b = b.clone();
+        tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                b.execute("UPDATE noobdb_it_blocking SET v = 2 WHERE id = 1", None),
+            )
+            .await
+        })
+    };
+
+    let mut waiter: Option<i64> = None;
+    for _ in 0..50 {
+        let list = admin.list_processes().await.expect("list");
+        if let Some(p) = list.iter().find(|p| p.blocked_by.contains(&a_pid)) {
+            waiter = Some(p.id);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let waiter = waiter.expect("B must be reported as blocked by A");
+    assert_ne!(waiter, a_pid);
+
+    // 根のブロッカー A を kill すると B の UPDATE が進む。
+    let killed = admin.kill_processes(&[a_pid]).await.expect("kill A");
+    assert_eq!(killed.killed, 1, "{killed:?}");
+    let outcome = b_task.await.expect("join B");
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "B must complete once the blocker is killed: {outcome:?}"
+    );
+
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_blocking", None)
+        .await
+        .expect("cleanup");
+    admin.close().await;
+}

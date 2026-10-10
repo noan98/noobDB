@@ -277,7 +277,7 @@ export function BottomPanelStrip({
   /** タブラベル。`BottomPanel` と同じ関数を渡す。 */
   label: (tab: BottomPanelTab) => string;
   /** 無効な項目の理由 (ツールチップ)。i18n 済みの文字列を返す。 */
-  reasonLabel: (reason: BottomPanelUnavailableReason) => string;
+  reasonLabel: (reason: BottomPanelUnavailableReason, tab: BottomPanelTab) => string;
   onOpen: (tab: BottomPanelTab) => void;
 }) {
   const t = useT();
@@ -316,7 +316,7 @@ export function BottomPanelStrip({
             />
           )}
           {/* 有効な項目は `label` が undefined になり、Tooltip は子をそのまま返す。 */}
-          <Tooltip label={enabled || !reason ? undefined : reasonLabel(reason)}>
+          <Tooltip label={enabled || !reason ? undefined : reasonLabel(reason, tab)}>
             <chakra.button
               type="button"
               aria-disabled={enabled ? undefined : true}

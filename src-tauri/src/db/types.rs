@@ -428,6 +428,10 @@ pub struct ProcessInfo {
     /// app's *other* pooled connections (same pool, different id) are not
     /// flagged because the engine cannot tell them apart from other clients.
     pub is_self: bool,
+    /// このプロセスの進行を (ロック待ちで) 止めているプロセスの id (#1417)。
+    /// PostgreSQL は `pg_blocking_pids()`、MySQL 8 は `performance_schema.data_lock_waits`。
+    /// 取得できない (権限不足・古い版) / 待っていないときは空。
+    pub blocked_by: Vec<i64>,
 }
 
 /// プロセス一覧の 1 行に載せるクエリ要約の最大文字数 (#1259)。
@@ -452,6 +456,8 @@ pub struct ProcessListItem {
     /// 要約が全文より短い (切り詰めた) とき true。
     pub query_truncated: bool,
     pub is_self: bool,
+    /// ブロッカー (待たされている相手) の id 一覧 (#1417)。待機チェーンのツリー化はフロントで行う。
+    pub blocked_by: Vec<i64>,
 }
 
 /// クエリ本文を 1 行要約にする。空白の畳み込みは `split_whitespace` (Unicode 空白)、
@@ -488,6 +494,7 @@ impl From<ProcessInfo> for ProcessListItem {
             query_summary,
             query_truncated,
             is_self: p.is_self,
+            blocked_by: p.blocked_by,
         }
     }
 }

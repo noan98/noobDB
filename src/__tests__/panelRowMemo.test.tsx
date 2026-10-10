@@ -215,6 +215,7 @@ describe("プロセス一覧 (#1321)", () => {
     query_summary: `SELECT ${id}`,
     query_truncated: false,
     is_self: false,
+    blocked_by: [],
   });
 
   it("行の選択で再レンダーされるのは当該行 (とパネル) だけ", async () => {

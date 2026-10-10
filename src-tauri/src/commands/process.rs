@@ -54,7 +54,7 @@ pub async fn get_process_query_inner(
         .get(session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
-    let rows = session.conn.list_processes().await?;
+    let rows = session.conn.list_processes_without_locks().await?;
     Ok(rows
         .into_iter()
         .find(|p| p.id == process_id)

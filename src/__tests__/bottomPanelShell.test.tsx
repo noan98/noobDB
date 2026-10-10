@@ -232,6 +232,16 @@ describe("BottomPanelStrip (折りたたみ時のパネルバー)", () => {
     );
   });
 
+  it("無効理由の生成にはタブも渡す (SQLite のプロセス/インスペクタで文言を分けるため)", async () => {
+    const seen = vi.fn(() => "reason");
+    renderStrip({
+      entries: [{ tab: "processes", enabled: false, reason: "sqliteUnsupported" }],
+      reasonLabel: seen,
+    });
+    fireEvent.focus(screen.getByRole("button", { name: t("processTitle") }));
+    await waitFor(() => expect(seen).toHaveBeenCalledWith("sqliteUnsupported", "processes"));
+  });
+
   it("項目が無ければ何も描かない", () => {
     renderStrip({ entries: [] });
     expect(screen.queryByTestId("bottom-panel-strip")).toBeNull();

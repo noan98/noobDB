@@ -1138,6 +1138,16 @@ impl Connection {
         }
     }
 
+    /// [`Connection::list_processes`] からロック待ち (`blocked_by`) の照会を省いた版 (#1417)。
+    /// 1 件のクエリ本文を引くだけなど待機チェーンが要らない経路用。
+    pub async fn list_processes_without_locks(&self) -> Result<Vec<ProcessInfo>> {
+        match self {
+            Connection::MySql(c) => c.list_processes_opts(false).await,
+            Connection::Postgres(c) => c.list_processes().await,
+            Connection::Sqlite(c) => c.list_processes().await,
+        }
+    }
+
     /// Terminates the server-side processes/connections `ids` (from
     /// [`Connection::list_processes`]): MySQL `KILL <id>` on one pooled
     /// connection, PostgreSQL `pg_terminate_backend` over `unnest` in one
