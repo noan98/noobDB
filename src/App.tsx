@@ -9509,6 +9509,7 @@ export default function App() {
                     <AdvisorPanel
                       sessionId={sessionId}
                       database={bottomPanelCtx.advisorDatabase}
+                      isProduction={selectedProfile?.is_production ?? false}
                       onInsertSql={handleInsertAdvisorSql}
                     />
                   ) : null}

@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 
 import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
+import { useAiAvailable } from "../ai/useAiAvailable";
 import { semanticColorToken } from "../semanticColors";
 import {
   DEFAULT_ADVISOR_SORT,
@@ -19,6 +20,7 @@ import {
   type AdvisorSortKey,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
+import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { CodePreview } from "./modalForm";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -45,6 +47,10 @@ import { transitions, variants } from "../motion";
  *   確認) を通る。
  * - **縮退の明示**: 前提を満たさずスキップしたルール (未使用インデックスなど) は
  *   理由コードを有効化手順つきの文言にして表示し、黙って 0 件にしない (#587)。
+ *
+ * - **AI 解説 (#1468)**: AI 有効 + キー設定済みのときだけ、各指摘に「AI に聞く」を出す。
+ *   解説は行内に展開し、AI は説明を返すだけで SQL は実行しない (本体の「読み取りのみ・
+ *   自動実行しない」は変えない)。
  *
  * ルール判定の純ロジックはバック `db::advisor` にあり、表示ロジック (ルール →
  * i18n キー/パラメータ) は `advisor.ts` に分離してテストする。
@@ -108,14 +114,19 @@ const MotionReveal = chakra(motion.div, {}, {
 export function AdvisorPanel({
   sessionId,
   database,
+  isProduction = false,
   onInsertSql,
 }: {
   sessionId: string;
   database: string;
+  /** 本番接続か。AI への送信前に確認を挟む (UI レベルの誤送信防止)。 */
+  isProduction?: boolean;
   onInsertSql: (sql: string) => void;
 }) {
   const t = useT();
   const toast = useToast();
+  // 「AI に聞く」は AI 有効 + API キー設定済みのときだけ出す (設定画面の保存 / 削除に即時追従)。
+  const aiAvailable = useAiAvailable();
 
   const [report, setReport] = useState<SchemaHealthReport | null>(null);
   const [running, setRunning] = useState(false);
@@ -151,6 +162,18 @@ export function AdvisorPanel({
       return t(desc.key, desc.params);
     });
   }, [report, sort, t]);
+
+  // 行の key は内容ベース (並べ替えで AiAdvisorExplain が作り直され、実行中の要求や結果が
+  // 消えないようにする)。同一内容の重複だけ出現順の連番で区別する。
+  const rowKeys = useMemo(() => {
+    const seen = new Map<string, number>();
+    return findings.map((f) => {
+      const base = `${f.rule}|${f.table}|${f.columns.join(",")}|${f.context.join(",")}`;
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      return n === 0 ? base : `${base}#${n}`;
+    });
+  }, [findings]);
 
   // 各ソートヘッダ共通のプロパティ (クリック / Enter・Space / aria-sort)。
   // th はネイティブに columnheader ロールを持つので role は上書きしない。
@@ -307,7 +330,7 @@ export function AdvisorPanel({
             {findings.map((f, i) => {
               const desc = findingDescription(f);
               return (
-                <chakra.tr key={`${f.rule}-${f.table}-${f.context.join(",")}-${i}`}>
+                <chakra.tr key={rowKeys[i]}>
                   <chakra.td css={tdCss}>
                     <SeverityBadge severity={f.severity} />
                   </chakra.td>
@@ -358,6 +381,15 @@ export function AdvisorPanel({
                           </Tooltip>
                         </Flex>
                       </Box>
+                    )}
+                    {aiAvailable && report && (
+                      <AiAdvisorExplain
+                        sessionId={sessionId}
+                        driver={report.driver}
+                        database={database}
+                        finding={f}
+                        isProduction={isProduction}
+                      />
                     )}
                   </chakra.td>
                 </chakra.tr>
