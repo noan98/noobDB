@@ -333,6 +333,8 @@ interface Props {
   onTruncateTable?: (database: string, table: string) => void;
   onDropTable?: (database: string, table: string) => void;
   onRenameTable?: (database: string, table: string) => void;
+  /** テーブルを複製するダイアログを開く (#1398)。read_only では無効化される。 */
+  onCloneTable?: (database: string, table: string) => void;
   /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
   onAlterTable?: (database: string, table: string) => void;
   /** テーブル右クリックからインデックス作成の軽量モーダルを開く (#850)。`AlterTable`
@@ -1690,6 +1692,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onTruncateTable,
   onDropTable,
   onRenameTable,
+  onCloneTable,
   onAlterTable,
   onCreateIndex,
   onDropIndex,
@@ -2490,13 +2493,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     // テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794) / インデックス作成
     // (#850)。破壊的なので read_only では無効化し、実行時は呼び出し側 (App) が
     // 確認ダイアログを挟む。
-    if (onTruncateTable || onDropTable || onRenameTable || onAlterTable || onCreateIndex) {
+    if (onTruncateTable || onDropTable || onRenameTable || onCloneTable || onAlterTable || onCreateIndex) {
       const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
       items.push({ separator: true });
       if (onRenameTable) {
         items.push({
           label: t("contextMenuRenameTable"),
           onSelect: () => onRenameTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onCloneTable) {
+        items.push({
+          label: t("contextMenuCloneTable"),
+          onSelect: () => onCloneTable(db, tbl),
           disabled: activeReadOnly,
           title: roTitle,
         });
