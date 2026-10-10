@@ -9,9 +9,11 @@ import {
   type DriverKind,
   type SaveAssertionRequest,
 } from "../api/tauri";
+import { useAiAvailable } from "../ai/useAiAvailable";
 import { useT } from "../i18n";
 import { semanticColorToken, type SemanticRole } from "../semanticColors";
 import { AssertionEditorModal } from "./AssertionEditorModal";
+import { AssertionSuggestModal } from "./AssertionSuggestModal";
 import {
   describeRule,
   draftFromAssertion,
@@ -146,6 +148,9 @@ export function AssertionsPanel({
   const [states, setStates] = useState<Map<string, AssertionRunState>>(() => new Map());
   const [runningAll, setRunningAll] = useState(false);
   const [editing, setEditing] = useState<AssertionDraft | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  // AI 無効 / API キー未設定のときは入口を出さない。
+  const aiAvailable = useAiAvailable();
   const cancelRef = useRef(false);
   // アンマウント後 (パネルを閉じた・切断) に結果を書き込まない。
   const mountedRef = useRef(true);
@@ -229,6 +234,16 @@ export function AssertionsPanel({
     [toast, t],
   );
 
+  // AI 提案から一括登録した分を一覧へ足す (定義が新しいので古い結果は無い)。
+  const handleRegistered = useCallback(
+    (saved: Assertion[]) => {
+      if (!mountedRef.current) return;
+      setAssertions((prev) => [...(prev ?? []), ...saved]);
+      toast.success(t("assertAiRegistered", { count: saved.length }));
+    },
+    [toast, t],
+  );
+
   const handleDelete = useCallback(
     async (a: Assertion) => {
       const ok = await confirm({
@@ -278,6 +293,12 @@ export function AssertionsPanel({
           <Icon name="plus" size={ICON_SIZES.sm} />
           <chakra.span marginLeft="1.5">{t("assertAdd")}</chakra.span>
         </Button>
+        {aiAvailable && (
+          <Button type="button" variant="secondary" onClick={() => setSuggesting(true)} disabled={runningAll}>
+            <Icon name="sparkles" size={ICON_SIZES.sm} />
+            <chakra.span marginLeft="1.5">{t("assertAiButton")}</chakra.span>
+          </Button>
+        )}
         {summary.passed + summary.failed + summary.errored > 0 && (
           <chakra.span fontSize="sm" color="app.textMuted" textStyle="numeric">
             {t("assertSummary", {
@@ -436,6 +457,18 @@ export function AssertionsPanel({
             profile={profile}
             onSave={handleSave}
             onClose={() => setEditing(null)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {suggesting && (
+          <AssertionSuggestModal
+            sessionId={sessionId}
+            driver={driver}
+            database={database ?? null}
+            profile={profile}
+            onRegistered={handleRegistered}
+            onClose={() => setSuggesting(false)}
           />
         )}
       </AnimatePresence>

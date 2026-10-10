@@ -126,6 +126,17 @@ pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
                 ));
             }
         }
+        AssertionRule::CustomSql { sql } => {
+            if !non_blank(sql) {
+                return Err(invalid("sql is required"));
+            }
+            // ドライバ非依存の保守的判定。ドライバ別の再検証は `build_sql` の末尾で行う。
+            if !crate::db::is_read_only_sql(sql) {
+                return Err(AppError::ReadOnly(
+                    "custom assertion SQL must be a single read-only statement".into(),
+                ));
+            }
+        }
         AssertionRule::RowCount { op, value, max } => {
             if *op == RowCountOp::Between {
                 match max {
@@ -148,6 +159,7 @@ pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
 /// | `range` | 非 NULL で範囲 (両端含む) の外にある行数 |
 /// | `referential` | 参照列がすべて非 NULL で、参照先に対応行が無い行数 |
 /// | `row_count` | 総行数 (pass/fail は [`evaluate`] が条件と比較して決める) |
+/// | `custom_sql` | 利用者の SELECT が返す行数 (0 行なら pass) |
 pub fn build_sql(
     driver: DriverKind,
     schema: Option<&str>,
@@ -237,6 +249,17 @@ pub fn build_sql(
             (
                 format!("SELECT {count} AS observed FROM {from} AS a_src WHERE {where_}"),
                 format!("SELECT a_src.* FROM {from} AS a_src WHERE {where_}"),
+            )
+        }
+        AssertionRule::CustomSql { sql } => {
+            // 末尾の `;` と空白を落とし、サブクエリに包む。改行で挟むのは末尾の
+            // `--` コメントが閉じ括弧を巻き込まないようにするため。
+            let body = sql
+                .trim()
+                .trim_end_matches(|c: char| c == ';' || c.is_whitespace());
+            (
+                format!("SELECT {count} AS observed FROM (\n{body}\n) AS a_custom"),
+                body.to_string(),
             )
         }
         AssertionRule::RowCount { .. } => (
@@ -329,6 +352,9 @@ mod tests {
                 op: RowCountOp::Gt,
                 value: 0,
                 max: None,
+            },
+            AssertionRule::CustomSql {
+                sql: s("SELECT * FROM t WHERE a > b;"),
             },
         ]
     }
@@ -550,6 +576,30 @@ mod tests {
                     Err(e) => panic!("{driver:?} {rule:?}: {e}"),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn custom_sql_wraps_as_subquery_and_rejects_writes() {
+        let rule = AssertionRule::CustomSql {
+            sql: s("SELECT id FROM t WHERE end_at < start_at -- コメント\n;"),
+        };
+        for driver in ALL {
+            let out = sql(driver, None, "t", &rule);
+            assert!(out.check_sql.contains("AS a_custom"), "{}", out.check_sql);
+            assert!(out.violations_sql.ends_with("start_at -- コメント"));
+        }
+        for bad in [
+            "DELETE FROM t",
+            "SELECT 1; DELETE FROM t",
+            "UPDATE t SET a = 1",
+            "   ",
+        ] {
+            let rule = AssertionRule::CustomSql { sql: s(bad) };
+            assert!(
+                build_sql(DriverKind::Postgres, None, "t", &rule).is_err(),
+                "{bad}"
+            );
         }
     }
 
