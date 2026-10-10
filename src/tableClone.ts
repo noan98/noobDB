@@ -230,6 +230,16 @@ export interface CloneOptions {
    * 生成列があるテーブルで `SELECT *` は失敗するので、列メタが取れたときは必ず渡す。
    */
   columns?: string[] | null;
+  /**
+   * PostgreSQL: 列の種別 (`parsePgColumnFlags`)。identity / serial 列の setval と serial 専用
+   * シーケンスの作成に使う。未指定なら serial は元のシーケンスを共有したままになる。
+   */
+  pgColumns?: PgColumnFlags | null;
+  /**
+   * PostgreSQL: `pg_constraint` から取った外部キー定義 (`parsePgForeignKeys`)。再構成 DDL は
+   * ON DELETE/UPDATE・DEFERRABLE・複合キーの列対応・別スキーマ参照を正しく出せないので使わない。
+   */
+  pgForeignKeys?: PgForeignKey[] | null;
   /** 既に使われているインデックス/制約名 (あれば衝突回避に使う)。 */
   existingNames?: string[];
 }
@@ -375,13 +385,53 @@ function rewriteCreateIndex(
 
 const render = (tokens: Token[]) => tokens.map((t) => t.text).join("").trim();
 
-/** 外側の括弧内をトップレベルのカンマで分けた項目 (PostgreSQL の FK 抜き出し用)。 */
-function topLevelItems(tokens: Token[]): Token[][] {
+/** `REFERENCES` が複製元自身を指していたら新テーブルに付け替えたトークン列を返す。 */
+function retargetSelfReferences(tokens: Token[], o: CloneOptions, newName: string): Token[] {
+  const out: Token[] = [];
+  for (let k = 0; k < tokens.length; k++) {
+    const t = tokens[k];
+    if (t.kind === "word" && t.text.toUpperCase() === "REFERENCES") {
+      const ref = readQualifiedName(tokens, k + 1);
+      if (ref && isSelfReference(o, ref)) {
+        out.push(t, ...tokens.slice(k + 1, ref.start), { kind: "word", text: newName });
+        k = ref.end - 1;
+        continue;
+      }
+    }
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * PostgreSQL: `pg_get_constraintdef` の定義から `ALTER TABLE new ADD CONSTRAINT <衝突回避名> <定義>`
+ * を作る。参照先は search_path 次第でスキーマ修飾付き/無しのどちらでも来るので、自己参照は
+ * 両方を `isSelfReference` で判定して新名に書き換える。
+ */
+function pgForeignKeyAlters(o: CloneOptions, used: Set<string>): string[] {
+  const newName = qualified(o.driver, o.database, o.newTable);
+  return (o.pgForeignKeys ?? []).map((fk) => {
+    const def = retargetSelfReferences(tokenize(fk.def, o.driver), o, newName);
+    const name = cloneObjectName(o.driver, fk.name, o.sourceTable, o.newTable, used);
+    return `ALTER TABLE ${newName} ADD CONSTRAINT ${quoteIdentFor(o.driver, name)} ${render(def)}`;
+  });
+}
+
+/**
+ * MySQL でデータ込み複製するとき、自己参照 FK を CREATE TABLE から外して `ALTER TABLE ... ADD` に
+ * する (INSERT ... SELECT の行順で親より先に子が入ると 1452 で失敗するため)。`FOREIGN_KEY_CHECKS`
+ * は触らない。`tokens` は既に新名向けに書き換え済みで、自己参照は新テーブルを指している。
+ */
+function detachSelfForeignKeys(
+  tokens: Token[],
+  o: CloneOptions,
+): { tokens: Token[]; alters: string[] } {
   const open = tokens.findIndex((t) => t.kind === "punct" && t.text === "(");
-  if (open < 0) return [];
-  const items: Token[][] = [];
+  if (open < 0) return { tokens, alters: [] };
+  const segs: Token[][] = [];
   let cur: Token[] = [];
   let depth = 0;
+  let close = -1;
   for (let i = open; i < tokens.length; i++) {
     const t = tokens[i];
     if (t.kind === "punct" && t.text === "(") {
@@ -390,65 +440,47 @@ function topLevelItems(tokens: Token[]): Token[][] {
     } else if (t.kind === "punct" && t.text === ")") {
       depth--;
       if (depth === 0) {
-        items.push(trimWs(cur));
-        return items;
+        segs.push(cur);
+        close = i;
+        break;
       }
     } else if (t.kind === "punct" && t.text === "," && depth === 1) {
-      items.push(trimWs(cur));
+      segs.push(cur);
       cur = [];
       continue;
     }
     cur.push(t);
   }
-  return [];
-}
-
-/** 再構成 DDL の CREATE TABLE から外部キー制約の項目だけを `ALTER TABLE ... ADD ...` にする。 */
-function extractForeignKeys(
-  createTokens: Token[],
-  o: CloneOptions,
-  used: Set<string>,
-): string[] {
+  if (close < 0) return { tokens, alters: [] };
   const newName = qualified(o.driver, o.database, o.newTable);
-  const out: string[] = [];
-  for (const item of topLevelItems(createTokens)) {
-    let i = nextSig(item, 0);
-    if (i < 0) continue;
-    let nameTok: number | null = null;
-    if (item[i].text.toUpperCase() === "CONSTRAINT") {
-      const n = nextSig(item, i + 1);
-      if (n < 0 || !isName(item[n])) continue;
-      nameTok = n;
-      i = nextSig(item, n + 1);
-      if (i < 0) continue;
-    }
-    if (item[i].text.toUpperCase() !== "FOREIGN") continue;
-    const rewritten: Token[] = [];
-    for (let k = 0; k < item.length; k++) {
-      const t = item[k];
-      if (k === nameTok) {
-        rewritten.push({
-          kind: "word",
-          text: quoteIdentFor(
-            o.driver,
-            cloneObjectName(o.driver, nameValue(t), o.sourceTable, o.newTable, used),
-          ),
-        });
-        continue;
+  const kept: Token[][] = [];
+  const alters: string[] = [];
+  for (const seg of segs) {
+    let i = nextSig(seg, 0);
+    let isSelfFk = false;
+    if (i >= 0) {
+      if (seg[i].text.toUpperCase() === "CONSTRAINT") {
+        const n = nextSig(seg, i + 1);
+        i = n >= 0 ? nextSig(seg, n + 1) : -1;
       }
-      if (t.kind === "word" && t.text.toUpperCase() === "REFERENCES") {
-        const ref = readQualifiedName(item, k + 1);
-        if (ref && isSelfReference(o, ref)) {
-          rewritten.push(t, ...item.slice(k + 1, ref.start), { kind: "word", text: newName });
-          k = ref.end - 1;
-          continue;
-        }
+      if (i >= 0 && seg[i].text.toUpperCase() === "FOREIGN") {
+        const refIdx = seg.findIndex((t) => t.kind === "word" && t.text.toUpperCase() === "REFERENCES");
+        const ref = refIdx >= 0 ? readQualifiedName(seg, refIdx + 1) : null;
+        // 書き換え済みの自己参照は `newName` (修飾付き 1 トークン) になっている
+        isSelfFk = !!ref && ref.last === newName;
       }
-      rewritten.push(t);
     }
-    out.push(`ALTER TABLE ${newName} ADD ${render(rewritten)}`);
+    if (isSelfFk) alters.push(`ALTER TABLE ${newName} ADD ${render(seg)}`);
+    else kept.push(seg);
   }
-  return out;
+  if (alters.length === 0) return { tokens, alters };
+  const out: Token[] = tokens.slice(0, open + 1);
+  kept.forEach((seg, idx) => {
+    if (idx > 0) out.push({ kind: "punct", text: "," });
+    out.push(...seg);
+  });
+  out.push(...tokens.slice(close));
+  return { tokens: out, alters };
 }
 
 /**
@@ -474,6 +506,13 @@ function targetTableOf(sql: string, driver: string): string | null {
       i = skipIfNotExists(nextSig(tokens, i + 1));
       return readQualifiedName(tokens, i)?.last ?? null;
     }
+    if (kw(i) === "SEQUENCE") {
+      // CREATE SEQUENCE <名> OWNED BY <schema>.<table>.<column> — 所有先テーブルが対象
+      const o = tokens.findIndex((t) => t.kind === "word" && t.text.toUpperCase() === "OWNED");
+      if (o < 0) return null;
+      const by = nextSig(tokens, o + 1);
+      return kw(by) === "BY" ? (readQualifiedName(tokens, by + 1)?.qualifier ?? null) : null;
+    }
     if (kw(i) === "INDEX") {
       i = skipIfNotExists(nextSig(tokens, i + 1));
       const idx = readQualifiedName(tokens, i);
@@ -489,6 +528,19 @@ function targetTableOf(sql: string, driver: string): string | null {
     i = nextSig(tokens, i + 1);
     if (kw(i) === "ONLY") i = nextSig(tokens, i + 1);
     return readQualifiedName(tokens, i)?.last ?? null;
+  }
+  if (first === "SELECT") {
+    // SELECT setval(...) FROM <新テーブル> ...: トップレベルの FROM の直後が対象
+    let depth = 0;
+    for (let k = 0; k < tokens.length; k++) {
+      const t = tokens[k];
+      if (t.kind === "punct" && t.text === "(") depth++;
+      else if (t.kind === "punct" && t.text === ")") depth--;
+      else if (depth === 0 && t.kind === "word" && t.text.toUpperCase() === "FROM") {
+        return readQualifiedName(tokens, k + 1)?.last ?? null;
+      }
+    }
+    return null;
   }
   if (first === "INSERT") {
     i = nextSig(tokens, i + 1);
@@ -528,15 +580,40 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
   const newName = qualified(o.driver, o.database, o.newTable);
   const oldName = qualified(o.driver, o.database, o.sourceTable);
   const head: string[] = [];
-  const tail: string[] = [];
+  const afterData: string[] = [];
+  const q = (c: string) => quoteIdentFor(o.driver, c);
+  const lit = (x: string) => `'${x.replace(/'/g, "''")}'`;
 
   if (o.driver === "postgres") {
     if (!rewriteCreateTable(stmts[0], { ...o, driver: "postgres" }, new Set())) return empty;
     head.push(`CREATE TABLE ${newName} (LIKE ${oldName} INCLUDING ALL)`);
-    tail.push(...extractForeignKeys(stmts[0], o, used));
+    // serial 列は元のシーケンスを共有してしまう (元テーブルを DROP できなくなる) ので、新テーブル専用の
+    // シーケンスを作って付け替える。
+    for (const col of o.pgColumns?.serial ?? []) {
+      const seq = qualified(o.driver, o.database, seqName(o, col));
+      head.push(`CREATE SEQUENCE ${seq} OWNED BY ${newName}.${q(col)}`);
+      head.push(`ALTER TABLE ${newName} ALTER COLUMN ${q(col)} SET DEFAULT nextval(${lit(seq)}::regclass)`);
+    }
+    // identity / serial のシーケンスは新規作成で開始値のままなので、データ込みなら現在の最大値に進める
+    // (さもないと複製先への最初の INSERT が必ず重複キーになる)。
+    if (o.includeData) {
+      const cols = [...(o.pgColumns?.identity ?? []), ...(o.pgColumns?.serial ?? [])];
+      for (const col of cols) {
+        afterData.push(
+          `SELECT setval(pg_get_serial_sequence(${lit(newName)}, ${lit(col)}), max(${q(col)})) ` +
+            `FROM ${newName} HAVING max(${q(col)}) IS NOT NULL`,
+        );
+      }
+    }
+    afterData.push(...pgForeignKeyAlters(o, used));
   } else {
-    const rewritten = rewriteCreateTable(stmts[0], o, used);
+    let rewritten = rewriteCreateTable(stmts[0], o, used);
     if (!rewritten) return empty;
+    if (o.driver === "mysql" && o.includeData) {
+      const d = detachSelfForeignKeys(rewritten, o);
+      rewritten = d.tokens;
+      afterData.push(...d.alters);
+    }
     head.push(stripTrailingSemicolon(render(rewritten)));
     stmts.slice(1).forEach((s) => {
       const r = rewriteCreateIndex(s, o, used);
@@ -547,7 +624,7 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
 
   const statements = [...head];
   if (o.includeData) statements.push(buildInsertSelect(o, newName, oldName));
-  statements.push(...tail);
+  statements.push(...afterData);
 
   // 保険: 書き換えた各文の対象が新テーブルであること (複製元を触る文を絶対に流さない)。
   const errors: string[] = [];
@@ -563,7 +640,8 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
     statements,
     skipped,
     errors,
-    sharedSequence: o.driver === "postgres" && /nextval\s*\(/i.test(o.ddl),
+    // 列種別が取れていない (serial 専用シーケンスを作れなかった) ときだけ共有の注意を出す
+    sharedSequence: o.driver === "postgres" && !o.pgColumns && /nextval\s*\(/i.test(o.ddl),
   };
 }
 
@@ -600,13 +678,60 @@ export function insertableColumns(
   return out.length > 0 ? out : null;
 }
 
-/** PostgreSQL: 生成列 (GENERATED ALWAYS AS (expr) STORED) の列名を引く読み取りクエリ。 */
-export function buildPgGeneratedColumnsSql(schema: string, table: string): string {
-  const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
+const sqlLit = (x: string) => `'${x.replace(/'/g, "''")}'`;
+
+/** PostgreSQL の列種別。 */
+export interface PgColumnFlags {
+  /** GENERATED ALWAYS AS (expr) STORED の列 (INSERT から除く)。 */
+  generated: string[];
+  /** identity 列 (ALWAYS / BY DEFAULT)。 */
+  identity: string[];
+  /** `nextval('...'::regclass)` を既定値に持つ serial 列 (identity は含めない)。 */
+  serial: string[];
+}
+
+/** PostgreSQL: 列の生成/identity/serial 種別を引く読み取りクエリ。 */
+export function buildPgColumnFlagsSql(schema: string, table: string): string {
   return (
-    "SELECT column_name FROM information_schema.columns " +
-    `WHERE table_schema = ${lit(schema)} AND table_name = ${lit(table)} AND is_generated = 'ALWAYS'`
+    "SELECT column_name, is_generated, is_identity, column_default FROM information_schema.columns " +
+    `WHERE table_schema = ${sqlLit(schema)} AND table_name = ${sqlLit(table)} ORDER BY ordinal_position`
   );
+}
+
+/** `buildPgColumnFlagsSql` の結果行 (列名, is_generated, is_identity, column_default) を分類する。 */
+export function parsePgColumnFlags(rows: unknown[][]): PgColumnFlags {
+  const out: PgColumnFlags = { generated: [], identity: [], serial: [] };
+  for (const r of rows) {
+    const name = String(r[0]);
+    if (String(r[1]) === "ALWAYS") out.generated.push(name);
+    else if (String(r[2]) === "YES") out.identity.push(name);
+    else if (/^nextval\(.*::regclass\)$/s.test(String(r[3] ?? ""))) out.serial.push(name);
+  }
+  return out;
+}
+
+/** PostgreSQL: 外部キー定義 (`pg_get_constraintdef`) を引く読み取りクエリ。 */
+export function buildPgForeignKeysSql(schema: string, table: string): string {
+  const rel = `${quoteIdentFor("postgres", schema)}.${quoteIdentFor("postgres", table)}`;
+  return (
+    "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint " +
+    `WHERE conrelid = to_regclass(${sqlLit(rel)}) AND contype = 'f' ORDER BY conname`
+  );
+}
+
+export interface PgForeignKey {
+  name: string;
+  def: string;
+}
+
+export function parsePgForeignKeys(rows: unknown[][]): PgForeignKey[] {
+  return rows.map((r) => ({ name: String(r[0]), def: String(r[1]) }));
+}
+
+/** serial 列用に新規作成するシーケンス名 (`<新>_<列>_seq`、PostgreSQL の 63 文字に収める)。 */
+function seqName(o: CloneOptions, col: string): string {
+  const base = `${o.newTable}_${col}`;
+  return `${base.slice(0, 63 - 4)}_seq`;
 }
 
 /**

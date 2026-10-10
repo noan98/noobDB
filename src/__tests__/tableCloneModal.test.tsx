@@ -82,13 +82,27 @@ describe("TableCloneModal (#1398)", () => {
     expect(stmts.at(-1)).toBe("INSERT INTO `main`.`users_copy` (`id`) SELECT `id` FROM `main`.`users`");
   });
 
-  it("PostgreSQL は LIKE INCLUDING ALL を使い、serial があれば共有シーケンスの注意を出す", async () => {
-    getDef.mockResolvedValue(
-      `CREATE TABLE "main"."users" ("id" integer NOT NULL DEFAULT nextval('users_id_seq'::regclass), PRIMARY KEY ("id"));\n`,
-    );
-    lookup.mockResolvedValue({ columns: [], rows: [], rows_affected: 0, elapsed_ms: 0 });
+  it("PostgreSQL は LIKE INCLUDING ALL と serial 専用シーケンスを使い、FK は pg_constraint から取る", async () => {
+    getDef.mockResolvedValue(`CREATE TABLE "main"."users" ("id" integer, PRIMARY KEY ("id"));\n`);
+    lookup.mockImplementation(async ({ sql }: { sql: string }) => ({
+      columns: [],
+      rows: sql.includes("pg_constraint")
+        ? [["users_boss_fkey", "FOREIGN KEY (boss) REFERENCES users(id)"]]
+        : [["id", "NEVER", "NO", "nextval('users_id_seq'::regclass)"]],
+      rows_affected: 0,
+      elapsed_ms: 0,
+    }));
     mount(vi.fn(), vi.fn(), "postgres");
-    expect(await screen.findByText(t("cloneTableSharedSequence"))).toBeInTheDocument();
-    expect(screen.getByText(/LIKE "main"\."users" INCLUDING ALL/)).toBeInTheDocument();
+    expect(await screen.findByText(/LIKE "main"\."users" INCLUDING ALL/)).toBeInTheDocument();
+    expect(screen.getByText(/CREATE SEQUENCE "main"\."users_copy_id_seq"/)).toBeInTheDocument();
+    expect(screen.getByText(/ADD CONSTRAINT "users_copy_boss_fkey" FOREIGN KEY \(boss\) REFERENCES "main"\."users_copy"\(id\)/)).toBeInTheDocument();
+    expect(screen.queryByText(t("cloneTableSharedSequence"))).not.toBeInTheDocument();
+  });
+
+  it("PostgreSQL のメタ取得に失敗したら ErrorNote を出して確定できない", async () => {
+    lookup.mockRejectedValue(new Error("boom"));
+    mount(vi.fn(), vi.fn(), "postgres");
+    expect(await screen.findByText(/boom/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("cloneTableConfirm") })).toBeDisabled();
   });
 });

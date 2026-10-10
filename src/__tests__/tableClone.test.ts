@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   buildCloneStatements,
-  buildPgGeneratedColumnsSql,
+  buildPgColumnFlagsSql,
+  buildPgForeignKeysSql,
+  parsePgColumnFlags,
+  parsePgForeignKeys,
   cloneObjectName,
   formatCloneStatements,
   insertableColumns,
@@ -70,45 +73,102 @@ describe("buildCloneStatements (#1398)", () => {
     expect(sql.endsWith(";")).toBe(false);
   });
 
-  it("PostgreSQL: LIKE INCLUDING ALL で写し、FK だけ ALTER TABLE ADD CONSTRAINT (名前衝突回避)", () => {
+  it("PostgreSQL: LIKE INCLUDING ALL で写し、FK は pg_get_constraintdef から ALTER (名前衝突回避・参照アクション保持)", () => {
     const r = buildCloneStatements({
-      driver: "postgres",
-      database: "public",
-      sourceTable: "orders",
-      newTable: "orders_copy",
-      ddl: PG_DDL,
-      includeData: false,
+      driver: "postgres", database: "public", sourceTable: "orders", newTable: "orders_copy",
+      ddl: PG_DDL, includeData: false,
+      pgForeignKeys: parsePgForeignKeys([
+        ["orders_user_fk", 'FOREIGN KEY (user_id) REFERENCES other.users(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED'],
+      ]),
     });
     expect(r.statements).toEqual([
       'CREATE TABLE "public"."orders_copy" (LIKE "public"."orders" INCLUDING ALL)',
-      'ALTER TABLE "public"."orders_copy" ADD CONSTRAINT "orders_copy_user_fk" FOREIGN KEY ("user_id") REFERENCES "users" ("id")',
+      'ALTER TABLE "public"."orders_copy" ADD CONSTRAINT "orders_copy_user_fk" FOREIGN KEY (user_id) REFERENCES other.users(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED',
     ]);
+  });
+
+  it("PostgreSQL: 自己参照 FK は修飾付き/無しどちらでも新テーブルへ、別スキーマの同名は付け替えない", () => {
+    const r = buildCloneStatements({
+      driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2",
+      ddl: PG_DDL, includeData: false,
+      pgForeignKeys: [
+        { name: "a", def: "FOREIGN KEY (p) REFERENCES orders(id)" },
+        { name: "b", def: "FOREIGN KEY (p) REFERENCES public.orders(id) ON UPDATE CASCADE" },
+        { name: "c", def: "FOREIGN KEY (q) REFERENCES other.orders(id)" },
+      ],
+    });
+    expect(r.statements.slice(1)).toEqual([
+      'ALTER TABLE "public"."o2" ADD CONSTRAINT "a_o2" FOREIGN KEY (p) REFERENCES "public"."o2"(id)',
+      'ALTER TABLE "public"."o2" ADD CONSTRAINT "b_o2" FOREIGN KEY (p) REFERENCES "public"."o2"(id) ON UPDATE CASCADE',
+      'ALTER TABLE "public"."o2" ADD CONSTRAINT "c_o2" FOREIGN KEY (q) REFERENCES other.orders(id)',
+    ]);
+  });
+
+  it("PostgreSQL: データ込みは INSERT → identity/serial の setval → FK の順、serial は専用シーケンスに付け替える", () => {
+    const r = buildCloneStatements({
+      driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2",
+      ddl: PG_DDL, includeData: true,
+      columns: ["id", "n", "user_id"],
+      pgColumns: { generated: [], identity: ["id"], serial: ["n"] },
+      pgForeignKeys: [{ name: "fk", def: "FOREIGN KEY (user_id) REFERENCES users(id)" }],
+    });
+    expect(r.statements).toEqual([
+      'CREATE TABLE "public"."o2" (LIKE "public"."orders" INCLUDING ALL)',
+      'CREATE SEQUENCE "public"."o2_n_seq" OWNED BY "public"."o2"."n"',
+      `ALTER TABLE "public"."o2" ALTER COLUMN "n" SET DEFAULT nextval('"public"."o2_n_seq"'::regclass)`,
+      'INSERT INTO "public"."o2" ("id", "n", "user_id") OVERRIDING SYSTEM VALUE SELECT "id", "n", "user_id" FROM "public"."orders"',
+      `SELECT setval(pg_get_serial_sequence('"public"."o2"', 'id'), max("id")) FROM "public"."o2" HAVING max("id") IS NOT NULL`,
+      `SELECT setval(pg_get_serial_sequence('"public"."o2"', 'n'), max("n")) FROM "public"."o2" HAVING max("n") IS NOT NULL`,
+      'ALTER TABLE "public"."o2" ADD CONSTRAINT "fk_o2" FOREIGN KEY (user_id) REFERENCES users(id)',
+    ]);
+    expect(r.errors).toEqual([]);
     expect(r.sharedSequence).toBe(false);
   });
 
-  it("PostgreSQL: データ複製は FK 追加より前、serial 既定値は sharedSequence で知らせる", () => {
-    const r = buildCloneStatements({
-      driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2",
-      ddl: PG_DDL.replace('"id" integer NOT NULL', `"id" integer NOT NULL DEFAULT nextval('orders_id_seq'::regclass)`),
-      includeData: true,
-      columns: ["id", "user_id"],
+  it("PostgreSQL: データ無しなら setval は出さない / 列種別が無く nextval があれば共有注意", () => {
+    const base = { driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2" };
+    const noData = buildCloneStatements({
+      ...base, ddl: PG_DDL, includeData: false, pgColumns: { generated: [], identity: ["id"], serial: [] },
     });
-    expect(r.statements[1]).toBe(
-      'INSERT INTO "public"."o2" ("id", "user_id") OVERRIDING SYSTEM VALUE SELECT "id", "user_id" FROM "public"."orders"',
-    );
-    expect(r.statements[2]).toMatch(/^ALTER TABLE "public"\."o2" ADD CONSTRAINT/);
-    expect(r.sharedSequence).toBe(true);
+    expect(noData.statements).toHaveLength(1);
+    const shared = buildCloneStatements({
+      ...base, includeData: false,
+      ddl: PG_DDL.replace('"id" integer NOT NULL', `"id" integer NOT NULL DEFAULT nextval('orders_id_seq'::regclass)`),
+    });
+    expect(shared.sharedSequence).toBe(true);
   });
 
-  it("PostgreSQL: 自己参照 FK は新テーブルへ、別スキーマの同名テーブルは付け替えない", () => {
-    const ddl = `CREATE TABLE "public"."orders" ("id" int, "p" int, "q" int,
-      CONSTRAINT "self" FOREIGN KEY ("p") REFERENCES "orders" ("id"),
-      FOREIGN KEY ("q") REFERENCES "other"."orders" ("id"));`;
-    const r = buildCloneStatements({
-      driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2", ddl, includeData: false,
+  it("PostgreSQL のメタ取得クエリはリテラルをエスケープし、結果行を分類する", () => {
+    expect(buildPgColumnFlagsSql("s'x", "t")).toContain("table_schema = 's''x' AND table_name = 't'");
+    expect(buildPgForeignKeysSql("my s", 'ta"b')).toContain(`to_regclass('"my s"."ta""b"')`);
+    expect(
+      parsePgColumnFlags([
+        ["a", "NEVER", "YES", null],
+        ["b", "NEVER", "NO", "nextval('b_seq'::regclass)"],
+        ["g", "ALWAYS", "NO", null],
+        ["c", "NEVER", "NO", "now()"],
+      ]),
+    ).toEqual({ generated: ["g"], identity: ["a"], serial: ["b"] });
+  });
+
+  it("MySQL: データ込みでは自己参照 FK を CREATE から外して INSERT の後に ALTER で付ける", () => {
+    const withData = buildCloneStatements({
+      driver: "mysql", database: "shop", sourceTable: "orders", newTable: "orders_copy",
+      ddl: MYSQL_DDL, includeData: true,
     });
-    expect(r.statements[1]).toContain('REFERENCES "public"."o2" ("id")');
-    expect(r.statements[2]).toBe('ALTER TABLE "public"."o2" ADD FOREIGN KEY ("q") REFERENCES "other"."orders" ("id")');
+    expect(withData.statements[0]).not.toContain("orders_parent");
+    expect(withData.statements[0]).toContain("CONSTRAINT `orders_copy_ibfk_1` FOREIGN KEY");
+    expect(withData.statements[1]).toMatch(/^INSERT INTO/);
+    expect(withData.statements[2]).toBe(
+      "ALTER TABLE `shop`.`orders_copy` ADD CONSTRAINT `orders_copy_parent` FOREIGN KEY (`parent_id`) REFERENCES `shop`.`orders_copy` (`id`)",
+    );
+    // データ無しなら従来どおり CREATE 内に残す
+    const noData = buildCloneStatements({
+      driver: "mysql", database: "shop", sourceTable: "orders", newTable: "orders_copy",
+      ddl: MYSQL_DDL, includeData: false,
+    });
+    expect(noData.statements).toHaveLength(1);
+    expect(noData.statements[0]).toContain("orders_copy_parent");
   });
 
   it("SQLite: テーブル名はスキーマ修飾なし、インデックス名のみ改名、CONSTRAINT 名は据え置き", () => {
@@ -130,7 +190,7 @@ describe("buildCloneStatements (#1398)", () => {
     const my = buildCloneStatements({
       driver: "mysql", database: "shop", sourceTable: "orders", newTable: "o2", ddl: MYSQL_DDL, includeData: true,
     });
-    expect(my.statements.at(-1)).toBe("INSERT INTO `shop`.`o2` SELECT * FROM `shop`.`orders`");
+    expect(my.statements.find((x) => x.startsWith("INSERT"))).toBe("INSERT INTO `shop`.`o2` SELECT * FROM `shop`.`orders`");
     const pg = buildCloneStatements({
       driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2", ddl: PG_DDL, includeData: true,
     });
@@ -197,12 +257,6 @@ describe("buildCloneStatements (#1398)", () => {
       ddl: "CREATE TABLE `t` (a int)", includeData: true, columns: ["a", "i"],
     });
     expect(r.statements.at(-1)).toBe("INSERT INTO `d`.`t2` (`a`, `i`) SELECT `a`, `i` FROM `d`.`t`");
-  });
-
-  it("PostgreSQL 生成列取得クエリはリテラルをエスケープする", () => {
-    expect(buildPgGeneratedColumnsSql("s'x", "t")).toBe(
-      "SELECT column_name FROM information_schema.columns WHERE table_schema = 's''x' AND table_name = 't' AND is_generated = 'ALWAYS'",
-    );
   });
 
   it("MySQL の部分失敗判定: 2 文以上で新名が残っているときだけ true", () => {

@@ -4,9 +4,14 @@ import { api, type DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
 import {
   buildCloneStatements,
-  buildPgGeneratedColumnsSql,
+  buildPgColumnFlagsSql,
+  buildPgForeignKeysSql,
   formatCloneStatements,
   insertableColumns,
+  parsePgColumnFlags,
+  parsePgForeignKeys,
+  type PgColumnFlags,
+  type PgForeignKey,
   suggestCloneName,
 } from "../tableClone";
 import { tableNameCollides } from "./resultsToTable";
@@ -42,6 +47,9 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
   const [ddlError, setDdlError] = useState<string | null>(null);
   // INSERT ... SELECT の明示列リスト (生成列を除く)。列メタが取れなければ null = SELECT *。
   const [insertCols, setInsertCols] = useState<string[] | null>(null);
+  // PostgreSQL のみ: 列種別 (identity/serial/生成) と外部キー定義 (pg_constraint)。
+  const [pgMeta, setPgMeta] = useState<{ columns: PgColumnFlags; fks: PgForeignKey[] } | null>(null);
+  const [metaError, setMetaError] = useState<string | null>(null);
   const [existingTables, setExistingTables] = useState<string[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,22 +64,22 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
       .catch((e) => {
         if (!cancelled) setDdlError(String(e));
       });
-    // 列メタ (生成列の除外用)。失敗しても複製自体は続ける (SELECT * に退避)。
+    // 列メタ (生成列の除外用)。MySQL/SQLite は失敗しても複製自体は続ける (SELECT * に退避)。
+    // PostgreSQL は identity/serial/FK を正しく写すのに必須なので、失敗したら確定させない。
     void (async () => {
       try {
         const cols = await api.describeTable(sessionId, database, sourceTable);
         let generated: string[] = [];
         if (driver === "postgres") {
-          const r = await api.runLookupQuery({
-            sessionId,
-            sql: buildPgGeneratedColumnsSql(database, sourceTable),
-            database,
-          });
-          generated = r.rows.map((row) => String(row[0]));
+          const lookup = (sql: string) => api.runLookupQuery({ sessionId, sql, database });
+          const flags = parsePgColumnFlags((await lookup(buildPgColumnFlagsSql(database, sourceTable))).rows);
+          const fks = parsePgForeignKeys((await lookup(buildPgForeignKeysSql(database, sourceTable))).rows);
+          generated = flags.generated;
+          if (!cancelled) setPgMeta({ columns: flags, fks });
         }
         if (!cancelled) setInsertCols(insertableColumns(driver, cols, generated));
-      } catch {
-        // 列メタが取れないときは SELECT * のまま
+      } catch (e) {
+        if (!cancelled && driver === "postgres") setMetaError(String(e));
       }
     })();
     api
@@ -112,13 +120,16 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
             ddl,
             includeData,
             columns: insertCols,
+            pgColumns: pgMeta?.columns ?? null,
+            pgForeignKeys: pgMeta?.fks ?? null,
           })
         : null,
-    [ddl, trimmed, driver, database, sourceTable, includeData, insertCols],
+    [ddl, trimmed, driver, database, sourceTable, includeData, insertCols, pgMeta],
   );
   const statements = trimmed ? (result?.statements ?? []) : [];
   const notTable = !!result && result.statements.length === 0 && result.errors.length === 0;
-  const valid = !loading && !collides && trimmed.length > 0 && statements.length > 0;
+  const metaPending = driver === "postgres" && !pgMeta;
+  const valid = !loading && !metaPending && !collides && trimmed.length > 0 && statements.length > 0;
 
   const submit = () => {
     if (valid) onConfirm(trimmed, statements);
@@ -159,6 +170,7 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         <Switch checked={includeData} onChange={setIncludeData} label={t("cloneTableIncludeData")} />
 
         {ddlError && <ErrorNote>{t("cloneTableDdlError", { error: ddlError })}</ErrorNote>}
+        {metaError && <ErrorNote>{t("cloneTableMetaError", { error: metaError })}</ErrorNote>}
         {notTable && <ErrorNote>{t("cloneTableNotTable")}</ErrorNote>}
         {result && result.errors.length > 0 && (
           <ErrorNote>{t("cloneTableRewriteError", { statements: result.errors.join(" / ") })}</ErrorNote>
