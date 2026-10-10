@@ -30,6 +30,7 @@ import {
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { SettingsInfo, SettingsLabelWithInfo } from "./settingsLayout";
 import { Button, Input, Select, Switch } from "./ui";
 import { useToast } from "./Toast";
 
@@ -293,7 +294,10 @@ export function AiSettings() {
       </chakra.span>
 
       <FormSection>
-        <FieldLabel htmlFor="settings-ai-key">{t("aiApiKeyLabel")}</FieldLabel>
+        <SettingsLabelWithInfo>
+          <FieldLabel htmlFor="settings-ai-key">{t("aiApiKeyLabel")}</FieldLabel>
+          <SettingsInfo>{t("aiApiKeyHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
         <Flex align="center" gap="2" wrap="wrap">
           <chakra.span
             fontSize="sm"
@@ -338,13 +342,13 @@ export function AiSettings() {
             </Button>
           )}
         </Flex>
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiApiKeyHelp")}
-        </chakra.span>
       </FormSection>
 
       <FormSection>
-        <FieldLabel htmlFor="settings-ai-default-model">{t("aiDefaultModel")}</FieldLabel>
+        <SettingsLabelWithInfo>
+          <FieldLabel htmlFor="settings-ai-default-model">{t("aiDefaultModel")}</FieldLabel>
+          <SettingsInfo>{t("aiDefaultModelHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
         <Select
           id="settings-ai-default-model"
           width="auto"
@@ -359,13 +363,13 @@ export function AiSettings() {
             </option>
           ))}
         </Select>
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiDefaultModelHelp")}
-        </chakra.span>
       </FormSection>
 
       <FormSection>
-        <FieldLabel as="div">{t("aiTaskModels")}</FieldLabel>
+        <SettingsLabelWithInfo>
+          <FieldLabel as="div">{t("aiTaskModels")}</FieldLabel>
+          <SettingsInfo>{t("aiTaskModelsHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
         <chakra.div
           display="grid"
           gridTemplateColumns="140px minmax(0, 1fr) minmax(0, 1fr)"
@@ -421,13 +425,13 @@ export function AiSettings() {
             );
           })}
         </chakra.div>
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiTaskModelsHelp")}
-        </chakra.span>
       </FormSection>
 
       <FormSection>
-        <FieldLabel htmlFor="settings-ai-send-scope">{t("aiSendScope")}</FieldLabel>
+        <SettingsLabelWithInfo>
+          <FieldLabel htmlFor="settings-ai-send-scope">{t("aiSendScope")}</FieldLabel>
+          <SettingsInfo>{t("aiSendScopeHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
         <Select
           id="settings-ai-send-scope"
           width="auto"
@@ -443,47 +447,44 @@ export function AiSettings() {
             </option>
           ))}
         </Select>
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiSendScopeHelp")}
-        </chakra.span>
-        <chakra.label
-          htmlFor="settings-ai-allow-row-data"
-          display="inline-flex"
-          alignItems="center"
-          gap="2"
-          fontSize="md"
-          fontWeight={500}
-          color="app.text"
-        >
-          <Switch
-            id="settings-ai-allow-row-data"
-            checked={ai.allowRowData}
-            onChange={setAiAllowRowData}
-          />
-          {t("aiAllowRowData")}
-        </chakra.label>
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiAllowRowDataHelp")}
-        </chakra.span>
-        <chakra.label
-          htmlFor="settings-ai-mask-literals"
-          display="inline-flex"
-          alignItems="center"
-          gap="2"
-          fontSize="md"
-          fontWeight={500}
-          color="app.text"
-        >
-          <Switch
-            id="settings-ai-mask-literals"
-            checked={ai.maskLiterals}
-            onChange={setAiMaskLiterals}
-          />
-          {t("aiMaskLiterals")}
-        </chakra.label>
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiMaskLiteralsHelp")}
-        </chakra.span>
+        <SettingsLabelWithInfo>
+          <chakra.label
+            htmlFor="settings-ai-allow-row-data"
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            fontSize="md"
+            fontWeight={500}
+            color="app.text"
+          >
+            <Switch
+              id="settings-ai-allow-row-data"
+              checked={ai.allowRowData}
+              onChange={setAiAllowRowData}
+            />
+            {t("aiAllowRowData")}
+          </chakra.label>
+          <SettingsInfo>{t("aiAllowRowDataHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
+        <SettingsLabelWithInfo>
+          <chakra.label
+            htmlFor="settings-ai-mask-literals"
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            fontSize="md"
+            fontWeight={500}
+            color="app.text"
+          >
+            <Switch
+              id="settings-ai-mask-literals"
+              checked={ai.maskLiterals}
+              onChange={setAiMaskLiterals}
+            />
+            {t("aiMaskLiterals")}
+          </chakra.label>
+          <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
       </FormSection>
 
       <Flex align="center" gap="2" wrap="wrap">
@@ -528,9 +529,7 @@ export function AiSettings() {
             {t("aiSampleCancel")}
           </Button>
         )}
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiSampleRequestHelp")}
-        </chakra.span>
+        <SettingsInfo>{t("aiSampleRequestHelp")}</SettingsInfo>
       </Flex>
       {sample.kind !== "idle" && sample.text !== "" && (
         <chakra.div

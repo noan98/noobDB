@@ -87,3 +87,26 @@ describe("SettingsView render smoke (#604)", () => {
     ).toBe("true");
   });
 });
+
+// 項目の説明文は常時表示せず、ラベル横のインフォメーションアイコンに畳んである。
+// 本文はフォーカス (クリック含む) で吹き出しに出て、`aria-describedby` でボタンに
+// 結び付くこと、結果グリッドのモードの説明が見出しと項目で二重に出ないことを固定する。
+describe("SettingsView info icons", () => {
+  it("hides item descriptions behind an info icon that reveals them on focus", async () => {
+    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
+    await screen.findByRole("heading", { name: t("settingsTitle") });
+
+    expect(screen.queryByText(t("settingsFlightRecorderHelp"))).toBeNull();
+    expect(screen.queryByText(t("settingsResultGridModeHelp"))).toBeNull();
+
+    const label = screen.getByText(t("settingsFlightRecorder"), { selector: "h3" });
+    const wrapper = label.parentElement;
+    if (!wrapper) throw new Error("info wrapper not found");
+    const info = within(wrapper).getByRole("button", { name: t("settingsInfoAria") });
+    fireEvent.focus(info);
+
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent(t("settingsFlightRecorderHelp"));
+    expect(info.getAttribute("aria-describedby")).toBe(tip.id);
+  });
+});

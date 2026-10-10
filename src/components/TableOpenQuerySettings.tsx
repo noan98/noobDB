@@ -13,6 +13,7 @@ import {
 } from "../tableQueryTemplate";
 import { Icon, ICON_SIZES } from "./Icon";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SettingsInfo, SettingsLabelWithInfo } from "./settingsLayout";
 import { Tooltip } from "./Tooltip";
 import { Button, Textarea } from "./ui";
 
@@ -67,7 +68,10 @@ export function TableOpenQuerySettings() {
       </FormSection>
 
       <FormSection>
-        <FieldLabel as="div">{t("tableOpenQueryOverridesLabel")}</FieldLabel>
+        <SettingsLabelWithInfo>
+          <FieldLabel as="div">{t("tableOpenQueryOverridesLabel")}</FieldLabel>
+          <SettingsInfo>{t("tableOpenQueryOverridesHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
         {overrides.length === 0 ? (
           <chakra.span fontSize="sm" color="app.textMuted">
             {t("tableOpenQueryOverridesEmpty")}
@@ -117,9 +121,6 @@ export function TableOpenQuerySettings() {
             ))}
           </chakra.ul>
         )}
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("tableOpenQueryOverridesHelp")}
-        </chakra.span>
       </FormSection>
     </Flex>
   );

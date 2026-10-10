@@ -15,7 +15,8 @@ import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Segmented } from "./Segmented";
 import { Input, Select, SelectableCard, Switch } from "./ui";
 import {
-  SettingsHelp,
+  SettingsInfo,
+  SettingsLabelWithInfo,
   SettingsNavAside,
   SettingsNavButton,
   SettingsNavEmpty,
@@ -255,10 +256,6 @@ const SettingsToggleLabel = chakra("label", {
     alignItems: "center",
     gap: "2",
   },
-});
-
-const SettingsHelpInline = chakra("span", {
-  base: { fontSize: "sm", color: "app.textMuted" },
 });
 
 const SettingsNumberRow = chakra("div", {
@@ -990,7 +987,7 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
         </SettingsSectionHeader>
         <SettingsToggleRow>
           <LanguageSwitcher />
-          <SettingsHelpInline>{t("settingsLanguageHelp")}</SettingsHelpInline>
+          <SettingsInfo>{t("settingsLanguageHelp")}</SettingsInfo>
         </SettingsToggleRow>
       </SettingsSection>
 
@@ -1002,7 +999,16 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
           </SettingsReset>
         </SettingsSectionHeader>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
+            <SettingsInfo>
+              {t("settingsFontSizeHelp", {
+                min: MIN_FONT_SIZE_PX,
+                max: MAX_FONT_SIZE_PX,
+                default: DEFAULT_FONT_SIZE_PX,
+              })}
+            </SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-font-size"
             type="number"
@@ -1017,24 +1023,19 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsFontSizeHelp", {
-              min: MIN_FONT_SIZE_PX,
-              max: MAX_FONT_SIZE_PX,
-              default: DEFAULT_FONT_SIZE_PX,
-            })}
-          </SettingsHelpInline>
         </SettingsNumberRow>
 
         <SettingsToggleRow>
-          <SettingsToggleLabel as="span">{t("settingsDensity")}</SettingsToggleLabel>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel as="span">{t("settingsDensity")}</SettingsToggleLabel>
+            <SettingsInfo>{t("settingsDensityHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Segmented
             value={settings.density}
             options={DENSITY_ORDER.map((d) => ({ value: d, label: t(DENSITY_LABEL_KEYS[d]) }))}
             onChange={setDensity}
             ariaLabel={t("settingsDensity")}
           />
-          <SettingsHelpInline>{t("settingsDensityHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
 
         <FontFamilyControl
@@ -1063,7 +1064,10 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
         />
 
         <SettingsToggleRow>
-          <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
+            <SettingsInfo>{t("settingsThemePresetHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <ThemePresetRow role="group" aria-label={t("settingsThemePreset")}>
             {THEME_PRESET_ORDER.map((p) => {
               const selected = settings.themePreset === p;
@@ -1093,11 +1097,13 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               );
             })}
           </ThemePresetRow>
-          <SettingsHelpInline>{t("settingsThemePresetHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
 
         <SettingsToggleRow>
-          <SettingsToggleLabel as="span">{t("settingsAccentColor")}</SettingsToggleLabel>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel as="span">{t("settingsAccentColor")}</SettingsToggleLabel>
+            <SettingsInfo>{t("settingsAccentColorHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <SettingsSwatchRow role="group" aria-label={t("settingsAccentColor")}>
             {ACCENT_PRESETS.map((p) => {
               const selected =
@@ -1126,11 +1132,13 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               />
             </Tooltip>
           </SettingsSwatchRow>
-          <SettingsHelpInline>{t("settingsAccentColorHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
 
         <SettingsToggleRow>
-          <SettingsToggleLabel as="span">{t("settingsMotionPreference")}</SettingsToggleLabel>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel as="span">{t("settingsMotionPreference")}</SettingsToggleLabel>
+            <SettingsInfo>{t("settingsMotionPreferenceHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Segmented
             value={settings.motionPreference}
             options={MOTION_PREFERENCE_ORDER.map((m) => ({
@@ -1140,23 +1148,27 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
             onChange={setMotionPreference}
             ariaLabel={t("settingsMotionPreference")}
           />
-          <SettingsHelpInline>{t("settingsMotionPreferenceHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-streaming" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsStreaming")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsStreaming")}</chakra.h3>
+            <SettingsInfo>{t("settingsStreamingHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <SettingsReset onClick={resetStreamingDefaults}>
             {t("settingsReset")}
           </SettingsReset>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsStreamingHelp")}</SettingsHelp>
 
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-default-display">
-            {t("settingsDefaultDisplayCount")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-default-display">
+              {t("settingsDefaultDisplayCount")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsDefaultDisplayCountHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-default-display"
             type="number"
@@ -1170,15 +1182,15 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsDefaultDisplayCountHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
 
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-stream-prefetch">
-            {t("settingsStreamPrefetchSize")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-stream-prefetch">
+              {t("settingsStreamPrefetchSize")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsStreamPrefetchSizeHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-stream-prefetch"
             type="number"
@@ -1192,42 +1204,46 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsStreamPrefetchSizeHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-table-open-query" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("tableOpenQuerySettingsTitle")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("tableOpenQuerySettingsTitle")}</chakra.h3>
+            <SettingsInfo>{t("tableOpenQuerySettingsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("tableOpenQuerySettingsHelp")}</SettingsHelp>
         <TableOpenQuerySettings />
       </SettingsSection>
 
       <SettingsSection id="settings-sec-auto-limit" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsAutoLimit")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsAutoLimit")}</chakra.h3>
+            <SettingsInfo>{t("settingsAutoLimitHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsAutoLimitHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-auto-limit">
-            <Switch
-              id="settings-auto-limit"
-              checked={settings.autoLimitEnabled}
-              onChange={setAutoLimitEnabled}
-            />
-            {t("settingsAutoLimitEnabled")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsAutoLimitEnabledHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-auto-limit">
+              <Switch
+                id="settings-auto-limit"
+                checked={settings.autoLimitEnabled}
+                onChange={setAutoLimitEnabled}
+              />
+              {t("settingsAutoLimitEnabled")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsAutoLimitEnabledHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-auto-limit-count">
-            {t("settingsAutoLimitCount")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-auto-limit-count">
+              {t("settingsAutoLimitCount")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsAutoLimitCountHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-auto-limit-count"
             type="number"
@@ -1242,117 +1258,127 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsAutoLimitCountHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-sql-lint" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsSqlLint")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsSqlLint")}</chakra.h3>
+            <SettingsInfo>{t("settingsSqlLintHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsSqlLintHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-sql-lint">
-            <Switch
-              id="settings-sql-lint"
-              checked={settings.sqlLintEnabled}
-              onChange={setSqlLintEnabled}
-            />
-            {t("settingsSqlLintEnabled")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsSqlLintEnabledHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-sql-lint">
+              <Switch
+                id="settings-sql-lint"
+                checked={settings.sqlLintEnabled}
+                onChange={setSqlLintEnabled}
+              />
+              {t("settingsSqlLintEnabled")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsSqlLintEnabledHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-preflight-impact" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsPreflightImpact")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsPreflightImpact")}</chakra.h3>
+            <SettingsInfo>{t("settingsPreflightImpactHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsPreflightImpactHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-preflight-impact">
-            <Switch
-              id="settings-preflight-impact"
-              checked={settings.preflightImpactEnabled}
-              onChange={setPreflightImpactEnabled}
-            />
-            {t("settingsPreflightImpactEnabled")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsPreflightImpactEnabledHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-preflight-impact">
+              <Switch
+                id="settings-preflight-impact"
+                checked={settings.preflightImpactEnabled}
+                onChange={setPreflightImpactEnabled}
+              />
+              {t("settingsPreflightImpactEnabled")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsPreflightImpactEnabledHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-plan-watch" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsPlanWatch")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsPlanWatch")}</chakra.h3>
+            <SettingsInfo>{t("settingsPlanWatchHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsPlanWatchHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-plan-watch-on-connect">
-            <Switch
-              id="settings-plan-watch-on-connect"
-              checked={settings.planWatchOnConnect}
-              onChange={setPlanWatchOnConnect}
-            />
-            {t("settingsPlanWatchOnConnect")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsPlanWatchOnConnectHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-plan-watch-on-connect">
+              <Switch
+                id="settings-plan-watch-on-connect"
+                checked={settings.planWatchOnConnect}
+                onChange={setPlanWatchOnConnect}
+              />
+              {t("settingsPlanWatchOnConnect")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsPlanWatchOnConnectHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-schema-drift" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsSchemaDrift")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsSchemaDrift")}</chakra.h3>
+            <SettingsInfo>{t("settingsSchemaDriftHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsSchemaDriftHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-schema-drift-on-connect">
-            <Switch
-              id="settings-schema-drift-on-connect"
-              checked={settings.schemaDriftOnConnect}
-              onChange={setSchemaDriftOnConnect}
-            />
-            {t("settingsSchemaDriftOnConnect")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsSchemaDriftOnConnectHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-schema-drift-on-connect">
+              <Switch
+                id="settings-schema-drift-on-connect"
+                checked={settings.schemaDriftOnConnect}
+                onChange={setSchemaDriftOnConnect}
+              />
+              {t("settingsSchemaDriftOnConnect")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsSchemaDriftOnConnectHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-timelapse" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsTimelapse")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsTimelapse")}</chakra.h3>
+            <SettingsInfo>{t("settingsTimelapseHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <SettingsReset onClick={() => void clearTimelapse()}>
             {t("settingsTimelapseClearAll")}
           </SettingsReset>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsTimelapseHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-timelapse-on-connect">
-            <Switch
-              id="settings-timelapse-on-connect"
-              checked={settings.timelapseOnConnect}
-              onChange={setTimelapseOnConnect}
-            />
-            {t("settingsTimelapseOnConnect")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsTimelapseOnConnectHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-timelapse-on-connect">
+              <Switch
+                id="settings-timelapse-on-connect"
+                checked={settings.timelapseOnConnect}
+                onChange={setTimelapseOnConnect}
+              />
+              {t("settingsTimelapseOnConnect")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsTimelapseOnConnectHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-timelapse-max-generations">
-            {t("settingsTimelapseMaxGenerations")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-timelapse-max-generations">
+              {t("settingsTimelapseMaxGenerations")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsTimelapseMaxGenerationsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-timelapse-max-generations"
             type="number"
@@ -1367,34 +1393,36 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsTimelapseMaxGenerationsHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-flight-recorder" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsFlightRecorder")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsFlightRecorder")}</chakra.h3>
+            <SettingsInfo>{t("settingsFlightRecorderHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsFlightRecorderHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-flight-recorder-enabled">
-            <Switch
-              id="settings-flight-recorder-enabled"
-              checked={settings.flightRecorderEnabled}
-              onChange={setFlightRecorderEnabled}
-            />
-            {t("settingsFlightRecorderEnabled")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsFlightRecorderEnabledHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-flight-recorder-enabled">
+              <Switch
+                id="settings-flight-recorder-enabled"
+                checked={settings.flightRecorderEnabled}
+                onChange={setFlightRecorderEnabled}
+              />
+              {t("settingsFlightRecorderEnabled")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsFlightRecorderEnabledHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-flight-recorder-row-cap">
-            {t("settingsFlightRecorderRowCap")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-flight-recorder-row-cap">
+              {t("settingsFlightRecorderRowCap")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsFlightRecorderRowCapHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-flight-recorder-row-cap"
             type="number"
@@ -1410,14 +1438,14 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsFlightRecorderRowCapHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-flight-recorder-retention">
-            {t("settingsFlightRecorderRetentionDays")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-flight-recorder-retention">
+              {t("settingsFlightRecorderRetentionDays")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsFlightRecorderRetentionDaysHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-flight-recorder-retention"
             type="number"
@@ -1433,9 +1461,6 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsFlightRecorderRetentionDaysHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
 
@@ -1443,11 +1468,13 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsResultGridMode")}</chakra.h3>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsResultGridModeHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-result-grid-mode">
-            {t("settingsResultGridMode")}
-          </SettingsToggleLabel>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-result-grid-mode">
+              {t("settingsResultGridMode")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsResultGridModeHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Select
             id="settings-result-grid-mode"
             value={settings.resultGridMode}
@@ -1456,14 +1483,14 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
             <option value="scroll">{t("settingsResultGridModeScroll")}</option>
             <option value="paginate">{t("settingsResultGridModePaginate")}</option>
           </Select>
-          <SettingsHelpInline>
-            {t("settingsResultGridModeHelp")}
-          </SettingsHelpInline>
         </SettingsToggleRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-page-size">
-            {t("settingsResultGridPageSize")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-page-size">
+              {t("settingsResultGridPageSize")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsResultGridPageSizeHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Select
             id="settings-page-size"
             value={String(settings.resultGridPageSize)}
@@ -1474,14 +1501,14 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               <option key={n} value={n}>{n}</option>
             ))}
           </Select>
-          <SettingsHelpInline>
-            {t("settingsResultGridPageSizeHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-auto-refresh-default">
-            {t("settingsAutoRefreshDefault")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-auto-refresh-default">
+              {t("settingsAutoRefreshDefault")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsAutoRefreshDefaultHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Select
             id="settings-auto-refresh-default"
             value={String(settings.autoRefreshDefaultSecs)}
@@ -1495,64 +1522,65 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               </option>
             ))}
           </Select>
-          <SettingsHelpInline>
-            {t("settingsAutoRefreshDefaultHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-cell-edit-on-blur">
-            <Switch
-              id="settings-cell-edit-on-blur"
-              checked={settings.cellEditOnBlur === "confirm"}
-              onChange={(checked) => setCellEditOnBlur(checked ? "confirm" : "commit")}
-            />
-            {t("settingsCellEditOnBlur")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsCellEditOnBlurHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-cell-edit-on-blur">
+              <Switch
+                id="settings-cell-edit-on-blur"
+                checked={settings.cellEditOnBlur === "confirm"}
+                onChange={(checked) => setCellEditOnBlur(checked ? "confirm" : "commit")}
+              />
+              {t("settingsCellEditOnBlur")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsCellEditOnBlurHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-rich-cell-rendering">
-            <Switch
-              id="settings-rich-cell-rendering"
-              checked={settings.richCellRendering}
-              onChange={setRichCellRendering}
-            />
-            {t("settingsRichCellRendering")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsRichCellRenderingHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-rich-cell-rendering">
+              <Switch
+                id="settings-rich-cell-rendering"
+                checked={settings.richCellRendering}
+                onChange={setRichCellRendering}
+              />
+              {t("settingsRichCellRendering")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsRichCellRenderingHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-column-null-bars">
-            <Switch
-              id="settings-column-null-bars"
-              checked={settings.columnNullBars}
-              onChange={setColumnNullBars}
-            />
-            {t("settingsColumnNullBars")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsColumnNullBarsHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-column-null-bars">
+              <Switch
+                id="settings-column-null-bars"
+                checked={settings.columnNullBars}
+                onChange={setColumnNullBars}
+              />
+              {t("settingsColumnNullBars")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsColumnNullBarsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-quick-launcher" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("quickLauncherSettingsTitle")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("quickLauncherSettingsTitle")}</chakra.h3>
+            <SettingsInfo>{t("quickLauncherSettingsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("quickLauncherSettingsHelp")}</SettingsHelp>
         <QuickLauncherSettings />
       </SettingsSection>
 
       <SettingsSection id="settings-sec-ai" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("aiSettingsTitle")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("aiSettingsTitle")}</chakra.h3>
+            <SettingsInfo>{t("aiSettingsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("aiSettingsHelp")}</SettingsHelp>
         <AiSettings />
       </SettingsSection>
 
@@ -1561,48 +1589,51 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
           <chakra.h3>{t("settingsSafety")}</chakra.h3>
         </SettingsSectionHeader>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-confirm-prod">
-            <Switch
-              id="settings-confirm-prod"
-              checked={settings.confirmProductionConnect}
-              onChange={setConfirmProductionConnect}
-            />
-            {t("settingsConfirmProductionConnect")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsConfirmProductionConnectHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-confirm-prod">
+              <Switch
+                id="settings-confirm-prod"
+                checked={settings.confirmProductionConnect}
+                onChange={setConfirmProductionConnect}
+              />
+              {t("settingsConfirmProductionConnect")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsConfirmProductionConnectHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-confirm-dangerous">
-            <Switch
-              id="settings-confirm-dangerous"
-              checked={settings.confirmDangerousQueries}
-              onChange={setConfirmDangerousQueries}
-            />
-            {t("settingsConfirmDangerousQueries")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsConfirmDangerousQueriesHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-confirm-dangerous">
+              <Switch
+                id="settings-confirm-dangerous"
+                checked={settings.confirmDangerousQueries}
+                onChange={setConfirmDangerousQueries}
+              />
+              {t("settingsConfirmDangerousQueries")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsConfirmDangerousQueriesHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-column-mask">
-            <Switch
-              id="settings-column-mask"
-              checked={settings.columnMaskEnabled}
-              onChange={setColumnMaskEnabled}
-            />
-            {t("settingsColumnMask")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsColumnMaskHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-column-mask">
+              <Switch
+                id="settings-column-mask"
+                checked={settings.columnMaskEnabled}
+                onChange={setColumnMaskEnabled}
+              />
+              {t("settingsColumnMask")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsColumnMaskHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-column-mask-patterns">
-            {t("settingsColumnMaskPatterns")}
-          </SettingsToggleLabel>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-column-mask-patterns">
+              {t("settingsColumnMaskPatterns")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsColumnMaskPatternsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-column-mask-patterns"
             flex="1"
@@ -1621,41 +1652,41 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
           >
             {t("settingsColumnMaskPatternsReset")}
           </SettingsReset>
-          <SettingsHelpInline>
-            {t("settingsColumnMaskPatternsHelp")}
-          </SettingsHelpInline>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-column-mask-copy">
-            <Switch
-              id="settings-column-mask-copy"
-              checked={settings.columnMaskCopyPlaceholder}
-              disabled={!settings.columnMaskEnabled}
-              onChange={setColumnMaskCopyPlaceholder}
-            />
-            {t("settingsColumnMaskCopyPlaceholder")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsColumnMaskCopyPlaceholderHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-column-mask-copy">
+              <Switch
+                id="settings-column-mask-copy"
+                checked={settings.columnMaskCopyPlaceholder}
+                disabled={!settings.columnMaskEnabled}
+                onChange={setColumnMaskCopyPlaceholder}
+              />
+              {t("settingsColumnMaskCopyPlaceholder")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsColumnMaskCopyPlaceholderHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-results-new-tab">
-            <Switch
-              id="settings-results-new-tab"
-              checked={settings.resultsInNewTab}
-              onChange={setResultsInNewTab}
-            />
-            {t("settingsResultsInNewTab")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsResultsInNewTabHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-results-new-tab">
+              <Switch
+                id="settings-results-new-tab"
+                checked={settings.resultsInNewTab}
+                onChange={setResultsInNewTab}
+              />
+              {t("settingsResultsInNewTab")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsResultsInNewTabHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-query-timeout">
-            {t("settingsQueryTimeout")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-query-timeout">
+              {t("settingsQueryTimeout")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsQueryTimeoutHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-query-timeout"
             type="number"
@@ -1675,15 +1706,15 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
                 {t("settingsQueryTimeoutUnlimited")}
               </SettingsUnlimitedBadge>
             )}
-            <SettingsHelpInline>
-              {t("settingsQueryTimeoutHelp")}
-            </SettingsHelpInline>
           </SettingsTimeoutAux>
         </SettingsNumberRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-connect-timeout">
-            {t("settingsConnectTimeout")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-connect-timeout">
+              {t("settingsConnectTimeout")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsConnectTimeoutHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-connect-timeout"
             type="number"
@@ -1698,29 +1729,27 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsTimeoutAux>
-            <SettingsHelpInline>
-              {t("settingsConnectTimeoutHelp")}
-            </SettingsHelpInline>
-          </SettingsTimeoutAux>
         </SettingsNumberRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-auto-reconnect">
-            <Switch
-              id="settings-auto-reconnect"
-              checked={settings.autoReconnectEnabled}
-              onChange={setAutoReconnectEnabled}
-            />
-            {t("settingsAutoReconnect")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsAutoReconnectHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-auto-reconnect">
+              <Switch
+                id="settings-auto-reconnect"
+                checked={settings.autoReconnectEnabled}
+                onChange={setAutoReconnectEnabled}
+              />
+              {t("settingsAutoReconnect")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsAutoReconnectHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-auto-reconnect-retries">
-            {t("settingsAutoReconnectMaxRetries")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-auto-reconnect-retries">
+              {t("settingsAutoReconnectMaxRetries")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsAutoReconnectMaxRetriesHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-auto-reconnect-retries"
             type="number"
@@ -1736,9 +1765,6 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsAutoReconnectMaxRetriesHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
 
@@ -1747,22 +1773,25 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
           <chakra.h3>{t("settingsNotifications")}</chakra.h3>
         </SettingsSectionHeader>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-query-notifications">
-            <Switch
-              id="settings-query-notifications"
-              checked={settings.queryNotificationsEnabled}
-              onChange={setQueryNotificationsEnabled}
-            />
-            {t("settingsQueryNotifications")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsQueryNotificationsHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-query-notifications">
+              <Switch
+                id="settings-query-notifications"
+                checked={settings.queryNotificationsEnabled}
+                onChange={setQueryNotificationsEnabled}
+              />
+              {t("settingsQueryNotifications")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsQueryNotificationsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
         <SettingsNumberRow>
-          <chakra.label htmlFor="settings-query-notification-threshold">
-            {t("settingsQueryNotificationThreshold")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-query-notification-threshold">
+              {t("settingsQueryNotificationThreshold")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsQueryNotificationThresholdHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <Input
             id="settings-query-notification-threshold"
             type="number"
@@ -1778,17 +1807,16 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <SettingsHelpInline>
-            {t("settingsQueryNotificationThresholdHelp")}
-          </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-tab-persistence" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsTabPersistence")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsTabPersistence")}</chakra.h3>
+            <SettingsInfo>{t("settingsTabPersistenceHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsTabPersistenceHelp")}</SettingsHelp>
         <SettingsToggleRow>
           <chakra.label htmlFor="settings-tab-restore-mode">
             {t("settingsTabRestoreMode")}
@@ -1807,17 +1835,22 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
 
       <SettingsSection id="settings-sec-syntax-highlighting" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsSyntaxHighlighting")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsSyntaxHighlighting")}</chakra.h3>
+            <SettingsInfo>{t("settingsSyntaxHelp", { theme: themeLabel })}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <SettingsReset onClick={() => resetSyntaxColors(theme)}>
             {t("settingsReset")}
           </SettingsReset>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsSyntaxHelp", { theme: themeLabel })}</SettingsHelp>
 
         <SettingsPresetRow>
-          <chakra.label htmlFor="settings-syntax-preset">
-            {t("settingsSyntaxPresetLabel")}
-          </chakra.label>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-syntax-preset">
+              {t("settingsSyntaxPresetLabel")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsSyntaxPresetHelp", { theme: themeLabel })}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <chakra.select
             id="settings-syntax-preset"
             fontSize="md"
@@ -1837,9 +1870,6 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
               </option>
             ))}
           </chakra.select>
-          <SettingsHelpInline>
-            {t("settingsSyntaxPresetHelp", { theme: themeLabel })}
-          </SettingsHelpInline>
         </SettingsPresetRow>
 
         <SettingsColorGrid>
@@ -1865,12 +1895,14 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
 
       <SettingsSection id="settings-sec-preview-highlight" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsPreviewHighlight")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsPreviewHighlight")}</chakra.h3>
+            <SettingsInfo>{t("settingsPreviewHighlightHelp", { theme: themeLabel })}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <SettingsReset onClick={() => resetPreviewHighlight(theme)}>
             {t("settingsReset")}
           </SettingsReset>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsPreviewHighlightHelp", { theme: themeLabel })}</SettingsHelp>
 
         <SettingsColorGrid>
           <SettingsColorRow>
@@ -1906,7 +1938,10 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
 
       <SettingsSection id="settings-sec-logs" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsLogs")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsLogs")}</chakra.h3>
+            <SettingsInfo>{t("settingsLogsHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
           <SettingsLogsActions>
             <SettingsReset onClick={loadLogs} disabled={logLoading}>
               {t("settingsLogsRefresh")}
@@ -1926,7 +1961,6 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
             </SettingsReset>
           </SettingsLogsActions>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsLogsHelp")}</SettingsHelp>
         <SettingsLogsView
           readOnly
           wrap="off"
@@ -1946,9 +1980,11 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
 
       <SettingsSection id="settings-sec-updates" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsUpdates")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsUpdates")}</chakra.h3>
+            <SettingsInfo>{t("settingsUpdatesHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsUpdatesHelp")}</SettingsHelp>
         <SettingsToggleRow>
           <chakra.span>
             {t("settingsCurrentVersion", {
@@ -1964,25 +2000,27 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
           </SettingsReset>
         </SettingsToggleRow>
         <SettingsToggleRow>
-          <SettingsToggleLabel htmlFor="settings-auto-update-check">
-            <Switch
-              id="settings-auto-update-check"
-              checked={settings.autoUpdateCheckEnabled}
-              onChange={setAutoUpdateCheckEnabled}
-            />
-            {t("settingsAutoUpdateCheck")}
-          </SettingsToggleLabel>
-          <SettingsHelpInline>
-            {t("settingsAutoUpdateCheckHelp")}
-          </SettingsHelpInline>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-auto-update-check">
+              <Switch
+                id="settings-auto-update-check"
+                checked={settings.autoUpdateCheckEnabled}
+                onChange={setAutoUpdateCheckEnabled}
+              />
+              {t("settingsAutoUpdateCheck")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsAutoUpdateCheckHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-backup" scrollMarginTop="8px">
         <SettingsSectionHeader>
-          <chakra.h3>{t("settingsBackup")}</chakra.h3>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsBackup")}</chakra.h3>
+            <SettingsInfo>{t("settingsBackupHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
         </SettingsSectionHeader>
-        <SettingsHelp>{t("settingsBackupHelp")}</SettingsHelp>
         <SettingsToggleRow>
           <SettingsReset type="button" onClick={handleExportSettings}>
             {t("settingsBackupExport")}
@@ -1990,7 +2028,7 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
           <SettingsReset type="button" onClick={handleImportSettings}>
             {t("settingsBackupImport")}
           </SettingsReset>
-          <SettingsHelpInline>{t("settingsBackupExcludesProfiles")}</SettingsHelpInline>
+          <SettingsInfo>{t("settingsBackupExcludesProfiles")}</SettingsInfo>
         </SettingsToggleRow>
         <SettingsToggleRow>
           <SettingsReset
@@ -2000,7 +2038,7 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
           >
             {t("settingsBackupResetAll")}
           </SettingsReset>
-          <SettingsHelpInline>{t("settingsBackupResetAllHelp")}</SettingsHelpInline>
+          <SettingsInfo>{t("settingsBackupResetAllHelp")}</SettingsInfo>
         </SettingsToggleRow>
       </SettingsSection>
         </chakra.div>

@@ -8,6 +8,7 @@ import {
   type QuickLauncherSectionId,
 } from "../quickLauncher";
 import { setQuickLauncherEnabled, setQuickLauncherSectionLimit, useSettings } from "../settings";
+import { SettingsInfo } from "./settingsLayout";
 import { Button, Input, Switch } from "./ui";
 
 /** セクション → 見出しの i18n キー (ランチャー本体と共有)。 */
@@ -84,9 +85,7 @@ export function QuickLauncherSettings() {
         <Button type="button" variant="secondary" size="sm" onClick={resetQuickLauncherPosition}>
           {t("quickLauncherResetPosition")}
         </Button>
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("quickLauncherResetPositionHelp")}
-        </chakra.span>
+        <SettingsInfo>{t("quickLauncherResetPositionHelp")}</SettingsInfo>
       </Flex>
     </Flex>
   );

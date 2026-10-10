@@ -120,6 +120,11 @@ export interface TooltipProps {
    * 増えてしまう。
    */
   focusableWrapper?: boolean;
+  /**
+   * 吹き出しの最大幅。既定 280px。設定画面のインフォメーションアイコン
+   * (`SettingsInfo`) のように段落単位の説明を出すときだけ広げる。
+   */
+  maxWidth?: string;
 }
 
 /**
@@ -149,6 +154,7 @@ export function Tooltip({
   placement = "top",
   openDelay = TOOLTIP_OPEN_DELAY_MS,
   focusableWrapper = false,
+  maxWidth = "280px",
 }: TooltipProps) {
   const id = useId();
   const anchorRef = useRef<HTMLElement | null>(null);
@@ -295,7 +301,7 @@ export function Tooltip({
               role="tooltip"
               position="fixed"
               zIndex="popover"
-              maxWidth="280px"
+              maxWidth={maxWidth}
               bg="app.surface"
               border="1px solid"
               borderColor="app.borderStrong"
