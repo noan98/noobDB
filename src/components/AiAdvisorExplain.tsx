@@ -24,6 +24,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
 type State =
@@ -189,6 +190,7 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
       {state.kind !== "idle" && state.kind !== "running" && (
         <Flex direction="column" gap="2" aria-live="polite">
           {state.kind === "done" && <ResultView value={state.value} />}
+          <AiUsageNote event={stream.done} />
           {state.kind === "raw" && (
             <Flex direction="column" gap="1">
               <ErrorNote role="alert">{t("advisorAiParseError")}</ErrorNote>

@@ -34,6 +34,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { mapLimited } from "./mapLimited";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -499,6 +500,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
               </CodePreview>
             </FormSection>
           )}
+          <AiUsageNote event={stream.done} />
           {state.kind === "error" &&
             (state.refused ? (
               <Callout tone="warning" role="alert">

@@ -22,6 +22,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
 type State =
@@ -264,6 +265,7 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
           )}
         </Flex>
       )}
+      <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
         <Flex direction="column" gap="1">
           <ErrorNote role="alert">{t("aiErrorExplainParseError")}</ErrorNote>

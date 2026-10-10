@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, renderWithProviders, screen } from "./testUtils";
+import { getAiUsage, resetAiUsage } from "../ai/aiUsageStore";
 import type { AiDoneEvent, AiStreamHandlers as WireHandlers } from "../api/tauri";
 
 const runAiRequest = vi.fn();
@@ -102,6 +103,48 @@ describe("useAiStream (#1470)", () => {
     expect(unlisten).toHaveBeenCalled();
     // 実行権が戻っているので次の要求を受け付ける。
     expect(result.current.acquire()).toBe(true);
+  });
+
+  describe("使用量の累計 (#1474)", () => {
+    beforeEach(() => resetAiUsage());
+
+    const total = () => getAiUsage().byModel[doneEvent.model]?.requests ?? 0;
+
+    it("完了時に今月の累計へ 1 件加算し、同じストリームの 2 回目の done では加算しない", async () => {
+      const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+      result.current.acquire();
+      await act(async () => {
+        await result.current.start(request, handlers());
+      });
+      act(() => wire?.onDone?.(doneEvent));
+      act(() => wire?.onDone?.(doneEvent));
+      expect(getAiUsage().byModel[doneEvent.model]).toMatchObject({
+        requests: 1,
+        inputTokens: doneEvent.usage.inputTokens,
+      });
+    });
+
+    it("error / cancelled / reset 後は加算しない", async () => {
+      const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+      result.current.acquire();
+      await act(async () => {
+        await result.current.start(request, handlers());
+      });
+      act(() => wire?.onError?.({ streamId: "x", error: "boom", kind: "aiApi" }));
+      result.current.acquire();
+      await act(async () => {
+        await result.current.start(request, handlers());
+      });
+      act(() => wire?.onCancelled?.({ streamId: "x", deliveredRows: 0 }));
+      result.current.acquire();
+      await act(async () => {
+        await result.current.start(request, handlers());
+      });
+      const late = wire;
+      act(() => result.current.reset());
+      act(() => late?.onDone?.(doneEvent));
+      expect(total()).toBe(0);
+    });
   });
 
   it("エラー / 拒否 (aiRefused) / 中止を区別して通知する", async () => {

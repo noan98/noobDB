@@ -29,6 +29,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 
 import { AiSettings } from "../components/AiSettings";
 import { getSettings, replaceAllSettings, DEFAULT_SETTINGS } from "../settings";
+import { getAiUsage, recordAiUsage, resetAiUsage } from "../ai/aiUsageStore";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -138,7 +139,9 @@ describe("AiSettings サンプル要求 (#690)", () => {
     act(() =>
       handlers?.onDone?.({ ...base, model: "claude-opus-5-5", requestedModel: "claude-opus-5-5", fallbackUsed: false, stopReason: "end_turn", usage }),
     );
-    await screen.findByText(t("aiSampleDone", { model: "claude-opus-5-5", input: 1, output: 2 }));
+    await screen.findByText(t("aiUsageLine", { model: "Claude Opus 5.5", input: "1", output: "2" }));
+    // 既存の完了帯と使用量表示が二重にならない
+    expect(screen.getAllByTestId("ai-usage-note")).toHaveLength(1);
   });
 
   it("error イベントはエラー表示になる", async () => {
@@ -155,5 +158,38 @@ describe("AiSettings サンプル要求 (#690)", () => {
     await start();
     act(() => handlers?.onCancelled?.({ streamId: "s", deliveredRows: 0 }));
     await screen.findByText(t("aiSampleCancelled"));
+  });
+});
+
+// 今月の使用量 (#1474)
+describe("AiSettings 今月の使用量 (#1474)", () => {
+  const ev = {
+    model: "claude-opus-5-5",
+    requestedModel: "claude-opus-5-5",
+    fallbackUsed: false,
+    usage: { inputTokens: 3200, outputTokens: 800, cacheReadInputTokens: 2000, cacheCreationInputTokens: 500 },
+  };
+
+  beforeEach(() => resetAiUsage());
+
+  it("空のときは案内を出し、リセットは押せない", () => {
+    renderWithProviders(<AiSettings />);
+    expect(screen.getByText(t("aiUsageMonthEmpty"))).toBeTruthy();
+    expect(screen.getByRole("button", { name: t("aiUsageReset") })).toBeDisabled();
+  });
+
+  it("モデル別行と合計にキャッシュ書き込み / 読み取りを併記し、リセットは確認後に消える", async () => {
+    recordAiUsage(ev);
+    renderWithProviders(<AiSettings />);
+    const cache = `${t("aiUsageSep")}${t("aiUsageCacheWrite", { count: "500" })}${t("aiUsageSep")}${t("aiUsageCacheRead", { count: "2k" })}`;
+    await screen.findByText(
+      t("aiUsageMonthRow", { model: "Claude Opus 5.5", requests: 1, input: "3.2k", output: "800", cache }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("aiUsageReset") }));
+    await screen.findByText(t("aiUsageResetConfirmTitle"));
+    const buttons = screen.getAllByRole("button", { name: t("aiUsageReset") });
+    fireEvent.click(buttons[buttons.length - 1]);
+    await screen.findByText(t("aiUsageMonthEmpty"));
+    expect(getAiUsage().byModel).toEqual({});
   });
 });

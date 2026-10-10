@@ -18,6 +18,7 @@ import { useAiStream } from "../ai/useAiStream";
 import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageNote } from "./AiUsageNote";
 import { draftToRequest } from "./assertions";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -383,6 +384,7 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
                 })}
               </>
             )}
+            <AiUsageNote event={stream.done} />
             {registerErrors.map((e) => (
               <ErrorNote key={e.id} role="alert">
                 {e.text}
