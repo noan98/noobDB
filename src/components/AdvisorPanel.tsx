@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
 import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
-import { useSettings } from "../settings";
+import { useAiAvailable } from "../ai/useAiAvailable";
 import { semanticColorToken } from "../semanticColors";
 import {
   DEFAULT_ADVISOR_SORT,
@@ -114,33 +114,19 @@ const MotionReveal = chakra(motion.div, {}, {
 export function AdvisorPanel({
   sessionId,
   database,
+  isProduction = false,
   onInsertSql,
 }: {
   sessionId: string;
   database: string;
+  /** 本番接続か。AI への送信前に確認を挟む (UI レベルの誤送信防止)。 */
+  isProduction?: boolean;
   onInsertSql: (sql: string) => void;
 }) {
   const t = useT();
   const toast = useToast();
-  const aiEnabled = useSettings().ai.enabled;
-  // 「AI に聞く」は AI 有効 + API キー設定済みのときだけ出す。キーの有無は行ごとではなく
-  // ここで 1 回だけ確認する (#1468)。取得できなければ非表示のまま。
-  const [hasAiKey, setHasAiKey] = useState(false);
-  useEffect(() => {
-    if (!aiEnabled) return;
-    let alive = true;
-    api
-      .hasAiApiKey()
-      .then((v) => {
-        if (alive) setHasAiKey(v);
-      })
-      .catch(() => {
-        /* 取得できなければ非表示のまま */
-      });
-    return () => {
-      alive = false;
-    };
-  }, [aiEnabled]);
+  // 「AI に聞く」は AI 有効 + API キー設定済みのときだけ出す (設定画面の保存 / 削除に即時追従)。
+  const aiAvailable = useAiAvailable();
 
   const [report, setReport] = useState<SchemaHealthReport | null>(null);
   const [running, setRunning] = useState(false);
@@ -176,6 +162,18 @@ export function AdvisorPanel({
       return t(desc.key, desc.params);
     });
   }, [report, sort, t]);
+
+  // 行の key は内容ベース (並べ替えで AiAdvisorExplain が作り直され、実行中の要求や結果が
+  // 消えないようにする)。同一内容の重複だけ出現順の連番で区別する。
+  const rowKeys = useMemo(() => {
+    const seen = new Map<string, number>();
+    return findings.map((f) => {
+      const base = `${f.rule}|${f.table}|${f.columns.join(",")}|${f.context.join(",")}`;
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      return n === 0 ? base : `${base}#${n}`;
+    });
+  }, [findings]);
 
   // 各ソートヘッダ共通のプロパティ (クリック / Enter・Space / aria-sort)。
   // th はネイティブに columnheader ロールを持つので role は上書きしない。
@@ -332,7 +330,7 @@ export function AdvisorPanel({
             {findings.map((f, i) => {
               const desc = findingDescription(f);
               return (
-                <chakra.tr key={`${f.rule}-${f.table}-${f.context.join(",")}-${i}`}>
+                <chakra.tr key={rowKeys[i]}>
                   <chakra.td css={tdCss}>
                     <SeverityBadge severity={f.severity} />
                   </chakra.td>
@@ -384,12 +382,13 @@ export function AdvisorPanel({
                         </Flex>
                       </Box>
                     )}
-                    {aiEnabled && hasAiKey && report && (
+                    {aiAvailable && report && (
                       <AiAdvisorExplain
                         sessionId={sessionId}
                         driver={report.driver}
                         database={database}
                         finding={f}
+                        isProduction={isProduction}
                       />
                     )}
                   </chakra.td>

@@ -33,6 +33,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 
 import { AdvisorPanel } from "../components/AdvisorPanel";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
+import { setAiKeyPresent } from "../ai/aiKeyStore";
 
 function enable(sendScope: "schemaOnly" | "schemaAndSql" = "schemaAndSql", enabled = true) {
   replaceAllSettings({
@@ -42,7 +43,9 @@ function enable(sendScope: "schemaOnly" | "schemaAndSql" = "schemaAndSql", enabl
 }
 
 const onInsertSql = vi.fn();
-const ui = () => <AdvisorPanel sessionId="s1" database="app" onInsertSql={onInsertSql} />;
+const ui = (isProduction = false) => (
+  <AdvisorPanel sessionId="s1" database="app" isProduction={isProduction} onInsertSql={onInsertSql} />
+);
 
 async function runDiagnosis() {
   fireEvent.click(screen.getByText(t("advisorRun")));
@@ -62,6 +65,7 @@ beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   hasAiApiKey.mockResolvedValue(true);
+  setAiKeyPresent(true);
   describeTable.mockResolvedValue([
     { name: "id", data_type: "int", nullable: false, key: "PRI", default: "DEFAULT_SENTINEL", extra: "", referenced_table: null, referenced_column: null },
   ]);
@@ -96,7 +100,7 @@ describe("アドバイザの AI 解説 (#1468)", () => {
     expect(screen.getByRole("button", { name: t("advisorInsertFix") })).toBeTruthy();
     cleanup();
     enable();
-    hasAiApiKey.mockResolvedValue(false);
+    setAiKeyPresent(false);
     renderWithProviders(ui());
     await runDiagnosis();
     await act(async () => {});
@@ -185,6 +189,56 @@ describe("アドバイザの AI 解説 (#1468)", () => {
     fireEvent.click(cancels[cancels.length - 1]);
     await act(async () => {});
     expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("本番接続では送信前に確認し、取り消すと送らない・承認すると送る", async () => {
+    renderWithProviders(ui(true));
+    await runDiagnosis();
+    fireEvent.click(await askBtn());
+    await screen.findByText(t("advisorAiProdTitle"));
+    expect(runAiRequest).not.toHaveBeenCalled();
+    let cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    fireEvent.click(cancels[cancels.length - 1]);
+    await act(async () => {});
+    expect(runAiRequest).not.toHaveBeenCalled();
+    fireEvent.click(await askBtn());
+    await screen.findByText(t("advisorAiProdTitle"));
+    fireEvent.click(screen.getByRole("button", { name: t("advisorAiConfirmSend") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+  });
+
+  it("並べ替えても実行中の要求と結果が消えない", async () => {
+    const mk = (table: string) => ({
+      rule: "unused_index" as const,
+      severity: "low" as const,
+      table,
+      columns: ["c"],
+      context: [`idx_${table}`],
+      fix_ddl: null,
+      statistical: false,
+    });
+    analyzeSchemaHealth.mockResolvedValue({
+      driver: "mysql",
+      tables_analyzed: 2,
+      findings: [mk("t_a"), mk("t_b")],
+      skipped: [],
+    });
+    renderWithProviders(ui());
+    fireEvent.click(screen.getByText(t("advisorRun")));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: t("advisorAiButton") }).length).toBe(2));
+    fireEvent.click(screen.getAllByRole("button", { name: t("advisorAiButton") })[0]);
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    // 対象列で降順に並べ替える (先頭行が入れ替わる)
+    const th = screen.getByRole("columnheader", { name: new RegExp(t("advisorColTarget")) });
+    fireEvent.click(th);
+    fireEvent.click(th);
+    await act(async () => {});
+    expect(cancelStream).not.toHaveBeenCalled();
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("WHY_TEXT");
   });
 
   it("実行中にアンマウントすると stream ID 付きで中止し unlisten する", async () => {

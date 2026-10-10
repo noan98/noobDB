@@ -79,7 +79,7 @@ export function advisorRelatedTables(finding: HealthFinding): string[] {
   const out: string[] = [finding.table];
   let ref: string | undefined;
   if (finding.rule === "fk_missing_index") ref = finding.context[0];
-  else if (finding.rule === "fk_type_mismatch") ref = finding.context[1]?.split(".")[0];
+  else if (finding.rule === "fk_type_mismatch") ref = finding.context[1]?.slice(0, Math.max(0, finding.context[1].lastIndexOf(".")));
   if (ref && !out.some((n) => n.toLowerCase() === ref.toLowerCase())) out.push(ref);
   return out.slice(0, ERROR_EXPLAIN_MAX_TABLES);
 }

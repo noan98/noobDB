@@ -40,6 +40,7 @@ export interface AiAdvisorExplainProps {
   driver: string;
   database: string;
   finding: HealthFinding;
+  isProduction?: boolean;
 }
 
 /**
@@ -54,19 +55,22 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
   const ai = useSettings().ai;
   const { confirm, dialog } = useConfirm();
   const [state, setState] = useState<State>({ kind: "idle" });
+  const [sent, setSent] = useState<string | null>(null);
   const stream = useAiStream({ idPrefix: "ai_advisor" });
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const tableNames = useMemo(() => advisorRelatedTables(props.finding), [props.finding]);
-  const sends = t("advisorAiSends", {
-    ddl: props.finding.fix_ddl
-      ? ai.maskLiterals
-        ? t("advisorAiDdlMasked")
-        : t("advisorAiDdlRaw")
-      : t("advisorAiDdlNone"),
-    dialect: dialectLabel(props.driver),
-    tables: String(tableNames.length),
-  });
+  const sendsLine = (tableCount: number) =>
+    t("advisorAiSends", {
+      ddl: props.finding.fix_ddl
+        ? ai.maskLiterals
+          ? t("advisorAiDdlMasked")
+          : t("advisorAiDdlRaw")
+        : t("advisorAiDdlNone"),
+      dialect: dialectLabel(props.driver),
+      tables: String(tableCount),
+    });
+  const sends = sendsLine(tableNames.length);
 
   const run = async () => {
     // 二重クリックで 2 本のストリームが走らないよう、同期的に弾く。
@@ -86,6 +90,18 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
       const ok = await confirm({
         title: t("advisorAiScopeTitle"),
         message: `${t("advisorAiScopeBody")}\n${sends}`,
+        confirmLabel: t("advisorAiConfirmSend"),
+        tone: "warning",
+      });
+      if (!ok) {
+        stream.release();
+        return;
+      }
+    }
+    if (props.isProduction) {
+      const ok = await confirm({
+        title: t("advisorAiProdTitle"),
+        message: `${t("advisorAiProdBody")}\n${sends}`,
         confirmLabel: t("advisorAiConfirmSend"),
         tone: "warning",
       });
@@ -115,6 +131,8 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
       return;
     }
     const tables = fetched.filter((x): x is AdvisorExplainTable => x !== null);
+    // 送信内容の表示は、取得できた実数に合わせる。
+    setSent(sendsLine(tables.length));
     await stream.start(
       {
         task: "advisorExplain",
@@ -144,7 +162,7 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
   return (
     <Flex direction="column" gap="2" marginTop="2" data-testid="ai-advisor-explain">
       <Flex align="center" gap="2" wrap="wrap">
-        <Tooltip label={sends}>
+        <Tooltip label={sent ?? sends}>
           <Button
             ref={buttonRef}
             type="button"
