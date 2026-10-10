@@ -8588,9 +8588,11 @@ export default function App() {
   // 閉じているときに `<main>` の下端へ常設するパネルバー。中核機能 (プロセスモニタ・
   // インスペクタ・アドバイザ・接続ヘルス) の入口をレンチメニューの外にも置く。
   const bottomPanelStripEntries = bottomPanelStripTabs(bottomPanelCtx);
-  const bottomPanelReasonLabel = (reason: BottomPanelUnavailableReason) =>
+  const bottomPanelReasonLabel = (reason: BottomPanelUnavailableReason, tab: BottomPanelTab) =>
     reason === "sqliteUnsupported"
-      ? t("appProcessesUnsupported")
+      ? tab === "inspector"
+        ? t("appQueryInspectorUnsupported")
+        : t("appProcessesUnsupported")
       : reason === "needsDatabase"
         ? t("appAdvisorUnsupported")
         : t("appToolsNeedsSession");

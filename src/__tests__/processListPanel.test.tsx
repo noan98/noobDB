@@ -260,7 +260,7 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
     vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
     await screen.findByTestId("blocking-tree");
-    expect(screen.getAllByRole("treeitem")).toHaveLength(3);
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
 
     fireEvent.click(screen.getByRole("button", { name: t("processBlockingKillAria", { id: 1 }) }));
     fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
@@ -274,5 +274,27 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
     expect(
       screen.getByRole("button", { name: t("processBlockingKillAria", { id: 1 }) }),
     ).toBeDisabled();
+  });
+
+  it("一覧外のブロッカーは Kill 不可の根、自アプリ接続はバッジ、循環は別ラベルで出す", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, id: 2, blocked_by: [99] },
+      { ...base, id: 10, blocked_by: [11], is_self: true },
+      { ...base, id: 11, blocked_by: [10] },
+    ]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    await screen.findByTestId("blocking-tree");
+    expect(
+      screen.getByText(t("processBlockingExternal", { id: 99, count: 1 })),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: t("processBlockingKillAria", { id: 99 }) }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(t("processBlockingDeadlock"))).toBeInTheDocument();
+    const tree = screen.getByTestId("blocking-tree");
+    expect(tree.textContent).toContain(t("processSelfBadge"));
+    expect(
+      screen.getByRole("button", { name: t("processBlockingKillAria", { id: 10 }) }),
+    ).toBeEnabled();
   });
 });

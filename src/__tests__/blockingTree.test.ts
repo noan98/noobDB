@@ -59,8 +59,24 @@ describe("buildBlockingTree (#1417)", () => {
     ]);
   });
 
-  it("一覧に無いブロッカー・自己参照は無視する", () => {
-    expect(buildBlockingTree([proc(1, [1, 99])])).toEqual([]);
+  it("自己参照は無視する", () => {
+    expect(buildBlockingTree([proc(1, [1])])).toEqual([]);
+  });
+
+  it("一覧に無いブロッカーは kill 不可の外部根として待機者と共に出す", () => {
+    const rows = buildBlockingTree([proc(2, [99]), proc(3, [2])]);
+    expect(rows.map((r) => [r.process.id, r.depth, r.isRoot, r.external, r.victims])).toEqual([
+      [99, 0, true, true, 2],
+      [2, 1, false, false, 1],
+      [3, 2, false, false, 0],
+    ]);
+  });
+
+  it("循環の先頭だけ deadlock、通常の根は deadlock ではない", () => {
+    const dead = buildBlockingTree([proc(1, [2]), proc(2, [1])]);
+    expect(dead.map((r) => r.deadlock)).toEqual([true, false, false]);
+    const normal = buildBlockingTree([proc(1), proc(2, [1])]);
+    expect(normal.every((r) => !r.deadlock)).toBe(true);
   });
 
   it("根に繋がる循環外の待機者も循環とは別に扱える", () => {

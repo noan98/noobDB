@@ -2412,3 +2412,170 @@ async fn mysql_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
         .await
         .expect("cleanup");
 }
+
+/// #1417 — 行ロック待ちの連鎖: 接続 A が行をロックしたまま、接続 B が同じ行を UPDATE して
+/// 待つ。`list_processes` で B の `blocked_by` に A の接続 id が入り、A を kill すると解消する。
+#[tokio::test]
+async fn mysql_blocking_chain_is_listed_and_resolved_by_kill() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let admin = t::connect(&opts).await.expect("connect admin");
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_blocking", Some(&db))
+        .await
+        .expect("drop");
+    admin
+        .execute(
+            "CREATE TABLE noobdb_it_blocking (id int PRIMARY KEY, v int) ENGINE=InnoDB",
+            Some(&db),
+        )
+        .await
+        .expect("create");
+    admin
+        .execute("INSERT INTO noobdb_it_blocking VALUES (1, 0)", Some(&db))
+        .await
+        .expect("insert");
+
+    let a = t::connect(&opts).await.expect("connect A");
+    a.begin_transaction(Some(&db)).await.expect("begin A");
+    let res = a
+        .execute_in_transaction("SELECT CONNECTION_ID() AS id")
+        .await
+        .expect("id A");
+    let a_id = match &res.rows[0][0] {
+        t::Value::Int(v) => *v,
+        t::Value::UInt(v) => *v as i64,
+        other => panic!("unexpected CONNECTION_ID: {other:?}"),
+    };
+    a.execute_in_transaction("UPDATE noobdb_it_blocking SET v = 1 WHERE id = 1")
+        .await
+        .expect("A update");
+
+    let b = std::sync::Arc::new(t::connect(&opts).await.expect("connect B"));
+    let b_task = {
+        let b = b.clone();
+        let db = db.clone();
+        tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                b.execute(
+                    "UPDATE noobdb_it_blocking SET v = 2 WHERE id = 1",
+                    Some(&db),
+                ),
+            )
+            .await
+        })
+    };
+
+    let mut found = false;
+    for _ in 0..50 {
+        let list = admin.list_processes().await.expect("list");
+        if list.iter().any(|p| p.blocked_by.contains(&a_id)) {
+            found = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(found, "B must be reported as blocked by A (id {a_id})");
+
+    let killed = admin.kill_processes(&[a_id]).await.expect("kill A");
+    assert_eq!(killed.killed, 1, "{killed:?}");
+    let outcome = b_task.await.expect("join B");
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "B must complete once the blocker is killed: {outcome:?}"
+    );
+
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_blocking", Some(&db))
+        .await
+        .expect("cleanup");
+    admin.close().await;
+}
+
+/// #1417 — メタデータロック待ち: 接続 A が未コミットのトランザクションでテーブルに触れている
+/// 間に接続 B が `ALTER TABLE` すると MDL 待ちになる。`blocked_by` に A が入ること。
+#[tokio::test]
+async fn mysql_metadata_lock_wait_is_listed_as_blocked() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let admin = t::connect(&opts).await.expect("connect admin");
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_mdl", Some(&db))
+        .await
+        .expect("drop");
+    admin
+        .execute(
+            "CREATE TABLE noobdb_it_mdl (id int PRIMARY KEY) ENGINE=InnoDB",
+            Some(&db),
+        )
+        .await
+        .expect("create");
+
+    let a = t::connect(&opts).await.expect("connect A");
+    a.begin_transaction(Some(&db)).await.expect("begin A");
+    let res = a
+        .execute_in_transaction("SELECT CONNECTION_ID() AS id")
+        .await
+        .expect("id A");
+    let a_id = match &res.rows[0][0] {
+        t::Value::Int(v) => *v,
+        t::Value::UInt(v) => *v as i64,
+        other => panic!("unexpected CONNECTION_ID: {other:?}"),
+    };
+    // 未コミットの SELECT で共有 MDL を保持する。
+    a.execute_in_transaction("SELECT * FROM noobdb_it_mdl")
+        .await
+        .expect("A select");
+
+    let b = std::sync::Arc::new(t::connect(&opts).await.expect("connect B"));
+    let b_task = {
+        let b = b.clone();
+        let db = db.clone();
+        tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                b.execute("ALTER TABLE noobdb_it_mdl ADD COLUMN c int", Some(&db)),
+            )
+            .await
+        })
+    };
+
+    let mut found = false;
+    for _ in 0..50 {
+        let list = admin.list_processes().await.expect("list");
+        if list.iter().any(|p| p.blocked_by.contains(&a_id)) {
+            found = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(found, "ALTER must be reported as blocked by A (id {a_id})");
+
+    a.finish_transaction(false).await.expect("rollback A");
+    let outcome = b_task.await.expect("join B");
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "ALTER must complete after A ends: {outcome:?}"
+    );
+
+    admin
+        .execute("DROP TABLE IF EXISTS noobdb_it_mdl", Some(&db))
+        .await
+        .expect("cleanup");
+    admin.close().await;
+}

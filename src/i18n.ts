@@ -832,6 +832,8 @@ const en = {
     "Authentication or permission was denied. Check the user name and password, and that the user is allowed to reach this database from this host.",
   errorHintInsufficientPrivilege:
     "This user doesn't have the privilege for that operation. Have an admin GRANT the missing privilege (SELECT/INSERT/UPDATE/DELETE, or a schema/DDL privilege), or open the Users & permissions panel with an account that can read mysql.user / pg_roles.",
+  errorHintSqliteLocked:
+    "The SQLite file is locked for writing. SQLite is single-writer: another session on the same file (including an open explicit transaction in this app) or an external process holds the write lock. Commit or roll back that transaction, or consider PRAGMA busy_timeout.",
   errorHintConnection:
     "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
   errorHintConnectionLost:
@@ -3057,7 +3059,8 @@ const en = {
   appCommandPalette: "Command palette",
   appToolsTitle: "Tools: diagnostics, logs, and full-screen tools",
   appToolsNeedsSession: "Available while connected",
-  appProcessesUnsupported: "Not available for SQLite connections",
+  appProcessesUnsupported:
+    "SQLite is single-writer, so there is no process list or blocking chain. If you hit \"database is locked\", see the hint in the error pane.",
   appUsersUnsupported: "Not available for SQLite connections",
   appSchemaCompare: "Compare schemas",
   appErDiagram: "ER diagram",
@@ -3364,6 +3367,8 @@ const en = {
     "Processes waiting on locks, shown under the process that blocks them. Killing a root blocker releases the whole chain.",
   processBlockingRoot: "Root blocker ({count} waiting)",
   processBlockingRepeated: "(already shown)",
+  processBlockingDeadlock: "Deadlock (circular wait)",
+  processBlockingExternal: "Blocker outside the list #{id} ({count} waiting)",
   processBlockingKill: "Kill",
   processBlockingKillAria: "Kill blocker {id}",
   processTruncated: "Showing the first {shown} of {total} processes.",
@@ -5136,6 +5141,8 @@ const ja: Dict = {
     "認証または権限が拒否されました。ユーザー名とパスワード、そのユーザーがこのホストから対象のデータベースへアクセスできるかを確認してください。",
   errorHintInsufficientPrivilege:
     "このユーザーにはその操作を行う権限がありません。管理者に不足している権限 (SELECT/INSERT/UPDATE/DELETE、またはスキーマ/DDL 権限) を GRANT してもらうか、mysql.user / pg_roles を読み取れるアカウントで「ユーザ / 権限管理」パネルを開いてください。",
+  errorHintSqliteLocked:
+    "SQLite のファイルが書き込みロックされています。SQLite は単一ライタで、同じファイルを開いている別セッション (このアプリの明示トランザクションを含む) か外部プロセスがロックを保持しています。該当トランザクションをコミット/ロールバックするか、PRAGMA busy_timeout を検討してください。",
   errorHintConnection:
     "データベースサーバーに到達できませんでした。ホストとポート、サーバーが起動しているか、SSH トンネルやファイアウォールの設定を確認してください。",
   errorHintConnectionLost:
@@ -7354,7 +7361,8 @@ const ja: Dict = {
   appCommandPalette: "コマンドパレット",
   appToolsTitle: "ツール: 診断・ログ・全画面ツールのメニュー",
   appToolsNeedsSession: "接続中のみ使用できます",
-  appProcessesUnsupported: "SQLite 接続では使用できません",
+  appProcessesUnsupported:
+    "SQLite は単一ライタのためプロセス一覧/待機チェーンはありません。database is locked が出たらエラー欄の案内を参照してください",
   appUsersUnsupported: "SQLite 接続では使用できません",
   appSchemaCompare: "スキーマ比較",
   appErDiagram: "ER 図",
@@ -7661,7 +7669,9 @@ const ja: Dict = {
     "ロック待ちのプロセスを、待たせているプロセスの下に表示します。根のブロッカーを kill すると連鎖全体が解消します。",
   processBlockingRoot: "根のブロッカー ({count} 件が待機中)",
   processBlockingRepeated: "(表示済み)",
-  processBlockingKill: "Kill",
+  processBlockingDeadlock: "デッドロック (循環待ち)",
+  processBlockingExternal: "一覧外のブロッカー #{id} ({count} 件が待機中)",
+  processBlockingKill: "強制終了",
   processBlockingKillAria: "ブロッカー {id} を kill",
   processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processReadOnlyHint:

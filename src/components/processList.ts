@@ -75,6 +75,7 @@ export function pruneSelection(
 
 /** 待機ツリーを平らに並べた 1 行 (#1417)。 */
 export interface BlockingTreeRow {
+  /** 外部ブロッカー (`external`) のときは id 以外が空のスタブ。 */
   process: ProcessInfo;
   /** 根 (他を待たせているが自分は待っていない) を 0 とする深さ。 */
   depth: number;
@@ -87,12 +88,17 @@ export interface BlockingTreeRow {
   repeated: boolean;
   /** このプロセスが (直接・間接に) 待たせているプロセスの数 (重複なし)。参照行は 0。 */
   victims: number;
+  /** 一覧に無いプロセスがブロッカーとして報告された根 (権限・取得タイミングの差)。kill 不可。 */
+  external: boolean;
+  /** 根から辿れない循環 (デッドロック / 循環待ち) の先頭として拾った根。 */
+  deadlock: boolean;
 }
 
 /**
  * `blocked_by` 関係から待機チェーンのツリーを作り、表示順 (深さ優先) の平らな行にする (#1417)。
  *
- * - 一覧に存在しない id・自己参照のブロッカーは無視する。
+ * - 自己参照のブロッカーは無視する。一覧に存在しないブロッカーは「一覧外のブロッカー」として
+ *   kill 不可の根ノードにし、待たされているプロセスが消えないようにする。
  * - 他を待たせている or 待たされているプロセスだけが対象 (無関係なプロセスは含まない)。
  * - 根 = 待たされておらず、他を待たせているプロセス。根から辿れない循環 (デッドロック) は、
  *   一覧順で最初のメンバーを根として拾う。
@@ -104,17 +110,33 @@ export function buildBlockingTree(processes: readonly ProcessInfo[]): BlockingTr
 
   const blockersOf = new Map<number, number[]>();
   const waitersOf = new Map<number, number[]>();
+  const externalIds: number[] = [];
   for (const p of byId.values()) {
     const valid: number[] = [];
     for (const b of p.blocked_by ?? []) {
-      if (b === p.id || !byId.has(b) || valid.includes(b)) continue;
+      if (b === p.id || valid.includes(b)) continue;
       valid.push(b);
+      if (!byId.has(b) && !externalIds.includes(b)) externalIds.push(b);
       const list = waitersOf.get(b);
       if (list) list.push(p.id);
       else waitersOf.set(b, [p.id]);
     }
     blockersOf.set(p.id, valid);
   }
+
+  const externalStub = (id: number): ProcessInfo => ({
+    id,
+    user: null,
+    host: null,
+    database: null,
+    command: null,
+    state: null,
+    time_secs: null,
+    query_summary: null,
+    query_truncated: false,
+    is_self: false,
+    blocked_by: [],
+  });
 
   const rows: BlockingTreeRow[] = [];
   const expanded = new Set<number>();
@@ -131,15 +153,32 @@ export function buildBlockingTree(processes: readonly ProcessInfo[]): BlockingTr
     return seen.size;
   };
 
-  const visit = (id: number, depth: number, isRoot: boolean) => {
-    const process = byId.get(id);
-    if (!process) return;
+  const visit = (id: number, depth: number, isRoot: boolean, deadlock = false) => {
+    const known = byId.get(id);
+    const process = known ?? externalStub(id);
+    const external = !known;
     if (expanded.has(id)) {
-      rows.push({ process, depth, isRoot: false, repeated: true, victims: 0 });
+      rows.push({
+        process,
+        depth,
+        isRoot: false,
+        repeated: true,
+        victims: 0,
+        external,
+        deadlock: false,
+      });
       return;
     }
     expanded.add(id);
-    rows.push({ process, depth, isRoot, repeated: false, victims: victimCount(id) });
+    rows.push({
+      process,
+      depth,
+      isRoot,
+      repeated: false,
+      victims: victimCount(id),
+      external,
+      deadlock,
+    });
     for (const child of waitersOf.get(id) ?? []) visit(child, depth + 1, false);
   };
 
@@ -149,9 +188,10 @@ export function buildBlockingTree(processes: readonly ProcessInfo[]): BlockingTr
   for (const p of participants) {
     if ((blockersOf.get(p.id)?.length ?? 0) === 0) visit(p.id, 0, true);
   }
+  for (const id of externalIds) visit(id, 0, true);
   // 根から辿れなかった循環 (デッドロック) を拾う。
   for (const p of participants) {
-    if (!expanded.has(p.id)) visit(p.id, 0, true);
+    if (!expanded.has(p.id)) visit(p.id, 0, true, true);
   }
   return rows;
 }

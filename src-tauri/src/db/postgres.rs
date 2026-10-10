@@ -605,7 +605,7 @@ impl PostgresConn {
                       EXTRACT(EPOCH FROM (now() - query_start))::bigint,
                       query,
                       pid = pg_backend_pid(),
-                      pg_blocking_pids(pid)
+                      CASE WHEN wait_event_type = 'Lock' THEN pg_blocking_pids(pid) END
                FROM pg_stat_activity
                WHERE backend_type = 'client backend'
                ORDER BY pid"#,
@@ -625,8 +625,12 @@ impl PostgresConn {
                 query: r.try_get::<Option<String>, _>(7).ok().flatten(),
                 is_self: r.try_get::<bool, _>(8).unwrap_or(false),
                 // 待機チェーン (#1417)。取れなければ空へ縮退する。
+                // Lock 待ちの行だけ `pg_blocking_pids` を呼ぶ (全行呼ぶと lock manager に
+                // 負荷がかかるため)。それ以外は NULL = 空配列。
                 blocked_by: r
-                    .try_get::<Vec<i32>, _>(9)
+                    .try_get::<Option<Vec<i32>>, _>(9)
+                    .ok()
+                    .flatten()
                     .map(|v| v.into_iter().map(i64::from).collect())
                     .unwrap_or_default(),
             })

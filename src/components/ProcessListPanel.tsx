@@ -354,12 +354,11 @@ export function ProcessListPanel({
           <chakra.p margin={0} marginBottom="2" textStyle="caption" color="app.textMuted">
             {t("processBlockingDesc")}
           </chakra.p>
-          <chakra.ul listStyleType="none" margin={0} padding={0} role="tree">
+          <chakra.ul listStyleType="none" margin={0} padding={0} role="list">
             {blockingRows.map((r, i) => (
               <chakra.li
                 key={`${r.process.id}-${i}`}
-                role="treeitem"
-                aria-level={r.depth + 1}
+                role="listitem"
                 display="flex"
                 alignItems="center"
                 gap="2"
@@ -368,7 +367,9 @@ export function ProcessListPanel({
                 fontSize="sm"
                 fontFamily="var(--font-mono)"
               >
-                <chakra.span color="app.textMuted">{r.depth === 0 ? "●" : "└"}</chakra.span>
+                <chakra.span color="app.textMuted" aria-hidden>
+                  {r.depth === 0 ? "●" : "└"}
+                </chakra.span>
                 <chakra.span fontWeight={r.isRoot ? 700 : 400}>#{r.process.id}</chakra.span>
                 <chakra.span color="app.textMuted">{r.process.user ?? "–"}</chakra.span>
                 {r.process.time_secs != null && (
@@ -391,12 +392,34 @@ export function ProcessListPanel({
                     {t("processBlockingRepeated")}
                   </chakra.span>
                 )}
-                {r.isRoot && (
+                {r.process.is_self && (
+                  <chakra.span
+                    px="1.5"
+                    fontSize="var(--text-xs)"
+                    fontFamily="var(--font-sans)"
+                    color="var(--accent)"
+                    border="1px solid var(--accent)"
+                    borderRadius="var(--radius-sm)"
+                  >
+                    {t("processSelfBadge")}
+                  </chakra.span>
+                )}
+                {r.deadlock && (
+                  <chakra.span color="app.textError" fontFamily="var(--font-sans)">
+                    {t("processBlockingDeadlock")}
+                  </chakra.span>
+                )}
+                {r.isRoot && !r.external && (
                   <chakra.span color="app.textError" fontFamily="var(--font-sans)">
                     {t("processBlockingRoot", { count: r.victims })}
                   </chakra.span>
                 )}
-                {!r.repeated && r.victims > 0 && (
+                {r.external && !r.repeated && (
+                  <chakra.span color="app.textWarning" fontFamily="var(--font-sans)">
+                    {t("processBlockingExternal", { id: r.process.id, count: r.victims })}
+                  </chakra.span>
+                )}
+                {!r.repeated && !r.external && r.victims > 0 && (
                   <Tooltip label={readOnly ? t("processReadOnlyHint") : undefined} focusableWrapper={readOnly}>
                     <Button
                       type="button"

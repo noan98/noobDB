@@ -1492,6 +1492,9 @@
     }
   ],
   "processInfo": {
+    "blocked_by": [
+      41
+    ],
     "command": "Query",
     "database": "testdb",
     "host": "127.0.0.1:53344",

@@ -104,6 +104,13 @@ const PATTERNS: { test: RegExp; key: I18nKey }[] = [
     test: /connection refused|(?:can't|cannot|couldn't|could not) connect|connection reset|connection timed out/i,
     key: "errorHintConnection",
   },
+  // SQLite は単一ライタ: 別セッション / 外部プロセスの書き込みロックで SQLITE_BUSY (5) /
+  // SQLITE_LOCKED (6) になる (#1417)。MySQL / PostgreSQL の待機チェーンに相当する診断は無く、
+  // この案内が SQLite 側の「縮退」にあたる。
+  {
+    test: /database (?:table )?is locked|SQLITE_BUSY|SQLITE_LOCKED/i,
+    key: "errorHintSqliteLocked",
+  },
 ];
 
 export function matchErrorHint(raw: string): I18nKey | null {

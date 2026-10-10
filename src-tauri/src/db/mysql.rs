@@ -755,7 +755,8 @@ impl MySqlConn {
         // query always appears — so empty unambiguously means "disabled".
         // The decision itself is split into `process_list_needs_fallback` so
         // it can be unit-tested without a live server (#587, #641).
-        let rows: Vec<MySqlRow> = if process_list_needs_fallback(&primary) {
+        let used_fallback = process_list_needs_fallback(&primary);
+        let rows: Vec<MySqlRow> = if used_fallback {
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{projection} information_schema.PROCESSLIST ORDER BY ID"
             )))
@@ -766,7 +767,7 @@ impl MySqlConn {
         };
         // 待機チェーン (#1417)。取得できなければ (権限不足・MySQL 5.7 / MariaDB・
         // performance_schema OFF) エラーにせず空へ縮退する。
-        let blockers = blocked_by_map(self.list_lock_waits().await);
+        let blockers = blocked_by_map(self.list_lock_waits(!used_fallback).await);
         Ok(rows
             .into_iter()
             .map(|r| ProcessInfo {
@@ -801,31 +802,71 @@ impl MySqlConn {
             .collect())
     }
 
-    /// `(待たされている processlist id, ブロッカーの processlist id)` の組を返す (#1417)。
-    /// `data_lock_waits` のスレッド id を `threads` で processlist id へ引き直す。
-    /// 取得できない場合は空 (呼び出し側で縮退)。
-    async fn list_lock_waits(&self) -> Vec<(i64, i64)> {
-        let rows = sqlx::query(
-            "SELECT rt.PROCESSLIST_ID, bt.PROCESSLIST_ID \
+    /// `(待たされている processlist id, ブロッカーの processlist id)` の組を集める (#1417)。
+    /// - 行ロック待ち: MySQL 8 は `performance_schema.data_lock_waits`、取れなければ
+    ///   (5.7 / MariaDB) `information_schema.INNODB_LOCK_WAITS` + `INNODB_TRX`。
+    /// - メタデータロック待ち (`ALTER TABLE` が `Waiting for table metadata lock` など):
+    ///   `performance_schema.metadata_locks` の PENDING と GRANTED を同じ対象で突き合わせる。
+    ///
+    /// `performance_schema` が使えない (`perf_schema_ok = false`) ときは `performance_schema`
+    /// 側の照会を省く。いずれの照会も失敗したら (権限不足など) 空へ縮退し、エラーにしない。
+    async fn list_lock_waits(&self, perf_schema_ok: bool) -> Vec<(i64, i64)> {
+        const DATA_LOCK_WAITS: &str = "SELECT rt.PROCESSLIST_ID, bt.PROCESSLIST_ID \
              FROM performance_schema.data_lock_waits w \
              JOIN performance_schema.threads rt ON rt.THREAD_ID = w.REQUESTING_THREAD_ID \
              JOIN performance_schema.threads bt ON bt.THREAD_ID = w.BLOCKING_THREAD_ID \
-             WHERE rt.PROCESSLIST_ID IS NOT NULL AND bt.PROCESSLIST_ID IS NOT NULL",
+             WHERE rt.PROCESSLIST_ID IS NOT NULL AND bt.PROCESSLIST_ID IS NOT NULL";
+        const INNODB_LOCK_WAITS: &str = "SELECT rt.trx_mysql_thread_id, bt.trx_mysql_thread_id \
+             FROM information_schema.INNODB_LOCK_WAITS w \
+             JOIN information_schema.INNODB_TRX rt ON rt.trx_id = w.requesting_trx_id \
+             JOIN information_schema.INNODB_TRX bt ON bt.trx_id = w.blocking_trx_id";
+        const METADATA_LOCK_WAITS: &str = "SELECT rt.PROCESSLIST_ID, gt.PROCESSLIST_ID \
+             FROM performance_schema.metadata_locks p \
+             JOIN performance_schema.metadata_locks g \
+               ON g.OBJECT_TYPE = p.OBJECT_TYPE \
+              AND g.OBJECT_SCHEMA <=> p.OBJECT_SCHEMA \
+              AND g.OBJECT_NAME <=> p.OBJECT_NAME \
+              AND g.LOCK_STATUS = 'GRANTED' \
+              AND g.OWNER_THREAD_ID <> p.OWNER_THREAD_ID \
+             JOIN performance_schema.threads rt ON rt.THREAD_ID = p.OWNER_THREAD_ID \
+             JOIN performance_schema.threads gt ON gt.THREAD_ID = g.OWNER_THREAD_ID \
+             WHERE p.LOCK_STATUS = 'PENDING' \
+               AND rt.PROCESSLIST_ID IS NOT NULL AND gt.PROCESSLIST_ID IS NOT NULL";
+        let mut pairs = Vec::new();
+        let mut row_locks: Option<Vec<(i64, i64)>> = None;
+        if perf_schema_ok {
+            row_locks = self.query_id_pairs(DATA_LOCK_WAITS).await;
+        }
+        if row_locks.is_none() {
+            row_locks = self.query_id_pairs(INNODB_LOCK_WAITS).await;
+        }
+        pairs.extend(row_locks.unwrap_or_default());
+        if perf_schema_ok {
+            pairs.extend(
+                self.query_id_pairs(METADATA_LOCK_WAITS)
+                    .await
+                    .unwrap_or_default(),
+            );
+        }
+        pairs
+    }
+
+    /// 2 列 (id, id) を返す照会を実行する。失敗 (テーブル無し・権限不足) は `None`。
+    async fn query_id_pairs(&self, sql: &'static str) -> Option<Vec<(i64, i64)>> {
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await.ok()?;
+        Some(
+            rows.iter()
+                .filter_map(|r| {
+                    let get = |i: usize| {
+                        r.try_get::<u64, _>(i)
+                            .map(|v| v as i64)
+                            .or_else(|_| r.try_get::<i64, _>(i))
+                            .ok()
+                    };
+                    Some((get(0)?, get(1)?))
+                })
+                .collect(),
         )
-        .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default();
-        rows.iter()
-            .filter_map(|r| {
-                let get = |i: usize| {
-                    r.try_get::<u64, _>(i)
-                        .map(|v| v as i64)
-                        .or_else(|_| r.try_get::<i64, _>(i))
-                        .ok()
-                };
-                Some((get(0)?, get(1)?))
-            })
-            .collect()
     }
 
     /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。
@@ -1962,15 +2003,6 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
     Ok(())
 }
 
-/// Decides whether `list_processes` must fall back from
-/// `performance_schema.processlist` to `information_schema.PROCESSLIST`
-/// (#587). A query error (table missing on pre-8.0.22 / MariaDB) always
-/// warrants the fallback; a *successful but empty* result does too, because
-/// with `performance_schema = OFF` the table still exists and the query still
-/// succeeds, yet collects nothing — and an empty processlist is impossible
-/// since the connection running this very query always appears in it.
-/// Split out as a pure, generic function so the branch selection is
-/// unit-testable without a live server (#641).
 /// `(待たされている id, ブロッカー id)` の組を、待たされている id ごとのブロッカー一覧へ
 /// まとめる (#1417)。重複は除き、自己参照は捨てる。
 fn blocked_by_map(pairs: Vec<(i64, i64)>) -> std::collections::HashMap<i64, Vec<i64>> {
@@ -1987,6 +2019,15 @@ fn blocked_by_map(pairs: Vec<(i64, i64)>) -> std::collections::HashMap<i64, Vec<
     map
 }
 
+/// Decides whether `list_processes` must fall back from
+/// `performance_schema.processlist` to `information_schema.PROCESSLIST`
+/// (#587). A query error (table missing on pre-8.0.22 / MariaDB) always
+/// warrants the fallback; a *successful but empty* result does too, because
+/// with `performance_schema = OFF` the table still exists and the query still
+/// succeeds, yet collects nothing — and an empty processlist is impossible
+/// since the connection running this very query always appears in it.
+/// Split out as a pure, generic function so the branch selection is
+/// unit-testable without a live server (#641).
 fn process_list_needs_fallback<T>(primary: &std::result::Result<Vec<T>, sqlx::Error>) -> bool {
     match primary {
         Ok(rows) => rows.is_empty(),
@@ -2812,16 +2853,17 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    use super::*;
+
     #[test]
     fn blocked_by_map_groups_dedups_and_drops_self_references() {
-        let map = super::blocked_by_map(vec![(2, 1), (3, 1), (3, 2), (3, 1), (4, 4)]);
+        let map = blocked_by_map(vec![(2, 1), (3, 1), (3, 2), (3, 1), (4, 4)]);
         assert_eq!(map.get(&2), Some(&vec![1]));
         assert_eq!(map.get(&3), Some(&vec![1, 2]));
         assert!(!map.contains_key(&4));
-        assert!(super::blocked_by_map(Vec::new()).is_empty());
+        assert!(blocked_by_map(Vec::new()).is_empty());
     }
-
-    use super::*;
 
     #[test]
     fn warning_rows_map_to_severity_and_prefix_code() {
