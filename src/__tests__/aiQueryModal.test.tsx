@@ -36,6 +36,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { AiQueryModal } from "../components/AiQueryModal";
+import { format } from "sql-formatter";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 const onInsert = vi.fn();
@@ -108,6 +109,13 @@ function table(name: string, cols: string[]) {
   };
 }
 
+/** 提案 SQL の表示 (整形・色分け済み) を、空白を詰めた文字列で待つ。 */
+async function findSql(text: string) {
+  await waitFor(() =>
+    expect(screen.getByTestId("ai-query-sql").textContent?.replace(/\s+/g, " ").trim()).toBe(text),
+  );
+}
+
 async function generate(text = "注文を集計して") {
   const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
   fireEvent.change(input, { target: { value: text } });
@@ -140,16 +148,51 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDelta?.({ streamId: "x", text: result });
       handlers?.onDone?.({} as never);
     });
-    await screen.findByText("SELECT 1");
+    await findSql("SELECT 1");
     expect(screen.getByText("説明です")).toBeTruthy();
     expect(screen.getByText("注意です")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: t("aiQueryInsert") }));
-    expect(onInsert).toHaveBeenCalledWith("SELECT 1");
+    // 生成 SQL は整形してから表示・挿入する。
+    expect(onInsert).toHaveBeenCalledWith(format("SELECT 1", { language: "postgresql" }));
     await screen.findByText(t("aiQueryInserted"));
     fireEvent.click(screen.getByRole("button", { name: t("aiQueryOpenInNewTab") }));
-    expect(onOpenInNewTab).toHaveBeenCalledWith("SELECT 1", "app");
+    expect(onOpenInNewTab).toHaveBeenCalledWith(format("SELECT 1", { language: "postgresql" }), "app");
     // 挿入後も説明・注意点は見えたまま。
     expect(screen.getByText("説明です")).toBeTruthy();
+  });
+
+  it("やりとりが始まるまで右ペイン (結果) とチャット欄は出さず、最初の送信で出す。新しい会話で閉じる", async () => {
+    renderWithProviders(ui());
+    await screen.findByLabelText(t("aiQueryRequestLabel"));
+    expect(screen.queryByTestId("ai-query-result")).toBeNull();
+    // チャット欄も送信前は出さない (入力欄だけ)。
+    expect(screen.queryByTestId("ai-query-log")).toBeNull();
+    await generate();
+    await screen.findByTestId("ai-query-result");
+    expect(screen.getByTestId("ai-query-log")).toBeTruthy();
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await findSql("SELECT 1");
+    fireEvent.click(screen.getByRole("button", { name: t("aiQueryNewConversation") }));
+    await waitFor(() => expect(screen.queryByTestId("ai-query-result")).toBeNull());
+  });
+
+  it("1 行で返った SQL も整形して表示し、整形できない SQL はそのまま出す", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const oneLine = JSON.stringify({ sql: "select id, amount from orders where amount > 10 order by id", explanation: "", warnings: [], tables_used: [] });
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: oneLine });
+      handlers?.onDone?.({} as never);
+    });
+    const shown = await screen.findByText((_, el) => el?.tagName === "PRE" && (el.textContent ?? "").includes("orders"));
+    expect(shown.textContent).toBe(format("select id, amount from orders where amount > 10 order by id", { language: "postgresql" }));
+    expect(shown.textContent?.split("\n").length).toBeGreaterThan(3);
+    // キーワードはエディタと同じ配色変数で色分けする。
+    expect(shown.querySelector("span")?.getAttribute("style")).toContain("var(--syntax-keyword)");
   });
 
   it("追い質問: 2 回目の要求に前回の依頼と回答が履歴として載り、新規の生成は履歴なし (#1471)", async () => {
@@ -162,7 +205,7 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDelta?.({ streamId: "x", text: result });
       handlers?.onDone?.({} as never);
     });
-    await screen.findByText("SELECT 1");
+    await findSql("SELECT 1");
     const followUp = await screen.findByLabelText(t("aiQueryRequestLabel"));
     fireEvent.change(followUp, { target: { value: "先月分だけに絞って" } });
     fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
@@ -181,7 +224,7 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDelta?.({ streamId: "x", text: result2 });
       handlers?.onDone?.({} as never);
     });
-    await screen.findByText("SELECT 2");
+    await findSql("SELECT 2");
     fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "金額の多い順に" } });
     fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(3));
@@ -200,7 +243,7 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDelta?.({ streamId: "x", text: result });
       handlers?.onDone?.({} as never);
     });
-    await screen.findByText("SELECT 1");
+    await findSql("SELECT 1");
     const send = await screen.findByRole("button", { name: t("aiQuerySend") });
     expect((send as HTMLButtonElement).disabled).toBe(true);
     // 送った依頼はチャット欄に残り、入力欄は空に戻って追い質問用の案内になる。
@@ -319,7 +362,8 @@ describe("AiQueryModal (#691)", () => {
     await screen.findByLabelText(t("aiQueryRequestLabel"));
     // 「新しい会話」からの生成は本番確認が出て、history なしで送られる。
     fireEvent.click(screen.getByRole("button", { name: t("aiQueryNewConversation") }));
-    expect(screen.queryByTestId("ai-query-log-user")).toBeNull();
+    // チャット欄は退場アニメーションの後に消える。
+    await waitFor(() => expect(screen.queryAllByTestId("ai-query-log-user")).toHaveLength(0));
     fireEvent.change(screen.getByLabelText(t("aiQueryRequestLabel")), { target: { value: "別の依頼" } });
     fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
     await screen.findByText(t("aiQueryConfirmTitle"));
@@ -377,7 +421,7 @@ describe("AiQueryModal (#691)", () => {
         handlers?.onDelta?.({ streamId: "x", text: result });
         handlers?.onDone?.({} as never);
       });
-      await screen.findByText("SELECT 1");
+      await findSql("SELECT 1");
       // 追い質問の途中は選択欄を出さず、送るスキーマは最初の集合のまま。
       expect(screen.queryByTestId("ai-query-tables")).toBeNull();
       fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "絞って" } });
@@ -452,7 +496,8 @@ describe("AiQueryModal (#691)", () => {
   it("開いているテーブルを、テーブル名の無い依頼の対象として伝える", async () => {
     setDb([table("orders", ["id"]), table("sms_receive", ["id"])]);
     renderWithProviders(ui({ focusTable: "orders" }));
-    await screen.findByText(t("aiQueryChatEmptyFocus", { table: "orders" }));
+    const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
+    expect(input.getAttribute("placeholder")).toBe(t("aiQueryRequestPlaceholderFocus", { table: "orders" }));
     await generate("今月に絞って取得したい");
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
     const req = runAiRequest.mock.calls[0][0];
