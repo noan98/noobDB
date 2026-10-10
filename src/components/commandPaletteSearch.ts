@@ -1,4 +1,5 @@
 import type { IconName } from "./Icon";
+import { isClosedTabItemId } from "../closedTabs";
 
 /**
  * コマンドパレット (Cmd/Ctrl+K) の純粋ロジック。検索・スコアリング・グループ化を
@@ -26,6 +27,15 @@ export const GROUP_ORDER: CommandGroup[] = [
   "history",
 ];
 
+/**
+ * 選択された候補を MRU (永続化される「最近使った項目」) に記録してよいか。履歴 (`history:${index}`)
+ * は配列インデックス由来で指す先が変わり、閉じたタブの個別項目 (#1353) は一時的な id なので、
+ * どちらも安定した識別子ではなく対象外。
+ */
+export function isMruRecordable(item: Pick<CommandItem, "id" | "group">): boolean {
+  return item.group !== "history" && !isClosedTabItemId(item.id);
+}
+
 /** MRU (最近使ったコマンド) として保持する最大件数。 */
 export const MAX_MRU_ITEMS = 8;
 
@@ -52,6 +62,11 @@ export interface CommandItem {
    * 受け取って描画するため、ユーザによる再割り当て (#557) にも自動追従する。
    */
   shortcut?: string;
+  /**
+   * true のとき空クエリでは出さず、検索語があるときだけ候補に出る (#1353)。件数が増えうる
+   * 項目 (閉じたタブの個別復元など) が、空クエリの定番操作を押し出さないために使う。
+   */
+  searchOnly?: boolean;
   /** 選択時の動作。パレットは実行後に自分を閉じる。 */
   run: () => void;
 }
@@ -134,7 +149,7 @@ export function fuzzyMatch(query: string, text: string): FuzzyMatch | null {
 
 /** 1 候補を query でスコアリング。マッチしなければ `null`。 */
 export function scoreItem(item: CommandItem, query: string): ScoredItem | null {
-  if (query === "") return { item, score: 0, ranges: [] };
+  if (query === "") return item.searchOnly ? null : { item, score: 0, ranges: [] };
   const labelMatch = fuzzyMatch(query, item.label);
   const extra = [item.sublabel, item.keywords].filter(Boolean).join(" ");
   const extraMatch = extra ? fuzzyMatch(query, extra) : null;
