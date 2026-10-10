@@ -1921,6 +1921,13 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
             sessionId={sessionId}
             driver={driver}
             database={defaultDatabase ?? activeTable?.database ?? null}
+            focusTable={
+              // 開いているテーブルを依頼の既定の対象として伝える。スキーマを読む DB と別の DB の
+              // テーブルは送るスキーマに無いので渡さない。
+              activeTable && activeTable.database === (defaultDatabase ?? activeTable.database)
+                ? activeTable.name
+                : null
+            }
             readOnly={!!readOnly}
             isProduction={!!isProduction}
             onInsert={insertAtCursor}

@@ -144,6 +144,14 @@ describe("buildNl2SqlSystemParts (#1473)", () => {
     expect(variable).toBe("");
   });
 
+  it("開いているテーブルは可変部分に入り、送るスキーマに無いテーブルは伝えない", () => {
+    const withFocus = buildNl2SqlSystemParts({ ...base, focusTable: "orders" });
+    expect(withFocus.cached).toBe(buildNl2SqlSystemParts(base).cached);
+    expect(withFocus.variable).toContain('"orders"');
+    expect(buildNl2SqlSystemParts({ ...base, focusTable: "no_such_table" }).variable).toBe("");
+    expect(buildNl2SqlSystemParts({ ...base, focusTable: null }).variable).toBe("");
+  });
+
   it("同じ入力なら固定部分は毎回完全一致する (キャッシュ先頭一致の前提)", () => {
     expect(buildNl2SqlSystemParts(base).cached).toBe(buildNl2SqlSystemParts({ ...base }).cached);
   });
@@ -237,6 +245,13 @@ describe("関連テーブルの選択 (#1472)", () => {
     expect(selectRelevantTables(tables, fks, "あいうえお")).toEqual([]);
     expect(selectRelevantTables(tables, fks, "")).toEqual([]);
     expect(selectRelevantTables(tables, fks, "products title")).toEqual(["orders", "order_items", "products"]);
+  });
+
+  it("開いているテーブルは依頼文に一致しなくても入る (存在しない名前は無視)", () => {
+    expect(selectRelevantTables(tables, fks, "あいうえお", "audit_log")).toEqual(["audit_log"]);
+    expect(selectRelevantTables(tables, fks, "", "audit_log")).toEqual(["audit_log"]);
+    expect(selectRelevantTables(tables, fks, "ユーザーマスタの一覧", "audit_log")).toEqual(["audit_log", "m_user"]);
+    expect(selectRelevantTables(tables, fks, "あいうえお", "nope")).toEqual([]);
   });
 
   it("キーワード一致は上限件数で打ち切る", () => {

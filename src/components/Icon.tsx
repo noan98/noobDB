@@ -27,6 +27,7 @@ import {
   IconCopy,
   IconDatabase,
   IconDots,
+  IconExternalLink,
   IconDownload,
   IconEye,
   IconEyeOff,
@@ -59,6 +60,7 @@ import {
   IconShieldExclamation,
   IconSortAscending,
   IconSortDescending,
+  IconSend,
   IconSparkles,
   IconStar,
   IconStarFilled,
@@ -227,7 +229,9 @@ export type IconName =
   | "alert-circle"
   | "play"
   | "format"
-  | "more";
+  | "more"
+  | "send"
+  | "external-link";
 
 /**
  * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
@@ -379,6 +383,10 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   format: IconAlignLeft,
   // もっと見る (オーバーフローメニュー): 横並びの三点リーダー。
   more: IconDots,
+  // 送信 (Ask Agent のチャット欄): 紙飛行機。
+  send: IconSend,
+  // 新しいタブで開く: 枠から外へ出る矢印。
+  "external-link": IconExternalLink,
 };
 
 interface IconProps {
