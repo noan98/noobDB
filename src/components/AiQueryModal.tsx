@@ -252,7 +252,6 @@ export function AiQueryModal(props: AiQueryModalProps) {
       tables: sm.tableCount,
       total: sm.totalTables,
       columns: sm.columnCount,
-      kb: approxKb(sm.approxChars),
       dialect: dialectLabel(props.driver),
     });
   const sendsLine = summary ? sendsLineFor(summary) : null;
