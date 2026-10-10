@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream } from "../api/tauri";
+import { api } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import { dialectLabel, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
 import {
   buildImpactAnalysisPrompt,
@@ -27,14 +27,8 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
-import { Spinner } from "./Spinner";
+import { AiStreamProgress } from "./AiStreamProgress";
 import { Tooltip } from "./Tooltip";
-
-let seq = 0;
-function makeStreamId(): string {
-  seq += 1;
-  return `ai_impact_${Date.now().toString(36)}_${seq.toString(36)}`;
-}
 
 type State =
   | { kind: "idle" }
@@ -71,12 +65,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
   const [hasKey, setHasKey] = useState(false);
   const [state, setState] = useState<State>({ kind: "idle" });
   const [open, setOpen] = useState(true);
-  const busyRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
-  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
-  const abortRef = useRef(false);
+  const stream = useAiStream({ idPrefix: "ai_impact" });
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -94,30 +83,6 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
     };
   }, []);
 
-  // 別のストリームに置き換わっている場合は触らない (ID が一致するときだけ解除する)。
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const sid = streamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    };
-  }, []);
-
   const tableRefs = useMemo(
     () => impactTableRefs(props.sql, props.findings, props.driver),
     [props.sql, props.findings, props.driver],
@@ -132,20 +97,19 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
 
   const run = async () => {
     // 二重クリックで 2 本のストリームが走らないよう、同期的に弾く。
-    if (busyRef.current) return;
-    busyRef.current = true;
+    if (!stream.acquire()) return;
     try {
       await runInner();
     } catch (e) {
-      busyRef.current = false;
+      stream.release();
       setState({ kind: "error", sends: sendsLine(tableRefs.length), message: String(e), refused: false });
     }
   };
 
   const runInner = async () => {
-    // busyRef はストリームの終了 (stopListener) まで保持する。送信前に取りやめた場合は戻す。
+    // 確保した実行権はストリームの終了までフックが保持する。送信前に取りやめた場合は戻す。
     const abort = () => {
-      busyRef.current = false;
+      stream.release();
     };
     // 確認ダイアログは元のダイアログの上に重なる。閉じたときに Ark がこのボタンへ
     // フォーカスを戻すよう、開く前に明示的にフォーカスしておく (クリックでフォーカスが
@@ -201,8 +165,8 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
       }),
     );
     // スキーマ取得中にダイアログが閉じられたら、要求を出さずに終える。
-    if (!mountedRef.current) {
-      busyRef.current = false;
+    if (!stream.isMounted()) {
+      stream.release();
       return;
     }
     const tables = fetched.filter((x): x is ImpactTable => x !== null);
@@ -212,85 +176,37 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
       names,
     );
     const sends = sendsLine(tables.length);
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    abortRef.current = false;
-    let text = "";
     setState({ kind: "running", sends });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-        },
-        onDone: () => {
-          stopListener(streamId);
-          const parsed = parseImpactAnalysisResponse(text);
+    await stream.start(
+      {
+      task: "impactAnalysis",
+      system: buildImpactAnalysisSystem(locale),
+      prompt: buildImpactAnalysisPrompt({
+        driver: props.driver,
+        sql: props.sql,
+        findings: props.findings,
+        tables,
+        foreignKeys,
+        preflight: props.preflight,
+        isProduction: props.isProduction,
+        maskLiterals: ai.maskLiterals,
+        locale,
+      }),
+      settings: toAiSnapshot(ai),
+      format: IMPACT_ANALYSIS_FORMAT,
+      },
+      {
+        parse: parseImpactAnalysisResponse,
+        onDone: ({ parsed }) =>
           setState(
             parsed.ok
               ? { kind: "done", sends, value: parsed.value }
               : { kind: "raw", sends, raw: parsed.raw },
-          );
-        },
-        onError: (e) => {
-          stopListener(streamId);
-          setState({ kind: "error", sends, message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopListener(streamId);
-          setState({ kind: "cancelled", sends });
-        },
-      });
-      if (!mountedRef.current) {
-        unlisten();
-        streamRef.current = null;
-        busyRef.current = false;
-        return;
-      }
-      unlistenRef.current = unlisten;
-      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
-      if (abortRef.current) {
-        stopListener(streamId);
-        setState({ kind: "cancelled", sends });
-        return;
-      }
-      await api.runAiRequest({
-        streamId,
-        task: "impactAnalysis",
-        system: buildImpactAnalysisSystem(locale),
-        prompt: buildImpactAnalysisPrompt({
-          driver: props.driver,
-          sql: props.sql,
-          findings: props.findings,
-          tables,
-          foreignKeys,
-          preflight: props.preflight,
-          isProduction: props.isProduction,
-          maskLiterals: ai.maskLiterals,
-          locale,
-        }),
-        settings: toAiSnapshot(ai),
-        format: IMPACT_ANALYSIS_FORMAT,
-      });
-      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
-      if (abortRef.current || !mountedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      setState({ kind: "error", sends, message: String(e), refused: false });
-    }
-  };
-
-  const cancel = () => {
-    abortRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
+          ),
+        onError: (f) => setState({ kind: "error", sends, message: f.message, refused: f.refused }),
+        onCancelled: () => setState({ kind: "cancelled", sends }),
+      },
+    );
   };
 
   if (!ai.enabled || !hasKey) return null;
@@ -312,7 +228,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
             type="button"
             variant="secondary"
             size="sm"
-            // disabled にするとフォーカスを戻せないので aria-disabled のみ (二重実行は busyRef が弾く)。
+            // disabled にするとフォーカスを戻せないので aria-disabled のみ (二重実行は useAiStream の acquire が弾く)。
             aria-disabled={running}
             onClick={() => {
               void run();
@@ -322,13 +238,9 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
           </Button>
         </Tooltip>
         {running && (
-          <>
-            <Spinner size={12} />
-            <chakra.span color="app.textMuted">{t("dangerousAiRunning")}</chakra.span>
-            <Button type="button" variant="secondary" size="sm" onClick={cancel}>
-              {t("dangerousAiStop")}
-            </Button>
-          </>
+          <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
+            {t("dangerousAiStop")}
+          </Button>
         )}
         {hasResult && (
           <Button
@@ -343,6 +255,9 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
           </Button>
         )}
       </Flex>
+      {running && (
+        <AiStreamProgress stream={stream} fields={["summary"]} waitingLabel={t("dangerousAiRunning")} />
+      )}
       {state.kind !== "idle" && (
         <chakra.span color="app.textMuted" fontSize="xs">
           {state.sends}

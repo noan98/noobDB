@@ -145,7 +145,7 @@ describe("AiSchemaDocModal (#696)", () => {
     expect(listIndexes).toHaveBeenCalledTimes(3);
 
     act(() => handlers?.onDelta?.({ streamId: "x", text: "# 店舗" }));
-    await screen.findByText(/4 characters received|4 文字受信/);
+    await screen.findByText(t("aiStreamChars", { count: 4 }));
     expect(screen.getByLabelText(t("aiSchemaDocResult")).textContent).toBe("# 店舗");
     act(() => {
       handlers?.onDelta?.({ streamId: "x", text: "\n\n本文" });
