@@ -351,6 +351,7 @@ mod tests {
             effort: AiEffort::Low,
             system: None,
             system_cached: None,
+            history: Vec::new(),
             prompt: "hi".into(),
             max_tokens: 100,
             stream,
