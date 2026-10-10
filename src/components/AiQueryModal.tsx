@@ -30,6 +30,11 @@ import {
 import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Button, Checkbox, Input, Textarea } from "./ui";
+import { CopyButton } from "./CopyButton";
+import { EmptyState } from "./EmptyState";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Tooltip } from "./Tooltip";
+import { useCopyFeedback } from "./useCopyFeedback";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -50,6 +55,12 @@ type State =
   | { kind: "raw"; raw: string }
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
+
+/** 左ペインのチャット欄に積む 1 件。AI 側は短い状況だけを出し、本文 (SQL・説明・注意点) は右ペインに出す。 */
+type ChatEntry =
+  | { role: "user"; text: string }
+  | { role: "agent"; outcome: "done"; warnings: number }
+  | { role: "agent"; outcome: "raw" | "error" | "cancelled" };
 
 /** 大きい DB で送信時にテーブルごとの詳細 (`describeTable`) を取るときの同時実行数。 */
 const DETAIL_CONCURRENCY = 6;
@@ -85,6 +96,11 @@ export interface AiQueryModalProps {
   database: string | null;
   /** 読み取り専用セッションなら SELECT 系のみ生成させる。 */
   readOnly: boolean;
+  /**
+   * エディタで開いているテーブル (テーブルタブのときだけ。`database` と同じ DB のもの)。
+   * 依頼文がテーブルを名指ししないときの対象として AI に伝え、大きい DB でも必ず送る。
+   */
+  focusTable?: string | null;
   isProduction: boolean;
   /** 現在のエディタのカーソル位置へ挿入する (実行はしない)。 */
   onInsert: (sql: string) => void;
@@ -104,6 +120,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const locale = useLocale();
   const ai = useSettings().ai;
   const { confirm, dialog } = useConfirm();
+  const copyFeedback = useCopyFeedback();
   const [request, setRequest] = useState("");
   const [schema, setSchema] = useState<Schema>({ kind: "loading" });
   const [state, setState] = useState<State>({ kind: "idle" });
@@ -115,9 +132,13 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const [lockedNames, setLockedNames] = useState<ReadonlySet<string> | null>(null);
   // 大きい DB: 送信時に取ったテーブルごとの詳細 (型・PK・コメント)。追い質問で同じ内容を再利用する。
   const [details, setDetails] = useState<ReadonlyMap<string, Nl2SqlColumn[]>>(() => new Map());
-  // 追い質問 (#1471): これまでの往復 (送ったプロンプトと回答の本文)。新規の生成で作り直す。
+  // 追い質問 (#1471): これまでの往復 (送ったプロンプトと回答の本文)。新しい会話で作り直す。
   const [exchanges, setExchanges] = useState<AiExchange[]>([]);
-  const [followUp, setFollowUp] = useState("");
+  // チャット欄の表示用の履歴 (送信のたびに入力欄は空にする)。会話の中身 (`exchanges`) とは別に持つ。
+  const [log, setLog] = useState<ChatEntry[]>([]);
+  // 大きい DB の関連テーブル提案の元にする文。入力欄が空になった後 (送信後) は直前に送った文を使う。
+  const [lastSent, setLastSent] = useState("");
+  const logEndRef = useRef<HTMLDivElement>(null);
   // 最初の生成で送信を確認した宛先。追い質問の本番確認を省けるのは、これと今の値が一致するときだけ。
   const confirmedRef = useRef<{ sessionId: string; database: string | null; isProduction: boolean } | null>(null);
   const stream = useAiStream({ idPrefix: "ai_nl2sql" });
@@ -130,7 +151,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
   useEffect(() => {
     // 接続 / データベースが変わったら会話を捨てる (別の宛先・別スキーマに古い履歴を送らない)。
     setExchanges([]);
-    setFollowUp("");
+    setLog([]);
     setPicked(null);
     setPickFilter("");
     setLockedNames(null);
@@ -189,10 +210,14 @@ export function AiQueryModal(props: AiQueryModalProps) {
 
   // 送るテーブル: 閾値以下の DB は全テーブル (固定順でキャッシュが効く)。大きい DB は選択した関連テーブルだけ。
   // 追い質問に送る集合 (最初に送った集合に固定) は `runInner` で決める。
+  const focusTable = props.focusTable ?? null;
+  const suggestBasis = request.trim() !== "" ? request : lastSent;
   const suggested = useMemo(
     () =>
-      schema.kind === "ready" && schema.large ? new Set(selectRelevantTables(schema.tables, schema.foreignKeys, request)) : null,
-    [schema, request],
+      schema.kind === "ready" && schema.large
+        ? new Set(selectRelevantTables(schema.tables, schema.foreignKeys, suggestBasis, focusTable))
+        : null,
+    [schema, suggestBasis, focusTable],
   );
   const selectedNames: ReadonlySet<string> | null = picked ?? suggested;
   // 追い質問の途中 (最初の生成で送った集合が固定されている) は、その集合が実際に送る内容。
@@ -241,9 +266,25 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const noPick = schema.kind === "ready" && schema.large && (selectedNames?.size ?? 0) === 0;
   const canGenerate =
     !!database && schema.kind === "ready" && !emptySchema && !noPick && trimmed !== "" && !running;
-  const followUpTrimmed = followUp.trim();
   const canFollowUp =
-    !!database && schema.kind === "ready" && exchanges.length > 0 && followUpTrimmed !== "" && !running;
+    !!database && schema.kind === "ready" && exchanges.length > 0 && trimmed !== "" && !running;
+  // 入力欄は 1 つ。最初の回答が返った後は、同じ欄からの送信を追い質問として扱う。
+  const canSend = exchanges.length > 0 ? canFollowUp : canGenerate;
+  const send = () => {
+    if (exchanges.length > 0) void run(trimmed);
+    else void run();
+  };
+  /** 会話を捨てて最初の依頼からやり直す (送るテーブルの固定も外す)。 */
+  const resetConversation = () => {
+    setExchanges([]);
+    setLog([]);
+    setLastSent("");
+    setLockedNames(null);
+    setState({ kind: "idle" });
+    setDone(null);
+    setRequest("");
+    inputRef.current?.focus();
+  };
 
   const run = async (followUpText?: string) => {
     const promptText = followUpText ?? trimmed;
@@ -328,6 +369,10 @@ export function AiQueryModal(props: AiQueryModalProps) {
     }
     // 新規の生成は新しい会話の始まり。表示中の結果が消えるので、古い往復も持ち越さない。
     if (followUpText === undefined) setExchanges([]);
+    const sentText = (followUpText ?? request).trim();
+    setLog((prev) => [...prev, { role: "user", text: sentText }]);
+    setLastSent(sentText);
+    setRequest("");
     setState({ kind: "running" });
     // スキーマを含む固定部分はプロンプトキャッシュの対象にする (#1473)。
     const systemParts = buildNl2SqlSystemParts({
@@ -337,6 +382,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
       readOnly: props.readOnly,
       tables: ready.tables,
       foreignKeys: ready.foreignKeys,
+      focusTable,
     });
     const isFollowUp = followUpText !== undefined;
     const prompt = buildNl2SqlPrompt(followUpText ?? request);
@@ -361,257 +407,389 @@ export function AiQueryModal(props: AiQueryModalProps) {
         parse: parseNl2SqlResponse,
         onDone: ({ parsed, text }) => {
           setState(parsed.ok ? { kind: "done", value: parsed.value } : { kind: "raw", raw: parsed.raw });
+          setLog((prev) => [
+            ...prev,
+            parsed.ok
+              ? { role: "agent", outcome: "done", warnings: parsed.value.warnings.length }
+              : { role: "agent", outcome: "raw" },
+          ]);
           // 解釈できた回答だけを会話に積む (壊れた本文を次の依頼に混ぜない)。
           if (parsed.ok) {
             const exchange = { prompt, answer: text };
             setExchanges((prev) => (isFollowUp ? appendExchange(prev, exchange) : [exchange]));
-            setFollowUp("");
           }
         },
-        onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
-        onCancelled: () => setState({ kind: "cancelled" }),
+        onError: (f) => {
+          setState({ kind: "error", message: f.message, refused: f.refused });
+          setLog((prev) => [...prev, { role: "agent", outcome: "error" }]);
+        },
+        onCancelled: () => {
+          setState({ kind: "cancelled" });
+          setLog((prev) => [...prev, { role: "agent", outcome: "cancelled" }]);
+        },
       },
     );
   };
 
+  // 新しい発言が積まれたらチャット欄の末尾まで送る。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 発言数と実行中表示の変化をきっかけに末尾へ送るための依存
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [log.length, running]);
+
   if (!ai.enabled) return null;
+
+  const result = state.kind === "done" ? state.value : null;
+  const inConversation = exchanges.length > 0;
 
   return (
     <>
     <Modal
-      width="680px"
+      width="1080px"
       onClose={props.onClose}
-      onSubmit={() => {
-        // フォーカス中の欄で振り分ける。メインの依頼欄なら新規生成、それ以外で追い質問の入力があれば追い質問。
-        if (document.activeElement === inputRef.current) void run();
-        else if (canFollowUp) void run(followUpTrimmed);
-        else void run();
-      }}
-      submitDisabled={!canGenerate && !canFollowUp}
+      onSubmit={send}
+      submitDisabled={!canSend}
       initialFocusEl={() => inputRef.current}
     >
       <ModalHeader onClose={props.onClose} closeLabel={t("aiQueryClose")}>
         {t("aiQueryTitle")}
       </ModalHeader>
-      <ModalBody display="flex" flexDirection="column" gap="4" data-testid="ai-query-modal">
-        <FormSection>
-          <FieldLabel htmlFor="ai-query-request">{t("aiQueryRequestLabel")}</FieldLabel>
-          <Textarea
-            id="ai-query-request"
-            ref={inputRef}
-            rows={3}
-            value={request}
-            onChange={(e) => setRequest(e.target.value)}
-            placeholder={t("aiQueryRequestPlaceholder")}
-          />
-          {database && schema.kind === "loading" && (
-            <Flex align="center" gap="2" color="app.textMuted" fontSize="xs">
-              <Spinner size={12} />
-              {t("aiQuerySchemaLoading")}
-            </Flex>
-          )}
-          {sendsLine && (
-            <chakra.span color="app.textMuted" fontSize="xs" data-testid="ai-query-sends">
-              {sendsLine}
-            </chakra.span>
-          )}
-        </FormSection>
-        {!database && <ErrorNote role="alert">{t("aiQueryNoDatabase")}</ErrorNote>}
-        {schema.kind === "error" && (
-          <ErrorNote role="alert">{t("aiQuerySchemaError", { message: schema.message })}</ErrorNote>
-        )}
-        {emptySchema && (
-          <Callout tone="warning" role="status">
-            {t("aiQueryEmptySchema")}
-          </Callout>
-        )}
-        {summary?.large && (
-          <Callout tone="warning" role="status">
-            {t("aiQueryLargeSchema", { total: summary.totalTables, tables: summary.tableCount, kb: approxKb(summary.approxChars) })}
-          </Callout>
-        )}
-        {schema.kind === "ready" && schema.large && !emptySchema && (
-          <FormSection data-testid="ai-query-tables">
-            <FieldLabel htmlFor="ai-query-table-filter">
-              {t("aiQueryTablesPickLabel", { count: selectedNames?.size ?? 0 })}
+      <ModalBody
+        display="flex"
+        gap="4"
+        // Body は flex: 1 (basis 0) なので height は効かない。最小の高さで 2 ペインの縦幅を確保する。
+        minH="min(560px, 70vh)"
+        overflow="hidden"
+        data-testid="ai-query-modal"
+      >
+        {/* 左ペイン: エージェントとのチャット (状況の注意・会話・入力欄)。 */}
+        <Flex
+          direction="column"
+          gap="3"
+          flex="0 0 42%"
+          minW="0"
+          minH="0"
+          data-testid="ai-query-chat"
+        >
+          <Flex align="center" gap="2">
+            <FieldLabel htmlFor="ai-query-request" flex="1" minW="0">
+              {t("aiQueryRequestLabel")}
             </FieldLabel>
-            {noPick && (
-              <Callout tone="info" role="status">
-                {t("aiQueryTablesNone")}
-              </Callout>
+            {(inConversation || log.length > 0) && (
+              <Tooltip label={t("aiQueryNewConversation")}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetConversation}
+                  disabled={running}
+                  aria-label={t("aiQueryNewConversation")}
+                >
+                  <Icon name="plus" size={ICON_SIZES.sm} />
+                </Button>
+              </Tooltip>
             )}
-            <Input
-              id="ai-query-table-filter"
-              value={pickFilter}
-              onChange={(e) => setPickFilter(e.target.value)}
-              placeholder={t("aiQueryTablesFilter")}
-              disabled={running}
-            />
-            <Flex direction="column" maxH="160px" overflowY="auto" border="1px solid" borderColor="app.border" borderRadius="md" p="1.5">
-              {pickRows.slice(0, PICKER_MAX_ROWS).map((x) => (
-                <chakra.label key={x.name} display="flex" alignItems="center" gap="2" cursor="pointer" fontSize="sm">
-                  <Checkbox
-                    checked={selectedNames?.has(x.name) ?? false}
-                    disabled={running}
-                    onChange={(e) => togglePick(x.name, e.target.checked)}
-                  />
-                  <chakra.span>{x.name}</chakra.span>
-                  {x.comment && (
-                    <chakra.span textStyle="caption" color="app.textMuted" minW="0" truncate title={x.comment}>
-                      {x.comment}
-                    </chakra.span>
-                  )}
-                </chakra.label>
-              ))}
-              {pickRows.length > PICKER_MAX_ROWS && (
-                <chakra.span textStyle="caption" color="app.textMuted">
-                  {t("aiQueryTablesMore", { count: pickRows.length - PICKER_MAX_ROWS })}
-                </chakra.span>
+          </Flex>
+          {!database && <ErrorNote role="alert">{t("aiQueryNoDatabase")}</ErrorNote>}
+          {schema.kind === "error" && (
+            <ErrorNote role="alert">{t("aiQuerySchemaError", { message: schema.message })}</ErrorNote>
+          )}
+          {emptySchema && (
+            <Callout tone="warning" role="status">
+              {t("aiQueryEmptySchema")}
+            </Callout>
+          )}
+          {props.readOnly && (
+            <Callout tone="info" role="status">
+              {t("aiQueryReadOnlyNote")}
+            </Callout>
+          )}
+          <Flex
+            direction="column"
+            gap="2"
+            flex="1"
+            minH="0"
+            overflowY="auto"
+            border="1px solid"
+            borderColor="app.border"
+            borderRadius="md"
+            p="2.5"
+            role="log"
+            aria-live="polite"
+            data-testid="ai-query-log"
+          >
+            {log.length === 0 && !running && (
+              <chakra.span textStyle="caption">
+                {focusTable ? t("aiQueryChatEmptyFocus", { table: focusTable }) : t("aiQueryChatEmpty")}
+              </chakra.span>
+            )}
+            {log.map((entry, i) =>
+              entry.role === "user" ? (
+                <chakra.div
+                  key={i}
+                  alignSelf="flex-end"
+                  maxW="90%"
+                  bg="app.active"
+                  borderRadius="md"
+                  px="2.5"
+                  py="1.5"
+                  textStyle="body"
+                  whiteSpace="pre-wrap"
+                  data-testid="ai-query-log-user"
+                >
+                  {entry.text}
+                </chakra.div>
+              ) : (
+                <Flex
+                  key={i}
+                  alignSelf="flex-start"
+                  maxW="90%"
+                  gap="1.5"
+                  align="flex-start"
+                  bg="app.surfaceMuted"
+                  borderRadius="md"
+                  px="2.5"
+                  py="1.5"
+                  textStyle="body"
+                  data-testid="ai-query-log-agent"
+                >
+                  <chakra.span display="inline-flex" flexShrink={0} pt="0.5" color="app.accent" aria-hidden>
+                    <Icon name="sparkles" size={ICON_SIZES.sm} />
+                  </chakra.span>
+                  <chakra.span>
+                    {entry.outcome === "done"
+                      ? entry.warnings > 0
+                        ? t("aiQueryChatDoneWarnings", { count: entry.warnings })
+                        : t("aiQueryChatDone")
+                      : entry.outcome === "cancelled"
+                        ? t("aiQueryCancelled")
+                        : t("aiQueryChatFailed")}
+                  </chakra.span>
+                </Flex>
+              ),
+            )}
+            {running && (
+              <Flex align="center" gap="2" alignSelf="flex-start" color="app.textMuted" textStyle="body">
+                <Spinner size={12} />
+                {t("aiQueryRunning")}
+              </Flex>
+            )}
+            <div ref={logEndRef} />
+          </Flex>
+          {summary?.large && !inConversation && (
+            <Callout tone="warning" role="status">
+              {t("aiQueryLargeSchema", { total: summary.totalTables, tables: summary.tableCount, kb: approxKb(summary.approxChars) })}
+            </Callout>
+          )}
+          {schema.kind === "ready" && schema.large && !emptySchema && !inConversation && (
+            <FormSection data-testid="ai-query-tables">
+              <FieldLabel htmlFor="ai-query-table-filter">
+                {t("aiQueryTablesPickLabel", { count: selectedNames?.size ?? 0 })}
+              </FieldLabel>
+              {noPick && (
+                <Callout tone="info" role="status">
+                  {t("aiQueryTablesNone")}
+                </Callout>
               )}
-            </Flex>
-          </FormSection>
-        )}
-        {props.readOnly && (
-          <Callout tone="info" role="status">
-            {t("aiQueryReadOnlyNote")}
-          </Callout>
-        )}
-        {running && (
-          <Flex direction="column" gap="2" fontSize="sm">
-            <AiStreamProgress stream={stream} fields={["sql", "explanation"]} waitingLabel={t("aiQueryRunning")} />
-            <Flex>
-              <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
-                {t("aiQueryCancel")}
+              <Input
+                id="ai-query-table-filter"
+                value={pickFilter}
+                onChange={(e) => setPickFilter(e.target.value)}
+                placeholder={t("aiQueryTablesFilter")}
+                disabled={running}
+              />
+              <Flex direction="column" maxH="120px" overflowY="auto" border="1px solid" borderColor="app.border" borderRadius="md" p="1.5">
+                {pickRows.slice(0, PICKER_MAX_ROWS).map((x) => (
+                  <chakra.label key={x.name} display="flex" alignItems="center" gap="2" cursor="pointer" fontSize="sm">
+                    <Checkbox
+                      checked={selectedNames?.has(x.name) ?? false}
+                      disabled={running}
+                      onChange={(e) => togglePick(x.name, e.target.checked)}
+                    />
+                    <chakra.span>{x.name}</chakra.span>
+                    {x.comment && (
+                      <chakra.span textStyle="caption" minW="0" truncate title={x.comment}>
+                        {x.comment}
+                      </chakra.span>
+                    )}
+                  </chakra.label>
+                ))}
+                {pickRows.length > PICKER_MAX_ROWS && (
+                  <chakra.span textStyle="caption">
+                    {t("aiQueryTablesMore", { count: pickRows.length - PICKER_MAX_ROWS })}
+                  </chakra.span>
+                )}
+              </Flex>
+            </FormSection>
+          )}
+          <Flex direction="column" gap="1.5">
+            <Textarea
+              id="ai-query-request"
+              ref={inputRef}
+              rows={3}
+              value={request}
+              onChange={(e) => setRequest(e.target.value)}
+              placeholder={inConversation ? t("aiFollowUpPlaceholder") : t("aiQueryRequestPlaceholder")}
+            />
+            <Flex align="flex-start" gap="2">
+              <chakra.span textStyle="caption" flex="1" minW="0" data-testid="ai-query-sends">
+                {database && schema.kind === "loading" ? (
+                  <Flex as="span" align="center" gap="2">
+                    <Spinner size={12} />
+                    {t("aiQuerySchemaLoading")}
+                  </Flex>
+                ) : inConversation ? (
+                  <>
+                    {t("aiFollowUpHint", { count: MAX_HISTORY_EXCHANGES })}
+                    {lockedNames ? ` ${t("aiQueryTablesLocked", { count: lockedNames.size })}` : ""}
+                  </>
+                ) : (
+                  sendsLine
+                )}
+              </chakra.span>
+              <Button type="button" variant="primary" size="sm" flexShrink={0} disabled={!canSend} onClick={send}>
+                <Icon name="send" size={ICON_SIZES.sm} />
+                {t("aiQuerySend")}
               </Button>
             </Flex>
           </Flex>
-        )}
-        {state.kind === "done" && (
-          <Flex direction="column" gap="3" aria-live="polite">
-            <FormSection>
-              <FieldLabel as="div">{t("aiQueryResultSql")}</FieldLabel>
-              <CodePreview wrap maxH="240px">
-                {state.value.sql}
-              </CodePreview>
-              <Flex align="center" gap="2" wrap="wrap">
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    props.onInsert(state.value.sql);
-                    setDone("inserted");
-                  }}
-                >
-                  {t("aiQueryInsert")}
+        </Flex>
+        {/* 右ペイン: 提案された SQL・説明・注意点を上から並べる。 */}
+        <Flex
+          direction="column"
+          gap="3"
+          flex="1"
+          minW="0"
+          minH="0"
+          overflowY="auto"
+          aria-live="polite"
+          data-testid="ai-query-result"
+        >
+          {running && (
+            <Flex direction="column" gap="2" fontSize="sm">
+              <AiStreamProgress stream={stream} fields={["sql", "explanation"]} waitingLabel={t("aiQueryRunning")} />
+              <Flex>
+                <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
+                  {t("aiQueryCancel")}
                 </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    props.onOpenInNewTab(state.value.sql, database);
-                    setDone("newTab");
-                  }}
-                >
-                  {t("aiQueryOpenInNewTab")}
-                </Button>
+              </Flex>
+            </Flex>
+          )}
+          {/* 中止はチャット欄に出すので、右ペインは未回答と同じ表示に戻す。 */}
+          {(state.kind === "idle" || state.kind === "cancelled") && (
+            <EmptyState compact icon="query" title={t("aiQueryResultEmpty")} description={t("aiQueryResultEmptyHint")} />
+          )}
+          {result && (
+            <>
+              <FormSection>
+                <Flex align="center" gap="1">
+                  <FieldLabel as="div" flex="1" minW="0">
+                    {t("aiQueryResultSql")}
+                  </FieldLabel>
+                  <Tooltip label={t("aiQueryInsert")}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("aiQueryInsert")}
+                      onClick={() => {
+                        props.onInsert(result.sql);
+                        setDone("inserted");
+                      }}
+                    >
+                      <Icon name="insert-sql" size={ICON_SIZES.md} />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label={t("aiQueryOpenInNewTab")}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("aiQueryOpenInNewTab")}
+                      onClick={() => {
+                        props.onOpenInNewTab(result.sql, database);
+                        setDone("newTab");
+                      }}
+                    >
+                      <Icon name="external-link" size={ICON_SIZES.md} />
+                    </Button>
+                  </Tooltip>
+                  <CopyButton
+                    copied={copyFeedback.copied}
+                    onClick={() => {
+                      void copyFeedback.copy(result.sql);
+                    }}
+                    label={t("aiQueryCopySql")}
+                    copiedLabel={t("aiQueryCopiedSql")}
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    px="2"
+                    py="1"
+                    border="none"
+                    bg="transparent"
+                    borderRadius="sm"
+                    cursor="pointer"
+                    _hover={{ bg: "app.hover", color: "app.text" }}
+                  />
+                </Flex>
+                <CodePreview wrap maxH="260px">
+                  {result.sql}
+                </CodePreview>
                 {done && (
                   <chakra.span color="app.textSuccess" fontSize="sm" role="status">
                     {done === "inserted" ? t("aiQueryInserted") : t("aiQueryOpenedInNewTab")}
                   </chakra.span>
                 )}
-              </Flex>
-            </FormSection>
-            {state.value.explanation && (
-              <FormSection>
-                <FieldLabel as="div">{t("aiQueryExplanation")}</FieldLabel>
-                <chakra.span whiteSpace="pre-wrap" fontSize="sm">
-                  {state.value.explanation}
-                </chakra.span>
               </FormSection>
-            )}
-            {state.value.warnings.length > 0 && (
-              <Callout tone="warning" title={t("aiQueryWarnings")} role="status">
-                {state.value.warnings.map((w, i) => (
-                  <chakra.div key={`${i}-${w}`}>{w}</chakra.div>
-                ))}
-              </Callout>
-            )}
-            {state.value.tables_used.length > 0 && (
-              <FormSection>
-                <FieldLabel as="div">{t("aiQueryTablesUsed")}</FieldLabel>
-                <chakra.span fontSize="sm">{state.value.tables_used.join(", ")}</chakra.span>
-              </FormSection>
-            )}
-          </Flex>
-        )}
-        <AiUsageNote event={stream.done} />
-        {state.kind === "raw" && (
-          <Flex direction="column" gap="1">
-            <ErrorNote role="alert">{t("aiQueryParseError")}</ErrorNote>
-            <CodePreview wrap maxH="200px">
-              {state.raw}
-            </CodePreview>
-          </Flex>
-        )}
-        {state.kind === "error" &&
-          (state.refused ? (
-            <Callout tone="warning" role="alert">
-              {t("aiQueryRefused", { message: state.message })}
-            </Callout>
-          ) : (
-            <ErrorNote role="alert">{t("aiQueryError", { message: state.message })}</ErrorNote>
-          ))}
-        {state.kind === "cancelled" && (
-          <Callout tone="info" role="status">
-            {t("aiQueryCancelled")}
-          </Callout>
-        )}
-        {exchanges.length > 0 && !running && (
-          <FormSection data-testid="ai-query-followup">
-            <FieldLabel htmlFor="ai-query-followup-input">{t("aiFollowUpLabel")}</FieldLabel>
-            <Textarea
-              id="ai-query-followup-input"
-              rows={2}
-              value={followUp}
-              onChange={(e) => setFollowUp(e.target.value)}
-              placeholder={t("aiFollowUpPlaceholder")}
-            />
-            <Flex align="center" gap="2" wrap="wrap">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={!canFollowUp}
-                onClick={() => {
-                  void run(followUpTrimmed);
-                }}
-              >
-                {t("aiFollowUpSend")}
-              </Button>
-              <chakra.span textStyle="caption" color="app.textMuted">
-                {t("aiFollowUpHint", { count: MAX_HISTORY_EXCHANGES })}
-                {lockedNames ? ` ${t("aiQueryTablesLocked", { count: lockedNames.size })}` : ""}
-              </chakra.span>
+              {result.explanation && (
+                <FormSection>
+                  <FieldLabel as="div">{t("aiQueryExplanation")}</FieldLabel>
+                  <chakra.span whiteSpace="pre-wrap" textStyle="body">
+                    {result.explanation}
+                  </chakra.span>
+                </FormSection>
+              )}
+              {result.warnings.length > 0 && (
+                <Callout tone="warning" title={t("aiQueryWarnings")} role="status">
+                  {result.warnings.map((w, i) => (
+                    <chakra.div key={`${i}-${w}`}>{w}</chakra.div>
+                  ))}
+                </Callout>
+              )}
+            </>
+          )}
+          {state.kind === "raw" && (
+            <Flex direction="column" gap="1">
+              <ErrorNote role="alert">{t("aiQueryParseError")}</ErrorNote>
+              <CodePreview wrap maxH="200px">
+                {state.raw}
+              </CodePreview>
             </Flex>
-          </FormSection>
-        )}
+          )}
+          {state.kind === "error" &&
+            (state.refused ? (
+              <Callout tone="warning" role="alert">
+                {t("aiQueryRefused", { message: state.message })}
+              </Callout>
+            ) : (
+              <ErrorNote role="alert">{t("aiQueryError", { message: state.message })}</ErrorNote>
+            ))}
+        </Flex>
       </ModalBody>
       <ModalFooter>
+        {/* 補助情報: 使用テーブルとモデル・トークン数。 */}
+        <Flex direction="column" gap="0.5" minW="0" data-testid="ai-query-meta">
+          {result && result.tables_used.length > 0 && (
+            <chakra.span textStyle="caption" truncate>
+              {t("aiQueryTablesUsed")}: {result.tables_used.join(", ")}
+            </chakra.span>
+          )}
+          <AiUsageNote event={stream.done} />
+        </Flex>
         <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={props.onClose}>
           {t("aiQueryClose")}
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          disabled={!canGenerate}
-          onClick={() => {
-            void run();
-          }}
-        >
-          {t("aiQueryGenerate")}
         </Button>
       </ModalFooter>
     </Modal>

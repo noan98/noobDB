@@ -103,6 +103,12 @@ export interface Nl2SqlSystemInput {
   readOnly: boolean;
   tables: Nl2SqlTable[];
   foreignKeys: Nl2SqlForeignKey[];
+  /**
+   * エディタで開いているテーブル (テーブルタブのときだけ)。依頼文がテーブルを名指ししないとき、
+   * AI が無関係なテーブルを「仮の対象」に選ばないよう、このテーブルを対象と伝える。
+   * 送るスキーマに含まれないときは伝えない (存在しない名前を使わせない)。
+   */
+  focusTable?: string | null;
 }
 
 const MAX_COMMENT_CHARS = 80;
@@ -214,23 +220,27 @@ function relevanceScore(t: Nl2SqlTable, keywords: string[], requestLower: string
 /**
  * 大きい DB で送るテーブルを、依頼文とのキーワード一致 (+ 外部キーで 1 段たどる) で選ぶ。
  * 純関数。戻り値はスキーマ上の並び順のテーブル名。一致が無ければ空配列
- * (呼び出し側が手動選択を促す)。
+ * (呼び出し側が手動選択を促す)。`focusTable` (エディタで開いているテーブル) は一致に関係なく含める。
  */
 export function selectRelevantTables(
   tables: Nl2SqlTable[],
   foreignKeys: Nl2SqlForeignKey[],
   request: string,
+  focusTable: string | null = null,
 ): string[] {
+  // 開いているテーブルは依頼文に名前が出なくても常に送る (依頼の主語になりやすいため)。
+  const focus = focusTable !== null && tables.some((t) => t.name === focusTable) ? focusTable : null;
   const keywords = extractKeywords(request);
-  if (keywords.length === 0) return [];
+  if (keywords.length === 0) return focus !== null ? [focus] : [];
   const requestLower = request.toLowerCase();
   const scored = tables
     .map((t, index) => ({ name: t.name, index, score: relevanceScore(t, keywords, requestLower) }))
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, NL2SQL_RELEVANT_MAX_TABLES);
-  if (scored.length === 0) return [];
+  if (scored.length === 0) return focus !== null ? [focus] : [];
   const chosen = new Set(scored.map((x) => x.name));
+  if (focus !== null) chosen.add(focus);
   const known = new Set(tables.map((t) => t.name));
   // 外部キーで 1 段 (参照する側・される側の両方向)。直接一致の高得点順に追加し、上限で打ち切る。
   const neighbors = new Set<string>();
@@ -263,7 +273,7 @@ export function restrictSchema(
 export interface Nl2SqlSystemParts {
   /** 方言・規則・スキーマ。プロンプトキャッシュの対象にする (`systemCached`)。 */
   cached: string;
-  /** 固定部分の後ろに足す可変部分 (今は無く、空文字)。 */
+  /** 固定部分の後ろに足す可変部分 (開いているテーブルの指示。無ければ空文字)。 */
   variable: string;
 }
 
@@ -295,7 +305,13 @@ export function buildNl2SqlSystemParts(input: Nl2SqlSystemInput): Nl2SqlSystemPa
   lines.push(input.database ? `Database: ${input.database}` : "Database: (default)");
   lines.push(SCHEMA_TEXT_LEGEND);
   lines.push(buildSchemaText(input.tables, input.foreignKeys));
-  return { cached: lines.join("\n"), variable: "" };
+  // 開いているテーブルはタブごとに変わるので、キャッシュ対象の固定部分には入れない。
+  const focus = input.focusTable ?? null;
+  const variable =
+    focus !== null && input.tables.some((t) => t.name === focus)
+      ? `The user is currently viewing the table "${focus}" in the editor. When the request does not name a table, treat it as a request about "${focus}". Use other tables only when the request clearly needs them.`
+      : "";
+  return { cached: lines.join("\n"), variable };
 }
 
 /** system プロンプト全体 (固定部分 + 可変部分)。分けて送れない呼び出し側向け。 */

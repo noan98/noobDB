@@ -238,7 +238,6 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/AiExplainInterpret.tsx", 2],
     ["../components/AiHistorySearch.tsx", 4],
     ["../components/AiImpactAnalysis.tsx", 2],
-    ["../components/AiQueryModal.tsx", 2],
     ["../components/AiSchemaDocModal.tsx", 2],
     ["../components/AiSqlPanel.tsx", 1],
     ["../components/AiSyncRisk.tsx", 2],

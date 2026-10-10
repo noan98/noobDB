@@ -111,7 +111,7 @@ function table(name: string, cols: string[]) {
 async function generate(text = "注文を集計して") {
   const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
   fireEvent.change(input, { target: { value: text } });
-  const btn = screen.getByRole("button", { name: t("aiQueryGenerate") });
+  const btn = screen.getByRole("button", { name: t("aiQuerySend") });
   await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(btn);
   return btn;
@@ -163,9 +163,9 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("SELECT 1");
-    const followUp = await screen.findByLabelText(t("aiFollowUpLabel"));
+    const followUp = await screen.findByLabelText(t("aiQueryRequestLabel"));
     fireEvent.change(followUp, { target: { value: "先月分だけに絞って" } });
-    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
     const second = runAiRequest.mock.calls[1][0];
     expect(second.prompt).toBe("先月分だけに絞って");
@@ -182,18 +182,18 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("SELECT 2");
-    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "金額の多い順に" } });
-    fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+    fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "金額の多い順に" } });
+    fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(3));
     const third = runAiRequest.mock.calls[2][0];
     expect(third.history.map((m: { role: string }) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
     expect(third.history[3].content).toBe(result2);
   });
 
-  it("追い質問は生成結果が出るまで出ず、空入力では送れない (#1471)", async () => {
+  it("回答後は同じ入力欄が追い質問になり、空入力では送れない (#1471)", async () => {
     renderWithProviders(ui());
-    await screen.findByLabelText(t("aiQueryRequestLabel"));
-    expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull();
+    const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
+    expect(input.getAttribute("placeholder")).toBe(t("aiQueryRequestPlaceholder"));
     await generate();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     act(() => {
@@ -201,8 +201,12 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("SELECT 1");
-    const send = await screen.findByRole("button", { name: t("aiFollowUpSend") });
+    const send = await screen.findByRole("button", { name: t("aiQuerySend") });
     expect((send as HTMLButtonElement).disabled).toBe(true);
+    // 送った依頼はチャット欄に残り、入力欄は空に戻って追い質問用の案内になる。
+    expect(screen.getByTestId("ai-query-log-user").textContent).toBe("注文を集計して");
+    expect(screen.getByTestId("ai-query-log-agent")).toBeTruthy();
+    expect(screen.getByLabelText(t("aiQueryRequestLabel")).getAttribute("placeholder")).toBe(t("aiFollowUpPlaceholder"));
   });
 
   it("読み取り専用ならプロンプトに SELECT 制約が入る", async () => {
@@ -290,10 +294,10 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDelta?.({ streamId: "x", text: out });
       handlers?.onDone?.({} as never);
     });
-    await screen.findByLabelText(t("aiFollowUpLabel"));
+    await screen.findByTestId("ai-query-log-agent");
   }
 
-  it("本番でも追い質問では再確認せず、新規の生成は会話をリセットして history を付けない (#1471)", async () => {
+  it("本番でも追い質問では再確認せず、新しい会話の生成はリセットして history を付けない (#1471)", async () => {
     renderWithProviders(ui({ isProduction: true }));
     await generate("注文を集計して");
     await screen.findByText(t("aiQueryConfirmTitle"));
@@ -303,8 +307,8 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDelta?.({ streamId: "x", text: result });
       handlers?.onDone?.({} as never);
     });
-    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "絞って" } });
-    fireEvent.click(await screen.findByRole("button", { name: t("aiFollowUpSend") }));
+    fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "絞って" } });
+    fireEvent.click(await screen.findByRole("button", { name: t("aiQuerySend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(t("aiQueryConfirmTitle"))).toBeNull();
     expect(runAiRequest.mock.calls[1][0].history).toHaveLength(2);
@@ -312,10 +316,12 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDelta?.({ streamId: "x", text: result });
       handlers?.onDone?.({} as never);
     });
-    await screen.findByLabelText(t("aiFollowUpLabel"));
-    // 新規の生成は本番確認が出て、history なしで送られる。
+    await screen.findByLabelText(t("aiQueryRequestLabel"));
+    // 「新しい会話」からの生成は本番確認が出て、history なしで送られる。
+    fireEvent.click(screen.getByRole("button", { name: t("aiQueryNewConversation") }));
+    expect(screen.queryByTestId("ai-query-log-user")).toBeNull();
     fireEvent.change(screen.getByLabelText(t("aiQueryRequestLabel")), { target: { value: "別の依頼" } });
-    fireEvent.click(screen.getByRole("button", { name: t("aiQueryGenerate") }));
+    fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
     await screen.findByText(t("aiQueryConfirmTitle"));
     fireEvent.click(screen.getByRole("button", { name: t("aiQueryConfirmSend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(3));
@@ -323,14 +329,14 @@ describe("AiQueryModal (#691)", () => {
     expect(runAiRequest.mock.calls[2][0].prompt).toBe("別の依頼");
   });
 
-  it("接続 / データベースが変わると会話を捨て、追い質問欄も消える (#1471)", async () => {
+  it("接続 / データベースが変わると会話を捨て、最初の依頼の入力に戻る (#1471)", async () => {
     const view = renderWithProviders(ui());
     await generateAndFinish("注文を集計して");
-    fireEvent.change(screen.getByLabelText(t("aiFollowUpLabel")), { target: { value: "絞って" } });
+    expect(screen.getByTestId("ai-query-log-user")).toBeTruthy();
     view.rerender(ui({ database: "other" }));
-    await waitFor(() => expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull());
-    view.rerender(ui({ sessionId: "s2", database: "other" }));
-    expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("ai-query-log-user")).toBeNull());
+    // 追い質問ではなく最初の依頼の入力に戻る。
+    expect(screen.getByLabelText(t("aiQueryRequestLabel")).getAttribute("placeholder")).toBe(t("aiQueryRequestPlaceholder"));
   });
 
   it("テーブルが多いスキーマは送信前に件数を見せる", async () => {
@@ -372,10 +378,10 @@ describe("AiQueryModal (#691)", () => {
         handlers?.onDone?.({} as never);
       });
       await screen.findByText("SELECT 1");
-      // 追い質問の途中で選択を変えても、送るスキーマは最初の集合のまま。
-      fireEvent.click(screen.getByLabelText("misc_0"));
-      fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "絞って" } });
-      fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
+      // 追い質問の途中は選択欄を出さず、送るスキーマは最初の集合のまま。
+      expect(screen.queryByTestId("ai-query-tables")).toBeNull();
+      fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "絞って" } });
+      fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
       await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
       expect(runAiRequest.mock.calls[1][0].systemCached).toBe(first.systemCached);
       // 追い質問では詳細を取り直さない。
@@ -397,17 +403,19 @@ describe("AiQueryModal (#691)", () => {
     it("DB を切り替えると、固定した集合と手動選択がリセットされる", async () => {
       setDb(bigSchema());
       const view = renderWithProviders(ui());
-      await generate("orders amount");
+      fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "orders amount" } });
+      // 手動で 1 件足してから送る (この選択は DB 切り替えで消えるべきもの)。
+      fireEvent.click(await screen.findByLabelText("misc_5"));
+      fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
       await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
       act(() => {
         handlers?.onDelta?.({ streamId: "x", text: result });
         handlers?.onDone?.({} as never);
       });
-      await screen.findByText(t("aiFollowUpLabel"));
-      expect(screen.getByTestId("ai-query-followup").textContent).toContain(t("aiQueryTablesLocked", { count: 1 }));
-      fireEvent.click(screen.getByLabelText("misc_5"));
+      await screen.findByTestId("ai-query-log-agent");
+      expect(screen.getByTestId("ai-query-sends").textContent).toContain(t("aiQueryTablesLocked", { count: 2 }));
       view.rerender(ui({ database: "other" }));
-      await waitFor(() => expect(screen.queryByLabelText(t("aiFollowUpLabel"))).toBeNull());
+      await waitFor(() => expect(screen.queryByTestId("ai-query-log-agent")).toBeNull());
       // 手動選択 (misc_5) も消え、依頼文からの自動提案に戻る。
       await waitFor(() => expect((screen.getByLabelText("misc_5") as HTMLInputElement).checked).toBe(false));
       expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true);
@@ -430,7 +438,7 @@ describe("AiQueryModal (#691)", () => {
       const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
       fireEvent.change(input, { target: { value: "ほげふが" } });
       await screen.findByText(t("aiQueryTablesNone"));
-      const gen = screen.getByRole("button", { name: t("aiQueryGenerate") }) as HTMLButtonElement;
+      const gen = screen.getByRole("button", { name: t("aiQuerySend") }) as HTMLButtonElement;
       expect(gen.disabled).toBe(true);
       fireEvent.click(screen.getByLabelText("misc_3"));
       await waitFor(() => expect(gen.disabled).toBe(false));
@@ -439,6 +447,29 @@ describe("AiQueryModal (#691)", () => {
       expect(runAiRequest.mock.calls[0][0].systemCached).toContain("- misc_3(");
       expect(runAiRequest.mock.calls[0][0].systemCached).not.toContain("- orders(");
     });
+  });
+
+  it("開いているテーブルを、テーブル名の無い依頼の対象として伝える", async () => {
+    setDb([table("orders", ["id"]), table("sms_receive", ["id"])]);
+    renderWithProviders(ui({ focusTable: "orders" }));
+    await screen.findByText(t("aiQueryChatEmptyFocus", { table: "orders" }));
+    await generate("今月に絞って取得したい");
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const req = runAiRequest.mock.calls[0][0];
+    expect(req.system).toContain('viewing the table "orders"');
+    // 開いているテーブルはタブごとに変わるので、キャッシュする固定部分には入れない。
+    expect(req.systemCached).not.toContain("viewing the table");
+  });
+
+  it("大きい DB でも開いているテーブルは依頼文と無関係に送るテーブルへ入る", async () => {
+    setDb([table("orders", ["id"]), ...Array.from({ length: 301 }, (_, i) => table(`misc_${i}`, ["id"]))]);
+    renderWithProviders(ui({ focusTable: "misc_7" }));
+    await generate("orders");
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const req = runAiRequest.mock.calls[0][0];
+    expect(req.systemCached).toContain("- misc_7(");
+    expect(req.systemCached).toContain("- orders(");
+    expect(req.system).toContain('"misc_7"');
   });
 
   it("閾値以下の DB は全テーブルを固定順で送る", async () => {
@@ -455,7 +486,7 @@ describe("AiQueryModal (#691)", () => {
   it("データベースが無い (MySQL 未選択) ときは生成できない", async () => {
     renderWithProviders(ui({ driver: "mysql", database: null }));
     await screen.findByText(t("aiQueryNoDatabase"));
-    expect((screen.getByRole("button", { name: t("aiQueryGenerate") }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: t("aiQuerySend") }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("テーブルが 0 件なら警告を出して生成を無効にする", async () => {
@@ -463,7 +494,7 @@ describe("AiQueryModal (#691)", () => {
     renderWithProviders(ui());
     await screen.findByText(t("aiQueryEmptySchema"));
     fireEvent.change(screen.getByLabelText(t("aiQueryRequestLabel")), { target: { value: "x" } });
-    expect((screen.getByRole("button", { name: t("aiQueryGenerate") }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: t("aiQuerySend") }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("onError と aiRefused を表示し分ける", async () => {
