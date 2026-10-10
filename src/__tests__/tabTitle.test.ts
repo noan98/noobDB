@@ -7,6 +7,7 @@ import {
   resolveNewTabTitle,
   copyTitle,
   resolveRename,
+  resolveRestoredTitle,
 } from "../tabTitle";
 
 const UNTITLED = "Query";
@@ -140,5 +141,24 @@ describe("copyTitle", () => {
   it("接尾辞を付け、既に付いていれば重ねない", () => {
     expect(copyTitle("mine", "(copy)")).toBe("mine (copy)");
     expect(copyTitle("mine (copy)", "(copy)")).toBe("mine (copy)");
+  });
+});
+
+describe("resolveRestoredTitle", () => {
+  it("手動フラグ付きはそのまま", () => {
+    expect(resolveRestoredTitle({ title: "mine", titleManual: true, sql: "SELECT 1" }, UNTITLED)).toEqual({ title: "mine", titleManual: true });
+  });
+  it("フラグ false の自動名は保つ (SQL とずれていても手動にしない)", () => {
+    expect(resolveRestoredTitle({ title: "old", titleManual: false, sql: "SELECT 2" }, UNTITLED)).toEqual({ title: "old", titleManual: false });
+  });
+  it("無題のまま SQL を持つタブは SQL から命名する (フラグの有無によらず)", () => {
+    expect(resolveRestoredTitle({ title: UNTITLED, sql: "SELECT 3" }, UNTITLED)).toEqual({ title: "SELECT 3", titleManual: false });
+    expect(resolveRestoredTitle({ title: UNTITLED, titleManual: false, sql: "SELECT 3" }, UNTITLED)).toEqual({ title: "SELECT 3", titleManual: false });
+  });
+  it("旧データ (フラグ無し) の明示タイトルは手動扱いで守る", () => {
+    expect(resolveRestoredTitle({ title: "スニペット名", sql: "SELECT 1" }, UNTITLED)).toEqual({ title: "スニペット名", titleManual: true });
+  });
+  it("旧データで SQL 由来のタイトルは自動のまま", () => {
+    expect(resolveRestoredTitle({ title: "SELECT 1", sql: "SELECT 1" }, UNTITLED)).toEqual({ title: "SELECT 1", titleManual: false });
   });
 });

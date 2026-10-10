@@ -61,7 +61,8 @@ function TabRenameInput({
   ariaLabel: string;
   /** `viaKey`: Enter での確定 (フォーカスをタブへ戻してよい)。blur 確定では戻さない。 */
   onCommit: (value: string, viaKey: boolean) => void;
-  onCancel: () => void;
+  /** `viaKey`: Esc でのキャンセル (フォーカスをタブへ戻してよい)。 */
+  onCancel: (viaKey: boolean) => void;
 }) {
   const [value, setValue] = useState(initial);
   // Enter/Esc の直後に続く blur で二重に確定しない。
@@ -88,7 +89,8 @@ function TabRenameInput({
       w="150px"
       onFocus={(e) => e.currentTarget.select()}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={() => settle(() => onCommit(value, false))}
+      // 編集せずに外れただけなら何も変えない (同名の確定は手動命名への昇格になるため、Enter のときだけ)。
+      onBlur={() => settle(() => (value === initial ? onCancel(false) : onCommit(value, false)))}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
@@ -104,7 +106,7 @@ function TabRenameInput({
           settle(() => onCommit(value, true));
         } else if (e.key === "Escape") {
           e.preventDefault();
-          settle(onCancel);
+          settle(() => onCancel(true));
         }
         e.stopPropagation();
       }}
@@ -548,10 +550,10 @@ export const TabBar = memo(function TabBar({
                       onRenameCommit?.(tab.id, v);
                       if (viaKey) requestAnimationFrame(() => tabRefs.current.get(tab.id)?.focus());
                     }}
-                    onCancel={() => {
+                    onCancel={(viaKey) => {
                       onRenameCancel?.();
-                      // 編集欄が消えたあとタブへフォーカスを戻し、矢印キー操作を続けられるようにする。
-                      requestAnimationFrame(() => tabRefs.current.get(tab.id)?.focus());
+                      // Esc のときは編集欄が消えたあとタブへフォーカスを戻し、矢印キー操作を続けられるようにする。
+                      if (viaKey) requestAnimationFrame(() => tabRefs.current.get(tab.id)?.focus());
                     }}
                   />
                 ) : (

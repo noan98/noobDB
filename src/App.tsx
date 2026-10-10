@@ -52,7 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
-import { autoTitleOnRun, copyTitle, deriveQueryTabTitle, resolveNewTabTitle, resolveRename } from "./tabTitle";
+import { autoTitleOnRun, copyTitle, deriveQueryTabTitle, resolveNewTabTitle, resolveRename, resolveRestoredTitle } from "./tabTitle";
 import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import {
   REOPEN_CLOSED_TAB_COMMAND_ID,
@@ -1042,7 +1042,8 @@ function toPersistedTab(
   liveGridScrollTop?: number,
 ): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
-  if (tab.titleManual) out.titleManual = true;
+  // 自動名 (false) も書き出す: フラグ無しの旧データと区別し、復元時に明示タイトルを手動扱いへ推定しないため。
+  if (tab.kind === "query" && typeof tab.titleManual === "boolean") out.titleManual = tab.titleManual;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   // Carry the Query Builder snapshot through so the inputs come back on
@@ -4316,17 +4317,16 @@ export default function App() {
             selection: s.selection,
           };
         }
-        const restoredManual = s.kind === "query" && s.titleManual === true;
-        const baseTitle = s.kind === "query" ? s.title : translate("tabUntitledQuery");
-        // 無題のまま SQL を持つ旧データ・テーブル消失で query に落ちたタブは SQL から命名する。
-        const restoredTitle =
-          !restoredManual && baseTitle === translate("tabUntitledQuery")
-            ? deriveQueryTabTitle(s.sql) ?? baseTitle
-            : baseTitle;
+        // 無題のまま SQL を持つタブ (旧データ・テーブル消失で query に落ちたタブ) は SQL から命名し、
+        // フラグの無い旧データの明示タイトルは手動扱いで守る (resolveRestoredTitle)。
+        // この経路は addTab を通らないので、手動/自動の区別をここで確定して戻す (#1390)。
+        const restored =
+          s.kind === "query"
+            ? resolveRestoredTitle(s, translate("tabUntitledQuery"))
+            : resolveRestoredTitle({ title: translate("tabUntitledQuery"), sql: s.sql }, translate("tabUntitledQuery"));
         return {
-          ...makeTab("query", restoredTitle, s.sql),
-          // この経路は addTab を通らないので、保存時の手動/自動の区別をここで明示して戻す (#1390)。
-          titleManual: s.kind === "query" && s.titleManual === true,
+          ...makeTab("query", restored.title, s.sql),
+          titleManual: restored.titleManual,
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
           selection: s.selection,
@@ -5455,8 +5455,8 @@ export default function App() {
   const handleLauncherRunSql = useCallback((sql: string) => {
     if (!sessionId) return;
     const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
-    addTab(tab);
-    runInTabWithGate(tab, sql, { newTab: false });
+    const added = addTab(tab);
+    runInTabWithGate(added, sql, { newTab: false });
   }, [sessionId, addTab, runInTabWithGate]);
 
   // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)

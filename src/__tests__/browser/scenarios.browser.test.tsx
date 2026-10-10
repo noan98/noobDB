@@ -888,7 +888,7 @@ describe("シナリオ: keep-alive による切替 (#1311, 実ブラウザ)", ()
 });
 
 /** 保存済みワークスペースとしてクエリタブを仕込む (先頭がアクティブ)。 */
-function seedQueryTabs(profileId: string, tabs: { title: string; sql: string }[]) {
+function seedQueryTabs(profileId: string, tabs: { title: string; sql: string; titleManual?: boolean }[]) {
   localStorage.setItem(
     `noobdb.tabs.${profileId}`,
     JSON.stringify({
@@ -1085,12 +1085,12 @@ describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () =
   });
 });
 
-describe("シナリオ: クエリタブの自動命名とリネーム (#1390, 実ブラウザ)", () => {
-  /** ツールバーの Run ボタンで実行する (エディタ描画待ちで右クリックメニューが不安定なため)。 */
-  async function runFromToolbar(screen: Screen) {
-    await screen.getByRole("button", { name: t("editorRun"), exact: true }).click();
-  }
+/** ツールバーの Run ボタンで実行する (エディタ描画待ちで右クリックメニューが不安定なため)。 */
+async function runFromToolbar(screen: Screen) {
+  await screen.getByRole("button", { name: t("editorRun"), exact: true }).click();
+}
 
+describe("シナリオ: クエリタブの自動命名とリネーム (#1390, 実ブラウザ)", () => {
   /** メニューは再描画で DOM が差し替わるため、ロケータではなく DOM で押す。 */
   async function clickMenuItemByDom(label: string) {
     await vi.waitFor(() => {
@@ -1104,13 +1104,13 @@ describe("シナリオ: クエリタブの自動命名とリネーム (#1390, �
 
   it("実行で SQL から自動命名され、ダブルクリックのリネーム後は上書きされず、空で自動に戻る", async () => {
     registerAutoStream();
-    // 自動名 (手動フラグ無し) の旧タイトルは、実行で SQL 由来の名前へ置き換わる。
-    seedQueryTabs(ALPHA.id, [{ title: "old name", sql: "SELECT * FROM fruits" }]);
+    // 自動名 (titleManual: false) の保存済みタイトルは、実行で SQL 由来の名前へ置き換わる。
+    seedQueryTabs(ALPHA.id, [{ title: "old name", sql: "SELECT * FROM fruits", titleManual: false }]);
     const screen = await renderInBrowser(<App />);
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await vi.waitFor(() => expect(tabTitles()).toEqual(["old name"]), { timeout: 5000 });
 
-    // 1) 実行すると、無題のタブが SQL の先頭行で命名される。
+    // 1) 実行すると、手動命名でないタブが SQL の先頭行で命名される。
     await runFromToolbar(screen);
     await vi.waitFor(() => expect(tabTitles()).toEqual(["SELECT * FROM fruits"]), { timeout: 5000 });
 
@@ -1211,5 +1211,51 @@ describe("シナリオ: 自動命名のレビュー指摘 (#1390, 実ブラウ�
       const ae = document.activeElement as HTMLElement | null;
       if (!ae?.closest(".cm-editor")) throw new Error("editor not focused");
     }, { timeout: 5000 });
+  });
+
+  it("編集せずに blur しただけでは手動名に昇格せず、再実行で SQL に追従する", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [{ title: "old name", sql: "SELECT * FROM fruits", titleManual: false }]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["old name"]), { timeout: 5000 });
+    const tabEl = () => document.querySelector<HTMLElement>('[role="tab"][draggable]') as HTMLElement;
+    await page.elementLocator(tabEl()).dblClick();
+    await expect.element(screen.getByRole("textbox", { name: t("tabRenameAria") })).toBeVisible();
+    (document.activeElement as HTMLElement | null)?.blur();
+    await vi.waitFor(() => {
+      if (document.querySelector('input[aria-label="' + t("tabRenameAria") + '"]')) throw new Error("still editing");
+    });
+    expect(tabTitles()).toEqual(["old name"]);
+    await runFromToolbar(screen);
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["SELECT * FROM fruits"]), { timeout: 5000 });
+  });
+
+  it("復元時: 無題のまま SQL を持つタブは SQL から命名され、フラグ無しの旧データの明示名は守られる", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [
+      { title: t("tabUntitledQuery"), sql: "SELECT * FROM fruits" },
+      { title: "My snippet", sql: "SELECT 2" },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["SELECT * FROM fruits", "My snippet"]), { timeout: 5000 });
+    // 旧データの明示名は手動扱いなので、実行しても上書きされない。
+    await screen.getByRole("tab", { name: /My snippet/ }).click();
+    await runFromToolbar(screen);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(tabTitles()).toEqual(["SELECT * FROM fruits", "My snippet"]);
+  });
+
+  it("危険クエリの確認をキャンセルしてもタブ名は変わらない", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [{ title: "old name", sql: "DELETE FROM fruits", titleManual: false }]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["old name"]), { timeout: 5000 });
+    await runFromToolbar(screen);
+    await screen.getByRole("dialog").getByText(t("dangerousCancel"), { exact: true }).click();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(tabTitles()).toEqual(["old name"]);
   });
 });

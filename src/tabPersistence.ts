@@ -7,7 +7,7 @@ export interface PersistedTab {
   title: string;
   /**
    * 利用者が手動で付けたタブ名か (#1390)。true の間は実行時の自動命名で上書きしない。
-   * 無い (古い保存データ) / false は自動命名の対象。true のときだけ書き出す。
+   * false は自動命名の対象 (明示した自動名)。無い (古い保存データ) 場合は復元時に推定する (resolveRestoredTitle)。
    */
   titleManual?: boolean;
   database?: string;
@@ -130,7 +130,7 @@ function sanitizeTab(raw: unknown): PersistedTab | null {
   if (!isValidTab(raw)) return null;
   const o = raw as Record<string, unknown> & PersistedTab;
   const out: PersistedTab = { kind: o.kind, title: o.title, sql: o.sql };
-  if (o.titleManual === true) out.titleManual = true;
+  if (typeof o.titleManual === "boolean") out.titleManual = o.titleManual;
   if (typeof o.database === "string") out.database = o.database;
   if (typeof o.table === "string") out.table = o.table;
   if (isValidBuilderSnapshot(o.builderSnapshot)) {

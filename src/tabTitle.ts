@@ -112,3 +112,17 @@ export function resolveRename(
 export function copyTitle(title: string, suffix: string): string {
   return title.endsWith(suffix) ? title : `${title} ${suffix}`;
 }
+
+/**
+ * 保存データから query タブを復元するときのタイトルと手動フラグ。
+ * - 保存時にフラグがあれば (true / false) その意味を保つ。無題のまま SQL を持つタブは SQL から命名する。
+ * - フラグが無い (#1390 より前の旧データ) ときは `resolveNewTabTitle` と同じ推定を使う。
+ *   無題でも SQL 由来でもないタイトル (スニペット名など) は手動扱いにして、既存の名前を守る。
+ */
+export function resolveRestoredTitle(
+  saved: { title: string; titleManual?: boolean; sql: string },
+  untitled: string,
+): { title: string; titleManual: boolean } {
+  const r = resolveNewTabTitle({ kind: "query", ...saved }, untitled);
+  return { title: r.title, titleManual: r.titleManual === true };
+}

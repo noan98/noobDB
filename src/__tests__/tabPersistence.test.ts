@@ -252,8 +252,12 @@ describe("normalizePersistedWorkspace", () => {
       // 旧形式 (配列) でも同様
       expect(normalizePersistedWorkspace([base]).panes[0].tabs[0]).not.toHaveProperty("titleManual");
     });
-    it("false / 不正な型は捨てるが、タブ自体は読める", () => {
-      for (const v of [false, "true", 1, null]) {
+    it("false (明示した自動名) も保持する", () => {
+      const ws = normalizePersistedWorkspace(wsOf({ ...base, titleManual: false }));
+      expect(ws.panes[0].tabs[0].titleManual).toBe(false);
+    });
+    it("不正な型は捨てるが、タブ自体は読める", () => {
+      for (const v of ["true", 1, null]) {
         const ws = normalizePersistedWorkspace(wsOf({ ...base, titleManual: v }));
         expect(ws.panes[0].tabs).toHaveLength(1);
         expect(ws.panes[0].tabs[0]).not.toHaveProperty("titleManual");
