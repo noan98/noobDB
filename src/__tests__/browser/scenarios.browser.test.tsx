@@ -1258,4 +1258,50 @@ describe("シナリオ: 自動命名のレビュー指摘 (#1390, 実ブラウ�
     await new Promise((r) => setTimeout(r, 300));
     expect(tabTitles()).toEqual(["old name"]);
   });
+
+  it("分割ペインで作ったタブの自動名は、SQL を書き換えて再起動しても手動名に化けず、再実行で追従する", async () => {
+    // splitPane は addTab を通らないので titleManual が付かない。保存時に false を書かないと、
+    // 復元時に「フラグ無しの旧データ」と推定されて手動名で固定されていた (#1390 の最終レビュー)。
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [{ title: "A", sql: "SELECT 2", titleManual: false }]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["A"]), { timeout: 5000 });
+    await screen.getByRole("button", { name: t("tabSplit") }).first().click();
+    const editors = () => Array.from(document.querySelectorAll<HTMLElement>(".cm-content"));
+    await vi.waitFor(() => expect(editors().length).toBe(2), { timeout: 5000 });
+    const runButtons = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("button")).filter(
+        (b) => b.getAttribute("aria-label") === t("editorRun") || b.textContent === t("editorRun"),
+      );
+    await page.elementLocator(editors()[1]).click();
+    await userEvent.keyboard("SELECT * FROM fruits");
+    const runs = runButtons();
+    await page.elementLocator(runs[runs.length - 1]).click();
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["A", "SELECT * FROM fruits"]), { timeout: 5000 });
+
+    // 実行せずに SQL だけ書き換えて保存 (アプリ終了相当)。
+    await page.elementLocator(editors()[1]).click();
+    await userEvent.keyboard("{End} zz");
+    window.dispatchEvent(new Event("beforeunload"));
+    const ws = JSON.parse(localStorage.getItem(`noobdb.tabs.${ALPHA.id}`) ?? "{}");
+    const saved = ws.panes
+      .flatMap((p: { tabs: { title: string; sql: string; titleManual?: boolean }[] }) => p.tabs)
+      .find((x: { title: string }) => x.title === "SELECT * FROM fruits");
+    expect(saved.titleManual).toBe(false);
+    expect(saved.sql).toContain("zz");
+
+    // 再起動して再実行すると、自動名が SQL に追従する。
+    await screen.unmount();
+    const screen2 = await renderInBrowser(<App />);
+    await connectToProfile(screen2, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(tabTitles()).toContain("SELECT * FROM fruits"), { timeout: 5000 });
+    const restored = Array.from(document.querySelectorAll<HTMLElement>('[role="tab"][draggable]')).find(
+      (e) => e.getAttribute("title") === "SELECT * FROM fruits",
+    ) as HTMLElement;
+    await page.elementLocator(restored).click();
+    const runs2 = runButtons();
+    await page.elementLocator(runs2[runs2.length - 1]).click();
+    await vi.waitFor(() => expect(tabTitles()).toContain("SELECT * FROM fruits zz"), { timeout: 5000 });
+  });
 });
