@@ -1084,3 +1084,53 @@ describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () =
     });
   });
 });
+
+describe("シナリオ: 未確定のセル編集があるタブを閉じる (#1391)", () => {
+  it("Ctrl+W で確認が出て、キャンセルするとタブも編集も残り、履歴にも積まれない", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    await vi.waitFor(() => {
+      const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+      if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
+    }, { timeout: 5000 });
+
+    await screen.getByRole("gridcell", { name: "3", exact: true }).dblClick();
+    const input = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
+      if (!el) throw new Error("cell edit input not open");
+      return el;
+    }, { timeout: 5000 });
+    await page.elementLocator(input).fill("42");
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .toBeVisible();
+
+    // Ctrl+W → 確認ダイアログ。キャンセルでタブと編集が残る。
+    await userEvent.keyboard("{Control>}w{/Control}");
+    await expect.element(screen.getByText(t("tabCloseDiscardTitle"))).toBeVisible();
+    await screen.getByRole("button", { name: t("confirmDefaultCancel"), exact: true }).first().click();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .toBeVisible();
+
+    // キャンセル時に閉じたタブ履歴へ積まれないことは pendingEditsGuard.test.ts の構造検査で
+    // 固定する (テーブルタブの復元は既存タブの前面化になり、タブ数では判別できないため)。
+
+    // 改めて閉じて OK すると、タブが閉じる。前の確認ダイアログの退場アニメと
+    // フォーカス返却が終わる前に次を開くと、返却されたフォーカスが新しいダイアログの
+    // 外側操作とみなされて閉じられるため、ダイアログが消えフォーカスが戻るのを待つ。
+    await vi.waitFor(() => {
+      if (document.querySelector("[role=dialog],[role=alertdialog]")) throw new Error("previous dialog still mounted");
+      if (document.activeElement === document.body) throw new Error("focus not restored yet");
+    }, { timeout: 5000 });
+    await userEvent.keyboard("{Control>}w{/Control}");
+    await screen.getByRole("button", { name: t("tabCloseDiscardAction") }).click();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+});

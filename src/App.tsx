@@ -63,6 +63,7 @@ import {
   takeClosedTab,
   type ClosedTab,
 } from "./closedTabs";
+import { closeGuard, hasPendingChanges, isTabDirty, tabsWithPendingChanges } from "./tabDirty";
 import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
@@ -411,6 +412,7 @@ import {
   type PersistedWorkspace,
 } from "./tabPersistence";
 import { reorderIfPermutation } from "./tabReorder";
+import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
 import { buildPageSql, canGoNext, canGoPrev, clampPage } from "./pagination";
@@ -664,6 +666,8 @@ export interface Tab {
   id: string;
   kind: TabKind;
   title: string;
+  /** 手動リネーム済み / 名前付きで開いたタブ。true なら実行時の自動命名で上書きしない (#1390)。 */
+  titleManual?: boolean;
   database?: string;
   table?: string;
   sql: string;
@@ -942,9 +946,7 @@ function schemaCacheKey(sessionId: string, database: string): string {
  * 1 行を短く切り詰める。空なら既定の無題タイトル。
  */
 function deriveResultTabTitle(sql: string): string {
-  const firstLine = sql.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
-  if (!firstLine) return translate("tabUntitledQuery");
-  return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
+  return deriveTitleFromSql(sql, translate("tabUntitledQuery"));
 }
 
 /** 共通の初期状態でタブを生成する。呼び出し側は必要なフィールドだけ上書きする。 */
@@ -1038,6 +1040,7 @@ function toPersistedTab(
   liveGridScrollTop?: number,
 ): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
+  if (tab.titleManual) out.titleManual = true;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   // Carry the Query Builder snapshot through so the inputs come back on
@@ -1141,6 +1144,20 @@ export default function App() {
   // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
   // `await confirm({...})` の形で同期感覚で呼べる。
   const { confirm, dialog: confirmDialogElement } = useConfirm();
+  // 未確定の編集の破棄確認 (#1391) を表示している間は true。タブ系のグローバル
+  // ショートカット (Cmd+W / Ctrl+Tab / Cmd+Shift+T …) を無視して、確認の二重起動や
+  // 確認中のタブ操作を防ぐ。
+  // 確認が重なる (前の確認が false で解決されて finally が後から走る) 場合に
+  // 早く下りないよう、真偽値ではなく表示中の件数で持つ。
+  const discardConfirmBusyRef = useRef(0);
+  const confirmDiscard = useCallback(async (opts: Parameters<typeof confirm>[0]) => {
+    discardConfirmBusyRef.current += 1;
+    try {
+      return await confirm(opts);
+    } finally {
+      discardConfirmBusyRef.current -= 1;
+    }
+  }, [confirm]);
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
   // AI にクエリを依頼する入口 (パレット項目) を出してよいか (#691)。
@@ -1722,13 +1739,22 @@ export default function App() {
   // パターン、#1219 付近参照)。F6 巡回 (paneFocusCursorRef) や
   // フォーカストラップ (keyboardNav.ts) の状態には触れない — こちらは
   // フォーカスを直接移すだけの単発処理。
+  const renamingTabIdRef = useRef<string | null>(null);
   const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
     if (!paneId || tabKind !== "query") return;
     requestAnimationFrame(() => {
       if (overlayOpenRef.current) return;
+      // タブ名のインライン編集中 (ダブルクリックの 1 回目の選択で予約された rAF が
+      // 後から走る場合を含む) は、エディタへフォーカスを奪って blur 確定させない (#1390)。
+      // リネーム中のタブが blur を経ずに消えた (接続切替等) 場合に ID が残っても
+      // 自動フォーカスが止まり続けないよう、まだ存在するタブだけを見る。
+      const renaming = renamingTabIdRef.current;
+      if (renaming && tabsRef.current.some((t) => t.id === renaming)) return;
+      const ae = document.activeElement;
+      if (ae instanceof HTMLInputElement && ae.closest('[role="tab"]')) return;
       editorRefs.current.get(paneId)?.focus();
     });
-  }, []);
+  }, [tabsRef]);
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
@@ -2061,7 +2087,7 @@ export default function App() {
         (id) => {
           const tt = tabsForDirtyRef.current.find((x) => x.id === id);
           if (!tt) return undefined;
-          return tt.kind === "query" && tabSqlStore.resolve(tt.id, tt.sql) !== tt.lastExecutedSql;
+          return isTabDirty(tt, tabSqlStore.resolve(tt.id, tt.sql));
         },
         bumpDirty,
       ),
@@ -2930,12 +2956,28 @@ export default function App() {
     setActivePaneId(null);
   }, [cancelStreamForTab, dirtyWatcher, tabSqlStore, setPanes, setTabs, tabsRef]);
 
+  // 接続の切替 / 切断はすべてのタブを閉じる。Apply 前のセル編集はメモリだけにあり
+  // (退避にも含まれない)、失うと回復できないので、1 つでもあれば確認する (#1391)。
+  // 接続が既に切れて自動で片付ける経路 (tearDownLostSession) は、止める意味が
+  // ないので対象外。ウィンドウ自体を閉じる経路は既存の仕組みが無くスコープ外。
+  const confirmDiscardPendingEdits = useCallback(async (): Promise<boolean> => {
+    const pending = tabsWithPendingChanges(tabsRef.current);
+    if (pending.length === 0) return true;
+    return confirmDiscard({
+      title: translate("connDiscardTitle"),
+      message: translate("connDiscardBody", { count: pending.length }),
+      confirmLabel: translate("connDiscardAction"),
+      tone: "danger",
+    });
+  }, [confirmDiscard, tabsRef]);
+
   // 既に開いている接続へ即座に切り替える (#複数同時接続)。再接続せず、生存中の
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
   const switchToOpenConnection = useCallback(async (target: OpenConnection) => {
     if (target.sessionId === sessionId) return;
+    if (!(await confirmDiscardPendingEdits())) return;
     // 進行中の自動再接続ループは手動切替で中断する。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -2966,7 +3008,7 @@ export default function App() {
     }
     setStatus({ kind: "idle" });
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits]);
 
   // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
   // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
@@ -3026,6 +3068,8 @@ export default function App() {
       });
       if (!ok) return;
     }
+    // 別接続へ張り替えると現在のタブはすべて閉じる。未確定の編集があれば先に確認する。
+    if (sessionId && !(await confirmDiscardPendingEdits())) return;
     // 手動接続は進行中の自動再接続ループより優先する: ループを中断させる。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3146,6 +3190,7 @@ export default function App() {
     closeAllTabs,
     persistTabsForProfile,
     switchToOpenConnection,
+    confirmDiscardPendingEdits,
     upsertOpenConnection,
     ensureLocalSession,
     settings.connectTimeoutSecs,
@@ -3213,8 +3258,11 @@ export default function App() {
     });
   }, [connectAttempt]);
 
-  const handleDisconnect = useCallback(async () => {
-    if (!sessionId) return;
+  // 戻り値は「切断できたか」。未確定の編集の確認でキャンセルされたら false
+  // (呼び出し側は後続の破壊的処理を中断する)。`force` は確認済みの呼び出し用。
+  const handleDisconnect = useCallback(async (opts?: { force?: boolean }): Promise<boolean> => {
+    if (!sessionId) return true;
+    if (!opts?.force && !(await confirmDiscardPendingEdits())) return false;
     // 明示切断は進行中の自動再接続ループを中断させる。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3246,17 +3294,17 @@ export default function App() {
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, forgetClosedTabs]);
+    return true;
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, forgetClosedTabs, confirmDiscardPendingEdits]);
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
   // 落とす。アクティブ接続を閉じる場合は handleDisconnect と同じ後始末を行う。
-  const handleDisconnectProfile = useCallback(async (profileId: string) => {
+  const handleDisconnectProfile = useCallback(async (profileId: string, opts?: { force?: boolean }): Promise<boolean> => {
     const entry = openConnectionsRef.current.find((c) => c.profile.id === profileId);
-    if (!entry) return;
+    if (!entry) return true;
     if (entry.profile.id === selectedProfile?.id) {
-      await handleDisconnect();
-      return;
+      return handleDisconnect(opts);
     }
     // 背景接続: タブは退避済みなので、セッションを落としてレジストリから外すだけ。
     removeOpenConnection(profileId);
@@ -3268,6 +3316,7 @@ export default function App() {
     clearEmergencyFor(entry.sessionId);
     forgetClosedTabs(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
+    return true;
   }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor, forgetClosedTabs]);
 
   // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
@@ -3298,7 +3347,8 @@ export default function App() {
 
   const handleDiscardSandbox = useCallback(
     async (record: SandboxRecord) => {
-      await handleDisconnectProfile(sandboxProfileId(record.id));
+      // 未確定の編集の破棄をキャンセルされたら、サンドボックス破棄も中断する (#1391)。
+      if (!(await handleDisconnectProfile(sandboxProfileId(record.id)))) return;
       try {
         await api.discardSandbox(record.id, null);
         setSandboxes((prev) => prev.filter((s) => s.id !== record.id));
@@ -3341,8 +3391,12 @@ export default function App() {
       gaveUpAfter?: number;
     }) => {
       const lostProfileId = profile?.id ?? null;
+      // 接続が切れた後に確認しても意味がないので止めないが、失われる未 Apply の
+      // 編集の件数は知らせる (#1391)。
+      const lostEdits = tabsWithPendingChanges(tabsRef.current).length;
       if (profile) persistTabsForProfile(profile.id);
       await closeAllTabs();
+      if (lostEdits > 0) toast.error(translate("toastPendingEditsLost", { count: lostEdits }));
       // 死んだ接続をレジストリから外す (#複数同時接続)。
       if (lostProfileId) removeOpenConnection(lostProfileId);
       if (oldSessionId) {
@@ -3371,7 +3425,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor, forgetClosedTabs],
+    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor, forgetClosedTabs, tabsRef, toast],
   );
 
   // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
@@ -3706,7 +3760,14 @@ export default function App() {
     }
     // パッチで更新できる見込みのときは、前回の結果を消さずに残す (パッチの適用元になる)。
     const keepPrevResult = refreshDiff?.prevSnapshotId != null;
+    // クエリタブの自動命名 (#1390): 実行時にだけ SQL 先頭行から付ける。手動リネーム済みは
+    // 上書きしない。直前のリネームを取りこぼさないよう最新の tabsRef を優先して判定する。
+    const titleSource = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
+    const autoTitle = titleSource
+      ? autoTitleOnRun(titleSource, sql, translate("tabUntitledQuery"))
+      : null;
     updateTab(tabId, {
+      ...(autoTitle !== null ? { title: autoTitle } : {}),
       lastExecutedSql: sql,
       ...(keepPrevResult ? {} : { result: emptyResult([]) }),
       preview: null,
@@ -4076,6 +4137,7 @@ export default function App() {
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
     panesRef,
+    tabsRef,
   ]);
 
   // 環境横断ブロードキャスト実行 (#738): クエリエディタの「複数の接続で実行」から
@@ -4143,7 +4205,7 @@ export default function App() {
         // runQueryInTab は常に pendingEdits / editUndoStack / editRedoStack を
         // リセットするため、ここでスキップしないと編集中のセルと Undo/Redo 履歴が
         // 黙って破棄されてしまう (#F1)。
-        if (Object.keys(tt.pendingEdits).length > 0) return;
+        if (hasPendingChanges(tt)) return;
         const sql = tt.lastExecutedSql;
         // Defence in depth: never poll a non-read-only statement (the backend
         // enforces this too via the auto-refresh guard).
@@ -4268,6 +4330,7 @@ export default function App() {
           return {
             ...tab,
             title: s.title || tab.title,
+            titleManual: s.titleManual === true,
             previewRowLimit: limit,
             builderSnapshot: restoredSnapshot,
             selection: s.selection,
@@ -4275,6 +4338,7 @@ export default function App() {
         }
         return {
           ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
+          titleManual: s.kind === "query" && s.titleManual === true,
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
           selection: s.selection,
@@ -4732,6 +4796,7 @@ export default function App() {
     const db = tab.database ?? selectedProfile?.database ?? null;
     patchTab(tabId, (tt) => ({
       ...tt,
+      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
       batchRunning: true,
       batchScript: sql,
       batchResults: [],
@@ -4812,6 +4877,7 @@ export default function App() {
     if (!sessionId) return;
     patchTab(tabId, (tt) => ({
       ...tt,
+      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
       streaming: true,
       queryError: null,
       showChart: false,
@@ -5215,6 +5281,7 @@ export default function App() {
       sql: snippet.sql,
       lastExecutedSql: snippet.sql,
       title: snippet.name,
+      titleManual: true,
     };
     addTab(tab);
     runInTabWithGate(tab, snippet.sql, { newTab: false });
@@ -5778,11 +5845,7 @@ export default function App() {
     async (tab: Tab, sql: string) => {
       if (!sessionId || !tab.database || !tab.table) return;
       const driver = selectedProfile?.driver;
-      if (
-        Object.keys(tab.pendingEdits).length > 0 ||
-        (tab.pendingDeletes ?? []).length > 0 ||
-        (tab.pendingInserts ?? []).length > 0
-      ) {
+      if (hasPendingChanges(tab)) {
         setStatus({ kind: "key", key: "statusColumnReplaceBlockedByEdits", error: true });
         return;
       }
@@ -6036,7 +6099,10 @@ export default function App() {
   const openAndRunQuery = useCallback((sql: string, title?: string) => {
     if (!sessionId) return;
     const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
-    if (title) tab.title = title;
+    if (title) {
+      tab.title = title;
+      tab.titleManual = true;
+    }
     addTab(tab);
     void runQueryInTab(tab.id, sql);
   }, [sessionId, runQueryInTab, addTab]);
@@ -6044,7 +6110,10 @@ export default function App() {
   // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
   const openQueryInEditor = useCallback((sql: string, title?: string, database?: string) => {
     const tab: Tab = { ...makeQueryTab(), sql };
-    if (title) tab.title = title;
+    if (title) {
+      tab.title = title;
+      tab.titleManual = true;
+    }
     if (database) tab.database = database;
     addTab(tab);
   }, [addTab]);
@@ -6054,7 +6123,7 @@ export default function App() {
   // アクティブタブ → プロファイル既定の順で解決したものをタブに持たせる。
   const assertionDatabase = activeTab?.database ?? selectedProfile?.database;
   const handleOpenAssertionSql = useCallback((sql: string, title: string) => {
-    const tab: Tab = { ...makeQueryTab(), sql, title };
+    const tab: Tab = { ...makeQueryTab(), sql, title, titleManual: true };
     if (assertionDatabase) tab.database = assertionDatabase;
     addTab(tab);
   }, [addTab, assertionDatabase]);
@@ -6115,6 +6184,7 @@ export default function App() {
       sql,
       lastExecutedSql: sql,
       title: target.name,
+      titleManual: true,
       database: target.database,
     };
     addTab(tab);
@@ -6142,6 +6212,7 @@ export default function App() {
         ...makeQueryTab(),
         sql: extractViewBody(ddl),
         title: name,
+        titleManual: true,
         database,
         editingViewName: name,
       };
@@ -6847,7 +6918,9 @@ export default function App() {
       // (CodeRabbit レビュー対応)。`handleDisconnectProfile` は対象が未接続なら
       // 何もしない (no-op) ので、常時呼んでよい。Undo 済み (finalize 自体が
       // キャンセル) の場合はここに到達しないので、切断は起きない。
-      await handleDisconnectProfile(id);
+      // 未確定の編集の確認は削除操作時 (handleDeleteProfile) に済ませてあるので、
+      // Undo 満了後の無関係なタイミングで再確認しない (force)。
+      await handleDisconnectProfile(id, { force: true });
       await api.deleteProfile(id);
       await refreshProfiles();
       // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
@@ -6862,9 +6935,13 @@ export default function App() {
     });
   }, [runWithErrorStatus, refreshProfiles, handleDisconnectProfile]);
 
-  const handleDeleteProfile = useCallback((profile: ConnectionProfile) => {
+  const handleDeleteProfile = useCallback(async (profile: ConnectionProfile) => {
     const id = profile.id;
     // Ignore a repeat delete of an already-pending profile.
+    if (pendingProfileDeleteTimers.current.has(id)) return;
+    // アクティブ接続の削除は切断を伴いタブを閉じる。未確定の編集があればここで確認し、
+    // キャンセルならプロファイルを隠さず何もしない (#1391)。
+    if (id === selectedProfile?.id && !(await confirmDiscardPendingEdits())) return;
     if (pendingProfileDeleteTimers.current.has(id)) return;
     // Hide from the sidebar right away, but defer the irreversible backend delete
     // (which wipes keyring secrets) so Undo can cancel it (#676).
@@ -6895,7 +6972,7 @@ export default function App() {
         },
       },
     });
-  }, [finalizeProfileDelete, toast]);
+  }, [finalizeProfileDelete, toast, selectedProfile?.id, confirmDiscardPendingEdits]);
 
   // 接続リストのドラッグ/キーボード並べ替え (#786)。`ConnectionList` は
   // `visibleProfiles` (Undo 待ちの削除中プロファイルを除いた表示用の部分集合) を
@@ -7057,6 +7134,7 @@ export default function App() {
         addTab({
           ...makeQueryTab(),
           title: fileBaseName(p),
+          titleManual: true,
           sql: content,
           lastExecutedSql: content,
         });
@@ -7251,6 +7329,7 @@ export default function App() {
       : makeTab("query", entry.title, entry.sql);
     const restored: Tab = {
       ...base,
+      titleManual: entry.kind === "query" && entry.titleManual === true,
       database: entry.database,
       builderSnapshot: entry.builderSnapshot ?? null,
       selection: entry.selection,
@@ -7263,19 +7342,61 @@ export default function App() {
   const handleOpenTableRef = useRef<(database: string, table: string) => void>(() => {});
   handleOpenTableRef.current = handleOpenTable;
 
-  // タブの一括クローズ (#1354)。対象は基点タブが属するペイン内のタブ (tabBulkClose.ts)。
-  // 各タブには既存の `handleCloseTab` を適用する (ストリーム中断・ref 掃除・ペイン畳み込みを
-  // 1 件ずつの × と同じ経路に通す。同期的なフック (スナップショット保存など) は handleCloseTab に
-  // 足せば一括でも効く。確認ダイアログのような非同期の割り込みを足す場合は、一括クローズ側で
-  // 1 回だけ確認するか、ループを await にする必要がある)。
-  const closeTabsBulk = useCallback((tabId: string, mode: BulkCloseMode) => {
-    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
-    if (!owner) return;
+  // ユーザ操作で閉じる経路 (Cmd+W / タブメニュー / TabBar の × ・中クリック) の入口 (#1391)。
+  // Apply 前の編集があるタブは確認し、キャンセルなら閉じる履歴 (#1353) のスナップショットも
+  // 取らずに中断する (履歴に残ると復元時に重複する)。閉じたタブの復元は編集内容を戻さない
+  // ので文言で伝える。DROP などで自動的に閉じる経路 (`record: false`) は確認不要なので
+  // `handleCloseTab` を直接使う。
+  const requestCloseTab = useCallback(async (id: string) => {
+    const guard = closeGuard(tabsRef.current, [id]);
+    if (guard.kind === "applying") {
+      toast.info(translate("tabCloseApplying"));
+      return;
+    }
+    if (guard.kind === "confirm") {
+      const tab = guard.pending[0];
+      const ok = await confirmDiscard({
+        title: translate("tabCloseDiscardTitle"),
+        message: translate("tabCloseDiscardBody", { name: tab.title || tab.table || "" }),
+        confirmLabel: translate("tabCloseDiscardAction"),
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    handleCloseTab(id);
+  }, [confirmDiscard, tabsRef, handleCloseTab, toast]);
+
+  // 一括クローズ版 (#1354 の closeTabsBulk が経由する)。対象に未確定の編集を持つタブが
+  // あれば 1 回だけまとめて確認し、キャンセルなら何も閉じない (全か無か)。
+  // 各タブには既存の `handleCloseTab` を適用する (ストリーム中断・ref 掃除・ペイン畳み込みと
+  // 閉じたタブ履歴の記録を 1 件ずつの × と同じ経路に通す)。
+  const requestCloseTabs = useCallback(async (ids: readonly string[]) => {
+    const guard = closeGuard(tabsRef.current, ids);
+    if (guard.kind === "applying") {
+      toast.info(translate("tabCloseApplying"));
+      return;
+    }
+    if (guard.kind === "confirm") {
+      const ok = await confirmDiscard({
+        title: translate("tabCloseDiscardTitle"),
+        message: translate("tabCloseDiscardBodyMany", { count: guard.pending.length }),
+        confirmLabel: translate("tabCloseDiscardAction"),
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
     // 右端から閉じる: 履歴は新しい順なので、Cmd+Shift+T を連続で押すと左のタブから順に戻り、
     // 末尾へ追加される復元タブの並びが元の並びと一致する (#1353)。履歴の上限
     // (MAX_CLOSED_TABS) を超えて閉じた場合は、先に閉じた右端側のタブから捨てられる。
-    for (const id of tabsToClose(owner.tabIds, tabId, mode).reverse()) handleCloseTab(id);
-  }, [panesRef, handleCloseTab]);
+    for (const id of [...ids].reverse()) handleCloseTab(id);
+  }, [confirmDiscard, tabsRef, handleCloseTab, toast]);
+
+  // タブの一括クローズ (#1354)。対象は基点タブが属するペイン内のタブ (tabBulkClose.ts)。
+  const closeTabsBulk = useCallback((tabId: string, mode: BulkCloseMode) => {
+    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+    if (!owner) return;
+    void requestCloseTabs(tabsToClose(owner.tabIds, tabId, mode));
+  }, [panesRef, requestCloseTabs]);
 
   // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
   // 結果を引き継がないため、table / explain も含め常にクエリタブとして SQL (未実行の編集中
@@ -7288,6 +7409,7 @@ export default function App() {
     const copy: Tab = {
       ...makeQueryTab(),
       title: spec.title ?? translate("tabUntitledQuery"),
+      titleManual: spec.titleManual,
       sql: spec.sql,
       lastExecutedSql: spec.lastExecutedSql,
       database: spec.database,
@@ -7295,10 +7417,31 @@ export default function App() {
     addTab(copy, owner?.id);
   }, [tabsRef, panesRef, tabSqlStore, addTab]);
 
+  // タブのリネーム (#1390)。編集中のタブ ID を持ち、TabBar のインライン編集を制御する。
+  // 確定は `applyRename` が空文字 (自動命名へ戻す) / 変更なしを判定する。
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  renamingTabIdRef.current = renamingTabId;
+  const requestRenameTab = useCallback((id: string) => setRenamingTabId(id), []);
+  const cancelRenameTab = useCallback(() => setRenamingTabId(null), []);
+  const renameTab = useCallback((id: string, input: string) => {
+    setRenamingTabId(null);
+    const src = tabsRef.current.find((tt) => tt.id === id);
+    if (!src) return;
+    const result = applyRename(
+      src,
+      input,
+      tabSqlStore.resolve(src.id, src.sql),
+      translate("tabUntitledQuery"),
+    );
+    if (result) updateTab(id, result);
+  }, [tabSqlStore, tabsRef, updateTab]);
+
   // Latest handlers held in a ref so the global keydown listener below can
   // call them without re-attaching on every tab change.
   const handleCloseTabRef = useRef(handleCloseTab);
   handleCloseTabRef.current = handleCloseTab;
+  const requestCloseTabRef = useRef(requestCloseTab);
+  requestCloseTabRef.current = requestCloseTab;
 
   // App-wide keyboard shortcuts for the tabbed workspace: tab management
   // and focusing the result search. Editor-scoped shortcuts
@@ -7310,6 +7453,12 @@ export default function App() {
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
+      // 未確定の編集の破棄確認を表示中は、タブ系ショートカットを一切受け付けない (#1391)。
+      if (discardConfirmBusyRef.current > 0) {
+        // Cmd/Ctrl+W の WebView 既定動作 (ウィンドウを閉じる) には届かせない。
+        if (comboMatchesEvent(bindingsRef.current.closeTab, e)) e.preventDefault();
+        return;
+      }
       const mod = e.metaKey || e.ctrlKey;
       // Cmd/Ctrl+F → open the focused pane's find-in-results bar (#644; no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
@@ -7354,7 +7503,7 @@ export default function App() {
         // tabbed workspace.
         e.preventDefault();
         const active = focusedPane()?.activeTabId;
-        if (active) handleCloseTabRef.current(active);
+        if (active) void requestCloseTabRef.current(active);
         return;
       }
       // Alt+←/→ → フォーカス中ペインのアクティブタブがページング可能なテーブル
@@ -8304,12 +8453,12 @@ export default function App() {
   // ペインの描画 (`PaneView`) へ渡す App 由来のハンドラ。参照が固定された束なので、
   // 呼び出し側の関数が毎レンダー作り直されても `PaneView` の memo は破られない (#1318)。
   const paneActions = useStableCallbacks({
-    applyEditsForTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
-    explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
+    applyEditsForTab, cancelRenameTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
+    explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab: requestCloseTab, handleEditorDocChange,
     handleAiSqlAction, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
-    redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,
+    redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
     requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
     runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
     setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
@@ -8334,6 +8483,7 @@ export default function App() {
         !isSandboxProfileId(c.profile.id),
     );
   const paneEnv: PaneEnv = {
+    renamingTabId,
     store: tabPaneStore,
     actions: paneActions,
     t,
@@ -9318,7 +9468,7 @@ export default function App() {
                 </Flex>
               )}
               {sessionId && (
-                <Button variant="dangerOutline" size="sm" onClick={handleDisconnect}>
+                <Button variant="dangerOutline" size="sm" onClick={() => void handleDisconnect()}>
                   <Icon name="unplug" size={ICON_SIZES.md} />
                   {t("appDisconnect")}
                 </Button>
@@ -10286,6 +10436,10 @@ export default function App() {
         const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
         const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [
+          // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
+          ...(tabsRef.current.find((tt) => tt.id === tabMenu.tabId)?.kind === "query"
+            ? [{ label: t("tabRename"), onSelect: () => requestRenameTab(tabMenu.tabId) }]
+            : []),
           {
             label: t("tabMoveOtherPane"),
             onSelect: () => moveTabToOtherPane(tabMenu.tabId),
@@ -10312,7 +10466,7 @@ export default function App() {
             label: t("tabClose"),
             icon: "close",
             shortcut: formatCombo(shortcutBindings.closeTab),
-            onSelect: () => handleCloseTab(tabMenu.tabId),
+            onSelect: () => void requestCloseTab(tabMenu.tabId),
             danger: true,
           },
           {

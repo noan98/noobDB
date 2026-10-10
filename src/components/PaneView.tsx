@@ -5,6 +5,7 @@ import { api, ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
 import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
+import { isTabDirty } from "../tabDirty";
 import { useKeyedStable } from "../useKeyedStable";
 import { isCtasEligibleSql } from "./resultsToTable";
 import { applyServerBrowse, type ServerFilterOp, type ServerSortDirection } from "./serverBrowse";
@@ -157,6 +158,9 @@ export interface PaneActions {
   openAndRunQuery: (sql: string, title?: string) => void;
   openQueryInEditor: (sql: string, title?: string, database?: string) => void;
   openTabMenu: (tabId: string, x: number, y: number) => void;
+  renameTab: (tabId: string, input: string) => void;
+  cancelRenameTab: () => void;
+  requestRenameTab: (tabId: string) => void;
   patchTab: (id: string, patcher: (tab: Tab) => Tab) => void;
   pinCurrentResult: (tab: Tab) => void;
   previewEditsForTab: (tab: Tab) => void;
@@ -215,6 +219,8 @@ export interface PaneEnv {
   editorBindings: ComponentProps<typeof QueryEditor>["editorBindings"];
   gridBindings: ComponentProps<typeof ResultGrid>["gridBindings"];
   shortcutBindings: ReturnType<typeof resolveShortcutBindings>;
+  /** タブ名をインライン編集中のタブ ID (#1390)。 */
+  renamingTabId: string | null;
   density: Settings["density"];
   defaultDisplayCount: number;
   streamPrefetchSize: number;
@@ -259,7 +265,7 @@ export const PaneView = memo(
     queryHistory, editorBindings, gridBindings, shortcutBindings, density, defaultDisplayCount,
     streamPrefetchSize, incomingFkCache, schemaForDatabase, lookupForSession, dirtyTick, dirtyWatcher,
     getTabSql, gridStable, editorSelectionRef, gridScrollRef, preflightRef, getEditorRefSetter,
-    getGridRefSetter,
+    getGridRefSetter, renamingTabId,
   } = env;
   // テーブルタブで編集系の操作 (セル編集・行の追加/削除・BLOB 書き戻し・列置換) を
   // 出してよいか。read_only 接続に加え、行を特定できないデフォルトクエリ (#1253) で
@@ -339,7 +345,7 @@ export const PaneView = memo(
         database: tt.database,
         table: tt.table,
         dirty: (() => {
-          const d = tt.kind === "query" && getTabSql(tt) !== tt.lastExecutedSql;
+          const d = isTabDirty(tt, getTabSql(tt));
           dirtyWatcher.recordShown(tt.id, d);
           return d;
         })(),
@@ -415,6 +421,10 @@ export const PaneView = memo(
         newTabCombo={shortcutBindings.newTab}
         onReorder={onReorderTabs}
         onTabContextMenu={actions.openTabMenu}
+        renamingTabId={renamingTabId}
+        onRenameRequest={actions.requestRenameTab}
+        onRename={actions.renameTab}
+        onRenameCancel={actions.cancelRenameTab}
         onSplit={onSplit}
         splitMode={split ? "close" : "split"}
       />
