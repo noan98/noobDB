@@ -1790,6 +1790,11 @@ export function setAiHideSetupHint(value: boolean): void {
   patchAi({ hideSetupHint: value });
 }
 
+/** エディタの AI インライン補完 (#1479) のオン / オフ。 */
+export function setAiInlineComplete(value: boolean): void {
+  patchAi({ inlineComplete: value });
+}
+
 /**
  * コマンドパレット (#845) で候補を選択したときに MRU の先頭へ記録する。並び替え・
  * 上限クランプは `recordMruUsage` (`components/commandPaletteSearch.ts`) を共有

@@ -24,6 +24,7 @@ import {
   giveAiConsent,
   setAiEnabled,
   setAiHideSetupHint,
+  setAiInlineComplete,
   setAiMaskLiterals,
   setAiSendScope,
   setAiTaskEffort,
@@ -504,6 +505,28 @@ export function AiSettings() {
           </chakra.label>
           <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
+        <SettingsLabelWithInfo>
+          <chakra.label
+            htmlFor="settings-ai-inline-complete"
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            fontSize="md"
+            fontWeight={500}
+            color="app.text"
+          >
+            <Switch
+              id="settings-ai-inline-complete"
+              checked={ai.inlineComplete}
+              onChange={setAiInlineComplete}
+            />
+            {t("aiInlineComplete")}
+          </chakra.label>
+          <SettingsInfo>{t("aiInlineCompleteHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
+        {ai.inlineComplete && ai.sendScope !== "schemaAndSql" && (
+          <Callout tone="info">{t("aiInlineCompleteNeedsScope")}</Callout>
+        )}
       </FormSection>
 
       <Flex align="center" gap="2" wrap="wrap">
