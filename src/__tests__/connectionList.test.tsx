@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
-import { TREE_DRAG_MIME, parseTreeDragItem } from "../components/treeDragInsert";
+import { registerTreeDropTarget } from "../components/treeDragStore";
 
 /**
  * 接続一覧サイドパネル (#604)。マウント時のスキーマ取得 (`listDatabases`) は
@@ -356,25 +356,48 @@ describe("Database Explorer の階層 (#1112)", () => {
     });
   });
 
-  describe("テーブル / 列行のドラッグ挿入 (#1414)", () => {
-    function dragStart(el: HTMLElement) {
-      const store: Record<string, string> = {};
-      const dataTransfer = { effectAllowed: "", setData: (f: string, d: string) => void (store[f] = d) };
-      fireEvent.dragStart(el, { dataTransfer });
-      return { store, dataTransfer };
+  describe("テーブル / 列行のポインタ・ドラッグ挿入 (#1414)", () => {
+    function setupTarget() {
+      const editor = document.createElement("div");
+      document.body.appendChild(editor);
+      document.elementFromPoint = () => editor;
+      const insert = vi.fn();
+      const unregister = registerTreeDropTarget({
+        element: editor,
+        posAtCoords: () => 5,
+        setMarker: vi.fn(),
+        insert,
+      });
+      return { insert, cleanup: () => (unregister(), editor.remove()) };
     }
+    const ptr = (type: string, x: number, init: PointerEventInit = {}) =>
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, bubbles: true, cancelable: true, clientX: x, clientY: 1, ...init });
 
-    it("テーブル行は draggable で、内部 MIME にテーブルを載せる", async () => {
+    it("テーブル行は HTML5 の draggable ではなく、ポインタ移動でエディタへ挿入される", async () => {
       await openDb({ onInsertTableSelect: vi.fn() });
       const row = await screen.findByRole("treeitem", { name: "tbl1" });
-      expect(row).toHaveAttribute("draggable", "true");
-      const { store, dataTransfer } = dragStart(row);
-      expect(dataTransfer.effectAllowed).toBe("copy");
-      expect(parseTreeDragItem(store[TREE_DRAG_MIME] ?? "")).toEqual({ kind: "table", database: "db1", table: "tbl1" });
-      expect(store["text/plain"]).toBe("tbl1");
+      expect(row).not.toHaveAttribute("draggable");
+      const { insert, cleanup } = setupTarget();
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 40));
+      window.dispatchEvent(ptr("pointerup", 40));
+      expect(insert).toHaveBeenCalledTimes(1);
+      expect(insert).toHaveBeenCalledWith({ kind: "table", database: "db1", table: "tbl1" }, 5, true);
+      cleanup();
     });
 
-    it("列行は draggable で、内部 MIME に列を載せる", async () => {
+    it("しきい値未満の移動はクリック扱いで挿入しない", async () => {
+      await openDb({ onInsertTableSelect: vi.fn() });
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      const { insert, cleanup } = setupTarget();
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 2));
+      window.dispatchEvent(ptr("pointerup", 2));
+      expect(insert).not.toHaveBeenCalled();
+      cleanup();
+    });
+
+    it("列行からのドラッグは列を渡す", async () => {
       vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
       await openDb({});
       await screen.findByRole("treeitem", { name: "tbl1" });
@@ -384,22 +407,25 @@ describe("Database Explorer の階層 (#1112)", () => {
         if (!el) throw new Error("列行 id がまだ無い");
         return el;
       });
-      expect(row).toHaveAttribute("draggable", "true");
-      const { store } = dragStart(row);
-      expect(parseTreeDragItem(store[TREE_DRAG_MIME] ?? "")).toEqual({
-        kind: "column",
-        database: "db1",
-        table: "tbl1",
-        column: "id",
-      });
+      const { insert, cleanup } = setupTarget();
+      row.dispatchEvent(ptr("pointerdown", 0));
+      window.dispatchEvent(ptr("pointermove", 40));
+      window.dispatchEvent(ptr("pointerup", 40, { altKey: true }));
+      expect(insert).toHaveBeenCalledWith({ kind: "column", database: "db1", table: "tbl1", column: "id" }, 5, false);
+      cleanup();
     });
 
-    it("接続行は HTML5 ドラッグ対象ではない (並べ替えは別経路)", async () => {
+    it("テーブル行の pointerdown は接続行 (並べ替え) へ伝播しない", async () => {
       await openDb({ onReorderProfiles: vi.fn() });
-      const dbRow = await screen.findByRole("treeitem", { name: "tbl1" });
-      const profileRow = document.querySelector<HTMLElement>('[data-tree-key^="profile:"]');
-      expect(profileRow?.getAttribute("draggable")).not.toBe("true");
-      expect(dbRow).toBeTruthy();
+      const row = await screen.findByRole("treeitem", { name: "tbl1" });
+      const onDown = vi.fn();
+      const node = row.parentElement as HTMLElement;
+      node.addEventListener("pointerdown", onDown);
+      row.dispatchEvent(ptr("pointerdown", 0));
+      expect(onDown).not.toHaveBeenCalled();
+      window.dispatchEvent(ptr("pointerup", 0));
+      const profileRow = document.querySelector<HTMLElement>('[data-tree-key^="profile:"]') as HTMLElement;
+      expect(profileRow.getAttribute("draggable")).not.toBe("true");
     });
   });
 });

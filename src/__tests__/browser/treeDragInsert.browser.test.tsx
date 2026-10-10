@@ -1,10 +1,10 @@
-// スキーマツリー行 → SQL エディタの HTML5 ドラッグ&ドロップ挿入 (#1414) を実 Chromium で通す。
-// jsdom では (1) framer-motion の並べ替えドラッグ (pointer) とネイティブ dragstart が
-// 干渉しないこと、(2) CodeMirror の既定ドロップと二重挿入にならないこと、
-// (3) 座標 → キャレット位置の変換 (posAtCoords) を確かめられないため。
+// スキーマツリー行 → SQL エディタのポインタ操作ドラッグ挿入 (#1414) を実 Chromium で通す。
+// HTML5 の D&D は Windows の WebView2 (OS ファイルのドロップ処理と排他) で動かないため使わない。
+// jsdom では (1) framer-motion の並べ替えドラッグがテーブル行から起動しないこと、
+// (2) 1 回だけ挿入されること、(3) 座標 → キャレット位置の変換 (posAtCoords /
+// elementFromPoint) を確かめられないため、実ブラウザで pointerdown → move → up を通す。
 import "../../App.css";
 import { expect, test, vi } from "vitest";
-import { userEvent } from "vitest/browser";
 import { EditorView } from "@codemirror/view";
 import { ConnectionList } from "../../components/ConnectionList";
 import { QueryEditor } from "../../components/QueryEditor";
@@ -40,10 +40,15 @@ vi.mock("../../api/tauri", async (importOriginal) => {
 
 const noop = () => {};
 
-test("テーブル行をエディタへドラッグ&ドロップすると SELECT 雛形が 1 回だけ入る", async () => {
-  const onReorderProfiles = vi.fn();
+function setup(onReorderProfiles: () => void) {
+  // 前のテストで開いた DB の展開状態 (schemaTreeState) を持ち越さない。
+  try {
+    localStorage.clear();
+  } catch {
+    // 無くても動く
+  }
   const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
-  const screen = await renderInBrowser(
+  return renderInBrowser(
     <div style={{ display: "flex", gap: "8px", height: "480px" }}>
       <div style={{ width: "280px" }}>
         <ConnectionList
@@ -71,13 +76,71 @@ test("テーブル行をエディタへドラッグ&ドロップすると SELECT
       </div>
     </div>,
   );
+}
+
+function pointer(type: string, x: number, y: number, init: PointerEventInit = {}) {
+  return new PointerEvent(type, {
+    pointerId: 1,
+    isPrimary: true,
+    button: 0,
+    bubbles: true,
+    cancelable: true,
+    clientX: x,
+    clientY: y,
+    ...init,
+  });
+}
+
+function center(el: Element) {
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
+test("テーブル行をポインタ操作でエディタへドラッグすると SELECT 雛形が 1 回だけ入り、並べ替えは起動しない", async () => {
+  const onReorderProfiles = vi.fn();
+  const screen = await setup(onReorderProfiles);
   await screen.getByRole("treeitem", { name: "db1" }).click();
-  const row = screen.getByRole("treeitem", { name: "tbl1" });
-  await expect.element(row).toBeVisible();
-  const content = document.querySelector(".cm-content") as HTMLElement;
-  await userEvent.dragAndDrop(row, screen.getByRole("textbox").first());
-  const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
+  const rowLocator = screen.getByRole("treeitem", { name: "tbl1" });
+  await expect.element(rowLocator).toBeVisible();
+  const row = rowLocator.element();
+  const editorEl = document.querySelector(".cm-editor") as HTMLElement;
+  const view = EditorView.findFromDOM(editorEl);
+  const from = center(row);
+  const to = center(editorEl);
+
+  row.dispatchEvent(pointer("pointerdown", from.x, from.y));
+  window.dispatchEvent(pointer("pointermove", from.x + 20, from.y));
+  window.dispatchEvent(pointer("pointermove", to.x, to.y));
+  // ドラッグ中はゴーストと挿入位置マーカーが出る。
+  await expect.poll(() => document.querySelector('[data-testid="tree-drag-ghost"]') !== null).toBe(true);
+  expect(document.querySelector(".cm-tree-drop-caret")).not.toBeNull();
+  window.dispatchEvent(pointer("pointerup", to.x, to.y));
+
   await expect.poll(() => view?.state.doc.toString()).toBe("SELECT * FROM `db1`.`tbl1`");
-  expect(content).toBeTruthy();
+  await expect.poll(() => document.querySelector('[data-testid="tree-drag-ghost"]')).toBeNull();
+  expect(document.querySelector(".cm-tree-drop-caret")).toBeNull();
   expect(onReorderProfiles).not.toHaveBeenCalled();
+});
+
+test("エディタの外で離す / Esc でキャンセルすると何も挿入されない", async () => {
+  const screen = await setup(vi.fn());
+  await screen.getByRole("treeitem", { name: "db1" }).click();
+  const rowLocator = screen.getByRole("treeitem", { name: "tbl1" });
+  await expect.element(rowLocator).toBeVisible();
+  const row = rowLocator.element();
+  const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
+  const from = center(row);
+  const to = center(document.querySelector(".cm-editor") as HTMLElement);
+
+  // エディタ外 (ツリー上) で離す。
+  row.dispatchEvent(pointer("pointerdown", from.x, from.y));
+  window.dispatchEvent(pointer("pointermove", from.x + 30, from.y));
+  window.dispatchEvent(pointer("pointerup", from.x + 30, from.y));
+  // エディタ上まで運んだあと Esc。
+  row.dispatchEvent(pointer("pointerdown", from.x, from.y));
+  window.dispatchEvent(pointer("pointermove", to.x, to.y));
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  window.dispatchEvent(pointer("pointerup", to.x, to.y));
+
+  expect(view?.state.doc.toString()).toBe("");
 });

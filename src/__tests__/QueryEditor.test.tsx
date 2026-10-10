@@ -7,7 +7,8 @@ import { EditorView } from "@codemirror/view";
 import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
-import { TREE_DRAG_MIME } from "../components/treeDragInsert";
+import { attachTreeDragSource } from "../components/treeDragStore";
+import type { TreeDragItem } from "../components/treeDragInsert";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 // QueryEditor の主要な実行フロー (Run ボタン / Ctrl+Enter ショートカット / 空状態
@@ -325,64 +326,63 @@ describe("QueryEditor.requestAiSql (#695)", () => {
 });
 
 
-describe("QueryEditor: スキーマツリー行のドロップ挿入 (#1414)", () => {
+describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿入 (#1414)", () => {
   beforeEach(() => {
     setLocale("en");
   });
 
   function mount(sql: string, driver = "mysql") {
     renderWithProviders(<QueryEditor onRun={vi.fn()} initialSql={sql} driver={driver} />);
-    const content = document.querySelector(".cm-content") as HTMLElement;
-    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) as EditorView;
-    // jsdom にはレイアウトが無く posAtCoords が使えないので、ドロップ位置を固定する。
-    view.posAtCoords = () => 7;
-    return { content, view };
-  }
-
-  function dropData(payload: Record<string, unknown> | null) {
-    const store: Record<string, string> = {};
-    if (payload) {
-      store[TREE_DRAG_MIME] = JSON.stringify(payload);
-      store["text/plain"] = "fallback";
-    }
-    return {
-      types: Object.keys(store),
-      getData: (f: string) => store[f] ?? "",
-      dropEffect: "none",
-    };
-  }
-
-  it("テーブル行を落とすとドロップ位置に SELECT 雛形が 1 回だけ入る (既定のテキスト挿入と二重にならない)", () => {
-    const { content, view } = mount("ab cd");
+    const editorEl = document.querySelector(".cm-editor") as HTMLElement;
+    const view = EditorView.findFromDOM(editorEl) as EditorView;
+    // jsdom にはレイアウトが無く posAtCoords / elementFromPoint が使えないので固定する。
     view.posAtCoords = () => 3;
-    const dataTransfer = dropData({ kind: "table", database: "shop", table: "orders" });
-    const notCancelled = fireEvent.drop(content, { dataTransfer, clientX: 1, clientY: 1 });
-    expect(notCancelled).toBe(false); // preventDefault 済み
+    document.elementFromPoint = () => editorEl;
+    return { view };
+  }
+
+  function drag(item: TreeDragItem, init: PointerEventInit = {}) {
+    const source = document.createElement("div");
+    document.body.appendChild(source);
+    const detach = attachTreeDragSource(source, () => item);
+    const ev = (type: string, x: number, extra: PointerEventInit = {}) =>
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, bubbles: true, clientX: x, clientY: 1, ...extra });
+    source.dispatchEvent(ev("pointerdown", 0));
+    window.dispatchEvent(ev("pointermove", 40));
+    window.dispatchEvent(ev("pointerup", 40, init));
+    detach();
+    source.remove();
+  }
+
+  it("テーブル行を落とすとドロップ位置に SELECT 雛形が 1 回だけ入る", () => {
+    const { view } = mount("ab cd");
+    drag({ kind: "table", database: "shop", table: "orders" });
     expect(view.state.doc.toString()).toBe("ab SELECT * FROM `shop`.`orders`cd");
   });
 
   it("列行は表.列、Alt を押していれば列名のみを挿入する", () => {
-    const { content, view } = mount("ab cd", "postgres");
-    view.posAtCoords = () => 3;
-    const payload = { kind: "column", database: "shop", table: "orders", column: "id" };
-    fireEvent.drop(content, { dataTransfer: dropData(payload), clientX: 1, clientY: 1 });
+    const { view } = mount("ab cd", "postgres");
+    const column: TreeDragItem = { kind: "column", database: "shop", table: "orders", column: "id" };
+    drag(column);
     expect(view.state.doc.toString()).toBe("ab orders.idcd");
-    fireEvent.drop(content, { dataTransfer: dropData(payload), clientX: 1, clientY: 1, altKey: true });
-    expect(view.state.doc.toString()).toContain("id");
+    drag(column, { altKey: true });
     expect(view.state.doc.toString().match(/id/g)?.length).toBe(2);
+    expect(view.state.doc.toString()).not.toContain("orders.id orders");
   });
 
-  it("ツリー行のペイロードが無いドロップはこのハンドラでは処理しない", () => {
-    const { content, view } = mount("ab cd");
-    fireEvent.drop(content, { dataTransfer: dropData(null), clientX: 1, clientY: 1 });
-    expect(view.state.doc.toString()).toBe("ab cd");
-  });
-
-  it("dragover はツリー行のときだけ drop を許可 (preventDefault + copy) する", () => {
-    const { content } = mount("ab cd");
-    const withItem = dropData({ kind: "table", database: "d", table: "t" });
-    expect(fireEvent.dragOver(content, { dataTransfer: withItem })).toBe(false);
-    expect(withItem.dropEffect).toBe("copy");
-    expect(fireEvent.dragOver(content, { dataTransfer: dropData(null) })).toBe(true);
+  it("ドラッグ中は挿入予定位置にマーカーが出て、終わると消える", () => {
+    mount("ab cd");
+    const source = document.createElement("div");
+    document.body.appendChild(source);
+    const detach = attachTreeDragSource(source, () => ({ kind: "table", database: "d", table: "t" }));
+    const ev = (type: string, x: number) =>
+      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, bubbles: true, clientX: x, clientY: 1 });
+    source.dispatchEvent(ev("pointerdown", 0));
+    window.dispatchEvent(ev("pointermove", 40));
+    expect(document.querySelector(".cm-tree-drop-caret")).not.toBeNull();
+    window.dispatchEvent(ev("pointerup", 40));
+    expect(document.querySelector(".cm-tree-drop-caret")).toBeNull();
+    detach();
+    source.remove();
   });
 });
