@@ -97,12 +97,15 @@ export function ProcessListPanel({
   driver,
   readOnly,
   isProduction = false,
+  schema,
 }: {
   sessionId: string;
   driver: DriverKind;
   readOnly: boolean;
   /** 本番接続か (AI 解説の送信前確認に使う)。 */
   isProduction?: boolean;
+  /** 開いているスキーマ (PostgreSQL)。AI 解説で修飾の無いテーブルを引くときに使う。 */
+  schema?: string | null;
 }) {
   const t = useT();
   const toast = useToast();
@@ -353,6 +356,7 @@ export function ProcessListPanel({
           processes={rows}
           selectedIds={selected}
           isProduction={isProduction}
+          schema={schema ?? undefined}
         />
       )}
 
