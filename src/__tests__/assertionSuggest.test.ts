@@ -64,6 +64,14 @@ describe("buildAssertionSuggestSystemParts (#1477)", () => {
   });
 });
 
+describe("プロンプトの注意書き", () => {
+  it("結合時の列名重複と SQLite の REGEXP を指示する", () => {
+    expect(buildAssertionSuggestSystemParts(input).cached).toContain("never use SELECT *");
+    expect(buildAssertionSuggestSystemParts(input).cached).not.toContain("REGEXP");
+    expect(buildAssertionSuggestSystemParts({ ...input, driver: "sqlite" }).cached).toContain("REGEXP");
+  });
+});
+
 describe("selectTableForeignKeys", () => {
   it("対象テーブルが参照する / される外部キーだけに絞る (大文字小文字無視)", () => {
     const fks = [
@@ -121,6 +129,9 @@ describe("isRegistrableSuggestionSql (読み取り専用でない候補は登録
     ["SELECT * FROM t WHERE a < 0", true],
     ["WITH x AS (SELECT 1) SELECT * FROM x", true],
     ["SELECT * FROM t;", true],
+    ["SHOW TABLES", false],
+    ["EXPLAIN SELECT 1", false],
+    ["TABLE t", false],
     ["DELETE FROM t", false],
     ["UPDATE t SET a = 1", false],
     ["DROP TABLE t", false],

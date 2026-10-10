@@ -83,7 +83,8 @@ export function parseAssertionSuggestResponse(text: string): ParsedAssertionSugg
  * 空文は不可。バックエンドも保存時と SQL 生成時に同じ検査をする (多層防御)。
  */
 export function isRegistrableSuggestionSql(sql: string, driver: string): boolean {
-  return sql.trim() !== "" && isReadOnlySql(sql, driver);
+  // SHOW / EXPLAIN / TABLE などはサブクエリに包めないので、先頭は SELECT / WITH に限る (Rust と同じ)。
+  return /^[\s(]*(select|with)\b/i.test(sql) && isReadOnlySql(sql, driver);
 }
 
 export interface AssertionSuggestColumn {
@@ -169,6 +170,10 @@ export function buildAssertionSuggestSystemParts(input: AssertionSuggestInput): 
     "- Use only tables and columns that appear in the schema below. Never invent names.",
     "- Do not use bind parameters or placeholders; write concrete SQL. Do not add LIMIT or ORDER BY.",
     "- Use syntax valid for the target dialect only.",
+    "- The statement is wrapped as a subquery, so every returned column name must be unique. When joining tables, never use SELECT *; return only o.* (the checked table's alias) or its primary key columns. Example: `SELECT o.* FROM orders o LEFT JOIN users u ON u.id = o.user_id WHERE o.user_id IS NOT NULL AND u.id IS NULL`.",
+    ...(input.driver === "sqlite"
+      ? ["- SQLite has no REGEXP operator here; use LIKE or GLOB for pattern checks."]
+      : []),
     "",
     "What to look for (propose only checks that make sense for the columns given):",
     "- Email-like columns whose values do not look like an email address.",

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { api, type Assertion, type ConnectionProfile } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
-import { dialectLabel, needsSendScopeConfirm } from "../ai/errorExplain";
+import { dialectLabel } from "../ai/errorExplain";
 import {
   ASSERTION_SUGGEST_FORMAT,
   buildAssertionSuggestPrompt,
@@ -78,7 +78,7 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
   const [items, setItems] = useState<Item[]>([]);
   const [sends, setSends] = useState<string | null>(null);
   const [registering, setRegistering] = useState(false);
-  const [registerErrors, setRegisterErrors] = useState<string[]>([]);
+  const [registerErrors, setRegisterErrors] = useState<{ id: number; text: string }[]>([]);
   const selectRef = useRef<HTMLSelectElement>(null);
 
   useEffect(() => {
@@ -141,11 +141,11 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
     const foreignKeys = selectTableForeignKeys(allFks, table);
     const sendsLine = t("assertAiSends", { table, columns: columns.length, dialect });
     setSends(sendsLine);
-    const needConfirm = needsSendScopeConfirm(ai.sendScope) || !!props.profile?.is_production;
-    if (needConfirm) {
+    // スキーマ情報だけを送るので、確認するのは本番接続のときだけ (AiSchemaDocModal と同じ)。
+    if (props.profile?.is_production) {
       const ok = await confirm({
         title: t("assertAiConfirmTitle"),
-        message: `${props.profile?.is_production ? t("assertAiConfirmProdBody") : t("assertAiConfirmBody")}\n${sendsLine}`,
+        message: `${t("assertAiConfirmProdBody")}\n${sendsLine}`,
         confirmLabel: t("assertAiConfirmSend"),
         tone: "warning",
       });
@@ -208,19 +208,19 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
     setRegisterErrors([]);
     const saved: Assertion[] = [];
     const failed = new Set<number>();
-    const errors: string[] = [];
+    const errors: { id: number; text: string }[] = [];
     for (const item of registrable) {
       const req = draftToRequest(suggestionToDraft({ name: item.name, sql: item.sql }, table, null), props.profile);
       if (!req.ok) {
         failed.add(item.id);
-        errors.push(t("assertAiRegisterError", { name: item.name, error: req.error }));
+        errors.push({ id: item.id, text: t("assertAiRegisterError", { name: item.name, error: req.error }) });
         continue;
       }
       try {
         saved.push(await api.saveAssertion(req.req));
       } catch (e) {
         failed.add(item.id);
-        errors.push(t("assertAiRegisterError", { name: item.name, error: String(e) }));
+        errors.push({ id: item.id, text: t("assertAiRegisterError", { name: item.name, error: String(e) }) });
       }
     }
     if (!stream.isMounted()) return;
@@ -383,9 +383,9 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
                 })}
               </>
             )}
-            {registerErrors.map((m) => (
-              <ErrorNote key={m} role="alert">
-                {m}
+            {registerErrors.map((e) => (
+              <ErrorNote key={e.id} role="alert">
+                {e.text}
               </ErrorNote>
             ))}
           </Flex>

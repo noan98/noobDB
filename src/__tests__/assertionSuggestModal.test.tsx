@@ -115,9 +115,9 @@ describe("AssertionSuggestModal (#1477)", () => {
     expect(describeTable).toHaveBeenCalledWith("s1", "app", "orders");
   });
 
-  it("送信範囲が schemaOnly のときは送信前に確認し、拒否すれば要求しない", async () => {
+  it("本番接続のときだけ送信前に確認し、拒否すれば要求しない", async () => {
     enable({ sendScope: "schemaOnly" });
-    renderWithProviders(ui());
+    renderWithProviders(ui({ profile: { ...profile, is_production: true } }));
     const select = (await screen.findByLabelText(t("assertAiTable"))) as HTMLSelectElement;
     await waitFor(() => expect(select.disabled).toBe(false));
     fireEvent.change(select, { target: { value: "orders" } });

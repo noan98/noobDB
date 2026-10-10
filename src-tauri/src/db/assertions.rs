@@ -73,6 +73,57 @@ fn bound_literal(driver: DriverKind, raw: &str) -> String {
     }
 }
 
+/// 先頭キーワードが `SELECT` / `WITH` か (前後の空白・開き括弧は許す)。
+fn starts_with_select_or_with(sql: &str) -> bool {
+    let body = sql.trim_start().trim_start_matches('(').trim_start();
+    let word: String = body
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    word.eq_ignore_ascii_case("select") || word.eq_ignore_ascii_case("with")
+}
+
+/// 文字列・識別子クォートとコメントの外で括弧が釣り合っているか。サブクエリの
+/// 閉じ括弧を先取りして包みから抜け出す本文を弾く。コメント内の括弧は読み飛ばす。
+fn parens_balanced(sql: &str) -> bool {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut depth: i64 = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\'' | '"' | '`' => {
+                i += 1;
+                while i < chars.len() && chars[i] != c {
+                    i += 1;
+                }
+            }
+            '-' if chars.get(i + 1) == Some(&'-') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 1;
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    depth == 0
+}
+
 /// ルールの入力検証。保存時 (`save_assertion`) と SQL 生成時の両方で使う。
 pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
     if !non_blank(table) {
@@ -135,6 +186,15 @@ pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
                 return Err(AppError::ReadOnly(
                     "custom assertion SQL must be a single read-only statement".into(),
                 ));
+            }
+            // SHOW / EXPLAIN / TABLE などは読み取り専用でもサブクエリに包めない。
+            if !starts_with_select_or_with(sql) {
+                return Err(invalid(
+                    "custom assertion SQL must start with SELECT or WITH",
+                ));
+            }
+            if !parens_balanced(sql) {
+                return Err(invalid("custom assertion SQL has unbalanced parentheses"));
             }
         }
         AssertionRule::RowCount { op, value, max } => {
@@ -594,6 +654,12 @@ mod tests {
             "SELECT 1; DELETE FROM t",
             "UPDATE t SET a = 1",
             "   ",
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
+            "SELECT * FROM t FOR UPDATE",
+            "SHOW TABLES",
+            "EXPLAIN SELECT 1",
+            "TABLE t",
+            "SELECT 1) AS a_custom UNION SELECT (1",
         ] {
             let rule = AssertionRule::CustomSql { sql: s(bad) };
             assert!(
