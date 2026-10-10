@@ -10,6 +10,7 @@ import {
   insertableColumns,
   isPartialCloneFailure,
   suggestCloneName,
+  violatesLiteralRules,
 } from "../tableClone";
 
 const MYSQL_DDL = `CREATE TABLE \`orders\` (
@@ -117,8 +118,8 @@ describe("buildCloneStatements (#1398)", () => {
       'CREATE SEQUENCE "public"."o2_n_seq" OWNED BY "public"."o2"."n"',
       `ALTER TABLE "public"."o2" ALTER COLUMN "n" SET DEFAULT nextval('"public"."o2_n_seq"'::regclass)`,
       'INSERT INTO "public"."o2" ("id", "n", "user_id") OVERRIDING SYSTEM VALUE SELECT "id", "n", "user_id" FROM "public"."orders"',
-      `SELECT setval(pg_get_serial_sequence('"public"."o2"', 'id'), max("id")) FROM "public"."o2" HAVING max("id") IS NOT NULL`,
-      `SELECT setval(pg_get_serial_sequence('"public"."o2"', 'n'), max("n")) FROM "public"."o2" HAVING max("n") IS NOT NULL`,
+      `SELECT setval(pg_get_serial_sequence('"public"."o2"', 'id'), max("id")) FROM "public"."o2" HAVING max("id") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('"public"."o2"', 'id')::regclass)`,
+      `SELECT setval(pg_get_serial_sequence('"public"."o2"', 'n'), max("n")) FROM "public"."o2" HAVING max("n") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('"public"."o2"', 'n')::regclass)`,
       'ALTER TABLE "public"."o2" ADD CONSTRAINT "fk_o2" FOREIGN KEY (user_id) REFERENCES users(id)',
     ]);
     expect(r.errors).toEqual([]);
@@ -310,5 +311,37 @@ describe("cloneObjectName / suggestCloneName", () => {
 
   it("formatCloneStatements は ; を付けて空行区切り", () => {
     expect(formatCloneStatements(["A", "B"])).toBe("A;\n\nB;");
+  });
+});
+
+describe("対象検証の補強 (#1398)", () => {
+  const base = {
+    driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2",
+    ddl: PG_DDL, includeData: true,
+  };
+  const opts = { ...base, includeData: true } as const;
+
+  it("複製先が元と同名 (大小違いも MySQL では同一) なら errors を返し statements は空", () => {
+    for (const [driver, newTable] of [["postgres", "orders"], ["mysql", "ORDERS"], ["sqlite", "Orders"]] as const) {
+      const r = buildCloneStatements({ ...base, driver, newTable, ddl: driver === "mysql" ? MYSQL_DDL : PG_DDL });
+      expect(r.errors.length).toBeGreaterThan(0);
+      expect(r.statements).toEqual([]);
+    }
+  });
+
+  it("元テーブルを指すリテラルの setval / nextval / CREATE SEQUENCE は違反として弾く", () => {
+    const o = { ...opts, driver: "postgres" } as never;
+    expect(violatesLiteralRules(`SELECT setval(pg_get_serial_sequence('"public"."orders"', 'id'), max("id")) FROM "public"."o2"`, o)).toBe(true);
+    expect(violatesLiteralRules(`SELECT 1 FROM "public"."o2"`, o)).toBe(true);
+    expect(violatesLiteralRules(`ALTER TABLE "public"."o2" ALTER COLUMN "n" SET DEFAULT nextval('"public"."orders"'::regclass)`, o)).toBe(true);
+    expect(violatesLiteralRules(`CREATE SEQUENCE "public"."orders" OWNED BY "public"."o2"."n"`, o)).toBe(true);
+    expect(violatesLiteralRules(`SELECT setval(pg_get_serial_sequence('"public"."o2"', 'id'), max("id")) FROM "public"."o2"`, o)).toBe(false);
+    expect(violatesLiteralRules(`ALTER TABLE "public"."o2" ALTER COLUMN "n" SET DEFAULT nextval('"public"."o2_n_seq"'::regclass)`, o)).toBe(false);
+  });
+
+  it("列名に引用符を含んでもリテラルはエスケープされ、検証を通る", () => {
+    const r = buildCloneStatements({ ...opts, pgColumns: { generated: [], identity: ["x', 'y"], serial: [] } });
+    expect(r.errors).toEqual([]);
+    expect(r.statements.join("\n")).toContain("'x'', ''y'");
   });
 });

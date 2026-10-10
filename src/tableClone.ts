@@ -579,6 +579,10 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
 
   const newName = qualified(o.driver, o.database, o.newTable);
   const oldName = qualified(o.driver, o.database, o.sourceTable);
+  // 複製先が元と同名 (衝突チェックをすり抜けた入力) だと元テーブルを操作する文になるので弾く。
+  const sameName =
+    o.driver === "postgres" ? o.newTable === o.sourceTable : o.newTable.toLowerCase() === o.sourceTable.toLowerCase();
+  if (sameName) return { ...empty, errors: [`same table name: ${o.newTable}`] };
   const head: string[] = [];
   const afterData: string[] = [];
   const q = (c: string) => quoteIdentFor(o.driver, c);
@@ -601,7 +605,8 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
       for (const col of cols) {
         afterData.push(
           `SELECT setval(pg_get_serial_sequence(${lit(newName)}, ${lit(col)}), max(${q(col)})) ` +
-            `FROM ${newName} HAVING max(${q(col)}) IS NOT NULL`,
+            `FROM ${newName} HAVING max(${q(col)}) >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = ` +
+            `pg_get_serial_sequence(${lit(newName)}, ${lit(col)})::regclass)`,
         );
       }
     }
@@ -633,7 +638,7 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
     const ok =
       target !== null &&
       (o.driver === "postgres" ? target === o.newTable : target.toLowerCase() === o.newTable.toLowerCase());
-    if (!ok) errors.push(sql.slice(0, 80));
+    if (!ok || violatesLiteralRules(sql, o)) errors.push(sql.slice(0, 80));
   }
   if (errors.length > 0) return { statements: [], skipped, errors, sharedSequence: false };
   return {
@@ -643,6 +648,39 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
     // 列種別が取れていない (serial 専用シーケンスを作れなかった) ときだけ共有の注意を出す
     sharedSequence: o.driver === "postgres" && !o.pgColumns && /nextval\s*\(/i.test(o.ddl),
   };
+}
+
+/**
+ * 対象テーブル検証の補強 (PostgreSQL の補助文)。文字列リテラルが元テーブルを指す文は弾く。
+ * - `SELECT setval(pg_get_serial_sequence('<リテラル>', ...))`: 最初のリテラルが新テーブル名と一致すること
+ * - `CREATE SEQUENCE` / `ALTER ... SET DEFAULT nextval('<リテラル>')`: リテラルが指す名前 (テーブル/
+ *   シーケンス) の末尾部品が元テーブル名と一致しないこと。CREATE SEQUENCE の名前自体も同様。
+ * 該当しない文 (CREATE TABLE / INSERT / FK の ALTER など) は対象外で false。
+ */
+export function violatesLiteralRules(sql: string, o: CloneOptions): boolean {
+  const tokens = tokenize(sql, o.driver);
+  const first = tokens.find((t) => t.kind === "word")?.text.toUpperCase();
+  const lits = tokens
+    .filter((t) => t.kind === "string")
+    .map((t) => t.text.slice(1, -1).replace(/''/g, "'"));
+  const isSource = (name: string) => {
+    const nm = readQualifiedName(tokenize(name, o.driver), 0);
+    return !!nm && nm.last.toLowerCase() === o.sourceTable.toLowerCase();
+  };
+  if (first === "SELECT") {
+    const newName = qualified(o.driver, o.database, o.newTable);
+    return !/^SELECT\s+setval\s*\(\s*pg_get_serial_sequence\s*\(/i.test(sql.trim()) || lits[0] !== newName;
+  }
+  const isSeq = first === "CREATE" && tokens.some((t) => t.text.toUpperCase() === "SEQUENCE");
+  const isDefault = first === "ALTER" && tokens.some((t) => t.text.toUpperCase() === "DEFAULT");
+  if (!isSeq && !isDefault) return false;
+  if (lits.some(isSource)) return true;
+  if (isSeq) {
+    const seq = tokens.findIndex((t) => t.text.toUpperCase() === "SEQUENCE");
+    const nm = readQualifiedName(tokens, seq + 1);
+    if (nm && nm.last.toLowerCase() === o.sourceTable.toLowerCase()) return true;
+  }
+  return false;
 }
 
 function buildInsertSelect(o: CloneOptions, newName: string, oldName: string): string {

@@ -126,10 +126,11 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         : null,
     [ddl, trimmed, driver, database, sourceTable, includeData, insertCols, pgMeta],
   );
-  const statements = trimmed ? (result?.statements ?? []) : [];
-  const notTable = !!result && result.statements.length === 0 && result.errors.length === 0;
-  const metaPending = driver === "postgres" && !pgMeta;
-  const valid = !loading && !metaPending && !collides && trimmed.length > 0 && statements.length > 0;
+  // PG は列種別/FK を取り終えるまで文が確定しない (不完全なプレビューや注意を出さない)。
+  const metaPending = driver === "postgres" && !pgMeta && !metaError;
+  const statements = trimmed && !metaPending ? (result?.statements ?? []) : [];
+  const notTable = !metaPending && !!result && result.statements.length === 0 && result.errors.length === 0;
+  const valid = !loading && !metaPending && !metaError && !collides && trimmed.length > 0 && statements.length > 0;
 
   const submit = () => {
     if (valid) onConfirm(trimmed, statements);
@@ -175,7 +176,7 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         {result && result.errors.length > 0 && (
           <ErrorNote>{t("cloneTableRewriteError", { statements: result.errors.join(" / ") })}</ErrorNote>
         )}
-        {result?.sharedSequence && <Callout tone="warning">{t("cloneTableSharedSequence")}</Callout>}
+        {!metaPending && result?.sharedSequence && <Callout tone="warning">{t("cloneTableSharedSequence")}</Callout>}
         {result && result.skipped.length > 0 && (
           <Callout tone="warning">{t("cloneTableSkipped", { statements: result.skipped.join(" / ") })}</Callout>
         )}
@@ -183,7 +184,7 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         <FormSection>
           <FieldLabel as="div">{t("cloneTablePreview")}</FieldLabel>
           <CodePreview minH="120px">
-            {statements.length > 0 ? formatCloneStatements(statements) : t("cloneTablePreviewEmpty")}
+            {metaPending ? t("cloneTablePreviewLoading") : statements.length > 0 ? formatCloneStatements(statements) : t("cloneTablePreviewEmpty")}
           </CodePreview>
           <chakra.span textStyle="caption">{t("cloneTableNotes")}</chakra.span>
         </FormSection>
