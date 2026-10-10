@@ -14,6 +14,8 @@ import {
   FALLBACK_INSERT_TABLE,
   hasAmbiguousIdentity,
   isEditableColumnType,
+  literalFromCellValue,
+  literalFromInput,
   resolvePkIndices,
   setValueFromInput,
   resolveRowIdentity,
@@ -1056,5 +1058,222 @@ describe("buildUpdateGroups (#1259)", () => {
         ],
       },
     ]);
+  });
+});
+
+// Stryker (#1358) の生存変異を潰す、リテラル生成・行識別の境界ケース。
+describe("数値判定の境界 (インジェクション隣接のリテラル生成)", () => {
+  const intCol = col("n", "INT");
+  const malformed = ["1x", "x1", "1 OR 1=1", "1e", "1.", "1; DROP TABLE t", "--1", "1 2"];
+
+  it("literalFromInput: 数値列でも数値形式でなければ引用符付きになる", () => {
+    for (const raw of malformed) {
+      expect(literalFromInput("mysql", raw, intCol)).toBe(`'${raw}'`);
+    }
+  });
+
+  it("literalFromInput: 数値形式は trim 済みでそのまま、非数値列は引用符付き", () => {
+    expect(literalFromInput("mysql", " -12.5e+3 ", intCol)).toBe("-12.5e+3");
+    expect(literalFromInput("mysql", "123", col("s", "VARCHAR"))).toBe("'123'");
+  });
+
+  it("cellValueFromInput / setValueFromInput も同じ判定で数値扱いしない", () => {
+    for (const raw of malformed) {
+      expect(cellValueFromInput(raw, intCol)).toBe(raw);
+      expect(setValueFromInput(raw, intCol)).toEqual({ kind: "text", text: raw });
+    }
+    expect(setValueFromInput("12", intCol)).toEqual({ kind: "number", text: "12" });
+    expect(setValueFromInput("12", col("s", "VARCHAR"))).toEqual({ kind: "text", text: "12" });
+  });
+
+  it("NULL キーワードは前後に文字があると NULL にならない", () => {
+    expect(literalFromInput("mysql", "nullx", intCol)).toBe("'nullx'");
+    expect(literalFromInput("mysql", "xnull", intCol)).toBe("'xnull'");
+    expect(literalFromInput("mysql", " NULL ", intCol)).toBe("NULL");
+    expect(cellValueFromInput("nullx", intCol)).toBe("nullx");
+    expect(cellValueFromInput("xnull", intCol)).toBe("xnull");
+    expect(setValueFromInput("nullx", intCol)).toEqual({ kind: "text", text: "nullx" });
+    expect(setValueFromInput("xnull", intCol)).toEqual({ kind: "text", text: "xnull" });
+    expect(setValueFromInput("NULL", intCol)).toEqual({ kind: "null" });
+  });
+
+  describe("rowValueLiteral (buildRowSql 経由)", () => {
+    const columns = [col("id", "INT"), col("code", "VARCHAR"), col("n", "INT")];
+    const base = { driver: "mysql", database: "d", table: "t", columns, pkIndices: [0] };
+
+    it("VARCHAR の先頭ゼロ付き文字列は引用符付きのまま", () => {
+      const [sql] = buildRowSql({ ...base, rows: [[1, "00123", 5]] }, "insert");
+      expect(sql).toContain("(1, '00123', 5)");
+      const [upd] = buildRowSql({ ...base, rows: [[1, "00123", 5]] }, "update");
+      expect(upd).toContain("`code` = '00123'");
+    });
+
+    it("数値列に入った非数値の文字列は引用符付きになる", () => {
+      for (const v of malformed) {
+        const [sql] = buildRowSql({ ...base, rows: [[1, "a", v]] }, "insert");
+        expect(sql).toContain(`'${v}')`);
+      }
+      const [ok] = buildRowSql({ ...base, rows: [[1, "a", " 42 "]] }, "insert");
+      expect(ok).toContain("'a', 42)");
+    });
+
+    it("buildDeleteStatements: 文字列 PK の先頭ゼロを保つ", () => {
+      const cols = [col("code", "VARCHAR")];
+      const rows: CellValue[][] = [["00123"]];
+      const deleteKeys = new Set([rowEditKey(rows[0], [0], 0)]);
+      expect(
+        buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns: cols, rows, pkIndices: [0], deleteKeys }),
+      ).toEqual(["DELETE FROM `d`.`t` WHERE `code` = '00123';"]);
+    });
+  });
+});
+
+describe("rowEditKey / 行識別の衝突回避", () => {
+  const key = (v: CellValue) => rowEditKey([v], [0], 0);
+
+  it("型タグで値域が分かれる", () => {
+    const keys = [key(1), key("1"), key(null), key(""), key(true), key("true"), key(false), key("false"), key(0), key("0")];
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(key(undefined as unknown as CellValue)).toBe(key(null));
+  });
+
+  it("精度を超える文字列 BIGINT と丸められた number は衝突しない", () => {
+    expect(key("9007199254740993")).not.toBe(key(9007199254740992));
+  });
+
+  it("PK 無しの行は添字ベースのキーになる", () => {
+    expect(rowEditKey([1], [], 3)).toBe("i3");
+    expect(rowEditKey([1], [], 3)).not.toBe(rowEditKey([1], [], 4));
+  });
+
+  it("複合キーは連結しても曖昧にならない", () => {
+    expect(rowEditKey(["a", "bc"], [0, 1], 0)).not.toBe(rowEditKey(["ab", "c"], [0, 1], 0));
+  });
+
+  it("buildDeleteStatements: PK が無ければ deleteKeys があっても何も出さない", () => {
+    expect(
+      buildDeleteStatements({
+        driver: "mysql", database: "d", table: "t", columns: [col("a", "INT")],
+        rows: [[1]], pkIndices: [], deleteKeys: new Set(["i0"]),
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("literalFromCellValue", () => {
+  it("boolean / 非有限数 / null / undefined / 文字列", () => {
+    expect(literalFromCellValue("mysql", true)).toBe("TRUE");
+    expect(literalFromCellValue("mysql", false)).toBe("FALSE");
+    expect(literalFromCellValue("mysql", NaN)).toBe("NULL");
+    expect(literalFromCellValue("mysql", Infinity)).toBe("NULL");
+    expect(literalFromCellValue("mysql", -Infinity)).toBe("NULL");
+    expect(literalFromCellValue("mysql", 1.5)).toBe("1.5");
+    expect(literalFromCellValue("mysql", null)).toBe("NULL");
+    expect(literalFromCellValue("mysql", undefined as unknown as CellValue)).toBe("NULL");
+    expect(literalFromCellValue("mysql", "a'b")).toBe("'a''b'");
+  });
+});
+
+describe("BIT 列の入力", () => {
+  const bit = col("b", "BIT");
+  it("literalFromInput", () => {
+    expect(literalFromInput("mysql", "true", bit)).toBe("1");
+    expect(literalFromInput("mysql", "TRUE", bit)).toBe("1");
+    expect(literalFromInput("mysql", "1", bit)).toBe("1");
+    expect(literalFromInput("mysql", " false ", bit)).toBe("0");
+    expect(literalFromInput("mysql", "0", bit)).toBe("0");
+    expect(literalFromInput("mysql", "2", bit)).toBe("'2'");
+    expect(literalFromInput("mysql", "yes", bit)).toBe("'yes'");
+  });
+  it("setValueFromInput", () => {
+    expect(setValueFromInput("true", bit)).toEqual({ kind: "number", text: "1" });
+    expect(setValueFromInput("TRUE", bit)).toEqual({ kind: "number", text: "1" });
+    expect(setValueFromInput("1", bit)).toEqual({ kind: "number", text: "1" });
+    expect(setValueFromInput("false", bit)).toEqual({ kind: "number", text: "0" });
+    expect(setValueFromInput("0", bit)).toEqual({ kind: "number", text: "0" });
+    expect(setValueFromInput("2", bit)).toEqual({ kind: "text", text: "2" });
+  });
+  it("BOOLEAN 列の true/false/0/1 と他の値", () => {
+    const b = col("f", "BOOLEAN");
+    expect(literalFromInput("postgres", "True", b)).toBe("TRUE");
+    expect(literalFromInput("postgres", "0", b)).toBe("FALSE");
+    expect(literalFromInput("postgres", "2", b)).toBe("'2'");
+  });
+});
+
+// Stryker (#1358) 2 周目: 数値正規表現の各部品 (小数部・指数部) と BOOLEAN / BIT 分岐を、
+// 入力 → リテラル / CellValue / BulkSetValue の 3 関数と rowValueLiteral で網羅する。
+describe("数値形式の受理 (小数部・指数部の部品ごと)", () => {
+  const intCol = col("n", "INT");
+  const valid = ["0", "-7", "12.25", "-0.50", "1e5", "1E5", "1e+05", "1e-12", "3.14e+10", "100"];
+  const invalid = ["1.e5", "1e+", "1e-", "1e*5", "1ee5", "1e5.5", "+5", ".5", "1..2", "1.2.3", "e5"];
+
+  it("literalFromInput / setValueFromInput / cellValueFromInput", () => {
+    for (const v of valid) {
+      expect(literalFromInput("mysql", v, intCol)).toBe(v);
+      expect(setValueFromInput(v, intCol)).toEqual({ kind: "number", text: v });
+      expect(cellValueFromInput(v, intCol)).toBe(Number.isSafeInteger(Number(v)) || !Number.isInteger(Number(v)) ? Number(v) : v);
+    }
+    for (const v of invalid) {
+      expect(literalFromInput("mysql", v, intCol)).toBe(`'${v}'`);
+      expect(setValueFromInput(v, intCol)).toEqual({ kind: "text", text: v });
+      expect(cellValueFromInput(v, intCol)).toBe(v);
+    }
+  });
+
+  it("rowValueLiteral (buildRowSql 経由) も同じ判定", () => {
+    const columns = [col("id", "INT"), col("n", "DECIMAL")];
+    const base = { driver: "mysql", database: "d", table: "t", columns, pkIndices: [0] };
+    for (const v of valid) {
+      const [sql] = buildRowSql({ ...base, rows: [[1, v]] }, "insert");
+      expect(sql).toContain(`(1, ${v})`);
+    }
+    for (const v of invalid) {
+      const [sql] = buildRowSql({ ...base, rows: [[1, v]] }, "insert");
+      expect(sql).toContain(`(1, '${v}')`);
+    }
+  });
+});
+
+describe("BOOLEAN / BIT 列の true・false・0・1 とそれ以外", () => {
+  const bool = col("f", "BOOLEAN");
+  const bit = col("b", "BIT");
+
+  it("cellValueFromInput", () => {
+    expect(cellValueFromInput("true", bool)).toBe(true);
+    expect(cellValueFromInput(" TRUE ", bool)).toBe(true);
+    expect(cellValueFromInput("1", bool)).toBe(true);
+    expect(cellValueFromInput("false", bool)).toBe(false);
+    expect(cellValueFromInput("0", bool)).toBe(false);
+    expect(cellValueFromInput("2", bool)).toBe("2");
+    expect(cellValueFromInput("maybe", bool)).toBe("maybe");
+    expect(cellValueFromInput("true", col("s", "VARCHAR"))).toBe("true");
+    expect(cellValueFromInput("true", bit)).toBe("true");
+  });
+
+  it("setValueFromInput (BOOLEAN)", () => {
+    expect(setValueFromInput("true", bool)).toEqual({ kind: "bool", value: true });
+    expect(setValueFromInput("TRUE", bool)).toEqual({ kind: "bool", value: true });
+    expect(setValueFromInput("1", bool)).toEqual({ kind: "bool", value: true });
+    expect(setValueFromInput("false", bool)).toEqual({ kind: "bool", value: false });
+    expect(setValueFromInput("FALSE", bool)).toEqual({ kind: "bool", value: false });
+    expect(setValueFromInput("0", bool)).toEqual({ kind: "bool", value: false });
+    expect(setValueFromInput("2", bool)).toEqual({ kind: "text", text: "2" });
+    expect(setValueFromInput("x", col("b", "BOOL"))).toEqual({ kind: "text", text: "x" });
+    expect(setValueFromInput("true", col("s", "VARCHAR"))).toEqual({ kind: "text", text: "true" });
+  });
+
+  it("literalFromInput (BOOLEAN / BIT) の大文字小文字・前後空白・非 BIT 列", () => {
+    expect(literalFromInput("postgres", " FALSE ", bool)).toBe("FALSE");
+    expect(literalFromInput("postgres", "1", col("f", "BOOL"))).toBe("TRUE");
+    expect(literalFromInput("mysql", "FALSE", bit)).toBe("0");
+    expect(literalFromInput("mysql", " TRUE ", bit)).toBe("1");
+    expect(literalFromInput("mysql", "true", col("s", "VARCHAR"))).toBe("'true'");
+    expect(setValueFromInput("FALSE", bit)).toEqual({ kind: "number", text: "0" });
+  });
+
+  it("NULL キーワード (大文字小文字・前後空白)", () => {
+    expect(cellValueFromInput(" Null ", col("s", "VARCHAR"))).toBeNull();
+    expect(setValueFromInput(" nULL ", col("s", "VARCHAR"))).toEqual({ kind: "null" });
   });
 });

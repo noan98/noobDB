@@ -77,3 +77,7 @@ vitest.ui-audit.config.ts
 # UI 性能ベンチマーク (`pnpm bench:ui`、#1307) の出力。数値は PR 本文に貼って共有する。
 src/__tests__/perf/__perf__/
 src/__tests__/perf/__screenshots__/
+
+# Stryker (JS ミューテーションテスト, #1358)
+/.stryker-tmp/
+/reports/mutation/

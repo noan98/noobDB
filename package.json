@@ -15,6 +15,7 @@
     "bench:ui": "vitest run --config vitest.perf.config.ts",
     "lint": "biome lint --max-diagnostics=none src",
     "knip": "knip",
+    "mutants:js": "stryker run",
     "bundle-size": "node scripts/bundle-size.mjs",
     "test:scripts": "node --test scripts/automerge-hold.test.mjs",
     "tauri": "tauri"
@@ -52,6 +53,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@tauri-apps/cli": "^2.12.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
