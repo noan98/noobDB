@@ -40,6 +40,8 @@ export default defineConfig({
       "@tauri-apps/plugin-process",
       "@tauri-apps/plugin-updater",
       "axe-core",
+      // SQL 補完の種別アイコン (completionIcon.tsx, #1413) がエディタの遅延チャンクから使う。
+      "react-dom/client",
     ],
   },
   test: {
