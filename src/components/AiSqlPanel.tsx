@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream } from "../api/tauri";
+import { api } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import {
   dialectLabel,
   extractTableRefs,
@@ -35,13 +35,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
-import { Spinner } from "./Spinner";
-
-let seq = 0;
-function makeStreamId(): string {
-  seq += 1;
-  return `ai_sql_${Date.now().toString(36)}_${seq.toString(36)}`;
-}
+import { AiStreamProgress } from "./AiStreamProgress";
 
 /** エディタのアクション (右クリック / パレット) が組み立てる依頼。 */
 export interface AiSqlRequest {
@@ -61,7 +55,7 @@ export interface AiSqlRequest {
 
 type State =
   | { kind: "idle" }
-  | { kind: "running"; chars: number }
+  | { kind: "running"; assist: SqlAssistKind }
   | { kind: "explain"; value: SqlExplainResponse }
   | {
       kind: "rewrite";
@@ -106,38 +100,10 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   const { request } = props;
   const [state, setState] = useState<State>({ kind: "idle" });
   const [applied, setApplied] = useState<null | "applied" | "closed" | "cancelled">(null);
-  const busyRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
-  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
-  const abortRef = useRef(false);
+  const stream = useAiStream({ idPrefix: "ai_sql" });
   // 「エディタに適用」の再入防止。確認ダイアログ中・適用済みの間は 2 回目を受け付けない。
   const applyingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const sid = streamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    };
-  }, []);
 
   const tableRefs = useMemo(
     () => (request ? extractTableRefs(request.sql, props.driver) : []),
@@ -151,9 +117,9 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     });
 
   const runInner = async (req: AiSqlRequest, kind: SqlAssistKind) => {
-    // busyRef はストリームの終了 (stopListener) まで保持する。送信前に取りやめた場合は戻す。
+    // 確保した実行権はストリームの終了までフックが保持する。送信前に取りやめた場合は戻す。
     const abort = () => {
-      busyRef.current = false;
+      stream.release();
     };
     if (needsSendScopeConfirm(ai.sendScope)) {
       const ok = await confirm({
@@ -173,7 +139,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       });
       if (!ok) return abort();
     }
-    if (!mountedRef.current) return abort();
+    if (!stream.isMounted()) return abort();
     setApplied(null);
     applyingRef.current = false;
     // テーブル定義はベストエフォート。取得できないテーブルは黙って落とす。
@@ -190,21 +156,25 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       }),
     );
     const tables = fetched.filter((x): x is ExplainTable => x !== null);
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    abortRef.current = false;
-    let text = "";
     const masked = ai.maskLiterals;
-    setState({ kind: "running", chars: 0 });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-          // 本文は JSON なので、受信中は文字数だけ見せる。
-          setState({ kind: "running", chars: text.length });
-        },
-        onDone: () => {
-          stopListener(streamId);
+    setState({ kind: "running", assist: kind });
+    await stream.start(
+      {
+        task: SQL_ASSIST_TASK[kind],
+        system: buildSqlAssistSystem(kind, locale),
+        prompt: buildSqlAssistPrompt({
+          kind,
+          sql: req.sql,
+          driver: props.driver,
+          tables,
+          maskLiterals: masked,
+        }),
+        settings: toAiSnapshot(ai),
+        format: sqlAssistFormat(kind),
+      },
+      {
+        // 種別ごとにスキーマが違うので、パースは完了時に本文から行う。
+        onDone: ({ text }) => {
           if (kind === "explain") {
             const parsed = parseSqlExplainResponse(text);
             setState(parsed.ok ? { kind: "explain", value: parsed.value } : { kind: "raw", raw: parsed.raw });
@@ -230,63 +200,20 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
             });
           }
         },
-        onError: (e) => {
-          stopListener(streamId);
-          setState({ kind: "error", message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopListener(streamId);
-          setState({ kind: "cancelled" });
-        },
-      });
-      if (!mountedRef.current) {
-        unlisten();
-        streamRef.current = null;
-        busyRef.current = false;
-        return;
-      }
-      unlistenRef.current = unlisten;
-      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
-      if (abortRef.current) {
-        stopListener(streamId);
-        setState({ kind: "cancelled" });
-        return;
-      }
-      await api.runAiRequest({
-        streamId,
-        task: SQL_ASSIST_TASK[kind],
-        system: buildSqlAssistSystem(kind, locale),
-        prompt: buildSqlAssistPrompt({
-          kind,
-          sql: req.sql,
-          driver: props.driver,
-          tables,
-          maskLiterals: masked,
-        }),
-        settings: toAiSnapshot(ai),
-        format: sqlAssistFormat(kind),
-      });
-      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
-      if (abortRef.current || !mountedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      setState({ kind: "error", message: String(e), refused: false });
-    }
+        onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
+        onCancelled: () => setState({ kind: "cancelled" }),
+      },
+    );
   };
 
   const run = async (kind: SqlAssistKind) => {
     if (!request) return;
     // 二重クリックで 2 本のストリームが走らないよう、同期的に弾く。
-    if (busyRef.current) return;
-    busyRef.current = true;
+    if (!stream.acquire()) return;
     try {
       await runInner(request, kind);
     } catch (e) {
-      busyRef.current = false;
+      stream.release();
       setState({ kind: "error", message: String(e), refused: false });
     }
   };
@@ -341,16 +268,6 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     }
   };
 
-  const cancel = () => {
-    abortRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
-  };
-
   if (!request) {
     return (
       <EmptyState compact icon="sparkles" title={t("aiSqlTitle")} description={t("aiSqlEmpty")} />
@@ -380,20 +297,21 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
           {t("aiSqlRewriteButton")}
         </Button>
         {running && (
-          <>
-            <Spinner size={12} />
-            <chakra.span color="app.textMuted" role="status" data-testid="ai-sql-running">
-              {t("aiSqlRunning", { chars: state.chars })}
-            </chakra.span>
-            <Button type="button" variant="secondary" size="sm" onClick={cancel}>
-              {t("aiSqlCancel")}
-            </Button>
-          </>
+          <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
+            {t("aiSqlCancel")}
+          </Button>
         )}
         <chakra.span color="app.textMuted" fontSize="xs">
           {sendsLine(tableRefs.length)}
         </chakra.span>
       </Flex>
+      {state.kind === "running" && (
+        <AiStreamProgress
+          stream={stream}
+          fields={state.assist === "explain" ? ["overview"] : ["rewritten_sql"]}
+          waitingLabel={t("aiSqlRunning")}
+        />
+      )}
       <Flex direction="column" gap="1">
         <FieldLabel as="div">{request.range ? t("aiSqlSourceSelection") : t("aiSqlSourceAll")}</FieldLabel>
         <CodePreview wrap maxH="120px">

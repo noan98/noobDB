@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { save } from "@tauri-apps/plugin-dialog";
-import { api, listenAiStream, type SchemaObject } from "../api/tauri";
+import { api, type SchemaObject } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import { dialectLabel } from "../ai/errorExplain";
 import { approxKb } from "../ai/nl2sql";
 import {
@@ -33,15 +33,10 @@ import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { mapLimited } from "./mapLimited";
+import { AiStreamProgress } from "./AiStreamProgress";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { useCopyFeedback } from "./useCopyFeedback";
-
-let seq = 0;
-function makeStreamId(): string {
-  seq += 1;
-  return `ai_schemadoc_${Date.now().toString(36)}_${seq.toString(36)}`;
-}
 
 type Loaded =
   | { kind: "loading" }
@@ -58,7 +53,7 @@ type Loaded =
 type State =
   | { kind: "idle" }
   | { kind: "collecting" }
-  | { kind: "running"; chars: number; text: string; sentKb: number }
+  | { kind: "running"; sentKb: number }
   | { kind: "done"; doc: string; truncated: boolean }
   | { kind: "tooBig"; kb: number }
   | { kind: "error"; message: string; refused: boolean }
@@ -97,11 +92,9 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(initial));
   const [filter, setFilter] = useState("");
   const [state, setState] = useState<State>({ kind: "idle" });
-  const busyRef = useRef(false);
-  const abortRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
+  const stream = useAiStream({ idPrefix: "ai_schemadoc" });
+  // 定義の収集中 (まだストリームが無い間) に中止されたか。ストリーム開始後の中止はフックが扱う。
+  const collectAbortRef = useRef(false);
 
   const { sessionId, database } = props;
 
@@ -157,31 +150,6 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
       alive = false;
     };
   }, [sessionId, database]);
-
-  // 別のストリームに置き換わっている場合は触らない (ID が一致するときだけ解除する)。
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      abortRef.current = true;
-      const sid = streamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    };
-  }, []);
 
   const allNames = useMemo(
     () => (loaded.kind === "ready" ? loaded.tables.map((x) => x.name) : []),
@@ -242,16 +210,21 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     });
   };
 
+  // 収集中も送信後も同じ「中止」ボタンから止める。
+  const cancelRun = () => {
+    collectAbortRef.current = true;
+    stream.cancel();
+  };
+
   const run = async () => {
     if (loaded.kind !== "ready" || !canGenerate) return;
     // 二重実行 (連打・Cmd+Enter の連続) で 2 本のストリームが走らないよう、同期的に弾く。
-    if (busyRef.current) return;
-    busyRef.current = true;
+    if (!stream.acquire()) return;
     try {
       await runInner(loaded);
     } catch (e) {
-      busyRef.current = false;
-      if (mountedRef.current) setState({ kind: "error", message: String(e), refused: false });
+      stream.release();
+      if (stream.isMounted()) setState({ kind: "error", message: String(e), refused: false });
     }
   };
 
@@ -264,33 +237,33 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
         tone: "warning",
       });
       if (!ok) {
-        busyRef.current = false;
+        stream.release();
         return;
       }
     }
-    abortRef.current = false;
+    collectAbortRef.current = false;
     setState({ kind: "collecting" });
     // インデックスとビュー / ルーチンの定義はテーブル数ぶんの呼び出しになるので、並列度を抑える。
     const limit = schemaDocConcurrency(scopedTables.length);
     const withIndexes = await mapLimited(scopedTables, limit, async (tb) => {
-      if (abortRef.current || tb.isView) return tb;
+      if (collectAbortRef.current || !stream.isMounted() || tb.isView) return tb;
       const indexes = await api.listIndexes(sessionId, database, tb.name).catch(() => []);
       return { ...tb, indexes };
     });
     const targets = selectDocObjects(ready.objects, mode === "all" ? null : scopeNames);
     const objects = await mapLimited(targets, limit, async (o) => {
-      if (abortRef.current) return { kind: o.kind, name: o.name, definition: null };
+      if (collectAbortRef.current || !stream.isMounted()) return { kind: o.kind, name: o.name, definition: null };
       const definition = await api
         .getObjectDefinition(sessionId, database, o.kind, o.name, o.id)
         .catch(() => null);
       return { kind: o.kind, name: o.name, definition };
     });
-    if (!mountedRef.current) {
-      busyRef.current = false;
+    if (!stream.isMounted()) {
+      stream.release();
       return;
     }
-    if (abortRef.current) {
-      busyRef.current = false;
+    if (collectAbortRef.current) {
+      stream.release();
       setState({ kind: "cancelled" });
       return;
     }
@@ -307,79 +280,30 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     // 実際に送るバイト数。バックエンドの上限を超えるなら送らずに絞り込みを促す。
     const sentBytes = utf8Bytes(system) + utf8Bytes(prompt);
     if (sentBytes > SCHEMA_DOC_MAX_PROMPT_BYTES) {
-      busyRef.current = false;
+      stream.release();
       setState({ kind: "tooBig", kb: approxKb(sentBytes) });
       return;
     }
     const sentKb = approxKb(sentBytes);
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    let text = "";
-    setState({ kind: "running", chars: 0, text: "", sentKb });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-          if (mountedRef.current) setState({ kind: "running", chars: text.length, text, sentKb });
-        },
-        onDone: (e) => {
-          stopListener(streamId);
-          setState({
-            kind: "done",
-            doc: assembleSchemaDoc(header, text),
-            truncated: e.stopReason === "max_tokens",
-          });
-        },
-        onError: (e) => {
-          stopListener(streamId);
-          setState({ kind: "error", message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopListener(streamId);
-          setState({ kind: "cancelled" });
-        },
-      });
-      if (!mountedRef.current) {
-        unlisten();
-        streamRef.current = null;
-        busyRef.current = false;
-        return;
-      }
-      unlistenRef.current = unlisten;
-      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
-      if (abortRef.current) {
-        stopListener(streamId);
-        setState({ kind: "cancelled" });
-        return;
-      }
-      await api.runAiRequest({
-        streamId,
+    setState({ kind: "running", sentKb });
+    await stream.start(
+      {
         task: "schemaDoc",
         system,
         prompt,
         settings: toAiSnapshot(ai),
-      });
-      // バックエンドはリクエストの登録が最後なので、登録前の中止 / クローズは cancel_stream が
-      // 空振りする。登録が済んだ今、改めて取り消す (生成が裏で続いて課金されるのを防ぐ)。
-      if (abortRef.current || !mountedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      setState({ kind: "error", message: String(e), refused: false });
-    }
-  };
-
-  const cancel = () => {
-    abortRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
+      },
+      {
+        onDone: ({ text, event }) =>
+          setState({
+            kind: "done",
+            doc: assembleSchemaDoc(header, text),
+            truncated: event.stopReason === "max_tokens",
+          }),
+        onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
+        onCancelled: () => setState({ kind: "cancelled" }),
+      },
+    );
   };
 
   const doc = state.kind === "done" ? state.doc : null;
@@ -550,16 +474,19 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
             <Flex align="center" gap="2" color="app.textMuted" fontSize="sm" aria-live="polite">
               <Spinner size={12} />
               {t("aiSchemaDocCollecting")}
-              <Button type="button" variant="secondary" size="sm" onClick={cancel}>
+              <Button type="button" variant="secondary" size="sm" onClick={cancelRun}>
                 {t("aiSchemaDocCancel")}
               </Button>
             </Flex>
           )}
           {state.kind === "running" && (
-            <Flex align="center" gap="2" color="app.textMuted" fontSize="sm" aria-live="polite">
-              <Spinner size={12} />
-              {t("aiSchemaDocRunning", { chars: state.chars, kb: state.sentKb })}
-              <Button type="button" variant="secondary" size="sm" onClick={cancel}>
+            <Flex align="center" gap="2" fontSize="sm" wrap="wrap">
+              <AiStreamProgress
+                stream={stream}
+                previewText={false}
+                waitingLabel={t("aiSchemaDocRunning", { kb: state.sentKb })}
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={cancelRun}>
                 {t("aiSchemaDocCancel")}
               </Button>
             </Flex>
@@ -568,7 +495,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
             <FormSection>
               <FieldLabel as="div">{t("aiSchemaDocResult")}</FieldLabel>
               <CodePreview wrap maxH="320px" aria-label={t("aiSchemaDocResult")}>
-                {state.kind === "running" ? state.text : state.doc}
+                {state.kind === "running" ? stream.text : state.doc}
               </CodePreview>
             </FormSection>
           )}

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream, type DriverKind, type SchemaDiff, type SyncKind, type SyncPlan } from "../api/tauri";
+import { type DriverKind, type SchemaDiff, type SyncKind, type SyncPlan } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import { dialectLabel, needsSendScopeConfirm } from "../ai/errorExplain";
 import {
   buildSyncRiskPrompt,
@@ -25,13 +25,7 @@ import { Button } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
-import { Spinner } from "./Spinner";
-
-let seq = 0;
-function makeStreamId(): string {
-  seq += 1;
-  return `ai_sync_${Date.now().toString(36)}_${seq.toString(36)}`;
-}
+import { AiStreamProgress } from "./AiStreamProgress";
 
 /** index ごとのリスク項目 (同期文の行バッジ用)。 */
 export type RiskByIndex = ReadonlyMap<number, readonly SyncRiskItem[]>;
@@ -116,50 +110,13 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
   const available = useAiAvailable();
   const { confirm, dialog } = useConfirm();
   const [state, setState] = useState<State>({ kind: "idle" });
-  const busyRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
-  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
-  const abortRef = useRef(false);
+  const stream = useAiStream({ idPrefix: "ai_sync" });
   const { onRisks } = props;
-
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-  }, []);
-
-  const cancelCurrent = useCallback(() => {
-    abortRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      cancelCurrent();
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    };
-  }, [cancelCurrent]);
 
   // プランが差し替わったら、実行中の要求を中止して結果を捨てる (古い結果を新しい文に付けない)。
   // biome-ignore lint/correctness/useExhaustiveDependencies: plan の差し替えだけをトリガーにする
   useEffect(() => {
-    cancelCurrent();
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
+    stream.reset();
     setState({ kind: "idle" });
     onRisks(null);
   }, [props.plan]);
@@ -183,19 +140,18 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
   };
 
   const run = async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
+    if (!stream.acquire()) return;
     try {
       await runInner();
     } catch (e) {
-      busyRef.current = false;
+      stream.release();
       setState({ kind: "error", sends: "", message: String(e), refused: false });
     }
   };
 
   const runInner = async () => {
     const abort = () => {
-      busyRef.current = false;
+      stream.release();
     };
     const sends = sendsLine();
     // データ比較は SQL 本文を送らず件数だけなので、送信範囲の確認は SQL 本文を送るスキーマ比較のみ。
@@ -218,21 +174,30 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
       if (!ok) return abort();
     }
     const statements = props.plan.statements;
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    abortRef.current = false;
-    let text = "";
     onRisks(null);
     setState({ kind: "running", sends });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          if (streamRef.current === streamId) text += e.text;
-        },
-        onDone: () => {
-          if (streamRef.current !== streamId) return;
-          stopListener(streamId);
-          const parsed = parseSyncRiskResponse(text);
+    await stream.start(
+      {
+        task: "syncRisk",
+        system: buildSyncRiskSystem(locale),
+        prompt: buildSyncRiskPrompt({
+          planKind: props.planKind,
+          sourceDriver: props.sourceDriver,
+          targetDriver: props.targetDriver,
+          statements,
+          warnings: props.plan.warnings,
+          allowDestructive: props.allowDestructive,
+          allowDelete: props.allowDelete,
+          diff: props.diff,
+          dataSummary: props.dataSummary,
+          maskLiterals: ai.maskLiterals,
+        }),
+        settings: toAiSnapshot(ai),
+        format: SYNC_RISK_FORMAT,
+      },
+      {
+        parse: parseSyncRiskResponse,
+        onDone: ({ parsed }) => {
           if (!parsed.ok) {
             setState({ kind: "raw", sends, raw: parsed.raw });
             return;
@@ -251,58 +216,10 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
           });
           onRisks(groupRiskByIndex(items));
         },
-        onError: (e) => {
-          if (streamRef.current !== streamId) return;
-          stopListener(streamId);
-          setState({ kind: "error", sends, message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          if (streamRef.current !== streamId) return;
-          stopListener(streamId);
-          setState({ kind: "cancelled", sends });
-        },
-      });
-      if (!mountedRef.current || streamRef.current !== streamId) {
-        unlisten();
-        if (streamRef.current === streamId) streamRef.current = null;
-        return;
-      }
-      unlistenRef.current = unlisten;
-      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
-      if (abortRef.current) {
-        stopListener(streamId);
-        setState({ kind: "cancelled", sends });
-        return;
-      }
-      await api.runAiRequest({
-        streamId,
-        task: "syncRisk",
-        system: buildSyncRiskSystem(locale),
-        prompt: buildSyncRiskPrompt({
-          planKind: props.planKind,
-          sourceDriver: props.sourceDriver,
-          targetDriver: props.targetDriver,
-          statements,
-          warnings: props.plan.warnings,
-          allowDestructive: props.allowDestructive,
-          allowDelete: props.allowDelete,
-          diff: props.diff,
-          dataSummary: props.dataSummary,
-          maskLiterals: ai.maskLiterals,
-        }),
-        settings: toAiSnapshot(ai),
-        format: SYNC_RISK_FORMAT,
-      });
-      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
-      if (abortRef.current || !mountedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      setState({ kind: "error", sends, message: String(e), refused: false });
-    }
+        onError: (f) => setState({ kind: "error", sends, message: f.message, refused: f.refused }),
+        onCancelled: () => setState({ kind: "cancelled", sends }),
+      },
+    );
   };
 
   if (!available) return null;
@@ -335,15 +252,14 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
           {t("aiSyncRiskButton")}
         </Button>
         {running && (
-          <>
-            <Spinner size={12} />
-            <chakra.span color="app.textMuted">{t("aiSyncRiskRunning")}</chakra.span>
-            <Button type="button" variant="secondary" size="sm" onClick={cancelCurrent}>
-              {t("aiSyncRiskCancel")}
-            </Button>
-          </>
+          <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
+            {t("aiSyncRiskCancel")}
+          </Button>
         )}
       </Flex>
+      {running && (
+        <AiStreamProgress stream={stream} fields={["summary"]} waitingLabel={t("aiSyncRiskRunning")} />
+      )}
       <Callout tone="info">{t("aiSyncRiskDisclaimer")}</Callout>
       {state.kind !== "idle" && state.sends !== "" && (
         <chakra.span color="app.textMuted" fontSize="xs">

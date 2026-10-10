@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream } from "../api/tauri";
+import { api } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import { dialectLabel } from "../ai/errorExplain";
 import {
   approxKb,
@@ -23,13 +23,8 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { AiStreamProgress } from "./AiStreamProgress";
 import { Spinner } from "./Spinner";
-
-let seq = 0;
-function makeStreamId(): string {
-  seq += 1;
-  return `ai_nl2sql_${Date.now().toString(36)}_${seq.toString(36)}`;
-}
 
 type Schema =
   | { kind: "loading" }
@@ -38,7 +33,7 @@ type Schema =
 
 type State =
   | { kind: "idle" }
-  | { kind: "running"; chars: number }
+  | { kind: "running" }
   | { kind: "done"; value: Nl2SqlResponse }
   | { kind: "raw"; raw: string }
   | { kind: "error"; message: string; refused: boolean }
@@ -75,12 +70,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const [schema, setSchema] = useState<Schema>({ kind: "loading" });
   const [state, setState] = useState<State>({ kind: "idle" });
   const [done, setDone] = useState<null | "inserted" | "newTab">(null);
-  const busyRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
-  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
-  const abortRef = useRef(false);
+  const stream = useAiStream({ idPrefix: "ai_nl2sql" });
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const database = resolveNl2SqlDatabase(props.database, props.driver);
@@ -115,30 +105,6 @@ export function AiQueryModal(props: AiQueryModalProps) {
     };
   }, [props.sessionId, database]);
 
-  // 別のストリームに置き換わっている場合は触らない (ID が一致するときだけ解除する)。
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const sid = streamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    };
-  }, []);
-
   const summary = useMemo(
     () => (schema.kind === "ready" ? summarizeSchemaSend(schema.tables, schema.foreignKeys) : null),
     [schema],
@@ -161,12 +127,11 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const run = async () => {
     if (schema.kind !== "ready" || trimmed === "") return;
     // 二重実行 (連打・Cmd+Enter の連続) で 2 本のストリームが走らないよう、同期的に弾く。
-    if (busyRef.current) return;
-    busyRef.current = true;
+    if (!stream.acquire()) return;
     try {
       await runInner(schema);
     } catch (e) {
-      busyRef.current = false;
+      stream.release();
       setState({ kind: "error", message: String(e), refused: false });
     }
   };
@@ -180,51 +145,14 @@ export function AiQueryModal(props: AiQueryModalProps) {
         tone: "warning",
       });
       if (!ok) {
-        busyRef.current = false;
+        stream.release();
         return;
       }
     }
     setDone(null);
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    abortRef.current = false;
-    let text = "";
-    setState({ kind: "running", chars: 0 });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-          if (mountedRef.current) setState({ kind: "running", chars: text.length });
-        },
-        onDone: () => {
-          stopListener(streamId);
-          const parsed = parseNl2SqlResponse(text);
-          setState(parsed.ok ? { kind: "done", value: parsed.value } : { kind: "raw", raw: parsed.raw });
-        },
-        onError: (e) => {
-          stopListener(streamId);
-          setState({ kind: "error", message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopListener(streamId);
-          setState({ kind: "cancelled" });
-        },
-      });
-      if (!mountedRef.current) {
-        unlisten();
-        streamRef.current = null;
-        busyRef.current = false;
-        return;
-      }
-      unlistenRef.current = unlisten;
-      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
-      if (abortRef.current) {
-        stopListener(streamId);
-        setState({ kind: "cancelled" });
-        return;
-      }
-      await api.runAiRequest({
-        streamId,
+    setState({ kind: "running" });
+    await stream.start(
+      {
         task: "nl2sql",
         system: buildNl2SqlSystem({
           driver: props.driver,
@@ -237,27 +165,15 @@ export function AiQueryModal(props: AiQueryModalProps) {
         prompt: buildNl2SqlPrompt(request),
         settings: toAiSnapshot(ai),
         format: NL2SQL_FORMAT,
-      });
-      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
-      if (abortRef.current || !mountedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      setState({ kind: "error", message: String(e), refused: false });
-    }
-  };
-
-  const cancel = () => {
-    abortRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
+      },
+      {
+        parse: parseNl2SqlResponse,
+        onDone: ({ parsed }) =>
+          setState(parsed.ok ? { kind: "done", value: parsed.value } : { kind: "raw", raw: parsed.raw }),
+        onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
+        onCancelled: () => setState({ kind: "cancelled" }),
+      },
+    );
   };
 
   if (!ai.enabled) return null;
@@ -319,12 +235,13 @@ export function AiQueryModal(props: AiQueryModalProps) {
           </Callout>
         )}
         {running && (
-          <Flex align="center" gap="2" color="app.textMuted" fontSize="sm" aria-live="polite">
-            <Spinner size={12} />
-            {t("aiQueryRunning", { chars: state.chars })}
-            <Button type="button" variant="secondary" size="sm" onClick={cancel}>
-              {t("aiQueryCancel")}
-            </Button>
+          <Flex direction="column" gap="2" fontSize="sm">
+            <AiStreamProgress stream={stream} fields={["sql", "explanation"]} waitingLabel={t("aiQueryRunning")} />
+            <Flex>
+              <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
+                {t("aiQueryCancel")}
+              </Button>
+            </Flex>
           </Flex>
         )}
         {state.kind === "done" && (

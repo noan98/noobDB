@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream } from "../api/tauri";
+import { api } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import {
   buildExplainInterpretPrompt,
   buildExplainInterpretSystem,
@@ -19,14 +19,8 @@ import { Button } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
-import { Spinner } from "./Spinner";
+import { AiStreamProgress } from "./AiStreamProgress";
 import { Tooltip } from "./Tooltip";
-
-let seq = 0;
-function makeStreamId(): string {
-  seq += 1;
-  return `ai_explain_${Date.now().toString(36)}_${seq.toString(36)}`;
-}
 
 type State =
   | { kind: "idle" }
@@ -70,12 +64,7 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [collapsed, setCollapsed] = useState(false);
   const [inserted, setInserted] = useState<ReadonlySet<number>>(new Set());
-  const busyRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
-  // 中止ボタンが押されたか。ストリーム登録前の中止は cancel_stream が空振りするため、登録後に取り直す。
-  const abortRef = useRef(false);
+  const stream = useAiStream({ idPrefix: "ai_explain" });
 
   useEffect(() => {
     let alive = true;
@@ -89,30 +78,6 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
       });
     return () => {
       alive = false;
-    };
-  }, []);
-
-  // 別のストリームに置き換わっている場合は触らない (ID が一致するときだけ解除する)。
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const sid = streamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      unlistenRef.current?.();
-      unlistenRef.current = null;
     };
   }, []);
 
@@ -131,20 +96,19 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
 
   const run = async () => {
     // 二重クリックで 2 本のストリームが走らないよう、同期的に弾く。
-    if (busyRef.current || props.plan === null) return;
-    busyRef.current = true;
+    if (props.plan === null || !stream.acquire()) return;
     try {
       await runInner(props.plan);
     } catch (e) {
-      busyRef.current = false;
+      stream.release();
       setState({ kind: "error", sends: "", message: String(e), refused: false });
     }
   };
 
   const runInner = async (plan: string) => {
-    // busyRef はストリームの終了 (stopListener) まで保持する。送信前に取りやめた場合は戻す。
+    // 確保した実行権はストリームの終了までフックが保持する。送信前に取りやめた場合は戻す。
     const abort = () => {
-      busyRef.current = false;
+      stream.release();
     };
     if (needsSendScopeConfirm(ai.sendScope)) {
       const ok = await confirm({
@@ -182,49 +146,9 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
     );
     const tables = fetched.filter((x): x is ExplainInterpretTable => x !== null);
     const sends = sendsLine(tables.length);
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    abortRef.current = false;
-    let text = "";
     setState({ kind: "running", sends });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-        },
-        onDone: () => {
-          stopListener(streamId);
-          const parsed = parseExplainInterpretResponse(text);
-          setState(
-            parsed.ok
-              ? { kind: "done", sends, value: parsed.value, masked: ai.maskLiterals }
-              : { kind: "raw", sends, raw: parsed.raw },
-          );
-        },
-        onError: (e) => {
-          stopListener(streamId);
-          setState({ kind: "error", sends, message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopListener(streamId);
-          setState({ kind: "cancelled", sends });
-        },
-      });
-      if (!mountedRef.current) {
-        unlisten();
-        streamRef.current = null;
-        busyRef.current = false;
-        return;
-      }
-      unlistenRef.current = unlisten;
-      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
-      if (abortRef.current) {
-        stopListener(streamId);
-        setState({ kind: "cancelled", sends });
-        return;
-      }
-      await api.runAiRequest({
-        streamId,
+    await stream.start(
+      {
         task: "explainInterpret",
         system: buildExplainInterpretSystem(locale, props.driver),
         prompt: buildExplainInterpretPrompt({
@@ -237,27 +161,19 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
         }),
         settings: toAiSnapshot(ai),
         format: EXPLAIN_INTERPRET_FORMAT,
-      });
-      // 登録前の中止 / アンマウントは cancel_stream が空振りするので、登録が済んだ今あらためて取り消す。
-      if (abortRef.current || !mountedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      setState({ kind: "error", sends, message: String(e), refused: false });
-    }
-  };
-
-  const cancel = () => {
-    abortRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
+      },
+      {
+        parse: parseExplainInterpretResponse,
+        onDone: ({ parsed }) =>
+          setState(
+            parsed.ok
+              ? { kind: "done", sends, value: parsed.value, masked: ai.maskLiterals }
+              : { kind: "raw", sends, raw: parsed.raw },
+          ),
+        onError: (f) => setState({ kind: "error", sends, message: f.message, refused: f.refused }),
+        onCancelled: () => setState({ kind: "cancelled", sends }),
+      },
+    );
   };
 
   if (!ai.enabled || !hasKey) return null;
@@ -294,13 +210,9 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
           </Button>
         </Tooltip>
         {running && (
-          <>
-            <Spinner size={12} />
-            <chakra.span color="app.textMuted">{t("explainAiRunning")}</chakra.span>
-            <Button type="button" variant="secondary" size="sm" onClick={cancel}>
-              {t("explainAiCancel")}
-            </Button>
-          </>
+          <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
+            {t("explainAiCancel")}
+          </Button>
         )}
         {hasResult && (
           <Button
@@ -314,6 +226,9 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
           </Button>
         )}
       </Flex>
+      {running && (
+        <AiStreamProgress stream={stream} fields={["summary"]} waitingLabel={t("explainAiRunning")} />
+      )}
       {state.kind !== "idle" && (
         <chakra.span color="app.textMuted" fontSize="xs">
           {state.sends}

@@ -103,7 +103,7 @@ describe("AiSqlPanel (#695)", () => {
     expect(screen.queryByRole("button", { name: t("bottomPanelClose") })).toBeNull();
   });
 
-  it("解説: 自動送信し (task: sqlExplain)、受信中は文字数、完了後に構造化表示する", async () => {
+  it("解説: 自動送信し (task: sqlExplain)、受信中は経過 / 途中の文章、完了後に構造化表示する", async () => {
     renderWithProviders(ui(req()));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
     expect(onRequestConsumed).toHaveBeenCalled();
@@ -112,9 +112,12 @@ describe("AiSqlPanel (#695)", () => {
     expect(arg.model).toBeUndefined();
     expect(arg.format.type).toBe("json_schema");
     act(() => handlers?.onDelta?.({ streamId: "x", text: "{\"over" }));
-    await screen.findByText(t("aiSqlRunning", { chars: 6 }));
+    await screen.findByText(t("aiStreamChars", { count: 6 }));
+    const mid = explainJson.indexOf("VIEW") + 2;
+    act(() => handlers?.onDelta?.({ streamId: "x", text: explainJson.slice(6, mid) }));
+    expect((await screen.findByTestId("ai-stream-preview")).textContent).toBe("OVERVI");
     act(() => {
-      handlers?.onDelta?.({ streamId: "x", text: explainJson.slice(6) });
+      handlers?.onDelta?.({ streamId: "x", text: explainJson.slice(mid) });
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("OVERVIEW");

@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream, type AiConnectionTestResult } from "../api/tauri";
+import { api, type AiConnectionTestResult } from "../api/tauri";
 import {
   AI_TASK_DEFS,
   AI_TASK_KINDS,
@@ -16,6 +15,7 @@ import { AI_SEND_SCOPES, toAiSnapshot, type AiSendScope } from "../ai/aiSettings
 import { connectionTestView } from "../ai/connectionTest";
 import { useT, type I18nKey } from "../i18n";
 import { setAiKeyPresent } from "../ai/aiKeyStore";
+import { useAiStream } from "../ai/useAiStream";
 import {
   setAiAllowRowData,
   setAiDefaultModel,
@@ -27,6 +27,7 @@ import {
   setAiTaskModel,
   useSettings,
 } from "../settings";
+import { AiStreamProgress } from "./AiStreamProgress";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -67,18 +68,12 @@ const SEND_SCOPE_LABEL: Record<AiSendScope, I18nKey> = {
   schemaAndSql: "aiSendScopeSchemaAndSql",
 };
 
-let sampleSeq = 0;
-function makeSampleStreamId(): string {
-  sampleSeq += 1;
-  return `ai_${Date.now().toString(36)}_${sampleSeq.toString(36)}`;
-}
-
 type SampleState =
   | { kind: "idle" }
-  | { kind: "running"; text: string }
-  | { kind: "done"; text: string; info: string; fallback: string | null }
-  | { kind: "error"; text: string; message: string; refused: boolean }
-  | { kind: "cancelled"; text: string };
+  | { kind: "running" }
+  | { kind: "done"; info: string; fallback: string | null }
+  | { kind: "error"; message: string; refused: boolean }
+  | { kind: "cancelled" };
 
 /**
  * 設定画面「AI アシスタント」(#690) の中身。有効化 (初回は送信への明示同意)・API キー
@@ -99,9 +94,8 @@ export function AiSettings() {
   const [testResult, setTestResult] = useState<AiConnectionTestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [sample, setSample] = useState<SampleState>({ kind: "idle" });
-  const sampleStreamRef = useRef<string | null>(null);
-  const sampleUnlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
+  // サンプル要求の本文 (`stream.text`) は完了 / 中止 / エラー後も次の要求まで残して表示する。
+  const stream = useAiStream({ idPrefix: "ai" });
 
   useEffect(() => {
     let alive = true;
@@ -116,28 +110,6 @@ export function AiSettings() {
       });
     return () => {
       alive = false;
-    };
-  }, []);
-
-  const stopSampleListener = useCallback(() => {
-    sampleUnlistenRef.current?.();
-    sampleUnlistenRef.current = null;
-    sampleStreamRef.current = null;
-  }, []);
-
-  // 画面を閉じたら実行中のサンプル要求を止める。
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const sid = sampleStreamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      sampleUnlistenRef.current?.();
-      sampleUnlistenRef.current = null;
     };
   }, []);
 
@@ -206,22 +178,18 @@ export function AiSettings() {
   // (非ストリーミング) とは別に、ストリーミング経路 (delta / done / error / cancel) を
   // 実際に通して確かめられるようにしている。
   const runSample = async () => {
-    const streamId = makeSampleStreamId();
-    sampleStreamRef.current = streamId;
-    let text = "";
-    setSample({ kind: "running", text });
-    try {
-      // 購読してから開始する (最初の delta を取りこぼさない)。
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-          setSample({ kind: "running", text });
-        },
-        onDone: (e) => {
-          stopSampleListener();
+    if (!stream.acquire()) return;
+    setSample({ kind: "running" });
+    await stream.start(
+      {
+        task: "generic",
+        prompt: t("aiSamplePrompt"),
+        settings: toAiSnapshot(ai),
+      },
+      {
+        onDone: ({ event: e }) =>
           setSample({
             kind: "done",
-            text,
             info: t("aiSampleDone", {
               model: e.model,
               input: e.usage.inputTokens,
@@ -230,44 +198,11 @@ export function AiSettings() {
             fallback: e.fallbackUsed
               ? t("aiSampleFallback", { model: e.model, requested: e.requestedModel })
               : null,
-          });
-        },
-        onError: (e) => {
-          stopSampleListener();
-          setSample({ kind: "error", text, message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopSampleListener();
-          setSample({ kind: "cancelled", text });
-        },
-      });
-      // 購読の確立中にアンマウントされると、cleanup の cancelStream は登録前に走って空振りし
-      // リスナーが残る。確立後に確認して、残っていれば外して要求を出さない。
-      if (!mountedRef.current) {
-        unlisten();
-        sampleStreamRef.current = null;
-        return;
-      }
-      sampleUnlistenRef.current = unlisten;
-      await api.runAiRequest({
-        streamId,
-        task: "generic",
-        prompt: t("aiSamplePrompt"),
-        settings: toAiSnapshot(ai),
-      });
-    } catch (e) {
-      stopSampleListener();
-      setSample({ kind: "error", text, message: String(e), refused: false });
-    }
-  };
-
-  const cancelSample = () => {
-    const sid = sampleStreamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
+          }),
+        onError: (f) => setSample({ kind: "error", message: f.message, refused: f.refused }),
+        onCancelled: () => setSample({ kind: "cancelled" }),
+      },
+    );
   };
 
   const usable = ai.enabled && hasKey;
@@ -530,13 +465,14 @@ export function AiSettings() {
           {t("aiSampleRequest")}
         </Button>
         {sampleRunning && (
-          <Button type="button" variant="secondary" size="sm" onClick={cancelSample}>
+          <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
             {t("aiSampleCancel")}
           </Button>
         )}
         <SettingsInfo>{t("aiSampleRequestHelp")}</SettingsInfo>
       </Flex>
-      {sample.kind !== "idle" && sample.text !== "" && (
+      {sampleRunning && <AiStreamProgress stream={stream} previewText={false} />}
+      {sample.kind !== "idle" && stream.text !== "" && (
         <chakra.div
           whiteSpace="pre-wrap"
           fontSize="sm"
@@ -544,7 +480,7 @@ export function AiSettings() {
           aria-live="polite"
           data-testid="ai-sample-text"
         >
-          {sample.text}
+          {stream.text}
         </chakra.div>
       )}
       {sample.kind === "done" && (

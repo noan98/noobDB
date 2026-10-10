@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, listenAiStream } from "../api/tauri";
+import { api } from "../api/tauri";
 import type { ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { useAiStream } from "../ai/useAiStream";
 import { needsSendScopeConfirm } from "../ai/errorExplain";
 import {
   buildHistorySearchPrompt,
@@ -28,14 +28,8 @@ import { Callout } from "./Callout";
 import { CopyButton } from "./CopyButton";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
-import { Spinner } from "./Spinner";
+import { AiStreamProgress } from "./AiStreamProgress";
 import { useCopyFeedback } from "./useCopyFeedback";
-
-let seq = 0;
-function makeStreamId(): string {
-  seq += 1;
-  return `ai_hist_${Date.now().toString(36)}_${seq.toString(36)}`;
-}
 
 /** SQL 全文の取得を同時に走らせる件数。 */
 const FETCH_BATCH = 20;
@@ -60,7 +54,7 @@ export interface HistoryFilterParams {
 type State =
   | { kind: "idle" }
   | { kind: "empty" }
-  | { kind: "running"; sends: string }
+  | { kind: "running"; sends: string; mode: Mode }
   | { kind: "matches"; sends: string; matches: MatchRow[]; notes: string[] }
   | { kind: "summary"; sends: string; text: string; notes: string[] }
   | { kind: "raw"; sends: string; raw: string }
@@ -90,42 +84,15 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
   const { copied, copy } = useCopyFeedback();
   const [query, setQuery] = useState("");
   const [state, setState] = useState<State>({ kind: "idle" });
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
+  const stream = useAiStream({ idPrefix: "ai_hist" });
+  // 履歴の取得 / 確認 / SQL 全文の取得など、ストリーム開始前の準備中か。
+  const [preparing, setPreparing] = useState(false);
   const stopRef = useRef(false);
-  const streamRef = useRef<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const mountedRef = useRef(true);
 
-  const stopListener = useCallback((streamId: string) => {
-    if (streamRef.current !== streamId) return;
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    streamRef.current = null;
-    busyRef.current = false;
-    setBusy(false);
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      stopRef.current = true;
-      const sid = streamRef.current;
-      if (sid) {
-        void api.cancelStream(sid).catch(() => {
-          /* すでに完了 */
-        });
-      }
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    };
-  }, []);
-
-  const releaseBusy = useCallback(() => {
-    busyRef.current = false;
-    setBusy(false);
-  }, []);
+  const releaseBusy = () => {
+    stream.release();
+    setPreparing(false);
+  };
 
   const sendsLine = (count: number, databases: string) =>
     t("aiHistorySends", {
@@ -135,16 +102,15 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
     });
 
   const run = async (mode: Mode) => {
-    if (busyRef.current) return;
     if (mode === "search" && query.trim() === "") return;
-    busyRef.current = true;
-    setBusy(true);
+    if (!stream.acquire()) return;
+    setPreparing(true);
     stopRef.current = false;
     try {
       await runInner(mode);
     } catch (e) {
       releaseBusy();
-      if (mountedRef.current) setState({ kind: "error", sends: "", message: String(e), refused: false });
+      if (stream.isMounted()) setState({ kind: "error", sends: "", message: String(e), refused: false });
     }
   };
 
@@ -159,7 +125,7 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
       setState({ kind: "error", sends: "", message: String(e), refused: false });
       return;
     }
-    if (!mountedRef.current) return releaseBusy();
+    if (!stream.isMounted()) return releaseBusy();
     const { items: limited, overflow } = limitCandidates(listed);
     if (limited.length === 0) {
       setState({ kind: "empty" });
@@ -173,7 +139,7 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
     } catch {
       profilesFailed = true;
     }
-    if (!mountedRef.current) return releaseBusy();
+    if (!stream.isMounted()) return releaseBusy();
     const profileById = new Map(profiles.map((p) => [p.id, p]));
     const productionIds = new Set(profiles.filter((p) => p.is_production).map((p) => p.id));
     const connName = (e: HistoryEntry) =>
@@ -228,10 +194,10 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
       tone: "warning",
     });
     if (!ok) return releaseBusy();
-    if (!mountedRef.current) return releaseBusy();
+    if (!stream.isMounted()) return releaseBusy();
 
     const sendsPre = sendsLine(limited.length, databases);
-    setState({ kind: "running", sends: sendsPre });
+    setState({ kind: "running", sends: sendsPre, mode });
 
     // SQL 全文は一覧に無いので、確認後に必要な分だけ取る。取れない行 (削除済み等) は数えて通知する。
     const candidates: HistoryCandidate[] = [];
@@ -260,9 +226,9 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
         if (c) candidates.push(c);
         else failedFetch += 1;
       }
-      if (!mountedRef.current || stopRef.current) {
+      if (!stream.isMounted() || stopRef.current) {
         releaseBusy();
-        if (mountedRef.current) setState({ kind: "cancelled", sends: sendsPre });
+        if (stream.isMounted()) setState({ kind: "cancelled", sends: sendsPre });
         return;
       }
     }
@@ -282,17 +248,22 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
     const snapshot = new Map(limited.map((e) => [e.id, e]));
     const allowed = new Set(formatted.included.map((c) => c.id));
     const sends = sendsLine(formatted.included.length, databases);
-    const streamId = makeStreamId();
-    streamRef.current = streamId;
-    let text = "";
-    setState({ kind: "running", sends });
-    try {
-      const unlisten = await listenAiStream(streamId, {
-        onDelta: (e) => {
-          text += e.text;
-        },
-        onDone: () => {
-          stopListener(streamId);
+    setState({ kind: "running", sends, mode });
+    // 以降は実行中の判定をフック (stream.running) に引き継ぐ。
+    setPreparing(false);
+    await stream.start(
+      {
+        task: "historySearch",
+        system: mode === "search" ? buildHistorySearchSystem(locale) : buildHistorySummarySystem(locale),
+        prompt:
+          mode === "search"
+            ? buildHistorySearchPrompt({ query, candidates: formatted })
+            : buildHistorySummaryPrompt({ periodLabel: promptPeriod, candidates: formatted }),
+        settings: toAiSnapshot(ai),
+        ...(mode === "search" ? { format: HISTORY_SEARCH_FORMAT } : {}),
+      },
+      {
+        onDone: ({ text }) => {
           if (mode === "summary") {
             setState({ kind: "summary", sends, text: text.trim(), notes });
             return;
@@ -308,66 +279,20 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
           });
           setState({ kind: "matches", sends, matches, notes });
         },
-        onError: (e) => {
-          stopListener(streamId);
-          setState({ kind: "error", sends, message: e.error, refused: e.kind === "aiRefused" });
-        },
-        onCancelled: () => {
-          stopListener(streamId);
-          setState({ kind: "cancelled", sends });
-        },
-      });
-      if (!mountedRef.current) {
-        unlisten();
-        streamRef.current = null;
-        releaseBusy();
-        void api.cancelStream(streamId).catch(() => {
-          /* まだ登録前 / すでに完了 */
-        });
-        return;
-      }
-      unlistenRef.current = unlisten;
-      // 購読を待つ間に中止された場合は、リクエストを送らずに終える。
-      if (stopRef.current) {
-        stopListener(streamId);
-        setState({ kind: "cancelled", sends });
-        return;
-      }
-      await api.runAiRequest({
-        streamId,
-        task: "historySearch",
-        system: mode === "search" ? buildHistorySearchSystem(locale) : buildHistorySummarySystem(locale),
-        prompt:
-          mode === "search"
-            ? buildHistorySearchPrompt({ query, candidates: formatted })
-            : buildHistorySummaryPrompt({ periodLabel: promptPeriod, candidates: formatted }),
-        settings: toAiSnapshot(ai),
-        ...(mode === "search" ? { format: HISTORY_SEARCH_FORMAT } : {}),
-      });
-      // 登録前に中止 / アンマウントされた場合は、登録が済んだ今あらためて止める。
-      if (stopRef.current || !mountedRef.current) {
-        void api.cancelStream(streamId).catch(() => {
-          /* すでに完了 */
-        });
-      }
-    } catch (e) {
-      stopListener(streamId);
-      if (mountedRef.current) setState({ kind: "error", sends, message: String(e), refused: false });
-    }
+        onError: (f) => setState({ kind: "error", sends, message: f.message, refused: f.refused }),
+        onCancelled: () => setState({ kind: "cancelled", sends }),
+      },
+    );
   };
 
+  // 準備中 (stopRef) もストリーム (フック) も同じ「中止」ボタンから止める。
   const cancel = () => {
     stopRef.current = true;
-    const sid = streamRef.current;
-    if (sid) {
-      void api.cancelStream(sid).catch(() => {
-        /* すでに完了 */
-      });
-    }
+    stream.cancel();
   };
 
   if (!available) return null;
-  const running = busy;
+  const running = preparing || stream.running;
 
   return (
     <Flex
@@ -425,15 +350,18 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
           {t("aiHistorySummaryRun")}
         </Button>
         {running && (
-          <>
-            <Spinner size={12} />
-            <chakra.span color="app.textMuted">{t("aiHistoryRunning")}</chakra.span>
-            <Button type="button" variant="secondary" size="sm" onClick={cancel}>
-              {t("aiHistoryCancel")}
-            </Button>
-          </>
+          <Button type="button" variant="secondary" size="sm" onClick={cancel}>
+            {t("aiHistoryCancel")}
+          </Button>
         )}
       </Flex>
+      {running && (
+        <AiStreamProgress
+          stream={stream}
+          previewText={state.kind === "running" && state.mode === "summary"}
+          waitingLabel={t("aiHistoryRunning")}
+        />
+      )}
       {state.kind === "empty" && (
         <Callout tone="info" role="status">
           {t("aiHistoryNoCandidates")}
