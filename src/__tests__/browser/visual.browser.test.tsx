@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import type { ReactElement } from "react";
 import { renderInBrowser } from "./render";
 import { ResultGrid } from "../../components/ResultGrid";
@@ -53,13 +53,23 @@ afterEach(() => {
 async function renderVisual(ui: ReactElement, theme: Theme) {
   applyTheme(theme);
   await renderInBrowser(
-    <div
-      data-testid="visual-root"
-      style={{ width: "640px", padding: "16px", background: "var(--app-bg)" }}
-    >
-      {ui}
-    </div>,
+    <>
+      <div
+        data-testid="visual-root"
+        style={{ width: "640px", padding: "16px", background: "var(--app-bg)" }}
+      >
+        {ui}
+      </div>
+      {/* マウスポインタの退避先。ポインタは前のテストの位置に残るため、そのままだと
+          結果グリッドの行などに乗ったまま :hover の見た目で撮れることがあり、
+          ベースラインが実行ごとに揺れる。撮影前に必ず画面の隅へ動かす。 */}
+      <div
+        data-testid="visual-pointer-park"
+        style={{ position: "fixed", right: 0, bottom: 0, width: "4px", height: "4px" }}
+      />
+    </>,
   );
+  await userEvent.hover(page.getByTestId("visual-pointer-park"));
   return page.getByTestId("visual-root");
 }
 
