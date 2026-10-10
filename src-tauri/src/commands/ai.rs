@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::ai::client::{run_once, run_streaming, AiCompletion, ReqwestTransport};
 use crate::ai::models::{resolve_effort, resolve_model, AiSettingsSnapshot, AiTaskKind};
-use crate::ai::request::{AiRequestSpec, DEFAULT_MAX_TOKENS};
+use crate::ai::request::{AiChatMessage, AiChatRole, AiRequestSpec, DEFAULT_MAX_TOKENS};
 use crate::ai::sse::AiUsage;
 use crate::error::{AppError, Result};
 use crate::profiles::secrets;
@@ -30,6 +30,9 @@ const EV_AI_ERROR: &str = "ai-stream:error";
 
 /// ユーザプロンプト / system の上限 (バイト)。巨大なスキーマ丸ごと送信などの事故を防ぐ。
 const MAX_PROMPT_BYTES: usize = 1024 * 1024;
+/// 会話履歴の発言数の上限 (user / assistant 合わせて)。フロントは直近 5 往復 (10 件) に絞る
+/// ので、それを超える入力は組み立て側の不具合として拒否する (#1471)。
+const MAX_HISTORY_MESSAGES: usize = 20;
 /// 接続テストの全体タイムアウト。
 const TEST_TIMEOUT_SECS: u64 = 60;
 /// 接続テストの `max_tokens`。thinking が常時オンなので小さすぎると本文が出ない。
@@ -142,6 +145,46 @@ fn validate_format(format: &serde_json::Value) -> Result<serde_json::Value> {
     }
 }
 
+/// 会話履歴を検証する (#1471)。user 始まり・user / assistant 交互・assistant 終わり
+/// (続けて今回の user プロンプトが付く) で、各発言が空でなく、件数が上限以内であること。
+fn validate_history(history: &[AiChatMessage]) -> Result<()> {
+    let invalid = |msg: &str| Err(AppError::InvalidInput(msg.into()));
+    if history.len() > MAX_HISTORY_MESSAGES {
+        return invalid("the conversation history is too long");
+    }
+    if history.len() % 2 != 0 {
+        return invalid("the conversation history must end with an assistant message");
+    }
+    for (i, m) in history.iter().enumerate() {
+        let expected = if i % 2 == 0 {
+            AiChatRole::User
+        } else {
+            AiChatRole::Assistant
+        };
+        if m.role != expected {
+            return invalid("the conversation history must alternate user and assistant");
+        }
+        if m.content.trim().is_empty() {
+            return invalid("the conversation history has an empty message");
+        }
+    }
+    Ok(())
+}
+
+/// system / prompt / 履歴を合算したバイト数が上限以内か。
+fn within_prompt_limit(
+    prompt: &str,
+    system: Option<&str>,
+    system_cached: Option<&str>,
+    history: &[AiChatMessage],
+) -> bool {
+    let total = prompt.len()
+        + system.map_or(0, str::len)
+        + system_cached.map_or(0, str::len)
+        + history.iter().map(|m| m.content.len()).sum::<usize>();
+    total <= MAX_PROMPT_BYTES
+}
+
 // 要求仕様の各項目をそのまま受ける組み立て関数で、構造体に包むと呼び出し側が冗長になるため許容する。
 #[allow(clippy::too_many_arguments)]
 fn build_spec(
@@ -149,6 +192,7 @@ fn build_spec(
     settings: &AiSettingsSnapshot,
     system: Option<String>,
     system_cached: Option<String>,
+    history: Vec<AiChatMessage>,
     prompt: String,
     max_tokens: u32,
     stream: bool,
@@ -159,6 +203,7 @@ fn build_spec(
         effort: resolve_effort(task, settings),
         system,
         system_cached,
+        history,
         prompt,
         max_tokens,
         stream,
@@ -202,18 +247,22 @@ pub async fn run_ai_request(
     settings: AiSettingsSnapshot,
     format: Option<serde_json::Value>,
     system_cached: Option<String>,
+    history: Option<Vec<AiChatMessage>>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     require_enabled(&settings)?;
+    let history = history.unwrap_or_default();
+    validate_history(&history)?;
     let format = format.as_ref().map(validate_format).transpose()?;
     if prompt.trim().is_empty() {
         return Err(AppError::InvalidInput("the prompt is empty".into()));
     }
-    if prompt.len()
-        + system.as_ref().map_or(0, String::len)
-        + system_cached.as_ref().map_or(0, String::len)
-        > MAX_PROMPT_BYTES
-    {
+    if !within_prompt_limit(
+        &prompt,
+        system.as_deref(),
+        system_cached.as_deref(),
+        &history,
+    ) {
         return Err(AppError::InvalidInput("the prompt is too large".into()));
     }
     let api_key = require_api_key()?;
@@ -222,6 +271,7 @@ pub async fn run_ai_request(
         &settings,
         system,
         system_cached,
+        history,
         prompt,
         DEFAULT_MAX_TOKENS,
         true,
@@ -316,6 +366,7 @@ pub async fn test_ai_connection(settings: AiSettingsSnapshot) -> Result<AiConnec
             &settings,
             None,
             None,
+            Vec::new(),
             TEST_PROMPT.to_string(),
             TEST_MAX_TOKENS,
             false,
@@ -396,6 +447,58 @@ mod tests {
         ] {
             assert!(validate_format(&bad).is_err(), "{bad}");
         }
+    }
+
+    fn m(role: &str, content: &str) -> AiChatMessage {
+        AiChatMessage {
+            role: if role == "user" {
+                AiChatRole::User
+            } else {
+                AiChatRole::Assistant
+            },
+            content: content.into(),
+        }
+    }
+
+    #[test]
+    fn history_validation_accepts_alternating_pairs_and_empty() {
+        assert!(validate_history(&[]).is_ok());
+        assert!(validate_history(&[m("user", "q"), m("assistant", "a")]).is_ok());
+        assert!(validate_history(&[
+            m("user", "q1"),
+            m("assistant", "a1"),
+            m("user", "q2"),
+            m("assistant", "a2"),
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn history_validation_rejects_bad_shapes() {
+        // user で終わる / assistant 始まり / 同じ role の連続 / 空 / 長すぎる (不明な role は serde が拒否)。
+        assert!(validate_history(&[m("user", "q")]).is_err());
+        assert!(validate_history(&[m("assistant", "a"), m("user", "q")]).is_err());
+        assert!(validate_history(&[m("user", "q"), m("user", "q2")]).is_err());
+        assert!(validate_history(&[m("user", " "), m("assistant", "a")]).is_err());
+        let long: Vec<AiChatMessage> = (0..=MAX_HISTORY_MESSAGES)
+            .map(|i| m(if i % 2 == 0 { "user" } else { "assistant" }, "x"))
+            .collect();
+        assert!(validate_history(&long).is_err());
+    }
+
+    #[test]
+    fn prompt_limit_includes_history() {
+        let half = "a".repeat(MAX_PROMPT_BYTES / 2);
+        assert!(within_prompt_limit(&half, None, None, &[]));
+        let history = [m("user", &half), m("assistant", "ok")];
+        assert!(!within_prompt_limit(&half, None, None, &history));
+        assert!(!within_prompt_limit(
+            "p",
+            Some(&half),
+            Some(&half),
+            &history
+        ));
+        assert!(within_prompt_limit("p", None, None, &history));
     }
 
     #[test]

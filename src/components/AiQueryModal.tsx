@@ -3,6 +3,13 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiStream } from "../ai/useAiStream";
+import {
+  appendExchange,
+  buildHistory,
+  historyBudget,
+  MAX_HISTORY_EXCHANGES,
+  type AiExchange,
+} from "../ai/conversation";
 import { dialectLabel } from "../ai/errorExplain";
 import {
   approxKb,
@@ -70,12 +77,21 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const [schema, setSchema] = useState<Schema>({ kind: "loading" });
   const [state, setState] = useState<State>({ kind: "idle" });
   const [done, setDone] = useState<null | "inserted" | "newTab">(null);
+  // 追い質問 (#1471): これまでの往復 (送ったプロンプトと回答の本文)。新規の生成で作り直す。
+  const [exchanges, setExchanges] = useState<AiExchange[]>([]);
+  const [followUp, setFollowUp] = useState("");
+  // 最初の生成で送信を確認した宛先。追い質問の本番確認を省けるのは、これと今の値が一致するときだけ。
+  const confirmedRef = useRef<{ sessionId: string; database: string | null; isProduction: boolean } | null>(null);
   const stream = useAiStream({ idPrefix: "ai_nl2sql" });
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const database = resolveNl2SqlDatabase(props.database, props.driver);
 
   useEffect(() => {
+    // 接続 / データベースが変わったら会話を捨てる (別の宛先・別スキーマに古い履歴を送らない)。
+    setExchanges([]);
+    setFollowUp("");
+    confirmedRef.current = null;
     if (!database) return;
     let alive = true;
     setSchema({ kind: "loading" });
@@ -123,21 +139,35 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const trimmed = request.trim();
   const emptySchema = schema.kind === "ready" && schema.tables.length === 0;
   const canGenerate = !!database && schema.kind === "ready" && !emptySchema && trimmed !== "" && !running;
+  const followUpTrimmed = followUp.trim();
+  const canFollowUp =
+    !!database && schema.kind === "ready" && exchanges.length > 0 && followUpTrimmed !== "" && !running;
 
-  const run = async () => {
-    if (schema.kind !== "ready" || trimmed === "") return;
+  const run = async (followUpText?: string) => {
+    const promptText = followUpText ?? trimmed;
+    if (schema.kind !== "ready" || promptText === "") return;
     // 二重実行 (連打・Cmd+Enter の連続) で 2 本のストリームが走らないよう、同期的に弾く。
     if (!stream.acquire()) return;
     try {
-      await runInner(schema);
+      await runInner(schema, followUpText);
     } catch (e) {
       stream.release();
       setState({ kind: "error", message: String(e), refused: false });
     }
   };
 
-  const runInner = async (ready: { tables: Nl2SqlTable[]; foreignKeys: Nl2SqlForeignKey[] }) => {
-    if (props.isProduction) {
+  const runInner = async (
+    ready: { tables: Nl2SqlTable[]; foreignKeys: Nl2SqlForeignKey[] },
+    followUpText?: string,
+  ) => {
+    // 追い質問は、最初の送信で確認した宛先と同じときだけ再確認しない。
+    const c = confirmedRef.current;
+    const sameTarget =
+      c !== null &&
+      c.sessionId === props.sessionId &&
+      c.database === database &&
+      c.isProduction === props.isProduction;
+    if (props.isProduction && !(followUpText !== undefined && sameTarget)) {
       const ok = await confirm({
         title: t("aiQueryConfirmTitle"),
         message: `${t("aiQueryConfirmBody")}\n${sendsLine ?? ""}`,
@@ -149,7 +179,10 @@ export function AiQueryModal(props: AiQueryModalProps) {
         return;
       }
     }
+    confirmedRef.current = { sessionId: props.sessionId, database, isProduction: props.isProduction };
     setDone(null);
+    // 新規の生成は新しい会話の始まり。表示中の結果が消えるので、古い往復も持ち越さない。
+    if (followUpText === undefined) setExchanges([]);
     setState({ kind: "running" });
     // スキーマを含む固定部分はプロンプトキャッシュの対象にする (#1473)。
     const systemParts = buildNl2SqlSystemParts({
@@ -160,19 +193,36 @@ export function AiQueryModal(props: AiQueryModalProps) {
       tables: ready.tables,
       foreignKeys: ready.foreignKeys,
     });
+    const isFollowUp = followUpText !== undefined;
+    const prompt = buildNl2SqlPrompt(followUpText ?? request);
+    // 新規の生成は履歴なし。追い質問は直近の往復を、system / 今回のプロンプトを除いた枠に収めて付ける。
+    const history = isFollowUp
+      ? buildHistory(exchanges, {
+          maxBytes: historyBudget(systemParts.cached, systemParts.variable, prompt),
+        })
+      : [];
     await stream.start(
       {
         task: "nl2sql",
         systemCached: systemParts.cached,
         system: systemParts.variable || undefined,
-        prompt: buildNl2SqlPrompt(request),
+        // 新規の生成は `history` を渡さない (単発の呼び出しは従来どおり)。
+        history: history.length > 0 ? history : undefined,
+        prompt,
         settings: toAiSnapshot(ai),
         format: NL2SQL_FORMAT,
       },
       {
         parse: parseNl2SqlResponse,
-        onDone: ({ parsed }) =>
-          setState(parsed.ok ? { kind: "done", value: parsed.value } : { kind: "raw", raw: parsed.raw }),
+        onDone: ({ parsed, text }) => {
+          setState(parsed.ok ? { kind: "done", value: parsed.value } : { kind: "raw", raw: parsed.raw });
+          // 解釈できた回答だけを会話に積む (壊れた本文を次の依頼に混ぜない)。
+          if (parsed.ok) {
+            const exchange = { prompt, answer: text };
+            setExchanges((prev) => (isFollowUp ? appendExchange(prev, exchange) : [exchange]));
+            setFollowUp("");
+          }
+        },
         onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
         onCancelled: () => setState({ kind: "cancelled" }),
       },
@@ -187,9 +237,12 @@ export function AiQueryModal(props: AiQueryModalProps) {
       width="680px"
       onClose={props.onClose}
       onSubmit={() => {
-        void run();
+        // フォーカス中の欄で振り分ける。メインの依頼欄なら新規生成、それ以外で追い質問の入力があれば追い質問。
+        if (document.activeElement === inputRef.current) void run();
+        else if (canFollowUp) void run(followUpTrimmed);
+        else void run();
       }}
-      submitDisabled={!canGenerate}
+      submitDisabled={!canGenerate && !canFollowUp}
       initialFocusEl={() => inputRef.current}
     >
       <ModalHeader onClose={props.onClose} closeLabel={t("aiQueryClose")}>
@@ -327,6 +380,34 @@ export function AiQueryModal(props: AiQueryModalProps) {
           <Callout tone="info" role="status">
             {t("aiQueryCancelled")}
           </Callout>
+        )}
+        {exchanges.length > 0 && !running && (
+          <FormSection data-testid="ai-query-followup">
+            <FieldLabel htmlFor="ai-query-followup-input">{t("aiFollowUpLabel")}</FieldLabel>
+            <Textarea
+              id="ai-query-followup-input"
+              rows={2}
+              value={followUp}
+              onChange={(e) => setFollowUp(e.target.value)}
+              placeholder={t("aiFollowUpPlaceholder")}
+            />
+            <Flex align="center" gap="2" wrap="wrap">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!canFollowUp}
+                onClick={() => {
+                  void run(followUpTrimmed);
+                }}
+              >
+                {t("aiFollowUpSend")}
+              </Button>
+              <chakra.span textStyle="caption" color="app.textMuted">
+                {t("aiFollowUpHint", { count: MAX_HISTORY_EXCHANGES })}
+              </chakra.span>
+            </Flex>
+          </FormSection>
         )}
       </ModalBody>
       <ModalFooter>
