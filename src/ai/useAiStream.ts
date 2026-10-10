@@ -138,6 +138,9 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
   const acquire = useCallback(() => {
     if (busyRef.current) return false;
     busyRef.current = true;
+    // 中止フラグは実行権を取った時点で下ろす。start より前 (確認ダイアログ・スキーマ取得中) に
+    // 押された中止を start が打ち消さないよう、start ではリセットしない。
+    abortRef.current = false;
     // 前回の本文 / 経過秒数 / 完了イベントを持ち越さない (準備中に古い内容が「受信中」に出ない)。
     setText("");
     setElapsedSec(0);
@@ -174,7 +177,6 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
       const streamId = makeStreamId(idPrefix);
       const gen = genRef.current;
       streamRef.current = streamId;
-      abortRef.current = false;
       startedAtRef.current = Date.now();
       let body = "";
       setText("");
