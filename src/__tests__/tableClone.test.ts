@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   buildCloneStatements,
+  buildPgGeneratedColumnsSql,
   cloneObjectName,
   formatCloneStatements,
+  insertableColumns,
+  isPartialCloneFailure,
   suggestCloneName,
 } from "../tableClone";
 
@@ -67,7 +70,7 @@ describe("buildCloneStatements (#1398)", () => {
     expect(sql.endsWith(";")).toBe(false);
   });
 
-  it("PostgreSQL: ヘッダコメント除去・制約名/インデックス名の改名・USING を保持", () => {
+  it("PostgreSQL: LIKE INCLUDING ALL で写し、FK だけ ALTER TABLE ADD CONSTRAINT (名前衝突回避)", () => {
     const r = buildCloneStatements({
       driver: "postgres",
       database: "public",
@@ -77,12 +80,35 @@ describe("buildCloneStatements (#1398)", () => {
       includeData: false,
     });
     expect(r.statements).toEqual([
-      expect.stringMatching(/^CREATE TABLE "public"\."orders_copy" \(/),
-      'CREATE UNIQUE INDEX "orders_copy_user_idx" ON "public"."orders_copy" ("user_id")',
-      'CREATE INDEX "by_id_orders_copy" ON "public"."orders_copy" USING hash ("id")',
+      'CREATE TABLE "public"."orders_copy" (LIKE "public"."orders" INCLUDING ALL)',
+      'ALTER TABLE "public"."orders_copy" ADD CONSTRAINT "orders_copy_user_fk" FOREIGN KEY ("user_id") REFERENCES "users" ("id")',
     ]);
-    expect(r.statements[0]).toContain('CONSTRAINT "orders_copy_user_fk" FOREIGN KEY');
-    expect(r.statements[0]).not.toContain("Reconstructed");
+    expect(r.sharedSequence).toBe(false);
+  });
+
+  it("PostgreSQL: データ複製は FK 追加より前、serial 既定値は sharedSequence で知らせる", () => {
+    const r = buildCloneStatements({
+      driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2",
+      ddl: PG_DDL.replace('"id" integer NOT NULL', `"id" integer NOT NULL DEFAULT nextval('orders_id_seq'::regclass)`),
+      includeData: true,
+      columns: ["id", "user_id"],
+    });
+    expect(r.statements[1]).toBe(
+      'INSERT INTO "public"."o2" ("id", "user_id") OVERRIDING SYSTEM VALUE SELECT "id", "user_id" FROM "public"."orders"',
+    );
+    expect(r.statements[2]).toMatch(/^ALTER TABLE "public"\."o2" ADD CONSTRAINT/);
+    expect(r.sharedSequence).toBe(true);
+  });
+
+  it("PostgreSQL: 自己参照 FK は新テーブルへ、別スキーマの同名テーブルは付け替えない", () => {
+    const ddl = `CREATE TABLE "public"."orders" ("id" int, "p" int, "q" int,
+      CONSTRAINT "self" FOREIGN KEY ("p") REFERENCES "orders" ("id"),
+      FOREIGN KEY ("q") REFERENCES "other"."orders" ("id"));`;
+    const r = buildCloneStatements({
+      driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2", ddl, includeData: false,
+    });
+    expect(r.statements[1]).toContain('REFERENCES "public"."o2" ("id")');
+    expect(r.statements[2]).toBe('ALTER TABLE "public"."o2" ADD FOREIGN KEY ("q") REFERENCES "other"."orders" ("id")');
   });
 
   it("SQLite: テーブル名はスキーマ修飾なし、インデックス名のみ改名、CONSTRAINT 名は据え置き", () => {
@@ -108,7 +134,83 @@ describe("buildCloneStatements (#1398)", () => {
     const pg = buildCloneStatements({
       driver: "postgres", database: "public", sourceTable: "orders", newTable: "o2", ddl: PG_DDL, includeData: true,
     });
-    expect(pg.statements.at(-1)).toBe('INSERT INTO "public"."o2" SELECT * FROM "public"."orders"');
+    expect(pg.statements[1]).toBe('INSERT INTO "public"."o2" SELECT * FROM "public"."orders"');
+  });
+
+  it("MySQL: バージョン付きコメント (/*!...*/) は保持し、通常コメントは文中なら残す", () => {
+    const ddl = `CREATE TABLE \`t\` (
+  \`a\` int /*!80023 INVISIBLE */, /* keep me */
+  \`b\` int
+) ENGINE=InnoDB /*!50100 PARTITION BY HASH (\`a\`) PARTITIONS 4 */;`;
+    const r = buildCloneStatements({
+      driver: "mysql", database: "d", sourceTable: "t", newTable: "t2", ddl, includeData: false,
+    });
+    expect(r.statements[0]).toContain("/*!80023 INVISIBLE */");
+    expect(r.statements[0]).toContain("/*!50100 PARTITION BY HASH (`a`) PARTITIONS 4 */");
+    expect(r.statements[0]).toContain("/* keep me */");
+  });
+
+  it("MySQL: 別 DB の同名テーブルを参照する FK は自己参照扱いしない", () => {
+    const ddl = "CREATE TABLE `t` (a int, CONSTRAINT `fk` FOREIGN KEY (a) REFERENCES `other`.`t` (id), CONSTRAINT `fk2` FOREIGN KEY (a) REFERENCES `d`.`t` (id))";
+    const r = buildCloneStatements({
+      driver: "mysql", database: "d", sourceTable: "t", newTable: "t2", ddl, includeData: false,
+    });
+    expect(r.statements[0]).toContain("REFERENCES `other`.`t` (id)");
+    expect(r.statements[0]).toContain("REFERENCES `d`.`t2` (id)");
+  });
+
+  it("新テーブル名に $ 系の置換記号があっても制約名にそのまま入る", () => {
+    const r = buildCloneStatements({
+      driver: "mysql", database: "d", sourceTable: "t", newTable: "t$&x",
+      ddl: "CREATE TABLE `t` (a int, CONSTRAINT `t_fk` CHECK (a > 0))", includeData: false,
+    });
+    expect(r.statements[0]).toContain("CONSTRAINT `t$&x_fk`");
+    expect(cloneObjectName("mysql", "t_fk", "t", "n$1$&", new Set())).toBe("n$1$&_fk");
+  });
+
+  it("SQLite: '\\' リテラルでバックスラッシュを文字列エスケープ扱いしない", () => {
+    const ddl = "CREATE TABLE t (a text DEFAULT '\\', b int);\n\nCREATE INDEX idx_t ON t (b);";
+    const r = buildCloneStatements({
+      driver: "sqlite", database: null, sourceTable: "t", newTable: "t2", ddl, includeData: false,
+    });
+    expect(r.statements).toEqual([
+      "CREATE TABLE \"t2\" (a text DEFAULT '\\', b int)",
+      'CREATE INDEX "idx_t2" ON "t2" (b)',
+    ]);
+  });
+
+  it("生成列を除いた明示列リストで INSERT ... SELECT を組む", () => {
+    expect(
+      insertableColumns("mysql", [
+        { name: "a", extra: "auto_increment" },
+        { name: "g", extra: "VIRTUAL GENERATED" },
+        { name: "s", extra: "STORED GENERATED" },
+        { name: "d", extra: "DEFAULT_GENERATED" },
+        { name: "i", extra: "INVISIBLE" },
+      ]),
+    ).toEqual(["a", "d", "i"]);
+    expect(insertableColumns("postgres", [{ name: "a" }, { name: "g" }], ["g"])).toEqual(["a"]);
+    expect(insertableColumns("sqlite", [{ name: "a" }])).toEqual(["a"]);
+    expect(insertableColumns("sqlite", [])).toBeNull();
+    const r = buildCloneStatements({
+      driver: "mysql", database: "d", sourceTable: "t", newTable: "t2",
+      ddl: "CREATE TABLE `t` (a int)", includeData: true, columns: ["a", "i"],
+    });
+    expect(r.statements.at(-1)).toBe("INSERT INTO `d`.`t2` (`a`, `i`) SELECT `a`, `i` FROM `d`.`t`");
+  });
+
+  it("PostgreSQL 生成列取得クエリはリテラルをエスケープする", () => {
+    expect(buildPgGeneratedColumnsSql("s'x", "t")).toBe(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema = 's''x' AND table_name = 't' AND is_generated = 'ALWAYS'",
+    );
+  });
+
+  it("MySQL の部分失敗判定: 2 文以上で新名が残っているときだけ true", () => {
+    expect(isPartialCloneFailure("mysql", 2, ["a", "T2"], "t2")).toBe(true);
+    expect(isPartialCloneFailure("mysql", 2, ["a"], "t2")).toBe(false);
+    expect(isPartialCloneFailure("mysql", 1, ["t2"], "t2")).toBe(false);
+    expect(isPartialCloneFailure("sqlite", 2, ["t2"], "t2")).toBe(false);
+    expect(isPartialCloneFailure("mysql", 2, null, "t2")).toBe(false);
   });
 
   it("CREATE TABLE で始まらない DDL は空を返し、解釈できない後続文は skipped に残す", () => {
@@ -128,12 +230,12 @@ describe("buildCloneStatements (#1398)", () => {
 
   it("IF NOT EXISTS と引用識別子内の記号を扱える", () => {
     const r = buildCloneStatements({
-      driver: "postgres", database: "s", sourceTable: 'we"ird', newTable: "x",
-      ddl: 'CREATE TABLE IF NOT EXISTS "s"."we""ird" ("a" int, CONSTRAINT "we""ird_fk" FOREIGN KEY ("a") REFERENCES "we""ird" ("a"));',
+      driver: "mysql", database: "s", sourceTable: "we`ird", newTable: "x",
+      ddl: "CREATE TABLE IF NOT EXISTS `s`.`we``ird` (`a` int, CONSTRAINT `we``ird_fk` FOREIGN KEY (`a`) REFERENCES `we``ird` (`a`));",
       includeData: false,
     });
     expect(r.statements[0]).toBe(
-      'CREATE TABLE IF NOT EXISTS "s"."x" ("a" int, CONSTRAINT "x_fk" FOREIGN KEY ("a") REFERENCES "s"."x" ("a"))',
+      "CREATE TABLE IF NOT EXISTS `s`.`x` (`a` int, CONSTRAINT `x_fk` FOREIGN KEY (`a`) REFERENCES `s`.`x` (`a`))",
     );
   });
 });

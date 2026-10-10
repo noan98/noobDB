@@ -1572,7 +1572,7 @@ const en = {
   pivotTruncated:
     "Truncated to the first {rows} row groups / {cols} column groups; the rest were omitted.",
   pivotNoData: "No data to pivot.",
-  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
+  // テーブル複製 (#1398)。
   cloneTableTitle: "Duplicate table",
   cloneTableClose: "Cancel",
   cloneTableNameLabel: "New table name (copy of \"{table}\")",
@@ -1586,6 +1586,11 @@ const en = {
   cloneTablePreviewEmpty: "Enter a table name to preview the SQL.",
   cloneTableConfirm: "Duplicate",
   cloneTableSuccess: "Duplicated \"{source}\" as \"{table}\".",
+  cloneTableNotTable: "Only tables can be duplicated (this object is a view or another kind).",
+  cloneTableRewriteError: "Refusing to run: the rewritten statements do not all target the new table ({statements}).",
+  cloneTableSharedSequence: "Serial/sequence defaults (nextval) still point at the original table's sequence. Dropping the original table or its sequence will affect the copy.",
+  cloneTablePartialFailure: "Table \"{table}\" was created but copying the data failed (nothing was rolled back on MySQL): {error}",
+  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   saveAsTableButton: "Save as table",
   saveAsTableButtonTitle: "Save the current result as a new table (CREATE TABLE ... AS SELECT)",
   saveAsTableDisabledTitle:
@@ -5882,7 +5887,7 @@ const ja: Dict = {
   pivotTruncated:
     "先頭の {rows} 行グループ / {cols} 列グループのみ表示しています (残りは省略)。",
   pivotNoData: "ピボットするデータがありません。",
-  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
+  // テーブル複製 (#1398)。
   cloneTableTitle: "テーブルを複製",
   cloneTableClose: "キャンセル",
   cloneTableNameLabel: "新しいテーブル名 (「{table}」の複製)",
@@ -5896,6 +5901,11 @@ const ja: Dict = {
   cloneTablePreviewEmpty: "テーブル名を入力すると SQL がプレビューされます。",
   cloneTableConfirm: "複製",
   cloneTableSuccess: "「{source}」を「{table}」として複製しました。",
+  cloneTableNotTable: "テーブル以外 (ビューなど) は複製できません。",
+  cloneTableRewriteError: "書き換え後の文が新しいテーブル以外を対象にしているため実行しません ({statements})。",
+  cloneTableSharedSequence: "serial / シーケンスの既定値 (nextval) は元テーブルのシーケンスを共有したままです。元のテーブルやシーケンスを削除すると複製にも影響します。",
+  cloneTablePartialFailure: "テーブル「{table}」は作成済みですが、後続の文 (データ複製など) が失敗しました (MySQL ではロールバックされません): {error}",
+  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   saveAsTableButton: "テーブルへ保存",
   saveAsTableButtonTitle: "現在の結果を新規テーブルとして保存します (CREATE TABLE ... AS SELECT)",
   saveAsTableDisabledTitle:

@@ -216,8 +216,11 @@ describe("Database Explorer の階層 (#1112)", () => {
     ...over,
   });
 
-  async function openDb(props: Partial<Parameters<typeof ConnectionList>[0]> = {}) {
-    const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+  async function openDb(
+    props: Partial<Parameters<typeof ConnectionList>[0]> = {},
+    profileOver: Partial<ReturnType<typeof makeProfile>> = {},
+  ) {
+    const profile = makeProfile({ id: "p-a", name: "Alpha DB", ...profileOver });
     renderWithProviders(
       <ConnectionList
         {...baseProps}
@@ -258,6 +261,24 @@ describe("Database Explorer の階層 (#1112)", () => {
     fireEvent.contextMenu(row);
     fireEvent.click((await screen.findAllByRole("menuitem"))[0]);
     expect(onPickTable).toHaveBeenCalledWith("db1", "tbl1");
+  });
+
+  it("「テーブルを複製」は onCloneTable を呼び、read_only 接続では無効化される (#1398)", async () => {
+    const onCloneTable = vi.fn();
+    await openDb({ onCloneTable });
+    fireEvent.contextMenu(await screen.findByRole("treeitem", { name: "tbl1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuCloneTable") }));
+    expect(onCloneTable).toHaveBeenCalledWith("db1", "tbl1");
+  });
+
+  it("read_only 接続では「テーブルを複製」が無効", async () => {
+    const onCloneTable = vi.fn();
+    await openDb({ onCloneTable }, { read_only: true });
+    fireEvent.contextMenu(await screen.findByRole("treeitem", { name: "tbl1" }));
+    const item = await screen.findByRole("menuitem", { name: t("contextMenuCloneTable") });
+    expect(item).toBeDisabled();
+    fireEvent.click(item);
+    expect(onCloneTable).not.toHaveBeenCalled();
   });
 
   it("テーブルを展開すると列・インデックス・外部キーのグループが並び、外部キーから参照先を開ける", async () => {

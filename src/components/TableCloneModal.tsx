@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { api, type DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
-import { buildCloneStatements, formatCloneStatements, suggestCloneName } from "../tableClone";
+import {
+  buildCloneStatements,
+  buildPgGeneratedColumnsSql,
+  formatCloneStatements,
+  insertableColumns,
+  suggestCloneName,
+} from "../tableClone";
 import { tableNameCollides } from "./resultsToTable";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -34,6 +40,8 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
   const [includeData, setIncludeData] = useState(false);
   const [ddl, setDdl] = useState<string | null>(null);
   const [ddlError, setDdlError] = useState<string | null>(null);
+  // INSERT ... SELECT の明示列リスト (生成列を除く)。列メタが取れなければ null = SELECT *。
+  const [insertCols, setInsertCols] = useState<string[] | null>(null);
   const [existingTables, setExistingTables] = useState<string[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -48,6 +56,24 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
       .catch((e) => {
         if (!cancelled) setDdlError(String(e));
       });
+    // 列メタ (生成列の除外用)。失敗しても複製自体は続ける (SELECT * に退避)。
+    void (async () => {
+      try {
+        const cols = await api.describeTable(sessionId, database, sourceTable);
+        let generated: string[] = [];
+        if (driver === "postgres") {
+          const r = await api.runLookupQuery({
+            sessionId,
+            sql: buildPgGeneratedColumnsSql(database, sourceTable),
+            database,
+          });
+          generated = r.rows.map((row) => String(row[0]));
+        }
+        if (!cancelled) setInsertCols(insertableColumns(driver, cols, generated));
+      } catch {
+        // 列メタが取れないときは SELECT * のまま
+      }
+    })();
     api
       .listTables(sessionId, database)
       .then((tables) => {
@@ -63,7 +89,7 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, sourceTable]);
+  }, [sessionId, database, sourceTable, driver]);
 
   // 既存テーブル名が分かった時点で、ユーザがまだ触っていなければ既定名 (<元>_copy) を入れる。
   useEffect(() => {
@@ -74,15 +100,25 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
   const loading = existingTables === null || (ddl === null && ddlError === null);
   const collides = existingTables ? tableNameCollides(existingTables, trimmed) : false;
 
+  // 名前が空でも「テーブルとして複製できる DDL か」を判定するため仮名で組み立てる。
   const result = useMemo(
     () =>
-      ddl && trimmed
-        ? buildCloneStatements({ driver, database, sourceTable, newTable: trimmed, ddl, includeData })
+      ddl
+        ? buildCloneStatements({
+            driver,
+            database,
+            sourceTable,
+            newTable: trimmed || `${sourceTable}_copy`,
+            ddl,
+            includeData,
+            columns: insertCols,
+          })
         : null,
-    [ddl, trimmed, driver, database, sourceTable, includeData],
+    [ddl, trimmed, driver, database, sourceTable, includeData, insertCols],
   );
-  const statements = result?.statements ?? [];
-  const valid = !loading && !collides && statements.length > 0;
+  const statements = trimmed ? (result?.statements ?? []) : [];
+  const notTable = !!result && result.statements.length === 0 && result.errors.length === 0;
+  const valid = !loading && !collides && trimmed.length > 0 && statements.length > 0;
 
   const submit = () => {
     if (valid) onConfirm(trimmed, statements);
@@ -123,6 +159,11 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         <Switch checked={includeData} onChange={setIncludeData} label={t("cloneTableIncludeData")} />
 
         {ddlError && <ErrorNote>{t("cloneTableDdlError", { error: ddlError })}</ErrorNote>}
+        {notTable && <ErrorNote>{t("cloneTableNotTable")}</ErrorNote>}
+        {result && result.errors.length > 0 && (
+          <ErrorNote>{t("cloneTableRewriteError", { statements: result.errors.join(" / ") })}</ErrorNote>
+        )}
+        {result?.sharedSequence && <Callout tone="warning">{t("cloneTableSharedSequence")}</Callout>}
         {result && result.skipped.length > 0 && (
           <Callout tone="warning">{t("cloneTableSkipped", { statements: result.skipped.join(" / ") })}</Callout>
         )}

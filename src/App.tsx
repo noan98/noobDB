@@ -327,6 +327,7 @@ import {
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
+import { isPartialCloneFailure } from "./tableClone";
 import {
   isAppWindowFocused,
   registerNotificationClickFocus,
@@ -6360,10 +6361,28 @@ export default function App() {
         connectionListRef.current?.refreshSchema();
         toast.success(translate("cloneTableSuccess", { source: target.table, table: newName }));
       } catch (e) {
-        toast.error(translate("statusQueryError", { error: String(e) }));
+        // MySQL は CREATE TABLE が暗黙コミットされるので、後続の文が失敗しても空の複製が残りうる。
+        // 失敗時もツリーを再読込し、作成済みかどうかを一覧で確かめて通知を出し分ける
+        // (補償 DROP は自動では行わない)。
+        invalidateSchemaCache(target.database);
+        connectionListRef.current?.refreshSchema();
+        const driver = selectedProfile?.driver ?? "mysql";
+        let after: string[] | null = null;
+        if (driver === "mysql" && statements.length > 1) {
+          try {
+            after = await api.listTables(sessionId, target.database);
+          } catch {
+            after = null;
+          }
+        }
+        toast.error(
+          isPartialCloneFailure(driver, statements.length, after, newName)
+            ? translate("cloneTablePartialFailure", { table: newName, error: String(e) })
+            : translate("statusQueryError", { error: String(e) }),
+        );
       }
     })();
-  }, [cloneTarget, sessionId, invalidateSchemaCache, toast]);
+  }, [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast]);
 
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
