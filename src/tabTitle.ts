@@ -88,7 +88,7 @@ export interface RenamePatch {
  * - 前後の空白を除き `TAB_RENAME_MAX` 文字までに切る。
  * - 空にした場合は「自動命名に戻す」: 手動フラグを外し、現在の SQL から導出し直す
  *   (導出できなければ無題プレースホルダ)。
- * - 現在と同じ名前なら変更なし (手動フラグも立てない)。
+ * - 手動名と同じ名前なら変更なし。自動名と同じ名前で確定したときは手動へ昇格する。
  */
 export function resolveRename(
   tab: TitledTab,
@@ -103,6 +103,12 @@ export function resolveRename(
     if (!tab.titleManual && title === tab.title) return null;
     return { title, titleManual: false };
   }
-  if (name === tab.title) return null;
+  // 手動名と同名なら変更なし。自動名と同名で確定したら、以後の自動命名で動かないよう手動へ昇格する。
+  if (name === tab.title && tab.titleManual) return null;
   return { title: name, titleManual: true };
+}
+
+/** 手動命名のタブを複製するときのタイトル。既に接尾辞で終わっていれば重ねて付けない。 */
+export function copyTitle(title: string, suffix: string): string {
+  return title.endsWith(suffix) ? title : `${title} ${suffix}`;
 }

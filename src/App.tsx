@@ -52,7 +52,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { useStableCallbacks } from "./useStableCallbacks";
 import { TabDirtyWatcher, TabSqlStore } from "./tabSqlStore";
-import { autoTitleOnRun, deriveQueryTabTitle, resolveNewTabTitle, resolveRename } from "./tabTitle";
+import { autoTitleOnRun, copyTitle, deriveQueryTabTitle, resolveNewTabTitle, resolveRename } from "./tabTitle";
 import { duplicateTabSpec, tabsToClose, type BulkCloseMode } from "./tabBulkClose";
 import {
   REOPEN_CLOSED_TAB_COMMAND_ID,
@@ -1717,7 +1717,7 @@ export default function App() {
   const overlayOpenRef = useRef(false);
   // タブ名のインライン編集中か (#1390)。ダブルクリックの 2 回目のクリックが起こす「エディタへ
   // 自動フォーカス」(rAF 遅延) が編集欄のフォーカスを奪って即確定してしまうのを防ぐ。
-  const renamingRef = useRef(false);
+  const renamingRef = useRef<string | null>(null);
   useEffect(() => {
     overlayOpenRef.current =
       showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
@@ -1733,7 +1733,7 @@ export default function App() {
   const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
     if (!paneId || tabKind !== "query") return;
     requestAnimationFrame(() => {
-      if (overlayOpenRef.current || renamingRef.current) return;
+      if (overlayOpenRef.current || renamingRef.current !== null) return;
       editorRefs.current.get(paneId)?.focus();
     });
   }, []);
@@ -2221,6 +2221,7 @@ export default function App() {
       );
     });
     if (paneId) setActivePaneId(paneId);
+    return tab;
   }, [setPanes, setTabs]);
 
   // Activate an already-open tab wherever it lives, focusing its pane.
@@ -2342,21 +2343,30 @@ export default function App() {
   const startRenameTab = useCallback((tabId: string) => {
     const tt = tabsRef.current.find((x) => x.id === tabId);
     if (tt?.kind !== "query") return;
-    renamingRef.current = true;
+    renamingRef.current = tabId;
     setRenamingTabId(tabId);
   }, [tabsRef]);
   const cancelRenameTab = useCallback(() => {
-    renamingRef.current = false;
+    renamingRef.current = null;
     setRenamingTabId(null);
   }, []);
   const commitRenameTab = useCallback((tabId: string, value: string) => {
-    renamingRef.current = false;
+    renamingRef.current = null;
     setRenamingTabId(null);
     const tt = tabsRef.current.find((x) => x.id === tabId);
     if (!tt) return;
     const patch = resolveRename(tt, value, tabSqlStore.resolve(tt.id, tt.sql), translate("tabUntitledQuery"));
     if (patch) setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)));
   }, [tabsRef, tabSqlStore, setTabs]);
+
+  // 編集中のタブが blur なしで消えた (中クリック・自動クローズ・接続切替) ときに、編集状態と
+  // エディタ自動フォーカスの抑止 (renamingRef) を残さない。
+  useEffect(() => {
+    if (renamingTabId && !tabs.some((x) => x.id === renamingTabId)) {
+      renamingRef.current = null;
+      setRenamingTabId(null);
+    }
+  }, [tabs, renamingTabId]);
 
   const refreshProfiles = useCallback(async () => {
     try {
@@ -4306,9 +4316,16 @@ export default function App() {
             selection: s.selection,
           };
         }
+        const restoredManual = s.kind === "query" && s.titleManual === true;
+        const baseTitle = s.kind === "query" ? s.title : translate("tabUntitledQuery");
+        // 無題のまま SQL を持つ旧データ・テーブル消失で query に落ちたタブは SQL から命名する。
+        const restoredTitle =
+          !restoredManual && baseTitle === translate("tabUntitledQuery")
+            ? deriveQueryTabTitle(s.sql) ?? baseTitle
+            : baseTitle;
         return {
-          ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
-          // 明示することで addTab 相当の推測を避け、保存時の手動/自動の区別をそのまま戻す (#1390)。
+          ...makeTab("query", restoredTitle, s.sql),
+          // この経路は addTab を通らないので、保存時の手動/自動の区別をここで明示して戻す (#1390)。
           titleManual: s.kind === "query" && s.titleManual === true,
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
@@ -4959,6 +4976,13 @@ export default function App() {
     void runQueryInTab(tabId, built.sql, null, null, false, { ...override, forceReadOnly: true });
   }, [selectedProfile?.driver, runQueryInTab, updateTab, toast, confirm]);
 
+  // 手動命名でない query タブを、タブ全体の SQL (選択範囲ではなくエディタ全文) の先頭行で自動命名する (#1390)。
+  const autoNameTab = useCallback((tab: Tab) => {
+    const cur = tabsRef.current.find((x) => x.id === tab.id) ?? tab;
+    const title = autoTitleOnRun(cur, tabSqlStore.resolve(cur.id, cur.sql));
+    if (title !== null) updateTab(cur.id, { title });
+  }, [tabsRef, tabSqlStore, updateTab]);
+
   const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
@@ -4984,11 +5008,6 @@ export default function App() {
       addTab(newTab);
       target = newTab;
       openedInNewTab = true;
-    }
-    // 結果を同じタブに出す通常実行: 手動命名でない query タブは直近に実行した SQL で自動命名する (#1390)。
-    if (target === tab) {
-      const autoTitle = autoTitleOnRun(tab, sql);
-      if (autoTitle !== null) updateTab(tab.id, { title: autoTitle });
     }
     // Auto LIMIT only guards free-form editor queries; table tabs carry their
     // own LIMIT. Writes pass through here too but the backend parser leaves
@@ -5046,6 +5065,9 @@ export default function App() {
       });
       return;
     }
+    // 実行へ進むことが確定した後で自動命名する (危険確認のキャンセルでは変えない)。結果を同じタブに
+    // 出す通常実行のみ (新規結果タブは作成時に命名済み)。
+    if (target === tab) autoNameTab(tab);
     if (batch) {
       // 新タブ直後は tabsRef に未反映なので、メモリ上の target を直接渡す。
       void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
@@ -5058,7 +5080,7 @@ export default function App() {
     }
     void runQueryInTab(target.id, sql, null, autoLimit);
   }, [
-    updateTab,
+    autoNameTab,
     runQueryInTab,
     runExplainInTab,
     runBatchInTab,
@@ -5079,6 +5101,8 @@ export default function App() {
     if (!pendingDangerous) return;
     const { tabId, sql, autoLimit, batch } = pendingDangerous;
     setPendingDangerous(null);
+    const named = tabsRef.current.find((tt) => tt.id === tabId);
+    if (named) autoNameTab(named);
     if (batch) {
       void runBatchInTab(tabId, sql, true);
       return;
@@ -5090,7 +5114,7 @@ export default function App() {
       return;
     }
     void runQueryInTab(tabId, sql, null, autoLimit);
-  }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
+  }, [pendingDangerous, autoNameTab, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
 
@@ -5257,8 +5281,9 @@ export default function App() {
       lastExecutedSql: snippet.sql,
       title: snippet.name,
     };
-    addTab(tab);
-    runInTabWithGate(tab, snippet.sql, { newTab: false });
+    // 解決済みのタブ (手動扱いの明示タイトル入り) を渡さないと、初回実行で名前が上書きされる。
+    const added = addTab(tab);
+    runInTabWithGate(added, snippet.sql, { newTab: false });
     recordSnippetRunUsage(snippet.id);
   }, [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage]);
 
@@ -6158,8 +6183,8 @@ export default function App() {
       title: target.name,
       database: target.database,
     };
-    addTab(tab);
-    runInTabWithGate(tab, sql, { newTab: false, fresh: true });
+    const added = addTab(tab);
+    runInTabWithGate(added, sql, { newTab: false, fresh: true });
   }, [routineTarget, sessionId, addTab, runInTabWithGate]);
 
   const handleRoutineToEditor = useCallback((sql: string) => {
@@ -7217,6 +7242,10 @@ export default function App() {
   // クローズ用 (#1353)。対象のテーブルはもう存在しない / 名前が変わっているので、復元履歴には残さない。
   const handleCloseTab = useCallback((id: string, opts?: { record?: boolean }) => {
     void cancelStreamForTab(id);
+    if (renamingRef.current === id) {
+      renamingRef.current = null;
+      setRenamingTabId(null);
+    }
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
@@ -7335,7 +7364,7 @@ export default function App() {
       title: spec.title === null
         ? translate("tabUntitledQuery")
         : spec.titleManual
-          ? `${spec.title} ${translate("tabCopySuffix")}`
+          ? copyTitle(spec.title, translate("tabCopySuffix"))
           : spec.title,
       titleManual: spec.titleManual,
       sql: spec.sql,

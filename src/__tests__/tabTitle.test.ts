@@ -5,6 +5,7 @@ import {
   autoTitleOnRun,
   deriveQueryTabTitle,
   resolveNewTabTitle,
+  copyTitle,
   resolveRename,
 } from "../tabTitle";
 
@@ -123,11 +124,21 @@ describe("resolveRename", () => {
   it("自動名のまま空で確定しても変更なし", () => {
     expect(resolveRename(q, "", "SELECT 1", UNTITLED)).toBeNull();
   });
-  it("同じ名前なら変更なし (手動フラグを立てない)", () => {
-    expect(resolveRename(q, "SELECT 1", "SELECT 1", UNTITLED)).toBeNull();
+  it("手動名と同じ名前なら変更なし", () => {
+    expect(resolveRename({ ...q, titleManual: true }, "SELECT 1", "SELECT 1", UNTITLED)).toBeNull();
+  });
+  it("自動名と同じ名前で確定したら手動へ昇格する", () => {
+    expect(resolveRename(q, "SELECT 1", "SELECT 1", UNTITLED)).toEqual({ title: "SELECT 1", titleManual: true });
   });
   it("query 以外はリネーム不可", () => {
     expect(resolveRename({ kind: "table", title: "users" }, "x", "", UNTITLED)).toBeNull();
     expect(resolveRename({ kind: "explain", title: "e" }, "x", "", UNTITLED)).toBeNull();
+  });
+});
+
+describe("copyTitle", () => {
+  it("接尾辞を付け、既に付いていれば重ねない", () => {
+    expect(copyTitle("mine", "(copy)")).toBe("mine (copy)");
+    expect(copyTitle("mine (copy)", "(copy)")).toBe("mine (copy)");
   });
 });

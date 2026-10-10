@@ -1104,10 +1104,11 @@ describe("シナリオ: クエリタブの自動命名とリネーム (#1390, �
 
   it("実行で SQL から自動命名され、ダブルクリックのリネーム後は上書きされず、空で自動に戻る", async () => {
     registerAutoStream();
-    seedQueryTabs(ALPHA.id, [{ title: t("tabUntitledQuery"), sql: "SELECT * FROM fruits" }]);
+    // 自動名 (手動フラグ無し) の旧タイトルは、実行で SQL 由来の名前へ置き換わる。
+    seedQueryTabs(ALPHA.id, [{ title: "old name", sql: "SELECT * FROM fruits" }]);
     const screen = await renderInBrowser(<App />);
     await connectToProfile(screen, /Alpha DB/, "appdb");
-    await vi.waitFor(() => expect(tabTitles()).toEqual([t("tabUntitledQuery")]), { timeout: 5000 });
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["old name"]), { timeout: 5000 });
 
     // 1) 実行すると、無題のタブが SQL の先頭行で命名される。
     await runFromToolbar(screen);
@@ -1166,5 +1167,49 @@ describe("シナリオ: クエリタブの自動命名とリネーム (#1390, �
 
     await page.elementLocator(tabEl).click({ button: "right" });
     await expect.element(screen.getByRole("menuitem", { name: t("tabRename") })).toBeDisabled();
+  });
+});
+
+describe("シナリオ: 自動命名のレビュー指摘 (#1390, 実ブラウザ)", () => {
+  it("スニペットを実行しても、タブ名はスニペット名のまま (SQL 由来の名前に上書きされない)", async () => {
+    registerAutoStream();
+    onCommand("list_snippets", () => [
+      { id: "s1", name: "Fruit snippet", folder: null, tags: [], sql: "SELECT * FROM fruits", driver: null, scope: { kind: "any" } },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await screen.getByRole("tab", { name: "Snippets" }).click();
+    await screen.getByRole("button", { name: t("snippetMenuRun") }).click();
+    await vi.waitFor(() => expect(tabTitles()).toEqual(["Fruit snippet"]), { timeout: 5000 });
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(tabTitles()).toEqual(["Fruit snippet"]);
+  });
+
+  it("リネーム中のタブを中クリックで閉じたあとも、新規タブでエディタへ自動フォーカスされる", async () => {
+    registerAutoStream();
+    seedQueryTabs(ALPHA.id, [
+      { title: t("tabUntitledQuery"), sql: "SELECT 1" },
+      { title: t("tabUntitledQuery"), sql: "SELECT 2" },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(tabTitles().length).toBe(2), { timeout: 5000 });
+    const last = Array.from(document.querySelectorAll<HTMLElement>('[role="tab"][draggable]'))[1];
+    await page.elementLocator(last).dblClick();
+    await expect.element(screen.getByRole("textbox", { name: t("tabRenameAria") })).toBeVisible();
+    const renaming = document.querySelector<HTMLElement>('[role="tab"] input')?.closest<HTMLElement>('[role="tab"]');
+    if (!renaming) throw new Error("renaming tab missing");
+    // タイトルではなくアイコン部分を中クリック (入力欄は pointerdown を止めるため)。
+    const icon = renaming.querySelector<HTMLElement>("span[aria-hidden]");
+    if (!icon) throw new Error("icon missing");
+    await page.elementLocator(icon).click({ button: "middle" });
+    await vi.waitFor(() => expect(tabTitles().length).toBe(1), { timeout: 5000 });
+    (document.activeElement as HTMLElement | null)?.blur();
+    await screen.getByRole("button", { name: t("tabNew"), exact: true }).click();
+    await vi.waitFor(() => {
+      const ae = document.activeElement as HTMLElement | null;
+      if (!ae?.closest(".cm-editor")) throw new Error("editor not focused");
+    }, { timeout: 5000 });
   });
 });
