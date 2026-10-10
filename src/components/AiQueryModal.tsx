@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
+import { transitions } from "../motion";
 import { api, type TableColumnInfo } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiStream } from "../ai/useAiStream";
@@ -35,6 +37,7 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { useCopyFeedback } from "./useCopyFeedback";
+import { formatSqlAsync } from "./sqlFormat";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -42,6 +45,9 @@ import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiUsageNote } from "./AiUsageNote";
 import { Spinner } from "./Spinner";
+
+/** `transition` は Chakra のスタイルプロップ名と衝突するため motion へ明示的に渡す。 */
+const MotionFlex = chakra(motion.div, {}, { forwardProps: ["transition", "initial", "animate", "exit"] });
 
 type Schema =
   | { kind: "loading" }
@@ -61,6 +67,9 @@ type ChatEntry =
   | { role: "user"; text: string }
   | { role: "agent"; outcome: "done"; warnings: number }
   | { role: "agent"; outcome: "raw" | "error" | "cancelled" };
+
+/** 生成 SQL の整形を待つ上限。超えたら AI の出力のまま表示する。 */
+const FORMAT_TIMEOUT_MS = 3000;
 
 /** 大きい DB で送信時にテーブルごとの詳細 (`describeTable`) を取るときの同時実行数。 */
 const DETAIL_CONCURRENCY = 6;
@@ -406,7 +415,29 @@ export function AiQueryModal(props: AiQueryModalProps) {
       {
         parse: parseNl2SqlResponse,
         onDone: ({ parsed, text }) => {
-          setState(parsed.ok ? { kind: "done", value: parsed.value } : { kind: "raw", raw: parsed.raw });
+          if (parsed.ok) {
+            // 生成 SQL は 1 行に詰まって返ることが多いので、表示・挿入の前に必ず整形する。
+            // 整形できない (方言の構文を sql-formatter が読めない等) ときは AI の出力のまま出す。
+            const value = parsed.value;
+            const gen = schemaGenRef.current;
+            // 整形が返ってこない (ワーカーの起動待ちなど) ときに回答を止めないよう、待つのは一定時間まで。
+            const timeout = new Promise<string>((resolve) => {
+              window.setTimeout(() => resolve(value.sql), FORMAT_TIMEOUT_MS);
+            });
+            void Promise.race([formatSqlAsync(value.sql, props.driver), timeout])
+              .catch(() => value.sql)
+              .then((sql) => {
+                if (!stream.isMounted()) return;
+                // 整形中に接続 / DB が変わったら、古い宛先の結果は出さない。
+                if (gen !== schemaGenRef.current) {
+                  setState({ kind: "idle" });
+                  return;
+                }
+                setState({ kind: "done", value: { ...value, sql: sql.trim() === "" ? value.sql : sql } });
+              });
+          } else {
+            setState({ kind: "raw", raw: parsed.raw });
+          }
           setLog((prev) => [
             ...prev,
             parsed.ok
@@ -440,12 +471,14 @@ export function AiQueryModal(props: AiQueryModalProps) {
   if (!ai.enabled) return null;
 
   const result = state.kind === "done" ? state.value : null;
+  // 右ペイン (結果) は最初の送信から出す。新しい会話で最初に戻ると閉じる。
+  const showResult = log.length > 0 || state.kind !== "idle";
   const inConversation = exchanges.length > 0;
 
   return (
     <>
     <Modal
-      width="1080px"
+      width={showResult ? "1080px" : "640px"}
       onClose={props.onClose}
       onSubmit={send}
       submitDisabled={!canSend}
@@ -466,7 +499,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
         <Flex
           direction="column"
           gap="3"
-          flex="0 0 42%"
+          flex={showResult ? "0 0 42%" : "1"}
           minW="0"
           minH="0"
           data-testid="ai-query-chat"
@@ -654,9 +687,18 @@ export function AiQueryModal(props: AiQueryModalProps) {
             </Flex>
           </Flex>
         </Flex>
-        {/* 右ペイン: 提案された SQL・説明・注意点を上から並べる。 */}
-        <Flex
-          direction="column"
+        {/* 右ペイン: 提案された SQL・説明・注意点を上から並べる。やりとりが始まるまでは出さず、
+            最初の送信で右からスライドインさせる (モーダルの幅も同時に広がる)。 */}
+        <AnimatePresence initial={false}>
+        {showResult && (
+        <MotionFlex
+          key="result"
+          initial={{ opacity: 0, x: 24 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 24 }}
+          transition={transitions.emphasized}
+          display="flex"
+          flexDirection="column"
           gap="3"
           flex="1"
           minW="0"
@@ -676,7 +718,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
             </Flex>
           )}
           {/* 中止はチャット欄に出すので、右ペインは未回答と同じ表示に戻す。 */}
-          {(state.kind === "idle" || state.kind === "cancelled") && (
+          {state.kind === "cancelled" && (
             <EmptyState compact icon="query" title={t("aiQueryResultEmpty")} description={t("aiQueryResultEmptyHint")} />
           )}
           {result && (
@@ -775,7 +817,9 @@ export function AiQueryModal(props: AiQueryModalProps) {
             ) : (
               <ErrorNote role="alert">{t("aiQueryError", { message: state.message })}</ErrorNote>
             ))}
-        </Flex>
+        </MotionFlex>
+        )}
+        </AnimatePresence>
       </ModalBody>
       <ModalFooter>
         {/* 補助情報: 使用テーブルとモデル・トークン数。 */}

@@ -36,6 +36,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { AiQueryModal } from "../components/AiQueryModal";
+import { format } from "sql-formatter";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 const onInsert = vi.fn();
@@ -144,12 +145,42 @@ describe("AiQueryModal (#691)", () => {
     expect(screen.getByText("説明です")).toBeTruthy();
     expect(screen.getByText("注意です")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: t("aiQueryInsert") }));
-    expect(onInsert).toHaveBeenCalledWith("SELECT 1");
+    // 生成 SQL は整形してから表示・挿入する。
+    expect(onInsert).toHaveBeenCalledWith(format("SELECT 1", { language: "postgresql" }));
     await screen.findByText(t("aiQueryInserted"));
     fireEvent.click(screen.getByRole("button", { name: t("aiQueryOpenInNewTab") }));
-    expect(onOpenInNewTab).toHaveBeenCalledWith("SELECT 1", "app");
+    expect(onOpenInNewTab).toHaveBeenCalledWith(format("SELECT 1", { language: "postgresql" }), "app");
     // 挿入後も説明・注意点は見えたまま。
     expect(screen.getByText("説明です")).toBeTruthy();
+  });
+
+  it("やりとりが始まるまで右ペイン (結果) は出さず、最初の送信で出す。新しい会話で閉じる", async () => {
+    renderWithProviders(ui());
+    await screen.findByLabelText(t("aiQueryRequestLabel"));
+    expect(screen.queryByTestId("ai-query-result")).toBeNull();
+    await generate();
+    await screen.findByTestId("ai-query-result");
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("SELECT 1");
+    fireEvent.click(screen.getByRole("button", { name: t("aiQueryNewConversation") }));
+    await waitFor(() => expect(screen.queryByTestId("ai-query-result")).toBeNull());
+  });
+
+  it("1 行で返った SQL も整形して表示し、整形できない SQL はそのまま出す", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const oneLine = JSON.stringify({ sql: "select id, amount from orders where amount > 10 order by id", explanation: "", warnings: [], tables_used: [] });
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: oneLine });
+      handlers?.onDone?.({} as never);
+    });
+    const shown = await screen.findByText((_, el) => el?.tagName === "PRE" && (el.textContent ?? "").includes("orders"));
+    expect(shown.textContent).toBe(format("select id, amount from orders where amount > 10 order by id", { language: "postgresql" }));
+    expect(shown.textContent?.split("\n").length).toBeGreaterThan(3);
   });
 
   it("追い質問: 2 回目の要求に前回の依頼と回答が履歴として載り、新規の生成は履歴なし (#1471)", async () => {

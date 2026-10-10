@@ -146,6 +146,9 @@ export function Modal({
                 flexDirection: "column",
                 width: `min(${width}, 100%)`,
                 maxWidth: `min(${width}, 100%)`,
+                // 開いたまま幅が変わるモーダル (Ask Agent の 2 ペイン化) で幅を滑らかに広げる。
+                // reduced-motion では App.css の全体ルールが transition を止める。
+                transition: "width var(--dur-med) var(--ease-out), max-width var(--dur-med) var(--ease-out)",
                 maxHeight: "90vh",
                 overflow: "hidden",
                 bg: "app.surface",
