@@ -29,6 +29,7 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 | `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 7 ジョブ、カバレッジ閾値 |
 | `references/release-workflow.md` | `release.yml` — タグビルド、キャッシュ温めの paths ゲート、`releaseDraft: false` の理由 |
 | `references/dependencies.md` | Dependabot / cargo-deny / pnpm audit の役割分担 |
+| `references/scheduled-notify.md` | 定期 / 手動の可視化専用ワークフロー (audit / e2e nightly / mutants / js-mutants) の検出結果をトラッキング Issue へ通知する仕組み (#1395) |
 | `references/automerge.md` | `automerge.yml` の判定フロー — Codex ゲート撤去の経緯、変更依頼ゲート (`/hold`・`do-not-merge`・定型句, #1108) |
 | `references/build-performance.md` | `mold` / `lld-link` / sccache / LTO 設定。**Linux では `clang` と `mold` が必須** |
 

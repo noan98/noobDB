@@ -68,14 +68,84 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # 当面は閾値による fail を設けず可視化のみ (バンドルサイズ #443・カバレッジ
-      # #482 と同じ漸進方針)。`pnpm audit` 自体は脆弱性が見つかると非ゼロ終了する
-      # ため `|| true` で吸収し、結果は Job Summary に出す。
+      # #482 と同じ漸進方針)。ただし `|| true` で握りつぶさず終了コードを step output
+      # (exit_code) に残し、後続の notify ジョブ (#1395) が検出有無を拾ってトラッキング
+      # Issue を upsert する。本ステップ自体は常に成功 (ブロックしない)。
       - name: pnpm audit (可視化のみ)
+        id: audit
+        shell: bash
         run: |
+          set +e
+          pnpm audit > audit-output.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
           {
             echo '### pnpm audit (フロントエンド依存脆弱性)'
             echo ''
             echo '```'
-            pnpm audit || true
+            cat audit-output.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # notify ジョブへ渡す要約 (Issue 本文の肥大を避けて先頭 80 行に切る)。
+          {
+            echo "summary<<AUDIT_EOF_$$"
+            head -n 80 audit-output.txt
+            echo "AUDIT_EOF_$$"
+          } >> "$GITHUB_OUTPUT"
+    outputs:
+      exit_code: ${{ steps.audit.outputs.exit_code }}
+      summary: ${{ steps.audit.outputs.summary }}
+
+  # 検出結果の通知 (#1395)。見に行かなければ腐る Job Summary だけの導線を補うため、
+  # 脆弱性が検出されたらトラッキング Issue (ラベル ci:audit) を upsert し、検出 0 件に
+  # 戻ったら自動でクローズする。`issues: write` はこのジョブにだけ付与し、本体ジョブの
+  # 権限は増やさない。schedule / workflow_dispatch でのみ起動する (本ワークフローは
+  # PR では走らないが、将来トリガが増えても通知しないようガードする)。
+  notify:
+    name: 検出結果の通知 (トラッキング Issue)
+    needs: pnpm-audit
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.pnpm-audit.result != 'cancelled' && needs.pnpm-audit.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/upsert-tracking-issue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: トラッキング Issue を upsert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_RESULT: ${{ needs.pnpm-audit.result }}
+          AUDIT_EXIT: ${{ needs.pnpm-audit.outputs.exit_code }}
+          AUDIT_SUMMARY: ${{ needs.pnpm-audit.outputs.summary }}
+          TRACK_LABEL: ci:audit
+          # 依存の脆弱性対応は日常運用で効くが数時間で済むことが多い。
+          TRACK_EXTRA_LABELS: cost:Low,benefit:3
+        run: |
+          if [ "$AUDIT_RESULT" = "success" ] && [ "$AUDIT_EXIT" = "0" ]; then
+            TRACK_STATE=ok bash scripts/upsert-tracking-issue.sh
+          else
+            {
+              echo "週次の \`pnpm audit\` でフロントエンド依存の脆弱性が検出された (または audit の実行自体が失敗した) ため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- ジョブ結果: \`${AUDIT_RESULT}\` / \`pnpm audit\` 終了コード: \`${AUDIT_EXIT:-不明}\`"
+              echo ""
+              echo '```'
+              printf '%s\n' "$AUDIT_SUMMARY"
+              echo '```'
+              echo ""
+              echo "対応方針: Dependabot の更新 PR を確認するか、\`pnpm update\` / \`pnpm.overrides\` で解消してください。検出 0 件に戻ると次回の週次実行で自動クローズされます。"
+            } > issue-body.md
+            TRACK_STATE=problem \
+              TRACK_TITLE="[audit] pnpm audit でフロントエンド依存の脆弱性を検出" \
+              TRACK_BODY_FILE=issue-body.md \
+              TRACK_DEDUP_KEY="exit=${AUDIT_EXIT};sha=$(printf '%s' "$AUDIT_SUMMARY" | sha256sum | cut -c1-12)" \
+              bash scripts/upsert-tracking-issue.sh
+          fi
