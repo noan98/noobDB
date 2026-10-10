@@ -41,6 +41,11 @@ export const AI_TASK_KINDS = [
   "syncRisk",
   "testData",
   "historySearch",
+  "advisorExplain",
+  "resultSummary",
+  "assertionSuggest",
+  "lockDiagnose",
+  "inlineComplete",
 ] as const;
 export type AiTaskKind = (typeof AI_TASK_KINDS)[number];
 
@@ -65,6 +70,11 @@ export const AI_TASK_DEFS: Record<
   syncRisk: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
   testData: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
   historySearch: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
+  advisorExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+  resultSummary: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+  assertionSuggest: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+  lockDiagnose: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+  inlineComplete: { recommendedModel: "claude-haiku-5-5", recommendedEffort: "low" },
 };
 
 export interface AiSelectOption<V extends string> {

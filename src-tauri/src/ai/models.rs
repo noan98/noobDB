@@ -100,11 +100,21 @@ pub enum AiTaskKind {
     TestData,
     /// 履歴の自然言語検索。
     HistorySearch,
+    /// スキーマ健全性アドバイザの指摘の解説 (#1468)。
+    AdvisorExplain,
+    /// 結果セットの要約 (#1476)。
+    ResultSummary,
+    /// データ品質アサーションの候補提案 (#1477)。
+    AssertionSuggest,
+    /// ロック待機・長時間クエリの診断 (#1478)。
+    LockDiagnose,
+    /// エディタのインライン補完 (#1479)。
+    InlineComplete,
 }
 
 impl AiTaskKind {
     #[cfg(test)]
-    pub const ALL: [AiTaskKind; 12] = [
+    pub const ALL: [AiTaskKind; 17] = [
         AiTaskKind::ConnectionTest,
         AiTaskKind::Generic,
         AiTaskKind::ErrorExplain,
@@ -117,6 +127,11 @@ impl AiTaskKind {
         AiTaskKind::SyncRisk,
         AiTaskKind::TestData,
         AiTaskKind::HistorySearch,
+        AiTaskKind::AdvisorExplain,
+        AiTaskKind::ResultSummary,
+        AiTaskKind::AssertionSuggest,
+        AiTaskKind::LockDiagnose,
+        AiTaskKind::InlineComplete,
     ];
 
     /// このタスク種別の推奨モデル (設定で上書きされない場合の目安。UI の「(推奨)」表示用)。
@@ -137,6 +152,11 @@ impl AiTaskKind {
             AiTaskKind::SyncRisk => AiModel::Opus55,
             AiTaskKind::TestData => AiModel::Opus55,
             AiTaskKind::HistorySearch => AiModel::Opus55,
+            AiTaskKind::AdvisorExplain => AiModel::Opus55,
+            AiTaskKind::ResultSummary => AiModel::Opus55,
+            AiTaskKind::AssertionSuggest => AiModel::Opus55,
+            AiTaskKind::LockDiagnose => AiModel::Opus55,
+            AiTaskKind::InlineComplete => AiModel::Haiku55,
         }
     }
 
@@ -155,6 +175,11 @@ impl AiTaskKind {
             AiTaskKind::SyncRisk => AiEffort::High,
             AiTaskKind::TestData => AiEffort::Medium,
             AiTaskKind::HistorySearch => AiEffort::Low,
+            AiTaskKind::AdvisorExplain => AiEffort::Medium,
+            AiTaskKind::ResultSummary => AiEffort::Medium,
+            AiTaskKind::AssertionSuggest => AiEffort::Medium,
+            AiTaskKind::LockDiagnose => AiEffort::High,
+            AiTaskKind::InlineComplete => AiEffort::Low,
         }
     }
 }
@@ -250,9 +275,16 @@ mod tests {
     }
 
     #[test]
-    fn recommended_model_is_opus_for_current_tasks() {
+    fn recommended_model_is_opus_except_inline_complete() {
+        // インライン補完 (#1479) は入力のたびに呼ぶため軽量モデルを推奨する。
+        // それ以外は Opus 5.5。
         for k in AiTaskKind::ALL {
-            assert_eq!(k.recommended_model(), AiModel::Opus55);
+            let expected = if k == AiTaskKind::InlineComplete {
+                AiModel::Haiku55
+            } else {
+                AiModel::Opus55
+            };
+            assert_eq!(k.recommended_model(), expected);
         }
     }
 

@@ -47,6 +47,11 @@ const TASK_LABEL: Record<AiTaskKind, I18nKey> = {
   syncRisk: "aiTaskSyncRisk",
   testData: "aiTaskTestData",
   historySearch: "aiTaskHistorySearch",
+  advisorExplain: "aiTaskAdvisorExplain",
+  resultSummary: "aiTaskResultSummary",
+  assertionSuggest: "aiTaskAssertionSuggest",
+  lockDiagnose: "aiTaskLockDiagnose",
+  inlineComplete: "aiTaskInlineComplete",
 };
 
 const EFFORT_LABEL: Record<AiEffort, I18nKey> = {
