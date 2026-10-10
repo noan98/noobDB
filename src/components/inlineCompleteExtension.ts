@@ -21,6 +21,7 @@ import {
 } from "@codemirror/view";
 import { completionStatus } from "@codemirror/autocomplete";
 import { api, listenAiStream, type AiStreamHandlers } from "../api/tauri";
+import { recordAiUsage } from "../ai/aiUsageStore";
 import type { AiSettingsSnapshot } from "../ai/aiSettings";
 import type { Nl2SqlTable } from "../ai/nl2sql";
 import {
@@ -287,8 +288,10 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
               onDelta: (e) => {
                 if (!finished) body += e.text;
               },
-              onDone: () => {
+              onDone: (e) => {
                 if (finished) return;
+                // `useAiStream` を通らない経路なので、今月の使用量には自前で加算する。
+                recordAiUsage(e);
                 cleanup();
                 onResult(body);
               },
