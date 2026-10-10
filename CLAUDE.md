@@ -19,6 +19,9 @@
 - 応答・PR (タイトル / 本文 / テスト計画) はすべて**日本語**。時刻は **JST** で書く。
 - 新規 Issue には `cost:Low|Mid|High` と `benefit:1`〜`benefit:5` の**両方**を付ける。
 - 関連 Issue がある PR は本文の独立行に `Closes #123`。Epic は最後の子を解消する PR でのみ閉じる。
+- **PR は作成と同時に `do-not-merge` ラベルを付ける** (automerge は必須チェックが通ると
+  即マージするので、作成後に付けると間に合わないことがある)。CI がすべて緑になったら
+  確認なしでラベルを外し、そのまま squash マージする (外すだけでは automerge は再評価されない)。
 - **対応 DB は MySQL / PostgreSQL / SQLite の 3 つに固定。** 他ドライバの追加・パリティ前提の
   Issue は作らない。
 
@@ -26,8 +29,8 @@
 
 これらを破ると CI が落ちるか、実行時に静かに壊れます。
 
-- **秘密情報 (パスワード / パスフレーズ) を `profiles.json` に書かない・ログに出さない。**
-  秘密は OS keyring のみ。非秘密フィールド (ホスト・パス・TLS 証明書の**パス**など) は
+- **秘密情報 (パスワード / パスフレーズ / AI の API キー) を `profiles.json` や設定ストアに
+  書かない・ログに出さない。** 秘密は OS keyring のみ。非秘密フィールド (ホスト・パス・TLS 証明書の**パス**など) は
   `profiles.json`。唯一の例外は `reveal_profile_secret` (#938)。
 - **Tauri capabilities を増やさない。** フロントは fs / shell を直接叩かず、必ず
   Rust コマンド経由にする (`src-tauri/capabilities/default.json` は意図的に最小)。
@@ -118,8 +121,10 @@ UI を変更したとき・改善点を洗い出すときは、**実ブラウザ
 `.claude/skills/noobdb-testing/references/ui-screenshots.md`。
 
 - **キャプチャは必ず日本語画面で撮る。** ブラウザテストの共通セットアップは英語固定
-  なので、撮影用テストの `beforeEach` で `setLocale("ja")` を呼び直す。英語のまま
-  撮ったキャプチャを PR / Issue に貼らない。
+  なので、撮影用テストの `beforeEach` で `setLocale("ja")` を呼び直す。
+- **キャプチャは PR / Issue に載せず、依頼元の会話 (スレッド) に添付して共有する。**
+  ダークテーマのみでよい。クラウド実行環境からは `gh` の画像添付 (`--attach`) も
+  uploads.github.com へのアップロードも通らないので、PR に貼ろうとしない。
 - 撮影用のテスト (`ui-audit.browser.test.tsx`)・設定 (`vitest.ui-audit.config.ts`)・
   PNG は一時ファイル。確認後に削除し、コミットに含めない。
 - 撮りたい画面が呼ぶ IPC コマンドは `onCommand` で固定応答を登録する。未登録の
@@ -140,6 +145,12 @@ SSH トンネルをファーストクラスでサポートします。
 - **DB レイヤ**: トレイトオブジェクトではなく手書きの `enum db::Connection` で
   ドライバをディスパッチ (`db/mod.rs`)。
 - **秘密情報**: `profiles.json` (非秘密) と OS keyring (秘密) を厳密に分離。
+- **AI アシスト**: `src-tauri/src/ai/` (Claude API クライアント・SSE・モデル定義) と
+  `src/ai/` (プロンプト組み立て・応答パースの純関数、`useAiStream`)。既定オフの
+  オプトインで、送信範囲 (既定はスキーマのみ)・行データの許可・リテラルのマスク設定を
+  必ず守る。タスク種別を足すときは `models.rs` の `AiTaskKind` と `aiModels.ts` を揃える。
+- **ブランド**: ロゴとブランド色 (navy / navy-raised / teal) は `src/brand.tsx` と
+  `App.css` の `--brand-*` 変数。サンドボックスの紫 (`--sandbox-violet`) はブランドとは別。
 
 より詳しい地図は `noobdb-architecture` スキル。
 
