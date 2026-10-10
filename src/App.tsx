@@ -411,6 +411,7 @@ import {
   type PersistedWorkspace,
 } from "./tabPersistence";
 import { reorderIfPermutation } from "./tabReorder";
+import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
 import { buildPageSql, canGoNext, canGoPrev, clampPage } from "./pagination";
@@ -664,6 +665,8 @@ export interface Tab {
   id: string;
   kind: TabKind;
   title: string;
+  /** 手動リネーム済み / 名前付きで開いたタブ。true なら実行時の自動命名で上書きしない (#1390)。 */
+  titleManual?: boolean;
   database?: string;
   table?: string;
   sql: string;
@@ -942,9 +945,7 @@ function schemaCacheKey(sessionId: string, database: string): string {
  * 1 行を短く切り詰める。空なら既定の無題タイトル。
  */
 function deriveResultTabTitle(sql: string): string {
-  const firstLine = sql.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
-  if (!firstLine) return translate("tabUntitledQuery");
-  return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
+  return deriveTitleFromSql(sql, translate("tabUntitledQuery"));
 }
 
 /** 共通の初期状態でタブを生成する。呼び出し側は必要なフィールドだけ上書きする。 */
@@ -1038,6 +1039,7 @@ function toPersistedTab(
   liveGridScrollTop?: number,
 ): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
+  if (tab.titleManual) out.titleManual = true;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   // Carry the Query Builder snapshot through so the inputs come back on
@@ -1722,13 +1724,22 @@ export default function App() {
   // パターン、#1219 付近参照)。F6 巡回 (paneFocusCursorRef) や
   // フォーカストラップ (keyboardNav.ts) の状態には触れない — こちらは
   // フォーカスを直接移すだけの単発処理。
+  const renamingTabIdRef = useRef<string | null>(null);
   const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
     if (!paneId || tabKind !== "query") return;
     requestAnimationFrame(() => {
       if (overlayOpenRef.current) return;
+      // タブ名のインライン編集中 (ダブルクリックの 1 回目の選択で予約された rAF が
+      // 後から走る場合を含む) は、エディタへフォーカスを奪って blur 確定させない (#1390)。
+      // リネーム中のタブが blur を経ずに消えた (接続切替等) 場合に ID が残っても
+      // 自動フォーカスが止まり続けないよう、まだ存在するタブだけを見る。
+      const renaming = renamingTabIdRef.current;
+      if (renaming && tabsRef.current.some((t) => t.id === renaming)) return;
+      const ae = document.activeElement;
+      if (ae instanceof HTMLInputElement && ae.closest('[role="tab"]')) return;
       editorRefs.current.get(paneId)?.focus();
     });
-  }, []);
+  }, [tabsRef]);
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
@@ -3706,7 +3717,14 @@ export default function App() {
     }
     // パッチで更新できる見込みのときは、前回の結果を消さずに残す (パッチの適用元になる)。
     const keepPrevResult = refreshDiff?.prevSnapshotId != null;
+    // クエリタブの自動命名 (#1390): 実行時にだけ SQL 先頭行から付ける。手動リネーム済みは
+    // 上書きしない。直前のリネームを取りこぼさないよう最新の tabsRef を優先して判定する。
+    const titleSource = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
+    const autoTitle = titleSource
+      ? autoTitleOnRun(titleSource, sql, translate("tabUntitledQuery"))
+      : null;
     updateTab(tabId, {
+      ...(autoTitle !== null ? { title: autoTitle } : {}),
       lastExecutedSql: sql,
       ...(keepPrevResult ? {} : { result: emptyResult([]) }),
       preview: null,
@@ -4076,6 +4094,7 @@ export default function App() {
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
     panesRef,
+    tabsRef,
   ]);
 
   // 環境横断ブロードキャスト実行 (#738): クエリエディタの「複数の接続で実行」から
@@ -4268,6 +4287,7 @@ export default function App() {
           return {
             ...tab,
             title: s.title || tab.title,
+            titleManual: s.titleManual === true,
             previewRowLimit: limit,
             builderSnapshot: restoredSnapshot,
             selection: s.selection,
@@ -4275,6 +4295,7 @@ export default function App() {
         }
         return {
           ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
+          titleManual: s.kind === "query" && s.titleManual === true,
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
           selection: s.selection,
@@ -4732,6 +4753,7 @@ export default function App() {
     const db = tab.database ?? selectedProfile?.database ?? null;
     patchTab(tabId, (tt) => ({
       ...tt,
+      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
       batchRunning: true,
       batchScript: sql,
       batchResults: [],
@@ -4812,6 +4834,7 @@ export default function App() {
     if (!sessionId) return;
     patchTab(tabId, (tt) => ({
       ...tt,
+      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
       streaming: true,
       queryError: null,
       showChart: false,
@@ -5215,6 +5238,7 @@ export default function App() {
       sql: snippet.sql,
       lastExecutedSql: snippet.sql,
       title: snippet.name,
+      titleManual: true,
     };
     addTab(tab);
     runInTabWithGate(tab, snippet.sql, { newTab: false });
@@ -6036,7 +6060,10 @@ export default function App() {
   const openAndRunQuery = useCallback((sql: string, title?: string) => {
     if (!sessionId) return;
     const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
-    if (title) tab.title = title;
+    if (title) {
+      tab.title = title;
+      tab.titleManual = true;
+    }
     addTab(tab);
     void runQueryInTab(tab.id, sql);
   }, [sessionId, runQueryInTab, addTab]);
@@ -6044,7 +6071,10 @@ export default function App() {
   // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
   const openQueryInEditor = useCallback((sql: string, title?: string, database?: string) => {
     const tab: Tab = { ...makeQueryTab(), sql };
-    if (title) tab.title = title;
+    if (title) {
+      tab.title = title;
+      tab.titleManual = true;
+    }
     if (database) tab.database = database;
     addTab(tab);
   }, [addTab]);
@@ -6054,7 +6084,7 @@ export default function App() {
   // アクティブタブ → プロファイル既定の順で解決したものをタブに持たせる。
   const assertionDatabase = activeTab?.database ?? selectedProfile?.database;
   const handleOpenAssertionSql = useCallback((sql: string, title: string) => {
-    const tab: Tab = { ...makeQueryTab(), sql, title };
+    const tab: Tab = { ...makeQueryTab(), sql, title, titleManual: true };
     if (assertionDatabase) tab.database = assertionDatabase;
     addTab(tab);
   }, [addTab, assertionDatabase]);
@@ -6115,6 +6145,7 @@ export default function App() {
       sql,
       lastExecutedSql: sql,
       title: target.name,
+      titleManual: true,
       database: target.database,
     };
     addTab(tab);
@@ -6142,6 +6173,7 @@ export default function App() {
         ...makeQueryTab(),
         sql: extractViewBody(ddl),
         title: name,
+        titleManual: true,
         database,
         editingViewName: name,
       };
@@ -7057,6 +7089,7 @@ export default function App() {
         addTab({
           ...makeQueryTab(),
           title: fileBaseName(p),
+          titleManual: true,
           sql: content,
           lastExecutedSql: content,
         });
@@ -7251,6 +7284,7 @@ export default function App() {
       : makeTab("query", entry.title, entry.sql);
     const restored: Tab = {
       ...base,
+      titleManual: entry.kind === "query" && entry.titleManual === true,
       database: entry.database,
       builderSnapshot: entry.builderSnapshot ?? null,
       selection: entry.selection,
@@ -7288,12 +7322,32 @@ export default function App() {
     const copy: Tab = {
       ...makeQueryTab(),
       title: spec.title ?? translate("tabUntitledQuery"),
+      titleManual: spec.titleManual,
       sql: spec.sql,
       lastExecutedSql: spec.lastExecutedSql,
       database: spec.database,
     };
     addTab(copy, owner?.id);
   }, [tabsRef, panesRef, tabSqlStore, addTab]);
+
+  // タブのリネーム (#1390)。編集中のタブ ID を持ち、TabBar のインライン編集を制御する。
+  // 確定は `applyRename` が空文字 (自動命名へ戻す) / 変更なしを判定する。
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  renamingTabIdRef.current = renamingTabId;
+  const requestRenameTab = useCallback((id: string) => setRenamingTabId(id), []);
+  const cancelRenameTab = useCallback(() => setRenamingTabId(null), []);
+  const renameTab = useCallback((id: string, input: string) => {
+    setRenamingTabId(null);
+    const src = tabsRef.current.find((tt) => tt.id === id);
+    if (!src) return;
+    const result = applyRename(
+      src,
+      input,
+      tabSqlStore.resolve(src.id, src.sql),
+      translate("tabUntitledQuery"),
+    );
+    if (result) updateTab(id, result);
+  }, [tabSqlStore, tabsRef, updateTab]);
 
   // Latest handlers held in a ref so the global keydown listener below can
   // call them without re-attaching on every tab change.
@@ -8304,12 +8358,12 @@ export default function App() {
   // ペインの描画 (`PaneView`) へ渡す App 由来のハンドラ。参照が固定された束なので、
   // 呼び出し側の関数が毎レンダー作り直されても `PaneView` の memo は破られない (#1318)。
   const paneActions = useStableCallbacks({
-    applyEditsForTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
+    applyEditsForTab, cancelRenameTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
     explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab, handleEditorDocChange,
     handleAiSqlAction, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
-    redoCellEditForTab, reorderTabsInPane, replaceColumnForTab, requestBroadcast,
+    redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
     requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
     runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
     setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
@@ -8334,6 +8388,7 @@ export default function App() {
         !isSandboxProfileId(c.profile.id),
     );
   const paneEnv: PaneEnv = {
+    renamingTabId,
     store: tabPaneStore,
     actions: paneActions,
     t,
@@ -10286,6 +10341,10 @@ export default function App() {
         const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
         const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
         const items: ContextMenuEntry[] = [
+          // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
+          ...(tabsRef.current.find((tt) => tt.id === tabMenu.tabId)?.kind === "query"
+            ? [{ label: t("tabRename"), onSelect: () => requestRenameTab(tabMenu.tabId) }]
+            : []),
           {
             label: t("tabMoveOtherPane"),
             onSelect: () => moveTabToOtherPane(tabMenu.tabId),

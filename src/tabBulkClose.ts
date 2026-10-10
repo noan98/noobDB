@@ -34,6 +34,8 @@ export function tabsToClose(
 export interface DuplicateSource {
   kind: "table" | "query" | "explain";
   title: string;
+  /** 手動リネーム済みか (#1390)。複製にも引き継ぐ (複製直後の実行で名前が消えないように)。 */
+  titleManual?: boolean;
   database?: string;
 }
 
@@ -42,6 +44,8 @@ export interface DuplicateTabSpec {
   kind: "query";
   /** 複製元のタイトルを引き継ぐ。explain は元のタイトルが計画用なので null (無題クエリ)。 */
   title: string | null;
+  /** 手動リネーム済みのフラグ (#1390)。explain はタイトルを引き継がないので常に false。 */
+  titleManual: boolean;
   sql: string;
   database: string | undefined;
   /** 未実行扱い (dirty 表示) にするため常に空。 */
@@ -56,6 +60,7 @@ export function duplicateTabSpec(src: DuplicateSource, sql: string): DuplicateTa
   return {
     kind: "query",
     title: src.kind === "explain" ? null : src.title,
+    titleManual: src.kind === "explain" ? false : src.titleManual === true,
     sql,
     database: src.database,
     lastExecutedSql: "",

@@ -34,6 +34,8 @@ export interface ClosedTab {
   scope: string;
   kind: "table" | "query" | "explain";
   title: string;
+  /** 手動リネーム済み (#1390)。復元後の実行で名前が自動命名に上書きされないよう保持する。 */
+  titleManual?: boolean;
   /** 閉じた時点の最新本文 (エディタに未反映の編集を含む)。 */
   sql: string;
   database?: string;
@@ -47,6 +49,7 @@ export interface ClosedTab {
 export interface ClosableTab {
   kind: "table" | "query" | "explain";
   title: string;
+  titleManual?: boolean;
   database?: string;
   table?: string;
   builderSnapshot?: QueryBuilderSnapshot | null;
@@ -77,6 +80,7 @@ export function snapshotClosedTab(
     sql,
     closedAt: meta.closedAt,
   };
+  if (tab.kind === "query" && tab.titleManual) out.titleManual = true;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   if (tab.builderSnapshot) out.builderSnapshot = tab.builderSnapshot;

@@ -29,6 +29,12 @@ describe("snapshotClosedTab", () => {
     expect(s).toMatchObject({ kind: "query", sql: "SELECT 2", database: "db", selection: { anchor: 3, head: 4 } });
   });
 
+  it("手動リネーム済み (titleManual) は query タブのときだけ保持する (#1390)", () => {
+    expect(snapshotClosedTab({ kind: "query", title: "月次", titleManual: true }, "SELECT 1", meta)?.titleManual).toBe(true);
+    expect(snapshotClosedTab({ kind: "query", title: "q" }, "SELECT 1", meta)).not.toHaveProperty("titleManual");
+    expect(snapshotClosedTab({ kind: "explain", title: "e", titleManual: true }, "EXPLAIN SELECT 1", meta)).not.toHaveProperty("titleManual");
+  });
+
   it("本文が空白だけのクエリ / explain タブは残さない", () => {
     expect(snapshotClosedTab({ kind: "query", title: "q" }, "  \n", meta)).toBeNull();
     expect(snapshotClosedTab({ kind: "explain", title: "e" }, "", meta)).toBeNull();
