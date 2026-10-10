@@ -107,3 +107,34 @@ describe("AdvisorPanel running skeleton (#1211)", () => {
     expect(rows[0].getAttribute("aria-hidden")).toBeNull();
   });
 });
+
+describe("AdvisorPanel 既定の並び (#1469)", () => {
+  const mk = (table: string, severity: "high" | "medium" | "low") => ({
+    rule: "missing_primary_key" as const,
+    severity,
+    table,
+    columns: [],
+    context: [],
+    statistical: false,
+    fix_ddl: null,
+  });
+
+  it("初期表示で重要度の高い指摘が上に並び、同重要度はバックエンドの順を保つ", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce({
+      driver: "mysql",
+      tables_analyzed: 4,
+      findings: [mk("t_low", "low"), mk("t_med1", "medium"), mk("t_high", "high"), mk("t_med2", "medium")],
+      skipped: [],
+    });
+    const { container } = renderWithProviders(
+      <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />,
+    );
+    fireEvent.click(screen.getByText(t("advisorRun")));
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr").length).toBe(4));
+    const text = Array.from(container.querySelectorAll("tbody > tr")).map((r) => r.textContent ?? "");
+    const order = ["t_high", "t_med1", "t_med2", "t_low"].map((n) => text.findIndex((x) => x.includes(n)));
+    expect(order).toEqual([0, 1, 2, 3]);
+    // 既定の重要度順はヘッダの aria-sort にも昇順として出る。
+    expect(container.querySelector('th[aria-sort="ascending"]')).not.toBeNull();
+  });
+});

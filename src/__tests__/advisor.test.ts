@@ -4,6 +4,7 @@ import type { AdvisorRuleId, HealthFinding } from "../api/tauri";
 import {
   findingDescription,
   findingTarget,
+  DEFAULT_ADVISOR_SORT,
   nextAdvisorSort,
   reasonTextKey,
   ruleTitleKey,
@@ -187,10 +188,17 @@ describe("sortFindings", () => {
 
 describe("nextAdvisorSort", () => {
   it("同じ列は 昇順 → 降順 → 解除、別の列は昇順から", () => {
-    expect(nextAdvisorSort(null, "rule")).toEqual({ key: "rule", dir: "asc" });
     expect(nextAdvisorSort({ key: "rule", dir: "asc" }, "rule")).toEqual({ key: "rule", dir: "desc" });
-    expect(nextAdvisorSort({ key: "rule", dir: "desc" }, "rule")).toBeNull();
     expect(nextAdvisorSort({ key: "rule", dir: "desc" }, "target")).toEqual({ key: "target", dir: "asc" });
+    expect(nextAdvisorSort(DEFAULT_ADVISOR_SORT, "rule")).toEqual({ key: "rule", dir: "asc" });
+  });
+
+  it("解除すると既定の重要度順 (高→低) に戻る", () => {
+    expect(DEFAULT_ADVISOR_SORT).toEqual({ key: "severity", dir: "asc" });
+    expect(nextAdvisorSort({ key: "rule", dir: "desc" }, "rule")).toEqual(DEFAULT_ADVISOR_SORT);
+    // 重要度列自身の巡回: 昇順(既定) → 降順 → 既定へ
+    expect(nextAdvisorSort(DEFAULT_ADVISOR_SORT, "severity")).toEqual({ key: "severity", dir: "desc" });
+    expect(nextAdvisorSort({ key: "severity", dir: "desc" }, "severity")).toEqual(DEFAULT_ADVISOR_SORT);
   });
 });
 
