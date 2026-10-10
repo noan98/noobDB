@@ -82,6 +82,9 @@ import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { AiQueryModal } from "./AiQueryModal";
 import { useAiAvailable } from "../ai/useAiAvailable";
+import { toAiSnapshot } from "../ai/aiSettings";
+import { inlineCompleteAllowed } from "../ai/inlineComplete";
+import { inlineCompleteExtension, type InlineCompleteConfig } from "./inlineCompleteExtension";
 import type { AiSqlEditorAction, SqlAssistKind } from "../ai/sqlAssist";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
@@ -859,6 +862,37 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   const [showBuilder, setShowBuilder] = useState(false);
   const [showAiQuery, setShowAiQuery] = useState(false);
   const aiAvailable = useAiAvailable();
+  // AI インライン補完 (#1479) の送信可否と送信元。拡張は state に一度だけ載せ、送信の直前に
+  // この ref から最新の設定を読む (オフにした直後・本番接続への切替直後に送らないため)。
+  const inlineGateRef = useRef({ settings: settings.ai, aiAvailable, isProduction: !!isProduction });
+  inlineGateRef.current = { settings: settings.ai, aiAvailable, isProduction: !!isProduction };
+  const getInlineConfig = (): InlineCompleteConfig | null => {
+    const g = inlineGateRef.current;
+    if (
+      !inlineCompleteAllowed({
+        featureEnabled: g.settings.inlineComplete,
+        aiAvailable: g.aiAvailable,
+        sendScope: g.settings.sendScope,
+        isProduction: g.isProduction,
+      })
+    ) {
+      return null;
+    }
+    const a = sqlArgsRef.current;
+    // 補完用にエディタが持っているスキーマ (DB 全体 + アクティブテーブル) を再利用する。
+    const tables = new Map<string, string[]>();
+    for (const tbl of a.databaseSchema ?? []) tables.set(tbl.name, tbl.columns);
+    if (a.schemaTable && !tables.has(a.schemaTable.name)) tables.set(a.schemaTable.name, a.schemaTable.columns);
+    return {
+      driver: a.driver,
+      maskLiterals: g.settings.maskLiterals,
+      tables: [...tables].map(([name, columns]) => ({ name, columns })),
+      database: a.schemaTable?.database ?? a.defaultDatabase ?? null,
+      settings: toAiSnapshot(g.settings),
+    };
+  };
+  const getInlineConfigRef = useRef(getInlineConfig);
+  getInlineConfigRef.current = getInlineConfig;
   // エディタはタブ間で再利用されるので、タブ / セッション / EXPLAIN 化が変わったら閉じる
   // (条件が戻ったときにモーダルが勝手に再表示されないように)。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 値の変化をトリガーにするだけ
@@ -1078,6 +1112,8 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
               getColumns,
             ),
           ),
+          // AI インライン補完 (#1479)。提案が出ているときだけ Tab / Esc を奪う。
+          inlineCompleteExtension({ getConfig: () => getInlineConfigRef.current() }),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
           // Compartment 越しのキーマップにして、設定変更時に再構成できるようにする。
           // 静的キーマップより前に置き優先させる。

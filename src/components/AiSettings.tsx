@@ -21,6 +21,7 @@ import {
   setAiDefaultModel,
   giveAiConsent,
   setAiEnabled,
+  setAiInlineComplete,
   setAiMaskLiterals,
   setAiSendScope,
   setAiTaskEffort,
@@ -424,6 +425,25 @@ export function AiSettings() {
             {t("aiMaskLiterals")}
           </chakra.label>
           <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
+        <SettingsLabelWithInfo>
+          <chakra.label
+            htmlFor="settings-ai-inline-complete"
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            fontSize="md"
+            fontWeight={500}
+            color="app.text"
+          >
+            <Switch
+              id="settings-ai-inline-complete"
+              checked={ai.inlineComplete}
+              onChange={setAiInlineComplete}
+            />
+            {t("aiInlineComplete")}
+          </chakra.label>
+          <SettingsInfo>{t("aiInlineCompleteHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
       </FormSection>
 
