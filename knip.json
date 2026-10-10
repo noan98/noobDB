@@ -11,7 +11,7 @@
     "@wdio/types",
     "ts-node"
   ],
-  "ignore": ["e2e/**"],
+  "ignore": ["e2e/**", "vitest.mutants.config.ts"],
   "tags": ["-public"],
   "rules": {
     "duplicates": "off"

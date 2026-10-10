@@ -71,6 +71,31 @@ cargo mutants --in-place
 (#482) と同じ漸進方針。生き残り変異 (MISSED) が出たら `db::tests` に境界ケースを
 追記して潰す。生成物 `mutants.out/` は `.gitignore` 済み。
 
+フロント (TS) 安全網のミューテーションテスト (#1358) — Stryker Mutator
+(`@stryker-mutator/core` + `@stryker-mutator/vitest-runner`、devDependency 導入済み):
+
+```sh
+# 4 モジュールすべて (concurrency 2。数十分かかる)
+pnpm run mutants:js
+
+# 1 モジュールだけ回す (推奨。dangerousSql.ts で約 5 分)
+pnpm exec stryker run --mutate src/dangerousSql.ts
+```
+
+**運用方針**: 対象は `src/dangerousSql.ts` / `src/sqlScript.ts` /
+`src/components/preflight.ts` / `src/components/cellEdit.ts` (単一ソースは
+`stryker.conf.json` の `mutate`)。実行するテストは `vitest.mutants.config.ts` の
+`include` に列挙した純ロジックのテスト (共有ゴールデン含む) に限る — 全スイートを
+変異ごとに回すと初回ドライランがタイムアウトする。対象モジュールを検証するテストを
+足したら `include` にも足す。Stryker は TypeScript 7 の JS API 非互換のため
+`tsconfigFile` に存在しないパスを指定して tsconfig の書き換えを避けている。
+CI トリガは `.github/workflows/js-mutants.yml` の `workflow_dispatch` (手動) のみで、
+PR では走らせない。**fail させない** (可視化のみ) — mutants.yml と同じ漸進方針で、
+Job Summary にスコアとモジュール別の生存数、アーティファクト `stryker-report` に
+HTML/JSON レポートを出す。生き残り変異 (Survived / NoCoverage) は `reports/mutation/mutation.html`
+で確認し、対応する `*.test.ts` に境界ケースを追記して潰す (等価変異や性能目的の
+キャッシュ分岐は無理に潰さない)。生成物 `reports/` / `.stryker-tmp/` は `.gitignore` 済み。
+
 統合テストは対応する環境変数が設定されていない限りスキップされます (SQLite を除く):
 
 ```sh
