@@ -240,20 +240,31 @@
   --ws-accent: var(--accent);
 
   /* ── Brand identity (#619) ────────────────────────────────────────────
-     プロダクトのブランドカラー。アプリアイコン (src-tauri/icons) の青→紫
-     グラデーションと一致させ、ロゴマーク (brand.tsx の BrandMark) ・スプラッシュ
+     プロダクトのブランドカラー (ロゴ「n Tunnel」)。アプリアイコン (src-tauri/icons)
+     ・favicon と一致させ、ロゴマーク (brand.tsx の BrandMark) ・スプラッシュ
      (SplashScreen) ・タイトルバーが参照する単一の出所。アクセント色 (--accent,
-     接続ごとに動的) とは別物で、テーマ (light/dark) を跨いで**固定**する —
-     ブランドの第一印象を環境差で揺らさないため。値は brand.tsx の定数とも一致。 */
-  --brand-blue: #3b82f6;
-  --brand-indigo: #4f6bf6;
-  --brand-violet: #8b5cf6;
-  --brand-gradient: linear-gradient(135deg, var(--brand-blue), var(--brand-violet));
+     接続ごとに動的) とは別物で、3 色ともテーマ (light/dark) を跨いで**固定**する —
+     ブランドの第一印象を環境差で揺らさないため。値は brand.tsx の定数とも一致。
+       - navy: ロゴのタイル (明るい地) とブランド面
+       - navy-raised: ロゴのタイル (暗い地)
+       - teal: ロゴの横線 (トンネル) とブランド面の小さなアクセント。文字色には使わない */
+  --brand-navy: #12355b;
+  --brand-navy-raised: #1d4a7a;
+  --brand-teal: #2dd4bf;
+  --brand-gradient: linear-gradient(135deg, var(--brand-navy-raised), var(--brand-teal));
+  /* ロゴのタイル色。ダーク系プリセットでは下の `:root[data-theme$="dark"]` で
+     navy-raised に切り替え、暗い面に沈まないようにする。 */
+  --brand-mark-tile: var(--brand-navy);
+  /* ワードマーク "noobDB" の文字色。ダーク系では本文色 (--text) に切り替える。 */
+  --brand-wordmark: var(--brand-navy);
+  /* ワードマークの字間。本文のリズムトークン (--tracking-tight = -0.01em) より
+     わずかに詰めたロゴ専用値なので、ブランド側に置く。 */
+  --brand-wordmark-tracking: -0.015em;
 
   /* ── Hero wash (#1163) ────────────────────────────────────────────────
      起動直後の「第一印象」画面 (WelcomeView / ProfileCardGrid) のルートに敷く、
-     ごく控えめなブランド由来の背景。`--brand-gradient` と同じ 2 色 (brand-blue /
-     brand-violet、テーマを跨いで固定) を単一ソースとして `color-mix` で薄め、
+     ごく控えめなブランド由来の背景。`--brand-gradient` と同じ 2 色 (brand-navy-raised /
+     brand-teal、テーマを跨いで固定) を単一ソースとして `color-mix` で薄め、
      素の `app.bg` に重ねても文字/カードのコントラストを損なわない不透明度
      (12%/8% 以下) に留める。上部中央のみに淡く滲ませ、下端は完全な透明へ
      フェードさせるので、スクロール量や画面幅が変わっても縁が見切れない。
@@ -262,21 +273,21 @@
      プリセットブロックで `none` に上書きする。 */
   --hero-wash: radial-gradient(
     ellipse 1200px 560px at 50% -12%,
-    color-mix(in srgb, var(--brand-blue) 12%, transparent) 0%,
-    color-mix(in srgb, var(--brand-violet) 8%, transparent) 45%,
+    color-mix(in srgb, var(--brand-navy-raised) 12%, transparent) 0%,
+    color-mix(in srgb, var(--brand-teal) 8%, transparent) 45%,
     transparent 75%
   );
 
   /* ── Hero halo / rule (#1216) ─────────────────────────────────────────
      Welcome / Splash のイラスト・ロゴの背後に敷く放射状のブランドの光彩と、見出し下の
-     短いブランドグラデーションの罫線。`--hero-wash` と同じく brand-blue / brand-violet
+     短いブランドグラデーションの罫線。`--hero-wash` と同じく brand-navy-raised / brand-teal
      (テーマを跨いで固定) を単一ソースとし、不透明度は控えめ (25% 以下) に留めて前景の
      コントラストを損なわない。静止装飾のため reduced-motion の影響は無い。
      hc-* では装飾より AAA を優先して `none` に上書きする。 */
   --hero-halo: radial-gradient(
     circle closest-side,
-    color-mix(in srgb, var(--brand-blue) 22%, transparent) 0%,
-    color-mix(in srgb, var(--brand-violet) 12%, transparent) 55%,
+    color-mix(in srgb, var(--brand-navy-raised) 22%, transparent) 0%,
+    color-mix(in srgb, var(--brand-teal) 12%, transparent) 55%,
     transparent 100%
   );
   --hero-rule: var(--brand-gradient);
@@ -362,9 +373,12 @@
      残さないため。 */
   --titlebar-close-hover-bg: #e81123;
   --titlebar-close-hover-fg: #ffffff;
-  --sandbox-solid: var(--brand-violet);
-  --sandbox-subtle: color-mix(in srgb, var(--brand-violet) 16%, transparent);
-  --sandbox-border: color-mix(in srgb, var(--brand-violet) 50%, transparent);
+  /* サンドボックス (ローカルコピー) の専用色。ブランド色とは切り離した固定の紫で、
+     sandbox.ts の SANDBOX_BAND_COLOR と一致させる (brand.test.ts)。 */
+  --sandbox-violet: #8b5cf6;
+  --sandbox-solid: var(--sandbox-violet);
+  --sandbox-subtle: color-mix(in srgb, var(--sandbox-violet) 16%, transparent);
+  --sandbox-border: color-mix(in srgb, var(--sandbox-violet) 50%, transparent);
 
   /* ── Semantic color families (#476) ───────────────────────────────────
      状態色 (info/success/warning/error) を役割別に展開する。色だけに依存
@@ -452,6 +466,13 @@
   line-height: var(--leading-normal);
   color: var(--text);
   background: var(--bg);
+}
+
+:root[data-theme$="dark"] {
+  /* ダーク系プリセット共通 (名前が "dark" で終わる)。ロゴのタイルを一段明るい紺に、
+     ワードマークを本文色にする。 */
+  --brand-mark-tile: var(--brand-navy-raised);
+  --brand-wordmark: var(--text);
 }
 
 :root[data-theme="dark"] {
