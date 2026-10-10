@@ -338,7 +338,9 @@ export type AssertionRule =
       ref_table: string;
       ref_columns: string[];
     }
-  | { kind: "row_count"; op: RowCountOp; value: number; max: number | null };
+  | { kind: "row_count"; op: RowCountOp; value: number; max: number | null }
+  /** 違反行を返す読み取り専用 SELECT。0 行なら pass (#1477)。 */
+  | { kind: "custom_sql"; sql: string };
 
 /** 保存済みのデータ品質アサーション (#742)。 */
 export interface Assertion {

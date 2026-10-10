@@ -78,6 +78,9 @@ pub enum AssertionRule {
         #[serde(default)]
         max: Option<u64>,
     },
+    /// 利用者 (または AI 提案) が書いた**違反行を返す** SELECT。0 行なら pass (#1477)。
+    /// 読み取り専用の単一文であることを保存時と SQL 生成時に検証する。
+    CustomSql { sql: String },
 }
 
 /// 保存済みのアサーション 1 件。
