@@ -115,6 +115,7 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { AiErrorExplain } from "./components/AiErrorExplain";
+import { OPEN_AI_SETTINGS_EVENT } from "./ai/aiSettingsNav";
 import { findSqlRange, sqlForRangeReplace } from "./ai/errorExplain";
 import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sqlAssist";
 import type { AiSqlRequest } from "./components/AiSqlPanel";
@@ -8117,6 +8118,21 @@ export default function App() {
   }, []);
   openFullViewRef.current = openFullView;
 
+  // AI の案内リンク (AiSetupHint) から AI 設定を開く (#1475)。通常の設定オープンでは
+  // 先頭から表示するよう、AI 経由のときだけセクション id を渡す。
+  const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const onOpenAi = () => {
+      setSettingsInitialSection("settings-sec-ai");
+      openFullView("settings");
+    };
+    window.addEventListener(OPEN_AI_SETTINGS_EVENT, onOpenAi);
+    return () => window.removeEventListener(OPEN_AI_SETTINGS_EVENT, onOpenAi);
+  }, [openFullView]);
+  useEffect(() => {
+    if (!showSettings) setSettingsInitialSection(undefined);
+  }, [showSettings]);
+
   /**
    * ボトムパネル (#1112) のタブを開く / 閉じる。ツールメニュー・コマンドパレット
    * からの唯一の入口で、**同じタブをもう一度選ぶと閉じる** (`toggleBottomPanelTab`)。
@@ -10993,7 +11009,11 @@ export default function App() {
         </AnimatePresence>
         <AnimatePresence>
           {showSettings && (
-            <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
+            <SettingsView
+              theme={theme}
+              initialSection={settingsInitialSection}
+              onClose={() => setShowSettings(false)}
+            />
           )}
         </AnimatePresence>
         <AnimatePresence>

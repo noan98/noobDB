@@ -140,6 +140,8 @@ import { Tooltip } from "./Tooltip";
 interface Props {
   theme: Theme;
   onClose: () => void;
+  /** 開いた直後にスクロールするセクション id (AI 案内リンクからの遷移用, #1475)。 */
+  initialSection?: string;
 }
 
 /** Sentinel select values for the "default" and "custom" choices. */
@@ -608,7 +610,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-backup", titleKey: "settingsBackup" },
 ];
 
-export function SettingsView({ theme: toggleTheme, onClose }: Props) {
+export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Props) {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -637,6 +639,13 @@ export function SettingsView({ theme: toggleTheme, onClose }: Props) {
     suppressSpyUntilRef.current = Date.now() + 600;
     document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
+  // 案内リンクから開かれたときは、描画後に指定セクションへ移動する (#1475)。
+  useEffect(() => {
+    if (!initialSection) return;
+    setActiveSection(initialSection);
+    suppressSpyUntilRef.current = Date.now() + 600;
+    document.getElementById(initialSection)?.scrollIntoView({ block: "start" });
+  }, [initialSection]);
   const handleModalBodyScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (Date.now() < suppressSpyUntilRef.current) return;
     const container = e.currentTarget;

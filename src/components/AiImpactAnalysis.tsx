@@ -28,6 +28,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSetupHint } from "./AiSetupHint";
 import { Tooltip } from "./Tooltip";
 
 type State =
@@ -209,7 +210,8 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
     );
   };
 
-  if (!ai.enabled || !hasKey) return null;
+  // AI が使えないときは、設定へ案内する控えめなリンクだけを出す (#1475)。
+  if (!ai.enabled || !hasKey) return <AiSetupHint />;
   const running = state.kind === "running";
   const hasResult = state.kind !== "idle" && state.kind !== "running";
 

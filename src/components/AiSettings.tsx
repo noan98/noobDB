@@ -21,6 +21,7 @@ import {
   setAiDefaultModel,
   giveAiConsent,
   setAiEnabled,
+  setAiHideSetupHint,
   setAiMaskLiterals,
   setAiSendScope,
   setAiTaskEffort,
@@ -424,6 +425,25 @@ export function AiSettings() {
             {t("aiMaskLiterals")}
           </chakra.label>
           <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
+        <SettingsLabelWithInfo>
+          <chakra.label
+            htmlFor="settings-ai-setup-hint"
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            fontSize="md"
+            fontWeight={500}
+            color="app.text"
+          >
+            <Switch
+              id="settings-ai-setup-hint"
+              checked={!ai.hideSetupHint}
+              onChange={(v) => setAiHideSetupHint(!v)}
+            />
+            {t("aiHideSetupHint")}
+          </chakra.label>
+          <SettingsInfo>{t("aiHideSetupHintHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
       </FormSection>
 
