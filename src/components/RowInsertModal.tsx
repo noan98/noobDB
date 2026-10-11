@@ -4,6 +4,8 @@ import { useT } from "../i18n";
 import type { Column, TableColumnInfo } from "../api/tauri";
 import {
   isEmptyInsertValue,
+  isInsertEmptyStringValue,
+  isInsertFunctionValue,
   type PendingInsertRow,
   type PendingInsertValue,
 } from "./cellEdit";
@@ -13,6 +15,7 @@ import { Button, Input, PressableButton, Select } from "./ui";
 import { boolOptions, resolveTypedEditor } from "./typedEditor";
 import { insertDefaultHint, insertFunctionChips, stripNonInsertableSeed } from "./insertDefaults";
 import { insertFunctionSql } from "./sqlDialect";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { useValuePicker, ValueDatalist, type ValueLookup } from "./useValuePicker";
 import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
@@ -59,7 +62,8 @@ interface Props {
  */
 function cellText(v: PendingInsertValue | undefined, driver: string): string {
   if (v === undefined) return "";
-  return typeof v === "string" ? v : (insertFunctionSql(driver, v.fn) ?? "");
+  if (typeof v === "string") return v;
+  return isInsertFunctionValue(v) ? (insertFunctionSql(driver, v.fn) ?? "") : "";
 }
 
 /** 初期値 (複製の種) の文字列。種は文字列だけだが、型上は関数値も含み得るため文字列のみ採る。 */
@@ -149,7 +153,8 @@ export function RowInsertModal({
           const listId = `${listIdBase}-${i}`;
           const cell = values[i];
           const cur = cellText(cell, driver);
-          const activeFn = typeof cell === "object" ? cell.fn : null;
+          const activeFn = isInsertFunctionValue(cell) ? cell.fn : null;
+          const emptyStr = isInsertEmptyStringValue(cell);
           // 真偽値だけセレクタにする。日付系はネイティブ入力だと明示的な NULL
           // (ヒント文の "null" 入力) を表現できないため、テキスト入力のままにする。
           // 種別は初期値で決め、入力中に切り替わらないようにする。
@@ -167,7 +172,9 @@ export function RowInsertModal({
             ? []
             : insertFunctionChips(driver, c.type_name, meta?.data_type);
           const hintText =
-            hint?.kind === "auto"
+            emptyStr
+              ? null
+              : hint?.kind === "auto"
               ? t("rowOpsInsertAutoHint")
               : hint?.kind === "default"
                 ? t("rowOpsInsertDefaultHint", { expr: hint.expr })
@@ -175,7 +182,9 @@ export function RowInsertModal({
                   ? t("rowOpsInsertGeneratedHint")
                   : null;
           const placeholder =
-            hint?.kind === "auto"
+            emptyStr
+              ? undefined
+              : hint?.kind === "auto"
               ? t("rowOpsInsertAutoPlaceholder")
               : hint?.kind === "default"
                 ? t("rowOpsInsertDefaultPlaceholder", { expr: hint.expr })
@@ -235,6 +244,46 @@ export function RowInsertModal({
                   />
                 )}
                 <ValueDatalist id={listId} values={pickerValues} />
+                {emptyStr && (
+                  <chakra.span
+                    flexShrink={0}
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1"
+                    fontSize="2xs"
+                    fontFamily="mono"
+                    color="app.textSecondary"
+                    borderWidth="1px"
+                    borderColor="app.border"
+                    borderRadius="sm"
+                    px="1"
+                    data-testid={`insert-empty-badge-${c.name}`}
+                  >
+                    <Tooltip label={t("rowOpsInsertEmptyTitle")}>
+                      <chakra.span>{t("rowOpsInsertEmptyBadge")}</chakra.span>
+                    </Tooltip>
+                    <Tooltip label={t("rowOpsInsertEmptyClear")}>
+                      <chakra.button
+                        type="button"
+                        aria-label={t("rowOpsInsertEmptyClear")}
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        color="app.textSecondary"
+                        bg="transparent"
+                        border="none"
+                        borderRadius="sm"
+                        cursor="pointer"
+                        _hover={{ bg: "app.hover", color: "app.text" }}
+                        _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+                        data-testid={`insert-empty-clear-${c.name}`}
+                        onClick={() => setValues((prev) => ({ ...prev, [i]: "" }))}
+                      >
+                        <Icon name="close" size={ICON_SIZES.sm} />
+                      </chakra.button>
+                    </Tooltip>
+                  </chakra.span>
+                )}
                 {pickerKind && (
                   <Tooltip label={badgeTitle(pickerKind, c.name)}>
                     <chakra.span

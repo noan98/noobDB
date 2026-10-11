@@ -361,6 +361,7 @@ mod tests {
             truncated: false,
             source_count: 0,
             target_count: 0,
+            generated_columns: Vec::new(),
         }
     }
 

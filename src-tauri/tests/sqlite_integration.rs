@@ -1067,6 +1067,7 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
         truncated: false,
         source_count: src_rows.len(),
         target_count: tgt_rows.len(),
+        generated_columns: Vec::new(),
     };
 
     let plan = t::generate_data_sync_sql(&diff, true);
@@ -1097,6 +1098,63 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
     tgt.close().await;
     let _ = std::fs::remove_file(&src_path);
     let _ = std::fs::remove_file(&tgt_path);
+}
+
+#[tokio::test]
+async fn sqlite_generated_columns_are_not_listed_so_data_sync_never_writes_them() {
+    // SQLite の生成列は `PRAGMA table_info` に現れない (table_xinfo のみ)。列一覧に
+    // 出ないので、データ同期の SELECT / INSERT / UPDATE の対象にもならず、生成列への
+    // 書き込みエラー ("cannot INSERT into generated column") を起こさない (#1521)。
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_gen_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute(
+        "CREATE TABLE g (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER GENERATED ALWAYS AS (a * 2) STORED)",
+        None,
+    )
+    .await
+    .expect("create generated table");
+    let cols = conn.columns("", "g").await.expect("columns");
+    let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec!["id", "a"]);
+
+    // 列一覧どおりの INSERT / UPDATE を流しても生成列に触れない。
+    let columns = vec!["id".to_string(), "a".to_string()];
+    let diff = t::DataDiff {
+        target_driver: t::DriverKind::Sqlite,
+        table: "g".to_string(),
+        column_types: vec!["INTEGER".to_string(); 2],
+        columns: columns.clone(),
+        primary_key: vec!["id".to_string()],
+        rows: t::compute_data_diff(
+            &columns,
+            &[0],
+            &[vec![t::Value::Int(1), t::Value::Int(5)]],
+            &[],
+        ),
+        truncated: false,
+        source_count: 1,
+        target_count: 0,
+        generated_columns: Vec::new(),
+    };
+    let plan = t::generate_data_sync_sql(&diff, false);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    conn.execute_transaction(&sqls, None)
+        .await
+        .expect("apply must not write the generated column");
+    let rows = conn
+        .execute("SELECT id, a, b FROM g", None)
+        .await
+        .expect("select")
+        .rows;
+    assert_eq!(rows.len(), 1);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
 }
 
 #[tokio::test]

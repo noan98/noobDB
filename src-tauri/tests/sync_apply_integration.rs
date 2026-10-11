@@ -364,6 +364,7 @@ async fn data_sync_apply(allow_delete: bool) -> (bool, std::path::PathBuf) {
         truncated: false,
         source_count: source.len(),
         target_count: target.len(),
+        generated_columns: Vec::new(),
     };
     let plan = t::generate_data_sync_sql(&diff, allow_delete);
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();

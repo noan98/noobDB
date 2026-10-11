@@ -461,6 +461,7 @@ fn build_fixtures() -> serde_json::Value {
         truncated: false,
         source_count: 10,
         target_count: 10,
+        generated_columns: Vec::new(),
     };
 
     // --- #1096: Query/Preview ストリーミングメッセージ (Tauri Channel) --------
@@ -959,6 +960,7 @@ fn build_fixtures() -> serde_json::Value {
             truncated: false,
             source_count: 1,
             target_count: 1,
+            generated_columns: Vec::new(),
         })
         .collect();
 

@@ -1418,7 +1418,7 @@ where
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
     // `lines[i]` is record i's source file line (CSV only), used to report a bad
     // row by both record number and file line (#687).
-    let (rows, lines) = parse_rows_with_lines(source, &options, &mapping)?;
+    let (mut rows, lines) = parse_rows_with_lines(source, &options, &mapping)?;
     let total = rows.len() as u64;
     let conflict = options.conflict();
 
@@ -1439,6 +1439,31 @@ where
         }
         None => false,
     };
+
+    // xlsx / JSON の真偽値は `true` / `false` のテキストで届く。取り込み先の列が
+    // 数値型 (MySQL の TINYINT(1)・SQLite の BOOLEAN など) なら 1 / 0 に直す (#1520)。
+    // 列型が分からないときは従来どおり true / false のまま。
+    if options.format != ImportFormat::Csv {
+        let numeric = numeric_target_flags(
+            session,
+            database.as_deref(),
+            &table,
+            &mapping,
+            create_table.as_deref(),
+        )
+        .await;
+        convert_bool_cells_for_numeric(&mut rows, &numeric);
+    }
+
+    // MySQL の UPSERT は全一意キーで発火するので、新規作成でない既存テーブルに
+    // 対してのみ、実行前に一意キーとの整合を検証する (作成直後は DROP 経路を
+    // 増やさないため対象外)。
+    if !created && conflict.is_upsert() {
+        session
+            .conn
+            .check_upsert_keys(database.as_deref(), &table, &columns, &conflict)
+            .await?;
+    }
 
     tracing::info!(
         session_id = %session.id,
@@ -1549,6 +1574,124 @@ where
                         line,
                     })
                 }
+            }
+        }
+    }
+}
+
+/// 列型名 (ドライバ固有の表記) が数値型か。真偽値を 1 / 0 で渡すべき列の判定 (#1520)。
+/// PostgreSQL の `boolean` は数値扱いにしない (`true` / `false` を受け付ける)。
+fn is_numeric_type_name(driver: DriverKind, data_type: &str) -> bool {
+    let lower = data_type.trim().to_ascii_lowercase();
+    match driver {
+        DriverKind::Mysql | DriverKind::Postgres => {
+            // `tinyint(1)` / `int unsigned` / `double precision` / `numeric(10,2)` の先頭語。
+            let head = lower
+                .split(|c: char| c == '(' || c.is_whitespace())
+                .next()
+                .unwrap_or("");
+            match driver {
+                DriverKind::Mysql => matches!(
+                    head,
+                    "tinyint"
+                        | "smallint"
+                        | "mediumint"
+                        | "int"
+                        | "integer"
+                        | "bigint"
+                        | "decimal"
+                        | "numeric"
+                        | "float"
+                        | "double"
+                        | "real"
+                        | "bit"
+                ),
+                _ => matches!(
+                    head,
+                    "smallint"
+                        | "integer"
+                        | "bigint"
+                        | "int"
+                        | "int2"
+                        | "int4"
+                        | "int8"
+                        | "numeric"
+                        | "decimal"
+                        | "real"
+                        | "double"
+                        | "float4"
+                        | "float8"
+                ),
+            }
+        }
+        // SQLite の型アフィニティ規則: "INT" を含めば INTEGER、BOOLEAN / NUMERIC / REAL 系は
+        // 数値アフィニティ (真偽値テキストはそのまま文字列で入ってしまう)。
+        DriverKind::Sqlite => {
+            lower.contains("int")
+                || lower.contains("bool")
+                || ["numeric", "decimal", "real", "float", "double"]
+                    .iter()
+                    .any(|t| lower.contains(t))
+        }
+    }
+}
+
+/// マッピング先の各列が数値型か (`mapping` と同じ並び)。新規作成なら作成定義、
+/// 既存テーブルならカタログの列型から決める。取得できなければ全列 `false`。
+async fn numeric_target_flags(
+    session: &Session,
+    database: Option<&str>,
+    table: &str,
+    mapping: &[ColumnMapping],
+    create_table: Option<&[NewColumn]>,
+) -> Vec<bool> {
+    use crate::db::create_table::NewColumnType as T;
+    let driver = session.conn.driver_kind();
+    if let Some(cols) = create_table {
+        return mapping
+            .iter()
+            .map(|m| {
+                cols.iter()
+                    .find(|c| c.name == m.column)
+                    .is_some_and(|c| match c.column_type {
+                        T::Integer | T::Bigint | T::Decimal | T::Double => true,
+                        T::Boolean => driver != DriverKind::Postgres,
+                        T::Date | T::Datetime | T::Text => false,
+                    })
+            })
+            .collect();
+    }
+    // database が未指定 (None / 空) のときは接続の現在の DB / スキーマで引く。
+    let db = session.conn.resolve_database(database).await;
+    let Ok(infos) = session.conn.columns(&db, table).await else {
+        return vec![false; mapping.len()];
+    };
+    mapping
+        .iter()
+        .map(|m| {
+            infos
+                .iter()
+                .find(|c| c.name == m.column)
+                .is_some_and(|c| is_numeric_type_name(driver, &c.data_type))
+        })
+        .collect()
+}
+
+/// 数値型の列に入る `true` / `false` のセルを `1` / `0` に置き換える (#1520)。
+/// `numeric` は列ごとのフラグ (行の並びと同じ)。
+fn convert_bool_cells_for_numeric(rows: &mut [Vec<Option<String>>], numeric: &[bool]) {
+    if !numeric.iter().any(|n| *n) {
+        return;
+    }
+    for row in rows {
+        for (cell, is_num) in row.iter_mut().zip(numeric) {
+            if !*is_num {
+                continue;
+            }
+            match cell.as_deref() {
+                Some("true") => *cell = Some("1".to_string()),
+                Some("false") => *cell = Some("0".to_string()),
+                _ => {}
             }
         }
     }
@@ -2400,5 +2543,76 @@ mod tests {
         assert_eq!(state.last_import_skipped_snapshot().len(), 1);
         state.set_last_import_skipped(Vec::new());
         assert!(state.last_import_skipped_snapshot().is_empty());
+    }
+
+    #[test]
+    fn numeric_type_names_per_driver() {
+        for t in [
+            "tinyint(1)",
+            "int unsigned",
+            "BIGINT",
+            "decimal(10,2)",
+            "double",
+        ] {
+            assert!(is_numeric_type_name(DriverKind::Mysql, t), "{t}");
+        }
+        for t in ["varchar(10)", "datetime", "json", "text"] {
+            assert!(!is_numeric_type_name(DriverKind::Mysql, t), "{t}");
+        }
+        for t in [
+            "integer",
+            "smallint",
+            "numeric(10,2)",
+            "double precision",
+            "bigint",
+        ] {
+            assert!(is_numeric_type_name(DriverKind::Postgres, t), "{t}");
+        }
+        for t in ["boolean", "text", "character varying(5)", "jsonb"] {
+            assert!(!is_numeric_type_name(DriverKind::Postgres, t), "{t}");
+        }
+        for t in [
+            "INTEGER",
+            "BOOLEAN",
+            "NUMERIC",
+            "REAL",
+            "bigint",
+            "DECIMAL(5,2)",
+        ] {
+            assert!(is_numeric_type_name(DriverKind::Sqlite, t), "{t}");
+        }
+        for t in ["TEXT", "VARCHAR(10)", "BLOB", ""] {
+            assert!(!is_numeric_type_name(DriverKind::Sqlite, t), "{t}");
+        }
+    }
+
+    #[test]
+    fn bool_cells_become_1_0_only_in_numeric_columns() {
+        let s = |v: &str| Some(v.to_string());
+        let mut rows = vec![
+            vec![s("true"), s("true"), s("false"), None],
+            vec![s("false"), s("x"), s("true"), s("true")],
+        ];
+        convert_bool_cells_for_numeric(&mut rows, &[true, false, true, true]);
+        assert_eq!(
+            rows,
+            vec![
+                vec![s("1"), s("true"), s("0"), None],
+                vec![s("0"), s("x"), s("1"), s("1")],
+            ]
+        );
+        // 数値列が無ければ何も変えない。
+        let mut same = vec![vec![s("true")]];
+        convert_bool_cells_for_numeric(&mut same, &[false]);
+        assert_eq!(same, vec![vec![s("true")]]);
+    }
+
+    #[test]
+    fn json_and_xlsx_bool_cells_parse_as_true_false_text() {
+        // 変換前の入力は従来どおり true / false のテキスト (変換は列型が分かる実行時)。
+        let data = br#"[{"a": true, "b": false}]"#;
+        let mapping = [map("a", 0), map("b", 1)];
+        let rows = parse_rows(data, &json_opts(ImportFormat::Json, None), &mapping).unwrap();
+        assert_eq!(rows, vec![vec![Some("true".into()), Some("false".into())]]);
     }
 }

@@ -1379,6 +1379,150 @@ async fn mysql_upsert_import_roundtrip() {
         .expect("cleanup");
 }
 
+/// MySQL の UPSERT は PRIMARY を含む全一意キーで発火するため、PK と UNIQUE を持つ
+/// テーブルで UNIQUE 側 (email) をキーにした取り込みは、実行前に拒否される (#1522)。
+/// 拒否された取り込みはテーブルに触れない。
+#[tokio::test]
+async fn mysql_upsert_import_rejects_key_that_leaves_another_unique_key() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_upsert_guard", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_my_upsert_guard (id INT PRIMARY KEY, email VARCHAR(50) NOT NULL, name VARCHAR(50), UNIQUE KEY uq_email (email)) ENGINE=InnoDB",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO noobdb_my_upsert_guard VALUES (1, 'a@x', 'a'), (2, 'b@x', 'b')",
+        None,
+    )
+    .await
+    .expect("seed");
+
+    let csv =
+        std::env::temp_dir().join(format!("noobdb_my_upsert_guard_{}.csv", std::process::id()));
+    std::fs::write(&csv, "id,email,name\n2,a@x,changed\n").expect("write csv");
+    let session = t::make_session("s-my-guard", conn, opts.clone(), false);
+    let mapping = serde_json::json!([
+        { "column": "id", "csvIndex": 0 },
+        { "column": "email", "csvIndex": 1 },
+        { "column": "name", "csvIndex": 2 },
+    ]);
+    let options = serde_json::json!({
+        "format": "csv", "delimiter": ",", "quote": "\"", "hasHeader": true,
+        "nullToken": "", "encoding": "utf-8",
+        "conflictMode": "update", "keyColumns": ["email"],
+    });
+    let res = t::import_file_via_command(
+        &session,
+        None,
+        "noobdb_my_upsert_guard",
+        csv.to_str().expect("utf8 path"),
+        options,
+        mapping,
+        None,
+    )
+    .await;
+    assert!(
+        res.is_err(),
+        "upsert keyed on email must be rejected: {res:?}"
+    );
+    let rows = session
+        .conn
+        .execute("SELECT name FROM noobdb_my_upsert_guard ORDER BY id", None)
+        .await
+        .expect("select")
+        .rows;
+    assert!(
+        matches!(&rows[0][0], t::Value::String(s) if s == "a")
+            && matches!(&rows[1][0], t::Value::String(s) if s == "b"),
+        "table must be untouched: {rows:?}"
+    );
+    session
+        .conn
+        .execute("DROP TABLE noobdb_my_upsert_guard", None)
+        .await
+        .expect("cleanup");
+    let _ = std::fs::remove_file(&csv);
+}
+
+/// JSON の `true` / `false` は数値型 (TINYINT(1)) の列では 1 / 0 として取り込まれる
+/// (#1520)。MySQL の文字列 'true' は TINYINT に変換できず従来は失敗していた。
+#[tokio::test]
+async fn mysql_json_bool_imports_into_tinyint_column() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_json_bool", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_my_json_bool (id INT PRIMARY KEY, flag TINYINT(1) NOT NULL, label VARCHAR(10)) ENGINE=InnoDB",
+        None,
+    )
+    .await
+    .expect("create");
+
+    let json =
+        std::env::temp_dir().join(format!("noobdb_my_json_bool_{}.json", std::process::id()));
+    std::fs::write(
+        &json,
+        r#"[{"flag":true,"id":1,"label":"x"},{"flag":false,"id":2,"label":"y"}]"#,
+    )
+    .expect("write json");
+    let session = t::make_session("s-my-bool", conn, opts.clone(), false);
+    // JSON はキーの出現順 (ここではアルファベット順で書いてある) が csvIndex になる。
+    let mapping = serde_json::json!([
+        { "column": "flag", "csvIndex": 0 },
+        { "column": "id", "csvIndex": 1 },
+        { "column": "label", "csvIndex": 2 },
+    ]);
+    let options = serde_json::json!({
+        "format": "json", "delimiter": ",", "quote": "\"", "hasHeader": true,
+        "encoding": "utf-8",
+    });
+    let n = t::import_file_via_command(
+        &session,
+        None,
+        "noobdb_my_json_bool",
+        json.to_str().expect("utf8 path"),
+        options,
+        mapping,
+        None,
+    )
+    .await
+    .expect("import setup")
+    .expect("import rows");
+    assert_eq!(n, 2);
+    let rows = session
+        .conn
+        .execute(
+            "SELECT CAST(flag AS SIGNED) FROM noobdb_my_json_bool ORDER BY id",
+            None,
+        )
+        .await
+        .expect("select")
+        .rows;
+    assert!(matches!(&rows[0][0], t::Value::Int(1)), "{rows:?}");
+    assert!(matches!(&rows[1][0], t::Value::Int(0)), "{rows:?}");
+    session
+        .conn
+        .execute("DROP TABLE noobdb_my_json_bool", None)
+        .await
+        .expect("cleanup");
+    let _ = std::fs::remove_file(&json);
+}
+
 /// ルーチンのシグネチャ取得 (#1003): information_schema.PARAMETERS から
 /// IN/OUT/INOUT とパラメータ順・型を読み、関数の戻り値型を返す。
 #[tokio::test]

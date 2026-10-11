@@ -192,6 +192,7 @@ pub fn diff_snapshots(
         truncated: older.truncated || newer.truncated,
         source_count: newer.rows.len(),
         target_count: older.rows.len(),
+        generated_columns: Vec::new(),
     };
     (diff, columns_added, columns_removed)
 }

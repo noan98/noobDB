@@ -732,6 +732,21 @@ describe("buildInsertStatements", () => {
     expect(stmts).toEqual(['INSERT INTO "public"."t" ("id", "name") VALUES (5, NULL);']);
   });
 
+  // #1526: 空文字の明示値は '' リテラルとして出し、素の "" (既定値) とは区別する。
+  it("emits '' for an explicit empty-string value but omits a plain empty cell", () => {
+    for (const driver of ["mysql", "postgres", "sqlite"]) {
+      const stmts = buildInsertStatements({
+        driver,
+        database: "d",
+        table: "t",
+        columns,
+        inserts: [{ 0: "1", 1: { empty: true }, 2: "" }],
+      });
+      expect(stmts).toHaveLength(1);
+      expect(stmts[0]).toMatch(/VALUES \(1, ''\);$/);
+    }
+  });
+
   // #1357: 空欄は INSERT から省き DB の既定値 / 自動採番に委ねる。
   it("omits empty cells so the database fills them (auto-increment / DEFAULT)", () => {
     const stmts = buildInsertStatements({

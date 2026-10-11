@@ -1414,6 +1414,24 @@ describe("行の複製 (#820)", () => {
     expect(onDuplicateRow).toHaveBeenCalledWith({ 0: "1", 1: "banana" });
   });
 
+  it("空文字の列は NULL と区別して種に残す (#1526)", async () => {
+    const user = userEvent.setup();
+    const onDuplicateRow = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={makeResult(columns, [[1, "", null]])}
+        editable
+        tableColumns={tableColumns}
+        onDuplicateRow={onDuplicateRow}
+      />,
+    );
+    fireEvent.contextMenu(dataCells(container)[0][1]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridDuplicateRow") }));
+
+    // '' (name) は残し、NULL (note) だけ省く。
+    expect(onDuplicateRow).toHaveBeenCalledWith({ 0: "1", 1: { empty: true } });
+  });
+
   it("onDuplicateRow が未指定ならメニュー項目を出さない", () => {
     const { container } = renderWithProviders(
       <ResultGrid result={result} editable tableColumns={tableColumns} />,

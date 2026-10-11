@@ -650,6 +650,59 @@ impl MySqlConn {
         Ok(())
     }
 
+    /// UPSERT の事前検証 (MySQL の `ON DUPLICATE KEY` は全一意キーで発火する)。
+    /// テーブルの PRIMARY / UNIQUE インデックスを読み、選択キー列と照合する。
+    /// 詳細は [`super::upsert::check_mysql_unique_keys`]。
+    pub(crate) async fn check_upsert_keys(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        imported: &[String],
+        key_columns: &[String],
+    ) -> Result<()> {
+        // 空文字は「未指定」と同じ扱いにする (`COALESCE` が NULL のときだけ現在の DB を使う)。
+        let database = database.filter(|d| !d.is_empty());
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT INDEX_NAME, COALESCE(COLUMN_NAME, '') FROM information_schema.STATISTICS \
+             WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? AND NON_UNIQUE = 0 \
+             ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut uniques: Vec<super::upsert::UniqueKey> = Vec::new();
+        for (name, col) in rows {
+            // 関数インデックスの式キー (COLUMN_NAME が NULL) は実列と一致しないよう
+            // 空文字の疑似列で表す。
+            match uniques.last_mut() {
+                Some(u) if u.name == name => u.columns.push(col),
+                _ => uniques.push(super::upsert::UniqueKey {
+                    name,
+                    columns: vec![col],
+                }),
+            }
+        }
+        // 取り込まない列が省略時に衝突しないもの (判定は `omitted_column_is_safe`)。
+        let col_rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT COLUMN_NAME, EXTRA, IS_NULLABLE, COLUMN_DEFAULT \
+             FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let omitted_safe: Vec<String> = col_rows
+            .into_iter()
+            .filter(|(_, extra, nullable, default)| {
+                super::upsert::omitted_column_is_safe(extra, nullable == "YES", default.as_deref())
+            })
+            .map(|(name, ..)| name)
+            .collect();
+        super::upsert::check_mysql_unique_keys(&uniques, &omitted_safe, imported, key_columns)
+    }
+
     /// Whether `table`'s storage engine supports transactional DML (rollback).
     /// InnoDB (the default) and NDB do; MyISAM / MEMORY / CSV / ARCHIVE etc. do
     /// not. The resilient-import probe/retry strategies rely on rollback, so they
@@ -662,6 +715,7 @@ impl MySqlConn {
         database: Option<&str>,
         table: &str,
     ) -> Result<bool> {
+        let database = database.filter(|d| !d.is_empty());
         let row: Option<(Option<String>,)> = sqlx::query_as(
             "SELECT ENGINE FROM information_schema.TABLES \
              WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? LIMIT 1",

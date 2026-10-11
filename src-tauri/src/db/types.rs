@@ -180,6 +180,32 @@ pub struct TableColumnInfo {
     pub comment: Option<String>,
 }
 
+impl TableColumnInfo {
+    /// 生成列 (MySQL の `STORED/VIRTUAL GENERATED`、MariaDB の `PERSISTENT GENERATED`、
+    /// PostgreSQL の `GENERATED ALWAYS AS (...) STORED`) か。ドライバは `extra` に
+    /// `... GENERATED` を入れる規約で、DB が値を計算するため INSERT / UPDATE では
+    /// 値を渡せない (渡すとエラー)。SQLite は `PRAGMA table_info` が生成列を返さない
+    /// ので、列一覧にそもそも現れない。
+    pub fn is_generated(&self) -> bool {
+        let up = self.extra.to_ascii_uppercase();
+        [
+            "STORED GENERATED",
+            "VIRTUAL GENERATED",
+            "PERSISTENT GENERATED",
+        ]
+        .iter()
+        .any(|m| up.contains(m))
+    }
+}
+
+/// 生成列の列名一覧 (データ同期・サンドボックス書き戻しの書き込み対象から外す用)。
+pub fn generated_column_names(cols: &[TableColumnInfo]) -> Vec<String> {
+    cols.iter()
+        .filter(|c| c.is_generated())
+        .map(|c| c.name.clone())
+        .collect()
+}
+
 /// テーブル (またはビュー) のコメント 1 件 (#1002)。`list_table_comments` は
 /// コメントを持つものだけを返す (空コメントは含めない)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -959,5 +985,38 @@ mod js_safe_tests {
              Value::from_i64_lossless / from_u64_lossless を経由してください (#1422):\n{}",
             offenders.join("\n")
         );
+    }
+}
+
+#[cfg(test)]
+mod generated_column_tests {
+    use super::*;
+
+    fn col(name: &str, extra: &str) -> TableColumnInfo {
+        TableColumnInfo {
+            name: name.to_string(),
+            data_type: "int".to_string(),
+            nullable: true,
+            key: String::new(),
+            default: None,
+            extra: extra.to_string(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn generated_columns_are_detected_from_extra() {
+        let cols = vec![
+            col("id", "auto_increment"),
+            col("a", "STORED GENERATED"),
+            col("b", "VIRTUAL GENERATED"),
+            col("c", "PERSISTENT GENERATED"),
+            col("d", "DEFAULT_GENERATED"),
+            col("e", ""),
+        ];
+        // DEFAULT_GENERATED は式デフォルトで、書き込み可能な通常列。
+        assert_eq!(generated_column_names(&cols), vec!["a", "b", "c"]);
     }
 }

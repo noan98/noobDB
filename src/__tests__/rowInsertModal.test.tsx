@@ -3,6 +3,7 @@ import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { RowInsertModal } from "../components/RowInsertModal";
 import { SAMPLE_COLUMNS } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
+import { buildInsertStatements } from "../components/cellEdit";
 
 /**
  * 行追加モーダル (#604)。マウント時に Tauri 呼び出しを持たない。カラム定義から
@@ -185,5 +186,83 @@ describe("RowInsertModal value picker (#1067)", () => {
     );
     expect(document.body.querySelector("datalist")).toBeNull();
     expect(screen.queryByTestId("value-picker-badge-user_id")).toBeNull();
+  });
+});
+
+// 行の複製で空文字を INSERT まで届ける (#1526)。
+describe("RowInsertModal 空文字の明示値 (#1526)", () => {
+  it("空文字の種はバッジ付きで開き、確定すると { empty: true } のまま返す", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        initialValues={{ 0: "1", 1: { empty: true } }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("insert-empty-badge-name")).toBeInTheDocument();
+    fireEvent.click(screen.getByText(t("rowOpsInsertAdd")));
+    expect(onConfirm).toHaveBeenCalledWith({ 0: "1", 1: { empty: true } });
+  });
+
+  it("バッジの × で未設定 (既定値) に戻り、確定行から消える", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        initialValues={{ 0: "1", 1: { empty: true } }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("insert-empty-clear-name"));
+    expect(screen.queryByTestId("insert-empty-badge-name")).toBeNull();
+    fireEvent.click(screen.getByText(t("rowOpsInsertAdd")));
+    expect(onConfirm).toHaveBeenCalledWith({ 0: "1" });
+  });
+
+  it("入力すると文字列に置き換わりバッジは消える", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        initialValues={{ 1: { empty: true } }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    const inputs = screen.getAllByRole("textbox");
+    fireEvent.change(inputs[1], { target: { value: "bob" } });
+    expect(screen.queryByTestId("insert-empty-badge-name")).toBeNull();
+    fireEvent.click(screen.getByText(t("rowOpsInsertAdd")));
+    expect(onConfirm).toHaveBeenCalledWith({ 1: "bob" });
+  });
+
+  it("複製 → 確定 → 生成 SQL に '' が入る", () => {
+    let confirmed: Parameters<typeof buildInsertStatements>[0]["inserts"][number] = {};
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        initialValues={{ 0: "7", 1: { empty: true } }}
+        onConfirm={(row) => {
+          confirmed = row;
+        }}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText(t("rowOpsInsertAdd")));
+    const [sql] = buildInsertStatements({
+      driver: "mysql",
+      database: "d",
+      table: "users",
+      columns: SAMPLE_COLUMNS,
+      inserts: [confirmed],
+    });
+    expect(sql).toBe("INSERT INTO `d`.`users` (`id`, `name`) VALUES (7, '');");
   });
 });
