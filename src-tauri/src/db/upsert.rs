@@ -261,10 +261,9 @@ pub fn check_mysql_unique_keys(
             key_columns.join(", ")
         )));
     }
-    let mut matched = false;
     for u in uniques {
-        if !matched && same_set(&u.columns, key_columns) {
-            matched = true;
+        // 選択キーと同じ列集合の一意キーは (重複して定義されていても) すべて読み飛ばす。
+        if same_set(&u.columns, key_columns) {
             continue;
         }
         let cannot_collide = u
@@ -280,6 +279,26 @@ pub fn check_mysql_unique_keys(
         }
     }
     Ok(())
+}
+
+/// 取り込まない列が、省略時 (= 既定値が入るとき) に一意キーの衝突を起こさないか。
+/// 安全なのは AUTO_INCREMENT、または NULL 許容で既定値が NULL の列 (NULL は衝突しない。
+/// MariaDB は既定値を文字列 `'NULL'` で返す)。生成列 (`STORED` / `VIRTUAL` /
+/// `PERSISTENT GENERATED`) は式の結果が入って衝突し得るので安全とみなさない。
+/// `DEFAULT_GENERATED` (式の既定値) は生成列ではない。
+pub fn omitted_column_is_safe(extra: &str, nullable: bool, default: Option<&str>) -> bool {
+    let up = extra.to_ascii_uppercase();
+    if [
+        "STORED GENERATED",
+        "VIRTUAL GENERATED",
+        "PERSISTENT GENERATED",
+    ]
+    .iter()
+    .any(|m| up.contains(m))
+    {
+        return false;
+    }
+    up.contains("AUTO_INCREMENT") || (nullable && matches!(default, None | Some("NULL")))
 }
 
 /// MySQL / PostgreSQL / SQLite の `INSERT … VALUES (…)` の**後ろに付ける**
@@ -631,5 +650,38 @@ mod tests {
             &cols(&["id"]),
         );
         assert!(matches!(out, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn omitted_column_safety_rules() {
+        assert!(omitted_column_is_safe("auto_increment", false, None));
+        assert!(omitted_column_is_safe("", true, None));
+        // MariaDB は既定値 NULL を文字列で返す。
+        assert!(omitted_column_is_safe("", true, Some("NULL")));
+        assert!(!omitted_column_is_safe("", false, None));
+        assert!(!omitted_column_is_safe("", true, Some("0")));
+        assert!(!omitted_column_is_safe("", true, Some("'NULL'")));
+        // 式の既定値は生成列ではない。
+        assert!(omitted_column_is_safe("DEFAULT_GENERATED", true, None));
+        for g in [
+            "STORED GENERATED",
+            "VIRTUAL GENERATED",
+            "PERSISTENT GENERATED",
+        ] {
+            assert!(!omitted_column_is_safe(g, true, None), "{g}");
+        }
+    }
+
+    #[test]
+    fn mysql_check_rejects_unique_key_containing_generated_column() {
+        // 生成列 (omitted_safe に入らない) を含む一意キーは、取り込まなくても衝突し得る。
+        let u = vec![uk("email", &["email"]), uk("g", &["gen"])];
+        assert!(check_mysql_unique_keys(&u, &[], &cols(&["email"]), &cols(&["email"])).is_err());
+    }
+
+    #[test]
+    fn mysql_check_skips_every_unique_key_equal_to_selection() {
+        let u = vec![uk("a1", &["a"]), uk("a2", &["a"])];
+        assert!(check_mysql_unique_keys(&u, &[], &cols(&["a"]), &cols(&["a"])).is_ok());
     }
 }

@@ -361,7 +361,7 @@ fn modify_column(
                     .iter()
                     .any(|f| f == "key" || f == "foreign_key")
             {
-                // Only `extra` differed (PostgreSQL leaves it empty), nothing to do.
+                // Only `extra` differed (e.g. a generated-column marker, which is not synced), nothing to do.
             }
         }
         DriverKind::Sqlite => {
@@ -414,15 +414,12 @@ pub(crate) fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
     def
 }
 
-/// MySQL の生成列 (`STORED GENERATED` / `VIRTUAL GENERATED`)。生成式を保持して
+/// 生成列 (MySQL の `STORED/VIRTUAL GENERATED`、PostgreSQL の
+/// `GENERATED ALWAYS AS (...) STORED`)。`extra` で判定する。生成式を保持して
 /// いないので、通常列として ADD / MODIFY / CREATE すると同期後のスキーマが
-/// 静かに変わってしまう。自動同期の対象から外す。
-fn is_generated_column(driver: DriverKind, col: &TableColumnInfo) -> bool {
-    if driver != DriverKind::Mysql {
-        return false;
-    }
-    let up = col.extra.to_ascii_uppercase();
-    up.contains("STORED GENERATED") || up.contains("VIRTUAL GENERATED")
+/// 静かに変わってしまう。自動同期の対象から外す。SQLite は列一覧に生成列が現れない。
+fn is_generated_column(_driver: DriverKind, col: &TableColumnInfo) -> bool {
+    col.is_generated()
 }
 
 fn generated_column_warning(table: &str, column: &str) -> String {
@@ -1142,5 +1139,16 @@ mod tests {
             plan.statements[0].sql,
             "ALTER TABLE \"t\" ALTER COLUMN \"name\" TYPE character varying(255)"
         );
+    }
+
+    #[test]
+    fn postgres_generated_columns_are_detected_from_extra() {
+        let mut g = col("g", "integer");
+        g.extra = "STORED GENERATED".to_string();
+        assert!(is_generated_column(DriverKind::Postgres, &g));
+        assert!(!is_generated_column(
+            DriverKind::Postgres,
+            &col("p", "integer")
+        ));
     }
 }

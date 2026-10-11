@@ -1429,7 +1429,7 @@ describe("行の複製 (#820)", () => {
     await user.click(await screen.findByRole("menuitem", { name: t("gridDuplicateRow") }));
 
     // '' (name) は残し、NULL (note) だけ省く。
-    expect(onDuplicateRow).toHaveBeenCalledWith({ 0: "1", 1: "" });
+    expect(onDuplicateRow).toHaveBeenCalledWith({ 0: "1", 1: { empty: true } });
   });
 
   it("onDuplicateRow が未指定ならメニュー項目を出さない", () => {

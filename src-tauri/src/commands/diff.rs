@@ -265,7 +265,16 @@ pub async fn compare_table_data(
     // (`data_diff::generate_data_sync_sql` 参照)。
     let column_types: Vec<String> = col_info.iter().map(|c| c.data_type.clone()).collect();
     // 生成列は DB が値を計算するので、同期 SQL の INSERT / UPDATE から外す (#1521)。
-    let generated_columns = generated_column_names(&col_info);
+    // ターゲット側だけが生成列のこともあるので、両側の和集合を除外する。ターゲットの
+    // 列定義を取れなければ (テーブル未作成など) ソース側だけで判定する。
+    let mut generated_columns = generated_column_names(&col_info);
+    if let Ok(target_cols) = target.conn.columns(&target_database, &table).await {
+        for name in generated_column_names(&target_cols) {
+            if !generated_columns.contains(&name) {
+                generated_columns.push(name);
+            }
+        }
+    }
     let primary_key: Vec<String> = col_info
         .iter()
         .filter(|c| c.key.eq_ignore_ascii_case("PRI"))

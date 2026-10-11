@@ -328,13 +328,33 @@ pub fn summarize_drift(diff: &SchemaDiff, index_drift: &[IndexDriftEntry]) -> Dr
 
 /// 旧世代 `prev` から新世代 `next` への変化サマリ (列: `compute_schema_diff`、
 /// インデックス: [`diff_indexes`])。
+///
+/// PostgreSQL は生成列の `extra` (`STORED GENERATED` 等) を後から出すようになった。
+/// `extra` が全列で空の旧スナップショットと比べると、生成列を持つテーブルが一斉に
+/// 「変更」と誤検知されるため、その場合に限り両側の `extra` を比較から外す。
 pub fn summarize_payloads(prev: &SnapshotPayload, next: &SnapshotPayload) -> DriftSummary {
+    let ignore_extra = prev.driver == DriverKind::Postgres
+        && next.driver == DriverKind::Postgres
+        && !prev
+            .tables
+            .iter()
+            .any(|t| t.columns.iter().any(|c| !c.extra.is_empty()));
     let to_columns = |p: &SnapshotPayload| -> Vec<TableColumns> {
         p.tables
             .iter()
             .map(|t| TableColumns {
                 name: t.name.clone(),
-                columns: t.columns.clone(),
+                columns: t
+                    .columns
+                    .iter()
+                    .map(|c| {
+                        let mut c = c.clone();
+                        if ignore_extra {
+                            c.extra.clear();
+                        }
+                        c
+                    })
+                    .collect(),
             })
             .collect()
     };
@@ -610,5 +630,26 @@ mod tests {
         let v = serde_json::to_value(summarize_payloads(&prev, &next)).unwrap();
         assert_eq!(v["tables"][0]["tableStatus"], "added");
         assert_eq!(v["tables"][0]["columnsAdded"], 0);
+    }
+
+    #[test]
+    fn postgres_extra_is_ignored_against_a_legacy_snapshot_without_extra() {
+        let mut gen = col("g", "integer");
+        gen.extra = "STORED GENERATED".to_string();
+        let mk = |driver, cols: Vec<TableColumnInfo>| SnapshotPayload {
+            driver,
+            database: "d".to_string(),
+            tables: vec![table("t", cols, vec![])],
+        };
+        let old = mk(DriverKind::Postgres, vec![col("g", "integer")]);
+        let new = mk(DriverKind::Postgres, vec![gen.clone()]);
+        // 旧世代に extra が一つも無い → 一回限りの誤検知を出さない。
+        assert!(summarize_payloads(&old, &new).tables.is_empty());
+        // 旧世代にも extra があれば通常どおり比較する。
+        let mut gen2 = col("h", "integer");
+        gen2.extra = "STORED GENERATED".to_string();
+        let old2 = mk(DriverKind::Postgres, vec![gen2, col("g", "integer")]);
+        let new2 = mk(DriverKind::Postgres, vec![col("h", "integer"), gen]);
+        assert!(!summarize_payloads(&old2, &new2).tables.is_empty());
     }
 }

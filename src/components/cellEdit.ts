@@ -681,8 +681,29 @@ export interface InsertFunctionValue {
   fn: InsertFunctionId;
 }
 
+/**
+ * 空文字 `''` を明示した値 (#1526)。行の複製で元が空文字の列を、NULL / 未設定
+ * (= DB 既定値) と区別して INSERT まで届けるために使う。素の `""` は「空欄 = 既定値」
+ * (#1357) のままなので、別の値として持つ。
+ */
+export interface InsertEmptyStringValue {
+  empty: true;
+}
+
 /** 行追加バッファの 1 セル。`string` は利用者の入力 (リテラル化される)、関数値は式そのまま。 */
-export type PendingInsertValue = string | InsertFunctionValue;
+export type PendingInsertValue = string | InsertFunctionValue | InsertEmptyStringValue;
+
+/** 関数値か (`string` / 空文字値ではない)。 */
+export function isInsertFunctionValue(v: PendingInsertValue | undefined): v is InsertFunctionValue {
+  return typeof v === "object" && v !== null && "fn" in v;
+}
+
+/** 空文字を明示した値か。 */
+export function isInsertEmptyStringValue(
+  v: PendingInsertValue | undefined,
+): v is InsertEmptyStringValue {
+  return typeof v === "object" && v !== null && "empty" in v;
+}
 
 /** One pending new row: column index → typed value. Unset columns are
  *  omitted from the INSERT so the database applies defaults / auto-increment.
@@ -726,7 +747,11 @@ export function buildInsertStatements(input: {
       const v = row[i];
       if (col === undefined || isEmptyInsertValue(v)) continue;
       const literal =
-        typeof v === "string" ? literalFromInput(input.driver, v, col) : insertFunctionSql(input.driver, v.fn);
+        typeof v === "string"
+          ? literalFromInput(input.driver, v, col)
+          : isInsertFunctionValue(v)
+            ? insertFunctionSql(input.driver, v.fn)
+            : "''";
       if (literal === null) {
         unsupported = true;
         break;

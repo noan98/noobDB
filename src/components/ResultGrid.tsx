@@ -1482,7 +1482,9 @@ function rowToPendingInsert(row: CellValue[]): PendingInsertRow {
   const seed: PendingInsertRow = {};
   row.forEach((v, i) => {
     if (v === null || v === undefined) return;
-    seed[i] = cellToText(v);
+    const text = cellToText(v);
+    // 空文字は素の "" (= 空欄 = 既定値) と区別して明示値にする (#1526)。
+    seed[i] = text === "" ? { empty: true } : text;
   });
   return seed;
 }

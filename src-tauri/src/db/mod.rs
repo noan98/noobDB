@@ -680,6 +680,27 @@ impl Connection {
         }
     }
 
+    /// 取り込み先の DB / スキーマ名を決める。明示されていればそれ、無い (None / 空) ときは
+    /// 接続の現在値 (MySQL は `DATABASE()`、PostgreSQL は `current_schema()`)。
+    /// SQLite は常に空文字。取得できなければ空文字。
+    pub async fn resolve_database(&self, database: Option<&str>) -> String {
+        if let Some(d) = database.filter(|d| !d.is_empty()) {
+            return d.to_string();
+        }
+        let sql = match self {
+            Connection::MySql(_) => "SELECT DATABASE()",
+            Connection::Postgres(_) => "SELECT current_schema()",
+            Connection::Sqlite(_) => return String::new(),
+        };
+        match self.execute(sql, None).await {
+            Ok(r) => match r.rows.first().and_then(|row| row.first()) {
+                Some(types::Value::String(s)) => s.clone(),
+                _ => String::new(),
+            },
+            Err(_) => String::new(),
+        }
+    }
+
     /// UPSERT モードのインポート前の検証。MySQL の `ON DUPLICATE KEY UPDATE` は
     /// PRIMARY を含む全一意キーの衝突で発火するため、選択キー列と一致しない
     /// 一意キーがあると別の行を黙って上書き / 読み飛ばす。実行前に理由付きで

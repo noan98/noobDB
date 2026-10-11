@@ -1661,7 +1661,9 @@ async fn numeric_target_flags(
             })
             .collect();
     }
-    let Ok(infos) = session.conn.columns(database.unwrap_or(""), table).await else {
+    // database が未指定 (None / 空) のときは接続の現在の DB / スキーマで引く。
+    let db = session.conn.resolve_database(database).await;
+    let Ok(infos) = session.conn.columns(&db, table).await else {
         return vec![false; mapping.len()];
     };
     mapping

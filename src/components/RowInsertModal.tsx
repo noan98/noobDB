@@ -4,6 +4,8 @@ import { useT } from "../i18n";
 import type { Column, TableColumnInfo } from "../api/tauri";
 import {
   isEmptyInsertValue,
+  isInsertEmptyStringValue,
+  isInsertFunctionValue,
   type PendingInsertRow,
   type PendingInsertValue,
 } from "./cellEdit";
@@ -59,7 +61,8 @@ interface Props {
  */
 function cellText(v: PendingInsertValue | undefined, driver: string): string {
   if (v === undefined) return "";
-  return typeof v === "string" ? v : (insertFunctionSql(driver, v.fn) ?? "");
+  if (typeof v === "string") return v;
+  return isInsertFunctionValue(v) ? (insertFunctionSql(driver, v.fn) ?? "") : "";
 }
 
 /** 初期値 (複製の種) の文字列。種は文字列だけだが、型上は関数値も含み得るため文字列のみ採る。 */
@@ -149,7 +152,8 @@ export function RowInsertModal({
           const listId = `${listIdBase}-${i}`;
           const cell = values[i];
           const cur = cellText(cell, driver);
-          const activeFn = typeof cell === "object" ? cell.fn : null;
+          const activeFn = isInsertFunctionValue(cell) ? cell.fn : null;
+          const emptyStr = isInsertEmptyStringValue(cell);
           // 真偽値だけセレクタにする。日付系はネイティブ入力だと明示的な NULL
           // (ヒント文の "null" 入力) を表現できないため、テキスト入力のままにする。
           // 種別は初期値で決め、入力中に切り替わらないようにする。
@@ -235,6 +239,36 @@ export function RowInsertModal({
                   />
                 )}
                 <ValueDatalist id={listId} values={pickerValues} />
+                {emptyStr && (
+                  <Tooltip label={t("rowOpsInsertEmptyTitle")}>
+                    <chakra.span
+                      flexShrink={0}
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="1"
+                      fontSize="2xs"
+                      fontFamily="mono"
+                      color="app.textMuted"
+                      borderWidth="1px"
+                      borderColor="app.border"
+                      borderRadius="sm"
+                      px="1"
+                      data-testid={`insert-empty-badge-${c.name}`}
+                    >
+                      {t("rowOpsInsertEmptyBadge")}
+                      <chakra.button
+                        type="button"
+                        aria-label={t("rowOpsInsertEmptyClear")}
+                        color="app.textMuted"
+                        cursor="pointer"
+                        data-testid={`insert-empty-clear-${c.name}`}
+                        onClick={() => setValues((prev) => ({ ...prev, [i]: "" }))}
+                      >
+                        ×
+                      </chakra.button>
+                    </chakra.span>
+                  </Tooltip>
+                )}
                 {pickerKind && (
                   <Tooltip label={badgeTitle(pickerKind, c.name)}>
                     <chakra.span

@@ -1089,7 +1089,18 @@ impl PostgresConn {
                 c.is_nullable,
                 CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
                 c.column_default,
-                CASE WHEN c.is_generated = 'ALWAYS' THEN 'STORED GENERATED' ELSE '' END AS extra,
+                CASE WHEN c.is_generated = 'ALWAYS' THEN
+                  -- attgenerated は PG12+ の列。to_jsonb 経由なら無い版でも NULL になり
+                  -- SQL エラーにならない (PG18 の 'v' = VIRTUAL を出し分ける)。
+                  CASE WHEN (SELECT to_jsonb(ga)->>'attgenerated'
+                               FROM pg_catalog.pg_attribute ga
+                               JOIN pg_catalog.pg_class gcl ON gcl.oid = ga.attrelid
+                               JOIN pg_catalog.pg_namespace gns ON gns.oid = gcl.relnamespace
+                              WHERE gns.nspname = c.table_schema
+                                AND gcl.relname = c.table_name
+                                AND ga.attname = c.column_name) = 'v'
+                       THEN 'VIRTUAL GENERATED' ELSE 'STORED GENERATED' END
+                ELSE '' END AS extra,
                 fk.ref_table,
                 fk.ref_column,
                 c.character_maximum_length,
@@ -1165,7 +1176,18 @@ impl PostgresConn {
                 c.is_nullable,
                 CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
                 c.column_default,
-                CASE WHEN c.is_generated = 'ALWAYS' THEN 'STORED GENERATED' ELSE '' END AS extra,
+                CASE WHEN c.is_generated = 'ALWAYS' THEN
+                  -- attgenerated は PG12+ の列。to_jsonb 経由なら無い版でも NULL になり
+                  -- SQL エラーにならない (PG18 の 'v' = VIRTUAL を出し分ける)。
+                  CASE WHEN (SELECT to_jsonb(ga)->>'attgenerated'
+                               FROM pg_catalog.pg_attribute ga
+                               JOIN pg_catalog.pg_class gcl ON gcl.oid = ga.attrelid
+                               JOIN pg_catalog.pg_namespace gns ON gns.oid = gcl.relnamespace
+                              WHERE gns.nspname = c.table_schema
+                                AND gcl.relname = c.table_name
+                                AND ga.attname = c.column_name) = 'v'
+                       THEN 'VIRTUAL GENERATED' ELSE 'STORED GENERATED' END
+                ELSE '' END AS extra,
                 fk.ref_table,
                 fk.ref_column,
                 c.character_maximum_length,
