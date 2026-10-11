@@ -99,6 +99,18 @@ fn executable_in(dir: &Path, binary: &str) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// インストール先ディレクトリ名 (`17` / `9.6` / `MySQL Server 8.4`) から版番号の数値列を
+/// 取り出す。ソートキー用: 数字の連なりごとに数値化して辞書順で比べる (`[9, 6] < [17]`)。
+/// 同じ数値列のときだけ元の名前で決める。
+fn version_sort_key(name: &str) -> (Vec<u64>, String) {
+    let nums = name
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| p.parse::<u64>().ok())
+        .collect();
+    (nums, name.to_string())
+}
+
 /// `PATH` に通らないことが多い既知のインストール先 (新しい版を先に)。
 fn known_locations(binary: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -140,9 +152,15 @@ fn known_locations(binary: &str) -> Vec<PathBuf> {
                     .collect()
             })
             .unwrap_or_default();
-        // 名前の降順 = おおむね新しい版が先 (8.4 > 8.0)。
-        dirs.sort();
-        dirs.reverse();
+        // 版番号の降順 (新しい版が先)。文字列順だと "9.6" が "17" より後ろにならず
+        // 古い版が選ばれるので、数値として比較する。
+        dirs.sort_by_cached_key(|d| {
+            std::cmp::Reverse(version_sort_key(
+                &d.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ))
+        });
         for d in dirs {
             out.push(d.join("bin").join(format!("{binary}.exe")));
         }
@@ -373,6 +391,19 @@ fn output_tail(stdout: &[u8], stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_dirs_sort_numerically_newest_first() {
+        let mut my = vec!["MySQL Server 8.0", "MySQL Server 8.4", "MySQL Server 5.7"];
+        my.sort_by_cached_key(|n| std::cmp::Reverse(version_sort_key(n)));
+        assert_eq!(
+            my,
+            ["MySQL Server 8.4", "MySQL Server 8.0", "MySQL Server 5.7"]
+        );
+        let mut pg = vec!["9.6", "17", "10"];
+        pg.sort_by_cached_key(|n| std::cmp::Reverse(version_sort_key(n)));
+        assert_eq!(pg, ["17", "10", "9.6"]);
+    }
 
     #[test]
     fn parse_accepts_only_known_tools() {

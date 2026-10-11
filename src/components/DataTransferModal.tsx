@@ -67,6 +67,10 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   const ownedSessionRef = useRef<string | null>(null);
+  // 接続中にモーダルが閉じられた / 別のプロファイルが選ばれたときに、遅れて完了した
+  // connect の結果 (専用セッション) を捨てて切断するための印。
+  const unmountedRef = useRef(false);
+  const selectSeqRef = useRef(0);
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -83,21 +87,24 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   }, []);
 
   // アンマウント時: 実行中の転送を止め、購読と専用セッションを片付ける。
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode の再マウントでも「アンマウント済み」のままにならないよう、設定時に戻す。
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
       const sid = streamIdRef.current;
       if (sid) void api.cancelStream(sid).catch(() => {});
       unlistenRef.current?.();
       unlistenRef.current = null;
       streamIdRef.current = null;
       releaseSession();
-    },
-    [releaseSession],
-  );
+    };
+  }, [releaseSession]);
 
   const selectProfile = useCallback(
     async (id: string) => {
       releaseSession();
+      const seq = ++selectSeqRef.current;
       setProfileId(id);
       setTargetSession(null);
       setDatabases(null);
@@ -123,15 +130,22 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
           read_only: profile.read_only,
           skip_history: profile.skip_history,
         });
+        if (unmountedRef.current || seq !== selectSeqRef.current) {
+          // 接続待ちの間にモーダルが閉じられた / 別のプロファイルに切り替わった。
+          // 誰も解放しない専用セッション (SSH トンネル含む) が残らないよう即切断する。
+          api.disconnect(res.session_id).catch(() => {});
+          return;
+        }
         ownedSessionRef.current = res.session_id;
         setTargetSession(res.session_id);
         const dbs = await api.listDatabases(res.session_id).catch(() => [] as string[]);
+        if (unmountedRef.current || seq !== selectSeqRef.current) return;
         setDatabases(dbs);
         setDatabase(pickDefaultDatabase(dbs, profile.database));
       } catch (e) {
-        setConnectError(String(e));
+        if (!unmountedRef.current && seq === selectSeqRef.current) setConnectError(String(e));
       } finally {
-        setConnecting(false);
+        if (!unmountedRef.current && seq === selectSeqRef.current) setConnecting(false);
       }
     },
     [profiles, releaseSession],

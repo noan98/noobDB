@@ -11,6 +11,7 @@
 import { z } from "zod";
 import type { DriverKind, SchemaDiff, SyncStatement, TableColumnInfo } from "../api/tauri";
 import { dialectLabel, sqlForAi } from "./errorExplain";
+import { sliceHead } from "./textSlice";
 
 /** プロンプトに載せる同期文の上限 (巨大プランでプロンプトが膨らむのを防ぐ)。 */
 export const SYNC_RISK_MAX_STATEMENTS = 200;
@@ -273,7 +274,7 @@ export function buildSyncRiskPrompt(input: SyncRiskInput): string {
     } else {
       const sql = sqlForAi(statement.sql, input.targetDriver, input.maskLiterals);
       lines.push(head);
-      lines.push(sql.length > SYNC_RISK_MAX_SQL_CHARS ? `${sql.slice(0, SYNC_RISK_MAX_SQL_CHARS)} ...(truncated)` : sql);
+      lines.push(sql.length > SYNC_RISK_MAX_SQL_CHARS ? `${sliceHead(sql, SYNC_RISK_MAX_SQL_CHARS)} ...(truncated)` : sql);
     }
   }
   if (input.warnings.length > 0) {

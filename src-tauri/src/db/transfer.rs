@@ -251,6 +251,8 @@ pub fn target_type_sql(driver: DriverKind, ty: &TransferType) -> String {
         (T::Integer, _) => "BIGINT",
 
         (T::UnsignedBigInt, D::Mysql) => "BIGINT UNSIGNED",
+        // SQLite の INTEGER は 64bit 符号付き。i64 を超える値は REAL に化けて精度を失うので、
+        // 書き込み前に [`check_sqlite_unsigned_range`] で行エラーにする (黙って丸めない)。
         (T::UnsignedBigInt, D::Sqlite) => "INTEGER",
         (T::UnsignedBigInt, D::Postgres) => "NUMERIC(20,0)",
 
@@ -412,6 +414,37 @@ pub fn binary_finalize_sql(
         .collect()
 }
 
+/// SQLite ターゲットの `UnsignedBigInt` 列に i64 の範囲を超える値があれば、列名付きの
+/// エラーにする。INTEGER 列へ入れると REAL に変換されて値が黙って失われるため。
+pub fn check_sqlite_unsigned_range(
+    driver: DriverKind,
+    columns: &[TransferColumn],
+    rows: &[Vec<Value>],
+) -> Result<()> {
+    if driver != DriverKind::Sqlite {
+        return Ok(());
+    }
+    for (i, c) in columns.iter().enumerate() {
+        if c.ty != TransferType::UnsignedBigInt {
+            continue;
+        }
+        // MySQL の BIGINT UNSIGNED は `Value::from_u64_lossless` で 2^53 を超えると
+        // `Value::String` (十進文字列) になるので、文字列も数値として読んで判定する。
+        let above_i64 = |v: Option<&Value>| match v {
+            Some(Value::UInt(n)) => *n > i64::MAX as u64,
+            Some(Value::String(s)) => s.parse::<u64>().is_ok_and(|n| n > i64::MAX as u64),
+            _ => false,
+        };
+        if rows.iter().any(|r| above_i64(r.get(i))) {
+            return Err(AppError::InvalidInput(format!(
+                "column \"{}\" has a value above 9223372036854775807, which SQLite INTEGER cannot hold without losing precision",
+                c.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// 1 セルをインポート経路へ渡すテキストへ変換する。`None` は SQL NULL。
 pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Option<String> {
     let bool_text = |b: bool| -> String {
@@ -441,8 +474,13 @@ pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Op
         } else {
             "0".into()
         }),
-        Value::Int(n) if *ty == TransferType::Boolean => Some(bool_text(*n != 0)),
-        Value::UInt(n) if *ty == TransferType::Boolean => Some(bool_text(*n != 0)),
+        // 真偽値列へ 0 / 1 以外の整数 (SQLite は型を強制しない。BIT(n) も該当) が来ても
+        // `true` へ黙って丸めない。そのままの数値テキストで渡し、ターゲットが保持できれば
+        // 値を保ち (MySQL / SQLite)、できなければ (PostgreSQL の BOOLEAN) 行エラーにする。
+        Value::Int(n) if *ty == TransferType::Boolean && (*n == 0 || *n == 1) => {
+            Some(bool_text(*n == 1))
+        }
+        Value::UInt(n) if *ty == TransferType::Boolean && *n <= 1 => Some(bool_text(*n == 1)),
         Value::Int(n) => Some(n.to_string()),
         Value::UInt(n) => Some(n.to_string()),
         Value::Float(f) => Some(f.to_string()),
@@ -714,6 +752,71 @@ mod tests {
             source_select_sql(DriverKind::Mysql, "a`b"),
             "SELECT * FROM `a``b`"
         );
+    }
+
+    #[test]
+    fn boolean_column_keeps_integers_other_than_zero_and_one() {
+        let b = TransferType::Boolean;
+        for driver in [DriverKind::Mysql, DriverKind::Sqlite, DriverKind::Postgres] {
+            // 0 / 1 だけが真偽値へ変換される。
+            let t = if driver == DriverKind::Postgres {
+                "true"
+            } else {
+                "1"
+            };
+            let f = if driver == DriverKind::Postgres {
+                "false"
+            } else {
+                "0"
+            };
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(1)).as_deref(),
+                Some(t)
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(0)).as_deref(),
+                Some(f)
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::UInt(1)).as_deref(),
+                Some(t)
+            );
+            // それ以外は true へ黙って丸めず、数値のまま渡す。
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(2)).as_deref(),
+                Some("2")
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(-1)).as_deref(),
+                Some("-1")
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::UInt(255)).as_deref(),
+                Some("255")
+            );
+        }
+    }
+
+    #[test]
+    fn unsigned_bigint_on_sqlite_is_integer_with_range_check() {
+        assert_eq!(
+            target_type_sql(DriverKind::Sqlite, &TransferType::UnsignedBigInt),
+            "INTEGER"
+        );
+        let cols = vec![TransferColumn {
+            name: "n".into(),
+            source_type: "BIGINT UNSIGNED".into(),
+            ty: TransferType::UnsignedBigInt,
+        }];
+        // 実際のデコード結果 (from_u64_lossless) で確かめる。2^53 超は String になる。
+        let ok = vec![vec![Value::from_u64_lossless(i64::MAX as u64)]];
+        let big = vec![vec![Value::from_u64_lossless(i64::MAX as u64 + 1)]];
+        let max = vec![vec![Value::from_u64_lossless(u64::MAX)]];
+        assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &ok).is_ok());
+        assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &big).is_err());
+        assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &max).is_err());
+        // 他ドライバは対象外。
+        assert!(check_sqlite_unsigned_range(DriverKind::Mysql, &cols, &big).is_ok());
     }
 
     #[test]

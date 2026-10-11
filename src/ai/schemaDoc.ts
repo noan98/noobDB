@@ -4,7 +4,8 @@
 // 送るのはテーブル / 列の名前・型・NULL 可・キー・コメント、インデックス、外部キー、ビュー / ルーチンの
 // 定義だけ。行データ・サンプル値・列のデフォルト値は送らない。
 
-import { dialectLabel } from "./errorExplain";
+import { dialectLabel, sqlForAi } from "./errorExplain";
+import { sliceHead } from "./textSlice";
 
 /** この件数を超えるスキーマでは、インデックス / 定義取得の並列度を `LARGE_CONCURRENCY` に抑える。 */
 export const SCHEMA_DOC_THROTTLE_TABLES = 100;
@@ -140,7 +141,7 @@ export function utf8Bytes(text: string): number {
 export function truncateDefinition(def: string): string {
   const trimmed = def.trim();
   if (trimmed.length <= SCHEMA_DOC_DEFINITION_MAX_CHARS) return trimmed;
-  return `${trimmed.slice(0, SCHEMA_DOC_DEFINITION_MAX_CHARS)}\n-- (truncated)`;
+  return `${sliceHead(trimmed, SCHEMA_DOC_DEFINITION_MAX_CHARS)}\n-- (truncated)`;
 }
 
 /** コメントを 1 行に畳む (改行・連続空白を 1 つの空白へ)。 */
@@ -148,8 +149,59 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * ビュー / ルーチン定義のリテラルをマスクする。`maskLiterals` はドル引用 (`$function$...$function$`)
+ * の中身を丸ごと空白にしてしまい、PostgreSQL の関数本体 (pg_get_functiondef は必ずこの形) が消えるので、
+ * ドル引用は外側のタグだけ残して本体を再帰的にマスクする。
+ */
+export function maskDefinition(sql: string, driver: string, mask: boolean): string {
+  if (!mask) return sql;
+  // ドル引用は PostgreSQL だけ。他ドライバは通常のマスクで足りる。
+  if (driver !== "postgres") return sqlForAi(sql, driver, true);
+  let out = "";
+  let segStart = 0;
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i];
+    if (c === "'" || c === '"') {
+      // 引用符リテラル / 識別子は丸ごと飛ばす (中の `$$` を開始タグと誤認しない)。
+      // E'...' はバックスラッシュエスケープを解釈する。
+      const escapes = c === "'" && i > 0 && /[Ee]/.test(sql[i - 1]);
+      let j = i + 1;
+      while (j < n) {
+        if (escapes && sql[j] === "\\") j += 2;
+        else if (sql[j] === c) {
+          if (sql[j + 1] === c) j += 2;
+          else break;
+        } else j++;
+      }
+      i = j + 1;
+    } else if (c === "-" && sql[i + 1] === "-") {
+      while (i < n && sql[i] !== "\n") i++;
+    } else if (c === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? n : end + 2;
+    } else if (c === "$" && (i === 0 || !/\w/.test(sql[i - 1]))) {
+      const m = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 64));
+      const close = m ? sql.indexOf(m[0], i + m[0].length) : -1;
+      if (m && close >= 0) {
+        out += sqlForAi(sql.slice(segStart, i), driver, true) + m[0];
+        out += maskDefinition(sql.slice(i + m[0].length, close), driver, true) + m[0];
+        i = close + m[0].length;
+        segStart = i;
+      } else i++;
+    } else i++;
+  }
+  return out + sqlForAi(sql.slice(segStart), driver, true);
+}
+
 /** AI へ渡すスキーマ本文。デフォルト値・行データは含めない。 */
-export function buildSchemaDocContextText(ctx: SchemaDocContext): string {
+export function buildSchemaDocContextText(
+  ctx: SchemaDocContext,
+  /** 定義中のリテラルをマスクするための設定 (`ai.maskLiterals`)。省略時はマスクしない。 */
+  mask?: { driver: string; maskLiterals: boolean },
+): string {
   const lines: string[] = ["## Tables"];
   for (const t of ctx.tables) {
     lines.push("");
@@ -186,7 +238,9 @@ export function buildSchemaDocContextText(ctx: SchemaDocContext): string {
       lines.push("");
       lines.push(`### ${o.kind} ${o.name}`);
       lines.push("```sql");
-      lines.push(truncateDefinition(o.definition ?? ""));
+      // マスクしてから切り詰める (先に切るとリテラルの途中で切れてマスクが外れうる)。
+      const def = mask ? maskDefinition(o.definition ?? "", mask.driver, mask.maskLiterals) : (o.definition ?? "");
+      lines.push(truncateDefinition(def));
       lines.push("```");
     }
   }
@@ -199,6 +253,8 @@ export interface SchemaDocSystemInput {
   database: string | null;
   locale: "ja" | "en";
   context: SchemaDocContext;
+  /** `ai.maskLiterals`。ビュー / ルーチン定義中のリテラルをマスクして送る。 */
+  maskLiterals: boolean;
 }
 
 /** system プロンプト。方言・出力仕様・スキーマ本文を含める。 */
@@ -230,7 +286,7 @@ export function buildSchemaDocSystem(input: SchemaDocSystemInput): string {
   );
   lines.push("");
   lines.push(input.database ? `Database: ${input.database}` : "Database: (default)");
-  lines.push(buildSchemaDocContextText(input.context));
+  lines.push(buildSchemaDocContextText(input.context, { driver: input.driver, maskLiterals: input.maskLiterals }));
   return lines.join("\n");
 }
 

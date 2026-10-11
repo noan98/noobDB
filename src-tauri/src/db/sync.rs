@@ -93,7 +93,9 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         match table.status {
             DiffStatus::Same => {}
             DiffStatus::SourceOnly => {
-                statements.push(create_table_stmt(driver, table));
+                if let Some(stmt) = create_table_stmt(driver, table, &mut warnings) {
+                    statements.push(stmt);
+                }
             }
             DiffStatus::TargetOnly => {
                 if allow_destructive {
@@ -133,12 +135,33 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
 /// Builds the `CREATE TABLE` for a source-only table from its source-side
 /// column definitions, appending a `PRIMARY KEY (...)` clause for any columns
 /// flagged `PRI`.
-fn create_table_stmt(driver: DriverKind, table: &TableDiff) -> SyncStatement {
-    let cols: Vec<&TableColumnInfo> = table
-        .columns
-        .iter()
-        .filter_map(|c| c.source.as_ref())
-        .collect();
+fn create_table_stmt(
+    driver: DriverKind,
+    table: &TableDiff,
+    warnings: &mut Vec<String>,
+) -> Option<SyncStatement> {
+    let mut cols: Vec<&TableColumnInfo> = Vec::new();
+    let mut pk_generated = false;
+    for c in table.columns.iter().filter_map(|c| c.source.as_ref()) {
+        if is_generated_column(driver, c) {
+            warnings.push(generated_column_warning(&table.name, &c.name));
+            if c.key.eq_ignore_ascii_case("PRI") {
+                pk_generated = true;
+            }
+        } else {
+            cols.push(c);
+        }
+    }
+
+    // 生成列を除くと主キーが変わる / 列が無くなる場合は、誤った構造のテーブルを
+    // 作らないよう CREATE TABLE 自体を出さない。
+    if pk_generated || cols.is_empty() {
+        warnings.push(format!(
+            "{}: 生成列を除外すると主キーが変わる、または作成できる列が無いため CREATE TABLE を生成しません。手動で作成してください。",
+            table.name
+        ));
+        return None;
+    }
 
     let mut lines: Vec<String> = cols.iter().map(|c| column_def(driver, c)).collect();
 
@@ -152,12 +175,12 @@ fn create_table_stmt(driver: DriverKind, table: &TableDiff) -> SyncStatement {
     }
 
     let sql = render_create_table(&quote_ident(driver, &table.name), &lines);
-    SyncStatement {
+    Some(SyncStatement {
         sql,
         table: table.name.clone(),
         kind: SyncKind::CreateTable,
         destructive: false,
-    }
+    })
 }
 
 /// Renders `CREATE TABLE <qualified> (\n  <line>,\n  ...\n)` from already
@@ -182,6 +205,10 @@ fn alter_table(
         match col.status {
             DiffStatus::SourceOnly => {
                 if let Some(src) = &col.source {
+                    if is_generated_column(driver, src) {
+                        warnings.push(generated_column_warning(&table.name, &src.name));
+                        continue;
+                    }
                     statements.push(SyncStatement {
                         sql: format!(
                             "ALTER TABLE {} ADD COLUMN {}",
@@ -210,6 +237,15 @@ fn alter_table(
             }
             DiffStatus::Different => {
                 if let Some(src) = &col.source {
+                    // target 側が生成列の場合も MODIFY で生成式が失われるため対象外。
+                    let target_generated = col
+                        .target
+                        .as_ref()
+                        .is_some_and(|t| is_generated_column(driver, t));
+                    if is_generated_column(driver, src) || target_generated {
+                        warnings.push(generated_column_warning(&table.name, &src.name));
+                        continue;
+                    }
                     modify_column(
                         driver,
                         &table.name,
@@ -362,11 +398,55 @@ pub(crate) fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
         def.push(' ');
         def.push_str(&clause);
     }
-    if driver == DriverKind::Mysql && !col.extra.is_empty() {
-        def.push(' ');
-        def.push_str(&col.extra);
+    if driver == DriverKind::Mysql {
+        let extra = mysql_extra_clause(&col.extra);
+        if !extra.is_empty() {
+            def.push(' ');
+            def.push_str(&extra);
+        }
+        // MODIFY COLUMN は COMMENT 句を省くと列コメントを空に戻すため、
+        // 取得済みのコメントは必ず出力する (単引用符・バックスラッシュは二重化)。
+        if let Some(comment) = col.comment.as_deref().filter(|c| !c.is_empty()) {
+            def.push_str(" COMMENT ");
+            def.push_str(&mysql_quote_default(comment));
+        }
     }
     def
+}
+
+/// MySQL の生成列 (`STORED GENERATED` / `VIRTUAL GENERATED`)。生成式を保持して
+/// いないので、通常列として ADD / MODIFY / CREATE すると同期後のスキーマが
+/// 静かに変わってしまう。自動同期の対象から外す。
+fn is_generated_column(driver: DriverKind, col: &TableColumnInfo) -> bool {
+    if driver != DriverKind::Mysql {
+        return false;
+    }
+    let up = col.extra.to_ascii_uppercase();
+    up.contains("STORED GENERATED") || up.contains("VIRTUAL GENERATED")
+}
+
+fn generated_column_warning(table: &str, column: &str) -> String {
+    format!(
+        "{table}.{column}: 生成列は自動同期の対象外です (生成式を保持していないため)。必要に応じて手動で追加・変更してください。"
+    )
+}
+
+/// MySQL の `information_schema.COLUMNS.EXTRA` から DDL にそのまま書ける語だけを
+/// 残す。`DEFAULT_GENERATED` / `STORED GENERATED` / `VIRTUAL GENERATED` は
+/// 情報表示用のマーカーで、DDL に連結すると構文エラーになる
+/// (`auto_increment` や `on update CURRENT_TIMESTAMP` は有効な句なので残す)。
+fn mysql_extra_clause(extra: &str) -> String {
+    let mut s = extra.to_string();
+    for marker in ["DEFAULT_GENERATED", "STORED GENERATED", "VIRTUAL GENERATED"] {
+        loop {
+            let upper = s.to_ascii_uppercase();
+            match upper.find(marker) {
+                Some(i) => s.replace_range(i..i + marker.len(), " "),
+                None => break,
+            }
+        }
+    }
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// 修正 L2: `DEFAULT ...` 句を組み立てる。デフォルトが無ければ `None`。
@@ -677,6 +757,123 @@ mod tests {
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
         assert!(plan.statements.is_empty());
         assert!(plan.warnings.is_empty());
+    }
+
+    // --- #1521: EXTRA マーカー除去と COMMENT 出力 ---------------------------
+
+    #[test]
+    fn mysql_extra_markers_are_stripped() {
+        let mut c = col("created_at", "timestamp");
+        c.nullable = false;
+        c.default = Some("CURRENT_TIMESTAMP".to_string());
+        c.extra = "DEFAULT_GENERATED".to_string();
+        assert_eq!(
+            column_def(DriverKind::Mysql, &c),
+            "`created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        );
+        c.extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP".to_string();
+        assert_eq!(
+            column_def(DriverKind::Mysql, &c),
+            "`created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP"
+        );
+        c.extra = "auto_increment".to_string();
+        assert!(column_def(DriverKind::Mysql, &c).ends_with(" auto_increment"));
+    }
+
+    #[test]
+    fn mysql_generated_columns_are_excluded_with_warning() {
+        let mut g = col("total", "int");
+        g.extra = "STORED GENERATED".to_string();
+        let mut v = col("v", "int");
+        v.extra = "VIRTUAL GENERATED".to_string();
+        let plain = col("id", "int");
+        assert!(is_generated_column(DriverKind::Mysql, &g));
+        assert!(is_generated_column(DriverKind::Mysql, &v));
+        assert!(!is_generated_column(DriverKind::Mysql, &plain));
+
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![
+                cdiff("id", DiffStatus::SourceOnly, Some(plain.clone()), &[]),
+                cdiff("total", DiffStatus::SourceOnly, Some(g.clone()), &[]),
+            ],
+        };
+        let mut warnings = Vec::new();
+        let stmt = create_table_stmt(DriverKind::Mysql, &table, &mut warnings).unwrap();
+        assert!(stmt.sql.contains("`id`") && !stmt.sql.contains("`total`"));
+        assert_eq!(warnings.len(), 1);
+
+        let alter = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::Different,
+            columns: vec![
+                cdiff("total", DiffStatus::SourceOnly, Some(g.clone()), &[]),
+                cdiff("v", DiffStatus::Different, Some(v), &["data_type"]),
+            ],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![alter]), false);
+        assert!(plan.statements.is_empty());
+        assert_eq!(plan.warnings.len(), 2);
+    }
+
+    #[test]
+    fn mysql_create_table_skipped_when_generated_pk_or_no_columns() {
+        let mut g = col("id", "int");
+        g.extra = "STORED GENERATED".to_string();
+        g.key = "PRI".to_string();
+        let plain = col("name", "varchar(10)");
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![
+                cdiff("id", DiffStatus::SourceOnly, Some(g.clone()), &[]),
+                cdiff("name", DiffStatus::SourceOnly, Some(plain), &[]),
+            ],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert!(plan.statements.is_empty());
+        assert!(plan.warnings.iter().any(|w| w.contains("CREATE TABLE")));
+
+        g.key = String::new();
+        let only = TableDiff {
+            name: "t2".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![cdiff("id", DiffStatus::SourceOnly, Some(g), &[])],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![only]), false);
+        assert!(plan.statements.is_empty());
+    }
+
+    #[test]
+    fn mysql_modify_skipped_when_target_is_generated() {
+        let src = col("v", "int");
+        let mut tgt = col("v", "bigint");
+        tgt.extra = "VIRTUAL GENERATED".to_string();
+        let mut cd = cdiff("v", DiffStatus::Different, Some(src), &["data_type"]);
+        cd.target = Some(tgt);
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::Different,
+            columns: vec![cd],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert!(plan.statements.is_empty());
+        assert_eq!(plan.warnings.len(), 1);
+    }
+
+    #[test]
+    fn mysql_column_comment_is_emitted_and_escaped() {
+        let mut c = col("amount", "int");
+        c.comment = Some("金額's \\ 備考".to_string());
+        assert_eq!(
+            column_def(DriverKind::Mysql, &c),
+            "`amount` int COMMENT '金額''s \\\\ 備考'"
+        );
+        // PostgreSQL / SQLite の列定義には COMMENT 句を付けない。
+        assert!(!column_def(DriverKind::Postgres, &c).contains("COMMENT"));
+        c.comment = Some(String::new());
+        assert!(!column_def(DriverKind::Mysql, &c).contains("COMMENT"));
     }
 
     // --- 修正 L2: MySQL の DEFAULT クオート ---------------------------------

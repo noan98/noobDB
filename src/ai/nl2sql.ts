@@ -5,6 +5,7 @@
 
 import { z } from "zod";
 import { dialectLabel } from "./errorExplain";
+import { sliceHead } from "./textSlice";
 
 /** この件数を超えるスキーマは、送信前にテーブル数と送信サイズの目安をモーダルに出す。 */
 export const NL2SQL_LARGE_SCHEMA_TABLES = 300;
@@ -124,7 +125,7 @@ function oneLine(name: string): string {
 /** コメントを 1 行・短く・引用符なしにする (トークン節約と、書式の崩れ防止)。 */
 function compactText(text: string, max: number): string {
   const one = text.replace(/\s+/g, " ").replace(/"/g, "'").trim();
-  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+  return one.length > max ? `${sliceHead(one, max - 1)}…` : one;
 }
 
 /** 1 列分の表記: `name type PK null "comment"`。主キーは NOT NULL なので null は付けない。 */

@@ -15,6 +15,7 @@ import { classifyTypeName, type CellKind } from "../components/cellTypeMeta";
 import { columnStats, nullRatePercentOf, type ColumnStats } from "../components/gridStats";
 import { isReadOnlySql, maskLiterals } from "../dangerousSql";
 import { dialectLabel, literalContents, sqlForAi } from "./errorExplain";
+import { sliceHead } from "./textSlice";
 
 /** `allowRowData` オン時に送る先頭行数。 */
 export const RESULT_SUMMARY_MAX_ROWS = 20;
@@ -94,7 +95,7 @@ export function parseResultSummaryResponse(text: string, driver?: string): Parse
 export function truncateCell(v: CellValue, max = RESULT_SUMMARY_CELL_MAX_CHARS): string {
   if (v === null || v === undefined) return "NULL";
   const s = String(v).replace(/\s+/g, " ");
-  return s.length > max ? `${s.slice(0, max)}…` : s;
+  return s.length > max ? `${sliceHead(s, max)}…` : s;
 }
 
 export interface ResultSummaryInput {
