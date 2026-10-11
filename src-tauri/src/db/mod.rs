@@ -285,6 +285,46 @@ impl WriteCapture {
     }
 }
 
+/// INSERT の捕捉で、dry-run が見た新規行 (`dry`) と、本実行後に同じ主キーで
+/// 取り直した実在行 (`live`) を突き合わせる。`live` に実在した行だけを
+/// `dry` の順で返す (実在しない = 自動採番がずれた行は落とす)。値は `live`
+/// (実際にコミットされた内容) を採用する — `NOW()` や DEFAULT 式は dry-run と
+/// 本実行で値が変わりうるため。列数が合わない行は信用せず `dry` を落とす。
+fn reconcile_inserted_rows(
+    dry: &[Vec<Value>],
+    live: Vec<Vec<Value>>,
+    columns: &[String],
+    pk_idx: &[usize],
+) -> Vec<Vec<Value>> {
+    let sig_of = |row: &[Value]| -> Option<String> {
+        if row.len() != columns.len() {
+            return None;
+        }
+        // dry-run (ドライバ別のセル復号) と取り直し (汎用の実行経路) で整数が
+        // Int / UInt / String のどれで返るかが揺れうるので、数値・文字列は
+        // 表記で比べる。
+        Some(
+            pk_idx
+                .iter()
+                .map(|&i| match &row[i] {
+                    Value::Int(n) => n.to_string(),
+                    Value::UInt(n) => n.to_string(),
+                    Value::String(s) => s.clone(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\u{1f}"),
+        )
+    };
+    let live_by_pk: std::collections::HashMap<String, Vec<Value>> = live
+        .into_iter()
+        .filter_map(|r| sig_of(&r).map(|s| (s, r)))
+        .collect();
+    dry.iter()
+        .filter_map(|d| sig_of(d).and_then(|s| live_by_pk.get(&s).cloned()))
+        .collect()
+}
+
 /// Tagged signature of a row's values, used to tell whether the same physical
 /// row appears in two row sets (e.g. an INSERT's before/after LIMIT-window
 /// scan). Mirrors `data_diff`'s private `key_signature` helper; kept as a
@@ -1320,6 +1360,21 @@ impl Connection {
             ));
         }
 
+        // 非トランザクショナル表 (MyISAM 等) では dry-run の変更が ROLLBACK で戻らず、
+        // 本実行と二重に書き込んでしまう。捕捉は辞退し、書き込みだけを 1 回実行する。
+        if let Connection::MySql(c) = self {
+            if c.write_target_is_non_transactional(database, sql).await {
+                let result = self.execute(sql, database).await?;
+                return Ok((
+                    result,
+                    WriteCapture::not_capturable(
+                        kind,
+                        "非トランザクショナル表 (MyISAM 等) のため記録できません",
+                    ),
+                ));
+            }
+        }
+
         let row_cap = row_cap.max(1);
         let dry = match self
             .preview_execute_with_limit(sql, database, row_cap)
@@ -1507,21 +1562,54 @@ impl Connection {
 
                 let result = self.execute(sql, database).await?;
 
-                let new_rows: Vec<Vec<Value>> = dry
+                let dry_new_rows: Vec<Vec<Value>> = dry
                     .after_rows
                     .iter()
                     .filter(|r| !before_sigs.contains(&row_signature(&pk_of(r))))
                     .cloned()
                     .collect();
 
+                // dry-run の行をそのまま信じない: 自動採番 (MySQL の AUTO_INCREMENT /
+                // PostgreSQL のシーケンス) は ROLLBACK で戻らないため、dry-run で
+                // 振られた id (例 4) と本実行の id (例 5) がずれる。本実行後に dry-run の
+                // 主キーで実在する行を取り直し、実際に存在する行だけを記録する
+                // (見つからなければ件数が合わず、下で記録を辞退する)。
+                // 取り直しは成功したが 1 件も実在しなかった = 自動採番で id がずれた可能性。
+                let mut autoinc_mismatch = false;
+                let new_rows: Vec<Vec<Value>> = if dry_new_rows.is_empty()
+                    || dry_new_rows.len() as u64 != result.rows_affected
+                {
+                    dry_new_rows
+                } else {
+                    let pks: Vec<Vec<Value>> = dry_new_rows.iter().map(|r| pk_of(r)).collect();
+                    match self
+                        .fetch_rows_by_pk(
+                            table.as_deref().unwrap_or_default(),
+                            &primary_key,
+                            &pks,
+                            database,
+                        )
+                        .await
+                    {
+                        Ok(live) => {
+                            let rows =
+                                reconcile_inserted_rows(&dry_new_rows, live, &columns, &pk_idx);
+                            autoinc_mismatch = rows.is_empty();
+                            rows
+                        }
+                        Err(_) => Vec::new(),
+                    }
+                };
+
                 if new_rows.is_empty() || new_rows.len() as u64 != result.rows_affected {
+                    let reason = if autoinc_mismatch {
+                        "自動採番のため挿入行を特定できません (採番値が dry-run と本実行でずれました)"
+                    } else {
+                        "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)"
+                    };
                     return Ok((
                         result,
-                        WriteCapture::not_capturable_with_meta(
-                            kind,
-                            "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)",
-                            &dry,
-                        ),
+                        WriteCapture::not_capturable_with_meta(kind, reason, &dry),
                     ));
                 }
 
@@ -3195,6 +3283,27 @@ mod tests {
         is_session_init_sql, is_session_init_sql_for, mask_sensitive_var, sum_size_parts,
         DriverKind, SslMode, WriteKind,
     };
+
+    #[test]
+    fn reconcile_inserted_rows_keeps_only_rows_that_really_exist() {
+        use super::types::Value;
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let row = |id: i64, n: &str| vec![Value::Int(id), Value::String(n.to_string())];
+        // 自動採番がずれた: dry-run は id=4 だが、本実行の行は id=5。
+        let dry = vec![row(4, "x")];
+        assert!(super::reconcile_inserted_rows(&dry, vec![row(5, "x")], &cols, &[0]).is_empty());
+        // 一致すれば実在した側の値 (本実行後の内容) を採用する。
+        let got = super::reconcile_inserted_rows(&dry, vec![row(4, "y")], &cols, &[0]);
+        assert_eq!(got, vec![row(4, "y")]);
+        // 整数の表現 (Int / UInt) が揺れても同じ主キーとして扱う。
+        let got = super::reconcile_inserted_rows(
+            &dry,
+            vec![vec![Value::UInt(4), Value::String("x".into())]],
+            &cols,
+            &[0],
+        );
+        assert_eq!(got.len(), 1);
+    }
 
     fn test_col(name: &str) -> super::types::TableColumnInfo {
         super::types::TableColumnInfo {

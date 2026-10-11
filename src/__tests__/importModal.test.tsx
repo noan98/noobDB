@@ -322,6 +322,34 @@ describe("ImportModal preview requests (#1258)", () => {
   });
 });
 
+describe("ImportModal preview spinner", () => {
+  it("clears the loading spinner when the quote becomes invalid mid-read", async () => {
+    // 読込中に引用符欄を無効値にすると、旧 effect の finally は cancelled で何もせず、
+    // 新 effect は早期 return するためスピナーが残り続けていた。
+    let resolvePreview: (v: unknown) => void = () => {};
+    vi.mocked(api.parseCsvPreview).mockImplementationOnce(
+      () => new Promise((r) => { resolvePreview = r; }) as never,
+    );
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    expect(await screen.findByText(t("importLoadingPreview"))).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(t("importQuote")), { target: { value: "ab" } });
+    await waitFor(() =>
+      expect(screen.queryByText(t("importLoadingPreview"))).not.toBeInTheDocument(),
+    );
+    resolvePreview({ headers: [], rows: [], truncated: false, sheets: [] });
+  });
+});
+
 describe("ImportModal skipped rows (#1258)", () => {
   async function finishWithSkips(skippedTotal: number, shown: number) {
     renderWithProviders(

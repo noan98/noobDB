@@ -285,11 +285,17 @@ export function ImportModal({
     if (!path) {
       previewedPathRef.current = null;
       setPreview(null);
+      // 読込中に打ち切られた場合、前の effect の finally は cancelled で何もしない
+      // ので、ここで解除しないとスピナーが残り続ける。
+      setLoadingPreview(false);
       return;
     }
     // An invalid quote would make the backend parser misbehave; skip the
     // preview fetch until it is corrected (the field shows its own error).
-    if (!quoteValid) return;
+    if (!quoteValid) {
+      setLoadingPreview(false);
+      return;
+    }
     let cancelled = false;
     const delay = previewedPathRef.current === path ? PREVIEW_DEBOUNCE_MS : 0;
     previewedPathRef.current = path;
