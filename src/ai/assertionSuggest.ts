@@ -1,7 +1,7 @@
 // データ品質アサーション候補の AI 提案 (#1477) の純ロジック: スキーマのテキスト化・プロンプト組み立て・
 // 応答パース・読み取り専用判定・登録用ドラフトへの変換。副作用 (IPC・状態管理) は
 // `components/AssertionSuggestModal.tsx` が持つ。
-// 送るのはテーブルの列定義 (型・NULL 可・キー・既定値・コメント) と外部キーだけ。行データは扱わない。
+// 送るのはテーブルの列定義 (型・NULL 可・キー・既定値の有無・コメント) と外部キーだけ。行データは扱わない。
 
 import { z } from "zod";
 import { isReadOnlySql } from "../dangerousSql";
@@ -131,7 +131,7 @@ export function selectTableForeignKeys<T extends AssertionSuggestForeignKey>(
 function columnLine(c: AssertionSuggestColumn): string {
   const parts = [`${c.name} ${c.data_type}`, c.nullable ? "NULL" : "NOT NULL"];
   if (c.key) parts.push(`key=${c.key}`);
-  if (c.default != null && c.default !== "") parts.push(`default=${c.default}`);
+  if (c.default != null && c.default !== "") parts.push("has-default"); // 値そのもの (文字列リテラル等) は送らない
   if (c.extra) parts.push(c.extra);
   if (c.referenced_table) parts.push(`FK->${c.referenced_table}.${c.referenced_column ?? "?"}`);
   if (c.comment) parts.push(`comment: ${c.comment.replace(/\s+/g, " ").trim()}`);

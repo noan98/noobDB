@@ -41,7 +41,8 @@ describe("buildAssertionSuggestSystemParts (#1477)", () => {
     expect(cached).toContain("0 rows");
     expect(cached).toContain("read-only");
     expect(cached).toContain("- id bigint | NOT NULL | key=PRI");
-    expect(cached).toContain("email text | NULL");
+    expect(cached).toContain("email text | NULL | has-default");
+    expect(cached).not.toContain("'x'");
     expect(cached).toContain("comment: 連絡先 メール");
     expect(cached).toContain("FK->users.id");
     expect(cached).toContain("orders.user_id -> users.id");

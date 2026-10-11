@@ -78,7 +78,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `bulk_update_cells`
 - `insert_generated_rows`
 
-- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements)` は結果グリッドの
+- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements, pkBinary?)` は結果グリッドの
   セル編集 Apply。フロント (`cellEdit.buildUpdateGroups`) が同じ (列, 値) ごとにまとめた
   構造化入力を送り、Rust が `UPDATE t SET c = v WHERE pk IN (…)` (単一 PK・500 件ずつ) /
   行条件の `OR` 連結 (複合 PK・NULL を含む PK・100 行ずつ) を組み立てる。`extraStatements` は
@@ -86,7 +86,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   委譲するため read_only ガード (緊急モード含む)・履歴・キャッシュ invalidate は従来と同一
   (フライトレコーダーに記録しない点も従来どおり。記録対象は `run_query_stream({ capture: true })`
   の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
-  text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。
+  text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。`pkBinary` (任意、`pkColumns` と同順の bool) が真の列は 16 進文字列の key を `Value::Bytes` に戻してバイナリリテラルで比較する (BLOB 列を含む all_columns 同定用)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 

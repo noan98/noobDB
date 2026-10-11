@@ -38,22 +38,91 @@ export interface CreateTableForm {
   checks?: CheckDef[];
 }
 
-/** DEFAULT 句を組み立てる。空なら null。数値・既知キーワードは素通し、他は文字列化。 */
-export function formatDefault(driver: string, raw: string): string | null {
+const NUMERIC_TYPE_RE =
+  /^(tinyint|smallint|mediumint|bigint|int\d*|integer|serial\d*|smallserial|bigserial|numeric|decimal|dec|float\d*|double|real|number|money|bit)\b/i;
+const BOOL_TYPE_RE = /^(bool|boolean)\b/i;
+
+/** 対応する `)` の次の位置を返す (文字列リテラル内の括弧は無視)。`s[open]` は `(`。無ければ -1。 */
+export function matchParen(s: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === "'") {
+      i++;
+      while (i < s.length && !(s[i] === "'" && s[i + 1] !== "'")) i += s[i] === "'" ? 2 : 1;
+      continue;
+    }
+    if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+const CAST_TAIL_RE = /^\s*::\s*[A-Za-z][\w\s]*(\(\s*\d+(\s*,\s*\d+)?\s*\))?(\[\])?$/;
+
+/**
+ * DEFAULT 入力の形。先頭が閉じた `'...'` ("quoted")・全体を括る `(...)` ("paren")・
+ * `ident(...)` ("call") のいずれかで、その直後が末尾か `::型` のときだけ式とみなす。
+ * `Error::NotFound` や `fe80::abcd` のような通常の文字列は null (リテラル扱い)。
+ */
+function defaultExprKind(v: string): "quoted" | "paren" | "call" | null {
+  const okTail = (end: number) => end === v.length || CAST_TAIL_RE.test(v.slice(end));
+  if (v[0] === "'") {
+    const m = /^'(?:[^']|'')*'/.exec(v);
+    return m && okTail(m[0].length) ? "quoted" : null;
+  }
+  if (v[0] === "(") {
+    const end = matchParen(v, 0);
+    return end > 0 && okTail(end) ? "paren" : null;
+  }
+  const m = /^[A-Za-z_][\w.]*\(/.exec(v);
+  if (m) {
+    const end = matchParen(v, m[0].length - 1);
+    return end > 0 && okTail(end) ? "call" : null;
+  }
+  return null;
+}
+
+/** 括らずに出せる現在時刻系の関数呼び出し (MySQL の `DEFAULT CURRENT_TIMESTAMP(6)` 等)。 */
+export const CURRENT_TIME_FN_RE =
+  /^(current_timestamp|now|localtime|localtimestamp|current_date|current_time)\s*(\(\s*\d*\s*\))?$/i;
+
+export interface FormatDefaultOptions {
+  /** true なら式判定をせず、数値/キーワード以外は常に文字列リテラルにする (既存列の未変更既定値用)。 */
+  literal?: boolean;
+}
+
+/**
+ * DEFAULT 句を組み立てる。空なら null。式 (`'..'`・`(..)`・`関数(..)` とその `::型`) と
+ * 既知キーワードは素通し、それ以外は文字列化。MySQL / SQLite は括弧なしの関数呼び出し
+ * を `(...)` で包む (現在時刻系を除く。PostgreSQL は逐語)。数値リテラルは `type` が
+ * 数値型のときだけ素通しし、文字列列の `007` が `7` になるのを防ぐ。`true`/`false` は
+ * 数値型と真偽型だけ素通し。`type` 省略時は従来どおり型を問わず素通し。
+ */
+export function formatDefault(
+  driver: string,
+  raw: string,
+  type?: string,
+  options: FormatDefaultOptions = {},
+): string | null {
   const v = raw.trim();
   if (!v) return null;
-  if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+  const t = type?.trim();
+  const numericType = t === undefined || t === "" ? undefined : NUMERIC_TYPE_RE.test(t);
+  const boolType = t === undefined || t === "" ? undefined : BOOL_TYPE_RE.test(t);
+  if (/^-?\d+(\.\d+)?$/.test(v) && numericType !== false) return v;
   const upper = v.toUpperCase();
-  const keywords = new Set([
-    "NULL",
-    "TRUE",
-    "FALSE",
-    "CURRENT_TIMESTAMP",
-    "CURRENT_DATE",
-    "CURRENT_TIME",
-    "NOW()",
-  ]);
+  if (upper === "TRUE" || upper === "FALSE") {
+    if (numericType === false && boolType === false) return quoteString(driver, v);
+    return upper;
+  }
+  const keywords = new Set(["NULL", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "NOW()"]);
   if (keywords.has(upper)) return upper;
+  if (!options.literal) {
+    const kind = defaultExprKind(v);
+    if (kind === "call" && driver !== "postgres" && !CURRENT_TIME_FN_RE.test(v)) return `(${v})`;
+    if (kind !== null) return v;
+  }
   return quoteString(driver, v);
 }
 
@@ -121,7 +190,7 @@ function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolea
     // SQLite の非 PK 自動採番は無効なので無視する。
   }
 
-  const def = formatDefault(driver, col.defaultValue);
+  const def = formatDefault(driver, col.defaultValue, col.type);
   if (def !== null) parts.push(`DEFAULT ${def}`);
 
   return parts.join(" ");

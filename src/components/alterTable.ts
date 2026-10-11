@@ -30,7 +30,7 @@
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import { quoteIdentFor } from "./sqlDialect";
-import { formatDefault } from "./createTable";
+import { CURRENT_TIME_FN_RE, formatDefault, matchParen } from "./createTable";
 import { quoteString } from "./cellEdit";
 import {
   checkClause,
@@ -222,9 +222,10 @@ function qualifiedName(driver: string, database: string | null | undefined, tabl
 
 /** `ADD COLUMN` 1 列ぶんの定義断片 (`<ident> <type> [NOT NULL] [DEFAULT x]`)。 */
 function newColumnLine(driver: string, col: NewColumn): string {
-  const parts = [quoteIdentFor(driver, col.name), col.type.trim() || "TEXT"];
+  const type = col.type.trim() || "TEXT";
+  const parts = [quoteIdentFor(driver, col.name.trim()), type];
   if (col.notNull) parts.push("NOT NULL");
-  const def = formatDefault(driver, col.defaultValue);
+  const def = formatDefault(driver, col.defaultValue, type);
   if (def !== null) parts.push(`DEFAULT ${def}`);
   return parts.join(" ");
 }
@@ -235,11 +236,33 @@ function newColumnLine(driver: string, col: NewColumn): string {
  * 使う想定で、未編集なら baseline と文字列一致するので差分なし判定になる —
  * 再クオートすると `'x'::type` のような既存の式表現を壊すため、変更時も逐語で使う。
  */
-function formatDefaultForEdit(driver: string, raw: string): string | null {
+function formatDefaultForEdit(driver: string, raw: string, type: string): string | null {
   const v = raw.trim();
   if (!v) return null;
-  if (driver === "mysql") return formatDefault(driver, v);
+  if (driver === "mysql") return formatDefault(driver, v, type);
   return v;
+}
+
+/**
+ * MySQL の CHANGE COLUMN に付ける DEFAULT。既定値を編集していないときは、
+ * `describeTable` が返す値がクオート無しの生値なので `db/sync.rs::default_clause` と同じ
+ * 方針で扱う: EXTRA に DEFAULT_GENERATED があれば式 (現在時刻系以外は `(expr)` で包む)、
+ * なければリテラルとして引用する (文字列既定値 `(none)` を式と誤認しない)。
+ * 編集したときはフォーム入力のヒューリスティック (`formatDefault`) に従う。
+ */
+function mysqlDefaultForChange(
+  baseline: ExistingColumnBaseline,
+  edit: ExistingColumnEdit,
+  type: string,
+): string | null {
+  const v = edit.defaultValue.trim();
+  if (!v) return null;
+  if (v !== baseline.defaultValue.trim()) return formatDefault("mysql", v, type);
+  if (/\bDEFAULT_GENERATED\b/i.test(baseline.extra)) {
+    if (CURRENT_TIME_FN_RE.test(v) || (v.startsWith("(") && matchParen(v, 0) === v.length)) return v;
+    return `(${v})`;
+  }
+  return formatDefault("mysql", v, type, { literal: true });
 }
 
 /** 既存 1 列ぶんの ADD 以外の変更を判定し、方言別の文へ変換する。 */
@@ -294,13 +317,19 @@ function planExistingColumn(
     // 「MODIFY/CHANGE は常にフル定義が必要」という制約を自然に満たす。
     const parts = [newIdent, newType];
     if (edit.notNull) parts.push("NOT NULL");
-    const def = formatDefaultForEdit(driver, edit.defaultValue);
+    const def = mysqlDefaultForChange(baseline, edit, newType);
     if (def !== null) parts.push(`DEFAULT ${def}`);
     // `extra` (auto_increment・on update CURRENT_TIMESTAMP 等) は
     // フォーム編集の対象外なので baseline の値を逐語で保持する — 付けないと
     // CHANGE COLUMN で AUTO_INCREMENT 等が黙って消えてしまう
     // (`db/sync.rs::column_def` と同じ方針)。
-    if (baseline.extra.trim()) parts.push(baseline.extra.trim());
+    // MySQL 8 の EXTRA に出る `DEFAULT_GENERATED` は情報表示用のマーカーで DDL の
+    // 構文ではない (そのまま付けると構文エラー) ので取り除く。
+    const extra = baseline.extra
+      .replace(/\bDEFAULT_GENERATED\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (extra) parts.push(extra);
     // 列コメントも CHANGE COLUMN の再定義で消えるので、編集後 (未編集なら
     // baseline) の値を付け足して保持する (#1002)。空へ変更したときだけ明示的に
     // `COMMENT ''` を書いて削除する。
@@ -348,7 +377,7 @@ function planExistingColumn(
       });
     }
     if (defaultChanged) {
-      const def = formatDefaultForEdit(driver, edit.defaultValue);
+      const def = formatDefaultForEdit(driver, edit.defaultValue, newType);
       const sql =
         def !== null
           ? `ALTER TABLE ${tIdent} ALTER COLUMN ${newIdent} SET DEFAULT ${def};`

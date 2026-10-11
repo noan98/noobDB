@@ -345,11 +345,48 @@ function readLiteralList(tokens: Token[], i: number, close: string): string[] | 
 const sameColumn = (tok: Token | undefined, column: string): boolean =>
   !!tok && tok.t === "id" && tok.v.toLowerCase() === column.toLowerCase();
 
+/**
+ * 各トークンについて、それを囲む括弧グループ (最上位を含む祖先) のどれかが直接 `OR` を
+ * 持つかを返す。`a IN (..) AND (b OR c)` の `a` は false、`(a IN (..) OR b)` の `a` は true。
+ */
+function orAncestors(toks: Token[]): boolean[] {
+  const parent: number[] = [-1];
+  const hasOr: boolean[] = [false];
+  const groupOf: number[] = [];
+  let cur = 0;
+  for (const t of toks) {
+    if (isOp(t, "(")) {
+      parent.push(cur);
+      hasOr.push(false);
+      groupOf.push(cur);
+      cur = parent.length - 1;
+      continue;
+    }
+    if (isOp(t, ")")) {
+      groupOf.push(cur);
+      if (parent[cur] >= 0) cur = parent[cur];
+      continue;
+    }
+    if (isKw(t, "OR")) hasOr[cur] = true;
+    groupOf.push(cur);
+  }
+  return groupOf.map((g) => {
+    for (let x = g; x >= 0; x = parent[x]) if (hasOr[x]) return true;
+    return false;
+  });
+}
+
 /** 1 つの CHECK 式 (トークン列) から `column` の許可値を取り出す。 */
 function allowedFromExpr(tokens: Token[], column: string): string[] | null {
   const toks = stripSingletonParens(stripCasts(tokens));
+  // OR を含む式では `col IN (...)` が許可値の全体とは限らない
+  // (`status IN ('a','b') OR qty > 0` は他の値も通す) ので A / B では採用しない。
+  // 同一列の等値 OR だけでできた式は下の C で拾う。
+  const orGroups = orAncestors(toks);
   for (let i = 0; i < toks.length; i++) {
     if (!sameColumn(toks[i], column)) continue;
+    // 自分を囲むどの括弧グループ (最上位含む) にも直接 OR が無いときだけ A / B を採る。
+    if (orGroups[i]) continue;
     // `NOT (col IN (...))` のような否定は許可値にならない。
     let p = i - 1;
     while (p >= 0 && isOp(toks[p], "(")) p--;

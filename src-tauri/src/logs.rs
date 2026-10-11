@@ -36,6 +36,9 @@ struct LogStore {
 struct Inner {
     file: File,
     size: u64,
+    /// ローテーションで current を backup へ改名した後、新しい current を開けなかった状態。
+    /// `file` は改名後の backup の実体を指しているので、次の書き込みで再オープンを試みる。
+    reopen_pending: bool,
 }
 
 fn open_append(path: &Path) -> io::Result<File> {
@@ -49,7 +52,11 @@ impl LogStore {
         let size = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(LogStore {
             dir,
-            inner: Mutex::new(Inner { file, size }),
+            inner: Mutex::new(Inner {
+                file,
+                size,
+                reopen_pending: false,
+            }),
         })
     }
 
@@ -63,17 +70,30 @@ impl LogStore {
 
     fn write_bytes(&self, buf: &[u8]) -> io::Result<usize> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if inner.reopen_pending {
+            // 前回のローテーションで新しい current を開けなかった。再オープンを試みる。
+            if let Ok(file) = open_append(&self.current_path()) {
+                inner.file = file;
+                inner.size = 0;
+                inner.reopen_pending = false;
+            } else if inner.size >= SEGMENT_CAP * 2 {
+                // 開けないまま backup が肥大化し続けるのを防ぐ (ログは捨てる)。
+                return Ok(buf.len());
+            }
+        }
         inner.file.write_all(buf)?;
         inner.size += buf.len() as u64;
-        if inner.size >= SEGMENT_CAP {
+        if inner.size >= SEGMENT_CAP && !inner.reopen_pending {
             // Rotate: the active file becomes the single retained backup, then a
-            // fresh active file is started. A failure here is non-fatal — we keep
-            // appending to the (now oversized) active file rather than dropping
-            // the writer entirely.
+            // fresh active file is started. 改名後に新しい current を開けなかった場合は
+            // `reopen_pending` を立て、次の書き込みで再試行する。
             if std::fs::rename(self.current_path(), self.prev_path()).is_ok() {
-                if let Ok(file) = open_append(&self.current_path()) {
-                    inner.file = file;
-                    inner.size = 0;
+                match open_append(&self.current_path()) {
+                    Ok(file) => {
+                        inner.file = file;
+                        inner.size = 0;
+                    }
+                    Err(_) => inner.reopen_pending = true,
                 }
             }
         }
@@ -113,6 +133,7 @@ impl LogStore {
             .open(self.current_path())?;
         inner.file = fresh;
         inner.size = 0;
+        inner.reopen_pending = false;
         // バックアップセグメントはアクティブハンドルに影響しないので、削除に
         // 失敗してもベストエフォートで無視してよい。
         let _ = std::fs::remove_file(self.prev_path());

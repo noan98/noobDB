@@ -137,6 +137,30 @@ pub fn upsert(snippet: Snippet) -> Result<()> {
     save_all_locked(&all)
 }
 
+/// 削除されたプロファイル専用のスニペットのスコープを `Any` へ戻す。戻さないと、
+/// 同じ ID で再作成したプロファイルに紐づいたまま残るか、どの接続からも使われなく
+/// なる (孤立)。戻した件数を返す。
+pub fn release_profile_scope(profile_id: &str) -> Result<usize> {
+    let _guard = lock_store();
+    let mut all = load_all_locked()?;
+    let n = reset_profile_scope(&mut all, profile_id);
+    if n > 0 {
+        save_all_locked(&all)?;
+    }
+    Ok(n)
+}
+
+fn reset_profile_scope(snippets: &mut [Snippet], profile_id: &str) -> usize {
+    let mut n = 0;
+    for s in snippets.iter_mut() {
+        if matches!(&s.scope, super::SnippetScope::Profile { profile_id: p } if p == profile_id) {
+            s.scope = super::SnippetScope::Any;
+            n += 1;
+        }
+    }
+    n
+}
+
 pub fn delete(id: &str) -> Result<()> {
     let _guard = lock_store();
     let mut all = load_all_locked()?;
@@ -242,5 +266,46 @@ mod tests {
             "temp file was left behind: {leftovers:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod release_scope_tests {
+    use super::*;
+    use crate::snippets::SnippetScope;
+
+    fn snip(id: &str, scope: SnippetScope) -> Snippet {
+        Snippet {
+            id: id.into(),
+            name: id.into(),
+            folder: None,
+            tags: vec![],
+            sql: "SELECT 1".into(),
+            driver: None,
+            scope,
+        }
+    }
+
+    #[test]
+    fn only_snippets_of_the_deleted_profile_are_released() {
+        let mut all = vec![
+            snip(
+                "a",
+                SnippetScope::Profile {
+                    profile_id: "p1".into(),
+                },
+            ),
+            snip(
+                "b",
+                SnippetScope::Profile {
+                    profile_id: "p2".into(),
+                },
+            ),
+            snip("c", SnippetScope::Group { group: "p1".into() }),
+        ];
+        assert_eq!(reset_profile_scope(&mut all, "p1"), 1);
+        assert_eq!(all[0].scope, SnippetScope::Any);
+        assert_ne!(all[1].scope, SnippetScope::Any);
+        assert_ne!(all[2].scope, SnippetScope::Any);
     }
 }
