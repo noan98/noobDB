@@ -84,7 +84,7 @@ impl ClientHandler {
                 continue;
             }
             if let Some((endpoint, fp)) = line.split_once(' ') {
-                if endpoint == target {
+                if endpoint.eq_ignore_ascii_case(&target) {
                     return Ok(Some(fp.to_string()));
                 }
             }
@@ -102,7 +102,13 @@ impl ClientHandler {
             .create(true)
             .append(true)
             .open(path)?;
-        writeln!(f, "{}:{} {}", self.host, self.port, fingerprint)
+        writeln!(
+            f,
+            "{}:{} {}",
+            self.host.to_ascii_lowercase(),
+            self.port,
+            fingerprint
+        )
     }
 
     /// Rewrite this endpoint's known_hosts entry with `fingerprint`, leaving
@@ -119,9 +125,9 @@ impl ClientHandler {
             let is_target = line
                 .trim()
                 .split_once(' ')
-                .is_some_and(|(endpoint, _)| endpoint == target);
+                .is_some_and(|(endpoint, _)| endpoint.eq_ignore_ascii_case(&target));
             if is_target {
-                out.push_str(&format!("{target} {fingerprint}\n"));
+                out.push_str(&format!("{} {fingerprint}\n", target.to_ascii_lowercase()));
             } else {
                 out.push_str(line);
                 out.push('\n');
@@ -299,6 +305,26 @@ mod tests {
         std::fs::write(&path, format!("ssh.example.com:22 {trusted_fp}\n")).unwrap();
 
         let mut handler = ClientHandler::with_known_hosts("ssh.example.com", 22, path.clone());
+        assert!(matches!(
+            handler.check_server_key(&presented.clone().into()).await,
+            Err(russh::Error::UnknownKey)
+        ));
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // ホスト名の大小違いでも既存の記録と照合され、鍵変更が見逃されない。
+    #[tokio::test]
+    async fn host_case_difference_still_detects_key_change() {
+        let trusted = PublicKey::from_openssh(KEY_A).unwrap();
+        let presented = PublicKey::from_openssh(KEY_B).unwrap();
+        let trusted_fp = trusted.fingerprint(HashAlg::Sha256).to_string();
+
+        let path = temp_known_hosts();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!("db.example.com:22 {trusted_fp}\n")).unwrap();
+
+        let mut handler = ClientHandler::with_known_hosts("DB.example.com", 22, path.clone());
         assert!(matches!(
             handler.check_server_key(&presented.clone().into()).await,
             Err(russh::Error::UnknownKey)

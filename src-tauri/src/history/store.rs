@@ -27,9 +27,45 @@ fn history_path() -> Result<PathBuf> {
     Ok(dir.join("history.sqlite"))
 }
 
+/// Unix では、まだ無ければ 0600 の空ファイルを作る。失敗は握り潰す (best-effort)。
+fn precreate_private(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
+/// 既存ファイルも含めて所有者のみ (0600) にする (Unix)。起動は妨げない。
+fn restrict_permissions(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!(path = %path.display(), error = %e, "history: failed to restrict file permissions");
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
 async fn pool() -> Result<&'static SqlitePool> {
     POOL.get_or_try_init(|| async {
         let path = history_path()?;
+        // 履歴にはユーザが実行した SQL 全文が残るため、作成直後から所有者のみ (0600) に
+        // する。SQLite に作らせると umask 次第で他ユーザに読める窓ができるので、
+        // 空ファイルを先に 0600 で作っておく (SQLite は空ファイルを新規 DB として扱う)。
+        precreate_private(&path);
         let connect = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(true);
@@ -46,6 +82,7 @@ async fn pool() -> Result<&'static SqlitePool> {
             tracing::error!(error = %e, "history: failed to initialize schema");
             e
         })?;
+        restrict_permissions(&path);
         Ok(pool)
     })
     .await
@@ -155,6 +192,20 @@ pub async fn list(
     list_in(pool().await?, profile_id, limit, search, status, from, to).await
 }
 
+/// 範囲境界を、SQL 側の `strftime('%Y-%m-%dT%H:%M:%f', executed_at)` と同じ固定形式
+/// (UTC・ミリ秒) へ揃える。保存側は `+00:00` 付き・小数桁可変、フロントの境界は
+/// `…000Z` と形式が違い、文字列のまま比較すると同一ミリ秒の境界がずれるため。
+/// 解釈できない値はそのまま返す (結果が空になるだけ)。
+fn normalize_bound(s: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(s) {
+        Ok(dt) => dt
+            .with_timezone(&chrono::Utc)
+            .format("%Y-%m-%dT%H:%M:%S%.3f")
+            .to_string(),
+        Err(_) => s.to_string(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn list_in(
     pool: &SqlitePool,
@@ -185,13 +236,14 @@ async fn list_in(
     if status.is_some() {
         conds.push("status = ?");
     }
-    // Timestamps are stored as UTC RFC3339, so lexical comparison is
-    // chronological (same property the ORDER BY below relies on).
+    // 保存形式は `+00:00` 付き・小数桁可変の RFC3339、フロントの境界は `…000Z` で、
+    // 文字列のままでは同一ミリ秒の境界がずれる。両側を `strftime` / `normalize_bound`
+    // で UTC ミリ秒の固定形式に揃えて比較する (ORDER BY は保存形式の辞書順のまま)。
     if from.is_some() {
-        conds.push("executed_at >= ?");
+        conds.push("strftime('%Y-%m-%dT%H:%M:%f', executed_at) >= ?");
     }
     if to.is_some() {
-        conds.push("executed_at <= ?");
+        conds.push("strftime('%Y-%m-%dT%H:%M:%f', executed_at) <= ?");
     }
     if !conds.is_empty() {
         sql.push_str(" WHERE ");
@@ -210,10 +262,10 @@ async fn list_in(
         q = q.bind(s.to_string());
     }
     if let Some(f) = from {
-        q = q.bind(f.to_string());
+        q = q.bind(normalize_bound(f));
     }
     if let Some(t) = to {
-        q = q.bind(t.to_string());
+        q = q.bind(normalize_bound(t));
     }
     q = q.bind(limit.max(1));
 
@@ -685,5 +737,48 @@ mod tests {
             list_sqls_in(&pool, None, 1).await.unwrap(),
             vec!["SELECT 3"]
         );
+    }
+
+    // 保存形式 (`+00:00`・小数桁可変) とフロントの境界 (`…000Z`) が違っても、
+    // 同一ミリ秒の境界は両端とも含まれ、直後のサブミリ秒は to に含まれない。
+    #[tokio::test]
+    async fn date_bounds_compare_across_formats() {
+        let pool = temp_pool().await;
+        record_in(&pool, entry("p1", "SELECT 1", "2026-01-05T00:00:00+00:00"))
+            .await
+            .unwrap();
+        record_in(
+            &pool,
+            entry("p1", "SELECT 2", "2026-01-05T00:00:00.123456+00:00"),
+        )
+        .await
+        .unwrap();
+
+        let from = list_in(
+            &pool,
+            None,
+            100,
+            None,
+            None,
+            Some("2026-01-05T00:00:00.000Z"),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(from.len(), 2);
+
+        let to = list_in(
+            &pool,
+            None,
+            100,
+            None,
+            None,
+            None,
+            Some("2026-01-05T00:00:00.000Z"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(to.len(), 1);
+        assert_eq!(to[0].sql_preview, "SELECT 1");
     }
 }
