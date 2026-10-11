@@ -145,3 +145,21 @@ describe("resolveShortcutBindings (defaults + scopes are conflict-free)", () => 
     expect(resolved.preview).toBe(DEFAULT_SHORTCUT_COMBOS.preview);
   });
 });
+
+describe("名前付きキーの正規化 (ArrowRight / PageDown)", () => {
+  it("複数語のキーは正規表記を保つ", () => {
+    expect(canonicalizeCombo("alt+arrowright")).toBe("Alt+ArrowRight");
+    expect(formatCombo("Alt+ArrowRight")).toBe("Alt/Option+ArrowRight");
+    expect(comboToCodeMirror("Mod+PageDown")).toBe("Mod-PageDown");
+    expect(comboToCodeMirror("Alt+ARROWLEFT")).toBe("Alt-ArrowLeft");
+  });
+  it("単語 1 つのキーは従来どおり先頭大文字", () => {
+    expect(canonicalizeCombo("mod+ENTER")).toBe("Mod+Enter");
+    expect(canonicalizeCombo("escape")).toBe("Escape");
+  });
+  it("KeyboardEvent の ArrowRight と一致する", () => {
+    const e = key({ key: "ArrowRight", altKey: true });
+    expect(comboMatchesEvent("Alt+ArrowRight", e)).toBe(true);
+    expect(comboMatchesEvent("Alt+Arrowright", e)).toBe(true);
+  });
+});

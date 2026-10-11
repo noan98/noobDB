@@ -140,6 +140,29 @@ describe("HistoryList の「スニペットとして保存」行アクション 
     expect(getHistorySql).toHaveBeenCalledWith(3);
   });
 
+  it("行内ボタンの Enter/Space は行の復元を起こさない (子ボタンに任せる)", async () => {
+    const entry = makeHistoryEntry({ id: 5 });
+    listHistory.mockResolvedValue([entry]);
+    const onRestore = vi.fn();
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={onRestore}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+    const button = await screen.findByLabelText(t("historyOpenInNewTab"));
+    fireEvent.keyDown(button, { key: "Enter" });
+    fireEvent.keyDown(button, { key: " " });
+    expect(onRestore).not.toHaveBeenCalled();
+    // 行自身の Enter は従来どおり復元する
+    getHistorySql.mockResolvedValue("SELECT 1");
+    fireEvent.keyDown(screen.getByRole("treeitem"), { key: "Enter" });
+    await waitFor(() => expect(onRestore).toHaveBeenCalledWith("SELECT 1"));
+  });
+
   it("一覧の表示は取得済みの sql_preview をそのまま使い、全文を取りに行かない", async () => {
     listHistory.mockResolvedValue([makeHistoryEntry()]);
     renderWithProviders(

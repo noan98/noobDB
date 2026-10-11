@@ -71,6 +71,7 @@ import {
   pruneTableSelection,
   rangeTableSelection,
   selectedTableCount,
+  splitTableKey,
   tableKey,
   toggleTableSelection,
   type TableSelection,
@@ -1955,9 +1956,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       const nextCols: Record<string, TableColumnInfo[]> = {};
       const nextIndexes: Record<string, IndexInfo[]> = {};
       for (const tt of tree.tables) {
-        const sep = tt.key.indexOf("::");
-        if (sep < 0) continue;
-        if (!nextTables[tt.key.slice(0, sep)]?.includes(tt.key.slice(sep + 2))) continue;
+        const split = splitTableKey(tt.key, (db, tbl) => !!nextTables[db]?.includes(tbl));
+        if (!split) continue;
+        if (!nextTables[split.db]?.includes(split.tbl)) continue;
         nextCols[tt.key] = tt.columns;
         nextIndexes[tt.key] = tt.indexes;
       }
@@ -1975,10 +1976,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       // DB whose listTables failed are "unknown" and kept, so a transient error
       // or a closed-but-existing DB never wipes persisted expansion (#677).
       const keptTableKeys = openTableKeys.filter((key) => {
-        const sep = key.indexOf("::");
-        if (sep < 0) return false; // malformed → drop
-        const db = key.slice(0, sep);
-        const tbl = key.slice(sep + 2);
+        const split = splitTableKey(key, (d) => dbs.includes(d));
+        if (!split) return false; // malformed → drop
+        const { db, tbl } = split;
         if (!dbs.includes(db)) return false; // DB gone → table gone
         const listed = nextTables[db]; // undefined = collapsed DB or listTables failed
         if (listed && !listed.includes(tbl)) return false; // confirmed absent
@@ -2056,9 +2056,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       const nextCols: Record<string, TableColumnInfo[]> = {};
       const nextIndexes: Record<string, IndexInfo[]> = {};
       for (const tt of tree.tables) {
-        const sep = tt.key.indexOf("::");
-        if (sep < 0) continue;
-        if (!nextTables[tt.key.slice(0, sep)]?.includes(tt.key.slice(sep + 2))) continue;
+        const split = splitTableKey(tt.key, (db, tbl) => !!nextTables[db]?.includes(tbl));
+        if (!split) continue;
+        if (!nextTables[split.db]?.includes(split.tbl)) continue;
         nextCols[tt.key] = tt.columns;
         nextIndexes[tt.key] = tt.indexes;
       }
@@ -2402,6 +2402,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
    *  their existing "activate the row" behavior. */
   const handleProfileRowKeyDown = (p: ConnectionProfile, siblingIds: string[]) => (e: React.KeyboardEvent<HTMLElement>) => {
     if (e.key === "Enter" || e.key === " ") {
+      // 行内のボタン (スキーマ更新など) から伝わったキーはボタンに任せる
+      if (e.target !== e.currentTarget) return;
       e.preventDefault();
       handleProfileClick(p);
       return;

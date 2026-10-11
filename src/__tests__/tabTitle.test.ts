@@ -65,3 +65,15 @@ describe("applyRename", () => {
     expect(applyRename({ kind: "query", title: "SELECT 1" }, "SELECT 1", "SELECT 1", U)).toBeNull();
   });
 });
+
+describe("deriveResultTabTitle: サロゲートペア", () => {
+  it("絵文字を割らずにコードポイント単位で切る", () => {
+    const title = deriveResultTabTitle(`${"a".repeat(26)}😀😀😀`, "untitled");
+    expect(title).toBe(`${"a".repeat(26)}😀…`);
+    expect(title).not.toContain("\uFFFD");
+  });
+  it("コードポイントで上限以内なら切らない", () => {
+    const s = "😀".repeat(28);
+    expect(deriveResultTabTitle(s, "untitled")).toBe(s);
+  });
+});

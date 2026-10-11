@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Box, chakra } from "@chakra-ui/react";
@@ -71,10 +71,13 @@ function ActivityPanel({
   anchor,
   onClose,
   onOpenInPanel,
+  triggerRef,
 }: {
   anchor: DOMRect;
   onClose: () => void;
   onOpenInPanel?: () => void;
+  /** ベルボタン。ここへの mousedown は外側クリック扱いにしない (click の toggle に任せる) */
+  triggerRef?: RefObject<HTMLElement | null>;
 }) {
   const t = useT();
   const { entries } = useActivityLog();
@@ -117,7 +120,9 @@ function ActivityPanel({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (!panelRef.current?.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      if (triggerRef?.current?.contains(target)) return;
+      if (!panelRef.current?.contains(target)) onClose();
     };
     window.addEventListener("mousedown", onDown, true);
     window.addEventListener("resize", onClose);
@@ -125,7 +130,7 @@ function ActivityPanel({
       window.removeEventListener("mousedown", onDown, true);
       window.removeEventListener("resize", onClose);
     };
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   return createPortal(
     <motion.div
@@ -417,6 +422,7 @@ export function ActivityCenter({ onOpenInPanel }: { onOpenInPanel?: () => void }
             anchor={anchor}
             onClose={() => setAnchor(null)}
             onOpenInPanel={onOpenInPanel}
+            triggerRef={buttonRef}
           />
         )}
       </AnimatePresence>

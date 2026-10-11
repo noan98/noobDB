@@ -3591,7 +3591,6 @@ export default function App() {
   // per table. #621 / #1255
   useEffect(() => {
     if (!sessionId) return;
-    let cancelled = false;
     for (const tt of paneActiveTabs) {
       if (!tt || tt.kind !== "table" || !tt.database || !tt.table) continue;
       const key = incomingFkCacheKey(sessionId, tt.database, tt.table);
@@ -3599,12 +3598,13 @@ export default function App() {
       fkInFlightRef.current.add(key);
       api.incomingForeignKeys(sessionId, tt.database, tt.table)
         .then((fks) => {
-          if (!cancelled) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
+          // cleanup で捨てない: 並行取得中に cache 更新で effect が再実行されても
+          // 結果を保持する (キーに sessionId を含むので別接続の値と混ざらない)
+          setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
         })
         .catch(() => { /* ignore: reverse FK nav is best-effort */ })
         .finally(() => { fkInFlightRef.current.delete(key); });
     }
-    return () => { cancelled = true; };
   }, [sessionId, paneActiveTabs, incomingFkCache]);
 
   // Drop every cached schema when the session changes so a new connection
@@ -3622,19 +3622,18 @@ export default function App() {
   // again after an invalidation drops a cache entry.
   useEffect(() => {
     if (!sessionId) return;
-    let cancelled = false;
     for (const database of editorDatabases) {
       const key = schemaCacheKey(sessionId, database);
       if (key in schemaCache || schemaInFlightRef.current.has(key)) continue;
       schemaInFlightRef.current.add(key);
       api.schemaOverview(sessionId, database)
         .then((schema) => {
-          if (!cancelled) setSchemaCache((prev) => ({ ...prev, [key]: schema }));
+          // cleanup で捨てない (並行取得中の結果が欠落するため)。キーに sessionId を含む
+          setSchemaCache((prev) => ({ ...prev, [key]: schema }));
         })
         .catch(() => { /* autocomplete is best-effort; ignore failures */ })
         .finally(() => { schemaInFlightRef.current.delete(key); });
     }
-    return () => { cancelled = true; };
   }, [sessionId, editorDatabases, schemaCache]);
 
   // Forget cached schemas so the fetch effect re-pulls fresh tables/columns —
@@ -7753,7 +7752,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -7898,7 +7897,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab, panesRef, tabsRef]);
+  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showObjectSearch, showDataSearch, showCheatSheet, handleNewTab, selectTab, goToPageInTab, panesRef, tabsRef]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -8070,7 +8069,7 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
+      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch) {
         return;
       }
       e.preventDefault();
@@ -8078,7 +8077,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
+  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette, showObjectSearch, showDataSearch]);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。

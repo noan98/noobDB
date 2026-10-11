@@ -26,7 +26,13 @@ export function formatBytes(bytes: number | null | undefined): string {
     value /= 1024;
     unit += 1;
   }
-  const digits = value >= 100 ? 0 : 1;
+  let digits = value >= 100 ? 0 : 1;
+  // 丸めた結果が 1024 に達したら (例: 1023.9 KB → "1024 KB") 単位を 1 つ上げて再計算する。
+  if (Number(value.toFixed(digits)) >= 1024 && unit < SIZE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+    digits = value >= 100 ? 0 : 1;
+  }
   return `${value.toFixed(digits)} ${SIZE_UNITS[unit]}`;
 }
 

@@ -74,8 +74,11 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // 実行中にアンマウントされたら購読を外し、バックエンドのストリームも止める。
-  useEffect(
-    () => () => {
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
       const sid = streamIdRef.current;
       if (sid) {
         void api.cancelStream(sid).catch(() => {
@@ -85,9 +88,8 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       unlistenRef.current?.();
       unlistenRef.current = null;
       streamIdRef.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const isRunning = status.kind === "running";
 
@@ -154,6 +156,12 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
           setProgress(null);
         },
       });
+      // 購読の await 中にアンマウントされたら、購読を外して開始しない
+      // (受信者のいないまま書き込み文が完走するのを防ぐ)。
+      if (unmountedRef.current) {
+        cleanupStream();
+        return;
+      }
       await api.runSqlScript({ sessionId, streamId, database, path: target, options });
     } catch (e) {
       // 購読・開始 (入力検証) の失敗は終端イベントが来ないので、ここで UI を戻す。

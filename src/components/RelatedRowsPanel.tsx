@@ -199,8 +199,12 @@ function RelatedSection({
 
 type FetchState =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "done"; result: QueryResult };
+  // prev: 「さらに読み込む」が失敗したとき、直前に表示していた結果 (行を消さない)
+  | { kind: "error"; message: string; prev?: ShownResult }
+  | { kind: "done"; result: QueryResult; limit: number };
+
+/** 表示中の結果と、それを取得したときの上限 (取得中に新しい上限と混ぜない)。 */
+type ShownResult = { result: QueryResult; limit: number };
 
 function RelatedRowsBody({
   entry,
@@ -244,20 +248,35 @@ function RelatedRowsBody({
   useEffect(() => {
     if (!sql) return;
     let cancelled = false;
+    const fetchLimit = limit;
     runRef.current(sql).then(
       (result) => {
-        if (!cancelled) setState({ kind: "done", result });
+        if (!cancelled) setState({ kind: "done", result, limit: fetchLimit });
       },
       (e: unknown) => {
-        if (!cancelled) setState({ kind: "error", message: String(e) });
+        if (!cancelled) {
+          setState((prev) => ({
+            kind: "error",
+            message: String(e),
+            prev:
+              prev.kind === "done"
+                ? { result: prev.result, limit: prev.limit }
+                : prev.kind === "error"
+                  ? prev.prev
+                  : undefined,
+          }));
+        }
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [sql]);
+  }, [sql, limit]);
 
-  const result = state.kind === "done" ? state.result : null;
+  // 取得中・失敗中も直前の結果を (取得時の上限で) 出し続ける。
+  const shown: ShownResult | null =
+    state.kind === "done" ? state : state.kind === "error" ? (state.prev ?? null) : null;
+  const result = shown?.result ?? null;
   const columns = useMemo(() => result?.columns ?? [], [result]);
   const kinds = useMemo(() => columns.map((c) => classifyTypeName(c.type_name)), [columns]);
   const masked = useMemo(
@@ -268,7 +287,7 @@ function RelatedRowsBody({
       ),
     [columns, columnMaskEnabled, columnMaskPatterns],
   );
-  const split = result ? splitRelatedRows(result.rows, limit) : null;
+  const split = shown ? splitRelatedRows(shown.result.rows, shown.limit) : null;
   const next = nextRelatedLimit(limit);
 
   return (
