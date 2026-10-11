@@ -1976,7 +1976,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       // DB whose listTables failed are "unknown" and kept, so a transient error
       // or a closed-but-existing DB never wipes persisted expansion (#677).
       const keptTableKeys = openTableKeys.filter((key) => {
-        const split = splitTableKey(key, (d) => dbs.includes(d));
+        const split = splitTableKey(key, (d, t) => dbs.includes(d) && (nextTables[d]?.includes(t) ?? true));
         if (!split) return false; // malformed → drop
         const { db, tbl } = split;
         if (!dbs.includes(db)) return false; // DB gone → table gone

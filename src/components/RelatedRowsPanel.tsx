@@ -222,6 +222,8 @@ function RelatedRowsBody({
   const t = useT();
   const { columnMaskEnabled, columnMaskPatterns } = useSettings();
   const [limit, setLimit] = useState(RELATED_ROWS_PAGE);
+  // 同じ上限での再試行用 (失敗後に同一上限を要求しても取り直せるようにする)。
+  const [retryKey, setRetryKey] = useState(0);
   const [state, setState] = useState<FetchState>({ kind: "loading" });
   const value: CellValue = entry.value;
 
@@ -245,6 +247,7 @@ function RelatedRowsBody({
     runRef.current = runQuery;
   }, [runQuery]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryKey は同一 SQL の再取得トリガー
   useEffect(() => {
     if (!sql) return;
     let cancelled = false;
@@ -271,7 +274,7 @@ function RelatedRowsBody({
     return () => {
       cancelled = true;
     };
-  }, [sql, limit]);
+  }, [sql, limit, retryKey]);
 
   // 取得中・失敗中も直前の結果を (取得時の上限で) 出し続ける。
   const shown: ShownResult | null =
@@ -288,7 +291,8 @@ function RelatedRowsBody({
     [columns, columnMaskEnabled, columnMaskPatterns],
   );
   const split = shown ? splitRelatedRows(shown.result.rows, shown.limit) : null;
-  const next = nextRelatedLimit(limit);
+  // 失敗後は表示中の上限を基準にすると同じ上限を再要求できる (再試行)。
+  const next = nextRelatedLimit(state.kind === "error" && shown ? shown.limit : limit);
 
   return (
     <Box px="2" py="1.5" display="flex" flexDirection="column" gap="1.5">
@@ -377,7 +381,15 @@ function RelatedRowsBody({
               : t("relatedRowsCount", { count: split.rows.length })}
           </chakra.span>
           {split.hasMore && next !== null && (
-            <Button size="sm" variant="secondary" onClick={() => setLimit(next)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={state.kind === "loading" || (state.kind === "done" && state.limit !== limit)}
+              onClick={() => {
+                setLimit(next);
+                setRetryKey((k) => k + 1);
+              }}
+            >
               {t("relatedRowsLoadMore")}
             </Button>
           )}

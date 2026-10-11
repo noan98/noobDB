@@ -60,10 +60,22 @@ pub struct SchemaTree {
     pub tables: Vec<SchemaTreeTable>,
 }
 
-/// `"db::table"` を最初の `::` で分ける (フロントの `indexOf("::")` と同じ規則)。
-fn split_table_key(key: &str) -> Option<(&str, &str)> {
-    let sep = key.find("::")?;
-    Some((&key[..sep], &key[sep + 2..]))
+/// `"db::table"` を DB 名とテーブル名へ分ける。DB 名自体に `::` を含み得るため、各 `::`
+/// 位置を候補にして `is_known(db, table)` が真になる分割を採用する (フロントの
+/// `splitTableKey` と同じ規則)。どれも当てはまらなければ最初の `::` で分ける。
+fn split_table_key(key: &str, is_known: impl Fn(&str, &str) -> bool) -> Option<(&str, &str)> {
+    let mut first = None;
+    let mut from = 0;
+    while let Some(off) = key[from..].find("::") {
+        let sep = from + off;
+        let cand = (&key[..sep], &key[sep + 2..]);
+        if is_known(cand.0, cand.1) {
+            return Some(cand);
+        }
+        first.get_or_insert(cand);
+        from = sep + 1;
+    }
+    first
 }
 
 async fn load_database(session: &Session, database: &str) -> SchemaTreeDatabase {
@@ -196,15 +208,14 @@ pub(crate) async fn load_schema_tree_inner(
     let wanted: Vec<(String, String, String)> = open_table_keys
         .iter()
         .filter_map(|key| {
-            let (db, table) = split_table_key(key)?;
-            let listed = open
-                .iter()
-                .find(|d| d.database == db)
-                .and_then(|d| d.tables.as_ref())?;
-            listed
-                .iter()
-                .any(|t| t == table)
-                .then(|| (key.clone(), db.to_string(), table.to_string()))
+            let exists = |db: &str, table: &str| {
+                open.iter()
+                    .find(|d| d.database == db)
+                    .and_then(|d| d.tables.as_ref())
+                    .is_some_and(|l| l.iter().any(|t| t == table))
+            };
+            let (db, table) = split_table_key(key, exists)?;
+            exists(db, table).then(|| (key.clone(), db.to_string(), table.to_string()))
         })
         .collect();
     let tables = load_tables(session, wanted).await;
@@ -255,9 +266,20 @@ mod tests {
 
     #[test]
     fn splits_table_key_at_the_first_separator() {
-        assert_eq!(split_table_key("db::tbl"), Some(("db", "tbl")));
-        assert_eq!(split_table_key("db::a::b"), Some(("db", "a::b")));
-        assert_eq!(split_table_key("nosep"), None);
-        assert_eq!(split_table_key("::t"), Some(("", "t")));
+        let none = |_: &str, _: &str| false;
+        assert_eq!(split_table_key("db::tbl", none), Some(("db", "tbl")));
+        assert_eq!(split_table_key("db::a::b", none), Some(("db", "a::b")));
+        assert_eq!(split_table_key("nosep", none), None);
+        assert_eq!(split_table_key("::t", none), Some(("", "t")));
+    }
+
+    #[test]
+    fn splits_table_key_by_known_database_and_table() {
+        // DB 名 `x::y` のテーブル `z`
+        let known = |db: &str, t: &str| db == "x::y" && t == "z";
+        assert_eq!(split_table_key("x::y::z", known), Some(("x::y", "z")));
+        // DB `x` のテーブル `y::z` も引き続き解釈できる
+        let known = |db: &str, t: &str| db == "x" && t == "y::z";
+        assert_eq!(split_table_key("x::y::z", known), Some(("x", "y::z")));
     }
 }

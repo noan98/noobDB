@@ -156,9 +156,9 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
           setProgress(null);
         },
       });
-      // 購読の await 中にアンマウントされたら、購読を外して開始しない
+      // 購読の await 中にアンマウント/キャンセルされたら、購読を外して開始しない
       // (受信者のいないまま書き込み文が完走するのを防ぐ)。
-      if (unmountedRef.current) {
+      if (unmountedRef.current || streamIdRef.current !== streamId) {
         cleanupStream();
         return;
       }

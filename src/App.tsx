@@ -1914,6 +1914,11 @@ export default function App() {
   // database-wide FK list while rendering. #621 / #1255
   const [incomingFkCache, setIncomingFkCache] = useState<Record<string, IncomingFk[]>>({});
   const fkInFlightRef = useRef<Set<string>>(new Set());
+  // 取得中の結果を受け入れるかの世代。セッション切替/全消去で epoch、DB 単位の無効化で
+  // キー別の番号を進める。resolve 時に世代が一致するときだけキャッシュへ書く
+  // (effect の cleanup で結果を捨てると、並行取得中の DB の結果が欠落する)。
+  const prefetchEpochRef = useRef(0);
+  const schemaGenRef = useRef<Map<string, number>>(new Map());
   // Set while a destructive query awaits confirmation; holds everything needed
   // to run it once the user accepts the warning dialog.
   const [pendingDangerous, setPendingDangerous] = useState<{
@@ -3596,14 +3601,13 @@ export default function App() {
       const key = incomingFkCacheKey(sessionId, tt.database, tt.table);
       if (key in incomingFkCache || fkInFlightRef.current.has(key)) continue;
       fkInFlightRef.current.add(key);
+      const epoch = prefetchEpochRef.current;
       api.incomingForeignKeys(sessionId, tt.database, tt.table)
         .then((fks) => {
-          // cleanup で捨てない: 並行取得中に cache 更新で effect が再実行されても
-          // 結果を保持する (キーに sessionId を含むので別接続の値と混ざらない)
-          setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
+          if (prefetchEpochRef.current === epoch) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
         })
         .catch(() => { /* ignore: reverse FK nav is best-effort */ })
-        .finally(() => { fkInFlightRef.current.delete(key); });
+        .finally(() => { if (prefetchEpochRef.current === epoch) fkInFlightRef.current.delete(key); });
     }
   }, [sessionId, paneActiveTabs, incomingFkCache]);
 
@@ -3611,6 +3615,7 @@ export default function App() {
   // never autocompletes against the previous database's tables.
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替時にキャッシュを捨てる
   useEffect(() => {
+    prefetchEpochRef.current += 1;
     setSchemaCache({});
     schemaInFlightRef.current.clear();
     setIncomingFkCache({});
@@ -3626,13 +3631,15 @@ export default function App() {
       const key = schemaCacheKey(sessionId, database);
       if (key in schemaCache || schemaInFlightRef.current.has(key)) continue;
       schemaInFlightRef.current.add(key);
+      const epoch = prefetchEpochRef.current;
+      const gen = schemaGenRef.current.get(key) ?? 0;
+      const current = () => prefetchEpochRef.current === epoch && (schemaGenRef.current.get(key) ?? 0) === gen;
       api.schemaOverview(sessionId, database)
         .then((schema) => {
-          // cleanup で捨てない (並行取得中の結果が欠落するため)。キーに sessionId を含む
-          setSchemaCache((prev) => ({ ...prev, [key]: schema }));
+          if (current()) setSchemaCache((prev) => ({ ...prev, [key]: schema }));
         })
         .catch(() => { /* autocomplete is best-effort; ignore failures */ })
-        .finally(() => { schemaInFlightRef.current.delete(key); });
+        .finally(() => { if (current()) schemaInFlightRef.current.delete(key); });
     }
   }, [sessionId, editorDatabases, schemaCache]);
 
@@ -3644,11 +3651,13 @@ export default function App() {
   const invalidateSchemaCache = useCallback(
     (database?: string | null) => {
       if (!sessionId || !database) {
+        prefetchEpochRef.current += 1;
         schemaInFlightRef.current.clear();
         setSchemaCache({});
         return;
       }
       const key = schemaCacheKey(sessionId, database);
+      schemaGenRef.current.set(key, (schemaGenRef.current.get(key) ?? 0) + 1);
       schemaInFlightRef.current.delete(key);
       setSchemaCache((prev) => {
         if (!(key in prev)) return prev;
