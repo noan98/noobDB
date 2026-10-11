@@ -87,4 +87,14 @@ describe("CellValueViewer JSON tree (#1026)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("cellViewerSave") }));
     expect(onSave).toHaveBeenCalledWith(DOC);
   });
+
+  it("非 JSON 列の TEXT は整形されず、何も変えずに保存しても元の文字列のまま", () => {
+    const onSave = vi.fn();
+    renderWithProviders(
+      <CellValueViewer columnName="c" value='{"a":1}' editable onSave={onSave} onClose={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("cellViewerEdit") }));
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(box.value).toBe('{"a":1}');
+  });
 });

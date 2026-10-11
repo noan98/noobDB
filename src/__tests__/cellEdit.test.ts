@@ -20,6 +20,7 @@ import {
   setValueFromInput,
   resolveRowIdentity,
   rowEditKey,
+  parseBooleanInput,
   validateCellInput,
   type BuildRowSqlInput,
   type BuildUpdateInput,
@@ -684,7 +685,8 @@ describe("validateCellInput", () => {
     expect(validateCellInput("2024-03-05 07:08:09", "DATETIME", true)).toBeNull();
     expect(validateCellInput("07:08:09", "TIME", true)).toBeNull();
     expect(validateCellInput("true", "BOOLEAN", true)).toBeNull();
-    expect(validateCellInput("yes", "BOOLEAN", true)).toBe("editInvalidBoolean");
+    expect(validateCellInput("yes", "BOOLEAN", true)).toBeNull(); // PostgreSQL が受理する表記
+    expect(validateCellInput("maybe", "BOOLEAN", true)).toBe("editInvalidBoolean");
     // 未知の型は決して弾かない (サーバに最終判断を委ねる)。
     expect(validateCellInput("anything", "GEOMETRY", true)).toBeNull();
   });
@@ -1275,5 +1277,91 @@ describe("BOOLEAN / BIT 列の true・false・0・1 とそれ以外", () => {
   it("NULL キーワード (大文字小文字・前後空白)", () => {
     expect(cellValueFromInput(" Null ", col("s", "VARCHAR"))).toBeNull();
     expect(setValueFromInput(" nULL ", col("s", "VARCHAR"))).toEqual({ kind: "null" });
+  });
+});
+
+describe("all_columns 同定の WHERE で BLOB 列を扱う", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR"), col("data", "BLOB")];
+  const rows: CellValue[][] = [[1, "a", "deadbeef"]];
+  const pkIndices = [0, 1, 2];
+
+  it.each([
+    ["mysql", "`data` = 0xdeadbeef"],
+    ["sqlite", '"data" = X\'deadbeef\''],
+    ["postgres", '"data" = \'\\xdeadbeef\''],
+  ])("%s: UPDATE の WHERE が 16 進文字列ではなくバイナリリテラルになる", (driver, expected) => {
+    const stmts = buildUpdateStatements({
+      driver,
+      database: "d",
+      table: "t",
+      columns,
+      rows,
+      pkIndices,
+      edits: { [rowEditKey(rows[0], pkIndices, 0)]: { 1: "b" } },
+    });
+    expect(stmts[0]).toContain(expected);
+    expect(stmts[0]).not.toContain("= 'deadbeef'");
+  });
+
+  it("DELETE の WHERE もバイナリリテラルになる", () => {
+    const stmts = buildDeleteStatements({
+      driver: "mysql",
+      database: "d",
+      table: "t",
+      columns,
+      rows,
+      pkIndices,
+      deleteKeys: new Set([rowEditKey(rows[0], pkIndices, 0)]),
+    });
+    expect(stmts[0]).toContain("`data` = 0xdeadbeef");
+  });
+});
+
+describe("validateCellInput: タイムゾーン付き日時と PostgreSQL の boolean 表記", () => {
+  it.each([
+    "2024-01-01 10:00:00+09",
+    "2024-01-01 10:00:00+09:00",
+    "2024-01-01T10:00:00Z",
+    "2024-01-01 10:00:00.123 -0500",
+  ])("timestamptz の %s を受理する", (v) => {
+    expect(validateCellInput(v, "TIMESTAMPTZ", true)).toBeNull();
+  });
+
+  it("不正な日時は引き続き弾く", () => {
+    expect(validateCellInput("2024-01-01 10:00:00+", "TIMESTAMP", true)).toBe("editInvalidDateTime");
+    expect(validateCellInput("yesterday", "TIMESTAMP", true)).toBe("editInvalidDateTime");
+  });
+
+  it.each(["yes", "no", "on", "off", "t", "f", "Y", "N"])("boolean の %s を受理する", (v) => {
+    expect(validateCellInput(v, "BOOLEAN", true)).toBeNull();
+  });
+
+  it("boolean の不正値は弾く", () => {
+    expect(validateCellInput("maybe", "BOOLEAN", true)).toBe("editInvalidBoolean");
+  });
+});
+
+describe("boolean 入力の正規化 (parseBooleanInput)", () => {
+  const bool = col("f", "BOOLEAN");
+
+  it.each([
+    ["yes", true],
+    ["Y", true],
+    ["on", true],
+    ["t", true],
+    ["no", false],
+    ["N", false],
+    ["off", false],
+    ["f", false],
+  ])("%s は %s に正規化され、書き込み側が全部 bool になる", (raw, v) => {
+    expect(parseBooleanInput(raw)).toBe(v);
+    expect(setValueFromInput(raw, bool)).toEqual({ kind: "bool", value: v });
+    expect(cellValueFromInput(raw, bool)).toBe(v);
+    expect(literalFromInput("mysql", raw, bool)).toBe(v ? "TRUE" : "FALSE");
+  });
+
+  it("受理しない表記は null で、文字列のまま扱われる", () => {
+    expect(parseBooleanInput("maybe")).toBeNull();
+    expect(setValueFromInput("maybe", bool)).toEqual({ kind: "text", text: "maybe" });
   });
 });

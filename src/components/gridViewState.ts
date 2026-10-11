@@ -70,9 +70,11 @@ export function gridViewStateKeyFrom(sizingKey: string | undefined): string | un
 const FILTER_OPS: FilterOp[] = [
   "contains",
   "equals",
+  "notEquals",
   "startsWith",
   "endsWith",
   "eq",
+  "ne",
   "gt",
   "lt",
   "between",
