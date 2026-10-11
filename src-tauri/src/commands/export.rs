@@ -144,6 +144,52 @@ pub async fn export_query_result(
     result
 }
 
+/// エクスポート先と同じディレクトリに置く一時ファイルの候補パス
+/// (`.<name>.exporting.<pid>.<seq>`)。同一ファイルシステム内なので最後の `rename` が
+/// 原子的になる。
+fn export_temp_path(final_path: &str) -> PathBuf {
+    use std::sync::atomic::AtomicUsize;
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let p = std::path::Path::new(final_path);
+    let dir = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "export".to_string());
+    dir.join(format!(".{name}.exporting.{}.{seq}", std::process::id()))
+}
+
+/// 一時ファイルの作成を試みる上限回数 ([`create_export_temp_file`])。
+const EXPORT_TEMP_FILE_MAX_ATTEMPTS: u32 = 8;
+
+/// 保存先と同じディレクトリに一時ファイルを **新規作成** (`O_CREAT|O_EXCL`) する。
+///
+/// 既存の保存先ファイル (上書きを承認されたもの) を実行前に切り詰めないための入口:
+/// 出力は一時ファイルに書き、成功したときだけ `rename` で保存先へ置き換える。失敗・
+/// キャンセル時は一時ファイルを消すだけなので、旧ファイルはそのまま残る。
+/// `create_new` はシンボリックリンクを辿らない (dump.rs の `create_dump_temp_file`
+/// と同じ防御)。
+fn create_export_temp_file(final_path: &str) -> Result<(PathBuf, std::fs::File)> {
+    let mut last_err: Option<std::io::Error> = None;
+    for _ in 0..EXPORT_TEMP_FILE_MAX_ATTEMPTS {
+        let candidate = export_temp_path(final_path);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last_err = Some(e),
+            Err(e) => return Err(AppError::Io(e)),
+        }
+    }
+    Err(AppError::Other(format!(
+        "failed to create a unique temp export file after {EXPORT_TEMP_FILE_MAX_ATTEMPTS} attempts: {}",
+        last_err.map(|e| e.to_string()).unwrap_or_default()
+    )))
+}
+
 /// Write the result set to `path`, streaming row-by-row into a buffered writer
 /// instead of building the whole output in memory first. The CPU-bound
 /// formatting and synchronous file I/O run on a blocking thread so the async
@@ -158,7 +204,9 @@ async fn write_export(
     mask_spec: Option<MaskSpec>,
 ) -> Result<ExportResult> {
     tokio::task::spawn_blocking(move || -> Result<ExportResult> {
-        let file = std::fs::File::create(&path)?;
+        // 一時ファイルへ書いて成功時に rename する。失敗しても既存の保存先は壊さない。
+        let (tmp, file) = create_export_temp_file(&path)?;
+        let mut cleanup = PartialFileCleanup::new(tmp.clone());
         let mut writer = std::io::BufWriter::new(file);
         let plan = mask_spec.as_ref().map(|s| s.plan(&columns));
         let truncation = write_export_to(
@@ -175,6 +223,9 @@ async fn write_export(
             .into_inner()
             .map_err(|e| AppError::Io(e.into_error()))?;
         let bytes = file.metadata()?.len();
+        drop(file);
+        std::fs::rename(&tmp, &path)?;
+        cleanup.commit();
         Ok(ExportResult { bytes, truncation })
     })
     .await
@@ -355,17 +406,48 @@ fn write_csv_rows<W: Write>(
     Ok(())
 }
 
+/// JSON / NDJSON のオブジェクトキーとして使う列名。`SELECT u.id, o.id ...` のような
+/// 同名列がオブジェクトの同一キーに潰れて値が黙って消えないよう、2 つ目以降の同名列には
+/// `_2`, `_3`, ... を付ける (CSV / Markdown / SQL は列を保持するので形式間の食い違いを
+/// 避ける)。接尾辞付きの名前が他の列名や割り当て済みキーと衝突するときは、空いている
+/// 番号まで進める。フロント `exportPreview.ts` の `jsonKeys` と同じ規則 (共有ゴールデン)。
+fn json_keys(columns: &[Column]) -> Vec<String> {
+    use std::collections::HashSet;
+    let reserved: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    let mut taken: HashSet<String> = HashSet::with_capacity(columns.len());
+    let mut keys = Vec::with_capacity(columns.len());
+    for col in columns {
+        let mut key = col.name.clone();
+        if taken.contains(&key) {
+            let mut n = 2usize;
+            loop {
+                let cand = format!("{}_{n}", col.name);
+                if !taken.contains(&cand) && !reserved.contains(cand.as_str()) {
+                    key = cand;
+                    break;
+                }
+                n += 1;
+            }
+        }
+        taken.insert(key.clone());
+        keys.push(key);
+    }
+    keys
+}
+
 /// Build a JSON object for one row, keyed by column name. Shared by the
 /// in-memory `write_json` and the streaming export sink.
-fn row_to_json_object(columns: &[Column], row: &[Value]) -> serde_json::Value {
+///
+/// `keys` は [`json_keys`] で作った列ごとのキー (同名列は `id_2` のように接尾辞付き)。
+fn row_to_json_object(keys: &[String], row: &[Value]) -> serde_json::Value {
     use serde_json::{Map, Value as J};
-    let mut obj = Map::with_capacity(columns.len());
-    for (i, col) in columns.iter().enumerate() {
+    let mut obj = Map::with_capacity(keys.len());
+    for (i, key) in keys.iter().enumerate() {
         let jv = match row.get(i).unwrap_or(&Value::Null) {
             Value::Bytes(hex) => J::String(format!("0x{}", hex)),
             v => serde_json::to_value(v).unwrap_or(J::Null),
         };
-        obj.insert(col.name.clone(), jv);
+        obj.insert(key.clone(), jv);
     }
     J::Object(obj)
 }
@@ -392,9 +474,10 @@ fn write_json<W: Write>(
     if let Some(q) = query.filter(|q| !q.is_empty()) {
         // 行オブジェクトを材料化してラッパオブジェクトとして整形出力する。
         // 在グリッドのエクスポートは既に全行をメモリに持つため材料化で問題ない。
+        let keys = json_keys(columns);
         let rows_json: Vec<serde_json::Value> = rows
             .iter()
-            .map(|row| row_to_json_object(columns, row))
+            .map(|row| row_to_json_object(&keys, row))
             .collect();
         let wrapper = serde_json::json!({ "query": q, "rows": rows_json });
         serde_json::to_writer_pretty(w, &wrapper)?;
@@ -403,8 +486,9 @@ fn write_json<W: Write>(
 
     let mut ser = serde_json::Serializer::pretty(w);
     let mut seq = ser.serialize_seq(Some(rows.len()))?;
+    let keys = json_keys(columns);
     for row in rows {
-        seq.serialize_element(&row_to_json_object(columns, row))?;
+        seq.serialize_element(&row_to_json_object(&keys, row))?;
     }
     seq.end()?;
     Ok(())
@@ -415,8 +499,9 @@ fn write_json<W: Write>(
 /// 値のエンコード (BLOB の 16 進・NULL・数値) は `write_json` と共有する
 /// `row_to_json_object` を使うため JSON 配列経路と一致する。空結果なら何も書かない。
 fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
+    let keys = json_keys(columns);
     for row in rows {
-        let obj = row_to_json_object(columns, row);
+        let obj = row_to_json_object(&keys, row);
         let s = serde_json::to_string(&obj)?;
         w.write_all(s.as_bytes())?;
         w.write_all(b"\n")?;
@@ -602,6 +687,8 @@ struct StreamExportSink {
     writer: BufWriter<std::fs::File>,
     format: ExportFormat,
     columns: Vec<Column>,
+    /// JSON / NDJSON のオブジェクトキー ([`json_keys`])。`on_columns` で確定する。
+    json_keys: Vec<String>,
     json_count: usize,
     /// JSON 形式のとき出力に同梱する実行クエリ。`Some(non-empty)` のときは配列
     /// ではなく `{ "query": ..., "rows": [...] }` でラップする。
@@ -617,6 +704,8 @@ struct StreamExportSink {
 }
 
 impl StreamExportSink {
+    /// パス指定で作る入口 (テスト用。本番は一時ファイルを予約して [`Self::with_file`])。
+    #[cfg(test)]
     fn with_query(
         path: &str,
         format: ExportFormat,
@@ -624,7 +713,23 @@ impl StreamExportSink {
         sql_opts: SqlExportOpts,
         mask_spec: Option<MaskSpec>,
     ) -> Result<Self> {
-        let file = std::fs::File::create(path)?;
+        Self::with_file(
+            std::fs::File::create(path)?,
+            format,
+            query,
+            sql_opts,
+            mask_spec,
+        )
+    }
+
+    /// 作成済みのファイルハンドルへ書く sink (本番経路は一時ファイルを渡す)。
+    fn with_file(
+        file: std::fs::File,
+        format: ExportFormat,
+        query: Option<String>,
+        sql_opts: SqlExportOpts,
+        mask_spec: Option<MaskSpec>,
+    ) -> Result<Self> {
         // クエリ同梱は JSON 形式のみ。空文字列は同梱しない。
         let json_query = match format {
             ExportFormat::Json => query.filter(|q| !q.is_empty()),
@@ -638,6 +743,7 @@ impl StreamExportSink {
             writer: BufWriter::new(file),
             format,
             columns: Vec::new(),
+            json_keys: Vec::new(),
             json_count: 0,
             json_query,
             sql_opts,
@@ -649,6 +755,7 @@ impl StreamExportSink {
 
     fn on_columns(&mut self, columns: Vec<Column>) -> Result<()> {
         self.mask_plan = self.mask_spec.as_ref().map(|s| s.plan(&columns));
+        self.json_keys = json_keys(&columns);
         self.columns = columns;
         match self.format {
             ExportFormat::Csv => write_csv_header(&mut self.writer, &self.columns)?,
@@ -694,7 +801,7 @@ impl StreamExportSink {
                 for row in rows {
                     self.writer
                         .write_all(if self.json_count == 0 { first } else { rest })?;
-                    let obj = row_to_json_object(&self.columns, row);
+                    let obj = row_to_json_object(&self.json_keys, row);
                     let s = serde_json::to_string(&obj)?;
                     self.writer.write_all(s.as_bytes())?;
                     self.json_count += 1;
@@ -837,12 +944,15 @@ pub(crate) async fn run_export_to_file(
     // Create the file up front so a bad path surfaces immediately rather than
     // after the query has already started running. JSON 形式では実行クエリを
     // 出力に同梱する (sink 側で JSON のときだけ反映)。
+    // 出力は保存先と同じディレクトリの一時ファイルへ書き、成功時だけ rename で置き換える
+    // (既存の保存先を実行前に切り詰めない。失敗・キャンセル時は一時ファイルだけ消える)。
+    let (tmp, tmp_file) = create_export_temp_file(path)?;
+    // 正常完了以外の経路 (エラー/タイムアウト/キャンセル) では Drop で一時ファイルが
+    // 自動的に削除される。sink の構築失敗でも消えるよう、sink より先に作る。
+    let mut cleanup = PartialFileCleanup::new(tmp.clone());
     let sink =
-        StreamExportSink::with_query(path, format, Some(sql.to_string()), sql_opts, mask_spec)?;
+        StreamExportSink::with_file(tmp_file, format, Some(sql.to_string()), sql_opts, mask_spec)?;
     let shared = Arc::new(Mutex::new(Some(sink)));
-    // ファイルは既に作成済み (`with_query` 内)。正常完了以外の経路 (エラー/タイムアウト/
-    // キャンセル) では Drop で自動的に削除される。
-    let mut cleanup = PartialFileCleanup::new(path);
     let counter = Arc::new(AtomicU64::new(0));
 
     let sink_cb = shared.clone();
@@ -883,7 +993,9 @@ pub(crate) async fn run_export_to_file(
             let sink = shared.lock().ok().and_then(|mut g| g.take());
             match sink.map(|s| s.finish()) {
                 Some(Ok((bytes, truncation))) => {
-                    // 出力が完全に書き終わったので、以降 Drop されてもファイルは消さない。
+                    // 出力が完全に書き終わったので保存先へ置き換える。rename に失敗したら
+                    // 未 commit のまま Err で返り、一時ファイルは Drop が消す。
+                    std::fs::rename(&tmp, path)?;
                     cleanup.commit();
                     Ok(StreamExportOutcome {
                         rows: counter.load(Ordering::SeqCst),
@@ -1135,6 +1247,99 @@ mod tests {
             name: name.into(),
             type_name: "VARCHAR".into(),
         }
+    }
+
+    fn unique_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("noobdb_export_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn dir_file_count(dir: &std::path::Path) -> usize {
+        std::fs::read_dir(dir).unwrap().count()
+    }
+
+    #[tokio::test]
+    async fn failed_export_keeps_existing_destination_file() {
+        let dir = unique_dir("keep");
+        let path = dir.join("backup.csv");
+        std::fs::write(&path, "old,data\n").unwrap();
+        // xlsx は 16,384 列超がエラー: 書き込み途中の失敗を再現する。
+        let columns: Vec<Column> = (0..=crate::commands::export_xlsx::XLSX_MAX_COLUMNS)
+            .map(|i| col(&format!("c{i}")))
+            .collect();
+        let res = write_export(
+            path.to_string_lossy().into_owned(),
+            ExportFormat::Xlsx,
+            columns,
+            Arc::new(vec![]),
+            None,
+            SqlExportOpts::build(None, None, None),
+            None,
+        )
+        .await;
+        assert!(res.is_err());
+        // 旧ファイルはそのまま、一時ファイルも残らない。
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old,data\n");
+        assert_eq!(dir_file_count(&dir), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn successful_export_replaces_destination_without_leftovers() {
+        let dir = unique_dir("replace");
+        let path = dir.join("out.csv");
+        std::fs::write(&path, "old\n").unwrap();
+        let res = write_export(
+            path.to_string_lossy().into_owned(),
+            ExportFormat::Csv,
+            vec![col("a")],
+            Arc::new(vec![vec![Value::Int(1)]]),
+            None,
+            SqlExportOpts::build(None, None, None),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\r\n1\r\n");
+        assert_eq!(res.bytes, 6);
+        assert_eq!(dir_file_count(&dir), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_temp_file_is_a_sibling_and_cleanup_removes_it() {
+        let dir = unique_dir("temp");
+        let dest = dir.join("x.csv");
+        std::fs::write(&dest, "keep").unwrap();
+        let (tmp, _file) = create_export_temp_file(&dest.to_string_lossy()).unwrap();
+        assert_eq!(tmp.parent(), dest.parent());
+        assert!(tmp.exists());
+        {
+            let _cleanup = PartialFileCleanup::new(tmp.clone());
+        }
+        assert!(!tmp.exists());
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "keep");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn json_duplicate_column_names_get_numeric_suffixes() {
+        let columns = vec![col("id"), col("id"), col("id_2"), col("id")];
+        assert_eq!(json_keys(&columns), ["id", "id_3", "id_2", "id_4"]);
+        let rows = vec![vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+        ]];
+        let out = String::from_utf8(json_bytes(&columns, &rows)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v[0]["id"], 1);
+        assert_eq!(v[0]["id_3"], 2);
+        assert_eq!(v[0]["id_2"], 3);
+        assert_eq!(v[0]["id_4"], 4);
     }
 
     fn csv_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {

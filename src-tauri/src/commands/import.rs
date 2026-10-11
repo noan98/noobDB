@@ -1010,6 +1010,84 @@ pub async fn import_csv(
     Ok(())
 }
 
+/// 取り込みタスクがキャンセル (`cancel_stream` による abort = future の drop) された
+/// ときの後始末ガード。`spawn_import` の後処理は run_import の完了後にあるため abort では
+/// 実行されず、(a) abort モードで作成済みの空テーブルが残る、(b) skip モードでコミット済みの
+/// 行があってもクエリキャッシュが古いまま・履歴に残らない、(c) 直前の取り込みのスキップ行が
+/// 残って `save_import_skipped_rows` が古い行を書き出す、という問題があった。Drop では await
+/// できないのでバックグラウンドタスクへ投げる。
+struct CancelledImportCleanup {
+    app: AppHandle,
+    session: Arc<Session>,
+    summary: String,
+    database: Option<String>,
+    table: String,
+    abort_mode: bool,
+    committed: Arc<std::sync::atomic::AtomicU64>,
+    created: Arc<std::sync::atomic::AtomicBool>,
+    armed: bool,
+}
+
+impl CancelledImportCleanup {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelledImportCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // 古い取り込みのスキップ行は同期で掃除できる。
+        if let Some(state) = self.app.try_state::<AppState>() {
+            state.set_last_import_skipped(Vec::new());
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!("no runtime for cancelled import post-processing");
+            return;
+        };
+        let session = self.session.clone();
+        let summary = std::mem::take(&mut self.summary);
+        let database = self.database.clone();
+        let table = std::mem::take(&mut self.table);
+        let abort_mode = self.abort_mode;
+        let committed = self.committed.load(std::sync::atomic::Ordering::SeqCst);
+        let created = self.created.load(std::sync::atomic::Ordering::SeqCst);
+        handle.spawn(async move {
+            let mut message = "import cancelled".to_string();
+            if abort_mode && created {
+                // 行はロールバックされるが、直前に作った空テーブルだけが残る。中断された
+                // 書き込みと競合して DROP が一時的に失敗しうるので少し待って再試行する。
+                let mut note = String::new();
+                for attempt in 0..10 {
+                    note = drop_created_table(&session, database.as_deref(), &table).await;
+                    if note.contains("was dropped") {
+                        break;
+                    }
+                    if attempt < 9 {
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
+                message.push_str(&note);
+            }
+            if committed > 0 {
+                // skip モードのチャンクは自動コミット済み: 永続化された行がある。
+                session.query_cache.invalidate_all().await;
+            }
+            record_write_history(
+                &session,
+                summary,
+                database.as_deref(),
+                (committed > 0).then_some(committed as i64),
+                None,
+                Some(message),
+            )
+            .await;
+        });
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn spawn_import(
     app: AppHandle,
@@ -1039,6 +1117,20 @@ async fn spawn_import(
         table,
         mapping.len()
     );
+    // abort (キャンセル) では以降の後処理に到達しないので、ガードの Drop が代わりに
+    // キャッシュ無効化・履歴・スキップ行の掃除・作成テーブルの DROP を行う。
+    let created_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut cancel_cleanup = CancelledImportCleanup {
+        app: app.clone(),
+        session: session.clone(),
+        summary: summary.clone(),
+        database: summary_db.clone(),
+        table: table.clone(),
+        abort_mode: options.error_mode == ImportErrorMode::Abort,
+        committed: committed.clone(),
+        created: created_flag.clone(),
+        armed: true,
+    };
     let result = run_import(
         &app,
         &session,
@@ -1051,8 +1143,10 @@ async fn spawn_import(
         batch_size,
         create_table,
         committed,
+        created_flag,
     )
     .await;
+    cancel_cleanup.disarm();
 
     // Query Result Cache (#1097): インポートはバルク書き込みなので、対象
     // テーブルの行が実際に増えていた場合 (skip モードの部分成功も含む) は
@@ -1207,6 +1301,7 @@ async fn run_import(
     batch_size: usize,
     create_table: Option<Vec<NewColumn>>,
     committed: Arc<std::sync::atomic::AtomicU64>,
+    created_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<ImportRun> {
     let started_app = app.clone();
     let started_id = stream_id.to_string();
@@ -1252,6 +1347,7 @@ async fn run_import(
         batch_size,
         create_table,
         committed,
+        created_flag,
         on_started,
         on_progress,
     )
@@ -1300,6 +1396,7 @@ async fn run_import_core<S, P>(
     batch_size: usize,
     create_table: Option<Vec<NewColumn>>,
     committed: Arc<std::sync::atomic::AtomicU64>,
+    created_flag: Arc<std::sync::atomic::AtomicBool>,
     on_started: S,
     mut on_progress: P,
 ) -> Result<ImportRun>
@@ -1328,6 +1425,9 @@ where
     let created = match &create_table {
         Some(cols) => {
             create_table_for_import(session, database.as_deref(), &table, cols).await?;
+            // キャンセル (abort) 時に spawn_import のガードが後始末できるよう、実際に
+            // 作成できたことを呼び出し元へ伝える。
+            created_flag.store(true, std::sync::atomic::Ordering::SeqCst);
             tracing::info!(
                 session_id = %session.id,
                 stream_id = %stream_id,
@@ -1539,6 +1639,7 @@ pub(crate) async fn import_file_for_test(
         DEFAULT_BATCH_SIZE,
         create_table,
         Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         |_| {},
         |_, _| Ok(()),
     )

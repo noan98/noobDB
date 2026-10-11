@@ -251,7 +251,9 @@ pub fn target_type_sql(driver: DriverKind, ty: &TransferType) -> String {
         (T::Integer, _) => "BIGINT",
 
         (T::UnsignedBigInt, D::Mysql) => "BIGINT UNSIGNED",
-        (T::UnsignedBigInt, D::Sqlite) => "INTEGER",
+        // SQLite の INTEGER は 64bit 符号付き。i64 を超える値 (最大 2^64-1) は REAL に
+        // 変換されて精度が失われるため、十進文字列のまま無損失で保持する。
+        (T::UnsignedBigInt, D::Sqlite) => "TEXT",
         (T::UnsignedBigInt, D::Postgres) => "NUMERIC(20,0)",
 
         (T::Float, D::Postgres) => "DOUBLE PRECISION",
@@ -441,8 +443,13 @@ pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Op
         } else {
             "0".into()
         }),
-        Value::Int(n) if *ty == TransferType::Boolean => Some(bool_text(*n != 0)),
-        Value::UInt(n) if *ty == TransferType::Boolean => Some(bool_text(*n != 0)),
+        // 真偽値列へ 0 / 1 以外の整数 (SQLite は型を強制しない。BIT(n) も該当) が来ても
+        // `true` へ黙って丸めない。そのままの数値テキストで渡し、ターゲットが保持できれば
+        // 値を保ち (MySQL / SQLite)、できなければ (PostgreSQL の BOOLEAN) 行エラーにする。
+        Value::Int(n) if *ty == TransferType::Boolean && (*n == 0 || *n == 1) => {
+            Some(bool_text(*n == 1))
+        }
+        Value::UInt(n) if *ty == TransferType::Boolean && *n <= 1 => Some(bool_text(*n == 1)),
         Value::Int(n) => Some(n.to_string()),
         Value::UInt(n) => Some(n.to_string()),
         Value::Float(f) => Some(f.to_string()),
@@ -713,6 +720,58 @@ mod tests {
         assert_eq!(
             source_select_sql(DriverKind::Mysql, "a`b"),
             "SELECT * FROM `a``b`"
+        );
+    }
+
+    #[test]
+    fn boolean_column_keeps_integers_other_than_zero_and_one() {
+        let b = TransferType::Boolean;
+        for driver in [DriverKind::Mysql, DriverKind::Sqlite, DriverKind::Postgres] {
+            // 0 / 1 だけが真偽値へ変換される。
+            let t = if driver == DriverKind::Postgres {
+                "true"
+            } else {
+                "1"
+            };
+            let f = if driver == DriverKind::Postgres {
+                "false"
+            } else {
+                "0"
+            };
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(1)).as_deref(),
+                Some(t)
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(0)).as_deref(),
+                Some(f)
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::UInt(1)).as_deref(),
+                Some(t)
+            );
+            // それ以外は true へ黙って丸めず、数値のまま渡す。
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(2)).as_deref(),
+                Some("2")
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::Int(-1)).as_deref(),
+                Some("-1")
+            );
+            assert_eq!(
+                value_to_cell(driver, &b, &Value::UInt(255)).as_deref(),
+                Some("255")
+            );
+        }
+    }
+
+    #[test]
+    fn unsigned_bigint_on_sqlite_is_lossless_text() {
+        // INTEGER だと 2^63 以上が REAL に化けるので TEXT にする。
+        assert_eq!(
+            target_type_sql(DriverKind::Sqlite, &TransferType::UnsignedBigInt),
+            "TEXT"
         );
     }
 

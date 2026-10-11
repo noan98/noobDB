@@ -320,12 +320,23 @@ where
         bytes_read += n as u64;
         let mut text = String::with_capacity(
             decoder
-                .max_utf8_buffer_length(n)
+                .max_utf8_buffer_length_without_replacement(n)
                 .unwrap_or(READ_CHUNK_BYTES * 3),
         );
-        // UTF-8 として不正なバイトは置換文字へロッシーにデコードする
-        // (`read_text_file` と同じ縮退)。先頭の BOM は decoder が取り除く。
-        let _ = decoder.decode_to_string(&raw[..n], &mut text, eof);
+        // UTF-8 として不正なバイトは**置換せずエラーにする**。Shift_JIS 等の SQL を
+        // U+FFFD 混じりで実行すると、文字列リテラルが化けたまま DB に書き込まれるため。
+        // 先頭の BOM は decoder が取り除く。
+        let (dec_result, _) =
+            decoder.decode_to_string_without_replacement(&raw[..n], &mut text, eof);
+        if let encoding_rs::DecoderResult::Malformed(_, _) = dec_result {
+            return Ok(runner
+                .abort_with(
+                    "the script is not valid UTF-8 (Shift_JIS / EUC-JP etc. are not supported); convert it to UTF-8 and try again"
+                        .to_string(),
+                    None,
+                )
+                .await);
+        }
         let statements: Vec<ScriptStatement> = if eof {
             let mut v = match splitter.push(&text) {
                 Ok(v) => v,

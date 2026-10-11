@@ -272,6 +272,45 @@ impl Drop for CreatedTableGuard {
     }
 }
 
+/// 転送タスクがキャンセル (`cancel_stream` による abort = future の drop) されたとき、
+/// 通常完了時に走る後処理 ([`after_transfer`]: キャッシュ無効化 + 履歴) を代わりに行う
+/// ガード。abort では `after_transfer` を呼ぶ行まで到達しないため、Append で途中まで
+/// コミット済みの行があってもターゲットの `query_cache` が古いまま残り、書き込みも履歴に
+/// 残らなかった。Drop では await できないのでバックグラウンドタスクへ投げる。
+struct CancelledTransferCleanup {
+    prepared: Arc<PreparedTransfer>,
+    counter: Arc<AtomicU64>,
+    started: Instant,
+    armed: bool,
+}
+
+impl CancelledTransferCleanup {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelledTransferCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!("no runtime for cancelled transfer post-processing");
+            return;
+        };
+        let prepared = self.prepared.clone();
+        let rows = self.counter.load(Ordering::SeqCst);
+        let elapsed_ms = self.started.elapsed().as_millis() as u64;
+        handle.spawn(async move {
+            let result: Result<TransferOutcome> = Err(AppError::Other(format!(
+                "transfer cancelled ({rows} rows had been read)"
+            )));
+            after_transfer(&prepared, &result, elapsed_ms).await;
+        });
+    }
+}
+
 /// ターゲット側の準備 (列計画 + DDL)。最初のバッチ (または空結果の終端) で 1 回だけ呼ぶ。
 async fn prepare_target(
     target: &Arc<Session>,
@@ -558,7 +597,7 @@ pub async fn transfer_data(
     state: State<'_, AppState>,
 ) -> Result<()> {
     // 入力・ガードのエラーは invoke の戻り値として即座に返す。
-    let prepared = prepare_transfer(&state, request).await?;
+    let prepared = Arc::new(prepare_transfer(&state, request).await?);
     let counter = Arc::new(AtomicU64::new(0));
 
     // register_stream をタスク本体より前に完了させるゲート (export / import と同じ
@@ -573,6 +612,14 @@ pub async fn transfer_data(
         let emit_app = app.clone();
         let emit_id = stream_id_for_task.clone();
         let started = Instant::now();
+        // abort (キャンセル) されると以降の after_transfer に到達しないので、その場合は
+        // このガードの Drop が代わりにキャッシュ無効化と履歴記録を行う。
+        let mut cancel_cleanup = CancelledTransferCleanup {
+            prepared: prepared.clone(),
+            counter: counter_for_task.clone(),
+            started,
+            armed: true,
+        };
         // 進捗イベントは 150ms ごとに間引く (#1258)。最終値は完了前に追い送りする。
         let emitted = Arc::new(AtomicU64::new(0));
         let emitted_cb = emitted.clone();
@@ -603,6 +650,7 @@ pub async fn transfer_data(
             }
         }
         let elapsed_ms = started.elapsed().as_millis() as u64;
+        cancel_cleanup.disarm();
         after_transfer(&prepared, &result, elapsed_ms).await;
         match result {
             Ok(outcome) => {
