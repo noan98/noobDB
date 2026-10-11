@@ -108,10 +108,10 @@ export function TableConstraintEditor({
                 minW="140px"
               />
               <Input
-                value={fk.refColumns.join(", ")}
-                onChange={(e) =>
-                  setFk(i, { refColumns: e.target.value.split(",").map((c) => c.trim()) })
-                }
+                // 入力途中の空白 (`Order Id` など) を保つため trim せず、"," で分割・結合するだけに
+                // して往復で文字列が変わらないようにする。trim は SQL 生成側 (identList) が行う。
+                value={fk.refColumns.join(",")}
+                onChange={(e) => setFk(i, { refColumns: e.target.value.split(",") })}
                 placeholder={t("constraintFkRefColumns")}
                 aria-label={t("constraintFkRefColumns")}
                 flex="1"

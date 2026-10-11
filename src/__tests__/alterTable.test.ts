@@ -398,3 +398,93 @@ describe("buildAlterPlan: statement ordering", () => {
     ]);
   });
 });
+
+describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
+  it("ADD COLUMN の式 DEFAULT を全方言で文字列化しない", () => {
+    const pg = buildAlterPlan(
+      "postgres",
+      form({ added: [{ name: "token", type: "text", notNull: false, defaultValue: "gen_random_uuid()::text" }] }),
+    );
+    expect(pg.statements[0].sql).toBe(
+      'ALTER TABLE "shop"."users" ADD COLUMN "token" text DEFAULT gen_random_uuid()::text;',
+    );
+    const my = buildAlterPlan(
+      "mysql",
+      form({ added: [{ name: "u", type: "varchar(36)", notNull: false, defaultValue: "(UUID())" }] }),
+    );
+    expect(my.statements[0].sql).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `u` varchar(36) DEFAULT (UUID());");
+    const lite = buildAlterPlan(
+      "sqlite",
+      form({ added: [{ name: "c", type: "text", notNull: false, defaultValue: "007" }] }),
+    );
+    expect(lite.statements[0].sql).toBe('ALTER TABLE "users" ADD COLUMN "c" text DEFAULT \'007\';');
+  });
+
+  it("CHANGE COLUMN に DEFAULT_GENERATED を入れない", () => {
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [
+          baseline({
+            name: "created_at",
+            type: "timestamp",
+            defaultValue: "CURRENT_TIMESTAMP",
+            extra: "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+            comment: "",
+          }),
+        ],
+        existing: [
+          edit({
+            original: "created_at",
+            name: "created_at",
+            type: "timestamp",
+            defaultValue: "CURRENT_TIMESTAMP",
+            comment: "x",
+          }),
+        ],
+      }),
+    );
+    expect(plan.statements[0].sql).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `created_at` `created_at` timestamp DEFAULT CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP COMMENT 'x';",
+    );
+  });
+});
+
+describe("buildAlterPlan: MySQL 既存列の既定値 (#1527 レビュー)", () => {
+  const change = (base: Partial<ExistingColumnBaseline>, ed: Partial<ExistingColumnEdit>) =>
+    buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "c", type: "varchar(10)", ...base })],
+        existing: [edit({ original: "c", name: "c", type: "varchar(10)", comment: "x", ...ed })],
+      }),
+    ).statements[0].sql;
+
+  it("文字列既定値 (none) はコメントだけ変えてもリテラルのまま", () => {
+    expect(change({ defaultValue: "(none)", comment: "" }, { defaultValue: "(none)" })).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT '(none)' COMMENT 'x';",
+    );
+  });
+  it("DEFAULT_GENERATED の式既定値は (expr) で包む。現在時刻系は包まない", () => {
+    expect(
+      change({ defaultValue: "uuid()", extra: "DEFAULT_GENERATED" }, { defaultValue: "uuid()" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT (uuid()) COMMENT 'x';");
+    expect(
+      change({ defaultValue: "CURRENT_TIMESTAMP", extra: "DEFAULT_GENERATED" }, { defaultValue: "CURRENT_TIMESTAMP" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT CURRENT_TIMESTAMP COMMENT 'x';");
+    // 全体が 1 組の括弧で包まれているときだけ包まない。`(a) + (b)` は包む。
+    expect(
+      change({ defaultValue: "(rand())", extra: "DEFAULT_GENERATED" }, { defaultValue: "(rand())" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT (rand()) COMMENT 'x';");
+    expect(
+      change({ defaultValue: "(1) + (2)", extra: "DEFAULT_GENERATED" }, { defaultValue: "(1) + (2)" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT ((1) + (2)) COMMENT 'x';");
+  });
+  it("ADD COLUMN で型が空なら TEXT として既定値を判定する", () => {
+    const r = buildAlterPlan(
+      "mysql",
+      form({ added: [{ name: "a", type: "", notNull: false, defaultValue: "007" }] }),
+    );
+    expect(r.statements[0].sql).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `a` TEXT DEFAULT '007';");
+  });
+});

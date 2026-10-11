@@ -1122,6 +1122,15 @@ pub fn cleanup_stale_dump_credential_files() {
         if !(name.ends_with(".cnf") || name.ends_with(".pgpass")) {
             continue;
         }
+        // 別インスタンスが実行中のダンプの資格情報ファイル (`noobdb-dump-<pid>-*`) は消さない。
+        let pid = name
+            .strip_prefix(DUMP_CREDENTIAL_FILE_PREFIX)
+            .and_then(|rest| rest.split_once('-'))
+            .and_then(|(pid, _)| pid.parse::<u32>().ok());
+        let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+        if crate::commands::local::is_owner_alive(pid, modified) {
+            continue;
+        }
         let path = entry.path();
         if let Err(e) = std::fs::remove_file(&path) {
             tracing::warn!(
@@ -1148,7 +1157,8 @@ impl DefaultsFile {
         // `DUMP_CREDENTIAL_FILE_PREFIX`/`.cnf` naming is also what
         // `cleanup_stale_dump_credential_files` matches on at startup.
         let name = format!(
-            "{DUMP_CREDENTIAL_FILE_PREFIX}{}.cnf",
+            "{DUMP_CREDENTIAL_FILE_PREFIX}{}-{}.cnf",
+            std::process::id(),
             crate::state::random_slug(8)
         );
         let path = std::env::temp_dir().join(name);
@@ -1216,7 +1226,8 @@ impl PgPassFile {
         // `DUMP_CREDENTIAL_FILE_PREFIX`/`.pgpass` naming is also what
         // `cleanup_stale_dump_credential_files` matches on at startup.
         let name = format!(
-            "{DUMP_CREDENTIAL_FILE_PREFIX}{}.pgpass",
+            "{DUMP_CREDENTIAL_FILE_PREFIX}{}-{}.pgpass",
+            std::process::id(),
             crate::state::random_slug(8)
         );
         let path = std::env::temp_dir().join(name);

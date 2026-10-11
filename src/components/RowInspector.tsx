@@ -18,6 +18,7 @@ import {
   type NavDirection,
 } from "./rowInspectorNav";
 import { copyToClipboard } from "./clipboard";
+import { formatJsonLossless } from "./jsonTree";
 import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
 import type { CellKind } from "./cellTypeMeta";
@@ -98,15 +99,14 @@ interface Props {
   hasNext: boolean;
 }
 
-/** Pretty-print a string as JSON, or null when it isn't valid JSON. */
+/**
+ * Pretty-print a string as JSON, or null when it isn't valid JSON. 数値は元の
+ * 文字列のまま保つ (`JSON.parse` だと 64bit 整数や 1.0 / 1e3 の表記が変わる)。
+ */
 function tryFormatJson(s: string): string | null {
   const trimmed = s.trim();
   if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return null;
-  }
+  return formatJsonLossless(trimmed, 2);
 }
 
 const MotionDrawer = chakra(motion.div, {}, { forwardProps: ["transition"] });
@@ -648,7 +648,7 @@ export function RowInspector({
                                 cursor: "not-allowed",
                               }}
                               disabled={isNull || masked}
-                              onClick={() => void copyField(display)}
+                              onClick={() => void copyField(raw)}
                               aria-label={t("gridInspectorCopyField")}
                             >
                               <Icon name="copy" size={ICON_SIZES.sm} />

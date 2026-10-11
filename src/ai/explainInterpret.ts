@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import { dialectLabel, sqlForAi } from "./errorExplain";
+import { sliceHead } from "./textSlice";
 
 /** プロンプトに含める実行計画本文の上限 (巨大な JSON でトークンが膨らむのを防ぐ)。 */
 export const EXPLAIN_INTERPRET_MAX_PLAN_CHARS = 24000;
@@ -128,7 +129,7 @@ function maskJsonStrings(v: unknown): unknown {
 export function planForAi(plan: string, mask: boolean): string {
   const body = mask ? maskPlanLiterals(plan) : plan;
   if (body.length <= EXPLAIN_INTERPRET_MAX_PLAN_CHARS) return body;
-  return `${body.slice(0, EXPLAIN_INTERPRET_MAX_PLAN_CHARS)}\n... (truncated)`;
+  return `${sliceHead(body, EXPLAIN_INTERPRET_MAX_PLAN_CHARS)}\n... (truncated)`;
 }
 
 /** 方言ごとの EXPLAIN 出力形式の説明 (プロンプトに載せる)。 */

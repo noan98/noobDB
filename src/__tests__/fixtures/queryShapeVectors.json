@@ -4,6 +4,11 @@
   "drivers": ["mysql", "postgres", "sqlite"],
   "cases": [
     {
+      "sql": "(SELECT 1 UNION SELECT 2)",
+      "note": "括弧で始まる SELECT。PostgreSQL / MySQL は先頭の '(' を剥がして結果経路に流す (#1519)。SQLite は '(' 始まりの SELECT 自体が構文エラーなので false が正しい",
+      "expected": { "mysql": true, "postgres": true, "sqlite": false }
+    },
+    {
       "sql": "SELECT * FROM users",
       "note": "素の SELECT",
       "expected": { "mysql": true, "postgres": true, "sqlite": true }

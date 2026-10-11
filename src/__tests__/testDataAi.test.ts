@@ -126,6 +126,16 @@ describe("buildTestDataPlan", () => {
     expect(plan.warnings).toEqual([{ code: "unknownColumn", columns: ["ghost"] }]);
   });
 
+  it("JS の安全整数を超える整数候補は採用しない (丸められて別の値が入るため)", () => {
+    const cols = [col({ name: "ref_no", data_type: "bigint" })];
+    const ctx = buildTestDataAiContext(cols, cols.map(inferColumnSpec), {}, []);
+    const big: TestDataAiResponse = {
+      columns: [{ name: "ref_no", kind: "choices", choices: ["9007199254740993", "9007199254740991"], notes: "" }],
+      consistency_rules: [],
+    };
+    expect(buildTestDataPlan(big, ctx.columns).columns.ref_no.choices).toEqual(["9007199254740991"]);
+  });
+
   it("候補数の揃わない整合ルールは適用せず警告する", () => {
     const { context } = setup();
     const bad = {

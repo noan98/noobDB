@@ -86,7 +86,8 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
         ? buildCreateTableSql(driver, {
             database,
             table: table.trim(),
-            columns,
+            // 列名の前後空白は検証側 (trim 済み) と制約エディタ候補に合わせて落とす。
+            columns: columns.map((c) => ({ ...c, name: c.name.trim() })),
             // id は React key 専用のローカル state なので純ロジックへ渡す前に落とす。
             foreignKeys: foreignKeys
               .filter(isCompleteForeignKey)

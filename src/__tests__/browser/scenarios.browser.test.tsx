@@ -424,6 +424,7 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
           database: "appdb",
           table: "fruits",
           pkColumns: ["id"],
+          pkBinary: [false],
           groups: [{ set: [{ column: "qty", value: { kind: "number", text: "42" } }], keys: [[2]] }],
           extraStatements: [],
         },

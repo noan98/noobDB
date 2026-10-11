@@ -216,6 +216,9 @@ export function SnippetForm({
                 onChange={(e) => setScopeProfileId(e.target.value)}
               >
                 {profiles.length === 0 && <option value="">—</option>}
+                {scopeProfileId !== "" && !profiles.some((p) => p.id === scopeProfileId) && (
+                  <option value={scopeProfileId}>{t("snippetScopeDeletedProfile")}</option>
+                )}
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}

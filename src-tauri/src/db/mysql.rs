@@ -878,10 +878,15 @@ impl MySqlConn {
             row_locks = self.query_id_pairs(DATA_LOCK_WAITS).await;
         }
         if row_locks.is_none() && !self.innodb_lock_waits_missing.load(Ordering::Relaxed) {
-            row_locks = self.query_id_pairs(INNODB_LOCK_WAITS).await;
-            if row_locks.is_none() {
-                self.innodb_lock_waits_missing
-                    .store(true, Ordering::Relaxed);
+            match self.query_id_pairs_checked(INNODB_LOCK_WAITS).await {
+                Ok(v) => row_locks = Some(v),
+                // テーブルが存在しないときだけ恒久的に諦める。プール枯渇や
+                // 権限不足などの一過性の失敗では次回以降も再試行する (#1519)。
+                Err(e) if is_missing_table_error(&e) => {
+                    self.innodb_lock_waits_missing
+                        .store(true, Ordering::Relaxed);
+                }
+                Err(_) => {}
             }
         }
         pairs.extend(row_locks.unwrap_or_default());
@@ -914,20 +919,27 @@ impl MySqlConn {
 
     /// 2 列 (id, id) を返す照会を実行する。失敗 (テーブル無し・権限不足) は `None`。
     async fn query_id_pairs(&self, sql: &'static str) -> Option<Vec<(i64, i64)>> {
-        let rows = sqlx::query(sql).fetch_all(&self.pool).await.ok()?;
-        Some(
-            rows.iter()
-                .filter_map(|r| {
-                    let get = |i: usize| {
-                        r.try_get::<u64, _>(i)
-                            .map(|v| v as i64)
-                            .or_else(|_| r.try_get::<i64, _>(i))
-                            .ok()
-                    };
-                    Some((get(0)?, get(1)?))
-                })
-                .collect(),
-        )
+        self.query_id_pairs_checked(sql).await.ok()
+    }
+
+    /// [`Self::query_id_pairs`] の失敗理由を保つ版。
+    async fn query_id_pairs_checked(
+        &self,
+        sql: &'static str,
+    ) -> std::result::Result<Vec<(i64, i64)>, sqlx::Error> {
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let get = |i: usize| {
+                    r.try_get::<u64, _>(i)
+                        .map(|v| v as i64)
+                        .or_else(|_| r.try_get::<i64, _>(i))
+                        .ok()
+                };
+                Some((get(0)?, get(1)?))
+            })
+            .collect())
     }
 
     /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。
@@ -2848,6 +2860,18 @@ fn strip_sql_comments(sql: &str) -> String {
     super::strip_sql_comments(sql, super::SqlFlavor::MySql)
 }
 
+/// 照会の失敗が「テーブルが存在しない」(ER_NO_SUCH_TABLE 1146 /
+/// ER_UNKNOWN_TABLE 1109) かを判定する純関数 (#1519)。
+fn is_missing_table_code(number: u16) -> bool {
+    matches!(number, 1146 | 1109)
+}
+
+fn is_missing_table_error(err: &sqlx::Error) -> bool {
+    err.as_database_error()
+        .and_then(|d| d.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
+        .is_some_and(|d| is_missing_table_code(d.number()))
+}
+
 /// Decides whether `sql` should run through the result-set path
 /// (`fetch`/`fetch_all`) or the `execute` path that only reports
 /// `rows_affected`. The leading keyword is the main signal, with one shape
@@ -2869,7 +2893,12 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
     // Leading comments/whitespace must be skipped before the keyword check, or
     // a perfectly normal `/* hint */ SELECT ...` / `-- note\nWITH ...` would
     // miss the prefix match and get misrouted to the execute path.
-    let trimmed = skip_leading_comments_and_ws(sql).to_ascii_lowercase();
+    // `(SELECT 1) UNION (SELECT 2)` のように括弧で始まる問い合わせも結果経路へ (#1519)。
+    let mut rest = skip_leading_comments_and_ws(sql);
+    while let Some(r) = rest.strip_prefix('(') {
+        rest = skip_leading_comments_and_ws(r);
+    }
+    let trimmed = rest.to_ascii_lowercase();
     if trimmed.starts_with("with") {
         return !with_cte_is_mutation(super::DriverKind::Mysql, sql);
     }
@@ -3274,6 +3303,21 @@ mod tests {
             !process_list_needs_fallback(&nonempty_ok),
             "a non-empty success must NOT fall back"
         );
+    }
+
+    #[test]
+    fn missing_table_code_only_matches_no_such_table() {
+        assert!(is_missing_table_code(1146));
+        assert!(is_missing_table_code(1109));
+        assert!(!is_missing_table_code(1142));
+        assert!(!is_missing_table_code(1205));
+    }
+
+    #[test]
+    fn query_shape_accepts_parenthesized_select() {
+        assert!(is_query_shape("(SELECT 1) UNION (SELECT 2)"));
+        assert!(is_query_shape("( /* c */ select 1 )"));
+        assert!(!is_query_shape("(INSERT INTO t VALUES (1))"));
     }
 
     #[test]

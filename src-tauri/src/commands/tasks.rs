@@ -81,6 +81,45 @@ pub async fn list_tasks() -> Result<Vec<TaskDefinition>> {
     store::load_all()
 }
 
+/// `save_task` のロック下で行う純粋な更新部分。`requested_id` が指定されているのに
+/// 該当タスクが無いのは、保存中に削除された編集なのでエラーにし、削除済みタスクを
+/// 復活させない。既存タスクの `created_at` / `last_run_at` / `last_status` は引き継ぐ。
+fn apply_save(
+    tasks: &mut Vec<TaskDefinition>,
+    requested_id: Option<&str>,
+    id: &str,
+    req: &SaveTaskRequest,
+    next_run_at: Option<String>,
+    now: chrono::DateTime<Utc>,
+) -> Result<TaskDefinition> {
+    let existing = tasks.iter().find(|t| t.id == id).cloned();
+    if requested_id.is_some() && existing.is_none() {
+        return Err(AppError::InvalidInput(format!("task not found: {id}")));
+    }
+    let created_at = existing
+        .as_ref()
+        .map(|t| t.created_at.clone())
+        .unwrap_or_else(|| now.to_rfc3339());
+    let task = TaskDefinition {
+        id: id.to_string(),
+        name: req.name.clone(),
+        profile_id: req.profile_id.clone(),
+        action: req.action.clone(),
+        schedule: req.schedule,
+        enabled: req.enabled,
+        created_at,
+        updated_at: now.to_rfc3339(),
+        next_run_at,
+        last_run_at: existing.as_ref().and_then(|t| t.last_run_at.clone()),
+        last_status: existing.as_ref().and_then(|t| t.last_status.clone()),
+    };
+    match tasks.iter_mut().find(|t| t.id == id) {
+        Some(slot) => *slot = task.clone(),
+        None => tasks.push(task.clone()),
+    }
+    Ok(task)
+}
+
 #[tauri::command]
 pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
     if req.name.trim().is_empty() {
@@ -97,16 +136,9 @@ pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
         )));
     }
 
-    let id = req
-        .id
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(store::new_task_id);
+    let requested_id = req.id.clone().filter(|s| !s.is_empty());
+    let id = requested_id.clone().unwrap_or_else(store::new_task_id);
     let now = Utc::now();
-    let existing = store::load_all()?.into_iter().find(|t| t.id == id);
-    let created_at = existing
-        .as_ref()
-        .map(|t| t.created_at.clone())
-        .unwrap_or_else(|| now.to_rfc3339());
 
     // 保存のたびに「今から」の次回発火時刻を計算し直す (有効なタスクのみ)。
     // スケジュール変更・再有効化・単純な名前変更のいずれでも一貫した挙動になる。
@@ -116,20 +148,22 @@ pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
         None
     };
 
-    let task = TaskDefinition {
-        id,
-        name: req.name,
-        profile_id: req.profile_id,
-        action: req.action,
-        schedule: req.schedule,
-        enabled: req.enabled,
-        created_at,
-        updated_at: now.to_rfc3339(),
-        next_run_at,
-        last_run_at: existing.as_ref().and_then(|t| t.last_run_at.clone()),
-        last_status: existing.as_ref().and_then(|t| t.last_status.clone()),
-    };
-    store::upsert(task.clone())?;
+    // 既存タスクの読み出しから書き戻しまでをストアのロック下で一息に行う。
+    // 別ロックで読むと、間に割り込んだ `delete_task` の削除を `upsert` が復活させたり、
+    // スケジューラが書いた `last_run_at` / `last_status` を古い値で上書きしたりする。
+    let mut saved: Option<TaskDefinition> = None;
+    store::update_all(|tasks| {
+        saved = Some(apply_save(
+            tasks,
+            requested_id.as_deref(),
+            &id,
+            &req,
+            next_run_at.clone(),
+            now,
+        )?);
+        Ok(())
+    })?;
+    let task = saved.ok_or_else(|| AppError::Other("task save did not produce a result".into()))?;
     Ok(task)
 }
 
@@ -178,6 +212,12 @@ pub async fn run_task_now(app: AppHandle, id: String) -> Result<TaskRun> {
         .ok_or_else(|| AppError::InvalidInput(format!("task not found: {id}")))?;
     validate_action(&task.action)?;
 
+    let Some(_run_guard) = scheduler::try_acquire_run(&task.id) else {
+        return Err(AppError::InvalidInput(format!(
+            "task is already running: {}",
+            task.id
+        )));
+    };
     let event = scheduler::execute_and_log(&app, task.clone(), false).await;
     // 直近の 1 件が今実行したものであるはずなので、それを返す (レースで別の実行が
     // 割り込んだ場合でもタスク単位で最新のログを返すだけなので実害はない)。
@@ -224,4 +264,60 @@ pub async fn get_scheduler_settings() -> Result<SchedulerSettings> {
 pub async fn set_scheduler_settings(settings: SchedulerSettings) -> Result<SchedulerSettings> {
     store::save_settings(settings)?;
     Ok(settings)
+}
+
+#[cfg(test)]
+mod apply_save_tests {
+    use super::*;
+    use crate::tasks::TaskSchedule;
+
+    fn req(id: Option<&str>) -> SaveTaskRequest {
+        SaveTaskRequest {
+            id: id.map(str::to_string),
+            name: "t".into(),
+            profile_id: "p".into(),
+            action: TaskAction::RunAssertions {
+                database: None,
+                assertion_ids: vec![],
+            },
+            schedule: TaskSchedule::Interval { minutes: 5 },
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn editing_a_deleted_task_errors_instead_of_resurrecting_it() {
+        let mut tasks = Vec::new();
+        let err = apply_save(
+            &mut tasks,
+            Some("gone"),
+            "gone",
+            &req(Some("gone")),
+            None,
+            Utc::now(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn new_task_is_added_and_edit_keeps_last_run() {
+        let mut tasks = Vec::new();
+        let now = Utc::now();
+        apply_save(&mut tasks, None, "new1", &req(None), None, now).unwrap();
+        assert_eq!(tasks.len(), 1);
+        tasks[0].last_status = Some("ok".into());
+        let edited = apply_save(
+            &mut tasks,
+            Some("new1"),
+            "new1",
+            &req(Some("new1")),
+            None,
+            now,
+        )
+        .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(edited.last_status.as_deref(), Some("ok"));
+    }
 }
