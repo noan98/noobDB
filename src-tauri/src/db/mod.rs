@@ -285,11 +285,6 @@ impl WriteCapture {
     }
 }
 
-/// Tagged signature of a row's values, used to tell whether the same physical
-/// row appears in two row sets (e.g. an INSERT's before/after LIMIT-window
-/// scan). Mirrors `data_diff`'s private `key_signature` helper; kept as a
-/// separate copy here rather than exposing that one, since the two call sites
-/// have no other coupling.
 /// INSERT の捕捉で、dry-run が見た新規行 (`dry`) と、本実行後に同じ主キーで
 /// 取り直した実在行 (`live`) を突き合わせる。`live` に実在した行だけを
 /// `dry` の順で返す (実在しない = 自動採番がずれた行は落とす)。値は `live`
@@ -330,6 +325,11 @@ fn reconcile_inserted_rows(
         .collect()
 }
 
+/// Tagged signature of a row's values, used to tell whether the same physical
+/// row appears in two row sets (e.g. an INSERT's before/after LIMIT-window
+/// scan). Mirrors `data_diff`'s private `key_signature` helper; kept as a
+/// separate copy here rather than exposing that one, since the two call sites
+/// have no other coupling.
 fn row_signature(values: &[Value]) -> String {
     values
         .iter()
@@ -1574,6 +1574,8 @@ impl Connection {
                 // 振られた id (例 4) と本実行の id (例 5) がずれる。本実行後に dry-run の
                 // 主キーで実在する行を取り直し、実際に存在する行だけを記録する
                 // (見つからなければ件数が合わず、下で記録を辞退する)。
+                // 取り直しは成功したが 1 件も実在しなかった = 自動採番で id がずれた可能性。
+                let mut autoinc_mismatch = false;
                 let new_rows: Vec<Vec<Value>> = if dry_new_rows.is_empty()
                     || dry_new_rows.len() as u64 != result.rows_affected
                 {
@@ -1589,19 +1591,25 @@ impl Connection {
                         )
                         .await
                     {
-                        Ok(live) => reconcile_inserted_rows(&dry_new_rows, live, &columns, &pk_idx),
+                        Ok(live) => {
+                            let rows =
+                                reconcile_inserted_rows(&dry_new_rows, live, &columns, &pk_idx);
+                            autoinc_mismatch = rows.is_empty();
+                            rows
+                        }
                         Err(_) => Vec::new(),
                     }
                 };
 
                 if new_rows.is_empty() || new_rows.len() as u64 != result.rows_affected {
+                    let reason = if autoinc_mismatch {
+                        "自動採番のため挿入行を特定できません (採番値が dry-run と本実行でずれました)"
+                    } else {
+                        "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)"
+                    };
                     return Ok((
                         result,
-                        WriteCapture::not_capturable_with_meta(
-                            kind,
-                            "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)",
-                            &dry,
-                        ),
+                        WriteCapture::not_capturable_with_meta(kind, reason, &dry),
                     ));
                 }
 

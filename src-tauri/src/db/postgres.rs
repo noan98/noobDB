@@ -390,6 +390,19 @@ impl PostgresConn {
                 .collect(),
             _ => Vec::new(),
         };
+        // PK 列ごとに bytea 型か (hex リテラル化してよい型か) を控える。
+        let pk_is_bytea: Vec<bool> = match before_raw.first() {
+            Some(first) => pk_indices
+                .iter()
+                .map(|&i| {
+                    first
+                        .columns()
+                        .get(i)
+                        .is_some_and(|c| c.type_info().name().eq_ignore_ascii_case("BYTEA"))
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         // 全ての PK 列を特定できたときだけ PK アンカーを使う。
         let captured_pks: Vec<Vec<Value>> =
             if !pk_indices.is_empty() && pk_indices.len() == primary_key.len() {
@@ -419,7 +432,14 @@ impl PostgresConn {
                     &primary_key,
                     &captured_pks
                         .iter()
-                        .map(|row| row.iter().map(pk_literal).collect())
+                        .map(|row| {
+                            row.iter()
+                                .enumerate()
+                                .map(|(i, v)| {
+                                    pk_literal(v, pk_is_bytea.get(i).copied().unwrap_or(false))
+                                })
+                                .collect()
+                        })
                         .collect::<Vec<Vec<String>>>(),
                     &order_clause,
                     pg_quote_ident,
@@ -2987,20 +3007,16 @@ fn pg_literal(cell: Option<&str>) -> String {
 /// 比較相手の列型へ暗黙に解決されるため、列型を知らないこの経路でも安全に
 /// 比較できる (`import_rows` が値をリテラルで流し込んでいるのと同じ理由)。
 ///
-/// BLOB (`Value::Bytes`) は bytea の hex 入力形式 (`'\x…'`) に戻す。16 進として
-/// 不正な場合だけ `NULL` にし、AFTER から当該行が落ちるだけに留める。
-fn pk_literal(v: &Value) -> String {
+/// BLOB (`Value::Bytes`) は、列が bytea のときだけ hex 入力形式 (`'\x…'`) に戻す。
+/// それ以外の型や、16 進として不正な場合は `NULL` にし、AFTER から当該行が
+/// 落ちるだけに留める (型不一致でエラーにしない)。
+fn pk_literal(v: &Value, is_bytea: bool) -> String {
     match v {
         Value::Null => "NULL".to_string(),
-        // bytea 主キー: 16 進文字列を `'\x…'` (bytea の hex 入力形式) に戻す。
-        // 16 進として不正なら NULL (AFTER から行が落ちるだけ)。
-        Value::Bytes(hex) => {
-            if hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-                format!("'\\x{hex}'")
-            } else {
-                "NULL".to_string()
-            }
+        Value::Bytes(hex) if is_bytea && hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            format!("'\\x{hex}'")
         }
+        Value::Bytes(_) => "NULL".to_string(),
         Value::Bool(b) => pg_literal(Some(if *b { "true" } else { "false" })),
         Value::Int(i) => pg_literal(Some(i.to_string().as_str())),
         Value::UInt(u) => pg_literal(Some(u.to_string().as_str())),
@@ -3602,18 +3618,23 @@ mod tests {
 
     #[test]
     fn pk_literals_are_untyped_and_safe() {
-        assert_eq!(pk_literal(&Value::Int(42)), "'42'");
-        assert_eq!(pk_literal(&Value::UInt(7)), "'7'");
-        assert_eq!(pk_literal(&Value::Bool(true)), "'true'");
+        assert_eq!(pk_literal(&Value::Int(42), false), "'42'");
+        assert_eq!(pk_literal(&Value::UInt(7), false), "'7'");
+        assert_eq!(pk_literal(&Value::Bool(true), false), "'true'");
         assert_eq!(
-            pk_literal(&Value::String("a'b".to_string())),
+            pk_literal(&Value::String("a'b".to_string()), false),
             "'a''b'",
             "PK 値に単一引用符が含まれても壊れない"
         );
         // NULL と BLOB は NULL 扱い (該当行が AFTER から落ちるだけ)。
-        assert_eq!(pk_literal(&Value::Null), "NULL");
-        assert_eq!(pk_literal(&Value::Bytes("zz".to_string())), "NULL");
+        assert_eq!(pk_literal(&Value::Null, false), "NULL");
+        assert_eq!(pk_literal(&Value::Bytes("zz".to_string()), true), "NULL");
         // bytea 主キーは hex 入力形式のリテラルに戻る。
-        assert_eq!(pk_literal(&Value::Bytes("00ff".to_string())), "'\\x00ff'");
+        assert_eq!(
+            pk_literal(&Value::Bytes("00ff".to_string()), true),
+            "'\\x00ff'"
+        );
+        // bytea 以外の列では従来どおり NULL。
+        assert_eq!(pk_literal(&Value::Bytes("00ff".to_string()), false), "NULL");
     }
 }

@@ -693,10 +693,13 @@ impl MySqlConn {
         };
         let (schema, table) = split_table_ref(&target);
         let db = schema.as_deref().or(database);
+        // 照会そのものが失敗した (権限不足など) ときは、ロールバックできるか
+        // 確認できないので非トランザクショナル扱いにして安全側に倒す。表が
+        // 見つからない (行なし) 場合は `table_is_transactional` が true を返す。
         !self
             .table_is_transactional(db, &table)
             .await
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     /// Row-by-row probe inside a rolled-back transaction to find the first
