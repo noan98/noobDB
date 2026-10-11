@@ -253,7 +253,14 @@ export function buildColumnStatsSql(req: FullStatsRequest): string {
   ];
   if (numeric) {
     parts.push(`AVG(${col}) AS avg_value`);
-    parts.push(`SUM(${col}) AS sum_value`);
+    // SQLite の SUM() は整数だけの列で 64bit を超えると "integer overflow" で SELECT 全体を
+    // 失敗させる。TOTAL() は浮動小数で返しオーバーフローしない (対象行が無いと 0.0 になるので
+    // SUM と同じく NULL に揃える)。
+    parts.push(
+      req.driver === "sqlite"
+        ? `CASE WHEN COUNT(${col}) = 0 THEN NULL ELSE TOTAL(${col}) END AS sum_value`
+        : `SUM(${col}) AS sum_value`,
+    );
   }
   return `SELECT ${parts.join(", ")} FROM ${ref}`;
 }

@@ -372,6 +372,8 @@ mod tests {
             unique,
             primary: false,
             method: Some("BTREE".to_string()),
+            predicate: None,
+            has_expression: false,
         }
     }
 

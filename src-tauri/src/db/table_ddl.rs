@@ -10,9 +10,10 @@
 //! で接続自身の方言の DDL にする。純関数なので DB 無しでテストできる。
 //!
 //! あくまでベストエフォート: 生成列の式・CHECK 制約・パーティション・
-//! ストレージオプション・部分/式インデックスは introspection が持たないため
-//! 出力されない。その旨を DDL 冒頭のコメント ([`SYNTHESIZED_DDL_HEADER`]) で
-//! 明示する。
+//! ストレージオプション・外部キーの参照動作 (ON DELETE / ON UPDATE)・式インデックスは
+//! introspection が持たないため出力されない (式インデックスは誤った形で出さず、
+//! 末尾のコメントで名前だけ知らせる)。部分インデックスは述語 (`WHERE`) 付きで出力する。
+//! その旨を DDL 冒頭のコメント ([`SYNTHESIZED_DDL_HEADER`]) で明示する。
 
 use super::sync::{column_def, quote_ident, render_create_table};
 use super::types::{ForeignKey, IndexInfo, TableColumnInfo};
@@ -22,8 +23,9 @@ use super::DriverKind;
 /// 実行できる。
 pub const SYNTHESIZED_DDL_HEADER: &str = "\
 -- Reconstructed by noobDB from catalog metadata (best-effort).
--- Generated columns, CHECK constraints, partitioning, storage options and
--- partial/expression indexes are not included. Review before running.
+-- Generated columns, CHECK constraints, partitioning, storage options,
+-- foreign key referential actions (ON DELETE / ON UPDATE) and expression
+-- indexes are not included. Review before running.
 ";
 
 /// `schema` (PostgreSQL のスキーマ) で修飾したテーブル名。
@@ -130,16 +132,16 @@ fn render_foreign_key(driver: DriverKind, g: &FkGroup<'_>) -> String {
     out
 }
 
-/// PK 以外のインデックスの `CREATE INDEX`。列の無いもの (式インデックス等) は
-/// 正しく再現できないので出さない。
+/// PK 以外のインデックスの `CREATE INDEX`。列の無いもの・式を含むものは正しく再現できない
+/// (列だけで作ると制約が変わる) ので出さない。部分インデックスは `WHERE` 述語を付ける。
 fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<String> {
-    if idx.primary || idx.columns.is_empty() {
+    if idx.primary || idx.columns.is_empty() || idx.has_expression {
         return None;
     }
     let cols: Vec<String> = idx.columns.iter().map(|c| quote_ident(driver, c)).collect();
     let unique = if idx.unique { "UNIQUE " } else { "" };
     let method = idx.method.as_deref().unwrap_or("");
-    let sql = match driver {
+    let mut sql = match driver {
         // PostgreSQL は btree 以外のアクセスメソッドを `USING` で残す。
         DriverKind::Postgres if !method.is_empty() && !method.eq_ignore_ascii_case("btree") => {
             format!(
@@ -154,6 +156,9 @@ fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<
             cols.join(", ")
         ),
     };
+    if let Some(pred) = idx.predicate.as_deref().filter(|p| !p.trim().is_empty()) {
+        sql.push_str(&format!(" WHERE {pred}"));
+    }
     Some(sql)
 }
 
@@ -196,6 +201,13 @@ pub fn synthesize_create_table(
     out.push_str(&statements.join(";\n\n"));
     out.push(';');
     out.push('\n');
+    // 再現できなかった式インデックスは名前だけコメントで知らせる (無言で落とさない)。
+    for idx in indexes.iter().filter(|i| !i.primary && i.has_expression) {
+        out.push_str(&format!(
+            "-- Skipped expression index: {}\n",
+            idx.name.replace(['\n', '\r'], " ")
+        ));
+    }
     out
 }
 
@@ -257,6 +269,8 @@ mod tests {
             unique,
             primary,
             method: method.map(str::to_string),
+            predicate: None,
+            has_expression: false,
         }
     }
 
@@ -370,8 +384,33 @@ mod tests {
         );
         assert!(ddl.contains("CREATE TABLE \"s\"\"x\".\"t\"\"1\""));
         assert!(ddl.contains("\"we\"\"ird\" text"));
-        assert!(!ddl.contains("expr_idx"));
+        assert!(!ddl.contains("CREATE INDEX"));
         assert!(!ddl.contains("PRIMARY KEY"));
+    }
+
+    #[test]
+    fn partial_index_keeps_its_predicate_and_expression_index_is_reported() {
+        let cols = vec![
+            col("email", "text", true, ""),
+            col("deleted_at", "timestamp", true, ""),
+        ];
+        let mut partial = idx("u_email", &["email"], true, false, Some("btree"));
+        partial.predicate = Some("(deleted_at IS NULL)".into());
+        let mut expr = idx("u_lower", &["tenant_id"], true, false, Some("btree"));
+        expr.has_expression = true;
+        let ddl = synthesize_create_table(
+            DriverKind::Postgres,
+            Some("public"),
+            "t",
+            &cols,
+            &[partial, expr],
+            &[],
+        );
+        assert!(ddl.contains(
+            "CREATE UNIQUE INDEX \"u_email\" ON \"public\".\"t\" (\"email\") WHERE (deleted_at IS NULL);"
+        ));
+        assert!(!ddl.contains("CREATE UNIQUE INDEX \"u_lower\""));
+        assert!(ddl.contains("-- Skipped expression index: u_lower"));
     }
 
     #[test]

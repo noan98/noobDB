@@ -5,6 +5,7 @@ import {
   findIdentityColumn,
   mysqlMaxValueSql,
   parseMaxValue,
+  sqliteHasAutoincrementSql,
 } from "../components/identitySync";
 
 function col(over: Partial<TableColumnInfo> & { name: string }): TableColumnInfo {
@@ -111,7 +112,13 @@ describe("buildIdentitySyncSql", () => {
 
   it("SQLite は sqlite_sequence を更新する", () => {
     expect(buildIdentitySyncSql("sqlite", "main", "notes", "id")).toBe(
-      `UPDATE sqlite_sequence SET seq = (SELECT COALESCE(MAX(rowid), 0) FROM "notes") WHERE name = 'notes';`,
+      `UPDATE sqlite_sequence SET seq = MAX(seq, (SELECT COALESCE(MAX(rowid), 0) FROM "notes")) WHERE name = 'notes';`,
+    );
+  });
+
+  it("SQLite の AUTOINCREMENT 判定 SQL", () => {
+    expect(sqliteHasAutoincrementSql("it's")).toBe(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'it''s' AND UPPER(sql) LIKE '%AUTOINCREMENT%'",
     );
   });
 

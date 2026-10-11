@@ -14,7 +14,9 @@ use tauri::State;
 
 use crate::assertions::{store, Assertion, AssertionRule};
 use crate::commands::query::run_lookup_query_inner;
-use crate::db::assertions::{build_sql, count_from_value, evaluate, validate, AssertionSql};
+use crate::db::assertions::{
+    build_sql, count_from_value, custom_sql_duplicate_column_hint, evaluate, validate, AssertionSql,
+};
 use crate::db::DriverKind;
 use crate::error::{AppError, Result};
 use crate::snippets::store::new_snippet_id;
@@ -147,7 +149,13 @@ pub(crate) async fn run_assertion_with(
         query_timeout_secs,
         Some(1),
     )
-    .await?;
+    .await
+    .map_err(|e| {
+        match custom_sql_duplicate_column_hint(driver, &assertion.rule, &e.to_string()) {
+            Some(hint) => AppError::Other(hint),
+            None => e,
+        }
+    })?;
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let observed = result
         .rows

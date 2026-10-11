@@ -8,7 +8,8 @@
 //
 // 以下は移植前のコメント。
 //
-import { classifyTypeName, type CellKind } from "../../components/cellTypeMeta";
+import type { CellKind } from "../../components/cellTypeMeta";
+import { numericLiteral, searchKindFor } from "../../components/dataSearch";
 import { quoteString } from "../../components/cellEdit";
 import { quoteIdentFor } from "../../components/sqlDialect";
 import { qualifiedTable } from "../../fkNavigation";
@@ -84,10 +85,9 @@ export function buildColumnPredicate(
   if (target === "excluded") return null;
   const col = quoteIdentFor(driver, columnName);
   if (target === "numeric") {
-    if (!isNumericTerm(term)) return null;
-    // 正規表現で数値と確認済みの文字列を正規化してそのまま埋め込む (安全網
-    // として Number() を経由し、想定外の表記を弾く)。
-    return `${col} = ${Number(term.trim())}`;
+    const literal = numericLiteral(term);
+    if (literal === null) return null;
+    return `${col} = ${literal}`;
   }
   const escapeClause = `ESCAPE ${quoteString(driver, "\\")}`;
   switch (mode) {
@@ -125,7 +125,7 @@ export function buildTableScanSql(
 ): TableScanSql | null {
   const parts: { name: string; predicate: string }[] = [];
   for (const c of columns) {
-    const predicate = buildColumnPredicate(driver, c.name, classifyTypeName(c.dataType), term, mode);
+    const predicate = buildColumnPredicate(driver, c.name, searchKindFor(driver, c.dataType), term, mode);
     if (predicate) parts.push({ name: c.name, predicate });
   }
   if (parts.length === 0) return null;

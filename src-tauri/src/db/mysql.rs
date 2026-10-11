@@ -1520,6 +1520,7 @@ impl MySqlConn {
                     unique: r.try_get::<i64, _>(3).unwrap_or(1) == 0,
                     primary: name == "PRIMARY",
                     method: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                    predicate: None,
                     name,
                 }
             })
@@ -1799,10 +1800,14 @@ impl MySqlConn {
                     unique: non_unique == 0,
                     primary: name == "PRIMARY",
                     method,
+                    predicate: None,
+                    has_expression: false,
                 }
             });
-            if let Some(col) = column {
-                entry.columns.push(col);
+            match column {
+                Some(col) => entry.columns.push(col),
+                // 関数インデックス (8.0.13+) のキーは COLUMN_NAME が NULL。
+                None => entry.has_expression = true,
             }
         }
         Ok(order

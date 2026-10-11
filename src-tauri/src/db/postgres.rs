@@ -1184,6 +1184,7 @@ impl PostgresConn {
                  ix.indisunique      AS is_unique,
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
+                 pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
                  k.ord               AS ord
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -1207,6 +1208,7 @@ impl PostgresConn {
                 unique: r.try_get::<bool, _>("is_unique").unwrap_or(false),
                 primary: r.try_get::<bool, _>("is_primary").unwrap_or(false),
                 method: r.try_get::<Option<String>, _>("method").ok().flatten(),
+                predicate: r.try_get::<Option<String>, _>("predicate").ok().flatten(),
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -1612,6 +1614,7 @@ impl PostgresConn {
                  ix.indisunique      AS is_unique,
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
+                 pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
                  k.ord               AS ord
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -1639,6 +1642,7 @@ impl PostgresConn {
             let unique = r.try_get::<bool, _>("is_unique").unwrap_or(false);
             let primary = r.try_get::<bool, _>("is_primary").unwrap_or(false);
             let method = r.try_get::<Option<String>, _>("method").ok().flatten();
+            let predicate = r.try_get::<Option<String>, _>("predicate").ok().flatten();
             let entry = by_name.entry(name.clone()).or_insert_with(|| {
                 order.push(name.clone());
                 IndexInfo {
@@ -1647,11 +1651,15 @@ impl PostgresConn {
                     unique,
                     primary,
                     method,
+                    predicate,
+                    has_expression: false,
                 }
             });
-            // attnum 0 (an expression index column) resolves to NULL; skip it.
-            if let Some(col) = column {
-                entry.columns.push(col);
+            // attnum 0 (an expression index column) resolves to NULL. 列名は積めないので
+            // 式インデックスの印だけ残す (列だけで同一視・再構成させないため)。
+            match column {
+                Some(col) => entry.columns.push(col),
+                None => entry.has_expression = true,
             }
         }
         Ok(order

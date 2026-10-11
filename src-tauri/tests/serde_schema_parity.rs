@@ -142,6 +142,8 @@ fn build_fixtures() -> serde_json::Value {
         unique: true,
         primary: false,
         method: Some("btree".into()),
+        predicate: None,
+        has_expression: false,
     };
     let schema_object = SchemaObject {
         kind: "view".into(),

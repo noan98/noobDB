@@ -1275,6 +1275,8 @@ mod tests {
                         unique: true,
                         primary: true,
                         method: None,
+                        predicate: None,
+                        has_expression: false,
                     }],
                 }],
             )
@@ -1443,6 +1445,8 @@ mod tests {
                     unique: false,
                     primary: false,
                     method: None,
+                    predicate: None,
+                    has_expression: false,
                 }])
             })
             .await;

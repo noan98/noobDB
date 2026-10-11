@@ -230,6 +230,14 @@ pub struct IndexInfo {
     pub unique: bool,
     pub primary: bool,
     pub method: Option<String>,
+    /// 部分インデックスの述語 (PostgreSQL の `pg_index.indpred` / SQLite の `WHERE` 句)。
+    /// IPC には出さない内部用 (アドバイザの重複判定と DDL 再構成が使う)。
+    #[serde(skip)]
+    pub predicate: Option<String>,
+    /// 式インデックス (名前を持たないキー列を含む) か。`columns` にはその列が積まれないため、
+    /// 列だけで同一視・再構成すると別物のインデックスになる。IPC には出さない内部用。
+    #[serde(skip)]
+    pub has_expression: bool,
 }
 
 /// ストアドプロシージャ / 関数の 1 パラメータ (#1003)。`get_routine_signature`

@@ -1,5 +1,5 @@
 {
-  "description": "DB 全体からの値検索 (#748 / #1261) の走査 SQL 生成の実装横断ゴールデンベクタ。移植前の TS 実装 (src/__tests__/oracles/dataSearchOracle.ts) の出力を期待値として固定し、Rust の db::data_search (tests/data_search_golden.rs) と、フロントに残る buildColumnPredicate (dataSearchGolden.test.ts) の両方を同じベクタに通す。`classify` は型名 → CellKind / 走査対象、`predicates` は列ごとの述語、`numericTerms` は数値語判定、`scanSql` はテーブル単位の SUM(CASE) クエリ、`skip` は概算行数のしきい値判定、`parseRow` は結果 1 行 → ヒット件数。新しい境界ケースはここへ追記する。",
+  "description": "DB 全体からの値検索 (#748 / #1261) の走査 SQL 生成の実装横断ゴールデンベクタ。移植前の TS 実装 (src/__tests__/oracles/dataSearchOracle.ts) の出力を期待値として固定し、Rust の db::data_search (tests/data_search_golden.rs) と、フロントに残る buildColumnPredicate (dataSearchGolden.test.ts) の両方を同じベクタに通す。`classify` は型名 → CellKind / 走査対象、`predicates` は列ごとの述語、`numericTerms` は数値語判定、`scanSql` はテーブル単位の SUM(CASE) クエリ、`skip` は概算行数のしきい値判定、`parseRow` は結果 1 行 → ヒット件数。新しい境界ケースはここへ追記する。 `searchKinds` は走査用の型分類 (PostgreSQL は LIKE できない型を走査対象外にする)。",
   "classify": [
     {
       "dataType": "VARCHAR",
@@ -412,7 +412,7 @@
       "dataType": "INT",
       "term": "123456789012345678901",
       "mode": "contains",
-      "expected": "`age` = 123456789012345680000"
+      "expected": "`age` = 123456789012345678901"
     },
     {
       "driver": "mysql",
@@ -476,7 +476,7 @@
       "dataType": "INT",
       "term": "99999999999999999999999",
       "mode": "contains",
-      "expected": "`age` = 1e+23"
+      "expected": "`age` = 99999999999999999999999"
     },
     {
       "driver": "mysql",
@@ -484,7 +484,7 @@
       "dataType": "INT",
       "term": "1e400",
       "mode": "contains",
-      "expected": "`age` = Infinity"
+      "expected": null
     },
     {
       "driver": "mysql",
@@ -596,7 +596,7 @@
       "dataType": "DECIMAL",
       "term": "123456789012345678901",
       "mode": "contains",
-      "expected": "`price` = 123456789012345680000"
+      "expected": "`price` = 123456789012345678901"
     },
     {
       "driver": "mysql",
@@ -660,7 +660,7 @@
       "dataType": "DECIMAL",
       "term": "99999999999999999999999",
       "mode": "contains",
-      "expected": "`price` = 1e+23"
+      "expected": "`price` = 99999999999999999999999"
     },
     {
       "driver": "mysql",
@@ -668,7 +668,7 @@
       "dataType": "DECIMAL",
       "term": "1e400",
       "mode": "contains",
-      "expected": "`price` = Infinity"
+      "expected": null
     },
     {
       "driver": "mysql",
@@ -1932,7 +1932,7 @@
       "dataType": "INT",
       "term": "123456789012345678901",
       "mode": "contains",
-      "expected": "\"age\" = 123456789012345680000"
+      "expected": "\"age\" = 123456789012345678901"
     },
     {
       "driver": "postgres",
@@ -1996,7 +1996,7 @@
       "dataType": "INT",
       "term": "99999999999999999999999",
       "mode": "contains",
-      "expected": "\"age\" = 1e+23"
+      "expected": "\"age\" = 99999999999999999999999"
     },
     {
       "driver": "postgres",
@@ -2004,7 +2004,7 @@
       "dataType": "INT",
       "term": "1e400",
       "mode": "contains",
-      "expected": "\"age\" = Infinity"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2116,7 +2116,7 @@
       "dataType": "DECIMAL",
       "term": "123456789012345678901",
       "mode": "contains",
-      "expected": "\"price\" = 123456789012345680000"
+      "expected": "\"price\" = 123456789012345678901"
     },
     {
       "driver": "postgres",
@@ -2180,7 +2180,7 @@
       "dataType": "DECIMAL",
       "term": "99999999999999999999999",
       "mode": "contains",
-      "expected": "\"price\" = 1e+23"
+      "expected": "\"price\" = 99999999999999999999999"
     },
     {
       "driver": "postgres",
@@ -2188,7 +2188,7 @@
       "dataType": "DECIMAL",
       "term": "1e400",
       "mode": "contains",
-      "expected": "\"price\" = Infinity"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2628,7 +2628,7 @@
       "dataType": "JSON",
       "term": "Alice",
       "mode": "exact",
-      "expected": "\"data\" = 'Alice'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2636,7 +2636,7 @@
       "dataType": "JSON",
       "term": "Alice",
       "mode": "contains",
-      "expected": "\"data\" LIKE '%Alice%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2644,7 +2644,7 @@
       "dataType": "JSON",
       "term": "Alice",
       "mode": "prefix",
-      "expected": "\"data\" LIKE 'Alice%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2652,7 +2652,7 @@
       "dataType": "JSON",
       "term": "",
       "mode": "exact",
-      "expected": "\"data\" = ''"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2660,7 +2660,7 @@
       "dataType": "JSON",
       "term": "",
       "mode": "contains",
-      "expected": "\"data\" LIKE '%%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2668,7 +2668,7 @@
       "dataType": "JSON",
       "term": "",
       "mode": "prefix",
-      "expected": "\"data\" LIKE '%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2676,7 +2676,7 @@
       "dataType": "JSON",
       "term": "50%_off",
       "mode": "exact",
-      "expected": "\"data\" = '50%_off'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2684,7 +2684,7 @@
       "dataType": "JSON",
       "term": "50%_off",
       "mode": "contains",
-      "expected": "\"data\" LIKE '%50\\%\\_off%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2692,7 +2692,7 @@
       "dataType": "JSON",
       "term": "50%_off",
       "mode": "prefix",
-      "expected": "\"data\" LIKE '50\\%\\_off%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2700,7 +2700,7 @@
       "dataType": "JSON",
       "term": "a\\b",
       "mode": "exact",
-      "expected": "\"data\" = 'a\\b'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2708,7 +2708,7 @@
       "dataType": "JSON",
       "term": "a\\b",
       "mode": "contains",
-      "expected": "\"data\" LIKE '%a\\\\b%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2716,7 +2716,7 @@
       "dataType": "JSON",
       "term": "a\\b",
       "mode": "prefix",
-      "expected": "\"data\" LIKE 'a\\\\b%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2724,7 +2724,7 @@
       "dataType": "JSON",
       "term": "it's",
       "mode": "exact",
-      "expected": "\"data\" = 'it''s'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2732,7 +2732,7 @@
       "dataType": "JSON",
       "term": "it's",
       "mode": "contains",
-      "expected": "\"data\" LIKE '%it''s%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2740,7 +2740,7 @@
       "dataType": "JSON",
       "term": "it's",
       "mode": "prefix",
-      "expected": "\"data\" LIKE 'it''s%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2748,7 +2748,7 @@
       "dataType": "JSON",
       "term": "42",
       "mode": "exact",
-      "expected": "\"data\" = '42'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2756,7 +2756,7 @@
       "dataType": "JSON",
       "term": "42",
       "mode": "contains",
-      "expected": "\"data\" LIKE '%42%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -2764,7 +2764,7 @@
       "dataType": "JSON",
       "term": "42",
       "mode": "prefix",
-      "expected": "\"data\" LIKE '42%' ESCAPE '\\'"
+      "expected": null
     },
     {
       "driver": "postgres",
@@ -3452,7 +3452,7 @@
       "dataType": "INT",
       "term": "123456789012345678901",
       "mode": "contains",
-      "expected": "\"age\" = 123456789012345680000"
+      "expected": "\"age\" = 123456789012345678901"
     },
     {
       "driver": "sqlite",
@@ -3516,7 +3516,7 @@
       "dataType": "INT",
       "term": "99999999999999999999999",
       "mode": "contains",
-      "expected": "\"age\" = 1e+23"
+      "expected": "\"age\" = 99999999999999999999999"
     },
     {
       "driver": "sqlite",
@@ -3524,7 +3524,7 @@
       "dataType": "INT",
       "term": "1e400",
       "mode": "contains",
-      "expected": "\"age\" = Infinity"
+      "expected": null
     },
     {
       "driver": "sqlite",
@@ -3636,7 +3636,7 @@
       "dataType": "DECIMAL",
       "term": "123456789012345678901",
       "mode": "contains",
-      "expected": "\"price\" = 123456789012345680000"
+      "expected": "\"price\" = 123456789012345678901"
     },
     {
       "driver": "sqlite",
@@ -3700,7 +3700,7 @@
       "dataType": "DECIMAL",
       "term": "99999999999999999999999",
       "mode": "contains",
-      "expected": "\"price\" = 1e+23"
+      "expected": "\"price\" = 99999999999999999999999"
     },
     {
       "driver": "sqlite",
@@ -3708,7 +3708,7 @@
       "dataType": "DECIMAL",
       "term": "1e400",
       "mode": "contains",
-      "expected": "\"price\" = Infinity"
+      "expected": null
     },
     {
       "driver": "sqlite",
@@ -4717,6 +4717,150 @@
       "term": "42",
       "mode": "prefix",
       "expected": "\"back\\slash\" LIKE '42%' ESCAPE '\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "9007199254740993",
+      "mode": "exact",
+      "expected": "`id` = 9007199254740993"
+    },
+    {
+      "driver": "mysql",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-9223372036854775808",
+      "mode": "exact",
+      "expected": "`id` = -9223372036854775808"
+    },
+    {
+      "driver": "mysql",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "007",
+      "mode": "exact",
+      "expected": "`id` = 7"
+    },
+    {
+      "driver": "mysql",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-0",
+      "mode": "exact",
+      "expected": "`id` = 0"
+    },
+    {
+      "driver": "mysql",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": " 42 ",
+      "mode": "exact",
+      "expected": "`id` = 42"
+    },
+    {
+      "driver": "mysql",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-1e400",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "9007199254740993",
+      "mode": "exact",
+      "expected": "\"id\" = 9007199254740993"
+    },
+    {
+      "driver": "postgres",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-9223372036854775808",
+      "mode": "exact",
+      "expected": "\"id\" = -9223372036854775808"
+    },
+    {
+      "driver": "postgres",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "007",
+      "mode": "exact",
+      "expected": "\"id\" = 7"
+    },
+    {
+      "driver": "postgres",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-0",
+      "mode": "exact",
+      "expected": "\"id\" = 0"
+    },
+    {
+      "driver": "postgres",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": " 42 ",
+      "mode": "exact",
+      "expected": "\"id\" = 42"
+    },
+    {
+      "driver": "postgres",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-1e400",
+      "mode": "exact",
+      "expected": null
+    },
+    {
+      "driver": "sqlite",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "9007199254740993",
+      "mode": "exact",
+      "expected": "\"id\" = 9007199254740993"
+    },
+    {
+      "driver": "sqlite",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-9223372036854775808",
+      "mode": "exact",
+      "expected": "\"id\" = -9223372036854775808"
+    },
+    {
+      "driver": "sqlite",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "007",
+      "mode": "exact",
+      "expected": "\"id\" = 7"
+    },
+    {
+      "driver": "sqlite",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-0",
+      "mode": "exact",
+      "expected": "\"id\" = 0"
+    },
+    {
+      "driver": "sqlite",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": " 42 ",
+      "mode": "exact",
+      "expected": "\"id\" = 42"
+    },
+    {
+      "driver": "sqlite",
+      "column": "id",
+      "dataType": "BIGINT",
+      "term": "-1e400",
+      "mode": "exact",
+      "expected": null
     }
   ],
   "numericTerms": [
@@ -5244,6 +5388,128 @@
         "Infinity"
       ],
       "expected": []
+    }
+  ],
+  "searchKinds": [
+    {
+      "driver": "postgres",
+      "dataType": "timestamp without time zone",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "timestamp with time zone",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "uuid",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "bytea",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "json",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "jsonb",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "USER-DEFINED",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "ARRAY",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "time without time zone",
+      "kind": "binary"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "double precision",
+      "kind": "number"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "integer",
+      "kind": "number"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "smallint",
+      "kind": "number"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "numeric(10,2)",
+      "kind": "decimal"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "numeric",
+      "kind": "decimal"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "character varying(50)",
+      "kind": "string"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "character(10)",
+      "kind": "string"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "text",
+      "kind": "string"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "citext",
+      "kind": "string"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "boolean",
+      "kind": "bool"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "date",
+      "kind": "date"
+    },
+    {
+      "driver": "mysql",
+      "dataType": "uuid",
+      "kind": "string"
+    },
+    {
+      "driver": "sqlite",
+      "dataType": "uuid",
+      "kind": "string"
+    },
+    {
+      "driver": "sqlite",
+      "dataType": "",
+      "kind": "string"
+    },
+    {
+      "driver": "mysql",
+      "dataType": "json",
+      "kind": "json"
     }
   ]
 }

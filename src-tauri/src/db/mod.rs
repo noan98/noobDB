@@ -1837,6 +1837,8 @@ pub(crate) struct IndexRow {
     pub unique: bool,
     pub primary: bool,
     pub method: Option<String>,
+    /// 部分インデックスの述語 (無ければ `None`)。
+    pub predicate: Option<String>,
 }
 
 /// `IndexRow` をテーブル → インデックスの順にまとめる。単一テーブル版
@@ -1878,12 +1880,17 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
                     unique: r.unique,
                     primary: r.primary,
                     method: r.method,
+                    predicate: r.predicate,
+                    has_expression: false,
                 });
                 i
             }
         };
-        if let (Some(col), Some(index)) = (r.column, entry.indexes.get_mut(ii)) {
-            index.columns.push(col);
+        if let Some(index) = entry.indexes.get_mut(ii) {
+            match r.column {
+                Some(col) => index.columns.push(col),
+                None => index.has_expression = true,
+            }
         }
     }
     out
@@ -3107,6 +3114,7 @@ mod tests {
             unique: name == "uq",
             primary: name == "PRIMARY",
             method: None,
+            predicate: None,
         }
     }
 

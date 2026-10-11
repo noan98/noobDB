@@ -60,6 +60,73 @@ pub fn classify_type_name(type_name: &str) -> CellKind {
     }
 }
 
+/// PostgreSQL で `LIKE` / `=` による文字列比較が成立する型名 (大文字化・長さ指定除去後)。
+const PG_TEXT_TYPES: &[&str] = &[
+    "TEXT",
+    "VARCHAR",
+    "CHARACTER VARYING",
+    "CHAR",
+    "CHARACTER",
+    "BPCHAR",
+    "NAME",
+    "CITEXT",
+];
+
+/// PostgreSQL の整数・浮動小数の型名 (`information_schema` / `format_type` の表記)。
+const PG_NUMBER_TYPES: &[&str] = &[
+    "SMALLINT",
+    "INTEGER",
+    "BIGINT",
+    "INT2",
+    "INT4",
+    "INT8",
+    "REAL",
+    "DOUBLE PRECISION",
+    "FLOAT4",
+    "FLOAT8",
+];
+
+/// 走査用の型分類。MySQL / SQLite は [`classify_type_name`] そのまま。PostgreSQL は
+/// `LIKE` が使えない型 (uuid・timestamp・bytea・json/jsonb・enum=`USER-DEFINED`・配列 …) を
+/// 文字列扱いすると表ごと SQL エラーになるため、`information_schema` の型名
+/// (`double precision` / `numeric(10,2)` / `timestamp without time zone` など) を解釈し、
+/// 文字列として比較できる型以外は走査対象外 (`Binary`) にする。
+/// フロントの `dataSearch.ts::searchKindFor` と同一規則 (共有ゴールデンで固定)。
+pub fn classify_for_search(driver: DriverKind, type_name: &str) -> CellKind {
+    let kind = classify_type_name(type_name);
+    if driver != DriverKind::Postgres {
+        return kind;
+    }
+    if !matches!(kind, CellKind::String | CellKind::Json | CellKind::Enum) {
+        return kind;
+    }
+    // `numeric(10,2)` などの括弧を除き、空白を畳んで大文字化する。
+    let mut base = String::new();
+    let mut depth = 0u32;
+    for ch in type_name.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            c if depth == 0 => base.push(c),
+            _ => {}
+        }
+    }
+    let base = base
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_uppercase();
+    if base == "NUMERIC" || base == "DECIMAL" {
+        CellKind::Decimal
+    } else if PG_NUMBER_TYPES.contains(&base.as_str()) {
+        CellKind::Number
+    } else if PG_TEXT_TYPES.contains(&base.as_str()) || base.is_empty() {
+        CellKind::String
+    } else {
+        CellKind::Binary
+    }
+}
+
 /// 走査における列の扱い。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchTarget {
@@ -113,6 +180,35 @@ pub fn is_numeric_term(term: &str) -> bool {
         }
     }
     i == t.len()
+}
+
+/// 数値検索語を SQL へ埋め込む数値リテラルへ正規化する。
+///
+/// 整数表記 (`-?\d+`) は f64 を通さず 10 進文字列のまま埋め込む (2^53 超の BIGINT ID が
+/// 丸められて別の行にヒットするのを防ぐ)。先頭の 0 は除き `-0` は `0` にする。小数・指数表記は
+/// f64 経由 (JS の `Number()` → 文字列化と同じ表記) だが、`1e400` のように有限でなくなる語は
+/// `Infinity` という識別子を SQL に出してしまうので `None` (その列は走査しない)。
+pub fn numeric_literal(term: &str) -> Option<String> {
+    if !is_numeric_term(term) {
+        return None;
+    }
+    let t = super::object_search::js_trim(term);
+    let (neg, digits) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t),
+    };
+    if digits.bytes().all(|b| b.is_ascii_digit()) {
+        let trimmed = digits.trim_start_matches('0');
+        if trimmed.is_empty() {
+            return Some("0".to_string());
+        }
+        return Some(format!("{}{trimmed}", if neg { "-" } else { "" }));
+    }
+    let n: f64 = t.parse().ok()?;
+    if !n.is_finite() {
+        return None;
+    }
+    Some(js_number_to_string(n))
 }
 
 /// LIKE パターン中のワイルドカード (`%` `_`) とエスケープ文字自身をエスケープする。
@@ -193,8 +289,8 @@ pub fn build_column_predicate(
         if !is_numeric_term(term) {
             return None;
         }
-        let n: f64 = super::object_search::js_trim(term).parse().ok()?;
-        return Some(format!("{col} = {}", js_number_to_string(n)));
+        let literal = numeric_literal(term)?;
+        return Some(format!("{col} = {literal}"));
     }
     let escape_clause = format!("ESCAPE {}", quote_string(driver, "\\"));
     Some(match mode {
@@ -253,7 +349,7 @@ pub fn build_table_scan_sql(
         if let Some(predicate) = build_column_predicate(
             driver,
             &c.name,
-            classify_type_name(&c.data_type),
+            classify_for_search(driver, &c.data_type),
             term,
             mode,
         ) {
@@ -358,6 +454,57 @@ mod tests {
         for (x, want) in cases {
             assert_eq!(js_number_to_string(x), want, "{x:e}");
         }
+    }
+
+    #[test]
+    fn numeric_literal_keeps_64bit_integers_exact_and_rejects_overflow() {
+        assert_eq!(
+            numeric_literal("9007199254740993").as_deref(),
+            Some("9007199254740993")
+        );
+        assert_eq!(
+            numeric_literal(" -9223372036854775808 ").as_deref(),
+            Some("-9223372036854775808")
+        );
+        assert_eq!(numeric_literal("007").as_deref(), Some("7"));
+        assert_eq!(numeric_literal("-0").as_deref(), Some("0"));
+        assert_eq!(numeric_literal("1.50").as_deref(), Some("1.5"));
+        assert_eq!(numeric_literal("1e400"), None);
+        assert_eq!(numeric_literal("abc"), None);
+    }
+
+    #[test]
+    fn postgres_non_text_types_are_not_searched_as_text() {
+        let pg = DriverKind::Postgres;
+        for t in [
+            "uuid",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "bytea",
+            "jsonb",
+            "USER-DEFINED",
+            "ARRAY",
+        ] {
+            assert_eq!(classify_for_search(pg, t), CellKind::Binary, "{t}");
+        }
+        assert_eq!(
+            classify_for_search(pg, "double precision"),
+            CellKind::Number
+        );
+        assert_eq!(classify_for_search(pg, "numeric(10,2)"), CellKind::Decimal);
+        assert_eq!(
+            classify_for_search(pg, "character varying(50)"),
+            CellKind::String
+        );
+        // MySQL / SQLite は従来どおり。
+        assert_eq!(
+            classify_for_search(DriverKind::Mysql, "uuid"),
+            CellKind::String
+        );
+        assert_eq!(
+            classify_for_search(DriverKind::Sqlite, ""),
+            CellKind::String
+        );
     }
 
     #[test]

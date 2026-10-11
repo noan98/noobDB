@@ -111,8 +111,22 @@ pub struct IncomingForeignKey {
 /// `table` を参照している外部キー (逆参照) を抽出する。参照先カラムが不明な
 /// エントリは結合キーを解決できないため除外する。
 pub fn incoming_foreign_keys(all: &[ForeignKey], table: &str) -> Vec<IncomingForeignKey> {
+    // 複合 FK (同じ子テーブル・制約名で列が複数) は、逆参照ジャンプが単一列の条件しか
+    // 組めず、親行を参照していない子行まで混ざる。制約単位に数え、単一列の FK だけを返す。
+    let mut cols_per_constraint: std::collections::HashMap<(&str, &str), usize> =
+        std::collections::HashMap::new();
+    for fk in all.iter().filter(|fk| fk.referenced_table == table) {
+        if let Some(name) = fk.constraint_name.as_deref() {
+            *cols_per_constraint.entry((&fk.table, name)).or_insert(0) += 1;
+        }
+    }
     all.iter()
         .filter(|fk| fk.referenced_table == table)
+        .filter(|fk| {
+            fk.constraint_name.as_deref().map_or(true, |name| {
+                cols_per_constraint.get(&(fk.table.as_str(), name)) == Some(&1)
+            })
+        })
         .filter_map(|fk| {
             let referenced_column = fk.referenced_column.as_ref()?;
             if referenced_column.is_empty() {
@@ -179,6 +193,8 @@ mod tests {
             unique: primary,
             primary,
             method: None,
+            predicate: None,
+            has_expression: false,
         }
     }
 
@@ -287,6 +303,18 @@ mod tests {
         ];
         assert!(incoming_foreign_keys(&fks, "users").is_empty());
         assert!(incoming_foreign_keys(&fks, "nowhere").is_empty());
+    }
+
+    #[test]
+    fn composite_foreign_keys_are_not_offered_for_single_column_jump() {
+        let fks = vec![
+            fk("orders", "a", "p", Some("x"), Some("fk_comp")),
+            fk("orders", "b", "p", Some("y"), Some("fk_comp")),
+            fk("orders", "user_id", "p", Some("id"), Some("fk_single")),
+        ];
+        let got = incoming_foreign_keys(&fks, "p");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].column, "user_id");
     }
 
     #[test]
