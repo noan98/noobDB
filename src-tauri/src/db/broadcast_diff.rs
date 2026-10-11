@@ -130,6 +130,10 @@ pub fn resolve_key_indices(
         }
         let mut out = Vec::with_capacity(names.len());
         for n in names {
+            // 同名の列が複数あるキーは曖昧なので解決失敗 (hash モードへ降格)。
+            if columns.iter().filter(|c| c.name == *n).count() != 1 {
+                return Vec::new();
+            }
             match columns.iter().position(|c| c.name == *n) {
                 Some(i) => out.push(i),
                 None => return Vec::new(),
@@ -182,19 +186,24 @@ pub fn compare_environments(
                     .collect::<Vec<_>>(),
             )
         };
-        // 重複キーは後勝ち (`diffResultRows` と同じ)。
-        let mut base_by_key: HashMap<String, usize> = HashMap::with_capacity(base.len());
+        // 重複キーは多重集合として扱う: 同じキーの基準行を出現順に持ち、対象の同じ
+        // キーの行が先頭から順に消費してペアリングする (同一結果なら差分なし)。
+        let mut base_by_key: HashMap<String, std::collections::VecDeque<usize>> =
+            HashMap::with_capacity(base.len());
         for (i, row) in base.iter().enumerate() {
-            base_by_key.insert(key_of(row), i);
+            base_by_key.entry(key_of(row)).or_default().push_back(i);
         }
         let mut matched = vec![false; base.len()];
         let mut changed_cells = Vec::new();
         let mut changed_cell_count = 0u64;
         let mut added = Vec::new();
         for (ti, trow) in targ.iter().enumerate() {
-            match base_by_key.get(&key_of(trow)) {
+            match base_by_key
+                .get_mut(&key_of(trow))
+                .and_then(|q| q.pop_front())
+            {
                 None => added.push(ti as u32),
-                Some(&bi) => {
+                Some(bi) => {
                     matched[bi] = true;
                     let brow = &base[bi];
                     let cols: Vec<u32> = (0..col_count)
@@ -280,6 +289,31 @@ mod tests {
     fn cmp(base: &[Vec<Value>], targ: &[Vec<Value>], pk: &[usize], max: usize) -> BroadcastDiff {
         let c = cols(&["id", "v"]);
         compare_environments(side(&c, base), side(&c, targ), pk, max)
+    }
+
+    #[test]
+    fn ambiguous_key_name_is_not_resolved() {
+        let c = cols(&["id", "name", "id"]);
+        assert!(resolve_key_indices(&c, &["id".to_string()], None).is_empty());
+        assert!(resolve_key_indices(&c, &[], Some("id")).is_empty());
+        assert_eq!(resolve_key_indices(&c, &[], Some("name")), vec![1]);
+    }
+
+    #[test]
+    fn pk_mode_duplicate_keys_are_paired_as_multiset() {
+        // キー列に非一意の列 (id) を選んだ同一結果は差分なし。
+        let dup = vec![r(1, "a"), r(1, "b")];
+        let d = cmp(&dup, &dup, &[0], MAX_BROADCAST_COMPARE_ROWS);
+        assert_eq!(d.mode, DiffMode::Pk);
+        assert!(!d.has_diff, "{d:?}");
+        assert_eq!(d.removed_count, 0);
+        assert!(d.changed_cells.is_empty());
+        // 対象の方が重複が多ければ余りは added、少なければ removed。
+        let more = vec![r(1, "a"), r(1, "b"), r(1, "c")];
+        let d = cmp(&dup, &more, &[0], MAX_BROADCAST_COMPARE_ROWS);
+        assert_eq!(d.added_row_indices, vec![2]);
+        let d = cmp(&more, &dup, &[0], MAX_BROADCAST_COMPARE_ROWS);
+        assert_eq!(d.removed_count, 1);
     }
 
     #[test]

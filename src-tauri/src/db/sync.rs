@@ -362,11 +362,38 @@ pub(crate) fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
         def.push(' ');
         def.push_str(&clause);
     }
-    if driver == DriverKind::Mysql && !col.extra.is_empty() {
-        def.push(' ');
-        def.push_str(&col.extra);
+    if driver == DriverKind::Mysql {
+        let extra = mysql_extra_clause(&col.extra);
+        if !extra.is_empty() {
+            def.push(' ');
+            def.push_str(&extra);
+        }
+        // MODIFY COLUMN は COMMENT 句を省くと列コメントを空に戻すため、
+        // 取得済みのコメントは必ず出力する (単引用符・バックスラッシュは二重化)。
+        if let Some(comment) = col.comment.as_deref().filter(|c| !c.is_empty()) {
+            def.push_str(" COMMENT ");
+            def.push_str(&mysql_quote_default(comment));
+        }
     }
     def
+}
+
+/// MySQL の `information_schema.COLUMNS.EXTRA` から DDL にそのまま書ける語だけを
+/// 残す。`DEFAULT_GENERATED` / `STORED GENERATED` / `VIRTUAL GENERATED` は
+/// 情報表示用のマーカーで、DDL に連結すると構文エラーになる
+/// (`auto_increment` や `on update CURRENT_TIMESTAMP` は有効な句なので残す)。
+fn mysql_extra_clause(extra: &str) -> String {
+    let mut s = extra.to_string();
+    for marker in ["DEFAULT_GENERATED", "STORED GENERATED", "VIRTUAL GENERATED"] {
+        loop {
+            let upper = s.to_ascii_uppercase();
+            match upper.find(marker) {
+                Some(i) => s.replace_range(i..i + marker.len(), " "),
+                None => break,
+            }
+        }
+    }
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// 修正 L2: `DEFAULT ...` 句を組み立てる。デフォルトが無ければ `None`。
@@ -677,6 +704,44 @@ mod tests {
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
         assert!(plan.statements.is_empty());
         assert!(plan.warnings.is_empty());
+    }
+
+    // --- #1521: EXTRA マーカー除去と COMMENT 出力 ---------------------------
+
+    #[test]
+    fn mysql_extra_markers_are_stripped() {
+        let mut c = col("created_at", "timestamp");
+        c.nullable = false;
+        c.default = Some("CURRENT_TIMESTAMP".to_string());
+        c.extra = "DEFAULT_GENERATED".to_string();
+        assert_eq!(
+            column_def(DriverKind::Mysql, &c),
+            "`created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        );
+        c.extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP".to_string();
+        assert_eq!(
+            column_def(DriverKind::Mysql, &c),
+            "`created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP"
+        );
+        c.default = None;
+        c.extra = "VIRTUAL GENERATED".to_string();
+        assert!(!column_def(DriverKind::Mysql, &c).contains("GENERATED"));
+        c.extra = "auto_increment".to_string();
+        assert!(column_def(DriverKind::Mysql, &c).ends_with(" auto_increment"));
+    }
+
+    #[test]
+    fn mysql_column_comment_is_emitted_and_escaped() {
+        let mut c = col("amount", "int");
+        c.comment = Some("金額's \\ 備考".to_string());
+        assert_eq!(
+            column_def(DriverKind::Mysql, &c),
+            "`amount` int COMMENT '金額''s \\\\ 備考'"
+        );
+        // PostgreSQL / SQLite の列定義には COMMENT 句を付けない。
+        assert!(!column_def(DriverKind::Postgres, &c).contains("COMMENT"));
+        c.comment = Some(String::new());
+        assert!(!column_def(DriverKind::Mysql, &c).contains("COMMENT"));
     }
 
     // --- 修正 L2: MySQL の DEFAULT クオート ---------------------------------

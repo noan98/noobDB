@@ -972,7 +972,24 @@ export function SchemaCompareView({
                   <chakra.h3 css={syncTitleCss}>{t("schemaCompareDataTitle")}</chakra.h3>
                   <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDataDesc")}</chakra.p>
                   <Box css={syncControlsCss}>
-                    <Select value={dataTable} onChange={(e) => setDataTable(e.target.value)}>
+                    <Select
+                      value={dataTable}
+                      disabled={dataComparing}
+                      onChange={(e) => {
+                        // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
+                        // なるので破棄する (残すと前のテーブルの変更が流れる)。
+                        setDataTable(e.target.value);
+                        setDataDiff(null);
+                        setDataDiffId(null);
+                        releaseHeldDiff();
+                        if (planKind === "data") {
+                          setPlan(null);
+                          setPlanKind(null);
+                          setSelected(new Set());
+                          setApplyResult(null);
+                        }
+                      }}
+                    >
                       <option value="">{t("schemaCompareDataSelectTable")}</option>
                       {comparableTables.map((name) => (
                         <option key={name} value={name}>
@@ -999,6 +1016,9 @@ export function SchemaCompareView({
 
                   {dataDiff && (
                     <>
+                      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+                        {t("schemaCompareDataComparedTable", { table: dataDiff.table })}
+                      </chakra.p>
                       <Box css={summaryCss}>
                         <chakra.span css={chipCss("source_only")}>
                           {t("schemaCompareDataInserts")}: {dataCounts.source_only}
