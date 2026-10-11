@@ -43,9 +43,10 @@ export interface DangerFinding {
  * closely enough that a shared golden (`fixtures/maskVectors.json`, #988)
  * pins both implementations to the same output for the same input.
  *
- * `options` (`keepQuotedIdentifiers` と `cache`) は TS 専用の補完向けオプションで、Rust の
- * `mask_for_analysis_impl` と共有ゴールデン (`fixtures/maskVectors.json`) の対象外。
- * 安全網の呼び出しは何も渡さない。
+ * `options` (`keepQuotedIdentifiers` と `cache`) は TS 専用のオプションで、共有ゴールデン
+ * (`fixtures/maskVectors.json`) の対象外。補完 (#1419) のほか、`isReadOnlySql` が関数の
+ * 拒否リストを引用符付き識別子 (`"nextval"(…)`) でも照合するために使う (Rust の対応物は
+ * `mask_keeping_identifiers`、#1517)。それ以外の安全網の呼び出しは何も渡さない。
  */
 export function maskLiterals(sql: string, driver?: string, options?: MaskOptions): string {
   // 1 回の実行ゲート〜実行後処理の間に、同じ SQL が文分割・危険判定・読み取り専用判定・
@@ -71,8 +72,8 @@ export function maskLiterals(sql: string, driver?: string, options?: MaskOptions
 }
 
 /**
- * `maskLiterals` のオプション。補完 (#1419) は列名・別名を読むために引用識別子の中身を
- * 残したいので `keepQuotedIdentifiers` を使う。安全網の呼び出しは何も渡さない (従来どおり
+ * `maskLiterals` のオプション。補完 (#1419) は列名・別名を読むために、`isReadOnlySql` は引用符付きの関数名を拒否リストと
+ * 照合するために引用識別子の中身を残したいので `keepQuotedIdentifiers` を使う。他の安全網は何も渡さない (従来どおり
  * 引用識別子も潰す)。
  */
 export interface MaskOptions {
@@ -580,12 +581,18 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
   // Trailing separators were stripped, so a remaining `;` hides a 2nd statement.
   if (body.includes(";")) return false;
   if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
-  const withIdents = maskLiterals(sql, driver, { keepQuotedIdentifiers: true }).toLowerCase();
-  if (DENIED_FUNCTIONS.some((kw) => containsWord(body, kw) || containsWord(withIdents, kw))) {
-    return false;
+  if (DENIED_FUNCTIONS.some((kw) => containsWord(body, kw))) return false;
+  // 引用符付き識別子の中身を残したマスクでも照合する。引用符を含む SQL だけ計算し、
+  // 補完向けの大きな入力と同様にキャッシュを汚さない (`cache: false`)。
+  if (/["`]/.test(sql)) {
+    const withIdents = maskLiterals(sql, driver, {
+      keepQuotedIdentifiers: true,
+      cache: false,
+    }).toLowerCase();
+    if (DENIED_FUNCTIONS.some((kw) => containsWord(withIdents, kw))) return false;
   }
   // MariaDB のシーケンス進行 `NEXT VALUE FOR seq`。
-  if (/\bnext\s+value\s+for\b/.test(body)) return false;
+  if (/\bnext[\s*/]+value[\s*/]+for\b/.test(body)) return false;
   if (hasLockingClause(body)) return false;
   if (hasLockingTableHint(body)) return false;
   return true;

@@ -2110,7 +2110,12 @@ fn is_read_only_sql_masked(masked: &[char], idents_kept: &[char]) -> bool {
         }
     }
     // MariaDB のシーケンス進行 `NEXT VALUE FOR seq` (空白の揺れは畳んで照合)。
-    let squashed = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    // MySQL のバージョンコメント `/*!*/` はマスク後に `*/` が残るので `*` `/` も区切りとみなす。
+    let squashed = body
+        .split(|c: char| c.is_whitespace() || c == '*' || c == '/')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     if contains_word_phrase(&squashed, "next value for") {
         return false;
     }
