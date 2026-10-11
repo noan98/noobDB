@@ -30,7 +30,7 @@
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import { quoteIdentFor } from "./sqlDialect";
-import { CURRENT_TIME_FN_RE, formatDefault } from "./createTable";
+import { CURRENT_TIME_FN_RE, formatDefault, matchParen } from "./createTable";
 import { quoteString } from "./cellEdit";
 import {
   checkClause,
@@ -259,7 +259,7 @@ function mysqlDefaultForChange(
   if (!v) return null;
   if (v !== baseline.defaultValue.trim()) return formatDefault("mysql", v, type);
   if (/\bDEFAULT_GENERATED\b/i.test(baseline.extra)) {
-    if (CURRENT_TIME_FN_RE.test(v) || (v.startsWith("(") && v.endsWith(")"))) return v;
+    if (CURRENT_TIME_FN_RE.test(v) || (v.startsWith("(") && matchParen(v, 0) === v.length)) return v;
     return `(${v})`;
   }
   return formatDefault("mysql", v, type, { literal: true });

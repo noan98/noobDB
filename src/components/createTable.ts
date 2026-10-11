@@ -43,7 +43,7 @@ const NUMERIC_TYPE_RE =
 const BOOL_TYPE_RE = /^(bool|boolean)\b/i;
 
 /** 対応する `)` の次の位置を返す (文字列リテラル内の括弧は無視)。`s[open]` は `(`。無ければ -1。 */
-function matchParen(s: string, open: number): number {
+export function matchParen(s: string, open: number): number {
   let depth = 0;
   for (let i = open; i < s.length; i++) {
     const c = s[i];

@@ -472,6 +472,13 @@ describe("buildAlterPlan: MySQL 既存列の既定値 (#1527 レビュー)", () 
     expect(
       change({ defaultValue: "CURRENT_TIMESTAMP", extra: "DEFAULT_GENERATED" }, { defaultValue: "CURRENT_TIMESTAMP" }),
     ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT CURRENT_TIMESTAMP COMMENT 'x';");
+    // 全体が 1 組の括弧で包まれているときだけ包まない。`(a) + (b)` は包む。
+    expect(
+      change({ defaultValue: "(rand())", extra: "DEFAULT_GENERATED" }, { defaultValue: "(rand())" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT (rand()) COMMENT 'x';");
+    expect(
+      change({ defaultValue: "(1) + (2)", extra: "DEFAULT_GENERATED" }, { defaultValue: "(1) + (2)" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT ((1) + (2)) COMMENT 'x';");
   });
   it("ADD COLUMN で型が空なら TEXT として既定値を判定する", () => {
     const r = buildAlterPlan(
