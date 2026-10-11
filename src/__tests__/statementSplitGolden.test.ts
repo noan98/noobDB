@@ -25,6 +25,8 @@ interface VectorCase {
   statements: string[];
   /** MySQL のバックスラッシュエスケープ解釈での期待値 (省略時は `statements`)。 */
   statementsMysql?: string[];
+  /** PostgreSQL / SQLite の期待値 (省略時は `statements`)。`#` は MySQL と driver 省略時だけ行コメント (#1517)。 */
+  statementsStandard?: string[];
 }
 
 const drivers = vectors.drivers as string[];
@@ -68,7 +70,8 @@ describe("文境界ゴールデン (フロント splitSqlStatements)", () => {
   for (const c of cases) {
     it(`${c.note} — ${JSON.stringify(c.sql)}`, () => {
       expectSplit(c.sql, undefined, c.statements);
-      for (const driver of STANDARD_DRIVERS) expectSplit(c.sql, driver, c.statements);
+      for (const driver of STANDARD_DRIVERS)
+        expectSplit(c.sql, driver, c.statementsStandard ?? c.statements);
       expectSplit(c.sql, "mysql", c.statementsMysql ?? c.statements);
     });
   }

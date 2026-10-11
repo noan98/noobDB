@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use tauri::State;
 
-use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
+use crate::db::inspector::{normalize_sql_fingerprint_for, NPlusOneOptions, StatementDeltaRow};
 use crate::db::types::{LiveQuery, QueryStatsSupport};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -63,8 +63,9 @@ pub async fn sample_live_queries_inner(
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     let mut queries = session.conn.live_queries().await?;
     // 同型クエリキー (N+1 グルーピング用) はここで付ける (#1259)。
+    let driver = session.conn.driver_kind();
     for q in &mut queries {
-        q.fingerprint = normalize_sql_fingerprint(&q.query);
+        q.fingerprint = normalize_sql_fingerprint_for(driver, &q.query);
     }
     Ok(queries)
 }

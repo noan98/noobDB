@@ -43,9 +43,10 @@ export interface DangerFinding {
  * closely enough that a shared golden (`fixtures/maskVectors.json`, #988)
  * pins both implementations to the same output for the same input.
  *
- * `options` (`keepQuotedIdentifiers` と `cache`) は TS 専用の補完向けオプションで、Rust の
- * `mask_for_analysis_impl` と共有ゴールデン (`fixtures/maskVectors.json`) の対象外。
- * 安全網の呼び出しは何も渡さない。
+ * `options` (`keepQuotedIdentifiers` と `cache`) は TS 専用のオプションで、共有ゴールデン
+ * (`fixtures/maskVectors.json`) の対象外。補完 (#1419) のほか、`isReadOnlySql` が関数の
+ * 拒否リストを引用符付き識別子 (`"nextval"(…)`) でも照合するために使う (Rust の対応物は
+ * `mask_keeping_identifiers`、#1517)。それ以外の安全網の呼び出しは何も渡さない。
  */
 export function maskLiterals(sql: string, driver?: string, options?: MaskOptions): string {
   // 1 回の実行ゲート〜実行後処理の間に、同じ SQL が文分割・危険判定・読み取り専用判定・
@@ -71,8 +72,8 @@ export function maskLiterals(sql: string, driver?: string, options?: MaskOptions
 }
 
 /**
- * `maskLiterals` のオプション。補完 (#1419) は列名・別名を読むために引用識別子の中身を
- * 残したいので `keepQuotedIdentifiers` を使う。安全網の呼び出しは何も渡さない (従来どおり
+ * `maskLiterals` のオプション。補完 (#1419) は列名・別名を読むために、`isReadOnlySql` は引用符付きの関数名を拒否リストと
+ * 照合するために引用識別子の中身を残したいので `keepQuotedIdentifiers` を使う。他の安全網は何も渡さない (従来どおり
  * 引用識別子も潰す)。
  */
 export interface MaskOptions {
@@ -114,7 +115,7 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): 
       i = j;
       continue;
     }
-    if (c === "#") {
+    if (c === "#" && hashIsComment(driver)) {
       let j = i + 1;
       while (j < n && sql[j] !== "\n") j++;
       blank(i, j);
@@ -252,6 +253,16 @@ function driverBackslashEscapes(driver?: string): boolean {
   return driver === "mysql";
 }
 
+/**
+ * `#` を行コメントとして扱うか。MySQL/MariaDB では `# …` がコメントだが、PostgreSQL では
+ * XOR 演算子や jsonb パス演算子 (`#>` / `#>>` / `#-`)、SQLite には `#` コメントが無い。
+ * これらを誤ってコメント扱いすると同じ行の後続 (`; DELETE …` や `FOR UPDATE`) が隠れる。
+ * driver 省略時は従来どおりコメント扱い。バックの `driver_hash_comment` と同じ規則。
+ */
+function hashIsComment(driver?: string): boolean {
+  return driver !== "postgres" && driver !== "sqlite";
+}
+
 function startsWithKeyword(body: string, keyword: string): boolean {
   return new RegExp(`^${keyword}\\b`).test(body);
 }
@@ -304,11 +315,19 @@ function cleanIdentifier(token: string): string {
   return token;
 }
 
-/** Reads the first table-like identifier from `rest` (after the lead keyword). */
+/**
+ * Reads the first table-like (possibly schema-qualified) name from `rest` (after
+ * the lead keyword). Each `.`-separated part may be quoted (`` `x` `` / `"x"` /
+ * `[x]`) or bare; the quotes are stripped and the parts rejoined with `.`, so
+ * `` `shop`.`orders` `` yields `shop.orders` rather than just `shop`.
+ */
 function readTargetIdentifier(rest: string): string | null {
-  const m = /^\s*(`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$.]+)/.exec(rest);
+  const m = /^\s*((?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+)(?:\.(?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+))*\.?)/.exec(
+    rest,
+  );
   if (!m) return null;
-  const cleaned = cleanIdentifier(m[1]);
+  const parts = m[1].match(/`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+/g) ?? [];
+  const cleaned = parts.map(cleanIdentifier).join(".");
   return cleaned.length > 0 ? cleaned : null;
 }
 
@@ -389,23 +408,49 @@ const WRITE_KEYWORDS = [
   "merge",
   "grant",
   "revoke",
-  // 別エンジンへの書き込みパススルー関数群。文全体は `SELECT ...` のままなので
-  // READ_ONLY_PREFIXES は通過するが、実際の書き込み SQL は引数の文字列リテラルの
-  // 中に埋め込まれ maskLiterals で空白化されるため、通常のキーワード走査には
-  // 引っかからない (`SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE ...')`、
-  // `SELECT dblink_exec('dbname=other','DELETE FROM accounts')`)。
-  // `openrowset`/`openquery`/`opendatasource` は MSSQL のリンクサーバ経由
-  // パススルー、`dblink`/`dblink_exec` は PostgreSQL の他 DB へのクエリ実行、
-  // `load_extension` は SQLite のネイティブ拡張ロード (任意コード実行)。バックの
-  // `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と同じく全ドライバ共通で
-  // 拒否する (fail-closed。正当な識別子としてこれらの名前が現れる可能性は極めて
-  // 低い)。
+];
+
+/**
+ * 拒否する関数名。文全体は `SELECT ...` のままなので READ_ONLY_PREFIXES は通過するが、
+ * 実際の書き込み SQL が引数の文字列リテラルに埋め込まれる (`OPENROWSET` /
+ * `dblink_exec` / `load_extension`) か、関数自体に副作用がある (他セッションの強制切断・
+ * シーケンス更新・ラージオブジェクト書き込み・通知送信・レプリケーションスロット操作・
+ * 統計リセット) もの。バックの `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と
+ * 同じ一覧で、全ドライバ共通で拒否する (fail-closed)。引用符付き識別子
+ * (`"nextval"(…)`) で素通りされないよう、中身を残したマスクでも照合する (#1517)。
+ * 書き込みキーワードは対象外 (`"update"` という列名の誤検知を避ける)。
+ */
+const DENIED_FUNCTIONS = [
   "openrowset",
   "openquery",
   "opendatasource",
   "dblink",
   "dblink_exec",
   "load_extension",
+  "pg_terminate_backend",
+  "pg_cancel_backend",
+  "nextval",
+  "setval",
+  "pg_reload_conf",
+  "pg_rotate_logfile",
+  "pg_switch_wal",
+  "pg_create_restore_point",
+  "lo_import",
+  "lo_export",
+  "lo_create",
+  "lo_unlink",
+  "lo_from_bytea",
+  "lo_put",
+  "lowrite",
+  "lo_truncate",
+  "lo_truncate64",
+  "pg_notify",
+  "pg_drop_replication_slot",
+  "pg_create_logical_replication_slot",
+  "pg_create_physical_replication_slot",
+  "pg_logical_emit_message",
+  "pg_promote",
+  "pg_stat_reset",
 ];
 
 /**
@@ -536,6 +581,18 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
   // Trailing separators were stripped, so a remaining `;` hides a 2nd statement.
   if (body.includes(";")) return false;
   if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
+  if (DENIED_FUNCTIONS.some((kw) => containsWord(body, kw))) return false;
+  // 引用符付き識別子の中身を残したマスクでも照合する。引用符を含む SQL だけ計算し、
+  // 補完向けの大きな入力と同様にキャッシュを汚さない (`cache: false`)。
+  if (/["`]/.test(sql)) {
+    const withIdents = maskLiterals(sql, driver, {
+      keepQuotedIdentifiers: true,
+      cache: false,
+    }).toLowerCase();
+    if (DENIED_FUNCTIONS.some((kw) => containsWord(withIdents, kw))) return false;
+  }
+  // MariaDB のシーケンス進行 `NEXT VALUE FOR seq`。
+  if (/\bnext[\s*/]+value[\s*/]+for\b/.test(body)) return false;
   if (hasLockingClause(body)) return false;
   if (hasLockingTableHint(body)) return false;
   return true;
