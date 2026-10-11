@@ -43,6 +43,9 @@ export function resolveKeyIndicesByName(
   for (const name of keyColumnNames) {
     const i = columns.findIndex((c) => c.name === name);
     if (i < 0) return [];
+    // 同名の列が複数ある (JOIN の `a.id, b.id` など) 曖昧なキーは誤ペアリングの
+    // 元なので解決失敗として扱う。
+    if (columns.some((c, j) => j !== i && c.name === name)) return [];
     indices.push(i);
   }
   return indices;

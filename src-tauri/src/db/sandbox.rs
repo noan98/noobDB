@@ -28,7 +28,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::data_diff::{key_signature, DataDiff, RowDiff, RowStatus};
+use super::data_diff::{coerce_binary_key, key_signature, DataDiff, RowDiff, RowStatus};
 use super::diff::{DiffStatus, SchemaDiff, TableColumns};
 use super::types::{ForeignKey, TableColumnInfo, Value};
 
@@ -185,7 +185,20 @@ pub fn detect_conflicts(desired: &DataDiff, external: &DataDiff) -> Vec<SandboxC
 /// trimmed diff is handed to `generate_data_sync_sql` to render the final
 /// writeback SQL.
 pub fn filter_out_keys(diff: &DataDiff, skip_keys: &[Vec<Value>]) -> DataDiff {
-    let skip: HashSet<String> = skip_keys.iter().map(|k| key_signature(k)).collect();
+    // skip_keys は JSON を経由するため、BLOB/BINARY 主キーの Value::Bytes は
+    // Value::String に化けている。列型から Bytes へ戻してから署名を取らないと
+    // Debug 表現 (`Bytes(..)` / `String(..)`) が一致せずスキップが無視される。
+    let skip: HashSet<String> = skip_keys
+        .iter()
+        .map(|k| {
+            key_signature(&coerce_binary_key(
+                &diff.columns,
+                &diff.column_types,
+                &diff.primary_key,
+                k,
+            ))
+        })
+        .collect();
     let rows = diff
         .rows
         .iter()
@@ -391,6 +404,23 @@ mod tests {
         // Everything else is preserved verbatim.
         assert_eq!(filtered.table, diff.table);
         assert_eq!(filtered.target_driver, diff.target_driver);
+    }
+
+    #[test]
+    fn filter_out_keys_matches_binary_pk_after_json_roundtrip() {
+        let mut diff = data_diff(vec![RowDiff {
+            status: RowStatus::Different,
+            key: vec![Value::Bytes("aabb".into())],
+            source: None,
+            target: None,
+            changed_columns: vec![],
+            key_unreliable: false,
+        }]);
+        diff.columns = vec!["id".to_string()];
+        diff.column_types = vec!["binary(16)".to_string()];
+        // JSON 往復後は Bytes が String になる。
+        let filtered = filter_out_keys(&diff, &[vec![Value::String("aabb".into())]]);
+        assert!(filtered.rows.is_empty());
     }
 
     #[test]

@@ -122,7 +122,10 @@ pub(crate) async fn apply_sync_sql_inner(
         .conn
         .execute_transaction(&statements, database.as_deref())
         .await;
-    if result.is_ok() {
+    {
+        // 失敗時も invalidate する (fail-closed)。MySQL は DDL の暗黙コミットで、
+        // 途中の文が失敗して ROLLBACK しても先に実行した ALTER は残るため。
+        //
         // Schema Cache (#1097): このコマンドの目的自体が「対象スキーマをソースに
         // 合わせて変更する」ことなので、渡された文の内容を判定せず常に
         // invalidate する (`sql_may_change_schema` による判定は不要 — ここに来る
