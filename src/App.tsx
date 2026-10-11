@@ -6182,8 +6182,8 @@ export default function App() {
       return;
     }
     // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
-    if (openingTablesRef.current.has(`${sessionId}\u0000${flightId}`)) return;
     const openKey = `${sessionId}\u0000${flightId}`;
+    if (openingTablesRef.current.has(openKey)) return;
     openingTablesRef.current.add(openKey);
     const limit = Math.max(1, settings.defaultDisplayCount);
     const driver = selectedProfile?.driver ?? "mysql";

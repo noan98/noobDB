@@ -11,6 +11,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       listDbUsers: vi.fn(),
       listUserPrivileges: vi.fn(),
+      generatePrivilegeDiffSql: vi.fn(),
+      applyPrivilegeSql: vi.fn(),
     },
   };
 });
@@ -85,5 +87,45 @@ describe("UsersPanel privilege load race", () => {
     fireEvent.click(await screen.findByRole("button", { name: /bob/ }));
     expect(screen.queryByText("alice_table")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("usersApplyChanges") })).toBeDisabled();
+  });
+
+  it("does not overwrite a newly selected user with the applied user's privileges", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("alice"), user("bob")]);
+    const resolvers: Record<string, (p: UserPrivileges) => void> = {};
+    vi.mocked(api.listUserPrivileges).mockImplementation(
+      (_sid, name) => new Promise<UserPrivileges>((r) => { resolvers[name] = r; }),
+    );
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["GRANT INSERT ON public.alice_table TO alice"]);
+    let resolveApply: () => void = () => {};
+    vi.mocked(api.applyPrivilegeSql).mockImplementation(
+      () => new Promise<number>((r) => { resolveApply = () => r(1); }),
+    );
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /alice/ }));
+    await act(async () => {
+      resolvers.alice(privs("alice_table"));
+    });
+    await screen.findByText("alice_table");
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersApplyConfirmOk") }));
+    await waitFor(() => expect(api.applyPrivilegeSql).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // 適用待ちの間に bob を選ぶ。
+    fireEvent.click(screen.getByRole("button", { name: /bob/ }));
+    await act(async () => {
+      resolveApply();
+    });
+    await act(async () => {
+      resolvers.bob(privs("bob_table"));
+    });
+
+    await screen.findByText("bob_table");
+    expect(screen.queryByText("alice_table")).not.toBeInTheDocument();
+    // 適用後に alice を読み直していない (初回の 1 回だけ)。
+    expect(vi.mocked(api.listUserPrivileges).mock.calls.filter((c) => c[1] === "alice")).toHaveLength(1);
   });
 });

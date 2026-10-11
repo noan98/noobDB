@@ -324,10 +324,12 @@ export function UsersPanel({
     });
     if (!ok) return;
     setBusy(true);
+    // 適用待ちの間に別ユーザが選ばれたら、そのユーザの読み込み結果を A の権限で上書きしない。
+    const seqBefore = privSeq.current;
     try {
       await api.applyPrivilegeSql({ sessionId, database, statements });
       toast.success(t("usersApplyDone"));
-      await loadPrivileges(selected);
+      if (privSeq.current === seqBefore) await loadPrivileges(selected);
     } catch (e) {
       toast.error(t("usersApplyFailed", { error: String(e) }));
     } finally {
