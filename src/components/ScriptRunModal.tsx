@@ -126,7 +126,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     setProgress(null);
     try {
       // 購読してから開始する (初回の進捗イベントを取りこぼさない)。
-      unlistenRef.current = await listenScriptStream(streamId, {
+      const unlisten = await listenScriptStream(streamId, {
         onProgress: (e) => setProgress(e),
         onDone: (e) => {
           cleanupStream();
@@ -159,9 +159,11 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       // 購読の await 中にアンマウント/キャンセルされたら、購読を外して開始しない
       // (受信者のいないまま書き込み文が完走するのを防ぐ)。
       if (unmountedRef.current || streamIdRef.current !== streamId) {
-        cleanupStream();
+        // 別の実行の購読/状態には触れず、この実行の購読だけ外す。
+        unlisten();
         return;
       }
+      unlistenRef.current = unlisten;
       await api.runSqlScript({ sessionId, streamId, database, path: target, options });
     } catch (e) {
       // 購読・開始 (入力検証) の失敗は終端イベントが来ないので、ここで UI を戻す。

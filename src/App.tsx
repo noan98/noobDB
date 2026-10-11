@@ -1918,6 +1918,8 @@ export default function App() {
   // キー別の番号を進める。resolve 時に世代が一致するときだけキャッシュへ書く
   // (effect の cleanup で結果を捨てると、並行取得中の DB の結果が欠落する)。
   const prefetchEpochRef = useRef(0);
+  // 逆 FK 用の世代。FK キャッシュは invalidateSchemaCache の対象外なので、セッション切替でだけ進める。
+  const fkEpochRef = useRef(0);
   const schemaGenRef = useRef<Map<string, number>>(new Map());
   // Set while a destructive query awaits confirmation; holds everything needed
   // to run it once the user accepts the warning dialog.
@@ -3601,13 +3603,13 @@ export default function App() {
       const key = incomingFkCacheKey(sessionId, tt.database, tt.table);
       if (key in incomingFkCache || fkInFlightRef.current.has(key)) continue;
       fkInFlightRef.current.add(key);
-      const epoch = prefetchEpochRef.current;
+      const epoch = fkEpochRef.current;
       api.incomingForeignKeys(sessionId, tt.database, tt.table)
         .then((fks) => {
-          if (prefetchEpochRef.current === epoch) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
+          if (fkEpochRef.current === epoch) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
         })
         .catch(() => { /* ignore: reverse FK nav is best-effort */ })
-        .finally(() => { if (prefetchEpochRef.current === epoch) fkInFlightRef.current.delete(key); });
+        .finally(() => { if (fkEpochRef.current === epoch) fkInFlightRef.current.delete(key); });
     }
   }, [sessionId, paneActiveTabs, incomingFkCache]);
 
@@ -3616,6 +3618,7 @@ export default function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替時にキャッシュを捨てる
   useEffect(() => {
     prefetchEpochRef.current += 1;
+    fkEpochRef.current += 1;
     setSchemaCache({});
     schemaInFlightRef.current.clear();
     setIncomingFkCache({});
@@ -3658,9 +3661,11 @@ export default function App() {
       }
       const key = schemaCacheKey(sessionId, database);
       schemaGenRef.current.set(key, (schemaGenRef.current.get(key) ?? 0) + 1);
-      schemaInFlightRef.current.delete(key);
+      const wasInFlight = schemaInFlightRef.current.delete(key);
       setSchemaCache((prev) => {
-        if (!(key in prev)) return prev;
+        // 取得中だった場合は結果が捨てられるので、新しい参照を返して再描画させ、
+        // 取得 effect を再実行して取り直す (prev をそのまま返すと止まる)。
+        if (!(key in prev)) return wasInFlight ? { ...prev } : prev;
         const next = { ...prev };
         delete next[key];
         return next;
