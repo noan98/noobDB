@@ -209,9 +209,83 @@ pub fn cleanup_stale_local_files() {
     // 未使用になる。存在確認だけが目的の変数なので明示的に握りつぶしておく。
     let _ = &meta;
 
-    if let Err(e) = std::fs::remove_dir_all(&dir) {
-        tracing::warn!(path = %dir.display(), error = %e, "failed to clean up stale local-session temp files");
+    // ディレクトリごとは消さない。複数インスタンスを同時に起動できるので、
+    // 別の生存プロセスが使っているファイル (`local-<pid>-*`) は残す。
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(path = %dir.display(), error = %e, "failed to scan local-session temp directory");
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let pid = name.to_str().and_then(local_file_pid);
+        let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+        if is_owner_alive(pid, modified) {
+            continue;
+        }
+        let path = entry.path();
+        let result = if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(e) = result {
+            tracing::warn!(path = %path.display(), error = %e, "failed to clean up stale local-session temp file");
+        }
     }
+    // 空になったときだけ消える (使用中のファイルがあれば失敗して残る)。
+    let _ = std::fs::remove_dir(&dir);
+}
+
+/// `local-<pid>-<slug>.sqlite` (と `-journal` / `-wal` などの付随ファイル) から PID を取り出す。
+/// 旧形式 (PID なし) は `None`。
+fn local_file_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("local-")?;
+    let (pid, _) = rest.split_once('-')?;
+    pid.parse().ok()
+}
+
+/// 一時ファイルの所有プロセスがまだ使っていそうか。PID が分かり生存していれば `true`。
+/// Unix 以外では生存確認ができないため、更新から 24 時間以内なら `true` とする。
+/// PID 不明 (旧形式) は `false` (掃除対象)。
+pub(crate) fn is_owner_alive(pid: Option<u32>, modified: Option<std::time::SystemTime>) -> bool {
+    let Some(pid) = pid else {
+        return false;
+    };
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let _ = modified;
+        pid_alive_unix(pid)
+    }
+    #[cfg(not(unix))]
+    {
+        let recent = modified
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|age| age < std::time::Duration::from_secs(24 * 60 * 60));
+        recent
+    }
+}
+
+#[cfg(unix)]
+fn pid_alive_unix(pid: u32) -> bool {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: シグナル 0 は存在確認だけで何も送らない。
+    let rc = unsafe { kill(pid, 0) };
+    // 戻り値 0 = 生存。権限不足 (EPERM = 1) も「存在する」。
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1)
 }
 
 /// テーブル名の最低限の妥当性チェック。SQL インジェクションは常に `quote_ident`
@@ -268,7 +342,9 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
     // 可能な場合はここでエラーになる。エラーメッセージは既に状況を明示しているので
     // そのまま伝播する。
     prepare_local_temp_dir(&dir)?;
-    let file_name = format!("local-{}.sqlite", random_slug(12));
+    // PID を名前に含める: 起動時の掃除が、別インスタンスが使用中のファイルを
+    // 消さないようにするため (`cleanup_stale_local_files`)。
+    let file_name = format!("local-{}-{}.sqlite", std::process::id(), random_slug(12));
     let path = dir.join(file_name);
     create_local_session_file(&path)
         .map_err(|e| AppError::Other(format!("failed to create local session file: {e}")))?;
@@ -481,6 +557,28 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     dur.as_millis() as i64
+}
+
+#[cfg(test)]
+mod pid_name_tests {
+    use super::*;
+
+    #[test]
+    fn parses_pid_from_local_file_names() {
+        assert_eq!(local_file_pid("local-1234-abcdef.sqlite"), Some(1234));
+        assert_eq!(
+            local_file_pid("local-1234-abcdef.sqlite-journal"),
+            Some(1234)
+        );
+        assert_eq!(local_file_pid("local-abcdef012345.sqlite"), None);
+        assert_eq!(local_file_pid("other"), None);
+    }
+
+    #[test]
+    fn own_pid_is_alive_and_unknown_is_stale() {
+        assert!(is_owner_alive(Some(std::process::id()), None));
+        assert!(!is_owner_alive(None, None));
+    }
 }
 
 #[cfg(test)]

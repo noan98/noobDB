@@ -51,18 +51,55 @@ fn load_all_locked() -> Result<Vec<ConnectionProfile>> {
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let profiles: Vec<ConnectionProfile> = serde_json::from_str(&content).map_err(|e| {
+    let values: Vec<serde_json::Value> = serde_json::from_str(&content).map_err(|e| {
         tracing::error!(path = %path.display(), error = %e, "profiles: failed to parse profiles.json");
         e
     })?;
-    Ok(profiles)
+    Ok(parse_tolerant(values).0)
+}
+
+/// 要素ごとにプロファイルとして解釈する。解釈できない要素 (手編集・新しい版が足した
+/// 未知の列挙子など) は警告を出して読み飛ばし、生の JSON のまま第 2 戻り値で返す。
+/// 1 件の不正で全プロファイルの一覧・保存・削除が不能になるのを防ぐ。
+fn parse_tolerant(
+    values: Vec<serde_json::Value>,
+) -> (Vec<ConnectionProfile>, Vec<serde_json::Value>) {
+    let mut ok = Vec::with_capacity(values.len());
+    let mut raw = Vec::new();
+    for v in values {
+        match serde_json::from_value::<ConnectionProfile>(v.clone()) {
+            Ok(p) => ok.push(p),
+            Err(e) => {
+                tracing::warn!(error = %e, "profiles: skipping unparsable profile entry");
+                raw.push(v);
+            }
+        }
+    }
+    (ok, raw)
+}
+
+/// 既存の profiles.json にある、解釈できない要素の生 JSON。保存時に書き戻して消さない。
+fn unparsable_raw(path: &std::path::Path) -> Vec<serde_json::Value> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+        Ok(values) => parse_tolerant(values).1,
+        Err(_) => Vec::new(),
+    }
 }
 
 /// 実際のファイル書き込み (ロック非取得)。`load_all_locked` と対で、複合操作から
 /// 呼ぶための内部版。
 fn save_all_locked(profiles: &[ConnectionProfile]) -> Result<()> {
     let path = profiles_path()?;
-    let content = serde_json::to_string_pretty(profiles).map_err(|e| {
+    // 読み飛ばした (解釈できない) 要素は生のまま末尾に残す。
+    let mut values: Vec<serde_json::Value> = profiles
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<_, _>>()?;
+    values.extend(unparsable_raw(&path));
+    let content = serde_json::to_string_pretty(&values).map_err(|e| {
         tracing::error!(error = %e, "profiles: failed to serialize profiles");
         e
     })?;
@@ -278,5 +315,14 @@ mod tests {
             "temp file was left behind: {leftovers:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // 解釈できない要素は読み飛ばされ、生の JSON として保持される。
+    #[test]
+    fn parse_tolerant_skips_unparsable_entries_and_keeps_raw() {
+        let values = vec![serde_json::json!({"id": 1}), serde_json::json!("junk")];
+        let (ok, raw) = parse_tolerant(values.clone());
+        assert!(ok.is_empty());
+        assert_eq!(raw, values);
     }
 }

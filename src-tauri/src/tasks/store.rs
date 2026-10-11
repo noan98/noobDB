@@ -60,7 +60,25 @@ fn load_file_locked() -> Result<TaskFile> {
     if content.trim().is_empty() {
         return Ok(TaskFile::default());
     }
-    Ok(serde_json::from_str(&content)?)
+    match serde_json::from_str(&content) {
+        Ok(file) => Ok(file),
+        Err(e) => {
+            // 壊れたまま放置すると tick の読み込みも保存もすべて失敗し、全タスクが
+            // 止まって復旧手段が無くなる。壊れたファイルを退避して空として扱う。
+            let backup = path.with_file_name(format!(
+                "tasks.json.corrupt-{}",
+                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            tracing::error!(
+                path = %path.display(),
+                backup = %backup.display(),
+                error = %e,
+                "tasks: tasks.json is corrupt; moving it aside and starting empty"
+            );
+            std::fs::rename(&path, &backup)?;
+            Ok(TaskFile::default())
+        }
+    }
 }
 
 /// 実際のファイル書き込み (ロック非取得)。`load_file_locked` と対。
@@ -127,7 +145,7 @@ pub fn load_all() -> Result<Vec<TaskDefinition>> {
 /// 「読み込み → 変更 → 保存」をロックを握ったまま一息で行う。
 ///
 /// `load_all()` して変更してから `save_all()` する形だと、その**間にロックが
-/// 解放される**ため、割り込んだ `upsert` / `delete` の変更を後から来た保存が
+/// 解放される**ため、割り込んだ `delete` の変更を後から来た保存が
 /// 丸ごと上書きしてしまう (lost update)。一覧全体を読んで書き戻す操作は必ず
 /// この API を通すこと。`profiles::store::update_all` と同じ形。
 ///
@@ -142,17 +160,6 @@ where
     let _guard = lock_store();
     let mut file = load_file_locked()?;
     f(&mut file.tasks)?;
-    save_file_locked(&file)
-}
-
-pub fn upsert(task: TaskDefinition) -> Result<()> {
-    let _guard = lock_store();
-    let mut file = load_file_locked()?;
-    if let Some(existing) = file.tasks.iter_mut().find(|t| t.id == task.id) {
-        *existing = task;
-    } else {
-        file.tasks.push(task);
-    }
     save_file_locked(&file)
 }
 

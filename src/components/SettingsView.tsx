@@ -833,6 +833,8 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       const res = await api.readLogs();
       setLogText(res.text);
       setLogPath(res.path);
+    } catch (e) {
+      toast.error(t("settingsLogsLoadError", { error: String(e) }));
     } finally {
       setLogLoading(false);
     }
@@ -860,7 +862,12 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       tone: "danger",
     });
     if (!ok) return;
-    await api.clearLogs();
+    try {
+      await api.clearLogs();
+    } catch (e) {
+      toast.error(t("settingsLogsClearError", { error: String(e) }));
+      return;
+    }
     await loadLogs();
   };
 
