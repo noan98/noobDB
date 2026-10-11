@@ -80,6 +80,14 @@ pub struct DataDiff {
     pub truncated: bool,
     pub source_count: usize,
     pub target_count: usize,
+    /// 生成列 (MySQL の STORED/VIRTUAL GENERATED・PostgreSQL の GENERATED ALWAYS AS
+    /// STORED) の列名。DB が値を計算するので、同期 SQL の INSERT / UPDATE からは
+    /// 外す。比較・表示 (`columns` / 各行の値) には残す。Rust 側のストア
+    /// (`AppState::data_diffs`) が持つ値だけで足りるので IPC には出さない
+    /// (`generate_data_sync_sql` はフロントを往復した diff ではなく `diff_id` で
+    /// ストア済みの diff を使う)。
+    #[serde(skip)]
+    pub generated_columns: Vec<String>,
 }
 
 /// Pairs `source` and `target` rows by their primary-key columns and returns
@@ -268,8 +276,10 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
             RowStatus::SourceOnly => {
                 if let Some(values) = &row.source {
                     let values = coerce_binary_values(&diff.columns, &diff.column_types, values);
+                    let (ins_columns, ins_values) =
+                        without_generated(&diff.columns, &values, &diff.generated_columns);
                     statements.push(SyncStatement {
-                        sql: insert_sql(driver, &table_ident, &diff.columns, &values),
+                        sql: insert_sql(driver, &table_ident, &ins_columns, &ins_values),
                         table: diff.table.clone(),
                         kind: SyncKind::InsertRow,
                         destructive: false,
@@ -287,12 +297,18 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
                         &diff.primary_key,
                         &row.key,
                     );
+                    let changed: Vec<String> = row
+                        .changed_columns
+                        .iter()
+                        .filter(|c| !diff.generated_columns.contains(c))
+                        .cloned()
+                        .collect();
                     if let Some(sql) = update_sql(
                         driver,
                         &table_ident,
                         &diff.columns,
                         &diff.primary_key,
-                        &row.changed_columns,
+                        &changed,
                         &values,
                         &key,
                     ) {
@@ -358,6 +374,20 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
         statements,
         warnings,
     }
+}
+
+/// 生成列を取り除いた (列名, 値) の組を返す。生成列には値を書き込めない。
+fn without_generated(
+    columns: &[String],
+    values: &[Value],
+    generated: &[String],
+) -> (Vec<String>, Vec<Value>) {
+    columns
+        .iter()
+        .zip(values.iter())
+        .filter(|(c, _)| !generated.contains(c))
+        .map(|(c, v)| (c.clone(), v.clone()))
+        .unzip()
 }
 
 /// True if some `SourceOnly` row's key and some `TargetOnly` row's key are
@@ -725,6 +755,7 @@ mod tests {
             truncated: false,
             source_count: 2,
             target_count: 2,
+            generated_columns: Vec::new(),
         };
 
         let without = generate_data_sync_sql(&diff, false);
@@ -752,6 +783,72 @@ mod tests {
             .unwrap();
         assert!(del.destructive);
         assert_eq!(del.sql, "DELETE FROM `scores` WHERE `id` = 4");
+    }
+
+    #[test]
+    fn generated_columns_are_excluded_from_insert_and_update_for_all_drivers() {
+        // score が生成列。比較 (changed_columns / 値) には残るが、書き込みからは外れる。
+        let columns = cols();
+        let pk = vec![0usize];
+        let source = vec![row(1, "a2", 10), row(3, "c", 30)];
+        let target = vec![row(1, "a", 99)];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        let changed = diffs
+            .iter()
+            .find(|d| d.status == RowStatus::Different)
+            .unwrap();
+        assert_eq!(changed.changed_columns, vec!["name", "score"]);
+        for driver in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            let diff = DataDiff {
+                target_driver: driver,
+                table: "scores".to_string(),
+                column_types: vec!["BIGINT".to_string(); columns.len()],
+                columns: columns.clone(),
+                primary_key: vec!["id".to_string()],
+                rows: diffs.clone(),
+                truncated: false,
+                source_count: 2,
+                target_count: 1,
+                generated_columns: vec!["score".to_string()],
+            };
+            let plan = generate_data_sync_sql(&diff, false);
+            let q = |c: &str| quote_ident(driver, c);
+            let t = quote_ident(driver, "scores");
+            assert_eq!(plan.statements.len(), 2, "{driver:?}");
+            assert_eq!(
+                plan.statements[0].sql,
+                format!(
+                    "INSERT INTO {t} ({}, {}) VALUES (3, 'c')",
+                    q("id"),
+                    q("name")
+                ),
+                "{driver:?}"
+            );
+            assert_eq!(
+                plan.statements[1].sql,
+                format!("UPDATE {t} SET {} = 'a2' WHERE {} = 1", q("name"), q("id")),
+                "{driver:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn update_with_only_generated_changes_emits_no_statement() {
+        let columns = cols();
+        let diffs = compute_data_diff(&columns, &[0], &[row(1, "a", 10)], &[row(1, "a", 99)]);
+        let diff = DataDiff {
+            target_driver: DriverKind::Mysql,
+            table: "scores".to_string(),
+            column_types: vec!["BIGINT".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["id".to_string()],
+            rows: diffs,
+            truncated: false,
+            source_count: 1,
+            target_count: 1,
+            generated_columns: vec!["score".to_string()],
+        };
+        assert!(generate_data_sync_sql(&diff, false).statements.is_empty());
     }
 
     #[test]
@@ -884,6 +981,7 @@ mod tests {
             truncated: true,
             source_count: 1,
             target_count: 2,
+            generated_columns: Vec::new(),
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -920,6 +1018,7 @@ mod tests {
             truncated: false,
             source_count: 1,
             target_count: 2,
+            generated_columns: Vec::new(),
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -954,6 +1053,7 @@ mod tests {
             truncated: false,
             source_count: 1,
             target_count: 0,
+            generated_columns: Vec::new(),
         };
 
         let mysql_plan = generate_data_sync_sql(&diff, false);
@@ -1003,6 +1103,7 @@ mod tests {
             truncated: false,
             source_count: 0,
             target_count: 2,
+            generated_columns: Vec::new(),
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1050,6 +1151,7 @@ mod tests {
             truncated: false,
             source_count: 0,
             target_count: 1,
+            generated_columns: Vec::new(),
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1146,6 +1248,7 @@ mod tests {
             truncated: false,
             source_count: 1,
             target_count: 1,
+            generated_columns: Vec::new(),
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1215,6 +1318,7 @@ mod tests {
             truncated: false,
             source_count: 1,
             target_count: 1,
+            generated_columns: Vec::new(),
         };
         let plan = generate_data_sync_sql(&diff, true);
         assert!(
@@ -1242,6 +1346,7 @@ mod tests {
             truncated: false,
             source_count: 1,
             target_count: 1,
+            generated_columns: Vec::new(),
         };
         let plan = generate_data_sync_sql(&diff, true);
         assert!(!plan.warnings.iter().any(|w| w.contains("大文字小文字")));

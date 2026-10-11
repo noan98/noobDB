@@ -532,10 +532,11 @@ impl PostgresConn {
             sqlx::raw_sql("SET standard_conforming_strings = on"),
         )
         .await?;
+        let numeric_columns = numeric_key_columns(&mut conn, table, conflict).await;
         let mut tx = conn.begin().await?;
         let mut inserted: u64 = 0;
         for chunk in rows.chunks(batch) {
-            let sql = build_pg_upsert(table, columns, chunk, conflict);
+            let sql = build_pg_upsert(table, columns, chunk, conflict, &numeric_columns);
             sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *tx)
                 .await?;
@@ -559,7 +560,6 @@ impl PostgresConn {
         if rows.is_empty() {
             return Ok(());
         }
-        let sql = build_pg_upsert(table, columns, rows, conflict);
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
         sqlx::Executor::execute(
@@ -567,6 +567,8 @@ impl PostgresConn {
             sqlx::raw_sql("SET standard_conforming_strings = on"),
         )
         .await?;
+        let numeric_columns = numeric_key_columns(&mut conn, table, conflict).await;
+        let sql = build_pg_upsert(table, columns, rows, conflict, &numeric_columns);
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(&mut *conn)
             .await?;
@@ -592,7 +594,7 @@ impl PostgresConn {
         .await?;
         let mut tx = conn.begin().await?;
         for (i, row) in rows.iter().enumerate() {
-            let sql = build_pg_upsert(table, columns, std::slice::from_ref(row), conflict);
+            let sql = build_pg_upsert(table, columns, std::slice::from_ref(row), conflict, &[]);
             if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *tx)
                 .await
@@ -1087,7 +1089,7 @@ impl PostgresConn {
                 c.is_nullable,
                 CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
                 c.column_default,
-                ''::text AS extra,
+                CASE WHEN c.is_generated = 'ALWAYS' THEN 'STORED GENERATED' ELSE '' END AS extra,
                 fk.ref_table,
                 fk.ref_column,
                 c.character_maximum_length,
@@ -1163,7 +1165,7 @@ impl PostgresConn {
                 c.is_nullable,
                 CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
                 c.column_default,
-                ''::text AS extra,
+                CASE WHEN c.is_generated = 'ALWAYS' THEN 'STORED GENERATED' ELSE '' END AS extra,
                 fk.ref_table,
                 fk.ref_column,
                 c.character_maximum_length,
@@ -3084,6 +3086,32 @@ fn build_pg_insert(table: &str, columns: &[String], rows: &[Vec<Option<String>>]
     sql
 }
 
+/// UPSERT のキー列のうち、整数型・数値型 (`pg_type.typcategory = 'N'`、money を除く)
+/// の列名を返す。`collapse_duplicate_keys` が `'1'` / `'01'` を同じキーとして畳むのに
+/// 使う。UPSERT でないとき・照会に失敗したときは空 (従来どおりテキスト比較)。
+async fn numeric_key_columns(
+    conn: &mut sqlx::PgConnection,
+    table: &str,
+    conflict: &ImportConflict,
+) -> Vec<String> {
+    if !conflict.is_upsert() {
+        return Vec::new();
+    }
+    let rows: std::result::Result<Vec<(String,)>, _> = sqlx::query_as(
+        "SELECT a.attname::text FROM pg_attribute a \
+         JOIN pg_type t ON t.oid = a.atttypid \
+         JOIN pg_type bt ON bt.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END \
+         WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped \
+           AND bt.typcategory = 'N' AND bt.typname <> 'money' AND a.attname::text = ANY($2)",
+    )
+    .bind(pg_quote_ident(table))
+    .bind(conflict.key_columns.clone())
+    .fetch_all(&mut *conn)
+    .await;
+    rows.map(|r| r.into_iter().map(|(c,)| c).collect())
+        .unwrap_or_default()
+}
+
 /// [`build_pg_insert`] に競合句 (#972) を付けたもの。UPSERT モードでは
 /// `ON CONFLICT DO UPDATE` が同一文内のキー重複をエラーにするため、先に
 /// [`ImportConflict::collapse_duplicate_keys`] で 1 行に畳む。
@@ -3092,8 +3120,9 @@ fn build_pg_upsert(
     columns: &[String],
     rows: &[Vec<Option<String>>],
     conflict: &ImportConflict,
+    numeric_columns: &[String],
 ) -> String {
-    let rows = conflict.collapse_duplicate_keys(columns, rows);
+    let rows = conflict.collapse_duplicate_keys(columns, rows, numeric_columns);
     let mut sql = build_pg_insert(table, columns, &rows);
     sql.push_str(&conflict_clause(DriverKind::Postgres, columns, conflict));
     sql

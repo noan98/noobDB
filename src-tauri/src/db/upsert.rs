@@ -114,10 +114,14 @@ impl ImportConflict {
     ///
     /// 重複が無ければ (大半のケース) 複製せず借用のまま返す。キーの比較は
     /// ファイル上のテキスト完全一致 (`NULL` 同士は同一視しない — SQL の一意性と同じ)。
+    /// ただし `numeric_columns` に含まれる (整数型・数値型の) キー列は、`'1'` / `'01'` /
+    /// `' 1'` / `'+1'` を同じキーとして扱えるよう [`normalize_numeric_key`] で正規化して
+    /// から比較する (DB 側では同じ値で、畳まないと "cannot affect row a second time")。
     pub fn collapse_duplicate_keys<'a>(
         &self,
         columns: &[String],
         rows: &'a [Vec<Option<String>>],
+        numeric_columns: &[String],
     ) -> Cow<'a, [Vec<Option<String>>]> {
         if !self.is_upsert() || rows.len() < 2 {
             return Cow::Borrowed(rows);
@@ -126,16 +130,25 @@ impl ImportConflict {
         if idx.is_empty() {
             return Cow::Borrowed(rows);
         }
+        let numeric: Vec<bool> = idx
+            .iter()
+            .map(|&ci| {
+                columns
+                    .get(ci)
+                    .is_some_and(|c| numeric_columns.iter().any(|n| n == c))
+            })
+            .collect();
         // キー → 採用する行番号。
-        let mut chosen: HashMap<Vec<&str>, usize> = HashMap::with_capacity(rows.len());
+        let mut chosen: HashMap<Vec<Cow<str>>, usize> = HashMap::with_capacity(rows.len());
         let mut keep = vec![true; rows.len()];
         let mut any_dup = false;
         for (ri, row) in rows.iter().enumerate() {
-            let mut key: Vec<&str> = Vec::with_capacity(idx.len());
+            let mut key: Vec<Cow<str>> = Vec::with_capacity(idx.len());
             let mut has_null = false;
-            for &ci in &idx {
+            for (k, &ci) in idx.iter().enumerate() {
                 match row.get(ci).and_then(|c| c.as_deref()) {
-                    Some(v) => key.push(v),
+                    Some(v) if numeric[k] => key.push(normalize_numeric_key(v)),
+                    Some(v) => key.push(Cow::Borrowed(v)),
                     None => {
                         has_null = true;
                         break;
@@ -172,6 +185,101 @@ impl ImportConflict {
                 .collect(),
         )
     }
+}
+
+/// 整数型・数値型のキー列の比較用に、数値テキストを正規形へ直す。前後の空白・
+/// 先頭の `+`・先頭の 0・小数部末尾の 0 を落とし、`-0` は `0` にする
+/// (`'1'` / `'01'` / `' 1'` / `'1.0'` が同じキーになる)。f64 を通さず文字列のまま
+/// 処理するので 64bit 整数・高精度 NUMERIC も丸まらない。`1e3` や `NaN` など
+/// 単純な 10 進表記でない値は元のテキストのまま返す。
+pub fn normalize_numeric_key(raw: &str) -> Cow<'_, str> {
+    let t = raw.trim();
+    let (neg, body) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    let (int_part, frac_part) = match body.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (body, ""),
+    };
+    let digits_ok = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    if (int_part.is_empty() && frac_part.is_empty())
+        || !digits_ok(int_part)
+        || !digits_ok(frac_part)
+    {
+        return Cow::Borrowed(raw);
+    }
+    let int_trim = int_part.trim_start_matches('0');
+    let frac_trim = frac_part.trim_end_matches('0');
+    let int_norm = if int_trim.is_empty() { "0" } else { int_trim };
+    let is_zero = int_norm == "0" && frac_trim.is_empty();
+    let mut out = String::with_capacity(t.len());
+    if neg && !is_zero {
+        out.push('-');
+    }
+    out.push_str(int_norm);
+    if !frac_trim.is_empty() {
+        out.push('.');
+        out.push_str(frac_trim);
+    }
+    Cow::Owned(out)
+}
+
+/// テーブルの一意キー (PRIMARY / UNIQUE インデックス) 1 本分。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniqueKey {
+    pub name: String,
+    pub columns: Vec<String>,
+}
+
+/// MySQL の UPSERT を実行してよいか、テーブルの一意キーから事前に検証する。
+///
+/// `ON DUPLICATE KEY UPDATE` は**PRIMARY を含むすべての一意キー**の衝突で発火し、
+/// ユーザが選んだキー列は構文に現れない。そのため選択キー以外の一意キーが 1 つでも
+/// あると、そのキーの衝突で意図しない行が黙って更新 (または読み飛ばし) される。
+/// 実行前に次のどちらかなら拒否する。
+///
+/// - 選んだキー列の集合と完全に一致する一意キーが無い (その列では衝突判定されない)
+/// - 選択キー以外の一意キーがある。ただし「インポートしない列を含み、その列が省略時に
+///   衝突しない (`omitted_safe`: AUTO_INCREMENT、または既定値 NULL の NULL 許容列)」
+///   一意キーは、今回の行では衝突し得ないので許容する。
+///
+/// `uniques` が空 (一意キー無し) の場合も、選択キーに一致するものが無いので拒否になる。
+pub fn check_mysql_unique_keys(
+    uniques: &[UniqueKey],
+    omitted_safe: &[String],
+    imported: &[String],
+    key_columns: &[String],
+) -> Result<()> {
+    let same_set = |a: &[String], b: &[String]| {
+        a.len() == b.len() && a.iter().all(|c| b.contains(c)) && b.iter().all(|c| a.contains(c))
+    };
+    if !uniques.iter().any(|u| same_set(&u.columns, key_columns)) {
+        return Err(AppError::InvalidInput(format!(
+            "MySQL upsert requires the key columns ({}) to exactly match a PRIMARY or UNIQUE key of the table",
+            key_columns.join(", ")
+        )));
+    }
+    let mut matched = false;
+    for u in uniques {
+        if !matched && same_set(&u.columns, key_columns) {
+            matched = true;
+            continue;
+        }
+        let cannot_collide = u
+            .columns
+            .iter()
+            .any(|c| !imported.contains(c) && omitted_safe.contains(c));
+        if !cannot_collide {
+            return Err(AppError::InvalidInput(format!(
+                "MySQL upsert would also fire on another unique key ({}: {}), which can overwrite or skip unrelated rows; use a table with a single unique key matching the selected key columns",
+                u.name,
+                u.columns.join(", ")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// MySQL / PostgreSQL / SQLite の `INSERT … VALUES (…)` の**後ろに付ける**
@@ -365,12 +473,12 @@ mod tests {
             row(&[Some("2"), Some("b")]),
             row(&[Some("1"), Some("c")]),
         ];
-        let up = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows);
+        let up = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &[]);
         assert_eq!(
             up.as_ref(),
             &[row(&[Some("2"), Some("b")]), row(&[Some("1"), Some("c")])]
         );
-        let sk = conflict(ConflictMode::Skip, &["id"]).collapse_duplicate_keys(&c, &rows);
+        let sk = conflict(ConflictMode::Skip, &["id"]).collapse_duplicate_keys(&c, &rows, &[]);
         assert_eq!(
             sk.as_ref(),
             &[row(&[Some("1"), Some("a")]), row(&[Some("2"), Some("b")])]
@@ -382,12 +490,12 @@ mod tests {
         let c = cols(&["id", "v"]);
         let rows = vec![row(&[None, Some("a")]), row(&[None, Some("b")])];
         assert!(matches!(
-            conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows),
+            conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &[]),
             Cow::Borrowed(_)
         ));
         let dup = vec![row(&[Some("1"), Some("a")]), row(&[Some("1"), Some("b")])];
         assert!(matches!(
-            ImportConflict::insert_only().collapse_duplicate_keys(&c, &dup),
+            ImportConflict::insert_only().collapse_duplicate_keys(&c, &dup, &[]),
             Cow::Borrowed(_)
         ));
     }
@@ -400,8 +508,128 @@ mod tests {
             row(&[Some("1"), Some("y"), Some("q")]),
             row(&[Some("1"), Some("x"), Some("r")]),
         ];
-        let out = conflict(ConflictMode::Update, &["a", "b"]).collapse_duplicate_keys(&c, &rows);
+        let out =
+            conflict(ConflictMode::Update, &["a", "b"]).collapse_duplicate_keys(&c, &rows, &[]);
         assert_eq!(out.len(), 2);
         assert_eq!(out[1], row(&[Some("1"), Some("x"), Some("r")]));
+    }
+
+    fn uk(name: &str, c: &[&str]) -> UniqueKey {
+        UniqueKey {
+            name: name.into(),
+            columns: cols(c),
+        }
+    }
+
+    #[test]
+    fn mysql_check_accepts_exact_single_unique_key() {
+        let u = vec![uk("PRIMARY", &["id"])];
+        assert!(check_mysql_unique_keys(&u, &[], &cols(&["id", "v"]), &cols(&["id"])).is_ok());
+    }
+
+    #[test]
+    fn mysql_check_rejects_when_no_unique_key_matches_selection() {
+        let u = vec![uk("PRIMARY", &["id"]), uk("email", &["email"])];
+        let r = check_mysql_unique_keys(&u, &[], &cols(&["id", "name"]), &cols(&["name"]));
+        assert!(r.is_err());
+        // 一意キーが無いテーブルも拒否。
+        assert!(check_mysql_unique_keys(&[], &[], &cols(&["a"]), &cols(&["a"])).is_err());
+    }
+
+    #[test]
+    fn mysql_check_rejects_other_unique_key_that_can_collide() {
+        // key=email を選んでも id (PK) の衝突で別行が上書きされ得る。
+        let u = vec![uk("PRIMARY", &["id"]), uk("email", &["email"])];
+        let r =
+            check_mysql_unique_keys(&u, &[], &cols(&["id", "email", "name"]), &cols(&["email"]));
+        assert!(r.is_err());
+        // 選択キーが複合の一部でも (部分集合は別の一意キー扱い)。
+        let u = vec![uk("a", &["a"]), uk("ab", &["a", "b"])];
+        assert!(check_mysql_unique_keys(&u, &[], &cols(&["a", "b"]), &cols(&["a", "b"])).is_err());
+    }
+
+    #[test]
+    fn mysql_check_allows_omitted_auto_increment_pk() {
+        let u = vec![uk("PRIMARY", &["id"]), uk("email", &["email"])];
+        // id を取り込まず AUTO_INCREMENT (omitted_safe) なら PK は衝突しない。
+        assert!(check_mysql_unique_keys(
+            &u,
+            &cols(&["id"]),
+            &cols(&["email", "name"]),
+            &cols(&["email"])
+        )
+        .is_ok());
+        // id を取り込む場合は omitted_safe でも許容しない。
+        assert!(check_mysql_unique_keys(
+            &u,
+            &cols(&["id"]),
+            &cols(&["id", "email"]),
+            &cols(&["email"])
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn mysql_check_key_order_does_not_matter() {
+        let u = vec![uk("ab", &["a", "b"])];
+        assert!(check_mysql_unique_keys(&u, &[], &cols(&["a", "b"]), &cols(&["b", "a"])).is_ok());
+    }
+
+    #[test]
+    fn normalize_numeric_key_cases() {
+        for (raw, want) in [
+            ("1", "1"),
+            ("01", "1"),
+            (" 1 ", "1"),
+            ("+1", "1"),
+            ("-0", "0"),
+            ("000", "0"),
+            ("1.0", "1"),
+            ("1.50", "1.5"),
+            ("-007.10", "-7.1"),
+            (".5", "0.5"),
+            ("9223372036854775807", "9223372036854775807"),
+            ("9223372036854775808", "9223372036854775808"),
+            ("012345678901234567890", "12345678901234567890"),
+        ] {
+            assert_eq!(normalize_numeric_key(raw), want, "raw={raw:?}");
+        }
+        // 数値として解釈できないものは元のまま。
+        for raw in ["abc", "1e3", "NaN", "", "-", "1.2.3", "0x10", "1 2"] {
+            assert_eq!(normalize_numeric_key(raw), raw, "raw={raw:?}");
+        }
+    }
+
+    #[test]
+    fn collapse_normalizes_numeric_key_columns_only() {
+        let c = cols(&["id", "v"]);
+        let rows = vec![
+            row(&[Some("1"), Some("a")]),
+            row(&[Some("01"), Some("b")]),
+            row(&[Some(" 1"), Some("c")]),
+        ];
+        let num = cols(&["id"]);
+        let up = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &num);
+        assert_eq!(up.as_ref(), &[row(&[Some(" 1"), Some("c")])]);
+        let sk = conflict(ConflictMode::Skip, &["id"]).collapse_duplicate_keys(&c, &rows, &num);
+        assert_eq!(sk.as_ref(), &[row(&[Some("1"), Some("a")])]);
+        // 数値列でなければ従来どおりテキスト完全一致 (畳まない)。
+        let none = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &[]);
+        assert!(matches!(none, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn collapse_numeric_keeps_64bit_precision() {
+        let c = cols(&["id"]);
+        let rows = vec![
+            row(&[Some("9007199254740993")]),
+            row(&[Some("9007199254740992")]),
+        ];
+        let out = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(
+            &c,
+            &rows,
+            &cols(&["id"]),
+        );
+        assert!(matches!(out, Cow::Borrowed(_)));
     }
 }

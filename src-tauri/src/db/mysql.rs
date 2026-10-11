@@ -650,6 +650,53 @@ impl MySqlConn {
         Ok(())
     }
 
+    /// UPSERT の事前検証 (MySQL の `ON DUPLICATE KEY` は全一意キーで発火する)。
+    /// テーブルの PRIMARY / UNIQUE インデックスを読み、選択キー列と照合する。
+    /// 詳細は [`super::upsert::check_mysql_unique_keys`]。
+    pub(crate) async fn check_upsert_keys(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        imported: &[String],
+        key_columns: &[String],
+    ) -> Result<()> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT INDEX_NAME, COALESCE(COLUMN_NAME, '') FROM information_schema.STATISTICS \
+             WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? AND NON_UNIQUE = 0 \
+             ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut uniques: Vec<super::upsert::UniqueKey> = Vec::new();
+        for (name, col) in rows {
+            // 関数インデックスの式キー (COLUMN_NAME が NULL) は実列と一致しないよう
+            // 空文字の疑似列で表す。
+            match uniques.last_mut() {
+                Some(u) if u.name == name => u.columns.push(col),
+                _ => uniques.push(super::upsert::UniqueKey {
+                    name,
+                    columns: vec![col],
+                }),
+            }
+        }
+        // 取り込まない列が省略時に衝突しないもの: AUTO_INCREMENT、または既定値
+        // NULL の NULL 許容列 (NULL は一意性の衝突にならない)。
+        let safe: Vec<(String,)> = sqlx::query_as(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? \
+             AND (LOWER(EXTRA) LIKE '%auto_increment%' \
+                  OR (IS_NULLABLE = 'YES' AND COLUMN_DEFAULT IS NULL))",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let omitted_safe: Vec<String> = safe.into_iter().map(|(c,)| c).collect();
+        super::upsert::check_mysql_unique_keys(&uniques, &omitted_safe, imported, key_columns)
+    }
+
     /// Whether `table`'s storage engine supports transactional DML (rollback).
     /// InnoDB (the default) and NDB do; MyISAM / MEMORY / CSV / ARCHIVE etc. do
     /// not. The resilient-import probe/retry strategies rely on rollback, so they

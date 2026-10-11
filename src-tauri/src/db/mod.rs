@@ -680,6 +680,26 @@ impl Connection {
         }
     }
 
+    /// UPSERT モードのインポート前の検証。MySQL の `ON DUPLICATE KEY UPDATE` は
+    /// PRIMARY を含む全一意キーの衝突で発火するため、選択キー列と一致しない
+    /// 一意キーがあると別の行を黙って上書き / 読み飛ばす。実行前に理由付きで
+    /// 拒否する。PostgreSQL / SQLite は `ON CONFLICT (キー列)` で判定するので何もしない。
+    pub async fn check_upsert_keys(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        imported: &[String],
+        conflict: &ImportConflict,
+    ) -> Result<()> {
+        match self {
+            Connection::MySql(c) if conflict.is_upsert() => {
+                c.check_upsert_keys(database, table, imported, &conflict.key_columns)
+                    .await
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Whether `table` supports transactional DML (rollback). Only MySQL has
     /// non-transactional storage engines (MyISAM etc.); PostgreSQL and SQLite are
     /// always transactional. Used to keep the resilient-import probe/retry paths

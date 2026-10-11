@@ -42,7 +42,7 @@ use crate::db::sandbox::{
     row_to_cells, schema_conflict_tables, shadow_table_name, with_shadow_copies, SandboxConflict,
 };
 use crate::db::sync::{generate_sync_sql, quote_ident};
-use crate::db::types::{TableColumnInfo, Value};
+use crate::db::types::{generated_column_names, TableColumnInfo, Value};
 use crate::db::upsert::ImportConflict;
 use crate::db::{Connection, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
@@ -542,6 +542,19 @@ pub(crate) async fn sandbox_table_diff_inner(
         .filter_map(|n| columns.iter().position(|c| c == n))
         .collect();
 
+    // 書き戻し先 (実 DB) の生成列は値を書き込めないので、書き戻し SQL から外す
+    // (#1521)。サンドボックスは SQLite のコピーで生成列が通常列に見えるため、
+    // 実 DB の列定義で判定する。接続が無い・取得に失敗したときは判定できず空。
+    let mut generated_columns: Vec<String> = Vec::new();
+    if let Some(source_session_id) = &source_session_id {
+        if let Some(source) = state.get(source_session_id).await {
+            let source_db = record.source_database.clone().unwrap_or_default();
+            if let Ok(src_cols) = source.conn.columns(&source_db, &table).await {
+                generated_columns = generated_column_names(&src_cols);
+            }
+        }
+    }
+
     let want = limit.unwrap_or(DEFAULT_DATA_ROWS).min(MAX_DATA_ROWS);
     let live_sql = select_rows_sql(DriverKind::Sqlite, &table, &columns, &primary_key, want + 1);
     let base_sql = select_rows_sql(
@@ -570,6 +583,7 @@ pub(crate) async fn sandbox_table_diff_inner(
         truncated,
         source_count: live_count,
         target_count: base_count,
+        generated_columns,
     };
 
     let mut conflicts = Vec::new();
@@ -612,6 +626,7 @@ pub(crate) async fn sandbox_table_diff_inner(
                     truncated: false,
                     source_count: current_rows.len(),
                     target_count: base_count,
+                    generated_columns: Vec::new(),
                 };
                 conflicts = detect_conflicts(&desired, &external);
                 source_checked = true;

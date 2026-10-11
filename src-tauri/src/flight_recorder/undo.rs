@@ -325,6 +325,7 @@ pub fn build_undo_plan(
         truncated: false,
         source_count: row_count,
         target_count: row_count,
+        generated_columns: Vec::new(),
     };
     // allow_delete=true is intentional and always safe here: a `DELETE`
     // statement is only ever generated for an `Insert`-undo `TargetOnly` row,

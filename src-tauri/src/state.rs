@@ -575,6 +575,7 @@ mod tests {
             truncated: false,
             source_count: n,
             target_count: 0,
+            generated_columns: Vec::new(),
         }
     }
 

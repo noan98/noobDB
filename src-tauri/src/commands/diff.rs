@@ -7,7 +7,7 @@ use tauri::State;
 use crate::db::data_diff::{compute_data_diff, DataDiff};
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sync::quote_ident;
-use crate::db::types::{TableColumnInfo, Value};
+use crate::db::types::{generated_column_names, TableColumnInfo, Value};
 use crate::db::{Connection, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -264,6 +264,8 @@ pub async fn compare_table_data(
     // 化けても、この型情報から Value::Bytes へ補正できるようにする
     // (`data_diff::generate_data_sync_sql` 参照)。
     let column_types: Vec<String> = col_info.iter().map(|c| c.data_type.clone()).collect();
+    // 生成列は DB が値を計算するので、同期 SQL の INSERT / UPDATE から外す (#1521)。
+    let generated_columns = generated_column_names(&col_info);
     let primary_key: Vec<String> = col_info
         .iter()
         .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
@@ -315,6 +317,7 @@ pub async fn compare_table_data(
         truncated,
         source_count,
         target_count,
+        generated_columns,
     };
     let diff_id = state.store_data_diff(
         diff.clone(),
