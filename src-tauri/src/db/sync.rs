@@ -93,7 +93,9 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         match table.status {
             DiffStatus::Same => {}
             DiffStatus::SourceOnly => {
-                statements.push(create_table_stmt(driver, table, &mut warnings));
+                if let Some(stmt) = create_table_stmt(driver, table, &mut warnings) {
+                    statements.push(stmt);
+                }
             }
             DiffStatus::TargetOnly => {
                 if allow_destructive {
@@ -137,14 +139,28 @@ fn create_table_stmt(
     driver: DriverKind,
     table: &TableDiff,
     warnings: &mut Vec<String>,
-) -> SyncStatement {
+) -> Option<SyncStatement> {
     let mut cols: Vec<&TableColumnInfo> = Vec::new();
+    let mut pk_generated = false;
     for c in table.columns.iter().filter_map(|c| c.source.as_ref()) {
         if is_generated_column(driver, c) {
             warnings.push(generated_column_warning(&table.name, &c.name));
+            if c.key.eq_ignore_ascii_case("PRI") {
+                pk_generated = true;
+            }
         } else {
             cols.push(c);
         }
+    }
+
+    // 生成列を除くと主キーが変わる / 列が無くなる場合は、誤った構造のテーブルを
+    // 作らないよう CREATE TABLE 自体を出さない。
+    if pk_generated || cols.is_empty() {
+        warnings.push(format!(
+            "{}: 生成列を除外すると主キーが変わる、または作成できる列が無いため CREATE TABLE を生成しません。手動で作成してください。",
+            table.name
+        ));
+        return None;
     }
 
     let mut lines: Vec<String> = cols.iter().map(|c| column_def(driver, c)).collect();
@@ -159,12 +175,12 @@ fn create_table_stmt(
     }
 
     let sql = render_create_table(&quote_ident(driver, &table.name), &lines);
-    SyncStatement {
+    Some(SyncStatement {
         sql,
         table: table.name.clone(),
         kind: SyncKind::CreateTable,
         destructive: false,
-    }
+    })
 }
 
 /// Renders `CREATE TABLE <qualified> (\n  <line>,\n  ...\n)` from already
@@ -221,7 +237,12 @@ fn alter_table(
             }
             DiffStatus::Different => {
                 if let Some(src) = &col.source {
-                    if is_generated_column(driver, src) {
+                    // target 側が生成列の場合も MODIFY で生成式が失われるため対象外。
+                    let target_generated = col
+                        .target
+                        .as_ref()
+                        .is_some_and(|t| is_generated_column(driver, t));
+                    if is_generated_column(driver, src) || target_generated {
                         warnings.push(generated_column_warning(&table.name, &src.name));
                         continue;
                     }
@@ -779,7 +800,7 @@ mod tests {
             ],
         };
         let mut warnings = Vec::new();
-        let stmt = create_table_stmt(DriverKind::Mysql, &table, &mut warnings);
+        let stmt = create_table_stmt(DriverKind::Mysql, &table, &mut warnings).unwrap();
         assert!(stmt.sql.contains("`id`") && !stmt.sql.contains("`total`"));
         assert_eq!(warnings.len(), 1);
 
@@ -794,6 +815,51 @@ mod tests {
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![alter]), false);
         assert!(plan.statements.is_empty());
         assert_eq!(plan.warnings.len(), 2);
+    }
+
+    #[test]
+    fn mysql_create_table_skipped_when_generated_pk_or_no_columns() {
+        let mut g = col("id", "int");
+        g.extra = "STORED GENERATED".to_string();
+        g.key = "PRI".to_string();
+        let plain = col("name", "varchar(10)");
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![
+                cdiff("id", DiffStatus::SourceOnly, Some(g.clone()), &[]),
+                cdiff("name", DiffStatus::SourceOnly, Some(plain), &[]),
+            ],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert!(plan.statements.is_empty());
+        assert!(plan.warnings.iter().any(|w| w.contains("CREATE TABLE")));
+
+        g.key = String::new();
+        let only = TableDiff {
+            name: "t2".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![cdiff("id", DiffStatus::SourceOnly, Some(g), &[])],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![only]), false);
+        assert!(plan.statements.is_empty());
+    }
+
+    #[test]
+    fn mysql_modify_skipped_when_target_is_generated() {
+        let src = col("v", "int");
+        let mut tgt = col("v", "bigint");
+        tgt.extra = "VIRTUAL GENERATED".to_string();
+        let mut cd = cdiff("v", DiffStatus::Different, Some(src), &["data_type"]);
+        cd.target = Some(tgt);
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::Different,
+            columns: vec![cd],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert!(plan.statements.is_empty());
+        assert_eq!(plan.warnings.len(), 1);
     }
 
     #[test]

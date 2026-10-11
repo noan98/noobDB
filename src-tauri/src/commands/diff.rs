@@ -142,6 +142,19 @@ fn cmp_value(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
             _ => None,
         }
     }
+    // 2^53 超の BIGINT などは Value::String になるため、両側が整数として読めるなら
+    // i128 で数値比較する (Int / UInt / String の混在を含む)。
+    fn int(v: &Value) -> Option<i128> {
+        match v {
+            Value::Int(i) => Some(i128::from(*i)),
+            Value::UInt(u) => Some(i128::from(*u)),
+            Value::String(s) => s.trim().parse::<i128>().ok(),
+            _ => None,
+        }
+    }
+    if let (Some(x), Some(y)) = (int(a), int(b)) {
+        return Some(x.cmp(&y));
+    }
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => Some(x.cmp(y)),
         (Value::UInt(x), Value::UInt(y)) => Some(x.cmp(y)),
@@ -349,6 +362,25 @@ mod window_tests {
         clamp_to_common_window(&mut s, &mut t, true, true, &[0]);
         assert_eq!(ids(&s), vec![1, 2, 3]);
         assert_eq!(ids(&t), vec![1, 2]);
+    }
+
+    #[test]
+    fn integer_strings_are_compared_numerically() {
+        let big = |n: i128| Value::String(n.to_string());
+        assert_eq!(
+            cmp_value(&big(9_007_199_254_740_993), &big(9_007_199_254_740_992)),
+            Some(std::cmp::Ordering::Greater)
+        );
+        // 文字列比較だと "9" > "10" になってしまう。
+        assert_eq!(cmp_value(&big(9), &big(10)), Some(std::cmp::Ordering::Less));
+        assert_eq!(
+            cmp_value(&Value::Int(5), &big(10)),
+            Some(std::cmp::Ordering::Less)
+        );
+        let mut s = vec![vec![big(9_007_199_254_740_993)]];
+        let mut t = vec![vec![Value::Int(5)]];
+        clamp_to_common_window(&mut s, &mut t, false, true, &[0]);
+        assert!(s.is_empty());
     }
 
     #[test]

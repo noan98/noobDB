@@ -232,18 +232,29 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   const apply = useCallback(async () => {
     if (!combined || combined.statements.length === 0 || !targetSessionId || !targetProfile) return;
     const destructiveCount = combined.statements.filter((s) => s.destructive).length;
-    const failedCheckTables = sandbox.tables.filter((tb) => !!tables[tb]?.diff?.source_error);
+    // 実際に書き戻す行があり、競合検出に失敗したテーブルだけを注意対象にする。
+    const failedCheckTables = sandbox.tables.filter((tb) => {
+      const d = tables[tb]?.diff;
+      return !!d?.source_error && d.desired.rows.length > 0;
+    });
     const ok = await confirm({
       title: t("sandboxApplyTitle", { count: combined.statements.length }),
-      message:
-        t("sandboxApplyConfirm", {
-          count: combined.statements.length,
-          name: targetProfile.name,
-          destructive: destructiveCount,
-        }) +
-        (failedCheckTables.length > 0
-          ? `\n\n${t("sandboxApplySourceErrorNote", { tables: failedCheckTables.join(", ") })}`
-          : ""),
+      message: (
+        <>
+          <chakra.p margin={0}>
+            {t("sandboxApplyConfirm", {
+              count: combined.statements.length,
+              name: targetProfile.name,
+              destructive: destructiveCount,
+            })}
+          </chakra.p>
+          {failedCheckTables.length > 0 && (
+            <chakra.p margin={0} mt="2" color="app.textWarning">
+              {t("sandboxApplySourceErrorNote", { tables: failedCheckTables.join(", ") })}
+            </chakra.p>
+          )}
+        </>
+      ),
       tone: destructiveCount > 0 ? "danger" : "warning",
     });
     if (!ok) return;
