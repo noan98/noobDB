@@ -439,12 +439,13 @@ pub fn classify_tx_control(driver: DriverKind, sql: &str) -> Option<TxControl> {
 
 /// `classify_tx_control` に加え、開始文に付いた分離レベル / READ ONLY を
 /// [`TxOptions`] として返す (PostgreSQL の `BEGIN ISOLATION LEVEL SERIALIZABLE` や
-/// MySQL の `START TRANSACTION READ ONLY` など)。認識できないオプション
-/// (`DEFERRABLE` 等) が付いた開始文は `None` (生の SQL として実行される)。
+/// MySQL の `START TRANSACTION READ ONLY` など)。開始文なのに解釈できない語が残る
+/// ときは `Err` (fail-closed: 生の SQL としてプールへ流さず、呼び出し側がエラーにする)。
+/// `BEGIN SELECT 1` のように開始文でないものだけ `None`。
 pub fn classify_tx_statement(
     driver: DriverKind,
     sql: &str,
-) -> Option<(TxControl, crate::db::tx_options::TxOptions)> {
+) -> Option<(TxControl, Result<crate::db::tx_options::TxOptions, String>)> {
     use crate::db::tx_options::TxOptions;
     let orig: Vec<char> = sql.chars().collect();
     let masked: String = super::mask_for_driver(driver, &orig).into_iter().collect();
@@ -456,7 +457,8 @@ pub fn classify_tx_statement(
     let first = *words.first()?;
     let rest = &words[1..];
     let only = |allowed: &[&str]| rest.len() <= 1 && rest.iter().all(|w| allowed.contains(w));
-    let plain = |ctl: bool, ctl_kind: TxControl| ctl.then_some((ctl_kind, TxOptions::default()));
+    let plain =
+        |ctl: bool, ctl_kind: TxControl| ctl.then_some((ctl_kind, Ok(TxOptions::default())));
     match first {
         "begin" => {
             let (mode, tail) = match rest.first() {
@@ -468,15 +470,21 @@ pub fn classify_tx_statement(
                 _ => tail,
             };
             if mode && tail.is_empty() {
-                return Some((TxControl::Begin, TxOptions::default()));
+                return Some((TxControl::Begin, Ok(TxOptions::default())));
             }
-            parse_tx_modes(tail).map(|o| (TxControl::Begin, o))
+            // 後ろに続くのがトランザクションのモード語でなければ開始文ではない。
+            if let Some(w) = tail.first() {
+                if !matches!(*w, "isolation" | "read" | "deferrable" | "not" | "with") {
+                    return None;
+                }
+            }
+            Some((TxControl::Begin, parse_tx_modes(tail)))
         }
         "start" => {
             if rest.first() != Some(&"transaction") {
                 return None;
             }
-            parse_tx_modes(&rest[1..]).map(|o| (TxControl::Begin, o))
+            Some((TxControl::Begin, parse_tx_modes(&rest[1..])))
         }
         "commit" => plain(only(&["work", "transaction", "tran"]), TxControl::Commit),
         "end" => plain(only(&["work", "transaction"]), TxControl::Commit),
@@ -486,8 +494,8 @@ pub fn classify_tx_statement(
 }
 
 /// 開始文の後ろに付く `ISOLATION LEVEL ...` / `READ ONLY` / `READ WRITE` を解釈する。
-/// 解釈できない語が残れば `None`。
-fn parse_tx_modes(words: &[&str]) -> Option<crate::db::tx_options::TxOptions> {
+/// `DEFERRABLE` / `NOT DEFERRABLE` は読み飛ばす。解釈できない語が残れば `Err`。
+fn parse_tx_modes(words: &[&str]) -> Result<crate::db::tx_options::TxOptions, String> {
     use crate::db::tx_options::{TxIsolation, TxOptions};
     let mut opts = TxOptions::default();
     let mut i = 0;
@@ -522,10 +530,16 @@ fn parse_tx_modes(words: &[&str]) -> Option<crate::db::tx_options::TxOptions> {
             ["with", "consistent", "snapshot", ..] => {
                 i += 3;
             }
-            _ => return None,
+            ["not", "deferrable", ..] => {
+                i += 2;
+            }
+            ["deferrable", ..] => {
+                i += 1;
+            }
+            other => return Err(format!("unsupported transaction mode near `{}`", other[0])),
         }
     }
-    Some(opts)
+    Ok(opts)
 }
 
 /// `USE <db>` 文なら切り替え先のデータベース名を返す (MySQL のみ)。
@@ -675,26 +689,49 @@ mod tests {
             classify_tx_statement(d, "BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY"),
             Some((
                 TxControl::Begin,
-                TxOptions {
+                Ok(TxOptions {
                     isolation: Some(TxIsolation::RepeatableRead),
                     read_only: true
-                }
+                })
             ))
         );
         assert_eq!(
             classify_tx_statement(d, "begin transaction read only"),
             Some((
                 TxControl::Begin,
-                TxOptions {
+                Ok(TxOptions {
                     isolation: None,
                     read_only: true
-                }
+                })
             ))
         );
         assert_eq!(
             classify_tx_statement(DriverKind::Mysql, "START TRANSACTION READ WRITE"),
-            Some((TxControl::Begin, TxOptions::default()))
+            Some((TxControl::Begin, Ok(TxOptions::default())))
         );
+        // DEFERRABLE は読み飛ばし、解釈できない語は Err (生 SQL にしない)。
+        assert_eq!(
+            classify_tx_statement(
+                d,
+                "START TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ ONLY, DEFERRABLE"
+            ),
+            Some((
+                TxControl::Begin,
+                Ok(TxOptions {
+                    isolation: Some(TxIsolation::Serializable),
+                    read_only: true
+                })
+            ))
+        );
+        assert!(matches!(
+            classify_tx_statement(d, "BEGIN ISOLATION LEVEL FOO"),
+            Some((TxControl::Begin, Err(_)))
+        ));
+        assert!(matches!(
+            classify_tx_statement(d, "START TRANSACTION bogus"),
+            Some((TxControl::Begin, Err(_)))
+        ));
+        assert_eq!(classify_tx_statement(d, "BEGIN SELECT 1"), None);
     }
 
     #[test]
@@ -719,7 +756,7 @@ mod tests {
             Some(Begin)
         );
         assert_eq!(classify_tx_control(d, "BEGIN READ ONLY"), Some(Begin));
-        assert_eq!(classify_tx_control(d, "BEGIN DEFERRABLE"), None);
+        assert_eq!(classify_tx_control(d, "BEGIN DEFERRABLE"), Some(Begin));
         assert_eq!(classify_tx_control(d, "BEGIN SELECT 1"), None);
         assert_eq!(classify_tx_control(d, "END"), Some(Commit));
         assert_eq!(classify_tx_control(d, "COMMIT -- done"), Some(Commit));

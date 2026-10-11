@@ -1873,9 +1873,9 @@ mod query_result_cache_tests {
         let cache = test_cache();
         let calls = Arc::new(AtomicUsize::new(0));
         for sql in [
-            "SELECT nextval('order_seq')",
+            "SELECT currval('order_seq')",
             "SELECT pg_advisory_lock(1)",
-            "SELECT setval('s', 10)",
+            "SELECT set_config('x', 'y', false)",
         ] {
             for _ in 0..2 {
                 let c = calls.clone();
@@ -1891,7 +1891,7 @@ mod query_result_cache_tests {
         assert_eq!(calls.load(Ordering::SeqCst), 6);
         assert!(!crate::db::sql_has_side_effect_function(
             DriverKind::Postgres,
-            "SELECT 'nextval' AS c, nextval_count FROM t"
+            "SELECT 'currval' AS c, currval_count FROM t"
         ));
     }
 

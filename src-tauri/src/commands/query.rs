@@ -517,12 +517,13 @@ pub async fn finish_transaction(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    session.conn.finish_transaction(commit).await?;
+    let result = session.conn.finish_transaction(commit).await;
     // トランザクション中にプール接続から読まれたキャッシュは、未確定 (COMMIT 前) の
     // 旧状態や ROLLBACK で消える状態を保存している可能性がある。確定/破棄の時点で
     // スキーマ・クエリ結果キャッシュを丸ごと無効化して stale を残さない。
     session.schema_cache.invalidate_all().await;
     session.query_cache.invalidate_all().await;
+    result?;
     tracing::info!(session_id = %session_id, commit, "explicit transaction finished");
     Ok(())
 }

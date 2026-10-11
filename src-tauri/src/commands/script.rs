@@ -696,11 +696,16 @@ impl Runner {
                         Err(AppError::InvalidInput(
                             "nested BEGIN: a transaction is already open in this script".into(),
                         ))
+                    } else if let Err(msg) = &tx_opts {
+                        Err(AppError::InvalidInput(msg.clone()))
                     } else {
                         let r = self
                             .session
                             .conn
-                            .begin_transaction_with(self.database.as_deref(), tx_opts)
+                            .begin_transaction_with(
+                                self.database.as_deref(),
+                                tx_opts.unwrap_or_default(),
+                            )
                             .await;
                         if r.is_ok() {
                             self.guard.active = true;

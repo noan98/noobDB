@@ -2128,10 +2128,12 @@ fn is_read_only_sql_masked(masked: &[char], idents_kept: &[char]) -> bool {
     true
 }
 
-/// 状態を進める/外部に作用する関数 (`nextval` / `setval` / advisory lock 系など) を
-/// 呼んでいる `SELECT` かどうか。Query Result Cache が同じ結果を再利用すると
-/// 2 回目以降の副作用が起きなくなるため、キャッシュ判定でだけ使う (読み取り専用
-/// ガードの判定には影響しない)。誤検知はキャッシュを使わないだけで安全側。
+/// Query Result Cache が再利用してはいけない、副作用のある関数を呼ぶ `SELECT` かどうか。
+/// `nextval` / `setval` / `pg_notify` / `NEXT VALUE FOR` は読み取り専用ガード
+/// (`is_read_only_sql_for` の拒否リスト) が先に弾くので、ここでは**ガードが許可する**
+/// もののうち結果が毎回変わる/外部に作用するもの (advisory lock 系・`set_config`・
+/// `pg_sleep`・MySQL の名前付きロック・`currval` / `lastval`) だけを扱う。
+/// キャッシュ判定でだけ使い、誤検知はキャッシュを使わないだけで安全側。
 pub fn sql_has_side_effect_function(driver: DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
     let masked: String = mask_for_driver(driver, &orig).into_iter().collect();
@@ -2140,19 +2142,18 @@ pub fn sql_has_side_effect_function(driver: DriverKind, sql: &str) -> bool {
         return true;
     }
     [
-        "nextval",
-        "setval",
+        "currval",
+        "lastval",
         "set_config",
-        "pg_notify",
         "pg_sleep",
         "get_lock",
         "release_lock",
         "release_all_locks",
         "is_free_lock",
-        "next value",
+        "is_used_lock",
     ]
     .iter()
-    .any(|kw| contains_word_phrase(&lower, kw) || contains_word(&lower, kw))
+    .any(|kw| contains_word(&lower, kw))
 }
 
 /// `sql` が DDL 相当 (`CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `RENAME`) を

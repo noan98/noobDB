@@ -1895,6 +1895,28 @@ export default function App() {
   const forgetTxState = useCallback((sid: string) => {
     txBySessionRef.current.delete(sid);
   }, []);
+  // await の後で「操作した接続」がまだ表示中とは限らない。表示中でなければ保存先
+  // (txBySessionRef) だけを更新し、state (別の接続のぶん) には触らない。
+  const updateSavepointsFor = useCallback(
+    (sid: string, fn: (s: readonly string[]) => readonly string[]) => {
+      if (txOwnerRef.current === sid) {
+        setSavepoints(fn);
+        return;
+      }
+      const saved = txBySessionRef.current.get(sid);
+      if (saved) txBySessionRef.current.set(sid, { ...saved, savepoints: fn(saved.savepoints) });
+    },
+    [],
+  );
+  const resetTxFor = useCallback((sid: string) => {
+    if (txOwnerRef.current === sid) {
+      setSavepoints([]);
+      savepointCounterRef.current = 0;
+      setTxActive(false);
+    } else {
+      txBySessionRef.current.delete(sid);
+    }
+  }, []);
   // 接続の切替: 切替先に保存済みの TX 状態があれば復元し、無ければ非 TX に戻す。
   useEffect(() => {
     txOwnerRef.current = sessionId;
@@ -3549,6 +3571,15 @@ export default function App() {
         try {
           // 同じ session id のまま張り直す。id が変わらないのでタブ・グリッドは維持。
           await api.reconnect(oldSessionId);
+          // 再接続でサーバ側の接続が入れ替わるため、開いていたトランザクションは破棄済み。
+          if (txBySessionRef.current.has(oldSessionId)) {
+            resetTxFor(oldSessionId);
+            toast.notify({
+              message: translate("toastReconnectTxDiscarded", { name: profile.name }),
+              tone: "info",
+              severity: "warning",
+            });
+          }
           // await 中にユーザが別接続へ切り替えていたら UI は触らずに抜ける。
           // バックエンドのセッションは張り直し済みで、背景接続として有効なまま
           // (切り替え先の表示を上書きしない)。
@@ -3574,7 +3605,7 @@ export default function App() {
       reconnectingRef.current = false;
       await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
-    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor],
+    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor, resetTxFor],
   );
 
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
@@ -5086,15 +5117,20 @@ export default function App() {
     if (!sessionId) return;
     // 連打で同名が二重作成されないよう、await の前に連番を確定する。
     savepointCounterRef.current += 1;
-    const name = savepointName(savepointCounterRef.current);
+    const seq = savepointCounterRef.current;
+    const name = savepointName(seq);
     try {
       await api.createSavepoint(sessionId, name);
-      setSavepoints((s) => pushSavepoint(s, name));
+      updateSavepointsFor(sessionId, (s) => pushSavepoint(s, name));
+      const saved = txBySessionRef.current.get(sessionId);
+      if (saved && txOwnerRef.current !== sessionId) {
+        txBySessionRef.current.set(sessionId, { ...saved, counter: Math.max(saved.counter, seq) });
+      }
       toast.success(translate("savepointCreated", { name }));
     } catch (e) {
       toast.error(String(e));
     }
-  }, [sessionId, toast]);
+  }, [sessionId, toast, updateSavepointsFor]);
 
   const handleRollbackToSavepoint = useCallback(async (name: string) => {
     if (!sessionId) return;
@@ -5111,47 +5147,43 @@ export default function App() {
     }
     try {
       await api.rollbackToSavepoint(sessionId, name);
-      setSavepoints((s) => afterRollbackTo(s, name));
+      updateSavepointsFor(sessionId, (s) => afterRollbackTo(s, name));
       toast.success(translate("savepointRolledBack", { name }));
     } catch (e) {
       // DB 側に既に無い SAVEPOINT なら、その名前とそれより新しいものを一覧から外す。
-      if (isMissingSavepointError(String(e))) setSavepoints((s) => afterRelease(s, name));
+      if (isMissingSavepointError(String(e))) updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
       toast.error(String(e));
     }
-  }, [sessionId, selectedProfile?.is_production, selectedProfile?.confirm_writes, selectedProfile?.read_only, confirm, toast]);
+  }, [sessionId, selectedProfile?.is_production, selectedProfile?.confirm_writes, selectedProfile?.read_only, confirm, toast, updateSavepointsFor]);
 
   const handleReleaseSavepoint = useCallback(async (name: string) => {
     if (!sessionId) return;
     try {
       await api.releaseSavepoint(sessionId, name);
-      setSavepoints((s) => afterRelease(s, name));
+      updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
       toast.success(translate("savepointReleased", { name }));
     } catch (e) {
-      if (isMissingSavepointError(String(e))) setSavepoints((s) => afterRelease(s, name));
+      if (isMissingSavepointError(String(e))) updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
       toast.error(String(e));
     }
-  }, [sessionId, toast]);
+  }, [sessionId, toast, updateSavepointsFor]);
 
   const handleFinishTransaction = useCallback(async (commit: boolean) => {
     if (!sessionId) return;
     try {
       await api.finishTransaction(sessionId, commit);
-      setSavepoints([]);
-      savepointCounterRef.current = 0;
-      setTxActive(false);
+      resetTxFor(sessionId);
       toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
     } catch (e) {
       // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
-      setSavepoints([]);
-      savepointCounterRef.current = 0;
-      setTxActive(false);
+      resetTxFor(sessionId);
       toast.error(
         String(e).includes("25P02")
           ? translate("txAbortedRolledBack")
           : `${String(e)} ${translate("txFinishFailedHint")}`,
       );
     }
-  }, [sessionId, toast]);
+  }, [sessionId, toast, resetTxFor]);
 
   // EXPLAIN タブの実行を 1 か所に集約する (#1164)。推定モードは従来どおり
   // `explainPrefixFor` のプレフィックスで走らせる。実測モード (analyze) は SQL を
