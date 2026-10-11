@@ -22,6 +22,7 @@ import { statusColors } from "./diffStatusColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Callout } from "./Callout";
 import { ErrorNote, FieldLabel } from "./modalForm";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Radio, Select } from "./ui";
@@ -231,13 +232,18 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   const apply = useCallback(async () => {
     if (!combined || combined.statements.length === 0 || !targetSessionId || !targetProfile) return;
     const destructiveCount = combined.statements.filter((s) => s.destructive).length;
+    const failedCheckTables = sandbox.tables.filter((tb) => !!tables[tb]?.diff?.source_error);
     const ok = await confirm({
       title: t("sandboxApplyTitle", { count: combined.statements.length }),
-      message: t("sandboxApplyConfirm", {
-        count: combined.statements.length,
-        name: targetProfile.name,
-        destructive: destructiveCount,
-      }),
+      message:
+        t("sandboxApplyConfirm", {
+          count: combined.statements.length,
+          name: targetProfile.name,
+          destructive: destructiveCount,
+        }) +
+        (failedCheckTables.length > 0
+          ? `\n\n${t("sandboxApplySourceErrorNote", { tables: failedCheckTables.join(", ") })}`
+          : ""),
       tone: destructiveCount > 0 ? "danger" : "warning",
     });
     if (!ok) return;
@@ -423,7 +429,12 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                   {st.diff.desired.truncated && ` (${t("sandboxReviewTruncated")})`}
                 </chakra.div>
               )}
-              {!st.diff.source_checked && (
+              {st.diff.source_error && (
+                <Callout tone="warning" role="alert" mt="1.5">
+                  {t("sandboxReviewSourceError", { error: st.diff.source_error })}
+                </Callout>
+              )}
+              {!st.diff.source_checked && !st.diff.source_error && (
                 <chakra.div fontSize="xs" color="app.textMuted" mt="1">
                   {t("sandboxReviewConflictsUnchecked")}
                 </chakra.div>

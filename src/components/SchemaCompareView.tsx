@@ -974,7 +974,7 @@ export function SchemaCompareView({
                   <Box css={syncControlsCss}>
                     <Select
                       value={dataTable}
-                      disabled={dataComparing}
+                      disabled={dataComparing || generating}
                       onChange={(e) => {
                         // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
                         // なるので破棄する (残すと前のテーブルの変更が流れる)。

@@ -1405,6 +1405,8 @@ export interface SandboxTableDiffResult {
   /** `source_checked` が false のときは常に空 (競合未検査、「競合なし」の意味ではない)。 */
   conflicts: SandboxConflict[];
   source_checked: boolean;
+  /** 実 DB 側の取得に失敗して競合検出ができなかったときのエラー文。 */
+  source_error: string | null;
 }
 
 /** `sandboxSchemaDiff` の戻り値。 */
