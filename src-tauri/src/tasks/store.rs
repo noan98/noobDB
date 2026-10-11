@@ -60,10 +60,10 @@ fn load_file_locked() -> Result<TaskFile> {
     if content.trim().is_empty() {
         return Ok(TaskFile::default());
     }
-    match serde_json::from_str(&content) {
-        Ok(file) => Ok(file),
+    let value: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
         Err(e) => {
-            // 壊れたまま放置すると tick の読み込みも保存もすべて失敗し、全タスクが
+            // JSON として読めない: 放置すると tick の読み込みも保存もすべて失敗し、全タスクが
             // 止まって復旧手段が無くなる。壊れたファイルを退避して空として扱う。
             let backup = path.with_file_name(format!(
                 "tasks.json.corrupt-{}",
@@ -76,15 +76,68 @@ fn load_file_locked() -> Result<TaskFile> {
                 "tasks: tasks.json is corrupt; moving it aside and starting empty"
             );
             std::fs::rename(&path, &backup)?;
-            Ok(TaskFile::default())
+            return Ok(TaskFile::default());
+        }
+    };
+    Ok(parse_tolerant(value).0)
+}
+
+/// 要素単位の寛容パース。解釈できないタスクは警告して読み飛ばし、生の JSON を第 2 戻り値で
+/// 返す (保存時に書き戻して消さない)。トップレベルが想定外の形ならタスク無しとして扱う。
+fn parse_tolerant(value: serde_json::Value) -> (TaskFile, Vec<serde_json::Value>) {
+    let mut file = TaskFile::default();
+    let mut raw = Vec::new();
+    let serde_json::Value::Object(mut obj) = value else {
+        return (file, raw);
+    };
+    if let Some(settings) = obj.remove("settings") {
+        match serde_json::from_value(settings) {
+            Ok(s) => file.settings = s,
+            Err(e) => tracing::warn!(error = %e, "tasks: unparsable settings; using defaults"),
         }
     }
+    if let Some(serde_json::Value::Array(items)) = obj.remove("tasks") {
+        for v in items {
+            match serde_json::from_value::<TaskDefinition>(v.clone()) {
+                Ok(t) => file.tasks.push(t),
+                Err(e) => {
+                    tracing::warn!(error = %e, "tasks: skipping unparsable task entry");
+                    raw.push(v);
+                }
+            }
+        }
+    }
+    (file, raw)
+}
+
+/// 既存ファイルの解釈できないタスクの生 JSON。解釈済みタスクと id が重なるものは除く。
+fn unparsable_raw(path: &std::path::Path, known: &[TaskDefinition]) -> Vec<serde_json::Value> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return Vec::new();
+    };
+    parse_tolerant(value)
+        .1
+        .into_iter()
+        .filter(|v| {
+            v.get("id")
+                .and_then(|i| i.as_str())
+                .map_or(true, |id| !known.iter().any(|t| t.id == id))
+        })
+        .collect()
 }
 
 /// 実際のファイル書き込み (ロック非取得)。`load_file_locked` と対。
 fn save_file_locked(file: &TaskFile) -> Result<()> {
     let path = tasks_path()?;
-    let content = serde_json::to_string_pretty(file)?;
+    let mut value = serde_json::to_value(file)?;
+    let raw = unparsable_raw(&path, &file.tasks);
+    if let Some(serde_json::Value::Array(tasks)) = value.get_mut("tasks") {
+        tasks.extend(raw);
+    }
+    let content = serde_json::to_string_pretty(&value)?;
     write_atomic(&path, content.as_bytes())?;
     Ok(())
 }
@@ -280,5 +333,13 @@ mod tests {
     fn task_file_defaults_missing_settings() {
         let back: TaskFile = serde_json::from_str("{\"tasks\":[]}").unwrap();
         assert!(!back.settings.catch_up_missed);
+    }
+
+    #[test]
+    fn parse_tolerant_skips_bad_task_and_keeps_raw() {
+        let v = serde_json::json!({"settings": {}, "tasks": [{"id": "x"}, "junk"]});
+        let (file, raw) = parse_tolerant(v);
+        assert!(file.tasks.is_empty());
+        assert_eq!(raw.len(), 2);
     }
 }

@@ -169,8 +169,9 @@ fn create_local_session_file(path: &std::path::Path) -> std::io::Result<()> {
 }
 
 /// 起動時に呼ばれるベストエフォートの掃除。前回異常終了で残った一時 DB ファイルは
-/// この時点でどのセッションからも参照されていない (アプリを再起動した = 全セッションが
-/// 消えている) ので、ディレクトリごと削除して構わない。失敗してもログに残すだけで
+/// 自プロセスのセッションからは参照されていない。ただし複数インスタンスを同時に起動できるため、
+/// ディレクトリごとは消さず、ファイル名の PID が生存しているプロセスのもの (他インスタンスが
+/// 使用中) は残して、それ以外だけ削除する。失敗してもログに残すだけで
 /// 起動は継続する (#740)。
 ///
 /// **Unix ではディレクトリの実体を検証してから消す。** `dir.exists()` (stat 相当、
@@ -264,10 +265,9 @@ pub(crate) fn is_owner_alive(pid: Option<u32>, modified: Option<std::time::Syste
     }
     #[cfg(not(unix))]
     {
-        let recent = modified
+        modified
             .and_then(|m| m.elapsed().ok())
-            .is_some_and(|age| age < std::time::Duration::from_secs(24 * 60 * 60));
-        recent
+            .is_some_and(|age| age < std::time::Duration::from_secs(24 * 60 * 60))
     }
 }
 

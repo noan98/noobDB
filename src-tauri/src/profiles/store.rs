@@ -79,12 +79,21 @@ fn parse_tolerant(
 }
 
 /// 既存の profiles.json にある、解釈できない要素の生 JSON。保存時に書き戻して消さない。
-fn unparsable_raw(path: &std::path::Path) -> Vec<serde_json::Value> {
+fn unparsable_raw(path: &std::path::Path, known: &[ConnectionProfile]) -> Vec<serde_json::Value> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
     match serde_json::from_str::<Vec<serde_json::Value>>(&content) {
-        Ok(values) => parse_tolerant(values).1,
+        // 解釈済みのプロファイルと id が重なるものは、書き戻すと重複するので除く。
+        Ok(values) => parse_tolerant(values)
+            .1
+            .into_iter()
+            .filter(|v| {
+                v.get("id")
+                    .and_then(|i| i.as_str())
+                    .map_or(true, |id| !known.iter().any(|p| p.id == id))
+            })
+            .collect(),
         Err(_) => Vec::new(),
     }
 }
@@ -98,7 +107,7 @@ fn save_all_locked(profiles: &[ConnectionProfile]) -> Result<()> {
         .iter()
         .map(serde_json::to_value)
         .collect::<std::result::Result<_, _>>()?;
-    values.extend(unparsable_raw(&path));
+    values.extend(unparsable_raw(&path, profiles));
     let content = serde_json::to_string_pretty(&values).map_err(|e| {
         tracing::error!(error = %e, "profiles: failed to serialize profiles");
         e
@@ -324,5 +333,21 @@ mod tests {
         let (ok, raw) = parse_tolerant(values.clone());
         assert!(ok.is_empty());
         assert_eq!(raw, values);
+    }
+
+    // save_all_locked が解釈できない生要素を保持して書き戻す (往復)。
+    #[test]
+    fn unparsable_raw_survives_save_and_skips_known_ids() {
+        let dir = scratch_dir("raw_roundtrip");
+        let path = dir.join("profiles.json");
+        std::fs::write(&path, r#"[{"id":"zz","bogus":true},"junk"]"#).unwrap();
+        let raw = unparsable_raw(&path, &[]);
+        assert_eq!(raw.len(), 2);
+        // 書き戻した内容を再度読んでも、解釈済み 0 件・生要素 2 件のまま。
+        let mut values: Vec<serde_json::Value> = Vec::new();
+        values.extend(raw);
+        write_atomic(&path, serde_json::to_string(&values).unwrap().as_bytes()).unwrap();
+        assert_eq!(unparsable_raw(&path, &[]).len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

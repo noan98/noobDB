@@ -236,8 +236,9 @@ async fn list_in(
     if status.is_some() {
         conds.push("status = ?");
     }
-    // Timestamps are stored as UTC RFC3339, so lexical comparison is
-    // chronological (same property the ORDER BY below relies on).
+    // 保存形式は `+00:00` 付き・小数桁可変の RFC3339、フロントの境界は `…000Z` で、
+    // 文字列のままでは同一ミリ秒の境界がずれる。両側を `strftime` / `normalize_bound`
+    // で UTC ミリ秒の固定形式に揃えて比較する (ORDER BY は保存形式の辞書順のまま)。
     if from.is_some() {
         conds.push("strftime('%Y-%m-%dT%H:%M:%f', executed_at) >= ?");
     }
