@@ -248,6 +248,10 @@ export function UsersPanel({
     (u: DbUserInfo) => {
       setSelected(u);
       setNewTable("");
+      // 前ユーザの未適用の編集を持ち越さない (読み込み中に別ユーザ宛の GRANT/REVOKE が出るのを防ぐ)。
+      setOriginal({});
+      setEdited({});
+      setGlobalRow(null);
       void loadPrivileges(u);
     },
     [loadPrivileges],
@@ -769,7 +773,7 @@ export function UsersPanel({
                       <Button
                         type="button"
                         variant="primary"
-                        disabled={readOnly || busy || !dirty}
+                        disabled={readOnly || busy || loadingPrivs || !dirty}
                         onClick={() => void applyPrivilegeChanges()}
                       >
                         {t("usersApplyChanges")}

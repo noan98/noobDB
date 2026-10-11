@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
 import { t } from "../i18n";
 import type { ServerMetrics } from "../api/tauri";
 
@@ -97,6 +97,9 @@ describe("ServerMetricsPanel session switch", () => {
 
     // 旧セッションの応答が後から届いても例外なく無視される。
     resolveOld({ ...empty, connections: 99 });
-    await Promise.resolve();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("99")).not.toBeInTheDocument();
   });
 });

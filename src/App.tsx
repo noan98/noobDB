@@ -4606,6 +4606,14 @@ export default function App() {
     tabsRef,
   ]);
 
+  // loadMore / ページ送りの要求トークン (タブ ID → 連番)。自分が最新の要求のときだけ
+  // 結果の反映と loadingMore の解除を行い、古い応答が新しい要求の状態を壊さないようにする。
+  const pageReqRef = useRef<Map<string, number>>(new Map());
+  const nextPageReq = useCallback((tabId: string) => {
+    const n = (pageReqRef.current.get(tabId) ?? 0) + 1;
+    pageReqRef.current.set(tabId, n);
+    return n;
+  }, []);
   const loadMoreInTab = useCallback(async (tabId: string) => {
     if (!sessionId) return;
     const tab = tabsRef.current.find((tt) => tt.id === tabId);
@@ -4627,6 +4635,7 @@ export default function App() {
     // page leaves existing rows in place, and even if a query without a stable
     // ORDER BY re-surfaces a row already shown, its PK identity is unchanged so
     // the edit still targets the correct row.
+    const reqToken = nextPageReq(tabId);
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     setStatus({
       kind: "key",
@@ -4636,6 +4645,7 @@ export default function App() {
     try {
       const more = await api.runQuery(sessionId, sql, tab.database ?? null);
       patchTab(tabId, (tt) => {
+        if (pageReqRef.current.get(tabId) !== reqToken) return tt;
         // 待機中に同じタブで別クエリが実行された場合 (結果の差し替え・ストリーミング
         // 開始・SQL/ページング元の変化) は、古い SQL の続きを混ぜずに破棄する。
         if (
@@ -4669,7 +4679,9 @@ export default function App() {
         vars: { rows: offset + more.rows.length, ms: tab.result.elapsed_ms },
       });
     } catch (e) {
-      patchTab(tabId, (tt) => ({ ...tt, loadingMore: false }));
+      patchTab(tabId, (tt) =>
+        pageReqRef.current.get(tabId) === reqToken ? { ...tt, loadingMore: false } : tt,
+      );
       setStatus({
         kind: "key",
         key: "statusQueryError",
@@ -4677,7 +4689,7 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, settings.streamPrefetchSize, patchTab, tabsRef]);
+  }, [sessionId, settings.streamPrefetchSize, patchTab, tabsRef, nextPageReq]);
 
   // ページネーション: table タブの `paginatable` base SQL から N ページ目を
   // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
@@ -4741,6 +4753,7 @@ export default function App() {
             keysetMove === "next" ? tab.result.rows[tab.result.rows.length - 1] : tab.result.rows[0],
           )
         : null;
+    const reqToken = nextPageReq(tabId);
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     try {
       let keysetRes: QueryResult | null = null;
@@ -4760,6 +4773,7 @@ export default function App() {
       }
       const res = keysetRes ?? (await api.runQuery(sessionId, sql, tab.database ?? null));
       patchTab(tabId, (tt) => {
+        if (pageReqRef.current.get(tabId) !== reqToken) return tt;
         // 待機中に同じタブで別クエリが実行された場合は、古いページで結果を
         // 上書きしない (loadMore と同じ判定)。
         if (
@@ -4800,7 +4814,9 @@ export default function App() {
         vars: { rows: res.rows.length, ms: res.elapsed_ms },
       });
     } catch (e) {
-      patchTab(tabId, (tt) => ({ ...tt, loadingMore: false }));
+      patchTab(tabId, (tt) =>
+        pageReqRef.current.get(tabId) === reqToken ? { ...tt, loadingMore: false } : tt,
+      );
       setStatus({
         kind: "key",
         key: "statusQueryError",
@@ -4808,7 +4824,7 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, patchTab, selectedProfile?.driver, tabsRef]);
+  }, [sessionId, patchTab, selectedProfile?.driver, tabsRef, nextPageReq]);
 
   // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
   // 新サイズを goToPageInTab に直接渡す。
@@ -6166,8 +6182,9 @@ export default function App() {
       return;
     }
     // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
-    if (openingTablesRef.current.has(flightId)) return;
-    openingTablesRef.current.add(flightId);
+    if (openingTablesRef.current.has(`${sessionId}\u0000${flightId}`)) return;
+    const openKey = `${sessionId}\u0000${flightId}`;
+    openingTablesRef.current.add(openKey);
     const limit = Math.max(1, settings.defaultDisplayCount);
     const driver = selectedProfile?.driver ?? "mysql";
     void (async () => {
@@ -6224,7 +6241,6 @@ export default function App() {
         rowEstimateTotal: null,
       };
       addTab(tab);
-      openingTablesRef.current.delete(flightId);
       endTabOpenFlight(flightId);
       // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
       // タブ自体と開いた時点のセッションを明示的に渡す。
@@ -6238,7 +6254,9 @@ export default function App() {
           if (est != null) patchTab(tab.id, (tt) => ({ ...tt, rowEstimateTotal: est }));
         })
         .catch(() => {});
-    })();
+    })().finally(() => {
+      openingTablesRef.current.delete(openKey);
+    });
   }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, settings.tableOpenQueryTemplate, settings.tableOpenQueryOverrides, selectedProfile?.driver, selectedProfile?.id, recordRecentTableOpen, sessionId, patchTab]);
 
   const handleImportTable = useCallback((database: string, table: string) => {

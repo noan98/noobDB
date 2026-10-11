@@ -2093,6 +2093,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setTableIndexes({});
     setSchemaObjects({});
     tablesInFlightRef.current.clear();
+    columnsInFlightRef.current.clear();
     estimatesInFlightRef.current.clear();
     if (sessionId) {
       // Expanded state is restored (not reset) so the tree comes back drilled-in
