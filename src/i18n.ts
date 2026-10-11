@@ -368,6 +368,7 @@ const en = {
   snippetScopeProfile: "A specific connection",
   snippetScopeGroup: "A connection group",
   snippetScopeProfileLabel: "Connection",
+  snippetScopeDeletedProfile: "(deleted connection)",
   snippetScopeGroupLabel: "Group",
   snippetScopeHelp: "Controls which connections show this snippet in the sidebar.",
   snippetSql: "SQL",
@@ -580,6 +581,8 @@ const en = {
   settingsLogsCopied: "Copied",
   settingsLogsClear: "Clear logs",
   settingsLogsClearConfirm: "Delete all saved application logs?",
+  settingsLogsLoadError: "Failed to load logs: {error}",
+  settingsLogsClearError: "Failed to clear logs: {error}",
   settingsLogsEmpty: "No logs recorded yet.",
   settingsLogsPath: "File: {path}",
 
@@ -4900,6 +4903,7 @@ const ja: Dict = {
   snippetScopeProfile: "特定の接続",
   snippetScopeGroup: "接続グループ",
   snippetScopeProfileLabel: "接続",
+  snippetScopeDeletedProfile: "(削除済みの接続)",
   snippetScopeGroupLabel: "グループ",
   snippetScopeHelp: "このスニペットをサイドバーに表示する接続を制御します。",
   snippetSql: "SQL",
@@ -5112,6 +5116,8 @@ const ja: Dict = {
   settingsLogsCopied: "コピーしました",
   settingsLogsClear: "ログを消去",
   settingsLogsClearConfirm: "保存されているアプリケーションログをすべて削除しますか？",
+  settingsLogsLoadError: "ログの読み込みに失敗しました: {error}",
+  settingsLogsClearError: "ログの削除に失敗しました: {error}",
   settingsLogsEmpty: "まだログは記録されていません。",
   settingsLogsPath: "ファイル: {path}",
 

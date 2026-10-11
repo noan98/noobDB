@@ -50,6 +50,9 @@ impl TaskOutcome {
     }
 }
 
+/// 1 回のタスク実行の最大時間 (エクスポート / ダンプ / アサーション共通)。
+const TASK_MAX_RUN_SECS: u64 = 6 * 60 * 60;
+
 /// アサーション 1 件あたりのクエリタイムアウト。ユーザ操作と違い中止できない
 /// 無人実行なので、固定の上限で必ず打ち切る。
 const ASSERTION_QUERY_TIMEOUT_SECS: u64 = 120;
@@ -116,7 +119,19 @@ pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
         Err(e) => return TaskOutcome::err(format!("connect failed: {e}")),
     };
 
-    let outcome = run_action(app, &session_id, task, &profile).await;
+    // 無人実行なのでロック待ち等で終わらないクエリが接続とタスクを溜めないよう、
+    // タスク単位の最大実行時間で打ち切る。超過は error として記録される。
+    let outcome = match tokio::time::timeout(
+        std::time::Duration::from_secs(TASK_MAX_RUN_SECS),
+        run_action(app, &session_id, task, &profile),
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(_) => TaskOutcome::err(format!(
+            "task timed out after {TASK_MAX_RUN_SECS} seconds and was cancelled"
+        )),
+    };
 
     // 成功/失敗を問わず必ず切断する (常駐接続を増やさない)。切断自体の失敗は
     // ログに残すのみで、タスクの成否には影響させない (アクションはもう完了/

@@ -116,6 +116,7 @@ pub fn forget_host_key_at(path: &Path, host: &str, port: u16) -> Result<bool> {
         return Ok(false);
     }
     let content = std::fs::read_to_string(path)?;
+    // DNS 名は大小無視。比較は eq_ignore_ascii_case で行う。
     let target = format!("{host}:{port}");
     let mut removed = false;
     let mut out = String::with_capacity(content.len());
@@ -123,7 +124,7 @@ pub fn forget_host_key_at(path: &Path, host: &str, port: u16) -> Result<bool> {
         let is_target = line
             .trim()
             .split_once(' ')
-            .is_some_and(|(endpoint, _)| endpoint == target);
+            .is_some_and(|(endpoint, _)| endpoint.eq_ignore_ascii_case(&target));
         if is_target {
             removed = true;
             continue;
@@ -169,7 +170,8 @@ pub fn set_host_key_at(path: &Path, host: &str, port: u16, fingerprint: &str) ->
     }
     // Hold the lock across the whole read-modify-write (see KNOWN_HOSTS_LOCK).
     let _guard = lock_known_hosts();
-    let target = format!("{host}:{port}");
+    // 記録は小文字に正規化する (DNS 名は大小無視。照合側も大小無視で比較する)。
+    let target = format!("{}:{port}", host.to_ascii_lowercase());
     let existing = if path.exists() {
         std::fs::read_to_string(path)?
     } else {
@@ -180,7 +182,7 @@ pub fn set_host_key_at(path: &Path, host: &str, port: u16, fingerprint: &str) ->
         let is_target = line
             .trim()
             .split_once(' ')
-            .is_some_and(|(endpoint, _)| endpoint == target);
+            .is_some_and(|(endpoint, _)| endpoint.eq_ignore_ascii_case(&target));
         if is_target {
             // Drop the stale entry; the fresh one is appended below.
             continue;
@@ -219,13 +221,19 @@ pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
         std::process::id(),
         seq
     ));
-    {
-        let mut f = std::fs::File::create(&tmp_path)?;
-        f.write_all(content)?;
-        f.sync_all()?;
+    // `create` は予測可能な名前のシンボリックリンクを追従して指す先を切り詰めるので、
+    // `create_new` (O_EXCL) で排他作成する。以降の失敗時は一時ファイルを消す。
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)?;
+    let written = f.write_all(content).and_then(|()| f.sync_all());
+    drop(f);
+    let written = written.and_then(|()| std::fs::rename(&tmp_path, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
     }
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
+    written
 }
 
 #[cfg(test)]
@@ -350,5 +358,16 @@ db.internal:2222 SHA256:xyz\n";
         assert!(set_host_key_at(&path, "", 22, "SHA256:a").is_err());
         // Nothing should have been written.
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn host_matching_is_case_insensitive() {
+        let path = temp_path().with_file_name("case_known_hosts");
+        std::fs::write(&path, "db.example.com:22 SHA256:old\n").unwrap();
+        assert!(forget_host_key_at(&path, "DB.Example.com", 22).unwrap());
+        set_host_key_at(&path, "DB.Example.com", 22, "SHA256:new").unwrap();
+        let entries = list_known_hosts_at(&path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].host, "db.example.com");
     }
 }

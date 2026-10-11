@@ -2332,3 +2332,63 @@ async fn postgres_blocking_chain_is_listed_and_resolved_by_kill() {
         .expect("cleanup");
     admin.close().await;
 }
+
+/// #1519: 複合 FK は列ごとに正しく 1 対 1 対応し、別テーブルの同名 FK が混ざらない。
+#[tokio::test]
+async fn postgres_foreign_keys_pair_composite_columns_and_ignore_same_named_fk() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for sql in [
+        "DROP TABLE IF EXISTS public.fk1519_child_a",
+        "DROP TABLE IF EXISTS public.fk1519_child_b",
+        "DROP TABLE IF EXISTS public.fk1519_child_c",
+        "DROP TABLE IF EXISTS public.fk1519_parent_a",
+        "DROP TABLE IF EXISTS public.fk1519_parent_b",
+        "CREATE TABLE public.fk1519_parent_a (id INT, sku INT, PRIMARY KEY (id, sku))",
+        "CREATE TABLE public.fk1519_parent_b (id INT PRIMARY KEY)",
+        "CREATE TABLE public.fk1519_child_a (order_id INT, product_id INT, \
+           CONSTRAINT fk_composite FOREIGN KEY (order_id, product_id) \
+             REFERENCES public.fk1519_parent_a (id, sku))",
+        "CREATE TABLE public.fk1519_child_b (pid INT, \
+           CONSTRAINT fk_parent FOREIGN KEY (pid) REFERENCES public.fk1519_parent_b (id))",
+        "CREATE TABLE public.fk1519_child_c (a INT, b INT, \
+           CONSTRAINT fk_parent FOREIGN KEY (a, b) REFERENCES public.fk1519_parent_a (id, sku))",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+
+    let fks = conn.foreign_keys("public").await.expect("foreign_keys");
+    let composite: Vec<_> = fks.iter().filter(|f| f.table == "fk1519_child_a").collect();
+    assert_eq!(composite.len(), 2, "複合 FK は 2 行だけ: {composite:?}");
+    for (col, refcol) in [("order_id", "id"), ("product_id", "sku")] {
+        let row = composite
+            .iter()
+            .find(|f| f.column == col)
+            .expect("composite column");
+        assert_eq!(row.referenced_table, "fk1519_parent_a");
+        assert_eq!(row.referenced_column.as_deref(), Some(refcol));
+    }
+    let b: Vec<_> = fks.iter().filter(|f| f.table == "fk1519_child_b").collect();
+    assert_eq!(b.len(), 1, "{b:?}");
+    assert_eq!(b[0].constraint_name.as_deref(), Some("fk_parent"));
+    assert_eq!(
+        b[0].referenced_table, "fk1519_parent_b",
+        "同名 FK fk_parent の参照先が別テーブルと混ざらない"
+    );
+
+    for sql in [
+        "DROP TABLE IF EXISTS public.fk1519_child_a",
+        "DROP TABLE IF EXISTS public.fk1519_child_b",
+        "DROP TABLE IF EXISTS public.fk1519_child_c",
+        "DROP TABLE IF EXISTS public.fk1519_parent_a",
+        "DROP TABLE IF EXISTS public.fk1519_parent_b",
+    ] {
+        conn.execute(sql, None).await.expect("cleanup");
+    }
+    conn.close().await;
+}

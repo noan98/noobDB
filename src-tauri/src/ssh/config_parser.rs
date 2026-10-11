@@ -145,9 +145,22 @@ pub fn parse_proxy_jump(value: &str) -> Option<ProxyJumpTarget> {
     if host_port.is_empty() {
         return None;
     }
-    let (host, port) = match host_port.rsplit_once(':') {
-        Some((h, p)) if !h.is_empty() && !p.is_empty() => (h.to_string(), p.parse().ok()),
-        _ => (host_port.to_string(), None),
+    let (host, port) = if let Some(rest) = host_port.strip_prefix('[') {
+        // `[2001:db8::1]:2222` — 角括弧内がホスト、`]` の後ろの `:port` がポート。
+        let (h, after) = rest.split_once(']')?;
+        if h.is_empty() {
+            return None;
+        }
+        let port = after.strip_prefix(':').filter(|p| !p.is_empty());
+        (h.to_string(), port.and_then(|p| p.parse().ok()))
+    } else if host_port.matches(':').count() >= 2 {
+        // 括弧の無い裸の IPv6 (`2001:db8::1`) はポート無しとして扱う。
+        (host_port.to_string(), None)
+    } else {
+        match host_port.rsplit_once(':') {
+            Some((h, p)) if !h.is_empty() && !p.is_empty() => (h.to_string(), p.parse().ok()),
+            _ => (host_port.to_string(), None),
+        }
     };
     Some(ProxyJumpTarget { user, host, port })
 }
@@ -307,5 +320,19 @@ Host bastion
     fn parse_proxy_jump_rejects_empty_value() {
         assert_eq!(parse_proxy_jump(""), None);
         assert_eq!(parse_proxy_jump("  "), None);
+    }
+
+    #[test]
+    fn proxy_jump_handles_ipv6() {
+        let bare = parse_proxy_jump("2001:db8::1").unwrap();
+        assert_eq!(bare.host, "2001:db8::1");
+        assert_eq!(bare.port, None);
+        let bracketed = parse_proxy_jump("ops@[2001:db8::1]:2222").unwrap();
+        assert_eq!(bracketed.user.as_deref(), Some("ops"));
+        assert_eq!(bracketed.host, "2001:db8::1");
+        assert_eq!(bracketed.port, Some(2222));
+        let bracketed_no_port = parse_proxy_jump("[::1]").unwrap();
+        assert_eq!(bracketed_no_port.host, "::1");
+        assert_eq!(bracketed_no_port.port, None);
     }
 }

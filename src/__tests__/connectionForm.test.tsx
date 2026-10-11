@@ -373,6 +373,38 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     expect(req.db_password).toBeUndefined();
   });
 
+  it("saves the user's chosen sslMode, not the IAM-forced one", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    const onSaved = vi.fn();
+    const saved: ConnectionProfile = {
+      id: "iam00002",
+      name: "RDS",
+      driver: "postgres",
+      host: "db.abc.us-west-2.rds.amazonaws.com",
+      port: 5432,
+      user: "app_iam",
+      database: null,
+      ssh: null,
+      group: null,
+      color: null,
+      is_production: false,
+      confirm_writes: false,
+      read_only: false,
+      skip_history: false,
+      file_path: null,
+      ssl_mode: "prefer",
+      aws_iam: { region: "us-west-2", profile: null },
+    };
+    renderWithProviders(
+      <ConnectionForm initial={saved} profiles={[saved]} onSaved={onSaved} onCancel={() => {}} />,
+    );
+    // 画面上は require に引き上げて表示される。
+    expect((screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement).value).toBe("require");
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(saveProfile.mock.calls[0][0].ssl_mode).toBe("prefer");
+  });
+
   it("does not offer IAM auth for SQLite (file-backed)", () => {
     renderWithProviders(
       <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
