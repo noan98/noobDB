@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
@@ -210,12 +210,17 @@ export function UsersPanel({
     void loadUsers();
   }, [loadUsers]);
 
+  // 権限取得の世代番号。ユーザ切替・削除後に遅れて返った旧応答を捨てる。
+  const privSeq = useRef(0);
+
   const loadPrivileges = useCallback(
     async (u: DbUserInfo) => {
+      const seq = ++privSeq.current;
       setLoadingPrivs(true);
       setPrivsError(null);
       try {
         const p = await api.listUserPrivileges(sessionId, u.name, u.host, database);
+        if (seq !== privSeq.current) return;
         setGlobalRow(p.global);
         const prefix = database ? `${database}.` : null;
         const rows: Record<string, Flags> = {};
@@ -227,12 +232,13 @@ export function UsersPanel({
         setOriginal(rows);
         setEdited({ ...rows });
       } catch (e) {
+        if (seq !== privSeq.current) return;
         setPrivsError(String(e));
         setOriginal({});
         setEdited({});
         setGlobalRow(null);
       } finally {
-        setLoadingPrivs(false);
+        if (seq === privSeq.current) setLoadingPrivs(false);
       }
     },
     [sessionId, database],
@@ -383,6 +389,8 @@ export function UsersPanel({
     try {
       await api.applyPrivilegeSql({ sessionId, database, statements: [sql] });
       toast.success(t("usersDropDone", { name: selected.name }));
+      privSeq.current++;
+      setLoadingPrivs(false);
       setSelected(null);
       setOriginal({});
       setEdited({});

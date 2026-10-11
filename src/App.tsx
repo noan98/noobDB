@@ -4636,7 +4636,17 @@ export default function App() {
     try {
       const more = await api.runQuery(sessionId, sql, tab.database ?? null);
       patchTab(tabId, (tt) => {
-        if (!tt.result) return { ...tt, loadingMore: false };
+        // 待機中に同じタブで別クエリが実行された場合 (結果の差し替え・ストリーミング
+        // 開始・SQL/ページング元の変化) は、古い SQL の続きを混ぜずに破棄する。
+        if (
+          !tt.result ||
+          tt.result !== tab.result ||
+          tt.streaming ||
+          tt.paginatable !== tab.paginatable ||
+          tt.lastExecutedSql !== tab.lastExecutedSql
+        ) {
+          return { ...tt, loadingMore: false };
+        }
         const nextRows = tt.result.rows.concat(more.rows);
         return {
           ...tt,
@@ -4749,7 +4759,18 @@ export default function App() {
         if (kres.rows.length > 0) keysetRes = { ...kres, rows: reverseRowsForPrev(kres.rows, keysetMove) };
       }
       const res = keysetRes ?? (await api.runQuery(sessionId, sql, tab.database ?? null));
-      patchTab(tabId, (tt) => ({
+      patchTab(tabId, (tt) => {
+        // 待機中に同じタブで別クエリが実行された場合は、古いページで結果を
+        // 上書きしない (loadMore と同じ判定)。
+        if (
+          tt.result !== tab.result ||
+          tt.streaming ||
+          tt.paginatable !== tab.paginatable ||
+          tt.lastExecutedSql !== tab.lastExecutedSql
+        ) {
+          return { ...tt, loadingMore: false };
+        }
+        return {
         ...tt,
         result: res,
         // ページ送りは完全な新ページへの置換なので、前回のキャンセル/タイム
@@ -4771,7 +4792,8 @@ export default function App() {
         editUndoStack: [],
         editRedoStack: [],
         preview: null,
-      }));
+        };
+      });
       setStatus({
         kind: "key",
         key: "statusStreamingDone",
@@ -6124,6 +6146,9 @@ export default function App() {
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
   }, [patchTab]);
 
+  // open_table の応答待ち中の (database, table)。タブがまだ state に無い間の再実行で
+  // 同じテーブルのタブが二重に開かないようにする (tabOpenFlightId と同じキー)。
+  const openingTablesRef = useRef<Set<string>>(new Set());
   const handleOpenTable = useCallback((database: string, table: string) => {
     recordRecentTableOpen(database, table);
     const existing = tabs.find(
@@ -6140,6 +6165,9 @@ export default function App() {
       endTabOpenFlight(flightId, true);
       return;
     }
+    // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
+    if (openingTablesRef.current.has(flightId)) return;
+    openingTablesRef.current.add(flightId);
     const limit = Math.max(1, settings.defaultDisplayCount);
     const driver = selectedProfile?.driver ?? "mysql";
     void (async () => {
@@ -6196,6 +6224,7 @@ export default function App() {
         rowEstimateTotal: null,
       };
       addTab(tab);
+      openingTablesRef.current.delete(flightId);
       endTabOpenFlight(flightId);
       // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
       // タブ自体と開いた時点のセッションを明示的に渡す。

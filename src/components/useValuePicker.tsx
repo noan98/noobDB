@@ -74,6 +74,9 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   useEffect(() => {
     allowedRequested.current = null;
     fkState.current = new Map();
+    // デバウンス中のタイマーは旧テーブルの参照先を握ったクロージャなので解除する。
+    for (const t of timers.current.values()) clearTimeout(t);
+    timers.current.clear();
     setFetchedAllowed(null);
     setFkValues({});
   }, [tableKey]);
