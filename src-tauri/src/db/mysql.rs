@@ -2893,7 +2893,12 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
     // Leading comments/whitespace must be skipped before the keyword check, or
     // a perfectly normal `/* hint */ SELECT ...` / `-- note\nWITH ...` would
     // miss the prefix match and get misrouted to the execute path.
-    let trimmed = skip_leading_comments_and_ws(sql).to_ascii_lowercase();
+    // `(SELECT 1) UNION (SELECT 2)` のように括弧で始まる問い合わせも結果経路へ (#1519)。
+    let mut rest = skip_leading_comments_and_ws(sql);
+    while let Some(r) = rest.strip_prefix('(') {
+        rest = skip_leading_comments_and_ws(r);
+    }
+    let trimmed = rest.to_ascii_lowercase();
     if trimmed.starts_with("with") {
         return !with_cte_is_mutation(super::DriverKind::Mysql, sql);
     }
@@ -3306,6 +3311,13 @@ mod tests {
         assert!(is_missing_table_code(1109));
         assert!(!is_missing_table_code(1142));
         assert!(!is_missing_table_code(1205));
+    }
+
+    #[test]
+    fn query_shape_accepts_parenthesized_select() {
+        assert!(is_query_shape("(SELECT 1) UNION (SELECT 2)"));
+        assert!(is_query_shape("( /* c */ select 1 )"));
+        assert!(!is_query_shape("(INSERT INTO t VALUES (1))"));
     }
 
     #[test]

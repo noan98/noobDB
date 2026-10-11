@@ -5,8 +5,8 @@
   "cases": [
     {
       "sql": "(SELECT 1 UNION SELECT 2)",
-      "note": "括弧で始まる SELECT。PostgreSQL は先頭の '(' を剥がして結果経路に流す (#1519)。MySQL / SQLite は現状 '(' 始まりを認識しない (別件)",
-      "expected": { "mysql": false, "postgres": true, "sqlite": false }
+      "note": "括弧で始まる SELECT。PostgreSQL / MySQL は先頭の '(' を剥がして結果経路に流す (#1519)。SQLite は '(' 始まりの SELECT 自体が構文エラーなので false が正しい",
+      "expected": { "mysql": true, "postgres": true, "sqlite": false }
     },
     {
       "sql": "SELECT * FROM users",

@@ -1080,6 +1080,10 @@ impl PostgresConn {
                 JOIN pg_catalog.pg_attribute fa
                   ON fa.attrelid = con.confrelid AND fa.attnum = k.fattnum
                 WHERE con.contype = 'f'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_constraint p
+                         WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                  AND fcl.relnamespace = cl.relnamespace
                   AND n.nspname = $1
                   AND cl.relname = $2
                 ORDER BY a.attname, con.conname
@@ -1152,6 +1156,10 @@ impl PostgresConn {
                 JOIN pg_catalog.pg_attribute fa
                   ON fa.attrelid = con.confrelid AND fa.attnum = k.fattnum
                 WHERE con.contype = 'f'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_constraint p
+                         WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                  AND fcl.relnamespace = cl.relnamespace
                   AND n.nspname = $1
                 ORDER BY cl.relname, a.attname, con.conname
               ) fk ON fk.table_name = c.table_name AND fk.column_name = c.column_name
@@ -1304,6 +1312,10 @@ impl PostgresConn {
                JOIN pg_catalog.pg_attribute fa
                  ON fa.attrelid = con.confrelid AND fa.attnum = k.fattnum
                WHERE con.contype = 'f'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_constraint p
+                         WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                  AND fcl.relnamespace = cl.relnamespace
                  AND n.nspname = $1
                ORDER BY cl.relname, con.conname, k.ord"#,
         )
