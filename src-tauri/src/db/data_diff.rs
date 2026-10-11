@@ -452,7 +452,7 @@ pub fn restore_binary_rows(
 /// Same as [`coerce_binary_values`] but for a primary-key value vector, whose
 /// names (`key_columns`) are looked up against the full `columns`/`all_types`
 /// arrays (a PK is a subset of the table's columns).
-fn coerce_binary_key(
+pub(crate) fn coerce_binary_key(
     columns: &[String],
     all_types: &[String],
     key_columns: &[String],

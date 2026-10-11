@@ -25,6 +25,8 @@ interface VectorCase {
   masked: string;
   /** MySQL のバックスラッシュエスケープ解釈での期待値 (省略時は `masked`)。 */
   maskedMysql?: string;
+  /** PostgreSQL / SQLite の期待値 (省略時は `masked`)。`#` は MySQL と driver 省略時だけ行コメント (#1517)。 */
+  maskedNoHash?: string;
 }
 
 const drivers = vectors.drivers as string[];
@@ -58,7 +60,7 @@ describe("マスキング ゴールデン (フロント maskLiterals)", () => {
       // ドライバ非依存の呼び出し口は保守的 (標準解釈) 側に倒れる。
       expect(maskLiterals(c.sql)).toBe(c.masked);
       for (const driver of STANDARD_DRIVERS) {
-        expect(maskLiterals(c.sql, driver)).toBe(c.masked);
+        expect(maskLiterals(c.sql, driver)).toBe(c.maskedNoHash ?? c.masked);
       }
       expect(maskLiterals(c.sql, "mysql")).toBe(mysqlExpected);
     });

@@ -78,6 +78,13 @@
 します (これらが読み取り専用クエリの識別子として正当に現れる可能性は極めて低く、
 過検知のコストより見逃しのコストが桁違いに大きいため fail-closed)。
 
+**`#` 行コメントは MySQL だけ (#1517)。** `mask_for_driver` / `maskLiterals(sql, driver)` /
+`ScriptSplitter` は PostgreSQL / SQLite で `#` をコメントにしない (PG では XOR・`#>`/`#>>`/`#-`
+演算子)。ドライバ不明の入口は従来どおりコメント扱いのまま (共有ベクタの
+`maskedNoHash` / `readOnlyStandard` / `statementsStandard` が PG/SQLite 側の期待値)。
+読み取り専用ガードは副作用のある関数 (`pg_terminate_backend` / `nextval` / `setval` /
+`lo_*` など) も拒否する。`set_config` はセッション初期化で使うため対象外。
+
 **マスクの前提を崩す設定は入口で塞ぎます。** `driver_backslash_escapes` は
 「MySQL では `\` がエスケープ文字」という静的な前提を置くため、セッション初期化 SQL
 (`is_session_init_sql`) が `SET sql_mode = 'NO_BACKSLASH_ESCAPES'` を通すとマスクと実

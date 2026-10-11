@@ -143,7 +143,8 @@ impl ScriptSplitter {
                         self.pos += 2;
                         continue;
                     }
-                    if c == b'#' {
+                    // `#` 行コメントは MySQL だけ (PostgreSQL では XOR / jsonb パス演算子、#1517)。
+                    if c == b'#' && self.mysql {
                         self.state = ScanState::LineComment;
                         self.pos += 1;
                         continue;
@@ -266,7 +267,7 @@ impl ScriptSplitter {
     /// `raw` (区切りの `;` を含まない 1 断片) を文として確定させ、行番号を進める。
     fn push_segment(&mut self, raw: &str, out: &mut Vec<ScriptStatement>) {
         let trimmed = raw.trim_matches(is_js_whitespace);
-        if !trimmed.is_empty() && has_executable_sql(trimmed, true) {
+        if !trimmed.is_empty() && has_executable_sql(trimmed, true, self.mysql) {
             let leading = raw.len() - raw.trim_start_matches(is_js_whitespace).len();
             let lead_lines = count_newlines(&raw[..leading]);
             out.push(ScriptStatement {
@@ -356,10 +357,15 @@ fn is_js_whitespace(c: char) -> bool {
 /// ブロックコメント → `--` 行コメント → `#` 行コメントの順に除去してから判定する
 /// (文字列リテラルは考慮しない正規表現相当の近似 — 完全一致のため同じ近似を採る)。
 /// MySQL では `/*! … */` を除去しない (実行されるコードのため)。
-fn has_executable_sql(fragment: &str, mysql: bool) -> bool {
+fn has_executable_sql(fragment: &str, mysql: bool, hash_comment: bool) -> bool {
     let no_block = strip_block_comments(fragment, mysql);
     let no_dash = strip_line_comments(&no_block, "--");
-    let no_hash = strip_line_comments(&no_dash, "#");
+    // `#` 行コメントは MySQL だけ (#1517)。
+    let no_hash = if hash_comment {
+        strip_line_comments(&no_dash, "#")
+    } else {
+        no_dash
+    };
     !no_hash.trim_matches(is_js_whitespace).is_empty()
 }
 
