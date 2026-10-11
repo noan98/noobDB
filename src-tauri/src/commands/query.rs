@@ -1550,10 +1550,16 @@ pub async fn preview_query_stream(
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     // The read-only guard is intentionally skipped here: a preview runs the
     // statement inside a transaction that is always rolled back, so it never
-    // persists a change. `preview_execute_with_limit` only accepts
+    // persists a *row* change. `preview_execute_with_limit` only accepts
     // INSERT/UPDATE/DELETE/REPLACE and rejects DDL (which would implicit-commit
-    // and so can't be rolled back), keeping the read-only guarantee intact while
+    // and so can't be rolled back) and non-transactional (MyISAM) tables,
     // letting a read-only session dry-run a write to inspect its effect.
+    //
+    // 注意: ロールバックで戻らない副作用は残りうる (InnoDB の AUTO_INCREMENT 採番、
+    // PostgreSQL のシーケンス `nextval`、トリガ内の非トランザクショナルな処理)。
+    // つまりプレビューは `read_only` の「バックエンド強制」の外にあり、データ行は
+    // 変えないが採番などは進みうる。これは意図した仕様 (読み取り専用接続でも書き込みの
+    // 影響を確認できることを優先) として、ここと `noobdb-sql-safety` に明記している。
     //
     // register_stream をタスク本体より前に完了させるためのゲート。理由は
     // run_query_stream 側の同種コメントを参照 (register/forget の順序が逆転すると

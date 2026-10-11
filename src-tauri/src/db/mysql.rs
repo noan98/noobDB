@@ -370,7 +370,11 @@ impl MySqlConn {
         row_limit: usize,
     ) -> Result<PreviewResult> {
         let row_limit = row_limit.max(1);
-        let trimmed = sql.trim_start().to_ascii_lowercase();
+        // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
+        // `/* fix */ DELETE …` を拒否しない)。
+        let trimmed = super::strip_sql_comments(sql, super::SqlFlavor::MySql)
+            .trim_start()
+            .to_ascii_lowercase();
         let is_mutation = trimmed.starts_with("insert")
             || trimmed.starts_with("update")
             || trimmed.starts_with("delete")
@@ -390,6 +394,14 @@ impl MySqlConn {
         }
 
         let target = extract_target_table(sql);
+
+        // MyISAM などの非トランザクショナル表では ROLLBACK しても変更が戻らず、
+        // 「ドライラン」のつもりが実際に書き込んでしまう。プレビューは拒否する。
+        if self.write_target_is_non_transactional(database, sql).await {
+            return Err(AppError::InvalidInput(
+                "preview is not available for non-transactional tables (e.g. MyISAM): the change would not be rolled back".into(),
+            ));
+        }
 
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
@@ -419,8 +431,16 @@ impl MySqlConn {
         //
         // 判定と切り出しはドライバ非依存の純ロジック (`db::preview`) を共有する
         // — PostgreSQL 側にも同じ取りこぼしがあったため。
-        let where_clause =
-            super::preview::before_where_clause(sql, super::SqlFlavor::MySql, &primary_key);
+        // PK 自体を書き換える UPDATE (`SET id = 100 WHERE id = 1`) は旧 PK で AFTER を
+        // 取り直すと行が見つからず「削除された」ように見えるため、WHERE の再利用も
+        // PK アンカーもやめ、BEFORE/AFTER を同じ固定窓で撮り直す。
+        let pk_changed =
+            super::preview::update_assigns_primary_key(sql, super::SqlFlavor::MySql, &primary_key);
+        let where_clause = if pk_changed {
+            None
+        } else {
+            super::preview::before_where_clause(sql, super::SqlFlavor::MySql, &primary_key)
+        };
 
         let before_sql = target.as_ref().map(|t| match &where_clause {
             // The user's clause is appended verbatim — it already includes
@@ -475,7 +495,8 @@ impl MySqlConn {
         // but for INSERT we want the LIMIT scan so newly inserted rows actually
         // show up in AFTER (their PKs weren't in BEFORE to anchor on).
         let is_insert = trimmed.starts_with("insert");
-        let use_pk_anchor = !is_insert && target.is_some() && !captured_pks.is_empty();
+        let use_pk_anchor =
+            !is_insert && !pk_changed && target.is_some() && !captured_pks.is_empty();
         let after_raw: Vec<MySqlRow> = if use_pk_anchor {
             // use_pk_anchor は target.is_some() を条件に含むため、ここでは
             // target が Some であることが構造上保証されている。
@@ -656,6 +677,26 @@ impl MySqlConn {
             ),
             None => true,
         })
+    }
+
+    /// 書き込み文 `sql` の対象表が非トランザクショナル (MyISAM 等) か。
+    /// ロールバックで戻らないため、ドライラン / フライトレコーダーの捕捉
+    /// (どちらも「いったん実行して ROLLBACK」前提) を避ける判定に使う。
+    /// 対象表を特定できない・照会に失敗した場合は `false` (InnoDB 想定で従来動作)。
+    pub(crate) async fn write_target_is_non_transactional(
+        &self,
+        database: Option<&str>,
+        sql: &str,
+    ) -> bool {
+        let Some(target) = extract_target_table(sql) else {
+            return false;
+        };
+        let (schema, table) = split_table_ref(&target);
+        let db = schema.as_deref().or(database);
+        !self
+            .table_is_transactional(db, &table)
+            .await
+            .unwrap_or(true)
     }
 
     /// Row-by-row probe inside a rolled-back transaction to find the first
@@ -2672,6 +2713,29 @@ fn extract_target_table(sql: &str) -> Option<String> {
     }
 }
 
+/// `extract_target_table` が返した対象表の表記 (`` `db`.`t` `` / `db.t` / `t`)
+/// を `(スキーマ, 表名)` に分ける。バッククォートは外し、`` `` `` は `` ` `` に戻す。
+fn split_table_ref(target: &str) -> (Option<String>, String) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_tick = false;
+    let mut chars = target.trim().chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '`' if in_tick && chars.peek() == Some(&'`') => {
+                chars.next();
+                cur.push('`');
+            }
+            '`' => in_tick = !in_tick,
+            '.' if !in_tick => parts.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    let table = parts.pop().unwrap_or_default();
+    (parts.pop().filter(|s| !s.is_empty()), table)
+}
+
 /// Backtick-quotes a single identifier, doubling any embedded backticks.
 /// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
 /// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
@@ -2811,26 +2875,42 @@ async fn fetch_after_by_pk(
     // form natively, so we don't need to fall back to OR chains. 組み立ては
     // ドライバ非依存の `db::preview` と共有し、ここでは MySQL の位置
     // パラメータ (`?`) を値の数だけ並べて後段で bind する。
-    let fragments: Vec<Vec<String>> = captured_pks
-        .iter()
-        .map(|_| vec!["?".to_string(); pk_cols.len()])
-        .collect();
-    let Some(sql) = super::preview::build_after_by_pk_sql(
-        target,
-        pk_cols,
-        &fragments,
-        order_clause,
-        quote_ident,
-    ) else {
-        return Ok(Vec::new());
-    };
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for row_pks in captured_pks {
-        for v in row_pks {
-            q = bind_value(q, v);
+    //
+    // プレースホルダ数は MySQL の上限 (65,535) を超えないよう、行数 × PK 列数が
+    // 収まる単位でチャンク分割する (行上限の大きい設定 × 複合 PK でプレビュー全体が
+    // 失敗しないように)。captured_pks は PK 順に並んでいるので、チャンクを順に
+    // 連結すれば全体の ORDER BY も保たれる。
+    let mut all_rows: Vec<MySqlRow> = Vec::new();
+    for chunk in captured_pks.chunks(after_by_pk_chunk_rows(pk_cols.len())) {
+        let fragments: Vec<Vec<String>> = chunk
+            .iter()
+            .map(|_| vec!["?".to_string(); pk_cols.len()])
+            .collect();
+        let Some(sql) = super::preview::build_after_by_pk_sql(
+            target,
+            pk_cols,
+            &fragments,
+            order_clause,
+            quote_ident,
+        ) else {
+            return Ok(Vec::new());
+        };
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for row_pks in chunk {
+            for v in row_pks {
+                q = bind_value(q, v);
+            }
         }
+        all_rows.extend(q.fetch_all(&mut **tx).await?);
     }
-    Ok(q.fetch_all(&mut **tx).await?)
+    Ok(all_rows)
+}
+
+/// 1 回の `IN` 句に載せる PK 行数。MySQL のプレースホルダ上限 65,535 に対して
+/// 余裕を見て 60,000 個以内に収める (PK 列数 0 でも 1 行以上を返す)。
+fn after_by_pk_chunk_rows(pk_col_count: usize) -> usize {
+    const MAX_PLACEHOLDERS: usize = 60_000;
+    (MAX_PLACEHOLDERS / pk_col_count.max(1)).max(1)
 }
 
 /// Binds one of our cross-driver `Value` variants onto a sqlx query. Only the
@@ -2848,10 +2928,14 @@ fn bind_value<'q>(
         Value::UInt(u) => q.bind(*u),
         Value::Float(f) => q.bind(*f),
         Value::String(s) => q.bind(s.as_str()),
-        // PKs over BLOB columns are exotic; binding the hex-encoded text
-        // would not round-trip. Treat as NULL — better to lose a row from
-        // AFTER than to mis-bind.
-        Value::Bytes(_) => q.bind(Option::<i64>::None),
+        // BINARY(16) の UUID 主キーなどは `decode_cell` で 16 進文字列
+        // (`Value::Bytes`) になる。そのまま bind すると往復しないので、バイト列へ
+        // 戻して bind する。16 進として不正な場合だけ NULL (AFTER から行が落ちる
+        // だけで、誤った値を bind するよりまし)。
+        Value::Bytes(hex) => match data_encoding::HEXLOWER_PERMISSIVE.decode(hex.as_bytes()) {
+            Ok(bytes) => q.bind(bytes),
+            Err(_) => q.bind(Option::<i64>::None),
+        },
     }
 }
 
@@ -3576,6 +3660,35 @@ mod tests {
         assert_eq!(
             build_insert_sql("`t`", "`a`", 1, 1),
             "INSERT INTO `t` (`a`) VALUES (?)"
+        );
+    }
+
+    #[test]
+    fn after_by_pk_chunks_stay_under_the_placeholder_limit() {
+        for cols in 1..=16usize {
+            let rows = after_by_pk_chunk_rows(cols);
+            assert!(rows >= 1);
+            assert!(rows * cols <= 65_535, "{cols} 列で {rows} 行は上限超過");
+        }
+        assert_eq!(after_by_pk_chunk_rows(0), 60_000);
+        assert_eq!(after_by_pk_chunk_rows(3), 20_000);
+    }
+
+    #[test]
+    fn split_table_ref_handles_quoting_and_schema() {
+        assert_eq!(split_table_ref("t"), (None, "t".to_string()));
+        assert_eq!(split_table_ref("`t`"), (None, "t".to_string()));
+        assert_eq!(
+            split_table_ref("`db`.`t`"),
+            (Some("db".to_string()), "t".to_string())
+        );
+        assert_eq!(
+            split_table_ref("db.t"),
+            (Some("db".to_string()), "t".to_string())
+        );
+        assert_eq!(
+            split_table_ref("`we``ird.name`"),
+            (None, "we`ird.name".to_string())
         );
     }
 }

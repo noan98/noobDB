@@ -429,6 +429,26 @@ fn coerce_binary_values(columns: &[String], all_types: &[String], values: &[Valu
         .collect()
 }
 
+/// 行の集合ぜんぶに [`coerce_binary_values`] を適用する。JSON 往復
+/// (`Value` は `untagged` なので `Bytes` が素の文字列に戻る) を経た行を、
+/// ライブ DB から取得した行 (`Value::Bytes`) と比べられる形へ戻すために使う。
+/// 列数と値の数が合わない行 (壊れた退避データ) は触らずそのまま返す。
+pub fn restore_binary_rows(
+    columns: &[String],
+    all_types: &[String],
+    rows: Vec<Vec<Value>>,
+) -> Vec<Vec<Value>> {
+    rows.into_iter()
+        .map(|row| {
+            if row.len() == columns.len() {
+                coerce_binary_values(columns, all_types, &row)
+            } else {
+                row
+            }
+        })
+        .collect()
+}
+
 /// Same as [`coerce_binary_values`] but for a primary-key value vector, whose
 /// names (`key_columns`) are looked up against the full `columns`/`all_types`
 /// arrays (a PK is a subset of the table's columns).

@@ -72,9 +72,6 @@ pub(crate) fn before_where_clause(
     flavor: SqlFlavor,
     primary_key: &[String],
 ) -> Option<String> {
-    if primary_key.is_empty() {
-        return None;
-    }
     // 先頭キーワードの判定も**コメント除去後**のテキストで行う。生の `sql` を
     // 見ると `/* fix */ UPDATE t SET …` のように先頭コメント付きの文で
     // `starts_with("update")` が偽になり、WHERE の再利用をあきらめて固定窓へ
@@ -108,15 +105,131 @@ pub(crate) fn before_where_clause(
     // 失格キーワードが無い方言 (= 探すのは `WHERE` だけ) では、抽出そのものは
     // [`extract_where_and_after`] と同一なのでそちらへ委譲する (コメント除去を
     // 二度走らせることになるが、同じ抽出規則が 2 か所に増えるより安い)。
-    if keywords.len() == 1 {
-        return extract_where_and_after(sql, flavor);
-    }
+    let tail = if keywords.len() == 1 {
+        extract_where_and_after(sql, flavor)?
+    } else {
+        let (pos, which) = find_top_level_keyword(&cleaned, keywords, flavor)?;
+        if which != 0 {
+            return None;
+        }
+        clause_tail(&cleaned, pos, flavor)?
+    };
 
-    let (pos, which) = find_top_level_keyword(&cleaned, keywords, flavor)?;
-    if which != 0 {
+    // 主キーが無い表: AFTER を PK で取り直せないので、UPDATE では WHERE を
+    // 再利用できない (`… SET flag=0 WHERE flag=1` は実行後に 0 件になり、対応付けが
+    // 壊れる) — 従来どおり固定窓へ縮退する。DELETE は実行後に同じ WHERE で
+    // 撮り直せば「消えた行」がそのまま BEFORE にだけ残るので、WHERE で絞った
+    // BEFORE が使える。ただし `LIMIT` 付きだと残りの一致行が AFTER に現れて位置
+    // 対応が崩れるため、その場合も固定窓のままにする。
+    if primary_key.is_empty()
+        && (!head.starts_with("delete")
+            || find_top_level_keyword(&tail, &["limit"], flavor).is_some())
+    {
         return None;
     }
-    clause_tail(&cleaned, pos, flavor)
+    Some(tail)
+}
+
+/// `UPDATE` の `SET` 句が主キー列を書き換えるか。
+///
+/// PK を書き換える文では、BEFORE で捕まえた旧 PK で AFTER を取り直しても行が
+/// 見つからず (`UPDATE users SET id = 100 WHERE id = 1` の後に `id = 1` は
+/// 存在しない)、「削除された」ように見えてしまう。呼び出し側は真の場合に PK
+/// アンカーと WHERE の再利用をやめ、BEFORE/AFTER を同じ固定窓で撮り直す。
+///
+/// 代入の左辺 (`col` / `t.col` / 引用付き / PostgreSQL の `(a, b) = …`) だけを
+/// 見る。右辺に PK 列が出てくるだけ (`SET n = id + 1`) では真にしない。
+pub(crate) fn update_assigns_primary_key(
+    sql: &str,
+    flavor: SqlFlavor,
+    primary_key: &[String],
+) -> bool {
+    if primary_key.is_empty() {
+        return false;
+    }
+    let cleaned = super::strip_sql_comments(sql, flavor);
+    if !cleaned
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("update")
+    {
+        return false;
+    }
+    let Some((set_pos, _)) = find_top_level_keyword(&cleaned, &["set"], flavor) else {
+        return false;
+    };
+    let Some(after_set) = cleaned.get(set_pos + 3..) else {
+        return false;
+    };
+    let end = find_top_level_keyword(
+        after_set,
+        &["where", "from", "returning", "order", "limit"],
+        flavor,
+    )
+    .map_or(after_set.len(), |(p, _)| p);
+    let Some(segment) = after_set.get(..end) else {
+        return false;
+    };
+    let pk_lower: Vec<String> = primary_key.iter().map(|c| c.to_lowercase()).collect();
+    split_top_level(segment, ',', flavor).iter().any(|assign| {
+        let Some(eq) = split_top_level(assign, '=', flavor).into_iter().next() else {
+            return false;
+        };
+        // 左辺が `(a, b)` 形式のときは括弧を外して列ごとに見る。
+        let lhs = eq.trim().trim_start_matches('(').trim_end_matches(')');
+        split_top_level(lhs, ',', flavor).iter().any(|col| {
+            let last = col.trim().rsplit('.').next().unwrap_or("");
+            let name = last.trim().trim_matches(|c| c == '`' || c == '"');
+            pk_lower.iter().any(|p| p == &name.to_lowercase())
+        })
+    })
+}
+
+/// 文字列リテラル・引用付き識別子・括弧の外にある `sep` で `text` を分割する。
+fn split_top_level(text: &str, sep: char, flavor: SqlFlavor) -> Vec<String> {
+    let backslash_escapes = flavor == SqlFlavor::MySql;
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut depth: i32 = 0;
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if backslash_escapes && c == '\\' && q != '`' {
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            } else if c == q {
+                if chars.peek() == Some(&q) {
+                    if let Some(n) = chars.next() {
+                        cur.push(n);
+                    }
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            _ if c == sep && depth <= 0 => parts.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    parts
 }
 
 /// スナップショット用の `SELECT * FROM …` を組み立てる。
@@ -665,6 +778,58 @@ mod tests {
         // 投げるより AFTER をフォールバックさせる)。
         assert!(
             build_after_by_pk_sql("t", &pk, &[vec!["?".into(), "?".into()]], "", quote).is_none()
+        );
+    }
+
+    #[test]
+    fn update_assigns_primary_key_detects_pk_in_set_lhs() {
+        let pk = vec!["id".to_string()];
+        let my = |q: &str| update_assigns_primary_key(q, SqlFlavor::MySql, &pk);
+        let pg = |q: &str| update_assigns_primary_key(q, SqlFlavor::Postgres, &pk);
+        assert!(my("UPDATE users SET id = 100 WHERE id = 1"));
+        assert!(my(
+            "UPDATE users SET name = 'a', `ID` = id + 1 WHERE id = 1"
+        ));
+        assert!(my("/* c */ UPDATE users u SET u.id = 5"));
+        assert!(pg("UPDATE users SET \"id\" = 100 WHERE id = 1"));
+        assert!(pg("UPDATE users SET (name, id) = ('a', 7) WHERE id = 1"));
+        // 右辺や WHERE にだけ出る PK、文字列内の `id =` は対象外。
+        assert!(!my("UPDATE users SET n = id + 1 WHERE id = 1"));
+        assert!(!my("UPDATE users SET note = 'id = 3, x' WHERE id = 1"));
+        assert!(!my("UPDATE users SET user_id = 2 WHERE id = 1"));
+        assert!(!my("DELETE FROM users WHERE id = 1"));
+        assert!(!update_assigns_primary_key(
+            "UPDATE users SET id = 2",
+            SqlFlavor::MySql,
+            &[]
+        ));
+        // 複合 PK は一部の列だけでも真。
+        let cpk = vec!["a".to_string(), "b".to_string()];
+        assert!(update_assigns_primary_key(
+            "UPDATE t SET b = 2 WHERE a = 1",
+            SqlFlavor::MySql,
+            &cpk
+        ));
+    }
+
+    #[test]
+    fn before_where_clause_without_pk_only_for_limitless_delete() {
+        let none: Vec<String> = Vec::new();
+        assert_eq!(
+            before_where_clause("DELETE FROM t WHERE status = 'x'", SqlFlavor::MySql, &none),
+            Some("WHERE status = 'x'".into())
+        );
+        assert_eq!(
+            before_where_clause("UPDATE t SET a = 0 WHERE a = 1", SqlFlavor::MySql, &none),
+            None
+        );
+        assert_eq!(
+            before_where_clause(
+                "DELETE FROM t WHERE status = 'x' LIMIT 5",
+                SqlFlavor::MySql,
+                &none
+            ),
+            None
         );
     }
 }
