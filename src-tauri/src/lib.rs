@@ -263,7 +263,7 @@ pub mod __test_api {
         F: FnMut(ScriptProgress),
     {
         let total = crate::commands::script::script_file_size(path).await?;
-        let file = tokio::fs::File::open(path).await?;
+        let file = crate::commands::script::open_script_file(path).await?;
         crate::commands::script::run_script_core(
             session,
             file,

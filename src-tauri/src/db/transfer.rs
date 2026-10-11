@@ -251,9 +251,9 @@ pub fn target_type_sql(driver: DriverKind, ty: &TransferType) -> String {
         (T::Integer, _) => "BIGINT",
 
         (T::UnsignedBigInt, D::Mysql) => "BIGINT UNSIGNED",
-        // SQLite の INTEGER は 64bit 符号付き。i64 を超える値 (最大 2^64-1) は REAL に
-        // 変換されて精度が失われるため、十進文字列のまま無損失で保持する。
-        (T::UnsignedBigInt, D::Sqlite) => "TEXT",
+        // SQLite の INTEGER は 64bit 符号付き。i64 を超える値は REAL に化けて精度を失うので、
+        // 書き込み前に [`check_sqlite_unsigned_range`] で行エラーにする (黙って丸めない)。
+        (T::UnsignedBigInt, D::Sqlite) => "INTEGER",
         (T::UnsignedBigInt, D::Postgres) => "NUMERIC(20,0)",
 
         (T::Float, D::Postgres) => "DOUBLE PRECISION",
@@ -412,6 +412,33 @@ pub fn binary_finalize_sql(
             format!("UPDATE {t} SET {q} = {func}({q}) WHERE {q} IS NOT NULL")
         })
         .collect()
+}
+
+/// SQLite ターゲットの `UnsignedBigInt` 列に i64 の範囲を超える値があれば、列名付きの
+/// エラーにする。INTEGER 列へ入れると REAL に変換されて値が黙って失われるため。
+pub fn check_sqlite_unsigned_range(
+    driver: DriverKind,
+    columns: &[TransferColumn],
+    rows: &[Vec<Value>],
+) -> Result<()> {
+    if driver != DriverKind::Sqlite {
+        return Ok(());
+    }
+    for (i, c) in columns.iter().enumerate() {
+        if c.ty != TransferType::UnsignedBigInt {
+            continue;
+        }
+        if rows
+            .iter()
+            .any(|r| matches!(r.get(i), Some(Value::UInt(n)) if *n > i64::MAX as u64))
+        {
+            return Err(AppError::InvalidInput(format!(
+                "column \"{}\" has a value above 9223372036854775807, which SQLite INTEGER cannot hold without losing precision",
+                c.name
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 1 セルをインポート経路へ渡すテキストへ変換する。`None` は SQL NULL。
@@ -767,12 +794,22 @@ mod tests {
     }
 
     #[test]
-    fn unsigned_bigint_on_sqlite_is_lossless_text() {
-        // INTEGER だと 2^63 以上が REAL に化けるので TEXT にする。
+    fn unsigned_bigint_on_sqlite_is_integer_with_range_check() {
         assert_eq!(
             target_type_sql(DriverKind::Sqlite, &TransferType::UnsignedBigInt),
-            "TEXT"
+            "INTEGER"
         );
+        let cols = vec![TransferColumn {
+            name: "n".into(),
+            source_type: "BIGINT UNSIGNED".into(),
+            ty: TransferType::UnsignedBigInt,
+        }];
+        let ok = vec![vec![Value::UInt(i64::MAX as u64)]];
+        let big = vec![vec![Value::UInt(i64::MAX as u64 + 1)]];
+        assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &ok).is_ok());
+        assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &big).is_err());
+        // 他ドライバは対象外。
+        assert!(check_sqlite_unsigned_range(DriverKind::Mysql, &cols, &big).is_ok());
     }
 
     #[test]

@@ -171,6 +171,14 @@ const EXPORT_TEMP_FILE_MAX_ATTEMPTS: u32 = 8;
 /// `create_new` はシンボリックリンクを辿らない (dump.rs の `create_dump_temp_file`
 /// と同じ防御)。
 fn create_export_temp_file(final_path: &str) -> Result<(PathBuf, std::fs::File)> {
+    // 既存の保存先を書き込みモードで開けるか (切り詰めずに) 先に確かめる。ロック中・読み取り
+    // 専用なら、クエリを走らせる前に rename の失敗ではなく早めのエラーにする。
+    if std::path::Path::new(final_path).is_file() {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(final_path)
+            .map_err(AppError::Io)?;
+    }
     let mut last_err: Option<std::io::Error> = None;
     for _ in 0..EXPORT_TEMP_FILE_MAX_ATTEMPTS {
         let candidate = export_temp_path(final_path);

@@ -1061,8 +1061,10 @@ impl Drop for CancelledImportCleanup {
                 // 書き込みと競合して DROP が一時的に失敗しうるので少し待って再試行する。
                 let mut note = String::new();
                 for attempt in 0..10 {
-                    note = drop_created_table(&session, database.as_deref(), &table).await;
-                    if note.contains("was dropped") {
+                    let (dropped, n) =
+                        drop_created_table(&session, database.as_deref(), &table).await;
+                    note = n;
+                    if dropped {
                         break;
                     }
                     if attempt < 9 {
@@ -1424,10 +1426,8 @@ where
     // (インポート自体の要約とは別エントリ)。
     let created = match &create_table {
         Some(cols) => {
-            create_table_for_import(session, database.as_deref(), &table, cols).await?;
-            // キャンセル (abort) 時に spawn_import のガードが後始末できるよう、実際に
-            // 作成できたことを呼び出し元へ伝える。
-            created_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            create_table_for_import(session, database.as_deref(), &table, cols, &created_flag)
+                .await?;
             tracing::info!(
                 session_id = %session.id,
                 stream_id = %stream_id,
@@ -1534,9 +1534,14 @@ where
                         _ => e.to_string(),
                     };
                     if created {
-                        message.push_str(
-                            &drop_created_table(session, database.as_deref(), &table).await,
-                        );
+                        let (dropped, note) =
+                            drop_created_table(session, database.as_deref(), &table).await;
+                        message.push_str(&note);
+                        if dropped {
+                            // 通常経路で DROP 済み。以降キャンセルされてもガードが再度 DROP
+                            // しない (同名の別テーブルを消さない)。
+                            created_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
                     }
                     Ok(ImportRun::Failed {
                         message,
@@ -1556,6 +1561,7 @@ async fn create_table_for_import(
     database: Option<&str>,
     table: &str,
     columns: &[NewColumn],
+    created_flag: &std::sync::atomic::AtomicBool,
 ) -> Result<()> {
     let started = Instant::now();
     match session
@@ -1564,6 +1570,9 @@ async fn create_table_for_import(
         .await
     {
         Ok(ddl) => {
+            // 作成直後 (履歴・キャッシュ処理の await より前) に立てる。ここでキャンセル
+            // されても spawn_import のガードが作成済みテーブルを後始末できる。
+            created_flag.store(true, std::sync::atomic::Ordering::SeqCst);
             record_write_history(
                 session,
                 ddl,
@@ -1590,13 +1599,17 @@ async fn create_table_for_import(
 /// abort モードの取り込み失敗時に、直前に作成したテーブルを DROP する (#985)。
 /// 失敗してもインポートのエラー自体は返したいので、結果はメッセージの
 /// 接尾辞として返す。
-async fn drop_created_table(session: &Session, database: Option<&str>, table: &str) -> String {
+async fn drop_created_table(
+    session: &Session,
+    database: Option<&str>,
+    table: &str,
+) -> (bool, String) {
     let sql = render_drop_table(session.conn.driver_kind(), table);
     match session.conn.execute(&sql, database).await {
         Ok(_) => {
             record_write_history(session, sql, database, None, None, None).await;
             session.schema_cache.invalidate_all().await;
-            " (the newly created table was dropped)".to_string()
+            (true, " (the newly created table was dropped)".to_string())
         }
         Err(drop_err) => {
             tracing::warn!(
@@ -1604,7 +1617,10 @@ async fn drop_created_table(session: &Session, database: Option<&str>, table: &s
                 error = %drop_err,
                 "failed to drop the table created for a failed import"
             );
-            format!(" (the newly created table could not be dropped: {drop_err})")
+            (
+                false,
+                format!(" (the newly created table could not be dropped: {drop_err})"),
+            )
         }
     }
 }
