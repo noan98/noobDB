@@ -38,22 +38,42 @@ export interface CreateTableForm {
   checks?: CheckDef[];
 }
 
-/** DEFAULT 句を組み立てる。空なら null。数値・既知キーワードは素通し、他は文字列化。 */
-export function formatDefault(driver: string, raw: string): string | null {
+const NUMERIC_TYPE_RE =
+  /^(tinyint|smallint|mediumint|bigint|int\d*|integer|serial\d*|smallserial|bigserial|numeric|decimal|dec|float\d*|double|real|number|money|bit)\b/i;
+const BOOL_TYPE_RE = /^(bool|boolean)\b/i;
+
+/**
+ * 式として逐語で出すべき DEFAULT か (`(UUID())`・`gen_random_uuid()`・`now()::text`
+ * のような括弧式 / 関数呼び出し / `::` キャスト)。文字列リテラル化すると式ではなく
+ * その文字列が全行に入ってしまう。
+ */
+function looksLikeDefaultExpression(v: string): boolean {
+  if (/^\(.*\)$/s.test(v)) return true;
+  if (/^[A-Za-z_][\w.]*\(.*\)(\s*::\s*[A-Za-z][\w\s]*(\(.*\))?(\[\])?)?$/s.test(v)) return true;
+  return /::\s*[A-Za-z]/.test(v);
+}
+
+/**
+ * DEFAULT 句を組み立てる。空なら null。式 (括弧式・関数呼び出し・`::` キャスト) と
+ * 既知キーワードは素通し、それ以外は文字列化。数値リテラルは `type` が数値型の
+ * ときだけ素通しし、文字列列の `007` が `7` になるのを防ぐ。`true`/`false` は数値型
+ * と真偽型だけ素通し。`type` 省略時は従来どおり型を問わず素通し。
+ */
+export function formatDefault(driver: string, raw: string, type?: string): string | null {
   const v = raw.trim();
   if (!v) return null;
-  if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+  const t = type?.trim();
+  const numericType = t === undefined || t === "" ? undefined : NUMERIC_TYPE_RE.test(t);
+  const boolType = t === undefined || t === "" ? undefined : BOOL_TYPE_RE.test(t);
+  if (/^-?\d+(\.\d+)?$/.test(v) && numericType !== false) return v;
   const upper = v.toUpperCase();
-  const keywords = new Set([
-    "NULL",
-    "TRUE",
-    "FALSE",
-    "CURRENT_TIMESTAMP",
-    "CURRENT_DATE",
-    "CURRENT_TIME",
-    "NOW()",
-  ]);
+  if (upper === "TRUE" || upper === "FALSE") {
+    if (numericType === false && boolType === false) return quoteString(driver, v);
+    return upper;
+  }
+  const keywords = new Set(["NULL", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "NOW()"]);
   if (keywords.has(upper)) return upper;
+  if (looksLikeDefaultExpression(v)) return v;
   return quoteString(driver, v);
 }
 
@@ -121,7 +141,7 @@ function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolea
     // SQLite の非 PK 自動採番は無効なので無視する。
   }
 
-  const def = formatDefault(driver, col.defaultValue);
+  const def = formatDefault(driver, col.defaultValue, col.type);
   if (def !== null) parts.push(`DEFAULT ${def}`);
 
   return parts.join(" ");

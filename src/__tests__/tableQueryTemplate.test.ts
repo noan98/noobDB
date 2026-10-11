@@ -312,3 +312,20 @@ describe("sanitizeTableOpenQueryOverrides", () => {
     expect(sanitizeTableOpenQueryOverrides("nope")).toEqual([]);
   });
 });
+
+describe("#1527 OFFSET のみ / バックスラッシュ", () => {
+  it("OFFSET だけのテンプレートは OFFSET の手前に LIMIT を補う", () => {
+    const plan = planTableOpenQuery("SELECT * FROM {table} ORDER BY {pk} OFFSET 100", mysql());
+    expect(plan).toMatchObject({
+      kind: "template",
+      sql: "SELECT * FROM `shop`.`users` ORDER BY `id` LIMIT 100 OFFSET 100",
+    });
+  });
+
+  it("末尾が反斜線の文字列は SQLite / PostgreSQL では閉じ、MySQL では未閉じ", () => {
+    const tpl = "SELECT * FROM {table} WHERE p = 'C:\\'";
+    expect(validateTableQueryTemplate(tpl, "sqlite")).toBeNull();
+    expect(validateTableQueryTemplate(tpl, "postgres")).toBeNull();
+    expect(validateTableQueryTemplate(tpl, "mysql")).toEqual({ kind: "syntax" });
+  });
+});

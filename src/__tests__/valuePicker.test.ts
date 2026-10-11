@@ -206,6 +206,7 @@ describe("allowedValuesFromCheck (#1067)", () => {
       "CHECK ((lower(status) IN ('a')))",
       "CHECK ((status IN ('a', other_col)))",
       "CHECK ((status <> 'a'))",
+      "CHECK ((status IN ('a','b') OR qty > 0))",
     ];
     for (const c of cases) {
       expect(allowedValuesFromCheck("postgres", [c], "status"), c).toBeNull();

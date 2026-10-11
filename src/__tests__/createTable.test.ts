@@ -98,3 +98,21 @@ describe("buildCreateTableSql", () => {
     expect(sql).not.toContain("ignored");
   });
 });
+
+describe("formatDefault: 型と式の判定 (#1527)", () => {
+  it("文字列型の数値風既定値は先頭ゼロを保つため文字列リテラルにする", () => {
+    for (const d of ["mysql", "postgres", "sqlite"]) {
+      expect(formatDefault(d, "007", "VARCHAR(10)")).toBe("'007'");
+      expect(formatDefault(d, "007", "INT")).toBe("007");
+      expect(formatDefault(d, "1.5", "numeric(8,2)")).toBe("1.5");
+      expect(formatDefault(d, "true", "VARCHAR(10)")).toBe("'true'");
+      expect(formatDefault(d, "true", "BOOLEAN")).toBe("TRUE");
+    }
+  });
+  it("関数呼び出し・括弧式・キャストは逐語で出す", () => {
+    expect(formatDefault("postgres", "gen_random_uuid()::text", "text")).toBe("gen_random_uuid()::text");
+    expect(formatDefault("mysql", "(UUID())", "varchar(36)")).toBe("(UUID())");
+    expect(formatDefault("sqlite", "(datetime('now'))", "text")).toBe("(datetime('now'))");
+    expect(formatDefault("mysql", "hello world", "varchar(36)")).toBe("'hello world'");
+  });
+});

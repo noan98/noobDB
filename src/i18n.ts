@@ -1327,6 +1327,7 @@ const en = {
   qbValidationNoTable: "Select a table first.",
   qbValidationNoInsertValues: "Fill in at least one column and value to insert.",
   qbValidationNoSetValues: "Fill in at least one column to update.",
+  qbValidationNoInValues: "An IN condition has no values — fill them in or remove the condition.",
   qbValidationNoWhereConditions:
     "WHERE is enabled but has no conditions — fill one in or disable WHERE.",
   qbOrderBy: "ORDER BY",
@@ -5857,6 +5858,7 @@ const ja: Dict = {
   qbValidationNoTable: "先にテーブルを選択してください。",
   qbValidationNoInsertValues: "挿入する列と値を少なくとも 1 つ入力してください。",
   qbValidationNoSetValues: "更新する列を少なくとも 1 つ入力してください。",
+  qbValidationNoInValues: "IN 条件に値がありません。値を入力するか条件を削除してください。",
   qbValidationNoWhereConditions:
     "WHERE が有効ですが条件がありません。条件を入力するか WHERE を無効にしてください。",
   qbOrderBy: "ORDER BY",

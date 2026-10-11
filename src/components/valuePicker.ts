@@ -348,7 +348,11 @@ const sameColumn = (tok: Token | undefined, column: string): boolean =>
 /** 1 つの CHECK 式 (トークン列) から `column` の許可値を取り出す。 */
 function allowedFromExpr(tokens: Token[], column: string): string[] | null {
   const toks = stripSingletonParens(stripCasts(tokens));
-  for (let i = 0; i < toks.length; i++) {
+  // OR を含む式では `col IN (...)` が許可値の全体とは限らない
+  // (`status IN ('a','b') OR qty > 0` は他の値も通す) ので A / B では採用しない。
+  // 同一列の等値 OR だけでできた式は下の C で拾う。
+  const hasOr = toks.some((t) => isKw(t, "OR"));
+  for (let i = 0; i < toks.length && !hasOr; i++) {
     if (!sameColumn(toks[i], column)) continue;
     // `NOT (col IN (...))` のような否定は許可値にならない。
     let p = i - 1;

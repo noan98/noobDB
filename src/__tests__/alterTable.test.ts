@@ -398,3 +398,54 @@ describe("buildAlterPlan: statement ordering", () => {
     ]);
   });
 });
+
+describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
+  it("ADD COLUMN の式 DEFAULT を全方言で文字列化しない", () => {
+    const pg = buildAlterPlan(
+      "postgres",
+      form({ added: [{ name: "token", type: "text", notNull: false, defaultValue: "gen_random_uuid()::text" }] }),
+    );
+    expect(pg.statements[0].sql).toBe(
+      'ALTER TABLE "shop"."users" ADD COLUMN "token" text DEFAULT gen_random_uuid()::text;',
+    );
+    const my = buildAlterPlan(
+      "mysql",
+      form({ added: [{ name: "u", type: "varchar(36)", notNull: false, defaultValue: "(UUID())" }] }),
+    );
+    expect(my.statements[0].sql).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `u` varchar(36) DEFAULT (UUID());");
+    const lite = buildAlterPlan(
+      "sqlite",
+      form({ added: [{ name: "c", type: "text", notNull: false, defaultValue: "007" }] }),
+    );
+    expect(lite.statements[0].sql).toBe('ALTER TABLE "users" ADD COLUMN "c" text DEFAULT \'007\';');
+  });
+
+  it("CHANGE COLUMN に DEFAULT_GENERATED を入れない", () => {
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [
+          baseline({
+            name: "created_at",
+            type: "timestamp",
+            defaultValue: "CURRENT_TIMESTAMP",
+            extra: "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+            comment: "",
+          }),
+        ],
+        existing: [
+          edit({
+            original: "created_at",
+            name: "created_at",
+            type: "timestamp",
+            defaultValue: "CURRENT_TIMESTAMP",
+            comment: "x",
+          }),
+        ],
+      }),
+    );
+    expect(plan.statements[0].sql).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `created_at` `created_at` timestamp DEFAULT CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP COMMENT 'x';",
+    );
+  });
+});
