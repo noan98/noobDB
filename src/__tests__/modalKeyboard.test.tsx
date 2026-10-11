@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "../components/Modal";
-import { isModalSubmitKey, type ModalKeyEventLike } from "../components/modalKeys";
+import { isImeComposing, isModalSubmitKey, isPlainEnterKey, type ModalKeyEventLike } from "../components/modalKeys";
+import { RenameTableDialog } from "../components/RenameTableDialog";
 
 /**
  * モーダル / フォームのキーボード操作の統一 (#1114)。
@@ -92,5 +93,51 @@ describe("Modal の Cmd/Ctrl+Enter", () => {
     renderModal({});
     // 例外なく素通りする (キーハンドラ自体が付かない)。
     fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+  });
+});
+
+describe("IME 変換確定の Enter (#1515)", () => {
+  const ev = (key: string, nativeEvent: { isComposing?: boolean; keyCode?: number }) => ({ key, nativeEvent });
+
+  it("isComposing / keyCode 229 を変換中と判定する", () => {
+    expect(isImeComposing(ev("Enter", { isComposing: true }))).toBe(true);
+    expect(isImeComposing(ev("Enter", { isComposing: false, keyCode: 229 }))).toBe(true);
+    expect(isImeComposing(ev("Enter", { isComposing: false, keyCode: 13 }))).toBe(false);
+  });
+
+  it("isPlainEnterKey は変換中の Enter と Enter 以外を除く", () => {
+    expect(isPlainEnterKey(ev("Enter", { isComposing: false }))).toBe(true);
+    expect(isPlainEnterKey(ev("Enter", { isComposing: true }))).toBe(false);
+    expect(isPlainEnterKey(ev("Enter", { keyCode: 229 }))).toBe(false);
+    expect(isPlainEnterKey(ev("a", {}))).toBe(false);
+  });
+
+  it("RenameTableDialog は変換確定の Enter で確定せず、通常の Enter で確定する", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(<RenameTableDialog table="users" onConfirm={onConfirm} onCancel={() => {}} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "ゆーざー" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(onConfirm).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledWith("ゆーざー");
+  });
+
+  it("RenameTableDialog で Ctrl+Enter を押しても onConfirm は 1 回だけ", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(<RenameTableDialog table="users" onConfirm={onConfirm} onCancel={() => {}} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "people" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("isPlainEnterKey は修飾キー付き Enter を除く", () => {
+    const base = { key: "Enter", nativeEvent: {} };
+    expect(isPlainEnterKey({ ...base, ctrlKey: true })).toBe(false);
+    expect(isPlainEnterKey({ ...base, metaKey: true })).toBe(false);
+    expect(isPlainEnterKey({ ...base, shiftKey: true })).toBe(false);
+    expect(isPlainEnterKey({ ...base, altKey: true })).toBe(false);
   });
 });

@@ -256,6 +256,7 @@ import {
   toggleMaskOverride,
 } from "./columnMask";
 import type { BundleContext } from "./investigationBundle";
+import { isImeComposing, isPlainEnterKey } from "./modalKeys";
 
 /** 未保存編集の破棄確認で初期フォーカスを当てるキャンセルボタンの id (#1114)。 */
 const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
@@ -5416,7 +5417,7 @@ export const DataGrid = memo(function DataGrid({
             navigateCell(visibleRows[vi2 - 1].index, visibleColIds[lastPos] ?? 0);
           else navigateCell(eRowIdx, eColIdx);
         }
-      } else if (e.key === "Enter") {
+      } else if (e.key === "Enter" && !isImeComposing(e)) {
         e.preventDefault();
         const eRowIdx = editing.rowIdx;
         const eColIdx = editing.colIdx;
@@ -6609,7 +6610,7 @@ export const DataGrid = memo(function DataGrid({
                 value={bulkEdit.value}
                 onChange={(e) => setBulkEdit({ ...bulkEdit, value: e.target.value })}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (isPlainEnterKey(e)) {
                     e.preventDefault();
                     applyBulkEdit();
                   }
@@ -8709,7 +8710,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
                 value={findQuery}
                 onChange={(e) => setFindQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "Enter" && !isImeComposing(e)) {
                     e.preventDefault();
                     findStep(e.shiftKey ? -1 : 1);
                   } else if (e.key === "Escape") {

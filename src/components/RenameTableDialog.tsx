@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldLabel } from "./modalForm";
+import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
 
 /**
@@ -40,7 +41,7 @@ export function RenameTableDialog({ table, onConfirm, onCancel }: Props) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
+            if (isPlainEnterKey(e)) submit();
           }}
         />
       </ModalBody>

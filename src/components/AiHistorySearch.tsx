@@ -31,6 +31,7 @@ import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiUsageNote } from "./AiUsageNote";
 import { useCopyFeedback } from "./useCopyFeedback";
+import { isImeComposing } from "./modalKeys";
 
 /** SQL 全文の取得を同時に走らせる件数。 */
 const FETCH_BATCH = 20;
@@ -321,7 +322,7 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+          if (e.key === "Enter" && !isImeComposing(e)) {
             e.preventDefault();
             void run("search");
           }

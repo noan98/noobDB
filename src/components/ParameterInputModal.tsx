@@ -12,6 +12,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, PressableButton } from "./ui";
 import { Tooltip } from "./Tooltip";
+import { isPlainEnterKey } from "./modalKeys";
 
 /** Per-parameter draft: the typed value and how it's rendered into SQL. */
 interface Draft {
@@ -183,7 +184,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                     aria-invalid={err ? true : undefined}
                     onChange={(e) => setDraft(name, { value: e.target.value })}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                      if (isPlainEnterKey(e)) {
                         e.preventDefault();
                         submit();
                       }

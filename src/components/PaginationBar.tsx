@@ -12,6 +12,7 @@ import { ICON_SIZES, Icon } from "./Icon";
 import { ListboxSelect } from "./ListboxSelect";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
+import { isPlainEnterKey } from "./modalKeys";
 
 /**
  * table タブの結果グリッド下に置くページネーションバー。先頭/前/次/末尾の
@@ -170,7 +171,7 @@ export function PaginationBar({
           onChange={(e) => setJump(e.target.value)}
           onBlur={submitJump}
           onKeyDown={(e) => {
-            if (e.key === "Enter") submitJump();
+            if (isPlainEnterKey(e)) submitJump();
           }}
           disabled={loading}
           w={CONTROL_MIN_W}
