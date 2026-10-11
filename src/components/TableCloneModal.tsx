@@ -20,6 +20,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { Spinner } from "./Spinner";
+import { isPlainEnterKey } from "./modalKeys";
 
 /**
  * テーブル複製ダイアログ (#1398)。
@@ -154,7 +155,7 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
                 setName(e.target.value);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
+                if (isPlainEnterKey(e)) submit();
               }}
               flex="1"
             />
