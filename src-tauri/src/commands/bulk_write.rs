@@ -116,6 +116,38 @@ fn row_condition(driver: DriverKind, pk_columns: &[String], key: &[Value]) -> St
         .join(" AND ")
 }
 
+/// `pk_binary[i]` が真の主キー列 (BLOB/BINARY/BYTEA) の `keys` は、IPC で 16 進文字列
+/// (`Value::String`) として届くため、`Value::Bytes` に戻して `sql_literal` にバイナリ
+/// リテラルとして書かせる。引用文字列のまま `=` 比較すると BLOB 列には当たらず 0 行になる
+/// (all_columns 同定で BLOB 列を含む表)。16 進以外が混じっていればリテラルへ埋め込む前に
+/// 拒否する。`pk_binary` が `None` ならそのまま返す (後方互換)。
+pub(crate) fn apply_pk_binary(
+    mut groups: Vec<BulkUpdateGroup>,
+    pk_binary: Option<&[bool]>,
+) -> Result<Vec<BulkUpdateGroup>> {
+    let Some(flags) = pk_binary else {
+        return Ok(groups);
+    };
+    for group in &mut groups {
+        for key in &mut group.keys {
+            for (v, is_bin) in key.iter_mut().zip(flags) {
+                if !*is_bin {
+                    continue;
+                }
+                if let Value::String(hex) = v {
+                    if hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        return Err(AppError::InvalidInput(
+                            "binary key is not a hex string".into(),
+                        ));
+                    }
+                    *v = Value::Bytes(std::mem::take(hex));
+                }
+            }
+        }
+    }
+    Ok(groups)
+}
+
 /// グループ化された構造化入力から `UPDATE` 文を組み立てる (純関数)。
 /// 単一 PK 列で NULL を含まないグループは `WHERE pk IN (…)` を [`IN_CHUNK`] 件ずつ、
 /// それ以外 (複合 PK / NULL を含む) は行条件を `OR` で連結して [`OR_CHUNK`] 行ずつ
@@ -191,6 +223,8 @@ pub(crate) fn build_bulk_update_statements(
 /// 載せる削除予定行 / 新規行の `DELETE` / `INSERT` 文 (従来どおりフロントが生成)。
 /// 全体が all-or-nothing で、read_only ガード・履歴・キャッシュ invalidate は
 /// `run_query_transaction` と同一。
+// IPC コマンドの引数は 1 引数 1 フィールドのフラット形が契約 (State 含め 8 個) のため許可する。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn bulk_update_cells(
     session_id: String,
@@ -199,8 +233,10 @@ pub async fn bulk_update_cells(
     pk_columns: Vec<String>,
     groups: Vec<BulkUpdateGroup>,
     extra_statements: Vec<String>,
+    pk_binary: Option<Vec<bool>>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult> {
+    let groups = apply_pk_binary(groups, pk_binary.as_deref())?;
     bulk_update_cells_inner(
         state.inner(),
         session_id,
@@ -394,6 +430,39 @@ mod tests {
 
     fn group(set: Vec<BulkSetColumn>, keys: Vec<Vec<Value>>) -> BulkUpdateGroup {
         BulkUpdateGroup { set, keys }
+    }
+
+    #[test]
+    fn binary_pk_keys_become_blob_literals_per_dialect() {
+        let groups = vec![group(
+            vec![set_text("name", "x")],
+            vec![vec![Value::Int(1), Value::String("deadbeef".into())]],
+        )];
+        let groups = apply_pk_binary(groups, Some(&[false, true])).unwrap();
+        let pk = ["id".to_string(), "data".to_string()];
+        let my = build_bulk_update_statements(DriverKind::Mysql, "d", "t", &pk, &groups).unwrap();
+        assert!(
+            my[0].ends_with("WHERE `id` = 1 AND `data` = X'deadbeef';"),
+            "{my:?}"
+        );
+        let pg =
+            build_bulk_update_statements(DriverKind::Postgres, "d", "t", &pk, &groups).unwrap();
+        assert!(pg[0].contains("\"data\" = '\\xdeadbeef'"), "{pg:?}");
+        let sl = build_bulk_update_statements(DriverKind::Sqlite, "d", "t", &pk, &groups).unwrap();
+        assert!(sl[0].contains("\"data\" = X'deadbeef'"), "{sl:?}");
+    }
+
+    #[test]
+    fn binary_pk_without_flags_is_passed_through_and_bad_hex_is_rejected() {
+        let g = || {
+            vec![group(
+                vec![set_text("n", "x")],
+                vec![vec![Value::String("zz'; DROP".into())]],
+            )]
+        };
+        let same = apply_pk_binary(g(), None).unwrap();
+        assert!(matches!(same[0].keys[0][0], Value::String(_)));
+        assert!(apply_pk_binary(g(), Some(&[true])).is_err());
     }
 
     #[test]

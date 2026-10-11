@@ -109,4 +109,22 @@ describe("RunRoutineModal (#1003)", () => {
     renderModal({ driver: "sqlite" });
     expect(await screen.findByRole("alert")).toHaveTextContent("not supported");
   });
+
+  it("IME 変換中の Enter では実行せず、通常の Enter で実行する (#1515)", async () => {
+    getRoutineSignature.mockResolvedValue({
+      kind: "procedure",
+      name: "add_order",
+      parameters: [{ name: "note", mode: "in", data_type: "varchar(20)" }],
+      returns_set: false,
+      return_type: null,
+    });
+    const { onRun } = renderModal();
+    const input = await screen.findByLabelText(/^note ·/);
+    fireEvent.change(input, { target: { value: "さくら" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(onRun).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onRun).toHaveBeenCalledTimes(1);
+  });
 });

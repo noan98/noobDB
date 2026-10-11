@@ -5,6 +5,7 @@ import { tableNameCollides } from "./resultsToTable";
 import { MAX_LOCAL_TABLE_ROWS, suggestLocalTableName } from "./localQuery";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
 
 /**
@@ -55,7 +56,7 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
             onChange={(e) => setName(e.target.value)}
             placeholder={t("localRegisterNamePlaceholder")}
             onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
+              if (isPlainEnterKey(e)) submit();
             }}
           />
           {trimmed.length > 0 && collides && (

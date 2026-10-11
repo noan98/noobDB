@@ -185,7 +185,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   // 描画中の SVG を画像エクスポート (#643) で捕捉するためのコンテナ参照。
   const chartRef = useRef<HTMLDivElement>(null);
   const getSvgForExport = (): SVGSVGElement => {
-    const svg = chartRef.current?.querySelector("svg");
+    const svg = chartRef.current?.querySelector("svg[data-chart-svg]");
     if (!svg) throw new Error("chart is not rendered");
     return svg as SVGSVGElement;
   };
@@ -255,6 +255,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         <ResultViewSwitch value="chart" onChange={onChangeView} />
         <ImageExportButton
           filenameBase="chart"
+          disabled={model.labels.length === 0 || config.yCols.length === 0}
           makePng={() => {
             const svg = getSvgForExport();
             return elementToPngBlob(svg as unknown as HTMLElement, svgExportSize(svg));
@@ -495,6 +496,7 @@ export function CartesianChart({
       width="100%"
       style={{ maxHeight: "100%" }}
       role="img"
+      data-chart-svg=""
       onMouseMove={onMove}
       onMouseLeave={() => setHover(null)}
     >
@@ -771,7 +773,7 @@ function PieChart({
   const labelR = donut ? (r + rInner) / 2 : r * 0.62;
   let angle = -Math.PI / 2;
   return (
-    <chakra.svg viewBox="0 0 720 440" width="100%" style={{ maxHeight: "100%" }} role="img">
+    <chakra.svg viewBox="0 0 720 440" width="100%" style={{ maxHeight: "100%" }} role="img" data-chart-svg="">
       {total === 0 ? (
         <text x={cx} y={cy} textAnchor="middle" style={{ fontSize: "var(--text-sm)" }} fill="var(--text-muted)">∅</text>
       ) : (

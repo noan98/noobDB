@@ -63,6 +63,19 @@ export interface ApplyTransition {
   sent: PendingEdits;
   /** true なら行スコープ適用 (他の保留は残す)。 */
   scoped: boolean;
+  /**
+   * 実際に送った削除予定 (rowEditKey) と新規行。Apply の往復中に追加された分は未送信
+   * なので残すために使う。省略時 (全体適用) は現在の保留をすべて消費する。
+   */
+  sentDeletes?: string[];
+  sentInserts?: PendingInsertRow[];
+}
+
+/** `sent` に含まれるもの (参照一致) を `current` から除いた残りを返す。 */
+export function remainingAfterSent<T>(current: T[], sent: T[] | undefined): T[] {
+  if (sent === undefined) return [];
+  const sentSet = new Set(sent);
+  return current.filter((x) => !sentSet.has(x));
 }
 
 /**
@@ -74,11 +87,15 @@ export function tabStateAfterApply<T extends ApplyTabState>(
   tt: T,
   transition: ApplyTransition,
 ): T & { pendingDeletes: string[]; pendingInserts: PendingInsertRow[] } {
-  const { pkIndices, sent, scoped } = transition;
+  const { pkIndices, sent, scoped, sentDeletes, sentInserts } = transition;
   // 行スコープ適用では削除予定・新規行・取り消し履歴は送っていないので保つ。
+  // 全体適用でも、Apply の往復中に追加された削除予定・新規行は未送信なので残す。
   const keepOps = scoped
     ? { pendingDeletes: tt.pendingDeletes ?? [], pendingInserts: tt.pendingInserts ?? [] }
-    : { pendingDeletes: [], pendingInserts: [] };
+    : {
+        pendingDeletes: remainingAfterSent(tt.pendingDeletes ?? [], sentDeletes),
+        pendingInserts: remainingAfterSent(tt.pendingInserts ?? [], sentInserts),
+      };
   const keepUndo = scoped
     ? { editUndoStack: tt.editUndoStack ?? [], editRedoStack: tt.editRedoStack ?? [] }
     : { editUndoStack: [], editRedoStack: [] };
@@ -91,7 +108,7 @@ export function tabStateAfterApply<T extends ApplyTabState>(
     rows: tt.result.rows,
     pkIndices,
     edits: sent,
-    deleteKeys: new Set(scoped ? [] : (tt.pendingDeletes ?? [])),
+    deleteKeys: new Set(scoped ? [] : (sentDeletes ?? tt.pendingDeletes ?? [])),
   });
   return {
     ...tt,

@@ -15,6 +15,7 @@ import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Kbd } from "./Kbd";
 import { Modal } from "./Modal";
+import { isImeComposing } from "./modalKeys";
 import { staggerContainer, transitions, variants } from "../motion";
 import {
   groupCommands,
@@ -182,6 +183,8 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         }
         break;
       case "Enter":
+        // IME 変換確定の Enter でコマンドを実行しない
+        if (isImeComposing(e)) break;
         e.preventDefault();
         runAt(activeIndex);
         break;

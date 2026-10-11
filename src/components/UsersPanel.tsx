@@ -21,6 +21,7 @@ import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Heading, Input } from "./ui";
+import { isPlainEnterKey } from "./modalKeys";
 
 /**
  * ユーザ / 権限管理パネル (#732)。MySQL ユーザ (`mysql.user`) / PostgreSQL
@@ -701,7 +702,7 @@ export function UsersPanel({
                       width="240px"
                       disabled={readOnly}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") addTableRow();
+                        if (isPlainEnterKey(e)) addTableRow();
                       }}
                     />
                     <Button type="button" disabled={readOnly || !newTable.trim()} onClick={addTableRow}>
