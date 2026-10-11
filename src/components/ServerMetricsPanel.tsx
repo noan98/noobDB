@@ -318,24 +318,31 @@ export function ServerMetricsPanel({
   // ポーリング間隔の既定は既存設定 autoRefreshDefaultSecs を流用する (#731)。
   const [intervalSecs, setIntervalSecs] = useState<number>(settings.autoRefreshDefaultSecs);
   const busyRef = useRef(false);
+  // 取得の世代番号。セッション切替前に始まった取得の遅延応答を捨てる。
+  const loadSeqRef = useRef(0);
   const windowMs = DEFAULT_METRICS_WINDOW_SECS * 1000;
 
-  const load = useCallback(async () => {
-    if (busyRef.current) return;
+  const load = useCallback(async (force = false) => {
+    if (busyRef.current && !force) return;
+    const seq = ++loadSeqRef.current;
     busyRef.current = true;
     setLoading(true);
     try {
       const m = await api.serverMetrics(sessionId);
+      if (seq !== loadSeqRef.current) return;
       // 受信時刻でスタンプしてリングバッファへ (差分レートの分母に使う)。
       const at = Date.now();
       setSamples((cur) => pushSample(cur, { atMs: at, metrics: m }, windowMs));
       setError(null);
       setUpdatedAt(new Date(at));
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(String(e));
     } finally {
-      busyRef.current = false;
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        busyRef.current = false;
+        setLoading(false);
+      }
     }
   }, [sessionId, windowMs]);
 
@@ -343,7 +350,8 @@ export function ServerMetricsPanel({
   useEffect(() => {
     setSamples([]);
     setError(null);
-    void load();
+    // 旧セッションの取得が飛んでいても新セッションの初回取得は必ず走らせる。
+    void load(true);
   }, [load]);
 
   // ポーリング。アンマウント (タブ切替/パネルを閉じる) で clearInterval → 停止。

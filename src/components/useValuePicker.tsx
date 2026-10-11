@@ -65,6 +65,8 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   const tableKey = `${driver}\u0000${database ?? ""}\u0000${table ?? ""}`;
   const allowedRequested = useRef<string | null>(null);
   const fkState = useRef<Map<string, { search: string; seq: number }>>(new Map());
+  // fkState をリセットしても巻き戻らない単調増加の連番 (旧テーブルの遅延応答を通さない)。
+  const fkSeqRef = useRef(0);
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const lookupRef = useRef(lookup);
   lookupRef.current = lookup;
@@ -74,6 +76,9 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   useEffect(() => {
     allowedRequested.current = null;
     fkState.current = new Map();
+    // デバウンス中のタイマーは旧テーブルの参照先を握ったクロージャなので解除する。
+    for (const t of timers.current.values()) clearTimeout(t);
+    timers.current.clear();
     setFetchedAllowed(null);
     setFkValues({});
   }, [tableKey]);
@@ -138,8 +143,7 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
       const run = lookupRef.current;
       const meta = metaByName.get(column);
       if (!run || !meta?.referenced_table || !meta.referenced_column) return;
-      const prev = fkState.current.get(column);
-      const seq = (prev?.seq ?? 0) + 1;
+      const seq = ++fkSeqRef.current;
       fkState.current.set(column, { search, seq });
       const sql = buildFkCandidatesSql({
         driver,
