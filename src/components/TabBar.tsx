@@ -318,6 +318,9 @@ export const TabBar = memo(function TabBar({
     recomputeOverflow();
     const ro = new ResizeObserver(recomputeOverflow);
     ro.observe(el);
+    // コンテナ自体の大きさは中身が伸びても変わらないので、各タブの幅変化
+    // (未保存の ● やタブ名変更) も拾えるよう子要素も観測する。
+    for (const child of Array.from(el.children)) ro.observe(child);
     el.addEventListener("scroll", recomputeOverflow, { passive: true });
     return () => {
       ro.disconnect();

@@ -1244,6 +1244,7 @@ impl PostgresConn {
                  ix.indisunique      AS is_unique,
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
+                 pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
                  k.ord               AS ord
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -1267,6 +1268,7 @@ impl PostgresConn {
                 unique: r.try_get::<bool, _>("is_unique").unwrap_or(false),
                 primary: r.try_get::<bool, _>("is_primary").unwrap_or(false),
                 method: r.try_get::<Option<String>, _>("method").ok().flatten(),
+                predicate: r.try_get::<Option<String>, _>("predicate").ok().flatten(),
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -1348,7 +1350,9 @@ impl PostgresConn {
                  a.attname::text    AS column_name,
                  fcl.relname::text  AS ref_table,
                  fa.attname::text   AS ref_column,
-                 con.conname::text  AS constraint_name
+                 con.conname::text  AS constraint_name,
+                 con.confdeltype::text,
+                 con.confupdtype::text
                FROM pg_catalog.pg_constraint con
                JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
                JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
@@ -1378,6 +1382,12 @@ impl PostgresConn {
                 referenced_table: r.try_get::<String, _>(2).unwrap_or_default(),
                 referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                on_delete: pg_fk_action(
+                    r.try_get::<Option<String>, _>(5).ok().flatten().as_deref(),
+                ),
+                on_update: pg_fk_action(
+                    r.try_get::<Option<String>, _>(6).ok().flatten().as_deref(),
+                ),
             })
             .collect())
     }
@@ -1677,6 +1687,7 @@ impl PostgresConn {
                  ix.indisunique      AS is_unique,
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
+                 pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
                  k.ord               AS ord
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -1704,6 +1715,7 @@ impl PostgresConn {
             let unique = r.try_get::<bool, _>("is_unique").unwrap_or(false);
             let primary = r.try_get::<bool, _>("is_primary").unwrap_or(false);
             let method = r.try_get::<Option<String>, _>("method").ok().flatten();
+            let predicate = r.try_get::<Option<String>, _>("predicate").ok().flatten();
             let entry = by_name.entry(name.clone()).or_insert_with(|| {
                 order.push(name.clone());
                 IndexInfo {
@@ -1712,11 +1724,17 @@ impl PostgresConn {
                     unique,
                     primary,
                     method,
+                    predicate,
+                    first_expression_at: None,
                 }
             });
-            // attnum 0 (an expression index column) resolves to NULL; skip it.
-            if let Some(col) = column {
-                entry.columns.push(col);
+            // attnum 0 (an expression index column) resolves to NULL. 列名は積めないので
+            // 式インデックスの印だけ残す (列だけで同一視・再構成させないため)。
+            match column {
+                Some(col) => entry.columns.push(col),
+                None => {
+                    entry.first_expression_at.get_or_insert(entry.columns.len());
+                }
             }
         }
         Ok(order
@@ -2011,6 +2029,19 @@ fn column_info_from_row(r: &PgRow, off: usize) -> TableColumnInfo {
         // #1002: `COMMENT ON COLUMN` の値 (`col_description`)。
         comment: non_empty_comment(r.try_get::<Option<String>, _>(off + 11).ok().flatten()),
     }
+}
+
+/// `pg_constraint.confdeltype` / `confupdtype` の 1 文字コードを参照動作の SQL 表記にする。
+/// 既定の `a` (NO ACTION) と未知のコードは `None` (DDL に出さない)。
+fn pg_fk_action(code: Option<&str>) -> Option<String> {
+    match code? {
+        "r" => Some("RESTRICT"),
+        "c" => Some("CASCADE"),
+        "n" => Some("SET NULL"),
+        "d" => Some("SET DEFAULT"),
+        _ => None,
+    }
+    .map(str::to_string)
 }
 
 /// Rebuilds a qualified type string (`character varying(50)`,

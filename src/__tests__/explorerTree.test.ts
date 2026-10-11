@@ -10,6 +10,7 @@ import {
   foreignKeysOf,
   foreignKeyTargetLabel,
   partitionDatabaseNodes,
+  splitTableKey,
   showTablesHeader,
   tableChildGroups,
 } from "../components/explorerTree";
@@ -433,5 +434,57 @@ describe("buildExplorerRows: 見えている行のフラット配列 (#1315)", (
     const loading = buildExplorerRows(base({ databases: null }))[0];
     expect(isFocusableExplorerRow(loading)).toBe(false);
     expect(isFocusableExplorerRow(db)).toBe(true);
+  });
+});
+
+describe("splitTableKey (DB 名に :: を含む場合)", () => {
+  it("既知の DB に一致する分割を選ぶ", () => {
+    expect(splitTableKey("x::y::z", (db) => db === "x::y")).toEqual({ db: "x::y", tbl: "z" });
+    expect(splitTableKey("x::y::z", (db) => db === "x")).toEqual({ db: "x", tbl: "y::z" });
+  });
+  it("どれにも一致しなければ最初の :: で割り、:: が無ければ null", () => {
+    expect(splitTableKey("x::y::z", () => false)).toEqual({ db: "x", tbl: "y::z" });
+    expect(splitTableKey("nosep", () => true)).toBeNull();
+  });
+});
+
+describe("buildExplorerRows: クイックアクセスから削除済みテーブルを除く", () => {
+  const input = (over: Partial<ExplorerRowsInput>): ExplorerRowsInput => ({
+    databases: ["db1"],
+    tables: {},
+    schemaObjects: {},
+    tableColumns: {},
+    tableIndexes: {},
+    expandedDbs: {},
+    expandedTables: {},
+    query: "",
+    schemaFiltered: false,
+    matchers: null,
+    partition: (_db, tables, objects) => partitionDatabaseNodes(tables, objects),
+    showObjects: true,
+    favorites: [],
+    recent: [],
+    rowEstimate: () => undefined,
+    comment: () => undefined,
+    isActiveTable: () => false,
+    ...over,
+  });
+  const keys = (i: ExplorerRowsInput) => buildExplorerRows(i).map((r) => r.key);
+  it("取得済みの一覧に無いテーブルと、存在しない DB のテーブルは出さない", () => {
+    expect(
+      keys(
+        input({
+          tables: { db1: ["a"] },
+          favorites: [{ database: "db1", table: "gone" }, { database: "db1", table: "a" }],
+          recent: [{ database: "dropped", table: "t" }],
+        }),
+      ),
+    ).toEqual(["hdr:favorites", "qa:favorite:db1::a", "db:db1"]);
+  });
+  it("未取得・空の一覧は不明として残す", () => {
+    expect(
+      keys(input({ tables: { db1: [] }, favorites: [{ database: "db1", table: "a" }] })),
+    ).toContain("qa:favorite:db1::a");
+    expect(keys(input({ favorites: [{ database: "db1", table: "a" }] }))).toContain("qa:favorite:db1::a");
   });
 });

@@ -2110,6 +2110,10 @@ const en = {
   identitySyncConfirmTitle: "Sync auto-increment of {table}?",
   identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to the current maximum value. The following statement will run:",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
+  identitySyncAutoincrementCheckFailed:
+    "Could not check whether {table} uses AUTOINCREMENT: {error}",
+  identitySyncNoAutoincrement:
+    "{table} was not created with AUTOINCREMENT, so there is no sequence to sync",
   identitySyncMaxFailed: "Could not read the maximum value of {column}: {error}",
   identitySyncDone: "Synced auto-increment of {table}",
   renameTableTitle: "Rename table",
@@ -6653,6 +6657,10 @@ const ja: Dict = {
   identitySyncConfirmTitle: "{table} の採番を同期しますか?",
   identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます。次の文を実行します:",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
+  identitySyncAutoincrementCheckFailed:
+    "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
+  identitySyncNoAutoincrement:
+    "{table} は AUTOINCREMENT で作られていないため、同期できる採番値がありません",
   identitySyncMaxFailed: "{column} の最大値を取得できませんでした: {error}",
   identitySyncDone: "{table} の採番を同期しました",
   renameTableTitle: "テーブル名を変更",

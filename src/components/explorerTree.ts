@@ -166,6 +166,24 @@ export function explorerContainerKind(driver: string): "database" | "schema" {
 /** `describe_table` 済みのテーブルキー (`db::table`)。ツリー全体で共通の識別子。 */
 export const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
+/**
+ * `tableKey` を db / table へ戻す。DB 名やテーブル名自体に `::` を含み得るため、最初の
+ * `::` で機械的に割らず、各 `::` 位置を候補にして `isKnown(db, tbl)` が真になる分割を
+ * 採用する。どれも当てはまらなければ最初の `::` で割る。`::` が無ければ null。
+ */
+export function splitTableKey(
+  key: string,
+  isKnown: (db: string, tbl: string) => boolean,
+): { db: string; tbl: string } | null {
+  let first: { db: string; tbl: string } | null = null;
+  for (let i = key.indexOf("::"); i >= 0; i = key.indexOf("::", i + 1)) {
+    const cand = { db: key.slice(0, i), tbl: key.slice(i + 2) };
+    if (isKnown(cand.db, cand.tbl)) return cand;
+    first ??= cand;
+  }
+  return first;
+}
+
 /** 見出し行の種別。 */
 export type ExplorerHeaderGroup =
   | "favorites"
@@ -284,7 +302,16 @@ export function buildExplorerRows(input: ExplorerRowsInput): ExplorerRow[] {
   const searching = q.length > 0;
   const rows: ExplorerRow[] = [];
 
-  const quick = (variant: "favorite" | "recent", refs: readonly TableRef[]) => {
+  // 削除済みテーブルの行を出さない。DB 一覧が読めていてその DB が無い、または DB の
+  // テーブル一覧が (空でなく) 読めていて載っていないものだけを「確実に無い」とみなす。
+  // 未取得 (折りたたみ中 / 取得失敗) と空一覧は不明として残す (永続データには触れない)。
+  const quickExists = (ref: TableRef) => {
+    if (input.databases && !input.databases.includes(ref.database)) return false;
+    const listed = input.tables[ref.database];
+    return !(listed && listed.length > 0 && !listed.includes(ref.table));
+  };
+  const quick = (variant: "favorite" | "recent", allRefs: readonly TableRef[]) => {
+    const refs = allRefs.filter(quickExists);
     const group = variant === "favorite" ? "favorites" : "recent";
     if (refs.length === 0) return;
     rows.push({ key: `hdr:${group}`, depth: 0, parent: "root", kind: "header", group, count: null });

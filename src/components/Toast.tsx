@@ -358,7 +358,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 // ボタン等) へ移っただけなら resume しない (focus-within 相当)。
                 {...(toast.action && {
                   onMouseEnter: () => pauseTimer(toast.id),
-                  onMouseLeave: () => resumeTimer(toast.id),
+                  onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => {
+                    // キーボードでフォーカスが残っている間は再開しない (focus-within)
+                    if (e.currentTarget.contains(document.activeElement)) return;
+                    resumeTimer(toast.id);
+                  },
                   onFocus: () => pauseTimer(toast.id),
                   onBlur: (e: React.FocusEvent<HTMLDivElement>) => {
                     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {

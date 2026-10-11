@@ -1279,6 +1279,8 @@ mod tests {
                         unique: true,
                         primary: true,
                         method: None,
+                        predicate: None,
+                        first_expression_at: None,
                     }],
                 }],
             )
@@ -1427,6 +1429,8 @@ mod tests {
                     referenced_table: "t2".to_string(),
                     referenced_column: Some("id".to_string()),
                     constraint_name: Some("fk".to_string()),
+                    on_delete: None,
+                    on_update: None,
                 }])
             })
             .await;
@@ -1447,6 +1451,8 @@ mod tests {
                     unique: false,
                     primary: false,
                     method: None,
+                    predicate: None,
+                    first_expression_at: None,
                 }])
             })
             .await;

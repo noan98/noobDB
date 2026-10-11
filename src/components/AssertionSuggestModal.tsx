@@ -224,9 +224,10 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
         errors.push({ id: item.id, text: t("assertAiRegisterError", { name: item.name, error: String(e) }) });
       }
     }
+    // 保存済みの候補は、登録中にモーダルが閉じられても親の一覧へ反映する (DB には既に入っている)。
+    if (saved.length > 0) props.onRegistered(saved);
     if (!stream.isMounted()) return;
     setRegistering(false);
-    if (saved.length > 0) props.onRegistered(saved);
     if (errors.length === 0) {
       props.onClose();
       return;

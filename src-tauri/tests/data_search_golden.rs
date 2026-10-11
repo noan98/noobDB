@@ -16,6 +16,8 @@ const VECTORS_JSON: &str = include_str!("../../src/__tests__/fixtures/dataSearch
 struct Vectors {
     classify: Vec<Classify>,
     predicates: Vec<Predicate>,
+    #[serde(rename = "searchKinds")]
+    search_kinds: Vec<SearchKind>,
     #[serde(rename = "numericTerms")]
     numeric_terms: Vec<NumericTerm>,
     #[serde(rename = "scanSql")]
@@ -31,6 +33,14 @@ struct Classify {
     data_type: String,
     kind: String,
     target: String,
+}
+
+#[derive(Deserialize)]
+struct SearchKind {
+    driver: String,
+    #[serde(rename = "dataType")]
+    data_type: String,
+    kind: String,
 }
 
 #[derive(Deserialize)]
@@ -132,6 +142,14 @@ fn type_classification_matches_the_shared_vectors() {
 }
 
 #[test]
+fn search_kinds_match_the_shared_vectors() {
+    for c in &load().search_kinds {
+        let kind = t::classify_for_search(driver_of(&c.driver), &c.data_type);
+        assert_eq!(kind_name(kind), c.kind, "{} {:?}", c.driver, c.data_type);
+    }
+}
+
+#[test]
 fn column_predicates_match_the_shared_vectors() {
     let vectors = load();
     assert!(vectors.predicates.len() > 100);
@@ -139,7 +157,7 @@ fn column_predicates_match_the_shared_vectors() {
         let actual = t::build_column_predicate(
             driver_of(&p.driver),
             &p.column,
-            t::classify_type_name(&p.data_type),
+            t::classify_for_search(driver_of(&p.driver), &p.data_type),
             &p.term,
             p.mode,
         );

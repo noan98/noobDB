@@ -94,6 +94,7 @@ import {
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import {
   buildIdentitySyncSql,
+  sqliteHasAutoincrementSql,
   findIdentityColumn,
   mysqlMaxValueSql,
 } from "./components/identitySync";
@@ -1961,6 +1962,13 @@ export default function App() {
   // database-wide FK list while rendering. #621 / #1255
   const [incomingFkCache, setIncomingFkCache] = useState<Record<string, IncomingFk[]>>({});
   const fkInFlightRef = useRef<Set<string>>(new Set());
+  // 取得中の結果を受け入れるかの世代。セッション切替/全消去で epoch、DB 単位の無効化で
+  // キー別の番号を進める。resolve 時に世代が一致するときだけキャッシュへ書く
+  // (effect の cleanup で結果を捨てると、並行取得中の DB の結果が欠落する)。
+  const prefetchEpochRef = useRef(0);
+  // 逆 FK 用の世代。FK キャッシュは invalidateSchemaCache の対象外なので、セッション切替でだけ進める。
+  const fkEpochRef = useRef(0);
+  const schemaGenRef = useRef<Map<string, number>>(new Map());
   // Set while a destructive query awaits confirmation; holds everything needed
   // to run it once the user accepts the warning dialog.
   const [pendingDangerous, setPendingDangerous] = useState<{
@@ -3677,26 +3685,27 @@ export default function App() {
   // per table. #621 / #1255
   useEffect(() => {
     if (!sessionId) return;
-    let cancelled = false;
     for (const tt of paneActiveTabs) {
       if (!tt || tt.kind !== "table" || !tt.database || !tt.table) continue;
       const key = incomingFkCacheKey(sessionId, tt.database, tt.table);
       if (key in incomingFkCache || fkInFlightRef.current.has(key)) continue;
       fkInFlightRef.current.add(key);
+      const epoch = fkEpochRef.current;
       api.incomingForeignKeys(sessionId, tt.database, tt.table)
         .then((fks) => {
-          if (!cancelled) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
+          if (fkEpochRef.current === epoch) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
         })
         .catch(() => { /* ignore: reverse FK nav is best-effort */ })
-        .finally(() => { fkInFlightRef.current.delete(key); });
+        .finally(() => { if (fkEpochRef.current === epoch) fkInFlightRef.current.delete(key); });
     }
-    return () => { cancelled = true; };
   }, [sessionId, paneActiveTabs, incomingFkCache]);
 
   // Drop every cached schema when the session changes so a new connection
   // never autocompletes against the previous database's tables.
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替時にキャッシュを捨てる
   useEffect(() => {
+    prefetchEpochRef.current += 1;
+    fkEpochRef.current += 1;
     setSchemaCache({});
     schemaInFlightRef.current.clear();
     setIncomingFkCache({});
@@ -3708,19 +3717,20 @@ export default function App() {
   // again after an invalidation drops a cache entry.
   useEffect(() => {
     if (!sessionId) return;
-    let cancelled = false;
     for (const database of editorDatabases) {
       const key = schemaCacheKey(sessionId, database);
       if (key in schemaCache || schemaInFlightRef.current.has(key)) continue;
       schemaInFlightRef.current.add(key);
+      const epoch = prefetchEpochRef.current;
+      const gen = schemaGenRef.current.get(key) ?? 0;
+      const current = () => prefetchEpochRef.current === epoch && (schemaGenRef.current.get(key) ?? 0) === gen;
       api.schemaOverview(sessionId, database)
         .then((schema) => {
-          if (!cancelled) setSchemaCache((prev) => ({ ...prev, [key]: schema }));
+          if (current()) setSchemaCache((prev) => ({ ...prev, [key]: schema }));
         })
         .catch(() => { /* autocomplete is best-effort; ignore failures */ })
-        .finally(() => { schemaInFlightRef.current.delete(key); });
+        .finally(() => { if (current()) schemaInFlightRef.current.delete(key); });
     }
-    return () => { cancelled = true; };
   }, [sessionId, editorDatabases, schemaCache]);
 
   // Forget cached schemas so the fetch effect re-pulls fresh tables/columns —
@@ -3731,14 +3741,18 @@ export default function App() {
   const invalidateSchemaCache = useCallback(
     (database?: string | null) => {
       if (!sessionId || !database) {
+        prefetchEpochRef.current += 1;
         schemaInFlightRef.current.clear();
         setSchemaCache({});
         return;
       }
       const key = schemaCacheKey(sessionId, database);
-      schemaInFlightRef.current.delete(key);
+      schemaGenRef.current.set(key, (schemaGenRef.current.get(key) ?? 0) + 1);
+      const wasInFlight = schemaInFlightRef.current.delete(key);
       setSchemaCache((prev) => {
-        if (!(key in prev)) return prev;
+        // 取得中だった場合は結果が捨てられるので、新しい参照を返して再描画させ、
+        // 取得 effect を再実行して取り直す (prev をそのまま返すと止まる)。
+        if (!(key in prev)) return wasInFlight ? { ...prev } : prev;
         const next = { ...prev };
         delete next[key];
         return next;
@@ -7052,6 +7066,24 @@ export default function App() {
           return;
         }
         let maxValue: string | null = null;
+        if (driver === "sqlite") {
+          // sqlite_sequence は AUTOINCREMENT の表が 1 つも無い DB には存在せず、
+          // AUTOINCREMENT でない表は行を持たない。同期できない表は SQL を出さずに知らせる。
+          try {
+            const res = await api.runLookupQuery({
+              sessionId,
+              sql: sqliteHasAutoincrementSql(table),
+              database,
+            });
+            if (res.rows.length === 0) {
+              toast.error(translate("identitySyncNoAutoincrement", { table }));
+              return;
+            }
+          } catch (e) {
+            toast.error(translate("identitySyncAutoincrementCheckFailed", { table, error: String(e) }));
+            return;
+          }
+        }
         if (driver === "mysql") {
           try {
             const res = await api.runLookupQuery({
@@ -7899,7 +7931,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -8044,7 +8076,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab, panesRef, tabsRef]);
+  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showObjectSearch, showDataSearch, showCheatSheet, handleNewTab, selectTab, goToPageInTab, panesRef, tabsRef]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -8216,7 +8248,7 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
+      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch) {
         return;
       }
       e.preventDefault();
@@ -8224,7 +8256,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
+  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette, showObjectSearch, showDataSearch]);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -9766,6 +9798,7 @@ export default function App() {
                     />
                   ) : bottomPanelCtx.advisorDatabase ? (
                     <AdvisorPanel
+                      key={`${sessionId}:${bottomPanelCtx.advisorDatabase}`}
                       sessionId={sessionId}
                       database={bottomPanelCtx.advisorDatabase}
                       isProduction={selectedProfile?.is_production ?? false}

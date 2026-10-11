@@ -247,3 +247,13 @@ describe("computeTableSizeTotals", () => {
     });
   });
 });
+
+describe("formatBytes: 単位境界の丸め", () => {
+  it("丸めて 1024 になる値は 1 つ上の単位で表示する", () => {
+    expect(formatBytes(1048500)).toBe("1.0 MB");
+    expect(formatBytes(1024 * 1024 * 1024 - 100)).toBe("1.0 GB");
+  });
+  it("境界の手前は従来どおり", () => {
+    expect(formatBytes(1023 * 1024)).toBe("1023 KB");
+  });
+});

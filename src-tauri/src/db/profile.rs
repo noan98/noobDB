@@ -284,7 +284,10 @@ pub fn build_histogram_sql(t: &ProfileTarget<'_>, min: f64, max: f64, buckets: u
 pub fn build_pg_distinct_estimate_sql(schema: &str, table: &str, column: &str) -> String {
     let lit = |s: &str| format!("'{}'", s.replace('\'', "''"));
     format!(
-        "SELECT n_distinct FROM pg_stats WHERE schemaname = {} AND tablename = {} AND attname = {}",
+        // 継承 / パーティション親では inherited = false (本体のみ) と true (子を含む) の 2 行が
+        // 出うる。本体の統計を優先し (false が先)、無ければ inherited = true を 1 行だけ採る。
+        "SELECT n_distinct FROM pg_stats WHERE schemaname = {} AND tablename = {} AND attname = {} \
+         ORDER BY inherited LIMIT 1",
         lit(schema),
         lit(table),
         lit(column)
@@ -542,7 +545,9 @@ pub async fn run_column_profile(
     let mut histogram = Vec::new();
     if numeric && non_null > 0 {
         match (value_as_f64(&min_value), value_as_f64(&max_value)) {
-            (Some(lo), Some(hi)) if hi > lo => {
+            // `hi - lo` が溢れる (±1.7e308 など) と区間幅が inf になり分布が壊れるので、
+            // 有限でない範囲は「ヒストグラムなし」に落とす。
+            (Some(lo), Some(hi)) if hi > lo && (hi - lo).is_finite() => {
                 let sql = build_histogram_sql(&target, lo, hi, HISTOGRAM_BUCKETS);
                 match conn.execute(&sql, None).await {
                     Ok(res) => {
