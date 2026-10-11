@@ -94,6 +94,16 @@
   `src/__tests__/fixtures/exportMaskingVectors.json` で一致を固定 (バックは
   `db/masking.rs` の単体テストが `cases` の変換結果も検証)。スケジュール実行
   (`tasks/executor.rs`) のエクスポートはマスキング非対応。
+- **エクスポートの出力は一時ファイル経由**: 在グリッド / ストリーミングとも保存先と同じ
+  ディレクトリの `.<name>.exporting.<pid>.<seq>` (`create_new`) へ書き、成功時だけ `rename`
+  で置き換える (`create_export_temp_file`)。失敗・キャンセル時は一時ファイルだけを
+  `PartialFileCleanup` が消すので、上書きを承認した既存ファイルは壊れない。JSON / NDJSON の
+  同名列 (`SELECT u.id, o.id`) は 2 つ目以降に `_2`, `_3` を付けて値を失わない
+  (`json_keys`。フロント `exportPreview.ts::jsonKeys` と共有ゴールデンで一致を固定)。
+- **取り込み / 転送のキャンセル後始末**: `cancel_stream` は future を drop するだけなので、
+  `spawn_import` / `transfer_data` は Drop ガード (`CancelledImportCleanup` /
+  `CancelledTransferCleanup`) で、キャッシュ無効化・履歴記録・スキップ行の掃除・(abort モードの)
+  作成済みテーブルの DROP を代行する。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
   SQLite は接続から直接生成 (`dump_sqlite`)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)

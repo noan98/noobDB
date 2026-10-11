@@ -52,8 +52,15 @@
     },
     {
       "sql": "SELECT 1 # DROP TABLE t\nFROM dual",
-      "note": "行コメント # (MySQL 由来だが両実装ともドライバ非依存で認識する)",
-      "masked": "SELECT 1               \nFROM dual"
+      "note": "行コメント # (MySQL のみ。ドライバ非依存の入口も従来どおりコメント扱い。PostgreSQL/SQLite は maskedNoHash で # をコメントにしない、#1517)",
+      "masked": "SELECT 1               \nFROM dual",
+      "maskedNoHash": "SELECT 1 # DROP TABLE t\nFROM dual"
+    },
+    {
+      "sql": "SELECT data #>> '{a}' FROM t; DELETE FROM t",
+      "note": "#1517: PostgreSQL の jsonb パス演算子 #>> は行コメントではない (後続の ; DELETE を隠さない)。MySQL / ドライバ非依存は # 以降がコメント",
+      "masked": "SELECT data                                ",
+      "maskedNoHash": "SELECT data #>> '   ' FROM t; DELETE FROM t"
     },
     {
       "sql": "SELECT /* comment; DROP TABLE t */ 1",

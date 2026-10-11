@@ -276,7 +276,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
       driver: props.driver,
       locale,
     });
-    const system = buildSchemaDocSystem({ driver: props.driver, database, locale, context });
+    const system = buildSchemaDocSystem({ driver: props.driver, database, locale, context, maskLiterals: ai.maskLiterals });
     const prompt = buildSchemaDocPrompt(locale);
     // 実際に送るバイト数。バックエンドの上限を超えるなら送らずに絞り込みを促す。
     const sentBytes = utf8Bytes(system) + utf8Bytes(prompt);

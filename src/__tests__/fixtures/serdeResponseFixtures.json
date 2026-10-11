@@ -1890,7 +1890,8 @@
       "truncated": false
     },
     "desired_diff_id": "diff0001",
-    "source_checked": true
+    "source_checked": true,
+    "source_error": null
   },
   "schedulerSettings": {
     "catch_up_missed": true

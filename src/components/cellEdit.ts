@@ -49,6 +49,11 @@ const BINARY_TYPES = new Set([
   "BYTEA",
 ]);
 
+/** BLOB/BINARY/BYTEA 系の列型か (16 進文字列で届く値をバイナリとして扱う判定)。 */
+export function isBinaryColumnType(typeName: string): boolean {
+  return BINARY_TYPES.has(typeName.toUpperCase());
+}
+
 /**
  * Whether a column may be edited inline. BLOB-family columns are excluded
  * because their JSON shape is hex bytes and round-tripping arbitrary
@@ -91,7 +96,26 @@ export function classifyEditType(typeName: string): EditTypeKind {
 
 const NUMERIC_INPUT_RE = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
 const DATE_RE = /^\d{4}-\d{1,2}-\d{1,2}$/;
-const DATETIME_RE = /^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?$/;
+// 末尾のタイムゾーン (`Z` / `+09` / `+09:00` / `+0900`、直前の空白可) は PostgreSQL の
+// timestamptz が受理する入力なので許す。最終判断は DB に任せる方針。
+const DATETIME_RE =
+  /^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*(Z|[+-]\d{2}(:?\d{2})?)?$/i;
+// PostgreSQL の boolean 入力で有効な表記 (MySQL / SQLite の BOOL でも 0/1 は通る)。
+const BOOLEAN_TRUE = new Set(["true", "t", "yes", "y", "on", "1"]);
+const BOOLEAN_FALSE = new Set(["false", "f", "no", "n", "off", "0"]);
+
+/**
+ * boolean 列の入力表記 (PostgreSQL が受理する true/false/t/f/yes/no/y/n/on/off/1/0、
+ * 大文字小文字・前後空白不問) を真偽値に正規化する。受理しない表記は null。検証と
+ * 書き込み側 (`literalFromInput` / `cellValueFromInput` / `setValueFromInput`) で共有し、
+ * 受理した表記は必ず bool として書く (MySQL / SQLite に 'yes' 文字列を入れない)。
+ */
+export function parseBooleanInput(s: string): boolean | null {
+  const lc = s.trim().toLowerCase();
+  if (BOOLEAN_TRUE.has(lc)) return true;
+  if (BOOLEAN_FALSE.has(lc)) return false;
+  return null;
+}
 const TIME_RE = /^-?\d{1,3}:\d{2}(:\d{2})?(\.\d+)?$/;
 
 function errorKeyForKind(kind: EditTypeKind): I18nKey | null {
@@ -152,10 +176,7 @@ export function validateCellInput(
     case "time":
       return TIME_RE.test(trimmed) ? null : "editInvalidTime";
     case "boolean": {
-      const lc = trimmed.toLowerCase();
-      return lc === "true" || lc === "false" || lc === "0" || lc === "1"
-        ? null
-        : "editInvalidBoolean";
+      return parseBooleanInput(trimmed) !== null ? null : "editInvalidBoolean";
     }
     default:
       return null;
@@ -346,9 +367,13 @@ export function literalFromCellValue(driver: string, v: CellValue): string {
  * columns in the WHERE clause, so every identity-WHERE builder below goes
  * through this helper rather than inlining `literalFromCellValue`.
  */
-function whereEqualsClause(driver: string, colName: string, v: CellValue): string {
-  const quoted = quoteIdentFor(driver, colName);
+function whereEqualsClause(driver: string, col: Column, v: CellValue): string {
+  const quoted = quoteIdentFor(driver, col.name);
   if (v === null || v === undefined) return `${quoted} IS NULL`;
+  // BLOB 列の値は 16 進文字列で届く。通常の文字列として引用すると 0 行にしか
+  // 当たらない (all_columns 同定で BLOB を含む表の更新・削除) ため、バイナリ
+  // リテラルにする。
+  if (BINARY_TYPES.has(col.type_name.toUpperCase())) return `${quoted} = ${blobLiteral(driver, String(v))}`;
   return `${quoted} = ${literalFromCellValue(driver, v)}`;
 }
 
@@ -371,9 +396,8 @@ export function literalFromInput(driver: string, raw: string, col: Column): stri
     return trimmed;
   }
   if (t === "BOOLEAN" || t === "BOOL") {
-    const lc = trimmed.toLowerCase();
-    if (lc === "true" || lc === "1") return "TRUE";
-    if (lc === "false" || lc === "0") return "FALSE";
+    const b = parseBooleanInput(trimmed);
+    if (b !== null) return b ? "TRUE" : "FALSE";
   }
   if (t === "BIT") {
     const lc = trimmed.toLowerCase();
@@ -411,9 +435,8 @@ export function cellValueFromInput(raw: string, col: Column): CellValue {
     return trimmed;
   }
   if (t === "BOOLEAN" || t === "BOOL") {
-    const lc = trimmed.toLowerCase();
-    if (lc === "true" || lc === "1") return true;
-    if (lc === "false" || lc === "0") return false;
+    const b = parseBooleanInput(trimmed);
+    if (b !== null) return b;
   }
   return raw;
 }
@@ -527,7 +550,7 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
     }
     if (setParts.length === 0) continue;
     const whereParts = input.pkIndices.map((i) =>
-      whereEqualsClause(input.driver, input.columns[i].name, row[i]),
+      whereEqualsClause(input.driver, input.columns[i], row[i]),
     );
     stmts.push(
       `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,
@@ -563,9 +586,8 @@ export function setValueFromInput(raw: string, col: Column): BulkSetValue {
     return { kind: "number", text: trimmed };
   }
   if (t === "BOOLEAN" || t === "BOOL") {
-    const lc = trimmed.toLowerCase();
-    if (lc === "true" || lc === "1") return { kind: "bool", value: true };
-    if (lc === "false" || lc === "0") return { kind: "bool", value: false };
+    const b = parseBooleanInput(trimmed);
+    if (b !== null) return { kind: "bool", value: b };
   }
   if (t === "BIT") {
     const lc = trimmed.toLowerCase();
@@ -646,7 +668,7 @@ export function buildBlobUpdateStatement(input: {
     return null;
   }
   const ref = qualifiedTableRef(driver, input.database, input.table);
-  const where = pkIndices.map((i) => whereEqualsClause(driver, columns[i].name, row[i]));
+  const where = pkIndices.map((i) => whereEqualsClause(driver, columns[i], row[i]));
   return `UPDATE ${ref} SET ${quoteIdentFor(driver, col.name)} = ${blobLiteral(driver, hex.toLowerCase())} WHERE ${where.join(" AND ")};`;
 }
 
@@ -744,7 +766,7 @@ export function buildDeleteStatements(input: {
     if (!input.deleteKeys.has(key) || emitted.has(key)) continue;
     emitted.add(key);
     const whereParts = input.pkIndices.map((i) =>
-      whereEqualsClause(input.driver, input.columns[i].name, row[i]),
+      whereEqualsClause(input.driver, input.columns[i], row[i]),
     );
     stmts.push(`DELETE FROM ${ref} WHERE ${whereParts.join(" AND ")};`);
   }

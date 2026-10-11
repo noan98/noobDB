@@ -670,9 +670,18 @@ fn emit_bytes_progress(app: &AppHandle, stream_id: &str, bytes: u64, started: In
 
 /// 書き出し済みのダンプファイルを `db::format::format_sql` で整形して書き戻し、
 /// 整形後のバイト数を返す。CPU バウンドな整形と同期 I/O は blocking スレッドで行う。
+///
+/// ダンプが UTF-8 として不正なバイトを含む場合 (`pg_dump` は DB の文字コードのまま流す
+/// ので SQL_ASCII の DB などで起こる) は、整形を**スキップして元のバイト列を残す**。
+/// 整形は任意の可読性向上機能なので、失敗で数時間かけたダンプ全体を捨てたり、置換文字
+/// へ化けさせて内容を壊したりしない。
 async fn format_dump_file(path: String) -> Result<u64> {
     tokio::task::spawn_blocking(move || -> Result<u64> {
-        let raw = std::fs::read_to_string(&path)?;
+        let bytes = std::fs::read(&path)?;
+        let Ok(raw) = String::from_utf8(bytes) else {
+            tracing::warn!("dump is not valid UTF-8; skipping SQL formatting");
+            return Ok(std::fs::metadata(&path)?.len());
+        };
         let formatted = crate::db::format::format_sql(&raw);
         std::fs::write(&path, formatted.as_bytes())?;
         Ok(std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0))
@@ -1122,6 +1131,15 @@ pub fn cleanup_stale_dump_credential_files() {
         if !(name.ends_with(".cnf") || name.ends_with(".pgpass")) {
             continue;
         }
+        // 別インスタンスが実行中のダンプの資格情報ファイル (`noobdb-dump-<pid>-*`) は消さない。
+        let pid = name
+            .strip_prefix(DUMP_CREDENTIAL_FILE_PREFIX)
+            .and_then(|rest| rest.split_once('-'))
+            .and_then(|(pid, _)| pid.parse::<u32>().ok());
+        let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+        if crate::commands::local::is_owner_alive(pid, modified) {
+            continue;
+        }
         let path = entry.path();
         if let Err(e) = std::fs::remove_file(&path) {
             tracing::warn!(
@@ -1148,7 +1166,8 @@ impl DefaultsFile {
         // `DUMP_CREDENTIAL_FILE_PREFIX`/`.cnf` naming is also what
         // `cleanup_stale_dump_credential_files` matches on at startup.
         let name = format!(
-            "{DUMP_CREDENTIAL_FILE_PREFIX}{}.cnf",
+            "{DUMP_CREDENTIAL_FILE_PREFIX}{}-{}.cnf",
+            std::process::id(),
             crate::state::random_slug(8)
         );
         let path = std::env::temp_dir().join(name);
@@ -1216,7 +1235,8 @@ impl PgPassFile {
         // `DUMP_CREDENTIAL_FILE_PREFIX`/`.pgpass` naming is also what
         // `cleanup_stale_dump_credential_files` matches on at startup.
         let name = format!(
-            "{DUMP_CREDENTIAL_FILE_PREFIX}{}.pgpass",
+            "{DUMP_CREDENTIAL_FILE_PREFIX}{}-{}.pgpass",
+            std::process::id(),
             crate::state::random_slug(8)
         );
         let path = std::env::temp_dir().join(name);
@@ -1511,6 +1531,21 @@ mod tests {
         // 整形により列が 2 スペース字下げで改行されること。返り値は整形後のサイズ。
         assert!(out.contains("\n  a,"), "got: {out}");
         assert_eq!(bytes as usize, out.len());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn format_dump_file_skips_non_utf8_dump() {
+        let path =
+            std::env::temp_dir().join(format!("noobdb_dump_fmt_bad_{}.sql", std::process::id()));
+        let raw: Vec<u8> = b"select 'caf\xe9' from t;".to_vec();
+        std::fs::write(&path, &raw).unwrap();
+        let bytes = format_dump_file(path.to_string_lossy().to_string())
+            .await
+            .unwrap();
+        // 失敗せず、元のバイト列をそのまま残す。
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+        assert_eq!(bytes as usize, raw.len());
         let _ = std::fs::remove_file(&path);
     }
 

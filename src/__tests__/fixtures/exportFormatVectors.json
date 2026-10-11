@@ -675,6 +675,65 @@
           "s:2024-01-02T03:04:05+09:00"
         ]
       ]
+    },
+    {
+      "name": "duplicate-column-names",
+      "note": "同名列 (JOIN の u.id / o.id): JSON / NDJSON は 2 つ目以降に _2, _3 を付けて値を失わない (既存の id_2 列とは衝突を避けて id_3)。CSV / Markdown / SQL / xlsx は列を保持する",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "id_2",
+          "typeName": "int"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "int",
+            "value": 3
+          }
+        ]
+      ],
+      "query": null,
+      "sql": {
+        "driver": "mysql",
+        "table": "t",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "id,id,id_2\r\n1,2,3\r\n",
+        "json": "[\n  {\n    \"id\": 1,\n    \"id_2\": 3,\n    \"id_3\": 2\n  }\n]",
+        "markdown": "| id | id | id_2 |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n",
+        "ndjson": "{\"id\":1,\"id_2\":3,\"id_3\":2}\n",
+        "sql": "INSERT INTO `t` (`id`, `id`, `id_2`) VALUES\n  (1, 2, 3);\n"
+      },
+      "xlsxCells": [
+        [
+          "s:id",
+          "s:id",
+          "s:id_2"
+        ],
+        [
+          "n:1",
+          "n:2",
+          "n:3"
+        ]
+      ]
     }
   ]
 }

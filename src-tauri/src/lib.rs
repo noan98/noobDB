@@ -76,8 +76,9 @@ pub mod __test_api {
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
-        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, sql_may_change_schema,
-        Connection, DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
+        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, is_session_init_sql_for,
+        sql_may_change_schema, Connection, DbConnectOptions, DriverKind, SslMode, WriteCapture,
+        WriteKind,
     };
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
@@ -263,7 +264,7 @@ pub mod __test_api {
         F: FnMut(ScriptProgress),
     {
         let total = crate::commands::script::script_file_size(path).await?;
-        let file = tokio::fs::File::open(path).await?;
+        let file = crate::commands::script::open_script_file(path).await?;
         crate::commands::script::run_script_core(
             session,
             file,

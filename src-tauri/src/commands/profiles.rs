@@ -224,6 +224,13 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
 /// Persists the profile row and any changed secrets. The secret *values* are
 /// never logged — only which secret kind was set or cleared, at debug level.
 fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionProfile> {
+    let req_secrets = ProfileSecretUpdates {
+        db_password: req.db_password.clone(),
+        ssh_passphrase: req.ssh_passphrase.clone(),
+        ssh_password: req.ssh_password.clone(),
+        ssh_jump_passphrase: req.ssh_jump_passphrase.clone(),
+        ssh_jump_password: req.ssh_jump_password.clone(),
+    };
     let profile = ConnectionProfile {
         id: id.clone(),
         name: req.name,
@@ -264,54 +271,86 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
                 .filter(|p| !p.is_empty()),
         }),
     };
+    // 秘密を先に書き、すべて成功してから本体を upsert する。秘密の書き込みが失敗しても
+    // profiles.json には何も残らず、フォームとストアがずれない。新規プロファイルの
+    // 途中失敗で書けた秘密は孤立させないよう掃除する。
+    let is_new = !store::load_all()?.iter().any(|p| p.id == id);
+    if let Err(e) = write_profile_secrets(&id, &req_secrets) {
+        if is_new {
+            let _ = secrets::delete_all(&id);
+        }
+        return Err(e);
+    }
     store::upsert(profile.clone())?;
-
-    if let Some(pw) = req.db_password {
-        if pw.is_empty() {
-            tracing::debug!(profile_id = %id, secret = "db_password", "clearing secret");
-            secrets::delete_db_password(&id)?;
-        } else {
-            tracing::debug!(profile_id = %id, secret = "db_password", "setting secret");
-            secrets::set_db_password(&id, &pw)?;
-        }
-    }
-    if let Some(pp) = req.ssh_passphrase {
-        if pp.is_empty() {
-            tracing::debug!(profile_id = %id, secret = "ssh_passphrase", "clearing secret");
-            secrets::delete_ssh_passphrase(&id)?;
-        } else {
-            tracing::debug!(profile_id = %id, secret = "ssh_passphrase", "setting secret");
-            secrets::set_ssh_passphrase(&id, &pp)?;
-        }
-    }
-    if let Some(pw) = req.ssh_password {
-        if pw.is_empty() {
-            tracing::debug!(profile_id = %id, secret = "ssh_password", "clearing secret");
-            secrets::delete_ssh_password(&id)?;
-        } else {
-            tracing::debug!(profile_id = %id, secret = "ssh_password", "setting secret");
-            secrets::set_ssh_password(&id, &pw)?;
-        }
-    }
-    if let Some(pp) = req.ssh_jump_passphrase {
-        if pp.is_empty() {
-            tracing::debug!(profile_id = %id, secret = "ssh_passphrase_hop0", "clearing secret");
-            secrets::delete_ssh_jump_passphrase(&id)?;
-        } else {
-            tracing::debug!(profile_id = %id, secret = "ssh_passphrase_hop0", "setting secret");
-            secrets::set_ssh_jump_passphrase(&id, &pp)?;
-        }
-    }
-    if let Some(pw) = req.ssh_jump_password {
-        if pw.is_empty() {
-            tracing::debug!(profile_id = %id, secret = "ssh_password_hop0", "clearing secret");
-            secrets::delete_ssh_jump_password(&id)?;
-        } else {
-            tracing::debug!(profile_id = %id, secret = "ssh_password_hop0", "setting secret");
-            secrets::set_ssh_jump_password(&id, &pw)?;
-        }
-    }
     Ok(profile)
+}
+
+/// `save_profile` で変更された秘密の更新指示 (`None` = 変更なし、`Some("")` = 削除、
+/// `Some(v)` = 設定)。値はログに出さず、種別名だけを debug で残す。
+struct ProfileSecretUpdates {
+    db_password: Option<String>,
+    ssh_passphrase: Option<String>,
+    ssh_password: Option<String>,
+    ssh_jump_passphrase: Option<String>,
+    ssh_jump_password: Option<String>,
+}
+
+fn apply_secret(
+    id: &str,
+    kind: &str,
+    value: &Option<String>,
+    set: impl FnOnce(&str, &str) -> Result<()>,
+    delete: impl FnOnce(&str) -> Result<()>,
+) -> Result<()> {
+    match value.as_deref() {
+        None => Ok(()),
+        Some("") => {
+            tracing::debug!(profile_id = %id, secret = kind, "clearing secret");
+            delete(id)
+        }
+        Some(v) => {
+            tracing::debug!(profile_id = %id, secret = kind, "setting secret");
+            set(id, v)
+        }
+    }
+}
+
+fn write_profile_secrets(id: &str, u: &ProfileSecretUpdates) -> Result<()> {
+    apply_secret(
+        id,
+        "db_password",
+        &u.db_password,
+        secrets::set_db_password,
+        secrets::delete_db_password,
+    )?;
+    apply_secret(
+        id,
+        "ssh_passphrase",
+        &u.ssh_passphrase,
+        secrets::set_ssh_passphrase,
+        secrets::delete_ssh_passphrase,
+    )?;
+    apply_secret(
+        id,
+        "ssh_password",
+        &u.ssh_password,
+        secrets::set_ssh_password,
+        secrets::delete_ssh_password,
+    )?;
+    apply_secret(
+        id,
+        "ssh_passphrase_hop0",
+        &u.ssh_jump_passphrase,
+        secrets::set_ssh_jump_passphrase,
+        secrets::delete_ssh_jump_passphrase,
+    )?;
+    apply_secret(
+        id,
+        "ssh_password_hop0",
+        &u.ssh_jump_password,
+        secrets::set_ssh_jump_password,
+        secrets::delete_ssh_jump_password,
+    )
 }
 
 /// エクスポートファイルのトップレベル形。`profiles` は `ConnectionProfile`
@@ -474,13 +513,31 @@ pub async fn export_profiles(path: String, ids: Option<Vec<String>>) -> Result<u
     Ok(json.len())
 }
 
+/// 平文プロファイル取り込みファイルの上限。暗号化バックアップ側
+/// (`profile_backup::MAX_BACKUP_FILE_BYTES`) と同じ 16 MiB。
+const MAX_IMPORT_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// 上限を超えるファイルは読まずに `InvalidInput` で拒否する。
+fn read_import_file(path: &str) -> Result<String> {
+    let len = std::fs::metadata(path)?.len();
+    if len > MAX_IMPORT_FILE_BYTES {
+        return Err(AppError::InvalidInput(format!(
+            "Profile import file is too large ({len} bytes, max {MAX_IMPORT_FILE_BYTES})"
+        )));
+    }
+    Ok(std::fs::read_to_string(path)?)
+}
+
 /// `path` の JSON (`export_profiles` 出力) を取り込む。形式を検証し、ドライバ不正な
 /// 行はスキップ、ID 衝突は `strategy` に従って解決する。**秘密情報は JSON に含まれ
 /// ないため、取り込んだプロファイルは資格情報未設定として扱われ、接続時に再入力が
 /// 促される。** ファイルの読み取りはバックエンドが行う (fs capability 不要)。
 #[tauri::command]
 pub async fn import_profiles(path: String, strategy: ImportStrategy) -> Result<ImportResult> {
-    let content = std::fs::read_to_string(&path)?;
+    let path_for_read = path.clone();
+    let content = tauri::async_runtime::spawn_blocking(move || read_import_file(&path_for_read))
+        .await
+        .map_err(|e| AppError::Other(format!("import read task failed: {e}")))??;
     let parsed: ProfileExport = serde_json::from_str(&content)
         .map_err(|e| AppError::InvalidInput(format!("Invalid profile export file: {e}")))?;
     if parsed.format != EXPORT_FORMAT {
@@ -533,6 +590,15 @@ pub async fn delete_profile(id: String) -> Result<()> {
     match &result {
         Ok(()) => tracing::info!(profile_id = %id, "profile deleted"),
         Err(e) => tracing::error!(profile_id = %id, error = %e, "failed to delete profile"),
+    }
+    // プロファイル本体が消えたら、そのプロファイル専用だったスニペットを孤立させない
+    // (スコープを Any へ戻す)。ベストエフォート。keyring 側の失敗で `result` が Err でも
+    // 本体は既に消えているので掃除する。
+    let gone = store::load_all().is_ok_and(|all| !all.iter().any(|p| p.id == id));
+    if gone {
+        if let Err(e) = crate::snippets::store::release_profile_scope(&id) {
+            tracing::warn!(profile_id = %id, error = %e, "failed to release snippets scoped to deleted profile");
+        }
     }
     result
 }
@@ -587,6 +653,43 @@ pub async fn reorder_profiles(ordered_ids: Vec<String>) -> Result<()> {
 /// レースなど、フロント側のガードをすり抜けた不正な入力からストレージを守る)。
 /// ファイル IO に触れないのでユニットテストできる。
 fn reorder_profiles_pure(
+    all: Vec<ConnectionProfile>,
+    ordered_ids: &[String],
+) -> Option<Vec<ConnectionProfile>> {
+    // 未対応ドライバ (旧 mssql / duckdb など) のプロファイルは `list_profiles` が
+    // 読み飛ばすのでフロントの `ordered_ids` には含まれない。順列検査は対応
+    // ドライバのものだけで行い、未対応のものは元の位置に据え置く。
+    let supported = |p: &ConnectionProfile| crate::db::DriverKind::parse(&p.driver).is_some();
+    let slots: Vec<usize> = all
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| supported(p))
+        .map(|(i, _)| i)
+        .collect();
+    if ordered_ids.len() != slots.len() {
+        return None;
+    }
+    let mut result: Vec<Option<ConnectionProfile>> = Vec::with_capacity(all.len());
+    let mut supported_profiles = Vec::with_capacity(slots.len());
+    for p in all {
+        if supported(&p) {
+            result.push(None);
+            supported_profiles.push(p);
+        } else {
+            result.push(Some(p));
+        }
+    }
+    let reordered = reorder_supported(supported_profiles, ordered_ids)?;
+    let mut it = reordered.into_iter();
+    for (slot, _) in result.iter_mut().zip(0..) {
+        if slot.is_none() {
+            *slot = it.next();
+        }
+    }
+    result.into_iter().collect()
+}
+
+fn reorder_supported(
     all: Vec<ConnectionProfile>,
     ordered_ids: &[String],
 ) -> Option<Vec<ConnectionProfile>> {
@@ -911,5 +1014,28 @@ mod tests {
     fn reorder_profiles_pure_accepts_empty() {
         let reordered = reorder_profiles_pure(vec![], &[]).unwrap();
         assert!(reordered.is_empty());
+    }
+
+    #[test]
+    fn reorder_ignores_unsupported_driver_profiles() {
+        let all = vec![
+            profile("a", "A", "mysql"),
+            profile("x", "Old", "mssql"),
+            profile("b", "B", "mysql"),
+        ];
+        // フロントは対応ドライバの 2 件しか知らない。
+        let out = reorder_profiles_pure(all, &["b".to_string(), "a".to_string()]).unwrap();
+        let ids: Vec<&str> = out.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["b", "x", "a"]);
+    }
+
+    #[test]
+    fn import_rejects_oversized_file() {
+        let path = std::env::temp_dir().join(format!("noobdb_import_big_{}", std::process::id()));
+        let f = std::fs::File::create(&path).unwrap();
+        f.set_len(MAX_IMPORT_FILE_BYTES + 1).unwrap();
+        let err = read_import_file(path.to_str().unwrap()).unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        let _ = std::fs::remove_file(&path);
     }
 }

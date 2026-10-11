@@ -15,6 +15,7 @@ import { copyToClipboard } from "./clipboard";
 import { Icon, ICON_SIZES } from "./Icon";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { isAbsolutePath } from "./pathUtil";
 
 let dumpStreamSeq = 0;
 /** Unique stream id per dump run so progress events / cancel target it (#686). */
@@ -345,7 +346,20 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
   };
 
   const handleDump = async () => {
-    if (!path.trim()) return;
+    let target = path.trim();
+    if (!target) return;
+    // 既定値の相対名のまま実行すると、GUI プロセスのカレントディレクトリ (Finder 起動では
+    // `/` など) 基準で書かれてしまう。絶対パスでなければ先に保存ダイアログで保存先を選ばせる。
+    if (!isAbsolutePath(target)) {
+      const selected = await save({
+        defaultPath: target,
+        title: t("dumpPickFileTitle"),
+        filters: [{ name: "SQL", extensions: ["sql"] }],
+      });
+      if (typeof selected !== "string" || !selected) return;
+      setPath(selected);
+      target = selected;
+    }
     const streamId = makeDumpStreamId();
     streamIdRef.current = streamId;
     setStatus({ kind: "running" });
@@ -365,7 +379,7 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
           }),
         onDone: (e) => {
           cleanupStream();
-          toast.success(t("dumpSuccess", { bytes: e.bytes, path }));
+          toast.success(t("dumpSuccess", { bytes: e.bytes, path: target }));
           setStatus({ kind: "idle" });
           setProgress(null);
         },
@@ -389,7 +403,7 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
         sessionId,
         streamId,
         database,
-        path,
+        path: target,
         options: tableScope
           ? { ...options, tables: tableScope, pgSchema: driver === "postgres" ? database : options.pgSchema }
           : options,

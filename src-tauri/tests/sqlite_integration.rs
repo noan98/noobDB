@@ -566,6 +566,10 @@ async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
     conn.execute("CREATE VIEW v_pos AS SELECT id FROM t WHERE n > 0", None)
         .await
         .expect("create view");
+    // `sqlite_` 接頭辞の判定で `_` がワイルドカード扱いにならないこと (#1519)。
+    conn.execute("CREATE VIEW \"sqlite-report\" AS SELECT id FROM t", None)
+        .await
+        .expect("create sqlite-report view");
     conn.execute(
         "CREATE TRIGGER trg_ai AFTER INSERT ON t BEGIN UPDATE t SET n = 0 WHERE n IS NULL; END",
         None,
@@ -585,6 +589,12 @@ async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
             .iter()
             .any(|o| o.kind == "trigger" && o.name == "trg_ai"),
         "trigger should be listed: {objects:?}"
+    );
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "view" && o.name == "sqlite-report"),
+        "sqlite_ 接頭辞でない名前のビューも一覧に出る: {objects:?}"
     );
     // No stored procedures/functions in SQLite.
     assert!(objects

@@ -1145,7 +1145,7 @@ impl SqliteConn {
         // SQLite only has views and triggers (no stored procedures/functions).
         let rows: Vec<SqliteRow> = sqlx::query(
             "SELECT type, name FROM sqlite_master \
-             WHERE type IN ('view','trigger') AND name NOT LIKE 'sqlite_%' \
+             WHERE type IN ('view','trigger') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
              ORDER BY type, name",
         )
         .fetch_all(&self.pool)

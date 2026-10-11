@@ -20,7 +20,7 @@ use crate::commands::connection::{
 };
 use crate::commands::dump;
 use crate::commands::export;
-use crate::db::{is_read_only_sql, DriverKind};
+use crate::db::{is_read_only_sql, is_read_only_sql_for, DriverKind};
 use crate::error::AppError;
 use crate::profiles::{self, ConnectionProfile};
 use crate::state::AppState;
@@ -49,6 +49,9 @@ impl TaskOutcome {
         }
     }
 }
+
+/// 1 回のタスク実行の最大時間 (エクスポート / ダンプ / アサーション共通)。
+const TASK_MAX_RUN_SECS: u64 = 6 * 60 * 60;
 
 /// アサーション 1 件あたりのクエリタイムアウト。ユーザ操作と違い中止できない
 /// 無人実行なので、固定の上限で必ず打ち切る。
@@ -116,7 +119,19 @@ pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
         Err(e) => return TaskOutcome::err(format!("connect failed: {e}")),
     };
 
-    let outcome = run_action(app, &session_id, task, &profile).await;
+    // 無人実行なのでロック待ち等で終わらないクエリが接続とタスクを溜めないよう、
+    // タスク単位の最大実行時間で打ち切る。超過は error として記録される。
+    let outcome = match tokio::time::timeout(
+        std::time::Duration::from_secs(TASK_MAX_RUN_SECS),
+        run_action(app, &session_id, task, &profile),
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(_) => TaskOutcome::err(format!(
+            "task timed out after {TASK_MAX_RUN_SECS} seconds and was cancelled"
+        )),
+    };
 
     // 成功/失敗を問わず必ず切断する (常駐接続を増やさない)。切断自体の失敗は
     // ログに残すのみで、タスクの成否には影響させない (アクションはもう完了/
@@ -150,6 +165,13 @@ async fn run_action(
             sql_table,
             sql_batch_size,
         } => {
+            // 接続前の検証 (ドライバ不明) に加えて、解決したドライバで再検証する
+            // (PostgreSQL の `#` 演算子など、ドライバ別マスクで結果が変わる入力のため)。
+            if !is_read_only_sql_for(session.conn.driver_kind(), sql) {
+                return TaskOutcome::err(
+                    "task SQL is not read-only (scheduler only allows SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)",
+                );
+            }
             let path = resolve_output_path(output_path, now);
             let result = export::run_export_to_file(
                 &session,

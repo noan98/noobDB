@@ -45,9 +45,11 @@ function nameOption(
   type: string,
   o: Pick<SchemaNamespaceOptions, "idQuote" | "idCaseInsensitive">,
 ): Completion {
-  return needsQuote(label, o.idCaseInsensitive)
-    ? { label, type, apply: o.idQuote + label + closingQuote(o.idQuote) }
-    : { label, type };
+  if (!needsQuote(label, o.idCaseInsensitive)) return { label, type };
+  // 識別子内の閉じ引用符は二重化する (quoteIdentFor と同じ規則)。
+  const close = closingQuote(o.idQuote);
+  const body = label.split(close).join(close + close);
+  return { label, type, apply: o.idQuote + body + close };
 }
 
 /** `table\0column` (小文字) → `参照テーブル.参照列`。 */

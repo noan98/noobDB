@@ -342,13 +342,53 @@ function scanStringLiterals(sql: string): LiteralSpan[] {
   return out;
 }
 
+/** 述語の左辺を遡るときの境界になる語。 */
+const PREDICATE_BOUNDARIES = new Set([
+  "and", "or", "where", "on", "set", "having", "when", "then", "else", "select", "values", "limit", "using",
+]);
+
+/**
+ * 各リテラルの左辺 (直前のリテラル末尾から、述語の境界 `and` / `or` / `where` / `,` / 開き括弧 などまで
+ * 遡った部分) を正規化して返す。差し戻しの対応確認に使う。引用符付き識別子は引用符を外し、演算子の
+ * 連なりは 1 トークンにし、大小文字・空白の違いは無視する。
+ */
+function literalContexts(sql: string, spans: LiteralSpan[]): string[] {
+  let prevEnd = 0;
+  return spans.map((l) => {
+    const raw =
+      sql
+        .slice(prevEnd, l.from)
+        .match(/`[^`]*`|"(?:[^"]|"")*"|[\p{L}\p{N}_$]+|[<>=!:|]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
+    prevEnd = l.to;
+    const tokens = raw.map((t) => {
+      if ((t.startsWith("`") || t.startsWith('"')) && t.length >= 2) return t.slice(1, -1).toLowerCase();
+      const lower = t.toLowerCase();
+      return lower === "<>" ? "!=" : lower;
+    });
+    const left: string[] = [];
+    let depth = 0;
+    for (let k = tokens.length - 1; k >= 0; k--) {
+      const t = tokens[k];
+      if (t === ")") depth++;
+      else if (t === "(") {
+        // 深さ 0 の `(` は左辺がまだ空のときだけ取り込む (`x IN ('A')` の左辺を `x in (` にして、
+        // IN 句どうしの並べ替えを見逃さない)。
+        if (depth === 0 && left.length > 0) break;
+        if (depth > 0) depth--;
+      } else if (depth === 0 && (t === "," || t === ";" || PREDICATE_BOUNDARIES.has(t))) break;
+      left.unshift(t);
+    }
+    return left.join(" ");
+  });
+}
+
 export interface RestoredLiterals {
   /** 差し戻し後の提案 SQL (差し戻せなかったときは提案そのまま)。 */
   sql: string;
   /**
    * - `none`: 提案に空白だけのリテラルが無い (差し戻し不要)。
    * - `restored`: 元 SQL のリテラルを出現順に差し戻した。
-   * - `missing`: 個数が合わず差し戻せなかった (空白リテラルが残る)。
+   * - `missing`: 個数が合わない、または直前の語が元と食い違い (並べ替え) 差し戻せなかった (空白リテラルが残る)。
    */
   status: "none" | "restored" | "missing";
 }
@@ -363,6 +403,12 @@ export function restoreMaskedLiterals(original: string, proposal: string): Resto
   const blanks = prop.filter((l) => l.inner.trim() === "");
   if (blanks.length === 0) return { sql: proposal, status: "none" };
   if (blanks.length !== orig.length) return { sql: proposal, status: "missing" };
+  // 個数が合っても、AI が条件を並べ替えると出現順の対応が崩れて値が別の述語へ移る。
+  // 各リテラル直前の語 (例: `a =`) が元と一致しないときは差し戻さない。
+  const origCtx = literalContexts(original, orig);
+  const propCtx = literalContexts(proposal, prop);
+  const blankCtx = propCtx.filter((_, idx) => prop[idx].inner.trim() === "");
+  if (blankCtx.some((c, idx) => c !== origCtx[idx])) return { sql: proposal, status: "missing" };
   let out = "";
   let pos = 0;
   let k = 0;

@@ -1065,22 +1065,28 @@ impl PostgresConn {
                   AND tc.table_name   = $2
               ) pk ON pk.column_name = c.column_name
               LEFT JOIN (
-                SELECT DISTINCT ON (kcu.column_name)
-                  kcu.column_name,
-                  ccu.table_name  AS ref_table,
-                  ccu.column_name AS ref_column
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                 AND tc.table_schema    = kcu.table_schema
-                 AND tc.table_name      = kcu.table_name
-                JOIN information_schema.constraint_column_usage ccu
-                  ON ccu.constraint_name = tc.constraint_name
-                 AND ccu.table_schema    = tc.table_schema
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                  AND tc.table_schema = $1
-                  AND tc.table_name   = $2
-                ORDER BY kcu.column_name
+                SELECT DISTINCT ON (a.attname)
+                  a.attname::text   AS column_name,
+                  fcl.relname::text AS ref_table,
+                  fa.attname::text  AS ref_column
+                FROM pg_catalog.pg_constraint con
+                JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
+                JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+                JOIN pg_catalog.pg_class fcl ON fcl.oid = con.confrelid
+                CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+                  WITH ORDINALITY AS k(attnum, fattnum, ord)
+                JOIN pg_catalog.pg_attribute a
+                  ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+                JOIN pg_catalog.pg_attribute fa
+                  ON fa.attrelid = con.confrelid AND fa.attnum = k.fattnum
+                WHERE con.contype = 'f'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_constraint p
+                         WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                  AND fcl.relnamespace = cl.relnamespace
+                  AND n.nspname = $1
+                  AND cl.relname = $2
+                ORDER BY a.attname, con.conname
               ) fk ON fk.column_name = c.column_name
               WHERE c.table_schema = $1 AND c.table_name = $2
               ORDER BY c.ordinal_position"#,
@@ -1134,22 +1140,28 @@ impl PostgresConn {
                   AND tc.table_schema = $1
               ) pk ON pk.table_name = c.table_name AND pk.column_name = c.column_name
               LEFT JOIN (
-                SELECT DISTINCT ON (kcu.table_name, kcu.column_name)
-                  kcu.table_name,
-                  kcu.column_name,
-                  ccu.table_name  AS ref_table,
-                  ccu.column_name AS ref_column
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                 AND tc.table_schema    = kcu.table_schema
-                 AND tc.table_name      = kcu.table_name
-                JOIN information_schema.constraint_column_usage ccu
-                  ON ccu.constraint_name = tc.constraint_name
-                 AND ccu.table_schema    = tc.table_schema
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                  AND tc.table_schema = $1
-                ORDER BY kcu.table_name, kcu.column_name
+                SELECT DISTINCT ON (cl.relname, a.attname)
+                  cl.relname::text  AS table_name,
+                  a.attname::text   AS column_name,
+                  fcl.relname::text AS ref_table,
+                  fa.attname::text  AS ref_column
+                FROM pg_catalog.pg_constraint con
+                JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
+                JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+                JOIN pg_catalog.pg_class fcl ON fcl.oid = con.confrelid
+                CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+                  WITH ORDINALITY AS k(attnum, fattnum, ord)
+                JOIN pg_catalog.pg_attribute a
+                  ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+                JOIN pg_catalog.pg_attribute fa
+                  ON fa.attrelid = con.confrelid AND fa.attnum = k.fattnum
+                WHERE con.contype = 'f'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_constraint p
+                         WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                  AND fcl.relnamespace = cl.relnamespace
+                  AND n.nspname = $1
+                ORDER BY cl.relname, a.attname, con.conname
               ) fk ON fk.table_name = c.table_name AND fk.column_name = c.column_name
               WHERE c.table_schema = $1
               ORDER BY c.table_name, c.ordinal_position"#,
@@ -1280,35 +1292,36 @@ impl PostgresConn {
     }
 
     pub async fn foreign_keys(&self, schema: &str) -> Result<Vec<ForeignKey>> {
-        // Join the FK constraints to their referencing columns (key_column_usage)
-        // and referenced columns (constraint_column_usage). This mirrors the
-        // per-table query in `columns`; like that one, the column pairing is
-        // exact for single-column keys (the common case) and best-effort for
-        // composite keys, which is sufficient for drawing table-to-table edges.
+        // pg_constraint の conkey / confkey を位置ごとに unnest して、参照元と参照先の
+        // 列を正しく対応付ける。information_schema.constraint_column_usage は列の
+        // 位置情報を持たず、制約名だけで結合すると複合 FK の列が総当たりになり、
+        // テーブルをまたいで同名の FK も混ざる (#1519)。
         let rows: Vec<PgRow> = sqlx::query(
             r#"SELECT
-                 tc.table_name,
-                 kcu.column_name,
-                 ccu.table_name  AS ref_table,
-                 ccu.column_name AS ref_column,
-                 tc.constraint_name,
-                 pc.confdeltype::text,
-                 pc.confupdtype::text
-               FROM information_schema.table_constraints tc
-               JOIN information_schema.key_column_usage kcu
-                 ON tc.constraint_name = kcu.constraint_name
-                AND tc.table_schema    = kcu.table_schema
-                AND tc.table_name      = kcu.table_name
-               JOIN information_schema.constraint_column_usage ccu
-                 ON ccu.constraint_name = tc.constraint_name
-                AND ccu.table_schema    = tc.table_schema
-               LEFT JOIN pg_constraint pc
-                 ON pc.contype = 'f'
-                AND pc.conname = tc.constraint_name
-                AND pc.conrelid = (quote_ident(tc.table_schema) || '.' || quote_ident(tc.table_name))::regclass
-               WHERE tc.constraint_type = 'FOREIGN KEY'
-                 AND tc.table_schema = $1
-               ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position"#,
+                 cl.relname::text   AS table_name,
+                 a.attname::text    AS column_name,
+                 fcl.relname::text  AS ref_table,
+                 fa.attname::text   AS ref_column,
+                 con.conname::text  AS constraint_name,
+                 con.confdeltype::text,
+                 con.confupdtype::text
+               FROM pg_catalog.pg_constraint con
+               JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
+               JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+               JOIN pg_catalog.pg_class fcl ON fcl.oid = con.confrelid
+               CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+                 WITH ORDINALITY AS k(attnum, fattnum, ord)
+               JOIN pg_catalog.pg_attribute a
+                 ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+               JOIN pg_catalog.pg_attribute fa
+                 ON fa.attrelid = con.confrelid AND fa.attnum = k.fattnum
+               WHERE con.contype = 'f'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_constraint p
+                         WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                  AND fcl.relnamespace = cl.relnamespace
+                 AND n.nspname = $1
+               ORDER BY cl.relname, con.conname, k.ord"#,
         )
         .bind(schema)
         .fetch_all(&self.pool)
@@ -2069,7 +2082,13 @@ fn pg_arg_mode(code: &str) -> &'static str {
 /// without changing its behaviour.
 pub(crate) fn is_query_shape(sql: &str) -> bool {
     let cleaned = strip_sql_comments(sql);
-    let trimmed = cleaned.trim_start().to_ascii_lowercase();
+    // `(SELECT 1 UNION SELECT 2)` のように括弧で始まる問い合わせも結果経路に流す。
+    // 先頭の `(` と直後の空白/コメントを剥がしてから判定する (#1519)。
+    let mut rest: &str = cleaned.trim_start();
+    while let Some(r) = rest.strip_prefix('(') {
+        rest = r.trim_start();
+    }
+    let trimmed = rest.to_ascii_lowercase();
     if trimmed.starts_with("with") {
         return !super::mysql::with_cte_is_mutation(super::DriverKind::Postgres, sql);
     }
@@ -2467,8 +2486,17 @@ fn numeric_binary_to_string(bytes: &[u8]) -> Option<String> {
     let scale = i16::from_be_bytes([bytes[6], bytes[7]]).max(0) as usize;
     const SIGN_NEGATIVE: u16 = 0x4000;
     const SIGN_NAN: u16 = 0xC000;
+    // PostgreSQL 14 以降の ±Infinity。桁を持たないので特別扱いしないと 0 になる。
+    const SIGN_PINF: u16 = 0xD000;
+    const SIGN_NINF: u16 = 0xF000;
     if sign == SIGN_NAN {
         return Some("NaN".to_string());
+    }
+    if sign == SIGN_PINF {
+        return Some("Infinity".to_string());
+    }
+    if sign == SIGN_NINF {
+        return Some("-Infinity".to_string());
     }
     if bytes.len() < 8 + num_digits * 2 {
         return None;
@@ -3305,6 +3333,26 @@ mod tests {
         // 12345 = 1 * 10000 + 2345 → digits [1, 2345], weight 1.
         let bytes = encode_numeric(0x0000, 1, 0, &[1, 2345]);
         assert_eq!(numeric_binary_to_string(&bytes), Some("12345".to_string()));
+    }
+
+    #[test]
+    fn numeric_fallback_decodes_infinity() {
+        // PG14+ の +Infinity / -Infinity は桁を持たず、0 と誤表示してはいけない (#1519)。
+        let pos = encode_numeric(0xD000, 0, 0, &[]);
+        assert_eq!(numeric_binary_to_string(&pos), Some("Infinity".to_string()));
+        let neg = encode_numeric(0xF000, 0, 0, &[]);
+        assert_eq!(
+            numeric_binary_to_string(&neg),
+            Some("-Infinity".to_string())
+        );
+    }
+
+    #[test]
+    fn query_shape_accepts_parenthesized_select() {
+        assert!(is_query_shape("(SELECT 1 UNION SELECT 2)"));
+        assert!(is_query_shape("  ( ( select 1 ) ) UNION ALL (select 2)"));
+        assert!(is_query_shape("/* c */ (SELECT 1)"));
+        assert!(!is_query_shape("(INSERT INTO t VALUES (1))"));
     }
 
     #[test]

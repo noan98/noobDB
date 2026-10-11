@@ -7,7 +7,7 @@ use tauri::State;
 use crate::db::data_diff::{compute_data_diff, DataDiff};
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sync::quote_ident;
-use crate::db::types::TableColumnInfo;
+use crate::db::types::{TableColumnInfo, Value};
 use crate::db::{Connection, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -130,6 +130,90 @@ mod select_rows_sql_tests {
     }
 }
 
+/// 数値は数値同士、文字列は文字列同士、バイト列はバイト列同士で比較する。
+/// 型が噛み合わない・NULL を含む場合は `None` (比較不能)。
+fn cmp_value(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    fn num(v: &Value) -> Option<f64> {
+        match v {
+            Value::Int(i) => Some(*i as f64),
+            Value::UInt(u) => Some(*u as f64),
+            Value::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+    // 2^53 超の BIGINT などは Value::String になるため、両側が整数として読めるなら
+    // i128 で数値比較する (Int / UInt / String の混在を含む)。
+    fn int(v: &Value) -> Option<i128> {
+        match v {
+            Value::Int(i) => Some(i128::from(*i)),
+            Value::UInt(u) => Some(i128::from(*u)),
+            Value::String(s) => s.trim().parse::<i128>().ok(),
+            _ => None,
+        }
+    }
+    if let (Some(x), Some(y)) = (int(a), int(b)) {
+        return Some(x.cmp(&y));
+    }
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => Some(x.cmp(y)),
+        (Value::UInt(x), Value::UInt(y)) => Some(x.cmp(y)),
+        (Value::String(x), Value::String(y)) | (Value::Bytes(x), Value::Bytes(y)) => Some(x.cmp(y)),
+        (Value::Bool(x), Value::Bool(y)) => Some(x.cmp(y)),
+        _ => match (num(a), num(b)) {
+            (Some(x), Some(y)) => x.partial_cmp(&y).or(Some(Ordering::Equal)),
+            _ => None,
+        },
+    }
+}
+
+/// 主キー値の辞書順比較。比較不能な成分があれば `None`。
+fn cmp_key(a: &[Value], b: &[Value]) -> Option<std::cmp::Ordering> {
+    for (x, y) in a.iter().zip(b.iter()) {
+        match cmp_value(x, y)? {
+            std::cmp::Ordering::Equal => continue,
+            o => return Some(o),
+        }
+    }
+    Some(std::cmp::Ordering::Equal)
+}
+
+/// 行数上限で切り詰められた側があるとき、両側を「切り詰められた側の最後の PK」以下
+/// の共通窓へ揃える。揃えないと、窓の外にある行が相手側で「存在しない」ことになり、
+/// 実在する行の INSERT (主キー重複で適用失敗) や UPDATE が生成される。
+/// 窓の外かどうか判定できない (キー比較不能の) 行は、安全側として落とす。
+fn clamp_to_common_window(
+    source: &mut Vec<Vec<Value>>,
+    target: &mut Vec<Vec<Value>>,
+    source_truncated: bool,
+    target_truncated: bool,
+    pk_idx: &[usize],
+) {
+    let key_of =
+        |row: &Vec<Value>| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
+    let mut cutoff: Option<Vec<Value>> = None;
+    for (rows, truncated) in [(&*source, source_truncated), (&*target, target_truncated)] {
+        if !truncated {
+            continue;
+        }
+        let Some(last) = rows.last() else { continue };
+        let k = key_of(last);
+        cutoff = match cutoff {
+            Some(c) if cmp_key(&k, &c) != Some(std::cmp::Ordering::Less) => Some(c),
+            _ => Some(k),
+        };
+    }
+    let Some(cutoff) = cutoff else { return };
+    let within = |row: &Vec<Value>| {
+        matches!(
+            cmp_key(&key_of(row), &cutoff),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        )
+    };
+    source.retain(within);
+    target.retain(within);
+}
+
 /// `compare_table_data` の結果。`diff` は表示用、`diff_id` は Rust 側のストア
 /// (`AppState::data_diffs`) に保持した同じ差分の ID で、SQL 生成 (`generate_data_sync_sql`)
 /// にはこの ID だけを送り返す (#1259)。不要になったら `release_data_diffs` で破棄する。
@@ -203,8 +287,19 @@ pub async fn compare_table_data(
     let target_res = target.conn.execute(&sql, Some(&target_database)).await?;
 
     let truncated = source_res.rows.len() > want || target_res.rows.len() > want;
-    let source_rows: Vec<_> = source_res.rows.into_iter().take(want).collect();
-    let target_rows: Vec<_> = target_res.rows.into_iter().take(want).collect();
+    let source_truncated = source_res.rows.len() > want;
+    let target_truncated = target_res.rows.len() > want;
+    let mut source_rows: Vec<_> = source_res.rows.into_iter().take(want).collect();
+    let mut target_rows: Vec<_> = target_res.rows.into_iter().take(want).collect();
+    // 片側だけ切り詰められたとき、もう一方の窓の外の行を「存在しない」と誤判定して
+    // INSERT してしまわないよう、両側を共通の PK 窓に揃える。
+    clamp_to_common_window(
+        &mut source_rows,
+        &mut target_rows,
+        source_truncated,
+        target_truncated,
+        &pk_idx,
+    );
     let source_count = source_rows.len();
     let target_count = target_rows.len();
 
@@ -226,4 +321,82 @@ pub async fn compare_table_data(
         vec![source_session_id.clone(), target_session_id.clone()],
     );
     Ok(DataDiffHandle { diff_id, diff })
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    fn rows(ids: &[i64]) -> Vec<Vec<Value>> {
+        ids.iter().map(|i| vec![Value::Int(*i)]).collect()
+    }
+
+    fn ids(r: &[Vec<Value>]) -> Vec<i64> {
+        r.iter()
+            .map(|row| match row[0] {
+                Value::Int(i) => i,
+                _ => -1,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_side_truncated_clamps_other_side() {
+        // limit=3: target は 5 行あり先頭 3 行 [1,2,3] に切り詰め。source の PK 4 は窓の外。
+        let mut s = rows(&[1, 2, 4]);
+        let mut t = rows(&[1, 2, 3]);
+        clamp_to_common_window(&mut s, &mut t, false, true, &[0]);
+        assert_eq!(ids(&s), vec![1, 2]);
+        assert_eq!(ids(&t), vec![1, 2, 3]);
+        let diff = compute_data_diff(&["id".to_string()], &[0], &s, &t);
+        // 4 の INSERT は生成されない。
+        assert!(diff
+            .iter()
+            .all(|d| d.status != crate::db::data_diff::RowStatus::SourceOnly));
+    }
+
+    #[test]
+    fn both_truncated_uses_smaller_cutoff() {
+        let mut s = rows(&[1, 2, 3]);
+        let mut t = rows(&[1, 2, 5]);
+        clamp_to_common_window(&mut s, &mut t, true, true, &[0]);
+        assert_eq!(ids(&s), vec![1, 2, 3]);
+        assert_eq!(ids(&t), vec![1, 2]);
+    }
+
+    #[test]
+    fn integer_strings_are_compared_numerically() {
+        let big = |n: i128| Value::String(n.to_string());
+        assert_eq!(
+            cmp_value(&big(9_007_199_254_740_993), &big(9_007_199_254_740_992)),
+            Some(std::cmp::Ordering::Greater)
+        );
+        // 文字列比較だと "9" > "10" になってしまう。
+        assert_eq!(cmp_value(&big(9), &big(10)), Some(std::cmp::Ordering::Less));
+        assert_eq!(
+            cmp_value(&Value::Int(5), &big(10)),
+            Some(std::cmp::Ordering::Less)
+        );
+        let mut s = vec![vec![big(9_007_199_254_740_993)]];
+        let mut t = vec![vec![Value::Int(5)]];
+        clamp_to_common_window(&mut s, &mut t, false, true, &[0]);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn no_truncation_keeps_everything() {
+        let mut s = rows(&[1, 9]);
+        let mut t = rows(&[2]);
+        clamp_to_common_window(&mut s, &mut t, false, false, &[0]);
+        assert_eq!(ids(&s), vec![1, 9]);
+        assert_eq!(ids(&t), vec![2]);
+    }
+
+    #[test]
+    fn incomparable_keys_are_dropped_conservatively() {
+        let mut s = vec![vec![Value::String("x".into())]];
+        let mut t = rows(&[1]);
+        clamp_to_common_window(&mut s, &mut t, false, true, &[0]);
+        assert!(s.is_empty());
+    }
 }

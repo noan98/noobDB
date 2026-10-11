@@ -678,6 +678,7 @@ export const sandboxTableDiffResult = z.object({
   desired_diff_id: z.string(),
   conflicts: z.array(sandboxConflict),
   source_checked: z.boolean(),
+  source_error: z.string().nullable(),
 });
 
 export const sandboxSchemaDiffResult = z.object({

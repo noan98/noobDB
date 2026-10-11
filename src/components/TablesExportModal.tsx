@@ -6,7 +6,8 @@ import { api, listenExportStream, type ExportFormat } from "../api/tauri";
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Radio } from "./ui";
+import { Button, Checkbox, Input, Radio } from "./ui";
+import { resolveExportMasks } from "./exportMasking";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
@@ -51,6 +52,8 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
   const settings = useSettings();
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [dir, setDir] = useState("");
+  // 単発の ExportModal と同じ設定 (exportMaskPresets) をテーブルごとの列名に当てて masks を作る。
+  const [maskEnabled, setMaskEnabled] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -124,6 +127,18 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
       return { ok: "cancelled" };
     }
     try {
+      // 列名はテーブルごとに違うので、書き出す直前に定義を取ってプリセットを解決する。
+      // 取得に失敗したときはマスクできないまま書き出さず、そのテーブルを失敗にする。
+      let masks: ReturnType<typeof resolveExportMasks> | null = null;
+      if (maskEnabled) {
+        const cols = await api.describeTable(sessionId, database, table);
+        const resolved = resolveExportMasks(
+          cols.map((c) => c.name),
+          settings.exportMaskPresets,
+          {},
+        );
+        masks = resolved.length > 0 ? resolved : null;
+      }
       await api.exportQueryStream({
         sessionId,
         streamId,
@@ -137,7 +152,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
         queryTimeoutSecs: null,
         table: format === "sql" ? table : null,
         batchSize: null,
-        masks: null,
+        masks,
       });
     } catch (e) {
       settle({ ok: false, error: String(e) });
@@ -245,6 +260,18 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
               </chakra.label>
             ))}
           </chakra.div>
+        </FormSection>
+
+        <FormSection>
+          <FieldLabel as="div">{t("exportMasking")}</FieldLabel>
+          <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none" fontSize="md">
+            <Checkbox
+              checked={maskEnabled}
+              onChange={(e) => setMaskEnabled(e.target.checked)}
+              disabled={isRunning}
+            />
+            <span>{t("exportMaskingEnable")}</span>
+          </chakra.label>
         </FormSection>
 
         <FormSection>

@@ -32,6 +32,12 @@ describe("resolveKeyIndicesByName", () => {
   it("falls back to [] (not partial) when any name is unresolvable", () => {
     expect(resolveKeyIndicesByName(COLS, ["id", "does_not_exist"])).toEqual([]);
   });
+
+  it("returns [] when the key name matches multiple columns (JOIN の同名列)", () => {
+    const joined = [col("id"), col("name"), col("id")];
+    expect(resolveKeyIndicesByName(joined, ["id"])).toEqual([]);
+    expect(resolveKeyIndicesByName(joined, ["name"])).toEqual([1]);
+  });
 });
 
 function pkDiff(partial: Partial<BroadcastDiff>): BroadcastDiff {

@@ -368,6 +368,7 @@ const en = {
   snippetScopeProfile: "A specific connection",
   snippetScopeGroup: "A connection group",
   snippetScopeProfileLabel: "Connection",
+  snippetScopeDeletedProfile: "(deleted connection)",
   snippetScopeGroupLabel: "Group",
   snippetScopeHelp: "Controls which connections show this snippet in the sidebar.",
   snippetSql: "SQL",
@@ -580,6 +581,8 @@ const en = {
   settingsLogsCopied: "Copied",
   settingsLogsClear: "Clear logs",
   settingsLogsClearConfirm: "Delete all saved application logs?",
+  settingsLogsLoadError: "Failed to load logs: {error}",
+  settingsLogsClearError: "Failed to clear logs: {error}",
   settingsLogsEmpty: "No logs recorded yet.",
   settingsLogsPath: "File: {path}",
 
@@ -1327,6 +1330,7 @@ const en = {
   qbValidationNoTable: "Select a table first.",
   qbValidationNoInsertValues: "Fill in at least one column and value to insert.",
   qbValidationNoSetValues: "Fill in at least one column to update.",
+  qbValidationNoInValues: "An IN condition has no values — fill them in or remove the condition.",
   qbValidationNoWhereConditions:
     "WHERE is enabled but has no conditions — fill one in or disable WHERE.",
   qbOrderBy: "ORDER BY",
@@ -3387,6 +3391,7 @@ const en = {
   schemaCompareDataSelectTable: "Select a table...",
   schemaCompareDataLimit: "Row limit",
   schemaCompareDataCompare: "Compare data",
+  schemaCompareDataComparedTable: "Compared table: {table}",
   schemaCompareDataInserts: "Insert",
   schemaCompareDataUpdates: "Update",
   schemaCompareDataDeletes: "Delete",
@@ -4172,6 +4177,10 @@ const en = {
   sandboxReviewSchemaExternalWarning:
     "These tables also changed schema on the original connection since the snapshot: {tables}. Review carefully before applying.",
   sandboxReviewTruncated: "capped at the row limit",
+  sandboxReviewSourceError:
+    "Could not read the current rows from the original database, so conflicts were not checked: {error}",
+  sandboxApplySourceErrorNote:
+    "Conflict detection failed for: {tables}. Changes made on the original database since the snapshot may be overwritten.",
   sandboxReviewConflictsUnchecked:
     "Conflict check skipped (pick a target connection above to check for concurrent changes).",
   sandboxReviewConflictsTitle: "{count} conflicting row(s) — choose how to resolve each one",
@@ -4903,6 +4912,7 @@ const ja: Dict = {
   snippetScopeProfile: "特定の接続",
   snippetScopeGroup: "接続グループ",
   snippetScopeProfileLabel: "接続",
+  snippetScopeDeletedProfile: "(削除済みの接続)",
   snippetScopeGroupLabel: "グループ",
   snippetScopeHelp: "このスニペットをサイドバーに表示する接続を制御します。",
   snippetSql: "SQL",
@@ -5115,6 +5125,8 @@ const ja: Dict = {
   settingsLogsCopied: "コピーしました",
   settingsLogsClear: "ログを消去",
   settingsLogsClearConfirm: "保存されているアプリケーションログをすべて削除しますか？",
+  settingsLogsLoadError: "ログの読み込みに失敗しました: {error}",
+  settingsLogsClearError: "ログの削除に失敗しました: {error}",
   settingsLogsEmpty: "まだログは記録されていません。",
   settingsLogsPath: "ファイル: {path}",
 
@@ -5861,6 +5873,7 @@ const ja: Dict = {
   qbValidationNoTable: "先にテーブルを選択してください。",
   qbValidationNoInsertValues: "挿入する列と値を少なくとも 1 つ入力してください。",
   qbValidationNoSetValues: "更新する列を少なくとも 1 つ入力してください。",
+  qbValidationNoInValues: "IN 条件に値がありません。値を入力するか条件を削除してください。",
   qbValidationNoWhereConditions:
     "WHERE が有効ですが条件がありません。条件を入力するか WHERE を無効にしてください。",
   qbOrderBy: "ORDER BY",
@@ -7915,6 +7928,7 @@ const ja: Dict = {
   schemaCompareDataSelectTable: "テーブルを選択...",
   schemaCompareDataLimit: "件数上限",
   schemaCompareDataCompare: "データを比較",
+  schemaCompareDataComparedTable: "比較したテーブル: {table}",
   schemaCompareDataInserts: "追加",
   schemaCompareDataUpdates: "変更",
   schemaCompareDataDeletes: "削除",
@@ -8700,6 +8714,10 @@ const ja: Dict = {
   sandboxReviewSchemaExternalWarning:
     "以下のテーブルはスナップショット以降、元の接続側でもスキーマが変更されています: {tables}。適用前によく確認してください。",
   sandboxReviewTruncated: "行数上限で打ち切り",
+  sandboxReviewSourceError:
+    "元の DB から現在の行を取得できなかったため、競合を検出できていません: {error}",
+  sandboxApplySourceErrorNote:
+    "競合検出に失敗したテーブル: {tables}。スナップショット以降に元の DB で行われた変更を上書きする可能性があります。",
   sandboxReviewConflictsUnchecked: "競合チェックは未実施です (上で対象接続を選ぶと同時変更を検出できます)。",
   sandboxReviewConflictsTitle: "{count} 件の競合行 — それぞれの解決方法を選んでください",
   sandboxReviewExternalValue: "元の接続での現在値",
