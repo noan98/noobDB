@@ -5636,7 +5636,8 @@ export const DataGrid = memo(function DataGrid({
         e.preventDefault();
         if (inspectorOpen) setInspectorOpen(false);
         else if (selection) setSelection(null);
-        else setActiveCell(null);
+        // activeCell は保持する: null にすると全セルが tabIndex=-1 になり、
+        // 矢印キー・Shift+Tab でグリッドへ戻れなくなる。
         break;
       case "Enter": {
         e.preventDefault();
