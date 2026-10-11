@@ -971,13 +971,14 @@ describe("キーボードセルナビゲーション (#406)", () => {
     expect(cells[0][1].classList.contains("is-active-cell")).toBe(true);
   });
 
-  it("Escape でアクティブセルが解除される", () => {
+  it("Escape でもアクティブセルは保持され、キーボードでグリッドへ戻れる", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     const cells = dataCells(container);
     fireEvent.focus(cells[0][0]);
     expect(cells[0][0].classList.contains("is-active-cell")).toBe(true);
     fireEvent.keyDown(cells[0][0], { key: "Escape" });
-    expect(cells[0][0].classList.contains("is-active-cell")).toBe(false);
+    expect(cells[0][0].classList.contains("is-active-cell")).toBe(true);
+    expect(cells[0][0].getAttribute("tabindex")).toBe("0");
   });
 
   it("Ctrl+C で現在のセル値がクリップボードにコピーされる", async () => {

@@ -31,6 +31,8 @@ interface Props {
   size?: "sm" | "md";
   /** アイコンのみ表示 (ラベルを隠す)。 */
   iconOnly?: boolean;
+  /** 書き出す対象がまだ無いとき (チャート未描画など) に無効化する。 */
+  disabled?: boolean;
 }
 
 async function pickPath(base: string, ext: "png" | "svg"): Promise<string | null> {
@@ -48,7 +50,7 @@ async function pickPath(base: string, ext: "png" | "svg"): Promise<string | null
   return typeof selected === "string" && selected ? selected : null;
 }
 
-export function ImageExportButton({ makePng, makeSvg, filenameBase, size = "sm", iconOnly }: Props) {
+export function ImageExportButton({ makePng, makeSvg, filenameBase, size = "sm", iconOnly, disabled }: Props) {
   const t = useT();
   const toast = useToast();
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -104,7 +106,7 @@ export function ImageExportButton({ makePng, makeSvg, filenameBase, size = "sm",
           variant="secondary"
           size={size}
           onClick={openMenu}
-          disabled={busy}
+          disabled={busy || disabled}
           aria-label={t("imageExportButton")}
         >
           <Icon name="download" size={ICON_SIZES.md} />

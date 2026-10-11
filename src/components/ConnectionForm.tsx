@@ -740,7 +740,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         file_path: isFileBacked ? (filePath || null) : null,
         // SQLite is file-backed and never negotiates TLS; persist null so a
         // driver switch can't leave stale TLS settings on the profile.
-        ssl_mode: isFileBacked ? null : effectiveSslMode,
+        // IAM で引き上げた値ではなく利用者が選んだ値を保存する (IAM を後で外したときに
+        // 元の選択を失わないため)。接続時のバックエンドが IAM では TLS を強制する。
+        ssl_mode: isFileBacked ? null : sslMode,
         ssl_root_cert: isFileBacked ? null : (sslRootCert.trim() || null),
         ssl_client_cert: isFileBacked ? null : (sslClientCert.trim() || null),
         ssl_client_key: isFileBacked ? null : (sslClientKey.trim() || null),

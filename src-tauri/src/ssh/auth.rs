@@ -162,18 +162,29 @@ where
     }
 
     let hash_alg = best_supported_rsa_hash(session).await;
+    let mut last_error: Option<String> = None;
     for id in identities {
         let public_key = id.public_key().into_owned();
-        let result = session
+        let result = match session
             .authenticate_publickey_with(user, public_key, hash_alg, &mut agent)
             .await
-            .map_err(|e| {
-                tracing::error!(user = %user, error = %e, "ssh: agent auth error");
-                AppError::Ssh(format!("ssh-agent auth error: {e}"))
-            })?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // 1 本の署名失敗 (確認拒否・ロック中など) で中断せず、OpenSSH と同じく
+                // 次の鍵へ進む。全部尽きたら最後のエラーを返す。
+                tracing::warn!(user = %user, error = %e, "ssh: agent auth error; trying next identity");
+                last_error = Some(format!("{e}"));
+                continue;
+            }
+        };
         if result.success() {
             return Ok(());
         }
+    }
+
+    if let Some(e) = last_error {
+        return Err(AppError::Ssh(format!("ssh-agent auth error: {e}")));
     }
 
     tracing::warn!(user = %user, "ssh: agent authentication rejected for all identities");

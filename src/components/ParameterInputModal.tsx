@@ -12,6 +12,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, PressableButton } from "./ui";
 import { Tooltip } from "./Tooltip";
+import { isPlainEnterKey } from "./modalKeys";
 
 /** Per-parameter draft: the typed value and how it's rendered into SQL. */
 interface Draft {
@@ -29,8 +30,9 @@ interface Props {
   onCancel: () => void;
 }
 
-// Previously entered values/types persist across runs so repeating a
-// parameterized query (or a saved snippet) doesn't re-type everything.
+// 前回の「型」だけを記憶する。値は保存しない: `ALTER USER u IDENTIFIED BY {{pw}}` の
+// ようにパスワードが入力されうるため、平文で localStorage に残さない (秘密は
+// OS keyring のみ、という方針)。
 const CACHE_KEY = "noobdb.queryparams.v1";
 type Cache = Record<string, Draft>;
 
@@ -39,7 +41,16 @@ function readCache(): Cache {
     const raw = localStorage.getItem(CACHE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") return parsed as Cache;
+      if (parsed && typeof parsed === "object") {
+        // 旧版が保存した値は読み捨てる (型だけ使う)。
+        const out: Cache = {};
+        for (const [k, v] of Object.entries(parsed as Record<string, Partial<Draft>>)) {
+          if (v && (v.type === "text" || v.type === "number" || v.type === "identifier")) {
+            out[k] = { value: "", type: v.type };
+          }
+        }
+        return out;
+      }
     }
   } catch {
     // ignore (corrupt entry, private mode, quota)
@@ -122,8 +133,10 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
 
   const submit = () => {
     if (hasError) return;
-    // Persist every entered parameter for next time.
-    writeCache({ ...readCache(), ...drafts });
+    // 型だけ保存する (値は保存しない)。
+    const typesOnly: Cache = {};
+    for (const [n, d] of Object.entries(drafts)) typesOnly[n] = { value: "", type: d.type };
+    writeCache({ ...readCache(), ...typesOnly });
     onSubmit(values, types);
   };
 
@@ -183,7 +196,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                     aria-invalid={err ? true : undefined}
                     onChange={(e) => setDraft(name, { value: e.target.value })}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                      if (isPlainEnterKey(e)) {
                         e.preventDefault();
                         submit();
                       }

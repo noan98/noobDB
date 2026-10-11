@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import { dialectLabel, sqlForAi } from "./errorExplain";
+import { sliceHead } from "./textSlice";
 
 /** モデルへ渡す候補の最大件数。超える分は送らず、期間で絞るよう案内する。 */
 export const HISTORY_SEARCH_MAX_CANDIDATES = 300;
@@ -75,7 +76,7 @@ export function limitCandidates<T>(items: readonly T[]): { items: T[]; overflow:
 export function candidateSql(c: Pick<HistoryCandidate, "sql" | "driver">, mask: boolean): string {
   const masked = sqlForAi(c.sql, c.driver, mask).replace(/\s+/g, " ").trim();
   return masked.length > HISTORY_SEARCH_MAX_SQL_CHARS
-    ? `${masked.slice(0, HISTORY_SEARCH_MAX_SQL_CHARS)}…`
+    ? `${sliceHead(masked, HISTORY_SEARCH_MAX_SQL_CHARS)}…`
     : masked;
 }
 

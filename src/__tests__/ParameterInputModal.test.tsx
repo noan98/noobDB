@@ -88,7 +88,7 @@ describe("ParameterInputModal", () => {
     expect(screen.getByText("SELECT 'O''Brien'")).toBeInTheDocument();
   });
 
-  it("前回入力値を localStorage から復元する", () => {
+  it("前回の型だけを localStorage から復元し、値は復元しない", () => {
     localStorage.setItem(
       "noobdb.queryparams.v1",
       JSON.stringify({ tbl: { value: "orders", type: "identifier" } }),
@@ -98,6 +98,27 @@ describe("ParameterInputModal", () => {
     );
     expect(
       screen.getByLabelText(t("parameterInputValueLabelFor", { name: "tbl" })),
-    ).toHaveValue("orders");
+    ).toHaveValue("");
+    expect(
+      screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "tbl" })),
+    ).toHaveValue("identifier");
+  });
+
+  it("実行しても入力値を localStorage に平文で残さない", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ParameterInputModal
+        sql="ALTER USER u IDENTIFIED BY {{pw}}"
+        driver="mysql"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    await user.type(
+      screen.getByLabelText(t("parameterInputValueLabelFor", { name: "pw" })),
+      "s3cret-value",
+    );
+    await user.click(screen.getByRole("button", { name: t("parameterInputRun") }));
+    expect(localStorage.getItem("noobdb.queryparams.v1") ?? "").not.toContain("s3cret-value");
   });
 });
