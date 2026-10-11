@@ -157,9 +157,9 @@ pub mod __test_api {
         DataSearchMessage, DataSearchRequest, ObjectSearchScope, WhereUsedReport,
     };
     pub use crate::db::data_search::{
-        build_column_predicate, build_table_scan_sql, classify_type_name, is_numeric_term,
-        parse_scan_row, search_target_for_kind, should_skip_table_for_scan, CellKind, ColumnHit,
-        MatchMode, ScanColumn, SearchTarget, TableScanSql,
+        build_column_predicate, build_table_scan_sql, classify_for_search, classify_type_name,
+        is_numeric_term, parse_scan_row, search_target_for_kind, should_skip_table_for_scan,
+        CellKind, ColumnHit, MatchMode, ScanColumn, SearchTarget, TableScanSql,
     };
     pub use crate::db::object_search::{ObjectHit, ObjectIndex};
     pub use crate::db::where_used::{

@@ -240,7 +240,8 @@ fn rule_duplicate_and_redundant_indexes(
     for x in indexes {
         // PRIMARY / UNIQUE は制約を担うため DROP 候補にしない。列が空の
         // (式) インデックスも対象外。
-        if x.primary || x.unique || x.columns.is_empty() {
+        // 式インデックスは `columns` に式の列が積まれず、列だけの比較は別物を同一視する。
+        if x.primary || x.unique || x.columns.is_empty() || x.first_expression_at.is_some() {
             continue;
         }
         let xcols = lower_cols(x);
@@ -248,8 +249,13 @@ fn rule_duplicate_and_redundant_indexes(
         // 完全一致の重複。相手が PRIMARY/UNIQUE か、名前が自分より前のときのみ
         // フラグする → 同一構成の非 UNIQUE インデックス 2 本のうち 1 本だけを
         // 指摘する (両方消える誤誘導を避ける)。
+        // 部分インデックスは述語が同じものどうしだけを重複とみなす (述語が違えば別の行集合を担う)。
         if let Some(dup) = indexes.iter().find(|y| {
-            y.name != x.name && lower_cols(y) == xcols && (y.primary || y.unique || y.name < x.name)
+            y.name != x.name
+                && y.first_expression_at.is_none()
+                && y.predicate == x.predicate
+                && lower_cols(y) == xcols
+                && (y.primary || y.unique || y.name < x.name)
         }) {
             out.push(HealthFinding {
                 rule: RuleId::DuplicateIndex,
@@ -266,8 +272,11 @@ fn rule_duplicate_and_redundant_indexes(
         // プレフィックス冗長: x の列列が別インデックス y の真のプレフィックス。
         // y は PRIMARY/UNIQUE を含む任意のインデックスでよい (より長いインデックスは
         // その先頭列でのルックアップを賄う)。
+        // y が部分インデックスなら、x と同じ述語のときだけ x の行を全て含む (非部分 y は常に包含)。
         if let Some(cov) = indexes.iter().find(|y| {
             y.name != x.name
+                && y.first_expression_at.is_none()
+                && (y.predicate.is_none() || y.predicate == x.predicate)
                 && y.columns.len() > x.columns.len()
                 && lower_cols(y).starts_with(&xcols)
         }) {
@@ -329,10 +338,19 @@ fn rule_fk_missing_index(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
         };
         let fk_cols: Vec<String> = group.columns.iter().map(|c| c.to_lowercase()).collect();
         // FK が「賄われている」= あるインデックスの先頭が FK 列列に一致する。
-        let covered = table
-            .indexes
-            .iter()
-            .any(|idx| idx.columns.len() >= fk_cols.len() && lower_cols(idx).starts_with(&fk_cols));
+        // 部分インデックスは一部の行しか持たないので数えない。式インデックスは、先頭から最初の
+        // 式キーの手前までの実列だけで前方一致を判定する (`(user_id, lower(name))` は
+        // `user_id` の FK を賄う)。
+        let covered = table.indexes.iter().any(|idx| {
+            let real = idx
+                .first_expression_at
+                .map_or(idx.columns.len(), |n| n.min(idx.columns.len()));
+            idx.predicate.is_none()
+                && real >= fk_cols.len()
+                && lower_cols(idx)
+                    .get(..real)
+                    .is_some_and(|c| c.starts_with(&fk_cols))
+        });
         if covered {
             continue;
         }
@@ -402,6 +420,11 @@ fn column_type<'a>(table: &'a TableMeta, column: &str) -> Option<&'a str> {
 /// MySQL では符号 (`unsigned`) も一致していれば互換とみなす。長さ/精度の違い
 /// (`varchar(50)` vs `varchar(255)`) は JOIN 自体は効くので不一致にしない。
 fn types_compatible(driver: DriverKind, a: &str, b: &str) -> bool {
+    // SQLite の型は宣言名ではなく型親和性で決まる (`INT` / `BIGINT` / `INTEGER` はどれも
+    // INTEGER 親和性で、暗黙変換もインデックスの効きも変わらない)。
+    if driver == DriverKind::Sqlite {
+        return sqlite_affinity(a) == sqlite_affinity(b);
+    }
     if base_type_token(a) != base_type_token(b) {
         return false;
     }
@@ -413,6 +436,22 @@ fn types_compatible(driver: DriverKind, a: &str, b: &str) -> bool {
         }
     }
     true
+}
+
+/// SQLite の型親和性 (公式の判定規則を上から順に適用する)。
+fn sqlite_affinity(t: &str) -> &'static str {
+    let u = t.to_uppercase();
+    if u.contains("INT") {
+        "INTEGER"
+    } else if u.contains("CHAR") || u.contains("CLOB") || u.contains("TEXT") {
+        "TEXT"
+    } else if u.contains("BLOB") || u.trim().is_empty() {
+        "BLOB"
+    } else if u.contains("REAL") || u.contains("FLOA") || u.contains("DOUB") {
+        "REAL"
+    } else {
+        "NUMERIC"
+    }
 }
 
 /// 型文字列の基底トークン (先頭の英字語) を小文字で返す。`character varying(50)`
@@ -510,7 +549,10 @@ fn rule_sqlite_integer_pk_hint(table: &TableMeta, out: &mut Vec<HealthFinding>) 
 /// FK 列に張る `CREATE INDEX` を生成する。インデックス名は `idx_<table>_<cols>`。
 /// 識別子は方言でクオートする。ユーザはエディタで確認してから実行する。
 fn create_index_ddl(driver: DriverKind, table: &str, columns: &[String]) -> String {
-    let idx_name = sanitize_index_name(&format!("idx_{}_{}", table, columns.join("_")));
+    let idx_name = fit_index_name(
+        driver,
+        sanitize_index_name(&format!("idx_{}_{}", table, columns.join("_"))),
+    );
     let cols = columns
         .iter()
         .map(|c| quote_ident(driver, c))
@@ -537,6 +579,22 @@ fn drop_index_ddl(driver: DriverKind, table: &str, index: &str) -> String {
             format!("DROP INDEX {};", quote_ident(driver, index))
         }
     }
+}
+
+/// 生成したインデックス名が方言の識別子長の上限 (MySQL 64 文字 / PostgreSQL 63 バイト) を
+/// 超えるとき、先頭を切り詰めて末尾に元の名前のハッシュ (8 桁 hex) を付けて収める。
+/// 名前は `sanitize_index_name` 済みの ASCII。SQLite に上限は無い。
+fn fit_index_name(driver: DriverKind, name: String) -> String {
+    const LIMIT: usize = 63;
+    if driver == DriverKind::Sqlite || name.len() <= LIMIT {
+        return name;
+    }
+    // FNV-1a (32bit)。同じ入力から常に同じ名前になる。
+    let hash = name.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    let keep = LIMIT - 9;
+    format!("{}_{hash:08x}", &name[..keep])
 }
 
 /// インデックス名候補から、識別子として扱いづらい文字を `_` に畳む。クオートは
@@ -572,6 +630,8 @@ mod tests {
             unique,
             primary,
             method: None,
+            predicate: None,
+            first_expression_at: None,
         }
     }
 
@@ -590,6 +650,8 @@ mod tests {
             referenced_table: ref_table.to_string(),
             referenced_column: ref_col.map(|s| s.to_string()),
             constraint_name: None,
+            on_delete: None,
+            on_update: None,
         }
     }
 
@@ -1045,5 +1107,157 @@ mod tests {
         assert_eq!(report.findings[0].table, "a");
         assert_eq!(report.findings[0].rule, RuleId::FkMissingIndex);
         assert_eq!(report.findings.last().unwrap().table, "z");
+    }
+
+    fn partial(mut i: IndexInfo, pred: &str) -> IndexInfo {
+        i.predicate = Some(pred.to_string());
+        i
+    }
+
+    #[test]
+    fn partial_indexes_with_different_predicates_are_not_duplicates() {
+        let t = table(
+            "orders",
+            vec![col("id", "int", true), col("status", "text", false)],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                partial(idx("i1", &["status"], false, false), "deleted_at IS NULL"),
+                partial(idx("i2", &["status"], false, false), "archived"),
+            ],
+        );
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        assert!(findings_for(&report, RuleId::DuplicateIndex).is_empty());
+    }
+
+    #[test]
+    fn partial_indexes_with_same_predicate_are_duplicates() {
+        let t = table(
+            "orders",
+            vec![col("id", "int", true), col("status", "text", false)],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                partial(idx("i1", &["status"], false, false), "archived"),
+                partial(idx("i2", &["status"], false, false), "archived"),
+            ],
+        );
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        assert_eq!(findings_for(&report, RuleId::DuplicateIndex).len(), 1);
+    }
+
+    #[test]
+    fn partial_index_does_not_cover_a_prefix_index() {
+        // 部分インデックス (a, b) は非部分インデックス (a) の行を全ては持たない。
+        let t = table(
+            "t",
+            vec![
+                col("id", "int", true),
+                col("a", "int", false),
+                col("b", "int", false),
+            ],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                idx("i_a", &["a"], false, false),
+                partial(idx("i_ab", &["a", "b"], false, false), "b > 0"),
+            ],
+        );
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        assert!(findings_for(&report, RuleId::RedundantIndex).is_empty());
+    }
+
+    #[test]
+    fn expression_index_is_not_treated_as_its_plain_columns() {
+        let mut expr = idx("i_expr", &["b"], false, false);
+        expr.first_expression_at = Some(0); // (lower(a), b)
+        let t = table(
+            "t",
+            vec![col("id", "int", true), col("b", "int", false)],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                idx("i_b", &["b"], false, false),
+                expr,
+            ],
+        );
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        assert!(findings_for(&report, RuleId::DuplicateIndex).is_empty());
+    }
+
+    #[test]
+    fn expression_index_covers_fk_by_its_leading_real_columns() {
+        // (user_id, lower(name)): 先頭の実列 user_id だけで FK を賄う。
+        let mut covering = idx("i_u_expr", &["user_id"], false, false);
+        covering.first_expression_at = Some(1);
+        // (lower(name), user_id): 式が先頭なので user_id の FK は賄えない。
+        let mut not_covering = idx("i_expr_u", &["user_id"], false, false);
+        not_covering.first_expression_at = Some(0);
+        let mk = |index: IndexInfo| {
+            table(
+                "orders",
+                vec![col("id", "int", true), col("user_id", "int", false)],
+                vec![idx("PRIMARY", &["id"], true, true), index],
+            )
+        };
+        let f = vec![fk("orders", "user_id", "users", Some("id"))];
+        let ok = analyze(&input(DriverKind::Postgres, vec![mk(covering)], f.clone()));
+        assert!(findings_for(&ok, RuleId::FkMissingIndex).is_empty());
+        let ng = analyze(&input(DriverKind::Postgres, vec![mk(not_covering)], f));
+        assert_eq!(findings_for(&ng, RuleId::FkMissingIndex).len(), 1);
+    }
+
+    #[test]
+    fn sqlite_fk_types_compare_by_affinity() {
+        let parent = table(
+            "users",
+            vec![col("id", "INTEGER", true)],
+            vec![idx("pk", &["id"], true, true)],
+        );
+        let child = table(
+            "orders",
+            vec![col("id", "INTEGER", true), col("user_id", "BIGINT", false)],
+            vec![
+                idx("pk", &["id"], true, true),
+                idx("i_u", &["user_id"], false, false),
+            ],
+        );
+        let report = analyze(&input(
+            DriverKind::Sqlite,
+            vec![parent, child],
+            vec![fk("orders", "user_id", "users", Some("id"))],
+        ));
+        assert!(findings_for(&report, RuleId::FkTypeMismatch).is_empty());
+        assert_eq!(sqlite_affinity("VARCHAR(50)"), "TEXT");
+        assert_eq!(sqlite_affinity("DOUBLE"), "REAL");
+        assert_ne!(sqlite_affinity("TEXT"), sqlite_affinity("INTEGER"));
+    }
+
+    #[test]
+    fn long_index_names_are_shortened_for_mysql_and_postgres() {
+        let ddl = create_index_ddl(
+            DriverKind::Mysql,
+            "customer_subscription_invoice_line_items",
+            &["subscription_invoice_id".to_string()],
+        );
+        let name = ddl.split('`').nth(1).unwrap();
+        assert!(name.len() <= 63, "{name}");
+        // 同じ入力なら同じ名前、短い名前はそのまま、SQLite は切り詰めない。
+        assert_eq!(
+            ddl,
+            create_index_ddl(
+                DriverKind::Mysql,
+                "customer_subscription_invoice_line_items",
+                &["subscription_invoice_id".to_string()],
+            )
+        );
+        assert_eq!(
+            create_index_ddl(DriverKind::Mysql, "t", &["c".to_string()]),
+            "CREATE INDEX `idx_t_c` ON `t` (`c`);"
+        );
+        let sqlite = create_index_ddl(
+            DriverKind::Sqlite,
+            "customer_subscription_invoice_line_items",
+            &["subscription_invoice_id".to_string()],
+        );
+        assert!(
+            sqlite.contains("idx_customer_subscription_invoice_line_items_subscription_invoice_id")
+        );
     }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import vectors from "./fixtures/dataSearchVectors.json";
-import { buildColumnPredicate } from "../components/dataSearch";
+import { buildColumnPredicate, searchKindFor } from "../components/dataSearch";
 import { classifyTypeName } from "../components/cellTypeMeta";
 import type { MatchMode } from "../components/dataSearch";
 import {
@@ -29,11 +29,17 @@ describe("data search golden vectors", () => {
     }
   });
 
+  it("search kinds (production searchKindFor)", () => {
+    for (const c of vectors.searchKinds) {
+      expect(searchKindFor(c.driver, c.dataType), `${c.driver} ${c.dataType}`).toBe(c.kind);
+    }
+  });
+
   it("column predicates (production buildColumnPredicate)", () => {
     expect(vectors.predicates.length).toBeGreaterThan(100);
     for (const p of vectors.predicates) {
       expect(
-        buildColumnPredicate(p.driver, p.column, classifyTypeName(p.dataType), p.term, p.mode as MatchMode),
+        buildColumnPredicate(p.driver, p.column, searchKindFor(p.driver, p.dataType), p.term, p.mode as MatchMode),
         `${p.driver} ${p.column} ${p.dataType} ${JSON.stringify(p.term)} ${p.mode}`,
       ).toBe(p.expected);
     }

@@ -247,6 +247,8 @@ mod tests {
             referenced_table: referenced.to_string(),
             referenced_column: Some("id".to_string()),
             constraint_name: None,
+            on_delete: None,
+            on_update: None,
         }
     }
 

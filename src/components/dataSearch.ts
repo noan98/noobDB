@@ -50,11 +50,69 @@ export function searchTargetForDataType(dataType: string): SearchTarget {
   return searchTargetForKind(classifyTypeName(dataType));
 }
 
+const PG_TEXT_TYPES = new Set([
+  "TEXT",
+  "VARCHAR",
+  "CHARACTER VARYING",
+  "CHAR",
+  "CHARACTER",
+  "BPCHAR",
+  "NAME",
+  "CITEXT",
+]);
+const PG_NUMBER_TYPES = new Set([
+  "SMALLINT",
+  "INTEGER",
+  "BIGINT",
+  "INT2",
+  "INT4",
+  "INT8",
+  "REAL",
+  "DOUBLE PRECISION",
+  "FLOAT4",
+  "FLOAT8",
+]);
+
+/**
+ * 走査用の型分類。MySQL / SQLite は `classifyTypeName` そのまま。PostgreSQL は `LIKE` が
+ * 使えない型 (uuid・timestamp・bytea・json/jsonb・enum=`USER-DEFINED`・配列 …) を文字列扱いすると
+ * 表ごと SQL エラーになるため、`information_schema` の型名 (`double precision` /
+ * `numeric(10,2)` / `timestamp without time zone` など) を解釈し、文字列として比較できる型以外は
+ * 走査対象外 (`binary`) にする。Rust の `data_search::classify_for_search` と同一規則。
+ */
+export function searchKindFor(driver: string, dataType: string): CellKind {
+  const kind = classifyTypeName(dataType);
+  if (driver !== "postgres") return kind;
+  if (kind !== "string" && kind !== "json" && kind !== "enum") return kind;
+  const base = dataType.replace(/\([^)]*\)/g, "").trim().split(/\s+/).join(" ").toUpperCase();
+  if (base === "NUMERIC" || base === "DECIMAL") return "decimal";
+  if (PG_NUMBER_TYPES.has(base)) return "number";
+  if (PG_TEXT_TYPES.has(base) || base === "") return "string";
+  return "binary";
+}
+
 /** 検索語が数値リテラルとして解釈できるか (`cellEdit.ts` の数値判定と同じ緩さ)。 */
 const NUMERIC_TERM_RE = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
 
 export function isNumericTerm(term: string): boolean {
   return NUMERIC_TERM_RE.test(term.trim());
+}
+
+/**
+ * 数値検索語を SQL へ埋め込む数値リテラルへ正規化する (Rust の `numeric_literal` と同一)。
+ * 整数表記は `Number()` を通さず 10 進文字列のまま使う (2^53 超の BIGINT を丸めない)。
+ * 小数・指数表記は `Number()` 経由だが、`1e400` のように有限でなくなる語は `null`。
+ */
+export function numericLiteral(term: string): string | null {
+  if (!isNumericTerm(term)) return null;
+  const t = term.trim();
+  const m = /^(-?)(\d+)$/.exec(t);
+  if (m) {
+    const digits = m[2].replace(/^0+/, "");
+    return digits === "" ? "0" : `${m[1]}${digits}`;
+  }
+  const n = Number(t);
+  return Number.isFinite(n) ? String(n) : null;
 }
 
 /**
@@ -88,10 +146,10 @@ export function buildColumnPredicate(
   if (target === "excluded") return null;
   const col = quoteIdentFor(driver, columnName);
   if (target === "numeric") {
-    if (!isNumericTerm(term)) return null;
-    // 正規表現で数値と確認済みの文字列を正規化してそのまま埋め込む (安全網
-    // として Number() を経由し、想定外の表記を弾く)。
-    return `${col} = ${Number(term.trim())}`;
+    // 正規表現で数値と確認済みの語を `numericLiteral` で正規化して埋め込む。
+    const literal = numericLiteral(term);
+    if (literal === null) return null;
+    return `${col} = ${literal}`;
   }
   const escapeClause = `ESCAPE ${quoteString(driver, "\\")}`;
   switch (mode) {
@@ -120,7 +178,7 @@ export function buildColumnJumpSql(
   term: string,
   mode: MatchMode,
 ): string | null {
-  const predicate = buildColumnPredicate(driver, columnName, classifyTypeName(dataType), term, mode);
+  const predicate = buildColumnPredicate(driver, columnName, searchKindFor(driver, dataType), term, mode);
   if (!predicate) return null;
   return `SELECT * FROM ${qualifiedTable(driver, database, table)} WHERE ${predicate}`;
 }
@@ -143,7 +201,7 @@ export function buildTableJumpSql(
   const predicates: string[] = [];
   for (const c of columns) {
     if (!hitSet.has(c.name)) continue;
-    const predicate = buildColumnPredicate(driver, c.name, classifyTypeName(c.dataType), term, mode);
+    const predicate = buildColumnPredicate(driver, c.name, searchKindFor(driver, c.dataType), term, mode);
     if (predicate) predicates.push(predicate);
   }
   if (predicates.length === 0) return null;

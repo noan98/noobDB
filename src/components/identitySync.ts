@@ -52,6 +52,14 @@ export function mysqlMaxValueSql(database: string | null, table: string, column:
 }
 
 /**
+ * SQLite 用: 対象表が AUTOINCREMENT 付きで作られているか (= `sqlite_sequence` に行を持ち得るか)
+ * を調べる SELECT。行が返れば同期可能、0 行なら同期対象外。
+ */
+export function sqliteHasAutoincrementSql(table: string): string {
+  return `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${sqlString(table)} AND UPPER(sql) LIKE '%AUTOINCREMENT%'`;
+}
+
+/**
  * `run_lookup_query` が返した MAX セルを、JS の number で丸めない 10 進整数の
  * 文字列に正規化する。空テーブル (NULL) は `"0"`、整数として解釈できない値は `null`。
  */
@@ -72,7 +80,8 @@ export function parseMaxValue(cell: unknown): string | null {
  * - MySQL: `ALTER TABLE ... AUTO_INCREMENT = N`。`AUTO_INCREMENT` にサブクエリは書けない
  *   ので、`maxValue` (事前に `mysqlMaxValueSql` で取得した最大値) から N = max+1 を
  *   BigInt で計算してリテラルで埋める。`maxValue` が整数でなければ `null` を返す。
- * - SQLite: `UPDATE sqlite_sequence SET seq = ... WHERE name = 'table'`。
+ * - SQLite: `UPDATE sqlite_sequence SET seq = MAX(seq, 実データの最大 rowid) WHERE name = 'table'`
+ *   (AUTOINCREMENT の表のみ。呼び出し側が `sqliteHasAutoincrementSql` で確認する)。
  */
 export function buildIdentitySyncSql(
   driver: string,
@@ -92,7 +101,9 @@ export function buildIdentitySyncSql(
   }
   if (driver === "sqlite") {
     return (
-      `UPDATE sqlite_sequence SET seq = (SELECT COALESCE(MAX(rowid), 0) FROM ${name}) ` +
+      // 採番値は下げない (MAX(seq, …))。下げると AUTOINCREMENT の「削除済み ID を再利用しない」
+      // 保証が壊れる。
+      `UPDATE sqlite_sequence SET seq = MAX(seq, (SELECT COALESCE(MAX(rowid), 0) FROM ${name})) ` +
       `WHERE name = ${sqlString(table)};`
     );
   }

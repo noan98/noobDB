@@ -344,6 +344,27 @@ pub fn build_sql(
     })
 }
 
+/// MySQL の派生表は列名の重複を許さない (ERROR 1060)。`custom_sql` の `check_sql` は本文を
+/// 派生表に包むため、`SELECT a.id, b.id …` のような同名列を含む本文だけが件数チェックで失敗する
+/// (`violations_sql` は素の SELECT なので動く)。その失敗かを判定し、原因が分かる案内を返す。
+pub fn custom_sql_duplicate_column_hint(
+    driver: DriverKind,
+    rule: &AssertionRule,
+    error_message: &str,
+) -> Option<String> {
+    if driver != DriverKind::Mysql || !matches!(rule, AssertionRule::CustomSql { .. }) {
+        return None;
+    }
+    let lower = error_message.to_lowercase();
+    (lower.contains("duplicate column name") || lower.contains("1060 (42s21)")).then(|| {
+        format!(
+            "custom_sql has duplicate column names in its SELECT. MySQL wraps the SELECT in a \
+             derived table for the count check, so give each column a unique alias (AS): \
+             {error_message}"
+        )
+    })
+}
+
 /// `check_sql` の結果 (件数) からルールの pass/fail を決める。`row_count` は条件と
 /// 比較し、それ以外は違反件数が 0 なら pass。
 pub fn evaluate(rule: &AssertionRule, observed: u64) -> bool {
@@ -379,6 +400,25 @@ pub fn count_from_value(value: &Value) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn duplicate_column_error_gets_a_hint_only_for_mysql_custom_sql() {
+        let custom = AssertionRule::CustomSql {
+            sql: "SELECT a.id, b.id FROM a JOIN b".into(),
+        };
+        let err = "error returned from database: 1060 (42S21): Duplicate column name 'id'";
+        assert!(custom_sql_duplicate_column_hint(DriverKind::Mysql, &custom, err).is_some());
+        // 単なる "1060" だけの文字列には反応しない (行番号などの偶然一致を避ける)。
+        assert!(
+            custom_sql_duplicate_column_hint(DriverKind::Mysql, &custom, "near line 1060")
+                .is_none()
+        );
+        assert!(custom_sql_duplicate_column_hint(DriverKind::Postgres, &custom, err).is_none());
+        assert!(
+            custom_sql_duplicate_column_hint(DriverKind::Mysql, &custom, "Unknown column 'x'")
+                .is_none()
+        );
+    }
+
     use super::*;
 
     const ALL: [DriverKind; 3] = [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];

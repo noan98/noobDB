@@ -954,7 +954,8 @@ impl SqliteConn {
         // index_list: seq, name, unique, origin, partial / index_info: seqno, cid, name。
         // 式インデックスの列は name が NULL なので列としては積まない。
         let rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT m.name, il.name, il.\"unique\", il.origin, ii.name
+            "SELECT m.name, il.name, il.\"unique\", il.origin, ii.name, il.partial,
+                    (SELECT x.sql FROM sqlite_master x WHERE x.type = 'index' AND x.name = il.name)
              FROM sqlite_master m
              JOIN pragma_index_list(m.name) il
              LEFT JOIN pragma_index_info(il.name) ii
@@ -975,6 +976,23 @@ impl SqliteConn {
                     .unwrap_or(false),
                 column: r.try_get::<Option<String>, _>(4).ok().flatten(),
                 method: None,
+                predicate: if r.try_get::<i64, _>(5).unwrap_or(0) != 0 {
+                    Some(
+                        r.try_get::<Option<String>, _>(6)
+                            .ok()
+                            .flatten()
+                            .as_deref()
+                            .and_then(sqlite_partial_predicate)
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "<partial:{}>",
+                                    r.try_get::<String, _>(1).unwrap_or_default()
+                                )
+                            }),
+                    )
+                } else {
+                    None
+                },
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -1053,6 +1071,8 @@ impl SqliteConn {
                     referenced_table,
                     referenced_column,
                     constraint_name: id.map(|i| format!("{}:{}", table, i)),
+                    on_delete: None,
+                    on_update: None,
                 });
             }
         }
@@ -1088,16 +1108,38 @@ impl SqliteConn {
             let info_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(info_sql))
                 .fetch_all(&self.pool)
                 .await?;
-            let columns = info_rows
+            let names: Vec<Option<String>> = info_rows
                 .iter()
-                .filter_map(|c| c.try_get::<Option<String>, _>("name").ok().flatten())
+                .map(|c| c.try_get::<Option<String>, _>("name").ok().flatten())
                 .collect();
+            let first_expression_at = names.iter().position(Option::is_none);
+            let columns = names.into_iter().flatten().collect();
+            let partial = r.try_get::<i64, _>("partial").unwrap_or(0) != 0;
+            let predicate = if partial {
+                let sql: Option<String> = sqlx::query_scalar(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+                )
+                .bind(&name)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
+                // 述語を取り出せなくても「部分インデックスである」印は残す。
+                Some(
+                    sql.as_deref()
+                        .and_then(sqlite_partial_predicate)
+                        .unwrap_or_else(|| format!("<partial:{name}>")),
+                )
+            } else {
+                None
+            };
             out.push(IndexInfo {
                 name,
                 columns,
                 unique,
                 primary,
                 method: None,
+                predicate,
+                first_expression_at,
             });
         }
         Ok(out)
@@ -1420,6 +1462,47 @@ async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Quer
     }
 }
 
+/// `CREATE [UNIQUE] INDEX … ON t (…) WHERE <述語>` から述語部分を取り出す (部分インデックス用)。
+/// 括弧の外・クオートの外にある最初の `WHERE` 以降を返す。見つからなければ `None`。
+fn sqlite_partial_predicate(create_sql: &str) -> Option<String> {
+    let bytes = create_sql.as_bytes();
+    let mut depth = 0i32;
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+        } else {
+            match c {
+                b'\'' | b'"' | b'`' => quote = Some(c),
+                b'[' => quote = Some(b']'),
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ if depth == 0
+                    && i > 0
+                    && (bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b')')
+                    && create_sql
+                        .get(i..i + 5)
+                        .is_some_and(|w| w.eq_ignore_ascii_case("where"))
+                    && bytes
+                        .get(i + 5)
+                        .map_or(true, |n| n.is_ascii_whitespace() || *n == b'(') =>
+                {
+                    let rest = create_sql.get(i + 5..)?.trim();
+                    return (!rest.is_empty())
+                        .then(|| rest.trim_end_matches(';').trim().to_string());
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 fn row_to_values(row: &SqliteRow) -> Vec<Value> {
     (0..row.columns().len())
         .map(|i| decode_cell(row, i))
@@ -1709,6 +1792,22 @@ async fn fetch_capped_sqlite(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn partial_predicate_is_extracted_from_create_index_sql() {
+        use super::sqlite_partial_predicate as p;
+        assert_eq!(
+            p("CREATE INDEX i ON t(a) WHERE b IS NULL").as_deref(),
+            Some("b IS NULL")
+        );
+        assert_eq!(
+            p("CREATE UNIQUE INDEX i ON t(a) where (x > 1)").as_deref(),
+            Some("(x > 1)")
+        );
+        // 括弧・クオート内の WHERE は拾わない。
+        assert_eq!(p("CREATE INDEX i ON t(a, \"where\")"), None);
+        assert_eq!(p("CREATE INDEX i ON t(a)"), None);
+    }
+
     use super::*;
 
     #[test]

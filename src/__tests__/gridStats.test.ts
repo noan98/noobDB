@@ -143,6 +143,20 @@ describe("buildColumnStatsSql (#524)", () => {
     );
   });
 
+  it("SQLite は SUM の整数オーバーフローを避けるため TOTAL を使う", () => {
+    const sql = buildColumnStatsSql({
+      driver: "sqlite",
+      database: "main",
+      table: "events",
+      column: "ts_ns",
+      kind: "number",
+    });
+    expect(sql).toContain(
+      'CASE WHEN COUNT("ts_ns") = 0 THEN NULL ELSE TOTAL("ts_ns") END AS sum_value',
+    );
+    expect(sql).not.toContain("SUM(");
+  });
+
   it("uses double quotes for Postgres and omits AVG/SUM for non-numeric", () => {
     const sql = buildColumnStatsSql({
       driver: "postgres",

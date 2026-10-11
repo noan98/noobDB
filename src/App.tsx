@@ -94,6 +94,7 @@ import {
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import {
   buildIdentitySyncSql,
+  sqliteHasAutoincrementSql,
   findIdentityColumn,
   mysqlMaxValueSql,
 } from "./components/identitySync";
@@ -6953,6 +6954,24 @@ export default function App() {
           return;
         }
         let maxValue: string | null = null;
+        if (driver === "sqlite") {
+          // sqlite_sequence は AUTOINCREMENT の表が 1 つも無い DB には存在せず、
+          // AUTOINCREMENT でない表は行を持たない。同期できない表は SQL を出さずに知らせる。
+          try {
+            const res = await api.runLookupQuery({
+              sessionId,
+              sql: sqliteHasAutoincrementSql(table),
+              database,
+            });
+            if (res.rows.length === 0) {
+              toast.error(translate("identitySyncNoAutoincrement", { table }));
+              return;
+            }
+          } catch (e) {
+            toast.error(translate("identitySyncAutoincrementCheckFailed", { table, error: String(e) }));
+            return;
+          }
+        }
         if (driver === "mysql") {
           try {
             const res = await api.runLookupQuery({
@@ -9654,6 +9673,7 @@ export default function App() {
                     />
                   ) : bottomPanelCtx.advisorDatabase ? (
                     <AdvisorPanel
+                      key={`${sessionId}:${bottomPanelCtx.advisorDatabase}`}
                       sessionId={sessionId}
                       database={bottomPanelCtx.advisorDatabase}
                       isProduction={selectedProfile?.is_production ?? false}

@@ -10,9 +10,9 @@
 //! で接続自身の方言の DDL にする。純関数なので DB 無しでテストできる。
 //!
 //! あくまでベストエフォート: 生成列の式・CHECK 制約・パーティション・
-//! ストレージオプション・部分/式インデックスは introspection が持たないため
-//! 出力されない。その旨を DDL 冒頭のコメント ([`SYNTHESIZED_DDL_HEADER`]) で
-//! 明示する。
+//! ストレージオプション・式インデックスは introspection が持たないため出力されない (式インデックスは誤った形で出さず、
+//! 末尾のコメントで名前だけ知らせる)。部分インデックスは述語 (`WHERE`) 付きで出力する。
+//! その旨を DDL 冒頭のコメント ([`SYNTHESIZED_DDL_HEADER`]) で明示する。
 
 use super::sync::{column_def, quote_ident, render_create_table};
 use super::types::{ForeignKey, IndexInfo, TableColumnInfo};
@@ -22,8 +22,8 @@ use super::DriverKind;
 /// 実行できる。
 pub const SYNTHESIZED_DDL_HEADER: &str = "\
 -- Reconstructed by noobDB from catalog metadata (best-effort).
--- Generated columns, CHECK constraints, partitioning, storage options and
--- partial/expression indexes are not included. Review before running.
+-- Generated columns, CHECK constraints, partitioning, storage options,
+-- and expression indexes are not included. Review before running.
 ";
 
 /// `schema` (PostgreSQL のスキーマ) で修飾したテーブル名。
@@ -63,6 +63,8 @@ struct FkGroup<'a> {
     referenced_table: &'a str,
     columns: Vec<&'a str>,
     referenced_columns: Vec<Option<&'a str>>,
+    on_delete: Option<&'a str>,
+    on_update: Option<&'a str>,
 }
 
 /// `foreign_keys` の 1 列 1 行を制約単位に畳む。制約名が無い行はそれぞれ独立の
@@ -84,6 +86,8 @@ fn group_foreign_keys<'a>(table: &str, fks: &'a [ForeignKey]) -> Vec<FkGroup<'a>
                     referenced_table: &fk.referenced_table,
                     columns: Vec::new(),
                     referenced_columns: Vec::new(),
+                    on_delete: fk.on_delete.as_deref(),
+                    on_update: fk.on_update.as_deref(),
                 });
                 groups.len() - 1
             }
@@ -127,19 +131,25 @@ fn render_foreign_key(driver: DriverKind, g: &FkGroup<'_>) -> String {
             .collect();
         out.push_str(&format!(" ({})", refs.join(", ")));
     }
+    if let Some(action) = g.on_delete {
+        out.push_str(&format!(" ON DELETE {action}"));
+    }
+    if let Some(action) = g.on_update {
+        out.push_str(&format!(" ON UPDATE {action}"));
+    }
     out
 }
 
-/// PK 以外のインデックスの `CREATE INDEX`。列の無いもの (式インデックス等) は
-/// 正しく再現できないので出さない。
+/// PK 以外のインデックスの `CREATE INDEX`。列の無いもの・式を含むものは正しく再現できない
+/// (列だけで作ると制約が変わる) ので出さない。部分インデックスは `WHERE` 述語を付ける。
 fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<String> {
-    if idx.primary || idx.columns.is_empty() {
+    if idx.primary || idx.columns.is_empty() || idx.first_expression_at.is_some() {
         return None;
     }
     let cols: Vec<String> = idx.columns.iter().map(|c| quote_ident(driver, c)).collect();
     let unique = if idx.unique { "UNIQUE " } else { "" };
     let method = idx.method.as_deref().unwrap_or("");
-    let sql = match driver {
+    let mut sql = match driver {
         // PostgreSQL は btree 以外のアクセスメソッドを `USING` で残す。
         DriverKind::Postgres if !method.is_empty() && !method.eq_ignore_ascii_case("btree") => {
             format!(
@@ -154,6 +164,9 @@ fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<
             cols.join(", ")
         ),
     };
+    if let Some(pred) = idx.predicate.as_deref().filter(|p| !p.trim().is_empty()) {
+        sql.push_str(&format!(" WHERE {pred}"));
+    }
     Some(sql)
 }
 
@@ -196,6 +209,16 @@ pub fn synthesize_create_table(
     out.push_str(&statements.join(";\n\n"));
     out.push(';');
     out.push('\n');
+    // 再現できなかった式インデックスは名前だけコメントで知らせる (無言で落とさない)。
+    for idx in indexes
+        .iter()
+        .filter(|i| !i.primary && i.first_expression_at.is_some())
+    {
+        out.push_str(&format!(
+            "-- Skipped expression index: {}\n",
+            idx.name.replace(['\n', '\r'], " ")
+        ));
+    }
     out
 }
 
@@ -257,6 +280,8 @@ mod tests {
             unique,
             primary,
             method: method.map(str::to_string),
+            predicate: None,
+            first_expression_at: None,
         }
     }
 
@@ -267,6 +292,8 @@ mod tests {
             referenced_table: rt.to_string(),
             referenced_column: rc.map(str::to_string),
             constraint_name: name.map(str::to_string),
+            on_delete: None,
+            on_update: None,
         }
     }
 
@@ -370,8 +397,45 @@ mod tests {
         );
         assert!(ddl.contains("CREATE TABLE \"s\"\"x\".\"t\"\"1\""));
         assert!(ddl.contains("\"we\"\"ird\" text"));
-        assert!(!ddl.contains("expr_idx"));
+        assert!(!ddl.contains("CREATE INDEX"));
         assert!(!ddl.contains("PRIMARY KEY"));
+    }
+
+    #[test]
+    fn foreign_key_referential_actions_are_emitted() {
+        let cols = vec![col("user_id", "integer", true, "")];
+        let mut f = fk("orders", "user_id", "users", Some("id"), Some("fk_u"));
+        f.on_delete = Some("CASCADE".into());
+        f.on_update = Some("SET NULL".into());
+        let ddl = synthesize_create_table(DriverKind::Postgres, None, "orders", &cols, &[], &[f]);
+        assert!(ddl.contains(
+            "FOREIGN KEY (\"user_id\") REFERENCES \"users\" (\"id\") ON DELETE CASCADE ON UPDATE SET NULL"
+        ));
+    }
+
+    #[test]
+    fn partial_index_keeps_its_predicate_and_expression_index_is_reported() {
+        let cols = vec![
+            col("email", "text", true, ""),
+            col("deleted_at", "timestamp", true, ""),
+        ];
+        let mut partial = idx("u_email", &["email"], true, false, Some("btree"));
+        partial.predicate = Some("(deleted_at IS NULL)".into());
+        let mut expr = idx("u_lower", &["tenant_id"], true, false, Some("btree"));
+        expr.first_expression_at = Some(0);
+        let ddl = synthesize_create_table(
+            DriverKind::Postgres,
+            Some("public"),
+            "t",
+            &cols,
+            &[partial, expr],
+            &[],
+        );
+        assert!(ddl.contains(
+            "CREATE UNIQUE INDEX \"u_email\" ON \"public\".\"t\" (\"email\") WHERE (deleted_at IS NULL);"
+        ));
+        assert!(!ddl.contains("CREATE UNIQUE INDEX \"u_lower\""));
+        assert!(ddl.contains("-- Skipped expression index: u_lower"));
     }
 
     #[test]
