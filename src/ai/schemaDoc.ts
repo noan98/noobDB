@@ -4,7 +4,8 @@
 // 送るのはテーブル / 列の名前・型・NULL 可・キー・コメント、インデックス、外部キー、ビュー / ルーチンの
 // 定義だけ。行データ・サンプル値・列のデフォルト値は送らない。
 
-import { dialectLabel } from "./errorExplain";
+import { dialectLabel, sqlForAi } from "./errorExplain";
+import { sliceHead } from "./textSlice";
 
 /** この件数を超えるスキーマでは、インデックス / 定義取得の並列度を `LARGE_CONCURRENCY` に抑える。 */
 export const SCHEMA_DOC_THROTTLE_TABLES = 100;
@@ -140,7 +141,7 @@ export function utf8Bytes(text: string): number {
 export function truncateDefinition(def: string): string {
   const trimmed = def.trim();
   if (trimmed.length <= SCHEMA_DOC_DEFINITION_MAX_CHARS) return trimmed;
-  return `${trimmed.slice(0, SCHEMA_DOC_DEFINITION_MAX_CHARS)}\n-- (truncated)`;
+  return `${sliceHead(trimmed, SCHEMA_DOC_DEFINITION_MAX_CHARS)}\n-- (truncated)`;
 }
 
 /** コメントを 1 行に畳む (改行・連続空白を 1 つの空白へ)。 */
@@ -149,7 +150,11 @@ function oneLine(text: string): string {
 }
 
 /** AI へ渡すスキーマ本文。デフォルト値・行データは含めない。 */
-export function buildSchemaDocContextText(ctx: SchemaDocContext): string {
+export function buildSchemaDocContextText(
+  ctx: SchemaDocContext,
+  /** 定義中のリテラルをマスクするための設定 (`ai.maskLiterals`)。省略時はマスクしない。 */
+  mask?: { driver: string; maskLiterals: boolean },
+): string {
   const lines: string[] = ["## Tables"];
   for (const t of ctx.tables) {
     lines.push("");
@@ -186,7 +191,9 @@ export function buildSchemaDocContextText(ctx: SchemaDocContext): string {
       lines.push("");
       lines.push(`### ${o.kind} ${o.name}`);
       lines.push("```sql");
-      lines.push(truncateDefinition(o.definition ?? ""));
+      // マスクしてから切り詰める (先に切るとリテラルの途中で切れてマスクが外れうる)。
+      const def = mask ? sqlForAi(o.definition ?? "", mask.driver, mask.maskLiterals) : (o.definition ?? "");
+      lines.push(truncateDefinition(def));
       lines.push("```");
     }
   }
@@ -199,6 +206,8 @@ export interface SchemaDocSystemInput {
   database: string | null;
   locale: "ja" | "en";
   context: SchemaDocContext;
+  /** `ai.maskLiterals`。ビュー / ルーチン定義中のリテラルをマスクして送る。 */
+  maskLiterals: boolean;
 }
 
 /** system プロンプト。方言・出力仕様・スキーマ本文を含める。 */
@@ -230,7 +239,7 @@ export function buildSchemaDocSystem(input: SchemaDocSystemInput): string {
   );
   lines.push("");
   lines.push(input.database ? `Database: ${input.database}` : "Database: (default)");
-  lines.push(buildSchemaDocContextText(input.context));
+  lines.push(buildSchemaDocContextText(input.context, { driver: input.driver, maskLiterals: input.maskLiterals }));
   return lines.join("\n");
 }
 

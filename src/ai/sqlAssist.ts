@@ -342,13 +342,23 @@ function scanStringLiterals(sql: string): LiteralSpan[] {
   return out;
 }
 
+/** 各リテラル直前 (直前のリテラル末尾から) の最後の 2 トークン。差し戻しの対応確認に使う。 */
+function literalContexts(sql: string, spans: LiteralSpan[]): string[] {
+  let prevEnd = 0;
+  return spans.map((l) => {
+    const tokens = sql.slice(prevEnd, l.from).toLowerCase().match(/[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
+    prevEnd = l.to;
+    return tokens.slice(-2).join(" ");
+  });
+}
+
 export interface RestoredLiterals {
   /** 差し戻し後の提案 SQL (差し戻せなかったときは提案そのまま)。 */
   sql: string;
   /**
    * - `none`: 提案に空白だけのリテラルが無い (差し戻し不要)。
    * - `restored`: 元 SQL のリテラルを出現順に差し戻した。
-   * - `missing`: 個数が合わず差し戻せなかった (空白リテラルが残る)。
+   * - `missing`: 個数が合わない、または直前の語が元と食い違い (並べ替え) 差し戻せなかった (空白リテラルが残る)。
    */
   status: "none" | "restored" | "missing";
 }
@@ -363,6 +373,12 @@ export function restoreMaskedLiterals(original: string, proposal: string): Resto
   const blanks = prop.filter((l) => l.inner.trim() === "");
   if (blanks.length === 0) return { sql: proposal, status: "none" };
   if (blanks.length !== orig.length) return { sql: proposal, status: "missing" };
+  // 個数が合っても、AI が条件を並べ替えると出現順の対応が崩れて値が別の述語へ移る。
+  // 各リテラル直前の語 (例: `a =`) が元と一致しないときは差し戻さない。
+  const origCtx = literalContexts(original, orig);
+  const propCtx = literalContexts(proposal, prop);
+  const blankCtx = propCtx.filter((_, idx) => prop[idx].inner.trim() === "");
+  if (blankCtx.some((c, idx) => c !== origCtx[idx])) return { sql: proposal, status: "missing" };
   let out = "";
   let pos = 0;
   let k = 0;

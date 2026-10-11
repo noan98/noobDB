@@ -136,12 +136,25 @@ describe("コンテキストとプロンプト", () => {
     expect(truncateDefinition("  SELECT 1  ")).toBe("SELECT 1");
   });
 
+  it("maskLiterals が有効ならビュー / ルーチン定義のリテラルをマスクして送る", () => {
+    const def = "SELECT * FROM t WHERE tenant_code = 'ACME-0001'";
+    const c: SchemaDocContext = { ...ctx, objects: [{ kind: "view", name: "v", definition: def }] };
+    const base = { driver: "mysql", database: "app", locale: "ja" as const, context: c };
+    expect(buildSchemaDocSystem({ ...base, maskLiterals: true })).not.toContain("ACME-0001");
+    expect(buildSchemaDocSystem({ ...base, maskLiterals: false })).toContain("ACME-0001");
+  });
+
+  it("定義の切り詰めはサロゲートペアを割らない", () => {
+    const out = truncateDefinition(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}😀zzz`);
+    expect(out).toBe(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}\n-- (truncated)`);
+  });
+
   it.each([
     ["mysql", "MySQL"],
     ["postgres", "PostgreSQL"],
     ["sqlite", "SQLite"],
   ])("%s は方言名・言語・ルールを system に含む", (driver, dialect) => {
-    const sys = buildSchemaDocSystem({ driver, database: "app", locale: "ja", context: ctx });
+    const sys = buildSchemaDocSystem({ driver, database: "app", locale: "ja", context: ctx, maskLiterals: true });
     expect(sys).toContain(dialect);
     expect(sys).toContain("Japanese");
     expect(sys).toContain("Database: app");
@@ -156,6 +169,7 @@ describe("コンテキストとプロンプト", () => {
       database: null,
       locale: "en",
       context: { ...ctx, objects: [] },
+      maskLiterals: true,
     });
     expect(sys).not.toContain("5. Views and routines");
     expect(sys).toContain("in English");

@@ -217,6 +217,14 @@ describe("restoreMaskedLiterals", () => {
     expect(restoreMaskedLiterals("SELECT 1", "SELECT ' '")).toEqual({ sql: "SELECT ' '", status: "missing" });
   });
 
+  it("条件が並べ替えられて直前の語が食い違うときは差し戻さず missing", () => {
+    const prop = "DELETE FROM t WHERE b = '' AND a = ''";
+    expect(restoreMaskedLiterals("DELETE FROM t WHERE a = 'x' AND b = 'y'", prop)).toEqual({
+      sql: prop,
+      status: "missing",
+    });
+  });
+
   it("コメント・二重引用符内の引用符はリテラルに数えない", () => {
     expect(restoreMaskedLiterals('SELECT "it\'s", \'a\' /* \'z\' */', "SELECT \" \", ' '")).toEqual({
       sql: "SELECT \" \", 'a'",

@@ -5,6 +5,7 @@
 
 import { maskLiterals } from "../dangerousSql";
 import { dialectLabel, needsSendScopeConfirm } from "./errorExplain";
+import { sliceHead, sliceTail } from "./textSlice";
 
 /** 補完に渡すテーブル (名前と列名)。nl2sql の型には依存しない。 */
 export interface InlineTable {
@@ -81,7 +82,7 @@ export interface InlineRequestParts {
 /** 末尾から最大 `maxLines` 行 / `maxChars` 文字を残す。 */
 export function tailWindow(text: string, maxLines: number, maxChars: number): string {
   let out = text;
-  if (out.length > maxChars) out = out.slice(out.length - maxChars);
+  out = sliceTail(out, maxChars);
   const lines = out.split("\n");
   if (lines.length > maxLines) out = lines.slice(lines.length - maxLines).join("\n");
   return out;
@@ -90,7 +91,7 @@ export function tailWindow(text: string, maxLines: number, maxChars: number): st
 /** 先頭から最大 `maxLines` 行 / `maxChars` 文字を残す。 */
 export function headWindow(text: string, maxLines: number, maxChars: number): string {
   let out = text;
-  if (out.length > maxChars) out = out.slice(0, maxChars);
+  out = sliceHead(out, maxChars);
   const lines = out.split("\n");
   if (lines.length > maxLines) out = lines.slice(0, maxLines).join("\n");
   return out;
@@ -160,7 +161,7 @@ export function buildInlineRequest(input: InlineContextInput): InlineRequestPart
   );
   if (rawBefore.replace(/\s/g, "").length < INLINE_MIN_CHARS) return null;
   // 単語の途中 (直後が識別子文字) では続きを出さない。
-  if (/^[\w$]/.test(rawAfter)) return null;
+  if (/^[\w$\u0080-\uffff]/.test(rawAfter)) return null;
   // リテラル / コメントの中身への補完は無意味。マスク設定がオフでも出さない。
   if (insideLiteralOrComment(input.doc, pos, input.driver)) return null;
 

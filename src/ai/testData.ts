@@ -334,7 +334,8 @@ function isUsableValue(col: TestDataAiColumn, kind: AiColumnPlan["kind"], raw: s
   }
   switch (colKind) {
     case "number":
-      return kind === "choices" && Number.isInteger(Number(v)) && /^[-+]?\d+$/.test(v);
+      // JS の安全整数を超える値は number へ変換すると丸められ、別の値が黙って入る。採用しない。
+      return kind === "choices" && Number.isSafeInteger(Number(v)) && /^[-+]?\d+$/.test(v);
     case "decimal":
       return kind === "choices" && Number.isFinite(Number(v));
     case "bool":
