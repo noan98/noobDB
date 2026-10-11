@@ -141,16 +141,35 @@ function compareCodePoints(a: string, b: string): number {
 }
 
 /**
+ * JSON / NDJSON のオブジェクトキー。同名列 (`SELECT u.id, o.id`) が 1 キーに潰れて値が
+ * 消えないよう、2 つ目以降には `_2`, `_3`, ... を付ける。接尾辞付きの名前が他の列名や
+ * 割り当て済みキーと衝突するときは空いている番号まで進める。バックエンド
+ * `export.rs::json_keys` と同じ規則 (共有ゴールデンで固定)。
+ */
+function jsonKeys(columns: Column[]): string[] {
+  const reserved = new Set(columns.map((c) => c.name));
+  const taken = new Set<string>();
+  return columns.map((col) => {
+    let key = col.name;
+    if (taken.has(key)) {
+      let n = 2;
+      while (taken.has(`${col.name}_${n}`) || reserved.has(`${col.name}_${n}`)) n++;
+      key = `${col.name}_${n}`;
+    }
+    taken.add(key);
+    return key;
+  });
+}
+
+/**
  * 1 行を列名キーのオブジェクトに変換する。キーは serde_json の `BTreeMap` 出力に
  * 合わせてソート済みのプレーンオブジェクトとして返す (`JSON.stringify` は非整数
  * キーの挿入順を保つため、ソート順に挿入すれば出力もソート順になる)。ソートは
  * コードポイント順 (`compareCodePoints`) — BTreeMap と同じ順序にするため。
  */
 function rowToObject(columns: Column[], row: CellValue[]): Record<string, CellValue> {
-  const pairs: [string, CellValue][] = columns.map((col, i) => [
-    col.name,
-    row[i] ?? null,
-  ]);
+  const keys = jsonKeys(columns);
+  const pairs: [string, CellValue][] = keys.map((key, i) => [key, row[i] ?? null]);
   pairs.sort((a, b) => compareCodePoints(a[0], b[0]));
   const obj: Record<string, CellValue> = {};
   for (const [k, v] of pairs) obj[k] = v;

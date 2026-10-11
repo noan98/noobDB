@@ -94,8 +94,9 @@ pub async fn write_text_file(path: String, content: String) -> Result<u64> {
 
 /// ドロップされた `.sql` / `.txt` の内容を読んでエディタへ流し込むための読み取り
 /// コマンド。フロントが fs プラグインを直に叩かず、バックエンド経由で読む
-/// (capabilities を最小に保つ方針)。UTF-8 として不正なバイトは置換文字へ
-/// ロッシーにデコードする (エディタ表示が目的で、厳密な往復は要らない)。
+/// (capabilities を最小に保つ方針)。UTF-8 として不正なバイトを含むファイル
+/// (Shift_JIS / EUC-JP 等) は**エラーにする**。置換文字へ黙って化けさせると、そのまま
+/// 保存・実行したときに元の文字を復元できないため。
 #[tauri::command]
 pub async fn read_text_file(path: String) -> Result<String> {
     if path.trim().is_empty() {
@@ -128,7 +129,12 @@ pub async fn read_text_file(path: String) -> Result<String> {
             "file too large to open in the editor (limit {MAX_TEXT_FILE_BYTES} bytes)"
         )));
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    String::from_utf8(bytes).map_err(|_| {
+        AppError::InvalidInput(
+            "file is not valid UTF-8 (Shift_JIS / EUC-JP etc. are not supported); convert it to UTF-8 and try again"
+                .into(),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -147,14 +153,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lossily_decodes_invalid_utf8() {
+    async fn rejects_invalid_utf8_instead_of_replacing() {
         let path = std::env::temp_dir().join(format!("noobdb_read_bad_{}.txt", std::process::id()));
         tokio::fs::write(&path, [0xff, 0xfe, 0x41]).await.unwrap();
-        let content = read_text_file(path.to_string_lossy().into_owned())
+        // Shift_JIS 等は U+FFFD に化けさせず、エラーにする。
+        let err = read_text_file(path.to_string_lossy().into_owned())
             .await
-            .unwrap();
-        // 末尾の 'A' は残り、不正バイトは置換文字へ。パニックせず文字列を返す。
-        assert!(content.ends_with('A'));
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
         let _ = tokio::fs::remove_file(&path).await;
     }
 
