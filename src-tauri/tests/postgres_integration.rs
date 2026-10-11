@@ -2392,3 +2392,41 @@ async fn postgres_foreign_keys_pair_composite_columns_and_ignore_same_named_fk()
     }
     conn.close().await;
 }
+
+/// 生成列 (`GENERATED ALWAYS AS (...) STORED`) の `columns()` は `extra` に
+/// `STORED GENERATED` を返す。通常列は空 (#1521)。
+#[tokio::test]
+async fn postgres_columns_report_generated_columns_in_extra() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_gen", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_gen (id INT PRIMARY KEY, a INT, b INT GENERATED ALWAYS AS (a * 2) STORED)",
+        None,
+    )
+    .await
+    .expect("create");
+    let cols = conn
+        .columns("public", "noobdb_pg_gen")
+        .await
+        .expect("columns");
+    let extra = |n: &str| {
+        cols.iter()
+            .find(|c| c.name == n)
+            .expect("column")
+            .extra
+            .clone()
+    };
+    assert_eq!(extra("b"), "STORED GENERATED");
+    assert_eq!(extra("a"), "");
+    conn.execute("DROP TABLE public.noobdb_pg_gen", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

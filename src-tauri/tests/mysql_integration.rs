@@ -1506,7 +1506,10 @@ async fn mysql_json_bool_imports_into_tinyint_column() {
     assert_eq!(n, 2);
     let rows = session
         .conn
-        .execute("SELECT flag FROM noobdb_my_json_bool ORDER BY id", None)
+        .execute(
+            "SELECT CAST(flag AS SIGNED) FROM noobdb_my_json_bool ORDER BY id",
+            None,
+        )
         .await
         .expect("select")
         .rows;

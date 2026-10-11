@@ -417,9 +417,11 @@ pub(crate) fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
 /// 生成列 (MySQL の `STORED/VIRTUAL GENERATED`、PostgreSQL の
 /// `GENERATED ALWAYS AS (...) STORED`)。`extra` で判定する。生成式を保持して
 /// いないので、通常列として ADD / MODIFY / CREATE すると同期後のスキーマが
-/// 静かに変わってしまう。自動同期の対象から外す。SQLite は列一覧に生成列が現れない。
-fn is_generated_column(_driver: DriverKind, col: &TableColumnInfo) -> bool {
-    col.is_generated()
+/// 静かに変わってしまう。自動同期の対象から外す。
+/// `driver` は宛先。SQLite 宛て (サンドボックス作成) では外さない: 後続の取り込みが
+/// 全列を INSERT するので、生成列を CREATE に含めて通常列として持たせる必要がある。
+fn is_generated_column(driver: DriverKind, col: &TableColumnInfo) -> bool {
+    driver != DriverKind::Sqlite && col.is_generated()
 }
 
 fn generated_column_warning(table: &str, column: &str) -> String {
@@ -1139,6 +1141,39 @@ mod tests {
             plan.statements[0].sql,
             "ALTER TABLE \"t\" ALTER COLUMN \"name\" TYPE character varying(255)"
         );
+    }
+
+    #[test]
+    fn sqlite_destination_keeps_generated_source_columns_in_create() {
+        // サンドボックス作成: MySQL / PG ソースの生成列は SQLite の CREATE に通常列として残る。
+        for src_driver in [DriverKind::Mysql, DriverKind::Postgres] {
+            let mut g = col("total", "int");
+            g.extra = "STORED GENERATED".to_string();
+            let table = TableDiff {
+                name: "t".into(),
+                status: DiffStatus::SourceOnly,
+                columns: vec![
+                    cdiff("id", DiffStatus::SourceOnly, Some(col("id", "int")), &[]),
+                    cdiff("total", DiffStatus::SourceOnly, Some(g), &[]),
+                ],
+            };
+            let d = SchemaDiff {
+                source_driver: src_driver,
+                target_driver: DriverKind::Sqlite,
+                tables: vec![table],
+            };
+            let plan = generate_sync_sql(&d, false);
+            assert_eq!(plan.statements.len(), 1, "{src_driver:?}");
+            assert!(
+                plan.statements[0].sql.contains("\"total\""),
+                "{src_driver:?}"
+            );
+            assert!(
+                plan.warnings.is_empty(),
+                "{src_driver:?}: {:?}",
+                plan.warnings
+            );
+        }
     }
 
     #[test]

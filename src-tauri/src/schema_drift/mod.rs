@@ -332,6 +332,9 @@ pub fn summarize_drift(diff: &SchemaDiff, index_drift: &[IndexDriftEntry]) -> Dr
 /// PostgreSQL は生成列の `extra` (`STORED GENERATED` 等) を後から出すようになった。
 /// `extra` が全列で空の旧スナップショットと比べると、生成列を持つテーブルが一斉に
 /// 「変更」と誤検知されるため、その場合に限り両側の `extra` を比較から外す。
+/// 限界: 生成列が 1 つも無い PostgreSQL では旧世代の `extra` が全列空のままなので、
+/// その DB では `extra` の比較が恒久的に外れる (生成列を後から追加しても、列の追加として
+/// 検出されるだけで、既存列の `extra` 変化は拾わない)。
 pub fn summarize_payloads(prev: &SnapshotPayload, next: &SnapshotPayload) -> DriftSummary {
     let ignore_extra = prev.driver == DriverKind::Postgres
         && next.driver == DriverKind::Postgres

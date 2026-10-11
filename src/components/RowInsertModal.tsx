@@ -15,6 +15,7 @@ import { Button, Input, PressableButton, Select } from "./ui";
 import { boolOptions, resolveTypedEditor } from "./typedEditor";
 import { insertDefaultHint, insertFunctionChips, stripNonInsertableSeed } from "./insertDefaults";
 import { insertFunctionSql } from "./sqlDialect";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { useValuePicker, ValueDatalist, type ValueLookup } from "./useValuePicker";
 import { FK_CANDIDATE_LIMIT, type PickerKind } from "./valuePicker";
@@ -171,7 +172,9 @@ export function RowInsertModal({
             ? []
             : insertFunctionChips(driver, c.type_name, meta?.data_type);
           const hintText =
-            hint?.kind === "auto"
+            emptyStr
+              ? null
+              : hint?.kind === "auto"
               ? t("rowOpsInsertAutoHint")
               : hint?.kind === "default"
                 ? t("rowOpsInsertDefaultHint", { expr: hint.expr })
@@ -179,7 +182,9 @@ export function RowInsertModal({
                   ? t("rowOpsInsertGeneratedHint")
                   : null;
           const placeholder =
-            hint?.kind === "auto"
+            emptyStr
+              ? undefined
+              : hint?.kind === "auto"
               ? t("rowOpsInsertAutoPlaceholder")
               : hint?.kind === "default"
                 ? t("rowOpsInsertDefaultPlaceholder", { expr: hint.expr })
@@ -240,34 +245,44 @@ export function RowInsertModal({
                 )}
                 <ValueDatalist id={listId} values={pickerValues} />
                 {emptyStr && (
-                  <Tooltip label={t("rowOpsInsertEmptyTitle")}>
-                    <chakra.span
-                      flexShrink={0}
-                      display="inline-flex"
-                      alignItems="center"
-                      gap="1"
-                      fontSize="2xs"
-                      fontFamily="mono"
-                      color="app.textMuted"
-                      borderWidth="1px"
-                      borderColor="app.border"
-                      borderRadius="sm"
-                      px="1"
-                      data-testid={`insert-empty-badge-${c.name}`}
-                    >
-                      {t("rowOpsInsertEmptyBadge")}
+                  <chakra.span
+                    flexShrink={0}
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1"
+                    fontSize="2xs"
+                    fontFamily="mono"
+                    color="app.textSecondary"
+                    borderWidth="1px"
+                    borderColor="app.border"
+                    borderRadius="sm"
+                    px="1"
+                    data-testid={`insert-empty-badge-${c.name}`}
+                  >
+                    <Tooltip label={t("rowOpsInsertEmptyTitle")}>
+                      <chakra.span>{t("rowOpsInsertEmptyBadge")}</chakra.span>
+                    </Tooltip>
+                    <Tooltip label={t("rowOpsInsertEmptyClear")}>
                       <chakra.button
                         type="button"
                         aria-label={t("rowOpsInsertEmptyClear")}
-                        color="app.textMuted"
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        color="app.textSecondary"
+                        bg="transparent"
+                        border="none"
+                        borderRadius="sm"
                         cursor="pointer"
+                        _hover={{ bg: "app.hover", color: "app.text" }}
+                        _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
                         data-testid={`insert-empty-clear-${c.name}`}
                         onClick={() => setValues((prev) => ({ ...prev, [i]: "" }))}
                       >
-                        ×
+                        <Icon name="close" size={ICON_SIZES.sm} />
                       </chakra.button>
-                    </chakra.span>
-                  </Tooltip>
+                    </Tooltip>
+                  </chakra.span>
                 )}
                 {pickerKind && (
                   <Tooltip label={badgeTitle(pickerKind, c.name)}>
