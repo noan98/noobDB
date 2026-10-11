@@ -63,3 +63,22 @@ export function isModalSubmitKey(e: ModalKeyEventLike): boolean {
   if (e.altKey || e.shiftKey) return false;
   return e.metaKey || e.ctrlKey;
 }
+
+/**
+ * IME 変換中 (確定の Enter を含む) のキーイベントか。WebKit 系 (macOS の WKWebView) は
+ * 変換確定の keydown を `isComposing=false` / `keyCode=229` で届けることがあるため両方見る。
+ */
+export function isImeComposing(e: { nativeEvent: { isComposing?: boolean; keyCode?: number } }): boolean {
+  return e.nativeEvent.isComposing === true || e.nativeEvent.keyCode === 229;
+}
+
+/**
+ * 修飾キー無しの素の Enter で、かつ IME 変換中でないか。単一行入力欄の「Enter で確定」
+ * を IME 変換確定と取り違えないために使う。
+ */
+export function isPlainEnterKey(e: {
+  key: string;
+  nativeEvent: { isComposing?: boolean; keyCode?: number };
+}): boolean {
+  return e.key === "Enter" && !isImeComposing(e);
+}

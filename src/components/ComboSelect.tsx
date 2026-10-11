@@ -34,6 +34,7 @@ import { transitions } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MENU_MARGIN } from "./menuPosition";
+import { isImeComposing } from "./modalKeys";
 
 export interface ComboSelectOption {
   value: string;
@@ -228,6 +229,8 @@ export function ComboSelect({
         }}
         onBlur={closeAndMaybeRevert}
         onKeyDown={(e) => {
+          // IME 変換中は候補選択・onEnter・Escape・矢印を処理しない (変換を打ち切らない)
+          if (isImeComposing(e)) return;
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
             if (!open) {
