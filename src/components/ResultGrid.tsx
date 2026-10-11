@@ -1475,7 +1475,9 @@ function cellToText(v: CellValue): string {
  * (#820) で、選択行の値を種に `RowInsertModal` の `initialValues` として渡す
  * ために使う。値の文字列化は `cellToText` と同じ規約 (コピー系アクション共通) を
  * 流用し、NULL/undefined の列はキー自体を省く — フォーム上は空欄のまま = 未設定
- * (DB 既定値) として扱われ、通常の「行を追加」の空欄と挙動が揃う。
+ * (DB 既定値) として扱われ、通常の「行を追加」の空欄と挙動が揃う。元の値が空文字 ('')
+ * の列も同様に省かれる (挿入フォームは空欄を DB 既定値として扱う #1357 の制約。空文字を
+ * 区別して複製するには挿入フォーム側の仕様変更が要る)。
  */
 function rowToPendingInsert(row: CellValue[]): PendingInsertRow {
   const seed: PendingInsertRow = {};

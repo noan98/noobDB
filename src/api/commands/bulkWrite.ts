@@ -20,6 +20,11 @@ export const bulkWriteCommands = {
     pkColumns: string[];
     groups: UpdateGroup[];
     extraStatements?: string[];
+    /**
+     * `pkColumns` と同順で、BLOB/BINARY/BYTEA の主キー列なら true。16 進文字列で届く
+     * 値を Rust がバイナリリテラルにする (all_columns 同定で BLOB 列を含むとき)。
+     */
+    pkBinary?: boolean[];
   }) =>
     invoke<QueryResult>("bulk_update_cells", {
       sessionId: params.sessionId,
@@ -28,6 +33,7 @@ export const bulkWriteCommands = {
       pkColumns: params.pkColumns,
       groups: params.groups,
       extraStatements: params.extraStatements ?? [],
+      pkBinary: params.pkBinary ?? null,
     }).then((r) => parseResponse(schemas.queryResultLite, r, "bulk_update_cells")),
   /**
    * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは

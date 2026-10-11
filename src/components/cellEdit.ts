@@ -49,6 +49,11 @@ const BINARY_TYPES = new Set([
   "BYTEA",
 ]);
 
+/** BLOB/BINARY/BYTEA 系の列型か (16 進文字列で届く値をバイナリとして扱う判定)。 */
+export function isBinaryColumnType(typeName: string): boolean {
+  return BINARY_TYPES.has(typeName.toUpperCase());
+}
+
 /**
  * Whether a column may be edited inline. BLOB-family columns are excluded
  * because their JSON shape is hex bytes and round-tripping arbitrary
@@ -96,7 +101,21 @@ const DATE_RE = /^\d{4}-\d{1,2}-\d{1,2}$/;
 const DATETIME_RE =
   /^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*(Z|[+-]\d{2}(:?\d{2})?)?$/i;
 // PostgreSQL の boolean 入力で有効な表記 (MySQL / SQLite の BOOL でも 0/1 は通る)。
-const BOOLEAN_INPUTS = new Set(["true", "false", "t", "f", "yes", "no", "y", "n", "on", "off", "0", "1"]);
+const BOOLEAN_TRUE = new Set(["true", "t", "yes", "y", "on", "1"]);
+const BOOLEAN_FALSE = new Set(["false", "f", "no", "n", "off", "0"]);
+
+/**
+ * boolean 列の入力表記 (PostgreSQL が受理する true/false/t/f/yes/no/y/n/on/off/1/0、
+ * 大文字小文字・前後空白不問) を真偽値に正規化する。受理しない表記は null。検証と
+ * 書き込み側 (`literalFromInput` / `cellValueFromInput` / `setValueFromInput`) で共有し、
+ * 受理した表記は必ず bool として書く (MySQL / SQLite に 'yes' 文字列を入れない)。
+ */
+export function parseBooleanInput(s: string): boolean | null {
+  const lc = s.trim().toLowerCase();
+  if (BOOLEAN_TRUE.has(lc)) return true;
+  if (BOOLEAN_FALSE.has(lc)) return false;
+  return null;
+}
 const TIME_RE = /^-?\d{1,3}:\d{2}(:\d{2})?(\.\d+)?$/;
 
 function errorKeyForKind(kind: EditTypeKind): I18nKey | null {
@@ -157,8 +176,7 @@ export function validateCellInput(
     case "time":
       return TIME_RE.test(trimmed) ? null : "editInvalidTime";
     case "boolean": {
-      const lc = trimmed.toLowerCase();
-      return BOOLEAN_INPUTS.has(lc) ? null : "editInvalidBoolean";
+      return parseBooleanInput(trimmed) !== null ? null : "editInvalidBoolean";
     }
     default:
       return null;
@@ -378,9 +396,8 @@ export function literalFromInput(driver: string, raw: string, col: Column): stri
     return trimmed;
   }
   if (t === "BOOLEAN" || t === "BOOL") {
-    const lc = trimmed.toLowerCase();
-    if (lc === "true" || lc === "1") return "TRUE";
-    if (lc === "false" || lc === "0") return "FALSE";
+    const b = parseBooleanInput(trimmed);
+    if (b !== null) return b ? "TRUE" : "FALSE";
   }
   if (t === "BIT") {
     const lc = trimmed.toLowerCase();
@@ -418,9 +435,8 @@ export function cellValueFromInput(raw: string, col: Column): CellValue {
     return trimmed;
   }
   if (t === "BOOLEAN" || t === "BOOL") {
-    const lc = trimmed.toLowerCase();
-    if (lc === "true" || lc === "1") return true;
-    if (lc === "false" || lc === "0") return false;
+    const b = parseBooleanInput(trimmed);
+    if (b !== null) return b;
   }
   return raw;
 }
@@ -570,9 +586,8 @@ export function setValueFromInput(raw: string, col: Column): BulkSetValue {
     return { kind: "number", text: trimmed };
   }
   if (t === "BOOLEAN" || t === "BOOL") {
-    const lc = trimmed.toLowerCase();
-    if (lc === "true" || lc === "1") return { kind: "bool", value: true };
-    if (lc === "false" || lc === "0") return { kind: "bool", value: false };
+    const b = parseBooleanInput(trimmed);
+    if (b !== null) return { kind: "bool", value: b };
   }
   if (t === "BIT") {
     const lc = trimmed.toLowerCase();

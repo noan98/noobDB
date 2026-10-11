@@ -42,7 +42,7 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
-import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, isBinaryColumnType, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
 import { remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
@@ -5910,6 +5910,7 @@ export default function App() {
         pkColumns: pkIndices.map((i) => result.columns[i].name),
         groups: updateGroups,
         extraStatements,
+        pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
       });
       totalAffected = Number(res.rows_affected ?? 0);
     } catch (e) {

@@ -20,6 +20,7 @@ import {
   setValueFromInput,
   resolveRowIdentity,
   rowEditKey,
+  parseBooleanInput,
   validateCellInput,
   type BuildRowSqlInput,
   type BuildUpdateInput,
@@ -1337,5 +1338,30 @@ describe("validateCellInput: タイムゾーン付き日時と PostgreSQL の bo
 
   it("boolean の不正値は弾く", () => {
     expect(validateCellInput("maybe", "BOOLEAN", true)).toBe("editInvalidBoolean");
+  });
+});
+
+describe("boolean 入力の正規化 (parseBooleanInput)", () => {
+  const bool = col("f", "BOOLEAN");
+
+  it.each([
+    ["yes", true],
+    ["Y", true],
+    ["on", true],
+    ["t", true],
+    ["no", false],
+    ["N", false],
+    ["off", false],
+    ["f", false],
+  ])("%s は %s に正規化され、書き込み側が全部 bool になる", (raw, v) => {
+    expect(parseBooleanInput(raw)).toBe(v);
+    expect(setValueFromInput(raw, bool)).toEqual({ kind: "bool", value: v });
+    expect(cellValueFromInput(raw, bool)).toBe(v);
+    expect(literalFromInput("mysql", raw, bool)).toBe(v ? "TRUE" : "FALSE");
+  });
+
+  it("受理しない表記は null で、文字列のまま扱われる", () => {
+    expect(parseBooleanInput("maybe")).toBeNull();
+    expect(setValueFromInput("maybe", bool)).toEqual({ kind: "text", text: "maybe" });
   });
 });
