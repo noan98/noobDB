@@ -371,8 +371,10 @@ function literalContexts(sql: string, spans: LiteralSpan[]): string[] {
       const t = tokens[k];
       if (t === ")") depth++;
       else if (t === "(") {
-        if (depth === 0) break;
-        depth--;
+        // 深さ 0 の `(` は左辺がまだ空のときだけ取り込む (`x IN ('A')` の左辺を `x in (` にして、
+        // IN 句どうしの並べ替えを見逃さない)。
+        if (depth === 0 && left.length > 0) break;
+        if (depth > 0) depth--;
       } else if (depth === 0 && (t === "," || t === ";" || PREDICATE_BOUNDARIES.has(t))) break;
       left.unshift(t);
     }

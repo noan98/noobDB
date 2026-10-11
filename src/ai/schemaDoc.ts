@@ -156,18 +156,23 @@ function oneLine(text: string): string {
  */
 export function maskDefinition(sql: string, driver: string, mask: boolean): string {
   if (!mask) return sql;
+  // ドル引用は PostgreSQL だけ。他ドライバは通常のマスクで足りる。
+  if (driver !== "postgres") return sqlForAi(sql, driver, true);
   let out = "";
   let segStart = 0;
   let i = 0;
   const n = sql.length;
   while (i < n) {
     const c = sql[i];
-    if (c === "'") {
-      // 単一引用符リテラルは丸ごと飛ばす (中の `$$` を開始タグと誤認しない)。
+    if (c === "'" || c === '"') {
+      // 引用符リテラル / 識別子は丸ごと飛ばす (中の `$$` を開始タグと誤認しない)。
+      // E'...' はバックスラッシュエスケープを解釈する。
+      const escapes = c === "'" && i > 0 && /[Ee]/.test(sql[i - 1]);
       let j = i + 1;
       while (j < n) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") j += 2;
+        if (escapes && sql[j] === "\\") j += 2;
+        else if (sql[j] === c) {
+          if (sql[j + 1] === c) j += 2;
           else break;
         } else j++;
       }

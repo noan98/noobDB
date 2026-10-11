@@ -154,6 +154,17 @@ describe("コンテキストとプロンプト", () => {
     expect(sys).not.toContain("SECRET-1");
   });
 
+  it.each([
+    ["mysql", "SELECT 'it\\'s $$secret$$ ok'"],
+    ["postgres", "SELECT E'it\\'s $q$secret$q$ ok'"],
+    ["sqlite", "SELECT \"$$\", 'secret', \"$$\""],
+    ["postgres", "SELECT \"$$\", 'secret', \"$$\""],
+  ])("引用符内の $$ をドル引用と誤認しない (%s): %s", (driver, def) => {
+    const c: SchemaDocContext = { ...ctx, objects: [{ kind: "view", name: "v", definition: def }] };
+    const sys = buildSchemaDocSystem({ driver, database: "a", locale: "en", context: c, maskLiterals: true });
+    expect(sys).not.toContain("secret");
+  });
+
   it("定義の切り詰めはサロゲートペアを割らない", () => {
     const out = truncateDefinition(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}😀zzz`);
     expect(out).toBe(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}\n-- (truncated)`);

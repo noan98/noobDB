@@ -231,6 +231,7 @@ describe("restoreMaskedLiterals", () => {
     ['"a" = \'A\' AND "b" = \'B\'', '"b" = \'\' AND "a" = \'\''],
     ["u.status = 'A' AND o.status = 'B'", "o.status = '' AND u.status = ''"],
     ["lower(a) = 'A' AND lower(b) = 'B'", "lower(b) = '' AND lower(a) = ''"],
+    ["x IN ('A') AND y IN ('B')", "y IN ('') AND x IN ('')"],
   ])("並べ替えを見逃さない: %s", (orig, prop) => {
     expect(restoreMaskedLiterals(orig, prop)).toEqual({ sql: prop, status: "missing" });
   });
