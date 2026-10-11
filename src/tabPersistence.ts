@@ -200,9 +200,11 @@ export function normalizePersistedWorkspace(parsed: unknown): PersistedWorkspace
   }
   if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).panes)) {
     const rawPanes = (parsed as { panes: unknown[] }).panes;
-    const panes: PersistedPane[] = rawPanes
-      .filter(isValidPane)
-      .map((p) => {
+    // activePane は元配列の添字なので、無効/空ペインを除く前の添字を持ち回る。
+    const kept = rawPanes
+      .map((p, origIndex) => ({ p, origIndex }))
+      .filter((e): e is { p: PersistedPane; origIndex: number } => isValidPane(e.p))
+      .map(({ p, origIndex }) => {
         const tabs = sanitizeTabs(p.tabs);
         // 非整数 (例: 1.5) が紛れ込んだ localStorage を読み込んでも `builtTabs[1.5]`
         // のような範囲外アクセスにならないよう、範囲検証の前に整数化する
@@ -214,13 +216,19 @@ export function normalizePersistedWorkspace(parsed: unknown): PersistedWorkspace
             : NaN;
         const activeIndex =
           truncatedIndex >= 0 && truncatedIndex < tabs.length ? truncatedIndex : 0;
-        return { tabs, activeIndex };
+        return { pane: { tabs, activeIndex }, origIndex };
       })
-      .filter((p) => p.tabs.length > 0);
+      .filter((e) => e.pane.tabs.length > 0);
+    const panes: PersistedPane[] = kept.map((e) => e.pane);
     if (panes.length === 0) return EMPTY_WORKSPACE;
     const rawActive = (parsed as { activePane?: unknown }).activePane;
-    const activePane =
-      typeof rawActive === "number" ? Math.min(Math.max(0, Math.trunc(rawActive)), panes.length - 1) : 0;
+    let activePane = 0;
+    if (typeof rawActive === "number") {
+      const orig = Math.max(0, Math.trunc(rawActive));
+      const mapped = kept.findIndex((e) => e.origIndex === orig);
+      // 除去されたペイン/範囲外を指していた場合は最寄りの末尾側へ丸める (従来どおり)
+      activePane = mapped >= 0 ? mapped : Math.min(orig, panes.length - 1);
+    }
     return { panes, activePane };
   }
   return EMPTY_WORKSPACE;

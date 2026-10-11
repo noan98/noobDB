@@ -143,6 +143,26 @@ describe("ConnectionList render smoke (#604)", () => {
   });
 });
 
+describe("ConnectionList: 行内ボタンのキー操作", () => {
+  it("更新ボタンの Enter/Space はプロファイル行を開閉しない", async () => {
+    localStorage.clear();
+    const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={[profile]} activeProfileId="p-a" sessionId="s1" />,
+    );
+    await screen.findByRole("treeitem", { name: "db1" });
+    const row = screen.getAllByRole("treeitem")[0];
+    const before = row.getAttribute("aria-expanded");
+    const button = screen.getByLabelText(t("treeRefresh"));
+    fireEvent.keyDown(button, { key: "Enter" });
+    fireEvent.keyDown(button, { key: " " });
+    expect(row.getAttribute("aria-expanded")).toBe(before);
+    // 行自身の Enter は従来どおり開閉する
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(row.getAttribute("aria-expanded")).not.toBe(before);
+  });
+});
+
 describe("ConnectionList のアクティブテーブル行インジケータ (#982)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

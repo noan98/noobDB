@@ -252,3 +252,25 @@ describe("normalizePersistedWorkspace", () => {
     expect(tabs[3].titleManual).toBeUndefined();
   });
 });
+
+describe("activePane の補正 (空ペイン除去)", () => {
+  const pane = (title: string) => ({
+    tabs: [{ kind: "query", title, sql: "SELECT 1" }],
+    activeIndex: 0,
+  });
+  it("先頭の無効ペインを除いても元のアクティブペインを指し続ける", () => {
+    const ws = normalizePersistedWorkspace({
+      panes: [{ tabs: [{ kind: "bogus" }], activeIndex: 0 }, pane("A"), pane("B")],
+      activePane: 1,
+    });
+    expect(ws.panes.map((p) => p.tabs[0].title)).toEqual(["A", "B"]);
+    expect(ws.activePane).toBe(0);
+  });
+  it("アクティブだったペイン自体が除かれたら範囲内へ丸める", () => {
+    const ws = normalizePersistedWorkspace({
+      panes: [pane("A"), { tabs: [{ kind: "bogus" }], activeIndex: 0 }],
+      activePane: 1,
+    });
+    expect(ws.activePane).toBe(0);
+  });
+});

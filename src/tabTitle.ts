@@ -15,7 +15,9 @@ const TITLE_MAX = 28;
 export function deriveResultTabTitle(sql: string, untitled: string): string {
   const firstLine = sql.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
   if (!firstLine) return untitled;
-  return firstLine.length > TITLE_MAX ? `${firstLine.slice(0, TITLE_MAX - 1)}…` : firstLine;
+  // コードポイント単位で数える (UTF-16 の slice だとサロゲートペアを割る)。
+  const chars = Array.from(firstLine);
+  return chars.length > TITLE_MAX ? `${chars.slice(0, TITLE_MAX - 1).join("")}…` : firstLine;
 }
 
 /** 自動命名の判定に必要なタブの最小情報。 */

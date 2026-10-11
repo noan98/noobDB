@@ -58,6 +58,17 @@ describe("ActivityCenter (#912)", () => {
     expect(getActivityState().entries).toHaveLength(0);
   });
 
+  it("開いているときにベルを押すと閉じ、開き直さない", async () => {
+    pushActivity("info", "hello");
+    const { user } = await open();
+    await user.click(screen.getByRole("button", { name: /Activity/ }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: t("activityCenterTitle") }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("Escape で閉じる", async () => {
     pushActivity("info", "hello");
     const { user } = await open();

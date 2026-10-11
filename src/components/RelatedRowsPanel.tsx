@@ -199,8 +199,12 @@ function RelatedSection({
 
 type FetchState =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "done"; result: QueryResult };
+  // prev: 「さらに読み込む」が失敗したとき、直前に表示していた結果 (行を消さない)
+  | { kind: "error"; message: string; prev?: ShownResult }
+  | { kind: "done"; result: QueryResult; limit: number };
+
+/** 表示中の結果と、それを取得したときの上限 (取得中に新しい上限と混ぜない)。 */
+type ShownResult = { result: QueryResult; limit: number };
 
 function RelatedRowsBody({
   entry,
@@ -218,6 +222,8 @@ function RelatedRowsBody({
   const t = useT();
   const { columnMaskEnabled, columnMaskPatterns } = useSettings();
   const [limit, setLimit] = useState(RELATED_ROWS_PAGE);
+  // 同じ上限での再試行用 (失敗後に同一上限を要求しても取り直せるようにする)。
+  const [retryKey, setRetryKey] = useState(0);
   const [state, setState] = useState<FetchState>({ kind: "loading" });
   const value: CellValue = entry.value;
 
@@ -241,23 +247,39 @@ function RelatedRowsBody({
     runRef.current = runQuery;
   }, [runQuery]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryKey は同一 SQL の再取得トリガー
   useEffect(() => {
     if (!sql) return;
     let cancelled = false;
+    const fetchLimit = limit;
     runRef.current(sql).then(
       (result) => {
-        if (!cancelled) setState({ kind: "done", result });
+        if (!cancelled) setState({ kind: "done", result, limit: fetchLimit });
       },
       (e: unknown) => {
-        if (!cancelled) setState({ kind: "error", message: String(e) });
+        if (!cancelled) {
+          setState((prev) => ({
+            kind: "error",
+            message: String(e),
+            prev:
+              prev.kind === "done"
+                ? { result: prev.result, limit: prev.limit }
+                : prev.kind === "error"
+                  ? prev.prev
+                  : undefined,
+          }));
+        }
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [sql]);
+  }, [sql, limit, retryKey]);
 
-  const result = state.kind === "done" ? state.result : null;
+  // 取得中・失敗中も直前の結果を (取得時の上限で) 出し続ける。
+  const shown: ShownResult | null =
+    state.kind === "done" ? state : state.kind === "error" ? (state.prev ?? null) : null;
+  const result = shown?.result ?? null;
   const columns = useMemo(() => result?.columns ?? [], [result]);
   const kinds = useMemo(() => columns.map((c) => classifyTypeName(c.type_name)), [columns]);
   const masked = useMemo(
@@ -268,8 +290,9 @@ function RelatedRowsBody({
       ),
     [columns, columnMaskEnabled, columnMaskPatterns],
   );
-  const split = result ? splitRelatedRows(result.rows, limit) : null;
-  const next = nextRelatedLimit(limit);
+  const split = shown ? splitRelatedRows(shown.result.rows, shown.limit) : null;
+  // 失敗後は表示中の上限を基準にすると同じ上限を再要求できる (再試行)。
+  const next = nextRelatedLimit(state.kind === "error" && shown ? shown.limit : limit);
 
   return (
     <Box px="2" py="1.5" display="flex" flexDirection="column" gap="1.5">
@@ -358,7 +381,15 @@ function RelatedRowsBody({
               : t("relatedRowsCount", { count: split.rows.length })}
           </chakra.span>
           {split.hasMore && next !== null && (
-            <Button size="sm" variant="secondary" onClick={() => setLimit(next)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={state.kind === "loading" || (state.kind === "done" && state.limit !== limit)}
+              onClick={() => {
+                setLimit(next);
+                setRetryKey((k) => k + 1);
+              }}
+            >
               {t("relatedRowsLoadMore")}
             </Button>
           )}

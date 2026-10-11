@@ -161,6 +161,8 @@ const HistoryRow = memo(function HistoryRow({
             tabIndex={0}
             onClick={() => onRestore(h.id)}
             onKeyDown={(e) => {
+              // 行内のボタン (コピー等) から伝わったキーはボタンに任せる
+              if (e.target !== e.currentTarget) return;
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 onRestore(h.id);
