@@ -147,7 +147,9 @@ function readTableRefPart(masked: string, p: number): number | null {
     if (close === -1 || close === p + 1) return null;
     return close + 1;
   }
-  const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(masked.slice(p));
+  // 日本語などの非 ASCII 識別子 (`user_情報`) も 1 語として読む。ASCII だけだと
+  // `user_` で打ち切って別テーブルの COUNT を出してしまう。
+  const m = /^[\p{L}_$][\p{L}\p{N}\p{M}_$]*/u.exec(masked.slice(p));
   return m ? p + m[0].length : null;
 }
 

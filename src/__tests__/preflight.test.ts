@@ -406,3 +406,12 @@ describe("buildPreflightPlan — 推定不可への降格 (変異テスト補強
     expect(preflightTone(true, null)).toBe("danger");
   });
 });
+
+describe("buildPreflightPlan — 非 ASCII のテーブル名 (#1527)", () => {
+  it("user_情報 を 1 つの識別子として読む", () => {
+    const plan = buildPreflightPlan("UPDATE user_情報 SET a = 1 WHERE b = 2");
+    expect(plan?.table).toBe("user_情報");
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM user_情報 WHERE b = 2");
+    expect(buildPreflightPlan("DELETE FROM 顧客")?.countSql).toBe("SELECT COUNT(*) FROM 顧客");
+  });
+});

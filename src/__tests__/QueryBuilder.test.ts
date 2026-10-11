@@ -378,3 +378,52 @@ describe("buildSql — ORDER BY", () => {
   });
 
 });
+
+describe("INSERT の空欄は DEFAULT (#1527)", () => {
+  const cols = [
+    makeColumnInfo({ name: "status", data_type: "varchar", default: "new" }),
+    makeColumnInfo({ name: "note", data_type: "varchar", default: null }),
+  ];
+  const insert = (driver: string, pairs: ColumnValuePair[]) =>
+    buildSql(driver, cols, "INSERT", "db", "t", [], true, false, [], [], false, "", [], pairs);
+
+  it("MySQL / PostgreSQL は DEFAULT キーワードを出す", () => {
+    const pairs = [
+      { column: "status", value: "" },
+      { column: "note", value: "x" },
+    ];
+    expect(insert("mysql", pairs)).toBe("INSERT INTO `db`.`t` (`status`, `note`) VALUES (DEFAULT, 'x');");
+    expect(insert("postgres", pairs)).toBe('INSERT INTO "db"."t" ("status", "note") VALUES (DEFAULT, \'x\');');
+  });
+
+  it("SQLite は VALUES に DEFAULT を書けないので列ごと省く", () => {
+    const pairs = [
+      { column: "status", value: "" },
+      { column: "note", value: "x" },
+    ];
+    expect(insert("sqlite", pairs)).toBe("INSERT INTO \"t\" (\"note\") VALUES ('x');");
+    expect(insert("sqlite", [{ column: "status", value: "" }])).toBe('INSERT INTO "t" DEFAULT VALUES;');
+  });
+
+  it("既定値の無い列の空欄は従来どおり空文字", () => {
+    expect(insert("mysql", [{ column: "note", value: "" }])).toBe("INSERT INTO `db`.`t` (`note`) VALUES ('');");
+  });
+});
+
+describe("IN の値が空なら Run をブロックする (#1527)", () => {
+  const base = {
+    kind: "SELECT" as const,
+    table: "t",
+    whereEnabled: true,
+    setPairs: [],
+    insertPairs: [],
+  };
+  it("空・区切りのみはブロック、値があれば通す", () => {
+    expect(
+      computeBuilderBlockedReason({ ...base, whereConditions: [{ column: "id", operator: "IN", value: " , " }] }),
+    ).toBe("qbValidationNoInValues");
+    expect(
+      computeBuilderBlockedReason({ ...base, whereConditions: [{ column: "id", operator: "in", value: "1,2" }] }),
+    ).toBeNull();
+  });
+});

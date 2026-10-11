@@ -396,3 +396,15 @@ describe("buildInvestigationBundleHtml", () => {
     expect(buildInvestigationBundleHtml(input({ lang: `"><script>` }))).toContain('<html lang="ja">');
   });
 });
+
+describe("反斜線で終わる文字列リテラル (#1527)", () => {
+  const sql = "SELECT * FROM a WHERE p = 'C:\\' UNION ALL SELECT * FROM b";
+  it("SQLite / PostgreSQL では後続の FROM b も拾う", () => {
+    for (const d of ["sqlite", "postgres"]) {
+      expect(extractReferencedTables(sql, 5, d).map((t) => t.table)).toEqual(["a", "b"]);
+    }
+  });
+  it("MySQL では反斜線がエスケープなので従来どおり", () => {
+    expect(extractReferencedTables(sql, 5, "mysql").map((t) => t.table)).toEqual(["a"]);
+  });
+});

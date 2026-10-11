@@ -1799,7 +1799,7 @@ function ColumnFilterMenu({
   const [serverFilterValue, setServerFilterValue] = useState<string>(() => serverFilter?.value ?? "");
   const [serverFilterValue2, setServerFilterValue2] = useState<string>(() => serverFilter?.value2 ?? "");
   const serverFilterNeedsValue = serverFilterOpNeedsValue(serverFilterOp);
-  const serverFilterValid = isServerFilterInputValid(serverFilterOp, serverFilterValue, serverFilterValue2);
+  const serverFilterValid = isServerFilterInputValid(serverFilterOp, serverFilterValue, serverFilterValue2, numeric);
 
   // Commit the draft up to the table, clearing it when it no longer narrows.
   const apply = (next: ColumnFilter) => {

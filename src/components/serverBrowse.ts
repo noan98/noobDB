@@ -74,9 +74,23 @@ export function splitInValues(raw: string): string[] {
  * 入力が演算子の要件を満たすか (UI の適用ボタン活性判定用)。`between` は両端、
  * `in` は 1 件以上、`eq` 系・`contains` は空でない値を要求しない (従来どおり)。
  */
-export function isServerFilterInputValid(op: ServerFilterOp, value: string, value2?: string): boolean {
-  if (op === "between") return value.trim() !== "" && (value2 ?? "").trim() !== "";
-  if (op === "in") return splitInValues(value).length > 0;
+export function isServerFilterInputValid(
+  op: ServerFilterOp,
+  value: string,
+  value2?: string,
+  numeric = false,
+): boolean {
+  if (op === "between") {
+    if (value.trim() === "" || (value2 ?? "").trim() === "") return false;
+    return !numeric || (isNumericParam(value) && isNumericParam(value2 ?? ""));
+  }
+  if (op === "in") {
+    const items = splitInValues(value);
+    return items.length > 0 && (!numeric || items.every(isNumericParam));
+  }
+  // 数値カラムの比較に数値でない値を渡すと、MySQL は 'abc' を 0 に暗黙変換して
+  // 別の行を黙って返し、PostgreSQL はエラーになるため適用させない。
+  if (numeric && op !== "contains" && op !== "isNull" && op !== "isNotNull") return isNumericParam(value);
   return true;
 }
 
@@ -121,7 +135,11 @@ export function buildServerFilterClause(driver: string, filter: ServerFilter): s
       return `${ident} IS NOT NULL`;
     case "contains": {
       const pattern = `%${escapeLikeValue(filter.value)}%`;
-      return `${ident} LIKE ${quoteString(driver, pattern)} ESCAPE '\\'`;
+      // PostgreSQL は integer 等に LIKE を直接適用できないため文字列へキャストする
+      // (MySQL / SQLite は暗黙変換で動く)。ESCAPE 文字は MySQL ではリテラル中の
+      // バックスラッシュが二重化される必要があるので方言別に引用する。
+      const target = filter.numeric && driver === "postgres" ? `CAST(${ident} AS TEXT)` : ident;
+      return `${target} LIKE ${quoteString(driver, pattern)} ESCAPE ${quoteString(driver, "\\")}`;
     }
     case "between":
       return `${ident} BETWEEN ${filterLiteral(driver, filter, filter.value)} AND ${filterLiteral(driver, filter, filter.value2 ?? "")}`;

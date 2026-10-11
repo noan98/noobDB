@@ -368,6 +368,7 @@ const en = {
   snippetScopeProfile: "A specific connection",
   snippetScopeGroup: "A connection group",
   snippetScopeProfileLabel: "Connection",
+  snippetScopeDeletedProfile: "(deleted connection)",
   snippetScopeGroupLabel: "Group",
   snippetScopeHelp: "Controls which connections show this snippet in the sidebar.",
   snippetSql: "SQL",
@@ -580,6 +581,8 @@ const en = {
   settingsLogsCopied: "Copied",
   settingsLogsClear: "Clear logs",
   settingsLogsClearConfirm: "Delete all saved application logs?",
+  settingsLogsLoadError: "Failed to load logs: {error}",
+  settingsLogsClearError: "Failed to clear logs: {error}",
   settingsLogsEmpty: "No logs recorded yet.",
   settingsLogsPath: "File: {path}",
 
@@ -1327,6 +1330,7 @@ const en = {
   qbValidationNoTable: "Select a table first.",
   qbValidationNoInsertValues: "Fill in at least one column and value to insert.",
   qbValidationNoSetValues: "Fill in at least one column to update.",
+  qbValidationNoInValues: "An IN condition has no values — fill them in or remove the condition.",
   qbValidationNoWhereConditions:
     "WHERE is enabled but has no conditions — fill one in or disable WHERE.",
   qbOrderBy: "ORDER BY",
@@ -4899,6 +4903,7 @@ const ja: Dict = {
   snippetScopeProfile: "特定の接続",
   snippetScopeGroup: "接続グループ",
   snippetScopeProfileLabel: "接続",
+  snippetScopeDeletedProfile: "(削除済みの接続)",
   snippetScopeGroupLabel: "グループ",
   snippetScopeHelp: "このスニペットをサイドバーに表示する接続を制御します。",
   snippetSql: "SQL",
@@ -5111,6 +5116,8 @@ const ja: Dict = {
   settingsLogsCopied: "コピーしました",
   settingsLogsClear: "ログを消去",
   settingsLogsClearConfirm: "保存されているアプリケーションログをすべて削除しますか？",
+  settingsLogsLoadError: "ログの読み込みに失敗しました: {error}",
+  settingsLogsClearError: "ログの削除に失敗しました: {error}",
   settingsLogsEmpty: "まだログは記録されていません。",
   settingsLogsPath: "ファイル: {path}",
 
@@ -5857,6 +5864,7 @@ const ja: Dict = {
   qbValidationNoTable: "先にテーブルを選択してください。",
   qbValidationNoInsertValues: "挿入する列と値を少なくとも 1 つ入力してください。",
   qbValidationNoSetValues: "更新する列を少なくとも 1 つ入力してください。",
+  qbValidationNoInValues: "IN 条件に値がありません。値を入力するか条件を削除してください。",
   qbValidationNoWhereConditions:
     "WHERE が有効ですが条件がありません。条件を入力するか WHERE を無効にしてください。",
   qbOrderBy: "ORDER BY",

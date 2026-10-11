@@ -109,7 +109,16 @@ function substitute(
  * 引用符・コメントが閉じていて、括弧の対応が取れているか。構文として成立しない
  * テンプレートを保存時に弾くための軽量チェック (SQL パーサではない)。
  */
-function isBalanced(sql: string): boolean {
+function isBalanced(sql: string, driver?: string): boolean {
+  // 単一引用符内のバックスラッシュ エスケープは MySQL だけ (`dangerousSql.ts` のマスクと同じ規則)。
+  // SQLite / PostgreSQL では `'C:\'` は閉じた文字列。driver 不明のときはどちらの規則でも
+  // 成立すればよしとする。
+  if (driver === "mysql") return isBalancedWith(sql, true);
+  if (driver === undefined) return isBalancedWith(sql, true) || isBalancedWith(sql, false);
+  return isBalancedWith(sql, false);
+}
+
+function isBalancedWith(sql: string, backslashEscapes: boolean): boolean {
   let depth = 0;
   let i = 0;
   const n = sql.length;
@@ -130,7 +139,7 @@ function isBalanced(sql: string): boolean {
       let j = i + 1;
       let closed = false;
       while (j < n) {
-        if (sql[j] === "\\" && c === "'") {
+        if (backslashEscapes && sql[j] === "\\" && c === "'") {
           j += 2;
           continue;
         }
@@ -340,7 +349,7 @@ const DUMMY_VALUES: Record<TableQueryPlaceholder, string> = {
 };
 
 function checkExpanded(sql: string, driver?: string): TableQueryTemplateError | null {
-  if (!isBalanced(sql)) return { kind: "syntax" };
+  if (!isBalanced(sql, driver)) return { kind: "syntax" };
   const masked = trimTrailingSeparators(maskLiterals(sql, driver));
   if (masked.includes(";")) return { kind: "multipleStatements" };
   const body = masked.trim().toLowerCase();
@@ -501,7 +510,14 @@ export function planTableOpenQuery(template: string | null, ctx: TableOpenContex
 
   const limit = values.limit;
   let base = shape.limitStart !== null ? expanded.slice(0, shape.limitStart).trimEnd() : expanded;
-  const sql = shape.limitStart !== null ? expanded : `${expanded} LIMIT ${limit}`;
+  let sql = expanded;
+  if (shape.limitStart === null) {
+    sql = `${expanded} LIMIT ${limit}`;
+  } else if (!shape.clauses.has("limit") && !shape.clauses.has("fetch")) {
+    // OFFSET だけのテンプレートは上限が無く全残行を読み込んでしまうので、
+    // OFFSET の手前に LIMIT を補う (`LIMIT n OFFSET m` は 3 方言で有効)。
+    sql = `${expanded.slice(0, shape.limitStart).trimEnd()} LIMIT ${limit} ${expanded.slice(shape.limitStart)}`;
+  }
 
   const singleTable =
     !shape.hasJoin && isTargetTable(shape.fromSegment, ctx.driver, ctx.database, ctx.table);

@@ -193,12 +193,16 @@ pub fn delete_ai_api_key() -> Result<()> {
 }
 
 pub fn delete_all(profile_id: &str) -> Result<()> {
-    delete_db_password(profile_id)?;
-    delete_ssh_passphrase(profile_id)?;
-    delete_ssh_password(profile_id)?;
-    delete_ssh_jump_passphrase(profile_id)?;
-    delete_ssh_jump_password(profile_id)?;
-    Ok(())
+    // 1 件が失敗しても残りの秘密は消す (孤立した秘密を keyring に残さない)。
+    // 最初のエラーを返す。
+    let results = [
+        delete_db_password(profile_id),
+        delete_ssh_passphrase(profile_id),
+        delete_ssh_password(profile_id),
+        delete_ssh_jump_passphrase(profile_id),
+        delete_ssh_jump_password(profile_id),
+    ];
+    results.into_iter().collect::<Result<Vec<()>>>().map(|_| ())
 }
 
 /// エクスポート時の仮名化 (#733) に使うアプリ単位のソルトの keyring 上の位置。

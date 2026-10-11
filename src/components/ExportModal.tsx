@@ -313,7 +313,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       const loadPlan = bundle.loadPlan;
       const [s, p] = await Promise.all([
         bundleSchema && describe
-          ? loadBundleSchema(bundleSchemaTargets(bundle.sql, database, table), database, describe)
+          ? loadBundleSchema(bundleSchemaTargets(bundle.sql, database, table, driver), database, describe)
           : Promise.resolve(null),
         bundlePlan && loadPlan
           ? loadPlan().then(

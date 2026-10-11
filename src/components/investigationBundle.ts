@@ -58,7 +58,10 @@ export interface SqlToken {
  * SQL をハイライト用のトークン列に分割する。表示用の軽量な分割で、どの入力でも
  * 例外を投げず、連結すると必ず元の文字列に戻る (取りこぼし無し)。
  */
-export function tokenizeSql(sql: string): SqlToken[] {
+export function tokenizeSql(sql: string, driver?: string | null): SqlToken[] {
+  // 文字列内のバックスラッシュ・エスケープは MySQL だけ (SQLite / PostgreSQL では
+  // `'C:\'` が閉じた文字列)。driver 不明のときは従来どおりエスケープ扱い。
+  const backslashEscapes = !driver || driver === "mysql";
   const out: SqlToken[] = [];
   const n = sql.length;
   let i = 0;
@@ -84,7 +87,7 @@ export function tokenizeSql(sql: string): SqlToken[] {
       const closeCh = c === "[" ? "]" : c;
       let j = i + 1;
       while (j < n) {
-        if (c === "'" && sql[j] === "\\" && j + 1 < n) {
+        if (backslashEscapes && c === "'" && sql[j] === "\\" && j + 1 < n) {
           j += 2;
           continue;
         }
@@ -135,8 +138,8 @@ const SQL_KEYWORDS = new Set(
 );
 
 /** SQL をハイライト済みの HTML 断片にする (各トークンはエスケープ済み)。 */
-export function highlightSqlHtml(sql: string): string {
-  return tokenizeSql(sql)
+export function highlightSqlHtml(sql: string, driver?: string | null): string {
+  return tokenizeSql(sql, driver)
     .map((tok) => {
       const text = escapeHtml(tok.text);
       switch (tok.kind) {
@@ -180,8 +183,8 @@ function unquoteIdent(text: string): string {
  * は最後の要素をテーブル名、その 1 つ前を database として返す。重複は除き、
  * 最大 `limit` 件。
  */
-export function extractReferencedTables(sql: string, limit = 5): TableReference[] {
-  const toks = tokenizeSql(sql).filter((t) => t.kind !== "space" && t.kind !== "comment");
+export function extractReferencedTables(sql: string, limit = 5, driver?: string | null): TableReference[] {
+  const toks = tokenizeSql(sql, driver).filter((t) => t.kind !== "space" && t.kind !== "comment");
   const out: TableReference[] = [];
   const seen = new Set<string>();
   const isName = (t: SqlToken | undefined) => !!t && (t.kind === "word" || t.kind === "ident");
@@ -254,9 +257,10 @@ export function bundleSchemaTargets(
   sql: string | null,
   database: string | null,
   table: string | null,
+  driver?: string | null,
 ): TableReference[] {
   if (table) return [{ database, table }];
-  return sql ? extractReferencedTables(sql) : [];
+  return sql ? extractReferencedTables(sql, 5, driver) : [];
 }
 
 /**
@@ -593,7 +597,7 @@ export function buildInvestigationBundleHtml(input: BundleInput): string {
   sections.push(
     `<section><h2>${escapeHtml(labels.sectionSql)}</h2>${
       sql && sql.trim()
-        ? `<pre class="sql"><code>${highlightSqlHtml(sql)}</code></pre>`
+        ? `<pre class="sql"><code>${highlightSqlHtml(sql, meta.driver)}</code></pre>`
         : `<p class="muted">${escapeHtml(labels.noSql)}</p>`
     }</section>`,
   );

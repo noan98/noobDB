@@ -69,9 +69,32 @@ describe("buildServerFilterClause", () => {
 
   it("contains: LIKE パターンをワイルドカードエスケープ付きで組み立てる (MySQL はバックスラッシュを二重化)", () => {
     const f: ServerFilter = { column: "name", op: "contains", value: "50%", numeric: false };
-    expect(buildServerFilterClause("mysql", f)).toBe("`name` LIKE '%50\\\\%%' ESCAPE '\\'");
+    expect(buildServerFilterClause("mysql", f)).toBe("`name` LIKE '%50\\\\%%' ESCAPE '\\\\'");
     expect(buildServerFilterClause("postgres", f)).toBe("\"name\" LIKE '%50\\%%' ESCAPE '\\'");
     expect(buildServerFilterClause("sqlite", f)).toBe("\"name\" LIKE '%50\\%%' ESCAPE '\\'");
+  });
+
+  it("contains: MySQL の ESCAPE は二重化したバックスラッシュ (未閉じリテラルにしない)", () => {
+    const f: ServerFilter = { column: "name", op: "contains", value: "ali", numeric: false };
+    expect(buildServerFilterClause("mysql", f)).toBe("`name` LIKE '%ali%' ESCAPE '\\\\'");
+  });
+
+  it("contains: 数値カラムは PostgreSQL だけ CAST AS TEXT を付ける", () => {
+    const f: ServerFilter = { column: "id", op: "contains", value: "5", numeric: true };
+    expect(buildServerFilterClause("postgres", f)).toBe("CAST(\"id\" AS TEXT) LIKE '%5%' ESCAPE '\\'");
+    expect(buildServerFilterClause("mysql", f)).toBe("`id` LIKE '%5%' ESCAPE '\\\\'");
+    expect(buildServerFilterClause("sqlite", f)).toBe("\"id\" LIKE '%5%' ESCAPE '\\'");
+  });
+
+  it("isServerFilterInputValid: 数値カラムは数値でない値を適用させない", () => {
+    expect(isServerFilterInputValid("eq", "abc", undefined, true)).toBe(false);
+    expect(isServerFilterInputValid("eq", "", undefined, true)).toBe(false);
+    expect(isServerFilterInputValid("eq", "12", undefined, true)).toBe(true);
+    expect(isServerFilterInputValid("eq", "abc", undefined, false)).toBe(true);
+    expect(isServerFilterInputValid("between", "1", "x", true)).toBe(false);
+    expect(isServerFilterInputValid("in", "1, 2, z", undefined, true)).toBe(false);
+    expect(isServerFilterInputValid("contains", "5", undefined, true)).toBe(true);
+    expect(isServerFilterInputValid("isNull", "", undefined, true)).toBe(true);
   });
 
   it("contains: プレーンな値は %value% で囲む", () => {

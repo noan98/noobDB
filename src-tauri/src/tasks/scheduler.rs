@@ -123,8 +123,15 @@ async fn tick(app: &AppHandle, is_startup: bool) -> Result<()> {
                 tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to persist next_run_at; skipping this tick to avoid a double fire");
                 continue;
             }
+            // 前回の実行がまだ終わっていないなら今回の発火は見送る (同一タスクの
+            // 並行実行は同じ出力ファイルを壊し、接続を溜める)。
+            let Some(guard) = try_acquire_run(&task.id) else {
+                tracing::warn!(task_id = %task.id, name = %task.name, "task scheduler: previous run still in progress; skipping this firing");
+                continue;
+            };
             let app2 = app.clone();
             tokio::spawn(async move {
+                let _guard = guard;
                 let _ = execute_and_log(&app2, task, catch_up).await;
             });
         } else if Some(effective_next) != persisted {
@@ -133,6 +140,34 @@ async fn tick(app: &AppHandle, is_startup: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// 実行中のタスク ID。スケジュール実行と手動実行 (`run_task_now`) で共有し、
+/// 同一タスクの重複実行を防ぐ。
+static RUNNING: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+    std::sync::Mutex::new(None);
+
+/// 実行中フラグ。Drop で解除される。
+pub(crate) struct RunGuard(String);
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        let mut g = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(set) = g.as_mut() {
+            set.remove(&self.0);
+        }
+    }
+}
+
+/// 同じタスクが実行中なら `None`。
+pub(crate) fn try_acquire_run(task_id: &str) -> Option<RunGuard> {
+    let mut g = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
+    let set = g.get_or_insert_with(std::collections::HashSet::new);
+    if set.insert(task_id.to_string()) {
+        Some(RunGuard(task_id.to_string()))
+    } else {
+        None
+    }
 }
 
 /// タスクを実行し、実行ログへ記録し、タスク定義の表示用ミラー
@@ -272,5 +307,20 @@ mod tests {
             ran.load(Ordering::SeqCst),
             "spawn_detached で投入したタスクが実行されなかった"
         );
+    }
+}
+
+#[cfg(test)]
+mod run_guard_tests {
+    use super::*;
+
+    #[test]
+    fn same_task_cannot_run_twice_until_guard_dropped() {
+        let g = try_acquire_run("guard-test-a");
+        assert!(g.is_some());
+        assert!(try_acquire_run("guard-test-a").is_none());
+        assert!(try_acquire_run("guard-test-b").is_some());
+        drop(g);
+        assert!(try_acquire_run("guard-test-a").is_some());
     }
 }
