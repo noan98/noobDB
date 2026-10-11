@@ -116,3 +116,25 @@ describe("formatDefault: 型と式の判定 (#1527)", () => {
     expect(formatDefault("mysql", "hello world", "varchar(36)")).toBe("'hello world'");
   });
 });
+
+describe("formatDefault: 式判定の厳密化 (#1527 レビュー)", () => {
+  it("`::` を含むだけの文字列は式にしない", () => {
+    expect(formatDefault("postgres", "Error::NotFound", "text")).toBe("'Error::NotFound'");
+    expect(formatDefault("postgres", "fe80::abcd", "text")).toBe("'fe80::abcd'");
+  });
+  it("閉じた '...' は逐語 (文字列リテラルを強制できる)", () => {
+    expect(formatDefault("mysql", "'(none)'", "varchar(10)")).toBe("'(none)'");
+    expect(formatDefault("postgres", "'x'::text", "text")).toBe("'x'::text");
+    expect(formatDefault("mysql", "it's", "varchar(10)")).toBe("'it''s'");
+  });
+  it("括弧なしの関数呼び出しは mysql / sqlite で括り、現在時刻系と PostgreSQL は括らない", () => {
+    expect(formatDefault("mysql", "uuid()", "varchar(36)")).toBe("(uuid())");
+    expect(formatDefault("sqlite", "lower(hex(randomblob(4)))", "text")).toBe("(lower(hex(randomblob(4))))");
+    expect(formatDefault("postgres", "gen_random_uuid()", "uuid")).toBe("gen_random_uuid()");
+    expect(formatDefault("mysql", "CURRENT_TIMESTAMP(6)", "datetime(6)")).toBe("CURRENT_TIMESTAMP(6)");
+    expect(formatDefault("mysql", "now()", "datetime")).toBe("NOW()");
+  });
+  it("literal モードは式判定をしない", () => {
+    expect(formatDefault("mysql", "(none)", "varchar(10)", { literal: true })).toBe("'(none)'");
+  });
+});

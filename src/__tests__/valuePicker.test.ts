@@ -196,6 +196,14 @@ describe("allowedValuesFromCheck (#1067)", () => {
     ]);
   });
 
+  it("OR は IN を囲むグループにあるときだけ候補を無効にする (#1527)", () => {
+    expect(allowedValuesFromCheck("postgres", ["CHECK (((status IN ('a','b')) OR qty > 0))"], "status")).toBeNull();
+    expect(allowedValuesFromCheck("postgres", ["CHECK ((status IN ('a','b') AND (qty > 0 OR qty < -5)))"], "status")).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
   it("does not turn non-enumerations into candidates", () => {
     const cases = [
       "CHECK ((status NOT IN ('x', 'y')))",

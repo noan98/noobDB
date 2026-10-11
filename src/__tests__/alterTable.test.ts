@@ -449,3 +449,35 @@ describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
     );
   });
 });
+
+describe("buildAlterPlan: MySQL 既存列の既定値 (#1527 レビュー)", () => {
+  const change = (base: Partial<ExistingColumnBaseline>, ed: Partial<ExistingColumnEdit>) =>
+    buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "c", type: "varchar(10)", ...base })],
+        existing: [edit({ original: "c", name: "c", type: "varchar(10)", comment: "x", ...ed })],
+      }),
+    ).statements[0].sql;
+
+  it("文字列既定値 (none) はコメントだけ変えてもリテラルのまま", () => {
+    expect(change({ defaultValue: "(none)", comment: "" }, { defaultValue: "(none)" })).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT '(none)' COMMENT 'x';",
+    );
+  });
+  it("DEFAULT_GENERATED の式既定値は (expr) で包む。現在時刻系は包まない", () => {
+    expect(
+      change({ defaultValue: "uuid()", extra: "DEFAULT_GENERATED" }, { defaultValue: "uuid()" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT (uuid()) COMMENT 'x';");
+    expect(
+      change({ defaultValue: "CURRENT_TIMESTAMP", extra: "DEFAULT_GENERATED" }, { defaultValue: "CURRENT_TIMESTAMP" }),
+    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT CURRENT_TIMESTAMP COMMENT 'x';");
+  });
+  it("ADD COLUMN で型が空なら TEXT として既定値を判定する", () => {
+    const r = buildAlterPlan(
+      "mysql",
+      form({ added: [{ name: "a", type: "", notNull: false, defaultValue: "007" }] }),
+    );
+    expect(r.statements[0].sql).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `a` TEXT DEFAULT '007';");
+  });
+});
