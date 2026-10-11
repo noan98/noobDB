@@ -220,7 +220,11 @@ impl SqliteConn {
         row_limit: usize,
     ) -> Result<PreviewResult> {
         let row_limit = row_limit.max(1);
-        let trimmed = sql.trim_start().to_ascii_lowercase();
+        // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
+        // `/* fix */ DELETE …` を拒否しない)。
+        let trimmed = super::strip_sql_comments(sql, super::SqlFlavor::Sqlite)
+            .trim_start()
+            .to_ascii_lowercase();
         let is_mutation = trimmed.starts_with("insert")
             || trimmed.starts_with("update")
             || trimmed.starts_with("delete")

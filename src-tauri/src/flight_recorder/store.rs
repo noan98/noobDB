@@ -5,6 +5,7 @@ use sqlx::Row;
 use tokio::sync::OnceCell;
 
 use super::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
+use crate::db::data_diff::restore_binary_rows;
 use crate::db::types::Value;
 use crate::db::WriteKind;
 use crate::error::{AppError, Result};
@@ -225,6 +226,24 @@ async fn approx_size_bytes(pool: &SqlitePool) -> Result<u64> {
     Ok(page_count.max(0) as u64 * page_size.max(0) as u64)
 }
 
+/// Bytes actually occupied by live data: `(page_count - freelist_count) *
+/// page_size`. A plain `DELETE` only moves pages onto the freelist and never
+/// shrinks `page_count`, so the eviction loop must judge progress by this
+/// value — judging by [`approx_size_bytes`] never looks "under the cap" until
+/// the `VACUUM` at the end and would evict everything down to the newest row.
+async fn used_bytes(pool: &SqlitePool) -> Result<u64> {
+    let page_count: i64 = sqlx::query_scalar("PRAGMA page_count")
+        .fetch_one(pool)
+        .await?;
+    let freelist_count: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+        .fetch_one(pool)
+        .await?;
+    let page_size: i64 = sqlx::query_scalar("PRAGMA page_size")
+        .fetch_one(pool)
+        .await?;
+    Ok((page_count - freelist_count).max(0) as u64 * page_size.max(0) as u64)
+}
+
 /// Evicts the oldest rows in small batches until the database's estimated
 /// on-disk size is back under `max_bytes`, then reclaims the freed space with
 /// `VACUUM` (a plain `DELETE` only frees pages for reuse *within* the file;
@@ -245,6 +264,11 @@ async fn enforce_byte_cap(pool: &SqlitePool, max_bytes: u64) -> Result<()> {
     // Always leaves at least the single newest row behind — even a lone
     // oversized capture stays queryable — rather than evicting down to zero.
     loop {
+        // 削除済みページは freelist に残りファイルサイズは縮まないため、
+        // 実使用量 (freelist を除く) で判定する。
+        if used_bytes(pool).await? <= max_bytes {
+            break;
+        }
         let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM write_capture")
             .fetch_one(pool)
             .await?;
@@ -259,9 +283,6 @@ async fn enforce_byte_cap(pool: &SqlitePool, max_bytes: u64) -> Result<()> {
         .await?
         .rows_affected();
         if deleted == 0 {
-            break;
-        }
-        if approx_size_bytes(pool).await? <= max_bytes {
             break;
         }
     }
@@ -375,6 +396,10 @@ fn row_to_record(r: SqliteRow) -> Result<WriteCaptureRecord> {
     let before_rows: Vec<Vec<Value>> =
         serde_json::from_str(&r.try_get::<String, _>("before_rows")?)?;
     let after_rows: Vec<Vec<Value>> = serde_json::from_str(&r.try_get::<String, _>("after_rows")?)?;
+    // JSON 往復で `Value::Bytes` は `Value::String` に戻ってしまう。ライブ DB の
+    // 行 (`Bytes`) と比較できるよう、BLOB 系の列は `Bytes` へ復元して返す。
+    let before_rows = restore_binary_rows(&columns, &column_types, before_rows);
+    let after_rows = restore_binary_rows(&columns, &column_types, after_rows);
     Ok(WriteCaptureRecord {
         id: r.try_get("id")?,
         profile_id: r.try_get("profile_id")?,
@@ -649,6 +674,42 @@ mod tests {
             size_after < 10 * 64 * 1024,
             "expected VACUUM to reclaim space, got {size_after} bytes"
         );
+    }
+
+    #[tokio::test]
+    async fn record_in_byte_cap_keeps_rows_that_fit_instead_of_wiping_history() {
+        let (path, pool) = temp_file_pool("partial").await;
+        for i in 0..10 {
+            record_in(
+                &pool,
+                big_entry(&format!("t{i}"), &format!("2026-01-01T00:00:{i:02}Z")),
+                1_000,
+                0,
+                u64::MAX,
+            )
+            .await
+            .unwrap();
+        }
+        // 約 64 KiB x 10 のうち 5 件ぶん強が収まる上限で再度記録する。
+        record_in(
+            &pool,
+            big_entry("t10", "2026-01-01T00:00:10Z"),
+            1_000,
+            0,
+            5 * 64 * 1024,
+        )
+        .await
+        .unwrap();
+        let remaining = list_in(&pool, None, 100).await.unwrap();
+        assert!(
+            remaining.len() >= 3,
+            "上限に収まる行は残るべき (全消去されていないこと)、残り {} 件",
+            remaining.len()
+        );
+        assert!(remaining.len() < 11);
+        assert_eq!(remaining[0].table, "t10");
+        drop(pool);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

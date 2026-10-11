@@ -22,7 +22,9 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::db::data_diff::{generate_data_sync_sql, DataDiff, RowDiff, RowStatus};
+use crate::db::data_diff::{
+    generate_data_sync_sql, restore_binary_rows, DataDiff, RowDiff, RowStatus,
+};
 use crate::db::types::Value;
 use crate::db::{DriverKind, WriteKind};
 
@@ -108,6 +110,22 @@ pub fn build_undo_plan(
     }
 
     let mut warnings: Vec<String> = Vec::new();
+    // 退避側 (JSON 往復後は BLOB が `String`) とライブ側 (`Bytes`) の表現を、
+    // `column_types` を手掛かりに `Bytes` へ揃えてから比較する。揃えないと BLOB 列を
+    // 含む行は常に不一致になり、BLOB 主キーの行は INSERT/DELETE の Undo で
+    // キーが一致せず誤った計画になる。
+    let current_rows =
+        &restore_binary_rows(&record.columns, &record.column_types, current_rows.to_vec());
+    let record_before = restore_binary_rows(
+        &record.columns,
+        &record.column_types,
+        record.before_rows.clone(),
+    );
+    let record_after = restore_binary_rows(
+        &record.columns,
+        &record.column_types,
+        record.after_rows.clone(),
+    );
     let current_by_key: HashMap<String, Vec<Value>> = current_rows
         .iter()
         .filter_map(|row| match key_of(row, &pk_idx) {
@@ -128,7 +146,7 @@ pub fn build_undo_plan(
     match record.kind {
         WriteKind::Insert => {
             // Undo = DELETE the row the original INSERT created.
-            for after in &record.after_rows {
+            for after in &record_after {
                 let Some(key) = key_of(after, &pk_idx) else {
                     warnings
                         .push("退避された挿入行の一部が壊れているためスキップしました".to_string());
@@ -172,7 +190,7 @@ pub fn build_undo_plan(
         }
         WriteKind::Delete => {
             // Undo = INSERT the row the original DELETE removed.
-            for before in &record.before_rows {
+            for before in &record_before {
                 let Some(key) = key_of(before, &pk_idx) else {
                     warnings
                         .push("退避された削除行の一部が壊れているためスキップしました".to_string());
@@ -216,10 +234,10 @@ pub fn build_undo_plan(
         WriteKind::Update => {
             // Undo = UPDATE back to the captured before-values. Pairs are
             // captured index-aligned (same PK) by `Connection::capture_write`.
-            let n = record.before_rows.len().min(record.after_rows.len());
+            let n = record_before.len().min(record_after.len());
             for i in 0..n {
-                let before = &record.before_rows[i];
-                let after = &record.after_rows[i];
+                let before = &record_before[i];
+                let after = &record_after[i];
                 let Some(key) = key_of(before, &pk_idx) else {
                     warnings
                         .push("退避された更新行の一部が壊れているためスキップしました".to_string());
@@ -524,5 +542,49 @@ mod tests {
         let plan = build_undo_plan(&r, &[], false);
         assert!(plan.statements.is_empty());
         assert!(!plan.warnings.is_empty());
+    }
+
+    fn blob_record(kind: WriteKind) -> WriteCaptureRecord {
+        let mut r = record(kind);
+        r.columns = vec!["id".to_string(), "data".to_string()];
+        r.column_types = vec!["INTEGER".to_string(), "BLOB".to_string()];
+        r
+    }
+
+    // JSON 往復後は BLOB 値が `String` に戻る。ライブ行 (`Bytes`) と比べても
+    // 競合扱いにならないこと。
+    #[test]
+    fn update_undo_does_not_flag_blob_rows_as_conflicts_after_json_round_trip() {
+        let mut r = blob_record(WriteKind::Update);
+        r.before_rows = vec![vec![Value::Int(1), Value::String("00ff".into())]];
+        r.after_rows = vec![vec![Value::Int(1), Value::String("ab12".into())]];
+        let current = vec![vec![Value::Int(1), Value::Bytes("ab12".into())]];
+        let plan = build_undo_plan(&r, &current, false);
+        assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+        assert_eq!(plan.statements.len(), 1);
+    }
+
+    // BLOB 主キーの INSERT を取り消す: キーが一致して DELETE が出ること。
+    #[test]
+    fn insert_undo_matches_blob_primary_key_after_json_round_trip() {
+        let mut r = blob_record(WriteKind::Insert);
+        r.columns = vec!["id".to_string(), "name".to_string()];
+        r.column_types = vec!["BLOB".to_string(), "TEXT".to_string()];
+        r.after_rows = vec![vec![
+            Value::String("deadbeef".into()),
+            Value::String("x".into()),
+        ]];
+        let current = vec![vec![
+            Value::Bytes("deadbeef".into()),
+            Value::String("x".into()),
+        ]];
+        let plan = build_undo_plan(&r, &current, false);
+        assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+        assert_eq!(plan.statements.len(), 1);
+        assert!(
+            plan.statements[0].starts_with("DELETE"),
+            "{:?}",
+            plan.statements
+        );
     }
 }

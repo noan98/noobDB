@@ -308,7 +308,11 @@ impl PostgresConn {
         row_limit: usize,
     ) -> Result<PreviewResult> {
         let row_limit = row_limit.max(1);
-        let trimmed = sql.trim_start().to_ascii_lowercase();
+        // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
+        // `/* fix */ DELETE …` を拒否しない)。
+        let trimmed = super::strip_sql_comments(sql, super::SqlFlavor::Postgres)
+            .trim_start()
+            .to_ascii_lowercase();
         let is_mutation = trimmed.starts_with("insert")
             || trimmed.starts_with("update")
             || trimmed.starts_with("delete");
@@ -339,8 +343,19 @@ impl PostgresConn {
         // ユーザの WHERE を BEFORE へ反映する (PK が判っている UPDATE/DELETE の
         // ときだけ。`UPDATE … FROM other` のように単独 SELECT として成立しない
         // 形は共有ロジック側が弾いて従来の固定窓へ縮退する)。
-        let where_clause =
-            super::preview::before_where_clause(sql, super::SqlFlavor::Postgres, &primary_key);
+        // PK 自体を書き換える UPDATE (`SET id = 100 WHERE id = 1`) は旧 PK で AFTER を
+        // 取り直すと行が見つからず「削除された」ように見えるため、WHERE の再利用も
+        // PK アンカーもやめ、BEFORE/AFTER を同じ固定窓で撮り直す。
+        let pk_changed = super::preview::update_assigns_primary_key(
+            sql,
+            super::SqlFlavor::Postgres,
+            &primary_key,
+        );
+        let where_clause = if pk_changed {
+            None
+        } else {
+            super::preview::before_where_clause(sql, super::SqlFlavor::Postgres, &primary_key)
+        };
         // PostgreSQL の UPDATE/DELETE は ORDER BY / LIMIT を取れないので、
         // 切り出した句と自前の ORDER BY / LIMIT が衝突することはない — MySQL と
         // 違ってフィルタ時も上限を SQL 側で掛けられる。
@@ -375,6 +390,19 @@ impl PostgresConn {
                 .collect(),
             _ => Vec::new(),
         };
+        // PK 列ごとに bytea 型か (hex リテラル化してよい型か) を控える。
+        let pk_is_bytea: Vec<bool> = match before_raw.first() {
+            Some(first) => pk_indices
+                .iter()
+                .map(|&i| {
+                    first
+                        .columns()
+                        .get(i)
+                        .is_some_and(|c| c.type_info().name().eq_ignore_ascii_case("BYTEA"))
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         // 全ての PK 列を特定できたときだけ PK アンカーを使う。
         let captured_pks: Vec<Vec<Value>> =
             if !pk_indices.is_empty() && pk_indices.len() == primary_key.len() {
@@ -395,7 +423,7 @@ impl PostgresConn {
         // INSERT は新しい行が BEFORE の PK に含まれないので、アンカーせず
         // 固定窓を撮り直す (そうしないと挿入行が AFTER に出てこない)。
         let is_insert = trimmed.starts_with("insert");
-        let after_by_pk = if is_insert {
+        let after_by_pk = if is_insert || pk_changed {
             None
         } else {
             target.as_ref().and_then(|t| {
@@ -404,13 +432,33 @@ impl PostgresConn {
                     &primary_key,
                     &captured_pks
                         .iter()
-                        .map(|row| row.iter().map(pk_literal).collect())
+                        .map(|row| {
+                            row.iter()
+                                .enumerate()
+                                .map(|(i, v)| {
+                                    pk_literal(v, pk_is_bytea.get(i).copied().unwrap_or(false))
+                                })
+                                .collect()
+                        })
                         .collect::<Vec<Vec<String>>>(),
                     &order_clause,
                     pg_quote_ident,
                 )
             })
         };
+        // AFTER 用の PK リテラルは「単一引用符の二重化だけで足りる」
+        // (`standard_conforming_strings = on`) 前提で組んでいる。接続初期化 SQL 等で
+        // off にされていると `\` がエスケープ扱いになりリテラルが壊れる/注入できて
+        // しまうため、ユーザの文を実行し終えたあとで、このトランザクション内に限り
+        // 強制的に on にする (`SET LOCAL` は ROLLBACK で消える。ユーザの文自体の
+        // 解釈は変えない)。
+        if after_by_pk.is_some() {
+            sqlx::Executor::execute(
+                &mut *tx,
+                sqlx::raw_sql("SET LOCAL standard_conforming_strings = on"),
+            )
+            .await?;
+        }
         // PK アンカーが組めなければ BEFORE と同じクエリを撮り直す (従来動作)。
         let after_raw: Vec<PgRow> = match after_by_pk.as_ref().or(before_sql.as_ref()) {
             Some(q) => fetch_capped_pg(&mut tx, q, row_limit + 1).await?,
@@ -2959,12 +3007,16 @@ fn pg_literal(cell: Option<&str>) -> String {
 /// 比較相手の列型へ暗黙に解決されるため、列型を知らないこの経路でも安全に
 /// 比較できる (`import_rows` が値をリテラルで流し込んでいるのと同じ理由)。
 ///
-/// BLOB (`Value::Bytes`) は 16 進テキストのままでは往復しないので `NULL` に
-/// する — MySQL 側の `bind_value` と同じ方針で、AFTER から当該行が落ちるだけに
-/// 留め、型不一致でエラーにはしない。
-fn pk_literal(v: &Value) -> String {
+/// BLOB (`Value::Bytes`) は、列が bytea のときだけ hex 入力形式 (`'\x…'`) に戻す。
+/// それ以外の型や、16 進として不正な場合は `NULL` にし、AFTER から当該行が
+/// 落ちるだけに留める (型不一致でエラーにしない)。
+fn pk_literal(v: &Value, is_bytea: bool) -> String {
     match v {
-        Value::Null | Value::Bytes(_) => "NULL".to_string(),
+        Value::Null => "NULL".to_string(),
+        Value::Bytes(hex) if is_bytea && hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            format!("'\\x{hex}'")
+        }
+        Value::Bytes(_) => "NULL".to_string(),
         Value::Bool(b) => pg_literal(Some(if *b { "true" } else { "false" })),
         Value::Int(i) => pg_literal(Some(i.to_string().as_str())),
         Value::UInt(u) => pg_literal(Some(u.to_string().as_str())),
@@ -3566,16 +3618,23 @@ mod tests {
 
     #[test]
     fn pk_literals_are_untyped_and_safe() {
-        assert_eq!(pk_literal(&Value::Int(42)), "'42'");
-        assert_eq!(pk_literal(&Value::UInt(7)), "'7'");
-        assert_eq!(pk_literal(&Value::Bool(true)), "'true'");
+        assert_eq!(pk_literal(&Value::Int(42), false), "'42'");
+        assert_eq!(pk_literal(&Value::UInt(7), false), "'7'");
+        assert_eq!(pk_literal(&Value::Bool(true), false), "'true'");
         assert_eq!(
-            pk_literal(&Value::String("a'b".to_string())),
+            pk_literal(&Value::String("a'b".to_string()), false),
             "'a''b'",
             "PK 値に単一引用符が含まれても壊れない"
         );
         // NULL と BLOB は NULL 扱い (該当行が AFTER から落ちるだけ)。
-        assert_eq!(pk_literal(&Value::Null), "NULL");
-        assert_eq!(pk_literal(&Value::Bytes("00ff".to_string())), "NULL");
+        assert_eq!(pk_literal(&Value::Null, false), "NULL");
+        assert_eq!(pk_literal(&Value::Bytes("zz".to_string()), true), "NULL");
+        // bytea 主キーは hex 入力形式のリテラルに戻る。
+        assert_eq!(
+            pk_literal(&Value::Bytes("00ff".to_string()), true),
+            "'\\x00ff'"
+        );
+        // bytea 以外の列では従来どおり NULL。
+        assert_eq!(pk_literal(&Value::Bytes("00ff".to_string()), false), "NULL");
     }
 }
