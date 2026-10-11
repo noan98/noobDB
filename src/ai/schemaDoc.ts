@@ -149,6 +149,48 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * ビュー / ルーチン定義のリテラルをマスクする。`maskLiterals` はドル引用 (`$function$...$function$`)
+ * の中身を丸ごと空白にしてしまい、PostgreSQL の関数本体 (pg_get_functiondef は必ずこの形) が消えるので、
+ * ドル引用は外側のタグだけ残して本体を再帰的にマスクする。
+ */
+export function maskDefinition(sql: string, driver: string, mask: boolean): string {
+  if (!mask) return sql;
+  let out = "";
+  let segStart = 0;
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i];
+    if (c === "'") {
+      // 単一引用符リテラルは丸ごと飛ばす (中の `$$` を開始タグと誤認しない)。
+      let j = i + 1;
+      while (j < n) {
+        if (sql[j] === "'") {
+          if (sql[j + 1] === "'") j += 2;
+          else break;
+        } else j++;
+      }
+      i = j + 1;
+    } else if (c === "-" && sql[i + 1] === "-") {
+      while (i < n && sql[i] !== "\n") i++;
+    } else if (c === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? n : end + 2;
+    } else if (c === "$" && (i === 0 || !/\w/.test(sql[i - 1]))) {
+      const m = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 64));
+      const close = m ? sql.indexOf(m[0], i + m[0].length) : -1;
+      if (m && close >= 0) {
+        out += sqlForAi(sql.slice(segStart, i), driver, true) + m[0];
+        out += maskDefinition(sql.slice(i + m[0].length, close), driver, true) + m[0];
+        i = close + m[0].length;
+        segStart = i;
+      } else i++;
+    } else i++;
+  }
+  return out + sqlForAi(sql.slice(segStart), driver, true);
+}
+
 /** AI へ渡すスキーマ本文。デフォルト値・行データは含めない。 */
 export function buildSchemaDocContextText(
   ctx: SchemaDocContext,
@@ -192,7 +234,7 @@ export function buildSchemaDocContextText(
       lines.push(`### ${o.kind} ${o.name}`);
       lines.push("```sql");
       // マスクしてから切り詰める (先に切るとリテラルの途中で切れてマスクが外れうる)。
-      const def = mask ? sqlForAi(o.definition ?? "", mask.driver, mask.maskLiterals) : (o.definition ?? "");
+      const def = mask ? maskDefinition(o.definition ?? "", mask.driver, mask.maskLiterals) : (o.definition ?? "");
       lines.push(truncateDefinition(def));
       lines.push("```");
     }

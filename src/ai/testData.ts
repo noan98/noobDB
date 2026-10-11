@@ -337,7 +337,8 @@ function isUsableValue(col: TestDataAiColumn, kind: AiColumnPlan["kind"], raw: s
       // JS の安全整数を超える値は number へ変換すると丸められ、別の値が黙って入る。採用しない。
       return kind === "choices" && Number.isSafeInteger(Number(v)) && /^[-+]?\d+$/.test(v);
     case "decimal":
-      return kind === "choices" && Number.isFinite(Number(v));
+      // 有効桁数が 15 桁を超えると number へ変換した時点で精度が落ちるので採用しない。
+      return kind === "choices" && Number.isFinite(Number(v)) && v.replace(/^[-+]?0*|\./g, "").replace(/e.*$/i, "").length <= 15;
     case "bool":
       return kind === "choices" && /^(true|false|0|1)$/i.test(v);
     case "date":

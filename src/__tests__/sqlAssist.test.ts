@@ -225,6 +225,25 @@ describe("restoreMaskedLiterals", () => {
     });
   });
 
+  it.each([
+    ["created_at >= 'A' AND updated_at >= 'B'", "updated_at >= '' AND created_at >= ''"],
+    ["`a` = 'A' AND `b` = 'B'", "`b` = '' AND `a` = ''"],
+    ['"a" = \'A\' AND "b" = \'B\'', '"b" = \'\' AND "a" = \'\''],
+    ["u.status = 'A' AND o.status = 'B'", "o.status = '' AND u.status = ''"],
+    ["lower(a) = 'A' AND lower(b) = 'B'", "lower(b) = '' AND lower(a) = ''"],
+  ])("並べ替えを見逃さない: %s", (orig, prop) => {
+    expect(restoreMaskedLiterals(orig, prop)).toEqual({ sql: prop, status: "missing" });
+  });
+
+  it("正当な書き換え (空白・大小文字・引用符の違い) では restored のまま", () => {
+    expect(
+      restoreMaskedLiterals(
+        "SELECT * FROM t WHERE `a` = 'A' AND lower(b) <> 'B'",
+        "select id from t\nwhere \"A\" =  '' and LOWER( b )  != ''",
+      ),
+    ).toMatchObject({ status: "restored" });
+  });
+
   it("コメント・二重引用符内の引用符はリテラルに数えない", () => {
     expect(restoreMaskedLiterals('SELECT "it\'s", \'a\' /* \'z\' */', "SELECT \" \", ' '")).toEqual({
       sql: "SELECT \" \", 'a'",

@@ -144,6 +144,16 @@ describe("コンテキストとプロンプト", () => {
     expect(buildSchemaDocSystem({ ...base, maskLiterals: false })).toContain("ACME-0001");
   });
 
+  it("PostgreSQL のドル引用本体は残し、リテラルだけ消す", () => {
+    const def =
+      "CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $function$\nBEGIN\n  RETURN (SELECT count(*) FROM t WHERE code = 'SECRET-1');\nEND;\n$function$";
+    const c: SchemaDocContext = { ...ctx, objects: [{ kind: "function", name: "f", definition: def }] };
+    const sys = buildSchemaDocSystem({ driver: "postgres", database: "a", locale: "en", context: c, maskLiterals: true });
+    expect(sys).toContain("RETURN (SELECT count(*) FROM t WHERE code =");
+    expect(sys).toContain("$function$");
+    expect(sys).not.toContain("SECRET-1");
+  });
+
   it("定義の切り詰めはサロゲートペアを割らない", () => {
     const out = truncateDefinition(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}😀zzz`);
     expect(out).toBe(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}\n-- (truncated)`);

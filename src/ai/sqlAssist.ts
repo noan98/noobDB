@@ -342,13 +342,41 @@ function scanStringLiterals(sql: string): LiteralSpan[] {
   return out;
 }
 
-/** 各リテラル直前 (直前のリテラル末尾から) の最後の 2 トークン。差し戻しの対応確認に使う。 */
+/** 述語の左辺を遡るときの境界になる語。 */
+const PREDICATE_BOUNDARIES = new Set([
+  "and", "or", "where", "on", "set", "having", "when", "then", "else", "select", "values", "limit", "using",
+]);
+
+/**
+ * 各リテラルの左辺 (直前のリテラル末尾から、述語の境界 `and` / `or` / `where` / `,` / 開き括弧 などまで
+ * 遡った部分) を正規化して返す。差し戻しの対応確認に使う。引用符付き識別子は引用符を外し、演算子の
+ * 連なりは 1 トークンにし、大小文字・空白の違いは無視する。
+ */
 function literalContexts(sql: string, spans: LiteralSpan[]): string[] {
   let prevEnd = 0;
   return spans.map((l) => {
-    const tokens = sql.slice(prevEnd, l.from).toLowerCase().match(/[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
+    const raw =
+      sql
+        .slice(prevEnd, l.from)
+        .match(/`[^`]*`|"(?:[^"]|"")*"|[\p{L}\p{N}_$]+|[<>=!:|]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
     prevEnd = l.to;
-    return tokens.slice(-2).join(" ");
+    const tokens = raw.map((t) => {
+      if ((t.startsWith("`") || t.startsWith('"')) && t.length >= 2) return t.slice(1, -1).toLowerCase();
+      const lower = t.toLowerCase();
+      return lower === "<>" ? "!=" : lower;
+    });
+    const left: string[] = [];
+    let depth = 0;
+    for (let k = tokens.length - 1; k >= 0; k--) {
+      const t = tokens[k];
+      if (t === ")") depth++;
+      else if (t === "(") {
+        if (depth === 0) break;
+        depth--;
+      } else if (depth === 0 && (t === "," || t === ";" || PREDICATE_BOUNDARIES.has(t))) break;
+      left.unshift(t);
+    }
+    return left.join(" ");
   });
 }
 
