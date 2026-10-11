@@ -143,7 +143,8 @@ impl ScriptSplitter {
                         self.pos += 2;
                         continue;
                     }
-                    if c == b'#' {
+                    // `#` 行コメントは MySQL だけ (PostgreSQL では XOR / jsonb パス演算子、#1517)。
+                    if c == b'#' && self.mysql {
                         self.state = ScanState::LineComment;
                         self.pos += 1;
                         continue;

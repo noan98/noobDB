@@ -72,17 +72,26 @@
     },
     {
       "sql": "SELECT 1 # a; b\n; SELECT 2",
-      "note": "# 行コメント内の ; (#J3: maskLiterals と揃える)",
+      "note": "# 行コメント内の ; (#J3: maskLiterals と揃える)。PostgreSQL/SQLite では # は行コメントではない (#1517)",
       "statements": [
         "SELECT 1 # a; b",
+        "SELECT 2"
+      ],
+      "statementsStandard": [
+        "SELECT 1 # a",
+        "b",
         "SELECT 2"
       ]
     },
     {
       "sql": "SELECT data #>> '{a}' FROM t; DELETE FROM t",
-      "note": "#J3 回帰: # 以降はコメント扱いで 1 文 (安全判定と一致)",
+      "note": "#J3 回帰: MySQL / ドライバ省略は # 以降をコメント扱いして 1 文 (安全判定と一致)。PostgreSQL/SQLite は #>> が演算子なので 2 文 (#1517)",
       "statements": [
         "SELECT data #>> '{a}' FROM t; DELETE FROM t"
+      ],
+      "statementsStandard": [
+        "SELECT data #>> '{a}' FROM t",
+        "DELETE FROM t"
       ]
     },
     {

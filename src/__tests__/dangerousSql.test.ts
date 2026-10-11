@@ -355,9 +355,24 @@ describe("analyzeDangerousSql: 変異テストで補強した境界ケース", (
     ]);
   });
 
+  it("引用符付きのスキーマ修飾名は修飾名全体を対象にする (#1517)", () => {
+    expect(analyzeDangerousSql("DROP TABLE `shop`.`orders`")).toEqual([
+      { kind: "drop", target: "shop.orders" },
+    ]);
+    expect(analyzeDangerousSql('DELETE FROM "public"."users"')).toEqual([
+      { kind: "deleteNoWhere", target: "public.users" },
+    ]);
+    expect(analyzeDangerousSql('DELETE FROM public."users"')).toEqual([
+      { kind: "deleteNoWhere", target: "public.users" },
+    ]);
+    expect(analyzeDangerousSql("TRUNCATE TABLE [dbo].[t]")).toEqual([
+      { kind: "truncate", target: "dbo.t" },
+    ]);
+  });
+
   it("対象テーブル名の引用符 (` \" []) を外し、空白の多い構文も解釈する", () => {
     expect(analyzeDangerousSql("DELETE   FROM   `my db`.x")).toEqual([
-      { kind: "deleteNoWhere", target: "my db" },
+      { kind: "deleteNoWhere", target: "my db.x" },
     ]);
     expect(analyzeDangerousSql('DELETE FROM "Users"')).toEqual([
       { kind: "deleteNoWhere", target: "Users" },
@@ -417,5 +432,19 @@ describe("isReadOnlySql: 変異テストで補強した境界ケース", () => {
     expect(isReadOnlySql("SELECT updlock FROM t")).toBe(true);
     expect(isReadOnlySql("SELECT * FROM t WITH (INDEX(1) , UPDLOCK)")).toBe(false);
     expect(isReadOnlySql("SELECT * FROM t WITH (NOLOCK) JOIN u WITH (XLOCK) ON 1=1")).toBe(false);
+  });
+});
+
+describe("# は MySQL だけ行コメント (#1517)", () => {
+  it("PostgreSQL の # 演算子の後ろに隠れた DELETE を検出する", () => {
+    expect(analyzeDangerousSql("SELECT 1 # 2; DELETE FROM orders", "postgres")).toEqual([
+      { kind: "deleteNoWhere", target: "orders" },
+    ]);
+    expect(analyzeDangerousSql("SELECT 1 # 2; DELETE FROM orders", "mysql")).toEqual([]);
+  });
+
+  it("PostgreSQL の #>> の後ろの FOR UPDATE を読み取り専用と誤判定しない", () => {
+    const sql = "SELECT data #>> '{a}' FROM t WHERE id = 1 FOR UPDATE";
+    expect(isReadOnlySql(sql, "postgres")).toBe(false);
   });
 });

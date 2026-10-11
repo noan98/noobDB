@@ -40,6 +40,10 @@ struct VectorCase {
     /// MySQL のバックスラッシュエスケープ解釈での期待値 (省略時は `masked`)。
     #[serde(rename = "maskedMysql", default)]
     masked_mysql: Option<String>,
+    /// PostgreSQL / SQLite の期待値 (省略時は `masked`)。`#` は MySQL とドライバ
+    /// 非依存の入口だけが行コメント扱いにする (#1517)。
+    #[serde(rename = "maskedNoHash", default)]
+    masked_no_hash: Option<String>,
 }
 
 /// 標準的な文字列リテラル解釈を採るドライバ (= `masked` がそのまま期待値)。
@@ -63,6 +67,7 @@ fn mask_golden_matches_shared_vectors() {
     let mut failures = Vec::new();
     for case in &vectors.cases {
         let mysql_expected = case.masked_mysql.as_deref().unwrap_or(&case.masked);
+        let standard_expected = case.masked_no_hash.as_deref().unwrap_or(&case.masked);
 
         // マスク後も長さは常に元の SQL と同じ (キーワードのオフセットが保たれる)。
         assert_eq!(
@@ -90,10 +95,10 @@ fn mask_golden_matches_shared_vectors() {
         }
         for driver in STANDARD_DRIVERS {
             let actual = t::mask_for_driver(driver, &case.sql);
-            if actual != case.masked {
+            if actual != standard_expected {
                 failures.push(format!(
                     "  - {:?} (note: {}) [{driver:?}]: expected {:?}, got {:?}",
-                    case.sql, case.note, case.masked, actual
+                    case.sql, case.note, standard_expected, actual
                 ));
             }
         }

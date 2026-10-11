@@ -21,6 +21,8 @@ interface VectorCase {
   readOnly: boolean;
   /** MySQL のバックスラッシュエスケープ解釈での期待値 (省略時は `readOnly`)。 */
   readOnlyMysql?: boolean;
+  /** PostgreSQL / SQLite の期待値 (省略時は `readOnly`)。`#` は MySQL と driver 省略時だけ行コメント (#1517)。 */
+  readOnlyStandard?: boolean;
   note: string;
 }
 
@@ -46,7 +48,7 @@ describe("read-only 判定ゴールデン (フロント isReadOnlySql)", () => {
       // ドライバ非依存の呼び出し口は保守的 (標準解釈) 側に倒れる。
       expect(isReadOnlySql(c.sql)).toBe(c.readOnly);
       for (const driver of STANDARD_DRIVERS) {
-        expect(isReadOnlySql(c.sql, driver)).toBe(c.readOnly);
+        expect(isReadOnlySql(c.sql, driver)).toBe(c.readOnlyStandard ?? c.readOnly);
       }
       expect(isReadOnlySql(c.sql, "mysql")).toBe(mysqlExpected);
     });

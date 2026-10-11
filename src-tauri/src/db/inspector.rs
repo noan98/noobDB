@@ -16,6 +16,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::db::types::StatementStat;
+use crate::db::DriverKind;
 
 // ── フィンガープリント正規化 ─────────────────────────────────────────────
 
@@ -355,13 +356,36 @@ fn collapse_values_rows(s: &[char]) -> Vec<char> {
 /// - 数値リテラル (16 進・小数・指数) を `?` に置換
 /// - 空白を畳んで小文字化
 /// - `IN (?, ?, ...)` と `VALUES (?, ...), (?, ...)` の繰り返しを 1 要素へ畳む
+///
+/// ドライバ非依存版は MySQL 流 (`"…"` は文字列、`#` は行コメント) で正規化する。
+/// ドライバが分かる呼び出し口は [`normalize_sql_fingerprint_for`] を使う。
 pub fn normalize_sql_fingerprint(sql: &str) -> String {
+    normalize_sql_fingerprint_impl(sql, true)
+}
+
+/// ドライバ別の [`normalize_sql_fingerprint`]。PostgreSQL / SQLite では `"…"` は
+/// 識別子 (テーブル名・列名) で、`#` は行コメントではない (PG では XOR / jsonb パス
+/// 演算子) ため、`"…"` を `?` に潰したり `#` 以降を除去したりしない。潰してしまうと
+/// `from "orders"` と `from "users"` が同一視される。
+pub fn normalize_sql_fingerprint_for(driver: DriverKind, sql: &str) -> String {
+    normalize_sql_fingerprint_impl(sql, matches!(driver, DriverKind::Mysql))
+}
+
+fn normalize_sql_fingerprint_impl(sql: &str, mysql_style: bool) -> String {
     let s: Vec<char> = sql.chars().collect();
     let s = strip_block_comments(&s);
     let s = strip_dash_comments(&s);
-    let s = strip_hash_comments(&s);
+    let s = if mysql_style {
+        strip_hash_comments(&s)
+    } else {
+        s
+    };
     let s = replace_quoted(&s, '\'');
-    let s = replace_quoted(&s, '"');
+    let s = if mysql_style {
+        replace_quoted(&s, '"')
+    } else {
+        s
+    };
     let s = replace_hex_literals(&s);
     let s = replace_number_literals(&s);
     // 空白を畳んで小文字化してから、繰り返しリストを構造的に畳む。
@@ -610,6 +634,30 @@ mod tests {
                 v.input
             );
         }
+    }
+
+    /// PostgreSQL / SQLite では `"…"` は識別子なので別テーブルを同一視しない。
+    /// `#` も行コメントではないので以降を落とさない。MySQL は従来どおり。
+    #[test]
+    fn fingerprint_for_keeps_double_quoted_identifiers_on_standard_drivers() {
+        for driver in [DriverKind::Postgres, DriverKind::Sqlite] {
+            let a = normalize_sql_fingerprint_for(driver, r#"select * from "orders" where id = 1"#);
+            let b = normalize_sql_fingerprint_for(driver, r#"select * from "users" where id = 1"#);
+            assert_eq!(a, r#"select * from "orders" where id = ?"#);
+            assert_ne!(a, b);
+            assert_eq!(
+                normalize_sql_fingerprint_for(driver, "select data #> '{a}' from t where id = 1"),
+                "select data #> ? from t where id = ?"
+            );
+        }
+        assert_eq!(
+            normalize_sql_fingerprint_for(DriverKind::Mysql, r#"select 1 from t where x = "abc""#),
+            "select ? from t where x = ?"
+        );
+        assert_eq!(
+            normalize_sql_fingerprint_for(DriverKind::Mysql, "select 1 # c\nfrom t"),
+            "select ? from t"
+        );
     }
 
     fn stat(digest: &str, database: Option<&str>, calls: i64, total: f64) -> StatementStat {

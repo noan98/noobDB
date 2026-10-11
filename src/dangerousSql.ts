@@ -114,7 +114,7 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): 
       i = j;
       continue;
     }
-    if (c === "#") {
+    if (c === "#" && hashIsComment(driver)) {
       let j = i + 1;
       while (j < n && sql[j] !== "\n") j++;
       blank(i, j);
@@ -252,6 +252,16 @@ function driverBackslashEscapes(driver?: string): boolean {
   return driver === "mysql";
 }
 
+/**
+ * `#` を行コメントとして扱うか。MySQL/MariaDB では `# …` がコメントだが、PostgreSQL では
+ * XOR 演算子や jsonb パス演算子 (`#>` / `#>>` / `#-`)、SQLite には `#` コメントが無い。
+ * これらを誤ってコメント扱いすると同じ行の後続 (`; DELETE …` や `FOR UPDATE`) が隠れる。
+ * driver 省略時は従来どおりコメント扱い。バックの `driver_hash_comment` と同じ規則。
+ */
+function hashIsComment(driver?: string): boolean {
+  return driver !== "postgres" && driver !== "sqlite";
+}
+
 function startsWithKeyword(body: string, keyword: string): boolean {
   return new RegExp(`^${keyword}\\b`).test(body);
 }
@@ -304,11 +314,19 @@ function cleanIdentifier(token: string): string {
   return token;
 }
 
-/** Reads the first table-like identifier from `rest` (after the lead keyword). */
+/**
+ * Reads the first table-like (possibly schema-qualified) name from `rest` (after
+ * the lead keyword). Each `.`-separated part may be quoted (`` `x` `` / `"x"` /
+ * `[x]`) or bare; the quotes are stripped and the parts rejoined with `.`, so
+ * `` `shop`.`orders` `` yields `shop.orders` rather than just `shop`.
+ */
 function readTargetIdentifier(rest: string): string | null {
-  const m = /^\s*(`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$.]+)/.exec(rest);
+  const m = /^\s*((?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+)(?:\.(?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+))*\.?)/.exec(
+    rest,
+  );
   if (!m) return null;
-  const cleaned = cleanIdentifier(m[1]);
+  const parts = m[1].match(/`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+/g) ?? [];
+  const cleaned = parts.map(cleanIdentifier).join(".");
   return cleaned.length > 0 ? cleaned : null;
 }
 
@@ -406,6 +424,20 @@ const WRITE_KEYWORDS = [
   "dblink",
   "dblink_exec",
   "load_extension",
+  // 副作用のある関数 (他セッションの強制切断・シーケンス更新・サーバ設定変更・
+  // ラージオブジェクト書き込み)。バックの `is_read_only_sql_masked` と同じ一覧。
+  "pg_terminate_backend",
+  "pg_cancel_backend",
+  "nextval",
+  "setval",
+  "pg_reload_conf",
+  "pg_rotate_logfile",
+  "pg_switch_wal",
+  "pg_create_restore_point",
+  "lo_import",
+  "lo_export",
+  "lo_create",
+  "lo_unlink",
 ];
 
 /**

@@ -36,6 +36,10 @@ struct VectorCase {
     /// MySQL のバックスラッシュエスケープ解釈での期待値 (省略時は `read_only`)。
     #[serde(rename = "readOnlyMysql", default)]
     read_only_mysql: Option<bool>,
+    /// PostgreSQL / SQLite の期待値 (省略時は `read_only`)。`#` は MySQL とドライバ
+    /// 非依存の入口だけが行コメント扱いにする (#1517)。
+    #[serde(rename = "readOnlyStandard", default)]
+    read_only_standard: Option<bool>,
     note: String,
 }
 
@@ -71,10 +75,11 @@ fn read_only_golden_matches_shared_vectors() {
         }
         for driver in STANDARD_DRIVERS {
             let actual = t::is_read_only_sql_for(driver, &case.sql);
-            if actual != case.read_only {
+            let standard_expected = case.read_only_standard.unwrap_or(case.read_only);
+            if actual != standard_expected {
                 failures.push(format!(
                     "  - {:?} (note: {}) [{driver:?}]: expected read_only={}, got {}",
-                    case.sql, case.note, case.read_only, actual
+                    case.sql, case.note, standard_expected, actual
                 ));
             }
         }

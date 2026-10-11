@@ -2071,6 +2071,22 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
         "dblink",
         "dblink_exec",
         "load_extension",
+        // 副作用のある関数。文全体は `SELECT ...` のままだが、他セッションの強制切断・
+        // シーケンスの更新・サーバ設定の変更・ラージオブジェクトの書き込みを行う。
+        // PostgreSQL 側には read_only セッション用のサーバ側読み取り専用設定が無く
+        // このガードが唯一の防御なので、名前を全ドライバ共通で拒否する (fail-closed)。
+        "pg_terminate_backend",
+        "pg_cancel_backend",
+        "nextval",
+        "setval",
+        "pg_reload_conf",
+        "pg_rotate_logfile",
+        "pg_switch_wal",
+        "pg_create_restore_point",
+        "lo_import",
+        "lo_export",
+        "lo_create",
+        "lo_unlink",
     ] {
         if contains_word(body, kw) {
             return false;
@@ -2610,7 +2626,20 @@ fn sets_no_backslash_escapes_mode(orig_segment: &str) -> bool {
 /// thin `&str -> String` wrapper for the shared frontend/backend masking
 /// golden (`tests/mask_golden.rs`, #988).
 pub(crate) fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
-    mask_for_analysis_impl(src, false)
+    // ドライバ不明の `#` は従来どおりコメント扱い (MySQL の `# …` に追従)。
+    mask_for_analysis_impl(src, false, true)
+}
+
+/// True when `driver` treats `#` as a line comment opener. Only MySQL/MariaDB
+/// does; in PostgreSQL `#` is the bitwise-XOR operator and the start of the
+/// `#>` / `#>>` / `#-` jsonb path operators, and SQLite has no `#` comment at
+/// all. Masking such a `#` as a comment would hide the rest of the line
+/// (including a stacked `; DELETE …` or `FOR UPDATE`) from every scan.
+fn driver_hash_comment(driver: DriverKind) -> bool {
+    match driver {
+        DriverKind::Mysql => true,
+        DriverKind::Postgres | DriverKind::Sqlite => false,
+    }
 }
 
 /// True when `driver` treats `\` inside a `'…'` / `"…"` string literal as an
@@ -2646,21 +2675,26 @@ fn driver_backslash_escapes(driver: DriverKind) -> bool {
 /// [`mask_for_analysis_conservative`] — re-exported for `tests/mask_golden.rs`
 /// (#988).
 pub(crate) fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
-    mask_for_analysis_impl(src, driver_backslash_escapes(driver))
+    mask_for_analysis_impl(
+        src,
+        driver_backslash_escapes(driver),
+        driver_hash_comment(driver),
+    )
 }
 
 /// Shared implementation for [`mask_for_analysis_conservative`] /
 /// [`mask_for_driver`]. `backslash_escapes` controls whether
 /// `\` inside a `'…'` / `"…"` literal is treated as escaping the following
 /// character (MySQL) or as an ordinary character (PostgreSQL / SQLite).
-fn mask_for_analysis_impl(src: &[char], backslash_escapes: bool) -> Vec<char> {
+fn mask_for_analysis_impl(src: &[char], backslash_escapes: bool, hash_comment: bool) -> Vec<char> {
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let n = src.len();
     let mut i = 0;
     while i < n {
         let c = src[i];
-        // Line comment: `-- …` or `# …`, terminated by newline.
-        if (c == '-' && i + 1 < n && src[i + 1] == '-') || c == '#' {
+        // Line comment: `-- …` or (MySQL / driver-less only) `# …`, terminated
+        // by newline.
+        if (c == '-' && i + 1 < n && src[i + 1] == '-') || (c == '#' && hash_comment) {
             while i < n && src[i] != '\n' {
                 out.push(' ');
                 i += 1;
@@ -2972,6 +3006,14 @@ fn contains_word(haystack: &str, word: &str) -> bool {
 /// one is the bug we are guarding against).
 fn is_aggregate_only(body: &str) -> bool {
     if !starts_with_word(body, "select") {
+        return false;
+    }
+    // 集合演算は複数の SELECT をつなぐので、先頭が集計でも全体は単一行ではない
+    // (`SELECT COUNT(*) FROM a UNION ALL SELECT id FROM big` など)。
+    if contains_word(body, "union")
+        || contains_word(body, "intersect")
+        || contains_word(body, "except")
+    {
         return false;
     }
     // GROUP BY, window functions (`OVER`) and DISTINCT can each yield many rows.
@@ -4046,6 +4088,62 @@ mod tests {
         assert!(
             apply_auto_limit("SELECT max(a) FROM t WHERE b IN (SELECT b FROM s)", 1000).is_none()
         );
+    }
+
+    #[test]
+    fn auto_limit_applies_to_set_operations_starting_with_aggregate() {
+        // 先頭が集計でも UNION / INTERSECT / EXCEPT は複数行を返しうる (#1517)。
+        assert!(apply_auto_limit(
+            "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table",
+            1000
+        )
+        .is_some());
+        assert!(apply_auto_limit("SELECT max(a) FROM t EXCEPT SELECT b FROM s", 1000).is_some());
+        assert!(apply_auto_limit("SELECT max(a) FROM t INTERSECT SELECT b FROM s", 1000).is_some());
+    }
+
+    #[test]
+    fn hash_is_not_a_line_comment_on_postgres_and_sqlite() {
+        // PostgreSQL の `#>` / `#` 演算子を行コメントと誤読すると LIMIT が途中に入る (#1517)。
+        assert_eq!(
+            apply_auto_limit_for(DriverKind::Postgres, "SELECT data #> '{a}' FROM t", 1000),
+            Some("SELECT data #> '{a}' FROM t LIMIT 1000".to_string())
+        );
+        // 同一行の後続 `; DELETE` を隠さない。
+        assert!(has_stacked_statements_for(
+            DriverKind::Postgres,
+            "SELECT 1 # 2; DELETE FROM orders"
+        ));
+        assert!(!is_read_only_sql_for(
+            DriverKind::Postgres,
+            "SELECT data #>> '{a}' FROM t FOR UPDATE"
+        ));
+        assert!(!is_read_only_sql_for(
+            DriverKind::Sqlite,
+            "SELECT 1 # x; DELETE FROM t"
+        ));
+        // MySQL では従来どおり `#` はコメント。
+        assert!(is_read_only_sql_for(
+            DriverKind::Mysql,
+            "SELECT * FROM users # delete from users"
+        ));
+    }
+
+    #[test]
+    fn read_only_rejects_side_effecting_functions() {
+        for sql in [
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity",
+            "SELECT pg_cancel_backend(123)",
+            "SELECT nextval('seq')",
+            "SELECT setval('seq', 10)",
+            "SELECT pg_reload_conf()",
+            "SELECT lo_import('/etc/passwd')",
+        ] {
+            assert!(!is_read_only_sql(sql), "{sql}");
+            assert!(!is_read_only_sql_for(DriverKind::Postgres, sql), "{sql}");
+        }
+        // 列名などに部分一致するだけなら拒否しない。
+        assert!(is_read_only_sql("SELECT nextval_count FROM t"));
     }
 
     #[test]
