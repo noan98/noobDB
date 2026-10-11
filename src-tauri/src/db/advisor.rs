@@ -241,7 +241,7 @@ fn rule_duplicate_and_redundant_indexes(
         // PRIMARY / UNIQUE は制約を担うため DROP 候補にしない。列が空の
         // (式) インデックスも対象外。
         // 式インデックスは `columns` に式の列が積まれず、列だけの比較は別物を同一視する。
-        if x.primary || x.unique || x.columns.is_empty() || x.has_expression {
+        if x.primary || x.unique || x.columns.is_empty() || x.first_expression_at.is_some() {
             continue;
         }
         let xcols = lower_cols(x);
@@ -252,7 +252,7 @@ fn rule_duplicate_and_redundant_indexes(
         // 部分インデックスは述語が同じものどうしだけを重複とみなす (述語が違えば別の行集合を担う)。
         if let Some(dup) = indexes.iter().find(|y| {
             y.name != x.name
-                && !y.has_expression
+                && y.first_expression_at.is_none()
                 && y.predicate == x.predicate
                 && lower_cols(y) == xcols
                 && (y.primary || y.unique || y.name < x.name)
@@ -275,7 +275,7 @@ fn rule_duplicate_and_redundant_indexes(
         // y が部分インデックスなら、x と同じ述語のときだけ x の行を全て含む (非部分 y は常に包含)。
         if let Some(cov) = indexes.iter().find(|y| {
             y.name != x.name
-                && !y.has_expression
+                && y.first_expression_at.is_none()
                 && (y.predicate.is_none() || y.predicate == x.predicate)
                 && y.columns.len() > x.columns.len()
                 && lower_cols(y).starts_with(&xcols)
@@ -338,13 +338,18 @@ fn rule_fk_missing_index(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
         };
         let fk_cols: Vec<String> = group.columns.iter().map(|c| c.to_lowercase()).collect();
         // FK が「賄われている」= あるインデックスの先頭が FK 列列に一致する。
-        // 式インデックスは列が欠けており、部分インデックスは一部の行しか持たないので、
-        // どちらも FK のルックアップを賄うものとは数えない。
+        // 部分インデックスは一部の行しか持たないので数えない。式インデックスは、先頭から最初の
+        // 式キーの手前までの実列だけで前方一致を判定する (`(user_id, lower(name))` は
+        // `user_id` の FK を賄う)。
         let covered = table.indexes.iter().any(|idx| {
-            !idx.has_expression
-                && idx.predicate.is_none()
-                && idx.columns.len() >= fk_cols.len()
-                && lower_cols(idx).starts_with(&fk_cols)
+            let real = idx
+                .first_expression_at
+                .map_or(idx.columns.len(), |n| n.min(idx.columns.len()));
+            idx.predicate.is_none()
+                && real >= fk_cols.len()
+                && lower_cols(idx)
+                    .get(..real)
+                    .is_some_and(|c| c.starts_with(&fk_cols))
         });
         if covered {
             continue;
@@ -626,7 +631,7 @@ mod tests {
             primary,
             method: None,
             predicate: None,
-            has_expression: false,
+            first_expression_at: None,
         }
     }
 
@@ -645,6 +650,8 @@ mod tests {
             referenced_table: ref_table.to_string(),
             referenced_column: ref_col.map(|s| s.to_string()),
             constraint_name: None,
+            on_delete: None,
+            on_update: None,
         }
     }
 
@@ -1160,7 +1167,7 @@ mod tests {
     #[test]
     fn expression_index_is_not_treated_as_its_plain_columns() {
         let mut expr = idx("i_expr", &["b"], false, false);
-        expr.has_expression = true; // (lower(a), b)
+        expr.first_expression_at = Some(0); // (lower(a), b)
         let t = table(
             "t",
             vec![col("id", "int", true), col("b", "int", false)],
@@ -1172,6 +1179,28 @@ mod tests {
         );
         let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
         assert!(findings_for(&report, RuleId::DuplicateIndex).is_empty());
+    }
+
+    #[test]
+    fn expression_index_covers_fk_by_its_leading_real_columns() {
+        // (user_id, lower(name)): 先頭の実列 user_id だけで FK を賄う。
+        let mut covering = idx("i_u_expr", &["user_id"], false, false);
+        covering.first_expression_at = Some(1);
+        // (lower(name), user_id): 式が先頭なので user_id の FK は賄えない。
+        let mut not_covering = idx("i_expr_u", &["user_id"], false, false);
+        not_covering.first_expression_at = Some(0);
+        let mk = |index: IndexInfo| {
+            table(
+                "orders",
+                vec![col("id", "int", true), col("user_id", "int", false)],
+                vec![idx("PRIMARY", &["id"], true, true), index],
+            )
+        };
+        let f = vec![fk("orders", "user_id", "users", Some("id"))];
+        let ok = analyze(&input(DriverKind::Postgres, vec![mk(covering)], f.clone()));
+        assert!(findings_for(&ok, RuleId::FkMissingIndex).is_empty());
+        let ng = analyze(&input(DriverKind::Postgres, vec![mk(not_covering)], f));
+        assert_eq!(findings_for(&ng, RuleId::FkMissingIndex).len(), 1);
     }
 
     #[test]

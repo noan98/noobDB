@@ -1594,6 +1594,8 @@ impl MySqlConn {
                 referenced_table: r.try_get::<String, _>(2).unwrap_or_default(),
                 referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                on_delete: None,
+                on_update: None,
             })
             .collect())
     }
@@ -1801,13 +1803,15 @@ impl MySqlConn {
                     primary: name == "PRIMARY",
                     method,
                     predicate: None,
-                    has_expression: false,
+                    first_expression_at: None,
                 }
             });
             match column {
                 Some(col) => entry.columns.push(col),
                 // 関数インデックス (8.0.13+) のキーは COLUMN_NAME が NULL。
-                None => entry.has_expression = true,
+                None => {
+                    entry.first_expression_at.get_or_insert(entry.columns.len());
+                }
             }
         }
         Ok(order

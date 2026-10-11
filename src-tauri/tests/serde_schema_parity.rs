@@ -135,6 +135,8 @@ fn build_fixtures() -> serde_json::Value {
         referenced_table: "users".into(),
         referenced_column: Some("id".into()),
         constraint_name: Some("fk_orders_user".into()),
+        on_delete: None,
+        on_update: None,
     };
     let index_info = IndexInfo {
         name: "idx_users_name".into(),
@@ -143,7 +145,7 @@ fn build_fixtures() -> serde_json::Value {
         primary: false,
         method: Some("btree".into()),
         predicate: None,
-        has_expression: false,
+        first_expression_at: None,
     };
     let schema_object = SchemaObject {
         kind: "view".into(),

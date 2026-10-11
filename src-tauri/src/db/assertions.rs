@@ -356,10 +356,11 @@ pub fn custom_sql_duplicate_column_hint(
         return None;
     }
     let lower = error_message.to_lowercase();
-    (lower.contains("duplicate column name") || lower.contains("1060")).then(|| {
+    (lower.contains("duplicate column name") || lower.contains("1060 (42s21)")).then(|| {
         format!(
-            "custom_sql の SELECT に同名の列があります。MySQL は件数チェックで SELECT を派生表に包むため、\
-             列に別名 (AS) を付けて一意にしてください: {error_message}"
+            "custom_sql has duplicate column names in its SELECT. MySQL wraps the SELECT in a \
+             derived table for the count check, so give each column a unique alias (AS): \
+             {error_message}"
         )
     })
 }
@@ -406,6 +407,11 @@ mod tests {
         };
         let err = "error returned from database: 1060 (42S21): Duplicate column name 'id'";
         assert!(custom_sql_duplicate_column_hint(DriverKind::Mysql, &custom, err).is_some());
+        // 単なる "1060" だけの文字列には反応しない (行番号などの偶然一致を避ける)。
+        assert!(
+            custom_sql_duplicate_column_hint(DriverKind::Mysql, &custom, "near line 1060")
+                .is_none()
+        );
         assert!(custom_sql_duplicate_column_hint(DriverKind::Postgres, &custom, err).is_none());
         assert!(
             custom_sql_duplicate_column_hint(DriverKind::Mysql, &custom, "Unknown column 'x'")

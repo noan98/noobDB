@@ -373,7 +373,7 @@ mod tests {
             primary: false,
             method: Some("BTREE".to_string()),
             predicate: None,
-            has_expression: false,
+            first_expression_at: None,
         }
     }
 

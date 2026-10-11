@@ -1881,7 +1881,7 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
                     primary: r.primary,
                     method: r.method,
                     predicate: r.predicate,
-                    has_expression: false,
+                    first_expression_at: None,
                 });
                 i
             }
@@ -1889,7 +1889,9 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
         if let Some(index) = entry.indexes.get_mut(ii) {
             match r.column {
                 Some(col) => index.columns.push(col),
-                None => index.has_expression = true,
+                None => {
+                    index.first_expression_at.get_or_insert(index.columns.len());
+                }
             }
         }
     }

@@ -1291,7 +1291,9 @@ impl PostgresConn {
                  kcu.column_name,
                  ccu.table_name  AS ref_table,
                  ccu.column_name AS ref_column,
-                 tc.constraint_name
+                 tc.constraint_name,
+                 pc.confdeltype::text,
+                 pc.confupdtype::text
                FROM information_schema.table_constraints tc
                JOIN information_schema.key_column_usage kcu
                  ON tc.constraint_name = kcu.constraint_name
@@ -1300,6 +1302,10 @@ impl PostgresConn {
                JOIN information_schema.constraint_column_usage ccu
                  ON ccu.constraint_name = tc.constraint_name
                 AND ccu.table_schema    = tc.table_schema
+               LEFT JOIN pg_constraint pc
+                 ON pc.contype = 'f'
+                AND pc.conname = tc.constraint_name
+                AND pc.conrelid = (quote_ident(tc.table_schema) || '.' || quote_ident(tc.table_name))::regclass
                WHERE tc.constraint_type = 'FOREIGN KEY'
                  AND tc.table_schema = $1
                ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position"#,
@@ -1315,6 +1321,12 @@ impl PostgresConn {
                 referenced_table: r.try_get::<String, _>(2).unwrap_or_default(),
                 referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                on_delete: pg_fk_action(
+                    r.try_get::<Option<String>, _>(5).ok().flatten().as_deref(),
+                ),
+                on_update: pg_fk_action(
+                    r.try_get::<Option<String>, _>(6).ok().flatten().as_deref(),
+                ),
             })
             .collect())
     }
@@ -1652,14 +1664,16 @@ impl PostgresConn {
                     primary,
                     method,
                     predicate,
-                    has_expression: false,
+                    first_expression_at: None,
                 }
             });
             // attnum 0 (an expression index column) resolves to NULL. 列名は積めないので
             // 式インデックスの印だけ残す (列だけで同一視・再構成させないため)。
             match column {
                 Some(col) => entry.columns.push(col),
-                None => entry.has_expression = true,
+                None => {
+                    entry.first_expression_at.get_or_insert(entry.columns.len());
+                }
             }
         }
         Ok(order
@@ -1954,6 +1968,19 @@ fn column_info_from_row(r: &PgRow, off: usize) -> TableColumnInfo {
         // #1002: `COMMENT ON COLUMN` の値 (`col_description`)。
         comment: non_empty_comment(r.try_get::<Option<String>, _>(off + 11).ok().flatten()),
     }
+}
+
+/// `pg_constraint.confdeltype` / `confupdtype` の 1 文字コードを参照動作の SQL 表記にする。
+/// 既定の `a` (NO ACTION) と未知のコードは `None` (DDL に出さない)。
+fn pg_fk_action(code: Option<&str>) -> Option<String> {
+    match code? {
+        "r" => Some("RESTRICT"),
+        "c" => Some("CASCADE"),
+        "n" => Some("SET NULL"),
+        "d" => Some("SET DEFAULT"),
+        _ => None,
+    }
+    .map(str::to_string)
 }
 
 /// Rebuilds a qualified type string (`character varying(50)`,

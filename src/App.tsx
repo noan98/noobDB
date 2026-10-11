@@ -6907,7 +6907,7 @@ export default function App() {
               return;
             }
           } catch (e) {
-            toast.error(translate("identitySyncMaxFailed", { column, error: String(e) }));
+            toast.error(translate("identitySyncAutoincrementCheckFailed", { table, error: String(e) }));
             return;
           }
         }

@@ -979,7 +979,12 @@ impl SqliteConn {
                             .flatten()
                             .as_deref()
                             .and_then(sqlite_partial_predicate)
-                            .unwrap_or_else(|| "<partial>".to_string()),
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "<partial:{}>",
+                                    r.try_get::<String, _>(1).unwrap_or_default()
+                                )
+                            }),
                     )
                 } else {
                     None
@@ -1062,6 +1067,8 @@ impl SqliteConn {
                     referenced_table,
                     referenced_column,
                     constraint_name: id.map(|i| format!("{}:{}", table, i)),
+                    on_delete: None,
+                    on_update: None,
                 });
             }
         }
@@ -1101,7 +1108,7 @@ impl SqliteConn {
                 .iter()
                 .map(|c| c.try_get::<Option<String>, _>("name").ok().flatten())
                 .collect();
-            let has_expression = names.iter().any(Option::is_none);
+            let first_expression_at = names.iter().position(Option::is_none);
             let columns = names.into_iter().flatten().collect();
             let partial = r.try_get::<i64, _>("partial").unwrap_or(0) != 0;
             let predicate = if partial {
@@ -1116,7 +1123,7 @@ impl SqliteConn {
                 Some(
                     sql.as_deref()
                         .and_then(sqlite_partial_predicate)
-                        .unwrap_or_else(|| "<partial>".to_string()),
+                        .unwrap_or_else(|| format!("<partial:{name}>")),
                 )
             } else {
                 None
@@ -1128,7 +1135,7 @@ impl SqliteConn {
                 primary,
                 method: None,
                 predicate,
-                has_expression,
+                first_expression_at,
             });
         }
         Ok(out)

@@ -217,6 +217,14 @@ pub struct ForeignKey {
     /// Constraint name when the engine exposes one. Lets the UI group the
     /// columns of a composite key into a single edge. `None` when unavailable.
     pub constraint_name: Option<String>,
+    /// `ON DELETE` の参照動作 (`CASCADE` / `SET NULL` / `SET DEFAULT` / `RESTRICT`)。既定の
+    /// `NO ACTION` と、取得していないドライバは `None`。PostgreSQL の DDL 再構成だけが使う内部用で、
+    /// IPC には出さない。
+    #[serde(skip)]
+    pub on_delete: Option<String>,
+    /// `ON UPDATE` の参照動作。意味は `on_delete` と同じ。
+    #[serde(skip)]
+    pub on_update: Option<String>,
 }
 
 /// One index on a table. Carries the index name, its constituent columns
@@ -234,10 +242,11 @@ pub struct IndexInfo {
     /// IPC には出さない内部用 (アドバイザの重複判定と DDL 再構成が使う)。
     #[serde(skip)]
     pub predicate: Option<String>,
-    /// 式インデックス (名前を持たないキー列を含む) か。`columns` にはその列が積まれないため、
-    /// 列だけで同一視・再構成すると別物のインデックスになる。IPC には出さない内部用。
+    /// 最初の式キー（名前を持たないキー列）の位置 = それより前にある実列の数。式を含まなければ
+    /// `None`。`columns` には式の列が積まれないため、列だけで同一視・再構成すると別物のインデックスに
+    /// なる。先頭からこの位置までの実列は FK 被覆の判定に使える。IPC には出さない内部用。
     #[serde(skip)]
-    pub has_expression: bool,
+    pub first_expression_at: Option<usize>,
 }
 
 /// ストアドプロシージャ / 関数の 1 パラメータ (#1003)。`get_routine_signature`

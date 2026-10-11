@@ -183,6 +183,8 @@ mod tests {
             referenced_table: to.to_string(),
             referenced_column: to_col.map(str::to_string),
             constraint_name: name.map(str::to_string),
+            on_delete: None,
+            on_update: None,
         }
     }
 
@@ -194,7 +196,7 @@ mod tests {
             primary,
             method: None,
             predicate: None,
-            has_expression: false,
+            first_expression_at: None,
         }
     }
 
