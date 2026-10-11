@@ -53,10 +53,13 @@ const RESIZE_DEBOUNCE_MS = 100;
 export function TitleBar({
   connection,
   onOpenActivityPanel,
+  onBeforeClose,
 }: {
   connection?: TitleBarConnection | null;
   /** アクティビティを Bottom Panel で開く (#1114)。ベルのポップオーバーから辿る。 */
   onOpenActivityPanel?: () => void;
+  /** 閉じる前の確認。`false` を返すとウィンドウを閉じない (未コミットの TX がある場合など)。 */
+  onBeforeClose?: () => Promise<boolean>;
 }) {
   const t = useT();
   const [maximized, setMaximized] = useState(false);
@@ -208,7 +211,12 @@ export function TitleBar({
           )}
         </TitleControl>
         <TitleControl
-          onClick={() => appWindow.close()}
+          onClick={() => {
+            void (async () => {
+              if (onBeforeClose && !(await onBeforeClose())) return;
+              await appWindow.close();
+            })();
+          }}
           title={t("titleBarClose")}
           aria-label={t("titleBarClose")}
           _hover={{ bg: "app.titlebarCloseHover.bg", color: "app.titlebarCloseHover.fg" }}

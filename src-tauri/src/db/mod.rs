@@ -2225,6 +2225,45 @@ fn is_read_only_sql_masked(masked: &[char], idents_kept: &[char]) -> bool {
     true
 }
 
+/// Query Result Cache が再利用してはいけない、副作用のある関数を呼ぶ `SELECT` かどうか。
+/// `nextval` / `setval` / `pg_notify` / `NEXT VALUE FOR` は読み取り専用ガード
+/// (`is_read_only_sql_for` の拒否リスト) が先に弾くので、ここでは**ガードが許可する**
+/// もののうち結果が毎回変わる/外部に作用するもの (advisory lock 系・`set_config`・
+/// `pg_sleep`・MySQL の名前付きロック・`currval` / `lastval`) だけを扱う。
+/// キャッシュ判定でだけ使い、誤検知はキャッシュを使わないだけで安全側。
+pub fn sql_has_side_effect_function(driver: DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    let masked: String = mask_for_driver(driver, &orig).into_iter().collect();
+    let lower = masked.to_ascii_lowercase();
+    // 読み取り専用ガードと同じく、引用符付き識別子 (`"pg_sleep"(…)`) の中身を残した
+    // マスクでも照合する。
+    let idents_lower: String = mask_keeping_identifiers(Some(driver), &orig)
+        .into_iter()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if [&lower, &idents_lower]
+        .iter()
+        .any(|l| l.contains("pg_advisory") || l.contains("pg_try_advisory"))
+    {
+        return true;
+    }
+    [
+        "currval",
+        "lastval",
+        "set_config",
+        "pg_sleep",
+        "pg_sleep_for",
+        "pg_sleep_until",
+        "get_lock",
+        "release_lock",
+        "release_all_locks",
+        "is_free_lock",
+        "is_used_lock",
+    ]
+    .iter()
+    .any(|kw| contains_word(&lower, kw) || contains_word(&idents_lower, kw))
+}
+
 /// `sql` が DDL 相当 (`CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `RENAME`) を
 /// 含み、Schema Cache (#1097) を invalidate すべきかどうかの簡易判定。
 ///

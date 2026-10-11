@@ -560,8 +560,14 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
     // Swap the live session for the new one, then close the old connection. The
     // old tunnel (if any) is dropped when the last Arc to the previous session
     // goes away, per the existing lifetime design.
-    if let Some(prev) = state.replace(new_session).await {
-        prev.conn.close().await;
+    match state.replace(new_session).await {
+        Ok(Some(prev)) => prev.conn.close().await,
+        Ok(None) => {}
+        Err(orphan) => {
+            // 再接続の最中に切断されていた: セッションを復活させず、確立した接続を閉じる。
+            orphan.conn.close().await;
+            return Err(AppError::SessionNotFound(session_id.to_string()));
+        }
     }
     tracing::info!(session_id = %session_id, "reconnected");
     Ok(())

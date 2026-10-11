@@ -522,6 +522,44 @@ describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)",
   });
 });
 
+describe("シナリオ: 明示トランザクションと接続 (実ブラウザ)", () => {
+  it("A で TX を開始して B へ切り替え、A に戻るとコミット / ロールバックの操作が残っている", async () => {
+    registerAutoStream();
+    onCommand("begin_transaction", () => null);
+    const screen = await renderInBrowser(<App />);
+
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await screen.getByRole("button", { name: t("txBegin") }).click();
+    await expect.element(screen.getByRole("button", { name: t("txCommit") })).toBeVisible();
+
+    // B へ切替: B は TX を持たないので開始ボタンに戻る。
+    await connectToProfile(screen, /Beta DB/, "betadb");
+    await expect.element(screen.getByRole("button", { name: t("txBegin") })).toBeVisible();
+    expect(screen.getByRole("button", { name: t("txCommit") }).query()).toBeNull();
+
+    // A に戻ると、サーバ側で続いている TX の操作が復元される。
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(screen.getByRole("button", { name: t("txCommit") })).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("txRollback") })).toBeVisible();
+  });
+
+  it("TX 中に切断すると確認ダイアログが出て、キャンセルすれば切断しない", async () => {
+    registerAutoStream();
+    onCommand("begin_transaction", () => null);
+    const screen = await renderInBrowser(<App />);
+
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await screen.getByRole("button", { name: t("txBegin") }).click();
+    await expect.element(screen.getByRole("button", { name: t("txCommit") })).toBeVisible();
+
+    await screen.getByRole("button", { name: t("appDisconnect") }).click();
+    await expect.element(screen.getByText(t("connTxOpenTitle"))).toBeVisible();
+    await screen.getByRole("button", { name: t("confirmDefaultCancel"), exact: true }).first().click();
+    expect(invocationsOf("disconnect")).toEqual([]);
+    await expect.element(screen.getByRole("button", { name: t("txCommit") })).toBeVisible();
+  });
+});
+
 describe("シナリオ: 接続ツリーのカラム展開 (実ブラウザ)", () => {
   it("ダブルクリックではカラム一覧が開かず、チェブロンボタンのキーボード操作で開閉する", async () => {
     registerAutoStream();

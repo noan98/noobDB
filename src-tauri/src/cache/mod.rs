@@ -28,7 +28,9 @@
 //!      する (どのテーブルが変わったかを SQL から正確に特定するパーサは持たない
 //!      ため、テーブル単位ではなく接続単位で丸ごと破棄する — 過剰破棄は「次の
 //!      1 回だけ再取得が走る」だけで安全側、見逃しの方が stale 表示という実害に
-//!      直結するため、fail-closed に倒す)。
+//!      直結するため、fail-closed に倒す)。明示トランザクションの COMMIT / ROLLBACK
+//!      (`finish_transaction`) でも、中途に読まれた未確定状態を残さないため丸ごと
+//!      invalidate する。
 //!   3. スキーマ同期の適用 — `commands::sync::apply_sync_sql` はコマンドの目的
 //!      自体が「対象のスキーマをソースに合わせて変更する」ことなので、SQL の
 //!      内容を判定せず常に invalidate する。
@@ -216,7 +218,7 @@ use crate::db::types::{
     ForeignKey, IndexInfo, QueryResult, SchemaObject, TableColumnInfo, TableIndexes,
     TableRowIdentity, TableSchema, Value,
 };
-use crate::db::{is_read_only_sql_for, DriverKind};
+use crate::db::{is_read_only_sql_for, sql_has_side_effect_function, DriverKind};
 use crate::error::{AppError, Result};
 
 /// キャッシュエントリの既定 TTL (#1097)。DDL / 明示 Refresh による invalidate が
@@ -1122,7 +1124,9 @@ impl QueryResultCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<QueryResult>>,
     {
-        if !is_read_only_sql_for(driver, sql) {
+        // `SELECT nextval(...)` のような副作用のある関数呼び出しは、キャッシュヒットで
+        // 2 回目以降が実行されなくなるためキャッシュを通さない。
+        if !is_read_only_sql_for(driver, sql) || sql_has_side_effect_function(driver, sql) {
             return fetch().await;
         }
         let key: QueryCacheKey = (database.map(str::to_string), sql.to_string());
@@ -1867,6 +1871,35 @@ mod query_result_cache_tests {
             8,
             "書き込み文は毎回 fetch が実行され、一度もキャッシュされないこと"
         );
+    }
+
+    /// 副作用のある関数 (`nextval` 等) を呼ぶ SELECT は読み取り専用判定でもキャッシュしない。
+    #[tokio::test]
+    async fn side_effect_function_select_is_never_cached() {
+        let cache = test_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        for sql in [
+            "SELECT currval('order_seq')",
+            "SELECT pg_advisory_lock(1)",
+            "SELECT set_config('x', 'y', false)",
+            "SELECT \"pg_sleep_for\"('1s')",
+        ] {
+            for _ in 0..2 {
+                let c = calls.clone();
+                cache
+                    .get_or_fetch(DriverKind::Postgres, None, sql, || async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        Ok(QueryResult::empty(0, 0))
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 8);
+        assert!(!crate::db::sql_has_side_effect_function(
+            DriverKind::Postgres,
+            "SELECT 'currval' AS c, currval_count FROM t"
+        ));
     }
 
     /// 対象外の条件 2: 行数の上限を超える結果はキャッシュされない。

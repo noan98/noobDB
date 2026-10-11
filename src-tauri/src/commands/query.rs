@@ -29,14 +29,14 @@ pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result
         if session.emergency_write_active() {
             tracing::warn!(
                 session_id = %session.id,
-                sql = %sql_summary(sql),
+                sql = %sql_summary(session.conn.driver_kind(), sql),
                 "emergency mode: allowing a non-read-only statement on a read-only session"
             );
             return Ok(());
         }
         tracing::warn!(
             session_id = %session.id,
-            sql = %sql_summary(sql),
+            sql = %sql_summary(session.conn.driver_kind(), sql),
             "read-only guard rejected a non-read-only statement"
         );
         return Err(AppError::ReadOnly(
@@ -140,12 +140,16 @@ pub(crate) fn ensure_broadcast_read_only(driver: DriverKind, sql: &str) -> Resul
     Ok(())
 }
 
-/// Collapses `sql` to a short, single-line summary for logging. Never used at
-/// `info` level — the full statement (which may carry sensitive literals) is
-/// only ever surfaced at `debug` and is truncated here regardless.
-fn sql_summary(sql: &str) -> String {
+/// Collapses `sql` to a short, single-line summary for logging. 文字列リテラルと
+/// コメントは `mask_for_driver` で空白化してから畳むので、`warn` 以上で永続ログへ
+/// 出しても `UPDATE users SET password_hash='...'` のような機密リテラルは残らない。
+fn sql_summary(driver: crate::db::DriverKind, sql: &str) -> String {
     const MAX: usize = 80;
-    let one_line = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars: Vec<char> = sql.chars().collect();
+    let masked: String = crate::db::mask_for_driver(driver, &chars)
+        .into_iter()
+        .collect();
+    let one_line = masked.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.chars().count() > MAX {
         let head: String = one_line.chars().take(MAX).collect();
         format!("{head}…")
@@ -282,7 +286,7 @@ pub(crate) async fn run_lookup_query_inner(
     if !is_read_only_sql_for(driver, sql) {
         tracing::warn!(
             session_id = %session.id,
-            sql = %sql_summary(sql),
+            sql = %sql_summary(driver, sql),
             "value lookup rejected a non-read-only statement"
         );
         return Err(AppError::ReadOnly(
@@ -513,7 +517,13 @@ pub async fn finish_transaction(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    session.conn.finish_transaction(commit).await?;
+    let result = session.conn.finish_transaction(commit).await;
+    // トランザクション中にプール接続から読まれたキャッシュは、未確定 (COMMIT 前) の
+    // 旧状態や ROLLBACK で消える状態を保存している可能性がある。確定/破棄の時点で
+    // スキーマ・クエリ結果キャッシュを丸ごと無効化して stale を残さない。
+    session.schema_cache.invalidate_all().await;
+    session.query_cache.invalidate_all().await;
+    result?;
     tracing::info!(session_id = %session_id, commit, "explicit transaction finished");
     Ok(())
 }
@@ -933,7 +943,7 @@ async fn spawn_query_stream(
         session_id = %session.id,
         stream_id = %stream_id,
         database = ?database,
-        sql = %sql_summary(&sql),
+        sql = %sql_summary(session.conn.driver_kind(), &sql),
         "query stream starting"
     );
     // Rewrite the statement with an automatic LIMIT when requested and the SQL
@@ -1088,14 +1098,38 @@ async fn spawn_query_stream(
     // When a positive timeout is configured, race the whole run against it.
     // Elapsing drops the streaming future, which returns the pooled connection
     // (mirroring the manual stop button), so the session stays usable.
-    let result = match query_timeout_secs {
-        Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res,
-                Err(_) => Err(AppError::Timeout(secs)),
+    let run = async {
+        match query_timeout_secs {
+            Some(secs) if secs > 0 => {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                    Ok(res) => res,
+                    Err(_) => Err(AppError::Timeout(secs)),
+                }
+            }
+            _ => exec.await,
+        }
+    };
+    // 合流バッチの時間フラッシュ: `StreamBatcher::push` はドライバのバッチが届いたとき
+    // にしか時間判定しないので、低速なクエリで行が溜まったまま止まらないよう、
+    // 一定間隔で期限切れの分を送る。`run` と同じタスクで交互に polling されるため、
+    // 送信順序は push 経路と競合しない。
+    let ticker = async {
+        loop {
+            tokio::time::sleep(crate::db::stream_batch::COALESCE_INTERVAL).await;
+            let due = batcher
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take_due(Instant::now());
+            if let Some(rows) = due {
+                if let Err(e) = send_rows(rows) {
+                    return e;
+                }
             }
         }
-        _ => exec.await,
+    };
+    let result = tokio::select! {
+        res = run => res,
+        e = ticker => Err(e),
     };
 
     // 合流待ちで残った行を吐き出す (正常終了・DB エラー・タイムアウトのどれでも。
@@ -1332,7 +1366,7 @@ async fn spawn_captured_write(
         session_id = %session.id,
         stream_id = %stream_id,
         database = ?database,
-        sql = %sql_summary(&sql),
+        sql = %sql_summary(session.conn.driver_kind(), &sql),
         "captured write starting"
     );
     let started = std::time::Instant::now();
@@ -1846,6 +1880,18 @@ mod tests {
     /// rather than only the one that happens to be the default (#852).
     const ALL_DRIVERS: [DriverKind; 3] =
         [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
+
+    #[test]
+    fn sql_summary_masks_literals() {
+        for d in ALL_DRIVERS {
+            let s = sql_summary(
+                d,
+                "UPDATE users SET password_hash='s3cr3t-value' WHERE id=1",
+            );
+            assert!(!s.contains("s3cr3t"), "{s}");
+            assert!(s.starts_with("UPDATE users SET password_hash="), "{s}");
+        }
+    }
 
     #[test]
     fn auto_refresh_allows_read_only_statements() {

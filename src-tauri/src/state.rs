@@ -303,15 +303,21 @@ impl AppState {
     /// re-established connection while keeping the same `SessionId`, so the
     /// frontend's tabs and grid state (keyed by session id) survive untouched
     /// (#712).
-    pub async fn replace(&self, session: Session) -> Option<Arc<Session>> {
+    ///
+    /// 再接続中に `disconnect` で ID が削除されていた場合は登録し直さず (セッションの
+    /// 復活を防ぐ)、渡されたセッションを `Err` で返す。呼び出し側がその接続を閉じる。
+    pub async fn replace(
+        &self,
+        session: Session,
+    ) -> std::result::Result<Option<Arc<Session>>, Box<Session>> {
         let id = session.id.clone();
-        let prev = self
-            .sessions
-            .write()
-            .await
-            .insert(id.clone(), Arc::new(session));
+        let mut sessions = self.sessions.write().await;
+        if !sessions.contains_key(&id) {
+            return Err(Box::new(session));
+        }
+        let prev = sessions.insert(id.clone(), Arc::new(session));
         tracing::info!(session_id = %id, "session replaced (reconnect)");
-        prev
+        Ok(prev)
     }
 
     pub async fn get(&self, id: &str) -> Option<Arc<Session>> {

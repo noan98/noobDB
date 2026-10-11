@@ -432,35 +432,117 @@ pub enum TxControl {
 /// (PostgreSQL/SQLite) / `ROLLBACK [WORK|TRANSACTION|TRAN]`。`ROLLBACK TO
 /// SAVEPOINT` や MSSQL の `BEGIN TRY` / `BEGIN … END` ブロックは対象外 (そのまま
 /// 通常の文として実行される)。コメントは除去してから判定する。
+#[cfg(test)]
 pub fn classify_tx_control(driver: DriverKind, sql: &str) -> Option<TxControl> {
+    classify_tx_statement(driver, sql).map(|(ctl, _)| ctl)
+}
+
+/// `classify_tx_control` に加え、開始文に付いた分離レベル / READ ONLY を
+/// [`TxOptions`] として返す (PostgreSQL の `BEGIN ISOLATION LEVEL SERIALIZABLE` や
+/// MySQL の `START TRANSACTION READ ONLY` など)。開始文なのに解釈できない語が残る
+/// ときは `Err` (fail-closed: 生の SQL としてプールへ流さず、呼び出し側がエラーにする)。
+/// `BEGIN SELECT 1` のように開始文でないものだけ `None`。
+pub fn classify_tx_statement(
+    driver: DriverKind,
+    sql: &str,
+) -> Option<(TxControl, Result<crate::db::tx_options::TxOptions, String>)> {
+    use crate::db::tx_options::TxOptions;
     let orig: Vec<char> = sql.chars().collect();
     let masked: String = super::mask_for_driver(driver, &orig).into_iter().collect();
     let lower = masked.to_ascii_lowercase();
     let words: Vec<&str> = lower
-        .split(|c: char| c.is_whitespace() || c == ';')
+        .split(|c: char| c.is_whitespace() || c == ';' || c == ',')
         .filter(|w| !w.is_empty())
         .collect();
     let first = *words.first()?;
     let rest = &words[1..];
     let only = |allowed: &[&str]| rest.len() <= 1 && rest.iter().all(|w| allowed.contains(w));
+    let plain =
+        |ctl: bool, ctl_kind: TxControl| ctl.then_some((ctl_kind, Ok(TxOptions::default())));
     match first {
         "begin" => {
             let (mode, tail) = match rest.first() {
                 Some(&("deferred" | "immediate" | "exclusive")) => (true, &rest[1..]),
                 _ => (false, rest),
             };
-            let tail_ok = tail.len() <= 1
-                && tail
-                    .iter()
-                    .all(|w| matches!(*w, "transaction" | "tran" | "work"));
-            (tail_ok || (mode && tail.is_empty())).then_some(TxControl::Begin)
+            let tail = match tail.first() {
+                Some(&("transaction" | "tran" | "work")) => &tail[1..],
+                _ => tail,
+            };
+            if mode && tail.is_empty() {
+                return Some((TxControl::Begin, Ok(TxOptions::default())));
+            }
+            // 後ろに続くのがトランザクションのモード語でなければ開始文ではない。
+            if let Some(w) = tail.first() {
+                if !matches!(*w, "isolation" | "read" | "deferrable" | "not" | "with") {
+                    return None;
+                }
+            }
+            Some((TxControl::Begin, parse_tx_modes(driver, tail)))
         }
-        "start" => (rest.first() == Some(&"transaction")).then_some(TxControl::Begin),
-        "commit" => only(&["work", "transaction", "tran"]).then_some(TxControl::Commit),
-        "end" => only(&["work", "transaction"]).then_some(TxControl::Commit),
-        "rollback" => only(&["work", "transaction", "tran"]).then_some(TxControl::Rollback),
+        "start" => {
+            if rest.first() != Some(&"transaction") {
+                return None;
+            }
+            Some((TxControl::Begin, parse_tx_modes(driver, &rest[1..])))
+        }
+        "commit" => plain(only(&["work", "transaction", "tran"]), TxControl::Commit),
+        "end" => plain(only(&["work", "transaction"]), TxControl::Commit),
+        "rollback" => plain(only(&["work", "transaction", "tran"]), TxControl::Rollback),
         _ => None,
     }
+}
+
+/// 開始文の後ろに付く `ISOLATION LEVEL ...` / `READ ONLY` / `READ WRITE` を解釈する。
+/// `DEFERRABLE` / `NOT DEFERRABLE` は読み飛ばす。解釈できない語が残れば `Err`。
+fn parse_tx_modes(
+    driver: DriverKind,
+    words: &[&str],
+) -> Result<crate::db::tx_options::TxOptions, String> {
+    use crate::db::tx_options::{TxIsolation, TxOptions};
+    let mut opts = TxOptions::default();
+    let mut i = 0;
+    while i < words.len() {
+        match &words[i..] {
+            ["isolation", "level", "read", "uncommitted", ..] => {
+                opts.isolation = Some(TxIsolation::ReadUncommitted);
+                i += 4;
+            }
+            ["isolation", "level", "read", "committed", ..] => {
+                opts.isolation = Some(TxIsolation::ReadCommitted);
+                i += 4;
+            }
+            ["isolation", "level", "repeatable", "read", ..] => {
+                opts.isolation = Some(TxIsolation::RepeatableRead);
+                i += 4;
+            }
+            ["isolation", "level", "serializable", ..] => {
+                opts.isolation = Some(TxIsolation::Serializable);
+                i += 3;
+            }
+            ["read", "only", ..] => {
+                opts.read_only = true;
+                i += 2;
+            }
+            ["read", "write", ..] => {
+                opts.read_only = false;
+                i += 2;
+            }
+            // MySQL の `WITH CONSISTENT SNAPSHOT` は従来どおり受理する (オプションは
+            // 反映しないが、生の SQL としてプールへ流れて境界が崩れるよりは安全)。
+            ["with", "consistent", "snapshot", ..] if driver == DriverKind::Mysql => {
+                i += 3;
+            }
+            ["not", "deferrable", ..] if driver == DriverKind::Postgres => {
+                i += 2;
+            }
+            ["deferrable", ..] if driver == DriverKind::Postgres => {
+                i += 1;
+            }
+            other => return Err(format!("unsupported transaction mode near `{}`", other[0])),
+        }
+    }
+    Ok(opts)
 }
 
 /// `USE <db>` 文なら切り替え先のデータベース名を返す (MySQL のみ)。
@@ -603,6 +685,77 @@ mod tests {
     }
 
     #[test]
+    fn classify_tx_statement_parses_options() {
+        use crate::db::tx_options::{TxIsolation, TxOptions};
+        let d = DriverKind::Postgres;
+        assert_eq!(
+            classify_tx_statement(d, "BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY"),
+            Some((
+                TxControl::Begin,
+                Ok(TxOptions {
+                    isolation: Some(TxIsolation::RepeatableRead),
+                    read_only: true
+                })
+            ))
+        );
+        assert_eq!(
+            classify_tx_statement(d, "begin transaction read only"),
+            Some((
+                TxControl::Begin,
+                Ok(TxOptions {
+                    isolation: None,
+                    read_only: true
+                })
+            ))
+        );
+        assert_eq!(
+            classify_tx_statement(DriverKind::Mysql, "START TRANSACTION READ WRITE"),
+            Some((TxControl::Begin, Ok(TxOptions::default())))
+        );
+        // DEFERRABLE は読み飛ばし、解釈できない語は Err (生 SQL にしない)。
+        assert_eq!(
+            classify_tx_statement(
+                d,
+                "START TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ ONLY, DEFERRABLE"
+            ),
+            Some((
+                TxControl::Begin,
+                Ok(TxOptions {
+                    isolation: Some(TxIsolation::Serializable),
+                    read_only: true
+                })
+            ))
+        );
+        assert!(matches!(
+            classify_tx_statement(d, "BEGIN ISOLATION LEVEL FOO"),
+            Some((TxControl::Begin, Err(_)))
+        ));
+        assert!(matches!(
+            classify_tx_statement(d, "START TRANSACTION bogus"),
+            Some((TxControl::Begin, Err(_)))
+        ));
+        assert_eq!(classify_tx_statement(d, "BEGIN SELECT 1"), None);
+        // DEFERRABLE は PostgreSQL だけ、WITH CONSISTENT SNAPSHOT は MySQL だけ。
+        for other in [DriverKind::Mysql, DriverKind::Sqlite] {
+            assert!(matches!(
+                classify_tx_statement(other, "START TRANSACTION DEFERRABLE"),
+                Some((TxControl::Begin, Err(_)))
+            ));
+        }
+        assert!(matches!(
+            classify_tx_statement(d, "START TRANSACTION WITH CONSISTENT SNAPSHOT"),
+            Some((TxControl::Begin, Err(_)))
+        ));
+        assert!(matches!(
+            classify_tx_statement(
+                DriverKind::Mysql,
+                "START TRANSACTION WITH CONSISTENT SNAPSHOT"
+            ),
+            Some((TxControl::Begin, Ok(_)))
+        ));
+    }
+
+    #[test]
     fn classifies_transaction_control() {
         use TxControl::*;
         let d = DriverKind::Sqlite;
@@ -618,6 +771,14 @@ mod tests {
             Some(Begin)
         );
         assert_eq!(classify_tx_control(d, "COMMIT"), Some(Commit));
+        // 分離レベル / READ ONLY 付きの開始文 (PostgreSQL / MySQL) も開始文として扱う。
+        assert_eq!(
+            classify_tx_control(d, "BEGIN ISOLATION LEVEL SERIALIZABLE;"),
+            Some(Begin)
+        );
+        assert_eq!(classify_tx_control(d, "BEGIN READ ONLY"), Some(Begin));
+        assert_eq!(classify_tx_control(d, "BEGIN DEFERRABLE"), Some(Begin));
+        assert_eq!(classify_tx_control(d, "BEGIN SELECT 1"), None);
         assert_eq!(classify_tx_control(d, "END"), Some(Commit));
         assert_eq!(classify_tx_control(d, "COMMIT -- done"), Some(Commit));
         assert_eq!(classify_tx_control(d, "ROLLBACK WORK"), Some(Rollback));
