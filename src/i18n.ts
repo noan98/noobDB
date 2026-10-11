@@ -3392,6 +3392,7 @@ const en = {
   schemaCompareDataSelectTable: "Select a table...",
   schemaCompareDataLimit: "Row limit",
   schemaCompareDataCompare: "Compare data",
+  schemaCompareDataComparedTable: "Compared table: {table}",
   schemaCompareDataInserts: "Insert",
   schemaCompareDataUpdates: "Update",
   schemaCompareDataDeletes: "Delete",
@@ -4177,6 +4178,10 @@ const en = {
   sandboxReviewSchemaExternalWarning:
     "These tables also changed schema on the original connection since the snapshot: {tables}. Review carefully before applying.",
   sandboxReviewTruncated: "capped at the row limit",
+  sandboxReviewSourceError:
+    "Could not read the current rows from the original database, so conflicts were not checked: {error}",
+  sandboxApplySourceErrorNote:
+    "Conflict detection failed for: {tables}. Changes made on the original database since the snapshot may be overwritten.",
   sandboxReviewConflictsUnchecked:
     "Conflict check skipped (pick a target connection above to check for concurrent changes).",
   sandboxReviewConflictsTitle: "{count} conflicting row(s) — choose how to resolve each one",
@@ -7925,6 +7930,7 @@ const ja: Dict = {
   schemaCompareDataSelectTable: "テーブルを選択...",
   schemaCompareDataLimit: "件数上限",
   schemaCompareDataCompare: "データを比較",
+  schemaCompareDataComparedTable: "比較したテーブル: {table}",
   schemaCompareDataInserts: "追加",
   schemaCompareDataUpdates: "変更",
   schemaCompareDataDeletes: "削除",
@@ -8710,6 +8716,10 @@ const ja: Dict = {
   sandboxReviewSchemaExternalWarning:
     "以下のテーブルはスナップショット以降、元の接続側でもスキーマが変更されています: {tables}。適用前によく確認してください。",
   sandboxReviewTruncated: "行数上限で打ち切り",
+  sandboxReviewSourceError:
+    "元の DB から現在の行を取得できなかったため、競合を検出できていません: {error}",
+  sandboxApplySourceErrorNote:
+    "競合検出に失敗したテーブル: {tables}。スナップショット以降に元の DB で行われた変更を上書きする可能性があります。",
   sandboxReviewConflictsUnchecked: "競合チェックは未実施です (上で対象接続を選ぶと同時変更を検出できます)。",
   sandboxReviewConflictsTitle: "{count} 件の競合行 — それぞれの解決方法を選んでください",
   sandboxReviewExternalValue: "元の接続での現在値",

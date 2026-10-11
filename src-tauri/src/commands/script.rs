@@ -194,6 +194,31 @@ fn preview_sql(sql: &str) -> String {
     }
 }
 
+const NOT_UTF8_MESSAGE: &str = "the script is not valid UTF-8 (Shift_JIS / EUC-JP etc. are not supported); convert it to UTF-8 and try again";
+
+/// スクリプトファイルを開く。**先にファイル全体を UTF-8 として事前スキャン**し、不正な
+/// バイトがあれば 1 文も実行する前にエラーにする。チャンクごとの検査だけだと、後半に不正
+/// バイトがあるとき前半の文が実行済み (トランザクション無しならコミット済み) になる。
+pub(crate) async fn open_script_file(path: &str) -> Result<tokio::fs::File> {
+    let mut scan = tokio::fs::File::open(path).await?;
+    let mut decoder = encoding_rs::UTF_8.new_decoder();
+    let mut raw = vec![0u8; READ_CHUNK_BYTES];
+    let mut out = String::with_capacity(READ_CHUNK_BYTES * 3);
+    loop {
+        let n = scan.read(&mut raw).await?;
+        let eof = n == 0;
+        out.clear();
+        let (res, _) = decoder.decode_to_string_without_replacement(&raw[..n], &mut out, eof);
+        if let encoding_rs::DecoderResult::Malformed(_, _) = res {
+            return Err(AppError::InvalidInput(NOT_UTF8_MESSAGE.into()));
+        }
+        if eof {
+            break;
+        }
+    }
+    Ok(tokio::fs::File::open(path).await?)
+}
+
 /// スクリプト実行の本体。Tauri ランタイムに依存しない (統合テストから直接駆動する)。
 ///
 /// `committed` には「確定済み (= キャンセルしても残る) 文の数」を随時書き込む。
@@ -321,12 +346,17 @@ where
         bytes_read += n as u64;
         let mut text = String::with_capacity(
             decoder
-                .max_utf8_buffer_length(n)
+                .max_utf8_buffer_length_without_replacement(n)
                 .unwrap_or(READ_CHUNK_BYTES * 3),
         );
-        // UTF-8 として不正なバイトは置換文字へロッシーにデコードする
-        // (`read_text_file` と同じ縮退)。先頭の BOM は decoder が取り除く。
-        let _ = decoder.decode_to_string(&raw[..n], &mut text, eof);
+        // UTF-8 として不正なバイトは**置換せずエラーにする**。Shift_JIS 等の SQL を
+        // U+FFFD 混じりで実行すると、文字列リテラルが化けたまま DB に書き込まれるため。
+        // 先頭の BOM は decoder が取り除く。
+        let (dec_result, _) =
+            decoder.decode_to_string_without_replacement(&raw[..n], &mut text, eof);
+        if let encoding_rs::DecoderResult::Malformed(_, _) = dec_result {
+            return Ok(runner.abort_with(NOT_UTF8_MESSAGE.to_string(), None).await);
+        }
         let statements: Vec<ScriptStatement> = if eof {
             let mut v = match splitter.push(&text) {
                 Ok(v) => v,
@@ -1013,7 +1043,7 @@ async fn spawn_script(
         armed: true,
     };
 
-    let result = match tokio::fs::File::open(&path).await {
+    let result = match open_script_file(&path).await {
         Ok(file) => {
             let emit_app = app.clone();
             let emit_id = stream_id.clone();
@@ -1042,7 +1072,7 @@ async fn spawn_script(
             )
             .await
         }
-        Err(e) => Err(AppError::from(e)),
+        Err(e) => Err(e),
     };
 
     cancel_guard.armed = false;
@@ -1354,6 +1384,23 @@ mod tests {
         assert!(p.chars().count() <= FAILURE_SQL_PREVIEW_CHARS + 1);
         assert!(p.ends_with('…'));
         assert_eq!(preview_sql("SELECT\n  1"), "SELECT 1");
+    }
+
+    #[tokio::test]
+    async fn open_script_file_rejects_invalid_utf8_after_the_first_chunk() {
+        let dir = std::env::temp_dir().join(format!("noobdb_script_utf8_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("bad.sql");
+        // 64KiB チャンクを超える ASCII の後ろに不正バイト。
+        let mut data = b"SELECT 1;\n".repeat(READ_CHUNK_BYTES / 4);
+        data.push(0xff);
+        std::fs::write(&bad, &data).unwrap();
+        let err = open_script_file(&bad.to_string_lossy()).await.unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        let good = dir.join("good.sql");
+        std::fs::write(&good, "SELECT '山田';\n").unwrap();
+        assert!(open_script_file(&good.to_string_lossy()).await.is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

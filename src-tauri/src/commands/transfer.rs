@@ -123,6 +123,10 @@ pub struct TransferErrorEvent {
 
 /// 検証済みの転送計画 (セッション解決・ガード適用・ソース SQL 決定済み)。
 pub(crate) struct PreparedTransfer {
+    /// キャンセル時に `CreatedTableGuard` が DROP を直接 spawn せず預ける場所。
+    /// [`CancelledTransferCleanup`] が DROP → キャッシュ無効化 → 履歴 を 1 タスクで順に
+    /// 実行できるようにする (並行すると古いキャッシュを DROP 前に作り直しうる)。
+    pub cancel_drop: Option<Arc<std::sync::Mutex<Option<DeferredDrop>>>>,
     pub source: Arc<Session>,
     pub target: Arc<Session>,
     pub source_sql: String,
@@ -198,6 +202,7 @@ pub(crate) async fn prepare_transfer(
     }
 
     Ok(PreparedTransfer {
+        cancel_drop: None,
         source,
         target,
         source_sql,
@@ -217,7 +222,29 @@ impl Drop for AbortOnDrop {
 /// 転送が作成したテーブルを、正常完了しなかったときに DROP するガード。エラー経路では
 /// 明示的に `cleanup` を await し、キャンセル (future の drop) 経路では Drop で
 /// バックグラウンドタスクへ投げる (Drop では await できないため)。
+/// キャンセル時に実行する DROP (ターゲット・DB・SQL)。
+pub(crate) struct DeferredDrop {
+    target: Arc<Session>,
+    database: Option<String>,
+    sql: String,
+}
+
+/// 中断された書き込みと競合して DROP が一時的に失敗しうるので、少し待って再試行する。
+async fn drop_with_retry(target: &Session, database: Option<&str>, sql: &str) {
+    for attempt in 0..10 {
+        match target.conn.execute(sql, database).await {
+            Ok(_) => return,
+            Err(e) if attempt == 9 => {
+                tracing::warn!(error = %e, "failed to drop cancelled transfer's table");
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+        }
+    }
+}
+
 struct CreatedTableGuard {
+    /// `Some` のとき、Drop で DROP を自前 spawn せずここへ預ける (後始末タスクが実行する)。
+    deferred: Option<Arc<std::sync::Mutex<Option<DeferredDrop>>>>,
     target: Arc<Session>,
     database: Option<String>,
     drop_sql: String,
@@ -256,18 +283,64 @@ impl Drop for CreatedTableGuard {
         let target = self.target.clone();
         let database = self.database.clone();
         let sql = std::mem::take(&mut self.drop_sql);
-        handle.spawn(async move {
-            // 中断された書き込みと競合して DROP が一時的に失敗しうるので、
-            // 少し待って再試行する。
-            for attempt in 0..10 {
-                match target.conn.execute(&sql, database.as_deref()).await {
-                    Ok(_) => return,
-                    Err(e) if attempt == 9 => {
-                        tracing::warn!(error = %e, "failed to drop cancelled transfer's table");
-                    }
-                    Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
-                }
+        if let Some(slot) = &self.deferred {
+            // 後始末タスク (CancelledTransferCleanup) が DROP → キャッシュ → 履歴を順に行う。
+            if let Ok(mut g) = slot.lock() {
+                *g = Some(DeferredDrop {
+                    target,
+                    database,
+                    sql,
+                });
+                return;
             }
+        }
+        handle.spawn(async move {
+            drop_with_retry(&target, database.as_deref(), &sql).await;
+        });
+    }
+}
+
+/// 転送タスクがキャンセル (`cancel_stream` による abort = future の drop) されたとき、
+/// 通常完了時に走る後処理 ([`after_transfer`]: キャッシュ無効化 + 履歴) を代わりに行う
+/// ガード。abort では `after_transfer` を呼ぶ行まで到達しないため、Append で途中まで
+/// コミット済みの行があってもターゲットの `query_cache` が古いまま残り、書き込みも履歴に
+/// 残らなかった。Drop では await できないのでバックグラウンドタスクへ投げる。
+struct CancelledTransferCleanup {
+    prepared: Arc<PreparedTransfer>,
+    counter: Arc<AtomicU64>,
+    started: Instant,
+    armed: bool,
+}
+
+impl CancelledTransferCleanup {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelledTransferCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!("no runtime for cancelled transfer post-processing");
+            return;
+        };
+        let prepared = self.prepared.clone();
+        let rows = self.counter.load(Ordering::SeqCst);
+        let elapsed_ms = self.started.elapsed().as_millis() as u64;
+        let deferred = self.prepared.cancel_drop.clone();
+        handle.spawn(async move {
+            // 1. 作成済みテーブルの DROP (ガードが預けたもの) → 2. キャッシュ無効化 → 3. 履歴。
+            let job = deferred.and_then(|slot| slot.lock().ok().and_then(|mut g| g.take()));
+            if let Some(job) = job {
+                drop_with_retry(&job.target, job.database.as_deref(), &job.sql).await;
+            }
+            let result: Result<TransferOutcome> = Err(AppError::Other(format!(
+                "transfer cancelled ({rows} rows had been read)"
+            )));
+            after_transfer(&prepared, &result, elapsed_ms).await;
         });
     }
 }
@@ -279,6 +352,7 @@ async fn prepare_target(
     columns: &[Column],
     sample: &[Vec<crate::db::types::Value>],
     guard: &mut Option<CreatedTableGuard>,
+    deferred: &Option<Arc<std::sync::Mutex<Option<DeferredDrop>>>>,
 ) -> Result<Vec<TransferColumn>> {
     let driver = target.conn.driver_kind();
     let plan = plan_columns(columns, sample);
@@ -303,6 +377,7 @@ async fn prepare_target(
                 .execute(&create_table_sql(driver, table, &plan), db)
                 .await?;
             *guard = Some(CreatedTableGuard {
+                deferred: deferred.clone(),
                 target: target.clone(),
                 database: db.map(str::to_string),
                 drop_sql: drop_table_sql(driver, table),
@@ -325,6 +400,8 @@ async fn write_batch(
     if rows.is_empty() {
         return Ok(0);
     }
+    // SQLite の INTEGER に入らない BIGINT UNSIGNED は黙って REAL にせず行エラーにする。
+    crate::db::transfer::check_sqlite_unsigned_range(driver, plan, rows)?;
     let names: Vec<String> = plan.iter().map(|c| c.name.clone()).collect();
     let cells: Vec<Vec<Option<String>>> = rows
         .iter()
@@ -409,8 +486,17 @@ pub(crate) async fn run_transfer(
                         let cols = columns.as_deref().ok_or_else(|| {
                             AppError::Other("transfer source sent rows before columns".into())
                         })?;
-                        plan =
-                            Some(prepare_target(&target, request, cols, &rows, &mut guard).await?);
+                        plan = Some(
+                            prepare_target(
+                                &target,
+                                request,
+                                cols,
+                                &rows,
+                                &mut guard,
+                                &prepared.cancel_drop,
+                            )
+                            .await?,
+                        );
                     }
                     let p = plan.as_deref().unwrap_or(&[]);
                     written += write_batch(&target, request, driver, p, &rows, batch_size).await?;
@@ -455,7 +541,15 @@ pub(crate) async fn run_transfer(
                             .collect();
                     }
                 }
-                prepare_target(&target, request, &cols, &[], &mut guard).await?
+                prepare_target(
+                    &target,
+                    request,
+                    &cols,
+                    &[],
+                    &mut guard,
+                    &prepared.cancel_drop,
+                )
+                .await?
             }
         };
         if request.mode.creates_table() {
@@ -558,7 +652,10 @@ pub async fn transfer_data(
     state: State<'_, AppState>,
 ) -> Result<()> {
     // 入力・ガードのエラーは invoke の戻り値として即座に返す。
-    let prepared = prepare_transfer(&state, request).await?;
+    let mut prepared = prepare_transfer(&state, request).await?;
+    // キャンセル時の DROP をキャッシュ無効化・履歴と順序づけて実行できるよう預け先を用意する。
+    prepared.cancel_drop = Some(Arc::new(std::sync::Mutex::new(None)));
+    let prepared = Arc::new(prepared);
     let counter = Arc::new(AtomicU64::new(0));
 
     // register_stream をタスク本体より前に完了させるゲート (export / import と同じ
@@ -573,6 +670,14 @@ pub async fn transfer_data(
         let emit_app = app.clone();
         let emit_id = stream_id_for_task.clone();
         let started = Instant::now();
+        // abort (キャンセル) されると以降の after_transfer に到達しないので、その場合は
+        // このガードの Drop が代わりにキャッシュ無効化と履歴記録を行う。
+        let mut cancel_cleanup = CancelledTransferCleanup {
+            prepared: prepared.clone(),
+            counter: counter_for_task.clone(),
+            started,
+            armed: true,
+        };
         // 進捗イベントは 150ms ごとに間引く (#1258)。最終値は完了前に追い送りする。
         let emitted = Arc::new(AtomicU64::new(0));
         let emitted_cb = emitted.clone();
@@ -603,6 +708,7 @@ pub async fn transfer_data(
             }
         }
         let elapsed_ms = started.elapsed().as_millis() as u64;
+        cancel_cleanup.disarm();
         after_transfer(&prepared, &result, elapsed_ms).await;
         match result {
             Ok(outcome) => {

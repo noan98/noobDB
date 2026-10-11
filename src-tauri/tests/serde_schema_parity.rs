@@ -1264,6 +1264,7 @@ fn build_fixtures() -> serde_json::Value {
             })
             .collect(),
         source_checked: true,
+        source_error: None,
     };
     let sandbox_schema_diff_result = t::SandboxSchemaDiffResult {
         desired: schema_diff.clone(),

@@ -8,7 +8,9 @@ import {
   INLINE_BEFORE_MAX_CHARS,
   INLINE_BEFORE_MAX_LINES,
   INLINE_TIMEOUT_MS,
+  headWindow,
   relevantTables,
+  tailWindow,
   shouldShowSuggestion,
 } from "../ai/inlineComplete";
 import { DEFAULT_AI_SETTINGS, sanitizeAiSettings } from "../ai/aiSettings";
@@ -47,6 +49,9 @@ describe("buildInlineRequest", () => {
   });
   it("単語の途中 (直後が識別子文字) では送らない", () => {
     expect(req("SELECT * FROM users", 15)).toBeNull();
+  });
+  it("直後が非 ASCII の識別子文字 (日本語の列名) でも送らない", () => {
+    expect(req("SELECT 名前 FROM users", 8)).toBeNull();
   });
   it("カーソル前後を分けて送り、出てくるテーブルのスキーマだけ載せる", () => {
     const doc = "SELECT * FROM users u JOIN orders o ON o.user_id = u.id WHERE ";
@@ -145,6 +150,15 @@ describe("窓の切り口が複数行リテラル / コメントの途中でも�
     expect(req("SELECT 1 -- memo ", undefined, { maskLiterals: false })).toBeNull();
     expect(req("SELECT 1 /* memo \n more ", undefined, { maskLiterals: false })).toBeNull();
     expect(req("SELECT * FROM users WHERE ", undefined, { maskLiterals: false })).not.toBeNull();
+  });
+});
+
+describe("tailWindow / headWindow はサロゲートペアを割らない", () => {
+  it("境界が絵文字の途中なら 1 文字ずらす", () => {
+    expect(headWindow("ab😀cd", 3, 1000)).toBe("ab😀cd");
+    expect(headWindow("ab😀cd", 1000, 3)).toBe("ab");
+    expect(tailWindow("ab😀cd", 1000, 3)).toBe("cd");
+    expect(tailWindow("ab😀cd", 1000, 4)).toBe("😀cd");
   });
 });
 

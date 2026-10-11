@@ -2093,6 +2093,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setTableIndexes({});
     setSchemaObjects({});
     tablesInFlightRef.current.clear();
+    columnsInFlightRef.current.clear();
     estimatesInFlightRef.current.clear();
     if (sessionId) {
       // Expanded state is restored (not reset) so the tree comes back drilled-in
@@ -3084,6 +3085,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     tablesInFlightRef.current.add(db);
     try {
       const list = await listVisibleTables(sessionId, db);
+      // 接続切替中に旧セッションの結果を新接続のツリーへ混ぜない。
+      if (sessionIdRef.current !== sessionId) return;
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
       void loadTableComments(sessionId, db);
@@ -3101,7 +3104,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           setSchemaObjects((prev) => ({ ...prev, [db]: [] }));
         });
     } catch (e) {
-      setError(String(e));
+      if (sessionIdRef.current === sessionId) setError(String(e));
     } finally {
       tablesInFlightRef.current.delete(db);
     }
@@ -3130,11 +3133,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       // ベストエフォート: 取得失敗 (権限など) でも列表示は維持する。
       const idxPromise = api.listIndexes(sessionId, db, tbl).catch(() => [] as IndexInfo[]);
       const cols = await api.describeTable(sessionId, db, tbl);
+      if (sessionIdRef.current !== sessionId) return;
       setTableColumns((prev) => ({ ...prev, [key]: cols }));
       const idx = await idxPromise;
+      if (sessionIdRef.current !== sessionId) return;
       setTableIndexes((prev) => ({ ...prev, [key]: idx }));
     } catch (e) {
-      setError(String(e));
+      if (sessionIdRef.current === sessionId) setError(String(e));
     } finally {
       columnsInFlightRef.current.delete(key);
     }

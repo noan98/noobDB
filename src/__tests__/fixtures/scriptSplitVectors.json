@@ -69,8 +69,13 @@
     },
     {
       "sql": "SELECT 1 # a; b\n; SELECT 2",
-      "note": "# 行コメント (マスク規約 #J3 と同じ扱い)",
+      "note": "# 行コメントは MySQL だけ (マスク規約 #J3 / #1517)。PostgreSQL/SQLite の # は演算子なので ; で分割する",
       "statements": [
+        "SELECT 1 # a",
+        "b",
+        "SELECT 2"
+      ],
+      "statementsMysql": [
         "SELECT 1 # a; b",
         "SELECT 2"
       ]

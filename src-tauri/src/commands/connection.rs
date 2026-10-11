@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::aws_iam::{self, AwsIamConfig};
-use crate::db::{is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode};
+use crate::db::{is_session_init_sql_for, Connection, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 use crate::profiles::{secrets, SshAuthMethod};
 use crate::ssh::{SshConfig, SshJumpConfig, SshPhase, SshTunnel};
@@ -712,7 +712,7 @@ async fn build_options(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     if let Some(sql) = &init_sql {
-        if !is_session_init_sql(sql) {
+        if !is_session_init_sql_for(req.driver, sql) {
             return Err(AppError::InvalidInput(
                 "session-init SQL may only contain SET / PRAGMA or read-only statements".into(),
             ));

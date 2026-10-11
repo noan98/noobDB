@@ -472,6 +472,9 @@ pub struct SandboxTableDiffResult {
     /// Whether `source_session_id` was supplied and resolved to a live
     /// session, i.e. whether conflict detection actually ran.
     pub source_checked: bool,
+    /// 実 DB 側の取得に失敗して競合検出ができなかったときのエラー文
+    /// (`source_checked` は false)。セッション未指定のときは `None`。
+    pub source_error: Option<String>,
 }
 
 /// Computes the data writeback diff for one sandbox table: the sandbox's live
@@ -572,9 +575,9 @@ pub(crate) async fn sandbox_table_diff_inner(
     let mut conflicts = Vec::new();
     let mut source_checked = false;
     let mut source_owner: Option<String> = None;
+    let mut source_error: Option<String> = None;
     if let Some(source_session_id) = source_session_id {
         if let Some(source) = state.get(&source_session_id).await {
-            source_owner = Some(source_session_id.clone());
             let source_db = record.source_database.clone().unwrap_or_default();
             let sql = select_rows_sql(
                 record.source_driver,
@@ -583,22 +586,36 @@ pub(crate) async fn sandbox_table_diff_inner(
                 &primary_key,
                 want + 1,
             );
-            let current_res = source.conn.execute(&sql, Some(&source_db)).await?;
-            let current_rows: Vec<_> = current_res.rows.into_iter().take(want).collect();
-            let external_rows = compute_data_diff(&columns, &pk_idx, &current_rows, &base_rows);
-            let external = DataDiff {
-                target_driver: record.source_driver,
-                table: table.clone(),
-                columns,
-                column_types,
-                primary_key,
-                rows: external_rows,
-                truncated: false,
-                source_count: current_rows.len(),
-                target_count: base_count,
-            };
-            conflicts = detect_conflicts(&desired, &external);
-            source_checked = true;
+            // 実 DB 側の取得失敗 (テーブルの DROP/RENAME・一時的な接続不良) は
+            // 競合検出ができなかった (`source_checked = false`) として扱い、
+            // サンドボックス側の差分 (desired) の表示・書き戻しは妨げない。
+            let fetched = source.conn.execute(&sql, Some(&source_db)).await;
+            if let Err(e) = &fetched {
+                // ログにはエラー種別だけを出す (メッセージに接続情報が混ざりうるため)。
+                tracing::warn!(
+                    kind = e.kind(),
+                    "sandbox conflict check: source fetch failed"
+                );
+                source_error = Some(e.to_string());
+            }
+            if let Ok(current_res) = fetched {
+                source_owner = Some(source_session_id.clone());
+                let current_rows: Vec<_> = current_res.rows.into_iter().take(want).collect();
+                let external_rows = compute_data_diff(&columns, &pk_idx, &current_rows, &base_rows);
+                let external = DataDiff {
+                    target_driver: record.source_driver,
+                    table: table.clone(),
+                    columns,
+                    column_types,
+                    primary_key,
+                    rows: external_rows,
+                    truncated: false,
+                    source_count: current_rows.len(),
+                    target_count: base_count,
+                };
+                conflicts = detect_conflicts(&desired, &external);
+                source_checked = true;
+            }
         }
     }
 
@@ -612,6 +629,7 @@ pub(crate) async fn sandbox_table_diff_inner(
         desired_diff_id,
         conflicts,
         source_checked,
+        source_error,
     })
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
 import { t } from "../i18n";
 import type { ServerMetrics } from "../api/tauri";
 
@@ -66,5 +66,40 @@ describe("ServerMetricsPanel error state (#848)", () => {
     await waitFor(() => {
       expect(api.serverMetrics).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+/** セッション切替直後でも、旧セッションの遅延応答を捨てて新セッションを即取得する。 */
+describe("ServerMetricsPanel session switch", () => {
+  it("fetches for the new session even while the old fetch is pending, and drops the stale reply", async () => {
+    let resolveOld: (m: ServerMetrics) => void = () => {};
+    const empty: ServerMetrics = {
+      connections: null,
+      active: null,
+      idle_in_transaction: null,
+      lock_waiting: null,
+      questions: null,
+      slow_queries: null,
+      lock_waits: null,
+    };
+    vi.mocked(api.serverMetrics)
+      .mockImplementationOnce(() => new Promise<ServerMetrics>((r) => { resolveOld = r; }))
+      .mockResolvedValue(empty);
+
+    const { rerender } = renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
+    expect(api.serverMetrics).toHaveBeenCalledTimes(1);
+
+    rerender(<ServerMetricsPanel sessionId="s2" driver="postgres" />);
+    await waitFor(() => {
+      expect(api.serverMetrics).toHaveBeenCalledTimes(2);
+    });
+    expect(vi.mocked(api.serverMetrics).mock.calls[1][0]).toBe("s2");
+
+    // 旧セッションの応答が後から届いても例外なく無視される。
+    resolveOld({ ...empty, connections: 99 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("99")).not.toBeInTheDocument();
   });
 });

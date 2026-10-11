@@ -42,6 +42,7 @@ const { SCHEMA_DIFF, TABLE_DIFF } = vi.hoisted(() => ({
     desired_diff_id: "diff-users",
     conflicts: [],
     source_checked: true,
+    source_error: null,
   } satisfies SandboxTableDiffResult,
 }));
 
@@ -128,5 +129,54 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
 
     unmount();
     expect(api.releaseDataDiffs).toHaveBeenCalledWith(["diff-users"]);
+  });
+
+  it("削除許可を切り替えると生成済みの SQL が破棄される", async () => {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue({
+      ...TABLE_DIFF,
+      desired: {
+        ...TABLE_DIFF.desired,
+        rows: [{ status: "source_only", key: [1], source: [1], target: null, changed_columns: [] }],
+      },
+    });
+    renderWithProviders(
+      <SandboxReviewModal
+        sandbox={SANDBOX}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+    const generate = await screen.findByText(t("sandboxReviewGenerate"));
+    await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
+    fireEvent.click(generate);
+    await screen.findByText(t("schemaCompareNoStatements"));
+    fireEvent.click(screen.getByLabelText(t("schemaCompareAllowDelete")));
+    await waitFor(() =>
+      expect(screen.queryByText(t("schemaCompareNoStatements"))).not.toBeInTheDocument(),
+    );
+  });
+
+  it("実 DB 側の取得失敗を警告として表示する", async () => {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue({
+      ...TABLE_DIFF,
+      desired: {
+        ...TABLE_DIFF.desired,
+        rows: [{ status: "source_only", key: [1], source: [1], target: null, changed_columns: [] }],
+      },
+      source_checked: false,
+      source_error: "boom",
+    });
+    renderWithProviders(
+      <SandboxReviewModal
+        sandbox={SANDBOX}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByText(t("sandboxReviewSourceError", { error: "boom" })),
+    ).toBeInTheDocument();
   });
 });

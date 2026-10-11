@@ -39,6 +39,10 @@ struct VectorCase {
     /// MySQL のバックスラッシュエスケープ解釈での期待値 (省略時は `statements`)。
     #[serde(rename = "statementsMysql", default)]
     statements_mysql: Option<Vec<String>>,
+    /// PostgreSQL / SQLite の期待値 (省略時は `statements`)。`#` は MySQL だけが
+    /// 行コメント扱いにする (#1517)。
+    #[serde(rename = "statementsStandard", default)]
+    statements_standard: Option<Vec<String>>,
 }
 
 const ALL_DRIVERS: [t::DriverKind; 3] = [
@@ -93,8 +97,9 @@ fn statement_split_golden_matches_shared_vectors() {
     let mut failures = Vec::new();
     for case in &vectors.cases {
         for driver in ALL_DRIVERS {
-            let expected = match (driver, &case.statements_mysql) {
-                (t::DriverKind::Mysql, Some(m)) => m,
+            let expected = match (driver, &case.statements_mysql, &case.statements_standard) {
+                (t::DriverKind::Mysql, Some(m), _) => m,
+                (t::DriverKind::Postgres | t::DriverKind::Sqlite, _, Some(s)) => s,
                 _ => &case.statements,
             };
             let actual = split_with_backend_mask(driver, &case.sql);

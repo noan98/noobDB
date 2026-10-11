@@ -22,6 +22,7 @@ import { statusColors } from "./diffStatusColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Callout } from "./Callout";
 import { ErrorNote, FieldLabel } from "./modalForm";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Radio, Select } from "./ui";
@@ -86,26 +87,35 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   const [applyResult, setApplyResult] = useState<string | null>(null);
   const [opError, setOpError] = useState<string | null>(null);
 
-  const loadSchema = useCallback(async () => {
-    setSchemaLoading(true);
-    setSchemaError(null);
-    try {
-      const result = await api.sandboxSchemaDiff({
-        sandboxId: sandbox.id,
-        sandboxSessionId,
-        sourceSessionId: targetSessionId,
-      });
-      setSchema(result);
-    } catch (e) {
-      setSchemaError(String(e));
-      setSchema(null);
-    } finally {
-      setSchemaLoading(false);
-    }
-  }, [sandbox.id, sandboxSessionId, targetSessionId]);
+  // 読み込みの世代。対象接続の切替・再読み込みで進め、古い世代の応答は捨てる
+  // (捨てないと旧接続の差分が state を上書きし、別接続へ誤って適用されうる)。
+  const loadGenRef = useRef(0);
+
+  const loadSchema = useCallback(
+    async (gen: number) => {
+      setSchemaLoading(true);
+      setSchemaError(null);
+      try {
+        const result = await api.sandboxSchemaDiff({
+          sandboxId: sandbox.id,
+          sandboxSessionId,
+          sourceSessionId: targetSessionId,
+        });
+        if (gen !== loadGenRef.current) return;
+        setSchema(result);
+      } catch (e) {
+        if (gen !== loadGenRef.current) return;
+        setSchemaError(String(e));
+        setSchema(null);
+      } finally {
+        if (gen === loadGenRef.current) setSchemaLoading(false);
+      }
+    },
+    [sandbox.id, sandboxSessionId, targetSessionId],
+  );
 
   const loadTable = useCallback(
-    async (table: string) => {
+    async (table: string, gen: number) => {
       setTables((prev) => ({
         ...prev,
         [table]: {
@@ -122,11 +132,17 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
           table,
           sourceSessionId: targetSessionId,
         });
+        if (gen !== loadGenRef.current) {
+          // 古い世代の差分はバックエンドに保持されたままなので解放して捨てる。
+          void api.releaseDataDiffs([diff.desired_diff_id]).catch(() => {});
+          return;
+        }
         setTables((prev) => ({
           ...prev,
           [table]: { diff, loading: false, error: null, resolutions: prev[table]?.resolutions ?? {} },
         }));
       } catch (e) {
+        if (gen !== loadGenRef.current) return;
         setTables((prev) => ({
           ...prev,
           [table]: { diff: null, loading: false, error: String(e), resolutions: prev[table]?.resolutions ?? {} },
@@ -152,8 +168,10 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
     setCombined(null);
     setApplyResult(null);
     setOpError(null);
-    void loadSchema();
-    for (const table of sandbox.tables) void loadTable(table);
+    loadGenRef.current += 1;
+    const gen = loadGenRef.current;
+    void loadSchema(gen);
+    for (const table of sandbox.tables) void loadTable(table, gen);
   }, [loadSchema, loadTable, sandbox.tables, releaseHeldDiffs]);
 
   // `loadAll`'s identity already changes whenever `targetSessionId` does
@@ -214,13 +232,29 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   const apply = useCallback(async () => {
     if (!combined || combined.statements.length === 0 || !targetSessionId || !targetProfile) return;
     const destructiveCount = combined.statements.filter((s) => s.destructive).length;
+    // 実際に書き戻す行があり、競合検出に失敗したテーブルだけを注意対象にする。
+    const failedCheckTables = sandbox.tables.filter((tb) => {
+      const d = tables[tb]?.diff;
+      return !!d?.source_error && d.desired.rows.length > 0;
+    });
     const ok = await confirm({
       title: t("sandboxApplyTitle", { count: combined.statements.length }),
-      message: t("sandboxApplyConfirm", {
-        count: combined.statements.length,
-        name: targetProfile.name,
-        destructive: destructiveCount,
-      }),
+      message: (
+        <>
+          <chakra.p margin={0}>
+            {t("sandboxApplyConfirm", {
+              count: combined.statements.length,
+              name: targetProfile.name,
+              destructive: destructiveCount,
+            })}
+          </chakra.p>
+          {failedCheckTables.length > 0 && (
+            <chakra.p margin={0} mt="2" color="app.textWarning">
+              {t("sandboxApplySourceErrorNote", { tables: failedCheckTables.join(", ") })}
+            </chakra.p>
+          )}
+        </>
+      ),
       tone: destructiveCount > 0 ? "danger" : "warning",
     });
     if (!ok) return;
@@ -359,7 +393,14 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                 })}
             </chakra.ul>
             <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" mt="1.5" cursor="pointer">
-              <Checkbox checked={allowDestructive} onChange={(e) => setAllowDestructive(e.target.checked)} />
+              <Checkbox
+                checked={allowDestructive}
+                onChange={(e) => {
+                  setAllowDestructive(e.target.checked);
+                  // 生成済みの文は生成時のフラグ固定なので破棄して再生成を促す。
+                  setCombined(null);
+                }}
+              />
               {t("schemaCompareAllowDestructive")}
             </chakra.label>
           </chakra.div>
@@ -399,7 +440,12 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                   {st.diff.desired.truncated && ` (${t("sandboxReviewTruncated")})`}
                 </chakra.div>
               )}
-              {!st.diff.source_checked && (
+              {st.diff.source_error && (
+                <Callout tone="warning" role="alert" mt="1.5">
+                  {t("sandboxReviewSourceError", { error: st.diff.source_error })}
+                </Callout>
+              )}
+              {!st.diff.source_checked && !st.diff.source_error && (
                 <chakra.div fontSize="xs" color="app.textMuted" mt="1">
                   {t("sandboxReviewConflictsUnchecked")}
                 </chakra.div>
@@ -461,7 +507,14 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
           )}
 
         <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" cursor="pointer">
-          <Checkbox checked={allowDelete} onChange={(e) => setAllowDelete(e.target.checked)} />
+          <Checkbox
+            checked={allowDelete}
+            onChange={(e) => {
+              setAllowDelete(e.target.checked);
+              // 生成済みの文は生成時のフラグ固定なので破棄して再生成を促す。
+              setCombined(null);
+            }}
+          />
           {t("schemaCompareAllowDelete")}
         </chakra.label>
 

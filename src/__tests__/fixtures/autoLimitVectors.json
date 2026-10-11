@@ -435,6 +435,26 @@
         "postgres": "SELECT $$limit 5$$ AS s LIMIT 1000",
         "sqlite": "SELECT $$limit 5$$ AS s LIMIT 1000" 
       }
+    },
+    {
+          "sql": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table",
+          "limit": 100,
+          "note": "#1517: 先頭が集計でも UNION を含む文は単一行ではないので LIMIT を付ける",
+          "expected": {
+                "mysql": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100",
+                "postgres": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100",
+                "sqlite": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100"
+          }
+    },
+    {
+          "sql": "SELECT data #> '{a}' FROM t",
+          "limit": 100,
+          "note": "#1517: PostgreSQL の # 演算子は行コメントではない。MySQL では # 以降がコメントなので LIMIT は # の前に入る",
+          "expected": {
+                "mysql": "SELECT data LIMIT 100 #> '{a}' FROM t",
+                "postgres": "SELECT data #> '{a}' FROM t LIMIT 100",
+                "sqlite": "SELECT data #> '{a}' FROM t LIMIT 100"
+          }
     }
   ]
 }
