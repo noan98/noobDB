@@ -1876,6 +1876,7 @@ mod query_result_cache_tests {
             "SELECT currval('order_seq')",
             "SELECT pg_advisory_lock(1)",
             "SELECT set_config('x', 'y', false)",
+            "SELECT \"pg_sleep_for\"('1s')",
         ] {
             for _ in 0..2 {
                 let c = calls.clone();
@@ -1888,7 +1889,7 @@ mod query_result_cache_tests {
                     .unwrap();
             }
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        assert_eq!(calls.load(Ordering::SeqCst), 8);
         assert!(!crate::db::sql_has_side_effect_function(
             DriverKind::Postgres,
             "SELECT 'currval' AS c, currval_count FROM t"

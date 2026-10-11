@@ -478,13 +478,13 @@ pub fn classify_tx_statement(
                     return None;
                 }
             }
-            Some((TxControl::Begin, parse_tx_modes(tail)))
+            Some((TxControl::Begin, parse_tx_modes(driver, tail)))
         }
         "start" => {
             if rest.first() != Some(&"transaction") {
                 return None;
             }
-            Some((TxControl::Begin, parse_tx_modes(&rest[1..])))
+            Some((TxControl::Begin, parse_tx_modes(driver, &rest[1..])))
         }
         "commit" => plain(only(&["work", "transaction", "tran"]), TxControl::Commit),
         "end" => plain(only(&["work", "transaction"]), TxControl::Commit),
@@ -495,7 +495,10 @@ pub fn classify_tx_statement(
 
 /// 開始文の後ろに付く `ISOLATION LEVEL ...` / `READ ONLY` / `READ WRITE` を解釈する。
 /// `DEFERRABLE` / `NOT DEFERRABLE` は読み飛ばす。解釈できない語が残れば `Err`。
-fn parse_tx_modes(words: &[&str]) -> Result<crate::db::tx_options::TxOptions, String> {
+fn parse_tx_modes(
+    driver: DriverKind,
+    words: &[&str],
+) -> Result<crate::db::tx_options::TxOptions, String> {
     use crate::db::tx_options::{TxIsolation, TxOptions};
     let mut opts = TxOptions::default();
     let mut i = 0;
@@ -527,13 +530,13 @@ fn parse_tx_modes(words: &[&str]) -> Result<crate::db::tx_options::TxOptions, St
             }
             // MySQL の `WITH CONSISTENT SNAPSHOT` は従来どおり受理する (オプションは
             // 反映しないが、生の SQL としてプールへ流れて境界が崩れるよりは安全)。
-            ["with", "consistent", "snapshot", ..] => {
+            ["with", "consistent", "snapshot", ..] if driver == DriverKind::Mysql => {
                 i += 3;
             }
-            ["not", "deferrable", ..] => {
+            ["not", "deferrable", ..] if driver == DriverKind::Postgres => {
                 i += 2;
             }
-            ["deferrable", ..] => {
+            ["deferrable", ..] if driver == DriverKind::Postgres => {
                 i += 1;
             }
             other => return Err(format!("unsupported transaction mode near `{}`", other[0])),
@@ -732,6 +735,24 @@ mod tests {
             Some((TxControl::Begin, Err(_)))
         ));
         assert_eq!(classify_tx_statement(d, "BEGIN SELECT 1"), None);
+        // DEFERRABLE は PostgreSQL だけ、WITH CONSISTENT SNAPSHOT は MySQL だけ。
+        for other in [DriverKind::Mysql, DriverKind::Sqlite] {
+            assert!(matches!(
+                classify_tx_statement(other, "START TRANSACTION DEFERRABLE"),
+                Some((TxControl::Begin, Err(_)))
+            ));
+        }
+        assert!(matches!(
+            classify_tx_statement(d, "START TRANSACTION WITH CONSISTENT SNAPSHOT"),
+            Some((TxControl::Begin, Err(_)))
+        ));
+        assert!(matches!(
+            classify_tx_statement(
+                DriverKind::Mysql,
+                "START TRANSACTION WITH CONSISTENT SNAPSHOT"
+            ),
+            Some((TxControl::Begin, Ok(_)))
+        ));
     }
 
     #[test]

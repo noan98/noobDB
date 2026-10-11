@@ -9653,7 +9653,19 @@ export default function App() {
                       defaultIntervalSecs={settings.autoRefreshDefaultSecs}
                       connectingProfileId={connectingId}
                       onOpenProfile={(p) => void handleConnect(p)}
-                      onReconnected={clearEmergencyFor}
+                      onReconnected={(sid) => {
+                        clearEmergencyFor(sid);
+                        // 再接続でサーバ側の接続が入れ替わり、開いていた TX は破棄されている。
+                        if (txBySessionRef.current.has(sid)) {
+                          resetTxFor(sid);
+                          const name = openConnections.find((c) => c.sessionId === sid)?.profile.name ?? "";
+                          toast.notify({
+                            message: translate("toastReconnectTxDiscarded", { name }),
+                            tone: "info",
+                            severity: "warning",
+                          });
+                        }
+                      }}
                     />
                   ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
                     <ProcessListPanel

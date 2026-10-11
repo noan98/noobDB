@@ -2226,7 +2226,16 @@ pub fn sql_has_side_effect_function(driver: DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
     let masked: String = mask_for_driver(driver, &orig).into_iter().collect();
     let lower = masked.to_ascii_lowercase();
-    if lower.contains("pg_advisory") || lower.contains("pg_try_advisory") {
+    // 読み取り専用ガードと同じく、引用符付き識別子 (`"pg_sleep"(…)`) の中身を残した
+    // マスクでも照合する。
+    let idents_lower: String = mask_keeping_identifiers(Some(driver), &orig)
+        .into_iter()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if [&lower, &idents_lower]
+        .iter()
+        .any(|l| l.contains("pg_advisory") || l.contains("pg_try_advisory"))
+    {
         return true;
     }
     [
@@ -2234,6 +2243,8 @@ pub fn sql_has_side_effect_function(driver: DriverKind, sql: &str) -> bool {
         "lastval",
         "set_config",
         "pg_sleep",
+        "pg_sleep_for",
+        "pg_sleep_until",
         "get_lock",
         "release_lock",
         "release_all_locks",
@@ -2241,7 +2252,7 @@ pub fn sql_has_side_effect_function(driver: DriverKind, sql: &str) -> bool {
         "is_used_lock",
     ]
     .iter()
-    .any(|kw| contains_word(&lower, kw))
+    .any(|kw| contains_word(&lower, kw) || contains_word(&idents_lower, kw))
 }
 
 /// `sql` が DDL 相当 (`CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `RENAME`) を
