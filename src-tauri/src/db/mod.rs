@@ -1993,7 +1993,10 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// MySQL keeps its own escaping rules. See [`mask_for_driver`] (#852).
 pub fn is_read_only_sql(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    is_read_only_sql_masked(None, &mask_for_analysis_conservative(&orig))
+    is_read_only_sql_masked(
+        &mask_for_analysis_conservative(&orig),
+        &mask_keeping_identifiers(None, &orig),
+    )
 }
 
 /// Driver-aware entry point for [`is_read_only_sql`] (#852): masks string
@@ -2003,15 +2006,17 @@ pub fn is_read_only_sql(sql: &str) -> bool {
 /// `SELECT '\'; DELETE FROM t; --'`.
 pub fn is_read_only_sql_for(driver: DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    is_read_only_sql_masked(Some(driver), &mask_for_driver(driver, &orig))
+    is_read_only_sql_masked(
+        &mask_for_driver(driver, &orig),
+        &mask_keeping_identifiers(Some(driver), &orig),
+    )
 }
 
 /// Shared body of [`is_read_only_sql`] / [`is_read_only_sql_for`], operating on
 /// an already-masked statement so the two entry points differ only in which
 /// masking rules they applied. `driver` is `None` for the driver-less entry
 /// point.
-fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool {
-    let _ = driver;
+fn is_read_only_sql_masked(masked: &[char], idents_kept: &[char]) -> bool {
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     let body = masked_lower
         .trim()
@@ -2039,18 +2044,18 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
         return false;
     }
     for kw in [
-        "insert",
-        "update",
-        "delete",
-        "into",
-        "create",
-        "alter",
-        "drop",
-        "truncate",
-        "call",
-        "merge",
-        "grant",
-        "revoke",
+        "insert", "update", "delete", "into", "create", "alter", "drop", "truncate", "call",
+        "merge", "grant", "revoke",
+    ] {
+        if contains_word(body, kw) {
+            return false;
+        }
+    }
+    // 関数名の拒否リスト。引用符付き識別子 (`"nextval"(…)`) で素通りされないよう、
+    // 引用符の中身を残したマスク (`idents_kept`) でも照合する。書き込みキーワードは
+    // 対象外 (`"update"` という列名の誤検知を避ける)。
+    let idents_lower: String = idents_kept.iter().collect::<String>().to_ascii_lowercase();
+    for kw in [
         // 別エンジンへの書き込みパススルー関数群。これらはトップレベルの文自体は
         // `SELECT ...` のままなので許可プレフィックスは通過するが、実際の書き込み
         // SQL は引数の文字列リテラルの中に埋め込まれる — つまりマスクで空白化
@@ -2065,16 +2070,16 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
         // 正当な識別子 (列名など) として現れる可能性は極めて低いため、対象ドライバに
         // 関わらず全ドライバ共通で拒否する (fail-closed — 過検知のコストは低い一方、
         // 見逃しは任意書き込みに直結する)。
+        // 副作用のある関数: 他セッションの強制切断・シーケンス更新・ラージオブジェクト
+        // 書き込み・通知送信・レプリケーションスロット操作・統計リセットなど。
+        // PostgreSQL 側には read_only セッション用のサーバ側読み取り専用設定が無く
+        // このガードが唯一の防御 (fail-closed)。
         "openrowset",
         "openquery",
         "opendatasource",
         "dblink",
         "dblink_exec",
         "load_extension",
-        // 副作用のある関数。文全体は `SELECT ...` のままだが、他セッションの強制切断・
-        // シーケンスの更新・サーバ設定の変更・ラージオブジェクトの書き込みを行う。
-        // PostgreSQL 側には read_only セッション用のサーバ側読み取り専用設定が無く
-        // このガードが唯一の防御なので、名前を全ドライバ共通で拒否する (fail-closed)。
         "pg_terminate_backend",
         "pg_cancel_backend",
         "nextval",
@@ -2087,10 +2092,27 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
         "lo_export",
         "lo_create",
         "lo_unlink",
+        "lo_from_bytea",
+        "lo_put",
+        "lowrite",
+        "lo_truncate",
+        "lo_truncate64",
+        "pg_notify",
+        "pg_drop_replication_slot",
+        "pg_create_logical_replication_slot",
+        "pg_create_physical_replication_slot",
+        "pg_logical_emit_message",
+        "pg_promote",
+        "pg_stat_reset",
     ] {
-        if contains_word(body, kw) {
+        if contains_word(body, kw) || contains_word(&idents_lower, kw) {
             return false;
         }
+    }
+    // MariaDB のシーケンス進行 `NEXT VALUE FOR seq` (空白の揺れは畳んで照合)。
+    let squashed = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if contains_word_phrase(&squashed, "next value for") {
+        return false;
     }
     if has_locking_clause(body) {
         return false;
@@ -2490,8 +2512,21 @@ fn has_stacked_statements_masked(masked: &[char]) -> bool {
 /// `SET` statement to see *into* its string-literal argument (see that
 /// function's doc comment for why).
 pub fn is_session_init_sql(sql: &str) -> bool {
+    is_session_init_sql_impl(None, sql)
+}
+
+/// Driver-aware [`is_session_init_sql`] (#1517): `#` is a line comment only on
+/// MySQL, so a PostgreSQL / SQLite init SQL such as `SELECT 1 # 2; DELETE …`
+/// is analysed with the `DELETE` visible instead of hidden behind a `#`.
+pub fn is_session_init_sql_for(driver: DriverKind, sql: &str) -> bool {
+    is_session_init_sql_impl(Some(driver), sql)
+}
+
+fn is_session_init_sql_impl(driver: Option<DriverKind>, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis_conservative(&orig);
+    let hash_comment = driver.map_or(true, driver_hash_comment);
+    let masked = mask_for_analysis_impl(&orig, false, hash_comment, KeepIdents::None);
+    let idents = mask_keeping_identifiers(driver, &orig);
     let masked_lower: Vec<char> = masked.iter().map(|c| c.to_ascii_lowercase()).collect();
     let n = masked_lower.len();
     let mut start = 0usize;
@@ -2502,10 +2537,11 @@ pub fn is_session_init_sql(sql: &str) -> bool {
             let s = seg.trim();
             if !s.is_empty() {
                 let orig_seg: String = orig[start..i].iter().collect();
+                // マスク済みの断片をそのまま判定する (ドライバ不明の再マスクはしない)。
                 let allowed = (starts_with_word(s, "set")
                     && is_allowed_set_statement(s, &orig_seg))
                     || starts_with_word(s, "pragma")
-                    || is_read_only_sql(s);
+                    || is_read_only_sql_masked(&masked[start..i], &idents[start..i]);
                 if !allowed {
                     return false;
                 }
@@ -2627,7 +2663,38 @@ fn sets_no_backslash_escapes_mode(orig_segment: &str) -> bool {
 /// golden (`tests/mask_golden.rs`, #988).
 pub(crate) fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
     // ドライバ不明の `#` は従来どおりコメント扱い (MySQL の `# …` に追従)。
-    mask_for_analysis_impl(src, false, true)
+    mask_for_analysis_impl(src, false, true, KeepIdents::None)
+}
+
+/// Which quoted-identifier bodies [`mask_for_analysis_impl`] leaves readable.
+/// The normal analysis mask blanks every quoted body; the function deny-list
+/// additionally needs identifiers (`"nextval"(…)`, `` `x` ``) kept so a quoted
+/// function name cannot slip past it (#1517).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeepIdents {
+    None,
+    /// Keep `"…"` and `` `…` `` bodies (PostgreSQL / SQLite / driver-less).
+    All,
+    /// Keep `` `…` `` only (MySQL, where `"…"` is a string literal).
+    Backtick,
+}
+
+/// Same masking as the analysis mask (strings, comments blanked) but quoted
+/// identifier bodies are kept. Used only to match the function deny-list.
+fn mask_keeping_identifiers(driver: Option<DriverKind>, src: &[char]) -> Vec<char> {
+    let (backslash, hash, keep) = match driver {
+        Some(d) => (
+            driver_backslash_escapes(d),
+            driver_hash_comment(d),
+            if d == DriverKind::Mysql {
+                KeepIdents::Backtick
+            } else {
+                KeepIdents::All
+            },
+        ),
+        None => (false, true, KeepIdents::All),
+    };
+    mask_for_analysis_impl(src, backslash, hash, keep)
 }
 
 /// True when `driver` treats `#` as a line comment opener. Only MySQL/MariaDB
@@ -2679,6 +2746,7 @@ pub(crate) fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
         src,
         driver_backslash_escapes(driver),
         driver_hash_comment(driver),
+        KeepIdents::None,
     )
 }
 
@@ -2686,7 +2754,12 @@ pub(crate) fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
 /// [`mask_for_driver`]. `backslash_escapes` controls whether
 /// `\` inside a `'…'` / `"…"` literal is treated as escaping the following
 /// character (MySQL) or as an ordinary character (PostgreSQL / SQLite).
-fn mask_for_analysis_impl(src: &[char], backslash_escapes: bool, hash_comment: bool) -> Vec<char> {
+fn mask_for_analysis_impl(
+    src: &[char],
+    backslash_escapes: bool,
+    hash_comment: bool,
+    keep: KeepIdents,
+) -> Vec<char> {
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let n = src.len();
     let mut i = 0;
@@ -2798,7 +2871,12 @@ fn mask_for_analysis_impl(src: &[char], backslash_escapes: bool, hash_comment: b
                     i += 1;
                     break;
                 }
-                out.push(if d == '\n' { '\n' } else { ' ' });
+                let keep_body = match quote {
+                    '`' => keep != KeepIdents::None,
+                    '"' => keep == KeepIdents::All,
+                    _ => false,
+                };
+                out.push(if d == '\n' || keep_body { d } else { ' ' });
                 i += 1;
             }
             continue;
@@ -3109,7 +3187,8 @@ mod tests {
     use super::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
         has_stacked_statements, has_stacked_statements_for, is_read_only_sql, is_read_only_sql_for,
-        is_session_init_sql, mask_sensitive_var, sum_size_parts, DriverKind, SslMode, WriteKind,
+        is_session_init_sql, is_session_init_sql_for, mask_sensitive_var, sum_size_parts,
+        DriverKind, SslMode, WriteKind,
     };
 
     fn test_col(name: &str) -> super::types::TableColumnInfo {
@@ -4126,6 +4205,25 @@ mod tests {
         assert!(is_read_only_sql_for(
             DriverKind::Mysql,
             "SELECT * FROM users # delete from users"
+        ));
+    }
+
+    #[test]
+    fn session_init_is_driver_aware_for_hash_comments() {
+        let sql = "SELECT 1 # 2; DELETE FROM orders";
+        // PostgreSQL / SQLite: `#` はコメントではないので DELETE が見える。
+        assert!(!is_session_init_sql_for(DriverKind::Postgres, sql));
+        assert!(!is_session_init_sql_for(DriverKind::Sqlite, sql));
+        // MySQL: `# …` 以降はコメント。
+        assert!(is_session_init_sql_for(DriverKind::Mysql, sql));
+        assert!(is_session_init_sql_for(
+            DriverKind::Postgres,
+            "SET search_path TO app"
+        ));
+        // 副作用のある関数 (引用符付き含む) は初期化 SQL でも拒否。
+        assert!(!is_session_init_sql_for(
+            DriverKind::Postgres,
+            "SELECT \"nextval\"('s')"
         ));
     }
 

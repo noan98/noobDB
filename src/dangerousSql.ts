@@ -407,25 +407,25 @@ const WRITE_KEYWORDS = [
   "merge",
   "grant",
   "revoke",
-  // 別エンジンへの書き込みパススルー関数群。文全体は `SELECT ...` のままなので
-  // READ_ONLY_PREFIXES は通過するが、実際の書き込み SQL は引数の文字列リテラルの
-  // 中に埋め込まれ maskLiterals で空白化されるため、通常のキーワード走査には
-  // 引っかからない (`SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE ...')`、
-  // `SELECT dblink_exec('dbname=other','DELETE FROM accounts')`)。
-  // `openrowset`/`openquery`/`opendatasource` は MSSQL のリンクサーバ経由
-  // パススルー、`dblink`/`dblink_exec` は PostgreSQL の他 DB へのクエリ実行、
-  // `load_extension` は SQLite のネイティブ拡張ロード (任意コード実行)。バックの
-  // `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と同じく全ドライバ共通で
-  // 拒否する (fail-closed。正当な識別子としてこれらの名前が現れる可能性は極めて
-  // 低い)。
+];
+
+/**
+ * 拒否する関数名。文全体は `SELECT ...` のままなので READ_ONLY_PREFIXES は通過するが、
+ * 実際の書き込み SQL が引数の文字列リテラルに埋め込まれる (`OPENROWSET` /
+ * `dblink_exec` / `load_extension`) か、関数自体に副作用がある (他セッションの強制切断・
+ * シーケンス更新・ラージオブジェクト書き込み・通知送信・レプリケーションスロット操作・
+ * 統計リセット) もの。バックの `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と
+ * 同じ一覧で、全ドライバ共通で拒否する (fail-closed)。引用符付き識別子
+ * (`"nextval"(…)`) で素通りされないよう、中身を残したマスクでも照合する (#1517)。
+ * 書き込みキーワードは対象外 (`"update"` という列名の誤検知を避ける)。
+ */
+const DENIED_FUNCTIONS = [
   "openrowset",
   "openquery",
   "opendatasource",
   "dblink",
   "dblink_exec",
   "load_extension",
-  // 副作用のある関数 (他セッションの強制切断・シーケンス更新・サーバ設定変更・
-  // ラージオブジェクト書き込み)。バックの `is_read_only_sql_masked` と同じ一覧。
   "pg_terminate_backend",
   "pg_cancel_backend",
   "nextval",
@@ -438,6 +438,18 @@ const WRITE_KEYWORDS = [
   "lo_export",
   "lo_create",
   "lo_unlink",
+  "lo_from_bytea",
+  "lo_put",
+  "lowrite",
+  "lo_truncate",
+  "lo_truncate64",
+  "pg_notify",
+  "pg_drop_replication_slot",
+  "pg_create_logical_replication_slot",
+  "pg_create_physical_replication_slot",
+  "pg_logical_emit_message",
+  "pg_promote",
+  "pg_stat_reset",
 ];
 
 /**
@@ -568,6 +580,12 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
   // Trailing separators were stripped, so a remaining `;` hides a 2nd statement.
   if (body.includes(";")) return false;
   if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
+  const withIdents = maskLiterals(sql, driver, { keepQuotedIdentifiers: true }).toLowerCase();
+  if (DENIED_FUNCTIONS.some((kw) => containsWord(body, kw) || containsWord(withIdents, kw))) {
+    return false;
+  }
+  // MariaDB のシーケンス進行 `NEXT VALUE FOR seq`。
+  if (/\bnext\s+value\s+for\b/.test(body)) return false;
   if (hasLockingClause(body)) return false;
   if (hasLockingTableHint(body)) return false;
   return true;

@@ -20,7 +20,7 @@ use crate::commands::connection::{
 };
 use crate::commands::dump;
 use crate::commands::export;
-use crate::db::{is_read_only_sql, DriverKind};
+use crate::db::{is_read_only_sql, is_read_only_sql_for, DriverKind};
 use crate::error::AppError;
 use crate::profiles::{self, ConnectionProfile};
 use crate::state::AppState;
@@ -150,6 +150,13 @@ async fn run_action(
             sql_table,
             sql_batch_size,
         } => {
+            // 接続前の検証 (ドライバ不明) に加えて、解決したドライバで再検証する
+            // (PostgreSQL の `#` 演算子など、ドライバ別マスクで結果が変わる入力のため)。
+            if !is_read_only_sql_for(session.conn.driver_kind(), sql) {
+                return TaskOutcome::err(
+                    "task SQL is not read-only (scheduler only allows SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)",
+                );
+            }
             let path = resolve_output_path(output_path, now);
             let result = export::run_export_to_file(
                 &session,
