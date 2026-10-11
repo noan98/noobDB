@@ -81,6 +81,28 @@ describe("tabStateAfterApply: 全体適用 (従来どおり)", () => {
   });
 });
 
+describe("tabStateAfterApply: Apply 中に追加された保留", () => {
+  it("送っていない削除予定・新規行は成功後も残り、送った分だけ消費される", () => {
+    const sentInsert = { 1: "dave" };
+    const lateInsert = { 1: "erin" };
+    const tt = baseTab({
+      pendingDeletes: [key3, key2],
+      pendingInserts: [sentInsert, lateInsert],
+    });
+    const out = tabStateAfterApply(tt, {
+      pkIndices: PK,
+      sent: { [key1]: { 1: "ALICE" } },
+      scoped: false,
+      sentDeletes: [key3],
+      sentInserts: [sentInsert],
+    });
+    expect(out.pendingDeletes).toEqual([key2]);
+    expect(out.pendingInserts).toEqual([lateInsert]);
+    // 未送信の削除予定の行は表示に残る
+    expect(out.result?.rows.map((r) => r[0])).toEqual([1, 2]);
+  });
+});
+
 describe("tabStateAfterApply: 行スコープ適用 (行インスペクタ #1394)", () => {
   it("送った行の編集だけ消え、他行の保留編集は残る", () => {
     const out = tabStateAfterApply(baseTab(), {
