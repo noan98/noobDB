@@ -9,6 +9,7 @@ import { Tooltip } from "./Tooltip";
 import { labelWithShortcut } from "../shortcutLabel";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
+import { isImeComposing } from "./modalKeys";
 import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
 
 // キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
@@ -124,7 +125,7 @@ function RenameInput({
         // WebView 既定動作 (ウィンドウを閉じる) にだけはここで届かせない。
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") e.preventDefault();
         // IME 変換確定の Enter では確定しない。
-        if (e.nativeEvent.isComposing) return;
+        if (isImeComposing(e)) return;
         if (e.key === "Enter") {
           e.preventDefault();
           finish("enter");

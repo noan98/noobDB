@@ -123,4 +123,21 @@ describe("IME 変換確定の Enter (#1515)", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onConfirm).toHaveBeenCalledWith("ゆーざー");
   });
+
+  it("RenameTableDialog で Ctrl+Enter を押しても onConfirm は 1 回だけ", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(<RenameTableDialog table="users" onConfirm={onConfirm} onCancel={() => {}} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "people" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("isPlainEnterKey は修飾キー付き Enter を除く", () => {
+    const base = { key: "Enter", nativeEvent: {} };
+    expect(isPlainEnterKey({ ...base, ctrlKey: true })).toBe(false);
+    expect(isPlainEnterKey({ ...base, metaKey: true })).toBe(false);
+    expect(isPlainEnterKey({ ...base, shiftKey: true })).toBe(false);
+    expect(isPlainEnterKey({ ...base, altKey: true })).toBe(false);
+  });
 });

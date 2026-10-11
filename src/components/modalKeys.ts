@@ -37,7 +37,7 @@ export function pickModalKeys(e: {
   shiftKey: boolean;
   repeat: boolean;
   defaultPrevented: boolean;
-  nativeEvent: { isComposing?: boolean };
+  nativeEvent: { isComposing?: boolean; keyCode?: number };
 }): ModalKeyEventLike {
   return {
     key: e.key,
@@ -47,7 +47,7 @@ export function pickModalKeys(e: {
     shiftKey: e.shiftKey,
     repeat: e.repeat,
     defaultPrevented: e.defaultPrevented,
-    isComposing: e.nativeEvent.isComposing,
+    isComposing: isImeComposing(e),
   };
 }
 
@@ -74,11 +74,17 @@ export function isImeComposing(e: { nativeEvent: { isComposing?: boolean; keyCod
 
 /**
  * 修飾キー無しの素の Enter で、かつ IME 変換中でないか。単一行入力欄の「Enter で確定」
- * を IME 変換確定と取り違えないために使う。
+ * を IME 変換確定と取り違えないために使う。修飾キー付き (Cmd/Ctrl+Enter など) は
+ * Modal の onSubmit 側が処理するため含めない (二重実行を避ける)。
  */
 export function isPlainEnterKey(e: {
   key: string;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
   nativeEvent: { isComposing?: boolean; keyCode?: number };
 }): boolean {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false;
   return e.key === "Enter" && !isImeComposing(e);
 }
