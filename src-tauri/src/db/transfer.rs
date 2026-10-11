@@ -428,10 +428,14 @@ pub fn check_sqlite_unsigned_range(
         if c.ty != TransferType::UnsignedBigInt {
             continue;
         }
-        if rows
-            .iter()
-            .any(|r| matches!(r.get(i), Some(Value::UInt(n)) if *n > i64::MAX as u64))
-        {
+        // MySQL の BIGINT UNSIGNED は `Value::from_u64_lossless` で 2^53 を超えると
+        // `Value::String` (十進文字列) になるので、文字列も数値として読んで判定する。
+        let above_i64 = |v: Option<&Value>| match v {
+            Some(Value::UInt(n)) => *n > i64::MAX as u64,
+            Some(Value::String(s)) => s.parse::<u64>().is_ok_and(|n| n > i64::MAX as u64),
+            _ => false,
+        };
+        if rows.iter().any(|r| above_i64(r.get(i))) {
             return Err(AppError::InvalidInput(format!(
                 "column \"{}\" has a value above 9223372036854775807, which SQLite INTEGER cannot hold without losing precision",
                 c.name
@@ -804,10 +808,13 @@ mod tests {
             source_type: "BIGINT UNSIGNED".into(),
             ty: TransferType::UnsignedBigInt,
         }];
-        let ok = vec![vec![Value::UInt(i64::MAX as u64)]];
-        let big = vec![vec![Value::UInt(i64::MAX as u64 + 1)]];
+        // 実際のデコード結果 (from_u64_lossless) で確かめる。2^53 超は String になる。
+        let ok = vec![vec![Value::from_u64_lossless(i64::MAX as u64)]];
+        let big = vec![vec![Value::from_u64_lossless(i64::MAX as u64 + 1)]];
+        let max = vec![vec![Value::from_u64_lossless(u64::MAX)]];
         assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &ok).is_ok());
         assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &big).is_err());
+        assert!(check_sqlite_unsigned_range(DriverKind::Sqlite, &cols, &max).is_err());
         // 他ドライバは対象外。
         assert!(check_sqlite_unsigned_range(DriverKind::Mysql, &cols, &big).is_ok());
     }
