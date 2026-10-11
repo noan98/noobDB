@@ -124,7 +124,7 @@ export function CellValueViewer({
   // モードで開く。`nullDraft` が真なら本文を無視して SQL NULL を書き戻す。
   const hasPending = pendingValue !== undefined && pendingValue !== null;
   const pendingIsNull = hasPending && /^null$/i.test(pendingValue!.trim());
-  const seedText = hasPending && !pendingIsNull ? pendingValue! : (formattedJson ?? raw);
+  const seedText = hasPending && !pendingIsNull ? pendingValue! : ((isJson ? formattedJson : null) ?? raw);
   const [editing, setEditing] = useState(canEdit && hasPending);
   const [draft, setDraft] = useState(seedText);
   const [nullDraft, setNullDraft] = useState(pendingIsNull || (hasPending ? false : isNull));

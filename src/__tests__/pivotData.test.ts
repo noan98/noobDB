@@ -157,6 +157,23 @@ describe("buildPivotModel", () => {
   });
 });
 
+describe("buildPivotModel のセルキー衝突", () => {
+  it("空白を含むラベルの別組み合わせが同じセルに混ざらない", () => {
+    const rows: CellValue[][] = [
+      ["New York", "Q1", 1],
+      ["New", "York Q1", 10],
+    ];
+    const cfg: PivotConfig = { rowField: 0, colField: 1, valueField: 2, agg: "sum" };
+    const m = buildPivotModel(COLUMNS, rows, cfg);
+    expect(m.rowKeys).toEqual(["New York", "New"]);
+    expect(m.colKeys).toEqual(["Q1", "York Q1"]);
+    expect(m.cells).toEqual([
+      [1, null],
+      [null, 10],
+    ]);
+  });
+});
+
 describe("firstNumericColumnIndex", () => {
   it("returns the first numeric column index or null", () => {
     expect(firstNumericColumnIndex(COLUMNS, ROWS)).toBe(2);
@@ -187,7 +204,7 @@ describe("buildPivotSql", () => {
     });
     expect(sql).toBe(
       "SELECT `region`, `quarter`, SUM(`amount`) AS `sum_amount`\n" +
-        "FROM (SELECT region, quarter, amount FROM sales) AS `pivot_src`\n" +
+        "FROM (SELECT region, quarter, amount FROM sales\n) AS `pivot_src`\n" +
         "GROUP BY `region`, `quarter`\n" +
         "ORDER BY `region`, `quarter`",
     );
@@ -204,7 +221,7 @@ describe("buildPivotSql", () => {
     });
     expect(sql).toBe(
       'SELECT "region", AVG("amount") AS "avg_amount"\n' +
-        'FROM (SELECT region, amount FROM sales) AS "pivot_src"\n' +
+        'FROM (SELECT region, amount FROM sales\n) AS "pivot_src"\n' +
         'GROUP BY "region"\n' +
         'ORDER BY "region"',
     );
@@ -221,10 +238,22 @@ describe("buildPivotSql", () => {
     });
     expect(sql).toBe(
       'SELECT "region", "quarter", COUNT(*) AS "count_all"\n' +
-        'FROM (SELECT region, quarter FROM sales) AS "pivot_src"\n' +
+        'FROM (SELECT region, quarter FROM sales\n) AS "pivot_src"\n' +
         'GROUP BY "region", "quarter"\n' +
         'ORDER BY "region", "quarter"',
     );
+  });
+
+  it("元 SQL が行コメントで終わっても閉じ括弧がコメントに飲まれない", () => {
+    const sql = buildPivotSql({
+      driver: "postgres",
+      sourceSql: "SELECT dept, amount FROM sales -- 月次",
+      rowColumn: "dept",
+      colColumn: null,
+      valueColumn: "amount",
+      agg: "sum",
+    });
+    expect(sql).toContain("FROM (SELECT dept, amount FROM sales -- 月次\n) AS");
   });
 
   it("escapes identifier quotes", () => {

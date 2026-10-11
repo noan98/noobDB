@@ -256,6 +256,7 @@ import {
   toggleMaskOverride,
 } from "./columnMask";
 import type { BundleContext } from "./investigationBundle";
+import { isImeComposing, isPlainEnterKey } from "./modalKeys";
 
 /** 未保存編集の破棄確認で初期フォーカスを当てるキャンセルボタンの id (#1114)。 */
 const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
@@ -1475,7 +1476,9 @@ function cellToText(v: CellValue): string {
  * (#820) で、選択行の値を種に `RowInsertModal` の `initialValues` として渡す
  * ために使う。値の文字列化は `cellToText` と同じ規約 (コピー系アクション共通) を
  * 流用し、NULL/undefined の列はキー自体を省く — フォーム上は空欄のまま = 未設定
- * (DB 既定値) として扱われ、通常の「行を追加」の空欄と挙動が揃う。
+ * (DB 既定値) として扱われ、通常の「行を追加」の空欄と挙動が揃う。元の値が空文字 ('')
+ * の列も同様に省かれる (挿入フォームは空欄を DB 既定値として扱う #1357 の制約。空文字を
+ * 区別して複製するには挿入フォーム側の仕様変更が要る)。
  */
 function rowToPendingInsert(row: CellValue[]): PendingInsertRow {
   const seed: PendingInsertRow = {};
@@ -5416,7 +5419,7 @@ export const DataGrid = memo(function DataGrid({
             navigateCell(visibleRows[vi2 - 1].index, visibleColIds[lastPos] ?? 0);
           else navigateCell(eRowIdx, eColIdx);
         }
-      } else if (e.key === "Enter") {
+      } else if (e.key === "Enter" && !isImeComposing(e)) {
         e.preventDefault();
         const eRowIdx = editing.rowIdx;
         const eColIdx = editing.colIdx;
@@ -5636,7 +5639,8 @@ export const DataGrid = memo(function DataGrid({
         e.preventDefault();
         if (inspectorOpen) setInspectorOpen(false);
         else if (selection) setSelection(null);
-        else setActiveCell(null);
+        // activeCell は保持する: null にすると全セルが tabIndex=-1 になり、
+        // 矢印キー・Shift+Tab でグリッドへ戻れなくなる。
         break;
       case "Enter": {
         e.preventDefault();
@@ -6609,7 +6613,7 @@ export const DataGrid = memo(function DataGrid({
                 value={bulkEdit.value}
                 onChange={(e) => setBulkEdit({ ...bulkEdit, value: e.target.value })}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (isPlainEnterKey(e)) {
                     e.preventDefault();
                     applyBulkEdit();
                   }
@@ -8709,7 +8713,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
                 value={findQuery}
                 onChange={(e) => setFindQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "Enter" && !isImeComposing(e)) {
                     e.preventDefault();
                     findStep(e.shiftKey ? -1 : 1);
                   } else if (e.key === "Escape") {

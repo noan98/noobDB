@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { buildCreateTableAsSql, tableNameCollides } from "./resultsToTable";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
 import { Spinner } from "./Spinner";
 
@@ -86,7 +87,7 @@ export function SaveAsTableModal({ sessionId, driver, database, sourceSql, onCon
               onChange={(e) => setName(e.target.value)}
               placeholder={t("saveAsTableNamePlaceholder")}
               onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
+                if (isPlainEnterKey(e)) submit();
               }}
               flex="1"
             />

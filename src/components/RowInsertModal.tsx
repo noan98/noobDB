@@ -8,6 +8,7 @@ import {
   type PendingInsertValue,
 } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton, Select } from "./ui";
 import { boolOptions, resolveTypedEditor } from "./typedEditor";
 import { insertDefaultHint, insertFunctionChips, stripNonInsertableSeed } from "./insertDefaults";
@@ -207,7 +208,7 @@ export function RowInsertModal({
                     onFocus={() => setFocused(i)}
                     onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") submit();
+                      if (isPlainEnterKey(e)) submit();
                     }}
                     flex="1"
                   >
@@ -228,7 +229,7 @@ export function RowInsertModal({
                     onFocus={() => setFocused(i)}
                     onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") submit();
+                      if (isPlainEnterKey(e)) submit();
                     }}
                     flex="1"
                   />

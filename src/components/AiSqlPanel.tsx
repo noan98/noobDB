@@ -43,6 +43,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiUsageNote } from "./AiUsageNote";
 
@@ -474,7 +475,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
             value={followUp}
             onChange={(e) => setFollowUp(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              if (isModalSubmitKey(pickModalKeys(e))) {
                 e.preventDefault();
                 void runFollowUp();
               }

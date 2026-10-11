@@ -42,8 +42,8 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
-import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
-import { tabStateAfterApply } from "./components/editApplyState";
+import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, isBinaryColumnType, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import { remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
@@ -5910,6 +5910,7 @@ export default function App() {
         pkColumns: pkIndices.map((i) => result.columns[i].name),
         groups: updateGroups,
         extraStatements,
+        pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
       });
       totalAffected = Number(res.rows_affected ?? 0);
     } catch (e) {
@@ -5941,7 +5942,14 @@ export default function App() {
       // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
       // サーバ側ソート/フィルタの表示 (#792) も解除しておく (SQL 未適用のままバッジ
       // だけ残るのを防ぐ)。
-      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [], serverSort: null, serverFilter: null }));
+      // Apply 中に追加された削除予定・新規行は未送信なので残す。
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        pendingDeletes: remainingAfterSent(tt.pendingDeletes ?? [], pendingDeletes),
+        pendingInserts: remainingAfterSent(tt.pendingInserts ?? [], pendingInserts),
+        serverSort: null,
+        serverFilter: null,
+      }));
       void runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
     } else {
       patchTab(tabId, (tt) => {
@@ -5950,7 +5958,13 @@ export default function App() {
         // グリッドへ反映し pendingEdits から取り除く。それ以外の新規編集は pending
         // のまま保持する (#F2)。
         // 状態遷移は純関数 `tabStateAfterApply` (editApplyState.ts) に任せる。
-        return { ...tabStateAfterApply(tt, { pkIndices, sent: pendingEdits, scoped }), preview: null };
+        return { ...tabStateAfterApply(tt, {
+            pkIndices,
+            sent: pendingEdits,
+            scoped,
+            sentDeletes: pendingDeletes,
+            sentInserts: pendingInserts,
+          }), preview: null };
       });
     }
     patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));

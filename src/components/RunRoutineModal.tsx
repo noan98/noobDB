@@ -10,6 +10,7 @@ import {
 } from "./routineCall";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
 
 /**
@@ -144,7 +145,7 @@ export function RunRoutineModal({
                       setValues((prev) => prev.map((old, j) => (j === i ? v : old)));
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                      if (isPlainEnterKey(e)) {
                         e.preventDefault();
                         run();
                       }
