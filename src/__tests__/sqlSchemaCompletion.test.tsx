@@ -88,6 +88,12 @@ describe("buildSchemaNamespace", () => {
     expect(ns["my table"].children[0].apply).toBe("`a b`");
   });
 
+  it("識別子内の引用符文字は二重化して apply する", () => {
+    const ns = buildSchemaNamespace({ ...base, tables: { "a`b": ["c`d"] } }) as Record<string, Node>;
+    expect(ns["a`b"].self.apply).toBe("`a``b`");
+    expect(ns["a`b"].children[0].apply).toBe("`c``d`");
+  });
+
   it("大文字小文字を区別する方言では大文字を含む名前もクォートする", () => {
     const ns = buildSchemaNamespace({
       ...base,

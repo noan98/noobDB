@@ -136,12 +136,46 @@ describe("コンテキストとプロンプト", () => {
     expect(truncateDefinition("  SELECT 1  ")).toBe("SELECT 1");
   });
 
+  it("maskLiterals が有効ならビュー / ルーチン定義のリテラルをマスクして送る", () => {
+    const def = "SELECT * FROM t WHERE tenant_code = 'ACME-0001'";
+    const c: SchemaDocContext = { ...ctx, objects: [{ kind: "view", name: "v", definition: def }] };
+    const base = { driver: "mysql", database: "app", locale: "ja" as const, context: c };
+    expect(buildSchemaDocSystem({ ...base, maskLiterals: true })).not.toContain("ACME-0001");
+    expect(buildSchemaDocSystem({ ...base, maskLiterals: false })).toContain("ACME-0001");
+  });
+
+  it("PostgreSQL のドル引用本体は残し、リテラルだけ消す", () => {
+    const def =
+      "CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $function$\nBEGIN\n  RETURN (SELECT count(*) FROM t WHERE code = 'SECRET-1');\nEND;\n$function$";
+    const c: SchemaDocContext = { ...ctx, objects: [{ kind: "function", name: "f", definition: def }] };
+    const sys = buildSchemaDocSystem({ driver: "postgres", database: "a", locale: "en", context: c, maskLiterals: true });
+    expect(sys).toContain("RETURN (SELECT count(*) FROM t WHERE code =");
+    expect(sys).toContain("$function$");
+    expect(sys).not.toContain("SECRET-1");
+  });
+
+  it.each([
+    ["mysql", "SELECT 'it\\'s $$secret$$ ok'"],
+    ["postgres", "SELECT E'it\\'s $q$secret$q$ ok'"],
+    ["sqlite", "SELECT \"$$\", 'secret', \"$$\""],
+    ["postgres", "SELECT \"$$\", 'secret', \"$$\""],
+  ])("引用符内の $$ をドル引用と誤認しない (%s): %s", (driver, def) => {
+    const c: SchemaDocContext = { ...ctx, objects: [{ kind: "view", name: "v", definition: def }] };
+    const sys = buildSchemaDocSystem({ driver, database: "a", locale: "en", context: c, maskLiterals: true });
+    expect(sys).not.toContain("secret");
+  });
+
+  it("定義の切り詰めはサロゲートペアを割らない", () => {
+    const out = truncateDefinition(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}😀zzz`);
+    expect(out).toBe(`${"a".repeat(SCHEMA_DOC_DEFINITION_MAX_CHARS - 1)}\n-- (truncated)`);
+  });
+
   it.each([
     ["mysql", "MySQL"],
     ["postgres", "PostgreSQL"],
     ["sqlite", "SQLite"],
   ])("%s は方言名・言語・ルールを system に含む", (driver, dialect) => {
-    const sys = buildSchemaDocSystem({ driver, database: "app", locale: "ja", context: ctx });
+    const sys = buildSchemaDocSystem({ driver, database: "app", locale: "ja", context: ctx, maskLiterals: true });
     expect(sys).toContain(dialect);
     expect(sys).toContain("Japanese");
     expect(sys).toContain("Database: app");
@@ -156,6 +190,7 @@ describe("コンテキストとプロンプト", () => {
       database: null,
       locale: "en",
       context: { ...ctx, objects: [] },
+      maskLiterals: true,
     });
     expect(sys).not.toContain("5. Views and routines");
     expect(sys).toContain("in English");

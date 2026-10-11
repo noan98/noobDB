@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
@@ -210,12 +210,17 @@ export function UsersPanel({
     void loadUsers();
   }, [loadUsers]);
 
+  // 権限取得の世代番号。ユーザ切替・削除後に遅れて返った旧応答を捨てる。
+  const privSeq = useRef(0);
+
   const loadPrivileges = useCallback(
     async (u: DbUserInfo) => {
+      const seq = ++privSeq.current;
       setLoadingPrivs(true);
       setPrivsError(null);
       try {
         const p = await api.listUserPrivileges(sessionId, u.name, u.host, database);
+        if (seq !== privSeq.current) return;
         setGlobalRow(p.global);
         const prefix = database ? `${database}.` : null;
         const rows: Record<string, Flags> = {};
@@ -227,12 +232,13 @@ export function UsersPanel({
         setOriginal(rows);
         setEdited({ ...rows });
       } catch (e) {
+        if (seq !== privSeq.current) return;
         setPrivsError(String(e));
         setOriginal({});
         setEdited({});
         setGlobalRow(null);
       } finally {
-        setLoadingPrivs(false);
+        if (seq === privSeq.current) setLoadingPrivs(false);
       }
     },
     [sessionId, database],
@@ -242,6 +248,10 @@ export function UsersPanel({
     (u: DbUserInfo) => {
       setSelected(u);
       setNewTable("");
+      // 前ユーザの未適用の編集を持ち越さない (読み込み中に別ユーザ宛の GRANT/REVOKE が出るのを防ぐ)。
+      setOriginal({});
+      setEdited({});
+      setGlobalRow(null);
       void loadPrivileges(u);
     },
     [loadPrivileges],
@@ -314,10 +324,12 @@ export function UsersPanel({
     });
     if (!ok) return;
     setBusy(true);
+    // 適用待ちの間に別ユーザが選ばれたら、そのユーザの読み込み結果を A の権限で上書きしない。
+    const seqBefore = privSeq.current;
     try {
       await api.applyPrivilegeSql({ sessionId, database, statements });
       toast.success(t("usersApplyDone"));
-      await loadPrivileges(selected);
+      if (privSeq.current === seqBefore) await loadPrivileges(selected);
     } catch (e) {
       toast.error(t("usersApplyFailed", { error: String(e) }));
     } finally {
@@ -383,6 +395,8 @@ export function UsersPanel({
     try {
       await api.applyPrivilegeSql({ sessionId, database, statements: [sql] });
       toast.success(t("usersDropDone", { name: selected.name }));
+      privSeq.current++;
+      setLoadingPrivs(false);
       setSelected(null);
       setOriginal({});
       setEdited({});
@@ -761,7 +775,7 @@ export function UsersPanel({
                       <Button
                         type="button"
                         variant="primary"
-                        disabled={readOnly || busy || !dirty}
+                        disabled={readOnly || busy || loadingPrivs || !dirty}
                         onClick={() => void applyPrivilegeChanges()}
                       >
                         {t("usersApplyChanges")}

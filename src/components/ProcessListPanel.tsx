@@ -130,6 +130,9 @@ export function ProcessListPanel({
   // in-flight ガード: 前回の取得 (または kill) が終わるまでティックをスキップし、
   // 低速な接続 (SSH トンネル等) でもリクエストが積み重ならないようにする。
   const busyRef = useRef(false);
+  // 取得の世代番号。kill やセッション切替より前に始まった取得の遅延応答
+  // (kill 前のスナップショット / 旧セッションの一覧) を捨てるために使う。
+  const loadSeqRef = useRef(0);
 
   // ポーリング結果の id 重複を除き (React key の衝突防止)、前回スナップショット
   // との差分から値変化フラッシュの再生キーを得る (#1022)。
@@ -142,22 +145,27 @@ export function ProcessListPanel({
     [rows],
   );
 
-  const load = useCallback(async () => {
-    if (busyRef.current) return;
+  const load = useCallback(async (force = false) => {
+    if (busyRef.current && !force) return;
+    const seq = ++loadSeqRef.current;
     busyRef.current = true;
     setLoading(true);
     try {
       const list = await api.listProcesses(sessionId);
+      if (seq !== loadSeqRef.current) return;
       setProcesses(list);
       // 消えたプロセスの選択を持ち越さない (id 再利用の巻き込み防止)。
       setSelected((cur) => pruneSelection(cur, list));
       setError(null);
       setUpdatedAt(new Date());
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(String(e));
     } finally {
-      busyRef.current = false;
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        busyRef.current = false;
+        setLoading(false);
+      }
     }
   }, [sessionId]);
 
@@ -166,7 +174,8 @@ export function ProcessListPanel({
     setProcesses([]);
     setSelected(new Set());
     setError(null);
-    void load();
+    // 旧セッションの取得が飛んでいても、新セッションの初回取得は必ず走らせる。
+    void load(true);
   }, [load]);
 
   // ポーリング。busyRef は load 側で見るので、ここは素朴な setInterval でよい。
@@ -234,6 +243,8 @@ export function ProcessListPanel({
     if (!ok) return;
     setKilling(true);
     busyRef.current = true;
+    // kill より前に始まったポーリングの応答 (kill 前のスナップショット) を無効化する。
+    loadSeqRef.current++;
     // バックエンドの 1 コマンドで一括 kill (#1259)。PostgreSQL は 1 文、MySQL は 1 接続上で
     // 順に実行し、失敗があっても残りは続行して件数と最初のエラーを返す。
     let killed = 0;
@@ -261,7 +272,7 @@ export function ProcessListPanel({
         }),
       );
     }
-    await load();
+    await load(true);
   }, [killing, processes, confirm, t, sessionId, toast, load]);
   const killSelected = useCallback(() => killIds([...selected]), [killIds, selected]);
   const killBlocker = useCallback((id: number) => killIds([id]), [killIds]);
