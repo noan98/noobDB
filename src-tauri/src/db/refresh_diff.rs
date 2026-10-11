@@ -30,6 +30,9 @@ use super::types::{Column, Value};
 pub const MAX_SNAPSHOT_ROWS: usize = 500_000;
 /// 同時に保持するスナップショット (タブ) の最大数。古いものから捨てる。
 pub const MAX_SNAPSHOTS: usize = 16;
+/// 全スナップショットの合計行数の上限。超えたら古いものから捨てる
+/// (1 行あたり約 100 バイトで、`ResultStore` の上限外に積み上がるメモリを抑える)。
+pub const MAX_TOTAL_SNAPSHOT_ROWS: usize = 2_000_000;
 
 /// 前回結果のスナップショット。行データ自体は持たない (ハッシュだけ)。
 #[derive(Debug)]
@@ -41,6 +44,8 @@ pub struct RefreshSnapshot {
     rows: Vec<(u128, u128)>,
     /// PK ハッシュ → 最初に現れた行位置。
     index: HashMap<u128, u32>,
+    /// PK が重複した行の 2 件目以降の位置 (結果順)。PK 重複が無ければ空。
+    dups: HashMap<u128, Vec<u32>>,
 }
 
 impl RefreshSnapshot {
@@ -105,6 +110,9 @@ pub struct RefreshBuilder {
     columns: Vec<(String, String)>,
     rows: Vec<(u128, u128)>,
     index: HashMap<u128, u32>,
+    dups: HashMap<u128, Vec<u32>>,
+    /// 前回側に重複 PK があるキーについて、今回すでに突き合わせた件数。
+    dup_cursor: HashMap<u128, usize>,
     overflow: bool,
     // --- パッチモード用 ---
     used: Vec<bool>,
@@ -138,6 +146,8 @@ impl RefreshBuilder {
             columns: sig,
             rows: Vec::new(),
             index: HashMap::new(),
+            dups: HashMap::new(),
+            dup_cursor: HashMap::new(),
             overflow: false,
             used,
             used_count: 0,
@@ -179,9 +189,14 @@ impl RefreshBuilder {
                 self.overflow = true;
                 self.rows = Vec::new();
                 self.index = HashMap::new();
+                self.dups = HashMap::new();
             } else {
                 let pos = self.rows.len() as u32;
-                self.index.entry(key).or_insert(pos);
+                if let std::collections::hash_map::Entry::Vacant(e) = self.index.entry(key) {
+                    e.insert(pos);
+                } else {
+                    self.dups.entry(key).or_default().push(pos);
+                }
                 self.rows.push((key, rh));
             }
         }
@@ -189,11 +204,25 @@ impl RefreshBuilder {
         let Some(prev) = self.prev.clone() else {
             return;
         };
-        let matched = prev
-            .index
-            .get(&key)
-            .copied()
-            .filter(|&p| !self.used[p as usize]);
+        // 前回側に同じ PK の行が複数あるときは、出現順に 1 件ずつ対応させる
+        // (最初の 1 件だけを引くと 2 件目以降が毎回「追加行」になる)。
+        let matched = match prev.dups.get(&key) {
+            Some(extra) => {
+                let n = self.dup_cursor.entry(key).or_insert(0);
+                let p = if *n == 0 {
+                    prev.index.get(&key).copied()
+                } else {
+                    extra.get(*n - 1).copied()
+                };
+                *n += 1;
+                p.filter(|&p| !self.used[p as usize])
+            }
+            None => prev
+                .index
+                .get(&key)
+                .copied()
+                .filter(|&p| !self.used[p as usize]),
+        };
         match matched {
             Some(p) => {
                 self.used[p as usize] = true;
@@ -254,6 +283,7 @@ impl RefreshBuilder {
                 pk: self.pk,
                 rows: self.rows,
                 index: self.index,
+                dups: self.dups,
             })
         };
         RefreshOutcome { snapshot, patch }
@@ -284,9 +314,14 @@ impl RefreshSnapshotStore {
             self.order.retain(|k| k != key);
         }
         self.order.push_back(key.to_string());
-        while self.order.len() > MAX_SNAPSHOTS {
+        let mut total: usize = self.map.values().map(|s| s.len()).sum();
+        while self.order.len() > MAX_SNAPSHOTS
+            || (total > MAX_TOTAL_SNAPSHOT_ROWS && self.order.len() > 1)
+        {
             if let Some(old) = self.order.pop_front() {
-                self.map.remove(&old);
+                if let Some(removed) = self.map.remove(&old) {
+                    total = total.saturating_sub(removed.len());
+                }
             }
         }
         arc
@@ -437,6 +472,37 @@ mod tests {
         let p = patch_for(&prev, &next);
         assert_eq!(apply(&prev, &p), next);
         assert_eq!(p.removed_count, 0);
+    }
+
+    #[test]
+    fn duplicate_keys_in_both_results_are_unchanged() {
+        let rows = vec![row(1, "a"), row(1, "a"), row(2, "b"), row(1, "a")];
+        let p = patch_for(&rows, &rows);
+        assert!(p.unchanged, "{p:?}");
+        assert_eq!(p.removed_count, 0);
+        // 重複行の一方だけが変わったときも再構成は正確。
+        let next = vec![row(1, "a"), row(1, "X"), row(2, "b"), row(1, "a")];
+        let p = patch_for(&rows, &next);
+        assert!(!p.unchanged);
+        assert_eq!(p.removed_count, 0);
+        assert_eq!(apply(&rows, &p), next);
+    }
+
+    #[test]
+    fn store_evicts_when_total_rows_exceed_cap() {
+        let big = |n: usize| RefreshSnapshot {
+            id: 0,
+            columns: Vec::new(),
+            pk: vec![0],
+            rows: vec![(0, 0); n],
+            index: HashMap::new(),
+            dups: HashMap::new(),
+        };
+        let mut store = RefreshSnapshotStore::default();
+        store.put("a", big(MAX_TOTAL_SNAPSHOT_ROWS / 2 + 10));
+        store.put("b", big(MAX_TOTAL_SNAPSHOT_ROWS / 2 + 10));
+        assert_eq!(store.len(), 1);
+        assert!(store.map.contains_key("b"));
     }
 
     #[test]

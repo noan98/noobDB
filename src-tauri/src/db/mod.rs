@@ -2085,6 +2085,33 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
     true
 }
 
+/// 状態を進める/外部に作用する関数 (`nextval` / `setval` / advisory lock 系など) を
+/// 呼んでいる `SELECT` かどうか。Query Result Cache が同じ結果を再利用すると
+/// 2 回目以降の副作用が起きなくなるため、キャッシュ判定でだけ使う (読み取り専用
+/// ガードの判定には影響しない)。誤検知はキャッシュを使わないだけで安全側。
+pub fn sql_has_side_effect_function(driver: DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    let masked: String = mask_for_driver(driver, &orig).into_iter().collect();
+    let lower = masked.to_ascii_lowercase();
+    if lower.contains("pg_advisory") || lower.contains("pg_try_advisory") {
+        return true;
+    }
+    [
+        "nextval",
+        "setval",
+        "set_config",
+        "pg_notify",
+        "pg_sleep",
+        "get_lock",
+        "release_lock",
+        "release_all_locks",
+        "is_free_lock",
+        "next value",
+    ]
+    .iter()
+    .any(|kw| contains_word_phrase(&lower, kw) || contains_word(&lower, kw))
+}
+
 /// `sql` が DDL 相当 (`CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `RENAME`) を
 /// 含み、Schema Cache (#1097) を invalidate すべきかどうかの簡易判定。
 ///

@@ -82,6 +82,24 @@ impl StreamBatcher {
         None
     }
 
+    /// タイマーから呼ぶ時間フラッシュ。溜まった行があり、前回送信から `interval` 以上
+    /// 経っていれば吐き出す。`push` は次のドライババッチが届いたときにしか評価されない
+    /// ので、低速なストリームで行が溜まったまま止まらないよう呼び出し側が定期的に呼ぶ。
+    pub fn take_due(&mut self, now: Instant) -> Option<Vec<Vec<Value>>> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let due = self
+            .last_sent
+            .is_some_and(|t| now.saturating_duration_since(t) >= self.interval);
+        if !due {
+            return None;
+        }
+        self.last_sent = Some(now);
+        self.cap = (self.cap.saturating_mul(2)).min(self.max_cap);
+        Some(std::mem::take(&mut self.pending))
+    }
+
     /// ストリーム終了 (正常・エラー・タイムアウト) 時に残りを吐き出す。
     pub fn finish(&mut self) -> Option<Vec<Vec<Value>>> {
         if self.pending.is_empty() {
@@ -364,6 +382,22 @@ mod tests {
         let t0 = Instant::now();
         let out = b.push(r(200), t0).expect("初回は即送信");
         assert_eq!(out.len(), 200);
+    }
+
+    #[test]
+    fn take_due_flushes_pending_after_interval_without_new_push() {
+        let mut b = StreamBatcher::with_limits(200, 10_000, Duration::from_millis(75));
+        let t0 = Instant::now();
+        assert!(b.push(r(200), t0).is_some());
+        assert!(b.push(r(200), t0 + Duration::from_millis(20)).is_none());
+        // 期限前は出さない。
+        assert!(b.take_due(t0 + Duration::from_millis(50)).is_none());
+        // 次のドライババッチが来なくても、期限を過ぎたらタイマーで出せる。
+        let out = b
+            .take_due(t0 + Duration::from_millis(80))
+            .expect("時間フラッシュ");
+        assert_eq!(out.len(), 200);
+        assert!(b.take_due(t0 + Duration::from_secs(10)).is_none());
     }
 
     #[test]

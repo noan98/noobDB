@@ -1712,6 +1712,7 @@ export default function App() {
   // 自動再接続ループの二重起動防止と、手動操作 (接続/切断) でループを中断するフラグ。
   const reconnectingRef = useRef(false);
   const reconnectAbortRef = useRef(false);
+  const reconnectRunRef = useRef(0);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
   // Lets the user close the whole error status bar (the red footer shown on a
   // failed connect, query error, etc.). Reset on every status change so a new
@@ -1880,14 +1881,38 @@ export default function App() {
   } | null>(null);
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
-  // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId は「接続が変わった」トリガー。本体では読まないが、切替ごとにトランザクション状態を捨てる
-  useEffect(() => { setTxActive(false); }, [sessionId]);
-  // 明示トランザクション内の SAVEPOINT スタック (#1418)。TX の開始/終了/セッション切替で空にする。
+  // 明示トランザクション内の SAVEPOINT スタック (#1418)。TX の開始/終了で空にする。
   const [savepoints, setSavepoints] = useState<readonly string[]>([]);
   const savepointCounterRef = useRef(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId / txActive の変化をリセットの合図に使う
-  useEffect(() => { setSavepoints([]); savepointCounterRef.current = 0; }, [sessionId, txActive]);
+  // トランザクション状態は接続ごとに持つ。接続の切替は背景セッションを生かしたまま
+  // 差し替えるだけでサーバ側の TX は続くので、切替元の状態を捨てると戻ったときに
+  // COMMIT / ROLLBACK の操作が消える。切断・喪失したセッションのぶんだけ捨てる。
+  const txBySessionRef = useRef(
+    new Map<string, { savepoints: readonly string[]; counter: number }>(),
+  );
+  // 現在の txActive / savepoints がどのセッションのものか (保存先のキー)。
+  const txOwnerRef = useRef<string | null>(null);
+  const forgetTxState = useCallback((sid: string) => {
+    txBySessionRef.current.delete(sid);
+  }, []);
+  // 接続の切替: 切替先に保存済みの TX 状態があれば復元し、無ければ非 TX に戻す。
+  useEffect(() => {
+    txOwnerRef.current = sessionId;
+    const saved = sessionId ? txBySessionRef.current.get(sessionId) : undefined;
+    setTxActive(saved !== undefined);
+    setSavepoints(saved?.savepoints ?? []);
+    savepointCounterRef.current = saved?.counter ?? 0;
+  }, [sessionId]);
+  // TX の開始/終了/SAVEPOINT の変化を現在のセッションぶんとして保存する。
+  useEffect(() => {
+    const owner = txOwnerRef.current;
+    if (!owner) return;
+    if (txActive) {
+      txBySessionRef.current.set(owner, { savepoints, counter: savepointCounterRef.current });
+    } else {
+      txBySessionRef.current.delete(owner);
+    }
+  }, [txActive, savepoints]);
   // 切断時はセッション依存のモーダル状態をリセットする (検索モーダルが
   // 再接続時に意図せず再表示されるのを防ぐ)。
   useEffect(() => {
@@ -3001,6 +3026,24 @@ export default function App() {
     });
   }, [confirmDiscard, tabsRef]);
 
+  // 未 COMMIT の明示トランザクションを持つ接続を切断すると、サーバ側で変更が黙って
+  // ロールバックされる。`sids` のどれかが TX 中なら確認する (UI レベルの誤操作防止)。
+  const confirmDiscardOpenTransactions = useCallback(
+    async (sids: readonly string[], body: "disconnect" | "closeWindow"): Promise<boolean> => {
+      const open = sids.filter((sid) => txBySessionRef.current.has(sid));
+      if (open.length === 0) return true;
+      return confirmDiscard({
+        title: translate("connTxOpenTitle"),
+        message: translate(body === "disconnect" ? "connTxOpenBody" : "windowCloseTxBody", {
+          count: open.length,
+        }),
+        confirmLabel: translate(body === "disconnect" ? "connTxOpenAction" : "windowCloseTxAction"),
+        tone: "danger",
+      });
+    },
+    [confirmDiscard],
+  );
+
   // 既に開いている接続へ即座に切り替える (#複数同時接続)。再接続せず、生存中の
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
@@ -3295,6 +3338,7 @@ export default function App() {
   const handleDisconnect = useCallback(async (opts?: { force?: boolean }): Promise<boolean> => {
     if (!sessionId) return true;
     if (!opts?.force && !(await confirmDiscardPendingEdits())) return false;
+    if (!opts?.force && !(await confirmDiscardOpenTransactions([sessionId], "disconnect"))) return false;
     // 明示切断は進行中の自動再接続ループを中断させる。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3312,6 +3356,7 @@ export default function App() {
     }
     clearEmergencyFor(sessionId);
     forgetClosedTabs(sessionId);
+    forgetTxState(sessionId);
     setSessionId(null);
     setSelectedProfile(null);
     setImportTarget(null);
@@ -3329,7 +3374,7 @@ export default function App() {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
     return true;
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, forgetClosedTabs, confirmDiscardPendingEdits]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, forgetClosedTabs, forgetTxState, confirmDiscardPendingEdits, confirmDiscardOpenTransactions]);
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
@@ -3341,6 +3386,7 @@ export default function App() {
       return handleDisconnect(opts);
     }
     // 背景接続: タブは退避済みなので、セッションを落としてレジストリから外すだけ。
+    if (!opts?.force && !(await confirmDiscardOpenTransactions([entry.sessionId], "disconnect"))) return false;
     removeOpenConnection(profileId);
     try {
       await api.disconnect(entry.sessionId);
@@ -3349,9 +3395,10 @@ export default function App() {
     }
     clearEmergencyFor(entry.sessionId);
     forgetClosedTabs(entry.sessionId);
+    forgetTxState(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
     return true;
-  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor, forgetClosedTabs]);
+  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor, forgetClosedTabs, forgetTxState, confirmDiscardOpenTransactions]);
 
   // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
   // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
@@ -3438,6 +3485,7 @@ export default function App() {
       }
       clearEmergencyFor(oldSessionId);
       forgetClosedTabs(oldSessionId);
+      if (oldSessionId) forgetTxState(oldSessionId);
       setSessionId(null);
       setSelectedProfile(null);
       setImportTarget(null);
@@ -3461,7 +3509,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor, forgetClosedTabs, tabsRef, toast],
+    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor, forgetClosedTabs, forgetTxState, tabsRef, toast],
   );
 
   // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
@@ -3475,6 +3523,13 @@ export default function App() {
       if (reconnectingRef.current) return;
       reconnectingRef.current = true;
       reconnectAbortRef.current = false;
+      // abort フラグは単一なので、後から始まった別ループが false に戻すと古いループの
+      // 中断が効かなくなる。ループごとに世代を持ち、古い世代は ref (reconnectingRef /
+      // 接続状態) に一切触れずに抜ける。
+      reconnectRunRef.current += 1;
+      const myRun = reconnectRunRef.current;
+      const superseded = () => reconnectRunRef.current !== myRun;
+      const bail = () => { if (!superseded()) reconnectingRef.current = false; };
       setConnectionStatus("reconnecting");
       // 再接続が最終的に失敗して手動フォールバックへ倒れてもタブが失われないよう
       // 先に退避しておく (成功パスではタブはそのまま生き続けるので保険)。旧セッション
@@ -3483,21 +3538,21 @@ export default function App() {
       persistTabsForProfile(profile.id);
 
       for (let attempt = 0; attempt < maxRetries; attempt++) {
-        if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
+        if (superseded() || reconnectAbortRef.current) { bail(); return; }
         setStatus({
           kind: "key",
           key: "statusReconnectingAttempt",
           vars: { name: profile.name, attempt: attempt + 1, max: maxRetries },
         });
         await new Promise((resolve) => setTimeout(resolve, backoffDelayMs(attempt)));
-        if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
+        if (superseded() || reconnectAbortRef.current) { bail(); return; }
         try {
           // 同じ session id のまま張り直す。id が変わらないのでタブ・グリッドは維持。
           await api.reconnect(oldSessionId);
           // await 中にユーザが別接続へ切り替えていたら UI は触らずに抜ける。
           // バックエンドのセッションは張り直し済みで、背景接続として有効なまま
           // (切り替え先の表示を上書きしない)。
-          if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
+          if (superseded() || reconnectAbortRef.current) { bail(); return; }
           // 成功: セッションはその場で復活。タブ・グリッドはそのまま。バックエンドは
           // 再接続でセッションを差し替え、緊急クエリ実行モードをオフに戻すため、
           // UI ミラーも同期して外す (同じ session id が生き続けるので明示的に必要)。
@@ -3515,8 +3570,8 @@ export default function App() {
       }
       // 上限到達: 諦めて手動再接続 UI へ (タブは退避済み → 復元される)。旧セッション
       // はまだ生きている (張り直せなかっただけ) ので id を渡して確実に後始末する。
+      if (superseded() || reconnectAbortRef.current) { bail(); return; }
       reconnectingRef.current = false;
-      if (reconnectAbortRef.current) return;
       await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
     [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor],
@@ -4974,6 +5029,14 @@ export default function App() {
         selectedProfile?.database ?? null,
         resolveTxOptions(selectedProfile?.driver, txIsolation, txReadOnly),
       );
+      if (txOwnerRef.current !== sessionId) {
+        // 開始の await 中に別の接続へ切り替わった: 状態は開始した接続のぶんとして保存する。
+        txBySessionRef.current.set(sessionId, { savepoints: [], counter: 0 });
+        toast.info(translate("txBegun"));
+        return;
+      }
+      setSavepoints([]);
+      savepointCounterRef.current = 0;
       setTxActive(true);
       toast.info(translate("txBegun"));
     } catch (e) {
@@ -5035,10 +5098,14 @@ export default function App() {
     if (!sessionId) return;
     try {
       await api.finishTransaction(sessionId, commit);
+      setSavepoints([]);
+      savepointCounterRef.current = 0;
       setTxActive(false);
       toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
     } catch (e) {
       // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
+      setSavepoints([]);
+      savepointCounterRef.current = 0;
       setTxActive(false);
       toast.error(
         String(e).includes("25P02")
@@ -9030,6 +9097,7 @@ export default function App() {
       <TitleBar
         connection={titleBarConnection}
         onOpenActivityPanel={() => setBottomPanelTab("activity")}
+        onBeforeClose={() => confirmDiscardOpenTransactions([...txBySessionRef.current.keys()], "closeWindow")}
       />
       <Grid
         templateColumns={

@@ -18,7 +18,7 @@
 //!   緊急モード) に通してから実行する。
 //! * トランザクション制御文 (`BEGIN` / `COMMIT` / `ROLLBACK` …) は生 SQL として
 //!   プールへ流さず、明示トランザクションのプリミティブに読み替える
-//!   ([`classify_tx_control`])。プールの別々の接続で `BEGIN` と `COMMIT` を実行すると
+//!   ([`classify_tx_statement`])。プールの別々の接続で `BEGIN` と `COMMIT` を実行すると
 //!   トランザクションを開いたままの接続がプールへ戻ってしまうため。
 //!   `wrap_in_transaction` のときはランナー自身が外側のトランザクションを持つので、
 //!   スクリプト内の制御文は読み飛ばす (件数は `skippedControl` で返す)。
@@ -34,7 +34,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::commands::query::{ensure_allowed_for_session, record_write_history};
 use crate::db::script::{
-    classify_tx_control, parse_use_database, split_script, ScriptSplitter, ScriptStatement,
+    classify_tx_statement, parse_use_database, split_script, ScriptSplitter, ScriptStatement,
     TxControl,
 };
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
@@ -282,6 +282,7 @@ where
             skipping: false,
             on_result: cfg.on_result,
         }),
+        caches_invalidated: false,
     };
 
     if options.wrap_in_transaction {
@@ -607,6 +608,31 @@ struct Runner {
     schema_changed: bool,
     /// エディタのバッチ実行モード (#1256)。`None` なら `.sql` スクリプト実行。
     batch: Option<BatchState>,
+    /// `invalidate_caches` を実行済みか (Drop での二重無効化を避ける)。
+    caches_invalidated: bool,
+}
+
+/// `cancel_stream` がタスクを abort すると `run_script_core_with` の末尾に到達せず
+/// キャッシュ無効化が走らない。確定済みの書き込み / DDL が DB に残るので、Drop 時に
+/// まだ無効化していなければランタイム上で無効化する。
+impl Drop for Runner {
+    fn drop(&mut self) {
+        if self.caches_invalidated || !(self.wrote || self.schema_changed) {
+            return;
+        }
+        let session = self.session.clone();
+        let (wrote, schema_changed) = (self.wrote, self.schema_changed);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if wrote {
+                    session.query_cache.invalidate_all().await;
+                }
+                if schema_changed {
+                    session.schema_cache.invalidate_all().await;
+                }
+            });
+        }
+    }
 }
 
 impl Runner {
@@ -626,9 +652,9 @@ impl Runner {
         let ctl = if external_tx {
             None
         } else {
-            classify_tx_control(self.driver, &stmt.sql)
+            classify_tx_statement(self.driver, &stmt.sql)
         };
-        if let Some(ctl) = ctl {
+        if let Some((ctl, tx_opts)) = ctl {
             let ctl_started = Instant::now();
             if self.options.wrap_in_transaction {
                 self.skipped_control += 1;
@@ -644,7 +670,7 @@ impl Runner {
                         let r = self
                             .session
                             .conn
-                            .begin_transaction(self.database.as_deref())
+                            .begin_transaction_with(self.database.as_deref(), tx_opts)
                             .await;
                         if r.is_ok() {
                             self.guard.active = true;
@@ -835,7 +861,8 @@ impl Runner {
         }
     }
 
-    async fn invalidate_caches(&self) {
+    async fn invalidate_caches(&mut self) {
+        self.caches_invalidated = true;
         // Query Result / Schema Cache (#1097): 書き込みや DDL が 1 文でも成功して
         // いたら接続単位で丸ごと invalidate する (ROLLBACK された場合も含めて
         // fail-closed — 余分な再取得 1 回は安全側のコスト)。
@@ -844,6 +871,41 @@ impl Runner {
         }
         if self.schema_changed {
             self.session.schema_cache.invalidate_all().await;
+        }
+    }
+}
+
+/// `cancel_stream` による abort でも履歴へ 1 行残すためのガード。`disarm` されずに
+/// drop された (= タスクが途中で破棄された) ときだけ、ランタイム上で中断の記録を書く。
+struct CancelHistoryGuard {
+    session: Arc<Session>,
+    summary: String,
+    database: Option<String>,
+    committed: Arc<AtomicU64>,
+    armed: bool,
+}
+
+impl Drop for CancelHistoryGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let session = self.session.clone();
+        let summary = std::mem::take(&mut self.summary);
+        let database = self.database.take();
+        let committed = self.committed.load(Ordering::SeqCst);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                record_write_history(
+                    &session,
+                    summary,
+                    database.as_deref(),
+                    None,
+                    None,
+                    Some(format!("cancelled ({committed} statements committed)")),
+                )
+                .await;
+            });
         }
     }
 }
@@ -943,6 +1005,13 @@ async fn spawn_script(
         .unwrap_or_else(|| path.clone());
     let summary = format!("-- SQL script {file_name}");
     let history_db = database.clone();
+    let mut cancel_guard = CancelHistoryGuard {
+        session: session.clone(),
+        summary: summary.clone(),
+        database: history_db.clone(),
+        committed: committed.clone(),
+        armed: true,
+    };
 
     let result = match tokio::fs::File::open(&path).await {
         Ok(file) => {
@@ -976,6 +1045,7 @@ async fn spawn_script(
         Err(e) => Err(AppError::from(e)),
     };
 
+    cancel_guard.armed = false;
     // スクリプト実行はバルク書き込みになりうるので、CSV インポートと同じく履歴へ
     // 1 行の要約を残す (skip_history は record_write_history 側で尊重)。
     match &result {
