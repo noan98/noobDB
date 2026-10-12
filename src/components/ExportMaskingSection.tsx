@@ -1,6 +1,7 @@
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Checkbox, Input, Select } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 import { FieldLabel, FormSection } from "./modalForm";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -49,11 +50,6 @@ function ruleLabelKey(kind: Choice) {
     default:
       return "exportMaskRuleNone" as const;
   }
-}
-
-function toInt(raw: string): number {
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) ? n : 0;
 }
 
 export function ExportMaskingSection({
@@ -165,41 +161,36 @@ export function ExportMaskingSection({
                   {rule?.kind === "partial" && (
                     <chakra.span display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
                       {t("exportMaskingKeepStart")}
-                      <Input
-                        type="number"
+                      <DraftNumberInput
                         min={0}
                         w="56px"
                         value={rule.keepStart}
                         aria-label={t("exportMaskingKeepStartFor", { column })}
                         disabled={disabled}
-                        onChange={(e) =>
-                          setRule(column, { ...rule, keepStart: toInt(e.target.value) })
-                        }
+                        onCommit={(n) => setRule(column, { ...rule, keepStart: n })}
                       />
                       {t("exportMaskingKeepEnd")}
-                      <Input
-                        type="number"
+                      <DraftNumberInput
                         min={0}
                         w="56px"
                         value={rule.keepEnd}
                         aria-label={t("exportMaskingKeepEndFor", { column })}
                         disabled={disabled}
-                        onChange={(e) => setRule(column, { ...rule, keepEnd: toInt(e.target.value) })}
+                        onCommit={(n) => setRule(column, { ...rule, keepEnd: n })}
                       />
                     </chakra.span>
                   )}
                   {rule?.kind === "hash" && (
                     <chakra.span display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
                       {t("exportMaskingHashLength")}
-                      <Input
-                        type="number"
+                      <DraftNumberInput
                         min={4}
                         max={64}
                         w="56px"
                         value={rule.length}
                         aria-label={t("exportMaskingHashLengthFor", { column })}
                         disabled={disabled}
-                        onChange={(e) => setRule(column, { kind: "hash", length: toInt(e.target.value) })}
+                        onCommit={(n) => setRule(column, { kind: "hash", length: n })}
                       />
                     </chakra.span>
                   )}

@@ -9,6 +9,7 @@ import { semanticColorVar } from "../semanticColors";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Radio } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
@@ -875,15 +876,11 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                   </chakra.div>
                   <chakra.div w="140px">
                     <FieldLabel htmlFor="export-sql-batch">{t("exportSqlBatch")}</FieldLabel>
-                    <Input
+                    <DraftNumberInput
                       id="export-sql-batch"
-                      type="number"
                       min={1}
                       value={sqlBatch}
-                      onChange={(e) => {
-                        const n = parseInt(e.target.value, 10);
-                        setSqlBatch(Number.isFinite(n) && n > 0 ? n : DEFAULT_SQL_BATCH);
-                      }}
+                      onCommit={setSqlBatch}
                       disabled={isSaving}
                     />
                   </chakra.div>

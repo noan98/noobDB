@@ -101,6 +101,7 @@ import {
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setResultsInNewTab,
+  getSettings,
   setDefaultDisplayCount,
   setDensity,
   setFontSizePx,
@@ -701,37 +702,37 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const commitDisplay = () => {
     const n = Number.parseInt(displayInput, 10);
     if (Number.isFinite(n) && n > 0) setDefaultDisplayCount(n);
-    else setDisplayInput(String(settings.defaultDisplayCount));
+    setDisplayInput(String(getSettings().defaultDisplayCount));
   };
   const commitPrefetch = () => {
     const n = Number.parseInt(prefetchInput, 10);
     if (Number.isFinite(n) && n > 0) setStreamPrefetchSize(n);
-    else setPrefetchInput(String(settings.streamPrefetchSize));
+    setPrefetchInput(String(getSettings().streamPrefetchSize));
   };
   const commitAutoLimit = () => {
     const n = Number.parseInt(autoLimitInput, 10);
     if (Number.isFinite(n) && n > 0) setAutoLimitCount(n);
-    else setAutoLimitInput(String(settings.autoLimitCount));
+    setAutoLimitInput(String(getSettings().autoLimitCount));
   };
   const commitTimeout = () => {
     const n = Number.parseInt(timeoutInput, 10);
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
-    else setTimeoutInput(String(settings.queryTimeoutSecs));
+    setTimeoutInput(String(getSettings().queryTimeoutSecs));
   };
   const commitConnectTimeout = () => {
     const n = Number.parseInt(connectTimeoutInput, 10);
     if (Number.isFinite(n)) setConnectTimeoutSecs(n);
-    else setConnectTimeoutInput(String(settings.connectTimeoutSecs));
+    setConnectTimeoutInput(String(getSettings().connectTimeoutSecs));
   };
   const commitNotifyThreshold = () => {
     const n = Number.parseInt(notifyThresholdInput, 10);
     if (Number.isFinite(n)) setQueryNotificationThresholdSecs(n);
-    else setNotifyThresholdInput(String(settings.queryNotificationThresholdSecs));
+    setNotifyThresholdInput(String(getSettings().queryNotificationThresholdSecs));
   };
   const commitReconnectRetries = () => {
     const n = Number.parseInt(reconnectRetriesInput, 10);
     if (Number.isFinite(n)) setAutoReconnectMaxRetries(n);
-    else setReconnectRetriesInput(String(settings.autoReconnectMaxRetries));
+    setReconnectRetriesInput(String(getSettings().autoReconnectMaxRetries));
   };
   const commitFlightRowCap = () => {
     const n = Number.parseInt(flightRowCapInput, 10);
@@ -744,6 +745,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     } else {
       setFlightRowCapInput(String(settings.flightRecorderRowCap));
     }
+    setFlightRowCapInput(String(getSettings().flightRecorderRowCap));
   };
   const commitFlightRetention = () => {
     const n = Number.parseInt(flightRetentionInput, 10);
@@ -756,6 +758,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     } else {
       setFlightRetentionInput(String(settings.flightRecorderRetentionDays));
     }
+    setFlightRetentionInput(String(getSettings().flightRecorderRetentionDays));
   };
   const commitTimelapseGenerations = () => {
     const n = Number.parseInt(timelapseGenInput, 10);
@@ -768,6 +771,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     } else {
       setTimelapseGenInput(String(settings.timelapseMaxGenerations));
     }
+    setTimelapseGenInput(String(getSettings().timelapseMaxGenerations));
   };
   // テーブル・タイムラプス (#739) の全データ一括削除。ローカル専用ストアの
   // ウォッチ登録と保存済み世代をすべて消す。
@@ -789,7 +793,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const commitFontSize = () => {
     const n = Number.parseInt(fontSizeInput, 10);
     if (Number.isFinite(n)) setFontSizePx(n);
-    else setFontSizeInput(String(settings.fontSizePx));
+    setFontSizeInput(String(getSettings().fontSizePx));
   };
 
   const [logText, setLogText] = useState("");

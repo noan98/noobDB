@@ -9,7 +9,8 @@ import {
 } from "../quickLauncher";
 import { setQuickLauncherEnabled, setQuickLauncherSectionLimit, useSettings } from "../settings";
 import { SettingsInfo, SettingsNumberRow, SettingsToggleLabel, SettingsToggleRow } from "./settingsLayout";
-import { Button, Input, Switch } from "./ui";
+import { Button, Switch } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 
 /** セクション → 見出しの i18n キー (ランチャー本体と共有)。 */
 export const QUICK_LAUNCHER_SECTION_LABEL: Record<QuickLauncherSectionId, I18nKey> = {
@@ -93,17 +94,13 @@ function SectionLimitRow({
   return (
     <SettingsNumberRow>
       <chakra.label htmlFor={inputId}>{label}</chakra.label>
-      <Input
+      <DraftNumberInput
         id={inputId}
-        type="number"
         min={MIN_QUICK_LAUNCHER_SECTION_LIMIT}
         max={MAX_QUICK_LAUNCHER_SECTION_LIMIT}
         value={value}
         disabled={disabled}
-        onChange={(e) => {
-          const n = Number.parseInt(e.target.value, 10);
-          if (Number.isFinite(n)) setQuickLauncherSectionLimit(id, n);
-        }}
+        onCommit={(n) => setQuickLauncherSectionLimit(id, n)}
       />
     </SettingsNumberRow>
   );

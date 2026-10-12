@@ -116,9 +116,10 @@ describe("ExportModal データマスキング (#733)", () => {
       screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "user_email" }) }),
       { target: { value: "hash" } },
     );
-    fireEvent.change(screen.getByLabelText(t("exportMaskingHashLengthFor", { column: "user_email" })), {
-      target: { value: "200" },
-    });
+    // 数値欄は入力中は確定せず、blur で確定する (#1534)。
+    const hashLength = screen.getByLabelText(t("exportMaskingHashLengthFor", { column: "user_email" }));
+    fireEvent.change(hashLength, { target: { value: "200" } });
+    fireEvent.blur(hashLength);
     await waitFor(() => expect(screen.getByTestId("export-masked-count").textContent).toBe(
       t("exportMaskedColumns", { count: 2 }),
     ));
