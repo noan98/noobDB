@@ -2,10 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { api, type DriverKind } from "../api/tauri";
-import { buildCreateTableSql, type ColumnDef } from "./createTable";
+import {
+  buildCreateTableSql,
+  columnDefsFromTableInfo,
+  templateCaveats,
+  type ColumnDef,
+  type TemplateCaveats,
+} from "./createTable";
+import { Callout } from "./Callout";
+import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, PressableButton, Switch } from "./ui";
+import { Button, Input, PressableButton, Select, Switch } from "./ui";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
@@ -47,6 +55,19 @@ function emptyColumn(driver: DriverKind): ColumnDef {
   };
 }
 
+/** 開いた直後の初期列 (id 1 本) のまま変更されていないか。 */
+function isInitialColumn(c: ColumnDef, driver: DriverKind): boolean {
+  return (
+    c.name === "id" &&
+    c.type === (driver === "sqlite" ? "INTEGER" : "INT") &&
+    c.notNull &&
+    c.primaryKey &&
+    !c.unique &&
+    c.autoIncrement &&
+    c.defaultValue === ""
+  );
+}
+
 export function CreateTableModal({ sessionId, driver, database, readOnly, onRun, onSendToEditor, onClose }: Props) {
   const t = useT();
   const [table, setTable] = useState("");
@@ -73,6 +94,50 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
       cancelled = true;
     };
   }, [sessionId, database]);
+
+  // 既存テーブルの列定義を雛形として読み込む (#1540)。
+  const [templateTable, setTemplateTable] = useState("");
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [caveats, setTemplateCaveats] = useState<TemplateCaveats | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const loadTemplate = async () => {
+    if (!sessionId || !database || !templateTable) return;
+    setTemplateLoading(true);
+    setTemplateError(null);
+    setTemplateCaveats(null);
+    try {
+      const info = await api.describeTable(sessionId, database, templateTable);
+      if (info.length === 0) {
+        setTemplateError(t("createTableTemplateEmpty", { table: templateTable }));
+        return;
+      }
+      // 入力済みの列 (名前が入っている / 初期の id 以外) があるときだけ、置き換えを確認する。
+      const initial = columns.length === 1 && isInitialColumn(columns[0], driver);
+      const hasInput = !initial || foreignKeys.length > 0 || checks.length > 0;
+      if (hasInput) {
+        const ok = await confirm({
+          title: t("createTableTemplateConfirmTitle"),
+          message: t("createTableTemplateConfirmBody", { table: templateTable }),
+          confirmLabel: t("createTableTemplateLoad"),
+          tone: "warning",
+        });
+        if (!ok) return;
+      }
+      setColumns(columnDefsFromTableInfo(info));
+      setTemplateCaveats(templateCaveats(driver, info));
+      // 空のままなら、元の名前に _copy を付けた名前を提案する (上書きはしない)。
+      setTable((cur) => (cur.trim() === "" ? `${templateTable}_copy` : cur));
+      // 元テーブルの制約は引き継がないので、既に入力済みの制約は列名と食い違いうる → 破棄する。
+      setForeignKeys([]);
+      setChecks([]);
+    } catch (e) {
+      setTemplateError(t("createTableTemplateError", { error: String(e) }));
+      setTemplateCaveats(null);
+    } finally {
+      setTemplateLoading(false);
+    }
+  };
 
   const setCol = (i: number, patch: Partial<ColumnDef>) =>
     setColumns((cols) => cols.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
@@ -122,6 +187,54 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
             flex="1"
           />
         </Flex>
+
+        {sessionId && database && tableNames.length > 0 && (
+          <FormSection>
+            <Flex align="center" gap="2">
+              <FieldLabel htmlFor="create-table-template" minW="90px">
+                {t("createTableTemplate")}
+              </FieldLabel>
+              <Select
+                id="create-table-template"
+                value={templateTable}
+                onChange={(e) => setTemplateTable(e.target.value)}
+                flex="1"
+              >
+                <option value="">{t("createTableTemplateNone")}</option>
+                {tableNames.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!templateTable || templateLoading}
+                onClick={() => void loadTemplate()}
+              >
+                {t("createTableTemplateLoad")}
+              </Button>
+            </Flex>
+            <chakra.div textStyle="caption">{t("createTableTemplateHelp")}</chakra.div>
+            {templateError && <FieldError>{templateError}</FieldError>}
+            {caveats && caveats.userDefined.length > 0 && (
+              <Callout tone="warning" role="status">
+                {t("createTableTemplateUserDefined", { columns: caveats.userDefined.join(", ") })}
+              </Callout>
+            )}
+            {caveats && caveats.arrays.length > 0 && (
+              <Callout tone="warning" role="status">
+                {t("createTableTemplateArray", { columns: caveats.arrays.join(", ") })}
+              </Callout>
+            )}
+            {caveats && caveats.identityMaybe.length > 0 && (
+              <Callout tone="info" role="status">
+                {t("createTableTemplateIdentity", { columns: caveats.identityMaybe.join(", ") })}
+              </Callout>
+            )}
+          </FormSection>
+        )}
 
         <datalist id={dataListId}>
           {TYPE_SUGGESTIONS[driver].map((ty) => (
@@ -231,6 +344,7 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
           {t("createTableRun")}
         </PressableButton>
       </ModalFooter>
+      {confirmDialog}
     </Modal>
   );
 }

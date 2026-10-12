@@ -62,6 +62,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["liveQuery", schemas.liveQuery],
   ["statementDeltaRow", schemas.statementDeltaRow],
   ["columnProfile", schemas.columnProfile],
+  ["tableProfileOverview", schemas.tableProfileOverview],
+  ["schemaCacheTime", schemas.schemaCacheTime],
   ["healthFinding", schemas.healthFinding],
   ["skippedRule", schemas.skippedRule],
   ["schemaHealthReport", schemas.schemaHealthReport],
@@ -71,6 +73,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["logView", schemas.logView],
   ["csvPreview", schemas.csvPreview],
   ["cellBlobProbe", schemas.cellBlobProbe],
+  ["blobFolderSaveResult", schemas.blobFolderSaveResult],
   ["transferPreview", schemas.transferPreview],
   ["connectResult", schemas.connectResult],
   ["localTableMeta", schemas.localTableMeta],
@@ -78,6 +81,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["cancelStreamResponse", schemas.cancelStreamResponse],
   // AI 基盤 (#690)
   ["aiConnectionTestResult", schemas.aiConnectionTestResult],
+  ["aiUsageRecord", schemas.aiUsageRecord],
   // #1534: AI ストリーム (Channel) とタスク進捗。
   ["aiStreamDeltaMessage", schemas.aiStreamDeltaMessage],
   ["aiStreamRetryingMessage", schemas.aiStreamRetryingMessage],
@@ -188,6 +192,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["sandboxCreateResponse", schemas.sandboxCreateResponse],
   ["sandboxTableDiffResult", schemas.sandboxTableDiffResult],
   ["sandboxSchemaDiffResult", schemas.sandboxSchemaDiffResult],
+  ["sandboxResetResult", schemas.sandboxResetResult],
   ["dataDiffHandle", schemas.dataDiffHandle],
   ["undoPreviewResponse", schemas.undoPreviewResponse],
   ["undoOutcome", schemas.undoOutcome],

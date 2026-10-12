@@ -47,6 +47,7 @@ describe("AdvisorPanel error state (#848)", () => {
       tables_analyzed: 1,
       findings: [],
       skipped: [],
+      table_plans: [],
     });
     fireEvent.click(screen.getByRole("button", { name: t("advisorRetry") }));
 
@@ -99,6 +100,7 @@ describe("AdvisorPanel running skeleton (#1211)", () => {
         },
       ],
       skipped: [],
+      table_plans: [],
     });
     await waitFor(() => {
       expect(screen.queryByText(t("advisorRunning"))).not.toBeInTheDocument();
@@ -127,6 +129,7 @@ describe("AdvisorPanel 既定の並び (#1469)", () => {
       tables_analyzed: 4,
       findings: [mk("t_low", "low"), mk("t_med1", "medium"), mk("t_high", "high"), mk("t_med2", "medium")],
       skipped: [],
+      table_plans: [],
     });
     const { container } = renderWithProviders(
       <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />,
@@ -159,6 +162,7 @@ describe("AdvisorPanel オンライン版の修正 DDL (#1534)", () => {
       tables_analyzed: 1,
       findings: [finding('CREATE INDEX CONCURRENTLY "idx_orders_user_id" ON "orders" ("user_id");')],
       skipped: [],
+      table_plans: [],
     });
     const onInsertSql = vi.fn();
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={onInsertSql} />);
@@ -185,6 +189,7 @@ describe("AdvisorPanel オンライン版の修正 DDL (#1534)", () => {
       tables_analyzed: 1,
       findings: [finding(null)],
       skipped: [],
+      table_plans: [],
     });
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
     fireEvent.click(screen.getByText(t("advisorRun")));
@@ -194,5 +199,61 @@ describe("AdvisorPanel オンライン版の修正 DDL (#1534)", () => {
     );
     expect(screen.queryByText(t("advisorFixOnline"))).toBeNull();
     expect(screen.queryByText(t("advisorFixStandard"))).toBeNull();
+  });
+});
+
+describe("AdvisorPanel テーブル別のまとめ DDL (#1540)", () => {
+  const plan = {
+    table: "orders",
+    change_count: 2,
+    ddl: "ALTER TABLE `orders`\n  DROP INDEX `a_dup`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);",
+    ddl_online:
+      "ALTER TABLE `orders`\n  DROP INDEX `a_dup`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;",
+  };
+  const finding = {
+    rule: "fk_missing_index" as const,
+    severity: "high" as const,
+    table: "orders",
+    columns: ["user_id"],
+    context: ["users"],
+    statistical: false,
+    fix_ddl: "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
+    fix_ddl_online: null,
+  };
+
+  it("計画がなければセクションを出さない", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce({
+      driver: "mysql",
+      tables_analyzed: 1,
+      findings: [finding],
+      skipped: [],
+      table_plans: [],
+    });
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("advisorInsertFix") })).toBeInTheDocument());
+    expect(screen.queryByTestId("advisor-table-plans")).toBeNull();
+  });
+
+  it("計画を標準版 / オンライン版で並べ、挿入できる。全テーブル分の一括挿入はテーブル名のコメント付き", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce({
+      driver: "mysql",
+      tables_analyzed: 2,
+      findings: [finding],
+      skipped: [],
+      table_plans: [plan, { ...plan, table: "items", ddl: "ALTER TABLE `items`\n  DROP INDEX `x`;", ddl_online: null }],
+    });
+    const onInsertSql = vi.fn();
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={onInsertSql} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+
+    const section = await screen.findByTestId("advisor-table-plans");
+    expect(section).toHaveTextContent(t("advisorPlansTitle"));
+    expect(section).toHaveTextContent(t("advisorPlanChanges", { count: "2" }));
+
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("advisorPlansInsertAll")) }));
+    expect(onInsertSql).toHaveBeenLastCalledWith(
+      `-- orders\n${plan.ddl}\n\n-- items\nALTER TABLE \`items\`\n  DROP INDEX \`x\`;`,
+    );
   });
 });

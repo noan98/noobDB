@@ -153,3 +153,105 @@ export function summarizeCapture(outcomes: readonly TimelapseCaptureOutcome[]): 
   }
   return { changed, failed };
 }
+
+// ── 差分の書き出し (#1539) ──────────────────────────────────────────────
+
+/** 書き出し用の 1 行。値は表示用文字列ではなく生の値 (NULL は null のまま)。 */
+export interface TimelapseExportRow {
+  kind: TimelapseRowKind;
+  /** 主キー列名 → 値。 */
+  key: Record<string, CellValue>;
+  /** 変更前 (古い世代) の列名 → 値。追加行は null。 */
+  before: Record<string, CellValue> | null;
+  /** 変更後 (新しい世代) の列名 → 値。削除行は null。 */
+  after: Record<string, CellValue> | null;
+  /** 変更行で値が変わった列。 */
+  changedColumns: string[];
+}
+
+/**
+ * `DataDiff` を書き出し用の行モデルにする。向きと種別の判定は `buildTimelapseRows` と同じ
+ * (source = 新 / target = 古)。`masked` が真の列は**値を伏せ字**にする (主キー列も同様。
+ * 画面表示と同じく、変化したこと = `changedColumns` は残す)。
+ */
+export function buildTimelapseExportRows(
+  diff: DataDiff,
+  masked: readonly boolean[] | null,
+): TimelapseExportRow[] {
+  const toRecord = (values: CellValue[] | null): Record<string, CellValue> | null => {
+    if (values === null) return null;
+    const out: Record<string, CellValue> = {};
+    diff.columns.forEach((column, i) => {
+      out[column] = masked?.[i] ? MASK_PLACEHOLDER : (values[i] ?? null);
+    });
+    return out;
+  };
+  return diff.rows.map((r) => {
+    const kind: TimelapseRowKind =
+      r.status === "source_only" ? "added" : r.status === "target_only" ? "removed" : "changed";
+    const before = kind === "added" ? null : toRecord(r.target ?? []);
+    const after = kind === "removed" ? null : toRecord(r.source ?? []);
+    const base = after ?? before ?? {};
+    const key: Record<string, CellValue> = {};
+    for (const pk of diff.primary_key) key[pk] = base[pk] ?? null;
+    return { kind, key, before, after, changedColumns: kind === "changed" ? [...r.changed_columns] : [] };
+  });
+}
+
+/** 主キーを `id=1, tenant=a` 形式の 1 文字列にする。 */
+function formatKey(key: Record<string, CellValue>): string {
+  return Object.entries(key)
+    .map(([k, v]) => `${k}=${v === null ? "NULL" : String(v)}`)
+    .join(", ");
+}
+
+/**
+ * CSV 用の縦持ち表 (1 行 = 1 セルの変化)。列は `kind, key, column, before, after`。
+ * 追加・削除行は全列、変更行は値が変わった列だけを出す (監査で見たいのは変わった所)。
+ * NULL は空セル (kind で追加 / 削除が分かるので before / after の空は「その側に行が無い」か NULL)。
+ */
+export function timelapseRowsToTable(
+  rows: readonly TimelapseExportRow[],
+  header: readonly [string, string, string, string, string],
+  /** 種別列の表示文言 (画面の kindLabel と同じ翻訳済み文言)。省略時は kind の識別子そのまま。 */
+  kindLabels?: Partial<Record<TimelapseRowKind, string>>,
+): { header: string[]; rows: CellValue[][] } {
+  const out: CellValue[][] = [];
+  for (const r of rows) {
+    const key = formatKey(r.key);
+    const columns = r.kind === "changed" ? r.changedColumns : Object.keys((r.after ?? r.before) ?? {});
+    for (const column of columns) {
+      out.push([kindLabels?.[r.kind] ?? r.kind, key, column, r.before?.[column] ?? null, r.after?.[column] ?? null]);
+    }
+  }
+  return { header: [...header], rows: out };
+}
+
+export interface TimelapseExportMeta {
+  table: string;
+  fromCapturedAt: string;
+  toCapturedAt: string;
+}
+
+/** JSON (2 スペース字下げ)。行モデルをそのまま入れ、世代の取得時刻とテーブル名を添える。 */
+export function timelapseRowsToJson(
+  rows: readonly TimelapseExportRow[],
+  meta: TimelapseExportMeta,
+): string {
+  return JSON.stringify(
+    {
+      table: meta.table,
+      from_captured_at: meta.fromCapturedAt,
+      to_captured_at: meta.toCapturedAt,
+      rows: rows.map((r) => ({
+        kind: r.kind,
+        key: r.key,
+        before: r.before,
+        after: r.after,
+        changed_columns: r.changedColumns,
+      })),
+    },
+    null,
+    2,
+  );
+}

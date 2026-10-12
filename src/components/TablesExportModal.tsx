@@ -54,6 +54,8 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
   const [dir, setDir] = useState("");
   // 単発の ExportModal と同じ設定 (exportMaskPresets) をテーブルごとの列名に当てて masks を作る。
   const [maskEnabled, setMaskEnabled] = useState(false);
+  // SQL 形式で各ファイルの先頭に CREATE TABLE 文を含める (#1539)。
+  const [includeDdl, setIncludeDdl] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -153,6 +155,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
         table: format === "sql" ? table : null,
         batchSize: null,
         masks,
+        includeDdl: format === "sql" && includeDdl,
       });
     } catch (e) {
       settle({ ok: false, error: String(e) });
@@ -261,6 +264,22 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
             ))}
           </chakra.div>
         </FormSection>
+
+        {format === "sql" && (
+          <FormSection>
+            <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none" fontSize="md">
+              <Checkbox
+                checked={includeDdl}
+                onChange={(e) => setIncludeDdl(e.target.checked)}
+                disabled={isRunning}
+              />
+              <span>{t("exportSqlIncludeDdl")}</span>
+            </chakra.label>
+            <chakra.div textStyle="caption">
+              {t("exportSqlIncludeDdlHint")}
+            </chakra.div>
+          </FormSection>
+        )}
 
         <FormSection>
           <FieldLabel as="div">{t("exportMasking")}</FieldLabel>

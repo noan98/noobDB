@@ -826,6 +826,14 @@ pub struct PreviewResult {
     pub elapsed_ms: u64,
     /// True if either snapshot was truncated by the LIMIT.
     pub truncated: bool,
+    /// 書き込みキャプチャ (#1536) 専用: 新規行 (INSERT) を窓の差分ではなく DB 側の手がかり
+    /// (PostgreSQL の xmin / MySQL の AUTO_INCREMENT) で特定できたとき `true`。
+    #[serde(skip)]
+    pub new_rows_exact: bool,
+    /// 書き込みキャプチャ (#1536) 専用: ドライバ側で記録を辞退すると決めた理由
+    /// (行ロックの競合など)。書き込み自体は 1 回実行・COMMIT される。
+    #[serde(skip)]
+    pub capture_decline: Option<String>,
 }
 
 /// 1 データベース (PostgreSQL ではスキーマ) とそのテーブル名一覧。

@@ -170,6 +170,7 @@ export interface PaneActions {
   replaceColumnForTab: (tab: Tab, sql: string) => unknown;
   requestBroadcast: (sql: string, tab: Tab | null) => void;
   requestDuplicateRowForTab: (tabId: string, row: PendingInsertRow) => void;
+  addInsertRowsForTab: (tabId: string, rows: PendingInsertRow[]) => void;
   requestInsertRowForTab: (tabId: string) => void;
   resolveParamsThen: (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => void;
   runBatchInTab: (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => unknown;
@@ -691,6 +692,7 @@ export const PaneView = memo(
                     result={tab.result}
                     driver={selectedProfile?.driver ?? "mysql"}
                     streaming={tab.streaming}
+                    pin={{ scope: tab.id, sql: tab.explainSourceSql ?? getTabSql(tab) }}
                     ai={
                       sessionId && selectedProfile
                         ? {
@@ -859,6 +861,13 @@ export const PaneView = memo(
                       tableTabEditable(tab)
                         ? gridStable.fn(`${tab.id}:duplicateRow`, (row: Parameters<typeof actions.requestDuplicateRowForTab>[1]) =>
                             actions.requestDuplicateRowForTab(tab.id, row),
+                          )
+                        : undefined
+                    }
+                    onPasteInsertRows={
+                      tableTabEditable(tab)
+                        ? gridStable.fn(`${tab.id}:pasteInsertRows`, (rows: Parameters<typeof actions.addInsertRowsForTab>[1]) =>
+                            actions.addInsertRowsForTab(tab.id, rows),
                           )
                         : undefined
                     }

@@ -63,6 +63,8 @@ fn table_request(src: &str, dst: &str, table: &str, target_table: &str) -> t::Tr
         target_table: target_table.into(),
         mode: t::TransferMode::Create,
         batch_size: Some(1000),
+        conflict_mode: None,
+        key_columns: None,
     }
 }
 
@@ -464,6 +466,110 @@ async fn preview_returns_the_plan_without_creating_a_table() {
         &state,
         "pv_dst",
         "SELECT count(*) FROM sqlite_master WHERE type = 'table'",
+    )
+    .await;
+    assert_eq!(int(&r.rows[0][0]), 0);
+
+    remove_files(&src);
+    remove_files(&dst);
+}
+
+/// #1539: upsert モード。主キーを省略するとターゲットの主キーで衝突判定し、
+/// `update` は既存行を更新して新規行を足し、`skip` は既存行を触らない。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upsert_mode_updates_or_skips_existing_rows() {
+    let state = t::AppState::default();
+    let src = sqlite_session(&state, "up_src", false).await;
+    let dst = sqlite_session(&state, "up_dst", false).await;
+    exec(
+        &state,
+        "up_src",
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)",
+    )
+    .await;
+    exec(
+        &state,
+        "up_src",
+        "INSERT INTO items VALUES (1, 'apple-new', 11), (2, 'banana', 5), (3, 'cherry', 7)",
+    )
+    .await;
+    exec(
+        &state,
+        "up_dst",
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)",
+    )
+    .await;
+    exec(
+        &state,
+        "up_dst",
+        "INSERT INTO items VALUES (1, 'apple-old', 10), (9, 'keep', 1)",
+    )
+    .await;
+
+    // 既定 (update、キーは主キー)。
+    let mut req = table_request("up_src", "up_dst", "items", "items");
+    req.mode = t::TransferMode::Upsert;
+    run(&state, req.clone()).await.expect("upsert update");
+    let r = exec(
+        &state,
+        "up_dst",
+        "SELECT id, name, qty FROM items ORDER BY id",
+    )
+    .await;
+    assert_eq!(r.rows.len(), 4, "新規 2 行が増え、無関係な行 9 は残る");
+    assert_eq!(text(&r.rows[0][1]), "apple-new");
+    assert_eq!(int(&r.rows[0][2]), 11);
+    assert_eq!(int(&r.rows[3][0]), 9);
+    assert_eq!(text(&r.rows[3][1]), "keep");
+
+    // 2 回目は同じ結果 (冪等)。
+    run(&state, req.clone()).await.expect("upsert again");
+    let r = exec(&state, "up_dst", "SELECT count(*) FROM items").await;
+    assert_eq!(int(&r.rows[0][0]), 4);
+
+    // skip: 既存行は変えない。
+    exec(
+        &state,
+        "up_dst",
+        "UPDATE items SET name = 'local-edit' WHERE id = 1",
+    )
+    .await;
+    let mut skip = req.clone();
+    skip.conflict_mode = Some(t::ConflictMode::Skip);
+    run(&state, skip).await.expect("upsert skip");
+    let r = exec(&state, "up_dst", "SELECT name FROM items WHERE id = 1").await;
+    assert_eq!(text(&r.rows[0][0]), "local-edit");
+
+    // キー列を明示 (大文字小文字は転送先の綴りに揃う) できる。
+    let mut keyed = req.clone();
+    keyed.key_columns = Some(vec!["ID".into()]);
+    run(&state, keyed).await.expect("explicit key");
+    let r = exec(&state, "up_dst", "SELECT name FROM items WHERE id = 1").await;
+    assert_eq!(text(&r.rows[0][0]), "apple-new");
+
+    // 主キーが無く、キーも未指定ならエラー。存在しないキー列もエラー。
+    exec(
+        &state,
+        "up_dst",
+        "CREATE TABLE nopk (id INTEGER, name TEXT)",
+    )
+    .await;
+    let mut nopk = table_request("up_src", "up_dst", "items", "nopk");
+    nopk.mode = t::TransferMode::Upsert;
+    let err = run(&state, nopk).await.expect_err("no primary key");
+    assert!(err.to_string().contains("key columns"), "{err}");
+    let mut bad = req.clone();
+    bad.key_columns = Some(vec!["nope".into()]);
+    assert!(run(&state, bad).await.is_err());
+
+    // 転送先テーブルが無ければ upsert は失敗し、テーブルは作られない (DDL を発行しない)。
+    let mut missing = table_request("up_src", "up_dst", "items", "missing_tbl");
+    missing.mode = t::TransferMode::Upsert;
+    assert!(run(&state, missing).await.is_err());
+    let r = exec(
+        &state,
+        "up_dst",
+        "SELECT count(*) FROM sqlite_master WHERE name = 'missing_tbl'",
     )
     .await;
     assert_eq!(int(&r.rows[0][0]), 0);

@@ -10,6 +10,8 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+#[path = "../capture_integration.rs"]
+mod capture_integration;
 #[path = "../mysql_integration.rs"]
 mod mysql_integration;
 #[path = "../postgres_integration.rs"]

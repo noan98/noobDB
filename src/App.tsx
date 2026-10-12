@@ -104,6 +104,7 @@ import {
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
 import { treeItemInsertText } from "./components/treeDragInsert";
+import { fkJoinSnippets } from "./components/fkJoin";
 import {
   applyServerBrowse,
   type ServerFilter,
@@ -294,6 +295,9 @@ const QueryInspectorPanel = lazy(() =>
 const AdvisorPanel = lazy(() =>
   import("./components/AdvisorPanel").then((m) => ({ default: m.AdvisorPanel })),
 );
+const ColumnProfileCompareModal = lazy(() =>
+  import("./components/ColumnProfileCompareModal").then((m) => ({ default: m.ColumnProfileCompareModal })),
+);
 const ColumnProfilePanel = lazy(() =>
   import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
 );
@@ -364,6 +368,8 @@ import {
   type QueryNotificationKind,
 } from "./queryNotify";
 import type { IncomingFk } from "./fkNavigation";
+import { collectDropImpacts, type DropImpact } from "./dropImpact";
+import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
@@ -497,6 +503,7 @@ import {
 } from "./schemaDrift";
 import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
+import { clearExplainPin } from "./explainPins";
 import { Tooltip } from "./components/Tooltip";
 
 type Theme = "light" | "dark";
@@ -1290,6 +1297,8 @@ export default function App() {
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // 環境横断ブロードキャスト実行 (#738)。非 null の間だけ `BroadcastModal` を
   // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
+  // 列の分布を複数接続で比べるモーダル (#1539)。非 null の間だけマウントする。
+  const [profileCompare, setProfileCompare] = useState<{ approximate: boolean } | null>(null);
   const [broadcastRequest, setBroadcastRequest] = useState<
     { sql: string; tableColumns: TableColumnInfo[] | null } | null
   >(null);
@@ -1931,9 +1940,25 @@ export default function App() {
   );
   // 現在の txActive / savepoints がどのセッションのものか (保存先のキー)。
   const txOwnerRef = useRef<string | null>(null);
+  // 背景接続の TX 状態 (ref) が変わったことを接続一覧のバッジへ伝える再描画トリガ (#1536)。
+  const [txTick, setTxTick] = useState(0);
   const forgetTxState = useCallback((sid: string) => {
     txBySessionRef.current.delete(sid);
+    setTxTick((n) => n + 1);
   }, []);
+  // 未確定の TX を保持している接続のプロファイル id (接続一覧の「TX」バッジ用, #1536)。
+  // 表示中の接続は state (`txActive`)、背景の接続は接続ごとの保存先 (ref) を見る。
+  // ref の変化は `txTick` で再計算する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: txTick は ref (txBySessionRef) の変化を知らせる再計算トリガ
+  const txProfileIds = useMemo(
+    () =>
+      new Set(
+        openConnections
+          .filter((c) => (c.sessionId === sessionId ? txActive : txBySessionRef.current.has(c.sessionId)))
+          .map((c) => c.profile.id),
+      ),
+    [openConnections, sessionId, txActive, txTick],
+  );
   // await の後で「操作した接続」がまだ表示中とは限らない。表示中でなければ保存先
   // (txBySessionRef) だけを更新し、state (別の接続のぶん) には触らない。
   const updateSavepointsFor = useCallback(
@@ -1954,6 +1979,7 @@ export default function App() {
       setTxActive(false);
     } else {
       txBySessionRef.current.delete(sid);
+      setTxTick((n) => n + 1);
     }
   }, []);
   // 接続の切替: 切替先に保存済みの TX 状態があれば復元し、無ければ非 TX に戻す。
@@ -3172,9 +3198,19 @@ export default function App() {
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
-  const switchToOpenConnection = useCallback(async (target: OpenConnection) => {
+  const switchToOpenConnection = useCallback(async (target: OpenConnection, opts?: { skipTxWarning?: boolean }) => {
     if (target.sessionId === sessionId) return;
     if (!(await confirmDiscardPendingEdits())) return;
+    // 未確定の TX を持つ接続から離れる前に知らせる (#1536)。TX は背景で開いたまま残る。
+    if (!opts?.skipTxWarning && sessionId && txActiveRef.current) {
+      const ok = await confirmDiscard({
+        title: translate("connSwitchTxTitle"),
+        message: translate("connSwitchTxBody"),
+        confirmLabel: translate("connSwitchTxAction"),
+        tone: "warning",
+      });
+      if (!ok) return;
+    }
     // 進行中の自動再接続ループは手動切替で中断する。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3207,7 +3243,7 @@ export default function App() {
     }
     setStatus({ kind: "idle" });
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits, confirmDiscard]);
 
   // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
   // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
@@ -3493,7 +3529,8 @@ export default function App() {
     // 残っていなければ未接続状態へ。
     const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
     if (remaining.length > 0) {
-      await switchToOpenConnection(remaining[remaining.length - 1]);
+      // 閉じた接続の TX は上の確認で破棄済み。残る接続への自動切替では警告しない。
+      await switchToOpenConnection(remaining[remaining.length - 1], { skipTxWarning: true });
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
@@ -5248,6 +5285,7 @@ export default function App() {
       if (txOwnerRef.current !== sessionId) {
         // 開始の await 中に別の接続へ切り替わった: 状態は開始した接続のぶんとして保存する。
         txBySessionRef.current.set(sessionId, { savepoints: [], counter: 0 });
+        setTxTick((n) => n + 1);
         toast.info(translate("txBegun"));
         return;
       }
@@ -6420,6 +6458,13 @@ export default function App() {
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
+  // 貼り付けが表示行を超えた分を、保留の追加行へまとめて積む (#1539)。確定後の流れ
+  // (反映時の確認・SQL 生成) は行追加モーダルで足した行と同じ。
+  const addInsertRowsForTab = useCallback((tabId: string, rows: PendingInsertRow[]) => {
+    if (rows.length === 0) return;
+    patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
+  }, [patchTab]);
+
   // 行操作 (追加/削除) の保留を破棄する。
   const discardRowOpsForTab = useCallback((tabId: string) => {
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
@@ -6695,13 +6740,15 @@ export default function App() {
   }, [openQueryInEditor]);
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
-  const runMaintenanceDdl = useCallback(async (sql: string, database: string): Promise<boolean> => {
+  // `table` を渡すと (CREATE / DROP INDEX など対象が 1 テーブルと分かる DDL)、そのテーブルの
+  // バックエンドキャッシュだけを捨てて再読込する (#1539)。
+  const runMaintenanceDdl = useCallback(async (sql: string, database: string, table?: string): Promise<boolean> => {
     if (!sessionId) return false;
     try {
       await api.runQuery(sessionId, sql, database);
       invalidateSchemaCache(database);
       noteSchemaDdl(sql, database);
-      connectionListRef.current?.refreshSchema();
+      connectionListRef.current?.refreshSchema(table ? { database, table } : undefined);
       return true;
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
@@ -6745,11 +6792,35 @@ export default function App() {
     await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
 
+  // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
+  // 取る (#1536)。バックエンドは DB 全体の FK 一覧を持っているので 1 テーブルあたり追加の
+  // DB 問い合わせは増えない。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
+  const loadDropImpacts = useCallback(async (database: string, tables: string[]): Promise<DropImpact[]> => {
+    if (!sessionId) return [];
+    const entries = await Promise.all(
+      tables.map(async (tbl): Promise<[string, IncomingFk[]]> => {
+        try {
+          return [tbl, await api.incomingForeignKeys(sessionId, database, tbl)];
+        } catch {
+          return [tbl, []];
+        }
+      }),
+    );
+    return collectDropImpacts(Object.fromEntries(entries), tables);
+  }, [sessionId]);
+
   const handleDropTable = useCallback(async (database: string, table: string) => {
     // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
+    const impacts = await loadDropImpacts(database, [table]);
+    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
     const ok = await confirm({
       title: translate("dropConfirmTitle", { table }),
-      message: maintenanceMessage(translate("dropConfirmBody", { table })),
+      message: maintenanceMessage(
+        <>
+          {translate("dropConfirmBody", { table })}
+          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+        </>,
+      ),
       confirmLabel: translate("dropConfirmOk"),
       tone: "danger",
       typedConfirmation: selectedProfile?.is_production ? table : undefined,
@@ -6763,7 +6834,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
         .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
+  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
   // ビューの DROP (#851)。確認導線・実行経路は `handleDropTable` をそのまま流用する
   // (Issue の方針: 「削除は既存の DROP 確認導線を流用」)。
@@ -6893,7 +6964,8 @@ export default function App() {
       await api.runQueryTransaction(sessionId, sqls, target.database);
       invalidateSchemaCache(target.database);
       noteSchemaDdl(sqls.join(";\n"), target.database);
-      connectionListRef.current?.refreshSchema();
+      // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。
+      connectionListRef.current?.refreshSchema({ database: target.database, table: target.table });
       toast.success(translate("alterTableSuccess", { table: target.table }));
       setAlterTableTarget(null);
       // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
@@ -6979,7 +7051,7 @@ export default function App() {
   const handleCreateIndexRun = useCallback(async (sql: string) => {
     const target = createIndexTarget;
     if (!target) return;
-    const success = await runMaintenanceDdl(sql, target.database);
+    const success = await runMaintenanceDdl(sql, target.database, target.table);
     if (success) {
       toast.success(translate("createIndexSuccess"));
       setCreateIndexTarget(null);
@@ -7005,7 +7077,7 @@ export default function App() {
       typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
     });
     if (!ok) return;
-    const success = await runMaintenanceDdl(sql, database);
+    const success = await runMaintenanceDdl(sql, database, table);
     if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, toast]);
 
@@ -7423,6 +7495,28 @@ export default function App() {
     }
   }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
 
+  // FK 列から `JOIN 参照先 ON ...` の雛形を挿入 (#1540)。FK 一覧はバックエンドがキャッシュする
+  // DB 単位の読み取り (JOIN 補完と同じ `foreign_keys`) で、書き込み経路は通らない。
+  const handleInsertFkJoin = useCallback(async (database: string, table: string, column: string) => {
+    if (!sessionId) return;
+    try {
+      const fks = await api.foreignKeys(sessionId, database);
+      const driver = selectedProfile?.driver ?? "mysql";
+      const [snippet] = fkJoinSnippets({ driver, database, table, column, fks });
+      if (!snippet) {
+        toast.error(translate("fkJoinUnavailable", { table, column }));
+        return;
+      }
+      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+        activeEditor()?.insertText(snippet.text);
+      } else {
+        addTab({ ...makeQueryTab(), sql: snippet.text, lastExecutedSql: snippet.text });
+      }
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab, toast]);
+
   const handleCopyColumnName = useCallback(async (column: string) => {
     if (await copyToClipboard(column)) {
       toast.success(translate("columnNameCopied", { column }));
@@ -7508,6 +7602,9 @@ export default function App() {
   // メニュー無効化に加え、バックエンドのガードが拒否する。
   const handleDropTables = useCallback(async (database: string, tables: string[]) => {
     if (tables.length === 0) return;
+    // DROP されずに残る子テーブルからの FK 参照を警告に添える (#1536)。
+    const impacts = await loadDropImpacts(database, tables);
+    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
     // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
     const production = Boolean(selectedProfile?.is_production);
     const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
@@ -7527,7 +7624,12 @@ export default function App() {
     );
     const ok = await confirm({
       title: translate("batchDropConfirmTitle", { count: tables.length }),
-      message: maintenanceMessage(body),
+      message: maintenanceMessage(
+        <>
+          {body}
+          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+        </>,
+      ),
       confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
       tone: "danger",
       typedConfirmation: selectedProfile?.is_production ? database : undefined,
@@ -7578,7 +7680,7 @@ export default function App() {
     if (!failed) {
       toast.success(translate("batchDropSuccess", { count: dropped.length }));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, noteSchemaDdl, toast, tabsRef]);
+  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, noteSchemaDdl, toast, tabsRef]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
@@ -7980,6 +8082,7 @@ export default function App() {
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
+    clearExplainPin(id);
     // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
     // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
     // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は
@@ -9255,7 +9358,7 @@ export default function App() {
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
-    requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
+    addInsertRowsForTab, requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
     runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
     setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
     setSaveAsTableRequest, setSaveAsViewRequest, setServerFilterInTab, setServerSortInTab, setStatus,
@@ -9473,6 +9576,7 @@ export default function App() {
     onWatchTable: handleWatchTable,
     onCopyTableName: handleCopyTableName,
     onInsertColumn: handleInsertColumn,
+    onInsertFkJoin: handleInsertFkJoin,
     onCopyColumnName: handleCopyColumnName,
     onOpenObjectDefinition: handleOpenObjectDefinition,
     onEditViewDefinition: handleEditViewDefinition,
@@ -9765,6 +9869,7 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             openProfileIds={openProfileIds}
+            txProfileIds={txProfileIds}
             {...connectionListHandlers}
             selectLimit={Math.max(1, settings.defaultDisplayCount)}
             favorites={quickAccess.favorites}
@@ -10024,6 +10129,7 @@ export default function App() {
                         onSelectColumn={(column) =>
                           setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
                         }
+                        onCompare={(approximate) => setProfileCompare({ approximate })}
                       />
                     ) : null
                   ) : activeBottomPanelTab === "structure" ? (
@@ -11051,6 +11157,24 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {profileCompare && sessionId && selectedProfile && profileTarget?.column && (
+          <Suspense fallback={null}>
+            <ColumnProfileCompareModal
+              baseline={{ sessionId, profile: selectedProfile }}
+              candidates={openConnections.filter(
+                (c) => c.sessionId !== sessionId && !isSandboxProfileId(c.profile.id),
+              )}
+              driver={selectedProfile.driver}
+              target={{ ...profileTarget, column: profileTarget.column }}
+              approximate={profileCompare.approximate}
+              confirm={confirm}
+              onClose={() => setProfileCompare(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {importProfilesPath && (
           <ProfileImportDialog
             onConfirm={handleImportProfilesConfirm}
@@ -11613,7 +11737,17 @@ export default function App() {
           )}
         </AnimatePresence>
         <AnimatePresence>
-          {showCheatSheet && <ShortcutCheatSheet onClose={() => setShowCheatSheet(false)} />}
+          {showCheatSheet && (
+            <ShortcutCheatSheet
+              onClose={() => setShowCheatSheet(false)}
+              onRebind={() => {
+                // 設定のキーバインド節へ直接移る (#1540)。
+                setShowCheatSheet(false);
+                setSettingsInitialSection("settings-sec-keybindings");
+                openFullView("settings");
+              }}
+            />
+          )}
         </AnimatePresence>
         <AnimatePresence>
           {showSettings && (

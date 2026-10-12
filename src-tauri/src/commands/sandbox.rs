@@ -890,6 +890,121 @@ pub(crate) async fn sandbox_advance_base_inner(
     Ok(())
 }
 
+/// 表リセット (`sandbox_reset_table`) の結果。
+#[derive(Debug, serde::Serialize)]
+pub struct SandboxResetResult {
+    /// リセット後にライブ表へ戻った行数 (= base スナップショットの行数)。
+    pub restored_rows: u64,
+}
+
+/// サンドボックスの 1 表を、base (shadow) スナップショットの内容へ戻す (#1539)。
+/// 1 トランザクションで「ライブ表を全行 DELETE → shadow から INSERT ... SELECT」を行い、
+/// 途中で失敗したら全体がロールバックされるので、他の表の作業にも、この表の元の状態にも
+/// 影響しない。
+///
+/// - 戻すのは**行データだけ**。ライブ表のスキーマ変更 (列の追加・削除・型変更) は
+///   取り消さない: ライブ表と shadow の共通列 (名前一致・生成列を除く) だけをコピーし、
+///   共通でない列は既定値 / NULL になる。
+/// - base は `sandbox_advance_base` で書き戻し済みの内容まで進むので、「戻る先」は
+///   サンドボックス作成時ではなく「最後に書き戻した時点」。
+/// - サンドボックスの表は FK 制約を持たない (作成時に落とす) ので、全行 DELETE が
+///   他の表へ波及することはない。
+/// - 書き込みなので read_only セッションは拒否する (`sandbox_advance_base` と同じ)。
+#[tauri::command]
+pub async fn sandbox_reset_table(
+    sandbox_id: String,
+    sandbox_session_id: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<SandboxResetResult> {
+    sandbox_reset_table_inner(state.inner(), sandbox_id, sandbox_session_id, table).await
+}
+
+/// Core of [`sandbox_reset_table`] (see [`create_sandbox_inner`] doc).
+pub(crate) async fn sandbox_reset_table_inner(
+    state: &AppState,
+    sandbox_id: String,
+    sandbox_session_id: String,
+    table: String,
+) -> Result<SandboxResetResult> {
+    let record = find_record(&sandbox_id)?;
+    if !record.tables.iter().any(|t| t == &table) {
+        return Err(AppError::InvalidInput(format!(
+            "table '{table}' is not part of sandbox '{sandbox_id}'"
+        )));
+    }
+    let sandbox = get_sandbox_session(state, &record, &sandbox_session_id).await?;
+    if sandbox.read_only {
+        return Err(AppError::ReadOnly(
+            "read-only session: sandbox table cannot be reset".into(),
+        ));
+    }
+    let shadow = shadow_table_name(&table);
+    let live_cols = sandbox.conn.columns("", &table).await?;
+    let base_cols = sandbox.conn.columns("", &shadow).await?;
+    if live_cols.is_empty() || base_cols.is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "table '{table}' or its base snapshot no longer exists in the sandbox"
+        )));
+    }
+    let generated = generated_column_names(&live_cols);
+    let common = reset_common_columns(&live_cols, &base_cols, &generated);
+    if common.is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "table '{table}' shares no columns with its base snapshot"
+        )));
+    }
+    let statements = reset_table_statements(&table, &shadow, &common);
+    sandbox.conn.execute_transaction(&statements, None).await?;
+    // ライブ表の中身が変わったので、同じサンドボックスの結果キャッシュは破棄する。
+    sandbox.query_cache.invalidate_all().await;
+    let count = sandbox
+        .conn
+        .execute(
+            &format!(
+                "SELECT COUNT(*) FROM {}",
+                quote_ident(DriverKind::Sqlite, &table)
+            ),
+            None,
+        )
+        .await?;
+    let restored_rows = match count.rows.first().and_then(|r| r.first()) {
+        Some(Value::Int(n)) => u64::try_from(*n).unwrap_or(0),
+        Some(Value::UInt(n)) => *n,
+        _ => 0,
+    };
+    Ok(SandboxResetResult { restored_rows })
+}
+
+/// ライブ表と shadow の共通列 (ライブ表の列順)。生成列は書き込めないので除く。
+/// SQLite の列名は大文字小文字を区別しないので、比較もそれに合わせる。
+fn reset_common_columns(
+    live: &[TableColumnInfo],
+    base: &[TableColumnInfo],
+    generated: &[String],
+) -> Vec<String> {
+    live.iter()
+        .map(|c| c.name.clone())
+        .filter(|n| !generated.iter().any(|g| g == n))
+        .filter(|n| base.iter().any(|b| b.name.eq_ignore_ascii_case(n)))
+        .collect()
+}
+
+/// 表リセットで流す 2 文: ライブ表の全行削除と、shadow からの全行コピー。
+fn reset_table_statements(table: &str, shadow: &str, columns: &[String]) -> Vec<String> {
+    let live_q = quote_ident(DriverKind::Sqlite, table);
+    let shadow_q = quote_ident(DriverKind::Sqlite, shadow);
+    let cols = columns
+        .iter()
+        .map(|c| quote_ident(DriverKind::Sqlite, c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![
+        format!("DELETE FROM {live_q}"),
+        format!("INSERT INTO {live_q} ({cols}) SELECT {cols} FROM {shadow_q}"),
+    ]
+}
+
 /// `INSERT OR REPLACE INTO <shadow> (...) VALUES (...)` — SQLite-only (the
 /// shadow table always lives in the sandbox's own SQLite file), keyed on
 /// whatever `UNIQUE`/`PRIMARY KEY` the shadow table already has (it was
@@ -931,4 +1046,59 @@ fn delete_shadow_sql(shadow_table: &str, primary_key: &[String], key: &[Value]) 
         "DELETE FROM {} WHERE {pred}",
         quote_ident(DriverKind::Sqlite, shadow_table)
     )
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+
+    fn col(name: &str, extra: &str) -> TableColumnInfo {
+        TableColumnInfo {
+            name: name.into(),
+            data_type: "TEXT".into(),
+            nullable: true,
+            key: String::new(),
+            default: None,
+            extra: extra.into(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn reset_statements_delete_then_copy_from_shadow() {
+        let sql = reset_table_statements(
+            "it\"ems",
+            "__noobdb_sandbox_base__it\"ems",
+            &["id".into(), "a b".into()],
+        );
+        assert_eq!(sql.len(), 2);
+        assert_eq!(sql[0], "DELETE FROM \"it\"\"ems\"");
+        assert_eq!(
+            sql[1],
+            "INSERT INTO \"it\"\"ems\" (\"id\", \"a b\") SELECT \"id\", \"a b\" FROM \"__noobdb_sandbox_base__it\"\"ems\""
+        );
+    }
+
+    #[test]
+    fn common_columns_skip_added_dropped_and_generated_columns() {
+        let live = vec![
+            col("id", ""),
+            col("Label", ""),
+            col("added_later", ""),
+            col("g", "STORED GENERATED"),
+        ];
+        let base = vec![
+            col("id", ""),
+            col("label", ""),
+            col("dropped_later", ""),
+            col("g", ""),
+        ];
+        let generated = generated_column_names(&live);
+        assert_eq!(
+            reset_common_columns(&live, &base, &generated),
+            vec!["id", "Label"]
+        );
+    }
 }

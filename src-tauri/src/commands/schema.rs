@@ -440,6 +440,60 @@ pub async fn refresh_schema_cache(session_id: String, state: State<'_, AppState>
     refresh_schema_cache_inner(state.inner(), &session_id).await
 }
 
+/// 1 つのテーブルのスキーマキャッシュだけを無効化する (#1539)。ALTER / CREATE INDEX の
+/// 適用後のように対象が分かるとき、接続全体の Refresh ([`refresh_schema_cache`]) の代わりに
+/// 呼ぶと、他のテーブルの列・インデックスは再取得せずに済む。読み取り専用の操作で
+/// `read_only` セッションでも許可する。`database` / `table` は大文字小文字を無視して照合する。
+#[tauri::command]
+pub async fn invalidate_table_cache(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session
+        .schema_cache
+        .invalidate_table(&database, &table)
+        .await;
+    Ok(())
+}
+
+/// テーブル一覧をキャッシュしたデータベースの取得時刻 (#1539)。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SchemaCacheTime {
+    pub database: String,
+    /// UNIX epoch ミリ秒 (壁時計)。フロントがローカル時刻で表示する。
+    pub fetched_at_ms: i64,
+}
+
+/// このセッションのスキーマキャッシュがいつ取得されたかを DB ごとに返す (#1539)。ツリーに
+/// 「キャッシュ取得 HH:MM」を出し、Refresh が要るかをユーザが判断できるようにする。TTL 切れや
+/// 未取得の DB は含まれない。キャッシュの内容そのものは返さない (時刻だけ)。
+#[tauri::command]
+pub async fn schema_cache_times(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SchemaCacheTime>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    Ok(session
+        .schema_cache
+        .tables_fetched_at()
+        .await
+        .into_iter()
+        .map(|(database, fetched_at_ms)| SchemaCacheTime {
+            database,
+            fetched_at_ms,
+        })
+        .collect())
+}
+
 /// Core of [`refresh_schema_cache`] decoupled from Tauri's `State` wrapper so
 /// integration tests can drive the exact command path (session lookup +
 /// invalidate) without standing up a Tauri runtime.

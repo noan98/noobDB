@@ -33,6 +33,16 @@
     "kind": "retrying",
     "maxAttempts": 3
   },
+  "aiUsageRecord": {
+    "cacheCreationInputTokens": 50,
+    "cacheReadInputTokens": 800,
+    "calls": 3,
+    "day": "2026-10-12",
+    "inputTokens": 1200,
+    "model": "claude-opus-5-5",
+    "outputTokens": 340,
+    "task": "nl2sql"
+  },
   "alterTableContext": {
     "columns": [
       {
@@ -340,6 +350,19 @@
   "batchStreamStartedMessage": {
     "kind": "started",
     "total": 3
+  },
+  "blobFolderSaveResult": {
+    "errors": [
+      {
+        "error": "expected exactly one row for the key, got 0",
+        "row": 4
+      }
+    ],
+    "failed": 1,
+    "saved": 3,
+    "skippedNull": 1,
+    "skippedTooLarge": 2,
+    "totalBytes": 4096
   },
   "broadcastCancelledMessage": {
     "kind": "cancelled",
@@ -1831,6 +1854,9 @@
       "users"
     ]
   },
+  "sandboxResetResult": {
+    "restored_rows": 3
+  },
   "sandboxSchemaDiffResult": {
     "desired": {
       "source_driver": "mysql",
@@ -1957,6 +1983,10 @@
   },
   "schedulerSettings": {
     "catch_up_missed": true
+  },
+  "schemaCacheTime": {
+    "database": "appdb",
+    "fetched_at_ms": 1760000000000
   },
   "schemaDiff": {
     "source_driver": "mysql",
@@ -3723,6 +3753,14 @@
         "rule": "unused_index"
       }
     ],
+    "table_plans": [
+      {
+        "change_count": 2,
+        "ddl": "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);",
+        "ddl_online": "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;",
+        "table": "orders"
+      }
+    ],
     "tables_analyzed": 3
   },
   "schemaHealthReportVariants": [
@@ -3842,6 +3880,14 @@
         {
           "reason": "performance_schema_off",
           "rule": "sqlite_integer_pk_hint"
+        }
+      ],
+      "table_plans": [
+        {
+          "change_count": 3,
+          "ddl": "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");",
+          "ddl_online": "DROP INDEX CONCURRENTLY \"a\";",
+          "table": "orders"
         }
       ],
       "tables_analyzed": 1
@@ -3964,6 +4010,14 @@
           "rule": "sqlite_integer_pk_hint"
         }
       ],
+      "table_plans": [
+        {
+          "change_count": 3,
+          "ddl": "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");",
+          "ddl_online": "DROP INDEX CONCURRENTLY \"a\";",
+          "table": "orders"
+        }
+      ],
       "tables_analyzed": 1
     },
     {
@@ -4082,6 +4136,14 @@
         {
           "reason": "performance_schema_off",
           "rule": "sqlite_integer_pk_hint"
+        }
+      ],
+      "table_plans": [
+        {
+          "change_count": 3,
+          "ddl": "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");",
+          "ddl_online": null,
+          "table": "orders"
         }
       ],
       "tables_analyzed": 1
@@ -4541,6 +4603,35 @@
     "comment": "registered users",
     "name": "users"
   },
+  "tableProfileOverview": {
+    "columns": [
+      {
+        "column": "id",
+        "data_type": "bigint",
+        "distinct_count": "9007199254740993",
+        "max_value": "9007199254740993",
+        "min_value": 1,
+        "non_null_count": 100,
+        "notes": [],
+        "null_count": 0
+      },
+      {
+        "column": "payload",
+        "data_type": "longblob",
+        "distinct_count": null,
+        "max_value": null,
+        "min_value": null,
+        "non_null_count": 40,
+        "notes": [
+          "overview_skipped_type"
+        ],
+        "null_count": 60
+      }
+    ],
+    "scans": 1,
+    "table": "orders",
+    "total_count": 100
+  },
   "tableRowEstimate": {
     "estimate": 1234,
     "name": "users"
@@ -4632,6 +4723,7 @@
           "events": false,
           "extendedInsert": false,
           "formatSql": false,
+          "gzip": false,
           "noCreateInfo": false,
           "noData": false,
           "noOwner": false,

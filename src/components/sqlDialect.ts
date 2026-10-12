@@ -39,10 +39,17 @@ export function qualifiedTableSql(
   hiddenColumn?: string | null,
 ): string {
   const extra = hiddenColumn ? `, ${hiddenColumn}` : "";
-  // SQLite has a single attached namespace ("main"); leaving the
-  // db.table qualification off keeps the generated SELECT portable.
-  if (driver === "sqlite") return `SELECT *${extra} FROM ${quoteIdentFor(driver, table)}`;
-  return `SELECT *${extra} FROM ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
+  return `SELECT *${extra} FROM ${qualifiedTableName(driver, database, table)}`;
+}
+
+/**
+ * `db.table` 形式の修飾テーブル名 (識別子はドライバ別にクォート済み)。SQLite は接続あたり
+ * 1 つの名前空間 (main) なので DB 修飾を付けず、生成する SQL を移植可能に保つ。
+ * `qualifiedTableSql` と JOIN 雛形 (`fkJoin.ts`) が同じ修飾規則を共有する (#1540)。
+ */
+export function qualifiedTableName(driver: string, database: string, table: string): string {
+  if (driver === "sqlite") return quoteIdentFor(driver, table);
+  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
 

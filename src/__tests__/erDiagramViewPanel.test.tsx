@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 
@@ -24,6 +24,10 @@ import { api } from "../api/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("ERDiagramView error state (#848)", () => {
@@ -56,5 +60,70 @@ describe("ERDiagramView error state (#848)", () => {
     await waitFor(() => {
       expect(screen.getByText(t("erDiagramEmpty"))).toBeInTheDocument();
     });
+  });
+});
+
+describe("ERDiagramView フォーカス (#1540)", () => {
+  const tb = (name: string) => ({
+    name,
+    columns: [
+      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
+    ],
+  });
+  const fkRow = (table: string, ref: string) => ({
+    table,
+    column: "id",
+    referenced_table: ref,
+    referenced_column: "id",
+    constraint_name: `${table}_${ref}`,
+  });
+
+  it("テーブルを選ぶとその近傍だけの図になり、「データベース全体」で戻る", async () => {
+    // jsdom に無い ResizeObserver (React Flow が使う) の最小スタブ。
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.mocked(api.describeDatabase).mockResolvedValueOnce(
+      ["a", "b", "c", "d"].map(tb) as never,
+    );
+    vi.mocked(api.foreignKeys).mockResolvedValueOnce([
+      fkRow("a", "b"),
+      fkRow("b", "c"),
+      fkRow("c", "d"),
+    ] as never);
+    renderWithProviders(
+      <ERDiagramView
+        sessionId="s1"
+        driver="mysql"
+        initialDatabase="appdb"
+        onOpenTable={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByText(t("erDiagramSummary", { tables: 4, relationships: 3 })),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(t("erDiagramFocus")), { target: { value: "a" } });
+    // 1 ホップ: a と b だけ。
+    expect(
+      await screen.findByText(t("erDiagramSummary", { tables: 2, relationships: 1 })),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(t("erDiagramFocusHops")), { target: { value: "2" } });
+    expect(
+      await screen.findByText(t("erDiagramSummary", { tables: 3, relationships: 2 })),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(t("erDiagramFocus")), { target: { value: "" } });
+    expect(
+      await screen.findByText(t("erDiagramSummary", { tables: 4, relationships: 3 })),
+    ).toBeInTheDocument();
+    // フォーカスの切り替えで DB を取り直さない。
+    expect(api.describeDatabase).toHaveBeenCalledTimes(1);
   });
 });

@@ -21,8 +21,13 @@ import {
   formatMs,
   isPrivilegeMasked,
   mergeLiveTail,
+  nextStatSort,
+  sortStatRows,
+  statRowsToTable,
   supportReasonI18nKey,
   type LiveTailEntry,
+  type StatSort,
+  type StatSortKey,
   type NPlusOneOptions,
 } from "./queryInspector";
 import { Skeleton } from "./Skeleton";
@@ -31,6 +36,8 @@ import { Button, Checkbox, Input, Select } from "./ui";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv, tableToTsv } from "./tabularText";
 
 /**
  * ライブクエリ・インスペクタ (#746): 接続先 DB で「アプリ (ORM) が投げている
@@ -89,6 +96,49 @@ const queryTdCss: SystemStyleObject = {
 function oneLine(query: string, max = 300): string {
   const s = query.split(/\s+/).filter(Boolean).join(" ");
   return s.length <= max ? s : `${s.slice(0, max)}…`;
+}
+
+/** 並べ替えできる列見出し (#1539)。クリックで 降順/昇順 → 反転 → 解除 を巡回する。 */
+function SortTh({
+  sortKey,
+  sort,
+  onSort,
+  tooltip,
+  children,
+}: {
+  tooltip?: string;
+  sortKey: StatSortKey;
+  sort: StatSort | null;
+  onSort: (key: StatSortKey) => void;
+  children: React.ReactNode;
+}) {
+  const active = sort?.key === sortKey ? sort.dir : null;
+  return (
+    <chakra.th
+      css={thCss}
+      aria-sort={active === "asc" ? "ascending" : active === "desc" ? "descending" : "none"}
+    >
+      <Tooltip label={tooltip}>
+      <chakra.button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        display="inline-flex"
+        alignItems="center"
+        gap="1"
+        textStyle="overline"
+        color="inherit"
+        cursor="pointer"
+        background="transparent"
+        border="none"
+        padding="0"
+        _hover={{ color: "app.text" }}
+      >
+        {children}
+        <span aria-hidden>{active === "asc" ? "▲" : active === "desc" ? "▼" : ""}</span>
+      </chakra.button>
+      </Tooltip>
+    </chakra.th>
+  );
 }
 
 function NPlusOneBadge({ title }: { title: string }) {
@@ -251,6 +301,8 @@ export function QueryInspectorPanel({
   const [filterText, setFilterText] = useState("");
   const [minDurationInput, setMinDurationInput] = useState("");
   const [showCumulative, setShowCumulative] = useState(false);
+  // 統計タブの並べ替え (#1539)。null はバックエンドが返す総時間降順のまま。
+  const [statSort, setStatSort] = useState<StatSort | null>(null);
   // ポーリング応答と「累積表示」切替の再計算が競合しても、古い方の設定で組んだ行で
   // 上書きしないよう、最新の切替状態を ref でも持つ。
   const cumulativeRef = useRef(false);
@@ -433,11 +485,42 @@ export function QueryInspectorPanel({
     [toast, t],
   );
 
+  const onStatSort = useCallback(
+    (key: StatSortKey) => setStatSort((cur) => nextStatSort(cur, key)),
+    [],
+  );
+
   const reasonText = (code: string | null) =>
     code == null ? null : t(supportReasonI18nKey(code));
 
   const fingerprintOf = (r: StatementDeltaRow) =>
     fingerprintCache.current.get(`${r.digest} ${r.database ?? ""}`) ?? "";
+
+  // fingerprintCache は ref なので、deltaRows の更新に合わせて再計算する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fingerprintOf は ref を読むだけ
+  const sortedRows = useMemo(
+    () => sortStatRows(deltaRows, statSort, fingerprintOf),
+    [deltaRows, statSort],
+  );
+  const statExportFormats = [
+    { id: "csv" as const, label: "CSV", build: () => buildStatText("csv") },
+    { id: "tsv" as const, label: "TSV", build: () => buildStatText("tsv") },
+  ];
+  function buildStatText(kind: "csv" | "tsv"): string {
+    const table = statRowsToTable(sortedRows, fingerprintOf, {
+      calls: t("inspectorColCalls"),
+      total: t("inspectorColTotalTime"),
+      mean: t("inspectorColMeanTime"),
+      max: t("inspectorColMaxTime"),
+      rows: driver === "mysql" ? t("inspectorColRowsExamined") : t("inspectorColRows"),
+      db: t("inspectorColDb"),
+      nPlusOne: "N+1",
+      fingerprint: t("inspectorColFingerprint"),
+    });
+    return kind === "csv"
+      ? tableToCsv(table.header, table.rows)
+      : tableToTsv(table.header, table.rows);
+  }
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
@@ -701,6 +784,12 @@ export function QueryInspectorPanel({
                     })}
                   </chakra.span>
                 )}
+                <TextExportButton
+                  formats={statExportFormats}
+                  filenameBase="query-inspector-stats"
+                  disabled={deltaRows.length === 0}
+                  label={t("inspectorStatsExport")}
+                />
               </Flex>
               {deltaRows.length === 0 ? (
                 // tail タブと同じ idle/recording の 2 状態表現 (#847)。
@@ -714,24 +803,39 @@ export function QueryInspectorPanel({
                   <chakra.table width="100%" borderCollapse="collapse">
                     <thead>
                       <tr>
-                        <chakra.th css={thCss}>{t("inspectorColCalls")}</chakra.th>
-                        <chakra.th css={thCss}>{t("inspectorColTotalTime")}</chakra.th>
-                        <chakra.th css={thCss}>{t("inspectorColMeanTime")}</chakra.th>
-                        <Tooltip label={t("inspectorMaxCumulativeTitle")} focusableWrapper>
-                          <chakra.th css={thCss}>{t("inspectorColMaxTime")}</chakra.th>
-                        </Tooltip>
-                        <chakra.th css={thCss}>
+                        <SortTh sortKey="calls" sort={statSort} onSort={onStatSort}>
+                          {t("inspectorColCalls")}
+                        </SortTh>
+                        <SortTh sortKey="total" sort={statSort} onSort={onStatSort}>
+                          {t("inspectorColTotalTime")}
+                        </SortTh>
+                        <SortTh sortKey="mean" sort={statSort} onSort={onStatSort}>
+                          {t("inspectorColMeanTime")}
+                        </SortTh>
+                        <SortTh
+                          sortKey="max"
+                          sort={statSort}
+                          onSort={onStatSort}
+                          tooltip={t("inspectorMaxCumulativeTitle")}
+                        >
+                          {t("inspectorColMaxTime")}
+                        </SortTh>
+                        <SortTh sortKey="rows" sort={statSort} onSort={onStatSort}>
                           {driver === "mysql"
                             ? t("inspectorColRowsExamined")
                             : t("inspectorColRows")}
-                        </chakra.th>
-                        <chakra.th css={thCss}>{t("inspectorColDb")}</chakra.th>
-                        <chakra.th css={thCss}>{t("inspectorColFingerprint")}</chakra.th>
+                        </SortTh>
+                        <SortTh sortKey="db" sort={statSort} onSort={onStatSort}>
+                          {t("inspectorColDb")}
+                        </SortTh>
+                        <SortTh sortKey="fingerprint" sort={statSort} onSort={onStatSort}>
+                          {t("inspectorColFingerprint")}
+                        </SortTh>
                         <chakra.th css={thCss} width="32px" aria-label={t("inspectorColActions")} />
                       </tr>
                     </thead>
                     <tbody>
-                      {deltaRows.map((r) => {
+                      {sortedRows.map((r) => {
                         const fp = fingerprintOf(r);
                         return (
                           <StatRow

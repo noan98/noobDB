@@ -385,7 +385,10 @@ fn streaming_and_run_query_share_the_invalidate_helper() {
     for f in ["run_query_transaction_inner", "run_in_transaction_inner"] {
         let body = fn_body(&src, f);
         assert!(
-            body.contains("schema_cache.invalidate_all()")
+            // スキーマ側は、対象が 1 テーブルと分かる DDL だけ表単位で捨てる
+            // `invalidate_schema_cache_for` (#1539。解析できなければ全体を捨てる) 経由でもよい。
+            (body.contains("schema_cache.invalidate_all()")
+                || body.contains("invalidate_schema_cache_for("))
                 && body.contains("query_cache.invalidate_all()"),
             "{f} が SchemaCache / QueryResultCache の両方を invalidate していない"
         );

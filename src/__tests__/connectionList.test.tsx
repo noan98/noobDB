@@ -143,6 +143,28 @@ describe("ConnectionList render smoke (#604)", () => {
   });
 });
 
+describe("ConnectionList: 未確定トランザクションのバッジ (#1536)", () => {
+  it("txProfileIds に含まれるプロファイル行にだけ TX バッジを出す", () => {
+    const profiles = [
+      makeProfile({ id: "p-a", name: "Alpha DB" }),
+      makeProfile({ id: "p-b", name: "Beta DB" }),
+    ];
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={profiles} txProfileIds={new Set(["p-b"])} />,
+    );
+    const rows = screen.getAllByRole("treeitem");
+    expect(within(rows[0]).queryByTestId("tx-badge")).toBeNull();
+    expect(within(rows[1]).getByTestId("tx-badge")).toHaveTextContent(t("txActiveBadge"));
+  });
+
+  it("txProfileIds が無ければバッジは出ない", () => {
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={[makeProfile({ id: "p-a", name: "Alpha DB" })]} />,
+    );
+    expect(screen.queryByTestId("tx-badge")).toBeNull();
+  });
+});
+
 describe("ConnectionList: 行内ボタンのキー操作", () => {
   it("更新ボタンの Enter/Space はプロファイル行を開閉しない", async () => {
     localStorage.clear();
@@ -388,6 +410,32 @@ describe("Database Explorer の階層 (#1112)", () => {
       expect(screen.queryByRole("separator")).toBeNull();
     });
 
+    it("外部キー列だけに JOIN 雛形の挿入項目が出る (#1540)", async () => {
+      vi.mocked(api.describeTable).mockResolvedValueOnce([
+        col("id", { key: "PRI" }),
+        col("user_id", { referenced_table: "users", referenced_column: "id" }),
+      ]);
+      const onInsertFkJoin = vi.fn();
+      await openDb({ onInsertFkJoin });
+      await screen.findByRole("treeitem", { name: "tbl1" });
+      fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+      const colRow = (name: string) =>
+        waitFor(() => {
+          const el = document.querySelector<HTMLElement>(
+            `[data-tree-key^="col:"][data-tree-key$=":${name}"]`,
+          );
+          if (!el) throw new Error(`列行 ${name} がまだ無い`);
+          return el;
+        });
+      // 主キー列 (FK でない) には出ない。
+      fireEvent.contextMenu(await colRow("id"));
+      expect(screen.queryByRole("menuitem", { name: t("contextMenuInsertFkJoin", { table: "users" }) })).toBeNull();
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      fireEvent.contextMenu(await colRow("user_id"));
+      fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuInsertFkJoin", { table: "users" }) }));
+      expect(onInsertFkJoin).toHaveBeenCalledWith("db1", "tbl1", "user_id");
+    });
+
     it("ダブルクリックで列名のみ (qualified=false) を挿入する", async () => {
       const onInsertColumn = vi.fn();
       const row = await openColumnRow({ onInsertColumn });
@@ -433,7 +481,7 @@ describe("Database Explorer の階層 (#1112)", () => {
       window.dispatchEvent(ptr("pointermove", 40));
       window.dispatchEvent(ptr("pointerup", 40));
       expect(insert).toHaveBeenCalledTimes(1);
-      expect(insert).toHaveBeenCalledWith({ kind: "table", database: "db1", table: "tbl1" }, 5, true);
+      expect(insert).toHaveBeenCalledWith({ kind: "table", database: "db1", table: "tbl1" }, 5, true, false);
       cleanup();
     });
 
@@ -462,7 +510,7 @@ describe("Database Explorer の階層 (#1112)", () => {
       row.dispatchEvent(ptr("pointerdown", 0));
       window.dispatchEvent(ptr("pointermove", 40));
       window.dispatchEvent(ptr("pointerup", 40, { altKey: true }));
-      expect(insert).toHaveBeenCalledWith({ kind: "column", database: "db1", table: "tbl1", column: "id" }, 5, false);
+      expect(insert).toHaveBeenCalledWith({ kind: "column", database: "db1", table: "tbl1", column: "id" }, 5, false, false);
       cleanup();
     });
 

@@ -111,6 +111,25 @@ pub struct SchemaHealthReport {
     pub tables_analyzed: usize,
     pub findings: Vec<HealthFinding>,
     pub skipped: Vec<SkippedRule>,
+    /// テーブルごとの**まとめ DDL** (#1540)。同じテーブルに 2 件以上の「機械的に直せる」指摘
+    /// (FK インデックス欠落・重複 / 冗長インデックス) があるときだけ、1 つの修正計画に束ねて返す。
+    /// 統計依存の指摘 (未使用インデックス) は観測期間に左右されるため含めない。
+    #[serde(default)]
+    pub table_plans: Vec<TableFixPlan>,
+}
+
+/// 1 テーブルぶんの修正 DDL のまとめ (#1540)。各指摘の `fix_ddl` を連結しただけでなく、
+/// 方言が許す範囲で 1 文に束ねる (MySQL は 1 本の `ALTER TABLE`、PostgreSQL は複数インデックスの
+/// 1 本の `DROP INDEX`)。実行はせず、エディタへ挿入するための文字列。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableFixPlan {
+    pub table: String,
+    /// まとめに含まれる変更 (インデックスの追加・削除) の件数。重複を除いた数。
+    pub change_count: usize,
+    /// 標準版 (各指摘の `fix_ddl` 相当をまとめたもの)。
+    pub ddl: String,
+    /// オンライン版 (`fix_ddl_online` 相当、#1534)。SQLite では `None`。
+    pub ddl_online: Option<String>,
 }
 
 /// 1 テーブルのメタデータ (カラム + インデックス)。命令の層が
@@ -180,12 +199,155 @@ pub fn analyze(input: &AdvisorInput) -> SchemaHealthReport {
             .then_with(|| a.columns.cmp(&b.columns))
     });
 
+    let table_plans = build_table_plans(input.driver, &findings);
+
     SchemaHealthReport {
         driver: input.driver,
         tables_analyzed: input.tables.len(),
         findings,
         skipped,
+        table_plans,
     }
+}
+
+/// まとめ DDL に入れる 1 件の変更 (#1540)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FixAction {
+    /// FK 列にインデックスを張る。
+    CreateIndex { columns: Vec<String> },
+    /// インデックスを落とす。
+    DropIndex { name: String },
+}
+
+/// 指摘から、まとめ DDL に入れられる変更を取り出す。統計依存の指摘・設計判断を要する指摘は `None`。
+fn fix_action_of(f: &HealthFinding) -> Option<FixAction> {
+    if f.statistical || f.fix_ddl.is_none() {
+        return None;
+    }
+    match f.rule {
+        RuleId::FkMissingIndex if !f.columns.is_empty() => Some(FixAction::CreateIndex {
+            columns: f.columns.clone(),
+        }),
+        RuleId::DuplicateIndex | RuleId::RedundantIndex => f
+            .context
+            .first()
+            .map(|name| FixAction::DropIndex { name: name.clone() }),
+        _ => None,
+    }
+}
+
+/// 指摘の集合から、2 件以上の変更があるテーブルごとにまとめ DDL を組み立てる。`findings` は
+/// テーブル順に並んでいる前提 (`analyze` が整列済み)。出力順はテーブル名順。
+fn build_table_plans(driver: DriverKind, findings: &[HealthFinding]) -> Vec<TableFixPlan> {
+    let mut plans = Vec::new();
+    let mut i = 0;
+    while i < findings.len() {
+        let table = &findings[i].table;
+        let mut j = i;
+        while j < findings.len() && findings[j].table == *table {
+            j += 1;
+        }
+        let actions: Vec<FixAction> = findings[i..j].iter().filter_map(fix_action_of).collect();
+        if let Some(plan) = combine_fixes(driver, table, &actions) {
+            plans.push(plan);
+        }
+        i = j;
+    }
+    plans
+}
+
+/// 1 テーブルの変更列を方言ごとの DDL に束ねる純関数。重複する変更 (同じインデックスの
+/// 二重 DROP・同じ列の二重 CREATE) は 1 件に畳み、畳んだ後の変更が 2 件未満なら `None`
+/// (単独なら各指摘の `fix_ddl` で足りる)。DROP を先、CREATE を後に並べる。
+fn combine_fixes(driver: DriverKind, table: &str, actions: &[FixAction]) -> Option<TableFixPlan> {
+    let mut drops: Vec<&str> = Vec::new();
+    let mut creates: Vec<&[String]> = Vec::new();
+    for a in actions {
+        match a {
+            FixAction::DropIndex { name } => {
+                if !drops.iter().any(|d| d.eq_ignore_ascii_case(name)) {
+                    drops.push(name);
+                }
+            }
+            FixAction::CreateIndex { columns } => {
+                let lower = |cols: &[String]| -> Vec<String> {
+                    cols.iter().map(|c| c.to_lowercase()).collect()
+                };
+                if !creates.iter().any(|c| lower(c) == lower(columns)) {
+                    creates.push(columns);
+                }
+            }
+        }
+    }
+    let change_count = drops.len() + creates.len();
+    if change_count < 2 {
+        return None;
+    }
+
+    let qt = quote_ident(driver, table);
+    let (ddl, ddl_online) = match driver {
+        DriverKind::Mysql => {
+            // 1 本の ALTER TABLE に束ねる。追加と削除が同じ文なので、FK が頼る唯一のインデックスを
+            // 冗長として落としつつ新しく張る、といった入れ替えも途中で FK が裸にならない。
+            let mut parts: Vec<String> = drops
+                .iter()
+                .map(|d| format!("DROP INDEX {}", quote_ident(driver, d)))
+                .collect();
+            for cols in &creates {
+                let (name, list) = quoted_index_parts(driver, table, cols);
+                parts.push(format!("ADD INDEX {name} ({list})"));
+            }
+            let body = parts.join(",\n  ");
+            (
+                format!("ALTER TABLE {qt}\n  {body};"),
+                Some(format!(
+                    "ALTER TABLE {qt}\n  {body},\n  ALGORITHM=INPLACE, LOCK=NONE;"
+                )),
+            )
+        }
+        DriverKind::Postgres => {
+            let mut std_lines: Vec<String> = Vec::new();
+            let mut online_lines: Vec<String> = Vec::new();
+            if !drops.is_empty() {
+                // 標準版は複数インデックスを 1 本の DROP INDEX にできる。CONCURRENTLY は
+                // 1 本ずつしか指定できないので、オンライン版は分ける。
+                let names = drops
+                    .iter()
+                    .map(|d| quote_ident(driver, d))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                std_lines.push(format!("DROP INDEX {names};"));
+                for d in &drops {
+                    online_lines.push(format!(
+                        "DROP INDEX CONCURRENTLY {};",
+                        quote_ident(driver, d)
+                    ));
+                }
+            }
+            for cols in &creates {
+                std_lines.push(create_index_ddl(driver, table, cols));
+                if let Some(o) = create_index_online_ddl(driver, table, cols) {
+                    online_lines.push(o);
+                }
+            }
+            (std_lines.join("\n"), Some(online_lines.join("\n")))
+        }
+        DriverKind::Sqlite => {
+            // SQLite の DROP INDEX は 1 本ずつ。オンライン版は無い。
+            let mut lines: Vec<String> = drops
+                .iter()
+                .map(|d| drop_index_ddl(driver, table, d))
+                .collect();
+            lines.extend(creates.iter().map(|c| create_index_ddl(driver, table, c)));
+            (lines.join("\n"), None)
+        }
+    };
+    Some(TableFixPlan {
+        table: table.to_string(),
+        change_count,
+        ddl,
+        ddl_online,
+    })
 }
 
 fn severity_rank(s: Severity) -> u8 {
@@ -1368,5 +1530,188 @@ mod tests {
         assert!(
             sqlite.contains("idx_customer_subscription_invoice_line_items_subscription_invoice_id")
         );
+    }
+
+    // --- #1540: テーブル単位のまとめ DDL ---
+
+    fn fk_named(table: &str, column: &str, ref_table: &str, name: &str) -> ForeignKey {
+        ForeignKey {
+            constraint_name: Some(name.to_string()),
+            ..fk(table, column, ref_table, Some("id"))
+        }
+    }
+
+    /// FK 2 本が未インデックス + 重複インデックス 1 本を持つ `orders` テーブル。
+    fn messy_orders() -> AdvisorInput {
+        let t = table(
+            "orders",
+            vec![
+                col("id", "int", true),
+                col("user_id", "int", false),
+                col("shop_id", "int", false),
+                col("a", "int", false),
+            ],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                idx("idx_a", &["a"], false, false),
+                idx("idx_a_dup", &["a"], false, false),
+            ],
+        );
+        input(
+            DriverKind::Mysql,
+            vec![t],
+            vec![
+                fk_named("orders", "user_id", "users", "fk_u"),
+                fk_named("orders", "shop_id", "shops", "fk_s"),
+            ],
+        )
+    }
+
+    #[test]
+    fn mysql_plan_merges_everything_into_one_alter_table() {
+        let report = analyze(&messy_orders());
+        assert_eq!(report.table_plans.len(), 1);
+        let plan = &report.table_plans[0];
+        assert_eq!(plan.table, "orders");
+        assert_eq!(plan.change_count, 3);
+        assert_eq!(
+            plan.ddl,
+            "ALTER TABLE `orders`\n  DROP INDEX `idx_a_dup`,\n  ADD INDEX `idx_orders_shop_id` (`shop_id`),\n  ADD INDEX `idx_orders_user_id` (`user_id`);"
+        );
+        assert_eq!(
+            plan.ddl_online.as_deref(),
+            Some(
+                "ALTER TABLE `orders`\n  DROP INDEX `idx_a_dup`,\n  ADD INDEX `idx_orders_shop_id` (`shop_id`),\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;"
+            )
+        );
+    }
+
+    #[test]
+    fn postgres_plan_merges_drops_and_keeps_creates_separate() {
+        let mut i = messy_orders();
+        i.driver = DriverKind::Postgres;
+        let plan = &analyze(&i).table_plans[0];
+        assert_eq!(
+            plan.ddl,
+            "DROP INDEX \"idx_a_dup\";\nCREATE INDEX \"idx_orders_shop_id\" ON \"orders\" (\"shop_id\");\nCREATE INDEX \"idx_orders_user_id\" ON \"orders\" (\"user_id\");"
+        );
+        // CONCURRENTLY は 1 本ずつ。
+        let online = plan.ddl_online.as_deref().unwrap_or_default();
+        assert!(online.starts_with("DROP INDEX CONCURRENTLY \"idx_a_dup\";"));
+        assert!(online.contains("CREATE INDEX CONCURRENTLY \"idx_orders_user_id\""));
+    }
+
+    #[test]
+    fn postgres_plan_joins_several_drops_into_one_statement_but_not_online() {
+        let t = table(
+            "t",
+            vec![
+                col("id", "int", true),
+                col("a", "int", false),
+                col("b", "int", false),
+            ],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                idx("i_a", &["a"], false, false),
+                idx("i_a2", &["a"], false, false),
+                idx("i_ab", &["a", "b"], false, false),
+            ],
+        );
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        // i_a2 は i_a の重複、i_a / i_a2 は i_ab のプレフィックス冗長。
+        let plan = &report.table_plans[0];
+        assert!(plan.ddl.starts_with("DROP INDEX "));
+        assert!(plan.ddl.contains("\"i_a\", \"i_a2\"") || plan.ddl.contains("\"i_a2\", \"i_a\""));
+        let online = plan.ddl_online.clone().unwrap_or_default();
+        assert_eq!(online.matches("DROP INDEX CONCURRENTLY").count(), 2);
+    }
+
+    #[test]
+    fn sqlite_plan_has_one_statement_per_change_and_no_online_variant() {
+        let mut i = messy_orders();
+        i.driver = DriverKind::Sqlite;
+        let plan = &analyze(&i).table_plans[0];
+        assert_eq!(plan.ddl.lines().count(), 3);
+        assert!(plan.ddl.starts_with("DROP INDEX \"idx_a_dup\";"));
+        assert!(plan.ddl_online.is_none());
+    }
+
+    #[test]
+    fn single_change_gets_no_plan() {
+        let t = table(
+            "orders",
+            vec![col("id", "int", true), col("user_id", "int", false)],
+            vec![idx("PRIMARY", &["id"], true, true)],
+        );
+        let report = analyze(&input(
+            DriverKind::Mysql,
+            vec![t],
+            vec![fk_named("orders", "user_id", "users", "fk_u")],
+        ));
+        assert_eq!(report.findings.len(), 1);
+        assert!(report.table_plans.is_empty());
+    }
+
+    #[test]
+    fn plans_are_per_table_and_statistical_findings_are_left_out() {
+        let t1 = messy_orders().tables.remove(0);
+        let t2 = table(
+            "zeta",
+            vec![col("id", "int", true), col("x", "int", false)],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                idx("i_x", &["x"], false, false),
+            ],
+        );
+        let mut i = messy_orders();
+        i.tables = vec![t1, t2];
+        i.unused = unused_supported(vec![UnusedIndexEntry {
+            table: "zeta".into(),
+            index: "i_x".into(),
+        }]);
+        let report = analyze(&i);
+        // zeta には統計依存の未使用インデックス 1 件だけ → まとめ対象外。
+        assert!(findings_for(&report, RuleId::UnusedIndex).len() == 1);
+        assert_eq!(report.table_plans.len(), 1);
+        assert_eq!(report.table_plans[0].table, "orders");
+    }
+
+    #[test]
+    fn duplicate_actions_are_collapsed() {
+        let actions = vec![
+            FixAction::DropIndex { name: "a".into() },
+            FixAction::DropIndex { name: "A".into() },
+            FixAction::CreateIndex {
+                columns: vec!["x".into()],
+            },
+            FixAction::CreateIndex {
+                columns: vec!["X".into()],
+            },
+        ];
+        let plan = combine_fixes(DriverKind::Mysql, "t", &actions);
+        assert_eq!(plan.map(|p| p.change_count), Some(2));
+        // 畳んだ結果が 1 件なら計画を作らない。
+        let one = vec![
+            FixAction::DropIndex { name: "a".into() },
+            FixAction::DropIndex { name: "a".into() },
+        ];
+        assert!(combine_fixes(DriverKind::Mysql, "t", &one).is_none());
+    }
+
+    #[test]
+    fn plan_quotes_hostile_identifiers() {
+        let actions = vec![
+            FixAction::DropIndex {
+                name: "we`ird".into(),
+            },
+            FixAction::CreateIndex {
+                columns: vec!["c`ol".into()],
+            },
+        ];
+        let plan = combine_fixes(DriverKind::Mysql, "ta`ble", &actions).map(|p| p.ddl);
+        let ddl = plan.unwrap_or_default();
+        assert!(ddl.contains("`ta``ble`"));
+        assert!(ddl.contains("DROP INDEX `we``ird`"));
+        assert!(ddl.contains("(`c``ol`)"));
     }
 }

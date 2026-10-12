@@ -699,6 +699,13 @@ export interface TableRowEstimate {
   estimate: number | null;
 }
 
+/** スキーマキャッシュの取得時刻 (DB ごと, #1539)。 */
+export interface SchemaCacheTime {
+  database: string;
+  /** UNIX epoch ミリ秒 (壁時計)。表示はローカル時刻。 */
+  fetched_at_ms: number;
+}
+
 /** テーブル (またはビュー) のコメント 1 件 (#1002)。コメントを持つものだけが返る。 */
 export interface TableComment {
   name: string;
@@ -1042,6 +1049,26 @@ export interface ColumnProfile {
   notes: string[];
 }
 
+/** 全列の概要の 1 列分 (#1539)。`distinct_count` が null なら求めていない / 求められなかった。 */
+export interface ColumnOverview {
+  column: string;
+  data_type: string;
+  non_null_count: ProfileCount;
+  null_count: ProfileCount;
+  distinct_count: ProfileCount | null;
+  min_value: CellValue;
+  max_value: CellValue;
+  notes: string[];
+}
+
+/** 表の全列の概要 (#1539)。`scans` は集計に使った SELECT の本数 (通常 1)。 */
+export interface TableProfileOverview {
+  table: string;
+  total_count: ProfileCount;
+  columns: ColumnOverview[];
+  scans: number;
+}
+
 /**
  * Where a table or column sits relative to the two schemas in a comparison.
  * `source_only` would be added to the target, `target_only` would be removed,
@@ -1253,12 +1280,25 @@ export interface SkippedRule {
   reason: string;
 }
 
+/** 1 テーブルぶんの修正 DDL のまとめ (#1540)。2 件以上の機械的に直せる指摘があるテーブルだけ。 */
+export interface TableFixPlan {
+  table: string;
+  /** まとめに含まれる変更 (インデックスの追加・削除) の件数。 */
+  change_count: number;
+  /** 標準版。方言が許す範囲で 1 文に束ねてある。 */
+  ddl: string;
+  /** オンライン版 (#1534)。SQLite では null。 */
+  ddl_online: string | null;
+}
+
 /** スキーマ健全性診断のレポート全体。 */
 export interface SchemaHealthReport {
   driver: DriverKind;
   tables_analyzed: number;
   findings: HealthFinding[];
   skipped: SkippedRule[];
+  /** テーブル単位のまとめ DDL (#1540)。 */
+  table_plans: TableFixPlan[];
 }
 
 /** What a generated sync statement does. */
@@ -1435,6 +1475,12 @@ export interface SandboxTableDiffResult {
   source_error: string | null;
 }
 
+/** `sandboxResetTable` の戻り値 (#1539)。 */
+export interface SandboxResetResult {
+  /** リセット後にライブ表へ戻った行数 (= base スナップショットの行数)。 */
+  restored_rows: number;
+}
+
 /** `sandboxSchemaDiff` の戻り値。 */
 export interface SandboxSchemaDiffResult {
   /** サンドボックスでのスキーマ変更 (base 比較)。`generateSyncSql` にそのまま渡せる。 */
@@ -1501,6 +1547,11 @@ export interface DumpOptions {
    * by the server / generator). Best-effort; intended for review/version control.
    */
   formatSql?: boolean;
+  /**
+   * All drivers — gzip-compress the finished dump (`.sql.gz`, #1539). Applied after
+   * `formatSql`. Off by default. The save path's extension is chosen by the caller.
+   */
+  gzip?: boolean;
   /**
    * 指定したテーブルだけをダンプする (#1399)。未指定 / null はデータベース全体。
    * 空配列は不可 (バックエンドが拒否する)。MySQL ではルーチン / イベントは対象外。
@@ -2056,6 +2107,22 @@ export interface CellBlobProbe {
   image: boolean;
 }
 
+/** BLOB 列のフォルダ一括保存の結果 (#1539)。 */
+export interface BlobFolderSaveResult {
+  /** 保存したファイル数。 */
+  saved: number;
+  /** 保存した合計バイト数。 */
+  totalBytes: number;
+  /** NULL のセルで保存しなかった行数。 */
+  skippedNull: number;
+  /** 上限 (16 MiB) を超えて保存しなかった行数。 */
+  skippedTooLarge: number;
+  /** 取得・書き込みに失敗した行数。 */
+  failed: number;
+  /** 失敗した行の理由 (先頭 20 件まで。`row` は渡した keys の添字)。 */
+  errors: { row: number; error: string }[];
+}
+
 export interface ImportErrorEvent {
   streamId: string;
   error: string;
@@ -2097,7 +2164,7 @@ export interface ExportStreamHandlers {
 }
 
 /** 接続間データ転送 (#986) で既存テーブルと衝突したときの扱い。 */
-export type TransferMode = "create" | "replace" | "append";
+export type TransferMode = "create" | "replace" | "append" | "upsert";
 
 export interface TransferRequest {
   sourceSessionId: string;
@@ -2111,6 +2178,10 @@ export interface TransferRequest {
   targetTable: string;
   mode: TransferMode;
   batchSize?: number | null;
+  /** `mode === "upsert"` の衝突方針。省略は `update` (#1539)。 */
+  conflictMode?: "skip" | "update" | null;
+  /** `mode === "upsert"` の衝突判定キー列。省略 / 空は転送先テーブルの主キー (#1539)。 */
+  keyColumns?: string[] | null;
 }
 export type TransferLossyKind = "decimal_clamped" | "decimal_float" | "timestamp_tz_degraded";
 export interface TransferLossyConversion {
@@ -3155,6 +3226,18 @@ export interface AiConnectionTestResult {
   message: string;
   model: string | null;
   elapsedMs: number;
+}
+
+/** 使用量台帳の 1 行 (日 JST × タスク種別 × モデル、#1540)。 */
+export interface AiUsageRecord {
+  day: string;
+  task: string;
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
 }
 
 export interface AiDeltaEvent {

@@ -1,3 +1,4 @@
+import { recordIpcValidationFailure } from "./ipcDiagnostics";
 import { z } from "zod";
 
 /**
@@ -107,6 +108,12 @@ export const foreignKey = z.object({
 export const tableRowEstimate = z.object({
   name: z.string(),
   estimate: z.number().nullable(),
+});
+
+/** スキーマキャッシュの取得時刻 (DB ごと, #1539)。 */
+export const schemaCacheTime = z.object({
+  database: z.string(),
+  fetched_at_ms: z.number(),
 });
 
 /** テーブルのサイズ・統計 (サイズダッシュボード #562)。 */
@@ -303,6 +310,25 @@ export const columnProfile = z.object({
   top_values: z.array(profileValueCount),
   histogram: z.array(profileHistogramBucket),
   notes: z.array(z.string()),
+});
+
+/** 全列の概要 (#1539)。 */
+export const tableProfileOverview = z.object({
+  table: z.string(),
+  total_count: z.union([z.number(), z.string()]),
+  columns: z.array(
+    z.object({
+      column: z.string(),
+      data_type: z.string(),
+      non_null_count: z.union([z.number(), z.string()]),
+      null_count: z.union([z.number(), z.string()]),
+      distinct_count: z.union([z.number(), z.string()]).nullable(),
+      min_value: cellValue,
+      max_value: cellValue,
+      notes: z.array(z.string()),
+    }),
+  ),
+  scans: z.number(),
 });
 
 export const schemaObject = z.object({
@@ -694,6 +720,10 @@ export const sandboxTableDiffResult = z.object({
   source_error: z.string().nullable(),
 });
 
+export const sandboxResetResult = z.object({
+  restored_rows: z.number(),
+});
+
 export const sandboxSchemaDiffResult = z.object({
   desired: schemaDiff,
   external_changed_tables: z.array(z.string()),
@@ -729,11 +759,19 @@ export const skippedRule = z.object({
   reason: z.string(),
 });
 
+export const tableFixPlan = z.object({
+  table: z.string(),
+  change_count: z.number(),
+  ddl: z.string(),
+  ddl_online: z.string().nullable(),
+});
+
 export const schemaHealthReport = z.object({
   driver: driverKind,
   tables_analyzed: z.number(),
   findings: z.array(healthFinding),
   skipped: z.array(skippedRule),
+  table_plans: z.array(tableFixPlan),
 });
 
 export const csvPreview = z.object({
@@ -929,6 +967,7 @@ export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const schemaCacheTimeArray = z.array(schemaCacheTime);
 export const tableCommentArray = z.array(tableComment);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
@@ -1279,6 +1318,20 @@ export const aiConnectionTestResult = z.object({
   elapsedMs: z.number(),
 });
 
+/** `get_ai_usage_history` の要素 (`ai/usage.rs::AiUsageRecord`、#1540)。数値のみで内容は含まない。 */
+export const aiUsageRecord = z.object({
+  day: z.string(),
+  task: z.string(),
+  model: z.string(),
+  calls: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadInputTokens: z.number(),
+  cacheCreationInputTokens: z.number(),
+});
+
+export const aiUsageRecordArray = z.array(aiUsageRecord);
+
 // `run_ai_request` は結果を Tauri Channel の `kind` タグ付きメッセージで送る (#1534)。
 // Channel は 1 要求にスコープされるので `streamId` は載らない。
 
@@ -1368,6 +1421,16 @@ export const cellBlobProbe = z.object({
   mime: z.string().nullable(),
   ext: z.string().nullable(),
   image: z.boolean(),
+});
+
+/** BLOB 列のフォルダ一括保存の結果 (#1539)。 */
+export const blobFolderSaveResult = z.object({
+  saved: z.number(),
+  totalBytes: z.number(),
+  skippedNull: z.number(),
+  skippedTooLarge: z.number(),
+  failed: z.number(),
+  errors: z.array(z.object({ row: z.number(), error: z.string() })),
 });
 
 export const importErrorEvent = z.object({
@@ -1513,6 +1576,7 @@ const dumpOptions = z.object({
   noPrivileges: z.boolean().optional(),
   pgSchema: z.string().nullable().optional(),
   formatSql: z.boolean().optional(),
+  gzip: z.boolean().optional(),
   tables: z.array(z.string()).nullable().optional(),
 });
 
@@ -1729,12 +1793,13 @@ export function parseResponse<T>(
       value,
     );
   }
-  const summary = result.error.issues
-    .map((issue) => {
-      const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
-      return `${path}: ${issue.message}`;
-    })
-    .join("; ");
+  const issueLines = result.error.issues.map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+    return `${path}: ${issue.message}`;
+  });
+  const summary = issueLines.join("; ");
+  // 失敗経路だけ: 本番の利用者にもアクティビティ経由で原因を伝えられるよう記録する (#1536)。
+  recordIpcValidationFailure(command, issueLines);
   throw new Error(
     `IPC レスポンス "${command}" が期待した形式と一致しません: ${summary}`,
   );

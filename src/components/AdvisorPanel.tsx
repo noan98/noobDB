@@ -9,6 +9,7 @@ import { semanticColorToken } from "../semanticColors";
 import {
   DEFAULT_ADVISOR_SORT,
   findingDescription,
+  findingsToTable,
   findingTarget,
   nextAdvisorSort,
   reasonTextKey,
@@ -30,6 +31,8 @@ import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 import { useToast } from "./Toast";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv, tableToMarkdown } from "./tabularText";
 import { transitions, variants } from "../motion";
 
 /**
@@ -211,6 +214,31 @@ export function AdvisorPanel({
     </chakra.th>
   );
 
+  // 診断結果の書き出し (#1539): 画面の並び順のまま、修正 DDL まで含めて CSV / Markdown にする。
+  const buildExport = (kind: "csv" | "markdown") => {
+    const table = findingsToTable(findings, {
+      headers: {
+        severity: t("advisorColSeverity"),
+        rule: t("advisorColRule"),
+        table: t("advisorExportColTable"),
+        columns: t("advisorExportColColumns"),
+        detail: t("advisorColDetail"),
+        fixDdl: t("advisorExportColFixDdl"),
+        fixDdlOnline: t("advisorExportColFixDdlOnline"),
+        statistical: t("advisorExportColStatistical"),
+      },
+      severity: (s) => t(severityLabelKey(s)),
+      rule: (f) => t(ruleTitleKey(f.rule)),
+      detail: (f) => {
+        const d = findingDescription(f);
+        return t(d.key, d.params);
+      },
+    });
+    return kind === "csv"
+      ? tableToCsv(table.header, table.rows)
+      : tableToMarkdown(table.header, table.rows);
+  };
+
   const copyFix = useCallback(
     async (sql: string) => {
       const ok = await copyToClipboard(sql);
@@ -236,6 +264,15 @@ export function AdvisorPanel({
             {report ? t("advisorRerun") : t("advisorRun")}
           </chakra.span>
         </Button>
+        {report && !running && report.findings.length > 0 && (
+          <TextExportButton
+            filenameBase={`schema-health-${database}`}
+            formats={[
+              { id: "csv", label: "CSV", build: () => buildExport("csv") },
+              { id: "markdown", label: "Markdown", build: () => buildExport("markdown") },
+            ]}
+          />
+        )}
         {running && (
           <Flex align="center" gap="2">
             <Spinner size={14} />
@@ -309,6 +346,68 @@ export function AdvisorPanel({
             <SkeletonTableRows columns={4} rows={5} />
           </chakra.tbody>
         </chakra.table>
+      )}
+
+      {report && !running && report.table_plans.length > 0 && (
+        // テーブル単位のまとめ DDL (#1540)。2 件以上の機械的に直せる指摘があるテーブルだけ。
+        <Box
+          borderRadius="var(--radius-sm)"
+          border="1px solid"
+          borderColor="app.border"
+          px="3"
+          py="2.5"
+          data-testid="advisor-table-plans"
+        >
+          <Flex align="center" gap="3" flexWrap="wrap">
+            <chakra.div textStyle="subheading">{t("advisorPlansTitle")}</chakra.div>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                insertFix(
+                  report.table_plans.map((p) => `-- ${p.table}\n${p.ddl}`).join("\n\n"),
+                )
+              }
+            >
+              <Icon name="insert-sql" size={ICON_SIZES.sm} />
+              <chakra.span marginLeft="1.5">{t("advisorPlansInsertAll")}</chakra.span>
+            </Button>
+          </Flex>
+          <chakra.div fontSize="var(--text-xs)" color="app.textMuted" marginTop="1" lineHeight={1.5}>
+            {t("advisorPlansNote")}
+          </chakra.div>
+          {report.table_plans.map((p) => (
+            <Box key={p.table} marginTop="2.5">
+              <chakra.div fontFamily="var(--font-mono)" fontWeight={600}>
+                {p.table}{" "}
+                <chakra.span textStyle="caption">
+                  {t("advisorPlanChanges", { count: String(p.change_count) })}
+                </chakra.span>
+              </chakra.div>
+              <FixDdlBlock
+                ddl={p.ddl}
+                label={p.ddl_online ? t("advisorFixStandard") : null}
+                note={p.ddl_online ? t("advisorFixStandardNote") : null}
+                onInsert={insertFix}
+                onCopy={copyFix}
+              />
+              {p.ddl_online && (
+                <FixDdlBlock
+                  ddl={p.ddl_online}
+                  label={t("advisorFixOnline")}
+                  note={
+                    report.driver === "postgres"
+                      ? t("advisorFixOnlineNotePostgres")
+                      : t("advisorFixOnlineNoteMysql")
+                  }
+                  onInsert={insertFix}
+                  onCopy={copyFix}
+                />
+              )}
+            </Box>
+          ))}
+        </Box>
       )}
 
       {report && !running && report.findings.length > 0 && (

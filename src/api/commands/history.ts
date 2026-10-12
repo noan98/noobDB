@@ -36,6 +36,16 @@ export const historyCommands = {
       profileId: params.profileId ?? null,
       limit: params.limit ?? null,
     }).then((r) => parseResponse(schemas.stringArray, r, "list_history_sql")),
+  /** 履歴の保持日数 (#1539)。0 は無効 (行数上限だけが効く)。 */
+  getHistoryRetentionDays: () =>
+    invoke<number>("get_history_retention_days").then((r) =>
+      parseResponse(schemas.numberResponse, r, "get_history_retention_days"),
+    ),
+  /** 履歴の保持日数を保存し、期限切れの行をすぐ削除する。削除した行数を返す。 */
+  setHistoryRetentionDays: (days: number) =>
+    invoke<number>("set_history_retention_days", { days }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "set_history_retention_days"),
+    ),
   clearHistory: (profileId?: string | null) =>
     invoke<number>("clear_history", { profileId: profileId ?? null }).then((r) =>
       parseResponse(schemas.numberResponse, r, "clear_history"),

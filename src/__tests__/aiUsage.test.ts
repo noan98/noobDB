@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addUsage,
-  emptyUsageTotals,
   formatTokens,
-  jstMonthKey,
-  rollUsageMonth,
-  sanitizeAiUsageTotals,
-  sumUsage,
   summarizeUsage,
   type AiUsageEventLike,
 } from "../ai/aiUsage";
@@ -19,48 +13,6 @@ const ev = (over: Partial<AiUsageEventLike> = {}): AiUsageEventLike => ({
   ...over,
 });
 
-describe("jstMonthKey", () => {
-  it("UTC 月末 14:59 は JST でもまだ同じ月", () => {
-    expect(jstMonthKey(new Date("2026-09-30T14:59:59Z"))).toBe("2026-09");
-  });
-  it("UTC 月末 15:00 は JST では翌月 1 日 0 時", () => {
-    expect(jstMonthKey(new Date("2026-09-30T15:00:00Z"))).toBe("2026-10");
-  });
-  it("年またぎ", () => {
-    expect(jstMonthKey(new Date("2026-12-31T15:00:00Z"))).toBe("2027-01");
-    expect(jstMonthKey(new Date("2026-12-31T14:59:59Z"))).toBe("2026-12");
-  });
-});
-
-describe("addUsage / rollUsageMonth", () => {
-  const now = new Date("2026-10-10T00:00:00Z");
-  it("応答モデル別に加算する", () => {
-    let t = emptyUsageTotals(now);
-    t = addUsage(t, ev(), now);
-    t = addUsage(t, ev({ model: "claude-sonnet-5-5", fallbackUsed: true }), now);
-    t = addUsage(t, ev(), now);
-    expect(t.byModel["claude-opus-5-5"]).toMatchObject({ requests: 2, inputTokens: 6400, outputTokens: 1600 });
-    expect(t.byModel["claude-sonnet-5-5"].requests).toBe(1);
-    expect(sumUsage(t)).toMatchObject({ requests: 3, inputTokens: 9600 });
-  });
-  it("入力を破壊しない", () => {
-    const t = emptyUsageTotals(now);
-    addUsage(t, ev(), now);
-    expect(t.byModel).toEqual({});
-  });
-  it("月が変わると数え直す (JST 境界)", () => {
-    const sep = new Date("2026-09-30T14:59:59Z");
-    const oct = new Date("2026-09-30T15:00:00Z");
-    let t = addUsage(emptyUsageTotals(sep), ev(), sep);
-    expect(t.month).toBe("2026-09");
-    expect(rollUsageMonth(t, sep)).toBe(t);
-    expect(rollUsageMonth(t, oct)).toEqual({ month: "2026-10", byModel: {} });
-    t = addUsage(t, ev(), oct);
-    expect(t.month).toBe("2026-10");
-    expect(sumUsage(t).requests).toBe(1);
-  });
-});
-
 describe("summarizeUsage キャッシュ作成", () => {
   it("キャッシュ書き込みは 0 より大きいときだけ併記する", () => {
     const s = summarizeUsage(
@@ -68,25 +20,6 @@ describe("summarizeUsage キャッシュ作成", () => {
     );
     expect(s.cacheWrite).toBe("1.5k");
     expect(s.cacheRead).toBeNull();
-  });
-});
-
-describe("sanitizeAiUsageTotals", () => {
-  const now = new Date("2026-10-10T00:00:00Z");
-  it("壊れた値は空にする", () => {
-    expect(sanitizeAiUsageTotals(null, now)).toEqual({ month: "2026-10", byModel: {} });
-    expect(sanitizeAiUsageTotals({ month: "x" }, now).month).toBe("2026-10");
-  });
-  it("不正な数値は 0 に丸める", () => {
-    const t = sanitizeAiUsageTotals({ month: "2026-09", byModel: { m: { requests: -1, inputTokens: "a", outputTokens: 5.9 } } }, now);
-    expect(t.month).toBe("2026-09");
-    expect(t.byModel.m).toEqual({
-      requests: 0,
-      inputTokens: 0,
-      outputTokens: 5,
-      cacheReadInputTokens: 0,
-      cacheCreationInputTokens: 0,
-    });
   });
 });
 

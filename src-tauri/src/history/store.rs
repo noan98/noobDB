@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use directories::ProjectDirs;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::Row;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::OnceCell;
 
 use super::{HistoryEntry, NewHistoryEntry};
@@ -83,6 +84,10 @@ async fn pool() -> Result<&'static SqlitePool> {
             e
         })?;
         restrict_permissions(&path);
+        // 保存済みの保持日数を取り込む (読めなければ無効のまま)。
+        if let Ok(days) = load_retention_days(&pool).await {
+            RETENTION_DAYS.store(days, Ordering::Relaxed);
+        }
         Ok(pool)
     })
     .await
@@ -112,6 +117,68 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // 履歴自体の設定 (今は保持日数だけ)。フロントの設定ストアではなくここに持つので、
+    // 履歴を書く Rust 側の全経路が同じ値を参照でき、起動直後の同期も要らない (#1539)。
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS history_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 期間ベースの保持日数 (#1539)。0 は無効 (行数上限だけが効く) で既定。
+/// `flight_recorder` の `retention_days` と同じ意味で、範囲は 0..=[`MAX_RETENTION_DAYS`]。
+/// プロセス内キャッシュで、`pool()` の初期化時に `history_settings` から読み込む。
+static RETENTION_DAYS: AtomicI64 = AtomicI64::new(0);
+
+/// 保持日数の上限 (約 10 年)。フロントの `MAX_FLIGHT_RECORDER_RETENTION_DAYS` と揃える。
+pub const MAX_RETENTION_DAYS: i64 = 3_650;
+
+const RETENTION_KEY: &str = "retention_days";
+
+async fn load_retention_days(pool: &SqlitePool) -> Result<i64> {
+    let v: Option<String> = sqlx::query_scalar("SELECT value FROM history_settings WHERE key = ?")
+        .bind(RETENTION_KEY)
+        .fetch_optional(pool)
+        .await?;
+    Ok(v.and_then(|s| s.trim().parse::<i64>().ok())
+        .map(|d| d.clamp(0, MAX_RETENTION_DAYS))
+        .unwrap_or(0))
+}
+
+/// 現在の保持日数 (0 = 無効)。
+pub async fn retention_days() -> Result<i64> {
+    pool().await?;
+    Ok(RETENTION_DAYS.load(Ordering::Relaxed))
+}
+
+/// 保持日数を保存し、すぐに期限切れの行を削除する。削除した行数を返す。
+/// 範囲外は `InvalidInput`。
+pub async fn set_retention_days(days: i64) -> Result<u64> {
+    if !(0..=MAX_RETENTION_DAYS).contains(&days) {
+        return Err(AppError::InvalidInput(format!(
+            "retention days must be between 0 and {MAX_RETENTION_DAYS}"
+        )));
+    }
+    let pool = pool().await?;
+    store_retention_days(pool, days).await?;
+    RETENTION_DAYS.store(days, Ordering::Relaxed);
+    prune_expired(pool, days).await
+}
+
+async fn store_retention_days(pool: &SqlitePool, days: i64) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO history_settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(RETENTION_KEY)
+    .bind(days.to_string())
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -127,15 +194,32 @@ pub async fn record(entry: NewHistoryEntry) -> Result<()> {
 }
 
 async fn record_in(pool: &SqlitePool, entry: NewHistoryEntry) -> Result<()> {
-    record_in_with_cap(pool, entry, MAX_HISTORY_ROWS).await
+    record_in_with_policy(
+        pool,
+        entry,
+        MAX_HISTORY_ROWS,
+        RETENTION_DAYS.load(Ordering::Relaxed),
+    )
+    .await
 }
 
 /// Same as `record_in` but with an explicit retention cap, so tests can
 /// exercise the real insert-then-evict path without inserting 10,000+ rows.
+#[cfg(test)]
 async fn record_in_with_cap(
     pool: &SqlitePool,
     entry: NewHistoryEntry,
     max_rows: i64,
+) -> Result<()> {
+    record_in_with_policy(pool, entry, max_rows, 0).await
+}
+
+/// 行数上限と保持日数の両方を指定して挿入する (テスト用に値を差し替えられる)。
+async fn record_in_with_policy(
+    pool: &SqlitePool,
+    entry: NewHistoryEntry,
+    max_rows: i64,
+    retention_days: i64,
 ) -> Result<()> {
     sqlx::query(
         "INSERT INTO query_history
@@ -156,7 +240,38 @@ async fn record_in_with_cap(
     .execute(pool)
     .await?;
     enforce_retention(pool, max_rows).await?;
+    prune_expired(pool, retention_days).await?;
     Ok(())
+}
+
+/// `retention_days` 日より古い行を削除する (0 以下は何もしない)。削除した行数を返す。
+/// 毎回の挿入で呼ばれるので、まず最古の行 (`id` 最小) が期限切れかだけを調べ、
+/// 期限切れが無ければ全件走査しない。`executed_at` は RFC3339 (`+00:00`・小数桁可変)
+/// なので、文字列比較ではなく `julianday` で時刻として比べる。解釈できない値の行は残す。
+async fn prune_expired(pool: &SqlitePool, retention_days: i64) -> Result<u64> {
+    if retention_days <= 0 {
+        return Ok(0);
+    }
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days)).to_rfc3339();
+    // 時刻として解釈できない行 (`julianday` が NULL) は飛ばして、解釈できる最古の行を見る。
+    // 先頭の壊れた行で判定が止まり、永久に削除されなくなるのを防ぐ。
+    let oldest_expired: Option<i64> = sqlx::query_scalar(
+        "SELECT julianday(executed_at) < julianday(?) FROM query_history
+          WHERE julianday(executed_at) IS NOT NULL ORDER BY id LIMIT 1",
+    )
+    .bind(&cutoff)
+    .fetch_optional(pool)
+    .await?;
+    if oldest_expired != Some(1) {
+        return Ok(0);
+    }
+    let affected =
+        sqlx::query("DELETE FROM query_history WHERE julianday(executed_at) < julianday(?)")
+            .bind(&cutoff)
+            .execute(pool)
+            .await?
+            .rows_affected();
+    Ok(affected)
 }
 
 /// Deletes the oldest rows (by `id`, i.e. insertion order) beyond `max_rows`.
@@ -780,5 +895,80 @@ mod tests {
         .unwrap();
         assert_eq!(to.len(), 1);
         assert_eq!(to[0].sql_preview, "SELECT 1");
+    }
+
+    #[tokio::test]
+    async fn retention_days_prunes_old_rows_on_insert() {
+        let pool = temp_pool().await;
+        let now = chrono::Utc::now();
+        let old = (now - chrono::Duration::days(40)).to_rfc3339();
+        let recent = (now - chrono::Duration::days(5)).to_rfc3339();
+        // 保持日数 0 (無効) の間は古い行も残る。
+        record_in_with_policy(&pool, entry("p", "old", &old), 100, 0)
+            .await
+            .unwrap();
+        record_in_with_policy(&pool, entry("p", "recent", &recent), 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_in(&pool, None, 10, None, None, None, None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        // 30 日にして挿入すると 40 日前の行だけが消える。
+        record_in_with_policy(&pool, entry("p", "new", &now.to_rfc3339()), 100, 30)
+            .await
+            .unwrap();
+        let rows = list_in(&pool, None, 10, None, None, None, None)
+            .await
+            .unwrap();
+        let sqls: Vec<_> = rows.iter().map(|r| r.sql_preview.as_str()).collect();
+        assert_eq!(sqls, vec!["new", "recent"]);
+    }
+
+    #[tokio::test]
+    async fn prune_expired_returns_deleted_count_and_keeps_unparsable_rows() {
+        let pool = temp_pool().await;
+        let now = chrono::Utc::now();
+        for (sql, at) in [
+            // 先頭が解釈できない行でも、後ろの期限切れの行は消える。
+            ("z", "garbage".to_string()),
+            ("a", (now - chrono::Duration::days(100)).to_rfc3339()),
+            ("b", (now - chrono::Duration::days(99)).to_rfc3339()),
+            ("c", "not-a-date".to_string()),
+            ("d", now.to_rfc3339()),
+        ] {
+            record_in_with_policy(&pool, entry("p", sql, &at), 100, 0)
+                .await
+                .unwrap();
+        }
+        assert_eq!(prune_expired(&pool, 0).await.unwrap(), 0, "0 は無効");
+        assert_eq!(prune_expired(&pool, 30).await.unwrap(), 2);
+        assert_eq!(
+            prune_expired(&pool, 30).await.unwrap(),
+            0,
+            "2 回目は何も消さない"
+        );
+        let left = list_in(&pool, None, 10, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(left.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn retention_setting_round_trips_through_history_settings() {
+        let pool = temp_pool().await;
+        assert_eq!(load_retention_days(&pool).await.unwrap(), 0);
+        store_retention_days(&pool, 45).await.unwrap();
+        store_retention_days(&pool, 60).await.unwrap();
+        assert_eq!(load_retention_days(&pool).await.unwrap(), 60);
+        // 範囲外の保存値は丸める。
+        store_retention_days(&pool, 999_999).await.unwrap();
+        assert_eq!(
+            load_retention_days(&pool).await.unwrap(),
+            MAX_RETENTION_DAYS
+        );
     }
 }

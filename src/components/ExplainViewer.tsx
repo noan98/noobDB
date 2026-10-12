@@ -8,6 +8,7 @@ import { Button, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Skeleton } from "./Skeleton";
+import { PlanPinControls } from "./PlanPinControls";
 import { AiExplainInterpret, type AiExplainInterpretProps } from "./AiExplainInterpret";
 import { staggerContainer, variants } from "../motion";
 import { EXPLAIN_SKELETON_ROWS, staggerPlanIds } from "./explainSkeleton";
@@ -67,8 +68,12 @@ const toolbarCss: SystemStyleObject = {
   background: "var(--bg-toolbar)",
   borderBottom: "1px solid var(--border-subtle)",
   flexShrink: 0,
+  // 並置表示 (計画の比較 #1539 / 計画ウォッチ #743) のような狭いペインで、バッジや総コストが
+  // 1 文字ずつ折り返さないよう、収まらない分は行ごと次の行へ送る。
+  flexWrap: "wrap",
 };
 const totalCostCss: SystemStyleObject = {
+  whiteSpace: "nowrap",
   fontSize: "var(--text-sm)",
   color: "var(--text-secondary)",
   fontWeight: 500,
@@ -93,6 +98,7 @@ function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
     borderRadius: "var(--radius-pill)",
     border: "1px solid",
     cursor: "default",
+    whiteSpace: "nowrap",
   };
   if (band === "high") {
     const c = semanticColorVar("danger", "solid");
@@ -131,7 +137,7 @@ const scoreBandCss: SystemStyleObject = {
   opacity: 0.85,
 };
 
-function scoreBandLabelKey(band: ScoreBand): I18nKey {
+export function scoreBandLabelKey(band: ScoreBand): I18nKey {
   if (band === "high") return "explainScoreHigh";
   if (band === "mid") return "explainScoreMid";
   return "explainScoreLow";
@@ -431,6 +437,11 @@ interface Props {
    * ときは指定しても何も描かない。計画・方言・実測フラグは ExplainViewer 自身が渡す。
    */
   ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze">;
+  /**
+   * 計画の固定と、固定した計画との比較 (#1539)。`scope` は固定の保存先 (EXPLAIN タブの id)。
+   * 未指定なら固定 / 比較の操作を出さない。
+   */
+  pin?: { scope: string; sql: string | null };
 }
 
 interface NodeRowProps {
@@ -648,10 +659,17 @@ function NodeRow({
 }
 
 /** 実測モードのトグルバー。どの表示状態 (読込中/空/エラー) でも常に出す。 */
-function AnalyzeBar({ analyze }: { analyze: NonNullable<Props["analyze"]> }) {
+function AnalyzeBar({
+  analyze,
+  pinControls,
+}: {
+  analyze?: NonNullable<Props["analyze"]>;
+  pinControls?: React.ReactNode;
+}) {
   const t = useT();
   return (
     <Box css={toolbarCss}>
+      {analyze && (
       <Tooltip
         label={t(analyze.supported ? "explainAnalyzeTooltip" : "explainAnalyzeUnsupportedTooltip")}
         focusableWrapper
@@ -666,11 +684,18 @@ function AnalyzeBar({ analyze }: { analyze: NonNullable<Props["analyze"]> }) {
           />
         </chakra.span>
       </Tooltip>
+      )}
+      {pinControls && (
+        <>
+          <Box flex="1" />
+          {pinControls}
+        </>
+      )}
     </Box>
   );
 }
 
-export function ExplainViewer({ result, driver, streaming, analyze, ai }: Props) {
+export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: Props) {
   const t = useT();
   const locale = useLocale();
   // 計画のパースはここで 1 回だけ行い、Body と AI 解釈で共有する。補助ラベルは
@@ -680,10 +705,26 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai }: Props)
   // AI 解釈に渡す計画の生テキスト。ストリーミング中は確定していないので渡さない。
   const hasAi = !!ai;
   const plan = hasAi && !streaming ? parsed.raw : null;
-  if (!analyze && !ai) return <ExplainViewerBody parsed={parsed} streaming={streaming} />;
+  if (!analyze && !ai && !pin) return <ExplainViewerBody parsed={parsed} streaming={streaming} />;
   return (
     <Box flex="1 1 auto" minHeight={0} minWidth={0} display="flex" flexDirection="column" overflow="hidden">
-      {analyze && <AnalyzeBar analyze={analyze} />}
+      {(analyze || pin) && (
+        <AnalyzeBar
+          analyze={analyze}
+          pinControls={
+            pin && (
+              <PlanPinControls
+                scope={pin.scope}
+                sql={pin.sql}
+                driver={driver}
+                result={result}
+                canPin={!streaming && parsed.root !== null}
+                analyze={!!analyze?.active && analyze.supported}
+              />
+            )
+          }
+        />
+      )}
       {ai && (
         <AiExplainInterpret
           // 別の計画 (再実行・実測切替) では状態を作り直し、実行中のストリームは中止する。

@@ -38,6 +38,8 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `has_ai_api_key`
 - `run_ai_request`
 - `test_ai_connection`
+- `get_ai_usage_history`
+- `clear_ai_usage_history`
 
 - API キーは OS keyring (`ai/anthropic_api_key`) のみ。`set_ai_api_key(key)` は `None` = 変更なし /
   `Some("")` = 削除。`has_ai_api_key` は bool だけ返し、値を返す IPC は無い。
@@ -57,6 +59,8 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   中断は既存の `cancel_stream` (`StreamKind::Ai`)。モデル・エフォートは呼び出し側から渡さず、
   `task` + `settings` (設定スナップショット) からバックエンド (`ai/models.rs`) が
   `taskModels[kind] ?? defaultModel` / `taskEfforts[kind] ?? 推奨` で解決する。
+- `get_ai_usage_history` / `clear_ai_usage_history` (#1540) は使用量台帳 (`ai_usage.json`: 日 JST × タスク × モデルのトークン数のみ。
+  キー・送信内容は含まない)。概算コストはフロント `aiModels.ts` の単価表で掛ける。
 - `test_ai_connection(settings)` は短い非ストリーミング要求。認証 / ネットワーク / API / refusal は
   戻り値の `status` で区別する。
 - エラー kind: `aiRefused` / `aiAuth` / `aiNetwork` / `aiApi` / `aiOverloaded` (429 / 529。再試行しても通らなかった一時的な混雑)。
@@ -217,6 +221,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `sandbox_table_diff`
 - `sandbox_schema_diff`
 - `sandbox_advance_base` (`diffId` + `skipKeys`, #1259)
+- `sandbox_reset_table` (#1539。1 表を base スナップショットへ戻す。行データのみ・read_only 拒否)
 
 ## プロセス管理・ユーザ / 権限 (`commands/process.rs`, `commands/privileges.rs`)
 
@@ -248,6 +253,9 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 `profile_column` (#974。NULL 率 / DISTINCT / MIN・MAX / 上位頻出値 / ヒストグラムを
 サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可)
+
+`profile_table` (#1539。表の全列の件数 / NULL 数 / DISTINCT / MIN・MAX を 1 回の走査で一括取得。
+上位値・ヒストグラムは含まず `profile_column` で列ごとに遅延取得)
 
 ## テーブル・タイムラプス (`commands/timelapse.rs`)
 
@@ -305,6 +313,8 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `clear_flight_records`
 - `preview_undo`
 - `undo_flight_record`
+- `preview_redo` (#1536。取り消し済みの記録を再適用する SQL と衝突のプレビュー)
+- `redo_flight_record` (#1536。Undo と同じ衝突検出・force・read_only ガード・履歴記録の経路で再適用し、記録を「取り消し済み」から戻す)
 
 ## ローカル横断クエリ (`commands/local.rs`)
 
@@ -338,6 +348,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `get_history_sql`
 - `list_history_sql`
 - `clear_history`
+- `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)
 - `read_logs`
 - `clear_logs`
 
@@ -364,6 +375,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `fetch_cell_bytes`
 - `probe_cell_blob`
 - `save_cell_to_file`
+- `save_cells_to_folder`
 - `read_binary_file`
 - `get_import_skipped_text`
 - `save_import_skipped_rows`
@@ -383,6 +395,11 @@ SQL を揃えている)。`fetch_cell_bytes` は主キーで 1 セルの生バ�
 `tauri::ipc::Response` で**生バイト**を返し、JS は `ArrayBuffer` で受ける (16 進や JSON 配列を
 経由しない)。`save_cell_to_file` は DB → ファイルを Rust 内で完結させる (BLOB が IPC を通らない)。
 書き戻しはフロントが `UPDATE` を組み立てて通常の `run_query` (読み取り専用ガード付き) で流す。
+`save_cells_to_folder` (#1539) は複数行の BLOB 列を主キー由来のファイル名 (`<pk>.<ext>`、複合キーは
+`-` 連結) で 1 つのフォルダへ書き出す。行ごとに probe でサイズ・種別を調べ、NULL / 16 MiB 超過は
+飛ばし、拡張子は種別 (不明は `bin`)、既存ファイルは上書きせず `_2` を付ける。1 行の失敗で止めず
+件数 (`saved` / `skippedNull` / `skippedTooLarge` / `failed`) と先頭 20 件の失敗理由を返す。
+行数上限 10,000。保存先は既存のフォルダに限る (作成しない)。
 
 `read_sql_file` (`commands/file.rs`, #1535) は SQL ファイルを**文字コード付き**で読む。`encoding`
 省略は自動判定 (BOM → UTF-8 として妥当か → Shift_JIS / EUC-JP をスコアで判別。UTF-16 は BOM または
@@ -500,3 +517,11 @@ DROP、TRUNCATE) は `classify_dangerous` (フロント `analyzeDangerousSql` �
 `run_in_transaction` / `apply_sync_sql`) は成功後にバックエンドが自動で
 invalidate するため、通常のフローでこのコマンドを呼ぶ必要はない — Schema
 Browser の更新ボタンなど、ユーザが明示的に最新化したいときのみ使う。
+
+`invalidate_table_cache` — 1 つのテーブルだけの Schema Cache を無効化する (#1539)。ALTER /
+CREATE INDEX の適用後など対象が分かるとき、接続全体の `refresh_schema_cache` の代わりに呼ぶ。
+バックエンド側でも `run_query_transaction` / `run_query` が、単一テーブルだけに効く単純な DDL
+(`db::schema_scope`) ならこのテーブル単位の無効化に切り替える (解析できない DDL は従来どおり全体)。
+
+`schema_cache_times` — テーブル一覧をキャッシュした DB ごとの取得時刻 (epoch ミリ秒)。ツリーの
+「キャッシュ取得 HH:MM」表示用。内容は返さず時刻だけ。

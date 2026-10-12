@@ -24,6 +24,7 @@ use crate::ai::client::{
 use crate::ai::models::{resolve_effort, resolve_model, AiSettingsSnapshot, AiTaskKind};
 use crate::ai::request::{AiChatMessage, AiChatRole, AiRequestSpec, DEFAULT_MAX_TOKENS};
 use crate::ai::sse::AiUsage;
+use crate::ai::usage::{self, AiUsageRecord};
 use crate::error::{AppError, Result};
 use crate::profiles::secrets;
 use crate::state::{AppState, StreamHandle, StreamKind};
@@ -245,6 +246,19 @@ pub async fn has_ai_api_key() -> Result<bool> {
     Ok(secrets::has_ai_api_key())
 }
 
+/// AI 使用量の台帳 (日 × タスク × モデルのトークン数、#1540) を返す。数値のみで、
+/// API キーや送信内容は含まれない。概算コストはフロントが単価表で計算する。
+#[tauri::command]
+pub async fn get_ai_usage_history() -> Result<Vec<AiUsageRecord>> {
+    usage::load_all().await
+}
+
+/// AI 使用量の台帳を空にする。
+#[tauri::command]
+pub async fn clear_ai_usage_history() -> Result<()> {
+    usage::clear().await
+}
+
 /// AI へのストリーミング要求。結果は `ai-stream:*` イベントで届く。
 // Tauri コマンドの引数は IPC の形そのもの (app/state は注入) で、まとめると呼び出し側の契約が変わるため許容する。
 #[allow(clippy::too_many_arguments)]
@@ -330,13 +344,18 @@ pub async fn run_ai_request(
         )
         .await;
         let message = match result {
-            Ok(done) => AiStreamMessage::Done {
-                model: done.model,
-                requested_model: done.requested_model,
-                fallback_used: done.fallback_used,
-                stop_reason: done.stop_reason,
-                usage: done.usage,
-            },
+            Ok(done) => {
+                // 使用量台帳 (#1540): 数値のみ。中断 / エラーは使用量が確定しないので記録しない。
+                // 完了通知より先に台帳へ入ったことを保証する (画面の再読み込みが空振りしない)。
+                let _ = usage::record(task, &done.model, &done.usage).await;
+                AiStreamMessage::Done {
+                    model: done.model,
+                    requested_model: done.requested_model,
+                    fallback_used: done.fallback_used,
+                    stop_reason: done.stop_reason,
+                    usage: done.usage,
+                }
+            }
             Err(e) => {
                 tracing::warn!(stream_id = %task_stream_id, kind = e.kind(), "ai request failed");
                 AiStreamMessage::Error {
@@ -397,7 +416,13 @@ pub async fn test_ai_connection(settings: AiSettingsSnapshot) -> Result<AiConnec
         )
         .await
         {
-            Ok(r) => r,
+            Ok(r) => {
+                if let Ok(done) = &r {
+                    let _ =
+                        usage::record(AiTaskKind::ConnectionTest, &done.model, &done.usage).await;
+                }
+                r
+            }
             Err(_) => Err(AppError::AiNetwork(format!(
                 "no response within {TEST_TIMEOUT_SECS}s"
             ))),

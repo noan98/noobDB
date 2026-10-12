@@ -46,6 +46,12 @@
     側も変化した」という偽の競合として出続けます (`allow_delete` を
     `generate_data_sync_sql` と揃え、実際に削除されなかった `TargetOnly` 行の base は
     残す)。
+  - `sandbox_reset_table` (#1539): 1 表だけを base (shadow) の内容へ戻す。1 トランザクションで
+    ライブ表を全行 DELETE → shadow から `INSERT ... SELECT` (共通列・生成列除外)。戻すのは
+    **行データだけ**でスキーマ変更の取り消しは対象外。戻り先は「最後に書き戻した時点」
+    (`sandbox_advance_base` で base が進むため)。サンドボックスの表は FK 制約を持たないので
+    他の表へ波及しない。`sandbox_advance_base` と同じく read_only 拒否・セッション検証あり。
+    UI は `SandboxReviewModal` の表ごとのカードに「この表をリセット」(確認ダイアログつき)。
   - 適用そのものは新規コマンドを作らず、既存の `apply_sync_sql` をそのまま使います
     (read_only セッション拒否・トランザクション適用などの安全網もそのまま効きます)。
   - **`sandbox_session_id` を受け取るコマンドは、そのセッションが本当にその

@@ -341,6 +341,49 @@ pub fn build_undo_plan(
     }
 }
 
+/// Redo (#1536) 用に、取り消し済みの記録を「その取り消しをさらに取り消す」向きへ反転する。
+/// Undo の `INSERT` は `DELETE` を、`DELETE` は `INSERT` を、`UPDATE` は逆向きの
+/// `UPDATE` を作る。Redo は元の書き込みの再適用なので、`INSERT` ⇔ `DELETE` を入れ替え、
+/// before / after を入れ替えた記録に対して同じ [`build_undo_plan`] を使えばよい
+/// (衝突検出・`force` の扱いも Undo と同一になり、新しい SQL 生成は要らない)。
+///
+/// | 元の書き込み | 反転後の記録 | Redo が流す文 |
+/// |---|---|---|
+/// | `INSERT` | `DELETE` (before = 元の after) | `INSERT` |
+/// | `DELETE` | `INSERT` (after = 元の before) | `DELETE` |
+/// | `UPDATE` | `UPDATE` (before ⇔ after) | 元の after への `UPDATE` |
+pub fn invert_for_redo(record: &WriteCaptureRecord) -> WriteCaptureRecord {
+    let mut inverted = record.clone();
+    match record.kind {
+        WriteKind::Insert => {
+            inverted.kind = WriteKind::Delete;
+            inverted.before_rows = record.after_rows.clone();
+            inverted.after_rows = Vec::new();
+        }
+        WriteKind::Delete => {
+            inverted.kind = WriteKind::Insert;
+            inverted.before_rows = Vec::new();
+            inverted.after_rows = record.before_rows.clone();
+        }
+        WriteKind::Update => {
+            inverted.before_rows = record.after_rows.clone();
+            inverted.after_rows = record.before_rows.clone();
+        }
+        WriteKind::Other => {}
+    }
+    inverted
+}
+
+/// 取り消し済みの記録を再適用する Redo の計画 (#1536)。`current_rows` は
+/// [`invert_for_redo`] した記録の主キーで取り直したライブ行。
+pub fn build_redo_plan(
+    record: &WriteCaptureRecord,
+    current_rows: &[Vec<Value>],
+    force: bool,
+) -> UndoPlan {
+    build_undo_plan(&invert_for_redo(record), current_rows, force)
+}
+
 /// Non-key column names whose values differ between `before` and `after`, in
 /// `columns` order. Mirrors `db::data_diff`'s private helper of the same
 /// purpose; `generate_data_sync_sql` needs this list on the `Different`
@@ -389,6 +432,65 @@ mod tests {
 
     fn row(id: i64, name: &str) -> Vec<Value> {
         vec![Value::Int(id), Value::String(name.to_string())]
+    }
+
+    #[test]
+    fn redo_of_insert_reinserts_the_row_when_it_is_absent() {
+        let mut r = record(WriteKind::Insert);
+        r.undone = true;
+        r.after_rows = vec![row(1, "alice")];
+        let plan = build_redo_plan(&r, &[], false);
+        assert!(plan.conflicts.is_empty());
+        assert_eq!(plan.statements.len(), 1);
+        assert!(plan.statements[0].starts_with("INSERT INTO \"users\""));
+    }
+
+    #[test]
+    fn redo_of_insert_conflicts_when_a_row_occupies_the_key() {
+        let mut r = record(WriteKind::Insert);
+        r.undone = true;
+        r.after_rows = vec![row(1, "alice")];
+        let plan = build_redo_plan(&r, &[row(1, "other")], false);
+        assert_eq!(plan.conflicts.len(), 1);
+        assert!(plan.statements.is_empty());
+        let forced = build_redo_plan(&r, &[row(1, "other")], true);
+        assert_eq!(forced.statements.len(), 1);
+    }
+
+    #[test]
+    fn redo_of_delete_deletes_the_restored_row() {
+        let mut r = record(WriteKind::Delete);
+        r.undone = true;
+        r.before_rows = vec![row(2, "bob")];
+        let plan = build_redo_plan(&r, &[row(2, "bob")], false);
+        assert!(plan.conflicts.is_empty());
+        assert_eq!(
+            plan.statements,
+            vec![r#"DELETE FROM "users" WHERE "id" = 2"#]
+        );
+        // 既に消えているなら何もしない。
+        assert!(build_redo_plan(&r, &[], false).statements.is_empty());
+    }
+
+    #[test]
+    fn redo_of_update_reapplies_the_after_values() {
+        let mut r = record(WriteKind::Update);
+        r.undone = true;
+        r.before_rows = vec![row(1, "alice")];
+        r.after_rows = vec![row(1, "alice2")];
+        // Undo 後なので、ライブ行は before の値。
+        let plan = build_redo_plan(&r, &[row(1, "alice")], false);
+        assert!(plan.conflicts.is_empty());
+        assert_eq!(plan.statements.len(), 1);
+        assert!(
+            plan.statements[0].contains("alice2"),
+            "{:?}",
+            plan.statements
+        );
+        // Undo 後に別の値へ変わっていたら衝突。
+        let plan = build_redo_plan(&r, &[row(1, "zzz")], false);
+        assert_eq!(plan.conflicts.len(), 1);
+        assert!(plan.statements.is_empty());
     }
 
     #[test]

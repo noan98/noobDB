@@ -40,23 +40,23 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage, BatchStatementResult,
-    BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport, BroadcastMessage,
-    CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff, ColumnProfile,
-    ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff, DiffMode,
-    DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent, ExportDoneEvent,
-    ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding, HistoryEntry,
-    ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult, ImportStartedEvent,
-    IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun, PreviewStreamMessage,
-    ProcessListItem, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags,
-    QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature,
-    RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
-    ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
-    ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule,
-    Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
-    StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
-    TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    TaskRunProgressEvent, Value,
+    AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage, AiUsageRecord,
+    BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport,
+    BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff,
+    ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff,
+    DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
+    ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
+    HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
+    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
+    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
+    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
+    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
+    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
+    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
+    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
+    StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
+    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -254,6 +254,39 @@ fn build_fixtures() -> serde_json::Value {
         }],
         notes: vec!["approx_distinct_no_stats".into()],
     };
+    // 全列の概要 (#1539)。`distinct_count` の Some / None と lossless 文字列の両方を出す。
+    let table_profile_overview = t::TableProfileOverview {
+        table: "orders".into(),
+        total_count: Value::UInt(100),
+        columns: vec![
+            t::ColumnOverview {
+                column: "id".into(),
+                data_type: "bigint".into(),
+                non_null_count: Value::UInt(100),
+                null_count: Value::UInt(0),
+                distinct_count: Some(Value::String("9007199254740993".into())),
+                min_value: Value::Int(1),
+                max_value: Value::String("9007199254740993".into()),
+                notes: vec![],
+            },
+            t::ColumnOverview {
+                column: "payload".into(),
+                data_type: "longblob".into(),
+                non_null_count: Value::UInt(40),
+                null_count: Value::UInt(60),
+                distinct_count: None,
+                min_value: Value::Null,
+                max_value: Value::Null,
+                notes: vec!["overview_skipped_type".into()],
+            },
+        ],
+        scans: 1,
+    };
+    let schema_cache_time = t::SchemaCacheTime {
+        database: "appdb".into(),
+        fetched_at_ms: 1_760_000_000_000,
+    };
+    let sandbox_reset_result = t::SandboxResetResult { restored_rows: 3 };
     let server_metrics = ServerMetrics {
         connections: Some(42),
         active: Some(3),
@@ -285,6 +318,12 @@ fn build_fixtures() -> serde_json::Value {
         tables_analyzed: 3,
         findings: vec![health_finding.clone()],
         skipped: vec![skipped_rule.clone()],
+        table_plans: vec![TableFixPlan {
+            table: "orders".into(),
+            change_count: 2,
+            ddl: "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);".into(),
+            ddl_online: Some("ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;".into()),
+        }],
     };
 
     // --- #824: 未収載だった主要レスポンス/永続化型 ---------------------------
@@ -413,6 +452,17 @@ fn build_fixtures() -> serde_json::Value {
         message: "ok".into(),
         model: Some("claude-opus-5-5".into()),
         elapsed_ms: 812,
+    };
+
+    let ai_usage_record = AiUsageRecord {
+        day: "2026-10-12".into(),
+        task: "nl2sql".into(),
+        model: "claude-opus-5-5".into(),
+        calls: 3,
+        input_tokens: 1200,
+        output_tokens: 340,
+        cache_read_input_tokens: 800,
+        cache_creation_input_tokens: 50,
     };
 
     // --- #1534: AI ストリーム (Channel) とタスク進捗 ---
@@ -822,6 +872,18 @@ fn build_fixtures() -> serde_json::Value {
         image: true,
     };
 
+    let blob_folder_save_result = t::BlobFolderSaveResult {
+        saved: 3,
+        total_bytes: 4096,
+        skipped_null: 1,
+        skipped_too_large: 2,
+        failed: 1,
+        errors: vec![t::BlobFolderIssue {
+            row: 4,
+            error: "expected exactly one row for the key, got 0".into(),
+        }],
+    };
+
     // #1256: エディタのバッチ実行 (`run_sql_batch`) の Channel メッセージ。
     // 結果 1 文ぶんは SELECT (列 + 行) とエラーの 2 形を載せ、省略フィールド
     // (`skip_serializing_if`) のキーも固定する。
@@ -915,6 +977,17 @@ fn build_fixtures() -> serde_json::Value {
                     reason: "performance_schema_off".into(),
                 })
                 .collect(),
+            // SQLite ではオンライン版が無い (None) 形も通す。
+            table_plans: vec![TableFixPlan {
+                table: "orders".into(),
+                change_count: 3,
+                ddl: "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");".into(),
+                ddl_online: if *driver == DriverKind::Sqlite {
+                    None
+                } else {
+                    Some("DROP INDEX CONCURRENTLY \"a\";".into())
+                },
+            }],
         })
         .collect();
 
@@ -1670,6 +1743,9 @@ fn build_fixtures() -> serde_json::Value {
         "liveQuery": live_query,
         "statementDeltaRow": statement_delta_row,
         "columnProfile": column_profile,
+        "tableProfileOverview": table_profile_overview,
+        "schemaCacheTime": schema_cache_time,
+        "sandboxResetResult": sandbox_reset_result,
         "healthFinding": health_finding,
         "skippedRule": skipped_rule,
         "schemaHealthReport": schema_health_report,
@@ -1683,6 +1759,7 @@ fn build_fixtures() -> serde_json::Value {
         "profileImportResult": profile_import_result,
         "cancelStreamResponse": cancel_stream_response,
         "aiConnectionTestResult": ai_connection_test_result,
+        "aiUsageRecord": ai_usage_record,
         "aiStreamDeltaMessage": ai_stream_delta_message,
         "aiStreamRetryingMessage": ai_stream_retrying_message,
         "aiStreamDoneMessage": ai_stream_done_message,
@@ -1726,6 +1803,7 @@ fn build_fixtures() -> serde_json::Value {
         "importProgressEvent": import_progress_event,
         "importDoneEvent": import_done_event,
         "cellBlobProbe": cell_blob_probe,
+        "blobFolderSaveResult": blob_folder_save_result,
         "transferPreview": transfer_preview,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,

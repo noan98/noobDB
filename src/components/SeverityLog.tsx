@@ -24,6 +24,8 @@ import {
 } from "../activityLog";
 import { ActivityDetailView } from "./ActivityDetailView";
 import { clearMessages, useMessageLog } from "../messageLog";
+import { activityToMarkdown, activityToText, type ActivityExportLabels } from "../activityExport";
+import { TextExportButton } from "./TextExportButton";
 
 /**
  * 重大度付きログ (アクティビティ / メッセージ) の一覧 UI (#1114)。
@@ -270,9 +272,12 @@ function SeverityLogPanel({
   emptyTitle,
   emptyDescription,
   listAria,
+  exportable,
 }: {
   entries: readonly MergedLogEntry[];
   onClear: () => void;
+  /** true なら表示中の行を Markdown / テキストで書き出すボタンを出す (#1539)。 */
+  exportable?: boolean;
   emptyTitle: string;
   emptyDescription: string;
   listAria: string;
@@ -281,12 +286,35 @@ function SeverityLogPanel({
   const [severity, setSeverity] = useState<ActivitySeverity | null>(null);
   const counts = useMemo(() => countBySeverity(entries), [entries]);
   const shown = useMemo(() => filterActivity(entries, severity), [entries, severity]);
+  const exportLabels = (): ActivityExportLabels => ({
+    time: t("activityExportColTime"),
+    severity: t("activityExportColSeverity"),
+    message: t("activityExportColMessage"),
+    severities: {
+      success: t(SEVERITY_LABEL.success),
+      warning: t(SEVERITY_LABEL.warning),
+      error: t(SEVERITY_LABEL.error),
+      info: t(SEVERITY_LABEL.info),
+    },
+  });
   return (
     <Flex direction="column" h="100%" minH={0}>
       <LogToolbar
         filterAria={t("activityFilterAria")}
         onClear={onClear}
         clearDisabled={entries.length === 0}
+        extra={
+          exportable ? (
+            <TextExportButton
+              filenameBase="noobdb-activity"
+              disabled={shown.length === 0}
+              formats={[
+                { id: "markdown", label: "Markdown", build: () => activityToMarkdown(shown, exportLabels()) },
+                { id: "text", label: t("activityExportText"), build: () => activityToText(shown, exportLabels()) },
+              ]}
+            />
+          ) : undefined
+        }
         filters={
           <>
             <FilterChip
@@ -356,6 +384,7 @@ export function ActivityLogPanel() {
       emptyTitle={t("activityEmptyTitle")}
       emptyDescription={t("activityPanelEmpty")}
       listAria={t("activityListAria")}
+      exportable
     />
   );
 }
