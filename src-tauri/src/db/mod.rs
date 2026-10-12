@@ -233,8 +233,9 @@ pub const DEFAULT_CAPTURE_ROW_CAP: usize = 10_000;
 /// blocks the write itself, since this is a best-effort safety net layered on
 /// top of the existing read-only guard, not a transactional guarantee.
 /// [`Connection::capture_prepare`] の結果。`Decline` は記録を辞退する (書き込み自体は
-/// [`Connection::capture_finish`] が 1 回だけ実行する)。`Ready` は dry-run で対象行を
-/// 特定できた状態で、本実行後に before/after を組み立てる材料を持つ。
+/// [`Connection::capture_finish`] が 1 回だけ実行する)。`Ready` は事前チェックを通った
+/// 状態で、`capture_finish` が 1 つのトランザクションで「対象行の取得 → 文の実行 →
+/// after 取得 → COMMIT」を行う (#1536)。
 #[derive(Debug)]
 pub enum CapturePrep {
     Decline(WriteCapture),
@@ -244,12 +245,7 @@ pub enum CapturePrep {
 #[derive(Debug)]
 pub struct ReadyCapture {
     kind: WriteKind,
-    dry: PreviewResult,
-    table: Option<String>,
-    primary_key: Vec<String>,
-    columns: Vec<String>,
-    column_types: Vec<String>,
-    pk_idx: Vec<usize>,
+    row_cap: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -303,46 +299,6 @@ impl WriteCapture {
             rows_affected: 0,
         }
     }
-}
-
-/// INSERT の捕捉で、dry-run が見た新規行 (`dry`) と、本実行後に同じ主キーで
-/// 取り直した実在行 (`live`) を突き合わせる。`live` に実在した行だけを
-/// `dry` の順で返す (実在しない = 自動採番がずれた行は落とす)。値は `live`
-/// (実際にコミットされた内容) を採用する — `NOW()` や DEFAULT 式は dry-run と
-/// 本実行で値が変わりうるため。列数が合わない行は信用せず `dry` を落とす。
-fn reconcile_inserted_rows(
-    dry: &[Vec<Value>],
-    live: Vec<Vec<Value>>,
-    columns: &[String],
-    pk_idx: &[usize],
-) -> Vec<Vec<Value>> {
-    let sig_of = |row: &[Value]| -> Option<String> {
-        if row.len() != columns.len() {
-            return None;
-        }
-        // dry-run (ドライバ別のセル復号) と取り直し (汎用の実行経路) で整数が
-        // Int / UInt / String のどれで返るかが揺れうるので、数値・文字列は
-        // 表記で比べる。
-        Some(
-            pk_idx
-                .iter()
-                .map(|&i| match &row[i] {
-                    Value::Int(n) => n.to_string(),
-                    Value::UInt(n) => n.to_string(),
-                    Value::String(s) => s.clone(),
-                    other => format!("{other:?}"),
-                })
-                .collect::<Vec<_>>()
-                .join("\u{1f}"),
-        )
-    };
-    let live_by_pk: std::collections::HashMap<String, Vec<Value>> = live
-        .into_iter()
-        .filter_map(|r| sig_of(&r).map(|s| (s, r)))
-        .collect();
-    dry.iter()
-        .filter_map(|d| sig_of(d).and_then(|s| live_by_pk.get(&s).cloned()))
-        .collect()
 }
 
 /// Tagged signature of a row's values, used to tell whether the same physical
@@ -546,6 +502,31 @@ impl Connection {
             Connection::MySql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Postgres(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Sqlite(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
+        }
+    }
+
+    /// 書き込みキャプチャ (#1536) 用の単一トランザクション実行。対象行の取得 → 文の実行 →
+    /// 同一トランザクション内での after 取得 → **COMMIT** を 1 トランザクションで行い、文は
+    /// ちょうど 1 回だけ実行される。`preview_execute_with_limit` と違いロールバックしない。
+    async fn execute_committing_snapshot(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+    ) -> Result<(PreviewResult, QueryResult)> {
+        match self {
+            Connection::MySql(c) => {
+                c.execute_committing_snapshot(sql, database, row_limit)
+                    .await
+            }
+            Connection::Postgres(c) => {
+                c.execute_committing_snapshot(sql, database, row_limit)
+                    .await
+            }
+            Connection::Sqlite(c) => {
+                c.execute_committing_snapshot(sql, database, row_limit)
+                    .await
+            }
         }
     }
 
@@ -1433,38 +1414,20 @@ impl Connection {
     /// reversible before/after image of the rows it touches (#735 DML flight
     /// recorder / one-click undo).
     ///
-    /// Implemented once here (not per-driver) on top of the existing dry-run
-    /// preview ([`Connection::preview_execute_with_limit`], which runs the
-    /// statement in a transaction that is always rolled back) instead of
-    /// duplicating its WHERE/target-table/PK extraction — the real write
-    /// afterwards goes through the ordinary [`Connection::execute`] path.
+    /// **単一トランザクション (#1536)**: 対象行の取得 (MySQL / PostgreSQL は `FOR UPDATE` で
+    /// 行ロック) → 文の実行 → 同じトランザクション内での after 取得 → COMMIT を 1 本で
+    /// 行う。以前は dry-run (ロールバック) と本実行で文を 2 回走らせており、トリガや
+    /// 非トランザクショナルな副作用の二重化・スナップショットのずれ・自動採番の取り違えが
+    /// あった。いまは文を実行するのは 1 回だけで、after-image は書き込んだ本人のトランザクション
+    /// から読むため、`NOW()` / `RANDOM()` / 採番値も実際にコミットされた値になる。
     ///
-    /// **The dry run's before/after snapshot is not trusted verbatim**: only
-    /// MySQL/PostgreSQL's preview narrows it to the statement's own `WHERE`
-    /// clause; SQLite's simpler implementation always re-scans the first
-    /// `row_cap` rows of the table by primary-key order for *both* snapshots,
-    /// regardless of `WHERE`. Rather than special-casing a driver, this method
-    /// re-derives which rows the statement *actually* touched by pairing
-    /// before/after on primary key and keeping only the pairs that changed
-    /// (`UPDATE`) or that appear on only one side (`INSERT`/`DELETE`) —
-    /// harmless no-ops on drivers that already narrowed the snapshot, and the
-    /// fix that makes this correct on SQLite. The result is then cross-checked
-    /// against the real write's authoritative `rows_affected`; any mismatch
-    /// (a row hid outside the `row_cap` window, an ambiguous shape) declines
-    /// capture rather than risk recording the wrong rows.
+    /// SQLite のスナップショットは `WHERE` に絞らず PK 順の先頭 `row_cap` 行の窓なので、
+    /// 前後を PK で突き合わせて「実際に変わった行」だけを残し、権威ある `rows_affected` と
+    /// 照合する。食い違えば (窓の外の行・曖昧な形) 記録を辞退する。INSERT は PK 降順の
+    /// 末尾窓で前後を撮り、後にだけ現れた PK を新規行とする。
     ///
-    /// **Known limitation (documented, not a bug):** because the snapshot
-    /// comes from a *separate* dry run rather than the same transaction as the
-    /// real write, there is a small window between the two in which another
-    /// client could change the same rows — the captured "after" image would
-    /// then not exactly match what the real write actually produced. This is
-    /// acceptable for a best-effort safety net (the far larger and more likely
-    /// drift window is between capture time and whenever the user chooses to
-    /// undo, which the undo path's conflict check is designed to catch
-    /// regardless). Capture failing for any reason (unresolvable target/PK,
-    /// ambiguous row identification, a malformed statement that only reveals
-    /// itself here) never blocks the write — it always still executes, just
-    /// uncaptured.
+    /// 記録に失敗しても (対象/主キー不明・行数超過・曖昧な行特定) 書き込みは必ず 1 回
+    /// 実行される。PK なし表などは従来どおり「記録なしで実行」にフォールバックする。
     pub async fn capture_write(
         &self,
         sql: &str,
@@ -1475,9 +1438,9 @@ impl Connection {
         self.capture_finish(prep, sql, database).await
     }
 
-    /// [`Connection::capture_write`] の前半: 書き込みを一切実行せず (件数見積もりと
-    /// dry-run のみ)、記録できるか判定する。キャンセル/タイムアウトで打ち切られても
-    /// 副作用が残らないので、呼び出し側はここだけをタイムアウト配下に置ける (#1530)。
+    /// [`Connection::capture_write`] の前半: 書き込みを一切実行せず (件数見積もりのみ)、
+    /// 記録を試みてよいか判定する。キャンセル/タイムアウトで打ち切られても副作用が
+    /// 残らないので、呼び出し側はここだけをタイムアウト配下に置ける (#1530)。
     pub async fn capture_prepare(
         &self,
         sql: &str,
@@ -1492,8 +1455,9 @@ impl Connection {
             )));
         }
 
-        // 非トランザクショナル表 (MyISAM 等) では dry-run の変更が ROLLBACK で戻らず、
-        // 本実行と二重に書き込んでしまう。捕捉は辞退し、書き込みだけを 1 回実行する。
+        // 非トランザクショナル表 (MyISAM 等) では、トランザクションで包んでも ROLLBACK 時の
+        // 保証がなく、スナップショットの一貫性も得られない。捕捉は辞退し、書き込みだけを
+        // 1 回実行する。
         if let Connection::MySql(c) = self {
             if c.write_target_is_non_transactional(database, sql).await {
                 return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
@@ -1505,10 +1469,9 @@ impl Connection {
 
         let row_cap = row_cap.max(1);
 
-        // 対象行数が記録の上限を超えるなら、どのみち下で「対象行を特定できない」と
-        // 辞退する。dry-run で文を丸ごと 1 回余計に実行する (時間・ロック保持・
-        // undo/WAL 負荷が約 2 倍) 前に、上限 + 1 件で打ち切る件数見積もりで先に判定する。
-        // 見積もれない文 (複雑な WHERE・多テーブル等) は従来どおり dry-run へ進む (#1530)。
+        // 対象行数が記録の上限を超えるなら、どのみち後で「対象行を特定できない」と辞退する。
+        // 行ロックとスナップショットを取る前に、上限 + 1 件で打ち切る件数見積もりで先に判定
+        // する。見積もれない文 (複雑な WHERE・多テーブル等) は従来どおり進む (#1530)。
         if self
             .write_exceeds_capture_cap(sql, database, kind, row_cap)
             .await
@@ -1519,36 +1482,57 @@ impl Connection {
             )));
         }
 
-        let dry = match self
-            .preview_execute_with_limit(sql, database, row_cap)
+        Ok(CapturePrep::Ready(Box::new(ReadyCapture { kind, row_cap })))
+    }
+
+    /// [`Connection::capture_write`] の後半: 単一トランザクションでの本実行と after-image
+    /// の取得。書き込みが実行された時点以降は途中で打ち切ってはならない (書き込み済みなのに
+    /// 失敗扱いになる) ので、呼び出し側はタイムアウト/キャンセルの外で実行する。
+    /// 行の特定などの失敗は記録を辞退するだけで、`Ok` を返す。
+    pub async fn capture_finish(
+        &self,
+        prep: CapturePrep,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<(QueryResult, WriteCapture)> {
+        let ready = match prep {
+            CapturePrep::Decline(capture) => {
+                let result = self.execute(sql, database).await?;
+                return Ok((result, capture));
+            }
+            CapturePrep::Ready(r) => *r,
+        };
+        let ReadyCapture { kind, row_cap } = ready;
+
+        let (dry, result) = match self
+            .execute_committing_snapshot(sql, database, row_cap)
             .await
         {
-            Ok(d) => d,
-            Err(_) => {
-                return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
-                    kind,
-                    "対象テーブル/主キーを特定できませんでした",
-                )));
+            Ok(pair) => pair,
+            // トランザクションを開く前に弾かれた (複数文など) 場合は何も実行されていない。
+            // 記録を辞退して通常経路で 1 回実行する。
+            Err(AppError::InvalidInput(_)) => {
+                let result = self.execute(sql, database).await?;
+                return Ok((
+                    result,
+                    WriteCapture::not_capturable(kind, "対象テーブル/主キーを特定できませんでした"),
+                ));
             }
+            Err(e) => return Err(e),
+        };
+
+        let decline = |reason: &str| -> Result<(QueryResult, WriteCapture)> {
+            Ok((
+                result.clone(),
+                WriteCapture::not_capturable_with_meta(kind, reason, &dry),
+            ))
         };
 
         if dry.target_table.is_none() {
-            return Ok(CapturePrep::Decline(
-                WriteCapture::not_capturable_with_meta(
-                    kind,
-                    "対象テーブルを特定できませんでした (複雑な JOIN 等)",
-                    &dry,
-                ),
-            ));
+            return decline("対象テーブルを特定できませんでした (複雑な JOIN 等)");
         }
         if dry.primary_key.is_empty() {
-            return Ok(CapturePrep::Decline(
-                WriteCapture::not_capturable_with_meta(
-                    kind,
-                    "対象テーブルに主キーがありません",
-                    &dry,
-                ),
-            ));
+            return decline("対象テーブルに主キーがありません");
         }
 
         let columns: Vec<String> = dry.columns.iter().map(|c| c.name.clone()).collect();
@@ -1560,13 +1544,7 @@ impl Connection {
             .filter_map(|name| columns.iter().position(|c| c == name))
             .collect();
         if pk_idx.len() != primary_key.len() {
-            return Ok(CapturePrep::Decline(
-                WriteCapture::not_capturable_with_meta(
-                    kind,
-                    "主キー列を特定できませんでした",
-                    &dry,
-                ),
-            ));
+            return decline("主キー列を特定できませんでした");
         }
         // 重複した主キーシグネチャの防御 (#735 レビュー対応): SQLite は
         // INTEGER PRIMARY KEY 以外の主キーに NULL を許すため、複数の行が同じ
@@ -1576,7 +1554,7 @@ impl Connection {
         // after 値を誤って紐付けかねない。DELETE/INSERT 側も HashSet の
         // 有無判定だけで多重度を見ないため、同様に誤判定しうる。before/after
         // いずれかで重複が見つかったら、正確に特定できないとして記録を辞退する
-        // (書き込み自体は必ず実行する)。
+        // (書き込み自体は必ず実行済み)。
         fn has_duplicate_pk_signature(rows: &[Vec<Value>], pk_idx: &[usize]) -> bool {
             let mut seen = std::collections::HashSet::with_capacity(rows.len());
             for row in rows {
@@ -1591,52 +1569,9 @@ impl Connection {
         if has_duplicate_pk_signature(&dry.before_rows, &pk_idx)
             || has_duplicate_pk_signature(&dry.after_rows, &pk_idx)
         {
-            return Ok(CapturePrep::Decline(
-                WriteCapture::not_capturable_with_meta(
-                    kind,
-                    "主キーが重複しており対象行を正確に特定できませんでした",
-                    &dry,
-                ),
-            ));
+            return decline("主キーが重複しており対象行を正確に特定できませんでした");
         }
 
-        Ok(CapturePrep::Ready(Box::new(ReadyCapture {
-            kind,
-            dry,
-            table,
-            primary_key,
-            columns,
-            column_types,
-            pk_idx,
-        })))
-    }
-
-    /// [`Connection::capture_write`] の後半: 本実行と、その後の after-image 取り直し。
-    /// 書き込みが実行された時点以降は途中で打ち切ってはならない (書き込み済みなのに
-    /// 失敗扱いになる) ので、呼び出し側はタイムアウト/キャンセルの外で実行する。
-    /// 取り直しなどの失敗は記録を辞退するだけで、`Ok` を返す。
-    pub async fn capture_finish(
-        &self,
-        prep: CapturePrep,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<(QueryResult, WriteCapture)> {
-        let ready = match prep {
-            CapturePrep::Decline(capture) => {
-                let result = self.execute(sql, database).await?;
-                return Ok((result, capture));
-            }
-            CapturePrep::Ready(r) => *r,
-        };
-        let ReadyCapture {
-            kind,
-            dry,
-            table,
-            primary_key,
-            columns,
-            column_types,
-            pk_idx,
-        } = ready;
         let pk_of =
             |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
         let ambiguous_reason =
@@ -1644,6 +1579,18 @@ impl Connection {
 
         match kind {
             WriteKind::Update => {
+                // 主キーを実行ごとに変わる関数 (RANDOM() など) で書き換える文は、前後の行を
+                // 主キーで対応付けられないので記録しない。
+                let flavor = sql_flavor_of(self.driver_kind());
+                if preview::update_set_segment(sql, flavor)
+                    .is_some_and(|seg| contains_nondeterministic_function(self.driver_kind(), &seg))
+                    && preview::update_assigns_primary_key(sql, flavor, &primary_key)
+                {
+                    return decline(
+                        "実行ごとに値が変わる関数で主キーを書き換えるため記録できません",
+                    );
+                }
+
                 let after_by_key: std::collections::HashMap<String, Vec<Value>> = dry
                     .after_rows
                     .iter()
@@ -1660,70 +1607,8 @@ impl Connection {
                     }
                 }
 
-                // SET 句に NOW() / RANDOM() / UUID() など実行ごとに値が変わる関数があると、
-                // dry-run の after-image は本実行の値とずれる (Undo の競合検出で止まる)。
-                // 主キーを書き換えないなら before-image は dry-run のまま使い、after-image は
-                // 本実行の後に主キーで取り直す。主キーごと非決定的に書き換える文は記録を辞退する。
-                let flavor = sql_flavor_of(self.driver_kind());
-                let set_nondeterministic =
-                    preview::update_set_segment(sql, flavor).is_some_and(|seg| {
-                        contains_nondeterministic_function(self.driver_kind(), &seg)
-                    });
-                if set_nondeterministic
-                    && preview::update_assigns_primary_key(sql, flavor, &primary_key)
-                {
-                    let result = self.execute(sql, database).await?;
-                    return Ok((
-                        result,
-                        WriteCapture::not_capturable_with_meta(
-                            kind,
-                            "実行ごとに値が変わる関数で主キーを書き換えるため記録できません",
-                            &dry,
-                        ),
-                    ));
-                }
-
-                let result = self.execute(sql, database).await?;
-
                 if before_changed.len() as u64 != result.rows_affected {
-                    return Ok((
-                        result,
-                        WriteCapture::not_capturable_with_meta(kind, ambiguous_reason, &dry),
-                    ));
-                }
-
-                if set_nondeterministic {
-                    let pks: Vec<Vec<Value>> = before_changed.iter().map(|r| pk_of(r)).collect();
-                    let live = self
-                        .fetch_rows_by_pk(
-                            table.as_deref().unwrap_or_default(),
-                            &primary_key,
-                            &pks,
-                            database,
-                        )
-                        .await
-                        .unwrap_or_default();
-                    let live_by_key: std::collections::HashMap<String, Vec<Value>> = live
-                        .into_iter()
-                        .map(|r| (row_signature(&pk_of(&r)), r))
-                        .collect();
-                    let refetched: Option<Vec<Vec<Value>>> = pks
-                        .iter()
-                        .map(|k| live_by_key.get(&row_signature(k)).cloned())
-                        .collect();
-                    match refetched {
-                        Some(rows) => after_changed = rows,
-                        None => {
-                            return Ok((
-                                result,
-                                WriteCapture::not_capturable_with_meta(
-                                    kind,
-                                    "更新後の行を取り直せませんでした (実行ごとに値が変わる関数を含む文)",
-                                    &dry,
-                                ),
-                            ));
-                        }
-                    }
+                    return decline(ambiguous_reason);
                 }
 
                 Ok((
@@ -1755,13 +1640,8 @@ impl Connection {
                     .cloned()
                     .collect();
 
-                let result = self.execute(sql, database).await?;
-
                 if deleted_rows.len() as u64 != result.rows_affected {
-                    return Ok((
-                        result,
-                        WriteCapture::not_capturable_with_meta(kind, ambiguous_reason, &dry),
-                    ));
+                    return decline(ambiguous_reason);
                 }
 
                 Ok((
@@ -1786,58 +1666,19 @@ impl Connection {
                     .iter()
                     .map(|r| row_signature(&pk_of(r)))
                     .collect();
-
-                let result = self.execute(sql, database).await?;
-
-                let dry_new_rows: Vec<Vec<Value>> = dry
+                // after-image は本実行と同じトランザクションから読んでいるので、採番値や
+                // DEFAULT 式もコミットされた値そのもの。before に無かった PK が新規行。
+                let new_rows: Vec<Vec<Value>> = dry
                     .after_rows
                     .iter()
                     .filter(|r| !before_sigs.contains(&row_signature(&pk_of(r))))
                     .cloned()
                     .collect();
 
-                // dry-run の行をそのまま信じない: 自動採番 (MySQL の AUTO_INCREMENT /
-                // PostgreSQL のシーケンス) は ROLLBACK で戻らないため、dry-run で
-                // 振られた id (例 4) と本実行の id (例 5) がずれる。本実行後に dry-run の
-                // 主キーで実在する行を取り直し、実際に存在する行だけを記録する
-                // (見つからなければ件数が合わず、下で記録を辞退する)。
-                // 取り直しは成功したが 1 件も実在しなかった = 自動採番で id がずれた可能性。
-                let mut autoinc_mismatch = false;
-                let new_rows: Vec<Vec<Value>> = if dry_new_rows.is_empty()
-                    || dry_new_rows.len() as u64 != result.rows_affected
-                {
-                    dry_new_rows
-                } else {
-                    let pks: Vec<Vec<Value>> = dry_new_rows.iter().map(|r| pk_of(r)).collect();
-                    match self
-                        .fetch_rows_by_pk(
-                            table.as_deref().unwrap_or_default(),
-                            &primary_key,
-                            &pks,
-                            database,
-                        )
-                        .await
-                    {
-                        Ok(live) => {
-                            let rows =
-                                reconcile_inserted_rows(&dry_new_rows, live, &columns, &pk_idx);
-                            autoinc_mismatch = rows.is_empty();
-                            rows
-                        }
-                        Err(_) => Vec::new(),
-                    }
-                };
-
                 if new_rows.is_empty() || new_rows.len() as u64 != result.rows_affected {
-                    let reason = if autoinc_mismatch {
-                        "自動採番のため挿入行を特定できません (採番値が dry-run と本実行でずれました)"
-                    } else {
-                        "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)"
-                    };
-                    return Ok((
-                        result,
-                        WriteCapture::not_capturable_with_meta(kind, reason, &dry),
-                    ));
+                    return decline(
+                        "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)",
+                    );
                 }
 
                 Ok((
@@ -2357,6 +2198,19 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
         out.push_str(&quote(c));
     }
     out
+}
+
+/// [`pk_order_clause`] の降順版。書き込みキャプチャ (#1536) の INSERT で、新規行が付く
+/// 末尾 (最大 PK 側) の窓を撮るために使う。
+pub(crate) fn pk_order_clause_desc(pk_cols: &[String], quote: fn(&str) -> String) -> String {
+    if pk_cols.is_empty() {
+        return String::new();
+    }
+    let cols: Vec<String> = pk_cols
+        .iter()
+        .map(|c| format!("{} DESC", quote(c)))
+        .collect();
+    format!(" ORDER BY {}", cols.join(", "))
 }
 
 /// Returns true when `sql` is shaped like a read-only statement that the
@@ -3863,27 +3717,6 @@ mod tests {
         is_session_init_sql, is_session_init_sql_for, mask_sensitive_var, sum_size_parts,
         DriverKind, SslMode, WriteKind,
     };
-
-    #[test]
-    fn reconcile_inserted_rows_keeps_only_rows_that_really_exist() {
-        use super::types::Value;
-        let cols = vec!["id".to_string(), "name".to_string()];
-        let row = |id: i64, n: &str| vec![Value::Int(id), Value::String(n.to_string())];
-        // 自動採番がずれた: dry-run は id=4 だが、本実行の行は id=5。
-        let dry = vec![row(4, "x")];
-        assert!(super::reconcile_inserted_rows(&dry, vec![row(5, "x")], &cols, &[0]).is_empty());
-        // 一致すれば実在した側の値 (本実行後の内容) を採用する。
-        let got = super::reconcile_inserted_rows(&dry, vec![row(4, "y")], &cols, &[0]);
-        assert_eq!(got, vec![row(4, "y")]);
-        // 整数の表現 (Int / UInt) が揺れても同じ主キーとして扱う。
-        let got = super::reconcile_inserted_rows(
-            &dry,
-            vec![vec![Value::UInt(4), Value::String("x".into())]],
-            &cols,
-            &[0],
-        );
-        assert_eq!(got.len(), 1);
-    }
 
     fn test_col(name: &str) -> super::types::TableColumnInfo {
         super::types::TableColumnInfo {

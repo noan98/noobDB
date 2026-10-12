@@ -2720,6 +2720,134 @@ async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[tokio::test]
+async fn capture_write_runs_the_statement_exactly_once_even_with_a_trigger() {
+    // #1536: 以前は dry-run と本実行で文が 2 回走っていた。単一トランザクション化後は
+    // トリガの副作用も 1 回分だけ残る。
+    let (path, conn) = flight_fixture("trigger_once").await;
+    conn.execute("CREATE TABLE audit (n INTEGER)", None)
+        .await
+        .expect("create audit");
+    conn.execute(
+        "CREATE TRIGGER t_upd AFTER UPDATE ON t BEGIN INSERT INTO audit (n) VALUES (1); END",
+        None,
+    )
+    .await
+    .expect("create trigger");
+
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET name = 'zed' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+
+    let audit = conn
+        .execute("SELECT COUNT(*) FROM audit", None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&audit.rows[0][0], t::Value::Int(1) | t::Value::UInt(1)),
+        "trigger must fire once: {:?}",
+        audit.rows[0][0]
+    );
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_records_autoincrement_insert_outside_the_head_window() {
+    // #1536: 行数が row_cap を超える表でも、採番で末尾に付く INSERT は PK 降順の
+    // 末尾窓で捕捉できる (先頭窓では新規行が窓の外になり辞退していた)。
+    let (path, conn) = flight_fixture("insert_tail").await;
+    for id in 3..=8 {
+        conn.execute(
+            &format!("INSERT INTO t (id, name) VALUES ({id}, 'n{id}')"),
+            None,
+        )
+        .await
+        .expect("seed");
+    }
+    let (result, capture) = conn
+        .capture_write("INSERT INTO t (name) VALUES ('fresh')", None, 3)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    let id_idx = capture.columns.iter().position(|c| c == "id").unwrap();
+    assert_eq!(capture.after_rows.len(), 1);
+    assert_eq!(capture.after_rows[0][id_idx], t::Value::Int(9));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn redo_plan_reapplies_an_undone_capture() {
+    // #1536: capture → undo → redo をドライバ層で通す (永続化を伴わない経路)。
+    let (path, conn) = flight_fixture("redo").await;
+    let (_r, capture) = conn
+        .capture_write("UPDATE t SET name = 'alice2' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    let record = t::WriteCaptureRecord {
+        id: 1,
+        profile_id: None,
+        driver: "sqlite".to_string(),
+        database: None,
+        table: capture.table.clone().unwrap(),
+        kind: capture.kind,
+        sql: "UPDATE t SET name = 'alice2' WHERE id = 1".to_string(),
+        primary_key: capture.primary_key.clone(),
+        columns: capture.columns.clone(),
+        column_types: capture.column_types.clone(),
+        before_rows: capture.before_rows.clone(),
+        after_rows: capture.after_rows.clone(),
+        rows_affected: capture.rows_affected as i64,
+        captured_at: "2026-01-01T00:00:00Z".to_string(),
+        undone: false,
+    };
+    let keys = vec![vec![t::Value::Int(1)]];
+    let current = conn
+        .fetch_rows_by_pk("t", &record.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    for stmt in &t::build_undo_plan(&record, &current, false).statements {
+        conn.execute(stmt, None).await.expect("undo");
+    }
+
+    let mut undone = record.clone();
+    undone.undone = true;
+    let current = conn
+        .fetch_rows_by_pk("t", &undone.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    let plan = t::build_redo_plan(&undone, &current, false);
+    assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+    assert_eq!(plan.statements.len(), 1);
+    for stmt in &plan.statements {
+        conn.execute(stmt, None).await.expect("redo");
+    }
+    let live = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "alice2"));
+
+    // Undo 後に別の値へ変わっていれば Redo は衝突として止まる。
+    conn.execute("UPDATE t SET name = 'other' WHERE id = 1", None)
+        .await
+        .expect("drift");
+    let current = conn
+        .fetch_rows_by_pk("t", &undone.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    let plan = t::build_redo_plan(&undone, &current, false);
+    assert_eq!(plan.conflicts.len(), 1);
+    assert!(plan.statements.is_empty());
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
 // ---------------------------------------------------------------------------
 // #735 コマンド層: 読み取り専用ガード・存在しないレコードの拒否
 // (永続化を伴わない経路のみ; 理由は上のコメント参照)

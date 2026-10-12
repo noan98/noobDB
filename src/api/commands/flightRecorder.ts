@@ -38,4 +38,19 @@ export const flightRecorderCommands = {
     invoke<UndoOutcome>("undo_flight_record", { sessionId, id, force }).then((r) =>
       parseResponse(schemas.undoOutcome, r, "undo_flight_record"),
     ),
+
+  /** Redo (#1536) の SQL・競合を副作用なしで確認する。取り消し済みの記録だけが対象。 */
+  previewRedo: (sessionId: string, id: number) =>
+    invoke<UndoPreviewResponse>("preview_redo", { sessionId, id }).then((r) =>
+      parseResponse(schemas.undoPreviewResponse, r, "preview_redo"),
+    ),
+
+  /**
+   * 取り消し済みの書き込みをやり直す (Redo, #1536)。衝突検出・`force`・read-only ガード・
+   * 履歴記録は `undoFlightRecord` と同じ経路を通る。
+   */
+  redoFlightRecord: (sessionId: string, id: number, force: boolean) =>
+    invoke<UndoOutcome>("redo_flight_record", { sessionId, id, force }).then((r) =>
+      parseResponse(schemas.undoOutcome, r, "redo_flight_record"),
+    ),
 };

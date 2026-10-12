@@ -310,6 +310,34 @@ impl PostgresConn {
         database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
+        self.preview_inner(sql, database, row_limit, false)
+            .await
+            .map(|(preview, _)| preview)
+    }
+
+    /// 書き込みキャプチャ (#1536) 用: [`Self::preview_execute_with_limit`] と同じ骨格だが
+    /// 最後に **COMMIT** し、文を 1 回だけ実行する。対象行の取得 (`FOR UPDATE` で行ロック)
+    /// → 文の実行 → 同一トランザクション内での after 取得が 1 つのトランザクションに収まる。
+    /// スナップショットの取得は SAVEPOINT で囲み、失敗しても文の実行・COMMIT は妨げない。
+    pub async fn execute_committing_snapshot(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+    ) -> Result<(PreviewResult, QueryResult)> {
+        let (preview, result) = self.preview_inner(sql, database, row_limit, true).await?;
+        let result =
+            result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
+        Ok((preview, result))
+    }
+
+    async fn preview_inner(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+        commit: bool,
+    ) -> Result<(PreviewResult, Option<QueryResult>)> {
         let row_limit = row_limit.max(1);
         // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
         // `/* fix */ DELETE …` を拒否しない)。
@@ -342,7 +370,16 @@ impl PostgresConn {
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
 
-        let order_clause = super::pk_order_clause(&primary_key, pg_quote_ident);
+        let is_insert_stmt = trimmed.starts_with("insert");
+        // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
+        // 採番表でも窓の外に出ないよう、PK 降順の末尾窓で前後を撮る。
+        let order_clause = if commit && is_insert_stmt {
+            super::pk_order_clause_desc(&primary_key, pg_quote_ident)
+        } else {
+            super::pk_order_clause(&primary_key, pg_quote_ident)
+        };
+        // 対象表/主キーが無ければ記録できないので、キャプチャ時はスナップショットを省く。
+        let skip_snapshots = commit && (target.is_none() || primary_key.is_empty());
         // ユーザの WHERE を BEFORE へ反映する (PK が判っている UPDATE/DELETE の
         // ときだけ。`UPDATE … FROM other` のように単独 SELECT として成立しない
         // 形は共有ロジック側が弾いて従来の固定窓へ縮退する)。
@@ -362,7 +399,7 @@ impl PostgresConn {
         // PostgreSQL の UPDATE/DELETE は ORDER BY / LIMIT を取れないので、
         // 切り出した句と自前の ORDER BY / LIMIT が衝突することはない — MySQL と
         // 違ってフィルタ時も上限を SQL 側で掛けられる。
-        let before_sql = target.as_ref().map(|t| {
+        let before_sql = target.as_ref().filter(|_| !skip_snapshots).map(|t| {
             super::preview::build_snapshot_sql(
                 t,
                 where_clause.as_deref(),
@@ -375,6 +412,20 @@ impl PostgresConn {
         let started = Instant::now();
 
         let before_raw: Vec<PgRow> = match &before_sql {
+            Some(q) if commit && !is_insert_stmt => {
+                // 行ロックを取って「見た行 = 実際に更新/削除される行」にする。ロックが
+                // 取れない (UPDATE 権限が無い等) ときはロック無しで取り直す。
+                let locked = format!("{q} FOR UPDATE");
+                match fetch_capped_pg_guarded(&mut tx, &locked, row_limit + 1).await {
+                    Some(rows) => rows,
+                    None => fetch_capped_pg_guarded(&mut tx, q, row_limit + 1)
+                        .await
+                        .unwrap_or_default(),
+                }
+            }
+            Some(q) if commit => fetch_capped_pg_guarded(&mut tx, q, row_limit + 1)
+                .await
+                .unwrap_or_default(),
             Some(q) => fetch_capped_pg(&mut tx, q, row_limit + 1).await?,
             None => Vec::new(),
         };
@@ -418,10 +469,15 @@ impl PostgresConn {
                 Vec::new()
             };
 
-        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .execute(&mut *tx)
-            .await?;
-        let rows_affected = result.rows_affected();
+        let (rows_affected, committed_result) = if commit {
+            let r = run_sql_on(&mut *tx, sql).await?;
+            (r.rows_affected, Some(r))
+        } else {
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *tx)
+                .await?;
+            (result.rows_affected(), None)
+        };
 
         // INSERT は新しい行が BEFORE の PK に含まれないので、アンカーせず
         // 固定窓を撮り直す (そうしないと挿入行が AFTER に出てこない)。
@@ -455,21 +511,40 @@ impl PostgresConn {
         // しまうため、ユーザの文を実行し終えたあとで、このトランザクション内に限り
         // 強制的に on にする (`SET LOCAL` は ROLLBACK で消える。ユーザの文自体の
         // 解釈は変えない)。
-        if after_by_pk.is_some() {
-            sqlx::Executor::execute(
+        let set_local_ok = if after_by_pk.is_some() {
+            let r = sqlx::Executor::execute(
                 &mut *tx,
                 sqlx::raw_sql("SET LOCAL standard_conforming_strings = on"),
             )
-            .await?;
-        }
+            .await;
+            match r {
+                Ok(_) => true,
+                // キャプチャ時は書き込み済みなので失敗させない (after を空にして COMMIT)。
+                Err(_) if commit => false,
+                Err(e) => return Err(e.into()),
+            }
+        } else {
+            true
+        };
         // PK アンカーが組めなければ BEFORE と同じクエリを撮り直す (従来動作)。
-        let after_raw: Vec<PgRow> = match after_by_pk.as_ref().or(before_sql.as_ref()) {
-            Some(q) => fetch_capped_pg(&mut tx, q, row_limit + 1).await?,
-            None => Vec::new(),
+        let after_raw: Vec<PgRow> = if !set_local_ok {
+            Vec::new()
+        } else {
+            match after_by_pk.as_ref().or(before_sql.as_ref()) {
+                Some(q) if commit => fetch_capped_pg_guarded(&mut tx, q, row_limit + 1)
+                    .await
+                    .unwrap_or_default(),
+                Some(q) => fetch_capped_pg(&mut tx, q, row_limit + 1).await?,
+                None => Vec::new(),
+            }
         };
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        tx.rollback().await?;
+        if commit {
+            tx.commit().await?;
+        } else {
+            tx.rollback().await?;
+        }
 
         let truncated = before_raw.len() > row_limit || after_raw.len() > row_limit;
         let columns = if let Some(first) = before_raw.first().or_else(|| after_raw.first()) {
@@ -488,16 +563,19 @@ impl PostgresConn {
             .map(row_to_values)
             .collect();
 
-        Ok(PreviewResult {
-            target_table: target,
-            columns,
-            primary_key,
-            before_rows,
-            after_rows,
-            rows_affected,
-            elapsed_ms,
-            truncated,
-        })
+        Ok((
+            PreviewResult {
+                target_table: target,
+                columns,
+                primary_key,
+                before_rows,
+                after_rows,
+                rows_affected,
+                elapsed_ms,
+                truncated,
+            },
+            committed_result,
+        ))
     }
 
     /// Bulk INSERT wrapped in one transaction. Unlike MySQL/SQLite we splice
@@ -3175,6 +3253,40 @@ async fn fetch_capped_pg(
         }
     }
     Ok(rows)
+}
+
+/// [`fetch_capped_pg`] を SAVEPOINT で囲んだ版 (書き込みキャプチャ #1536)。PostgreSQL は
+/// トランザクション内で 1 文でも失敗すると以降すべて失敗し COMMIT が ROLLBACK 扱いに
+/// なる。書き込みを失わないよう、失敗したら SAVEPOINT まで巻き戻して `None` を返す。
+async fn fetch_capped_pg_guarded(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    query: &str,
+    cap: usize,
+) -> Option<Vec<PgRow>> {
+    sqlx::Executor::execute(
+        &mut **tx,
+        sqlx::raw_sql("SAVEPOINT noobdb_capture_snapshot"),
+    )
+    .await
+    .ok()?;
+    match fetch_capped_pg(tx, query, cap).await {
+        Ok(rows) => {
+            let _ = sqlx::Executor::execute(
+                &mut **tx,
+                sqlx::raw_sql("RELEASE SAVEPOINT noobdb_capture_snapshot"),
+            )
+            .await;
+            Some(rows)
+        }
+        Err(_) => {
+            let _ = sqlx::Executor::execute(
+                &mut **tx,
+                sqlx::raw_sql("ROLLBACK TO SAVEPOINT noobdb_capture_snapshot"),
+            )
+            .await;
+            None
+        }
+    }
 }
 
 /// `pg_stat_statements` を読めなかったときの理由コード (#1534)。拡張が

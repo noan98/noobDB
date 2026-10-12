@@ -219,9 +219,37 @@ impl SqliteConn {
     pub async fn preview_execute_with_limit(
         &self,
         sql: &str,
-        _database: Option<&str>,
+        database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
+        self.preview_inner(sql, database, row_limit, false)
+            .await
+            .map(|(preview, _)| preview)
+    }
+
+    /// 書き込みキャプチャ (#1536) 用: [`Self::preview_execute_with_limit`] と同じ骨格だが
+    /// 最後に **COMMIT** し、文を 1 回だけ実行する。対象行の取得 → 文の実行 → 同一
+    /// トランザクション内での after 取得が 1 つのトランザクションに収まる。スナップショットの
+    /// 取得失敗は握りつぶして空にする (文の実行・COMMIT は妨げない)。
+    pub async fn execute_committing_snapshot(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+    ) -> Result<(PreviewResult, QueryResult)> {
+        let (preview, result) = self.preview_inner(sql, database, row_limit, true).await?;
+        let result =
+            result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
+        Ok((preview, result))
+    }
+
+    async fn preview_inner(
+        &self,
+        sql: &str,
+        _database: Option<&str>,
+        row_limit: usize,
+        commit: bool,
+    ) -> Result<(PreviewResult, Option<QueryResult>)> {
         let row_limit = row_limit.max(1);
         // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
         // `/* fix */ DELETE …` を拒否しない)。
@@ -254,8 +282,17 @@ impl SqliteConn {
 
         let mut conn = self.pool.acquire().await?;
 
-        let before_sql = target.as_ref().map(|t| {
-            let order = super::pk_order_clause(&primary_key, quote_ident);
+        // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
+        // 採番表でも窓の外に出ないよう、PK 降順の末尾窓で前後を撮る。
+        let is_insert_stmt = trimmed.starts_with("insert") || trimmed.starts_with("replace");
+        // 対象表/主キーが無ければ記録できないので、キャプチャ時はスナップショットを省く。
+        let skip_snapshots = commit && (target.is_none() || primary_key.is_empty());
+        let before_sql = target.as_ref().filter(|_| !skip_snapshots).map(|t| {
+            let order = if commit && is_insert_stmt {
+                super::pk_order_clause_desc(&primary_key, quote_ident)
+            } else {
+                super::pk_order_clause(&primary_key, quote_ident)
+            };
             format!("SELECT * FROM {}{} LIMIT {}", t, order, row_limit + 1)
         });
 
@@ -263,22 +300,37 @@ impl SqliteConn {
         let started = Instant::now();
 
         let before_raw: Vec<SqliteRow> = match &before_sql {
+            Some(q) if commit => fetch_capped_sqlite(&mut tx, q, row_limit + 1)
+                .await
+                .unwrap_or_default(),
             Some(q) => fetch_capped_sqlite(&mut tx, q, row_limit + 1).await?,
             None => Vec::new(),
         };
 
-        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .execute(&mut *tx)
-            .await?;
-        let rows_affected = result.rows_affected();
+        let (rows_affected, committed_result) = if commit {
+            let r = run_sql_on(&mut *tx, sql).await?;
+            (r.rows_affected, Some(r))
+        } else {
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *tx)
+                .await?;
+            (result.rows_affected(), None)
+        };
 
         let after_raw: Vec<SqliteRow> = match &before_sql {
+            Some(q) if commit => fetch_capped_sqlite(&mut tx, q, row_limit + 1)
+                .await
+                .unwrap_or_default(),
             Some(q) => fetch_capped_sqlite(&mut tx, q, row_limit + 1).await?,
             None => Vec::new(),
         };
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        tx.rollback().await?;
+        if commit {
+            tx.commit().await?;
+        } else {
+            tx.rollback().await?;
+        }
 
         let truncated = before_raw.len() > row_limit || after_raw.len() > row_limit;
         let columns = if let Some(first) = before_raw.first().or_else(|| after_raw.first()) {
@@ -297,16 +349,19 @@ impl SqliteConn {
             .map(row_to_values)
             .collect();
 
-        Ok(PreviewResult {
-            target_table: target,
-            columns,
-            primary_key,
-            before_rows,
-            after_rows,
-            rows_affected,
-            elapsed_ms,
-            truncated,
-        })
+        Ok((
+            PreviewResult {
+                target_table: target,
+                columns,
+                primary_key,
+                before_rows,
+                after_rows,
+                rows_affected,
+                elapsed_ms,
+                truncated,
+            },
+            committed_result,
+        ))
     }
 
     /// Bulk INSERT via batched multi-row statements bound as parameters and

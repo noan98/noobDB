@@ -12,18 +12,24 @@
 - 対象行数が行上限を超える UPDATE / DELETE は、`write_count_probe_sql` の件数見積もり
   (`COUNT(*) FROM (… LIMIT 上限+1)`) で先に判定して記録を辞退し、dry-run で文を 2 回
   走らせない (#1530)。PostgreSQL の `UPDATE … FROM` / `DELETE … USING` は見積もらない。
-- UPDATE の SET 句に `NOW()` / `RANDOM()` / `UUID()` など実行ごとに値が変わる関数がある
-  (`contains_nondeterministic_function`) 場合、before は dry-run、after は本実行後に
-  主キーで取り直して記録する。主キーをその値で書き換える文は辞退する。INSERT は従来どおり
-  本実行後の取り直しで整合させ、DELETE は before-image だけなので判定しない。
-- 本実行より後 (本実行と after-image の取り直し) はタイムアウト/キャンセルの外で
-  走る (`commands::query::run_captured_write`: 準備段階 `capture_prepare` だけを
-  タイムアウト配下に置き、`capture_finish` は独立タスク)。取り直しに失敗しても結果は
-  `Ok` で、記録を辞退するだけ。
-- **既知の限界:** after-image の取り直しは本実行とは別の接続・別トランザクションで、
-  UPDATE のコミットと SELECT の間に他クライアントが同じ行を変えると、その値を記録する
-  (Undo の競合検出が止める)。同一トランザクション化 (UPDATE → SELECT → COMMIT、
-  または RETURNING) は 3 ドライバの実行・デコード経路の作り直しになるため見送った。
+- **単一トランザクション (#1536)。** 記録対象の書き込みは `Connection::capture_write`
+  (`capture_prepare` → `capture_finish`) が、各ドライバの `execute_committing_snapshot`
+  で「対象行の取得 (MySQL / PostgreSQL は `FOR UPDATE` で行ロック。取れなければロック無し)
+  → 文の実行 (ちょうど 1 回) → 同じトランザクション内での after 取得 → COMMIT」を行う。
+  以前の dry-run (別トランザクション) + 本実行の 2 回実行は廃止したので、トリガ・
+  非トランザクショナルな副作用の二重化、スナップショットのずれ、`NOW()` / `RANDOM()` /
+  採番値の取り違えは構造上起きない (after-image はコミットされた値そのもの)。
+  `capture_prepare` は書き込みを一切しない事前チェック (文種・MyISAM・行数上限の見積もり)
+  だけで、`capture_finish` 以降はタイムアウト/キャンセルの外で走る。
+  スナップショットの取得失敗は記録を辞退するだけで、文の実行と COMMIT は妨げない
+  (PostgreSQL はスナップショットごとに SAVEPOINT で囲み、失敗でトランザクション全体が
+  中断扱いにならないようにしている)。
+- INSERT は PK 降順の末尾窓で前後を撮り、後にだけ現れた PK を新規行とする (採番で末尾に
+  付く行が窓の外にならない)。**PK が無い表・主キーを特定できない文・複数行 INSERT などは従来
+  どおり「記録なしで 1 回実行」にフォールバックする**。UPDATE の SET で主キーを非決定的な
+  関数 (`RANDOM()` 等) で書き換える文も、前後を対応付けられないので辞退する。
+- 本実行より後 (本実行と after-image の取得) はタイムアウト/キャンセルの外で
+  走る (`commands::query::run_captured_write`)。
 - 対象は `INSERT` / `UPDATE` / `DELETE` **のみ**。DDL (`DROP` / `TRUNCATE` など) は
   完全にスコープ外です。
 - トリガー・カスケードなどサーバ側の二次的な副作用は記録されません。ドライバが
@@ -81,5 +87,14 @@
 ## IPC / フロント
 
 `list_flight_records` / `clear_flight_records` / `preview_undo` /
-`undo_flight_record`。UI は `components/FlightRecorderPanel.tsx`、純ロジックは
+`undo_flight_record` / `preview_redo` / `redo_flight_record`。UI は `components/FlightRecorderPanel.tsx`、純ロジックは
 `flightRecorder.ts`。
+
+## Redo (#1536)
+
+取り消し済み (`undone`) の記録を再適用する。`undo::invert_for_redo` が記録を反転
+(`INSERT` ⇔ `DELETE`、UPDATE は before ⇔ after) し、同じ `build_undo_plan` に通すだけなので
+新しい SQL 生成は無い。`plan_flight` 経由で Undo と同一の衝突検出・`force`・ドライバ/
+プロファイル照合・`run_query_transaction_inner` (read_only ガード・履歴記録) を通り、
+成功すると `mark_redone` で `undone` を解除する (再度 Undo できる)。取り消し済みでない記録の
+Redo は `InvalidInput`。UI は `FlightRecorderPanel` の「取り消し済み」行の「やり直す」ボタン。

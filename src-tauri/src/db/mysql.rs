@@ -370,6 +370,35 @@ impl MySqlConn {
         database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
+        self.preview_inner(sql, database, row_limit, false)
+            .await
+            .map(|(preview, _)| preview)
+    }
+
+    /// 書き込みキャプチャ (#1536) 用: [`Self::preview_execute_with_limit`] と同じ骨格だが
+    /// 最後に **COMMIT** し、文を 1 回だけ実行する。対象行の取得 (`FOR UPDATE` で行ロック)
+    /// → 文の実行 → 同一トランザクション内での after 取得が 1 つのトランザクションに収まる
+    /// ので、dry-run と本実行の間に他クライアントが割り込む窓も、自動採番のずれもない。
+    /// スナップショットの取得失敗は握りつぶして空にする (文の実行・COMMIT は妨げない)。
+    pub async fn execute_committing_snapshot(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+    ) -> Result<(PreviewResult, QueryResult)> {
+        let (preview, result) = self.preview_inner(sql, database, row_limit, true).await?;
+        let result =
+            result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
+        Ok((preview, result))
+    }
+
+    async fn preview_inner(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+        commit: bool,
+    ) -> Result<(PreviewResult, Option<QueryResult>)> {
         let row_limit = row_limit.max(1);
         // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
         // `/* fix */ DELETE …` を拒否しない)。
@@ -414,7 +443,17 @@ impl MySqlConn {
             Some(t) => fetch_primary_key(&mut conn, t).await.unwrap_or_default(),
             None => Vec::new(),
         };
-        let order_clause = super::pk_order_clause(&primary_key, quote_ident);
+        let is_insert_stmt = trimmed.starts_with("insert");
+        // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
+        // 自動採番表でも窓の外に出ないよう、PK 降順の末尾窓で前後を撮る。
+        let order_clause = if commit && is_insert_stmt {
+            super::pk_order_clause_desc(&primary_key, quote_ident)
+        } else {
+            super::pk_order_clause(&primary_key, quote_ident)
+        };
+        // 対象表/主キーが無ければ記録できない (呼び出し側が辞退する) ので、キャプチャ時は
+        // スナップショットの読み取りを省いて文だけを実行する。
+        let skip_snapshots = commit && (target.is_none() || primary_key.is_empty());
 
         // For UPDATE / DELETE we lift the user's WHERE clause out of the
         // statement and use it to filter the BEFORE snapshot. Without this
@@ -443,19 +482,38 @@ impl MySqlConn {
             super::preview::before_where_clause(sql, super::SqlFlavor::MySql, &primary_key)
         };
 
-        let before_sql = target.as_ref().map(|t| match &where_clause {
-            // The user's clause is appended verbatim — it already includes
-            // any ORDER BY / LIMIT they wrote. We don't add our own LIMIT
-            // here (their LIMIT would clash); the fetch below caps the
-            // collected rows at `row_limit + 1` instead.
-            Some(w) => super::preview::build_snapshot_sql(t, Some(w), "", None),
-            None => super::preview::build_snapshot_sql(t, None, &order_clause, Some(row_limit + 1)),
-        });
+        let before_sql = target
+            .as_ref()
+            .filter(|_| !skip_snapshots)
+            .map(|t| match &where_clause {
+                // The user's clause is appended verbatim — it already includes
+                // any ORDER BY / LIMIT they wrote. We don't add our own LIMIT
+                // here (their LIMIT would clash); the fetch below caps the
+                // collected rows at `row_limit + 1` instead.
+                Some(w) => super::preview::build_snapshot_sql(t, Some(w), "", None),
+                None => {
+                    super::preview::build_snapshot_sql(t, None, &order_clause, Some(row_limit + 1))
+                }
+            });
 
         let mut tx = conn.begin().await?;
         let started = Instant::now();
 
         let before_raw: Vec<MySqlRow> = match &before_sql {
+            Some(q) if commit && !is_insert_stmt => {
+                // 行ロックを取って「見た行 = 実際に更新/削除される行」にする。ロックが
+                // 取れない (権限・ビュー等) ときはロック無しで取り直す。
+                let locked = format!("{q} FOR UPDATE");
+                match fetch_capped(&mut tx, &locked, row_limit + 1).await {
+                    Ok(rows) => rows,
+                    Err(_) => fetch_capped(&mut tx, q, row_limit + 1)
+                        .await
+                        .unwrap_or_default(),
+                }
+            }
+            Some(q) if commit => fetch_capped(&mut tx, q, row_limit + 1)
+                .await
+                .unwrap_or_default(),
             Some(q) => fetch_capped(&mut tx, q, row_limit + 1).await?,
             None => Vec::new(),
         };
@@ -487,10 +545,15 @@ impl MySqlConn {
                 Vec::new()
             };
 
-        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .execute(&mut *tx)
-            .await?;
-        let rows_affected = result.rows_affected();
+        let (rows_affected, committed_result) = if commit {
+            let r = run_sql_on(&mut *tx, sql).await?;
+            (r.rows_affected, Some(r))
+        } else {
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *tx)
+                .await?;
+            (result.rows_affected(), None)
+        };
 
         // PK-anchored refetch keeps the same rows visible after UPDATE/DELETE,
         // but for INSERT we want the LIMIT scan so newly inserted rows actually
@@ -498,7 +561,7 @@ impl MySqlConn {
         let is_insert = trimmed.starts_with("insert");
         let use_pk_anchor =
             !is_insert && !pk_changed && target.is_some() && !captured_pks.is_empty();
-        let after_raw: Vec<MySqlRow> = if use_pk_anchor {
+        let after_res: Result<Vec<MySqlRow>> = if use_pk_anchor {
             // use_pk_anchor は target.is_some() を条件に含むため、ここでは
             // target が Some であることが構造上保証されている。
             #[allow(clippy::unwrap_used)]
@@ -509,20 +572,29 @@ impl MySqlConn {
                 &captured_pks,
                 &order_clause,
             )
-            .await?
+            .await
         } else {
             match &before_sql {
-                Some(q) => {
-                    sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
-                        .fetch_all(&mut *tx)
-                        .await?
-                }
-                None => Vec::new(),
+                Some(q) => sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(AppError::from),
+                None => Ok(Vec::new()),
             }
+        };
+        // キャプチャ時は after の取得失敗で書き込みを失わない (空にして COMMIT する)。
+        let after_raw: Vec<MySqlRow> = if commit {
+            after_res.unwrap_or_default()
+        } else {
+            after_res?
         };
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        tx.rollback().await?;
+        if commit {
+            tx.commit().await?;
+        } else {
+            tx.rollback().await?;
+        }
 
         // AFTER is bounded by the captured PKs in the common path, but the
         // fallback runs the same LIMIT 101 query and can overshoot — guard
@@ -544,16 +616,19 @@ impl MySqlConn {
             .map(row_to_values)
             .collect();
 
-        Ok(PreviewResult {
-            target_table: target,
-            columns,
-            primary_key,
-            before_rows,
-            after_rows,
-            rows_affected,
-            elapsed_ms,
-            truncated,
-        })
+        Ok((
+            PreviewResult {
+                target_table: target,
+                columns,
+                primary_key,
+                before_rows,
+                after_rows,
+                rows_affected,
+                elapsed_ms,
+                truncated,
+            },
+            committed_result,
+        ))
     }
 
     /// Bulk INSERT via batched multi-row statements bound as parameters and
