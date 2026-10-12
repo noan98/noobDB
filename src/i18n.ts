@@ -2099,6 +2099,7 @@ const en = {
   previewSyncScrollTitle: "Sync vertical and horizontal scroll between the before and after panes.",
 
   treeNotConnected: "Not connected.",
+  treeCacheFetchedAt: "Cached at {time}",
   treeRefresh: "Refresh schema",
   treeRefreshTitle: "Reload databases, tables and columns from the server",
   treeNoDatabases: "(no databases)",
@@ -6779,6 +6780,7 @@ const ja: Dict = {
   createTableNamePlaceholder: "new_table",
   createTableColName: "名前",
   createTableColNamePlaceholder: "列名",
+  treeCacheFetchedAt: "キャッシュ取得 {time}",
   createTableColType: "型",
   createTableColNotNull: "NOT NULL",
   createTableColUnique: "UNIQUE",

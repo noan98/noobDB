@@ -447,7 +447,7 @@ pub mod __test_api {
     /// invalidate (#1220)。`AppHandle` / `Channel` が要るため経路そのものは統合テスト
     /// から駆動できないので、共通ヘルパを直接叩いて配線を固定する。
     pub async fn invalidate_caches_after_stream_success(session: &Session, sql: &str) {
-        crate::commands::query::invalidate_caches_after_success(session, sql).await
+        crate::commands::query::invalidate_caches_after_success(session, sql, None).await
     }
 
     /// Drives the `run_assertion` IPC command's core path (#742): rule → SQL
@@ -1344,6 +1344,8 @@ pub fn run() {
             commands::tasks::set_scheduler_settings,
             commands::schema::refresh_schema_cache,
         ])
+            commands::schema::invalidate_table_cache,
+            commands::schema::schema_cache_times,
         .run(tauri::generate_context!());
 
     if let Err(e) = result {

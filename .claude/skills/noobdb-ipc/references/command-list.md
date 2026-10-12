@@ -458,3 +458,11 @@ BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ�
 `run_in_transaction` / `apply_sync_sql`) は成功後にバックエンドが自動で
 invalidate するため、通常のフローでこのコマンドを呼ぶ必要はない — Schema
 Browser の更新ボタンなど、ユーザが明示的に最新化したいときのみ使う。
+
+`invalidate_table_cache` — 1 つのテーブルだけの Schema Cache を無効化する (#1539)。ALTER /
+CREATE INDEX の適用後など対象が分かるとき、接続全体の `refresh_schema_cache` の代わりに呼ぶ。
+バックエンド側でも `run_query_transaction` / `run_query` が、単一テーブルだけに効く単純な DDL
+(`db::schema_scope`) ならこのテーブル単位の無効化に切り替える (解析できない DDL は従来どおり全体)。
+
+`schema_cache_times` — テーブル一覧をキャッシュした DB ごとの取得時刻 (epoch ミリ秒)。ツリーの
+「キャッシュ取得 HH:MM」表示用。内容は返さず時刻だけ。

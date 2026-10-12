@@ -236,6 +236,9 @@ const DEFAULT_MAX_ENTRIES_PER_KIND: usize = 500;
 struct CacheEntry<V> {
     value: V,
     inserted_at: Instant,
+    /// 取得した壁時計の時刻 (#1539。ツリーに「キャッシュ取得 HH:MM」を出すため)。
+    /// TTL の判定には使わない (単調な `inserted_at` を使う)。
+    fetched_at: std::time::SystemTime,
 }
 
 impl<V> CacheEntry<V> {
@@ -243,6 +246,7 @@ impl<V> CacheEntry<V> {
         Self {
             value,
             inserted_at: Instant::now(),
+            fetched_at: std::time::SystemTime::now(),
         }
     }
 
@@ -367,6 +371,23 @@ where
     /// 書き戻らず、旧世代を待っていた待機者も結果を受け取らずに再試行する。
     async fn clear(&self) {
         self.entries.write().await.clear();
+    }
+
+    /// 条件に合うキーのエントリだけを捨てる (テーブル単位の無効化, #1539)。進行中のフライトは
+    /// 触らない — `clear` と同じく、呼び出し元が先に `generation` を進める。
+    async fn remove_where(&self, mut pred: impl FnMut(&K) -> bool) {
+        self.entries.write().await.retain(|k, _| !pred(k));
+    }
+
+    /// TTL 内のエントリの (キー, 取得した壁時計の時刻)。
+    async fn fetched_times(&self, ttl: Duration) -> Vec<(K, std::time::SystemTime)> {
+        self.entries
+            .read()
+            .await
+            .iter()
+            .filter(|(_, e)| !e.is_expired(ttl))
+            .map(|(k, e)| (k.clone(), e.fetched_at))
+            .collect()
     }
 
     async fn lookup(&self, key: &K, ttl: Duration) -> Option<V> {
@@ -986,6 +1007,48 @@ impl SchemaCache {
             .await;
     }
 
+    /// 1 つのテーブルに関わるエントリだけを無効化する (#1539)。`ALTER TABLE` や
+    /// `CREATE INDEX` のように対象が分かる DDL のとき、接続全体を捨てて大量のテーブルの
+    /// 列・インデックスを取り直す代わりに使う。
+    ///
+    /// 捨てるもの: そのテーブルの `columns` / `row_identity` / `list_indexes`、そのデータベース
+    /// 単位の集約 (`schema_overview` — 補完用の全テーブル概要、`foreign_keys`、`object_index_db`)、
+    /// 全体索引 `object_index_all`。残すもの: 他のテーブルの列・インデックス、テーブル一覧
+    /// (`tables`)、スキーマオブジェクト一覧 (`schema_objects`)、データベース一覧。
+    /// 名前は大文字小文字を区別せずに突き合わせる (SQLite の識別子や、PostgreSQL の
+    /// 小文字化に左右されず取りこぼさないため)。`generation` を先に進める理由は
+    /// [`Self::invalidate_all`] と同じ。
+    pub async fn invalidate_table(&self, database: &str, table: &str) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let same_db = |d: &str| d.eq_ignore_ascii_case(database);
+        let same_table = |k: &TableKey| same_db(&k.0) && k.1.eq_ignore_ascii_case(table);
+        self.columns.remove_where(|k| same_table(k)).await;
+        self.row_identity.remove_where(|k| same_table(k)).await;
+        self.list_indexes.remove_where(|k| same_table(k)).await;
+        self.schema_overview.remove_where(|d| same_db(d)).await;
+        self.foreign_keys.remove_where(|d| same_db(d)).await;
+        self.object_index_db.remove_where(|d| same_db(d)).await;
+        self.object_index_all.clear().await;
+        tracing::debug!("schema cache invalidated for one table");
+    }
+
+    /// テーブル一覧をキャッシュしたデータベースごとの取得時刻 (UNIX epoch ミリ秒)。TTL 切れは
+    /// 含めない。ツリーの「キャッシュ取得 HH:MM」表示用 (#1539)。
+    pub async fn tables_fetched_at(&self) -> Vec<(String, i64)> {
+        let mut out: Vec<(String, i64)> = self
+            .tables
+            .fetched_times(self.ttl)
+            .await
+            .into_iter()
+            .filter_map(|(db, at)| {
+                let ms = at.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis();
+                Some((db, i64::try_from(ms).ok()?))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
     /// このセッションのスキーマキャッシュを丸ごと無効化する。呼び出し元:
     /// - `commands::schema::refresh_schema_cache` (明示的 Refresh)
     /// - `commands::query::{run_query_inner, run_query_transaction_inner,
@@ -1252,6 +1315,99 @@ mod tests {
 
         assert_eq!(t1[0].name, "id");
         assert_eq!(t2[0].name, "name");
+    }
+
+    /// #1539: テーブル単位の無効化は、そのテーブルの列・インデックスと DB 単位の集約だけを
+    /// 捨て、他のテーブルのエントリとテーブル一覧は残す。名前は大文字小文字を無視して照合する。
+    #[tokio::test]
+    async fn invalidate_table_drops_only_that_table() {
+        let cache = test_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let col = |name: &str| TableColumnInfo {
+            name: name.to_string(),
+            data_type: "text".to_string(),
+            nullable: true,
+            key: String::new(),
+            default: None,
+            extra: String::new(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        };
+        for t in ["t1", "t2"] {
+            let calls = calls.clone();
+            cache
+                .columns("db", t, move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![col("id")])
+                })
+                .await
+                .unwrap();
+            cache
+                .list_indexes("db", t, || async { Ok(Vec::new()) })
+                .await
+                .unwrap();
+        }
+        cache
+            .tables("db", || async {
+                Ok(vec!["t1".to_string(), "t2".to_string()])
+            })
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        cache.invalidate_table("DB", "T1").await;
+
+        // t2 は残り (fetch 不要)、t1 は取り直しになる。テーブル一覧も残る。
+        let refetched = Arc::new(AtomicUsize::new(0));
+        for t in ["t1", "t2"] {
+            let refetched = refetched.clone();
+            cache
+                .columns("db", t, move || async move {
+                    refetched.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![col("id")])
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(refetched.load(Ordering::SeqCst), 1, "t1 だけ再取得");
+        let listed = cache
+            .tables("db", || async { Ok(vec!["WRONG".to_string()]) })
+            .await
+            .unwrap();
+        assert_eq!(listed, vec!["t1".to_string(), "t2".to_string()]);
+    }
+
+    /// #1539: テーブル一覧の取得時刻が DB ごとに取れ、TTL 切れは含まれない。
+    #[tokio::test]
+    async fn tables_fetched_at_reports_unexpired_databases() {
+        let cache = test_cache();
+        assert!(cache.tables_fetched_at().await.is_empty());
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        cache
+            .tables("b_db", || async { Ok(vec!["x".to_string()]) })
+            .await
+            .unwrap();
+        cache
+            .tables("a_db", || async { Ok(vec!["y".to_string()]) })
+            .await
+            .unwrap();
+        let times = cache.tables_fetched_at().await;
+        assert_eq!(
+            times.iter().map(|(d, _)| d.as_str()).collect::<Vec<_>>(),
+            vec!["a_db", "b_db"]
+        );
+        assert!(times.iter().all(|(_, ms)| *ms >= before));
+        // TTL 0 のキャッシュでは取得済みでも期限切れ扱いになり、一覧に出ない。
+        let expired = SchemaCache::new(Duration::from_secs(0), 500);
+        expired
+            .tables("db", || async { Ok(Vec::new()) })
+            .await
+            .unwrap();
+        assert!(expired.tables_fetched_at().await.is_empty());
     }
 
     /// 受け入れ条件 2: Refresh (= `invalidate_all`) を挟むと、その後の呼び出し

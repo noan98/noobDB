@@ -699,6 +699,13 @@ export interface TableRowEstimate {
   estimate: number | null;
 }
 
+/** スキーマキャッシュの取得時刻 (DB ごと, #1539)。 */
+export interface SchemaCacheTime {
+  database: string;
+  /** UNIX epoch ミリ秒 (壁時計)。表示はローカル時刻。 */
+  fetched_at_ms: number;
+}
+
 /** テーブル (またはビュー) のコメント 1 件 (#1002)。コメントを持つものだけが返る。 */
 export interface TableComment {
   name: string;

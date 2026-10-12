@@ -165,8 +165,11 @@ const MotionActiveIndicator = chakra(motion.span, {}, { forwardProps: ["transiti
 /** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
 export interface ConnectionListHandle {
   focusFilter: () => void;
-  /** スキーマツリーをサーバーから再取得する (DDL 実行後の反映に使う)。 */
-  refreshSchema: () => void;
+  /**
+   * スキーマツリーをサーバーから再取得する (DDL 実行後の反映に使う)。`scope` を渡すと、そのテーブル
+   * だけバックエンドのキャッシュを捨てる (他のテーブルの列・インデックスは取り直さない, #1539)。
+   */
+  refreshSchema: (scope?: { database: string; table: string }) => void;
 }
 
 /** 検索クエリ `query` にマッチする部分をハイライト表示するシンプルなコンポーネント。
@@ -576,6 +579,18 @@ interface TreeActions {
 }
 
 const TreeActionsContext = createContext<TreeActions | null>(null);
+
+/**
+ * DB ごとのスキーマキャッシュ取得時刻 (epoch ミリ秒, #1539)。バックエンドの Schema Cache が
+ * テーブル一覧を取得した時刻で、DB 行に「キャッシュ取得 HH:MM」として出す。`TreeActions` は
+ * 参照を固定しているので、時刻の変化は別の context で行へ届ける。
+ */
+const SchemaCacheTimesContext = createContext<Record<string, number>>({});
+
+/** 取得時刻をローカル時刻の `HH:MM` にする (他パネルの `toLocaleTimeString` と同じローカル表示)。 */
+function formatCacheClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
 function useTreeActions(): TreeActions {
   const actions = useContext(TreeActionsContext);
@@ -1205,7 +1220,10 @@ const DbRow = memo(function DbRow({
   posInSet?: number;
   setSize?: number;
 }) {
+  const t = useT();
   const actions = useTreeActions();
+  const cachedAt = useContext(SchemaCacheTimesContext)[db];
+  const cacheLabel = cachedAt === undefined ? null : t("treeCacheFetchedAt", { time: formatCacheClock(cachedAt) });
   const treeKey = `db:${db}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, treeKey);
   const openMenu = (e: ContextMenuTriggerEvent) => actions.dbMenu(e, db);
@@ -1224,11 +1242,16 @@ const DbRow = memo(function DbRow({
       tabIndex={tabIndex}
       onFocus={onFocus}
       onKeyDown={actions.makeKeyDown(() => actions.toggleDb(db), openMenu)}
-      {...actions.treeTooltip(`${db} — ${containerLabel}`)}
+      {...actions.treeTooltip(cacheLabel ? `${db} — ${containerLabel} — ${cacheLabel}` : `${db} — ${containerLabel}`)}
     >
       <TreeChevron transform={open ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
       <TreeIcon color="app.dbAccent" aria-hidden><Icon name="database" /></TreeIcon>
       <TreeLabel fontWeight={400}><HighlightText text={db} query={q} /></TreeLabel>
+      {open && cachedAt !== undefined && (
+        <TreeBadge data-testid="tree-cache-time" {...actions.treeTooltip(cacheLabel ?? "")}>
+          {formatCacheClock(cachedAt)}
+        </TreeBadge>
+      )}
       <TreeMoreActions onOpen={openMenu} />
     </TreeRow>
   );
@@ -1864,13 +1887,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       filterInputRef.current?.focus();
       filterInputRef.current?.select();
     },
-    refreshSchema: () => {
-      void refreshSchemaRef.current?.();
+    refreshSchema: (scope) => {
+      void refreshSchemaRef.current?.(scope);
     },
   }));
   // `refreshSchema` is defined later in the body; reach it through a ref so the
   // imperative handle doesn't depend on declaration order.
-  const refreshSchemaRef = useRef<(() => Promise<void>) | null>(null);
+  const refreshSchemaRef = useRef<((scope?: { database: string; table: string }) => Promise<void>) | null>(null);
 
   // Id of the session whose schema is currently being re-fetched, or null.
   // Keyed by session (not a shared boolean) so a refresh only disables/​spins
@@ -2018,7 +2041,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // server-side changes (new/dropped tables or columns) show up. Currently
   // expanded databases/tables are re-fetched in place to preserve the tree's
   // open state; collapsed nodes reload lazily on next expand as usual.
-  const refreshSchema = useCallback(async () => {
+  const refreshSchema = useCallback(async (scope?: { database: string; table: string }) => {
     if (!sessionId || refreshingSession === sessionId) return;
     const targetSessionId = sessionId;
     setRefreshingSession(targetSessionId);
@@ -2028,7 +2051,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       // 再取得する。無効化に失敗しても (セッション消失など) 通常のフローで
       // エラーになるだけなので、以降の再取得自体は続行する。
       try {
-        await api.refreshSchemaCache(targetSessionId);
+        // 対象テーブルが分かっているとき (ALTER / CREATE INDEX の適用後など) は、そのテーブルの
+        // キャッシュだけを捨てる (#1539)。
+        if (scope) await api.invalidateTableCache(targetSessionId, scope.database, scope.table);
+        else await api.refreshSchemaCache(targetSessionId);
       } catch {
         // ignore — 下の listDatabases がセッション消失を検知してエラー表示する。
       }
@@ -3304,6 +3330,32 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       });
   }, [searching, sessionId, databases, activeExpanded, tables]);
 
+  // バックエンドの Schema Cache が各 DB のテーブル一覧を取得した時刻 (#1539)。テーブル一覧が
+  // 読み込まれ直すたびに取り直し、DB 行に「キャッシュ取得 HH:MM」を出す。失敗は装飾なので無視する。
+  const [cacheTimes, setCacheTimes] = useState<Record<string, number>>({});
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tables は本体で参照しないが、テーブル一覧の再取得 (= キャッシュの取得時刻が変わりうる) を知るためのトリガーとして意図的に依存へ含めている
+  useEffect(() => {
+    if (!sessionId) {
+      setCacheTimes({});
+      return;
+    }
+    let alive = true;
+    api
+      .schemaCacheTimes(sessionId)
+      .then((list) => {
+        if (!alive) return;
+        const next: Record<string, number> = {};
+        for (const e of list) next[e.database] = e.fetched_at_ms;
+        setCacheTimes(next);
+      })
+      .catch(() => {
+        if (alive) setCacheTimes({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, tables]);
+
   const visibleProfiles = profiles.filter((p) => {
     if (!searching) return true;
     if (profileMetaMatches(p)) return true;
@@ -3749,6 +3801,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
   return (
     <TreeActionsContext.Provider value={treeActions}>
+      <SchemaCacheTimesContext.Provider value={cacheTimes}>
     <Flex direction="column" overflow="hidden" flex="1">
       {/* ツールチップの state はここ (ツリー本体の外) に閉じ込める。ホバーの出入りで
           描き直されるのはこの 2 つだけ (#1314)。 */}
@@ -4031,6 +4084,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       )}
       {confirmDialog}
     </Flex>
+      </SchemaCacheTimesContext.Provider>
     </TreeActionsContext.Provider>
   );
 }));

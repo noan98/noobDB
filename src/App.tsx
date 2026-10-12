@@ -6567,12 +6567,14 @@ export default function App() {
   }, [openQueryInEditor]);
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
-  const runMaintenanceDdl = useCallback(async (sql: string, database: string): Promise<boolean> => {
+  // `table` を渡すと (CREATE / DROP INDEX など対象が 1 テーブルと分かる DDL)、そのテーブルの
+  // バックエンドキャッシュだけを捨てて再読込する (#1539)。
+  const runMaintenanceDdl = useCallback(async (sql: string, database: string, table?: string): Promise<boolean> => {
     if (!sessionId) return false;
     try {
       await api.runQuery(sessionId, sql, database);
       invalidateSchemaCache(database);
-      connectionListRef.current?.refreshSchema();
+      connectionListRef.current?.refreshSchema(table ? { database, table } : undefined);
       return true;
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
@@ -6762,7 +6764,8 @@ export default function App() {
     try {
       await api.runQueryTransaction(sessionId, sqls, target.database);
       invalidateSchemaCache(target.database);
-      connectionListRef.current?.refreshSchema();
+      // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。
+      connectionListRef.current?.refreshSchema({ database: target.database, table: target.table });
       toast.success(translate("alterTableSuccess", { table: target.table }));
       setAlterTableTarget(null);
       // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
@@ -6848,7 +6851,7 @@ export default function App() {
   const handleCreateIndexRun = useCallback(async (sql: string) => {
     const target = createIndexTarget;
     if (!target) return;
-    const success = await runMaintenanceDdl(sql, target.database);
+    const success = await runMaintenanceDdl(sql, target.database, target.table);
     if (success) {
       toast.success(translate("createIndexSuccess"));
       setCreateIndexTarget(null);
@@ -6874,7 +6877,7 @@ export default function App() {
       typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
     });
     if (!ok) return;
-    const success = await runMaintenanceDdl(sql, database);
+    const success = await runMaintenanceDdl(sql, database, table);
     if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, toast]);
 

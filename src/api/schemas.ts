@@ -109,6 +109,12 @@ export const tableRowEstimate = z.object({
   estimate: z.number().nullable(),
 });
 
+/** スキーマキャッシュの取得時刻 (DB ごと, #1539)。 */
+export const schemaCacheTime = z.object({
+  database: z.string(),
+  fetched_at_ms: z.number(),
+});
+
 /** テーブルのサイズ・統計 (サイズダッシュボード #562)。 */
 export const tableSizeInfo = z.object({
   name: z.string(),
@@ -943,6 +949,7 @@ export const historyEntryArray = z.array(historyEntry);
 // `PreviewStreamMessage` 参照)。チャンネル自体がそのストリームにスコープされる
 // ため、個々のメッセージに `streamId` は乗らない — 旧 `query-stream:*` /
 // `preview-stream:*` イベント (下の CSV インポート/エクスポート/ダンプ系イベント
+export const schemaCacheTimeArray = z.array(schemaCacheTime);
 // と同じ形) では全メッセージが `streamId` を重複して運んでいた分の payload を
 // 削減している。CSV インポート/エクスポート/ダンプは従来どおり名前付きイベント
 // のまま (下のセクション参照)。
