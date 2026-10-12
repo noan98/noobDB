@@ -18,6 +18,11 @@ import { resultViewKey } from "./resultViewKey";
 
 export type ChartType = "bar" | "line" | "area" | "pie";
 export type Aggregation = "none" | "sum" | "avg" | "count";
+/**
+ * 時系列チャートの時間バケット (#1541)。DB 側集計 (`buildChartSql`) の X を日 / 週 (ISO、
+ * 月曜始まり) / 月に丸めてグループ化する。`none` (または未設定) は従来どおり X 値そのもの。
+ */
+export type TimeBucket = "none" | "day" | "week" | "month";
 
 export interface ChartConfig {
   type: ChartType;
@@ -41,6 +46,8 @@ export interface ChartConfig {
    * 通り、`isDonut` が既定へ倒す。円グラフ以外では無視される。
    */
   donut?: boolean;
+  /** 時間バケット (#1541)。DB 側集計のときだけ効く。省略 = `none`。 */
+  timeBucket?: TimeBucket;
 }
 
 export interface ChartSeries {
@@ -351,6 +358,33 @@ export interface ChartSqlRequest {
   xColumn: string;
   yColumns: string[];
   agg: Exclude<Aggregation, "none">;
+  /** 時間バケット (#1541)。`day` / `week` / `month` なら X を丸めた文字列でグループ化する。 */
+  bucket?: TimeBucket;
+}
+
+/**
+ * X 列を時間バケットに丸めた文字列 (`YYYY-MM-DD` / 月は `YYYY-MM`) にする式 (#1541)。
+ * 週は ISO (月曜始まり) で、ラベルはその週の月曜の日付。`xRef` はクオート済みの列参照。
+ *
+ * - PostgreSQL: `to_char(date_trunc(...), ...)` (`date_trunc('week')` は ISO 月曜始まり)。
+ * - MySQL: `DATE_FORMAT`。週は `WEEKDAY()` (月曜 = 0) の日数だけ遡る。
+ * - SQLite: `strftime`。週は `%w` (日曜 = 0) から `(w + 6) % 7` 日遡る。
+ *
+ * 未知のドライバは MySQL 扱い (`quoteIdentFor` と同じ)。
+ */
+export function timeBucketExpr(driver: string, xRef: string, bucket: Exclude<TimeBucket, "none">): string {
+  if (driver === "postgres") {
+    const fmt = bucket === "month" ? "YYYY-MM" : "YYYY-MM-DD";
+    return `to_char(date_trunc('${bucket}', ${xRef}), '${fmt}')`;
+  }
+  if (driver === "sqlite") {
+    if (bucket === "month") return `strftime('%Y-%m', ${xRef})`;
+    if (bucket === "day") return `strftime('%Y-%m-%d', ${xRef})`;
+    return `strftime('%Y-%m-%d', ${xRef}, '-' || ((CAST(strftime('%w', ${xRef}) AS INTEGER) + 6) % 7) || ' days')`;
+  }
+  if (bucket === "month") return `DATE_FORMAT(${xRef}, '%Y-%m')`;
+  if (bucket === "day") return `DATE_FORMAT(${xRef}, '%Y-%m-%d')`;
+  return `DATE_FORMAT(DATE_SUB(${xRef}, INTERVAL WEEKDAY(${xRef}) DAY), '%Y-%m-%d')`;
 }
 
 /** DB 側集計の SQL を生成する。結果の列は X、続いて Y 系列の集計値 (`yColumns` と同順)。 */
@@ -359,15 +393,17 @@ export function buildChartSql(req: ChartSqlRequest): string {
   // 末尾のセミコロンはサブクエリに包むと構文エラーになるため落とす。
   const sub = req.sourceSql.trim().replace(/;+\s*$/, "");
   const fn = req.agg.toUpperCase();
+  const bucket = req.bucket && req.bucket !== "none" ? req.bucket : null;
+  // バケット指定時は式でグループ化する。位置指定 (1) は 3 方言とも使え、式の重複を避けられる。
+  const xExpr = bucket ? timeBucketExpr(req.driver, q(req.xColumn), bucket) : q(req.xColumn);
   const selectCols = [
-    `${q(req.xColumn)} AS ${q("chart_x")}`,
+    `${xExpr} AS ${q("chart_x")}`,
     ...req.yColumns.map((y, i) => `${fn}(${q(y)}) AS ${q(`chart_y${i}`)}`),
   ];
   return (
     `SELECT ${selectCols.join(", ")}\n` +
     `FROM (${sub}) AS ${q("chart_src")}\n` +
-    `GROUP BY ${q(req.xColumn)}\n` +
-    `ORDER BY ${q(req.xColumn)}`
+    (bucket ? "GROUP BY 1\nORDER BY 1" : `GROUP BY ${q(req.xColumn)}\nORDER BY ${q(req.xColumn)}`)
   );
 }
 
@@ -394,6 +430,7 @@ export function chartModelFromAggregatedRows(
   rows: CellValue[][],
   yNames: string[],
   aggregation: Exclude<Aggregation, "none">,
+  bucket?: TimeBucket,
 ): ChartModel {
   const labels = rows.map((r) => cellLabel(r[0]));
   const series: ChartSeries[] = yNames.map((name, i) => ({
@@ -401,8 +438,91 @@ export function chartModelFromAggregatedRows(
     // SUM/AVG が NULL (数値が 1 件も無いグループ) は JS 側と同じく 0。
     values: rows.map((r) => toNumber(r[i + 1]) ?? 0),
   }));
-  return { labels, series, sampledFrom: null, excludedNonNumeric: 0 };
+  const model: ChartModel = { labels, series, sampledFrom: null, excludedNonNumeric: 0 };
+  return bucket && bucket !== "none" ? fillTimeBuckets(model, bucket) : model;
 }
+
+/** 欠損期間の 0 埋めで生成するバケット数の上限。これを超える範囲は埋めずに元のまま返す。 */
+export const MAX_FILLED_BUCKETS = 5000;
+
+const BUCKET_LABEL_RE = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/;
+
+function parseBucketLabel(label: string, bucket: Exclude<TimeBucket, "none">): number | null {
+  const m = BUCKET_LABEL_RE.exec(label);
+  if (!m) return null;
+  if (bucket === "month" ? m[3] !== undefined : m[3] === undefined) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = m[3] === undefined ? 1 : Number(m[3]);
+  const ms = Date.UTC(y, mo - 1, d);
+  const dt = new Date(ms);
+  // 2 月 30 日のような不正日付は Date が繰り上げるので往復で弾く。
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return ms;
+}
+
+function formatBucketLabel(ms: number, bucket: Exclude<TimeBucket, "none">): string {
+  const dt = new Date(ms);
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  const ym = `${p(dt.getUTCFullYear(), 4)}-${p(dt.getUTCMonth() + 1)}`;
+  return bucket === "month" ? ym : `${ym}-${p(dt.getUTCDate())}`;
+}
+
+function nextBucket(ms: number, bucket: Exclude<TimeBucket, "none">): number {
+  const dt = new Date(ms);
+  if (bucket === "month") return Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 1);
+  return ms + (bucket === "week" ? 7 : 1) * 86_400_000;
+}
+
+/**
+ * 時間バケットで集計したモデルの欠けた期間を 0 で埋める (#1541)。最小〜最大のバケットを
+ * 連続で並べ、行の無い期間は全系列 0。ラベルは日 / 週 = `YYYY-MM-DD`、月 = `YYYY-MM`。
+ * NULL の X (`(null)` ラベル) は末尾へ寄せて埋めの対象にしない。日付として読めないラベルが
+ * 1 つでもある・範囲が `MAX_FILLED_BUCKETS` を超える・週で月曜以外が混じるときは、
+ * 誤った補間を避けて元のモデルをそのまま返す。純関数。
+ */
+export function fillTimeBuckets(model: ChartModel, bucket: Exclude<TimeBucket, "none">): ChartModel {
+  const NULL_LABEL = "(null)";
+  const dated: { ms: number; idx: number }[] = [];
+  const nullIdx: number[] = [];
+  for (let i = 0; i < model.labels.length; i++) {
+    const label = model.labels[i];
+    if (label === NULL_LABEL) {
+      nullIdx.push(i);
+      continue;
+    }
+    const ms = parseBucketLabel(label, bucket);
+    if (ms === null) return model;
+    if (bucket === "week" && new Date(ms).getUTCDay() !== 1) return model;
+    dated.push({ ms, idx: i });
+  }
+  if (dated.length === 0) return model;
+  const byMs = new Map<number, number>();
+  for (const d of dated) byMs.set(d.ms, d.idx);
+  const min = Math.min(...dated.map((d) => d.ms));
+  const max = Math.max(...dated.map((d) => d.ms));
+  const labels: string[] = [];
+  const picks: (number | null)[] = [];
+  for (let ms = min; ms <= max; ms = nextBucket(ms, bucket)) {
+    if (labels.length >= MAX_FILLED_BUCKETS) return model;
+    labels.push(formatBucketLabel(ms, bucket));
+    picks.push(byMs.get(ms) ?? null);
+  }
+  for (const i of nullIdx) {
+    labels.push(NULL_LABEL);
+    picks.push(i);
+  }
+  return {
+    ...model,
+    labels,
+    series: model.series.map((s) => ({
+      ...s,
+      values: picks.map((p) => (p === null ? 0 : (s.values[p] ?? 0))),
+    })),
+  };
+}
+
+const TIME_BUCKETS: TimeBucket[] = ["none", "day", "week", "month"];
 
 /**
  * 軸の目盛りに使う「キリの良い」値の配列を昇順で返す。
@@ -544,7 +664,13 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
   // ドーナツ指定 (#1215) も後付けなので、boolean のときだけ引き継ぐ (欠損は既定)。
   const donut = typeof o.donut === "boolean" ? { donut: o.donut } : {};
 
-  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation, palette, ...donut };
+  // 時間バケット (#1541) も後付け。既知の値だけ引き継ぐ (未設定の旧設定は付けない)。
+  const timeBucket =
+    typeof o.timeBucket === "string" && TIME_BUCKETS.includes(o.timeBucket as TimeBucket)
+      ? { timeBucket: o.timeBucket as TimeBucket }
+      : {};
+
+  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation, palette, ...donut, ...timeBucket };
 }
 
 /**

@@ -733,3 +733,115 @@ describe("chartSummary / stepChartIndex (#1529)", () => {
     expect(stepChartIndex(0, "ArrowRight", 0)).toBeNull();
   });
 });
+
+describe("時間バケット集計 (#1541)", () => {
+  const base = { sourceSql: "SELECT * FROM ev;", xColumn: "created_at", yColumns: ["n"], agg: "sum" as const };
+
+  it("PostgreSQL は date_trunc + to_char で、位置指定の GROUP BY", () => {
+    expect(buildChartSql({ ...base, driver: "postgres", bucket: "week" })).toBe(
+      `SELECT to_char(date_trunc('week', "created_at"), 'YYYY-MM-DD') AS "chart_x", SUM("n") AS "chart_y0"\n` +
+        `FROM (SELECT * FROM ev) AS "chart_src"\nGROUP BY 1\nORDER BY 1`,
+    );
+    expect(buildChartSql({ ...base, driver: "postgres", bucket: "month" })).toContain(
+      `to_char(date_trunc('month', "created_at"), 'YYYY-MM')`,
+    );
+  });
+
+  it("MySQL は DATE_FORMAT、週は WEEKDAY で月曜に丸める", () => {
+    expect(buildChartSql({ ...base, driver: "mysql", bucket: "day" })).toContain(
+      "DATE_FORMAT(`created_at`, '%Y-%m-%d') AS `chart_x`",
+    );
+    expect(buildChartSql({ ...base, driver: "mysql", bucket: "month" })).toContain(
+      "DATE_FORMAT(`created_at`, '%Y-%m')",
+    );
+    expect(buildChartSql({ ...base, driver: "mysql", bucket: "week" })).toContain(
+      "DATE_FORMAT(DATE_SUB(`created_at`, INTERVAL WEEKDAY(`created_at`) DAY), '%Y-%m-%d')",
+    );
+  });
+
+  it("SQLite は strftime、週は %w から月曜まで遡る", () => {
+    expect(buildChartSql({ ...base, driver: "sqlite", bucket: "day" })).toContain(
+      `strftime('%Y-%m-%d', "created_at") AS "chart_x"`,
+    );
+    expect(buildChartSql({ ...base, driver: "sqlite", bucket: "week" })).toContain(
+      `strftime('%Y-%m-%d', "created_at", '-' || ((CAST(strftime('%w', "created_at") AS INTEGER) + 6) % 7) || ' days')`,
+    );
+  });
+
+  it("識別子のクオートは列名の引用符を二重化する (式へ注入されない)", () => {
+    const sql = buildChartSql({ ...base, driver: "postgres", xColumn: 'a"b', bucket: "day" });
+    expect(sql).toContain(`"a""b"`);
+  });
+
+  it("bucket 未指定 / none は従来どおり X そのものでグループ化", () => {
+    const sql = buildChartSql({ ...base, driver: "sqlite" });
+    expect(sql).toContain(`GROUP BY "created_at"`);
+    expect(buildChartSql({ ...base, driver: "sqlite", bucket: "none" })).toBe(sql);
+  });
+
+  it("日の欠損を 0 で埋める (月・年またぎ、うるう日を含む)", () => {
+    const m = chartModelFromAggregatedRows(
+      [
+        ["2024-02-27", 3],
+        ["2024-03-01", 5],
+      ],
+      ["n"],
+      "sum",
+      "day",
+    );
+    expect(m.labels).toEqual(["2024-02-27", "2024-02-28", "2024-02-29", "2024-03-01"]);
+    expect(m.series[0].values).toEqual([3, 0, 0, 5]);
+  });
+
+  it("月の欠損を 0 で埋める (年またぎ)", () => {
+    const m = chartModelFromAggregatedRows(
+      [
+        ["2023-11", 1],
+        ["2024-02", 2],
+      ],
+      ["n"],
+      "count",
+      "month",
+    );
+    expect(m.labels).toEqual(["2023-11", "2023-12", "2024-01", "2024-02"]);
+    expect(m.series[0].values).toEqual([1, 0, 0, 2]);
+  });
+
+  it("週は 7 日刻みで埋める。月曜以外のラベルが混じると埋めない", () => {
+    const m = chartModelFromAggregatedRows(
+      [
+        ["2024-01-01", 1],
+        ["2024-01-22", 4],
+      ],
+      ["n"],
+      "sum",
+      "week",
+    );
+    expect(m.labels).toEqual(["2024-01-01", "2024-01-08", "2024-01-15", "2024-01-22"]);
+    expect(m.series[0].values).toEqual([1, 0, 0, 4]);
+    const bad = chartModelFromAggregatedRows([["2024-01-02", 1], ["2024-01-22", 4]], ["n"], "sum", "week");
+    expect(bad.labels).toEqual(["2024-01-02", "2024-01-22"]);
+  });
+
+  it("NULL の X は末尾へ寄せ、日付として読めないラベルがあれば元のまま", () => {
+    const m = chartModelFromAggregatedRows([[null, 9], ["2024-01-01", 1], ["2024-01-03", 2]], ["n"], "sum", "day");
+    expect(m.labels).toEqual(["2024-01-01", "2024-01-02", "2024-01-03", "(null)"]);
+    expect(m.series[0].values).toEqual([1, 0, 2, 9]);
+    const raw = chartModelFromAggregatedRows([["abc", 1], ["2024-01-03", 2]], ["n"], "sum", "day");
+    expect(raw.labels).toEqual(["abc", "2024-01-03"]);
+    const invalid = chartModelFromAggregatedRows([["2024-02-30", 1], ["2024-03-03", 2]], ["n"], "sum", "day");
+    expect(invalid.labels).toEqual(["2024-02-30", "2024-03-03"]);
+  });
+
+  it("範囲が上限を超えるときは埋めない", () => {
+    const m = chartModelFromAggregatedRows([["1990-01-01", 1], ["2024-01-01", 2]], ["n"], "sum", "day");
+    expect(m.labels).toHaveLength(2);
+  });
+
+  it("sanitizeChartConfig は既知の timeBucket だけ引き継ぐ", () => {
+    const cols = [{ name: "d", type_name: "DATE" }, { name: "n", type_name: "INT" }];
+    const cfg = { type: "line", xCol: 0, yCols: [1], aggregation: "sum", palette: "categorical" };
+    expect(sanitizeChartConfig({ ...cfg, timeBucket: "week" }, cols)?.timeBucket).toBe("week");
+    expect(sanitizeChartConfig({ ...cfg, timeBucket: "year" }, cols)?.timeBucket).toBeUndefined();
+  });
+});
