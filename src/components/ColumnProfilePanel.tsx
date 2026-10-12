@@ -91,12 +91,15 @@ export function ColumnProfilePanel({
   driver,
   target,
   onSelectColumn,
+  onCompare,
 }: {
   sessionId: string;
   driver: string;
   target: ProfileTarget;
   /** 列の選択を App の対象 state へ戻す (タブを閉じて開き直しても列が残る)。 */
   onSelectColumn: (column: string) => void;
+  /** 他の接続の同じ列と分布を並べて比べるモーダルを開く (#1539)。未指定なら入口を出さない。 */
+  onCompare?: (approximate: boolean) => void;
 }) {
   const t = useT();
   const [columns, setColumns] = useState<TableColumnInfo[] | null>(null);
@@ -265,6 +268,19 @@ export function ColumnProfilePanel({
           <Icon name="refresh" size={ICON_SIZES.sm} />
           <chakra.span marginLeft="1.5">{profile ? t("profileRerun") : t("profileRun")}</chakra.span>
         </Button>
+        {onCompare && (
+          <Tooltip label={t("profileCompareOpenTooltip")} focusableWrapper={!column}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => onCompare(approximate)}
+              disabled={!column}
+            >
+              {t("profileCompareOpen")}
+            </Button>
+          </Tooltip>
+        )}
         <Tooltip label={t("profileOverviewHint")}>
           <Button
             type="button"

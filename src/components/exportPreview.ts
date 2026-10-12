@@ -80,7 +80,7 @@ function parsesAsF64(s: string): boolean {
   return /^[+-]?(inf|infinity|nan|(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?)$/i.test(s.trim());
 }
 
-function mitigateFormulaInjection(s: string): string {
+export function mitigateFormulaInjection(s: string): string {
   const first = s[0];
   if (first !== undefined && CSV_FORMULA_TRIGGERS.includes(first) && !parsesAsF64(s)) {
     return "'" + s;

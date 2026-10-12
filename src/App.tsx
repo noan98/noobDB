@@ -292,6 +292,9 @@ const QueryInspectorPanel = lazy(() =>
 const AdvisorPanel = lazy(() =>
   import("./components/AdvisorPanel").then((m) => ({ default: m.AdvisorPanel })),
 );
+const ColumnProfileCompareModal = lazy(() =>
+  import("./components/ColumnProfileCompareModal").then((m) => ({ default: m.ColumnProfileCompareModal })),
+);
 const ColumnProfilePanel = lazy(() =>
   import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
 );
@@ -497,6 +500,7 @@ import {
 } from "./schemaDrift";
 import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
+import { clearExplainPin } from "./explainPins";
 import { Tooltip } from "./components/Tooltip";
 
 type Theme = "light" | "dark";
@@ -1287,6 +1291,8 @@ export default function App() {
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // 環境横断ブロードキャスト実行 (#738)。非 null の間だけ `BroadcastModal` を
   // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
+  // 列の分布を複数接続で比べるモーダル (#1539)。非 null の間だけマウントする。
+  const [profileCompare, setProfileCompare] = useState<{ approximate: boolean } | null>(null);
   const [broadcastRequest, setBroadcastRequest] = useState<
     { sql: string; tableColumns: TableColumnInfo[] | null } | null
   >(null);
@@ -6400,6 +6406,13 @@ export default function App() {
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
+  // 貼り付けが表示行を超えた分を、保留の追加行へまとめて積む (#1539)。確定後の流れ
+  // (反映時の確認・SQL 生成) は行追加モーダルで足した行と同じ。
+  const addInsertRowsForTab = useCallback((tabId: string, rows: PendingInsertRow[]) => {
+    if (rows.length === 0) return;
+    patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
+  }, [patchTab]);
+
   // 行操作 (追加/削除) の保留を破棄する。
   const discardRowOpsForTab = useCallback((tabId: string) => {
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
@@ -7921,6 +7934,7 @@ export default function App() {
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
+    clearExplainPin(id);
     // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
     // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
     // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は
@@ -9196,7 +9210,7 @@ export default function App() {
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
-    requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
+    addInsertRowsForTab, requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
     runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
     setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
     setSaveAsTableRequest, setSaveAsViewRequest, setServerFilterInTab, setServerSortInTab, setStatus,
@@ -9957,6 +9971,7 @@ export default function App() {
                         onSelectColumn={(column) =>
                           setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
                         }
+                        onCompare={(approximate) => setProfileCompare({ approximate })}
                       />
                     ) : null
                   ) : activeBottomPanelTab === "structure" ? (
@@ -10980,6 +10995,24 @@ export default function App() {
             confirm={confirm}
             onClose={() => setBroadcastRequest(null)}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {profileCompare && sessionId && selectedProfile && profileTarget?.column && (
+          <Suspense fallback={null}>
+            <ColumnProfileCompareModal
+              baseline={{ sessionId, profile: selectedProfile }}
+              candidates={openConnections.filter(
+                (c) => c.sessionId !== sessionId && !isSandboxProfileId(c.profile.id),
+              )}
+              driver={selectedProfile.driver}
+              target={{ ...profileTarget, column: profileTarget.column }}
+              approximate={profileCompare.approximate}
+              confirm={confirm}
+              onClose={() => setProfileCompare(null)}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 
