@@ -6898,6 +6898,7 @@ export const DataGrid = memo(function DataGrid({
             validateEdit={validateEdit}
             serverFilter={serverFilter}
             onApplyColumn={onReplaceColumn}
+            onLookupQuery={onLookupQuery}
             onApplyInGrid={(targets) => {
               onBulkEdit(targets);
               toast.success(t("gridReplaceApplied", { cells: targets.length }));

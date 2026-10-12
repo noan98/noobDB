@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
@@ -25,7 +25,7 @@ import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
 import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
 import { buildAlterPrechecks, type AlterPrecheck } from "./alterPrecheck";
-import { useCountPreviews, type CountPreviewState } from "../useCountPreviews";
+import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews, type CountPreviewState } from "../useCountPreviews";
 
 /**
  * 既存テーブルの列編集ダイアログ (#794)。`describeTable` で現状の列を取得し、
@@ -340,7 +340,12 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     () => buildAlterPrechecks(driver, database, table, baseline, existing),
     [driver, database, table, baseline, existing],
   );
-  const precheckCounts = useCountPreviews(sessionId, database, prechecks, !loading && !loadError);
+  const runCount = useCallback(
+    (sql: string) =>
+      api.runLookupQuery({ sessionId, sql, database, queryTimeoutSecs: COUNT_PREVIEW_TIMEOUT_SECS, rowCap: 1 }),
+    [sessionId, database],
+  );
+  const precheckCounts = useCountPreviews(runCount, prechecks, !loading && !loadError);
   // 破壊的な文 (DROP COLUMN / DROP FOREIGN KEY / DROP CHECK) を含むか (#1529)。
   // 含むときは確認ダイアログと同じ破壊的パターン (実行は dangerOutline で左、
   // キャンセルを primary で右) に切り替え、Cmd/Ctrl+Enter での実行も止める。

@@ -2764,6 +2764,10 @@ const en = {
   gridReplaceSkipUnchanged: "{count} unchanged",
   gridReplacePreview: "SQL to run",
   gridReplacePreviewEmpty: "Enter the text to find.",
+  gridReplaceColumnCount: "{count} row(s) will be updated.",
+  gridReplaceColumnCountZero: "No rows match, so nothing would be updated.",
+  gridReplaceColumnCountError: "Could not count the affected rows: {error}",
+  gridReplaceColumnCountRunning: "Counting the affected rows…",
   gridReplaceColumnWarning:
     "This can rewrite many rows at once. It runs as one transaction (all or nothing) after you confirm.",
   gridReplaceApplyGrid: "Buffer edits",
@@ -7455,6 +7459,10 @@ const ja: Dict = {
   gridReplaceSkipUnchanged: "{count} 件は変化なし",
   gridReplacePreview: "実行する SQL",
   gridReplacePreviewEmpty: "検索する文字列を入力してください。",
+  gridReplaceColumnCount: "{count} 行が更新対象です。",
+  gridReplaceColumnCountZero: "一致する行がないため、何も更新されません。",
+  gridReplaceColumnCountError: "対象行数を数えられませんでした: {error}",
+  gridReplaceColumnCountRunning: "対象行数を数えています…",
   gridReplaceColumnWarning:
     "一度に多数の行を書き換える可能性があります。確認後に 1 トランザクション (全件成功か全件ロールバック) で実行します。",
   gridReplaceApplyGrid: "編集を保留",

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "./api/tauri";
 
 /** 件数プレビュー 1 件 (`COUNT(*)` を返す読み取り専用 SQL)。 */
 export interface CountPreviewItem {
@@ -12,10 +11,17 @@ export type CountPreviewState =
   | { status: "ok"; count: number }
   | { status: "error"; error: string };
 
+/**
+ * 読み取り専用の件数クエリを実行する関数。`run_lookup_query` を束ねたもの
+ * (`api.runLookupQuery` / App の `lookupForSession`) を渡す。参照が変わると再実行されるので、
+ * 呼び出し側は `useCallback` / `useMemo` で安定させること。
+ */
+export type CountRunner = (sql: string) => Promise<{ rows: readonly (readonly unknown[])[] }>;
+
 /** 入力の途中で毎回クエリを撃たないための待ち時間 (ミリ秒)。 */
 export const COUNT_PREVIEW_DEBOUNCE_MS = 500;
-/** 件数プレビューのクエリを打ち切る秒数 (大きな表で UI を待たせない)。 */
-const COUNT_PREVIEW_TIMEOUT_SECS = 15;
+/** 件数プレビューのクエリを打ち切る秒数 (大きな表で UI を待たせない)。呼び出し側の `CountRunner` が使う。 */
+export const COUNT_PREVIEW_TIMEOUT_SECS = 15;
 
 /** `COUNT(*)` の結果セル (number / 文字列 / bigint の文字列表現) を数値にする。読めなければ null。 */
 export function parseCountCell(cell: unknown): number | null {
@@ -27,16 +33,15 @@ export function parseCountCell(cell: unknown): number | null {
 /**
  * 読み取り専用の件数プレビューを、入力の変化に対してデバウンスしながら実行するフック (#1536)。
  *
- * - 実行は `run_lookup_query` 経由: セッションが `read_only` でも通り (バックエンドが読み取り専用の文
+ * - 実行は `run` (= `run_lookup_query` 経由): セッションが `read_only` でも通り (バックエンドが読み取り専用の文
  *   だけを許す)、履歴・結果キャッシュを汚さず、タイムアウトで打ち切られる。
  * - `items` の中身 (id と SQL) が変わらない限り再実行しない。変わったら `COUNT_PREVIEW_DEBOUNCE_MS`
  *   待ってから実行し、待っている間に更に変わったら前の呼び出しを捨てる (古い応答で上書きしない)。
- * - `enabled` が false、または `items` が空なら何も実行しない。
+ * - `enabled` が false、`run` が null、または `items` が空なら何も実行しない。
  * 戻り値は id → 状態。まだ実行していない (デバウンス中を含む) id は `loading`。
  */
 export function useCountPreviews(
-  sessionId: string,
-  database: string | null,
+  run: CountRunner | null,
   items: readonly CountPreviewItem[],
   enabled = true,
 ): Record<string, CountPreviewState> {
@@ -47,19 +52,13 @@ export function useCountPreviews(
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: items は signature が同一なら同じ内容なので signature だけを依存にする
   useEffect(() => {
-    if (!enabled || items.length === 0) return;
+    if (!enabled || !run || items.length === 0) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       void Promise.all(
         items.map(async (item): Promise<[string, CountPreviewState]> => {
           try {
-            const res = await api.runLookupQuery({
-              sessionId,
-              sql: item.sql,
-              database,
-              queryTimeoutSecs: COUNT_PREVIEW_TIMEOUT_SECS,
-              rowCap: 1,
-            });
+            const res = await run(item.sql);
             const count = parseCountCell(res.rows[0]?.[0]);
             return [
               item.id,
@@ -77,7 +76,7 @@ export function useCountPreviews(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sessionId, database, signature, enabled]);
+  }, [run, signature, enabled]);
 
   return useMemo(() => {
     const out: Record<string, CountPreviewState> = {};
