@@ -4296,6 +4296,13 @@ const en = {
   sandboxReviewSchemaExternalWarning:
     "These tables also changed schema on the original connection since the snapshot: {tables}. Review carefully before applying.",
   sandboxReviewTruncated: "capped at the row limit",
+  sandboxResetTable: "Reset this table",
+  sandboxResetTableHint:
+    "Restore this table's rows to the base snapshot. Other tables are untouched; schema changes are not undone.",
+  sandboxResetConfirmTitle: "Reset table {table}?",
+  sandboxResetConfirmMessage:
+    "All rows of {table} in the sandbox are replaced with the base snapshot (the state at creation or at the last write-back). Your edits to this table are lost. Schema changes are not reverted.",
+  sandboxResetDone: "Reset {table} ({rows} rows restored).",
   sandboxReviewSourceError:
     "Could not read the current rows from the original database, so conflicts were not checked: {error}",
   sandboxApplySourceErrorNote:
@@ -8973,6 +8980,13 @@ const ja: Dict = {
   sandboxReviewSchemaExternalWarning:
     "以下のテーブルはスナップショット以降、元の接続側でもスキーマが変更されています: {tables}。適用前によく確認してください。",
   sandboxReviewTruncated: "行数上限で打ち切り",
+  sandboxResetTable: "この表をリセット",
+  sandboxResetTableHint:
+    "この表の行を base スナップショットの内容へ戻します。他の表には影響せず、スキーマ変更は戻りません。",
+  sandboxResetConfirmTitle: "表 {table} をリセットしますか?",
+  sandboxResetConfirmMessage:
+    "サンドボックス内の {table} の全行を base スナップショット (作成時、または最後に書き戻した時点) の内容に置き換えます。この表への編集は失われます。スキーマ変更は戻りません。",
+  sandboxResetDone: "{table} をリセットしました ({rows} 行を復元)。",
   sandboxReviewSourceError:
     "元の DB から現在の行を取得できなかったため、競合を検出できていません: {error}",
   sandboxApplySourceErrorNote:

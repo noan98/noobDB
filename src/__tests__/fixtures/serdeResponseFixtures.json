@@ -1826,6 +1826,9 @@
       "users"
     ]
   },
+  "sandboxResetResult": {
+    "restored_rows": 3
+  },
   "sandboxSchemaDiffResult": {
     "desired": {
       "source_driver": "mysql",
@@ -1952,6 +1955,10 @@
   },
   "schedulerSettings": {
     "catch_up_missed": true
+  },
+  "schemaCacheTime": {
+    "database": "appdb",
+    "fetched_at_ms": 1760000000000
   },
   "schemaDiff": {
     "source_driver": "mysql",
@@ -4379,6 +4386,35 @@
   "tableComment": {
     "comment": "registered users",
     "name": "users"
+  },
+  "tableProfileOverview": {
+    "columns": [
+      {
+        "column": "id",
+        "data_type": "bigint",
+        "distinct_count": "9007199254740993",
+        "max_value": "9007199254740993",
+        "min_value": 1,
+        "non_null_count": 100,
+        "notes": [],
+        "null_count": 0
+      },
+      {
+        "column": "payload",
+        "data_type": "longblob",
+        "distinct_count": null,
+        "max_value": null,
+        "min_value": null,
+        "non_null_count": 40,
+        "notes": [
+          "overview_skipped_type"
+        ],
+        "null_count": 60
+      }
+    ],
+    "scans": 1,
+    "table": "orders",
+    "total_count": 100
   },
   "tableRowEstimate": {
     "estimate": 1234,

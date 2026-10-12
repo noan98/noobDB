@@ -1456,6 +1456,12 @@ export interface SandboxTableDiffResult {
   source_error: string | null;
 }
 
+/** `sandboxResetTable` の戻り値 (#1539)。 */
+export interface SandboxResetResult {
+  /** リセット後にライブ表へ戻った行数 (= base スナップショットの行数)。 */
+  restored_rows: number;
+}
+
 /** `sandboxSchemaDiff` の戻り値。 */
 export interface SandboxSchemaDiffResult {
   /** サンドボックスでのスキーマ変更 (base 比較)。`generateSyncSql` にそのまま渡せる。 */

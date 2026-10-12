@@ -717,6 +717,10 @@ export const sandboxTableDiffResult = z.object({
   source_error: z.string().nullable(),
 });
 
+export const sandboxResetResult = z.object({
+  restored_rows: z.number(),
+});
+
 export const sandboxSchemaDiffResult = z.object({
   desired: schemaDiff,
   external_changed_tables: z.array(z.string()),

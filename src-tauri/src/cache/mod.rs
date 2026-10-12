@@ -151,6 +151,8 @@
 //!    base スナップショット (shadow テーブル) への書き込み。ライブテーブルの
 //!    データ自体は変えないが、shadow テーブルを直接 SELECT すれば見えるため
 //!    安全側で invalidate する。
+//!    同じく [`crate::commands::sandbox::sandbox_reset_table_inner`] (#1539。ライブ表を
+//!    base の内容へ戻す) もサンドボックス自身の結果キャッシュを invalidate する。
 //! 8. `commands::import::spawn_import` (CSV/JSON インポート) — バルク書き込み。
 //! 9. [`crate::commands::local::register_local_table_inner`] /
 //!    [`crate::commands::local::drop_local_table_inner`] — ローカル横断クエリ

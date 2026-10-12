@@ -210,6 +210,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `sandbox_table_diff`
 - `sandbox_schema_diff`
 - `sandbox_advance_base` (`diffId` + `skipKeys`, #1259)
+- `sandbox_reset_table` (#1539。1 表を base スナップショットへ戻す。行データのみ・read_only 拒否)
 
 ## プロセス管理・ユーザ / 権限 (`commands/process.rs`, `commands/privileges.rs`)
 
