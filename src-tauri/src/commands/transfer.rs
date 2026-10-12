@@ -475,6 +475,20 @@ async fn resolve_conflict(
             conflict
         };
     conflict.validate(&names)?;
+    // MySQL の `ON DUPLICATE KEY UPDATE` は主キー以外の UNIQUE でも発火し、別の行を
+    // 上書きしうる。取り込み (import) と同じ検証で、危険な表は実行前に拒否する。
+    target
+        .conn
+        .check_upsert_keys(
+            request
+                .target_database
+                .as_deref()
+                .filter(|d| !d.is_empty()),
+            request.target_table.trim(),
+            &names,
+            &conflict,
+        )
+        .await?;
     Ok(conflict)
 }
 
