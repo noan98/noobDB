@@ -13,7 +13,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 100",
         "postgres": "SELECT * FROM t LIMIT 100",
-        "sqlite": "SELECT * FROM t LIMIT 100" 
+        "sqlite": "SELECT * FROM t LIMIT 100"
       }
     },
     {
@@ -23,7 +23,7 @@
       "expected": {
         "mysql": "select id, name from users where age > 18 LIMIT 50",
         "postgres": "select id, name from users where age > 18 LIMIT 50",
-        "sqlite": "select id, name from users where age > 18 LIMIT 50" 
+        "sqlite": "select id, name from users where age > 18 LIMIT 50"
       }
     },
     {
@@ -33,7 +33,7 @@
       "expected": {
         "mysql": "SELECT DISTINCT a FROM t LIMIT 50",
         "postgres": "SELECT DISTINCT a FROM t LIMIT 50",
-        "sqlite": "SELECT DISTINCT a FROM t LIMIT 50" 
+        "sqlite": "SELECT DISTINCT a FROM t LIMIT 50"
       }
     },
     {
@@ -43,7 +43,7 @@
       "expected": {
         "mysql": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20",
         "postgres": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20",
-        "sqlite": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20" 
+        "sqlite": "WITH c AS (SELECT 1 AS n) SELECT * FROM c LIMIT 20"
       }
     },
     {
@@ -53,7 +53,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
       }
     },
     {
@@ -63,7 +68,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
       }
     },
     {
@@ -73,7 +83,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
       }
     },
     {
@@ -83,7 +98,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
       }
     },
     {
@@ -93,7 +113,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
       }
     },
     {
@@ -103,7 +128,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
       }
     },
     {
@@ -113,7 +143,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
       }
     },
     {
@@ -123,7 +158,7 @@
       "expected": {
         "mysql": "SELECT TOP (5) * FROM t LIMIT 100",
         "postgres": "SELECT TOP (5) * FROM t LIMIT 100",
-        "sqlite": "SELECT TOP (5) * FROM t LIMIT 100" 
+        "sqlite": "SELECT TOP (5) * FROM t LIMIT 100"
       }
     },
     {
@@ -133,7 +168,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000;",
         "postgres": "SELECT * FROM t LIMIT 1000;",
-        "sqlite": "SELECT * FROM t LIMIT 1000;" 
+        "sqlite": "SELECT * FROM t LIMIT 1000;"
       }
     },
     {
@@ -143,7 +178,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000; -- bye",
         "postgres": "SELECT * FROM t LIMIT 1000; -- bye",
-        "sqlite": "SELECT * FROM t LIMIT 1000; -- bye" 
+        "sqlite": "SELECT * FROM t LIMIT 1000; -- bye"
       }
     },
     {
@@ -153,7 +188,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000 -- trailing\n",
         "postgres": "SELECT * FROM t LIMIT 1000 -- trailing\n",
-        "sqlite": "SELECT * FROM t LIMIT 1000 -- trailing\n" 
+        "sqlite": "SELECT * FROM t LIMIT 1000 -- trailing\n"
       }
     },
     {
@@ -163,7 +198,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "lockingClause",
+        "postgres": "lockingClause",
+        "sqlite": "lockingClause"
       }
     },
     {
@@ -173,7 +213,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "lockingClause",
+        "postgres": "lockingClause",
+        "sqlite": "lockingClause"
       }
     },
     {
@@ -183,7 +228,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "lockingClause",
+        "postgres": "lockingClause",
+        "sqlite": "lockingClause"
       }
     },
     {
@@ -193,7 +243,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "aggregateOnly",
+        "postgres": "aggregateOnly",
+        "sqlite": "aggregateOnly"
       }
     },
     {
@@ -203,7 +258,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "aggregateOnly",
+        "postgres": "aggregateOnly",
+        "sqlite": "aggregateOnly"
       }
     },
     {
@@ -213,7 +273,7 @@
       "expected": {
         "mysql": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100",
         "postgres": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100",
-        "sqlite": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100" 
+        "sqlite": "SELECT a, COUNT(*) FROM t GROUP BY a LIMIT 100"
       }
     },
     {
@@ -223,7 +283,7 @@
       "expected": {
         "mysql": "SELECT COUNT(*) OVER () FROM t LIMIT 1000",
         "postgres": "SELECT COUNT(*) OVER () FROM t LIMIT 1000",
-        "sqlite": "SELECT COUNT(*) OVER () FROM t LIMIT 1000" 
+        "sqlite": "SELECT COUNT(*) OVER () FROM t LIMIT 1000"
       }
     },
     {
@@ -233,7 +293,11 @@
       "expected": {
         "mysql": "SELECT * FROM t WHERE s = '\\'; DELETE FROM t; --' LIMIT 100",
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -243,7 +307,7 @@
       "expected": {
         "mysql": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100" 
+        "sqlite": "SELECT a FROM x UNION SELECT a FROM y LIMIT 100"
       }
     },
     {
@@ -253,7 +317,7 @@
       "expected": {
         "mysql": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100" 
+        "sqlite": "SELECT a FROM x UNION ALL SELECT a FROM y LIMIT 100"
       }
     },
     {
@@ -263,7 +327,7 @@
       "expected": {
         "mysql": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100" 
+        "sqlite": "SELECT a FROM x INTERSECT SELECT a FROM y LIMIT 100"
       }
     },
     {
@@ -273,7 +337,7 @@
       "expected": {
         "mysql": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100",
         "postgres": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100",
-        "sqlite": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100" 
+        "sqlite": "SELECT a FROM x EXCEPT SELECT a FROM y LIMIT 100"
       }
     },
     {
@@ -283,7 +347,7 @@
       "expected": {
         "mysql": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100",
         "postgres": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100",
-        "sqlite": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100" 
+        "sqlite": "SELECT * FROM (SELECT a FROM x UNION SELECT a FROM y) s LIMIT 100"
       }
     },
     {
@@ -293,7 +357,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -303,7 +372,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -313,7 +387,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -323,7 +402,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -333,7 +417,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -343,7 +432,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -353,7 +447,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -363,7 +462,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -373,7 +477,12 @@
       "expected": {
         "mysql": null,
         "postgres": null,
-        "sqlite": null 
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "notApplicable",
+        "postgres": "notApplicable",
+        "sqlite": "notApplicable"
       }
     },
     {
@@ -383,7 +492,7 @@
       "expected": {
         "mysql": "SELECT deleted_at FROM t LIMIT 1000",
         "postgres": "SELECT deleted_at FROM t LIMIT 1000",
-        "sqlite": "SELECT deleted_at FROM t LIMIT 1000" 
+        "sqlite": "SELECT deleted_at FROM t LIMIT 1000"
       }
     },
     {
@@ -393,7 +502,7 @@
       "expected": {
         "mysql": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000",
         "postgres": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000",
-        "sqlite": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000" 
+        "sqlite": "SELECT REPLACE(name, 'a', 'b') FROM t LIMIT 1000"
       }
     },
     {
@@ -403,7 +512,7 @@
       "expected": {
         "mysql": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000",
         "postgres": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000",
-        "sqlite": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000" 
+        "sqlite": "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000"
       }
     },
     {
@@ -413,7 +522,7 @@
       "expected": {
         "mysql": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */",
         "postgres": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */",
-        "sqlite": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */" 
+        "sqlite": "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */"
       }
     },
     {
@@ -423,7 +532,7 @@
       "expected": {
         "mysql": "SELECT `limit` FROM t LIMIT 1000",
         "postgres": "SELECT `limit` FROM t LIMIT 1000",
-        "sqlite": "SELECT `limit` FROM t LIMIT 1000" 
+        "sqlite": "SELECT `limit` FROM t LIMIT 1000"
       }
     },
     {
@@ -433,28 +542,28 @@
       "expected": {
         "mysql": "SELECT $$limit 5$$ AS s LIMIT 1000",
         "postgres": "SELECT $$limit 5$$ AS s LIMIT 1000",
-        "sqlite": "SELECT $$limit 5$$ AS s LIMIT 1000" 
+        "sqlite": "SELECT $$limit 5$$ AS s LIMIT 1000"
       }
     },
     {
-          "sql": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table",
-          "limit": 100,
-          "note": "#1517: 先頭が集計でも UNION を含む文は単一行ではないので LIMIT を付ける",
-          "expected": {
-                "mysql": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100",
-                "postgres": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100",
-                "sqlite": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100"
-          }
+      "sql": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table",
+      "limit": 100,
+      "note": "#1517: 先頭が集計でも UNION を含む文は単一行ではないので LIMIT を付ける",
+      "expected": {
+        "mysql": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100",
+        "postgres": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100",
+        "sqlite": "SELECT COUNT(*) FROM users UNION ALL SELECT id FROM big_table LIMIT 100"
+      }
     },
     {
-          "sql": "SELECT data #> '{a}' FROM t",
-          "limit": 100,
-          "note": "#1517: PostgreSQL の # 演算子は行コメントではない。MySQL では # 以降がコメントなので LIMIT は # の前に入る",
-          "expected": {
-                "mysql": "SELECT data LIMIT 100 #> '{a}' FROM t",
-                "postgres": "SELECT data #> '{a}' FROM t LIMIT 100",
-                "sqlite": "SELECT data #> '{a}' FROM t LIMIT 100"
-          }
+      "sql": "SELECT data #> '{a}' FROM t",
+      "limit": 100,
+      "note": "#1517: PostgreSQL の # 演算子は行コメントではない。MySQL では # 以降がコメントなので LIMIT は # の前に入る",
+      "expected": {
+        "mysql": "SELECT data LIMIT 100 #> '{a}' FROM t",
+        "postgres": "SELECT data #> '{a}' FROM t LIMIT 100",
+        "sqlite": "SELECT data #> '{a}' FROM t LIMIT 100"
+      }
     }
   ]
 }

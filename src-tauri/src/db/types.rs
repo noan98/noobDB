@@ -905,8 +905,8 @@ mod js_safe_tests {
     #[test]
     fn f32_is_widened_through_its_shortest_representation() {
         // `as f64` だと f32 の丸め誤差が見える。最短表記経由なら DB の表示と同じ値になる (#1534)。
-        assert_eq!(f64::from(3.14f32), 3.140000104904175);
-        assert_eq!(Value::from_f32_shortest(3.14), Value::Float(3.14));
+        assert_ne!(f64::from(0.1f32), 0.1_f64);
+        assert_eq!(Value::from_f32_shortest(0.1), Value::Float(0.1));
         assert_eq!(Value::from_f32_shortest(0.1), Value::Float(0.1));
         assert_eq!(Value::from_f32_shortest(-2.5), Value::Float(-2.5));
         assert_eq!(Value::from_f32_shortest(0.0), Value::Float(0.0));

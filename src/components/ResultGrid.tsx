@@ -49,7 +49,7 @@ import {
   tablePinPosition,
   toTablePinning,
 } from "./gridColumnPinning";
-import { api, CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
+import { api, type AutoLimitSkip, CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
@@ -1090,6 +1090,11 @@ interface Props {
    * filled it), so small results and aggregates stay quiet.
    */
   autoLimitApplied?: number | null;
+  /**
+   * 自動 LIMIT を付けなかった理由 (#1534)。ステータスバーに「既存の LIMIT があるため
+   * 未適用」などの注記を出す。付与した / 要求なしは null。
+   */
+  autoLimitSkip?: AutoLimitSkip | null;
   /**
    * Set when the last run stopped before finishing (user cancel or query
    * timeout) instead of completing normally, so `result` holds only a
@@ -7299,6 +7304,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   canLoadMore,
   onLoadMore,
   autoLimitApplied,
+  autoLimitSkip,
   partialResult,
   onFetchAllRows,
   driver,
@@ -8078,6 +8084,23 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
     autoLimitApplied != null &&
     result.rows.length >= autoLimitApplied;
 
+  // 自動 LIMIT の付与 / 未適用の理由を常に一言で示す (#1534)。上限に達した場合は
+  // 既存の警告バッジが出るので、ここは「付与したが上限未満」と「付けなかった」を担当する。
+  const autoLimitNote: string | null =
+    streaming || result.columns.length === 0
+      ? null
+      : autoLimitApplied != null
+        ? showAutoLimitBadge
+          ? null
+          : t("autoLimitNoteApplied", { limit: autoLimitApplied })
+        : autoLimitSkip === "existingLimit"
+          ? t("autoLimitNoteExistingLimit")
+          : autoLimitSkip === "lockingClause"
+            ? t("autoLimitNoteLockingClause")
+            : autoLimitSkip === "aggregateOnly"
+              ? t("autoLimitNoteAggregateOnly")
+              : null;
+
   const editsCount = pendingEdits ? countEditedCells(pendingEdits) : 0;
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
   const hasPendingEdits = editsCount > 0;
@@ -8604,6 +8627,15 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
                   LIMIT {autoLimitApplied}
                 </chakra.span>
               </Tooltip>
+            )}
+            {autoLimitNote && (
+              <chakra.span
+                color="app.textMuted"
+                marginLeft="6px"
+                data-testid="auto-limit-note"
+              >
+                {autoLimitNote}
+              </chakra.span>
             )}
             {partialResult && (
               <Tooltip

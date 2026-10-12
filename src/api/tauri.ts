@@ -1848,6 +1848,9 @@ export interface QueryStreamPatchMessage {
   runs: QueryStreamPatchRun[];
 }
 
+/** 自動 LIMIT を付与しなかった理由 (#1534)。バックエンド `AutoLimitSkip` と同じ camelCase。 */
+export type AutoLimitSkip = "existingLimit" | "lockingClause" | "aggregateOnly" | "notApplicable";
+
 export interface QueryStreamDoneMessage {
   totalRows: number;
   rowsAffected: number;
@@ -1855,6 +1858,8 @@ export interface QueryStreamDoneMessage {
   hasColumns: boolean;
   /** Row cap auto-injected for this run, or null when none was applied. */
   appliedAutoLimit: number | null;
+  /** 自動 LIMIT を要求したが付与しなかった理由 (#1534)。 */
+  autoLimitSkip?: AutoLimitSkip | null;
   /** サーバの通知・警告 (PostgreSQL NOTICE/WARNING、MySQL SHOW WARNINGS) (#1165)。 */
   serverMessages?: ServerMessage[];
   /** 全行を観測し終えた統計 (#1257)。 */

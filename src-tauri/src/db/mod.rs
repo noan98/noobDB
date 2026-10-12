@@ -2819,8 +2819,33 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
 /// Shared body of [`apply_auto_limit`] and its driver-aware caller, operating
 /// on the original chars plus an already-masked copy of the same length.
 fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Option<String> {
+    decide_auto_limit_masked(orig, masked, limit).ok()
+}
+
+/// 自動 LIMIT を付けなかった理由 (#1534)。結果ペインで「なぜ上限が付いていないか」を
+/// 説明するための列挙で、`apply_auto_limit_*` の `None` を理由別に分けたもの。
+/// ワイヤ上は camelCase 文字列 (`existingLimit` など)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AutoLimitSkip {
+    /// 既に `LIMIT` / `OFFSET` / `FETCH` がある (ユーザの指定を優先)。
+    ExistingLimit,
+    /// `FOR UPDATE` / `LOCK IN SHARE MODE` などロック句があり、末尾に足すと不正になる。
+    LockingClause,
+    /// 集約のみ (`SELECT COUNT(*) …`) で 1 行しか返らない。
+    AggregateOnly,
+    /// 対象外 (SELECT / WITH 以外、データ変更 CTE、`SELECT … INTO`、空 SQL、上限 0)。
+    NotApplicable,
+}
+
+/// 自動 LIMIT の判定本体。付与できれば書き換え後 SQL、付けなければ理由を返す。
+fn decide_auto_limit_masked(
+    orig: &[char],
+    masked: &[char],
+    limit: usize,
+) -> std::result::Result<String, AutoLimitSkip> {
     if limit == 0 {
-        return None;
+        return Err(AutoLimitSkip::NotApplicable);
     }
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
 
@@ -2829,22 +2854,14 @@ fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Opti
         .trim_end_matches(|c: char| c == ';' || c.is_whitespace())
         .trim_start();
     if body.is_empty() {
-        return None;
+        return Err(AutoLimitSkip::NotApplicable);
     }
     if !(starts_with_word(body, "select") || starts_with_word(body, "with")) {
-        return None;
+        return Err(AutoLimitSkip::NotApplicable);
     }
     if contains_word(body, "limit") || contains_word(body, "offset") || contains_word(body, "fetch")
     {
-        return None;
-    }
-    // Data-modifying CTEs (`WITH … DELETE`) and `SELECT … INTO` must not get a
-    // trailing LIMIT spliced onto them. `replace`/`merge` are intentionally not
-    // listed here: `REPLACE()` is a common string function, not a write.
-    for kw in ["insert", "update", "delete", "into"] {
-        if contains_word(body, kw) {
-            return None;
-        }
+        return Err(AutoLimitSkip::ExistingLimit);
     }
     // Locking reads put the LIMIT in the wrong place if appended at the very end
     // (`… LOCK IN SHARE MODE LIMIT n` is invalid, and `LIMIT` can't be spliced
@@ -2852,10 +2869,18 @@ fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Opti
     // either), so leave any statement carrying a locking clause untouched. See
     // [`has_locking_clause`] for the recognised phrases and suffixed forms.
     if has_locking_clause(body) {
-        return None;
+        return Err(AutoLimitSkip::LockingClause);
+    }
+    // Data-modifying CTEs (`WITH … DELETE`) and `SELECT … INTO` must not get a
+    // trailing LIMIT spliced onto them. `replace`/`merge` are intentionally not
+    // listed here: `REPLACE()` is a common string function, not a write.
+    for kw in ["insert", "update", "delete", "into"] {
+        if contains_word(body, kw) {
+            return Err(AutoLimitSkip::NotApplicable);
+        }
     }
     if is_aggregate_only(body) {
-        return None;
+        return Err(AutoLimitSkip::AggregateOnly);
     }
 
     // Splice ` LIMIT n` after the last meaningful character. Trailing `;`,
@@ -2873,7 +2898,7 @@ fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Opti
     let mut out: String = orig[..end].iter().collect();
     out.push_str(&format!(" LIMIT {limit}"));
     out.extend(orig[end..].iter());
-    Some(out)
+    Ok(out)
 }
 
 /// Driver-aware entry point for the automatic row cap: MySQL / PostgreSQL /
@@ -2885,9 +2910,19 @@ fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Opti
 /// String literals are masked with `driver`'s own escaping rules
 /// ([`mask_for_driver`], #852) rather than always assuming MySQL's.
 pub fn apply_auto_limit_for(driver: DriverKind, sql: &str, limit: usize) -> Option<String> {
+    decide_auto_limit_for(driver, sql, limit).ok()
+}
+
+/// [`apply_auto_limit_for`] の理由付き版 (#1534)。付与しなかったときは
+/// [`AutoLimitSkip`] を返し、UI が「既存の LIMIT があるため未適用」などを表示できる。
+pub fn decide_auto_limit_for(
+    driver: DriverKind,
+    sql: &str,
+    limit: usize,
+) -> std::result::Result<String, AutoLimitSkip> {
     let orig: Vec<char> = sql.chars().collect();
     let masked = mask_for_driver(driver, &orig);
-    apply_auto_limit_masked(&orig, &masked, limit)
+    decide_auto_limit_masked(&orig, &masked, limit)
 }
 
 /// True when `sql` packs more than one statement — i.e. a `;` separates

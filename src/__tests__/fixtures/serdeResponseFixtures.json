@@ -1610,6 +1610,7 @@
   },
   "queryStreamDoneMessage": {
     "appliedAutoLimit": 1000,
+    "autoLimitSkip": "existingLimit",
     "elapsedMs": 12,
     "hasColumns": true,
     "kind": "done",

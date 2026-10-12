@@ -1000,6 +1000,8 @@ export const queryStreamDoneMessage = z.object({
   elapsedMs: z.number(),
   hasColumns: z.boolean(),
   appliedAutoLimit: z.number().nullable(),
+  /** 自動 LIMIT を付けなかった理由 (#1534)。付与した / 要求なし / 古いバックエンドは null/省略。 */
+  autoLimitSkip: z.enum(["existingLimit", "lockingClause", "aggregateOnly", "notApplicable"]).nullable().optional(),
   /** サーバの通知・警告 (#1165)。古いバックエンドは送らないので省略可能。 */
   serverMessages: z.array(serverMessage).optional(),
   /** 全行を観測し終えた逐次統計 (#1257)。結果セットの無い文・古いバックエンドは省略/null。 */

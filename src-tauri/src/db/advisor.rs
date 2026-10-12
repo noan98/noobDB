@@ -86,6 +86,7 @@ pub struct HealthFinding {
     /// - MySQL: `ALTER TABLE … ADD/DROP INDEX …, ALGORITHM=INPLACE, LOCK=NONE`。サーバが
     ///   その方式で実行できないときは変更せずにエラーで止まる。
     /// - SQLite: テーブル全体のロックが前提でオンライン版は無いため `None`。
+    ///
     /// `fix_ddl` が `None` のルール、および SQLite では `None`。
     pub fix_ddl_online: Option<String>,
     /// エンジンの実行時統計 (未使用インデックス) に由来する指摘のとき `true`。

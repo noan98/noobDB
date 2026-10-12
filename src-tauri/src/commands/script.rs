@@ -599,7 +599,7 @@ async fn execute_preview(
         Ok(mut r) => {
             let is_query = !r.columns.is_empty() || !rows.is_empty();
             r.rows = rows;
-            let cut = is_query.then(|| PreviewCut {
+            let cut = is_query.then_some(PreviewCut {
                 truncated: false,
                 total_rows: Some(r.rows.len() as u64),
             });
@@ -805,7 +805,7 @@ impl Runner {
                             let total = r.rows.len();
                             let is_query = !r.columns.is_empty();
                             r.rows.truncate(preview_rows);
-                            let cut = is_query.then(|| PreviewCut {
+                            let cut = is_query.then_some(PreviewCut {
                                 truncated: total > preview_rows,
                                 total_rows: Some(total as u64),
                             });

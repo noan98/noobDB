@@ -30,6 +30,8 @@ struct VectorCase {
     limit: usize,
     note: String,
     expected: ExpectedByDriver,
+    /// 付与しない (`expected` が null) ドライバごとの理由 (#1534)。
+    skip: Option<SkipByDriver>,
 }
 
 #[derive(Deserialize)]
@@ -37,6 +39,23 @@ struct ExpectedByDriver {
     mysql: Option<String>,
     postgres: Option<String>,
     sqlite: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SkipByDriver {
+    mysql: Option<String>,
+    postgres: Option<String>,
+    sqlite: Option<String>,
+}
+
+impl SkipByDriver {
+    fn get(&self, driver: t::DriverKind) -> Option<&String> {
+        match driver {
+            t::DriverKind::Mysql => self.mysql.as_ref(),
+            t::DriverKind::Postgres => self.postgres.as_ref(),
+            t::DriverKind::Sqlite => self.sqlite.as_ref(),
+        }
+    }
 }
 
 impl ExpectedByDriver {
@@ -86,6 +105,45 @@ fn auto_limit_golden_matches_shared_vectors() {
     assert!(
         failures.is_empty(),
         "apply_auto_limit_for diverged from the shared golden vectors:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// #1534: 付与しなかった理由 (`AutoLimitSkip`) もベクタで固定する。付与するケースは
+/// `Ok`、付与しないケースは `skip` と同じ camelCase 名の `Err` になる。
+#[test]
+fn auto_limit_skip_reasons_match_shared_vectors() {
+    let vectors = load();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for case in &vectors.cases {
+        for driver in ALL_DRIVERS {
+            let actual = t::decide_auto_limit_for(driver, &case.sql, case.limit);
+            let expected_applied = case.expected.get(driver).is_some();
+            let want_skip = case.skip.as_ref().and_then(|s| s.get(driver));
+            match (&actual, want_skip, expected_applied) {
+                (Ok(_), None, true) => {}
+                (Err(reason), Some(want), false) => {
+                    checked += 1;
+                    let got = serde_json::to_value(reason).unwrap_or_default();
+                    if got.as_str() != Some(want.as_str()) {
+                        failures.push(format!(
+                            "  - {:?} (note: {}) [{driver:?}]: expected skip {want}, got {got}",
+                            case.sql, case.note
+                        ));
+                    }
+                }
+                _ => failures.push(format!(
+                    "  - {:?} (note: {}) [{driver:?}]: applied/skip mismatch (skip field = {:?}, got {:?})",
+                    case.sql, case.note, want_skip, actual
+                )),
+            }
+        }
+    }
+    assert!(checked > 0, "no skip cases were checked");
+    assert!(
+        failures.is_empty(),
+        "skip reasons diverged:\n{}",
         failures.join("\n")
     );
 }

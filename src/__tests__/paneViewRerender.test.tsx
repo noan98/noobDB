@@ -87,6 +87,7 @@ function makeTab(id: string, title: string): Tab {
     previewRowLimit: 100,
     paginatable: null,
     autoLimitApplied: null,
+    autoLimitSkip: null,
     autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,

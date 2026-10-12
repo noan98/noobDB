@@ -525,6 +525,7 @@ fn build_fixtures() -> serde_json::Value {
         elapsed_ms: 12,
         has_columns: true,
         applied_auto_limit: Some(1000),
+        auto_limit_skip: Some(t::AutoLimitSkip::ExistingLimit),
         server_messages: vec![ServerMessage {
             severity: ServerMessageSeverity::Warning,
             text: "[1265] Data truncated for column 'a' at row 1".into(),
