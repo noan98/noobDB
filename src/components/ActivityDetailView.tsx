@@ -46,7 +46,7 @@ function IpcValidationDetail({ detail }: { detail: Extract<ActivityDetail, { kin
   const text = buildIpcDiagnosticText(detail, version);
   return (
     <chakra.div display="flex" flexDirection="column" gap="1.5" mt="1" data-testid="ipc-diagnostic">
-      <chakra.span fontSize="xs" color="app.textMuted">
+      <chakra.span textStyle="caption" color="app.textMuted">
         {t("ipcValidationHint")}
       </chakra.span>
       <CodePreview wrap maxH="160px">

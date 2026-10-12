@@ -6,6 +6,11 @@ import { useT } from "../i18n";
 import { COUNT_PREVIEW_TIMEOUT_SECS } from "../useCountPreviews";
 import { Button } from "./ui";
 
+/** MySQL の 1060 (Duplicate column name)。`SELECT COUNT(*) FROM (…) q` は派生表の列名が重複できない。 */
+function isDuplicateColumnError(error: string): boolean {
+  return /\b1060\b|Duplicate column name/i.test(error);
+}
+
 /**
  * AI が出した SQL の「件数で検証」ボタンと結果表示 (#1536)。押したときだけ、
  * `SELECT COUNT(*) FROM (<SQL>) q` を読み取り専用 (`run_lookup_query`。read_only 接続でも通り、
@@ -79,7 +84,8 @@ export function SqlCountCheck({
                 : t("sqlCheckViolations", { count: current.count.toLocaleString() })
               : t("sqlCheckRows", { count: current.count.toLocaleString() })
             : current && current.status === "error"
-              ? t("sqlCheckError", { error: current.error })
+              ? t("sqlCheckError", { error: current.error }) +
+                (isDuplicateColumnError(current.error) ? ` ${t("sqlCheckDuplicateColumn")}` : "")
               : t("sqlCheckHint")}
       </chakra.span>
     </Flex>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 /** 件数プレビュー 1 件 (`COUNT(*)` を返す読み取り専用 SQL)。 */
 export interface CountPreviewItem {
@@ -37,6 +37,8 @@ export function parseCountCell(cell: unknown): number | null {
  *   だけを許す)、履歴・結果キャッシュを汚さず、タイムアウトで打ち切られる。
  * - `items` の中身 (id と SQL) が変わらない限り再実行しない。変わったら `COUNT_PREVIEW_DEBOUNCE_MS`
  *   待ってから実行し、待っている間に更に変わったら前の呼び出しを捨てる (古い応答で上書きしない)。
+ * - 前の要求が終わるまで次の要求は発行しない (サーバへ重い COUNT を積み上げない)。待っている間に入力が
+ *   変わったら、最新の 1 件だけを保持して前の要求が終わった直後に発行する。
  * - `enabled` が false、`run` が null、または `items` が空なら何も実行しない。
  * 戻り値は id → 状態。まだ実行していない (デバウンス中を含む) id は `loading`。
  */
@@ -50,11 +52,16 @@ export function useCountPreviews(
     null,
   );
 
+  // 要求中か、と、その間に溜まった「最新の 1 件」。
+  const busyRef = useRef(false);
+  const queuedRef = useRef<(() => void) | null>(null);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: items は signature が同一なら同じ内容なので signature だけを依存にする
   useEffect(() => {
     if (!enabled || !run || items.length === 0) return;
     let cancelled = false;
-    const timer = setTimeout(() => {
+    const start = () => {
+      busyRef.current = true;
       void Promise.all(
         items.map(async (item): Promise<[string, CountPreviewState]> => {
           try {
@@ -68,13 +75,25 @@ export function useCountPreviews(
             return [item.id, { status: "error", error: String(e) }];
           }
         }),
-      ).then((entries) => {
-        if (!cancelled) setSettled({ signature, results: Object.fromEntries(entries) });
-      });
+      )
+        .then((entries) => {
+          if (!cancelled) setSettled({ signature, results: Object.fromEntries(entries) });
+        })
+        .finally(() => {
+          busyRef.current = false;
+          const next = queuedRef.current;
+          queuedRef.current = null;
+          next?.();
+        });
+    };
+    const timer = setTimeout(() => {
+      if (busyRef.current) queuedRef.current = start;
+      else start();
     }, COUNT_PREVIEW_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      if (queuedRef.current === start) queuedRef.current = null;
     };
   }, [run, signature, enabled]);
 

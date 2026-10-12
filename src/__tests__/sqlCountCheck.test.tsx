@@ -50,4 +50,15 @@ describe("SqlCountCheck (#1536)", () => {
     );
     expect(screen.queryByRole("button")).toBeNull();
   });
+
+  it("MySQL の 1060 (列名の重複) は、重複の可能性を案内する", async () => {
+    vi.mocked(api.runLookupQuery).mockRejectedValueOnce(
+      new Error("error returned from database: 1060 (42S21): Duplicate column name 'id'"),
+    );
+    renderWithProviders(
+      <SqlCountCheck sessionId="s1" database="db" driver="mysql" sql="SELECT a.id, b.id FROM a JOIN b" mode="rows" />,
+    );
+    fireEvent.click(screen.getByRole("button"));
+    await screen.findByText(new RegExp(t("sqlCheckDuplicateColumn").slice(0, 10)));
+  });
 });

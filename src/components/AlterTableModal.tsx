@@ -146,14 +146,14 @@ function AlterPrecheckNotice({
   }
   if (pending) {
     return (
-      <chakra.span fontSize="xs" color="app.textMuted" role="status">
+      <chakra.span textStyle="caption" color="app.textMuted" role="status">
         {t("alterPrecheckRunning")}
       </chakra.span>
     );
   }
   if (errors.length > 0) {
     return (
-      <chakra.span fontSize="xs" color="app.textMuted" role="status">
+      <chakra.span textStyle="caption" color="app.textMuted" role="status">
         {t("alterPrecheckError", { error: errors[0].error })}
       </chakra.span>
     );

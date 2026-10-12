@@ -213,6 +213,8 @@ export function UsersPanel({
   // 他ユーザの権限コピー (#1536)。コピー元は `${name}@@${host}` で持つ。
   const [showCopy, setShowCopy] = useState(false);
   const [copySourceKey, setCopySourceKey] = useState("");
+  // 直近にコピーした内容 (注意書き用)。別ユーザへ切り替え・変更の破棄・再読込で消す。
+  const [copied, setCopied] = useState<{ name: string; sourceRows: number } | null>(null);
 
   const [busy, setBusy] = useState(false);
 
@@ -254,6 +256,7 @@ export function UsersPanel({
         }
         setOriginal(rows);
         setEdited({ ...rows });
+        setCopied(null);
       } catch (e) {
         if (seq !== privSeq.current) return;
         setPrivsError(String(e));
@@ -274,6 +277,7 @@ export function UsersPanel({
       // 前ユーザの未適用の編集を持ち越さない (読み込み中に別ユーザ宛の GRANT/REVOKE が出るのを防ぐ)。
       setOriginal({});
       setEdited({});
+      setCopied(null);
       setGlobalRow(null);
       void loadPrivileges(u);
     },
@@ -307,8 +311,20 @@ export function UsersPanel({
     [rowKeys, original, edited],
   );
 
+  // コピー後の注意 (#1536): コピー元に権限が 0 件、または適用すると既存の権限を REVOKE する行がある。
+  const copyRevokeCount = useMemo(
+    () =>
+      rowKeys.filter((k) => {
+        const before = original[k] ?? EMPTY_FLAGS;
+        const after = edited[k] ?? EMPTY_FLAGS;
+        return (Object.keys(EMPTY_FLAGS) as (keyof Flags)[]).some((f) => before[f] && !after[f]);
+      }).length,
+    [rowKeys, original, edited],
+  );
+
   const discardChanges = useCallback(() => {
     setEdited({ ...original });
+    setCopied(null);
     setNewTable("");
   }, [original]);
 
@@ -379,6 +395,7 @@ export function UsersPanel({
         rows[row.table.slice(prefix.length)] = flagsFromRow(row);
       }
       setEdited(mergeCopiedPrivileges(original, rows));
+      setCopied({ name: source.name, sourceRows: Object.keys(rows).length });
       setShowCopy(false);
       toast.info(t("usersCopyLoaded", { name: source.name }));
     } catch (e) {
@@ -719,7 +736,7 @@ export function UsersPanel({
               </Flex>
 
               {showCopy && (
-                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "360px" }}>
+                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "40ch" }}>
                   <FieldLabel htmlFor="users-copy-source">{t("usersCopySourceLabel")}</FieldLabel>
                   <Select
                     id="users-copy-source"
@@ -739,6 +756,11 @@ export function UsersPanel({
                   <chakra.p margin={0} textStyle="caption">
                     {t("usersCopyHint", { database: database ?? "" })}
                   </chakra.p>
+                  {driver === "mysql" && (
+                    <chakra.p margin={0} textStyle="caption">
+                      {t("usersCopyMysqlNote")}
+                    </chakra.p>
+                  )}
                   <Flex gap="2" justifyContent="flex-end">
                     <Button type="button" onClick={() => setShowCopy(false)} disabled={busy}>
                       {t("usersCopyCancel")}
@@ -755,8 +777,16 @@ export function UsersPanel({
                 </FormSection>
               )}
 
+              {copied && (copied.sourceRows === 0 || copyRevokeCount > 0) && (
+                <Callout tone="warning" role="status" data-testid="users-copy-warning">
+                  {copied.sourceRows === 0
+                    ? t("usersCopyEmptySource", { name: copied.name, database: database ?? "" })
+                    : t("usersCopyRevokes", { count: copyRevokeCount })}
+                </Callout>
+              )}
+
               {showPassword && (
-                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "360px" }}>
+                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "40ch" }}>
                   <FieldLabel htmlFor="users-new-password">{t("usersPasswordLabel")}</FieldLabel>
                   <Input
                     id="users-new-password"

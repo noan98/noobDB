@@ -81,4 +81,36 @@ describe("useCountPreviews (#1536)", () => {
     });
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("前の要求が終わるまで次を発行せず、待つ間に変わった入力は最新の 1 件だけ発行する", async () => {
+    let release: (v: QueryResult) => void = () => {};
+    run.mockImplementationOnce(() => new Promise<QueryResult>((r) => (release = r)));
+    run.mockResolvedValue(result(9));
+    const { result: hook, rerender } = renderHook(
+      ({ sql }: { sql: string }) => useCountPreviews(run, [{ id: "a", sql }]),
+      { initialProps: { sql: "S1" } },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COUNT_PREVIEW_DEBOUNCE_MS + 10);
+    });
+    expect(run).toHaveBeenCalledTimes(1); // S1 が要求中
+
+    rerender({ sql: "S2" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COUNT_PREVIEW_DEBOUNCE_MS + 10);
+    });
+    rerender({ sql: "S3" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COUNT_PREVIEW_DEBOUNCE_MS + 10);
+    });
+    expect(run).toHaveBeenCalledTimes(1); // S1 が終わるまで S2 / S3 は出さない
+
+    await act(async () => {
+      release(result(1));
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1][0]).toBe("S3"); // 最新の 1 件だけ
+    expect(hook.current.a).toEqual({ status: "ok", count: 9 });
+  });
 });

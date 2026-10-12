@@ -88,4 +88,35 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
     expect(await screen.findByRole("button", { name: t("usersCopyPrivileges") })).toBeDisabled();
   });
+
+  async function copyFrom(driver: "postgres" | "mysql", sourceTables: UserPrivileges["tables"]) {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app"), user("template")]);
+    vi.mocked(api.listUserPrivileges).mockImplementation(async (_sid, name) => ({
+      global: null,
+      tables: name === "app" ? [priv("old_only", true)] : sourceTables,
+    }));
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver={driver} database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("old_only");
+    fireEvent.click(screen.getByRole("button", { name: t("usersCopyPrivileges") }));
+  }
+
+  it("コピー元の権限が 0 件なら、全権限が剥奪される旨の注意を出す", async () => {
+    await copyFrom("postgres", []);
+    fireEvent.change(screen.getByLabelText(t("usersCopySourceLabel")), { target: { value: "template@@" } });
+    fireEvent.click(screen.getByRole("button", { name: t("usersCopySubmit") }));
+    const warn = await screen.findByTestId("users-copy-warning");
+    expect(warn).toHaveTextContent(t("usersCopyEmptySource", { name: "template", database: "public" }));
+  });
+
+  it("適用で REVOKE が出るコピーでは件数つきの注意を出し、MySQL ではテーブル単位の注記を出す", async () => {
+    await copyFrom("mysql", [priv("orders", true)]);
+    expect(screen.getByText(t("usersCopyMysqlNote"))).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(t("usersCopySourceLabel")), { target: { value: "template@@" } });
+    fireEvent.click(screen.getByRole("button", { name: t("usersCopySubmit") }));
+    const warn = await screen.findByTestId("users-copy-warning");
+    expect(warn).toHaveTextContent(t("usersCopyRevokes", { count: 1 }));
+  });
 });
