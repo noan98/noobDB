@@ -234,9 +234,11 @@ describe("isAnalysisStaleError (#1535)", () => {
   it("バックエンドの『事前確認のあとでファイルが変わった』エラーだけに一致する", () => {
     expect(
       isAnalysisStaleError(
-        "invalid input: the script file changed after the dry run, so statement numbers may no longer match; run the dry run again",
+        "invalid input: [script-file-changed] the script file changed after the dry run, so statement numbers may no longer match; run the dry run again",
       ),
     ).toBe(true);
     expect(isAnalysisStaleError("an explicit transaction is already active")).toBe(false);
+    // 文言が変わっても目印があれば判定できる。
+    expect(isAnalysisStaleError("invalid input: [script-file-changed] anything")).toBe(true);
   });
 });

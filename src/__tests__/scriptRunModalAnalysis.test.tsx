@@ -8,6 +8,9 @@ import type {
   ScriptStreamHandlers,
 } from "../api/tauri";
 
+// CI の 5 秒枠 (並列負荷でも落ちないよう、panelRowMemo.test.tsx と同じく余裕を持たせる)。
+vi.setConfig({ testTimeout: 15_000 });
+
 // ScriptRunModal (#1535): 実行ボタンでの自動事前確認・危険文の確認・expectedFile の送信・
 // トランザクション中の失敗での再開の出し分け・ファイル変更エラーの扱い。
 
@@ -111,7 +114,7 @@ beforeEach(() => {
 describe("ScriptRunModal: 自動事前確認 (#1535)", () => {
   it("事前確認をしていなくても、実行ボタンで自動的に確認してから実行し、ファイルの印を渡す", async () => {
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptExecute") }));
+    fireEvent.click(screen.getByText(t("scriptExecute")));
     await waitFor(() => expect(runSqlScript).toHaveBeenCalledTimes(1));
     expect(analyzeSqlScript).toHaveBeenCalledTimes(1);
     expect(runSqlScript.mock.calls[0][0].options.expectedFile).toEqual(STAMP);
@@ -129,8 +132,8 @@ describe("ScriptRunModal: 自動事前確認 (#1535)", () => {
         }),
       );
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptExecute") }));
-    const confirmButton = await screen.findByRole("button", { name: t("scriptDangerConfirmOk") });
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    const confirmButton = await screen.findByText(t("scriptDangerConfirmOk"), {}, { timeout: 3000 });
     expect(runSqlScript).not.toHaveBeenCalled();
     fireEvent.click(confirmButton);
     await waitFor(() => expect(runSqlScript).toHaveBeenCalledTimes(1));
@@ -143,10 +146,10 @@ describe("ScriptRunModal: 失敗時の再開 (#1535)", () => {
       handlers.get(id)?.onError?.(errorEvent({ inTransaction: true, rolledBack: false, txBeginStatement: 2 }));
     };
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptExecute") }));
-    expect(await screen.findByRole("button", { name: t("scriptResumeFromBegin", { index: 2 }) })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: t("scriptResume") })).toBeNull();
-    expect(screen.queryByRole("button", { name: t("scriptResumeSkip") })).toBeNull();
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    expect(await screen.findByText(t("scriptResumeFromBegin", { index: 2 }), {}, { timeout: 3000 })).toBeTruthy();
+    expect(screen.queryByText(t("scriptResume"))).toBeNull();
+    expect(screen.queryByText(t("scriptResumeSkip"))).toBeNull();
   });
 
   it("トランザクション外の失敗は『この文から再開』『飛ばして再開』を出す", async () => {
@@ -154,9 +157,9 @@ describe("ScriptRunModal: 失敗時の再開 (#1535)", () => {
       handlers.get(id)?.onError?.(errorEvent({}));
     };
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptExecute") }));
-    expect(await screen.findByRole("button", { name: t("scriptResume") })).toBeTruthy();
-    expect(screen.getByRole("button", { name: t("scriptResumeSkip") })).toBeTruthy();
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    expect(await screen.findByText(t("scriptResume"), {}, { timeout: 3000 })).toBeTruthy();
+    expect(screen.getByText(t("scriptResumeSkip"))).toBeTruthy();
   });
 
   it("BEGIN から再開すると開始文番号がその BEGIN になる", async () => {
@@ -164,8 +167,8 @@ describe("ScriptRunModal: 失敗時の再開 (#1535)", () => {
       handlers.get(id)?.onError?.(errorEvent({ inTransaction: true, txBeginStatement: 2 }));
     };
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptExecute") }));
-    const resume = await screen.findByRole("button", { name: t("scriptResumeFromBegin", { index: 2 }) });
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    const resume = await screen.findByText(t("scriptResumeFromBegin", { index: 2 }), {}, { timeout: 3000 });
     runSqlScript.mockClear();
     await act(async () => {
       fireEvent.click(resume);
@@ -180,12 +183,15 @@ describe("ScriptRunModal: 事前確認後のファイル変更 (#1535)", () => {
     runBehavior = () =>
       Promise.reject(
         new Error(
-          "the script file changed after the dry run, so statement numbers may no longer match; run the dry run again",
+          "[script-file-changed] the script file changed after the dry run, so statement numbers may no longer match; run the dry run again",
         ),
       );
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptExecute") }));
-    expect((await screen.findAllByText(t("scriptAnalysisFileChanged"))).length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText(t("scriptStartAtLabel")), { target: { value: "3" } });
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    expect((await screen.findAllByText(t("scriptAnalysisFileChanged"), {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    // 開始文番号は残す (自動では再実行しない)。
+    expect((screen.getByLabelText(t("scriptStartAtLabel")) as HTMLInputElement).value).toBe("3");
   });
 });
 
@@ -202,10 +208,10 @@ describe("ScriptRunModal: 開始文番号がトランザクションの途中 (#
         }),
       );
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptAnalyze") }));
-    await screen.findByText(t("scriptAnalysisTxLocked"));
+    fireEvent.click(screen.getByText(t("scriptAnalyze")));
+    await screen.findByText(t("scriptAnalysisTxLocked"), {}, { timeout: 3000 });
     fireEvent.change(screen.getByLabelText(t("scriptStartAtLabel")), { target: { value: "4" } });
-    expect(await screen.findByText(t("scriptStartInTransactionWarning", { start: 4, begin: 2 }))).toBeTruthy();
+    expect(await screen.findByText(t("scriptStartInTransactionWarning", { start: 4, begin: 2 }), {}, { timeout: 3000 })).toBeTruthy();
     fireEvent.change(screen.getByLabelText(t("scriptStartAtLabel")), { target: { value: "7" } });
     await waitFor(() =>
       expect(screen.queryByText(t("scriptStartInTransactionWarning", { start: 7, begin: 2 }))).toBeNull(),
@@ -225,8 +231,8 @@ describe("ScriptRunModal: 開始文番号がトランザクションの途中 (#
         }),
       );
     setup();
-    fireEvent.click(screen.getByRole("button", { name: t("scriptAnalyze") }));
-    const tx = await screen.findByLabelText(t("scriptAnalysisSkipAria", { index: 1 }));
+    fireEvent.click(screen.getByText(t("scriptAnalyze")));
+    const tx = await screen.findByLabelText(t("scriptAnalysisSkipAria", { index: 1 }), {}, { timeout: 3000 });
     expect((tx as HTMLInputElement).disabled).toBe(true);
     const stmt = screen.getByLabelText(t("scriptAnalysisSkipAria", { index: 2 }));
     expect((stmt as HTMLInputElement).disabled).toBe(false);

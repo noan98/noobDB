@@ -1014,7 +1014,7 @@ async fn changed_file_since_the_dry_run_is_rejected_before_running() {
     )
     .await
     .expect_err("a changed file must be rejected");
-    assert!(err.to_string().contains("changed after the dry run"));
+    assert!(err.to_string().contains("[script-file-changed]"));
 }
 
 /// 手動指定と BOM が食い違えばエラー、NUL を含む UTF-8 / ASCII の自動判定もエラー (#1535)。
@@ -1074,4 +1074,29 @@ async fn explicit_utf8_with_a_utf8_bom_file_runs() {
         run(&session, &path, o).await,
         t::ScriptRun::Done { executed: 1, .. }
     ));
+}
+
+/// 失敗した文が COMMIT のとき、BEGIN からのやり直しは勧めない (確定したか不明で二重適用に
+/// なりうる)。`in_transaction` は true のまま (#1535)。
+#[tokio::test]
+async fn failed_commit_does_not_offer_restart_from_begin() {
+    let (mut fx, session) = setup("tx_commit_fail", false).await;
+    let path = write_script(
+        &mut fx,
+        "tx_commit_fail",
+        "CREATE TABLE p (id INTEGER PRIMARY KEY);\nCREATE TABLE c (pid INTEGER REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED);\nBEGIN;\nINSERT INTO c VALUES (99);\nCOMMIT;",
+    );
+    match run(&session, &path, opts(false, false)).await {
+        t::ScriptRun::Failed {
+            failure,
+            in_transaction,
+            tx_begin_statement,
+            ..
+        } => {
+            assert_eq!(failure.expect("failure").index, 5, "the COMMIT fails");
+            assert!(in_transaction);
+            assert_eq!(tx_begin_statement, None);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
 }

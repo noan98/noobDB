@@ -59,6 +59,9 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
 const FAILURE_SQL_PREVIEW_CHARS: usize = 200;
 /// continue-on-error で返す失敗一覧の上限。超えた分は件数 (`failedCount`) だけ数える。
 const MAX_REPORTED_FAILURES: usize = 1000;
+/// 「事前確認のあとでファイルが変わった」エラーの固定の目印 (メッセージの先頭)。フロントが
+/// 文言ではなくこの目印で判定する (`src/scriptRun.ts` の `isAnalysisStaleError`)。
+pub const FILE_CHANGED_MARKER: &str = "[script-file-changed]";
 /// 個別除外できる文の数の上限 (リクエストが無制限に膨らまないように)。
 const MAX_SKIP_STATEMENTS: usize = 100_000;
 
@@ -371,6 +374,7 @@ where
         rows_affected: 0,
         pending_in_tx: 0,
         tx_begin_index: None,
+        tx_restart_unsafe: false,
         wrote: false,
         schema_changed: false,
         batch: batch.map(|cfg| BatchState {
@@ -776,6 +780,10 @@ struct Runner {
     /// スクリプト内の BEGIN で開いたトランザクションの BEGIN 文の通し番号。COMMIT / ROLLBACK が
     /// 成功するまで残す (ROLLBACK が失敗しても「開いていた」ことを失敗報告に載せるため)。
     tx_begin_index: Option<u64>,
+    /// 今のトランザクションを BEGIN からやり直すと二重適用になりうるか。失敗した文が COMMIT のとき
+    /// (確定したか不明) と、MySQL でトランザクション内に暗黙 COMMIT する DDL が実行済みのとき。
+    /// true なら失敗報告に BEGIN の番号を載せない (`in_transaction` は true のまま)。
+    tx_restart_unsafe: bool,
     wrote: bool,
     schema_changed: bool,
     /// エディタのバッチ実行モード (#1256)。`None` なら `.sql` スクリプト実行。
@@ -868,6 +876,7 @@ impl Runner {
                         if r.is_ok() {
                             self.guard.active = true;
                             self.tx_begin_index = Some(self.seen);
+                            self.tx_restart_unsafe = false;
                         }
                         r
                     }
@@ -893,6 +902,20 @@ impl Runner {
                     }
                 }
             };
+            if result.is_err() {
+                if ctl == TxControl::Commit {
+                    // COMMIT が失敗: 確定したかどうか分からないので BEGIN からのやり直しは勧めない。
+                    self.tx_restart_unsafe = true;
+                }
+                if self.options.continue_on_error
+                    && matches!(ctl, TxControl::Commit | TxControl::Rollback)
+                    && !self.guard.active
+                {
+                    // 続行モードでは失敗した COMMIT / ROLLBACK のあとも実行が続く。トランザクションは
+                    // もう閉じた扱いなので、後続の失敗を「トランザクション中」と報告しないよう忘れる。
+                    self.tx_begin_index = None;
+                }
+            }
             return match result {
                 Ok(()) => {
                     if self.batch.is_some() {
@@ -969,6 +992,12 @@ impl Runner {
                     self.emit_batch(BatchStatementResult::ok(stmt.sql.clone(), &r).with_cut(cut));
                 }
                 if self.guard.active {
+                    if self.driver == crate::db::DriverKind::Mysql
+                        && crate::db::sql_may_change_schema(self.driver, &stmt.sql)
+                    {
+                        // MySQL の DDL は暗黙 COMMIT する: ここまでのトランザクションは確定済み。
+                        self.tx_restart_unsafe = true;
+                    }
                     self.pending_in_tx += 1;
                 } else if !external_tx {
                     self.committed.fetch_add(1, Ordering::SeqCst);
@@ -1054,7 +1083,11 @@ impl Runner {
     async fn abort_with(&mut self, message: String, failure: Option<ScriptFailure>) -> ScriptRun {
         let mut rolled_back = false;
         let in_transaction = self.guard.active || self.tx_begin_index.is_some();
-        let tx_begin_statement = self.tx_begin_index;
+        let tx_begin_statement = if self.tx_restart_unsafe {
+            None
+        } else {
+            self.tx_begin_index
+        };
         if self.guard.active {
             self.guard.active = false;
             self.pending_in_tx = 0;
@@ -1153,7 +1186,9 @@ pub(crate) async fn script_file_stamp(path: &str) -> Result<FileStamp> {
 pub(crate) fn check_expected_file(expected: Option<FileStamp>, actual: FileStamp) -> Result<()> {
     match expected {
         Some(e) if e != actual => Err(AppError::InvalidInput(
-            "the script file changed after the dry run, so statement numbers may no longer match; run the dry run again".into(),
+            format!(
+                "{FILE_CHANGED_MARKER} the script file changed after the dry run, so statement numbers may no longer match; run the dry run again"
+            ),
         )),
         _ => Ok(()),
     }
@@ -1934,7 +1969,7 @@ mod tests {
             },
         ] {
             let err = check_expected_file(Some(a), other).unwrap_err();
-            assert!(err.to_string().contains("changed after the dry run"));
+            assert!(err.to_string().contains(FILE_CHANGED_MARKER));
         }
     }
 }

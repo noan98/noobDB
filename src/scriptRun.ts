@@ -224,7 +224,13 @@ export function startInsideTransaction(
   return open;
 }
 
-/** 失敗メッセージが「事前確認のあとでファイルが変わった」ことを示すか (バックエンドの固定文言)。 */
+/**
+ * 失敗メッセージが「事前確認のあとでファイルが変わった」ことを示すか。バックエンド
+ * (`commands/script.rs` の `FILE_CHANGED_MARKER`) がメッセージの先頭に付ける固定の目印で判定する
+ * (文言の一部には依存しない)。
+ */
+const FILE_CHANGED_MARKER = "[script-file-changed]";
+
 export function isAnalysisStaleError(message: string): boolean {
-  return /changed after the dry run/.test(message);
+  return message.includes(FILE_CHANGED_MARKER);
 }

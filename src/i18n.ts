@@ -2065,7 +2065,7 @@ const en = {
   scriptResumeFromBeginHint: "The failure happened inside a transaction that started at statement #{begin}, so everything since that BEGIN is discarded (or in an unknown state). Resuming from BEGIN reruns that whole block.",
   scriptResumeInTransactionUnavailable: "The failure happened inside a transaction, so resuming from the failed statement would leave out the earlier statements of that transaction. Start again from the top.",
   scriptStartInTransactionWarning: "Statement #{start} is inside the transaction that begins at BEGIN (#{begin}). Starting here skips the statements of that transaction before it, but its COMMIT/ROLLBACK still runs. Start from #{begin} instead unless you mean this.",
-  scriptAnalysisFileChanged: "The file changed after the dry run, so statement numbers may no longer match. Run the dry run again.",
+  scriptAnalysisFileChanged: "The file changed after the dry run, so statement numbers may no longer match. The start number is kept — check that it still points at the right statement, then run again.",
   scriptAnalysisTxLocked: "BEGIN / COMMIT / ROLLBACK cannot be excluded — they always run.",
   // SQL file encoding for open / save (#1535).
   sqlFileOpenedAs: "Opened {name} ({encoding})",
@@ -6793,7 +6793,7 @@ const ja: Dict = {
   scriptResumeFromBeginHint: "失敗はトランザクションの中で起きました (開始は {begin} 番目)。その BEGIN 以降の文は取り消されている (または状態が不明) ので、BEGIN からそのブロック全体をやり直します。",
   scriptResumeInTransactionUnavailable: "トランザクションの途中で失敗したため、失敗した文からだと同じトランザクションの前半が欠けてしまい再開できません。最初からやり直してください。",
   scriptStartInTransactionWarning: "{start} 番目は {begin} 番目の BEGIN から始まるトランザクションの途中です。ここから始めると前半の文は実行されないまま COMMIT / ROLLBACK だけが実行されます。意図しない場合は {begin} 番目から始めてください。",
-  scriptAnalysisFileChanged: "事前確認のあとでファイルが変わったため、文番号がずれている可能性があります。もう一度事前確認してください。",
+  scriptAnalysisFileChanged: "事前確認のあとでファイルが変わったため、文番号がずれている可能性があります。開始文番号は残してあります。ずれていないか確認して、もう一度実行してください。",
   scriptAnalysisTxLocked: "BEGIN / COMMIT / ROLLBACK は除外できません (常に実行されます)。",
   // SQL ファイルを開く・保存するときの文字コード (#1535)。
   sqlFileOpenedAs: "{name} を開きました ({encoding})",
