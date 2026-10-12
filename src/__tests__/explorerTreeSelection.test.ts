@@ -5,6 +5,7 @@ import {
   EMPTY_TABLE_SELECTION,
   extendTableSelection,
   isTableSelected,
+  joinTableNames,
   orderedSelectedTables,
   partitionDatabaseNodes,
   pruneTableSelection,
@@ -160,5 +161,14 @@ describe("orderedSelectedTables", () => {
     sel = toggleTableSelection(sel, "d", "a");
     expect(orderedSelectedTables(sel, ["a", "b", "c"])).toEqual(["a", "c"]);
     expect(orderedSelectedTables(EMPTY_TABLE_SELECTION, ["a"])).toEqual([]);
+  });
+});
+
+describe("joinTableNames (#1541)", () => {
+  it("改行区切りは末尾改行なし、カンマ区切りは空白なし。名前は引用しない", () => {
+    expect(joinTableNames(["users", "order items", 'we"ird'], "newline")).toBe('users\norder items\nwe"ird');
+    expect(joinTableNames(["a", "b", "c"], "comma")).toBe("a,b,c");
+    expect(joinTableNames(["only"], "comma")).toBe("only");
+    expect(joinTableNames([], "newline")).toBe("");
   });
 });

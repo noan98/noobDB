@@ -649,3 +649,15 @@ export function orderedSelectedTables(sel: TableSelection, dbTables: readonly st
   const db = sel.db;
   return dbTables.filter((t) => sel.keys.has(tableKey(db, t)));
 }
+
+/** テーブル名の一括コピーの区切り (#1541)。 */
+export type TableNameSeparator = "newline" | "comma";
+
+/**
+ * 選択したテーブル名をクリップボード向けに連結する (#1541)。名前は引用せずそのまま
+ * (識別子として貼るのか、一覧として貼るのかは使う側で変わるため)。改行区切りは末尾の
+ * 改行なし、カンマ区切りは `a,b,c` (空白なし)。
+ */
+export function joinTableNames(tables: readonly string[], separator: TableNameSeparator): string {
+  return tables.join(separator === "comma" ? "," : "\n");
+}

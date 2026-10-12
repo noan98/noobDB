@@ -355,6 +355,8 @@ interface Props {
    */
   onShowCreateTables?: (database: string, tables: string[]) => void;
   onCopyTablesDdl?: (database: string, tables: string[]) => void;
+  /** 選択したテーブル名だけをクリップボードへコピーする (#1541)。DB に触れないので read_only でも有効。 */
+  onCopyTableNames?: (database: string, tables: string[], separator: "newline" | "comma") => void;
   onExportTables?: (database: string, tables: string[]) => void;
   onDumpTables?: (database: string, tables: string[]) => void;
   onDropTables?: (database: string, tables: string[]) => void;
@@ -1764,6 +1766,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onCloneTable,
   onShowCreateTables,
   onCopyTablesDdl,
+  onCopyTableNames,
   onExportTables,
   onDumpTables,
   onDropTables,
@@ -2552,6 +2555,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         onSelect: () => onCopyTablesDdl(db, selected),
         title: ddlTitle,
       });
+    }
+    if (onCopyTableNames) {
+      items.push(
+        {
+          label: t("batchMenuCopyNames", { count }),
+          onSelect: () => onCopyTableNames(db, selected, "newline"),
+        },
+        {
+          label: t("batchMenuCopyNamesComma", { count }),
+          onSelect: () => onCopyTableNames(db, selected, "comma"),
+        },
+      );
     }
     if (onExportTables) {
       items.push({ label: t("batchMenuExport", { count }), onSelect: () => onExportTables(db, selected) });

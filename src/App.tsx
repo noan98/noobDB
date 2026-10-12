@@ -70,6 +70,7 @@ import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
+import { joinTableNames, type TableNameSeparator } from "./components/explorerTree";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
 import { joinTableDdls, summarizeTableNames } from "./components/batchTables";
 import {
@@ -7376,6 +7377,19 @@ export default function App() {
     }
   }, [fetchTablesDdl, toast]);
 
+  // 複数選択したテーブル名だけのコピー (#1541)。DB には触れない。
+  const handleCopyTableNames = useCallback(
+    async (_database: string, tables: string[], separator: TableNameSeparator) => {
+      if (tables.length === 0) return;
+      if (await copyToClipboard(joinTableNames(tables, separator))) {
+        toast.success(translate("batchNamesCopied", { count: tables.length }));
+      } else {
+        toast.error(translate("clipboardCopyFailed"));
+      }
+    },
+    [toast],
+  );
+
   // 複数選択したテーブルの一括 DROP (#1399)。確認導線は単一の `handleDropTable` と同じ
   // `confirm` + 本番接続のタイプ入力ゲート (#675)。対象が複数なので、対象のテーブル名を本文に
   // 並べ、本番ではデータベース名の入力を求める。実行は `buildDropTablesSql` の文を流す
@@ -9333,6 +9347,7 @@ export default function App() {
     onCloneTable: (database: string, table: string) => setCloneTarget({ database, table }),
     onShowCreateTables: handleShowCreateTables,
     onCopyTablesDdl: handleCopyTablesDdl,
+    onCopyTableNames: handleCopyTableNames,
     onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
     onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
     onDropTables: handleDropTables,

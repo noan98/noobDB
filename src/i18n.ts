@@ -2219,6 +2219,9 @@ const en = {
   // テーブルの複数選択と一括操作 (#1399)。
   batchMenuShowDdl: "Show DDL of {count} tables",
   batchMenuCopyDdl: "Copy DDL of {count} tables",
+  batchMenuCopyNames: "Copy {count} table names (one per line)",
+  batchMenuCopyNamesComma: "Copy {count} table names (comma-separated)",
+  batchNamesCopied: "Copied {count} table names",
   batchMenuExport: "Export {count} tables...",
   batchMenuDump: "Dump {count} tables...",
   batchMenuClearSelection: "Clear selection",
@@ -7026,6 +7029,9 @@ const ja: Dict = {
   // テーブルの複数選択と一括操作 (#1399)。
   batchMenuShowDdl: "選択した {count} テーブルの DDL を表示",
   batchMenuCopyDdl: "選択した {count} テーブルの DDL をコピー",
+  batchMenuCopyNames: "選択した {count} テーブルの名前をコピー (改行区切り)",
+  batchMenuCopyNamesComma: "選択した {count} テーブルの名前をコピー (カンマ区切り)",
+  batchNamesCopied: "{count} 件のテーブル名をコピーしました",
   batchMenuExport: "選択した {count} テーブルをエクスポート...",
   batchMenuDump: "選択した {count} テーブルをダンプ...",
   batchMenuClearSelection: "選択を解除",
