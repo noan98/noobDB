@@ -95,7 +95,8 @@ pub mod __test_api {
     pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshJumpProfile, SshProfile};
     pub use crate::schema_drift::{
         build_payload as build_drift_payload, capture_payload as capture_drift_payload,
-        fingerprint_payload as fingerprint_drift_payload, summarize_payloads as summarize_drift,
+        fingerprint_payload as fingerprint_drift_payload,
+        resolve_capture_database as resolve_drift_database, summarize_payloads as summarize_drift,
         DriftSummary, SnapshotPayload as DriftSnapshotPayload,
     };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
@@ -203,7 +204,8 @@ pub mod __test_api {
     };
     pub use crate::tasks::scheduler::TaskRunProgressEvent;
     pub use crate::tasks::{
-        AssertionRunRecord, SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
+        AssertionRunRecord, ConnectRetry, SchedulerSettings, TaskAction, TaskDefinition, TaskRun,
+        TaskSchedule,
     };
     pub use crate::timelapse::{
         GenerationDiff, GenerationMeta as TimelapseGenerationMeta, TableWatch,
@@ -1232,6 +1234,7 @@ pub fn run() {
             commands::connection::disconnect,
             commands::connection::reconnect,
             commands::connection::ping_session,
+            commands::connection::session_tunnel_alive,
             commands::connection::health_probe_all,
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,

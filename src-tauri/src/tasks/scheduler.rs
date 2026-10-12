@@ -58,6 +58,10 @@ pub(crate) fn progress_unit(action: &super::TaskAction) -> &'static str {
         super::TaskAction::ExportQuery { .. } => "rows",
         super::TaskAction::Dump { .. } => "bytes",
         super::TaskAction::RunAssertions { .. } => "items",
+        // ウォッチ中のテーブル / スニペットの件数。
+        super::TaskAction::TimelapseCapture { .. } | super::TaskAction::RefreshPlanWatch { .. } => {
+            "items"
+        }
     }
 }
 
@@ -263,6 +267,7 @@ pub(crate) async fn record_outcome(
         bytes: outcome.bytes,
         elapsed_ms,
         catch_up,
+        attempts: i64::from(outcome.attempts.max(1)),
     };
     if let Err(e) = runs::record(new_run).await {
         tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to record run log");
@@ -402,8 +407,21 @@ mod progress_tests {
         let a = TaskAction::RunAssertions {
             database: None,
             assertion_ids: Vec::new(),
+            notify_only_on_increase: false,
         };
         assert_eq!(progress_unit(&a), "items");
+        assert_eq!(
+            progress_unit(&TaskAction::TimelapseCapture {
+                max_generations: None
+            }),
+            "items"
+        );
+        assert_eq!(
+            progress_unit(&TaskAction::RefreshPlanWatch {
+                snippet_ids: Vec::new()
+            }),
+            "items"
+        );
         let d = TaskAction::Dump {
             database: "db".into(),
             output_path: "x".into(),

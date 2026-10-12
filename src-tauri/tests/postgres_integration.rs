@@ -2152,6 +2152,75 @@ async fn postgres_schema_drift_capture_and_plan_watch() {
     conn.close().await;
 }
 
+/// #1537: PostgreSQL ではプロファイルの `database` は実 DB 名で、ツリー/タブの「データベース」は
+/// スキーマ名。DB 名のまま (または空で) 取得しても既定スキーマ (`current_schema()`) の
+/// スナップショットになり、スキーマ名を明示したときはそのスキーマになる。
+#[tokio::test]
+async fn postgres_schema_drift_resolves_db_name_to_default_schema() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let res = conn
+        .execute("SELECT current_database(), current_schema()", None)
+        .await
+        .expect("current");
+    let text = |i: usize| match &res.rows[0][i] {
+        t::Value::String(s) => s.clone(),
+        other => panic!("unexpected {other:?}"),
+    };
+    let (db_name, default_schema) = (text(0), text(1));
+
+    // 他のテストと干渉しないよう、既定スキーマには一意名のテーブルを 1 つだけ作る。
+    let table = format!("noobdb_drift1537_{}", std::process::id());
+    let qualified = format!("{default_schema}.{table}");
+    conn.execute(&format!("DROP TABLE IF EXISTS {qualified}"), None)
+        .await
+        .expect("drop");
+    conn.execute(
+        &format!("CREATE TABLE {qualified} (id integer PRIMARY KEY, v text)"),
+        None,
+    )
+    .await
+    .expect("create");
+
+    // DB 名・空文字・スキーマ名の明示は、どれも既定スキーマの同じ内容になる。
+    for requested in [db_name.as_str(), "", default_schema.as_str()] {
+        assert_eq!(
+            t::resolve_drift_database(&conn, requested)
+                .await
+                .expect("resolve"),
+            default_schema,
+            "'{requested}' must resolve to the default schema"
+        );
+        let payload = t::capture_drift_payload(&conn, requested)
+            .await
+            .expect("capture");
+        assert_eq!(payload.database, default_schema);
+        let captured = payload
+            .tables
+            .iter()
+            .find(|x| x.name == table)
+            .unwrap_or_else(|| panic!("'{requested}' capture must contain {table}"));
+        assert!(captured.columns.iter().any(|c| c.name == "v"));
+    }
+    // 別のスキーマの明示はそのスキーマ (DB 名には読み替えない)。
+    assert_eq!(
+        t::resolve_drift_database(&conn, "information_schema")
+            .await
+            .expect("resolve"),
+        "information_schema"
+    );
+
+    conn.execute(&format!("DROP TABLE {qualified}"), None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
 /// `load_schema_tree` / `open_table(s)` / `list_tables_all` / `table_row_estimate`
 /// (#1263) が、個別 IPC の結果と一致する。他のテストと干渉しないよう専用の
 /// スキーマ `noobdb_t1263` に閉じる。

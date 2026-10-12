@@ -366,7 +366,11 @@ export function ConnectionHealthPanel({
                       </Flex>
                     </chakra.td>
                     <chakra.td css={tdCss}>
-                      <StatusCell status={row.status} label={t(STATUS_LABEL[row.status])} />
+                      <StatusCell
+                        status={row.status}
+                        label={t(STATUS_LABEL[row.status])}
+                        note={row.tunnelClosed ? t("healthTunnelClosed") : undefined}
+                      />
                     </chakra.td>
                     <chakra.td css={monoTdCss}>
                       <LatencyCell ms={row.latencyMs} label={(ms) => t("healthLatencyMs", { ms })} />
@@ -428,19 +432,27 @@ export function ConnectionHealthPanel({
   );
 }
 
-function StatusCell({ status, label }: { status: HealthStatus; label: string }) {
+function StatusCell({ status, label, note }: { status: HealthStatus; label: string; note?: string }) {
   const role = healthStatusRole(status);
   return (
-    <Flex align="center" gap="1.5">
-      <Box
-        aria-hidden
-        w="8px"
-        h="8px"
-        borderRadius="pill"
-        bg={role ? semanticColorToken(role, "solid") : "app.textMuted"}
-        flexShrink={0}
-      />
-      <chakra.span color={role ? semanticColorToken(role, "text") : "app.textMuted"}>{label}</chakra.span>
+    <Flex direction="column" gap="0.5">
+      <Flex align="center" gap="1.5">
+        <Box
+          aria-hidden
+          w="8px"
+          h="8px"
+          borderRadius="pill"
+          bg={role ? semanticColorToken(role, "solid") : "app.textMuted"}
+          flexShrink={0}
+        />
+        <chakra.span color={role ? semanticColorToken(role, "text") : "app.textMuted"}>{label}</chakra.span>
+      </Flex>
+      {/* SSH トンネルが閉じている旨 (#1537)。クエリ失敗より先に原因を示し、再接続へ誘導する。 */}
+      {note && (
+        <chakra.span textStyle="caption" color="app.textMuted">
+          {note}
+        </chakra.span>
+      )}
     </Flex>
   );
 }

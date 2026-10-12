@@ -210,6 +210,8 @@ export const healthProbeItem = z.object({
   latency_ms: z.number().nullable(),
   version: z.string().nullable(),
   connections: z.number().nullable(),
+  // SSH トンネルの生存 (#1537)。トンネル越しでないセッションは null。
+  tunnel_alive: z.boolean().nullable(),
 });
 export const healthProbeItemArray = z.array(healthProbeItem);
 
@@ -766,6 +768,7 @@ export const connectPhaseEvent = z.object({
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
+export const nullableBooleanResponse = z.boolean().nullable();
 export const stringResponse = z.string();
 export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
@@ -1535,8 +1538,23 @@ const taskAction = z.discriminatedUnion("kind", [
     kind: z.literal("run_assertions"),
     database: z.string().nullable().optional(),
     assertion_ids: z.array(z.string()),
+    notify_only_on_increase: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("timelapse_capture"),
+    max_generations: z.number().nullable().optional(),
+  }),
+  z.object({
+    kind: z.literal("refresh_plan_watch"),
+    snippet_ids: z.array(z.string()),
   }),
 ]);
+
+/** 接続失敗時の自動リトライ設定 (#1537)。 */
+const connectRetry = z.object({
+  max_retries: z.number(),
+  interval_secs: z.number(),
+});
 
 const taskSchedule = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("interval"), minutes: z.number() }),
@@ -1555,6 +1573,7 @@ export const taskDefinition = z.object({
   next_run_at: z.string().nullable(),
   last_run_at: z.string().nullable(),
   last_status: z.string().nullable(),
+  connect_retry: connectRetry,
 });
 
 export const taskRun = z.object({
@@ -1569,6 +1588,8 @@ export const taskRun = z.object({
   bytes: z.number().nullable(),
   elapsed_ms: z.number(),
   catch_up: z.boolean(),
+  // 接続を試みた回数 (#1537)。再試行なしの通常実行は 1。
+  attempts: z.number(),
 });
 
 export const assertionRunRecord = z.object({
@@ -1731,6 +1752,8 @@ export const schemaDriftGeneration = z.object({
   fingerprint: z.string(),
   tableCount: z.number(),
   omitted: z.boolean(),
+  // DDL の成功をきっかけに自動取得した世代のときの実行 SQL (#1537)。
+  triggerSql: z.string().nullable().optional(),
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 
@@ -1774,6 +1797,7 @@ export const schemaDriftSummaryOrNull = schemaDriftSummary.nullable();
 
 export const schemaDriftCapture = z.object({
   added: z.boolean(),
+  database: z.string(),
   generations: z.array(schemaDriftGeneration),
   summary: schemaDriftSummary.nullable(),
 });

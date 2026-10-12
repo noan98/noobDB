@@ -3,6 +3,7 @@
 //! (`task_runs.sqlite`)。プールは初回利用時に遅延オープンし、テーブルは
 //! `CREATE TABLE IF NOT EXISTS` で用意するのでマイグレーション手順は不要。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
@@ -71,6 +72,18 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // #1537: 接続リトライの試行回数。既存の DB には列を足すだけ (SQLite には
+    // `ADD COLUMN IF NOT EXISTS` が無いので有無を調べてから足す)。
+    let has_attempts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('task_runs') WHERE name = 'attempts'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has_attempts == 0 {
+        sqlx::query("ALTER TABLE task_runs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1")
+            .execute(pool)
+            .await?;
+    }
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_task_runs_task_time
             ON task_runs(task_id, started_at DESC)",
@@ -164,6 +177,39 @@ async fn record_assertion_results_in(
     Ok(())
 }
 
+/// そのタスクの**直前の**アサーション実行で失敗 (違反 + 実行エラー) だった assertion ID の
+/// 集合 (#1537)。まだ実行が無ければ `None`。「新しく失敗したものがあるときだけ通知」の比較元で、
+/// 現在の実行を記録する**前**に読む。件数ではなく ID で比べるのは、別の項目が直って別の項目が
+/// 壊れたとき (件数は同じ) を見逃さないため。
+pub async fn last_failed_assertion_ids(task_id: &str) -> Result<Option<HashSet<String>>> {
+    last_failed_assertion_ids_in(pool().await?, task_id).await
+}
+
+async fn last_failed_assertion_ids_in(
+    pool: &SqlitePool,
+    task_id: &str,
+) -> Result<Option<HashSet<String>>> {
+    let latest: Option<String> = sqlx::query_scalar(
+        "SELECT run_started_at FROM assertion_runs WHERE task_id = ?
+          ORDER BY run_started_at DESC, id DESC LIMIT 1",
+    )
+    .bind(task_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+    let Some(started) = latest else {
+        return Ok(None);
+    };
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT assertion_id FROM assertion_runs
+          WHERE task_id = ? AND run_started_at = ? AND passed = 0",
+    )
+    .bind(task_id.to_string())
+    .bind(started)
+    .fetch_all(pool)
+    .await?;
+    Ok(Some(ids.into_iter().collect()))
+}
+
 /// アサーション実行の履歴を新しい順に返す。`task_id` / `assertion_id` で絞り込める。
 pub async fn list_assertion_runs(
     task_id: Option<&str>,
@@ -229,8 +275,8 @@ async fn record_in_with_cap(pool: &SqlitePool, entry: NewTaskRun, max_rows: i64)
     let result = sqlx::query(
         "INSERT INTO task_runs
             (task_id, started_at, finished_at, status, error, output_path,
-             \"rows\", bytes, elapsed_ms, catch_up)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             \"rows\", bytes, elapsed_ms, catch_up, attempts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(entry.task_id)
     .bind(entry.started_at)
@@ -242,6 +288,7 @@ async fn record_in_with_cap(pool: &SqlitePool, entry: NewTaskRun, max_rows: i64)
     .bind(entry.bytes)
     .bind(entry.elapsed_ms)
     .bind(entry.catch_up)
+    .bind(entry.attempts.max(1))
     .execute(pool)
     .await?;
     let id = result.last_insert_rowid();
@@ -271,7 +318,7 @@ pub async fn list(task_id: Option<&str>, limit: i64) -> Result<Vec<TaskRun>> {
 async fn list_in(pool: &SqlitePool, task_id: Option<&str>, limit: i64) -> Result<Vec<TaskRun>> {
     let mut sql = String::from(
         "SELECT id, task_id, started_at, finished_at, status, error, output_path,
-                \"rows\", bytes, elapsed_ms, catch_up
+                \"rows\", bytes, elapsed_ms, catch_up, attempts
          FROM task_runs",
     );
     if task_id.is_some() {
@@ -334,6 +381,7 @@ fn row_to_run(r: &SqliteRow) -> TaskRun {
         bytes: r.try_get("bytes").unwrap_or(None),
         elapsed_ms: r.try_get("elapsed_ms").unwrap_or_default(),
         catch_up: r.try_get::<i64, _>("catch_up").unwrap_or(0) != 0,
+        attempts: r.try_get::<i64, _>("attempts").unwrap_or(1).max(1),
     }
 }
 
@@ -353,6 +401,7 @@ mod tests {
             bytes: Some(100),
             elapsed_ms: 5,
             catch_up: false,
+            attempts: 1,
         }
     }
 
@@ -388,6 +437,99 @@ mod tests {
         assert_eq!(t1_only.len(), 2);
         assert!(t1_only.iter().all(|r| r.task_id == "t1"));
         assert_eq!(t1_only[0].status, "error");
+    }
+
+    /// #1537: 試行回数が実行ログに残り、`attempts` 列の無い旧 DB も開ける。
+    #[tokio::test]
+    async fn records_attempts_and_migrates_old_databases() {
+        let pool = temp_pool().await;
+        let mut e = entry("t1", "ok", "2026-01-01T00:00:00Z");
+        e.attempts = 3;
+        record_in_with_cap(&pool, e, 100).await.unwrap();
+        assert_eq!(list_in(&pool, None, 10).await.unwrap()[0].attempts, 3);
+
+        let old = SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(":memory:"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE task_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+                started_at TEXT NOT NULL, finished_at TEXT NOT NULL, status TEXT NOT NULL,
+                error TEXT, output_path TEXT, \"rows\" INTEGER, bytes INTEGER,
+                elapsed_ms INTEGER NOT NULL, catch_up INTEGER NOT NULL DEFAULT 0)",
+        )
+        .execute(&old)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO task_runs (task_id, started_at, finished_at, status, elapsed_ms)
+             VALUES ('t1', 'a', 'b', 'ok', 1)",
+        )
+        .execute(&old)
+        .await
+        .unwrap();
+        init_schema(&old).await.unwrap();
+        init_schema(&old).await.unwrap();
+        let runs = list_in(&old, None, 10).await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].attempts, 1);
+    }
+
+    /// #1537: 直前の実行で失敗した ID の集合。実行が無ければ `None`、新しい実行が優先される。
+    #[tokio::test]
+    async fn last_failed_ids_reads_the_latest_run_only() {
+        let pool = temp_pool().await;
+        assert_eq!(
+            last_failed_assertion_ids_in(&pool, "t1").await.unwrap(),
+            None
+        );
+        let res = |id: &str, passed: bool| NewAssertionResult {
+            assertion_id: id.into(),
+            assertion_name: id.into(),
+            passed,
+            observed: None,
+            error: None,
+            elapsed_ms: 1,
+        };
+        record_assertion_results_in(
+            &pool,
+            "t1",
+            "2026-01-01T00:00:00Z",
+            vec![res("a", false), res("b", false), res("c", true)],
+            100,
+        )
+        .await
+        .unwrap();
+        record_assertion_results_in(
+            &pool,
+            "t1",
+            "2026-01-02T00:00:00Z",
+            vec![res("a", false), res("b", true)],
+            100,
+        )
+        .await
+        .unwrap();
+        record_assertion_results_in(
+            &pool,
+            "t2",
+            "2026-01-03T00:00:00Z",
+            vec![res("z", false)],
+            100,
+        )
+        .await
+        .unwrap();
+        let ids = |v: &[&str]| -> HashSet<String> { v.iter().map(|s| s.to_string()).collect() };
+        assert_eq!(
+            last_failed_assertion_ids_in(&pool, "t1").await.unwrap(),
+            Some(ids(&["a"]))
+        );
+        assert_eq!(
+            last_failed_assertion_ids_in(&pool, "t2").await.unwrap(),
+            Some(ids(&["z"]))
+        );
     }
 
     #[tokio::test]

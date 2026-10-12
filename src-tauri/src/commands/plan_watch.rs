@@ -14,10 +14,11 @@ use super::query::ensure_allowed_for_session;
 use crate::error::{AppError, Result};
 use crate::plan_watch::store::{self, WatchEntry};
 use crate::plan_watch::{
-    compare_plans, explain_snapshot, ops_from_payload, plan_fingerprint, DEFAULT_ROW_FACTOR,
+    compare_plans, explain_snapshot, ops_from_payload, plan_fingerprint, PlanChangeSeverity,
+    DEFAULT_ROW_FACTOR,
 };
 use crate::snippets::store as snippet_store;
-use crate::state::AppState;
+use crate::state::{AppState, Session};
 
 /// 1 スニペットの更新失敗。
 #[derive(Debug, Serialize)]
@@ -37,6 +38,11 @@ pub struct PlanWatchRefresh {
     /// 記録された世代のうち、前世代から重要な変化があった件数 (初回取得は含まない)。
     pub changed: usize,
     pub errors: Vec<PlanWatchRefreshError>,
+    /// 前世代から**警告 (Warning)** 相当の変化 (フルスキャンへの退行・推定行数の桁違いの増加
+    /// など) があったスニペットの名前 (#1537)。定期実行タスクがこれだけを通知する。IPC では
+    /// 返さない (画面は従来どおり `changed` を使う)。
+    #[serde(skip)]
+    pub warned: Vec<String>,
 }
 
 /// プロファイルのウォッチ一覧 (世代つき)。セッション不要。
@@ -65,12 +71,22 @@ pub async fn plan_watch_refresh(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    refresh_plans(&session, &profile_id, snippet_ids.as_deref()).await
+}
+
+/// `plan_watch_refresh` の本体。スケジューラのタスク (`TaskAction::RefreshPlanWatch`、
+/// #1537) からも同じ実装を呼ぶ。
+pub(crate) async fn refresh_plans(
+    session: &Session,
+    profile_id: &str,
+    snippet_ids: Option<&[String]>,
+) -> Result<PlanWatchRefresh> {
     let driver = session.conn.driver_kind();
     let driver_name = driver.as_str();
-    let targets: Vec<String> = store::watched_ids(&profile_id)
+    let targets: Vec<String> = store::watched_ids(profile_id)
         .await?
         .into_iter()
-        .filter(|id| snippet_ids.as_ref().map_or(true, |only| only.contains(id)))
+        .filter(|id| snippet_ids.map_or(true, |only| only.contains(id)))
         .collect();
     let mut out = PlanWatchRefresh::default();
     if targets.is_empty() {
@@ -93,7 +109,7 @@ pub async fn plan_watch_refresh(
             crate::plan_watch::explain_prefix(driver),
             snippet.sql
         );
-        if let Err(e) = ensure_allowed_for_session(&session, &explain_sql) {
+        if let Err(e) = ensure_allowed_for_session(session, &explain_sql) {
             fail(e.to_string());
             continue;
         }
@@ -108,7 +124,7 @@ pub async fn plan_watch_refresh(
         let ops = ops_from_payload(driver_name, snapshot.payload_kind, &snapshot.payload);
         let fingerprint = plan_fingerprint(&ops);
         let rec = match store::record(
-            &profile_id,
+            profile_id,
             &id,
             driver_name,
             snapshot.payload_kind,
@@ -129,8 +145,15 @@ pub async fn plan_watch_refresh(
         out.recorded += 1;
         if let Some(prev) = rec.prev {
             let prev_ops = ops_from_payload(&prev.driver, prev.payload_kind, &prev.payload);
-            if !compare_plans(&prev_ops, &ops, DEFAULT_ROW_FACTOR).is_empty() {
+            let changes = compare_plans(&prev_ops, &ops, DEFAULT_ROW_FACTOR);
+            if !changes.is_empty() {
                 out.changed += 1;
+            }
+            if changes
+                .iter()
+                .any(|c| c.severity == PlanChangeSeverity::Warning)
+            {
+                out.warned.push(snippet.name.clone());
             }
         }
     }
