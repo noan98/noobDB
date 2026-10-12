@@ -136,6 +136,22 @@ impl HopRole {
     }
 }
 
+/// 接続 (TCP / 鍵交換) 段階の失敗メッセージの接頭辞。認証失敗 (`ssh/auth.rs`) や鍵・agent の
+/// 不備とは接頭辞で区別でき、タスクの接続リトライは「この接頭辞の失敗だけ」を一時的な
+/// ネットワーク障害として扱う (#1537)。
+pub const SSH_CONNECT_FAILED_PREFIX: &str = "ssh connect failed: ";
+
+/// `AppError::Ssh` のメッセージが接続段階の失敗か (純粋)。ホップのタグ
+/// (`[jump host:22] ` — [`tag_hop_error`]) を除いた本文の先頭で判定するので、
+/// 本文のどこかに "auth" 等の語が含まれていても影響されない。
+pub fn is_ssh_connect_stage_failure(msg: &str) -> bool {
+    let body = match msg.strip_prefix('[').and_then(|rest| rest.split_once("] ")) {
+        Some((_, body)) => body,
+        None => msg,
+    };
+    body.starts_with(SSH_CONNECT_FAILED_PREFIX)
+}
+
 /// Prefix an SSH-shaped error with which hop (and its `host:port` identity)
 /// produced it. Other error variants (host-key mismatch, `Io`, ...) already
 /// carry their own `host`/`port` context or don't originate from a specific
@@ -287,7 +303,7 @@ impl SshTunnel {
                             actual: m.actual,
                         });
                     }
-                    return Err(AppError::Ssh(format!("ssh connect failed: {e}")));
+                    return Err(AppError::Ssh(format!("{SSH_CONNECT_FAILED_PREFIX}{e}")));
                 }
             };
 
@@ -400,6 +416,34 @@ impl SshTunnel {
     }
 }
 
+impl SshTunnel {
+    /// トンネルがまだ使える状態か (#1537)。外部に見えるのは `local_port` だけだったため、
+    /// SSH セッションが落ちても accept ループは待ち受けを続け、次のクエリが失敗して
+    /// 初めて切断に気付けた。ここでは次の 3 点を**ネットワークに触れず**に調べる:
+    ///
+    /// - SSH セッションの制御チャネルが閉じていないか (`Handle::is_closed`。サーバからの
+    ///   切断・keepalive 失敗 (30 秒間隔) ・ネットワーク断で run ループが終わると true)。
+    /// - accept ループのタスクが終了していないか。
+    /// - 多段トンネルなら踏み台側の `_upstream` も同様に生きているか (踏み台が落ちると
+    ///   その上に載った本ホップのセッションも遠からず落ちるが、先に検知できる)。
+    pub fn is_alive(&self) -> bool {
+        tunnel_state_alive(
+            self._session.is_closed(),
+            self.accept_task.as_ref().map_or(true, |h| h.is_finished()),
+            self._upstream.as_ref().map(|u| u.is_alive()),
+        )
+    }
+}
+
+/// `is_alive` の判定本体 (純関数。ソケットなしでテストできる)。
+fn tunnel_state_alive(
+    session_closed: bool,
+    accept_finished: bool,
+    upstream_alive: Option<bool>,
+) -> bool {
+    !session_closed && !accept_finished && upstream_alive.unwrap_or(true)
+}
+
 impl Drop for SshTunnel {
     fn drop(&mut self) {
         if let Some(h) = self.accept_task.take() {
@@ -425,6 +469,28 @@ impl Drop for SshTunnel {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connect_stage_failures_are_told_apart_from_auth_failures() {
+        assert!(is_ssh_connect_stage_failure("ssh connect failed: reset"));
+        assert!(is_ssh_connect_stage_failure(
+            "[jump bastion:22] ssh connect failed: connection refused"
+        ));
+        // 本文に auth を含む接続失敗でも接続段階として扱う (語の有無では判定しない)。
+        assert!(is_ssh_connect_stage_failure(
+            "[host auth.example.com:22] ssh connect failed: timed out"
+        ));
+        for m in [
+            "ssh authentication failed",
+            "[host h:22] ssh password authentication failed",
+            "[host h:22] ssh auth error: boom",
+            "ssh-agent holds no identities (add one with `ssh-add`)",
+            "failed to connect to ssh-agent (check SSH_AUTH_SOCK)",
+            "[host h:22] failed to list ssh-agent identities: x",
+        ] {
+            assert!(!is_ssh_connect_stage_failure(m), "{m}");
+        }
+    }
+
     use super::*;
 
     // H1: accept ループの一時的エラーからの回復戦略 (指数バックオフ、上限あり)
@@ -448,6 +514,17 @@ mod tests {
         }
         assert_eq!(backoff, MAX_ACCEPT_BACKOFF);
         assert_eq!(next_accept_backoff(backoff), MAX_ACCEPT_BACKOFF);
+    }
+
+    // #1537: トンネル生存判定は「セッション閉鎖・accept ループ終了・踏み台の死」のどれか
+    // 一つでも当てはまれば死んでいる扱い。
+    #[test]
+    fn tunnel_state_alive_requires_every_part_alive() {
+        assert!(tunnel_state_alive(false, false, None));
+        assert!(tunnel_state_alive(false, false, Some(true)));
+        assert!(!tunnel_state_alive(true, false, None));
+        assert!(!tunnel_state_alive(false, true, None));
+        assert!(!tunnel_state_alive(false, false, Some(false)));
     }
 
     // #708: エラーメッセージにどの段 (bastion/jump か target か) の失敗かが

@@ -15,6 +15,13 @@ import type { CellValue, Column, ConnectionProfile, TableColumnInfo } from "../.
 import { __resetOutputLog } from "../../outputLog";
 import { __resetMessageLog } from "../../messageLog";
 
+// SSH トンネル監視 (#1537) のポーリング間隔を縮める。SSH プロファイルを使うシナリオだけが
+// 影響を受け、他のシナリオ (直結) では監視自体が動かない。
+vi.mock("../../reconnect", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../reconnect")>()),
+  TUNNEL_WATCH_INTERVAL_MS: 150,
+}));
+
 // シナリオテスト (#564) — App 全体を実ブラウザにマウントし、ユーザ操作の主要
 // フローを再現する。Phase 1 (画面スモーク) / Phase 2 (ビジュアル回帰) が
 // 「個々の画面が描画されるか」を見るのに対し、ここでは **接続 → スキーマツリー →
@@ -119,7 +126,12 @@ function registerBaseHandlers() {
   onCommand("plan_watch_list", () => []);
   onCommand("plan_watch_refresh", () => ({ recorded: 0, changed: 0, errors: [] }));
   onCommand("schema_drift_list", () => []);
-  onCommand("schema_drift_capture", () => ({ added: false, generations: [], summary: null }));
+  onCommand("schema_drift_capture", () => ({
+    added: false,
+    database: "appdb",
+    generations: [],
+    summary: null,
+  }));
   onCommand("list_table_comments", () => []);
   // 集約 IPC (#1263): テーブルを開く処理とスキーマツリーの復元 / 検索は、
   // 個別コマンドの代わりにこれらを呼ぶ。内容は上の個別ハンドラと同じ。
@@ -1172,5 +1184,134 @@ describe("シナリオ: 未確定のセル編集があるタブを閉じる (#13
     await expect
       .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
       .not.toBeInTheDocument();
+  });
+});
+
+describe("シナリオ: DDL 後のスキーマドリフト自動取得と SSH トンネル監視 (#1537, 実ブラウザ)", () => {
+  /** DDL (ALTER) だけ schemaMayChange を立てて返す自動応答。 */
+  function registerDdlStream() {
+    onCommand("run_query_stream", (args) => {
+      const channel = args.onEvent as ChannelLike;
+      const isDdl = /^\s*alter/i.test(String((args as { sql?: unknown }).sql ?? ""));
+      window.setTimeout(() => {
+        emitChannelMessage(channel, { kind: "columns", columns: FRUIT_COLUMNS });
+        emitChannelMessage(channel, {
+          kind: "done",
+          totalRows: 0,
+          rowsAffected: 0,
+          elapsedMs: 1,
+          hasColumns: true,
+          appliedAutoLimit: null,
+          readOnly: false,
+          schemaMayChange: isDdl,
+        });
+      }, 0);
+      return null;
+    });
+  }
+
+  /** シード済みの「ALTER ...」タブを、ツールバーの実行ボタンで実行する。 */
+  async function runSeededAlter(screen: Screen) {
+    await vi.waitFor(() => {
+      if (!document.querySelector(".cm-content")) throw new Error("editor not mounted");
+    }, { timeout: 5000 });
+    await screen.getByRole("button", { name: t("editorRun"), exact: true }).click();
+  }
+
+  const captureCalls = () =>
+    invocationsOf("schema_drift_capture") as { database: string; triggerSql: string | null }[];
+
+  it("DDL の成功でまとめて 1 回だけ取得し、実行した SQL を世代に紐づける", async () => {
+    registerDdlStream();
+    seedQueryTabs(ALPHA.id, [{ title: "DDL", sql: "ALTER TABLE fruits ADD c INT" }]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    // 接続時の取得 (SQL なし) が先に走る。
+    await vi.waitFor(() => expect(captureCalls().length).toBe(1), { timeout: 5000 });
+    expect(captureCalls()[0].triggerSql).toBeNull();
+    expect(captureCalls()[0].database).toBe("appdb");
+
+    await runSeededAlter(screen);
+    // 静かになってから (3 秒) 1 回だけ、実行した SQL つきで取得する。
+    await vi.waitFor(() => expect(captureCalls().length).toBe(2), { timeout: 10_000 });
+    expect(captureCalls()[1].triggerSql).toBe("ALTER TABLE fruits ADD c INT;");
+    expect(captureCalls()[1].database).toBe("appdb");
+  });
+
+  it("PostgreSQL でも、取得が解決した既定スキーマへの DDL が対象になる", async () => {
+    registerDdlStream();
+    const PG: ConnectionProfile = { ...makeProfile("p-pg", "PG DB", "testdb"), driver: "postgres" };
+    onCommand("list_profiles", () => [PG]);
+    // プロファイルの database は実 DB 名で、取得対象の既定スキーマ (public) はバックエンドが決める。
+    onCommand("schema_drift_capture", () => ({
+      added: false,
+      database: "public",
+      generations: [],
+      summary: null,
+    }));
+    seedQueryTabs(PG.id, [{ title: "DDL", sql: "ALTER TABLE fruits ADD c INT" }]);
+    const screen = await renderInBrowser(<App />);
+    // ツリーの DB ノード (スキーマ名) の出し分けはこのシナリオの関心外なので、接続して
+    // 取得 IPC が呼ばれるところから確認する。
+    await screen.getByRole("treeitem", { name: /PG DB/ }).click();
+    await vi.waitFor(() => expect(captureCalls().length).toBe(1), { timeout: 5000 });
+    // 接続時は DB 名のまま渡し、既定スキーマへの解決はバックエンドが行う。
+    expect(captureCalls()[0].database).toBe("testdb");
+
+    await runSeededAlter(screen);
+    await vi.waitFor(() => expect(captureCalls().length).toBe(2), { timeout: 10_000 });
+    expect(captureCalls()[1].triggerSql).toBe("ALTER TABLE fruits ADD c INT;");
+  });
+
+  const SSH_ALPHA: ConnectionProfile = {
+    ...ALPHA,
+    ssh: {
+      host: "bastion.example.com",
+      port: 22,
+      user: "ops",
+      auth_method: "agent",
+      private_key_path: "",
+    },
+  };
+
+  it("トンネルが切断されると (false) 切断を通知して統一ハンドラへ倒す", async () => {
+    onCommand("list_profiles", () => [SSH_ALPHA]);
+    let alive: boolean | null = true;
+    onCommand("session_tunnel_alive", () => alive);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    // 生きている間は何も起きない。
+    await vi.waitFor(() => expect(invocationsOf("session_tunnel_alive").length).toBeGreaterThan(1), {
+      timeout: 5000,
+    });
+    expect(invocationsOf("disconnect").length).toBe(0);
+
+    alive = false;
+    await expect
+      .element(screen.getByText(t("toastSshTunnelLost", { name: SSH_ALPHA.name })))
+      .toBeVisible();
+    // 統一ハンドラに渡る: 自動再接続なら reconnect、手動誘導なら古いセッションの
+    // disconnect が呼ばれる (設定の既定に依らずどちらかが起きる)。
+    await vi.waitFor(
+      () =>
+        expect(
+          invocationsOf("reconnect").length + invocationsOf("disconnect").length,
+        ).toBeGreaterThan(0),
+      { timeout: 8000 },
+    );
+  });
+
+  it("セッション不在などで null が返っても、切断扱いにしない", async () => {
+    onCommand("list_profiles", () => [SSH_ALPHA]);
+    onCommand("session_tunnel_alive", () => null);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await vi.waitFor(() => expect(invocationsOf("session_tunnel_alive").length).toBeGreaterThan(2), {
+      timeout: 5000,
+    });
+    await expect
+      .element(screen.getByText(t("toastSshTunnelLost", { name: SSH_ALPHA.name })))
+      .not.toBeInTheDocument();
+    expect(invocationsOf("disconnect").length).toBe(0);
   });
 });

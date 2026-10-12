@@ -25,6 +25,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Select, Textarea } from "./ui";
+import { SqlCountCheck } from "./SqlCountCheck";
 
 interface Item {
   id: number;
@@ -380,6 +381,16 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
                         }}
                       />
                       {!ok && <ErrorNote role="alert">{t("assertAiNotReadOnly")}</ErrorNote>}
+                      {ok && (
+                        <SqlCountCheck
+                          sessionId={props.sessionId}
+                          database={database}
+                          driver={props.driver}
+                          sql={item.sql}
+                          mode="violations"
+                          disabled={registering}
+                        />
+                      )}
                     </Flex>
                   );
                 })}

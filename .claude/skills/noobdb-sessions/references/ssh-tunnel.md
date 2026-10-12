@@ -85,3 +85,20 @@ fingerprint"` へアンカーし、ホストのキャプチャを非貪欲 (`+?`
 引き続き固定します。known_hosts の `host:port` エンコード
 (`ssh/known_hosts.rs::parse_known_hosts`) はもともと最後の `:` で区切る
 `rsplit_once` を使っており、IPv6 ホストでも曖昧にならないため無改修です。
+
+## トンネルの生存確認 (#1537)
+
+`SshTunnel` の SSH セッションが落ちても accept ループは待ち受けを続けるため、従来は次のクエリが
+失敗して初めて切断に気付けた。`SshTunnel::is_alive()` は**ネットワークに触れず**に次の 3 点を調べる:
+
+- russh `client::Handle::is_closed()` (セッションの run ループが終わると true。`keepalive_interval`
+  30 秒の応答失敗・サーバ側切断・ネットワーク断で閉じる)
+- accept ループのタスクが終了していないか (`JoinHandle::is_finished`)
+- 多段トンネルなら踏み台側 `_upstream` も生きているか
+
+`Session::tunnel_alive()` (トンネル越しでなければ `None`。`session_tunnel_alive` はセッションが無いときも `None` で、切断と断定しない) を `health_probe_all` の
+`tunnel_alive` と `session_tunnel_alive` IPC が使う。`false` のときは `SELECT 1` を投げずに
+`down` を確定する。フロントは `App.tsx` が 10 秒ごと (`TUNNEL_WATCH_INTERVAL_MS`、ウィンドウが
+隠れている間は止める) に `session_tunnel_alive` を呼び、閉じていれば統一ハンドラ
+`handleConnectionLost` (自動再接続 or 手動再接続への誘導, #712) に倒す。接続ヘルスの行にも
+「SSH トンネルが切断されています」を出す。

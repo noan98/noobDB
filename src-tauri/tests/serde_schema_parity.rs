@@ -753,8 +753,30 @@ fn build_fixtures() -> serde_json::Value {
         failed_count: 1,
         failures: vec![script_failure.clone()],
         skipped_control: 2,
+        skipped_excluded: 3,
+        skipped_before_start: 10,
         rows_affected: 57,
         elapsed_ms: 900,
+    };
+    // 事前確認 (#1535): 全種別・全危険種別・制御文を含むスクリプトの集計。
+    let script_analyzed_event = t::ScriptAnalyzedEvent {
+        stream_id: "strm0007".into(),
+        encoding: t::TextEncoding::ShiftJis,
+        total_bytes: 2048,
+        file_stamp: t::FileStamp {
+            size: 2048,
+            mtime_ms: 1_700_000_000_000,
+        },
+        elapsed_ms: 12,
+        analysis: t::analyze_script_text(
+            t::DriverKind::Sqlite,
+            true,
+            "BEGIN;\nCREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\nSELECT * FROM t;\nDELETE FROM t;\nUPDATE t SET id = 2;\nTRUNCATE TABLE t;\nDROP TABLE t;\nROLLBACK;",
+        ),
+    };
+    let sql_file_content = t::SqlFileContent {
+        content: "SELECT 1;".into(),
+        encoding: t::TextEncoding::Utf8Bom,
     };
     let script_error_event = ScriptErrorEvent {
         stream_id: "strm0007".into(),
@@ -762,6 +784,8 @@ fn build_fixtures() -> serde_json::Value {
         failure: Some(script_failure),
         executed: 4,
         rolled_back: true,
+        in_transaction: true,
+        tx_begin_statement: Some(2),
     };
 
     let dump_progress_event = DumpProgressEvent {
@@ -1245,6 +1269,7 @@ fn build_fixtures() -> serde_json::Value {
                 latency_ms: Some(12),
                 version: Some("8.0.36".into()),
                 connections: Some(5),
+                tunnel_alive: Some(true),
             })
             .collect();
     let incoming_foreign_key = t::IncomingForeignKey {
@@ -1444,8 +1469,21 @@ fn build_fixtures() -> serde_json::Value {
             t::TaskAction::RunAssertions {
                 database: None,
                 assertion_ids: vec!["asrt0001".into()],
+                notify_only_on_increase: true,
             },
             t::TaskSchedule::Interval { minutes: 5 },
+        ),
+        (
+            t::TaskAction::TimelapseCapture {
+                max_generations: Some(30),
+            },
+            t::TaskSchedule::Daily { hour: 2, minute: 0 },
+        ),
+        (
+            t::TaskAction::RefreshPlanWatch {
+                snippet_ids: vec!["snip0001".into()],
+            },
+            t::TaskSchedule::Interval { minutes: 60 },
         ),
     ]
     .into_iter()
@@ -1461,6 +1499,10 @@ fn build_fixtures() -> serde_json::Value {
         next_run_at: Some("2026-01-03T00:00:00Z".into()),
         last_run_at: Some("2026-01-02T00:00:00Z".into()),
         last_status: Some("ok".into()),
+        connect_retry: t::ConnectRetry {
+            max_retries: 3,
+            interval_secs: 30,
+        },
     })
     .collect();
     // ExportFormat 全種 (zod `exportFormat` と突き合わせる)。
@@ -1487,6 +1529,7 @@ fn build_fixtures() -> serde_json::Value {
         next_run_at: None,
         last_run_at: None,
         last_status: None,
+        connect_retry: t::ConnectRetry::default(),
     })
     .collect();
     let task_run = t::TaskRun {
@@ -1501,6 +1544,7 @@ fn build_fixtures() -> serde_json::Value {
         bytes: Some(4096),
         elapsed_ms: 3000,
         catch_up: true,
+        attempts: 2,
     };
     let scheduler_settings = t::SchedulerSettings {
         catch_up_missed: true,
@@ -1556,6 +1600,7 @@ fn build_fixtures() -> serde_json::Value {
         fingerprint: "deadbeef".into(),
         table_count: 12,
         omitted: false,
+        trigger_sql: Some("ALTER TABLE users ADD COLUMN age INT".into()),
     };
     let schema_drift_summary = t::DriftSummary {
         tables: variants!(TableChangeStatus [Added, Removed, Changed])
@@ -1580,6 +1625,7 @@ fn build_fixtures() -> serde_json::Value {
     };
     let schema_drift_capture = t::SchemaDriftCapture {
         added: true,
+        database: "public".into(),
         generations: vec![schema_drift_generation.clone()],
         summary: Some(schema_drift_summary.clone()),
     };
@@ -1608,6 +1654,7 @@ fn build_fixtures() -> serde_json::Value {
             name: "slow query".into(),
             error: "syntax error".into(),
         }],
+        warned: vec![],
     };
 
     // ダンプツール (#546 周辺): 導入方法あり / なしの 2 形。
@@ -1739,6 +1786,8 @@ fn build_fixtures() -> serde_json::Value {
         "scriptProgressEvent": script_progress_event,
         "scriptDoneEvent": script_done_event,
         "scriptErrorEvent": script_error_event,
+        "scriptAnalyzedEvent": script_analyzed_event,
+        "sqlFileContent": sql_file_content,
 
         // --- #1195: enum の全バリアントを網羅した配列 (`*Variants`) ---
         "healthFindingVariants": health_finding_variants,

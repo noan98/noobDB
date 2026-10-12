@@ -996,12 +996,84 @@ async fn mysql_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
-    let killed = conn.kill_processes(&[victim_id]).await.expect("kill");
+    // 文のみ停止 (KILL QUERY / pg_cancel_backend) は実行中の文を中断するが、接続は残る (#1538)。
+    // 対象接続で長い文を走らせ、文のみ停止で即座に中断エラーで返り、同じプールで続けて使えることを確かめる。
+    let victim = std::sync::Arc::new(victim);
+    let sleeper = {
+        let v = std::sync::Arc::clone(&victim);
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            let r = v
+                .execute("SELECT /* noobdb_1538_my_cancel */ SLEEP(30)", None)
+                .await;
+            (r, started.elapsed())
+        })
+    };
+    // プールが複数の接続を持つと、sleep は victim_id と別の接続で走りうる。
+    // 実際に sleep を実行しているプロセスを一覧から探して、その id を止める。
+    let mut sleeping_id = None;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sleeping_id = conn
+            .list_processes()
+            .await
+            .expect("list while sleeping")
+            .iter()
+            .find(|p| {
+                p.query.as_deref().is_some_and(|q| {
+                    q.contains("noobdb_1538_my_cancel")
+                        && !q.contains("processlist")
+                        && !q.contains("pg_stat_activity")
+                })
+            })
+            .map(|p| p.id);
+        if sleeping_id.is_some() {
+            break;
+        }
+    }
+    let sleeping_id = sleeping_id.expect("the sleeping statement must appear in the process list");
+    let cancelled_running = conn
+        .kill_processes(&[sleeping_id], true)
+        .await
+        .expect("cancel running statement");
+    assert_eq!(cancelled_running.failed, 0, "{cancelled_running:?}");
+    let (sleep_result, took) = tokio::time::timeout(std::time::Duration::from_secs(10), sleeper)
+        .await
+        .expect("the sleeping statement must end promptly after a statement-only stop")
+        .expect("join");
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+    // MySQL の SLEEP は中断されるとエラーではなく 1 を返すことがあるため、どちらでも許容する。
+    let _ = sleep_result;
+    assert!(
+        victim.execute("SELECT 1", None).await.is_ok(),
+        "the connection pool must stay usable after a statement-only stop"
+    );
+
+    // 文のみ停止 (KILL QUERY / pg_cancel_backend) は成功するが接続は残る (#1538)。
+    let cancelled = conn
+        .kill_processes(&[victim_id], true)
+        .await
+        .expect("cancel statement");
+    assert_eq!(cancelled.killed, 1, "{cancelled:?}");
+    assert_eq!(cancelled.failed, 0, "{cancelled:?}");
+    assert!(
+        conn.list_processes()
+            .await
+            .expect("list after cancel")
+            .iter()
+            .any(|p| p.id == victim_id),
+        "a statement-only stop must keep the connection"
+    );
+
+    let killed = conn
+        .kill_processes(&[victim_id], false)
+        .await
+        .expect("kill");
     assert_eq!(killed.killed, 1, "{killed:?}");
     assert_eq!(killed.failed, 0, "{killed:?}");
     // 存在しない id は失敗として数え、最初のエラーを返すが、残りの kill は続行する。
     let mixed = conn
-        .kill_processes(&[i64::MAX, victim_id])
+        .kill_processes(&[i64::MAX, victim_id], false)
         .await
         .expect("kill mixed");
     assert_eq!(mixed.killed + mixed.failed, 2, "{mixed:?}");
@@ -2690,7 +2762,7 @@ async fn mysql_blocking_chain_is_listed_and_resolved_by_kill() {
     }
     assert!(found, "B must be reported as blocked by A (id {a_id})");
 
-    let killed = admin.kill_processes(&[a_id]).await.expect("kill A");
+    let killed = admin.kill_processes(&[a_id], false).await.expect("kill A");
     assert_eq!(killed.killed, 1, "{killed:?}");
     let outcome = b_task.await.expect("join B");
     assert!(
@@ -2894,6 +2966,60 @@ async fn mysql_metadata_lock_reader_behind_pending_alter_waits_on_the_alter() {
         .await
         .expect("cleanup");
     admin.close().await;
+}
+
+/// MySQL ではトランザクション内の DDL が暗黙 COMMIT する。そのあとの失敗は、BEGIN からやり直すと
+/// 二重適用になるので `tx_begin_statement` を載せない (`in_transaction` は true) (#1535)。
+#[tokio::test]
+async fn mysql_script_failure_after_implicit_commit_does_not_offer_begin_restart() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = std::sync::Arc::new(t::make_session("mysql_script_tx", conn, opts, false));
+    let table = format!("noobdb_script_tx_{}", std::process::id());
+    let mut path = std::env::temp_dir();
+    path.push(format!("{table}.sql"));
+    std::fs::write(
+        &path,
+        format!(
+            "DROP TABLE IF EXISTS {table};\nBEGIN;\nCREATE TABLE {table} (id INT);\nINSERT INTO {table} VALUES (1);\nINSERT INTO {table}_missing VALUES (1);\nCOMMIT;"
+        ),
+    )
+    .expect("write script");
+    let result = t::run_sql_script_via_core(
+        session.clone(),
+        &path.to_string_lossy(),
+        None,
+        t::ScriptOptions::default(),
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect("script setup");
+    let _ = session
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), None)
+        .await;
+    let _ = std::fs::remove_file(&path);
+    match result {
+        t::ScriptRun::Failed {
+            failure,
+            in_transaction,
+            tx_begin_statement,
+            ..
+        } => {
+            assert_eq!(failure.expect("failure").index, 5);
+            assert!(in_transaction);
+            assert_eq!(
+                tx_begin_statement, None,
+                "implicit COMMIT: BEGIN restart is unsafe"
+            );
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
 }
 
 /// 全列の概要 (#1539)。BLOB / JSON を含む表でも 1 本の SELECT で取れ、

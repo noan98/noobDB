@@ -236,6 +236,32 @@ describe("AiLockDiagnose (#1478)", () => {
     expect(screen.getByText(t("lockDiagnoseGuardNote"))).toBeTruthy();
   });
 
+  it("停止候補の「一覧で表示」は onLocateProcess を呼ぶだけで KILL は実行しない (#1538)", async () => {
+    const onLocateProcess = vi.fn();
+    renderWithProviders(ui({ onLocateProcess }));
+    fireEvent.click(await ask());
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("SUMMARY_TEXT");
+    fireEvent.click(screen.getByRole("button", { name: t("lockDiagnoseLocateAria", { id: 1 }) }));
+    expect(onLocateProcess).toHaveBeenCalledWith(1);
+  });
+
+  it("onLocateProcess が無ければ「一覧で表示」を出さない", async () => {
+    renderWithProviders(ui());
+    fireEvent.click(await ask());
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("SUMMARY_TEXT");
+    expect(screen.queryByRole("button", { name: t("lockDiagnoseLocateAria", { id: 1 }) })).toBeNull();
+  });
+
   it("実行中は中止でき、中止の表示になる", async () => {
     renderWithProviders(ui());
     fireEvent.click(await ask());

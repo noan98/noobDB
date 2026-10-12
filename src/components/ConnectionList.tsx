@@ -298,6 +298,8 @@ interface Props {
    * to switch to them instantly instead of reconnecting. (#複数同時接続)
    */
   openProfileIds?: ReadonlySet<string>;
+  /** 未確定の明示トランザクションを保持している接続のプロファイル ID (#1536)。行に「TX」バッジを出す。 */
+  txProfileIds?: ReadonlySet<string>;
   onConnect: (profile: ConnectionProfile) => void;
   /** Close a specific background (or active) connection without reconnecting. */
   onDisconnectProfile?: (profileId: string) => void;
@@ -1768,6 +1770,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   connectingId,
   errorProfileId,
   openProfileIds,
+  txProfileIds,
   onConnect,
   onDisconnectProfile,
   onReorderProfiles,
@@ -3730,7 +3733,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           {/* 本番/読取専用バッジは ConnectionList・TitleBar・本番接続確認ダイアログで
               共有する `ProfileBadges` (#663)。配色決定は `profileIdentity.ts` /
               `semanticColors.ts` に一元化済みで、ここに色を持たない。 */}
-          <ProfileBadges isProduction={p.is_production} readOnly={p.read_only} />
+          <ProfileBadges
+            isProduction={p.is_production}
+            readOnly={p.read_only}
+            inTransaction={txProfileIds?.has(p.id) ?? false}
+          />
           {/* スキーマ更新ボタンはアクティブ接続でのみ表示する。refreshSchema は
               アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
               更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}

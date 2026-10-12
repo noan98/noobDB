@@ -248,6 +248,12 @@ export interface Settings {
    */
   schemaDriftOnConnect: boolean;
   /**
+   * スキーマドリフト・タイムライン (#1537): DDL (CREATE / ALTER / DROP など) が成功したら、
+   * プロファイルの既定データベースのスキーマ世代を自動取得し、実行した SQL を紐づけて残す。
+   * 連続する DDL は数秒まとめて 1 回だけ取得する。取得はメタデータの読み取りのみ。
+   */
+  schemaDriftOnDdl: boolean;
+  /**
    * テーブル・タイムラプス (#739): 接続確立直後に、このプロファイルでウォッチ
    * 登録済みのテーブルのスナップショットを背景で取得する。読み取り専用の単一
    * SELECT のみで履歴も汚さない。ウォッチが 1 件も無ければ何もしない。
@@ -699,6 +705,9 @@ export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
 /** スキーマドリフト・タイムライン (#736) の接続時自動スナップショットは既定オン。 */
 export const DEFAULT_SCHEMA_DRIFT_ON_CONNECT = true;
 
+/** DDL 成功時のスキーマ世代の自動取得 (#1537) は既定オン。 */
+export const DEFAULT_SCHEMA_DRIFT_ON_DDL = true;
+
 /** テーブル・タイムラプス (#739) の接続時自動スナップショットは既定オン。 */
 export const DEFAULT_TIMELAPSE_ON_CONNECT = true;
 /** 保持世代数。Rust の `timelapse::DEFAULT_MAX_GENERATIONS` / `clamp_max_generations` と揃える。 */
@@ -763,6 +772,7 @@ export const DEFAULT_SETTINGS: Settings = {
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
   schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
+  schemaDriftOnDdl: DEFAULT_SCHEMA_DRIFT_ON_DDL,
   timelapseOnConnect: DEFAULT_TIMELAPSE_ON_CONNECT,
   timelapseMaxGenerations: DEFAULT_TIMELAPSE_MAX_GENERATIONS,
   motionPreference: DEFAULT_MOTION_PREFERENCE,
@@ -994,6 +1004,7 @@ export function normalizeSettings(input: unknown): Settings {
     preflightImpactEnabled?: unknown;
     planWatchOnConnect?: unknown;
     schemaDriftOnConnect?: unknown;
+    schemaDriftOnDdl?: unknown;
     timelapseOnConnect?: unknown;
     timelapseMaxGenerations?: unknown;
     motionPreference?: unknown;
@@ -1125,6 +1136,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.schemaDriftOnConnect === "boolean"
         ? parsed.schemaDriftOnConnect
         : DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
+    schemaDriftOnDdl:
+      typeof parsed.schemaDriftOnDdl === "boolean"
+        ? parsed.schemaDriftOnDdl
+        : DEFAULT_SCHEMA_DRIFT_ON_DDL,
     timelapseOnConnect:
       typeof parsed.timelapseOnConnect === "boolean"
         ? parsed.timelapseOnConnect
@@ -1624,6 +1639,13 @@ export function setPlanWatchOnConnect(value: boolean): void {
 export function setSchemaDriftOnConnect(value: boolean): void {
   if (current.schemaDriftOnConnect === value) return;
   current = { ...current, schemaDriftOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setSchemaDriftOnDdl(value: boolean): void {
+  if (current.schemaDriftOnDdl === value) return;
+  current = { ...current, schemaDriftOnDdl: value };
   persist();
   listeners.forEach((cb) => cb());
 }

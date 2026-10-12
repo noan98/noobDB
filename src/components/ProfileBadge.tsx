@@ -119,6 +119,48 @@ export function ReadOnlyBadge({
 }
 
 /**
+ * 未確定の明示トランザクションを保持している接続を示すバッジ (#1536)。背景接続は別の接続へ
+ * 切り替えても TX を保持したままなので、接続一覧でどの接続が TX 中かをひと目で分かるようにする。
+ * warning の淡色 (subtle/border/text) で、本番 (danger) より控えめに示す。
+ */
+export function TxBadge({
+  compact,
+  focusable = true,
+  ...rest
+}: ProfileBadgeStyleProps & { focusable?: boolean } & HTMLChakraProps<"span">) {
+  const t = useT();
+  return (
+    <MotionSpan
+      key="tx-badge"
+      initial={variants.fadeScale.initial}
+      animate={variants.fadeScale.animate}
+      exit={variants.fadeScale.exit}
+      transition={transitions.crossfade}
+      display="inline-flex"
+    >
+      <Tooltip label={t("txListBadgeTitle")} focusableWrapper={focusable}>
+        <TreeBadge
+          display="inline-flex"
+          alignItems="center"
+          gap="1"
+          bg={semanticColorToken("warning", "subtle")}
+          color={semanticColorToken("warning", "text")}
+          borderColor={semanticColorToken("warning", "border")}
+          fontSize={compact ? "2xs" : "xs"}
+          fontWeight={700}
+          px={compact ? "1.5" : "2"}
+          py={compact ? "0.25" : "0.5"}
+          data-testid="tx-badge"
+          {...rest}
+        >
+          {t("txActiveBadge")}
+        </TreeBadge>
+      </Tooltip>
+    </MotionSpan>
+  );
+}
+
+/**
  * サンドボックス (壊せる砂場、#747) のセッションを示すバッジ。専用色 (violet 系。
  * `titleBarContext.ts` の `SANDBOX_BAND_COLOR` と同じ値) で常時明示し、「このタブは
  * 接続先へ一切影響しないローカルコピーである」ことをひと目で伝える。production/
@@ -170,12 +212,15 @@ export function ProfileBadges({
   isProduction,
   readOnly,
   sandbox,
+  inTransaction,
   compact,
   gap = "1",
   focusable = true,
 }: {
   isProduction: boolean;
   readOnly: boolean;
+  /** 未確定の明示トランザクションを保持している接続なら true (#1536)。 */
+  inTransaction?: boolean;
   /** サンドボックスのセッション/プロファイルなら true (#747)。 */
   sandbox?: boolean;
   compact?: boolean;
@@ -186,13 +231,14 @@ export function ProfileBadges({
   focusable?: boolean;
 }) {
   const kinds = profileBadgeKinds({ is_production: isProduction, read_only: readOnly });
-  if (kinds.length === 0 && !sandbox) return null;
+  if (kinds.length === 0 && !sandbox && !inTransaction) return null;
   return (
     <chakra.span display="inline-flex" alignItems="center" gap={gap}>
       <AnimatePresence initial={false}>
         {sandbox && <SandboxBadge compact={compact} />}
         {kinds.includes("production") && <ProductionBadge compact={compact} focusable={focusable} />}
         {kinds.includes("readOnly") && <ReadOnlyBadge compact={compact} focusable={focusable} />}
+        {inTransaction && <TxBadge compact={compact} focusable={focusable} />}
       </AnimatePresence>
     </chakra.span>
   );

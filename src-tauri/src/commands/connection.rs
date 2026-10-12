@@ -346,6 +346,22 @@ pub async fn ping_session(session_id: String, state: State<'_, AppState>) -> Res
     Ok(alive)
 }
 
+/// セッションの SSH トンネルが生きているかを、DB へ問い合わせずに返す (#1537)。
+/// トンネル越しでない (直結・ファイル) セッションは `None`、セッションが無いときも `None`
+/// (切断・自動再接続の最中にセッションが入れ替わるのは正常で、ここでは「トンネルが切れた」
+/// と断定しない)。クエリが失敗するより先に切断を知らせ、再接続 (#712) へ誘導するための
+/// 軽量なポーリング用で、ネットワークには一切触れない。
+#[tauri::command]
+pub async fn session_tunnel_alive(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<bool>> {
+    Ok(state
+        .get(&session_id)
+        .await
+        .and_then(|session| session.tunnel_alive()))
+}
+
 /// `health_probe_all` の 1 セッション分の結果 (#1259)。状態判定
 /// (`connectionHealth.ts`) はフロントの純ロジックが担い、ここは生の観測値だけを返す。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -369,6 +385,11 @@ pub struct HealthProbeItem {
     pub version: Option<String>,
     /// 現在の接続数。サーバを持たないドライバ / 取得不可は `None`。
     pub connections: Option<i64>,
+    /// SSH トンネルの生存 (#1537)。トンネル越しでないセッションは `None`、トンネル越しなら
+    /// `Some(true)` (生存) / `Some(false)` (SSH セッションが閉じている)。`Some(false)` の
+    /// ときは `SELECT 1` を投げずに `Down` を返す (死んだトンネルへのクエリはタイムアウト
+    /// まで待たされるだけなので、クエリ失敗より先に切断を確定できる)。
+    pub tunnel_alive: Option<bool>,
 }
 
 /// 1 ティックぶんの接続ヘルスを全セッション分まとめて取得する (#1259)。
@@ -413,16 +434,35 @@ async fn probe_session_health(
     timeout: Duration,
     refresh_version: bool,
 ) -> HealthProbeItem {
+    let Some(session) = state.get(session_id).await else {
+        return HealthProbeItem {
+            session_id: session_id.to_string(),
+            status: HealthProbeStatus::Down,
+            latency_ms: None,
+            version: None,
+            connections: None,
+            tunnel_alive: None,
+        };
+    };
+    let tunnel_alive = session.tunnel_alive();
     let item = |status, latency_ms, version, connections| HealthProbeItem {
         session_id: session_id.to_string(),
         status,
         latency_ms,
         version,
         connections,
+        tunnel_alive,
     };
-    let Some(session) = state.get(session_id).await else {
-        return item(HealthProbeStatus::Down, None, None, None);
-    };
+    // トンネルが閉じていれば DB には触れずに Down を確定する (#1537)。
+    if tunnel_alive == Some(false) {
+        tracing::info!(session_id = %session_id, "ssh tunnel is closed; connection is down");
+        return item(
+            HealthProbeStatus::Down,
+            None,
+            session.cached_health_version(),
+            None,
+        );
+    }
     // 再取得を指示されても、既知のバージョンは手放さない。タイムアウトや失敗で
     // ヘルス表示からバージョンが消えないよう、フォールバック用に必ず保持する (#1530)。
     let known = session.cached_health_version();

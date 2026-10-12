@@ -339,15 +339,19 @@ function extractTarget(rawStatement: string, lead: RegExp): string | null {
 
 function classifyStatement(masked: string, raw: string): DangerFinding | null {
   const maskedLower = masked.toLowerCase();
-  const body = maskedLower.replace(/^[\s(]+/, "");
+  // 先頭の空白と `(` を読み飛ばす。JS の `\s` は U+FEFF を含み U+0085 を含まないが、Rust の
+  // `char::is_whitespace` は逆なので、両方を明示して二重実装の判定を揃える (#1535)。
+  const body = maskedLower.replace(/^[\s(\u0085\uFEFF]+/, "");
   if (!body) return null;
 
+  // WHERE の深さは先頭の `(` を除いた位置から数える: `(DELETE FROM t WHERE id = 1)` の WHERE は
+  // 括弧の内側でも文自身のガードなので、外側の括弧ぶんだけ深さがずれて見落とさないようにする。
   if (startsWithKeyword(body, "delete")) {
-    if (hasTopLevelWhere(maskedLower)) return null;
+    if (hasTopLevelWhere(body)) return null;
     return { kind: "deleteNoWhere", target: extractTarget(raw, /delete\s+from\s+/i) };
   }
   if (startsWithKeyword(body, "update")) {
-    if (hasTopLevelWhere(maskedLower)) return null;
+    if (hasTopLevelWhere(body)) return null;
     return { kind: "updateNoWhere", target: extractTarget(raw, /update\s+/i) };
   }
   if (startsWithKeyword(body, "truncate")) {

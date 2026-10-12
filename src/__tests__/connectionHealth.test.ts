@@ -87,6 +87,15 @@ describe("toHealthProbeResult (health_probe_all の観測値 → 表示状態, #
     }
   });
 
+  it("SSH トンネルが閉じていれば tunnelClosed を立て、生存・トンネル無しでは立てない (#1537)", () => {
+    expect(toHealthProbeResult(mysql, item({ status: "down", tunnel_alive: false }))).toMatchObject({
+      status: "down",
+      tunnelClosed: true,
+    });
+    expect(toHealthProbeResult(mysql, item({ tunnel_alive: true }))).not.toHaveProperty("tunnelClosed");
+    expect(toHealthProbeResult(mysql, item({ tunnel_alive: null }))).not.toHaveProperty("tunnelClosed");
+  });
+
   it("SQLite は接続数を常に N/A にする", () => {
     expect(toHealthProbeResult({ sessionId: "s1", driver: "sqlite" }, item({ connections: null }))).toMatchObject({
       status: "up",
@@ -273,5 +282,21 @@ describe("pruneHealthResults", () => {
       ["gone", up()],
     ]);
     expect([...pruneHealthResults(m, ["live"]).keys()]).toEqual(["live"]);
+  });
+});
+
+describe("tunnelClosed の伝播 (#1537)", () => {
+  const base: HealthProbeResult = { status: "down", latencyMs: null, version: null, connections: null };
+
+  it("buildHealthRows が行に引き継ぎ、変化はフラッシュ対象になる", () => {
+    const p = { ...profile({ id: "p1", name: "app" }) };
+    const results = new Map<string, HealthProbeResult>([["s1", { ...base, tunnelClosed: true }]]);
+    const rows = buildHealthRows([{ sessionId: "s1", profile: p }], [], results, {
+      activeSessionId: "s1",
+      includeSaved: false,
+    });
+    expect(rows[0].tunnelClosed).toBe(true);
+    const prev = new Map<string, HealthProbeResult>([["s1", base]]);
+    expect(changedHealthSessions(prev, results).has("s1")).toBe(true);
   });
 });

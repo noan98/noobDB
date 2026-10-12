@@ -76,3 +76,109 @@ describe("SchemaDriftPanel error state (#848)", () => {
     });
   });
 });
+
+describe("SchemaDriftPanel 構造/データへの導線と DDL の紐づけ (#1537)", () => {
+  const generations = () => [
+    { ...makeGeneration("g2", "2026-01-02T00:00:00Z"), triggerSql: "ALTER TABLE users ADD COLUMN age INT" },
+    makeGeneration("g1", "2026-01-01T00:00:00Z"),
+  ];
+  const summary = {
+    tables: [
+      {
+        table: "users",
+        tableStatus: "changed" as const,
+        columnsAdded: 1,
+        columnsRemoved: 0,
+        columnsChanged: 0,
+        indexesAdded: 0,
+        indexesRemoved: 0,
+        indexesChanged: 0,
+      },
+      {
+        table: "legacy",
+        tableStatus: "removed" as const,
+        columnsAdded: 0,
+        columnsRemoved: 0,
+        columnsChanged: 0,
+        indexesAdded: 0,
+        indexesRemoved: 0,
+        indexesChanged: 0,
+      },
+    ],
+  };
+
+  it("変化したテーブルから構造/データを開き、パネルを閉じる。削除済みテーブルには出さない", async () => {
+    vi.mocked(api.schemaDriftCompare).mockResolvedValue(summary);
+    const onOpenStructure = vi.fn();
+    const onOpenData = vi.fn();
+    const onClose = vi.fn();
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={generations()}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={onClose}
+        onOpenStructure={onOpenStructure}
+        onOpenData={onOpenData}
+      />,
+    );
+    const structureBtn = await screen.findByRole("button", {
+      name: t("schemaDriftOpenStructureAria", { table: "users" }),
+    });
+    fireEvent.click(structureBtn);
+    expect(onOpenStructure).toHaveBeenCalledWith("appdb", "users");
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: t("schemaDriftOpenDataAria", { table: "users" }) }),
+    );
+    expect(onOpenData).toHaveBeenCalledWith("appdb", "users");
+
+    // 削除されたテーブルは開けない。
+    expect(
+      screen.queryByRole("button", { name: t("schemaDriftOpenStructureAria", { table: "legacy" }) }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("導線のコールバックが無ければボタンを出さず、DDL の SQL が世代に表示される", async () => {
+    vi.mocked(api.schemaDriftCompare).mockResolvedValue(summary);
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={generations()}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("users")).toBeInTheDocument());
+    expect(
+      screen.queryByRole("button", { name: t("schemaDriftOpenStructureAria", { table: "users" }) }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(t("schemaDriftTriggerSql", { sql: "ALTER TABLE users ADD COLUMN age INT" })),
+    ).toBeInTheDocument();
+  });
+
+  it("対象 (DB / スキーマ) が異なる世代は比較せず、理由を表示する", async () => {
+    vi.mocked(api.schemaDriftCompare).mockClear();
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={[
+          { ...makeGeneration("g2", "2026-01-02T00:00:00Z"), database: "public" },
+          { ...makeGeneration("g1", "2026-01-01T00:00:00Z"), database: "appdb" },
+        ]}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(await screen.findByText(t("schemaDriftDifferentTarget"))).toBeInTheDocument();
+    expect(api.schemaDriftCompare).not.toHaveBeenCalled();
+  });
+});

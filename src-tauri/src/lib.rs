@@ -21,6 +21,7 @@ mod snippets;
 mod ssh;
 mod state;
 mod tasks;
+mod text_encoding;
 mod timelapse;
 
 /// Test-only re-exports. Not part of the public API; subject to change.
@@ -87,7 +88,9 @@ pub mod __test_api {
         DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
-    pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
+    pub use crate::flight_recorder::undo::{
+        build_redo_plan, build_undo_plan, UndoConflict, UndoPlan,
+    };
     pub use crate::flight_recorder::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
     pub use crate::plan_watch::{
         compare_plans, explain_prefix, explain_snapshot, ops_from_payload, plan_fingerprint,
@@ -97,7 +100,8 @@ pub mod __test_api {
     pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshJumpProfile, SshProfile};
     pub use crate::schema_drift::{
         build_payload as build_drift_payload, capture_payload as capture_drift_payload,
-        fingerprint_payload as fingerprint_drift_payload, summarize_payloads as summarize_drift,
+        fingerprint_payload as fingerprint_drift_payload,
+        resolve_capture_database as resolve_drift_database, summarize_payloads as summarize_drift,
         DriftSummary, SnapshotPayload as DriftSnapshotPayload,
     };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
@@ -205,7 +209,8 @@ pub mod __test_api {
     };
     pub use crate::tasks::scheduler::TaskRunProgressEvent;
     pub use crate::tasks::{
-        AssertionRunRecord, SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
+        AssertionRunRecord, ConnectRetry, SchedulerSettings, TaskAction, TaskDefinition, TaskRun,
+        TaskSchedule,
     };
     pub use crate::timelapse::{
         GenerationDiff, GenerationMeta as TimelapseGenerationMeta, TableWatch,
@@ -236,6 +241,7 @@ pub mod __test_api {
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
+    pub use crate::commands::file::SqlFileContent;
     pub use crate::commands::import::{
         ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
     };
@@ -243,9 +249,45 @@ pub mod __test_api {
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
     pub use crate::commands::script::{
-        BatchStatementResult, BatchStatus, BatchStreamMessage, ScriptDoneEvent, ScriptErrorEvent,
-        ScriptFailure, ScriptOptions, ScriptProgress, ScriptProgressEvent, ScriptRun,
+        BatchStatementResult, BatchStatus, BatchStreamMessage, FileStamp, ScriptAnalyzedEvent,
+        ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
+        ScriptProgressEvent, ScriptRun,
     };
+    pub use crate::db::script_analysis::ScriptAnalysis;
+    pub use crate::text_encoding::TextEncoding;
+
+    /// 危険文判定 ([`crate::db::script_analysis::classify_dangerous`]) の種別名。
+    /// フロント `analyzeDangerousSql` の `DangerKind` と同じ文字列で、共有ゴールデン
+    /// (`tests/dangerous_sql_golden.rs`) が使う。危険でなければ `None`。
+    pub fn classify_dangerous_kind(driver: DriverKind, sql: &str) -> Option<&'static str> {
+        use crate::db::script_analysis::{classify_dangerous, DangerKind};
+        classify_dangerous(driver, sql).map(|k| match k {
+            DangerKind::DeleteNoWhere => "deleteNoWhere",
+            DangerKind::UpdateNoWhere => "updateNoWhere",
+            DangerKind::Drop => "drop",
+            DangerKind::Truncate => "truncate",
+        })
+    }
+
+    /// スクリプト文字列を事前確認 (ドライラン) の集計にかける (#1535)。ファイル入出力も
+    /// ストリーミング読みも通さず、分割 → 文ごとの解析だけを駆動する。
+    pub fn analyze_script_text(
+        driver: DriverKind,
+        enforce_read_only: bool,
+        sql: &str,
+    ) -> ScriptAnalysis {
+        let mut analyzer =
+            crate::db::script_analysis::ScriptAnalyzer::new(driver, enforce_read_only);
+        for stmt in crate::db::script::split_script(driver, sql) {
+            analyzer.push(&stmt);
+        }
+        analyzer.finish()
+    }
+
+    /// テキストを指定の文字コードのバイト列にする (`text_encoding::encode`)。
+    pub fn encode_text(text: &str, encoding: TextEncoding) -> crate::error::Result<Vec<u8>> {
+        crate::text_encoding::encode(text, encoding)
+    }
 
     /// `.sql` スクリプトのストリーミング文分割 (#973) を一括で行い、各文の本文だけを
     /// 返す。フロント `splitSqlStatements` との共有ゴールデン
@@ -271,8 +313,15 @@ pub mod __test_api {
     where
         F: FnMut(ScriptProgress),
     {
-        let total = crate::commands::script::script_file_size(path).await?;
-        let file = crate::commands::script::open_script_file(path).await?;
+        let stamp = crate::commands::script::script_file_stamp(path).await?;
+        crate::commands::script::check_expected_file(options.expected_file, stamp)?;
+        let total = stamp.size;
+        let (file, encoding) =
+            crate::commands::script::open_script_file(path, options.encoding).await?;
+        let options = ScriptOptions {
+            encoding: Some(encoding),
+            ..options
+        };
         crate::commands::script::run_script_core(
             session,
             file,
@@ -665,6 +714,32 @@ pub mod __test_api {
         .await
     }
 
+    /// 記録つき書き込みの実行コア (`run_captured_write`) を、クエリタイムアウト付きで直接
+    /// 叩く (#1536)。永続化 (フライトレコーダーのストア) と履歴は経由しない。返り値は
+    /// `(rows_affected, capturable)`。タイムアウトすれば `AppError::Timeout`、その場合は
+    /// トランザクションがロールバックされ書き込みは残らない。
+    pub async fn run_captured_write_with_timeout(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        row_cap: usize,
+        timeout_secs: u64,
+    ) -> crate::error::Result<(u64, bool)> {
+        let session = state
+            .get(session_id)
+            .await
+            .ok_or_else(|| crate::error::AppError::SessionNotFound(session_id.to_string()))?;
+        let (result, capture) = crate::commands::query::run_captured_write(
+            session,
+            sql.to_string(),
+            None,
+            row_cap,
+            Some(timeout_secs),
+        )
+        .await?;
+        Ok((result.rows_affected, capture.capturable))
+    }
+
     /// Drives the `undo_flight_record` IPC command's core path without a
     /// Tauri runtime (#735).
     pub async fn undo_flight_record_via_command(
@@ -696,6 +771,23 @@ pub mod __test_api {
             conflicts: plan.conflicts,
             warnings: plan.warnings,
         })
+    }
+
+    /// Drives the `redo_flight_record` IPC command's core path without a
+    /// Tauri runtime (#1536).
+    pub async fn redo_flight_record_via_command(
+        state: &AppState,
+        session_id: &str,
+        id: i64,
+        force: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoOutcome> {
+        crate::commands::flight_recorder::redo_flight_record_inner(
+            state,
+            session_id.to_string(),
+            id,
+            force,
+        )
+        .await
     }
 
     /// Lists flight-recorder captures directly against the store, for tests
@@ -757,8 +849,15 @@ pub mod __test_api {
         state: &AppState,
         session_id: &str,
         process_ids: &[i64],
+        statement_only: bool,
     ) -> crate::error::Result<KillProcessesResult> {
-        crate::commands::process::kill_processes_inner(state, session_id, process_ids).await
+        crate::commands::process::kill_processes_inner(
+            state,
+            session_id,
+            process_ids,
+            statement_only,
+        )
+        .await
     }
 
     /// Drives the full schema-comparison path (`commands::diff`) without Tauri:
@@ -1219,6 +1318,7 @@ pub fn run() {
             commands::connection::disconnect,
             commands::connection::reconnect,
             commands::connection::ping_session,
+            commands::connection::session_tunnel_alive,
             commands::connection::health_probe_all,
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,
@@ -1323,6 +1423,8 @@ pub fn run() {
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,
             commands::flight_recorder::undo_flight_record,
+            commands::flight_recorder::preview_redo,
+            commands::flight_recorder::redo_flight_record,
             commands::timelapse::timelapse_watch_table,
             commands::timelapse::timelapse_capture,
             commands::timelapse::timelapse_list_watches,
@@ -1353,6 +1455,7 @@ pub fn run() {
             commands::import::parse_csv_preview,
             commands::import::import_csv,
             commands::script::run_sql_script,
+            commands::script::analyze_sql_script,
             commands::ai::set_ai_api_key,
             commands::ai::has_ai_api_key,
             commands::ai::run_ai_request,
@@ -1362,6 +1465,7 @@ pub fn run() {
             commands::transfer::preview_transfer,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
+            commands::file::read_sql_file,
             commands::cell_blob::fetch_cell_bytes,
             commands::cell_blob::probe_cell_blob,
             commands::cell_blob::save_cell_to_file,

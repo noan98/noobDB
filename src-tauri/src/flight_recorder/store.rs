@@ -353,6 +353,19 @@ async fn mark_undone_in(pool: &SqlitePool, id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Redo (#1536) の成功後に「取り消し済み」を解除する (冪等)。
+pub async fn mark_redone(id: i64) -> Result<()> {
+    mark_redone_in(pool().await?, id).await
+}
+
+async fn mark_redone_in(pool: &SqlitePool, id: i64) -> Result<()> {
+    sqlx::query("UPDATE write_capture SET undone = 0 WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Deletes captures. `Some(profile_id)` clears just that profile; `None`
 /// clears everything. Returns the number of rows removed.
 pub async fn clear(profile_id: Option<&str>) -> Result<u64> {
@@ -532,6 +545,24 @@ mod tests {
         mark_undone_in(&pool, id).await.unwrap();
         let record = get_in(&pool, id).await.unwrap().unwrap();
         assert!(record.undone);
+    }
+
+    #[tokio::test]
+    async fn mark_redone_clears_the_undone_flag() {
+        let pool = temp_pool().await;
+        let id = record_in(
+            &pool,
+            entry("p1", "t1", "2026-01-01T00:00:00Z"),
+            100,
+            0,
+            u64::MAX,
+        )
+        .await
+        .unwrap();
+        mark_undone_in(&pool, id).await.unwrap();
+        mark_redone_in(&pool, id).await.unwrap();
+        let record = get_in(&pool, id).await.unwrap().unwrap();
+        assert!(!record.undone);
     }
 
     #[tokio::test]

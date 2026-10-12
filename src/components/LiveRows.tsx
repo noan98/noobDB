@@ -61,9 +61,28 @@ export function LiveRowsPresence({ children }: { children: ReactNode }) {
  * ライブ表の行。variant ラベル (`initial` / `animate` / `exit`) を配下の
  * `LiveCell` へ伝播させ、行全体を同時に伸縮させる。
  */
-export function LiveTr({ children }: { children: ReactNode }) {
+export function LiveTr({
+  children,
+  highlighted = false,
+  rowId,
+}: {
+  children: ReactNode;
+  /** 強調表示する行 (#1538: AI の停止候補をプロセス行へ連動させる)。 */
+  highlighted?: boolean;
+  /** 行の DOM id (スクロール先の指定用)。 */
+  rowId?: string;
+}) {
   return (
-    <MotionTr variants={variants.fade} initial="initial" animate="animate" exit="exit">
+    <MotionTr
+      id={rowId}
+      data-highlighted={highlighted ? "true" : undefined}
+      bg={highlighted ? "var(--accent-subtle)" : undefined}
+      boxShadow={highlighted ? "inset 3px 0 0 var(--accent)" : undefined}
+      variants={variants.fade}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+    >
       {children}
     </MotionTr>
   );

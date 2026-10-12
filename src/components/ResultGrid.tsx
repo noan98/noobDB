@@ -3507,6 +3507,7 @@ export const DataGrid = memo(function DataGrid({
   onSetCellEdit,
   onBulkEdit,
   onReplaceColumn,
+  onLookupQuery,
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
@@ -3595,6 +3596,8 @@ export const DataGrid = memo(function DataGrid({
   onBulkEdit?: (edits: BulkEditTarget[]) => void;
   /** 列全体の検索して置換 (#1242) の実行ハンドラ。未指定なら列全体モードを出さない。 */
   onReplaceColumn?: (sql: string) => void;
+  /** 列全体の置換で対象行数を数える読み取り専用の件数クエリ (#1536)。 */
+  onLookupQuery?: ValueLookup;
   /** 削除予定の行: rowEditKey の集合。該当行は取り消し線で示す。 */
   pendingDeleteKeys?: Set<string>;
   /** 行を削除予定にトグルする。未指定ならメニュー項目を出さない。 */
@@ -6924,6 +6927,7 @@ export const DataGrid = memo(function DataGrid({
             validateEdit={validateEdit}
             serverFilter={serverFilter}
             onApplyColumn={onReplaceColumn}
+            onLookupQuery={onLookupQuery}
             onApplyInGrid={(targets) => {
               onBulkEdit(targets);
               toast.success(t("gridReplaceApplied", { cells: targets.length }));
@@ -9140,6 +9144,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
           onSetCellEdit={onSetCellEdit}
           onBulkEdit={editableActive ? onBulkEdit : undefined}
           onReplaceColumn={editableActive ? onReplaceColumn : undefined}
+          onLookupQuery={editableActive ? onLookupQuery : undefined}
           changedCells={diff?.changedCells}
           addedRowIndices={diff?.addedRows}
           pendingDeleteKeys={pendingDeleteKeys}

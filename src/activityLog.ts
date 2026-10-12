@@ -58,7 +58,10 @@ export const ACTIVITY_SEVERITIES: readonly ActivitySeverity[] = [
  * トーストは短い要約しか出せないので、後から「どのテーブルのどの列が変わったか」を
  * 確かめたいイベントだけ構造化データを添える。
  */
-export type ActivityDetail = { kind: "schemaDrift"; summary: SchemaDriftSummary };
+export type ActivityDetail =
+  | { kind: "schemaDrift"; summary: SchemaDriftSummary }
+  /** IPC レスポンスの検証失敗 (#1536)。診断テキストの組み立てに必要な最小限の情報だけを持つ。 */
+  | { kind: "ipcValidation"; command: string; issues: readonly string[]; at: number };
 
 export interface ActivityEntry {
   /** 単調増加の識別子。未読判定 (水位) と React の key に使う。 */
