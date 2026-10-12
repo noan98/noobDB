@@ -80,6 +80,8 @@ export interface ErGraph {
   edges: ErEdge[];
   /** Number of tables in the schema before the `MAX_TABLES` cap. */
   totalTables: number;
+  /** `MAX_TABLES` の上限で一部のテーブルを描かなかった (フォーカス時は近傍が上限を超えた)。 */
+  capped: boolean;
 }
 
 export interface PositionedNode extends ErNode {
@@ -171,6 +173,63 @@ export interface BuildErGraphInput {
   pkByTable?: Record<string, string[]>;
   /** 列ごとの型・NULL 可・UNIQUE (テーブル名 → 列名 → 情報)。無ければ型表示なし・N:1 既定。 */
   columnMeta?: Record<string, Record<string, ErColumnMeta>>;
+  /**
+   * フォーカス表示 (#1540)。指定すると、`table` から外部キーを `hops` ホップ (向きは問わない)
+   * 辿った範囲のテーブルだけを描く。`MAX_TABLES` の切り捨て(次数順)の前に絞るので、
+   * 切り捨てで図から消えているテーブルにも使える。`table` が存在しなければ無視する。
+   */
+  focus?: ErFocus | null;
+}
+
+export interface ErFocus {
+  table: string;
+  /** 1 以上の整数。 */
+  hops: number;
+}
+
+/**
+ * `center` から外部キー (向きは問わない) を `hops` ホップ以内で辿れるテーブル名を、
+ * 近い順 (同距離は名前順) で返す。先頭は `center` 自身。`center` が `known` に無ければ空。
+ * 参照先 / 参照元が `known` に無いテーブル (他 DB など) は辿らない。
+ */
+export function focusNeighborhood(
+  known: readonly string[],
+  foreignKeys: readonly { table: string; referenced_table: string }[],
+  center: string,
+  hops: number,
+): string[] {
+  const names = new Set(known);
+  if (!names.has(center)) return [];
+  const adjacency = new Map<string, Set<string>>();
+  const link = (a: string, b: string) => {
+    let set = adjacency.get(a);
+    if (!set) adjacency.set(a, (set = new Set()));
+    set.add(b);
+  };
+  for (const fk of foreignKeys) {
+    if (!names.has(fk.table) || !names.has(fk.referenced_table)) continue;
+    link(fk.table, fk.referenced_table);
+    link(fk.referenced_table, fk.table);
+  }
+  const maxHops = Math.max(0, Math.floor(hops));
+  const out = [center];
+  const seen = new Set(out);
+  let frontier = [center];
+  for (let depth = 0; depth < maxHops && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const name of frontier) {
+      for (const n of adjacency.get(name) ?? []) {
+        if (!seen.has(n)) {
+          seen.add(n);
+          next.push(n);
+        }
+      }
+    }
+    next.sort((a, b) => a.localeCompare(b));
+    out.push(...next);
+    frontier = next;
+  }
+  return out;
 }
 
 /**
@@ -193,7 +252,27 @@ export function buildErGraph(input: BuildErGraphInput): ErGraph {
   }
 
   let kept = tables;
-  if (tables.length > MAX_TABLES) {
+  let capped = false;
+  const near = input.focus
+    ? focusNeighborhood(
+        tables.map((t) => t.name),
+        foreignKeys,
+        input.focus.table,
+        input.focus.hops,
+      )
+    : [];
+  if (near.length > 0) {
+    // フォーカス: 近い順に上限まで。次数順の切り捨てはかけない。
+    const byName = new Map(tables.map((t) => [t.name, t]));
+    capped = near.length > MAX_TABLES;
+    kept = near
+      .slice(0, MAX_TABLES)
+      .flatMap((name) => {
+        const t = byName.get(name);
+        return t ? [t] : [];
+      });
+  } else if (tables.length > MAX_TABLES) {
+    capped = true;
     kept = [...tables]
       .sort((a, b) => {
         const da = degree.get(a.name) ?? 0;
@@ -266,7 +345,7 @@ export function buildErGraph(input: BuildErGraphInput): ErGraph {
     });
   }
 
-  return { nodes, edges, totalTables };
+  return { nodes, edges, totalTables, capped };
 }
 
 /**

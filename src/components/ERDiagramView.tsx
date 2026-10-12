@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
@@ -32,6 +32,8 @@ import { semanticColorToken } from "../semanticColors";
 import {
   buildErGraph,
   endGlyph,
+  type BuildErGraphInput,
+  type ErFocus,
   erHighlight,
   layoutErGraph,
   sourceEndKind,
@@ -322,13 +324,34 @@ function ERDiagramInner({
   const [database, setDatabase] = useState<string | null>(initialDatabase);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<{ shown: number; total: number; rels: number } | null>(
-    null,
-  );
   // The built (un-positioned) graph is fetched once per database; the layout
   // (positions) is recomputed whenever direction/density change without a
   // refetch (#560).
-  const [graph, setGraph] = useState<ErGraph | null>(null);
+  // 取得した生データ。フォーカス (#1540) はこれから `buildErGraph` を組み直すだけで、
+  // DB への再アクセスは要らない。
+  const [source, setSource] = useState<Omit<BuildErGraphInput, "focus"> | null>(null);
+  const [focusTable, setFocusTable] = useState<string | null>(null);
+  const [focusHops, setFocusHops] = useState(1);
+  const focus: ErFocus | null = useMemo(
+    () => (focusTable ? { table: focusTable, hops: focusHops } : null),
+    [focusTable, focusHops],
+  );
+  const graph: ErGraph | null = useMemo(
+    () => (source ? buildErGraph({ ...source, focus }) : null),
+    [source, focus],
+  );
+  const summary = useMemo(
+    () =>
+      graph
+        ? { shown: graph.nodes.length, total: graph.totalTables, rels: graph.edges.length }
+        : null,
+    [graph],
+  );
+  // フォーカスの対象に選べるテーブル (上限で図から落ちているものも含む)。
+  const focusChoices = useMemo(
+    () => (source ? source.tables.map((tb) => tb.name).sort((a, b) => a.localeCompare(b)) : []),
+    [source],
+  );
   const [direction, setDirection] = useState<ErLayoutDirection>("LR");
   const [density, setDensity] = useState<ErLayoutDensity>("comfortable");
   const [nodes, setNodes, onNodesChange] = useNodesState<ErFlowNode>([]);
@@ -415,6 +438,7 @@ function ERDiagramInner({
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setFocusTable(null);
     didLayoutOnce.current = false;
     (async () => {
       // 列名と PK 列は DB 全体を 1 回で取得する (#1255)。以前は列名を
@@ -451,21 +475,14 @@ function ERDiagramInner({
         ]),
       );
 
-      const built = buildErGraph({ tables, foreignKeys, pkByTable, columnMeta });
-      setGraph(built);
-      setSummary({
-        shown: built.nodes.length,
-        total: built.totalTables,
-        rels: built.edges.length,
-      });
+      setSource({ tables, foreignKeys, pkByTable, columnMeta });
     })()
       .catch((e) => {
         if (!cancelled) {
           setError(String(e));
-          setGraph(null);
+          setSource(null);
           setNodes([]);
           setEdges([]);
-          setSummary(null);
         }
       })
       .finally(() => {
@@ -551,7 +568,8 @@ function ERDiagramInner({
     );
   }, [hoverId, graph, setNodes, setEdges]);
 
-  const truncated = summary != null && summary.shown < summary.total;
+  const truncated = graph?.capped === true;
+  const selectedTable = nodes.filter((n) => n.selected).map((n) => n.data.table);
 
   return (
     <Box flex="1" display="flex" flexDirection="column" minHeight={0}>
@@ -605,6 +623,52 @@ function ERDiagramInner({
             <option value="compact">{t("erDiagramDensityCompact")}</option>
           </Select>
         </chakra.label>
+        {focusChoices.length > 0 && !loading && !error && (
+          <>
+            <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+              {t("erDiagramFocus")}
+              <Select
+                value={focusTable ?? ""}
+                onChange={(e) => setFocusTable(e.target.value || null)}
+                minWidth="150px"
+                aria-label={t("erDiagramFocus")}
+              >
+                <option value="">{t("erDiagramFocusOff")}</option>
+                {focusChoices.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </chakra.label>
+            {focusTable && (
+              <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+                {t("erDiagramFocusHops")}
+                <Select
+                  value={String(focusHops)}
+                  onChange={(e) => setFocusHops(Number(e.target.value))}
+                  minWidth="90px"
+                  aria-label={t("erDiagramFocusHops")}
+                >
+                  <option value="1">{t("erDiagramFocusHopsN", { n: 1 })}</option>
+                  <option value="2">{t("erDiagramFocusHopsN", { n: 2 })}</option>
+                </Select>
+              </chakra.label>
+            )}
+            {selectedTable.length === 1 && selectedTable[0] !== focusTable && (
+              <Tooltip label={t("erDiagramFocusSelectedTip")}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setFocusTable(selectedTable[0])}
+                >
+                  {t("erDiagramFocusSelected", { table: selectedTable[0] })}
+                </Button>
+              </Tooltip>
+            )}
+          </>
+        )}
         {summary && !loading && !error && (
           <chakra.span fontSize="sm" color="app.textMuted">
             {t("erDiagramSummary", { tables: summary.shown, relationships: summary.rels })}
@@ -671,7 +735,9 @@ function ERDiagramInner({
       </chakra.p>
       {truncated && (
         <chakra.p margin={0} pt="1.5" px="6" pb="0" fontSize="sm" color={semanticColorToken("warning", "text")}>
-          {t("erDiagramTruncated", { shown: summary!.shown, total: summary!.total })}
+          {focus
+            ? t("erDiagramFocusCapped", { shown: summary!.shown })
+            : `${t("erDiagramTruncated", { shown: summary!.shown, total: summary!.total })} ${t("erDiagramTruncatedFocusHint")}`}
         </chakra.p>
       )}
 
