@@ -4,6 +4,8 @@
 // 結果サマリの組み立てをここへ出し、Vitest でユニットテストする。
 
 import type {
+  ScriptAnalysis,
+  ScriptDangerKind,
   ScriptDoneEvent,
   ScriptErrorEvent,
   ScriptOptions,
@@ -13,7 +15,13 @@ import type {
 export const DEFAULT_SCRIPT_OPTIONS: ScriptOptions = {
   continueOnError: false,
   wrapInTransaction: false,
+  encoding: null,
+  startAtStatement: 0,
+  skipStatements: [],
 };
+
+/** 排他制御つきで切り替えられる真偽オプション。 */
+export type ScriptToggleKey = "continueOnError" | "wrapInTransaction";
 
 /**
  * オプションを 1 つ切り替える。`continueOnError` と `wrapInTransaction` は排他
@@ -22,7 +30,7 @@ export const DEFAULT_SCRIPT_OPTIONS: ScriptOptions = {
  */
 export function toggleScriptOption(
   opts: ScriptOptions,
-  key: keyof ScriptOptions,
+  key: ScriptToggleKey,
 ): ScriptOptions {
   const next = { ...opts, [key]: !opts[key] };
   if (next[key]) {
@@ -69,12 +77,15 @@ export function omittedFailureCount(e: Pick<ScriptDoneEvent, "failedCount" | "fa
 export function describeScriptError(e: ScriptErrorEvent): {
   message: string;
   line: number | null;
+  /** 停止した文の通し番号 (トランザクション制御文を含む)。事前確認の一覧・再開位置と同じ番号。 */
+  index: number | null;
   sql: string | null;
   rolledBack: boolean;
 } {
   return {
     message: e.failure?.error ?? e.error,
     line: e.failure?.line ?? null,
+    index: e.failure?.index ?? null,
     sql: e.failure?.sql ?? null,
     rolledBack: e.rolledBack,
   };
@@ -85,4 +96,141 @@ let scriptStreamSeq = 0;
 export function makeScriptStreamId(now: number = Date.now()): string {
   scriptStreamSeq += 1;
   return `script_${now.toString(36)}_${scriptStreamSeq.toString(36)}`;
+}
+
+// ── 事前確認 (ドライラン、#1535) ────────────────────────────────────────────
+
+/** 開始文番号の入力欄の文字列を 0 以上の整数へ。空・不正・負は 0 (先頭から)。 */
+export function parseStartAt(text: string): number {
+  const n = Number(text.trim());
+  return Number.isSafeInteger(n) && n > 0 ? n : 0;
+}
+
+/** 除外集合の 1 文を切り替えた新しい集合を返す。 */
+export function toggleExcluded(excluded: ReadonlySet<number>, index: number): Set<number> {
+  const next = new Set(excluded);
+  if (next.has(index)) next.delete(index);
+  else next.add(index);
+  return next;
+}
+
+/** `ScriptOptions.skipStatements` へ渡す昇順の配列。 */
+export function skipList(excluded: ReadonlySet<number>): number[] {
+  return [...excluded].sort((a, b) => a - b);
+}
+
+/** 一覧に載っている危険文を全部除外した (または全部戻した) 集合。 */
+export function setDangerousExcluded(
+  excluded: ReadonlySet<number>,
+  analysis: Pick<ScriptAnalysis, "dangerous">,
+  exclude: boolean,
+): Set<number> {
+  const next = new Set(excluded);
+  for (const d of analysis.dangerous) {
+    if (exclude) next.add(d.index);
+    else next.delete(d.index);
+  }
+  return next;
+}
+
+/**
+ * 実行すると流れる危険文の数。一覧 (`dangerous`) に載っている文は除外・開始位置より前の
+ * ものを引き、一覧に載らなかった分 (`dangerousTotal` − 一覧の件数) は個別に除外できず、
+ * 開始位置も判別できないので、そのまま「流れる」ものとして数える (fail-closed)。
+ */
+export function remainingDangerous(
+  analysis: Pick<ScriptAnalysis, "dangerous" | "dangerousTotal">,
+  excluded: ReadonlySet<number>,
+  startAt: number,
+): number {
+  const unlisted = Math.max(0, analysis.dangerousTotal - analysis.dangerous.length);
+  const listed = analysis.dangerous.filter(
+    (d) => !excluded.has(d.index) && !(startAt > 1 && d.index < startAt),
+  ).length;
+  return unlisted + listed;
+}
+
+/** 件数が 1 以上の危険種別だけを、固定の表示順で返す。 */
+export function dangerKindCounts(
+  analysis: Pick<ScriptAnalysis, "dangerCounts">,
+): { kind: ScriptDangerKind; count: number }[] {
+  const order: ScriptDangerKind[] = ["drop", "truncate", "deleteNoWhere", "updateNoWhere"];
+  return order
+    .map((kind) => ({ kind, count: analysis.dangerCounts[kind] }))
+    .filter((e) => e.count > 0);
+}
+
+/** 先頭の一覧が全文を網羅していない (`head` が `totalStatements` より短い)。 */
+export function analysisIsTruncated(analysis: Pick<ScriptAnalysis, "head" | "totalStatements">): boolean {
+  return analysis.head.length < analysis.totalStatements;
+}
+
+/**
+ * 停止エラーから「この文から再開」できる開始位置を返す。再開できないときは `null`:
+ * 原因の文が分からない (準備段階の失敗)、失敗した時点でトランザクションが開いていた
+ * (ROLLBACK の成否に関係なく — 取り消された範囲の文が欠けたまま、または確定していない
+ * まま進んでしまう)、全体をトランザクションで包んでいた (全部が取り消される)。
+ * `skipFailed` なら失敗した文自体を飛ばして次の文から再開する。`options` は**その実行で
+ * 使ったオプション** (画面の現在の設定ではない)。
+ */
+export function resumeStartAt(
+  e: Pick<ScriptErrorEvent, "failure" | "rolledBack" | "inTransaction">,
+  options: Pick<ScriptOptions, "wrapInTransaction">,
+  skipFailed = false,
+): number | null {
+  if (!e.failure || e.inTransaction || e.rolledBack || options.wrapInTransaction) return null;
+  return skipFailed ? e.failure.index + 1 : e.failure.index;
+}
+
+/**
+ * トランザクションの途中で失敗したとき、そのトランザクションを始めた BEGIN 文の番号。
+ * ここから再開すれば取り消された範囲をやり直せる。BEGIN の位置が分からない (全体を包んでいた
+ * / 準備段階の失敗) ときは `null`。
+ */
+export function resumeFromBeginAt(
+  e: Pick<ScriptErrorEvent, "failure" | "inTransaction" | "txBeginStatement">,
+  options: Pick<ScriptOptions, "wrapInTransaction">,
+): number | null {
+  if (!e.failure || !e.inTransaction || options.wrapInTransaction) return null;
+  return e.txBeginStatement;
+}
+
+/**
+ * 開始文番号 `startAt` が BEGIN〜COMMIT/ROLLBACK の途中なら、その BEGIN の番号を返す
+ * (そうでなければ `null`)。トランザクション制御文の位置の一覧は上限つきなので、一覧の末尾より
+ * 先に開始位置があって一覧が途切れているときは判定できず `null`。
+ */
+export function startInsideTransaction(
+  analysis: Pick<ScriptAnalysis, "txControls" | "txControlTotal">,
+  startAt: number,
+): number | null {
+  if (startAt <= 1) return null;
+  let open: number | null = null;
+  let last = 0;
+  for (const m of [...analysis.txControls].sort((a, b) => a.index - b.index)) {
+    if (m.index >= startAt) break;
+    last = m.index;
+    if (m.kind === "begin") {
+      if (open === null) open = m.index;
+    } else {
+      open = null;
+    }
+  }
+  const listTruncated = analysis.txControlTotal > analysis.txControls.length;
+  if (listTruncated && last > 0 && last === analysis.txControls[analysis.txControls.length - 1]?.index) {
+    // 一覧の最後の制御文より先に開始位置がある: その先の BEGIN / COMMIT は見えない。
+    return null;
+  }
+  return open;
+}
+
+/**
+ * 失敗メッセージが「事前確認のあとでファイルが変わった」ことを示すか。バックエンド
+ * (`commands/script.rs` の `FILE_CHANGED_MARKER`) がメッセージの先頭に付ける固定の目印で判定する
+ * (文言の一部には依存しない)。
+ */
+const FILE_CHANGED_MARKER = "[script-file-changed]";
+
+export function isAnalysisStaleError(message: string): boolean {
+  return message.includes(FILE_CHANGED_MARKER);
 }

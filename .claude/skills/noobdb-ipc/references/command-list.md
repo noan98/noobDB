@@ -351,6 +351,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `import_csv`
 - `preview_create_table_ddl`
 - `read_text_file`
+- `read_sql_file`
 - `write_text_file`
 - `write_binary_file`
 - `fetch_cell_bytes`
@@ -376,8 +377,18 @@ SQL を揃えている)。`fetch_cell_bytes` は主キーで 1 セルの生バ�
 経由しない)。`save_cell_to_file` は DB → ファイルを Rust 内で完結させる (BLOB が IPC を通らない)。
 書き戻しはフロントが `UPDATE` を組み立てて通常の `run_query` (読み取り専用ガード付き) で流す。
 
+`read_sql_file` (`commands/file.rs`, #1535) は SQL ファイルを**文字コード付き**で読む。`encoding`
+省略は自動判定 (BOM → UTF-8 として妥当か → Shift_JIS / EUC-JP をスコアで判別。UTF-16 は BOM または
+NUL の比率パターン。自動判定で本文に NUL があればエラー)、指定があればその文字コード
+(先頭の BOM と食い違えばエラー。UTF-8 系は BOM の有無を実際に合わせて返す)。不正バイトは U+FFFD に置換せずエラー。戻り値
+`{ content, encoding }` の `encoding` をフロントがタブ (`Tab.fileEncoding`) に覚え、保存時に
+`write_text_file` の `encoding` へ渡して同じ文字コードに書き戻す。識別子は `utf-8` / `utf-8-bom` /
+`utf-16le` / `utf-16be` / `shift_jis` / `euc-jp` (Rust `text_encoding::TextEncoding`)。`read_text_file`
+(JSON の設定ファイルなど) は従来どおり UTF-8 固定。
+
 `write_text_file` (`commands/file.rs`, #1258) は SQL・Markdown・JSON などのテキストを文字列の
-まま UTF-8 で書く (上限 32 MiB)。`write_binary_file` は `tauri::ipc::Request` の raw ボディ
+まま書く (上限 32 MiB)。`encoding` (#1535) を省略すると BOM なし UTF-8。指定すると変換して書き、
+その文字コードで表せない文字があれば置換せずエラーにする (UTF-8 BOM / UTF-16 は BOM を付ける)。`write_binary_file` は `tauri::ipc::Request` の raw ボディ
 (`InvokeBody::Raw`) を受け、保存先パスはヘッダ `x-noobdb-path` に URL エンコードして載せる
 (`api.writeBinaryFile` が `encodeURIComponent`、Rust 側 `decode_path_header` が復元)。
 
@@ -429,6 +440,30 @@ JS から行を送る。ハンドルは「行配列」に紐づけて持ち (`co
 `:done` / `:error` / `:cancelled` イベント + `cancel_stream`。読み取り専用ガードは
 文ごと、`continueOnError` / `wrapInTransaction` は排他。スクリプト内の
 BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ読み替える。
+
+`run_sql_script` の `options` (#1535) は `continueOnError` / `wrapInTransaction` に加えて、
+`encoding` (省略 = 自動判定。**実行前にファイル全体を事前スキャン**して判定と妥当性確認を済ませ、
+不正バイトなら 1 文も実行しない)、`startAtStatement` (この通し番号より前の文を実行せず読み飛ばす。
+`ScriptFailure.index` と同じ 1 始まりでトランザクション制御文を含む。失敗した文からの再開用。読み飛ばした
+文の `USE` による DB 切り替えには追従する)、`skipStatements` (個別除外する通し番号。上限 10 万件。
+**BEGIN / COMMIT / ROLLBACK の番号は指定されても無視して実行する**)、`expectedFile` (事前確認時の
+`{ size, mtimeMs }` = `sql-script:analyzed` の `fileStamp`。実行時のファイルと違えば 1 文も実行せずエラー) を持つ。
+`sql-script:done` に `skippedExcluded` / `skippedBeforeStart` が付く。`sql-script:error` には
+`inTransaction` (失敗時にトランザクションが開いていた。ROLLBACK の成否に関係なく true) と
+`txBeginStatement` (スクリプト内の BEGIN の通し番号) が付き、フロントはトランザクション中の失敗では
+「この文から再開」を出さず、BEGIN の文から再開させる。
+
+`analyze_sql_script` (`commands/script.rs`, #1535) — 実行前の**事前確認 (ドライラン)**。`run_sql_script`
+と同じストリーミング読み + 文分割で 1 文ずつ `db/script_analysis.rs` の `ScriptAnalyzer` へ渡し、
+DB には触れない。保持するのは有限個の集計だけ (文の総数・種別ごとの件数・危険文の件数と先頭 200 件・
+トランザクション制御文の位置の先頭 200 件・先頭 300 文の一覧・読み取り専用セッションで拒否される文の数)
+なので GB 級でもメモリに全文を載せない。判定は実行時と同じ `is_read_only_sql_for` /
+`classify_tx_statement` / `sql_may_change_schema` を流用し、危険文 (WHERE なしの DELETE/UPDATE、
+DROP、TRUNCATE) は `classify_dangerous` (フロント `analyzeDangerousSql` の Rust 実装。共有ゴールデン
+`dangerousSqlVectors.json` で固定)。一覧の `index` は実行時の通し番号と同じなので、UI の個別除外
+(`skipStatements`) と再開位置 (`startAtStatement`) にそのまま使える。進捗は `sql-script:progress`
+(`executed` = 走査済みの文数、`failed` = 見つけた危険文の数)、結果は `sql-script:analyzed`、失敗は
+`sql-script:error`、中断は `cancel_stream` (`sql-script:cancelled`)。
 
 `run_sql_batch` (`commands/script.rs`, #1256) — エディタの複数文 SQL のバッチ実行。
 `run_sql_script` と同じ `run_script_core_with` を文字列の `Cursor` で再利用し、分割

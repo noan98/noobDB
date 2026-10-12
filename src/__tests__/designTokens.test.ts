@@ -297,7 +297,6 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/SchemaCompareView.tsx", 1],
     ["../components/SchemaDriftPanel.tsx", 1],
     ["../components/SchemaExportModal.tsx", 3],
-    ["../components/ScriptRunModal.tsx", 5],
     ["../components/ServerInfoPanel.tsx", 1],
     ["../components/ServerMetricsPanel.tsx", 2],
     ["../components/SeverityLog.tsx", 1],

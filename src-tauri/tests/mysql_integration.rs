@@ -2967,3 +2967,57 @@ async fn mysql_metadata_lock_reader_behind_pending_alter_waits_on_the_alter() {
         .expect("cleanup");
     admin.close().await;
 }
+
+/// MySQL ではトランザクション内の DDL が暗黙 COMMIT する。そのあとの失敗は、BEGIN からやり直すと
+/// 二重適用になるので `tx_begin_statement` を載せない (`in_transaction` は true) (#1535)。
+#[tokio::test]
+async fn mysql_script_failure_after_implicit_commit_does_not_offer_begin_restart() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = std::sync::Arc::new(t::make_session("mysql_script_tx", conn, opts, false));
+    let table = format!("noobdb_script_tx_{}", std::process::id());
+    let mut path = std::env::temp_dir();
+    path.push(format!("{table}.sql"));
+    std::fs::write(
+        &path,
+        format!(
+            "DROP TABLE IF EXISTS {table};\nBEGIN;\nCREATE TABLE {table} (id INT);\nINSERT INTO {table} VALUES (1);\nINSERT INTO {table}_missing VALUES (1);\nCOMMIT;"
+        ),
+    )
+    .expect("write script");
+    let result = t::run_sql_script_via_core(
+        session.clone(),
+        &path.to_string_lossy(),
+        None,
+        t::ScriptOptions::default(),
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect("script setup");
+    let _ = session
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), None)
+        .await;
+    let _ = std::fs::remove_file(&path);
+    match result {
+        t::ScriptRun::Failed {
+            failure,
+            in_transaction,
+            tx_begin_statement,
+            ..
+        } => {
+            assert_eq!(failure.expect("failure").index, 5);
+            assert!(in_transaction);
+            assert_eq!(
+                tx_begin_statement, None,
+                "implicit COMMIT: BEGIN restart is unsafe"
+            );
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}

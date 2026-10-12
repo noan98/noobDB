@@ -78,6 +78,7 @@ fn opts(continue_on_error: bool, wrap_in_transaction: bool) -> t::ScriptOptions 
     t::ScriptOptions {
         continue_on_error,
         wrap_in_transaction,
+        ..Default::default()
     }
 }
 
@@ -661,4 +662,441 @@ async fn batch_script_transaction_control_is_translated_and_rolled_back_on_error
     assert_eq!(failed[3].status, t::BatchStatus::Skipped);
     assert_eq!(count(&session, "t").await, 1);
     assert!(!session.conn.transaction_active().await);
+}
+
+fn write_script_bytes(fx: &mut Fixture, name: &str, body: &[u8]) -> String {
+    let p = unique(name, "sql");
+    std::fs::write(&p, body).expect("write script");
+    fx.scripts.push(p.clone());
+    p.to_string_lossy().into_owned()
+}
+
+/// 失敗した文の通し番号 (`failure.index`) から再開できる (#1535)。それより前の文は
+/// 実行されず、`skipped_before_start` に数えられる。
+#[tokio::test]
+async fn resume_from_the_failed_statement_runs_only_the_rest() {
+    let (mut fx, session) = setup("resume", false).await;
+    let path = write_script(
+        &mut fx,
+        "resume",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY);\nINSERT INTO t VALUES (1);\nINSERT INTO late VALUES (1);\nINSERT INTO t VALUES (2);",
+    );
+    let failed_at = match run(&session, &path, opts(false, false)).await {
+        t::ScriptRun::Failed { failure, .. } => failure.expect("failure").index,
+        other => panic!("expected Failed, got {other:?}"),
+    };
+    assert_eq!(failed_at, 3);
+    assert_eq!(count(&session, "t").await, 1);
+
+    // 原因 (テーブルの不足) を直してから、失敗した文から再開する。
+    session
+        .conn
+        .execute("CREATE TABLE late (id INTEGER)", None)
+        .await
+        .expect("create late");
+    let resume = t::ScriptOptions {
+        start_at_statement: failed_at,
+        ..opts(false, false)
+    };
+    match run(&session, &path, resume).await {
+        t::ScriptRun::Done {
+            executed,
+            succeeded,
+            skipped_before_start,
+            ..
+        } => {
+            // CREATE TABLE と最初の INSERT は読み飛ばし (再実行すると重複で失敗する)。
+            assert_eq!(skipped_before_start, 2);
+            assert_eq!(executed, 2);
+            assert_eq!(succeeded, 2);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 2);
+    assert_eq!(count(&session, "late").await, 1);
+}
+
+/// 開始位置の通し番号は BEGIN / COMMIT などのトランザクション制御文も数える
+/// (`ScriptFailure.index` や事前確認の一覧と同じ数え方)。
+#[tokio::test]
+async fn start_position_counts_transaction_control_statements() {
+    let (mut fx, session) = setup("resume_tx", false).await;
+    let path = write_script(
+        &mut fx,
+        "resume_tx",
+        "CREATE TABLE t (id INTEGER);\nBEGIN;\nINSERT INTO t VALUES (1);\nCOMMIT;\nINSERT INTO t VALUES (2);",
+    );
+    // 5 番目 (最後の INSERT) から: 先行 4 文 (制御文 2 つを含む) を読み飛ばす。
+    let o = t::ScriptOptions {
+        start_at_statement: 5,
+        ..opts(false, false)
+    };
+    session
+        .conn
+        .execute("CREATE TABLE t (id INTEGER)", None)
+        .await
+        .expect("create");
+    match run(&session, &path, o).await {
+        t::ScriptRun::Done {
+            executed,
+            skipped_before_start,
+            ..
+        } => {
+            assert_eq!(skipped_before_start, 4);
+            assert_eq!(executed, 1);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 1);
+}
+
+/// 事前確認の一覧で除外した文は実行されず、`skipped_excluded` に数えられる (#1535)。
+#[tokio::test]
+async fn excluded_statements_are_not_executed() {
+    let (mut fx, session) = setup("exclude", false).await;
+    let path = write_script(
+        &mut fx,
+        "exclude",
+        "CREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (1);\nDELETE FROM t;\nINSERT INTO t VALUES (2);",
+    );
+    // 3 番目の DELETE (WHERE なし) を除外する。
+    let o = t::ScriptOptions {
+        skip_statements: vec![3],
+        ..opts(false, false)
+    };
+    match run(&session, &path, o).await {
+        t::ScriptRun::Done {
+            executed,
+            skipped_excluded,
+            failed_count,
+            ..
+        } => {
+            assert_eq!(skipped_excluded, 1);
+            assert_eq!(executed, 3);
+            assert_eq!(failed_count, 0);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 2);
+}
+
+/// Shift_JIS / UTF-16 のスクリプトを自動判定して正しく実行できる (#1535)。
+#[tokio::test]
+async fn runs_scripts_in_other_encodings_with_auto_detection() {
+    for (tag, enc) in [
+        ("sjis", t::TextEncoding::ShiftJis),
+        ("eucjp", t::TextEncoding::EucJp),
+        ("utf16le", t::TextEncoding::Utf16Le),
+        ("utf16be", t::TextEncoding::Utf16Be),
+        ("utf8bom", t::TextEncoding::Utf8Bom),
+    ] {
+        let (mut fx, session) = setup(&format!("enc_{tag}"), false).await;
+        let text = "CREATE TABLE items (id INTEGER, label TEXT);\nINSERT INTO items VALUES (1, '日本語のテキスト;山田');\n";
+        let bytes = t::encode_text(text, enc).expect("encode");
+        let path = write_script_bytes(&mut fx, &format!("enc_{tag}"), &bytes);
+        match run(&session, &path, opts(false, false)).await {
+            t::ScriptRun::Done { executed, .. } => assert_eq!(executed, 2, "{tag}"),
+            other => panic!("{tag}: expected Done, got {other:?}"),
+        }
+        let r = session
+            .conn
+            .execute("SELECT label FROM items", None)
+            .await
+            .expect("select");
+        match &r.rows[0][0] {
+            t::Value::String(s) => assert_eq!(s, "日本語のテキスト;山田", "{tag}"),
+            other => panic!("{tag}: unexpected value {other:?}"),
+        }
+    }
+}
+
+/// 文字コードを誤って指定した場合は、1 文も実行する前にエラーになる (化けたまま書かない)。
+#[tokio::test]
+async fn wrong_explicit_encoding_fails_before_executing_anything() {
+    let (mut fx, session) = setup("enc_wrong", false).await;
+    let bytes = t::encode_text(
+        "CREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (1); -- 日本語\n",
+        t::TextEncoding::ShiftJis,
+    )
+    .expect("encode");
+    let path = write_script_bytes(&mut fx, "enc_wrong", &bytes);
+    let o = t::ScriptOptions {
+        encoding: Some(t::TextEncoding::Utf8),
+        ..opts(false, false)
+    };
+    let err = t::run_sql_script_via_core(
+        session.clone(),
+        &path,
+        None,
+        o,
+        Arc::new(AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect_err("invalid UTF-8 must be rejected up front");
+    assert!(matches!(err, t::AppError::InvalidInput(_)));
+    // テーブルも作られていない。
+    assert!(session
+        .conn
+        .execute("SELECT COUNT(*) FROM t", None)
+        .await
+        .is_err());
+}
+
+/// トランザクションの途中で失敗したら、`in_transaction` と BEGIN 文の番号を報告する (#1535)。
+/// ROLLBACK の成否に関係なく立つので、フロントは取り消された範囲を飛ばして再開させない。
+#[tokio::test]
+async fn failure_inside_a_script_transaction_reports_the_begin_statement() {
+    let (mut fx, session) = setup("tx_fail", false).await;
+    let path = write_script(
+        &mut fx,
+        "tx_fail",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY);\nBEGIN;\nINSERT INTO t VALUES (1);\nINSERT INTO nope VALUES (1);\nCOMMIT;",
+    );
+    match run(&session, &path, opts(false, false)).await {
+        t::ScriptRun::Failed {
+            failure,
+            rolled_back,
+            in_transaction,
+            tx_begin_statement,
+            ..
+        } => {
+            assert_eq!(failure.expect("failure").index, 4);
+            assert!(rolled_back);
+            assert!(in_transaction);
+            assert_eq!(tx_begin_statement, Some(2));
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 0);
+
+    // BEGIN から再開 (取り消された範囲をやり直す) と、原因を直せば最後まで通る。
+    session
+        .conn
+        .execute("CREATE TABLE nope (id INTEGER)", None)
+        .await
+        .expect("create nope");
+    let resume = t::ScriptOptions {
+        start_at_statement: 2,
+        ..opts(false, false)
+    };
+    match run(&session, &path, resume).await {
+        t::ScriptRun::Done { failed_count, .. } => assert_eq!(failed_count, 0),
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 1);
+}
+
+/// トランザクションの外での失敗や、COMMIT 済みのあとの失敗は `in_transaction = false`。
+#[tokio::test]
+async fn failure_outside_a_transaction_is_not_flagged() {
+    let (mut fx, session) = setup("tx_outside", false).await;
+    let path = write_script(
+        &mut fx,
+        "tx_outside",
+        "CREATE TABLE t (id INTEGER);\nBEGIN;\nINSERT INTO t VALUES (1);\nCOMMIT;\nINSERT INTO nope VALUES (1);",
+    );
+    match run(&session, &path, opts(false, false)).await {
+        t::ScriptRun::Failed {
+            failure,
+            in_transaction,
+            tx_begin_statement,
+            ..
+        } => {
+            assert_eq!(failure.expect("failure").index, 5);
+            assert!(!in_transaction);
+            assert_eq!(tx_begin_statement, None);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 1);
+}
+
+/// 全体を包む実行の失敗は `in_transaction = true` だが BEGIN 文の番号は無い。
+#[tokio::test]
+async fn failure_in_a_wrapped_run_has_no_begin_statement() {
+    let (mut fx, session) = setup("tx_wrap", false).await;
+    let path = write_script(
+        &mut fx,
+        "tx_wrap",
+        "CREATE TABLE t (id INTEGER);\nINSERT INTO nope VALUES (1);",
+    );
+    match run(&session, &path, opts(false, true)).await {
+        t::ScriptRun::Failed {
+            in_transaction,
+            tx_begin_statement,
+            ..
+        } => {
+            assert!(in_transaction);
+            assert_eq!(tx_begin_statement, None);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}
+
+/// BEGIN / COMMIT / ROLLBACK は個別除外に指定されても実行される (#1535)。片方だけ外すと
+/// 取り消すはずの範囲が確定したり、トランザクションが閉じなかったりするため。
+#[tokio::test]
+async fn transaction_control_statements_cannot_be_excluded() {
+    let (mut fx, session) = setup("tx_skip", false).await;
+    let path = write_script(
+        &mut fx,
+        "tx_skip",
+        "CREATE TABLE t (id INTEGER);\nBEGIN;\nINSERT INTO t VALUES (1);\nROLLBACK;\nINSERT INTO t VALUES (2);\nDELETE FROM t WHERE id = 99;",
+    );
+    // 2 (BEGIN) と 4 (ROLLBACK) を除外に指定しても無視され、6 番目の通常文だけが除外される。
+    let o = t::ScriptOptions {
+        skip_statements: vec![2, 4, 6],
+        ..opts(false, false)
+    };
+    match run(&session, &path, o).await {
+        t::ScriptRun::Done {
+            skipped_excluded,
+            failed_count,
+            ..
+        } => {
+            assert_eq!(skipped_excluded, 1);
+            assert_eq!(failed_count, 0);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+    // INSERT (1) は ROLLBACK で取り消され、INSERT (2) だけが残る。
+    assert_eq!(count(&session, "t").await, 1);
+    assert!(!session.conn.transaction_active().await);
+}
+
+fn stamp_of(path: &str) -> t::FileStamp {
+    let meta = std::fs::metadata(path).expect("metadata");
+    let mtime_ms = meta
+        .modified()
+        .expect("mtime")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("epoch")
+        .as_millis() as u64;
+    t::FileStamp {
+        size: meta.len(),
+        mtime_ms,
+    }
+}
+
+/// 事前確認のときのファイルと違えば、1 文も実行する前にエラーにする (#1535)。
+#[tokio::test]
+async fn changed_file_since_the_dry_run_is_rejected_before_running() {
+    let (mut fx, session) = setup("stamp", false).await;
+    let path = write_script(&mut fx, "stamp", "CREATE TABLE t (id INTEGER);");
+    let good = stamp_of(&path);
+
+    // 一致すれば実行できる。
+    let ok = t::ScriptOptions {
+        expected_file: Some(good),
+        ..opts(false, false)
+    };
+    assert!(matches!(
+        run(&session, &path, ok).await,
+        t::ScriptRun::Done { .. }
+    ));
+
+    // ファイルが書き換わった (大きさが違う) 想定。
+    let stale = t::ScriptOptions {
+        expected_file: Some(t::FileStamp {
+            size: good.size + 1,
+            ..good
+        }),
+        ..opts(false, false)
+    };
+    let err = t::run_sql_script_via_core(
+        session.clone(),
+        &path,
+        None,
+        stale,
+        Arc::new(AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect_err("a changed file must be rejected");
+    assert!(err.to_string().contains("[script-file-changed]"));
+}
+
+/// 手動指定と BOM が食い違えばエラー、NUL を含む UTF-8 / ASCII の自動判定もエラー (#1535)。
+#[tokio::test]
+async fn bom_conflict_and_nul_bytes_are_rejected_before_running() {
+    let (mut fx, session) = setup("enc_bom", false).await;
+    let utf16 =
+        t::encode_text("CREATE TABLE t (id INTEGER);", t::TextEncoding::Utf16Le).expect("encode");
+    let path = write_script_bytes(&mut fx, "enc_bom", &utf16);
+    let conflict = t::ScriptOptions {
+        encoding: Some(t::TextEncoding::ShiftJis),
+        ..opts(false, false)
+    };
+    let err = t::run_sql_script_via_core(
+        session.clone(),
+        &path,
+        None,
+        conflict,
+        Arc::new(AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect_err("BOM and explicit encoding disagree");
+    assert!(matches!(err, t::AppError::InvalidInput(_)));
+
+    let nul_path = write_script_bytes(&mut fx, "enc_nul", b"CREATE TABLE t (id INTEGER);\0\n");
+    let err = t::run_sql_script_via_core(
+        session.clone(),
+        &nul_path,
+        None,
+        opts(false, false),
+        Arc::new(AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect_err("NUL bytes in a UTF-8 script");
+    assert!(err.to_string().contains("NUL"));
+    assert!(session
+        .conn
+        .execute("SELECT COUNT(*) FROM t", None)
+        .await
+        .is_err());
+}
+
+/// 手動で UTF-8 を選んだ UTF-8 BOM 付きファイルは、BOM を取り除いて実行できる。
+#[tokio::test]
+async fn explicit_utf8_with_a_utf8_bom_file_runs() {
+    let (mut fx, session) = setup("enc_bom8", false).await;
+    let bytes =
+        t::encode_text("CREATE TABLE t (id INTEGER);", t::TextEncoding::Utf8Bom).expect("encode");
+    let path = write_script_bytes(&mut fx, "enc_bom8", &bytes);
+    let o = t::ScriptOptions {
+        encoding: Some(t::TextEncoding::Utf8),
+        ..opts(false, false)
+    };
+    assert!(matches!(
+        run(&session, &path, o).await,
+        t::ScriptRun::Done { executed: 1, .. }
+    ));
+}
+
+/// 失敗した文が COMMIT のとき、BEGIN からのやり直しは勧めない (確定したか不明で二重適用に
+/// なりうる)。`in_transaction` は true のまま (#1535)。
+#[tokio::test]
+async fn failed_commit_does_not_offer_restart_from_begin() {
+    let (mut fx, session) = setup("tx_commit_fail", false).await;
+    let path = write_script(
+        &mut fx,
+        "tx_commit_fail",
+        "CREATE TABLE p (id INTEGER PRIMARY KEY);\nCREATE TABLE c (pid INTEGER REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED);\nBEGIN;\nINSERT INTO c VALUES (99);\nCOMMIT;",
+    );
+    match run(&session, &path, opts(false, false)).await {
+        t::ScriptRun::Failed {
+            failure,
+            in_transaction,
+            tx_begin_statement,
+            ..
+        } => {
+            assert_eq!(failure.expect("failure").index, 5, "the COMMIT fails");
+            assert!(in_transaction);
+            assert_eq!(tx_begin_statement, None);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
 }

@@ -131,6 +131,9 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["scriptProgressEvent", schemas.scriptProgressEvent],
   ["scriptDoneEvent", schemas.scriptDoneEvent],
   ["scriptErrorEvent", schemas.scriptErrorEvent],
+  // #1535: 事前確認 (ドライラン) の完了イベントと、文字コード付きの SQL ファイル読み込み結果。
+  ["scriptAnalyzedEvent", schemas.scriptAnalyzedEvent],
+  ["sqlFileContent", schemas.sqlFileContent],
   ["importErrorEvent", schemas.importErrorEvent],
   ["dumpProgressEvent", schemas.dumpProgressEvent],
   ["dumpDoneEvent", schemas.dumpDoneEvent],

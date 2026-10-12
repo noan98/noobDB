@@ -24,6 +24,7 @@ import {
   TableColumnInfo,
   TableRowIdentity,
   TableSchema,
+  type TextEncodingId,
   listenConnectProgress,
   listenPreviewStream,
   listenBatchStream,
@@ -36,7 +37,7 @@ import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profi
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { createStreamRowFlusher, type StreamRowFlusher } from "./streamRowFlusher";
-import { sqlSaveFileName } from "./sqlFileIO";
+import { sqlSaveFileName, textEncodingLabel } from "./sqlFileIO";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
 // 本体は perf.ts に閉じる。
 import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
@@ -183,6 +184,9 @@ const PlanWatchPanel = lazy(() =>
 );
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
+);
+const SqlFileEncodingModal = lazy(() =>
+  import("./components/SqlFileEncodingModal").then((m) => ({ default: m.SqlFileEncodingModal })),
 );
 const ScriptRunModal = lazy(() =>
   import("./components/ScriptRunModal").then((m) => ({ default: m.ScriptRunModal })),
@@ -688,6 +692,11 @@ export interface Tab {
   title: string;
   /** 手動リネーム済み / 名前付きで開いたタブ。true なら実行時の自動命名で上書きしない (#1390)。 */
   titleManual?: boolean;
+  /**
+   * ファイルから開いたタブの文字コード (#1535)。「名前を付けて保存」は同じ文字コードで
+   * 書き戻す。未設定は UTF-8。永続化しない。
+   */
+  fileEncoding?: TextEncodingId;
   database?: string;
   table?: string;
   sql: string;
@@ -1815,6 +1824,8 @@ export default function App() {
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
   // `.sql` スクリプト実行モーダルの対象 DB (#973。null で閉じる)。
   const [scriptTarget, setScriptTarget] = useState<string | null>(null);
+  /** 文字コードを指定して SQL ファイルを開く / 保存するモーダル (#1535)。 */
+  const [sqlEncodingDialog, setSqlEncodingDialog] = useState<{ mode: "open" | "save" } | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
   // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
@@ -7624,7 +7635,7 @@ export default function App() {
    * - 非対応拡張子 … トーストで明示的に拒否する。
    * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
    */
-  const handleFilesDropped = useCallback(async (paths: string[]) => {
+  const handleFilesDropped = useCallback(async (paths: string[], sqlEncoding: TextEncodingId | null = null) => {
     if (paths.length === 0) return;
     const sqlPaths = paths.filter((p) => classifyDroppedFile(p) === "sql");
     const csvPaths = paths.filter((p) => classifyDroppedFile(p) === "csv");
@@ -7632,23 +7643,32 @@ export default function App() {
 
     // .sql / .txt → 新規クエリタブ。
     let openedSql = 0;
+    let lastEncoding: TextEncodingId = "utf-8";
     for (const p of sqlPaths) {
       try {
-        const content = await api.readTextFile(p);
+        // 文字コードは自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。指定があればそれを使い、
+        // 判定結果は保存時に同じ文字コードへ戻すためタブに覚えておく (#1535)。
+        const { content, encoding } = await api.readSqlFile(p, sqlEncoding);
         addTab({
           ...makeQueryTab(),
           title: fileBaseName(p),
           titleManual: true,
           sql: content,
           lastExecutedSql: content,
+          fileEncoding: encoding,
         });
         openedSql += 1;
+        lastEncoding = encoding;
       } catch (e) {
         toast.error(translate("dropReadError", { name: fileBaseName(p), error: String(e) }));
       }
     }
     if (openedSql === 1 && sqlPaths.length === 1) {
-      toast.success(translate("dropOpenedSql", { name: fileBaseName(sqlPaths[0]) }));
+      toast.success(
+        lastEncoding === "utf-8"
+          ? translate("dropOpenedSql", { name: fileBaseName(sqlPaths[0]) })
+          : translate("sqlFileOpenedAs", { name: fileBaseName(sqlPaths[0]), encoding: textEncodingLabel(lastEncoding) }),
+      );
     } else if (openedSql > 1) {
       toast.success(translate("dropOpenedSqlMulti", { count: openedSql }));
     }
@@ -7678,7 +7698,7 @@ export default function App() {
    * ドラッグ&ドロップ (`handleFilesDropped`) と読み込みロジックを完全に共有し、
    * 新しい IPC/読み込み経路は増やさない。ダイアログでキャンセルされたら何もしない。
    */
-  const handleOpenSqlFile = useCallback(async () => {
+  const handleOpenSqlFile = useCallback(async (encoding: TextEncodingId | null = null) => {
     try {
       const picked = await openFileDialog({
         multiple: true,
@@ -7688,7 +7708,7 @@ export default function App() {
       if (!picked) return;
       const paths = Array.isArray(picked) ? picked : [picked];
       if (paths.length === 0) return;
-      await handleFilesDropped(paths);
+      await handleFilesDropped(paths, encoding);
     } catch (e) {
       toast.error(translate("openSqlFileError", { error: String(e) }));
     }
@@ -7700,9 +7720,11 @@ export default function App() {
    * capabilities を増やさない経路。#1258 で文字列のまま渡す専用 IPC にした) で
    * ディスクへ書き出す。
    */
-  const handleSaveSqlFile = useCallback(async () => {
+  const handleSaveSqlFile = useCallback(async (encodingOverride: TextEncodingId | null = null) => {
     const tab = activeTabRef.current;
     if (!tab) return;
+    // 開いたときの文字コード (または指定) で書き戻す。表せない文字があれば保存は失敗する (#1535)。
+    const encoding = encodingOverride ?? tab.fileEncoding ?? "utf-8";
     try {
       const dest = await saveFileDialog({
         defaultPath: sqlSaveFileName(tab.title),
@@ -7710,12 +7732,13 @@ export default function App() {
         filters: [{ name: "SQL", extensions: ["sql"] }],
       });
       if (typeof dest !== "string" || !dest) return;
-      await api.writeTextFile(dest, getTabSql(tab));
+      await api.writeTextFile(dest, getTabSql(tab), encoding);
+      updateTab(tab.id, { fileEncoding: encoding });
       toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
     } catch (e) {
       toast.error(translate("saveSqlFileError", { error: String(e) }));
     }
-  }, [toast, getTabSql]);
+  }, [toast, getTabSql, updateTab]);
 
   // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
@@ -8583,6 +8606,14 @@ export default function App() {
         keywords: "open file sql script import ファイル 開く スクリプト",
         run: () => void handleOpenSqlFile(),
       });
+      items.push({
+        id: "nav:open-sql-file-encoding",
+        group: "navigation",
+        label: t("cmdkActionOpenSqlFileEncoding"),
+        icon: "upload",
+        keywords: "open file sql encoding charset shift_jis euc-jp utf-16 文字コード 文字化け 開く",
+        run: () => setSqlEncodingDialog({ mode: "open" }),
+      });
       if (activeTab) {
         items.push({
           id: "nav:save-sql-file",
@@ -8591,6 +8622,14 @@ export default function App() {
           icon: "download",
           keywords: "save file sql script export ファイル 保存",
           run: () => void handleSaveSqlFile(),
+        });
+        items.push({
+          id: "nav:save-sql-file-encoding",
+          group: "navigation",
+          label: t("cmdkActionSaveSqlFileEncoding"),
+          icon: "download",
+          keywords: "save file sql encoding charset shift_jis euc-jp utf-16 文字コード 保存",
+          run: () => setSqlEncodingDialog({ mode: "save" }),
         });
       }
       items.push({
@@ -10656,6 +10695,24 @@ export default function App() {
               database={exportTablesTarget.database}
               tables={exportTablesTarget.tables}
               onClose={() => setExportTablesTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {sqlEncodingDialog && (
+          <Suspense fallback={null}>
+            <SqlFileEncodingModal
+              mode={sqlEncodingDialog.mode}
+              initial={activeTabRef.current?.fileEncoding}
+              onConfirm={(encoding) => {
+                const mode = sqlEncodingDialog.mode;
+                setSqlEncodingDialog(null);
+                if (mode === "open") void handleOpenSqlFile(encoding);
+                else void handleSaveSqlFile(encoding);
+              }}
+              onClose={() => setSqlEncodingDialog(null)}
             />
           </Suspense>
         )}

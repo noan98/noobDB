@@ -2,6 +2,7 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
+import type { SqlFileContent, TextEncodingId } from "../tauri";
 
 export const fileCommands = {
 
@@ -13,6 +14,17 @@ export const fileCommands = {
   readTextFile: (path: string) =>
     invoke<string>("read_text_file", { path }).then((r) =>
       parseResponse(schemas.stringResponse, r, "read_text_file"),
+    ),
+
+  /**
+   * SQL ファイルを文字コード付きで読む (#1535)。`encoding` が `null` / 省略なら BOM →
+   * UTF-8 の妥当性 → Shift_JIS / EUC-JP の順に自動判定し、指定があればその文字コードで
+   * 読む。不正なバイトは置換せず reject する。戻り値の `encoding` を保存時に渡すと
+   * 同じ文字コードで書き戻せる。
+   */
+  readSqlFile: (path: string, encoding?: TextEncodingId | null) =>
+    invoke<SqlFileContent>("read_sql_file", { path, encoding: encoding ?? null }).then((r) =>
+      parseResponse(schemas.sqlFileContent, r, "read_sql_file"),
     ),
 
   /**
@@ -28,11 +40,13 @@ export const fileCommands = {
     }).then((r) => parseResponse(schemas.numberResponse, r, "write_binary_file")),
 
   /**
-   * テキスト (SQL・Markdown・JSON など) を UTF-8 で `path` へ書き出す (#1258)。
-   * `writeBinaryFile` と同じ上限 (32 MiB)。書き込んだバイト数を返す。
+   * テキスト (SQL・Markdown・JSON など) を `path` へ書き出す (#1258)。`encoding` を省略
+   * すると BOM なし UTF-8。SQL ファイル (#1535) は `readSqlFile` が返した文字コードを渡して
+   * Shift_JIS / EUC-JP / UTF-16 のまま書き戻す。その文字コードで表せない文字があれば
+   * reject する。`writeBinaryFile` と同じ上限 (32 MiB)。書き込んだバイト数を返す。
    */
-  writeTextFile: (path: string, content: string) =>
-    invoke<number>("write_text_file", { path, content }).then((r) =>
+  writeTextFile: (path: string, content: string, encoding?: TextEncodingId | null) =>
+    invoke<number>("write_text_file", { path, content, encoding: encoding ?? null }).then((r) =>
       parseResponse(schemas.numberResponse, r, "write_text_file"),
     ),
 };
