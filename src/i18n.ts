@@ -2237,6 +2237,16 @@ const en = {
   alterTableDropCheckRemove: "Remove entry",
   alterTableUnsupportedConstraintSqlite:
     "{column}: SQLite cannot add or drop this constraint on an existing table.",
+  alterPrecheckFailTitle: "{count} column(s) hold data that will not fit",
+  alterPrecheckFailBody:
+    "Existing rows would not fit the new definition, so this ALTER is expected to fail (or truncate data). The counts are a snapshot taken just now.",
+  alterPrecheckLength: "{count} row(s) are longer than the new length",
+  alterPrecheckRange: "{count} row(s) are outside the new numeric range",
+  alterPrecheckDecimal: "{count} row(s) have too many integer digits for the new precision",
+  alterPrecheckNotNull: "{count} row(s) are NULL",
+  alterPrecheckRunning: "Checking whether existing data fits…",
+  alterPrecheckError: "Could not check existing data: {error}",
+  alterPrecheckOk: "All existing rows fit the new definition.",
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
   alterTableRun: "Apply",
@@ -6922,6 +6932,16 @@ const ja: Dict = {
   alterTableDropCheckRemove: "この項目を取り消す",
   alterTableUnsupportedConstraintSqlite:
     "{column}: SQLite は既存テーブルへのこの制約の追加・削除ができません。",
+  alterPrecheckFailTitle: "{count} 列で既存データが収まらない見込みです",
+  alterPrecheckFailBody:
+    "既存の行が新しい定義に収まらないため、この ALTER は失敗する (またはデータが切り詰められる) 見込みです。件数はいま取得した時点の値です。",
+  alterPrecheckLength: "{count} 行が新しい長さを超えています",
+  alterPrecheckRange: "{count} 行が新しい数値範囲に収まりません",
+  alterPrecheckDecimal: "{count} 行が新しい精度の整数部の桁数を超えています",
+  alterPrecheckNotNull: "{count} 行が NULL です",
+  alterPrecheckRunning: "既存データが収まるか検査しています…",
+  alterPrecheckError: "既存データの検査に失敗しました: {error}",
+  alterPrecheckOk: "既存の行はすべて新しい定義に収まります。",
   alterTablePreview: "SQL プレビュー",
   alterTablePreviewEmpty: "まだ変更はありません。",
   alterTableRun: "適用",

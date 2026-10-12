@@ -24,6 +24,8 @@ import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
 import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
+import { buildAlterPrechecks, type AlterPrecheck } from "./alterPrecheck";
+import { useCountPreviews, type CountPreviewState } from "../useCountPreviews";
 
 /**
  * 既存テーブルの列編集ダイアログ (#794)。`describeTable` で現状の列を取得し、
@@ -91,6 +93,76 @@ function groupExistingFks(all: ForeignKey[], table: string): ExistingFk[] {
     out.push(fk);
   }
   return out;
+}
+
+/**
+ * ALTER の事前検査の結果表示 (#1536)。型を縮小した列・NOT NULL を付けた列について、既存行のうち
+ * 新しい定義に収まらない件数を警告する。実行は止めない (件数は目安で、判断は利用者に任せる)。
+ */
+function AlterPrecheckNotice({
+  prechecks,
+  counts,
+}: {
+  prechecks: AlterPrecheck[];
+  counts: Record<string, CountPreviewState>;
+}) {
+  const t = useT();
+  if (prechecks.length === 0) return null;
+  const failing = prechecks.flatMap((p) => {
+    const c = counts[p.id];
+    return c?.status === "ok" && c.count > 0 ? [{ check: p, count: c.count }] : [];
+  });
+  const pending = prechecks.some((p) => (counts[p.id]?.status ?? "loading") === "loading");
+  const errors = prechecks.flatMap((p) => {
+    const c = counts[p.id];
+    return c?.status === "error" ? [{ check: p, error: c.error }] : [];
+  });
+  const kindKey = {
+    length: "alterPrecheckLength",
+    range: "alterPrecheckRange",
+    decimal: "alterPrecheckDecimal",
+    notNull: "alterPrecheckNotNull",
+  } as const;
+  if (failing.length > 0) {
+    return (
+      <Callout
+        tone="warning"
+        role="status"
+        title={t("alterPrecheckFailTitle", { count: failing.length })}
+        data-testid="alter-precheck-warning"
+      >
+        <chakra.div display="flex" flexDirection="column" gap="0.5">
+          <span>{t("alterPrecheckFailBody")}</span>
+          {failing.map(({ check, count }) => (
+            <chakra.span key={check.id} fontSize="sm">
+              <chakra.code fontFamily="mono">{check.column}</chakra.code>
+              {check.kind === "notNull" ? ` (${check.to})` : ` (${check.from} → ${check.to})`}:{" "}
+              {t(kindKey[check.kind], { count })}
+            </chakra.span>
+          ))}
+        </chakra.div>
+      </Callout>
+    );
+  }
+  if (pending) {
+    return (
+      <chakra.span fontSize="xs" color="app.textMuted" role="status">
+        {t("alterPrecheckRunning")}
+      </chakra.span>
+    );
+  }
+  if (errors.length > 0) {
+    return (
+      <chakra.span fontSize="xs" color="app.textMuted" role="status">
+        {t("alterPrecheckError", { error: errors[0].error })}
+      </chakra.span>
+    );
+  }
+  return (
+    <Callout tone="success" role="status" data-testid="alter-precheck-ok">
+      {t("alterPrecheckOk")}
+    </Callout>
+  );
 }
 
 function emptyNewColumn(driver: DriverKind): NewColumn {
@@ -262,6 +334,13 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   };
 
   const sqlPreview = statements.map((s: AlterStatement) => s.sql).join("\n");
+  // 型の縮小・NOT NULL 追加で既存行が収まらないかの事前検査 (#1536)。読み取り専用の COUNT を
+  // デバウンスして発行するので、read_only 接続でも動く。
+  const prechecks = useMemo(
+    () => buildAlterPrechecks(driver, database, table, baseline, existing),
+    [driver, database, table, baseline, existing],
+  );
+  const precheckCounts = useCountPreviews(sessionId, database, prechecks, !loading && !loadError);
   // 破壊的な文 (DROP COLUMN / DROP FOREIGN KEY / DROP CHECK) を含むか (#1529)。
   // 含むときは確認ダイアログと同じ破壊的パターン (実行は dangerOutline で左、
   // キャンセルを primary で右) に切り替え、Cmd/Ctrl+Enter での実行も止める。
@@ -669,6 +748,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
               <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
             </FormSection>
+            <AlterPrecheckNotice prechecks={prechecks} counts={precheckCounts} />
             {hasIncompleteIndex && (
               <Callout tone="warning">
                 {t("alterTableIndexIncompleteBlocked")}
