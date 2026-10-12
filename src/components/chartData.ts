@@ -636,3 +636,43 @@ export function roundedBarPath(x: number, y: number, w: number, h: number, r: nu
   }
   return `M ${f(x)} ${f(y)} L ${f(x)} ${f(y + h - rr)} A ${f(rr)} ${f(rr)} 0 0 0 ${f(x + rr)} ${f(y + h)} L ${f(x + w - rr)} ${f(y + h)} A ${f(rr)} ${f(rr)} 0 0 0 ${f(x + w)} ${f(y + h - rr)} L ${f(x + w)} ${f(y)} Z`;
 }
+
+/** チャートの要約 (支援技術向け aria-label の材料, #1529)。点が無ければ min / max は null。 */
+export function chartSummary(
+  model: ChartModel,
+  type: ChartType = "bar",
+): { series: number; points: number; min: number | null; max: number | null } {
+  const points = model.labels.length;
+  const values = model.series.flatMap((s) => s.values).filter((v) => Number.isFinite(v));
+  if (points === 0 || values.length === 0) {
+    return { series: model.series.length, points, min: null, max: null };
+  }
+  // 円グラフは負値を 0 として描くので要約も合わせる (先頭系列のみ)。
+  const src = type === "pie" ? (model.series[0]?.values ?? []).map((v) => Math.max(0, v)) : values;
+  return {
+    series: type === "pie" ? 1 : model.series.length,
+    points,
+    min: src.length ? Math.min(...src) : null,
+    max: src.length ? Math.max(...src) : null,
+  };
+}
+
+/**
+ * 左右 / Home / End キーで強調する点を動かす (チャートのキーボード操作, #1529)。
+ * 現在位置が無い (null) ときは → で先頭、← で末尾から始める。対象外のキーは null。
+ */
+export function stepChartIndex(current: number | null, key: string, count: number): number | null {
+  if (count <= 0) return null;
+  switch (key) {
+    case "ArrowRight":
+      return current === null ? 0 : Math.min(count - 1, current + 1);
+    case "ArrowLeft":
+      return current === null ? count - 1 : Math.max(0, current - 1);
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    default:
+      return null;
+  }
+}

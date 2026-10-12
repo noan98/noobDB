@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
+import { ErrorNote } from "./modalForm";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -151,13 +152,17 @@ export function ServerInfoPanel({
         />
         {loading && <Spinner size={14} />}
         {info && (
-          <chakra.span fontSize="xs" color="app.textMuted">
+          <chakra.span fontSize="xs" color="app.textMuted" role="status">
             {t("serverInfoVarCount", { shown: filtered.length, total: variables.length })}
           </chakra.span>
         )}
       </Flex>
 
-      {error ? (
+      {error && info && (
+        // 再取得の失敗: 取得済みの一覧は消さず、表の上の帯でエラーを伝える (#1529)。
+        <ErrorNote role="alert">{t("serverInfoLoadError", { error })}</ErrorNote>
+      )}
+      {error && !info ? (
         // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
         // 添える (#848)。
         <EmptyState

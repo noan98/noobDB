@@ -1000,6 +1000,7 @@ export function ImportModal({
                       }))
                     }
                     disabled={importing}
+                    aria-label={t("importMappingAria", { column: col.name })}
                   >
                     <option value="">{t("importSkipColumn")}</option>
                     {preview.headers.map((_, idx) => (

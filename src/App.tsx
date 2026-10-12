@@ -1750,11 +1750,15 @@ export default function App() {
   // 前面にモーダルが乗っている)。依存配列なしの effect で毎レンダ最新値に同期し、
   // requestAnimationFrame 越しの非同期フォーカス実行時点の値を参照できるようにする。
   const overlayOpenRef = useRef(false);
+  // チートシート以外のオーバーレイ / 全画面ビューが開いているか。`?` ハンドラが使う
+  // (チートシート自身の閉じる操作は通す必要があるので別に持つ, #1529)。
+  const blockingOverlayOpenRef = useRef(false);
   useEffect(() => {
-    overlayOpenRef.current =
+    blockingOverlayOpenRef.current =
       showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
       showUsers || showServerInfo || showSizes || showSnippetForm ||
-      showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
+      showCommandPalette || showObjectSearch || showDataSearch;
+    overlayOpenRef.current = blockingOverlayOpenRef.current || showCheatSheet;
   });
   // アクティブになったタブがクエリタブのときだけ、次フレームでエディタへ
   // フォーカスする (#816)。setState 直後はまだ DOM 未反映のため
@@ -8248,7 +8252,8 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch) {
+      // ER 図・ユーザ管理・サーバ情報・サイズなどの全画面ビューも含む (#1529)。
+      if (blockingOverlayOpenRef.current) {
         return;
       }
       e.preventDefault();
@@ -8256,7 +8261,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette, showObjectSearch, showDataSearch]);
+  }, []);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -10300,7 +10305,11 @@ export default function App() {
                   {t("statusSeverityCritical")}
                 </chakra.span>
               )}
-              <Box flex="1" minW="0">
+              {/* 文言の変化をスクリーンリーダーへ通知するライブリージョン (#1529)。常設の
+                  要素なので内容の差し替えだけが読み上げられ、同一文言の再描画は DOM が
+                  変わらないため再通知されない。エラーは assertive、それ以外は polite。
+                  ライブリージョンの role 手書きは禁止 (designTokens) なので aria-live で表す。 */}
+              <Box flex="1" minW="0" aria-live={isError ? "assertive" : "polite"} aria-atomic="true">
                 {statusHintKey ? (
                   // ヒントは初心者向けの一般的な言い回しだけだと具体性に欠けるため、
                   // 実際のエラー本文 (シンタックスエラーの箇所など具体的な値) を常に
@@ -10367,7 +10376,7 @@ export default function App() {
                     disabled={connectingId === reconnectProfile.id}
                   >
                     {connectingId === reconnectProfile.id ? (
-                      <Spinner size={12} />
+                      <Spinner size={12} decorative />
                     ) : (
                       <Icon name="refresh" />
                     )}
@@ -10385,7 +10394,7 @@ export default function App() {
                     alignItems="center"
                     gap="1.25"
                   >
-                    <Spinner size={12} />
+                    <Spinner size={12} decorative />
                     {t(connectPhaseI18nKey(connectAttempt.phase))}
                   </chakra.span>
                   <Tooltip label={t("connectCancel")}>

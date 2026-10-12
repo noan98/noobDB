@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { chakra, Flex } from "@chakra-ui/react";
+import { chakra, Flex, VisuallyHidden } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
@@ -22,10 +22,12 @@ import {
   chartNotices,
   chartRampGradient,
   chartSeriesColors,
+  chartSummary,
   chartValueColors,
   DONUT_INNER_RATIO,
   defaultChartConfig,
   donutSlicePath,
+  stepChartIndex,
   isDonut,
   inferNumericColumns,
   niceTicks,
@@ -445,8 +447,11 @@ export function CartesianChart({
    */
   valueColors?: string[] | null;
 }) {
+  const t = useT();
   // ホバー中のバンド (X インデックス)。値を読み取るためのガイド/ツールチップに使う。
   const [hover, setHover] = useState<number | null>(null);
+  // キーボード操作で読み上げる文言 (#1529)。マウスのホバーでは更新しない (読み上げが騒がしくなる)。
+  const [announce, setAnnounce] = useState("");
   // グラデ/クリップの id。チャートが同時に複数描画されても衝突しないよう useId 由来にする
   // (`:` は url(#…) で扱いづらいので除く)。
   const uid = useId().replace(/:/g, "");
@@ -490,15 +495,38 @@ export function CartesianChart({
     setHover(idx >= 0 && idx < n ? idx : null);
   };
 
+  const summary = chartSummary(model, type);
+  const ariaLabel = t("chartAriaSummary", {
+    series: summary.series,
+    points: summary.points,
+    max: summary.max === null ? "-" : formatValue(summary.max),
+    min: summary.min === null ? "-" : formatValue(summary.min),
+  });
+  // 左右 / Home / End で点を動かし、HoverTooltip と同じ内容 (X ラベル + 各系列の値) を読み上げる。
+  const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    const next = stepChartIndex(hover, e.key, n);
+    if (next === null) return;
+    e.preventDefault();
+    setHover(next);
+    setAnnounce(
+      `${model.labels[next]}: ${model.series.map((s) => `${s.name} ${formatValue(s.values[next])}`).join(", ")}`,
+    );
+  };
+
   return (
+    <>
     <chakra.svg
       viewBox={`0 0 ${W} ${H}`}
       width="100%"
       style={{ maxHeight: "100%" }}
       role="img"
+      aria-label={ariaLabel}
+      tabIndex={0}
       data-chart-svg=""
       onMouseMove={onMove}
       onMouseLeave={() => setHover(null)}
+      onKeyDown={onKey}
+      onBlur={() => setHover(null)}
     >
       <defs>
         {/* 面グラフの縦グラデ: 系列色をプロット上端で濃く、下端で透明へ (userSpaceOnUse で
@@ -673,6 +701,10 @@ export function CartesianChart({
         />
       )}
     </chakra.svg>
+    <VisuallyHidden role="status" aria-live="polite">
+      {announce}
+    </VisuallyHidden>
+    </>
   );
 }
 
@@ -753,8 +785,10 @@ function PieChart({
   /** 中央に穴を開けるドーナツ表示 (#1215)。 */
   donut: boolean;
 }) {
+  const t = useT();
   // 円グラフは先頭系列のみ。負値は 0 にクランプ。
   const [hover, setHover] = useState<number | null>(null);
+  const [announce, setAnnounce] = useState("");
   const series = model.series[0];
   const values = series.values.map((v) => Math.max(0, v));
   const total = values.reduce((a, b) => a + b, 0);
@@ -772,8 +806,34 @@ function PieChart({
   // ラベルは扇形なら中心寄り、ドーナツなら環の中央に置く。
   const labelR = donut ? (r + rInner) / 2 : r * 0.62;
   let angle = -Math.PI / 2;
+  const summary = chartSummary(model, "pie");
+  const ariaLabel = t("chartAriaSummary", {
+    series: summary.series,
+    points: summary.points,
+    max: summary.max === null ? "-" : formatValue(summary.max),
+    min: summary.min === null ? "-" : formatValue(summary.min),
+  });
+  const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    const next = stepChartIndex(hover, e.key, values.length);
+    if (next === null) return;
+    e.preventDefault();
+    setHover(next);
+    const pct = total > 0 ? (values[next] / total) * 100 : 0;
+    setAnnounce(`${model.labels[next]}: ${formatValue(values[next])} (${pct.toFixed(1)}%)`);
+  };
   return (
-    <chakra.svg viewBox="0 0 720 440" width="100%" style={{ maxHeight: "100%" }} role="img" data-chart-svg="">
+    <>
+    <chakra.svg
+      viewBox="0 0 720 440"
+      width="100%"
+      style={{ maxHeight: "100%" }}
+      role="img"
+      aria-label={ariaLabel}
+      tabIndex={0}
+      data-chart-svg=""
+      onKeyDown={onKey}
+      onBlur={() => setHover(null)}
+    >
       {total === 0 ? (
         <text x={cx} y={cy} textAnchor="middle" style={{ fontSize: "var(--text-sm)" }} fill="var(--text-muted)">∅</text>
       ) : (
@@ -852,6 +912,10 @@ function PieChart({
         );
       })}
     </chakra.svg>
+    <VisuallyHidden role="status" aria-live="polite">
+      {announce}
+    </VisuallyHidden>
+    </>
   );
 }
 

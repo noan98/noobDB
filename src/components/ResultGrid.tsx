@@ -85,7 +85,8 @@ import {
 } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
-import { reorderColumnIds } from "./columnReorderFlip";
+import { moveColumnId, reorderColumnIds } from "./columnReorderFlip";
+import { rowSelectRange, selectAllRange } from "./gridSelection";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
 import { useRowCrossfade } from "./useRowCrossfade";
@@ -404,6 +405,8 @@ export const GRID_CSS: SystemStyleObject = {
     borderRight: "1px solid var(--border-strong)",
   },
   "& thead th.row-index": { top: 0, zIndex: 3 },
+  // 行番号クリックで行全体を選ぶ (#1529)。
+  "& tbody td.row-index": { cursor: "pointer" },
   "& tbody tr.grid-row-stripe td.row-index": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td.row-index": { background: "var(--bg-row-hover)" },
   // 編集保留中の行は、行番号セルの左端にアクセントバーを出して「この行に未適用の
@@ -719,6 +722,13 @@ export const GRID_CSS: SystemStyleObject = {
   "& th:hover .th-drag-grip, & th.is-dragging-col .th-drag-grip": { opacity: 0.7 },
   "& th .th-drag-grip:hover": { color: "var(--text)", opacity: 1 },
   "& th .th-drag-grip:active": { cursor: "grabbing" },
+  // キーボードフォーカス時はホバーなしでも見せる (#1529)。
+  "& th .th-drag-grip:focus-visible": {
+    opacity: 1,
+    color: "var(--text)",
+    outline: "none",
+    boxShadow: "var(--focus-ring)",
+  },
   "& th.is-dragging-col": { opacity: 0.5 },
   // ドロップ先候補のヘッダを左端のアクセント線とごく薄い塗りで示す。
   "& th.is-drag-over": {
@@ -827,6 +837,12 @@ export const GRID_CSS: SystemStyleObject = {
   "& thead th .th-resize-handle:hover, & thead th .th-resize-handle.is-resizing": {
     background: "var(--accent)",
     opacity: 0.65,
+  },
+  "& thead th .th-resize-handle:focus-visible": {
+    background: "var(--accent)",
+    opacity: 0.65,
+    outline: "none",
+    boxShadow: "var(--focus-ring)",
   },
   "& thead th.is-resizing": { userSelect: "none" },
   "& thead th.is-resizing .th-resize-handle": { background: "var(--accent)", opacity: 0.65 },
@@ -1673,7 +1689,7 @@ const FILTER_FIELD_CSS: SystemStyleObject = {
   _focus: {
     outline: "none",
     borderColor: "var(--accent)",
-    boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+    boxShadow: "var(--focus-ring)",
   },
   _disabled: { opacity: 0.5, cursor: "not-allowed" },
 };
@@ -1729,6 +1745,7 @@ function ColumnFilterMenu({
   onHideColumn,
   onShowAllColumns,
   onResetLayout,
+  onMoveColumn,
   pinned,
   onPin,
   onShowStats,
@@ -1759,6 +1776,8 @@ function ColumnFilterMenu({
   onHideColumn?: () => void;
   onShowAllColumns?: () => void;
   onResetLayout?: () => void;
+  /** 列を左 / 右へ 1 つ動かす (キーボードだけで列順を変える手段, #1529)。端なら該当方向は null。 */
+  onMoveColumn?: { left: (() => void) | null; right: (() => void) | null };
   /** 列のピン留め状態と切替。未指定ならピン操作を出さない。 */
   pinned?: false | "left" | "right";
   onPin?: (side: false | "left" | "right") => void;
@@ -2157,7 +2176,7 @@ function ColumnFilterMenu({
         </Box>
       )}
 
-      {(onHideColumn || onShowAllColumns || onResetLayout || onShowStats || onToggleFooter) && (
+      {(onHideColumn || onShowAllColumns || onResetLayout || onShowStats || onToggleFooter || onMoveColumn) && (
         <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
             {t("gridColumnsLabel")}
@@ -2188,6 +2207,34 @@ function ColumnFilterMenu({
               >
                 {footerEnabled ? t("gridFooterHide") : t("gridFooterShow")}
               </Button>
+            )}
+            {onMoveColumn && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="2"
+                  disabled={!onMoveColumn.left}
+                  onClick={() => {
+                    onMoveColumn.left?.();
+                    onClose();
+                  }}
+                >
+                  {t("gridMoveColumnLeft")}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="2"
+                  disabled={!onMoveColumn.right}
+                  onClick={() => {
+                    onMoveColumn.right?.();
+                    onClose();
+                  }}
+                >
+                  {t("gridMoveColumnRight")}
+                </Button>
+              </>
             )}
             {onHideColumn && (
               <Button
@@ -2750,6 +2797,9 @@ function useReloadOnChange(effect: () => void, deps: readonly unknown[]): void {
   }, deps);
 }
 
+/** リサイズハンドルで左右キーを 1 回押したときの幅の増減 (px。Shift で 5 倍)。 */
+const COLUMN_RESIZE_KEY_STEP = 10;
+
 /** `GridHeaderCell` が呼ぶハンドラの束 (`useStableCallbacks` で参照固定して渡す, #1341)。 */
 type GridHeaderHandlers = {
   onDragOver: (e: ReactDragEvent<HTMLTableCellElement>, colId: string) => void;
@@ -2761,6 +2811,10 @@ type GridHeaderHandlers = {
     e: React.MouseEvent | React.TouchEvent,
     column: Header<GridFeatures, RowShape, unknown>["column"],
   ) => void;
+  /** リサイズハンドルのキーボード操作 (左右キーで幅を delta px 変える, #1529)。 */
+  onResizeBy: (column: Header<GridFeatures, RowShape, unknown>["column"], delta: number) => void;
+  /** 並び替えグリップのキーボード操作 (左右キーで列を 1 つ動かす, #1529)。 */
+  onMoveColumn: (colId: string, dir: -1 | 1) => void;
 };
 
 /**
@@ -2793,6 +2847,8 @@ interface GridHeaderCellProps {
   /** NULL 率 (%)。ミニバーを出さないときは null。 */
   nullPct: number | null;
   rowCount: number;
+  /** 現在の列幅 (px)。リサイズハンドルの aria-valuenow に使う。 */
+  colSize: number;
   t: ReturnType<typeof useT>;
   bindTooltip: ReturnType<typeof useDelegatedTooltip>["bind"];
   handlers: GridHeaderHandlers;
@@ -2826,6 +2882,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
   filterOpen,
   nullPct,
   rowCount,
+  colSize,
   t,
   bindTooltip,
   handlers,
@@ -2861,8 +2918,14 @@ const GridHeaderCell = memo(function GridHeaderCell({
               className="th-drag-grip"
               draggable
               role="button"
-              tabIndex={-1}
+              tabIndex={0}
               aria-label={t("gridDragColumn")}
+              aria-keyshortcuts="ArrowLeft ArrowRight"
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                e.preventDefault();
+                handlers.onMoveColumn(h.column.id, e.key === "ArrowLeft" ? -1 : 1);
+              }}
               onDragStart={(e) => handlers.onDragStart(e, h.column.id)}
               onDragEnd={() => handlers.onDragEnd()}
             >
@@ -2940,7 +3003,24 @@ const GridHeaderCell = memo(function GridHeaderCell({
             onMouseDown={(e) => handlers.onStartResize(e, h.column)}
             onTouchStart={(e) => handlers.onStartResize(e, h.column)}
             onDoubleClick={() => h.column.resetSize()}
-            aria-hidden
+            // キーボードで幅を変えられるよう、フォーカス可能な vertical separator にする (#1529)。
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t("gridResizeColumnAria", { column: colName })}
+            aria-valuenow={Math.round(colSize)}
+            aria-valuemin={h.column.columnDef.minSize ?? 20}
+            aria-valuemax={
+              h.column.columnDef.maxSize !== undefined && Number.isFinite(h.column.columnDef.maxSize)
+                ? h.column.columnDef.maxSize
+                : undefined
+            }
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+              e.preventDefault();
+              const step = e.shiftKey ? COLUMN_RESIZE_KEY_STEP * 5 : COLUMN_RESIZE_KEY_STEP;
+              handlers.onResizeBy(h.column, e.key === "ArrowLeft" ? -step : step);
+            }}
           />
         </Tooltip>
       )}
@@ -2958,6 +3038,8 @@ const GridHeaderCell = memo(function GridHeaderCell({
 type GridRowHandlers = {
   onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
   onCellFocus: (e: ReactFocusEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
+  /** 行番号セルのクリック。行全体を選び、Shift+クリックでアンカー行から伸ばす (#1529)。 */
+  onRowIndexClick: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number) => void;
   onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
   /** FK セルのジャンプアイコン (#1393)。右クリックメニューの「参照先へジャンプ」と同じ経路。 */
   onFkCellJump: (rowIdx: number, colIdx: number) => void;
@@ -3331,7 +3413,9 @@ const GridRow = memo(function GridRow({
       ref={measureRef}
       data-index={measureIndex}
     >
-      <td className="row-index">{rowIdx + 1}</td>
+      <td className="row-index" onClick={(e) => handlers.onRowIndexClick(e, rowIdx)}>
+        {rowIdx + 1}
+      </td>
       {leftCells.map(renderCell)}
       {/* Spacer <td>s absorb the off-screen width of skipped center
           columns so scroll width / sticky offsets stay correct — the
@@ -4072,6 +4156,18 @@ export const DataGrid = memo(function DataGrid({
     if (!next) return;
     columnFlip.capture();
     handleColumnOrderChange(next);
+  };
+
+  // キーボードで列を 1 つ左 / 右へ動かす (#1529)。非表示の列は飛び越えて、見えている隣と
+  // 入れ替える。端のときは何もしない。移動後は並び替えグリップへフォーカスを戻す
+  // (React が DOM を並べ替える際に外れることがあるため)。
+  const moveColumnBy = (colId: string, dir: -1 | 1): boolean => {
+    const base = columnOrderRef.current.length ? columnOrderRef.current : columns.map((_, i) => String(i));
+    const next = moveColumnId(base, colId, dir, (id) => table.getColumn(id)?.getIsVisible() ?? true);
+    if (!next) return false;
+    columnFlip.capture();
+    handleColumnOrderChange(next);
+    return true;
   };
 
   // 列ごとの FK 参照先テーブル (#1393)。ジャンプ先 SQL を作れる列 (参照先テーブル + 列が
@@ -5293,6 +5389,20 @@ export const DataGrid = memo(function DataGrid({
       e: React.MouseEvent | React.TouchEvent,
       column: Header<GridFeatures, RowShape, unknown>["column"],
     ) => startColumnResize(e, column),
+    onResizeBy: (column: Header<GridFeatures, RowShape, unknown>["column"], delta: number) => {
+      const min = column.columnDef.minSize ?? 20;
+      const max = column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER;
+      const size = Math.min(max, Math.max(min, column.getSize() + delta));
+      handleColumnSizingChange((prev) => ({ ...prev, [column.id]: size }));
+    },
+    onMoveColumn: (colId: string, dir: -1 | 1) => {
+      if (!moveColumnBy(colId, dir)) return;
+      requestAnimationFrame(() => {
+        gridTableRef.current
+          ?.querySelector<HTMLElement>(`th[data-col-id="${colId}"] .th-drag-grip`)
+          ?.focus();
+      });
+    },
   });
   // セルの FK 順方向ジャンプ先 (参照先テーブル + SELECT)。FK でない / 参照先が解決できない /
   // マスク中なら null。右クリックメニューと FK セルのジャンプアイコンで共有する (#1393)。
@@ -5330,6 +5440,19 @@ export const DataGrid = memo(function DataGrid({
       if (e.target === e.currentTarget) {
         setActiveCell({ rowIdx, colIdx });
       }
+    },
+    onRowIndexClick: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number) => {
+      if (e.button !== 0 || editing) return;
+      const extend = e.shiftKey;
+      const range = rowSelectRange(
+        rowIdx,
+        visibleColIds,
+        extend,
+        (selection?.anchor ?? activeCell)?.rowIdx ?? null,
+      );
+      if (!range) return;
+      setSelection(range);
+      navigateCell(range.focus.rowIdx, extend ? range.focus.colIdx : range.anchor.colIdx);
     },
     onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
       e.preventDefault();
@@ -5565,6 +5688,19 @@ export const DataGrid = memo(function DataGrid({
         e.preventDefault();
         const { x, y } = contextMenuPointFromRect(el.getBoundingClientRect());
         setCopyMenu({ x, y, rowIdx, colIdx });
+      }
+      return;
+    }
+
+    // Ctrl/Cmd+A: 表示中の全セルを矩形選択する (#1529)。ページ全体のテキスト選択にさせない。
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "a" || e.key === "A")) {
+      const all = selectAllRange(
+        visibleRows.map((r) => r.index),
+        visibleColIds,
+      );
+      if (all) {
+        e.preventDefault();
+        setSelection(all);
       }
       return;
     }
@@ -5901,6 +6037,7 @@ export const DataGrid = memo(function DataGrid({
                     filterOpen={filterMenu?.colIdx === colIdx}
                     nullPct={nullRates ? (nullRates[colIdx] ?? 0) : null}
                     rowCount={nullRates ? rows.length : 0}
+                    colSize={h.column.getSize()}
                     t={t}
                     bindTooltip={bindCellTooltip}
                     handlers={headerHandlers}
@@ -6717,6 +6854,19 @@ export const DataGrid = memo(function DataGrid({
             enableColumnControls ? () => table.toggleAllColumnsVisible(true) : undefined
           }
           onResetLayout={enableColumnControls && hasCustomLayout ? resetColumnLayout : undefined}
+          onMoveColumn={
+            enableColumnControls
+              ? (() => {
+                  const id = String(filterMenu.colIdx);
+                  const base = columnOrderRef.current.length ? columnOrderRef.current : columns.map((_, i) => String(i));
+                  const visible = (cid: string) => table.getColumn(cid)?.getIsVisible() ?? true;
+                  return {
+                    left: moveColumnId(base, id, -1, visible) ? () => moveColumnBy(id, -1) : null,
+                    right: moveColumnId(base, id, 1, visible) ? () => moveColumnBy(id, 1) : null,
+                  };
+                })()
+              : undefined
+          }
           pinned={
             enableColumnControls
               ? pinSideFromTable(table.getColumn(String(filterMenu.colIdx))?.getIsPinned() ?? false)

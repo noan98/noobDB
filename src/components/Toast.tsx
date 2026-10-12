@@ -10,6 +10,7 @@ import {
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Box, chakra } from "@chakra-ui/react";
+import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions } from "../motion";
 import { semanticColorToken, semanticColorVar, type SemanticRole } from "../semanticColors";
@@ -174,6 +175,7 @@ export function useToast(): ToastApi {
 let nextId = 1;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const t = useT();
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   // アクション付きトースト (Undo 等、#676) は hover/focus 中に自動消滅を一時停止
@@ -319,7 +321,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         pointerEvents="none"
         role="region"
         aria-live="polite"
-        aria-label="notifications"
+        aria-label={t("toastRegionAria")}
       >
         <AnimatePresence initial={false}>
           {toasts.map((toast) => (
@@ -414,7 +416,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 <chakra.button
                   type="button"
                   onClick={() => dismiss(toast.id)}
-                  aria-label="dismiss"
+                  aria-label={t("toastDismissAria")}
                   flexShrink={0}
                   display="inline-flex"
                   alignItems="center"

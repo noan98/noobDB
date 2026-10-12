@@ -107,8 +107,9 @@ export function ConnectionHealthPanel({
 
   const [results, setResults] = useState<Map<string, HealthProbeResult>>(() => new Map());
   const resultsRef = useRef(results);
-  // 値が変わった行を一瞬光らせる。値はフラッシュの世代で、行の key に混ぜて
-  // 再マウントさせることで CSS アニメーションを毎回最初から再生する。
+  // 値が変わった行を一瞬光らせる。値はフラッシュの世代で、偶奇で CSS の animation-name を
+  // 切り替えてアニメーションを最初から再生し直す。行の key には混ぜない (再マウントすると
+  // キーボードで操作中のボタンからフォーカスが落ちる, #1529)。
   const [flash, setFlash] = useState<Map<string, number>>(() => new Map());
   const [loading, setLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -345,10 +346,10 @@ export function ConnectionHealthPanel({
                 const profile = profileById.get(row.profileId);
                 return (
                   <chakra.tr
-                    key={`${row.profileId}:${row.sessionId ?? "-"}:${gen}`}
+                    key={`${row.profileId}:${row.sessionId ?? "-"}`}
                     data-testid={`health-row-${row.profileId}`}
                     css={gen > 0 ? { "& > td": { position: "relative" } } : undefined}
-                    className={gen > 0 ? "flash-row" : undefined}
+                    className={gen > 0 ? (gen % 2 === 0 ? "flash-row flash-row-alt" : "flash-row") : undefined}
                   >
                     <chakra.td css={tdCss}>
                       <Flex direction="column" gap="0.5">

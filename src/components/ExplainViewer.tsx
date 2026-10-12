@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import { QueryResult } from "../api/tauri";
@@ -155,6 +155,7 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
     cursor: "pointer",
     whiteSpace: "nowrap",
     borderLeft: "2px solid transparent",
+    "&:focus-visible": { outline: "none", boxShadow: "inset var(--focus-ring)" },
   };
   if (selected) {
     const bg =
@@ -489,8 +490,71 @@ function NodeRow({
         pl={`${6 + depth * 16}px`}
         role="treeitem"
         aria-selected={selected}
+        aria-level={depth + 1}
         aria-expanded={hasChildren ? !isCollapsed : undefined}
+        data-node-id={node.id}
+        // roving tabindex: 選択中の行だけが Tab で届き、行間は矢印キーで移動する (APG tree)。
+        tabIndex={selected ? 0 : -1}
         onClick={() => onSelect(node.id)}
+        onKeyDown={(e: ReactKeyboardEvent<HTMLElement>) => {
+          // 内側の展開ボタン等から bubbling してきたキーは扱わない。
+          if (e.target !== e.currentTarget) return;
+          const items = Array.from(
+            e.currentTarget.closest<HTMLElement>('[role="tree"]')?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [],
+          );
+          const idx = items.indexOf(e.currentTarget);
+          const moveTo = (el: HTMLElement | undefined) => {
+            if (!el) return;
+            e.preventDefault();
+            const id = el.dataset.nodeId;
+            if (id) onSelect(id);
+            el.focus();
+          };
+          switch (e.key) {
+            case "Enter":
+            case " ":
+              e.preventDefault();
+              onSelect(node.id);
+              break;
+            case "ArrowDown":
+              moveTo(items[idx + 1]);
+              break;
+            case "ArrowUp":
+              moveTo(items[idx - 1]);
+              break;
+            case "Home":
+              moveTo(items[0]);
+              break;
+            case "End":
+              moveTo(items[items.length - 1]);
+              break;
+            case "ArrowRight":
+              if (hasChildren && isCollapsed) {
+                e.preventDefault();
+                onToggle(node.id);
+              } else if (hasChildren) {
+                moveTo(items[idx + 1]);
+              }
+              break;
+            case "ArrowLeft":
+              if (hasChildren && !isCollapsed) {
+                e.preventDefault();
+                onToggle(node.id);
+              } else {
+                // 親 = 手前で最初に見つかる 1 段浅い行。
+                const level = depth + 1;
+                for (let i = idx - 1; i >= 0; i--) {
+                  if (Number(items[i].getAttribute("aria-level")) < level) {
+                    moveTo(items[i]);
+                    break;
+                  }
+                }
+              }
+              break;
+            default:
+              break;
+          }
+        }}
       >
         {hasChildren ? (
           <Tooltip label={isCollapsed ? expandLabel : collapseLabel}>
