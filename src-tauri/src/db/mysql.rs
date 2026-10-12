@@ -527,10 +527,12 @@ impl MySqlConn {
                 let locked = format!("{q} FOR UPDATE");
                 match fetch_capped(&mut tx, &locked, row_limit + 1).await {
                     Ok(rows) => rows,
-                    // デッドロック (1213) / ロック待ちタイムアウト (1205): 記録のために他の
-                    // クライアントと争わず、トランザクションを張り直して書き込みだけを 1 回
-                    // 実行する (記録は辞退)。
-                    Err(e) if is_lock_conflict(&e) => {
+                    // ロック待ちタイムアウト (1205): 素の UPDATE / DELETE でも同じロックを待って
+                    // 失敗するので、張り直して待ち直さずそのままエラーにする (最悪 2 倍待たない)。
+                    Err(e) if is_lock_wait_timeout(&e) => return Err(e),
+                    // デッドロック (1213): InnoDB がトランザクションを巻き戻している。記録のために
+                    // 争わず、張り直して書き込みだけを 1 回実行する (記録は辞退)。
+                    Err(e) if is_deadlock(&e) => {
                         let _ = tx.rollback().await;
                         tx = self.pool.begin().await?;
                         apply_use_database_on(&mut tx, database).await?;
@@ -2695,14 +2697,17 @@ fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
 /// Run one statement on a specific connection and decode it. Shared by
 /// `execute` (pool connection) and `tx_execute` (held transaction connection).
 /// Handles CALL (which may or may not return a result set) like `execute`.
-/// デッドロック (1213) / ロック待ちタイムアウト (1205) か。書き込みキャプチャの行ロック
-/// 取得が競合したときに、記録を辞退してトランザクションを張り直す判定に使う (#1536)。
-fn is_lock_conflict(e: &AppError) -> bool {
+/// デッドロック (1213) か。書き込みキャプチャの行ロック取得が競合したときに、記録を辞退して
+/// トランザクションを張り直す判定に使う (#1536)。
+fn is_deadlock(e: &AppError) -> bool {
     let m = e.to_string();
-    m.contains("Deadlock found")
-        || m.contains("Lock wait timeout exceeded")
-        || m.contains("1213 (40001)")
-        || m.contains("1205 (HY000)")
+    m.contains("Deadlock found") || m.contains("1213 (40001)")
+}
+
+/// ロック待ちタイムアウト (1205) か。
+fn is_lock_wait_timeout(e: &AppError) -> bool {
+    let m = e.to_string();
+    m.contains("Lock wait timeout exceeded") || m.contains("1205 (HY000)")
 }
 
 /// 書き込み文を 1 回実行し、その OK パケットの `last_insert_id` (採番が無ければ 0) を併せて
@@ -3539,9 +3544,11 @@ mod tests {
         let wait = AppError::Other("error returned from database: 1205 (HY000): Lock wait timeout exceeded; try restarting transaction".into());
         let other =
             AppError::Other("error returned from database: 1054 (42S22): Unknown column".into());
-        assert!(is_lock_conflict(&dead));
-        assert!(is_lock_conflict(&wait));
-        assert!(!is_lock_conflict(&other));
+        assert!(is_deadlock(&dead));
+        assert!(!is_deadlock(&wait));
+        assert!(is_lock_wait_timeout(&wait));
+        assert!(!is_lock_wait_timeout(&dead));
+        assert!(!is_deadlock(&other) && !is_lock_wait_timeout(&other));
     }
 
     use super::*;

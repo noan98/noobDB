@@ -172,6 +172,51 @@ async fn pg_insert_outside_window_is_not_misattributed() {
     );
 }
 
+/// 同じ文のトリガが窓の行を消し、さらに別の既存行を UPDATE する (その行の xmin も自トランザクション
+/// になる)。xmin の確認だけでは既存行を挿入行と取り違えるので、窓の端の候補は辞退する。
+#[tokio::test]
+async fn pg_trigger_update_of_existing_row_is_not_misattributed() {
+    let Some(o) = pg_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1536_pg_trgupd";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, name TEXT)"),
+        None,
+    )
+    .await
+    .unwrap();
+    for i in 10..=20 {
+        c.execute(&format!("INSERT INTO {tb} VALUES ({i}, 'r{i}')"), None)
+            .await
+            .unwrap();
+    }
+    c.execute(&format!("CREATE OR REPLACE FUNCTION {tb}_f() RETURNS trigger AS $$ BEGIN DELETE FROM {tb} WHERE id = 20; UPDATE {tb} SET name = 'u' WHERE id = 17; RETURN NEW; END $$ LANGUAGE plpgsql"), None).await.unwrap();
+    c.execute(
+        &format!(
+            "CREATE TRIGGER {tb}_t AFTER INSERT ON {tb} FOR EACH ROW EXECUTE FUNCTION {tb}_f()"
+        ),
+        None,
+    )
+    .await
+    .unwrap();
+    let (r, cap) = c
+        .capture_write(&format!("INSERT INTO {tb} VALUES (1, 'new')"), None, 3)
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 1);
+    let recorded = ids(&cap);
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    assert!(
+        !cap.capturable || recorded == vec![1],
+        "取り違え: {recorded:?}"
+    );
+}
+
 #[tokio::test]
 async fn pg_upsert_is_not_recorded_as_a_new_row() {
     let Some(o) = pg_opts().await else { return };
@@ -190,7 +235,7 @@ async fn pg_upsert_is_not_recorded_as_a_new_row() {
         .await
         .unwrap();
     let (r, cap) = c
-        .capture_write(&format!("INSERT INTO {tb} VALUES (1,'b') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name"), None, 100)
+        .capture_write(&format!("INSERT INTO {tb} VALUES (1,'b') ON CONFLICT(id) DO UPDATE SET name = EXCLUDED.name"), None, 100)
         .await
         .unwrap();
     assert_eq!(r.rows_affected, 1);

@@ -559,7 +559,9 @@ impl PostgresConn {
         // トランザクションで書かれた行 (xmin が自トランザクション) かを PK で引き直して
         // 確かめる。窓の外へ出た行や同一文内の副作用 (トリガが別行を消す等) で、既存の別行を
         // 挿入行と取り違えて記録しないため。確かめられなければ記録を辞退する (#1536)。
-        let mut new_rows_exact = false;
+        // xmin だけでは「同一文内のトリガが既存行を UPDATE した」行も自トランザクションの書き込みに
+        // 見えるので、これを `new_rows_exact` の根拠にはしない (窓の端の候補を辞退する共通判定に任せる)。
+        let new_rows_exact = false;
         let mut capture_decline: Option<String> = None;
         if commit && is_insert && !after_raw.is_empty() {
             let verified = verify_inserted_rows(
@@ -571,9 +573,7 @@ impl PostgresConn {
                 row_limit,
             )
             .await;
-            if verified {
-                new_rows_exact = true;
-            } else {
+            if !verified {
                 capture_decline = Some(
                     "挿入行をこのトランザクションの書き込みとして確認できなかったため記録しません"
                         .into(),

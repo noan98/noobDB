@@ -211,7 +211,8 @@ fn insert_is_upsert(driver: DriverKind, sql: &str) -> bool {
     let masked: String = mask_for_driver(driver, &orig)
         .iter()
         .collect::<String>()
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+        .replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', " ");
     let words: Vec<&str> = masked.split_whitespace().collect();
     words.windows(2).any(|w| {
         (w[0] == "on" && (w[1] == "conflict" || w[1] == "duplicate"))

@@ -1357,6 +1357,30 @@ async fn spawn_query_stream(
 /// 呼び出し側の future が落とされても中断しない (確定直前で記録だけ失う / 確定したのに
 /// 失敗扱いになるのを防ぐ、#1530)。after-image からの記録の組み立ては COMMIT の前に
 /// 済ませるので、特定に失敗しても結果は `Ok` (記録を辞退して確定) になる。
+/// 記録つき書き込みの前半 (準備 + 同一トランザクションでの実行〜after 取得)。タイムアウトが
+/// あればここだけを配下に置く。打ち切られると `PendingTx` の drop でロールバックされる。
+async fn stage_captured_write(
+    session: &Session,
+    sql: &str,
+    database: Option<&str>,
+    row_cap: usize,
+    query_timeout_secs: Option<u64>,
+) -> Result<crate::db::CaptureRun> {
+    let staged = async {
+        let prep = session.conn.capture_prepare(sql, database, row_cap).await?;
+        session.conn.capture_execute(prep, sql, database).await
+    };
+    match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), staged).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => staged.await,
+    }
+}
+
 pub(crate) async fn run_captured_write(
     session: Arc<Session>,
     sql: String,
@@ -1364,27 +1388,14 @@ pub(crate) async fn run_captured_write(
     row_cap: usize,
     query_timeout_secs: Option<u64>,
 ) -> Result<(crate::db::types::QueryResult, crate::db::WriteCapture)> {
-    let run = {
-        let staged = async {
-            let prep = session
-                .conn
-                .capture_prepare(&sql, database.as_deref(), row_cap)
-                .await?;
-            session
-                .conn
-                .capture_execute(prep, &sql, database.as_deref())
-                .await
-        };
-        match query_timeout_secs {
-            Some(secs) if secs > 0 => {
-                match tokio::time::timeout(std::time::Duration::from_secs(secs), staged).await {
-                    Ok(res) => res?,
-                    Err(_) => return Err(AppError::Timeout(secs)),
-                }
-            }
-            _ => staged.await?,
-        }
-    };
+    let run = stage_captured_write(
+        &session,
+        &sql,
+        database.as_deref(),
+        row_cap,
+        query_timeout_secs,
+    )
+    .await?;
     let handle = tokio::spawn(async move { session.conn.capture_commit(run, &sql).await });
     match handle.await {
         Ok(res) => res,
@@ -1423,14 +1434,74 @@ async fn spawn_captured_write(
         "captured write starting"
     );
     let started = std::time::Instant::now();
-    let outcome = run_captured_write(
-        session.clone(),
-        sql.clone(),
-        database.clone(),
+    let staged = stage_captured_write(
+        &session,
+        &sql,
+        database.as_deref(),
         row_cap,
         query_timeout_secs,
     )
     .await;
+    match staged {
+        Err(e) => {
+            finish_captured_write(
+                app,
+                session,
+                stream_id,
+                stream_token,
+                sql,
+                database,
+                retention_days,
+                delivered_rows,
+                on_event,
+                started,
+                Err(e),
+            )
+            .await;
+        }
+        Ok(run) => {
+            // COMMIT から記録・履歴・Done 送信までを 1 つの切り離したタスクにまとめる。
+            // COMMIT 中や直後にキャンセルされても、「確定したのに記録・履歴なし・Cancelled 表示」
+            // にならない (キャンセルできるのは確定前の実行段階まで)。
+            let task_session = session.clone();
+            let task_sql = sql.clone();
+            let handle = tokio::spawn(async move {
+                let outcome = task_session.conn.capture_commit(run, &task_sql).await;
+                finish_captured_write(
+                    app,
+                    task_session,
+                    stream_id,
+                    stream_token,
+                    task_sql,
+                    database,
+                    retention_days,
+                    delivered_rows,
+                    on_event,
+                    started,
+                    outcome,
+                )
+                .await;
+            });
+            let _ = handle.await;
+        }
+    }
+}
+
+/// 記録つき書き込みの後半: キャッシュ無効化 → Done / Error 送信 → 記録の永続化 → 履歴。
+#[allow(clippy::too_many_arguments)]
+async fn finish_captured_write(
+    app: AppHandle,
+    session: Arc<Session>,
+    stream_id: String,
+    stream_token: u64,
+    sql: String,
+    database: Option<String>,
+    retention_days: Option<i64>,
+    delivered_rows: Arc<AtomicU64>,
+    on_event: Channel<QueryStreamMessage>,
+    started: std::time::Instant,
+    outcome: Result<(QueryResult, crate::db::WriteCapture)>,
+) {
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     // Query Result Cache (#1097): capture 対象は呼び出し元 (`run_query_stream`)
