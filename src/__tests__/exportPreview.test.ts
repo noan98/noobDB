@@ -211,3 +211,45 @@ describe("buildExportContent", () => {
     expect(sql.startsWith("INSERT INTO `users`")).toBe(true);
   });
 });
+
+describe("JSON / NDJSON のキー順 (最適化前と同一出力)", () => {
+  // 最適化前の実装 (行ごとに列をソート) と同じ出力になることを固定する。
+  const cmp = (a: string, b: string) => {
+    const ca = Array.from(a);
+    const cb = Array.from(b);
+    for (let i = 0; i < Math.min(ca.length, cb.length); i++) {
+      const d = (ca[i].codePointAt(0) ?? 0) - (cb[i].codePointAt(0) ?? 0);
+      if (d !== 0) return d;
+    }
+    return ca.length - cb.length;
+  };
+  const cols: Column[] = ["z", "a", "\u{1F600}", "Ａ", "a", "B", "a_2", ""].map((name) => ({
+    name,
+    type_name: "TEXT",
+  }));
+  const data: CellValue[][] = [
+    [1, 2, 3, 4, 5, 6, 7, 8],
+    [null, "x", true, 1.5, "y", null, "z"],
+  ];
+  it("キーはコードポイント順で、行の値と対応する", () => {
+    const parsed = JSON.parse(buildJson(cols, data));
+    const keys = Object.keys(parsed[0]);
+    const nonInteger = keys.filter((k) => !/^\d+$/.test(k));
+    expect([...nonInteger].sort(cmp)).toEqual(nonInteger);
+    expect(keys).toHaveLength(8);
+    // 2 行目 (短い行) は欠けた値が null になる。
+    expect(Object.keys(parsed[1])).toEqual(keys);
+    expect(Object.values(parsed[1]).filter((v) => v === null)).toHaveLength(3);
+  });
+
+  it("NDJSON の各行は JSON 出力の各要素と同じ", () => {
+    const fromJson = (JSON.parse(buildJson(cols, data)) as unknown[]).map((o) => JSON.stringify(o));
+    const lines = buildNdjson(cols, data).trimEnd().split("\n");
+    expect(lines).toEqual(fromJson);
+  });
+
+  it("固定の期待値: 列順に依らずキーがソートされる", () => {
+    const c: Column[] = ["b", "a", "c"].map((name) => ({ name, type_name: "INT" }));
+    expect(buildNdjson(c, [[1, 2, 3]])).toBe('{"a":2,"b":1,"c":3}\n');
+  });
+});

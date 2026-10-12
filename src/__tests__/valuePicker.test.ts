@@ -9,6 +9,7 @@ import {
   candidatesFromResult,
   collectAllowedValues,
   fkSearchTerm,
+  isTextDataType,
   pickerKindFor,
 } from "../components/valuePicker";
 
@@ -60,6 +61,27 @@ describe("buildFkCandidatesSql (#1067)", () => {
     });
     expect(my).toContain("CAST(`code` AS CHAR) LIKE 'a\\\\_b%' ESCAPE '\\\\'");
     expect(my).toContain("FROM `users`");
+  });
+
+  it("textColumn: PostgreSQL / SQLite は列を CAST で包まず LIKE し、MySQL は従来どおり CAST を残す", () => {
+    const base = { database: "db", refTable: "t", refColumn: "code", search: "ab" } as const;
+    expect(buildFkCandidatesSql({ ...base, driver: "postgres", textColumn: true })).toContain(
+      `WHERE "code" IS NOT NULL AND "code" LIKE 'ab%' ESCAPE`,
+    );
+    expect(buildFkCandidatesSql({ ...base, driver: "sqlite", textColumn: true })).toContain(`"code" LIKE 'ab%'`);
+    expect(buildFkCandidatesSql({ ...base, driver: "sqlite", textColumn: true })).not.toContain("CAST");
+    expect(buildFkCandidatesSql({ ...base, driver: "mysql", textColumn: true })).toContain("CAST(`code` AS CHAR) LIKE");
+    // 文字列型と分からない列は従来どおり CAST。
+    expect(buildFkCandidatesSql({ ...base, driver: "postgres" })).toContain(`CAST("code" AS TEXT) LIKE`);
+  });
+
+  it("isTextDataType は文字列型だけ true", () => {
+    for (const t of ["varchar(20)", "character varying", "TEXT", "char(3)", "longtext", "citext"]) {
+      expect(isTextDataType(t)).toBe(true);
+    }
+    for (const t of ["int", "bigint", "uuid", "datetime", "enum('a','b')", "", null]) {
+      expect(isTextDataType(t)).toBe(false);
+    }
   });
 
   it("clamps the limit to at least 1 and quotes hostile identifiers", () => {

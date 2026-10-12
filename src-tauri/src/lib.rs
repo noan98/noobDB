@@ -1223,6 +1223,7 @@ pub fn run() {
             commands::server::server_metrics,
             commands::process::list_processes,
             commands::process::get_process_query,
+            commands::process::get_process_queries,
             commands::process::kill_processes,
             commands::privileges::list_db_users,
             commands::privileges::list_user_privileges,

@@ -63,6 +63,8 @@ export interface ComboSelectProps {
   css?: SystemStyleObject;
   /** 候補 0 件時に表示する文言 (i18n はこのコンポーネントでは持たないため props で受ける)。 */
   emptyText?: string;
+  /** 候補が `COMBO_MAX_VISIBLE` を超えたときの「さらに表示」ボタンの文言 (残り件数を受ける)。 */
+  showMoreText?: (hiddenCount: number) => string;
 }
 
 const MotionListbox = chakra(motion.div, {}, { forwardProps: ["transition"] });
@@ -72,6 +74,9 @@ const POPOVER_GAP = 4;
 
 /** これを超える候補数では、マウスのハイライトを state ではなく CSS の `:hover` で表す (#1321)。 */
 export const COMBO_CSS_HOVER_THRESHOLD = 50;
+
+/** 一度に描画する候補の上限。超えた分は「さらに表示」で展開する (2000 列のテーブルでも開く/入力のたびに全件を作らない)。 */
+export const COMBO_MAX_VISIBLE = 200;
 
 function optionElementId(listboxId: string, index: number): string {
   return `${listboxId}-opt-${index}`;
@@ -104,6 +109,7 @@ export function ComboSelect({
   freeSolo = true,
   css,
   emptyText,
+  showMoreText,
 }: ComboSelectProps) {
   const autoId = useId();
   const inputId = id ?? autoId;
@@ -126,11 +132,22 @@ export function ComboSelect({
 
   const displayValue = freeSolo ? value : draft;
 
-  const filtered = useMemo(() => {
+  const matches = useMemo(() => {
     const needle = displayValue.trim().toLowerCase();
     if (!needle) return options;
     return options.filter((o) => o.value.toLowerCase().includes(needle));
   }, [options, displayValue]);
+  // 件数上限。「さらに表示」で展開したら、入力が変わる / 閉じるまで全件を出す。
+  const [expanded, setExpanded] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 入力が変わったら展開を畳むトリガ依存
+  useEffect(() => {
+    setExpanded(false);
+  }, [displayValue, open]);
+  const filtered = useMemo(
+    () => (expanded || matches.length <= COMBO_MAX_VISIBLE ? matches : matches.slice(0, COMBO_MAX_VISIBLE)),
+    [matches, expanded],
+  );
+  const hiddenCount = matches.length - filtered.length;
 
   // フィルタで候補数が減ってハイライトが範囲外になったら先頭 (0 件なら null) へ戻す。
   useEffect(() => {
@@ -378,6 +395,25 @@ export function ComboSelect({
                   </chakra.button>
                 );
               })
+            )}
+            {hiddenCount > 0 && (
+              <chakra.button
+                type="button"
+                display="block"
+                width="100%"
+                textAlign="left"
+                bg="transparent"
+                border="none"
+                px="2.5"
+                py="1.5"
+                fontSize="var(--text-sm)"
+                color="var(--text-muted)"
+                cursor="pointer"
+                _hover={{ bg: "var(--bg-hover)", color: "var(--text)" }}
+                onClick={() => setExpanded(true)}
+              >
+                {showMoreText ? showMoreText(hiddenCount) : `+${hiddenCount}`}
+              </chakra.button>
             )}
           </MotionListbox>,
           document.body,

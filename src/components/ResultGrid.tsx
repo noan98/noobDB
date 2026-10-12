@@ -4030,14 +4030,23 @@ export const DataGrid = memo(function DataGrid({
   // Per-column in-memory ColumnStats for the footer, reusing gridStats
   // (#524) so aggregate math is never re-defined. Only computed while the
   // footer is shown, and memoized on the loaded rows so scrolling is free.
-  const footerStats = useMemo<ColumnStats[] | null>(() => {
+  // 実際にフッターへ描画する (表示中の) 列だけを、初めて参照されたときに計算してキャッシュする。
+  // 非表示列や、ストリーミングの 1 バッチごとに全列を走査していた負荷を避ける。
+  const footerStatsFor = useMemo<((colIdx: number) => ColumnStats | undefined) | null>(() => {
     if (!footerEnabled) return null;
-    return columns.map((_, i) =>
-      computeColumnStats(
-        rows.map((r) => r[i] ?? null),
-        columnKinds[i] ?? "string",
-      ),
-    );
+    const cache = new Map<number, ColumnStats>();
+    return (colIdx: number) => {
+      if (colIdx < 0 || colIdx >= columns.length) return undefined;
+      let stats = cache.get(colIdx);
+      if (!stats) {
+        stats = computeColumnStats(
+          rows.map((r) => r[colIdx] ?? null),
+          columnKinds[colIdx] ?? "string",
+        );
+        cache.set(colIdx, stats);
+      }
+      return stats;
+    };
   }, [footerEnabled, rows, columns, columnKinds]);
 
   // 列ヘッダの常時 NULL 率ミニバー (#911)。ポップオーバー (`ColumnStatsMenu`) を
@@ -5994,7 +6003,7 @@ export const DataGrid = memo(function DataGrid({
                 const colIdx = Number(h.column.id);
                 const kind = columnKinds[colIdx] ?? "string";
                 const fn = resolveFooterFn(footerAggs[h.column.id], kind);
-                const stats = footerStats?.[colIdx];
+                const stats = footerStatsFor?.(colIdx);
                 const cell = stats ? computeFooterCell(stats, fn) : null;
                 // マスク中の列 (#1069) は集計値 (合計・最小/最大など) も伏せ、
                 // CountUp (#1024) でも数値を出さない。

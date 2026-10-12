@@ -759,6 +759,9 @@ export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
 export const nullableStringResponse = z.string().nullable();
 
+/** `get_process_queries` の戻り値。プロセス id (JSON キーなので文字列) → SQL 全文。 */
+export const processQueriesResponse = z.record(z.string(), z.string());
+
 /** `result_sort_filter` の戻り値。表示順の行インデックス。`null` はハンドルが無い (#1264)。 */
 export const resultSortFilterResponse = z.array(z.number()).nullable();
 

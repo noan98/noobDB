@@ -80,6 +80,9 @@ export interface AiSchemaDocModalProps {
  * デフォルト値は送らない。生成物は Markdown の生テキストで逐次表示し、コピー / `.md` 保存できる。
  * 冒頭の生成日時・対象接続・AI 推定の注記はモデルに書かせず、フロントで付ける。AI 無効時は何も描かない。
  */
+/** テーブル手動選択欄に一度に描く行数の上限 (`AiQueryModal` と同じ。残りは絞り込みで探す)。 */
+const PICKER_MAX_ROWS = 200;
+
 export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   const t = useT();
   const locale = useLocale();
@@ -168,11 +171,12 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
         : [],
     [loaded, allNames, selected, mode],
   );
+  // 選択欄の「参照先として自動で含まれる」判定を O(1) にするための集合。
+  const scopeSet = useMemo(() => new Set(scopeNames), [scopeNames]);
   const scopedTables = useMemo(() => {
     if (loaded.kind !== "ready") return [];
-    const set = new Set(scopeNames);
-    return loaded.tables.filter((x) => set.has(x.name));
-  }, [loaded, scopeNames]);
+    return loaded.tables.filter((x) => scopeSet.has(x.name));
+  }, [loaded, scopeSet]);
   const scopedFks = useMemo(
     () => (loaded.kind === "ready" ? filterForeignKeysInScope(loaded.foreignKeys, scopeNames) : []),
     [loaded, scopeNames],
@@ -230,6 +234,13 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   };
 
   const runInner = async (ready: Extract<Loaded, { kind: "ready" }>) => {
+    // 表・列・FK だけで送信上限を超えると分かっているなら、インデックスや定義を (件数ぶんの IPC で)
+    // 取得する前に止める。文字数は UTF-8 バイト数以下なので、これで超えるなら必ず超える。
+    if (summary.approxChars > SCHEMA_DOC_MAX_PROMPT_BYTES) {
+      stream.release();
+      setState({ kind: "tooBig", kb: approxKb(summary.approxChars) });
+      return;
+    }
     if (props.isProduction) {
       const ok = await confirm({
         title: t("aiSchemaDocConfirmTitle"),
@@ -408,8 +419,8 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
                     display="flex"
                     flexDirection="column"
                   >
-                    {filteredNames.map((name) => {
-                      const auto = !selected.has(name) && scopeNames.includes(name);
+                    {filteredNames.slice(0, PICKER_MAX_ROWS).map((name) => {
+                      const auto = !selected.has(name) && scopeSet.has(name);
                       return (
                         <chakra.label
                           key={name}
@@ -446,6 +457,11 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
                         </chakra.label>
                       );
                     })}
+                    {filteredNames.length > PICKER_MAX_ROWS && (
+                      <chakra.span textStyle="caption" px="1">
+                        {t("aiQueryTablesMore", { count: filteredNames.length - PICKER_MAX_ROWS })}
+                      </chakra.span>
+                    )}
                   </chakra.div>
                   <chakra.span fontSize="xs" color="app.textMuted">
                     {emptySelection

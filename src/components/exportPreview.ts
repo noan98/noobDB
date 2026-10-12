@@ -128,14 +128,10 @@ export function buildCsv(columns: Column[], rows: CellValue[][]): string {
  * 混在時に順序が食い違う。`Array.from` は文字列をコードポイント単位 (サロゲート
  * ペアも 1 要素) でイテレートするため、それぞれの先頭コードポイントを比較する。
  */
-function compareCodePoints(a: string, b: string): number {
-  const ca = Array.from(a);
-  const cb = Array.from(b);
+function compareCodePointArrays(ca: number[], cb: number[]): number {
   const len = Math.min(ca.length, cb.length);
   for (let i = 0; i < len; i++) {
-    const pa = ca[i].codePointAt(0) ?? 0;
-    const pb = cb[i].codePointAt(0) ?? 0;
-    if (pa !== pb) return pa - pb;
+    if (ca[i] !== cb[i]) return ca[i] - cb[i];
   }
   return ca.length - cb.length;
 }
@@ -167,13 +163,26 @@ function jsonKeys(columns: Column[]): string[] {
  * キーの挿入順を保つため、ソート順に挿入すれば出力もソート順になる)。ソートは
  * コードポイント順 (`compareCodePoints`) — BTreeMap と同じ順序にするため。
  */
-function rowToObject(columns: Column[], row: CellValue[]): Record<string, CellValue> {
-  const keys = jsonKeys(columns);
-  const pairs: [string, CellValue][] = keys.map((key, i) => [key, row[i] ?? null]);
-  pairs.sort((a, b) => compareCodePoints(a[0], b[0]));
+function rowToObject(order: JsonColumnOrder, row: CellValue[]): Record<string, CellValue> {
   const obj: Record<string, CellValue> = {};
-  for (const [k, v] of pairs) obj[k] = v;
+  for (let n = 0; n < order.length; n++) {
+    const { key, index } = order[n];
+    obj[key] = row[index] ?? null;
+  }
   return obj;
+}
+
+/** JSON 出力のキー順 (ソート済み)。列定義だけで決まるので、1 回の出力で一度だけ作る。 */
+type JsonColumnOrder = { key: string; index: number }[];
+
+function jsonColumnOrder(columns: Column[]): JsonColumnOrder {
+  const keys = jsonKeys(columns);
+  const order = keys.map((key, index) => ({ key, index }));
+  // 比較ごとの配列確保を避けるため、ソートキー (コードポイント配列) を事前に 1 回だけ作る。
+  const cps = new Map<string, number[]>();
+  for (const { key } of order) cps.set(key, Array.from(key, (ch) => ch.codePointAt(0) ?? 0));
+  order.sort((a, b) => compareCodePointArrays(cps.get(a.key) ?? [], cps.get(b.key) ?? []));
+  return order;
 }
 
 /**
@@ -185,7 +194,8 @@ export function buildJson(
   rows: CellValue[][],
   query?: string | null,
 ): string {
-  const arr = rows.map((row) => rowToObject(columns, row));
+  const order = jsonColumnOrder(columns);
+  const arr = rows.map((row) => rowToObject(order, row));
   if (query && query.length > 0) {
     return JSON.stringify({ query, rows: arr }, null, 2);
   }
@@ -195,8 +205,9 @@ export function buildJson(
 /** NDJSON: 1 行 1 オブジェクト、`\n` 区切り。空なら空文字列。 */
 export function buildNdjson(columns: Column[], rows: CellValue[][]): string {
   let out = "";
+  const order = jsonColumnOrder(columns);
   for (const row of rows) {
-    out += JSON.stringify(rowToObject(columns, row)) + "\n";
+    out += JSON.stringify(rowToObject(order, row)) + "\n";
   }
   return out;
 }

@@ -377,6 +377,17 @@ describe("AiSchemaDocModal の中止・安全網 (#696)", () => {
     expect(runAiRequest).not.toHaveBeenCalled();
   });
 
+  it("表・列だけで上限超過が分かるときは、インデックス取得の IPC を発行しない", async () => {
+    describeDatabase.mockResolvedValue([
+      { name: "big", columns: [{ ...col("id"), comment: "x".repeat(1_100_000) }] },
+    ]);
+    listIndexes.mockClear();
+    renderWithProviders(ui());
+    await generate();
+    await screen.findByText(/1024 KB/);
+    expect(listIndexes).not.toHaveBeenCalled();
+  });
+
   it("外部キーを取得できないときは関係が含まれない旨を出す", async () => {
     foreignKeys.mockRejectedValue(new Error("x"));
     renderWithProviders(ui());

@@ -135,7 +135,7 @@ describe("AiSettings サンプル要求 (#690)", () => {
     expect(Object.keys(args)).not.toContain("model");
     act(() => handlers?.onDelta?.({ ...base, text: "Hel" }));
     act(() => handlers?.onDelta?.({ ...base, text: "lo" }));
-    expect(screen.getByTestId("ai-sample-text").textContent).toBe("Hello");
+    await waitFor(() => expect(screen.getByTestId("ai-sample-text").textContent).toBe("Hello"));
     act(() =>
       handlers?.onDone?.({ ...base, model: "claude-opus-5-5", requestedModel: "claude-opus-5-5", fallbackUsed: false, stopReason: "end_turn", usage }),
     );

@@ -75,6 +75,20 @@ export interface FkCandidatesParams {
   search?: string;
   /** 最大件数 (1 以上に丸める)。 */
   limit?: number;
+  /**
+   * 参照先列が文字列型と分かっているとき true。PostgreSQL / SQLite では `CAST(col AS TEXT)` が
+   * 恒等変換なので外し、列を関数で包まず `LIKE` できるようにする (索引を使える余地を残す)。
+   * MySQL は `CAST(col AS CHAR)` が接続の照合順序へ変えるため、外すと一致結果が変わりうる
+   * ので従来どおり残す。範囲条件 (`col >= 'x' AND col < next`) は、照合順序 (MySQL の *_ci・
+   * PostgreSQL の ICU / locale)・LIKE の大文字小文字無視 (SQLite) と結果が食い違うため採らない。
+   */
+  textColumn?: boolean;
+}
+
+/** 文字列として前方一致できる型名か (FK 候補の索引利用判定用)。 */
+export function isTextDataType(dataType: string | null | undefined): boolean {
+  const t = (dataType ?? "").trim().toLowerCase();
+  return /^(character varying|character|varchar|char|nvarchar|nchar|text|citext|tinytext|mediumtext|longtext)\b/.test(t);
 }
 
 /**
@@ -88,7 +102,8 @@ export function buildFkCandidatesSql(p: FkCandidatesParams): string {
   const search = p.search ?? "";
   if (search !== "") {
     const pattern = quoteString(p.driver, `${escapeLikeWildcards(search)}%`);
-    where.push(`${textCastExpr(p.driver, col)} LIKE ${pattern} ESCAPE ${quoteString(p.driver, "\\")}`);
+    const target = p.textColumn && p.driver !== "mysql" ? col : textCastExpr(p.driver, col);
+    where.push(`${target} LIKE ${pattern} ESCAPE ${quoteString(p.driver, "\\")}`);
   }
   const from = tableRef(p.driver, p.database, p.refTable);
   return `SELECT DISTINCT ${col} FROM ${from} WHERE ${where.join(" AND ")} ORDER BY ${col} LIMIT ${limit}`;

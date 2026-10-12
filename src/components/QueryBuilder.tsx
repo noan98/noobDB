@@ -954,6 +954,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                       onChange={setNewSelectCol}
                       onEnter={() => addSelectColumn(newSelectCol)}
                       emptyText={t("qbComboNoMatches")}
+                      showMoreText={(count) => t("qbComboShowMore", { count })}
                     />
                     <chakra.button
                       type="button"
@@ -1021,6 +1022,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                         onChange={(v) => updatePair("set", i, { column: v })}
                         placeholder={t("qbColumn")}
                         emptyText={t("qbComboNoMatches")}
+                        showMoreText={(count) => t("qbComboShowMore", { count })}
                       />
                       <chakra.span css={eqCss}>=</chakra.span>
                       <ValueControl
@@ -1088,6 +1090,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                         onChange={(v) => updatePair("insert", i, { column: v })}
                         placeholder={t("qbColumn")}
                         emptyText={t("qbComboNoMatches")}
+                        showMoreText={(count) => t("qbComboShowMore", { count })}
                       />
                       {required && (
                         <Tooltip label={t("qbRequiredColumn")}>
@@ -1163,6 +1166,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                         onChange={(v) => updateCondition(i, { column: v })}
                         placeholder={t("qbColumn")}
                         emptyText={t("qbComboNoMatches")}
+                        showMoreText={(count) => t("qbComboShowMore", { count })}
                       />
                       <ComboSelect
                         css={opCss}
@@ -1170,6 +1174,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                         options={operatorComboOptions}
                         onChange={(v) => updateCondition(i, { operator: v })}
                         emptyText={t("qbComboNoMatches")}
+                        showMoreText={(count) => t("qbComboShowMore", { count })}
                       />
                       {nullOp || isIn ? (
                         <chakra.input
@@ -1231,6 +1236,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                       onChange={(v) => updateOrderBy(i, { column: v })}
                       placeholder={t("qbColumn")}
                       emptyText={t("qbComboNoMatches")}
+                      showMoreText={(count) => t("qbComboShowMore", { count })}
                     />
                     <Select
                       css={opCss}

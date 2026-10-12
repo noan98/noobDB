@@ -2,7 +2,7 @@ import { useState } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "./testUtils";
-import { ComboSelect, type ComboSelectOption } from "../components/ComboSelect";
+import { COMBO_MAX_VISIBLE, ComboSelect, type ComboSelectOption } from "../components/ComboSelect";
 
 /**
  * ポップオーバー型コンボボックス `ComboSelect`。開閉・フィルタ・クリック/キーボード
@@ -233,5 +233,26 @@ describe("ComboSelect の ARIA 結線", () => {
 
     const selected = screen.getByRole("option", { name: /email/ });
     expect(selected).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("ComboSelect の件数上限", () => {
+  const MANY: ComboSelectOption[] = Array.from({ length: 260 }, (_, i) => ({ value: `col_${i}` }));
+
+  it("多いときは上限までしか描画せず、「さらに表示」で全件に広げる", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
+    await user.click(screen.getByRole("combobox"));
+    expect(screen.getAllByRole("option")).toHaveLength(COMBO_MAX_VISIBLE);
+    await user.click(screen.getByRole("button", { name: `+${260 - COMBO_MAX_VISIBLE}` }));
+    expect(screen.getAllByRole("option")).toHaveLength(260);
+  });
+
+  it("入力で絞り込んだ結果が上限以下なら「さらに表示」は出ない", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
+    await user.type(screen.getByRole("combobox"), "col_199");
+    expect(screen.queryByRole("button", { name: /^\+\d+$/ })).toBeNull();
+    expect(screen.getAllByRole("option").length).toBeLessThan(COMBO_MAX_VISIBLE);
   });
 });

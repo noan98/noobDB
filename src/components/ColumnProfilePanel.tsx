@@ -77,6 +77,9 @@ const countTile = (c: ProfileCount | null | undefined) =>
 // 補間中の小数は四捨五入してから整形する (CountUp 既定と同じ)。
 const formatCount = (n: number) => formatProfileCount(Math.round(n));
 
+/** 列選択から自動集計を発行するまでの待ち時間 (ms)。 */
+const PROFILE_DEBOUNCE_MS = 300;
+
 export function ColumnProfilePanel({
   sessionId,
   driver,
@@ -137,9 +140,14 @@ export function ColumnProfilePanel({
   }, [sessionId, database, table, column, approximate]);
 
   // 対象列が決まった / 変わったら自動で実行する (近似の切替も再実行する)。
+  // 列を素早く切り替えたときに全件集計が並走しないよう、自動実行は PROFILE_DEBOUNCE_MS 待つ
+  // (ボタンからの手動実行は即時)。待っている間に古い結果が出ないよう seq も進めておく。
   useEffect(() => {
     setProfile(null);
-    if (column) void run();
+    if (!column) return;
+    requestSeq.current++;
+    const timer = setTimeout(() => void run(), PROFILE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
   }, [run, column]);
 
   const chartKind = profile ? profileChartKind(profile) : null;
