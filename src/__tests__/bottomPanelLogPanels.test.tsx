@@ -77,6 +77,34 @@ describe("OutputPanel", () => {
     expect(onOpenSql).toHaveBeenCalledWith("selec 1");
   });
 
+  it("行の「エディタへ挿入」「再実行」は接続中だけ押せ、全文の SQL を渡す (#1541)", () => {
+    run({ sql: "update t set a = 1 where id = 2", outcome: "affected", rows: 1 });
+    const onInsertSql = vi.fn();
+    const onRunSql = vi.fn();
+    const { unmount } = renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun={false} />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByRole("button", { name: t("outputInsertInEditor") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();
+    unmount();
+    renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    fireEvent.click(screen.getByRole("button", { name: t("outputInsertInEditor") }));
+    fireEvent.click(screen.getByRole("button", { name: t("outputRerun") }));
+    expect(onInsertSql).toHaveBeenCalledWith("update t set a = 1 where id = 2");
+    expect(onRunSql).toHaveBeenCalledWith("update t set a = 1 where id = 2");
+  });
+
+  it("コールバックを渡さなければ挿入・再実行ボタンは出さない (#1541)", () => {
+    run();
+    renderWithProviders(<OutputPanel onOpenSql={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.queryByRole("button", { name: t("outputRerun") })).toBeNull();
+  });
+
   it("SQL のコピーに失敗したらエラーを知らせる (#1534)", async () => {
     vi.mocked(copyToClipboard).mockResolvedValue(false);
     run();

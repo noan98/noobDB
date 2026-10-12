@@ -9846,7 +9846,12 @@ export default function App() {
                     // ログ系 3 タブ (#1114) は接続に依存しないので sessionId の
                     // ガードより前で描く。出力の SQL は新しいタブで開き、今の
                     // エディタを上書きしない (履歴の「新しいタブで開く」と同じ)。
-                    <OutputPanel onOpenSql={handleOpenHistoryInNewTab} />
+                    <OutputPanel
+                      onOpenSql={handleOpenHistoryInNewTab}
+                      onInsertSql={handleLauncherInsertSql}
+                      onRunSql={handleLauncherRunSql}
+                      canRun={sessionId !== null}
+                    />
                   ) : activeBottomPanelTab === "activity" ? (
                     <ActivityLogPanel />
                   ) : activeBottomPanelTab === "health" ? (

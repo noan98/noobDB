@@ -35,7 +35,20 @@ import { Button } from "./ui";
  * 行を押すと SQL の全文とエラー本文を展開し、そこから「エディタで開く」
  * 「SQL をコピー」ができる (開くのは新しいタブ — 今のエディタを上書きしない)。
  */
-export function OutputPanel({ onOpenSql }: { onOpenSql: (sql: string) => void }) {
+export function OutputPanel({
+  onOpenSql,
+  onInsertSql,
+  onRunSql,
+  canRun = false,
+}: {
+  onOpenSql: (sql: string) => void;
+  /** フォーカス中のエディタへ挿入する (#1541)。省略時はボタンを出さない。 */
+  onInsertSql?: (sql: string) => void;
+  /** 新しいタブで再実行する (#1541)。実行は通常の実行経路 (安全網つき) に委ねる。省略時は出さない。 */
+  onRunSql?: (sql: string) => void;
+  /** 挿入・再実行できるか (接続中か)。 */
+  canRun?: boolean;
+}) {
   const t = useT();
   const entries = useOutputLog();
   const [filter, setFilter] = useState<OutputFilter>("all");
@@ -82,6 +95,9 @@ export function OutputPanel({ onOpenSql }: { onOpenSql: (sql: string) => void })
               expanded={expanded === e.id}
               onToggle={() => setExpanded((cur) => (cur === e.id ? null : e.id))}
               onOpenSql={onOpenSql}
+              onInsertSql={onInsertSql}
+              onRunSql={onRunSql}
+              canRun={canRun}
             />
           ))}
         </chakra.ul>
@@ -95,11 +111,17 @@ function OutputRow({
   expanded,
   onToggle,
   onOpenSql,
+  onInsertSql,
+  onRunSql,
+  canRun,
 }: {
   entry: OutputEntry;
   expanded: boolean;
   onToggle: () => void;
   onOpenSql: (sql: string) => void;
+  onInsertSql?: (sql: string) => void;
+  onRunSql?: (sql: string) => void;
+  canRun: boolean;
 }) {
   const t = useT();
   const toast = useToast();
@@ -222,6 +244,39 @@ function OutputRow({
                 {t("outputOpenInEditor")}
               </Button>
             </Tooltip>
+            {onInsertSql && (
+              <Tooltip
+                label={truncated ? t("outputOpenTruncatedDisabled") : !canRun ? t("outputNeedsConnection") : undefined}
+                focusableWrapper={truncated || !canRun}
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={truncated || !canRun}
+                  onClick={() => onInsertSql(entry.sql)}
+                >
+                  {t("outputInsertInEditor")}
+                </Button>
+              </Tooltip>
+            )}
+            {onRunSql && (
+              <Tooltip
+                label={truncated ? t("outputOpenTruncatedDisabled") : !canRun ? t("outputNeedsConnection") : t("outputRerunHint")}
+                focusableWrapper={truncated || !canRun}
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={truncated || !canRun}
+                  onClick={() => onRunSql(entry.sql)}
+                >
+                  <Icon name="play" size={ICON_SIZES.md} />
+                  {t("outputRerun")}
+                </Button>
+              </Tooltip>
+            )}
             <Tooltip label={t("outputCopySql")}>
               <Button
                 type="button"
