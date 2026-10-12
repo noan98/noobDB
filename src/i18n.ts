@@ -1521,6 +1521,9 @@ const en = {
     "{cells} cells exceeded Excel's 32,767-character limit and were truncated.",
   exportSqlTable: "Target table",
   exportSqlTablePlaceholder: "Table name for INSERT",
+  exportSqlIncludeDdl: "Include CREATE TABLE statement",
+  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Not included in the preview or copy.",
+  exportSqlIncludeDdlNeedsTable: "Enter a target table name to include its definition.",
   exportSqlBatch: "Rows per statement",
   exportSqlHint:
     "Generates INSERT statements with driver-specific literal escaping, grouping rows into batches.",
@@ -6182,6 +6185,9 @@ const ja: Dict = {
     "Excel のセル文字数上限 (32,767 文字) を超えた {cells} セルを切り詰めました。",
   exportSqlTable: "対象テーブル",
   exportSqlTablePlaceholder: "INSERT 先のテーブル名",
+  exportSqlIncludeDdl: "CREATE TABLE 文を先頭に含める",
+  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーには含まれません。",
+  exportSqlIncludeDdlNeedsTable: "表定義を含めるには対象テーブル名を入力してください。",
   exportSqlBatch: "1 文あたり行数",
   exportSqlHint:
     "ドライバ別のリテラルエスケープで INSERT 文を生成し、指定行数ごとに 1 文へまとめます。",

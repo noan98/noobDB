@@ -65,6 +65,8 @@ pub(crate) struct SqlExportOpts {
     driver: DriverKind,
     table: String,
     batch_size: usize,
+    /// 先頭に付ける `CREATE TABLE` 文 (#1539)。`None` なら INSERT のみ。
+    ddl: Option<String>,
 }
 
 impl SqlExportOpts {
@@ -85,8 +87,29 @@ impl SqlExportOpts {
             driver: driver.unwrap_or(DriverKind::Mysql),
             table,
             batch_size,
+            ddl: None,
         }
     }
+
+    /// 出力の先頭に付ける表定義 (`CREATE TABLE ...`) を設定する。空白だけなら付けない。
+    pub(crate) fn with_ddl(mut self, ddl: Option<String>) -> Self {
+        self.ddl = ddl.filter(|d| !d.trim().is_empty());
+        self
+    }
+}
+
+/// 表定義を `CREATE TABLE ...;` + 空行の形で書く (SQL 形式の `include_ddl`, #1539)。
+/// MySQL の `SHOW CREATE TABLE` は末尾に `;` を付けないので、無ければ補う。
+fn write_sql_ddl<W: Write>(w: &mut W, opts: &SqlExportOpts) -> std::io::Result<()> {
+    let Some(ddl) = &opts.ddl else {
+        return Ok(());
+    };
+    let ddl = ddl.trim_end();
+    w.write_all(ddl.as_bytes())?;
+    if !ddl.ends_with(';') {
+        w.write_all(b";")?;
+    }
+    w.write_all(b"\n\n")
 }
 
 #[tauri::command]
@@ -108,6 +131,9 @@ pub async fn export_query_result(
     // 結果ハンドル (#1264)。指定時は `rows` を使わず、バックエンドが保持する行を書き出す
     // (ハンドルが破棄済みなら `result handle gone` のエラー。フロントは rows 付きで再試行する)。
     result_id: Option<String>,
+    // SQL INSERT 形式のとき先頭に付ける `CREATE TABLE` 文 (#1539)。フロントが
+    // `get_object_definition` で取得して渡す。他形式では無視。
+    ddl_header: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ExportResult> {
     if path.trim().is_empty() {
@@ -115,7 +141,7 @@ pub async fn export_query_result(
     }
     let rows = crate::commands::result::resolve_rows(&state, result_id.as_deref(), rows)?;
     let row_count = rows.len();
-    let sql_opts = SqlExportOpts::build(driver, table, batch_size);
+    let sql_opts = SqlExportOpts::build(driver, table, batch_size).with_ddl(ddl_header);
     let mask_spec = load_mask_spec(masks).await?;
     let masked_columns = mask_spec
         .as_ref()
@@ -265,7 +291,10 @@ pub(crate) fn write_export_to<W: Write + Send>(
         ExportFormat::Json => write_json(w, columns, rows, query)?,
         ExportFormat::Ndjson => write_ndjson(w, columns, rows)?,
         ExportFormat::Markdown => write_markdown(w, columns, rows)?,
-        ExportFormat::Sql => write_sql_insert(w, columns, rows, sql_opts)?,
+        ExportFormat::Sql => {
+            write_sql_ddl(w, sql_opts)?;
+            write_sql_insert(w, columns, rows, sql_opts)?
+        }
         // xlsx だけが列の型名を見る (数値セル判定)。マスク列は文字列として扱わせる。
         ExportFormat::Xlsx => return write_xlsx(w, &mask_columns(mask, columns), rows),
     }
@@ -781,9 +810,10 @@ impl StreamExportSink {
             // Markdown はヘッダ + 区切り行を columns イベントで書く。
             ExportFormat::Markdown => write_markdown_header(&mut self.writer, &self.columns)?,
             ExportFormat::Xlsx => xlsx_sheet(&mut self.xlsx)?.write_header(&self.columns)?,
-            // NDJSON / SQL にはヘッダも開き括弧も無いので columns イベントでは何も書かない
-            // (SQL は各バッチで自己完結した INSERT 文を書く)。
-            ExportFormat::Ndjson | ExportFormat::Sql => {}
+            // SQL は表定義 (#1539, 指定時のみ) を先頭に書く。INSERT は各バッチで自己完結した文を書く。
+            ExportFormat::Sql => write_sql_ddl(&mut self.writer, &self.sql_opts)?,
+            // NDJSON にはヘッダも開き括弧も無いので columns イベントでは何も書かない。
+            ExportFormat::Ndjson => {}
         }
         Ok(())
     }
@@ -917,6 +947,29 @@ impl Drop for PartialFileCleanup {
     }
 }
 
+/// 対象テーブルの `CREATE TABLE` 文を取得する (#1539)。MySQL は `SHOW CREATE TABLE`、
+/// SQLite は `sqlite_master.sql`、PostgreSQL は列・インデックス・FK からの再構成
+/// ([`crate::db::Connection::object_definition`] が 3 ドライバを振り分ける)。
+/// テーブル名が既定のプレースホルダ (結果元が不明) のときは取得できないのでエラー。
+async fn fetch_table_ddl(
+    session: &crate::state::Session,
+    database: Option<&str>,
+    table: &str,
+) -> Result<String> {
+    if table == DEFAULT_SQL_TABLE {
+        return Err(AppError::InvalidInput(
+            "table name is required to include CREATE TABLE".into(),
+        ));
+    }
+    let db = database.ok_or_else(|| {
+        AppError::InvalidInput("database is required to include CREATE TABLE".into())
+    })?;
+    session
+        .conn
+        .object_definition(db, "table", table, None)
+        .await
+}
+
 /// Re-run `sql` against `session` and stream the full result set to `path`.
 /// Shared by the `export_query_stream` command's background task and the task
 /// scheduler (#730) — the command wraps this with `export-stream:*` event
@@ -943,11 +996,17 @@ pub(crate) async fn run_export_to_file(
     chunk_size: usize,
     query_timeout_secs: Option<u64>,
     mask_spec: Option<MaskSpec>,
+    include_ddl: bool,
     mut on_progress: impl FnMut(u64),
 ) -> Result<StreamExportOutcome> {
     // SQL 形式のドライバはセッション (実接続) の方言を使う。
-    let sql_opts =
+    let mut sql_opts =
         SqlExportOpts::build(Some(session.conn.driver_kind()), sql_table, sql_batch_size);
+    // 表定義を先頭に付ける (#1539)。出力ファイルを作る前に取得し、失敗はここで返す。
+    if include_ddl && matches!(format, ExportFormat::Sql) {
+        let ddl = fetch_table_ddl(session, database, &sql_opts.table).await?;
+        sql_opts = sql_opts.with_ddl(Some(ddl));
+    }
 
     // Create the file up front so a bad path surfaces immediately rather than
     // after the query has already started running. JSON 形式では実行クエリを
@@ -1051,6 +1110,8 @@ pub async fn export_query_stream(
     batch_size: Option<usize>,
     // 列単位のマスキングルール (#733)。None / 空ならマスクしない。
     masks: Option<Vec<ColumnMask>>,
+    // SQL INSERT 形式のとき、先頭に `CREATE TABLE` 文を含める (#1539)。他形式では無視。
+    include_ddl: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     if path.trim().is_empty() {
@@ -1108,6 +1169,7 @@ pub async fn export_query_stream(
             chunk_size,
             query_timeout_secs,
             mask_spec,
+            include_ddl.unwrap_or(false),
             counter_for_task,
         )
         .await;
@@ -1147,6 +1209,7 @@ async fn spawn_export_stream(
     chunk_size: usize,
     query_timeout_secs: Option<u64>,
     mask_spec: Option<MaskSpec>,
+    include_ddl: bool,
     counter: Arc<AtomicU64>,
 ) {
     let emit_app = app.clone();
@@ -1170,6 +1233,7 @@ async fn spawn_export_stream(
         chunk_size,
         query_timeout_secs,
         mask_spec,
+        include_ddl,
         move |total| {
             // AppState の StreamHandle.delivered_rows と同期させ、cancel_stream が
             // 現在までの行数を報告できるようにする。
@@ -1844,6 +1908,32 @@ mod tests {
                         \u{20}\u{20}(1, 'Alice'),\n\
                         \u{20}\u{20}(2, 'Bob');\n";
         assert_eq!(out, expected);
+    }
+
+    // #1539: 表定義を先頭に付ける。`;` が無い定義 (MySQL の SHOW CREATE TABLE) は補い、
+    // 空結果でも定義だけは出す。空白だけの定義は付けない。
+    #[test]
+    fn sql_export_prepends_create_table_when_ddl_given() {
+        let columns = vec![col("id")];
+        let rows = vec![vec![Value::Int(1)]];
+        let opts = SqlExportOpts::build(Some(DriverKind::Mysql), Some("t".into()), Some(100))
+            .with_ddl(Some("CREATE TABLE `t` (\n  `id` int\n)\n".into()));
+        let mut buf = Vec::new();
+        write_export_to(&mut buf, ExportFormat::Sql, &columns, &rows, None, &opts, None).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(
+            out.starts_with("CREATE TABLE `t` (\n  `id` int\n);\n\nINSERT INTO `t`"),
+            "{out}"
+        );
+        // 既に `;` で終わる定義 (SQLite / PostgreSQL) は二重にしない。空結果でも定義は出る。
+        let opts = SqlExportOpts::build(Some(DriverKind::Sqlite), Some("t".into()), None)
+            .with_ddl(Some("CREATE TABLE t (id)".to_string() + ";"));
+        let mut buf = Vec::new();
+        write_export_to(&mut buf, ExportFormat::Sql, &columns, &[], None, &opts, None).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "CREATE TABLE t (id);\n\n");
+        let opts = SqlExportOpts::build(Some(DriverKind::Sqlite), Some("t".into()), None)
+            .with_ddl(Some("   ".into()));
+        assert!(opts.ddl.is_none());
     }
 
     #[test]

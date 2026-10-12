@@ -66,6 +66,13 @@
   `escapeHtml` を通し、CSP `default-src 'none'` で外部リソースを禁止、機微カラムマスク
   (#1069) 対象列は reveal に関係なく伏せ字。文脈は `App.tsx` → `ResultGrid` の
   `bundleContext` で渡し、マスク設定は `DataGrid` の `onMaskConfigChange` で持ち上げる。
+- **SQL 形式の `CREATE TABLE` 同梱 (#1539)**: `SqlExportOpts.ddl` に表定義を持たせ、
+  `write_sql_ddl` が INSERT の前に `定義;` + 空行を書く (`;` が無ければ補う。空結果でも定義だけ出る)。
+  ストリーミング (`export_query_stream` の `include_ddl`) はバックエンドが
+  `Connection::object_definition(db, "table", table)` (MySQL `SHOW CREATE TABLE` /
+  SQLite `sqlite_master.sql` / PostgreSQL は introspection からの再構成) で取得し、取得失敗は
+  ファイルを作る前にエラーで止める。在グリッド (`export_query_result` の `ddl_header`) はフロントが
+  `get_object_definition` で取って渡す。プレビュー / 全文コピーには含めない。スケジューラは非対応。
 - **データマスキング (#733)**: `export_query_result` / `export_query_stream` は
   `masks: Option<Vec<ColumnMask>>` (列名 → `MaskRule`) を受け取り、純粋層
   `db/masking.rs` の `mask_rows` を**値エンコード直前の単一フック**として在グリッド

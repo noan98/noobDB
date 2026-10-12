@@ -245,6 +245,10 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   const [sqlTable, setSqlTable] = useState<string>(table ?? "");
   const [sqlBatch, setSqlBatch] = useState<number>(DEFAULT_SQL_BATCH);
   const sqlDriver = driver ?? "mysql";
+  // SQL 形式で先頭に CREATE TABLE 文を含める (#1539)。定義の取得にセッションが要るので、
+  // 全件エクスポートの文脈 (セッション ID) があるときだけ選べる。
+  const [sqlIncludeDdl, setSqlIncludeDdl] = useState(false);
+  const canIncludeDdl = !!fullExport && sqlTable.trim() !== "" && !!database;
   // 選択範囲があればそれを扱う意図が明確なので「選択範囲」を初期選択にする。
   // 次点は、部分結果かつ全件モードが使えるときの「全件」(誤って部分だけ書き出す
   // のを防ぐ)。それ以外は従来どおりグリッドのみ。
@@ -574,6 +578,17 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       return;
     }
     setStatus({ kind: "saving" });
+    // グリッド行の SQL 出力に付ける表定義 (#1539)。取得に失敗したら定義なしで書かず中断する。
+    let ddlHeader: string | null = null;
+    if (format === "sql" && sqlIncludeDdl && canIncludeDdl && fullExport && database) {
+      try {
+        ddlHeader = await api.getObjectDefinition(fullExport.sessionId, database, "table", sqlTable.trim());
+      } catch (e) {
+        setStatus({ kind: "error", message: String(e) });
+        toast.error(t("exportError", { error: String(e) }));
+        return;
+      }
+    }
     if (format === "bundle") {
       try {
         // データマスキング (#733) はバンドルにも適用する (変換はバックエンドの
@@ -618,6 +633,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
           driver: sqlDriver,
           batchSize: sqlBatch,
           masks,
+          ddlHeader,
         }),
       );
       toast.success(t("exportSuccess", { bytes: result.bytes, path }) + maskedSuffix);
@@ -677,6 +693,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         table: sqlTable,
         batchSize: sqlBatch,
         masks,
+        includeDdl: format === "sql" && sqlIncludeDdl && canIncludeDdl,
       });
     } catch (e) {
       unlisten();
@@ -888,6 +905,21 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 <chakra.div fontSize="xs" color="app.textMuted" mt="1">
                   {t("exportSqlHint")}
                 </chakra.div>
+                {fullExport && (
+                  <chakra.div mt="2">
+                    <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none" fontSize="md">
+                      <Checkbox
+                        checked={sqlIncludeDdl && canIncludeDdl}
+                        onChange={(e) => setSqlIncludeDdl(e.target.checked)}
+                        disabled={isSaving || !canIncludeDdl}
+                      />
+                      <span>{t("exportSqlIncludeDdl")}</span>
+                    </chakra.label>
+                    <chakra.div fontSize="xs" color="app.textMuted" mt="1">
+                      {sqlTable.trim() === "" ? t("exportSqlIncludeDdlNeedsTable") : t("exportSqlIncludeDdlHint")}
+                    </chakra.div>
+                  </chakra.div>
+                )}
               </FormSection>
             </motion.div>
           )}

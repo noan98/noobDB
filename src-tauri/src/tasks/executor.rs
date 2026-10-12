@@ -233,6 +233,8 @@ async fn run_action(
                 // スケジュール実行のエクスポートはマスキング (#733) 非対応 (タスク定義に
                 // ルールを持たない)。マスクが必要な出力は ExportModal から行う。
                 None,
+                // スケジュール実行は表定義 (CREATE TABLE) を付けない (#1539。ExportModal から行う)。
+                false,
                 |rows| progress.store(rows, Ordering::SeqCst),
             )
             .await;
