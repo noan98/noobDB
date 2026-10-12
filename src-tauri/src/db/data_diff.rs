@@ -270,12 +270,15 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
         row.key_unreliable || duplicate_key_sigs.contains(&key_signature(&row.key))
     };
     let mut skipped_unreliable = false;
+    // 列名 → 位置とバイナリ列の判定を最初に 1 度だけ作り、行ごと・列ごとの線形探索を
+    // しない (1 万行 × 60 列で約 3600 万回の文字列比較になっていた #1530)。
+    let index = ColumnIndex::new(&diff.columns, &diff.column_types);
 
     for row in &diff.rows {
         match row.status {
             RowStatus::SourceOnly => {
                 if let Some(values) = &row.source {
-                    let values = coerce_binary_values(&diff.columns, &diff.column_types, values);
+                    let values = index.coerce_values(values);
                     let (ins_columns, ins_values) =
                         without_generated(&diff.columns, &values, &diff.generated_columns);
                     statements.push(SyncStatement {
@@ -290,13 +293,8 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
                 if is_unreliable(row) {
                     skipped_unreliable = true;
                 } else if let Some(values) = &row.source {
-                    let values = coerce_binary_values(&diff.columns, &diff.column_types, values);
-                    let key = coerce_binary_key(
-                        &diff.columns,
-                        &diff.column_types,
-                        &diff.primary_key,
-                        &row.key,
-                    );
+                    let values = index.coerce_values(values);
+                    let key = index.coerce_key(&diff.primary_key, &row.key);
                     let changed: Vec<String> = row
                         .changed_columns
                         .iter()
@@ -306,7 +304,7 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
                     if let Some(sql) = update_sql(
                         driver,
                         &table_ident,
-                        &diff.columns,
+                        &index,
                         &diff.primary_key,
                         &changed,
                         &values,
@@ -326,12 +324,7 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
                     if is_unreliable(row) {
                         skipped_unreliable = true;
                     } else {
-                        let key = coerce_binary_key(
-                            &diff.columns,
-                            &diff.column_types,
-                            &diff.primary_key,
-                            &row.key,
-                        );
+                        let key = index.coerce_key(&diff.primary_key, &row.key);
                         statements.push(SyncStatement {
                             sql: delete_sql(driver, &table_ident, &diff.primary_key, &key),
                             table: diff.table.clone(),
@@ -495,6 +488,64 @@ pub(crate) fn coerce_binary_key(
         .collect()
 }
 
+/// 列名 → 位置の表と、バイナリ列の判定。`generate_data_sync_sql` の冒頭で 1 度だけ
+/// 作り、行処理から参照する。重複した列名は最初の位置を採る (従来の
+/// `iter().position` と同じ)。結果は線形探索版と変わらない。
+struct ColumnIndex<'a> {
+    positions: std::collections::HashMap<&'a str, usize>,
+    /// `positions` の位置ごとの「バイナリ型か」。型が無い位置は `false`。
+    binary: Vec<bool>,
+}
+
+impl<'a> ColumnIndex<'a> {
+    fn new(columns: &'a [String], types: &[String]) -> Self {
+        let mut positions = std::collections::HashMap::with_capacity(columns.len());
+        for (i, c) in columns.iter().enumerate() {
+            positions.entry(c.as_str()).or_insert(i);
+        }
+        let binary = (0..columns.len())
+            .map(|i| types.get(i).is_some_and(|t| is_binary_type(t)))
+            .collect();
+        Self { positions, binary }
+    }
+
+    fn coerce_one(&self, name: &str, value: &Value) -> Value {
+        let is_binary = self
+            .positions
+            .get(name)
+            .and_then(|&i| self.binary.get(i))
+            .copied()
+            .unwrap_or(false);
+        match value {
+            Value::String(hex) if is_binary => Value::Bytes(hex.clone()),
+            _ => value.clone(),
+        }
+    }
+
+    /// 行全体 (列の並びは `columns` と同じ) に [`coerce_binary_values`] 相当を適用する。
+    fn coerce_values(&self, values: &[Value]) -> Vec<Value> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, value)| match value {
+                Value::String(hex) if self.binary.get(i).copied().unwrap_or(false) => {
+                    Value::Bytes(hex.clone())
+                }
+                _ => value.clone(),
+            })
+            .collect()
+    }
+
+    /// 主キー値に [`coerce_binary_key`] 相当を適用する。
+    fn coerce_key(&self, key_columns: &[String], key: &[Value]) -> Vec<Value> {
+        key_columns
+            .iter()
+            .zip(key.iter())
+            .map(|(name, value)| self.coerce_one(name, value))
+            .collect()
+    }
+}
+
 fn insert_sql(
     driver: DriverKind,
     table_ident: &str,
@@ -519,7 +570,7 @@ fn insert_sql(
 fn update_sql(
     driver: DriverKind,
     table_ident: &str,
-    columns: &[String],
+    index: &ColumnIndex<'_>,
     primary_key: &[String],
     changed: &[String],
     source_values: &[Value],
@@ -531,7 +582,7 @@ fn update_sql(
     let set = changed
         .iter()
         .filter_map(|name| {
-            let idx = columns.iter().position(|c| c == name)?;
+            let idx = *index.positions.get(name.as_str())?;
             Some(format!(
                 "{} = {}",
                 quote_ident(driver, name),

@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::process::Command;
 
-use crate::db::types::Value;
+use crate::db::types::{StreamBatch, Value};
 use crate::db::{DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
@@ -884,14 +884,18 @@ async fn dump_sqlite(
 ) -> Result<u64> {
     // テーブル指定 (#1399)。検証は書き込み開始前に済ませる。
     let selected = selected_tables(options)?;
-    let mut writer = BufWriter::new(file);
+    // 行データは `execute_stream` の同期コールバックから書くので、同期の BufWriter を
+    // 共有する (エクスポートの sink と同じ方式)。表単位ではなく行単位で書き出すため、
+    // 巨大な 1 表でも全行を同時にメモリへ載せない (#1530)。
+    let writer = Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(
+        file.into_std().await,
+    )));
 
     write_chunk(
-        &mut writer,
+        &writer,
         counter,
         "PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n",
-    )
-    .await?;
+    )?;
 
     // Tables: CREATE then row data, in name order. `sqlite_%` internal tables and
     // rows without a stored `sql` (implicit indexes) are skipped.
@@ -945,29 +949,66 @@ async fn dump_sqlite(
             chunk.push_str(&create_sql);
             chunk.push_str(";\n");
         }
+        // 表の DDL までを先に書き出し、行データは下でストリーミングする。
+        write_chunk(&writer, counter, &chunk)?;
         if !options.no_data {
-            let data = conn
-                .execute(
-                    &format!("SELECT * FROM {}", sqlite_quote_ident(&name)),
-                    None,
-                )
-                .await?;
-            let cols: Vec<String> = data
-                .columns
-                .iter()
-                .map(|c| sqlite_quote_ident(&c.name))
-                .collect();
-            for r in &data.rows {
-                let vals: Vec<String> = r.iter().map(sqlite_literal).collect();
-                chunk.push_str(&format!(
-                    "INSERT INTO {} ({}) VALUES ({});\n",
-                    sqlite_quote_ident(&name),
-                    cols.join(", "),
-                    vals.join(", ")
-                ));
-            }
+            let quoted = sqlite_quote_ident(&name);
+            let mut insert_prefix = String::new();
+            let writer_cb = writer.clone();
+            let counter_cb = counter.clone();
+            let app_cb = app.clone();
+            let stream_id_cb = stream_id.to_string();
+            let mut last_progress_bytes = counter.load(Ordering::SeqCst);
+            let mut last_progress_at = Instant::now();
+            let tables_done = processed;
+            conn.execute_stream(
+                &format!("SELECT * FROM {quoted}"),
+                None,
+                DUMP_STREAM_BATCH,
+                DUMP_STREAM_BATCH,
+                move |batch| {
+                    match batch {
+                        StreamBatch::Columns(columns) => {
+                            let cols: Vec<String> = columns
+                                .iter()
+                                .map(|c| sqlite_quote_ident(&c.name))
+                                .collect();
+                            insert_prefix =
+                                format!("INSERT INTO {quoted} ({}) VALUES (", cols.join(", "));
+                        }
+                        StreamBatch::Rows(rows) => {
+                            let mut buf = String::new();
+                            for r in &rows {
+                                let vals: Vec<String> = r.iter().map(sqlite_literal).collect();
+                                buf.push_str(&insert_prefix);
+                                buf.push_str(&vals.join(", "));
+                                buf.push_str(");\n");
+                            }
+                            write_chunk(&writer_cb, &counter_cb, &buf)?;
+                            // 1 表が長くても止まって見えないよう、一定バイトごと (または
+                            // 一定時間ごと) に進捗を出す。
+                            let bytes = counter_cb.load(Ordering::SeqCst);
+                            if bytes.saturating_sub(last_progress_bytes) >= DUMP_PROGRESS_BYTES
+                                || last_progress_at.elapsed() >= DUMP_PROGRESS_INTERVAL
+                            {
+                                last_progress_bytes = bytes;
+                                last_progress_at = Instant::now();
+                                emit_table_progress(
+                                    &app_cb,
+                                    &stream_id_cb,
+                                    bytes,
+                                    tables_done,
+                                    total_tables,
+                                    started,
+                                );
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .await?;
         }
-        write_chunk(&mut writer, counter, &chunk).await?;
         processed += 1;
         emit_table_progress(
             app,
@@ -1009,22 +1050,39 @@ async fn dump_sqlite(
                 chunk.push_str(";\n");
             }
         }
-        write_chunk(&mut writer, counter, &chunk).await?;
+        write_chunk(&writer, counter, &chunk)?;
     }
 
-    write_chunk(&mut writer, counter, "COMMIT;\n").await?;
-    writer.flush().await?;
+    write_chunk(&writer, counter, "COMMIT;\n")?;
+    {
+        use std::io::Write;
+        let mut w = writer
+            .lock()
+            .map_err(|_| AppError::Other("dump writer lock poisoned".into()))?;
+        w.flush()?;
+    }
     let bytes = counter.load(Ordering::SeqCst);
     Ok(bytes)
 }
 
+/// SQLite ダンプの行ストリームを 1 回に受け取る行数。
+const DUMP_STREAM_BATCH: usize = 500;
+/// 1 表の行データ書き出し中に進捗を出す間隔 (バイト)。
+const DUMP_PROGRESS_BYTES: u64 = 1024 * 1024;
+/// 同じく時間基準の上限 (遅い表でもこの間隔で進捗が動く)。
+const DUMP_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// Write `s` to the dump file and add its byte length to the shared counter.
-async fn write_chunk(
-    writer: &mut BufWriter<tokio::fs::File>,
+fn write_chunk(
+    writer: &Arc<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>,
     counter: &Arc<AtomicU64>,
     s: &str,
 ) -> Result<()> {
-    writer.write_all(s.as_bytes()).await?;
+    use std::io::Write;
+    let mut w = writer
+        .lock()
+        .map_err(|_| AppError::Other("dump writer lock poisoned".into()))?;
+    w.write_all(s.as_bytes())?;
     counter.fetch_add(s.len() as u64, Ordering::SeqCst);
     Ok(())
 }

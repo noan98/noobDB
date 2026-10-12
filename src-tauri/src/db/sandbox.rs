@@ -169,14 +169,38 @@ pub fn detect_conflicts(desired: &DataDiff, external: &DataDiff) -> Vec<SandboxC
         .iter()
         .filter_map(|d| {
             let sig = key_signature(&d.key);
-            external_by_key.get(&sig).map(|e| SandboxConflict {
-                key: d.key.clone(),
-                desired_status: d.status,
-                external_status: e.status,
-                external_row: e.source.clone(),
-            })
+            external_by_key
+                .get(&sig)
+                .filter(|e| !is_converged(d, e))
+                .map(|e| SandboxConflict {
+                    key: d.key.clone(),
+                    desired_status: d.status,
+                    external_status: e.status,
+                    external_row: e.source.clone(),
+                })
         })
         .collect()
+}
+
+/// 両側が同じ内容に変えた (収束した) 行か。利用者に解決を求める意味が無いので
+/// 衝突から外す (#1530):
+/// - 両側とも更新で、変更後の行が一致する (書き戻しの UPDATE は同値の上書きで無害)。
+/// - 両側とも削除 (書き戻しの DELETE は対象が無いだけで無害)。
+///
+/// 両側が同じ行を**追加**した場合は外さない: 書き戻しの INSERT が既存キーと重複して
+/// 失敗するので、利用者が「スキップ」を選べる衝突として残す。
+fn is_converged(desired: &RowDiff, external: &RowDiff) -> bool {
+    if desired.status != external.status {
+        return false;
+    }
+    match desired.status {
+        RowStatus::TargetOnly => true,
+        RowStatus::Different => match (&desired.source, &external.source) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// Returns a copy of `diff` with every row whose key signature appears in
@@ -389,6 +413,31 @@ mod tests {
     }
 
     #[test]
+    fn detect_conflicts_skips_rows_both_sides_changed_to_the_same_value() {
+        let desired = data_diff(vec![
+            // 両側が同じ値 (99) に更新 → 収束。
+            row_diff(RowStatus::Different, 1, Some(99), Some(10)),
+            // 両側が別の値へ更新 → 衝突。
+            row_diff(RowStatus::Different, 2, Some(1), Some(10)),
+            // 両側が削除 → 収束。
+            row_diff(RowStatus::TargetOnly, 3, None, Some(10)),
+            // 両側が同じ行を追加 → INSERT が重複するので衝突のまま。
+            row_diff(RowStatus::SourceOnly, 4, Some(7), None),
+        ]);
+        let external = data_diff(vec![
+            row_diff(RowStatus::Different, 1, Some(99), Some(10)),
+            row_diff(RowStatus::Different, 2, Some(2), Some(10)),
+            row_diff(RowStatus::TargetOnly, 3, None, Some(10)),
+            row_diff(RowStatus::SourceOnly, 4, Some(7), None),
+        ]);
+        let keys: Vec<Value> = detect_conflicts(&desired, &external)
+            .into_iter()
+            .flat_map(|c| c.key)
+            .collect();
+        assert_eq!(keys, vec![Value::Int(2), Value::Int(4)]);
+    }
+
+    #[test]
     fn detect_conflicts_empty_when_no_key_overlap() {
         let desired = data_diff(vec![row_diff(RowStatus::SourceOnly, 1, Some(1), None)]);
         let external = data_diff(vec![row_diff(RowStatus::SourceOnly, 2, Some(2), None)]);
@@ -437,6 +486,7 @@ mod tests {
         TableDiff {
             name: name.to_string(),
             status,
+            foreign_keys: vec![],
             columns: Vec::<ColumnDiff>::new(),
         }
     }

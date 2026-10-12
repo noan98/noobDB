@@ -2901,7 +2901,7 @@ fn array_element_needs_quotes(s: &str) -> bool {
 /// Best-effort extraction of the target table from a mutation statement.
 /// Returns `None` for shapes we don't confidently recognise. The returned
 /// string is taken verbatim so quoting/qualification is preserved.
-fn extract_target_table(sql: &str) -> Option<String> {
+pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
     let tokens = tokenize_sql(sql);
     let mut iter = tokens.into_iter().peekable();
     let first = iter.next()?;

@@ -326,10 +326,24 @@ async fn conflict_modes_create_replace_append() {
     assert_eq!(int(&r.rows[0][0]), 2);
     assert_eq!(int(&r.rows[0][1]), 2);
 
-    // BLOB 列を含む SQLite への追記は拒否 (hex の後処理が既存行を壊すため)
+    // BLOB 列を含む追記もできる: hex は INSERT の値式で unhex されるので既存行を
+    // 巻き込まず (後処理 UPDATE が無い #1530)、追記した行もバイト列のまま。
     let mut req = table_request("m_src", "m_dst", "a", "a");
     req.mode = t::TransferMode::Append;
-    assert!(run(&state, req).await.is_err());
+    run(&state, req).await.expect("append with blob");
+    let r = exec(
+        &state,
+        "m_dst",
+        "SELECT count(*), sum(typeof(b) = 'blob'), sum(typeof(b) = 'text') FROM a",
+    )
+    .await;
+    assert_eq!(int(&r.rows[0][0]), 4);
+    assert_eq!(
+        int(&r.rows[0][1]),
+        2,
+        "BLOB はバイト列のまま (既存行・追記行とも)"
+    );
+    assert_eq!(int(&r.rows[0][2]), 0, "hex テキストが残らない");
 
     // BLOB を含まない追記は行が増える
     let mut req = table_request("m_src", "m_dst", "", "a_ids");

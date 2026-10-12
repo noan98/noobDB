@@ -35,9 +35,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::commands::progress::{needs_final_emit, ProgressThrottle};
 use crate::commands::query::{ensure_allowed_for_session, record_write_history};
 use crate::db::transfer::{
-    binary_finalize_sql, create_table_sql, drop_table_sql, ensure_append_supported, plan_columns,
-    plan_warnings, source_select_sql, validate_target_table, value_to_cell, TransferColumn,
-    TransferMode,
+    create_table_sql, drop_table_sql, hex_binary_columns, plan_columns, plan_warnings,
+    source_select_sql, validate_target_table, value_to_cell, TransferColumn, TransferMode,
 };
 use crate::db::types::{Column, StreamBatch};
 use crate::db::{is_read_only_sql_for, DriverKind};
@@ -364,7 +363,7 @@ async fn prepare_target(
     let db = request.target_database.as_deref().filter(|d| !d.is_empty());
     let table = request.target_table.trim();
     match request.mode {
-        TransferMode::Append => ensure_append_supported(driver, &plan)?,
+        TransferMode::Append => {}
         TransferMode::Create | TransferMode::Replace => {
             if request.mode == TransferMode::Replace {
                 target
@@ -413,9 +412,12 @@ async fn write_batch(
         })
         .collect();
     let db = request.target_database.as_deref().filter(|d| !d.is_empty());
+    // SQLite / MySQL のバイナリ列は hex 文字列で bind し、値式側で unhex する
+    // (全件投入後の UPDATE を不要にする #1530)。
+    let hex_binary = hex_binary_columns(driver, plan);
     target
         .conn
-        .import_rows(
+        .import_rows_with_binary(
             db,
             request.target_table.trim(),
             &names,
@@ -423,6 +425,7 @@ async fn write_batch(
             batch_size,
             // 転送は常に素の INSERT (衝突時の扱いは `TransferMode` 側で事前に決める)。
             &crate::db::upsert::ImportConflict::insert_only(),
+            &hex_binary,
             |_| Ok(()),
         )
         .await
@@ -552,12 +555,6 @@ pub(crate) async fn run_transfer(
                 .await?
             }
         };
-        if request.mode.creates_table() {
-            let db = request.target_database.as_deref().filter(|d| !d.is_empty());
-            for sql in binary_finalize_sql(driver, request.target_table.trim(), &plan) {
-                target.conn.execute(&sql, db).await?;
-            }
-        }
         Ok::<_, AppError>((written, plan))
     };
     let result = body.await;

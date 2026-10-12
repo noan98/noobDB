@@ -423,20 +423,19 @@ async fn probe_session_health(
     let Some(session) = state.get(session_id).await else {
         return item(HealthProbeStatus::Down, None, None, None);
     };
-    let cached = if refresh_version {
-        None
-    } else {
-        session.cached_health_version()
-    };
+    // 再取得を指示されても、既知のバージョンは手放さない。タイムアウトや失敗で
+    // ヘルス表示からバージョンが消えないよう、フォールバック用に必ず保持する (#1530)。
+    let known = session.cached_health_version();
+    let cached = if refresh_version { None } else { known.clone() };
     let started = std::time::Instant::now();
     match tokio::time::timeout(timeout, session.conn.health_check()).await {
         Err(_) => {
             tracing::info!(session_id = %session_id, "health probe timed out");
-            return item(HealthProbeStatus::Timeout, None, cached, None);
+            return item(HealthProbeStatus::Timeout, None, known, None);
         }
         Ok(Err(_)) => {
             tracing::info!(session_id = %session_id, "health check failed; connection appears dead");
-            return item(HealthProbeStatus::Down, None, cached, None);
+            return item(HealthProbeStatus::Down, None, known, None);
         }
         Ok(Ok(())) => {}
     }
@@ -455,8 +454,10 @@ async fn probe_session_health(
             .filter(|v| !v.is_empty());
         if fetched.is_some() {
             session.set_cached_health_version(fetched.clone());
+            return fetched;
         }
-        fetched
+        // 再取得に失敗したら、既知の値へフォールバックする。
+        known.clone()
     };
     let connections_fut = async {
         tokio::time::timeout(timeout, session.conn.connection_count())

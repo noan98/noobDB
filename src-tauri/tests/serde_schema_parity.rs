@@ -424,6 +424,14 @@ fn build_fixtures() -> serde_json::Value {
     let table_diff = TableDiff {
         name: "users".into(),
         status: DiffStatus::Different,
+        foreign_keys: vec![t::DiffForeignKey {
+            name: Some("fk_users_org".into()),
+            columns: vec!["org_id".into()],
+            referenced_table: "orgs".into(),
+            referenced_columns: vec!["id".into()],
+            on_delete: Some("CASCADE".into()),
+            on_update: None,
+        }],
         columns: vec![column_diff],
     };
     let schema_diff = SchemaDiff {
@@ -905,6 +913,7 @@ fn build_fixtures() -> serde_json::Value {
                 .map(|table_status| TableDiff {
                     name: "users".into(),
                     status: *table_status,
+                    foreign_keys: vec![],
                     columns: all_diff_statuses
                         .iter()
                         .map(|column_status| ColumnDiff {
@@ -920,10 +929,10 @@ fn build_fixtures() -> serde_json::Value {
         })
         .collect();
 
-    // 同期プラン: SyncKind 8 種すべて (destructive は DROP 系のみ true)。
+    // 同期プラン: SyncKind 9 種すべて (destructive は DROP 系のみ true)。
     let sync_plan_variants = vec![SyncPlan {
         statements: variants!(SyncKind [
-            CreateTable, AddColumn, AlterColumn, DropColumn, DropTable,
+            CreateTable, AddColumn, AlterColumn, AddForeignKey, DropColumn, DropTable,
             InsertRow, UpdateRow, DeleteRow
         ])
         .into_iter()

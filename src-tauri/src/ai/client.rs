@@ -252,8 +252,19 @@ pub struct ReqwestTransport {
     client: reqwest::Client,
 }
 
+/// プロセス全体で共有する HTTP クライアント。要求のたびに作り直すと接続プールが
+/// 効かず、毎回 TCP / TLS のハンドシェイクが走る (インライン補完は入力のたびに
+/// 呼ばれるので待ちが積み上がる #1530)。`reqwest::Client` は内部が `Arc` なので
+/// clone は安価で、同じプールを共有する。
+static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
 impl ReqwestTransport {
     pub fn new() -> Result<Self> {
+        if let Some(client) = SHARED_CLIENT.get() {
+            return Ok(Self {
+                client: client.clone(),
+            });
+        }
         // reqwest の `rustls-no-provider` 構成は、プロセス既定の暗号プロバイダが未登録だと
         // Client 構築時に panic する (sqlx は既定に登録せず、updater は更新チェック時にしか
         // 登録しない)。更新チェック前でも安全なよう、updater と同じ ring をここで登録する。
@@ -265,6 +276,8 @@ impl ReqwestTransport {
             .read_timeout(Duration::from_secs(120))
             .build()
             .map_err(|e| AppError::AiNetwork(e.without_url().to_string()))?;
+        // 同時に初期化が競合したら先に登録された方を使う (どちらも同じ設定)。
+        let client = SHARED_CLIENT.get_or_init(|| client).clone();
         Ok(Self { client })
     }
 }

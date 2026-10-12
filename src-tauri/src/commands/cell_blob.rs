@@ -264,6 +264,19 @@ pub(crate) async fn fetch_cell_blob(
     key: &[CellKeyPart],
 ) -> Result<Option<Vec<u8>>> {
     let driver = session.conn.driver_kind();
+    // 本体を取り込む前にサイズだけ先に問い合わせ、上限超過なら SELECT を発行しない
+    // (数百 MB 〜 GB の BLOB を全量転送・16 進化してから拒否していた #1530)。
+    // probe は OCTET_LENGTH / LENGTH と先頭 16 バイトだけを返す軽い問い合わせ。
+    match probe_blob(session, database, table, column, key).await? {
+        None => return Ok(None),
+        Some(p) if p.size > MAX_CELL_BLOB_BYTES as u64 => {
+            return Err(AppError::InvalidInput(format!(
+                "value too large ({} bytes, limit {} bytes)",
+                p.size, MAX_CELL_BLOB_BYTES
+            )));
+        }
+        Some(_) => {}
+    }
     let sql = build_cell_select(driver, database, table, column, key)?;
     let result = session.conn.execute(&sql, database).await?;
     if result.rows.len() != 1 {
