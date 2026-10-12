@@ -737,6 +737,21 @@ fn build_fixtures() -> serde_json::Value {
         rows: 200,
     };
 
+    // #1532: 転送前プレビュー (`preview_transfer`)。
+    let transfer_preview = t::TransferPreview {
+        columns: vec![t::TransferColumnInfo {
+            name: "amount".into(),
+            source_type: "DECIMAL(70,2)".into(),
+            target_type: "DECIMAL(65,2)".into(),
+        }],
+        lossy: vec![t::LossyConversion {
+            column: "amount".into(),
+            kind: t::LossyKind::DecimalClamped,
+            source_type: "DECIMAL(70,2)".into(),
+            target_type: "DECIMAL(65,2)".into(),
+        }],
+    };
+
     let cell_blob_probe = CellBlobProbe {
         size: 4096,
         mime: Some("image/png".into()),
@@ -1612,6 +1627,7 @@ fn build_fixtures() -> serde_json::Value {
         "importProgressEvent": import_progress_event,
         "importDoneEvent": import_done_event,
         "cellBlobProbe": cell_blob_probe,
+        "transferPreview": transfer_preview,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,
         "dumpDoneEvent": dump_done_event,

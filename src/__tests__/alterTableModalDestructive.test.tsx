@@ -90,3 +90,73 @@ describe("AlterTableModal 破壊的変更 (#1529)", () => {
     expect(onRun).toHaveBeenCalledOnce();
   });
 });
+
+describe("AlterTableModal インデックス行の不備 (#1532)", () => {
+  it("追加直後の空行にはエラーを出さず、触った後に行ごとに出す。不完全な間は実行しない", async () => {
+    const onRun = renderModal();
+    await screen.findAllByRole("button", { name: t("alterTableDrop") });
+    const inputs = screen.getAllByLabelText(new RegExp(`${t("createTableColType")}: memo`));
+    fireEvent.change(inputs[0], { target: { value: "varchar(10)" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableAddIndex") }));
+    // 行ごとのエラーは伏せたまま、止まっている理由は出る。
+    expect(await screen.findByText(t("alterTableIndexIncompleteBlocked"))).toBeInTheDocument();
+    expect(screen.queryByText(t("alterTableIndexNameRequired"))).toBeNull();
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter", ctrlKey: true });
+    expect(onRun).not.toHaveBeenCalled();
+    // 実行を試みた後は行のエラーも出る。
+    expect(await screen.findByText(t("alterTableIndexNameRequired"))).toBeInTheDocument();
+    expect(screen.getByText(t("alterTableIndexColumnsRequired"))).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(t("alterTableIndexNamePlaceholder")), {
+      target: { value: "idx_memo" },
+    });
+    expect(screen.queryByText(t("alterTableIndexNameRequired"))).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableRun") }));
+    expect(onRun).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getAllByRole("checkbox").at(-1) as HTMLElement);
+    await waitFor(() => {
+      expect(screen.queryByText(t("alterTableIndexIncompleteBlocked"))).toBeNull();
+    });
+    expect(screen.queryByText(t("alterTableIndexColumnsRequired"))).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableRun") }));
+    expect(onRun).toHaveBeenCalledOnce();
+  });
+
+  it("名前欄のフォーカスを外すとその行のエラーが出る", async () => {
+    renderModal();
+    await screen.findAllByRole("button", { name: t("alterTableDrop") });
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableAddIndex") }));
+    const name = screen.getByLabelText(t("alterTableIndexNamePlaceholder"));
+    expect(screen.queryByText(t("alterTableIndexNameRequired"))).toBeNull();
+    fireEvent.blur(name);
+    expect(await screen.findByText(t("alterTableIndexNameRequired"))).toBeInTheDocument();
+  });
+
+  it("名前を入力して空に戻すと、blur なしでもその行のエラーが出る", async () => {
+    renderModal();
+    await screen.findAllByRole("button", { name: t("alterTableDrop") });
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableAddIndex") }));
+    const name = screen.getByLabelText(t("alterTableIndexNamePlaceholder"));
+    fireEvent.change(name, { target: { value: "x" } });
+    expect(screen.queryByText(t("alterTableIndexNameRequired"))).toBeNull();
+    fireEvent.change(name, { target: { value: "" } });
+    expect(await screen.findByText(t("alterTableIndexNameRequired"))).toBeInTheDocument();
+  });
+
+  it("破壊的変更があっても、不完全なインデックス行がある間は実行ボタンで実行されない", async () => {
+    const onRun = renderModal();
+    const dropButtons = await screen.findAllByRole("button", { name: t("alterTableDrop") });
+    fireEvent.click(dropButtons[1]);
+    await screen.findByText(t("alterTableDestructiveTitle", { count: 1 }));
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableAddIndex") }));
+    expect(await screen.findByText(t("alterTableIndexIncompleteBlocked"))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableRun") }));
+    expect(onRun).not.toHaveBeenCalled();
+  });
+});

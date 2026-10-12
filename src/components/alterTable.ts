@@ -104,6 +104,19 @@ export interface IndexDef {
   unique: boolean;
 }
 
+/** インデックス行の不備 (#1532)。`buildAlterPlan` はこれが有る行を文にしない。 */
+export interface IndexRowProblems {
+  missingName: boolean;
+  missingColumns: boolean;
+}
+
+/** インデックス行の不備を調べる。不備が無ければ `null`。 */
+export function indexRowProblems(idx: IndexDef): IndexRowProblems | null {
+  const missingName = idx.name.trim().length === 0;
+  const missingColumns = idx.columns.every((c) => c.trim().length === 0);
+  return missingName || missingColumns ? { missingName, missingColumns } : null;
+}
+
 export interface AlterTableForm {
   database?: string | null;
   table: string;
@@ -484,7 +497,8 @@ const STATEMENT_ORDER: Record<AlterStatementKind, number> = {
  * フォーム入力から `ALTER TABLE` / `CREATE INDEX` 文の配列を組み立てる。順序は
  * ADD → RENAME/MODIFY → DROP → CREATE INDEX
  * (`db/sync.rs` の `SyncKind::order()` と同じ「作ってから壊す」安全な適用順)。
- * 列名 / 索引名が未入力の行は無視する。
+ * 列名が未入力の追加列は無視する。不備のあるインデックス行 ({@link indexRowProblems}) も
+ * 文にしないが、UI 側が実行を止める。
  */
 export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan {
   const tIdent = qualifiedName(driver, form.database, form.table);
@@ -522,9 +536,11 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   statements.sort((a, b) => STATEMENT_ORDER[a.kind] - STATEMENT_ORDER[b.kind]);
 
   for (const idx of form.indexes) {
+    // 不備のある行はここで捨てる。UI は `indexRowProblems` で行ごとにエラーを出し、
+    // 不備が残る間は実行を止めるので、黙って作られないまま実行されることはない (#1532)。
+    if (indexRowProblems(idx)) continue;
     const name = idx.name.trim();
     const cols = idx.columns.map((c) => c.trim()).filter((c) => c.length > 0);
-    if (!name || cols.length === 0) continue;
     const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
     const keyword = idx.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
     statements.push({

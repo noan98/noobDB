@@ -1,6 +1,7 @@
 import { chakra, Flex } from "@chakra-ui/react";
 import type { LocalTableMeta } from "../api/tauri";
 import { useT } from "../i18n";
+import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { PressableButton } from "./ui";
@@ -42,6 +43,18 @@ export function LocalTablesPanel({
   onSaveToFile,
 }: Props) {
   const t = useT();
+  const { confirm, dialog: confirmDialog } = useConfirm();
+
+  // 登録済みの結果セットは取り消せないので、削除の前に確認を挟む (#1532)。
+  const requestDrop = async (name: string) => {
+    const ok = await confirm({
+      title: t("localPanelDropConfirmTitle"),
+      message: t("localPanelDropConfirmBody", { table: name }),
+      confirmLabel: t("localPanelDropConfirmOk"),
+      tone: "danger",
+    });
+    if (ok) onDropTable(name);
+  };
 
   return (
     <Flex direction="column" h="100%" minH={0}>
@@ -105,7 +118,7 @@ export function LocalTablesPanel({
                       color="app.textError"
                       _hover={{ color: "app.textError", bg: "app.hover" }}
                       aria-label={t("localPanelDropTable")}
-                      onClick={() => onDropTable(tbl.name)}
+                      onClick={() => void requestDrop(tbl.name)}
                     >
                       <Icon name="trash" size={ICON_SIZES.sm} />
                     </PressableButton>
@@ -143,6 +156,7 @@ export function LocalTablesPanel({
           </chakra.span>
         )}
       </Flex>
+      {confirmDialog}
     </Flex>
   );
 }

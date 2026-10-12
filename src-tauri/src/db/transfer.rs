@@ -377,12 +377,6 @@ pub fn source_select_sql(driver: DriverKind, table: &str) -> String {
     format!("SELECT * FROM {}", quote_ident(driver, table))
 }
 
-/// バイト列を忠実に書けない (hex 文字列へ縮退する) ドライバか。
-pub fn binary_is_lossy(driver: DriverKind) -> bool {
-    let _ = driver;
-    false
-}
-
 /// 列ごとに「hex 文字列で bind し、INSERT の値式で `unhex` するか」。テキストでしか
 /// 渡せないインポート経路で、SQLite / MySQL のバイナリ列だけが対象 (PostgreSQL は
 /// `\x<hex>` を bytea へ暗黙変換できるので不要)。
@@ -492,18 +486,101 @@ fn value_to_cell_inner(driver: DriverKind, ty: &TransferType, value: &Value) -> 
     }
 }
 
-/// 転送結果のユーザ向け注意書き (損失のあるマッピング等)。
-pub fn plan_warnings(driver: DriverKind, columns: &[TransferColumn]) -> Vec<String> {
+/// 転送で実際に値や型が変わる列変換の種別 (#1532)。ターゲット方言の DDL 型へ
+/// 落とすときに精度・型の情報が縮退する組み合わせだけを検出する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LossyKind {
+    /// 精度/小数桁がターゲット方言の上限を超え、DDL 型で丸められる (MySQL: 65 桁 / 小数 30 桁、
+    /// PostgreSQL: 1000 桁)。
+    DecimalClamped,
+    /// SQLite は NUMERIC を INTEGER / REAL に寄せるため、有効桁 15 桁超の小数は桁落ちしうる。
+    DecimalFloat,
+    /// タイムゾーン付き時刻が時刻型ではなく文字列 (MySQL: VARCHAR) / 型アフィニティ頼み
+    /// (SQLite) に縮退し、時刻としての比較・演算ができなくなる。
+    TimestampTzDegraded,
+}
+
+/// 1 列ぶんの縮退する変換。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LossyConversion {
+    pub column: String,
+    pub kind: LossyKind,
+    pub source_type: String,
+    pub target_type: String,
+}
+
+/// 列ごとの精度・型の縮退を検出する (純関数。ドライバは転送先)。
+pub fn lossy_conversions(driver: DriverKind, columns: &[TransferColumn]) -> Vec<LossyConversion> {
     let mut out = Vec::new();
-    if binary_is_lossy(driver) {
-        for c in columns.iter().filter(|c| c.ty == TransferType::Binary) {
-            out.push(format!(
-                "column \"{}\" is binary and may lose precision on this target",
-                c.name
-            ));
+    for c in columns {
+        let kind = match &c.ty {
+            TransferType::Decimal { precision, scale } => {
+                let (max_p, max_s) = match driver {
+                    DriverKind::Mysql => (65, 30),
+                    DriverKind::Postgres => (1000, u32::MAX),
+                    DriverKind::Sqlite => (0, 0),
+                };
+                if driver == DriverKind::Sqlite {
+                    // 精度が分かっていて 15 桁を超えるときだけ。精度不明 (無制限 NUMERIC など)
+                    // は実際の値が分からず誤検知が多いので警告しない。
+                    // 小数桁の無い整数 decimal は 18 桁まで INTEGER (64bit) で正確に持てる。
+                    let exact_integer =
+                        scale.unwrap_or(0) == 0 && precision.is_some_and(|p| p <= 18);
+                    if !exact_integer && precision.is_some_and(|p| p > 15) {
+                        Some(LossyKind::DecimalFloat)
+                    } else {
+                        None
+                    }
+                } else if precision.is_some_and(|p| p > max_p) || scale.is_some_and(|s| s > max_s) {
+                    Some(LossyKind::DecimalClamped)
+                } else {
+                    None
+                }
+            }
+            TransferType::TimestampTz if driver != DriverKind::Postgres => {
+                Some(LossyKind::TimestampTzDegraded)
+            }
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            out.push(LossyConversion {
+                column: c.name.clone(),
+                kind,
+                source_type: c.source_type.clone(),
+                target_type: target_type_sql(driver, &c.ty),
+            });
         }
     }
     out
+}
+
+impl LossyConversion {
+    /// ログ・完了通知向けの英語メッセージ (UI の転送前プレビューは `kind` から翻訳する)。
+    pub fn message(&self) -> String {
+        let (c, s, t) = (&self.column, &self.source_type, &self.target_type);
+        match self.kind {
+            LossyKind::DecimalClamped => format!(
+                "column \"{c}\" ({s}) exceeds the target's decimal limits and is rounded to {t}"
+            ),
+            LossyKind::DecimalFloat => format!(
+                "column \"{c}\" ({s}) is stored as {t} on SQLite and may lose digits beyond 15 significant digits"
+            ),
+            LossyKind::TimestampTzDegraded => format!(
+                "column \"{c}\" ({s}) has no timezone-aware type on this target and is stored as {t} (offset kept as text)"
+            ),
+        }
+    }
+}
+
+/// 転送結果のユーザ向け注意書き (損失のあるマッピング等)。
+pub fn plan_warnings(driver: DriverKind, columns: &[TransferColumn]) -> Vec<String> {
+    // バイナリは INSERT の値式で忠実に書けるので警告対象ではない (#1530)。
+    lossy_conversions(driver, columns)
+        .iter()
+        .map(LossyConversion::message)
+        .collect()
 }
 
 #[cfg(test)]
@@ -888,6 +965,55 @@ mod tests {
             vec![false, false]
         );
         assert!(plan_warnings(DriverKind::Postgres, &cols).is_empty());
+    }
+
+    #[test]
+    fn detects_lossy_conversions_per_target() {
+        let col = |name: &str, ty: TransferType| TransferColumn {
+            name: name.into(),
+            source_type: "src".into(),
+            ty,
+        };
+        let dec = |p, s| TransferType::Decimal {
+            precision: p,
+            scale: s,
+        };
+        let cols = vec![
+            col("a", dec(Some(70), Some(2))),
+            col("b", dec(Some(40), Some(35))),
+            col("c", dec(Some(10), Some(2))),
+            col("e", dec(Some(18), Some(0))),
+            col("d", dec(None, None)),
+            col("t", TransferType::TimestampTz),
+            col("i", TransferType::Integer),
+        ];
+        let kinds = |d| {
+            lossy_conversions(d, &cols)
+                .into_iter()
+                .map(|l| (l.column, l.kind))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(DriverKind::Mysql),
+            vec![
+                ("a".to_string(), LossyKind::DecimalClamped),
+                ("b".to_string(), LossyKind::DecimalClamped),
+                ("t".to_string(), LossyKind::TimestampTzDegraded),
+            ]
+        );
+        // PostgreSQL は 1000 桁まで。タイムゾーン付きもそのまま持てる。
+        assert!(kinds(DriverKind::Postgres).is_empty());
+        assert_eq!(
+            kinds(DriverKind::Sqlite),
+            vec![
+                ("a".to_string(), LossyKind::DecimalFloat),
+                ("b".to_string(), LossyKind::DecimalFloat),
+                ("t".to_string(), LossyKind::TimestampTzDegraded),
+            ]
+        );
+        let w = plan_warnings(DriverKind::Mysql, &cols);
+        assert_eq!(w.len(), 3);
+        assert!(w[0].contains("\"a\""));
     }
 
     #[test]

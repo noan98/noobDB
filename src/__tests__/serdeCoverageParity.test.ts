@@ -97,6 +97,7 @@ const COVERED: Record<string, string> = {
   TableWatch: "tableWatch",
   TaskDefinition: "taskDefinitionVariants",
   TaskRun: "taskRun",
+  TransferPreview: "transferPreview",
   UndoOutcome: "undoOutcome",
   UndoPreviewResponse: "undoPreviewResponse",
   UserPrivileges: "userPrivileges",
