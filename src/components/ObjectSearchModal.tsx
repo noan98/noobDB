@@ -175,6 +175,11 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
           role="combobox"
           aria-expanded={results.length > 0}
           aria-controls="object-search-list"
+          aria-activedescendant={
+            results.length > 0 && activeIndex >= 0 && activeIndex < results.length
+              ? objectSearchOptionId(activeIndex)
+              : undefined
+          }
           autoComplete="off"
           spellCheck={false}
           flex="1"
@@ -231,6 +236,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
           results.map((entry, i) => (
             <ResultRow
               key={entryKey(entry)}
+              id={objectSearchOptionId(i)}
               ref={(el) => {
                 if (el) itemRefs.current.set(entryKey(entry), el);
                 else itemRefs.current.delete(entryKey(entry));
@@ -280,7 +286,13 @@ function ScopeButton({
   );
 }
 
+/** 候補 i の DOM id。入力欄の aria-activedescendant が指す (#1529)。 */
+function objectSearchOptionId(index: number): string {
+  return `object-search-opt-${index}`;
+}
+
 interface RowProps {
+  id: string;
   entry: ObjectSearchHit;
   active: boolean;
   /** 先頭 `MAX_STAGGER_ITEMS` 件だけ stagger 出現させる (CommandPalette と同じ上限ガード)。 */
@@ -290,10 +302,11 @@ interface RowProps {
   ref?: (el: HTMLButtonElement | null) => void;
 }
 
-function ResultRow({ entry, active, animateEntrance, onMouseMove, onClick, ref }: RowProps) {
+function ResultRow({ id, entry, active, animateEntrance, onMouseMove, onClick, ref }: RowProps) {
   return (
     <MotionRow
       ref={ref}
+      id={id}
       type="button"
       role="option"
       variants={animateEntrance ? variants.staggerItem : undefined}

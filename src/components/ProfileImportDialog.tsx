@@ -4,7 +4,8 @@ import { useT } from "../i18n";
 import type { ProfileImportStrategy } from "../api/tauri";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, PressableButton, Radio } from "./ui";
+import { Button, PressableButton, Radio } from "./ui";
+import { PassphraseInput } from "./PassphraseInput";
 
 /**
  * プロファイルインポートの ID 衝突解決ダイアログ。ファイル選択後に開き、
@@ -91,10 +92,9 @@ export function ProfileImportDialog({ onConfirm, onCancel, encrypted = false, er
               <FieldLabel htmlFor="profile-backup-import-passphrase">
                 {t("profileBackupPassphrase")}
               </FieldLabel>
-              <Input
+              <PassphraseInput
                 id="profile-backup-import-passphrase"
                 ref={passphraseRef}
-                type="password"
                 autoComplete="current-password"
                 spellCheck={false}
                 value={passphrase}

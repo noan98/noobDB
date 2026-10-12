@@ -50,16 +50,29 @@ interface Props<T extends string> {
  *
  * a11y: `role="radiogroup"` + 各セグメント `role="radio"` / `aria-checked` の
  * 排他選択として公開し、左右矢印 / Home / End のフォーカス移動を
- * `useRovingFocus` に委ねる (選択は Enter/Space またはクリック — ネイティブ
- * `<button>` なので追加のキー処理は不要)。未選択セグメントは `tabIndex={-1}`
+ * `useRovingFocus` に委ねつつ、移動先のセグメントを即座に選択する (WAI-ARIA の
+ * radiogroup と同じ「矢印で選択が追従する」挙動, #1529)。Enter/Space やクリックでも
+ * 選べる。未選択セグメントは `tabIndex={-1}`
  * としてグループ全体を Tab 移動で 1 ストップとして扱う。
  */
+const SELECT_KEYS: ReadonlySet<string> = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
+
 export function Segmented<T extends string>({ value, options, onChange, ariaLabel }: Props<T>) {
   const ref = useRef<HTMLDivElement>(null);
   const thumbId = `segmented-thumb-${useId()}`;
-  const { onKeyDown } = useRovingFocus(ref, "[role=radio]", {
+  const { onKeyDown: moveFocus } = useRovingFocus(ref, "[role=radio]", {
     orientation: "horizontal",
   });
+  // WAI-ARIA の radiogroup と同じく、矢印 / Home / End でフォーカスと選択を同時に動かす
+  // (#1529)。フォーカス移動は useRovingFocus に任せ、移動後にフォーカスされた項目の値を onChange へ渡す。
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    moveFocus(e);
+    if (!SELECT_KEYS.has(e.key)) return;
+    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>("[role=radio]") ?? []);
+    const idx = items.indexOf(document.activeElement as HTMLElement);
+    const target = idx >= 0 ? options[idx] : undefined;
+    if (target && target.value !== value) onChange(target.value);
+  };
 
   return (
     <chakra.div

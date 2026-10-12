@@ -94,3 +94,28 @@ describe("ProfileImportDialog 暗号化モード (#710)", () => {
     expect(onConfirm).toHaveBeenCalledWith("rename", "");
   });
 });
+
+// #1529: パスフレーズ欄の表示切替と、強度テキストの aria-describedby 結線。
+describe("パスフレーズ欄の表示切替と強度の結線 (#1529)", () => {
+  beforeEach(() => setLocale("en"));
+
+  it("書き出し: 表示切替ボタンで入力内容を確認でき、強度テキストが describedby で結ばれる", async () => {
+    renderWithProviders(
+      <ProfileBackupExportDialog profileCount={1} onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    const user = userEvent.setup();
+    const input = await screen.findByLabelText(t("profileBackupPassphrase"));
+    expect(input).toHaveAttribute("type", "password");
+    expect(input).not.toHaveAttribute("aria-describedby");
+
+    await user.type(input, "abcdefgh");
+    const strength = screen.getByTestId("profile-backup-strength");
+    expect(input.getAttribute("aria-describedby")).toBe(strength.id);
+
+    const toggles = screen.getAllByRole("button", { name: t("passphraseShow") });
+    expect(toggles[0]).toHaveAttribute("aria-pressed", "false");
+    await user.click(toggles[0]);
+    expect(input).toHaveAttribute("type", "text");
+    expect(screen.getByRole("button", { name: t("passphraseHide") })).toHaveAttribute("aria-pressed", "true");
+  });
+});

@@ -308,8 +308,9 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await vi.waitFor(() => {
       expect(invocationsOf("cancel_stream")).toEqual([{ streamId }]);
     }, { timeout: 5000 });
+    // 読み上げ専用領域 (#1529) にも同じ文言が入るので、表示側 (後に描画される方) を見る。
     await expect.element(
-      screen.getByText(t("statusQueryCancelledPartial", { rows: 1 })),
+      screen.getByText(t("statusQueryCancelledPartial", { rows: 1 })).last(),
     ).toBeVisible();
 
     // 取得済みの行は保持される。

@@ -372,7 +372,7 @@ export function TableTimelapsePanel({
       {dialog}
       <Flex align="center" gap="2" px="4" py="2" borderBottom="1px solid" borderColor="app.border" flexWrap="wrap">
         <Button type="button" variant="secondary" size="sm" onClick={() => void captureNow()} disabled={busy}>
-          {busy ? <Spinner size={12} /> : <Icon name="refresh" size={ICON_SIZES.sm} />}
+          {busy ? <Spinner size={12} decorative /> : <Icon name="refresh" size={ICON_SIZES.sm} />}
           <chakra.span marginLeft="1.5">{t("timelapseCaptureNow")}</chakra.span>
         </Button>
         {watches && watches.length > 0 && (

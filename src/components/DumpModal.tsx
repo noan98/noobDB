@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -244,6 +244,7 @@ const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptio
 
 export function DumpModal({ sessionId, database, driver, tables, onClose }: Props) {
   const t = useT();
+  const optionsIdBase = `dump-opt-${useId().replace(/:/g, "")}`;
   const toast = useToast();
   const tableScope = tables && tables.length > 0 ? tables : null;
   const initialBasename = useMemo(
@@ -509,13 +510,15 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
                       onChange={() => toggle(row.key)}
                       disabled={isRunning}
                       size="sm"
+                      aria-labelledby={`${optionsIdBase}-${row.key}-label`}
+                      aria-describedby={`${optionsIdBase}-${row.key}-hint`}
                     />
                   </chakra.span>
                   <chakra.span display="flex" flexDirection="column" gap="0.5" minW={0}>
-                    <chakra.span fontSize="md" color="app.text">
+                    <chakra.span id={`${optionsIdBase}-${row.key}-label`} fontSize="md" color="app.text">
                       {t(row.label)}
                     </chakra.span>
-                    <chakra.span fontSize="xs" color="app.textMuted" lineHeight={1.4}>
+                    <chakra.span id={`${optionsIdBase}-${row.key}-hint`} fontSize="xs" color="app.textMuted" lineHeight={1.4}>
                       {t(row.hint)}
                     </chakra.span>
                   </chakra.span>

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   columnIdFromCellKey,
   computeFlipOffsets,
+  moveColumnId,
   reorderColumnIds,
 } from "../components/columnReorderFlip";
 
@@ -82,5 +83,36 @@ describe("columnIdFromCellKey (#1021)", () => {
   it("不正なキーは null", () => {
     expect(columnIdFromCellKey("12")).toBeNull();
     expect(columnIdFromCellKey("12:")).toBeNull();
+  });
+});
+
+describe("moveColumnId (#1529)", () => {
+  const base = ["0", "1", "2", "3"];
+
+  it("1 つ左 / 右へ動かす", () => {
+    expect(moveColumnId(base, "2", -1)).toEqual(["0", "2", "1", "3"]);
+    expect(moveColumnId(base, "1", 1)).toEqual(["0", "2", "1", "3"]);
+    expect(moveColumnId(base, "0", 1)).toEqual(["1", "0", "2", "3"]);
+    expect(moveColumnId(base, "2", 1)).toEqual(["0", "1", "3", "2"]);
+  });
+
+  it("端・存在しない列は null", () => {
+    expect(moveColumnId(base, "0", -1)).toBeNull();
+    expect(moveColumnId(base, "3", 1)).toBeNull();
+    expect(moveColumnId(base, "9", 1)).toBeNull();
+  });
+
+  it("isMovable が false の列 (非表示) は飛び越えて見えている隣と入れ替える", () => {
+    const visible = (id: string) => id !== "1";
+    expect(moveColumnId(base, "0", 1, visible)).toEqual(["1", "2", "0", "3"]);
+    expect(moveColumnId(base, "2", -1, visible)).toEqual(["2", "0", "1", "3"]);
+    // 隣が非表示の列しか無いなら動かさない。
+    expect(moveColumnId(["0", "1"], "0", 1, visible)).toBeNull();
+  });
+
+  it("入力配列を破壊しない", () => {
+    const copy = base.slice();
+    moveColumnId(base, "1", 1);
+    expect(base).toEqual(copy);
   });
 });

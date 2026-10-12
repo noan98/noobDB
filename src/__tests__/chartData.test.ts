@@ -16,6 +16,8 @@ import {
   chartPalette,
   chartRampGradient,
   chartSeriesColors,
+  chartSummary,
+  stepChartIndex,
   chartValueColors,
   DEFAULT_CHART_PALETTE,
   defaultChartConfig,
@@ -694,5 +696,40 @@ describe("棒の角丸 (#1215)", () => {
     expect(roundedBarPath(0, 0, 10, 2, 4, true)).toContain("A 2 2");
     expect(roundedBarPath(0, 0, 10, 0, 4, true)).toBe("");
     expect(roundedBarPath(0, 0, 0, 10, 4, true)).toBe("");
+  });
+});
+
+describe("chartSummary / stepChartIndex (#1529)", () => {
+  const model = {
+    labels: ["a", "b", "c"],
+    series: [
+      { name: "x", values: [1, -2, 5] },
+      { name: "y", values: [3, 0, 4] },
+    ],
+  } as unknown as Parameters<typeof chartSummary>[0];
+
+  it("系列数・点数・最大 / 最小を要約する", () => {
+    expect(chartSummary(model, "bar")).toEqual({ series: 2, points: 3, min: -2, max: 5 });
+  });
+
+  it("円グラフは先頭系列だけ、負値は 0 として数える", () => {
+    expect(chartSummary(model, "pie")).toEqual({ series: 1, points: 3, min: 0, max: 5 });
+  });
+
+  it("点が無ければ min / max は null", () => {
+    const empty = { labels: [], series: [{ name: "x", values: [] }] } as unknown as Parameters<typeof chartSummary>[0];
+    expect(chartSummary(empty)).toEqual({ series: 1, points: 0, min: null, max: null });
+  });
+
+  it("左右 / Home / End で点を動かし、端でクランプする", () => {
+    expect(stepChartIndex(null, "ArrowRight", 3)).toBe(0);
+    expect(stepChartIndex(null, "ArrowLeft", 3)).toBe(2);
+    expect(stepChartIndex(1, "ArrowRight", 3)).toBe(2);
+    expect(stepChartIndex(2, "ArrowRight", 3)).toBe(2);
+    expect(stepChartIndex(0, "ArrowLeft", 3)).toBe(0);
+    expect(stepChartIndex(1, "Home", 3)).toBe(0);
+    expect(stepChartIndex(1, "End", 3)).toBe(2);
+    expect(stepChartIndex(1, "a", 3)).toBeNull();
+    expect(stepChartIndex(0, "ArrowRight", 0)).toBeNull();
   });
 });
