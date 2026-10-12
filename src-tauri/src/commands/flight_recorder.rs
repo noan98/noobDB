@@ -267,9 +267,7 @@ pub(crate) async fn plan_undo(
         .await?
         .ok_or_else(|| AppError::InvalidInput(format!("flight record {id} not found")))?;
     if record.undone {
-        return Err(AppError::InvalidInput(
-            "この操作は既に元に戻されています".into(),
-        ));
+        return Err(AppError::FlightAlreadyUndone);
     }
     ensure_record_matches_session(
         &record,
@@ -283,9 +281,7 @@ pub(crate) async fn plan_undo(
         .filter_map(|n| record.columns.iter().position(|c| c == n))
         .collect();
     if pk_idx.len() != record.primary_key.len() {
-        return Err(AppError::InvalidInput(
-            "主キー列を特定できませんでした".into(),
-        ));
+        return Err(AppError::FlightPrimaryKeyUnresolved);
     }
     let reference_rows: &[Vec<Value>] = match record.kind {
         WriteKind::Insert => &record.after_rows,
@@ -329,14 +325,10 @@ fn ensure_record_matches_session(
     let record_driver = DriverKind::parse(&record.driver)
         .ok_or_else(|| AppError::InvalidInput(format!("unknown driver: {}", record.driver)))?;
     if record_driver != session_driver {
-        return Err(AppError::InvalidInput(
-            "接続先のドライバが記録時と異なります".into(),
-        ));
+        return Err(AppError::FlightDriverMismatch);
     }
     if record.profile_id.as_deref() != session_profile_id {
-        return Err(AppError::InvalidInput(
-            "接続先のプロファイルが記録時と異なります".into(),
-        ));
+        return Err(AppError::FlightProfileMismatch);
     }
     Ok(())
 }
@@ -383,21 +375,21 @@ mod tests {
     fn rejects_driver_mismatch() {
         let r = record("mysql", Some("p1"));
         let err = ensure_record_matches_session(&r, Some("p1"), DriverKind::Sqlite).unwrap_err();
-        assert!(matches!(err, AppError::InvalidInput(_)));
+        assert!(matches!(err, AppError::FlightDriverMismatch));
     }
 
     #[test]
     fn rejects_profile_mismatch_even_with_the_same_driver() {
         let r = record("sqlite", Some("p1"));
         let err = ensure_record_matches_session(&r, Some("p2"), DriverKind::Sqlite).unwrap_err();
-        assert!(matches!(err, AppError::InvalidInput(_)));
+        assert!(matches!(err, AppError::FlightProfileMismatch));
     }
 
     #[test]
     fn rejects_ad_hoc_capture_replayed_against_a_saved_profile() {
         let r = record("sqlite", None);
         let err = ensure_record_matches_session(&r, Some("p1"), DriverKind::Sqlite).unwrap_err();
-        assert!(matches!(err, AppError::InvalidInput(_)));
+        assert!(matches!(err, AppError::FlightProfileMismatch));
     }
 
     #[test]

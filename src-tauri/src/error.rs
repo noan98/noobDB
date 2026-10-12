@@ -78,6 +78,23 @@ pub enum AppError {
     #[error("AI API error: {0}")]
     AiApi(String),
 
+    /// フライトレコーダー (#1533): 既に Undo 済みの記録に対する Undo。
+    /// 文言はフロントが `kind` から i18n キーで引くので、ここは英語の既定文だけ持つ。
+    #[error("this operation has already been undone")]
+    FlightAlreadyUndone,
+
+    /// フライトレコーダー (#1533): 記録の主キー列が保存済み列に見つからず、Undo の対象行を特定できない。
+    #[error("could not identify the primary key columns")]
+    FlightPrimaryKeyUnresolved,
+
+    /// フライトレコーダー (#1533): 接続中のドライバが記録時と異なる (逆 SQL のリテラル規則が違うため拒否)。
+    #[error("the connected driver differs from the one used when recorded")]
+    FlightDriverMismatch,
+
+    /// フライトレコーダー (#1533): 接続中のプロファイルが記録時と異なる。
+    #[error("the connected profile differs from the one used when recorded")]
+    FlightProfileMismatch,
+
     #[error("{0}")]
     Other(String),
 }
@@ -135,6 +152,10 @@ impl AppError {
             AppError::AiAuth(m) => AppError::AiAuth(m.clone()),
             AppError::AiNetwork(m) => AppError::AiNetwork(m.clone()),
             AppError::AiApi(m) => AppError::AiApi(m.clone()),
+            AppError::FlightAlreadyUndone => AppError::FlightAlreadyUndone,
+            AppError::FlightPrimaryKeyUnresolved => AppError::FlightPrimaryKeyUnresolved,
+            AppError::FlightDriverMismatch => AppError::FlightDriverMismatch,
+            AppError::FlightProfileMismatch => AppError::FlightProfileMismatch,
             AppError::Other(m) => AppError::Other(m.clone()),
         }
     }
@@ -173,6 +194,10 @@ impl AppError {
             AppError::AiAuth(_) => "aiAuth",
             AppError::AiNetwork(_) => "aiNetwork",
             AppError::AiApi(_) => "aiApi",
+            AppError::FlightAlreadyUndone => "flightAlreadyUndone",
+            AppError::FlightPrimaryKeyUnresolved => "flightPrimaryKeyUnresolved",
+            AppError::FlightDriverMismatch => "flightDriverMismatch",
+            AppError::FlightProfileMismatch => "flightProfileMismatch",
             AppError::Other(_) => "other",
         }
     }

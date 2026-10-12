@@ -1,3 +1,4 @@
+import { errorKindOf } from "./api/invoke";
 import type { I18nKey } from "./i18n";
 
 // Maps a raw database error string to a beginner-friendly hint key, or null
@@ -174,6 +175,28 @@ export function hintForKind(kind: string | null | undefined, message = ""): I18n
     default:
       return null;
   }
+}
+
+/**
+ * バックエンドが英語の既定文しか持たないエラーを、`kind` から画面言語の文言へ置き換えるための
+ * 対応表 (#1533)。ここに無い kind は `message` をそのまま表示する。
+ */
+const KIND_MESSAGE_KEYS: Record<string, I18nKey> = {
+  flightAlreadyUndone: "errorFlightAlreadyUndone",
+  flightPrimaryKeyUnresolved: "errorFlightPrimaryKeyUnresolved",
+  flightDriverMismatch: "errorFlightDriverMismatch",
+  flightProfileMismatch: "errorFlightProfileMismatch",
+};
+
+/** `kind` に対応する翻訳済みメッセージのキー。無ければ null。 */
+export function messageKeyForKind(kind: string | null | undefined): I18nKey | null {
+  return (kind && KIND_MESSAGE_KEYS[kind]) || null;
+}
+
+/** 捕捉したエラーの表示文: `kind` が翻訳対象ならその文言、それ以外は `String(e)`。 */
+export function localizedErrorMessage(e: unknown, t: (key: I18nKey) => string): string {
+  const key = messageKeyForKind(errorKindOf(e));
+  return key ? t(key) : String(e);
 }
 
 /**
