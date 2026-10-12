@@ -7173,6 +7173,13 @@ export const DataGrid = memo(function DataGrid({
                   }
                 : undefined
             }
+            rowSql={{
+              driver: rowSqlDriver ?? "mysql",
+              database: rowSqlDatabase ?? "",
+              table: rowSqlTable ?? null,
+              pkIndices: pkIndices ?? [],
+              blockedByMask: rowSqlBlockedByMask([activeCell.rowIdx]),
+            }}
             edit={
               onApplyRowEdits
                 ? {
