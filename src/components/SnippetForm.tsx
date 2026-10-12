@@ -181,7 +181,7 @@ export function SnippetForm({
           onChange={(e) => setTags(e.target.value)}
           placeholder={t("snippetTagsPlaceholder")}
         />
-        <chakra.p color="app.textMuted" fontSize="xs" m="4px 0 0">
+        <chakra.p color="app.textMuted" fontSize="xs" mt="1" mx="0" mb="0">
           {t("snippetTagsHelp")}
         </chakra.p>
       </Box>
@@ -243,7 +243,7 @@ export function SnippetForm({
             </Box>
           )}
         </Box>
-        <chakra.p color="app.textMuted" fontSize="xs" m="8px 0 0">
+        <chakra.p color="app.textMuted" fontSize="xs" mt="2" mx="0" mb="0">
           {t("snippetScopeHelp")}
         </chakra.p>
       </chakra.fieldset>

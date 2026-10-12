@@ -30,7 +30,11 @@ export function truncateReleaseNotes(body: string | undefined, maxLen = 600): st
   if (!body) return "";
   const trimmed = body.trim();
   if (trimmed.length <= maxLen) return trimmed;
-  return `${trimmed.slice(0, maxLen)}…`;
+  // コードポイント単位で数える: UTF-16 のコード単位で切ると、絵文字などのサロゲート
+  // ペアの途中で割れて末尾に孤立したサロゲート (置換文字) が残る (#1534)。
+  const points = Array.from(trimmed);
+  if (points.length <= maxLen) return trimmed;
+  return `${points.slice(0, maxLen).join("")}…`;
 }
 
 /**

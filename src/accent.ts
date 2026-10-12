@@ -183,12 +183,37 @@ const TINT_AMOUNT: Record<Theme, { subtle: number; selection: number }> = {
 /** WCAG AA 相当のコントラスト下限。面塗り自体でなく、その上に乗る本文向け。 */
 const MIN_TONE_CONTRAST = 4.5;
 
-function toneBase(theme: Theme): [number, number, number] {
-  return theme === "dark" ? DARK_BG : LIGHT_BG;
+/**
+ * 調和トーンの基準にする、現在のテーマプリセットの面と本文の色 (`#rrggbb`)。
+ * 省略した/不正な値のときは、ライト/ダーク既定の `--bg` / `--text` を使う。
+ * プリセット (dracula・nord・solarized-light・black など) は独自の `--bg` を持つので、
+ * 固定の既定値だけを基準にすると選択行の面が周囲のパネル背景から浮く (#1534)。
+ */
+export interface ToneSurface {
+  bg?: string;
+  text?: string;
 }
 
-function toneTextRef(theme: Theme): string {
+function toneBase(theme: Theme, surface?: ToneSurface): [number, number, number] {
+  const fromSurface = surface?.bg ? parseHex(surface.bg.trim()) : null;
+  return fromSurface ?? (theme === "dark" ? DARK_BG : LIGHT_BG);
+}
+
+function toneTextRef(theme: Theme, surface?: ToneSurface): string {
+  const text = surface?.text?.trim();
+  if (text && parseHex(text)) return text;
   return theme === "dark" ? DARK_TEXT_REF : LIGHT_TEXT_REF;
+}
+
+/** 要素に適用されている `--bg` / `--text` を読む。取得できない値は省略する。 */
+export function readToneSurface(el: Element): ToneSurface {
+  const cs = getComputedStyle(el);
+  const bg = cs.getPropertyValue("--bg").trim();
+  const text = cs.getPropertyValue("--text").trim();
+  return {
+    bg: parseHex(bg) ? bg : undefined,
+    text: parseHex(text) ? text : undefined,
+  };
 }
 
 /**
@@ -196,11 +221,16 @@ function toneTextRef(theme: Theme): string {
  * `MIN_TONE_CONTRAST` を満たすまで `amount` を半減させ続ける。`amount` が 0 に
  * 収束すれば基準色そのもの (本文と常に高コントラスト) になるため必ず終了する。
  */
-function harmonicTone(hex: string, theme: Theme, amount: number): string {
-  const base = toneBase(theme);
+function harmonicTone(
+  hex: string,
+  theme: Theme,
+  amount: number,
+  surface?: ToneSurface,
+): string {
+  const base = toneBase(theme, surface);
   const rgb = parseHex(hex);
   if (!rgb) return toHex(base);
-  const textRef = toneTextRef(theme);
+  const textRef = toneTextRef(theme, surface);
   let a = amount;
   let out = toHex(mix(base, rgb, a));
   let guard = 0;
@@ -216,16 +246,16 @@ function harmonicTone(hex: string, theme: Theme, amount: number): string {
  * 選択色から派生する控えめな面塗り (`--bg-active` 相当)。ホバーより一段弱い
  * 「薄くアクセントが香る」トーンで、選択行・アクティブ項目の背景に使う。
  */
-export function accentSubtle(hex: string, theme: Theme): string {
-  return harmonicTone(hex, theme, TINT_AMOUNT[theme].subtle);
+export function accentSubtle(hex: string, theme: Theme, surface?: ToneSurface): string {
+  return harmonicTone(hex, theme, TINT_AMOUNT[theme].subtle, surface);
 }
 
 /**
  * 選択色から派生するやや強めの面塗り (`--bg-active-strong` 相当)。ソート中の
  * 列見出しなど、選択状態をより強調したい面に使う。
  */
-export function accentSelection(hex: string, theme: Theme): string {
-  return harmonicTone(hex, theme, TINT_AMOUNT[theme].selection);
+export function accentSelection(hex: string, theme: Theme, surface?: ToneSurface): string {
+  return harmonicTone(hex, theme, TINT_AMOUNT[theme].selection, surface);
 }
 
 export interface AccentVars {
@@ -242,12 +272,12 @@ export interface AccentVars {
  * `--accent-subtle` / `--accent-selection` に書き込む (後者 2 つは
  * `--bg-active` / `--bg-active-strong` も上書きし、選択行・アクティブ状態に波及させる)。
  */
-export function accentVars(hex: string, theme: Theme): AccentVars {
+export function accentVars(hex: string, theme: Theme, surface?: ToneSurface): AccentVars {
   return {
     accent: hex,
     accentHover: accentHover(hex, theme),
     accentText: accentForeground(hex),
-    accentSubtle: accentSubtle(hex, theme),
-    accentSelection: accentSelection(hex, theme),
+    accentSubtle: accentSubtle(hex, theme, surface),
+    accentSelection: accentSelection(hex, theme, surface),
   };
 }

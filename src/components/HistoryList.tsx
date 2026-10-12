@@ -23,6 +23,7 @@ import {
 import { CopyButton } from "./CopyButton";
 import { useKeyedCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
+import { useToast } from "./Toast";
 import {
   HISTORY_PERIOD_FILTERS,
   HISTORY_STATUS_FILTERS,
@@ -300,6 +301,8 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   const aiAvailable = useAiAvailable();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [localReload, setLocalReload] = useState(0);
+  const toast = useToast();
   const { copiedKey: copiedId, copy } = useKeyedCopyFeedback<number>();
 
   // 一覧は SQL の要約 (`sql_preview`) しか持たない (#1256)。復元・コピー・新規タブ・
@@ -310,7 +313,10 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
       const sql = await api.getHistorySql(id);
       await action(sql);
     } catch (e) {
-      setError(String(e));
+      // 行操作の失敗は一覧のエラー (取得失敗) とは別物: 一覧を置き換えずトーストで知らせ、
+      // 行が消えていた場合に備えて一覧を取り直す (#1534)。
+      toast.error(String(e));
+      setLocalReload((n) => n + 1);
     }
   };
 
@@ -366,7 +372,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
     return () => {
       cancelled = true;
     };
-  }, [scopeId, debounced, statusParam, from, to, reloadKey]);
+  }, [scopeId, debounced, statusParam, from, to, reloadKey, localReload]);
 
   const handleClear = async () => {
     const msg = scopeId

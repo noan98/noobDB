@@ -190,6 +190,9 @@ export function TableTimelapsePanel({
     let cancelled = false;
     setDiffLoading(true);
     setDiffError(null);
+    // 直前のペアの差分は破棄する。残すと取得が終わるまで古い件数と行が新しい結果に
+    // 見えてしまう (読み込み中の表示は diff が無いときに出る, #1534)。
+    setDiff(null);
     api
       .timelapseDiffGenerations(fromId, toId)
       .then((d) => {

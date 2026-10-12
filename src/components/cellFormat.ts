@@ -13,11 +13,57 @@
  */
 
 /**
+ * これを超える長さの JSON は整形しない (`null` を返し、呼び出し側は素の値を表示する)。
+ * MB 級の JSON 列を可視セルの再描画のたびに parse / stringify するとフレームが落ちる
+ * ため (#1534)。グリッドのセルは CSS で省略表示されるので、巨大な値を畳んでも
+ * 見える内容はほぼ変わらない。
+ */
+export const JSON_COMPACT_MAX_CHARS = 100_000;
+/** 整形結果 (失敗 = `null` も含む) を覚えておく件数。仮想化グリッドの可視セル数より十分大きく。 */
+const JSON_COMPACT_CACHE_SIZE = 500;
+/** これより短い値は parse が安いのでキャッシュしない (キャッシュの出入りの方が高くつく)。 */
+const JSON_COMPACT_CACHE_MIN_CHARS = 1_000;
+/** キャッシュが抱える入力文字数の合計上限 (キー + 結果)。大きな値で常駐メモリが膨らまないように。 */
+const JSON_COMPACT_CACHE_MAX_TOTAL_CHARS = 2_000_000;
+const jsonCompactCache = new Map<string, string | null>();
+let jsonCompactCacheChars = 0;
+
+const cacheCost = (key: string, value: string | null) => key.length + (value?.length ?? 0);
+
+/**
  * JSON 文字列を 1 行のコンパクト表現に正規化する (グリッド内のインライン表示用)。
  * `{` または `[` で始まり、かつ `JSON.parse` できる場合のみ整形し、空白を畳んだ
- * 最小表現を返す。JSON でなければ `null`。
+ * 最小表現を返す。JSON でなければ `null`。`JSON_COMPACT_MAX_CHARS` を超える値は
+ * 整形せず `null`。結果は小さな LRU にキャッシュし、スクロールでの再描画で同じ値を
+ * 何度も parse しない。
  */
 export function formatJsonCompact(s: string): string | null {
+  if (s.length > JSON_COMPACT_MAX_CHARS) return null;
+  if (s.length < JSON_COMPACT_CACHE_MIN_CHARS) return compactJson(s);
+  const cached = jsonCompactCache.get(s);
+  if (cached !== undefined) {
+    // 参照順を更新して LRU にする。
+    jsonCompactCache.delete(s);
+    jsonCompactCache.set(s, cached);
+    return cached;
+  }
+  const out = compactJson(s);
+  jsonCompactCache.set(s, out);
+  jsonCompactCacheChars += cacheCost(s, out);
+  while (
+    jsonCompactCache.size > JSON_COMPACT_CACHE_SIZE ||
+    (jsonCompactCacheChars > JSON_COMPACT_CACHE_MAX_TOTAL_CHARS && jsonCompactCache.size > 1)
+  ) {
+    const oldest = jsonCompactCache.entries().next();
+    if (oldest.done) break;
+    const [key, value] = oldest.value;
+    jsonCompactCache.delete(key);
+    jsonCompactCacheChars -= cacheCost(key, value);
+  }
+  return out;
+}
+
+function compactJson(s: string): string | null {
   const trimmed = s.trim();
   if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
   try {

@@ -3,9 +3,11 @@ import { statusLogClass, statusTone, type Status } from "../statusMessage";
 import { appendMessage, MESSAGE_LIMIT, type MessageEntry } from "../messageLog";
 import {
   appendOutput,
+  compactOutputSql,
   countProblems,
   filterOutput,
   isProblemOutcome,
+  isSqlTruncated,
   outputSummary,
   sqlHeadline,
   worstServerSeverity,
@@ -127,6 +129,7 @@ describe("outputLog", () => {
     id,
     at: id,
     sql: `select ${id}`,
+    sqlLength: `select ${id}`.length,
     outcome,
     rows: 1,
     elapsedMs: 5,
@@ -202,5 +205,42 @@ describe("worstServerSeverity (サーバ側メッセージ, #1165)", () => {
         { severity: "error", text: "b" },
       ]),
     ).toBe("error");
+  });
+});
+
+describe("outputLog の SQL 保持量 (#1534)", () => {
+  const entry = (id: number, sql: string): OutputEntry => ({
+    id,
+    at: id,
+    sql,
+    sqlLength: sql.length,
+    outcome: "affected",
+    rows: 1,
+    elapsedMs: 1,
+    error: null,
+    connection: null,
+    database: null,
+  });
+
+  it("予算内なら全文を保ち、同じ配列を返す", () => {
+    const list = [entry(2, "x".repeat(50)), entry(1, "y".repeat(50))];
+    expect(compactOutputSql(list, 1000, 10)).toBe(list);
+  });
+
+  it("新しい行から予算を消費し、超えた古い行だけ先頭に切り詰めて元の長さを残す", () => {
+    const list = [entry(3, "a".repeat(60)), entry(2, "b".repeat(60)), entry(1, "c".repeat(60))];
+    const out = compactOutputSql(list, 100, 10);
+    expect(out[0].sql).toHaveLength(60);
+    expect(out[1].sql).toHaveLength(10);
+    expect(out[1].sqlLength).toBe(60);
+    expect(isSqlTruncated(out[1])).toBe(true);
+    expect(isSqlTruncated(out[0])).toBe(false);
+  });
+
+  it("単体で予算を超える文は切り詰めるが、先頭のサロゲートペアは割らない", () => {
+    const sql = `${"a".repeat(9)}😀${"b".repeat(100)}`;
+    const [out] = compactOutputSql([entry(1, sql)], 50, 10);
+    expect(out.sql).toBe("a".repeat(9));
+    expect(out.sqlLength).toBe(sql.length);
   });
 });

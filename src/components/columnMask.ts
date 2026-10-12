@@ -171,8 +171,16 @@ export function toggleMaskOverride(
 
 /** 一時 reveal の対象。セル 1 つ (元の行インデックス + 列インデックス) か列全体。 */
 export type RevealTarget =
-  | { kind: "cell"; rowIdx: number; colIdx: number }
-  | { kind: "column"; colIdx: number };
+  | { kind: "cell"; rowIdx: number; colIdx: number; expiresAt?: number }
+  | { kind: "column"; colIdx: number; expiresAt?: number };
+
+/**
+ * 一時 reveal の期限 (epoch ミリ秒)。reveal 時に一度だけ決め、行の追従などで
+ * 対象オブジェクトが作り直されても引き継ぐ (タイマーを張り直して延ばさない)。
+ */
+export function revealExpiry(now: number = Date.now()): number {
+  return now + REVEAL_TIMEOUT_MS;
+}
 
 /** セルが reveal 中か。 */
 export function isCellRevealed(

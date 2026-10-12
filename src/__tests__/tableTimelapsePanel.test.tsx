@@ -184,4 +184,30 @@ describe("TableTimelapsePanel (#739)", () => {
       expect(screen.getByText(t("timelapseCountAdded", { count: 1 }))).toBeInTheDocument(),
     );
   });
+
+  /** ペアを変えたら、取得が終わるまで直前のペアの差分を新しい結果として見せない (#1534)。 */
+  it("世代ペアを変えると、取得完了まで直前の差分を破棄してスケルトンを出す", async () => {
+    const w = watch();
+    w.generations = [
+      { id: 13, captured_at: "2026-01-03T00:00:00Z", row_count: 2, truncated: false, bytes: 40 },
+      ...w.generations,
+    ];
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([w]);
+    vi.mocked(api.timelapseDiffGenerations).mockResolvedValueOnce(genDiff());
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("150")).toBeInTheDocument());
+
+    let resolveDiff: (d: TimelapseGenerationDiff) => void = () => {};
+    vi.mocked(api.timelapseDiffGenerations).mockReturnValueOnce(
+      new Promise<TimelapseGenerationDiff>((resolve) => {
+        resolveDiff = resolve;
+      }),
+    );
+    fireEvent.change(screen.getByLabelText(t("timelapseFrom")), { target: { value: "11" } });
+
+    expect(await screen.findByText(t("timelapseDiffLoading"))).toBeInTheDocument();
+    expect(screen.queryByText("150")).not.toBeInTheDocument();
+    resolveDiff(genDiff());
+    await waitFor(() => expect(screen.getByText("150")).toBeInTheDocument());
+  });
 });

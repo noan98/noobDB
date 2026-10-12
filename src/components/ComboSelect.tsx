@@ -26,7 +26,7 @@
  * `onChange` を呼ばない — 入力中のテキストは内部 `draft` state にだけ反映し、
  * blur 時に確定されていなければ直前の `value` へ巻き戻す。
  */
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -158,14 +158,7 @@ export function ComboSelect({
     });
   }, [navCount]);
 
-  // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
-  // (`ContextMenu` と同じ「測定 → フリップ → クランプ」の流れ)。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (filtered.length) の変化でポップオーバーを測り直すトリガ依存
-  useLayoutEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
+  const measure = useCallback(() => {
     const inputEl = inputRef.current;
     const listEl = listboxRef.current;
     if (!inputEl || !listEl) return;
@@ -187,8 +180,40 @@ export function ComboSelect({
       Math.max(anchor.left, MENU_MARGIN),
       Math.max(MENU_MARGIN, viewportW - anchor.width - MENU_MARGIN),
     );
-    setPos({ left, top, width: anchor.width });
-  }, [open, filtered.length]);
+    setPos((prev) =>
+      prev && prev.left === left && prev.top === top && prev.width === anchor.width
+        ? prev
+        : { left, top, width: anchor.width },
+    );
+  }, []);
+
+  // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
+  // (`ContextMenu` と同じ「測定 → フリップ → クランプ」の流れ)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (filtered.length) の変化でポップオーバーを測り直すトリガ依存
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    measure();
+  }, [open, filtered.length, measure]);
+
+  // 開いている間は、祖先のスクロールやウィンドウのリサイズにも追従させる (#1534)。
+  // scroll はバブリングしないので capture で拾う。候補リスト自身のスクロールでは
+  // 入力欄の位置は変わらないので無視する。
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && listboxRef.current?.contains(e.target)) return;
+      measure();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [open, measure]);
 
   // ハイライト移動時に、はみ出していればスクロールして見えるようにする。
   useEffect(() => {

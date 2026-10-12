@@ -46,7 +46,11 @@ export function KnownHostsPanel() {
     async (host: KnownHost) => {
       const ok = await confirm({
         title: t("knownHostsForget"),
-        message: t("knownHostsDesc"),
+        // どのホストの信頼を取り消すのかを明示する (行の取り違えに気付けるように, #1534)。
+        message: t("knownHostsForgetConfirm", {
+          host: `${host.host}:${host.port}`,
+          fingerprint: host.fingerprint,
+        }),
         confirmLabel: t("knownHostsForget"),
         tone: "warning",
       });

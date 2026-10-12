@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { act } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "./testUtils";
 import { COMBO_MAX_VISIBLE, ComboSelect, type ComboSelectOption } from "../components/ComboSelect";
@@ -267,5 +268,29 @@ describe("ComboSelect の件数上限", () => {
     await user.type(screen.getByRole("combobox"), "col_199");
     expect(screen.queryByRole("option", { name: /^\+\d+$/ })).toBeNull();
     expect(screen.getAllByRole("option").length).toBeLessThan(COMBO_MAX_VISIBLE);
+  });
+});
+
+describe("ComboSelect の位置追従 (#1534)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("開いている間に祖先がスクロールされると、入力欄の新しい位置へ追従する", async () => {
+    const user = userEvent.setup();
+    let anchorTop = 100;
+    vi.spyOn(HTMLInputElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ left: 20, right: 220, top: anchorTop, bottom: anchorTop + 30, width: 200, height: 30, x: 20, y: anchorTop, toJSON: () => ({}) }),
+    );
+    renderCombo();
+    await user.click(screen.getByRole("combobox"));
+    const listbox = screen.getByRole("listbox");
+    const before = listbox.parentElement?.style.top || listbox.style.top;
+
+    anchorTop = 300;
+    act(() => {
+      document.body.dispatchEvent(new Event("scroll", { bubbles: false }));
+      window.dispatchEvent(new Event("resize"));
+    });
+    const after = listbox.parentElement?.style.top || listbox.style.top;
+    expect(after).not.toBe(before);
   });
 });

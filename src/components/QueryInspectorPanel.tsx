@@ -28,6 +28,7 @@ import {
 import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
@@ -550,25 +551,23 @@ export function QueryInspectorPanel({
           <Flex align="center" gap="3" flexWrap="wrap" fontSize="sm">
             <chakra.label display="inline-flex" alignItems="center" gap="1.5" color="app.textSecondary">
               {t("inspectorNPlusOneCountLabel")}
-              <Input
-                type="number"
+              <DraftNumberInput
                 width="72px"
                 min={2}
-                value={String(settings.inspectorNPlusOneMinCount)}
+                value={settings.inspectorNPlusOneMinCount}
                 aria-label={t("inspectorNPlusOneCountLabel")}
-                onChange={(e) => setInspectorNPlusOneMinCount(Number(e.target.value))}
+                onCommit={setInspectorNPlusOneMinCount}
               />
             </chakra.label>
             <chakra.label display="inline-flex" alignItems="center" gap="1.5" color="app.textSecondary">
               {t("inspectorNPlusOneWindowLabel")}
-              <Input
-                type="number"
+              <DraftNumberInput
                 width="88px"
                 min={100}
                 step={100}
-                value={String(settings.inspectorNPlusOneWindowMs)}
+                value={settings.inspectorNPlusOneWindowMs}
                 aria-label={t("inspectorNPlusOneWindowLabel")}
-                onChange={(e) => setInspectorNPlusOneWindowMs(Number(e.target.value))}
+                onCommit={setInspectorNPlusOneWindowMs}
               />
             </chakra.label>
             <chakra.span fontSize="xs" color="app.textMuted">
