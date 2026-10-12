@@ -119,6 +119,11 @@
   SQL を `db::format::format_sql` (`sqlformat` クレートの薄いラッパ) で整形して
   保存し直します — フロントの sql-formatter と方針 (2 スペース字下げ・キーワードの
   ケース保持) を揃えた可読性向上オプションです。
+  **gzip 圧縮 (#1539)**: `DumpOptions.gzip` (既定オフ、全ドライバ共通) を立てると、整形
+  (`format_sql`) の後に `gzip_dump_file` が完成した一時ファイルを別の一時ファイルへ `flate2`
+  (Rust 実装) でストリーム圧縮し、成功したときだけ保存先へ rename する (未圧縮の一時ファイルは
+  `PartialFileCleanup` が消す)。バックエンドは拡張子を付け替えない (`DumpModal` が `.sql` ⇔ `.sql.gz` を
+  追従)。進捗のバイト数は圧縮前、完了イベントのバイト数は圧縮後。
   **進捗・キャンセル・SQLite ストリーミング (#686)**: ダンプはストリーミングコマンド
   (`register_stream`/`forget_stream`/`stream_id` の 3 点セット) で、`dump-stream:progress`
   (バイト数・経過秒・SQLite はテーブル数) と `:done` / `:error` を emit します。外部

@@ -1453,6 +1453,7 @@ const dumpOptions = z.object({
   noPrivileges: z.boolean().optional(),
   pgSchema: z.string().nullable().optional(),
   formatSql: z.boolean().optional(),
+  gzip: z.boolean().optional(),
   tables: z.array(z.string()).nullable().optional(),
 });
 

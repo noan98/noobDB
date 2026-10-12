@@ -1880,6 +1880,8 @@ const en = {
   dumpOptPgSchema: "Schema (optional)",
   dumpOptPgSchemaPlaceholder: "e.g. public",
   dumpOptPgSchemaHint: "pg_dump -n <schema>: restrict to one schema. Leave empty to dump all schemas.",
+  dumpOptGzip: "Compress with gzip (.sql.gz)",
+  dumpOptGzipHint: "Compresses the finished dump with gzip and saves it as a .sql.gz file. Saves disk space and transfer size; restore with gunzip or zcat.",
   dumpOptFormatSql: "Format SQL",
   dumpOptFormatSqlHint:
     "Reformat the saved SQL for readability (2-space indent, keyword case preserved), matching the editor's formatter. Best-effort; for review/version control. Off keeps the raw output.",
@@ -6542,6 +6544,8 @@ const ja: Dict = {
   dumpOptPgSchema: "スキーマ (任意)",
   dumpOptPgSchemaPlaceholder: "例: public",
   dumpOptPgSchemaHint: "pg_dump -n <スキーマ>: 1 つのスキーマに限定します。空欄で全スキーマをダンプします。",
+  dumpOptGzip: "gzip で圧縮 (.sql.gz)",
+  dumpOptGzipHint: "完成したダンプを gzip 圧縮し、.sql.gz として保存します。ディスクと転送量を減らせます (復元は gunzip / zcat)。進捗のバイト数は圧縮前、完了時のサイズは圧縮後です。",
   dumpOptFormatSql: "SQL を整形",
   dumpOptFormatSqlHint:
     "保存する SQL を可読性向上のため整形します (2 スペース字下げ・キーワードのケースは保持) — エディタの整形と方針を揃えています。best-effort でレビュー/バージョン管理向け。オフなら出力そのままです。",

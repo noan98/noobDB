@@ -4467,6 +4467,7 @@
           "events": false,
           "extendedInsert": false,
           "formatSql": false,
+          "gzip": false,
           "noCreateInfo": false,
           "noData": false,
           "noOwner": false,

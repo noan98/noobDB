@@ -147,6 +147,9 @@ encoding_rs = "0.8"
 # のみ (CLI 着色用の optional "debug" feature は使わない) で依存は unicode_categories /
 # winnow (いずれも MIT/Apache) に閉じ、cargo deny の許可リストを通る。
 sqlformat = "0.5"
+# ダンプの gzip 圧縮出力 (.sql.gz, #1539)。圧縮は Rust 実装 (miniz_oxide) だけで行い、
+# zip / 他の依存が既に引いている flate2 を直接使う (Cargo.lock の追加は noobdb の依存行のみ)。
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # Excel (xlsx) エクスポート (#711)。書き込み専用の純 Rust 実装 (MIT OR Apache-2.0)。
 # "constant_memory" は行を書くたびに一時ファイルへ逐次フラッシュする定数メモリ
 # モードで、ストリーミング経路 (`export_query_stream`) が 100 万行級の結果を

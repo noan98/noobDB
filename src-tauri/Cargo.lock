@@ -3062,6 +3062,7 @@ dependencies = [
  "data-encoding",
  "directories",
  "encoding_rs",
+ "flate2",
  "futures-util",
  "hmac",
  "keyring",

@@ -1496,6 +1496,11 @@ export interface DumpOptions {
    */
   formatSql?: boolean;
   /**
+   * All drivers — gzip-compress the finished dump (`.sql.gz`, #1539). Applied after
+   * `formatSql`. Off by default. The save path's extension is chosen by the caller.
+   */
+  gzip?: boolean;
+  /**
    * 指定したテーブルだけをダンプする (#1399)。未指定 / null はデータベース全体。
    * 空配列は不可 (バックエンドが拒否する)。MySQL ではルーチン / イベントは対象外。
    */
