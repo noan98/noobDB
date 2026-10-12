@@ -7,6 +7,8 @@ import {
   buildChartSql,
   canAggregateInDb,
   chartModelFromAggregatedRows,
+  canTimeBucket,
+  effectiveTimeBucket,
   chartConfigKeyFrom,
   chartNotices,
   donutSlicePath,
@@ -843,5 +845,48 @@ describe("時間バケット集計 (#1541)", () => {
     const cfg = { type: "line", xCol: 0, yCols: [1], aggregation: "sum", palette: "categorical" };
     expect(sanitizeChartConfig({ ...cfg, timeBucket: "week" }, cols)?.timeBucket).toBe("week");
     expect(sanitizeChartConfig({ ...cfg, timeBucket: "year" }, cols)?.timeBucket).toBeUndefined();
+  });
+});
+
+describe("時間バケットの適用条件 (#1541)", () => {
+  const col = (type_name: string) => [{ name: "x", type_name }];
+  it("PostgreSQL / MySQL は date / datetime / timestamp 系の列だけ。整数・文字列・time は不可", () => {
+    for (const d of ["postgres", "mysql"]) {
+      for (const ok of ["DATE", "DATETIME", "TIMESTAMP", "timestamptz", "TIMESTAMP WITHOUT TIME ZONE", "datetime(6)"]) {
+        expect(canTimeBucket(d, col(ok), [], 0)).toBe(true);
+      }
+      for (const ng of ["INT", "BIGINT", "VARCHAR", "TEXT", "TIME", "BOOLEAN"]) {
+        expect(canTimeBucket(d, col(ng), [], 0)).toBe(false);
+      }
+    }
+    expect(canTimeBucket("mysql", col("DATE"), [], 3)).toBe(false);
+  });
+
+  it("SQLite は取得済みの値の 80% 以上が日付表記のときだけ (整数 X は不可)", () => {
+    const rows = (vals: CellValue[]) => vals.map((v) => [v]);
+    const c = col("");
+    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02 10:00:00", "2024-01-03T01:02:03", null]), 0)).toBe(true);
+    expect(canTimeBucket("sqlite", c, rows([1, 2, 3]), 0)).toBe(false);
+    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "x", "y", "z", "w"]), 0)).toBe(false);
+    // 境界: 5 件中 4 件 (80%) は可、3 件 (60%) は不可
+    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "q"]), 0)).toBe(true);
+    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02", "2024-01-03", "q", "r"]), 0)).toBe(false);
+    expect(canTimeBucket("sqlite", c, [], 0)).toBe(false);
+    expect(canTimeBucket("sqlite", c, rows([20240101, 20240102]), 0)).toBe(false);
+  });
+
+  it("条件外では bucket を無視する (整数 X で day を選んでも undefined)", () => {
+    const cfg = { xCol: 0, timeBucket: "day" as const };
+    expect(effectiveTimeBucket("postgres", col("INT"), [], cfg)).toBeUndefined();
+    expect(effectiveTimeBucket("postgres", col("DATE"), [], cfg)).toBe("day");
+    expect(effectiveTimeBucket("postgres", col("DATE"), [], { xCol: 0, timeBucket: "none" })).toBeUndefined();
+    expect(effectiveTimeBucket("postgres", col("DATE"), [], { xCol: 0 })).toBeUndefined();
+  });
+
+  it("avg では欠損期間を 0 で埋めない (sum / count は埋める)", () => {
+    const rows: CellValue[][] = [["2024-01-01", 5], ["2024-01-03", 7]];
+    expect(chartModelFromAggregatedRows(rows, ["n"], "avg", "day").labels).toEqual(["2024-01-01", "2024-01-03"]);
+    expect(chartModelFromAggregatedRows(rows, ["n"], "sum", "day").labels).toHaveLength(3);
+    expect(chartModelFromAggregatedRows(rows, ["n"], "count", "day").labels).toHaveLength(3);
   });
 });

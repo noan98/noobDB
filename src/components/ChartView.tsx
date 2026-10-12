@@ -17,6 +17,8 @@ import {
   buildChartModel,
   buildChartSql,
   canAggregateInDb,
+  canTimeBucket,
+  effectiveTimeBucket,
   chartConfigKeyFrom,
   chartModelFromAggregatedRows,
   chartNotices,
@@ -141,9 +143,9 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       xColumn: result.columns[config.xCol].name,
       yColumns: config.yCols.map((c) => result.columns[c].name),
       agg: config.aggregation,
-      bucket: config.timeBucket,
+      bucket: effectiveTimeBucket(driver ?? "mysql", result.columns, result.rows, config),
     });
-  }, [dbAgg, onRunQuery, config, sourceSql, driver, result.columns]);
+  }, [dbAgg, onRunQuery, config, sourceSql, driver, result.columns, result.rows]);
   const [remote, setRemote] = useState<
     { sql: string; model: ChartModel | null; error: string | null } | null
   >(null);
@@ -158,7 +160,12 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         if (cancelled) return;
         setRemote({
           sql: dbAggSql,
-          model: chartModelFromAggregatedRows(res.rows, yNames, agg, config.timeBucket),
+          model: chartModelFromAggregatedRows(
+            res.rows,
+            yNames,
+            agg,
+            effectiveTimeBucket(driver ?? "mysql", result.columns, result.rows, config),
+          ),
           error: null,
         });
       })
@@ -318,7 +325,10 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         )}
         {/* 時間バケット (#1541): DB 側集計のときだけ。X の日時を日 / 週 / 月に丸めて
             グループ化し、欠けた期間は 0 で埋める。 */}
-        {dbAgg && config.aggregation !== "none" && canAggregateInDb(result.columns, config, sourceSql) && (
+        {dbAgg &&
+          config.aggregation !== "none" &&
+          canAggregateInDb(result.columns, config, sourceSql) &&
+          canTimeBucket(driver ?? "mysql", result.columns, result.rows, config.xCol) && (
           <Field label={t("chartTimeBucket")}>
             <ListboxSelect
               value={config.timeBucket ?? "none"}

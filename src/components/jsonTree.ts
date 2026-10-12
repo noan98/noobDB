@@ -536,6 +536,9 @@ export function jsonPathSqlPredicate(
  * キーや文字列値に含まれる引用符は SQL に漏れない。`where` は呼び出し側が行の主キーから
  * 作った述語 (`buildRowWhere`)。ルート (空パス)、および SQLite で `"` / `\` を含むキーを
  * 通るパス (JSON パスで表せない) は null。
+ *
+ * PostgreSQL の `json` 型の列は `::jsonb` を経由して書き戻されるため、更新後はキーの順序・重複キー・
+ * 空白・数値の表記が jsonb 流に正規化される (`jsonb` 列では変わらない)。
  */
 export function jsonPathSqlUpdate(
   driver: string,

@@ -14,6 +14,7 @@ import {
   type ColorRamp,
 } from "../colorScale";
 import { quoteIdentFor } from "./sqlDialect";
+import { classifyEditType } from "./cellEdit";
 import { resultViewKey } from "./resultViewKey";
 
 export type ChartType = "bar" | "line" | "area" | "pie";
@@ -371,6 +372,11 @@ export interface ChartSqlRequest {
  * - SQLite: `strftime`。週は `%w` (日曜 = 0) から `(w + 6) % 7` 日遡る。
  *
  * 未知のドライバは MySQL 扱い (`quoteIdentFor` と同じ)。
+ *
+ * タイムゾーン: 日時を DB の保持する値のまま丸める。PostgreSQL の `timestamptz` はセッションの
+ * タイムゾーンで日付境界が決まり、MySQL の `TIMESTAMP` も接続のタイムゾーンで変換された値を丸める。
+ * SQLite は保存された文字列をそのまま解釈する (`Z` や `+09:00` 付きは UTC に換算される)。
+ * 利用者のローカルタイムゾーンへは変換しない。
  */
 export function timeBucketExpr(driver: string, xRef: string, bucket: Exclude<TimeBucket, "none">): string {
   if (driver === "postgres") {
@@ -385,6 +391,56 @@ export function timeBucketExpr(driver: string, xRef: string, bucket: Exclude<Tim
   if (bucket === "month") return `DATE_FORMAT(${xRef}, '%Y-%m')`;
   if (bucket === "day") return `DATE_FORMAT(${xRef}, '%Y-%m-%d')`;
   return `DATE_FORMAT(DATE_SUB(${xRef}, INTERVAL WEEKDAY(${xRef}) DAY), '%Y-%m-%d')`;
+}
+
+const SQLITE_DATE_LIKE_RE = /^\d{4}-\d{2}-\d{2}([ T]|$)/;
+/** SQLite の X 列を日時とみなす、取得済みの値の割合の下限。 */
+const SQLITE_DATE_LIKE_MIN_RATIO = 0.8;
+/** SQLite の判定に使う先頭からの行数の上限。 */
+const SQLITE_DATE_SAMPLE_ROWS = 200;
+
+/**
+ * 時間バケットを X 列に適用してよいか (#1541)。整数・文字列の X に `date_trunc` / `DATE_FORMAT` を
+ * かけると DB のエラーや無意味な結果になるので、型が合うときだけ許す。
+ *
+ * - PostgreSQL / MySQL: 列の型が date / datetime (`classifyEditType`、timestamp 系を含む)。
+ *   `time` や数値、文字列は不可。
+ * - SQLite: 型が実質ないため、取得済みの非 NULL 値の 80% 以上 (先頭 200 行) が
+ *   `YYYY-MM-DD` で始まる日付表記のときだけ。
+ */
+export function canTimeBucket(
+  driver: string,
+  columns: Column[],
+  rows: CellValue[][],
+  xCol: number,
+): boolean {
+  const col = columns[xCol];
+  if (!col) return false;
+  if (driver === "sqlite") {
+    let total = 0;
+    let dateLike = 0;
+    for (const r of rows) {
+      const v = r[xCol];
+      if (v === null || v === undefined) continue;
+      total++;
+      if (typeof v === "string" && SQLITE_DATE_LIKE_RE.test(v)) dateLike++;
+      if (total >= SQLITE_DATE_SAMPLE_ROWS) break;
+    }
+    return total > 0 && dateLike / total >= SQLITE_DATE_LIKE_MIN_RATIO;
+  }
+  const kind = classifyEditType(col.type_name);
+  return kind === "date" || kind === "datetime";
+}
+
+/** 設定の時間バケットのうち、X 列に適用してよいもの。不可なら `undefined` (= X 値そのまま)。 */
+export function effectiveTimeBucket(
+  driver: string,
+  columns: Column[],
+  rows: CellValue[][],
+  config: Pick<ChartConfig, "xCol" | "timeBucket">,
+): TimeBucket | undefined {
+  if (!config.timeBucket || config.timeBucket === "none") return undefined;
+  return canTimeBucket(driver, columns, rows, config.xCol) ? config.timeBucket : undefined;
 }
 
 /** DB 側集計の SQL を生成する。結果の列は X、続いて Y 系列の集計値 (`yColumns` と同順)。 */
@@ -439,7 +495,8 @@ export function chartModelFromAggregatedRows(
     values: rows.map((r) => toNumber(r[i + 1]) ?? 0),
   }));
   const model: ChartModel = { labels, series, sampledFrom: null, excludedNonNumeric: 0 };
-  return bucket && bucket !== "none" ? fillTimeBuckets(model, bucket) : model;
+  // avg は「行の無い期間の平均」が 0 ではなく未定義なので、欠損は埋めない (sum / count だけ 0 埋め)。
+  return bucket && bucket !== "none" && aggregation !== "avg" ? fillTimeBuckets(model, bucket) : model;
 }
 
 /** 欠損期間の 0 埋めで生成するバケット数の上限。これを超える範囲は埋めずに元のまま返す。 */
