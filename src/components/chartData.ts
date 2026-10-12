@@ -648,7 +648,7 @@ export function chartSummary(
     return { series: model.series.length, points, min: null, max: null };
   }
   // 円グラフは負値を 0 として描くので要約も合わせる (先頭系列のみ)。
-  const src = type === "pie" ? (model.series[0]?.values ?? []).map((v) => Math.max(0, v)) : values;
+  const src = type === "pie" ? (model.series[0]?.values ?? []).filter((v) => Number.isFinite(v)).map((v) => Math.max(0, v)) : values;
   return {
     series: type === "pie" ? 1 : model.series.length,
     points,

@@ -1135,6 +1135,35 @@ describe("キーボードセルナビゲーション (#406)", () => {
     });
   });
 
+  it("ヘッダのグリップ / ハンドルのキー操作はセルの選択とフォーカスを動かさない (#1529)", async () => {
+    localStorage.clear();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[1][0]);
+    fireEvent.keyDown(cells[1][0], { key: "ArrowRight", shiftKey: true });
+    const selectedBefore = container.querySelectorAll("td.is-selected-cell").length;
+    expect(selectedBefore).toBe(2);
+    const activeBefore = container.querySelector("td.is-active-cell");
+
+    const handle = container.querySelector<HTMLElement>("thead th .th-resize-handle") as HTMLElement;
+    handle.focus();
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    const grip = container.querySelector<HTMLElement>(".th-drag-grip") as HTMLElement;
+    fireEvent.keyDown(grip, { key: "Home" });
+    fireEvent.keyDown(grip, { key: "ArrowLeft" });
+
+    expect(container.querySelectorAll("td.is-selected-cell").length).toBe(selectedBefore);
+    expect(container.querySelector("td.is-active-cell")).toBe(activeBefore);
+    expect(cells[1][0].ownerDocument.activeElement?.closest("thead")).not.toBeNull();
+  });
+
+  it("並び替えグリップは Enter で列メニューを開く (#1529)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const grip = container.querySelector<HTMLElement>(".th-drag-grip") as HTMLElement;
+    fireEvent.keyDown(grip, { key: "Enter" });
+    expect(screen.getByRole("button", { name: t("gridMoveColumnRight") })).toBeInTheDocument();
+  });
+
   it("列ヘッダのメニューから列を左 / 右へ移動できる (#1529)", async () => {
     localStorage.clear();
     const user = userEvent.setup();

@@ -124,3 +124,20 @@ describe("ExplainViewer のキーボード操作 (#1529)", () => {
     expect(items()[0]).toHaveAttribute("aria-selected", "true");
   });
 });
+
+describe("ExplainViewer の祖先の折りたたみ (#1529)", () => {
+  it("選択中ノードの祖先を折りたたむと、その親が選択され直す", () => {
+    const { getAllByRole } = renderWithProviders(
+      <ExplainViewer result={sqliteResult()} driver="sqlite" />,
+    );
+    const items = () => getAllByRole("treeitem");
+    // 子を選択してから、ルートの展開ボタンで折りたたむ。
+    fireEvent.click(items()[1]);
+    expect(items()[1]).toHaveAttribute("aria-selected", "true");
+    const caret = items()[0].querySelector("button") as HTMLElement;
+    expect(caret).toHaveAttribute("tabindex", "-1");
+    fireEvent.click(caret);
+    expect(items()[0]).toHaveAttribute("aria-selected", "true");
+    expect(items()[0]).toHaveAttribute("tabindex", "0");
+  });
+});

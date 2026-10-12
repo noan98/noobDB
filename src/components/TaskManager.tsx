@@ -411,7 +411,7 @@ function TaskRow({
               onClick={onToggleHistory}
               aria-label={t("taskHistory")}
               aria-expanded={expanded}
-              aria-controls={`task-history-${task.id}`}
+              aria-controls={expanded ? `task-history-${task.id}` : undefined}
             >
               <Icon name="clock" size={ICON_SIZES.sm} />
             </Button>

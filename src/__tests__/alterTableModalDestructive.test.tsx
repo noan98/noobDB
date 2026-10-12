@@ -53,7 +53,7 @@ describe("AlterTableModal 破壊的変更 (#1529)", () => {
     fireEvent.click(dropButtons[1]);
 
     expect(await screen.findByText(t("alterTableDestructiveTitle", { count: 1 }))).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("DROP COLUMN");
+    expect(screen.getByRole("status")).toHaveTextContent("DROP COLUMN");
 
     const run = screen.getByRole("button", { name: t("alterTableRun") });
     // ヘッダの × も同名なので、フッターのもの (最後) を取る。

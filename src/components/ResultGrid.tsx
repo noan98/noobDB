@@ -2922,6 +2922,12 @@ const GridHeaderCell = memo(function GridHeaderCell({
               aria-label={t("gridDragColumn")}
               aria-keyshortcuts="ArrowLeft ArrowRight"
               onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  // role=button なので Enter / Space で列メニューを開く。
+                  e.preventDefault();
+                  handlers.onOpenFilter(colIdx, e.currentTarget.getBoundingClientRect());
+                  return;
+                }
                 if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
                 e.preventDefault();
                 handlers.onMoveColumn(h.column.id, e.key === "ArrowLeft" ? -1 : 1);
@@ -3413,7 +3419,14 @@ const GridRow = memo(function GridRow({
       ref={measureRef}
       data-index={measureIndex}
     >
-      <td className="row-index" onClick={(e) => handlers.onRowIndexClick(e, rowIdx)}>
+      <td
+        className="row-index"
+        // Shift+クリックでブラウザ既定のテキスト選択が走らないようにする。
+        onMouseDown={(e) => {
+          if (e.shiftKey) e.preventDefault();
+        }}
+        onClick={(e) => handlers.onRowIndexClick(e, rowIdx)}
+      >
         {rowIdx + 1}
       </td>
       {leftCells.map(renderCell)}
@@ -5625,6 +5638,9 @@ export const DataGrid = memo(function DataGrid({
   // Fires on the <table> (bubbled from the focused <td>). When the inline
   // editor is open the input handles its own keys and this handler short-circuits.
   const handleGridKeyDown = (e: React.KeyboardEvent<HTMLTableElement>) => {
+    // ヘッダ内 (並び替えグリップ・リサイズハンドル・ソート / フィルタボタン) のキー操作は
+    // それぞれの要素が処理する。ここで受けるとセルの移動・選択解除が走ってしまう (#1529)。
+    if ((e.target as HTMLElement).closest("thead")) return;
     if (editing) return;
     if (!activeCell) return;
     const { rowIdx, colIdx } = activeCell;

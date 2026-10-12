@@ -614,7 +614,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             )}
 
             {hasDestructive && (
-              <Callout tone="warning" role="alert" title={t("alterTableDestructiveTitle", { count: destructiveStatements.length })}>
+              <Callout tone="warning" role="status" title={t("alterTableDestructiveTitle", { count: destructiveStatements.length })}>
                 <chakra.div display="flex" flexDirection="column" gap="0.5">
                   <span>{t("alterTableDestructiveBody")}</span>
                   {destructiveStatements.map((s, i) => (

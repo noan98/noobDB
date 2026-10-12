@@ -122,7 +122,7 @@ import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sql
 import type { AiSqlRequest } from "./components/AiSqlPanel";
 import { RESULT_SUMMARY_STATS_MAX_ROWS } from "./ai/resultSummary";
 import type { AiResultSummaryRequest } from "./components/AiResultSummaryPanel";
-import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
+import { StatusAnnouncer, StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
@@ -1753,11 +1753,13 @@ export default function App() {
   // チートシート以外のオーバーレイ / 全画面ビューが開いているか。`?` ハンドラが使う
   // (チートシート自身の閉じる操作は通す必要があるので別に持つ, #1529)。
   const blockingOverlayOpenRef = useRef(false);
+  const cheatSheetOpenRef = useRef(false);
   useEffect(() => {
     blockingOverlayOpenRef.current =
       showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
       showUsers || showServerInfo || showSizes || showSnippetForm ||
       showCommandPalette || showObjectSearch || showDataSearch;
+    cheatSheetOpenRef.current = showCheatSheet;
     overlayOpenRef.current = blockingOverlayOpenRef.current || showCheatSheet;
   });
   // アクティブになったタブがクエリタブのときだけ、次フレームでエディタへ
@@ -8256,6 +8258,11 @@ export default function App() {
       if (blockingOverlayOpenRef.current) {
         return;
       }
+      // ref に載らないモーダル (AlterTable など個別の Dialog) が開いていれば開かない。
+      // チートシート自身は閉じる操作を通す。
+      if (!cheatSheetOpenRef.current && document.querySelector('[role="dialog"][aria-modal="true"]')) {
+        return;
+      }
       e.preventDefault();
       setShowCheatSheet((v) => !v);
     };
@@ -10224,6 +10231,12 @@ export default function App() {
         </Box>
         </WorkspaceSplit>
 
+        {/* 読み上げ専用の常設領域 (#1529)。メッセージの種類が変わったときだけ更新する。 */}
+        <StatusAnnouncer
+          text={statusDismissed ? "" : statusText}
+          messageKey={statusDismissed ? "" : statusMessageKey}
+          assertive={statusTone(status) === "error" || statusTone(status) === "critical"}
+        />
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
           // critical は error と同じ赤系で描き、加えて「重大」バッジで際立たせる。
@@ -10305,11 +10318,7 @@ export default function App() {
                   {t("statusSeverityCritical")}
                 </chakra.span>
               )}
-              {/* 文言の変化をスクリーンリーダーへ通知するライブリージョン (#1529)。常設の
-                  要素なので内容の差し替えだけが読み上げられ、同一文言の再描画は DOM が
-                  変わらないため再通知されない。エラーは assertive、それ以外は polite。
-                  ライブリージョンの role 手書きは禁止 (designTokens) なので aria-live で表す。 */}
-              <Box flex="1" minW="0" aria-live={isError ? "assertive" : "polite"} aria-atomic="true">
+              <Box flex="1" minW="0">
                 {statusHintKey ? (
                   // ヒントは初心者向けの一般的な言い回しだけだと具体性に欠けるため、
                   // 実際のエラー本文 (シンタックスエラーの箇所など具体的な値) を常に

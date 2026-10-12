@@ -417,6 +417,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/** キーボードフォーカス時の枠 (フォーカスリングのトークン, #1529)。 */
+const CHART_FOCUS_CSS = { "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" } } as const;
+
 const W = 900;
 const H = 440;
 const PAD = { left: 60, right: 20, top: 16, bottom: 66 };
@@ -519,9 +522,11 @@ export function CartesianChart({
       viewBox={`0 0 ${W} ${H}`}
       width="100%"
       style={{ maxHeight: "100%" }}
-      role="img"
+      role="group"
+      aria-roledescription={t("chartAriaRoleDescription")}
       aria-label={ariaLabel}
       tabIndex={0}
+      css={CHART_FOCUS_CSS}
       data-chart-svg=""
       onMouseMove={onMove}
       onMouseLeave={() => setHover(null)}
@@ -827,9 +832,11 @@ function PieChart({
       viewBox="0 0 720 440"
       width="100%"
       style={{ maxHeight: "100%" }}
-      role="img"
+      role="group"
+      aria-roledescription={t("chartAriaRoleDescription")}
       aria-label={ariaLabel}
       tabIndex={0}
+      css={CHART_FOCUS_CSS}
       data-chart-svg=""
       onKeyDown={onKey}
       onBlur={() => setHover(null)}

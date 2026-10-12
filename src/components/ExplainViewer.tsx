@@ -560,6 +560,9 @@ function NodeRow({
           <Tooltip label={isCollapsed ? expandLabel : collapseLabel}>
             <chakra.button
               css={caretButtonCss}
+              // 行自体が roving tabindex の対象なので、展開ボタンは余分なタブストップにしない
+              // (行にフォーカスして ←→ で開閉できる, #1529)。
+              tabIndex={-1}
               aria-label={isCollapsed ? expandLabel : collapseLabel}
               onClick={(e) => {
                 e.stopPropagation();
@@ -740,6 +743,12 @@ function ExplainViewerBody({
 
   const toggle = (id: string) => {
     markEntered();
+    // 選択中のノードの祖先を折りたたむと選択行が消えるので、折りたたんだ親を選び直す
+    // (roving tabindex のタブストップが消えないように, #1529)。
+    if (root && selectedId && selectedId !== id && !collapsed.has(id)) {
+      const target = findNode(root, id);
+      if (target && findNode(target, selectedId)) setSelectedId(id);
+    }
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);

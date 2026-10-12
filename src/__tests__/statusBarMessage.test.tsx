@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderWithProviders, screen } from "./testUtils";
-import { StatusBarIcon, StatusBarText } from "../components/StatusBarMessage";
+import { StatusAnnouncer, StatusBarIcon, StatusBarText } from "../components/StatusBarMessage";
 
 /**
  * フッターステータスバーの状態アイコン・文言 (#1213)。
@@ -43,5 +43,26 @@ describe("StatusBarIcon (#1213)", () => {
     rerender(<StatusBarIcon kind="success" />);
     await screen.findByText((_, el) => el?.querySelector("svg") != null && el.tagName === "SPAN");
     expect(container.querySelectorAll("span > span").length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("StatusAnnouncer (#1529)", () => {
+  it("同じメッセージ種別の数値更新では読み上げ領域を更新せず、種別が変わったときだけ更新する", () => {
+    const { rerender } = renderWithProviders(
+      <StatusAnnouncer text="10 rows fetched…" messageKey="statusFetching" assertive={false} />,
+    );
+    const polite = () => screen.getByTestId("status-live-polite");
+    const assertive = () => screen.getByTestId("status-live-assertive");
+    expect(polite()).toHaveTextContent("10 rows fetched…");
+
+    rerender(<StatusAnnouncer text="20 rows fetched…" messageKey="statusFetching" assertive={false} />);
+    expect(polite()).toHaveTextContent("10 rows fetched…");
+
+    rerender(<StatusAnnouncer text="Query failed" messageKey="statusError" assertive />);
+    expect(assertive()).toHaveTextContent("Query failed");
+    expect(polite()).toHaveTextContent("");
+
+    rerender(<StatusAnnouncer text="" messageKey="" assertive={false} />);
+    expect(assertive()).toHaveTextContent("");
   });
 });
