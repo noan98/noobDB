@@ -5849,6 +5849,15 @@ export default function App() {
     runInTabWithGate(tab, sql, { newTab: false });
   }, [sessionId, addTab, runInTabWithGate]);
 
+  // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
+  // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
+  const handleOutputRunSql = useCallback((sql: string, database: string | null) => {
+    if (!sessionId) return;
+    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql, ...(database ? { database } : {}) };
+    addTab(tab);
+    runInTabWithGate(tab, sql, { newTab: false });
+  }, [sessionId, addTab, runInTabWithGate]);
+
   // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)
   // をサイドバーに出す。
   const handleLauncherShowMore = useCallback((section: QuickLauncherSectionId) => {
@@ -9912,8 +9921,9 @@ export default function App() {
                     <OutputPanel
                       onOpenSql={handleOpenHistoryInNewTab}
                       onInsertSql={handleLauncherInsertSql}
-                      onRunSql={handleLauncherRunSql}
+                      onRunSql={handleOutputRunSql}
                       canRun={sessionId !== null}
+                      currentConnection={selectedProfile?.name ?? null}
                     />
                   ) : activeBottomPanelTab === "activity" ? (
                     <ActivityLogPanel />

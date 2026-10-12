@@ -326,7 +326,7 @@ describe("App.tsx の結線 (#1112)", () => {
     expect(appSource).toContain("<OutputPanel");
     expect(appSource).toContain("onOpenSql={handleOpenHistoryInNewTab}");
     expect(appSource).toContain("onInsertSql={handleLauncherInsertSql}");
-    expect(appSource).toContain("onRunSql={handleLauncherRunSql}");
+    expect(appSource).toContain("onRunSql={handleOutputRunSql}");
     expect(appSource).toContain("<ActivityLogPanel />");
     // 出力は実行経路の結果受信地点で、メッセージはステータスの変化で積む。
     expect(appSource).toMatch(/recordOutput\(/);

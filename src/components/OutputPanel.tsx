@@ -40,14 +40,17 @@ export function OutputPanel({
   onInsertSql,
   onRunSql,
   canRun = false,
+  currentConnection = null,
 }: {
   onOpenSql: (sql: string) => void;
   /** フォーカス中のエディタへ挿入する (#1541)。省略時はボタンを出さない。 */
   onInsertSql?: (sql: string) => void;
   /** 新しいタブで再実行する (#1541)。実行は通常の実行経路 (安全網つき) に委ねる。省略時は出さない。 */
-  onRunSql?: (sql: string) => void;
-  /** 挿入・再実行できるか (接続中か)。 */
+  onRunSql?: (sql: string, database: string | null) => void;
+  /** 接続中か。再実行に必要 (挿入は未接続でも使える)。 */
   canRun?: boolean;
+  /** いま接続している接続名。記録時の接続と違う行は再実行を無効にする。 */
+  currentConnection?: string | null;
 }) {
   const t = useT();
   const entries = useOutputLog();
@@ -98,6 +101,7 @@ export function OutputPanel({
               onInsertSql={onInsertSql}
               onRunSql={onRunSql}
               canRun={canRun}
+              currentConnection={currentConnection}
             />
           ))}
         </chakra.ul>
@@ -114,14 +118,16 @@ function OutputRow({
   onInsertSql,
   onRunSql,
   canRun,
+  currentConnection,
 }: {
   entry: OutputEntry;
   expanded: boolean;
   onToggle: () => void;
   onOpenSql: (sql: string) => void;
   onInsertSql?: (sql: string) => void;
-  onRunSql?: (sql: string) => void;
+  onRunSql?: (sql: string, database: string | null) => void;
   canRun: boolean;
+  currentConnection: string | null;
 }) {
   const t = useT();
   const toast = useToast();
@@ -131,6 +137,14 @@ function OutputRow({
   const truncated = isSqlTruncated(entry);
   const detailsId = `output-row-${entry.id}`;
   const where = [entry.connection, entry.database].filter(Boolean).join(" / ");
+  // 再実行できない理由 (#1541)。記録時と別の接続へは流さない (別環境への誤実行を防ぐ)。
+  const rerunBlock = truncated
+    ? t("outputOpenTruncatedDisabled")
+    : !canRun
+      ? t("outputNeedsConnection")
+      : entry.connection !== null && entry.connection !== currentConnection
+        ? t("outputRerunOtherConnection", { name: entry.connection })
+        : null;
   const serverMessages = entry.serverMessages ?? [];
   const worstServer = worstServerSeverity(serverMessages);
 
@@ -246,14 +260,14 @@ function OutputRow({
             </Tooltip>
             {onInsertSql && (
               <Tooltip
-                label={truncated ? t("outputOpenTruncatedDisabled") : !canRun ? t("outputNeedsConnection") : undefined}
-                focusableWrapper={truncated || !canRun}
+                label={truncated ? t("outputOpenTruncatedDisabled") : undefined}
+                focusableWrapper={truncated}
               >
                 <Button
                   type="button"
                   size="sm"
                   variant="secondary"
-                  disabled={truncated || !canRun}
+                  disabled={truncated}
                   onClick={() => onInsertSql(entry.sql)}
                 >
                   {t("outputInsertInEditor")}
@@ -261,16 +275,13 @@ function OutputRow({
               </Tooltip>
             )}
             {onRunSql && (
-              <Tooltip
-                label={truncated ? t("outputOpenTruncatedDisabled") : !canRun ? t("outputNeedsConnection") : t("outputRerunHint")}
-                focusableWrapper={truncated || !canRun}
-              >
+              <Tooltip label={rerunBlock ?? t("outputRerunHint")} focusableWrapper={rerunBlock !== null}>
                 <Button
                   type="button"
                   size="sm"
                   variant="secondary"
-                  disabled={truncated || !canRun}
-                  onClick={() => onRunSql(entry.sql)}
+                  disabled={rerunBlock !== null}
+                  onClick={() => onRunSql(entry.sql, entry.database)}
                 >
                   <Icon name="play" size={ICON_SIZES.md} />
                   {t("outputRerun")}

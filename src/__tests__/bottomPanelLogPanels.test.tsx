@@ -82,20 +82,32 @@ describe("OutputPanel", () => {
     const onInsertSql = vi.fn();
     const onRunSql = vi.fn();
     const { unmount } = renderWithProviders(
-      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun={false} />,
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun={false} currentConnection="local" />,
     );
     fireEvent.click(screen.getByRole("button", { expanded: false }));
-    expect(screen.getByRole("button", { name: t("outputInsertInEditor") })).toBeDisabled();
+    // 未接続でも挿入は使える (再実行だけ接続が要る)。
+    expect(screen.getByRole("button", { name: t("outputInsertInEditor") })).toBeEnabled();
     expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();
     unmount();
     renderWithProviders(
-      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun />,
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun currentConnection="local" />,
     );
     fireEvent.click(screen.getByRole("button", { expanded: false }));
     fireEvent.click(screen.getByRole("button", { name: t("outputInsertInEditor") }));
     fireEvent.click(screen.getByRole("button", { name: t("outputRerun") }));
     expect(onInsertSql).toHaveBeenCalledWith("update t set a = 1 where id = 2");
-    expect(onRunSql).toHaveBeenCalledWith("update t set a = 1 where id = 2");
+    expect(onRunSql).toHaveBeenCalledWith("update t set a = 1 where id = 2", "app");
+  });
+
+  it("記録時と別の接続では再実行を無効にする (挿入は可)。同じ接続名なら有効 (#1541)", () => {
+    run({ sql: "delete from t", outcome: "affected", rows: 1, connection: "prod" });
+    const onRunSql = vi.fn();
+    renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={vi.fn()} onRunSql={onRunSql} canRun currentConnection="dev" />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("outputInsertInEditor") })).toBeEnabled();
   });
 
   it("コールバックを渡さなければ挿入・再実行ボタンは出さない (#1541)", () => {
