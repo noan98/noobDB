@@ -104,7 +104,7 @@ function registerHandlers() {
   onCommand("plan_watch_list", () => []);
   onCommand("plan_watch_refresh", () => ({ recorded: 0, changed: 0, errors: [] }));
   onCommand("schema_drift_list", () => []);
-  onCommand("schema_drift_capture", () => ({ added: false, generations: [], summary: null }));
+  onCommand("schema_drift_capture", () => ({ added: false, database: "appdb", generations: [], summary: null }));
   const openResult = (db: string, table: string, limit: number) => {
     const base = `SELECT * FROM \`${db}\`.\`${table}\``;
     return { base, sql: `${base} LIMIT ${limit}`, columns: TABLE_COLUMNS, row_identity: null, row_estimate: null };

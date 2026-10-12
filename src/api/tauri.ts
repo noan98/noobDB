@@ -927,6 +927,8 @@ export interface HealthProbeItem {
   version: string | null;
   /** 現在の接続数。SQLite / 取得不可は null。 */
   connections: number | null;
+  /** SSH トンネルの生存 (#1537)。トンネル越しでなければ null、false なら SSH セッションが閉じている。 */
+  tunnel_alive: boolean | null;
 }
 
 export interface ServerMetrics {
@@ -1121,6 +1123,8 @@ export interface SchemaDriftGeneration {
   tableCount: number;
   /** true のとき、サイズ暴走ガードで中身を保存していない (差分表示不可)。 */
   omitted: boolean;
+  /** DDL の成功をきっかけに自動取得した世代のとき、そのとき実行した SQL (#1537)。 */
+  triggerSql?: string | null;
 }
 
 /** 1 テーブルの変化サマリ。`tableStatus` はテーブル自体の増減、それ以外は
@@ -1177,6 +1181,8 @@ export interface SchemaDriftSummary {
 export interface SchemaDriftCapture {
   /** 新しい世代が追加されたか (直前世代と同一内容なら false)。 */
   added: boolean;
+  /** 実際に取得した対象。PostgreSQL ではプロファイルの DB 名が既定スキーマに解決される。 */
+  database: string;
   /** 追加後の世代一覧 (新しい順)。`added` が false のときは空。 */
   generations: SchemaDriftGeneration[];
   /** 直前世代からの変化サマリ。初回取得・比較不能のときは null。 */
@@ -1532,7 +1538,29 @@ export type TaskAction =
       database?: string | null;
       /** 実行するアサーション ID。空ならプロファイルのスコープに合うものすべて。 */
       assertion_ids: string[];
+      /** true: 失敗件数が前回の実行より増えたときだけ失敗扱い (通知) にする (#1537)。 */
+      notify_only_on_increase?: boolean;
+    }
+  | {
+      /** ウォッチ中のテーブルのスナップショットを無人で取得する (#1537)。 */
+      kind: "timelapse_capture";
+      /** 1 ウォッチあたりの保持世代数の上限。未指定ならタイムラプスの既定値。 */
+      max_generations?: number | null;
+    }
+  | {
+      /** ウォッチ中の EXPLAIN を再取得し、警告相当の変化だけを失敗扱い (通知) にする (#1537)。 */
+      kind: "refresh_plan_watch";
+      /** 対象スニペット ID。空ならこのプロファイルでウォッチ中のものすべて。 */
+      snippet_ids: string[];
     };
+
+/** 接続失敗時の自動リトライ設定 (#1537)。接続段階の失敗だけを指数バックオフで再試行する。 */
+export interface ConnectRetry {
+  /** 初回失敗後の再試行回数 (0 = しない、上限 10)。 */
+  max_retries: number;
+  /** 最初の待機秒数 (5〜3600)。以降 2 倍ずつ伸びる (上限 15 分)。 */
+  interval_secs: number;
+}
 
 /** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
 export type TaskSchedule =
@@ -1551,6 +1579,7 @@ export interface TaskDefinition {
   next_run_at: string | null;
   last_run_at: string | null;
   last_status: string | null;
+  connect_retry: ConnectRetry;
 }
 
 export interface SaveTaskRequest {
@@ -1560,6 +1589,7 @@ export interface SaveTaskRequest {
   action: TaskAction;
   schedule: TaskSchedule;
   enabled: boolean;
+  connect_retry?: ConnectRetry;
 }
 
 /** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
@@ -1575,6 +1605,8 @@ export interface TaskRun {
   bytes: number | null;
   elapsed_ms: number;
   catch_up: boolean;
+  /** 接続を試みた回数 (#1537)。2 以上なら接続リトライが働いた。 */
+  attempts: number;
 }
 
 /** アサーション実行タスクの 1 アサーション分の合否履歴 (#1170)。 */

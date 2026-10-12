@@ -105,18 +105,25 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
     };
   }, [scopeId, reloadKey]);
 
-  const handleUndo = async (entry: WriteCaptureSummary) => {
+  // Undo (巻き戻し) と Redo (やり直し, #1536) は同じ「プレビュー → 確認 → 適用」の流れで、
+  // 呼ぶ IPC と文言だけが違う。
+  const handleApply = async (entry: WriteCaptureSummary, mode: "undo" | "redo") => {
     if (!sessionId) return;
+    const redo = mode === "redo";
     setBusyId(entry.id);
     try {
-      const preview = await api.previewUndo(sessionId, entry.id);
+      const preview = redo
+        ? await api.previewRedo(sessionId, entry.id)
+        : await api.previewUndo(sessionId, entry.id);
       if (preview.statements.length === 0 && preview.conflicts.length === 0) {
-        toast.info(t("flightRecorderNothingToUndo"));
+        toast.info(t(redo ? "flightRecorderNothingToRedo" : "flightRecorderNothingToUndo"));
         return;
       }
       const message = (
         <Box>
-          <chakra.p m={0}>{t("flightRecorderUndoConfirmBody", { table: entry.table })}</chakra.p>
+          <chakra.p m={0}>
+            {t(redo ? "flightRecorderRedoConfirmBody" : "flightRecorderUndoConfirmBody", { table: entry.table })}
+          </chakra.p>
           <CodePreview wrap mt="2" maxH="160px">
             {preview.statements.join(";\n") || t("flightRecorderNoStatements")}
           </CodePreview>
@@ -131,7 +138,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         </Box>
       );
       const ok = await confirm({
-        title: t("flightRecorderUndoConfirmTitle"),
+        title: t(redo ? "flightRecorderRedoConfirmTitle" : "flightRecorderUndoConfirmTitle"),
         message,
         confirmLabel:
           preview.conflicts.length > 0 ? t("flightRecorderForceApply") : t("flightRecorderApply"),
@@ -139,9 +146,12 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
       });
       if (!ok) return;
 
-      const outcome = await api.undoFlightRecord(sessionId, entry.id, preview.conflicts.length > 0);
+      const force = preview.conflicts.length > 0;
+      const outcome = redo
+        ? await api.redoFlightRecord(sessionId, entry.id, force)
+        : await api.undoFlightRecord(sessionId, entry.id, force);
       if (outcome.applied) {
-        toast.success(t("flightRecorderUndoApplied", { rows: outcome.rowsAffected }));
+        toast.success(t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", { rows: outcome.rowsAffected }));
         setReloadKey((k) => k + 1);
       } else {
         toast.error(t("flightRecorderUndoBlocked"));
@@ -252,11 +262,13 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
                   <PressableButton
                     type="button"
                     variant="secondary"
-                    disabled={!sessionId || entry.undone || busyId === entry.id}
-                    onClick={() => void handleUndo(entry)}
+                    disabled={!sessionId || busyId === entry.id}
+                    onClick={() => void handleApply(entry, entry.undone ? "redo" : "undo")}
                   >
-                    <Icon name="undo" size={ICON_SIZES.sm} />{" "}
-                    {busyId === entry.id ? t("flightRecorderUndoing") : t("flightRecorderUndoAction")}
+                    <Icon name={entry.undone ? "redo" : "undo"} size={ICON_SIZES.sm} />{" "}
+                    {busyId === entry.id
+                      ? t(entry.undone ? "flightRecorderRedoing" : "flightRecorderUndoing")
+                      : t(entry.undone ? "flightRecorderRedoAction" : "flightRecorderUndoAction")}
                   </PressableButton>
                 </chakra.li>
               ))}

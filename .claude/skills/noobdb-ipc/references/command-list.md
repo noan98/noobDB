@@ -18,12 +18,19 @@
 - `connect`
 - `cancel_connect`
 - `ping_session`
+- `session_tunnel_alive`
 - `health_probe_all`
 - `disconnect`
 - `reconnect`
 
 `health_probe_all(sessionIds, timeoutMs, refreshVersion)` (#1259) は接続ヘルスの一括プローブ。
 Rust が全セッションを並列に問い合わせ、各セッションを `tokio::time::timeout` で打ち切る。
+各項目の `tunnel_alive` (#1537) は SSH トンネルの生存 (トンネル越しでなければ null)。
+`false` のときは `SELECT 1` を投げずに `down` を返す。
+
+`session_tunnel_alive(sessionId)` (#1537) は SSH トンネルの生存だけを DB に触れずに返す軽量チェック
+(russh `Handle::is_closed` + accept ループ終了 + 踏み台の生存)。UI が定期的に呼び、クエリ失敗より
+先に切断を知らせて再接続 (#712) へ誘導する。
 
 ## AI 基盤 (`commands/ai.rs`, #690)
 
@@ -260,7 +267,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `schema_drift_compare`
 - `schema_drift_import_legacy`
 
-#736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存 (最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。`import_legacy` は旧 localStorage 世代を初回だけ取り込む
+#736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存 (最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。`import_legacy` は旧 localStorage 世代を初回だけ取り込む。`capture` の任意引数 `trigger_sql` (#1537) は DDL 成功をきっかけにした自動取得のときの実行 SQL で、世代に紐づけて保存する
 
 ## 実行計画ウォッチ (`commands/plan_watch.rs`)
 
@@ -298,6 +305,8 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `clear_flight_records`
 - `preview_undo`
 - `undo_flight_record`
+- `preview_redo` (#1536。取り消し済みの記録を再適用する SQL と衝突のプレビュー)
+- `redo_flight_record` (#1536。Undo と同じ衝突検出・force・read_only ガード・履歴記録の経路で再適用し、記録を「取り消し済み」から戻す)
 
 ## ローカル横断クエリ (`commands/local.rs`)
 

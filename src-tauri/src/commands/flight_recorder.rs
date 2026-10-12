@@ -8,6 +8,10 @@
 //! `list_flight_records` / `clear_flight_records` mirror the existing history
 //! commands. `preview_undo` / `undo_flight_record` compute (and, for the
 //! latter, apply) the reverse SQL via `flight_recorder::undo::build_undo_plan`.
+//! `preview_redo` / `redo_flight_record` (#1536) are the mirror image for a
+//! record that was already undone: they re-apply the original write by planning
+//! an undo of the *inverted* record (`undo::invert_for_redo`), then go through
+//! the very same conflict detection / `force` / read-only guard / history path.
 //!
 //! **Undo re-uses the existing write path end to end**: it calls
 //! [`crate::commands::query::run_query_transaction_inner`] — the very same
@@ -21,7 +25,9 @@ use tauri::State;
 use crate::db::types::{QueryResult, Value};
 use crate::db::{DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
 use crate::error::{AppError, Result};
-use crate::flight_recorder::undo::{build_undo_plan, UndoConflict};
+use crate::flight_recorder::undo::{
+    build_redo_plan, build_undo_plan, invert_for_redo, UndoConflict,
+};
 use crate::flight_recorder::{persist_capture, store as flight_store, WriteCaptureSummary};
 use crate::state::AppState;
 
@@ -198,6 +204,34 @@ pub async fn undo_flight_record(
     undo_flight_record_inner(state.inner(), session_id, id, force).await
 }
 
+/// Redo のプレビュー (#1536): 取り消し済みの記録を再適用する SQL と衝突を返す。
+/// 何も適用しない。
+#[tauri::command]
+pub async fn preview_redo(
+    session_id: String,
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<UndoPreviewResponse> {
+    let (plan, _record) = plan_redo(state.inner(), &session_id, id, false).await?;
+    Ok(UndoPreviewResponse {
+        statements: plan.statements,
+        conflicts: plan.conflicts,
+        warnings: plan.warnings,
+    })
+}
+
+/// 取り消し済みの記録をやり直す (Redo, #1536)。[`undo_flight_record`] と同じ衝突検出・
+/// `force`・読み取り専用ガード・履歴記録の経路を通る。
+#[tauri::command]
+pub async fn redo_flight_record(
+    session_id: String,
+    id: i64,
+    force: bool,
+    state: State<'_, AppState>,
+) -> Result<UndoOutcome> {
+    redo_flight_record_inner(state.inner(), session_id, id, force).await
+}
+
 /// Core of [`undo_flight_record`] decoupled from Tauri's `State` wrapper so
 /// integration tests can drive the exact command path. See
 /// `commands::query::run_query_inner`'s doc comment for the pattern.
@@ -207,7 +241,29 @@ pub(crate) async fn undo_flight_record_inner(
     id: i64,
     force: bool,
 ) -> Result<UndoOutcome> {
-    let (plan, record) = plan_undo(state, &session_id, id, force).await?;
+    apply_flight_plan(state, session_id, id, force, false).await
+}
+
+/// 取り消し済みの記録を再適用する (Redo, #1536)。衝突検出・`force`・読み取り専用ガード・
+/// 履歴記録は Undo と同じ `run_query_transaction_inner` 経路をそのまま通る。成功すると
+/// 記録は「取り消し済み」から元の状態へ戻り、もう一度 Undo できる。
+pub(crate) async fn redo_flight_record_inner(
+    state: &AppState,
+    session_id: String,
+    id: i64,
+    force: bool,
+) -> Result<UndoOutcome> {
+    apply_flight_plan(state, session_id, id, force, true).await
+}
+
+async fn apply_flight_plan(
+    state: &AppState,
+    session_id: String,
+    id: i64,
+    force: bool,
+    redo: bool,
+) -> Result<UndoOutcome> {
+    let (plan, record) = plan_flight(state, &session_id, id, force, redo).await?;
 
     if plan.statements.is_empty() {
         return Ok(UndoOutcome {
@@ -234,7 +290,11 @@ pub(crate) async fn undo_flight_record_inner(
     )
     .await?;
 
-    if let Err(e) = flight_store::mark_undone(id).await {
+    if redo {
+        if let Err(e) = flight_store::mark_redone(id).await {
+            tracing::warn!(error = %e, capture_id = id, "failed to mark flight recorder capture as redone");
+        }
+    } else if let Err(e) = flight_store::mark_undone(id).await {
         tracing::warn!(error = %e, capture_id = id, "failed to mark flight recorder capture as undone");
     }
 
@@ -259,6 +319,33 @@ pub(crate) async fn plan_undo(
     crate::flight_recorder::undo::UndoPlan,
     crate::flight_recorder::WriteCaptureRecord,
 )> {
+    plan_flight(state, session_id, id, force, false).await
+}
+
+/// [`plan_undo`] の Redo 版 (#1536)。取り消し済みの記録だけを受け付け、元の書き込みを
+/// 再適用する計画を返す。
+pub(crate) async fn plan_redo(
+    state: &AppState,
+    session_id: &str,
+    id: i64,
+    force: bool,
+) -> Result<(
+    crate::flight_recorder::undo::UndoPlan,
+    crate::flight_recorder::WriteCaptureRecord,
+)> {
+    plan_flight(state, session_id, id, force, true).await
+}
+
+async fn plan_flight(
+    state: &AppState,
+    session_id: &str,
+    id: i64,
+    force: bool,
+    redo: bool,
+) -> Result<(
+    crate::flight_recorder::undo::UndoPlan,
+    crate::flight_recorder::WriteCaptureRecord,
+)> {
     let session = state
         .get(session_id)
         .await
@@ -266,7 +353,13 @@ pub(crate) async fn plan_undo(
     let record = flight_store::get(id)
         .await?
         .ok_or_else(|| AppError::InvalidInput(format!("flight record {id} not found")))?;
-    if record.undone {
+    if redo {
+        if !record.undone {
+            return Err(AppError::InvalidInput(format!(
+                "flight record {id} has not been undone"
+            )));
+        }
+    } else if record.undone {
         return Err(AppError::FlightAlreadyUndone);
     }
     ensure_record_matches_session(
@@ -275,17 +368,24 @@ pub(crate) async fn plan_undo(
         session.conn.driver_kind(),
     )?;
 
-    let pk_idx: Vec<usize> = record
+    // Redo は反転した記録 (INSERT ⇔ DELETE、before ⇔ after) に対する Undo 計画として扱う。
+    let effective = if redo {
+        invert_for_redo(&record)
+    } else {
+        record.clone()
+    };
+
+    let pk_idx: Vec<usize> = effective
         .primary_key
         .iter()
-        .filter_map(|n| record.columns.iter().position(|c| c == n))
+        .filter_map(|n| effective.columns.iter().position(|c| c == n))
         .collect();
-    if pk_idx.len() != record.primary_key.len() {
+    if pk_idx.len() != effective.primary_key.len() {
         return Err(AppError::FlightPrimaryKeyUnresolved);
     }
-    let reference_rows: &[Vec<Value>] = match record.kind {
-        WriteKind::Insert => &record.after_rows,
-        _ => &record.before_rows,
+    let reference_rows: &[Vec<Value>] = match effective.kind {
+        WriteKind::Insert => &effective.after_rows,
+        _ => &effective.before_rows,
     };
     // 保存済み行が壊れている (JSON 破損・列削除後の再実行など) 場合に direct
     // index で panic しないよう `get()` を使い、キーを特定できない行は無視する
@@ -304,7 +404,11 @@ pub(crate) async fn plan_undo(
         )
         .await?;
 
-    let plan = build_undo_plan(&record, &current_rows, force);
+    let plan = if redo {
+        build_redo_plan(&record, &current_rows, force)
+    } else {
+        build_undo_plan(&record, &current_rows, force)
+    };
     Ok((plan, record))
 }
 
