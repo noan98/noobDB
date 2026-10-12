@@ -157,7 +157,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
-import { parseClipboardGrid, planPasteEdit } from "./pasteEdit";
+import { parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import {
   clientQuickFilter,
@@ -1210,6 +1210,11 @@ interface Props {
    * 渡せる。未指定ならメニュー項目を出さない。
    */
   onDuplicateRow?: (row: PendingInsertRow) => void;
+  /**
+   * 貼り付けが表示行を超えた分を、保留の追加行 (行追加モーダルと同じバッファ) へ積む
+   * (#1539)。未指定なら従来どおり超過行は捨てて件数をトーストで出す。
+   */
+  onPasteInsertRows?: (rows: PendingInsertRow[]) => void;
   /**
    * Apply a single value (or NULL) to every cell of the current rectangular
    * selection in one batch (#596). Set by App for editable table tabs.
@@ -3511,6 +3516,7 @@ export const DataGrid = memo(function DataGrid({
   onToggleRowDelete,
   onRequestInsertRow,
   onDuplicateRow,
+  onPasteInsertRows,
   validateEdit,
   onApplyRowEdits,
   streaming: rowStreaming = false,
@@ -3606,6 +3612,7 @@ export const DataGrid = memo(function DataGrid({
    * 項目を出さない。
    */
   onDuplicateRow?: (row: PendingInsertRow) => void;
+  onPasteInsertRows?: (rows: PendingInsertRow[]) => void;
   /**
    * Validates a pending edit by result-column index, returning an i18n key
    * describing the problem or `null` when the value is acceptable. Drives the
@@ -5220,8 +5227,24 @@ export const DataGrid = memo(function DataGrid({
     const targetRowIndices = visibleRows.slice(anchorVis, anchorVis + grid.length).map((r) => r.index);
     const targetColIndices = visibleColIds.slice(anchorColPos, anchorColPos + maxCols);
 
+    // 表示行を超えた分は、保留の追加行へ積む選択肢を出す (#1539)。
+    // 積める可能性があるときは、範囲内の行だけを既存の貼り付け編集に渡す。
+    const overflowGrid = onPasteInsertRows ? grid.slice(targetRowIndices.length) : [];
+    const insertPlan =
+      overflowGrid.length > 0
+        ? planPasteInsertRows({
+            grid: overflowGrid,
+            targetColIndices,
+            columns,
+            driver: rowSqlDriver ?? "mysql",
+            tableColumns: columnMeta,
+            validate: (c, v) => validateEdit?.(c, v) ?? null,
+          })
+        : null;
+    const offerInsert = insertPlan !== null && insertPlan.rows.length > 0;
+
     const plan = planPasteEdit({
-      grid,
+      grid: offerInsert ? grid.slice(0, targetRowIndices.length) : grid,
       rows,
       columns,
       pkIndices: pkIndices ?? [],
@@ -5232,20 +5255,46 @@ export const DataGrid = memo(function DataGrid({
     });
 
     if (plan.applied.length === 0 && plan.unchanged.length === 0) {
-      toast.error(t("gridPasteNoneApplied"));
-      return;
-    }
-    onBulkEdit([...plan.applied, ...plan.unchanged]);
-    if (plan.applied.length === 0) {
-      toast.info(t("gridPasteAllUnchanged", { cells: plan.unchanged.length }));
-      return;
-    }
-    const skipped =
-      plan.skippedReadonly + plan.skippedInvalid + plan.skippedOutOfBounds + plan.unchanged.length;
-    if (skipped > 0) {
-      toast.info(t("gridPasteAppliedSkipped", { cells: plan.applied.length, skipped }));
+      if (!offerInsert) {
+        toast.error(t("gridPasteNoneApplied"));
+        return;
+      }
     } else {
-      toast.success(t("gridPasteApplied", { cells: plan.applied.length }));
+      onBulkEdit([...plan.applied, ...plan.unchanged]);
+      if (plan.applied.length === 0) {
+        toast.info(t("gridPasteAllUnchanged", { cells: plan.unchanged.length }));
+      } else {
+        const skipped =
+          plan.skippedReadonly + plan.skippedInvalid + plan.skippedOutOfBounds + plan.unchanged.length;
+        if (skipped > 0) {
+          toast.info(t("gridPasteAppliedSkipped", { cells: plan.applied.length, skipped }));
+        } else {
+          toast.success(t("gridPasteApplied", { cells: plan.applied.length }));
+        }
+      }
+    }
+
+    if (offerInsert && insertPlan && onPasteInsertRows) {
+      const rowsToAdd = insertPlan.rows;
+      const skippedCells =
+        insertPlan.skippedGenerated + insertPlan.skippedInvalid + insertPlan.skippedOutOfBounds;
+      void (async () => {
+        const ok = await confirmBlur({
+          title: t("gridPasteInsertTitle"),
+          message: (
+            <>
+              <p>{t("gridPasteInsertMessage", { rows: rowsToAdd.length, cells: insertPlan.cells })}</p>
+              {skippedCells > 0 && (
+                <p>{t("gridPasteInsertSkipped", { cells: skippedCells })}</p>
+              )}
+            </>
+          ),
+          confirmLabel: t("gridPasteInsertConfirm"),
+        });
+        if (!ok) return;
+        onPasteInsertRows(rowsToAdd);
+        toast.success(t("gridPasteInsertAdded", { rows: rowsToAdd.length }));
+      })();
     }
   };
 
@@ -7404,6 +7453,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   onToggleRowDelete,
   onRequestInsertRow,
   onDuplicateRow,
+  onPasteInsertRows,
   onBulkEdit,
   onReplaceColumn,
   diffPrevRows,
@@ -9120,6 +9170,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
           onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
           onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
           onDuplicateRow={editableActive ? onDuplicateRow : undefined}
+          onPasteInsertRows={editableActive ? onPasteInsertRows : undefined}
           onUndoEdit={onUndoEdit}
           onRedoEdit={onRedoEdit}
           canUndo={canUndo}

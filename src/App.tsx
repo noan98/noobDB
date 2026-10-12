@@ -6303,6 +6303,13 @@ export default function App() {
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
+  // 貼り付けが表示行を超えた分を、保留の追加行へまとめて積む (#1539)。確定後の流れ
+  // (反映時の確認・SQL 生成) は行追加モーダルで足した行と同じ。
+  const addInsertRowsForTab = useCallback((tabId: string, rows: PendingInsertRow[]) => {
+    if (rows.length === 0) return;
+    patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
+  }, [patchTab]);
+
   // 行操作 (追加/削除) の保留を破棄する。
   const discardRowOpsForTab = useCallback((tabId: string) => {
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
@@ -9023,7 +9030,7 @@ export default function App() {
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
-    requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
+    addInsertRowsForTab, requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
     runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
     setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
     setSaveAsTableRequest, setSaveAsViewRequest, setServerFilterInTab, setServerSortInTab, setStatus,

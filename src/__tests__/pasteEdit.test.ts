@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { CellValue, Column } from "../api/tauri";
-import { parseClipboardGrid, planPasteEdit } from "../components/pasteEdit";
-import { buildUpdateStatements, rowEditKey, validateCellInput, type PendingEdits } from "../components/cellEdit";
+import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
+import { parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "../components/pasteEdit";
+import { buildInsertStatements, buildUpdateStatements, rowEditKey, validateCellInput, type PendingEdits } from "../components/cellEdit";
 import type { BulkEditTarget } from "../components/bulkEdit";
 
 function col(name: string, type_name: string): Column {
@@ -246,5 +246,71 @@ describe("planPasteEdit", () => {
       edits: toPending(plan.applied),
     });
     expect(stmts).toEqual(["UPDATE `db`.`users` SET `name` = NULL WHERE `id` = 1;"]);
+  });
+});
+
+describe("planPasteInsertRows (#1539)", () => {
+  const meta = (name: string, over: Partial<TableColumnInfo> = {}): TableColumnInfo => ({
+    name,
+    data_type: "int",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...over,
+  });
+  const tableColumns = [
+    meta("id", { key: "PRI", extra: "auto_increment" }),
+    meta("name", { data_type: "varchar(20)" }),
+    meta("age"),
+    meta("total", { extra: "VIRTUAL GENERATED" }),
+  ];
+  const cols = [col("id", "INT"), col("name", "VARCHAR"), col("age", "INT"), col("total", "INT")];
+  const base = {
+    columns: cols,
+    driver: "mysql",
+    tableColumns,
+    targetColIndices: [0, 1, 2, 3],
+    validate: noValidate as (c: number, v: string) => unknown,
+  };
+
+  it("空欄は省き、NULL 表記と値はそのまま PendingInsertRow にする", () => {
+    const plan = planPasteInsertRows({ ...base, grid: [["", "dave", "NULL"], ["", "erin", ""]] });
+    expect(plan.rows).toEqual([{ 1: "dave", 2: "NULL" }, { 1: "erin" }]);
+    expect(plan.cells).toBe(3);
+  });
+
+  it("生成列は外し、自動採番列は明示値ならそのまま入れる", () => {
+    const plan = planPasteInsertRows({ ...base, grid: [["10", "dave", "5", "999"]] });
+    expect(plan.rows).toEqual([{ 0: "10", 1: "dave", 2: "5" }]);
+    expect(plan.skippedGenerated).toBe(1);
+  });
+
+  it("不正な値のセルだけを外し、値が残らない行は積まない", () => {
+    const validate = (c: number, v: string) => (c === 2 && v === "abc" ? "bad" : null);
+    const plan = planPasteInsertRows({ ...base, validate, grid: [["", "frank", "abc"], ["", "", "abc"], ["", "", ""]] });
+    expect(plan.rows).toEqual([{ 1: "frank" }]);
+    expect(plan.skippedInvalid).toBe(2);
+    expect(plan.skippedBlankRows).toBe(2);
+  });
+
+  it("表示列を超えたセルは数えて捨てる", () => {
+    const plan = planPasteInsertRows({ ...base, targetColIndices: [1, 2], grid: [["x", "1", "y", "z"]] });
+    expect(plan.rows).toEqual([{ 1: "x", 2: "1" }]);
+    expect(plan.skippedOutOfBounds).toBe(2);
+  });
+
+  it("積んだ行は既存の buildInsertStatements でそのまま INSERT 文になる", () => {
+    const plan = planPasteInsertRows({ ...base, grid: [["", "dave", "7"]] });
+    expect(
+      buildInsertStatements({ driver: "mysql", database: "d", table: "t", columns: cols, inserts: plan.rows }),
+    ).toEqual(["INSERT INTO `d`.`t` (`name`, `age`) VALUES ('dave', 7);"]);
+  });
+
+  it("列メタが無くても動く (生成列の判定だけ省く)", () => {
+    const plan = planPasteInsertRows({ ...base, tableColumns: null, grid: [["", "a", "", "9"]] });
+    expect(plan.rows).toEqual([{ 1: "a", 3: "9" }]);
   });
 });
