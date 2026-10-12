@@ -646,6 +646,32 @@ pub mod __test_api {
         .await
     }
 
+    /// 記録つき書き込みの実行コア (`run_captured_write`) を、クエリタイムアウト付きで直接
+    /// 叩く (#1536)。永続化 (フライトレコーダーのストア) と履歴は経由しない。返り値は
+    /// `(rows_affected, capturable)`。タイムアウトすれば `AppError::Timeout`、その場合は
+    /// トランザクションがロールバックされ書き込みは残らない。
+    pub async fn run_captured_write_with_timeout(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        row_cap: usize,
+        timeout_secs: u64,
+    ) -> crate::error::Result<(u64, bool)> {
+        let session = state
+            .get(session_id)
+            .await
+            .ok_or_else(|| crate::error::AppError::SessionNotFound(session_id.to_string()))?;
+        let (result, capture) = crate::commands::query::run_captured_write(
+            session,
+            sql.to_string(),
+            None,
+            row_cap,
+            Some(timeout_secs),
+        )
+        .await?;
+        Ok((result.rows_affected, capture.capturable))
+    }
+
     /// Drives the `undo_flight_record` IPC command's core path without a
     /// Tauri runtime (#735).
     pub async fn undo_flight_record_via_command(

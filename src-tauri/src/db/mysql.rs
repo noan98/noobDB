@@ -370,9 +370,9 @@ impl MySqlConn {
         database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
-        self.preview_inner(sql, database, row_limit, false)
-            .await
-            .map(|(preview, _)| preview)
+        let (preview, _, tx) = self.preview_inner(sql, database, row_limit, false).await?;
+        tx.rollback().await?;
+        Ok(preview)
     }
 
     /// 書き込みキャプチャ (#1536) 用: [`Self::preview_execute_with_limit`] と同じ骨格だが
@@ -380,16 +380,24 @@ impl MySqlConn {
     /// → 文の実行 → 同一トランザクション内での after 取得が 1 つのトランザクションに収まる
     /// ので、dry-run と本実行の間に他クライアントが割り込む窓も、自動採番のずれもない。
     /// スナップショットの取得失敗は握りつぶして空にする (文の実行・COMMIT は妨げない)。
-    pub async fn execute_committing_snapshot(
+    ///
+    /// **COMMIT はここではしない**: 開いたままのトランザクションを返す。呼び出し側
+    /// (`Connection::capture_execute` → `capture_commit`) が、ここまでをタイムアウト /
+    /// キャンセル配下に置き (中断すれば drop でロールバック)、COMMIT だけを切り離して守る。
+    pub async fn execute_snapshot_uncommitted(
         &self,
         sql: &str,
         database: Option<&str>,
         row_limit: usize,
-    ) -> Result<(PreviewResult, QueryResult)> {
-        let (preview, result) = self.preview_inner(sql, database, row_limit, true).await?;
+    ) -> Result<(
+        PreviewResult,
+        QueryResult,
+        sqlx::Transaction<'static, MySql>,
+    )> {
+        let (preview, result, tx) = self.preview_inner(sql, database, row_limit, true).await?;
         let result =
             result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
-        Ok((preview, result))
+        Ok((preview, result, tx))
     }
 
     async fn preview_inner(
@@ -398,7 +406,11 @@ impl MySqlConn {
         database: Option<&str>,
         row_limit: usize,
         commit: bool,
-    ) -> Result<(PreviewResult, Option<QueryResult>)> {
+    ) -> Result<(
+        PreviewResult,
+        Option<QueryResult>,
+        sqlx::Transaction<'static, MySql>,
+    )> {
         let row_limit = row_limit.max(1);
         // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
         // `/* fix */ DELETE …` を拒否しない)。
@@ -433,14 +445,16 @@ impl MySqlConn {
             ));
         }
 
-        let mut conn = self.pool.acquire().await?;
-        apply_use_database(&mut conn, database).await?;
+        // トランザクションは `'static` (接続を所有) にして、呼び出し側へ開いたまま返せる
+        // ようにする (#1536)。`USE` / PK 検索もこのトランザクションの接続で行う。
+        let mut tx = self.pool.begin().await?;
+        apply_use_database_on(&mut tx, database).await?;
 
         // Best-effort PK lookup — falls back to an empty Vec so a missing
         // primary key, view target, or stripped privileges just degrades to
         // an unordered snapshot.
         let primary_key: Vec<String> = match target.as_deref() {
-            Some(t) => fetch_primary_key(&mut conn, t).await.unwrap_or_default(),
+            Some(t) => fetch_primary_key_on(&mut tx, t).await.unwrap_or_default(),
             None => Vec::new(),
         };
         let is_insert_stmt = trimmed.starts_with("insert");
@@ -482,39 +496,59 @@ impl MySqlConn {
             super::preview::before_where_clause(sql, super::SqlFlavor::MySql, &primary_key)
         };
 
-        let before_sql = target
-            .as_ref()
-            .filter(|_| !skip_snapshots)
-            .map(|t| match &where_clause {
-                // The user's clause is appended verbatim — it already includes
-                // any ORDER BY / LIMIT they wrote. We don't add our own LIMIT
-                // here (their LIMIT would clash); the fetch below caps the
-                // collected rows at `row_limit + 1` instead.
-                Some(w) => super::preview::build_snapshot_sql(t, Some(w), "", None),
-                None => {
-                    super::preview::build_snapshot_sql(t, None, &order_clause, Some(row_limit + 1))
-                }
-            });
+        let mut before_sql =
+            target
+                .as_ref()
+                .filter(|_| !skip_snapshots)
+                .map(|t| match &where_clause {
+                    // The user's clause is appended verbatim — it already includes
+                    // any ORDER BY / LIMIT they wrote. We don't add our own LIMIT
+                    // here (their LIMIT would clash); the fetch below caps the
+                    // collected rows at `row_limit + 1` instead.
+                    Some(w) => super::preview::build_snapshot_sql(t, Some(w), "", None),
+                    None => super::preview::build_snapshot_sql(
+                        t,
+                        None,
+                        &order_clause,
+                        Some(row_limit + 1),
+                    ),
+                });
 
-        let mut tx = conn.begin().await?;
         let started = Instant::now();
+        let mut capture_decline: Option<String> = None;
 
-        let before_raw: Vec<MySqlRow> = match &before_sql {
-            Some(q) if commit && !is_insert_stmt => {
+        let before_raw: Vec<MySqlRow> = match before_sql.clone() {
+            // 行ロックは「ユーザの WHERE を引き継いだ対象行の取得」のときだけ取る。WHERE を
+            // 引き継げない形 (PK を書き換える UPDATE など) の固定窓にロックを掛けると、
+            // 無関係な行のロックを待ち続けてしまう (#1536 レビュー)。
+            Some(q) if commit && !is_insert_stmt && where_clause.is_some() => {
                 // 行ロックを取って「見た行 = 実際に更新/削除される行」にする。ロックが
                 // 取れない (権限・ビュー等) ときはロック無しで取り直す。
                 let locked = format!("{q} FOR UPDATE");
                 match fetch_capped(&mut tx, &locked, row_limit + 1).await {
                     Ok(rows) => rows,
-                    Err(_) => fetch_capped(&mut tx, q, row_limit + 1)
+                    // デッドロック (1213) / ロック待ちタイムアウト (1205): 記録のために他の
+                    // クライアントと争わず、トランザクションを張り直して書き込みだけを 1 回
+                    // 実行する (記録は辞退)。
+                    Err(e) if is_lock_conflict(&e) => {
+                        let _ = tx.rollback().await;
+                        tx = self.pool.begin().await?;
+                        apply_use_database_on(&mut tx, database).await?;
+                        before_sql = None;
+                        capture_decline = Some(
+                            "対象行のロックを取れなかった (他の処理と競合) ため記録しません".into(),
+                        );
+                        Vec::new()
+                    }
+                    Err(_) => fetch_capped(&mut tx, &q, row_limit + 1)
                         .await
                         .unwrap_or_default(),
                 }
             }
-            Some(q) if commit => fetch_capped(&mut tx, q, row_limit + 1)
+            Some(q) if commit => fetch_capped(&mut tx, &q, row_limit + 1)
                 .await
                 .unwrap_or_default(),
-            Some(q) => fetch_capped(&mut tx, q, row_limit + 1).await?,
+            Some(q) => fetch_capped(&mut tx, &q, row_limit + 1).await?,
             None => Vec::new(),
         };
 
@@ -545,8 +579,10 @@ impl MySqlConn {
                 Vec::new()
             };
 
+        let mut insert_id: u64 = 0;
         let (rows_affected, committed_result) = if commit {
-            let r = run_sql_on(&mut tx, sql).await?;
+            let (r, id) = run_write_with_insert_id(&mut tx, sql).await?;
+            insert_id = id;
             (r.rows_affected, Some(r))
         } else {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -561,7 +597,37 @@ impl MySqlConn {
         let is_insert = trimmed.starts_with("insert");
         let use_pk_anchor =
             !is_insert && !pk_changed && target.is_some() && !captured_pks.is_empty();
-        let after_res: Result<Vec<MySqlRow>> = if use_pk_anchor {
+        // 単一行の INSERT で AUTO_INCREMENT の主キーが採番されたときは、その値 (この文の OK
+        // パケットの last_insert_id) で挿入行を直接引く。窓の差分では、窓の外へ出る行や
+        // 同一文内の副作用で別の既存行を取り違えうる (#1536 レビュー)。
+        let mut new_rows_exact = false;
+        let insert_by_id_sql: Option<String> = if commit
+            && is_insert_stmt
+            && insert_id > 0
+            && rows_affected == 1
+            && primary_key.len() == 1
+        {
+            match target.as_deref() {
+                Some(t) if pk_is_auto_increment(&mut tx, t, &primary_key[0]).await => {
+                    new_rows_exact = true;
+                    Some(format!(
+                        "SELECT * FROM {} WHERE {} = {}",
+                        t,
+                        quote_ident(&primary_key[0]),
+                        insert_id
+                    ))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let after_res: Result<Vec<MySqlRow>> = if let Some(q) = &insert_by_id_sql {
+            sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(AppError::from)
+        } else if use_pk_anchor {
             // use_pk_anchor は target.is_some() を条件に含むため、ここでは
             // target が Some であることが構造上保証されている。
             #[allow(clippy::unwrap_used)]
@@ -590,11 +656,6 @@ impl MySqlConn {
         };
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        if commit {
-            tx.commit().await?;
-        } else {
-            tx.rollback().await?;
-        }
 
         // AFTER is bounded by the captured PKs in the common path, but the
         // fallback runs the same LIMIT 101 query and can overshoot — guard
@@ -626,8 +687,11 @@ impl MySqlConn {
                 rows_affected,
                 elapsed_ms,
                 truncated,
+                new_rows_exact,
+                capture_decline,
             },
             committed_result,
+            tx,
         ))
     }
 
@@ -2565,6 +2629,13 @@ async fn apply_use_database(
     conn: &mut PoolConnection<MySql>,
     database: Option<&str>,
 ) -> Result<()> {
+    apply_use_database_on(conn, database).await
+}
+
+async fn apply_use_database_on(
+    conn: &mut sqlx::MySqlConnection,
+    database: Option<&str>,
+) -> Result<()> {
     let Some(db) = database else { return Ok(()) };
     if db.is_empty() {
         return Ok(());
@@ -2579,7 +2650,7 @@ async fn apply_use_database(
     // directly because `RawSql::execute` is an `async fn` whose lifetime bounds
     // produce a non-`Send` future when bubbled up through `#[tauri::command]`.
     let sql = format!("USE `{}`", db);
-    sqlx::Executor::execute(&mut **conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql))).await?;
+    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql))).await?;
     Ok(())
 }
 
@@ -2624,6 +2695,63 @@ fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
 /// Run one statement on a specific connection and decode it. Shared by
 /// `execute` (pool connection) and `tx_execute` (held transaction connection).
 /// Handles CALL (which may or may not return a result set) like `execute`.
+/// デッドロック (1213) / ロック待ちタイムアウト (1205) か。書き込みキャプチャの行ロック
+/// 取得が競合したときに、記録を辞退してトランザクションを張り直す判定に使う (#1536)。
+fn is_lock_conflict(e: &AppError) -> bool {
+    let m = e.to_string();
+    m.contains("Deadlock found")
+        || m.contains("Lock wait timeout exceeded")
+        || m.contains("1213 (40001)")
+        || m.contains("1205 (HY000)")
+}
+
+/// 書き込み文を 1 回実行し、その OK パケットの `last_insert_id` (採番が無ければ 0) を併せて
+/// 返す。`run_sql_on` と同じ結果 (警告つき) を返すが、行を返す形 (`RETURNING` 等) は
+/// 通常経路に任せて id は 0 とする。書き込みキャプチャの INSERT 特定用 (#1536)。
+async fn run_write_with_insert_id(
+    conn: &mut sqlx::MySqlConnection,
+    sql: &str,
+) -> Result<(QueryResult, u64)> {
+    if is_call_shape(sql) || is_query_shape(sql) {
+        return Ok((run_sql_on(conn, sql).await?, 0));
+    }
+    let started = Instant::now();
+    let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .execute(&mut *conn)
+        .await?;
+    let id = result.last_insert_id();
+    let messages = fetch_warnings(conn).await;
+    Ok((
+        QueryResult::empty(result.rows_affected(), started.elapsed().as_millis() as u64)
+            .with_server_messages(messages),
+        id,
+    ))
+}
+
+/// `column` が `target` の AUTO_INCREMENT 列か (`SHOW COLUMNS` の Extra)。`last_insert_id`
+/// が主キー以外の採番列のものでないことの確認に使う。判定できなければ `false`。
+async fn pk_is_auto_increment(
+    conn: &mut sqlx::MySqlConnection,
+    target: &str,
+    column: &str,
+) -> bool {
+    let sql = format!(
+        "SHOW COLUMNS FROM {} WHERE Field = '{}'",
+        target,
+        column.replace('\\', "\\\\").replace('\'', "''")
+    );
+    let Ok(rows) = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .fetch_all(&mut *conn)
+        .await
+    else {
+        return false;
+    };
+    rows.first()
+        .and_then(|r| r.try_get_unchecked::<Vec<u8>, _>("Extra").ok())
+        .map(|b| String::from_utf8_lossy(&b).to_ascii_lowercase())
+        .is_some_and(|extra| extra.contains("auto_increment"))
+}
+
 async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
     if is_call_shape(sql) {
@@ -2999,12 +3127,15 @@ fn tokenize_sql(sql: &str) -> Vec<String> {
 /// them in `Seq_in_index` order (so composite PKs are ordered correctly).
 /// On any failure — view target, MERGE table, lacking SELECT on the table —
 /// the caller treats an empty result as "PK unknown" and degrades gracefully.
-async fn fetch_primary_key(conn: &mut PoolConnection<MySql>, target: &str) -> Result<Vec<String>> {
+async fn fetch_primary_key_on(
+    conn: &mut sqlx::MySqlConnection,
+    target: &str,
+) -> Result<Vec<String>> {
     // `target` is taken verbatim from the user's SQL (already quoted as
     // needed). `SHOW KEYS FROM ...` accepts both `tbl` and `` `db`.`tbl` ``.
     let sql = format!("SHOW KEYS FROM {} WHERE Key_name = 'PRIMARY'", target);
     let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .fetch_all(&mut **conn)
+        .fetch_all(&mut *conn)
         .await?;
     let mut entries: Vec<(u64, String)> = rows
         .iter()
@@ -3399,6 +3530,20 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lock_conflict_errors_are_recognised() {
+        let dead = AppError::Other(
+            "error returned from database: 1213 (40001): Deadlock found when trying to get lock"
+                .into(),
+        );
+        let wait = AppError::Other("error returned from database: 1205 (HY000): Lock wait timeout exceeded; try restarting transaction".into());
+        let other =
+            AppError::Other("error returned from database: 1054 (42S22): Unknown column".into());
+        assert!(is_lock_conflict(&dead));
+        assert!(is_lock_conflict(&wait));
+        assert!(!is_lock_conflict(&other));
+    }
+
     use super::*;
 
     fn cand(w: &str, h: &str, pending: bool) -> MdlCandidate {

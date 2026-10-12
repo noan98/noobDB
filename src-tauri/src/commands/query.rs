@@ -1348,11 +1348,15 @@ async fn spawn_query_stream(
     }
 }
 
-/// 記録つき書き込みの実行。タイムアウト/キャンセルの配下に置くのは、書き込みを
-/// 一切実行しない準備段階 (件数見積もり + dry-run) だけにする。本実行と after-image の
-/// 取り直しは独立タスクで走らせ、呼び出し側の future が落とされても、タイムアウトが
-/// 来ても中断しない (書き込み済みなのに失敗扱い / 記録なしになるのを防ぐ、#1530)。
-/// 取り直しの失敗は記録の辞退になるだけで、結果は `Ok` のまま。
+/// 記録つき書き込みの実行 (単一トランザクション、#1536)。
+///
+/// 「対象行の取得 → 文の実行 → after 取得」までは 1 つのトランザクションの中で行い、
+/// **タイムアウト / キャンセルの配下**に置く。ここで打ち切られたときはトランザクションが
+/// drop されてロールバックされ、書き込みは何も残らない (エラーとして返るので、
+/// 「失敗したのに書き込まれていた」状態にならない)。`COMMIT` だけを独立タスクで走らせ、
+/// 呼び出し側の future が落とされても中断しない (確定直前で記録だけ失う / 確定したのに
+/// 失敗扱いになるのを防ぐ、#1530)。after-image からの記録の組み立ては COMMIT の前に
+/// 済ませるので、特定に失敗しても結果は `Ok` (記録を辞退して確定) になる。
 pub(crate) async fn run_captured_write(
     session: Arc<Session>,
     sql: String,
@@ -1360,26 +1364,28 @@ pub(crate) async fn run_captured_write(
     row_cap: usize,
     query_timeout_secs: Option<u64>,
 ) -> Result<(crate::db::types::QueryResult, crate::db::WriteCapture)> {
-    let prep = {
-        let prepare = session
-            .conn
-            .capture_prepare(&sql, database.as_deref(), row_cap);
+    let run = {
+        let staged = async {
+            let prep = session
+                .conn
+                .capture_prepare(&sql, database.as_deref(), row_cap)
+                .await?;
+            session
+                .conn
+                .capture_execute(prep, &sql, database.as_deref())
+                .await
+        };
         match query_timeout_secs {
             Some(secs) if secs > 0 => {
-                match tokio::time::timeout(std::time::Duration::from_secs(secs), prepare).await {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), staged).await {
                     Ok(res) => res?,
                     Err(_) => return Err(AppError::Timeout(secs)),
                 }
             }
-            _ => prepare.await?,
+            _ => staged.await?,
         }
     };
-    let handle = tokio::spawn(async move {
-        session
-            .conn
-            .capture_finish(prep, &sql, database.as_deref())
-            .await
-    });
+    let handle = tokio::spawn(async move { session.conn.capture_commit(run, &sql).await });
     match handle.await {
         Ok(res) => res,
         Err(e) => Err(AppError::Other(format!("captured write task failed: {e}"))),

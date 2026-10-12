@@ -204,6 +204,21 @@ pub fn classify_write_kind_for(driver: DriverKind, sql: &str) -> WriteKind {
     classify_write_kind_masked(&mask_for_driver(driver, &orig))
 }
 
+/// INSERT が UPSERT 形 (`ON CONFLICT` / `ON DUPLICATE KEY UPDATE` / `INSERT OR REPLACE`) か。
+/// 文字列・コメントはマスクして判定する。
+fn insert_is_upsert(driver: DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    let masked: String = mask_for_driver(driver, &orig)
+        .iter()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let words: Vec<&str> = masked.split_whitespace().collect();
+    words.windows(2).any(|w| {
+        (w[0] == "on" && (w[1] == "conflict" || w[1] == "duplicate"))
+            || (w[0] == "insert" && w[1] == "or")
+    })
+}
+
 /// Leading-keyword half of [`classify_write_kind`]; the stacked-statement
 /// rejection happens in the two entry points so each can use its own flavour.
 fn classify_write_kind_masked(masked: &[char]) -> WriteKind {
@@ -246,6 +261,47 @@ pub enum CapturePrep {
 pub struct ReadyCapture {
     kind: WriteKind,
     row_cap: usize,
+}
+
+/// 開いたままの書き込みトランザクション (#1536)。`commit` するまで変更は確定せず、
+/// COMMIT せずに drop すればロールバックされる (タイムアウト / キャンセルで中断した場合)。
+pub enum PendingTx {
+    MySql(sqlx::Transaction<'static, sqlx::MySql>),
+    Postgres(sqlx::Transaction<'static, sqlx::Postgres>),
+    Sqlite(sqlx::Transaction<'static, sqlx::Sqlite>),
+}
+
+impl std::fmt::Debug for PendingTx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PendingTx")
+    }
+}
+
+impl PendingTx {
+    async fn commit(self) -> Result<()> {
+        match self {
+            PendingTx::MySql(tx) => tx.commit().await?,
+            PendingTx::Postgres(tx) => tx.commit().await?,
+            PendingTx::Sqlite(tx) => tx.commit().await?,
+        }
+        Ok(())
+    }
+}
+
+/// [`Connection::capture_execute`] の結果。`Done` は書き込み済み (記録を辞退した経路)、
+/// `Pending` は同一トランザクションで実行済みで **まだ COMMIT していない** 状態。
+#[derive(Debug)]
+pub enum CaptureRun {
+    Done(Box<(QueryResult, WriteCapture)>),
+    Pending(Box<PendingCapture>),
+}
+
+#[derive(Debug)]
+pub struct PendingCapture {
+    kind: WriteKind,
+    preview: PreviewResult,
+    result: QueryResult,
+    tx: PendingTx,
 }
 
 #[derive(Debug, Clone)]
@@ -506,26 +562,33 @@ impl Connection {
     }
 
     /// 書き込みキャプチャ (#1536) 用の単一トランザクション実行。対象行の取得 → 文の実行 →
-    /// 同一トランザクション内での after 取得 → **COMMIT** を 1 トランザクションで行い、文は
-    /// ちょうど 1 回だけ実行される。`preview_execute_with_limit` と違いロールバックしない。
-    async fn execute_committing_snapshot(
+    /// 同一トランザクション内での after 取得までを行い、**COMMIT せずに開いたトランザクション
+    /// を返す** (`preview_execute_with_limit` はロールバックする)。文はちょうど 1 回だけ
+    /// 実行される。返した [`PendingTx`] を drop すればロールバックされる。
+    async fn execute_snapshot_uncommitted(
         &self,
         sql: &str,
         database: Option<&str>,
         row_limit: usize,
-    ) -> Result<(PreviewResult, QueryResult)> {
+    ) -> Result<(PreviewResult, QueryResult, PendingTx)> {
         match self {
             Connection::MySql(c) => {
-                c.execute_committing_snapshot(sql, database, row_limit)
-                    .await
+                let (p, r, tx) = c
+                    .execute_snapshot_uncommitted(sql, database, row_limit)
+                    .await?;
+                Ok((p, r, PendingTx::MySql(tx)))
             }
             Connection::Postgres(c) => {
-                c.execute_committing_snapshot(sql, database, row_limit)
-                    .await
+                let (p, r, tx) = c
+                    .execute_snapshot_uncommitted(sql, database, row_limit)
+                    .await?;
+                Ok((p, r, PendingTx::Postgres(tx)))
             }
             Connection::Sqlite(c) => {
-                c.execute_committing_snapshot(sql, database, row_limit)
-                    .await
+                let (p, r, tx) = c
+                    .execute_snapshot_uncommitted(sql, database, row_limit)
+                    .await?;
+                Ok((p, r, PendingTx::Sqlite(tx)))
             }
         }
     }
@@ -1435,7 +1498,8 @@ impl Connection {
         row_cap: usize,
     ) -> Result<(QueryResult, WriteCapture)> {
         let prep = self.capture_prepare(sql, database, row_cap).await?;
-        self.capture_finish(prep, sql, database).await
+        let run = self.capture_execute(prep, sql, database).await?;
+        self.capture_commit(run, sql).await
     }
 
     /// [`Connection::capture_write`] の前半: 書き込みを一切実行せず (件数見積もりのみ)、
@@ -1469,6 +1533,15 @@ impl Connection {
 
         let row_cap = row_cap.max(1);
 
+        // UPSERT (ON CONFLICT / ON DUPLICATE KEY UPDATE) は、既存行の更新が「新規行」に見えて
+        // Undo が無関係な既存行を DELETE しかねない。記録は辞退し、書き込みだけ 1 回実行する。
+        if kind == WriteKind::Insert && insert_is_upsert(self.driver_kind(), sql) {
+            return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
+                kind,
+                "UPSERT (ON CONFLICT / ON DUPLICATE KEY UPDATE) は新規行と更新行を区別できないため記録できません",
+            )));
+        }
+
         // 対象行数が記録の上限を超えるなら、どのみち後で「対象行を特定できない」と辞退する。
         // 行ロックとスナップショットを取る前に、上限 + 1 件で打ち切る件数見積もりで先に判定
         // する。見積もれない文 (複雑な WHERE・多テーブル等) は従来どおり進む (#1530)。
@@ -1485,42 +1558,82 @@ impl Connection {
         Ok(CapturePrep::Ready(Box::new(ReadyCapture { kind, row_cap })))
     }
 
-    /// [`Connection::capture_write`] の後半: 単一トランザクションでの本実行と after-image
-    /// の取得。書き込みが実行された時点以降は途中で打ち切ってはならない (書き込み済みなのに
-    /// 失敗扱いになる) ので、呼び出し側はタイムアウト/キャンセルの外で実行する。
-    /// 行の特定などの失敗は記録を辞退するだけで、`Ok` を返す。
-    pub async fn capture_finish(
+    /// [`Connection::capture_write`] の中盤: 単一トランザクションで「対象行の取得 → 文の実行 →
+    /// after 取得」までを行い、**COMMIT せず**に返す。ここまでは呼び出し側が
+    /// タイムアウト / キャンセル配下に置いてよい: 打ち切られれば `PendingTx` の drop で
+    /// ロールバックされ、書き込みは何も残らない。記録を辞退する経路 (対象外の文・上限超過・
+    /// 複数文など) は通常経路で 1 回実行して `Done` を返す。
+    pub async fn capture_execute(
         &self,
         prep: CapturePrep,
         sql: &str,
         database: Option<&str>,
-    ) -> Result<(QueryResult, WriteCapture)> {
+    ) -> Result<CaptureRun> {
         let ready = match prep {
             CapturePrep::Decline(capture) => {
                 let result = self.execute(sql, database).await?;
-                return Ok((result, capture));
+                return Ok(CaptureRun::Done(Box::new((result, capture))));
             }
             CapturePrep::Ready(r) => *r,
         };
         let ReadyCapture { kind, row_cap } = ready;
 
-        let (dry, result) = match self
-            .execute_committing_snapshot(sql, database, row_cap)
+        match self
+            .execute_snapshot_uncommitted(sql, database, row_cap)
             .await
         {
-            Ok(pair) => pair,
+            Ok((preview, result, tx)) => Ok(CaptureRun::Pending(Box::new(PendingCapture {
+                kind,
+                preview,
+                result,
+                tx,
+            }))),
             // トランザクションを開く前に弾かれた (複数文など) 場合は何も実行されていない。
             // 記録を辞退して通常経路で 1 回実行する。
             Err(AppError::InvalidInput(_)) => {
                 let result = self.execute(sql, database).await?;
-                return Ok((
+                Ok(CaptureRun::Done(Box::new((
                     result,
                     WriteCapture::not_capturable(kind, "対象テーブル/主キーを特定できませんでした"),
-                ));
+                ))))
             }
-            Err(e) => return Err(e),
-        };
+            Err(e) => Err(e),
+        }
+    }
 
+    /// [`Connection::capture_write`] の後半: after-image から記録を組み立て、**COMMIT** する。
+    /// COMMIT は書き込みを確定する唯一の操作なので、呼び出し側はタイムアウト / キャンセルの
+    /// 外 (切り離したタスク) で実行する。行の特定などの失敗は記録を辞退するだけで、
+    /// `rows_affected` の照合に失敗した場合も書き込み自体は COMMIT する (記録なしで確定)。
+    pub async fn capture_commit(
+        &self,
+        run: CaptureRun,
+        sql: &str,
+    ) -> Result<(QueryResult, WriteCapture)> {
+        let pending = match run {
+            CaptureRun::Done(done) => return Ok(*done),
+            CaptureRun::Pending(p) => *p,
+        };
+        let PendingCapture {
+            kind,
+            preview,
+            result,
+            tx,
+        } = pending;
+        let analyzed = self.analyze_capture(kind, sql, preview, result)?;
+        tx.commit().await?;
+        Ok(analyzed)
+    }
+
+    /// after-image と `rows_affected` から [`WriteCapture`] を組み立てる純粋な判定
+    /// (DB には触れない)。特定できなければ記録を辞退した `WriteCapture` を返す。
+    fn analyze_capture(
+        &self,
+        kind: WriteKind,
+        sql: &str,
+        dry: PreviewResult,
+        result: QueryResult,
+    ) -> Result<(QueryResult, WriteCapture)> {
         let decline = |reason: &str| -> Result<(QueryResult, WriteCapture)> {
             Ok((
                 result.clone(),
@@ -1528,6 +1641,9 @@ impl Connection {
             ))
         };
 
+        if let Some(reason) = dry.capture_decline.as_deref() {
+            return decline(reason);
+        }
         if dry.target_table.is_none() {
             return decline("対象テーブルを特定できませんでした (複雑な JOIN 等)");
         }
@@ -1674,6 +1790,22 @@ impl Connection {
                     .filter(|r| !before_sigs.contains(&row_signature(&pk_of(r))))
                     .cloned()
                     .collect();
+
+                // DB 側の手がかり (PostgreSQL の xmin / MySQL の AUTO_INCREMENT) で新規行を特定して
+                // いない場合は、窓の差分だけが根拠になる。窓が打ち切られている (表が上限より
+                // 大きい) とき、窓の末尾に現れた「新規行」は、窓の外にいた既存行が他の行の消滅で
+                // 繰り上がっただけかもしれない。見分けられないので記録を辞退する。
+                if !dry.new_rows_exact && dry.truncated {
+                    let last = dry.after_rows.len().saturating_sub(1);
+                    let at_edge = dry.after_rows.iter().enumerate().any(|(i, r)| {
+                        i >= last && !before_sigs.contains(&row_signature(&pk_of(r)))
+                    });
+                    if at_edge {
+                        return decline(
+                            "挿入行が取得窓の端に現れたため、既存行との区別がつかず記録しません",
+                        );
+                    }
+                }
 
                 if new_rows.is_empty() || new_rows.len() as u64 != result.rows_affected {
                     return decline(
@@ -3710,6 +3842,31 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upsert_inserts_are_recognised() {
+        use super::{insert_is_upsert, DriverKind};
+        assert!(insert_is_upsert(
+            DriverKind::Postgres,
+            "INSERT INTO t VALUES (1) ON CONFLICT (id) DO NOTHING"
+        ));
+        assert!(insert_is_upsert(
+            DriverKind::Mysql,
+            "insert into t values (1) on duplicate key update a = 1"
+        ));
+        assert!(insert_is_upsert(
+            DriverKind::Sqlite,
+            "INSERT OR REPLACE INTO t VALUES (1)"
+        ));
+        assert!(!insert_is_upsert(
+            DriverKind::Mysql,
+            "INSERT INTO t VALUES ('on duplicate key')"
+        ));
+        assert!(!insert_is_upsert(
+            DriverKind::Postgres,
+            "INSERT INTO t VALUES (1)"
+        ));
+    }
+
     use super::contains_nondeterministic_function as nondet;
     use super::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,

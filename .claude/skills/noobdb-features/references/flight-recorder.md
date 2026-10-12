@@ -12,24 +12,29 @@
 - 対象行数が行上限を超える UPDATE / DELETE は、`write_count_probe_sql` の件数見積もり
   (`COUNT(*) FROM (… LIMIT 上限+1)`) で先に判定して記録を辞退し、dry-run で文を 2 回
   走らせない (#1530)。PostgreSQL の `UPDATE … FROM` / `DELETE … USING` は見積もらない。
-- **単一トランザクション (#1536)。** 記録対象の書き込みは `Connection::capture_write`
-  (`capture_prepare` → `capture_finish`) が、各ドライバの `execute_committing_snapshot`
-  で「対象行の取得 (MySQL / PostgreSQL は `FOR UPDATE` で行ロック。取れなければロック無し)
-  → 文の実行 (ちょうど 1 回) → 同じトランザクション内での after 取得 → COMMIT」を行う。
-  以前の dry-run (別トランザクション) + 本実行の 2 回実行は廃止したので、トリガ・
-  非トランザクショナルな副作用の二重化、スナップショットのずれ、`NOW()` / `RANDOM()` /
-  採番値の取り違えは構造上起きない (after-image はコミットされた値そのもの)。
-  `capture_prepare` は書き込みを一切しない事前チェック (文種・MyISAM・行数上限の見積もり)
-  だけで、`capture_finish` 以降はタイムアウト/キャンセルの外で走る。
-  スナップショットの取得失敗は記録を辞退するだけで、文の実行と COMMIT は妨げない
-  (PostgreSQL はスナップショットごとに SAVEPOINT で囲み、失敗でトランザクション全体が
-  中断扱いにならないようにしている)。
-- INSERT は PK 降順の末尾窓で前後を撮り、後にだけ現れた PK を新規行とする (採番で末尾に
-  付く行が窓の外にならない)。**PK が無い表・主キーを特定できない文・複数行 INSERT などは従来
-  どおり「記録なしで 1 回実行」にフォールバックする**。UPDATE の SET で主キーを非決定的な
-  関数 (`RANDOM()` 等) で書き換える文も、前後を対応付けられないので辞退する。
-- 本実行より後 (本実行と after-image の取得) はタイムアウト/キャンセルの外で
-  走る (`commands::query::run_captured_write`)。
+- **単一トランザクション (#1536)。** 記録対象の書き込みは `Connection::capture_write` が
+  3 段 (`capture_prepare` → `capture_execute` → `capture_commit`) で行う。`capture_execute`
+  は各ドライバの `execute_snapshot_uncommitted` で「対象行の取得 (MySQL / PostgreSQL は
+  **ユーザの WHERE を引き継げたときだけ** `FOR UPDATE` で行ロック。固定窓にはロックを掛けない) →
+  文の実行 (ちょうど 1 回) → 同じトランザクション内での after 取得」までを行い、**COMMIT せず**
+  `PendingTx` を返す。`capture_commit` が記録の組み立て (純粋な判定) → COMMIT を行う。
+  以前の dry-run + 本実行の 2 回実行は廃止したので、トリガ・非トランザクショナルな副作用の
+  二重化、スナップショットのずれ、`NOW()` / `RANDOM()` / 採番値の取り違えは構造上起きない。
+- **タイムアウト / キャンセル**: `commands::query::run_captured_write` は
+  `capture_prepare` + `capture_execute` を `query_timeout` / ストリームの abort 配下に置く。
+  ここで中断すると `PendingTx` の drop でロールバックされ書き込みは残らない (エラーで返る)。
+  **COMMIT だけ**を `tokio::spawn` で切り離す (確定直前に呼び出し側が落ちても中断しない)。
+- スナップショットの取得失敗は記録を辞退するだけで、文の実行と COMMIT は妨げない
+  (PostgreSQL は SAVEPOINT で囲み、`SET LOCAL standard_conforming_strings` も同様)。MySQL は
+  行ロックが 1213 / 1205 で競合したらトランザクションを張り直して記録を辞退し、書き込みは 1 回だけ。
+  SQLite は `BEGIN IMMEDIATE`。`rows_affected` の照合に失敗したときも COMMIT して記録だけ辞退する。
+- **INSERT の新規行の特定**: PK 降順の末尾窓で前後を撮り、後にだけ現れた PK を新規行とする。
+  PostgreSQL は候補を PK で引き直して `xmin` が自トランザクションか確かめ、MySQL は単一行 +
+  AUTO_INCREMENT 主キーなら OK パケットの `last_insert_id` で直接引く (`PreviewResult.new_rows_exact`)。
+  これらで特定できず窓が打ち切られている場合、窓の末尾に現れた候補は既存行の繰り上がりと
+  区別できないので辞退する。UPSERT (`ON CONFLICT` / `ON DUPLICATE KEY UPDATE` / `INSERT OR REPLACE`)
+  も辞退。**PK が無い表・主キーを特定できない文・複数行 INSERT などは従来どおり「記録なしで
+  1 回実行」にフォールバックする**。UPDATE の SET で主キーを非決定的な関数で書き換える文も辞退する。
 - 対象は `INSERT` / `UPDATE` / `DELETE` **のみ**。DDL (`DROP` / `TRUNCATE` など) は
   完全にスコープ外です。
 - トリガー・カスケードなどサーバ側の二次的な副作用は記録されません。ドライバが

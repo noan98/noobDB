@@ -2249,7 +2249,12 @@ async fn capture_prepare_has_no_side_effect_and_finish_applies_the_write() {
         .await
         .expect("select");
     assert_eq!(format!("{:?}", rows.rows[0][0]), "String(\"alice\")");
-    let (res, cap) = conn.capture_finish(prep, sql, None).await.expect("finish");
+    let run = conn
+        .capture_execute(prep, sql, None)
+        .await
+        .expect("execute");
+    // COMMIT 前でも同じ接続の外からは未確定 (BEGIN IMMEDIATE) だが、commit すれば確定する。
+    let (res, cap) = conn.capture_commit(run, sql).await.expect("commit");
     assert_eq!(res.rows_affected, 1);
     assert!(cap.capturable, "{:?}", cap.reason);
     let rows = conn
@@ -4605,6 +4610,61 @@ async fn import_rows_with_binary_unhexes_blob_columns_in_the_insert() {
     assert_eq!(res.rows[0][3], t::Value::String("abcd".to_string()));
     assert_eq!(res.rows[1][1], t::Value::String("null".to_string()));
     assert_eq!(res.rows[2][1], t::Value::String("blob".to_string()));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 新規行が取得窓の外にあり、同じ文のトリガが窓の行を消すと、窓の外にいた既存行が繰り上がって
+/// 「新規行」に見える。既存行を挿入行として記録しない (Undo が無関係な行を消さない) (#1536)。
+#[tokio::test]
+async fn capture_insert_outside_window_with_trigger_delete_is_not_misattributed() {
+    let (path, conn) = flight_fixture("insert_window_trigger").await;
+    conn.execute("CREATE TABLE w (id INTEGER PRIMARY KEY, name TEXT)", None)
+        .await
+        .expect("create");
+    for i in 10..=20 {
+        conn.execute(&format!("INSERT INTO w VALUES ({i}, 'r{i}')"), None)
+            .await
+            .expect("seed");
+    }
+    conn.execute(
+        "CREATE TRIGGER w_t AFTER INSERT ON w BEGIN DELETE FROM w WHERE id = 20; END",
+        None,
+    )
+    .await
+    .expect("trigger");
+    let (res, cap) = conn
+        .capture_write("INSERT INTO w VALUES (1, 'new')", None, 3)
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 1);
+    let idx = cap.columns.iter().position(|c| c == "id").unwrap_or(0);
+    let recorded: Vec<String> = cap
+        .after_rows
+        .iter()
+        .map(|r| format!("{:?}", r[idx]))
+        .collect();
+    assert!(
+        !cap.capturable || recorded == vec!["Int(1)".to_string()],
+        "取り違え: {recorded:?}"
+    );
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_upsert_is_declined_but_written_once() {
+    let (path, conn) = flight_fixture("upsert_decline").await;
+    let (res, cap) = conn
+        .capture_write(
+            "INSERT INTO t (id, name) VALUES (1, 'u') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
+            None,
+            100,
+        )
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 1);
+    assert!(!cap.capturable);
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

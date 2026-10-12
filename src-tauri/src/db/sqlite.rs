@@ -222,25 +222,35 @@ impl SqliteConn {
         database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
-        self.preview_inner(sql, database, row_limit, false)
-            .await
-            .map(|(preview, _)| preview)
+        let (preview, _, tx) = self.preview_inner(sql, database, row_limit, false).await?;
+        tx.rollback().await?;
+        Ok(preview)
     }
 
     /// 書き込みキャプチャ (#1536) 用: [`Self::preview_execute_with_limit`] と同じ骨格だが
     /// 最後に **COMMIT** し、文を 1 回だけ実行する。対象行の取得 → 文の実行 → 同一
     /// トランザクション内での after 取得が 1 つのトランザクションに収まる。スナップショットの
     /// 取得失敗は握りつぶして空にする (文の実行・COMMIT は妨げない)。
-    pub async fn execute_committing_snapshot(
+    ///
+    /// **COMMIT はここではしない**: 開いたままのトランザクションを返す。呼び出し側
+    /// (`Connection::capture_execute` → `capture_commit`) が、ここまでをタイムアウト /
+    /// キャンセル配下に置き (中断すれば drop でロールバック)、COMMIT だけを切り離して守る。
+    /// `BEGIN IMMEDIATE` で書き込みロックを先に取り、読み取りから書き込みへの昇格で
+    /// `SQLITE_BUSY` になって途中で失敗するのを避ける。
+    pub async fn execute_snapshot_uncommitted(
         &self,
         sql: &str,
         database: Option<&str>,
         row_limit: usize,
-    ) -> Result<(PreviewResult, QueryResult)> {
-        let (preview, result) = self.preview_inner(sql, database, row_limit, true).await?;
+    ) -> Result<(
+        PreviewResult,
+        QueryResult,
+        sqlx::Transaction<'static, sqlx::Sqlite>,
+    )> {
+        let (preview, result, tx) = self.preview_inner(sql, database, row_limit, true).await?;
         let result =
             result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
-        Ok((preview, result))
+        Ok((preview, result, tx))
     }
 
     async fn preview_inner(
@@ -249,7 +259,11 @@ impl SqliteConn {
         _database: Option<&str>,
         row_limit: usize,
         commit: bool,
-    ) -> Result<(PreviewResult, Option<QueryResult>)> {
+    ) -> Result<(
+        PreviewResult,
+        Option<QueryResult>,
+        sqlx::Transaction<'static, sqlx::Sqlite>,
+    )> {
         let row_limit = row_limit.max(1);
         // 文種の判定は先頭コメントを除去したテキストで行う (`-- メモ\nUPDATE …` や
         // `/* fix */ DELETE …` を拒否しない)。
@@ -280,8 +294,6 @@ impl SqliteConn {
             None => Vec::new(),
         };
 
-        let mut conn = self.pool.acquire().await?;
-
         // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
         // 採番表でも窓の外に出ないよう、PK 降順の末尾窓で前後を撮る。
         let is_insert_stmt = trimmed.starts_with("insert") || trimmed.starts_with("replace");
@@ -296,7 +308,11 @@ impl SqliteConn {
             format!("SELECT * FROM {}{} LIMIT {}", t, order, row_limit + 1)
         });
 
-        let mut tx = conn.begin().await?;
+        let mut tx = if commit {
+            self.pool.begin_with("BEGIN IMMEDIATE").await?
+        } else {
+            self.pool.begin().await?
+        };
         let started = Instant::now();
 
         let before_raw: Vec<SqliteRow> = match &before_sql {
@@ -326,11 +342,6 @@ impl SqliteConn {
         };
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        if commit {
-            tx.commit().await?;
-        } else {
-            tx.rollback().await?;
-        }
 
         let truncated = before_raw.len() > row_limit || after_raw.len() > row_limit;
         let columns = if let Some(first) = before_raw.first().or_else(|| after_raw.first()) {
@@ -359,8 +370,11 @@ impl SqliteConn {
                 rows_affected,
                 elapsed_ms,
                 truncated,
+                new_rows_exact: false,
+                capture_decline: None,
             },
             committed_result,
+            tx,
         ))
     }
 
