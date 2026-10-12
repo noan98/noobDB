@@ -124,7 +124,8 @@ DDL を**静かになってから 3 秒 (最大 15 秒) まとめて 1 回だけ
 `current_schema()` (空・実 DB 名が渡されたとき。無ければ `public`) に解決し、応答の `database`
 (= 世代の `database`) をフロントが記録対象として覚えて、DDL の実行先をスキーマ名同士で比べる。
 接続時・手動の取得も同じ解決を通る。以前の世代 (実 DB 名で空を取っていた) との境目は、対象が
-違うのでサマリを作らない。MySQL / SQLite は従来どおりプロファイルの DB をそのまま使う。エディタ実行のほか、テーブル保守・複製・ALTER・一括削除の GUI 経路も呼ぶ。
+違うのでサマリを作らない (`schema_drift_capture` は `summary: null`、`schema_drift_compare` は `null`、
+パネルは「対象が異なる世代のため比較しません」を表示)。MySQL / SQLite は従来どおりプロファイルの DB をそのまま使う。エディタ実行のほか、テーブル保守・複製・ALTER・一括削除の GUI 経路も呼ぶ。
 `schema_drift_capture` の `trigger_sql` が世代 (`generation.trigger_sql` 列。旧 DB には
 `ALTER TABLE ADD COLUMN` で後付け) に紐づき、`GenerationMeta.triggerSql` としてパネルの
 世代一覧に出る。`skip_history` の接続では SQL を保存しない。設定 `schemaDriftOnDdl` (既定オン)。

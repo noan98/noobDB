@@ -77,10 +77,19 @@ export function SchemaDriftPanel({
     () => !!genA && !!genB && genA.id !== genB.id && canDiff(genA) && canDiff(genB),
     [genA, genB],
   );
+  // 対象 (DB / スキーマ) が違う世代どうしは比べない (全テーブルが増減したように見えるため)。
+  const differentTarget = !!genA && !!genB && genA.database !== genB.database;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: genA / genB は state から毎回新しい参照で渡るため id だけを依存にする。compareAttempt は再取得ボタン専用のトリガー (下のコメント参照)
   useEffect(() => {
-    if (!genA || !genB || genA.id === genB.id || !canDiff(genA) || !canDiff(genB)) {
+    if (
+      !genA ||
+      !genB ||
+      genA.id === genB.id ||
+      !canDiff(genA) ||
+      !canDiff(genB) ||
+      genA.database !== genB.database
+    ) {
       setSummary(null);
       setCompareError(null);
       return;
@@ -211,6 +220,10 @@ export function SchemaDriftPanel({
                 ) : !bothDiffable ? (
                   <chakra.p m={0} textStyle="body" color="app.textMuted">
                     {t("schemaDriftOmittedNote")}
+                  </chakra.p>
+                ) : differentTarget ? (
+                  <chakra.p m={0} textStyle="body" color="app.textMuted">
+                    {t("schemaDriftDifferentTarget")}
                   </chakra.p>
                 ) : comparing ? (
                   // 差分計算中: 裸のスピナーではなく差分リストの構造 (行の予兆) を

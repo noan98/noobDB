@@ -11,7 +11,9 @@ use tauri::State;
 
 use crate::error::{AppError, Result};
 use crate::schema_drift::store::{self, LegacyGeneration};
-use crate::schema_drift::{capture_payload, summarize_payloads, DriftSummary, GenerationMeta};
+use crate::schema_drift::{
+    capture_payload, summarize_payloads, DriftSummary, GenerationMeta, SnapshotPayload,
+};
 use crate::state::{AppState, Session};
 
 /// `schema_drift_capture` の結果。
@@ -95,8 +97,7 @@ pub async fn schema_drift_capture(
         .and_then(|p| p.payload.as_ref())
         // 対象 (DB / スキーマ) が前世代と違うと全テーブルが増減したように見えるので比べない
         // (PostgreSQL で DB 名のまま空を取っていた旧世代との境目など)。
-        .filter(|prev| prev.database == payload.database)
-        .map(|prev| summarize_payloads(prev, &payload));
+        .and_then(|prev| summarize_if_same_target(prev, &payload));
     Ok(SchemaDriftCapture {
         added: true,
         database: payload.database,
@@ -112,7 +113,9 @@ pub async fn schema_drift_list(profile_id: String) -> Result<Vec<GenerationMeta>
 }
 
 /// 同じプロファイルの 2 世代 (`from_id` = 比較元、`to_id` = 比較先) の変化サマリ。
-/// どちらかの世代が (サイズ超過で) 省略されている、または存在しないときは `None`。
+/// どちらかの世代が (サイズ超過で) 省略されている、存在しない、または対象 (DB / スキーマ)
+/// が異なるときは `None` (対象が違うと全テーブルが増減したように見えるため。PostgreSQL で
+/// 実 DB 名のまま空を取っていた旧世代との比較など, #1537)。
 #[tauri::command]
 pub async fn schema_drift_compare(
     profile_id: String,
@@ -123,9 +126,17 @@ pub async fn schema_drift_compare(
     let a = store::load(&profile_id, from).await?;
     let b = store::load(&profile_id, to).await?;
     match (a.and_then(|g| g.payload), b.and_then(|g| g.payload)) {
-        (Some(a), Some(b)) => Ok(Some(summarize_payloads(&a, &b))),
+        (Some(a), Some(b)) => Ok(summarize_if_same_target(&a, &b)),
         _ => Ok(None),
     }
+}
+
+/// 2 つのペイロードの対象 (DB / スキーマ) が同じときだけ差分サマリを作る。
+pub(crate) fn summarize_if_same_target(
+    prev: &SnapshotPayload,
+    next: &SnapshotPayload,
+) -> Option<DriftSummary> {
+    (prev.database == next.database).then(|| summarize_payloads(prev, next))
 }
 
 /// 旧 localStorage の世代 (新しい順) をストアへ一度だけ取り込む。既にこのプロファイルの
@@ -147,6 +158,22 @@ pub async fn schema_drift_import_legacy(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DriverKind;
+
+    fn payload(database: &str) -> SnapshotPayload {
+        SnapshotPayload {
+            driver: DriverKind::Postgres,
+            database: database.to_string(),
+            tables: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn summaries_are_only_made_for_the_same_target() {
+        assert!(summarize_if_same_target(&payload("public"), &payload("public")).is_some());
+        // 実 DB 名で空を取っていた旧世代と、既定スキーマの新世代は比べない。
+        assert!(summarize_if_same_target(&payload("testdb"), &payload("public")).is_none());
+    }
 
     #[test]
     fn normalize_trigger_sql_trims_and_drops_empty() {

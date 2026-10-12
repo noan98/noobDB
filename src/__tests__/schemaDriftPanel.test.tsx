@@ -162,4 +162,23 @@ describe("SchemaDriftPanel 構造/データへの導線と DDL の紐づけ (#15
       screen.getByText(t("schemaDriftTriggerSql", { sql: "ALTER TABLE users ADD COLUMN age INT" })),
     ).toBeInTheDocument();
   });
+
+  it("対象 (DB / スキーマ) が異なる世代は比較せず、理由を表示する", async () => {
+    vi.mocked(api.schemaDriftCompare).mockClear();
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={[
+          { ...makeGeneration("g2", "2026-01-02T00:00:00Z"), database: "public" },
+          { ...makeGeneration("g1", "2026-01-01T00:00:00Z"), database: "appdb" },
+        ]}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(await screen.findByText(t("schemaDriftDifferentTarget"))).toBeInTheDocument();
+    expect(api.schemaDriftCompare).not.toHaveBeenCalled();
+  });
 });

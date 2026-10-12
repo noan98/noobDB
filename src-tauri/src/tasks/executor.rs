@@ -203,15 +203,27 @@ pub async fn run_once(
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                     // 待っている間に無効化・削除されたタスクは、定義を読み直して中止する。
-                    let current = super::store::load_all()
-                        .ok()
-                        .and_then(|all| all.into_iter().find(|t| t.id == task.id));
-                    if let Some(reason) = retry_abort_reason(task.enabled, current.as_ref()) {
-                        let mut outcome = TaskOutcome::err(format!(
-                            "connect retry aborted ({reason}) after {attempts} attempts: {e}"
-                        ));
-                        outcome.attempts = attempts;
-                        return outcome;
+                    // 読み直せなかったとき (一時的な I/O エラー等) は削除扱いにせず、警告だけ
+                    // 残して再試行を続ける。
+                    match super::store::load_all() {
+                        Ok(all) => {
+                            let current = all.into_iter().find(|t| t.id == task.id);
+                            if let Some(reason) = retry_abort_reason(task.enabled, current.as_ref())
+                            {
+                                let mut outcome = TaskOutcome::err(format!(
+                                    "connect retry aborted ({reason}) after {attempts} attempts: {e}"
+                                ));
+                                outcome.attempts = attempts;
+                                return outcome;
+                            }
+                        }
+                        Err(load_err) => {
+                            tracing::warn!(
+                                task_id = %task.id,
+                                error = %load_err,
+                                "task scheduler: failed to re-read the task definition before retrying; continuing"
+                            );
+                        }
                     }
                     continue;
                 }
