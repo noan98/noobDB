@@ -692,6 +692,7 @@ export const PaneView = memo(
                     result={tab.result}
                     driver={selectedProfile?.driver ?? "mysql"}
                     streaming={tab.streaming}
+                    pin={{ scope: tab.id, sql: tab.explainSourceSql ?? getTabSql(tab) }}
                     ai={
                       sessionId && selectedProfile
                         ? {
