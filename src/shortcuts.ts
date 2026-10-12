@@ -183,9 +183,20 @@ export function resolveShortcutBindings(
   return out;
 }
 
-/** キー表記の絞り込み用に正規化する: 小文字化し、空白と `+` を除く (`Ctrl + K` ≡ `ctrlk`)。 */
+/**
+ * キー表記の絞り込み用に正規化する: 小文字化し、修飾キーの表記ゆれ (`Cmd/Ctrl` ・ `ctrl` ・
+ * `cmd` ・ `command` ・ `⌘` ・ `control` ・ `meta` を `mod`、`opt` ・ `option` ・ `⌥` を `alt`、
+ * `⇧` を `shift`) を揃え、空白と `+` を除く (`Ctrl + K` ≡ `Cmd/Ctrl+K` ≡ `⌘K` ≡ `modk`)。
+ * Ctrl と Cmd は同じ「主修飾キー」として区別しない (一覧に出るのは `Cmd/Ctrl` 表記のため)。
+ */
 function normalizeKeyText(s: string): string {
-  return s.toLowerCase().replace(/[\s+]/g, "");
+  return s
+    .toLowerCase()
+    .replace(/cmd\/ctrl|ctrl\/cmd/g, "mod")
+    .replace(/command|control|ctrl|ctl|cmd|meta|⌘|⌃/g, "mod")
+    .replace(/option|opt|⌥/g, "alt")
+    .replace(/⇧/g, "shift")
+    .replace(/[\s+]/g, "");
 }
 
 /**

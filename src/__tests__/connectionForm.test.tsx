@@ -459,6 +459,18 @@ describe("ConnectionForm connection URL import (#1540)", () => {
     expect(req.ssl_mode).toBe("verify_full");
   });
 
+  it("URL に無い項目 (DB 名・ポート) は、ドライバが同じなら現在の値を残す", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    importUrl("postgres://h/shop");
+    fireEvent.change(screen.getByLabelText(t("formPort")), { target: { value: "6543" } });
+    importUrl("postgres://other-host");
+    expect((screen.getByLabelText(t("formHost")) as HTMLInputElement).value).toBe("other-host");
+    expect((screen.getByLabelText(t("formDatabase")) as HTMLInputElement).value).toBe("shop");
+    expect((screen.getByLabelText(t("formPort")) as HTMLInputElement).value).toBe("6543");
+  });
+
   it("ポート省略時はドライバの既定ポートに戻る", () => {
     renderWithProviders(
       <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,

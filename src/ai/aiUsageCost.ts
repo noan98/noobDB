@@ -71,6 +71,11 @@ export function sinceDayKey(now: Date, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** JST の今月 1 日 (`YYYY-MM-01`)。台帳の日キーと同じ基準 (月の境目は JST 0 時)。 */
+export function monthStartKey(now: Date): string {
+  return `${new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 7)}-01`;
+}
+
 /** 台帳を集計する。`sinceDay` (含む) 以降の日だけを対象にする (省略で全期間)。 */
 export function buildUsageReport(records: readonly AiUsageRecord[], sinceDay?: string): UsageReport {
   const total = empty("total");

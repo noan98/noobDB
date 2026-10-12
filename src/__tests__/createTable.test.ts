@@ -3,6 +3,7 @@ import type { TableColumnInfo } from "../api/tauri";
 import {
   buildCreateTableSql,
   columnDefsFromTableInfo,
+  templateCaveats,
   formatDefault,
   type ColumnDef,
 } from "../components/createTable";
@@ -208,5 +209,35 @@ describe("columnDefsFromTableInfo (#1540)", () => {
     expect(buildCreateTableSql("sqlite", { table: "t2", columns: defs })).toContain(
       '"id" INTEGER PRIMARY KEY AUTOINCREMENT',
     );
+  });
+});
+
+describe("templateCaveats (#1540)", () => {
+  const i = (name: string, over: Record<string, unknown> = {}) => ({
+    name,
+    data_type: "integer",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...over,
+  });
+  it("PostgreSQL の USER-DEFINED / ARRAY / IDENTITY の可能性がある整数主キーを拾う", () => {
+    const c = templateCaveats("postgres", [
+      i("id", { key: "PRI", nullable: false }),
+      i("mood", { data_type: "USER-DEFINED" }),
+      i("tags", { data_type: "ARRAY" }),
+      i("seq", { key: "PRI", default: "nextval('s'::regclass)" }),
+    ] as never);
+    expect(c).toEqual({ userDefined: ["mood"], arrays: ["tags"], identityMaybe: ["id"] });
+  });
+  it("PostgreSQL 以外では注記なし", () => {
+    expect(templateCaveats("mysql", [i("m", { data_type: "ARRAY" })] as never)).toEqual({
+      userDefined: [],
+      arrays: [],
+      identityMaybe: [],
+    });
   });
 });

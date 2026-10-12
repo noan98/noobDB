@@ -226,3 +226,31 @@ export function columnDefsFromTableInfo(columns: readonly TableColumnInfo[]): Co
     };
   });
 }
+
+/** 雛形の読み込みで忠実に写せない列 (画面の注記用)。 */
+export interface TemplateCaveats {
+  /** PostgreSQL の USER-DEFINED (ENUM・ドメイン・拡張型など) の列名。型名が取れず `USER-DEFINED` のまま入る。 */
+  userDefined: string[];
+  /** PostgreSQL の ARRAY の列名。要素型が取れず `ARRAY` のまま入る。 */
+  arrays: string[];
+  /** IDENTITY の可能性がある列 (PostgreSQL の整数主キーで既定値なし)。IDENTITY は検出できず通常の列として写る。 */
+  identityMaybe: string[];
+}
+
+export function templateCaveats(driver: string, columns: readonly TableColumnInfo[]): TemplateCaveats {
+  const out: TemplateCaveats = { userDefined: [], arrays: [], identityMaybe: [] };
+  if (driver !== "postgres") return out;
+  for (const c of columns) {
+    const ty = c.data_type.trim().toUpperCase();
+    if (ty === "USER-DEFINED") out.userDefined.push(c.name);
+    else if (ty === "ARRAY") out.arrays.push(c.name);
+    else if (
+      c.key.toUpperCase() === "PRI" &&
+      (c.default ?? "").trim() === "" &&
+      /^(SMALL|BIG)?INT(EGER)?[248]?$/.test(ty.replace(/\s+/g, ""))
+    ) {
+      out.identityMaybe.push(c.name);
+    }
+  }
+  return out;
+}

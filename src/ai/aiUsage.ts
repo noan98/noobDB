@@ -1,5 +1,5 @@
-// AI の使用量表示と今月の累計 (#1474)。完了メッセージ (Channel の `done`) の整形と、
-// JST 基準の月次累計の加算・月替わり判定を純関数で持つ。保存は `aiUsageStore.ts`。
+// AI の使用量表示 (#1474)。完了メッセージ (Channel の `done`) の整形を純関数で持つ。
+// 日次・タスク別の集計と概算コストは使用量台帳 (#1540) の `aiUsageCost.ts`。
 // 料金の概算はここでは扱わない (日次・タスク別と合わせて `aiUsageCost.ts` / 台帳 #1540 が担う)。
 
 import { AI_MODEL_LABELS, isAiModelId } from "./aiModels";
@@ -30,110 +30,6 @@ const ZERO_USAGE: AiUsageEventLike["usage"] = {
  */
 function usageOf(event: AiUsageEventLike): AiUsageEventLike["usage"] {
   return { ...ZERO_USAGE, ...(event.usage as Partial<AiUsageEventLike["usage"]> | undefined) };
-}
-
-/** 1 モデル分の累計。 */
-export interface AiModelUsage {
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadInputTokens: number;
-  cacheCreationInputTokens: number;
-}
-
-/** 月次累計。`month` は JST の `YYYY-MM`。 */
-export interface AiUsageTotals {
-  month: string;
-  byModel: Record<string, AiModelUsage>;
-}
-
-const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
-
-/** 日時を JST (UTC+9) の `YYYY-MM` にする。月の境目は JST 0 時 (UTC 15 時)。 */
-export function jstMonthKey(date: Date): string {
-  const d = new Date(date.getTime() + JST_OFFSET_MS);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-export function emptyUsageTotals(now: Date): AiUsageTotals {
-  return { month: jstMonthKey(now), byModel: {} };
-}
-
-/** 保存値 (形が不明) を有効な累計へ丸める。壊れた値は空に戻す。 */
-export function sanitizeAiUsageTotals(input: unknown, now: Date = new Date()): AiUsageTotals {
-  if (!input || typeof input !== "object") return emptyUsageTotals(now);
-  const p = input as Record<string, unknown>;
-  if (typeof p.month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(p.month)) {
-    return emptyUsageTotals(now);
-  }
-  const byModel: Record<string, AiModelUsage> = {};
-  const src = p.byModel && typeof p.byModel === "object" ? (p.byModel as Record<string, unknown>) : {};
-  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
-  for (const [model, raw] of Object.entries(src)) {
-    if (!raw || typeof raw !== "object") continue;
-    const r = raw as Record<string, unknown>;
-    byModel[model] = {
-      requests: num(r.requests),
-      inputTokens: num(r.inputTokens),
-      outputTokens: num(r.outputTokens),
-      cacheReadInputTokens: num(r.cacheReadInputTokens),
-      cacheCreationInputTokens: num(r.cacheCreationInputTokens),
-    };
-  }
-  return { month: p.month, byModel };
-}
-
-/**
- * 表示・加算の前に月を合わせる。保存済みの月が `now` の月と違えば空の新しい月にする
- * (月が変わると数え直す)。
- */
-export function rollUsageMonth(totals: AiUsageTotals, now: Date): AiUsageTotals {
-  return totals.month === jstMonthKey(now) ? totals : emptyUsageTotals(now);
-}
-
-/** 完了イベント 1 件を加算した新しい累計 (入力は変更しない)。実際に応答したモデルで数える。 */
-export function addUsage(totals: AiUsageTotals, event: AiUsageEventLike, now: Date): AiUsageTotals {
-  const base = rollUsageMonth(totals, now);
-  const prev = base.byModel[event.model] ?? {
-    requests: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadInputTokens: 0,
-    cacheCreationInputTokens: 0,
-  };
-  const u = usageOf(event);
-  return {
-    month: base.month,
-    byModel: {
-      ...base.byModel,
-      [event.model]: {
-        requests: prev.requests + 1,
-        inputTokens: prev.inputTokens + u.inputTokens,
-        outputTokens: prev.outputTokens + u.outputTokens,
-        cacheReadInputTokens: prev.cacheReadInputTokens + u.cacheReadInputTokens,
-        cacheCreationInputTokens: prev.cacheCreationInputTokens + u.cacheCreationInputTokens,
-      },
-    },
-  };
-}
-
-/** モデル別累計の合計。 */
-export function sumUsage(totals: AiUsageTotals): AiModelUsage {
-  const sum: AiModelUsage = {
-    requests: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadInputTokens: 0,
-    cacheCreationInputTokens: 0,
-  };
-  for (const m of Object.values(totals.byModel)) {
-    sum.requests += m.requests;
-    sum.inputTokens += m.inputTokens;
-    sum.outputTokens += m.outputTokens;
-    sum.cacheReadInputTokens += m.cacheReadInputTokens;
-    sum.cacheCreationInputTokens += m.cacheCreationInputTokens;
-  }
-  return sum;
 }
 
 /** トークン数の短縮表記 (999 → "999"、3200 → "3.2k"、1_250_000 → "1.3M")。 */

@@ -480,11 +480,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       setFilePath(v.filePath ?? "");
     } else {
       if (v.host !== undefined) setHost(v.host);
-      setPort(String(v.port ?? defaultPortFor(v.driver)));
+      // URL に無い項目は現在の値を残す。ただしドライバが変わるときのポートは新ドライバの既定にする。
+      if (v.port !== undefined) setPort(String(v.port));
+      else if (v.driver !== driver) setPort(String(defaultPortFor(v.driver)));
       setPortError(null);
       // ドライバが変わったとき、前ドライバの既定ユーザーを持ち越さない。
       setUser(v.user ?? (user === defaultUserFor(driver) ? defaultUserFor(v.driver) : user));
-      setDatabase(v.database ?? "");
+      if (v.database !== undefined) setDatabase(v.database);
       if (v.password !== undefined) {
         setPassword(v.password);
         setAuthMethod("password");

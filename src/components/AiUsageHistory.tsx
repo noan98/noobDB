@@ -8,6 +8,7 @@ import { formatTokens, modelLabel } from "../ai/aiUsage";
 import {
   buildUsageReport,
   formatUsd,
+  monthStartKey,
   sinceDayKey,
   type UsageAggregate,
 } from "../ai/aiUsageCost";
@@ -19,7 +20,7 @@ import { SettingsInfo } from "./settingsLayout";
 import { useToast } from "./Toast";
 import { Button, Select } from "./ui";
 
-type Range = "7" | "30" | "all";
+type Range = "month" | "7" | "30" | "all";
 
 interface Props {
   /** タスク種別 ID の表示名 (未知の ID はそのまま返す)。 */
@@ -34,7 +35,7 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
   const { confirm, dialog } = useConfirm();
   const [records, setRecords] = useState<AiUsageRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [range, setRange] = useState<Range>("30");
+  const [range, setRange] = useState<Range>("month");
 
   const load = useCallback(() => {
     api
@@ -52,7 +53,12 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
   }, [load, reloadKey]);
 
   const report = useMemo(
-    () => buildUsageReport(records, range === "all" ? undefined : sinceDayKey(new Date(), Number(range))),
+    () => {
+      const now = new Date();
+      const since =
+        range === "all" ? undefined : range === "month" ? monthStartKey(now) : sinceDayKey(now, Number(range));
+      return buildUsageReport(records, since);
+    },
     [records, range],
   );
   const { total } = report;
@@ -103,6 +109,7 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
           value={range}
           onChange={(e) => setRange(e.target.value as Range)}
         >
+          <option value="month">{t("aiLedgerRangeMonth")}</option>
           <option value="7">{t("aiLedgerRange7")}</option>
           <option value="30">{t("aiLedgerRange30")}</option>
           <option value="all">{t("aiLedgerRangeAll")}</option>

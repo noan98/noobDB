@@ -2,7 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { api, type DriverKind } from "../api/tauri";
-import { buildCreateTableSql, columnDefsFromTableInfo, type ColumnDef } from "./createTable";
+import {
+  buildCreateTableSql,
+  columnDefsFromTableInfo,
+  templateCaveats,
+  type ColumnDef,
+  type TemplateCaveats,
+} from "./createTable";
+import { Callout } from "./Callout";
+import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Select, Switch } from "./ui";
@@ -78,6 +86,8 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
   const [templateTable, setTemplateTable] = useState("");
   const [templateLoading, setTemplateLoading] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [caveats, setTemplateCaveats] = useState<TemplateCaveats | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const loadTemplate = async () => {
     if (!sessionId || !database || !templateTable) return;
     setTemplateLoading(true);
@@ -88,7 +98,19 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
         setTemplateError(t("createTableTemplateEmpty", { table: templateTable }));
         return;
       }
+      // 入力済みの列 (名前が入っている / 初期の id 以外) があるときだけ、置き換えを確認する。
+      const hasInput = columns.some((c) => c.name.trim() !== "" && !(c.name === "id" && columns.length === 1));
+      if (hasInput) {
+        const ok = await confirm({
+          title: t("createTableTemplateConfirmTitle"),
+          message: t("createTableTemplateConfirmBody", { table: templateTable }),
+          confirmLabel: t("createTableTemplateLoad"),
+          tone: "warning",
+        });
+        if (!ok) return;
+      }
       setColumns(columnDefsFromTableInfo(info));
+      setTemplateCaveats(templateCaveats(driver, info));
       // 空のままなら、元の名前に _copy を付けた名前を提案する (上書きはしない)。
       setTable((cur) => (cur.trim() === "" ? `${templateTable}_copy` : cur));
       // 元テーブルの制約は引き継がないので、既に入力済みの制約は列名と食い違いうる → 破棄する。
@@ -180,6 +202,21 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
             </Flex>
             <chakra.div textStyle="caption">{t("createTableTemplateHelp")}</chakra.div>
             {templateError && <FieldError>{templateError}</FieldError>}
+            {caveats && caveats.userDefined.length > 0 && (
+              <Callout tone="warning" role="status">
+                {t("createTableTemplateUserDefined", { columns: caveats.userDefined.join(", ") })}
+              </Callout>
+            )}
+            {caveats && caveats.arrays.length > 0 && (
+              <Callout tone="warning" role="status">
+                {t("createTableTemplateArray", { columns: caveats.arrays.join(", ") })}
+              </Callout>
+            )}
+            {caveats && caveats.identityMaybe.length > 0 && (
+              <Callout tone="info" role="status">
+                {t("createTableTemplateIdentity", { columns: caveats.identityMaybe.join(", ") })}
+              </Callout>
+            )}
           </FormSection>
         )}
 
@@ -291,6 +328,7 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
           {t("createTableRun")}
         </PressableButton>
       </ModalFooter>
+      {confirmDialog}
     </Modal>
   );
 }

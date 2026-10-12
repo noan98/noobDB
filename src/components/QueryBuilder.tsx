@@ -489,54 +489,97 @@ function tableRef(driver: string, database: string, table: string): string {
   return tbl;
 }
 
+/**
+ * WHERE 条件を括弧グループへ分ける。グループは空行を落とす「前」に全行で確定する
+ * (空行を挟んでも groupWithPrevious の行が前のグループに吸われて AND が OR に化けない
+ * ように)。グループ先頭 (空行でも) の connector が前グループとの結合で、グループが空に
+ * なったら捨てる。列が空の行は出力に含めない。
+ */
+function whereGroups(
+  conditions: WhereCondition[],
+): { connector: "AND" | "OR"; items: WhereCondition[] }[] {
+  const groups: { connector: "AND" | "OR"; items: WhereCondition[] }[] = [];
+  conditions.forEach((c, i) => {
+    const connector = c.connector === "OR" ? "OR" : "AND";
+    const last = groups[groups.length - 1];
+    if (i > 0 && c.groupWithPrevious === true && last) {
+      if (c.column) last.items.push(c);
+    } else {
+      groups.push({ connector, items: c.column ? [c] : [] });
+    }
+  });
+  return groups.filter((g) => g.items.length > 0);
+}
+
+/**
+ * 括弧でまとめていない AND と OR が最上位で混在しているか (`a OR b AND c` のように
+ * SQL の優先順位 = AND が先、で読まれる並び)。UPDATE / DELETE で意図とずれると
+ * 広い範囲を書き換えうるので、UI が注意を出す。
+ */
+export function hasAmbiguousAndOr(conditions: WhereCondition[]): boolean {
+  const joins = whereGroups(conditions)
+    .slice(1)
+    .map((g) => g.connector);
+  return joins.includes("AND") && joins.includes("OR");
+}
+
+/**
+ * WHERE 条件を 1 件消した新しい配列。グループ先頭 (括弧の開始) を消したときは、次の行が
+ * 前の行と同じグループに吸われて AND が OR に化けないよう、次の行を新しい先頭へ昇格する
+ * (結合子は消した行のものを引き継ぐ)。先頭行を消したときは単に独立させる。
+ */
+export function removeWhereCondition(prev: WhereCondition[], idx: number): WhereCondition[] {
+  const removed = prev[idx];
+  const next = prev.filter((_, i) => i !== idx);
+  if (removed && !removed.groupWithPrevious && next[idx]?.groupWithPrevious) {
+    next[idx] = {
+      ...next[idx],
+      groupWithPrevious: false,
+      connector: idx === 0 ? next[idx].connector : removed.connector,
+    };
+  } else if (idx === 0 && next[0]?.groupWithPrevious) {
+    next[0] = { ...next[0], groupWithPrevious: false };
+  }
+  return next;
+}
+
 function renderWhereClause(
   driver: string,
   columns: TableColumnInfo[],
   conditions: WhereCondition[],
 ): string {
-  const rendered = conditions
-    .filter((c) => c.column)
-    .map((c) => {
-      const col = quoteIdentFor(driver, c.column);
-      const info = resolveColumnInfo(columns, c.column);
-      const literal = (raw: string) =>
-        info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
-      const opNorm = normalizeOperator(c.operator);
-      let text: string;
-      if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") {
-        text = `${col} ${opNorm}`;
-      } else if (opNorm === "IN") {
-        const items = splitInItems(c.value).map(literal);
-        const inner = items.length > 0 ? items.join(", ") : "<values>";
-        text = `${col} IN (${inner})`;
-      } else {
-        const opOut = c.operator.trim() || "=";
-        text = `${col} ${opOut} ${literal(c.value)}`;
-      }
-      return {
-        text,
-        connector: c.connector === "OR" ? "OR" : "AND",
-        joinPrev: c.groupWithPrevious === true,
-      };
-    });
-  if (rendered.length === 0) return " WHERE <column> = <value>";
-  // 連続して groupWithPrevious な条件を 1 グループにまとめる。グループ先頭の
-  // connector が前グループとの結合、2 件目以降の connector がグループ内の結合。
-  const groups: { connector: string; items: typeof rendered }[] = [];
-  rendered.forEach((r, i) => {
-    const last = groups[groups.length - 1];
-    if (i > 0 && r.joinPrev && last) last.items.push(r);
-    else groups.push({ connector: r.connector, items: [r] });
-  });
-  const joinItems = (items: typeof rendered) =>
+  const renderOne = (c: WhereCondition): string => {
+    const col = quoteIdentFor(driver, c.column);
+    const info = resolveColumnInfo(columns, c.column);
+    const literal = (raw: string) =>
+      info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
+    const opNorm = normalizeOperator(c.operator);
+    if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") return `${col} ${opNorm}`;
+    if (opNorm === "IN") {
+      const items = splitInItems(c.value).map(literal);
+      const inner = items.length > 0 ? items.join(", ") : "<values>";
+      return `${col} IN (${inner})`;
+    }
+    const opOut = c.operator.trim() || "=";
+    return `${col} ${opOut} ${literal(c.value)}`;
+  };
+  const live = whereGroups(conditions).map((g) => ({
+    connector: g.connector,
+    items: g.items.map((c) => ({
+      text: renderOne(c),
+      connector: c.connector === "OR" ? "OR" : "AND",
+    })),
+  }));
+  if (live.length === 0) return " WHERE <column> = <value>";
+  const joinItems = (items: { text: string; connector: string }[]) =>
     items.map((r, i) => (i === 0 ? r.text : `${r.connector} ${r.text}`)).join(" ");
   // グループが 1 つだけなら括弧は意味を変えないので付けない。
-  const wrap = groups.length > 1;
-  const parts = groups.map((g) =>
+  const wrap = live.length > 1;
+  const parts = live.map((g) =>
     wrap && g.items.length > 1 ? `(${joinItems(g.items)})` : joinItems(g.items),
   );
   return (
-    " WHERE " + parts.map((part, i) => (i === 0 ? part : `${groups[i].connector} ${part}`)).join(" ")
+    " WHERE " + parts.map((part, i) => (i === 0 ? part : `${live[i].connector} ${part}`)).join(" ")
   );
 }
 
@@ -852,14 +895,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const addCondition = () =>
     setWhereConditions((prev) => [...prev, { column: "", operator: "=", value: "" }]);
   const removeCondition = (idx: number) =>
-    setWhereConditions((prev) => {
-      const next = prev.filter((_, i) => i !== idx);
-      // 先頭を消したら、新しい先頭がグループの途中扱いで残らないようにする。
-      if (idx === 0 && next.length > 0 && next[0].groupWithPrevious) {
-        next[0] = { ...next[0], groupWithPrevious: false };
-      }
-      return next;
-    });
+    setWhereConditions((prev) => removeWhereCondition(prev, idx));
 
   const updateOrderBy = (idx: number, patch: Partial<OrderByItem>) => {
     setOrderBy((prev) => prev.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
@@ -1119,6 +1155,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   </Box>
                 );
               })}
+              {(kind === "UPDATE" || kind === "DELETE") && hasAmbiguousAndOr(whereConditions) && (
+                <chakra.span css={inlineWarningCss} role="status" data-testid="qb-and-or-precedence">
+                  {t("qbWhereAndOrPrecedence")}
+                </chakra.span>
+              )}
             </chakra.section>
           )}
 

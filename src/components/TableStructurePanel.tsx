@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type IndexInfo, type TableColumnInfo } from "../api/tauri";
@@ -158,6 +158,9 @@ export function TableStructurePanel({
   // 構造パネルを開くたびに要るものではないため)。テーブルや再読み込みで破棄する。
   const [ddl, setDdl] = useState<DdlState>({ kind: "hidden" });
   const { copied: ddlCopied, copy: copyDdl } = useCopyFeedback();
+  // DDL 取得の世代。テーブル切替・再読み込み・再取得のたびに進め、古い応答を捨てる
+  // (A の応答が B を表示中に届いて、B の欄に A の DDL が出るのを防ぐ)。
+  const ddlSeq = useRef(0);
 
   const { database, table } = target;
 
@@ -167,6 +170,7 @@ export function TableStructurePanel({
     setColumns(null);
     setIndexes(null);
     setError(null);
+    ddlSeq.current += 1;
     setDdl({ kind: "hidden" });
     api
       .describeTable(sessionId, database, table)
@@ -191,13 +195,16 @@ export function TableStructurePanel({
   }, [sessionId, database, table, reloadKey]);
 
   const showDdl = useCallback(() => {
+    const seq = ++ddlSeq.current;
     setDdl({ kind: "loading" });
     api
       .getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null)
-      .then((text) => setDdl((cur) => (cur.kind === "loading" ? { kind: "ready", ddl: text } : cur)))
-      .catch((e) =>
-        setDdl((cur) => (cur.kind === "loading" ? { kind: "error", message: String(e) } : cur)),
-      );
+      .then((text) => {
+        if (seq === ddlSeq.current) setDdl({ kind: "ready", ddl: text });
+      })
+      .catch((e) => {
+        if (seq === ddlSeq.current) setDdl({ kind: "error", message: String(e) });
+      });
   }, [sessionId, database, table]);
 
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);

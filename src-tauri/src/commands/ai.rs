@@ -250,13 +250,13 @@ pub async fn has_ai_api_key() -> Result<bool> {
 /// API キーや送信内容は含まれない。概算コストはフロントが単価表で計算する。
 #[tauri::command]
 pub async fn get_ai_usage_history() -> Result<Vec<AiUsageRecord>> {
-    usage::load_all()
+    usage::load_all().await
 }
 
 /// AI 使用量の台帳を空にする。
 #[tauri::command]
 pub async fn clear_ai_usage_history() -> Result<()> {
-    usage::clear()
+    usage::clear().await
 }
 
 /// AI へのストリーミング要求。結果は `ai-stream:*` イベントで届く。

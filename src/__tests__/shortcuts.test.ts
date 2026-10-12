@@ -65,10 +65,15 @@ describe("filterShortcuts (#1540)", () => {
   });
 
   it("キー表記の部分一致は空白と + を無視する", () => {
-    expect(filterShortcuts(items, "ctrl+k", texts).map((x) => x.id)).toEqual([1]);
-    expect(filterShortcuts(items, "Ctrl K", texts).map((x) => x.id)).toEqual([1]);
+    expect(filterShortcuts(items, "ctrl+k", texts).map((x) => x.id)).toEqual([1, 3]);
+    // 表記ゆれ: cmd+k / ⌘K / Command K / ctrl k はどれも Cmd/Ctrl+K に当たる。
+    for (const q of ["cmd+k", "⌘K", "Command K", "ctrl k", "control+k"]) {
+      expect(filterShortcuts([{ id: 9, label: "x", keys: "Cmd/Ctrl+K" }], q, (i) => i)).toHaveLength(1);
+    }
+    // Ctrl と Cmd は同じ主修飾キーとして扱う (一覧の表記は Cmd/Ctrl)。
+    expect(filterShortcuts(items, "Ctrl K", texts).map((x) => x.id)).toEqual([1, 3]);
     expect(filterShortcuts(items, "shift f", texts).map((x) => x.id)).toEqual([2]);
-    expect(filterShortcuts(items, "⌘k", texts).map((x) => x.id)).toEqual([3]);
+    expect(filterShortcuts(items, "⌘k", texts).map((x) => x.id)).toEqual([1, 3]);
   });
 
   it("一致が無ければ空、記号だけのクエリはキー側に誤一致しない", () => {

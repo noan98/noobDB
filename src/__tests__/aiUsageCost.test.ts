@@ -5,6 +5,7 @@ import {
   buildUsageReport,
   estimateRecordCostUsd,
   formatUsd,
+  monthStartKey,
   sinceDayKey,
 } from "../ai/aiUsageCost";
 
@@ -75,6 +76,12 @@ describe("AI 使用量の集計と概算コスト (#1540)", () => {
     expect(sinceDayKey(now, 1)).toBe("2026-10-13");
     expect(sinceDayKey(now, 7)).toBe("2026-10-07");
     expect(sinceDayKey(new Date("2026-10-12T14:59:00Z"), 1)).toBe("2026-10-12");
+  });
+
+  it("monthStartKey は JST の月初 (UTC 月末 15:00 から翌月)", () => {
+    expect(monthStartKey(new Date("2026-10-12T00:00:00Z"))).toBe("2026-10-01");
+    expect(monthStartKey(new Date("2026-09-30T14:59:00Z"))).toBe("2026-09-01");
+    expect(monthStartKey(new Date("2026-09-30T15:00:00Z"))).toBe("2026-10-01");
   });
 
   it("formatUsd は 1 セント未満を 4 桁で出す", () => {

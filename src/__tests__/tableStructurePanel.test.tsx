@@ -100,6 +100,27 @@ describe("TableStructurePanel (#1112)", () => {
     expect(screen.queryByText(t("tableDdlSynthesizedHint"))).not.toBeInTheDocument();
   });
 
+  it("テーブルを切り替えたあとに届いた古い DDL 応答は捨てる (#1540)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    let resolveA: (v: string) => void = () => {};
+    vi.mocked(api.getObjectDefinition)
+      .mockImplementationOnce(() => new Promise<string>((r) => (resolveA = r)))
+      .mockResolvedValueOnce("CREATE TABLE `items` (`id` int)");
+    const props = { sessionId: "s1", driver: "mysql" as const, onOpenData: vi.fn(), onSelectTable: vi.fn() };
+    const { rerender } = renderWithProviders(
+      <TableStructurePanel {...props} target={{ database: "app", table: "orders" }} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("structureDdlShow") }));
+    rerender(<TableStructurePanel {...props} target={{ database: "app", table: "items" }} />);
+    fireEvent.click(await screen.findByRole("button", { name: t("structureDdlShow") }));
+    expect(await screen.findByText("CREATE TABLE `items` (`id` int)")).toBeInTheDocument();
+    resolveA("CREATE TABLE `orders` (`id` int)");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("CREATE TABLE `orders` (`id` int)")).not.toBeInTheDocument();
+    expect(screen.getByText("CREATE TABLE `items` (`id` int)")).toBeInTheDocument();
+  });
+
   it("DDL の取得に失敗したらエラーを出し、再度試せる (#1540)", async () => {
     vi.mocked(api.describeTable).mockResolvedValueOnce([col("id")]);
     vi.mocked(api.listIndexes).mockResolvedValueOnce([]);

@@ -118,16 +118,27 @@ fn usage_path() -> Result<PathBuf> {
 }
 
 fn load_locked() -> Result<Vec<AiUsageRecord>> {
-    let path = usage_path()?;
+    read_records(&usage_path()?)
+}
+
+fn read_records(path: &Path) -> Result<Vec<AiUsageRecord>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&path)?;
+    let content = std::fs::read_to_string(path)?;
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let file: UsageFile = serde_json::from_str(&content)?;
-    Ok(file.records)
+    match serde_json::from_str::<UsageFile>(&content) {
+        Ok(file) => Ok(file.records),
+        Err(e) => {
+            // 壊れた台帳は読めないままだと記録も表示も恒久的に失敗するので、`.bak` へ退避して
+            // 空から始める (使用量は集計値で、失っても機能・安全性に影響しない)。
+            tracing::warn!(error = %e, "ai_usage.json is corrupt; moving it to .bak and starting empty");
+            let _ = std::fs::rename(path, path.with_extension("json.bak"));
+            Ok(Vec::new())
+        }
+    }
 }
 
 fn save_locked(records: Vec<AiUsageRecord>) -> Result<()> {
@@ -157,8 +168,15 @@ fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     written
 }
 
-/// 完了 1 件を記録する。失敗しても呼び出し元の AI 処理は続けたいので `warn` ログのみ。
+/// 完了 1 件を記録する。ファイル I/O は同期なので、非同期ランタイムのワーカーを塞がないよう
+/// blocking スレッドへ逃がす (待たずに返す)。失敗しても AI 処理は続けたいので `warn` ログのみ。
 pub fn record(task: AiTaskKind, model: &str, usage: &AiUsage) {
+    let model = model.to_string();
+    let usage = *usage;
+    tauri::async_runtime::spawn_blocking(move || record_blocking(task, &model, &usage));
+}
+
+fn record_blocking(task: AiTaskKind, model: &str, usage: &AiUsage) {
     let result = (|| -> Result<()> {
         let _guard = lock_store();
         let mut all = load_locked()?;
@@ -170,14 +188,26 @@ pub fn record(task: AiTaskKind, model: &str, usage: &AiUsage) {
     }
 }
 
-pub fn load_all() -> Result<Vec<AiUsageRecord>> {
+fn load_all_blocking() -> Result<Vec<AiUsageRecord>> {
     let _guard = lock_store();
     load_locked()
 }
 
-pub fn clear() -> Result<()> {
+fn clear_blocking() -> Result<()> {
     let _guard = lock_store();
     save_locked(Vec::new())
+}
+
+pub async fn load_all() -> Result<Vec<AiUsageRecord>> {
+    tauri::async_runtime::spawn_blocking(load_all_blocking)
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+pub async fn clear() -> Result<()> {
+    tauri::async_runtime::spawn_blocking(clear_blocking)
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[cfg(test)]
@@ -192,6 +222,25 @@ mod tests {
             cache_read_input_tokens: cr,
             cache_creation_input_tokens: cw,
         }
+    }
+
+    #[test]
+    fn corrupt_ledger_is_moved_to_bak_and_reads_as_empty() {
+        let dir = std::env::temp_dir().join(format!("noobdb-ai-usage-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ai_usage.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(read_records(&path).unwrap().is_empty());
+        assert!(!path.exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("ai_usage.json.bak")).unwrap(),
+            "{ not json"
+        );
+        // 無いファイル / 空ファイルも空。
+        assert!(read_records(&path).unwrap().is_empty());
+        std::fs::write(&path, "  ").unwrap();
+        assert!(read_records(&path).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

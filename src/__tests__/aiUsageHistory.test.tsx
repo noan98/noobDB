@@ -64,6 +64,14 @@ describe("AiUsageHistory (#1540)", () => {
     await screen.findByText(t("aiLedgerEmpty"));
   });
 
+  it("既定の期間は今月で、先月以前の記録は「記録されたすべて」に切り替えるまで集計しない", async () => {
+    getAiUsageHistory.mockResolvedValue([{ ...record, day: "2000-01-15", calls: 7 }]);
+    renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
+    await screen.findByText(t("aiLedgerEmpty"));
+    fireEvent.change(screen.getByLabelText(t("aiLedgerRange")), { target: { value: "all" } });
+    await screen.findAllByText(/7 /);
+  });
+
   it("読み込みに失敗したらエラーを表示する", async () => {
     getAiUsageHistory.mockRejectedValue(new Error("boom"));
     renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);

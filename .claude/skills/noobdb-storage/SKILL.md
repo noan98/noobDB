@@ -20,7 +20,7 @@ description: noobDB のプロファイル・秘密情報 (keyring) の分離、J
   条件で、新しい秘密の種類を足すときは `SecretKind` と フロントの
   `ProfileSecretKind` の**両方**に追加します。
 
-## JSON ストア 4 種 (`profiles` / `snippets` / `sandboxes` / `tasks`) の必須対策
+## JSON ストア (`profiles` / `snippets` / `sandboxes` / `tasks` / `ai_usage`) の必須対策
 
 Tauri の `#[tauri::command] async fn` は同一プロセス内で**並行実行される**ため、
 次の 2 つが揃っていないと壊れます。
@@ -33,6 +33,15 @@ Tauri の `#[tauri::command] async fn` は同一プロセス内で**並行実行
 
 **新しい read-modify-write を足すときは内部の `*_locked` 版を呼んでください** —
 公開関数を呼ぶと同一 Mutex の再取得でデッドロックします。
+
+## AI 使用量台帳 (`ai_usage.json`, #1540)
+
+- `ai/usage.rs` が持つ JSON ストア (data_dir)。日 (JST) × タスク種別 × モデルの**トークン数と回数だけ**を
+  積む。API キー・送信内容・応答は入れない。400 日を超えた日は書き込み時に捨てる。
+- 上記 2 つの必須対策 (一時ファイル名に PID + カウンタ、ストア単位 `Mutex` で read-modify-write を直列化)
+  を満たす。同期 I/O なので `tauri::async_runtime::spawn_blocking` で実行する (記録は fire-and-forget、
+  失敗は `warn` ログのみ)。壊れたファイルは `ai_usage.json.bak` へ退避して空から始める。
+- 概算コストは保存せず、フロント `aiModels.ts` の単価表で表示時に掛ける。
 
 ## 参照
 
