@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 import { api, UndoConflict, WriteCaptureSummary } from "../api/tauri";
+import { localizedErrorMessage } from "../errorHints";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -146,7 +147,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         toast.error(t("flightRecorderUndoBlocked"));
       }
     } catch (e) {
-      toast.error(String(e));
+      toast.error(localizedErrorMessage(e, t));
     } finally {
       setBusyId(null);
     }

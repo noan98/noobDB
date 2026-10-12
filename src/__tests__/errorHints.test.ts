@@ -254,3 +254,25 @@ describe("matchErrorHint", () => {
     });
   });
 });
+
+describe("localizedErrorMessage (#1533)", () => {
+  const t = (key: string) => `T:${key}`;
+  it("翻訳対象の kind は i18n キーの文言に置き換える", async () => {
+    const { BackendError } = await import("../api/invoke");
+    const { localizedErrorMessage } = await import("../errorHints");
+    const e = new BackendError("flightAlreadyUndone", "this operation has already been undone");
+    expect(localizedErrorMessage(e, t as never)).toBe("T:errorFlightAlreadyUndone");
+    expect(localizedErrorMessage(new BackendError("flightDriverMismatch", "x"), t as never)).toBe(
+      "T:errorFlightDriverMismatch",
+    );
+  });
+  it("対象外の kind や素の文字列はそのまま", async () => {
+    const { BackendError } = await import("../api/invoke");
+    const { localizedErrorMessage } = await import("../errorHints");
+    expect(localizedErrorMessage(new BackendError("db", "boom"), t as never)).toBe("boom");
+    expect(localizedErrorMessage("plain", t as never)).toBe("plain");
+    // Object.prototype 上のキー名を kind として拾わない。
+    expect(localizedErrorMessage(new BackendError("constructor", "ctor"), t as never)).toBe("ctor");
+    expect(localizedErrorMessage(new BackendError("toString", "ts"), t as never)).toBe("ts");
+  });
+});
