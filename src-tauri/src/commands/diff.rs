@@ -188,6 +188,27 @@ fn key_predicate(
         .collect();
     if idents.len() == 1 {
         format!("{} {op} {}", idents[0], lits[0])
+    } else if driver == DriverKind::Mysql {
+        // MySQL の行値比較は索引を使えず全走査になりうるので、展開形
+        // `a > x OR (a = x AND b > y)` で書く (`<=` は途中を `<`、最後だけ `<=`)。
+        let strict = if op.starts_with('>') { ">" } else { "<" };
+        let n = idents.len();
+        let terms: Vec<String> = (0..n)
+            .map(|i| {
+                let o = if i + 1 == n { op } else { strict };
+                let last = format!("{} {o} {}", idents[i], lits[i]);
+                if i == 0 {
+                    last
+                } else {
+                    let mut parts: Vec<String> = (0..i)
+                        .map(|j| format!("{} = {}", idents[j], lits[j]))
+                        .collect();
+                    parts.push(last);
+                    format!("({})", parts.join(" AND "))
+                }
+            })
+            .collect();
+        format!("({})", terms.join(" OR "))
     } else {
         format!("({}) {op} ({})", idents.join(", "), lits.join(", "))
     }
@@ -230,6 +251,92 @@ fn keyset_select_sql(
     };
     let table = quote_ident(driver, table);
     format!("SELECT {cols} FROM {table}{where_clause} ORDER BY {order} LIMIT {limit}")
+}
+
+/// 相手側に同じ主キーの行が 1 件でもあるか (主キー等価検索。`LIMIT 1`)。
+/// 照合順序が違う 2 つの DB では「ORDER BY の窓」で両側の同じ行が食い違い、片側だけの
+/// 行に見えることがある。その行が実際は相手側にあるかを、相手側自身の等価比較で確かめる。
+async fn any_key_exists(
+    conn: &Connection,
+    db: &str,
+    table: &str,
+    primary_key: &[String],
+    pk_types: &[String],
+    keys: &[&Vec<Value>],
+) -> Result<bool> {
+    let driver = conn.driver_kind();
+    let cols = primary_key
+        .iter()
+        .map(|c| quote_ident(driver, c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let table = quote_ident(driver, table);
+    for chunk in keys.chunks(200) {
+        let terms: Vec<String> = chunk
+            .iter()
+            .map(|k| {
+                let eqs: Vec<String> = primary_key
+                    .iter()
+                    .zip(pk_types)
+                    .zip(k.iter())
+                    .map(|((c, t), v)| {
+                        format!("{} = {}", quote_ident(driver, c), key_literal(driver, t, v))
+                    })
+                    .collect();
+                format!("({})", eqs.join(" AND "))
+            })
+            .collect();
+        let sql = format!(
+            "SELECT {cols} FROM {table} WHERE {} LIMIT 1",
+            terms.join(" OR ")
+        );
+        if !conn.execute(&sql, Some(db)).await?.rows.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn collation_mismatch_error() -> AppError {
+    AppError::InvalidInput(
+        "the two sides order or compare the primary key differently (collation mismatch), \
+         so the table cannot be compared in full; align the key collation on both sides"
+            .into(),
+    )
+}
+
+/// 片側だけにあると判定された行が、相手側に主キー等価で実在しないことを確かめる
+/// (照合順序の違いで DELETE / INSERT を誤って出さないための fail-closed 検査)。
+async fn verify_one_sided(
+    source: (&Connection, &str),
+    target: (&Connection, &str),
+    table: &str,
+    primary_key: &[String],
+    pk_types: &[String],
+    rows: &[RowDiff],
+) -> Result<()> {
+    use crate::db::data_diff::RowStatus;
+    let target_only: Vec<&Vec<Value>> = rows
+        .iter()
+        .filter(|r| r.status == RowStatus::TargetOnly)
+        .map(|r| &r.key)
+        .collect();
+    let source_only: Vec<&Vec<Value>> = rows
+        .iter()
+        .filter(|r| r.status == RowStatus::SourceOnly)
+        .map(|r| &r.key)
+        .collect();
+    if !target_only.is_empty()
+        && any_key_exists(source.0, source.1, table, primary_key, pk_types, &target_only).await?
+    {
+        return Err(collation_mismatch_error());
+    }
+    if !source_only.is_empty()
+        && any_key_exists(target.0, target.1, table, primary_key, pk_types, &source_only).await?
+    {
+        return Err(collation_mismatch_error());
+    }
+    Ok(())
 }
 
 /// 全行比較の結果。
@@ -295,6 +402,7 @@ async fn keyset_compare(
         truncated: false,
     };
     let mut after: Option<Vec<Value>> = None;
+    let mut seen_target: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
         let sql = keyset_select_sql(
             driver,
@@ -332,10 +440,16 @@ async fn keyset_compare(
             );
             let page = target.execute(&sql, Some(target_db)).await?.rows;
             let n = page.len();
-            if let Some(last) = page.last() {
-                let k = key_of(last);
+            for r in &page {
+                let k = key_of(r);
                 check_key(&k)?;
-                cursor = Some(k);
+                // 同じ target 行が 2 つの窓に現れる = 両側の順序 (照合順序) が食い違っている。
+                if !seen_target.insert(format!("{k:?}")) {
+                    return Err(collation_mismatch_error());
+                }
+            }
+            if let Some(last) = page.last() {
+                cursor = Some(key_of(last));
             }
             tgt_window.extend(page);
             if n < page_rows {
@@ -355,13 +469,23 @@ async fn keyset_compare(
 
         out.source_count += src_page.len();
         out.target_count += tgt_window.len();
-        out.rows.extend(compute_data_diff_ignoring(
+        let window_rows = compute_data_diff_ignoring(
             columns,
             pk_idx,
             &src_page,
             &tgt_window,
             ignore_columns,
-        ));
+        );
+        verify_one_sided(
+            (source, source_db),
+            (target, target_db),
+            table,
+            primary_key,
+            &pk_types,
+            &window_rows,
+        )
+        .await?;
+        out.rows.extend(window_rows);
         let src_len = src_page.len();
         after = Some(boundary);
         if out.rows.len() >= KEYSET_MAX_DIFF_ROWS || out.source_count >= KEYSET_MAX_SCAN_ROWS {
@@ -391,16 +515,26 @@ async fn keyset_compare(
             break;
         }
         let n = page.len();
+        for r in &page {
+            let k = key_of(r);
+            check_key(&k)?;
+            if !seen_target.insert(format!("{k:?}")) {
+                return Err(collation_mismatch_error());
+            }
+        }
         let last_key = key_of(&page[n - 1]);
-        check_key(&last_key)?;
         out.target_count += n;
-        out.rows.extend(compute_data_diff_ignoring(
-            columns,
-            pk_idx,
-            &[],
-            &page,
-            ignore_columns,
-        ));
+        let tail_rows = compute_data_diff_ignoring(columns, pk_idx, &[], &page, ignore_columns);
+        verify_one_sided(
+            (source, source_db),
+            (target, target_db),
+            table,
+            primary_key,
+            &pk_types,
+            &tail_rows,
+        )
+        .await?;
+        out.rows.extend(tail_rows);
         after = Some(last_key);
         if out.rows.len() >= KEYSET_MAX_DIFF_ROWS || out.target_count >= KEYSET_MAX_SCAN_ROWS {
             out.truncated = true;
@@ -807,8 +941,22 @@ mod keyset_tests {
         let upto = [Value::Int(9), Value::String("z".into())];
         assert_eq!(
             keyset_select_sql(DriverKind::Mysql, "t", &cols, &pk, &types, Some(&after), Some(&upto), 50),
-            "SELECT `a`, `b`, `v` FROM `t` WHERE (`a`, `b`) > (1, 'x''y') AND (`a`, `b`) <= (9, 'z') \
+            "SELECT `a`, `b`, `v` FROM `t` WHERE (`a` > 1 OR (`a` = 1 AND `b` > 'x''y')) AND (`a` < 9 OR (`a` = 9 AND `b` <= 'z')) \
              ORDER BY `a`, `b` LIMIT 50"
+        );
+        assert_eq!(
+            keyset_select_sql(
+                DriverKind::Postgres,
+                "t",
+                &cols,
+                &pk,
+                &types,
+                Some(&after),
+                None,
+                7
+            ),
+            "SELECT \"a\", \"b\", \"v\" FROM \"t\" WHERE (\"a\", \"b\") > (1, 'x''y') \
+             ORDER BY \"a\", \"b\" LIMIT 7"
         );
         assert_eq!(
             keyset_select_sql(DriverKind::Postgres, "t", &cols, &pk, &types, None, None, 7),
@@ -1011,6 +1159,45 @@ mod keyset_tests {
         .await
         .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
+        let _ = std::fs::remove_file(src_path);
+        let _ = std::fs::remove_file(tgt_path);
+    }
+
+    /// 片側が `COLLATE NOCASE`、片側が BINARY の主キーだと、両側にある行が片側だけの行に
+    /// 見えて DELETE が生成されかねない。fail-closed でエラーにする。
+    #[tokio::test]
+    async fn keyset_compare_rejects_collation_mismatch() {
+        let (src, src_path) = sqlite_conn("c_src").await;
+        let (tgt, tgt_path) = sqlite_conn("c_tgt").await;
+        src.execute("CREATE TABLE t (k TEXT PRIMARY KEY, v TEXT)", None)
+            .await
+            .unwrap();
+        tgt.execute(
+            "CREATE TABLE t (k TEXT COLLATE NOCASE PRIMARY KEY, v TEXT)",
+            None,
+        )
+        .await
+        .unwrap();
+        // source は 'a' と 'B'、target は 'A' と 'b' (NOCASE では同じ行)。
+        src.execute("INSERT INTO t VALUES ('a','1'),('B','2')", None)
+            .await
+            .unwrap();
+        tgt.execute("INSERT INTO t VALUES ('A','1'),('b','2')", None)
+            .await
+            .unwrap();
+        let columns = s(&["k", "v"]);
+        let types = s(&["TEXT", "TEXT"]);
+        let pk = s(&["k"]);
+        for (a, b) in [(&src, &tgt), (&tgt, &src)] {
+            for page in [1usize, 100] {
+                let err = keyset_compare(
+                    a, "main", b, "main", "t", &columns, &types, &pk, &[0], &[], page,
+                )
+                .await
+                .unwrap_err();
+                assert!(matches!(err, AppError::InvalidInput(_)), "page={page}");
+            }
+        }
         let _ = std::fs::remove_file(src_path);
         let _ = std::fs::remove_file(tgt_path);
     }
