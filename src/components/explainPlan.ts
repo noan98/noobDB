@@ -1,7 +1,10 @@
 import dagre from "@dagrejs/dagre";
 
 import type { QueryResult } from "../api/tauri";
-import type { I18nKey } from "../i18n";
+import { t as defaultT, type I18nKey } from "../i18n";
+
+/** 補助ラベルの翻訳関数。省略時は現在のロケールのグローバル `t`。 */
+export type PlanLabelT = (key: I18nKey, vars?: Record<string, string | number>) => string;
 
 /**
  * MySQL `EXPLAIN FORMAT=JSON` プランの純粋ロジック層。
@@ -92,41 +95,42 @@ function nodeCost(costInfo: Record<string, unknown> | undefined): number | null 
   return null;
 }
 
-const KIND_LABELS: Record<string, string> = {
-  query_block: "Query block",
-  nested_loop: "Nested loop",
-  ordering_operation: "Ordering",
-  grouping_operation: "Grouping",
-  duplicates_removal: "Duplicates removal",
-  buffer_result: "Buffer result",
-  materialized_from_subquery: "Materialized subquery",
-  union_result: "Union result",
-  query_specifications: "Query specifications",
-  attached_subqueries: "Attached subqueries",
-  optimized_away_subqueries: "Optimized-away subqueries",
-  select_list_subqueries: "Select-list subqueries",
-  group_by_subqueries: "GROUP BY subqueries",
-  order_by_subqueries: "ORDER BY subqueries",
-  windowing: "Windowing",
-  table: "Table",
+const KIND_LABEL_KEYS: Record<string, I18nKey> = {
+  query_block: "explainKindQueryBlock",
+  nested_loop: "explainKindNestedLoop",
+  ordering_operation: "explainKindOrdering",
+  grouping_operation: "explainKindGrouping",
+  duplicates_removal: "explainKindDuplicatesRemoval",
+  buffer_result: "explainKindBufferResult",
+  materialized_from_subquery: "explainKindMaterializedSubquery",
+  union_result: "explainKindUnionResult",
+  query_specifications: "explainKindQuerySpecifications",
+  attached_subqueries: "explainKindAttachedSubqueries",
+  optimized_away_subqueries: "explainKindOptimizedAwaySubqueries",
+  select_list_subqueries: "explainKindSelectListSubqueries",
+  group_by_subqueries: "explainKindGroupBySubqueries",
+  order_by_subqueries: "explainKindOrderBySubqueries",
+  windowing: "explainKindWindowing",
+  table: "explainKindTable",
 };
 
-function humanize(key: string): string {
-  return KIND_LABELS[key] ?? key.replace(/_/g, " ");
+function humanize(key: string, tr: PlanLabelT): string {
+  const k = KIND_LABEL_KEYS[key];
+  return k ? tr(k) : key.replace(/_/g, " ");
 }
 
-function labelFor(key: string, obj: Record<string, unknown> | null): string {
+function labelFor(key: string, obj: Record<string, unknown> | null, tr: PlanLabelT): string {
   if (key === "table" && obj && typeof obj.table_name === "string") {
-    return `table: ${obj.table_name}`;
+    return tr("explainKindTableNamed", { name: obj.table_name });
   }
-  return humanize(key);
+  return humanize(key, tr);
 }
 
 // `cost_info` is an object but it is an attribute, not a sub-plan, so it is
 // flattened into `attrs` rather than walked as a child.
 const ATTR_OBJECT_KEYS = new Set(["cost_info"]);
 
-function buildNode(key: string, obj: Record<string, unknown>, path: string): PlanNode {
+function buildNode(key: string, obj: Record<string, unknown>, path: string, tr: PlanLabelT): PlanNode {
   const attrs: [string, unknown][] = [];
   let costInfo: Record<string, unknown> | undefined;
   for (const [k, v] of Object.entries(obj)) {
@@ -145,19 +149,19 @@ function buildNode(key: string, obj: Record<string, unknown>, path: string): Pla
   return {
     id: path,
     kind: key,
-    label: labelFor(key, obj),
+    label: labelFor(key, obj, tr),
     cost: nodeCost(costInfo),
     attrs,
-    children: buildChildren(obj, path),
+    children: buildChildren(obj, path, tr),
   };
 }
 
-function buildChildren(obj: Record<string, unknown>, path: string): PlanNode[] {
+function buildChildren(obj: Record<string, unknown>, path: string, tr: PlanLabelT): PlanNode[] {
   const out: PlanNode[] = [];
   for (const [k, v] of Object.entries(obj)) {
     if (ATTR_OBJECT_KEYS.has(k)) continue;
     if (isPlainObject(v)) {
-      out.push(buildNode(k, v, `${path}/${k}`));
+      out.push(buildNode(k, v, `${path}/${k}`, tr));
     } else if (Array.isArray(v) && v.some(isPlainObject)) {
       // Structural arrays (nested_loop, query_specifications, *_subqueries).
       // Each element typically wraps a single sub-plan (e.g. nested_loop
@@ -166,15 +170,15 @@ function buildChildren(obj: Record<string, unknown>, path: string): PlanNode[] {
       const arrPath = `${path}/${k}`;
       const children: PlanNode[] = [];
       v.forEach((el, i) => {
-        if (isPlainObject(el)) children.push(...buildChildren(el, `${arrPath}/${i}`));
+        if (isPlainObject(el)) children.push(...buildChildren(el, `${arrPath}/${i}`, tr));
       });
-      out.push({ id: arrPath, kind: k, label: humanize(k), cost: null, attrs: [], children });
+      out.push({ id: arrPath, kind: k, label: humanize(k, tr), cost: null, attrs: [], children });
     }
   }
   return out;
 }
 
-export function parsePlan(json: string): { root: PlanNode | null; error: string | null } {
+export function parsePlan(json: string, tr: PlanLabelT = defaultT): { root: PlanNode | null; error: string | null } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -183,9 +187,9 @@ export function parsePlan(json: string): { root: PlanNode | null; error: string 
   }
   if (!isPlainObject(data)) return { root: null, error: "unexpected plan shape" };
   if (isPlainObject(data.query_block)) {
-    return { root: buildNode("query_block", data.query_block, "query_block"), error: null };
+    return { root: buildNode("query_block", data.query_block, "query_block", tr), error: null };
   }
-  return { root: buildNode("plan", data, "plan"), error: null };
+  return { root: buildNode("plan", data, "plan", tr), error: null };
 }
 
 // --- PostgreSQL `EXPLAIN (FORMAT JSON)` -------------------------------------
@@ -461,6 +465,7 @@ export interface ParsedExplain {
 export function parseExplainForDriver(
   driver: string,
   result: QueryResult | null,
+  tr: PlanLabelT = defaultT,
 ): ParsedExplain {
   if (!result || result.rows.length === 0) return { raw: null, root: null, error: null };
   if (driver === "sqlite") {
@@ -482,7 +487,7 @@ export function parseExplainForDriver(
     return { raw, root, error };
   }
   const { root, error } =
-    driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw);
+    driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw, tr);
   return { raw, root, error };
 }
 

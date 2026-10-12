@@ -111,3 +111,27 @@ describe("computeHints (regression after extraction)", () => {
     expect(hints).toContainEqual({ severity: "info", key: "explainHintCoveringIndex" });
   });
 });
+
+describe("補助ラベルの翻訳 (#1533)", () => {
+  const raw = JSON.stringify({
+    query_block: { select_id: 1, nested_loop: [{ table: { table_name: "users" } }] },
+  });
+  const tr = (map: Record<string, string>) => (key: string, vars?: Record<string, string | number>) => {
+    let s = map[key] ?? key;
+    for (const [k, v] of Object.entries(vars ?? {})) s = s.split(`{${k}}`).join(String(v));
+    return s;
+  };
+  it("翻訳関数が返した語がラベルになる", () => {
+    const { root } = parsePlan(
+      raw,
+      tr({ explainKindQueryBlock: "クエリブロック", explainKindNestedLoop: "ネステッドループ", explainKindTableNamed: "テーブル: {name}" }) as never,
+    );
+    expect(root?.label).toBe("クエリブロック");
+    expect(root?.children[0].label).toBe("ネステッドループ");
+    expect(root?.children[0].children[0].label).toBe("テーブル: users");
+  });
+  it("既定は現在ロケール (英語) のラベル", () => {
+    const { root } = parsePlan(raw);
+    expect(root?.label).toBe("Query block");
+  });
+});
