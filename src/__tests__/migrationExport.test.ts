@@ -5,6 +5,7 @@ import {
   buildMigrationHeader,
   defaultMigrationName,
   migrationFileNames,
+  pairedDownFileName,
   migrationVersion,
   renderMigrationStatements,
   renderMigrationWarnings,
@@ -187,5 +188,28 @@ describe("buildMigrationFile", () => {
     const plan: SyncPlan = { statements: [], warnings: [] };
     const content = buildMigrationFile("-- header", plan);
     expect(content).toBe("-- header\n\n-- (no statements)\n");
+  });
+});
+
+describe("pairedDownFileName (#1532)", () => {
+  const names = (format: Parameters<typeof migrationFileNames>[0]) =>
+    migrationFileNames(format, "20260101000000", "add_users");
+
+  it("既定名のままなら計算済みの down 名を使う", () => {
+    for (const f of ["flyway", "golang-migrate", "sqlx", "generic"] as const) {
+      expect(pairedDownFileName(f, names(f).up, names(f))).toBe(names(f).down);
+    }
+  });
+
+  it("改名された up 名は命名規則に沿って down 名へ写す", () => {
+    expect(pairedDownFileName("flyway", "V2__custom.sql", names("flyway"))).toBe("U2__custom.sql");
+    expect(pairedDownFileName("golang-migrate", "7_x.up.sql", names("golang-migrate"))).toBe(
+      "7_x.down.sql",
+    );
+  });
+
+  it("規則に合わない改名でも up と同名にならない", () => {
+    expect(pairedDownFileName("generic", "mine.sql", names("generic"))).toBe("mine.down.sql");
+    expect(pairedDownFileName("flyway", "mine.sql", names("flyway"))).toBe("mine.down.sql");
   });
 });

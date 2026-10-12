@@ -18,6 +18,7 @@ import {
   defaultMigrationName,
   migrationFileNames,
   migrationVersion,
+  pairedDownFileName,
   sanitizeMigrationName,
   MIGRATION_FORMATS,
   type MigrationEndpointMeta,
@@ -175,12 +176,14 @@ export function MigrationExportModal({
         setStatus({ kind: "idle" });
         return;
       }
-      // 選んだ場所のフォルダへ、規則どおりの up/down ファイル名で対にして保存する
-      // (up 側のファイル名を保存ダイアログで変更しても、down はペアの命名規則を
-      // 保つため常にこちらの計算結果を使う)。
+      // 保存ダイアログで選ばれたパス (改名も含む) をそのまま up の保存先にし、down は
+      // 同じフォルダへ対の名前で置く (#1532)。
       const dir = await dirname(picked);
-      const upPath = await join(dir, fileNames.up);
-      const downPath = await join(dir, fileNames.down);
+      const upPath = picked;
+      const downPath = await join(
+        dir,
+        pairedDownFileName(format, (picked.split(/[\\/]/).pop() ?? picked), fileNames),
+      );
 
       await api.writeTextFile(upPath, contentUp);
       await api.writeTextFile(downPath, contentDown);

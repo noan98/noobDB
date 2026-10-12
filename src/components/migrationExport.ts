@@ -99,6 +99,26 @@ export function migrationFileNames(
   }
 }
 
+/**
+ * 保存ダイアログで選ばれた up ファイル名に対応する down ファイル名 (#1532)。
+ * 選ばれた名前はそのまま使い、down は同じ階層に対で置けるよう命名規則から導く:
+ * 既定名のままなら計算済みの down、Flyway は先頭の `V` を `U` に、それ以外は
+ * `.up.sql` を `.down.sql` に置き換える。規則に合わない名前に改名された場合は
+ * 拡張子 `.sql` の手前に `.down` を足す (up と同名にはならない)。
+ */
+export function pairedDownFileName(
+  format: MigrationFormat,
+  pickedUp: string,
+  names: MigrationFileNames,
+): string {
+  if (pickedUp === names.up) return names.down;
+  if (format === "flyway" && /^V/.test(pickedUp)) return `U${pickedUp.slice(1)}`;
+  if (format !== "flyway" && /\.up\.sql$/i.test(pickedUp)) {
+    return pickedUp.replace(/\.up\.sql$/i, ".down.sql");
+  }
+  return `${pickedUp.replace(/\.sql$/i, "")}.down.sql`;
+}
+
 /** ヘッダコメントに載せる接続端点のメタ情報。秘密情報 (パスワード等) は含まない
  *  — `profiles.json` に保存される非秘密フィールドのみを反映する。 */
 export interface MigrationEndpointMeta {

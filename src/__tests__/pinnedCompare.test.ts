@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Column } from "../api/tauri";
-import { addPinned, pinToastPlan, resultsComparable, type PinnedResult } from "../pinnedCompare";
+import { addPinned, addPinnedWithEvicted, pinToastPlan, resultsComparable, type PinnedResult } from "../pinnedCompare";
 
 function cols(...names: string[]): Column[] {
   return names.map((name) => ({ name, type_name: "text" }));
@@ -59,6 +59,20 @@ describe("addPinned", () => {
     let list: PinnedResult[] = [];
     for (let i = 0; i < 5; i++) list = addPinned(list, pin(`p${i}`, i), 3);
     expect(list.map((p) => p.id)).toEqual(["p2", "p3", "p4"]);
+  });
+});
+
+describe("addPinnedWithEvicted (#1532)", () => {
+  it("上限内なら何も外れない", () => {
+    const r = addPinnedWithEvicted([pin("a", 1)], pin("b", 2), 3);
+    expect(r.list.map((p) => p.id)).toEqual(["a", "b"]);
+    expect(r.evicted).toEqual([]);
+  });
+
+  it("上限を超えると外れた最古の項目を返す", () => {
+    const r = addPinnedWithEvicted([pin("a", 1), pin("b", 2)], pin("c", 3), 2);
+    expect(r.list.map((p) => p.id)).toEqual(["b", "c"]);
+    expect(r.evicted.map((p) => p.id)).toEqual(["a"]);
   });
 });
 
