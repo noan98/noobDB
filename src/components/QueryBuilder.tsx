@@ -88,6 +88,39 @@ const rowCss: SystemStyleObject = { display: "flex", gap: "1.5", alignItems: "ce
 // 行内の入力は伸縮させる。
 const rowInputCss: SystemStyleObject = { flex: 1, minWidth: 0 };
 const opCss: SystemStyleObject = { width: "110px", flexShrink: 0 };
+// WHERE 行の先頭にある AND/OR 選択と括弧グループのトグル (#1540)。先頭行は
+// 結合相手がないので、同じ幅の空きを置いて列を揃える。
+const connectorCss: SystemStyleObject = { width: "76px", flexShrink: 0 };
+const connectorSpacerCss: SystemStyleObject = {
+  width: "76px",
+  flexShrink: 0,
+  textAlign: "center",
+  fontSize: "var(--text-xs)",
+  color: "var(--text-muted)",
+};
+const groupBtnCss: SystemStyleObject = {
+  py: "0.5",
+  px: "2",
+  fontSize: "var(--text-sm)",
+  fontFamily: "var(--font-mono)",
+  border: "1px solid var(--border-strong)",
+  background: "var(--bg-elevated)",
+  color: "var(--text-muted)",
+  borderRadius: "var(--radius-sm)",
+  cursor: "pointer",
+  flexShrink: 0,
+  "&[aria-pressed=true]": {
+    color: "var(--text)",
+    borderColor: "var(--accent)",
+    background: "var(--bg-hover)",
+  },
+  "&:hover:not(:disabled)": { color: "var(--text)" },
+};
+// 括弧グループに入っている条件行の左の目印。
+const groupedRowCss: SystemStyleObject = {
+  borderLeft: "2px solid var(--accent)",
+  paddingLeft: "var(--space-1-5)",
+};
 const eqCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
@@ -249,6 +282,17 @@ export interface WhereCondition {
   column: string;
   operator: string;
   value: string;
+  /**
+   * 直前の条件との結合 (#1540)。省略 / `"AND"` は AND、`"OR"` は OR。先頭の条件では
+   * 無視される。旧スナップショット (このフィールドなし) は全 AND として復元される。
+   */
+  connector?: "AND" | "OR";
+  /**
+   * 直前の条件と同じ括弧グループに入れる (#1540)。連続してこれが真の条件が 1 つの
+   * `( ... )` にまとまる (グループは 1 段のみ・入れ子なし)。省略 / false は単独。
+   * グループ全体と前後の結合には、グループ先頭の条件の `connector` を使う。
+   */
+  groupWithPrevious?: boolean;
 }
 
 function normalizeOperator(op: string): string {
@@ -458,19 +502,42 @@ function renderWhereClause(
       const literal = (raw: string) =>
         info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
       const opNorm = normalizeOperator(c.operator);
+      let text: string;
       if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") {
-        return `${col} ${opNorm}`;
-      }
-      if (opNorm === "IN") {
+        text = `${col} ${opNorm}`;
+      } else if (opNorm === "IN") {
         const items = splitInItems(c.value).map(literal);
         const inner = items.length > 0 ? items.join(", ") : "<values>";
-        return `${col} IN (${inner})`;
+        text = `${col} IN (${inner})`;
+      } else {
+        const opOut = c.operator.trim() || "=";
+        text = `${col} ${opOut} ${literal(c.value)}`;
       }
-      const opOut = c.operator.trim() || "=";
-      return `${col} ${opOut} ${literal(c.value)}`;
+      return {
+        text,
+        connector: c.connector === "OR" ? "OR" : "AND",
+        joinPrev: c.groupWithPrevious === true,
+      };
     });
   if (rendered.length === 0) return " WHERE <column> = <value>";
-  return " WHERE " + rendered.join(" AND ");
+  // 連続して groupWithPrevious な条件を 1 グループにまとめる。グループ先頭の
+  // connector が前グループとの結合、2 件目以降の connector がグループ内の結合。
+  const groups: { connector: string; items: typeof rendered }[] = [];
+  rendered.forEach((r, i) => {
+    const last = groups[groups.length - 1];
+    if (i > 0 && r.joinPrev && last) last.items.push(r);
+    else groups.push({ connector: r.connector, items: [r] });
+  });
+  const joinItems = (items: typeof rendered) =>
+    items.map((r, i) => (i === 0 ? r.text : `${r.connector} ${r.text}`)).join(" ");
+  // グループが 1 つだけなら括弧は意味を変えないので付けない。
+  const wrap = groups.length > 1;
+  const parts = groups.map((g) =>
+    wrap && g.items.length > 1 ? `(${joinItems(g.items)})` : joinItems(g.items),
+  );
+  return (
+    " WHERE " + parts.map((part, i) => (i === 0 ? part : `${groups[i].connector} ${part}`)).join(" ")
+  );
 }
 
 /** Renders the `ORDER BY` clause (leading space included, empty string if no
@@ -785,7 +852,14 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const addCondition = () =>
     setWhereConditions((prev) => [...prev, { column: "", operator: "=", value: "" }]);
   const removeCondition = (idx: number) =>
-    setWhereConditions((prev) => prev.filter((_, i) => i !== idx));
+    setWhereConditions((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      // 先頭を消したら、新しい先頭がグループの途中扱いで残らないようにする。
+      if (idx === 0 && next.length > 0 && next[0].groupWithPrevious) {
+        next[0] = { ...next[0], groupWithPrevious: false };
+      }
+      return next;
+    });
 
   const updateOrderBy = (idx: number, patch: Partial<OrderByItem>) => {
     setOrderBy((prev) => prev.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
@@ -1151,9 +1225,41 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 // "IS [NOT] NULL" operators need no value at all.
                 const isIn = normalizeOperator(c.operator) === "IN";
                 const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
+                const inGroup =
+                  c.groupWithPrevious === true || whereConditions[i + 1]?.groupWithPrevious === true;
                 return (
                   <Box css={stackedRowCss} key={`w-${i}`}>
-                    <Box css={rowCss}>
+                    <Box css={inGroup ? { ...rowCss, ...groupedRowCss } : rowCss}>
+                      {i === 0 ? (
+                        <chakra.span css={connectorSpacerCss}>WHERE</chakra.span>
+                      ) : (
+                        <>
+                          <Select
+                            css={connectorCss}
+                            value={c.connector === "OR" ? "OR" : "AND"}
+                            aria-label={t("qbWhereConnector")}
+                            onChange={(e) =>
+                              updateCondition(i, { connector: e.target.value as "AND" | "OR" })
+                            }
+                          >
+                            <option value="AND">AND</option>
+                            <option value="OR">OR</option>
+                          </Select>
+                          <Tooltip label={t("qbWhereGroupTip")}>
+                            <chakra.button
+                              type="button"
+                              css={groupBtnCss}
+                              aria-pressed={c.groupWithPrevious === true}
+                              aria-label={t("qbWhereGroupTip")}
+                              onClick={() =>
+                                updateCondition(i, { groupWithPrevious: c.groupWithPrevious !== true })
+                              }
+                            >
+                              ( )
+                            </chakra.button>
+                          </Tooltip>
+                        </>
+                      )}
                       <ComboSelect
                         css={rowInputCss}
                         value={c.column}
