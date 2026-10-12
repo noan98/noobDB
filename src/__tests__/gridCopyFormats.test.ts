@@ -109,3 +109,38 @@ describe("gridCopyFormats", () => {
     ).toBe("");
   });
 });
+
+describe("Markdown 表としてコピー (#1541)", () => {
+  it("エクスポートと同じ GFM 表 (| をエスケープ、NULL は空欄) で、列の部分集合とマスクに従う", () => {
+    const cols: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "memo", type_name: "TEXT" },
+      { name: "secret", type_name: "TEXT" },
+    ];
+    const data: CellValue[][] = [
+      [1, "a|b", "s1"],
+      [2, null, "s2"],
+    ];
+    const text = buildGridCopyText("markdown", {
+      columns: cols,
+      rows: data,
+      rowIndices: [0, 1],
+      colIndices: [0, 1, 2],
+      isMasked: (_r, c) => c === 2,
+      copyPlaceholder: true,
+    });
+    expect(text).toBe(
+      `| id | memo | secret |\n| --- | --- | --- |\n| 1 | a\\|b | ${MASK_PLACEHOLDER} |\n| 2 |  | ${MASK_PLACEHOLDER} |\n`,
+    );
+    expect(
+      buildGridCopyText("markdown", {
+        columns: cols,
+        rows: data,
+        rowIndices: [1],
+        colIndices: [1, 0],
+        isMasked: () => false,
+        copyPlaceholder: true,
+      }),
+    ).toBe("| memo | id |\n| --- | --- |\n|  | 2 |\n");
+  });
+});

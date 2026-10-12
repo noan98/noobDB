@@ -6337,6 +6337,13 @@ export const DataGrid = memo(function DataGrid({
                         label: n > 1 ? t("gridCopyAsJsonRows", { count: n }) : t("gridCopyAsJson"),
                         onSelect: () => copyAsFormat("json", target),
                       },
+                      {
+                        label:
+                          n > 1
+                            ? t("gridCopyAsMarkdownRows", { count: n })
+                            : t("gridCopyAsMarkdown"),
+                        onSelect: () => copyAsFormat("markdown", target),
+                      },
                     ];
                   })(),
                   { separator: true as const },
