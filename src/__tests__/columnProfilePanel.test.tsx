@@ -87,6 +87,23 @@ describe("ColumnProfilePanel 列切替の debounce", () => {
   });
 });
 
+describe("ColumnProfilePanel 手動実行", () => {
+  it("debounce 待ちの間に再実行ボタンを押しても、集計は 1 回だけ", async () => {
+    vi.mocked(api.profileColumn).mockResolvedValue({
+      data_type: "int", total_count: 1, null_count: 0, distinct_count: 1, distinct_approximate: false,
+      min_value: null, max_value: null, top_values: [], histogram: [], notes: [],
+    } as never);
+    renderWithProviders(
+      <ColumnProfilePanel sessionId="s1" driver="mysql" target={{ database: "app", table: "orders", column: "id" }} onSelectColumn={() => {}} />,
+    );
+    const btn = await screen.findByRole("button", { name: new RegExp(t("profileRun")) });
+    btn.click();
+    await waitFor(() => expect(api.profileColumn).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 450));
+    expect(api.profileColumn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ColumnProfilePanel StatTile (#1238)", () => {
   const base = {
     data_type: "bigint",

@@ -137,26 +137,26 @@ export function ComboSelect({
     if (!needle) return options;
     return options.filter((o) => o.value.toLowerCase().includes(needle));
   }, [options, displayValue]);
-  // 件数上限。「さらに表示」で展開したら、入力が変わる / 閉じるまで全件を出す。
+  // 件数上限。「さらに表示」で展開したら、入力が変わる / 閉じるまで全件を出す
+  // (畳むのは入力の onChange と閉じる処理の中で行う)。
   const [expanded, setExpanded] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 入力が変わったら展開を畳むトリガ依存
-  useEffect(() => {
-    setExpanded(false);
-  }, [displayValue, open]);
   const filtered = useMemo(
     () => (expanded || matches.length <= COMBO_MAX_VISIBLE ? matches : matches.slice(0, COMBO_MAX_VISIBLE)),
     [matches, expanded],
   );
   const hiddenCount = matches.length - filtered.length;
+  // キーボードで辿れる行数。「さらに表示」行があれば末尾に 1 行足す。
+  const moreIndex = hiddenCount > 0 ? filtered.length : -1;
+  const navCount = filtered.length + (hiddenCount > 0 ? 1 : 0);
 
   // フィルタで候補数が減ってハイライトが範囲外になったら先頭 (0 件なら null) へ戻す。
   useEffect(() => {
     setHighlighted((prev) => {
       if (prev === null) return prev;
-      if (prev < filtered.length) return prev;
-      return filtered.length > 0 ? 0 : null;
+      if (prev < navCount) return prev;
+      return navCount > 0 ? 0 : null;
     });
-  }, [filtered.length]);
+  }, [navCount]);
 
   // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
   // (`ContextMenu` と同じ「測定 → フリップ → クランプ」の流れ)。
@@ -208,12 +208,14 @@ export function ComboSelect({
     if (!freeSolo) setDraft(opt.value);
     onChange(opt.value);
     setOpen(false);
+    setExpanded(false);
     setHighlighted(null);
     inputRef.current?.focus();
   };
 
   const closeAndMaybeRevert = () => {
     setOpen(false);
+    setExpanded(false);
     setHighlighted(null);
     if (!freeSolo) setDraft(value);
   };
@@ -231,7 +233,9 @@ export function ComboSelect({
         aria-controls={listboxId}
         aria-autocomplete="list"
         aria-activedescendant={
-          activeOption ? optionElementId(listboxId, highlighted as number) : undefined
+          activeOption || (open && highlighted !== null && highlighted === moreIndex)
+            ? optionElementId(listboxId, highlighted as number)
+            : undefined
         }
         css={css}
         value={displayValue}
@@ -242,6 +246,7 @@ export function ComboSelect({
         onChange={(e) => {
           commitText(e.target.value);
           setOpen(true);
+          setExpanded(false);
           setHighlighted(null);
         }}
         onBlur={closeAndMaybeRevert}
@@ -252,18 +257,23 @@ export function ComboSelect({
             e.preventDefault();
             if (!open) {
               setOpen(true);
-              setHighlighted(filtered.length > 0 ? (e.key === "ArrowDown" ? 0 : filtered.length - 1) : null);
+              setHighlighted(navCount > 0 ? (e.key === "ArrowDown" ? 0 : navCount - 1) : null);
               return;
             }
-            if (filtered.length === 0) return;
+            if (navCount === 0) return;
             setHighlighted((prev) => {
-              const n = filtered.length;
+              const n = navCount;
               if (prev === null) return e.key === "ArrowDown" ? 0 : n - 1;
               return e.key === "ArrowDown" ? (prev + 1) % n : (prev - 1 + n) % n;
             });
             return;
           }
           if (e.key === "Enter") {
+            if (open && highlighted !== null && highlighted === moreIndex) {
+              e.preventDefault();
+              setExpanded(true);
+              return;
+            }
             if (activeOption) {
               e.preventDefault();
               selectOption(activeOption);
@@ -398,11 +408,18 @@ export function ComboSelect({
             )}
             {hiddenCount > 0 && (
               <chakra.button
+                id={optionElementId(listboxId, moreIndex)}
+                ref={(el: HTMLButtonElement | null) => {
+                  if (el) optionRefs.current.set(moreIndex, el);
+                  else optionRefs.current.delete(moreIndex);
+                }}
+                role="option"
+                aria-selected={false}
                 type="button"
                 display="block"
                 width="100%"
                 textAlign="left"
-                bg="transparent"
+                bg={highlighted === moreIndex ? "var(--bg-hover)" : "transparent"}
                 border="none"
                 px="2.5"
                 py="1.5"

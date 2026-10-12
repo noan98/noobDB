@@ -119,14 +119,14 @@ export function buildCsv(columns: Column[], rows: CellValue[][]): string {
 }
 
 /**
- * 文字列を Unicode コードポイント順で比較する。JS の既定の文字列比較 (`<`/`>`) は
- * UTF-16 コード単位ごとの比較で、サロゲートペア (絵文字など U+10000 以上の非 BMP
- * 文字) の先頭コード単位 (U+D800〜U+DBFF) が U+E000〜U+FFFF より小さい値になるため、
- * 実際のコードポイント値としては大きい非 BMP 文字が誤って「小さい」と判定される。
- * Rust の `BTreeMap<String, _>` は `char` (Unicode スカラー値 = コードポイント) の
- * 数値比較でソートするため、フロントもコードポイント単位で比較しないと非 BMP 文字
- * 混在時に順序が食い違う。`Array.from` は文字列をコードポイント単位 (サロゲート
- * ペアも 1 要素) でイテレートするため、それぞれの先頭コードポイントを比較する。
+ * コードポイント配列 (`Array.from(str, ch => ch.codePointAt(0))`) を辞書順で比較する。
+ * JS の既定の文字列比較 (`<`/`>`) は UTF-16 コード単位ごとの比較で、サロゲートペア
+ * (U+10000 以上の非 BMP 文字) の先頭コード単位 (U+D800〜U+DBFF) が U+E000〜U+FFFF より
+ * 小さくなるため、コードポイント値としては大きい文字が誤って「小さい」と判定される。
+ * Rust の `BTreeMap<String, _>` は `char` (Unicode スカラー値) の数値比較でソートするので、
+ * フロントもコードポイント単位で比較しないと非 BMP 文字混在時に順序が食い違う。
+ * 比較のたびに配列を作らないよう、呼び出し側 (`jsonColumnOrder`) がキーごとに 1 回だけ
+ * コードポイント配列を作ってから渡す。
  */
 function compareCodePointArrays(ca: number[], cb: number[]): number {
   const len = Math.min(ca.length, cb.length);
@@ -159,9 +159,9 @@ function jsonKeys(columns: Column[]): string[] {
 
 /**
  * 1 行を列名キーのオブジェクトに変換する。キーは serde_json の `BTreeMap` 出力に
- * 合わせてソート済みのプレーンオブジェクトとして返す (`JSON.stringify` は非整数
- * キーの挿入順を保つため、ソート順に挿入すれば出力もソート順になる)。ソートは
- * コードポイント順 (`compareCodePoints`) — BTreeMap と同じ順序にするため。
+ * 合わせてソート済みの順 (`order`、`jsonColumnOrder` が出力ごとに 1 回だけ作る) で挿入する
+ * (`JSON.stringify` は非整数キーの挿入順を保つため、出力もソート順になる)。ソートは
+ * コードポイント順 — BTreeMap と同じ順序にするため。
  */
 function rowToObject(order: JsonColumnOrder, row: CellValue[]): Record<string, CellValue> {
   const obj: Record<string, CellValue> = {};

@@ -76,7 +76,7 @@ export interface FkCandidatesParams {
   /** 最大件数 (1 以上に丸める)。 */
   limit?: number;
   /**
-   * 参照先列が文字列型と分かっているとき true。PostgreSQL / SQLite では `CAST(col AS TEXT)` が
+   * 参照先列が素の文字列型 (`isTextDataType`) と分かっているとき true。PostgreSQL / SQLite では `CAST(col AS TEXT)` が
    * 恒等変換なので外し、列を関数で包まず `LIKE` できるようにする (索引を使える余地を残す)。
    * MySQL は `CAST(col AS CHAR)` が接続の照合順序へ変えるため、外すと一致結果が変わりうる
    * ので従来どおり残す。範囲条件 (`col >= 'x' AND col < next`) は、照合順序 (MySQL の *_ci・
@@ -85,10 +85,16 @@ export interface FkCandidatesParams {
   textColumn?: boolean;
 }
 
-/** 文字列として前方一致できる型名か (FK 候補の索引利用判定用)。 */
+/**
+ * `CAST(col AS TEXT)` を外しても `LIKE` の結果が変わらない素の文字列型か。
+ * `citext` は型の演算子が大文字小文字を無視するので、CAST を外すと一致結果が変わる
+ * (CAST すると `text` になり区別する) ため含めない。配列型 (`text[]` / `ARRAY`) も
+ * 文字列ではないので除く。
+ */
 export function isTextDataType(dataType: string | null | undefined): boolean {
   const t = (dataType ?? "").trim().toLowerCase();
-  return /^(character varying|character|varchar|char|nvarchar|nchar|text|citext|tinytext|mediumtext|longtext)\b/.test(t);
+  if (t.endsWith("]") || t.startsWith("array") || t.startsWith("_")) return false;
+  return /^(character varying|character|varchar|char|nvarchar|nchar|text|tinytext|mediumtext|longtext)\b/.test(t);
 }
 
 /**

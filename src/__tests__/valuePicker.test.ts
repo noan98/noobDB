@@ -76,10 +76,10 @@ describe("buildFkCandidatesSql (#1067)", () => {
   });
 
   it("isTextDataType は文字列型だけ true", () => {
-    for (const t of ["varchar(20)", "character varying", "TEXT", "char(3)", "longtext", "citext"]) {
+    for (const t of ["varchar(20)", "character varying", "TEXT", "char(3)", "longtext"]) {
       expect(isTextDataType(t)).toBe(true);
     }
-    for (const t of ["int", "bigint", "uuid", "datetime", "enum('a','b')", "", null]) {
+    for (const t of ["int", "bigint", "uuid", "datetime", "enum('a','b')", "", null, "citext", "text[]", "varchar(10)[]", "character varying[]", "ARRAY", "_text"]) {
       expect(isTextDataType(t)).toBe(false);
     }
   });

@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
 import { rowEditKey } from "../components/cellEdit";
-import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
+import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
+import { attachStreamStats } from "../components/streamStats";
 import { setLocale, t } from "../i18n";
 import { setColumnMaskEnabled, setColumnMaskPatterns, setColumnNullBars, setRichCellRendering } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
@@ -757,6 +758,42 @@ describe("集計フッター行 (#645)", () => {
     expect(c2.querySelector("tfoot")).not.toBeNull();
     expect(footerTexts(c2)[1]).toContain("5.33");
   });
+});
+
+describe("集計フッターのストリーム統計利用 (件数 / NULL 率)", () => {
+  beforeEach(() => {
+    setLocale("en");
+    localStorage.clear();
+  });
+
+  const footerTexts = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("tfoot td"))
+      .filter((td) => !td.classList.contains("row-index") && !td.classList.contains("col-filler"))
+      .map((td) => td.textContent ?? "");
+
+  async function footerFor(fn: string, withStream: boolean): Promise<string[]> {
+    localStorage.clear();
+    const rows: CellValue[][] = [["banana", 2], [null, 5], ["cherry", null], ["fig", 7]];
+    const result = makeResult(FRUIT_COLUMNS, rows);
+    if (withStream) {
+      attachStreamStats(result.rows, { rowCount: 4, nullCounts: [1, 1], numMin: [null, 2], numMax: [null, 7], duplicateRows: false });
+    }
+    const user = userEvent.setup();
+    const { container, unmount } = renderWithProviders(<ResultGrid result={result} database="db" table="f" />);
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }));
+    await user.click(screen.getByText(t("gridColumnStats")));
+    await user.selectOptions(screen.getByLabelText(t("gridFooterSelectAria", { column: "qty" })) as HTMLSelectElement, fn);
+    await waitFor(() => expect(container.querySelector("tfoot")).not.toBeNull());
+    const texts = footerTexts(container);
+    unmount();
+    return texts;
+  }
+
+  for (const fn of ["count", "nullRate"]) {
+    it(`${fn}: ストリーム統計ありでも、再計算した場合と表示が同じ`, async () => {
+      expect(await footerFor(fn, true)).toEqual(await footerFor(fn, false));
+    });
+  }
 });
 
 describe("列ヘッダの NULL 率ミニバー (#911)", () => {

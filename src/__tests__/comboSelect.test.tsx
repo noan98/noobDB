@@ -243,8 +243,21 @@ describe("ComboSelect の件数上限", () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
     await user.click(screen.getByRole("combobox"));
-    expect(screen.getAllByRole("option")).toHaveLength(COMBO_MAX_VISIBLE);
-    await user.click(screen.getByRole("button", { name: `+${260 - COMBO_MAX_VISIBLE}` }));
+    // 上限ぶん + 「さらに表示」行。
+    expect(screen.getAllByRole("option")).toHaveLength(COMBO_MAX_VISIBLE + 1);
+    await user.click(screen.getByRole("option", { name: `+${260 - COMBO_MAX_VISIBLE}` }));
+    expect(screen.getAllByRole("option")).toHaveLength(260);
+  });
+
+  it("ArrowDown で末尾を越えると「さらに表示」にハイライトが移り、Enter で展開する", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
+    const input = screen.getByRole("combobox");
+    await user.click(input);
+    await user.keyboard("{ArrowUp}");
+    const more = screen.getByRole("option", { name: `+${260 - COMBO_MAX_VISIBLE}` });
+    expect(input.getAttribute("aria-activedescendant")).toBe(more.id);
+    await user.keyboard("{Enter}");
     expect(screen.getAllByRole("option")).toHaveLength(260);
   });
 
@@ -252,7 +265,7 @@ describe("ComboSelect の件数上限", () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
     await user.type(screen.getByRole("combobox"), "col_199");
-    expect(screen.queryByRole("button", { name: /^\+\d+$/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /^\+\d+$/ })).toBeNull();
     expect(screen.getAllByRole("option").length).toBeLessThan(COMBO_MAX_VISIBLE);
   });
 });

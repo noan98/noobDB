@@ -74,15 +74,15 @@ export interface AiSchemaDocModalProps {
   onClose: () => void;
 }
 
+/** テーブル手動選択欄に一度に描く行数の上限 (`AiQueryModal` と同じ。残りは絞り込みで探す)。 */
+const PICKER_MAX_ROWS = 200;
+
 /**
  * スキーマドキュメントを AI で生成する Modal (#696)。テーブル / 列の名前・型・キー・コメント、
  * インデックス、外部キー、ビュー / ルーチンの定義だけを送る。行データ・サンプル値・列の
  * デフォルト値は送らない。生成物は Markdown の生テキストで逐次表示し、コピー / `.md` 保存できる。
  * 冒頭の生成日時・対象接続・AI 推定の注記はモデルに書かせず、フロントで付ける。AI 無効時は何も描かない。
  */
-/** テーブル手動選択欄に一度に描く行数の上限 (`AiQueryModal` と同じ。残りは絞り込みで探す)。 */
-const PICKER_MAX_ROWS = 200;
-
 export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   const t = useT();
   const locale = useLocale();
