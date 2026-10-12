@@ -253,14 +253,16 @@ async fn prune_expired(pool: &SqlitePool, retention_days: i64) -> Result<u64> {
         return Ok(0);
     }
     let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days)).to_rfc3339();
+    // 時刻として解釈できない行 (`julianday` が NULL) は飛ばして、解釈できる最古の行を見る。
+    // 先頭の壊れた行で判定が止まり、永久に削除されなくなるのを防ぐ。
     let oldest_expired: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM (SELECT executed_at FROM query_history ORDER BY id LIMIT 1)
-          WHERE julianday(executed_at) < julianday(?)",
+        "SELECT julianday(executed_at) < julianday(?) FROM query_history
+          WHERE julianday(executed_at) IS NOT NULL ORDER BY id LIMIT 1",
     )
     .bind(&cutoff)
     .fetch_optional(pool)
     .await?;
-    if oldest_expired.is_none() {
+    if oldest_expired != Some(1) {
         return Ok(0);
     }
     let affected =
@@ -931,6 +933,8 @@ mod tests {
         let pool = temp_pool().await;
         let now = chrono::Utc::now();
         for (sql, at) in [
+            // 先頭が解釈できない行でも、後ろの期限切れの行は消える。
+            ("z", "garbage".to_string()),
             ("a", (now - chrono::Duration::days(100)).to_rfc3339()),
             ("b", (now - chrono::Duration::days(99)).to_rfc3339()),
             ("c", "not-a-date".to_string()),
@@ -950,7 +954,7 @@ mod tests {
         let left = list_in(&pool, None, 10, None, None, None, None)
             .await
             .unwrap();
-        assert_eq!(left.len(), 2);
+        assert_eq!(left.len(), 3);
     }
 
     #[tokio::test]

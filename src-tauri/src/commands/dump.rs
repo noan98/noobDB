@@ -687,13 +687,6 @@ fn emit_bytes_progress(app: &AppHandle, stream_id: &str, bytes: u64, started: In
     );
 }
 
-/// 書き出し済みのダンプファイルを `db::format::format_sql` で整形して書き戻し、
-/// 整形後のバイト数を返す。CPU バウンドな整形と同期 I/O は blocking スレッドで行う。
-///
-/// ダンプが UTF-8 として不正なバイトを含む場合 (`pg_dump` は DB の文字コードのまま流す
-/// ので SQL_ASCII の DB などで起こる) は、整形を**スキップして元のバイト列を残す**。
-/// 整形は任意の可読性向上機能なので、失敗で数時間かけたダンプ全体を捨てたり、置換文字
-/// へ化けさせて内容を壊したりしない。
 /// `src` の内容を gzip 圧縮して、既に開いてある `dst` へ書き、圧縮後のバイト数を返す (#1539)。
 /// ストリームコピーなので巨大なダンプでもメモリに載せない。CPU 負荷が高いので blocking
 /// スレッドで行う。
@@ -715,6 +708,13 @@ async fn gzip_dump_file(src: PathBuf, dst: std::fs::File) -> Result<u64> {
     .map_err(|e| AppError::Other(format!("dump gzip task failed: {e}")))?
 }
 
+/// 書き出し済みのダンプファイルを `db::format::format_sql` で整形して書き戻し、
+/// 整形後のバイト数を返す。CPU バウンドな整形と同期 I/O は blocking スレッドで行う。
+///
+/// ダンプが UTF-8 として不正なバイトを含む場合 (`pg_dump` は DB の文字コードのまま流す
+/// ので SQL_ASCII の DB などで起こる) は、整形を**スキップして元のバイト列を残す**。
+/// 整形は任意の可読性向上機能なので、失敗で数時間かけたダンプ全体を捨てたり、置換文字
+/// へ化けさせて内容を壊したりしない。
 async fn format_dump_file(path: String) -> Result<u64> {
     tokio::task::spawn_blocking(move || -> Result<u64> {
         let bytes = std::fs::read(&path)?;

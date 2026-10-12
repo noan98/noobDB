@@ -171,7 +171,32 @@ const UNSCOPED_WORDS: &[&str] = &[
     "detach",
     "exchange",
     "swap",
+    // `DROP ... CASCADE` は依存する他のオブジェクト (別テーブルの FK・ビューなど) も消す。
+    "cascade",
 ];
+
+/// 文が既定の DB / スキーマ (名前解決の基準) を切り替えるか: `USE db`、`SET search_path`、
+/// `SET SCHEMA` / `SET CURRENT SCHEMA`。同じバッチでこれらが走ると、後続の DDL の
+/// 非修飾テーブル名が指す先が変わるため、呼び出し側は表単位の無効化を諦める。
+/// 字句に分けられない文は文字列の部分一致で判定する (見逃すより多めに拾う側に倒す)。
+pub fn changes_default_namespace(driver: DriverKind, sql: &str) -> bool {
+    match lex(driver, sql) {
+        Some(toks) => match toks.first() {
+            Some(t) if t.is_kw("use") => true,
+            Some(t) if t.is_kw("set") => toks[1..].iter().any(|t| {
+                t.is_kw("search_path") || t.is_kw("schema") || t.is_kw("current_schema")
+            }),
+            _ => false,
+        },
+        None => {
+            let l = sql.trim_start().to_ascii_lowercase();
+            l.starts_with("use ")
+                || l.starts_with("use\t")
+                || l.starts_with("use\n")
+                || (l.starts_with("set") && (l.contains("search_path") || l.contains("schema")))
+        }
+    }
+}
 
 /// `sql` が単一テーブルだけに効く単純な DDL なら、そのテーブルを返す。それ以外は `None`。
 pub fn sql_schema_change_table(driver: DriverKind, sql: &str) -> Option<SchemaChangeTable> {
@@ -237,6 +262,17 @@ pub fn sql_schema_change_table(driver: DriverKind, sql: &str) -> Option<SchemaCh
 mod tests {
     use super::*;
     use DriverKind::{Mysql, Postgres, Sqlite};
+
+    #[test]
+    fn cascade_and_namespace_switches_are_not_scoped() {
+        assert_eq!(t(Postgres, "ALTER TABLE a DROP COLUMN x CASCADE"), None);
+        assert!(changes_default_namespace(Mysql, "USE other"));
+        assert!(changes_default_namespace(Postgres, "SET search_path TO s2"));
+        assert!(changes_default_namespace(Postgres, "set local search_path = s2, public"));
+        assert!(changes_default_namespace(Postgres, "SET SCHEMA 's2'"));
+        assert!(!changes_default_namespace(Postgres, "SELECT 1"));
+        assert!(!changes_default_namespace(Mysql, "ALTER TABLE a ADD c INT"));
+    }
 
     fn t(driver: DriverKind, sql: &str) -> Option<(Option<&'static str>, &'static str)> {
         // テスト用に 'static へ漏らして比較しやすくする。

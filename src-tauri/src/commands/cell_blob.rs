@@ -431,6 +431,9 @@ fn key_value_fragment(v: &Value) -> String {
         .collect()
 }
 
+/// ファイル名の幹に使うバイト数の上限 (拡張子・`_N` の連番を足しても 255 バイトに収まる)。
+const MAX_STEM_BYTES: usize = 100;
+
 /// 主キーからファイル名の幹 (拡張子なし) を作る (純関数)。複数列のキーは `-` でつなぐ。
 /// 先頭のドットは外し (隠しファイル・`..` 対策)、長さを丸め、Windows の予約名
 /// (`CON` など) は避ける。空になったら `row<行番号>`。
@@ -440,12 +443,23 @@ fn blob_file_stem(key: &[CellKeyPart], row_number: usize) -> String {
         .map(|p| key_value_fragment(&p.value))
         .collect::<Vec<_>>()
         .join("-");
-    let trimmed: String = joined.trim_start_matches('.').chars().take(100).collect();
+    // 長さはバイト数で数える (多くのファイルシステムは名前を 255 バイトに制限する)。
+    // UTF-8 の文字境界で切る。
+    let mut trimmed = joined.trim_start_matches('.').to_string();
+    if trimmed.len() > MAX_STEM_BYTES {
+        let mut end = MAX_STEM_BYTES;
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        trimmed.truncate(end);
+    }
     let trimmed = trimmed.trim_end_matches('.').to_string();
     if trimmed.is_empty() {
         return format!("row{row_number}");
     }
-    let upper = trimmed.to_ascii_uppercase();
+    // Windows は `CON.txt` のように最初のドットより前が予約名ならデバイス扱いにする。
+    let base = trimmed.split('.').next().unwrap_or("");
+    let upper = base.trim_end().to_ascii_uppercase();
     let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (upper.len() == 4
             && (upper.starts_with("COM") || upper.starts_with("LPT"))
@@ -880,6 +894,20 @@ mod tests {
             blob_file_stem(&[key("id", Value::String("a".repeat(300)))], 1).len(),
             100
         );
+        // 最初のドットより前が予約名なら避ける (`CON.txt` は Windows でデバイス扱い)。
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("con.v2".into()))], 1),
+            "_con.v2"
+        );
+        // 予約名を含むだけの名前は触らない。
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("a.con".into()))], 1),
+            "a.con"
+        );
+        // 長さはバイト数で数え、UTF-8 の文字境界で切る (3 バイト文字 40 個 = 120 バイト)。
+        let jp = blob_file_stem(&[key("id", Value::String("あ".repeat(40)))], 1);
+        assert!(jp.len() <= 100 && jp.chars().all(|c| c == 'あ'), "{}", jp.len());
+        assert_eq!(jp.len(), 99);
     }
 
     #[tokio::test]

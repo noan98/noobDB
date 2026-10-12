@@ -497,6 +497,20 @@ pub fn overview_aggs(driver: DriverKind, data_type: &str, include_distinct: bool
     }
 }
 
+/// 列ごとの再試行で救える失敗か。SQL 側の失敗 (型に使えない集計など) だけが対象で、
+/// キャンセル・タイムアウト・接続断・I/O はそのまま呼び出し元へ返す。
+fn overview_error_is_retryable(e: &AppError) -> bool {
+    !(matches!(
+        e,
+        AppError::Timeout(_)
+            | AppError::ConnectTimeout { .. }
+            | AppError::SessionNotFound(_)
+            | AppError::Ssh(_)
+            | AppError::Io(_)
+    ) || e.is_connection_lost()
+        || e.to_string().to_ascii_lowercase().contains("cancel"))
+}
+
 /// 全列の概要を 1 本で返す集計 SQL。列の並びは `total, [non_null, [distinct,] [min, max]]...`
 /// (各列の集計式は `aggs` に従い、位置で読む)。
 pub fn build_overview_sql(
@@ -797,19 +811,27 @@ pub async fn run_table_overview(
                 mark_skipped(&mut part, chunk, include_distinct);
                 columns.extend(part);
             }
+            // キャンセル・タイムアウト・接続断は列ごとに再試行しても同じ結果になる (しかも
+            // 走査を何十回も繰り返してしまう) ので、そのまま返す。
+            Err(e) if !overview_error_is_retryable(&e) => return Err(e),
             Err(_) => {
                 // 塊ごと失敗: 列ごとに集計し直し、それも通らなければ件数だけにする。
                 for one in chunk {
                     let single = [(one.0, one.2)];
                     scans += 1;
                     let sql = build_overview_sql(driver, database, table, &single);
-                    if let Ok(res) = conn.execute(&sql, None).await {
-                        let row = res.rows.into_iter().next().unwrap_or_default();
-                        let (t, mut part) = read_overview_row(&row, std::slice::from_ref(one));
-                        total.get_or_insert(t);
-                        mark_skipped(&mut part, std::slice::from_ref(one), include_distinct);
-                        columns.extend(part);
-                        continue;
+                    match conn.execute(&sql, None).await {
+                        Ok(res) => {
+                            let row = res.rows.into_iter().next().unwrap_or_default();
+                            let (t, mut part) =
+                                read_overview_row(&row, std::slice::from_ref(one));
+                            total.get_or_insert(t);
+                            mark_skipped(&mut part, std::slice::from_ref(one), include_distinct);
+                            columns.extend(part);
+                            continue;
+                        }
+                        Err(e) if !overview_error_is_retryable(&e) => return Err(e),
+                        Err(_) => {}
                     }
                     let bare = [(
                         one.0,
