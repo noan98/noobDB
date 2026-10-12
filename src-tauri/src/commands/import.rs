@@ -561,7 +561,7 @@ fn parse_json_preview_reader<R: std::io::Read>(
 /// absolute sheet column so the preview and the import agree on `csv_index`.
 fn parse_xlsx_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
     let want = PREVIEW_ROW_LIMIT + usize::from(opts.has_header);
-    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), Some(want))?;
+    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), Some(want), true)?;
     let mut iter = sheet.rows.iter();
     let header_row = if opts.has_header { iter.next() } else { None };
     let data_rows: Vec<&import_xlsx::XlsxRow> = iter.collect();
@@ -604,7 +604,7 @@ fn parse_xlsx_rows(
     opts: &ImportOptions,
     mapping: &[ColumnMapping],
 ) -> Result<ParsedRowsWithLines> {
-    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), None)?;
+    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), None, false)?;
     let skip = usize::from(opts.has_header);
     let mut out: Vec<Vec<Option<String>>> = Vec::new();
     let mut lines: Vec<Option<u64>> = Vec::new();
