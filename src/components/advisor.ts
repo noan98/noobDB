@@ -208,3 +208,46 @@ export function nextAdvisorSort(current: AdvisorSort, key: AdvisorSortKey): Advi
   if (current.dir === "asc") return { key, dir: "desc" };
   return DEFAULT_ADVISOR_SORT;
 }
+
+// ── 診断結果の書き出し (#1539) ───────────────────────────────────────────
+
+/** 書き出し用の見出しと、i18n を要する値の解決関数 (この関数群を i18n に依存させない)。 */
+export interface AdvisorExportLabels {
+  headers: {
+    severity: string;
+    rule: string;
+    table: string;
+    columns: string;
+    detail: string;
+    fixDdl: string;
+    fixDdlOnline: string;
+    statistical: string;
+  };
+  severity: (severity: AdvisorSeverity) => string;
+  rule: (finding: HealthFinding) => string;
+  detail: (finding: HealthFinding) => string;
+}
+
+/**
+ * 表示中の指摘 (並べ替え済み) を CSV / Markdown 用の表にする。対象はテーブルと列を別の
+ * 列にして、表計算で絞り込みやすくする。統計由来の指摘は `Y`、修正 DDL が無ければ空。
+ */
+export function findingsToTable(
+  findings: readonly HealthFinding[],
+  labels: AdvisorExportLabels,
+): { header: string[]; rows: (string | null)[][] } {
+  const h = labels.headers;
+  return {
+    header: [h.severity, h.rule, h.table, h.columns, h.detail, h.fixDdl, h.fixDdlOnline, h.statistical],
+    rows: findings.map((f) => [
+      labels.severity(f.severity),
+      labels.rule(f),
+      f.table,
+      f.columns.join(", "),
+      labels.detail(f),
+      f.fix_ddl,
+      f.fix_ddl_online,
+      f.statistical ? "Y" : "",
+    ]),
+  };
+}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AdvisorRuleId, HealthFinding } from "../api/tauri";
 import {
   findingDescription,
+  findingsToTable,
   findingTarget,
   DEFAULT_ADVISOR_SORT,
   nextAdvisorSort,
@@ -13,6 +14,7 @@ import {
   sortFindings,
 } from "../components/advisor";
 import { dictionaries } from "../i18n";
+import { tableToCsv, tableToMarkdown } from "../components/tabularText";
 
 // i18n の実キーテーブルを import して、advisor.ts が返すキーが実在し翻訳文が
 // 空でないことを固定する (キー名のタイポやテンプレート欠落を検出)。
@@ -219,5 +221,62 @@ describe("未知ルールのフォールバック (#1194)", () => {
     });
     expect(d.key).toBe("advisorRuleUnknownDesc");
     expect(d.params.table).toBe("t");
+  });
+});
+
+describe("findingsToTable (#1539)", () => {
+  const labels = {
+    headers: {
+      severity: "Severity",
+      rule: "Rule",
+      table: "Table",
+      columns: "Columns",
+      detail: "Detail",
+      fixDdl: "Fix",
+      fixDdlOnline: "Fix online",
+      statistical: "Stat",
+    },
+    severity: (s: string) => s.toUpperCase(),
+    rule: (f: HealthFinding) => `rule:${f.rule}`,
+    detail: (f: HealthFinding) => `detail of ${f.table}`,
+  };
+  const f1 = finding({
+    rule: "fk_missing_index",
+    severity: "high",
+    table: "orders",
+    columns: ["user_id", "shop_id"],
+    fix_ddl: 'CREATE INDEX "i" ON "orders" ("user_id");\nSELECT 1;',
+    fix_ddl_online: "CREATE INDEX CONCURRENTLY i ON orders (user_id)",
+    statistical: true,
+  });
+  const f2 = finding({ rule: "fk_missing_index", table: "t,2" });
+
+  it("表示順のまま 1 指摘 1 行にし、列は ', ' 連結、DDL が無ければ null", () => {
+    const { header, rows } = findingsToTable([f1, f2], labels);
+    expect(header).toHaveLength(8);
+    expect(rows[0]).toEqual([
+      "HIGH",
+      "rule:fk_missing_index",
+      "orders",
+      "user_id, shop_id",
+      "detail of orders",
+      f1.fix_ddl,
+      f1.fix_ddl_online,
+      "Y",
+    ]);
+    expect(rows[1].slice(5)).toEqual([null, null, ""]);
+  });
+  it("CSV はカンマ・改行・ダブルクオートを含む DDL を 1 セルに収める", () => {
+    const { header, rows } = findingsToTable([f1, f2], labels);
+    const csv = tableToCsv(header, rows);
+    expect(csv).toContain('"CREATE INDEX ""i"" ON ""orders"" (""user_id"");\nSELECT 1;"');
+    expect(csv).toContain('"t,2"');
+  });
+  it("Markdown は DDL の改行を <br>、| をエスケープする", () => {
+    const { header, rows } = findingsToTable([f1], labels);
+    const md = tableToMarkdown(header, rows);
+    expect(md.split("\n")[2]).toContain("SELECT 1;");
+    expect(md.split("\n")).toHaveLength(4);
+    expect(md).toContain("<br>");
   });
 });
