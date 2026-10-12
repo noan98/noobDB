@@ -1724,11 +1724,16 @@ impl MySqlConn {
         // Ordering by CONSTRAINT_NAME then ORDINAL_POSITION keeps the columns of
         // a composite key together and in declaration order.
         let rows: Vec<MySqlRow> = sqlx::query(
-            r#"SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME,
-                      REFERENCED_COLUMN_NAME, CONSTRAINT_NAME
-               FROM information_schema.KEY_COLUMN_USAGE
-               WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL
-               ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION"#,
+            r#"SELECT k.TABLE_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME,
+                      k.REFERENCED_COLUMN_NAME, k.CONSTRAINT_NAME,
+                      rc.DELETE_RULE, rc.UPDATE_RULE
+               FROM information_schema.KEY_COLUMN_USAGE k
+               LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
+                 ON rc.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+                AND rc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+                AND rc.TABLE_NAME = k.TABLE_NAME
+               WHERE k.TABLE_SCHEMA = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL
+               ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION"#,
         )
         .bind(db)
         .fetch_all(&self.pool)
@@ -1741,8 +1746,19 @@ impl MySqlConn {
                 referenced_table: r.try_get::<String, _>(2).unwrap_or_default(),
                 referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
-                on_delete: None,
-                on_update: None,
+                // 参照動作は REFERENTIAL_CONSTRAINTS から (文字列 / バイナリの揺れに備える)。
+                on_delete: super::types::normalize_fk_action(
+                    r.try_get::<String, _>(5)
+                        .ok()
+                        .or_else(|| decode_text_col(&r, 5).ok())
+                        .as_deref(),
+                ),
+                on_update: super::types::normalize_fk_action(
+                    r.try_get::<String, _>(6)
+                        .ok()
+                        .or_else(|| decode_text_col(&r, 6).ok())
+                        .as_deref(),
+                ),
             })
             .collect())
     }

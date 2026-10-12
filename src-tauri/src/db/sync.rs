@@ -22,7 +22,7 @@
 //! reproduced verbatim from introspection, and PK/FK reshaping on an existing
 //! column is reported as a warning rather than guessed at.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +105,12 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         .map(|t| t.name.as_str())
         .collect();
 
+    let drop_order = if allow_destructive {
+        drop_table_order(diff, &mut warnings)
+    } else {
+        HashMap::new()
+    };
+
     for table in &diff.tables {
         match table.status {
             DiffStatus::Same => {}
@@ -138,16 +144,78 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
     }
 
     statements.sort_by(|a, b| {
-        a.kind
-            .order()
-            .cmp(&b.kind.order())
-            .then(a.table.cmp(&b.table))
+        a.kind.order().cmp(&b.kind.order()).then_with(|| {
+            if a.kind == SyncKind::DropTable {
+                // 外部キーの子 → 親の順 (表名順ではなく依存順)。
+                let rank = |s: &SyncStatement| drop_order.get(&s.table).copied().unwrap_or(0);
+                rank(a).cmp(&rank(b)).then(a.table.cmp(&b.table))
+            } else {
+                a.table.cmp(&b.table)
+            }
+        })
     });
 
     SyncPlan {
         statements,
         warnings,
     }
+}
+
+/// `DROP TABLE` の順位 (小さいほど先)。target のみの表同士の外部キーを見て、
+/// 子 (参照する側) を親 (参照される側) より先に落とす。循環があれば残りを名前順で
+/// 末尾に回し、警告を出す。
+fn drop_table_order(diff: &SchemaDiff, warnings: &mut Vec<String>) -> HashMap<String, usize> {
+    let mut names: Vec<&str> = diff
+        .tables
+        .iter()
+        .filter(|t| t.status == DiffStatus::TargetOnly)
+        .map(|t| t.name.as_str())
+        .collect();
+    names.sort_unstable();
+    // parent -> 参照している子 (自己参照は除く)
+    let mut children: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for t in diff
+        .tables
+        .iter()
+        .filter(|t| t.status == DiffStatus::TargetOnly)
+    {
+        for fk in &t.foreign_keys {
+            let parent = fk.referenced_table.as_str();
+            if parent != t.name && names.binary_search(&parent).is_ok() {
+                children.entry(parent).or_default().insert(t.name.as_str());
+            }
+        }
+    }
+    let mut order: HashMap<String, usize> = HashMap::new();
+    let mut remaining: Vec<&str> = names;
+    while !remaining.is_empty() {
+        let ready: Vec<&str> = remaining
+            .iter()
+            .copied()
+            .filter(|n| {
+                children
+                    .get(n)
+                    .map_or(true, |cs| cs.iter().all(|c| order.contains_key(*c)))
+            })
+            .collect();
+        if ready.is_empty() {
+            warnings.push(format!(
+                "外部キーが循環しているため、DROP TABLE の順序を決められません (先に制約を外す必要があります): {}",
+                remaining.join(", ")
+            ));
+            for n in &remaining {
+                let next = order.len();
+                order.insert((*n).to_string(), next);
+            }
+            break;
+        }
+        for n in &ready {
+            let next = order.len();
+            order.insert((*n).to_string(), next);
+        }
+        remaining.retain(|n| !ready.contains(n));
+    }
+    order
 }
 
 /// Builds the `CREATE TABLE` for a source-only table from its source-side
@@ -233,7 +301,28 @@ fn create_table_stmt(
             ));
             continue;
         }
-        let clause = render_foreign_key(driver, &fk_group(fk));
+        // MySQL (InnoDB) は `SET DEFAULT` の参照動作を拒否する (PostgreSQL ソース由来)。
+        // 動作を外して既定にし、警告する。
+        let mut fk = fk.clone();
+        if driver == DriverKind::Mysql {
+            for (label, action) in [
+                ("ON DELETE", &mut fk.on_delete),
+                ("ON UPDATE", &mut fk.on_update),
+            ] {
+                if action
+                    .as_deref()
+                    .is_some_and(|a| a.eq_ignore_ascii_case("SET DEFAULT"))
+                {
+                    *action = None;
+                    warnings.push(format!(
+                        "{}: 外部キー ({}) の {label} SET DEFAULT は MySQL (InnoDB) で使えないため外しました。",
+                        table.name,
+                        fk.columns.join(", ")
+                    ));
+                }
+            }
+        }
+        let clause = render_foreign_key(driver, &fk_group(&fk));
         if driver == DriverKind::Sqlite {
             lines.push(clause);
         } else {
@@ -1443,5 +1532,88 @@ mod tests {
             DriverKind::Postgres,
             &col("p", "integer")
         ));
+    }
+
+    fn target_only(name: &str, fks: Vec<DiffForeignKey>) -> TableDiff {
+        TableDiff {
+            name: name.to_string(),
+            status: DiffStatus::TargetOnly,
+            foreign_keys: fks,
+            columns: vec![],
+        }
+    }
+
+    fn drop_order_of(plan: &SyncPlan) -> Vec<&str> {
+        plan.statements
+            .iter()
+            .filter(|s| s.kind == SyncKind::DropTable)
+            .map(|s| s.table.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn drop_tables_are_ordered_children_first() {
+        // 名前順なら "a_parent" が先だが、子 "z_child" を先に落とす必要がある。
+        let d = diff(
+            DriverKind::Postgres,
+            vec![
+                target_only("a_parent", vec![]),
+                target_only("z_child", vec![fk("fk", &["pid"], "a_parent", &["id"])]),
+            ],
+        );
+        let plan = generate_sync_sql(&d, true);
+        assert_eq!(drop_order_of(&plan), vec!["z_child", "a_parent"]);
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    }
+
+    #[test]
+    fn drop_tables_with_fk_cycle_warn() {
+        let d = diff(
+            DriverKind::Postgres,
+            vec![
+                target_only("a", vec![fk("f1", &["b_id"], "b", &["id"])]),
+                target_only("b", vec![fk("f2", &["a_id"], "a", &["id"])]),
+            ],
+        );
+        let plan = generate_sync_sql(&d, true);
+        assert_eq!(drop_order_of(&plan).len(), 2);
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("循環")),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn mysql_create_drops_set_default_fk_action_with_warning() {
+        let mut id = col("id", "int");
+        id.key = "PRI".to_string();
+        let mut f = fk("fk_p", &["pid"], "parent", &["id"]);
+        f.on_delete = Some("SET DEFAULT".to_string());
+        let table = TableDiff {
+            name: "child".to_string(),
+            status: DiffStatus::SourceOnly,
+            foreign_keys: vec![f],
+            columns: vec![
+                cdiff("id", DiffStatus::SourceOnly, Some(id), &[]),
+                cdiff("pid", DiffStatus::SourceOnly, Some(col("pid", "int")), &[]),
+            ],
+        };
+        let parent = TableDiff {
+            name: "parent".to_string(),
+            status: DiffStatus::Same,
+            foreign_keys: vec![],
+            columns: vec![],
+        };
+        let mut d = diff(DriverKind::Mysql, vec![table, parent]);
+        d.source_driver = DriverKind::Postgres;
+        let plan = generate_sync_sql(&d, false);
+        let all: String = plan.statements.iter().map(|s| s.sql.clone()).collect();
+        assert!(!all.contains("SET DEFAULT"), "{all}");
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("SET DEFAULT")),
+            "{:?}",
+            plan.warnings
+        );
     }
 }

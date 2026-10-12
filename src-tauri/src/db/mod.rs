@@ -232,6 +232,26 @@ pub const DEFAULT_CAPTURE_ROW_CAP: usize = 10_000;
 /// fails (unresolvable target table/PK, row count over the cap, ...) never
 /// blocks the write itself, since this is a best-effort safety net layered on
 /// top of the existing read-only guard, not a transactional guarantee.
+/// [`Connection::capture_prepare`] の結果。`Decline` は記録を辞退する (書き込み自体は
+/// [`Connection::capture_finish`] が 1 回だけ実行する)。`Ready` は dry-run で対象行を
+/// 特定できた状態で、本実行後に before/after を組み立てる材料を持つ。
+#[derive(Debug)]
+pub enum CapturePrep {
+    Decline(WriteCapture),
+    Ready(Box<ReadyCapture>),
+}
+
+#[derive(Debug)]
+pub struct ReadyCapture {
+    kind: WriteKind,
+    dry: PreviewResult,
+    table: Option<String>,
+    primary_key: Vec<String>,
+    columns: Vec<String>,
+    column_types: Vec<String>,
+    pk_idx: Vec<usize>,
+}
+
 #[derive(Debug, Clone)]
 pub struct WriteCapture {
     pub kind: WriteKind,
@@ -1451,30 +1471,35 @@ impl Connection {
         database: Option<&str>,
         row_cap: usize,
     ) -> Result<(QueryResult, WriteCapture)> {
+        let prep = self.capture_prepare(sql, database, row_cap).await?;
+        self.capture_finish(prep, sql, database).await
+    }
+
+    /// [`Connection::capture_write`] の前半: 書き込みを一切実行せず (件数見積もりと
+    /// dry-run のみ)、記録できるか判定する。キャンセル/タイムアウトで打ち切られても
+    /// 副作用が残らないので、呼び出し側はここだけをタイムアウト配下に置ける (#1530)。
+    pub async fn capture_prepare(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_cap: usize,
+    ) -> Result<CapturePrep> {
         let kind = classify_write_kind_for(self.driver_kind(), sql);
         if kind == WriteKind::Other {
-            let result = self.execute(sql, database).await?;
-            return Ok((
-                result,
-                WriteCapture::not_capturable(
-                    kind,
-                    "対象外の文 (SELECT / DDL / 複数文など) のため記録できません",
-                ),
-            ));
+            return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
+                kind,
+                "対象外の文 (SELECT / DDL / 複数文など) のため記録できません",
+            )));
         }
 
         // 非トランザクショナル表 (MyISAM 等) では dry-run の変更が ROLLBACK で戻らず、
         // 本実行と二重に書き込んでしまう。捕捉は辞退し、書き込みだけを 1 回実行する。
         if let Connection::MySql(c) = self {
             if c.write_target_is_non_transactional(database, sql).await {
-                let result = self.execute(sql, database).await?;
-                return Ok((
-                    result,
-                    WriteCapture::not_capturable(
-                        kind,
-                        "非トランザクショナル表 (MyISAM 等) のため記録できません",
-                    ),
-                ));
+                return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
+                    kind,
+                    "非トランザクショナル表 (MyISAM 等) のため記録できません",
+                )));
             }
         }
 
@@ -1488,14 +1513,10 @@ impl Connection {
             .write_exceeds_capture_cap(sql, database, kind, row_cap)
             .await
         {
-            let result = self.execute(sql, database).await?;
-            return Ok((
-                result,
-                WriteCapture::not_capturable(
-                    kind,
-                    format!("対象行数が記録の上限 ({row_cap} 行) を超えるため記録しません"),
-                ),
-            ));
+            return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
+                kind,
+                format!("対象行数が記録の上限 ({row_cap} 行) を超えるため記録しません"),
+            )));
         }
 
         let dry = match self
@@ -1504,18 +1525,15 @@ impl Connection {
         {
             Ok(d) => d,
             Err(_) => {
-                let result = self.execute(sql, database).await?;
-                return Ok((
-                    result,
-                    WriteCapture::not_capturable(kind, "対象テーブル/主キーを特定できませんでした"),
-                ));
+                return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
+                    kind,
+                    "対象テーブル/主キーを特定できませんでした",
+                )));
             }
         };
 
         if dry.target_table.is_none() {
-            let result = self.execute(sql, database).await?;
-            return Ok((
-                result,
+            return Ok(CapturePrep::Decline(
                 WriteCapture::not_capturable_with_meta(
                     kind,
                     "対象テーブルを特定できませんでした (複雑な JOIN 等)",
@@ -1524,9 +1542,7 @@ impl Connection {
             ));
         }
         if dry.primary_key.is_empty() {
-            let result = self.execute(sql, database).await?;
-            return Ok((
-                result,
+            return Ok(CapturePrep::Decline(
                 WriteCapture::not_capturable_with_meta(
                     kind,
                     "対象テーブルに主キーがありません",
@@ -1544,9 +1560,7 @@ impl Connection {
             .filter_map(|name| columns.iter().position(|c| c == name))
             .collect();
         if pk_idx.len() != primary_key.len() {
-            let result = self.execute(sql, database).await?;
-            return Ok((
-                result,
+            return Ok(CapturePrep::Decline(
                 WriteCapture::not_capturable_with_meta(
                     kind,
                     "主キー列を特定できませんでした",
@@ -1554,12 +1568,6 @@ impl Connection {
                 ),
             ));
         }
-        let pk_of =
-            |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
-
-        let ambiguous_reason =
-            "対象行を正確に特定できませんでした (対象行数が上限を超えている可能性があります)";
-
         // 重複した主キーシグネチャの防御 (#735 レビュー対応): SQLite は
         // INTEGER PRIMARY KEY 以外の主キーに NULL を許すため、複数の行が同じ
         // シグネチャに畳まれることがある (`db::data_diff` の `key_unreliable`
@@ -1583,9 +1591,7 @@ impl Connection {
         if has_duplicate_pk_signature(&dry.before_rows, &pk_idx)
             || has_duplicate_pk_signature(&dry.after_rows, &pk_idx)
         {
-            let result = self.execute(sql, database).await?;
-            return Ok((
-                result,
+            return Ok(CapturePrep::Decline(
                 WriteCapture::not_capturable_with_meta(
                     kind,
                     "主キーが重複しており対象行を正確に特定できませんでした",
@@ -1593,6 +1599,48 @@ impl Connection {
                 ),
             ));
         }
+
+        Ok(CapturePrep::Ready(Box::new(ReadyCapture {
+            kind,
+            dry,
+            table,
+            primary_key,
+            columns,
+            column_types,
+            pk_idx,
+        })))
+    }
+
+    /// [`Connection::capture_write`] の後半: 本実行と、その後の after-image 取り直し。
+    /// 書き込みが実行された時点以降は途中で打ち切ってはならない (書き込み済みなのに
+    /// 失敗扱いになる) ので、呼び出し側はタイムアウト/キャンセルの外で実行する。
+    /// 取り直しなどの失敗は記録を辞退するだけで、`Ok` を返す。
+    pub async fn capture_finish(
+        &self,
+        prep: CapturePrep,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<(QueryResult, WriteCapture)> {
+        let ready = match prep {
+            CapturePrep::Decline(capture) => {
+                let result = self.execute(sql, database).await?;
+                return Ok((result, capture));
+            }
+            CapturePrep::Ready(r) => *r,
+        };
+        let ReadyCapture {
+            kind,
+            dry,
+            table,
+            primary_key,
+            columns,
+            column_types,
+            pk_idx,
+        } = ready;
+        let pk_of =
+            |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
+        let ambiguous_reason =
+            "対象行を正確に特定できませんでした (対象行数が上限を超えている可能性があります)";
 
         match kind {
             WriteKind::Update => {
@@ -3150,8 +3198,9 @@ pub(crate) fn sql_flavor_of(driver: DriverKind) -> SqlFlavor {
 
 /// 文に、実行のたびに結果が変わる関数 (現在時刻・乱数・UUID・採番) が含まれるか。
 /// 文字列リテラル・コメント・引用識別子の中身は読まない。dry-run と本実行で値が
-/// ずれるため、フライトレコーダーは該当する文の記録を辞退する (#1530)。
-/// 偽陽性 (記録を諦める) は許容するが、偽陰性は避ける安全側の判定。
+/// ずれる。フライトレコーダーは UPDATE の SET 句にこれがあると after-image を本実行後に
+/// 取り直し、主キーをその値で書き換える文だけ記録を辞退する (#1530)。偽陽性は
+/// 取り直しの手間が増えるだけだが、偽陰性は不一致な after-image を残すので安全側に倒す。
 pub(crate) fn contains_nondeterministic_function(driver: DriverKind, sql: &str) -> bool {
     // 括弧付きで呼ぶ関数 (`name(`)。
     const CALLS: &[&str] = &[

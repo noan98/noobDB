@@ -91,18 +91,37 @@ pub struct DiffForeignKey {
     pub on_update: Option<String>,
 }
 
+/// 制約名として DDL に出してよいか。SQLite の合成名 (`<table>:<id>`、実在の名前ではない)
+/// と、識別子の長さ上限 (MySQL 64 / PostgreSQL 63) を超える名前は出さない。
+fn is_usable_constraint_name(table: &str, name: &str) -> bool {
+    let synthetic = name
+        .strip_prefix(table)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()));
+    !synthetic && name.chars().count() <= 63
+}
+
 /// `SourceOnly` テーブルへ、source 側の外部キー (`Connection::foreign_keys` の結果)
 /// を制約単位に束ねて載せる。`CREATE TABLE` 同期が FK を出力するために呼ぶ。
 pub fn attach_source_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey]) {
-    for table in diff
-        .tables
-        .iter_mut()
-        .filter(|t| t.status == DiffStatus::SourceOnly)
-    {
+    attach_foreign_keys(diff, fks, DiffStatus::SourceOnly);
+}
+
+/// `TargetOnly` テーブルへ、target 側の外部キーを載せる。逆向きの同期 (down
+/// マイグレーション) で `DROP TABLE` を子 → 親の順に並べるために使う。
+pub fn attach_target_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey]) {
+    attach_foreign_keys(diff, fks, DiffStatus::TargetOnly);
+}
+
+fn attach_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey], status: DiffStatus) {
+    for table in diff.tables.iter_mut().filter(|t| t.status == status) {
         table.foreign_keys = super::table_ddl::group_foreign_keys(&table.name, fks)
             .into_iter()
             .map(|g| DiffForeignKey {
-                name: g.name.map(str::to_string),
+                name: g
+                    .name
+                    .filter(|n| is_usable_constraint_name(&table.name, n))
+                    .map(str::to_string),
                 columns: g.columns.iter().map(|c| c.to_string()).collect(),
                 referenced_table: g.referenced_table.to_string(),
                 referenced_columns: if g.referenced_columns.iter().all(Option::is_some) {
@@ -326,6 +345,15 @@ fn sorted_union<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constraint_names_synthetic_or_too_long_are_not_usable() {
+        assert!(is_usable_constraint_name("child", "fk_child_parent"));
+        assert!(!is_usable_constraint_name("child", "child:0"));
+        assert!(is_usable_constraint_name("child", "child:abc"));
+        assert!(is_usable_constraint_name("child", &"a".repeat(63)));
+        assert!(!is_usable_constraint_name("child", &"a".repeat(64)));
+    }
 
     fn col(name: &str, data_type: &str) -> TableColumnInfo {
         TableColumnInfo {

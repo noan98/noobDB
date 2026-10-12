@@ -385,6 +385,42 @@ async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
 }
 
 #[tokio::test]
+async fn sqlite_foreign_keys_carry_on_delete_and_on_update() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_fk_actions_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE p (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create p");
+    conn.execute(
+        "CREATE TABLE c (
+           id INTEGER PRIMARY KEY,
+           a INTEGER REFERENCES p(id) ON DELETE CASCADE ON UPDATE SET NULL,
+           b INTEGER REFERENCES p(id)
+         )",
+        None,
+    )
+    .await
+    .expect("create c");
+    let fks = conn.foreign_keys("main").await.expect("foreign_keys");
+    let a = fks.iter().find(|f| f.column == "a").expect("fk a");
+    assert_eq!(a.on_delete.as_deref(), Some("CASCADE"));
+    assert_eq!(a.on_update.as_deref(), Some("SET NULL"));
+    let b = fks.iter().find(|f| f.column == "b").expect("fk b");
+    assert_eq!(b.on_delete, None, "NO ACTION is normalized to None");
+    assert_eq!(b.on_update, None);
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
     // list_indexes must surface the implicit PK index, an explicit UNIQUE
     // index, and a plain multi-column index with its columns in declaration order.
@@ -2199,6 +2235,28 @@ async fn capture_write_records_update_before_after_and_applies_the_real_write() 
         .expect("select");
     assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "alice2"));
 
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_prepare_has_no_side_effect_and_finish_applies_the_write() {
+    let (path, conn) = flight_fixture("prepare_finish").await;
+    let sql = "UPDATE t SET name = 'z' WHERE id = 1";
+    let prep = conn.capture_prepare(sql, None, 100).await.expect("prepare");
+    let rows = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert_eq!(format!("{:?}", rows.rows[0][0]), "String(\"alice\")");
+    let (res, cap) = conn.capture_finish(prep, sql, None).await.expect("finish");
+    assert_eq!(res.rows_affected, 1);
+    assert!(cap.capturable, "{:?}", cap.reason);
+    let rows = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert_eq!(format!("{:?}", rows.rows[0][0]), "String(\"z\")");
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

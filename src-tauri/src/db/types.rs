@@ -244,13 +244,24 @@ pub struct ForeignKey {
     /// columns of a composite key into a single edge. `None` when unavailable.
     pub constraint_name: Option<String>,
     /// `ON DELETE` の参照動作 (`CASCADE` / `SET NULL` / `SET DEFAULT` / `RESTRICT`)。既定の
-    /// `NO ACTION` と、取得していないドライバは `None`。PostgreSQL の DDL 再構成だけが使う内部用で、
-    /// IPC には出さない。
+    /// `NO ACTION` と、取得していないドライバは `None`。DDL 再構成と `CREATE TABLE` 同期
+    /// (MySQL / PostgreSQL / SQLite 共通) だけが使う内部用で、IPC には出さない。
     #[serde(skip)]
     pub on_delete: Option<String>,
     /// `ON UPDATE` の参照動作。意味は `on_delete` と同じ。
     #[serde(skip)]
     pub on_update: Option<String>,
+}
+
+/// 参照動作 (`ON DELETE` / `ON UPDATE`) の表記を揃える。既定の `NO ACTION` と
+/// 空・未取得は `None` (DDL に出さない)。MySQL の `information_schema` と SQLite の
+/// `PRAGMA foreign_key_list` が使う。
+pub fn normalize_fk_action(action: Option<&str>) -> Option<String> {
+    let a = action?.trim().to_ascii_uppercase();
+    match a.as_str() {
+        "" | "NO ACTION" => None,
+        _ => Some(a),
+    }
 }
 
 /// One index on a table. Carries the index name, its constituent columns
@@ -1018,5 +1029,25 @@ mod generated_column_tests {
         ];
         // DEFAULT_GENERATED は式デフォルトで、書き込み可能な通常列。
         assert_eq!(generated_column_names(&cols), vec!["a", "b", "c"]);
+    }
+}
+
+#[cfg(test)]
+mod fk_action_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_fk_action_drops_default_and_uppercases() {
+        assert_eq!(normalize_fk_action(None), None);
+        assert_eq!(normalize_fk_action(Some("")), None);
+        assert_eq!(normalize_fk_action(Some("no action")), None);
+        assert_eq!(
+            normalize_fk_action(Some(" cascade ")).as_deref(),
+            Some("CASCADE")
+        );
+        assert_eq!(
+            normalize_fk_action(Some("SET NULL")).as_deref(),
+            Some("SET NULL")
+        );
     }
 }

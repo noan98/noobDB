@@ -427,6 +427,21 @@ pub fn check_sqlite_unsigned_range(
 
 /// 1 セルをインポート経路へ渡すテキストへ変換する。`None` は SQL NULL。
 pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Option<String> {
+    // SQLite / MySQL は Binary 列を `UNHEX(?)` に包んで渡す ([`hex_binary_columns`])。
+    // SQLite は型を強制しないので BLOB 列に文字列・数値が入っていることがあり、その
+    // テキストをそのまま渡すと UNHEX が NULL を返して値が消える。バイト列以外は
+    // テキストのバイト列を hex にして渡す (値を保つ)。
+    if *ty == TransferType::Binary
+        && matches!(driver, DriverKind::Sqlite | DriverKind::Mysql)
+        && !matches!(value, Value::Bytes(_) | Value::Null)
+    {
+        let text = value_to_cell_inner(driver, ty, value)?;
+        return Some(text.bytes().map(|b| format!("{b:02x}")).collect());
+    }
+    value_to_cell_inner(driver, ty, value)
+}
+
+fn value_to_cell_inner(driver: DriverKind, ty: &TransferType, value: &Value) -> Option<String> {
     let bool_text = |b: bool| -> String {
         match driver {
             DriverKind::Postgres => {
@@ -825,6 +840,19 @@ mod tests {
         assert_eq!(
             value_to_cell(DriverKind::Mysql, &bin, &v).as_deref(),
             Some("00ff")
+        );
+        // Binary 列に入った文字列・数値はテキストのバイト列を hex にする (UNHEX で消えない)
+        assert_eq!(
+            value_to_cell(DriverKind::Sqlite, &bin, &Value::String("AB".into())).as_deref(),
+            Some("4142")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Mysql, &bin, &Value::Int(12)).as_deref(),
+            Some("3132")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &bin, &Value::String("AB".into())).as_deref(),
+            Some("AB")
         );
         // バイナリでない列に入るバイト列は hex テキストのまま
         assert_eq!(

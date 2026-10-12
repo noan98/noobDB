@@ -1108,8 +1108,13 @@ impl SqliteConn {
                     referenced_table,
                     referenced_column,
                     constraint_name: id.map(|i| format!("{}:{}", table, i)),
-                    on_delete: None,
-                    on_update: None,
+                    // foreign_key_list の on_delete / on_update。NO ACTION (既定) は None。
+                    on_delete: super::types::normalize_fk_action(
+                        r.try_get::<String, _>("on_delete").ok().as_deref(),
+                    ),
+                    on_update: super::types::normalize_fk_action(
+                        r.try_get::<String, _>("on_update").ok().as_deref(),
+                    ),
                 });
             }
         }

@@ -95,6 +95,21 @@ pub async fn compare_schema(
             ),
         }
     }
+    // down マイグレーションの DROP TABLE を子 → 親の順に並べるため、target のみに
+    // 存在する表の FK も載せる。
+    if diff
+        .tables
+        .iter()
+        .any(|t| t.status == crate::db::diff::DiffStatus::TargetOnly)
+    {
+        match target.conn.foreign_keys(&target_database).await {
+            Ok(fks) => crate::db::diff::attach_target_foreign_keys(&mut diff, &fks),
+            Err(e) => tracing::warn!(
+                kind = e.kind(),
+                "schema compare: could not load foreign keys of the target"
+            ),
+        }
+    }
     Ok(diff)
 }
 

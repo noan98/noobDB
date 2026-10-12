@@ -724,12 +724,14 @@ pub(crate) async fn sandbox_schema_diff_inner(
             // 対象表が少数なら DB 全体を取る一括取得のほうが重いので、表ごとに取る。
             const BULK_THRESHOLD: usize = 4;
             let bulk = if record.tables.len() >= BULK_THRESHOLD {
-                crate::commands::schema::fetch_columns_bulk(&source, &db).await
+                crate::commands::schema::fetch_columns_bulk(&source, &db)
+                    .await
+                    .ok()
             } else {
-                Err(AppError::Other("few tables: per-table fetch".into()))
+                None
             };
             match bulk {
-                Ok(all) => {
+                Some(all) => {
                     let mut by_name: std::collections::HashMap<String, TableColumns> =
                         all.into_iter().map(|t| (t.name.clone(), t)).collect();
                     for t in &record.tables {
@@ -740,7 +742,7 @@ pub(crate) async fn sandbox_schema_diff_inner(
                         }));
                     }
                 }
-                Err(_) => {
+                None => {
                     for t in &record.tables {
                         let cols = source.conn.columns(&db, t).await?;
                         current_tables.push(TableColumns {

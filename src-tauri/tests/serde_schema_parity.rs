@@ -929,7 +929,7 @@ fn build_fixtures() -> serde_json::Value {
         })
         .collect();
 
-    // 同期プラン: SyncKind 8 種すべて (destructive は DROP 系のみ true)。
+    // 同期プラン: SyncKind 9 種すべて (destructive は DROP 系のみ true)。
     let sync_plan_variants = vec![SyncPlan {
         statements: variants!(SyncKind [
             CreateTable, AddColumn, AlterColumn, AddForeignKey, DropColumn, DropTable,

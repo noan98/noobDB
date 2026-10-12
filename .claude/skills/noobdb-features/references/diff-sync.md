@@ -71,3 +71,14 @@
 - MySQL / PostgreSQL は全 CREATE の後に `ALTER TABLE … ADD CONSTRAINT …`
   (`SyncKind::AddForeignKey`)、SQLite は CREATE TABLE 内に出す。描画は
   `db::table_ddl::render_foreign_key` と共通。再現できない索引は warnings に列挙する。
+- 参照動作 (ON DELETE / ON UPDATE) は 3 ドライバとも取得する: MySQL は
+  `REFERENTIAL_CONSTRAINTS` の `DELETE_RULE` / `UPDATE_RULE`、SQLite は
+  `PRAGMA foreign_key_list` の `on_delete` / `on_update`。既定の `NO ACTION` は
+  `normalize_fk_action` で `None` にして DDL に出さない。PostgreSQL の `SET DEFAULT` を
+  MySQL (InnoDB は拒否) へ流すときは参照動作を外して warnings に出す。
+- 制約名は、SQLite の合成名 (`<表>:<id>`) と 63 文字超 (MySQL 64 / PG 63 の上限回避)
+  なら `None` にして無名で出す (`is_usable_constraint_name`)。
+- 逆向き (down マイグレーション) の `DROP TABLE` は FK の子 → 親の順に並べる。
+  `compare_schema` が **TargetOnly テーブルにも** target 側の FK を載せ、
+  `generate_sync_sql` が `drop_table_order` で依存順にする。循環があれば名前順で
+  末尾に回し、warnings に出す。
