@@ -292,6 +292,9 @@ const QueryInspectorPanel = lazy(() =>
 const AdvisorPanel = lazy(() =>
   import("./components/AdvisorPanel").then((m) => ({ default: m.AdvisorPanel })),
 );
+const ColumnProfileCompareModal = lazy(() =>
+  import("./components/ColumnProfileCompareModal").then((m) => ({ default: m.ColumnProfileCompareModal })),
+);
 const ColumnProfilePanel = lazy(() =>
   import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
 );
@@ -1279,6 +1282,8 @@ export default function App() {
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // 環境横断ブロードキャスト実行 (#738)。非 null の間だけ `BroadcastModal` を
   // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
+  // 列の分布を複数接続で比べるモーダル (#1539)。非 null の間だけマウントする。
+  const [profileCompare, setProfileCompare] = useState<{ approximate: boolean } | null>(null);
   const [broadcastRequest, setBroadcastRequest] = useState<
     { sql: string; tableColumns: TableColumnInfo[] | null } | null
   >(null);
@@ -9790,6 +9795,7 @@ export default function App() {
                         onSelectColumn={(column) =>
                           setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
                         }
+                        onCompare={(approximate) => setProfileCompare({ approximate })}
                       />
                     ) : null
                   ) : activeBottomPanelTab === "structure" ? (
@@ -10811,6 +10817,24 @@ export default function App() {
             confirm={confirm}
             onClose={() => setBroadcastRequest(null)}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {profileCompare && sessionId && selectedProfile && profileTarget?.column && (
+          <Suspense fallback={null}>
+            <ColumnProfileCompareModal
+              baseline={{ sessionId, profile: selectedProfile }}
+              candidates={openConnections.filter(
+                (c) => c.sessionId !== sessionId && !isSandboxProfileId(c.profile.id),
+              )}
+              driver={selectedProfile.driver}
+              target={{ ...profileTarget, column: profileTarget.column }}
+              approximate={profileCompare.approximate}
+              confirm={confirm}
+              onClose={() => setProfileCompare(null)}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 
