@@ -149,10 +149,13 @@ function ToastProgressRail({
 }
 
 interface ToastApi {
-  notify: (opts: ToastOptions) => void;
-  success: (message: string, duration?: number) => void;
-  error: (message: string, duration?: number) => void;
-  info: (message: string, duration?: number) => void;
+  /** 表示したトーストの id を返す (`dismiss` で閉じるときに使う)。 */
+  notify: (opts: ToastOptions) => number;
+  success: (message: string, duration?: number) => number;
+  error: (message: string, duration?: number) => number;
+  info: (message: string, duration?: number) => number;
+  /** id 指定でトーストを閉じる。`duration: 0` の進行中トーストを完了/失敗時に消す用途。 */
+  dismiss: (id: number) => void;
 }
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -292,6 +295,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       if (duration > 0) {
         armTimer(id, duration);
       }
+      return id;
     },
     [armTimer],
   );
@@ -302,8 +306,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       success: (message, duration) => notify({ message, tone: "success", duration }),
       error: (message, duration) => notify({ message, tone: "error", duration }),
       info: (message, duration) => notify({ message, tone: "info", duration }),
+      dismiss,
     }),
-    [notify],
+    [notify, dismiss],
   );
 
   return (

@@ -280,4 +280,28 @@ describe("HistoryList の AI 検索入口 (#699)", () => {
     expect(listHistory).toHaveBeenCalledWith(expect.objectContaining({ limit: 301, profileId: "p-test" }));
     expect(screen.getAllByText(t("aiHistoryOverflow", { max: 300 })).length).toBeGreaterThan(0);
   });
+
+  it("行操作 (復元) の失敗は一覧を置き換えず、トーストで知らせて一覧を取り直す (#1534)", async () => {
+    const entry = makeHistoryEntry({ id: 5 });
+    listHistory.mockResolvedValue([entry]);
+    getHistorySql.mockRejectedValue("history row 5 not found");
+    const onRestore = vi.fn();
+
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={onRestore}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText(entry.sql_preview));
+    await waitFor(() => expect(screen.getAllByText("history row 5 not found").length).toBeGreaterThan(0));
+    // 一覧は消えず、削除済みの行を反映するため取り直しが走る。
+    expect(screen.getByText(entry.sql_preview)).toBeInTheDocument();
+    expect(onRestore).not.toHaveBeenCalled();
+    await waitFor(() => expect(listHistory.mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
 });

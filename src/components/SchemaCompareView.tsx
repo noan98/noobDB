@@ -28,7 +28,8 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { Tooltip } from "./Tooltip";
 import { TreeChevron } from "./tree";
-import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
+import { Button, Checkbox, Heading, PressableButton, Select } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 
 // motion 用 props (`variants`/`initial`/`animate`/`exit`/`transition`) は Chakra の
 // スタイルプロップに飲まれないよう forwardProps で素通しする (`ActivityCenter` /
@@ -1000,15 +1001,7 @@ export function SchemaCompareView({
                     </Select>
                     <chakra.label css={limitCss}>
                       {t("schemaCompareDataLimit")}
-                      <Input
-                        type="number"
-                        min={1}
-                        max={5000}
-                        value={dataLimit}
-                        onChange={(e) =>
-                          setDataLimit(Math.max(1, Math.min(5000, Number(e.target.value) || 1)))
-                        }
-                      />
+                      <DraftNumberInput min={1} max={5000} value={dataLimit} onCommit={setDataLimit} />
                     </chakra.label>
                     <Button onClick={compareData} disabled={!dataTable || dataComparing}>
                       {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}

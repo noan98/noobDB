@@ -292,6 +292,7 @@ pub async fn parse_csv_preview(path: String, options: ImportOptions) -> Result<C
                 std::path::Path::new(&path),
                 options.sheet.as_deref(),
                 Some(xlsx_preview_want(&options)),
+                true,
             )?;
             Ok(xlsx_sheet_to_preview(sheet, &options))
         })
@@ -572,8 +573,12 @@ fn parse_json_preview_reader<R: std::io::Read>(
 /// absolute sheet column so the preview and the import agree on `csv_index`.
 #[cfg(test)]
 fn parse_xlsx_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
-    let sheet =
-        import_xlsx::read_sheet(data, opts.sheet.as_deref(), Some(xlsx_preview_want(opts)))?;
+    let sheet = import_xlsx::read_sheet(
+        data,
+        opts.sheet.as_deref(),
+        Some(xlsx_preview_want(opts)),
+        true,
+    )?;
     Ok(xlsx_sheet_to_preview(sheet, opts))
 }
 
@@ -639,7 +644,7 @@ fn parse_xlsx_rows_from<RS: std::io::Read + std::io::Seek>(
     let mut skip = usize::from(opts.has_header);
     let mut out: Vec<Vec<Option<String>>> = Vec::new();
     let mut lines: Vec<Option<u64>> = Vec::new();
-    import_xlsx::scan_sheet(rs, opts.sheet.as_deref(), None, |row| {
+    import_xlsx::scan_sheet(rs, opts.sheet.as_deref(), None, false, |row| {
         if skip > 0 {
             skip -= 1;
             return;

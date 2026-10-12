@@ -199,12 +199,27 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
       streamRef.current = streamId;
       startedAtRef.current = Date.now();
       let body = "";
+      // 1 トークンごとに setText すると、stream.text を使う画面全体が毎回再描画される。
+      // 本文は変数に溜め、1 フレームに 1 回だけ反映する (終了・エラー・中止では即時に確定)。
+      let frame = 0;
+      const flushText = () => {
+        frame = 0;
+        if (streamRef.current === streamId && mountedRef.current) setText(body);
+      };
+      const settleText = () => {
+        if (frame !== 0) {
+          cancelAnimationFrame(frame);
+          frame = 0;
+        }
+        if (mountedRef.current) setText(body);
+      };
       setText("");
       setDone(null);
       setElapsedSec(0);
       setRunning(true);
       const fail = (message: string, kind: string) => {
         if (!stopListener(streamId)) return;
+        settleText();
         // 混雑 (429/529) は英語の技術メッセージだけだと次の手が分からないので案内を足す (#1534)。
         const shown = kind === "aiOverloaded" ? `${message}\n${t("errorHintAiOverloaded")}` : message;
         handlers.onError({ message: shown, kind, refused: kind === "aiRefused" });
@@ -214,10 +229,8 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
           onDelta: (e) => {
             if (streamRef.current !== streamId) return;
             body += e.text;
-            if (mountedRef.current) {
-              setText(body);
-              setRetrying(null);
-            }
+            if (mountedRef.current) setRetrying(null);
+            if (frame === 0) frame = requestAnimationFrame(flushText);
           },
           onRetrying: (e) => {
             if (streamRef.current !== streamId) return;
@@ -227,6 +240,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
           },
           onDone: (e) => {
             if (!stopListener(streamId)) return;
+            settleText();
             // 使用量の累計 (#1474) はここ 1 か所で加算する。画面側では加算しない。
             recordAiUsage(e);
             setDone(e);
@@ -239,6 +253,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
           onError: (e) => fail(e.error, e.kind),
           onCancelled: () => {
             if (!stopListener(streamId)) return;
+            settleText();
             handlers.onCancelled();
           },
         });

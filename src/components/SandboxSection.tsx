@@ -4,6 +4,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import type { SandboxRecord } from "../api/tauri";
 import { useT } from "../i18n";
 import { sandboxProfileId } from "../sandbox";
+import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { Icon, ICON_SIZES } from "./Icon";
 import { TreeBadge, TreeChevron } from "./tree";
@@ -39,6 +40,7 @@ export function SandboxSection({
   const t = useT();
   const [open, setOpen] = useState(true);
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuEntry[] } | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   if (sandboxes.length === 0) return null;
 
@@ -107,9 +109,14 @@ export function SandboxSection({
                         label: t("sandboxMenuDiscard"),
                         danger: true,
                         onSelect: () => {
-                          if (confirm(t("sandboxDiscardConfirm", { name: record.name }))) {
-                            onDiscard(record);
-                          }
+                          void confirm({
+                            title: t("sandboxDiscardConfirmTitle"),
+                            message: t("sandboxDiscardConfirm", { name: record.name }),
+                            confirmLabel: t("sandboxMenuDiscard"),
+                            tone: "danger",
+                          }).then((ok) => {
+                            if (ok) onDiscard(record);
+                          });
                         },
                       },
                     ],
@@ -152,6 +159,7 @@ export function SandboxSection({
         </Box>
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {confirmDialog}
     </Box>
   );
 }

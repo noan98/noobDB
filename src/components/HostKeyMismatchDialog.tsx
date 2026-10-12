@@ -40,8 +40,8 @@ export function HostKeyMismatchDialog({ profile, message, busy, onReTrust, onCan
   return (
     <Modal
       // no-submit: ホスト鍵の再信頼は破壊的操作。キャンセルが既定
-      width="520px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
-      <ModalHeader onClose={onCancel} closeLabel={t("hostKeyMismatchCancel")}>
+      width="520px" onClose={onCancel} closeOnEscape={!busy} closeOnInteractOutside={!busy} initialFocusEl={() => cancelRef.current}>
+      <ModalHeader onClose={onCancel} closeLabel={t("hostKeyMismatchCancel")} closeDisabled={busy}>
         {t("hostKeyMismatchTitle")}
       </ModalHeader>
       <ModalBody>

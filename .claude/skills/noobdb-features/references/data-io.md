@@ -261,6 +261,12 @@
   ソースが SQL のときは `ensure_allowed_for_session` + `is_read_only_sql_for` で読み取り
   専用文に限る。同一セッション・同一テーブルへの `create` / `replace` も拒否。
   `is_production` の確認 (置き換えなら接続名タイプ入力の強確認) は UI レベル。
+- **転送前プレビュー** (`preview_transfer`, #1532): 書き込み・DDL をせず、ソース SQL に
+  `apply_auto_limit_for` で LIMIT を入れて (サーバ側でも読み出しを止める) 先頭バッチから列計画を
+  作り、転送先の列定義と、値や型が縮退する列 (`db::transfer::lossy_conversions`: decimal の
+  桁丸め / SQLite の浮動小数化 / TIMESTAMPTZ の縮退) を返す。モーダルは `create` / `replace`
+  のときだけ Callout に出す (`append` は DDL を発行せず縮退しない)。完了時の警告トーストは
+  出さない (英語固定のため)。
 - 統合テスト: `tests/transfer_integration.rs` (SQLite ↔ SQLite、環境変数不要で常時実走)。
 
 ## データ転送のバイナリ列 (#1530)

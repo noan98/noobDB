@@ -220,6 +220,35 @@ export interface NewColumnDraft {
 }
 
 /**
+ * Excel のエラー値トークン。xlsx のプレビューはエラーセルを文字列のまま見せるが
+ * (どのセルが NULL になるか分かるように)、取り込みでは NULL になる (#1532)。
+ * 型推論・列名提案では NULL 相当として扱う。
+ */
+const EXCEL_ERROR_TOKENS: ReadonlySet<string> = new Set([
+  "#DIV/0!",
+  "#N/A",
+  "#NAME?",
+  "#NULL!",
+  "#NUM!",
+  "#REF!",
+  "#VALUE!",
+  "#SPILL!",
+  "#CALC!",
+  "#GETTING_DATA",
+]);
+
+export function isExcelErrorToken(value: string): boolean {
+  return EXCEL_ERROR_TOKENS.has(value.trim().toUpperCase());
+}
+
+/** プレビュー行にある Excel エラー値のセル数 (取り込み時に NULL になる件数)。 */
+export function countExcelErrors(rows: readonly (readonly string[])[]): number {
+  let n = 0;
+  for (const r of rows) for (const c of r) if (isExcelErrorToken(c)) n += 1;
+  return n;
+}
+
+/**
  * プレビューから列の下書きを作る。`named` が false (ヘッダ行なしの CSV) なら
  * ヘッダ名を使わず `column_N` を提案する。
  */
@@ -228,13 +257,23 @@ export function buildColumnDrafts(
   nullToken: string | null,
   driver: DriverKind,
   named: boolean,
+  excelErrors = false,
 ): NewColumnDraft[] {
   const width = Math.max(preview.headers.length, ...preview.rows.map((r) => r.length), 0);
-  const headers = Array.from({ length: width }, (_, i) => (named ? preview.headers[i] ?? "" : ""));
+  const headers = Array.from({ length: width }, (_, i) => {
+    const h = named ? preview.headers[i] ?? "" : "";
+    // xlsx のヘッダ行にあるエラーセルは列名にせず column_N にする。
+    return excelErrors && isExcelErrorToken(h) ? "" : h;
+  });
   const names = proposeColumnNames(headers);
   return names.map((name, i) => {
     // 行が短い (ragged) とき欠けたセルはバックエンドで NULL になる。
-    const values = preview.rows.map((r) => (i < r.length ? applyNullToken(r[i], nullToken) : null));
+    const values = preview.rows.map((r) => {
+      if (i >= r.length) return null;
+      // xlsx のエラー値は取り込みで NULL になるので、推論でも NULL として扱う。
+      if (excelErrors && isExcelErrorToken(r[i])) return null;
+      return applyNullToken(r[i], nullToken);
+    });
     const ty = inferColumnType(values, driver);
     return { csvIndex: i, name, proposedName: name, type: ty, inferredType: ty, include: true };
   });

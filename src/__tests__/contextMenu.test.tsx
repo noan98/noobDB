@@ -80,6 +80,19 @@ describe("ContextMenu のサブメニュー", () => {
     expect(screen.queryByRole("menuitem", { name: "1-a" })).toBeNull();
   });
 
+  it("ホバーで開いた親項目をクリックしても閉じない (#1534)", async () => {
+    const user = userEvent.setup();
+    renderMenu([{ label: "グループ", items: [child("a"), child("b")] }]);
+    const trigger = screen.getByRole("menuitem", { name: "グループ" });
+
+    await user.hover(trigger);
+    expect(await screen.findByRole("menuitem", { name: "a" })).toBeTruthy();
+
+    await user.click(trigger);
+    expect(screen.getByRole("menuitem", { name: "a" })).toBeTruthy();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("無効なサブメニューはホバーしても開かない", async () => {
     const user = userEvent.setup();
     renderMenu([{ label: "グループ", disabled: true, items: [child("a")] }]);

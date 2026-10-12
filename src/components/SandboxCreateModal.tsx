@@ -14,6 +14,7 @@ import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Input } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 
 interface Props {
   sessionId: string;
@@ -217,13 +218,12 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
               <FieldLabel as="label" htmlFor="sandbox-create-row-limit">
                 {t("sandboxCreateRowLimit")}
               </FieldLabel>
-              <Input
+              <DraftNumberInput
                 id="sandbox-create-row-limit"
-                type="number"
                 min={1}
                 max={SANDBOX_MAX_ROW_LIMIT}
                 value={rowLimit}
-                onChange={(e) => setRowLimit(clampSandboxRowLimit(Number(e.target.value)))}
+                onCommit={(n) => setRowLimit(clampSandboxRowLimit(n))}
                 disabled={creating}
               />
             </FormSection>

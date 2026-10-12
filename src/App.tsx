@@ -358,7 +358,7 @@ import {
 } from "./queryNotify";
 import type { IncomingFk } from "./fkNavigation";
 import type { ValueLookup } from "./components/useValuePicker";
-import { addPinned, pinToastPlan, type PinnedResult } from "./pinnedCompare";
+import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
 import { endTabOpenFlight, tabOpenFlightId } from "./sharedElement";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
@@ -423,7 +423,7 @@ import {
 } from "./densityTransition";
 import { ThemeTransition } from "./components/ThemeTransition";
 import { AccentWash } from "./components/AccentWash";
-import { accentVars } from "./accent";
+import { accentVars, readToneSurface } from "./accent";
 import {
   clearPersistedTabs,
   loadPersistedWorkspace,
@@ -1375,7 +1375,8 @@ export default function App() {
     // タブ・コマンドパレット等) が参照する --bg-active / --bg-active-strong 自体も
     // 上書きすることで、個別コンポーネントを書き換えずに一括で波及させる。
     if (settings.accentColor) {
-      const v = accentVars(settings.accentColor, effTheme);
+      // 調和トーンは現在のプリセットの --bg / --text を基準にする (#1534)。
+      const v = accentVars(settings.accentColor, effTheme, readToneSurface(root));
       root.style.setProperty("--accent", v.accent);
       root.style.setProperty("--accent-hover", v.accentHover);
       root.style.setProperty("--accent-text", v.accentText);
@@ -5411,12 +5412,19 @@ export default function App() {
       elapsedMs: tab.result.elapsed_ms,
       pinnedAt: Date.now(),
     };
-    const next = addPinned(pinnedResults, item);
+    const { list: next, evicted } = addPinnedWithEvicted(pinnedResults, item);
     setPinnedResults(next);
     // ピン直後に比較ビューへ誘導する (#1277)。2 件未満は比較できないので案内のみ。
     const plan = pinToastPlan(next.length);
     toast.notify({
-      message: translate(plan.messageKey),
+      // 上限で外れた結果があれば、どれが消えたかを明示する (#1532)。
+      message:
+        evicted.length > 0
+          ? translate("pinToastEvicted", {
+              max: MAX_PINNED,
+              title: evicted.map((e) => e.title).join(", "),
+            })
+          : translate(plan.messageKey),
       ...(plan.showOpenAction && {
         action: {
           label: translate("pinToastOpenCompare"),

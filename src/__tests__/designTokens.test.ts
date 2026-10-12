@@ -99,12 +99,23 @@ describe("design tokens: 余白 (spacing)", () => {
   // Chakra の余白系スタイル props。サイズ (w/h/minW/maxH...) や位置 (top/left...) は
   // レイアウトの実寸であってリズムではないため対象外 —「4px リズムに乗る値」だけを
   // トークン強制する。
+  // 短縮形 (`px`) だけでなく長い綴り (`marginLeft` / `paddingX` など) も対象にする。
+  // 長い綴りは以前すり抜けていた (PreviewGrid の `marginLeft="16px"`, #1534)。
   const SPACING_PROPS =
-    "p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|rowGap|columnGap";
+    "p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|rowGap|columnGap|" +
+    "(?:padding|margin)(?:Top|Bottom|Left|Right|X|Y|Inline|Block|InlineStart|InlineEnd|BlockStart|BlockEnd|Start|End)?";
 
   /** 余白を表す CSS プロパティ名 (`style` / `css` / recipe の `base` オブジェクト用)。 */
   const SPACING_CSS_PROPS =
     "(?:padding|margin|gap|rowGap|columnGap)(?:Top|Bottom|Left|Right|Block|Inline|Start|End)?";
+
+  /**
+   * 負のマージンで 1px の罫線を重ねる・固定幅のヒット領域を食い込ませる補正
+   * (`marginBottom="-1px"` / Splitter の `marginX="-3px"`)。相手が px 固定の幾何
+   * (ヘアライン・ハンドル幅) なので、トークン (フォント拡大に追従) にすると逆にズレる。
+   * 単一値の `"-1px"`〜`"-4px"` の `margin*` に限って許可する。
+   */
+  const isHairlineOffset = (text: string) => /^margin\w*=\{?[^"]*"-[1-4]px"?$/.test(text);
 
   const HINT =
     "余白は App.css の --space-* (theme.ts の spacing トークン) を使う。" +
@@ -112,8 +123,9 @@ describe("design tokens: 余白 (spacing)", () => {
 
   it("スタイル props に px 直値を書かない", () => {
     const offenders = findViolations(
-      new RegExp(`\\b(?:${SPACING_PROPS})=\\{?"(-?[0-9.]+)px"`),
-      () => true,
+      // `padding="5px 10px"` のような複数値の文字列も拾う (以前は単一値だけだった, #1534)。
+      new RegExp(`\\b(?:${SPACING_PROPS})=\\{?"[^"]*[0-9.]px`),
+      (m) => !isHairlineOffset(m[0]),
     );
     expect(offenders, HINT).toEqual([]);
   });
@@ -123,7 +135,7 @@ describe("design tokens: 余白 (spacing)", () => {
     // 前段の props 検査は `="..."` の形しか見ないため、こちらで別に拾う。
     const offenders = findViolations(
       new RegExp(`\\b(?:${SPACING_PROPS})=\\{[^}]*"-?[0-9.]+px"`),
-      () => true,
+      (m) => !isHairlineOffset(m[0]),
     );
     expect(offenders, HINT).toEqual([]);
   });

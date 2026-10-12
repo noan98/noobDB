@@ -80,11 +80,13 @@ export async function confirmAndInstallUpdate(
   }
 
   // 進行中は自動消滅しない (duration 0) トーストを出す。成功時は relaunch で
-  // アプリごと消えるので残らない。
-  toast.info(t("updateDownloadingStarted"), 0);
+  // アプリごと消えるので残らない。失敗時は id で閉じてからエラーを出し、「ダウンロード中」
+  // と「失敗」が並んで残らないようにする (#1534)。
+  const progressId = toast.info(t("updateDownloadingStarted"), 0);
   try {
     await installUpdateAndRestart(update);
   } catch (e) {
+    toast.dismiss(progressId);
     toast.error(t("updateFailed", { error: e instanceof Error ? e.message : String(e) }));
   }
 }

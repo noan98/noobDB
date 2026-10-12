@@ -362,7 +362,7 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
               }}
               // 開いているサブメニューは、他のサブメニュー項目にホバーしたとき
               // だけ切り替える。通常項目を通過しただけで閉じないので、親項目から
-              // 斜めにパネルへ移動しても取りこぼさない (閉じるのはクリック・
+              // 斜めにパネルへ移動しても取りこぼさない (閉じるのは
               // Escape・ArrowLeft・メニュー自体の終了時)。
               onMouseEnter={(e) => {
                 if (!submenu || entry.disabled) return;
@@ -374,8 +374,9 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
                   return;
                 }
                 if (entry.disabled) return;
-                if (expanded) closeSubmenu(false);
-                else openSubmenu(i, e.currentTarget, true);
+                // ホバーで開いた直後のクリックで閉じない (#1534)。開いている間のクリックは
+                // 維持し、閉じるのは Escape・ArrowLeft・別項目へのホバー・外側クリック。
+                if (!expanded) openSubmenu(i, e.currentTarget, true);
               }}
               onKeyDown={(e) => {
                 if (!submenu || entry.disabled) return;

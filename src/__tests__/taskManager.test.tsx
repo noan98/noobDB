@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { act, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
-import type { TaskDefinition, TaskRun } from "../api/tauri";
+import { api, type TaskDefinition, type TaskRun } from "../api/tauri";
 
 /**
  * タスクスケジューラ管理画面の実行履歴消去アクション (#910)。
@@ -58,6 +58,7 @@ const clearTaskRuns = vi.fn();
 const runTaskNow = vi.fn();
 const cancelStream = vi.fn();
 let progressHandler: ((e: import("../api/tauri").TaskRunProgressEvent) => void) | null = null;
+const getSchedulerSettings = vi.fn();
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -68,7 +69,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listTasks: (...args: unknown[]) => listTasks(...args),
       listTaskRuns: (...args: unknown[]) => listTaskRuns(...(args as [string, number])),
       clearTaskRuns: (...args: unknown[]) => clearTaskRuns(...(args as [string])),
-      getSchedulerSettings: vi.fn().mockResolvedValue({ catch_up_missed: false }),
+      saveTask: vi.fn(),
+      getSchedulerSettings: (...args: unknown[]) => getSchedulerSettings(...args),
       setSchedulerSettings: vi.fn(),
       runTaskNow: (...args: unknown[]) => runTaskNow(...args),
       cancelStream: (...args: unknown[]) => cancelStream(...args),
@@ -90,6 +92,7 @@ beforeEach(() => {
   listTasks.mockResolvedValue([TASK]);
   listTaskRuns.mockResolvedValue([RUN]);
   clearTaskRuns.mockResolvedValue(1);
+  getSchedulerSettings.mockResolvedValue({ catch_up_missed: false });
 });
 
 describe("TaskManager 今すぐ実行の中断・進捗 (#1534)", () => {
@@ -197,5 +200,67 @@ describe("TaskManager 空状態の CTA (#1272)", () => {
 
     await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
     expect(screen.getAllByRole("button", { name: t("taskCreate") })).toHaveLength(1);
+  });
+});
+
+describe("TaskManager スケジューラ設定の取得 (#1534)", () => {
+  it("取得に失敗したらエラーを知らせ、取得できるまで追い掛け実行のトグルを無効にする", async () => {
+    getSchedulerSettings.mockRejectedValue("settings store unavailable");
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByText(t("taskSchedulerSettingsLoadError", { error: "settings store unavailable" })),
+      ).toBeInTheDocument(),
+    );
+    const toggle = screen.getByRole("switch", { name: t("taskCatchUpMissed") });
+    expect(toggle).toBeDisabled();
+  });
+
+  it("取得できたら実際の値を反映し、トグルを操作できる", async () => {
+    getSchedulerSettings.mockResolvedValue({ catch_up_missed: true });
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+
+    const toggle = await screen.findByRole("switch", { name: t("taskCatchUpMissed") });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+});
+
+describe("TaskForm 日次スケジュールの保存 (#1533)", () => {
+  const prevTz = process.env.TZ;
+  beforeAll(() => {
+    // UTC 以外の環境でも変換が効くことを確かめるため JST に固定する。
+    process.env.TZ = "Asia/Tokyo";
+  });
+  afterAll(() => {
+    if (prevTz === undefined) delete process.env.TZ;
+    else process.env.TZ = prevTz;
+  });
+
+  it("ローカル時刻で入力した日次時刻が UTC に変換されて saveTask に渡る", async () => {
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockResolvedValue(TASK);
+    // UTC 00:05 は JST 09:05。
+    listTasks.mockResolvedValue([{ ...TASK, schedule: { kind: "daily", hour: 0, minute: 5 } }]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: t("taskEdit") }));
+
+    const [hour, minute] = await screen.findAllByRole("spinbutton");
+    expect(hour).toHaveValue(9);
+    expect(minute).toHaveValue(5);
+
+    // ローカル 10:30 → UTC 01:30。
+    await user.clear(hour);
+    await user.type(hour, "10");
+    await user.clear(minute);
+    await user.type(minute, "30");
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+
+    await waitFor(() => expect(saveTask).toHaveBeenCalled());
+    expect(saveTask.mock.calls[0][0].schedule).toEqual({ kind: "daily", hour: 1, minute: 30 });
   });
 });

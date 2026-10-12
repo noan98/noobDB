@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAlterPlan,
+  indexRowProblems,
   type AlterTableForm,
   type ExistingColumnBaseline,
   type ExistingColumnEdit,
@@ -370,6 +371,24 @@ describe("buildAlterPlan: CREATE INDEX", () => {
     );
     expect(plan.statements).toHaveLength(1);
     expect(plan.statements[0].sql).toBe('CREATE INDEX "idx_multi" ON "users" ("a", "b");');
+  });
+});
+
+describe("indexRowProblems (#1532)", () => {
+  it("名前の空 / 列未選択を行ごとに報告し、完全な行は null", () => {
+    expect(indexRowProblems({ name: "i", columns: ["a"], unique: false })).toBeNull();
+    expect(indexRowProblems({ name: " ", columns: ["a"], unique: false })).toEqual({
+      missingName: true,
+      missingColumns: false,
+    });
+    expect(indexRowProblems({ name: "i", columns: [], unique: false })).toEqual({
+      missingName: false,
+      missingColumns: true,
+    });
+    expect(indexRowProblems({ name: "", columns: [" "], unique: true })).toEqual({
+      missingName: true,
+      missingColumns: true,
+    });
   });
 });
 

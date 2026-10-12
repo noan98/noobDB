@@ -35,8 +35,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::commands::progress::{needs_final_emit, ProgressThrottle};
 use crate::commands::query::{ensure_allowed_for_session, record_write_history};
 use crate::db::transfer::{
-    create_table_sql, drop_table_sql, hex_binary_columns, plan_columns, plan_warnings,
-    source_select_sql, validate_target_table, value_to_cell, TransferColumn, TransferMode,
+    create_table_sql, drop_table_sql, hex_binary_columns, lossy_conversions, plan_columns,
+    plan_warnings, source_select_sql, validate_target_table, value_to_cell, LossyConversion,
+    TransferColumn, TransferMode,
 };
 use crate::db::types::{Column, StreamBatch};
 use crate::db::{is_read_only_sql_for, DriverKind};
@@ -47,6 +48,11 @@ use crate::state::{AppState, Session, StreamHandle, StreamKind};
 const DEFAULT_TRANSFER_BATCH: usize = 1000;
 /// 読み出し ⇔ 書き込み間に滞留させるバッチ数の上限 (背圧の効き具合)。
 const CHANNEL_CAPACITY: usize = 2;
+
+/// 転送前プレビューで型推定に読む先頭バッチの行数。
+const PREVIEW_SAMPLE_ROWS: usize = 100;
+/// プレビューが先頭バッチで読み出しを打ち切るための内部用の目印。
+const PREVIEW_STOP: &str = "transfer preview sample complete";
 
 pub(crate) const EV_TRANSFER_PROGRESS: &str = "transfer-stream:progress";
 pub(crate) const EV_TRANSFER_DONE: &str = "transfer-stream:done";
@@ -84,6 +90,14 @@ pub struct TransferOutcome {
     pub columns: Vec<TransferColumnInfo>,
     /// 損失のあるマッピングなどの注意書き。
     pub warnings: Vec<String>,
+}
+
+/// 転送前プレビュー (#1532): 転送先の列定義と、値や型が縮退する列の一覧。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferPreview {
+    pub columns: Vec<TransferColumnInfo>,
+    pub lossy: Vec<LossyConversion>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -564,7 +578,12 @@ pub(crate) async fn run_transfer(
             if let Some(g) = guard.as_mut() {
                 g.disarm();
             }
-            let warnings = plan_warnings(driver, &plan);
+            // 追記は DDL を発行せず既存テーブルの型で書くので、型の縮退は起きない。
+            let warnings = if request.mode.creates_table() {
+                plan_warnings(driver, &plan)
+            } else {
+                Vec::new()
+            };
             let columns = plan
                 .iter()
                 .map(|c| TransferColumnInfo {
@@ -637,6 +656,102 @@ pub async fn transfer_data_inner(
     let result = run_transfer(&prepared, counter, on_progress).await;
     after_transfer(&prepared, &result, started.elapsed().as_millis() as u64).await;
     result
+}
+
+/// 転送を実行せずに、転送先の列定義と縮退する変換を返す (#1532)。ソースは先頭バッチだけ
+/// 読んで打ち切る (書き込み・DDL は一切しない)。
+pub async fn preview_transfer_inner(
+    state: &AppState,
+    mut request: TransferRequest,
+) -> Result<TransferPreview> {
+    if request.target_table.trim().is_empty() {
+        request.target_table = "preview".into();
+    }
+    let prepared = prepare_transfer(state, request).await?;
+    let driver = prepared.target.conn.driver_kind();
+    let request = &prepared.request;
+
+    let mut columns: Option<Vec<Column>> = None;
+    let mut sample: Vec<Vec<crate::db::types::Value>> = Vec::new();
+    let mut stopped = false;
+    let source_db = request.source_database.clone().filter(|d| !d.is_empty());
+    // サーバ側でも読み出しを止めるため、ソース SQL に LIMIT を入れる。クライアントがストリームを
+    // 捨てるだけだと MySQL / PostgreSQL はクエリを最後まで走らせ、残りを次の利用時に受信して
+    // 捨てることになる (大きなテーブルで毎回全件読み出しになる)。LIMIT を入れられない文
+    // (既に LIMIT があるなど) は元の SQL のまま先頭バッチで打ち切る。
+    let source_driver = prepared.source.conn.driver_kind();
+    let limited_sql =
+        crate::db::apply_auto_limit_for(source_driver, &prepared.source_sql, PREVIEW_SAMPLE_ROWS)
+            .unwrap_or_else(|| prepared.source_sql.clone());
+    let res = prepared
+        .source
+        .conn
+        .execute_stream(
+            &limited_sql,
+            source_db.as_deref(),
+            PREVIEW_SAMPLE_ROWS,
+            PREVIEW_SAMPLE_ROWS,
+            |batch| match batch {
+                StreamBatch::Columns(c) => {
+                    columns = Some(c);
+                    Ok(())
+                }
+                StreamBatch::Rows(rows) => {
+                    sample = rows;
+                    stopped = true;
+                    // 型推定に必要な先頭バッチだけで十分。残りは読まずに打ち切る。
+                    Err(AppError::Other(PREVIEW_STOP.into()))
+                }
+            },
+        )
+        .await;
+    if let Err(e) = res {
+        if !stopped {
+            return Err(e);
+        }
+    }
+    let mut cols = columns.unwrap_or_default();
+    if cols.is_empty() {
+        if let Some(t) = request.source_table.as_deref() {
+            let db = request
+                .source_database
+                .as_deref()
+                .filter(|d| !d.is_empty())
+                .unwrap_or("main");
+            cols = prepared
+                .source
+                .conn
+                .columns(db, t.trim())
+                .await?
+                .into_iter()
+                .map(|c| Column {
+                    name: c.name,
+                    type_name: c.data_type,
+                })
+                .collect();
+        }
+    }
+    let plan = plan_columns(&cols, &sample);
+    Ok(TransferPreview {
+        columns: plan
+            .iter()
+            .map(|c| TransferColumnInfo {
+                name: c.name.clone(),
+                source_type: c.source_type.clone(),
+                target_type: crate::db::transfer::target_type_sql(driver, &c.ty),
+            })
+            .collect(),
+        lossy: lossy_conversions(driver, &plan),
+    })
+}
+
+/// 転送前プレビュー (#1532)。書き込みはしない。
+#[tauri::command]
+pub async fn preview_transfer(
+    request: TransferRequest,
+    state: State<'_, AppState>,
+) -> Result<TransferPreview> {
+    preview_transfer_inner(&state, request).await
 }
 
 /// ソース接続の結果セットを別接続のテーブルへ転送する (#986)。進捗は

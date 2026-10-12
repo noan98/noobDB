@@ -120,3 +120,21 @@ describe("SettingsView info icons", () => {
     expect(info.getAttribute("aria-describedby")).toBe(tip.id);
   });
 });
+
+describe("SettingsView の数値欄 (#1534)", () => {
+  it("上限を超えた値を入力して blur すると、clamp 後の値が欄に戻る", async () => {
+    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
+    // 設定モーダルは DOM が大きく、ラベル検索 (findByLabelText) だけで既定の 5 秒を
+    // 使い切ることがあるため、見出しの描画を待ってから id で直接引く。
+    await screen.findByRole("heading", { name: t("settingsTitle") });
+    const input = document.getElementById("settings-font-size") as HTMLInputElement;
+    expect(input).not.toBeNull();
+    // 上限 (24) にしてから、さらに大きい値を入れる。
+    fireEvent.change(input, { target: { value: "24" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(input.value).toBe("24"));
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(input.value).toBe("24"));
+  });
+});

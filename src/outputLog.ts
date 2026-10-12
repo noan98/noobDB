@@ -39,7 +39,13 @@ export interface OutputEntry {
   id: number;
   /** 記録時刻 (epoch ミリ秒)。 */
   at: number;
+  /**
+   * 実行した SQL。保持量の予算を超えた古い行 (と単体で大きすぎる文) は先頭
+   * `OUTPUT_SQL_HEAD_CHARS` 字に切り詰められる。元の長さは `sqlLength`。
+   */
   sql: string;
+  /** 切り詰め前の SQL の長さ (UTF-16 コード単位)。`sql.length` より大きければ切り詰め済み。 */
+  sqlLength: number;
   outcome: OutputOutcome;
   /** `rows` / `affected` / 部分結果の行数。無い結末では null。 */
   rows: number | null;
@@ -58,7 +64,7 @@ export interface OutputEntry {
   serverMessages?: readonly ServerMessage[];
 }
 
-export type OutputInput = Omit<OutputEntry, "id" | "at">;
+export type OutputInput = Omit<OutputEntry, "id" | "at" | "sqlLength">;
 
 /** 重大度の重い順 (小さいほど重い)。 */
 const SEVERITY_RANK: Record<ServerMessageSeverity, number> = {
@@ -97,6 +103,59 @@ export function worstServerSeverity(
 
 /** 保持する最大件数。 */
 export const OUTPUT_LIMIT = 500;
+
+/**
+ * SQL 全文を保持してよい合計文字数 (新しい行から数える)。数 MB の INSERT を流しても
+ * 500 件ぶんの全文が常駐しないよう、予算を超えた古い行は先頭だけにする (#1534)。
+ * 予算内の行は全文を持つので「コピー」「エディタで開く」は全文のまま使える。
+ */
+export const OUTPUT_SQL_BUDGET_CHARS = 1_000_000;
+/** 予算を超えた行に残す SQL の先頭文字数。 */
+export const OUTPUT_SQL_HEAD_CHARS = 4_000;
+/** エラー本文の最大文字数。 */
+export const OUTPUT_ERROR_MAX_CHARS = 20_000;
+
+/** コードポイントの途中 (サロゲートペアの間) で切らずに先頭 `max` 字までにする。 */
+function headChars(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = max;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  return text.slice(0, end);
+}
+
+/** SQL が切り詰め済みか。 */
+export function isSqlTruncated(entry: Pick<OutputEntry, "sql" | "sqlLength">): boolean {
+  return entry.sqlLength > entry.sql.length;
+}
+
+/**
+ * 新しい行から `budget` 文字ぶんまで SQL 全文を残し、超えた行は先頭
+ * `OUTPUT_SQL_HEAD_CHARS` 字に切り詰める。変更が無ければ同じ配列を返す。
+ */
+export function compactOutputSql(
+  list: readonly OutputEntry[],
+  budget: number = OUTPUT_SQL_BUDGET_CHARS,
+  headMax: number = OUTPUT_SQL_HEAD_CHARS,
+): readonly OutputEntry[] {
+  let used = 0;
+  let changed = false;
+  const next = list.map((e) => {
+    if (e.sql.length <= headMax) {
+      used += e.sql.length;
+      return e;
+    }
+    if (used + e.sql.length <= budget) {
+      used += e.sql.length;
+      return e;
+    }
+    changed = true;
+    const head = headChars(e.sql, headMax);
+    used += head.length;
+    return { ...e, sql: head };
+  });
+  return changed ? next : list;
+}
 
 /** 絞り込み。`problems` はエラー / タイムアウト / キャンセル / スキップ。 */
 export type OutputFilter = "all" | "problems";
@@ -192,7 +251,14 @@ function getOutput(): OutputEntry[] {
 
 /** 実行結果を 1 件記録する。 */
 export function pushOutput(input: OutputInput): void {
-  current = appendOutput(current, { ...input, id: nextId++, at: Date.now() });
+  const entry: OutputEntry = {
+    ...input,
+    id: nextId++,
+    at: Date.now(),
+    sqlLength: input.sql.length,
+    error: input.error === null ? null : headChars(input.error, OUTPUT_ERROR_MAX_CHARS),
+  };
+  current = compactOutputSql(appendOutput(current, entry)) as OutputEntry[];
   emit();
 }
 

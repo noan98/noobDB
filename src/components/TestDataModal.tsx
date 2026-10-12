@@ -23,6 +23,7 @@ import { useLocale, useT, type I18nKey } from "../i18n";
 import { useSettings } from "../settings";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Select } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiUsageNote } from "./AiUsageNote";
 import { Spinner } from "./Spinner";
@@ -474,14 +475,10 @@ export function TestDataModal({
                   )}
                   {spec.strategy === "serial" && (
                     <Tooltip label={t("testDataSerialStart")} focusableWrapper={running}>
-                      <Input
-                        type="number"
+                      <DraftNumberInput
                         css={{ width: "100px" }}
-                        value={String(spec.serialStart)}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n)) updateSpec(i, { serialStart: Math.floor(n) });
-                        }}
+                        value={spec.serialStart}
+                        onCommit={(n) => updateSpec(i, { serialStart: n })}
                         disabled={running}
                         aria-label={t("testDataSerialStart")}
                       />
@@ -489,15 +486,11 @@ export function TestDataModal({
                   )}
                   {spec.strategy === "randomString" && (
                     <Tooltip label={t("testDataLength")} focusableWrapper={running}>
-                      <Input
-                        type="number"
+                      <DraftNumberInput
                         min={1}
                         css={{ width: "90px" }}
-                        value={String(spec.length)}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n) && n >= 1) updateSpec(i, { length: Math.floor(n) });
-                        }}
+                        value={spec.length}
+                        onCommit={(n) => updateSpec(i, { length: n })}
                         disabled={running}
                         aria-label={t("testDataLength")}
                       />
@@ -506,27 +499,21 @@ export function TestDataModal({
                   {spec.strategy === "randomNumber" && (
                     <>
                       <Tooltip label={t("testDataMin")} focusableWrapper={running}>
-                        <Input
-                          type="number"
+                        <DraftNumberInput
+                          allowDecimal={spec.kind === "decimal"}
                           css={{ width: "100px" }}
-                          value={String(spec.min)}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (Number.isFinite(n)) updateSpec(i, { min: n });
-                          }}
+                          value={spec.min}
+                          onCommit={(n) => updateSpec(i, { min: n })}
                           disabled={running}
                           aria-label={t("testDataMin")}
                         />
                       </Tooltip>
                       <Tooltip label={t("testDataMax")} focusableWrapper={running}>
-                        <Input
-                          type="number"
+                        <DraftNumberInput
+                          allowDecimal={spec.kind === "decimal"}
                           css={{ width: "100px" }}
-                          value={String(spec.max)}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (Number.isFinite(n)) updateSpec(i, { max: n });
-                          }}
+                          value={spec.max}
+                          onCommit={(n) => updateSpec(i, { max: n })}
                           disabled={running}
                           aria-label={t("testDataMax")}
                         />
@@ -536,18 +523,12 @@ export function TestDataModal({
                   {spec.nullable && spec.strategy !== "omit" && (
                     <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
                       {t("testDataNullRate")}
-                      <Input
-                        type="number"
+                      <DraftNumberInput
                         min={0}
                         max={100}
                         css={{ width: "72px" }}
-                        value={String(Math.round(spec.nullRate * 100))}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n)) {
-                            updateSpec(i, { nullRate: Math.min(100, Math.max(0, n)) / 100 });
-                          }
-                        }}
+                        value={Math.round(spec.nullRate * 100)}
+                        onCommit={(n) => updateSpec(i, { nullRate: n / 100 })}
                         disabled={running}
                         aria-label={t("testDataNullRateAria", { column: spec.column })}
                       />

@@ -65,7 +65,10 @@ export function diffResultRows(
   pkIndices: number[],
   colCount: number,
 ): ResultRowDiff {
-  const changedCells = next.map(() => new Array<boolean>(colCount).fill(false));
+  // 変化の無い行は全行で共有する読み取り専用の全 false 配列を使い、変化した行だけ遅延確保する
+  // (10 万行 × 20 列でも毎回 200 万要素を確保しない)。
+  const noChange = new Array<boolean>(colCount).fill(false);
+  const changedCells: boolean[][] = new Array<boolean[]>(next.length).fill(noChange);
   // PK が無ければペアリング不能 — 差分を出さない。
   if (pkIndices.length === 0) {
     return { changedCells, addedRows: new Set(), removedCount: 0, hasChanges: false };
@@ -90,9 +93,14 @@ export function diffResultRows(
     }
     matchedPrev.add(pi);
     const prevRow = prev[pi];
+    let flags: boolean[] | null = null;
     for (let c = 0; c < colCount; c++) {
       if (!valuesEqual(prevRow[c], row[c])) {
-        changedCells[ni][c] = true;
+        if (flags === null) {
+          flags = new Array<boolean>(colCount).fill(false);
+          changedCells[ni] = flags;
+        }
+        flags[c] = true;
         anyCellChanged = true;
       }
     }

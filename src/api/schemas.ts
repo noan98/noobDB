@@ -771,6 +771,9 @@ export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
 export const nullableStringResponse = z.string().nullable();
 
+/** `get_process_queries` の戻り値。プロセス id (JSON キーなので文字列) → SQL 全文。 */
+export const processQueriesResponse = z.record(z.string(), z.string());
+
 /** `result_sort_filter` の戻り値。表示順の行インデックス。`null` はハンドルが無い (#1264)。 */
 export const resultSortFilterResponse = z.array(z.number()).nullable();
 
@@ -1339,6 +1342,19 @@ export const importDoneEvent = z.object({
   // 先頭一部しか `skipped` に載らないため、総件数を別に持つ (#1258)。旧バックエンドでは
   // 省略されるので既定 0 (フロントは `max(skippedTotal, skipped.length)` で使う)。
   skippedTotal: z.number().default(0),
+});
+
+/** 転送前プレビュー (#1532)。 */
+export const transferPreview = z.object({
+  columns: z.array(z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() })),
+  lossy: z.array(
+    z.object({
+      column: z.string(),
+      kind: z.enum(["decimal_clamped", "decimal_float", "timestamp_tz_degraded"]),
+      sourceType: z.string(),
+      targetType: z.string(),
+    }),
+  ),
 });
 
 /** BLOB セルの probe 結果 (#1258)。 */

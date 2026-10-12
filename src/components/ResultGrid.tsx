@@ -251,6 +251,7 @@ import {
   type RevealTarget,
   isCellMasked,
   isCellRevealed,
+  revealExpiry,
   maskedCopyText,
   resolveMaskedColumns,
   rowHasMaskedCell,
@@ -2474,6 +2475,8 @@ function ColumnStatsMenu({
   );
   // 率の式は列ヘッダのミニバー (#911) / 集計フッターと `nullRatePercentOf` で共有する。
   const nullPct = nullRatePercentOf(stats);
+  // バックエンド集計が届くまでは仮の値 (NULL 0・Distinct 0 など) を出さず、集計中と示す (#1534)。
+  const statsPending = useRemote && remoteStats === null;
 
   // Clamp into the viewport once measured (mirrors ColumnFilterMenu). Re-runs on
   // `full`/`loadingFull` since the panel grows when the all-rows section appears.
@@ -2599,6 +2602,12 @@ function ColumnStatsMenu({
         {t("gridStatsInMemory", { count: stats.count })}
       </chakra.span>
 
+      {statsPending ? (
+        <Box display="flex" alignItems="center" gap="1.5" fontSize="var(--text-xs)" color="app.textMuted">
+          <Spinner size={12} />
+          {t("gridStatsLoading")}
+        </Box>
+      ) : (
       <Box display="flex" flexDirection="column" gap="1">
         <StatRow
           label={t("gridCountLabel")}
@@ -2644,6 +2653,7 @@ function ColumnStatsMenu({
           </>
         )}
       </Box>
+      )}
 
       {onSetFooterFn && (
         <Box
@@ -2669,7 +2679,7 @@ function ColumnStatsMenu({
               onChange={(e) => onSetFooterFn(e.target.value as FooterAggFn)}
               fontSize="var(--text-xs)"
               fontFamily="inherit"
-              padding="2px 6px"
+              py="0.5" px="1.5"
               border="1px solid var(--border)"
               background="var(--bg-input)"
               color="var(--text)"
@@ -3483,6 +3493,7 @@ const rowShapeByRow = new WeakMap<CellValue[], RowShape>();
 // できる (stale な比較ロジックによる誤バイパスのリスクはない)。
 export const DataGrid = memo(function DataGrid({
   columns,
+  rowIdentityStrategy,
   rows,
   enableColumnControls = true,
   changedCells,
@@ -3572,6 +3583,8 @@ export const DataGrid = memo(function DataGrid({
    * all — editing is gated off in that case.
    */
   pkIndices?: number[];
+  /** 行 identity の戦略。一時 reveal が行の移動に追従してよいのは `primary_key` のときだけ。 */
+  rowIdentityStrategy?: RowIdentityKind;
   pendingEdits?: PendingEdits;
   onSetCellEdit?: (rowKey: string, colIdx: number, value: string | null) => void;
   /**
@@ -3920,7 +3933,9 @@ export const DataGrid = memo(function DataGrid({
   const [reveal, setReveal] = useState<RevealTarget | null>(null);
   useEffect(() => {
     if (!reveal) return;
-    const timer = window.setTimeout(() => setReveal(null), REVEAL_TIMEOUT_MS);
+    // 期限は reveal 時の絶対時刻。行の追従で対象が作り直されても、残り時間で張り直す。
+    const remaining = Math.max(0, (reveal.expiresAt ?? Date.now() + REVEAL_TIMEOUT_MS) - Date.now());
+    const timer = window.setTimeout(() => setReveal(null), remaining);
     const remask = () => setReveal(null);
     const onVisibility = () => {
       if (document.visibilityState === "hidden") setReveal(null);
@@ -3936,12 +3951,34 @@ export const DataGrid = memo(function DataGrid({
   // 結果 (列構成) が変わったら reveal は無効。セル単位の reveal は行インデックスで
   // 持つため、行が差し替わったら別の行を見せてしまわないよう解除する。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 列構成が差し替わったことを契機に reveal を解除する (columns は本体で読まない) ため意図的に依存へ入れている
-  useEffect(() => {
+  useLayoutEffect(() => {
     setReveal(null);
   }, [columns]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 行が差し替わったことを契機にセル単位の reveal を解除する (rows は本体で読まない) ため意図的に依存へ入れている
-  useEffect(() => {
-    setReveal((r) => (r && r.kind === "cell" ? null : r));
+  // セル単位の reveal は、自動リフレッシュやストリーミングで rows の参照が作り直された
+  // だけでは解除しない (数秒ごとに伏せ字へ戻ってしまう, #1534)。主キー由来の行 identity
+  // (`rowEditKey`) で同じ行を探し直し、無くなっていれば解除、位置が動いていれば追従する。
+  // 追従するのは識別戦略が主キー (`primary_key`) のときだけ。rowid / ctid / all_columns は
+  // 行の同一性が保証されず別の行を見せかねないので、従来どおり解除する。
+  // 描画前に反映する (useLayoutEffect) ので、1 フレームでも別の行が実値で映らない。
+  const prevRowsRef = useRef(rows);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 行が差し替わったことを契機にセル単位の reveal を引き継ぐ/解除する (pkIndices は最新値を読むだけ) ため rows のみを依存にする
+  useLayoutEffect(() => {
+    const prevRows = prevRowsRef.current;
+    prevRowsRef.current = rows;
+    setReveal((r) => {
+      if (!r || r.kind !== "cell") return r;
+      const pks = pkIndices ?? [];
+      if (rowIdentityStrategy !== "primary_key" || pks.length === 0) return null;
+      const prev = prevRows[r.rowIdx];
+      if (!prev) return null;
+      const key = rowEditKey(prev, pks, r.rowIdx);
+      const same = rows[r.rowIdx];
+      if (same && rowEditKey(same, pks, r.rowIdx) === key) return r;
+      for (let i = 0; i < rows.length; i++) {
+        if (rowEditKey(rows[i] ?? [], pks, i) === key) return { ...r, rowIdx: i };
+      }
+      return null;
+    });
   }, [rows]);
   const toggleColumnMask = (colIdx: number, nextMasked: boolean) => {
     const name = columns[colIdx]?.name;
@@ -4132,14 +4169,44 @@ export const DataGrid = memo(function DataGrid({
   // Per-column in-memory ColumnStats for the footer, reusing gridStats
   // (#524) so aggregate math is never re-defined. Only computed while the
   // footer is shown, and memoized on the loaded rows so scrolling is free.
-  const footerStats = useMemo<ColumnStats[] | null>(() => {
+  // 実際にフッターへ描画する (表示中の) 列だけを、初めて参照されたときに計算してキャッシュする。
+  // `none` の列は計算しない。件数 / NULL 率だけで足りる列は、ストリーム逐次統計 (#1257) の
+  // NULL 数から O(1) で出す (distinct・合計など値の走査が要る関数だけ全行を走査する)。
+  const footerStatsFor = useMemo<
+    ((colIdx: number, fn: FooterAggFn) => ColumnStats | undefined) | null
+  >(() => {
     if (!footerEnabled) return null;
-    return columns.map((_, i) =>
-      computeColumnStats(
-        rows.map((r) => r[i] ?? null),
-        columnKinds[i] ?? "string",
-      ),
-    );
+    const cache = new Map<number, ColumnStats>();
+    const stream = streamStatsFor(rows);
+    return (colIdx: number, fn: FooterAggFn) => {
+      if (fn === "none" || colIdx < 0 || colIdx >= columns.length) return undefined;
+      const nulls = stream?.nullCounts[colIdx];
+      if ((fn === "count" || fn === "nullRate") && typeof nulls === "number") {
+        return {
+          count: rows.length,
+          nullCount: nulls,
+          nonNullCount: rows.length - nulls,
+          distinctCount: 0,
+          numericCount: 0,
+          sum: null,
+          avg: null,
+          min: null,
+          max: null,
+          minLen: null,
+          maxLen: null,
+          mode: null,
+        };
+      }
+      let stats = cache.get(colIdx);
+      if (!stats) {
+        stats = computeColumnStats(
+          rows.map((r) => r[colIdx] ?? null),
+          columnKinds[colIdx] ?? "string",
+        );
+        cache.set(colIdx, stats);
+      }
+      return stats;
+    };
   }, [footerEnabled, rows, columns, columnKinds]);
 
   // 列ヘッダの常時 NULL 率ミニバー (#911)。ポップオーバー (`ColumnStatsMenu`) を
@@ -6152,7 +6219,7 @@ export const DataGrid = memo(function DataGrid({
                 const colIdx = Number(h.column.id);
                 const kind = columnKinds[colIdx] ?? "string";
                 const fn = resolveFooterFn(footerAggs[h.column.id], kind);
-                const stats = footerStats?.[colIdx];
+                const stats = footerStatsFor?.(colIdx, fn);
                 const cell = stats ? computeFooterCell(stats, fn) : null;
                 // マスク中の列 (#1069) は集計値 (合計・最小/最大など) も伏せ、
                 // CountUp (#1024) でも数値を出さない。
@@ -6659,7 +6726,7 @@ export const DataGrid = memo(function DataGrid({
                         title: t("gridMaskRevealTitle"),
                         onSelect: () => {
                           setCopyMenu(null);
-                          setReveal({ kind: "cell", rowIdx: ri, colIdx: ci });
+                          setReveal({ kind: "cell", rowIdx: ri, colIdx: ci, expiresAt: revealExpiry() });
                         },
                       },
                       {
@@ -6667,7 +6734,7 @@ export const DataGrid = memo(function DataGrid({
                         title: t("gridMaskRevealTitle"),
                         onSelect: () => {
                           setCopyMenu(null);
-                          setReveal({ kind: "column", colIdx: ci });
+                          setReveal({ kind: "column", colIdx: ci, expiresAt: revealExpiry() });
                         },
                       },
                     ]),
@@ -6949,7 +7016,7 @@ export const DataGrid = memo(function DataGrid({
           }
           onRevealColumn={
             isColumnMaskedNow(filterMenu.colIdx)
-              ? () => setReveal({ kind: "column", colIdx: filterMenu.colIdx })
+              ? () => setReveal({ kind: "column", colIdx: filterMenu.colIdx, expiresAt: revealExpiry() })
               : undefined
           }
         />
@@ -8265,7 +8332,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
           display="flex"
           alignItems="center"
           gap="2.5"
-          padding="5px 10px"
+          py="1.25" px="2.5"
           fontSize="sm"
           color="app.text"
           borderBottom="1px solid"
@@ -8361,7 +8428,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
             display="inline-flex"
             alignItems="center"
             gap="1.5"
-            paddingLeft="2px"
+            paddingLeft="0.5"
             flexShrink={0}
           >
             <chakra.label
@@ -8456,7 +8523,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
             display="inline-flex"
             alignItems="center"
             gap="1.5"
-            paddingLeft="2px"
+            paddingLeft="0.5"
           >
             <chakra.label
               display="inline-flex"
@@ -8520,7 +8587,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
               fontSize="xs"
               color={identityStrategy === "all_columns" ? "var(--text-warning)" : "app.textMuted"}
               fontStyle="italic"
-              paddingLeft="4px"
+              paddingLeft="1"
             >
               {t(identityHintKeys(identityStrategy, ambiguousIdentity).label)}
             </chakra.span>
@@ -8623,7 +8690,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
             {statusBarParts[1]}
             {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
               <Tooltip label={t("autoLimitApplied", { limit: autoLimitApplied })}>
-                <chakra.span color="var(--text-warning)" marginLeft="6px">
+                <chakra.span color="var(--text-warning)" marginLeft="1.5">
                   LIMIT {autoLimitApplied}
                 </chakra.span>
               </Tooltip>
@@ -8646,7 +8713,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
                   { rows: partialResult.rows },
                 )}
               >
-                <chakra.span color="var(--text-warning)" marginLeft="6px">
+                <chakra.span color="var(--text-warning)" marginLeft="1.5">
                   {t("partialResultBadge")}
                 </chakra.span>
               </Tooltip>
@@ -8656,9 +8723,9 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
         <chakra.input
           ref={searchInputRef}
           type="search"
-          marginLeft={selSummary || statusBarParts ? "8px" : "auto"}
+          marginLeft={selSummary || statusBarParts ? "2" : "auto"}
           width="220px"
-          padding="3px 8px"
+          py="0.75" px="2"
           fontSize="sm"
           fontFamily="inherit"
           border="1px solid var(--border)"
@@ -8895,7 +8962,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
                 ref={findInputRef}
                 type="text"
                 width="240px"
-                padding="3px 8px"
+                py="0.75" px="2"
                 fontSize="sm"
                 fontFamily="inherit"
                 border="1px solid var(--border)"
@@ -9042,6 +9109,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
           editable={editableActive}
           editableColumns={editableCols}
           pkIndices={pkIndices}
+          rowIdentityStrategy={identityStrategy}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
           onBulkEdit={editableActive ? onBulkEdit : undefined}
@@ -9204,7 +9272,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
                   }}
                   fontSize="xs"
                   fontFamily="inherit"
-                  padding="1px 4px"
+                  py="0.25" px="1"
                   border="1px solid var(--border)"
                   background="var(--bg-input)"
                   color="var(--text)"

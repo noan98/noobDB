@@ -23,4 +23,10 @@ export const processCommands = {
     invoke<string | null>("get_process_query", { sessionId, processId }).then((r) =>
       parseResponse(schemas.nullableStringResponse, r, "get_process_query"),
     ),
+  /** 複数プロセスの SQL 全文を 1 回の一覧取得でまとめて取得する。`id -> 全文` で、消えた
+   *  プロセス・本文なしは含まれない。AI ロック診断が件数分の一覧取得を並走させないために使う。 */
+  getProcessQueries: (sessionId: string, processIds: number[]) =>
+    invoke<Record<string, string>>("get_process_queries", { sessionId, processIds }).then((r) =>
+      parseResponse(schemas.processQueriesResponse, r, "get_process_queries"),
+    ),
 };

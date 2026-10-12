@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState, type KeyboardEvent as Rea
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import { QueryResult } from "../api/tauri";
-import { useT, type I18nKey } from "../i18n";
+import { useLocale, useT, type I18nKey } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import { Button, Switch } from "./ui";
 import { Spinner } from "./Spinner";
@@ -671,8 +671,12 @@ function AnalyzeBar({ analyze }: { analyze: NonNullable<Props["analyze"]> }) {
 }
 
 export function ExplainViewer({ result, driver, streaming, analyze, ai }: Props) {
-  // 計画のパースはここで 1 回だけ行い、Body と AI 解釈で共有する。
-  const parsed = useMemo(() => parseExplainForDriver(driver, result), [driver, result]);
+  const t = useT();
+  const locale = useLocale();
+  // 計画のパースはここで 1 回だけ行い、Body と AI 解釈で共有する。補助ラベルは
+  // ロケール依存なので、言語切替で作り直す (`t` は参照が変わらないため locale を依存に入れる)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: locale は再計算のトリガとしてだけ使う
+  const parsed = useMemo(() => parseExplainForDriver(driver, result, t), [driver, result, t, locale]);
   // AI 解釈に渡す計画の生テキスト。ストリーミング中は確定していないので渡さない。
   const hasAi = !!ai;
   const plan = hasAi && !streaming ? parsed.raw : null;

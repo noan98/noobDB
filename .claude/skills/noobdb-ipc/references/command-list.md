@@ -215,6 +215,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 - `list_processes`
 - `get_process_query`
+- `get_process_queries` (複数 id の全文を一覧 1 回でまとめて取得。AI ロック診断用)
 - `kill_processes`
 - `list_db_users`
 - `list_user_privileges`
@@ -445,6 +446,10 @@ BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ�
 `execute_stream`、書き込みは `import_rows` (新しい書き込み経路は増やさない)。進捗は
 `transfer-stream:*` イベント、`cancel_stream` で中断。ターゲットの `read_only` は
 バックエンドで拒否する。
+
+`preview_transfer` — 転送前プレビュー (#1532)。ソースの先頭バッチだけ読んで打ち切り、転送先の
+列定義と、値や型が縮退する列 (`lossy`: decimal の桁丸め・TIMESTAMPTZ の縮退など) を返す。
+書き込み・DDL はしない。
 
 ## Schema Cache (`commands/schema.rs`, #1097)
 

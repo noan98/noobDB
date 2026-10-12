@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { act } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "./testUtils";
-import { ComboSelect, type ComboSelectOption } from "../components/ComboSelect";
+import { COMBO_MAX_VISIBLE, ComboSelect, type ComboSelectOption } from "../components/ComboSelect";
 
 /**
  * ポップオーバー型コンボボックス `ComboSelect`。開閉・フィルタ・クリック/キーボード
@@ -233,5 +234,63 @@ describe("ComboSelect の ARIA 結線", () => {
 
     const selected = screen.getByRole("option", { name: /email/ });
     expect(selected).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("ComboSelect の件数上限", () => {
+  const MANY: ComboSelectOption[] = Array.from({ length: 260 }, (_, i) => ({ value: `col_${i}` }));
+
+  it("多いときは上限までしか描画せず、「さらに表示」で全件に広げる", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
+    await user.click(screen.getByRole("combobox"));
+    // 上限ぶん + 「さらに表示」行。
+    expect(screen.getAllByRole("option")).toHaveLength(COMBO_MAX_VISIBLE + 1);
+    await user.click(screen.getByRole("option", { name: `+${260 - COMBO_MAX_VISIBLE}` }));
+    expect(screen.getAllByRole("option")).toHaveLength(260);
+  });
+
+  it("ArrowDown で末尾を越えると「さらに表示」にハイライトが移り、Enter で展開する", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
+    const input = screen.getByRole("combobox");
+    await user.click(input);
+    await user.keyboard("{ArrowUp}");
+    const more = screen.getByRole("option", { name: `+${260 - COMBO_MAX_VISIBLE}` });
+    expect(input.getAttribute("aria-activedescendant")).toBe(more.id);
+    await user.keyboard("{Enter}");
+    expect(screen.getAllByRole("option")).toHaveLength(260);
+  });
+
+  it("入力で絞り込んだ結果が上限以下なら「さらに表示」は出ない", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChangeSpy={vi.fn()} options={MANY} />);
+    await user.type(screen.getByRole("combobox"), "col_199");
+    expect(screen.queryByRole("option", { name: /^\+\d+$/ })).toBeNull();
+    expect(screen.getAllByRole("option").length).toBeLessThan(COMBO_MAX_VISIBLE);
+  });
+});
+
+describe("ComboSelect の位置追従 (#1534)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("開いている間に祖先がスクロールされると、入力欄の新しい位置へ追従する", async () => {
+    const user = userEvent.setup();
+    let anchorTop = 100;
+    vi.spyOn(HTMLInputElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ left: 20, right: 220, top: anchorTop, bottom: anchorTop + 30, width: 200, height: 30, x: 20, y: anchorTop, toJSON: () => ({}) }),
+    );
+    renderCombo();
+    await user.click(screen.getByRole("combobox"));
+    const listbox = screen.getByRole("listbox");
+    const before = listbox.parentElement?.style.top || listbox.style.top;
+
+    anchorTop = 300;
+    act(() => {
+      document.body.dispatchEvent(new Event("scroll", { bubbles: false }));
+      window.dispatchEvent(new Event("resize"));
+    });
+    const after = listbox.parentElement?.style.top || listbox.style.top;
+    expect(after).not.toBe(before);
   });
 });

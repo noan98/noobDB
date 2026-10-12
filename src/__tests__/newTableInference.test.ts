@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyNullToken,
   buildColumnDrafts,
+  countExcelErrors,
+  isExcelErrorToken,
   inferColumnType,
   inferValueType,
   mergeColumnDrafts,
@@ -299,5 +301,27 @@ describe("mergeColumnDrafts", () => {
       ["note", "text", false],
     ]);
     expect(mergeColumnDrafts(null, next)).toEqual(next);
+  });
+});
+
+describe("xlsx のエラー値 (#1532)", () => {
+  it("エラートークンを判定し、プレビュー内の件数を数える", () => {
+    for (const t of ["#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#REF!", "#VALUE!", "#SPILL!", "#CALC!", "#GETTING_DATA"]) {
+      expect(isExcelErrorToken(t)).toBe(true);
+    }
+    expect(isExcelErrorToken("#hashtag")).toBe(false);
+    expect(isExcelErrorToken("42")).toBe(false);
+    expect(countExcelErrors([["1", "#N/A"], ["#REF!", "x"]])).toBe(2);
+  });
+
+  it("エラーセルを含む数値列は数値のまま推論し、ヘッダのエラーは column_N にする", () => {
+    const preview = { headers: ["#N/A", "price"], rows: [["1", "#DIV/0!"], ["2", "3"], ["#N/A", "4"]] };
+    const drafts = buildColumnDrafts(preview, "", "postgres", true, true);
+    expect(drafts[0].name).toBe("column_1");
+    expect(drafts[0].type).toBe("integer");
+    expect(drafts[1].name).toBe("price");
+    expect(drafts[1].type).toBe("integer");
+    // xlsx 以外 (CSV) では "#N/A" は普通の文字列。
+    expect(buildColumnDrafts(preview, "", "postgres", true)[0].type).toBe("text");
   });
 });

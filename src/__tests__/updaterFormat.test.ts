@@ -45,6 +45,14 @@ describe("truncateReleaseNotes (#705)", () => {
     expect(truncateReleaseNotes("fixed a bug", 600)).toBe("fixed a bug");
   });
 
+  it("does not split a surrogate pair when truncating (#1534)", () => {
+    const out = truncateReleaseNotes("ab😀cd", 3);
+    expect(out).toBe("ab😀…");
+    expect(out).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    // コードポイント数が上限以内なら、コード単位では超えていても切らない。
+    expect(truncateReleaseNotes("😀😀😀", 3)).toBe("😀😀😀");
+  });
+
   it("truncates long notes with an ellipsis", () => {
     const body = "x".repeat(1000);
     const out = truncateReleaseNotes(body, 600);

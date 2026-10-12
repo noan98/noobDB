@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use tauri::State;
 
 use crate::db::types::{KillProcessesResult, ProcessListItem};
@@ -61,6 +63,48 @@ pub async fn get_process_query_inner(
         .and_then(|p| p.query))
 }
 
+/// 複数プロセスの SQL 全文を 1 回の一覧取得でまとめて返す。AI ロック診断は最大 12 件の
+/// 全文を引くので、`get_process_query` を件数分呼ぶと混んだサーバに同じ一覧クエリが
+/// 件数分同時に走る。ここでは一覧を 1 回だけ取り、指定 id のうちクエリ本文があるものだけを
+/// `id -> 全文` で返す (消えたプロセス・本文なしは含めない)。読み取りのみ。
+#[tauri::command]
+pub async fn get_process_queries(
+    session_id: String,
+    process_ids: Vec<i64>,
+    state: State<'_, AppState>,
+) -> Result<HashMap<i64, String>> {
+    get_process_queries_inner(state.inner(), &session_id, &process_ids).await
+}
+
+/// Core of [`get_process_queries`]. See [`list_processes_inner`] (#881).
+pub async fn get_process_queries_inner(
+    state: &AppState,
+    session_id: &str,
+    process_ids: &[i64],
+) -> Result<HashMap<i64, String>> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    if process_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let wanted: HashSet<i64> = process_ids.iter().copied().collect();
+    let rows = session.conn.list_processes_without_locks().await?;
+    Ok(select_process_queries(rows, &wanted))
+}
+
+/// 一覧から `wanted` の id だけを選び、クエリ本文があるものを `id -> 全文` にする純関数。
+fn select_process_queries(
+    rows: Vec<crate::db::types::ProcessInfo>,
+    wanted: &HashSet<i64>,
+) -> HashMap<i64, String> {
+    rows.into_iter()
+        .filter(|p| wanted.contains(&p.id))
+        .filter_map(|p| p.query.map(|q| (p.id, q)))
+        .collect()
+}
+
 /// `list_processes` が返した id のプロセス/接続をまとめて強制終了する (#1259)。
 /// read_only ガードは 1 回だけ。PostgreSQL は `unnest` で 1 文、MySQL は 1 接続上で
 /// 順に `KILL` する。失敗があっても残りは続行し、成功件数・失敗件数・最初のエラーを返す。
@@ -106,6 +150,39 @@ pub(crate) async fn kill_processes_inner(
 
 #[cfg(test)]
 mod tests {
+    use super::select_process_queries;
+    use crate::db::types::ProcessInfo;
+    use std::collections::HashSet;
+
+    fn proc(id: i64, query: Option<&str>) -> ProcessInfo {
+        ProcessInfo {
+            id,
+            user: None,
+            host: None,
+            database: None,
+            command: None,
+            state: None,
+            time_secs: None,
+            query: query.map(str::to_string),
+            is_self: false,
+            blocked_by: vec![],
+        }
+    }
+
+    #[test]
+    fn select_process_queries_keeps_only_wanted_ids_with_a_query() {
+        let rows = vec![
+            proc(1, Some("SELECT 1")),
+            proc(2, Some("SELECT 2")),
+            proc(3, None),
+            proc(4, Some("SELECT 4")),
+        ];
+        let wanted: HashSet<i64> = [1, 3, 9].into_iter().collect();
+        let got = select_process_queries(rows, &wanted);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got.get(&1).map(String::as_str), Some("SELECT 1"));
+    }
+
     use crate::db::types::{summarize_process_query, PROCESS_QUERY_SUMMARY_MAX};
 
     #[test]

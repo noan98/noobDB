@@ -6,6 +6,7 @@ import {
   countProblems,
   filterOutput,
   isProblemOutcome,
+  isSqlTruncated,
   outputSummary,
   SERVER_SEVERITY_LABEL,
   SERVER_SEVERITY_ROLE,
@@ -105,6 +106,7 @@ function OutputRow({
   const problem = isProblemOutcome(entry.outcome);
   const role = entry.outcome === "error" ? "danger" : problem ? "warning" : "success";
   const summary = outputSummary(entry);
+  const truncated = isSqlTruncated(entry);
   const detailsId = `output-row-${entry.id}`;
   const where = [entry.connection, entry.database].filter(Boolean).join(" / ");
   const serverMessages = entry.serverMessages ?? [];
@@ -173,6 +175,11 @@ function OutputRow({
       {expanded && (
         <Flex id={detailsId} direction="column" gap="2" px="2.5" pb="2.5" pl="8">
           <CodePreview wrap maxH="200px">{entry.sql}</CodePreview>
+          {truncated && (
+            <chakra.span textStyle="caption">
+              {t("outputSqlTruncated", { kept: entry.sql.length, total: entry.sqlLength })}
+            </chakra.span>
+          )}
           {serverMessages.length > 0 && (
             <chakra.ul
               listStyleType="none"
@@ -203,9 +210,18 @@ function OutputRow({
             </CodePreview>
           )}
           <Flex gap="2">
-            <Button type="button" size="sm" variant="secondary" onClick={() => onOpenSql(entry.sql)}>
-              {t("outputOpenInEditor")}
-            </Button>
+            {/* 切り詰めた断片を開くと、欠けた DML をそのまま実行できてしまうので無効にする。 */}
+            <Tooltip label={truncated ? t("outputOpenTruncatedDisabled") : undefined} focusableWrapper={truncated}>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={truncated}
+                onClick={() => onOpenSql(entry.sql)}
+              >
+                {t("outputOpenInEditor")}
+              </Button>
+            </Tooltip>
             <Tooltip label={t("outputCopySql")}>
               <Button
                 type="button"
@@ -213,7 +229,13 @@ function OutputRow({
                 variant="secondary"
                 aria-label={t("outputCopySql")}
                 onClick={async () => {
-                  if (await copyToClipboard(entry.sql)) toast.success(t("outputCopied"));
+                  if (!(await copyToClipboard(entry.sql))) {
+                    toast.error(t("outputCopyFailed"));
+                  } else if (truncated) {
+                    toast.info(t("outputCopiedTruncated", { kept: entry.sql.length, total: entry.sqlLength }));
+                  } else {
+                    toast.success(t("outputCopied"));
+                  }
                 }}
               >
                 <Icon name="copy" size={ICON_SIZES.md} />

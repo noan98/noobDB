@@ -25,6 +25,7 @@ import {
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { readCollapsedSnippetFolders, writeCollapsedSnippetFolders } from "./snippetFolders";
 import { Tooltip } from "./Tooltip";
+import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
   snippets: Snippet[];
@@ -238,6 +239,7 @@ export const SnippetList = memo(function SnippetList({
   onRun,
 }: Props) {
   const t = useT();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [filter, setFilter] = useState("");
   const [showAllScopes, setShowAllScopes] = useState(false);
   // フォルダの開閉は localStorage に永続化し、再起動後も維持する (#677)。既定は
@@ -268,6 +270,8 @@ export const SnippetList = memo(function SnippetList({
       return false;
     });
   }, [scopeFiltered, filter]);
+
+  const searching = filter.trim() !== "";
 
   /** Snippets grouped by their `folder`. `null` key = no folder. */
   const grouped = useMemo(() => {
@@ -317,7 +321,14 @@ export const SnippetList = memo(function SnippetList({
       label: t("snippetMenuDelete"),
       danger: true,
       onSelect: () => {
-        if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s);
+        void confirm({
+          title: t("snippetDeleteConfirmTitle"),
+          message: t("snippetDeleteConfirm", { name: s.name }),
+          confirmLabel: t("snippetMenuDelete"),
+          tone: "danger",
+        }).then((ok) => {
+          if (ok) onDelete(s);
+        });
       },
     });
     setMenu({ x: e.clientX, y: e.clientY, items });
@@ -403,7 +414,10 @@ export const SnippetList = memo(function SnippetList({
             ? <AnimatePresence initial={false}>{visibleSnippets.map(renderSnippet)}</AnimatePresence>
             : grouped.map((g) => {
                 const key = g.name ?? "__unfiled__";
-                const folderOpen = expandedFolders[key] !== false;
+                // 検索中は一致を含むフォルダを強制的に開く (閉じたフォルダの一致が見えない
+                // と、見出しのバッジに件数だけ出て中身が空に見える, #1534)。保存している開閉
+                // 状態は変えないので、検索を消せば元の開閉に戻る。
+                const folderOpen = searching || expandedFolders[key] !== false;
                 const label = g.name ?? t("snippetFolderNone");
                 return (
                   <TreeNode key={key}>
@@ -430,12 +444,15 @@ export const SnippetList = memo(function SnippetList({
                       transitionDuration="var(--dur-fast)"
                       transitionTimingFunction="var(--ease)"
                       _hover={{ bg: "app.hover", color: "app.text" }}
-                      onClick={() =>
-                        setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
-                      }
+                      // 検索中は強制的に開いているので、開閉の操作は無視する (保存状態を変えない)。
+                      onClick={() => {
+                        if (searching) return;
+                        setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }));
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
+                          if (searching) return;
                           setExpandedFolders((prev) => ({
                             ...prev,
                             [key]: prev[key] === false ? true : false,
@@ -468,6 +485,7 @@ export const SnippetList = memo(function SnippetList({
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
+      {confirmDialog}
     </TreePane>
   );
 });

@@ -26,7 +26,7 @@
  * `onChange` を呼ばない — 入力中のテキストは内部 `draft` state にだけ反映し、
  * blur 時に確定されていなければ直前の `value` へ巻き戻す。
  */
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -63,6 +63,8 @@ export interface ComboSelectProps {
   css?: SystemStyleObject;
   /** 候補 0 件時に表示する文言 (i18n はこのコンポーネントでは持たないため props で受ける)。 */
   emptyText?: string;
+  /** 候補が `COMBO_MAX_VISIBLE` を超えたときの「さらに表示」ボタンの文言 (残り件数を受ける)。 */
+  showMoreText?: (hiddenCount: number) => string;
 }
 
 const MotionListbox = chakra(motion.div, {}, { forwardProps: ["transition"] });
@@ -72,6 +74,9 @@ const POPOVER_GAP = 4;
 
 /** これを超える候補数では、マウスのハイライトを state ではなく CSS の `:hover` で表す (#1321)。 */
 export const COMBO_CSS_HOVER_THRESHOLD = 50;
+
+/** 一度に描画する候補の上限。超えた分は「さらに表示」で展開する (2000 列のテーブルでも開く/入力のたびに全件を作らない)。 */
+export const COMBO_MAX_VISIBLE = 200;
 
 function optionElementId(listboxId: string, index: number): string {
   return `${listboxId}-opt-${index}`;
@@ -104,6 +109,7 @@ export function ComboSelect({
   freeSolo = true,
   css,
   emptyText,
+  showMoreText,
 }: ComboSelectProps) {
   const autoId = useId();
   const inputId = id ?? autoId;
@@ -126,29 +132,33 @@ export function ComboSelect({
 
   const displayValue = freeSolo ? value : draft;
 
-  const filtered = useMemo(() => {
+  const matches = useMemo(() => {
     const needle = displayValue.trim().toLowerCase();
     if (!needle) return options;
     return options.filter((o) => o.value.toLowerCase().includes(needle));
   }, [options, displayValue]);
+  // 件数上限。「さらに表示」で展開したら、入力が変わる / 閉じるまで全件を出す
+  // (畳むのは入力の onChange と閉じる処理の中で行う)。
+  const [expanded, setExpanded] = useState(false);
+  const filtered = useMemo(
+    () => (expanded || matches.length <= COMBO_MAX_VISIBLE ? matches : matches.slice(0, COMBO_MAX_VISIBLE)),
+    [matches, expanded],
+  );
+  const hiddenCount = matches.length - filtered.length;
+  // キーボードで辿れる行数。「さらに表示」行があれば末尾に 1 行足す。
+  const moreIndex = hiddenCount > 0 ? filtered.length : -1;
+  const navCount = filtered.length + (hiddenCount > 0 ? 1 : 0);
 
   // フィルタで候補数が減ってハイライトが範囲外になったら先頭 (0 件なら null) へ戻す。
   useEffect(() => {
     setHighlighted((prev) => {
       if (prev === null) return prev;
-      if (prev < filtered.length) return prev;
-      return filtered.length > 0 ? 0 : null;
+      if (prev < navCount) return prev;
+      return navCount > 0 ? 0 : null;
     });
-  }, [filtered.length]);
+  }, [navCount]);
 
-  // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
-  // (`ContextMenu` と同じ「測定 → フリップ → クランプ」の流れ)。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (filtered.length) の変化でポップオーバーを測り直すトリガ依存
-  useLayoutEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
+  const measure = useCallback(() => {
     const inputEl = inputRef.current;
     const listEl = listboxRef.current;
     if (!inputEl || !listEl) return;
@@ -170,8 +180,40 @@ export function ComboSelect({
       Math.max(anchor.left, MENU_MARGIN),
       Math.max(MENU_MARGIN, viewportW - anchor.width - MENU_MARGIN),
     );
-    setPos({ left, top, width: anchor.width });
-  }, [open, filtered.length]);
+    setPos((prev) =>
+      prev && prev.left === left && prev.top === top && prev.width === anchor.width
+        ? prev
+        : { left, top, width: anchor.width },
+    );
+  }, []);
+
+  // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
+  // (`ContextMenu` と同じ「測定 → フリップ → クランプ」の流れ)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (filtered.length) の変化でポップオーバーを測り直すトリガ依存
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    measure();
+  }, [open, filtered.length, measure]);
+
+  // 開いている間は、祖先のスクロールやウィンドウのリサイズにも追従させる (#1534)。
+  // scroll はバブリングしないので capture で拾う。候補リスト自身のスクロールでは
+  // 入力欄の位置は変わらないので無視する。
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && listboxRef.current?.contains(e.target)) return;
+      measure();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [open, measure]);
 
   // ハイライト移動時に、はみ出していればスクロールして見えるようにする。
   useEffect(() => {
@@ -191,12 +233,14 @@ export function ComboSelect({
     if (!freeSolo) setDraft(opt.value);
     onChange(opt.value);
     setOpen(false);
+    setExpanded(false);
     setHighlighted(null);
     inputRef.current?.focus();
   };
 
   const closeAndMaybeRevert = () => {
     setOpen(false);
+    setExpanded(false);
     setHighlighted(null);
     if (!freeSolo) setDraft(value);
   };
@@ -214,7 +258,9 @@ export function ComboSelect({
         aria-controls={listboxId}
         aria-autocomplete="list"
         aria-activedescendant={
-          activeOption ? optionElementId(listboxId, highlighted as number) : undefined
+          activeOption || (open && highlighted !== null && highlighted === moreIndex)
+            ? optionElementId(listboxId, highlighted as number)
+            : undefined
         }
         css={css}
         value={displayValue}
@@ -225,6 +271,7 @@ export function ComboSelect({
         onChange={(e) => {
           commitText(e.target.value);
           setOpen(true);
+          setExpanded(false);
           setHighlighted(null);
         }}
         onBlur={closeAndMaybeRevert}
@@ -235,18 +282,23 @@ export function ComboSelect({
             e.preventDefault();
             if (!open) {
               setOpen(true);
-              setHighlighted(filtered.length > 0 ? (e.key === "ArrowDown" ? 0 : filtered.length - 1) : null);
+              setHighlighted(navCount > 0 ? (e.key === "ArrowDown" ? 0 : navCount - 1) : null);
               return;
             }
-            if (filtered.length === 0) return;
+            if (navCount === 0) return;
             setHighlighted((prev) => {
-              const n = filtered.length;
+              const n = navCount;
               if (prev === null) return e.key === "ArrowDown" ? 0 : n - 1;
               return e.key === "ArrowDown" ? (prev + 1) % n : (prev - 1 + n) % n;
             });
             return;
           }
           if (e.key === "Enter") {
+            if (open && highlighted !== null && highlighted === moreIndex) {
+              e.preventDefault();
+              setExpanded(true);
+              return;
+            }
             if (activeOption) {
               e.preventDefault();
               selectOption(activeOption);
@@ -378,6 +430,32 @@ export function ComboSelect({
                   </chakra.button>
                 );
               })
+            )}
+            {hiddenCount > 0 && (
+              <chakra.button
+                id={optionElementId(listboxId, moreIndex)}
+                ref={(el: HTMLButtonElement | null) => {
+                  if (el) optionRefs.current.set(moreIndex, el);
+                  else optionRefs.current.delete(moreIndex);
+                }}
+                role="option"
+                aria-selected={false}
+                type="button"
+                display="block"
+                width="100%"
+                textAlign="left"
+                bg={highlighted === moreIndex ? "var(--bg-hover)" : "transparent"}
+                border="none"
+                px="2.5"
+                py="1.5"
+                fontSize="var(--text-sm)"
+                color="var(--text-muted)"
+                cursor="pointer"
+                _hover={{ bg: "var(--bg-hover)", color: "var(--text)" }}
+                onClick={() => setExpanded(true)}
+              >
+                {showMoreText ? showMoreText(hiddenCount) : `+${hiddenCount}`}
+              </chakra.button>
             )}
           </MotionListbox>,
           document.body,

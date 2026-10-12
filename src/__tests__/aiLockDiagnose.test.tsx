@@ -7,7 +7,7 @@ const hasAiApiKey = vi.fn().mockResolvedValue(true);
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
 const describeTable = vi.fn();
 const tableRowEstimate = vi.fn().mockResolvedValue(null);
-const getProcessQuery = vi.fn();
+const getProcessQueries = vi.fn();
 const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 });
 const unlisten = vi.fn();
 let handlers: import("../api/tauri").AiStreamHandlers | null = null;
@@ -26,7 +26,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       runAiRequest: (...a: unknown[]) => runAiRequest(...a),
       describeTable: (...a: unknown[]) => describeTable(...a),
       tableRowEstimate: (...a: unknown[]) => tableRowEstimate(...a),
-      getProcessQuery: (...a: unknown[]) => getProcessQuery(...a),
+      getProcessQueries: (...a: unknown[]) => getProcessQueries(...a),
       cancelStream: (...a: unknown[]) => cancelStream(...a),
     },
   };
@@ -97,8 +97,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetAiKeyStoreForTest();
   setAiKeyPresent(true);
-  getProcessQuery.mockImplementation(async (_s: string, id: number) =>
-    id === 1 ? "UPDATE orders SET note = 'top-secret-note' WHERE id = 5" : null,
+  getProcessQueries.mockImplementation(async (_s: string, ids: number[]) =>
+    ids.includes(1) ? { "1": "UPDATE orders SET note = 'top-secret-note' WHERE id = 5" } : {},
   );
   describeTable.mockResolvedValue([
     { name: "id", data_type: "int", nullable: false, key: "PRI", default: "DEFAULT_SENTINEL", extra: "", referenced_table: null, referenced_column: null },
