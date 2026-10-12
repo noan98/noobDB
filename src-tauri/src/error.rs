@@ -92,6 +92,51 @@ impl AppError {
         matches!(self, AppError::Sqlx(e) if sqlx_is_connection_lost(e))
     }
 
+    /// 同じ失敗を別の呼び出し元へ配るための複製 (キャッシュの single-flight で、
+    /// リーダーの失敗を待機者へ共有する #1530)。`AppError` は `Clone` できない
+    /// (`sqlx::Error` / `io::Error` / `serde_json::Error` を抱える) ので、文字列だけの
+    /// バリアントはそのまま、それ以外は `kind()` が保たれる最も近い形へ作り直す:
+    /// 接続断は `connectionLost` のまま、`Io` は `io` のまま、他の sqlx / serde は
+    /// メッセージを保った `Other`。
+    pub fn replicate(&self) -> AppError {
+        match self {
+            AppError::SessionNotFound(m) => AppError::SessionNotFound(m.clone()),
+            AppError::ProfileNotFound(m) => AppError::ProfileNotFound(m.clone()),
+            AppError::InvalidInput(m) => AppError::InvalidInput(m.clone()),
+            AppError::ReadOnly(m) => AppError::ReadOnly(m.clone()),
+            AppError::Timeout(s) => AppError::Timeout(*s),
+            AppError::ConnectTimeout { phase, secs } => AppError::ConnectTimeout {
+                phase: phase.clone(),
+                secs: *secs,
+            },
+            AppError::Ssh(m) => AppError::Ssh(m.clone()),
+            AppError::SshKey(m) => AppError::SshKey(m.clone()),
+            AppError::SshHostKeyMismatch {
+                host,
+                port,
+                expected,
+                actual,
+            } => AppError::SshHostKeyMismatch {
+                host: host.clone(),
+                port: *port,
+                expected: expected.clone(),
+                actual: actual.clone(),
+            },
+            AppError::Io(e) => AppError::Io(std::io::Error::new(e.kind(), e.to_string())),
+            AppError::Sqlx(_) if self.is_connection_lost() => AppError::Sqlx(sqlx::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::ConnectionAborted, self.to_string()),
+            )),
+            AppError::Sqlx(_) | AppError::Serde(_) => AppError::Other(self.to_string()),
+            AppError::Keyring(m) => AppError::Keyring(m.clone()),
+            AppError::ConfigDir => AppError::ConfigDir,
+            AppError::AiRefused(m) => AppError::AiRefused(m.clone()),
+            AppError::AiAuth(m) => AppError::AiAuth(m.clone()),
+            AppError::AiNetwork(m) => AppError::AiNetwork(m.clone()),
+            AppError::AiApi(m) => AppError::AiApi(m.clone()),
+            AppError::Other(m) => AppError::Other(m.clone()),
+        }
+    }
+
     /// A stable, machine-readable discriminant for this error, serialized
     /// alongside the human `message` (see the `Serialize` impl). The frontend
     /// classifies errors by this `kind` first and only falls back to fuzzy
@@ -249,6 +294,21 @@ mod tests {
         assert_eq!(AppError::AiNetwork("x".into()).kind(), "aiNetwork");
         assert_eq!(AppError::AiApi("x".into()).kind(), "aiApi");
         assert_eq!(AppError::Other("x".into()).kind(), "other");
+    }
+
+    #[test]
+    fn replicate_keeps_the_kind() {
+        let lost: AppError = sqlx::Error::PoolClosed.into();
+        assert_eq!(lost.replicate().kind(), "connectionLost");
+        assert!(lost.replicate().is_connection_lost());
+        assert_eq!(AppError::Timeout(3).replicate().kind(), "timeout");
+        assert_eq!(
+            AppError::InvalidInput("x".into()).replicate().to_string(),
+            "invalid input: x"
+        );
+        let other = AppError::Sqlx(sqlx::Error::RowNotFound);
+        assert_eq!(other.replicate().kind(), "other");
+        assert_eq!(other.replicate().to_string(), other.to_string());
     }
 
     #[test]

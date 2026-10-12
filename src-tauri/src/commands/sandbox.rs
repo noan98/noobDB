@@ -718,13 +718,30 @@ pub(crate) async fn sandbox_schema_diff_inner(
     if let Some(source_session_id) = source_session_id {
         if let Some(source) = state.get(&source_session_id).await {
             let db = record.source_database.clone().unwrap_or_default();
+            // 表ごとの往復 (N 回) を避け、DB 単位の一括取得 (#1255) を 1 回で済ませる。
+            // 一括取得に失敗したときだけ従来の表ごとの取得へ戻る (#1530)。
             let mut current_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
-            for t in &record.tables {
-                let cols = source.conn.columns(&db, t).await?;
-                current_tables.push(TableColumns {
-                    name: t.clone(),
-                    columns: cols,
-                });
+            match crate::commands::schema::fetch_columns_bulk(&source, &db).await {
+                Ok(all) => {
+                    let mut by_name: std::collections::HashMap<String, TableColumns> =
+                        all.into_iter().map(|t| (t.name.clone(), t)).collect();
+                    for t in &record.tables {
+                        // 一括結果に無い表 (外部で削除済みなど) は空の列として扱う。
+                        current_tables.push(by_name.remove(t).unwrap_or_else(|| TableColumns {
+                            name: t.clone(),
+                            columns: Vec::new(),
+                        }));
+                    }
+                }
+                Err(_) => {
+                    for t in &record.tables {
+                        let cols = source.conn.columns(&db, t).await?;
+                        current_tables.push(TableColumns {
+                            name: t.clone(),
+                            columns: cols,
+                        });
+                    }
+                }
             }
             let external = compute_schema_diff(
                 record.source_driver,

@@ -143,17 +143,35 @@ async fn run_env(
     }
 }
 
-fn report(session_id: &str, run: &EnvRun, diff: Option<BroadcastDiff>) -> BroadcastEnvReport {
+/// 環境の結果を値で受け取って報告に載せる。行データは move するので clone しない
+/// (環境数 × 最大行数のコピーを避ける #1530)。
+fn report(session_id: &str, run: EnvRun, diff: Option<BroadcastDiff>) -> BroadcastEnvReport {
     BroadcastEnvReport {
         session_id: session_id.to_string(),
         status: if run.error.is_some() { "error" } else { "done" },
-        columns: run.columns.clone(),
-        rows: run.rows.clone(),
+        columns: run.columns,
+        rows: run.rows,
         total_rows: run.total_rows,
         elapsed_ms: run.elapsed_ms,
-        error: run.error.clone(),
+        error: run.error,
         diff,
     }
+}
+
+/// 基準環境の報告。基準の結果は後続の環境との差分計算でも使うので、ここだけは複製する
+/// (複製は基準 1 環境ぶんで、環境数には比例しない)。
+fn report_baseline(session_id: &str, run: &EnvRun) -> BroadcastEnvReport {
+    report(
+        session_id,
+        EnvRun {
+            columns: run.columns.clone(),
+            rows: run.rows.clone(),
+            total_rows: run.total_rows,
+            elapsed_ms: run.elapsed_ms,
+            error: run.error.clone(),
+        },
+        None,
+    )
 }
 
 /// 環境の stream id (個別キャンセル用)。フロントも同じ規則で組み立てる。
@@ -304,20 +322,20 @@ async fn coordinate(
         let mut outgoing: Vec<BroadcastEnvReport> = Vec::new();
         if idx == 0 {
             if let Some(r) = &run {
-                outgoing.push(report(&sid, r, None));
+                outgoing.push(report_baseline(&sid, r));
             }
             baseline = Some(run);
             if let Some(base) = &baseline {
                 for (wsid, wrun) in waiting.drain(..) {
                     let diff = diff_for(base, &wrun);
-                    outgoing.push(report(&wsid, &wrun, diff));
+                    outgoing.push(report(&wsid, wrun, diff));
                 }
             }
         } else if let Some(r) = run {
             match &baseline {
                 Some(base) => {
                     let diff = diff_for(base, &r);
-                    outgoing.push(report(&sid, &r, diff));
+                    outgoing.push(report(&sid, r, diff));
                 }
                 None => waiting.push((sid, r)),
             }
