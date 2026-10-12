@@ -470,7 +470,7 @@ impl PostgresConn {
             };
 
         let (rows_affected, committed_result) = if commit {
-            let r = run_sql_on(&mut *tx, sql).await?;
+            let r = run_sql_on(&mut tx, sql).await?;
             (r.rows_affected, Some(r))
         } else {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))

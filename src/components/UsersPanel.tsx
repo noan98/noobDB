@@ -107,6 +107,8 @@ export function mergeCopiedPrivileges(
   return out;
 }
 
+const userKey = (u: DbUserInfo) => `${u.name}@@${u.host ?? ""}`;
+
 const thCss: SystemStyleObject = {
   position: "sticky",
   top: 0,
@@ -357,8 +359,6 @@ export function UsersPanel({
       setBusy(false);
     }
   }, [selected, database, rowKeys, original, edited, driver, confirm, t, sessionId, toast, loadPrivileges]);
-
-  const userKey = (u: DbUserInfo) => `${u.name}@@${u.host ?? ""}`;
 
   // 他ユーザの権限をコピー (#1536): コピー元の権限を読み、編集中のマトリクスへ反映する。
   // 反映後は通常の編集と同じく「変更を適用」→ SQL 全文プレビュー → 適用の経路に乗る。
