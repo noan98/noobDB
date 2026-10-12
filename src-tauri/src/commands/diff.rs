@@ -253,7 +253,7 @@ fn keyset_select_sql(
     format!("SELECT {cols} FROM {table}{where_clause} ORDER BY {order} LIMIT {limit}")
 }
 
-/// 相手側に同じ主キーの行が 1 件でもあるか (主キー等価検索。`LIMIT 1`)。
+/// 相手側に同じ主キーの行が 1 件でもあるか (主キー等価検索。`LIMIT 1`)。見つかった行のキーを返す。
 /// 照合順序が違う 2 つの DB では「ORDER BY の窓」で両側の同じ行が食い違い、片側だけの
 /// 行に見えることがある。その行が実際は相手側にあるかを、相手側自身の等価比較で確かめる。
 async fn any_key_exists(
@@ -263,7 +263,7 @@ async fn any_key_exists(
     primary_key: &[String],
     pk_types: &[String],
     keys: &[&Vec<Value>],
-) -> Result<bool> {
+) -> Result<Option<Vec<Value>>> {
     let driver = conn.driver_kind();
     let cols = primary_key
         .iter()
@@ -290,19 +290,20 @@ async fn any_key_exists(
             "SELECT {cols} FROM {table} WHERE {} LIMIT 1",
             terms.join(" OR ")
         );
-        if !conn.execute(&sql, Some(db)).await?.rows.is_empty() {
-            return Ok(true);
+        if let Some(found) = conn.execute(&sql, Some(db)).await?.rows.into_iter().next() {
+            return Ok(Some(found));
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
-fn collation_mismatch_error() -> AppError {
-    AppError::InvalidInput(
-        "the two sides order or compare the primary key differently (collation mismatch), \
-         so the table cannot be compared in full; align the key collation on both sides"
-            .into(),
-    )
+fn collation_mismatch_error(example: &[Value]) -> AppError {
+    AppError::InvalidInput(format!(
+        "the table cannot be compared in full: a primary key value is equal under the database's \
+         collation but differs byte-for-byte (case, trailing spaces, ...), or the two sides use \
+         different collations for the key. Example key: {example:?}. \
+         Align the key collation on both sides"
+    ))
 }
 
 /// 片側だけにあると判定された行が、相手側に主キー等価で実在しないことを確かめる
@@ -314,6 +315,7 @@ async fn verify_one_sided(
     primary_key: &[String],
     pk_types: &[String],
     rows: &[RowDiff],
+    seen_target_only: &mut std::collections::HashSet<String>,
 ) -> Result<()> {
     use crate::db::data_diff::RowStatus;
     let target_only: Vec<&Vec<Value>> = rows
@@ -326,8 +328,19 @@ async fn verify_one_sided(
         .filter(|r| r.status == RowStatus::SourceOnly)
         .map(|r| &r.key)
         .collect();
-    if !target_only.is_empty()
-        && any_key_exists(
+    // 同じ target 行が 2 つの窓で TargetOnly になる = 両側の順序が食い違っている。
+    // 保持数は差分の上限で頭打ちにする (上限に達すれば比較は打ち切られる)。
+    for k in &target_only {
+        let sig = format!("{k:?}");
+        if seen_target_only.contains(&sig) {
+            return Err(collation_mismatch_error(k));
+        }
+        if seen_target_only.len() < KEYSET_MAX_DIFF_ROWS {
+            seen_target_only.insert(sig);
+        }
+    }
+    if !target_only.is_empty() {
+        if let Some(found) = any_key_exists(
             source.0,
             source.1,
             table,
@@ -336,11 +349,12 @@ async fn verify_one_sided(
             &target_only,
         )
         .await?
-    {
-        return Err(collation_mismatch_error());
+        {
+            return Err(collation_mismatch_error(&found));
+        }
     }
-    if !source_only.is_empty()
-        && any_key_exists(
+    if !source_only.is_empty() {
+        if let Some(found) = any_key_exists(
             target.0,
             target.1,
             table,
@@ -349,8 +363,9 @@ async fn verify_one_sided(
             &source_only,
         )
         .await?
-    {
-        return Err(collation_mismatch_error());
+        {
+            return Err(collation_mismatch_error(&found));
+        }
     }
     Ok(())
 }
@@ -459,10 +474,6 @@ async fn keyset_compare(
             for r in &page {
                 let k = key_of(r);
                 check_key(&k)?;
-                // 同じ target 行が 2 つの窓に現れる = 両側の順序 (照合順序) が食い違っている。
-                if !seen_target.insert(format!("{k:?}")) {
-                    return Err(collation_mismatch_error());
-                }
             }
             if let Some(last) = page.last() {
                 cursor = Some(key_of(last));
@@ -494,6 +505,7 @@ async fn keyset_compare(
             primary_key,
             &pk_types,
             &window_rows,
+            &mut seen_target,
         )
         .await?;
         out.rows.extend(window_rows);
@@ -529,9 +541,6 @@ async fn keyset_compare(
         for r in &page {
             let k = key_of(r);
             check_key(&k)?;
-            if !seen_target.insert(format!("{k:?}")) {
-                return Err(collation_mismatch_error());
-            }
         }
         let last_key = key_of(&page[n - 1]);
         out.target_count += n;
@@ -543,6 +552,7 @@ async fn keyset_compare(
             primary_key,
             &pk_types,
             &tail_rows,
+            &mut seen_target,
         )
         .await?;
         out.rows.extend(tail_rows);

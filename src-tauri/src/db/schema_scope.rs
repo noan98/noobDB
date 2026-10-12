@@ -182,18 +182,27 @@ const UNSCOPED_WORDS: &[&str] = &[
 pub fn changes_default_namespace(driver: DriverKind, sql: &str) -> bool {
     match lex(driver, sql) {
         Some(toks) => match toks.first() {
-            Some(t) if t.is_kw("use") => true,
-            Some(t) if t.is_kw("set") => toks[1..]
-                .iter()
-                .any(|t| t.is_kw("search_path") || t.is_kw("schema") || t.is_kw("current_schema")),
-            _ => false,
+            Some(t) if t.is_kw("use") || t.is_kw("reset") || t.is_kw("discard") => true,
+            Some(t) if t.is_kw("set") => toks[1..].iter().any(|t| {
+                t.is_kw("search_path")
+                    || t.is_kw("schema")
+                    || t.is_kw("current_schema")
+                    || t.is_kw("role")
+            }),
+            // `SELECT set_config('search_path', ...)` など。
+            Some(_) => toks.iter().any(|t| t.is_kw("set_config")),
+            None => false,
         },
         None => {
             let l = sql.trim_start().to_ascii_lowercase();
             l.starts_with("use ")
                 || l.starts_with("use\t")
                 || l.starts_with("use\n")
-                || (l.starts_with("set") && (l.contains("search_path") || l.contains("schema")))
+                || l.starts_with("reset")
+                || l.starts_with("discard")
+                || l.contains("set_config")
+                || (l.starts_with("set")
+                    && (l.contains("search_path") || l.contains("schema") || l.contains("role")))
         }
     }
 }
@@ -273,6 +282,14 @@ mod tests {
             "set local search_path = s2, public"
         ));
         assert!(changes_default_namespace(Postgres, "SET SCHEMA 's2'"));
+        assert!(changes_default_namespace(Postgres, "RESET search_path"));
+        assert!(changes_default_namespace(Postgres, "RESET ALL"));
+        assert!(changes_default_namespace(Postgres, "DISCARD ALL"));
+        assert!(changes_default_namespace(Postgres, "SET ROLE other"));
+        assert!(changes_default_namespace(
+            Postgres,
+            "SELECT set_config('search_path', 's2', false)"
+        ));
         assert!(!changes_default_namespace(Postgres, "SELECT 1"));
         assert!(!changes_default_namespace(Mysql, "ALTER TABLE a ADD c INT"));
     }

@@ -508,7 +508,20 @@ fn overview_error_is_retryable(e: &AppError) -> bool {
             | AppError::Ssh(_)
             | AppError::Io(_)
     ) || e.is_connection_lost()
+        || is_interrupt_error(e)
         || e.to_string().to_ascii_lowercase().contains("cancel"))
+}
+
+/// サーバ側のクエリ中断: PostgreSQL の SQLSTATE 57014 (query_canceled)、MySQL の 1317
+/// (ER_QUERY_INTERRUPTED) / 3024 (ER_QUERY_TIMEOUT)、文字列 "interrupted"。
+fn is_interrupt_error(e: &AppError) -> bool {
+    if let AppError::Sqlx(sqlx::Error::Database(db)) = e {
+        let code = db.code();
+        if matches!(code.as_deref(), Some("57014" | "1317" | "3024")) {
+            return true;
+        }
+    }
+    e.to_string().to_ascii_lowercase().contains("interrupted")
 }
 
 /// 全列の概要を 1 本で返す集計 SQL。列の並びは `total, [non_null, [distinct,] [min, max]]...`
@@ -886,6 +899,20 @@ fn mark_skipped(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn interrupts_and_timeouts_are_not_retried_per_column() {
+        assert!(!overview_error_is_retryable(&AppError::Timeout(5)));
+        assert!(!overview_error_is_retryable(&AppError::Other(
+            "Query execution was interrupted".into()
+        )));
+        assert!(!overview_error_is_retryable(&AppError::Other(
+            "canceling statement due to user request".into()
+        )));
+        assert!(overview_error_is_retryable(&AppError::InvalidInput(
+            "unsupported aggregate".into()
+        )));
+    }
+
     use super::*;
     use crate::db::is_read_only_sql_for;
 
