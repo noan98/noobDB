@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen } from "./testUtils";
+import { fireEvent, renderWithProviders, screen } from "./testUtils";
+import { Modal, ModalBody } from "../components/Modal";
 import {
   clampDraftInt,
   DraftNumberInput,
@@ -59,9 +60,23 @@ describe("DraftNumberInput (#1534)", () => {
 
     await user.clear(input);
     expect(input.value).toBe("");
+    expect(onCommit).not.toHaveBeenCalled();
     await user.type(input, "27");
     expect(input.value).toBe("27");
+    // 範囲内の値はその場で確定される (途中の "2" も含む)。
+    expect(onCommit).toHaveBeenLastCalledWith(27);
+  });
+
+  it("範囲外の途中入力は確定せず、範囲に入った時点で確定する", async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    renderWithProviders(<Harness onCommit={onCommit} initial={5} min={4} max={64} />);
+    const input = screen.getByLabelText("件数");
+    await user.clear(input);
+    await user.type(input, "1");
     expect(onCommit).not.toHaveBeenCalled();
+    await user.type(input, "2");
+    expect(onCommit).toHaveBeenCalledWith(12);
   });
 
   it("blur で確定し、上限を超えた値は clamp 後の値が欄に戻る", async () => {
@@ -96,5 +111,28 @@ describe("DraftNumberInput (#1534)", () => {
     await user.tab();
     expect(onCommit).not.toHaveBeenCalled();
     expect(input.value).toBe("9");
+  });
+});
+
+describe("DraftNumberInput と Modal の Cmd/Ctrl+Enter (#1534)", () => {
+  it("欄にフォーカスしたまま送信しても、入力した新しい値で onSubmit が走る", async () => {
+    const user = userEvent.setup();
+    const submitted = vi.fn();
+    function Form() {
+      const [n, setN] = useState(5);
+      return (
+        <Modal onClose={() => {}} onSubmit={() => submitted(n)}>
+          <ModalBody>
+            <DraftNumberInput aria-label="件数" value={n} min={1} max={100} onCommit={setN} />
+          </ModalBody>
+        </Modal>
+      );
+    }
+    renderWithProviders(<Form />);
+    const input = screen.getByLabelText("件数");
+    await user.clear(input);
+    await user.type(input, "42");
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(submitted).toHaveBeenCalledWith(42);
   });
 });

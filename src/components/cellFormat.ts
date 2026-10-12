@@ -21,7 +21,14 @@
 export const JSON_COMPACT_MAX_CHARS = 100_000;
 /** 整形結果 (失敗 = `null` も含む) を覚えておく件数。仮想化グリッドの可視セル数より十分大きく。 */
 const JSON_COMPACT_CACHE_SIZE = 500;
+/** これより短い値は parse が安いのでキャッシュしない (キャッシュの出入りの方が高くつく)。 */
+const JSON_COMPACT_CACHE_MIN_CHARS = 1_000;
+/** キャッシュが抱える入力文字数の合計上限 (キー + 結果)。大きな値で常駐メモリが膨らまないように。 */
+const JSON_COMPACT_CACHE_MAX_TOTAL_CHARS = 2_000_000;
 const jsonCompactCache = new Map<string, string | null>();
+let jsonCompactCacheChars = 0;
+
+const cacheCost = (key: string, value: string | null) => key.length + (value?.length ?? 0);
 
 /**
  * JSON 文字列を 1 行のコンパクト表現に正規化する (グリッド内のインライン表示用)。
@@ -32,6 +39,7 @@ const jsonCompactCache = new Map<string, string | null>();
  */
 export function formatJsonCompact(s: string): string | null {
   if (s.length > JSON_COMPACT_MAX_CHARS) return null;
+  if (s.length < JSON_COMPACT_CACHE_MIN_CHARS) return compactJson(s);
   const cached = jsonCompactCache.get(s);
   if (cached !== undefined) {
     // 参照順を更新して LRU にする。
@@ -41,9 +49,16 @@ export function formatJsonCompact(s: string): string | null {
   }
   const out = compactJson(s);
   jsonCompactCache.set(s, out);
-  if (jsonCompactCache.size > JSON_COMPACT_CACHE_SIZE) {
-    const oldest = jsonCompactCache.keys().next();
-    if (!oldest.done) jsonCompactCache.delete(oldest.value);
+  jsonCompactCacheChars += cacheCost(s, out);
+  while (
+    jsonCompactCache.size > JSON_COMPACT_CACHE_SIZE ||
+    (jsonCompactCacheChars > JSON_COMPACT_CACHE_MAX_TOTAL_CHARS && jsonCompactCache.size > 1)
+  ) {
+    const oldest = jsonCompactCache.entries().next();
+    if (oldest.done) break;
+    const [key, value] = oldest.value;
+    jsonCompactCache.delete(key);
+    jsonCompactCacheChars -= cacheCost(key, value);
   }
   return out;
 }

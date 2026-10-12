@@ -742,8 +742,6 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       n <= MAX_FLIGHT_RECORDER_ROW_CAP
     ) {
       setFlightRecorderRowCap(n);
-    } else {
-      setFlightRowCapInput(String(settings.flightRecorderRowCap));
     }
     setFlightRowCapInput(String(getSettings().flightRecorderRowCap));
   };
@@ -755,8 +753,6 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS
     ) {
       setFlightRecorderRetentionDays(n);
-    } else {
-      setFlightRetentionInput(String(settings.flightRecorderRetentionDays));
     }
     setFlightRetentionInput(String(getSettings().flightRecorderRetentionDays));
   };
@@ -768,8 +764,6 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       n <= MAX_TIMELAPSE_MAX_GENERATIONS
     ) {
       setTimelapseMaxGenerations(n);
-    } else {
-      setTimelapseGenInput(String(settings.timelapseMaxGenerations));
     }
     setTimelapseGenInput(String(getSettings().timelapseMaxGenerations));
   };

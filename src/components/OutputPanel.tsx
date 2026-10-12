@@ -210,9 +210,18 @@ function OutputRow({
             </CodePreview>
           )}
           <Flex gap="2">
-            <Button type="button" size="sm" variant="secondary" onClick={() => onOpenSql(entry.sql)}>
-              {t("outputOpenInEditor")}
-            </Button>
+            {/* 切り詰めた断片を開くと、欠けた DML をそのまま実行できてしまうので無効にする。 */}
+            <Tooltip label={truncated ? t("outputOpenTruncatedDisabled") : undefined} focusableWrapper={truncated}>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={truncated}
+                onClick={() => onOpenSql(entry.sql)}
+              >
+                {t("outputOpenInEditor")}
+              </Button>
+            </Tooltip>
             <Tooltip label={t("outputCopySql")}>
               <Button
                 type="button"

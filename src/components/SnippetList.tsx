@@ -444,12 +444,15 @@ export const SnippetList = memo(function SnippetList({
                       transitionDuration="var(--dur-fast)"
                       transitionTimingFunction="var(--ease)"
                       _hover={{ bg: "app.hover", color: "app.text" }}
-                      onClick={() =>
-                        setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
-                      }
+                      // 検索中は強制的に開いているので、開閉の操作は無視する (保存状態を変えない)。
+                      onClick={() => {
+                        if (searching) return;
+                        setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }));
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
+                          if (searching) return;
                           setExpandedFolders((prev) => ({
                             ...prev,
                             [key]: prev[key] === false ? true : false,

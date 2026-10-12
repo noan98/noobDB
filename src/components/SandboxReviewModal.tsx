@@ -368,7 +368,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                 (semanticColors 経由、#664) を `SchemaCompareView` と共有し、状態色を
                 二重管理しない (#1008)。左端の 3px スパインも同ビューのテーブル/
                 カラム差分行と同じ手法。 */}
-            <chakra.ul margin="var(--space-1) 0 0" paddingLeft="0" listStyleType="none" display="flex" flexDirection="column" gap="1">
+            <chakra.ul mt="1" mx="0" mb="0" paddingLeft="0" listStyleType="none" display="flex" flexDirection="column" gap="1">
               {schema.desired.tables
                 .filter((tb) => tb.status !== "same")
                 .map((tb) => {

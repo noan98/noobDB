@@ -171,6 +171,55 @@ describe("ResultGrid の機微カラム表示マスク (#1069)", () => {
     expect(dataCells(container)[0][2].textContent).toBe(MASK_PLACEHOLDER);
   });
 
+  it("行が動いて追従しても、一時表示の期限は延びない (#1534)", async () => {
+    const { container, rerender } = renderWithProviders(
+      <ResultGrid result={RESULT} editable tableColumns={TABLE_COLUMNS} />,
+    );
+    fireEvent.contextMenu(dataCells(container)[1][2]);
+    const item = await screen.findByRole("menuitem", {
+      name: t("gridMaskRevealCell", { secs: REVEAL_TIMEOUT_MS / 1000 }),
+    });
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(item);
+    });
+    act(() => void vi.advanceTimersByTime(REVEAL_TIMEOUT_MS - 10_000));
+    rerender(
+      <ResultGrid
+        result={makeResult(COLUMNS, [
+          [0, "zed", "zed@example.com"],
+          [1, "alice", "alice@example.com"],
+          [2, "bob", "bob@example.com"],
+        ])}
+        editable
+        tableColumns={TABLE_COLUMNS}
+      />,
+    );
+    expect(dataCells(container)[2][2].textContent).toBe("bob@example.com");
+    // 追従で張り直されていれば、元の期限を過ぎても実値のまま残ってしまう。
+    act(() => void vi.advanceTimersByTime(10_000));
+    expect(dataCells(container)[2][2].textContent).toBe(MASK_PLACEHOLDER);
+  });
+
+  it("主キー以外の識別戦略 (all_columns) では、rows が変わったら一時表示を解除する (#1534)", async () => {
+    const identity = { strategy: "all_columns" as const, hidden_column: null };
+    const { container, rerender } = renderWithProviders(
+      <ResultGrid result={RESULT} editable rowIdentity={identity} />,
+    );
+    fireEvent.contextMenu(dataCells(container)[1][2]);
+    const item = await screen.findByRole("menuitem", {
+      name: t("gridMaskRevealCell", { secs: REVEAL_TIMEOUT_MS / 1000 }),
+    });
+    await act(async () => {
+      fireEvent.click(item);
+    });
+    expect(dataCells(container)[1][2].textContent).toBe("bob@example.com");
+    rerender(
+      <ResultGrid result={makeResult(COLUMNS, [...RESULT.rows.map((r) => [...r])])} editable rowIdentity={identity} />,
+    );
+    expect(dataCells(container)[1][2].textContent).toBe(MASK_PLACEHOLDER);
+  });
+
   it("列の一時表示はウィンドウのフォーカス喪失で再マスクする", async () => {
     const { container } = renderWithProviders(<ResultGrid result={RESULT} />);
     fireEvent.contextMenu(dataCells(container)[1][2]);

@@ -38,6 +38,10 @@ describe("SnippetList 検索中のフォルダ展開 (#1534)", () => {
     await user.type(screen.getByPlaceholderText(t("snippetSearchPlaceholder")), "report");
     expect(screen.getByRole("treeitem", { name: /reports/ })).toHaveAttribute("aria-expanded", "true");
 
+    // 検索中は見出しを押しても閉じない (保存状態も変わらない)。
+    await user.click(screen.getByRole("treeitem", { name: /reports/ }));
+    expect(screen.getByRole("treeitem", { name: /reports/ })).toHaveAttribute("aria-expanded", "true");
+
     // 検索を消せば、保存している開閉状態 (閉じている) に戻る。
     await user.clear(screen.getByPlaceholderText(t("snippetSearchPlaceholder")));
     expect(screen.getByRole("treeitem", { name: /reports/ })).toHaveAttribute("aria-expanded", "false");

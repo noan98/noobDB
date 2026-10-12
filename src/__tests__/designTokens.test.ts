@@ -113,9 +113,9 @@ describe("design tokens: 余白 (spacing)", () => {
    * 負のマージンで 1px の罫線を重ねる・固定幅のヒット領域を食い込ませる補正
    * (`marginBottom="-1px"` / Splitter の `marginX="-3px"`)。相手が px 固定の幾何
    * (ヘアライン・ハンドル幅) なので、トークン (フォント拡大に追従) にすると逆にズレる。
-   * 長い綴りの `margin*` に限って許可する。
+   * 単一値の `"-1px"`〜`"-4px"` の `margin*` に限って許可する。
    */
-  const isHairlineOffset = (text: string) => /^margin\w*=\{?[^"]*"-[0-9.]+px/.test(text);
+  const isHairlineOffset = (text: string) => /^margin\w*=\{?[^"]*"-[1-4]px"?$/.test(text);
 
   const HINT =
     "余白は App.css の --space-* (theme.ts の spacing トークン) を使う。" +

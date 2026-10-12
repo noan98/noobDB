@@ -120,3 +120,17 @@ describe("SettingsView info icons", () => {
     expect(info.getAttribute("aria-describedby")).toBe(tip.id);
   });
 });
+
+describe("SettingsView の数値欄 (#1534)", () => {
+  it("上限を超えた値を入力して blur すると、clamp 後の値が欄に戻る", async () => {
+    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
+    const input = (await screen.findByLabelText(t("settingsFontSize"))) as HTMLInputElement;
+    // 上限 (24) にしてから、さらに大きい値を入れる。
+    fireEvent.change(input, { target: { value: "24" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(input.value).toBe("24"));
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(input.value).toBe("24"));
+  });
+});

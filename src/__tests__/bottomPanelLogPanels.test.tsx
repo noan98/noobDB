@@ -94,6 +94,8 @@ describe("OutputPanel", () => {
     const rows = screen.getAllByRole("button", { expanded: false });
     fireEvent.click(rows[1]);
     expect(screen.getByText(/4000/)).toBeInTheDocument();
+    // 切り詰めた断片は、実行できる状態でエディタに開かせない。
+    expect(screen.getByRole("button", { name: t("outputOpenInEditor") })).toBeDisabled();
   });
 
   it("クリアで空になる", () => {

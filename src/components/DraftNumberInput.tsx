@@ -32,14 +32,17 @@ interface Props extends InputProps {
 }
 
 /**
- * 数値入力欄 (#1534)。入力中の文字列はローカル state に保持し、確定 (blur /
- * Enter) のときだけ整数化 → clamp → `onCommit` する。
+ * 数値入力欄 (#1534)。入力中の文字列はローカル state (draft) に保持する。
  *
- * 1 打鍵ごとに clamp / 既定値化すると、空欄にした瞬間に値が戻って打ち直した数字が
- * 連結される (「5」→「27」→「5000300」) ので、数値入力はこの部品に揃える。
- * 入力が空・不正のときは何も書き込まず、確定済みの値の表示へ戻す。確定後は常に
- * `value` の表示へ戻すので、親側で clamp されて値が変わらなかった場合も、欄が
- * 入力途中の値 (例: 上限超過の 30) のまま残らない。
+ * - 入力が整数として読め、`min`〜`max` の範囲内なら**その場で** `onCommit` する。Modal 内で
+ *   欄にフォーカスしたまま Cmd/Ctrl+Enter を押しても、blur の setState 反映前の古い値で
+ *   送信されないようにするため。
+ * - 空欄・不正・範囲外のあいだは確定せず draft を保持する (空欄にした瞬間に既定値へ
+ *   戻って、打ち直した数字が連結する「5」→「27」→「5000300」を防ぐ)。blur / Enter で
+ *   整数化 → clamp して確定し、空・不正なら確定済みの値の表示へ戻す。
+ * - draft がある間は、入力中に `value` が外から変わっても draft の表示を優先する
+ *   (打鍵の途中で欄が書き換わらない)。確定 (blur / Enter) 後は常に `value` の表示へ戻るので、
+ *   親側で値が変わらなかった場合も、欄が上限超過の入力値のまま残らない。
  */
 export function DraftNumberInput({ value, onCommit, min, max, onBlur, onKeyDown, ...rest }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -59,7 +62,12 @@ export function DraftNumberInput({ value, onCommit, min, max, onBlur, onKeyDown,
       min={min}
       max={max}
       value={draft ?? String(value)}
-      onChange={(e) => setDraft(e.target.value)}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const parsed = parseDraftInt(raw);
+        if (parsed !== null && clampDraftInt(parsed, min, max) === parsed) onCommit(parsed);
+      }}
       onBlur={(e) => {
         commit();
         onBlur?.(e);

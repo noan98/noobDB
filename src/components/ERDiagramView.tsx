@@ -666,16 +666,16 @@ function ERDiagramInner({
         </Tooltip>
       </chakra.header>
 
-      <chakra.p margin={0} padding="var(--space-2) var(--space-6) 0" fontSize="sm" color="app.textMuted">
+      <chakra.p margin={0} pt="2" px="6" pb="0" fontSize="sm" color="app.textMuted">
         {t("erDiagramDesc")}
       </chakra.p>
       {truncated && (
-        <chakra.p margin={0} padding="var(--space-1-5) var(--space-6) 0" fontSize="sm" color={semanticColorToken("warning", "text")}>
+        <chakra.p margin={0} pt="1.5" px="6" pb="0" fontSize="sm" color={semanticColorToken("warning", "text")}>
           {t("erDiagramTruncated", { shown: summary!.shown, total: summary!.total })}
         </chakra.p>
       )}
 
-      <Box ref={flowWrapRef} flex="1" position="relative" minHeight={0} margin="var(--space-3) 0 0">
+      <Box ref={flowWrapRef} flex="1" position="relative" minHeight={0} mt="3" mx="0" mb="0">
         {loading ? (
           <Box position="absolute" inset={0} display="flex" alignItems="center" justifyContent="center" gap="3" color="app.textMuted">
             <Spinner size={18} />

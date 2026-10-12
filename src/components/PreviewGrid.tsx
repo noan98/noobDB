@@ -423,7 +423,7 @@ export function PreviewGrid({
               overflow="hidden"
             >
               <chakra.header
-                padding="var(--space-1-25) var(--space-2-5)"
+                py="1.25" px="2.5"
                 textStyle="overline"
                 bg="app.header"
                 borderBottom="1px solid"
@@ -459,7 +459,7 @@ export function PreviewGrid({
               overflow="hidden"
             >
               <chakra.header
-                padding="var(--space-1-25) var(--space-2-5)"
+                py="1.25" px="2.5"
                 textStyle="overline"
                 color="app.textSuccess"
                 bg="app.header"

@@ -45,9 +45,16 @@ describe("formatJsonCompact", () => {
     }
   });
 
+  it("合計文字数の上限を超えるほど大きな値を続けても、結果は正しい", () => {
+    const body = (i: number) => `{ "k": [${"1, ".repeat(30_000)}${i}] }`;
+    for (let i = 0; i < 40; i++) expect(formatJsonCompact(body(i))).not.toBeNull();
+    expect(formatJsonCompact(body(0))).toBe(JSON.stringify(JSON.parse(body(0))));
+  });
+
   it("キャッシュ件数を超えて押し出された値も、再計算して同じ結果を返す", () => {
-    for (let i = 0; i < 600; i++) formatJsonCompact(`{ "n": ${i} }`);
-    expect(formatJsonCompact('{ "n": 0 }')).toBe('{"n":0}');
+    const pad = " ".repeat(1_100);
+    for (let i = 0; i < 600; i++) formatJsonCompact(`{ "n": ${i}${pad}}`);
+    expect(formatJsonCompact(`{ "n": 0${pad}}`)).toBe('{"n":0}');
   });
 });
 
