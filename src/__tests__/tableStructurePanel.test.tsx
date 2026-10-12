@@ -15,6 +15,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       describeTable: vi.fn(),
       listIndexes: vi.fn(),
+      getObjectDefinition: vi.fn(),
     },
   };
 });
@@ -81,6 +82,33 @@ describe("TableStructurePanel (#1112)", () => {
     expect(refs).toHaveLength(2);
     fireEvent.click(refs[1]);
     expect(onSelectTable).toHaveBeenCalledWith({ database: "app", table: "users" });
+  });
+
+  it("DDL は「DDL を表示」を押すまで取得せず、押すと CREATE TABLE を読み取り専用で表示する (#1540)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValueOnce([]);
+    vi.mocked(api.getObjectDefinition).mockResolvedValueOnce("CREATE TABLE `orders` (`id` int)");
+    renderPanel();
+
+    const show = await screen.findByRole("button", { name: t("structureDdlShow") });
+    expect(api.getObjectDefinition).not.toHaveBeenCalled();
+    fireEvent.click(show);
+    expect(await screen.findByText("CREATE TABLE `orders` (`id` int)")).toBeInTheDocument();
+    expect(api.getObjectDefinition).toHaveBeenCalledWith("s1", "app", "table", "orders", null);
+    expect(screen.getByRole("button", { name: t("structureDdlCopy") })).toBeInTheDocument();
+    // MySQL はネイティブ出力なので「再構成」の注記は出さない。
+    expect(screen.queryByText(t("tableDdlSynthesizedHint"))).not.toBeInTheDocument();
+  });
+
+  it("DDL の取得に失敗したらエラーを出し、再度試せる (#1540)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValueOnce([]);
+    vi.mocked(api.getObjectDefinition).mockRejectedValueOnce(new Error("no privilege"));
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: t("structureDdlShow") }));
+    expect(await screen.findByText(/no privilege/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("structureDdlShow") })).toBeInTheDocument();
   });
 
   it("インデックス / 外部キーが無いときはその旨を出す", async () => {
