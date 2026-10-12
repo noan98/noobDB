@@ -2043,6 +2043,17 @@ export interface TransferRequest {
   mode: TransferMode;
   batchSize?: number | null;
 }
+export type TransferLossyKind = "decimal_clamped" | "decimal_float" | "timestamp_tz_degraded";
+export interface TransferLossyConversion {
+  column: string;
+  kind: TransferLossyKind;
+  sourceType: string;
+  targetType: string;
+}
+export interface TransferPreview {
+  columns: { name: string; sourceType: string; targetType: string }[];
+  lossy: TransferLossyConversion[];
+}
 export interface TransferProgressEvent {
   streamId: string;
   rows: number;

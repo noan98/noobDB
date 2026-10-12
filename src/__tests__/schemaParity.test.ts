@@ -71,6 +71,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["logView", schemas.logView],
   ["csvPreview", schemas.csvPreview],
   ["cellBlobProbe", schemas.cellBlobProbe],
+  ["transferPreview", schemas.transferPreview],
   ["connectResult", schemas.connectResult],
   ["localTableMeta", schemas.localTableMeta],
   ["profileImportResult", schemas.profileImportResult],

@@ -169,9 +169,9 @@ pub mod __test_api {
 
     // 接続間データ転送 (#986)。Tauri を介さずに統合テストから駆動するコア。
     pub use crate::commands::transfer::{
-        transfer_data_inner, TransferColumnInfo, TransferOutcome, TransferRequest,
+        transfer_data_inner, TransferColumnInfo, TransferOutcome, TransferPreview, TransferRequest,
     };
-    pub use crate::db::transfer::TransferMode;
+    pub use crate::db::transfer::{LossyConversion, LossyKind, TransferMode};
 
     // IPC レスポンス型の serde ゴールデン網羅 (#1243)。`#[tauri::command]` の戻り値型を
     // `serde_schema_parity.rs` のフィクスチャへ載せるための追加の再エクスポート
@@ -1310,6 +1310,7 @@ pub fn run() {
             commands::ai::test_ai_connection,
             commands::script::run_sql_batch,
             commands::transfer::transfer_data,
+            commands::transfer::preview_transfer,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::cell_blob::fetch_cell_bytes,

@@ -1312,6 +1312,19 @@ export const importDoneEvent = z.object({
   skippedTotal: z.number().default(0),
 });
 
+/** 転送前プレビュー (#1532)。 */
+export const transferPreview = z.object({
+  columns: z.array(z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() })),
+  lossy: z.array(
+    z.object({
+      column: z.string(),
+      kind: z.enum(["decimal_clamped", "decimal_float", "timestamp_tz_degraded"]),
+      sourceType: z.string(),
+      targetType: z.string(),
+    }),
+  ),
+});
+
 /** BLOB セルの probe 結果 (#1258)。 */
 export const cellBlobProbe = z.object({
   size: z.number(),

@@ -444,6 +444,10 @@ BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ�
 `transfer-stream:*` イベント、`cancel_stream` で中断。ターゲットの `read_only` は
 バックエンドで拒否する。
 
+`preview_transfer` — 転送前プレビュー (#1532)。ソースの先頭バッチだけ読んで打ち切り、転送先の
+列定義と、値や型が縮退する列 (`lossy`: decimal の桁丸め・TIMESTAMPTZ の縮退など) を返す。
+書き込み・DDL はしない。
+
 ## Schema Cache (`commands/schema.rs`, #1097)
 
 `refresh_schema_cache` — セッション単位の Schema Cache (`cache::SchemaCache`) を
