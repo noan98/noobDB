@@ -118,7 +118,8 @@ export function ColumnProfileCompareModal({
 
   const run = async () => {
     if (selected.size === 0 || running) return;
-    const prod = targets.filter((c) => c.profile.is_production);
+    // 基準 (今の接続) は列プロファイルパネルがすでに集計しているので、確認するのは選んだ他の接続だけ。
+    const prod = targets.filter((c) => c !== baseline && c.profile.is_production);
     if (prod.length > 0) {
       const ok = await confirm({
         title: t("profileCompareProdTitle"),

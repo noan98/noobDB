@@ -99,7 +99,7 @@ export function PlanCompareModal({ driver, before, after, beforeLabel, onClose }
     <Modal
       // no-submit: 2 つの計画を見比べるだけの閲覧画面で、確定する主アクションが無い
       onClose={onClose}
-      width="1180px"
+      width="min(1400px, 96vw)"
     >
       <ModalHeader onClose={onClose} closeLabel={t("planCompareClose")}>
         {t("planCompareTitle")}

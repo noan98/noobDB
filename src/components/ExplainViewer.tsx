@@ -68,8 +68,12 @@ const toolbarCss: SystemStyleObject = {
   background: "var(--bg-toolbar)",
   borderBottom: "1px solid var(--border-subtle)",
   flexShrink: 0,
+  // 並置表示 (計画の比較 #1539 / 計画ウォッチ #743) のような狭いペインで、バッジや総コストが
+  // 1 文字ずつ折り返さないよう、収まらない分は行ごと次の行へ送る。
+  flexWrap: "wrap",
 };
 const totalCostCss: SystemStyleObject = {
+  whiteSpace: "nowrap",
   fontSize: "var(--text-sm)",
   color: "var(--text-secondary)",
   fontWeight: 500,
@@ -94,6 +98,7 @@ function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
     borderRadius: "var(--radius-pill)",
     border: "1px solid",
     cursor: "default",
+    whiteSpace: "nowrap",
   };
   if (band === "high") {
     const c = semanticColorVar("danger", "solid");
