@@ -2739,7 +2739,7 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
 /// UPDATE/DELETE, embedded subqueries, etc.) — callers fall back to a
 /// snapshot-less preview in that case. The returned string is taken verbatim
 /// from the user's SQL so quoting/qualification is preserved.
-fn extract_target_table(sql: &str) -> Option<String> {
+pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
     let tokens = tokenize_sql(sql);
     let mut iter = tokens.into_iter().peekable();
     let first = iter.next()?;

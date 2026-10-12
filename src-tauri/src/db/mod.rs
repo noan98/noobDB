@@ -1417,6 +1417,40 @@ impl Connection {
         }
 
         let row_cap = row_cap.max(1);
+
+        // NOW() / RANDOM() / UUID() など実行ごとに値が変わる関数を含む文は、dry-run と
+        // 本実行で値がずれ、記録した after-image が実データと一致せず Undo の競合検出で
+        // 止まる。しかも文を 2 回実行するコストも払うので、記録を辞退して 1 回だけ
+        // 実行する (#1530)。
+        if contains_nondeterministic_function(self.driver_kind(), sql) {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable(
+                    kind,
+                    "実行ごとに値が変わる関数 (NOW() / RANDOM() / UUID() など) を含むため記録できません",
+                ),
+            ));
+        }
+
+        // 対象行数が記録の上限を超えるなら、どのみち下で「対象行を特定できない」と
+        // 辞退する。dry-run で文を丸ごと 1 回余計に実行する (時間・ロック保持・
+        // undo/WAL 負荷が約 2 倍) 前に、上限 + 1 件で打ち切る件数見積もりで先に判定する。
+        // 見積もれない文 (複雑な WHERE・多テーブル等) は従来どおり dry-run へ進む (#1530)。
+        if self
+            .write_exceeds_capture_cap(sql, database, kind, row_cap)
+            .await
+        {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable(
+                    kind,
+                    format!("対象行数が記録の上限 ({row_cap} 行) を超えるため記録しません"),
+                ),
+            ));
+        }
+
         let dry = match self
             .preview_execute_with_limit(sql, database, row_cap)
             .await
@@ -1671,6 +1705,52 @@ impl Connection {
                 ))
             }
             WriteKind::Other => unreachable!("guarded above"),
+        }
+    }
+
+    /// UPDATE / DELETE の対象行数が `row_cap` を超えると判明したら `true`。
+    /// `SELECT COUNT(*) FROM (SELECT 1 FROM <表> <WHERE> LIMIT cap+1)` で上限 + 1
+    /// 件に打ち切るので、巨大な表でも全件走査にならない。INSERT・多テーブル・
+    /// ORDER BY / LIMIT 付き・別名参照などで見積もれない (またはクエリが失敗した)
+    /// ときは `false` (= 従来どおり dry-run へ進む)。
+    async fn write_exceeds_capture_cap(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        kind: WriteKind,
+        row_cap: usize,
+    ) -> bool {
+        if !matches!(kind, WriteKind::Update | WriteKind::Delete) {
+            return false;
+        }
+        let (target, flavor) = match self {
+            Connection::MySql(_) => (mysql::extract_target_table(sql), SqlFlavor::MySql),
+            Connection::Postgres(_) => (postgres::extract_target_table(sql), SqlFlavor::Postgres),
+            Connection::Sqlite(_) => (sqlite::extract_target_table(sql), SqlFlavor::Sqlite),
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        // WHERE 無しは全行対象。ある場合はその句 (ORDER BY / LIMIT 付きは見積もらない)。
+        let tail = preview::extract_where_and_after(sql, flavor);
+        if let Some(t) = &tail {
+            if preview::has_top_level_keyword(t, &["limit", "order"], flavor) {
+                return false;
+            }
+        }
+        let probe = format!(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM {target} {} LIMIT {}) AS noobdb_probe",
+            tail.as_deref().unwrap_or(""),
+            row_cap.saturating_add(1)
+        );
+        match self.execute(&probe, database).await {
+            Ok(r) => match r.rows.first().and_then(|row| row.first()) {
+                Some(Value::Int(n)) => *n > row_cap as i64,
+                Some(Value::UInt(n)) => *n > row_cap as u64,
+                Some(Value::String(s)) => s.parse::<u64>().is_ok_and(|n| n > row_cap as u64),
+                _ => false,
+            },
+            Err(_) => false,
         }
     }
 
@@ -2903,6 +2983,92 @@ fn driver_backslash_escapes(driver: DriverKind) -> bool {
     }
 }
 
+/// 文に、実行のたびに結果が変わる関数 (現在時刻・乱数・UUID・採番) が含まれるか。
+/// 文字列リテラル・コメント・引用識別子の中身は読まない。dry-run と本実行で値が
+/// ずれるため、フライトレコーダーは該当する文の記録を辞退する (#1530)。
+/// 偽陽性 (記録を諦める) は許容するが、偽陰性は避ける安全側の判定。
+pub(crate) fn contains_nondeterministic_function(driver: DriverKind, sql: &str) -> bool {
+    // 括弧付きで呼ぶ関数 (`name(`)。
+    const CALLS: &[&str] = &[
+        "now",
+        "sysdate",
+        "curdate",
+        "curtime",
+        "utc_timestamp",
+        "utc_date",
+        "utc_time",
+        "unix_timestamp",
+        "rand",
+        "random",
+        "randomblob",
+        "uuid",
+        "uuid_short",
+        "gen_random_uuid",
+        "uuid_generate_v1",
+        "uuid_generate_v4",
+        "clock_timestamp",
+        "statement_timestamp",
+        "transaction_timestamp",
+        "timeofday",
+        "nextval",
+    ];
+    // 括弧なしで書ける現在時刻キーワード。
+    const KEYWORDS: &[&str] = &[
+        "current_timestamp",
+        "current_date",
+        "current_time",
+        "localtime",
+        "localtimestamp",
+    ];
+    let chars: Vec<char> = sql.chars().collect();
+    let masked: String = mask_for_driver(driver, &chars).into_iter().collect();
+    let lower = masked.to_ascii_lowercase();
+    let b = lower.as_bytes();
+    let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+    let mut i = 0;
+    while i < b.len() {
+        if !is_ident(b[i]) || (i > 0 && is_ident(b[i - 1])) {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < b.len() && is_ident(b[j]) {
+            j += 1;
+        }
+        let word = &lower[i..j];
+        if KEYWORDS.contains(&word) {
+            return true;
+        }
+        if CALLS.contains(&word) {
+            let mut k = j;
+            while k < b.len() && b[k].is_ascii_whitespace() {
+                k += 1;
+            }
+            if k < b.len() && b[k] == b'(' {
+                return true;
+            }
+        }
+        i = j;
+    }
+    // SQLite: `datetime('now')` など。'now' はリテラルで上のマスクに消えるので原文で
+    // 探す (date/time 系の関数呼び出しと併用されているときだけ)。
+    if driver == DriverKind::Sqlite {
+        let l = sql.to_ascii_lowercase();
+        return l.contains("'now'")
+            && [
+                "datetime(",
+                "date(",
+                "time(",
+                "julianday(",
+                "strftime(",
+                "unixepoch(",
+            ]
+            .iter()
+            .any(|f| l.contains(f));
+    }
+    false
+}
+
 /// Masks `src` for analysis using the string-escaping rules of `driver` (#852).
 ///
 /// The safety nets built on this mask ([`is_read_only_sql_for`],
@@ -3366,6 +3532,7 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::contains_nondeterministic_function as nondet;
     use super::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
         has_stacked_statements, has_stacked_statements_for, is_read_only_sql, is_read_only_sql_for,
@@ -4606,6 +4773,36 @@ mod tests {
         }
         assert_eq!(DriverKind::parse("oracle"), None);
         assert_eq!(DriverKind::parse(""), None);
+    }
+
+    #[test]
+    fn nondeterministic_functions_are_detected_outside_literals() {
+        use super::DriverKind::{Mysql, Postgres, Sqlite};
+        assert!(nondet(Mysql, "UPDATE t SET at = NOW() WHERE id = 1"));
+        assert!(nondet(Mysql, "UPDATE t SET at = now ( ) WHERE id = 1"));
+        assert!(nondet(Mysql, "UPDATE t SET at = CURRENT_TIMESTAMP"));
+        assert!(nondet(Mysql, "UPDATE t SET v = RAND()"));
+        assert!(nondet(Mysql, "INSERT INTO t (id) VALUES (UUID())"));
+        assert!(nondet(Postgres, "UPDATE t SET id = gen_random_uuid()"));
+        assert!(nondet(Postgres, "INSERT INTO t (id) VALUES (nextval('s'))"));
+        assert!(nondet(Sqlite, "UPDATE t SET v = random()"));
+        assert!(nondet(Sqlite, "UPDATE t SET at = datetime('now')"));
+        // リテラル・コメント・識別子の中は読まない。
+        assert!(!nondet(
+            Mysql,
+            "UPDATE t SET note = 'now() rand()' WHERE id = 1"
+        ));
+        assert!(!nondet(
+            Mysql,
+            "UPDATE t SET a = 1 /* NOW() */ WHERE id = 1"
+        ));
+        assert!(!nondet(Mysql, "UPDATE t SET status = 'now' WHERE id = 1"));
+        assert!(!nondet(Sqlite, "UPDATE t SET status = 'now' WHERE id = 1"));
+        assert!(!nondet(
+            Postgres,
+            "UPDATE t SET randomized = 1 WHERE id = 2"
+        ));
+        assert!(!nondet(Mysql, "UPDATE t SET name = 'a' WHERE id = 1"));
     }
 }
 

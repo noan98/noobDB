@@ -2204,6 +2204,68 @@ async fn capture_write_records_update_before_after_and_applies_the_real_write() 
 }
 
 #[tokio::test]
+async fn capture_write_skips_dry_run_when_rows_exceed_cap() {
+    // 対象行数が row_cap を超えるなら、dry-run を省いて本実行 1 回だけにする (#1530)。
+    let (path, conn) = flight_fixture("overcap").await;
+    for id in 3..=6 {
+        conn.execute(
+            &format!("INSERT INTO t (id, name) VALUES ({id}, 'n{id}')"),
+            None,
+        )
+        .await
+        .expect("seed");
+    }
+
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET name = 'x' WHERE id > 0", None, 3)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 6, "the real UPDATE must have applied");
+    assert!(!capture.capturable);
+    assert!(
+        capture
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("上限")),
+        "reason: {:?}",
+        capture.reason
+    );
+
+    // 上限以内なら従来どおり記録できる。
+    let (result, capture) = conn
+        .capture_write("DELETE FROM t WHERE id <= 2", None, 3)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 2);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    assert_eq!(capture.before_rows.len(), 2);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_declines_nondeterministic_statement_but_still_executes() {
+    let (path, conn) = flight_fixture("nondet").await;
+    let (result, capture) = conn
+        .capture_write(
+            "UPDATE t SET name = hex(randomblob(4)) WHERE id = 1",
+            None,
+            100,
+        )
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(!capture.capturable);
+    assert!(capture
+        .reason
+        .as_deref()
+        .is_some_and(|r| r.contains("関数")));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn capture_write_records_delete_before_image() {
     let (path, conn) = flight_fixture("delete").await;
 

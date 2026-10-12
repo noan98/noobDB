@@ -1591,7 +1591,7 @@ fn decode_cell_unchecked(row: &SqliteRow, i: usize) -> Value {
 
 /// Best-effort extraction of the target table from a mutation statement.
 /// Returns `None` for shapes we don't confidently recognise.
-fn extract_target_table(sql: &str) -> Option<String> {
+pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
     let tokens = tokenize_sql(sql);
     let mut iter = tokens.into_iter().peekable();
     let first = iter.next()?;

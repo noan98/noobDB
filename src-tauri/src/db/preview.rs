@@ -333,6 +333,11 @@ fn clause_tail(cleaned: &str, pos: usize, flavor: SqlFlavor) -> Option<String> {
     }
 }
 
+/// `tail` (コメント除去済みの句) のトップレベルに `keywords` のいずれかがあるか。
+pub(crate) fn has_top_level_keyword(tail: &str, keywords: &[&str], flavor: SqlFlavor) -> bool {
+    find_top_level_keyword(tail, keywords, flavor).is_some()
+}
+
 /// `cleaned` (コメント除去済み) の**トップレベル**に最初に現れる
 /// `keywords` のいずれかを探し、`(バイト位置, keywords 内の添字)` を返す。
 ///
