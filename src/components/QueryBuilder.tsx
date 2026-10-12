@@ -517,9 +517,13 @@ function whereGroups(
  * 広い範囲を書き換えうるので、UI が注意を出す。
  */
 export function hasAmbiguousAndOr(conditions: WhereCondition[]): boolean {
-  const joins = whereGroups(conditions)
-    .slice(1)
-    .map((g) => g.connector);
+  const live = whereGroups(conditions);
+  // グループが 1 つだけだと括弧が付かない (renderWhereClause の wrap) ので、中身の結合子が
+  // そのまま最上位に並ぶ。複数グループなら括弧の外 (グループ間) の結合子を見る。
+  const joins =
+    live.length > 1
+      ? live.slice(1).map((g) => g.connector)
+      : (live[0]?.items.slice(1).map((c) => (c.connector === "OR" ? "OR" : "AND")) ?? []);
   return joins.includes("AND") && joins.includes("OR");
 }
 
@@ -1155,11 +1159,6 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   </Box>
                 );
               })}
-              {(kind === "UPDATE" || kind === "DELETE") && hasAmbiguousAndOr(whereConditions) && (
-                <chakra.span css={inlineWarningCss} role="status" data-testid="qb-and-or-precedence">
-                  {t("qbWhereAndOrPrecedence")}
-                </chakra.span>
-              )}
             </chakra.section>
           )}
 
@@ -1354,6 +1353,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   </Box>
                 );
               })}
+              {whereEnabled && (kind === "UPDATE" || kind === "DELETE") && hasAmbiguousAndOr(whereConditions) && (
+                <chakra.span css={inlineWarningCss} role="status" data-testid="qb-and-or-precedence">
+                  {t("qbWhereAndOrPrecedence")}
+                </chakra.span>
+              )}
             </chakra.section>
           )}
 

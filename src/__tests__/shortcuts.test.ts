@@ -71,6 +71,8 @@ describe("filterShortcuts (#1540)", () => {
       expect(filterShortcuts([{ id: 9, label: "x", keys: "Cmd/Ctrl+K" }], q, (i) => i)).toHaveLength(1);
     }
     // Ctrl と Cmd は同じ主修飾キーとして扱う (一覧の表記は Cmd/Ctrl)。
+    // 入力途中 (ctr / cmd/c) も元表記への部分一致で残る。
+    expect(filterShortcuts([{ id: 9, label: "x", keys: "Cmd/Ctrl+K" }], "ctr", (i) => i)).toHaveLength(1);
     expect(filterShortcuts(items, "Ctrl K", texts).map((x) => x.id)).toEqual([1, 3]);
     expect(filterShortcuts(items, "shift f", texts).map((x) => x.id)).toEqual([2]);
     expect(filterShortcuts(items, "⌘k", texts).map((x) => x.id)).toEqual([1, 3]);

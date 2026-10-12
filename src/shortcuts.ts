@@ -212,8 +212,15 @@ export function filterShortcuts<T>(
   const q = query.trim().toLowerCase();
   if (q === "") return [...items];
   const qKeys = normalizeKeyText(q);
+  const qRaw = q.replace(/[\s+]/g, "");
   return items.filter((item) => {
     const { label, keys } = textsOf(item);
-    return label.toLowerCase().includes(q) || (qKeys !== "" && normalizeKeyText(keys).includes(qKeys));
+    if (label.toLowerCase().includes(q)) return true;
+    // 正規化後の一致に加え、元の表記 (空白と + を除き小文字化) への部分一致も残す。
+    // 入力途中の `ctr` などは正規化すると `mod` にならず外れるため。
+    return (
+      (qKeys !== "" && normalizeKeyText(keys).includes(qKeys)) ||
+      (qRaw !== "" && keys.toLowerCase().replace(/[\s+]/g, "").includes(qRaw))
+    );
   });
 }

@@ -611,6 +611,15 @@ describe("hasAmbiguousAndOr", () => {
       hasAmbiguousAndOr([c("a"), c("b", { connector: "AND" }), c("c", { connector: "OR", groupWithPrevious: true })]),
     ).toBe(false);
   });
+  it("単一グループ (括弧が付かない) の中身の AND/OR 混在も警告する: a / b(OR,グループ) / c(AND,グループ)", () => {
+    expect(
+      hasAmbiguousAndOr([
+        c("a"),
+        c("b", { connector: "OR", groupWithPrevious: true }),
+        c("c", { connector: "AND", groupWithPrevious: true }),
+      ]),
+    ).toBe(true);
+  });
   it("最上位で AND と OR が混ざると警告する", () => {
     expect(hasAmbiguousAndOr([c("a"), c("b", { connector: "OR" }), c("c", { connector: "AND" })])).toBe(true);
   });

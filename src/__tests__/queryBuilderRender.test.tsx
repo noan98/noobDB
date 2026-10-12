@@ -390,4 +390,23 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
     expect(onExecute).toHaveBeenCalledTimes(1);
     expect(onExecute.mock.calls[0][0]).toContain("WHERE `id` = 1 AND `name` = 'x' OR `active`");
   });
+  it("DELETE / UPDATE で括弧なしの AND と OR が混在すると優先順位の注意を出し、SELECT では出さない", async () => {
+    renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" defaultDatabase="testdb" defaultTable="users" onExecute={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
+    const cols = screen.getAllByPlaceholderText(t("qbColumn"));
+    ["id", "name", "active"].forEach((c, i) => fireEvent.change(cols[i], { target: { value: c } }));
+    const connectors = screen.getAllByLabelText(t("qbWhereConnector"));
+    fireEvent.change(connectors[0], { target: { value: "AND" } });
+    fireEvent.change(connectors[1], { target: { value: "OR" } });
+    // SELECT では出ない。
+    expect(screen.queryByTestId("qb-and-or-precedence")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "DELETE" }));
+    expect(await screen.findByTestId("qb-and-or-precedence")).toHaveTextContent(t("qbWhereAndOrPrecedence"));
+    fireEvent.click(screen.getByRole("button", { name: "UPDATE" }));
+    expect(await screen.findByTestId("qb-and-or-precedence")).toBeInTheDocument();
+  });
 });

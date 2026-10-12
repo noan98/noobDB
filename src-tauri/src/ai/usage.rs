@@ -134,8 +134,17 @@ fn read_records(path: &Path) -> Result<Vec<AiUsageRecord>> {
         Err(e) => {
             // 壊れた台帳は読めないままだと記録も表示も恒久的に失敗するので、`.bak` へ退避して
             // 空から始める (使用量は集計値で、失っても機能・安全性に影響しない)。
-            tracing::warn!(error = %e, "ai_usage.json is corrupt; moving it to .bak and starting empty");
-            let _ = std::fs::rename(path, path.with_extension("json.bak"));
+            tracing::warn!(error = %e, "ai_usage.json is corrupt; moving it to a .bak file and starting empty");
+            // 退避先は `ai_usage.json.bak.<unix秒>` (既存の退避を上書きしない)。失敗は warn のみ。
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let mut name = path.as_os_str().to_os_string();
+            name.push(format!(".bak.{secs}"));
+            if let Err(re) = std::fs::rename(path, PathBuf::from(name)) {
+                tracing::warn!(error = %re, "failed to move the corrupt ai_usage.json aside");
+            }
             Ok(Vec::new())
         }
     }
@@ -169,11 +178,17 @@ fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
 }
 
 /// 完了 1 件を記録する。ファイル I/O は同期なので、非同期ランタイムのワーカーを塞がないよう
-/// blocking スレッドへ逃がす (待たずに返す)。失敗しても AI 処理は続けたいので `warn` ログのみ。
-pub fn record(task: AiTaskKind, model: &str, usage: &AiUsage) {
+/// blocking スレッドへ逃がす。返る `JoinHandle` を await すると保存完了を待てる (完了通知の前に
+/// 台帳へ入っていることを保証したい呼び出し側用。待たなくてもよい)。失敗しても AI 処理は
+/// 続けたいので `warn` ログのみ。
+pub fn record(
+    task: AiTaskKind,
+    model: &str,
+    usage: &AiUsage,
+) -> tauri::async_runtime::JoinHandle<()> {
     let model = model.to_string();
     let usage = *usage;
-    tauri::async_runtime::spawn_blocking(move || record_blocking(task, &model, &usage));
+    tauri::async_runtime::spawn_blocking(move || record_blocking(task, &model, &usage))
 }
 
 fn record_blocking(task: AiTaskKind, model: &str, usage: &AiUsage) {
@@ -232,8 +247,15 @@ mod tests {
         std::fs::write(&path, "{ not json").unwrap();
         assert!(read_records(&path).unwrap().is_empty());
         assert!(!path.exists());
+        let bak: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("ai_usage.json.bak."))
+            .collect();
+        assert_eq!(bak.len(), 1);
         assert_eq!(
-            std::fs::read_to_string(dir.join("ai_usage.json.bak")).unwrap(),
+            std::fs::read_to_string(dir.join(&bak[0])).unwrap(),
             "{ not json"
         );
         // 無いファイル / 空ファイルも空。

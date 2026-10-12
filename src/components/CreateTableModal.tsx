@@ -55,6 +55,19 @@ function emptyColumn(driver: DriverKind): ColumnDef {
   };
 }
 
+/** 開いた直後の初期列 (id 1 本) のまま変更されていないか。 */
+function isInitialColumn(c: ColumnDef, driver: DriverKind): boolean {
+  return (
+    c.name === "id" &&
+    c.type === (driver === "sqlite" ? "INTEGER" : "INT") &&
+    c.notNull &&
+    c.primaryKey &&
+    !c.unique &&
+    c.autoIncrement &&
+    c.defaultValue === ""
+  );
+}
+
 export function CreateTableModal({ sessionId, driver, database, readOnly, onRun, onSendToEditor, onClose }: Props) {
   const t = useT();
   const [table, setTable] = useState("");
@@ -92,6 +105,7 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
     if (!sessionId || !database || !templateTable) return;
     setTemplateLoading(true);
     setTemplateError(null);
+    setTemplateCaveats(null);
     try {
       const info = await api.describeTable(sessionId, database, templateTable);
       if (info.length === 0) {
@@ -99,7 +113,8 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
         return;
       }
       // 入力済みの列 (名前が入っている / 初期の id 以外) があるときだけ、置き換えを確認する。
-      const hasInput = columns.some((c) => c.name.trim() !== "" && !(c.name === "id" && columns.length === 1));
+      const initial = columns.length === 1 && isInitialColumn(columns[0], driver);
+      const hasInput = !initial || foreignKeys.length > 0 || checks.length > 0;
       if (hasInput) {
         const ok = await confirm({
           title: t("createTableTemplateConfirmTitle"),
@@ -118,6 +133,7 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
       setChecks([]);
     } catch (e) {
       setTemplateError(t("createTableTemplateError", { error: String(e) }));
+      setTemplateCaveats(null);
     } finally {
       setTemplateLoading(false);
     }

@@ -122,6 +122,17 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
     expect(screen.getByDisplayValue("mine")).toBeInTheDocument();
   });
 
+  it("初期列を変えていなくても FK が入力済みなら置き換えを確認する", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([colInfo("uid")] as never);
+    renderModal();
+    const select = (await screen.findByLabelText(t("createTableTemplate"))) as HTMLSelectElement;
+    await waitFor(() => expect(select.querySelectorAll("option").length).toBe(3));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("constraintFkAdd")) }));
+    fireEvent.change(select, { target: { value: "users" } });
+    fireEvent.click(screen.getByRole("button", { name: t("createTableTemplateLoad") }));
+    expect(await screen.findByText(t("createTableTemplateConfirmTitle"))).toBeInTheDocument();
+  });
+
   it("読み込みに失敗したらエラーを出し、列は変えない", async () => {
     vi.mocked(api.describeTable).mockRejectedValueOnce(new Error("denied"));
     renderModal();

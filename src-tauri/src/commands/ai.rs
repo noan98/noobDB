@@ -346,7 +346,8 @@ pub async fn run_ai_request(
         let message = match result {
             Ok(done) => {
                 // 使用量台帳 (#1540): 数値のみ。中断 / エラーは使用量が確定しないので記録しない。
-                usage::record(task, &done.model, &done.usage);
+                // 完了通知より先に台帳へ入ったことを保証する (画面の再読み込みが空振りしない)。
+                let _ = usage::record(task, &done.model, &done.usage).await;
                 AiStreamMessage::Done {
                     model: done.model,
                     requested_model: done.requested_model,
@@ -417,7 +418,8 @@ pub async fn test_ai_connection(settings: AiSettingsSnapshot) -> Result<AiConnec
         {
             Ok(r) => {
                 if let Ok(done) = &r {
-                    usage::record(AiTaskKind::ConnectionTest, &done.model, &done.usage);
+                    let _ =
+                        usage::record(AiTaskKind::ConnectionTest, &done.model, &done.usage).await;
                 }
                 r
             }
