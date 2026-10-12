@@ -1,9 +1,9 @@
 import type { CellValue, Column } from "../api/tauri";
 import { MASK_PLACEHOLDER } from "./columnMask";
-import { buildCsv, buildJson } from "./exportPreview";
+import { buildCsv, buildJson, buildMarkdownTable } from "./exportPreview";
 
 /**
- * 結果グリッドの「CSV / JSON としてコピー」(#1113) の純ロジック。
+ * 結果グリッドの「CSV / JSON / Markdown 表としてコピー」(#1113, #1541) の純ロジック。
  *
  * 書式はエクスポート (`exportPreview.ts` の `buildCsv` / `buildJson`) をそのまま
  * 再利用し、ファイル書き出しとクリップボードで同じ出力になるようにする
@@ -17,7 +17,7 @@ import { buildCsv, buildJson } from "./exportPreview";
  * オフなら実値をコピーする。
  */
 
-export type GridCopyFormat = "csv" | "json";
+export type GridCopyFormat = "csv" | "json" | "markdown";
 
 export interface GridCopyInput {
   columns: readonly Column[];
@@ -55,5 +55,12 @@ export function sliceForCopy(input: GridCopyInput): { columns: Column[]; rows: C
 export function buildGridCopyText(format: GridCopyFormat, input: GridCopyInput): string {
   const { columns, rows } = sliceForCopy(input);
   if (columns.length === 0 || rows.length === 0) return "";
-  return format === "csv" ? buildCsv(columns, rows) : buildJson(columns, rows);
+  switch (format) {
+    case "csv":
+      return buildCsv(columns, rows);
+    case "markdown":
+      return buildMarkdownTable(columns, rows);
+    default:
+      return buildJson(columns, rows);
+  }
 }

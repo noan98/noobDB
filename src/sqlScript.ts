@@ -174,7 +174,7 @@ export function toBatchResult(r: BatchStreamStatementResult): BatchStatementResu
 /** 1 文ぶんの結果を出力ログ (`pushOutput`) のエントリに変換する (接続・DB 名は呼び出し側)。 */
 export function toBatchOutputInput(
   r: BatchStreamStatementResult,
-): Omit<OutputInput, "connection" | "database"> {
+): Omit<OutputInput, "connection" | "connectionId" | "database" | "execDatabase"> {
   if (r.status === "error") {
     return { sql: r.sql, outcome: "error", rows: null, elapsedMs: null, error: r.error ?? "" };
   }

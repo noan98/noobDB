@@ -41,3 +41,33 @@ export function historyPeriodRange(
   const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   return { from: start.toISOString(), to: null };
 }
+
+/**
+ * 実行時間による並べ替え / 絞り込み (#1541)。取得済みの履歴に対してクライアント側だけで
+ * 行う (`listHistory` は変えない)。
+ *
+ * - `recent`: 実行時刻の新しい順のまま (バックエンドの並び)。
+ * - `slowest`: `elapsed_ms` の長い順。計測できていない行 (`elapsed_ms` が null) は末尾。
+ * - `slow`: `SLOW_QUERY_MS` 以上のものだけを、長い順で。
+ *
+ * 同じ時間の行は元の並び (新しい順) を保つ。
+ */
+export type HistorySpeedFilter = "recent" | "slowest" | "slow";
+
+export const HISTORY_SPEED_FILTERS: HistorySpeedFilter[] = ["recent", "slowest", "slow"];
+
+/** 「遅いクエリ」とみなす実行時間の下限 (ミリ秒)。 */
+export const SLOW_QUERY_MS = 1000;
+
+export function applyHistorySpeedFilter<T extends { elapsed_ms: number | null }>(
+  entries: readonly T[],
+  mode: HistorySpeedFilter,
+): T[] {
+  if (mode === "recent") return entries as T[];
+  const base =
+    mode === "slow"
+      ? entries.filter((e) => e.elapsed_ms !== null && e.elapsed_ms >= SLOW_QUERY_MS)
+      : [...entries];
+  // Array.prototype.sort は安定ソート。null は -Infinity 扱いで末尾へ。
+  return base.sort((a, b) => (b.elapsed_ms ?? -Infinity) - (a.elapsed_ms ?? -Infinity));
+}

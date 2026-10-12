@@ -151,7 +151,7 @@ export interface PaneActions {
   handleAiSqlAction: (action: AiSqlEditorAction) => void;
   handleAiResultSummary: (tab: Tab) => void;
   handleOpenSqlFile: () => unknown;
-  handleRegisterLocalTable: (result: QueryResult, sourceSql: string) => void;
+  handleRegisterLocalTable: (result: QueryResult, sourceSql: string, tabDatabase: string | null) => void;
   handleSaveSnippetFromEditor: (sql: string) => void;
   handleSaveSqlFile: () => unknown;
   handleToggleEmergencyMode: (next: boolean) => unknown;
@@ -987,7 +987,7 @@ export const PaneView = memo(
                     onRegisterLocalTable={
                       sessionId && tab.result
                         ? gridStable.fn(`${tab.id}:registerLocal`, () =>
-                            actions.handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql),
+                            actions.handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql, tab.database ?? null),
                           )
                         : undefined
                     }

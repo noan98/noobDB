@@ -1778,8 +1778,12 @@ export interface CsvPreview {
 export interface LocalTableMeta {
   name: string;
   source_profile: string | null;
+  /** 元の接続のプロファイル id (#1541)。旧データは null (名前で照合する)。 */
+  source_profile_id: string | null;
   source_sql: string;
   source_driver: string | null;
+  /** 元の SQL を実行した DB (#1541)。記録していない (旧データ・SQLite) 場合は null。 */
+  source_database: string | null;
   /** 登録時刻 (epoch ミリ秒)。`new Date(fetched_at_ms)` でそのまま使える。 */
   fetched_at_ms: number;
   row_count: number;
@@ -1794,8 +1798,12 @@ export interface RegisterLocalTableRequest {
   /** 結果ハンドル (#1264)。指定時はバックエンド保持の行を取り込む。 */
   resultId?: string | null;
   sourceProfile?: string | null;
+  /** 元の接続のプロファイル id (#1541)。 */
+  sourceProfileId?: string | null;
   sourceSql: string;
   sourceDriver?: string | null;
+  /** 元の SQL を実行した DB (#1541)。再取得で同じ DB へ流すために保存する。 */
+  sourceDatabase?: string | null;
 }
 
 /**

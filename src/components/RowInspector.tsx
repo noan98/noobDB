@@ -27,6 +27,8 @@ import { withComment } from "./schemaComment";
 import { MASK_PLACEHOLDER } from "./columnMask";
 import { RelatedRowsPanel } from "./RelatedRowsPanel";
 import { Segmented } from "./Segmented";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { buildInsertClipboard, buildRowSql } from "./cellEdit";
 import type { RelatedEntry } from "../relatedRows";
 import type { I18nKey } from "../i18n";
 import { FieldError, FieldLabel } from "./modalForm";
@@ -71,6 +73,23 @@ export interface RowInspectorEdit {
   onApply: (edits: Record<number, string>) => Promise<boolean>;
 }
 
+/**
+ * 行を INSERT / UPDATE 文としてコピーするための入力 (#1541)。結果グリッドが
+ * 行 SQL の生成元 (ドライバ・DB・テーブル・PK) を持っているときだけ渡す。
+ * 文は元の `CellValue` から `buildRowSql` で生成するので、NULL・BLOB・64bit 整数の
+ * 扱いは右クリックの「SQL としてコピー」と同じ (JS number に丸めない)。
+ */
+export interface RowInspectorSql {
+  driver: string;
+  database: string;
+  /** 解決できた対象テーブル。`null` なら INSERT はプレースホルダ名で出し、UPDATE は無効。 */
+  table: string | null;
+  /** 主キー列の添字。空なら UPDATE は無効。 */
+  pkIndices: number[];
+  /** 機微カラムのマスクが SQL コピーを妨げるか (伏せ字コピー設定中にマスク行を含む)。 */
+  blockedByMask: boolean;
+}
+
 interface Props {
   /** Column metadata (names) for the inspected row. */
   columns: Column[];
@@ -90,6 +109,8 @@ interface Props {
   related?: RowInspectorRelated;
   /** フォーム編集 (#1394)。省略時は閲覧専用。 */
   edit?: RowInspectorEdit;
+  /** 「SQL としてコピー」(#1541)。省略時は出さない。 */
+  rowSql?: RowInspectorSql;
   /** 1-based visible row number shown in the header. */
   rowNumber: number;
   onClose: () => void;
@@ -126,6 +147,7 @@ export function RowInspector({
   maskedColumns,
   related,
   edit,
+  rowSql,
   rowNumber,
   onClose,
   onPrev,
@@ -264,6 +286,62 @@ export function RowInspector({
     );
   };
 
+  // 「SQL としてコピー」メニュー (#1541)。ヘッダのボタンと、本文の右クリックで開く。
+  const [sqlMenu, setSqlMenu] = useState<{ x: number; y: number } | null>(null);
+  const copyRowSql = async (kind: "insert" | "update") => {
+    if (!rowSql) return;
+    const row = [...values];
+    let sql = "";
+    let placeholderTable = false;
+    if (kind === "insert") {
+      const res = buildInsertClipboard(
+        { driver: rowSql.driver, database: rowSql.database, table: rowSql.table, columns, rows: [row] },
+        false,
+      );
+      sql = res.sql;
+      placeholderTable = !res.tableResolved;
+    } else if (rowSql.table) {
+      sql = buildRowSql(
+        {
+          driver: rowSql.driver,
+          database: rowSql.database,
+          table: rowSql.table,
+          columns,
+          rows: [row],
+          pkIndices: rowSql.pkIndices,
+        },
+        "update",
+      ).join("\n");
+    }
+    if (!sql) return;
+    const ok = await copyToClipboard(sql);
+    toast[ok ? "success" : "error"](ok ? t("gridCopied") : t("clipboardCopyFailed"));
+    if (ok && placeholderTable) toast.info(t("gridCopyAsInsertAmbiguousTable"));
+  };
+  const sqlMenuItems = (): ContextMenuEntry[] => {
+    if (!rowSql) return [];
+    const maskTitle = rowSql.blockedByMask ? t("gridMaskedSqlCopyBlocked") : undefined;
+    const noUpdate = !rowSql.table || rowSql.pkIndices.length === 0;
+    return [
+      {
+        label: t("gridCopyAsInsert"),
+        title: maskTitle,
+        disabled: rowSql.blockedByMask,
+        onSelect: () => void copyRowSql("insert"),
+      },
+      {
+        label: t("gridCopyAsUpdate"),
+        title: rowSql.blockedByMask
+          ? maskTitle
+          : noUpdate
+            ? t("gridCopyAsSqlNoPk")
+            : undefined,
+        disabled: rowSql.blockedByMask || noUpdate,
+        onSelect: () => void copyRowSql("update"),
+      },
+    ];
+  };
+
   /** 編集可能な列のフォーム欄 (#1394)。入力コントロールは `inspectorControlFor` で決める。 */
   const renderEditField = (i: number): ReactElement | null => {
     const col = columns[i];
@@ -376,6 +454,7 @@ export function RowInspector({
   };
 
   return createPortal(
+    <>
     <AnimatePresence>
       <MotionDrawer
         key="row-inspector"
@@ -434,6 +513,32 @@ export function RowInspector({
                 aria-label={t("rowInspectorEdit")}
               >
                 <Icon name="pencil" size={ICON_SIZES.md} />
+              </chakra.button>
+            </Tooltip>
+          )}
+          {rowSql && !editing && (
+            <Tooltip label={t("rowInspectorCopySql")}>
+              <chakra.button
+                type="button"
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="24px"
+                h="24px"
+                border="none"
+                bg="transparent"
+                color="app.textMuted"
+                borderRadius="sm"
+                cursor="pointer"
+                _hover={{ bg: "app.hover", color: "app.text" }}
+                aria-haspopup="menu"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setSqlMenu({ x: r.left, y: r.bottom + 4 });
+                }}
+                aria-label={t("rowInspectorCopySql")}
+              >
+                <Icon name="insert-sql" size={ICON_SIZES.md} />
               </chakra.button>
             </Tooltip>
           )}
@@ -532,6 +637,11 @@ export function RowInspector({
           px="3"
           py="2"
           onKeyDown={onFormKeyDown}
+          onContextMenu={(e) => {
+            if (!rowSql || editing || activeView !== "fields") return;
+            e.preventDefault();
+            setSqlMenu({ x: e.clientX, y: e.clientY });
+          }}
         >
           {activeView === "related" && related ? (
             <RelatedRowsPanel
@@ -746,7 +856,16 @@ export function RowInspector({
           </Box>
         )}
       </MotionDrawer>
-    </AnimatePresence>,
+    </AnimatePresence>
+    {sqlMenu && rowSql && (
+      <ContextMenu
+        x={sqlMenu.x}
+        y={sqlMenu.y}
+        items={sqlMenuItems()}
+        onClose={() => setSqlMenu(null)}
+      />
+    )}
+    </>,
     document.body,
   );
 }

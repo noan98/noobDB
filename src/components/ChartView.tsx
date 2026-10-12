@@ -17,6 +17,8 @@ import {
   buildChartModel,
   buildChartSql,
   canAggregateInDb,
+  canTimeBucket,
+  effectiveTimeBucket,
   chartConfigKeyFrom,
   chartModelFromAggregatedRows,
   chartNotices,
@@ -37,6 +39,7 @@ import {
   valueExtent,
   writeStoredChartConfig,
   type Aggregation,
+  type TimeBucket,
   type ChartType,
   type ChartConfig,
   type ChartModel,
@@ -129,19 +132,27 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   // DB 側集計 (#1257): 有効かつ依頼できる設定のときだけ、元クエリ全件の GROUP BY を
   // DB に任せる。結果が届くまで・失敗したときは取得済み行の JS 集計を表示する。
   const [dbAgg, setDbAgg] = useState(false);
-  const dbAggSql = useMemo(() => {
+  // SQL を作った時点の有効バケットも一緒に確定して持つ (モデル化で再計算するとずれうる)。
+  const dbAggPlan = useMemo<{ sql: string; bucket: TimeBucket | undefined } | null>(() => {
     if (!dbAgg || !onRunQuery || !config || !sourceSql) return null;
     if (config.aggregation === "none" || !canAggregateInDb(result.columns, config, sourceSql)) {
       return null;
     }
-    return buildChartSql({
-      driver: driver ?? "mysql",
-      sourceSql,
-      xColumn: result.columns[config.xCol].name,
-      yColumns: config.yCols.map((c) => result.columns[c].name),
-      agg: config.aggregation,
-    });
-  }, [dbAgg, onRunQuery, config, sourceSql, driver, result.columns]);
+    const bucket = effectiveTimeBucket(driver ?? "mysql", result.columns, result.rows, config);
+    return {
+      bucket,
+      sql: buildChartSql({
+        driver: driver ?? "mysql",
+        sourceSql,
+        xColumn: result.columns[config.xCol].name,
+        yColumns: config.yCols.map((c) => result.columns[c].name),
+        agg: config.aggregation,
+        bucket,
+      }),
+    };
+  }, [dbAgg, onRunQuery, config, sourceSql, driver, result.columns, result.rows]);
+  const dbAggSql = dbAggPlan?.sql ?? null;
+  const dbAggBucket = dbAggPlan?.bucket;
   const [remote, setRemote] = useState<
     { sql: string; model: ChartModel | null; error: string | null } | null
   >(null);
@@ -156,7 +167,12 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         if (cancelled) return;
         setRemote({
           sql: dbAggSql,
-          model: chartModelFromAggregatedRows(res.rows, yNames, agg),
+          model: chartModelFromAggregatedRows(
+            res.rows,
+            yNames,
+            agg,
+            dbAggBucket,
+          ),
           error: null,
         });
       })
@@ -227,6 +243,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   const setX = (xCol: number) => setConfig({ ...config, xCol });
   const setAgg = (aggregation: Aggregation) => setConfig({ ...config, aggregation });
   const setPalette = (palette: ChartPaletteKey) => setConfig({ ...config, palette });
+  const setBucket = (timeBucket: TimeBucket) => setConfig({ ...config, timeBucket });
   const setDonut = (donut: boolean) => setConfig({ ...config, donut });
   const toggleY = (c: number) =>
     setConfig({
@@ -313,6 +330,36 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             {t("chartAggInDb")}
           </chakra.label>
         )}
+        {/* 時間バケット (#1541): DB 側集計のときだけ。X の日時を日 / 週 / 月に丸めて
+            グループ化し、欠けた期間は 0 で埋める。 */}
+        {dbAgg &&
+          config.aggregation !== "none" &&
+          canAggregateInDb(result.columns, config, sourceSql) &&
+          canTimeBucket(driver ?? "mysql", result.columns, result.rows, config.xCol) && (
+          <Field label={t("chartTimeBucket")}>
+            <ListboxSelect
+              value={config.timeBucket ?? "none"}
+              ariaLabel={t("chartTimeBucket")}
+              onChange={(v) => setBucket(v as TimeBucket)}
+              options={[
+                { value: "none", label: t("chartTimeBucketNone") },
+                { value: "day", label: t("chartTimeBucketDay") },
+                { value: "week", label: t("chartTimeBucketWeek") },
+                { value: "month", label: t("chartTimeBucketMonth") },
+              ]}
+            />
+          </Field>
+        )}
+        {dbAgg &&
+          config.aggregation !== "none" &&
+          config.timeBucket &&
+          config.timeBucket !== "none" &&
+          canAggregateInDb(result.columns, config, sourceSql) &&
+          !canTimeBucket(driver ?? "mysql", result.columns, result.rows, config.xCol) && (
+            <chakra.span textStyle="caption" data-testid="chart-time-bucket-invalid">
+              {t("chartTimeBucketInvalid")}
+            </chakra.span>
+          )}
         {/* 配色 (#916): グリッドの条件付き書式と同型のセレクタで、共有カラー
             スケールの離散/連続/発散パレットを選ぶ。CB セーフかどうかも同じ
             注記 (`gridPaletteCbSafe`) で示し、体系を UI レベルでも揃える。 */}

@@ -322,7 +322,11 @@ describe("App.tsx の結線 (#1112)", () => {
     const guardIdx = appSource.indexOf("!sessionId ? null : activeBottomPanelTab");
     expect(outputIdx).toBeGreaterThan(0);
     expect(guardIdx).toBeGreaterThan(outputIdx);
-    expect(appSource).toContain("<OutputPanel onOpenSql={handleOpenHistoryInNewTab} />");
+    // 出力タブの行操作 (#1541): 挿入・再実行は通常の実行経路 (runInTabWithGate) に委ねる既存ハンドラ。
+    expect(appSource).toContain("<OutputPanel");
+    expect(appSource).toContain("onOpenSql={handleOpenHistoryInNewTab}");
+    expect(appSource).toContain("onInsertSql={handleLauncherInsertSql}");
+    expect(appSource).toContain("onRunSql={handleOutputRunSql}");
     expect(appSource).toContain("<ActivityLogPanel />");
     // 出力は実行経路の結果受信地点で、メッセージはステータスの変化で積む。
     expect(appSource).toMatch(/recordOutput\(/);

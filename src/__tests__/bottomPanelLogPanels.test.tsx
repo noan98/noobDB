@@ -33,7 +33,9 @@ const run = (over: Partial<Parameters<typeof pushOutput>[0]> = {}) =>
     elapsedMs: 12,
     error: null,
     connection: "local",
+    connectionId: "p-local",
     database: "app",
+    execDatabase: "app",
     ...over,
   });
 
@@ -75,6 +77,66 @@ describe("OutputPanel", () => {
     expect(screen.getByText(/at line 1/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("outputOpenInEditor") }));
     expect(onOpenSql).toHaveBeenCalledWith("selec 1");
+  });
+
+  it("行の「エディタへ挿入」「再実行」は接続中だけ押せ、全文の SQL を渡す (#1541)", () => {
+    run({ sql: "update t set a = 1 where id = 2", outcome: "affected", rows: 1 });
+    const onInsertSql = vi.fn();
+    const onRunSql = vi.fn();
+    const { unmount } = renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun={false} currentConnectionId="p-local" />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    // 未接続でも挿入は使える (再実行だけ接続が要る)。
+    expect(screen.getByRole("button", { name: t("outputInsertInEditor") })).toBeEnabled();
+    expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();
+    unmount();
+    renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun currentConnectionId="p-local" />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    fireEvent.click(screen.getByRole("button", { name: t("outputInsertInEditor") }));
+    fireEvent.click(screen.getByRole("button", { name: t("outputRerun") }));
+    expect(onInsertSql).toHaveBeenCalledWith("update t set a = 1 where id = 2");
+    expect(onRunSql).toHaveBeenCalledWith("update t set a = 1 where id = 2", "app");
+  });
+
+  it("記録時と別の接続では再実行を無効にする (挿入は可)。同じ接続名なら有効 (#1541)", () => {
+    run({ sql: "delete from t", outcome: "affected", rows: 1, connection: "local", connectionId: "p-prod" });
+    const onRunSql = vi.fn();
+    renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onInsertSql={vi.fn()} onRunSql={onRunSql} canRun currentConnectionId="p-local" />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("outputInsertInEditor") })).toBeEnabled();
+  });
+
+  it("接続 id を持たない行 (記録できなかった行) は表示名が同じでも再実行できない (#1541)", () => {
+    run({ connectionId: null });
+    renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onRunSql={vi.fn()} canRun currentConnectionId="p-local" />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();
+  });
+
+  it("再実行には実行 DB (execDatabase) を渡し、表示用の既定 DB は渡さない (#1541)", () => {
+    run({ database: "testdb", execDatabase: null });
+    const onRunSql = vi.fn();
+    renderWithProviders(
+      <OutputPanel onOpenSql={vi.fn()} onRunSql={onRunSql} canRun currentConnectionId="p-local" />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    fireEvent.click(screen.getByRole("button", { name: t("outputRerun") }));
+    expect(onRunSql).toHaveBeenCalledWith("select * from users", null);
+  });
+
+  it("コールバックを渡さなければ挿入・再実行ボタンは出さない (#1541)", () => {
+    run();
+    renderWithProviders(<OutputPanel onOpenSql={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.queryByRole("button", { name: t("outputRerun") })).toBeNull();
   });
 
   it("SQL のコピーに失敗したらエラーを知らせる (#1534)", async () => {

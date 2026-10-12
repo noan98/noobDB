@@ -875,6 +875,40 @@ export interface BuildRowSqlInput {
   pkIndices: number[];
 }
 
+function rowWhereParts(
+  driver: string,
+  columns: Column[],
+  row: CellValue[],
+  pkIndices: number[],
+): string[] {
+  return pkIndices.map((i) => {
+    const v = row[i];
+    const quoted = quoteIdentFor(driver, columns[i].name);
+    // A real WHERE `= NULL` never matches (SQL three-valued logic) — see
+    // `whereEqualsClause`'s doc for why this matters once identity can
+    // include nullable columns (#849's all_columns fallback).
+    if (v === null || v === undefined) return `${quoted} IS NULL`;
+    const approx = singleFloatWhere(driver, columns[i], v);
+    if (approx) return approx;
+    return `${quoted} = ${rowValueLiteral(driver, v, columns[i])}`;
+  });
+}
+
+/**
+ * 1 行を主キーで特定する WHERE 述語 (`"id" = 1 AND ...`)。`UPDATE` / `DELETE` のコピーと
+ * 同じ規則 (NULL は `IS NULL`、64bit 整数・BLOB は `CellValue` から生成)。主キーが解決できない
+ * (`pkIndices` が空) ときは null (#1541)。
+ */
+export function buildRowWhere(
+  driver: string,
+  columns: Column[],
+  row: CellValue[],
+  pkIndices: number[],
+): string | null {
+  if (pkIndices.length === 0) return null;
+  return rowWhereParts(driver, columns, row, pkIndices).join(" AND ");
+}
+
 /**
  * Builds executable `INSERT` / `UPDATE` / `DELETE` statements from selected
  * result rows, one statement per row, for the right-click "copy as SQL" menu.
@@ -897,17 +931,7 @@ export function buildRowSql(input: BuildRowSqlInput, kind: RowSqlKind): string[]
   const stmts: string[] = [];
   for (const row of rows) {
     if (!row) continue;
-    const whereParts = pkIndices.map((i) => {
-      const v = row[i];
-      const quoted = quoteIdentFor(driver, columns[i].name);
-      // A real WHERE `= NULL` never matches (SQL three-valued logic) — see
-      // `whereEqualsClause`'s doc for why this matters once identity can
-      // include nullable columns (#849's all_columns fallback).
-      if (v === null || v === undefined) return `${quoted} IS NULL`;
-      const approx = singleFloatWhere(driver, columns[i], v);
-      if (approx) return approx;
-      return `${quoted} = ${rowValueLiteral(driver, v, columns[i])}`;
-    });
+    const whereParts = rowWhereParts(driver, columns, row, pkIndices);
     if (kind === "insert") {
       const cols = columns.map((c) => quoteIdentFor(driver, c.name)).join(", ");
       const vals = columns.map((c, i) => rowValueLiteral(driver, row[i], c)).join(", ");

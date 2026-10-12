@@ -1396,8 +1396,10 @@
     "fetched_at_ms": 1700000000000,
     "name": "r1",
     "row_count": 42,
+    "source_database": "shop",
     "source_driver": "mysql",
     "source_profile": "prod-mysql",
+    "source_profile_id": "prof-1",
     "source_sql": "SELECT * FROM orders"
   },
   "logView": {

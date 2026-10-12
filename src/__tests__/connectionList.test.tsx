@@ -596,6 +596,20 @@ describe("スキーマツリーのキーボード操作 (#1184)", () => {
     expect(colRow).toHaveAttribute("aria-level", "4");
   });
 
+  it("接続行の右クリック「すべて折りたたむ」で展開が閉じ、保存済みの展開状態も空になる (#1541)", async () => {
+    await openDb();
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    expect(JSON.stringify(Object.values(localStorage))).toContain("db1");
+    fireEvent.contextMenu(screen.getByRole("treeitem", { name: /Alpha DB/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuCollapseAll") }));
+    await waitFor(() => expect(screen.queryByRole("treeitem", { name: "tbl1" })).toBeNull());
+    expect(screen.getByRole("treeitem", { name: "db1" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.contextMenu(screen.getByRole("treeitem", { name: /Alpha DB/ }));
+    // 開いているものが無ければ項目自体を出さない。
+    expect(screen.queryByRole("menuitem", { name: t("contextMenuCollapseAll") })).toBeNull();
+    expect(JSON.stringify(Object.values(localStorage))).not.toContain('"db1":true');
+  });
+
   it("roving tabindex: 常にちょうど 1 行だけが tabIndex=0 で、フォーカスした行に追従する", async () => {
     await openDb();
     const dbRow = await screen.findByRole("treeitem", { name: "db1" });

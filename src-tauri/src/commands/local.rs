@@ -413,8 +413,14 @@ pub struct RegisterLocalTableRequest {
     /// 表示用の由来情報。すべて非秘密 — 接続情報そのもの (ホスト/資格情報) は
     /// 含まない。
     pub source_profile: Option<String>,
+    /// 元の接続のプロファイル id (#1541)。再取得で表示名より優先して照合する。
+    #[serde(default)]
+    pub source_profile_id: Option<String>,
     pub source_sql: String,
     pub source_driver: Option<String>,
+    /// 元の SQL を実行した DB (#1541)。再取得で同じ DB へ流すために保存する。
+    #[serde(default)]
+    pub source_database: Option<String>,
 }
 
 /// 結果セットを 1 つのローカルテーブルとして登録する。データはワイヤフォーマット
@@ -446,8 +452,10 @@ pub async fn register_local_table_inner(
         rows,
         result_id,
         source_profile,
+        source_profile_id,
         source_sql,
         source_driver,
+        source_database,
     } = req;
     let rows = crate::commands::result::resolve_rows(state, result_id.as_deref(), rows)?;
     if rows.len() > MAX_LOCAL_TABLE_ROWS {
@@ -461,8 +469,10 @@ pub async fn register_local_table_inner(
     let meta = LocalTableMeta {
         name: table_name.trim().to_string(),
         source_profile,
+        source_profile_id,
         source_sql,
         source_driver,
+        source_database,
         fetched_at_ms: now_ms(),
         row_count: rows.len() as i64,
     };

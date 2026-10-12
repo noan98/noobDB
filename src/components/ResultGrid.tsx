@@ -143,6 +143,8 @@ import { columnCommentsFor, withComment } from "./schemaComment";
 import {
   buildInsertClipboard,
   buildRowSql,
+  buildRowWhere,
+  qualifiedTableRef,
   countEditedCells,
   countEditedRows,
   editIsNoop,
@@ -6397,6 +6399,13 @@ export const DataGrid = memo(function DataGrid({
                         label: n > 1 ? t("gridCopyAsJsonRows", { count: n }) : t("gridCopyAsJson"),
                         onSelect: () => copyAsFormat("json", target),
                       },
+                      {
+                        label:
+                          n > 1
+                            ? t("gridCopyAsMarkdownRows", { count: n })
+                            : t("gridCopyAsMarkdown"),
+                        onSelect: () => copyAsFormat("markdown", target),
+                      },
                     ];
                   })(),
                   { separator: true as const },
@@ -7223,6 +7232,19 @@ export const DataGrid = memo(function DataGrid({
               }
               onClose={() => setViewer(null)}
               driver={rowSqlDriver}
+              jsonUpdate={
+                rowSqlTable && columnKinds[viewer.colIdx] === "json" && !rowSqlBlockedByMask([viewer.rowIdx])
+                  ? {
+                      tableRef: qualifiedTableRef(rowSqlDriver ?? "mysql", rowSqlDatabase ?? "", rowSqlTable),
+                      where: buildRowWhere(
+                        rowSqlDriver ?? "mysql",
+                        columns,
+                        rows[viewer.rowIdx] ?? [],
+                        pkIndices ?? [],
+                      ),
+                    }
+                  : undefined
+              }
             />
           );
         })()}
@@ -7260,6 +7282,13 @@ export const DataGrid = memo(function DataGrid({
                   }
                 : undefined
             }
+            rowSql={{
+              driver: rowSqlDriver ?? "mysql",
+              database: rowSqlDatabase ?? "",
+              table: rowSqlTable ?? null,
+              pkIndices: pkIndices ?? [],
+              blockedByMask: rowSqlBlockedByMask([activeCell.rowIdx]),
+            }}
             edit={
               onApplyRowEdits
                 ? {

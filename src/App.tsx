@@ -70,6 +70,7 @@ import { TabPaneStore } from "./tabPaneStore";
 import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
+import { joinTableNames, type TableNameSeparator } from "./components/explorerTree";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
 import { joinTableDdls, summarizeTableNames } from "./components/batchTables";
 import {
@@ -131,6 +132,7 @@ import { SnippetList } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
 import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
+import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
@@ -1023,6 +1025,9 @@ function makeTab(kind: TabKind, title: string, sql: string): Tab {
   };
 }
 
+/** 出力ログへ記録する接続の情報 (実行開始時に確定する, #1541)。 */
+type OutputCtx = { connectionId: string | null; connectionName: string | null; defaultDatabase: string | null };
+
 function makeQueryTab(): Tab {
   // 新規クエリタブは空のエディタで開く。
   return makeTab("query", translate("tabUntitledQuery"), "");
@@ -1892,6 +1897,8 @@ export default function App() {
     columns: Column[];
     rows: CellValue[][];
     sourceSql: string;
+    /** 元の SQL を実行した DB (#1541)。再取得で同じ DB へ流す。SQLite・不明なら null。 */
+    sourceDatabase: string | null;
   } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
@@ -1917,6 +1924,9 @@ export default function App() {
     name: string | null;
     id: string | null;
   } | null>(null);
+  // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
+  // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
+  const txDatabaseRef = useRef<string | null>(null);
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 明示トランザクション内の SAVEPOINT スタック (#1418)。TX の開始/終了で空にする。
@@ -3937,20 +3947,36 @@ export default function App() {
   // 呼ぶだけで、DB アクセスそのものには関与しない。接続名 / 既定 DB は ref 経由で
   // 引き、実行系 useCallback の依存配列を増やさない (増やすと接続切替のたびに
   // ハンドラが作り直され、エディタのキーマップへの再バインドが走る)。
-  const outputProfileRef = useRef<{ name: string | null; database: string | null }>({
-    name: null,
-    database: null,
+  const outputProfileRef = useRef<OutputCtx>({
+    connectionId: null,
+    connectionName: null,
+    defaultDatabase: null,
   });
   outputProfileRef.current = {
-    name: selectedProfile?.name ?? null,
-    database: selectedProfile?.database ?? null,
+    connectionId: selectedProfile?.id ?? null,
+    connectionName: selectedProfile?.name ?? null,
+    defaultDatabase: selectedProfile?.database ?? null,
   };
+  // 実行を開始した時点の接続 (id / 表示名 / 既定 DB) を確定する (#1541)。実行中に接続を切り替えても
+  // 出力の記録が新しい接続へずれないよう、各実行の冒頭で 1 回だけ呼んで recordOutput に渡す。
+  const outputCtxFor = useCallback((sid: string | null | undefined): OutputCtx => {
+    const p = sid ? openConnectionsRef.current.find((c) => c.sessionId === sid)?.profile : undefined;
+    if (p) return { connectionId: p.id, connectionName: p.name, defaultDatabase: p.database ?? null };
+    return { ...outputProfileRef.current };
+  }, []);
+  // `execDatabase` は実行に使った DB (タブの database のみ。既定へのフォールバックはしない)。
   const recordOutput = useCallback(
-    (input: Omit<OutputInput, "connection" | "database">, database: string | null | undefined) => {
+    (
+      input: Omit<OutputInput, "connection" | "connectionId" | "database" | "execDatabase">,
+      execDatabase: string | null | undefined,
+      ctx: OutputCtx = outputProfileRef.current,
+    ) => {
       pushOutput({
         ...input,
-        connection: outputProfileRef.current.name,
-        database: database ?? outputProfileRef.current.database,
+        connection: ctx.connectionName,
+        connectionId: ctx.connectionId,
+        database: execDatabase ?? ctx.defaultDatabase,
+        execDatabase: execDatabase ?? null,
       });
     },
     [],
@@ -3982,6 +4008,7 @@ export default function App() {
       return;
     }
     const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
+    const outCtx = outputCtxFor(sid);
     await cancelStreamForTab(tabId);
 
     const timeoutSecs = settings.queryTimeoutSecs;
@@ -4222,6 +4249,7 @@ export default function App() {
               serverMessages,
             },
             tab?.database,
+            outCtx,
           );
         }
         // A new entry was just written to history; refresh the panel. Auto-refresh
@@ -4292,6 +4320,7 @@ export default function App() {
               error: error ?? null,
             },
             tab?.database,
+            outCtx,
           );
         }
         if (!autoRefresh && !connectionLost) {
@@ -4374,6 +4403,7 @@ export default function App() {
         recordOutput(
           { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
           tab?.database,
+          outCtx,
         );
       }
       finalize();
@@ -4396,6 +4426,7 @@ export default function App() {
     // 読み取り専用判定の文字列エスケープ規則がドライバ依存になったため (#852)。
     selectedProfile?.driver,
     recordOutput,
+    outputCtxFor,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
@@ -5095,7 +5126,9 @@ export default function App() {
     if (!tab) return;
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
-    const db = tab.database ?? selectedProfile?.database ?? null;
+    // 単文実行と同じく、実行 DB はタブの database のみ (PG ではプロファイルの DB 名は実 DB でありスキーマではない)。
+    const db = tab.database ?? null;
+    const outCtx = outputCtxFor(sessionId);
     patchTab(tabId, (tt) => ({
       ...tt,
       title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
@@ -5137,7 +5170,7 @@ export default function App() {
         },
         onResults: ({ results: incoming }) => {
           for (const r of incoming) {
-            recordOutput(toBatchOutputInput(r), db);
+            recordOutput(toBatchOutputInput(r), tab.database ?? null, outCtx);
             results.push(toBatchResult(r));
           }
           // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
@@ -5169,7 +5202,7 @@ export default function App() {
       finish();
       finishRun({ error: String(e) });
     }
-  }, [sessionId, selectedProfile?.database, patchTab, recordOutput, tabsRef]);
+  }, [sessionId, patchTab, recordOutput, tabsRef, outputCtxFor]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -5177,6 +5210,7 @@ export default function App() {
   // 明示トランザクション内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
   const runTxInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) return;
+    const outCtx = outputCtxFor(sessionId);
     patchTab(tabId, (tt) => ({
       ...tt,
       title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
@@ -5216,7 +5250,8 @@ export default function App() {
           error: null,
           serverMessages: res.server_messages,
         },
-        null,
+        txDatabaseRef.current,
+        outCtx,
       );
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
@@ -5228,14 +5263,20 @@ export default function App() {
         errorKind: errorKindOf(e),
         aiContext: { tabId, sql, database: tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null },
       });
-      recordOutput({ sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, null);
+      recordOutput(
+        { sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) },
+        txDatabaseRef.current,
+        outCtx,
+      );
     }
-  }, [sessionId, patchTab, recordOutput, tabsRef]);
+  }, [sessionId, patchTab, recordOutput, outputCtxFor, tabsRef]);
 
   // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
     if (!sessionId) return;
     try {
+      txDatabaseRef.current =
+        selectedProfile?.driver === "postgres" ? null : (selectedProfile?.database ?? null);
       await api.beginTransaction(
         sessionId,
         selectedProfile?.database ?? null,
@@ -5455,7 +5496,7 @@ export default function App() {
       void runTxInTab(target.id, sql);
       return;
     }
-    void runQueryInTab(target.id, sql, null, autoLimit);
+    void runQueryInTab(target.id, sql, null, autoLimit, false, openedInNewTab ? { tab: target } : undefined);
   }, [
     runQueryInTab,
     runExplainInTab,
@@ -5632,10 +5673,11 @@ export default function App() {
         recordOutput(
           { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
           tab.database,
+          outputCtxFor(sessionId),
         );
       }
     }
-  }, [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput]);
+  }, [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput, outputCtxFor, sessionId]);
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab
   // holding the snippet when there is no active tab yet.
@@ -5883,6 +5925,15 @@ export default function App() {
     const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
     addTab(tab);
     runInTabWithGate(tab, sql, { newTab: false });
+  }, [sessionId, addTab, runInTabWithGate]);
+
+  // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
+  // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
+  const handleOutputRunSql = useCallback((sql: string, execDatabase: string | null) => {
+    if (!sessionId) return;
+    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql, ...(execDatabase ? { database: execDatabase } : {}) };
+    addTab(tab);
+    runInTabWithGate(tab, sql, { newTab: false, fresh: true });
   }, [sessionId, addTab, runInTabWithGate]);
 
   // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)
@@ -7106,9 +7157,13 @@ export default function App() {
   }, [toast]);
 
   // 結果グリッドの「ローカルに登録」ボタン: 名前を確認するモーダルを開く。
-  const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string) => {
-    setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql });
-  }, []);
+  // `tabDatabase` は結果の持ち主のタブの database (PaneView が渡す)。MySQL / PostgreSQL では
+  // タブの database のみを記録し (PG ではスキーマ名)、既定のまま実行したものは "" で記録する。
+  // プロファイルの既定 DB へはフォールバックしない (再取得で search_path を壊すため)。
+  const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string, tabDatabase: string | null) => {
+    const database = selectedProfile && selectedProfile.driver !== "sqlite" ? (tabDatabase ?? "") : null;
+    setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql, sourceDatabase: database });
+  }, [selectedProfile]);
 
   const handleConfirmRegisterLocalTable = useCallback((tableName: string) => {
     const req = registerLocalRequest;
@@ -7128,8 +7183,10 @@ export default function App() {
             rows: useHandle ? [] : req.rows,
             resultId: useHandle ? handleId : null,
             sourceProfile: selectedProfile?.name ?? null,
+            sourceProfileId: selectedProfile?.id ?? null,
             sourceSql: req.sourceSql,
             sourceDriver: selectedProfile?.driver ?? null,
+            sourceDatabase: req.sourceDatabase,
           });
         if (handleId) {
           try {
@@ -7166,6 +7223,61 @@ export default function App() {
       }
     })();
   }, [refreshLocalTables, toast]);
+
+  // ローカルテーブルの再取得 (#1541)。可否判定は `planLocalRefetch` (純ロジック)。元の接続が
+  // 閉じていれば案内のみ (自動接続しない)。実行は読み取り専用の SQL に限り、取得できてから
+  // 同名のテーブルへ置き換える (取得に失敗したら既存のテーブルはそのまま)。
+  const [refetchingLocalTable, setRefetchingLocalTable] = useState<string | null>(null);
+  const handleRefetchLocalTable = useCallback((tableName: string) => {
+    const sid = localSessionIdRef.current;
+    const meta = localTables.find((m) => m.name === tableName);
+    if (!sid || !meta) return;
+    const plan = planLocalRefetch(meta, openConnectionsRef.current);
+    if (plan.kind === "notReadOnly") {
+      toast.info(translate("localRefetchNotReadOnly", { table: tableName }));
+      return;
+    }
+    if (plan.kind === "noDatabase") {
+      toast.info(translate("localRefetchNoDatabase", { table: tableName }));
+      return;
+    }
+    if (plan.kind === "ambiguous") {
+      toast.info(translate("localRefetchAmbiguous", { table: tableName, name: plan.profileName }));
+      return;
+    }
+    if (plan.kind === "noConnection") {
+      toast.info(
+        plan.profileName === null
+          ? translate("localRefetchNoSource", { table: tableName })
+          : translate("localRefetchNeedsConnection", { table: tableName, name: plan.profileName }),
+      );
+      return;
+    }
+    setRefetchingLocalTable(tableName);
+    void (async () => {
+      try {
+        const result = await api.runQuery(plan.sessionId, meta.source_sql, plan.database);
+        await api.registerLocalTable({
+          sessionId: sid,
+          tableName,
+          columns: result.columns,
+          rows: result.rows,
+          resultId: null,
+          sourceProfile: meta.source_profile,
+          sourceProfileId: meta.source_profile_id,
+          sourceSql: meta.source_sql,
+          sourceDriver: meta.source_driver,
+          sourceDatabase: meta.source_database,
+        });
+        await refreshLocalTables(sid);
+        toast.success(translate("localRefetchSuccess", { rows: result.rows.length, table: tableName }));
+      } catch (e) {
+        toast.error(translate("localRefetchFailed", { table: tableName, error: String(e) }));
+      } finally {
+        setRefetchingLocalTable(null);
+      }
+    })();
+  }, [localTables, refreshLocalTables, toast]);
 
   const handleSaveLocalDatabase = useCallback(() => {
     const sid = localSessionIdRef.current;
@@ -7469,6 +7581,19 @@ export default function App() {
       toast.success(translate("batchDdlCopied", { count: entries.length }));
     }
   }, [fetchTablesDdl, toast]);
+
+  // 複数選択したテーブル名だけのコピー (#1541)。DB には触れない。
+  const handleCopyTableNames = useCallback(
+    async (_database: string, tables: string[], separator: TableNameSeparator) => {
+      if (tables.length === 0) return;
+      if (await copyToClipboard(joinTableNames(tables, separator))) {
+        toast.success(translate("batchNamesCopied", { count: tables.length }));
+      } else {
+        toast.error(translate("clipboardCopyFailed"));
+      }
+    },
+    [toast],
+  );
 
   // 複数選択したテーブルの一括 DROP (#1399)。確認導線は単一の `handleDropTable` と同じ
   // `confirm` + 本番接続のタイプ入力ゲート (#675)。対象が複数なので、対象のテーブル名を本文に
@@ -9436,6 +9561,7 @@ export default function App() {
     onCloneTable: (database: string, table: string) => setCloneTarget({ database, table }),
     onShowCreateTables: handleShowCreateTables,
     onCopyTablesDdl: handleCopyTablesDdl,
+    onCopyTableNames: handleCopyTableNames,
     onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
     onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
     onDropTables: handleDropTables,
@@ -9788,6 +9914,8 @@ export default function App() {
             loading={localTablesLoading}
             onOpenLocal={handleOpenLocalConnection}
             onDropTable={handleDropLocalTable}
+            onRefetchTable={handleRefetchLocalTable}
+            refetchingTable={refetchingLocalTable}
             onSaveToFile={handleSaveLocalDatabase}
           />
         )}
@@ -9951,7 +10079,13 @@ export default function App() {
                     // ログ系 3 タブ (#1114) は接続に依存しないので sessionId の
                     // ガードより前で描く。出力の SQL は新しいタブで開き、今の
                     // エディタを上書きしない (履歴の「新しいタブで開く」と同じ)。
-                    <OutputPanel onOpenSql={handleOpenHistoryInNewTab} />
+                    <OutputPanel
+                      onOpenSql={handleOpenHistoryInNewTab}
+                      onInsertSql={handleLauncherInsertSql}
+                      onRunSql={handleOutputRunSql}
+                      canRun={sessionId !== null}
+                      currentConnectionId={selectedProfile?.id ?? null}
+                    />
                   ) : activeBottomPanelTab === "activity" ? (
                     <ActivityLogPanel />
                   ) : activeBottomPanelTab === "health" ? (

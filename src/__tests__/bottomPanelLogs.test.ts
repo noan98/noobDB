@@ -135,7 +135,9 @@ describe("outputLog", () => {
     elapsedMs: 5,
     error: null,
     connection: "local",
+    connectionId: "p1",
     database: "app",
+    execDatabase: "app",
     ...extra,
   });
 
@@ -219,7 +221,9 @@ describe("outputLog の SQL 保持量 (#1534)", () => {
     elapsedMs: 1,
     error: null,
     connection: null,
+    connectionId: null,
     database: null,
+    execDatabase: null,
   });
 
   it("予算内なら全文を保ち、同じ配列を返す", () => {

@@ -24,6 +24,7 @@ import {
   isContainer,
   jsonPathSqlExpression,
   jsonPathSqlPredicate,
+  jsonPathSqlUpdate,
   pathKey,
   scalarPreview,
   searchJsonTree,
@@ -36,6 +37,7 @@ import {
 import { useToast } from "./Toast";
 import { TreeChevron, TreeCollapse, TreeRow } from "./tree";
 import { Button, Input } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /**
  * 展開したコンテナで一度に描画する子の数。これを超える配列/オブジェクトは
@@ -50,6 +52,12 @@ interface Props {
   columnName?: string;
   /** 接続ドライバ ("mysql" | "postgres" | "sqlite")。 */
   driver?: string;
+  /**
+   * ノードを書き換える UPDATE 文のコピー (#1541) に使う対象行。`tableRef` は引用済みの
+   * テーブル参照、`where` は主キー述語 (主キーが解決できなければ null でボタンを無効にする)。
+   * 無ければ UPDATE のコピーを出さない。
+   */
+  update?: { tableRef: string; where: string | null };
 }
 
 interface Selection {
@@ -129,7 +137,7 @@ function rowSnapshot(state: TreeState, key: string, firstFocusable: boolean): st
  *   生成した SQL はクリップボードへ渡すだけで、DB への書き込み経路は持たない。
  * - 数値は元テキストのまま表示する (64bit 整数を丸めない)。
  */
-export function JsonTreeView({ root, columnName, driver }: Props) {
+export function JsonTreeView({ root, columnName, driver, update }: Props) {
   const t = useT();
   const toast = useToast();
   const [query, setQuery] = useState("");
@@ -228,6 +236,11 @@ export function JsonTreeView({ root, columnName, driver }: Props) {
       : null;
   const sqlWhere =
     selected && canSql ? jsonPathSqlPredicate(driver!, columnName!, selected.path, selected.node) : null;
+
+  const sqlUpdate =
+    selected && canSql && update && update.where
+      ? jsonPathSqlUpdate(driver!, update.tableRef, columnName!, selected.path, selected.node, update.where)
+      : null;
 
   return (
     <chakra.div display="flex" flexDirection="column" gap="2" flex="1" minH="0">
@@ -328,6 +341,20 @@ export function JsonTreeView({ root, columnName, driver }: Props) {
                 <Icon name="filter" size={ICON_SIZES.sm} />
                 {t("jsonTreeCopySqlWhere")}
               </Button>
+            )}
+            {update && selected.path.length > 0 && canSql && (
+              <Tooltip label={update.where ? t("jsonTreeCopySqlUpdateTitle") : t("gridCopyAsSqlNoPk")} focusableWrapper={!sqlUpdate}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={!sqlUpdate}
+                  onClick={() => sqlUpdate && copy(sqlUpdate)}
+                >
+                  <Icon name="insert-sql" size={ICON_SIZES.sm} />
+                  {t("jsonTreeCopySqlUpdate")}
+                </Button>
+              </Tooltip>
             )}
           </>
         ) : (

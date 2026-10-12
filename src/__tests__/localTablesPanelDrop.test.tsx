@@ -10,6 +10,8 @@ const table = {
   row_count: 3,
   fetched_at_ms: 0,
   source_profile: null,
+  source_profile_id: null,
+  source_database: null,
   source_sql: "select 1",
 } as unknown as LocalTableMeta;
 
@@ -43,5 +45,43 @@ describe("LocalTablesPanel 削除確認", () => {
     fireEvent.click(screen.getByRole("button", { name: t("localPanelDropTable") }));
     fireEvent.click(await screen.findByRole("button", { name: t("localPanelDropConfirmOk") }));
     await waitFor(() => expect(onDrop).toHaveBeenCalledWith("orders_copy"));
+  });
+});
+
+describe("LocalTablesPanel 再取得ボタン (#1541)", () => {
+  it("onRefetchTable があれば各行に出て、押すとテーブル名で呼ぶ。再取得中は止める", () => {
+    const onRefetch = vi.fn();
+    const { unmount } = renderWithProviders(
+      <LocalTablesPanel
+        hasSession
+        isActive={false}
+        tables={[table]}
+        onOpenLocal={() => {}}
+        onDropTable={() => {}}
+        onRefetchTable={onRefetch}
+        onSaveToFile={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("localPanelRefetch", { table: "orders_copy" }) }));
+    expect(onRefetch).toHaveBeenCalledWith("orders_copy");
+    unmount();
+    renderWithProviders(
+      <LocalTablesPanel
+        hasSession
+        isActive={false}
+        tables={[table]}
+        onOpenLocal={() => {}}
+        onDropTable={() => {}}
+        onRefetchTable={onRefetch}
+        refetchingTable="orders_copy"
+        onSaveToFile={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: t("localPanelRefetch", { table: "orders_copy" }) })).toBeDisabled();
+  });
+
+  it("onRefetchTable が無ければ出さない", () => {
+    renderPanel();
+    expect(screen.queryByRole("button", { name: t("localPanelRefetch", { table: "orders_copy" }) })).toBeNull();
   });
 });

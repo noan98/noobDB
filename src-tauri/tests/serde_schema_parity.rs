@@ -427,8 +427,10 @@ fn build_fixtures() -> serde_json::Value {
     let local_table_meta = LocalTableMeta {
         name: "r1".into(),
         source_profile: Some("prod-mysql".into()),
+        source_profile_id: Some("prof-1".into()),
         source_sql: "SELECT * FROM orders".into(),
         source_driver: Some("mysql".into()),
+        source_database: Some("shop".into()),
         fetched_at_ms: 1_700_000_000_000,
         row_count: 42,
     };

@@ -723,6 +723,76 @@ describe("シナリオ: Bottom Panel のログ系タブ (#1114, 実ブラウザ)
   });
 });
 
+describe("シナリオ: 出力ログの再実行は記録した実行 DB で走る (#1541, 実ブラウザ)", () => {
+  beforeEach(() => {
+    __resetOutputLog();
+    __resetMessageLog();
+  });
+
+  it("出力タブの「再実行」が run_query_stream に execDatabase (タブの database) を渡す", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    // テーブルタブの初回実行はタブの database (appdb) で走る。
+    expect(invocationsOf("run_query_stream")[0]).toMatchObject({ database: "appdb" });
+    const before = invocationsOf("run_query_stream").length;
+
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
+    await userEvent.keyboard(t("cmdkOutput"));
+    await userEvent.keyboard("{Enter}");
+    const outputList = screen.getByRole("list", { name: t("outputListAria") });
+    await outputList.getByRole("button", { expanded: false }).first().click();
+    await screen.getByRole("button", { name: t("outputRerun") }).click();
+
+    // 再実行は addTab 直後の新タブで走る。描画前のスナップショットでタブが見つからず
+    // database が null になる退行を防ぐ。
+    await vi.waitFor(() => {
+      const runs = invocationsOf("run_query_stream");
+      expect(runs.length).toBeGreaterThan(before);
+      expect(runs[runs.length - 1]).toMatchObject({ database: "appdb" });
+    }, { timeout: 5000 });
+  });
+
+  it("複文 (バッチ) の実行は run_sql_batch にタブの database だけを渡し、プロファイル既定へ寄せない", async () => {
+    registerAutoStream();
+    onCommand("run_sql_batch", () => null);
+    localStorage.setItem(
+      `noobdb.tabs.${ALPHA.id}`,
+      JSON.stringify({
+        panes: [{ tabs: [{ kind: "query", title: "Batch", sql: "SELECT 1; SELECT 2" }], activeIndex: 0 }],
+        activePane: 0,
+      }),
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(screen.getByRole("tab", { name: /Batch/ })).toBeVisible();
+    // 復元したタブはエディタの再マウントが落ち着くまで右クリックメニューが出ないことがある。
+    // SQL が載ったことを確認してから、メニューが出るまで右クリックからやり直す。
+    await vi.waitFor(() => {
+      if (!(document.querySelector(".cm-content")?.textContent ?? "").includes("SELECT 1")) {
+        throw new Error("editor SQL not restored");
+      }
+    }, { timeout: 5000 });
+    await vi.waitFor(async () => {
+      const el = document.querySelector<HTMLElement>(".cm-content");
+      if (!el) throw new Error("editor not mounted");
+      await page.elementLocator(el).click({ button: "right" });
+      await screen
+        .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+        .click({ timeout: 2000 });
+    }, { timeout: 20000, interval: 300 });
+await vi.waitFor(() => {
+      const runs = invocationsOf("run_sql_batch");
+      expect(runs).toHaveLength(1);
+      // タブに database が無ければ null (プロファイルの appdb を混ぜない)。
+      expect(runs[0]).toMatchObject({ database: null });
+    }, { timeout: 5000 });
+  });
+});
+
 describe("シナリオ: 折りたたみ時のパネルバーから中核機能へ辿れる (実ブラウザ)", () => {
   it("接続前は診断が無効で理由が読め、接続後はパネルバーからプロセスモニタが開く", async () => {
     onCommand("list_processes", () => []);

@@ -29,8 +29,10 @@ export const localCommands = {
         rows: req.rows,
         result_id: req.resultId ?? null,
         source_profile: req.sourceProfile ?? null,
+        source_profile_id: req.sourceProfileId ?? null,
         source_sql: req.sourceSql,
         source_driver: req.sourceDriver ?? null,
+        source_database: req.sourceDatabase ?? null,
       },
     }).then((r) => parseResponse(schemas.localTableMeta, r, "register_local_table")),
   /** ローカルセッションに登録済みの全テーブルを、登録が新しい順で返す。 */

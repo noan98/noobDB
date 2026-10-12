@@ -787,8 +787,10 @@ export const connectResult = z.object({ session_id: z.string() });
 export const localTableMeta = z.object({
   name: z.string(),
   source_profile: z.string().nullable(),
+  source_profile_id: z.string().nullable(),
   source_sql: z.string(),
   source_driver: z.string().nullable(),
+  source_database: z.string().nullable(),
   fetched_at_ms: z.number(),
   row_count: z.number(),
 });

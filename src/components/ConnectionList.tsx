@@ -40,6 +40,7 @@ import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
 import { isSynthesizedTableDdl } from "./tableDdl";
+import type { TableNameSeparator } from "./explorerTree";
 import { tableCommentMap, withComment } from "./schemaComment";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
 import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
@@ -360,6 +361,8 @@ interface Props {
    */
   onShowCreateTables?: (database: string, tables: string[]) => void;
   onCopyTablesDdl?: (database: string, tables: string[]) => void;
+  /** 選択したテーブル名だけをクリップボードへコピーする (#1541)。DB に触れないので read_only でも有効。 */
+  onCopyTableNames?: (database: string, tables: string[], separator: TableNameSeparator) => void;
   onExportTables?: (database: string, tables: string[]) => void;
   onDumpTables?: (database: string, tables: string[]) => void;
   onDropTables?: (database: string, tables: string[]) => void;
@@ -1810,6 +1813,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onCloneTable,
   onShowCreateTables,
   onCopyTablesDdl,
+  onCopyTableNames,
   onExportTables,
   onDumpTables,
   onDropTables,
@@ -2552,6 +2556,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               },
             ]
           : []),
+        // スキーマツリーの展開をまとめて閉じる (#1541)。永続化済みの展開状態も空にする
+        // (次の接続で開き直されない)。開いているものが無ければ出さない。
+        ...(p.id === activeProfileId &&
+        (Object.values(expandedDbs).some(Boolean) || Object.values(expandedTables).some(Boolean))
+          ? [
+              {
+                label: t("contextMenuCollapseAll"),
+                onSelect: () => {
+                  setExpandedDbs({});
+                  setExpandedTables({});
+                  persistTree({}, {});
+                },
+              },
+            ]
+          : []),
         ...(onCreateNamespace && p.id === activeProfileId && treeNamespaceKind(p.driver) !== null
           ? [
               {
@@ -2602,6 +2621,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         onSelect: () => onCopyTablesDdl(db, selected),
         title: ddlTitle,
       });
+    }
+    if (onCopyTableNames) {
+      items.push(
+        {
+          label: t("batchMenuCopyNames", { count }),
+          onSelect: () => onCopyTableNames(db, selected, "newline"),
+        },
+        {
+          label: t("batchMenuCopyNamesComma", { count }),
+          onSelect: () => onCopyTableNames(db, selected, "comma"),
+        },
+      );
     }
     if (onExportTables) {
       items.push({ label: t("batchMenuExport", { count }), onSelect: () => onExportTables(db, selected) });

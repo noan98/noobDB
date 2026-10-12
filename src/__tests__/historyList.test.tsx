@@ -305,3 +305,32 @@ describe("HistoryList の AI 検索入口 (#699)", () => {
     await waitFor(() => expect(listHistory.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 });
+
+describe("HistoryList の実行時間フィルタ (#1541)", () => {
+  it("「1 秒以上のみ」で速い行が消え、「実行時間の長い順」で並びが変わる", async () => {
+    listHistory.mockResolvedValue([
+      makeHistoryEntry({ id: 1, sql_preview: "SELECT fast", elapsed_ms: 20 }),
+      makeHistoryEntry({ id: 2, sql_preview: "SELECT slower", elapsed_ms: 3000 }),
+      makeHistoryEntry({ id: 3, sql_preview: "SELECT slowest", elapsed_ms: 9000 }),
+    ]);
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={() => {}}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+    await screen.findByText("SELECT fast");
+    const order = () => screen.getAllByRole("treeitem").map((n) => n.textContent ?? "");
+    fireEvent.click(screen.getByRole("button", { name: t("historySpeedFilterSlowest") }));
+    expect(order()[0]).toContain("SELECT slowest");
+    expect(order()[2]).toContain("SELECT fast");
+    fireEvent.click(screen.getByRole("button", { name: t("historySpeedFilterSlow") }));
+    expect(screen.queryByText("SELECT fast")).toBeNull();
+    expect(order()).toHaveLength(2);
+    // listHistory の引数は変えない (クライアント側だけで処理する)。
+    expect(listHistory).toHaveBeenCalledTimes(1);
+  });
+});

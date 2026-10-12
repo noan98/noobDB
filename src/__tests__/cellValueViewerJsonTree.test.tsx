@@ -39,6 +39,45 @@ describe("CellValueViewer JSON tree (#1026)", () => {
     expect(screen.getByRole("button", { name: t("jsonTreeCopySqlWhere") })).toBeInTheDocument();
   });
 
+  it("UPDATE のコピーは jsonUpdate があるときだけ出て、主キーが無ければ無効 (#1541)", () => {
+    const select = () => {
+      const tree = screen.getByRole("tree");
+      fireEvent.click(within(tree).getByText('"user"'));
+      fireEvent.click(within(tree).getByText('"name"'));
+    };
+    const { unmount } = renderWithProviders(
+      <CellValueViewer columnName="doc" value={DOC} isJson driver="postgres" onClose={() => {}} />,
+    );
+    select();
+    expect(screen.queryByRole("button", { name: t("jsonTreeCopySqlUpdate") })).toBeNull();
+    unmount();
+    const noPk = renderWithProviders(
+      <CellValueViewer
+        columnName="doc"
+        value={DOC}
+        isJson
+        driver="postgres"
+        jsonUpdate={{ tableRef: '"app"."t"', where: null }}
+        onClose={() => {}}
+      />,
+    );
+    select();
+    expect(screen.getByRole("button", { name: t("jsonTreeCopySqlUpdate") })).toBeDisabled();
+    noPk.unmount();
+    renderWithProviders(
+      <CellValueViewer
+        columnName="doc"
+        value={DOC}
+        isJson
+        driver="postgres"
+        jsonUpdate={{ tableRef: '"app"."t"', where: '"id" = 1' }}
+        onClose={() => {}}
+      />,
+    );
+    select();
+    expect(screen.getByRole("button", { name: t("jsonTreeCopySqlUpdate") })).toBeEnabled();
+  });
+
   it("filters to matching branches while searching", () => {
     renderWithProviders(<CellValueViewer columnName="doc" value={DOC} isJson onClose={() => {}} />);
     fireEvent.change(screen.getByRole("searchbox", { name: t("jsonTreeSearchPlaceholder") }), {
