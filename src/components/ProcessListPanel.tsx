@@ -9,10 +9,18 @@ import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
 import {
   buildBlockingTree,
+  distinctProcessValues,
+  EMPTY_PROCESS_FILTER,
+  filterProcesses,
   formatProcessTime,
+  isProcessFilterActive,
   processKey,
   PROCESS_LIVE_FIELDS,
+  PROCESS_MIN_SECS_OPTIONS,
   pruneSelection,
+  sortProcesses,
+  type ProcessFilter,
+  type ProcessSortKey,
 } from "./processList";
 import { CountUp } from "./CountUp";
 import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
@@ -25,7 +33,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Select } from "./ui";
+import { Button, Checkbox, Input, Select } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
@@ -140,10 +148,47 @@ export function ProcessListPanel({
   const { flashToken } = useLiveChanges(rows, processKey, PROCESS_LIVE_FIELDS);
   // 件数上限 (#1321): 数千件でも描画コストが頭打ちになるよう、先頭から上限件数だけ描く。
   // 選択・全選択・件数表示は全件 (`rows`) を対象にする。
-  const visibleRows = useMemo(
-    () => (rows.length > PROCESS_RENDER_LIMIT ? rows.slice(0, PROCESS_RENDER_LIMIT) : rows),
-    [rows],
+  // 絞り込み・並べ替え (#1538) は描画上限で切る「前」に全件へ適用する。501 件目以降の
+  // プロセスも条件に合えば先頭側に現れ、KILL 対象を探せる。
+  const [filter, setFilter] = useState<ProcessFilter>(EMPTY_PROCESS_FILTER);
+  const [sortKey, setSortKey] = useState<ProcessSortKey>("default");
+  // AI の停止候補から「一覧で表示」されたプロセス (#1538)。強調 + スクロール先。
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const [scrollTick, setScrollTick] = useState(0);
+  const filterActive = isProcessFilterActive(filter);
+  const processedRows = useMemo(
+    () => sortProcesses(filterProcesses(rows, filter), sortKey),
+    [rows, filter, sortKey],
   );
+  const visibleRows = useMemo(() => {
+    const head =
+      processedRows.length > PROCESS_RENDER_LIMIT
+        ? processedRows.slice(0, PROCESS_RENDER_LIMIT)
+        : processedRows;
+    if (highlightId === null || head.some((p) => p.id === highlightId)) return head;
+    // 強調対象が描画上限の外なら、先頭に足して必ず見えるようにする。
+    const hit = processedRows.find((p) => p.id === highlightId);
+    return hit ? [hit, ...head] : head;
+  }, [processedRows, highlightId]);
+  // 選択中の値が (プロセスが消えて) 選択肢から無くなっても option に残し、表示が空欄にならないようにする。
+  const userOptions = useMemo(
+    () => withCurrent(distinctProcessValues(rows, "user"), filter.user),
+    [rows, filter.user],
+  );
+  const databaseOptions = useMemo(
+    () => withCurrent(distinctProcessValues(rows, "database"), filter.database),
+    [rows, filter.database],
+  );
+  const commandOptions = useMemo(
+    () => withCurrent(distinctProcessValues(rows, "command"), filter.command),
+    [rows, filter.command],
+  );
+  // 絞り込みで隠れている行の選択は kill 対象に含めない (見えないものを kill しない)。
+  const activeSelected = useMemo(() => {
+    if (!filterActive) return selected;
+    const visible = new Set(processedRows.map((p) => p.id));
+    return new Set([...selected].filter((id) => visible.has(id)));
+  }, [filterActive, processedRows, selected]);
 
   const load = useCallback(async (force = false) => {
     if (busyRef.current && !force) return;
@@ -156,6 +201,8 @@ export function ProcessListPanel({
       setProcesses(list);
       // 消えたプロセスの選択を持ち越さない (id 再利用の巻き込み防止)。
       setSelected((cur) => pruneSelection(cur, list));
+      // 消えたプロセスの強調は外す (PG の pid 再利用で無関係な行が強調されるのを防ぐ)。
+      setHighlightId((cur) => (cur !== null && list.some((p) => p.id === cur) ? cur : null));
       setError(null);
       setUpdatedAt(new Date());
     } catch (e) {
@@ -173,6 +220,10 @@ export function ProcessListPanel({
   useEffect(() => {
     setProcesses([]);
     setSelected(new Set());
+    setHighlightId(null);
+    // 別セッションへ絞り込み・並べ替えを持ち越さない (他セッションの値で全件が隠れるのを防ぐ)。
+    setFilter(EMPTY_PROCESS_FILTER);
+    setSortKey("default");
     setError(null);
     // 旧セッションの取得が飛んでいても、新セッションの初回取得は必ず走らせる。
     void load(true);
@@ -193,14 +244,20 @@ export function ProcessListPanel({
 
   const countParts = splitAroundCountUpToken(t("processCount", { count: COUNT_UP_TOKEN }));
 
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const allSelected =
+    processedRows.length > 0 && processedRows.every((p) => selected.has(p.id));
+  // 全選択は絞り込み後の行が対象。絞り込み外の選択は触らない。
   const toggleAll = useCallback(() => {
-    setSelected((cur) =>
-      cur.size === rows.length
-        ? new Set()
-        : new Set(rows.map((p) => p.id)),
-    );
-  }, [rows]);
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (processedRows.every((p) => cur.has(p.id))) {
+        for (const p of processedRows) next.delete(p.id);
+      } else {
+        for (const p of processedRows) next.add(p.id);
+      }
+      return next;
+    });
+  }, [processedRows]);
   const toggleOne = useCallback((id: number) => {
     setSelected((cur) => {
       const next = new Set(cur);
@@ -214,30 +271,30 @@ export function ProcessListPanel({
   const blockingRows = useMemo(() => buildBlockingTree(rows), [rows]);
 
   // 確認 → 一括 kill → 再取得。選択 kill と待機ツリーのブロッカー kill で共通 (#1417)。
-  const killIds = useCallback(async (rawIds: number[]) => {
+  const killIds = useCallback(async (rawIds: number[], statementOnly = false) => {
     const ids = [...rawIds].sort((a, b) => a - b);
     if (ids.length === 0 || killing) return;
     // 自アプリのプール接続を kill するとこのセッション自体が切断されるため、
     // 選択に含まれている場合は確認文に強い警告を足す (#自己kill による切断)。
     const includesSelf = processes.some((p) => ids.includes(p.id) && p.is_self);
     const ok = await confirm({
-      title: t("processKillConfirmTitle"),
+      title: t(statementOnly ? "processCancelConfirmTitle" : "processKillConfirmTitle"),
       message: (
         <>
           <chakra.p margin={0}>
-            {t("processKillConfirmMessage", {
+            {t(statementOnly ? "processCancelConfirmMessage" : "processKillConfirmMessage", {
               count: ids.length,
               ids: ids.join(", "),
             })}
           </chakra.p>
-          {includesSelf && (
+          {includesSelf && !statementOnly && (
             <chakra.p marginTop="2" marginBottom={0} color={semanticColorToken("danger", "text")} fontWeight={600}>
               {t("processKillSelfWarning")}
             </chakra.p>
           )}
         </>
       ),
-      confirmLabel: t("processKillConfirmOk"),
+      confirmLabel: t(statementOnly ? "processCancelConfirmOk" : "processKillConfirmOk"),
       tone: "danger",
     });
     if (!ok) return;
@@ -251,7 +308,7 @@ export function ProcessListPanel({
     let failed = ids.length;
     let firstError: string | null = null;
     try {
-      const res = await api.killProcesses(sessionId, ids);
+      const res = await api.killProcesses(sessionId, ids, statementOnly);
       killed = res.killed;
       failed = res.failed;
       firstError = res.first_error;
@@ -262,10 +319,10 @@ export function ProcessListPanel({
     busyRef.current = false;
     setKilling(false);
     if (firstError === null && failed === 0) {
-      toast.success(t("processKillDone", { count: killed }));
+      toast.success(t(statementOnly ? "processCancelDone" : "processKillDone", { count: killed }));
     } else {
       toast.error(
-        t("processKillFailed", {
+        t(statementOnly ? "processCancelFailed" : "processKillFailed", {
           failed,
           count: ids.length,
           error: firstError ?? "",
@@ -274,8 +331,36 @@ export function ProcessListPanel({
     }
     await load(true);
   }, [killing, processes, confirm, t, sessionId, toast, load]);
-  const killSelected = useCallback(() => killIds([...selected]), [killIds, selected]);
+  const killSelected = useCallback(() => killIds([...activeSelected]), [killIds, activeSelected]);
+  const cancelSelected = useCallback(
+    () => killIds([...activeSelected], true),
+    [killIds, activeSelected],
+  );
   const killBlocker = useCallback((id: number) => killIds([id]), [killIds]);
+
+  // AI の停止候補 → 一覧の該当行へ (#1538)。AI は何も実行せず、行を強調してスクロールし、
+  // その 1 件だけを選択する。停止は下の既存ボタン (確認ダイアログつき) でユーザが行う。
+  const locateProcess = useCallback(
+    (id: number) => {
+      if (!rows.some((p) => p.id === id)) {
+        toast.info(t("processLocateGone", { id }));
+        return;
+      }
+      // 絞り込みで隠れるなら解除して見えるようにする。
+      if (!filterProcesses(rows, filter).some((p) => p.id === id)) setFilter(EMPTY_PROCESS_FILTER);
+      setHighlightId(id);
+      setSelected(new Set([id]));
+      setScrollTick((n) => n + 1);
+    },
+    [rows, filter, toast, t],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollTick は同じ行を再度指されたときもスクロールを再実行するためのトリガー
+  useEffect(() => {
+    if (highlightId === null) return;
+    document
+      .getElementById(`process-row-${sessionId}-${highlightId}`)
+      ?.scrollIntoView?.({ block: "center" });
+  }, [highlightId, scrollTick, sessionId]);
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
@@ -304,10 +389,23 @@ export function ProcessListPanel({
           <Button
             type="button"
             variant="danger"
-            disabled={readOnly || killing || selected.size === 0}
+            disabled={readOnly || killing || activeSelected.size === 0}
             onClick={() => void killSelected()}
           >
-            {t("processKillSelected", { count: selected.size })}
+            {t("processKillSelected", { count: activeSelected.size })}
+          </Button>
+        </Tooltip>
+        <Tooltip
+          label={readOnly ? t("processReadOnlyHint") : t("processCancelSelectedHint")}
+          focusableWrapper={readOnly}
+        >
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={readOnly || killing || activeSelected.size === 0}
+            onClick={() => void cancelSelected()}
+          >
+            {t("processCancelSelected", { count: activeSelected.size })}
           </Button>
         </Tooltip>
         <Tooltip label={t("processRefresh")} focusableWrapper={loading}>
@@ -367,6 +465,97 @@ export function ProcessListPanel({
         </chakra.p>
       )}
 
+      {!error && processes.length > 0 && (
+        <Flex align="center" gap="2" flexWrap="wrap" data-testid="process-filter">
+          <Input
+            type="search"
+            width="auto"
+            minWidth="72"
+            aria-label={t("processFilterTextAria")}
+            placeholder={t("processFilterTextPlaceholder")}
+            value={filter.text}
+            onChange={(e) => setFilter((f) => ({ ...f, text: e.target.value }))}
+          />
+          <Select
+            aria-label={t("processFilterUserAria")}
+            value={filter.user}
+            onChange={(e) => setFilter((f) => ({ ...f, user: e.target.value }))}
+            width="auto"
+          >
+            <option value="">{t("processFilterUserAny")}</option>
+            {userOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label={t("processFilterDbAria")}
+            value={filter.database}
+            onChange={(e) => setFilter((f) => ({ ...f, database: e.target.value }))}
+            width="auto"
+          >
+            <option value="">{t("processFilterDbAny")}</option>
+            {databaseOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label={t("processFilterStateAria")}
+            value={filter.command}
+            onChange={(e) => setFilter((f) => ({ ...f, command: e.target.value }))}
+            width="auto"
+          >
+            <option value="">{t("processFilterStateAny")}</option>
+            {commandOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label={t("processFilterMinSecsAria")}
+            value={String(filter.minSecs)}
+            onChange={(e) => setFilter((f) => ({ ...f, minSecs: Number(e.target.value) }))}
+            width="auto"
+          >
+            {PROCESS_MIN_SECS_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s === 0 ? t("processFilterMinSecsAny") : t("processFilterMinSecsOver", { time: formatProcessTime(s) })}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label={t("processSortAria")}
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as ProcessSortKey)}
+            width="auto"
+          >
+            <option value="default">{t("processSortDefault")}</option>
+            <option value="timeDesc">{t("processSortTimeDesc")}</option>
+            <option value="timeAsc">{t("processSortTimeAsc")}</option>
+            <option value="id">{t("processSortId")}</option>
+          </Select>
+          {filterActive && (
+            <>
+              <chakra.span textStyle="caption" data-testid="process-filter-count">
+                {t("processFilterCount", { shown: processedRows.length, total: rows.length })}
+              </chakra.span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setFilter(EMPTY_PROCESS_FILTER)}
+              >
+                {t("processFilterClear")}
+              </Button>
+            </>
+          )}
+        </Flex>
+      )}
+
       {/* AI 解説 (#1478)。AI 無効 / SQLite では何も描かない。KILL は下の既存ボタンで行う。 */}
       {!error && (
         <AiLockDiagnose
@@ -374,7 +563,8 @@ export function ProcessListPanel({
           sessionId={sessionId}
           driver={driver}
           processes={rows}
-          selectedIds={selected}
+          selectedIds={activeSelected}
+          onLocateProcess={locateProcess}
           isProduction={isProduction}
           schema={schema ?? undefined}
         />
@@ -496,6 +686,13 @@ export function ProcessListPanel({
           icon="server"
           title={t("processEmpty")}
         />
+      ) : processes.length > 0 && processedRows.length === 0 ? (
+        <EmptyState
+          illustration={<NoResultsIllustration />}
+          icon="search"
+          title={t("processFilterNoMatch")}
+          action={{ label: t("processFilterClear"), onClick: () => setFilter(EMPTY_PROCESS_FILTER) }}
+        />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">
@@ -531,6 +728,7 @@ export function ProcessListPanel({
                       sessionId={sessionId}
                       process={p}
                       selected={selected.has(p.id)}
+                      highlighted={p.id === highlightId}
                       onToggle={toggleOne}
                       flashCommand={flashToken(p.id, "command")}
                       flashState={flashToken(p.id, "state")}
@@ -544,9 +742,9 @@ export function ProcessListPanel({
           </chakra.table>
         </Box>
       )}
-      {!error && rows.length > visibleRows.length && (
+      {!error && processedRows.length > visibleRows.length && (
         <chakra.p margin={0} textStyle="caption" data-testid="process-truncated">
-          {t("processTruncated", { shown: visibleRows.length, total: rows.length })}
+          {t("processTruncated", { shown: visibleRows.length, total: processedRows.length })}
         </chakra.p>
       )}
         </>
@@ -555,6 +753,13 @@ export function ProcessListPanel({
       {dialog}
     </Box>
   );
+}
+
+/** 選択肢に現在値が無ければ足す (空文字は「指定なし」なので足さない)。 */
+function withCurrent(options: string[], current: string): string[] {
+  return current === "" || options.includes(current)
+    ? options
+    : [...options, current].sort((a, b) => a.localeCompare(b));
 }
 
 /** `ProcessInfo` の全フィールドが同値か (ポーリングごとに配列・オブジェクトは作り直されるため)。 */
@@ -575,6 +780,7 @@ const ProcessRow = memo(
     sessionId,
     process: p,
     selected,
+    highlighted,
     onToggle,
     flashCommand,
     flashState,
@@ -584,6 +790,7 @@ const ProcessRow = memo(
     sessionId: string;
     process: ProcessInfo;
     selected: boolean;
+    highlighted: boolean;
     onToggle: (id: number) => void;
     flashCommand: number | null;
     flashState: number | null;
@@ -592,7 +799,7 @@ const ProcessRow = memo(
   }) {
     const t = useT();
     return (
-      <LiveTr>
+      <LiveTr highlighted={highlighted} rowId={`process-row-${sessionId}-${p.id}`}>
         <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
           <Checkbox
             checked={selected}
@@ -643,6 +850,7 @@ const ProcessRow = memo(
   (a, b) =>
     a.sessionId === b.sessionId &&
     a.selected === b.selected &&
+    a.highlighted === b.highlighted &&
     a.onToggle === b.onToggle &&
     a.flashCommand === b.flashCommand &&
     a.flashState === b.flashState &&

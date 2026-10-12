@@ -1314,13 +1314,19 @@ impl Connection {
     /// Terminates the server-side processes/connections `ids` (from
     /// [`Connection::list_processes`]): MySQL `KILL <id>` on one pooled
     /// connection, PostgreSQL `pg_terminate_backend` over `unnest` in one
-    /// statement (#1259). Failures don't stop the rest; the result carries the
+    /// statement (#1259). With `statement_only` only the running statement is
+    /// stopped (MySQL `KILL QUERY <id>` / PostgreSQL `pg_cancel_backend`) and the
+    /// connection and its transaction state survive. Failures don't stop the rest; the result carries the
     /// counts and the first error. SQLite returns an error.
-    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
+    pub async fn kill_processes(
+        &self,
+        ids: &[i64],
+        statement_only: bool,
+    ) -> Result<KillProcessesResult> {
         match self {
-            Connection::MySql(c) => c.kill_processes(ids).await,
-            Connection::Postgres(c) => c.kill_processes(ids).await,
-            Connection::Sqlite(c) => c.kill_processes(ids).await,
+            Connection::MySql(c) => c.kill_processes(ids, statement_only).await,
+            Connection::Postgres(c) => c.kill_processes(ids, statement_only).await,
+            Connection::Sqlite(c) => c.kill_processes(ids, statement_only).await,
         }
     }
 

@@ -208,7 +208,7 @@ describe("ProcessListPanel bulk kill & lazy query (#1259)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("processKillSelected", { count: 2 }) }));
     fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
 
-    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [7, 8]));
+    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [7, 8], false));
     expect(api.killProcesses).toHaveBeenCalledTimes(1);
     await waitFor(() =>
       expect(
@@ -264,7 +264,7 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: t("processBlockingKillAria", { id: 1 }) }));
     fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
-    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [1]));
+    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [1], false));
   });
 
   it("read_only ではブロッカーの Kill を無効化する", async () => {
@@ -296,5 +296,156 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
     expect(
       screen.getByRole("button", { name: t("processBlockingKillAria", { id: 10 }) }),
     ).toBeEnabled();
+  });
+});
+
+/** 絞り込み・並べ替え (#1538) と、文のみ停止 (#1538)。 */
+describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => {
+  const base: ProcessInfo = {
+    id: 1,
+    user: "app",
+    host: "localhost",
+    database: "db",
+    command: "Query",
+    state: null,
+    time_secs: 10,
+    query_summary: "SELECT 1",
+    query_truncated: false,
+    is_self: false,
+    blocked_by: [],
+  };
+
+  it("描画上限を超える一覧でも、絞り込みで 501 件目以降のプロセスが見つかる", async () => {
+    const many = Array.from({ length: 501 }, (_, i) => ({
+      ...base,
+      id: i + 1,
+      user: i === 500 ? "needle" : "app",
+    }));
+    vi.mocked(api.listProcesses).mockResolvedValue(many);
+    const { container } = renderWithProviders(
+      <ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />,
+    );
+    await screen.findByTestId("process-truncated", {}, { timeout: 15000 });
+    expect(container.querySelector("#process-row-s1-501")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), {
+      target: { value: "needle" },
+    });
+    await waitFor(() => expect(container.querySelector("#process-row-s1-501")).not.toBeNull(), {
+      timeout: 15000,
+    });
+    expect(screen.queryByTestId("process-truncated")).not.toBeInTheDocument();
+    expect(screen.getByTestId("process-filter-count").textContent).toBe(
+      t("processFilterCount", { shown: 1, total: 501 }),
+    );
+    // 500 行の描画は jsdom では重いため、panelRowMemo.test.tsx と同じく個別に猶予を持たせる。
+  }, 30000);
+
+  it("一致が無いときは空状態と解除ボタンを出す", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
+    await screen.findByText("SELECT 1");
+    fireEvent.change(screen.getByLabelText(t("processFilterTextAria")), {
+      target: { value: "zzz" },
+    });
+    expect(await screen.findByText(t("processFilterNoMatch"))).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: t("processFilterClear") })[0]);
+    expect(await screen.findByText("SELECT 1")).toBeInTheDocument();
+  });
+
+  it("経過時間の降順に並べ替える", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, id: 1, time_secs: 1 },
+      { ...base, id: 2, time_secs: 500 },
+    ]);
+    const { container } = renderWithProviders(
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
+    );
+    await waitFor(() => expect(container.querySelector("#process-row-s1-2")).not.toBeNull());
+    fireEvent.change(screen.getByLabelText(t("processSortAria")), { target: { value: "timeDesc" } });
+    await waitFor(() => {
+      const first = container.querySelector("tbody > tr");
+      expect(first?.id).toBe("process-row-s1-2");
+    });
+  });
+
+  it("絞り込みで隠れた行の選択は停止対象に含めない", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, id: 1, user: "app" },
+      { ...base, id: 2, user: "batch" },
+    ]);
+    const { container } = renderWithProviders(
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
+    );
+    await waitFor(() => expect(container.querySelector("#process-row-s1-2")).not.toBeNull());
+    fireEvent.click(screen.getByLabelText(t("processSelectAll")));
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
+    fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), { target: { value: "app" } });
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("processKillSelected", { count: 1 }) }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
+    // 隠れている id 2 は含めず、見えている id 1 だけを送る。
+    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [1], false));
+  });
+
+  it("セッションを切り替えると絞り込みと並べ替えが初期化される", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, id: 1, user: "app" },
+      { ...base, id: 2, user: "batch" },
+    ]);
+    const { rerender } = renderWithProviders(
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
+    );
+    await screen.findByLabelText(t("processFilterUserAria"));
+    fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), { target: { value: "batch" } });
+    fireEvent.change(screen.getByLabelText(t("processSortAria")), { target: { value: "timeDesc" } });
+    rerender(<ProcessListPanel sessionId="s2" driver="mysql" readOnly={false} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).value).toBe(""),
+    );
+    expect((screen.getByLabelText(t("processSortAria")) as HTMLSelectElement).value).toBe("default");
+  });
+
+  it("選択中のユーザが一覧から消えても選択肢に残り、表示が空欄にならない", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, id: 1, user: "app" },
+      { ...base, id: 2, user: "batch" },
+    ]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
+    const sel = (await screen.findByLabelText(t("processFilterUserAria"))) as HTMLSelectElement;
+    fireEvent.change(sel, { target: { value: "batch" } });
+    vi.mocked(api.listProcesses).mockResolvedValue([{ ...base, id: 1, user: "app" }]);
+    fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
+    await waitFor(() => expect(api.listProcesses).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        Array.from(
+          (screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).options,
+        ).some((o) => o.value === "batch"),
+      ).toBe(true),
+    );
+    expect((screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).value).toBe("batch");
+  });
+
+  it("「文を停止」は確認後に statementOnly=true で killProcesses を呼ぶ", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base]);
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
+    await screen.findByText("SELECT 1");
+    fireEvent.click(screen.getByLabelText(t("processSelectAll")));
+    fireEvent.click(screen.getByRole("button", { name: t("processCancelSelected", { count: 1 }) }));
+    fireEvent.click(await screen.findByRole("button", { name: t("processCancelConfirmOk") }));
+    await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [1], true));
+    expect(await screen.findByText(t("processCancelDone", { count: 1 }))).toBeInTheDocument();
+  });
+
+  it("read_only では「文を停止」も無効", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly />);
+    await screen.findByText("SELECT 1");
+    expect(
+      screen.getByRole("button", { name: t("processCancelSelected", { count: 0 }) }),
+    ).toBeDisabled();
   });
 });

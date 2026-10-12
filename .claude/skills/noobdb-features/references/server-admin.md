@@ -8,6 +8,12 @@
 読み取り専用セッションでも許可しますが、`kill_processes` はサーバ状態を変えるため
 読み取り専用セッションを明示的に拒否します (SQL 文ではないので `is_read_only_sql` の
 経路外、コマンド側で別途ガード)。SQLite はサーバプロセスを持たないため空を返します。
+`kill_processes` の任意引数 `statement_only` (#1538) で「文のみ停止」(MySQL `KILL QUERY` /
+PostgreSQL `pg_cancel_backend`、接続とトランザクションは残る) と「接続ごと停止」(`KILL` /
+`pg_terminate_backend`) を選べます。UI は `ProcessListPanel` が二つのボタンを持ち、どちらも
+確認ダイアログを通します。一覧の絞り込み・並べ替えは `processList.ts` の純関数
+(`filterProcesses` / `sortProcesses`) で、描画上限 (500 件) で切る前に適用します。
+AI ロック診断の停止候補は「一覧で表示」で該当行を強調・選択するだけで、KILL は実行しません。
 なお #587 で `performance_schema` 無効時に MySQL のプロセス一覧が空になる問題を修正済み。
 
 ## 接続横断のヘルスダッシュボード (#1068)

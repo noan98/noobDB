@@ -610,12 +610,84 @@ async fn postgres_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
-    let killed = conn.kill_processes(&[victim_pid]).await.expect("kill");
+    // 文のみ停止 (KILL QUERY / pg_cancel_backend) は実行中の文を中断するが、接続は残る (#1538)。
+    // 対象接続で長い文を走らせ、文のみ停止で即座に中断エラーで返り、同じプールで続けて使えることを確かめる。
+    let victim = std::sync::Arc::new(victim);
+    let sleeper = {
+        let v = std::sync::Arc::clone(&victim);
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            let r = v
+                .execute("SELECT /* noobdb_1538_pg_cancel */ pg_sleep(30)", None)
+                .await;
+            (r, started.elapsed())
+        })
+    };
+    // プールが複数の接続を持つと、sleep は victim_pid と別の接続で走りうる。
+    // 実際に sleep を実行しているプロセスを一覧から探して、その id を止める。
+    let mut sleeping_id = None;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sleeping_id = conn
+            .list_processes()
+            .await
+            .expect("list while sleeping")
+            .iter()
+            .find(|p| {
+                p.query.as_deref().is_some_and(|q| {
+                    q.contains("noobdb_1538_pg_cancel")
+                        && !q.contains("processlist")
+                        && !q.contains("pg_stat_activity")
+                })
+            })
+            .map(|p| p.id);
+        if sleeping_id.is_some() {
+            break;
+        }
+    }
+    let sleeping_id = sleeping_id.expect("the sleeping statement must appear in the process list");
+    let cancelled_running = conn
+        .kill_processes(&[sleeping_id], true)
+        .await
+        .expect("cancel running statement");
+    assert_eq!(cancelled_running.failed, 0, "{cancelled_running:?}");
+    let (sleep_result, took) = tokio::time::timeout(std::time::Duration::from_secs(10), sleeper)
+        .await
+        .expect("the sleeping statement must end promptly after a statement-only stop")
+        .expect("join");
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+    // MySQL の SLEEP は中断されるとエラーではなく 1 を返すことがあるため、どちらでも許容する。
+    let _ = sleep_result;
+    assert!(
+        victim.execute("SELECT 1", None).await.is_ok(),
+        "the connection pool must stay usable after a statement-only stop"
+    );
+
+    // 文のみ停止 (KILL QUERY / pg_cancel_backend) は成功するが接続は残る (#1538)。
+    let cancelled = conn
+        .kill_processes(&[victim_pid], true)
+        .await
+        .expect("cancel statement");
+    assert_eq!(cancelled.killed, 1, "{cancelled:?}");
+    assert_eq!(cancelled.failed, 0, "{cancelled:?}");
+    assert!(
+        conn.list_processes()
+            .await
+            .expect("list after cancel")
+            .iter()
+            .any(|p| p.id == victim_pid),
+        "a statement-only stop must keep the connection"
+    );
+
+    let killed = conn
+        .kill_processes(&[victim_pid], false)
+        .await
+        .expect("kill");
     assert_eq!(killed.killed, 1, "{killed:?}");
     assert_eq!(killed.failed, 0, "{killed:?}");
     // int4 に収まらない pid は実行前に失敗として数える (有効な pid はそのまま処理される)。
     let mixed = conn
-        .kill_processes(&[i64::MAX, victim_pid])
+        .kill_processes(&[i64::MAX, victim_pid], false)
         .await
         .expect("kill mixed");
     assert_eq!(mixed.killed, 1, "{mixed:?}");
@@ -2318,7 +2390,7 @@ async fn postgres_blocking_chain_is_listed_and_resolved_by_kill() {
     assert_ne!(waiter, a_pid);
 
     // 根のブロッカー A を kill すると B の UPDATE が進む。
-    let killed = admin.kill_processes(&[a_pid]).await.expect("kill A");
+    let killed = admin.kill_processes(&[a_pid], false).await.expect("kill A");
     assert_eq!(killed.killed, 1, "{killed:?}");
     let outcome = b_task.await.expect("join B");
     assert!(

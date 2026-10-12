@@ -12,9 +12,10 @@ export const processCommands = {
     ),
   /** プロセス/接続をまとめて強制終了する (#1259)。PostgreSQL は `unnest` で 1 文、MySQL は
    *  1 接続上で順に `KILL`。失敗があっても残りは続行し、件数と最初のエラーを返す。
-   *  read_only セッションはバックエンドで拒否される。 */
-  killProcesses: (sessionId: string, processIds: number[]) =>
-    invoke<KillProcessesResult>("kill_processes", { sessionId, processIds }).then((r) =>
+   *  `statementOnly` が true なら接続は残して実行中の文だけを止める (#1538。MySQL `KILL QUERY` /
+   *  PostgreSQL `pg_cancel_backend`)。read_only セッションはバックエンドで拒否される。 */
+  killProcesses: (sessionId: string, processIds: number[], statementOnly = false) =>
+    invoke<KillProcessesResult>("kill_processes", { sessionId, processIds, statementOnly }).then((r) =>
       parseResponse(schemas.killProcessesResult, r, "kill_processes"),
     ),
   /** 1 プロセスの実行中 (または直近) の SQL 全文を取得する (#1259)。一覧は要約しか

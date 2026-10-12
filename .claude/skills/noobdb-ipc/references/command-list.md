@@ -225,7 +225,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成)
 - `apply_privilege_sql`
 
-`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 / MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る
+`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 / MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。任意引数 `statement_only` (`statementOnly`) が true なら接続は残して実行中の文だけを止める (MySQL `KILL QUERY` / PostgreSQL `pg_cancel_backend`、#1538)。`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
