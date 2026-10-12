@@ -170,9 +170,19 @@ export function ProcessListPanel({
     const hit = processedRows.find((p) => p.id === highlightId);
     return hit ? [hit, ...head] : head;
   }, [processedRows, highlightId]);
-  const userOptions = useMemo(() => distinctProcessValues(rows, "user"), [rows]);
-  const databaseOptions = useMemo(() => distinctProcessValues(rows, "database"), [rows]);
-  const commandOptions = useMemo(() => distinctProcessValues(rows, "command"), [rows]);
+  // 選択中の値が (プロセスが消えて) 選択肢から無くなっても option に残し、表示が空欄にならないようにする。
+  const userOptions = useMemo(
+    () => withCurrent(distinctProcessValues(rows, "user"), filter.user),
+    [rows, filter.user],
+  );
+  const databaseOptions = useMemo(
+    () => withCurrent(distinctProcessValues(rows, "database"), filter.database),
+    [rows, filter.database],
+  );
+  const commandOptions = useMemo(
+    () => withCurrent(distinctProcessValues(rows, "command"), filter.command),
+    [rows, filter.command],
+  );
   // 絞り込みで隠れている行の選択は kill 対象に含めない (見えないものを kill しない)。
   const activeSelected = useMemo(() => {
     if (!filterActive) return selected;
@@ -191,6 +201,8 @@ export function ProcessListPanel({
       setProcesses(list);
       // 消えたプロセスの選択を持ち越さない (id 再利用の巻き込み防止)。
       setSelected((cur) => pruneSelection(cur, list));
+      // 消えたプロセスの強調は外す (PG の pid 再利用で無関係な行が強調されるのを防ぐ)。
+      setHighlightId((cur) => (cur !== null && list.some((p) => p.id === cur) ? cur : null));
       setError(null);
       setUpdatedAt(new Date());
     } catch (e) {
@@ -209,6 +221,9 @@ export function ProcessListPanel({
     setProcesses([]);
     setSelected(new Set());
     setHighlightId(null);
+    // 別セッションへ絞り込み・並べ替えを持ち越さない (他セッションの値で全件が隠れるのを防ぐ)。
+    setFilter(EMPTY_PROCESS_FILTER);
+    setSortKey("default");
     setError(null);
     // 旧セッションの取得が飛んでいても、新セッションの初回取得は必ず走らせる。
     void load(true);
@@ -548,7 +563,7 @@ export function ProcessListPanel({
           sessionId={sessionId}
           driver={driver}
           processes={rows}
-          selectedIds={selected}
+          selectedIds={activeSelected}
           onLocateProcess={locateProcess}
           isProduction={isProduction}
           schema={schema ?? undefined}
@@ -727,9 +742,9 @@ export function ProcessListPanel({
           </chakra.table>
         </Box>
       )}
-      {!error && processedRows.length > PROCESS_RENDER_LIMIT && (
+      {!error && processedRows.length > visibleRows.length && (
         <chakra.p margin={0} textStyle="caption" data-testid="process-truncated">
-          {t("processTruncated", { shown: PROCESS_RENDER_LIMIT, total: processedRows.length })}
+          {t("processTruncated", { shown: visibleRows.length, total: processedRows.length })}
         </chakra.p>
       )}
         </>
@@ -738,6 +753,13 @@ export function ProcessListPanel({
       {dialog}
     </Box>
   );
+}
+
+/** 選択肢に現在値が無ければ足す (空文字は「指定なし」なので足さない)。 */
+function withCurrent(options: string[], current: string): string[] {
+  return current === "" || options.includes(current)
+    ? options
+    : [...options, current].sort((a, b) => a.localeCompare(b));
 }
 
 /** `ProcessInfo` の全フィールドが同値か (ポーリングごとに配列・オブジェクトは作り直されるため)。 */

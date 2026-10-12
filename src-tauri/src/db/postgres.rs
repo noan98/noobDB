@@ -736,9 +736,10 @@ impl PostgresConn {
         }
         let count = pids.len() as u64;
         let sql = if statement_only {
+            // 自分自身の接続 (pg_backend_pid) は対象から外す。スキップは成功・失敗どちらにも数えない。
             "SELECT pg_cancel_backend(s.p) FROM ( \
                SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
-               ORDER BY (p = pg_backend_pid()), ord \
+               WHERE p <> pg_backend_pid() ORDER BY ord \
              ) s"
         } else {
             "SELECT pg_terminate_backend(s.p) FROM ( \
@@ -747,6 +748,8 @@ impl PostgresConn {
              ) s"
         };
         match sqlx::query(sql).bind(&pids).execute(&self.pool).await {
+            // 文のみ停止は自分自身を除いた行数だけ成功として数える (SELECT の rows_affected は返却行数)。
+            Ok(done) if statement_only => out.killed += done.rows_affected(),
             Ok(_) => out.killed += count,
             Err(e) => out.record_failure(count, AppError::from(e).to_string()),
         }

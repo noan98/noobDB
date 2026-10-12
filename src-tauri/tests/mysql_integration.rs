@@ -996,6 +996,35 @@ async fn mysql_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
+    // 文のみ停止 (KILL QUERY / pg_cancel_backend) は実行中の文を中断するが、接続は残る (#1538)。
+    // 対象接続で長い文を走らせ、文のみ停止で即座に中断エラーで返り、同じプールで続けて使えることを確かめる。
+    let victim = std::sync::Arc::new(victim);
+    let sleeper = {
+        let v = std::sync::Arc::clone(&victim);
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            let r = v.execute("SELECT SLEEP(30)", None).await;
+            (r, started.elapsed())
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let cancelled_running = conn
+        .kill_processes(&[victim_id], true)
+        .await
+        .expect("cancel running statement");
+    assert_eq!(cancelled_running.failed, 0, "{cancelled_running:?}");
+    let (sleep_result, took) = tokio::time::timeout(std::time::Duration::from_secs(10), sleeper)
+        .await
+        .expect("the sleeping statement must end promptly after a statement-only stop")
+        .expect("join");
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+    // MySQL の SLEEP は中断されるとエラーではなく 1 を返すことがあるため、どちらでも許容する。
+    let _ = sleep_result;
+    assert!(
+        victim.execute("SELECT 1", None).await.is_ok(),
+        "the connection pool must stay usable after a statement-only stop"
+    );
+
     // 文のみ停止 (KILL QUERY / pg_cancel_backend) は成功するが接続は残る (#1538)。
     let cancelled = conn
         .kill_processes(&[victim_id], true)

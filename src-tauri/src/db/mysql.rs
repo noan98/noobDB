@@ -1428,7 +1428,11 @@ impl MySqlConn {
             .ok()
             .and_then(|v| i64::try_from(v).ok());
         let mut ordered: Vec<i64> = ids.iter().copied().filter(|id| Some(*id) != own).collect();
-        ordered.extend(ids.iter().copied().filter(|id| Some(*id) == own));
+        // 文のみ停止では自分自身の接続を対象から外す (この KILL QUERY を打つ接続自体のため無意味)。
+        // スキップは成功・失敗どちらにも数えない。
+        if !statement_only {
+            ordered.extend(ids.iter().copied().filter(|id| Some(*id) == own));
+        }
         let mut out = KillProcessesResult::default();
         for id in ordered {
             match sqlx::query(sqlx::AssertSqlSafe(format!("{verb} {id}")))

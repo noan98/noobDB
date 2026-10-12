@@ -3600,7 +3600,7 @@ const en = {
   processTruncated: "Showing the first {shown} of {total} processes.",
   processCancelSelected: "Stop statement ({count})",
   processCancelSelectedHint:
-    "Stops only the running statement (MySQL KILL QUERY / PostgreSQL pg_cancel_backend). The connection and its open transaction stay.",
+    "Stops only the running statement (MySQL KILL QUERY / PostgreSQL pg_cancel_backend). The connection and its open transaction stay. It has no effect on idle connections.",
   processCancelConfirmTitle: "Stop statements",
   processCancelConfirmMessage:
     "Stop the running statement of {count} process(es) (id: {ids})? The connections stay open; an open transaction is kept.",
@@ -8286,7 +8286,7 @@ const ja: Dict = {
   processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processCancelSelected: "選択の文を停止 ({count})",
   processCancelSelectedHint:
-    "実行中の文だけを止めます (MySQL KILL QUERY / PostgreSQL pg_cancel_backend)。接続と開いているトランザクションは残ります。",
+    "実行中の文だけを止めます (MySQL KILL QUERY / PostgreSQL pg_cancel_backend)。接続と開いているトランザクションは残ります。アイドルの接続には効果がありません。",
   processCancelConfirmTitle: "文を停止",
   processCancelConfirmMessage:
     "{count} 件のプロセス (id: {ids}) の実行中の文を停止します。接続は切断されず、開いているトランザクションも残ります。よろしいですか?",
