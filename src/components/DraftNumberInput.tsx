@@ -81,7 +81,10 @@ export function DraftNumberInput({ value, onCommit, min, max, allowDecimal = fal
         const raw = e.target.value;
         setDraft(raw);
         const parsed = parse(raw);
-        if (parsed !== null && clampDraftInt(parsed, min, max) === parsed) onCommit(parsed);
+        if (parsed === null) return;
+        // 上限を超えた途中入力は上限で確定する (下限側は打ち途中の可能性があるので確定しない)。
+        if (max !== undefined && parsed > max) onCommit(max);
+        else if (clampDraftInt(parsed, min, max) === parsed) onCommit(parsed);
       }}
       onBlur={(e) => {
         commit();

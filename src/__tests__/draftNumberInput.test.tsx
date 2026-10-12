@@ -68,6 +68,16 @@ describe("DraftNumberInput (#1534)", () => {
     expect(onCommit).toHaveBeenLastCalledWith(27);
   });
 
+  it("上限を超えた途中入力は、その場で上限として確定する", async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    renderWithProviders(<Harness onCommit={onCommit} initial={5} min={1} max={100} />);
+    const input = screen.getByLabelText("件数");
+    await user.clear(input);
+    await user.type(input, "300");
+    expect(onCommit).toHaveBeenLastCalledWith(100);
+  });
+
   it("範囲外の途中入力は確定せず、範囲に入った時点で確定する", async () => {
     const user = userEvent.setup();
     const onCommit = vi.fn();

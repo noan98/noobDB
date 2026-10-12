@@ -71,7 +71,7 @@ const en = {
   outputOpenInEditor: "Open in new tab",
   outputCopySql: "Copy SQL",
   outputCopied: "SQL copied",
-  outputOpenTruncatedDisabled: "This SQL was shortened to save memory, so it cannot be opened in the editor. Copy it, or run it again from the history.",
+  outputOpenTruncatedDisabled: "This SQL was shortened to save memory, so it cannot be opened in the editor. Open it again from the history.",
   outputCopyFailed: "Could not copy the SQL to the clipboard",
   outputCopiedTruncated: "Copied the first {kept} of {total} characters (older entries keep only the beginning)",
   outputSqlTruncated: "Showing the first {kept} of {total} characters. Older entries keep only the beginning of long SQL to save memory.",

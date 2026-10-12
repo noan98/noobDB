@@ -500,7 +500,7 @@ export function TestDataModal({
                     <>
                       <Tooltip label={t("testDataMin")} focusableWrapper={running}>
                         <DraftNumberInput
-                          allowDecimal
+                          allowDecimal={spec.kind === "decimal"}
                           css={{ width: "100px" }}
                           value={spec.min}
                           onCommit={(n) => updateSpec(i, { min: n })}
@@ -510,7 +510,7 @@ export function TestDataModal({
                       </Tooltip>
                       <Tooltip label={t("testDataMax")} focusableWrapper={running}>
                         <DraftNumberInput
-                          allowDecimal
+                          allowDecimal={spec.kind === "decimal"}
                           css={{ width: "100px" }}
                           value={spec.max}
                           onCommit={(n) => updateSpec(i, { max: n })}
