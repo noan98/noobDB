@@ -11,7 +11,9 @@ use crate::db::result_store::ResultBuilder;
 use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
 use crate::db::tx_options::{TxIsolation, TxOptions};
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
-use crate::db::{apply_auto_limit_for, is_read_only_sql_for, DriverKind};
+use crate::db::{
+    apply_auto_limit_for, decide_auto_limit_for, is_read_only_sql_for, AutoLimitSkip, DriverKind,
+};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
@@ -653,6 +655,9 @@ pub enum QueryStreamMessage {
         /// The row cap that was auto-injected for this run, or `null` when none
         /// was applied. Lets the UI show a "auto LIMIT N applied" badge.
         applied_auto_limit: Option<u64>,
+        /// 自動 LIMIT を要求したのに付与しなかった理由 (#1534)。付与した / 要求していない /
+        /// 結果セットが無い場合は `null`。UI が結果ペインに理由の注記を出す。
+        auto_limit_skip: Option<AutoLimitSkip>,
         /// サーバが実行中に返した通知・警告 (PostgreSQL NOTICE/WARNING、MySQL
         /// SHOW WARNINGS)。SQLite と無い場合は空配列 (#1165)。
         server_messages: Vec<ServerMessage>,
@@ -758,7 +763,6 @@ const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
 const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
 const EV_SCRIPT_CANCELLED: &str = "sql-script:cancelled";
-const EV_AI_CANCELLED: &str = "ai-stream:cancelled";
 const EV_TRANSFER_CANCELLED: &str = "transfer-stream:cancelled";
 
 /// 自動リフレッシュの差分パッチ (#1257) を要求するパラメータ。
@@ -949,12 +953,12 @@ async fn spawn_query_stream(
     // Rewrite the statement with an automatic LIMIT when requested and the SQL
     // is eligible. `sql` stays the original so history records what the user
     // actually typed; only `effective_sql` carries the injected cap.
-    let (effective_sql, applied_auto_limit) = match auto_limit {
-        Some(n) => match apply_auto_limit_for(session.conn.driver_kind(), &sql, n) {
-            Some(rewritten) => (rewritten, Some(n as u64)),
-            None => (sql.clone(), None),
+    let (effective_sql, applied_auto_limit, auto_limit_skip) = match auto_limit {
+        Some(n) => match decide_auto_limit_for(session.conn.driver_kind(), &sql, n) {
+            Ok(rewritten) => (rewritten, Some(n as u64), None),
+            Err(reason) => (sql.clone(), None, Some(reason)),
         },
-        None => (sql.clone(), None),
+        None => (sql.clone(), None, None),
     };
     let send_id = stream_id.clone();
     let delivered_rows_cb = delivered_rows.clone();
@@ -1269,6 +1273,11 @@ async fn spawn_query_stream(
                 } else {
                     applied_auto_limit
                 },
+                auto_limit_skip: if res.columns.is_empty() {
+                    None
+                } else {
+                    auto_limit_skip
+                },
                 server_messages: res.server_messages.clone(),
                 stats: if res.columns.is_empty() {
                     None
@@ -1442,6 +1451,7 @@ async fn spawn_captured_write(
                 elapsed_ms,
                 has_columns: false,
                 applied_auto_limit: None,
+                auto_limit_skip: None,
                 server_messages: result.server_messages.clone(),
                 stats: None,
                 snapshot_id: None,
@@ -1865,8 +1875,6 @@ pub async fn cancel_stream(
                     // transaction); an open transaction is rolled back by the
                     // runner's drop guard (#973).
                     StreamKind::Script => Some(EV_SCRIPT_CANCELLED),
-                    // AI リクエスト (#690)。`delivered_rows` は送信済みの delta 件数。
-                    StreamKind::Ai => Some(EV_AI_CANCELLED),
                     // 接続間転送 (#986)。`create` / `replace` では作りかけのテーブルを
                     // 後始末で DROP するため、`delivered_rows` (書き込み済み行数) が
                     // 永続化されて残るのは `append` のときだけ。
@@ -1875,7 +1883,13 @@ pub async fn cancel_stream(
                     // `run_query_stream` / `preview_query_stream`), so this arm is
                     // unreachable in practice; keep it exhaustive rather than
                     // panicking on a future refactor that drops the callback.
-                    StreamKind::Query | StreamKind::Preview | StreamKind::Search => None,
+                    StreamKind::Query
+                    | StreamKind::Preview
+                    | StreamKind::Search
+                    | StreamKind::Ai => None,
+                    // 「今すぐ実行」のタスク (#1534)。中断は `run_task_now` の戻り値
+                    // (中断として記録した実行ログ) で伝わるので通知イベントは無い。
+                    StreamKind::Task => None,
                 };
                 if let Some(event) = event {
                     if let Err(e) = app.emit(

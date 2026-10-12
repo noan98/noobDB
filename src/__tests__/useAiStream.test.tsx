@@ -127,6 +127,40 @@ describe("useAiStream (#1470)", () => {
     expect(result.current.acquire()).toBe(true);
   });
 
+  it("混雑 (429/529) の自動再試行中は retrying を出し、本文が届くと消える (#1534)", async () => {
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    result.current.acquire();
+    await act(async () => {
+      await result.current.start(request, handlers());
+    });
+    expect(result.current.retrying).toBeNull();
+    act(() => wire?.onRetrying?.({ streamId: "x", attempt: 1, maxAttempts: 3, delayMs: 1500 }));
+    expect(result.current.retrying).toEqual({ attempt: 1, maxAttempts: 3, delayMs: 1500 });
+    act(() => wire?.onDelta?.({ streamId: "x", text: "a" }));
+    expect(result.current.retrying).toBeNull();
+  });
+
+  it("aiOverloaded の失敗には時間を置いて再実行する案内を足して渡す (#1534)", async () => {
+    const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    const h = handlers();
+    result.current.acquire();
+    await act(async () => {
+      await result.current.start(request, h);
+    });
+    act(() =>
+      wire?.onError?.({
+        streamId: "x",
+        error: "AI is temporarily busy: HTTP 529: overloaded_error",
+        kind: "aiOverloaded",
+      }),
+    );
+    const failure = h.onError.mock.calls[0][0];
+    expect(failure.kind).toBe("aiOverloaded");
+    expect(failure.refused).toBe(false);
+    expect(failure.message).toContain("HTTP 529");
+    expect(failure.message.split("\n").length).toBe(2);
+  });
+
   describe("使用量の累計 (#1474)", () => {
     beforeEach(() => resetAiUsage());
 

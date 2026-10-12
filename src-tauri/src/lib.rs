@@ -26,8 +26,9 @@ mod timelapse;
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::ai::sse::AiUsage;
     pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
-    pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult};
+    pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult, AiStreamMessage};
     pub use crate::commands::assertions::AssertionOutcome;
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
@@ -78,9 +79,9 @@ pub mod __test_api {
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
-        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, is_session_init_sql_for,
-        sql_may_change_schema, Connection, DbConnectOptions, DriverKind, SslMode, WriteCapture,
-        WriteKind,
+        decide_auto_limit_for, is_read_only_sql, is_read_only_sql_for, is_session_init_sql,
+        is_session_init_sql_for, sql_may_change_schema, AutoLimitSkip, Connection,
+        DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
@@ -199,6 +200,7 @@ pub mod __test_api {
     pub use crate::schema_drift::{
         GenerationMeta as DriftGenerationMeta, TableChangeStatus, TableChangeSummary,
     };
+    pub use crate::tasks::scheduler::TaskRunProgressEvent;
     pub use crate::tasks::{
         AssertionRunRecord, SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
     };

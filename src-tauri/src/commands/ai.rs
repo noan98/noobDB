@@ -2,8 +2,9 @@
 //!
 //! - `set_ai_api_key` / `has_ai_api_key`: API キーは OS keyring のみ (`ai/anthropic_api_key`)。
 //!   値を返す IPC は無く、`has_ai_api_key` は bool だけ返す。
-//! - `run_ai_request`: ストリーミング要求 (任意の `format` で構造化出力 JSON Schema を指定可)。`ai-stream:delta` / `:done` / `:error` /
-//!   `:cancelled` を `stream_id` で絞って購読する。`cancel_stream` で中断できる。
+//! - `run_ai_request`: ストリーミング要求 (任意の `format` で構造化出力 JSON Schema を指定可)。結果は
+//!   フロントが `invoke` 前に作って渡す Tauri Channel (`AiStreamMessage`) で届く (#1534。クエリ結果の
+//!   #1096 と同じ方式)。`cancel_stream` で中断でき、その通知も同じ Channel の `cancelled` で届く。
 //! - `test_ai_connection`: 短い非ストリーミング要求で疎通を確認する。
 //!
 //! モデル・エフォートは呼び出し側から直接受け取らず、「タスク種別 + 設定スナップショット」
@@ -14,19 +15,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, State};
 
-use crate::ai::client::{run_once, run_streaming, AiCompletion, ReqwestTransport};
+use crate::ai::client::{
+    run_once_with, run_streaming_with, AiCompletion, ReqwestTransport, RetryPolicy,
+};
 use crate::ai::models::{resolve_effort, resolve_model, AiSettingsSnapshot, AiTaskKind};
 use crate::ai::request::{AiChatMessage, AiChatRole, AiRequestSpec, DEFAULT_MAX_TOKENS};
 use crate::ai::sse::AiUsage;
 use crate::error::{AppError, Result};
 use crate::profiles::secrets;
 use crate::state::{AppState, StreamHandle, StreamKind};
-
-const EV_AI_DELTA: &str = "ai-stream:delta";
-const EV_AI_DONE: &str = "ai-stream:done";
-const EV_AI_ERROR: &str = "ai-stream:error";
 
 /// ユーザプロンプト / system の上限 (バイト)。巨大なスキーマ丸ごと送信などの事故を防ぐ。
 const MAX_PROMPT_BYTES: usize = 1024 * 1024;
@@ -39,32 +39,40 @@ const TEST_TIMEOUT_SECS: u64 = 60;
 const TEST_MAX_TOKENS: u32 = 1024;
 const TEST_PROMPT: &str = "Reply with the single word: ok";
 
+/// `run_ai_request` が Channel へ送るメッセージ (#1534)。`kind` タグ付きで、フロントの
+/// `listenAiStream` が受ける。Channel は 1 回の要求に紐づくので `stream_id` は載せない
+/// (グローバルイベントだった頃は、全リスナーに配られて各自が `streamId` で捨てていた)。
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiDeltaEvent {
-    pub stream_id: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiDoneEvent {
-    pub stream_id: String,
-    /// 実際に応答したモデル。フォールバックが働くと `requested_model` と異なる。
-    pub model: String,
-    pub requested_model: String,
-    pub fallback_used: bool,
-    pub stop_reason: String,
-    pub usage: AiUsage,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiErrorEvent {
-    pub stream_id: String,
-    pub error: String,
-    /// `AppError::kind()` (例: `aiRefused` / `aiAuth` / `aiNetwork` / `aiApi`)。
-    pub kind: String,
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AiStreamMessage {
+    /// 本文の差分。
+    Delta { text: String },
+    /// 429 / 529 を受けて、`delay_ms` 待ってから再試行する (ストリーム開始前のみ)。
+    Retrying {
+        attempt: u32,
+        max_attempts: u32,
+        delay_ms: u64,
+    },
+    Done {
+        /// 実際に応答したモデル。フォールバックが働くと `requested_model` と異なる。
+        model: String,
+        requested_model: String,
+        fallback_used: bool,
+        stop_reason: String,
+        usage: AiUsage,
+    },
+    Error {
+        error: String,
+        /// `AppError::kind()` (例: `aiRefused` / `aiAuth` / `aiNetwork` / `aiApi` / `aiOverloaded`)。
+        /// タグ名 `kind` と衝突するので `errorKind` として送る。
+        error_kind: String,
+    },
+    /// `cancel_stream` による中断。`delivered_rows` は送信済みの本文差分の件数。
+    Cancelled { delivered_rows: u64 },
 }
 
 /// 接続テストの結果の区分。
@@ -75,6 +83,8 @@ pub enum AiConnectionStatus {
     AuthError,
     NetworkError,
     ApiError,
+    /// 混雑 (429 / 529)。一時的なので API エラーとは文言を分ける。
+    Overloaded,
     Refused,
 }
 
@@ -102,6 +112,7 @@ pub fn classify_connection_test(
         Err(e @ AppError::AiAuth(_)) => (AiConnectionStatus::AuthError, e.to_string(), None),
         Err(e @ AppError::AiNetwork(_)) => (AiConnectionStatus::NetworkError, e.to_string(), None),
         Err(e @ AppError::AiRefused(_)) => (AiConnectionStatus::Refused, e.to_string(), None),
+        Err(e @ AppError::AiOverloaded(_)) => (AiConnectionStatus::Overloaded, e.to_string(), None),
         Err(e @ AppError::AiApi(_)) => (AiConnectionStatus::ApiError, e.to_string(), None),
         // keyring 障害など、AI 呼び出し以外の失敗は結果の区分にせず IPC エラーとして返す。
         Err(e) => return Err(e),
@@ -248,6 +259,8 @@ pub async fn run_ai_request(
     format: Option<serde_json::Value>,
     system_cached: Option<String>,
     history: Option<Vec<AiChatMessage>>,
+    // フロントが `invoke` 前に生成して渡す Tauri Channel (#1534)。
+    on_event: Channel<AiStreamMessage>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     require_enabled(&settings)?;
@@ -285,52 +298,55 @@ pub async fn run_ai_request(
     let task_stream_id = stream_id.clone();
     let task_delivered = delivered.clone();
     let task_app = app.clone();
+    // `Channel` は内部 `Arc` の clone なので軽い。タスク本体用と `cancel_stream` 用の 2 系統。
+    let cancel_channel = on_event.clone();
     let handle = tokio::spawn(async move {
         let Ok(token) = ready_rx.await else {
             return;
         };
-        let emit_app = task_app.clone();
-        let emit_id = task_stream_id.clone();
         let counter = task_delivered.clone();
-        let result = run_streaming(&transport, &api_key, &spec, |text| {
-            counter.fetch_add(1, Ordering::SeqCst);
-            if let Err(e) = emit_app.emit(
-                EV_AI_DELTA,
-                AiDeltaEvent {
-                    stream_id: emit_id.clone(),
+        let delta_channel = on_event.clone();
+        let retry_channel = on_event.clone();
+        let result = run_streaming_with(
+            &transport,
+            &api_key,
+            &spec,
+            &RetryPolicy::DEFAULT,
+            |notice| {
+                let _ = retry_channel.send(AiStreamMessage::Retrying {
+                    attempt: notice.attempt,
+                    max_attempts: notice.max_attempts,
+                    delay_ms: notice.delay.as_millis() as u64,
+                });
+            },
+            |text| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                if let Err(e) = delta_channel.send(AiStreamMessage::Delta {
                     text: text.to_string(),
-                },
-            ) {
-                tracing::warn!(stream_id = %emit_id, error = %e, "failed to emit ai delta");
-            }
-        })
+                }) {
+                    tracing::warn!(error = %e, "failed to send ai delta");
+                }
+            },
+        )
         .await;
-        let emitted = match result {
-            Ok(done) => task_app.emit(
-                EV_AI_DONE,
-                AiDoneEvent {
-                    stream_id: task_stream_id.clone(),
-                    model: done.model,
-                    requested_model: done.requested_model,
-                    fallback_used: done.fallback_used,
-                    stop_reason: done.stop_reason,
-                    usage: done.usage,
-                },
-            ),
+        let message = match result {
+            Ok(done) => AiStreamMessage::Done {
+                model: done.model,
+                requested_model: done.requested_model,
+                fallback_used: done.fallback_used,
+                stop_reason: done.stop_reason,
+                usage: done.usage,
+            },
             Err(e) => {
                 tracing::warn!(stream_id = %task_stream_id, kind = e.kind(), "ai request failed");
-                task_app.emit(
-                    EV_AI_ERROR,
-                    AiErrorEvent {
-                        stream_id: task_stream_id.clone(),
-                        error: e.to_string(),
-                        kind: e.kind().to_string(),
-                    },
-                )
+                AiStreamMessage::Error {
+                    error: e.to_string(),
+                    error_kind: e.kind().to_string(),
+                }
             }
         };
-        if let Err(e) = emitted {
-            tracing::warn!(stream_id = %task_stream_id, error = %e, "failed to emit ai terminal event");
+        if let Err(e) = on_event.send(message) {
+            tracing::warn!(stream_id = %task_stream_id, error = %e, "failed to send ai terminal message");
         }
         task_app
             .state::<AppState>()
@@ -344,7 +360,9 @@ pub async fn run_ai_request(
                 abort: handle.abort_handle(),
                 delivered_rows: delivered,
                 kind: StreamKind::Ai,
-                on_cancel: None,
+                on_cancel: Some(Box::new(move |delivered_rows| {
+                    let _ = cancel_channel.send(AiStreamMessage::Cancelled { delivered_rows });
+                })),
             },
         )
         .await;
@@ -374,7 +392,8 @@ pub async fn test_ai_connection(settings: AiSettingsSnapshot) -> Result<AiConnec
         );
         match tokio::time::timeout(
             Duration::from_secs(TEST_TIMEOUT_SECS),
-            run_once(&transport, &api_key, &spec),
+            // 接続テストは待たせず、混雑 (429/529) も即座に結果として見せる。
+            run_once_with(&transport, &api_key, &spec, &RetryPolicy::NONE),
         )
         .await
         {
@@ -417,6 +436,10 @@ mod tests {
                 AiConnectionStatus::NetworkError,
             ),
             (AppError::AiApi("x".into()), AiConnectionStatus::ApiError),
+            (
+                AppError::AiOverloaded("x".into()),
+                AiConnectionStatus::Overloaded,
+            ),
             (AppError::AiRefused("x".into()), AiConnectionStatus::Refused),
         ];
         for (err, want) in cases {
@@ -424,6 +447,34 @@ mod tests {
             assert_eq!(r.status, want);
             assert!(r.model.is_none());
         }
+    }
+
+    #[test]
+    fn stream_messages_serialize_with_kind_tag_and_camel_case() {
+        let v = |m: AiStreamMessage| serde_json::to_value(m).unwrap();
+        assert_eq!(
+            v(AiStreamMessage::Delta { text: "a".into() }),
+            serde_json::json!({ "kind": "delta", "text": "a" })
+        );
+        assert_eq!(
+            v(AiStreamMessage::Retrying {
+                attempt: 1,
+                max_attempts: 3,
+                delay_ms: 1000
+            }),
+            serde_json::json!({ "kind": "retrying", "attempt": 1, "maxAttempts": 3, "delayMs": 1000 })
+        );
+        assert_eq!(
+            v(AiStreamMessage::Error {
+                error: "e".into(),
+                error_kind: "aiOverloaded".into()
+            }),
+            serde_json::json!({ "kind": "error", "error": "e", "errorKind": "aiOverloaded" })
+        );
+        assert_eq!(
+            v(AiStreamMessage::Cancelled { delivered_rows: 2 }),
+            serde_json::json!({ "kind": "cancelled", "deliveredRows": 2 })
+        );
     }
 
     #[test]

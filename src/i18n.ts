@@ -839,6 +839,10 @@ const en = {
   statusPreviewStreaming: "Streaming preview... ({ms} ms)",
   gridLoadingMore: "Loading more rows...",
   autoLimitApplied: "Auto-applied LIMIT {limit} — there may be more rows.",
+  autoLimitNoteApplied: "Auto LIMIT {limit} applied",
+  autoLimitNoteExistingLimit: "Auto LIMIT not applied: the query already has a LIMIT",
+  autoLimitNoteLockingClause: "Auto LIMIT not applied: the query has a locking clause (FOR UPDATE etc.)",
+  autoLimitNoteAggregateOnly: "Auto LIMIT not applied: aggregate-only query returns a single row",
   autoLimitFetchAll: "Fetch all rows",
   autoLimitFetchAllTitle: "Re-run this query without the automatic LIMIT.",
   partialResultBadge: "Partial",
@@ -910,6 +914,8 @@ const en = {
     "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
   errorHintConnectionLost:
     "The connection seems to have dropped — the server may have closed an idle session (wait_timeout), or the network / VPN went down. Reconnect and run the query again.",
+  errorHintAiOverloaded:
+    "The AI service is busy (rate limit or overload). Wait a little and run it again.",
   errorHintTimeout:
     "The operation ran past its time limit and was cancelled. Try a narrower query (add WHERE / LIMIT), or raise the query timeout in Settings.",
   errorHintSsh:
@@ -1837,6 +1843,8 @@ const en = {
   batchSkipped: "skipped",
   batchError: "error",
   batchRows: "{rows} rows",
+  batchRowsTruncated: "First {shown} rows only (more rows exist)",
+  batchRowsTruncatedOfTotal: "First {shown} rows / {total} total",
   batchAffected: "{rows} affected",
 
   dumpTitle: "Dump database \"{database}\"",
@@ -2321,7 +2329,7 @@ const en = {
   timelapseCountChanged: "Changed: {count}",
   timelapseCountRemoved: "Removed: {count}",
   timelapsePartialNote: "A generation is partial (only the first {limit} rows by primary key were captured). Rows beyond that range may show up as added or removed.",
-  timelapseColumnsAdded: "Columns added: {columns}",
+  timelapseColumnsAdded: "Columns added (not counted as row changes): {columns}",
   timelapseColumnsRemoved: "Columns removed (not compared): {columns}",
   timelapseMaskedNote: "Sensitive columns are masked for display only. Snapshots store the actual values locally.",
   timelapseNoChanges: "No row differences between these generations.",
@@ -3722,6 +3730,8 @@ const en = {
     "the statements_digest consumer is disabled. Enable it with: UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME='statements_digest';",
   inspectorReasonPgssMissing:
     "the pg_stat_statements extension is not installed. Add pg_stat_statements to shared_preload_libraries in postgresql.conf, restart the server, then run CREATE EXTENSION pg_stat_statements;",
+  inspectorReasonPgssNotPreloaded:
+    "pg_stat_statements is installed but not loaded. Add pg_stat_statements to shared_preload_libraries in postgresql.conf and restart the server (CREATE EXTENSION alone is not enough).",
   inspectorReasonUnreadable:
     "the statistics source exists but could not be read (insufficient privileges or an unsupported server version). Only what your database user is allowed to see is shown.",
   inspectorReasonUnknown: "not available on this server.",
@@ -3979,6 +3989,13 @@ const en = {
   advisorColTarget: "Target",
   advisorColSeverity: "Severity",
   advisorColDetail: "Detail",
+  advisorFixStandard: "Standard",
+  advisorFixStandardNote: "Simple, but the table may block writes for the whole duration on a large production table.",
+  advisorFixOnline: "Online (writes keep flowing)",
+  advisorFixOnlineNotePostgres:
+    "Uses CONCURRENTLY, so it cannot run inside a transaction block — run it as a single statement outside BEGIN/COMMIT (multi-statement scripts and transaction mode will fail). It takes longer, and if it fails an INVALID index may remain and must be dropped.",
+  advisorFixOnlineNoteMysql:
+    "ALGORITHM=INPLACE, LOCK=NONE keeps the table writable. If the server cannot run it that way it stops with an error and changes nothing.",
   advisorInsertFix: "Insert into editor",
   advisorCopyFix: "Copy fix DDL",
   advisorInserted: "Fix DDL inserted into the editor",
@@ -4316,6 +4333,13 @@ const en = {
   taskDeleteConfirmMessage: "Delete the scheduled task \"{name}\"? Its run history will also be removed.",
   taskDeleteConfirmOk: "Delete",
   taskDeleted: "Deleted task \"{name}\".",
+  taskRunning: "Running…",
+  taskRunProgress: "Running: {progress}",
+  taskRunProgressRows: "{count} rows",
+  taskRunProgressBytes: "{count} bytes",
+  taskRunProgressItems: "{count} done",
+  taskRunStop: "Stop",
+  taskRunStopTitle: "Stop this run. A partial output file is removed, and the run is recorded as cancelled in the history.",
   taskRunOk: "\"{name}\" ran successfully.",
   taskRunFailed: "\"{name}\" failed: {error}",
   taskRunNotifyTitle: "Scheduled task failed: {name}",
@@ -4560,6 +4584,7 @@ const en = {
   aiErrorExplainRunning: "Asking the AI...",
   aiErrorExplainCancel: "Stop",
   aiErrorExplainCancelled: "Stopped.",
+  aiStreamRetrying: "The AI service is busy. Retrying automatically ({attempt}/{max}, in {sec}s)...",
   aiStreamWaiting: "Waiting for the AI to start responding...",
   aiStreamReceiving: "Receiving",
   aiStreamElapsed: "{sec}s elapsed",
@@ -4608,6 +4633,7 @@ const en = {
   aiTestAuthError: "The API key was rejected or is missing: {message}",
   aiTestNetworkError: "Could not reach the Anthropic API: {message}",
   aiTestApiError: "The API returned an error: {message}",
+  aiTestOverloaded: "The API is overloaded or rate limited right now. Try again shortly: {message}",
   aiTestRefused: "The model declined the test request: {message}",
   aiTestFailed: "Connection test failed: {error}",
   aiSampleRequest: "Send sample request",
@@ -5475,6 +5501,10 @@ const ja: Dict = {
   statusPreviewStreaming: "プレビューをストリーミング中... ({ms} ms)",
   gridLoadingMore: "追加レコードを読み込み中...",
   autoLimitApplied: "自動的に LIMIT {limit} を適用しました — さらに行がある可能性があります。",
+  autoLimitNoteApplied: "自動で LIMIT {limit} を付与",
+  autoLimitNoteExistingLimit: "既存の LIMIT があるため自動 LIMIT は未適用",
+  autoLimitNoteLockingClause: "ロック句 (FOR UPDATE など) があるため自動 LIMIT は未適用",
+  autoLimitNoteAggregateOnly: "集約のみで 1 行しか返らないため自動 LIMIT は未適用",
   autoLimitFetchAll: "全件取得",
   autoLimitFetchAllTitle: "自動 LIMIT を外してこのクエリを再実行します。",
   partialResultBadge: "部分結果",
@@ -5546,6 +5576,8 @@ const ja: Dict = {
     "データベースサーバーに到達できませんでした。ホストとポート、サーバーが起動しているか、SSH トンネルやファイアウォールの設定を確認してください。",
   errorHintConnectionLost:
     "接続が切れたようです。サーバーがアイドル状態のセッションを閉じた (wait_timeout)、またはネットワークや VPN が切断された可能性があります。再接続してから、もう一度クエリを実行してください。",
+  errorHintAiOverloaded:
+    "AI サービスが混み合っています (レート制限または過負荷)。しばらく待ってからもう一度実行してください。",
   errorHintTimeout:
     "操作が制限時間を超えたため中断されました。クエリを絞り込む (WHERE / LIMIT を付ける) か、設定でクエリタイムアウトを延ばしてください。",
   errorHintSsh:
@@ -6470,6 +6502,8 @@ const ja: Dict = {
   batchSkipped: "スキップ",
   batchError: "エラー",
   batchRows: "{rows} 行",
+  batchRowsTruncated: "先頭 {shown} 行のみ (さらに行があります)",
+  batchRowsTruncatedOfTotal: "先頭 {shown} 行 / 全 {total} 行",
   batchAffected: "{rows} 行に影響",
 
   dumpTitle: "データベース「{database}」のダンプ",
@@ -6954,7 +6988,7 @@ const ja: Dict = {
   timelapseCountChanged: "変更: {count}",
   timelapseCountRemoved: "削除: {count}",
   timelapsePartialNote: "部分取得の世代が含まれます (主キー順の先頭 {limit} 行のみ)。範囲外の行は追加・削除として表示されることがあります。",
-  timelapseColumnsAdded: "追加された列: {columns}",
+  timelapseColumnsAdded: "追加された列 (行の変更には数えません): {columns}",
   timelapseColumnsRemoved: "削除された列 (比較対象外): {columns}",
   timelapseMaskedNote: "機微カラムは表示上だけ伏せ字にしています。スナップショットには実値がローカル保存されています。",
   timelapseNoChanges: "この 2 世代の間に行の差分はありません。",
@@ -8352,6 +8386,8 @@ const ja: Dict = {
     "statements_digest consumer が無効です。UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME='statements_digest'; で有効化できます。",
   inspectorReasonPgssMissing:
     "pg_stat_statements 拡張が未導入です。postgresql.conf の shared_preload_libraries に pg_stat_statements を追加してサーバを再起動し、CREATE EXTENSION pg_stat_statements; を実行してください。",
+  inspectorReasonPgssNotPreloaded:
+    "pg_stat_statements は導入済みですが読み込まれていません。postgresql.conf の shared_preload_libraries に pg_stat_statements を追加してサーバを再起動してください (CREATE EXTENSION だけでは有効になりません)。",
   inspectorReasonUnreadable:
     "統計ソースは存在しますが読み取れませんでした (権限不足、または非対応のサーババージョン)。DB ユーザに見えている範囲のみ表示します。",
   inspectorReasonUnknown: "このサーバでは利用できません。",
@@ -8609,6 +8645,13 @@ const ja: Dict = {
   advisorColTarget: "対象",
   advisorColSeverity: "重要度",
   advisorColDetail: "説明",
+  advisorFixStandard: "通常版",
+  advisorFixStandardNote: "シンプルですが、大きな本番テーブルでは実行中ずっと書き込みが止まることがあります。",
+  advisorFixOnline: "オンライン版 (書き込みを止めにくい)",
+  advisorFixOnlineNotePostgres:
+    "CONCURRENTLY を使うため、トランザクションブロックの中では実行できません。BEGIN/COMMIT の外で、1 文だけで実行してください (複数文のスクリプトやトランザクションモードでは失敗します)。時間は長くかかり、失敗すると無効 (INVALID) なインデックスが残るので DROP が必要です。",
+  advisorFixOnlineNoteMysql:
+    "ALGORITHM=INPLACE, LOCK=NONE により書き込みを止めずに実行します。サーバがその方式で実行できないときは、何も変更せずエラーで止まります。",
   advisorInsertFix: "エディタに挿入",
   advisorCopyFix: "修正 DDL をコピー",
   advisorInserted: "修正 DDL をエディタに挿入しました",
@@ -8944,6 +8987,13 @@ const ja: Dict = {
   taskDeleteConfirmMessage: "タスク「{name}」を削除しますか? 実行履歴も削除されます。",
   taskDeleteConfirmOk: "削除",
   taskDeleted: "タスク「{name}」を削除しました。",
+  taskRunning: "実行中…",
+  taskRunProgress: "実行中: {progress}",
+  taskRunProgressRows: "{count} 行",
+  taskRunProgressBytes: "{count} バイト",
+  taskRunProgressItems: "{count} 件完了",
+  taskRunStop: "中断",
+  taskRunStopTitle: "この実行を中断します。書きかけの出力ファイルは削除され、履歴には中断として記録されます。",
   taskRunOk: "「{name}」が正常に完了しました。",
   taskRunFailed: "「{name}」が失敗しました: {error}",
   taskRunNotifyTitle: "タスクが失敗しました: {name}",
@@ -9187,6 +9237,7 @@ const ja: Dict = {
   aiErrorExplainRunning: "AI に問い合わせ中...",
   aiErrorExplainCancel: "中止",
   aiErrorExplainCancelled: "中止しました。",
+  aiStreamRetrying: "AI サービスが混み合っているため再試行しています ({attempt}/{max}回目、{sec} 秒後)...",
   aiStreamWaiting: "AI の応答開始を待っています...",
   aiStreamReceiving: "受信中",
   aiStreamElapsed: "{sec} 秒経過",
@@ -9235,6 +9286,7 @@ const ja: Dict = {
   aiTestAuthError: "API キーが未設定、または拒否されました: {message}",
   aiTestNetworkError: "Anthropic の API へ到達できません: {message}",
   aiTestApiError: "API がエラーを返しました: {message}",
+  aiTestOverloaded: "API が混雑またはレート制限中です。しばらくしてから再試行してください: {message}",
   aiTestRefused: "モデルが接続テストの要求を拒否しました: {message}",
   aiTestFailed: "接続テストに失敗しました: {error}",
   aiSampleRequest: "サンプル要求を送る",

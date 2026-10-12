@@ -78,6 +78,12 @@ pub enum AppError {
     #[error("AI API error: {0}")]
     AiApi(String),
 
+    /// AI 基盤 (#1534): Anthropic API が 429 (レート制限) / 529 (過負荷) を返した。
+    /// ストリーム開始前は自動で数回再試行するが、それでも通らなかったときの区分。
+    /// 認証や不正な要求と違い、しばらく待てば通るので UI は「時間を置いて再実行」を案内する。
+    #[error("AI is temporarily busy: {0}")]
+    AiOverloaded(String),
+
     /// フライトレコーダー (#1533): 既に Undo 済みの記録に対する Undo。
     /// 文言はフロントが `kind` から i18n キーで引くので、ここは英語の既定文だけ持つ。
     #[error("this operation has already been undone")]
@@ -152,6 +158,7 @@ impl AppError {
             AppError::AiAuth(m) => AppError::AiAuth(m.clone()),
             AppError::AiNetwork(m) => AppError::AiNetwork(m.clone()),
             AppError::AiApi(m) => AppError::AiApi(m.clone()),
+            AppError::AiOverloaded(m) => AppError::AiOverloaded(m.clone()),
             AppError::FlightAlreadyUndone => AppError::FlightAlreadyUndone,
             AppError::FlightPrimaryKeyUnresolved => AppError::FlightPrimaryKeyUnresolved,
             AppError::FlightDriverMismatch => AppError::FlightDriverMismatch,
@@ -194,6 +201,7 @@ impl AppError {
             AppError::AiAuth(_) => "aiAuth",
             AppError::AiNetwork(_) => "aiNetwork",
             AppError::AiApi(_) => "aiApi",
+            AppError::AiOverloaded(_) => "aiOverloaded",
             AppError::FlightAlreadyUndone => "flightAlreadyUndone",
             AppError::FlightPrimaryKeyUnresolved => "flightPrimaryKeyUnresolved",
             AppError::FlightDriverMismatch => "flightDriverMismatch",
@@ -320,6 +328,7 @@ mod tests {
         assert_eq!(AppError::AiAuth("x".into()).kind(), "aiAuth");
         assert_eq!(AppError::AiNetwork("x".into()).kind(), "aiNetwork");
         assert_eq!(AppError::AiApi("x".into()).kind(), "aiApi");
+        assert_eq!(AppError::AiOverloaded("x".into()).kind(), "aiOverloaded");
         assert_eq!(AppError::Other("x".into()).kind(), "other");
     }
 

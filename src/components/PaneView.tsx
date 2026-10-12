@@ -863,6 +863,7 @@ export const PaneView = memo(
                         : undefined
                     }
                     autoLimitApplied={tab.autoLimitApplied}
+                    autoLimitSkip={tab.autoLimitSkip}
                     partialResult={tab.partialResult ?? null}
                     onFetchAllRows={gridStable.fn(`${tab.id}:fetchAll`, () => actions.fetchAllForTab(tab))}
                     driver={selectedProfile?.driver ?? "mysql"}

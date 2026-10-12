@@ -142,6 +142,10 @@ export interface BatchStatementResult {
   elapsedMs?: number;
   /** エラー時のメッセージ。 */
   error?: string;
+  /** `rows` がプレビュー上限で切り詰められている (まだ続きの行がある、#1534)。 */
+  truncated?: boolean;
+  /** 結果セットの総行数 (取得を途中で打ち切ったときは不明で未設定、#1534)。 */
+  totalRows?: number;
 }
 
 /**
@@ -152,7 +156,8 @@ export interface BatchStatementResult {
 export function toBatchResult(r: BatchStreamStatementResult): BatchStatementResult {
   if (r.status === "error") return { sql: r.sql, status: "error", error: r.error };
   if (r.status === "skipped") return { sql: r.sql, status: "skipped" };
-  // 結果セットを返した文は columns が付く (0 行の SELECT は従来どおり影響行数 0 の扱い)。
+  // 結果セットを返した文は columns が付く (0 行の SELECT も列見出しが付くので、影響行数ではなく
+  // 「0 行の結果」として扱う、#1534)。
   const isSelect = !!r.columns;
   return {
     sql: r.sql,
@@ -161,6 +166,8 @@ export function toBatchResult(r: BatchStreamStatementResult): BatchStatementResu
     rows: isSelect ? r.rows : undefined,
     rowsAffected: isSelect ? undefined : Number(r.rowsAffected ?? 0),
     elapsedMs: r.elapsedMs,
+    truncated: isSelect && r.truncated ? true : undefined,
+    totalRows: isSelect ? r.totalRows : undefined,
   };
 }
 

@@ -18,6 +18,7 @@ import {
   QueryResult,
   type SandboxCreateResponse,
   type SandboxRecord,
+  type AutoLimitSkip,
   Snippet,
   OpenTableResult,
   TableColumnInfo,
@@ -754,6 +755,8 @@ export interface Tab {
    * applied" badge near the result grid.
    */
   autoLimitApplied: number | null;
+  /** 自動 LIMIT を付けなかった理由 (#1534)。付与した / 要求なしは null。 */
+  autoLimitSkip: AutoLimitSkip | null;
   /**
    * The exact SQL that was run with an auto LIMIT, so the badge's "fetch all"
    * action can re-run it uncapped even after the editor text has changed.
@@ -984,6 +987,7 @@ function makeTab(kind: TabKind, title: string, sql: string): Tab {
     previewRowLimit: getSettings().defaultDisplayCount,
     paginatable: null,
     autoLimitApplied: null,
+    autoLimitSkip: null,
     autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,
@@ -3919,6 +3923,7 @@ export default function App() {
       streaming: true,
       paginatable: paginatableBase,
       autoLimitApplied: null,
+      autoLimitSkip: null,
       autoLimitSql: autoLimit !== null ? sql : null,
       loadingMore: false,
       canLoadMore: false,
@@ -4032,7 +4037,7 @@ export default function App() {
           };
         });
       },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, serverMessages, readOnly, schemaMayChange, stats, snapshotId, resultId }) => {
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, autoLimitSkip, serverMessages, readOnly, schemaMayChange, stats, snapshotId, resultId }) => {
         // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
         markQueryDone(streamId, {
           rows: hasColumns ? totalRows : rowsAffected,
@@ -4050,6 +4055,7 @@ export default function App() {
               streaming: false,
               canLoadMore: false,
               autoLimitApplied: null,
+              autoLimitSkip: null,
             };
           }
           // Optimistically enable scroll-triggered pagination for table-shaped
@@ -4076,6 +4082,7 @@ export default function App() {
             streaming: false,
             canLoadMore: tt.paginatable !== null,
             autoLimitApplied: appliedAutoLimit,
+            autoLimitSkip: autoLimitSkip ?? null,
             ...(autoRefresh ? { autoRefreshLastRunAt: Date.now() } : {}),
           };
         });
@@ -5081,6 +5088,7 @@ export default function App() {
         paginatable: null,
         canLoadMore: false,
         autoLimitApplied: null,
+        autoLimitSkip: null,
         autoLimitSql: null,
       }));
       setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: res.rows.length, ms: res.elapsed_ms } });

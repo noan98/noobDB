@@ -170,6 +170,33 @@ describe("ResultGrid", () => {
     expect(onFetchAllRows).toHaveBeenCalledTimes(1);
   });
 
+  it("自動 LIMIT の付与 / 未適用の理由を注記する (#1534)", () => {
+    const { unmount } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} autoLimitApplied={1000} />,
+    );
+    expect(screen.getByTestId("auto-limit-note")).toHaveTextContent(
+      t("autoLimitNoteApplied", { limit: 1000 }),
+    );
+    unmount();
+
+    const cases = [
+      ["existingLimit", "autoLimitNoteExistingLimit"],
+      ["lockingClause", "autoLimitNoteLockingClause"],
+      ["aggregateOnly", "autoLimitNoteAggregateOnly"],
+    ] as const;
+    for (const [skip, key] of cases) {
+      const r = renderWithProviders(
+        <ResultGrid result={FRUIT_RESULT} autoLimitSkip={skip} />,
+      );
+      expect(screen.getByTestId("auto-limit-note")).toHaveTextContent(t(key));
+      r.unmount();
+    }
+
+    // 対象外 (notApplicable) と要求なしは注記を出さない。
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} autoLimitSkip="notApplicable" />);
+    expect(screen.queryByTestId("auto-limit-note")).toBeNull();
+  });
+
   describe("インラインセル編集", () => {
     const columns: Column[] = [
       { name: "id", type_name: "INT" },

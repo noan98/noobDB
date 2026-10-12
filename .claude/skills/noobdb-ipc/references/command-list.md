@@ -34,9 +34,11 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 
 - API キーは OS keyring (`ai/anthropic_api_key`) のみ。`set_ai_api_key(key)` は `None` = 変更なし /
   `Some("")` = 削除。`has_ai_api_key` は bool だけ返し、値を返す IPC は無い。
-- `run_ai_request(streamId, task, system, prompt, settings, format, systemCached, history)` はストリーミング。`format` は任意で
+- `run_ai_request(streamId, task, system, prompt, settings, format, systemCached, history, onEvent)` はストリーミング。`format` は任意で
   `{ type: "json_schema", schema }` (構造化出力 `output_config.format`、他の形は拒否)。結果は
-  `ai-stream:delta` / `:done` / `:error` / `:cancelled` (`listenAiStream`、`streamId` で絞る)。
+  `onEvent` の Tauri Channel に `kind` タグ付き (`delta` / `retrying` / `done` / `error` / `cancelled`) で届く
+  (#1534。`listenAiStream` が Channel を作る)。429 / 529 はストリーム開始前に限り `Retry-After` /
+  指数バックオフで最大 3 回再試行し、その間 `retrying` が届く。
   `systemCached` は任意 (#1473): system の固定部分 (スキーマなど)。`system` より前のブロックになり、
   モデルの最小キャッシュ長 (`AiModel::cache_min_tokens`、UTF-8 バイト数で判定) 以上のとき
   `cache_control: ephemeral` が付く。キャッシュは `systemCached` を渡したときだけ (オプトイン)。
@@ -50,7 +52,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   `taskModels[kind] ?? defaultModel` / `taskEfforts[kind] ?? 推奨` で解決する。
 - `test_ai_connection(settings)` は短い非ストリーミング要求。認証 / ネットワーク / API / refusal は
   戻り値の `status` で区別する。
-- エラー kind: `aiRefused` / `aiAuth` / `aiNetwork` / `aiApi`。
+- エラー kind: `aiRefused` / `aiAuth` / `aiNetwork` / `aiApi` / `aiOverloaded` (429 / 529。再試行しても通らなかった一時的な混雑)。
 
 ## SSH (`commands/ssh.rs`)
 
@@ -275,7 +277,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `save_task`
 - `delete_task`
 - `set_task_enabled`
-- `run_task_now`
+- `run_task_now` (引数 `id`, `streamId`) — `cancel_stream` で中断でき、進捗は `task-run:progress` (`streamId` で絞る。#1534)
 - `list_task_runs`
 - `list_assertion_runs`
 - `clear_task_runs`

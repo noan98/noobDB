@@ -6,13 +6,14 @@
 // 後続の拡張を見越した形にしてある:
 // - `start` はリクエスト引数 (task / system / prompt / settings / format) をそのまま受け取る。
 //   会話の追い質問など、呼び出し側が組み立てた引数をそのまま流せる。
-// - 完了イベント (`ai-stream:done`) は加工せずに `done` として保持して返す
+// - 完了メッセージ (Channel の `done`) は加工せずに `done` として保持して返す
 //   (応答モデル・フォールバック有無・トークン使用量)。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { recordAiUsage } from "./aiUsageStore";
 import { api, listenAiStream, type AiDoneEvent } from "../api/tauri";
+import { t } from "../i18n";
 
 /** `run_ai_request` に渡す引数 (ストリーム ID はフックが採番する)。 */
 export type AiStreamRequest = Omit<Parameters<typeof api.runAiRequest>[0], "streamId">;
@@ -41,6 +42,15 @@ export interface AiStreamHandlers<T> {
   onError: (failure: AiStreamFailure) => void;
   /** 中止された (登録前に中止されて要求を送らなかった場合を含む)。 */
   onCancelled: () => void;
+}
+
+/** 429 / 529 (混雑) を受けて自動で再試行している間の状態 (#1534)。 */
+export interface AiRetryState {
+  /** 何回目の再試行か (1 始まり)。 */
+  attempt: number;
+  maxAttempts: number;
+  /** 再試行までの待ち時間 (ms)。 */
+  delayMs: number;
 }
 
 export interface UseAiStreamOptions {
@@ -73,6 +83,8 @@ export interface UseAiStream {
   text: string;
   /** 開始からの経過秒数 (受信中のみ進む)。 */
   elapsedSec: number;
+  /** 混雑で自動再試行を待っている間だけ非 null。本文が届き始めると null に戻る。 */
+  retrying: AiRetryState | null;
   /** 直近の完了イベント。次の `start` で消える。 */
   done: AiDoneEvent | null;
 }
@@ -88,6 +100,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
   const [running, setRunning] = useState(false);
   const [text, setText] = useState("");
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [retrying, setRetrying] = useState<AiRetryState | null>(null);
   const [done, setDone] = useState<AiDoneEvent | null>(null);
   const busyRef = useRef(false);
   const streamRef = useRef<string | null>(null);
@@ -112,7 +125,10 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     unlistenRef.current = null;
     streamRef.current = null;
     busyRef.current = false;
-    if (mountedRef.current) setRunning(false);
+    if (mountedRef.current) {
+      setRunning(false);
+      setRetrying(null);
+    }
     return true;
   }, []);
 
@@ -145,6 +161,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     // 前回の本文 / 経過秒数 / 完了イベントを持ち越さない (準備中に古い内容が「受信中」に出ない)。
     setText("");
     setElapsedSec(0);
+    setRetrying(null);
     setDone(null);
     return true;
   }, []);
@@ -172,6 +189,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     busyRef.current = false;
     setRunning(false);
     setDone(null);
+    setRetrying(null);
   }, [cancelRemote]);
 
   const start = useCallback(
@@ -202,14 +220,23 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
       const fail = (message: string, kind: string) => {
         if (!stopListener(streamId)) return;
         settleText();
-        handlers.onError({ message, kind, refused: kind === "aiRefused" });
+        // 混雑 (429/529) は英語の技術メッセージだけだと次の手が分からないので案内を足す (#1534)。
+        const shown = kind === "aiOverloaded" ? `${message}\n${t("errorHintAiOverloaded")}` : message;
+        handlers.onError({ message: shown, kind, refused: kind === "aiRefused" });
       };
       try {
         const unlisten = await listenAiStream(streamId, {
           onDelta: (e) => {
             if (streamRef.current !== streamId) return;
             body += e.text;
+            if (mountedRef.current) setRetrying(null);
             if (frame === 0) frame = requestAnimationFrame(flushText);
+          },
+          onRetrying: (e) => {
+            if (streamRef.current !== streamId) return;
+            if (mountedRef.current) {
+              setRetrying({ attempt: e.attempt, maxAttempts: e.maxAttempts, delayMs: e.delayMs });
+            }
           },
           onDone: (e) => {
             if (!stopListener(streamId)) return;
@@ -257,7 +284,19 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
   );
 
   return useMemo(
-    () => ({ acquire, release, isMounted, start, cancel, reset, running, text, elapsedSec, done }),
-    [acquire, release, isMounted, start, cancel, reset, running, text, elapsedSec, done],
+    () => ({
+      acquire,
+      release,
+      isMounted,
+      start,
+      cancel,
+      reset,
+      running,
+      text,
+      elapsedSec,
+      retrying,
+      done,
+    }),
+    [acquire, release, isMounted, start, cancel, reset, running, text, elapsedSec, retrying, done],
   );
 }

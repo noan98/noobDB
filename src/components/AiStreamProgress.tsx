@@ -6,7 +6,7 @@ import { Spinner } from "./Spinner";
 
 export interface AiStreamProgressProps {
   /** `useAiStream` の戻り値 (受信済み本文と経過秒数だけを使う)。 */
-  stream: Pick<UseAiStream, "text" | "elapsedSec">;
+  stream: Pick<UseAiStream, "text" | "elapsedSec"> & Partial<Pick<UseAiStream, "retrying">>;
   /**
    * 構造化出力 (JSON) のとき、途中経過として見せる文章フィールドのキー (`explanation` など)。
    * 省略すると本文を「プレーンテキスト」としてそのまま見せる。JSON なのに指定しない画面は
@@ -26,14 +26,22 @@ export interface AiStreamProgressProps {
  */
 export function AiStreamProgress({ stream, fields, previewText = true, waitingLabel }: AiStreamProgressProps) {
   const t = useT();
-  const { text, elapsedSec } = stream;
+  const { text, elapsedSec, retrying } = stream;
   const preview = !previewText ? "" : fields ? partialJsonPreview(text, fields) : text;
   return (
     <Flex direction="column" gap="1" data-testid="ai-stream-progress" minW="0">
       <Flex align="center" gap="2" wrap="wrap" color="app.textMuted" textStyle="caption">
         <Spinner size={12} />
         <chakra.span role="status">
-          {text.length > 0 ? t("aiStreamReceiving") : (waitingLabel ?? t("aiStreamWaiting"))}
+          {retrying
+            ? t("aiStreamRetrying", {
+                attempt: retrying.attempt,
+                max: retrying.maxAttempts,
+                sec: Math.ceil(retrying.delayMs / 1000),
+              })
+            : text.length > 0
+              ? t("aiStreamReceiving")
+              : (waitingLabel ?? t("aiStreamWaiting"))}
         </chakra.span>
         {/* 毎秒変わる値は読み上げ領域 (role="status") の外に置く。 */}
         <chakra.span data-testid="ai-stream-elapsed">{t("aiStreamElapsed", { sec: elapsedSec })}</chakra.span>

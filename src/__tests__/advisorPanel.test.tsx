@@ -95,6 +95,7 @@ describe("AdvisorPanel running skeleton (#1211)", () => {
           context: [],
           statistical: false,
           fix_ddl: null,
+          fix_ddl_online: null,
         },
       ],
       skipped: [],
@@ -117,6 +118,7 @@ describe("AdvisorPanel 既定の並び (#1469)", () => {
     context: [],
     statistical: false,
     fix_ddl: null,
+    fix_ddl_online: null,
   });
 
   it("初期表示で重要度の高い指摘が上に並び、同重要度はバックエンドの順を保つ", async () => {
@@ -136,5 +138,61 @@ describe("AdvisorPanel 既定の並び (#1469)", () => {
     expect(order).toEqual([0, 1, 2, 3]);
     // 既定の重要度順はヘッダの aria-sort にも昇順として出る。
     expect(container.querySelector('th[aria-sort="ascending"]')).not.toBeNull();
+  });
+});
+
+describe("AdvisorPanel オンライン版の修正 DDL (#1534)", () => {
+  const finding = (online: string | null) => ({
+    rule: "fk_missing_index" as const,
+    severity: "high" as const,
+    table: "orders",
+    columns: ["user_id"],
+    context: ["users"],
+    statistical: false,
+    fix_ddl: 'CREATE INDEX "idx_orders_user_id" ON "orders" ("user_id");',
+    fix_ddl_online: online,
+  });
+
+  it("オンライン版があれば通常版と並べ、PostgreSQL ではトランザクション外で実行する旨を添える", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce({
+      driver: "postgres",
+      tables_analyzed: 1,
+      findings: [finding('CREATE INDEX CONCURRENTLY "idx_orders_user_id" ON "orders" ("user_id");')],
+      skipped: [],
+    });
+    const onInsertSql = vi.fn();
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={onInsertSql} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+
+    await waitFor(() => expect(screen.getByText(t("advisorFixOnline"))).toBeInTheDocument());
+    expect(screen.getByText(t("advisorFixStandard"))).toBeInTheDocument();
+    expect(screen.getByText(t("advisorFixOnlineNotePostgres"))).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: new RegExp(t("advisorInsertFix")) })).toHaveLength(2);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `${t("advisorInsertFix")} (${t("advisorFixOnline")})`,
+      }),
+    );
+    expect(onInsertSql).toHaveBeenCalledWith(
+      'CREATE INDEX CONCURRENTLY "idx_orders_user_id" ON "orders" ("user_id");',
+    );
+  });
+
+  it("オンライン版が無い (SQLite) ときは従来どおり通常版だけを出す", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce({
+      driver: "sqlite",
+      tables_analyzed: 1,
+      findings: [finding(null)],
+      skipped: [],
+    });
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: t("advisorInsertFix") })).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(t("advisorFixOnline"))).toBeNull();
+    expect(screen.queryByText(t("advisorFixStandard"))).toBeNull();
   });
 });

@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import {
+  aiStreamChannels,
   batchStreamChannels,
   broadcastChannels,
   dataSearchChannels,
@@ -956,7 +957,7 @@ export interface KnownHost {
  * ライブクエリ・インスペクタ (#746) の前提可否。使えない機能には機械可読な
  * 理由コード (`unsupported_driver` / `performance_schema_off` /
  * `statements_consumer_off` / `statements_digest_off` /
- * `pg_stat_statements_missing` / `stats_unreadable`) が付き、UI は有効化手順
+ * `pg_stat_statements_missing` / `pg_stat_statements_not_preloaded` / `stats_unreadable`) が付き、UI は有効化手順
  * つきのヘルプ文言にマップして縮退表示する (黙って空にしない)。
  */
 export interface QueryStatsSupport {
@@ -1233,6 +1234,9 @@ export interface HealthFinding {
   context: string[];
   /** エディタへ挿入する修正 DDL。設計判断を要するルールでは null。 */
   fix_ddl: string | null;
+  /** `fix_ddl` のオンライン版 (#1534)。PostgreSQL は `CONCURRENTLY` (トランザクション外で実行)、
+   *  MySQL は `ALGORITHM=INPLACE, LOCK=NONE`。SQLite・修正 DDL が無いルールでは null。 */
+  fix_ddl_online: string | null;
   /** エンジンの実行時統計に由来する指摘 (観測期間に依存する旨を注記)。 */
   statistical: boolean;
 }
@@ -1844,6 +1848,9 @@ export interface QueryStreamPatchMessage {
   runs: QueryStreamPatchRun[];
 }
 
+/** 自動 LIMIT を付与しなかった理由 (#1534)。バックエンド `AutoLimitSkip` と同じ camelCase。 */
+export type AutoLimitSkip = "existingLimit" | "lockingClause" | "aggregateOnly" | "notApplicable";
+
 export interface QueryStreamDoneMessage {
   totalRows: number;
   rowsAffected: number;
@@ -1851,6 +1858,8 @@ export interface QueryStreamDoneMessage {
   hasColumns: boolean;
   /** Row cap auto-injected for this run, or null when none was applied. */
   appliedAutoLimit: number | null;
+  /** 自動 LIMIT を要求したが付与しなかった理由 (#1534)。 */
+  autoLimitSkip?: AutoLimitSkip | null;
   /** サーバの通知・警告 (PostgreSQL NOTICE/WARNING、MySQL SHOW WARNINGS) (#1165)。 */
   serverMessages?: ServerMessage[];
   /** 全行を観測し終えた統計 (#1257)。 */
@@ -1896,6 +1905,10 @@ export interface BatchStreamStatementResult {
   elapsedMs?: number;
   error?: string;
   serverMessages?: ServerMessage[];
+  /** `rows` がプレビュー上限で切り詰められている (まだ続きの行がある、#1534)。 */
+  truncated?: boolean;
+  /** 結果セットの総行数。取得を途中で打ち切ったときは数えていないので省略される。 */
+  totalRows?: number;
 }
 
 export interface BatchStreamStartedMessage {
@@ -2952,6 +2965,30 @@ export interface TaskRunEvent {
   catchUp: boolean;
 }
 
+/** 「今すぐ実行」(`runTaskNow`) の進捗 (#1534)。`count` の単位は `unit`
+ *  (エクスポート = 行数、ダンプ = 書き込みバイト数、アサーション = 実行済みの件数)。 */
+export interface TaskRunProgressEvent {
+  streamId: string;
+  taskId: string;
+  count: number;
+  unit: "rows" | "bytes" | "items";
+}
+
+/** `runTaskNow` に渡した `streamId` の `task-run:progress` を購読する (#1534)。 */
+export async function listenTaskRunProgress(
+  streamId: string,
+  onProgress: (e: TaskRunProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<TaskRunProgressEvent>("task-run:progress", (e) => {
+    const payload = parseResponse<TaskRunProgressEvent>(
+      schemas.taskRunProgressEvent,
+      e.payload,
+      "task-run:progress",
+    );
+    if (payload.streamId === streamId) onProgress(payload);
+  });
+}
+
 /**
  * バックグラウンドスケジューラが発火させた `task-run:*` イベントをグローバルに
  * 購読する (特定の `streamId` を持たない — アプリ起動中いつでも、どのタブからでも
@@ -2976,7 +3013,7 @@ export async function listenTaskRunEvents(handlers: {
 
 // --- AI 基盤 (#690) ---------------------------------------------------------
 
-export type AiConnectionStatus = "success" | "authError" | "networkError" | "apiError" | "refused";
+export type AiConnectionStatus = "success" | "authError" | "networkError" | "apiError" | "overloaded" | "refused";
 
 export interface AiConnectionTestResult {
   status: AiConnectionStatus;
@@ -3011,12 +3048,23 @@ export interface AiDoneEvent {
 export interface AiErrorEvent {
   streamId: string;
   error: string;
-  /** `AppError.kind` (`aiRefused` / `aiAuth` / `aiNetwork` / `aiApi`)。 */
+  /** `AppError.kind` (`aiRefused` / `aiAuth` / `aiNetwork` / `aiApi` / `aiOverloaded`)。 */
   kind: string;
+}
+
+export interface AiRetryingEvent {
+  streamId: string;
+  /** 何回目の再試行か (1 始まり)。 */
+  attempt: number;
+  maxAttempts: number;
+  /** 再試行までの待ち時間 (ms)。 */
+  delayMs: number;
 }
 
 export interface AiStreamHandlers {
   onDelta?: (event: AiDeltaEvent) => void;
+  /** 429 / 529 (混雑) を受けて、待ってから自動で再試行する (#1534)。 */
+  onRetrying?: (event: AiRetryingEvent) => void;
   onDone?: (event: AiDoneEvent) => void;
   onError?: (event: AiErrorEvent) => void;
   /** `deliveredRows` は送信済みの本文差分 (delta) の件数。 */
@@ -3024,40 +3072,85 @@ export interface AiStreamHandlers {
 }
 
 /**
- * AI リクエスト (#690) の `ai-stream:*` イベントを `streamId` で絞って購読する。
- * 戻り値の関数ですべてのリスナーを外す。
+ * AI リクエスト (#690) の Tauri Channel を `streamId` 向けに作って購読する (#1534。以前は
+ * `ai-stream:*` のグローバルイベントで、webview 内の全リスナーに配られていた)。`runAiRequest`
+ * の前に await すること。戻り値の関数でハンドラを外す。ハンドラへは従来どおり `streamId`
+ * 付きのイベントを渡す。
  */
 export async function listenAiStream(
   streamId: string,
   handlers: AiStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "delta": {
+        const m = parseChannelMessage<{ text: string }>(
+          schemas.aiStreamDeltaMessage,
+          msg,
+          "aiStreamDeltaMessage",
+        );
+        handlers.onDelta?.({ streamId, text: m.text });
+        break;
       }
-    };
-  return registerListeners([
-    listen<AiDeltaEvent>(
-      "ai-stream:delta",
-      filter(schemas.aiDeltaEvent, "ai-stream:delta", handlers.onDelta),
-    ),
-    listen<AiDoneEvent>(
-      "ai-stream:done",
-      filter(schemas.aiDoneEvent, "ai-stream:done", handlers.onDone),
-    ),
-    listen<AiErrorEvent>(
-      "ai-stream:error",
-      filter(schemas.aiErrorEvent, "ai-stream:error", handlers.onError),
-    ),
-    listen<StreamCancelledEvent>(
-      "ai-stream:cancelled",
-      filter(schemas.streamCancelledEvent, "ai-stream:cancelled", handlers.onCancelled),
-    ),
-  ]);
+      case "retrying": {
+        const m = parseChannelMessage<Omit<AiRetryingEvent, "streamId">>(
+          schemas.aiStreamRetryingMessage,
+          msg,
+          "aiStreamRetryingMessage",
+        );
+        handlers.onRetrying?.({
+          streamId,
+          attempt: m.attempt,
+          maxAttempts: m.maxAttempts,
+          delayMs: m.delayMs,
+        });
+        break;
+      }
+      case "done": {
+        const m = parseChannelMessage<Omit<AiDoneEvent, "streamId">>(
+          schemas.aiStreamDoneMessage,
+          msg,
+          "aiStreamDoneMessage",
+        );
+        handlers.onDone?.({
+          streamId,
+          model: m.model,
+          requestedModel: m.requestedModel,
+          fallbackUsed: m.fallbackUsed,
+          stopReason: m.stopReason,
+          usage: m.usage,
+        });
+        break;
+      }
+      case "error": {
+        const m = parseChannelMessage<{ error: string; errorKind: string }>(
+          schemas.aiStreamErrorMessage,
+          msg,
+          "aiStreamErrorMessage",
+        );
+        handlers.onError?.({ streamId, error: m.error, kind: m.errorKind });
+        break;
+      }
+      case "cancelled": {
+        const m = parseChannelMessage<ChannelCancelledMessage>(
+          schemas.channelCancelledMessage,
+          msg,
+          "channelCancelledMessage",
+        );
+        handlers.onCancelled?.({ streamId, deliveredRows: m.deliveredRows });
+        break;
+      }
+      default:
+        break;
+    }
+  };
+  aiStreamChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (aiStreamChannels.get(streamId) === channel) {
+      aiStreamChannels.delete(streamId);
+    }
+  };
 }

@@ -457,9 +457,16 @@ async fn batch_returns_one_result_per_statement() {
     let rows = results[2].rows.as_ref().expect("rows");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][1], t::Value::String("a;b".into()));
-    // 0 行の SELECT は従来どおり columns が空 = 影響行数 0 の扱い (run_query と同じ判定)。
-    assert!(results[3].columns.is_none());
-    assert_eq!(results[3].rows_affected, Some(0));
+    // 0 行の SELECT でも準備済み文のメタデータから列見出しを返す (#1534)。影響行数ではなく
+    // 「0 行の結果セット」として扱い、切り詰めは無く総行数は 0。
+    assert_eq!(results[3].columns.as_ref().map(Vec::len), Some(1));
+    assert_eq!(results[3].rows.as_ref().map(Vec::len), Some(0));
+    assert_eq!(results[3].rows_affected, None);
+    assert!(!results[3].truncated);
+    assert_eq!(results[3].total_rows, Some(0));
+    // 切り詰めの無い SELECT は総行数 = 返した行数。
+    assert!(!results[2].truncated);
+    assert_eq!(results[2].total_rows, Some(2));
     assert_eq!(count(&session, "t").await, 2);
 }
 
@@ -474,6 +481,9 @@ async fn batch_caps_select_rows_at_the_preview_limit() {
     assert_eq!(rows.len(), 7, "取得は preview_rows 件で打ち切られる");
     assert_eq!(rows[0][0], t::Value::Int(1));
     assert_eq!(rows[6][0], t::Value::Int(7));
+    // 続きの行があるので切り詰め済み。途中で打ち切ったため総行数は不明 (#1534)。
+    assert!(results[0].truncated);
+    assert_eq!(results[0].total_rows, None);
     // 打ち切り後も同じ接続 (プール) が使える。
     assert_eq!(
         session
@@ -485,6 +495,21 @@ async fn batch_caps_select_rows_at_the_preview_limit() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn batch_preview_limit_is_not_reported_as_truncated_when_rows_fit_exactly() {
+    let (_fx, session) = setup("batch_exact", false).await;
+    let sql = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 7) SELECT x FROM c";
+    let (_run, results) = batch(&session, sql, true, 7).await;
+    assert_eq!(results[0].rows.as_ref().map(Vec::len), Some(7));
+    // ちょうど上限件数ぴったりは切り詰めではない。
+    assert!(!results[0].truncated);
+    assert_eq!(results[0].total_rows, Some(7));
+    // 1 行多いと切り詰め。
+    let (_run, results) = batch(&session, sql, true, 6).await;
+    assert_eq!(results[0].rows.as_ref().map(Vec::len), Some(6));
+    assert!(results[0].truncated);
 }
 
 #[tokio::test]

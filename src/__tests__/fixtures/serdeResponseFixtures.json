@@ -5,6 +5,34 @@
     "model": "claude-opus-5-5",
     "status": "success"
   },
+  "aiStreamDeltaMessage": {
+    "kind": "delta",
+    "text": "SEL"
+  },
+  "aiStreamDoneMessage": {
+    "fallbackUsed": false,
+    "kind": "done",
+    "model": "claude-opus-5-5",
+    "requestedModel": "claude-opus-5-5",
+    "stopReason": "end_turn",
+    "usage": {
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 80,
+      "inputTokens": 120,
+      "outputTokens": 45
+    }
+  },
+  "aiStreamErrorMessage": {
+    "error": "overloaded",
+    "errorKind": "aiOverloaded",
+    "kind": "error"
+  },
+  "aiStreamRetryingMessage": {
+    "attempt": 1,
+    "delayMs": 1500,
+    "kind": "retrying",
+    "maxAttempts": 3
+  },
   "alterTableContext": {
     "columns": [
       {
@@ -279,7 +307,9 @@
           ]
         ],
         "sql": "SELECT 1",
-        "status": "ok"
+        "status": "ok",
+        "totalRows": 10000,
+        "truncated": true
       },
       {
         "error": "boom",
@@ -446,6 +476,10 @@
   },
   "channelCancelledMessage": {
     "deliveredRows": 5,
+    "kind": "cancelled"
+  },
+  "channelCancelledMessageAi": {
+    "deliveredRows": 3,
     "kind": "cancelled"
   },
   "channelCancelledMessageZero": {
@@ -1134,6 +1168,7 @@
       "users"
     ],
     "fix_ddl": "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
+    "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
     "rule": "fk_missing_index",
     "severity": "high",
     "statistical": false,
@@ -1146,6 +1181,7 @@
       ],
       "context": [],
       "fix_ddl": null,
+      "fix_ddl_online": null,
       "rule": "fk_missing_index",
       "severity": "high",
       "statistical": true,
@@ -1157,6 +1193,7 @@
       ],
       "context": [],
       "fix_ddl": null,
+      "fix_ddl_online": null,
       "rule": "duplicate_index",
       "severity": "medium",
       "statistical": false,
@@ -1168,6 +1205,7 @@
       ],
       "context": [],
       "fix_ddl": null,
+      "fix_ddl_online": null,
       "rule": "redundant_index",
       "severity": "low",
       "statistical": true,
@@ -1179,6 +1217,7 @@
       ],
       "context": [],
       "fix_ddl": null,
+      "fix_ddl_online": null,
       "rule": "missing_primary_key",
       "severity": "high",
       "statistical": false,
@@ -1190,6 +1229,7 @@
       ],
       "context": [],
       "fix_ddl": null,
+      "fix_ddl_online": null,
       "rule": "unused_index",
       "severity": "medium",
       "statistical": true,
@@ -1201,6 +1241,7 @@
       ],
       "context": [],
       "fix_ddl": null,
+      "fix_ddl_online": null,
       "rule": "fk_type_mismatch",
       "severity": "low",
       "statistical": false,
@@ -1212,6 +1253,7 @@
       ],
       "context": [],
       "fix_ddl": null,
+      "fix_ddl_online": null,
       "rule": "sqlite_integer_pk_hint",
       "severity": "high",
       "statistical": true,
@@ -1600,6 +1642,7 @@
   },
   "queryStreamDoneMessage": {
     "appliedAutoLimit": 1000,
+    "autoLimitSkip": "existingLimit",
     "elapsedMs": 12,
     "hasColumns": true,
     "kind": "done",
@@ -3659,6 +3702,7 @@
           "users"
         ],
         "fix_ddl": "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
+        "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
         "rule": "fk_missing_index",
         "severity": "high",
         "statistical": false,
@@ -3683,6 +3727,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
           "statistical": true,
@@ -3694,6 +3739,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
           "statistical": false,
@@ -3705,6 +3751,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
           "statistical": true,
@@ -3716,6 +3763,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
           "statistical": false,
@@ -3727,6 +3775,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
           "statistical": true,
@@ -3738,6 +3787,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
           "statistical": false,
@@ -3749,6 +3799,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
           "statistical": true,
@@ -3796,6 +3847,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
           "statistical": true,
@@ -3807,6 +3859,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
           "statistical": false,
@@ -3818,6 +3871,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
           "statistical": true,
@@ -3829,6 +3883,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
           "statistical": false,
@@ -3840,6 +3895,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
           "statistical": true,
@@ -3851,6 +3907,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
           "statistical": false,
@@ -3862,6 +3919,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
           "statistical": true,
@@ -3909,6 +3967,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
           "statistical": true,
@@ -3920,6 +3979,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
           "statistical": false,
@@ -3931,6 +3991,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
           "statistical": true,
@@ -3942,6 +4003,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
           "statistical": false,
@@ -3953,6 +4015,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
           "statistical": true,
@@ -3964,6 +4027,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
           "statistical": false,
@@ -3975,6 +4039,7 @@
           ],
           "context": [],
           "fix_ddl": null,
+          "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
           "statistical": true,
@@ -4610,6 +4675,12 @@
     "started_at": "2026-01-02T00:00:00Z",
     "status": "ok",
     "task_id": "task0001"
+  },
+  "taskRunProgressEvent": {
+    "count": 1234,
+    "streamId": "task_t1_abc",
+    "taskId": "t1",
+    "unit": "rows"
   },
   "timelapseCaptureOutcome": {
     "added": true,

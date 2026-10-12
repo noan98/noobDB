@@ -21,6 +21,8 @@ const TICK_SECS: u64 = 20;
 
 const EV_TASK_RUN_DONE: &str = "task-run:done";
 const EV_TASK_RUN_ERROR: &str = "task-run:error";
+/// 「今すぐ実行」の進捗 (#1534)。`stream_id` で絞って購読する。
+const EV_TASK_RUN_PROGRESS: &str = "task-run:progress";
 
 // `pub` は #825 の zod ⇔ serde ゴールデンパターンに倣った将来のフィクスチャ化に
 // 備えたもの。IPC 経路としては引き続きこのモジュール内で完結する。
@@ -37,6 +39,58 @@ pub struct TaskRunEvent {
     pub output_path: Option<String>,
     #[serde(rename = "catchUp")]
     pub catch_up: bool,
+}
+
+/// 「今すぐ実行」の進捗 (#1534)。`unit` は `count` の単位 (`rows` / `bytes` / `items`)。
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskRunProgressEvent {
+    #[serde(rename = "streamId")]
+    pub stream_id: String,
+    #[serde(rename = "taskId")]
+    pub task_id: String,
+    pub count: u64,
+    pub unit: &'static str,
+}
+
+/// タスクの進捗の単位。
+pub(crate) fn progress_unit(action: &super::TaskAction) -> &'static str {
+    match action {
+        super::TaskAction::ExportQuery { .. } => "rows",
+        super::TaskAction::Dump { .. } => "bytes",
+        super::TaskAction::RunAssertions { .. } => "items",
+    }
+}
+
+/// 進捗の件数を一定間隔で `task-run:progress` として知らせるタスクを起動する。
+/// 返した `JoinHandle` を abort すれば止まる。
+pub(crate) fn spawn_progress_ticker(
+    app: AppHandle,
+    stream_id: String,
+    task: &TaskDefinition,
+    progress: std::sync::Arc<std::sync::atomic::AtomicU64>,
+) -> tokio::task::JoinHandle<()> {
+    let task_id = task.id.clone();
+    let unit = progress_unit(&task.action);
+    tokio::spawn(async move {
+        let mut last: Option<u64> = None;
+        loop {
+            let count = progress.load(std::sync::atomic::Ordering::SeqCst);
+            // 変化したときだけ送る (開始直後の 0 は 1 回送り、進行中表示の起点にする)。
+            if last != Some(count) {
+                last = Some(count);
+                let _ = app.emit(
+                    EV_TASK_RUN_PROGRESS,
+                    TaskRunProgressEvent {
+                        stream_id: stream_id.clone(),
+                        task_id: task_id.clone(),
+                        count,
+                        unit,
+                    },
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        }
+    })
 }
 
 /// スケジューラを起動する。`app` の生存期間 (= アプリのプロセス) と同じだけ
@@ -180,7 +234,20 @@ pub(crate) async fn execute_and_log(
     catch_up: bool,
 ) -> TaskRunEvent {
     let started = Utc::now();
-    let outcome = executor::run_once(app, &task).await;
+    let progress = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let outcome = executor::run_once(app, &task, &progress).await;
+    record_outcome(app, task, catch_up, started, outcome).await
+}
+
+/// 実行結果をログへ記録し、タスク定義のミラーを更新し、`task-run:*` を emit する。
+/// 「今すぐ実行」の中断 (`TaskOutcome` を作って渡す) でも使う。
+pub(crate) async fn record_outcome(
+    app: &AppHandle,
+    task: TaskDefinition,
+    catch_up: bool,
+    started: DateTime<Utc>,
+    outcome: executor::TaskOutcome,
+) -> TaskRunEvent {
     let finished = Utc::now();
     let elapsed_ms = (finished - started).num_milliseconds().max(0);
     let status = if outcome.ok { "ok" } else { "error" };
@@ -322,5 +389,36 @@ mod run_guard_tests {
         assert!(try_acquire_run("guard-test-b").is_some());
         drop(g);
         assert!(try_acquire_run("guard-test-a").is_some());
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    use crate::tasks::TaskAction;
+
+    #[test]
+    fn progress_unit_follows_the_action_and_event_is_camel_case() {
+        let a = TaskAction::RunAssertions {
+            database: None,
+            assertion_ids: Vec::new(),
+        };
+        assert_eq!(progress_unit(&a), "items");
+        let d = TaskAction::Dump {
+            database: "db".into(),
+            output_path: "x".into(),
+            options: Default::default(),
+        };
+        assert_eq!(progress_unit(&d), "bytes");
+        let ev = TaskRunProgressEvent {
+            stream_id: "s".into(),
+            task_id: "t".into(),
+            count: 3,
+            unit: "rows",
+        };
+        assert_eq!(
+            serde_json::to_value(ev).unwrap(),
+            serde_json::json!({ "streamId": "s", "taskId": "t", "count": 3, "unit": "rows" })
+        );
     }
 }

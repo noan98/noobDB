@@ -201,6 +201,9 @@ impl SqliteConn {
             on_batch(StreamBatch::Rows(std::mem::take(&mut buffer)))?;
         }
         if !columns_emitted {
+            // 0 行の結果でも列見出しを出せるよう、準備済み文から列を取る (#1534)。
+            drop(stream);
+            columns = super::prepared_columns!(conn, sql);
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
@@ -1484,7 +1487,12 @@ async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Quer
         let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut *conn)
             .await?;
-        let columns = columns_of(&rows);
+        let columns = if rows.is_empty() {
+            // 0 行でも列見出しを返す (#1534)。
+            super::prepared_columns!(conn, sql)
+        } else {
+            columns_of(&rows)
+        };
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
             columns,

@@ -718,6 +718,7 @@ export const healthFinding = z.object({
   columns: z.array(z.string()),
   context: z.array(z.string()),
   fix_ddl: z.string().nullable(),
+  fix_ddl_online: z.string().nullable(),
   statistical: z.boolean(),
 });
 
@@ -1002,6 +1003,8 @@ export const queryStreamDoneMessage = z.object({
   elapsedMs: z.number(),
   hasColumns: z.boolean(),
   appliedAutoLimit: z.number().nullable(),
+  /** 自動 LIMIT を付けなかった理由 (#1534)。付与した / 要求なし / 古いバックエンドは null/省略。 */
+  autoLimitSkip: z.enum(["existingLimit", "lockingClause", "aggregateOnly", "notApplicable"]).nullable().optional(),
   /** サーバの通知・警告 (#1165)。古いバックエンドは送らないので省略可能。 */
   serverMessages: z.array(serverMessage).optional(),
   /** 全行を観測し終えた逐次統計 (#1257)。結果セットの無い文・古いバックエンドは省略/null。 */
@@ -1186,6 +1189,10 @@ export const batchStatementResult = z.object({
   elapsedMs: z.number().optional(),
   error: z.string().optional(),
   serverMessages: z.array(serverMessage).optional(),
+  /** `rows` がプレビュー上限で切り詰められている (#1534)。切り詰めが無ければ省略。 */
+  truncated: z.boolean().optional(),
+  /** 結果セットの総行数。取得を途中で打ち切ったときは数えていないので省略 (#1534)。 */
+  totalRows: z.number().optional(),
 });
 
 export const batchStreamStartedMessage = z.object({
@@ -1261,16 +1268,27 @@ export const streamCancelledEvent = z.object({
 
 /** `test_ai_connection` の戻り値 (`commands/ai.rs::AiConnectionTestResult`)。 */
 export const aiConnectionTestResult = z.object({
-  status: z.enum(["success", "authError", "networkError", "apiError", "refused"]),
+  status: z.enum(["success", "authError", "networkError", "apiError", "overloaded", "refused"]),
   message: z.string(),
   model: z.string().nullable(),
   elapsedMs: z.number(),
 });
 
-/** `ai-stream:delta` イベント。 */
-export const aiDeltaEvent = z.object({
-  streamId: z.string(),
+// `run_ai_request` は結果を Tauri Channel の `kind` タグ付きメッセージで送る (#1534)。
+// Channel は 1 要求にスコープされるので `streamId` は載らない。
+
+/** 本文の差分。 */
+export const aiStreamDeltaMessage = z.object({
+  kind: z.literal("delta"),
   text: z.string(),
+});
+
+/** 429 / 529 を受けて待ってから再試行する (ストリーム開始前のみ)。 */
+export const aiStreamRetryingMessage = z.object({
+  kind: z.literal("retrying"),
+  attempt: z.number(),
+  maxAttempts: z.number(),
+  delayMs: z.number(),
 });
 
 const aiUsage = z.object({
@@ -1280,9 +1298,9 @@ const aiUsage = z.object({
   cacheCreationInputTokens: z.number(),
 });
 
-/** `ai-stream:done` イベント。`model` は実際に応答したモデル (フォールバック時は要求と異なる)。 */
-export const aiDoneEvent = z.object({
-  streamId: z.string(),
+/** 完了メッセージ。`model` は実際に応答したモデル (フォールバック時は要求と異なる)。 */
+export const aiStreamDoneMessage = z.object({
+  kind: z.literal("done"),
   model: z.string(),
   requestedModel: z.string(),
   fallbackUsed: z.boolean(),
@@ -1290,11 +1308,11 @@ export const aiDoneEvent = z.object({
   usage: aiUsage,
 });
 
-/** `ai-stream:error` イベント。`kind` は `AppError.kind` (`aiRefused` など)。 */
-export const aiErrorEvent = z.object({
-  streamId: z.string(),
+/** エラーメッセージ。`errorKind` は `AppError.kind` (`aiRefused` など。タグ名 `kind` と別名)。 */
+export const aiStreamErrorMessage = z.object({
+  kind: z.literal("error"),
   error: z.string(),
-  kind: z.string(),
+  errorKind: z.string(),
 });
 
 export const importStartedEvent = z.object({
@@ -1523,6 +1541,14 @@ export const taskRunEvent = z.object({
   message: z.string().nullable(),
   outputPath: z.string().nullable(),
   catchUp: z.boolean(),
+});
+
+/** 「今すぐ実行」の進捗 (`task-run:progress`、#1534)。`unit` は `rows` / `bytes` / `items`。 */
+export const taskRunProgressEvent = z.object({
+  streamId: z.string(),
+  taskId: z.string(),
+  count: z.number(),
+  unit: z.enum(["rows", "bytes", "items"]),
 });
 
 export const taskDefinitionArray = z.array(taskDefinition);

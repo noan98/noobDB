@@ -169,6 +169,9 @@ export function hintForKind(kind: string | null | undefined, message = ""): I18n
       return "errorHintConnection";
     case "connectionLost":
       return "errorHintConnectionLost";
+    // AI の混雑 (429/529、#1534)。認証や不正な要求と違い、時間を置けば通る。
+    case "aiOverloaded":
+      return "errorHintAiOverloaded";
     // `db` (一般的な sqlx エラー) は具体的なヒントが message 依存なので、ここでは
     // 判定せず matchErrorHint にフォールバックさせる。その他の内部エラー
     // (sessionNotFound / invalidInput / readOnly ...) はヒント対象外。

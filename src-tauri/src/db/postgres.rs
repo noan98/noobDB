@@ -274,6 +274,9 @@ impl PostgresConn {
             on_batch(StreamBatch::Rows(std::mem::take(&mut buffer)))?;
         }
         if !columns_emitted {
+            // 0 行の結果でも列見出しを出せるよう、準備済み文から列を取る (#1534)。
+            drop(stream);
+            columns = super::prepared_columns!(conn, sql);
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
@@ -868,7 +871,9 @@ impl PostgresConn {
     /// `pg_stat_statements` 拡張が要る: 未導入なら理由コード
     /// `pg_stat_statements_missing` (フロントが `CREATE EXTENSION` /
     /// `shared_preload_libraries` の導入手順をヘルプ表示)、導入済みでも読めない
-    /// (権限不足・PG12 以前の列名差) 場合は `stats_unreadable` で縮退する。
+    /// (権限不足・PG12 以前の列名差) 場合は `stats_unreadable` で縮退する。拡張は
+    /// あるが `shared_preload_libraries` に無く読めない場合は専用の
+    /// `pg_stat_statements_not_preloaded` (postgresql.conf への追記と再起動が要る)。
     pub async fn query_stats_support(&self) -> Result<QueryStatsSupport> {
         let statements_reason = match self.pg_stat_statements_schema().await? {
             None => Some("pg_stat_statements_missing".to_string()),
@@ -883,7 +888,7 @@ impl PostgresConn {
                     .await
                 {
                     Ok(_) => None,
-                    Err(_) => Some("stats_unreadable".to_string()),
+                    Err(e) => Some(statements_unreadable_reason(&e.to_string()).to_string()),
                 }
             }
         };
@@ -2238,7 +2243,12 @@ async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryRes
         let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut *conn)
             .await?;
-        let columns = columns_of(&rows);
+        let columns = if rows.is_empty() {
+            // 0 行でも列見出しを返す (#1534)。
+            super::prepared_columns!(conn, sql)
+        } else {
+            columns_of(&rows)
+        };
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
             columns,
@@ -2315,7 +2325,8 @@ fn decode_cell_unchecked(row: &PgRow, i: usize) -> Value {
     }
     if ti(type_name, &["FLOAT4"]) {
         if let Ok(v) = row.try_get::<Option<f32>, _>(i) {
-            return v.map(|f| Value::Float(f as f64)).unwrap_or(Value::Null);
+            // f32 の最短表記経由で広げる (`3.14` が `3.140000104904175` にならない、#1534)。
+            return v.map(Value::from_f32_shortest).unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["FLOAT8"]) {
@@ -3166,9 +3177,39 @@ async fn fetch_capped_pg(
     Ok(rows)
 }
 
+/// `pg_stat_statements` を読めなかったときの理由コード (#1534)。拡張が
+/// `CREATE EXTENSION` 済みでも `shared_preload_libraries` に無いとビューの読み取りが
+/// 「must be loaded via shared_preload_libraries」で失敗する。権限不足
+/// (`stats_unreadable`) と対処法が違う (postgresql.conf への追記と再起動) ので、
+/// 専用コード `pg_stat_statements_not_preloaded` に分けて導入手順を出せるようにする。
+fn statements_unreadable_reason(error_message: &str) -> &'static str {
+    if error_message
+        .to_ascii_lowercase()
+        .contains("shared_preload_libraries")
+    {
+        "pg_stat_statements_not_preloaded"
+    } else {
+        "stats_unreadable"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn statements_probe_error_is_classified() {
+        assert_eq!(
+            statements_unreadable_reason(
+                "pg_stat_statements must be loaded via \"shared_preload_libraries\""
+            ),
+            "pg_stat_statements_not_preloaded"
+        );
+        assert_eq!(
+            statements_unreadable_reason("permission denied for view pg_stat_statements"),
+            "stats_unreadable"
+        );
+    }
 
     #[test]
     fn is_call_shape_detects_call_only() {

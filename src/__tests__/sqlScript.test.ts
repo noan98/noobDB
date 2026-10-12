@@ -280,12 +280,29 @@ describe("toBatchResult / toBatchOutputInput (run_sql_batch の結果変換)", (
     });
   });
 
-  it("columns の無い成功は影響行数の結果 (0 行の SELECT も従来どおりこちら)", () => {
+  it("columns の無い成功は影響行数の結果", () => {
     const wire = { sql: "DELETE FROM t", status: "ok" as const, rowsAffected: 4, elapsedMs: 1 };
     expect(toBatchResult(wire)).toMatchObject({ status: "ok", rowsAffected: 4, columns: undefined, rows: undefined });
     expect(toBatchOutputInput(wire)).toMatchObject({ outcome: "affected", rows: 4 });
     // rowsAffected が無くても 0 件として扱う。
     expect(toBatchResult({ sql: "SELECT 1 WHERE 0", status: "ok" })).toMatchObject({ rowsAffected: 0 });
+  });
+
+  it("プレビュー上限で切り詰めた SELECT は切り詰めの有無と総行数を引き継ぐ (#1534)", () => {
+    const columns = [{ name: "id", type_name: "INT" }];
+    const cut = toBatchResult({
+      sql: "SELECT id FROM t",
+      status: "ok",
+      columns,
+      rows: [[1], [2]],
+      truncated: true,
+      totalRows: 10000,
+    });
+    expect(cut).toMatchObject({ truncated: true, totalRows: 10000 });
+    // 0 行の SELECT も列見出し付きの結果セットとして扱い、影響行数にはしない。
+    const empty = toBatchResult({ sql: "SELECT id FROM t WHERE 0", status: "ok", columns, rows: [], totalRows: 0 });
+    expect(empty).toMatchObject({ columns, rows: [], totalRows: 0, rowsAffected: undefined });
+    expect(empty.truncated).toBeUndefined();
   });
 
   it("サーバメッセージは出力ログにだけ載せる", () => {

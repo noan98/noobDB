@@ -114,11 +114,15 @@ impl AiUsage {
     }
 }
 
-/// API のエラー種別 → `AppError`。認証系だけ `AiAuth` に分ける。
+/// API のエラー種別 → `AppError`。認証系は `AiAuth`、レート制限・過負荷は `AiOverloaded` に分ける。
 pub fn api_error(error_type: &str, message: &str) -> AppError {
     match error_type {
         "authentication_error" | "permission_error" => {
             AppError::AiAuth(format!("{error_type}: {message}"))
+        }
+        // レート制限・過負荷は時間を置けば通るので別の区分にする (#1534)。
+        "rate_limit_error" | "overloaded_error" => {
+            AppError::AiOverloaded(format!("{error_type}: {message}"))
         }
         _ => AppError::AiApi(format!("{error_type}: {message}")),
     }
@@ -320,6 +324,11 @@ mod tests {
         let (_, steps) = run(&[(
             "error",
             r#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#,
+        )]);
+        assert_eq!(steps[0].as_ref().unwrap_err().kind(), "aiOverloaded");
+        let (_, steps) = run(&[(
+            "error",
+            r#"{"type":"error","error":{"type":"api_error","message":"oops"}}"#,
         )]);
         assert_eq!(steps[0].as_ref().unwrap_err().kind(), "aiApi");
     }

@@ -169,6 +169,9 @@ describe("supportReasonI18nKey", () => {
     expect(supportReasonI18nKey("statements_consumer_off")).toBe("inspectorReasonConsumerOff");
     expect(supportReasonI18nKey("statements_digest_off")).toBe("inspectorReasonDigestOff");
     expect(supportReasonI18nKey("pg_stat_statements_missing")).toBe("inspectorReasonPgssMissing");
+    expect(supportReasonI18nKey("pg_stat_statements_not_preloaded")).toBe(
+      "inspectorReasonPgssNotPreloaded",
+    );
     expect(supportReasonI18nKey("stats_unreadable")).toBe("inspectorReasonUnreadable");
     expect(supportReasonI18nKey("some_future_code")).toBe("inspectorReasonUnknown");
   });

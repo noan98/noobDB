@@ -374,7 +374,32 @@ function whereEqualsClause(driver: string, col: Column, v: CellValue): string {
   // 当たらない (all_columns 同定で BLOB を含む表の更新・削除) ため、バイナリ
   // リテラルにする。
   if (BINARY_TYPES.has(col.type_name.toUpperCase())) return `${quoted} = ${blobLiteral(driver, String(v))}`;
+  // 単精度 (PG の FLOAT4 / REAL、MySQL の FLOAT) は、バックエンドが f32 の最短表記
+  // (0.1 など) で返す (#1534)。`col = 0.1` は列が倍精度へ広がった値と比べられて一致しない
+  // ため、f32 の丸め誤差より十分大きい相対許容差で比較する。
+  const approx = singleFloatWhere(driver, col, v);
+  if (approx) return approx;
   return `${quoted} = ${literalFromCellValue(driver, v)}`;
+}
+
+/** 単精度 float 列の WHERE 項 (`ABS(col - x) <= ...`)。対象外の列・値は null。 */
+function singleFloatWhere(driver: string, col: Column, v: CellValue): string | null {
+  if (!isSinglePrecisionFloat(driver, col) || typeof v !== "number" || !Number.isFinite(v)) {
+    return null;
+  }
+  const quoted = quoteIdentFor(driver, col.name);
+  const lit = `(${literalFromCellValue(driver, v)})`;
+  return `ABS(${quoted} - ${lit}) <= ABS(${lit}) * ${FLOAT4_WHERE_REL_TOLERANCE}`;
+}
+
+/** f32 の相対精度 (約 6e-8) より大きく、別の値と取り違えない程度の許容差。 */
+const FLOAT4_WHERE_REL_TOLERANCE = "0.000001";
+
+function isSinglePrecisionFloat(driver: string, col: Column): boolean {
+  // SQLite の REAL は常に f64 (最短表記でも厳密に往復する)。
+  if (driver === "sqlite") return false;
+  const t = col.type_name.toUpperCase();
+  return t === "FLOAT4" || t === "REAL" || t === "FLOAT";
 }
 
 /**
@@ -879,6 +904,8 @@ export function buildRowSql(input: BuildRowSqlInput, kind: RowSqlKind): string[]
       // `whereEqualsClause`'s doc for why this matters once identity can
       // include nullable columns (#849's all_columns fallback).
       if (v === null || v === undefined) return `${quoted} IS NULL`;
+      const approx = singleFloatWhere(driver, columns[i], v);
+      if (approx) return approx;
       return `${quoted} = ${rowValueLiteral(driver, v, columns[i])}`;
     });
     if (kind === "insert") {

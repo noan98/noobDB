@@ -354,33 +354,26 @@ export function AdvisorPanel({
                       </chakra.div>
                     )}
                     {f.fix_ddl && (
-                      <Box marginTop="2">
-                        <CodePreview wrap>{f.fix_ddl}</CodePreview>
-                        <Flex gap="1" marginTop="1.5">
-                          <Tooltip label={t("advisorInsertFix")}>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => insertFix(f.fix_ddl as string)}
-                              aria-label={t("advisorInsertFix")}
-                            >
-                              <Icon name="insert-sql" size={ICON_SIZES.sm} />
-                            </Button>
-                          </Tooltip>
-                          <Tooltip label={t("advisorCopyFix")}>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => copyFix(f.fix_ddl as string)}
-                              aria-label={t("advisorCopyFix")}
-                            >
-                              <Icon name="copy" size={ICON_SIZES.sm} />
-                            </Button>
-                          </Tooltip>
-                        </Flex>
-                      </Box>
+                      <FixDdlBlock
+                        ddl={f.fix_ddl}
+                        label={f.fix_ddl_online ? t("advisorFixStandard") : null}
+                        note={f.fix_ddl_online ? t("advisorFixStandardNote") : null}
+                        onInsert={insertFix}
+                        onCopy={copyFix}
+                      />
+                    )}
+                    {f.fix_ddl_online && (
+                      <FixDdlBlock
+                        ddl={f.fix_ddl_online}
+                        label={t("advisorFixOnline")}
+                        note={
+                          report?.driver === "postgres"
+                            ? t("advisorFixOnlineNotePostgres")
+                            : t("advisorFixOnlineNoteMysql")
+                        }
+                        onInsert={insertFix}
+                        onCopy={copyFix}
+                      />
                     )}
                     {aiAvailable && report && (
                       <AiAdvisorExplain
@@ -400,6 +393,63 @@ export function AdvisorPanel({
         </MotionReveal>
       )}
     </Box>
+    </Box>
+  );
+}
+
+/** 修正 DDL 1 本ぶんの表示 (コードプレビュー + エディタへ挿入 / コピー)。通常版とオンライン版
+ *  (#1534) を並べるときは `label` / `note` で違いを説明する。 */
+function FixDdlBlock({
+  ddl,
+  label,
+  note,
+  onInsert,
+  onCopy,
+}: {
+  ddl: string;
+  label: string | null;
+  note: string | null;
+  onInsert: (ddl: string) => void;
+  onCopy: (ddl: string) => void;
+}) {
+  const t = useT();
+  return (
+    <Box marginTop="2">
+      {label && (
+        <chakra.div fontSize="var(--text-xs)" fontWeight={600} color="app.text" marginBottom="1">
+          {label}
+        </chakra.div>
+      )}
+      <CodePreview wrap>{ddl}</CodePreview>
+      {note && (
+        <chakra.div fontSize="var(--text-xs)" color="app.textMuted" marginTop="1" lineHeight={1.5}>
+          {note}
+        </chakra.div>
+      )}
+      <Flex gap="1" marginTop="1.5">
+        <Tooltip label={t("advisorInsertFix")}>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => onInsert(ddl)}
+            aria-label={label ? `${t("advisorInsertFix")} (${label})` : t("advisorInsertFix")}
+          >
+            <Icon name="insert-sql" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
+        <Tooltip label={t("advisorCopyFix")}>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => onCopy(ddl)}
+            aria-label={label ? `${t("advisorCopyFix")} (${label})` : t("advisorCopyFix")}
+          >
+            <Icon name="copy" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
+      </Flex>
     </Box>
   );
 }

@@ -340,8 +340,9 @@ impl MySqlConn {
             on_batch(StreamBatch::Rows(std::mem::take(&mut buffer)))?;
         }
         if !columns_emitted {
-            // Empty result set: still tell the client the column shape so
-            // headers can render.
+            // 0 行の結果でも列見出しを出せるよう、準備済み文から列を取る (#1534)。
+            drop(stream);
+            columns = super::prepared_columns!(conn, sql);
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
@@ -2557,7 +2558,12 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
         let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut *conn)
             .await?;
-        let columns = columns_of(&rows);
+        let columns = if rows.is_empty() {
+            // 0 行でも列見出しを返す (#1534)。
+            super::prepared_columns!(conn, sql)
+        } else {
+            columns_of(&rows)
+        };
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
             columns,
@@ -2688,7 +2694,14 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
             return v.map(Value::from_u64_lossless).unwrap_or(Value::Null);
         }
     }
-    if ti(type_name, &["FLOAT", "DOUBLE"]) {
+    if ti(type_name, &["FLOAT"]) {
+        // 単精度。f64 で読むと f32 の丸め誤差ごと広がる (`3.14` → `3.140000104904175`) ので、
+        // f32 で読んで最短表記経由で広げる (#1534)。
+        if let Ok(v) = row.try_get::<Option<f32>, _>(i) {
+            return v.map(Value::from_f32_shortest).unwrap_or(Value::Null);
+        }
+    }
+    if ti(type_name, &["DOUBLE"]) {
         if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
             return v.map(Value::Float).unwrap_or(Value::Null);
         }

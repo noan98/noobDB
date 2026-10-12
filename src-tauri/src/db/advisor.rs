@@ -77,6 +77,18 @@ pub struct HealthFinding {
     /// エディタへ挿入する修正 DDL。安全で一意に定まるルールのときのみ `Some`。
     /// 設計判断を要するルール (PK 欠落・型不一致・SQLite ヒント) は `None`。
     pub fix_ddl: Option<String>,
+    /// `fix_ddl` の**オンライン版** (#1534)。大きな本番テーブルでは通常の `CREATE INDEX` /
+    /// `DROP INDEX` が書き込みを止めるロックを長く取りうるため、書き込みを止めにくい形を並べて
+    /// 提示し、利用者が選べるようにする (エディタへ挿入するだけで、自動実行はしない)。
+    /// - PostgreSQL: `CREATE INDEX CONCURRENTLY` / `DROP INDEX CONCURRENTLY`。**トランザクション
+    ///   ブロックの中では実行できない** (他の文と一緒に流さない・明示トランザクションを開いたまま
+    ///   実行しない)。失敗すると無効 (`INVALID`) なインデックスが残りうる。
+    /// - MySQL: `ALTER TABLE … ADD/DROP INDEX …, ALGORITHM=INPLACE, LOCK=NONE`。サーバが
+    ///   その方式で実行できないときは変更せずにエラーで止まる。
+    /// - SQLite: テーブル全体のロックが前提でオンライン版は無いため `None`。
+    ///
+    /// `fix_ddl` が `None` のルール、および SQLite では `None`。
+    pub fix_ddl_online: Option<String>,
     /// エンジンの実行時統計 (未使用インデックス) に由来する指摘のとき `true`。
     /// フロントは「観測期間に依存する」旨の注記を表示する。
     pub statistical: bool,
@@ -221,6 +233,7 @@ fn rule_missing_primary_key(table: &TableMeta, out: &mut Vec<HealthFinding>) {
         columns: Vec::new(),
         context: Vec::new(),
         fix_ddl: None,
+        fix_ddl_online: None,
         statistical: false,
     });
 }
@@ -264,6 +277,7 @@ fn rule_duplicate_and_redundant_indexes(
                 columns: x.columns.clone(),
                 context: vec![x.name.clone(), dup.name.clone()],
                 fix_ddl: Some(drop_index_ddl(driver, &table.name, &x.name)),
+                fix_ddl_online: drop_index_online_ddl(driver, &table.name, &x.name),
                 statistical: false,
             });
             continue;
@@ -287,6 +301,7 @@ fn rule_duplicate_and_redundant_indexes(
                 columns: x.columns.clone(),
                 context: vec![x.name.clone(), cov.name.clone()],
                 fix_ddl: Some(drop_index_ddl(driver, &table.name, &x.name)),
+                fix_ddl_online: drop_index_online_ddl(driver, &table.name, &x.name),
                 statistical: false,
             });
         }
@@ -361,6 +376,7 @@ fn rule_fk_missing_index(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
             columns: group.columns.clone(),
             context: vec![group.referenced_table.clone()],
             fix_ddl: Some(create_index_ddl(input.driver, &group.table, &group.columns)),
+            fix_ddl_online: create_index_online_ddl(input.driver, &group.table, &group.columns),
             statistical: false,
         });
     }
@@ -402,6 +418,7 @@ fn rule_fk_type_mismatch(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
                 ref_type.to_string(),
             ],
             fix_ddl: None,
+            fix_ddl_online: None,
             statistical: false,
         });
     }
@@ -511,6 +528,7 @@ fn rule_unused_indexes(
                 .unwrap_or_default(),
             context: vec![entry.index.clone()],
             fix_ddl: Some(drop_index_ddl(input.driver, &entry.table, &entry.index)),
+            fix_ddl_online: drop_index_online_ddl(input.driver, &entry.table, &entry.index),
             statistical: true,
         });
     }
@@ -541,14 +559,14 @@ fn rule_sqlite_integer_pk_hint(table: &TableMeta, out: &mut Vec<HealthFinding>) 
             columns: vec![col.name.clone()],
             context: vec![ty.to_string()],
             fix_ddl: None,
+            fix_ddl_online: None,
             statistical: false,
         });
     }
 }
 
-/// FK 列に張る `CREATE INDEX` を生成する。インデックス名は `idx_<table>_<cols>`。
-/// 識別子は方言でクオートする。ユーザはエディタで確認してから実行する。
-fn create_index_ddl(driver: DriverKind, table: &str, columns: &[String]) -> String {
+/// FK 列に張るインデックスの (クオート済み名, クオート済み列リスト)。
+fn quoted_index_parts(driver: DriverKind, table: &str, columns: &[String]) -> (String, String) {
     let idx_name = fit_index_name(
         driver,
         sanitize_index_name(&format!("idx_{}_{}", table, columns.join("_"))),
@@ -558,12 +576,41 @@ fn create_index_ddl(driver: DriverKind, table: &str, columns: &[String]) -> Stri
         .map(|c| quote_ident(driver, c))
         .collect::<Vec<_>>()
         .join(", ");
+    (quote_ident(driver, &idx_name), cols)
+}
+
+/// FK 列に張る `CREATE INDEX` を生成する。インデックス名は `idx_<table>_<cols>`。
+/// 識別子は方言でクオートする。ユーザはエディタで確認してから実行する。
+fn create_index_ddl(driver: DriverKind, table: &str, columns: &[String]) -> String {
+    let (name, cols) = quoted_index_parts(driver, table, columns);
     format!(
         "CREATE INDEX {} ON {} ({});",
-        quote_ident(driver, &idx_name),
+        name,
         quote_ident(driver, table),
         cols
     )
+}
+
+/// [`create_index_ddl`] のオンライン版 (#1534)。PostgreSQL は `CREATE INDEX CONCURRENTLY`
+/// (トランザクション外で実行する必要がある)、MySQL は `ALGORITHM=INPLACE, LOCK=NONE`。
+/// SQLite は `None`。
+fn create_index_online_ddl(driver: DriverKind, table: &str, columns: &[String]) -> Option<String> {
+    let (name, cols) = quoted_index_parts(driver, table, columns);
+    match driver {
+        DriverKind::Postgres => Some(format!(
+            "CREATE INDEX CONCURRENTLY {} ON {} ({});",
+            name,
+            quote_ident(driver, table),
+            cols
+        )),
+        DriverKind::Mysql => Some(format!(
+            "ALTER TABLE {} ADD INDEX {} ({}), ALGORITHM=INPLACE, LOCK=NONE;",
+            quote_ident(driver, table),
+            name,
+            cols
+        )),
+        DriverKind::Sqlite => None,
+    }
 }
 
 /// 方言別の `DROP INDEX`。MySQL は `DROP INDEX <name> ON <table>`、
@@ -578,6 +625,24 @@ fn drop_index_ddl(driver: DriverKind, table: &str, index: &str) -> String {
         DriverKind::Postgres | DriverKind::Sqlite => {
             format!("DROP INDEX {};", quote_ident(driver, index))
         }
+    }
+}
+
+/// [`drop_index_ddl`] のオンライン版 (#1534)。PostgreSQL は `DROP INDEX CONCURRENTLY`
+/// (トランザクション外で実行する必要がある)、MySQL は `ALGORITHM=INPLACE, LOCK=NONE`。
+/// SQLite は `None`。
+fn drop_index_online_ddl(driver: DriverKind, table: &str, index: &str) -> Option<String> {
+    match driver {
+        DriverKind::Postgres => Some(format!(
+            "DROP INDEX CONCURRENTLY {};",
+            quote_ident(driver, index)
+        )),
+        DriverKind::Mysql => Some(format!(
+            "ALTER TABLE {} DROP INDEX {}, ALGORITHM=INPLACE, LOCK=NONE;",
+            quote_ident(driver, table),
+            quote_ident(driver, index)
+        )),
+        DriverKind::Sqlite => None,
     }
 }
 
@@ -1227,6 +1292,50 @@ mod tests {
         assert_eq!(sqlite_affinity("VARCHAR(50)"), "TEXT");
         assert_eq!(sqlite_affinity("DOUBLE"), "REAL");
         assert_ne!(sqlite_affinity("TEXT"), sqlite_affinity("INTEGER"));
+    }
+
+    #[test]
+    fn online_ddl_is_offered_per_driver_alongside_the_plain_ddl() {
+        let cols = vec!["user_id".to_string()];
+        assert_eq!(
+            create_index_online_ddl(DriverKind::Postgres, "orders", &cols).as_deref(),
+            Some("CREATE INDEX CONCURRENTLY \"idx_orders_user_id\" ON \"orders\" (\"user_id\");")
+        );
+        assert_eq!(
+            create_index_online_ddl(DriverKind::Mysql, "orders", &cols).as_deref(),
+            Some("ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;")
+        );
+        assert!(create_index_online_ddl(DriverKind::Sqlite, "orders", &cols).is_none());
+        assert_eq!(
+            drop_index_online_ddl(DriverKind::Postgres, "orders", "idx_a").as_deref(),
+            Some("DROP INDEX CONCURRENTLY \"idx_a\";")
+        );
+        assert_eq!(
+            drop_index_online_ddl(DriverKind::Mysql, "orders", "idx_a").as_deref(),
+            Some("ALTER TABLE `orders` DROP INDEX `idx_a`, ALGORITHM=INPLACE, LOCK=NONE;")
+        );
+        assert!(drop_index_online_ddl(DriverKind::Sqlite, "orders", "idx_a").is_none());
+    }
+
+    #[test]
+    fn fk_finding_carries_the_online_variant_for_server_drivers_only() {
+        let orders = table(
+            "orders",
+            vec![col("id", "int", true), col("user_id", "int", false)],
+            vec![idx("PRIMARY", &["id"], true, true)],
+        );
+        let f = vec![fk("orders", "user_id", "users", Some("id"))];
+        for (driver, online) in [
+            (DriverKind::Mysql, true),
+            (DriverKind::Postgres, true),
+            (DriverKind::Sqlite, false),
+        ] {
+            let report = analyze(&input(driver, vec![orders.clone()], f.clone()));
+            let found = findings_for(&report, RuleId::FkMissingIndex);
+            assert_eq!(found.len(), 1);
+            assert!(found[0].fix_ddl.is_some());
+            assert_eq!(found[0].fix_ddl_online.is_some(), online, "{driver:?}");
+        }
     }
 
     #[test]
