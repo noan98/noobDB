@@ -38,6 +38,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { formatSqlAsync } from "./sqlFormat";
+import { SqlCountCheck } from "./SqlCountCheck";
 import { SQL_TOKEN_STYLE, sqlHighlightSegments } from "./sqlHighlight";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -800,6 +801,13 @@ export function AiQueryModal(props: AiQueryModalProps) {
                     ),
                   )}
                 </CodePreview>
+                <SqlCountCheck
+                  sessionId={props.sessionId}
+                  database={database}
+                  driver={props.driver}
+                  sql={result.sql}
+                  mode="rows"
+                />
                 {done && (
                   <chakra.span color="app.textSuccess" fontSize="sm" role="status">
                     {done === "inserted" ? t("aiQueryInserted") : t("aiQueryOpenedInNewTab")}
