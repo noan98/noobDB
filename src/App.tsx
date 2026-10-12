@@ -11394,7 +11394,17 @@ export default function App() {
           )}
         </AnimatePresence>
         <AnimatePresence>
-          {showCheatSheet && <ShortcutCheatSheet onClose={() => setShowCheatSheet(false)} />}
+          {showCheatSheet && (
+            <ShortcutCheatSheet
+              onClose={() => setShowCheatSheet(false)}
+              onRebind={() => {
+                // 設定のキーバインド節へ直接移る (#1540)。
+                setShowCheatSheet(false);
+                setSettingsInitialSection("settings-sec-keybindings");
+                openFullView("settings");
+              }}
+            />
+          )}
         </AnimatePresence>
         <AnimatePresence>
           {showSettings && (

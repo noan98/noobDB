@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import {
+  filterShortcuts,
   resolveShortcutBindings,
   SHORTCUTS,
   SHORTCUT_CATEGORY_LABEL,
@@ -11,6 +13,9 @@ import { formatCombo } from "../shortcutKeys";
 import { useSettings } from "../settings";
 import { Kbd } from "./Kbd";
 import { Modal, ModalHeader, ModalBody } from "./Modal";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Tooltip } from "./Tooltip";
+import { Input } from "./ui";
 
 /**
  * `?` キーで開くキーボードショートカット チートシート オーバーレイ。
@@ -28,13 +33,25 @@ import { Modal, ModalHeader, ModalBody } from "./Modal";
  */
 interface ShortcutCheatSheetProps {
   onClose: () => void;
+  /**
+   * 再割り当て可能なショートカットの行から、設定のキーバインド節へ移る (#1540)。
+   * 渡されたときだけ各行に「変更」ボタンを出す。親がチートシートを閉じて設定を開く。
+   */
+  onRebind?: () => void;
 }
 
-export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
+export function ShortcutCheatSheet({ onClose, onRebind }: ShortcutCheatSheetProps) {
   const t = useT();
   // 再割り当て可能なショートカットは解決済みコンボを表示する (#557)。
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
+  const [query, setQuery] = useState("");
+  const keysText = (s: (typeof SHORTCUTS)[number]) =>
+    s.id ? formatCombo(resolved[s.id]) : t(s.keysKey);
+  const visible = filterShortcuts(SHORTCUTS, query, (s) => ({
+    label: t(s.descKey),
+    keys: keysText(s),
+  }));
 
   return (
     <Modal
@@ -45,8 +62,22 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
       </ModalHeader>
       <ModalBody>
         <Flex direction="column" gap="4">
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("cheatSheetSearchPlaceholder")}
+            aria-label={t("cheatSheetSearchPlaceholder")}
+            autoComplete="off"
+            data-testid="cheat-sheet-search"
+          />
+          {visible.length === 0 && (
+            <chakra.div textStyle="caption" role="status">
+              {t("cheatSheetNoMatches")}
+            </chakra.div>
+          )}
           {SHORTCUT_CATEGORY_ORDER.map((category) => {
-            const items = SHORTCUTS.filter((s) => s.category === category);
+            const items = visible.filter((s) => s.category === category);
             if (items.length === 0) return null;
             return (
               <Box key={category}>
@@ -67,9 +98,35 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
                       <chakra.span fontSize="sm" color="app.text">
                         {t(s.descKey)}
                       </chakra.span>
-                      <Kbd flexShrink={0}>
-                        {s.id ? formatCombo(resolved[s.id]) : t(s.keysKey)}
-                      </Kbd>
+                      <Flex align="center" gap="2" flexShrink={0}>
+                        <Kbd flexShrink={0}>{keysText(s)}</Kbd>
+                        {onRebind && (
+                          // 再割り当て不可 (id なし) の行にも同じ幅の空きを置いて、キー表記の右端を揃える。
+                          <chakra.span display="inline-flex" w="6" justifyContent="center">
+                            {s.id && (
+                              <Tooltip label={t("cheatSheetRebind")}>
+                                <chakra.button
+                                  type="button"
+                                  aria-label={t("cheatSheetRebindFor", { action: t(s.descKey) })}
+                                  onClick={onRebind}
+                                  display="inline-flex"
+                                  alignItems="center"
+                                  justifyContent="center"
+                                  p="1"
+                                  border="none"
+                                  bg="transparent"
+                                  color="app.textMuted"
+                                  borderRadius="sm"
+                                  cursor="pointer"
+                                  _hover={{ bg: "app.hover", color: "app.text" }}
+                                >
+                                  <Icon name="pencil" size={ICON_SIZES.sm} />
+                                </chakra.button>
+                              </Tooltip>
+                            )}
+                          </chakra.span>
+                        )}
+                      </Flex>
                     </Flex>
                   ))}
                 </Flex>

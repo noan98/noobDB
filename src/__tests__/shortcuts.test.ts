@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { setLocale, t } from "../i18n";
 import {
+  filterShortcuts,
   SHORTCUTS,
   SHORTCUT_CATEGORY_LABEL,
   SHORTCUT_CATEGORY_ORDER,
@@ -41,5 +42,41 @@ describe("SHORTCUTS", () => {
   it("表記キーは重複しない (チートシートの key として一意である必要がある)", () => {
     const keys = SHORTCUTS.map((s) => s.keysKey);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("filterShortcuts (#1540)", () => {
+  const items = [
+    { id: 1, label: "Open command palette", keys: "Ctrl+K" },
+    { id: 2, label: "Format SQL", keys: "Ctrl+Shift+F" },
+    { id: 3, label: "コマンドパレットを開く", keys: "⌘K" },
+  ];
+  const texts = (x: (typeof items)[number]) => ({ label: x.label, keys: x.keys });
+
+  it("空クエリ (空白のみ含む) は全件を元の順序で返す", () => {
+    expect(filterShortcuts(items, "", texts)).toEqual(items);
+    expect(filterShortcuts(items, "   ", texts)).toEqual(items);
+    expect(filterShortcuts(items, "", texts)).not.toBe(items);
+  });
+
+  it("表示名の部分一致 (大文字小文字を区別しない)", () => {
+    expect(filterShortcuts(items, "FORMAT", texts).map((x) => x.id)).toEqual([2]);
+    expect(filterShortcuts(items, "パレット", texts).map((x) => x.id)).toEqual([3]);
+  });
+
+  it("キー表記の部分一致は空白と + を無視する", () => {
+    expect(filterShortcuts(items, "ctrl+k", texts).map((x) => x.id)).toEqual([1]);
+    expect(filterShortcuts(items, "Ctrl K", texts).map((x) => x.id)).toEqual([1]);
+    expect(filterShortcuts(items, "shift f", texts).map((x) => x.id)).toEqual([2]);
+    expect(filterShortcuts(items, "⌘k", texts).map((x) => x.id)).toEqual([3]);
+  });
+
+  it("一致が無ければ空、記号だけのクエリはキー側に誤一致しない", () => {
+    expect(filterShortcuts(items, "zzz", texts)).toEqual([]);
+    expect(filterShortcuts(items, "+", texts).map((x) => x.id)).toEqual([]);
+  });
+
+  it("定義順を保つ", () => {
+    expect(filterShortcuts(items, "k", texts).map((x) => x.id)).toEqual([1, 3]);
   });
 });

@@ -3366,6 +3366,10 @@ const en = {
   shortcutCatTabs: "Tabs",
   cheatSheetTitle: "Keyboard shortcuts",
   cheatSheetClose: "Close",
+  cheatSheetSearchPlaceholder: "Search by action or key (e.g. format, ctrl+k)",
+  cheatSheetNoMatches: "No shortcuts match.",
+  cheatSheetRebind: "Change this shortcut in Settings",
+  cheatSheetRebindFor: "Change the shortcut for {action}",
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "Tools",
@@ -8155,6 +8159,10 @@ const ja: Dict = {
   shortcutCatTabs: "タブ",
   cheatSheetTitle: "キーボードショートカット",
   cheatSheetClose: "閉じる",
+  cheatSheetSearchPlaceholder: "操作名やキーで検索 (例: 整形、ctrl+k)",
+  cheatSheetNoMatches: "一致するショートカットはありません。",
+  cheatSheetRebind: "設定でこのショートカットを変更",
+  cheatSheetRebindFor: "「{action}」のショートカットを変更",
 
   // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
   appTools: "ツール",
