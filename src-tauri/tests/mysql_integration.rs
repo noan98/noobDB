@@ -1003,13 +1003,37 @@ async fn mysql_process_list_and_kill() {
         let v = std::sync::Arc::clone(&victim);
         tokio::spawn(async move {
             let started = std::time::Instant::now();
-            let r = v.execute("SELECT SLEEP(30)", None).await;
+            let r = v
+                .execute("SELECT /* noobdb_1538_my_cancel */ SLEEP(30)", None)
+                .await;
             (r, started.elapsed())
         })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // プールが複数の接続を持つと、sleep は victim_id と別の接続で走りうる。
+    // 実際に sleep を実行しているプロセスを一覧から探して、その id を止める。
+    let mut sleeping_id = None;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sleeping_id = conn
+            .list_processes()
+            .await
+            .expect("list while sleeping")
+            .iter()
+            .find(|p| {
+                p.query.as_deref().is_some_and(|q| {
+                    q.contains("noobdb_1538_my_cancel")
+                        && !q.contains("processlist")
+                        && !q.contains("pg_stat_activity")
+                })
+            })
+            .map(|p| p.id);
+        if sleeping_id.is_some() {
+            break;
+        }
+    }
+    let sleeping_id = sleeping_id.expect("the sleeping statement must appear in the process list");
     let cancelled_running = conn
-        .kill_processes(&[victim_id], true)
+        .kill_processes(&[sleeping_id], true)
         .await
         .expect("cancel running statement");
     assert_eq!(cancelled_running.failed, 0, "{cancelled_running:?}");
