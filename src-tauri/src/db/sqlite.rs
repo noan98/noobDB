@@ -13,7 +13,9 @@ use super::types::{
     TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
-use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
+use super::{
+    build_insert_sql, columns_of, columns_of_statement, init_sql_of, DbConnectOptions, DriverKind,
+};
 use crate::error::{AppError, Result};
 
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
@@ -201,6 +203,15 @@ impl SqliteConn {
             on_batch(StreamBatch::Rows(std::mem::take(&mut buffer)))?;
         }
         if !columns_emitted {
+            // 0 行の結果でも列見出しを出せるよう、準備済み文から列を取る (#1534)。
+            drop(stream);
+            columns = sqlx::Executor::prepare(
+                &mut *conn,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
+            )
+            .await
+            .map(|stmt| columns_of_statement(&stmt))
+            .unwrap_or_default();
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
@@ -1484,7 +1495,18 @@ async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Quer
         let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut *conn)
             .await?;
-        let columns = columns_of(&rows);
+        let columns = if rows.is_empty() {
+            // 0 行でも列見出しを返す (#1534)。
+            sqlx::Executor::prepare(
+                &mut *conn,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
+            )
+            .await
+            .map(|stmt| columns_of_statement(&stmt))
+            .unwrap_or_default()
+        } else {
+            columns_of(&rows)
+        };
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
             columns,

@@ -18,8 +18,8 @@ use super::types::{
 use super::types::{ServerMessage, ServerMessageSeverity};
 use super::upsert::{conflict_clause, ImportConflict};
 use super::{
-    build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions,
-    DriverKind, SslMode,
+    build_insert_sql, columns_of, columns_of_statement, decode_string_or_bytes, init_sql_of,
+    DbConnectOptions, DriverKind, SslMode,
 };
 use crate::error::{AppError, Result};
 
@@ -340,8 +340,15 @@ impl MySqlConn {
             on_batch(StreamBatch::Rows(std::mem::take(&mut buffer)))?;
         }
         if !columns_emitted {
-            // Empty result set: still tell the client the column shape so
-            // headers can render.
+            // 0 行の結果でも列見出しを出せるよう、準備済み文から列を取る (#1534)。
+            drop(stream);
+            columns = sqlx::Executor::prepare(
+                &mut *conn,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
+            )
+            .await
+            .map(|stmt| columns_of_statement(&stmt))
+            .unwrap_or_default();
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
@@ -2557,7 +2564,18 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
         let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut *conn)
             .await?;
-        let columns = columns_of(&rows);
+        let columns = if rows.is_empty() {
+            // 0 行でも列見出しを返す (#1534)。
+            sqlx::Executor::prepare(
+                &mut *conn,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
+            )
+            .await
+            .map(|stmt| columns_of_statement(&stmt))
+            .unwrap_or_default()
+        } else {
+            columns_of(&rows)
+        };
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
             columns,

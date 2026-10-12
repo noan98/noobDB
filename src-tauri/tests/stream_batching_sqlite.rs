@@ -178,3 +178,37 @@ async fn refresh_patch_reconstructs_the_new_result_from_real_rows() {
     drop(conn);
     let _ = std::fs::remove_file(&path);
 }
+
+/// 行が 0 件の SELECT でも、準備済み文のメタデータから列見出しが送られる (#1534)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn zero_row_select_still_reports_columns() {
+    let (conn, path) = sqlite_conn("zero_rows").await;
+    seed(&conn, 3).await;
+
+    let mut emitted: Vec<Vec<String>> = Vec::new();
+    let res = conn
+        .execute_stream(
+            "SELECT id, name FROM t WHERE 1=0",
+            None,
+            200,
+            200,
+            |batch| {
+                if let t::StreamBatch::Columns(cols) = batch {
+                    emitted.push(cols.iter().map(|c| c.name.clone()).collect());
+                }
+                Ok(())
+            },
+        )
+        .await
+        .expect("stream");
+    assert_eq!(res.rows_affected, 0);
+    assert_eq!(emitted, vec![vec!["id".to_string(), "name".to_string()]]);
+
+    let plain = conn
+        .execute("SELECT id, name FROM t WHERE 1=0", None)
+        .await
+        .expect("execute");
+    let names: Vec<&str> = plain.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec!["id", "name"]);
+    let _ = std::fs::remove_file(path);
+}

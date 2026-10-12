@@ -2073,6 +2073,21 @@ pub(crate) fn columns_of<R: sqlx::Row>(rows: &[R]) -> Vec<Column> {
         .collect()
 }
 
+/// 準備済み文 (`prepare`) のメタデータから列情報を作る (#1534)。行が 1 件も
+/// 返らない結果 (`SELECT id, name FROM t WHERE 1=0`) は最初の行から列を取れない
+/// ため、列見出しがグリッドから消えていた。3 ドライバとも prepare で列名・型が
+/// 取れるので、0 行のときだけこちらを使う。
+pub(crate) fn columns_of_statement<S: sqlx::Statement>(stmt: &S) -> Vec<Column> {
+    use sqlx::{Column as _, TypeInfo as _};
+    stmt.columns()
+        .iter()
+        .map(|c| Column {
+            name: c.name().to_string(),
+            type_name: c.type_info().name().to_string(),
+        })
+        .collect()
+}
+
 /// Shared decode fallback tail for MySQL / Postgres: try `String`, else
 /// hex-encode `Vec<u8>` (the JSON-safe BLOB representation), else `Null`.
 /// SQLite keeps its own tail (it also tries int/float for dynamically typed
