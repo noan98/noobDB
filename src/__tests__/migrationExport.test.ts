@@ -211,5 +211,8 @@ describe("pairedDownFileName (#1532)", () => {
   it("規則に合わない改名でも up と同名にならない", () => {
     expect(pairedDownFileName("generic", "mine.sql", names("generic"))).toBe("mine.down.sql");
     expect(pairedDownFileName("flyway", "mine.sql", names("flyway"))).toBe("mine.down.sql");
+    // V で始まるだけの名前は Flyway の versioned 名ではない。拡張子が無ければ .sql を補う。
+    expect(pairedDownFileName("flyway", "Vacation.sql", names("flyway"))).toBe("Vacation.down.sql");
+    expect(pairedDownFileName("generic", "noext", names("generic"))).toBe("noext.down.sql");
   });
 });

@@ -112,10 +112,12 @@ export function pairedDownFileName(
   names: MigrationFileNames,
 ): string {
   if (pickedUp === names.up) return names.down;
-  if (format === "flyway" && /^V/.test(pickedUp)) return `U${pickedUp.slice(1)}`;
+  // Flyway の versioned 名 (`V<version>__<name>`) だけ先頭の V を U にする。
+  if (format === "flyway" && /^V(?=[\d._]+__)/.test(pickedUp)) return `U${pickedUp.slice(1)}`;
   if (format !== "flyway" && /\.up\.sql$/i.test(pickedUp)) {
     return pickedUp.replace(/\.up\.sql$/i, ".down.sql");
   }
+  // 拡張子の有無にかかわらず `.sql` の手前に `.down` を付ける (拡張子が無ければ補う)。
   return `${pickedUp.replace(/\.sql$/i, "")}.down.sql`;
 }
 

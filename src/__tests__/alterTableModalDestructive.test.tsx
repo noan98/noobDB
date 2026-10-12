@@ -137,4 +137,26 @@ describe("AlterTableModal インデックス行の不備 (#1532)", () => {
     fireEvent.blur(name);
     expect(await screen.findByText(t("alterTableIndexNameRequired"))).toBeInTheDocument();
   });
+
+  it("名前を入力して空に戻すと、blur なしでもその行のエラーが出る", async () => {
+    renderModal();
+    await screen.findAllByRole("button", { name: t("alterTableDrop") });
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableAddIndex") }));
+    const name = screen.getByLabelText(t("alterTableIndexNamePlaceholder"));
+    fireEvent.change(name, { target: { value: "x" } });
+    expect(screen.queryByText(t("alterTableIndexNameRequired"))).toBeNull();
+    fireEvent.change(name, { target: { value: "" } });
+    expect(await screen.findByText(t("alterTableIndexNameRequired"))).toBeInTheDocument();
+  });
+
+  it("破壊的変更があっても、不完全なインデックス行がある間は実行ボタンで実行されない", async () => {
+    const onRun = renderModal();
+    const dropButtons = await screen.findAllByRole("button", { name: t("alterTableDrop") });
+    fireEvent.click(dropButtons[1]);
+    await screen.findByText(t("alterTableDestructiveTitle", { count: 1 }));
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableAddIndex") }));
+    expect(await screen.findByText(t("alterTableIndexIncompleteBlocked"))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableRun") }));
+    expect(onRun).not.toHaveBeenCalled();
+  });
 });

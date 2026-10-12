@@ -578,7 +578,12 @@ pub(crate) async fn run_transfer(
             if let Some(g) = guard.as_mut() {
                 g.disarm();
             }
-            let warnings = plan_warnings(driver, &plan);
+            // 追記は DDL を発行せず既存テーブルの型で書くので、型の縮退は起きない。
+            let warnings = if request.mode.creates_table() {
+                plan_warnings(driver, &plan)
+            } else {
+                Vec::new()
+            };
             let columns = plan
                 .iter()
                 .map(|c| TransferColumnInfo {
@@ -655,7 +660,7 @@ pub async fn transfer_data_inner(
 
 /// 転送を実行せずに、転送先の列定義と縮退する変換を返す (#1532)。ソースは先頭バッチだけ
 /// 読んで打ち切る (書き込み・DDL は一切しない)。
-pub(crate) async fn preview_transfer_inner(
+pub async fn preview_transfer_inner(
     state: &AppState,
     mut request: TransferRequest,
 ) -> Result<TransferPreview> {
@@ -670,11 +675,19 @@ pub(crate) async fn preview_transfer_inner(
     let mut sample: Vec<Vec<crate::db::types::Value>> = Vec::new();
     let mut stopped = false;
     let source_db = request.source_database.clone().filter(|d| !d.is_empty());
+    // サーバ側でも読み出しを止めるため、ソース SQL に LIMIT を入れる。クライアントがストリームを
+    // 捨てるだけだと MySQL / PostgreSQL はクエリを最後まで走らせ、残りを次の利用時に受信して
+    // 捨てることになる (大きなテーブルで毎回全件読み出しになる)。LIMIT を入れられない文
+    // (既に LIMIT があるなど) は元の SQL のまま先頭バッチで打ち切る。
+    let source_driver = prepared.source.conn.driver_kind();
+    let limited_sql =
+        crate::db::apply_auto_limit_for(source_driver, &prepared.source_sql, PREVIEW_SAMPLE_ROWS)
+            .unwrap_or_else(|| prepared.source_sql.clone());
     let res = prepared
         .source
         .conn
         .execute_stream(
-            &prepared.source_sql,
+            &limited_sql,
             source_db.as_deref(),
             PREVIEW_SAMPLE_ROWS,
             PREVIEW_SAMPLE_ROWS,

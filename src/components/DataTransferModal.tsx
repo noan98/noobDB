@@ -279,7 +279,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
           cleanupStream();
           setStatus({ kind: "idle" });
           toast.success(t("transferDone", { rows: e.rows, table: name, name: targetProfile.name }));
-          for (const w of e.warnings) toast.info(w);
+          // 縮退の警告は転送前の Callout (翻訳済み) で示すので、完了時のトーストは出さない。
           onClose();
         },
         onError: (e) => {
@@ -429,7 +429,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
           </chakra.span>
         </FormSection>
 
-        {lossy.length > 0 && !isRunning && (
+        {lossy.length > 0 && mode !== "append" && !isRunning && (
           <Callout tone="warning" title={t("transferLossyTitle")} role="status">
             <chakra.ul listStyleType="disc" pl="4" m="0">
               {lossy.map((l) => (

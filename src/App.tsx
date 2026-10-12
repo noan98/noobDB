@@ -6997,14 +6997,6 @@ export default function App() {
     const sid = localSessionIdRef.current;
     if (!sid) return;
     void (async () => {
-      // 登録済みの結果セットは取り消せない (他の削除と同じく確認を挟む、#1532)。
-      const ok = await confirm({
-        title: translate("localPanelDropConfirmTitle"),
-        message: translate("localPanelDropConfirmBody", { table: tableName }),
-        confirmLabel: translate("localPanelDropConfirmOk"),
-        tone: "danger",
-      });
-      if (!ok) return;
       try {
         await api.dropLocalTable(sid, tableName);
         await refreshLocalTables(sid);
@@ -7012,7 +7004,7 @@ export default function App() {
         toast.error(String(e));
       }
     })();
-  }, [confirm, refreshLocalTables, toast]);
+  }, [refreshLocalTables, toast]);
 
   const handleSaveLocalDatabase = useCallback(() => {
     const sid = localSessionIdRef.current;

@@ -2892,6 +2892,8 @@ const en = {
   importColumnNumbered: "Column {n}",
   importPreviewTitle: "Preview",
   importPreviewTruncated: "(showing the first rows)",
+  importXlsxErrorCells:
+    "The preview has {count} Excel error value(s) (such as #DIV/0!). They are imported as NULL.",
   importProgress: "Inserted {inserted} / {total} rows...",
   importSuccess: "Imported {inserted} rows ({ms} ms).",
   importImporting: "Importing...",
@@ -7479,6 +7481,8 @@ const ja: Dict = {
   importColumnNumbered: "列 {n}",
   importPreviewTitle: "プレビュー",
   importPreviewTruncated: "(先頭の行を表示しています)",
+  importXlsxErrorCells:
+    "プレビューに Excel のエラー値 (#DIV/0! など) が {count} 件あります。取り込み時は NULL になります。",
   importProgress: "{total} 行中 {inserted} 行を投入中...",
   importSuccess: "{inserted} 行をインポートしました ({ms} ms)。",
   importImporting: "インポート中...",

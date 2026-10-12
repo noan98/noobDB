@@ -525,7 +525,10 @@ pub fn lossy_conversions(driver: DriverKind, columns: &[TransferColumn]) -> Vec<
                 if driver == DriverKind::Sqlite {
                     // 精度が分かっていて 15 桁を超えるときだけ。精度不明 (無制限 NUMERIC など)
                     // は実際の値が分からず誤検知が多いので警告しない。
-                    if precision.is_some_and(|p| p > 15) {
+                    // 小数桁の無い整数 decimal は 18 桁まで INTEGER (64bit) で正確に持てる。
+                    let exact_integer =
+                        scale.unwrap_or(0) == 0 && precision.is_some_and(|p| p <= 18);
+                    if !exact_integer && precision.is_some_and(|p| p > 15) {
                         Some(LossyKind::DecimalFloat)
                     } else {
                         None
@@ -979,6 +982,7 @@ mod tests {
             col("a", dec(Some(70), Some(2))),
             col("b", dec(Some(40), Some(35))),
             col("c", dec(Some(10), Some(2))),
+            col("e", dec(Some(18), Some(0))),
             col("d", dec(None, None)),
             col("t", TransferType::TimestampTz),
             col("i", TransferType::Integer),

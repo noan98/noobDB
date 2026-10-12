@@ -176,7 +176,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   }, [sessionId, driver, database, table]);
 
   const setExistingAt = (i: number, patch: Partial<ExistingColumnEdit>) =>
-    setExisting((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch, touched: true } : r)));
+    setExisting((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const touchIndex = (i: number) =>
     setIndexes((rows) => rows.map((r, idx) => (idx === i && !r.touched ? { ...r, touched: true } : r)));
   // `existing[i].drop` を外側のクロージャから読まず、setState の関数更新内で
@@ -192,7 +192,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   const removeNewColumn = (i: number) => setAdded((rows) => rows.filter((_, idx) => idx !== i));
 
   const setIndexAt = (i: number, patch: Partial<IndexDef>) =>
-    setIndexes((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+    setIndexes((rows) =>
+      rows.map((r, idx) => (idx === i ? { ...r, ...patch, touched: true } : r)),
+    );
   const addIndex = () => setIndexes((rows) => [...rows, { id: nextRowId(), ...emptyIndex() }]);
   const removeIndex = (i: number) => setIndexes((rows) => rows.filter((_, idx) => idx !== i));
   const toggleIndexColumn = (i: number, col: string) =>
@@ -217,6 +219,12 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     return [...new Set([...kept, ...addedNames])];
   }, [existing, added]);
 
+  // DROP / 改名で選択肢から消えた列を選んだままの行は、その列を未選択として扱う。
+  const effectiveIndexes = useMemo(
+    () => indexes.map((r) => ({ ...r, columns: r.columns.filter((c) => availableColumns.includes(c)) })),
+    [indexes, availableColumns],
+  );
+
   const plan = useMemo(
     () =>
       buildAlterPlan(driver, {
@@ -226,7 +234,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         existing,
         // id は React key 専用のローカル state なので、純ロジックへ渡す前に取り除く。
         added: added.map((r) => ({ name: r.name, type: r.type, notNull: r.notNull, defaultValue: r.defaultValue })),
-        indexes: indexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
+        indexes: effectiveIndexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
         tableComment,
         // id は React key 専用のローカル state なので純ロジックへ渡す前に落とす。
         addedForeignKeys: addedFks.filter(isCompleteForeignKey).map(({ id: _id, ...fk }) => fk),
@@ -234,13 +242,13 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         droppedForeignKeys: droppedFks,
         droppedChecks: droppedChecks.map((c) => c.name),
       }),
-    [driver, database, table, baseline, existing, added, indexes, tableComment, addedFks, addedChecks, droppedFks, droppedChecks],
+    [driver, database, table, baseline, existing, added, effectiveIndexes, tableComment, addedFks, addedChecks, droppedFks, droppedChecks],
   );
   const statements = plan.statements;
   const unsupported = plan.unsupported;
   // 名前が空 / 列未選択のインデックス行は文にならない。黙って捨てて実行できてしまうと
   // 「作ったつもり」になるので、行ごとにエラーを出して不備が残る間は実行を止める (#1532)。
-  const hasIncompleteIndex = indexes.some((r) => indexRowProblems(r) !== null);
+  const hasIncompleteIndex = effectiveIndexes.some((r) => indexRowProblems(r) !== null);
   // 実行ボタン / Cmd+Enter を一度押された後は、空の行にもエラーを出す。
   const [runAttempted, setRunAttempted] = useState(false);
   const valid = statements.length > 0;
@@ -463,7 +471,8 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel as="div">{t("indexesLabel")}</FieldLabel>
               {indexes.map((idx, i) => {
-                const problems = idx.touched || runAttempted ? indexRowProblems(idx) : null;
+                const problems =
+                  idx.touched || runAttempted ? indexRowProblems(effectiveIndexes[i]) : null;
                 return (
                 <chakra.div
                   key={idx.id}
@@ -510,7 +519,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                     {availableColumns.map((col) => (
                       <chakra.label key={col} display="flex" alignItems="center" gap="1" fontSize="sm">
                         <Checkbox
-                          checked={idx.columns.includes(col)}
+                          checked={effectiveIndexes[i].columns.includes(col)}
                           onChange={() => toggleIndexColumn(i, col)}
                         />
                         {col}
@@ -661,7 +670,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
             </FormSection>
             {hasIncompleteIndex && (
-              <FieldError>{t("alterTableIndexIncompleteBlocked")}</FieldError>
+              <Callout tone="warning">
+                {t("alterTableIndexIncompleteBlocked")}
+              </Callout>
             )}
             {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
             </motion.div>

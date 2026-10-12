@@ -171,7 +171,8 @@ pub mod __test_api {
 
     // 接続間データ転送 (#986)。Tauri を介さずに統合テストから駆動するコア。
     pub use crate::commands::transfer::{
-        transfer_data_inner, TransferColumnInfo, TransferOutcome, TransferPreview, TransferRequest,
+        preview_transfer_inner, transfer_data_inner, TransferColumnInfo, TransferOutcome,
+        TransferPreview, TransferRequest,
     };
     pub use crate::db::transfer::{LossyConversion, LossyKind, TransferMode};
 
