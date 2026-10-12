@@ -357,7 +357,7 @@ import {
 } from "./queryNotify";
 import type { IncomingFk } from "./fkNavigation";
 import type { ValueLookup } from "./components/useValuePicker";
-import { addPinned, pinToastPlan, type PinnedResult } from "./pinnedCompare";
+import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
 import { endTabOpenFlight, tabOpenFlightId } from "./sharedElement";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
@@ -5403,12 +5403,19 @@ export default function App() {
       elapsedMs: tab.result.elapsed_ms,
       pinnedAt: Date.now(),
     };
-    const next = addPinned(pinnedResults, item);
+    const { list: next, evicted } = addPinnedWithEvicted(pinnedResults, item);
     setPinnedResults(next);
     // ピン直後に比較ビューへ誘導する (#1277)。2 件未満は比較できないので案内のみ。
     const plan = pinToastPlan(next.length);
     toast.notify({
-      message: translate(plan.messageKey),
+      // 上限で外れた結果があれば、どれが消えたかを明示する (#1532)。
+      message:
+        evicted.length > 0
+          ? translate("pinToastEvicted", {
+              max: MAX_PINNED,
+              title: evicted.map((e) => e.title).join(", "),
+            })
+          : translate(plan.messageKey),
       ...(plan.showOpenAction && {
         action: {
           label: translate("pinToastOpenCompare"),
@@ -6990,6 +6997,14 @@ export default function App() {
     const sid = localSessionIdRef.current;
     if (!sid) return;
     void (async () => {
+      // 登録済みの結果セットは取り消せない (他の削除と同じく確認を挟む、#1532)。
+      const ok = await confirm({
+        title: translate("localPanelDropConfirmTitle"),
+        message: translate("localPanelDropConfirmBody", { table: tableName }),
+        confirmLabel: translate("localPanelDropConfirmOk"),
+        tone: "danger",
+      });
+      if (!ok) return;
       try {
         await api.dropLocalTable(sid, tableName);
         await refreshLocalTables(sid);
@@ -6997,7 +7012,7 @@ export default function App() {
         toast.error(String(e));
       }
     })();
-  }, [refreshLocalTables, toast]);
+  }, [confirm, refreshLocalTables, toast]);
 
   const handleSaveLocalDatabase = useCallback(() => {
     const sid = localSessionIdRef.current;

@@ -12,6 +12,18 @@ import { describe, expect, it } from "vitest";
 // (negative lookbehind)。
 const CALL_PATTERN = /(?<!`)window(?:\.confirm|\?\.confirm|\[["']confirm["']\])\(/;
 
+// `window.` を付けない素の `confirm("...")` も同じネイティブダイアログを呼ぶ (#1532:
+// ConnectionList / SnippetList / SandboxSection に残っていた)。一方 `useConfirm()` が返す
+// `confirm` は必ずオブジェクト (`confirm({ ... })`) を取る。引数が文字列 (リテラル /
+// `t(...)` / `translate(...)`) の
+// 呼び出しだけを素の confirm とみなす。メンバー呼び出し (`x.confirm(`) と識別子の一部
+// (`onConfirm(`) は除く。コメントは検査前に落とす。
+const BARE_CALL_PATTERN = /(?<![\w.$`])confirm\(\s*(?:["'`]|t\(|translate\()/;
+
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
 const modules = import.meta.glob("../**/*.{ts,tsx}", {
   eager: true,
   query: "?raw",
@@ -27,6 +39,15 @@ describe("window.confirm regression guard (#674)", () => {
       if (CALL_PATTERN.test(content)) {
         offenders.push(path);
       }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("no source file calls a bare confirm(...) with a non-object argument (#1532)", () => {
+    const offenders: string[] = [];
+    for (const [path, content] of Object.entries(modules)) {
+      if (path.endsWith("windowConfirmGuard.test.ts")) continue;
+      if (BARE_CALL_PATTERN.test(stripComments(content))) offenders.push(path);
     }
     expect(offenders).toEqual([]);
   });
