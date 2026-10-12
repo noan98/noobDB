@@ -80,6 +80,9 @@ theme.ts (Chakra トークン)
 
 > **ガード**: `designTokens.test.ts` の「余白 (spacing)」— props / JSX 式 /
 > スタイルオブジェクトの 3 形態すべてを検査する
+> (短縮形 `px` だけでなく `marginLeft` / `paddingX` など長い綴りと、`padding="5px 10px"` の
+> ような複数値の文字列も検査する。負のマージンによる 1px 罫線の重ね・固定幅ハンドルの
+> 食い込み補正 `margin*="-Npx"` だけは幾何補正として許可。#1534)
 
 ---
 

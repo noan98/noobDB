@@ -589,7 +589,7 @@ export function UsersPanel({
                         onClick={() => selectUser(u)}
                         width="100%"
                         textAlign="left"
-                        padding="6px 8px"
+                        padding="var(--space-1-5) var(--space-2)"
                         borderRadius="var(--radius-sm)"
                         background={isSelected ? "var(--bg-selected, var(--bg-muted))" : "transparent"}
                         border="1px solid"

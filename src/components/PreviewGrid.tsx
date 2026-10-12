@@ -288,8 +288,8 @@ export function PreviewGrid({
             display="inline-flex"
             alignItems="center"
             gap="2"
-            marginLeft="16px"
-            paddingLeft="12px"
+            marginLeft="4"
+            paddingLeft="3"
             borderLeft="1px solid var(--preview-banner-border)"
           >
             <chakra.span fontSize="sm" color="var(--preview-banner-text)">
@@ -336,7 +336,7 @@ export function PreviewGrid({
             <Button
               variant="warning"
               size="sm"
-              marginLeft="8px"
+              marginLeft="2"
               px="3"
               py="0.5"
               whiteSpace="nowrap"
@@ -423,7 +423,7 @@ export function PreviewGrid({
               overflow="hidden"
             >
               <chakra.header
-                padding="5px 10px"
+                padding="var(--space-1-25) var(--space-2-5)"
                 textStyle="overline"
                 bg="app.header"
                 borderBottom="1px solid"
@@ -459,7 +459,7 @@ export function PreviewGrid({
               overflow="hidden"
             >
               <chakra.header
-                padding="5px 10px"
+                padding="var(--space-1-25) var(--space-2-5)"
                 textStyle="overline"
                 color="app.textSuccess"
                 bg="app.header"
