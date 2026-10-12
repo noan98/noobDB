@@ -40,6 +40,7 @@ import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
 import { isSynthesizedTableDdl } from "./tableDdl";
+import type { TableNameSeparator } from "./explorerTree";
 import { tableCommentMap, withComment } from "./schemaComment";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
 import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
@@ -356,7 +357,7 @@ interface Props {
   onShowCreateTables?: (database: string, tables: string[]) => void;
   onCopyTablesDdl?: (database: string, tables: string[]) => void;
   /** 選択したテーブル名だけをクリップボードへコピーする (#1541)。DB に触れないので read_only でも有効。 */
-  onCopyTableNames?: (database: string, tables: string[], separator: "newline" | "comma") => void;
+  onCopyTableNames?: (database: string, tables: string[], separator: TableNameSeparator) => void;
   onExportTables?: (database: string, tables: string[]) => void;
   onDumpTables?: (database: string, tables: string[]) => void;
   onDropTables?: (database: string, tables: string[]) => void;

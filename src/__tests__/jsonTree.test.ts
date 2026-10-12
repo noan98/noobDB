@@ -243,9 +243,9 @@ describe("jsonPathSqlUpdate (#1541)", () => {
   const at = (path: (string | number)[]) => nodeAtPath(doc, path)!;
   const W = "`id` = 1";
 
-  it("MySQL: JSON_SET + CAST AS JSON、パスは引用符付きキーと添字", () => {
+  it("MySQL: JSON_SET + JSON_EXTRACT、パスは引用符付きキーと添字", () => {
     expect(jsonPathSqlUpdate("mysql", "`app`.`t`", "doc", ["a", "big"], at(["a", "big"]), W)).toBe(
-      "UPDATE `app`.`t` SET `doc` = JSON_SET(`doc`, '$.a.big', CAST('9007199254740993' AS JSON)) WHERE `id` = 1;",
+      "UPDATE `app`.`t` SET `doc` = JSON_SET(`doc`, '$.a.big', JSON_EXTRACT('9007199254740993', '$')) WHERE `id` = 1;",
     );
     expect(jsonPathSqlUpdate("mysql", "`t`", "doc", ["a", "b c", 0], at(["a", "b c", 0]), W)).toContain(
       `'$.a."b c"[0]'`,
@@ -272,7 +272,7 @@ describe("jsonPathSqlUpdate (#1541)", () => {
     const node = at(path);
     // MySQL はバックスラッシュも二重化、PostgreSQL / SQLite は ' だけ二重化
     const my = jsonPathSqlUpdate("mysql", "`t`", "doc", path, node, W)!;
-    expect(my).toContain(`CAST('"it''s \\\\\\\\ ok"' AS JSON)`);
+    expect(my).toContain(`JSON_EXTRACT('"it''s \\\\\\\\ ok"', '$')`);
     const pg = jsonPathSqlUpdate("postgres", '"t"', "doc", path, node, "x")!;
     expect(pg).toContain(`'{"a","b c","1","q\\"x"}'`);
     expect(pg).toContain(`'"it''s \\\\ ok"'::jsonb`);

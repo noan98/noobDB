@@ -529,7 +529,7 @@ export function jsonPathSqlPredicate(
  *   (各要素を二重引用符で囲み `\` と `"` をエスケープ) を SQL 文字列として渡す。json 型の列でも
  *   `::jsonb` を経由する。JSON の null は SQL の NULL ではなく `'null'::jsonb` にする
  *   (SQL NULL を渡すと jsonb_set の結果ごと NULL になるため)。
- * - MySQL: `JSON_SET(col, '$.a[0]', CAST('<json>' AS JSON))`。
+ * - MySQL: `JSON_SET(col, '$.a[0]', JSON_EXTRACT('<json>', '$'))`。
  * - SQLite: `json_set(col, '$.a[0]', json('<json>'))` (`json()` で文字列でなく JSON として扱わせる)。
  *
  * パス・値・テーブル参照はすべて既存の引用ヘルパー (`sqlString` / `quoteIdentFor`) を通すので、
@@ -568,7 +568,7 @@ export function jsonPathSqlUpdate(
   } else if (driver === "sqlite") {
     set = `json_set(${col}, ${sqlString(driver, formatJsonPath(path))}, json(${json}))`;
   } else {
-    set = `JSON_SET(${col}, ${sqlString(driver, formatJsonPath(path))}, CAST(${json} AS JSON))`;
+    set = `JSON_SET(${col}, ${sqlString(driver, formatJsonPath(path))}, JSON_EXTRACT(${json}, '$'))`;
   }
   return `UPDATE ${tableRef} SET ${col} = ${set} WHERE ${where};`;
 }

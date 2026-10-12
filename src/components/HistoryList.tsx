@@ -459,6 +459,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
             </FilterSegmentButton>
           ))}
         </FilterSegment>
+        <Tooltip label={t("historySpeedFilterHint")}>
         <FilterSegment role="group" aria-label={t("historySpeedFilterLabel")}>
           {HISTORY_SPEED_FILTERS.map((m) => (
             <FilterSegmentButton
@@ -471,6 +472,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
             </FilterSegmentButton>
           ))}
         </FilterSegment>
+        </Tooltip>
         {aiAvailable && (
           <Tooltip label={t("aiHistoryToggleHint")}>
             <PressableButton
