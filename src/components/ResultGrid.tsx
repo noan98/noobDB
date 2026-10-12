@@ -4127,14 +4127,44 @@ export const DataGrid = memo(function DataGrid({
   // Per-column in-memory ColumnStats for the footer, reusing gridStats
   // (#524) so aggregate math is never re-defined. Only computed while the
   // footer is shown, and memoized on the loaded rows so scrolling is free.
-  const footerStats = useMemo<ColumnStats[] | null>(() => {
+  // 実際にフッターへ描画する (表示中の) 列だけを、初めて参照されたときに計算してキャッシュする。
+  // `none` の列は計算しない。件数 / NULL 率だけで足りる列は、ストリーム逐次統計 (#1257) の
+  // NULL 数から O(1) で出す (distinct・合計など値の走査が要る関数だけ全行を走査する)。
+  const footerStatsFor = useMemo<
+    ((colIdx: number, fn: FooterAggFn) => ColumnStats | undefined) | null
+  >(() => {
     if (!footerEnabled) return null;
-    return columns.map((_, i) =>
-      computeColumnStats(
-        rows.map((r) => r[i] ?? null),
-        columnKinds[i] ?? "string",
-      ),
-    );
+    const cache = new Map<number, ColumnStats>();
+    const stream = streamStatsFor(rows);
+    return (colIdx: number, fn: FooterAggFn) => {
+      if (fn === "none" || colIdx < 0 || colIdx >= columns.length) return undefined;
+      const nulls = stream?.nullCounts[colIdx];
+      if ((fn === "count" || fn === "nullRate") && typeof nulls === "number") {
+        return {
+          count: rows.length,
+          nullCount: nulls,
+          nonNullCount: rows.length - nulls,
+          distinctCount: 0,
+          numericCount: 0,
+          sum: null,
+          avg: null,
+          min: null,
+          max: null,
+          minLen: null,
+          maxLen: null,
+          mode: null,
+        };
+      }
+      let stats = cache.get(colIdx);
+      if (!stats) {
+        stats = computeColumnStats(
+          rows.map((r) => r[colIdx] ?? null),
+          columnKinds[colIdx] ?? "string",
+        );
+        cache.set(colIdx, stats);
+      }
+      return stats;
+    };
   }, [footerEnabled, rows, columns, columnKinds]);
 
   // 列ヘッダの常時 NULL 率ミニバー (#911)。ポップオーバー (`ColumnStatsMenu`) を
@@ -6147,7 +6177,7 @@ export const DataGrid = memo(function DataGrid({
                 const colIdx = Number(h.column.id);
                 const kind = columnKinds[colIdx] ?? "string";
                 const fn = resolveFooterFn(footerAggs[h.column.id], kind);
-                const stats = footerStats?.[colIdx];
+                const stats = footerStatsFor?.(colIdx, fn);
                 const cell = stats ? computeFooterCell(stats, fn) : null;
                 // マスク中の列 (#1069) は集計値 (合計・最小/最大など) も伏せ、
                 // CountUp (#1024) でも数値を出さない。

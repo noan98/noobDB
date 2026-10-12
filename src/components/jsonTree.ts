@@ -339,30 +339,68 @@ export function searchJsonTree(
   const paths: JsonPathSegment[][] = [];
   let truncated = false;
 
-  const stack: { node: JsonNode; path: JsonPathSegment[] }[] = [{ node: root, path: [] }];
-  while (stack.length > 0) {
-    const { node, path } = stack.pop()!;
-    const last = path[path.length - 1];
-    const keyHit = typeof last === "string" && last.toLowerCase().includes(needle);
+  // 子ごとにパス配列を複製しない。フレームには (ノード, 親フレーム, 自身のセグメント, 次の子の
+  // 添字) だけを積み、一致したときにだけ親鎖からパスを組み立てる。
+  interface Frame {
+    node: JsonNode;
+    parent: Frame | null;
+    segment: JsonPathSegment | null;
+    next: number;
+    count: number;
+  }
+  const buildPath = (parent: Frame | null, segment: JsonPathSegment | null): JsonPathSegment[] => {
+    const out: JsonPathSegment[] = [];
+    if (segment !== null) out.push(segment);
+    for (let f = parent; f !== null; f = f.parent) {
+      if (f.segment !== null) out.push(f.segment);
+    }
+    return out.reverse();
+  };
+  // ノードを訪問 (一致判定)。打ち切りになったら true。
+  const visit = (node: JsonNode, parent: Frame | null, segment: JsonPathSegment | null): boolean => {
+    const keyHit = typeof segment === "string" && segment.toLowerCase().includes(needle);
     const text = scalarSearchText(node);
     const valueHit = text !== null && text.toLowerCase().includes(needle);
-    if (keyHit || valueHit) {
-      if (paths.length >= limit) {
-        truncated = true;
-        break;
-      }
-      matches.add(pathKey(path));
-      paths.push(path);
-      for (let i = 0; i < path.length; i++) ancestors.add(pathKey(path.slice(0, i)));
+    if (!keyHit && !valueHit) return false;
+    if (paths.length >= limit) {
+      truncated = true;
+      return true;
     }
-    // 文書順に取り出せるよう、子は逆順で積む。
-    const n = childCount(node);
-    if (n > 0) {
-      const kids = childSlice(node, 0, n);
-      for (let i = kids.length - 1; i >= 0; i--) {
-        stack.push({ node: kids[i].node, path: [...path, kids[i].segment] });
-      }
+    const path = buildPath(parent, segment);
+    matches.add(pathKey(path));
+    paths.push(path);
+    for (let i = 0; i < path.length; i++) ancestors.add(pathKey(path.slice(0, i)));
+    return false;
+  };
+
+  const frames: Frame[] = [];
+  if (!visit(root, null, null)) {
+    const n = childCount(root);
+    if (n > 0) frames.push({ node: root, parent: null, segment: null, next: 0, count: n });
+  }
+  while (frames.length > 0 && !truncated) {
+    const frame = frames[frames.length - 1];
+    if (frame.next >= frame.count) {
+      frames.pop();
+      continue;
     }
+    const i = frame.next++;
+    let child: JsonNode;
+    let seg: JsonPathSegment;
+    if (frame.node.kind === "object") {
+      const e = frame.node.entries[i];
+      child = e.value;
+      seg = e.key;
+    } else if (frame.node.kind === "array") {
+      child = frame.node.items[i];
+      seg = i;
+    } else {
+      frames.pop();
+      continue;
+    }
+    if (visit(child, frame, seg)) break;
+    const n = childCount(child);
+    if (n > 0) frames.push({ node: child, parent: frame, segment: seg, next: 0, count: n });
   }
   return { matches, ancestors, paths, truncated };
 }

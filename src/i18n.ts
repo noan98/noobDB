@@ -1347,6 +1347,7 @@ const en = {
   qbRequiredColumn: "Required — NOT NULL with no default value.",
   qbBadgeNotNull: "NOT NULL",
   qbComboNoMatches: "No matching columns",
+  qbComboShowMore: "Show {count} more",
   qbInsertToEditor: "Insert into editor",
   qbInsertToEditorTitle: "Insert the generated SQL into the editor without running it.",
 
@@ -5939,6 +5940,7 @@ const ja: Dict = {
   qbRequiredColumn: "必須 — NOT NULL かつデフォルト値がありません。",
   qbBadgeNotNull: "NOT NULL",
   qbComboNoMatches: "一致するカラムがありません",
+  qbComboShowMore: "さらに {count} 件を表示",
   qbInsertToEditor: "エディタに挿入",
   qbInsertToEditorTitle: "生成した SQL を実行せずにエディタへ挿入します。",
 

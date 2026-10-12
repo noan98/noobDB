@@ -77,6 +77,9 @@ const countTile = (c: ProfileCount | null | undefined) =>
 // 補間中の小数は四捨五入してから整形する (CountUp 既定と同じ)。
 const formatCount = (n: number) => formatProfileCount(Math.round(n));
 
+/** 列選択から自動集計を発行するまでの待ち時間 (ms)。 */
+const PROFILE_DEBOUNCE_MS = 300;
+
 export function ColumnProfilePanel({
   sessionId,
   driver,
@@ -98,6 +101,8 @@ export function ColumnProfilePanel({
   const [error, setError] = useState<string | null>(null);
   // 連続して列を切り替えたとき、遅れて返った古い結果で上書きしない。
   const requestSeq = useRef(0);
+  // 自動実行の debounce タイマー (手動実行で取り消せるよう ref に持つ)。
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { database, table, column } = target;
 
@@ -137,10 +142,33 @@ export function ColumnProfilePanel({
   }, [sessionId, database, table, column, approximate]);
 
   // 対象列が決まった / 変わったら自動で実行する (近似の切替も再実行する)。
+  // 列を素早く切り替えたときに全件集計が並走しないよう、自動実行は PROFILE_DEBOUNCE_MS 待つ
+  // (ボタンからの手動実行は即時)。待っている間に古い結果が出ないよう seq も進めておく。
   useEffect(() => {
     setProfile(null);
-    if (column) void run();
+    if (!column) return;
+    requestSeq.current++;
+    // debounce 待ちの間に前回のエラーが残らないようにする。
+    setError(null);
+    const timer = setTimeout(() => {
+      debounceTimer.current = null;
+      void run();
+    }, PROFILE_DEBOUNCE_MS);
+    debounceTimer.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (debounceTimer.current === timer) debounceTimer.current = null;
+    };
   }, [run, column]);
+
+  // 手動実行: 待機中の自動実行があれば取り消して、二重に発行しない。
+  const runNow = () => {
+    if (debounceTimer.current !== null) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+    }
+    void run();
+  };
 
   const chartKind = profile ? profileChartKind(profile) : null;
   const chartModel =
@@ -194,7 +222,7 @@ export function ColumnProfilePanel({
           type="button"
           variant="primary"
           size="sm"
-          onClick={() => void run()}
+          onClick={runNow}
           disabled={!column || running}
         >
           <Icon name="refresh" size={ICON_SIZES.sm} />
@@ -219,7 +247,7 @@ export function ColumnProfilePanel({
           illustration={errorIllustration(error)}
           icon="warning"
           title={t("profileError", { error })}
-          action={{ label: t("profileRetry"), onClick: () => void run() }}
+          action={{ label: t("profileRetry"), onClick: runNow }}
         />
       )}
 

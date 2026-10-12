@@ -106,14 +106,13 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
     buttonRef.current?.focus();
     // 一覧は 200 文字の要約しか持たないので、対象だけ全文を取り直す (取れなければ要約)。
     // 確認ダイアログに実際に引くテーブル数を出すため、確認より先に行う (読み取りのみ・送信なし)。
-    const procs = await Promise.all(
-      tg.processes.map(async (p) => {
-        const full = p.query_summary
-          ? await api.getProcessQuery(props.sessionId, p.id).catch(() => null)
-          : null;
-        return toLockDiagnoseProcess(p, full);
-      }),
-    );
+    // 全文は 1 回の問い合わせでまとめて取る (件数分の一覧取得が並走しないように)。
+    const needFull = tg.processes.filter((p) => p.query_summary).map((p) => p.id);
+    const fullById =
+      needFull.length > 0
+        ? await api.getProcessQueries(props.sessionId, needFull).catch(() => ({}) as Record<string, string>)
+        : ({} as Record<string, string>);
+    const procs = tg.processes.map((p) => toLockDiagnoseProcess(p, fullById[String(p.id)] ?? null));
     const refs = lockDiagnoseTableRefs(procs, props.driver, {
       connectedDatabase: props.processes.find((p) => p.is_self)?.database ?? null,
       schema: props.schema,
