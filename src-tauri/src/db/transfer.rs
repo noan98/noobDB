@@ -75,12 +75,20 @@ pub enum TransferMode {
     Replace,
     /// 既存テーブルへ追記する (DDL は発行しない。列は名前で対応付ける)。
     Append,
+    /// 既存テーブルへ upsert する (#1539)。DDL は発行せず、キー列が既存行と衝突した
+    /// 行はインポートの UPSERT と同じ方針で読み飛ばす (`skip`) か更新する (`update`)。
+    Upsert,
 }
 
 impl TransferMode {
     /// この転送がテーブルを作成するか (= 失敗/キャンセル時に後始末で DROP してよいか)。
     pub fn creates_table(self) -> bool {
         matches!(self, TransferMode::Create | TransferMode::Replace)
+    }
+
+    /// 既存テーブルへ書き込む (DDL を発行しない) モードか。
+    pub fn writes_existing_table(self) -> bool {
+        matches!(self, TransferMode::Append | TransferMode::Upsert)
     }
 }
 
@@ -1025,5 +1033,9 @@ mod tests {
         assert!(TransferMode::Create.creates_table());
         assert!(TransferMode::Replace.creates_table());
         assert!(!TransferMode::Append.creates_table());
+        assert!(!TransferMode::Upsert.creates_table());
+        assert!(TransferMode::Upsert.writes_existing_table());
+        assert!(TransferMode::Append.writes_existing_table());
+        assert!(!TransferMode::Replace.writes_existing_table());
     }
 }

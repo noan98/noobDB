@@ -3021,3 +3021,342 @@ async fn mysql_script_failure_after_implicit_commit_does_not_offer_begin_restart
         other => panic!("expected Failed, got {other:?}"),
     }
 }
+
+/// 全列の概要 (#1539)。BLOB / JSON を含む表でも 1 本の SELECT で取れ、
+/// 型の都合で MIN/MAX を外した列に理由コードが付くこと。
+#[tokio::test]
+async fn mysql_table_overview_single_scan() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: no database in URL");
+        return;
+    };
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_overview", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_my_overview (id INT PRIMARY KEY, score DOUBLE, tag VARCHAR(10), \
+         j JSON, b BLOB)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO noobdb_my_overview VALUES \
+         (1, 1.5, 'a', '{\"k\":1}', X'01'), (2, 2.5, 'a', NULL, NULL), (3, NULL, NULL, NULL, NULL)",
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    let o = conn
+        .table_profile(&db, "noobdb_my_overview", true)
+        .await
+        .expect("overview");
+    assert_eq!(o.scans, 1);
+    assert_eq!(o.total_count, t::Value::UInt(3));
+    assert_eq!(o.columns.len(), 5);
+    let by = |n: &str| o.columns.iter().find(|c| c.column == n).expect("column");
+    assert_eq!(by("score").null_count, t::Value::UInt(1));
+    assert_eq!(by("tag").distinct_count, Some(t::Value::UInt(1)));
+    assert_eq!(by("b").non_null_count, t::Value::UInt(1));
+    assert!(
+        !by("b").notes.is_empty(),
+        "BLOB は MIN/MAX を外した理由が付く"
+    );
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_overview", Some(&db))
+        .await
+        .expect("cleanup");
+}
+
+/// #1539: SQLite → MySQL の upsert 転送。既存行の更新・新規行の追加・skip を実 DB で確かめる。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mysql_transfer_upsert_updates_and_skips() {
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: no database in URL");
+        return;
+    };
+    conn.execute("DROP TABLE IF EXISTS noobdb_upsert_my", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_upsert_my (id INT PRIMARY KEY, name VARCHAR(20), qty INT)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO noobdb_upsert_my VALUES (1, 'old', 10), (9, 'keep', 1)",
+        Some(&db),
+    )
+    .await
+    .expect("seed target");
+
+    let state = t::AppState::default();
+    let mut src_path = std::env::temp_dir();
+    src_path.push(format!("noobdb_upsert_mysql_src_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&src_path);
+    std::fs::File::create(&src_path).expect("touch");
+    let src_opts = t::sqlite_options(src_path.to_str().expect("utf8"));
+    let src_conn = t::connect(&src_opts).await.expect("sqlite");
+    src_conn
+        .execute(
+            "CREATE TABLE noobdb_upsert_my (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)",
+            None,
+        )
+        .await
+        .expect("src create");
+    src_conn
+        .execute(
+            "INSERT INTO noobdb_upsert_my VALUES (1, 'new', 11), (2, 'two', 5)",
+            None,
+        )
+        .await
+        .expect("src seed");
+    state
+        .insert(t::make_session("src", src_conn, src_opts, false))
+        .await;
+    state
+        .insert(t::make_session("dst", conn, opts, false))
+        .await;
+
+    let req = |mode: Option<t::ConflictMode>| t::TransferRequest {
+        source_session_id: "src".into(),
+        target_session_id: "dst".into(),
+        source_database: None,
+        source_table: Some("noobdb_upsert_my".into()),
+        source_sql: None,
+        target_database: Some(db.clone()),
+        target_table: "noobdb_upsert_my".into(),
+        mode: t::TransferMode::Upsert,
+        batch_size: Some(100),
+        conflict_mode: mode,
+        key_columns: None,
+    };
+    let run = |r: t::TransferRequest| {
+        let state = &state;
+        async move { t::transfer_data_inner(state, r, Arc::new(AtomicU64::new(0)), |_| {}).await }
+    };
+    let dst = state.get("dst").await.expect("dst");
+
+    run(req(None)).await.expect("upsert update");
+    let r = dst
+        .conn
+        .execute(
+            "SELECT id, name, qty FROM noobdb_upsert_my ORDER BY id",
+            Some(&db),
+        )
+        .await
+        .expect("select");
+    assert_eq!(r.rows.len(), 3, "{:?}", r.rows);
+    assert_eq!(
+        format!("{:?}", r.rows[0][1]),
+        format!("{:?}", t::Value::String("new".into()))
+    );
+
+    dst.conn
+        .execute(
+            "UPDATE noobdb_upsert_my SET name = 'local' WHERE id = 1",
+            Some(&db),
+        )
+        .await
+        .expect("local edit");
+    run(req(Some(t::ConflictMode::Skip)))
+        .await
+        .expect("upsert skip");
+    let r = dst
+        .conn
+        .execute("SELECT name FROM noobdb_upsert_my WHERE id = 1", Some(&db))
+        .await
+        .expect("select");
+    assert_eq!(
+        format!("{:?}", r.rows[0][0]),
+        format!("{:?}", t::Value::String("local".into()))
+    );
+
+    dst.conn
+        .execute("DROP TABLE IF EXISTS noobdb_upsert_my", Some(&db))
+        .await
+        .expect("cleanup");
+    let _ = std::fs::remove_file(&src_path);
+}
+
+/// #1539: MySQL への upsert 転送は、主キー以外の UNIQUE (email) がある表を拒否する
+/// (`ON DUPLICATE KEY UPDATE` が email の衝突でも発火し、別の行を上書きするため)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mysql_transfer_upsert_rejects_table_with_other_unique_key() {
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: no database in URL");
+        return;
+    };
+    conn.execute("DROP TABLE IF EXISTS noobdb_upsert_guard_my", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_upsert_guard_my (id INT PRIMARY KEY, email VARCHAR(50) NOT NULL, name VARCHAR(20), UNIQUE KEY uq_email (email))",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO noobdb_upsert_guard_my VALUES (1, 'a@x', 'a'), (2, 'b@x', 'b')",
+        Some(&db),
+    )
+    .await
+    .expect("seed target");
+
+    let state = t::AppState::default();
+    let mut src_path = std::env::temp_dir();
+    src_path.push(format!("noobdb_upsert_guard_src_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&src_path);
+    std::fs::File::create(&src_path).expect("touch");
+    let src_opts = t::sqlite_options(src_path.to_str().expect("utf8"));
+    let src_conn = t::connect(&src_opts).await.expect("sqlite");
+    src_conn
+        .execute(
+            "CREATE TABLE noobdb_upsert_guard_my (id INTEGER PRIMARY KEY, email TEXT, name TEXT)",
+            None,
+        )
+        .await
+        .expect("src create");
+    // id=3 の行の email は、target の id=1 と衝突する。
+    src_conn
+        .execute(
+            "INSERT INTO noobdb_upsert_guard_my VALUES (3, 'a@x', 'clash')",
+            None,
+        )
+        .await
+        .expect("src seed");
+    state
+        .insert(t::make_session("src", src_conn, src_opts, false))
+        .await;
+    state
+        .insert(t::make_session("dst", conn, opts, false))
+        .await;
+
+    let res = t::transfer_data_inner(
+        &state,
+        t::TransferRequest {
+            source_session_id: "src".into(),
+            target_session_id: "dst".into(),
+            source_database: None,
+            source_table: Some("noobdb_upsert_guard_my".into()),
+            source_sql: None,
+            target_database: Some(db.clone()),
+            target_table: "noobdb_upsert_guard_my".into(),
+            mode: t::TransferMode::Upsert,
+            batch_size: Some(100),
+            conflict_mode: None,
+            key_columns: None,
+        },
+        Arc::new(AtomicU64::new(0)),
+        |_| {},
+    )
+    .await;
+    assert!(res.is_err(), "upsert must be rejected: {res:?}");
+
+    let dst = state.get("dst").await.expect("dst");
+    let r = dst
+        .conn
+        .execute(
+            "SELECT name FROM noobdb_upsert_guard_my WHERE id = 1",
+            Some(&db),
+        )
+        .await
+        .expect("select");
+    assert_eq!(
+        format!("{:?}", r.rows[0][0]),
+        format!("{:?}", t::Value::String("a".into())),
+        "another row must stay untouched"
+    );
+    dst.conn
+        .execute("DROP TABLE IF EXISTS noobdb_upsert_guard_my", Some(&db))
+        .await
+        .expect("cleanup");
+    let _ = std::fs::remove_file(&src_path);
+}
+
+/// 複数行の BLOB をフォルダへ書き出す (#1539)。MySQL の実 DB で probe → 取得 → ファイル書き出しが
+/// 主キー由来の名前・種別由来の拡張子で行われ、NULL が飛ばされること。
+#[tokio::test]
+async fn mysql_save_cells_to_folder() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("s-blob-folder", conn, opts.clone(), false);
+    let db: Option<&str> = opts.database.as_deref();
+    session
+        .conn
+        .execute("DROP TABLE IF EXISTS cell_blob_folder_t", db)
+        .await
+        .expect("drop");
+    session
+        .conn
+        .execute(
+            "CREATE TABLE cell_blob_folder_t (id INT PRIMARY KEY, data LONGBLOB)",
+            db,
+        )
+        .await
+        .expect("create");
+    for sql in [
+        "INSERT INTO cell_blob_folder_t VALUES (1, 0x89504e470d0a1a0a0000)",
+        "INSERT INTO cell_blob_folder_t VALUES (2, 0x0102)",
+        "INSERT INTO cell_blob_folder_t VALUES (3, NULL)",
+    ] {
+        session.conn.execute(sql, db).await.expect("insert");
+    }
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("noobdb_blob_folder_mysql_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let keys = serde_json::json!([
+        [{ "column": "id", "value": 1 }],
+        [{ "column": "id", "value": 2 }],
+        [{ "column": "id", "value": 3 }],
+    ]);
+    let r = t::save_cells_to_folder_via_session(
+        &session,
+        db,
+        "cell_blob_folder_t",
+        "data",
+        keys,
+        dir.to_str().expect("utf8"),
+    )
+    .await
+    .expect("save to folder");
+    assert_eq!((r.saved, r.skipped_null, r.failed), (2, 1, 0), "{r:?}");
+    assert_eq!(
+        std::fs::read(dir.join("1.png")).expect("png"),
+        vec![0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]
+    );
+    assert_eq!(std::fs::read(dir.join("2.bin")).expect("bin"), vec![1u8, 2]);
+    let _ = std::fs::remove_dir_all(&dir);
+    session
+        .conn
+        .execute("DROP TABLE IF EXISTS cell_blob_folder_t", db)
+        .await
+        .expect("cleanup");
+}

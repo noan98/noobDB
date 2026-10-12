@@ -3222,6 +3222,71 @@ async fn sqlite_profile_column_via_command_layer() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 表の全列の概要 (#1539)。全列の件数 / NULL 数 / DISTINCT / MIN・MAX が 1 回の走査で
+/// 揃うこと (scans == 1)、read_only でも動くこと、存在しない表を弾くことを固定する。
+#[tokio::test]
+async fn sqlite_profile_table_overview_single_scan() {
+    let path = temp_cmd_db("profile_overview");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE ov_t (id INTEGER PRIMARY KEY, score REAL, tag TEXT, blobby BLOB)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO ov_t (score, tag, blobby) VALUES \
+         (1.0, 'a', x'01'), (2.0, 'a', NULL), (2.0, 'b', NULL), (NULL, NULL, NULL)",
+        None,
+    )
+    .await
+    .expect("insert");
+    let session = t::make_session("ov", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let o = t::profile_table_inner(&state, &sid, "main", "ov_t", true)
+        .await
+        .expect("overview");
+    assert_eq!(o.scans, 1, "全列が 1 本の SELECT で取れること");
+    assert_eq!(o.total_count, t::Value::UInt(4));
+    assert_eq!(o.columns.len(), 4);
+    let by = |n: &str| o.columns.iter().find(|c| c.column == n).expect("column");
+    let score = by("score");
+    assert_eq!(score.non_null_count, t::Value::UInt(3));
+    assert_eq!(score.null_count, t::Value::UInt(1));
+    assert_eq!(score.distinct_count, Some(t::Value::UInt(2)));
+    assert_eq!(cell_text(&score.min_value), "1");
+    assert_eq!(cell_text(&score.max_value), "2");
+    let tag = by("tag");
+    assert_eq!(tag.distinct_count, Some(t::Value::UInt(2)));
+    assert_eq!(cell_text(&tag.min_value), "a");
+    assert_eq!(cell_text(&tag.max_value), "b");
+    let id = by("id");
+    assert_eq!(id.distinct_count, Some(t::Value::UInt(4)));
+
+    // DISTINCT を求めない指定。
+    let no_distinct = t::profile_table_inner(&state, &sid, "main", "ov_t", false)
+        .await
+        .expect("overview without distinct");
+    assert!(no_distinct
+        .columns
+        .iter()
+        .all(|c| c.distinct_count.is_none()));
+
+    assert!(
+        t::profile_table_inner(&state, &sid, "main", "no_such_table", true)
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        t::profile_table_inner(&state, "nope", "main", "ov_t", true).await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+    let _ = std::fs::remove_file(&path);
+}
+
 /// セル値をテスト比較用の文字列へ (64bit 整数は安全整数を超えると lossless
 /// デコードで文字列になるため、Int / String の両方を同じ表記に揃える)。
 fn cell_text(v: &t::Value) -> String {
@@ -4200,6 +4265,108 @@ async fn sqlite_cell_blob_probe_and_fetch() {
             .await
             .is_err()
     );
+}
+
+/// 複数行の BLOB をフォルダへ書き出す (#1539)。主キー由来のファイル名・種別由来の拡張子・
+/// NULL と上限超過のスキップ・既存ファイルを上書きしないこと・存在しない行の失敗集計。
+#[tokio::test]
+async fn sqlite_save_cells_to_folder() {
+    let db = temp_cmd_db("blob_folder");
+    let db_path = db.to_str().expect("utf8 path");
+    let conn = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("s-blob-folder", conn, t::sqlite_options(db_path), true);
+    // read_only セッションでも SELECT だけなので書き出せる。作表は別接続で行う。
+    let writer = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("writer");
+    writer
+        .execute(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB)",
+            None,
+        )
+        .await
+        .expect("create");
+    let png = "89504E470D0A1A0A0000";
+    let big = "00".repeat(16 * 1024 * 1024 + 1);
+    for sql in [
+        format!("INSERT INTO files VALUES (1, X'{png}')"),
+        "INSERT INTO files VALUES (2, X'0102')".to_string(),
+        "INSERT INTO files VALUES (3, NULL)".to_string(),
+        format!("INSERT INTO files VALUES (4, X'{big}')"),
+        "INSERT INTO files VALUES (5, X'0A')".to_string(),
+    ] {
+        writer.execute(&sql, None).await.expect("insert");
+    }
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("noobdb_blob_folder_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    // 既存ファイルは上書きされない。
+    std::fs::write(dir.join("2.bin"), b"keep").expect("existing");
+
+    let keys = serde_json::json!([
+        [{ "column": "id", "value": 1 }],
+        [{ "column": "id", "value": 2 }],
+        [{ "column": "id", "value": 3 }],
+        [{ "column": "id", "value": 4 }],
+        [{ "column": "id", "value": 99 }],
+        [{ "column": "id", "value": 5 }],
+    ]);
+    let folder = dir.to_str().expect("utf8");
+    let r = t::save_cells_to_folder_via_session(&session, None, "files", "data", keys, folder)
+        .await
+        .expect("save to folder");
+    assert_eq!(r.saved, 3, "{r:?}");
+    assert_eq!(r.skipped_null, 1);
+    assert_eq!(r.skipped_too_large, 1);
+    assert_eq!(r.failed, 1, "存在しない行");
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 4);
+    assert_eq!(r.total_bytes, 10 + 2 + 1);
+    assert_eq!(
+        std::fs::read(dir.join("1.png")).expect("png"),
+        hex_to_bytes(png)
+    );
+    assert_eq!(std::fs::read(dir.join("2.bin")).expect("kept"), b"keep");
+    assert_eq!(
+        std::fs::read(dir.join("2_2.bin")).expect("renamed"),
+        vec![1u8, 2]
+    );
+    assert_eq!(
+        std::fs::read(dir.join("5.bin")).expect("five"),
+        vec![0x0au8]
+    );
+
+    // 存在しないフォルダ・空の行リストは入力エラー。
+    assert!(t::save_cells_to_folder_via_session(
+        &session,
+        None,
+        "files",
+        "data",
+        serde_json::json!([[{ "column": "id", "value": 1 }]]),
+        dir.join("missing").to_str().expect("utf8"),
+    )
+    .await
+    .is_err());
+    assert!(t::save_cells_to_folder_via_session(
+        &session,
+        None,
+        "files",
+        "data",
+        serde_json::json!([]),
+        folder
+    )
+    .await
+    .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn hex_to_bytes(hex: &str) -> Vec<u8> {
+    (0..hex.len() / 2)
+        .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("hex"))
+        .collect()
 }
 
 // ── スキーマドリフト / 実行計画ウォッチ (#1260) ──

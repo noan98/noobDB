@@ -207,7 +207,7 @@ pub(crate) async fn run_query_inner(
         );
     }
     if result.is_ok() {
-        invalidate_caches_after_success(&session, sql).await;
+        invalidate_caches_after_success(&session, sql, database).await;
     }
     result
 }
@@ -222,13 +222,67 @@ pub(crate) async fn run_query_inner(
 ///   丸ごと invalidate (Schema Cache と違い DML でも stale になるため対象が広い)。
 ///
 /// `sql` は auto-limit 適用前の元の文を渡す (LIMIT の注入は判定を変えない)。
-pub(crate) async fn invalidate_caches_after_success(session: &Session, sql: &str) {
+pub(crate) async fn invalidate_caches_after_success(
+    session: &Session,
+    sql: &str,
+    database: Option<&str>,
+) {
     let driver = session.conn.driver_kind();
-    if crate::db::sql_may_change_schema(driver, sql) {
-        session.schema_cache.invalidate_all().await;
-    }
+    invalidate_schema_cache_for(session, database, &[sql]).await;
     if !crate::db::is_read_only_sql_for(driver, sql) {
         session.query_cache.invalidate_all().await;
+    }
+}
+
+/// DDL 成功後の Schema Cache の無効化 (#1539)。`statements` のうちスキーマを変えうる文
+/// (`sql_may_change_schema`) が全部「単一テーブルだけに効く単純な形」
+/// (`db::schema_scope::sql_schema_change_table`) で、対象の DB も分かるときは、そのテーブルの
+/// エントリだけを捨てる。1 つでも対象が特定できない文があれば従来どおり接続全体を捨てる
+/// (fail-closed)。`database` は文が実行された DB (文中で修飾されていなければこれを使う)。
+pub(crate) async fn invalidate_schema_cache_for(
+    session: &Session,
+    database: Option<&str>,
+    statements: &[&str],
+) {
+    let driver = session.conn.driver_kind();
+    let mut targets: Vec<(String, String)> = Vec::new();
+    let mut any_ddl = false;
+    // 同じバッチに既定の DB / スキーマを切り替える文 (`USE`・`SET search_path` など) が
+    // あると、非修飾の表名が指す先が変わるので表単位では判断できない。
+    if statements
+        .iter()
+        .any(|s| crate::db::sql_may_change_schema(driver, s))
+        && statements
+            .iter()
+            .any(|s| crate::db::schema_scope::changes_default_namespace(driver, s))
+    {
+        session.schema_cache.invalidate_all().await;
+        return;
+    }
+    for sql in statements {
+        if !crate::db::sql_may_change_schema(driver, sql) {
+            continue;
+        }
+        any_ddl = true;
+        let scoped = crate::db::schema_scope::sql_schema_change_table(driver, sql).and_then(
+            |(schema, table)| Some((schema.or_else(|| database.map(str::to_string))?, table)),
+        );
+        match scoped {
+            Some(target) => {
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+            None => {
+                session.schema_cache.invalidate_all().await;
+                return;
+            }
+        }
+    }
+    if any_ddl {
+        for (db, table) in targets {
+            session.schema_cache.invalidate_table(&db, &table).await;
+        }
     }
 }
 
@@ -409,12 +463,9 @@ pub(crate) async fn run_query_transaction_inner(
     // ALTER/CREATE 文の適用はここを必ず通る。
     if result.is_ok() {
         let driver = session.conn.driver_kind();
-        if statements
-            .iter()
-            .any(|sql| crate::db::sql_may_change_schema(driver, sql))
-        {
-            session.schema_cache.invalidate_all().await;
-        }
+        // 対象が 1 テーブルと分かる ALTER / CREATE INDEX だけなら、そのテーブルだけを捨てる (#1539)。
+        let stmt_refs: Vec<&str> = statements.iter().map(String::as_str).collect();
+        invalidate_schema_cache_for(&session, database.as_deref(), &stmt_refs).await;
         // Query Result Cache (#1097): 束ねた文のいずれか 1 つでも書き込み
         // (DDL/DML 問わず) なら丸ごと invalidate する。cell-edit の Apply は
         // 通常 DML のみだが、Schema Cache と違い DML でも対象になるため、ここは
@@ -1220,7 +1271,7 @@ async fn spawn_query_stream(
         // Schema Cache (#1220): DDL 成功後は SchemaCache も invalidate する。以前は
         // query_cache だけで、エディタ (ストリーミング) で流した ALTER / CREATE INDEX
         // 後もツリー・補完・describe が最大 TTL まで旧スキーマのままだった。
-        invalidate_caches_after_success(&session, &sql).await;
+        invalidate_caches_after_success(&session, &sql, database.as_deref()).await;
     }
 
     match &result {

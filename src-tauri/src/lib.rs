@@ -50,7 +50,10 @@ pub mod __test_api {
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
         generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
     };
-    pub use crate::db::profile::{ColumnProfile, ProfileHistogramBucket, ProfileValueCount};
+    pub use crate::db::profile::{
+        ColumnOverview, ColumnProfile, ProfileHistogramBucket, ProfileValueCount,
+        TableProfileOverview,
+    };
     pub use crate::db::refresh_diff::{
         PatchPayload, PatchRun, RefreshBuilder, RefreshOutcome, RefreshSnapshot,
         RefreshSnapshotStore,
@@ -146,7 +149,7 @@ pub mod __test_api {
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags};
     pub use crate::commands::query::CancelStreamResult;
     pub use crate::commands::sandbox::{
-        SandboxCreateResponse, SandboxSchemaDiffResult, SandboxTableDiffResult,
+        SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
     pub use crate::history::HistoryEntry;
     pub use crate::sandboxes::SandboxRecord;
@@ -191,7 +194,7 @@ pub mod __test_api {
     pub use crate::commands::flight_recorder::{UndoOutcome, UndoPreviewResponse};
     pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
     pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
-    pub use crate::commands::schema::AlterTableContext;
+    pub use crate::commands::schema::{AlterTableContext, SchemaCacheTime};
     pub use crate::commands::schema_drift::SchemaDriftCapture;
     pub use crate::commands::ssh::ResolvedSshAlias;
     pub use crate::commands::timelapse::{CaptureOutcome, WatchOutcome};
@@ -234,7 +237,7 @@ pub mod __test_api {
     // 個別イベント構造体ではなく、Tauri Channel で送る 1 本のタグ付き enum
     // (`QueryStreamMessage` / `PreviewStreamMessage`) に統合済み。Export/Dump/
     // Import は引き続き個別の emit ペイロード構造体のまま。
-    pub use crate::commands::cell_blob::CellBlobProbe;
+    pub use crate::commands::cell_blob::{BlobFolderIssue, BlobFolderSaveResult, CellBlobProbe};
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
@@ -427,7 +430,7 @@ pub mod __test_api {
         start_statement_recording_inner,
     };
     pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
-    pub use crate::commands::profile::profile_column_inner;
+    pub use crate::commands::profile::{profile_column_inner, profile_table_inner};
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
@@ -496,7 +499,7 @@ pub mod __test_api {
     /// invalidate (#1220)。`AppHandle` / `Channel` が要るため経路そのものは統合テスト
     /// から駆動できないので、共通ヘルパを直接叩いて配線を固定する。
     pub async fn invalidate_caches_after_stream_success(session: &Session, sql: &str) {
-        crate::commands::query::invalidate_caches_after_success(session, sql).await
+        crate::commands::query::invalidate_caches_after_success(session, sql, None).await
     }
 
     /// Drives the `run_assertion` IPC command's core path (#742): rule → SQL
@@ -617,6 +620,24 @@ pub mod __test_api {
     ) -> crate::error::Result<Option<Vec<u8>>> {
         let key = parse_cell_key(key)?;
         crate::commands::cell_blob::fetch_cell_blob(session, database, table, column, &key).await
+    }
+
+    /// `save_cells_to_folder` の本体を、IPC と同じ JSON 形の `keys` (行ごとの主キー配列) で
+    /// 統合テストから駆動する (#1539)。
+    pub async fn save_cells_to_folder_via_session(
+        session: &Session,
+        database: Option<&str>,
+        table: &str,
+        column: &str,
+        keys: serde_json::Value,
+        folder: &str,
+    ) -> crate::error::Result<crate::commands::cell_blob::BlobFolderSaveResult> {
+        let keys: Vec<Vec<crate::commands::cell_blob::CellKeyPart>> = serde_json::from_value(keys)
+            .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
+        crate::commands::cell_blob::save_cells_to_folder_inner(
+            session, database, table, column, &keys, folder,
+        )
+        .await
     }
 
     fn parse_cell_key(
@@ -1063,6 +1084,24 @@ pub mod __test_api {
         .await
     }
 
+    /// Drives the `sandbox_reset_table` IPC command's core path without a
+    /// Tauri runtime (#1539).
+    pub async fn sandbox_reset_table_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        table: &str,
+    ) -> crate::error::Result<u64> {
+        crate::commands::sandbox::sandbox_reset_table_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            table.to_string(),
+        )
+        .await
+        .map(|r| r.restored_rows)
+    }
+
     /// Drives the `generate_data_sync_sql` IPC command's core path (stored-diff
     /// lookup + optional skip-key filtering + rendering) without a Tauri
     /// runtime (#1259).
@@ -1342,6 +1381,7 @@ pub fn run() {
             commands::inspector::start_statement_recording,
             commands::inspector::sample_statement_delta,
             commands::profile::profile_column,
+            commands::profile::profile_table,
             commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
@@ -1355,6 +1395,7 @@ pub fn run() {
             commands::sandbox::sandbox_table_diff,
             commands::sandbox::sandbox_schema_diff,
             commands::sandbox::sandbox_advance_base,
+            commands::sandbox::sandbox_reset_table,
             commands::profiles::list_profiles,
             commands::profiles::reveal_profile_secret,
             commands::profiles::save_profile,
@@ -1376,6 +1417,8 @@ pub fn run() {
             commands::history::get_history_sql,
             commands::history::list_history_sql,
             commands::history::clear_history,
+            commands::history::get_history_retention_days,
+            commands::history::set_history_retention_days,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,
@@ -1426,6 +1469,7 @@ pub fn run() {
             commands::cell_blob::fetch_cell_bytes,
             commands::cell_blob::probe_cell_blob,
             commands::cell_blob::save_cell_to_file,
+            commands::cell_blob::save_cells_to_folder,
             commands::cell_blob::read_binary_file,
             commands::file::write_binary_file,
             commands::file::write_text_file,
@@ -1447,6 +1491,8 @@ pub fn run() {
             commands::tasks::get_scheduler_settings,
             commands::tasks::set_scheduler_settings,
             commands::schema::refresh_schema_cache,
+            commands::schema::invalidate_table_cache,
+            commands::schema::schema_cache_times,
         ])
         .run(tauri::generate_context!());
 

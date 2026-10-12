@@ -3,7 +3,14 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, type CellBlobProbe, type CellValue, type Column } from "../api/tauri";
 import { useT } from "../i18n";
 import { useToast } from "./Toast";
-import { MAX_BLOB_BYTES, blobFileName, blobKeyParts, bytesToHex, formatBlobSize } from "./blobIo";
+import {
+  MAX_BLOB_BYTES,
+  blobFileName,
+  blobKeyParts,
+  bytesToHex,
+  formatBlobSize,
+  type BlobKeyPart,
+} from "./blobIo";
 
 /**
  * BLOB セルのファイル入出力を有効にするための、結果グリッドへの入力 (#1148)。
@@ -27,6 +34,11 @@ export interface CellBlobHandlers {
   save: () => Promise<void>;
   /** ファイルから読み込んで書き戻す。書き戻せない状況では undefined。 */
   load?: () => Promise<void>;
+  /**
+   * この列の BLOB を、指定した複数行ぶんまとめてフォルダへ保存する (#1539)。ファイル名は
+   * 主キー由来で、フォルダ選択・件数の通知までここで行う。主キーで引けない行は飛ばす。
+   */
+  saveMany?: (rowIndices: number[]) => Promise<void>;
 }
 
 interface Input {
@@ -92,6 +104,55 @@ export function useCellBlobIo({
         }
       };
 
+      const saveMany = async (rowIndices: number[]) => {
+        try {
+          const keys: BlobKeyPart[][] = [];
+          let noKey = 0;
+          for (const r of rowIndices) {
+            const k = rows[r]
+              ? blobKeyParts(columns, rows[r], pkIndices ?? [], isBinaryColumn)
+              : null;
+            if (k) keys.push(k);
+            else noKey += 1;
+          }
+          if (keys.length === 0) {
+            toast.error(t("blobFolderNoKeys"));
+            return;
+          }
+          const folder = await open({
+            directory: true,
+            multiple: false,
+            title: t("blobFolderPickTitle"),
+          });
+          if (typeof folder !== "string" || !folder) return;
+          const res = await api.saveCellsToFolder(
+            config.sessionId,
+            database ?? null,
+            table,
+            col.name,
+            keys,
+            folder,
+          );
+          const skipped = res.skippedNull + res.skippedTooLarge + noKey;
+          const summary = t("blobFolderSaved", {
+            saved: res.saved,
+            size: formatBlobSize(res.totalBytes),
+            skipped,
+            failed: res.failed,
+            folder,
+          });
+          if (res.failed > 0) {
+            toast.error(
+              `${summary} ${t("blobFolderFirstError", { error: res.errors[0]?.error ?? "" })}`,
+            );
+          } else {
+            toast.success(summary);
+          }
+        } catch (e) {
+          toast.error(t("blobSaveFailed", { error: String(e) }));
+        }
+      };
+
       const onWrite = config.onWrite;
       const loadFromFile = onWrite
         ? async () => {
@@ -107,7 +168,7 @@ export function useCellBlobIo({
           }
         : undefined;
 
-      return { probe, fetchBytes, save: saveToFile, load: loadFromFile };
+      return { probe, fetchBytes, save: saveToFile, load: loadFromFile, saveMany };
     },
     [config, database, table, columns, rows, pkIndices, isBinaryColumn, t, toast],
   );

@@ -28,7 +28,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { Tooltip } from "./Tooltip";
 import { TreeChevron } from "./tree";
-import { Button, Checkbox, Heading, PressableButton, Select } from "./ui";
+import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
 import { DraftNumberInput } from "./DraftNumberInput";
 
 // motion 用 props (`variants`/`initial`/`animate`/`exit`/`transition`) は Chakra の
@@ -256,6 +256,8 @@ const limitCss: SystemStyleObject = {
   color: "var(--text-secondary)",
   "& input": { width: "80px" },
 };
+// 除外列の入力 (列名をカンマ区切りで並べるので件数上限より広く取る)。
+const ignoreCss: SystemStyleObject = { ...limitCss, "& input": { width: "14em" } };
 
 /** サマリ等のステータスチップ。 */
 function chipCss(status: DiffStatus): SystemStyleObject {
@@ -424,6 +426,15 @@ export function SchemaCompareView({
   // Data sync state.
   const [dataTable, setDataTable] = useState<string>("");
   const [dataLimit, setDataLimit] = useState(1000);
+  // 全行をキーセットページングで比較する (#1539)。既定オン。オフは従来の件数上限つき比較。
+  const [dataAllRows, setDataAllRows] = useState(true);
+  // 打ち切りメッセージは、比較した時点の設定 (全行 / 上限) で選ぶ。比較後に入力欄を触っても変わらない。
+  const [dataComparedWith, setDataComparedWith] = useState<{ allRows: boolean; limit: number }>({
+    allRows: true,
+    limit: 1000,
+  });
+  // 比較から外す列 (カンマ区切り, #1539)。updated_at のように環境ごとに違う列を差分にしない。
+  const [dataIgnore, setDataIgnore] = useState("");
   const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
   // `dataDiff` をバックエンドが保持している ID (#1259)。SQL 生成にはこの ID だけを送る。
   const [dataDiffId, setDataDiffId] = useState<string | null>(null);
@@ -661,10 +672,16 @@ export function SchemaCompareView({
         targetDatabase: target.database,
         table: dataTable,
         limit: dataLimit,
+        allRows: dataAllRows,
+        ignoreColumns: dataIgnore
+          .split(",")
+          .map((c) => c.trim())
+          .filter((c) => c !== ""),
       });
       // 直前の比較結果はバックエンドの保持を解放してから差し替える。
       releaseHeldDiff();
       heldDiffIdRef.current = result.diff_id;
+      setDataComparedWith({ allRows: dataAllRows, limit: dataLimit });
       setDataDiff(result.diff);
       setDataDiffId(result.diff_id);
     } catch (e) {
@@ -675,7 +692,7 @@ export function SchemaCompareView({
     } finally {
       setDataComparing(false);
     }
-  }, [source, target, dataTable, dataLimit, releaseHeldDiff]);
+  }, [source, target, dataTable, dataLimit, dataAllRows, dataIgnore, releaseHeldDiff]);
 
   const generateDataPlan = useCallback(async () => {
     if (!dataDiffId) return;
@@ -999,9 +1016,28 @@ export function SchemaCompareView({
                         </option>
                       ))}
                     </Select>
-                    <chakra.label css={limitCss}>
-                      {t("schemaCompareDataLimit")}
-                      <DraftNumberInput min={1} max={5000} value={dataLimit} onCommit={setDataLimit} />
+                    <chakra.label css={destructiveCss}>
+                      <Checkbox
+                        checked={dataAllRows}
+                        onChange={(e) => setDataAllRows(e.target.checked)}
+                        disabled={dataComparing}
+                      />
+                      {t("schemaCompareDataAllRows")}
+                    </chakra.label>
+                    {!dataAllRows && (
+                      <chakra.label css={limitCss}>
+                        {t("schemaCompareDataLimit")}
+                        <DraftNumberInput min={1} max={5000} value={dataLimit} onCommit={setDataLimit} />
+                      </chakra.label>
+                    )}
+                    <chakra.label css={ignoreCss}>
+                      {t("schemaCompareDataIgnore")}
+                      <Input
+                        value={dataIgnore}
+                        onChange={(e) => setDataIgnore(e.target.value)}
+                        placeholder={t("schemaCompareDataIgnorePlaceholder")}
+                        disabled={dataComparing}
+                      />
                     </chakra.label>
                     <Button onClick={compareData} disabled={!dataTable || dataComparing}>
                       {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
@@ -1026,7 +1062,9 @@ export function SchemaCompareView({
                       </Box>
                       {dataDiff.truncated && (
                         <chakra.p css={backupCss}>
-                          {t("schemaCompareDataTruncated", { limit: dataLimit })}
+                          {dataComparedWith.allRows
+                            ? t("schemaCompareDataTruncatedAll")
+                            : t("schemaCompareDataTruncated", { limit: dataComparedWith.limit })}
                         </chakra.p>
                       )}
                       <Box css={syncControlsCss}>

@@ -254,6 +254,39 @@ fn build_fixtures() -> serde_json::Value {
         }],
         notes: vec!["approx_distinct_no_stats".into()],
     };
+    // 全列の概要 (#1539)。`distinct_count` の Some / None と lossless 文字列の両方を出す。
+    let table_profile_overview = t::TableProfileOverview {
+        table: "orders".into(),
+        total_count: Value::UInt(100),
+        columns: vec![
+            t::ColumnOverview {
+                column: "id".into(),
+                data_type: "bigint".into(),
+                non_null_count: Value::UInt(100),
+                null_count: Value::UInt(0),
+                distinct_count: Some(Value::String("9007199254740993".into())),
+                min_value: Value::Int(1),
+                max_value: Value::String("9007199254740993".into()),
+                notes: vec![],
+            },
+            t::ColumnOverview {
+                column: "payload".into(),
+                data_type: "longblob".into(),
+                non_null_count: Value::UInt(40),
+                null_count: Value::UInt(60),
+                distinct_count: None,
+                min_value: Value::Null,
+                max_value: Value::Null,
+                notes: vec!["overview_skipped_type".into()],
+            },
+        ],
+        scans: 1,
+    };
+    let schema_cache_time = t::SchemaCacheTime {
+        database: "appdb".into(),
+        fetched_at_ms: 1_760_000_000_000,
+    };
+    let sandbox_reset_result = t::SandboxResetResult { restored_rows: 3 };
     let server_metrics = ServerMetrics {
         connections: Some(42),
         active: Some(3),
@@ -818,6 +851,18 @@ fn build_fixtures() -> serde_json::Value {
         mime: Some("image/png".into()),
         ext: Some("png".into()),
         image: true,
+    };
+
+    let blob_folder_save_result = t::BlobFolderSaveResult {
+        saved: 3,
+        total_bytes: 4096,
+        skipped_null: 1,
+        skipped_too_large: 2,
+        failed: 1,
+        errors: vec![t::BlobFolderIssue {
+            row: 4,
+            error: "expected exactly one row for the key, got 0".into(),
+        }],
     };
 
     // #1256: エディタのバッチ実行 (`run_sql_batch`) の Channel メッセージ。
@@ -1668,6 +1713,9 @@ fn build_fixtures() -> serde_json::Value {
         "liveQuery": live_query,
         "statementDeltaRow": statement_delta_row,
         "columnProfile": column_profile,
+        "tableProfileOverview": table_profile_overview,
+        "schemaCacheTime": schema_cache_time,
+        "sandboxResetResult": sandbox_reset_result,
         "healthFinding": health_finding,
         "skippedRule": skipped_rule,
         "schemaHealthReport": schema_health_report,
@@ -1724,6 +1772,7 @@ fn build_fixtures() -> serde_json::Value {
         "importProgressEvent": import_progress_event,
         "importDoneEvent": import_done_event,
         "cellBlobProbe": cell_blob_probe,
+        "blobFolderSaveResult": blob_folder_save_result,
         "transferPreview": transfer_preview,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,

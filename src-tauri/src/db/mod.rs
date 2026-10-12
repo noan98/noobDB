@@ -33,6 +33,7 @@ pub mod sandbox;
 pub mod savepoint;
 /// 一括取得したスキーマ情報の画面向け結合 (テーブル統計・逆方向 FK、#1255)。
 pub mod schema_insight;
+pub mod schema_scope;
 /// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
 pub mod script;
 pub mod script_analysis;
@@ -1471,6 +1472,18 @@ impl Connection {
         top_n: u32,
     ) -> Result<profile::ColumnProfile> {
         profile::run_column_profile(self, db, table, column, approximate, top_n).await
+    }
+
+    /// 表の全列の概要 (件数 / NULL 数 / DISTINCT / MIN・MAX) を、列数ぶんの集計式を
+    /// 並べた少数の SELECT (通常 1 本) でまとめて取る (#1539)。上位値・ヒストグラムは
+    /// 含まず、列ごとの `column_profile` で遅延取得する。
+    pub async fn table_profile(
+        &self,
+        db: &str,
+        table: &str,
+        include_distinct: bool,
+    ) -> Result<profile::TableProfileOverview> {
+        profile::run_table_overview(self, db, table, include_distinct).await
     }
 
     pub async fn close(&self) {

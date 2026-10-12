@@ -111,6 +111,22 @@ pub fn compute_data_diff(
     source: &[Vec<Value>],
     target: &[Vec<Value>],
 ) -> Vec<RowDiff> {
+    compute_data_diff_ignoring(columns, pk_idx, source, target, &[])
+}
+
+/// [`compute_data_diff`] に「比較から外す列」を足した版 (#1539)。`updated_at` /
+/// `modified_by` / `row_version` のように環境ごとに値が違う列を `ignore_columns` に
+/// 渡すと、`changed_columns` の判定だけでその列を飛ばす: 他の列が全て等しければ行は
+/// `Different` にならず、`Different` の行でも `changed_columns` (= 生成される UPDATE の
+/// SET 句) に載らない。DML の生成ロジックは変えない。`SourceOnly` の INSERT は全列を
+/// 書く (無視列も含める — 新規行には値が要る)。主キー列は元々比較しないので指定しても無害。
+pub fn compute_data_diff_ignoring(
+    columns: &[String],
+    pk_idx: &[usize],
+    source: &[Vec<Value>],
+    target: &[Vec<Value>],
+    ignore_columns: &[String],
+) -> Vec<RowDiff> {
     use std::collections::HashMap;
 
     let key_of = |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
@@ -142,7 +158,7 @@ pub fn compute_data_diff(
         match target_by_sig.get(&s) {
             Some(t_row) => {
                 seen.insert(s);
-                let changed = changed_columns(columns, pk_idx, s_row, t_row);
+                let changed = changed_columns(columns, pk_idx, s_row, t_row, ignore_columns);
                 if !changed.is_empty() {
                     out.push(RowDiff {
                         status: RowStatus::Different,
@@ -188,10 +204,11 @@ fn changed_columns(
     pk_idx: &[usize],
     source: &[Value],
     target: &[Value],
+    ignore_columns: &[String],
 ) -> Vec<String> {
     let mut changed = Vec::new();
     for (i, name) in columns.iter().enumerate() {
-        if pk_idx.contains(&i) {
+        if pk_idx.contains(&i) || ignore_columns.contains(name) {
             continue;
         }
         let eq = match (source.get(i), target.get(i)) {
@@ -414,7 +431,7 @@ fn has_case_insensitive_key_collision(rows: &[RowDiff]) -> bool {
 /// `BYTEA`, `blob`) holds binary data rather than text. Used to restore
 /// `Value::Bytes` for values that came back as `Value::String` after an IPC
 /// round trip (see the `DataDiff::column_types` doc comment).
-fn is_binary_type(type_name: &str) -> bool {
+pub(crate) fn is_binary_type(type_name: &str) -> bool {
     let upper = type_name.to_ascii_uppercase();
     upper.contains("BLOB") || upper.contains("BINARY") || upper.contains("BYTEA")
 }
@@ -764,6 +781,47 @@ mod tests {
             Value::String(name.to_string()),
             Value::Int(score),
         ]
+    }
+
+    // #1539: 無視列だけが違う行は Different にならず、他の列も違う行は無視列を SET に含めない。
+    #[test]
+    fn ignored_columns_do_not_count_as_differences() {
+        let columns = cols();
+        let pk = vec![0usize];
+        let ignore = vec!["score".to_string()];
+        // id=1: score だけ違う → 差分なし。id=2: name と score が違う → name のみ変更扱い。
+        let source = vec![row(1, "a", 10), row(2, "b", 20)];
+        let target = vec![row(1, "a", 99), row(2, "x", 99)];
+        let diffs = compute_data_diff_ignoring(&columns, &pk, &source, &target, &ignore);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].key, vec![Value::Int(2)]);
+        assert_eq!(diffs[0].changed_columns, vec!["name".to_string()]);
+        // 無視列を空にすれば従来どおり両方が差分になる。
+        let all = compute_data_diff_ignoring(&columns, &pk, &source, &target, &[]);
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            all.len(),
+            compute_data_diff(&columns, &pk, &source, &target).len()
+        );
+        // 生成される UPDATE の SET 句にも無視列は出ない。
+        let diff = DataDiff {
+            target_driver: DriverKind::Mysql,
+            table: "t".into(),
+            columns: columns.clone(),
+            primary_key: vec!["id".into()],
+            column_types: vec!["int".into(), "varchar".into(), "int".into()],
+            rows: diffs,
+            truncated: false,
+            source_count: 2,
+            target_count: 2,
+            generated_columns: vec![],
+        };
+        let plan = generate_data_sync_sql(&diff, false);
+        assert_eq!(plan.statements.len(), 1);
+        assert_eq!(
+            plan.statements[0].sql,
+            "UPDATE `t` SET `name` = 'b' WHERE `id` = 2"
+        );
     }
 
     #[test]
