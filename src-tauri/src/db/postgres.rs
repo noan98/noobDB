@@ -831,11 +831,16 @@ impl PostgresConn {
     }
 
     /// `pg_terminate_backend(pid)` を `unnest` で 1 文にまとめて実行する (#1259)。
-    /// MySQL `KILL` と同じく接続全体を終了する。pid が既に消えていても関数は false を
+    /// MySQL `KILL` と同じく接続全体を終了する。`statement_only` のときは
+    /// `pg_cancel_backend` で実行中の文だけをキャンセルし、接続は残す。pid が既に消えていても関数は false を
     /// 返すだけなので成功扱い (プロセス自然終了との競合は正常)。アプリ自身の接続
     /// (`pg_backend_pid()`) は最後に回す。int4 に収まらない pid は実行前に失敗として数える。
     /// 文が失敗した場合 (権限不足など) は対象全件を失敗として数え、最初のエラーを返す。
-    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
+    pub async fn kill_processes(
+        &self,
+        ids: &[i64],
+        statement_only: bool,
+    ) -> Result<KillProcessesResult> {
         let mut out = KillProcessesResult::default();
         let mut pids: Vec<i32> = Vec::with_capacity(ids.len());
         for id in ids {
@@ -848,16 +853,21 @@ impl PostgresConn {
             return Ok(out);
         }
         let count = pids.len() as u64;
-        match sqlx::query(
+        let sql = if statement_only {
+            // 自分自身の接続 (pg_backend_pid) は対象から外す。スキップは成功・失敗どちらにも数えない。
+            "SELECT pg_cancel_backend(s.p) FROM ( \
+               SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
+               WHERE p <> pg_backend_pid() ORDER BY ord \
+             ) s"
+        } else {
             "SELECT pg_terminate_backend(s.p) FROM ( \
                SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
                ORDER BY (p = pg_backend_pid()), ord \
-             ) s",
-        )
-        .bind(&pids)
-        .execute(&self.pool)
-        .await
-        {
+             ) s"
+        };
+        match sqlx::query(sql).bind(&pids).execute(&self.pool).await {
+            // 文のみ停止は自分自身を除いた行数だけ成功として数える (SELECT の rows_affected は返却行数)。
+            Ok(done) if statement_only => out.killed += done.rows_affected(),
             Ok(_) => out.killed += count,
             Err(e) => out.record_failure(count, AppError::from(e).to_string()),
         }

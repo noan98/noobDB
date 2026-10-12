@@ -778,7 +778,11 @@ impl SqliteConn {
 
     /// See [`SqliteConn::list_processes`] — nothing to kill on a file-backed
     /// database.
-    pub async fn kill_processes(&self, _ids: &[i64]) -> Result<KillProcessesResult> {
+    pub async fn kill_processes(
+        &self,
+        _ids: &[i64],
+        _statement_only: bool,
+    ) -> Result<KillProcessesResult> {
         Err(AppError::InvalidInput(
             "killing processes is not supported for SQLite (file-backed, no server processes)"
                 .into(),

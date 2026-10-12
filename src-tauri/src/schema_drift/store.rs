@@ -75,6 +75,18 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // #1537: DDL 実行をきっかけに取得した世代に、そのときの SQL を紐づける。既存の DB には
+    // 列を足すだけ (SQLite には `ADD COLUMN IF NOT EXISTS` が無いので有無を調べてから足す)。
+    let has_trigger_sql: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('generation') WHERE name = 'trigger_sql'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has_trigger_sql == 0 {
+        sqlx::query("ALTER TABLE generation ADD COLUMN trigger_sql TEXT")
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 
@@ -112,7 +124,13 @@ pub struct StoredGeneration {
 
 // ── 公開 API (実ストア) ──
 
-pub async fn record(profile_id: &str, payload: &SnapshotPayload) -> Result<RecordOutcome> {
+/// 世代を記録する。`trigger_sql` は DDL 実行をきっかけにした取得のとき、そのときの SQL
+/// (#1537)。接続時・手動の取得では `None`。
+pub async fn record(
+    profile_id: &str,
+    payload: &SnapshotPayload,
+    trigger_sql: Option<&str>,
+) -> Result<RecordOutcome> {
     let captured_at = chrono::Utc::now().to_rfc3339();
     record_in(
         pool().await?,
@@ -120,6 +138,7 @@ pub async fn record(profile_id: &str, payload: &SnapshotPayload) -> Result<Recor
         payload,
         &captured_at,
         MAX_GENERATIONS,
+        trigger_sql,
     )
     .await
 }
@@ -155,12 +174,13 @@ fn meta_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<GenerationMeta> {
         fingerprint: r.try_get("fingerprint")?,
         table_count: r.try_get::<i64, _>("table_count")?.max(0) as usize,
         omitted: r.try_get("omitted")?,
+        trigger_sql: r.try_get("trigger_sql")?,
     })
 }
 
 async fn list_in(pool: &SqlitePool, profile_id: &str) -> Result<Vec<GenerationMeta>> {
     let rows = sqlx::query(
-        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted
+        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted, trigger_sql
            FROM generation WHERE profile_id = ? ORDER BY id DESC",
     )
     .bind(profile_id)
@@ -171,7 +191,7 @@ async fn list_in(pool: &SqlitePool, profile_id: &str) -> Result<Vec<GenerationMe
 
 async fn load_in(pool: &SqlitePool, profile_id: &str, id: i64) -> Result<Option<StoredGeneration>> {
     let row = sqlx::query(
-        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted, payload
+        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted, trigger_sql, payload
            FROM generation WHERE profile_id = ? AND id = ?",
     )
     .bind(profile_id)
@@ -195,6 +215,8 @@ struct NewRow<'a> {
     table_count: usize,
     /// `None` のときは省略世代 (`omitted = 1`)。
     payload_json: Option<&'a str>,
+    /// DDL 実行をきっかけにした取得のときの SQL (#1537)。
+    trigger_sql: Option<&'a str>,
 }
 
 async fn insert_in(
@@ -204,8 +226,8 @@ async fn insert_in(
 ) -> Result<i64> {
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO generation
-            (profile_id, captured_at, driver, \"database\", fingerprint, table_count, omitted, payload)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (profile_id, captured_at, driver, \"database\", fingerprint, table_count, omitted, payload, trigger_sql)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id",
     )
     .bind(profile_id)
@@ -216,6 +238,7 @@ async fn insert_in(
     .bind(row.table_count as i64)
     .bind(row.payload_json.is_none())
     .bind(row.payload_json)
+    .bind(row.trigger_sql)
     .fetch_one(&mut *conn)
     .await?;
     Ok(id)
@@ -249,6 +272,7 @@ async fn record_in(
     payload: &SnapshotPayload,
     captured_at: &str,
     max_generations: usize,
+    trigger_sql: Option<&str>,
 ) -> Result<RecordOutcome> {
     let _guard = WRITE_LOCK.lock().await;
     let json = serialize_payload(payload)?;
@@ -285,6 +309,7 @@ async fn record_in(
             fingerprint: &fingerprint,
             table_count: payload.tables.len(),
             payload_json: (!omitted).then_some(json.as_str()),
+            trigger_sql,
         },
     )
     .await?;
@@ -336,6 +361,7 @@ async fn import_legacy_in(
                 fingerprint: &fingerprint,
                 table_count: g.table_count,
                 payload_json: json.as_deref(),
+                trigger_sql: None,
             },
         )
         .await?;
@@ -393,7 +419,7 @@ mod tests {
         p: &SnapshotPayload,
         max: usize,
     ) -> RecordOutcome {
-        record_in(pool, profile, p, "2026-01-01T00:00:00Z", max)
+        record_in(pool, profile, p, "2026-01-01T00:00:00Z", max, None)
             .await
             .unwrap()
     }
@@ -457,7 +483,15 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let err = record_in(&pool, "p", &payload(&["a", "b"]), "2026-01-02T00:00:00Z", 1).await;
+        let err = record_in(
+            &pool,
+            "p",
+            &payload(&["a", "b"]),
+            "2026-01-02T00:00:00Z",
+            1,
+            None,
+        )
+        .await;
         assert!(err.is_err());
         let list = list_in(&pool, "p").await.unwrap();
         assert_eq!(list.len(), 1, "追加だけが残って上限を超えてはいけない");
@@ -466,6 +500,71 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(only.payload.unwrap().tables[0].columns.len(), 1);
+    }
+
+    /// #1537: DDL をきっかけにした世代は実行した SQL を持ち、それ以外は `None`。
+    #[tokio::test]
+    async fn trigger_sql_is_stored_with_the_generation() {
+        let pool = temp_pool().await;
+        rec(&pool, "p", &payload(&["a"]), 20).await;
+        record_in(
+            &pool,
+            "p",
+            &payload(&["a", "b"]),
+            "2026-01-02T00:00:00Z",
+            20,
+            Some("ALTER TABLE t ADD COLUMN b INT"),
+        )
+        .await
+        .unwrap();
+        let list = list_in(&pool, "p").await.unwrap();
+        assert_eq!(
+            list[0].trigger_sql.as_deref(),
+            Some("ALTER TABLE t ADD COLUMN b INT")
+        );
+        assert_eq!(list[1].trigger_sql, None);
+        let loaded = load_in(&pool, "p", list[0].id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loaded.meta.trigger_sql.as_deref(),
+            Some("ALTER TABLE t ADD COLUMN b INT")
+        );
+    }
+
+    /// #1537: `trigger_sql` 列の無い旧 DB を開くと列が足され、既存の世代はそのまま読める。
+    #[tokio::test]
+    async fn init_schema_adds_trigger_sql_column_to_an_old_database() {
+        let pool = SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(":memory:"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE generation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id TEXT NOT NULL,
+                captured_at TEXT NOT NULL, driver TEXT NOT NULL, \"database\" TEXT NOT NULL,
+                fingerprint TEXT NOT NULL, table_count INTEGER NOT NULL,
+                omitted INTEGER NOT NULL, payload TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO generation (profile_id, captured_at, driver, \"database\", fingerprint, table_count, omitted)
+             VALUES ('p', '2026-01-01T00:00:00Z', 'sqlite', 'main', 'fp', 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        init_schema(&pool).await.unwrap();
+        // 2 回目の初期化でも壊れない (冪等)。
+        init_schema(&pool).await.unwrap();
+        let list = list_in(&pool, "p").await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].trigger_sql, None);
     }
 
     #[tokio::test]

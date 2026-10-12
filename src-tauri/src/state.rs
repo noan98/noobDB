@@ -234,6 +234,12 @@ impl Session {
         }
     }
 
+    /// SSH トンネル越しのセッションならトンネルが生きているか (#1537)。トンネルを
+    /// 持たない (直結・ファイル・ローカル) セッションは `None`。ネットワークには触れない。
+    pub fn tunnel_alive(&self) -> Option<bool> {
+        self._tunnel.as_ref().map(SshTunnel::is_alive)
+    }
+
     pub fn set_emergency_write(&self, enabled: bool) {
         self.emergency_write.store(enabled, Ordering::SeqCst);
     }

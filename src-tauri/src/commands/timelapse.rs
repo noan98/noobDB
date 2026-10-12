@@ -148,13 +148,22 @@ pub async fn timelapse_capture(
     state: State<'_, AppState>,
 ) -> Result<Vec<CaptureOutcome>> {
     let session = session_of(&state, &session_id).await?;
+    capture_all(&session, max_generations).await
+}
+
+/// `timelapse_capture` の本体。スケジューラのタスク (`TaskAction::TimelapseCapture`、
+/// #1537) からも同じ実装を呼ぶ。プロファイル無しのセッションは空を返す。
+pub(crate) async fn capture_all(
+    session: &Session,
+    max_generations: Option<u32>,
+) -> Result<Vec<CaptureOutcome>> {
     let Some(profile_id) = session.profile_id.clone() else {
         return Ok(Vec::new());
     };
     let max_generations = clamp_max_generations(max_generations);
     let mut out = Vec::new();
     for target in store::active_watches(&profile_id).await? {
-        let outcome = match fetch_snapshot(&session, &target.database, &target.table).await {
+        let outcome = match fetch_snapshot(session, &target.database, &target.table).await {
             Ok(snapshot) => {
                 match store::record_generation(target.id, &snapshot, max_generations).await {
                     Ok(added) => (added, snapshot.truncated, None),

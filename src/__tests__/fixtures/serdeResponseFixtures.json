@@ -1266,6 +1266,7 @@
       "latency_ms": 12,
       "session_id": "sess0001",
       "status": "up",
+      "tunnel_alive": true,
       "version": "8.0.36"
     },
     {
@@ -1273,6 +1274,7 @@
       "latency_ms": 12,
       "session_id": "sess0001",
       "status": "down",
+      "tunnel_alive": true,
       "version": "8.0.36"
     },
     {
@@ -1280,6 +1282,7 @@
       "latency_ms": 12,
       "session_id": "sess0001",
       "status": "timeout",
+      "tunnel_alive": true,
       "version": "8.0.36"
     }
   ],
@@ -3494,6 +3497,7 @@
   ],
   "schemaDriftCapture": {
     "added": true,
+    "database": "public",
     "generations": [
       {
         "capturedAt": "2026-01-01T00:00:00Z",
@@ -3502,7 +3506,8 @@
         "fingerprint": "deadbeef",
         "id": "gen00001",
         "omitted": false,
-        "tableCount": 12
+        "tableCount": 12,
+        "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
       }
     ],
     "summary": {
@@ -3601,7 +3606,8 @@
     "fingerprint": "deadbeef",
     "id": "gen00001",
     "omitted": false,
-    "tableCount": 12
+    "tableCount": 12,
+    "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
   },
   "schemaDriftSummary": {
     "tables": [
@@ -4161,6 +4167,151 @@
       }
     ]
   },
+  "scriptAnalyzedEvent": {
+    "analysis": {
+      "blockedTotal": 6,
+      "categories": {
+        "ddl": 3,
+        "read": 1,
+        "txControl": 2,
+        "write": 3
+      },
+      "dangerCounts": {
+        "deleteNoWhere": 1,
+        "drop": 1,
+        "truncate": 1,
+        "updateNoWhere": 1
+      },
+      "dangerous": [
+        {
+          "blocked": true,
+          "category": "write",
+          "danger": "deleteNoWhere",
+          "index": 5,
+          "line": 5,
+          "sql": "DELETE FROM t"
+        },
+        {
+          "blocked": true,
+          "category": "write",
+          "danger": "updateNoWhere",
+          "index": 6,
+          "line": 6,
+          "sql": "UPDATE t SET id = 2"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "danger": "truncate",
+          "index": 7,
+          "line": 7,
+          "sql": "TRUNCATE TABLE t"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "danger": "drop",
+          "index": 8,
+          "line": 8,
+          "sql": "DROP TABLE t"
+        }
+      ],
+      "dangerousTotal": 4,
+      "head": [
+        {
+          "blocked": false,
+          "category": "txControl",
+          "index": 1,
+          "line": 1,
+          "sql": "BEGIN"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "index": 2,
+          "line": 2,
+          "sql": "CREATE TABLE t (id INT)"
+        },
+        {
+          "blocked": true,
+          "category": "write",
+          "index": 3,
+          "line": 3,
+          "sql": "INSERT INTO t VALUES (1)"
+        },
+        {
+          "blocked": false,
+          "category": "read",
+          "index": 4,
+          "line": 4,
+          "sql": "SELECT * FROM t"
+        },
+        {
+          "blocked": true,
+          "category": "write",
+          "danger": "deleteNoWhere",
+          "index": 5,
+          "line": 5,
+          "sql": "DELETE FROM t"
+        },
+        {
+          "blocked": true,
+          "category": "write",
+          "danger": "updateNoWhere",
+          "index": 6,
+          "line": 6,
+          "sql": "UPDATE t SET id = 2"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "danger": "truncate",
+          "index": 7,
+          "line": 7,
+          "sql": "TRUNCATE TABLE t"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "danger": "drop",
+          "index": 8,
+          "line": 8,
+          "sql": "DROP TABLE t"
+        },
+        {
+          "blocked": false,
+          "category": "txControl",
+          "index": 9,
+          "line": 9,
+          "sql": "ROLLBACK"
+        }
+      ],
+      "headLimit": 300,
+      "listLimit": 200,
+      "totalStatements": 9,
+      "txControlTotal": 2,
+      "txControls": [
+        {
+          "index": 1,
+          "kind": "begin",
+          "line": 1
+        },
+        {
+          "index": 9,
+          "kind": "rollback",
+          "line": 9
+        }
+      ]
+    },
+    "elapsedMs": 12,
+    "encoding": "shift_jis",
+    "fileStamp": {
+      "mtimeMs": 1700000000000,
+      "size": 2048
+    },
+    "streamId": "strm0007",
+    "totalBytes": 2048
+  },
   "scriptDoneEvent": {
     "elapsedMs": 900,
     "executed": 20,
@@ -4174,7 +4325,9 @@
       }
     ],
     "rowsAffected": 57,
+    "skippedBeforeStart": 10,
     "skippedControl": 2,
+    "skippedExcluded": 3,
     "streamId": "strm0007",
     "succeeded": 19
   },
@@ -4187,8 +4340,10 @@
       "line": 12,
       "sql": "INSERT INTO t VALUES (1)"
     },
+    "inTransaction": true,
     "rolledBack": true,
-    "streamId": "strm0007"
+    "streamId": "strm0007",
+    "txBeginStatement": 2
   },
   "scriptProgressEvent": {
     "bytesRead": 4096,
@@ -4276,6 +4431,10 @@
       "tags": []
     }
   ],
+  "sqlFileContent": {
+    "content": "SELECT 1;",
+    "encoding": "utf-8-bom"
+  },
   "statementDeltaRow": {
     "calls": 1200,
     "database": "appdb",
@@ -4443,6 +4602,10 @@
         "sql_batch_size": 100,
         "sql_table": "users"
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4479,6 +4642,10 @@
         },
         "output_path": "/tmp/dump.sql"
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4500,7 +4667,12 @@
           "asrt0001"
         ],
         "database": null,
-        "kind": "run_assertions"
+        "kind": "run_assertions",
+        "notify_only_on_increase": true
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
@@ -4515,6 +4687,55 @@
         "minutes": 5
       },
       "updated_at": "2026-01-02T00:00:00Z"
+    },
+    {
+      "action": {
+        "kind": "timelapse_capture",
+        "max_generations": 30
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
+      "created_at": "2026-01-01T00:00:00Z",
+      "enabled": true,
+      "id": "task0001",
+      "last_run_at": "2026-01-02T00:00:00Z",
+      "last_status": "ok",
+      "name": "nightly",
+      "next_run_at": "2026-01-03T00:00:00Z",
+      "profile_id": "abc12345",
+      "schedule": {
+        "hour": 2,
+        "kind": "daily",
+        "minute": 0
+      },
+      "updated_at": "2026-01-02T00:00:00Z"
+    },
+    {
+      "action": {
+        "kind": "refresh_plan_watch",
+        "snippet_ids": [
+          "snip0001"
+        ]
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
+      "created_at": "2026-01-01T00:00:00Z",
+      "enabled": true,
+      "id": "task0001",
+      "last_run_at": "2026-01-02T00:00:00Z",
+      "last_status": "ok",
+      "name": "nightly",
+      "next_run_at": "2026-01-03T00:00:00Z",
+      "profile_id": "abc12345",
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60
+      },
+      "updated_at": "2026-01-02T00:00:00Z"
     }
   ],
   "taskExportFormatVariants": [
@@ -4527,6 +4748,10 @@
         "sql": "SELECT 1",
         "sql_batch_size": null,
         "sql_table": null
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
@@ -4552,6 +4777,10 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4575,6 +4804,10 @@
         "sql": "SELECT 1",
         "sql_batch_size": null,
         "sql_table": null
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
@@ -4600,6 +4833,10 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4623,6 +4860,10 @@
         "sql": "SELECT 1",
         "sql_batch_size": null,
         "sql_table": null
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
@@ -4648,6 +4889,10 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4664,6 +4909,7 @@
     }
   ],
   "taskRun": {
+    "attempts": 2,
     "bytes": 4096,
     "catch_up": true,
     "elapsed_ms": 3000,

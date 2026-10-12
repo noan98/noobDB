@@ -211,6 +211,8 @@ export const healthProbeItem = z.object({
   latency_ms: z.number().nullable(),
   version: z.string().nullable(),
   connections: z.number().nullable(),
+  // SSH トンネルの生存 (#1537)。トンネル越しでないセッションは null。
+  tunnel_alive: z.boolean().nullable(),
 });
 export const healthProbeItemArray = z.array(healthProbeItem);
 
@@ -767,6 +769,7 @@ export const connectPhaseEvent = z.object({
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
+export const nullableBooleanResponse = z.boolean().nullable();
 export const stringResponse = z.string();
 export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
@@ -1398,8 +1401,61 @@ export const scriptDoneEvent = z.object({
   failedCount: z.number(),
   failures: z.array(scriptFailure),
   skippedControl: z.number(),
+  skippedExcluded: z.number(),
+  skippedBeforeStart: z.number(),
   rowsAffected: z.number(),
   elapsedMs: z.number(),
+});
+
+/** SQL ファイルの文字コード識別子 (#1535)。Rust `TextEncoding` の serde 名と一致させる。 */
+export const textEncoding = z.enum(["utf-8", "utf-8-bom", "utf-16le", "utf-16be", "shift_jis", "euc-jp"]);
+
+/** `read_sql_file` の戻り値 (#1535)。 */
+export const sqlFileContent = z.object({
+  content: z.string(),
+  encoding: textEncoding,
+});
+
+const scriptDangerKind = z.enum(["deleteNoWhere", "updateNoWhere", "drop", "truncate"]);
+
+/** 事前確認の一覧の 1 文 (#1535)。`index` は実行時の通し番号と同じ。 */
+const analyzedStatement = z.object({
+  index: z.number(),
+  line: z.number(),
+  sql: z.string(),
+  category: z.enum(["read", "write", "ddl", "txControl"]),
+  danger: scriptDangerKind.optional(),
+  blocked: z.boolean(),
+});
+
+/** 事前確認 (`analyze_sql_script`) の集計 (#1535)。 */
+export const scriptAnalysis = z.object({
+  totalStatements: z.number(),
+  categories: z.object({ read: z.number(), write: z.number(), ddl: z.number(), txControl: z.number() }),
+  dangerCounts: z.object({
+    deleteNoWhere: z.number(),
+    updateNoWhere: z.number(),
+    drop: z.number(),
+    truncate: z.number(),
+  }),
+  dangerousTotal: z.number(),
+  blockedTotal: z.number(),
+  txControlTotal: z.number(),
+  head: z.array(analyzedStatement),
+  dangerous: z.array(analyzedStatement),
+  txControls: z.array(z.object({ index: z.number(), line: z.number(), kind: z.enum(["begin", "commit", "rollback"]) })),
+  headLimit: z.number(),
+  listLimit: z.number(),
+});
+
+/** `sql-script:analyzed` (#1535)。 */
+export const scriptAnalyzedEvent = z.object({
+  streamId: z.string(),
+  encoding: textEncoding,
+  totalBytes: z.number(),
+  fileStamp: z.object({ size: z.number(), mtimeMs: z.number() }),
+  elapsedMs: z.number(),
+  analysis: scriptAnalysis,
 });
 
 export const scriptErrorEvent = z.object({
@@ -1408,6 +1464,8 @@ export const scriptErrorEvent = z.object({
   failure: scriptFailure.nullable(),
   executed: z.number(),
   rolledBack: z.boolean(),
+  inTransaction: z.boolean(),
+  txBeginStatement: z.number().nullable(),
 });
 
 // ストリーミングダンプのイベント (#686)。
@@ -1481,8 +1539,23 @@ const taskAction = z.discriminatedUnion("kind", [
     kind: z.literal("run_assertions"),
     database: z.string().nullable().optional(),
     assertion_ids: z.array(z.string()),
+    notify_only_on_increase: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("timelapse_capture"),
+    max_generations: z.number().nullable().optional(),
+  }),
+  z.object({
+    kind: z.literal("refresh_plan_watch"),
+    snippet_ids: z.array(z.string()),
   }),
 ]);
+
+/** 接続失敗時の自動リトライ設定 (#1537)。 */
+const connectRetry = z.object({
+  max_retries: z.number(),
+  interval_secs: z.number(),
+});
 
 const taskSchedule = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("interval"), minutes: z.number() }),
@@ -1501,6 +1574,7 @@ export const taskDefinition = z.object({
   next_run_at: z.string().nullable(),
   last_run_at: z.string().nullable(),
   last_status: z.string().nullable(),
+  connect_retry: connectRetry,
 });
 
 export const taskRun = z.object({
@@ -1515,6 +1589,8 @@ export const taskRun = z.object({
   bytes: z.number().nullable(),
   elapsed_ms: z.number(),
   catch_up: z.boolean(),
+  // 接続を試みた回数 (#1537)。再試行なしの通常実行は 1。
+  attempts: z.number(),
 });
 
 export const assertionRunRecord = z.object({
@@ -1678,6 +1754,8 @@ export const schemaDriftGeneration = z.object({
   fingerprint: z.string(),
   tableCount: z.number(),
   omitted: z.boolean(),
+  // DDL の成功をきっかけに自動取得した世代のときの実行 SQL (#1537)。
+  triggerSql: z.string().nullable().optional(),
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 
@@ -1721,6 +1799,7 @@ export const schemaDriftSummaryOrNull = schemaDriftSummary.nullable();
 
 export const schemaDriftCapture = z.object({
   added: z.boolean(),
+  database: z.string(),
   generations: z.array(schemaDriftGeneration),
   summary: schemaDriftSummary.nullable(),
 });

@@ -1,7 +1,7 @@
 // `src-tauri/src/commands/script.rs` の IPC ラッパー。`../tauri.ts` の `api` に束ねられる。
 import { invoke } from "../invoke";
 import { batchStreamChannels } from "../streamChannels";
-import type { ScriptOptions } from "../tauri";
+import type { ScriptOptions, TextEncodingId } from "../tauri";
 
 export const scriptCommands = {
 
@@ -24,6 +24,26 @@ export const scriptCommands = {
       database: params.database ?? null,
       path: params.path,
       options: params.options,
+    }),
+
+  /**
+   * `.sql` スクリプトを実行せずに走査する事前確認 / ドライラン (#1535)。ファイルを
+   * ストリーミングで読み、文数・種別・危険文・トランザクション制御文の位置と先頭の文の
+   * 一覧だけを保持する (GB 級でも全文をメモリに載せない)。進捗は `sql-script:progress`、
+   * 完了は `sql-script:analyzed` ({@link listenScriptStream} の `onAnalyzed`)、`cancelStream`
+   * で中断できる。`encoding` が `null` なら自動判定。
+   */
+  analyzeSqlScript: (params: {
+    sessionId: string;
+    streamId: string;
+    path: string;
+    encoding?: TextEncodingId | null;
+  }) =>
+    invoke<void>("analyze_sql_script", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      path: params.path,
+      encoding: params.encoding ?? null,
     }),
 
   /**

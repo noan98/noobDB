@@ -927,6 +927,8 @@ export interface HealthProbeItem {
   version: string | null;
   /** 現在の接続数。SQLite / 取得不可は null。 */
   connections: number | null;
+  /** SSH トンネルの生存 (#1537)。トンネル越しでなければ null、false なら SSH セッションが閉じている。 */
+  tunnel_alive: boolean | null;
 }
 
 export interface ServerMetrics {
@@ -1121,6 +1123,8 @@ export interface SchemaDriftGeneration {
   tableCount: number;
   /** true のとき、サイズ暴走ガードで中身を保存していない (差分表示不可)。 */
   omitted: boolean;
+  /** DDL の成功をきっかけに自動取得した世代のとき、そのとき実行した SQL (#1537)。 */
+  triggerSql?: string | null;
 }
 
 /** 1 テーブルの変化サマリ。`tableStatus` はテーブル自体の増減、それ以外は
@@ -1177,6 +1181,8 @@ export interface SchemaDriftSummary {
 export interface SchemaDriftCapture {
   /** 新しい世代が追加されたか (直前世代と同一内容なら false)。 */
   added: boolean;
+  /** 実際に取得した対象。PostgreSQL ではプロファイルの DB 名が既定スキーマに解決される。 */
+  database: string;
   /** 追加後の世代一覧 (新しい順)。`added` が false のときは空。 */
   generations: SchemaDriftGeneration[];
   /** 直前世代からの変化サマリ。初回取得・比較不能のときは null。 */
@@ -1532,7 +1538,29 @@ export type TaskAction =
       database?: string | null;
       /** 実行するアサーション ID。空ならプロファイルのスコープに合うものすべて。 */
       assertion_ids: string[];
+      /** true: 失敗件数が前回の実行より増えたときだけ失敗扱い (通知) にする (#1537)。 */
+      notify_only_on_increase?: boolean;
+    }
+  | {
+      /** ウォッチ中のテーブルのスナップショットを無人で取得する (#1537)。 */
+      kind: "timelapse_capture";
+      /** 1 ウォッチあたりの保持世代数の上限。未指定ならタイムラプスの既定値。 */
+      max_generations?: number | null;
+    }
+  | {
+      /** ウォッチ中の EXPLAIN を再取得し、警告相当の変化だけを失敗扱い (通知) にする (#1537)。 */
+      kind: "refresh_plan_watch";
+      /** 対象スニペット ID。空ならこのプロファイルでウォッチ中のものすべて。 */
+      snippet_ids: string[];
     };
+
+/** 接続失敗時の自動リトライ設定 (#1537)。接続段階の失敗だけを指数バックオフで再試行する。 */
+export interface ConnectRetry {
+  /** 初回失敗後の再試行回数 (0 = しない、上限 10)。 */
+  max_retries: number;
+  /** 最初の待機秒数 (5〜3600)。以降 2 倍ずつ伸びる (上限 15 分)。 */
+  interval_secs: number;
+}
 
 /** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
 export type TaskSchedule =
@@ -1551,6 +1579,7 @@ export interface TaskDefinition {
   next_run_at: string | null;
   last_run_at: string | null;
   last_status: string | null;
+  connect_retry: ConnectRetry;
 }
 
 export interface SaveTaskRequest {
@@ -1560,6 +1589,7 @@ export interface SaveTaskRequest {
   action: TaskAction;
   schedule: TaskSchedule;
   enabled: boolean;
+  connect_retry?: ConnectRetry;
 }
 
 /** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
@@ -1575,6 +1605,8 @@ export interface TaskRun {
   bytes: number | null;
   elapsed_ms: number;
   catch_up: boolean;
+  /** 接続を試みた回数 (#1537)。2 以上なら接続リトライが働いた。 */
+  attempts: number;
 }
 
 /** アサーション実行タスクの 1 アサーション分の合否履歴 (#1170)。 */
@@ -2139,6 +2171,83 @@ export interface ScriptOptions {
   continueOnError: boolean;
   /** 全体を 1 トランザクションで包む (失敗・キャンセルで ROLLBACK)。 */
   wrapInTransaction: boolean;
+  /** ファイルの文字コード (#1535)。`null` は自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。 */
+  encoding: TextEncodingId | null;
+  /**
+   * この通し番号 (1 始まり、トランザクション制御文を含む) より前の文を実行せず読み飛ばす
+   * (#1535)。失敗した文からの再開に使う。0 は先頭から。
+   */
+  startAtStatement: number;
+  /**
+   * 実行せず読み飛ばす文の通し番号 (事前確認の一覧での個別除外、#1535)。BEGIN / COMMIT /
+   * ROLLBACK の番号は指定されても無視される (バックエンドが常に実行する)。
+   */
+  skipStatements: number[];
+  /**
+   * 事前確認をしたときのファイルの大きさ・更新時刻 (`ScriptAnalyzedEvent.fileStamp`)。
+   * 実行時のファイルと違えば、文番号がずれるので実行前にエラーになる (#1535)。
+   */
+  expectedFile?: ScriptFileStamp | null;
+}
+
+/** ファイルの大きさと更新時刻 (ミリ秒)。事前確認の後でファイルが変わっていないかの照合用。 */
+export interface ScriptFileStamp {
+  size: number;
+  mtimeMs: number;
+}
+
+/**
+ * SQL ファイルの文字コード識別子 (#1535)。Rust `TextEncoding` の serde 名と一致する。
+ * `utf-8-bom` / `utf-16*` は保存時に BOM を付ける。
+ */
+export type TextEncodingId = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "shift_jis" | "euc-jp";
+
+/** `read_sql_file` の戻り値: 本文と実際に使った文字コード (保存時に同じ文字コードへ戻す)。 */
+export interface SqlFileContent {
+  content: string;
+  encoding: TextEncodingId;
+}
+
+/** 事前確認で検出する危険な文の種別 (`src/dangerousSql.ts` の `DangerKind` と同じ名前)。 */
+export type ScriptDangerKind = "deleteNoWhere" | "updateNoWhere" | "drop" | "truncate";
+
+/** 事前確認の一覧の 1 文。`index` は実行時の通し番号 (`ScriptFailure.index`) と同じ。 */
+export interface ScriptAnalyzedStatement {
+  index: number;
+  line: number;
+  sql: string;
+  category: "read" | "write" | "ddl" | "txControl";
+  danger?: ScriptDangerKind;
+  /** 読み取り専用セッションで実行時に拒否される文。 */
+  blocked: boolean;
+}
+
+/** 事前確認 (`analyze_sql_script`) の集計。一覧は上限つきで、全文は保持しない。 */
+export interface ScriptAnalysis {
+  totalStatements: number;
+  categories: { read: number; write: number; ddl: number; txControl: number };
+  dangerCounts: { deleteNoWhere: number; updateNoWhere: number; drop: number; truncate: number };
+  dangerousTotal: number;
+  blockedTotal: number;
+  txControlTotal: number;
+  /** 先頭 `headLimit` 文 (個別除外の対象)。 */
+  head: ScriptAnalyzedStatement[];
+  /** 危険文の先頭 `listLimit` 件。 */
+  dangerous: ScriptAnalyzedStatement[];
+  /** トランザクション制御文の位置 (先頭 `listLimit` 件)。 */
+  txControls: { index: number; line: number; kind: "begin" | "commit" | "rollback" }[];
+  headLimit: number;
+  listLimit: number;
+}
+
+export interface ScriptAnalyzedEvent {
+  streamId: string;
+  encoding: TextEncodingId;
+  totalBytes: number;
+  /** 事前確認したときのファイルの大きさ・更新時刻。実行時に `expectedFile` として渡す。 */
+  fileStamp: ScriptFileStamp;
+  elapsedMs: number;
+  analysis: ScriptAnalysis;
 }
 
 /** 失敗した 1 文。`index` はスクリプト内の通し番号、`line` はファイル内の開始行 (1 始まり)。 */
@@ -2166,6 +2275,10 @@ export interface ScriptDoneEvent {
   failures: ScriptFailure[];
   /** wrap-in-transaction で読み飛ばしたスクリプト内の BEGIN/COMMIT 等の数。 */
   skippedControl: number;
+  /** 事前確認で個別除外して読み飛ばした文の数 (#1535)。 */
+  skippedExcluded: number;
+  /** 開始位置より前で読み飛ばした文の数 (#1535)。 */
+  skippedBeforeStart: number;
   rowsAffected: number;
   elapsedMs: number;
 }
@@ -2177,10 +2290,19 @@ export interface ScriptErrorEvent {
   executed: number;
   /** 開いていたトランザクションを ROLLBACK したか。 */
   rolledBack: boolean;
+  /**
+   * 失敗した時点でトランザクションが開いていたか (ROLLBACK の成否に関係なく true)。
+   * 開いていたなら失敗した文だけからの再開は欠けた範囲を残すので出さない。
+   */
+  inTransaction: boolean;
+  /** 開いていたトランザクションを始めた BEGIN 文の通し番号 (全体を包む実行では `null`)。 */
+  txBeginStatement: number | null;
 }
 
 export interface ScriptStreamHandlers {
   onProgress?: (event: ScriptProgressEvent) => void;
+  /** 事前確認 (`analyzeSqlScript`) の完了 (#1535)。 */
+  onAnalyzed?: (event: ScriptAnalyzedEvent) => void;
   onDone?: (event: ScriptDoneEvent) => void;
   onError?: (event: ScriptErrorEvent) => void;
   /** `deliveredRows` は確定済み (キャンセル後も残る) 文の数。 */
@@ -2808,6 +2930,10 @@ export async function listenScriptStream(
     listen<ScriptDoneEvent>(
       "sql-script:done",
       filter(schemas.scriptDoneEvent, "sql-script:done", handlers.onDone),
+    ),
+    listen<ScriptAnalyzedEvent>(
+      "sql-script:analyzed",
+      filter(schemas.scriptAnalyzedEvent, "sql-script:analyzed", handlers.onAnalyzed),
     ),
     listen<ScriptErrorEvent>(
       "sql-script:error",

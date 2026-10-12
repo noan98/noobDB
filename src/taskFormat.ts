@@ -115,6 +115,14 @@ export function summarizeAction(action: TaskAction, t: TaskT): string {
       ? t("taskSummaryAssertionsAll")
       : t("taskSummaryAssertions", { n: action.assertion_ids.length });
   }
+  if (action.kind === "timelapse_capture") {
+    return t("taskSummaryTimelapse");
+  }
+  if (action.kind === "refresh_plan_watch") {
+    return action.snippet_ids.length === 0
+      ? t("taskSummaryPlanWatchAll")
+      : t("taskSummaryPlanWatch", { n: action.snippet_ids.length });
+  }
   return t("taskSummaryDump", { database: action.database || "?" });
 }
 

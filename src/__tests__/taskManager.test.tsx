@@ -31,6 +31,7 @@ const TASK: TaskDefinition = {
   next_run_at: null,
   last_run_at: null,
   last_status: "ok",
+  connect_retry: { max_retries: 0, interval_secs: 30 },
 };
 
 const RUN: TaskRun = {
@@ -45,6 +46,7 @@ const RUN: TaskRun = {
   bytes: 100,
   elapsed_ms: 5000,
   catch_up: false,
+  attempts: 1,
 };
 
 // `vi.mock` のファクトリはファイル先頭へホイストされるため、`TASK`/`RUN` の
@@ -262,5 +264,57 @@ describe("TaskForm 日次スケジュールの保存 (#1533)", () => {
 
     await waitFor(() => expect(saveTask).toHaveBeenCalled());
     expect(saveTask.mock.calls[0][0].schedule).toEqual({ kind: "daily", hour: 1, minute: 30 });
+  });
+});
+
+describe("TaskManager 取得系アクションと接続リトライ (#1537)", () => {
+  it("タイムラプス取得 + 接続リトライを選んで保存すると、出力先なしのアクションと retry 設定が渡る", async () => {
+    listTasks.mockResolvedValue([]);
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockResolvedValue({ ...TASK, id: "new" });
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+
+    await user.type(await screen.findByLabelText(t("taskFormName")), "Nightly timelapse");
+    await user.selectOptions(screen.getByDisplayValue(t("taskFormActionExport")), "timelapse_capture");
+    // 出力先は不要 (ファイルを書かないアクション)。
+    expect(screen.queryByLabelText(t("taskFormOutputPath"))).not.toBeInTheDocument();
+    expect(screen.getByText(t("taskFormTimelapseHint"))).toBeInTheDocument();
+
+    const retries = screen.getByLabelText(t("taskFormConnectRetries"));
+    await user.clear(retries);
+    await user.type(retries, "3");
+    const interval = screen.getByLabelText(t("taskFormConnectRetryInterval"));
+    await user.clear(interval);
+    await user.type(interval, "45");
+
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalledTimes(1));
+    const req = saveTask.mock.calls[0][0];
+    expect(req.action).toEqual({ kind: "timelapse_capture", max_generations: null });
+    expect(req.connect_retry).toEqual({ max_retries: 3, interval_secs: 45 });
+  });
+
+  it("プランウォッチの要約と、接続リトライの試行回数の表示", async () => {
+    listTasks.mockResolvedValue([
+      {
+        ...TASK,
+        id: "task-pw",
+        name: "Plan watch task",
+        action: { kind: "refresh_plan_watch", snippet_ids: [] },
+        connect_retry: { max_retries: 2, interval_secs: 30 },
+      },
+    ]);
+    listTaskRuns.mockResolvedValue([{ ...RUN, task_id: "task-pw", attempts: 3 }]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Plan watch task")).toBeInTheDocument());
+    expect(screen.getByText(t("taskSummaryPlanWatchAll"), { exact: false })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("taskHistory") }));
+    await waitFor(() =>
+      expect(screen.getByText(`(${t("taskRunAttempts", { n: 3 })})`)).toBeInTheDocument(),
+    );
   });
 });

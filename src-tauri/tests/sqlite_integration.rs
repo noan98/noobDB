@@ -1642,7 +1642,7 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
         Err(t::AppError::InvalidInput(_))
     ));
     assert!(matches!(
-        conn.kill_processes(&[1]).await,
+        conn.kill_processes(&[1], false).await,
         Err(t::AppError::InvalidInput(_))
     ));
 
@@ -1652,13 +1652,13 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
     let state = t::AppState::default();
     let sid = state.insert(session).await;
     assert!(matches!(
-        t::kill_processes_via_command(&state, &sid, &[1]).await,
+        t::kill_processes_via_command(&state, &sid, &[1], false).await,
         Err(t::AppError::ReadOnly(_))
     ));
 
     // 空の id 一覧は read_only セッションでもガードが先に拒否する (ガードは 1 回)。
     assert!(matches!(
-        t::kill_processes_via_command(&state, &sid, &[]).await,
+        t::kill_processes_via_command(&state, &sid, &[], false).await,
         Err(t::AppError::ReadOnly(_))
     ));
 
@@ -1667,7 +1667,7 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
     let session2 = t::make_session("proc_rw", conn2, opts, /* read_only */ false);
     let sid2 = state.insert(session2).await;
     assert!(matches!(
-        t::kill_processes_via_command(&state, &sid2, &[1]).await,
+        t::kill_processes_via_command(&state, &sid2, &[1], true).await,
         Err(t::AppError::InvalidInput(_))
     ));
 

@@ -122,6 +122,7 @@ import {
   setColumnMaskCopyPlaceholder,
   setPlanWatchOnConnect,
   setSchemaDriftOnConnect,
+  setSchemaDriftOnDdl,
   setTimelapseOnConnect,
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
@@ -1323,6 +1324,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
             id="settings-schema-drift-on-connect"
             checked={settings.schemaDriftOnConnect}
             onChange={setSchemaDriftOnConnect}
+          />
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-schema-drift-on-ddl">
+              {t("settingsSchemaDriftOnDdl")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("settingsSchemaDriftOnDdlHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+          <Switch
+            id="settings-schema-drift-on-ddl"
+            checked={settings.schemaDriftOnDdl}
+            onChange={setSchemaDriftOnDdl}
           />
         </SettingsToggleRow>
       </SettingsSection>

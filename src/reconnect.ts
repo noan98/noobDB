@@ -20,6 +20,13 @@ export const RECONNECT_BASE_DELAY_MS = 1_000;
 /** バックオフの上限 (ms)。サーバ復旧待ちでも待ち時間が際限なく伸びないようにする。 */
 export const RECONNECT_MAX_DELAY_MS = 30_000;
 
+/**
+ * SSH トンネルの生存を確認する間隔 (ms、#1537)。確認自体は DB にもネットワークにも触れない
+ * ローカル判定なので短くてよい。russh の keepalive (30 秒間隔) でセッションが閉じるまでの
+ * 遅れが支配的で、ここはそれを拾うまでの追加遅延にすぎない。
+ */
+export const TUNNEL_WATCH_INTERVAL_MS = 10_000;
+
 export interface BackoffOptions {
   baseMs?: number;
   maxMs?: number;
