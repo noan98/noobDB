@@ -28,9 +28,11 @@ export const tasksCommands = {
       parseResponse(schemas.taskDefinition, r, "set_task_enabled"),
     ),
   /** タスクを即座に 1 回実行する (有効/無効を問わない)。完了までブロックする —
-   *  ダンプ等は数分かかりうるので、呼び出し側で進行中表示を出すこと。 */
-  runTaskNow: (id: string) =>
-    invoke<TaskRun>("run_task_now", { id }).then((r) =>
+   *  ダンプ等は数分かかりうるので、呼び出し側で進行中表示を出すこと。`streamId` を
+   *  `cancelStream` に渡すと中断でき (中断した実行は error として記録された `TaskRun` が
+   *  返る)、進捗は `listenTaskRunProgress(streamId)` で届く (#1534)。 */
+  runTaskNow: (id: string, streamId: string) =>
+    invoke<TaskRun>("run_task_now", { id, streamId }).then((r) =>
       parseResponse(schemas.taskRun, r, "run_task_now"),
     ),
   listTaskRuns: (taskId?: string | null, limit?: number) =>

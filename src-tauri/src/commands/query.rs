@@ -1876,6 +1876,9 @@ pub async fn cancel_stream(
                     | StreamKind::Preview
                     | StreamKind::Search
                     | StreamKind::Ai => None,
+                    // 「今すぐ実行」のタスク (#1534)。中断は `run_task_now` の戻り値
+                    // (中断として記録した実行ログ) で伝わるので通知イベントは無い。
+                    StreamKind::Task => None,
                 };
                 if let Some(event) = event {
                     if let Err(e) = app.emit(

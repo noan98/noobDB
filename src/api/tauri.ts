@@ -2942,6 +2942,30 @@ export interface TaskRunEvent {
   catchUp: boolean;
 }
 
+/** 「今すぐ実行」(`runTaskNow`) の進捗 (#1534)。`count` の単位は `unit`
+ *  (エクスポート = 行数、ダンプ = 書き込みバイト数、アサーション = 実行済みの件数)。 */
+export interface TaskRunProgressEvent {
+  streamId: string;
+  taskId: string;
+  count: number;
+  unit: "rows" | "bytes" | "items";
+}
+
+/** `runTaskNow` に渡した `streamId` の `task-run:progress` を購読する (#1534)。 */
+export async function listenTaskRunProgress(
+  streamId: string,
+  onProgress: (e: TaskRunProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<TaskRunProgressEvent>("task-run:progress", (e) => {
+    const payload = parseResponse<TaskRunProgressEvent>(
+      schemas.taskRunProgressEvent,
+      e.payload,
+      "task-run:progress",
+    );
+    if (payload.streamId === streamId) onProgress(payload);
+  });
+}
+
 /**
  * バックグラウンドスケジューラが発火させた `task-run:*` イベントをグローバルに
  * 購読する (特定の `streamId` を持たない — アプリ起動中いつでも、どのタブからでも

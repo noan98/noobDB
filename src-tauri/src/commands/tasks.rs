@@ -2,15 +2,19 @@
 //! 実行 (`tasks::executor` / `tasks::scheduler`) はどちらも `tasks` モジュールに
 //! あり、ここは Tauri コマンドとしての薄いラッパー + 入力検証を担う。
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use chrono::Utc;
 use serde::Deserialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 
 use crate::db::is_read_only_sql;
 use crate::error::{AppError, Result};
 use crate::profiles;
+use crate::state::{AppState, StreamHandle, StreamKind};
 use crate::tasks::{
-    runs, schedule, scheduler, store, AssertionRunRecord, SchedulerSettings, TaskAction,
+    executor, runs, schedule, scheduler, store, AssertionRunRecord, SchedulerSettings, TaskAction,
     TaskDefinition, TaskRun, TaskSchedule,
 };
 
@@ -204,8 +208,18 @@ pub async fn set_task_enabled(id: String, enabled: bool) -> Result<TaskDefinitio
 
 /// タスクを即座に 1 回実行する。有効/無効に関係なく実行できる (手動確認・
 /// トラブルシュート用)。スケジュール自体 (`next_run_at`) には影響しない。
+///
+/// `stream_id` で `cancel_stream` から中断できる (#1534)。数時間かかるダンプを手動実行しても
+/// UI が応答のない invoke を待ち続けないよう、実行中は `task-run:progress` (`stream_id` で絞る)
+/// で進捗の件数を知らせる。中断した実行は「中断された」エラーとして実行ログに残り、
+/// 通常どおりその `TaskRun` を返す。
 #[tauri::command]
-pub async fn run_task_now(app: AppHandle, id: String) -> Result<TaskRun> {
+pub async fn run_task_now(
+    app: AppHandle,
+    id: String,
+    stream_id: String,
+    state: State<'_, AppState>,
+) -> Result<TaskRun> {
     let task = store::load_all()?
         .into_iter()
         .find(|t| t.id == id)
@@ -218,7 +232,44 @@ pub async fn run_task_now(app: AppHandle, id: String) -> Result<TaskRun> {
             task.id
         )));
     };
-    let event = scheduler::execute_and_log(&app, task.clone(), false).await;
+
+    let started = Utc::now();
+    let progress = Arc::new(AtomicU64::new(0));
+    let task_for_run = task.clone();
+    let app_for_run = app.clone();
+    let progress_for_run = progress.clone();
+    let handle = tokio::spawn(async move {
+        executor::run_once(&app_for_run, &task_for_run, &progress_for_run).await
+    });
+    let token = state
+        .register_stream(
+            stream_id.clone(),
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: progress.clone(),
+                kind: StreamKind::Task,
+                on_cancel: None,
+            },
+        )
+        .await;
+    let ticker =
+        scheduler::spawn_progress_ticker(app.clone(), stream_id.clone(), &task, progress.clone());
+
+    let joined = handle.await;
+    ticker.abort();
+    state.forget_stream(&stream_id, token).await;
+
+    let outcome = match joined {
+        Ok(outcome) => outcome,
+        // `cancel_stream` による中断 (実行の future は破棄済みで、接続は Drop ガードが閉じる)。
+        Err(e) if e.is_cancelled() => executor::TaskOutcome::err(format!(
+            "cancelled by user (progress: {} {})",
+            progress.load(Ordering::SeqCst),
+            scheduler::progress_unit(&task.action)
+        )),
+        Err(e) => executor::TaskOutcome::err(format!("task execution aborted: {e}")),
+    };
+    let event = scheduler::record_outcome(&app, task.clone(), false, started, outcome).await;
     // 直近の 1 件が今実行したものであるはずなので、それを返す (レースで別の実行が
     // 割り込んだ場合でもタスク単位で最新のログを返すだけなので実害はない)。
     let latest = runs::list(Some(&task.id), 1).await?;

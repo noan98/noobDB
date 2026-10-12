@@ -1520,6 +1520,14 @@ export const taskRunEvent = z.object({
   catchUp: z.boolean(),
 });
 
+/** 「今すぐ実行」の進捗 (`task-run:progress`、#1534)。`unit` は `rows` / `bytes` / `items`。 */
+export const taskRunProgressEvent = z.object({
+  streamId: z.string(),
+  taskId: z.string(),
+  count: z.number(),
+  unit: z.enum(["rows", "bytes", "items"]),
+});
+
 export const taskDefinitionArray = z.array(taskDefinition);
 export const taskRunArray = z.array(taskRun);
 

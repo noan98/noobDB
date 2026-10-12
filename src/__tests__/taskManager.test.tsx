@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, within } from "./testUtils";
+import { act, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import type { TaskDefinition, TaskRun } from "../api/tauri";
@@ -55,6 +55,9 @@ const RUN: TaskRun = {
 const listTasks = vi.fn();
 const listTaskRuns = vi.fn();
 const clearTaskRuns = vi.fn();
+const runTaskNow = vi.fn();
+const cancelStream = vi.fn();
+let progressHandler: ((e: import("../api/tauri").TaskRunProgressEvent) => void) | null = null;
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -67,8 +70,16 @@ vi.mock("../api/tauri", async (importOriginal) => {
       clearTaskRuns: (...args: unknown[]) => clearTaskRuns(...(args as [string])),
       getSchedulerSettings: vi.fn().mockResolvedValue({ catch_up_missed: false }),
       setSchedulerSettings: vi.fn(),
+      runTaskNow: (...args: unknown[]) => runTaskNow(...args),
+      cancelStream: (...args: unknown[]) => cancelStream(...args),
     },
     listenTaskRunEvents: vi.fn().mockResolvedValue(() => {}),
+    listenTaskRunProgress: vi.fn(
+      async (_id: string, h: (e: import("../api/tauri").TaskRunProgressEvent) => void) => {
+        progressHandler = h;
+        return () => {};
+      },
+    ),
   };
 });
 
@@ -79,6 +90,34 @@ beforeEach(() => {
   listTasks.mockResolvedValue([TASK]);
   listTaskRuns.mockResolvedValue([RUN]);
   clearTaskRuns.mockResolvedValue(1);
+});
+
+describe("TaskManager 今すぐ実行の中断・進捗 (#1534)", () => {
+  it("実行中は進捗を表示し、中断ボタンで streamId を cancelStream へ渡す", async () => {
+    let finish: (r: typeof RUN) => void = () => {};
+    runTaskNow.mockImplementation(() => new Promise<typeof RUN>((res) => (finish = res)));
+    cancelStream.mockResolvedValue({ cancelled: true, deliveredRows: 0 });
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: t("taskRunNow") }));
+    await waitFor(() => expect(runTaskNow).toHaveBeenCalledTimes(1));
+    const [taskId, streamId] = runTaskNow.mock.calls[0];
+    expect(taskId).toBe("task-1");
+    expect(typeof streamId).toBe("string");
+
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+    act(() => progressHandler?.({ streamId, taskId: "task-1", count: 1234, unit: "rows" }));
+    expect(screen.getByTestId("task-run-progress").textContent).toContain("1,234");
+
+    await user.click(screen.getByRole("button", { name: t("taskRunStop") }));
+    expect(cancelStream).toHaveBeenCalledWith(streamId);
+
+    // 中断された実行は error の TaskRun として返り、進行中表示が消える。
+    await act(async () => finish({ ...RUN, status: "error", error: "cancelled by user" }));
+    await waitFor(() => expect(screen.queryByTestId("task-run-progress")).toBeNull());
+  });
 });
 
 describe("TaskManager 実行履歴の消去 (#910)", () => {

@@ -5,7 +5,7 @@
 //! **既存の実行基盤をそのまま呼び出す**ことで、通常のクエリ/エクスポート/ダンプと
 //! 同じ安全網・挙動を共有する。
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -38,7 +38,7 @@ pub struct TaskOutcome {
 }
 
 impl TaskOutcome {
-    fn err(message: impl Into<String>) -> Self {
+    pub(crate) fn err(message: impl Into<String>) -> Self {
         Self {
             ok: false,
             error: Some(message.into()),
@@ -91,7 +91,18 @@ const EXPORT_CHUNK_SIZE: usize = 2000;
 /// 接続前に検証するので、不正なタスクは接続コストを払わずに拒否される。
 /// `catch_up` (アプリ非起動中に過ぎたスケジュールの追い掛け実行かどうか) は実行
 /// そのものには影響せず、呼び出し元が `NewTaskRun.catch_up` へそのまま転記する。
-pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
+///
+/// `progress` は進捗の件数 (エクスポートは書いた行数、ダンプは書いたバイト数、アサーションは
+/// 実行済みの件数)。「今すぐ実行」(`commands::tasks::run_task_now`) が定期的に読んで
+/// `task-run:progress` で知らせる (#1534)。スケジューラ経由では読む人がいない。
+///
+/// 実行中に future が破棄されても (「今すぐ実行」の中断) 接続が残らないよう、切断は
+/// Drop ガードでも保証する。
+pub async fn run_once(
+    app: &AppHandle,
+    task: &TaskDefinition,
+    progress: &Arc<AtomicU64>,
+) -> TaskOutcome {
     if let TaskAction::ExportQuery { sql, .. } = &task.action {
         // プロファイル (= ドライバ) を解決する前に弾くため、ドライバ非依存の
         // 保守的なマスクを使う `is_read_only_sql` を通す (#852)。判定は
@@ -118,12 +129,18 @@ pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
         Ok(resp) => resp.session_id,
         Err(e) => return TaskOutcome::err(format!("connect failed: {e}")),
     };
+    // 以降で future が途中で破棄されたら (中断)、Drop で切断を投げる。
+    let mut disconnect_guard = DisconnectOnDrop {
+        app: app.clone(),
+        session_id: session_id.clone(),
+        armed: true,
+    };
 
     // 無人実行なのでロック待ち等で終わらないクエリが接続とタスクを溜めないよう、
     // タスク単位の最大実行時間で打ち切る。超過は error として記録される。
     let outcome = match tokio::time::timeout(
         std::time::Duration::from_secs(TASK_MAX_RUN_SECS),
-        run_action(app, &session_id, task, &profile),
+        run_action(app, &session_id, task, &profile, progress),
     )
     .await
     {
@@ -137,6 +154,7 @@ pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
     // ログに残すのみで、タスクの成否には影響させない (アクションはもう完了/
     // 失敗している)。
     let state = app.state::<AppState>();
+    disconnect_guard.armed = false;
     if let Err(e) = disconnect(session_id.clone(), state).await {
         tracing::warn!(session_id = %session_id, error = %e, "task scheduler: failed to close connection after run");
     }
@@ -144,11 +162,36 @@ pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
     outcome
 }
 
+/// `run_once` の future が実行の途中で破棄されたとき (「今すぐ実行」の中断) に、張った接続を
+/// 閉じるためのガード。通常終了では `armed` を下ろして `run_once` 自身が切断する。
+struct DisconnectOnDrop {
+    app: AppHandle,
+    session_id: String,
+    armed: bool,
+}
+
+impl Drop for DisconnectOnDrop {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let app = self.app.clone();
+        let session_id = self.session_id.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app.state::<AppState>();
+            if let Err(e) = disconnect(session_id.clone(), state).await {
+                tracing::warn!(session_id = %session_id, error = %e, "task: failed to close connection after cancel");
+            }
+        });
+    }
+}
+
 async fn run_action(
     app: &AppHandle,
     session_id: &str,
     task: &TaskDefinition,
     profile: &ConnectionProfile,
+    progress: &Arc<AtomicU64>,
 ) -> TaskOutcome {
     let state = app.state::<AppState>();
     let Some(session) = state.get(session_id).await else {
@@ -187,7 +230,7 @@ async fn run_action(
                 // スケジュール実行のエクスポートはマスキング (#733) 非対応 (タスク定義に
                 // ルールを持たない)。マスクが必要な出力は ExportModal から行う。
                 None,
-                |_rows| {},
+                |rows| progress.store(rows, Ordering::SeqCst),
             )
             .await;
             match result {
@@ -225,7 +268,6 @@ async fn run_action(
             options,
         } => {
             let path = resolve_output_path(output_path, now);
-            let counter = Arc::new(AtomicU64::new(0));
             let result = dump::run_dump(
                 app,
                 &session,
@@ -237,7 +279,7 @@ async fn run_action(
                 true,
                 &path,
                 options,
-                &counter,
+                progress,
                 Instant::now(),
             )
             .await;
@@ -272,6 +314,7 @@ async fn run_action(
             }
             let mut results = Vec::with_capacity(selected.len());
             for item in selected {
+                progress.store(results.len() as u64, Ordering::SeqCst);
                 match item {
                     Err(missing_id) => results.push(NewAssertionResult {
                         assertion_id: missing_id.clone(),

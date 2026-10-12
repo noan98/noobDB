@@ -5,6 +5,7 @@ import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   api,
   listenTaskRunEvents,
+  listenTaskRunProgress,
   type Assertion,
   type ConnectionProfile,
   type DumpOptions,
@@ -12,6 +13,7 @@ import {
   type TaskAction,
   type TaskDefinition,
   type TaskRun,
+  type TaskRunProgressEvent,
   type TaskSchedule,
 } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
@@ -84,6 +86,9 @@ export function TaskManager({
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<TaskDefinition | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  // 「今すぐ実行」の中断用 ID と進捗 (#1534)。
+  const [runningStreamId, setRunningStreamId] = useState<string | null>(null);
+  const [runProgress, setRunProgress] = useState<TaskRunProgressEvent | null>(null);
   const [historyTaskId, setHistoryTaskId] = useState<string | null>(null);
   const [runs, setRuns] = useState<TaskRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
@@ -197,9 +202,18 @@ export function TaskManager({
   };
 
   const handleRunNow = async (task: TaskDefinition) => {
+    const streamId = `task_${task.id}_${Date.now().toString(36)}`;
     setRunningId(task.id);
+    setRunningStreamId(streamId);
+    setRunProgress(null);
+    let unlistenProgress: (() => void) | undefined;
     try {
-      const run = await api.runTaskNow(task.id);
+      unlistenProgress = await listenTaskRunProgress(streamId, setRunProgress);
+    } catch {
+      // 進捗が見られないだけで実行自体は続けられる。
+    }
+    try {
+      const run = await api.runTaskNow(task.id, streamId);
       if (run.status === "ok") {
         toast.success(t("taskRunOk", { name: task.name }));
       } else {
@@ -210,8 +224,15 @@ export function TaskManager({
     } catch (e) {
       toast.error(String(e));
     } finally {
+      unlistenProgress?.();
       setRunningId(null);
+      setRunningStreamId(null);
+      setRunProgress(null);
     }
+  };
+
+  const handleStopRun = () => {
+    if (runningStreamId) void api.cancelStream(runningStreamId).catch(() => {});
   };
 
   const handleClearRuns = async (task: TaskDefinition) => {
@@ -313,6 +334,8 @@ export function TaskManager({
                       profileName={profileName(task.profile_id)}
                       now={now}
                       running={runningId === task.id}
+                      progress={runningId === task.id ? runProgress : null}
+                      onStopRun={handleStopRun}
                       expanded={historyTaskId === task.id}
                       runs={historyTaskId === task.id ? runs : []}
                       runsLoading={historyTaskId === task.id && runsLoading}
@@ -338,11 +361,20 @@ export function TaskManager({
   );
 }
 
+/** 進捗の件数を単位つきの文字列にする (行数 / バイト / 件)。 */
+function formatTaskProgress(p: TaskRunProgressEvent, t: ReturnType<typeof useT>): string {
+  const key: I18nKey =
+    p.unit === "rows" ? "taskRunProgressRows" : p.unit === "bytes" ? "taskRunProgressBytes" : "taskRunProgressItems";
+  return t(key, { count: p.count.toLocaleString() });
+}
+
 function TaskRow({
   task,
   profileName,
   now,
   running,
+  progress,
+  onStopRun,
   expanded,
   runs,
   runsLoading,
@@ -357,6 +389,9 @@ function TaskRow({
   profileName: string;
   now: Date;
   running: boolean;
+  /** 実行中の進捗 (届くまで null)。 */
+  progress: TaskRunProgressEvent | null;
+  onStopRun: () => void;
   expanded: boolean;
   runs: TaskRun[];
   runsLoading: boolean;
@@ -391,13 +426,18 @@ function TaskRow({
           )}
         </chakra.div>
         <chakra.div fontSize="xs" minW="70px" textAlign="right">
-          {task.last_status === "ok" && (
+          {running && (
+            <chakra.span color="app.textMuted" data-testid="task-run-progress">
+              {progress ? t("taskRunProgress", { progress: formatTaskProgress(progress, t) }) : t("taskRunning")}
+            </chakra.span>
+          )}
+          {!running && task.last_status === "ok" && (
             <chakra.span color="app.textMuted">{t("taskLastOk")}</chakra.span>
           )}
-          {task.last_status === "error" && (
+          {!running && task.last_status === "error" && (
             <chakra.span color={semanticColorToken("danger", "text")}>{t("taskLastError")}</chakra.span>
           )}
-          {!task.last_status && <chakra.span color="app.textMuted">–</chakra.span>}
+          {!running && !task.last_status && <chakra.span color="app.textMuted">–</chakra.span>}
         </chakra.div>
         <Flex gap="1.5">
           <Tooltip label={t("taskRunNow")}>
@@ -405,6 +445,13 @@ function TaskRow({
               {running ? <Spinner size={14} decorative /> : <Icon name="query" size={ICON_SIZES.sm} />}
             </Button>
           </Tooltip>
+          {running && (
+            <Tooltip label={t("taskRunStopTitle")}>
+              <Button type="button" variant="warning" onClick={onStopRun} aria-label={t("taskRunStop")}>
+                {t("taskRunStop")}
+              </Button>
+            </Tooltip>
+          )}
           <Tooltip label={t("taskHistory")}>
             <Button
               type="button"

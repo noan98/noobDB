@@ -39,6 +39,11 @@ pub enum StreamKind {
     /// AI リクエスト (#690)。`delivered_rows` は送信済みの本文差分 (delta) の件数。
     /// キャンセルは Channel の `Cancelled` で通知する (#1534)。
     Ai,
+    /// タスクの「今すぐ実行」(#1534)。`delivered_rows` は進捗の件数
+    /// (エクスポートは行数、ダンプは書き込みバイト数、アサーションは実行済みの件数)。
+    /// キャンセルしても `run_task_now` の戻り値 (中断として記録した実行ログ) で分かるので、
+    /// 通知イベントは持たない。
+    Task,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`

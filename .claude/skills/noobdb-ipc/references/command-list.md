@@ -276,7 +276,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `save_task`
 - `delete_task`
 - `set_task_enabled`
-- `run_task_now`
+- `run_task_now` (引数 `id`, `streamId`) — `cancel_stream` で中断でき、進捗は `task-run:progress` (`streamId` で絞る。#1534)
 - `list_task_runs`
 - `list_assertion_runs`
 - `clear_task_runs`
