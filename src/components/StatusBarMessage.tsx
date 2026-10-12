@@ -100,7 +100,8 @@ export function StatusAnnouncer({
 }) {
   const [polite, setPolite] = useState("");
   const [urgent, setUrgent] = useState("");
-  const lastKey = useRef("");
+  // マウント時点の文言 (起動直後の「未接続」など) は読み上げない。読み上げるのは変化だけ。
+  const lastKey = useRef(messageKey);
   useEffect(() => {
     if (messageKey === lastKey.current) return;
     lastKey.current = messageKey;

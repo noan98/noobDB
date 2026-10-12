@@ -49,10 +49,14 @@ describe("StatusBarIcon (#1213)", () => {
 describe("StatusAnnouncer (#1529)", () => {
   it("同じメッセージ種別の数値更新では読み上げ領域を更新せず、種別が変わったときだけ更新する", () => {
     const { rerender } = renderWithProviders(
-      <StatusAnnouncer text="10 rows fetched…" messageKey="statusFetching" assertive={false} />,
+      <StatusAnnouncer text="Disconnected" messageKey="appDisconnected" assertive={false} />,
     );
     const polite = () => screen.getByTestId("status-live-polite");
     const assertive = () => screen.getByTestId("status-live-assertive");
+    // マウント時点の文言 (起動直後の「未接続」) は読み上げない。
+    expect(polite()).toHaveTextContent("");
+
+    rerender(<StatusAnnouncer text="10 rows fetched…" messageKey="statusFetching" assertive={false} />);
     expect(polite()).toHaveTextContent("10 rows fetched…");
 
     rerender(<StatusAnnouncer text="20 rows fetched…" messageKey="statusFetching" assertive={false} />);
