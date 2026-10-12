@@ -249,7 +249,9 @@ struct KeysetOutcome {
 /// 1. source から `key > 前回の最終キー` を `PAGE` 行読み、その最終キー B を境界にする。
 /// 2. target から `前回 < key <= B` の行を (複数ページに分けて) 集める。
 /// 3. 両方の窓を `compute_data_diff_ignoring` で突き合わせ、境界を B に進める。
+///
 /// source が尽きたら、残りの target 行 (`key > 前回`) は全部 TargetOnly になる。
+///
 /// 窓は常に両側で同じ範囲なので、片側だけ切り詰めたときのような窓ずれは起きない。
 ///
 /// 主キーに NULL を含む行は行値比較で落ちて比較できないため、見つけたらエラーにする
@@ -548,6 +550,9 @@ pub struct DataDiffHandle {
 /// pairing by primary key. Reads at most `limit` rows per side (clamped to a
 /// master-data-sized cap); a table without a primary key is rejected since
 /// there is nothing to pair on. Both connections must use the same driver.
+// IPC の引数をそのまま受ける Tauri コマンドなので、引数の数は呼び出し側 (フロント) の
+// 形に合わせて固定されている。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn compare_table_data(
     source_session_id: String,

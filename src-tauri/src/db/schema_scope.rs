@@ -54,7 +54,7 @@ fn lex(driver: DriverKind, sql: &str) -> Option<Vec<Tok>> {
             let comment = driver != DriverKind::Mysql
                 || chars
                     .get(i + 2)
-                    .is_none_or(|n| n.is_whitespace() || n.is_control());
+                    .map_or(true, |n| n.is_whitespace() || n.is_control());
             if !comment {
                 toks.push(Tok::Punct('-'));
                 i += 1;
@@ -180,7 +180,7 @@ pub fn sql_schema_change_table(driver: DriverKind, sql: &str) -> Option<SchemaCh
     if toks.last() == Some(&Tok::Punct(';')) {
         toks.pop();
     }
-    if toks.iter().any(|t| *t == Tok::Punct(';')) {
+    if toks.contains(&Tok::Punct(';')) {
         return None;
     }
     let first = toks.first()?;

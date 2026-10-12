@@ -592,6 +592,15 @@ function formatCacheClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function emptyIfNonEmpty(prev: Record<string, number>): Record<string, number> {
+  return Object.keys(prev).length === 0 ? prev : {};
+}
+
+function sameCacheTimes(a: Record<string, number>, b: Record<string, number>): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
+
 function useTreeActions(): TreeActions {
   const actions = useContext(TreeActionsContext);
   if (!actions) throw new Error("TreeActionsContext の外でスキーマツリーの行を描画した");
@@ -3336,7 +3345,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // biome-ignore lint/correctness/useExhaustiveDependencies: tables は本体で参照しないが、テーブル一覧の再取得 (= キャッシュの取得時刻が変わりうる) を知るためのトリガーとして意図的に依存へ含めている
   useEffect(() => {
     if (!sessionId) {
-      setCacheTimes({});
+      setCacheTimes(emptyIfNonEmpty);
       return;
     }
     let alive = true;
@@ -3346,10 +3355,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         if (!alive) return;
         const next: Record<string, number> = {};
         for (const e of list) next[e.database] = e.fetched_at_ms;
-        setCacheTimes(next);
+        // 内容が同じなら同じ参照のまま返し、ツリー全体の無駄な再レンダーを避ける。
+        setCacheTimes((prev) => (sameCacheTimes(prev, next) ? prev : next));
       })
       .catch(() => {
-        if (alive) setCacheTimes({});
+        if (alive) setCacheTimes(emptyIfNonEmpty);
       });
     return () => {
       alive = false;
