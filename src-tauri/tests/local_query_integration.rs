@@ -95,6 +95,7 @@ async fn registers_and_joins_across_two_sources() {
             rows: orders_rows,
             result_id: None,
             source_profile: Some("Source A (mysql-ish)".into()),
+            source_profile_id: None,
             source_sql: "SELECT * FROM orders".into(),
             source_driver: Some("mysql".into()),
             source_database: None,
@@ -112,6 +113,7 @@ async fn registers_and_joins_across_two_sources() {
             rows: customers_rows,
             result_id: None,
             source_profile: Some("Source B (postgres-ish)".into()),
+            source_profile_id: None,
             source_sql: "SELECT * FROM customers".into(),
             source_driver: Some("postgres".into()),
             source_database: None,
@@ -220,6 +222,7 @@ async fn round_trips_blob_and_null_values() {
             rows,
             result_id: None,
             source_profile: None,
+            source_profile_id: None,
             source_sql: "SELECT 1".into(),
             source_driver: None,
             source_database: None,
@@ -279,6 +282,7 @@ async fn rejects_registration_over_the_row_cap() {
             rows,
             result_id: None,
             source_profile: None,
+            source_profile_id: None,
             source_sql: "SELECT n FROM generate_series".into(),
             source_driver: None,
             source_database: None,
@@ -309,6 +313,7 @@ async fn rejects_registration_and_listing_on_a_non_local_session() {
             rows: vec![vec![t::Value::Int(1)]],
             result_id: None,
             source_profile: None,
+            source_profile_id: None,
             source_sql: "SELECT 1".into(),
             source_driver: None,
             source_database: None,
@@ -343,6 +348,7 @@ async fn saves_a_standalone_snapshot_file() {
             rows: vec![vec![t::Value::Int(42)]],
             result_id: None,
             source_profile: None,
+            source_profile_id: None,
             source_sql: "SELECT 42".into(),
             source_driver: None,
             source_database: None,
@@ -428,6 +434,7 @@ async fn source_database_is_recorded_and_legacy_catalog_is_upgraded() {
             rows: vec![vec![t::Value::Int(1)]],
             result_id: None,
             source_profile: Some("P".into()),
+            source_profile_id: Some("prof-p".into()),
             source_sql: "SELECT id FROM t".into(),
             source_driver: Some("mysql".into()),
             source_database: Some("shop".into()),
@@ -440,6 +447,8 @@ async fn source_database_is_recorded_and_legacy_catalog_is_upgraded() {
         .expect("list after upgrade");
     let fresh = listed.iter().find(|m| m.name == "fresh").expect("fresh");
     assert_eq!(fresh.source_database.as_deref(), Some("shop"));
+    assert_eq!(fresh.source_profile_id.as_deref(), Some("prof-p"));
     let old = listed.iter().find(|m| m.name == "legacy").expect("legacy");
     assert_eq!(old.source_database, None);
+    assert_eq!(old.source_profile_id, None);
 }

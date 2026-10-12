@@ -782,6 +782,11 @@ pub struct LocalTableMeta {
     /// label for an unsaved/ad-hoc connection). `None` when the source has
     /// since been forgotten.
     pub source_profile: Option<String>,
+    /// Profile id of the source connection (#1541). Display names are not
+    /// unique, so a refetch matches on this when present; `None` for rows
+    /// registered before it was recorded (those fall back to the name).
+    #[serde(default)]
+    pub source_profile_id: Option<String>,
     /// The SQL that produced the registered rows, kept verbatim so the
     /// sidebar can show provenance.
     pub source_sql: String,

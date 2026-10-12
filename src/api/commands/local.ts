@@ -29,6 +29,7 @@ export const localCommands = {
         rows: req.rows,
         result_id: req.resultId ?? null,
         source_profile: req.sourceProfile ?? null,
+        source_profile_id: req.sourceProfileId ?? null,
         source_sql: req.sourceSql,
         source_driver: req.sourceDriver ?? null,
         source_database: req.sourceDatabase ?? null,

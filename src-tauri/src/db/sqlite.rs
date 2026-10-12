@@ -546,14 +546,22 @@ impl SqliteConn {
         )))
         .execute(&mut *tx)
         .await?;
-        // source_database (#1541) は後から足した列。既存のカタログ (ファイルから開いた
-        // ローカル DB など) には無いので、無ければ追加する (既存行は NULL のまま)。
-        if !local_meta_has_source_database(&mut *tx).await? {
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "ALTER TABLE {LOCAL_META_TABLE} ADD COLUMN source_database TEXT"
-            )))
-            .execute(&mut *tx)
-            .await?;
+        // source_database / source_profile_id (#1541) は後から足した列。既存のカタログ
+        // (ファイルから開いたローカル DB など) には無いので、無ければ追加する (既存行は NULL)。
+        // 別の接続が先に追加した場合の "duplicate column" は無視する。
+        for col in LOCAL_META_ADDED_COLUMNS {
+            if !local_meta_has_column(&mut *tx, col).await? {
+                let added = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "ALTER TABLE {LOCAL_META_TABLE} ADD COLUMN {col} TEXT"
+                )))
+                .execute(&mut *tx)
+                .await;
+                if let Err(e) = added {
+                    if !e.to_string().to_lowercase().contains("duplicate column") {
+                        return Err(e.into());
+                    }
+                }
+            }
         }
 
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -586,10 +594,11 @@ impl SqliteConn {
 
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {LOCAL_META_TABLE}
-                (name, source_profile, source_sql, source_driver, source_database, fetched_at_ms, row_count)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+                (name, source_profile, source_profile_id, source_sql, source_driver, source_database, fetched_at_ms, row_count)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(name) DO UPDATE SET
                 source_profile = excluded.source_profile,
+                source_profile_id = excluded.source_profile_id,
                 source_sql = excluded.source_sql,
                 source_driver = excluded.source_driver,
                 source_database = excluded.source_database,
@@ -598,6 +607,7 @@ impl SqliteConn {
         )))
         .bind(&meta.name)
         .bind(&meta.source_profile)
+        .bind(&meta.source_profile_id)
         .bind(&meta.source_sql)
         .bind(&meta.source_driver)
         .bind(&meta.source_database)
@@ -619,14 +629,18 @@ impl SqliteConn {
         if !local_meta_table_exists(&mut *conn).await? {
             return Ok(Vec::new());
         }
-        // 古いカタログには source_database 列が無い (#1541)。その場合は NULL として読む。
-        let source_database_col = if local_meta_has_source_database(&mut *conn).await? {
-            "source_database"
-        } else {
-            "NULL AS source_database"
-        };
+        // 古いカタログには後から足した列が無い (#1541)。その場合は NULL として読む。
+        let mut optional_cols = Vec::new();
+        for col in LOCAL_META_ADDED_COLUMNS {
+            optional_cols.push(if local_meta_has_column(&mut *conn, col).await? {
+                col.to_string()
+            } else {
+                format!("NULL AS {col}")
+            });
+        }
+        let optional_cols = optional_cols.join(", ");
         let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT name, source_profile, source_sql, source_driver, {source_database_col}, fetched_at_ms, row_count
+            "SELECT name, source_profile, source_sql, source_driver, {optional_cols}, fetched_at_ms, row_count
              FROM {LOCAL_META_TABLE} ORDER BY fetched_at_ms DESC"
         )))
         .fetch_all(&mut *conn)
@@ -636,6 +650,7 @@ impl SqliteConn {
             .map(|r| LocalTableMeta {
                 name: r.try_get("name").unwrap_or_default(),
                 source_profile: r.try_get("source_profile").unwrap_or(None),
+                source_profile_id: r.try_get("source_profile_id").unwrap_or(None),
                 source_sql: r.try_get("source_sql").unwrap_or_default(),
                 source_driver: r.try_get("source_driver").unwrap_or(None),
                 source_database: r.try_get("source_database").unwrap_or(None),
@@ -1794,15 +1809,19 @@ where
     Ok(found.is_some())
 }
 
-/// カタログテーブルに `source_database` 列があるか (#1541)。列が無い古いカタログでも
-/// 一覧が読め、登録時に `ALTER TABLE ADD COLUMN` で足せるようにする。
-async fn local_meta_has_source_database<'e, E>(exec: E) -> Result<bool>
+/// 後から足したカタログ列 (#1541)。`local_meta_has_column` / 登録時の ADD COLUMN で使う。
+const LOCAL_META_ADDED_COLUMNS: [&str; 2] = ["source_database", "source_profile_id"];
+
+/// カタログテーブルに列 `col` があるか。列が無い古いカタログでも一覧が読め、登録時に
+/// `ALTER TABLE ADD COLUMN` で足せるようにする。
+async fn local_meta_has_column<'e, E>(exec: E, col: &str) -> Result<bool>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     let found: Option<SqliteRow> =
-        sqlx::query("SELECT name FROM pragma_table_info(?) WHERE name = 'source_database'")
+        sqlx::query("SELECT name FROM pragma_table_info(?) WHERE name = ?")
             .bind(LOCAL_META_TABLE)
+            .bind(col)
             .fetch_optional(exec)
             .await?;
     Ok(found.is_some())

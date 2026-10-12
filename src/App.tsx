@@ -4386,6 +4386,7 @@ export default function App() {
     // 読み取り専用判定の文字列エスケープ規則がドライバ依存になったため (#852)。
     selectedProfile?.driver,
     recordOutput,
+    outputCtxFor,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
@@ -5160,7 +5161,7 @@ export default function App() {
       finish();
       finishRun({ error: String(e) });
     }
-  }, [sessionId, selectedProfile?.database, patchTab, recordOutput, tabsRef]);
+  }, [sessionId, selectedProfile?.database, patchTab, recordOutput, tabsRef, outputCtxFor]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -7078,13 +7079,13 @@ export default function App() {
   }, [toast]);
 
   // 結果グリッドの「ローカルに登録」ボタン: 名前を確認するモーダルを開く。
-  const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string) => {
-    const database =
-      selectedProfile && selectedProfile.driver !== "sqlite"
-        ? (activeTab?.database ?? selectedProfile.database ?? null) || null
-        : null;
+  // `tabDatabase` は結果の持ち主のタブの database (PaneView が渡す)。MySQL / PostgreSQL では
+  // タブの database のみを記録し (PG ではスキーマ名)、既定のまま実行したものは "" で記録する。
+  // プロファイルの既定 DB へはフォールバックしない (再取得で search_path を壊すため)。
+  const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string, tabDatabase: string | null) => {
+    const database = selectedProfile && selectedProfile.driver !== "sqlite" ? (tabDatabase ?? "") : null;
     setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql, sourceDatabase: database });
-  }, [selectedProfile, activeTab]);
+  }, [selectedProfile]);
 
   const handleConfirmRegisterLocalTable = useCallback((tableName: string) => {
     const req = registerLocalRequest;
@@ -7104,6 +7105,7 @@ export default function App() {
             rows: useHandle ? [] : req.rows,
             resultId: useHandle ? handleId : null,
             sourceProfile: selectedProfile?.name ?? null,
+            sourceProfileId: selectedProfile?.id ?? null,
             sourceSql: req.sourceSql,
             sourceDriver: selectedProfile?.driver ?? null,
             sourceDatabase: req.sourceDatabase,
@@ -7184,6 +7186,7 @@ export default function App() {
           rows: result.rows,
           resultId: null,
           sourceProfile: meta.source_profile,
+          sourceProfileId: meta.source_profile_id,
           sourceSql: meta.source_sql,
           sourceDriver: meta.source_driver,
           sourceDatabase: meta.source_database,
