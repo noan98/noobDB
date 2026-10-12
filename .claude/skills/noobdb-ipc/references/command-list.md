@@ -361,6 +361,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `fetch_cell_bytes`
 - `probe_cell_blob`
 - `save_cell_to_file`
+- `save_cells_to_folder`
 - `read_binary_file`
 - `get_import_skipped_text`
 - `save_import_skipped_rows`
@@ -380,6 +381,11 @@ SQL を揃えている)。`fetch_cell_bytes` は主キーで 1 セルの生バ�
 `tauri::ipc::Response` で**生バイト**を返し、JS は `ArrayBuffer` で受ける (16 進や JSON 配列を
 経由しない)。`save_cell_to_file` は DB → ファイルを Rust 内で完結させる (BLOB が IPC を通らない)。
 書き戻しはフロントが `UPDATE` を組み立てて通常の `run_query` (読み取り専用ガード付き) で流す。
+`save_cells_to_folder` (#1539) は複数行の BLOB 列を主キー由来のファイル名 (`<pk>.<ext>`、複合キーは
+`-` 連結) で 1 つのフォルダへ書き出す。行ごとに probe でサイズ・種別を調べ、NULL / 16 MiB 超過は
+飛ばし、拡張子は種別 (不明は `bin`)、既存ファイルは上書きせず `_2` を付ける。1 行の失敗で止めず
+件数 (`saved` / `skippedNull` / `skippedTooLarge` / `failed`) と先頭 20 件の失敗理由を返す。
+行数上限 10,000。保存先は既存のフォルダに限る (作成しない)。
 
 `write_text_file` (`commands/file.rs`, #1258) は SQL・Markdown・JSON などのテキストを文字列の
 まま UTF-8 で書く (上限 32 MiB)。`write_binary_file` は `tauri::ipc::Request` の raw ボディ

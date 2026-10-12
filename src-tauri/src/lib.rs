@@ -232,7 +232,7 @@ pub mod __test_api {
     // 個別イベント構造体ではなく、Tauri Channel で送る 1 本のタグ付き enum
     // (`QueryStreamMessage` / `PreviewStreamMessage`) に統合済み。Export/Dump/
     // Import は引き続き個別の emit ペイロード構造体のまま。
-    pub use crate::commands::cell_blob::CellBlobProbe;
+    pub use crate::commands::cell_blob::{BlobFolderIssue, BlobFolderSaveResult, CellBlobProbe};
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
@@ -571,6 +571,24 @@ pub mod __test_api {
     ) -> crate::error::Result<Option<Vec<u8>>> {
         let key = parse_cell_key(key)?;
         crate::commands::cell_blob::fetch_cell_blob(session, database, table, column, &key).await
+    }
+
+    /// `save_cells_to_folder` の本体を、IPC と同じ JSON 形の `keys` (行ごとの主キー配列) で
+    /// 統合テストから駆動する (#1539)。
+    pub async fn save_cells_to_folder_via_session(
+        session: &Session,
+        database: Option<&str>,
+        table: &str,
+        column: &str,
+        keys: serde_json::Value,
+        folder: &str,
+    ) -> crate::error::Result<crate::commands::cell_blob::BlobFolderSaveResult> {
+        let keys: Vec<Vec<crate::commands::cell_blob::CellKeyPart>> = serde_json::from_value(keys)
+            .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
+        crate::commands::cell_blob::save_cells_to_folder_inner(
+            session, database, table, column, &keys, folder,
+        )
+        .await
     }
 
     fn parse_cell_key(
@@ -1347,6 +1365,7 @@ pub fn run() {
             commands::cell_blob::fetch_cell_bytes,
             commands::cell_blob::probe_cell_blob,
             commands::cell_blob::save_cell_to_file,
+            commands::cell_blob::save_cells_to_folder,
             commands::cell_blob::read_binary_file,
             commands::file::write_binary_file,
             commands::file::write_text_file,

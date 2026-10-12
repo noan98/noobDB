@@ -2054,6 +2054,22 @@ export interface CellBlobProbe {
   image: boolean;
 }
 
+/** BLOB 列のフォルダ一括保存の結果 (#1539)。 */
+export interface BlobFolderSaveResult {
+  /** 保存したファイル数。 */
+  saved: number;
+  /** 保存した合計バイト数。 */
+  totalBytes: number;
+  /** NULL のセルで保存しなかった行数。 */
+  skippedNull: number;
+  /** 上限 (16 MiB) を超えて保存しなかった行数。 */
+  skippedTooLarge: number;
+  /** 取得・書き込みに失敗した行数。 */
+  failed: number;
+  /** 失敗した行の理由 (先頭 20 件まで。`row` は渡した keys の添字)。 */
+  errors: { row: number; error: string }[];
+}
+
 export interface ImportErrorEvent {
   streamId: string;
   error: string;

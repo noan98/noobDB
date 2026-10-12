@@ -3066,3 +3066,68 @@ async fn mysql_transfer_upsert_updates_and_skips() {
         .expect("cleanup");
     let _ = std::fs::remove_file(&src_path);
 }
+
+/// 複数行の BLOB をフォルダへ書き出す (#1539)。MySQL の実 DB で probe → 取得 → ファイル書き出しが
+/// 主キー由来の名前・種別由来の拡張子で行われ、NULL が飛ばされること。
+#[tokio::test]
+async fn mysql_save_cells_to_folder() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("s-blob-folder", conn, opts.clone(), false);
+    let db: Option<&str> = opts.database.as_deref();
+    session
+        .conn
+        .execute("DROP TABLE IF EXISTS cell_blob_folder_t", db)
+        .await
+        .expect("drop");
+    session
+        .conn
+        .execute(
+            "CREATE TABLE cell_blob_folder_t (id INT PRIMARY KEY, data LONGBLOB)",
+            db,
+        )
+        .await
+        .expect("create");
+    for sql in [
+        "INSERT INTO cell_blob_folder_t VALUES (1, 0x89504e470d0a1a0a0000)",
+        "INSERT INTO cell_blob_folder_t VALUES (2, 0x0102)",
+        "INSERT INTO cell_blob_folder_t VALUES (3, NULL)",
+    ] {
+        session.conn.execute(sql, db).await.expect("insert");
+    }
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("noobdb_blob_folder_mysql_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let keys = serde_json::json!([
+        [{ "column": "id", "value": 1 }],
+        [{ "column": "id", "value": 2 }],
+        [{ "column": "id", "value": 3 }],
+    ]);
+    let r = t::save_cells_to_folder_via_session(
+        &session,
+        db,
+        "cell_blob_folder_t",
+        "data",
+        keys,
+        dir.to_str().expect("utf8"),
+    )
+    .await
+    .expect("save to folder");
+    assert_eq!((r.saved, r.skipped_null, r.failed), (2, 1, 0), "{r:?}");
+    assert_eq!(
+        std::fs::read(dir.join("1.png")).expect("png"),
+        vec![0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]
+    );
+    assert_eq!(std::fs::read(dir.join("2.bin")).expect("bin"), vec![1u8, 2]);
+    let _ = std::fs::remove_dir_all(&dir);
+    session
+        .conn
+        .execute("DROP TABLE IF EXISTS cell_blob_folder_t", db)
+        .await
+        .expect("cleanup");
+}

@@ -1395,6 +1395,16 @@ export const cellBlobProbe = z.object({
   image: z.boolean(),
 });
 
+/** BLOB 列のフォルダ一括保存の結果 (#1539)。 */
+export const blobFolderSaveResult = z.object({
+  saved: z.number(),
+  totalBytes: z.number(),
+  skippedNull: z.number(),
+  skippedTooLarge: z.number(),
+  failed: z.number(),
+  errors: z.array(z.object({ row: z.number(), error: z.string() })),
+});
+
 export const importErrorEvent = z.object({
   streamId: z.string(),
   error: z.string(),

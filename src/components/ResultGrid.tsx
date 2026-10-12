@@ -6511,6 +6511,32 @@ export const DataGrid = memo(function DataGrid({
                     void blob.save();
                   },
                 },
+                // 矩形選択が複数行に渡り、クリックしたセルを含むときは、その列の BLOB を
+                // 選択行ぶんまとめてフォルダへ保存できる (#1539)。マスク中の行を含むときは出さない。
+                ...(() => {
+                  if (
+                    !blob.saveMany ||
+                    !selectionRect ||
+                    selectionRect.rowIndexSet.size < 2 ||
+                    !selectionRect.rowIndexSet.has(copyMenu.rowIdx) ||
+                    !selectionRect.colIdSet.has(copyMenu.colIdx)
+                  ) {
+                    return [];
+                  }
+                  const rowIdxs = Array.from(selectionRect.rowIndexSet);
+                  if (rowIdxs.some((r) => cellMaskedNow(r, copyMenu.colIdx))) return [];
+                  const saveMany = blob.saveMany;
+                  return [
+                    {
+                      label: t("blobSaveMany", { count: rowIdxs.length }),
+                      title: t("blobSaveManyTitle"),
+                      onSelect: () => {
+                        setCopyMenu(null);
+                        void saveMany(rowIdxs);
+                      },
+                    },
+                  ];
+                })(),
                 ...(blob.load
                   ? [
                       {

@@ -34,6 +34,7 @@ const COVERED: Record<string, string> = {
   AssertionSql: "assertionSql",
   CancelStreamResult: "cancelStreamResponse",
   CaptureOutcome: "timelapseCaptureOutcome",
+  BlobFolderSaveResult: "blobFolderSaveResult",
   CellBlobProbe: "cellBlobProbe",
   ColumnProfile: "columnProfile",
   ColumnStatsOut: "resultColumnStats",

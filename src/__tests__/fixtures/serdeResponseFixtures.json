@@ -341,6 +341,19 @@
     "kind": "started",
     "total": 3
   },
+  "blobFolderSaveResult": {
+    "errors": [
+      {
+        "error": "expected exactly one row for the key, got 0",
+        "row": 4
+      }
+    ],
+    "failed": 1,
+    "saved": 3,
+    "skippedNull": 1,
+    "skippedTooLarge": 2,
+    "totalBytes": 4096
+  },
   "broadcastCancelledMessage": {
     "kind": "cancelled",
     "sessionId": "sess0002"

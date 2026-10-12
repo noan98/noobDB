@@ -829,6 +829,18 @@ fn build_fixtures() -> serde_json::Value {
         image: true,
     };
 
+    let blob_folder_save_result = t::BlobFolderSaveResult {
+        saved: 3,
+        total_bytes: 4096,
+        skipped_null: 1,
+        skipped_too_large: 2,
+        failed: 1,
+        errors: vec![t::BlobFolderIssue {
+            row: 4,
+            error: "expected exactly one row for the key, got 0".into(),
+        }],
+    };
+
     // #1256: エディタのバッチ実行 (`run_sql_batch`) の Channel メッセージ。
     // 結果 1 文ぶんは SELECT (列 + 行) とエラーの 2 形を載せ、省略フィールド
     // (`skip_serializing_if`) のキーも固定する。
@@ -1713,6 +1725,7 @@ fn build_fixtures() -> serde_json::Value {
         "importProgressEvent": import_progress_event,
         "importDoneEvent": import_done_event,
         "cellBlobProbe": cell_blob_probe,
+        "blobFolderSaveResult": blob_folder_save_result,
         "transferPreview": transfer_preview,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,
