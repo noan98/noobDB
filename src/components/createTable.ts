@@ -4,6 +4,7 @@
 // 識別子のクオートは sqlDialect.ts、DEFAULT のリテラルエスケープは cellEdit.ts の
 // quoteString を流用する。副作用が無いので Vitest でユニットテストする。
 
+import type { TableColumnInfo } from "../api/tauri";
 import { quoteIdentFor } from "./sqlDialect";
 import { quoteString } from "./cellEdit";
 import {
@@ -194,4 +195,34 @@ function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolea
   if (def !== null) parts.push(`DEFAULT ${def}`);
 
   return parts.join(" ");
+}
+
+/**
+ * 既存テーブルの列メタデータから CREATE TABLE ウィザードの列定義の雛形を作る (#1540)。
+ *
+ * 型名は方言のまま (`data_type` を逐語) 渡すので、同じドライバの接続なら追加変換なしで
+ * 使える。主キー (`PRI`)・単一列 UNIQUE (`UNI`)・NOT NULL・既定値を引き継ぐ。
+ * - 自動採番 (MySQL `auto_increment` / PostgreSQL の `nextval(...)` 既定値) は
+ *   `autoIncrement` に写し、既定値は空にする (`nextval` は元テーブルのシーケンスを指すため)。
+ * - 生成列 (`GENERATED`、`DEFAULT_GENERATED` を除く) は式が取れないので既定値なしの通常列として写す。
+ * - 外部キー・CHECK・インデックスは引き継がない (必要なら制約エディタで足す)。
+ */
+export function columnDefsFromTableInfo(columns: readonly TableColumnInfo[]): ColumnDef[] {
+  return columns.map((c) => {
+    const extra = c.extra.toLowerCase();
+    const def = (c.default ?? "").trim();
+    const serial = /^nextval\(/i.test(def);
+    const autoIncrement = extra.includes("auto_increment") || serial;
+    const generated = extra.replace("default_generated", "").includes("generated");
+    const primaryKey = c.key.toUpperCase() === "PRI";
+    return {
+      name: c.name,
+      type: c.data_type,
+      notNull: !c.nullable || primaryKey,
+      primaryKey,
+      unique: c.key.toUpperCase() === "UNI",
+      autoIncrement,
+      defaultValue: autoIncrement || generated ? "" : def,
+    };
+  });
 }
