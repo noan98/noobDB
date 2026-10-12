@@ -655,6 +655,11 @@ const en = {
   txCommit: "Commit",
   txRollback: "Rollback",
   txActiveBadge: "TX",
+  txListBadgeTitle: "This connection holds an uncommitted transaction. Switching away keeps it open; commit or roll back before disconnecting.",
+  connSwitchTxTitle: "This connection has an open transaction",
+  connSwitchTxBody:
+    "The current connection still holds an uncommitted transaction. It stays open in the background while you switch, so its changes and row locks remain until you come back and commit or roll back.",
+  connSwitchTxAction: "Switch anyway",
   txActiveHelp: "An explicit transaction is active. Queries run inside it until commit/rollback.",
   txIsolationLabel: "Isolation level",
   txIsolationDefault: "Server default",
@@ -5330,6 +5335,11 @@ const ja: Dict = {
   txCommit: "コミット",
   txRollback: "ロールバック",
   txActiveBadge: "TX",
+  txListBadgeTitle: "この接続は未確定のトランザクションを保持しています。切り替えても開いたままです。切断する前に確定または破棄してください。",
+  connSwitchTxTitle: "この接続には未確定のトランザクションがあります",
+  connSwitchTxBody:
+    "現在の接続は未確定のトランザクションを保持しています。切り替えてもバックグラウンドで開いたままになり、戻って確定または破棄するまで変更と行ロックが残ります。",
+  connSwitchTxAction: "このまま切り替える",
   txActiveHelp: "明示トランザクションが有効です。クエリは確定/破棄するまでこの中で実行されます。",
   txIsolationLabel: "分離レベル",
   txIsolationDefault: "サーバ既定",

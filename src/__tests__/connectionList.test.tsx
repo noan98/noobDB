@@ -143,6 +143,28 @@ describe("ConnectionList render smoke (#604)", () => {
   });
 });
 
+describe("ConnectionList: 未確定トランザクションのバッジ (#1536)", () => {
+  it("txProfileIds に含まれるプロファイル行にだけ TX バッジを出す", () => {
+    const profiles = [
+      makeProfile({ id: "p-a", name: "Alpha DB" }),
+      makeProfile({ id: "p-b", name: "Beta DB" }),
+    ];
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={profiles} txProfileIds={new Set(["p-b"])} />,
+    );
+    const rows = screen.getAllByRole("treeitem");
+    expect(within(rows[0]).queryByTestId("tx-badge")).toBeNull();
+    expect(within(rows[1]).getByTestId("tx-badge")).toHaveTextContent(t("txActiveBadge"));
+  });
+
+  it("txProfileIds が無ければバッジは出ない", () => {
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={[makeProfile({ id: "p-a", name: "Alpha DB" })]} />,
+    );
+    expect(screen.queryByTestId("tx-badge")).toBeNull();
+  });
+});
+
 describe("ConnectionList: 行内ボタンのキー操作", () => {
   it("更新ボタンの Enter/Space はプロファイル行を開閉しない", async () => {
     localStorage.clear();

@@ -1906,9 +1906,25 @@ export default function App() {
   );
   // 現在の txActive / savepoints がどのセッションのものか (保存先のキー)。
   const txOwnerRef = useRef<string | null>(null);
+  // 背景接続の TX 状態 (ref) が変わったことを接続一覧のバッジへ伝える再描画トリガ (#1536)。
+  const [txTick, setTxTick] = useState(0);
   const forgetTxState = useCallback((sid: string) => {
     txBySessionRef.current.delete(sid);
+    setTxTick((n) => n + 1);
   }, []);
+  // 未確定の TX を保持している接続のプロファイル id (接続一覧の「TX」バッジ用, #1536)。
+  // 表示中の接続は state (`txActive`)、背景の接続は接続ごとの保存先 (ref) を見る。
+  // ref の変化は `txTick` で再計算する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: txTick は ref (txBySessionRef) の変化を知らせる再計算トリガ
+  const txProfileIds = useMemo(
+    () =>
+      new Set(
+        openConnections
+          .filter((c) => (c.sessionId === sessionId ? txActive : txBySessionRef.current.has(c.sessionId)))
+          .map((c) => c.profile.id),
+      ),
+    [openConnections, sessionId, txActive, txTick],
+  );
   // await の後で「操作した接続」がまだ表示中とは限らない。表示中でなければ保存先
   // (txBySessionRef) だけを更新し、state (別の接続のぶん) には触らない。
   const updateSavepointsFor = useCallback(
@@ -1929,6 +1945,7 @@ export default function App() {
       setTxActive(false);
     } else {
       txBySessionRef.current.delete(sid);
+      setTxTick((n) => n + 1);
     }
   }, []);
   // 接続の切替: 切替先に保存済みの TX 状態があれば復元し、無ければ非 TX に戻す。
@@ -3091,9 +3108,19 @@ export default function App() {
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
-  const switchToOpenConnection = useCallback(async (target: OpenConnection) => {
+  const switchToOpenConnection = useCallback(async (target: OpenConnection, opts?: { skipTxWarning?: boolean }) => {
     if (target.sessionId === sessionId) return;
     if (!(await confirmDiscardPendingEdits())) return;
+    // 未確定の TX を持つ接続から離れる前に知らせる (#1536)。TX は背景で開いたまま残る。
+    if (!opts?.skipTxWarning && sessionId && txActiveRef.current) {
+      const ok = await confirmDiscard({
+        title: translate("connSwitchTxTitle"),
+        message: translate("connSwitchTxBody"),
+        confirmLabel: translate("connSwitchTxAction"),
+        tone: "warning",
+      });
+      if (!ok) return;
+    }
     // 進行中の自動再接続ループは手動切替で中断する。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3126,7 +3153,7 @@ export default function App() {
     }
     setStatus({ kind: "idle" });
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits, confirmDiscard]);
 
   // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
   // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
@@ -3412,7 +3439,8 @@ export default function App() {
     // 残っていなければ未接続状態へ。
     const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
     if (remaining.length > 0) {
-      await switchToOpenConnection(remaining[remaining.length - 1]);
+      // 閉じた接続の TX は上の確認で破棄済み。残る接続への自動切替では警告しない。
+      await switchToOpenConnection(remaining[remaining.length - 1], { skipTxWarning: true });
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
@@ -5132,6 +5160,7 @@ export default function App() {
       if (txOwnerRef.current !== sessionId) {
         // 開始の await 中に別の接続へ切り替わった: 状態は開始した接続のぶんとして保存する。
         txBySessionRef.current.set(sessionId, { savepoints: [], counter: 0 });
+        setTxTick((n) => n + 1);
         toast.info(translate("txBegun"));
         return;
       }
@@ -9527,6 +9556,7 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             openProfileIds={openProfileIds}
+            txProfileIds={txProfileIds}
             {...connectionListHandlers}
             selectLimit={Math.max(1, settings.defaultDisplayCount)}
             favorites={quickAccess.favorites}
