@@ -16,7 +16,7 @@
 //! | 真偽 | `true` / `false` |
 //! | 日時 | 時刻が 0:00:00 なら `YYYY-MM-DD`、それ以外は `YYYY-MM-DD HH:MM:SS[.fff]` |
 //! | 経過時間 | `HH:MM:SS` |
-//! | エラー値 (`#DIV/0!` など) | NULL (数値列などへ文字列が混ざって取り込みが失敗するのを避ける) |
+//! | エラー値 (`#DIV/0!` など) | 取り込みは NULL (数値列などへ文字列が混ざって取り込みが失敗するのを避ける)。プレビューだけエラー文字列をそのまま出し、どのセルが NULL になるか分かるようにする (#1532) |
 //!
 //! 数式セルは Excel が保存した**計算済みの値**を読む (数式そのものは取り込まない)。
 //!
@@ -83,10 +83,12 @@ fn format_duration(d: &chrono::Duration) -> String {
     format!("{sign}{:02}:{:02}:{:02}", t / 3600, (t / 60) % 60, t % 60)
 }
 
-/// セル 1 つ → 取り込むテキスト (`None` = NULL)。対応は冒頭の表。
-pub(crate) fn cell_text(cell: &DataRef<'_>) -> Option<String> {
+/// セル 1 つ → 取り込むテキスト (`None` = NULL)。対応は冒頭の表。`show_errors` が真なら
+/// エラー値を `#DIV/0!` などの文字列で返す (プレビュー用。取り込みは偽で NULL にする)。
+pub(crate) fn cell_text(cell: &DataRef<'_>, show_errors: bool) -> Option<String> {
     match cell {
-        DataRef::Empty | DataRef::Error(_) => None,
+        DataRef::Empty => None,
+        DataRef::Error(e) => show_errors.then(|| e.to_string()),
         DataRef::String(s) => Some(s.clone()),
         DataRef::SharedString(s) => Some((*s).to_string()),
         DataRef::Int(i) => Some(i.to_string()),
@@ -120,18 +122,24 @@ pub(crate) struct XlsxSheetMeta {
 }
 
 /// `sheet` (省略時は先頭シート) を読む。`max_rows` は読む行数の上限 (空行を除く)。
-/// 超える行があれば読み取りを打ち切って `truncated` を立てる。メモリ上のバイト列用
+/// 超える行があれば読み取りを打ち切って `truncated` を立てる。`show_errors` はプレビュー用に
+/// エラー値のセルを文字列で残す ([`cell_text`])。メモリ上のバイト列用
 /// (本番はファイル版の [`read_sheet_file`] / [`scan_sheet`] を使う)。
 #[cfg(test)]
 pub(crate) fn read_sheet(
     data: &[u8],
     sheet: Option<&str>,
     max_rows: Option<usize>,
+    show_errors: bool,
 ) -> Result<XlsxSheet> {
     let mut rows: Vec<XlsxRow> = Vec::new();
-    let meta = scan_sheet(std::io::Cursor::new(data), sheet, max_rows, |row| {
-        rows.push(row)
-    })?;
+    let meta = scan_sheet(
+        std::io::Cursor::new(data),
+        sheet,
+        max_rows,
+        show_errors,
+        |row| rows.push(row),
+    )?;
     Ok(XlsxSheet {
         sheets: meta.sheets,
         sheet: meta.sheet,
@@ -147,12 +155,17 @@ pub(crate) fn read_sheet_file(
     path: &std::path::Path,
     sheet: Option<&str>,
     max_rows: Option<usize>,
+    show_errors: bool,
 ) -> Result<XlsxSheet> {
     let file = std::fs::File::open(path)?;
     let mut rows: Vec<XlsxRow> = Vec::new();
-    let meta = scan_sheet(std::io::BufReader::new(file), sheet, max_rows, |row| {
-        rows.push(row)
-    })?;
+    let meta = scan_sheet(
+        std::io::BufReader::new(file),
+        sheet,
+        max_rows,
+        show_errors,
+        |row| rows.push(row),
+    )?;
     Ok(XlsxSheet {
         sheets: meta.sheets,
         sheet: meta.sheet,
@@ -167,6 +180,7 @@ pub(crate) fn scan_sheet<RS: Read + Seek>(
     rs: RS,
     sheet: Option<&str>,
     max_rows: Option<usize>,
+    show_errors: bool,
     mut on_row: impl FnMut(XlsxRow),
 ) -> Result<XlsxSheetMeta> {
     let mut wb = open(rs)?;
@@ -206,7 +220,7 @@ pub(crate) fn scan_sheet<RS: Read + Seek>(
 
     while let Some(cell) = reader.next_cell().map_err(xlsx_err)? {
         let (row, col) = cell.get_position();
-        let text = cell_text(cell.get_value());
+        let text = cell_text(cell.get_value(), show_errors);
         if current.as_ref().map(|(r, _)| *r) != Some(row) {
             flush(&mut current, &mut emitted);
             if max_rows.is_some_and(|m| emitted >= m) {
@@ -246,7 +260,7 @@ mod tests {
     use super::*;
     use crate::commands::export_xlsx::write_xlsx;
     use crate::db::types::{Column, Value};
-    use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
+    use rust_xlsxwriter::{ExcelDateTime, Format, Formula, Workbook};
 
     fn col(name: &str, ty: &str) -> Column {
         Column {
@@ -297,7 +311,7 @@ mod tests {
         ];
         let bytes = export(&cols, &rows);
         assert_eq!(sheet_names(&bytes).unwrap().len(), 1);
-        let r = read_sheet(&bytes, None, None).unwrap();
+        let r = read_sheet(&bytes, None, None, false).unwrap();
         assert!(!r.truncated);
         assert_eq!(r.rows.len(), 3);
         assert_eq!(r.rows[0].line, 1);
@@ -348,15 +362,15 @@ mod tests {
         ws.write_string(4, 0, "c").unwrap();
         let bytes = wb.save_to_buffer().unwrap();
 
-        let all = read_sheet(&bytes, None, None).unwrap();
+        let all = read_sheet(&bytes, None, None, false).unwrap();
         let lines: Vec<u64> = all.rows.iter().map(|r| r.line).collect();
         assert_eq!(lines, vec![1, 2, 4, 5]);
         assert!(!all.truncated);
 
-        let two = read_sheet(&bytes, None, Some(2)).unwrap();
+        let two = read_sheet(&bytes, None, Some(2), false).unwrap();
         assert_eq!(two.rows.len(), 2);
         assert!(two.truncated);
-        let exact = read_sheet(&bytes, None, Some(4)).unwrap();
+        let exact = read_sheet(&bytes, None, Some(4), false).unwrap();
         assert_eq!(exact.rows.len(), 4);
         assert!(!exact.truncated);
     }
@@ -376,17 +390,20 @@ mod tests {
             .unwrap();
         let bytes = wb.save_to_buffer().unwrap();
 
-        let first = read_sheet(&bytes, None, None).unwrap();
+        let first = read_sheet(&bytes, None, None, false).unwrap();
         assert_eq!(first.sheet, "first");
         assert_eq!(
             first.sheets,
             vec!["first".to_string(), "second".to_string()]
         );
-        let second = read_sheet(&bytes, Some("second"), None).unwrap();
+        let second = read_sheet(&bytes, Some("second"), None, false).unwrap();
         assert_eq!(second.rows[0].cells, vec![s("y")]);
-        assert!(read_sheet(&bytes, Some("nope"), None).is_err());
+        assert!(read_sheet(&bytes, Some("nope"), None, false).is_err());
         // 空文字列は「指定なし」と同じ扱い。
-        assert_eq!(read_sheet(&bytes, Some(""), None).unwrap().sheet, "first");
+        assert_eq!(
+            read_sheet(&bytes, Some(""), None, false).unwrap().sheet,
+            "first"
+        );
     }
 
     #[test]
@@ -412,7 +429,7 @@ mod tests {
             .unwrap();
         ws.write_number(0, 4, 42.0).unwrap();
         let bytes = wb.save_to_buffer().unwrap();
-        let r = read_sheet(&bytes, None, None).unwrap();
+        let r = read_sheet(&bytes, None, None, false).unwrap();
         assert_eq!(
             r.rows[0].cells,
             vec![
@@ -426,7 +443,23 @@ mod tests {
     }
 
     #[test]
+    fn error_cells_are_null_on_import_but_visible_in_preview() {
+        let mut wb = Workbook::new();
+        let ws = wb.add_worksheet();
+        ws.write_number(0, 0, 1.0).unwrap();
+        ws.write_formula(0, 1, Formula::new("=1/0").set_result("#DIV/0!"))
+            .unwrap();
+        let bytes = wb.save_to_buffer().unwrap();
+        // 取り込み: エラー値は NULL (数値列へ文字列が混ざらない)。
+        let import = read_sheet(&bytes, None, None, false).unwrap();
+        assert_eq!(import.rows[0].cells, vec![s("1")]);
+        // プレビュー: どのセルが NULL になるか分かるよう文字列で残す。
+        let preview = read_sheet(&bytes, None, None, true).unwrap();
+        assert_eq!(preview.rows[0].cells, vec![s("1"), s("#DIV/0!")]);
+    }
+
+    #[test]
     fn invalid_bytes_is_error() {
-        assert!(read_sheet(b"not a zip", None, None).is_err());
+        assert!(read_sheet(b"not a zip", None, None, false).is_err());
     }
 }

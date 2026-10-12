@@ -130,8 +130,9 @@ describe("MigrationExportModal render smoke (#744)", () => {
     await waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(2));
     const [upPath, upText] = writeTextFile.mock.calls[0];
     const [downPath, downText] = writeTextFile.mock.calls[1];
-    expect(upPath).toContain("shop_staging_to_shop_prod");
-    expect(downPath).toContain("shop_staging_to_shop_prod");
+    // 保存ダイアログで選んだパスをそのまま up に使い、down は同じフォルダへ対の名前で置く (#1532)。
+    expect(upPath).toBe("/home/user/Downloads/mig.sql");
+    expect(downPath).toBe("/home/user/Downloads/mig.down.sql");
     expect(upText).toContain("CREATE TABLE t (id INT);");
     expect(downText).toContain("DROP TABLE t;");
     expect(downText).toContain("sqlite cannot alter columns in place");

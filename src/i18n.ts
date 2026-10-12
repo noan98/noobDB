@@ -286,6 +286,7 @@ const en = {
   snippetFavoriteBadge: "Favorite snippet",
   snippetMenuDelete: "Delete snippet",
   snippetDeleteConfirm: 'Delete snippet "{name}"?',
+  snippetDeleteConfirmTitle: "Delete snippet?",
 
   snippetMenuWatchPlan: "Watch execution plan",
   snippetMenuUnwatchPlan: "Stop watching execution plan",
@@ -974,6 +975,7 @@ const en = {
   listEditTitle: "Edit connection settings (host, port, credentials, SSH)",
   listDelete: "Delete",
   listDeleteConfirm: 'Delete "{name}"?',
+  listDeleteConfirmTitle: "Delete connection?",
   listDuplicateSuffix: " (copy)",
   listVia: "via SSH {host}",
 
@@ -1813,6 +1815,10 @@ const en = {
   localPanelRowCount: "{rows} rows",
   localPanelSourceLabel: "from {name}",
   localPanelDropTable: "Drop local table",
+  localPanelDropConfirmTitle: "Drop local table?",
+  localPanelDropConfirmBody:
+    "Drop the local table \"{table}\"? The registered result set is removed and cannot be restored.",
+  localPanelDropConfirmOk: "Drop",
   localPanelLoading: "Loading…",
   // SQL スクリプトのバッチ実行。
   statusBatchRunning: "Running script ({total} statements)...",
@@ -2013,6 +2019,13 @@ const en = {
     "Column types are mapped to the target database. If the transfer fails or is cancelled, the partially created table is dropped.",
   transferModeAppendHint:
     "Columns are matched by name. Rows written before a failure or cancel remain in the table.",
+  transferLossyTitle: "Some columns change on this target",
+  transferLossyDecimalClamped:
+    "{column} ({source}): exceeds the target's decimal limits and is rounded to {target}.",
+  transferLossyDecimalFloat:
+    "{column} ({source}): SQLite stores it as a number ({target}), so digits beyond 15 significant digits may be lost.",
+  transferLossyTimestampTz:
+    "{column} ({source}): this target has no timezone-aware type, so it is stored as {target} (the offset stays as text).",
   transferProgress: "Transferring… {rows} rows written",
   transferError: "Transfer failed: {error}",
   transferCancelRun: "Cancel transfer",
@@ -2165,6 +2178,10 @@ const en = {
   alterTableNotNullNewAria: "NOT NULL for new column {n}",
   alterTableAddedSection: "New columns",
   alterTableIndexNamePlaceholder: "index_name",
+  alterTableIndexNameRequired: "Enter an index name. Rows without a name are not created.",
+  alterTableIndexColumnsRequired: "Select at least one column. Rows without columns are not created.",
+  alterTableIndexIncompleteBlocked:
+    "An index row is incomplete (name or columns missing), so the changes cannot be run. Complete or remove the row.",
   alterTableAddIndex: "Add index",
   alterTableRemoveIndex: "Remove index",
   alterTableUnsupportedTitle: "Not supported on this driver",
@@ -2896,6 +2913,8 @@ const en = {
   importColumnNumbered: "Column {n}",
   importPreviewTitle: "Preview",
   importPreviewTruncated: "(showing the first rows)",
+  importXlsxErrorCells:
+    "The preview has {count} Excel error value(s) (such as #DIV/0!). They are imported as NULL.",
   importProgress: "Inserted {inserted} / {total} rows...",
   importSuccess: "Imported {inserted} rows ({ms} ms).",
   importImporting: "Importing...",
@@ -3266,6 +3285,7 @@ const en = {
   pinCompareEmptyHint: "Pin a result first (pin button on the result toolbar)",
   pinToastCompare: "Result pinned",
   pinToastNeedOneMore: "Result pinned. Pin one more to compare.",
+  pinToastEvicted: "Result pinned. The limit is {max}, so \"{title}\" was removed.",
   pinToastOpenCompare: "Open comparison",
   pinCompareSelect: "Select a pinned result to show here.",
   pinCompareLeft: "Left",
@@ -4197,6 +4217,7 @@ const en = {
   sandboxSectionTitle: "Sandboxes",
   sandboxMenuReview: "Review changes...",
   sandboxMenuDiscard: "Discard",
+  sandboxDiscardConfirmTitle: "Discard sandbox?",
   sandboxDiscardConfirm:
     'Discard sandbox "{name}"? Its local copy will be deleted and cannot be recovered. This never affects the original connection.',
   sandboxTableCountTitle: "{count} table(s)",
@@ -4893,6 +4914,7 @@ const ja: Dict = {
   snippetFavoriteBadge: "お気に入りのスニペット",
   snippetMenuDelete: "スニペットを削除",
   snippetDeleteConfirm: "スニペット「{name}」を削除しますか？",
+  snippetDeleteConfirmTitle: "スニペットを削除しますか？",
 
   snippetMenuWatchPlan: "実行計画をウォッチ",
   snippetMenuUnwatchPlan: "実行計画のウォッチを解除",
@@ -5581,6 +5603,7 @@ const ja: Dict = {
   listEditTitle: "接続情報を編集 (ホスト・ポート・認証情報・SSH)",
   listDelete: "削除",
   listDeleteConfirm: "「{name}」を削除しますか？",
+  listDeleteConfirmTitle: "接続を削除しますか？",
   listDuplicateSuffix: "（コピー）",
   listVia: "SSH {host} 経由",
 
@@ -6417,6 +6440,10 @@ const ja: Dict = {
   localPanelRowCount: "{rows} 行",
   localPanelSourceLabel: "由来: {name}",
   localPanelDropTable: "ローカルテーブルを削除",
+  localPanelDropConfirmTitle: "ローカルテーブルを削除しますか？",
+  localPanelDropConfirmBody:
+    "ローカルテーブル「{table}」を削除します。登録した結果セットは失われ、元に戻せません。",
+  localPanelDropConfirmOk: "削除",
   localPanelLoading: "読み込み中…",
   // SQL スクリプトのバッチ実行。
   statusBatchRunning: "スクリプトを実行中 ({total} 文)...",
@@ -6617,6 +6644,13 @@ const ja: Dict = {
     "列の型はコピー先のデータベースに合わせて変換します。失敗・キャンセル時は作成途中のテーブルを削除します。",
   transferModeAppendHint:
     "列は名前で対応付けます。失敗・キャンセルまでに書き込んだ行はテーブルに残ります。",
+  transferLossyTitle: "コピー先で値や型が変わる列があります",
+  transferLossyDecimalClamped:
+    "{column} ({source}): コピー先の小数の上限を超えるため、{target} に丸められます。",
+  transferLossyDecimalFloat:
+    "{column} ({source}): SQLite では数値 ({target}) として保存されるため、有効桁 15 桁を超える部分は失われることがあります。",
+  transferLossyTimestampTz:
+    "{column} ({source}): コピー先にはタイムゾーン付きの型がないため {target} として保存されます (オフセットは文字列のまま残ります)。",
   transferProgress: "転送中… {rows} 行を書き込みました",
   transferError: "転送に失敗しました: {error}",
   transferCancelRun: "転送を中止",
@@ -6769,6 +6803,10 @@ const ja: Dict = {
   alterTableNotNullNewAria: "新しい列 {n} の NOT NULL",
   alterTableAddedSection: "新しい列",
   alterTableIndexNamePlaceholder: "index_name",
+  alterTableIndexNameRequired: "インデックス名を入力してください。名前のない行は作成されません。",
+  alterTableIndexColumnsRequired: "列を 1 つ以上選んでください。列のない行は作成されません。",
+  alterTableIndexIncompleteBlocked:
+    "未完成のインデックス行 (名前または列が未入力) があるため実行できません。入力を完成させるか、行を削除してください。",
   alterTableAddIndex: "インデックスを追加",
   alterTableRemoveIndex: "インデックスを削除",
   alterTableUnsupportedTitle: "このドライバでは非対応",
@@ -7496,6 +7534,8 @@ const ja: Dict = {
   importColumnNumbered: "列 {n}",
   importPreviewTitle: "プレビュー",
   importPreviewTruncated: "(先頭の行を表示しています)",
+  importXlsxErrorCells:
+    "プレビューに Excel のエラー値 (#DIV/0! など) が {count} 件あります。取り込み時は NULL になります。",
   importProgress: "{total} 行中 {inserted} 行を投入中...",
   importSuccess: "{inserted} 行をインポートしました ({ms} ms)。",
   importImporting: "インポート中...",
@@ -7866,6 +7906,7 @@ const ja: Dict = {
   pinCompareEmptyHint: "先に結果をピン留めしてください (結果ツールバーのピンボタン)",
   pinToastCompare: "結果をピン留めしました",
   pinToastNeedOneMore: "結果をピン留めしました。もう 1 件ピンすると比較できます",
+  pinToastEvicted: "結果をピン留めしました。上限 {max} 件のため「{title}」を外しました",
   pinToastOpenCompare: "比較を開く",
   pinCompareSelect: "ここに表示するピン留め結果を選択してください。",
   pinCompareLeft: "左",
@@ -8797,6 +8838,7 @@ const ja: Dict = {
   sandboxSectionTitle: "サンドボックス",
   sandboxMenuReview: "変更を確認",
   sandboxMenuDiscard: "破棄",
+  sandboxDiscardConfirmTitle: "サンドボックスを破棄しますか？",
   sandboxDiscardConfirm:
     "サンドボックス「{name}」を破棄しますか? ローカルコピーは削除され元に戻せません。元の接続には一切影響しません。",
   sandboxTableCountTitle: "{count} テーブル",

@@ -431,3 +431,43 @@ async fn cancelling_drops_the_partially_created_table() {
     remove_files(&src);
     remove_files(&dst);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn preview_returns_the_plan_without_creating_a_table() {
+    let state = t::AppState::default();
+    let src = sqlite_session(&state, "pv_src", false).await;
+    let dst = sqlite_session(&state, "pv_dst", false).await;
+    exec(
+        &state,
+        "pv_src",
+        "CREATE TABLE a (id INTEGER, at TIMESTAMPTZ, price DECIMAL(20,2))",
+    )
+    .await;
+    exec(
+        &state,
+        "pv_src",
+        "INSERT INTO a VALUES (1, '2024-01-01 00:00:00+09', 1.50)",
+    )
+    .await;
+
+    let preview = t::preview_transfer_inner(&state, table_request("pv_src", "pv_dst", "a", "a"))
+        .await
+        .expect("preview");
+    let names: Vec<_> = preview.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["id", "at", "price"]);
+    // SQLite のストリームは宣言型を報告せず値の形から推定するので (転送本体と同じ計画)、
+    // SQLite 同士では縮退する列は出ない。MySQL / PostgreSQL 由来の縮退は
+    // `db::transfer` の単体テストで固定している。
+    assert!(preview.lossy.is_empty(), "{:?}", preview.lossy);
+    // プレビューは何も書かない。
+    let r = exec(
+        &state,
+        "pv_dst",
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table'",
+    )
+    .await;
+    assert_eq!(int(&r.rows[0][0]), 0);
+
+    remove_files(&src);
+    remove_files(&dst);
+}

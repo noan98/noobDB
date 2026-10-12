@@ -18,6 +18,7 @@ import {
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
@@ -38,6 +39,7 @@ import {
 } from "./importConflict";
 import {
   buildColumnDrafts,
+  countExcelErrors,
   mergeColumnDrafts,
   newColumnTypeCellKind,
   newColumnTypeOptions,
@@ -216,6 +218,10 @@ export function ImportModal({
   const importing = status.kind === "importing";
   const isCsv = format === "csv";
   const isXlsx = format === "xlsx";
+  const excelErrorCount = useMemo(
+    () => (isXlsx && preview ? countExcelErrors(preview.rows) : 0),
+    [isXlsx, preview],
+  );
   // 先頭行を列名として使うかを選べる形式 (JSON/NDJSON は常にフィールド名を持つ)。
   const headerApplies = isCsv || isXlsx;
   // The quote character only matters for CSV; JSON/NDJSON ignore it, so don't
@@ -338,9 +344,9 @@ export function ImportModal({
       setDrafts(null);
       return;
     }
-    const next = buildColumnDrafts(preview, nullToken, driver, namedFields);
+    const next = buildColumnDrafts(preview, nullToken, driver, namedFields, isXlsx);
     setDrafts((prev) => mergeColumnDrafts(prev, next));
-  }, [preview, nullToken, driver, namedFields]);
+  }, [preview, nullToken, driver, namedFields, isXlsx]);
 
   // ファイル名からテーブル名を提案する (ユーザが編集するまで)。
   useEffect(() => {
@@ -1054,6 +1060,12 @@ export function ImportModal({
               <FieldError>{t("importConflictKeyNotMapped")}</FieldError>
             )}
           </FormSection>
+        )}
+
+        {isXlsx && preview && excelErrorCount > 0 && (
+          <Callout tone="warning" role="status">
+            {t("importXlsxErrorCells", { count: excelErrorCount })}
+          </Callout>
         )}
 
         {preview && preview.rows.length > 0 && (

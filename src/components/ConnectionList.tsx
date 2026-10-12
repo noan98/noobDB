@@ -54,6 +54,7 @@ import {
   type MaintenanceKind,
 } from "./maintenanceCommands";
 import { Input } from "./ui";
+import { useConfirm } from "./ConfirmDialog";
 import {
   anchorTableSelection,
   buildExplorerRows,
@@ -1798,6 +1799,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onToggleFavorite,
 }, ref) {
   const t = useT();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   // アクティブテーブル行のスパインが共有する layoutId (#982)。`TabBar` の
   // `indicatorId` と同じ理由でコンポーネントインスタンスごとにスコープする。
   const activeTableIndicatorId = `tree-active-table-indicator-${useId()}`;
@@ -2516,7 +2518,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           label: t("contextMenuDelete"),
           danger: true,
           onSelect: () => {
-            if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p);
+            void confirm({
+              title: t("listDeleteConfirmTitle"),
+              message: t("listDeleteConfirm", { name: p.name }),
+              confirmLabel: t("contextMenuDelete"),
+              tone: "danger",
+            }).then((ok) => {
+              if (ok) onDelete(p);
+            });
           },
         },
       ],
@@ -4020,6 +4029,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
+      {confirmDialog}
     </Flex>
     </TreeActionsContext.Provider>
   );

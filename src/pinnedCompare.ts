@@ -46,8 +46,22 @@ export function addPinned(
   item: PinnedResult,
   max = MAX_PINNED,
 ): PinnedResult[] {
+  return addPinnedWithEvicted(list, item, max).list;
+}
+
+/**
+ * {@link addPinned} と同じ追加を行い、上限超過で外れた項目も返す (#1532)。
+ * どの結果が消えたかをトーストで明示するために使う。
+ */
+export function addPinnedWithEvicted(
+  list: PinnedResult[],
+  item: PinnedResult,
+  max = MAX_PINNED,
+): { list: PinnedResult[]; evicted: PinnedResult[] } {
   const next = [...list, item];
-  return next.length > max ? next.slice(next.length - max) : next;
+  if (next.length <= max) return { list: next, evicted: [] };
+  const cut = next.length - max;
+  return { list: next.slice(cut), evicted: next.slice(0, cut) };
 }
 
 /** ピン直後のトーストの内容 (#1277)。 */

@@ -4672,6 +4672,23 @@
     "row_limit": 10000,
     "watch_id": 3
   },
+  "transferPreview": {
+    "columns": [
+      {
+        "name": "amount",
+        "sourceType": "DECIMAL(70,2)",
+        "targetType": "DECIMAL(65,2)"
+      }
+    ],
+    "lossy": [
+      {
+        "column": "amount",
+        "kind": "decimal_clamped",
+        "sourceType": "DECIMAL(70,2)",
+        "targetType": "DECIMAL(65,2)"
+      }
+    ]
+  },
   "undoOutcome": {
     "applied": true,
     "conflicts": [

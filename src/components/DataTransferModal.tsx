@@ -5,10 +5,12 @@ import {
   api,
   listenTransferStream,
   type ConnectionProfile,
+  type TransferLossyConversion,
   type TransferMode,
 } from "../api/tauri";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Callout } from "./Callout";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, Select } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -45,6 +47,12 @@ interface Props {
   onClose: () => void;
 }
 
+const LOSSY_MESSAGE_KEYS = {
+  decimal_clamped: "transferLossyDecimalClamped",
+  decimal_float: "transferLossyDecimalFloat",
+  timestamp_tz_degraded: "transferLossyTimestampTz",
+} as const;
+
 type Status =
   | { kind: "idle" }
   | { kind: "running"; rows: number }
@@ -64,6 +72,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const [existingTables, setExistingTables] = useState<string[] | null>(null);
   const [tableName, setTableName] = useState(() => defaultTransferTableName(source));
   const [mode, setMode] = useState<TransferMode>("create");
+  const [lossy, setLossy] = useState<TransferLossyConversion[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   const ownedSessionRef = useRef<string | null>(null);
@@ -172,6 +181,35 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     };
   }, [targetSession, database]);
 
+  // 転送先が決まったら、書き込み前に「値や型が変わる列」を調べて出す (#1532、ベストエフォート)。
+  // 列定義と縮退の判定はバックエンド (転送本体と同じ型マッピング) が返す。
+  const sourceTableName = source.kind === "table" ? source.table : null;
+  const sourceSqlText = source.kind === "query" ? source.sql : null;
+  const sourceDatabase = source.database;
+  useEffect(() => {
+    setLossy([]);
+    if (!targetSession || !database) return;
+    let cancelled = false;
+    api
+      .previewTransfer({
+        sourceSessionId,
+        targetSessionId: targetSession,
+        sourceDatabase,
+        sourceTable: sourceTableName,
+        sourceSql: sourceSqlText,
+        targetDatabase: database,
+        targetTable: "",
+        mode: "create",
+      })
+      .then((p) => {
+        if (!cancelled) setLossy(p.lossy);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceSessionId, sourceDatabase, sourceTableName, sourceSqlText, targetSession, database]);
+
   const tableExists = existingTables ? tableNameCollides(existingTables, tableName) : false;
   const validation = validateTransferTarget({
     tableName,
@@ -241,7 +279,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
           cleanupStream();
           setStatus({ kind: "idle" });
           toast.success(t("transferDone", { rows: e.rows, table: name, name: targetProfile.name }));
-          for (const w of e.warnings) toast.info(w);
+          // 縮退の警告は転送前の Callout (翻訳済み) で示すので、完了時のトーストは出さない。
           onClose();
         },
         onError: (e) => {
@@ -390,6 +428,22 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
             {mode === "append" ? t("transferModeAppendHint") : t("transferModeCreateHint")}
           </chakra.span>
         </FormSection>
+
+        {lossy.length > 0 && mode !== "append" && !isRunning && (
+          <Callout tone="warning" title={t("transferLossyTitle")} role="status">
+            <chakra.ul listStyleType="disc" pl="4" m="0">
+              {lossy.map((l) => (
+                <li key={`${l.column}:${l.kind}`}>
+                  {t(LOSSY_MESSAGE_KEYS[l.kind], {
+                    column: l.column,
+                    source: l.sourceType,
+                    target: l.targetType,
+                  })}
+                </li>
+              ))}
+            </chakra.ul>
+          </Callout>
+        )}
 
         {isRunning && (
           <chakra.div fontSize="sm" color="app.text" textStyle="numeric">

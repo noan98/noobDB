@@ -25,6 +25,7 @@ import {
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { readCollapsedSnippetFolders, writeCollapsedSnippetFolders } from "./snippetFolders";
 import { Tooltip } from "./Tooltip";
+import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
   snippets: Snippet[];
@@ -238,6 +239,7 @@ export const SnippetList = memo(function SnippetList({
   onRun,
 }: Props) {
   const t = useT();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [filter, setFilter] = useState("");
   const [showAllScopes, setShowAllScopes] = useState(false);
   // フォルダの開閉は localStorage に永続化し、再起動後も維持する (#677)。既定は
@@ -317,7 +319,14 @@ export const SnippetList = memo(function SnippetList({
       label: t("snippetMenuDelete"),
       danger: true,
       onSelect: () => {
-        if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s);
+        void confirm({
+          title: t("snippetDeleteConfirmTitle"),
+          message: t("snippetDeleteConfirm", { name: s.name }),
+          confirmLabel: t("snippetMenuDelete"),
+          tone: "danger",
+        }).then((ok) => {
+          if (ok) onDelete(s);
+        });
       },
     });
     setMenu({ x: e.clientX, y: e.clientY, items });
@@ -468,6 +477,7 @@ export const SnippetList = memo(function SnippetList({
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
+      {confirmDialog}
     </TreePane>
   );
 });
