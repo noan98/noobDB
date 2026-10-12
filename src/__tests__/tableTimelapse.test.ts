@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { DataDiff, TableWatch, TimelapseGenerationMeta } from "../api/tauri";
 import { MASK_PLACEHOLDER } from "../components/columnMask";
+import { tableToCsv } from "../components/tabularText";
 import {
+  buildTimelapseExportRows,
   buildTimelapseRows,
   countTimelapseDiff,
   defaultGenerationPair,
   formatTimelapseValue,
   resolveGenerationPair,
   summarizeCapture,
+  timelapseRowsToJson,
+  timelapseRowsToTable,
   totalTimelapseBytes,
 } from "../tableTimelapse";
 
@@ -132,5 +136,82 @@ describe("summarizeCapture / totalTimelapseBytes / formatTimelapseValue", () => 
     expect(formatTimelapseValue(undefined)).toBe("NULL");
     expect(formatTimelapseValue(false)).toBe("false");
     expect(formatTimelapseValue("9007199254740993")).toBe("9007199254740993");
+  });
+});
+
+describe("差分の書き出し (#1539)", () => {
+  const diff = {
+    target_driver: "sqlite",
+    table: "users",
+    columns: ["id", "name", "email"],
+    column_types: ["int", "text", "text"],
+    primary_key: ["id"],
+    rows: [
+      { status: "source_only", key: [1], source: [1, "a,b", "a@x"], target: null, changed_columns: [] },
+      { status: "target_only", key: [2], source: null, target: [2, "bob", null], changed_columns: [] },
+      {
+        status: "different",
+        key: [3],
+        source: [3, 'say "hi"\nnow', "c@x"],
+        target: [3, "old", "c@x"],
+        changed_columns: ["name"],
+      },
+    ],
+    truncated: false,
+    source_count: 3,
+    target_count: 3,
+  } as unknown as import("../api/tauri").DataDiff;
+
+  it("追加・削除・変更を種別と before / after 付きの行モデルにする", () => {
+    const rows = buildTimelapseExportRows(diff, null);
+    expect(rows.map((r) => r.kind)).toEqual(["added", "removed", "changed"]);
+    expect(rows[0].before).toBeNull();
+    expect(rows[0].after).toEqual({ id: 1, name: "a,b", email: "a@x" });
+    expect(rows[1].after).toBeNull();
+    expect(rows[1].before).toEqual({ id: 2, name: "bob", email: null });
+    expect(rows[2].before?.name).toBe("old");
+    expect(rows[2].after?.name).toBe('say "hi"\nnow');
+    expect(rows[2].key).toEqual({ id: 3 });
+    expect(rows[2].changedColumns).toEqual(["name"]);
+  });
+
+  it("マスク列は before / after とも伏せ字 (主キー列も)", () => {
+    const rows = buildTimelapseExportRows(diff, [true, false, true]);
+    expect(rows[2].before).toEqual({ id: "••••", name: "old", email: "••••" });
+    expect(rows[2].after?.email).toBe("••••");
+    expect(rows[2].key).toEqual({ id: "••••" });
+    expect(JSON.stringify(rows)).not.toContain("c@x");
+    expect(JSON.stringify(rows)).not.toContain("a@x");
+  });
+
+  it("CSV 用の縦持ち表は追加・削除は全列、変更は変わった列だけ", () => {
+    const table = timelapseRowsToTable(buildTimelapseExportRows(diff, [false, false, true]), [
+      "kind",
+      "key",
+      "column",
+      "before",
+      "after",
+    ]);
+    expect(table.rows).toHaveLength(3 + 3 + 1);
+    expect(table.rows[0]).toEqual(["added", "id=1", "id", null, 1]);
+    expect(table.rows[2]).toEqual(["added", "id=1", "email", null, "••••"]);
+    expect(table.rows[6]).toEqual(["changed", "id=3", "name", "old", 'say "hi"\nnow']);
+    const csv = tableToCsv(table.header, table.rows);
+    expect(csv).toContain('changed,id=3,name,old,"say ""hi""\nnow"');
+    expect(csv).toContain('added,id=1,name,,"a,b"');
+  });
+
+  it("JSON はメタ付きで null を保つ", () => {
+    const json = JSON.parse(
+      timelapseRowsToJson(buildTimelapseExportRows(diff, null), {
+        table: "users",
+        fromCapturedAt: "2026-10-12T00:00:00Z",
+        toCapturedAt: "2026-10-12T01:00:00Z",
+      }),
+    );
+    expect(json.table).toBe("users");
+    expect(json.rows[1].after).toBeNull();
+    expect(json.rows[1].before.email).toBeNull();
+    expect(json.rows[2].changed_columns).toEqual(["name"]);
   });
 });
