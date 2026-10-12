@@ -14,16 +14,20 @@ import {
   type TaskRun,
   type TaskSchedule,
 } from "../api/tauri";
-import { useT, type I18nKey } from "../i18n";
+import { useLocale, useT, type I18nKey } from "../i18n";
 import { isReadOnlySql } from "../dangerousSql";
 import { semanticColorToken } from "../semanticColors";
 import {
   buildAssertionTrends,
+  formatClock,
+  localToUtcClock,
   previewOutputPath,
   relativeNextRun,
   sortTasksForDisplay,
   summarizeAction,
   summarizeSchedule,
+  timeZoneLabel,
+  utcToLocalClock,
   type AssertionTrend,
 } from "../taskFormat";
 import { useConfirm } from "./ConfirmDialog";
@@ -368,7 +372,8 @@ function TaskRow({
   onClearHistory: () => void;
 }) {
   const t = useT();
-  const rel = relativeNextRun(task.next_run_at, now);
+  const rel = relativeNextRun(task.next_run_at, now, t);
+  const locale = useLocale();
   return (
     <chakra.div border="1px solid" borderColor="app.border" borderRadius="md" overflow="hidden">
       <Flex align="center" gap="3" px="3" py="2.5" flexWrap="wrap">
@@ -378,7 +383,7 @@ function TaskRow({
             {task.name}
           </chakra.div>
           <chakra.div fontSize="xs" color="app.textMuted">
-            {profileName} · {summarizeAction(task.action)} · {summarizeSchedule(task.schedule)}
+            {profileName} · {summarizeAction(task.action, t)} · {summarizeSchedule(task.schedule, t, { now, locale })}
           </chakra.div>
         </chakra.div>
         <chakra.div fontSize="xs" color="app.textMuted" minW="90px" textAlign="right" textStyle="numeric">
@@ -599,13 +604,29 @@ function TaskForm({
   const [intervalMinutes, setIntervalMinutes] = useState(
     task?.schedule.kind === "interval" ? String(task.schedule.minutes) : "60",
   );
-  const [dailyHour, setDailyHour] = useState(task?.schedule.kind === "daily" ? String(task.schedule.hour) : "9");
-  const [dailyMinute, setDailyMinute] = useState(task?.schedule.kind === "daily" ? String(task.schedule.minute) : "0");
+  // 日次の時刻は「ローカル時刻」で入力し、保存時に UTC (バックエンドの保存形式) へ変換する。
+  const [initialLocalDaily] = useState(() =>
+    task?.schedule.kind === "daily"
+      ? utcToLocalClock(task.schedule.hour, task.schedule.minute, new Date())
+      : { hour: 9, minute: 0, dayShift: 0 as const },
+  );
+  const [dailyHour, setDailyHour] = useState(String(initialLocalDaily.hour));
+  const [dailyMinute, setDailyMinute] = useState(String(initialLocalDaily.minute));
 
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
+  const locale = useLocale();
+  // 入力中のローカル時刻が保存される UTC 時刻を即時表示する (日付境界で前日/翌日になる場合も分かる)。
+  const dailyHint = (() => {
+    const at = new Date();
+    const utc = localToUtcClock(Number(dailyHour) || 0, Number(dailyMinute) || 0, at);
+    return t("taskScheduleLocalHint", {
+      tz: timeZoneLabel(at, locale),
+      utc: formatClock(utc.hour, utc.minute),
+    });
+  })();
   // ドライバを渡さない (= 保守的なマスク) のは意図的: バックエンドの
   // `commands::tasks::validate_action` / `tasks::executor::run_once` も、
   // プロファイル解決前に同じドライバ非依存の判定で弾くため (#852)。ここで
@@ -682,11 +703,10 @@ function TaskForm({
     const schedule: TaskSchedule =
       scheduleKind === "interval"
         ? { kind: "interval", minutes: Math.max(1, Number(intervalMinutes) || 1) }
-        : {
-            kind: "daily",
-            hour: Math.min(23, Math.max(0, Number(dailyHour) || 0)),
-            minute: Math.min(59, Math.max(0, Number(dailyMinute) || 0)),
-          };
+        : (() => {
+            const utc = localToUtcClock(Number(dailyHour) || 0, Number(dailyMinute) || 0, new Date());
+            return { kind: "daily" as const, hour: utc.hour, minute: utc.minute };
+          })();
 
     if (selectedProfile?.is_production) {
       const ok = await confirm({
@@ -950,7 +970,7 @@ function TaskForm({
                 onChange={(e) => setDailyMinute(e.target.value)}
               />
               <chakra.span fontSize="sm" color="app.textMuted">
-                {t("taskScheduleUtcHint")}
+                {dailyHint}
               </chakra.span>
             </Flex>
           )}
