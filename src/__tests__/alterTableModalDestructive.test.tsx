@@ -90,3 +90,32 @@ describe("AlterTableModal 破壊的変更 (#1529)", () => {
     expect(onRun).toHaveBeenCalledOnce();
   });
 });
+
+describe("AlterTableModal インデックス行の不備 (#1532)", () => {
+  it("名前が空 / 列未選択の行はエラーを出し、他に変更があっても実行を止める", async () => {
+    renderModal();
+    await screen.findAllByRole("button", { name: t("alterTableDrop") });
+    const inputs = screen.getAllByLabelText(new RegExp(`${t("createTableColType")}: memo`));
+    fireEvent.change(inputs[0], { target: { value: "varchar(10)" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("alterTableAddIndex") }));
+    expect(await screen.findByText(t("alterTableIndexNameRequired"))).toBeInTheDocument();
+    expect(screen.getByText(t("alterTableIndexColumnsRequired"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(t("alterTableIndexNamePlaceholder")), {
+      target: { value: "idx_memo" },
+    });
+    expect(screen.queryByText(t("alterTableIndexNameRequired"))).toBeNull();
+    expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeDisabled();
+
+    fireEvent.click(screen.getAllByRole("checkbox").at(-1) as HTMLElement);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeEnabled();
+    });
+    expect(screen.queryByText(t("alterTableIndexColumnsRequired"))).toBeNull();
+  });
+});

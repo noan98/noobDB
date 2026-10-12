@@ -11,6 +11,7 @@ import {
   type ExistingColumnBaseline,
   type ExistingColumnEdit,
   type IndexDef,
+  indexRowProblems,
   type NewColumn,
   type UnsupportedChange,
 } from "./alterTable";
@@ -229,7 +230,10 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   );
   const statements = plan.statements;
   const unsupported = plan.unsupported;
-  const valid = statements.length > 0;
+  // 名前が空 / 列未選択のインデックス行は文にならない。黙って捨てて実行できてしまうと
+  // 「作ったつもり」になるので、行ごとにエラーを出して不備が残る間は実行を止める (#1532)。
+  const hasIncompleteIndex = indexes.some((r) => indexRowProblems(r) !== null);
+  const valid = statements.length > 0 && !hasIncompleteIndex;
 
   const sqlPreview = statements.map((s: AlterStatement) => s.sql).join("\n");
   // 破壊的な文 (DROP COLUMN / DROP FOREIGN KEY / DROP CHECK) を含むか (#1529)。
@@ -440,7 +444,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
 
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel as="div">{t("indexesLabel")}</FieldLabel>
-              {indexes.map((idx, i) => (
+              {indexes.map((idx, i) => {
+                const problems = indexRowProblems(idx);
+                return (
                 <chakra.div
                   key={idx.id}
                   display="flex"
@@ -475,6 +481,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                       <Icon name="close" />
                     </chakra.button>
                   </Flex>
+                  {problems?.missingName && <FieldError>{t("alterTableIndexNameRequired")}</FieldError>}
                   <Flex gap="3" wrap="wrap">
                     {availableColumns.length === 0 && (
                       <chakra.span fontSize="xs" color="app.textMuted">
@@ -491,8 +498,12 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                       </chakra.label>
                     ))}
                   </Flex>
+                  {problems?.missingColumns && availableColumns.length > 0 && (
+                    <FieldError>{t("alterTableIndexColumnsRequired")}</FieldError>
+                  )}
                 </chakra.div>
-              ))}
+                );
+              })}
               <Flex>
                 <Button type="button" variant="secondary" size="sm" onClick={addIndex} disabled={availableColumns.length === 0}>
                   <Icon name="plus" /> {t("alterTableAddIndex")}
