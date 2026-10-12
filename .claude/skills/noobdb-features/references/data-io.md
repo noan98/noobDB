@@ -105,7 +105,7 @@
   `CancelledTransferCleanup`) で、キャッシュ無効化・履歴記録・スキップ行の掃除・(abort モードの)
   作成済みテーブルの DROP を代行する。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
-  SQLite は接続から直接生成 (`dump_sqlite`)。`mysqldump` の資格情報は
+  SQLite は接続から直接生成 (`dump_sqlite`。行は `execute_stream` で 1 行ずつ書き出し、1 MiB または 0.5 秒ごとに進捗を出す, #1530)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
   エラーを返します。`DumpOptions.format_sql` (既定オフ) を立てると、書き出した

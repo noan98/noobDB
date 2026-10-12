@@ -29,7 +29,7 @@
 //!   (ファイル全体を行列に展開しない)。取り込み本体は既存の `import_rows` が行を
 //!   まとめて受け取る設計なので、ここで読み終えた行は保持する。
 
-use std::io::Cursor;
+use std::io::{Read, Seek};
 
 use calamine::{DataRef, Reader, Xlsx};
 
@@ -60,8 +60,8 @@ fn xlsx_err(e: calamine::XlsxError) -> AppError {
     AppError::Other(format!("xlsx parse error: {e}"))
 }
 
-fn open(data: &[u8]) -> Result<Xlsx<Cursor<&[u8]>>> {
-    Xlsx::new(Cursor::new(data)).map_err(xlsx_err)
+fn open<RS: Read + Seek>(rs: RS) -> Result<Xlsx<RS>> {
+    Xlsx::new(rs).map_err(xlsx_err)
 }
 
 /// 日時セルをテキストにする。時刻が 0:00:00 なら日付のみ。
@@ -107,17 +107,69 @@ pub(crate) fn cell_text(cell: &DataRef<'_>) -> Option<String> {
 /// ブック内のシート名 (ブック順) を返す。
 #[cfg(test)]
 pub(crate) fn sheet_names(data: &[u8]) -> Result<Vec<String>> {
-    Ok(open(data)?.sheet_names())
+    Ok(open(std::io::Cursor::new(data))?.sheet_names())
+}
+
+/// [`scan_sheet`] の結果 (行は訪問側が受け取るので含まない)。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct XlsxSheetMeta {
+    pub sheets: Vec<String>,
+    pub sheet: String,
+    /// `max_rows` に達して読み残した行がある。
+    pub truncated: bool,
 }
 
 /// `sheet` (省略時は先頭シート) を読む。`max_rows` は読む行数の上限 (空行を除く)。
-/// 超える行があれば読み取りを打ち切って `truncated` を立てる。
+/// 超える行があれば読み取りを打ち切って `truncated` を立てる。メモリ上のバイト列用
+/// (本番はファイル版の [`read_sheet_file`] / [`scan_sheet`] を使う)。
+#[cfg(test)]
 pub(crate) fn read_sheet(
     data: &[u8],
     sheet: Option<&str>,
     max_rows: Option<usize>,
 ) -> Result<XlsxSheet> {
-    let mut wb = open(data)?;
+    let mut rows: Vec<XlsxRow> = Vec::new();
+    let meta = scan_sheet(std::io::Cursor::new(data), sheet, max_rows, |row| {
+        rows.push(row)
+    })?;
+    Ok(XlsxSheet {
+        sheets: meta.sheets,
+        sheet: meta.sheet,
+        rows,
+        truncated: meta.truncated,
+    })
+}
+
+/// [`read_sheet`] のファイル版。ファイル全体をメモリへ読み込まず、calamine が
+/// ZIP の必要な部分だけをシークして読む。プレビューは先頭行で打ち切れるので、
+/// 巨大なブックでもシートを切り替えるたびに全読み込みが走らない (#1530)。
+pub(crate) fn read_sheet_file(
+    path: &std::path::Path,
+    sheet: Option<&str>,
+    max_rows: Option<usize>,
+) -> Result<XlsxSheet> {
+    let file = std::fs::File::open(path)?;
+    let mut rows: Vec<XlsxRow> = Vec::new();
+    let meta = scan_sheet(std::io::BufReader::new(file), sheet, max_rows, |row| {
+        rows.push(row)
+    })?;
+    Ok(XlsxSheet {
+        sheets: meta.sheets,
+        sheet: meta.sheet,
+        rows,
+        truncated: meta.truncated,
+    })
+}
+
+/// `sheet` を読み、空でない行を 1 行ずつ `on_row` へ渡す。行を溜めずに済むので、
+/// 呼び出し側が必要な形へ直接変換できる (取り込みで同じ内容を 2 回保持しない)。
+pub(crate) fn scan_sheet<RS: Read + Seek>(
+    rs: RS,
+    sheet: Option<&str>,
+    max_rows: Option<usize>,
+    mut on_row: impl FnMut(XlsxRow),
+) -> Result<XlsxSheetMeta> {
+    let mut wb = open(rs)?;
     let sheets = wb.sheet_names();
     let name = match sheet {
         Some(s) if !s.is_empty() => {
@@ -135,18 +187,19 @@ pub(crate) fn read_sheet(
     };
 
     let mut reader = wb.worksheet_cells_reader(&name).map_err(xlsx_err)?;
-    let mut rows: Vec<XlsxRow> = Vec::new();
+    let mut emitted = 0usize;
     let mut truncated = false;
     // 読み進め中の行 (行番号は 0 始まり)。
     let mut current: Option<(u32, Vec<Option<String>>)> = None;
 
-    let flush = |current: &mut Option<(u32, Vec<Option<String>>)>, rows: &mut Vec<XlsxRow>| {
+    let mut flush = |current: &mut Option<(u32, Vec<Option<String>>)>, emitted: &mut usize| {
         if let Some((r, cells)) = current.take() {
             if cells.iter().any(Option::is_some) {
-                rows.push(XlsxRow {
+                on_row(XlsxRow {
                     line: u64::from(r) + 1,
                     cells,
                 });
+                *emitted += 1;
             }
         }
     };
@@ -155,8 +208,8 @@ pub(crate) fn read_sheet(
         let (row, col) = cell.get_position();
         let text = cell_text(cell.get_value());
         if current.as_ref().map(|(r, _)| *r) != Some(row) {
-            flush(&mut current, &mut rows);
-            if max_rows.is_some_and(|m| rows.len() >= m) {
+            flush(&mut current, &mut emitted);
+            if max_rows.is_some_and(|m| emitted >= m) {
                 // 上限まで読み終えた後にまだ行が続く。空の行は数えない
                 // ので、続きの行が実際に値を持つときだけ truncated にする。
                 if text.is_some() {
@@ -178,13 +231,12 @@ pub(crate) fn read_sheet(
         }
     }
     if !truncated {
-        flush(&mut current, &mut rows);
+        flush(&mut current, &mut emitted);
     }
 
-    Ok(XlsxSheet {
+    Ok(XlsxSheetMeta {
         sheets,
         sheet: name,
-        rows,
         truncated,
     })
 }
