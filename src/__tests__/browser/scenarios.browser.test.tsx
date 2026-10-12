@@ -769,16 +769,22 @@ describe("シナリオ: 出力ログの再実行は記録した実行 DB で走�
     const screen = await renderInBrowser(<App />);
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await expect.element(screen.getByRole("tab", { name: /Batch/ })).toBeVisible();
-    const content = await vi.waitFor(() => {
+    // 復元したタブはエディタの再マウントが落ち着くまで右クリックメニューが出ないことがある。
+    // SQL が載ったことを確認してから、メニューが出るまで右クリックからやり直す。
+    await vi.waitFor(() => {
+      if (!(document.querySelector(".cm-content")?.textContent ?? "").includes("SELECT 1")) {
+        throw new Error("editor SQL not restored");
+      }
+    }, { timeout: 5000 });
+    await vi.waitFor(async () => {
       const el = document.querySelector<HTMLElement>(".cm-content");
       if (!el) throw new Error("editor not mounted");
-      return el;
-    }, { timeout: 5000 });
-    await page.elementLocator(content).click({ button: "right" });
-    await screen
-      .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
-      .click();
-    await vi.waitFor(() => {
+      await page.elementLocator(el).click({ button: "right" });
+      await screen
+        .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+        .click({ timeout: 2000 });
+    }, { timeout: 20000, interval: 300 });
+await vi.waitFor(() => {
       const runs = invocationsOf("run_sql_batch");
       expect(runs).toHaveLength(1);
       // タブに database が無ければ null (プロファイルの appdb を混ぜない)。
