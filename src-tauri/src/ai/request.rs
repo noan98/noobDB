@@ -24,11 +24,19 @@ pub const ANTHROPIC_BETA: &str = "server-side-fallback-2026-07-01";
 /// ストリーミング要求の既定 `max_tokens` (接続テストは別に小さい値を使う)。
 pub const DEFAULT_MAX_TOKENS: u32 = 64_000;
 
-/// キャッシュ可否の判定で 1 トークンを何バイトとみなすか。
-/// 英文は 1 トークン約 4 バイト。日本語 (UTF-8 で 3 バイト/文字) は 1 文字 1 トークン以上
-/// なので、バイト数で見積もれば実トークン数を多く見積もりすぎず、キャッシュが効かない
-/// 短さを誤って「十分長い」と判定しにくい。
-const BYTES_PER_TOKEN: usize = 4;
+/// キャッシュ可否の判定で使うトークン見積もりの単位。1 トークン = `WEIGHT_PER_TOKEN` 単位。
+/// ASCII 1 文字 = 1 単位 (英文は 1 トークン約 4 文字)、非 ASCII 1 文字 = 1 トークン
+/// (日本語など CJK は 1 文字ほぼ 1 トークン以上)。以前は UTF-8 バイト数 / 4 で見積もって
+/// いたため、日本語 (3 バイト/文字) を約 3/4 に過小評価し、最小長を満たしても
+/// `cache_control` が付かなかった (#1533)。
+const WEIGHT_PER_TOKEN: usize = 4;
+
+/// `text` のトークン見積もり (`WEIGHT_PER_TOKEN` 単位)。
+fn estimate_weight(text: &str) -> usize {
+    text.chars()
+        .map(|c| if c.is_ascii() { 1 } else { WEIGHT_PER_TOKEN })
+        .sum()
+}
 
 /// 会話履歴の発言者。IPC では `"user"` / `"assistant"` だけを受け付ける。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,13 +105,13 @@ fn mark_cacheable(block: &mut Value, model: AiModel) {
     mark_cacheable_after(block, model, 0);
 }
 
-/// `mark_cacheable` の、ブロックより前の内容 (`preceding_bytes`) も数える版。API の最小長は
+/// `mark_cacheable` の、ブロックより前の内容 (`preceding_weight`) も数える版。API の最小長は
 /// 先頭からブレークポイントまでの累積トークン数で判定されるので、履歴末尾のブレークポイントは
 /// system と履歴全体の合計で判定する (#1471)。
-fn mark_cacheable_after(block: &mut Value, model: AiModel, preceding_bytes: usize) {
-    let long_enough = block["text"]
-        .as_str()
-        .is_some_and(|t| preceding_bytes + t.len() >= model.cache_min_tokens() * BYTES_PER_TOKEN);
+fn mark_cacheable_after(block: &mut Value, model: AiModel, preceding_weight: usize) {
+    let long_enough = block["text"].as_str().is_some_and(|t| {
+        preceding_weight + estimate_weight(t) >= model.cache_min_tokens() * WEIGHT_PER_TOKEN
+    });
     if long_enough {
         block["cache_control"] = json!({ "type": "ephemeral" });
     }
@@ -113,12 +121,12 @@ fn mark_cacheable_after(block: &mut Value, model: AiModel, preceding_bytes: usiz
 /// (直前までの会話をキャッシュ対象にし、今回の `prompt` は毎回変わるので付けない)。
 fn build_messages(spec: &AiRequestSpec) -> Value {
     let last = spec.history.len().checked_sub(1);
-    // 履歴末尾のブレークポイントまでの累積バイト数 (system 固定部分 + 可変部分 + 履歴の手前)。
+    // 履歴末尾のブレークポイントまでの累積見積もり (`estimate_weight` 単位) (system 固定部分 + 可変部分 + 履歴の手前)。
     let mut preceding: usize = [&spec.system_cached, &spec.system]
         .into_iter()
         .flatten()
         .filter(|t| !t.trim().is_empty())
-        .map(String::len)
+        .map(|t| estimate_weight(t))
         .sum();
     let mut messages: Vec<Value> = Vec::with_capacity(spec.history.len() + 1);
     for (i, m) in spec.history.iter().enumerate() {
@@ -127,7 +135,7 @@ fn build_messages(spec: &AiRequestSpec) -> Value {
             mark_cacheable_after(&mut block, spec.model, preceding);
             messages.push(json!({ "role": m.role, "content": [block] }));
         } else {
-            preceding += m.content.len();
+            preceding += estimate_weight(&m.content);
             messages.push(json!({ "role": m.role, "content": m.content }));
         }
     }
@@ -214,8 +222,8 @@ mod tests {
         assert!(build_body(&s).get("system").is_none());
     }
 
-    /// 最小キャッシュ長ちょうどのバイト数 (Opus 5.5 = 512 トークン x 4 = 2048 バイト)。
-    const MIN_BYTES: usize = 512 * BYTES_PER_TOKEN;
+    /// 最小キャッシュ長ちょうどの ASCII 文字数 (Opus 5.5 = 512 トークン x 4 = 2048 文字)。
+    const MIN_BYTES: usize = 512 * WEIGHT_PER_TOKEN;
 
     fn cached_spec(text: String) -> AiRequestSpec {
         let mut s = spec();
@@ -232,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_part_threshold_is_byte_based() {
+    fn cached_part_threshold_is_weight_based() {
         let below = build_body(&cached_spec("a".repeat(MIN_BYTES - 1)));
         assert!(below["system"][0].get("cache_control").is_none());
         let at = build_body(&cached_spec("a".repeat(MIN_BYTES)));
@@ -240,12 +248,30 @@ mod tests {
     }
 
     #[test]
-    fn multibyte_text_is_judged_by_bytes_not_chars() {
-        // 「あ」は 3 バイト。682 文字 = 2046 バイト (未満)、683 文字 = 2049 バイト (以上)。
-        let below = build_body(&cached_spec("あ".repeat(682)));
+    fn japanese_text_counts_about_one_token_per_char() {
+        // 「あ」は 1 文字 = 1 トークン換算。511 文字 (未満) / 512 文字 (ちょうど) の境界。
+        let below = build_body(&cached_spec("あ".repeat(511)));
         assert!(below["system"][0].get("cache_control").is_none());
-        let above = build_body(&cached_spec("あ".repeat(683)));
-        assert_eq!(above["system"][0]["cache_control"]["type"], "ephemeral");
+        let at = build_body(&cached_spec("あ".repeat(512)));
+        assert_eq!(at["system"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn six_hundred_japanese_chars_are_cached() {
+        // 600 文字 (1800 バイト) は旧見積もり (バイト / 4 = 450) では未満だったが、実際は約 600 トークン。
+        let b = build_body(&cached_spec("あ".repeat(600)));
+        assert_eq!(b["system"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn mixed_ascii_and_japanese_boundary() {
+        // 日本語 100 文字 = 100 トークン、ASCII 1648 文字 = 412 トークン → ちょうど 512。
+        let text = format!("{}{}", "あ".repeat(100), "a".repeat(1648));
+        let at = build_body(&cached_spec(text));
+        assert_eq!(at["system"][0]["cache_control"]["type"], "ephemeral");
+        let text = format!("{}{}", "あ".repeat(100), "a".repeat(1647));
+        let below = build_body(&cached_spec(text));
+        assert!(below["system"][0].get("cache_control").is_none());
     }
 
     #[test]
