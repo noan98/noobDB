@@ -110,6 +110,12 @@ export const tableRowEstimate = z.object({
   estimate: z.number().nullable(),
 });
 
+/** スキーマキャッシュの取得時刻 (DB ごと, #1539)。 */
+export const schemaCacheTime = z.object({
+  database: z.string(),
+  fetched_at_ms: z.number(),
+});
+
 /** テーブルのサイズ・統計 (サイズダッシュボード #562)。 */
 export const tableSizeInfo = z.object({
   name: z.string(),
@@ -304,6 +310,25 @@ export const columnProfile = z.object({
   top_values: z.array(profileValueCount),
   histogram: z.array(profileHistogramBucket),
   notes: z.array(z.string()),
+});
+
+/** 全列の概要 (#1539)。 */
+export const tableProfileOverview = z.object({
+  table: z.string(),
+  total_count: z.union([z.number(), z.string()]),
+  columns: z.array(
+    z.object({
+      column: z.string(),
+      data_type: z.string(),
+      non_null_count: z.union([z.number(), z.string()]),
+      null_count: z.union([z.number(), z.string()]),
+      distinct_count: z.union([z.number(), z.string()]).nullable(),
+      min_value: cellValue,
+      max_value: cellValue,
+      notes: z.array(z.string()),
+    }),
+  ),
+  scans: z.number(),
 });
 
 export const schemaObject = z.object({
@@ -695,6 +720,10 @@ export const sandboxTableDiffResult = z.object({
   source_error: z.string().nullable(),
 });
 
+export const sandboxResetResult = z.object({
+  restored_rows: z.number(),
+});
+
 export const sandboxSchemaDiffResult = z.object({
   desired: schemaDiff,
   external_changed_tables: z.array(z.string()),
@@ -928,6 +957,7 @@ export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const schemaCacheTimeArray = z.array(schemaCacheTime);
 export const tableCommentArray = z.array(tableComment);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
@@ -1369,6 +1399,16 @@ export const cellBlobProbe = z.object({
   image: z.boolean(),
 });
 
+/** BLOB 列のフォルダ一括保存の結果 (#1539)。 */
+export const blobFolderSaveResult = z.object({
+  saved: z.number(),
+  totalBytes: z.number(),
+  skippedNull: z.number(),
+  skippedTooLarge: z.number(),
+  failed: z.number(),
+  errors: z.array(z.object({ row: z.number(), error: z.string() })),
+});
+
 export const importErrorEvent = z.object({
   streamId: z.string(),
   error: z.string(),
@@ -1512,6 +1552,7 @@ const dumpOptions = z.object({
   noPrivileges: z.boolean().optional(),
   pgSchema: z.string().nullable().optional(),
   formatSql: z.boolean().optional(),
+  gzip: z.boolean().optional(),
   tables: z.array(z.string()).nullable().optional(),
 });
 

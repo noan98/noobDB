@@ -39,6 +39,11 @@ export function pickDefaultDatabase(
   return databases[0] ?? null;
 }
 
+/** 既存テーブルへ書き込む (DDL を発行しない) モードか (#1539)。 */
+export function writesExistingTable(mode: TransferMode): boolean {
+  return mode === "append" || mode === "upsert";
+}
+
 export type TransferValidationError =
   | "tableEmpty"
   | "tableExists"
@@ -59,7 +64,7 @@ export interface TransferTargetInput {
  * 入力の妥当性。null なら実行可能。
  *
  * - `create` で同名テーブルが既にある → `tableExists` (置き換え/追記をユーザに選ばせる)
- * - `append` で追記先が無い → `tableMissing`
+ * - `append` / `upsert` で書き込み先が無い → `tableMissing`
  * - 同じ接続・同じ DB の同じテーブルへ `create` / `replace` → `sameTable`
  *   (作り直すとソースそのものを消してしまう)
  */
@@ -68,7 +73,7 @@ export function validateTransferTarget(input: TransferTargetInput): TransferVali
   if (!name) return "tableEmpty";
   if (
     input.sameProfileAndDatabase &&
-    input.mode !== "append" &&
+    !writesExistingTable(input.mode) &&
     input.source.kind === "table" &&
     input.source.table.trim().toLowerCase() === name.toLowerCase()
   ) {
@@ -77,7 +82,7 @@ export function validateTransferTarget(input: TransferTargetInput): TransferVali
   if (input.existingTables) {
     const exists = tableNameCollides(input.existingTables, name);
     if (input.mode === "create" && exists) return "tableExists";
-    if (input.mode === "append" && !exists) return "tableMissing";
+    if (writesExistingTable(input.mode) && !exists) return "tableMissing";
   }
   return null;
 }

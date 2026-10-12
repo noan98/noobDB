@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::db::profile::{ColumnProfile, DEFAULT_TOP_N};
+use crate::db::profile::{ColumnProfile, TableProfileOverview, DEFAULT_TOP_N};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -59,5 +59,44 @@ pub async fn profile_column_inner(
             approximate,
             top_n.unwrap_or(DEFAULT_TOP_N),
         )
+        .await
+}
+
+/// 表の全列の概要 (#1539)。件数 / NULL 数 / DISTINCT / MIN・MAX を、列数ぶんの
+/// 集計式を並べた SELECT (列が多いときは分割) で 1 回の走査にまとめる。
+/// 単一 SELECT のみなので read_only セッションでも許可する。
+#[tauri::command]
+pub async fn profile_table(
+    session_id: String,
+    database: String,
+    table: String,
+    include_distinct: bool,
+    state: State<'_, AppState>,
+) -> Result<TableProfileOverview> {
+    profile_table_inner(
+        state.inner(),
+        &session_id,
+        &database,
+        &table,
+        include_distinct,
+    )
+    .await
+}
+
+/// [`profile_table`] の本体 (テストから直接呼ぶ用)。
+pub async fn profile_table_inner(
+    state: &AppState,
+    session_id: &str,
+    database: &str,
+    table: &str,
+    include_distinct: bool,
+) -> Result<TableProfileOverview> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    session
+        .conn
+        .table_profile(database, table, include_distinct)
         .await
 }

@@ -469,6 +469,13 @@ const en = {
   settingsPlanWatchOnConnect: "Check watched plans on connect",
   settingsPlanWatchOnConnectHelp: "When connecting, run EXPLAIN for the profile's watched snippets and record a new generation when the plan changed. Read-only and never written to query history. Turn off to only refresh manually.",
   settingsFlightRecorder: "DML flight recorder",
+  settingsHistory: "Query history",
+  settingsHistoryHelp:
+    "History keeps the most recent 10,000 statements. Add an age limit to also drop old entries, e.g. to avoid keeping literal values in WHERE clauses for long.",
+  settingsHistoryRetentionDays: "Retention period (days)",
+  settingsHistoryRetentionDaysHelp:
+    "Entries older than this are deleted automatically (also right after you change it). 0 keeps them until the 10,000-row cap evicts them.",
+  settingsHistoryRetentionPruned: "Deleted {count} old history entries.",
   settingsFlightRecorderHelp: "Best-effort local safety net: running a single INSERT/UPDATE/DELETE captures a before/after image of the rows it touched, so you can undo it later from the history panel. This never replaces a real backup — DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
   settingsFlightRecorderEnabled: "Capture writes for undo",
   settingsFlightRecorderEnabledHelp: "When on, a single-statement INSERT/UPDATE/DELETE run from the editor tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
@@ -1547,6 +1554,11 @@ const en = {
     "{cells} cells exceeded Excel's 32,767-character limit and were truncated.",
   exportSqlTable: "Target table",
   exportSqlTablePlaceholder: "Table name for INSERT",
+  exportSqlIncludeDdl: "Include CREATE TABLE statement",
+  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Not included in the preview or copy.",
+  exportSqlIncludeDdlNeedsTable: "Enter a target table name to include its definition.",
+  exportSqlIncludeDdlTableMismatch:
+    "The definition can only be included when the table name matches the result's source table.",
   exportSqlBatch: "Rows per statement",
   exportSqlHint:
     "Generates INSERT statements with driver-specific literal escaping, grouping rows into batches.",
@@ -1903,6 +1915,8 @@ const en = {
   dumpOptPgSchema: "Schema (optional)",
   dumpOptPgSchemaPlaceholder: "e.g. public",
   dumpOptPgSchemaHint: "pg_dump -n <schema>: restrict to one schema. Leave empty to dump all schemas.",
+  dumpOptGzip: "Compress with gzip (.sql.gz)",
+  dumpOptGzipHint: "Compresses the finished dump with gzip and saves it as a .sql.gz file. Saves disk space and transfer size; restore with gunzip or zcat.",
   dumpOptFormatSql: "Format SQL",
   dumpOptFormatSqlHint:
     "Reformat the saved SQL for readability (2-space indent, keyword case preserved), matching the editor's formatter. Best-effort; for review/version control. Off keeps the raw output.",
@@ -2125,6 +2139,16 @@ const en = {
   transferModeCreate: "Create a new table (fail if it exists)",
   transferModeReplace: "Replace (drop and recreate)",
   transferModeAppend: "Append to the existing table",
+  transferModeUpsert: "Update existing rows (upsert into the existing table)",
+  transferModeUpsertHint:
+    "No DDL is issued; the table must already exist. Rows whose key matches an existing row are updated or skipped, the rest are inserted. Rows written before a failure or cancel remain.",
+  transferConflictMode: "On existing key",
+  transferConflictUpdate: "Update existing rows",
+  transferConflictSkip: "Skip existing rows",
+  transferKeyColumns: "Key columns",
+  transferKeyColumnsPlaceholder: "Blank = the target table's primary key",
+  transferKeyColumnsHint:
+    "Comma-separated column names that identify a row. They must be covered by a unique key on the target (PostgreSQL / SQLite require it).",
   transferModeCreateHint:
     "Column types are mapped to the target database. If the transfer fails or is cancelled, the partially created table is dropped.",
   transferModeAppendHint:
@@ -2189,6 +2213,7 @@ const en = {
   previewSyncScrollTitle: "Sync vertical and horizontal scroll between the before and after panes.",
 
   treeNotConnected: "Not connected.",
+  treeCacheFetchedAt: "Cached at {time}",
   treeRefresh: "Refresh schema",
   treeRefreshTitle: "Reload databases, tables and columns from the server",
   treeNoDatabases: "(no databases)",
@@ -2927,6 +2952,13 @@ const en = {
   cellViewerCopy: "Copy",
   blobSave: "Save BLOB to file…",
   blobLoad: "Load BLOB from file…",
+  blobSaveMany: "Save BLOBs of {count} selected rows to a folder…",
+  blobSaveManyTitle:
+    "Files are named after each row's primary key. NULL values and values over 16 MiB are skipped, and existing files are never overwritten.",
+  blobFolderPickTitle: "Choose a folder to save the BLOBs in",
+  blobFolderNoKeys: "None of the selected rows can be located by a primary key, so nothing was saved.",
+  blobFolderSaved: "Saved {saved} files ({size}) to {folder}. Skipped {skipped}, failed {failed}.",
+  blobFolderFirstError: "First error: {error}",
   blobLoading: "Loading the binary value…",
   blobKindUnknown: "Unknown type",
   blobPreviewAlt: "Image preview of {column}",
@@ -3592,6 +3624,10 @@ const en = {
     "Pick a table present on both sides and compare its rows (paired by primary key), then generate INSERT / UPDATE / DELETE to make the target match the source. Aimed at master / config tables — large tables are capped by the row limit.",
   schemaCompareDataSelectTable: "Select a table...",
   schemaCompareDataLimit: "Row limit",
+  schemaCompareDataAllRows: "Compare all rows",
+  schemaCompareDataIgnore: "Ignore columns",
+  schemaCompareDataIgnorePlaceholder: "e.g. updated_at, modified_by",
+  schemaCompareDataTruncatedAll: "The comparison stopped at the safety cap on rows or differences, so the rest was not compared and DELETE is not generated. Narrow the table or compare it in parts.",
   schemaCompareDataCompare: "Compare data",
   schemaCompareDataComparedTable: "Compared table: {table}",
   schemaCompareDataInserts: "Insert",
@@ -4147,6 +4183,18 @@ const en = {
   profileNoteApproxNoStats:
     "No planner statistics for this column yet (run ANALYZE); the exact distinct count is shown.",
   profileNoteUnknown: "Part of the profile could not be computed.",
+  profileNoteOverviewSkipped:
+    "MIN / MAX / DISTINCT are skipped for this column type (counts only).",
+  profileOverviewRun: "All columns overview",
+  profileOverviewRerun: "Refresh overview",
+  profileOverviewHint:
+    "Counts, NULLs, distinct and min/max for every column in a single scan. Pick a row for its histogram and top values.",
+  profileOverviewRunning: "Scanning every column…",
+  profileOverviewError: "Overview failed: {error}",
+  profileOverviewSummary: "{rows} rows · {columns} columns · {scans} scan(s)",
+  profileOverviewNonNull: "Non-NULL",
+  profileOverviewSkippedMark: "skipped",
+  profileOverviewSelect: "Profile column {column}",
   advisorSummary: "{findings} finding(s) across {tables} table(s)",
   advisorNoFindings: "No schema health issues found across {tables} table(s). Nice and tidy.",
   advisorSeverityHigh: "High",
@@ -4441,6 +4489,13 @@ const en = {
   sandboxReviewSchemaExternalWarning:
     "These tables also changed schema on the original connection since the snapshot: {tables}. Review carefully before applying.",
   sandboxReviewTruncated: "capped at the row limit",
+  sandboxResetTable: "Reset this table",
+  sandboxResetTableHint:
+    "Restore this table's rows to the base snapshot. Other tables are untouched; schema changes are not undone.",
+  sandboxResetConfirmTitle: "Reset table {table}?",
+  sandboxResetConfirmMessage:
+    "All rows of {table} in the sandbox are replaced with the base snapshot (the state at creation or at the last write-back). Your edits to this table are lost. Schema changes are not reverted.",
+  sandboxResetDone: "Reset {table} ({rows} rows restored).",
   sandboxReviewSourceError:
     "Could not read the current rows from the original database, so conflicts were not checked: {error}",
   sandboxApplySourceErrorNote:
@@ -5316,6 +5371,13 @@ const ja: Dict = {
   settingsPlanWatchOnConnect: "接続時にウォッチ済み計画をチェック",
   settingsPlanWatchOnConnectHelp: "接続確立時に、そのプロファイルでウォッチ登録済みのスニペットの EXPLAIN を実行し、計画が変化していれば新しい世代として記録します。読み取り操作のみで、クエリ履歴には記録されません。オフにすると手動更新のみになります。",
   settingsFlightRecorder: "DML フライトレコーダ",
+  settingsHistory: "クエリ履歴",
+  settingsHistoryHelp:
+    "履歴は直近 10,000 件まで保持します。期間の上限を足すと古い履歴も自動で消えます (WHERE 句のリテラル値などを長く残したくないとき)。",
+  settingsHistoryRetentionDays: "保持期間 (日数)",
+  settingsHistoryRetentionDaysHelp:
+    "この日数を過ぎた履歴は自動的に削除されます (変更した直後にも削除します)。0 は無期限 (10,000 件の上限を超えた分だけ古い順に消えます)。",
+  settingsHistoryRetentionPruned: "古い履歴を {count} 件削除しました。",
   settingsFlightRecorderHelp: "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE を実行すると、対象行の before/after イメージを退避し、あとから履歴パネルの「巻き戻す」でワンクリック Undo できます。本物のバックアップの代わりにはなりません — DDL (DROP/TRUNCATE) は対象外で、退避後〜Undo までの間に他クライアントが加えた変更は検出のみで防止はできません。",
   settingsFlightRecorderEnabled: "書き込みを記録して Undo に備える",
   settingsFlightRecorderEnabledHelp: "オンのとき、エディタから実行した単文の INSERT/UPDATE/DELETE は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
@@ -6393,6 +6455,11 @@ const ja: Dict = {
     "Excel のセル文字数上限 (32,767 文字) を超えた {cells} セルを切り詰めました。",
   exportSqlTable: "対象テーブル",
   exportSqlTablePlaceholder: "INSERT 先のテーブル名",
+  exportSqlIncludeDdl: "CREATE TABLE 文を先頭に含める",
+  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーには含まれません。",
+  exportSqlIncludeDdlNeedsTable: "表定義を含めるには対象テーブル名を入力してください。",
+  exportSqlIncludeDdlTableMismatch:
+    "表定義を含められるのは、対象テーブル名が結果の取得元テーブルと一致しているときだけです。",
   exportSqlBatch: "1 文あたり行数",
   exportSqlHint:
     "ドライバ別のリテラルエスケープで INSERT 文を生成し、指定行数ごとに 1 文へまとめます。",
@@ -6747,6 +6814,8 @@ const ja: Dict = {
   dumpOptPgSchema: "スキーマ (任意)",
   dumpOptPgSchemaPlaceholder: "例: public",
   dumpOptPgSchemaHint: "pg_dump -n <スキーマ>: 1 つのスキーマに限定します。空欄で全スキーマをダンプします。",
+  dumpOptGzip: "gzip で圧縮 (.sql.gz)",
+  dumpOptGzipHint: "完成したダンプを gzip 圧縮し、.sql.gz として保存します。ディスクと転送量を減らせます (復元は gunzip / zcat)。進捗のバイト数は圧縮前、完了時のサイズは圧縮後です。",
   dumpOptFormatSql: "SQL を整形",
   dumpOptFormatSqlHint:
     "保存する SQL を可読性向上のため整形します (2 スペース字下げ・キーワードのケースは保持) — エディタの整形と方針を揃えています。best-effort でレビュー/バージョン管理向け。オフなら出力そのままです。",
@@ -6969,6 +7038,16 @@ const ja: Dict = {
   transferModeCreate: "新規作成 (既にあれば失敗)",
   transferModeReplace: "置き換え (削除して作り直す)",
   transferModeAppend: "既存テーブルへ追記",
+  transferModeUpsert: "既存テーブルへ upsert (既存行を更新)",
+  transferModeUpsertHint:
+    "DDL は発行しないため、テーブルが存在している必要があります。キーが既存行と一致した行は更新または読み飛ばし、それ以外は追加します。失敗・キャンセルまでに書き込んだ行は残ります。",
+  transferConflictMode: "キーが既存行と一致したとき",
+  transferConflictUpdate: "既存行を更新する",
+  transferConflictSkip: "既存行は読み飛ばす",
+  transferKeyColumns: "キー列",
+  transferKeyColumnsPlaceholder: "空欄 = 転送先テーブルの主キー",
+  transferKeyColumnsHint:
+    "行を特定する列名をカンマ区切りで指定します。転送先で一意キー (主キーなど) に含まれている必要があります (PostgreSQL / SQLite は必須)。",
   transferModeCreateHint:
     "列の型はコピー先のデータベースに合わせて変換します。失敗・キャンセル時は作成途中のテーブルを削除します。",
   transferModeAppendHint:
@@ -7033,6 +7112,7 @@ const ja: Dict = {
   previewSyncScrollTitle: "実行前後のペインで縦・横のスクロールを同期します。",
 
   treeNotConnected: "接続されていません。",
+  treeCacheFetchedAt: "キャッシュ取得 {time}",
   treeRefresh: "スキーマを更新",
   treeRefreshTitle: "データベース・テーブル・カラムをサーバーから再取得します",
   treeNoDatabases: "(データベースがありません)",
@@ -7767,6 +7847,13 @@ const ja: Dict = {
   cellViewerCopy: "コピー",
   blobSave: "BLOB をファイルに保存…",
   blobLoad: "ファイルから BLOB を読み込み…",
+  blobSaveMany: "選択した {count} 行の BLOB をフォルダへ保存…",
+  blobSaveManyTitle:
+    "ファイル名は各行の主キーから付けます。NULL と 16 MiB を超える値は飛ばし、既存のファイルは上書きしません。",
+  blobFolderPickTitle: "BLOB を保存するフォルダを選択",
+  blobFolderNoKeys: "選択した行はどれも主キーで特定できないため、保存しませんでした。",
+  blobFolderSaved: "{saved} 件 ({size}) を {folder} に保存しました。スキップ {skipped} 件・失敗 {failed} 件。",
+  blobFolderFirstError: "最初のエラー: {error}",
   blobLoading: "バイナリ値を読み込み中…",
   blobKindUnknown: "種別不明",
   blobPreviewAlt: "{column} の画像プレビュー",
@@ -8432,6 +8519,10 @@ const ja: Dict = {
     "両側に存在するテーブルを選び、行を主キーでペアリングして比較し、ターゲットをソースに合わせる INSERT / UPDATE / DELETE を生成します。マスタ / 設定データ向けで、大きなテーブルは件数上限で制限されます。",
   schemaCompareDataSelectTable: "テーブルを選択...",
   schemaCompareDataLimit: "件数上限",
+  schemaCompareDataAllRows: "全行を比較する",
+  schemaCompareDataIgnore: "除外列",
+  schemaCompareDataIgnorePlaceholder: "例: updated_at, modified_by",
+  schemaCompareDataTruncatedAll: "行数または差分数の安全上限で比較を止めたため、残りは未比較で、削除 (DELETE) は生成しません。対象を絞るか分けて比較してください。",
   schemaCompareDataCompare: "データを比較",
   schemaCompareDataComparedTable: "比較したテーブル: {table}",
   schemaCompareDataInserts: "追加",
@@ -8988,6 +9079,18 @@ const ja: Dict = {
   profileNoteApproxNoStats:
     "この列の統計情報がまだありません (ANALYZE で収集されます)。正確な DISTINCT 数を表示しています。",
   profileNoteUnknown: "プロファイルの一部を計算できませんでした。",
+  profileNoteOverviewSkipped:
+    "この列の型では MIN / MAX / DISTINCT を省略しています (件数のみ)。",
+  profileOverviewRun: "全列の概要",
+  profileOverviewRerun: "概要を更新",
+  profileOverviewHint:
+    "全列の件数・NULL・DISTINCT・MIN/MAX を 1 回の走査でまとめて取得します。行を選ぶとその列のヒストグラムと上位値を表示します。",
+  profileOverviewRunning: "全列を走査中…",
+  profileOverviewError: "概要の取得に失敗しました: {error}",
+  profileOverviewSummary: "{rows} 行 · {columns} 列 · 走査 {scans} 回",
+  profileOverviewNonNull: "NULL 以外",
+  profileOverviewSkippedMark: "省略",
+  profileOverviewSelect: "列 {column} を詳しく見る",
   advisorSummary: "{tables} テーブル中 {findings} 件の指摘",
   advisorNoFindings: "{tables} テーブルを診断し、スキーマ健全性の問題は見つかりませんでした。良好です。",
   advisorSeverityHigh: "高",
@@ -9281,6 +9384,13 @@ const ja: Dict = {
   sandboxReviewSchemaExternalWarning:
     "以下のテーブルはスナップショット以降、元の接続側でもスキーマが変更されています: {tables}。適用前によく確認してください。",
   sandboxReviewTruncated: "行数上限で打ち切り",
+  sandboxResetTable: "この表をリセット",
+  sandboxResetTableHint:
+    "この表の行を base スナップショットの内容へ戻します。他の表には影響せず、スキーマ変更は戻りません。",
+  sandboxResetConfirmTitle: "表 {table} をリセットしますか?",
+  sandboxResetConfirmMessage:
+    "サンドボックス内の {table} の全行を base スナップショット (作成時、または最後に書き戻した時点) の内容に置き換えます。この表への編集は失われます。スキーマ変更は戻りません。",
+  sandboxResetDone: "{table} をリセットしました ({rows} 行を復元)。",
   sandboxReviewSourceError:
     "元の DB から現在の行を取得できなかったため、競合を検出できていません: {error}",
   sandboxApplySourceErrorNote:

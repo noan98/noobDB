@@ -24,6 +24,10 @@ export const diffCommands = {
     targetDatabase: string;
     table: string;
     limit?: number | null;
+    /** true なら上限を使わず、主キーのキーセットページングで全行を比較する (#1539)。 */
+    allRows?: boolean | null;
+    /** 比較から外す列 (updated_at など環境ごとに値が違う列, #1539)。 */
+    ignoreColumns?: string[] | null;
   }) =>
     invoke<DataDiffHandle>("compare_table_data", {
       sourceSessionId: params.sourceSessionId,
@@ -32,5 +36,7 @@ export const diffCommands = {
       targetDatabase: params.targetDatabase,
       table: params.table,
       limit: params.limit ?? null,
+      allRows: params.allRows ?? null,
+      ignoreColumns: params.ignoreColumns && params.ignoreColumns.length > 0 ? params.ignoreColumns : null,
     }).then((r) => parseResponse(schemas.dataDiffHandle, r, "compare_table_data")),
 };

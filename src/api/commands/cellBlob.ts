@@ -2,7 +2,7 @@
 import { invoke, parseBinaryResponse } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { CellValue, CellBlobProbe } from "../tauri";
+import type { CellValue, CellBlobProbe, BlobFolderSaveResult } from "../tauri";
 
 export const cellBlobCommands = {
 
@@ -63,6 +63,28 @@ export const cellBlobCommands = {
       key,
       path,
     }).then((r) => parseResponse(schemas.numberResponse, r, "save_cell_to_file")),
+
+  /**
+   * 複数行の BLOB 列を主キー由来のファイル名で `folder` へ一括保存する (#1539)。
+   * `keys` は行ごとの主キー。DB → ファイルは Rust 内で完結し、NULL と上限超過の行は
+   * 飛ばし、拡張子は種別から決め、既存ファイルは上書きしない。件数を集計して返す。
+   */
+  saveCellsToFolder: (
+    sessionId: string,
+    database: string | null,
+    table: string,
+    column: string,
+    keys: { column: string; value: CellValue }[][],
+    folder: string,
+  ) =>
+    invoke<BlobFolderSaveResult>("save_cells_to_folder", {
+      sessionId,
+      database,
+      table,
+      column,
+      keys,
+      folder,
+    }).then((r) => parseResponse(schemas.blobFolderSaveResult, r, "save_cells_to_folder")),
 
   /**
    * ファイルをバイナリで読み、生バイト列を返す (#1148、BLOB への

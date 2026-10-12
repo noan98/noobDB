@@ -15,6 +15,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       readLogs: vi.fn().mockResolvedValue({ text: "", path: "/tmp/noobdb.log" }),
+      getHistoryRetentionDays: vi.fn().mockResolvedValue(0),
+      setHistoryRetentionDays: vi.fn().mockResolvedValue(0),
     },
   };
 });
@@ -31,6 +33,7 @@ vi.mock("../components/updatePrompt", () => ({
 }));
 
 import { SettingsView } from "../components/SettingsView";
+import { api } from "../api/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -136,5 +139,29 @@ describe("SettingsView の数値欄 (#1534)", () => {
     fireEvent.change(input, { target: { value: "30" } });
     fireEvent.blur(input);
     await waitFor(() => expect(input.value).toBe("24"));
+  });
+});
+
+describe("クエリ履歴の保持期間 (#1539)", () => {
+  // フライトレコーダにも同名ラベル「保持期間 (日数)」があるので id で引く。
+  const historyInput = async () => {
+    await waitFor(() => expect(document.getElementById("settings-history-retention")).not.toBeNull());
+    return document.getElementById("settings-history-retention") as HTMLInputElement;
+  };
+
+  // SettingsView の描画は重いので 1 回だけ描画し、読み込み・保存・範囲外の巻き戻しを順に確かめる。
+  it("保存済みの値を読み込み、確定で保存し、範囲外の入力は保存せず元の値へ戻す", async () => {
+    vi.mocked(api.getHistoryRetentionDays).mockResolvedValue(14);
+    renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
+    const input = await historyInput();
+    await waitFor(() => expect(input.value).toBe("14"));
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(api.setHistoryRetentionDays).toHaveBeenCalledWith(30));
+    vi.mocked(api.setHistoryRetentionDays).mockClear();
+    fireEvent.change(input, { target: { value: "99999" } });
+    fireEvent.blur(input);
+    expect(api.setHistoryRetentionDays).not.toHaveBeenCalled();
+    await waitFor(() => expect(input.value).toBe("30"));
   });
 });

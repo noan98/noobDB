@@ -108,6 +108,7 @@ const NOTE_KEYS = {
   histogram_unavailable: "profileNoteHistogramUnavailable",
   approx_distinct_unsupported: "profileNoteApproxUnsupported",
   approx_distinct_no_stats: "profileNoteApproxNoStats",
+  overview_skipped_type: "profileNoteOverviewSkipped",
 } as const;
 
 export type ProfileNoteKey = (typeof NOTE_KEYS)[keyof typeof NOTE_KEYS] | "profileNoteUnknown";

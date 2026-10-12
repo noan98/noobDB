@@ -137,6 +137,11 @@ pub struct DumpOptions {
     /// 内容は保たれるが配置が変わりうるため、再取り込み重視ならオフのままにする。
     #[serde(default)]
     pub format_sql: bool,
+    /// 完成したダンプを gzip 圧縮して保存する (`.sql.gz`, #1539)。全ドライバ共通の後段処理
+    /// (整形 → 圧縮の順)。既定オフ。保存先パスの拡張子は呼び出し側が決める
+    /// (バックエンドは付け替えない)。進捗のバイト数は圧縮前、完了時のバイト数は圧縮後。
+    #[serde(default)]
+    pub gzip: bool,
 
     // ── テーブル指定 (#1399) ──
     /// 指定したテーブルだけをダンプする (スキーマツリーで複数選択したテーブルの一括ダンプ)。
@@ -445,6 +450,20 @@ pub(crate) async fn run_dump(
         bytes
     };
 
+    // gzip 圧縮 (#1539)。完成した一時ファイルを別の一時ファイルへ圧縮し、成功したときだけ
+    // そちらを保存先へ rename する。元の (未圧縮) 一時ファイルは `cleanup` の Drop が消す。
+    if options.gzip {
+        let (gz_tmp, gz_file) = create_dump_temp_file(final_path).await?;
+        let mut gz_cleanup = PartialFileCleanup::new(gz_tmp.clone());
+        let gz_bytes = gzip_dump_file(tmp.clone(), gz_file.into_std().await).await?;
+        tokio::fs::rename(&gz_tmp, final_path)
+            .await
+            .map_err(AppError::Io)?;
+        gz_cleanup.commit();
+        // `cleanup` は未 commit のまま関数末尾で Drop され、未圧縮の一時ファイルを消す。
+        return Ok(gz_bytes);
+    }
+
     // Everything succeeded: atomically move the temp file onto the final path,
     // replacing any existing file only now (not mid-write). Failure here is
     // also covered by `cleanup`'s Drop.
@@ -666,6 +685,27 @@ fn emit_bytes_progress(app: &AppHandle, stream_id: &str, bytes: u64, started: In
             tables_total: None,
         },
     );
+}
+
+/// `src` の内容を gzip 圧縮して、既に開いてある `dst` へ書き、圧縮後のバイト数を返す (#1539)。
+/// ストリームコピーなので巨大なダンプでもメモリに載せない。CPU 負荷が高いので blocking
+/// スレッドで行う。
+async fn gzip_dump_file(src: PathBuf, dst: std::fs::File) -> Result<u64> {
+    tokio::task::spawn_blocking(move || -> Result<u64> {
+        let mut input = std::io::BufReader::new(std::fs::File::open(&src)?);
+        let mut encoder = flate2::write::GzEncoder::new(
+            std::io::BufWriter::new(dst),
+            flate2::Compression::default(),
+        );
+        std::io::copy(&mut input, &mut encoder)?;
+        let writer = encoder.finish()?;
+        let file = writer
+            .into_inner()
+            .map_err(|e| AppError::Io(e.into_error()))?;
+        Ok(file.metadata()?.len())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("dump gzip task failed: {e}")))?
 }
 
 /// 書き出し済みのダンプファイルを `db::format::format_sql` で整形して書き戻し、
@@ -1590,6 +1630,31 @@ mod tests {
         assert!(out.contains("\n  a,"), "got: {out}");
         assert_eq!(bytes as usize, out.len());
         let _ = std::fs::remove_file(&path);
+    }
+
+    // #1539: gzip 圧縮した結果が元の内容に伸長でき、返り値が圧縮後のファイルサイズと一致する。
+    #[tokio::test]
+    async fn gzip_dump_file_roundtrips_and_reports_compressed_size() {
+        use std::io::Read;
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("noobdb_dump_gz_src_{}.sql", std::process::id()));
+        let dst = dir.join(format!("noobdb_dump_gz_dst_{}.sql.gz", std::process::id()));
+        let body = "INSERT INTO t VALUES (1, 'あ');\n".repeat(2000);
+        std::fs::write(&src, &body).unwrap();
+        let bytes = gzip_dump_file(src.clone(), std::fs::File::create(&dst).unwrap())
+            .await
+            .unwrap();
+        let gz = std::fs::read(&dst).unwrap();
+        assert_eq!(bytes as usize, gz.len());
+        assert!(gz.len() < body.len() / 4, "should compress well");
+        assert_eq!(&gz[..2], &[0x1f, 0x8b], "gzip magic");
+        let mut out = String::new();
+        flate2::read::GzDecoder::new(&gz[..])
+            .read_to_string(&mut out)
+            .unwrap();
+        assert_eq!(out, body);
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&dst);
     }
 
     #[tokio::test]

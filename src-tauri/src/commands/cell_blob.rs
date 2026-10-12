@@ -263,7 +263,6 @@ pub(crate) async fn fetch_cell_blob(
     column: &str,
     key: &[CellKeyPart],
 ) -> Result<Option<Vec<u8>>> {
-    let driver = session.conn.driver_kind();
     // 本体を取り込む前にサイズだけ先に問い合わせ、上限超過なら SELECT を発行しない
     // (数百 MB 〜 GB の BLOB を全量転送・16 進化してから拒否していた #1530)。
     // probe は OCTET_LENGTH / LENGTH と先頭 16 バイトだけを返す軽い問い合わせ。
@@ -277,6 +276,20 @@ pub(crate) async fn fetch_cell_blob(
         }
         Some(_) => {}
     }
+    fetch_cell_body(session, database, table, column, key).await
+}
+
+/// probe 済み (サイズ確認済み) のセルの本体を取得してデコードする。`fetch_cell_blob` と
+/// フォルダ一括保存 (`save_cells_to_folder`、probe を種別判定にも使うので二重に打たない)
+/// が共有する。
+async fn fetch_cell_body(
+    session: &Session,
+    database: Option<&str>,
+    table: &str,
+    column: &str,
+    key: &[CellKeyPart],
+) -> Result<Option<Vec<u8>>> {
+    let driver = session.conn.driver_kind();
     let sql = build_cell_select(driver, database, table, column, key)?;
     let result = session.conn.execute(&sql, database).await?;
     if result.rows.len() != 1 {
@@ -359,6 +372,272 @@ pub async fn save_cell_to_file(
         .ok_or_else(|| AppError::InvalidInput("the cell is NULL".into()))?;
     tokio::fs::write(&path, &bytes).await?;
     Ok(bytes.len() as u64)
+}
+
+/// フォルダ一括保存の行数上限。
+const MAX_FOLDER_EXPORT_ROWS: usize = 10_000;
+
+/// フォルダ一括保存でスキップ / 失敗した行 1 件。`row` は渡した `keys` の添字。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobFolderIssue {
+    pub row: u32,
+    pub error: String,
+}
+
+/// `save_cells_to_folder` の結果。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobFolderSaveResult {
+    /// 保存したファイル数。
+    pub saved: u32,
+    /// 保存した合計バイト数。
+    pub total_bytes: u64,
+    /// NULL のセルで保存しなかった行数。
+    pub skipped_null: u32,
+    /// 上限 (16 MiB) を超えて保存しなかった行数。
+    pub skipped_too_large: u32,
+    /// 取得・書き込みに失敗した行数。
+    pub failed: u32,
+    /// 失敗した行の理由 (先頭 20 件まで)。
+    pub errors: Vec<BlobFolderIssue>,
+}
+
+/// 失敗理由として返す件数の上限 (IPC を肥大させない)。
+const MAX_REPORTED_ERRORS: usize = 20;
+
+/// 主キーの値 1 つをファイル名の断片にする。区切り・制御文字・予約記号は `_` に置き換える。
+fn key_value_fragment(v: &Value) -> String {
+    let raw = match v {
+        Value::Null => "null".to_string(),
+        Value::Int(n) => n.to_string(),
+        Value::UInt(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Bytes(h) => h.clone(),
+    };
+    raw.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric()
+                || matches!(c, '-' | '_' | '.')
+                || (!c.is_ascii() && c.is_alphanumeric())
+            {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// ファイル名の幹に使うバイト数の上限 (拡張子・`_N` の連番を足しても 255 バイトに収まる)。
+const MAX_STEM_BYTES: usize = 100;
+
+/// 主キーからファイル名の幹 (拡張子なし) を作る (純関数)。複数列のキーは `-` でつなぐ。
+/// 先頭のドットは外し (隠しファイル・`..` 対策)、長さを丸め、Windows の予約名
+/// (`CON` など) は避ける。空になったら `row<行番号>`。
+fn blob_file_stem(key: &[CellKeyPart], row_number: usize) -> String {
+    let joined = key
+        .iter()
+        .map(|p| key_value_fragment(&p.value))
+        .collect::<Vec<_>>()
+        .join("-");
+    // 長さはバイト数で数える (多くのファイルシステムは名前を 255 バイトに制限する)。
+    // UTF-8 の文字境界で切る。
+    let mut trimmed = joined.trim_start_matches('.').to_string();
+    if trimmed.len() > MAX_STEM_BYTES {
+        let mut end = MAX_STEM_BYTES;
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        trimmed.truncate(end);
+    }
+    let trimmed = trimmed.trim_end_matches('.').to_string();
+    if trimmed.is_empty() {
+        return format!("row{row_number}");
+    }
+    // Windows は `CON.txt` のように最初のドットより前が予約名ならデバイス扱いにする。
+    let base = trimmed.split('.').next().unwrap_or("");
+    let upper = base.trim_end().to_ascii_uppercase();
+    let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.ends_with(|c: char| c.is_ascii_digit()));
+    if reserved {
+        format!("_{trimmed}")
+    } else {
+        trimmed
+    }
+}
+
+/// `folder` の中で未使用のファイルを排他的に作って返す (既存ファイルは決して上書きしない)。
+/// 同じ名前が既にあるか、この一括保存の中で使用済み (大文字小文字を無視) なら `_2`, `_3`… を付ける。
+async fn create_unique_file(
+    folder: &std::path::Path,
+    stem: &str,
+    ext: &str,
+    used: &mut std::collections::HashSet<String>,
+) -> Result<(tokio::fs::File, std::path::PathBuf)> {
+    for n in 1..=10_000u32 {
+        let name = if n == 1 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}_{n}.{ext}")
+        };
+        if used.contains(&name.to_lowercase()) {
+            continue;
+        }
+        let path = folder.join(&name);
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(f) => {
+                used.insert(name.to_lowercase());
+                return Ok((f, path));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                used.insert(name.to_lowercase());
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(AppError::Other(format!(
+        "could not find a free file name for '{stem}'"
+    )))
+}
+
+/// 複数行の BLOB 列を、主キー由来のファイル名で 1 つのフォルダへ書き出す (#1539)。
+/// `keys` は行ごとの主キー (`save_cell_to_file` の `key` と同じ形)。DB → ファイルは
+/// Rust 内で完結し BLOB は IPC を通らない。行ごとに probe でサイズと種別を調べ、
+/// NULL は飛ばし、上限 (16 MiB) 超過は飛ばし、拡張子は種別 (判別不能は `bin`) から決める。
+/// 既存のファイルは上書きせず `_2` などを付ける。1 行の失敗で全体は止めず、件数と
+/// 先頭の失敗理由を返す。読み取りの SELECT だけなので read_only セッションでも使える。
+#[tauri::command]
+pub async fn save_cells_to_folder(
+    session_id: String,
+    database: Option<String>,
+    table: String,
+    column: String,
+    keys: Vec<Vec<CellKeyPart>>,
+    folder: String,
+    state: State<'_, AppState>,
+) -> Result<BlobFolderSaveResult> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    save_cells_to_folder_inner(
+        &session,
+        database.as_deref(),
+        &table,
+        &column,
+        &keys,
+        &folder,
+    )
+    .await
+}
+
+/// [`save_cells_to_folder`] の本体 (セッションを受ける。統合テストからも呼ぶ)。
+pub(crate) async fn save_cells_to_folder_inner(
+    session: &Session,
+    database: Option<&str>,
+    table: &str,
+    column: &str,
+    keys: &[Vec<CellKeyPart>],
+    folder: &str,
+) -> Result<BlobFolderSaveResult> {
+    if folder.trim().is_empty() {
+        return Err(AppError::InvalidInput("destination folder is empty".into()));
+    }
+    if keys.is_empty() {
+        return Err(AppError::InvalidInput("no rows to save".into()));
+    }
+    if keys.len() > MAX_FOLDER_EXPORT_ROWS {
+        return Err(AppError::InvalidInput(format!(
+            "too many rows ({}, limit {MAX_FOLDER_EXPORT_ROWS})",
+            keys.len()
+        )));
+    }
+    let dir = std::path::Path::new(folder);
+    if !tokio::fs::metadata(dir)
+        .await
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
+    {
+        return Err(AppError::InvalidInput(format!(
+            "destination is not an existing folder: {folder}"
+        )));
+    }
+    let mut result = BlobFolderSaveResult::default();
+    let mut used = std::collections::HashSet::new();
+    let report = |result: &mut BlobFolderSaveResult, row: usize, error: String| {
+        result.failed += 1;
+        if result.errors.len() < MAX_REPORTED_ERRORS {
+            result.errors.push(BlobFolderIssue {
+                row: row as u32,
+                error,
+            });
+        }
+    };
+    for (i, key) in keys.iter().enumerate() {
+        let probe = match probe_blob(session, database, table, column, key).await {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                result.skipped_null += 1;
+                continue;
+            }
+            Err(e) => {
+                report(&mut result, i, e.to_string());
+                continue;
+            }
+        };
+        if probe.size > MAX_CELL_BLOB_BYTES as u64 {
+            result.skipped_too_large += 1;
+            continue;
+        }
+        let bytes = match fetch_cell_body(session, database, table, column, key).await {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                result.skipped_null += 1;
+                continue;
+            }
+            Err(e) => {
+                report(&mut result, i, e.to_string());
+                continue;
+            }
+        };
+        let stem = blob_file_stem(key, i + 1);
+        let ext = probe.ext.as_deref().unwrap_or("bin");
+        let (mut file, path) = match create_unique_file(dir, &stem, ext, &mut used).await {
+            Ok(v) => v,
+            Err(e) => {
+                report(&mut result, i, e.to_string());
+                continue;
+            }
+        };
+        use tokio::io::AsyncWriteExt;
+        let written = match file.write_all(&bytes).await {
+            Ok(()) => file.flush().await,
+            Err(e) => Err(e),
+        };
+        drop(file);
+        match written {
+            Ok(()) => {
+                result.saved += 1;
+                result.total_bytes += bytes.len() as u64;
+            }
+            Err(e) => {
+                // 書きかけのファイルは残さない。
+                let _ = tokio::fs::remove_file(&path).await;
+                report(&mut result, i, e.to_string());
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// ファイルを読み、生バイト列のまま返す (#1258)。BLOB 列への書き戻し (UPDATE 生成)
@@ -577,5 +856,89 @@ mod tests {
             .is_none());
         assert!(interpret_probe_row(vec![Value::Int(1)]).is_err());
         assert!(interpret_probe_row(vec![Value::Float(1.5), Value::Null]).is_err());
+    }
+
+    #[test]
+    fn file_stem_comes_from_the_primary_key() {
+        assert_eq!(blob_file_stem(&[key("id", Value::Int(7))], 1), "7");
+        assert_eq!(
+            blob_file_stem(
+                &[
+                    key("a", Value::Int(1)),
+                    key("b", Value::String("x y".into()))
+                ],
+                1
+            ),
+            "1-x_y"
+        );
+        // パス区切り・先頭ドットは無害化される。
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("../etc/passwd".into()))], 1),
+            "_etc_passwd"
+        );
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("..".into()))], 3),
+            "row3"
+        );
+        // Windows 予約名は避ける。
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("con".into()))], 1),
+            "_con"
+        );
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("LPT1".into()))], 1),
+            "_LPT1"
+        );
+        // 長いキーは丸める。
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("a".repeat(300)))], 1).len(),
+            100
+        );
+        // 最初のドットより前が予約名なら避ける (`CON.txt` は Windows でデバイス扱い)。
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("con.v2".into()))], 1),
+            "_con.v2"
+        );
+        // 予約名を含むだけの名前は触らない。
+        assert_eq!(
+            blob_file_stem(&[key("id", Value::String("a.con".into()))], 1),
+            "a.con"
+        );
+        // 長さはバイト数で数え、UTF-8 の文字境界で切る (3 バイト文字 40 個 = 120 バイト)。
+        let jp = blob_file_stem(&[key("id", Value::String("あ".repeat(40)))], 1);
+        assert!(
+            jp.len() <= 100 && jp.chars().all(|c| c == 'あ'),
+            "{}",
+            jp.len()
+        );
+        assert_eq!(jp.len(), 99);
+    }
+
+    #[tokio::test]
+    async fn create_unique_file_never_overwrites_and_avoids_case_collisions() {
+        let dir = std::env::temp_dir().join(format!("noobdb_blob_unique_{}", std::process::id()));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("a.bin"), b"existing")
+            .await
+            .unwrap();
+        let mut used = std::collections::HashSet::new();
+        let (_, p1) = create_unique_file(&dir, "a", "bin", &mut used)
+            .await
+            .unwrap();
+        assert_eq!(p1.file_name().unwrap(), "a_2.bin");
+        let (_, p2) = create_unique_file(&dir, "A", "bin", &mut used)
+            .await
+            .unwrap();
+        assert_eq!(
+            p2.file_name().unwrap(),
+            "A_3.bin",
+            "大文字小文字違いも別名にする"
+        );
+        assert_eq!(
+            tokio::fs::read(dir.join("a.bin")).await.unwrap(),
+            b"existing"
+        );
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }

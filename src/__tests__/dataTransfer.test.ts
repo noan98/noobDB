@@ -6,6 +6,7 @@ import {
   toDriverKind,
   transferConfirmSteps,
   validateTransferTarget,
+  writesExistingTable,
   type TransferSource,
 } from "../components/dataTransfer";
 
@@ -55,6 +56,15 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
       expect(validateTransferTarget({ ...base, tableName: "orders", mode: "append" })).toBeNull();
     });
 
+    it("upsert は append と同じく既存テーブルが必要 (#1539)", () => {
+      expect(validateTransferTarget({ ...base, mode: "upsert" })).toBe("tableMissing");
+      expect(validateTransferTarget({ ...base, tableName: "orders", mode: "upsert" })).toBeNull();
+      expect(writesExistingTable("upsert")).toBe(true);
+      expect(writesExistingTable("append")).toBe(true);
+      expect(writesExistingTable("create")).toBe(false);
+      expect(writesExistingTable("replace")).toBe(false);
+    });
+
     it("一覧が未取得なら衝突判定はしない (バックエンドが最終判定)", () => {
       expect(validateTransferTarget({ ...base, tableName: "orders", existingTables: null })).toBeNull();
     });
@@ -76,6 +86,11 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
     it("非本番の新規作成・追記は確認なし", () => {
       expect(transferConfirmSteps({ mode: "create", tableExists: false, isProduction: false })).toEqual([]);
       expect(transferConfirmSteps({ mode: "append", tableExists: true, isProduction: false })).toEqual([]);
+      expect(transferConfirmSteps({ mode: "upsert", tableExists: true, isProduction: false })).toEqual([]);
+      // 本番への upsert は書き込みの確認 (DROP を伴わないので強確認ではない)。
+      expect(transferConfirmSteps({ mode: "upsert", tableExists: true, isProduction: true })).toEqual([
+        "production",
+      ]);
     });
 
     it("既存テーブルの置き換えは常に確認、本番ならタイプ入力の強確認", () => {

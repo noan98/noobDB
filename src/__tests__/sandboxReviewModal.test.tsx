@@ -57,6 +57,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       generateSyncSql: vi.fn().mockResolvedValue({ statements: [], warnings: [] }),
       generateDataSyncSql: vi.fn().mockResolvedValue({ statements: [], warnings: [] }),
       releaseDataDiffs: vi.fn().mockResolvedValue(undefined),
+      sandboxResetTable: vi.fn().mockResolvedValue({ restored_rows: 3 }),
     },
   };
 });
@@ -178,5 +179,47 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
     expect(
       await screen.findByText(t("sandboxReviewSourceError", { error: "boom" })),
     ).toBeInTheDocument();
+  });
+});
+
+/** 表単位のリセット (#1539)。確認のうえ API を呼び、完了後に差分を読み直す。 */
+describe("SandboxReviewModal の表リセット (#1539)", () => {
+  const changed = {
+    ...TABLE_DIFF,
+    desired: {
+      ...TABLE_DIFF.desired,
+      rows: [
+        { status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] },
+      ],
+    },
+  };
+
+  it("確認後に sandboxResetTable を呼んで差分を再読込する", async () => {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue(changed);
+    renderWithProviders(
+      <SandboxReviewModal sandbox={SANDBOX} sandboxSessionId="s1" openConnections={[]} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByText(t("sandboxResetTable")));
+    fireEvent.click(await screen.findByText(t("confirmDefaultOk")));
+    await waitFor(() =>
+      expect(api.sandboxResetTable).toHaveBeenCalledWith({
+        sandboxId: "sb1",
+        sandboxSessionId: "s1",
+        table: "users",
+      }),
+    );
+    await waitFor(() => expect(vi.mocked(api.sandboxTableDiff).mock.calls.length).toBeGreaterThan(1));
+    expect(await screen.findByText(t("sandboxResetDone", { table: "users", rows: 3 }))).toBeInTheDocument();
+  });
+
+  it("確認をキャンセルしたら何も呼ばない", async () => {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue(changed);
+    renderWithProviders(
+      <SandboxReviewModal sandbox={SANDBOX} sandboxSessionId="s1" openConnections={[]} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByText(t("sandboxResetTable")));
+    fireEvent.click(await screen.findByText(t("confirmDefaultCancel")));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.sandboxResetTable).not.toHaveBeenCalled();
   });
 });

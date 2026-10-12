@@ -66,6 +66,13 @@
   `escapeHtml` を通し、CSP `default-src 'none'` で外部リソースを禁止、機微カラムマスク
   (#1069) 対象列は reveal に関係なく伏せ字。文脈は `App.tsx` → `ResultGrid` の
   `bundleContext` で渡し、マスク設定は `DataGrid` の `onMaskConfigChange` で持ち上げる。
+- **SQL 形式の `CREATE TABLE` 同梱 (#1539)**: `SqlExportOpts.ddl` に表定義を持たせ、
+  `write_sql_ddl` が INSERT の前に `定義;` + 空行を書く (`;` が無ければ補う。空結果でも定義だけ出る)。
+  ストリーミング (`export_query_stream` の `include_ddl`) はバックエンドが
+  `Connection::object_definition(db, "table", table)` (MySQL `SHOW CREATE TABLE` /
+  SQLite `sqlite_master.sql` / PostgreSQL は introspection からの再構成) で取得し、取得失敗は
+  ファイルを作る前にエラーで止める。在グリッド (`export_query_result` の `ddl_header`) はフロントが
+  `get_object_definition` で取って渡す。プレビュー / 全文コピーには含めない。スケジューラは非対応。
 - **データマスキング (#733)**: `export_query_result` / `export_query_stream` は
   `masks: Option<Vec<ColumnMask>>` (列名 → `MaskRule`) を受け取り、純粋層
   `db/masking.rs` の `mask_rows` を**値エンコード直前の単一フック**として在グリッド
@@ -112,6 +119,11 @@
   SQL を `db::format::format_sql` (`sqlformat` クレートの薄いラッパ) で整形して
   保存し直します — フロントの sql-formatter と方針 (2 スペース字下げ・キーワードの
   ケース保持) を揃えた可読性向上オプションです。
+  **gzip 圧縮 (#1539)**: `DumpOptions.gzip` (既定オフ、全ドライバ共通) を立てると、整形
+  (`format_sql`) の後に `gzip_dump_file` が完成した一時ファイルを別の一時ファイルへ `flate2`
+  (Rust 実装) でストリーム圧縮し、成功したときだけ保存先へ rename する (未圧縮の一時ファイルは
+  `PartialFileCleanup` が消す)。バックエンドは拡張子を付け替えない (`DumpModal` が `.sql` ⇔ `.sql.gz` を
+  追従)。進捗のバイト数は圧縮前、完了イベントのバイト数は圧縮後。
   **進捗・キャンセル・SQLite ストリーミング (#686)**: ダンプはストリーミングコマンド
   (`register_stream`/`forget_stream`/`stream_id` の 3 点セット) で、`dump-stream:progress`
   (バイト数・経過秒・SQLite はテーブル数) と `:done` / `:error` を emit します。外部
@@ -257,6 +269,12 @@
   作りかけのテーブルを DROP する (キャンセルは future の drop 経由なので Drop ガードが
   バックグラウンドタスクで DROP を投げる)。`append` はバッチごとにコミットされるため、
   キャンセル時は `deliveredRows` で書き込み済み行数を返す。
+  `upsert` (#1539) は `append` と同じく DDL なしの既存テーブル書き込みで、インポートの
+  UPSERT 方針 (`db/upsert.rs` の `ImportConflict`) をそのまま流用する。`TransferRequest` の
+  `conflictMode` (`update` 既定 / `skip`) と `keyColumns` (省略・空は転送先の主キー。
+  `resolve_conflict` が転送先カタログから引き、転送列に無ければ `InvalidInput`。主キーも
+  無ければエラー) で衝突判定し、最初のバッチで 1 回だけ解決する。転送列がキーだけなら
+  `update` は `skip` に倒す。PostgreSQL / SQLite はキー列に一意制約が要る (DB が拒否)。
 - **安全網**: ターゲットの `read_only` はバックエンドで拒否 (緊急書き込みモードでも)。
   ソースが SQL のときは `ensure_allowed_for_session` + `is_read_only_sql_for` で読み取り
   専用文に限る。同一セッション・同一テーブルへの `create` / `replace` も拒否。

@@ -408,6 +408,194 @@ pub fn top_values_from_rows(rows: &[Vec<Value>]) -> Vec<ProfileValueCount> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 全列の概要 (#1539)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 件数・NULL 数・DISTINCT 数・MIN/MAX は 1 本の SELECT に列数ぶん並べれば 1 回の走査で
+// 取れる (3 DB 共通)。上位値とヒストグラムは従来どおり列ごとに遅延取得する
+// ([`run_column_profile`])。1 文あたりの式の数を抑えるため列を [`OVERVIEW_CHUNK_COLUMNS`]
+// ずつに分け、極端に列が多い表では文が複数 (= 走査も複数) になる。
+
+/// 1 文に載せる列数の上限。1 列あたり最大 4 式 (`COUNT` / `COUNT(DISTINCT)` / `MIN` / `MAX`)
+/// なので 1 文は最大 240 式程度。MySQL / PostgreSQL / SQLite の式・結果列の上限に十分収まる。
+pub const OVERVIEW_CHUNK_COLUMNS: usize = 60;
+
+/// 概要で型の都合により MIN/MAX・DISTINCT を求めなかった列の理由コード。
+pub const NOTE_OVERVIEW_SKIPPED: &str = "overview_skipped_type";
+
+/// 概要 1 列分の結果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ColumnOverview {
+    pub column: String,
+    pub data_type: String,
+    pub non_null_count: Value,
+    pub null_count: Value,
+    /// DISTINCT 数 (NULL を除く)。求めなかった / 求められなかったときは `None`。
+    pub distinct_count: Option<Value>,
+    pub min_value: Value,
+    pub max_value: Value,
+    /// 縮退理由コード (`NOTE_*`)。
+    pub notes: Vec<String>,
+}
+
+/// 表全体の概要。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TableProfileOverview {
+    pub table: String,
+    pub total_count: Value,
+    pub columns: Vec<ColumnOverview>,
+    /// 集計に使った SELECT の本数 (正常時は 列数 / [`OVERVIEW_CHUNK_COLUMNS`] の切り上げ。
+    /// 失敗して列ごとに縮退した分も数える)。
+    pub scans: u32,
+}
+
+/// 1 列に載せる集計式の種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverviewAggs {
+    pub distinct: bool,
+    pub min_max: bool,
+}
+
+/// 型の都合で `COUNT(DISTINCT)` / `MIN` / `MAX` が通らない・極端に重い列を外す。
+/// 外した列は件数 (`COUNT(col)`) だけ求める。
+pub fn overview_aggs(driver: DriverKind, data_type: &str, include_distinct: bool) -> OverviewAggs {
+    let t = data_type.trim().to_ascii_lowercase();
+    let base = t.split('(').next().unwrap_or_default().trim().to_string();
+    let has = |needles: &[&str]| needles.iter().any(|n| t.contains(n));
+    let (no_min_max, no_distinct) = match driver {
+        DriverKind::Mysql => {
+            let heavy = has(&[
+                "blob",
+                "mediumtext",
+                "longtext",
+                "json",
+                "geometry",
+                "point",
+                "polygon",
+                "linestring",
+            ]);
+            (heavy, heavy)
+        }
+        DriverKind::Postgres => {
+            let unordered = has(&[
+                "json", "xml", "point", "line", "lseg", "box", "path", "polygon", "circle",
+            ]) && base != "jsonb";
+            // jsonb は等価比較できるので DISTINCT は可、MIN/MAX は不可。
+            let no_min_max = unordered
+                || base == "jsonb"
+                || has(&["bool", "bytea", "uuid", "tsvector", "tsquery"]);
+            (no_min_max, unordered || has(&["tsvector", "tsquery"]))
+        }
+        DriverKind::Sqlite => {
+            let blob = has(&["blob"]);
+            (blob, blob)
+        }
+    };
+    OverviewAggs {
+        distinct: include_distinct && !no_distinct,
+        min_max: !no_min_max,
+    }
+}
+
+/// 列ごとの再試行で救える失敗か。SQL 側の失敗 (型に使えない集計など) だけが対象で、
+/// キャンセル・タイムアウト・接続断・I/O はそのまま呼び出し元へ返す。
+fn overview_error_is_retryable(e: &AppError) -> bool {
+    !(matches!(
+        e,
+        AppError::Timeout(_)
+            | AppError::ConnectTimeout { .. }
+            | AppError::SessionNotFound(_)
+            | AppError::Ssh(_)
+            | AppError::Io(_)
+    ) || e.is_connection_lost()
+        || is_interrupt_error(e)
+        || e.to_string().to_ascii_lowercase().contains("cancel"))
+}
+
+/// サーバ側のクエリ中断: PostgreSQL の SQLSTATE 57014 (query_canceled)、MySQL の 1317
+/// (ER_QUERY_INTERRUPTED) / 3024 (ER_QUERY_TIMEOUT)、文字列 "interrupted"。
+fn is_interrupt_error(e: &AppError) -> bool {
+    if let AppError::Sqlx(sqlx::Error::Database(db)) = e {
+        let code = db.code();
+        if matches!(code.as_deref(), Some("57014" | "1317" | "3024")) {
+            return true;
+        }
+    }
+    e.to_string().to_ascii_lowercase().contains("interrupted")
+}
+
+/// 全列の概要を 1 本で返す集計 SQL。列の並びは `total, [non_null, [distinct,] [min, max]]...`
+/// (各列の集計式は `aggs` に従い、位置で読む)。
+pub fn build_overview_sql(
+    driver: DriverKind,
+    database: &str,
+    table: &str,
+    columns: &[(&str, OverviewAggs)],
+) -> String {
+    let count = count_fn(driver);
+    let mut parts = vec![format!("{count}(*) AS total_count")];
+    for (i, (name, aggs)) in columns.iter().enumerate() {
+        let col = quote_ident(driver, name);
+        parts.push(format!("{count}({col}) AS nn_{i}"));
+        if aggs.distinct {
+            parts.push(format!("{count}(DISTINCT {col}) AS d_{i}"));
+        }
+        if aggs.min_max {
+            parts.push(format!("MIN({col}) AS min_{i}"));
+            parts.push(format!("MAX({col}) AS max_{i}"));
+        }
+    }
+    let target = ProfileTarget {
+        driver,
+        database,
+        table,
+        column: "",
+    };
+    format!("SELECT {} FROM {}", parts.join(", "), table_ref(&target))
+}
+
+/// [`build_overview_sql`] の結果 1 行を列ごとの結果に読み分ける。戻り値は
+/// `(total, 各列)`。行が短い (列が足りない) ときは欠けた値を NULL / `None` として扱う。
+fn read_overview_row(
+    row: &[Value],
+    columns: &[(&str, &str, OverviewAggs)],
+) -> (u64, Vec<ColumnOverview>) {
+    let get = |i: usize| row.get(i).cloned().unwrap_or(Value::Null);
+    let total = value_as_u64(&get(0)).unwrap_or(0);
+    let mut pos = 1;
+    let mut out = Vec::with_capacity(columns.len());
+    for (name, data_type, aggs) in columns {
+        let non_null = value_as_u64(&get(pos)).unwrap_or(0);
+        pos += 1;
+        let distinct = if aggs.distinct {
+            let d = value_as_u64(&get(pos));
+            pos += 1;
+            d
+        } else {
+            None
+        };
+        let (min_value, max_value) = if aggs.min_max {
+            let r = (get(pos), get(pos + 1));
+            pos += 2;
+            r
+        } else {
+            (Value::Null, Value::Null)
+        };
+        out.push(ColumnOverview {
+            column: (*name).to_string(),
+            data_type: (*data_type).to_string(),
+            non_null_count: Value::from_u64_lossless(non_null),
+            null_count: Value::from_u64_lossless(total.saturating_sub(non_null)),
+            distinct_count: distinct.map(Value::from_u64_lossless),
+            min_value,
+            max_value,
+            notes: Vec::new(),
+        });
+    }
+    (total, out)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 実行
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -585,8 +773,146 @@ pub async fn run_column_profile(
     })
 }
 
+/// 表の全列の概要 (件数・NULL 数・DISTINCT・MIN/MAX) を、列を [`OVERVIEW_CHUNK_COLUMNS`] ずつ
+/// 1 文にまとめて集計する (#1539)。書き込みは一切しない (read_only セッションでも可)。
+/// 文が失敗したら (型の都合など) その塊だけ列ごとの集計へ縮退し、それでも通らない列は
+/// 件数だけ (`NOTE_STATS_UNAVAILABLE`) にする — 件数は必ず返す。
+pub async fn run_table_overview(
+    conn: &Connection,
+    database: &str,
+    table: &str,
+    include_distinct: bool,
+) -> Result<TableProfileOverview> {
+    if table.trim().is_empty() {
+        return Err(AppError::InvalidInput("table is required".into()));
+    }
+    let driver = conn.driver_kind();
+    let infos = conn.columns(database, table).await?;
+    if infos.is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "table has no columns: {table}"
+        )));
+    }
+    let planned: Vec<(&str, &str, OverviewAggs)> = infos
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.data_type.as_str(),
+                overview_aggs(driver, &c.data_type, include_distinct),
+            )
+        })
+        .collect();
+
+    let mut scans = 0u32;
+    let mut total: Option<u64> = None;
+    let mut columns: Vec<ColumnOverview> = Vec::with_capacity(planned.len());
+    for chunk in planned.chunks(OVERVIEW_CHUNK_COLUMNS) {
+        let sql_cols: Vec<(&str, OverviewAggs)> = chunk.iter().map(|(n, _, a)| (*n, *a)).collect();
+        scans += 1;
+        match conn
+            .execute(
+                &build_overview_sql(driver, database, table, &sql_cols),
+                None,
+            )
+            .await
+        {
+            Ok(res) => {
+                let row = res.rows.into_iter().next().unwrap_or_default();
+                let (t, mut part) = read_overview_row(&row, chunk);
+                total.get_or_insert(t);
+                mark_skipped(&mut part, chunk, include_distinct);
+                columns.extend(part);
+            }
+            // キャンセル・タイムアウト・接続断は列ごとに再試行しても同じ結果になる (しかも
+            // 走査を何十回も繰り返してしまう) ので、そのまま返す。
+            Err(e) if !overview_error_is_retryable(&e) => return Err(e),
+            Err(_) => {
+                // 塊ごと失敗: 列ごとに集計し直し、それも通らなければ件数だけにする。
+                for one in chunk {
+                    let single = [(one.0, one.2)];
+                    scans += 1;
+                    let sql = build_overview_sql(driver, database, table, &single);
+                    match conn.execute(&sql, None).await {
+                        Ok(res) => {
+                            let row = res.rows.into_iter().next().unwrap_or_default();
+                            let (t, mut part) = read_overview_row(&row, std::slice::from_ref(one));
+                            total.get_or_insert(t);
+                            mark_skipped(&mut part, std::slice::from_ref(one), include_distinct);
+                            columns.extend(part);
+                            continue;
+                        }
+                        Err(e) if !overview_error_is_retryable(&e) => return Err(e),
+                        Err(_) => {}
+                    }
+                    let bare = [(
+                        one.0,
+                        OverviewAggs {
+                            distinct: false,
+                            min_max: false,
+                        },
+                    )];
+                    scans += 1;
+                    let res = conn
+                        .execute(&build_overview_sql(driver, database, table, &bare), None)
+                        .await?;
+                    let row = res.rows.into_iter().next().unwrap_or_default();
+                    let bare_col = (
+                        one.0,
+                        one.1,
+                        OverviewAggs {
+                            distinct: false,
+                            min_max: false,
+                        },
+                    );
+                    let (t, mut part) = read_overview_row(&row, std::slice::from_ref(&bare_col));
+                    total.get_or_insert(t);
+                    for c in &mut part {
+                        c.notes.push(NOTE_STATS_UNAVAILABLE.to_string());
+                    }
+                    columns.extend(part);
+                }
+            }
+        }
+    }
+    Ok(TableProfileOverview {
+        table: table.to_string(),
+        total_count: Value::from_u64_lossless(total.unwrap_or(0)),
+        columns,
+        scans,
+    })
+}
+
+/// 型の都合で MIN/MAX・DISTINCT を外した列に `NOTE_OVERVIEW_SKIPPED` を付ける。
+/// DISTINCT を外したのが `include_distinct = false` の指定によるときは付けない。
+fn mark_skipped(
+    part: &mut [ColumnOverview],
+    planned: &[(&str, &str, OverviewAggs)],
+    include_distinct: bool,
+) {
+    for (c, (_, _, aggs)) in part.iter_mut().zip(planned) {
+        if !aggs.min_max || (include_distinct && !aggs.distinct) {
+            c.notes.push(NOTE_OVERVIEW_SKIPPED.to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn interrupts_and_timeouts_are_not_retried_per_column() {
+        assert!(!overview_error_is_retryable(&AppError::Timeout(5)));
+        assert!(!overview_error_is_retryable(&AppError::Other(
+            "Query execution was interrupted".into()
+        )));
+        assert!(!overview_error_is_retryable(&AppError::Other(
+            "canceling statement due to user request".into()
+        )));
+        assert!(overview_error_is_retryable(&AppError::InvalidInput(
+            "unsupported aggregate".into()
+        )));
+    }
+
     use super::*;
     use crate::db::is_read_only_sql_for;
 
@@ -816,5 +1142,52 @@ mod tests {
         // 2^53 を超える件数は文字列のまま (JS で丸めない)。
         assert_eq!(top[0].count, Value::String("9007199254740993".into()));
         assert_eq!(top[1].count, Value::UInt(2));
+    }
+
+    #[test]
+    fn overview_sql_puts_every_column_in_one_select() {
+        let on = OverviewAggs {
+            distinct: true,
+            min_max: true,
+        };
+        let off = OverviewAggs {
+            distinct: false,
+            min_max: false,
+        };
+        for d in ALL {
+            let sql = build_overview_sql(d, "app", "users", &[("a", on), ("b c", off)]);
+            assert_eq!(sql.matches("SELECT").count(), 1, "{d:?}: {sql}");
+            assert!(sql.contains("AS total_count"), "{sql}");
+            assert!(sql.contains("AS d_0") && sql.contains("AS min_0") && sql.contains("AS max_0"));
+            assert!(
+                sql.contains("AS nn_1") && !sql.contains("AS d_1") && !sql.contains("AS min_1")
+            );
+            assert!(is_read_only_sql_for(d, &sql), "{d:?}: {sql}");
+        }
+        // 列名は方言ごとに引用される。
+        assert!(
+            build_overview_sql(DriverKind::Mysql, "app", "users", &[("b c", off)])
+                .contains("`b c`")
+        );
+        assert!(
+            build_overview_sql(DriverKind::Postgres, "app", "users", &[("b c", off)])
+                .contains("\"b c\"")
+        );
+    }
+
+    #[test]
+    fn overview_aggs_skips_unorderable_types_and_respects_distinct_flag() {
+        for d in ALL {
+            let int = overview_aggs(d, "int", true);
+            assert!(int.distinct && int.min_max, "{d:?}");
+            let no_distinct = overview_aggs(d, "int", false);
+            assert!(!no_distinct.distinct && no_distinct.min_max, "{d:?}");
+        }
+        let blob = overview_aggs(DriverKind::Mysql, "longblob", true);
+        assert!(!blob.distinct && !blob.min_max);
+        let json = overview_aggs(DriverKind::Postgres, "json", true);
+        assert!(!json.min_max);
+        let jsonb = overview_aggs(DriverKind::Postgres, "jsonb", true);
+        assert!(jsonb.distinct && !jsonb.min_max);
     }
 }

@@ -40,6 +40,7 @@ use crate::db::transfer::{
     TransferColumn, TransferMode,
 };
 use crate::db::types::{Column, StreamBatch};
+use crate::db::upsert::{ConflictMode, ImportConflict};
 use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
@@ -78,6 +79,13 @@ pub struct TransferRequest {
     pub mode: TransferMode,
     #[serde(default)]
     pub batch_size: Option<usize>,
+    /// `mode == upsert` のときの衝突方針 (`skip` / `update`)。省略は `update`。
+    /// 他のモードでは無視される (#1539)。
+    #[serde(default)]
+    pub conflict_mode: Option<ConflictMode>,
+    /// `mode == upsert` のときの衝突判定キー列。省略 / 空は転送先テーブルの主キーを使う。
+    #[serde(default)]
+    pub key_columns: Option<Vec<String>>,
 }
 
 /// 転送の結果。
@@ -201,7 +209,7 @@ pub(crate) async fn prepare_transfer(
     // 同じセッション上で「自分自身へ」作り直し/新規作成すると、ソースを DROP
     // したり読みながら書いたりすることになるので拒否する。
     if request.source_session_id == request.target_session_id
-        && request.mode != TransferMode::Append
+        && !request.mode.writes_existing_table()
     {
         if let Some(t) = request.source_table.as_deref() {
             let same_db = request.source_database.as_deref().unwrap_or("")
@@ -377,7 +385,7 @@ async fn prepare_target(
     let db = request.target_database.as_deref().filter(|d| !d.is_empty());
     let table = request.target_table.trim();
     match request.mode {
-        TransferMode::Append => {}
+        TransferMode::Append | TransferMode::Upsert => {}
         TransferMode::Create | TransferMode::Replace => {
             if request.mode == TransferMode::Replace {
                 target
@@ -401,6 +409,86 @@ async fn prepare_target(
     Ok(plan)
 }
 
+/// 転送の衝突設定を決める (#1539)。`upsert` 以外は従来どおり素の INSERT。
+/// `upsert` ではキー列を、リクエストの指定 → 転送先テーブルの主キーの順に解決し、
+/// 転送する列に含まれることを確かめる。名前は転送先の綴り (大文字小文字) に揃える。
+async fn resolve_conflict(
+    target: &Session,
+    request: &TransferRequest,
+    plan: &[TransferColumn],
+) -> Result<ImportConflict> {
+    if request.mode != TransferMode::Upsert {
+        return Ok(ImportConflict::insert_only());
+    }
+    let wanted: Vec<String> = match request.key_columns.as_deref() {
+        Some(keys) if !keys.is_empty() => keys.to_vec(),
+        _ => {
+            let db = request
+                .target_database
+                .as_deref()
+                .filter(|d| !d.is_empty())
+                .unwrap_or("");
+            target
+                .conn
+                .columns(db, request.target_table.trim())
+                .await?
+                .into_iter()
+                .filter(|c| c.key == "PRI")
+                .map(|c| c.name)
+                .collect()
+        }
+    };
+    if wanted.is_empty() {
+        return Err(AppError::InvalidInput(
+            "upsert needs key columns: the target table has no primary key, so specify them".into(),
+        ));
+    }
+    let mut keys = Vec::with_capacity(wanted.len());
+    for w in &wanted {
+        let found = plan
+            .iter()
+            .find(|c| c.name == *w)
+            .or_else(|| plan.iter().find(|c| c.name.eq_ignore_ascii_case(w)))
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "upsert key column is not among the transferred columns: {w}"
+                ))
+            })?;
+        if !keys.contains(&found.name) {
+            keys.push(found.name.clone());
+        }
+    }
+    let names: Vec<String> = plan.iter().map(|c| c.name.clone()).collect();
+    let conflict = ImportConflict {
+        mode: request.conflict_mode.unwrap_or(ConflictMode::Update),
+        key_columns: keys,
+    };
+    // 転送する列がキー列だけのときは `update` で更新する列が無い。方言ごとの SQL が
+    // 壊れないよう、その場合は `skip` に倒す。
+    let conflict =
+        if conflict.mode == ConflictMode::Update && names.len() == conflict.key_columns.len() {
+            ImportConflict {
+                mode: ConflictMode::Skip,
+                ..conflict
+            }
+        } else {
+            conflict
+        };
+    conflict.validate(&names)?;
+    // MySQL の `ON DUPLICATE KEY UPDATE` は主キー以外の UNIQUE でも発火し、別の行を
+    // 上書きしうる。取り込み (import) と同じ検証で、危険な表は実行前に拒否する。
+    target
+        .conn
+        .check_upsert_keys(
+            request.target_database.as_deref().filter(|d| !d.is_empty()),
+            request.target_table.trim(),
+            &names,
+            &conflict,
+        )
+        .await?;
+    Ok(conflict)
+}
+
 /// バッチ 1 つ分をテキストセルへ変換して既存のインポート経路で書き込む。
 async fn write_batch(
     target: &Session,
@@ -409,6 +497,7 @@ async fn write_batch(
     plan: &[TransferColumn],
     rows: &[Vec<crate::db::types::Value>],
     batch_size: usize,
+    conflict: &ImportConflict,
 ) -> Result<u64> {
     if rows.is_empty() {
         return Ok(0);
@@ -437,8 +526,9 @@ async fn write_batch(
             &names,
             &cells,
             batch_size,
-            // 転送は常に素の INSERT (衝突時の扱いは `TransferMode` 側で事前に決める)。
-            &crate::db::upsert::ImportConflict::insert_only(),
+            // 衝突時の扱いは `TransferMode` / `resolve_conflict` で事前に決める
+            // (upsert 以外は素の INSERT)。
+            conflict,
             &hex_binary,
             |_| Ok(()),
         )
@@ -494,6 +584,7 @@ pub(crate) async fn run_transfer(
     let body = async {
         let mut columns: Option<Vec<Column>> = None;
         let mut plan: Option<Vec<TransferColumn>> = None;
+        let mut conflict: Option<ImportConflict> = None;
         let mut written: u64 = 0;
         while let Some(batch) = rx.recv().await {
             match batch {
@@ -516,7 +607,14 @@ pub(crate) async fn run_transfer(
                         );
                     }
                     let p = plan.as_deref().unwrap_or(&[]);
-                    written += write_batch(&target, request, driver, p, &rows, batch_size).await?;
+                    // 衝突設定は最初のバッチで 1 回だけ解決する (upsert のキー列解決で
+                    // 転送先のカタログを引くため)。
+                    if conflict.is_none() {
+                        conflict = Some(resolve_conflict(&target, request, p).await?);
+                    }
+                    let c = conflict.as_ref().cloned().unwrap_or_default();
+                    written +=
+                        write_batch(&target, request, driver, p, &rows, batch_size, &c).await?;
                     counter.store(written, Ordering::SeqCst);
                     on_progress(written);
                 }

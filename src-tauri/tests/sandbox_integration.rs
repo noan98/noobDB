@@ -672,3 +672,206 @@ async fn create_sandbox_with_foreign_key_tables_does_not_carry_the_constraints()
 
     let _ = std::fs::remove_file(&source_path);
 }
+
+/// #1539: `sandbox_reset_table` は 1 表のライブ行だけを base スナップショットへ戻し、
+/// 他の表の作業を残す。base が書き戻しで進んでいれば戻り先もそこまで進む。
+#[tokio::test]
+async fn sandbox_reset_table_restores_one_table_only() {
+    let (source_path, source_conn) = fresh_sqlite("reset_source").await;
+    source_conn
+        .execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL, qty INTEGER NOT NULL)",
+            None,
+        )
+        .await
+        .expect("create items");
+    source_conn
+        .execute(
+            "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)",
+            None,
+        )
+        .await
+        .expect("create notes");
+    source_conn
+        .execute(
+            "INSERT INTO items (id, label, qty) VALUES (1, 'apple', 10), (2, 'banana', 5)",
+            None,
+        )
+        .await
+        .expect("seed items");
+    source_conn
+        .execute("INSERT INTO notes (id, body) VALUES (1, 'n1')", None)
+        .await
+        .expect("seed notes");
+
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_reset_source",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let source_session_id = state.insert(source_session).await;
+    let create = t::create_sandbox_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "reset sandbox",
+        vec!["items".to_string(), "notes".to_string()],
+        false,
+        Some(100),
+    )
+    .await
+    .expect("create_sandbox");
+    let guard = DiscardGuard {
+        state: state.clone(),
+        sandbox_id: Some(create.sandbox.id.clone()),
+        session_id: Some(create.session_id.clone()),
+    };
+    let sandbox_session = state.get(&create.session_id).await.expect("session");
+
+    // 両方の表を編集する。
+    for sql in [
+        "UPDATE items SET qty = 99 WHERE id = 1",
+        "DELETE FROM items WHERE id = 2",
+        "INSERT INTO items (id, label, qty) VALUES (3, 'cherry', 1)",
+        "UPDATE notes SET body = 'edited' WHERE id = 1",
+    ] {
+        sandbox_session.conn.execute(sql, None).await.expect(sql);
+    }
+
+    // 存在しない表は弾く。
+    assert!(t::sandbox_reset_table_via_command(
+        &state,
+        &create.sandbox.id,
+        &create.session_id,
+        "nope"
+    )
+    .await
+    .is_err());
+
+    let restored =
+        t::sandbox_reset_table_via_command(&state, &create.sandbox.id, &create.session_id, "items")
+            .await
+            .expect("reset items");
+    assert_eq!(restored, 2);
+    let items = sandbox_session
+        .conn
+        .execute("SELECT id, label, qty FROM items ORDER BY id", None)
+        .await
+        .expect("select items");
+    let flat: Vec<String> = items.rows.iter().map(|r| format!("{:?}", r)).collect();
+    assert_eq!(flat.len(), 2, "{flat:?}");
+    assert!(
+        flat[0].contains("apple") && flat[0].contains("10"),
+        "{flat:?}"
+    );
+    assert!(
+        flat[1].contains("banana") && flat[1].contains("5"),
+        "{flat:?}"
+    );
+    // 他の表の編集はそのまま残る。
+    let notes = sandbox_session
+        .conn
+        .execute("SELECT body FROM notes", None)
+        .await
+        .expect("select notes");
+    assert!(format!("{:?}", notes.rows).contains("edited"));
+
+    // 再度の差分は items だけ空になる。
+    let diff = t::sandbox_table_diff_via_command(
+        &state,
+        &create.sandbox.id,
+        &create.session_id,
+        "items",
+        None,
+        None,
+    )
+    .await
+    .expect("diff items");
+    assert!(diff.desired.rows.is_empty());
+    let diff_notes = t::sandbox_table_diff_via_command(
+        &state,
+        &create.sandbox.id,
+        &create.session_id,
+        "notes",
+        None,
+        None,
+    )
+    .await
+    .expect("diff notes");
+    assert_eq!(diff_notes.desired.rows.len(), 1);
+
+    guard.discard().await;
+    let _ = std::fs::remove_file(&source_path);
+}
+
+/// #1539: 読み取り専用セッションと無関係なセッションでは表リセットを拒否する。
+#[tokio::test]
+async fn sandbox_reset_table_rejects_read_only_and_unrelated_sessions() {
+    let (source_path, source_conn) = fresh_sqlite("reset_guard_source").await;
+    source_conn
+        .execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT)",
+            None,
+        )
+        .await
+        .expect("create");
+    source_conn
+        .execute("INSERT INTO items (id, label) VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_reset_guard",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let source_session_id = state.insert(source_session).await;
+    let create = t::create_sandbox_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "reset guard",
+        vec!["items".to_string()],
+        false,
+        Some(10),
+    )
+    .await
+    .expect("create_sandbox");
+    let guard = DiscardGuard {
+        state: state.clone(),
+        sandbox_id: Some(create.sandbox.id.clone()),
+        session_id: Some(create.session_id.clone()),
+    };
+
+    // 無関係なセッション (元 DB) を渡しても弾かれる。
+    let err =
+        t::sandbox_reset_table_via_command(&state, &create.sandbox.id, &source_session_id, "items")
+            .await
+            .expect_err("unrelated session");
+    assert!(err.to_string().contains("not the sandbox session"), "{err}");
+
+    // 同じファイルを指す読み取り専用セッション。
+    let ro_conn = t::connect(&t::sqlite_options(&create.sandbox.file_path))
+        .await
+        .expect("connect ro");
+    let ro = t::make_session(
+        "sbx_reset_ro",
+        ro_conn,
+        t::sqlite_options(&create.sandbox.file_path),
+        true,
+    );
+    let ro_id = state.insert(ro).await;
+    let err = t::sandbox_reset_table_via_command(&state, &create.sandbox.id, &ro_id, "items")
+        .await
+        .expect_err("read-only");
+    assert_eq!(err.kind(), "readOnly", "{err:?}");
+
+    guard.discard().await;
+    if let Some(sess) = state.remove(&ro_id).await {
+        sess.conn.close().await;
+    }
+    let _ = std::fs::remove_file(&source_path);
+}
