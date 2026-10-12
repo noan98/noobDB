@@ -25,6 +25,7 @@ import {
   toDriverKind,
   transferConfirmSteps,
   validateTransferTarget,
+  writesExistingTable,
   type TransferSource,
 } from "./dataTransfer";
 import { tableNameCollides } from "./resultsToTable";
@@ -72,6 +73,9 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const [existingTables, setExistingTables] = useState<string[] | null>(null);
   const [tableName, setTableName] = useState(() => defaultTransferTableName(source));
   const [mode, setMode] = useState<TransferMode>("create");
+  // upsert (#1539): 衝突方針とキー列 (空なら転送先テーブルの主キー)。
+  const [conflictMode, setConflictMode] = useState<"update" | "skip">("update");
+  const [keyColumnsInput, setKeyColumnsInput] = useState("");
   const [lossy, setLossy] = useState<TransferLossyConversion[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -300,6 +304,15 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
         targetDatabase: database,
         targetTable: name,
         mode,
+        ...(mode === "upsert"
+          ? {
+              conflictMode,
+              keyColumns: keyColumnsInput
+                .split(",")
+                .map((k) => k.trim())
+                .filter((k) => k !== ""),
+            }
+          : {}),
       });
     } catch (e) {
       cleanupStream();
@@ -314,7 +327,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     setStatus({ kind: "idle" });
     const res = await api.cancelStream(streamId).catch(() => null);
     toast.info(
-      mode === "append"
+      writesExistingTable(mode)
         ? t("transferCancelledAppend", { rows: res?.deliveredRows ?? 0 })
         : t("transferCancelled"),
     );
@@ -423,13 +436,44 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
             <option value="create">{t("transferModeCreate")}</option>
             <option value="replace">{t("transferModeReplace")}</option>
             <option value="append">{t("transferModeAppend")}</option>
+            <option value="upsert">{t("transferModeUpsert")}</option>
           </Select>
           <chakra.span fontSize="xs" color="app.textMuted">
-            {mode === "append" ? t("transferModeAppendHint") : t("transferModeCreateHint")}
+            {mode === "upsert"
+              ? t("transferModeUpsertHint")
+              : mode === "append"
+                ? t("transferModeAppendHint")
+                : t("transferModeCreateHint")}
           </chakra.span>
         </FormSection>
 
-        {lossy.length > 0 && mode !== "append" && !isRunning && (
+        {mode === "upsert" && (
+          <FormSection>
+            <FieldLabel htmlFor="transfer-conflict-mode">{t("transferConflictMode")}</FieldLabel>
+            <Select
+              id="transfer-conflict-mode"
+              value={conflictMode}
+              onChange={(e) => setConflictMode(e.target.value as "update" | "skip")}
+              disabled={isRunning}
+            >
+              <option value="update">{t("transferConflictUpdate")}</option>
+              <option value="skip">{t("transferConflictSkip")}</option>
+            </Select>
+            <FieldLabel htmlFor="transfer-key-columns">{t("transferKeyColumns")}</FieldLabel>
+            <Input
+              id="transfer-key-columns"
+              value={keyColumnsInput}
+              onChange={(e) => setKeyColumnsInput(e.target.value)}
+              placeholder={t("transferKeyColumnsPlaceholder")}
+              disabled={isRunning}
+            />
+            <chakra.span textStyle="caption" color="app.textMuted">
+              {t("transferKeyColumnsHint")}
+            </chakra.span>
+          </FormSection>
+        )}
+
+        {lossy.length > 0 && !writesExistingTable(mode) && !isRunning && (
           <Callout tone="warning" title={t("transferLossyTitle")} role="status">
             <chakra.ul listStyleType="disc" pl="4" m="0">
               {lossy.map((l) => (

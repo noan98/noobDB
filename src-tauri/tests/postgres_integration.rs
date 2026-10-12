@@ -2478,3 +2478,122 @@ async fn postgres_table_overview_single_scan() {
         .await
         .expect("cleanup");
 }
+
+/// #1539: SQLite → Postgres の upsert 転送。既存行の更新・新規行の追加・skip を実 DB で確かめる。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_transfer_upsert_updates_and_skips() {
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_upsert_pg", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.noobdb_upsert_pg (id INT PRIMARY KEY, name VARCHAR(20), qty INT)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO noobdb_upsert_pg VALUES (1, 'old', 10), (9, 'keep', 1)",
+        None,
+    )
+    .await
+    .expect("seed target");
+
+    let state = t::AppState::default();
+    let mut src_path = std::env::temp_dir();
+    src_path.push(format!(
+        "noobdb_upsert_postgres_src_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&src_path);
+    std::fs::File::create(&src_path).expect("touch");
+    let src_opts = t::sqlite_options(src_path.to_str().expect("utf8"));
+    let src_conn = t::connect(&src_opts).await.expect("sqlite");
+    src_conn
+        .execute(
+            "CREATE TABLE noobdb_upsert_pg (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)",
+            None,
+        )
+        .await
+        .expect("src create");
+    src_conn
+        .execute(
+            "INSERT INTO noobdb_upsert_pg VALUES (1, 'new', 11), (2, 'two', 5)",
+            None,
+        )
+        .await
+        .expect("src seed");
+    state
+        .insert(t::make_session("src", src_conn, src_opts, false))
+        .await;
+    state
+        .insert(t::make_session("dst", conn, opts, false))
+        .await;
+
+    let req = |mode: Option<t::ConflictMode>| t::TransferRequest {
+        source_session_id: "src".into(),
+        target_session_id: "dst".into(),
+        source_database: None,
+        source_table: Some("noobdb_upsert_pg".into()),
+        source_sql: None,
+        target_database: Some("public".into()),
+        target_table: "noobdb_upsert_pg".into(),
+        mode: t::TransferMode::Upsert,
+        batch_size: Some(100),
+        conflict_mode: mode,
+        key_columns: None,
+    };
+    let run = |r: t::TransferRequest| {
+        let state = &state;
+        async move { t::transfer_data_inner(state, r, Arc::new(AtomicU64::new(0)), |_| {}).await }
+    };
+    let dst = state.get("dst").await.expect("dst");
+
+    run(req(None)).await.expect("upsert update");
+    let r = dst
+        .conn
+        .execute(
+            "SELECT id, name, qty FROM noobdb_upsert_pg ORDER BY id",
+            None,
+        )
+        .await
+        .expect("select");
+    assert_eq!(r.rows.len(), 3, "{:?}", r.rows);
+    assert_eq!(
+        format!("{:?}", r.rows[0][1]),
+        format!("{:?}", t::Value::String("new".into()))
+    );
+
+    dst.conn
+        .execute(
+            "UPDATE noobdb_upsert_pg SET name = 'local' WHERE id = 1",
+            None,
+        )
+        .await
+        .expect("local edit");
+    run(req(Some(t::ConflictMode::Skip)))
+        .await
+        .expect("upsert skip");
+    let r = dst
+        .conn
+        .execute("SELECT name FROM noobdb_upsert_pg WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert_eq!(
+        format!("{:?}", r.rows[0][0]),
+        format!("{:?}", t::Value::String("local".into()))
+    );
+
+    dst.conn
+        .execute("DROP TABLE IF EXISTS noobdb_upsert_pg", None)
+        .await
+        .expect("cleanup");
+    let _ = std::fs::remove_file(&src_path);
+}

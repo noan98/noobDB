@@ -2095,7 +2095,7 @@ export interface ExportStreamHandlers {
 }
 
 /** 接続間データ転送 (#986) で既存テーブルと衝突したときの扱い。 */
-export type TransferMode = "create" | "replace" | "append";
+export type TransferMode = "create" | "replace" | "append" | "upsert";
 
 export interface TransferRequest {
   sourceSessionId: string;
@@ -2109,6 +2109,10 @@ export interface TransferRequest {
   targetTable: string;
   mode: TransferMode;
   batchSize?: number | null;
+  /** `mode === "upsert"` の衝突方針。省略は `update` (#1539)。 */
+  conflictMode?: "skip" | "update" | null;
+  /** `mode === "upsert"` の衝突判定キー列。省略 / 空は転送先テーブルの主キー (#1539)。 */
+  keyColumns?: string[] | null;
 }
 export type TransferLossyKind = "decimal_clamped" | "decimal_float" | "timestamp_tz_degraded";
 export interface TransferLossyConversion {

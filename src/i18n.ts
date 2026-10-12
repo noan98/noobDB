@@ -2042,6 +2042,16 @@ const en = {
   transferModeCreate: "Create a new table (fail if it exists)",
   transferModeReplace: "Replace (drop and recreate)",
   transferModeAppend: "Append to the existing table",
+  transferModeUpsert: "Update existing rows (upsert into the existing table)",
+  transferModeUpsertHint:
+    "No DDL is issued; the table must already exist. Rows whose key matches an existing row are updated or skipped, the rest are inserted. Rows written before a failure or cancel remain.",
+  transferConflictMode: "On existing key",
+  transferConflictUpdate: "Update existing rows",
+  transferConflictSkip: "Skip existing rows",
+  transferKeyColumns: "Key columns",
+  transferKeyColumnsPlaceholder: "Blank = the target table's primary key",
+  transferKeyColumnsHint:
+    "Comma-separated column names that identify a row. They must be covered by a unique key on the target (PostgreSQL / SQLite require it).",
   transferModeCreateHint:
     "Column types are mapped to the target database. If the transfer fails or is cancelled, the partially created table is dropped.",
   transferModeAppendHint:
@@ -6737,6 +6747,16 @@ const ja: Dict = {
   transferModeCreate: "新規作成 (既にあれば失敗)",
   transferModeReplace: "置き換え (削除して作り直す)",
   transferModeAppend: "既存テーブルへ追記",
+  transferModeUpsert: "既存テーブルへ upsert (既存行を更新)",
+  transferModeUpsertHint:
+    "DDL は発行しないため、テーブルが存在している必要があります。キーが既存行と一致した行は更新または読み飛ばし、それ以外は追加します。失敗・キャンセルまでに書き込んだ行は残ります。",
+  transferConflictMode: "キーが既存行と一致したとき",
+  transferConflictUpdate: "既存行を更新する",
+  transferConflictSkip: "既存行は読み飛ばす",
+  transferKeyColumns: "キー列",
+  transferKeyColumnsPlaceholder: "空欄 = 転送先テーブルの主キー",
+  transferKeyColumnsHint:
+    "行を特定する列名をカンマ区切りで指定します。転送先で一意キー (主キーなど) に含まれている必要があります (PostgreSQL / SQLite は必須)。",
   transferModeCreateHint:
     "列の型はコピー先のデータベースに合わせて変換します。失敗・キャンセル時は作成途中のテーブルを削除します。",
   transferModeAppendHint:

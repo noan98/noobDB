@@ -205,6 +205,7 @@ async fn record_in(pool: &SqlitePool, entry: NewHistoryEntry) -> Result<()> {
 
 /// Same as `record_in` but with an explicit retention cap, so tests can
 /// exercise the real insert-then-evict path without inserting 10,000+ rows.
+#[cfg(test)]
 async fn record_in_with_cap(
     pool: &SqlitePool,
     entry: NewHistoryEntry,

@@ -269,6 +269,12 @@
   作りかけのテーブルを DROP する (キャンセルは future の drop 経由なので Drop ガードが
   バックグラウンドタスクで DROP を投げる)。`append` はバッチごとにコミットされるため、
   キャンセル時は `deliveredRows` で書き込み済み行数を返す。
+  `upsert` (#1539) は `append` と同じく DDL なしの既存テーブル書き込みで、インポートの
+  UPSERT 方針 (`db/upsert.rs` の `ImportConflict`) をそのまま流用する。`TransferRequest` の
+  `conflictMode` (`update` 既定 / `skip`) と `keyColumns` (省略・空は転送先の主キー。
+  `resolve_conflict` が転送先カタログから引き、転送列に無ければ `InvalidInput`。主キーも
+  無ければエラー) で衝突判定し、最初のバッチで 1 回だけ解決する。転送列がキーだけなら
+  `update` は `skip` に倒す。PostgreSQL / SQLite はキー列に一意制約が要る (DB が拒否)。
 - **安全網**: ターゲットの `read_only` はバックエンドで拒否 (緊急書き込みモードでも)。
   ソースが SQL のときは `ensure_allowed_for_session` + `is_read_only_sql_for` で読み取り
   専用文に限る。同一セッション・同一テーブルへの `create` / `replace` も拒否。
