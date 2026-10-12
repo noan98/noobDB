@@ -996,12 +996,31 @@ async fn mysql_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
-    let killed = conn.kill_processes(&[victim_id]).await.expect("kill");
+    // 文のみ停止 (KILL QUERY / pg_cancel_backend) は成功するが接続は残る (#1538)。
+    let cancelled = conn
+        .kill_processes(&[victim_id], true)
+        .await
+        .expect("cancel statement");
+    assert_eq!(cancelled.killed, 1, "{cancelled:?}");
+    assert_eq!(cancelled.failed, 0, "{cancelled:?}");
+    assert!(
+        conn.list_processes()
+            .await
+            .expect("list after cancel")
+            .iter()
+            .any(|p| p.id == victim_id),
+        "a statement-only stop must keep the connection"
+    );
+
+    let killed = conn
+        .kill_processes(&[victim_id], false)
+        .await
+        .expect("kill");
     assert_eq!(killed.killed, 1, "{killed:?}");
     assert_eq!(killed.failed, 0, "{killed:?}");
     // 存在しない id は失敗として数え、最初のエラーを返すが、残りの kill は続行する。
     let mixed = conn
-        .kill_processes(&[i64::MAX, victim_id])
+        .kill_processes(&[i64::MAX, victim_id], false)
         .await
         .expect("kill mixed");
     assert_eq!(mixed.killed + mixed.failed, 2, "{mixed:?}");
@@ -2690,7 +2709,7 @@ async fn mysql_blocking_chain_is_listed_and_resolved_by_kill() {
     }
     assert!(found, "B must be reported as blocked by A (id {a_id})");
 
-    let killed = admin.kill_processes(&[a_id]).await.expect("kill A");
+    let killed = admin.kill_processes(&[a_id], false).await.expect("kill A");
     assert_eq!(killed.killed, 1, "{killed:?}");
     let outcome = b_task.await.expect("join B");
     assert!(

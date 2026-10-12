@@ -610,12 +610,31 @@ async fn postgres_process_list_and_kill() {
         "the second connection must be visible before the kill"
     );
 
-    let killed = conn.kill_processes(&[victim_pid]).await.expect("kill");
+    // 文のみ停止 (KILL QUERY / pg_cancel_backend) は成功するが接続は残る (#1538)。
+    let cancelled = conn
+        .kill_processes(&[victim_pid], true)
+        .await
+        .expect("cancel statement");
+    assert_eq!(cancelled.killed, 1, "{cancelled:?}");
+    assert_eq!(cancelled.failed, 0, "{cancelled:?}");
+    assert!(
+        conn.list_processes()
+            .await
+            .expect("list after cancel")
+            .iter()
+            .any(|p| p.id == victim_pid),
+        "a statement-only stop must keep the connection"
+    );
+
+    let killed = conn
+        .kill_processes(&[victim_pid], false)
+        .await
+        .expect("kill");
     assert_eq!(killed.killed, 1, "{killed:?}");
     assert_eq!(killed.failed, 0, "{killed:?}");
     // int4 に収まらない pid は実行前に失敗として数える (有効な pid はそのまま処理される)。
     let mixed = conn
-        .kill_processes(&[i64::MAX, victim_pid])
+        .kill_processes(&[i64::MAX, victim_pid], false)
         .await
         .expect("kill mixed");
     assert_eq!(mixed.killed, 1, "{mixed:?}");
@@ -2318,7 +2337,7 @@ async fn postgres_blocking_chain_is_listed_and_resolved_by_kill() {
     assert_ne!(waiter, a_pid);
 
     // 根のブロッカー A を kill すると B の UPDATE が進む。
-    let killed = admin.kill_processes(&[a_pid]).await.expect("kill A");
+    let killed = admin.kill_processes(&[a_pid], false).await.expect("kill A");
     assert_eq!(killed.killed, 1, "{killed:?}");
     let outcome = b_task.await.expect("join B");
     assert!(

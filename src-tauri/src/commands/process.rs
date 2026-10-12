@@ -107,14 +107,22 @@ fn select_process_queries(
 
 /// `list_processes` が返した id のプロセス/接続をまとめて強制終了する (#1259)。
 /// read_only ガードは 1 回だけ。PostgreSQL は `unnest` で 1 文、MySQL は 1 接続上で
-/// 順に `KILL` する。失敗があっても残りは続行し、成功件数・失敗件数・最初のエラーを返す。
+/// 順に `KILL` する。`statement_only` なら接続は残して実行中の文だけを止める
+/// (MySQL `KILL QUERY` / PostgreSQL `pg_cancel_backend`)。失敗があっても残りは続行し、成功件数・失敗件数・最初のエラーを返す。
 #[tauri::command]
 pub async fn kill_processes(
     session_id: String,
     process_ids: Vec<i64>,
+    statement_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<KillProcessesResult> {
-    kill_processes_inner(state.inner(), &session_id, &process_ids).await
+    kill_processes_inner(
+        state.inner(),
+        &session_id,
+        &process_ids,
+        statement_only.unwrap_or(false),
+    )
+    .await
 }
 
 /// Core of [`kill_processes`] decoupled from Tauri's `State` wrapper so
@@ -126,6 +134,7 @@ pub(crate) async fn kill_processes_inner(
     state: &AppState,
     session_id: &str,
     process_ids: &[i64],
+    statement_only: bool,
 ) -> Result<KillProcessesResult> {
     let session = state
         .get(session_id)
@@ -144,8 +153,11 @@ pub(crate) async fn kill_processes_inner(
     if process_ids.is_empty() {
         return Ok(KillProcessesResult::default());
     }
-    tracing::info!(session_id = %session.id, count = process_ids.len(), "killing server processes");
-    session.conn.kill_processes(process_ids).await
+    tracing::info!(session_id = %session.id, count = process_ids.len(), statement_only, "killing server processes");
+    session
+        .conn
+        .kill_processes(process_ids, statement_only)
+        .await
 }
 
 #[cfg(test)]

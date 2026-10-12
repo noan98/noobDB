@@ -1409,11 +1409,18 @@ impl MySqlConn {
         Ok(out)
     }
 
-    /// `KILL <id>` を 1 本のプール接続上で順に実行する (#1259)。KILL はプレースホルダを
+    /// `KILL <id>` を 1 本のプール接続上で順に実行する (#1259)。`statement_only` のときは
+    /// `KILL QUERY <id>` で実行中の文だけを止め、接続とトランザクション状態は残す。
+    /// KILL はプレースホルダを
     /// 取れないが `id` は数値なので SQL インジェクションにならない。失敗しても残りは続行し、
     /// 件数と最初のエラーを返す。アプリ自身の接続 (`CONNECTION_ID()`) を巻き込むと
     /// 以降の KILL が打てなくなるため、自分自身の id は最後に回す。
-    pub async fn kill_processes(&self, ids: &[i64]) -> Result<KillProcessesResult> {
+    pub async fn kill_processes(
+        &self,
+        ids: &[i64],
+        statement_only: bool,
+    ) -> Result<KillProcessesResult> {
+        let verb = if statement_only { "KILL QUERY" } else { "KILL" };
         let mut conn = self.pool.acquire().await?;
         let own = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
             .fetch_one(&mut *conn)
@@ -1424,7 +1431,7 @@ impl MySqlConn {
         ordered.extend(ids.iter().copied().filter(|id| Some(*id) == own));
         let mut out = KillProcessesResult::default();
         for id in ordered {
-            match sqlx::query(sqlx::AssertSqlSafe(format!("KILL {id}")))
+            match sqlx::query(sqlx::AssertSqlSafe(format!("{verb} {id}")))
                 .execute(&mut *conn)
                 .await
             {
