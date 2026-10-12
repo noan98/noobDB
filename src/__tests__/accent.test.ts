@@ -204,3 +204,28 @@ describe("accentSubtle / accentSelection", () => {
     expect(colorDistance(accentSelection("#4c93f7", "dark"), "#3a5894")).toBeLessThan(40);
   });
 });
+
+describe("ToneSurface (テーマプリセットの --bg / --text を基準にする, #1534)", () => {
+  it("混合の基準色にプリセットの --bg を使う", () => {
+    // dracula 風の --bg。アクセントが --bg と同色なら、基準が --bg である限り結果も --bg のまま。
+    const surface = { bg: "#282a36", text: "#f8f8f2" };
+    expect(accentSubtle("#282a36", "dark", surface)).toBe("#282a36");
+    expect(accentSelection("#282a36", "dark", surface)).toBe("#282a36");
+    // 既定の基準 (#0d1117) では同じ入力でも別の色になる。
+    expect(accentSubtle("#282a36", "dark")).not.toBe("#282a36");
+  });
+
+  it("プリセットの --text に対しても AA 4.5:1 を保つ", () => {
+    const surface = { bg: "#fdf6e3", text: "#073642" };
+    for (const p of ACCENT_PRESETS) {
+      if (p.hex === null) continue;
+      expect(contrastRatio(accentSubtle(p.hex, "light", surface), surface.text)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(accentSelection(p.hex, "light", surface), surface.text)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("surface 省略・不正値では従来どおり既定の基準色を使う", () => {
+    expect(accentSubtle("#2563eb", "dark", { bg: "not-a-color" })).toBe(accentSubtle("#2563eb", "dark"));
+    expect(accentVars("#2563eb", "light", {})).toEqual(accentVars("#2563eb", "light"));
+  });
+});

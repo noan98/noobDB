@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, renderWithProviders, screen } from "./testUtils";
+import { copyToClipboard } from "../components/clipboard";
+import { act, fireEvent, renderHook, renderWithProviders, screen } from "./testUtils";
 import { t } from "../i18n";
 import { OutputPanel } from "../components/OutputPanel";
 import { ActivityLogPanel } from "../components/SeverityLog";
-import { __resetOutputLog, pushOutput } from "../outputLog";
+import { __resetOutputLog, OUTPUT_ERROR_MAX_CHARS, pushOutput, useOutputLog } from "../outputLog";
 import { __resetMessageLog, pushMessage } from "../messageLog";
 import { __resetActivityLog, getActivityState, pushActivity } from "../activityLog";
 
@@ -12,7 +13,13 @@ import { __resetActivityLog, getActivityState, pushActivity } from "../activityL
  * クリア) → 一覧」の同じ骨格で、見出しと閉じるボタンは持たない (タブバーが持つ)。
  */
 
+vi.mock("../components/clipboard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/clipboard")>();
+  return { ...actual, copyToClipboard: vi.fn() };
+});
+
 afterEach(() => {
+  vi.mocked(copyToClipboard).mockReset();
   __resetOutputLog();
   __resetMessageLog();
   __resetActivityLog();
@@ -68,6 +75,25 @@ describe("OutputPanel", () => {
     expect(screen.getByText(/at line 1/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("outputOpenInEditor") }));
     expect(onOpenSql).toHaveBeenCalledWith("selec 1");
+  });
+
+  it("SQL のコピーに失敗したらエラーを知らせる (#1534)", async () => {
+    vi.mocked(copyToClipboard).mockResolvedValue(false);
+    run();
+    renderWithProviders(<OutputPanel onOpenSql={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    fireEvent.click(screen.getByRole("button", { name: t("outputCopySql") }));
+    expect(await screen.findByText(t("outputCopyFailed"))).toBeInTheDocument();
+  });
+
+  it("予算を超えて切り詰められた行は、保持範囲を注記する (#1534)", () => {
+    run({ sql: `select '${"x".repeat(1_200_000)}'` });
+    run({ sql: "select 2" });
+    renderWithProviders(<OutputPanel onOpenSql={vi.fn()} />);
+    // 古い方 (2 行目) だけが先頭に切り詰められる。
+    const rows = screen.getAllByRole("button", { expanded: false });
+    fireEvent.click(rows[1]);
+    expect(screen.getByText(/4000/)).toBeInTheDocument();
   });
 
   it("クリアで空になる", () => {
@@ -170,5 +196,14 @@ describe("ActivityLogPanel", () => {
     act(() => pushActivity("warning", "later"));
     expect(screen.getByText("later")).toBeInTheDocument();
     expect(getActivityState().lastReadId).toBe(getActivityState().entries[0].id);
+  });
+});
+
+describe("pushOutput の保持量 (#1534)", () => {
+  it("元の SQL の長さを記録し、エラー本文も上限で切る", () => {
+    run({ sql: "select 1", outcome: "error", error: "e".repeat(OUTPUT_ERROR_MAX_CHARS + 5) });
+    const { result } = renderHook(() => useOutputLog());
+    expect(result.current[0].sqlLength).toBe(8);
+    expect(result.current[0].error).toHaveLength(OUTPUT_ERROR_MAX_CHARS);
   });
 });

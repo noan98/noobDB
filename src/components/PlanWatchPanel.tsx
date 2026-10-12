@@ -16,6 +16,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
 import { Button, Select } from "./ui";
 import { ExplainViewer } from "./ExplainViewer";
+import { Callout } from "./Callout";
 import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
 
@@ -272,6 +273,10 @@ export function PlanWatchPanel({
                         </chakra.ul>
                       )}
                     </Box>
+                  )}
+
+                  {genA && genB && genA.id === genB.id && (
+                    <Callout tone="info">{t("planWatchSameGeneration")}</Callout>
                   )}
 
                   {/* 2 世代の計画を並置。左 = 比較元 (A)、右 = 比較先 (B)。 */}

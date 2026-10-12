@@ -271,6 +271,8 @@ export const SnippetList = memo(function SnippetList({
     });
   }, [scopeFiltered, filter]);
 
+  const searching = filter.trim() !== "";
+
   /** Snippets grouped by their `folder`. `null` key = no folder. */
   const grouped = useMemo(() => {
     const anyFoldered = scopeFiltered.some((s) => s.folder);
@@ -412,7 +414,10 @@ export const SnippetList = memo(function SnippetList({
             ? <AnimatePresence initial={false}>{visibleSnippets.map(renderSnippet)}</AnimatePresence>
             : grouped.map((g) => {
                 const key = g.name ?? "__unfiled__";
-                const folderOpen = expandedFolders[key] !== false;
+                // 検索中は一致を含むフォルダを強制的に開く (閉じたフォルダの一致が見えない
+                // と、見出しのバッジに件数だけ出て中身が空に見える, #1534)。保存している開閉
+                // 状態は変えないので、検索を消せば元の開閉に戻る。
+                const folderOpen = searching || expandedFolders[key] !== false;
                 const label = g.name ?? t("snippetFolderNone");
                 return (
                   <TreeNode key={key}>

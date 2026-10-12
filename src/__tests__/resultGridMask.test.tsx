@@ -141,6 +141,36 @@ describe("ResultGrid の機微カラム表示マスク (#1069)", () => {
     expect(dataCells(container)[0][2].textContent).toBe(MASK_PLACEHOLDER);
   });
 
+  it("自動更新で rows が作り直されても、主キーで同じ行が残っていればセルの一時表示を保つ (#1534)", async () => {
+    const { container, rerender } = renderWithProviders(
+      <ResultGrid result={RESULT} editable tableColumns={TABLE_COLUMNS} />,
+    );
+    fireEvent.contextMenu(dataCells(container)[1][2]);
+    const item = await screen.findByRole("menuitem", {
+      name: t("gridMaskRevealCell", { secs: REVEAL_TIMEOUT_MS / 1000 }),
+    });
+    await act(async () => {
+      fireEvent.click(item);
+    });
+    expect(dataCells(container)[1][2].textContent).toBe("bob@example.com");
+
+    // 先頭に行が増え、bob の位置が動く。参照が新しくなっても bob は表示のまま。
+    const refreshed = makeResult(COLUMNS, [
+      [0, "zed", "zed@example.com"],
+      [1, "alice", "alice@example.com"],
+      [2, "bob", "bob@example.com"],
+    ]);
+    rerender(<ResultGrid result={refreshed} editable tableColumns={TABLE_COLUMNS} />);
+    expect(dataCells(container)[2][2].textContent).toBe("bob@example.com");
+    expect(dataCells(container)[1][2].textContent).toBe(MASK_PLACEHOLDER);
+
+    // その行が無くなったら解除する。
+    rerender(
+      <ResultGrid result={makeResult(COLUMNS, [[1, "alice", "alice@example.com"]])} editable tableColumns={TABLE_COLUMNS} />,
+    );
+    expect(dataCells(container)[0][2].textContent).toBe(MASK_PLACEHOLDER);
+  });
+
   it("列の一時表示はウィンドウのフォーカス喪失で再マスクする", async () => {
     const { container } = renderWithProviders(<ResultGrid result={RESULT} />);
     fireEvent.contextMenu(dataCells(container)[1][2]);

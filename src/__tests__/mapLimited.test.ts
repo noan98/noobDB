@@ -27,4 +27,19 @@ describe("mapLimited", () => {
     });
     expect(peak).toBeLessThanOrEqual(2);
   });
+
+  it("1 件失敗したら、まだ始めていない項目は処理しない (#1534)", async () => {
+    const started: number[] = [];
+    await expect(
+      mapLimited([1, 2, 3, 4, 5, 6, 7, 8], 2, async (n) => {
+        started.push(n);
+        await new Promise((r) => setTimeout(r, 1));
+        if (n === 1) throw new Error("boom");
+        return n;
+      }),
+    ).rejects.toThrow("boom");
+    // 失敗の時点で処理中だった分は終えるが、残り全件までは進まない。
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started.length).toBeLessThan(8);
+  });
 });

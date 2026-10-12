@@ -422,7 +422,7 @@ import {
 } from "./densityTransition";
 import { ThemeTransition } from "./components/ThemeTransition";
 import { AccentWash } from "./components/AccentWash";
-import { accentVars } from "./accent";
+import { accentVars, readToneSurface } from "./accent";
 import {
   clearPersistedTabs,
   loadPersistedWorkspace,
@@ -1371,7 +1371,8 @@ export default function App() {
     // タブ・コマンドパレット等) が参照する --bg-active / --bg-active-strong 自体も
     // 上書きすることで、個別コンポーネントを書き換えずに一括で波及させる。
     if (settings.accentColor) {
-      const v = accentVars(settings.accentColor, effTheme);
+      // 調和トーンは現在のプリセットの --bg / --text を基準にする (#1534)。
+      const v = accentVars(settings.accentColor, effTheme, readToneSurface(root));
       root.style.setProperty("--accent", v.accent);
       root.style.setProperty("--accent-hover", v.accentHover);
       root.style.setProperty("--accent-text", v.accentText);

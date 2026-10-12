@@ -89,9 +89,26 @@ export function TaskManager({
   const [runsLoading, setRunsLoading] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [catchUpMissed, setCatchUpMissed] = useState(false);
+  // スケジューラ設定を取得できるまでは false (未取得) の値を見せない。取得前/失敗時に
+  // 実際は true の設定がオフに見え、オンにしようとして逆の値を保存しかねないため (#1534)。
+  const [catchUpLoaded, setCatchUpLoaded] = useState(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 初回のみ取得する (toast / t は安定でなくても再取得しない)
   useEffect(() => {
-    void api.getSchedulerSettings().then((s) => setCatchUpMissed(s.catch_up_missed));
+    let active = true;
+    api
+      .getSchedulerSettings()
+      .then((s) => {
+        if (!active) return;
+        setCatchUpMissed(s.catch_up_missed);
+        setCatchUpLoaded(true);
+      })
+      .catch((e) => {
+        if (active) toast.error(t("taskSchedulerSettingsLoadError", { error: String(e) }));
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleToggleCatchUp = async (next: boolean) => {
@@ -283,7 +300,12 @@ export function TaskManager({
               )}
 
               <chakra.label display="inline-flex" alignItems="center" gap="1.5" marginBottom="3">
-                <Switch checked={catchUpMissed} onChange={(v) => void handleToggleCatchUp(v)} size="sm" />
+                <Switch
+                  checked={catchUpMissed}
+                  onChange={(v) => void handleToggleCatchUp(v)}
+                  disabled={!catchUpLoaded}
+                  size="sm"
+                />
                 <chakra.span fontSize="sm" color="app.textSecondary">
                   {t("taskCatchUpMissed")}
                 </chakra.span>

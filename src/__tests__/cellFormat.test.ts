@@ -3,6 +3,7 @@ import {
   enumBadgeHue,
   formatDateTimeDisplay,
   formatJsonCompact,
+  JSON_COMPACT_MAX_CHARS,
   rawValueTitle,
 } from "../components/cellFormat";
 
@@ -29,6 +30,24 @@ describe("formatJsonCompact", () => {
   it("オブジェクト/配列で始まるが不正な JSON は null を返す", () => {
     expect(formatJsonCompact("{ broken")).toBeNull();
     expect(formatJsonCompact("[1, 2,")).toBeNull();
+  });
+
+  it("上限を超える長さの JSON は整形せず null (素の値へフォールバック)", () => {
+    const big = `[${"1, ".repeat(JSON_COMPACT_MAX_CHARS)}1]`;
+    expect(big.length).toBeGreaterThan(JSON_COMPACT_MAX_CHARS);
+    expect(formatJsonCompact(big)).toBeNull();
+  });
+
+  it("同じ入力を繰り返しても結果が変わらない (キャッシュ経由でも null / 整形結果を保つ)", () => {
+    for (let i = 0; i < 3; i++) {
+      expect(formatJsonCompact('{ "k": [1, 2] }')).toBe('{"k":[1,2]}');
+      expect(formatJsonCompact("{ broken")).toBeNull();
+    }
+  });
+
+  it("キャッシュ件数を超えて押し出された値も、再計算して同じ結果を返す", () => {
+    for (let i = 0; i < 600; i++) formatJsonCompact(`{ "n": ${i} }`);
+    expect(formatJsonCompact('{ "n": 0 }')).toBe('{"n":0}');
   });
 });
 

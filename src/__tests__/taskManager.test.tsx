@@ -55,6 +55,7 @@ const RUN: TaskRun = {
 const listTasks = vi.fn();
 const listTaskRuns = vi.fn();
 const clearTaskRuns = vi.fn();
+const getSchedulerSettings = vi.fn();
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -65,7 +66,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listTasks: (...args: unknown[]) => listTasks(...args),
       listTaskRuns: (...args: unknown[]) => listTaskRuns(...(args as [string, number])),
       clearTaskRuns: (...args: unknown[]) => clearTaskRuns(...(args as [string])),
-      getSchedulerSettings: vi.fn().mockResolvedValue({ catch_up_missed: false }),
+      getSchedulerSettings: (...args: unknown[]) => getSchedulerSettings(...args),
       setSchedulerSettings: vi.fn(),
     },
     listenTaskRunEvents: vi.fn().mockResolvedValue(() => {}),
@@ -79,6 +80,7 @@ beforeEach(() => {
   listTasks.mockResolvedValue([TASK]);
   listTaskRuns.mockResolvedValue([RUN]);
   clearTaskRuns.mockResolvedValue(1);
+  getSchedulerSettings.mockResolvedValue({ catch_up_missed: false });
 });
 
 describe("TaskManager 実行履歴の消去 (#910)", () => {
@@ -137,5 +139,30 @@ describe("TaskManager 空状態の CTA (#1272)", () => {
 
     await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
     expect(screen.getAllByRole("button", { name: t("taskCreate") })).toHaveLength(1);
+  });
+});
+
+describe("TaskManager スケジューラ設定の取得 (#1534)", () => {
+  it("取得に失敗したらエラーを知らせ、取得できるまで追い掛け実行のトグルを無効にする", async () => {
+    getSchedulerSettings.mockRejectedValue("settings store unavailable");
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByText(t("taskSchedulerSettingsLoadError", { error: "settings store unavailable" })),
+      ).toBeInTheDocument(),
+    );
+    const toggle = screen.getByRole("switch", { name: t("taskCatchUpMissed") });
+    expect(toggle).toBeDisabled();
+  });
+
+  it("取得できたら実際の値を反映し、トグルを操作できる", async () => {
+    getSchedulerSettings.mockResolvedValue({ catch_up_missed: true });
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+
+    const toggle = await screen.findByRole("switch", { name: t("taskCatchUpMissed") });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toHaveAttribute("aria-checked", "true");
   });
 });
