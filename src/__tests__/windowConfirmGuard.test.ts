@@ -57,7 +57,7 @@ describe("window.confirm regression guard (#674)", () => {
   });
 
   it("BARE_CALL_PATTERN の自己テスト", () => {
-    for (const bad of ['confirm("x")', "confirm(msg)", "if (confirm(t('k')))", "confirm(\n  `x`)"]) {
+    for (const bad of ['confirm("x")', "confirm(msg)", "if (confirm(tr('k')))", "confirm(\n  `x`)"]) {
       expect(BARE_CALL_PATTERN.test(bad), bad).toBe(true);
     }
     for (const ok of ["confirm({ title: 'a' })", "await confirm(\n{", "x.confirm(a)", "onConfirm(a)", "`confirm(x)"]) {
