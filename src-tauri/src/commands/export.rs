@@ -1919,7 +1919,16 @@ mod tests {
         let opts = SqlExportOpts::build(Some(DriverKind::Mysql), Some("t".into()), Some(100))
             .with_ddl(Some("CREATE TABLE `t` (\n  `id` int\n)\n".into()));
         let mut buf = Vec::new();
-        write_export_to(&mut buf, ExportFormat::Sql, &columns, &rows, None, &opts, None).unwrap();
+        write_export_to(
+            &mut buf,
+            ExportFormat::Sql,
+            &columns,
+            &rows,
+            None,
+            &opts,
+            None,
+        )
+        .unwrap();
         let out = String::from_utf8(buf).unwrap();
         assert!(
             out.starts_with("CREATE TABLE `t` (\n  `id` int\n);\n\nINSERT INTO `t`"),
@@ -1929,7 +1938,16 @@ mod tests {
         let opts = SqlExportOpts::build(Some(DriverKind::Sqlite), Some("t".into()), None)
             .with_ddl(Some("CREATE TABLE t (id)".to_string() + ";"));
         let mut buf = Vec::new();
-        write_export_to(&mut buf, ExportFormat::Sql, &columns, &[], None, &opts, None).unwrap();
+        write_export_to(
+            &mut buf,
+            ExportFormat::Sql,
+            &columns,
+            &[],
+            None,
+            &opts,
+            None,
+        )
+        .unwrap();
         assert_eq!(String::from_utf8(buf).unwrap(), "CREATE TABLE t (id);\n\n");
         let opts = SqlExportOpts::build(Some(DriverKind::Sqlite), Some("t".into()), None)
             .with_ddl(Some("   ".into()));

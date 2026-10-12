@@ -915,7 +915,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                       />
                       <span>{t("exportSqlIncludeDdl")}</span>
                     </chakra.label>
-                    <chakra.div fontSize="xs" color="app.textMuted" mt="1">
+                    <chakra.div textStyle="caption" mt="1">
                       {sqlTable.trim() === "" ? t("exportSqlIncludeDdlNeedsTable") : t("exportSqlIncludeDdlHint")}
                     </chakra.div>
                   </chakra.div>

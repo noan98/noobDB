@@ -456,6 +456,7 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
         "batchSize",
         "masks",
         "resultId",
+        "ddlHeader",
       ].sort(),
     );
     // 引数を一切取らないコマンドは空配列。

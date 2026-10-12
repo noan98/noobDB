@@ -275,7 +275,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
               />
               <span>{t("exportSqlIncludeDdl")}</span>
             </chakra.label>
-            <chakra.div fontSize="xs" color="app.textMuted">
+            <chakra.div textStyle="caption">
               {t("exportSqlIncludeDdlHint")}
             </chakra.div>
           </FormSection>
