@@ -3923,6 +3923,10 @@ const en = {
   contextMenuFindColumnUsages: "Find usages of this column",
   contextMenuInsertColumnName: "Insert column name into editor",
   contextMenuInsertQualifiedColumn: "Insert qualified name (table.column)",
+  contextMenuInsertFkJoin: "Insert JOIN {table} ON ... into the editor",
+  contextMenuInsertFkJoinTitle:
+    "Inserts a JOIN clause for this foreign key. Dropping the column on the editor with Shift held does the same.",
+  fkJoinUnavailable: "No JOIN could be built from the foreign key on {table}.{column}.",
   contextMenuCopyColumnName: "Copy column name",
   columnNameCopied: "Copied column name: {column}",
   cmdkWhereUsed: "Where used (impact analysis)",
@@ -8700,6 +8704,10 @@ const ja: Dict = {
   contextMenuFindColumnUsages: "この列の参照元を検索",
   contextMenuInsertColumnName: "列名をエディタへ挿入",
   contextMenuInsertQualifiedColumn: "修飾名 (表.列) をエディタへ挿入",
+  contextMenuInsertFkJoin: "JOIN {table} ON ... をエディタへ挿入",
+  contextMenuInsertFkJoinTitle:
+    "この外部キーの JOIN 句を挿入します。列を Shift を押したままエディタへドロップしても同じです。",
+  fkJoinUnavailable: "{table}.{column} の外部キーから JOIN を組み立てられませんでした。",
   contextMenuCopyColumnName: "列名をコピー",
   columnNameCopied: "列名をコピーしました: {column}",
   cmdkWhereUsed: "影響分析 (参照元の検索)",

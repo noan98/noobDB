@@ -64,18 +64,25 @@ describe("treeDragStore (ポインタ・ドラッグ)", () => {
     expect(target.setMarker).toHaveBeenLastCalledWith(3);
     window.dispatchEvent(ptr("pointerup", 30, 0));
     expect(target.insert).toHaveBeenCalledTimes(1);
-    expect(target.insert).toHaveBeenCalledWith(item, 3, true);
+    expect(target.insert).toHaveBeenCalledWith(item, 3, true, false);
     expect(getTreeDragSnapshot().active).toBe(false);
     expect(target.setMarker).toHaveBeenLastCalledWith(null);
     source.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     expect(onClick).not.toHaveBeenCalled();
   });
 
+  it("Shift を押して離すと FK JOIN 雛形の挿入を要求する (joinFk=true, #1540)", () => {
+    source.dispatchEvent(ptr("pointerdown", 0, 0));
+    window.dispatchEvent(ptr("pointermove", 30, 0));
+    window.dispatchEvent(ptr("pointerup", 30, 0, { shiftKey: true }));
+    expect(target.insert).toHaveBeenCalledWith(item, 3, true, true);
+  });
+
   it("Alt を押して離すと列名のみ (qualified=false)", () => {
     source.dispatchEvent(ptr("pointerdown", 0, 0));
     window.dispatchEvent(ptr("pointermove", 30, 0));
     window.dispatchEvent(ptr("pointerup", 30, 0, { altKey: true }));
-    expect(target.insert).toHaveBeenCalledWith(item, 3, false);
+    expect(target.insert).toHaveBeenCalledWith(item, 3, false, false);
   });
 
   it("エディタ外で離したら何もしない", () => {

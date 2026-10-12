@@ -103,6 +103,7 @@ import {
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
 import { treeItemInsertText } from "./components/treeDragInsert";
+import { fkJoinSnippets } from "./components/fkJoin";
 import {
   applyServerBrowse,
   type ServerFilter,
@@ -7242,6 +7243,28 @@ export default function App() {
     }
   }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
 
+  // FK 列から `JOIN 参照先 ON ...` の雛形を挿入 (#1540)。FK 一覧はバックエンドがキャッシュする
+  // DB 単位の読み取り (JOIN 補完と同じ `foreign_keys`) で、書き込み経路は通らない。
+  const handleInsertFkJoin = useCallback(async (database: string, table: string, column: string) => {
+    if (!sessionId) return;
+    try {
+      const fks = await api.foreignKeys(sessionId, database);
+      const driver = selectedProfile?.driver ?? "mysql";
+      const [snippet] = fkJoinSnippets({ driver, database, table, column, fks });
+      if (!snippet) {
+        toast.error(translate("fkJoinUnavailable", { table, column }));
+        return;
+      }
+      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+        activeEditor()?.insertText(snippet.text);
+      } else {
+        addTab({ ...makeQueryTab(), sql: snippet.text, lastExecutedSql: snippet.text });
+      }
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab, toast]);
+
   const handleCopyColumnName = useCallback(async (column: string) => {
     if (await copyToClipboard(column)) {
       toast.success(translate("columnNameCopied", { column }));
@@ -9240,6 +9263,7 @@ export default function App() {
     onWatchTable: handleWatchTable,
     onCopyTableName: handleCopyTableName,
     onInsertColumn: handleInsertColumn,
+    onInsertFkJoin: handleInsertFkJoin,
     onCopyColumnName: handleCopyColumnName,
     onOpenObjectDefinition: handleOpenObjectDefinition,
     onEditViewDefinition: handleEditViewDefinition,

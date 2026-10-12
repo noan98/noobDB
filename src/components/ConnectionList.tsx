@@ -402,6 +402,11 @@ interface Props {
    * 列のコンテキストメニューとダブルクリックから呼ぶ。未指定なら挿入項目を出さない。
    */
   onInsertColumn?: (database: string, table: string, column: string, qualified: boolean) => void;
+  /**
+   * 外部キー列から `JOIN 参照先 ON ...` の雛形をエディタへ挿入する (#1540)。外部キー列の
+   * コンテキストメニューだけから呼ぶ。未指定ならメニュー項目を出さない。
+   */
+  onInsertFkJoin?: (database: string, table: string, column: string) => void;
   /** 列名をクリップボードへコピーする (#1352)。未指定ならメニュー項目を出さない。 */
   onCopyColumnName?: (column: string) => void;
   /** スキーマオブジェクトの定義を開く。`id` は同名衝突を避ける一意識別子。 */
@@ -567,7 +572,13 @@ interface TreeActions {
   tableMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string) => void;
   viewMenu: (e: ContextMenuTriggerEvent, db: string, view: ExplorerViewNode, asNode?: boolean) => void;
   routineMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
-  columnMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => void;
+  columnMenu: (
+    e: ContextMenuTriggerEvent,
+    db: string,
+    tbl: string,
+    column: string,
+    referencedTable?: string | null,
+  ) => void;
   insertColumn: (db: string, tbl: string, column: string) => void;
   indexMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string, idx: IndexInfo) => void;
   toggleDb: (db: string) => void;
@@ -873,7 +884,7 @@ const ColumnRow = memo(function ColumnRow({
   const isFk = col.referenced_table !== null;
   const colKey = `col:${tableKey(db, tbl)}:${col.name}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, colKey);
-  const openMenu = (e: ContextMenuTriggerEvent) => actions.columnMenu(e, db, tbl, col.name);
+  const openMenu = (e: ContextMenuTriggerEvent) => actions.columnMenu(e, db, tbl, col.name, col.referenced_table);
   // ポインタ操作でエディタへドラッグ挿入 (#1414)。HTML5 の draggable は使わない。
   const dragRef = useTreeDragSource({ kind: "column", database: db, table: tbl, column: col.name });
   return (
@@ -1785,6 +1796,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDiscardSandbox,
   onCopyTableName,
   onInsertColumn,
+  onInsertFkJoin,
   onCopyColumnName,
   onOpenObjectDefinition,
   onEditViewDefinition,
@@ -2896,13 +2908,26 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // 列ノードの右クリック: エディタへ挿入・列名コピー (#1352) と影響分析 (#1027)。
   // 影響分析は列を RENAME / DROP する前に、その列を参照しているビュー・ルーチン・
   // トリガー・スニペットを探す。
-  const handleColumnContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string, column: string) => {
+  const handleColumnContextMenu = (
+    e: ContextMenuTriggerEvent,
+    db: string,
+    tbl: string,
+    column: string,
+    referencedTable?: string | null,
+  ) => {
     const items: ContextMenuEntry[] = [];
     if (onInsertColumn) {
       items.push(
         { label: t("contextMenuInsertColumnName"), onSelect: () => onInsertColumn(db, tbl, column, false) },
         { label: t("contextMenuInsertQualifiedColumn"), onSelect: () => onInsertColumn(db, tbl, column, true) },
       );
+    }
+    if (onInsertFkJoin && referencedTable) {
+      items.push({
+        label: t("contextMenuInsertFkJoin", { table: referencedTable }),
+        title: t("contextMenuInsertFkJoinTitle"),
+        onSelect: () => onInsertFkJoin(db, tbl, column),
+      });
     }
     if (onCopyColumnName) {
       items.push({ label: t("contextMenuCopyColumnName"), onSelect: () => onCopyColumnName(column) });
