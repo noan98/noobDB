@@ -269,6 +269,10 @@ fn build_fixtures() -> serde_json::Value {
         columns: vec!["user_id".into()],
         context: vec!["users".into()],
         fix_ddl: Some("CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);".into()),
+        fix_ddl_online: Some(
+            "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;"
+                .into(),
+        ),
         statistical: false,
     };
     let skipped_rule = SkippedRule {
@@ -814,6 +818,7 @@ fn build_fixtures() -> serde_json::Value {
             columns: vec!["user_id".into()],
             context: vec![],
             fix_ddl: None,
+            fix_ddl_online: None,
             statistical: i % 2 == 0,
         })
         .collect();

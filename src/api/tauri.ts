@@ -1234,6 +1234,9 @@ export interface HealthFinding {
   context: string[];
   /** エディタへ挿入する修正 DDL。設計判断を要するルールでは null。 */
   fix_ddl: string | null;
+  /** `fix_ddl` のオンライン版 (#1534)。PostgreSQL は `CONCURRENTLY` (トランザクション外で実行)、
+   *  MySQL は `ALGORITHM=INPLACE, LOCK=NONE`。SQLite・修正 DDL が無いルールでは null。 */
+  fix_ddl_online: string | null;
   /** エンジンの実行時統計に由来する指摘 (観測期間に依存する旨を注記)。 */
   statistical: boolean;
 }

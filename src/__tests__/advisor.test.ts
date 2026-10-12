@@ -24,6 +24,7 @@ function finding(partial: Partial<HealthFinding> & Pick<HealthFinding, "rule">):
     columns: [],
     context: [],
     fix_ddl: null,
+    fix_ddl_online: null,
     statistical: false,
     ...partial,
   };
@@ -213,6 +214,7 @@ describe("未知ルールのフォールバック (#1194)", () => {
       columns: [],
       context: [],
       fix_ddl: null,
+      fix_ddl_online: null,
       statistical: false,
     });
     expect(d.key).toBe("advisorRuleUnknownDesc");

@@ -81,6 +81,7 @@ beforeEach(() => {
         columns: ["note"],
         context: ["idx_note"],
         fix_ddl: "DROP INDEX idx_note ON orders;",
+        fix_ddl_online: null,
         statistical: true,
       },
     ],
@@ -215,6 +216,7 @@ describe("アドバイザの AI 解説 (#1468)", () => {
       columns: ["c"],
       context: [`idx_${table}`],
       fix_ddl: null,
+      fix_ddl_online: null,
       statistical: false,
     });
     analyzeSchemaHealth.mockResolvedValue({

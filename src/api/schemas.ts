@@ -718,6 +718,7 @@ export const healthFinding = z.object({
   columns: z.array(z.string()),
   context: z.array(z.string()),
   fix_ddl: z.string().nullable(),
+  fix_ddl_online: z.string().nullable(),
   statistical: z.boolean(),
 });
 

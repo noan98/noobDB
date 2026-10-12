@@ -3934,6 +3934,13 @@ const en = {
   advisorColTarget: "Target",
   advisorColSeverity: "Severity",
   advisorColDetail: "Detail",
+  advisorFixStandard: "Standard",
+  advisorFixStandardNote: "Simple, but the table may block writes for the whole duration on a large production table.",
+  advisorFixOnline: "Online (writes keep flowing)",
+  advisorFixOnlineNotePostgres:
+    "Uses CONCURRENTLY, so it cannot run inside a transaction block — run it as a single statement outside BEGIN/COMMIT (multi-statement scripts and transaction mode will fail). It takes longer, and if it fails an INVALID index may remain and must be dropped.",
+  advisorFixOnlineNoteMysql:
+    "ALGORITHM=INPLACE, LOCK=NONE keeps the table writable. If the server cannot run it that way it stops with an error and changes nothing.",
   advisorInsertFix: "Insert into editor",
   advisorCopyFix: "Copy fix DDL",
   advisorInserted: "Fix DDL inserted into the editor",
@@ -8514,6 +8521,13 @@ const ja: Dict = {
   advisorColTarget: "対象",
   advisorColSeverity: "重要度",
   advisorColDetail: "説明",
+  advisorFixStandard: "通常版",
+  advisorFixStandardNote: "シンプルですが、大きな本番テーブルでは実行中ずっと書き込みが止まることがあります。",
+  advisorFixOnline: "オンライン版 (書き込みを止めにくい)",
+  advisorFixOnlineNotePostgres:
+    "CONCURRENTLY を使うため、トランザクションブロックの中では実行できません。BEGIN/COMMIT の外で、1 文だけで実行してください (複数文のスクリプトやトランザクションモードでは失敗します)。時間は長くかかり、失敗すると無効 (INVALID) なインデックスが残るので DROP が必要です。",
+  advisorFixOnlineNoteMysql:
+    "ALGORITHM=INPLACE, LOCK=NONE により書き込みを止めずに実行します。サーバがその方式で実行できないときは、何も変更せずエラーで止まります。",
   advisorInsertFix: "エディタに挿入",
   advisorCopyFix: "修正 DDL をコピー",
   advisorInserted: "修正 DDL をエディタに挿入しました",

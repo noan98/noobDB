@@ -16,6 +16,7 @@ const finding = (over: Partial<HealthFinding> = {}): HealthFinding => ({
   columns: ["note"],
   context: ["idx_note"],
   fix_ddl: "DROP INDEX idx_note ON orders;",
+  fix_ddl_online: null,
   statistical: true,
   ...over,
 });
