@@ -271,5 +271,8 @@ describe("localizedErrorMessage (#1533)", () => {
     const { localizedErrorMessage } = await import("../errorHints");
     expect(localizedErrorMessage(new BackendError("db", "boom"), t as never)).toBe("boom");
     expect(localizedErrorMessage("plain", t as never)).toBe("plain");
+    // Object.prototype 上のキー名を kind として拾わない。
+    expect(localizedErrorMessage(new BackendError("constructor", "ctor"), t as never)).toBe("ctor");
+    expect(localizedErrorMessage(new BackendError("toString", "ts"), t as never)).toBe("ts");
   });
 });

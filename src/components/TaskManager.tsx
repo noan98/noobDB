@@ -383,7 +383,7 @@ function TaskRow({
             {task.name}
           </chakra.div>
           <chakra.div fontSize="xs" color="app.textMuted">
-            {profileName} · {summarizeAction(task.action, t)} · {summarizeSchedule(task.schedule, t, { now, locale })}
+            {profileName} · {summarizeAction(task.action, t)} · {summarizeSchedule(task.schedule, t, { now: task.next_run_at ? new Date(task.next_run_at) : now, locale })}
           </chakra.div>
         </chakra.div>
         <chakra.div fontSize="xs" color="app.textMuted" minW="90px" textAlign="right" textStyle="numeric">
@@ -618,7 +618,8 @@ function TaskForm({
 
   const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
   const locale = useLocale();
-  // 入力中のローカル時刻が保存される UTC 時刻を即時表示する (日付境界で前日/翌日になる場合も分かる)。
+  // ヒント: 入力欄はローカル時刻で、保存時に UTC (バックエンドの保存形式) へ変換される。
+  // 変換後の UTC 時刻を即時表示する (日付境界で前日/翌日になる場合も分かる)。
   const dailyHint = (() => {
     const at = new Date();
     const utc = localToUtcClock(Number(dailyHour) || 0, Number(dailyMinute) || 0, at);

@@ -222,8 +222,8 @@ mod tests {
         assert!(build_body(&s).get("system").is_none());
     }
 
-    /// 最小キャッシュ長ちょうどの ASCII 文字数 (Opus 5.5 = 512 トークン x 4 = 2048 文字)。
-    const MIN_BYTES: usize = 512 * WEIGHT_PER_TOKEN;
+    /// キャッシュ最小長 (トークン) ちょうどになる ASCII 文字数 (Opus 5.5 = 512 トークン x 4 = 2048 文字)。
+    const MIN_CACHE_ASCII_CHARS: usize = 512 * WEIGHT_PER_TOKEN;
 
     fn cached_spec(text: String) -> AiRequestSpec {
         let mut s = spec();
@@ -241,9 +241,9 @@ mod tests {
 
     #[test]
     fn cached_part_threshold_is_weight_based() {
-        let below = build_body(&cached_spec("a".repeat(MIN_BYTES - 1)));
+        let below = build_body(&cached_spec("a".repeat(MIN_CACHE_ASCII_CHARS - 1)));
         assert!(below["system"][0].get("cache_control").is_none());
-        let at = build_body(&cached_spec("a".repeat(MIN_BYTES)));
+        let at = build_body(&cached_spec("a".repeat(MIN_CACHE_ASCII_CHARS)));
         assert_eq!(at["system"][0]["cache_control"]["type"], "ephemeral");
     }
 
@@ -275,21 +275,42 @@ mod tests {
     }
 
     #[test]
+    fn japanese_history_cumulative_boundary() {
+        // system なし。履歴 = 日本語 300 文字 (300 トークン) + 末尾 212 / 211 文字 → 累積 512 / 511 トークン。
+        let build = |tail: usize| {
+            let mut s = spec();
+            s.system = None;
+            s.history = vec![
+                msg("user", &"あ".repeat(300)),
+                msg("assistant", &"い".repeat(tail)),
+            ];
+            build_body(&s)
+        };
+        assert_eq!(
+            build(212)["messages"][1]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        assert!(build(211)["messages"][1]["content"][0]
+            .get("cache_control")
+            .is_none());
+    }
+
+    #[test]
     fn variable_system_alone_is_never_cached() {
         let mut s = spec();
-        s.system = Some("a".repeat(MIN_BYTES * 10));
+        s.system = Some("a".repeat(MIN_CACHE_ASCII_CHARS * 10));
         let b = build_body(&s);
         assert!(b["system"][0].get("cache_control").is_none());
     }
 
     #[test]
     fn cached_part_comes_first_and_variable_part_is_not_cached() {
-        let mut s = cached_spec("a".repeat(MIN_BYTES));
+        let mut s = cached_spec("a".repeat(MIN_CACHE_ASCII_CHARS));
         s.system = Some("今回だけの指示".into());
         let b = build_body(&s);
         let blocks = b["system"].as_array().unwrap();
         assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0]["text"], "a".repeat(MIN_BYTES));
+        assert_eq!(blocks[0]["text"], "a".repeat(MIN_CACHE_ASCII_CHARS));
         assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
         assert_eq!(blocks[1]["text"], "今回だけの指示");
         assert!(blocks[1].get("cache_control").is_none());
@@ -297,7 +318,7 @@ mod tests {
 
     #[test]
     fn cached_part_without_variable_part_is_single_block() {
-        let b = build_body(&cached_spec("a".repeat(MIN_BYTES)));
+        let b = build_body(&cached_spec("a".repeat(MIN_CACHE_ASCII_CHARS)));
         assert_eq!(b["system"].as_array().map(Vec::len), Some(1));
     }
 
@@ -371,7 +392,7 @@ mod tests {
         // 末尾の発言 1 件は最小長未満でも、system と履歴の累積が最小長以上なら印が付く。
         let mut s = spec();
         s.system = None;
-        s.system_cached = Some("c".repeat(MIN_BYTES - 10));
+        s.system_cached = Some("c".repeat(MIN_CACHE_ASCII_CHARS - 10));
         s.history = vec![msg("user", "q"), msg("assistant", &"a".repeat(10))];
         let b = build_body(&s);
         assert_eq!(
@@ -409,11 +430,11 @@ mod tests {
     fn long_history_marks_only_the_last_history_message() {
         let mut s = spec();
         s.history = vec![
-            msg("user", &"q".repeat(MIN_BYTES)),
-            msg("assistant", &"a".repeat(MIN_BYTES)),
+            msg("user", &"q".repeat(MIN_CACHE_ASCII_CHARS)),
+            msg("assistant", &"a".repeat(MIN_CACHE_ASCII_CHARS)),
         ];
         s.system = None;
-        s.system_cached = Some("c".repeat(MIN_BYTES));
+        s.system_cached = Some("c".repeat(MIN_CACHE_ASCII_CHARS));
         let b = build_body(&s);
         // 先頭の発言と今回のプロンプトは文字列のままで、ブレークポイントを持たない。
         assert!(b["messages"][0]["content"].is_string());

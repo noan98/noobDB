@@ -80,7 +80,7 @@ export function formatClock(hour: number, minute: number): string {
 }
 
 export interface ScheduleDisplayOptions {
-  /** オフセット計算の基準日時 (DST 対応)。 */
+  /** オフセット計算の基準日時 (DST 対応)。一覧では次回実行日時を渡すと、DST をまたいでも次回実行日の時差で表示される。 */
   now?: Date;
   /** IANA タイムゾーン。省略時は実行環境のローカル (テストで固定するための口)。 */
   timeZone?: string;

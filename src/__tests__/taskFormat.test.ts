@@ -25,17 +25,24 @@ const JST = "Asia/Tokyo";
 
 describe("summarizeSchedule (#730)", () => {
   it("summarizes an interval schedule", () => {
-    expect(summarizeSchedule({ kind: "interval", minutes: 30 }, en)).toBe("30 min");
+    expect(summarizeSchedule({ kind: "interval", minutes: 30 }, en)).toBe("every 30 min");
   });
 
   it("clamps a zero/negative interval to at least 1 minute", () => {
-    expect(summarizeSchedule({ kind: "interval", minutes: 0 }, en)).toBe("1 min");
+    expect(summarizeSchedule({ kind: "interval", minutes: 0 }, en)).toBe("every 1 min");
   });
 
   it("summarizes a daily schedule in local time (UTC 00:05 = JST 09:05)", () => {
     const opts = { now: new Date("2026-01-01T00:00:00Z"), timeZone: JST, locale: "ja" };
     expect(summarizeSchedule({ kind: "daily", hour: 0, minute: 5 }, ja, opts)).toBe("毎日 09:05 (JST)");
     expect(summarizeSchedule({ kind: "daily", hour: 0, minute: 5 }, en, opts)).toBe("daily 09:05 (JST)");
+  });
+
+  it("converts with the offset at the given reference date (DST: next run date)", () => {
+    const ny = "America/New_York";
+    const sched = { kind: "daily", hour: 13, minute: 0 } as const;
+    expect(summarizeSchedule(sched, en, { now: new Date("2026-01-15T00:00:00Z"), timeZone: ny })).toContain("08:00");
+    expect(summarizeSchedule(sched, en, { now: new Date("2026-07-15T00:00:00Z"), timeZone: ny })).toContain("09:00");
   });
 
   it("localizes the interval summary", () => {

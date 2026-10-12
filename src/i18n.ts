@@ -4327,7 +4327,7 @@ const en = {
   taskScheduleInterval: "Every N minutes",
   taskScheduleDaily: "Daily at",
   taskScheduleMinutes: "minutes",
-  taskSummaryInterval: "{n} min",
+  taskSummaryInterval: "every {n} min",
   taskSummaryDaily: "daily {time} ({tz})",
   taskSummaryExport: "export ({format})",
   taskSummaryDump: "dump ({database})",
