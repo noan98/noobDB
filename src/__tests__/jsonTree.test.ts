@@ -176,3 +176,63 @@ describe("jsonPathSqlPredicate", () => {
     expect(jsonPathSqlPredicate("postgres", "doc", ["x"], nul)).toBe(`"doc" ->> 'x' IS NULL`);
   });
 });
+
+describe("searchJsonTree (遅延パス組み立て: 素朴実装と同一結果)", () => {
+  // 最適化前の実装 (子ごとにパスを複製する深さ優先) を参照実装として比較する。
+  function naive(root: ReturnType<typeof parseJsonLossless> & object, query: string, limit: number) {
+    const needle = query.trim().toLowerCase();
+    const paths: (string | number)[][] = [];
+    let truncated = false;
+    const stack: { node: typeof root; path: (string | number)[] }[] = [{ node: root, path: [] }];
+    while (stack.length > 0) {
+      const { node, path } = stack.pop()!;
+      const last = path[path.length - 1];
+      const keyHit = typeof last === "string" && last.toLowerCase().includes(needle);
+      let text: string | null = null;
+      if (node.kind === "string") text = node.value;
+      else if (node.kind === "number") text = node.raw;
+      else if (node.kind === "boolean") text = node.value ? "true" : "false";
+      else if (node.kind === "null") text = "null";
+      const valueHit = text !== null && text.toLowerCase().includes(needle);
+      if (keyHit || valueHit) {
+        if (paths.length >= limit) {
+          truncated = true;
+          break;
+        }
+        paths.push(path);
+      }
+      const kids = childSlice(node, 0, childCount(node));
+      for (let i = kids.length - 1; i >= 0; i--) {
+        stack.push({ node: kids[i].node, path: [...path, kids[i].segment] });
+      }
+    }
+    return { paths, truncated };
+  }
+
+  const doc = parseJsonLossless(
+    JSON.stringify({
+      a: [1, 2, { a: "xa", b: [null, true, "A"] }],
+      b: { a: { a: "a" }, c: [[["a"]]] },
+      empty: [],
+      obj: {},
+      "a b": "aaa",
+    }),
+  )!;
+
+  for (const q of ["a", "A", "true", "null", "zzz", "b", "1"]) {
+    for (const limit of [1, 3, 1000]) {
+      it(`query=${q} limit=${limit}`, () => {
+        const got = searchJsonTree(doc, q, limit)!;
+        const want = naive(doc, q, limit);
+        expect(got.paths).toEqual(want.paths);
+        expect(got.truncated).toBe(want.truncated);
+        expect(got.matches).toEqual(new Set(want.paths.map((p) => pathKey(p))));
+      });
+    }
+  }
+
+  it("ルート自身が一致するスカラも拾う", () => {
+    const r = searchJsonTree(parseJsonLossless('"hello"')!, "ell")!;
+    expect(r.paths).toEqual([[]]);
+  });
+});

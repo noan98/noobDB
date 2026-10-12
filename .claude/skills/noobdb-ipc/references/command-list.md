@@ -213,6 +213,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 - `list_processes`
 - `get_process_query`
+- `get_process_queries` (複数 id の全文を一覧 1 回でまとめて取得。AI ロック診断用)
 - `kill_processes`
 - `list_db_users`
 - `list_user_privileges`

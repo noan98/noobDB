@@ -181,12 +181,27 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
       streamRef.current = streamId;
       startedAtRef.current = Date.now();
       let body = "";
+      // 1 トークンごとに setText すると、stream.text を使う画面全体が毎回再描画される。
+      // 本文は変数に溜め、1 フレームに 1 回だけ反映する (終了・エラー・中止では即時に確定)。
+      let frame = 0;
+      const flushText = () => {
+        frame = 0;
+        if (streamRef.current === streamId && mountedRef.current) setText(body);
+      };
+      const settleText = () => {
+        if (frame !== 0) {
+          cancelAnimationFrame(frame);
+          frame = 0;
+        }
+        if (mountedRef.current) setText(body);
+      };
       setText("");
       setDone(null);
       setElapsedSec(0);
       setRunning(true);
       const fail = (message: string, kind: string) => {
         if (!stopListener(streamId)) return;
+        settleText();
         handlers.onError({ message, kind, refused: kind === "aiRefused" });
       };
       try {
@@ -194,10 +209,11 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
           onDelta: (e) => {
             if (streamRef.current !== streamId) return;
             body += e.text;
-            if (mountedRef.current) setText(body);
+            if (frame === 0) frame = requestAnimationFrame(flushText);
           },
           onDone: (e) => {
             if (!stopListener(streamId)) return;
+            settleText();
             // 使用量の累計 (#1474) はここ 1 か所で加算する。画面側では加算しない。
             recordAiUsage(e);
             setDone(e);
@@ -210,6 +226,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
           onError: (e) => fail(e.error, e.kind),
           onCancelled: () => {
             if (!stopListener(streamId)) return;
+            settleText();
             handlers.onCancelled();
           },
         });

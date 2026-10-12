@@ -128,3 +128,31 @@ describe("diffResultRows", () => {
     expect(d.addedRows.size).toBe(0);
   });
 });
+
+describe("diffResultRows の配列確保 (出力は変えない)", () => {
+  it("変化の無い行は共有配列を使い、変化した行だけ個別の配列を持つ", () => {
+    const prev: CellValue[][] = [[1, "a", 1], [2, "b", 2], [3, "c", 3]];
+    const next: CellValue[][] = [[1, "a", 1], [2, "B", 2], [3, "c", 3]];
+    const d = diffResultRows(prev, next, PK, 3);
+    expect(d.changedCells).toEqual([[false, false, false], [false, true, false], [false, false, false]]);
+    expect(d.changedCells[0]).toBe(d.changedCells[2]);
+    expect(d.changedCells[1]).not.toBe(d.changedCells[0]);
+    // 共有配列を書き換えていない。
+    expect(d.changedCells[0]).toEqual([false, false, false]);
+    expect(d.hasChanges).toBe(true);
+  });
+
+  it("PK が無いときは全行が全 false で、差分なし", () => {
+    const d = diffResultRows([[1, "a"]], [[1, "b"], [2, "c"]], [], 2);
+    expect(d.changedCells).toEqual([[false, false], [false, false]]);
+    expect(d.hasChanges).toBe(false);
+    expect(d.addedRows.size).toBe(0);
+  });
+
+  it("追加行は全 false、削除は件数", () => {
+    const d = diffResultRows([[1, "a"], [2, "b"]], [[1, "a"], [3, "c"]], PK, 2);
+    expect(d.changedCells).toEqual([[false, false], [false, false]]);
+    expect([...d.addedRows]).toEqual([1]);
+    expect(d.removedCount).toBe(1);
+  });
+});

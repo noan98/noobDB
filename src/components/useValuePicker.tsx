@@ -16,6 +16,7 @@ import {
   FK_CANDIDATE_LIMIT,
   buildAllowedValuesQueries,
   buildFkCandidatesSql,
+  isTextDataType,
   candidatesFromResult,
   collectAllowedValues,
   definitionsFromResult,
@@ -152,6 +153,7 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
         refColumn: meta.referenced_column,
         search,
         limit: FK_CANDIDATE_LIMIT,
+        textColumn: isTextDataType(meta.data_type),
       });
       run(sql, FK_CANDIDATE_LIMIT).then(
         (res) => {

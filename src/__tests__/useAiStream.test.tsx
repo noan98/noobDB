@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, renderHook, renderWithProviders, screen } from "./testUtils";
+import { act, cleanup, renderHook, renderWithProviders, screen, waitFor } from "./testUtils";
 import { getAiUsage, resetAiUsage } from "../ai/aiUsageStore";
 import type { AiDoneEvent, AiStreamHandlers as WireHandlers } from "../api/tauri";
 
@@ -83,7 +83,29 @@ describe("useAiStream (#1470)", () => {
     expect(result.current.running).toBe(true);
     act(() => wire?.onDelta?.({ streamId: "x", text: "ab" }));
     act(() => wire?.onDelta?.({ streamId: "x", text: "cd" }));
-    expect(result.current.text).toBe("abcd");
+    // 受信本文は 1 フレームに 1 回だけ反映される。
+    await waitFor(() => expect(result.current.text).toBe("abcd"));
+  });
+
+  it("delta の直後に done / error / cancelled が来ても、text は最後の delta まで含む", async () => {
+    const cases: [string, () => void][] = [
+      ["done", () => wire?.onDone?.(doneEvent)],
+      ["error", () => wire?.onError?.({ streamId: "x", error: "boom", kind: "aiApi" })],
+      ["cancelled", () => wire?.onCancelled?.({ streamId: "x", deliveredRows: 0 })],
+    ];
+    for (const [, finish] of cases) {
+      const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+      result.current.acquire();
+      await act(async () => {
+        await result.current.start(request, handlers());
+      });
+      act(() => {
+        wire?.onDelta?.({ streamId: "x", text: "ab" });
+        wire?.onDelta?.({ streamId: "x", text: "cd" });
+        finish();
+      });
+      expect(result.current.text).toBe("abcd");
+    }
   });
 
   it("完了: 本文をパースして渡し、完了イベント (モデル・使用量) をそのまま保持する", async () => {
