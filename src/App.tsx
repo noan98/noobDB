@@ -1885,6 +1885,8 @@ export default function App() {
     columns: Column[];
     rows: CellValue[][];
     sourceSql: string;
+    /** 元の SQL を実行した DB (#1541)。再取得で同じ DB へ流す。SQLite・不明なら null。 */
+    sourceDatabase: string | null;
   } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
@@ -7046,8 +7048,12 @@ export default function App() {
 
   // 結果グリッドの「ローカルに登録」ボタン: 名前を確認するモーダルを開く。
   const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string) => {
-    setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql });
-  }, []);
+    const database =
+      selectedProfile && selectedProfile.driver !== "sqlite"
+        ? (activeTab?.database ?? selectedProfile.database ?? null) || null
+        : null;
+    setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql, sourceDatabase: database });
+  }, [selectedProfile, activeTab]);
 
   const handleConfirmRegisterLocalTable = useCallback((tableName: string) => {
     const req = registerLocalRequest;
@@ -7069,6 +7075,7 @@ export default function App() {
             sourceProfile: selectedProfile?.name ?? null,
             sourceSql: req.sourceSql,
             sourceDriver: selectedProfile?.driver ?? null,
+            sourceDatabase: req.sourceDatabase,
           });
         if (handleId) {
           try {
@@ -7119,6 +7126,14 @@ export default function App() {
       toast.info(translate("localRefetchNotReadOnly", { table: tableName }));
       return;
     }
+    if (plan.kind === "noDatabase") {
+      toast.info(translate("localRefetchNoDatabase", { table: tableName }));
+      return;
+    }
+    if (plan.kind === "ambiguous") {
+      toast.info(translate("localRefetchAmbiguous", { table: tableName, name: plan.profileName }));
+      return;
+    }
     if (plan.kind === "noConnection") {
       toast.info(
         plan.profileName === null
@@ -7130,7 +7145,7 @@ export default function App() {
     setRefetchingLocalTable(tableName);
     void (async () => {
       try {
-        const result = await api.runQuery(plan.sessionId, meta.source_sql, null);
+        const result = await api.runQuery(plan.sessionId, meta.source_sql, plan.database);
         await api.registerLocalTable({
           sessionId: sid,
           tableName,
@@ -7140,6 +7155,7 @@ export default function App() {
           sourceProfile: meta.source_profile,
           sourceSql: meta.source_sql,
           sourceDriver: meta.source_driver,
+          sourceDatabase: meta.source_database,
         });
         await refreshLocalTables(sid);
         toast.success(translate("localRefetchSuccess", { rows: result.rows.length, table: tableName }));

@@ -10,6 +10,7 @@ const table = {
   row_count: 3,
   fetched_at_ms: 0,
   source_profile: null,
+  source_database: null,
   source_sql: "select 1",
 } as unknown as LocalTableMeta;
 

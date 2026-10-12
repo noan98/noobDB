@@ -97,6 +97,7 @@ async fn registers_and_joins_across_two_sources() {
             source_profile: Some("Source A (mysql-ish)".into()),
             source_sql: "SELECT * FROM orders".into(),
             source_driver: Some("mysql".into()),
+            source_database: None,
         },
     )
     .await
@@ -113,6 +114,7 @@ async fn registers_and_joins_across_two_sources() {
             source_profile: Some("Source B (postgres-ish)".into()),
             source_sql: "SELECT * FROM customers".into(),
             source_driver: Some("postgres".into()),
+            source_database: None,
         },
     )
     .await
@@ -220,6 +222,7 @@ async fn round_trips_blob_and_null_values() {
             source_profile: None,
             source_sql: "SELECT 1".into(),
             source_driver: None,
+            source_database: None,
         },
     )
     .await
@@ -278,6 +281,7 @@ async fn rejects_registration_over_the_row_cap() {
             source_profile: None,
             source_sql: "SELECT n FROM generate_series".into(),
             source_driver: None,
+            source_database: None,
         },
     )
     .await
@@ -307,6 +311,7 @@ async fn rejects_registration_and_listing_on_a_non_local_session() {
             source_profile: None,
             source_sql: "SELECT 1".into(),
             source_driver: None,
+            source_database: None,
         },
     )
     .await
@@ -340,6 +345,7 @@ async fn saves_a_standalone_snapshot_file() {
             source_profile: None,
             source_sql: "SELECT 42".into(),
             source_driver: None,
+            source_database: None,
         },
     )
     .await
@@ -375,4 +381,65 @@ async fn saves_a_standalone_snapshot_file() {
     saved_conn.close().await;
 
     let _ = std::fs::remove_file(&save_path);
+}
+
+/// 再取得 (#1541) のため source_database を記録する。列を持たない古いカタログ
+/// (ファイルから開いたローカル DB など) でも一覧が読め、次の登録で列が足される。
+#[tokio::test]
+async fn source_database_is_recorded_and_legacy_catalog_is_upgraded() {
+    let state = t::AppState::default();
+    let local_id = new_local(&state).await;
+    let local_session = state.get(&local_id).await.expect("local session exists");
+
+    // 旧スキーマのカタログ (source_database 列なし) に 1 行ある状態を作る。
+    local_session
+        .conn
+        .execute(
+            "CREATE TABLE __noobdb_local_meta (
+                name TEXT PRIMARY KEY, source_profile TEXT, source_sql TEXT NOT NULL,
+                source_driver TEXT, fetched_at_ms INTEGER NOT NULL, row_count INTEGER NOT NULL)",
+            None,
+        )
+        .await
+        .expect("create legacy catalog");
+    local_session
+        .conn
+        .execute(
+            "INSERT INTO __noobdb_local_meta VALUES ('legacy', 'P', 'SELECT 1', 'mysql', 1, 0)",
+            None,
+        )
+        .await
+        .expect("insert legacy row");
+    let legacy = t::list_local_tables_inner(&state, &local_id)
+        .await
+        .expect("list legacy catalog");
+    assert_eq!(legacy.len(), 1);
+    assert_eq!(legacy[0].source_database, None);
+
+    t::register_local_table_inner(
+        &state,
+        t::RegisterLocalTableRequest {
+            session_id: local_id.clone(),
+            table_name: "fresh".into(),
+            columns: vec![t::Column {
+                name: "id".into(),
+                type_name: "INTEGER".into(),
+            }],
+            rows: vec![vec![t::Value::Int(1)]],
+            result_id: None,
+            source_profile: Some("P".into()),
+            source_sql: "SELECT id FROM t".into(),
+            source_driver: Some("mysql".into()),
+            source_database: Some("shop".into()),
+        },
+    )
+    .await
+    .expect("register after legacy catalog");
+    let listed = t::list_local_tables_inner(&state, &local_id)
+        .await
+        .expect("list after upgrade");
+    let fresh = listed.iter().find(|m| m.name == "fresh").expect("fresh");
+    assert_eq!(fresh.source_database.as_deref(), Some("shop"));
+    let old = listed.iter().find(|m| m.name == "legacy").expect("legacy");
+    assert_eq!(old.source_database, None);
 }

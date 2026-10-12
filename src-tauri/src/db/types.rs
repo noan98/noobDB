@@ -788,6 +788,11 @@ pub struct LocalTableMeta {
     /// Driver of the *source* connection (`mysql` / `postgres` / `sqlite`),
     /// not the local engine itself.
     pub source_driver: Option<String>,
+    /// Database (MySQL) / schema context the source SQL ran against (#1541), so a
+    /// refetch runs in the same place. `None` for rows registered before this
+    /// was recorded, and for drivers where it does not apply (SQLite).
+    #[serde(default)]
+    pub source_database: Option<String>,
     /// Registration time, epoch milliseconds (matches the JS `Date.now()`
     /// convention already used by the frontend's own timestamps).
     pub fetched_at_ms: i64,
