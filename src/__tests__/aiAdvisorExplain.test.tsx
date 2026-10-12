@@ -86,6 +86,7 @@ beforeEach(() => {
       },
     ],
     skipped: [],
+    table_plans: [],
   });
   handlers = null;
   enable();
@@ -224,6 +225,7 @@ describe("アドバイザの AI 解説 (#1468)", () => {
       tables_analyzed: 2,
       findings: [mk("t_a"), mk("t_b")],
       skipped: [],
+      table_plans: [],
     });
     renderWithProviders(ui());
     fireEvent.click(screen.getByText(t("advisorRun")));

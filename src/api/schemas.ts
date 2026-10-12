@@ -727,11 +727,19 @@ export const skippedRule = z.object({
   reason: z.string(),
 });
 
+export const tableFixPlan = z.object({
+  table: z.string(),
+  change_count: z.number(),
+  ddl: z.string(),
+  ddl_online: z.string().nullable(),
+});
+
 export const schemaHealthReport = z.object({
   driver: driverKind,
   tables_analyzed: z.number(),
   findings: z.array(healthFinding),
   skipped: z.array(skippedRule),
+  table_plans: z.array(tableFixPlan),
 });
 
 export const csvPreview = z.object({

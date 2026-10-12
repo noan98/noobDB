@@ -4134,6 +4134,11 @@ const en = {
   advisorColTarget: "Target",
   advisorColSeverity: "Severity",
   advisorColDetail: "Detail",
+  advisorPlansTitle: "Per-table fix plans",
+  advisorPlansInsertAll: "Insert all plans into the editor",
+  advisorPlansNote:
+    "For tables with two or more fixable findings (missing FK indexes, duplicate or redundant indexes), the fixes are combined into as few statements as the database allows. Findings based on usage statistics are not included. Review before running.",
+  advisorPlanChanges: "{count} changes",
   advisorFixStandard: "Standard",
   advisorFixStandardNote: "Simple, but the table may block writes for the whole duration on a large production table.",
   advisorFixOnline: "Online (writes keep flowing)",
@@ -8935,6 +8940,11 @@ const ja: Dict = {
   advisorColTarget: "対象",
   advisorColSeverity: "重要度",
   advisorColDetail: "説明",
+  advisorPlansTitle: "テーブル別の修正計画",
+  advisorPlansInsertAll: "すべての計画をエディタへ挿入",
+  advisorPlansNote:
+    "機械的に直せる指摘 (FK のインデックス欠落・重複 / 冗長インデックス) が 2 件以上あるテーブルについて、DB が許す範囲でなるべく少ない文にまとめています。利用統計に基づく指摘は含みません。実行前に内容を確認してください。",
+  advisorPlanChanges: "{count} 件の変更",
   advisorFixStandard: "通常版",
   advisorFixStandardNote: "シンプルですが、大きな本番テーブルでは実行中ずっと書き込みが止まることがあります。",
   advisorFixOnline: "オンライン版 (書き込みを止めにくい)",

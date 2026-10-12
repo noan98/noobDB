@@ -55,7 +55,7 @@ use t::{
     ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule,
     Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
     StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
-    TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    TableComment, TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
     TaskRunProgressEvent, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
@@ -285,6 +285,12 @@ fn build_fixtures() -> serde_json::Value {
         tables_analyzed: 3,
         findings: vec![health_finding.clone()],
         skipped: vec![skipped_rule.clone()],
+        table_plans: vec![TableFixPlan {
+            table: "orders".into(),
+            change_count: 2,
+            ddl: "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);".into(),
+            ddl_online: Some("ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;".into()),
+        }],
     };
 
     // --- #824: 未収載だった主要レスポンス/永続化型 ---------------------------
@@ -913,6 +919,17 @@ fn build_fixtures() -> serde_json::Value {
                     reason: "performance_schema_off".into(),
                 })
                 .collect(),
+            // SQLite ではオンライン版が無い (None) 形も通す。
+            table_plans: vec![TableFixPlan {
+                table: "orders".into(),
+                change_count: 3,
+                ddl: "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");".into(),
+                ddl_online: if *driver == DriverKind::Sqlite {
+                    None
+                } else {
+                    Some("DROP INDEX CONCURRENTLY \"a\";".into())
+                },
+            }],
         })
         .collect();
 

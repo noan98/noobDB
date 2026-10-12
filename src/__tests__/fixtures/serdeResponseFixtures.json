@@ -3715,6 +3715,14 @@
         "rule": "unused_index"
       }
     ],
+    "table_plans": [
+      {
+        "change_count": 2,
+        "ddl": "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);",
+        "ddl_online": "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;",
+        "table": "orders"
+      }
+    ],
     "tables_analyzed": 3
   },
   "schemaHealthReportVariants": [
@@ -3834,6 +3842,14 @@
         {
           "reason": "performance_schema_off",
           "rule": "sqlite_integer_pk_hint"
+        }
+      ],
+      "table_plans": [
+        {
+          "change_count": 3,
+          "ddl": "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");",
+          "ddl_online": "DROP INDEX CONCURRENTLY \"a\";",
+          "table": "orders"
         }
       ],
       "tables_analyzed": 1
@@ -3956,6 +3972,14 @@
           "rule": "sqlite_integer_pk_hint"
         }
       ],
+      "table_plans": [
+        {
+          "change_count": 3,
+          "ddl": "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");",
+          "ddl_online": "DROP INDEX CONCURRENTLY \"a\";",
+          "table": "orders"
+        }
+      ],
       "tables_analyzed": 1
     },
     {
@@ -4074,6 +4098,14 @@
         {
           "reason": "performance_schema_off",
           "rule": "sqlite_integer_pk_hint"
+        }
+      ],
+      "table_plans": [
+        {
+          "change_count": 3,
+          "ddl": "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");",
+          "ddl_online": null,
+          "table": "orders"
         }
       ],
       "tables_analyzed": 1

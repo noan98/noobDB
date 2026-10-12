@@ -1247,12 +1247,25 @@ export interface SkippedRule {
   reason: string;
 }
 
+/** 1 テーブルぶんの修正 DDL のまとめ (#1540)。2 件以上の機械的に直せる指摘があるテーブルだけ。 */
+export interface TableFixPlan {
+  table: string;
+  /** まとめに含まれる変更 (インデックスの追加・削除) の件数。 */
+  change_count: number;
+  /** 標準版。方言が許す範囲で 1 文に束ねてある。 */
+  ddl: string;
+  /** オンライン版 (#1534)。SQLite では null。 */
+  ddl_online: string | null;
+}
+
 /** スキーマ健全性診断のレポート全体。 */
 export interface SchemaHealthReport {
   driver: DriverKind;
   tables_analyzed: number;
   findings: HealthFinding[];
   skipped: SkippedRule[];
+  /** テーブル単位のまとめ DDL (#1540)。 */
+  table_plans: TableFixPlan[];
 }
 
 /** What a generated sync statement does. */

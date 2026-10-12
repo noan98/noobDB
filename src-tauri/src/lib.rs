@@ -34,7 +34,7 @@ pub mod __test_api {
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
         analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
-        TableMeta, UnusedIndexEntry, UnusedIndexStats,
+        TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
     };
     pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
