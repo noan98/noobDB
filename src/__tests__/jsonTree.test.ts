@@ -7,6 +7,7 @@ import {
   JSON_MAX_DEPTH,
   jsonPathSqlExpression,
   jsonPathSqlPredicate,
+  jsonPathSqlUpdate,
   nodeAtPath,
   parseJsonLossless,
   pathKey,
@@ -234,5 +235,64 @@ describe("searchJsonTree (遅延パス組み立て: 素朴実装と同一結果)
   it("ルート自身が一致するスカラも拾う", () => {
     const r = searchJsonTree(parseJsonLossless('"hello"')!, "ell")!;
     expect(r.paths).toEqual([[]]);
+  });
+});
+
+describe("jsonPathSqlUpdate (#1541)", () => {
+  const doc = parseJsonLossless('{"a":{"b c":[10,{"q\\"x":"it\'s \\\\ ok"}],"big":9007199254740993,"n":null,"t":true}}')!;
+  const at = (path: (string | number)[]) => nodeAtPath(doc, path)!;
+  const W = "`id` = 1";
+
+  it("MySQL: JSON_SET + CAST AS JSON、パスは引用符付きキーと添字", () => {
+    expect(jsonPathSqlUpdate("mysql", "`app`.`t`", "doc", ["a", "big"], at(["a", "big"]), W)).toBe(
+      "UPDATE `app`.`t` SET `doc` = JSON_SET(`doc`, '$.a.big', CAST('9007199254740993' AS JSON)) WHERE `id` = 1;",
+    );
+    expect(jsonPathSqlUpdate("mysql", "`t`", "doc", ["a", "b c", 0], at(["a", "b c", 0]), W)).toContain(
+      `'$.a."b c"[0]'`,
+    );
+  });
+
+  it("PostgreSQL: jsonb_set + text[] パス、JSON null は 'null'::jsonb", () => {
+    expect(jsonPathSqlUpdate("postgres", '"app"."t"', "doc", ["a", "b c", 0], at(["a", "b c", 0]), '"id" = 1')).toBe(
+      `UPDATE "app"."t" SET "doc" = jsonb_set("doc"::jsonb, '{"a","b c","0"}', '10'::jsonb) WHERE "id" = 1;`,
+    );
+    expect(jsonPathSqlUpdate("postgres", '"t"', "doc", ["a", "n"], at(["a", "n"]), "x")).toContain(
+      `'null'::jsonb`,
+    );
+  });
+
+  it("SQLite: json_set + json()", () => {
+    expect(jsonPathSqlUpdate("sqlite", '"t"', "doc", ["a", "t"], at(["a", "t"]), '"id" = 1')).toBe(
+      `UPDATE "t" SET "doc" = json_set("doc", '$.a.t', json('true')) WHERE "id" = 1;`,
+    );
+  });
+
+  it("キー・文字列値の引用符とバックスラッシュを各方言でエスケープする (インジェクションしない)", () => {
+    const path = ["a", "b c", 1, 'q"x'];
+    const node = at(path);
+    // MySQL はバックスラッシュも二重化、PostgreSQL / SQLite は ' だけ二重化
+    const my = jsonPathSqlUpdate("mysql", "`t`", "doc", path, node, W)!;
+    expect(my).toContain(`CAST('"it''s \\\\\\\\ ok"' AS JSON)`);
+    const pg = jsonPathSqlUpdate("postgres", '"t"', "doc", path, node, "x")!;
+    expect(pg).toContain(`'{"a","b c","1","q\\"x"}'`);
+    expect(pg).toContain(`'"it''s \\\\ ok"'::jsonb`);
+    // 悪意あるキー: ' を含んでも文字列リテラルから抜けない
+    const evil = parseJsonLossless(`{"k'); DROP TABLE t;--":1}`)!;
+    for (const d of ["mysql", "postgres", "sqlite"]) {
+      const sql = jsonPathSqlUpdate(d, "t", "doc", ["k'); DROP TABLE t;--"], nodeAtPath(evil, ["k'); DROP TABLE t;--"])!, "x")!;
+      expect(sql).toContain("k''); DROP TABLE t;--");
+      expect(sql).not.toMatch(/[^']'\); DROP/);
+    }
+  });
+
+  it("SQLite は \" や \\ を含むキーのパスを生成しない (別キーが増えるため)", () => {
+    const path = ["a", "b c", 1, 'q"x'];
+    expect(jsonPathSqlUpdate("sqlite", '"t"', "doc", path, at(path), "x")).toBeNull();
+    expect(jsonPathSqlUpdate("mysql", "`t`", "doc", path, at(path), "x")).not.toBeNull();
+  });
+
+  it("ルートと WHERE 無しは生成しない", () => {
+    expect(jsonPathSqlUpdate("mysql", "`t`", "doc", [], doc, W)).toBeNull();
+    expect(jsonPathSqlUpdate("mysql", "`t`", "doc", ["a"], at(["a"]), " ")).toBeNull();
   });
 });

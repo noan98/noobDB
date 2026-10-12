@@ -519,3 +519,53 @@ export function jsonPathSqlPredicate(
       }
   }
 }
+
+/**
+ * 選択ノードを書き換える `UPDATE` 文を方言別に組み立てる (#1541)。クリップボードへ
+ * コピーするだけで実行はしない。値は**現在のノードの内容**を JSON として埋め込むので、
+ * 貼り付けた後に新しい値へ書き換えて使う。
+ *
+ * - PostgreSQL: `jsonb_set(col::jsonb, '{"a","0"}', '<json>'::jsonb)`。パスは text[] リテラル
+ *   (各要素を二重引用符で囲み `\` と `"` をエスケープ) を SQL 文字列として渡す。json 型の列でも
+ *   `::jsonb` を経由する。JSON の null は SQL の NULL ではなく `'null'::jsonb` にする
+ *   (SQL NULL を渡すと jsonb_set の結果ごと NULL になるため)。
+ * - MySQL: `JSON_SET(col, '$.a[0]', CAST('<json>' AS JSON))`。
+ * - SQLite: `json_set(col, '$.a[0]', json('<json>'))` (`json()` で文字列でなく JSON として扱わせる)。
+ *
+ * パス・値・テーブル参照はすべて既存の引用ヘルパー (`sqlString` / `quoteIdentFor`) を通すので、
+ * キーや文字列値に含まれる引用符は SQL に漏れない。`where` は呼び出し側が行の主キーから
+ * 作った述語 (`buildRowWhere`)。ルート (空パス)、および SQLite で `"` / `\` を含むキーを
+ * 通るパス (JSON パスで表せない) は null。
+ */
+export function jsonPathSqlUpdate(
+  driver: string,
+  tableRef: string,
+  column: string,
+  path: readonly JsonPathSegment[],
+  node: JsonNode,
+  where: string,
+): string | null {
+  if (path.length === 0 || where.trim() === "") return null;
+  // SQLite の JSON パスは引用符付きキーの中のエスケープを解釈しない (`"` や `\` を含むキーは
+  // 別のキーとして追加されてしまう) ので、安全に表せないパスは生成しない。
+  if (driver === "sqlite" && path.some((seg) => typeof seg === "string" && /["\\]/.test(seg))) {
+    return null;
+  }
+  const col = quoteIdentFor(driver, column);
+  const json = sqlString(driver, serializeJson(node));
+  let set: string;
+  if (driver === "postgres") {
+    const arr =
+      "{" +
+      path
+        .map((seg) => '"' + String(seg).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"')
+        .join(",") +
+      "}";
+    set = `jsonb_set(${col}::jsonb, ${sqlString(driver, arr)}, ${json}::jsonb)`;
+  } else if (driver === "sqlite") {
+    set = `json_set(${col}, ${sqlString(driver, formatJsonPath(path))}, json(${json}))`;
+  } else {
+    set = `JSON_SET(${col}, ${sqlString(driver, formatJsonPath(path))}, CAST(${json} AS JSON))`;
+  }
+  return `UPDATE ${tableRef} SET ${col} = ${set} WHERE ${where};`;
+}

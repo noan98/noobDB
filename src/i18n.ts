@@ -2939,6 +2939,9 @@ const en = {
   jsonTreeCopyValue: "Copy value",
   jsonTreeCopySqlExpr: "Copy SQL expression",
   jsonTreeCopySqlWhere: "Copy WHERE condition",
+  jsonTreeCopySqlUpdate: "Copy UPDATE",
+  jsonTreeCopySqlUpdateTitle:
+    "Copy an UPDATE that sets this node (JSON_SET / jsonb_set / json_set) with its current value, keyed on the primary key. Edit the value, then run it yourself.",
   jsonTreeCopied: "Copied to clipboard",
 
   splitterEditorAria: "Drag to resize editor and result area; double-click to reset",
@@ -7731,6 +7734,9 @@ const ja: Dict = {
   jsonTreeCopyValue: "値をコピー",
   jsonTreeCopySqlExpr: "SQL 抽出式をコピー",
   jsonTreeCopySqlWhere: "WHERE 条件をコピー",
+  jsonTreeCopySqlUpdate: "UPDATE をコピー",
+  jsonTreeCopySqlUpdateTitle:
+    "このノードを書き換える UPDATE 文 (JSON_SET / jsonb_set / json_set) を、現在の値を入れた状態で主キー指定でコピーします。値を直して自分で実行してください。",
   jsonTreeCopied: "クリップボードにコピーしました",
 
   splitterEditorAria: "ドラッグでエディタと結果領域のサイズを変更、ダブルクリックでリセット",

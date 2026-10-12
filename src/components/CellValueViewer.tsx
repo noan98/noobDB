@@ -50,6 +50,8 @@ interface Props {
    * のに使う (#1026)。未指定なら SQL のコピー導線を出さない。
    */
   driver?: string;
+  /** JSON ノードの UPDATE 文コピー (#1541) の対象行。`JsonTreeView` の `update` と同じ。 */
+  jsonUpdate?: { tableRef: string; where: string | null };
   /**
    * バイナリセルのファイル保存 / 読み込みと画像プレビュー (#1148)。行を主キーで
    * 引けるときだけ渡される。`load` が無いときは書き戻し不可 (読み取り専用など)。
@@ -98,6 +100,7 @@ export function CellValueViewer({
   onSave,
   onClose,
   driver,
+  jsonUpdate,
   blob,
 }: Props) {
   const t = useT();
@@ -305,7 +308,7 @@ export function CellValueViewer({
             {t("resultNull")}
           </chakra.div>
         ) : showTree && jsonDoc ? (
-          <JsonTreeView root={jsonDoc} columnName={columnName} driver={driver} />
+          <JsonTreeView root={jsonDoc} columnName={columnName} driver={driver} update={jsonUpdate} />
         ) : display === "" ? (
           <chakra.div fontStyle="italic" color="app.textMuted">
             {t("cellViewerEmpty")}
