@@ -730,6 +730,10 @@ fn build_fixtures() -> serde_json::Value {
         stream_id: "strm0007".into(),
         encoding: t::TextEncoding::ShiftJis,
         total_bytes: 2048,
+        file_stamp: t::FileStamp {
+            size: 2048,
+            mtime_ms: 1_700_000_000_000,
+        },
         elapsed_ms: 12,
         analysis: t::analyze_script_text(
             t::DriverKind::Sqlite,
@@ -747,6 +751,8 @@ fn build_fixtures() -> serde_json::Value {
         failure: Some(script_failure),
         executed: 4,
         rolled_back: true,
+        in_transaction: true,
+        tx_begin_statement: Some(2),
     };
 
     let dump_progress_event = DumpProgressEvent {

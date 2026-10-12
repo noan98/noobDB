@@ -141,10 +141,7 @@ pub struct SqlFileContent {
 #[tauri::command]
 pub async fn read_sql_file(path: String, encoding: Option<TextEncoding>) -> Result<SqlFileContent> {
     let bytes = read_limited(&path).await?;
-    let enc = match encoding {
-        Some(e) => e,
-        None => text_encoding::detect(&bytes).map_err(|e| e.into_app_error())?,
-    };
+    let enc = text_encoding::detect_with(&bytes, encoding).map_err(|e| e.into_app_error())?;
     let content = text_encoding::decode_all(&bytes, enc)?;
     Ok(SqlFileContent {
         content,

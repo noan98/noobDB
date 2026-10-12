@@ -88,6 +88,18 @@ pub struct ScriptOptions {
     /// 実行せず読み飛ばす文の通し番号 (事前確認の一覧での個別除外、#1535)。
     #[serde(default)]
     pub skip_statements: Vec<u64>,
+    /// 事前確認 (ドライラン) をしたときのファイルの大きさと更新時刻。指定されていて実行時の
+    /// ファイルと違えば、除外・開始位置の文番号がずれるので実行前にエラーにする (#1535)。
+    #[serde(default)]
+    pub expected_file: Option<FileStamp>,
+}
+
+/// ファイルの大きさと更新時刻 (ミリ秒)。事前確認の後でファイルが書き換わっていないかの照合用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStamp {
+    pub size: u64,
+    pub mtime_ms: u64,
 }
 
 /// 失敗した 1 文。`index` はスクリプト内の文の通し番号 (1 始まり、制御文を含む)、`line` はファイル内の
@@ -152,6 +164,14 @@ pub struct ScriptErrorEvent {
     /// 開いていたトランザクションを ROLLBACK したか (その範囲の文は取り消された)。
     #[serde(rename = "rolledBack")]
     pub rolled_back: bool,
+    /// 失敗した時点でトランザクションが開いていたか (ROLLBACK の成否に関係なく true)。
+    /// 開いていたなら、失敗した文だけから再開すると BEGIN 以降の文が欠けるので再開を出さない。
+    #[serde(rename = "inTransaction")]
+    pub in_transaction: bool,
+    /// 開いていたトランザクションを始めた BEGIN 文の通し番号 (スクリプト内の BEGIN のとき。
+    /// 全体を包む `wrapInTransaction` の場合は `null`)。ここから再開すれば取り消された範囲をやり直せる。
+    #[serde(rename = "txBeginStatement")]
+    pub tx_begin_statement: Option<u64>,
 }
 
 /// 進捗のスナップショット (コア → emit 側)。
@@ -183,6 +203,8 @@ pub enum ScriptRun {
         failure: Option<ScriptFailure>,
         executed: u64,
         rolled_back: bool,
+        in_transaction: bool,
+        tx_begin_statement: Option<u64>,
     },
 }
 
@@ -348,6 +370,7 @@ where
         skipped_control: 0,
         rows_affected: 0,
         pending_in_tx: 0,
+        tx_begin_index: None,
         wrote: false,
         schema_changed: false,
         batch: batch.map(|cfg| BatchState {
@@ -368,7 +391,7 @@ where
     }
 
     let mut splitter = ScriptSplitter::new(driver);
-    let mut decoder = encoding.codec().new_decoder();
+    let mut decoder = encoding.new_decoder();
     let mut raw = vec![0u8; READ_CHUNK_BYTES];
     let mut text = String::new();
     let mut bytes_read = 0u64;
@@ -750,6 +773,9 @@ struct Runner {
     rows_affected: u64,
     /// 開いているトランザクション内で成功した (未確定の) 文の数。
     pending_in_tx: u64,
+    /// スクリプト内の BEGIN で開いたトランザクションの BEGIN 文の通し番号。COMMIT / ROLLBACK が
+    /// 成功するまで残す (ROLLBACK が失敗しても「開いていた」ことを失敗報告に載せるため)。
+    tx_begin_index: Option<u64>,
     wrote: bool,
     schema_changed: bool,
     /// エディタのバッチ実行モード (#1256)。`None` なら `.sql` スクリプト実行。
@@ -800,11 +826,6 @@ impl Runner {
             }
             return None;
         }
-        // 事前確認の一覧で個別除外された文は実行しない (#1535)。
-        if !self.skip_set.is_empty() && self.skip_set.contains(&self.seen) {
-            self.skipped_excluded += 1;
-            return None;
-        }
         // バッチ実行が呼び出し側の明示トランザクションの上で動くときは、制御文も
         // 従来どおり生の SQL として同じ接続へ流す (読み替えると UI 側のトランザクション
         // 状態 (`txActive`) と食い違う)。
@@ -814,6 +835,13 @@ impl Runner {
         } else {
             classify_tx_statement(self.driver, &stmt.sql)
         };
+        // 事前確認の一覧で個別除外された文は実行しない (#1535)。ただしトランザクション制御文
+        // (BEGIN / COMMIT / ROLLBACK) は除外できない — 片方だけ外すと取り消されるはずの範囲が
+        // 確定したり、COMMIT が抜けたままになるので、番号が指定されていても無視して実行する。
+        if ctl.is_none() && !self.skip_set.is_empty() && self.skip_set.contains(&self.seen) {
+            self.skipped_excluded += 1;
+            return None;
+        }
         if let Some((ctl, tx_opts)) = ctl {
             let ctl_started = Instant::now();
             if self.options.wrap_in_transaction {
@@ -839,6 +867,7 @@ impl Runner {
                             .await;
                         if r.is_ok() {
                             self.guard.active = true;
+                            self.tx_begin_index = Some(self.seen);
                         }
                         r
                     }
@@ -854,7 +883,11 @@ impl Runner {
                     if self.guard.active {
                         self.guard.active = false;
                         self.pending_in_tx = 0;
-                        self.session.conn.finish_transaction(false).await
+                        let r = self.session.conn.finish_transaction(false).await;
+                        if r.is_ok() {
+                            self.tx_begin_index = None;
+                        }
+                        r
                     } else {
                         Ok(())
                     }
@@ -956,6 +989,7 @@ impl Runner {
     async fn commit(&mut self) -> Result<()> {
         self.guard.active = false;
         self.session.conn.finish_transaction(true).await?;
+        self.tx_begin_index = None;
         self.committed
             .fetch_add(self.pending_in_tx, Ordering::SeqCst);
         self.pending_in_tx = 0;
@@ -1019,6 +1053,8 @@ impl Runner {
     /// 実行を止める。開いているトランザクションがあれば ROLLBACK する。
     async fn abort_with(&mut self, message: String, failure: Option<ScriptFailure>) -> ScriptRun {
         let mut rolled_back = false;
+        let in_transaction = self.guard.active || self.tx_begin_index.is_some();
+        let tx_begin_statement = self.tx_begin_index;
         if self.guard.active {
             self.guard.active = false;
             self.pending_in_tx = 0;
@@ -1035,6 +1071,8 @@ impl Runner {
             failure,
             executed: self.executed,
             rolled_back,
+            in_transaction,
+            tx_begin_statement,
         }
     }
 
@@ -1088,7 +1126,8 @@ impl Drop for CancelHistoryGuard {
 }
 
 /// 対象ファイルのメタデータを確認する (空パス・ディレクトリ・特殊ファイルを拒否)。
-pub(crate) async fn script_file_size(path: &str) -> Result<u64> {
+/// [`script_file_size`] に更新時刻を添えたもの (事前確認との照合用)。
+pub(crate) async fn script_file_stamp(path: &str) -> Result<FileStamp> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("script file path is empty".into()));
     }
@@ -1098,7 +1137,26 @@ pub(crate) async fn script_file_size(path: &str) -> Result<u64> {
             "not a regular file: {path}"
         )));
     }
-    Ok(meta.len())
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64);
+    Ok(FileStamp {
+        size: meta.len(),
+        mtime_ms,
+    })
+}
+
+/// 事前確認のときのファイルと今のファイルが同じか確かめる。違えば文番号 (除外・開始位置) が
+/// ずれるので、実行前にエラーにして再確認を促す (#1535)。
+pub(crate) fn check_expected_file(expected: Option<FileStamp>, actual: FileStamp) -> Result<()> {
+    match expected {
+        Some(e) if e != actual => Err(AppError::InvalidInput(
+            "the script file changed after the dry run, so statement numbers may no longer match; run the dry run again".into(),
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// `.sql` スクリプトファイルを文単位でストリーミング実行する (#973)。進捗は
@@ -1118,7 +1176,9 @@ pub async fn run_sql_script(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     validate_options(&options)?;
-    let total_bytes = script_file_size(&path).await?;
+    let stamp = script_file_stamp(&path).await?;
+    check_expected_file(options.expected_file, stamp)?;
+    let total_bytes = stamp.size;
     if session.conn.transaction_active().await {
         return Err(AppError::InvalidInput(
             "an explicit transaction is already active on this session; commit or roll it back before running a script".into(),
@@ -1306,6 +1366,8 @@ async fn spawn_script(
             failure,
             executed,
             rolled_back,
+            in_transaction,
+            tx_begin_statement,
         }) => {
             tracing::error!(stream_id = %stream_id, error = %message, "sql script stopped");
             app.emit(
@@ -1316,6 +1378,8 @@ async fn spawn_script(
                     failure,
                     executed,
                     rolled_back,
+                    in_transaction,
+                    tx_begin_statement,
                 },
             )
         }
@@ -1329,6 +1393,8 @@ async fn spawn_script(
                     failure: None,
                     executed: 0,
                     rolled_back: false,
+                    in_transaction: false,
+                    tx_begin_statement: None,
                 },
             )
         }
@@ -1360,6 +1426,10 @@ pub struct ScriptAnalyzedEvent {
     pub encoding: TextEncoding,
     #[serde(rename = "totalBytes")]
     pub total_bytes: u64,
+    /// 事前確認したときのファイルの大きさ・更新時刻。実行時に `expectedFile` として渡すと、
+    /// 事前確認の後でファイルが変わっていれば実行前にエラーになる。
+    #[serde(rename = "fileStamp")]
+    pub file_stamp: FileStamp,
     #[serde(rename = "elapsedMs")]
     pub elapsed_ms: u64,
     pub analysis: ScriptAnalysis,
@@ -1382,7 +1452,7 @@ where
     let started = Instant::now();
     let mut analyzer = ScriptAnalyzer::new(driver, enforce_read_only);
     let mut splitter = ScriptSplitter::new(driver);
-    let mut decoder = encoding.codec().new_decoder();
+    let mut decoder = encoding.new_decoder();
     let mut raw = vec![0u8; READ_CHUNK_BYTES];
     let mut text = String::new();
     let mut bytes_read = 0u64;
@@ -1442,7 +1512,8 @@ pub async fn analyze_sql_script(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    let total_bytes = script_file_size(&path).await?;
+    let stamp = script_file_stamp(&path).await?;
+    let total_bytes = stamp.size;
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
     let stream_id_for_task = stream_id.clone();
     let committed = Arc::new(AtomicU64::new(0));
@@ -1457,6 +1528,7 @@ pub async fn analyze_sql_script(
             token,
             path,
             total_bytes,
+            stamp,
             encoding,
         )
         .await;
@@ -1476,6 +1548,7 @@ pub async fn analyze_sql_script(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_analysis(
     app: AppHandle,
     session: Arc<Session>,
@@ -1483,6 +1556,7 @@ async fn spawn_analysis(
     stream_token: u64,
     path: String,
     total_bytes: u64,
+    stamp: FileStamp,
     requested: Option<TextEncoding>,
 ) {
     let started = Instant::now();
@@ -1529,6 +1603,7 @@ async fn spawn_analysis(
                     stream_id: stream_id.clone(),
                     encoding,
                     total_bytes,
+                    file_stamp: stamp,
                     elapsed_ms: started.elapsed().as_millis() as u64,
                     analysis,
                 },
@@ -1544,6 +1619,8 @@ async fn spawn_analysis(
                     failure: None,
                     executed: 0,
                     rolled_back: false,
+                    in_transaction: false,
+                    tx_begin_statement: None,
                 },
             )
         }
@@ -1831,13 +1908,33 @@ mod tests {
     #[tokio::test]
     async fn rejects_empty_path_and_directories() {
         assert!(matches!(
-            script_file_size("  ").await,
+            script_file_stamp("  ").await,
             Err(AppError::InvalidInput(_))
         ));
         let dir = std::env::temp_dir();
         assert!(matches!(
-            script_file_size(&dir.to_string_lossy()).await,
+            script_file_stamp(&dir.to_string_lossy()).await,
             Err(AppError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn expected_file_must_match_when_given() {
+        let a = FileStamp {
+            size: 10,
+            mtime_ms: 1000,
+        };
+        assert!(check_expected_file(None, a).is_ok());
+        assert!(check_expected_file(Some(a), a).is_ok());
+        for other in [
+            FileStamp { size: 11, ..a },
+            FileStamp {
+                mtime_ms: 1001,
+                ..a
+            },
+        ] {
+            let err = check_expected_file(Some(a), other).unwrap_err();
+            assert!(err.to_string().contains("changed after the dry run"));
+        }
     }
 }

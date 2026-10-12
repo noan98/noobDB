@@ -51,6 +51,12 @@ impl TextEncoding {
         }
     }
 
+    /// 本文のデコーダ。**自分の BOM だけ**を取り除き、別の BOM を見て文字コードを乗り換える
+    /// ことはしない (`new_decoder()` は BOM に従って切り替えるので、手動指定が BOM に負ける)。
+    pub fn new_decoder(self) -> encoding_rs::Decoder {
+        self.codec().new_decoder_with_bom_removal()
+    }
+
     /// エラーメッセージ用の表示名。
     pub fn label(self) -> &'static str {
         match self {
@@ -101,7 +107,7 @@ impl Candidate {
     fn new(encoding: TextEncoding) -> Self {
         Self {
             encoding,
-            decoder: encoding.codec().new_decoder(),
+            decoder: encoding.new_decoder(),
             ok: true,
             score: 0,
         }
@@ -139,6 +145,14 @@ pub enum DetectError {
     Invalid(TextEncoding),
     /// UTF-8 でも Shift_JIS でも EUC-JP でもデコードできない。
     Undetected,
+    /// 指定した文字コードと先頭の BOM が食い違う (例: UTF-16 の BOM があるのに Shift_JIS 指定)。
+    BomMismatch {
+        requested: TextEncoding,
+        bom: TextEncoding,
+    },
+    /// 自動判定で UTF-8 / ASCII / 日本語の文字コードとなったが本文に NUL バイトがある
+    /// (バイナリ、または判定できなかった UTF-16)。
+    NulBytes,
 }
 
 impl DetectError {
@@ -148,6 +162,16 @@ impl DetectError {
                 "the file is not valid {}; pick the correct text encoding and try again",
                 enc.label()
             )),
+            DetectError::BomMismatch { requested, bom } => AppError::InvalidInput(format!(
+                "the file starts with a {} byte order mark but {} was selected; pick {} (or auto-detect)",
+                bom.label(),
+                requested.label(),
+                bom.label()
+            )),
+            DetectError::NulBytes => AppError::InvalidInput(
+                "the file contains NUL bytes; it is probably binary or UTF-16 without a BOM; pick the text encoding manually"
+                    .into(),
+            ),
             DetectError::Undetected => AppError::InvalidInput(
                 "could not detect the text encoding (not valid UTF-8 / Shift_JIS / EUC-JP); pick the encoding manually"
                     .into(),
@@ -167,6 +191,10 @@ pub struct EncodingDetector {
     candidates: Vec<Candidate>,
     /// 先頭チャンクで BOM / UTF-16 パターンにより確定した文字コード、または明示指定。
     fixed: Option<TextEncoding>,
+    /// 手動指定と先頭の BOM が食い違っていたときの BOM 側。
+    bom_mismatch: Option<TextEncoding>,
+    /// 自動判定の対象に NUL バイトがあったか。
+    nul_seen: bool,
     buf: String,
 }
 
@@ -182,6 +210,8 @@ impl EncodingDetector {
             non_ascii_seen: false,
             candidates: Vec::new(),
             fixed: requested,
+            bom_mismatch: None,
+            nul_seen: false,
             buf: String::new(),
         }
     }
@@ -189,8 +219,24 @@ impl EncodingDetector {
     pub fn feed(&mut self, bytes: &[u8], last: bool) {
         if !self.started {
             self.started = true;
-            if self.requested.is_none() {
-                self.fixed = sniff_prefix(bytes);
+            match self.requested {
+                None => self.fixed = sniff_prefix(bytes),
+                Some(req) => {
+                    // 手動指定でも先頭の BOM は無視しない。食い違えばエラー (戻り値の文字コードが
+                    // 実際の中身と一致しなくなるため)。UTF-8 の指定だけは BOM の有無を実際に合わせる。
+                    if let Some(bom) = sniff_bom(bytes) {
+                        let utf8_family = |e: TextEncoding| {
+                            matches!(e, TextEncoding::Utf8 | TextEncoding::Utf8Bom)
+                        };
+                        if utf8_family(req) && utf8_family(bom) {
+                            self.fixed = Some(bom);
+                        } else if req != bom {
+                            self.bom_mismatch = Some(bom);
+                        }
+                    } else if req == TextEncoding::Utf8Bom {
+                        self.fixed = Some(TextEncoding::Utf8);
+                    }
+                }
             }
             if let Some(enc) = self.fixed {
                 self.candidates.push(Candidate::new(enc));
@@ -203,6 +249,9 @@ impl EncodingDetector {
             return;
         }
         // 自動判定 (BOM なし・UTF-16 パターンなし)。
+        if self.requested.is_none() && !self.nul_seen && bytes.contains(&0) {
+            self.nul_seen = true;
+        }
         if !self.non_ascii_seen {
             if bytes.is_ascii() {
                 return;
@@ -221,6 +270,15 @@ impl EncodingDetector {
 
     /// 判定結果。全チャンクを `last = true` の呼び出しまで含めて食わせたあとに呼ぶ。
     pub fn finish(self) -> std::result::Result<TextEncoding, DetectError> {
+        if let (Some(req), Some(bom)) = (self.requested, self.bom_mismatch) {
+            return Err(DetectError::BomMismatch {
+                requested: req,
+                bom,
+            });
+        }
+        if self.requested.is_none() && self.fixed.is_none() && self.nul_seen {
+            return Err(DetectError::NulBytes);
+        }
         if let Some(enc) = self.fixed {
             return match self.candidates.first() {
                 Some(c) if c.ok => Ok(enc),
@@ -251,7 +309,7 @@ impl EncodingDetector {
 }
 
 /// 先頭バイト列から BOM / BOM なし UTF-16 を判定する。
-fn sniff_prefix(bytes: &[u8]) -> Option<TextEncoding> {
+fn sniff_bom(bytes: &[u8]) -> Option<TextEncoding> {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Some(TextEncoding::Utf8Bom);
     }
@@ -260,6 +318,13 @@ fn sniff_prefix(bytes: &[u8]) -> Option<TextEncoding> {
     }
     if bytes.starts_with(&[0xFE, 0xFF]) {
         return Some(TextEncoding::Utf16Be);
+    }
+    None
+}
+
+fn sniff_prefix(bytes: &[u8]) -> Option<TextEncoding> {
+    if let Some(bom) = sniff_bom(bytes) {
+        return Some(bom);
     }
     // BOM なしの UTF-16: ASCII 主体の SQL なら、片方の偶奇位置にだけ NUL が並ぶ。
     let sample = &bytes[..bytes.len().min(UTF16_SAMPLE_BYTES)];
@@ -276,19 +341,32 @@ fn sniff_prefix(bytes: &[u8]) -> Option<TextEncoding> {
             }
         }
     }
+    // 比率で判定する: 片側の位置に NUL が十分多く (全体の 1/8 以上かつ 2 個以上)、反対側は
+    // その 1/8 以下。日本語主体の UTF-16 は ASCII が少なく NUL も少ないので閾値を低めにし、
+    // 数個の混入 NUL だけで UTF-16 とは見なさない。最終的な妥当性は全体のデコードで確かめる。
     let slots = sample.len() / 2;
-    if odd * 4 >= slots && even == 0 {
+    if odd >= 2 && odd * 8 >= slots && even * 8 <= odd {
         return Some(TextEncoding::Utf16Le);
     }
-    if even * 4 >= slots && odd == 0 {
+    if even >= 2 && even * 8 >= slots && odd * 8 <= even {
         return Some(TextEncoding::Utf16Be);
     }
     None
 }
 
-/// バイト列全体の文字コードを判定する (ファイル全体がメモリにある場合)。
+/// バイト列全体の文字コードを判定する (ファイル全体がメモリにある場合、テスト用)。
+#[cfg(test)]
 pub fn detect(bytes: &[u8]) -> std::result::Result<TextEncoding, DetectError> {
-    let mut d = EncodingDetector::new(None);
+    detect_with(bytes, None)
+}
+
+/// [`detect`] に手動指定を加えたもの。`requested` が `Some` なら自動判定せずその文字コードで
+/// 全体を検証し、BOM が食い違えばエラー。返す文字コードは実際の中身と一致する。
+pub fn detect_with(
+    bytes: &[u8],
+    requested: Option<TextEncoding>,
+) -> std::result::Result<TextEncoding, DetectError> {
+    let mut d = EncodingDetector::new(requested);
     d.feed(bytes, true);
     d.finish()
 }
@@ -296,7 +374,7 @@ pub fn detect(bytes: &[u8]) -> std::result::Result<TextEncoding, DetectError> {
 /// バイト列全体を `encoding` でデコードする。先頭の BOM は取り除く。不正なバイトが
 /// あればエラー (置換しない)。
 pub fn decode_all(bytes: &[u8], encoding: TextEncoding) -> Result<String> {
-    let mut decoder = encoding.codec().new_decoder();
+    let mut decoder = encoding.new_decoder();
     let mut out = String::new();
     if decode_chunk(&mut decoder, bytes, true, &mut out) {
         Ok(out)
@@ -405,6 +483,64 @@ mod tests {
             be.extend_from_slice(&u.to_be_bytes());
         }
         assert_eq!(detect(&be).unwrap(), TextEncoding::Utf16Be);
+    }
+
+    #[test]
+    fn utf16_without_bom_is_detected_by_ratio_even_with_stray_nul_or_cjk() {
+        // 日本語主体 (ASCII が少ない) でも検出できる。
+        let mut le = Vec::new();
+        for u in "INSERT INTO t VALUES ('日本語の長いテキストです');".encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(detect(&le).unwrap(), TextEncoding::Utf16Le);
+        // 偶数側に 1 つ NUL が混ざっても、反対側が十分多ければ UTF-16LE。
+        let mut le2 = Vec::new();
+        for u in "SELECT * FROM users WHERE id = 1 AND name = 'x';".encode_utf16() {
+            le2.extend_from_slice(&u.to_le_bytes());
+        }
+        le2[10] = 0;
+        assert_eq!(detect(&le2).unwrap(), TextEncoding::Utf16Le);
+    }
+
+    #[test]
+    fn nul_bytes_in_utf8_or_ascii_are_rejected() {
+        assert_eq!(detect(b"SELECT 1;\0 SELECT 2;"), Err(DetectError::NulBytes));
+        assert_eq!(
+            detect("SELECT '日本';\0".as_bytes()),
+            Err(DetectError::NulBytes)
+        );
+        // 明示指定ならこの検査はしない (従来どおりデコードの妥当性だけ)。
+        assert_eq!(
+            detect_with(b"SELECT 1;\0", Some(TextEncoding::Utf8)),
+            Ok(TextEncoding::Utf8)
+        );
+    }
+
+    #[test]
+    fn explicit_encoding_conflicting_with_the_bom_is_an_error() {
+        let le = encode("SELECT 1;", TextEncoding::Utf16Le).unwrap();
+        assert_eq!(
+            detect_with(&le, Some(TextEncoding::ShiftJis)),
+            Err(DetectError::BomMismatch {
+                requested: TextEncoding::ShiftJis,
+                bom: TextEncoding::Utf16Le
+            })
+        );
+        assert!(detect_with(&le, Some(TextEncoding::Utf16Be)).is_err());
+        assert_eq!(
+            detect_with(&le, Some(TextEncoding::Utf16Le)),
+            Ok(TextEncoding::Utf16Le)
+        );
+        // UTF-8 系は BOM の有無を実際に合わせて返す。
+        let bom8 = encode("SELECT 1;", TextEncoding::Utf8Bom).unwrap();
+        assert_eq!(
+            detect_with(&bom8, Some(TextEncoding::Utf8)),
+            Ok(TextEncoding::Utf8Bom)
+        );
+        assert_eq!(
+            detect_with(b"SELECT 1;", Some(TextEncoding::Utf8Bom)),
+            Ok(TextEncoding::Utf8)
+        );
     }
 
     #[test]

@@ -4299,6 +4299,10 @@
     },
     "elapsedMs": 12,
     "encoding": "shift_jis",
+    "fileStamp": {
+      "mtimeMs": 1700000000000,
+      "size": 2048
+    },
     "streamId": "strm0007",
     "totalBytes": 2048
   },
@@ -4330,8 +4334,10 @@
       "line": 12,
       "sql": "INSERT INTO t VALUES (1)"
     },
+    "inTransaction": true,
     "rolledBack": true,
-    "streamId": "strm0007"
+    "streamId": "strm0007",
+    "txBeginStatement": 2
   },
   "scriptProgressEvent": {
     "bytesRead": 4096,

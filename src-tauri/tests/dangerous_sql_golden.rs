@@ -47,12 +47,15 @@ fn dangerous_sql_golden_matches_shared_vectors() {
     let mut failures = Vec::new();
     for case in &vectors.cases {
         let mysql_expected = case.kind_mysql.clone().unwrap_or_else(|| case.kind.clone());
-        for driver in [t::DriverKind::Postgres, t::DriverKind::Sqlite] {
+        for (driver, expected) in [
+            (t::DriverKind::Postgres, &case.kind),
+            (t::DriverKind::Sqlite, &case.kind),
+        ] {
             let actual = t::classify_dangerous_kind(driver, &case.sql).map(str::to_string);
-            if actual != case.kind {
+            if &actual != expected {
                 failures.push(format!(
                     "  - {:?} (note: {}) [{driver:?}]: expected {:?}, got {:?}",
-                    case.sql, case.note, case.kind, actual
+                    case.sql, case.note, expected, actual
                 ));
             }
         }

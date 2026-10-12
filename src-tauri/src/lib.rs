@@ -242,7 +242,7 @@ pub mod __test_api {
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
     pub use crate::commands::script::{
-        BatchStatementResult, BatchStatus, BatchStreamMessage, ScriptAnalyzedEvent,
+        BatchStatementResult, BatchStatus, BatchStreamMessage, FileStamp, ScriptAnalyzedEvent,
         ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
         ScriptProgressEvent, ScriptRun,
     };
@@ -306,7 +306,9 @@ pub mod __test_api {
     where
         F: FnMut(ScriptProgress),
     {
-        let total = crate::commands::script::script_file_size(path).await?;
+        let stamp = crate::commands::script::script_file_stamp(path).await?;
+        crate::commands::script::check_expected_file(options.expected_file, stamp)?;
+        let total = stamp.size;
         let (file, encoding) =
             crate::commands::script::open_script_file(path, options.encoding).await?;
         let options = ScriptOptions {

@@ -9,7 +9,10 @@ import {
   omittedFailureCount,
   parseStartAt,
   remainingDangerous,
+  resumeFromBeginAt,
   resumeStartAt,
+  isAnalysisStaleError,
+  startInsideTransaction,
   scriptProgressPercent,
   scriptProgressRatio,
   setDangerousExcluded,
@@ -71,10 +74,17 @@ describe("完了/エラーの要約", () => {
         failure: { index: 2, line: 3, sql: "INSERT", error: "boom" },
         executed: 2,
         rolledBack: true,
+        inTransaction: true,
+        txBeginStatement: 1,
       }),
     ).toEqual({ message: "boom", line: 3, index: 2, sql: "INSERT", rolledBack: true });
     expect(
-      describeScriptError({ streamId: "s", error: "no file", failure: null, executed: 0, rolledBack: false }),
+      describeScriptError({ streamId: "s", error: "no file", failure: null,
+        executed: 0,
+        rolledBack: false,
+        inTransaction: false,
+        txBeginStatement: null,
+      }),
     ).toEqual({ message: "no file", line: null, index: null, sql: null, rolledBack: false });
   });
 
@@ -153,15 +163,80 @@ describe("事前確認 (ドライラン) の補助 (#1535)", () => {
 describe("resumeStartAt (#1535)", () => {
   const failure = { index: 7, line: 12, sql: "INSERT", error: "boom" };
   const noWrap = { wrapInTransaction: false };
+  const plain = { failure, rolledBack: false, inTransaction: false };
 
   it("失敗した文の通し番号から、または次の文から再開できる", () => {
-    expect(resumeStartAt({ failure, rolledBack: false }, noWrap)).toBe(7);
-    expect(resumeStartAt({ failure, rolledBack: false }, noWrap, true)).toBe(8);
+    expect(resumeStartAt(plain, noWrap)).toBe(7);
+    expect(resumeStartAt(plain, noWrap, true)).toBe(8);
   });
 
   it("原因の文が無い・ロールバックされた・全体を包んでいた場合は再開できない", () => {
-    expect(resumeStartAt({ failure: null, rolledBack: false }, noWrap)).toBeNull();
-    expect(resumeStartAt({ failure, rolledBack: true }, noWrap)).toBeNull();
-    expect(resumeStartAt({ failure, rolledBack: false }, { wrapInTransaction: true })).toBeNull();
+    expect(resumeStartAt({ ...plain, failure: null }, noWrap)).toBeNull();
+    expect(resumeStartAt({ ...plain, rolledBack: true }, noWrap)).toBeNull();
+    expect(resumeStartAt(plain, { wrapInTransaction: true })).toBeNull();
+  });
+
+  it("トランザクション中の失敗は ROLLBACK の成否に関係なく再開できない", () => {
+    // ROLLBACK が失敗した (rolledBack = false) ときも、取り消された範囲を飛ばさない。
+    const rollbackFailed = { failure, rolledBack: false, inTransaction: true };
+    expect(resumeStartAt(rollbackFailed, noWrap)).toBeNull();
+    expect(resumeStartAt(rollbackFailed, noWrap, true)).toBeNull();
+    expect(resumeStartAt({ ...rollbackFailed, rolledBack: true }, noWrap)).toBeNull();
+  });
+});
+
+describe("resumeFromBeginAt (#1535)", () => {
+  const failure = { index: 7, line: 12, sql: "INSERT", error: "boom" };
+  const noWrap = { wrapInTransaction: false };
+
+  it("トランザクション中の失敗は BEGIN の文から再開できる", () => {
+    expect(resumeFromBeginAt({ failure, inTransaction: true, txBeginStatement: 3 }, noWrap)).toBe(3);
+  });
+
+  it("トランザクション外・BEGIN 不明・全体を包んでいた・原因不明なら null", () => {
+    expect(resumeFromBeginAt({ failure, inTransaction: false, txBeginStatement: null }, noWrap)).toBeNull();
+    expect(resumeFromBeginAt({ failure, inTransaction: true, txBeginStatement: null }, noWrap)).toBeNull();
+    expect(
+      resumeFromBeginAt({ failure, inTransaction: true, txBeginStatement: 3 }, { wrapInTransaction: true }),
+    ).toBeNull();
+    expect(resumeFromBeginAt({ failure: null, inTransaction: true, txBeginStatement: 3 }, noWrap)).toBeNull();
+  });
+});
+
+describe("startInsideTransaction (#1535)", () => {
+  const tx = (kind: "begin" | "commit" | "rollback", index: number) => ({ index, line: index, kind });
+  const a = { txControls: [tx("begin", 2), tx("commit", 6), tx("begin", 9), tx("rollback", 12)], txControlTotal: 4 };
+
+  it("BEGIN と COMMIT の間の開始位置なら、その BEGIN の番号を返す", () => {
+    expect(startInsideTransaction(a, 4)).toBe(2);
+    expect(startInsideTransaction(a, 6)).toBe(2);
+    expect(startInsideTransaction(a, 10)).toBe(9);
+  });
+
+  it("トランザクションの外・先頭からなら null", () => {
+    expect(startInsideTransaction(a, 0)).toBeNull();
+    expect(startInsideTransaction(a, 1)).toBeNull();
+    expect(startInsideTransaction(a, 2)).toBeNull();
+    expect(startInsideTransaction(a, 7)).toBeNull();
+    expect(startInsideTransaction(a, 13)).toBeNull();
+  });
+
+  it("制御文の一覧が途切れていて先が見えないときは判定しない", () => {
+    expect(startInsideTransaction({ txControls: [tx("begin", 2)], txControlTotal: 50 }, 40)).toBeNull();
+    // 一覧の範囲内なら途切れていても判定できる。
+    expect(
+      startInsideTransaction({ txControls: [tx("begin", 2), tx("commit", 30)], txControlTotal: 50 }, 10),
+    ).toBe(2);
+  });
+});
+
+describe("isAnalysisStaleError (#1535)", () => {
+  it("バックエンドの『事前確認のあとでファイルが変わった』エラーだけに一致する", () => {
+    expect(
+      isAnalysisStaleError(
+        "invalid input: the script file changed after the dry run, so statement numbers may no longer match; run the dry run again",
+      ),
+    ).toBe(true);
+    expect(isAnalysisStaleError("an explicit transaction is already active")).toBe(false);
   });
 });

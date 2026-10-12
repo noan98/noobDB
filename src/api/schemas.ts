@@ -1449,6 +1449,7 @@ export const scriptAnalyzedEvent = z.object({
   streamId: z.string(),
   encoding: textEncoding,
   totalBytes: z.number(),
+  fileStamp: z.object({ size: z.number(), mtimeMs: z.number() }),
   elapsedMs: z.number(),
   analysis: scriptAnalysis,
 });
@@ -1459,6 +1460,8 @@ export const scriptErrorEvent = z.object({
   failure: scriptFailure.nullable(),
   executed: z.number(),
   rolledBack: z.boolean(),
+  inTransaction: z.boolean(),
+  txBeginStatement: z.number().nullable(),
 });
 
 // ストリーミングダンプのイベント (#686)。

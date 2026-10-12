@@ -1,5 +1,5 @@
 {
-  "description": "classify_dangerous (Rust db/script_analysis.rs) と analyzeDangerousSql (src/dangerousSql.ts) の共有ゴールデン (#1535)。1 文ずつの判定で、kind は標準解釈 (PostgreSQL / SQLite / ドライバ不明)、kindMysql は MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけに書く。null は危険ではない。",
+  "description": "classify_dangerous (Rust db/script_analysis.rs) と analyzeDangerousSql (src/dangerousSql.ts) の共有ゴールデン (#1535)。1 文ずつの判定で、kind は標準解釈 (PostgreSQL / SQLite / ドライバ不明)、kindMysql は MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけに書く。null は危険ではない。 kindUnknown はフロントだけが持つ『ドライバ不明』の期待値 (# を行コメントとして扱うため)。省略時は kind と同じ。",
   "cases": [
     {
       "sql": "DELETE FROM t",
@@ -161,6 +161,68 @@
       "sql": "WITH x AS (SELECT 1) DELETE FROM t",
       "kind": null,
       "note": "WITH で始まる文は先頭キーワードが違うため対象外 (ベストエフォート)"
+    },
+    {
+      "sql": "﻿DELETE FROM t",
+      "kind": "deleteNoWhere",
+      "note": "先頭の U+FEFF (BOM / ZWNBSP) は空白扱いで読み飛ばす (JS の trim と Rust の trim の差)"
+    },
+    {
+      "sql": "DELETE FROM t",
+      "kind": "deleteNoWhere",
+      "note": "先頭の U+0085 (NEL) も読み飛ばす (Rust の trim は空白、JS は非空白)"
+    },
+    {
+      "sql": "﻿UPDATE t SET a = 1",
+      "kind": "updateNoWhere",
+      "note": "先頭 U+FEFF の UPDATE"
+    },
+    {
+      "sql": "DELETE FROM t # where id = 1",
+      "kind": null,
+      "kindMysql": "deleteNoWhere",
+      "note": "# は MySQL とドライバ不明だけ行コメント: そこでは where がコメント内なので WHERE なし (PostgreSQL / SQLite では演算子扱いで where が見える)",
+      "kindUnknown": "deleteNoWhere"
+    },
+    {
+      "sql": "DELETE FROM t RETURNING $$ where $$",
+      "kind": "deleteNoWhere",
+      "note": "$$...$$ 内の where は (保守的なマスクにより全ドライバで) 文字列として無視する"
+    },
+    {
+      "sql": "DELETE FROM t RETURNING \"where\"",
+      "kind": "deleteNoWhere",
+      "note": "\"where\" の引用識別子は WHERE 句ではない"
+    },
+    {
+      "sql": "DELETE FROM t /*!50000 WHERE id=1 */",
+      "kind": null,
+      "note": "/*!50000 ... */ の中身は MySQL が実行するので WHERE ありとみなす。マスクは全ドライバ共通でこの本文を残す (現状の仕様をフロントとバックで固定)"
+    },
+    {
+      "sql": "(DELETE FROM t WHERE id=1)",
+      "kind": null,
+      "note": "括弧で囲まれていても WHERE があれば安全"
+    },
+    {
+      "sql": "(DELETE FROM t)",
+      "kind": "deleteNoWhere",
+      "note": "括弧で囲まれた WHERE なし DELETE も検出する"
+    },
+    {
+      "sql": "DELETE\r\nFROM t",
+      "kind": "deleteNoWhere",
+      "note": "CRLF 区切りの WHERE なし DELETE"
+    },
+    {
+      "sql": "DELETE FROM t\r\nWHERE id = 1",
+      "kind": null,
+      "note": "CRLF 区切りの WHERE あり"
+    },
+    {
+      "sql": "UPDATE t\r\nSET a = 1",
+      "kind": "updateNoWhere",
+      "note": "CRLF 区切りの WHERE なし UPDATE"
     }
   ]
 }

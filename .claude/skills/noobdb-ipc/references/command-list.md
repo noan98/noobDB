@@ -379,7 +379,8 @@ SQL を揃えている)。`fetch_cell_bytes` は主キーで 1 セルの生バ�
 
 `read_sql_file` (`commands/file.rs`, #1535) は SQL ファイルを**文字コード付き**で読む。`encoding`
 省略は自動判定 (BOM → UTF-8 として妥当か → Shift_JIS / EUC-JP をスコアで判別。UTF-16 は BOM または
-NUL パターン)、指定があればその文字コード。不正バイトは U+FFFD に置換せずエラー。戻り値
+NUL の比率パターン。自動判定で本文に NUL があればエラー)、指定があればその文字コード
+(先頭の BOM と食い違えばエラー。UTF-8 系は BOM の有無を実際に合わせて返す)。不正バイトは U+FFFD に置換せずエラー。戻り値
 `{ content, encoding }` の `encoding` をフロントがタブ (`Tab.fileEncoding`) に覚え、保存時に
 `write_text_file` の `encoding` へ渡して同じ文字コードに書き戻す。識別子は `utf-8` / `utf-8-bom` /
 `utf-16le` / `utf-16be` / `shift_jis` / `euc-jp` (Rust `text_encoding::TextEncoding`)。`read_text_file`
@@ -444,8 +445,13 @@ BEGIN/COMMIT/ROLLBACK は明示トランザクションのプリミティブへ�
 `encoding` (省略 = 自動判定。**実行前にファイル全体を事前スキャン**して判定と妥当性確認を済ませ、
 不正バイトなら 1 文も実行しない)、`startAtStatement` (この通し番号より前の文を実行せず読み飛ばす。
 `ScriptFailure.index` と同じ 1 始まりでトランザクション制御文を含む。失敗した文からの再開用。読み飛ばした
-文の `USE` による DB 切り替えには追従する)、`skipStatements` (個別除外する通し番号。上限 10 万件) を持つ。
-`sql-script:done` に `skippedExcluded` / `skippedBeforeStart` が付く。
+文の `USE` による DB 切り替えには追従する)、`skipStatements` (個別除外する通し番号。上限 10 万件。
+**BEGIN / COMMIT / ROLLBACK の番号は指定されても無視して実行する**)、`expectedFile` (事前確認時の
+`{ size, mtimeMs }` = `sql-script:analyzed` の `fileStamp`。実行時のファイルと違えば 1 文も実行せずエラー) を持つ。
+`sql-script:done` に `skippedExcluded` / `skippedBeforeStart` が付く。`sql-script:error` には
+`inTransaction` (失敗時にトランザクションが開いていた。ROLLBACK の成否に関係なく true) と
+`txBeginStatement` (スクリプト内の BEGIN の通し番号) が付き、フロントはトランザクション中の失敗では
+「この文から再開」を出さず、BEGIN の文から再開させる。
 
 `analyze_sql_script` (`commands/script.rs`, #1535) — 実行前の**事前確認 (ドライラン)**。`run_sql_script`
 と同じストリーミング読み + 文分割で 1 文ずつ `db/script_analysis.rs` の `ScriptAnalyzer` へ渡し、

@@ -286,15 +286,19 @@ pub fn classify_dangerous(driver: DriverKind, sql: &str) -> Option<DangerKind> {
     let chars: Vec<char> = sql.chars().collect();
     let masked: String = mask_for_driver(driver, &chars).into_iter().collect();
     let lower = masked.to_lowercase();
-    let body = lower.trim_start_matches(|c: char| c.is_whitespace() || c == '(');
+    // 先頭の空白と `(` を読み飛ばす。Rust の `is_whitespace` は U+0085 を含み U+FEFF を含まないが、
+    // JS の `\s` は逆なので、両方を明示してフロントと判定を揃える (共有ゴールデンで固定)。
+    let body = lower.trim_start_matches(|c: char| {
+        c.is_whitespace() || c == '(' || c == '\u{FEFF}' || c == '\u{0085}'
+    });
     if body.is_empty() {
         return None;
     }
     if keyword_prefix(body, "delete") {
-        return (!has_top_level_where(&lower)).then_some(DangerKind::DeleteNoWhere);
+        return (!has_top_level_where(body)).then_some(DangerKind::DeleteNoWhere);
     }
     if keyword_prefix(body, "update") {
-        return (!has_top_level_where(&lower)).then_some(DangerKind::UpdateNoWhere);
+        return (!has_top_level_where(body)).then_some(DangerKind::UpdateNoWhere);
     }
     if keyword_prefix(body, "truncate") {
         return Some(DangerKind::Truncate);

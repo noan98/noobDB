@@ -86,7 +86,11 @@
   チャンクをデコードする (`text_encoding.rs`)。
 - **再開・除外 (#1535)**: `options.startAtStatement` より前の文は実行せず読み飛ばし (`USE` の DB 切り替えにだけ
   追従)、`options.skipStatements` の通し番号の文も実行しない。通し番号は `ScriptFailure.index` と同じ
-  (1 始まり、制御文を含む)。
+  (1 始まり、制御文を含む)。BEGIN / COMMIT / ROLLBACK は除外できない (`run_statement` が制御文の判定後に
+  除外を見る)。`options.expectedFile` (事前確認時のファイルの大きさ・更新時刻) が実際と違えば実行前にエラー。
+- **失敗時のトランザクション状態 (#1535)**: `Runner.tx_begin_index` はスクリプト内の BEGIN の通し番号で、
+  COMMIT / ROLLBACK が**成功するまで**残る。`abort_with` はこれと `guard.active` から `in_transaction` /
+  `tx_begin_statement` を作って `ScriptErrorEvent` に載せる (ROLLBACK が失敗しても true のまま)。
 - **事前確認 `analyze_sql_script` (#1535)**: 同じ 3 点セット (`StreamKind::Script`、`sql-script:progress` /
   `:analyzed` / `:error` / `:cancelled`) で、DB に触れずに分割 → `db/script_analysis.rs` の
   `ScriptAnalyzer` で集計する。保持するのは有限個 (先頭 300 文・危険文 200 件・制御文の位置 200 件・件数)

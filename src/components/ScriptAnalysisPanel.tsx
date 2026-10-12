@@ -168,6 +168,7 @@ export function ScriptAnalysisPanel({
           {a.txControlTotal > txShown.length && (
             <> {t("scriptAnalysisTxOverflow", { count: (a.txControlTotal - txShown.length).toLocaleString() })}</>
           )}
+          <chakra.div>{t("scriptAnalysisTxLocked")}</chakra.div>
         </chakra.div>
       )}
 
@@ -241,7 +242,7 @@ function StatementList({
               <Checkbox
                 checked={skipped}
                 onChange={() => onToggle(s.index)}
-                disabled={disabled}
+                disabled={disabled || s.category === "txControl"}
                 aria-label={t("scriptAnalysisSkipAria", { index: s.index })}
               />
             </chakra.span>

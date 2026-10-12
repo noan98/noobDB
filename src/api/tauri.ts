@@ -2146,8 +2146,22 @@ export interface ScriptOptions {
    * (#1535)。失敗した文からの再開に使う。0 は先頭から。
    */
   startAtStatement: number;
-  /** 実行せず読み飛ばす文の通し番号 (事前確認の一覧での個別除外、#1535)。 */
+  /**
+   * 実行せず読み飛ばす文の通し番号 (事前確認の一覧での個別除外、#1535)。BEGIN / COMMIT /
+   * ROLLBACK の番号は指定されても無視される (バックエンドが常に実行する)。
+   */
   skipStatements: number[];
+  /**
+   * 事前確認をしたときのファイルの大きさ・更新時刻 (`ScriptAnalyzedEvent.fileStamp`)。
+   * 実行時のファイルと違えば、文番号がずれるので実行前にエラーになる (#1535)。
+   */
+  expectedFile?: ScriptFileStamp | null;
+}
+
+/** ファイルの大きさと更新時刻 (ミリ秒)。事前確認の後でファイルが変わっていないかの照合用。 */
+export interface ScriptFileStamp {
+  size: number;
+  mtimeMs: number;
 }
 
 /**
@@ -2198,6 +2212,8 @@ export interface ScriptAnalyzedEvent {
   streamId: string;
   encoding: TextEncodingId;
   totalBytes: number;
+  /** 事前確認したときのファイルの大きさ・更新時刻。実行時に `expectedFile` として渡す。 */
+  fileStamp: ScriptFileStamp;
   elapsedMs: number;
   analysis: ScriptAnalysis;
 }
@@ -2242,6 +2258,13 @@ export interface ScriptErrorEvent {
   executed: number;
   /** 開いていたトランザクションを ROLLBACK したか。 */
   rolledBack: boolean;
+  /**
+   * 失敗した時点でトランザクションが開いていたか (ROLLBACK の成否に関係なく true)。
+   * 開いていたなら失敗した文だけからの再開は欠けた範囲を残すので出さない。
+   */
+  inTransaction: boolean;
+  /** 開いていたトランザクションを始めた BEGIN 文の通し番号 (全体を包む実行では `null`)。 */
+  txBeginStatement: number | null;
 }
 
 export interface ScriptStreamHandlers {

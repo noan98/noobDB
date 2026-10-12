@@ -18,19 +18,23 @@ import {
   classifyScriptDone,
   DEFAULT_SCRIPT_OPTIONS,
   describeScriptError,
+  isAnalysisStaleError,
   makeScriptStreamId,
   omittedFailureCount,
   parseStartAt,
   remainingDangerous,
+  resumeFromBeginAt,
   resumeStartAt,
   scriptProgressPercent,
   setDangerousExcluded,
   skipList,
+  startInsideTransaction,
   toggleExcluded,
   toggleScriptOption,
   type ScriptToggleKey,
 } from "../scriptRun";
 import { parseTextEncodingId, TEXT_ENCODING_OPTIONS } from "../sqlFileIO";
+import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -39,6 +43,12 @@ import { ScriptAnalysisPanel } from "./ScriptAnalysisPanel";
 import { StreamProgressBar } from "./StreamProgressBar";
 import { useToast } from "./Toast";
 import { Button, Input, Select, Switch } from "./ui";
+
+/** 事前確認の結果と、それを取ったときの入力 (ファイル + 文字コード) のキー。 */
+interface AnalysisResult {
+  event: ScriptAnalyzedEvent;
+  key: string;
+}
 
 interface Props {
   sessionId: string;
@@ -56,7 +66,8 @@ type Status =
   | { kind: "analyzing" }
   | { kind: "analysisError"; message: string }
   | { kind: "done"; event: ScriptDoneEvent }
-  | { kind: "error"; event: ScriptErrorEvent }
+  /** `runOptions` はその実行で実際に使ったオプション (再開の可否は画面の現在の設定ではなくこれで決める)。 */
+  | { kind: "error"; event: ScriptErrorEvent; runOptions: ScriptOptions }
   | { kind: "setupError"; message: string };
 
 const OPTION_ROWS: { key: ScriptToggleKey; label: I18nKey; hint: I18nKey }[] = [
@@ -86,13 +97,15 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [progress, setProgress] = useState<ScriptProgressEvent | null>(null);
   /** 事前確認 (ドライラン) の結果と、それを取ったときの入力 (ファイル + 文字コード)。 */
-  const [analysis, setAnalysis] = useState<{ event: ScriptAnalyzedEvent; key: string } | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   /** 事前確認の一覧で「実行しない」にした文の通し番号。 */
   const [excluded, setExcluded] = useState<ReadonlySet<number>>(new Set());
   const analysisRef = useRef<HTMLDivElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  /** 走査中の事前確認の完了待ち (キャンセル・アンマウントで `null` を返して待ちを解く)。 */
+  const pendingAnalysisRef = useRef<((r: AnalysisResult | null) => void) | null>(null);
 
   // 実行中にアンマウントされたら購読を外し、バックエンドのストリームも止める。
   const unmountedRef = useRef(false);
@@ -109,6 +122,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       unlistenRef.current?.();
       unlistenRef.current = null;
       streamIdRef.current = null;
+      pendingAnalysisRef.current?.(null);
     };
   }, []);
 
@@ -143,50 +157,71 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     if (typeof selected === "string" && selected) setPath(selected);
   };
 
-  /** 実行せずにファイルを走査して、文数・危険文・先頭の文の一覧を出す (#1535)。 */
-  const handleAnalyze = async () => {
-    const target = path.trim();
-    if (!target || busy) return;
-    const streamId = makeScriptStreamId();
-    streamIdRef.current = streamId;
-    const key = inputKey;
-    setStatus({ kind: "analyzing" });
-    setProgress(null);
-    setAnalysis(null);
-    setExcluded(new Set());
-    try {
-      const unlisten = await listenScriptStream(streamId, {
-        onProgress: (e) => setProgress(e),
-        onAnalyzed: (e) => {
-          cleanupStream();
-          setAnalysis({ event: e, key });
-          setStatus({ kind: "idle" });
-          setProgress(null);
-          // 結果は折りたたみの下に出るので、見える位置へスクロールする。
-          requestAnimationFrame(() => analysisRef.current?.scrollIntoView?.({ block: "start" }));
-        },
-        onError: (e) => {
-          cleanupStream();
-          setStatus({ kind: "analysisError", message: describeScriptError(e).message });
-          setProgress(null);
-        },
-        onCancelled: () => {
-          cleanupStream();
-          setStatus({ kind: "idle" });
-          setProgress(null);
-        },
-      });
-      if (unmountedRef.current || streamIdRef.current !== streamId) {
-        unlisten();
-        return;
-      }
-      unlistenRef.current = unlisten;
-      await api.analyzeSqlScript({ sessionId, streamId, path: target, encoding: options.encoding });
-    } catch (e) {
-      cleanupStream();
-      setStatus({ kind: "analysisError", message: String(e) });
+  /**
+   * 実行せずにファイルを走査して、文数・危険文・先頭の文の一覧を出す (#1535)。失敗・キャンセル
+   * なら `null`。実行ボタンからの自動確認 (`scroll = false`) でも同じ経路を使う。
+   */
+  const analyzeNow = (scroll: boolean): Promise<AnalysisResult | null> =>
+    new Promise((resolve) => {
+      const target = path.trim();
+      const streamId = makeScriptStreamId();
+      streamIdRef.current = streamId;
+      const key = inputKey;
+      const finish = (r: AnalysisResult | null) => {
+        pendingAnalysisRef.current = null;
+        resolve(r);
+      };
+      pendingAnalysisRef.current = finish;
+      setStatus({ kind: "analyzing" });
       setProgress(null);
-    }
+      setAnalysis(null);
+      setExcluded(new Set());
+      void (async () => {
+        try {
+          const unlisten = await listenScriptStream(streamId, {
+            onProgress: (e) => setProgress(e),
+            onAnalyzed: (e) => {
+              cleanupStream();
+              const result = { event: e, key };
+              setAnalysis(result);
+              setStatus({ kind: "idle" });
+              setProgress(null);
+              // 結果は折りたたみの下に出るので、見える位置へスクロールする。
+              if (scroll) requestAnimationFrame(() => analysisRef.current?.scrollIntoView?.({ block: "start" }));
+              finish(result);
+            },
+            onError: (e) => {
+              cleanupStream();
+              setStatus({ kind: "analysisError", message: describeScriptError(e).message });
+              setProgress(null);
+              finish(null);
+            },
+            onCancelled: () => {
+              cleanupStream();
+              setStatus({ kind: "idle" });
+              setProgress(null);
+              finish(null);
+            },
+          });
+          if (unmountedRef.current || streamIdRef.current !== streamId) {
+            unlisten();
+            finish(null);
+            return;
+          }
+          unlistenRef.current = unlisten;
+          await api.analyzeSqlScript({ sessionId, streamId, path: target, encoding: options.encoding });
+        } catch (e) {
+          cleanupStream();
+          setStatus({ kind: "analysisError", message: String(e) });
+          setProgress(null);
+          finish(null);
+        }
+      })();
+    });
+
+  const handleAnalyze = async () => {
+    if (!path.trim() || busy) return;
+    await analyzeNow(true);
   };
 
   /** `override` は再開位置など、状態を介さずに今回だけ差し替えるオプション。 */
@@ -194,9 +229,13 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     const target = path.trim();
     if (!target || busy) return;
     const startAt = override?.startAtStatement ?? parseStartAt(startAtText);
+    // 新しい事前確認が無ければ、実行の前に自動で走らせる (危険文の確認を飛ばさせない)。
+    const checked: AnalysisResult | null = analysisFresh ? analysis : await analyzeNow(false);
+    if (!checked) return;
+    if (unmountedRef.current) return;
     const skip = analysisFresh ? excluded : new Set<number>();
-    if (analysisFresh && analysis) {
-      const dangerous = remainingDangerous(analysis.event.analysis, skip, startAt);
+    {
+      const dangerous = remainingDangerous(checked.event.analysis, skip, startAt);
       if (dangerous > 0) {
         const ok = await confirm({
           title: t("scriptDangerConfirmTitle"),
@@ -221,6 +260,8 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       ...override,
       startAtStatement: startAt,
       skipStatements: skipList(skip),
+      // 事前確認のときのファイルと違えば、文番号がずれるのでバックエンドが実行前にエラーにする。
+      expectedFile: checked.event.fileStamp,
     };
     const streamId = makeScriptStreamId();
     streamIdRef.current = streamId;
@@ -248,7 +289,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
         },
         onError: (e) => {
           cleanupStream();
-          setStatus({ kind: "error", event: e });
+          setStatus({ kind: "error", event: e, runOptions });
           setProgress(null);
           toast.error(t("scriptError", { error: describeScriptError(e).message }));
         },
@@ -270,9 +311,17 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     } catch (e) {
       // 購読・開始 (入力検証) の失敗は終端イベントが来ないので、ここで UI を戻す。
       cleanupStream();
-      setStatus({ kind: "setupError", message: String(e) });
       setProgress(null);
-      toast.error(t("scriptError", { error: String(e) }));
+      if (isAnalysisStaleError(String(e))) {
+        // 事前確認のあとでファイルが変わった: 結果と除外を捨て、次の実行で確認し直させる。
+        setAnalysis(null);
+        setExcluded(new Set());
+        setStatus({ kind: "setupError", message: t("scriptAnalysisFileChanged") });
+        toast.error(t("scriptAnalysisFileChanged"));
+      } else {
+        setStatus({ kind: "setupError", message: String(e) });
+        toast.error(t("scriptError", { error: String(e) }));
+      }
     }
   };
 
@@ -291,14 +340,22 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     cleanupStream();
     setStatus({ kind: "idle" });
     setProgress(null);
+    pendingAnalysisRef.current?.(null);
     const res = await api.cancelStream(streamId).catch(() => null);
     if (analyzing) toast.info(t("scriptAnalysisCancelled"));
     else toast.info(t("scriptCancelled", { count: res?.deliveredRows ?? 0 }));
   };
 
   const percent = progress ? scriptProgressPercent(progress) : null;
-  const resumeAt = status.kind === "error" ? resumeStartAt(status.event, options) : null;
-  const resumeSkipAt = status.kind === "error" ? resumeStartAt(status.event, options, true) : null;
+  // 再開の可否は、その実行で使ったオプションで決める (実行後に画面のスイッチを触っても変わらない)。
+  const resumeAt = status.kind === "error" ? resumeStartAt(status.event, status.runOptions) : null;
+  const resumeSkipAt = status.kind === "error" ? resumeStartAt(status.event, status.runOptions, true) : null;
+  const resumeBeginAt = status.kind === "error" ? resumeFromBeginAt(status.event, status.runOptions) : null;
+  // 開始文番号が BEGIN〜COMMIT の途中なら警告する (事前確認の結果があるときだけ判定できる)。
+  const startTxBegin =
+    analysisFresh && analysis && !options.wrapInTransaction
+      ? startInsideTransaction(analysis.event.analysis, parseStartAt(startAtText))
+      : null;
 
   return (
     <Modal onSubmit={() => handleRun()} submitDisabled={busy || !path.trim()} width="640px" onClose={onClose} closeOnInteractOutside={!busy} closeOnEscape={!busy}>
@@ -364,6 +421,16 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
           <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug" flexBasis="100%">
             {t("scriptEncodingHint")} {t("scriptStartAtHint")}
           </chakra.div>
+          {startTxBegin != null && (
+            <chakra.div flexBasis="100%">
+              <Callout tone="warning" role="status">
+                {t("scriptStartInTransactionWarning", {
+                  start: parseStartAt(startAtText),
+                  begin: startTxBegin,
+                })}
+              </Callout>
+            </chakra.div>
+          )}
         </FormSection>
 
         {analysis && status.kind !== "analyzing" && (
@@ -468,6 +535,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
                 event={status.event}
                 resumeAt={resumeAt}
                 resumeSkipAt={resumeSkipAt}
+                resumeBeginAt={resumeBeginAt}
                 onResume={handleResume}
               />
             </motion.div>
@@ -613,12 +681,15 @@ function ScriptErrorSummary({
   event,
   resumeAt,
   resumeSkipAt,
+  resumeBeginAt,
   onResume,
 }: {
   event: ScriptErrorEvent;
   /** 失敗した文から再開できるときの開始文番号。`null` は再開できない。 */
   resumeAt: number | null;
   resumeSkipAt: number | null;
+  /** トランザクションの途中で失敗したとき、その BEGIN 文の番号 (そこから再開できる)。 */
+  resumeBeginAt: number | null;
   onResume: (startAt: number) => void;
 }) {
   const t = useT();
@@ -657,9 +728,21 @@ function ScriptErrorSummary({
           </chakra.div>
         </chakra.div>
       )}
-      {resumeAt == null && d.index != null && (
+      {resumeAt == null && resumeBeginAt != null && (
+        <chakra.div display="flex" flexDirection="column" gap="1.5">
+          <chakra.div display="flex" flexWrap="wrap" gap="2">
+            <Button type="button" variant="secondary" onClick={() => onResume(resumeBeginAt)}>
+              {t("scriptResumeFromBegin", { index: resumeBeginAt })}
+            </Button>
+          </chakra.div>
+          <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug">
+            {t("scriptResumeFromBeginHint", { begin: resumeBeginAt })}
+          </chakra.div>
+        </chakra.div>
+      )}
+      {resumeAt == null && resumeBeginAt == null && d.index != null && (
         <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug">
-          {t("scriptResumeUnavailable")}
+          {event.inTransaction ? t("scriptResumeInTransactionUnavailable") : t("scriptResumeUnavailable")}
         </chakra.div>
       )}
     </chakra.div>

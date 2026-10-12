@@ -15,11 +15,12 @@ interface VectorCase {
   sql: string;
   kind: string | null;
   kindMysql?: string | null;
+  /** ドライバ不明 (`driver` 省略) だけ判定が変わるケース。省略時は `kind`。 */
+  kindUnknown?: string | null;
   note: string;
 }
 
 const cases = vectors.cases as VectorCase[];
-const STANDARD_DRIVERS = ["postgres", "sqlite"] as const;
 
 function kindOf(sql: string, driver?: string): string | null {
   return analyzeDangerousSql(sql, driver)[0]?.kind ?? null;
@@ -38,12 +39,21 @@ describe("危険文検出ゴールデン (フロント analyzeDangerousSql)", ()
 
   for (const c of cases) {
     const mysqlExpected = c.kindMysql === undefined ? c.kind : c.kindMysql;
+    const unknownExpected = c.kindUnknown === undefined ? c.kind : c.kindUnknown;
     it(`${c.kind ?? "safe"}: ${c.note} — ${JSON.stringify(c.sql)}`, () => {
-      expect(kindOf(c.sql)).toBe(c.kind);
-      for (const driver of STANDARD_DRIVERS) {
-        expect(kindOf(c.sql, driver)).toBe(c.kind);
-      }
-      expect(kindOf(c.sql, "mysql")).toBe(mysqlExpected);
+      expect({ driver: "unknown", kind: kindOf(c.sql) }).toEqual({
+        driver: "unknown",
+        kind: unknownExpected,
+      });
+      expect({ driver: "sqlite", kind: kindOf(c.sql, "sqlite") }).toEqual({ driver: "sqlite", kind: c.kind });
+      expect({ driver: "postgres", kind: kindOf(c.sql, "postgres") }).toEqual({
+        driver: "postgres",
+        kind: c.kind,
+      });
+      expect({ driver: "mysql", kind: kindOf(c.sql, "mysql") }).toEqual({
+        driver: "mysql",
+        kind: mysqlExpected,
+      });
     });
   }
 });
