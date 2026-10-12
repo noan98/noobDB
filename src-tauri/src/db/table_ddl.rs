@@ -58,19 +58,19 @@ fn primary_key_columns<'a>(
 }
 
 /// 外部キー 1 制約ぶん (複合キーの列を束ねたもの)。
-struct FkGroup<'a> {
-    name: Option<&'a str>,
-    referenced_table: &'a str,
-    columns: Vec<&'a str>,
-    referenced_columns: Vec<Option<&'a str>>,
-    on_delete: Option<&'a str>,
-    on_update: Option<&'a str>,
+pub(crate) struct FkGroup<'a> {
+    pub(crate) name: Option<&'a str>,
+    pub(crate) referenced_table: &'a str,
+    pub(crate) columns: Vec<&'a str>,
+    pub(crate) referenced_columns: Vec<Option<&'a str>>,
+    pub(crate) on_delete: Option<&'a str>,
+    pub(crate) on_update: Option<&'a str>,
 }
 
 /// `foreign_keys` の 1 列 1 行を制約単位に畳む。制約名が無い行はそれぞれ独立の
 /// 制約として扱う。information_schema の結合が複合キーで直積を返しても同じ列の
 /// 組が重複しないよう除去する。出現順を保つ。
-fn group_foreign_keys<'a>(table: &str, fks: &'a [ForeignKey]) -> Vec<FkGroup<'a>> {
+pub(crate) fn group_foreign_keys<'a>(table: &str, fks: &'a [ForeignKey]) -> Vec<FkGroup<'a>> {
     let mut groups: Vec<FkGroup<'a>> = Vec::new();
     for fk in fks.iter().filter(|f| f.table == table) {
         let existing = fk.constraint_name.as_deref().and_then(|name| {
@@ -109,7 +109,7 @@ fn group_foreign_keys<'a>(table: &str, fks: &'a [ForeignKey]) -> Vec<FkGroup<'a>
     groups
 }
 
-fn render_foreign_key(driver: DriverKind, g: &FkGroup<'_>) -> String {
+pub(crate) fn render_foreign_key(driver: DriverKind, g: &FkGroup<'_>) -> String {
     let cols: Vec<String> = g.columns.iter().map(|c| quote_ident(driver, c)).collect();
     let mut out = String::new();
     if let Some(name) = g.name {

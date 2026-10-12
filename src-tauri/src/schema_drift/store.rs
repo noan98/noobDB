@@ -103,6 +103,9 @@ pub struct RecordOutcome {
 /// 保存済み世代 1 件 (メタ + ペイロード)。
 #[derive(Debug, Clone)]
 pub struct StoredGeneration {
+    // 前世代の一致判定はフィンガープリントだけを先に読むようにした (#1530) ので、
+    // 本体コードは読まない。テストと将来の参照用に保持する。
+    #[allow(dead_code)]
     pub meta: GenerationMeta,
     pub payload: Option<SnapshotPayload>,
 }
@@ -183,19 +186,6 @@ async fn load_in(pool: &SqlitePool, profile_id: &str, id: i64) -> Result<Option<
     }))
 }
 
-async fn latest_in(pool: &SqlitePool, profile_id: &str) -> Result<Option<StoredGeneration>> {
-    let id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM generation WHERE profile_id = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(profile_id)
-    .fetch_optional(pool)
-    .await?;
-    match id {
-        Some(id) => load_in(pool, profile_id, id).await,
-        None => Ok(None),
-    }
-}
-
 /// `generation` テーブルへ挿入する 1 行分 (引数の数を抑えるための束ね)。
 struct NewRow<'a> {
     captured_at: &'a str,
@@ -255,16 +245,24 @@ async fn record_in(
     let _guard = WRITE_LOCK.lock().await;
     let json = serialize_payload(payload)?;
     let fingerprint = super::fnv1a32(json.as_bytes());
-    let prev = latest_in(pool, profile_id).await?;
-    if prev
-        .as_ref()
-        .is_some_and(|p| p.meta.fingerprint == fingerprint)
-    {
+    // 一致判定はフィンガープリントだけで済むので、前世代のペイロード (最大 8 MiB 級の
+    // JSON) は不一致で追加するときまでデコードしない (#1530)。
+    let prev_head: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, fingerprint FROM generation WHERE profile_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(profile_id)
+    .fetch_optional(pool)
+    .await?;
+    if prev_head.as_ref().is_some_and(|(_, fp)| *fp == fingerprint) {
         return Ok(RecordOutcome {
             added: false,
             prev: None,
         });
     }
+    let prev = match prev_head {
+        Some((id, _)) => load_in(pool, profile_id, id).await?,
+        None => None,
+    };
     let omitted = json.len() > MAX_SNAPSHOT_BYTES;
     insert_in(
         pool,

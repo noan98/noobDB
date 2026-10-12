@@ -385,6 +385,42 @@ async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
 }
 
 #[tokio::test]
+async fn sqlite_foreign_keys_carry_on_delete_and_on_update() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_fk_actions_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE p (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create p");
+    conn.execute(
+        "CREATE TABLE c (
+           id INTEGER PRIMARY KEY,
+           a INTEGER REFERENCES p(id) ON DELETE CASCADE ON UPDATE SET NULL,
+           b INTEGER REFERENCES p(id)
+         )",
+        None,
+    )
+    .await
+    .expect("create c");
+    let fks = conn.foreign_keys("main").await.expect("foreign_keys");
+    let a = fks.iter().find(|f| f.column == "a").expect("fk a");
+    assert_eq!(a.on_delete.as_deref(), Some("CASCADE"));
+    assert_eq!(a.on_update.as_deref(), Some("SET NULL"));
+    let b = fks.iter().find(|f| f.column == "b").expect("fk b");
+    assert_eq!(b.on_delete, None, "NO ACTION is normalized to None");
+    assert_eq!(b.on_update, None);
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
     // list_indexes must surface the implicit PK index, an explicit UNIQUE
     // index, and a plain multi-column index with its columns in declaration order.
@@ -2199,6 +2235,124 @@ async fn capture_write_records_update_before_after_and_applies_the_real_write() 
         .expect("select");
     assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "alice2"));
 
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_prepare_has_no_side_effect_and_finish_applies_the_write() {
+    let (path, conn) = flight_fixture("prepare_finish").await;
+    let sql = "UPDATE t SET name = 'z' WHERE id = 1";
+    let prep = conn.capture_prepare(sql, None, 100).await.expect("prepare");
+    let rows = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert_eq!(format!("{:?}", rows.rows[0][0]), "String(\"alice\")");
+    let (res, cap) = conn.capture_finish(prep, sql, None).await.expect("finish");
+    assert_eq!(res.rows_affected, 1);
+    assert!(cap.capturable, "{:?}", cap.reason);
+    let rows = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert_eq!(format!("{:?}", rows.rows[0][0]), "String(\"z\")");
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_skips_dry_run_when_rows_exceed_cap() {
+    // 対象行数が row_cap を超えるなら、dry-run を省いて本実行 1 回だけにする (#1530)。
+    let (path, conn) = flight_fixture("overcap").await;
+    for id in 3..=6 {
+        conn.execute(
+            &format!("INSERT INTO t (id, name) VALUES ({id}, 'n{id}')"),
+            None,
+        )
+        .await
+        .expect("seed");
+    }
+
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET name = 'x' WHERE id > 0", None, 3)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 6, "the real UPDATE must have applied");
+    assert!(!capture.capturable);
+    assert!(
+        capture
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("上限")),
+        "reason: {:?}",
+        capture.reason
+    );
+
+    // 上限以内なら従来どおり記録できる。
+    let (result, capture) = conn
+        .capture_write("DELETE FROM t WHERE id <= 2", None, 3)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 2);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    assert_eq!(capture.before_rows.len(), 2);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_refetches_after_image_for_nondeterministic_set() {
+    // SET 句が非決定的でも、主キーを書き換えないなら before は dry-run、after は本実行後に
+    // 主キーで取り直して記録する (#1530)。
+    let (path, conn) = flight_fixture("nondet").await;
+    let (result, capture) = conn
+        .capture_write(
+            "UPDATE t SET name = hex(randomblob(4)) WHERE id = 1",
+            None,
+            100,
+        )
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    let name_idx = capture.columns.iter().position(|c| c == "name").unwrap();
+    assert_eq!(
+        capture.before_rows[0][name_idx],
+        t::Value::String("alice".to_string())
+    );
+    let live = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert_eq!(
+        capture.after_rows[0][name_idx], live.rows[0][0],
+        "after-image は実データと一致する"
+    );
+
+    // 主キーを非決定的に書き換える文は記録しない。
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET id = abs(random()) WHERE id = 2", None, 100)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(!capture.capturable);
+    assert!(capture
+        .reason
+        .as_deref()
+        .is_some_and(|r| r.contains("主キー")));
+
+    // DELETE は WHERE に時刻関数があっても before-image で記録できる。
+    let (_, capture) = conn
+        .capture_write(
+            "DELETE FROM t WHERE id = 1 AND datetime('now') > '2000-01-01'",
+            None,
+            100,
+        )
+        .await
+        .expect("capture_write");
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
@@ -4272,6 +4426,57 @@ async fn sqlite_savepoint_create_rollback_release_commit() {
         .expect("count");
     assert!(matches!(&res.rows[0][0], t::Value::Int(1)));
 
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn import_rows_with_binary_unhexes_blob_columns_in_the_insert() {
+    // 転送のバイナリ列は hex で bind し、INSERT の値式で unhex する (後処理 UPDATE 不要, #1530)。
+    let (path, conn) = flight_fixture("hexblob").await;
+    conn.execute(
+        "CREATE TABLE b (id INTEGER PRIMARY KEY, data BLOB, note TEXT)",
+        None,
+    )
+    .await
+    .expect("create");
+    let columns = vec!["id".to_string(), "data".to_string(), "note".to_string()];
+    let rows = vec![
+        vec![
+            Some("1".to_string()),
+            Some("deadbeef".to_string()),
+            Some("abcd".to_string()),
+        ],
+        vec![Some("2".to_string()), None, Some("x".to_string())],
+        vec![Some("3".to_string()), Some("".to_string()), None],
+    ];
+    let n = conn
+        .import_rows_with_binary(
+            None,
+            "b",
+            &columns,
+            &rows,
+            100,
+            &t::ImportConflict::insert_only(),
+            &[false, true, false],
+            |_| Ok(()),
+        )
+        .await
+        .expect("import");
+    assert_eq!(n, 3);
+    let res = conn
+        .execute(
+            "SELECT id, typeof(data), hex(data), note FROM b ORDER BY id",
+            None,
+        )
+        .await
+        .expect("select");
+    assert_eq!(res.rows[0][1], t::Value::String("blob".to_string()));
+    assert_eq!(res.rows[0][2], t::Value::String("DEADBEEF".to_string()));
+    // 値式を通らない通常のテキスト列は hex のまま (unhex されない)。
+    assert_eq!(res.rows[0][3], t::Value::String("abcd".to_string()));
+    assert_eq!(res.rows[1][1], t::Value::String("null".to_string()));
+    assert_eq!(res.rows[2][1], t::Value::String("blob".to_string()));
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

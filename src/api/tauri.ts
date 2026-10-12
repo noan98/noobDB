@@ -1073,6 +1073,21 @@ export interface TableDiff {
    * are listed; for an identical (`same`) table this is empty.
    */
   columns: ColumnDiff[];
+  /**
+   * `source_only` テーブルの外部キー制約 (source 側。`CREATE TABLE` 同期が出力する)。
+   * スキーマ比較だけが埋め、それ以外 (サンドボックス等) では空。
+   */
+  foreign_keys?: DiffForeignKey[];
+}
+
+/** 外部キー 1 制約 (複合キーの列を束ねたもの)。`referenced_columns` が空なら参照先列は未解決。 */
+export interface DiffForeignKey {
+  name: string | null;
+  columns: string[];
+  referenced_table: string;
+  referenced_columns: string[];
+  on_delete: string | null;
+  on_update: string | null;
 }
 
 /** Result of comparing a source schema against a target schema. */
@@ -1241,6 +1256,7 @@ export type SyncKind =
   | "create_table"
   | "add_column"
   | "alter_column"
+  | "add_foreign_key"
   | "drop_column"
   | "drop_table"
   | "insert_row"

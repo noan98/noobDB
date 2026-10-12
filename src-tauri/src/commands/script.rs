@@ -1283,10 +1283,9 @@ pub async fn run_sql_batch(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    let total = split_script(session.conn.driver_kind(), &sql).len() as u64;
-    if let Err(e) = on_event.send(BatchStreamMessage::Started { total }) {
-        tracing::warn!(stream_id = %stream_id, error = %e, "failed to send batch started message");
-    }
+    // 件数 (Started の total) のための分割は数 MB の SQL では CPU を食うので、IPC の
+    // ランタイム上では行わず、下で起動するタスク側で spawn_blocking に逃がす (#1530)。
+    let driver = session.conn.driver_kind();
 
     let committed = Arc::new(AtomicU64::new(0));
     let cancel_channel = on_event.clone();
@@ -1298,6 +1297,27 @@ pub async fn run_sql_batch(
         let Ok(token) = ready_rx.await else {
             return;
         };
+        let (sql, total) = match tokio::task::spawn_blocking(move || {
+            let total = split_script(driver, &sql).len() as u64;
+            (sql, total)
+        })
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = on_event.send(BatchStreamMessage::Error {
+                    error: format!("failed to split the script: {e}"),
+                    connection_lost: false,
+                });
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.forget_stream(&stream_id_for_task, token).await;
+                }
+                return;
+            }
+        };
+        if let Err(e) = on_event.send(BatchStreamMessage::Started { total }) {
+            tracing::warn!(stream_id = %stream_id_for_task, error = %e, "failed to send batch started message");
+        }
         let emitter = Arc::new(std::sync::Mutex::new(BatchEmitter {
             channel: on_event.clone(),
             pending: Vec::new(),

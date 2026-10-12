@@ -568,6 +568,36 @@ impl MySqlConn {
         rows: &[Vec<Option<String>>],
         batch_size: usize,
         conflict: &ImportConflict,
+        on_progress: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        self.import_rows_with_hex(
+            database,
+            table,
+            columns,
+            rows,
+            batch_size,
+            conflict,
+            &[],
+            on_progress,
+        )
+        .await
+    }
+
+    /// [`Self::import_rows`] の、`hex_columns[i]` が真の列を hex テキストとして
+    /// bind し `UNHEX(?)` でバイト列にする版 (#1530)。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn import_rows_with_hex<F>(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        conflict: &ImportConflict,
+        hex_columns: &[bool],
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -596,7 +626,14 @@ impl MySqlConn {
         let mut tx = conn.begin().await?;
         let mut inserted: u64 = 0;
         for chunk in rows.chunks(batch) {
-            let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            let mut sql = super::build_insert_sql_with(
+                &table_ident,
+                &cols_sql,
+                ncols,
+                chunk.len(),
+                hex_columns,
+                "UNHEX",
+            );
             sql.push_str(&on_conflict);
             let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
             for row in chunk {
@@ -1687,11 +1724,16 @@ impl MySqlConn {
         // Ordering by CONSTRAINT_NAME then ORDINAL_POSITION keeps the columns of
         // a composite key together and in declaration order.
         let rows: Vec<MySqlRow> = sqlx::query(
-            r#"SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME,
-                      REFERENCED_COLUMN_NAME, CONSTRAINT_NAME
-               FROM information_schema.KEY_COLUMN_USAGE
-               WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL
-               ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION"#,
+            r#"SELECT k.TABLE_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME,
+                      k.REFERENCED_COLUMN_NAME, k.CONSTRAINT_NAME,
+                      rc.DELETE_RULE, rc.UPDATE_RULE
+               FROM information_schema.KEY_COLUMN_USAGE k
+               LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
+                 ON rc.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+                AND rc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+                AND rc.TABLE_NAME = k.TABLE_NAME
+               WHERE k.TABLE_SCHEMA = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL
+               ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION"#,
         )
         .bind(db)
         .fetch_all(&self.pool)
@@ -1704,8 +1746,19 @@ impl MySqlConn {
                 referenced_table: r.try_get::<String, _>(2).unwrap_or_default(),
                 referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
-                on_delete: None,
-                on_update: None,
+                // 参照動作は REFERENTIAL_CONSTRAINTS から (文字列 / バイナリの揺れに備える)。
+                on_delete: super::types::normalize_fk_action(
+                    r.try_get::<String, _>(5)
+                        .ok()
+                        .or_else(|| decode_text_col(&r, 5).ok())
+                        .as_deref(),
+                ),
+                on_update: super::types::normalize_fk_action(
+                    r.try_get::<String, _>(6)
+                        .ok()
+                        .or_else(|| decode_text_col(&r, 6).ok())
+                        .as_deref(),
+                ),
             })
             .collect())
     }
@@ -2739,7 +2792,7 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
 /// UPDATE/DELETE, embedded subqueries, etc.) — callers fall back to a
 /// snapshot-less preview in that case. The returned string is taken verbatim
 /// from the user's SQL so quoting/qualification is preserved.
-fn extract_target_table(sql: &str) -> Option<String> {
+pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
     let tokens = tokenize_sql(sql);
     let mut iter = tokens.into_iter().peekable();
     let first = iter.next()?;

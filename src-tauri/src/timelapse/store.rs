@@ -334,30 +334,35 @@ async fn total_bytes(pool: &SqlitePool) -> Result<u64> {
     Ok(total.max(0) as u64)
 }
 
-/// 全ウォッチ合計の保存量が上限を超えていれば、古い世代から 1 件ずつ削除する。
+/// 全ウォッチ合計の保存量が上限を超えていれば、古い世代から削除して上限以内へ戻す。
 /// 各ウォッチの**最新世代は削除しない** (次回取得時の「同一なら増やさない」比較と、
 /// 最低限の閲覧のため)。
+///
+/// 削除は 1 文にまとめる (#1530): 削除候補を古い順に並べて累積バイト数を取り、
+/// 超過分 (`合計 - 上限`) を満たすまでの先頭部分をまとめて消す。以前は 1 件削除する
+/// たびに `SUM` と `NOT IN` で全件を走査していた。さらに、上限に張り付いた定常状態で
+/// 保存のたびに `VACUUM` (DB 全体の書き直し) が走っていたので、ここでは行わない —
+/// 解放されたページは次の挿入で再利用されるためファイルは上限付近で頭打ちになる。
+/// ファイルを縮めるのはウォッチ解除 / 全消去のときだけ。
 async fn enforce_total_bytes(pool: &SqlitePool, max_total_bytes: u64) -> Result<()> {
-    let mut evicted = false;
-    while total_bytes(pool).await? > max_total_bytes {
-        let deleted = sqlx::query(
-            "DELETE FROM generation WHERE id = (
-                SELECT id FROM generation
+    let total = total_bytes(pool).await?;
+    if total <= max_total_bytes {
+        return Ok(());
+    }
+    let excess = (total - max_total_bytes) as i64;
+    sqlx::query(
+        "DELETE FROM generation WHERE id IN (
+            SELECT id FROM (
+                SELECT id,
+                       SUM(bytes) OVER (ORDER BY id ASC) - bytes AS before_bytes
+                  FROM generation
                  WHERE id NOT IN (SELECT MAX(id) FROM generation GROUP BY watch_id)
-                 ORDER BY id ASC LIMIT 1
-             )",
-        )
-        .execute(pool)
-        .await?
-        .rows_affected();
-        if deleted == 0 {
-            break;
-        }
-        evicted = true;
-    }
-    if evicted {
-        vacuum(pool).await;
-    }
+            ) WHERE before_bytes < ?
+        )",
+    )
+    .bind(excess)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

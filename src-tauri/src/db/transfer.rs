@@ -19,10 +19,11 @@
 //! ([`value_to_cell`])。バイナリだけは方言ごとに表現が違う:
 //!
 //! - PostgreSQL: `\x<hex>` (bytea の hex 入力形式)
-//! - SQLite / MySQL: テキストのまま hex を入れ、全件投入後に
-//!   `UPDATE ... SET c = unhex(c)` で 1 回だけバイト列へ戻す
-//!   ([`binary_finalize_sql`])。テキストでしか書けないインポート経路で
-//!   バイト列を忠実に運ぶための後処理で、転送が作成したテーブルに対してのみ行う。
+//! - SQLite / MySQL: hex 文字列のまま bind し、INSERT の値式側で `unhex(?)` /
+//!   `UNHEX(?)` に包んでバイト列にする ([`hex_binary_columns`] が対象列を決め、
+//!   `Connection::import_rows_with_binary` が式を組む)。以前は全件投入後に
+//!   `UPDATE ... SET c = unhex(c)` を全行へ流していたため、BLOB 列が 1 つあるだけで
+//!   書き込みがほぼ倍になっていた (#1530)。既存テーブルへの追記でも安全。
 
 use crate::db::sync::quote_ident;
 use crate::db::types::{Column, Value};
@@ -376,41 +377,14 @@ pub fn source_select_sql(driver: DriverKind, table: &str) -> String {
     format!("SELECT * FROM {}", quote_ident(driver, table))
 }
 
-/// インポート経路 (テキストのみ) ではバイト列を直接書けず、全件投入後に hex を
-/// バイト列へ戻す後処理が要るドライバか。
-pub fn needs_binary_finalize(driver: DriverKind) -> bool {
-    matches!(driver, DriverKind::Sqlite | DriverKind::Mysql)
-}
-
-/// バイト列を忠実に書けない (hex 文字列へ縮退する) ドライバか。
-pub fn binary_is_lossy(driver: DriverKind) -> bool {
-    let _ = driver;
-    false
-}
-
-/// hex で投入したバイナリ列をバイト列へ戻す UPDATE 文 (SQLite / MySQL のみ。
-/// それ以外は空)。転送が作成したテーブルに対してだけ使うこと — 既存行まで
-/// 変換してしまうため追記 (`Append`) では使わない。
-pub fn binary_finalize_sql(
-    driver: DriverKind,
-    table: &str,
-    columns: &[TransferColumn],
-) -> Vec<String> {
-    if !needs_binary_finalize(driver) {
-        return Vec::new();
-    }
-    let func = match driver {
-        DriverKind::Mysql => "UNHEX",
-        _ => "unhex",
-    };
-    let t = quote_ident(driver, table);
+/// 列ごとに「hex 文字列で bind し、INSERT の値式で `unhex` するか」。テキストでしか
+/// 渡せないインポート経路で、SQLite / MySQL のバイナリ列だけが対象 (PostgreSQL は
+/// `\x<hex>` を bytea へ暗黙変換できるので不要)。
+pub fn hex_binary_columns(driver: DriverKind, columns: &[TransferColumn]) -> Vec<bool> {
+    let applies = matches!(driver, DriverKind::Sqlite | DriverKind::Mysql);
     columns
         .iter()
-        .filter(|c| c.ty == TransferType::Binary)
-        .map(|c| {
-            let q = quote_ident(driver, &c.name);
-            format!("UPDATE {t} SET {q} = {func}({q}) WHERE {q} IS NOT NULL")
-        })
+        .map(|c| applies && c.ty == TransferType::Binary)
         .collect()
 }
 
@@ -447,6 +421,21 @@ pub fn check_sqlite_unsigned_range(
 
 /// 1 セルをインポート経路へ渡すテキストへ変換する。`None` は SQL NULL。
 pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Option<String> {
+    // SQLite / MySQL は Binary 列を `UNHEX(?)` に包んで渡す ([`hex_binary_columns`])。
+    // SQLite は型を強制しないので BLOB 列に文字列・数値が入っていることがあり、その
+    // テキストをそのまま渡すと UNHEX が NULL を返して値が消える。バイト列以外は
+    // テキストのバイト列を hex にして渡す (値を保つ)。
+    if *ty == TransferType::Binary
+        && matches!(driver, DriverKind::Sqlite | DriverKind::Mysql)
+        && !matches!(value, Value::Bytes(_) | Value::Null)
+    {
+        let text = value_to_cell_inner(driver, ty, value)?;
+        return Some(text.bytes().map(|b| format!("{b:02x}")).collect());
+    }
+    value_to_cell_inner(driver, ty, value)
+}
+
+fn value_to_cell_inner(driver: DriverKind, ty: &TransferType, value: &Value) -> Option<String> {
     let bool_text = |b: bool| -> String {
         match driver {
             DriverKind::Postgres => {
@@ -534,8 +523,9 @@ pub fn lossy_conversions(driver: DriverKind, columns: &[TransferColumn]) -> Vec<
                     DriverKind::Sqlite => (0, 0),
                 };
                 if driver == DriverKind::Sqlite {
-                    // 精度不明 (無制限 NUMERIC など) も 15 桁を超えうるので対象にする。
-                    if precision.map_or(true, |p| p > 15) {
+                    // 精度が分かっていて 15 桁を超えるときだけ。精度不明 (無制限 NUMERIC など)
+                    // は実際の値が分からず誤検知が多いので警告しない。
+                    if precision.is_some_and(|p| p > 15) {
                         Some(LossyKind::DecimalFloat)
                     } else {
                         None
@@ -583,36 +573,11 @@ impl LossyConversion {
 
 /// 転送結果のユーザ向け注意書き (損失のあるマッピング等)。
 pub fn plan_warnings(driver: DriverKind, columns: &[TransferColumn]) -> Vec<String> {
-    let mut out = Vec::new();
-    if binary_is_lossy(driver) {
-        for c in columns.iter().filter(|c| c.ty == TransferType::Binary) {
-            out.push(format!(
-                "column \"{}\" is binary and may lose precision on this target",
-                c.name
-            ));
-        }
-    }
-    out.extend(
-        lossy_conversions(driver, columns)
-            .iter()
-            .map(LossyConversion::message),
-    );
-    out
-}
-
-/// 追記モードで、テキスト経路では正しく書けないバイナリ列を含むなら拒否する
-/// (後処理の UPDATE は既存行まで変換してしまうため追記では使えない)。
-pub fn ensure_append_supported(driver: DriverKind, columns: &[TransferColumn]) -> Result<()> {
-    if needs_binary_finalize(driver) || binary_is_lossy(driver) {
-        if let Some(c) = columns.iter().find(|c| c.ty == TransferType::Binary) {
-            return Err(AppError::InvalidInput(format!(
-                "appending binary column \"{}\" into an existing {} table is not supported; transfer into a new table instead",
-                c.name,
-                driver.as_str()
-            )));
-        }
-    }
-    Ok(())
+    // バイナリは INSERT の値式で忠実に書けるので警告対象ではない (#1530)。
+    lossy_conversions(driver, columns)
+        .iter()
+        .map(LossyConversion::message)
+        .collect()
 }
 
 #[cfg(test)]
@@ -950,6 +915,19 @@ mod tests {
             value_to_cell(DriverKind::Mysql, &bin, &v).as_deref(),
             Some("00ff")
         );
+        // Binary 列に入った文字列・数値はテキストのバイト列を hex にする (UNHEX で消えない)
+        assert_eq!(
+            value_to_cell(DriverKind::Sqlite, &bin, &Value::String("AB".into())).as_deref(),
+            Some("4142")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Mysql, &bin, &Value::Int(12)).as_deref(),
+            Some("3132")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &bin, &Value::String("AB".into())).as_deref(),
+            Some("AB")
+        );
         // バイナリでない列に入るバイト列は hex テキストのまま
         assert_eq!(
             value_to_cell(DriverKind::Sqlite, &TransferType::Text, &v).as_deref(),
@@ -958,7 +936,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_finalize_only_for_text_only_binary_targets() {
+    fn hex_unwrap_only_for_text_only_binary_targets() {
         let cols = vec![
             TransferColumn {
                 name: "b".into(),
@@ -972,17 +950,17 @@ mod tests {
             },
         ];
         assert_eq!(
-            binary_finalize_sql(DriverKind::Sqlite, "x", &cols),
-            vec!["UPDATE \"x\" SET \"b\" = unhex(\"b\") WHERE \"b\" IS NOT NULL".to_string()]
+            hex_binary_columns(DriverKind::Sqlite, &cols),
+            vec![true, false]
         );
         assert_eq!(
-            binary_finalize_sql(DriverKind::Mysql, "x", &cols),
-            vec!["UPDATE `x` SET `b` = UNHEX(`b`) WHERE `b` IS NOT NULL".to_string()]
+            hex_binary_columns(DriverKind::Mysql, &cols),
+            vec![true, false]
         );
-        assert!(binary_finalize_sql(DriverKind::Postgres, "x", &cols).is_empty());
-        assert!(ensure_append_supported(DriverKind::Sqlite, &cols).is_err());
-        assert!(ensure_append_supported(DriverKind::Postgres, &cols).is_ok());
-        assert!(ensure_append_supported(DriverKind::Sqlite, &cols[1..]).is_ok());
+        assert_eq!(
+            hex_binary_columns(DriverKind::Postgres, &cols),
+            vec![false, false]
+        );
         assert!(plan_warnings(DriverKind::Postgres, &cols).is_empty());
     }
 
@@ -1026,7 +1004,6 @@ mod tests {
             vec![
                 ("a".to_string(), LossyKind::DecimalFloat),
                 ("b".to_string(), LossyKind::DecimalFloat),
-                ("d".to_string(), LossyKind::DecimalFloat),
                 ("t".to_string(), LossyKind::TimestampTzDegraded),
             ]
         );

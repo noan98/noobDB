@@ -285,6 +285,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
   switch (kind) {
     case "create_table":
     case "add_column":
+    case "add_foreign_key":
     case "insert_row": {
       const c = semanticColorVar("success", "text");
       return { color: c, borderColor: c };
@@ -1183,6 +1184,8 @@ function syncKindLabel(kind: SyncKind, t: ReturnType<typeof useT>): string {
       return t("schemaCompareKindAddColumn");
     case "alter_column":
       return t("schemaCompareKindAlterColumn");
+    case "add_foreign_key":
+      return t("schemaCompareKindAddForeignKey");
     case "drop_column":
       return t("schemaCompareKindDropColumn");
     case "drop_table":

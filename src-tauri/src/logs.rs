@@ -9,7 +9,7 @@
 //! growth, while the most recent logs are always retained.
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -101,13 +101,25 @@ impl LogStore {
     }
 
     fn read(&self) -> String {
-        let _guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        // ロックを持つのは 2 つのファイルハンドルを開く間だけ。開いたハンドルは
+        // ローテーション (rename) されても元の実体を指し続けるので、ロック外で
+        // 時間をかけて読んでも整合した断面になり、読み込み中に tracing の書き込みを
+        // ブロックしない (#1530)。
+        let (prev, cur) = {
+            let _guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            (
+                File::open(self.prev_path()).ok(),
+                File::open(self.current_path()).ok(),
+            )
+        };
         let mut out = String::new();
-        if let Ok(prev) = std::fs::read_to_string(self.prev_path()) {
-            out.push_str(&prev);
-        }
-        if let Ok(cur) = std::fs::read_to_string(self.current_path()) {
-            out.push_str(&cur);
+        for mut file in [prev, cur].into_iter().flatten() {
+            let mut bytes = Vec::new();
+            if file.read_to_end(&mut bytes).is_ok() {
+                // ロック外で読むので、書き込み途中の末尾 (UTF-8 の途中で切れた
+                // マルチバイト文字) を読むことがある。lossy にして捨てない。
+                out.push_str(&String::from_utf8_lossy(&bytes));
+            }
         }
         out
     }
@@ -245,6 +257,18 @@ mod tests {
         let content = store.read();
         let last = format!("{:012}", iterations - 1);
         assert!(content.contains(&last), "recent entry was lost");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_tolerates_a_partially_written_multibyte_tail() {
+        let dir = scratch_dir("lossy");
+        let store = LogStore::open(dir.clone()).unwrap();
+        store.write_bytes("ok\n".as_bytes()).unwrap();
+        // 「あ」(3 バイト) の先頭 2 バイトだけが書かれた状態。
+        store.write_bytes(&"あ".as_bytes()[..2]).unwrap();
+        let text = store.read();
+        assert!(text.starts_with("ok\n"), "got: {text:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

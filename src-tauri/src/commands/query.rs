@@ -1339,6 +1339,44 @@ async fn spawn_query_stream(
     }
 }
 
+/// 記録つき書き込みの実行。タイムアウト/キャンセルの配下に置くのは、書き込みを
+/// 一切実行しない準備段階 (件数見積もり + dry-run) だけにする。本実行と after-image の
+/// 取り直しは独立タスクで走らせ、呼び出し側の future が落とされても、タイムアウトが
+/// 来ても中断しない (書き込み済みなのに失敗扱い / 記録なしになるのを防ぐ、#1530)。
+/// 取り直しの失敗は記録の辞退になるだけで、結果は `Ok` のまま。
+pub(crate) async fn run_captured_write(
+    session: Arc<Session>,
+    sql: String,
+    database: Option<String>,
+    row_cap: usize,
+    query_timeout_secs: Option<u64>,
+) -> Result<(crate::db::types::QueryResult, crate::db::WriteCapture)> {
+    let prep = {
+        let prepare = session
+            .conn
+            .capture_prepare(&sql, database.as_deref(), row_cap);
+        match query_timeout_secs {
+            Some(secs) if secs > 0 => {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), prepare).await {
+                    Ok(res) => res?,
+                    Err(_) => return Err(AppError::Timeout(secs)),
+                }
+            }
+            _ => prepare.await?,
+        }
+    };
+    let handle = tokio::spawn(async move {
+        session
+            .conn
+            .capture_finish(prep, &sql, database.as_deref())
+            .await
+    });
+    match handle.await {
+        Ok(res) => res,
+        Err(e) => Err(AppError::Other(format!("captured write task failed: {e}"))),
+    }
+}
+
 /// The `run_query_stream` capture-enabled sibling of [`spawn_query_stream`]
 /// (#735 DML flight recorder). Instead of streaming a result set, this
 /// executes a single INSERT/UPDATE/DELETE via [`crate::db::Connection::
@@ -1370,22 +1408,14 @@ async fn spawn_captured_write(
         "captured write starting"
     );
     let started = std::time::Instant::now();
-    let exec = session
-        .conn
-        .capture_write(&sql, database.as_deref(), row_cap);
-    // Same timeout treatment as the ordinary streaming path (`spawn_query_stream`):
-    // without this, a captured write could hang indefinitely — the capture
-    // step itself runs a dry-run preview *and* the real write, so it is at
-    // least as susceptible to a stuck query as a normal execution.
-    let outcome = match query_timeout_secs {
-        Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res,
-                Err(_) => Err(AppError::Timeout(secs)),
-            }
-        }
-        _ => exec.await,
-    };
+    let outcome = run_captured_write(
+        session.clone(),
+        sql.clone(),
+        database.clone(),
+        row_cap,
+        query_timeout_secs,
+    )
+    .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     // Query Result Cache (#1097): capture 対象は呼び出し元 (`run_query_stream`)

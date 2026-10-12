@@ -212,8 +212,9 @@ fn csv_err(e: csv::Error) -> AppError {
     AppError::Other(format!("CSV parse error: {e}"))
 }
 
-/// Header + first rows from already-decoded (UTF-8) bytes. xlsx is parsed from the
-/// whole workbook; CSV / JSON / NDJSON go through the streaming reader path.
+/// Header + first rows from already-decoded (UTF-8) bytes (メモリ上のバイト列用。
+/// 本番の xlsx プレビューはファイルから直接読む)。
+#[cfg(test)]
 fn parse_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
     if opts.format == ImportFormat::Xlsx {
         return parse_xlsx_preview(data, opts);
@@ -276,16 +277,27 @@ fn parse_csv_preview_reader<R: std::io::Read>(
 /// Despite the `csv` name (kept for IPC stability) this handles CSV, JSON, and
 /// NDJSON; the format is selected by `options.format`. CSV / NDJSON / JSON read
 /// only the head of the file (decoded on the fly), so a huge file previews
-/// instantly (#1258); xlsx needs the whole workbook.
+/// instantly (#1258); xlsx is read from the file by seeking (never fully loaded).
 #[tauri::command]
 pub async fn parse_csv_preview(path: String, options: ImportOptions) -> Result<CsvPreview> {
     if options.format == ImportFormat::Csv {
         validate_chars(&options)?;
     }
     if options.format == ImportFormat::Xlsx {
-        let bytes = read_import_file(&path).await?;
-        // xlsx はバイナリ (ZIP) なので文字コード変換を通さない。
-        return parse_preview(&bytes, &options);
+        // xlsx はバイナリ (ZIP) なので文字コード変換を通さない。ファイル全体を
+        // メモリへ読まず、calamine がシークしながら先頭行だけを読む (#1530)。
+        check_import_file(&path).await?;
+        return tokio::task::spawn_blocking(move || {
+            let sheet = import_xlsx::read_sheet_file(
+                std::path::Path::new(&path),
+                options.sheet.as_deref(),
+                Some(xlsx_preview_want(&options)),
+                true,
+            )?;
+            Ok(xlsx_sheet_to_preview(sheet, &options))
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("preview task failed: {e}")))?;
     }
     preview_text_file(path, options).await
 }
@@ -559,9 +571,24 @@ fn parse_json_preview_reader<R: std::io::Read>(
 /// Header + first rows of an xlsx sheet for the mapping UI (#1171). Reading stops
 /// as soon as enough rows for the preview are seen. Cells are addressed by the
 /// absolute sheet column so the preview and the import agree on `csv_index`.
+#[cfg(test)]
 fn parse_xlsx_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
-    let want = PREVIEW_ROW_LIMIT + usize::from(opts.has_header);
-    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), Some(want), true)?;
+    let sheet = import_xlsx::read_sheet(
+        data,
+        opts.sheet.as_deref(),
+        Some(xlsx_preview_want(opts)),
+        true,
+    )?;
+    Ok(xlsx_sheet_to_preview(sheet, opts))
+}
+
+/// プレビューに必要な行数 (ヘッダー行を含む)。
+fn xlsx_preview_want(opts: &ImportOptions) -> usize {
+    PREVIEW_ROW_LIMIT + usize::from(opts.has_header)
+}
+
+/// 読み込んだ先頭行をマッピング UI 用のヘッダー + 行へ整える。
+fn xlsx_sheet_to_preview(sheet: import_xlsx::XlsxSheet, opts: &ImportOptions) -> CsvPreview {
     let mut iter = sheet.rows.iter();
     let header_row = if opts.has_header { iter.next() } else { None };
     let data_rows: Vec<&import_xlsx::XlsxRow> = iter.collect();
@@ -589,12 +616,12 @@ fn parse_xlsx_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
         })
         .collect();
 
-    Ok(CsvPreview {
+    CsvPreview {
         headers,
         rows,
         truncated: sheet.truncated,
         sheets: sheet.sheets,
-    })
+    }
 }
 
 /// Parses an xlsx sheet into target-column order via `mapping` (#1171). Returns the
@@ -604,11 +631,24 @@ fn parse_xlsx_rows(
     opts: &ImportOptions,
     mapping: &[ColumnMapping],
 ) -> Result<ParsedRowsWithLines> {
-    let sheet = import_xlsx::read_sheet(data, opts.sheet.as_deref(), None, false)?;
-    let skip = usize::from(opts.has_header);
+    parse_xlsx_rows_from(std::io::Cursor::new(data), opts, mapping)
+}
+
+/// [`parse_xlsx_rows`] の読み取り元を問わない版。行を中間の `Vec<XlsxRow>` へ溜めず、
+/// 読みながらマッピング済みの行へ直接変換する (同じ内容を 2 回保持しない #1530)。
+fn parse_xlsx_rows_from<RS: std::io::Read + std::io::Seek>(
+    rs: RS,
+    opts: &ImportOptions,
+    mapping: &[ColumnMapping],
+) -> Result<ParsedRowsWithLines> {
+    let mut skip = usize::from(opts.has_header);
     let mut out: Vec<Vec<Option<String>>> = Vec::new();
     let mut lines: Vec<Option<u64>> = Vec::new();
-    for row in sheet.rows.iter().skip(skip) {
+    import_xlsx::scan_sheet(rs, opts.sheet.as_deref(), None, false, |row| {
+        if skip > 0 {
+            skip -= 1;
+            return;
+        }
         lines.push(Some(row.line));
         out.push(
             mapping
@@ -622,7 +662,7 @@ fn parse_xlsx_rows(
                 })
                 .collect(),
         );
-    }
+    })?;
     Ok((out, lines))
 }
 
@@ -1406,19 +1446,26 @@ where
     S: FnOnce(u64),
     P: FnMut(u64, u64) -> Result<()>,
 {
-    let bytes = read_import_file(&path).await?;
-    // xlsx はバイナリ (ZIP) なので文字コード変換を通さず生のバイト列を渡す。
-    let decoded;
-    let source: &[u8] = if options.format == ImportFormat::Xlsx {
-        &bytes
-    } else {
-        decoded = decode_bytes(&bytes, &options.encoding);
-        decoded.as_bytes()
-    };
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
     // `lines[i]` is record i's source file line (CSV only), used to report a bad
     // row by both record number and file line (#687).
-    let (mut rows, lines) = parse_rows_with_lines(source, &options, &mapping)?;
+    let (mut rows, lines) = if options.format == ImportFormat::Xlsx {
+        // xlsx はバイナリ (ZIP) なので文字コード変換を通さず、ファイルから直接
+        // シークしながら読む (全体をメモリへ載せない #1530)。
+        check_import_file(&path).await?;
+        let (opts, map) = (options.clone(), mapping.clone());
+        let p = path.clone();
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&p)?;
+            parse_xlsx_rows_from(std::io::BufReader::new(file), &opts, &map)
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("xlsx import task failed: {e}")))??
+    } else {
+        let bytes = read_import_file(&path).await?;
+        let decoded = decode_bytes(&bytes, &options.encoding);
+        parse_rows_with_lines(decoded.as_bytes(), &options, &mapping)?
+    };
     let total = rows.len() as u64;
     let conflict = options.conflict();
 

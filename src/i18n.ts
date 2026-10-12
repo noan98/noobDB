@@ -2158,6 +2158,8 @@ const en = {
   alterTableIndexNamePlaceholder: "index_name",
   alterTableIndexNameRequired: "Enter an index name. Rows without a name are not created.",
   alterTableIndexColumnsRequired: "Select at least one column. Rows without columns are not created.",
+  alterTableIndexIncompleteBlocked:
+    "An index row is incomplete (name or columns missing), so the changes cannot be run. Complete or remove the row.",
   alterTableAddIndex: "Add index",
   alterTableRemoveIndex: "Remove index",
   alterTableUnsupportedTitle: "Not supported on this driver",
@@ -3424,6 +3426,7 @@ const en = {
   schemaCompareKindCreateTable: "CREATE TABLE",
   schemaCompareKindAddColumn: "ADD COLUMN",
   schemaCompareKindAlterColumn: "ALTER COLUMN",
+  schemaCompareKindAddForeignKey: "ADD FOREIGN KEY",
   schemaCompareKindDropColumn: "DROP COLUMN",
   schemaCompareKindDropTable: "DROP TABLE",
   schemaCompareKindInsertRow: "INSERT",
@@ -6745,6 +6748,8 @@ const ja: Dict = {
   alterTableIndexNamePlaceholder: "index_name",
   alterTableIndexNameRequired: "インデックス名を入力してください。名前のない行は作成されません。",
   alterTableIndexColumnsRequired: "列を 1 つ以上選んでください。列のない行は作成されません。",
+  alterTableIndexIncompleteBlocked:
+    "未完成のインデックス行 (名前または列が未入力) があるため実行できません。入力を完成させるか、行を削除してください。",
   alterTableAddIndex: "インデックスを追加",
   alterTableRemoveIndex: "インデックスを削除",
   alterTableUnsupportedTitle: "このドライバでは非対応",
@@ -8007,6 +8012,7 @@ const ja: Dict = {
   schemaCompareKindCreateTable: "CREATE TABLE",
   schemaCompareKindAddColumn: "ADD COLUMN",
   schemaCompareKindAlterColumn: "ALTER COLUMN",
+  schemaCompareKindAddForeignKey: "ADD FOREIGN KEY",
   schemaCompareKindDropColumn: "DROP COLUMN",
   schemaCompareKindDropTable: "DROP TABLE",
   schemaCompareKindInsertRow: "INSERT",

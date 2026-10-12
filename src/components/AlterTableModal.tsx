@@ -56,6 +56,8 @@ interface AddedColumnRow extends NewColumn {
 }
 interface IndexRow extends IndexDef {
   id: string;
+  /** 利用者が一度触った (編集した / フォーカスを外した) 行。エラーはこの後に出す (#1532)。 */
+  touched?: boolean;
 }
 
 /** 既存 FK 1 本 (制約名単位に畳んだもの)。`name` が無い制約は DROP できない。 */
@@ -174,7 +176,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   }, [sessionId, driver, database, table]);
 
   const setExistingAt = (i: number, patch: Partial<ExistingColumnEdit>) =>
-    setExisting((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+    setExisting((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch, touched: true } : r)));
+  const touchIndex = (i: number) =>
+    setIndexes((rows) => rows.map((r, idx) => (idx === i && !r.touched ? { ...r, touched: true } : r)));
   // `existing[i].drop` を外側のクロージャから読まず、setState の関数更新内で
   // 反転させる (setExistingAt と同じ流儀に統一。連続クリックや古いレンダの
   // クロージャから stale な値を反転させてしまう余地をなくす)。
@@ -196,7 +200,11 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
       rows.map((r, idx) => {
         if (idx !== i) return r;
         const has = r.columns.includes(col);
-        return { ...r, columns: has ? r.columns.filter((c) => c !== col) : [...r.columns, col] };
+        return {
+          ...r,
+          touched: true,
+          columns: has ? r.columns.filter((c) => c !== col) : [...r.columns, col],
+        };
       }),
     );
 
@@ -233,7 +241,17 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   // 名前が空 / 列未選択のインデックス行は文にならない。黙って捨てて実行できてしまうと
   // 「作ったつもり」になるので、行ごとにエラーを出して不備が残る間は実行を止める (#1532)。
   const hasIncompleteIndex = indexes.some((r) => indexRowProblems(r) !== null);
-  const valid = statements.length > 0 && !hasIncompleteIndex;
+  // 実行ボタン / Cmd+Enter を一度押された後は、空の行にもエラーを出す。
+  const [runAttempted, setRunAttempted] = useState(false);
+  const valid = statements.length > 0;
+  // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
+  const tryRun = () => {
+    if (hasIncompleteIndex) {
+      setRunAttempted(true);
+      return;
+    }
+    onRun(statements);
+  };
 
   const sqlPreview = statements.map((s: AlterStatement) => s.sql).join("\n");
   // 破壊的な文 (DROP COLUMN / DROP FOREIGN KEY / DROP CHECK) を含むか (#1529)。
@@ -244,7 +262,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
 
   return (
     <Modal
-      onSubmit={hasDestructive ? undefined : () => onRun(statements)}
+      onSubmit={hasDestructive ? undefined : tryRun}
       submitDisabled={!valid || readOnly}
       width="880px"
       onClose={onClose}
@@ -445,7 +463,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel as="div">{t("indexesLabel")}</FieldLabel>
               {indexes.map((idx, i) => {
-                const problems = indexRowProblems(idx);
+                const problems = idx.touched || runAttempted ? indexRowProblems(idx) : null;
                 return (
                 <chakra.div
                   key={idx.id}
@@ -461,6 +479,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                     <Input
                       value={idx.name}
                       onChange={(e) => setIndexAt(i, { name: e.target.value })}
+                      onBlur={() => touchIndex(i)}
                       placeholder={t("alterTableIndexNamePlaceholder")}
                       aria-label={t("alterTableIndexNamePlaceholder")}
                       flex="1"
@@ -641,6 +660,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
               <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
             </FormSection>
+            {hasIncompleteIndex && (
+              <FieldError>{t("alterTableIndexIncompleteBlocked")}</FieldError>
+            )}
             {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
             </motion.div>
           )}
@@ -661,7 +683,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               type="button"
               variant="dangerOutline"
               disabled={!valid || readOnly}
-              onClick={() => onRun(statements)}
+              onClick={tryRun}
             >
               {t("alterTableRun")}
             </Button>
@@ -688,7 +710,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               type="button"
               variant="primary"
               disabled={!valid || readOnly}
-              onClick={() => onRun(statements)}
+              onClick={tryRun}
             >
               {t("alterTableRun")}
             </PressableButton>

@@ -9,6 +9,21 @@
 主キーが解決できない、行数が上限を超える、認識できない文の形)。**そのとき書き込みは
 そのまま通ります — 捕捉が書き込みを妨げてはいけない**、というのが設計方針です。
 
+- 対象行数が行上限を超える UPDATE / DELETE は、`write_count_probe_sql` の件数見積もり
+  (`COUNT(*) FROM (… LIMIT 上限+1)`) で先に判定して記録を辞退し、dry-run で文を 2 回
+  走らせない (#1530)。PostgreSQL の `UPDATE … FROM` / `DELETE … USING` は見積もらない。
+- UPDATE の SET 句に `NOW()` / `RANDOM()` / `UUID()` など実行ごとに値が変わる関数がある
+  (`contains_nondeterministic_function`) 場合、before は dry-run、after は本実行後に
+  主キーで取り直して記録する。主キーをその値で書き換える文は辞退する。INSERT は従来どおり
+  本実行後の取り直しで整合させ、DELETE は before-image だけなので判定しない。
+- 本実行より後 (本実行と after-image の取り直し) はタイムアウト/キャンセルの外で
+  走る (`commands::query::run_captured_write`: 準備段階 `capture_prepare` だけを
+  タイムアウト配下に置き、`capture_finish` は独立タスク)。取り直しに失敗しても結果は
+  `Ok` で、記録を辞退するだけ。
+- **既知の限界:** after-image の取り直しは本実行とは別の接続・別トランザクションで、
+  UPDATE のコミットと SELECT の間に他クライアントが同じ行を変えると、その値を記録する
+  (Undo の競合検出が止める)。同一トランザクション化 (UPDATE → SELECT → COMMIT、
+  または RETURNING) は 3 ドライバの実行・デコード経路の作り直しになるため見送った。
 - 対象は `INSERT` / `UPDATE` / `DELETE` **のみ**。DDL (`DROP` / `TRUNCATE` など) は
   完全にスコープ外です。
 - トリガー・カスケードなどサーバ側の二次的な副作用は記録されません。ドライバが
