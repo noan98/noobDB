@@ -213,13 +213,15 @@ function formatKey(key: Record<string, CellValue>): string {
 export function timelapseRowsToTable(
   rows: readonly TimelapseExportRow[],
   header: readonly [string, string, string, string, string],
+  /** 種別列の表示文言 (画面の kindLabel と同じ翻訳済み文言)。省略時は kind の識別子そのまま。 */
+  kindLabels?: Partial<Record<TimelapseRowKind, string>>,
 ): { header: string[]; rows: CellValue[][] } {
   const out: CellValue[][] = [];
   for (const r of rows) {
     const key = formatKey(r.key);
     const columns = r.kind === "changed" ? r.changedColumns : Object.keys((r.after ?? r.before) ?? {});
     for (const column of columns) {
-      out.push([r.kind, key, column, r.before?.[column] ?? null, r.after?.[column] ?? null]);
+      out.push([kindLabels?.[r.kind] ?? r.kind, key, column, r.before?.[column] ?? null, r.after?.[column] ?? null]);
     }
   }
   return { header: [...header], rows: out };

@@ -288,6 +288,20 @@ describe("planPasteInsertRows (#1539)", () => {
     expect(plan.skippedGenerated).toBe(1);
   });
 
+  it("BLOB 列は外して数える", () => {
+    const columns = [col("id", "INT"), col("name", "VARCHAR"), col("data", "BLOB")];
+    const plan = planPasteInsertRows({
+      ...base,
+      columns,
+      tableColumns: null,
+      targetColIndices: [0, 1, 2],
+      grid: [["1", "a", "deadbeef"], ["", "", "cafe"]],
+    });
+    expect(plan.rows).toEqual([{ 0: "1", 1: "a" }]);
+    expect(plan.skippedBinary).toBe(2);
+    expect(plan.skippedBlankRows).toBe(1);
+  });
+
   it("不正な値のセルだけを外し、値が残らない行は積まない", () => {
     const validate = (c: number, v: string) => (c === 2 && v === "abc" ? "bad" : null);
     const plan = planPasteInsertRows({ ...base, validate, grid: [["", "frank", "abc"], ["", "", "abc"], ["", "", ""]] });

@@ -201,6 +201,16 @@ describe("差分の書き出し (#1539)", () => {
     expect(csv).toContain('added,id=1,name,,"a,b"');
   });
 
+  it("種別列は渡した翻訳済み文言になる", () => {
+    const table = timelapseRowsToTable(
+      buildTimelapseExportRows(diff, [false, false, true]),
+      ["kind", "key", "column", "before", "after"],
+      { added: "追加", removed: "削除", changed: "変更" },
+    );
+    expect(table.rows[0][0]).toBe("追加");
+    expect(table.rows[6][0]).toBe("変更");
+  });
+
   it("JSON はメタ付きで null を保つ", () => {
     const json = JSON.parse(
       timelapseRowsToJson(buildTimelapseExportRows(diff, null), {

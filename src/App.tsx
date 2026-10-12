@@ -492,6 +492,7 @@ import {
 import { buildDriftDetail, migrateLegacySchemaDrift } from "./schemaDrift";
 import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
+import { clearExplainPin } from "./explainPins";
 import { Tooltip } from "./components/Tooltip";
 
 type Theme = "light" | "dark";
@@ -7796,6 +7797,7 @@ export default function App() {
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
+    clearExplainPin(id);
     // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
     // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
     // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は

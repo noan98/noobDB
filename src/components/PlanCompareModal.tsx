@@ -31,6 +31,9 @@ interface Props {
   after: QueryResult;
   /** 固定した時刻の表示用文字列。 */
   beforeLabel: string;
+  /** 各計画が実測 (EXPLAIN ANALYZE) で取得されたか。食い違うときは注意を出す。 */
+  beforeAnalyze?: boolean;
+  afterAnalyze?: boolean;
   onClose: () => void;
 }
 
@@ -46,14 +49,17 @@ function Metric({
   after,
   delta,
   lowerIsBetter = true,
+  neutral = false,
 }: {
   label: string;
   before: string;
   after: string;
   delta: { text: string; sign: number } | null;
   lowerIsBetter?: boolean;
+  /** 増減に良し悪しが無い指標 (ノード数など)。色を付けない。 */
+  neutral?: boolean;
 }) {
-  const good = delta && delta.sign !== 0 ? (delta.sign < 0) === lowerIsBetter : null;
+  const good = neutral ? null : delta && delta.sign !== 0 ? (delta.sign < 0) === lowerIsBetter : null;
   return (
     <chakra.tr>
       <chakra.th scope="row" textAlign="left" fontWeight={500} color="app.textSecondary" px="2.5" py="1">
@@ -84,7 +90,7 @@ const VERDICT_KEY: Record<PlanComparisonView["verdict"], I18nKey> = {
   same: "planCompareVerdictSame",
 };
 
-export function PlanCompareModal({ driver, before, after, beforeLabel, onClose }: Props) {
+export function PlanCompareModal({ driver, before, after, beforeLabel, beforeAnalyze, afterAnalyze, onClose }: Props) {
   const t = useT();
   const view = useMemo<{ cmp: PlanComparisonView; b: PlanSummary; a: PlanSummary } | null>(() => {
     const b = summarizePlanResult(driver, before, t);
@@ -123,6 +129,10 @@ export function PlanCompareModal({ driver, before, after, beforeLabel, onClose }
                 after: view.a.score.score,
               })}
             </Callout>
+
+            {beforeAnalyze !== undefined && afterAnalyze !== undefined && beforeAnalyze !== afterAnalyze && (
+              <Callout tone="warning">{t("planCompareAnalyzeMismatch")}</Callout>
+            )}
 
             <Flex gap="4" align="flex-start" flexWrap="wrap">
               <chakra.table
@@ -197,7 +207,7 @@ export function PlanCompareModal({ driver, before, after, beforeLabel, onClose }
                       text: signed(view.a.nodeCount - view.b.nodeCount),
                       sign: view.a.nodeCount - view.b.nodeCount,
                     }}
-                    lowerIsBetter={false}
+                    neutral
                   />
                 </tbody>
               </chakra.table>

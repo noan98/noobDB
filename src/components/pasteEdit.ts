@@ -1,5 +1,5 @@
 import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
-import { editIsNoop, rowEditKey, type PendingInsertRow } from "./cellEdit";
+import { editIsNoop, isBinaryColumnType, rowEditKey, type PendingInsertRow } from "./cellEdit";
 import type { BulkEditTarget } from "./bulkEdit";
 import { insertDefaultHint } from "./insertDefaults";
 
@@ -215,6 +215,8 @@ export interface PasteInsertPlan {
   cells: number;
   /** 生成列のため入れなかったセル数 (値を入れると INSERT がエラーになる)。 */
   skippedGenerated: number;
+  /** BLOB / バイナリ列のため入れなかったセル数 (貼り付けテキストはバイト列にならない)。 */
+  skippedBinary: number;
   /** 列型に対して不正な値のため入れなかったセル数。 */
   skippedInvalid: number;
   /** 表示列を超えたため入れなかったセル数。 */
@@ -231,6 +233,7 @@ export interface PasteInsertPlan {
  * - 生成列 (`insertDefaultHint` が `generated`) は値を入れられないので外す。自動採番列は
  *   値が明示されていればそのまま入れる (意図して ID を貼ることがあるため。重複は反映時の
  *   DB エラーで分かる)。
+ * - BLOB / バイナリ列は文字列の貼り付けでは正しいバイト列にならないので外す (`skippedBinary`)。
  * - 型に合わない値のセルだけを外し、行の他のセルは積む。値が 1 つも残らない行は積まない。
  *
  * 書き込みはここでは行わない — 呼び出し側が既存の保留 INSERT バッファへ足し、反映は従来どおり
@@ -241,6 +244,7 @@ export function planPasteInsertRows(input: PlanPasteInsertInput): PasteInsertPla
     rows: [],
     cells: 0,
     skippedGenerated: 0,
+    skippedBinary: 0,
     skippedInvalid: 0,
     skippedOutOfBounds: 0,
     skippedBlankRows: 0,
@@ -268,6 +272,10 @@ export function planPasteInsertRows(input: PlanPasteInsertInput): PasteInsertPla
       if (value === "") continue;
       if (generated.has(colIdx)) {
         plan.skippedGenerated++;
+        continue;
+      }
+      if (isBinaryColumnType(input.columns[colIdx].type_name)) {
+        plan.skippedBinary++;
         continue;
       }
       if (input.validate(colIdx, value)) {

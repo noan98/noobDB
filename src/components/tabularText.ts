@@ -1,5 +1,5 @@
 import type { CellValue, Column } from "../api/tauri";
-import { buildCsv, buildMarkdownTable } from "./exportPreview";
+import { buildCsv, buildMarkdownTable, mitigateFormulaInjection } from "./exportPreview";
 
 /**
  * 表形式データ (ヘッダ + 行) を CSV / TSV / Markdown のテキストへ整形する純ロジック (#1539)。
@@ -25,7 +25,8 @@ export function tableToMarkdown(header: readonly string[], rows: readonly CellVa
 /** TSV のセル: タブ・改行は空白 1 つへ潰す (表計算へ貼ったときに行・列が崩れないように)。 */
 function tsvCell(v: CellValue): string {
   if (v === null) return "";
-  return String(v).replace(/[\t\r\n]+/g, " ");
+  // 表計算へ貼ったときの数式インジェクションは CSV と同じ規則で緩和する。
+  return mitigateFormulaInjection(String(v)).replace(/[\t\r\n]+/g, " ");
 }
 
 /** TSV (`\n` 終端)。クオートはせず、タブ・改行を空白へ置換する。 */

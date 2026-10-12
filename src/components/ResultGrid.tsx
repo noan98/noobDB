@@ -5276,8 +5276,12 @@ export const DataGrid = memo(function DataGrid({
 
     if (offerInsert && insertPlan && onPasteInsertRows) {
       const rowsToAdd = insertPlan.rows;
+      const overflowCells = overflowGrid.reduce((n, r) => n + r.length, 0);
       const skippedCells =
-        insertPlan.skippedGenerated + insertPlan.skippedInvalid + insertPlan.skippedOutOfBounds;
+        insertPlan.skippedGenerated +
+        insertPlan.skippedBinary +
+        insertPlan.skippedInvalid +
+        insertPlan.skippedOutOfBounds;
       void (async () => {
         const ok = await confirmBlur({
           title: t("gridPasteInsertTitle"),
@@ -5291,7 +5295,11 @@ export const DataGrid = memo(function DataGrid({
           ),
           confirmLabel: t("gridPasteInsertConfirm"),
         });
-        if (!ok) return;
+        if (!ok) {
+          // 取り込まなかったので、従来どおり表示範囲を超えて捨てたセル数を知らせる。
+          toast.info(t("gridPasteInsertDeclined", { cells: overflowCells }));
+          return;
+        }
         onPasteInsertRows(rowsToAdd);
         toast.success(t("gridPasteInsertAdded", { rows: rowsToAdd.length }));
       })();

@@ -124,4 +124,8 @@ describe("statRowsToTable / CSV / TSV (#1539)", () => {
     expect(lines[1].split("\t")).toHaveLength(8);
     expect(lines[1].endsWith('SELECT "a",  b FROM t WHERE x = ?')).toBe(true);
   });
+  it("TSV も数式として解釈されうる先頭文字を緩和する", () => {
+    const tsv = tableToTsv(["a"], [["=SUM(A1)"], ["-5"]]);
+    expect(tsv).toBe("a\n'=SUM(A1)\n-5\n");
+  });
 });

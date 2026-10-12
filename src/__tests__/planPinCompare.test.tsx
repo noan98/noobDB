@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import type { QueryResult } from "../api/tauri";
 import { ExplainViewer } from "../components/ExplainViewer";
+import { PlanCompareModal } from "../components/PlanCompareModal";
 import { __resetExplainPins } from "../explainPins";
 import { setLocale, t } from "../i18n";
 
@@ -55,5 +56,16 @@ describe("EXPLAIN 計画の固定と比較 (#1539)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("planPin") }));
     rerender(<ExplainViewer result={indexed} driver="mysql" pin={{ scope: "tab-2", sql: null }} />);
     expect(screen.queryByRole("button", { name: t("planCompareOpen") })).toBeNull();
+  });
+
+  it("片方だけ実測 (ANALYZE) のときは注意を出し、同じモードなら出さない", async () => {
+    const { rerender } = renderWithProviders(
+      <PlanCompareModal driver="mysql" before={scan} after={indexed} beforeLabel="10:00" beforeAnalyze={false} afterAnalyze onClose={() => {}} />,
+    );
+    expect(await screen.findByText(t("planCompareAnalyzeMismatch"))).toBeInTheDocument();
+    rerender(
+      <PlanCompareModal driver="mysql" before={scan} after={indexed} beforeLabel="10:00" beforeAnalyze afterAnalyze onClose={() => {}} />,
+    );
+    expect(screen.queryByText(t("planCompareAnalyzeMismatch"))).toBeNull();
   });
 });

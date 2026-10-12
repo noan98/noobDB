@@ -381,7 +381,11 @@ export function TableTimelapsePanel({
       t("timelapseExportColColumn"),
       t("timelapseExportColBefore"),
       t("timelapseExportColAfter"),
-    ]);
+    ], {
+      added: t("timelapseKindAdded"),
+      removed: t("timelapseKindRemoved"),
+      changed: t("timelapseKindChanged"),
+    });
     return tableToCsv(table.header, table.rows);
   };
 

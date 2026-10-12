@@ -91,6 +91,8 @@ export function PlanPinControls({
             before={pinned.result}
             after={result}
             beforeLabel={pinnedAt}
+            beforeAnalyze={pinned.analyze}
+            afterAnalyze={analyze}
             onClose={() => setComparing(false)}
           />
         </Suspense>

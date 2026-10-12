@@ -5,6 +5,7 @@ import { useT, type I18nKey } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import {
   buildMetricRows,
+  baselineIndex,
   buildTopValueRows,
   countMetricDifferences,
   topValueCellDiffers,
@@ -118,8 +119,9 @@ export function ColumnProfileCompareModal({
 
   const run = async () => {
     if (selected.size === 0 || running) return;
-    // 基準 (今の接続) は列プロファイルパネルがすでに集計しているので、確認するのは選んだ他の接続だけ。
-    const prod = targets.filter((c) => c !== baseline && c.profile.is_production);
+    // 基準 (今の接続) も `profile_column` でもう一度集計する (全件走査) ので、基準が本番接続の
+    // ときも含めて、本番接続があれば実行前に確認する。
+    const prod = targets.filter((c) => c.profile.is_production);
     if (prod.length > 0) {
       const ok = await confirm({
         title: t("profileCompareProdTitle"),
@@ -161,6 +163,9 @@ export function ColumnProfileCompareModal({
   const diffCount =
     countMetricDifferences(metricRows) + topRows.filter((r) => topValueRowDiffers(r, entries)).length;
   const fetched = entries.filter((e) => e.profile).length;
+  // 基準は「取得できた最初の接続」(columnProfileCompare.baselineIndex)。今の接続の取得に失敗した
+  // ときは次の接続が基準になるので、見出しの「基準」表示もそれに合わせる。まだ何も取れていない間は先頭。
+  const baseHeaderIdx = Math.max(0, baselineIndex(entries));
 
   if (phase === "pick") {
     return (
@@ -256,7 +261,7 @@ export function ColumnProfileCompareModal({
               <chakra.tr borderBottom="1px solid" borderColor="app.border">
                 <chakra.th />
                 {targets.map((c, i) => (
-                  <ConnHeader key={c.sessionId} c={c} isBaseline={i === 0} database={i === 0 ? target.database : dbOf(c)} />
+                  <ConnHeader key={c.sessionId} c={c} isBaseline={i === baseHeaderIdx} database={i === 0 ? target.database : dbOf(c)} />
                 ))}
               </chakra.tr>
             </thead>
