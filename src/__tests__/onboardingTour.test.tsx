@@ -88,3 +88,10 @@ describe("OnboardingTour (#599)", () => {
     });
   });
 });
+
+describe("OnboardingTour の初期フォーカス (#1529)", () => {
+  it("開いた直後のフォーカスは × ではなく「次へ」(Enter で閉じてしまわない)", () => {
+    const { getByRole } = renderWithProviders(<OnboardingTour onClose={() => {}} />);
+    expect(document.activeElement).toBe(getByRole("button", { name: t("onboardingNext") }));
+  });
+});

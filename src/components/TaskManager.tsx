@@ -402,11 +402,17 @@ function TaskRow({
         <Flex gap="1.5">
           <Tooltip label={t("taskRunNow")}>
             <Button type="button" onClick={onRunNow} disabled={running} aria-label={t("taskRunNow")}>
-              {running ? <Spinner size={14} /> : <Icon name="query" size={ICON_SIZES.sm} />}
+              {running ? <Spinner size={14} decorative /> : <Icon name="query" size={ICON_SIZES.sm} />}
             </Button>
           </Tooltip>
           <Tooltip label={t("taskHistory")}>
-            <Button type="button" onClick={onToggleHistory} aria-label={t("taskHistory")}>
+            <Button
+              type="button"
+              onClick={onToggleHistory}
+              aria-label={t("taskHistory")}
+              aria-expanded={expanded}
+              aria-controls={expanded ? `task-history-${task.id}` : undefined}
+            >
               <Icon name="clock" size={ICON_SIZES.sm} />
             </Button>
           </Tooltip>
@@ -423,7 +429,7 @@ function TaskRow({
         </Flex>
       </Flex>
       {expanded && (
-        <chakra.div borderTop="1px solid" borderColor="app.border" bg="app.toolbar" px="3" py="2.5">
+        <chakra.div id={`task-history-${task.id}`} borderTop="1px solid" borderColor="app.border" bg="app.toolbar" px="3" py="2.5">
           {runsLoading ? (
             <Spinner size={14} />
           ) : runs.length === 0 ? (

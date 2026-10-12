@@ -3,7 +3,8 @@ import { chakra } from "@chakra-ui/react";
 import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, PressableButton } from "./ui";
+import { Button, PressableButton } from "./ui";
+import { PassphraseInput } from "./PassphraseInput";
 import {
   MIN_BACKUP_PASSPHRASE_LENGTH,
   passphraseStrength,
@@ -95,10 +96,10 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
             <FieldLabel htmlFor="profile-backup-passphrase">
               {t("profileBackupPassphrase")}
             </FieldLabel>
-            <Input
+            <PassphraseInput
               id="profile-backup-passphrase"
               ref={firstRef}
-              type="password"
+              aria-describedby={passphrase.length > 0 ? "profile-backup-strength" : undefined}
               autoComplete="new-password"
               spellCheck={false}
               value={passphrase}
@@ -107,6 +108,7 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
             />
             {passphrase.length > 0 && (
               <chakra.span
+                id="profile-backup-strength"
                 fontSize="xs"
                 color={STRENGTH_COLOR[strength]}
                 data-testid="profile-backup-strength"
@@ -119,9 +121,8 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
             <FieldLabel htmlFor="profile-backup-passphrase-confirm">
               {t("profileBackupPassphraseConfirm")}
             </FieldLabel>
-            <Input
+            <PassphraseInput
               id="profile-backup-passphrase-confirm"
-              type="password"
               autoComplete="new-password"
               spellCheck={false}
               value={confirmation}

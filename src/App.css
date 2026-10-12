@@ -2323,6 +2323,17 @@ td.is-copy-flash::after {
   animation: apply-flash 0.7s ease-out;
 }
 
+/* ヘルス行のフラッシュは行を再マウントせず、世代の偶奇で animation-name を切り替えて
+   再生し直す (再マウントすると操作ボタンのフォーカスが失われる, #1529)。 */
+@keyframes apply-flash-alt {
+  0%   { opacity: 0; }
+  25%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+.flash-row.flash-row-alt > td::after {
+  animation-name: apply-flash-alt;
+}
+
 td.is-find-current::after {
   content: "";
   position: absolute;

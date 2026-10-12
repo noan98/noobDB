@@ -42,8 +42,9 @@ export interface ProfileBadgeStyleProps {
 /** 本番プロファイルを示すバッジ。danger のベタ塗り (常に警戒色) で最も目立たせる。 */
 export function ProductionBadge({
   compact,
+  focusable = true,
   ...rest
-}: ProfileBadgeStyleProps & HTMLChakraProps<"span">) {
+}: ProfileBadgeStyleProps & { focusable?: boolean } & HTMLChakraProps<"span">) {
   const t = useT();
   return (
     <MotionSpan
@@ -57,7 +58,7 @@ export function ProductionBadge({
       {/* TreeBadge は非対話の <span> でそもそもフォーカスを持てないため、
           native title のままではキーボードで一切読めなかった。`focusableWrapper`
           で読み取り専用のタブストップを与える (#814/#884)。 */}
-      <Tooltip label={t("listProductionTitle")} focusableWrapper>
+      <Tooltip label={t("listProductionTitle")} focusableWrapper={focusable}>
         <TreeBadge
           display="inline-flex"
           alignItems="center"
@@ -82,8 +83,9 @@ export function ProductionBadge({
 /** 読み取り専用プロファイルを示すバッジ。info の淡色 (subtle/border/text) で控えめに示す。 */
 export function ReadOnlyBadge({
   compact,
+  focusable = true,
   ...rest
-}: ProfileBadgeStyleProps & HTMLChakraProps<"span">) {
+}: ProfileBadgeStyleProps & { focusable?: boolean } & HTMLChakraProps<"span">) {
   const t = useT();
   return (
     <MotionSpan
@@ -94,7 +96,7 @@ export function ReadOnlyBadge({
       transition={transitions.crossfade}
       display="inline-flex"
     >
-      <Tooltip label={t("listReadOnlyTitle")} focusableWrapper>
+      <Tooltip label={t("listReadOnlyTitle")} focusableWrapper={focusable}>
         <TreeBadge
           display="inline-flex"
           alignItems="center"
@@ -170,6 +172,7 @@ export function ProfileBadges({
   sandbox,
   compact,
   gap = "1",
+  focusable = true,
 }: {
   isProduction: boolean;
   readOnly: boolean;
@@ -177,6 +180,10 @@ export function ProfileBadges({
   sandbox?: boolean;
   compact?: boolean;
   gap?: string;
+  /** false なら本番 / RO バッジをタブストップにしない。`<button>` の内側に置くカード
+   *  (ProfileCardGrid) では入れ子のフォーカス要素になるため false にし、状態は
+   *  カード側の aria-label で伝える (#1529)。 */
+  focusable?: boolean;
 }) {
   const kinds = profileBadgeKinds({ is_production: isProduction, read_only: readOnly });
   if (kinds.length === 0 && !sandbox) return null;
@@ -184,8 +191,8 @@ export function ProfileBadges({
     <chakra.span display="inline-flex" alignItems="center" gap={gap}>
       <AnimatePresence initial={false}>
         {sandbox && <SandboxBadge compact={compact} />}
-        {kinds.includes("production") && <ProductionBadge compact={compact} />}
-        {kinds.includes("readOnly") && <ReadOnlyBadge compact={compact} />}
+        {kinds.includes("production") && <ProductionBadge compact={compact} focusable={focusable} />}
+        {kinds.includes("readOnly") && <ReadOnlyBadge compact={compact} focusable={focusable} />}
       </AnimatePresence>
     </chakra.span>
   );
