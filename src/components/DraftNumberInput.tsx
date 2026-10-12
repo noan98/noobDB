@@ -9,6 +9,17 @@ export function parseDraftInt(raw: string): number | null {
   return Number.isSafeInteger(n) ? n : null;
 }
 
+/**
+ * 小数も許す版。空・数値でない・非有限は `null`。入力途中の `1.` は 1、`-` / `.` は `null`
+ * (後者は確定せず draft として保持される)。
+ */
+export function parseDraftNumber(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^-?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
+}
+
 /** `min` / `max` で丸める (指定が無い側は無制限)。 */
 export function clampDraftInt(n: number, min?: number, max?: number): number {
   let v = n;
@@ -29,6 +40,11 @@ interface Props extends InputProps {
   onCommit: (value: number) => void;
   min?: number;
   max?: number;
+  /**
+   * 小数を許す。入力途中の `1.` や `-` を欄に残せるよう `type="number"` ではなく
+   * `type="text"` + `inputMode="decimal"` で描画する。
+   */
+  allowDecimal?: boolean;
 }
 
 /**
@@ -44,12 +60,13 @@ interface Props extends InputProps {
  *   (打鍵の途中で欄が書き換わらない)。確定 (blur / Enter) 後は常に `value` の表示へ戻るので、
  *   親側で値が変わらなかった場合も、欄が上限超過の入力値のまま残らない。
  */
-export function DraftNumberInput({ value, onCommit, min, max, onBlur, onKeyDown, ...rest }: Props) {
+export function DraftNumberInput({ value, onCommit, min, max, allowDecimal = false, onBlur, onKeyDown, ...rest }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
+  const parse = allowDecimal ? parseDraftNumber : parseDraftInt;
 
   const commit = () => {
     if (draft === null) return;
-    const parsed = parseDraftInt(draft);
+    const parsed = parse(draft);
     setDraft(null);
     if (parsed === null) return;
     onCommit(clampDraftInt(parsed, min, max));
@@ -58,14 +75,12 @@ export function DraftNumberInput({ value, onCommit, min, max, onBlur, onKeyDown,
   return (
     <Input
       {...rest}
-      type="number"
-      min={min}
-      max={max}
+      {...(allowDecimal ? { type: "text", inputMode: "decimal" as const } : { type: "number", min, max })}
       value={draft ?? String(value)}
       onChange={(e) => {
         const raw = e.target.value;
         setDraft(raw);
-        const parsed = parseDraftInt(raw);
+        const parsed = parse(raw);
         if (parsed !== null && clampDraftInt(parsed, min, max) === parsed) onCommit(parsed);
       }}
       onBlur={(e) => {

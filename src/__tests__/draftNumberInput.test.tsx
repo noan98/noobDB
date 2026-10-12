@@ -5,6 +5,7 @@ import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import { Modal, ModalBody } from "../components/Modal";
 import {
   clampDraftInt,
+  parseDraftNumber,
   DraftNumberInput,
   parseDraftInt,
 } from "../components/DraftNumberInput";
@@ -134,5 +135,47 @@ describe("DraftNumberInput と Modal の Cmd/Ctrl+Enter (#1534)", () => {
     await user.type(input, "42");
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
     expect(submitted).toHaveBeenCalledWith(42);
+  });
+});
+
+describe("DraftNumberInput の小数入力 (allowDecimal)", () => {
+  it("parseDraftNumber は小数と入力途中の 1. を読み、- や . だけは null", () => {
+    expect(parseDraftNumber("1.5")).toBe(1.5);
+    expect(parseDraftNumber("-0.25")).toBe(-0.25);
+    expect(parseDraftNumber("1.")).toBe(1);
+    expect(parseDraftNumber(".5")).toBe(0.5);
+    expect(parseDraftNumber("-")).toBeNull();
+    expect(parseDraftNumber(".")).toBeNull();
+    expect(parseDraftNumber("1e5")).toBeNull();
+    expect(parseDraftNumber("")).toBeNull();
+  });
+
+  it("-1.5 のように途中で - や 1. を挟んでも欄に残り、小数で確定される", async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    function H() {
+      const [v, setV] = useState(0);
+      return (
+        <DraftNumberInput
+          aria-label="最小"
+          allowDecimal
+          value={v}
+          onCommit={(n) => {
+            setV(n);
+            onCommit(n);
+          }}
+        />
+      );
+    }
+    renderWithProviders(<H />);
+    const input = screen.getByLabelText("最小") as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, "-1.");
+    expect(input.value).toBe("-1.");
+    await user.type(input, "5");
+    expect(input.value).toBe("-1.5");
+    expect(onCommit).toHaveBeenLastCalledWith(-1.5);
+    await user.tab();
+    expect(input.value).toBe("-1.5");
   });
 });
