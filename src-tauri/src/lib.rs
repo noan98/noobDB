@@ -781,8 +781,15 @@ pub mod __test_api {
         state: &AppState,
         session_id: &str,
         process_ids: &[i64],
+        statement_only: bool,
     ) -> crate::error::Result<KillProcessesResult> {
-        crate::commands::process::kill_processes_inner(state, session_id, process_ids).await
+        crate::commands::process::kill_processes_inner(
+            state,
+            session_id,
+            process_ids,
+            statement_only,
+        )
+        .await
     }
 
     /// Drives the full schema-comparison path (`commands::diff`) without Tauri:

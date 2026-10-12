@@ -46,6 +46,11 @@ export interface AiLockDiagnoseProps {
   processes: readonly ProcessInfo[];
   /** 一覧で選択中のプロセス id。 */
   selectedIds: ReadonlySet<number>;
+  /**
+   * 停止候補のプロセスを一覧で強調・選択する (#1538)。AI は何も実行せず、停止は一覧の
+   * 既存ボタン (確認ダイアログつき) で行う。省略時は候補の「一覧で表示」ボタンを出さない。
+   */
+  onLocateProcess?: (id: number) => void;
   /** 本番接続か。true のときは送信前に本番である旨の確認を出す。 */
   isProduction?: boolean;
   /** PostgreSQL で修飾の無いテーブルを引くスキーマ。省略時は `public`。 */
@@ -249,7 +254,9 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
       )}
       {(running || (hasResult && open)) && (
         <Flex direction="column" gap="2" maxH="320px" overflow="auto" aria-live="polite">
-          {state.kind === "done" && <ResultView value={state.value} />}
+          {state.kind === "done" && (
+            <ResultView value={state.value} onLocate={props.onLocateProcess} />
+          )}
           <AiUsageNote event={stream.done} />
           {state.kind === "raw" && (
             <Flex direction="column" gap="1">
@@ -274,7 +281,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
           )}
         </Flex>
       )}
-      {/* AI は KILL を実行しない。停止は一覧の既存ボタンでユーザが行う。 */}
+      {/* AI は KILL を実行しない。停止は一覧の既存ボタン (確認つき) でユーザが行う。 */}
       {(running || hasResult) && (
         <Callout tone="info" role="note">
           {t("lockDiagnoseGuardNote")}
@@ -285,7 +292,13 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
   );
 }
 
-function ResultView({ value }: { value: LockDiagnoseResponse }) {
+function ResultView({
+  value,
+  onLocate,
+}: {
+  value: LockDiagnoseResponse;
+  onLocate?: (id: number) => void;
+}) {
   const t = useT();
   const impactLabel: Record<ImpactRisk, string> = {
     high: t("lockDiagnoseImpactHigh"),
@@ -341,6 +354,17 @@ function ResultView({ value }: { value: LockDiagnoseResponse }) {
                   {t("lockDiagnoseImpact", { level: impactLabel[c.impact] })}
                 </chakra.span>
                 <chakra.span color="app.textMuted">{c.reason}</chakra.span>
+                {onLocate && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    aria-label={t("lockDiagnoseLocateAria", { id: c.session_id })}
+                    onClick={() => onLocate(c.session_id)}
+                  >
+                    {t("lockDiagnoseLocate")}
+                  </Button>
+                )}
               </Flex>
             );
           })}
