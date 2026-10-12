@@ -2335,7 +2335,8 @@ fn decode_cell_unchecked(row: &PgRow, i: usize) -> Value {
     }
     if ti(type_name, &["FLOAT4"]) {
         if let Ok(v) = row.try_get::<Option<f32>, _>(i) {
-            return v.map(|f| Value::Float(f as f64)).unwrap_or(Value::Null);
+            // f32 の最短表記経由で広げる (`3.14` が `3.140000104904175` にならない、#1534)。
+            return v.map(Value::from_f32_shortest).unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["FLOAT8"]) {

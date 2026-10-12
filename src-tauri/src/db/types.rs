@@ -39,6 +39,23 @@ impl Value {
         }
     }
 
+    /// 単精度浮動小数 (PostgreSQL の `FLOAT4`/`real`、MySQL の `FLOAT`) を `Value::Float` にする (#1534)。
+    ///
+    /// `f as f64` で広げると、`3.14f32` が `3.140000104904175` のように f32 の丸め誤差ごと
+    /// 倍精度の桁数で表示され、DB 上の `3.14` と食い違う (インラインセル編集が元の値を書き戻す
+    /// ときも混乱する)。f32 の最短表記 (往復して元の f32 に戻る最短の十進表記) を経由して
+    /// f64 に直すと、DB が見せる値と同じ `3.14` になる。NaN / 無限大は文字列化せずそのまま広げる。
+    pub fn from_f32_shortest(v: f32) -> Self {
+        if !v.is_finite() {
+            return Value::Float(f64::from(v));
+        }
+        Value::Float(
+            v.to_string()
+                .parse::<f64>()
+                .unwrap_or_else(|_| f64::from(v)),
+        )
+    }
+
     /// [`Value::from_i64_lossless`] の符号なし版 (MySQL の `BIGINT UNSIGNED` 等)。
     pub fn from_u64_lossless(v: u64) -> Self {
         if v <= JS_MAX_SAFE_INTEGER as u64 {
@@ -884,6 +901,31 @@ mod js_safe_tests {
     use super::*;
 
     const SAFE: i64 = JS_MAX_SAFE_INTEGER;
+
+    #[test]
+    fn f32_is_widened_through_its_shortest_representation() {
+        // `as f64` だと f32 の丸め誤差が見える。最短表記経由なら DB の表示と同じ値になる (#1534)。
+        assert_eq!(f64::from(3.14f32), 3.140000104904175);
+        assert_eq!(Value::from_f32_shortest(3.14), Value::Float(3.14));
+        assert_eq!(Value::from_f32_shortest(0.1), Value::Float(0.1));
+        assert_eq!(Value::from_f32_shortest(-2.5), Value::Float(-2.5));
+        assert_eq!(Value::from_f32_shortest(0.0), Value::Float(0.0));
+        assert_eq!(
+            Value::from_f32_shortest(16_777_216.0),
+            Value::Float(16_777_216.0)
+        );
+        assert_eq!(Value::from_f32_shortest(1.0e-7), Value::Float(1.0e-7));
+        assert_eq!(
+            Value::from_f32_shortest(f32::MAX),
+            Value::Float(3.4028235e38)
+        );
+        // 非有限値はそのまま。
+        assert!(matches!(Value::from_f32_shortest(f32::NAN), Value::Float(f) if f.is_nan()));
+        assert_eq!(
+            Value::from_f32_shortest(f32::INFINITY),
+            Value::Float(f64::INFINITY)
+        );
+    }
 
     #[test]
     fn lossless_constructors_always_produce_js_safe_values() {

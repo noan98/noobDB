@@ -2706,7 +2706,14 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
             return v.map(Value::from_u64_lossless).unwrap_or(Value::Null);
         }
     }
-    if ti(type_name, &["FLOAT", "DOUBLE"]) {
+    if ti(type_name, &["FLOAT"]) {
+        // 単精度。f64 で読むと f32 の丸め誤差ごと広がる (`3.14` → `3.140000104904175`) ので、
+        // f32 で読んで最短表記経由で広げる (#1534)。
+        if let Ok(v) = row.try_get::<Option<f32>, _>(i) {
+            return v.map(Value::from_f32_shortest).unwrap_or(Value::Null);
+        }
+    }
+    if ti(type_name, &["DOUBLE"]) {
         if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
             return v.map(Value::Float).unwrap_or(Value::Null);
         }
