@@ -1531,6 +1531,8 @@ const en = {
   exportSqlIncludeDdl: "Include CREATE TABLE statement",
   exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Not included in the preview or copy.",
   exportSqlIncludeDdlNeedsTable: "Enter a target table name to include its definition.",
+  exportSqlIncludeDdlTableMismatch:
+    "The definition can only be included when the table name matches the result's source table.",
   exportSqlBatch: "Rows per statement",
   exportSqlHint:
     "Generates INSERT statements with driver-specific literal escaping, grouping rows into batches.",
@@ -6245,6 +6247,8 @@ const ja: Dict = {
   exportSqlIncludeDdl: "CREATE TABLE 文を先頭に含める",
   exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーには含まれません。",
   exportSqlIncludeDdlNeedsTable: "表定義を含めるには対象テーブル名を入力してください。",
+  exportSqlIncludeDdlTableMismatch:
+    "表定義を含められるのは、対象テーブル名が結果の取得元テーブルと一致しているときだけです。",
   exportSqlBatch: "1 文あたり行数",
   exportSqlHint:
     "ドライバ別のリテラルエスケープで INSERT 文を生成し、指定行数ごとに 1 文へまとめます。",

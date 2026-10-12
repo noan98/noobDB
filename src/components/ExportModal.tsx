@@ -248,7 +248,10 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // SQL 形式で先頭に CREATE TABLE 文を含める (#1539)。定義の取得にセッションが要るので、
   // 全件エクスポートの文脈 (セッション ID) があるときだけ選べる。
   const [sqlIncludeDdl, setSqlIncludeDdl] = useState(false);
-  const canIncludeDdl = !!fullExport && sqlTable.trim() !== "" && !!database;
+  // 結果の取得元テーブルと一致するときだけ (別名へ書き換えた名前の定義を取ると、中身の違う
+  // CREATE TABLE を付けてしまう)。
+  const ddlTableMatches = sqlTable.trim() !== "" && sqlTable.trim() === (table ?? "").trim();
+  const canIncludeDdl = !!fullExport && ddlTableMatches && !!database;
   // 選択範囲があればそれを扱う意図が明確なので「選択範囲」を初期選択にする。
   // 次点は、部分結果かつ全件モードが使えるときの「全件」(誤って部分だけ書き出す
   // のを防ぐ)。それ以外は従来どおりグリッドのみ。
@@ -916,7 +919,11 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                       <span>{t("exportSqlIncludeDdl")}</span>
                     </chakra.label>
                     <chakra.div textStyle="caption" mt="1">
-                      {sqlTable.trim() === "" ? t("exportSqlIncludeDdlNeedsTable") : t("exportSqlIncludeDdlHint")}
+                      {sqlTable.trim() === ""
+                        ? t("exportSqlIncludeDdlNeedsTable")
+                        : !ddlTableMatches
+                          ? t("exportSqlIncludeDdlTableMismatch")
+                          : t("exportSqlIncludeDdlHint")}
                     </chakra.div>
                   </chakra.div>
                 )}

@@ -149,7 +149,8 @@ describe("クエリ履歴の保持期間 (#1539)", () => {
     return document.getElementById("settings-history-retention") as HTMLInputElement;
   };
 
-  it("保存済みの値を読み込み、変更を確定するとバックエンドへ保存する", async () => {
+  // SettingsView の描画は重いので 1 回だけ描画し、読み込み・保存・範囲外の巻き戻しを順に確かめる。
+  it("保存済みの値を読み込み、確定で保存し、範囲外の入力は保存せず元の値へ戻す", async () => {
     vi.mocked(api.getHistoryRetentionDays).mockResolvedValue(14);
     renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
     const input = await historyInput();
@@ -157,16 +158,10 @@ describe("クエリ履歴の保持期間 (#1539)", () => {
     fireEvent.change(input, { target: { value: "30" } });
     fireEvent.blur(input);
     await waitFor(() => expect(api.setHistoryRetentionDays).toHaveBeenCalledWith(30));
-  });
-
-  it("範囲外の入力は保存せず元の値に戻す", async () => {
-    vi.mocked(api.getHistoryRetentionDays).mockResolvedValue(7);
-    renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
-    const input = await historyInput();
-    await waitFor(() => expect(input.value).toBe("7"));
+    vi.mocked(api.setHistoryRetentionDays).mockClear();
     fireEvent.change(input, { target: { value: "99999" } });
     fireEvent.blur(input);
     expect(api.setHistoryRetentionDays).not.toHaveBeenCalled();
-    await waitFor(() => expect(input.value).toBe("7"));
+    await waitFor(() => expect(input.value).toBe("30"));
   });
 });

@@ -82,4 +82,16 @@ describe("ExportModal CREATE TABLE 文の同梱 (#1539)", () => {
     expect(api.getObjectDefinition).not.toHaveBeenCalled();
     expect(vi.mocked(api.exportQueryResult).mock.calls[0][0].ddlHeader).toBeNull();
   });
+
+  it("対象テーブル名を取得元と違う名前に変えると選べなくなり、理由を示す", () => {
+    renderModal(true);
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    const box = screen.getByRole("checkbox", { name: t("exportSqlIncludeDdl") });
+    expect(box).not.toBeDisabled();
+    fireEvent.change(document.getElementById("export-sql-table") as HTMLInputElement, {
+      target: { value: "users_copy" },
+    });
+    expect(box).toBeDisabled();
+    expect(screen.getByText(t("exportSqlIncludeDdlTableMismatch"))).toBeInTheDocument();
+  });
 });

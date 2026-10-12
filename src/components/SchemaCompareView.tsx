@@ -428,6 +428,11 @@ export function SchemaCompareView({
   const [dataLimit, setDataLimit] = useState(1000);
   // 全行をキーセットページングで比較する (#1539)。既定オン。オフは従来の件数上限つき比較。
   const [dataAllRows, setDataAllRows] = useState(true);
+  // 打ち切りメッセージは、比較した時点の設定 (全行 / 上限) で選ぶ。比較後に入力欄を触っても変わらない。
+  const [dataComparedWith, setDataComparedWith] = useState<{ allRows: boolean; limit: number }>({
+    allRows: true,
+    limit: 1000,
+  });
   // 比較から外す列 (カンマ区切り, #1539)。updated_at のように環境ごとに違う列を差分にしない。
   const [dataIgnore, setDataIgnore] = useState("");
   const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
@@ -676,6 +681,7 @@ export function SchemaCompareView({
       // 直前の比較結果はバックエンドの保持を解放してから差し替える。
       releaseHeldDiff();
       heldDiffIdRef.current = result.diff_id;
+      setDataComparedWith({ allRows: dataAllRows, limit: dataLimit });
       setDataDiff(result.diff);
       setDataDiffId(result.diff_id);
     } catch (e) {
@@ -1056,9 +1062,9 @@ export function SchemaCompareView({
                       </Box>
                       {dataDiff.truncated && (
                         <chakra.p css={backupCss}>
-                          {dataAllRows
+                          {dataComparedWith.allRows
                             ? t("schemaCompareDataTruncatedAll")
-                            : t("schemaCompareDataTruncated", { limit: dataLimit })}
+                            : t("schemaCompareDataTruncated", { limit: dataComparedWith.limit })}
                         </chakra.p>
                       )}
                       <Box css={syncControlsCss}>
