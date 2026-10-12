@@ -357,6 +357,8 @@ import {
   type QueryNotificationKind,
 } from "./queryNotify";
 import type { IncomingFk } from "./fkNavigation";
+import { collectDropImpacts, type DropImpact } from "./dropImpact";
+import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
@@ -6616,11 +6618,35 @@ export default function App() {
     await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
 
+  // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
+  // 取る (#1536)。バックエンドは DB 全体の FK 一覧を持っているので 1 テーブルあたり追加の
+  // DB 問い合わせは増えない。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
+  const loadDropImpacts = useCallback(async (database: string, tables: string[]): Promise<DropImpact[]> => {
+    if (!sessionId) return [];
+    const entries = await Promise.all(
+      tables.map(async (tbl): Promise<[string, IncomingFk[]]> => {
+        try {
+          return [tbl, await api.incomingForeignKeys(sessionId, database, tbl)];
+        } catch {
+          return [tbl, []];
+        }
+      }),
+    );
+    return collectDropImpacts(Object.fromEntries(entries), tables);
+  }, [sessionId]);
+
   const handleDropTable = useCallback(async (database: string, table: string) => {
     // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
+    const impacts = await loadDropImpacts(database, [table]);
+    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
     const ok = await confirm({
       title: translate("dropConfirmTitle", { table }),
-      message: maintenanceMessage(translate("dropConfirmBody", { table })),
+      message: maintenanceMessage(
+        <>
+          {translate("dropConfirmBody", { table })}
+          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+        </>,
+      ),
       confirmLabel: translate("dropConfirmOk"),
       tone: "danger",
       typedConfirmation: selectedProfile?.is_production ? table : undefined,
@@ -6634,7 +6660,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
         .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
+  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
   // ビューの DROP (#851)。確認導線・実行経路は `handleDropTable` をそのまま流用する
   // (Issue の方針: 「削除は既存の DROP 確認導線を流用」)。
@@ -7303,6 +7329,9 @@ export default function App() {
   // メニュー無効化に加え、バックエンドのガードが拒否する。
   const handleDropTables = useCallback(async (database: string, tables: string[]) => {
     if (tables.length === 0) return;
+    // DROP されずに残る子テーブルからの FK 参照を警告に添える (#1536)。
+    const impacts = await loadDropImpacts(database, tables);
+    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
     // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
     const production = Boolean(selectedProfile?.is_production);
     const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
@@ -7322,7 +7351,12 @@ export default function App() {
     );
     const ok = await confirm({
       title: translate("batchDropConfirmTitle", { count: tables.length }),
-      message: maintenanceMessage(body),
+      message: maintenanceMessage(
+        <>
+          {body}
+          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+        </>,
+      ),
       confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
       tone: "danger",
       typedConfirmation: selectedProfile?.is_production ? database : undefined,
@@ -7371,7 +7405,7 @@ export default function App() {
     if (!failed) {
       toast.success(translate("batchDropSuccess", { count: dropped.length }));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, toast, tabsRef]);
+  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, toast, tabsRef]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と

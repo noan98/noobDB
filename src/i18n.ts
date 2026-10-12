@@ -2278,6 +2278,12 @@ const en = {
   truncateConfirmOk: "Truncate",
   dropConfirmTitle: "Drop {table}?",
   dropConfirmBody: "This permanently removes the table {table} and all its data. This cannot be undone.",
+  dropReferencedByTitle: "Referenced by foreign keys ({count})",
+  dropReferencedByServer:
+    "These tables still reference the table(s) being dropped, so the DROP will fail with a foreign key error (unless it cascades). Parent.column ← child.column:",
+  dropReferencedBySqlite:
+    "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
+  dropReferencedByMore: "and {count} more",
   dropConfirmOk: "Drop table",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "Drop index {index}?",
@@ -6943,6 +6949,12 @@ const ja: Dict = {
   truncateConfirmOk: "TRUNCATE",
   dropConfirmTitle: "{table} を DROP しますか?",
   dropConfirmBody: "テーブル {table} とそのデータをすべて完全に削除します。この操作は取り消せません。",
+  dropReferencedByTitle: "外部キーで参照されています ({count} 件)",
+  dropReferencedByServer:
+    "次のテーブルがここで削除するテーブルを参照しているため、CASCADE でない限り DROP は外部キーエラーで失敗します。親.列 ← 子.列:",
+  dropReferencedBySqlite:
+    "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
+  dropReferencedByMore: "ほか {count} 件",
   dropConfirmOk: "DROP TABLE",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "インデックス {index} を DROP しますか?",
