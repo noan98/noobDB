@@ -131,6 +131,7 @@ import { SnippetList } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
 import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
+import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
@@ -7096,6 +7097,51 @@ export default function App() {
     })();
   }, [refreshLocalTables, toast]);
 
+  // ローカルテーブルの再取得 (#1541)。可否判定は `planLocalRefetch` (純ロジック)。元の接続が
+  // 閉じていれば案内のみ (自動接続しない)。実行は読み取り専用の SQL に限り、取得できてから
+  // 同名のテーブルへ置き換える (取得に失敗したら既存のテーブルはそのまま)。
+  const [refetchingLocalTable, setRefetchingLocalTable] = useState<string | null>(null);
+  const handleRefetchLocalTable = useCallback((tableName: string) => {
+    const sid = localSessionIdRef.current;
+    const meta = localTables.find((m) => m.name === tableName);
+    if (!sid || !meta) return;
+    const plan = planLocalRefetch(meta, openConnectionsRef.current);
+    if (plan.kind === "notReadOnly") {
+      toast.info(translate("localRefetchNotReadOnly", { table: tableName }));
+      return;
+    }
+    if (plan.kind === "noConnection") {
+      toast.info(
+        plan.profileName === null
+          ? translate("localRefetchNoSource", { table: tableName })
+          : translate("localRefetchNeedsConnection", { table: tableName, name: plan.profileName }),
+      );
+      return;
+    }
+    setRefetchingLocalTable(tableName);
+    void (async () => {
+      try {
+        const result = await api.runQuery(plan.sessionId, meta.source_sql, null);
+        await api.registerLocalTable({
+          sessionId: sid,
+          tableName,
+          columns: result.columns,
+          rows: result.rows,
+          resultId: null,
+          sourceProfile: meta.source_profile,
+          sourceSql: meta.source_sql,
+          sourceDriver: meta.source_driver,
+        });
+        await refreshLocalTables(sid);
+        toast.success(translate("localRefetchSuccess", { rows: result.rows.length, table: tableName }));
+      } catch (e) {
+        toast.error(translate("localRefetchFailed", { table: tableName, error: String(e) }));
+      } finally {
+        setRefetchingLocalTable(null);
+      }
+    })();
+  }, [localTables, refreshLocalTables, toast]);
+
   const handleSaveLocalDatabase = useCallback(() => {
     const sid = localSessionIdRef.current;
     if (!sid) return;
@@ -9698,6 +9744,8 @@ export default function App() {
             loading={localTablesLoading}
             onOpenLocal={handleOpenLocalConnection}
             onDropTable={handleDropLocalTable}
+            onRefetchTable={handleRefetchLocalTable}
+            refetchingTable={refetchingLocalTable}
             onSaveToFile={handleSaveLocalDatabase}
           />
         )}

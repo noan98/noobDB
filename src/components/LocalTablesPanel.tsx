@@ -22,6 +22,13 @@ interface Props {
   loading?: boolean;
   onOpenLocal: () => void;
   onDropTable: (name: string) => void;
+  /**
+   * 元の SQL を元の接続で流し直し、同じ名前のテーブルへ置き換える (#1541)。
+   * 省略時はボタンを出さない。
+   */
+  onRefetchTable?: (name: string) => void;
+  /** 再取得中のテーブル名 (その行のボタンを止める)。 */
+  refetchingTable?: string | null;
   onSaveToFile: () => void;
 }
 
@@ -40,6 +47,8 @@ export function LocalTablesPanel({
   loading,
   onOpenLocal,
   onDropTable,
+  onRefetchTable,
+  refetchingTable = null,
   onSaveToFile,
 }: Props) {
   const t = useT();
@@ -110,6 +119,20 @@ export function LocalTablesPanel({
                   <chakra.span fontWeight={600} fontSize="sm" color="app.text" flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                     {tbl.name}
                   </chakra.span>
+                  {onRefetchTable && (
+                    <Tooltip label={t("localPanelRefetchTitle")}>
+                      <PressableButton
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={refetchingTable !== null}
+                        aria-label={t("localPanelRefetch", { table: tbl.name })}
+                        onClick={() => onRefetchTable(tbl.name)}
+                      >
+                        <Icon name="refresh" size={ICON_SIZES.sm} />
+                      </PressableButton>
+                    </Tooltip>
+                  )}
                   <Tooltip label={t("localPanelDropTable")}>
                     <PressableButton
                       type="button"
