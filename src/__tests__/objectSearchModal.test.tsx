@@ -181,3 +181,19 @@ describe("ObjectSearchModal backend search (#1261)", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("boom"));
   });
 });
+
+describe("ObjectSearchModal combobox a11y (#1529)", () => {
+  it("入力欄の aria-activedescendant が、ハイライト中の候補 (role=option) の id を指す", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    renderWithProviders(
+      <ObjectSearchModal sessionId="s1" currentDatabase="testdb" onOpenTable={() => {}} onClose={() => {}} />,
+    );
+    const input = screen.getByPlaceholderText(t("objSearchPlaceholder"));
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.change(input, { target: { value: "users" } });
+    const option = (await screen.findAllByRole("option"))[0];
+    expect(option.id).toBeTruthy();
+    expect(input).toHaveAttribute("aria-activedescendant", option.id);
+  });
+});

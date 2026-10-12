@@ -1,4 +1,5 @@
-import { chakra } from "@chakra-ui/react";
+import { useEffect, useRef, useState } from "react";
+import { chakra, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { durations, variants } from "../motion";
 import { Icon } from "./Icon";
@@ -77,5 +78,52 @@ export function StatusBarText({ text, messageKey }: { text: string; messageKey?:
     >
       {text}
     </MotionSpan>
+  );
+}
+
+/**
+ * ステータスバーの文言をスクリーンリーダーへ通知する読み上げ専用領域 (#1529)。
+ *
+ * 表示側に aria-live を付けると、ストリーミング中の「N 行取得中…」や経過時間のような
+ * 数値だけの更新のたびに全文が読み上げられる。そこで polite / assertive の 2 領域を常設し、
+ * 中身は `messageKey` (メッセージの種類) が変わったときだけ更新する。エラーは assertive、
+ * それ以外は polite。`text` が空 (idle・閉じた) なら両方を空にする。
+ */
+export function StatusAnnouncer({
+  text,
+  messageKey,
+  assertive,
+}: {
+  text: string;
+  messageKey: string;
+  assertive: boolean;
+}) {
+  const [polite, setPolite] = useState("");
+  const [urgent, setUrgent] = useState("");
+  // マウント時点の文言 (起動直後の「未接続」など) は読み上げない。読み上げるのは変化だけ。
+  const lastKey = useRef(messageKey);
+  useEffect(() => {
+    if (messageKey === lastKey.current) return;
+    lastKey.current = messageKey;
+    if (!text) {
+      setPolite("");
+      setUrgent("");
+    } else if (assertive) {
+      setUrgent(text);
+      setPolite("");
+    } else {
+      setPolite(text);
+      setUrgent("");
+    }
+  }, [messageKey, text, assertive]);
+  return (
+    <>
+      <VisuallyHidden aria-live="polite" aria-atomic="true" data-testid="status-live-polite">
+        {polite}
+      </VisuallyHidden>
+      <VisuallyHidden aria-live="assertive" aria-atomic="true" data-testid="status-live-assertive">
+        {urgent}
+      </VisuallyHidden>
+    </>
   );
 }

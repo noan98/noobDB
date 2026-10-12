@@ -18,6 +18,7 @@ import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 import { Tooltip } from "./Tooltip";
+import { ErrorNote } from "./modalForm";
 
 /**
  * Query Builder のフォーム部のスタイル。各要素へ直接 `css` を適用する。
@@ -25,16 +26,6 @@ import { Tooltip } from "./Tooltip";
  * (`.cm-*`) だけは CodeMirror が生成する DOM を対象にするため、`previewCss` 内で
  * タグ/要素スコープのセレクタとして残す (CodeMirror 本体のテーマは対象外)。
  */
-const errorCss: SystemStyleObject = {
-  py: "2",
-  px: "2.5",
-  border: "1px solid var(--border)",
-  background: "var(--bg-error)",
-  color: "var(--text-error)",
-  borderRadius: "var(--radius-md)",
-  fontSize: "var(--text-sm)",
-  marginBottom: "2.5",
-};
 const sectionCss: SystemStyleObject = {
   display: "flex",
   flexDirection: "column",
@@ -879,7 +870,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       </ModalHeader>
       <ModalBody>
         <Box display="flex" flexDirection="column" gap="1.5">
-          {loadError && <Box css={errorCss}>{loadError}</Box>}
+          {loadError && (
+            <ErrorNote role="alert" mb="2.5">
+              {loadError}
+            </ErrorNote>
+          )}
 
           <chakra.section css={sectionCss}>
             <Box css={sectionTitleCss}>{t("qbQueryType")}</Box>
@@ -1182,6 +1177,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                           value={c.value}
                           placeholder={nullOp ? "—" : t("qbValuesPlaceholder")}
                           disabled={nullOp}
+                          aria-label={t("qbValue")}
                           onChange={(e) => updateCondition(i, { value: e.target.value })}
                         />
                       ) : (
@@ -1283,6 +1279,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   value={limit}
                   placeholder="100"
                   disabled={!limitEnabled}
+                  aria-label={t("qbLimit")}
                   onChange={(e) => setLimit(e.target.value)}
                   inputMode="numeric"
                 />
@@ -1423,6 +1420,7 @@ function ValueControl({ value, onChange, columnInfo, disabled, placeholder, t }:
         css={rowInputCss}
         value={value}
         disabled={disabled}
+        aria-label={placeholder ?? t("qbValue")}
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">{placeholder ?? t("qbValue")}</option>
@@ -1443,6 +1441,7 @@ function ValueControl({ value, onChange, columnInfo, disabled, placeholder, t }:
         value={value}
         placeholder={placeholder}
         disabled={disabled}
+        aria-label={placeholder ?? t("qbValue")}
         onChange={(e) => onChange(e.target.value)}
       />
     );
@@ -1455,6 +1454,7 @@ function ValueControl({ value, onChange, columnInfo, disabled, placeholder, t }:
         value={value}
         placeholder={placeholder}
         disabled={disabled}
+        aria-label={placeholder ?? t("qbValue")}
         onChange={(e) => onChange(e.target.value)}
       />
       <Tooltip label={t("qbSetNow")}>

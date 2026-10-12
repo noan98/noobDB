@@ -142,13 +142,44 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
           </chakra.div>
           {columns.map((c, i) => (
             <chakra.div key={i} display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="1.5" alignItems="center">
-              <Input value={c.name} onChange={(e) => setCol(i, { name: e.target.value })} placeholder="column" />
-              <Input value={c.type} onChange={(e) => setCol(i, { type: e.target.value })} list={dataListId} />
-              <Switch checked={c.notNull} onChange={() => setCol(i, { notNull: !c.notNull })} />
-              <Switch checked={c.primaryKey} onChange={() => setCol(i, { primaryKey: !c.primaryKey })} />
-              <Switch checked={c.unique} onChange={() => setCol(i, { unique: !c.unique })} />
-              <Switch checked={c.autoIncrement} onChange={() => setCol(i, { autoIncrement: !c.autoIncrement })} />
-              <Input value={c.defaultValue} onChange={(e) => setCol(i, { defaultValue: e.target.value })} placeholder={t("createTableColDefault")} />
+              <Input
+                value={c.name}
+                onChange={(e) => setCol(i, { name: e.target.value })}
+                placeholder={t("createTableColNamePlaceholder")}
+                aria-label={`${t("createTableColName")} (${i + 1})`}
+              />
+              <Input
+                value={c.type}
+                onChange={(e) => setCol(i, { type: e.target.value })}
+                list={dataListId}
+                aria-label={`${t("createTableColType")} (${i + 1})`}
+              />
+              <Switch
+                checked={c.notNull}
+                onChange={() => setCol(i, { notNull: !c.notNull })}
+                aria-label={`${t("createTableColNotNull")} (${i + 1})`}
+              />
+              <Switch
+                checked={c.primaryKey}
+                onChange={() => setCol(i, { primaryKey: !c.primaryKey })}
+                aria-label={`PK (${i + 1})`}
+              />
+              <Switch
+                checked={c.unique}
+                onChange={() => setCol(i, { unique: !c.unique })}
+                aria-label={`${t("createTableColUnique")} (${i + 1})`}
+              />
+              <Switch
+                checked={c.autoIncrement}
+                onChange={() => setCol(i, { autoIncrement: !c.autoIncrement })}
+                aria-label={`${t("createTableColAuto")} (${i + 1})`}
+              />
+              <Input
+                value={c.defaultValue}
+                onChange={(e) => setCol(i, { defaultValue: e.target.value })}
+                placeholder={t("createTableColDefault")}
+                aria-label={`${t("createTableColDefault")} (${i + 1})`}
+              />
               <Tooltip label={t("createTableRemoveCol")} focusableWrapper={columns.length <= 1}>
                 <chakra.button
                   type="button"

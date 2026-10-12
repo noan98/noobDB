@@ -170,14 +170,15 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         e.stopPropagation();
         move(e.shiftKey ? -1 : 1);
         break;
+      // Home / End は入力欄のカーソル移動に任せ、候補の先頭 / 末尾へは Ctrl(Cmd)+Home / End (#1529)。
       case "Home":
-        if (flat.length > 0) {
+        if (flat.length > 0 && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           setActiveIndex(0);
         }
         break;
       case "End":
-        if (flat.length > 0) {
+        if (flat.length > 0 && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           setActiveIndex(flat.length - 1);
         }

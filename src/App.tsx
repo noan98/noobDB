@@ -122,7 +122,7 @@ import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sql
 import type { AiSqlRequest } from "./components/AiSqlPanel";
 import { RESULT_SUMMARY_STATS_MAX_ROWS } from "./ai/resultSummary";
 import type { AiResultSummaryRequest } from "./components/AiResultSummaryPanel";
-import { StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
+import { StatusAnnouncer, StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
@@ -1750,11 +1750,17 @@ export default function App() {
   // 前面にモーダルが乗っている)。依存配列なしの effect で毎レンダ最新値に同期し、
   // requestAnimationFrame 越しの非同期フォーカス実行時点の値を参照できるようにする。
   const overlayOpenRef = useRef(false);
+  // チートシート以外のオーバーレイ / 全画面ビューが開いているか。`?` ハンドラが使う
+  // (チートシート自身の閉じる操作は通す必要があるので別に持つ, #1529)。
+  const blockingOverlayOpenRef = useRef(false);
+  const cheatSheetOpenRef = useRef(false);
   useEffect(() => {
-    overlayOpenRef.current =
+    blockingOverlayOpenRef.current =
       showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
       showUsers || showServerInfo || showSizes || showSnippetForm ||
-      showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
+      showCommandPalette || showObjectSearch || showDataSearch;
+    cheatSheetOpenRef.current = showCheatSheet;
+    overlayOpenRef.current = blockingOverlayOpenRef.current || showCheatSheet;
   });
   // アクティブになったタブがクエリタブのときだけ、次フレームでエディタへ
   // フォーカスする (#816)。setState 直後はまだ DOM 未反映のため
@@ -8248,7 +8254,13 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch) {
+      // ER 図・ユーザ管理・サーバ情報・サイズなどの全画面ビューも含む (#1529)。
+      if (blockingOverlayOpenRef.current) {
+        return;
+      }
+      // ref に載らないモーダル (AlterTable など個別の Dialog) が開いていれば開かない。
+      // チートシート自身は閉じる操作を通す。
+      if (!cheatSheetOpenRef.current && document.querySelector('[role="dialog"][aria-modal="true"]')) {
         return;
       }
       e.preventDefault();
@@ -8256,7 +8268,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette, showObjectSearch, showDataSearch]);
+  }, []);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -10219,6 +10231,12 @@ export default function App() {
         </Box>
         </WorkspaceSplit>
 
+        {/* 読み上げ専用の常設領域 (#1529)。メッセージの種類が変わったときだけ更新する。 */}
+        <StatusAnnouncer
+          text={statusDismissed ? "" : statusText}
+          messageKey={statusDismissed ? "" : statusMessageKey}
+          assertive={statusTone(status) === "error" || statusTone(status) === "critical"}
+        />
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
           // critical は error と同じ赤系で描き、加えて「重大」バッジで際立たせる。
@@ -10367,7 +10385,7 @@ export default function App() {
                     disabled={connectingId === reconnectProfile.id}
                   >
                     {connectingId === reconnectProfile.id ? (
-                      <Spinner size={12} />
+                      <Spinner size={12} decorative />
                     ) : (
                       <Icon name="refresh" />
                     )}
@@ -10385,7 +10403,7 @@ export default function App() {
                     alignItems="center"
                     gap="1.25"
                   >
-                    <Spinner size={12} />
+                    <Spinner size={12} decorative />
                     {t(connectPhaseI18nKey(connectAttempt.phase))}
                   </chakra.span>
                   <Tooltip label={t("connectCancel")}>

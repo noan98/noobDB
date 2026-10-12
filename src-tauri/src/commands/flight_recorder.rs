@@ -68,10 +68,14 @@ pub(crate) async fn run_captured_write_inner(
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_CAPTURE_ROW_CAP);
     let started = std::time::Instant::now();
-    let outcome = session
-        .conn
-        .capture_write(&sql, database.as_deref(), row_cap)
-        .await;
+    let outcome = crate::commands::query::run_captured_write(
+        session.clone(),
+        sql.clone(),
+        database.clone(),
+        row_cap,
+        None,
+    )
+    .await;
     let elapsed_ms = started.elapsed().as_millis() as i64;
 
     match &outcome {

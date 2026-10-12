@@ -29,6 +29,28 @@ export function reorderColumnIds(base: readonly string[], fromId: string, toId: 
 }
 
 /**
+ * `id` の列を現在の順序 `base` で 1 つ左 (`dir = -1`) / 右 (`dir = 1`) へ動かした新しい順序。
+ * `isMovable` を渡すと、非表示の列などそれが false の列は飛び越えて「見えている隣」と
+ * 入れ替える。端にいる / 見つからないときは `null` (キーボード操作・ヘッダメニュー用, #1529)。
+ */
+export function moveColumnId(
+  base: readonly string[],
+  id: string,
+  dir: -1 | 1,
+  isMovable: (id: string) => boolean = () => true,
+): string[] | null {
+  const from = base.indexOf(id);
+  if (from < 0) return null;
+  let to = from + dir;
+  while (to >= 0 && to < base.length && !isMovable(base[to])) to += dir;
+  if (to < 0 || to >= base.length) return null;
+  const next = base.slice();
+  next.splice(from, 1);
+  next.splice(to, 0, id);
+  return next;
+}
+
+/**
  * 並べ替え前後の列位置 (列 id → 左端 x 座標, px) から、各列を元の位置へ戻すための
  * 横オフセット (before − after) を求める。
  *

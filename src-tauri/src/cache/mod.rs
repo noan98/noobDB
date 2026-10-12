@@ -257,12 +257,11 @@ impl<V> CacheEntry<V> {
 enum FlightOutcome<V> {
     /// fetch が成功した。待機者は (generation が変わっていなければ) この値を返す。
     Value(V),
-    /// fetch がエラーを返した。`AppError` は `Clone` できず、かつ `kind`
-    /// (`connectionLost` など UI の復帰導線を決める判別子) を保ったまま複製する
-    /// 手段がないため、エラー本体は配らない。待機者は各自の `fetch` を 1 回だけ
-    /// 直接実行し、自分自身のエラー (または回復した値) を受け取る
-    /// ([`KeyedCache::get_or_fetch`] 参照)。
-    Failed,
+    /// fetch がエラーを返した。`AppError` は `Clone` できないので、`kind` を保つ
+    /// 複製 ([`AppError::replicate`]) を作って配る。待機者は自分の `fetch` を走らせず
+    /// これをそのまま返す — 障害中の DB へ待機者の数だけ introspection を一斉に
+    /// 投げ直さないため (#1530)。
+    Failed(Arc<AppError>),
 }
 
 type FlightTx<V> = watch::Sender<Option<FlightOutcome<V>>>;
@@ -420,10 +419,14 @@ where
     /// 各スロットの write lock 取得より必ず先に行うため、ロック取得後なら
     /// generation の最新値を確実に読める (チェックしてからロックを取る順序だと、
     /// その隙間で invalidate が完了して stale な結果を書き戻す余地が残る)。
+    // generation / ttl / max_entries は呼び出し元が持つ固定の設定値で、束ねても
+    // 読みやすくならないため個別の引数のまま渡す。
+    #[allow(clippy::too_many_arguments)]
     async fn fetch_and_store<F, Fut, C>(
         &self,
         key: K,
         generation_before_fetch: u64,
+        ttl: Duration,
         max_entries: usize,
         generation: &AtomicU64,
         cacheable: &C,
@@ -438,6 +441,11 @@ where
         if cacheable(&value) {
             let mut guard = self.entries.write().await;
             if generation.load(Ordering::SeqCst) == generation_before_fetch {
+                if guard.len() >= max_entries && !guard.contains_key(&key) {
+                    // 期限切れは lookup が返さないだけで残っているので、容量判定の前に
+                    // 掃除する。掃除しないと、有効なエントリごと全消去してしまう (#1530)。
+                    guard.retain(|_, entry| !entry.is_expired(ttl));
+                }
                 if guard.len() >= max_entries && !guard.contains_key(&key) {
                     tracing::debug!(
                         max_entries,
@@ -476,10 +484,11 @@ where
     ///   の状態かもしれないので**受け取らずに 1. からやり直す** (新しい世代で
     ///   改めて合流またはリーダーになる) — invalidate 後の呼び出しに stale な値を
     ///   返さない。
-    /// - **エラー**: エラーはキャッシュしない (従来どおり)。待機者は自分の
-    ///   `fetch` を 1 回だけ直接実行して、その結果を返す ([`FlightOutcome::Failed`]
-    ///   参照)。もう一度合流させないのは、DB が落ちている間に待機者が 1 人ずつ
-    ///   順番にリーダーになってタイムアウトを直列に積み上げるのを避けるため。
+    /// - **エラー**: エラーはキャッシュしない (従来どおり、次の呼び出しは改めて
+    ///   fetch する)。待機者は自分で fetch せず、リーダーのエラーの複製をそのまま
+    ///   返す ([`FlightOutcome::Failed`] 参照)。DB が落ちている間に待機者が
+    ///   1 人ずつリーダーになってタイムアウトを直列に積み上げることも、同時 N 本の
+    ///   introspection を障害中の DB へ集中させることも避けるため (#1530)。
     /// - **リーダーのキャンセル・パニック**: 結末が届かないまま送信側が閉じるので
     ///   待機者は永久には待たず、1. からやり直す (うち 1 人が新しいリーダーになる)。
     async fn get_or_fetch<F, Fut, C>(
@@ -518,19 +527,8 @@ where
                             self.label
                         );
                     }
-                    Some(FlightOutcome::Failed) => {
-                        let fetch = take_fetch(&mut fetch)?;
-                        let generation_before_fetch = generation.load(Ordering::SeqCst);
-                        return self
-                            .fetch_and_store(
-                                key,
-                                generation_before_fetch,
-                                max_entries,
-                                generation,
-                                &cacheable,
-                                fetch,
-                            )
-                            .await;
+                    Some(FlightOutcome::Failed(err)) => {
+                        return Err(err.replicate());
                     }
                     None => {
                         tracing::debug!(
@@ -562,6 +560,7 @@ where
                         .fetch_and_store(
                             key,
                             generation_now,
+                            ttl,
                             max_entries,
                             generation,
                             &cacheable,
@@ -570,7 +569,7 @@ where
                         .await;
                     guard.tx.send_replace(Some(match &result {
                         Ok(value) => FlightOutcome::Value(value.clone()),
-                        Err(_) => FlightOutcome::Failed,
+                        Err(e) => FlightOutcome::Failed(Arc::new(e.replicate())),
                     }));
                     return result;
                 }
@@ -587,6 +586,7 @@ where
         &self,
         items: Vec<(K, V)>,
         generation_before_fetch: u64,
+        ttl: Duration,
         max_entries: usize,
         generation: &AtomicU64,
     ) -> usize {
@@ -605,6 +605,10 @@ where
                 self.label
             );
             return 0;
+        }
+        if guard.len() + items.len() > max_entries {
+            // まず期限切れだけを掃除し、それでも溢れるときに限って全消去する (#1530)。
+            guard.retain(|_, entry| !entry.is_expired(ttl));
         }
         if guard.len() + items.len() > max_entries {
             guard.clear();
@@ -940,6 +944,7 @@ impl SchemaCache {
             .store_many(
                 items,
                 generation_before_fetch,
+                self.ttl,
                 self.max_entries_per_kind,
                 &self.generation,
             )
@@ -974,6 +979,7 @@ impl SchemaCache {
             .store_many(
                 items,
                 generation_before_fetch,
+                self.ttl,
                 self.max_entries_per_kind,
                 &self.generation,
             )
@@ -2013,6 +2019,43 @@ mod query_result_cache_tests {
         );
     }
 
+    /// 期限切れエントリが容量判定に残って、有効なエントリごと全消去されないこと (#1530)。
+    #[tokio::test]
+    async fn capacity_purges_expired_entries_before_clearing_valid_ones() {
+        let cache = QueryResultCache::new(Duration::from_millis(1000), 2, 1000, 1024 * 1024);
+        let fetch = |sql: &'static str| {
+            let cache = &cache;
+            async move {
+                cache
+                    .get_or_fetch(DriverKind::Sqlite, None, sql, || async {
+                        Ok(result_with(1, 1))
+                    })
+                    .await
+                    .unwrap()
+            }
+        };
+        fetch("SELECT 1").await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        // 1 は期限切れ、2 は有効。容量 2 を満たした状態で 3 を挿入する。
+        fetch("SELECT 2").await;
+        fetch("SELECT 3").await;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        cache
+            .get_or_fetch(DriverKind::Sqlite, None, "SELECT 2", || async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok(result_with(1, 1))
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "有効な SELECT 2 は期限切れの掃除に巻き込まれず残る"
+        );
+    }
+
     /// 容量上限を超えたら、次の挿入前に丸ごとクリアされること。
     #[tokio::test]
     async fn exceeding_capacity_clears_before_inserting() {
@@ -2506,32 +2549,35 @@ mod single_flight_tests {
     /// 受け入れ条件 3: リーダーの fetch がエラーを返した場合の挙動。
     ///
     /// - エラーはキャッシュしない
-    /// - 待機者は永久に待たず、自分の fetch を 1 回だけ直接実行してその結果を
-    ///   返す (エラーの `kind` を保つため、リーダーのエラーは複製しない)
+    /// - 待機者は永久に待たず、自分では fetch せずリーダーのエラーの複製をそのまま
+    ///   受け取る (障害中の DB へ待機者の数だけ introspection を集中させない #1530)。
+    ///   エラーの `kind` は複製後も保たれる
     #[tokio::test]
-    async fn leader_error_releases_waiters_to_fetch_on_their_own() {
+    async fn leader_error_is_shared_with_waiters_without_refetching() {
         let cache = schema_cache();
         let leader_calls = Arc::new(AtomicUsize::new(0));
         let waiter_calls = Arc::new(AtomicUsize::new(0));
         let (release_tx, release_rx) = oneshot::channel();
 
         let leader = spawn_blocked_leader(&cache, &leader_calls, release_rx).await;
-        let recovering = spawn_caller(&cache, &waiter_calls, Ok(strings(&["recovered"])));
-        let failing = spawn_caller(&cache, &waiter_calls, Err(AppError::Timeout(30)));
-        wait_for_waiters(&cache.tables, &"db".to_string(), 2).await;
+        let waiters: Vec<_> = (0..3)
+            .map(|_| spawn_caller(&cache, &waiter_calls, Ok(strings(&["recovered"]))))
+            .collect();
+        wait_for_waiters(&cache.tables, &"db".to_string(), 3).await;
 
-        release_tx
-            .send(Err(AppError::InvalidInput("boom".into())))
-            .unwrap();
+        release_tx.send(Err(AppError::Timeout(30))).unwrap();
 
-        assert!(matches!(join(leader).await, Err(AppError::InvalidInput(_))));
-        assert_eq!(join(recovering).await.unwrap(), strings(&["recovered"]));
-        // 待機者自身の fetch のエラーが、その kind のまま返ること。
-        assert!(matches!(join(failing).await, Err(AppError::Timeout(30))));
+        assert!(matches!(join(leader).await, Err(AppError::Timeout(30))));
+        for w in waiters {
+            assert!(
+                matches!(join(w).await, Err(AppError::Timeout(30))),
+                "待機者もリーダーと同じ kind のエラーを受け取る"
+            );
+        }
         assert_eq!(
             waiter_calls.load(Ordering::SeqCst),
-            2,
-            "リーダーがエラーなら待機者はそれぞれ自分の fetch を 1 回ずつ実行する"
+            0,
+            "待機者は障害中の DB へ自分の fetch を投げ直さない"
         );
         assert!(lock_flights(&cache.tables.flights).is_empty());
     }
@@ -2544,7 +2590,7 @@ mod single_flight_tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let (release_tx, release_rx) = oneshot::channel();
         let leader = spawn_blocked_leader(&cache, &calls, release_rx).await;
-        let waiter = spawn_caller(&cache, &calls, Err(AppError::InvalidInput("again".into())));
+        let waiter = spawn_caller(&cache, &calls, Ok(strings(&["unused"])));
         wait_for_waiters(&cache.tables, &"db".to_string(), 1).await;
 
         release_tx
@@ -2565,7 +2611,8 @@ mod single_flight_tests {
                 .unwrap()
         };
         assert_eq!(next, strings(&["ok"]));
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        // リーダー 1 + 次の呼び出し 1 (待機者は fetch しない)。
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     /// リーダーの future がキャンセル (drop) されても待機者は永久に待たず、

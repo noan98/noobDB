@@ -52,12 +52,25 @@ describe("CommandPalette 大規模候補 (#1320)", () => {
   it("末尾で ↓ を押すと隠れた候補が展開されて次の行へ進む", () => {
     renderWithProviders(<CommandPalette items={tables(30)} onClose={() => {}} />);
     const input = screen.getByRole("combobox");
-    fireEvent.keyDown(input, { key: "End" });
+    fireEvent.keyDown(input, { key: "End", ctrlKey: true });
     expect(screen.getAllByRole("option")).toHaveLength(8);
     fireEvent.keyDown(input, { key: "ArrowDown" });
     const opts = screen.getAllByRole("option");
     expect(opts).toHaveLength(30);
     expect(opts[8]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("Home / End は入力欄のカーソル移動に任せ、候補は動かさない (Ctrl+Home / End で先頭・末尾)", () => {
+    renderWithProviders(<CommandPalette items={tables(30)} onClose={() => {}} />);
+    const input = screen.getByRole("combobox");
+    // preventDefault されなければ fireEvent は true を返す (= ブラウザ既定のカーソル移動が走る)。
+    expect(fireEvent.keyDown(input, { key: "End" })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "Home" })).toBe(true);
+    expect(screen.getAllByRole("option")[0]).toHaveAttribute("aria-selected", "true");
+    expect(fireEvent.keyDown(input, { key: "End", ctrlKey: true })).toBe(false);
+    expect(screen.getAllByRole("option")[7]).toHaveAttribute("aria-selected", "true");
+    expect(fireEvent.keyDown(input, { key: "Home", ctrlKey: true })).toBe(false);
+    expect(screen.getAllByRole("option")[0]).toHaveAttribute("aria-selected", "true");
   });
 
   it("入力すると絞り込まれ、先頭が選択される", async () => {

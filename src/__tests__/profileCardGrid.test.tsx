@@ -28,7 +28,12 @@ describe("ProfileCardGrid (#874)", () => {
       <ProfileCardGrid profiles={profiles} connectingId={null} onConnect={() => {}} onCreate={() => {}} />,
     );
     expect(screen.getByRole("button", { name: "Alpha DB" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Prod PG" })).toBeInTheDocument();
+    // 本番 / 読み取り専用の状態は accessible name に含める (#1529)。
+    expect(
+      screen.getByRole("button", {
+        name: `Prod PG, ${t("profileCardStatusProduction")}, ${t("profileCardStatusReadOnly")}`,
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByText("app@db.example.com:3306/appdb")).toBeInTheDocument();
   });
 
@@ -65,7 +70,7 @@ describe("ProfileCardGrid (#874)", () => {
     renderWithProviders(
       <ProfileCardGrid profiles={profiles} connectingId="p-b" onConnect={onConnect} onCreate={() => {}} />,
     );
-    const busy = screen.getByRole("button", { name: "Prod PG" });
+    const busy = screen.getByRole("button", { name: /^Prod PG/ });
     expect(busy).toHaveAttribute("aria-busy", "true");
     const other = screen.getByRole("button", { name: "Alpha DB" });
     expect(other).toBeDisabled();

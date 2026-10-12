@@ -158,13 +158,21 @@ function ProfileCard({
   const driverIcon: IconName = driverIconName(p.driver) ?? "server";
   const endpoint = endpointSummary(p);
   const inert = disabled || connecting;
+  // バッジは視覚情報なので、読み上げ用に状態込みの名前を組み立てる (#1529)。
+  const cardLabel = [
+    p.name,
+    p.is_production ? t("profileCardStatusProduction") : null,
+    p.read_only ? t("profileCardStatusReadOnly") : null,
+  ]
+    .filter((x): x is string => x !== null)
+    .join(", ");
   return (
     <MotionCardWrap variants={variants.staggerItem} flex="0 1 240px" minW="220px" maxW="280px" minH="118px">
       <SelectableCard
         type="button"
         onClick={onConnect}
         disabled={inert}
-        aria-label={p.name}
+        aria-label={cardLabel}
         aria-describedby={descId}
         aria-busy={connecting || undefined}
         flex="1"
@@ -189,7 +197,7 @@ function ProfileCard({
           >
             {p.name}
           </Text>
-          <ProfileBadges isProduction={p.is_production} readOnly={p.read_only} compact />
+          <ProfileBadges isProduction={p.is_production} readOnly={p.read_only} compact focusable={false} />
         </Flex>
         <Flex align="center" gap="2" minW={0} color="app.textMuted">
           <chakra.span
@@ -198,7 +206,7 @@ function ProfileCard({
             flexShrink={0}
             style={{ color: driverColor(p.driver) }}
           >
-            {connecting ? <Spinner size={14} /> : <Icon name={driverIcon} size={ICON_SIZES.md} />}
+            {connecting ? <Spinner size={14} decorative /> : <Icon name={driverIcon} size={ICON_SIZES.md} />}
           </chakra.span>
           <Text
             id={descId}

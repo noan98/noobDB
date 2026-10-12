@@ -313,12 +313,42 @@ impl SqliteConn {
     #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        conflict: &ImportConflict,
+        on_progress: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        self.import_rows_with_hex(
+            database,
+            table,
+            columns,
+            rows,
+            batch_size,
+            conflict,
+            &[],
+            on_progress,
+        )
+        .await
+    }
+
+    /// [`Self::import_rows`] の、`hex_columns[i]` が真の列を hex テキストとして
+    /// bind し `unhex(?)` でバイト列にする版 (#1530)。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn import_rows_with_hex<F>(
+        &self,
         _database: Option<&str>,
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
         batch_size: usize,
         conflict: &ImportConflict,
+        hex_columns: &[bool],
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -347,7 +377,14 @@ impl SqliteConn {
         let mut tx = conn.begin().await?;
         let mut inserted: u64 = 0;
         for chunk in rows.chunks(batch) {
-            let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            let mut sql = super::build_insert_sql_with(
+                &table_ident,
+                &cols_sql,
+                ncols,
+                chunk.len(),
+                hex_columns,
+                "unhex",
+            );
             sql.push_str(&on_conflict);
             let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
             for row in chunk {
@@ -1071,8 +1108,13 @@ impl SqliteConn {
                     referenced_table,
                     referenced_column,
                     constraint_name: id.map(|i| format!("{}:{}", table, i)),
-                    on_delete: None,
-                    on_update: None,
+                    // foreign_key_list の on_delete / on_update。NO ACTION (既定) は None。
+                    on_delete: super::types::normalize_fk_action(
+                        r.try_get::<String, _>("on_delete").ok().as_deref(),
+                    ),
+                    on_update: super::types::normalize_fk_action(
+                        r.try_get::<String, _>("on_update").ok().as_deref(),
+                    ),
                 });
             }
         }
@@ -1591,7 +1633,7 @@ fn decode_cell_unchecked(row: &SqliteRow, i: usize) -> Value {
 
 /// Best-effort extraction of the target table from a mutation statement.
 /// Returns `None` for shapes we don't confidently recognise.
-fn extract_target_table(sql: &str) -> Option<String> {
+pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
     let tokens = tokenize_sql(sql);
     let mut iter = tokens.into_iter().peekable();
     let first = iter.next()?;

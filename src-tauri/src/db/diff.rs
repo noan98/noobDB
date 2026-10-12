@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::types::TableColumnInfo;
+use super::types::{ForeignKey, TableColumnInfo};
 use super::DriverKind;
 
 /// Where a table or column sits relative to the two schemas being compared.
@@ -70,6 +70,74 @@ pub struct TableDiff {
     /// differ (added / removed / changed) are listed — identical columns are
     /// omitted to keep the diff focused. For a `Same` table this is empty.
     pub columns: Vec<ColumnDiff>,
+    /// `SourceOnly` テーブルの外部キー制約 (source 側、制約単位。複合キー・参照動作を
+    /// 保つ)。`CREATE TABLE` 同期が FK を出すためだけに使い、[`attach_source_foreign_keys`]
+    /// を呼んだ経路 (スキーマ比較) でのみ埋まる。サンドボックスなど呼ばない経路では
+    /// 空のままで、FK は出力されない (FK 付きの表のコピーが親行欠落で失敗しないため)。
+    /// `#[serde(default)]`: このフィールドを持たない JSON (往復後の diff) も読める。
+    #[serde(default)]
+    pub foreign_keys: Vec<DiffForeignKey>,
+}
+
+/// 外部キー 1 制約 (複合キーの列を束ねたもの)。`referenced_columns` が空なら参照先
+/// 列は解決できなかった (参照先の主キーを暗黙に指す形で出力する)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiffForeignKey {
+    pub name: Option<String>,
+    pub columns: Vec<String>,
+    pub referenced_table: String,
+    pub referenced_columns: Vec<String>,
+    pub on_delete: Option<String>,
+    pub on_update: Option<String>,
+}
+
+/// 制約名として DDL に出してよいか。SQLite の合成名 (`<table>:<id>`、実在の名前ではない)
+/// と、識別子の長さ上限 (MySQL 64 / PostgreSQL 63) を超える名前は出さない。
+fn is_usable_constraint_name(table: &str, name: &str) -> bool {
+    let synthetic = name
+        .strip_prefix(table)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()));
+    !synthetic && name.chars().count() <= 63
+}
+
+/// `SourceOnly` テーブルへ、source 側の外部キー (`Connection::foreign_keys` の結果)
+/// を制約単位に束ねて載せる。`CREATE TABLE` 同期が FK を出力するために呼ぶ。
+pub fn attach_source_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey]) {
+    attach_foreign_keys(diff, fks, DiffStatus::SourceOnly);
+}
+
+/// `TargetOnly` テーブルへ、target 側の外部キーを載せる。逆向きの同期 (down
+/// マイグレーション) で `DROP TABLE` を子 → 親の順に並べるために使う。
+pub fn attach_target_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey]) {
+    attach_foreign_keys(diff, fks, DiffStatus::TargetOnly);
+}
+
+fn attach_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey], status: DiffStatus) {
+    for table in diff.tables.iter_mut().filter(|t| t.status == status) {
+        table.foreign_keys = super::table_ddl::group_foreign_keys(&table.name, fks)
+            .into_iter()
+            .map(|g| DiffForeignKey {
+                name: g
+                    .name
+                    .filter(|n| is_usable_constraint_name(&table.name, n))
+                    .map(str::to_string),
+                columns: g.columns.iter().map(|c| c.to_string()).collect(),
+                referenced_table: g.referenced_table.to_string(),
+                referenced_columns: if g.referenced_columns.iter().all(Option::is_some) {
+                    g.referenced_columns
+                        .iter()
+                        .flatten()
+                        .map(|c| c.to_string())
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                on_delete: g.on_delete.map(str::to_string),
+                on_update: g.on_update.map(str::to_string),
+            })
+            .collect();
+    }
 }
 
 /// The full result of comparing a source schema against a target schema. Tables
@@ -117,11 +185,13 @@ pub fn compute_schema_diff(
                     name,
                     status: DiffStatus::SourceOnly,
                     columns: one_sided_columns(&s.columns, DiffStatus::SourceOnly),
+                    foreign_keys: Vec::new(),
                 },
                 (None, Some(t)) => TableDiff {
                     name,
                     status: DiffStatus::TargetOnly,
                     columns: one_sided_columns(&t.columns, DiffStatus::TargetOnly),
+                    foreign_keys: Vec::new(),
                 },
                 (Some(s), Some(t)) => {
                     let columns = diff_columns(&s.columns, &t.columns);
@@ -134,6 +204,7 @@ pub fn compute_schema_diff(
                         name,
                         status,
                         columns,
+                        foreign_keys: Vec::new(),
                     }
                 }
                 // `names` is the union of the two sides, so at least one is Some.
@@ -274,6 +345,15 @@ fn sorted_union<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constraint_names_synthetic_or_too_long_are_not_usable() {
+        assert!(is_usable_constraint_name("child", "fk_child_parent"));
+        assert!(!is_usable_constraint_name("child", "child:0"));
+        assert!(is_usable_constraint_name("child", "child:abc"));
+        assert!(is_usable_constraint_name("child", &"a".repeat(63)));
+        assert!(!is_usable_constraint_name("child", &"a".repeat(64)));
+    }
 
     fn col(name: &str, data_type: &str) -> TableColumnInfo {
         TableColumnInfo {

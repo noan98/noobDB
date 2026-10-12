@@ -647,9 +647,11 @@ export function AiQueryModal(props: AiQueryModalProps) {
                     />
                     <chakra.span>{x.name}</chakra.span>
                     {x.comment && (
-                      <chakra.span textStyle="caption" minW="0" truncate title={x.comment}>
-                        {x.comment}
-                      </chakra.span>
+                      <Tooltip label={x.comment}>
+                        <chakra.span textStyle="caption" minW="0" truncate>
+                          {x.comment}
+                        </chakra.span>
+                      </Tooltip>
                     )}
                   </chakra.label>
                 ))}

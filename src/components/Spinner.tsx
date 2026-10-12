@@ -1,8 +1,14 @@
 import { chakra } from "@chakra-ui/react";
+import { useT } from "../i18n";
 
 interface Props {
   /** Diameter in px. */
   size?: number;
+  /**
+   * ボタンのラベルなど、隣に読み上げられる文言がある装飾用途では true。
+   * role / aria-label を外して aria-hidden にする (読み上げが二重になるため, #1529)。
+   */
+  decorative?: boolean;
 }
 
 /**
@@ -12,7 +18,8 @@ interface Props {
  * ring. Styling is expressed via Chakra `app.*` tokens so it follows the active
  * theme/accent.
  */
-export function Spinner({ size = 16 }: Props) {
+export function Spinner({ size = 16, decorative = false }: Props) {
+  const t = useT();
   return (
     <chakra.span
       display="inline-block"
@@ -25,8 +32,9 @@ export function Spinner({ size = 16 }: Props) {
       flexShrink={0}
       verticalAlign="middle"
       style={{ width: size, height: size }}
-      role="status"
-      aria-label="loading"
+      role={decorative ? undefined : "status"}
+      aria-label={decorative ? undefined : t("spinnerLoadingAria")}
+      aria-hidden={decorative ? true : undefined}
     />
   );
 }

@@ -530,10 +530,20 @@ const columnDiff = z.object({
   changed_fields: z.array(z.string()),
 });
 
+const diffForeignKey = z.object({
+  name: z.string().nullable(),
+  columns: z.array(z.string()),
+  referenced_table: z.string(),
+  referenced_columns: z.array(z.string()),
+  on_delete: z.string().nullable(),
+  on_update: z.string().nullable(),
+});
+
 const tableDiff = z.object({
   name: z.string(),
   status: diffStatus,
   columns: z.array(columnDiff),
+  foreign_keys: z.array(diffForeignKey).default([]),
 });
 
 const driverKind = z.enum(["mysql", "postgres", "sqlite"]);
@@ -551,6 +561,7 @@ const syncStatement = z.object({
     "create_table",
     "add_column",
     "alter_column",
+    "add_foreign_key",
     "drop_column",
     "drop_table",
     "insert_row",

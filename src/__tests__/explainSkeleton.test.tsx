@@ -77,3 +77,67 @@ describe("ExplainViewer の待機表示 (#1236)", () => {
     expect(getAllByRole("treeitem").length).toBeGreaterThan(0);
   });
 });
+
+describe("ExplainViewer のキーボード操作 (#1529)", () => {
+  it("選択中の行だけが Tab で届き、矢印キーで選択とフォーカスが動く", () => {
+    const { getAllByRole } = renderWithProviders(
+      <ExplainViewer result={sqliteResult()} driver="sqlite" />,
+    );
+    const items = () => getAllByRole("treeitem");
+    // ルートが選択済みで、roving tabindex の唯一のタブストップ。
+    expect(items().map((el) => el.getAttribute("tabindex"))).toEqual(["0", "-1", "-1", "-1"].slice(0, items().length));
+    const root = items()[0];
+    root.focus();
+    fireEvent.keyDown(root, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items()[1]);
+    expect(items()[1]).toHaveAttribute("aria-selected", "true");
+    expect(items()[1]).toHaveAttribute("tabindex", "0");
+
+    fireEvent.keyDown(items()[1], { key: "End" });
+    expect(document.activeElement).toBe(items()[items().length - 1]);
+    fireEvent.keyDown(document.activeElement as Element, { key: "Home" });
+    expect(document.activeElement).toBe(items()[0]);
+  });
+
+  it("Enter / Space は行を選択し、← → は展開・折りたたみと親子の移動を行う", () => {
+    const { getAllByRole } = renderWithProviders(
+      <ExplainViewer result={sqliteResult()} driver="sqlite" />,
+    );
+    const items = () => getAllByRole("treeitem");
+    const root = items()[0];
+    expect(root).toHaveAttribute("aria-expanded", "true");
+    root.focus();
+    // 展開中の親で ← は折りたたむ。
+    fireEvent.keyDown(root, { key: "ArrowLeft" });
+    expect(items()[0]).toHaveAttribute("aria-expanded", "false");
+    // 折りたたみ中で → は展開する。
+    fireEvent.keyDown(items()[0], { key: "ArrowRight" });
+    expect(items()[0]).toHaveAttribute("aria-expanded", "true");
+    // 展開済みで → は最初の子へ。子で ← は親へ戻る。
+    fireEvent.keyDown(items()[0], { key: "ArrowRight" });
+    const child = items()[1];
+    expect(document.activeElement).toBe(child);
+    fireEvent.keyDown(child, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(items()[0]);
+    // Space で選択。
+    fireEvent.keyDown(items()[0], { key: " " });
+    expect(items()[0]).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("ExplainViewer の祖先の折りたたみ (#1529)", () => {
+  it("選択中ノードの祖先を折りたたむと、その親が選択され直す", () => {
+    const { getAllByRole } = renderWithProviders(
+      <ExplainViewer result={sqliteResult()} driver="sqlite" />,
+    );
+    const items = () => getAllByRole("treeitem");
+    // 子を選択してから、ルートの展開ボタンで折りたたむ。
+    fireEvent.click(items()[1]);
+    expect(items()[1]).toHaveAttribute("aria-selected", "true");
+    const caret = items()[0].querySelector("button") as HTMLElement;
+    expect(caret).toHaveAttribute("tabindex", "-1");
+    fireEvent.click(caret);
+    expect(items()[0]).toHaveAttribute("aria-selected", "true");
+    expect(items()[0]).toHaveAttribute("tabindex", "0");
+  });
+});

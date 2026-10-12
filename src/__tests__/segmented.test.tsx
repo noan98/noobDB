@@ -80,6 +80,31 @@ describe("Segmented", () => {
     expect(document.activeElement).toBe(cherry);
   });
 
+  it("矢印 / Home / End はフォーカスと同時に選択も動かす (WAI-ARIA radiogroup, #1529)", () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <Segmented value="apple" options={OPTIONS} onChange={onChange} ariaLabel="Fruit" />,
+    );
+    const [apple, banana, cherry] = screen.getAllByRole("radio");
+
+    apple.focus();
+    fireEvent.keyDown(apple, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenLastCalledWith("banana");
+
+    fireEvent.keyDown(banana, { key: "End" });
+    expect(onChange).toHaveBeenLastCalledWith("cherry");
+
+    // 選択中の項目へ戻る移動 (Home → apple は value と同じ) は onChange しない。
+    onChange.mockClear();
+    fireEvent.keyDown(cherry, { key: "Home" });
+    expect(onChange).not.toHaveBeenCalled();
+
+    // 文字キー (type-ahead) はフォーカスだけで、選択は変えない。
+    onChange.mockClear();
+    fireEvent.keyDown(apple, { key: "c" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("renders a sliding thumb only behind the active segment", () => {
     renderWithProviders(
       <Segmented value="banana" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />,

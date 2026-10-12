@@ -59,15 +59,17 @@ export function OnboardingTour({ onClose }: Props) {
   const t = useT();
   const [state, setState] = useState<TourState>(INITIAL_TOUR_STATE);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const nextRef = useRef<HTMLButtonElement | null>(null);
 
   // 開く前にフォーカスしていた要素へ、閉じたときに戻す。
   useReturnFocus();
   // カード内で Tab をループさせ、Esc で閉じる。
   useFocusTrap(cardRef, onClose);
 
-  // マウント時にカード内の最初の操作可能要素へフォーカスを移す。
+  // マウント時は「次へ」へフォーカスを移す。DOM 順の最初のボタンは右上の × で、開いた
+  // 直後の Enter / Space でカードが閉じてしまうため (#1529)。
   useEffect(() => {
-    cardRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    nextRef.current?.focus();
   }, []);
 
   const steps: StepTuple = [
@@ -273,7 +275,7 @@ export function OnboardingTour({ onClose }: Props) {
           >
             {t("onboardingBack")}
           </Button>
-          <Button type="button" variant="primary" size="sm" onClick={handleNext}>
+          <Button ref={nextRef} type="button" variant="primary" size="sm" data-testid="onboarding-next" onClick={handleNext}>
             {isLastStep(state) ? t("onboardingFinish") : t("onboardingNext")}
           </Button>
         </Flex>

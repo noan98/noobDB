@@ -80,3 +80,27 @@ describe("ServerInfoPanel error state (#848)", () => {
     });
   });
 });
+
+/** 再取得に失敗しても、取得済みの変数一覧は消さずに表の上の帯でエラーを出す (#1529)。 */
+describe("ServerInfoPanel refresh failure keeps the table (#1529)", () => {
+  it("keeps the loaded variables and shows the error above them", async () => {
+    renderWithProviders(<ServerInfoPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByText("max_connections")).toBeInTheDocument();
+    });
+
+    vi.mocked(api.serverInfo).mockRejectedValueOnce(new Error("lost"));
+    fireEvent.click(screen.getByRole("button", { name: t("serverInfoRefresh") }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(t("serverInfoLoadError", { error: "Error: lost" })),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText("max_connections")).toBeInTheDocument();
+    // 件数表示は変化が読み上げられるよう role=status。
+    expect(screen.getByRole("status")).toHaveTextContent(
+      t("serverInfoVarCount", { shown: 1, total: 1 }),
+    );
+  });
+});

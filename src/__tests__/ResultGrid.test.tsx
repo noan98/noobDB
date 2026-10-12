@@ -1126,6 +1126,97 @@ describe("キーボードセルナビゲーション (#406)", () => {
     );
   });
 
+  it("Ctrl/Cmd+A で表示中の全セルを選択し、ページ全体の選択にさせない (#1529)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    // preventDefault されれば fireEvent は false を返す。
+    expect(fireEvent.keyDown(cells[0][0], { key: "a", ctrlKey: true })).toBe(false);
+    // 3 行 x 2 列。
+    expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(6);
+  });
+
+  it("行番号セルのクリックで行全体を選び、Shift+クリックで範囲を伸ばす (#1529)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const rowIndexCells = Array.from(container.querySelectorAll<HTMLElement>("tbody td.row-index"));
+    fireEvent.click(rowIndexCells[1]);
+    expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(2);
+    fireEvent.click(rowIndexCells[2], { shiftKey: true });
+    // 2 行目 (アンカー) から 3 行目まで x 2 列。
+    expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(4);
+  });
+
+  it("並び替えグリップとリサイズハンドルはキーボードで操作できる (#1529)", async () => {
+    localStorage.clear();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const grips = container.querySelectorAll<HTMLElement>(".th-drag-grip");
+    expect(grips[0]).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(grips[0], { key: "ArrowRight" });
+    await waitFor(() => {
+      const heads = Array.from(container.querySelectorAll("thead th[data-col-id]")).map((th) =>
+        th.getAttribute("data-col-id"),
+      );
+      expect(heads).toEqual(["1", "0"]);
+    });
+
+    const handle = container.querySelector<HTMLElement>("thead th .th-resize-handle");
+    expect(handle).not.toBeNull();
+    expect(handle).toHaveAttribute("role", "separator");
+    const before = Number(handle?.getAttribute("aria-valuenow"));
+    fireEvent.keyDown(handle as HTMLElement, { key: "ArrowRight" });
+    await waitFor(() => {
+      const after = Number(
+        container.querySelector("thead th .th-resize-handle")?.getAttribute("aria-valuenow"),
+      );
+      expect(after).toBe(before + 10);
+    });
+  });
+
+  it("ヘッダのグリップ / ハンドルのキー操作はセルの選択とフォーカスを動かさない (#1529)", async () => {
+    localStorage.clear();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[1][0]);
+    fireEvent.keyDown(cells[1][0], { key: "ArrowRight", shiftKey: true });
+    const selectedBefore = container.querySelectorAll("td.is-selected-cell").length;
+    expect(selectedBefore).toBe(2);
+    const activeBefore = container.querySelector("td.is-active-cell");
+
+    const handle = container.querySelector<HTMLElement>("thead th .th-resize-handle") as HTMLElement;
+    handle.focus();
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    const grip = container.querySelector<HTMLElement>(".th-drag-grip") as HTMLElement;
+    fireEvent.keyDown(grip, { key: "Home" });
+    fireEvent.keyDown(grip, { key: "ArrowLeft" });
+
+    expect(container.querySelectorAll("td.is-selected-cell").length).toBe(selectedBefore);
+    expect(container.querySelector("td.is-active-cell")).toBe(activeBefore);
+    expect(cells[1][0].ownerDocument.activeElement?.closest("thead")).not.toBeNull();
+  });
+
+  it("並び替えグリップは Enter で列メニューを開く (#1529)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const grip = container.querySelector<HTMLElement>(".th-drag-grip") as HTMLElement;
+    fireEvent.keyDown(grip, { key: "Enter" });
+    expect(screen.getByRole("button", { name: t("gridMoveColumnRight") })).toBeInTheDocument();
+  });
+
+  it("列ヘッダのメニューから列を左 / 右へ移動できる (#1529)", async () => {
+    localStorage.clear();
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "name" }) }));
+    // 先頭列は左へ動かせない。
+    expect(screen.getByRole("button", { name: t("gridMoveColumnLeft") })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: t("gridMoveColumnRight") }));
+    await waitFor(() => {
+      const heads = Array.from(container.querySelectorAll("thead th[data-col-id]")).map((th) =>
+        th.getAttribute("data-col-id"),
+      );
+      expect(heads).toEqual(["1", "0"]);
+    });
+  });
+
   it("Escape で選択範囲を解除する (#486)", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     const cells = dataCells(container);

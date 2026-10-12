@@ -18,6 +18,7 @@ import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
+import { Callout } from "./Callout";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
@@ -231,9 +232,19 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   const valid = statements.length > 0;
 
   const sqlPreview = statements.map((s: AlterStatement) => s.sql).join("\n");
+  // 破壊的な文 (DROP COLUMN / DROP FOREIGN KEY / DROP CHECK) を含むか (#1529)。
+  // 含むときは確認ダイアログと同じ破壊的パターン (実行は dangerOutline で左、
+  // キャンセルを primary で右) に切り替え、Cmd/Ctrl+Enter での実行も止める。
+  const destructiveStatements = statements.filter((s) => s.destructive);
+  const hasDestructive = destructiveStatements.length > 0;
 
   return (
-    <Modal onSubmit={() => onRun(statements)} submitDisabled={!valid || readOnly} width="880px" onClose={onClose}>
+    <Modal
+      onSubmit={hasDestructive ? undefined : () => onRun(statements)}
+      submitDisabled={!valid || readOnly}
+      width="880px"
+      onClose={onClose}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("alterTableTitle", { table })}
       </ModalHeader>
@@ -322,18 +333,22 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                   alignItems="center"
                   opacity={row.drop ? 0.5 : 1}
                 >
-                  <chakra.span fontSize="sm" fontFamily="mono" color="app.text" title={row.original}>
-                    {row.original}
-                  </chakra.span>
+                  <Tooltip label={row.original}>
+                    <chakra.span fontSize="sm" fontFamily="mono" color="app.text" minW="0" truncate>
+                      {row.original}
+                    </chakra.span>
+                  </Tooltip>
                   <Input
                     value={row.name}
                     onChange={(e) => setExistingAt(i, { name: e.target.value })}
                     disabled={row.drop}
+                    aria-label={`${t("alterTableNewName")}: ${row.original}`}
                   />
                   <Input
                     value={row.type}
                     onChange={(e) => setExistingAt(i, { type: e.target.value })}
                     disabled={row.drop}
+                    aria-label={`${t("createTableColType")}: ${row.original}`}
                   />
                   <Switch
                     checked={row.notNull}
@@ -347,6 +362,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                     onChange={(e) => setExistingAt(i, { defaultValue: e.target.value })}
                     placeholder={t("createTableColDefault")}
                     disabled={row.drop}
+                    aria-label={`${t("createTableColDefault")}: ${row.original}`}
                   />
                   <Input
                     value={row.comment ?? ""}
@@ -381,8 +397,17 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                   gap="1.5"
                   alignItems="center"
                 >
-                  <Input value={c.name} onChange={(e) => setAddedAt(i, { name: e.target.value })} placeholder="column" />
-                  <Input value={c.type} onChange={(e) => setAddedAt(i, { type: e.target.value })} />
+                  <Input
+                    value={c.name}
+                    onChange={(e) => setAddedAt(i, { name: e.target.value })}
+                    placeholder={t("createTableColNamePlaceholder")}
+                    aria-label={`${t("createTableColName")} (${i + 1})`}
+                  />
+                  <Input
+                    value={c.type}
+                    onChange={(e) => setAddedAt(i, { type: e.target.value })}
+                    aria-label={`${t("createTableColType")} (${i + 1})`}
+                  />
                   <Switch
                     checked={c.notNull}
                     onChange={() => setAddedAt(i, { notNull: !c.notNull })}
@@ -392,6 +417,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                     value={c.defaultValue}
                     onChange={(e) => setAddedAt(i, { defaultValue: e.target.value })}
                     placeholder={t("createTableColDefault")}
+                    aria-label={`${t("createTableColDefault")} (${i + 1})`}
                   />
                   <chakra.button
                     type="button"
@@ -430,6 +456,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                       value={idx.name}
                       onChange={(e) => setIndexAt(i, { name: e.target.value })}
                       placeholder={t("alterTableIndexNamePlaceholder")}
+                      aria-label={t("alterTableIndexNamePlaceholder")}
                       flex="1"
                     />
                     <Switch
@@ -586,6 +613,19 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               </chakra.div>
             )}
 
+            {hasDestructive && (
+              <Callout tone="warning" role="status" title={t("alterTableDestructiveTitle", { count: destructiveStatements.length })}>
+                <chakra.div display="flex" flexDirection="column" gap="0.5">
+                  <span>{t("alterTableDestructiveBody")}</span>
+                  {destructiveStatements.map((s, i) => (
+                    <chakra.code key={`${i}-${s.sql}`} fontFamily="mono" fontSize="xs" wordBreak="break-all">
+                      {s.sql}
+                    </chakra.code>
+                  ))}
+                </chakra.div>
+              </Callout>
+            )}
+
             <FormSection>
               <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
               <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
@@ -596,26 +636,53 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         </AnimatePresence>
       </ModalBody>
       <ModalFooter>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={!valid}
-          onClick={() => onSendToEditor(sqlPreview)}
-        >
-          {t("createTableToEditor")}
-        </Button>
-        <div style={{ flex: 1 }} />
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("createTableClose")}
-        </Button>
-        <PressableButton
-          type="button"
-          variant="primary"
-          disabled={!valid || readOnly}
-          onClick={() => onRun(statements)}
-        >
-          {t("alterTableRun")}
-        </PressableButton>
+        {hasDestructive ? (
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!valid}
+              onClick={() => onSendToEditor(sqlPreview)}
+            >
+              {t("createTableToEditor")}
+            </Button>
+            <Button
+              type="button"
+              variant="dangerOutline"
+              disabled={!valid || readOnly}
+              onClick={() => onRun(statements)}
+            >
+              {t("alterTableRun")}
+            </Button>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="primary" onClick={onClose}>
+              {t("createTableClose")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!valid}
+              onClick={() => onSendToEditor(sqlPreview)}
+            >
+              {t("createTableToEditor")}
+            </Button>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="secondary" onClick={onClose}>
+              {t("createTableClose")}
+            </Button>
+            <PressableButton
+              type="button"
+              variant="primary"
+              disabled={!valid || readOnly}
+              onClick={() => onRun(statements)}
+            >
+              {t("alterTableRun")}
+            </PressableButton>
+          </>
+        )}
       </ModalFooter>
     </Modal>
   );

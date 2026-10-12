@@ -117,25 +117,32 @@ fn filter_supported_driver_profiles(profiles: Vec<ConnectionProfile>) -> Vec<Con
 
 #[tauri::command]
 pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
-    let profiles = filter_supported_driver_profiles(store::load_all()?);
-    Ok(profiles
-        .into_iter()
-        .map(|profile| {
-            let has_db_password = secrets::has_db_password(&profile.id);
-            let has_ssh_passphrase = secrets::has_ssh_passphrase(&profile.id);
-            let has_ssh_password = secrets::has_ssh_password(&profile.id);
-            let has_ssh_jump_passphrase = secrets::has_ssh_jump_passphrase(&profile.id);
-            let has_ssh_jump_password = secrets::has_ssh_jump_password(&profile.id);
-            ProfileWithSecretFlags {
-                profile,
-                has_db_password,
-                has_ssh_passphrase,
-                has_ssh_password,
-                has_ssh_jump_passphrase,
-                has_ssh_jump_password,
-            }
-        })
-        .collect())
+    // keyring の存在確認 (プロファイル 1 件につき 5 回) は OS の資格情報マネージャを
+    // 同期でブロックする。async コマンドの runtime worker を塞がないよう、
+    // ファイル読み込みと一緒に blocking スレッドへ逃がす (#1530)。
+    tauri::async_runtime::spawn_blocking(|| {
+        let profiles = filter_supported_driver_profiles(store::load_all()?);
+        Ok(profiles
+            .into_iter()
+            .map(|profile| {
+                let has_db_password = secrets::has_db_password(&profile.id);
+                let has_ssh_passphrase = secrets::has_ssh_passphrase(&profile.id);
+                let has_ssh_password = secrets::has_ssh_password(&profile.id);
+                let has_ssh_jump_passphrase = secrets::has_ssh_jump_passphrase(&profile.id);
+                let has_ssh_jump_password = secrets::has_ssh_jump_password(&profile.id);
+                ProfileWithSecretFlags {
+                    profile,
+                    has_db_password,
+                    has_ssh_passphrase,
+                    has_ssh_password,
+                    has_ssh_jump_passphrase,
+                    has_ssh_jump_password,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("list_profiles task failed: {e}")))?
 }
 
 /// keyring に保存された秘密の種類。`as_str` は `profiles::secrets` の内部 kind

@@ -22,9 +22,12 @@
 //! reproduced verbatim from introspection, and PK/FK reshaping on an existing
 //! column is reported as a warning rather than guessed at.
 
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 
-use super::diff::{DiffStatus, SchemaDiff, TableDiff};
+use super::diff::{DiffForeignKey, DiffStatus, SchemaDiff, TableDiff};
+use super::table_ddl::{render_foreign_key, FkGroup};
 use super::types::TableColumnInfo;
 use super::DriverKind;
 
@@ -36,6 +39,9 @@ pub enum SyncKind {
     CreateTable,
     AddColumn,
     AlterColumn,
+    /// `CREATE TABLE` 同期の外部キー (MySQL / PostgreSQL は全 CREATE の後の
+    /// `ALTER TABLE ... ADD CONSTRAINT`。SQLite は CREATE TABLE 内に含めるので出ない)。
+    AddForeignKey,
     DropColumn,
     DropTable,
     // Data-level statements (`db::data_diff`).
@@ -53,11 +59,12 @@ impl SyncKind {
             SyncKind::CreateTable => 0,
             SyncKind::AddColumn => 1,
             SyncKind::AlterColumn => 2,
-            SyncKind::DropColumn => 3,
-            SyncKind::DropTable => 4,
-            SyncKind::InsertRow => 5,
-            SyncKind::UpdateRow => 6,
-            SyncKind::DeleteRow => 7,
+            SyncKind::AddForeignKey => 3,
+            SyncKind::DropColumn => 4,
+            SyncKind::DropTable => 5,
+            SyncKind::InsertRow => 6,
+            SyncKind::UpdateRow => 7,
+            SyncKind::DeleteRow => 8,
         }
     }
 }
@@ -89,11 +96,28 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
     let mut statements: Vec<SyncStatement> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
+    // 生成列の都合で CREATE TABLE 自体を出さない表。外部キーの参照先がこれだと
+    // 適用に失敗するので、その FK は出さずに警告する。
+    let uncreatable: HashSet<&str> = diff
+        .tables
+        .iter()
+        .filter(|t| t.status == DiffStatus::SourceOnly && !can_create_table(driver, t))
+        .map(|t| t.name.as_str())
+        .collect();
+
+    let drop_order = if allow_destructive {
+        drop_table_order(diff, &mut warnings)
+    } else {
+        HashMap::new()
+    };
+
     for table in &diff.tables {
         match table.status {
             DiffStatus::Same => {}
             DiffStatus::SourceOnly => {
-                if let Some(stmt) = create_table_stmt(driver, table, &mut warnings) {
+                if let Some(stmt) =
+                    create_table_stmt(driver, table, &uncreatable, &mut statements, &mut warnings)
+                {
                     statements.push(stmt);
                 }
             }
@@ -120,10 +144,15 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
     }
 
     statements.sort_by(|a, b| {
-        a.kind
-            .order()
-            .cmp(&b.kind.order())
-            .then(a.table.cmp(&b.table))
+        a.kind.order().cmp(&b.kind.order()).then_with(|| {
+            if a.kind == SyncKind::DropTable {
+                // 外部キーの子 → 親の順 (表名順ではなく依存順)。
+                let rank = |s: &SyncStatement| drop_order.get(&s.table).copied().unwrap_or(0);
+                rank(a).cmp(&rank(b)).then(a.table.cmp(&b.table))
+            } else {
+                a.table.cmp(&b.table)
+            }
+        })
     });
 
     SyncPlan {
@@ -132,12 +161,86 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
     }
 }
 
+/// `DROP TABLE` の順位 (小さいほど先)。target のみの表同士の外部キーを見て、
+/// 子 (参照する側) を親 (参照される側) より先に落とす。循環があれば残りを名前順で
+/// 末尾に回し、警告を出す。
+fn drop_table_order(diff: &SchemaDiff, warnings: &mut Vec<String>) -> HashMap<String, usize> {
+    let mut names: Vec<&str> = diff
+        .tables
+        .iter()
+        .filter(|t| t.status == DiffStatus::TargetOnly)
+        .map(|t| t.name.as_str())
+        .collect();
+    names.sort_unstable();
+    // parent -> 参照している子 (自己参照は除く)
+    let mut children: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for t in diff
+        .tables
+        .iter()
+        .filter(|t| t.status == DiffStatus::TargetOnly)
+    {
+        for fk in &t.foreign_keys {
+            let parent = fk.referenced_table.as_str();
+            if parent != t.name && names.binary_search(&parent).is_ok() {
+                children.entry(parent).or_default().insert(t.name.as_str());
+            }
+        }
+    }
+    let mut order: HashMap<String, usize> = HashMap::new();
+    let mut remaining: Vec<&str> = names;
+    while !remaining.is_empty() {
+        let ready: Vec<&str> = remaining
+            .iter()
+            .copied()
+            .filter(|n| {
+                children
+                    .get(n)
+                    .map_or(true, |cs| cs.iter().all(|c| order.contains_key(*c)))
+            })
+            .collect();
+        if ready.is_empty() {
+            warnings.push(format!(
+                "外部キーが循環しているため、DROP TABLE の順序を決められません (先に制約を外す必要があります): {}",
+                remaining.join(", ")
+            ));
+            for n in &remaining {
+                let next = order.len();
+                order.insert((*n).to_string(), next);
+            }
+            break;
+        }
+        for n in &ready {
+            let next = order.len();
+            order.insert((*n).to_string(), next);
+        }
+        remaining.retain(|n| !ready.contains(n));
+    }
+    order
+}
+
 /// Builds the `CREATE TABLE` for a source-only table from its source-side
 /// column definitions, appending a `PRIMARY KEY (...)` clause for any columns
 /// flagged `PRI`.
+/// 生成列を除いても主キーと列が残り、`CREATE TABLE` を出せるか。
+fn can_create_table(driver: DriverKind, table: &TableDiff) -> bool {
+    let mut any_column = false;
+    for c in table.columns.iter().filter_map(|c| c.source.as_ref()) {
+        if is_generated_column(driver, c) {
+            if c.key.eq_ignore_ascii_case("PRI") {
+                return false;
+            }
+        } else {
+            any_column = true;
+        }
+    }
+    any_column
+}
+
 fn create_table_stmt(
     driver: DriverKind,
     table: &TableDiff,
+    uncreatable: &HashSet<&str>,
+    fk_statements: &mut Vec<SyncStatement>,
     warnings: &mut Vec<String>,
 ) -> Option<SyncStatement> {
     let mut cols: Vec<&TableColumnInfo> = Vec::new();
@@ -174,6 +277,91 @@ fn create_table_stmt(
         lines.push(format!("PRIMARY KEY ({})", pk.join(", ")));
     }
 
+    // 外部キー (制約単位。複合キー・ON DELETE / ON UPDATE を保つ)。SQLite は
+    // ALTER TABLE で制約を足せないので CREATE TABLE 内に、MySQL / PostgreSQL は
+    // 全 CREATE の後の `ALTER TABLE ... ADD CONSTRAINT` にする (参照先の作成順や
+    // 循環参照を気にしなくて済む)。以前は黙って落としていた (#1530)。
+    let col_names: HashSet<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+    for fk in &table.foreign_keys {
+        if let Some(missing) = fk.columns.iter().find(|c| !col_names.contains(c.as_str())) {
+            warnings.push(format!(
+                "{}: 外部キー ({}) は CREATE TABLE から除いた列 {} を含むため出力しません。",
+                table.name,
+                fk.columns.join(", "),
+                missing
+            ));
+            continue;
+        }
+        if uncreatable.contains(fk.referenced_table.as_str()) {
+            warnings.push(format!(
+                "{}: 外部キー ({}) の参照先 {} は CREATE TABLE を生成しないため出力しません。",
+                table.name,
+                fk.columns.join(", "),
+                fk.referenced_table
+            ));
+            continue;
+        }
+        // MySQL (InnoDB) は `SET DEFAULT` の参照動作を拒否する (PostgreSQL ソース由来)。
+        // 動作を外して既定にし、警告する。
+        let mut fk = fk.clone();
+        if driver == DriverKind::Mysql {
+            for (label, action) in [
+                ("ON DELETE", &mut fk.on_delete),
+                ("ON UPDATE", &mut fk.on_update),
+            ] {
+                if action
+                    .as_deref()
+                    .is_some_and(|a| a.eq_ignore_ascii_case("SET DEFAULT"))
+                {
+                    *action = None;
+                    warnings.push(format!(
+                        "{}: 外部キー ({}) の {label} SET DEFAULT は MySQL (InnoDB) で使えないため外しました。",
+                        table.name,
+                        fk.columns.join(", ")
+                    ));
+                }
+            }
+        }
+        let clause = render_foreign_key(driver, &fk_group(&fk));
+        if driver == DriverKind::Sqlite {
+            lines.push(clause);
+        } else {
+            fk_statements.push(SyncStatement {
+                sql: format!(
+                    "ALTER TABLE {} ADD {}",
+                    quote_ident(driver, &table.name),
+                    clause
+                ),
+                table: table.name.clone(),
+                kind: SyncKind::AddForeignKey,
+                destructive: false,
+            });
+        }
+    }
+    // 単一列の索引 (UNIQUE / INDEX) は列情報の `key` にしか無く、複合索引や名前を
+    // 再現できない。省略したことを利用者に知らせる (外部キーの列は MySQL が索引を
+    // 自動で作るので MUL でも除く)。
+    let fk_cols: HashSet<&str> = table
+        .foreign_keys
+        .iter()
+        .flat_map(|f| f.columns.iter().map(String::as_str))
+        .collect();
+    let indexed: Vec<&str> = cols
+        .iter()
+        .filter(|c| {
+            c.key.eq_ignore_ascii_case("UNI")
+                || (c.key.eq_ignore_ascii_case("MUL") && !fk_cols.contains(c.name.as_str()))
+        })
+        .map(|c| c.name.as_str())
+        .collect();
+    if !indexed.is_empty() {
+        warnings.push(format!(
+            "{}: 索引 (UNIQUE / INDEX) は CREATE TABLE に含まれません (対象列: {})。必要に応じて手動で作成してください。",
+            table.name,
+            indexed.join(", ")
+        ));
+    }
+
     let sql = render_create_table(&quote_ident(driver, &table.name), &lines);
     Some(SyncStatement {
         sql,
@@ -181,6 +369,25 @@ fn create_table_stmt(
         kind: SyncKind::CreateTable,
         destructive: false,
     })
+}
+
+/// `DiffForeignKey` を DDL 再構成 (`db::table_ddl`) と共通の描画へ渡す形にする。
+fn fk_group(fk: &DiffForeignKey) -> FkGroup<'_> {
+    FkGroup {
+        name: fk.name.as_deref(),
+        referenced_table: &fk.referenced_table,
+        columns: fk.columns.iter().map(String::as_str).collect(),
+        referenced_columns: if fk.referenced_columns.is_empty() {
+            fk.columns.iter().map(|_| None).collect()
+        } else {
+            fk.referenced_columns
+                .iter()
+                .map(|c| Some(c.as_str()))
+                .collect()
+        },
+        on_delete: fk.on_delete.as_deref(),
+        on_update: fk.on_update.as_deref(),
+    }
 }
 
 /// Renders `CREATE TABLE <qualified> (\n  <line>,\n  ...\n)` from already
@@ -604,6 +811,7 @@ mod tests {
         let table = TableDiff {
             name: "users".to_string(),
             status: DiffStatus::SourceOnly,
+            foreign_keys: vec![],
             columns: vec![
                 cdiff("id", DiffStatus::SourceOnly, Some(id), &[]),
                 cdiff("name", DiffStatus::SourceOnly, Some(name), &[]),
@@ -621,11 +829,127 @@ mod tests {
         assert!(sql.contains("PRIMARY KEY (`id`)"), "got: {sql}");
     }
 
+    fn fk(name: &str, cols: &[&str], ref_table: &str, ref_cols: &[&str]) -> DiffForeignKey {
+        DiffForeignKey {
+            name: Some(name.to_string()),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            referenced_table: ref_table.to_string(),
+            referenced_columns: ref_cols.iter().map(|c| c.to_string()).collect(),
+            on_delete: Some("CASCADE".to_string()),
+            on_update: None,
+        }
+    }
+
+    fn pk_col(name: &str) -> TableColumnInfo {
+        let mut c = col(name, "int");
+        c.key = "PRI".to_string();
+        c
+    }
+
+    fn fk_tables(foreign_keys: Vec<DiffForeignKey>) -> Vec<TableDiff> {
+        // 名前順では orders が先だが、複合キーの参照先 users は後から作られる。
+        vec![
+            TableDiff {
+                name: "orders".to_string(),
+                status: DiffStatus::SourceOnly,
+                foreign_keys,
+                columns: vec![
+                    cdiff("id", DiffStatus::SourceOnly, Some(pk_col("id")), &[]),
+                    cdiff("a", DiffStatus::SourceOnly, Some(col("a", "int")), &[]),
+                    cdiff("b", DiffStatus::SourceOnly, Some(col("b", "int")), &[]),
+                ],
+            },
+            TableDiff {
+                name: "users".to_string(),
+                status: DiffStatus::SourceOnly,
+                foreign_keys: vec![],
+                columns: vec![
+                    cdiff("a", DiffStatus::SourceOnly, Some(pk_col("a")), &[]),
+                    cdiff("b", DiffStatus::SourceOnly, Some(pk_col("b")), &[]),
+                ],
+            },
+        ]
+    }
+
+    #[test]
+    fn foreign_keys_follow_all_creates_as_alter_on_mysql_and_postgres() {
+        for driver in [DriverKind::Mysql, DriverKind::Postgres] {
+            let tables = fk_tables(vec![fk("fk_o_u", &["a", "b"], "users", &["a", "b"])]);
+            let plan = generate_sync_sql(&diff(driver, tables), false);
+            let kinds: Vec<SyncKind> = plan.statements.iter().map(|s| s.kind).collect();
+            assert_eq!(
+                kinds,
+                vec![
+                    SyncKind::CreateTable,
+                    SyncKind::CreateTable,
+                    SyncKind::AddForeignKey
+                ]
+            );
+            let q = |s: &str| quote_ident(driver, s);
+            assert_eq!(
+                plan.statements[2].sql,
+                format!(
+                    "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}, {}) REFERENCES {} ({}, {}) ON DELETE CASCADE",
+                    q("orders"),
+                    q("fk_o_u"),
+                    q("a"),
+                    q("b"),
+                    q("users"),
+                    q("a"),
+                    q("b")
+                )
+            );
+            // CREATE TABLE 自体には FK を含めない。
+            assert!(!plan.statements[0].sql.contains("FOREIGN KEY"));
+        }
+    }
+
+    #[test]
+    fn sqlite_foreign_keys_are_inline_in_create_table() {
+        let tables = fk_tables(vec![fk("fk_o_u", &["a", "b"], "users", &["a", "b"])]);
+        let plan = generate_sync_sql(&diff(DriverKind::Sqlite, tables), false);
+        assert_eq!(plan.statements.len(), 2);
+        assert!(plan.statements[0].sql.contains(
+            "CONSTRAINT \"fk_o_u\" FOREIGN KEY (\"a\", \"b\") REFERENCES \"users\" (\"a\", \"b\") ON DELETE CASCADE"
+        ));
+    }
+
+    #[test]
+    fn no_foreign_keys_are_emitted_without_attached_info() {
+        // サンドボックスなど FK を載せない経路では FK を出さない。
+        for driver in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            let plan = generate_sync_sql(&diff(driver, fk_tables(vec![])), false);
+            assert!(plan
+                .statements
+                .iter()
+                .all(|s| !s.sql.contains("FOREIGN KEY")));
+            assert!(plan
+                .statements
+                .iter()
+                .all(|s| s.kind == SyncKind::CreateTable));
+        }
+    }
+
+    #[test]
+    fn foreign_key_to_uncreatable_table_is_skipped_with_warning() {
+        let mut gen = pk_col("a");
+        gen.extra = "STORED GENERATED".to_string();
+        let mut tables = fk_tables(vec![fk("fk_o_u", &["a"], "users", &["a"])]);
+        tables[1].columns[0] = cdiff("a", DiffStatus::SourceOnly, Some(gen), &[]);
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, tables), false);
+        assert!(plan
+            .statements
+            .iter()
+            .all(|s| s.kind != SyncKind::AddForeignKey));
+        assert!(plan.warnings.iter().any(|w| w.contains("外部キー")));
+    }
+
     #[test]
     fn destructive_statements_gated_by_flag() {
         let table = TableDiff {
             name: "stale".to_string(),
             status: DiffStatus::TargetOnly,
+            foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::TargetOnly, None, &[])],
         };
         let without = generate_sync_sql(&diff(DriverKind::Mysql, vec![table.clone()]), false);
@@ -648,6 +972,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![
                 cdiff("added", DiffStatus::SourceOnly, Some(added), &[]),
                 cdiff(
@@ -685,6 +1010,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![cdiff(
                 "v",
                 DiffStatus::Different,
@@ -706,6 +1032,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::Different, Some(src), &["key"])],
         };
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
@@ -722,6 +1049,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![
                 cdiff("added", DiffStatus::SourceOnly, Some(added), &[]),
                 cdiff("v", DiffStatus::Different, Some(changed), &["data_type"]),
@@ -751,6 +1079,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Same,
+            foreign_keys: vec![],
             columns: vec![],
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
@@ -793,19 +1122,28 @@ mod tests {
         let table = TableDiff {
             name: "t".into(),
             status: DiffStatus::SourceOnly,
+            foreign_keys: vec![],
             columns: vec![
                 cdiff("id", DiffStatus::SourceOnly, Some(plain.clone()), &[]),
                 cdiff("total", DiffStatus::SourceOnly, Some(g.clone()), &[]),
             ],
         };
         let mut warnings = Vec::new();
-        let stmt = create_table_stmt(DriverKind::Mysql, &table, &mut warnings).unwrap();
+        let stmt = create_table_stmt(
+            DriverKind::Mysql,
+            &table,
+            &HashSet::new(),
+            &mut Vec::new(),
+            &mut warnings,
+        )
+        .unwrap();
         assert!(stmt.sql.contains("`id`") && !stmt.sql.contains("`total`"));
         assert_eq!(warnings.len(), 1);
 
         let alter = TableDiff {
             name: "t".into(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![
                 cdiff("total", DiffStatus::SourceOnly, Some(g.clone()), &[]),
                 cdiff("v", DiffStatus::Different, Some(v), &["data_type"]),
@@ -825,6 +1163,7 @@ mod tests {
         let table = TableDiff {
             name: "t".into(),
             status: DiffStatus::SourceOnly,
+            foreign_keys: vec![],
             columns: vec![
                 cdiff("id", DiffStatus::SourceOnly, Some(g.clone()), &[]),
                 cdiff("name", DiffStatus::SourceOnly, Some(plain), &[]),
@@ -838,6 +1177,7 @@ mod tests {
         let only = TableDiff {
             name: "t2".into(),
             status: DiffStatus::SourceOnly,
+            foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::SourceOnly, Some(g), &[])],
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![only]), false);
@@ -854,6 +1194,7 @@ mod tests {
         let table = TableDiff {
             name: "t".into(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![cd],
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
@@ -1047,6 +1388,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::Different, Some(src), &["key"])],
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
@@ -1064,6 +1406,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![cdiff(
                 "user_id",
                 DiffStatus::Different,
@@ -1085,6 +1428,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![cdiff(
                 "v",
                 DiffStatus::Different,
@@ -1109,6 +1453,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::SourceOnly,
+            foreign_keys: vec![],
             columns: vec![cdiff("price", DiffStatus::SourceOnly, Some(price), &[])],
         };
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
@@ -1128,6 +1473,7 @@ mod tests {
         let table = TableDiff {
             name: "t".to_string(),
             status: DiffStatus::Different,
+            foreign_keys: vec![],
             columns: vec![cdiff(
                 "name",
                 DiffStatus::Different,
@@ -1152,6 +1498,7 @@ mod tests {
             let table = TableDiff {
                 name: "t".into(),
                 status: DiffStatus::SourceOnly,
+                foreign_keys: vec![],
                 columns: vec![
                     cdiff("id", DiffStatus::SourceOnly, Some(col("id", "int")), &[]),
                     cdiff("total", DiffStatus::SourceOnly, Some(g), &[]),
@@ -1185,5 +1532,88 @@ mod tests {
             DriverKind::Postgres,
             &col("p", "integer")
         ));
+    }
+
+    fn target_only(name: &str, fks: Vec<DiffForeignKey>) -> TableDiff {
+        TableDiff {
+            name: name.to_string(),
+            status: DiffStatus::TargetOnly,
+            foreign_keys: fks,
+            columns: vec![],
+        }
+    }
+
+    fn drop_order_of(plan: &SyncPlan) -> Vec<&str> {
+        plan.statements
+            .iter()
+            .filter(|s| s.kind == SyncKind::DropTable)
+            .map(|s| s.table.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn drop_tables_are_ordered_children_first() {
+        // 名前順なら "a_parent" が先だが、子 "z_child" を先に落とす必要がある。
+        let d = diff(
+            DriverKind::Postgres,
+            vec![
+                target_only("a_parent", vec![]),
+                target_only("z_child", vec![fk("fk", &["pid"], "a_parent", &["id"])]),
+            ],
+        );
+        let plan = generate_sync_sql(&d, true);
+        assert_eq!(drop_order_of(&plan), vec!["z_child", "a_parent"]);
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    }
+
+    #[test]
+    fn drop_tables_with_fk_cycle_warn() {
+        let d = diff(
+            DriverKind::Postgres,
+            vec![
+                target_only("a", vec![fk("f1", &["b_id"], "b", &["id"])]),
+                target_only("b", vec![fk("f2", &["a_id"], "a", &["id"])]),
+            ],
+        );
+        let plan = generate_sync_sql(&d, true);
+        assert_eq!(drop_order_of(&plan).len(), 2);
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("循環")),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn mysql_create_drops_set_default_fk_action_with_warning() {
+        let mut id = col("id", "int");
+        id.key = "PRI".to_string();
+        let mut f = fk("fk_p", &["pid"], "parent", &["id"]);
+        f.on_delete = Some("SET DEFAULT".to_string());
+        let table = TableDiff {
+            name: "child".to_string(),
+            status: DiffStatus::SourceOnly,
+            foreign_keys: vec![f],
+            columns: vec![
+                cdiff("id", DiffStatus::SourceOnly, Some(id), &[]),
+                cdiff("pid", DiffStatus::SourceOnly, Some(col("pid", "int")), &[]),
+            ],
+        };
+        let parent = TableDiff {
+            name: "parent".to_string(),
+            status: DiffStatus::Same,
+            foreign_keys: vec![],
+            columns: vec![],
+        };
+        let mut d = diff(DriverKind::Mysql, vec![table, parent]);
+        d.source_driver = DriverKind::Postgres;
+        let plan = generate_sync_sql(&d, false);
+        let all: String = plan.statements.iter().map(|s| s.sql.clone()).collect();
+        assert!(!all.contains("SET DEFAULT"), "{all}");
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("SET DEFAULT")),
+            "{:?}",
+            plan.warnings
+        );
     }
 }
